@@ -11,4 +11,4 @@
 0016-oliphaunt-wasix-add-btree-int4-compare-fast-path.patch
 0018-oliphaunt-wasix-avoid-pg-dump-executequery-lto-collision.patch
 0024-oliphaunt-wasix-add-like-literal-substring-fast-path.patch
-0030-oliphaunt-wasix-add-first-int4-leaf-compare-fast-path.patch
+0026-oliphaunt-wasix-add-first-int4-leaf-compare-fast-path.patch

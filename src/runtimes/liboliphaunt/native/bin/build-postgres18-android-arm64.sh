@@ -60,10 +60,11 @@ liboliphaunt_sources=(
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_native.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_runtime.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_protocol.c"
-  "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_bootstrap.c"
+  "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_config.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_process.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_trace.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_fs.c"
+  "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_backup_state.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_archive.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_archive_tar.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_static_extensions.c"
@@ -327,7 +328,6 @@ artifact_ready() {
     oliphaunt_register_static_extensions \
     oliphaunt_last_error \
     oliphaunt_version \
-    oliphaunt_capabilities \
     oliphaunt_free_response \
     oliphaunt_embedded_kill \
     oliphaunt_embedded_raise

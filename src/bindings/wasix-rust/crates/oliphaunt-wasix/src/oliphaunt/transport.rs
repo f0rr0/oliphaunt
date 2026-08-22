@@ -1,7 +1,6 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 
 use super::postgres_mod::PostgresMod;
-use crate::oliphaunt::interface::DataTransferContainer;
 
 /// Protocol transport for the WASIX Oliphaunt backend.
 pub enum Transport {
@@ -13,15 +12,7 @@ impl Transport {
         Ok(Self::Wasix)
     }
 
-    pub fn send(
-        &self,
-        pg: &mut PostgresMod,
-        payload: &[u8],
-        requested: Option<DataTransferContainer>,
-    ) -> Result<Vec<u8>> {
-        if matches!(requested, Some(DataTransferContainer::File)) {
-            bail!("file transport is not implemented for the WASIX backend")
-        }
+    pub fn send(&self, pg: &mut PostgresMod, payload: &[u8]) -> Result<Vec<u8>> {
         pg.send_protocol(payload)
     }
 }

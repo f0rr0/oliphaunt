@@ -13,34 +13,13 @@
         } \
     } while (0)
 
-#define CHECK_ONE_BIT(value) \
-    _Static_assert(((value) != 0) && (((value) & ((value) - 1ull)) == 0), #value " must be a single capability bit")
-
-CHECK_ONE_BIT(OLIPHAUNT_CAP_PROTOCOL_RAW);
-CHECK_ONE_BIT(OLIPHAUNT_CAP_PROTOCOL_STREAM);
-CHECK_ONE_BIT(OLIPHAUNT_CAP_MULTI_INSTANCE);
-CHECK_ONE_BIT(OLIPHAUNT_CAP_SERVER_MODE);
-CHECK_ONE_BIT(OLIPHAUNT_CAP_EXTENSIONS);
-CHECK_ONE_BIT(OLIPHAUNT_CAP_QUERY_CANCEL);
-CHECK_ONE_BIT(OLIPHAUNT_CAP_BACKUP_RESTORE);
-CHECK_ONE_BIT(OLIPHAUNT_CAP_SIMPLE_QUERY);
-CHECK_ONE_BIT(OLIPHAUNT_CAP_STATIC_EXTENSIONS);
-CHECK_ONE_BIT(OLIPHAUNT_CAP_LOGICAL_REOPEN);
-
-_Static_assert(OLIPHAUNT_ABI_VERSION == 7u, "unexpected liboliphaunt ABI version");
+_Static_assert(OLIPHAUNT_ABI_VERSION == 8u, "unexpected liboliphaunt ABI version");
 _Static_assert(OLIPHAUNT_STATIC_EXTENSION_ABI_VERSION == 1u, "unexpected static extension ABI version");
-_Static_assert(OLIPHAUNT_BACKUP_FORMAT_SQL == 1u, "unexpected SQL backup format tag");
-_Static_assert(OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE == 2u, "unexpected physical archive backup format tag");
-_Static_assert(OLIPHAUNT_BACKUP_FORMAT_OLIPHAUNT_ARCHIVE == 3u, "unexpected oliphaunt archive backup format tag");
+_Static_assert(OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK == 1ull, "unexpected external root lock flag");
 _Static_assert(offsetof(OliphauntConfig, abi_version) == 0, "OliphauntConfig must start with abi_version");
-_Static_assert(offsetof(OliphauntBackupOptions, abi_version) == 0, "OliphauntBackupOptions must start with abi_version");
 _Static_assert(offsetof(OliphauntRestoreOptions, abi_version) == 0, "OliphauntRestoreOptions must start with abi_version");
 _Static_assert(sizeof(((OliphauntConfig *)0)->reserved_flags) == sizeof(uint64_t), "config flags must be 64-bit");
-_Static_assert(sizeof(((OliphauntArchiveFile *)0)->len) == sizeof(size_t), "archive file length must be size_t");
-_Static_assert(sizeof(((OliphauntArchiveFile *)0)->reserved_flags) == sizeof(uint64_t), "archive file flags must be 64-bit");
-_Static_assert(sizeof(((OliphauntBackupOptions *)0)->generated_file_count) == sizeof(size_t), "generated file count must be size_t");
-_Static_assert(sizeof(((OliphauntBackupOptions *)0)->reserved_flags) == sizeof(uint64_t), "backup flags must be 64-bit");
-_Static_assert(sizeof(((OliphauntRestoreOptions *)0)->flags) == sizeof(uint64_t), "restore flags must be 64-bit");
+_Static_assert(sizeof(((OliphauntRestoreOptions *)0)->len) == sizeof(size_t), "restore length must be size_t");
 _Static_assert(sizeof(((OliphauntResponse *)0)->len) == sizeof(size_t), "response length must be size_t");
 _Static_assert(sizeof(((OliphauntStaticExtension *)0)->symbol_count) == sizeof(size_t), "symbol count must be size_t");
 
@@ -48,9 +27,10 @@ _Static_assert(sizeof(((OliphauntStaticExtension *)0)->symbol_count) == sizeof(s
 _Static_assert(sizeof(OliphauntConfig) == 72, "unexpected 64-bit OliphauntConfig size");
 _Static_assert(offsetof(OliphauntConfig, module_dir) == 24, "unexpected 64-bit module_dir offset");
 _Static_assert(offsetof(OliphauntConfig, startup_arg_count) == 64, "unexpected 64-bit startup_arg_count offset");
-_Static_assert(sizeof(OliphauntBackupOptions) == 32, "unexpected 64-bit OliphauntBackupOptions size");
-_Static_assert(sizeof(OliphauntRestoreOptions) == 48, "unexpected 64-bit OliphauntRestoreOptions size");
+_Static_assert(sizeof(OliphauntRestoreOptions) == 32, "unexpected 64-bit OliphauntRestoreOptions size");
 _Static_assert(offsetof(OliphauntRestoreOptions, destination) == 8, "unexpected 64-bit restore destination offset");
+_Static_assert(offsetof(OliphauntRestoreOptions, data) == 16, "unexpected 64-bit restore data offset");
+_Static_assert(offsetof(OliphauntRestoreOptions, len) == 24, "unexpected 64-bit restore length offset");
 #endif
 
 static int32_t stream_callback(void *context, const uint8_t *data, size_t len) {
@@ -75,7 +55,7 @@ int main(void) {
         size_t,
         OliphauntStreamCallback,
         void *) = oliphaunt_exec_protocol_stream;
-    int32_t (*backup_fn)(OliphauntHandle *, const OliphauntBackupOptions *, OliphauntResponse *) =
+    int32_t (*backup_fn)(OliphauntHandle *, OliphauntResponse *) =
         oliphaunt_backup;
     int32_t (*restore_fn)(const OliphauntRestoreOptions *) = oliphaunt_restore;
     int32_t (*cancel_fn)(OliphauntHandle *) = oliphaunt_cancel;
@@ -88,7 +68,6 @@ int main(void) {
         oliphaunt_register_static_extensions;
     const char *(*last_error_fn)(OliphauntHandle *) = oliphaunt_last_error;
     const char *(*version_fn)(void) = oliphaunt_version;
-    uint64_t (*capabilities_fn)(void) = oliphaunt_capabilities;
     void (*free_response_fn)(OliphauntResponse *) = oliphaunt_free_response;
     OliphauntStreamCallback stream_callback_fn = stream_callback;
 
@@ -106,7 +85,6 @@ int main(void) {
     CHECK(register_static_extensions_fn != NULL, "oliphaunt_register_static_extensions must link");
     CHECK(last_error_fn != NULL, "oliphaunt_last_error must link");
     CHECK(version_fn != NULL, "oliphaunt_version must link");
-    CHECK(capabilities_fn != NULL, "oliphaunt_capabilities must link");
     CHECK(free_response_fn != NULL, "oliphaunt_free_response must link");
     CHECK(stream_callback_fn != NULL, "OliphauntStreamCallback must accept stream callbacks");
 
@@ -117,7 +95,7 @@ int main(void) {
     config.module_dir = NULL;
     config.username = "liboliphaunt";
     config.database = "postgres";
-    config.reserved_flags = OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK;
+    config.reserved_flags = 0;
     config.startup_args = NULL;
     config.startup_arg_count = 0;
 
@@ -128,30 +106,11 @@ int main(void) {
     CHECK(response.data == NULL && response.len == 0, "oliphaunt_free_response must clear empty responses");
     free_response_fn(NULL);
 
-    const uint8_t manifest_bytes[] = "layout=abi\n";
-    OliphauntArchiveFile generated_file = {
-        .path = "manifest.properties",
-        .data = manifest_bytes,
-        .len = sizeof(manifest_bytes) - 1,
-        .mode = 0600,
-        .reserved_flags = 0,
-    };
-    OliphauntBackupOptions backup_options = {
-        .abi_version = OLIPHAUNT_ABI_VERSION,
-        .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
-        .generated_files = &generated_file,
-        .generated_file_count = 1,
-        .reserved_flags = 0,
-    };
-    CHECK(backup_options.generated_files[0].len == sizeof(manifest_bytes) - 1, "backup options layout mismatch");
-
     OliphauntRestoreOptions restore = {0};
     restore.abi_version = OLIPHAUNT_ABI_VERSION;
     restore.destination = "/tmp/oliphaunt-abi-conformance-restore";
-    restore.format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE;
     restore.data = (const uint8_t *)"x";
     restore.len = 1;
-    restore.flags = OLIPHAUNT_RESTORE_REPLACE_EXISTING;
 
     OliphauntStaticExtensionSymbol symbol = {
         .name = "liboliphaunt_abi_conformance_symbol",
@@ -175,20 +134,6 @@ int main(void) {
     char trailing = '\0';
     CHECK(version != NULL && sscanf(version, "%u.%u.%u%c", &major, &minor, &patch, &trailing) == 3,
           "unexpected version string");
-
-    uint64_t capabilities = capabilities_fn();
-    uint64_t required =
-        OLIPHAUNT_CAP_PROTOCOL_RAW |
-        OLIPHAUNT_CAP_PROTOCOL_STREAM |
-        OLIPHAUNT_CAP_EXTENSIONS |
-        OLIPHAUNT_CAP_QUERY_CANCEL |
-        OLIPHAUNT_CAP_BACKUP_RESTORE |
-        OLIPHAUNT_CAP_SIMPLE_QUERY |
-        OLIPHAUNT_CAP_STATIC_EXTENSIONS |
-        OLIPHAUNT_CAP_LOGICAL_REOPEN;
-    CHECK((capabilities & required) == required, "missing required capability bits");
-    CHECK((capabilities & OLIPHAUNT_CAP_MULTI_INSTANCE) == 0, "direct C ABI must not advertise multi-instance");
-    CHECK((capabilities & OLIPHAUNT_CAP_SERVER_MODE) == 0, "direct C ABI must not advertise server mode");
 
     CHECK(close_fn(NULL) == 0, "oliphaunt_close(NULL) must be a no-op");
     CHECK(detach_fn(NULL) == 0, "oliphaunt_detach(NULL) must be a no-op");

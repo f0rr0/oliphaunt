@@ -14,6 +14,10 @@ class OliphauntJsiPromiseCallback @DoNotStrip constructor(
     nativeResolveString(token, value)
   }
 
+  override fun resolveUnit() {
+    nativeResolveUnit(token)
+  }
+
   override fun reject(code: String, message: String?) {
     nativeReject(token, if (message.isNullOrBlank()) code else "$code: $message")
   }
@@ -21,6 +25,8 @@ class OliphauntJsiPromiseCallback @DoNotStrip constructor(
   private external fun nativeResolveBytes(token: Long, response: ByteArray)
 
   private external fun nativeResolveString(token: Long, value: String)
+
+  private external fun nativeResolveUnit(token: Long)
 
   private external fun nativeReject(token: Long, message: String)
 }

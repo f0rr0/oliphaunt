@@ -1,6 +1,6 @@
 ---
 title: Build With Kotlin
-description: Add Oliphaunt to an Android app with Gradle, coroutines, app-private storage, lifecycle hooks, selected extensions, and backup APIs.
+description: Add Oliphaunt to an Android app with Gradle, coroutines, app-private storage, selected extensions, backup, and app-owned lifecycle actions.
 ---
 
 # Build With Kotlin
@@ -55,10 +55,9 @@ coroutines.
 
 ```kotlin
 val database =
-    OliphauntAndroid.open(
+    Oliphaunt.open(
         context = context,
         config = OliphauntConfig(
-            mode = EngineMode.NativeDirect,
             storage = DatabaseStorage.Directory(
                 context.filesDir.resolve("main.oliphaunt").absolutePath,
             ),
@@ -115,8 +114,8 @@ native session underneath those calls.
 
 ### Configure
 
-Configure storage, mode, selected exact extensions, startup identity, and
-durability through `OliphauntConfig` and the Android facade. Normal apps use
+Configure storage, selected exact extensions, startup identity, and PostgreSQL
+startup GUCs through `OliphauntConfig` and the Android facade. Normal apps use
 packaged runtime assets; explicit asset locations remain advanced overrides.
 
 </Step>
@@ -125,17 +124,15 @@ packaged runtime assets; explicit asset locations remain advanced overrides.
 ### Choose a mode
 
 Android direct mode owns one resident backend per app process and one physical
-session. Broker and server modes appear when the Android SDK reports platform
-support for them.
+session.
 
 </Step>
 <Step>
 
 ### Handle lifecycle
 
-Database calls run through coroutine serialization. Close rejects queued work,
-waits for active work, then detaches from the runtime. Use Android lifecycle
-hooks to prepare for backgrounding and resume foreground work deliberately.
+Database calls run through coroutine serialization. Use `checkpoint()`,
+`cancel()`, and `close()` explicitly according to the app's lifecycle policy.
 
 </Step>
 <Step>
@@ -150,10 +147,9 @@ contain only those selected extensions and mandatory dependencies.
 
 ### Back up and restore
 
-Use SDK backup and restore APIs with Android file/document APIs. The SDK
-validates destinations, formats, and archive metadata before materialization.
-`RestoreRequest` defaults to `RestoreDestinationPolicy.FailIfExists`; call
-`.replaceExisting()` only when replacement is deliberate.
+Use `backup()` and static `restore(destination, bytes)` with Android
+file/document APIs. Restore accepts a new or existing-empty destination and
+rejects nonempty data without mutation.
 
 </Step>
 </Steps>
@@ -163,5 +159,5 @@ validates destinations, formats, and archive metadata before materialization.
 ## Troubleshooting
 
 Check app storage permissions, storage ownership, missing native libraries, missing
-runtime resources, mode capability errors, selected-extension artifacts, and
+runtime resources, runtime errors, selected-extension artifacts, and
 SQLSTATE-bearing PostgreSQL errors.

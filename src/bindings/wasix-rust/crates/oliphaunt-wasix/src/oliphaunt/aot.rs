@@ -13,9 +13,6 @@ use wasmer::{Engine, Module};
 use zstd::stream::read::Decoder as ZstdDecoder;
 
 use super::assets;
-#[cfg(feature = "extensions")]
-use super::extensions::Extension;
-use super::timing;
 
 const RUNTIME_ARTIFACT: &str = "runtime:oliphaunt";
 const EXPECTED_AOT_ENGINE: &str = "llvm-opta";
@@ -53,7 +50,6 @@ enum AotVerifyMode {
 pub(crate) fn headless_engine() -> Engine {
     HEADLESS_ENGINE
         .get_or_init(|| {
-            let _phase = timing::phase("wasmer.headless_engine");
             let mut features = Features::new();
             features.exceptions(true);
             EngineBuilder::headless()
@@ -74,34 +70,6 @@ pub(crate) fn engine_identity() -> &'static str {
     AOT_ENGINE_ID
 }
 
-pub(crate) fn preload_runtime_artifact() -> Result<()> {
-    let _ = load_runtime_module()?;
-    Ok(())
-}
-
-#[cfg(feature = "extensions")]
-pub(crate) fn preload_extension_artifact(extension: Extension) -> Result<()> {
-    let engine = headless_engine();
-    for module in extension.native_support_modules() {
-        if let Some(aot_name) = module.aot_name() {
-            let _ = load_artifact_module(&engine, aot_name)?;
-        }
-    }
-    let _ = load_extension_module(&engine, extension)?;
-    Ok(())
-}
-
-#[cfg(feature = "extensions")]
-pub(crate) fn load_extension_module(
-    engine: &Engine,
-    extension: Extension,
-) -> Result<Option<Module>> {
-    let Some(aot_name) = extension.aot_name() else {
-        return Ok(None);
-    };
-    load_artifact_module(engine, aot_name).map(Some)
-}
-
 pub(crate) fn load_artifact_module(engine: &Engine, artifact_name: &str) -> Result<Module> {
     let artifact = install_artifact(artifact_name)?;
     let cache_key = format!("{artifact_name}:{}", artifact.sha256);
@@ -114,7 +82,6 @@ pub(crate) fn load_artifact_module(engine: &Engine, artifact_name: &str) -> Resu
     let module = match deserialize_headless(engine, &artifact.path) {
         Ok(module) => module,
         Err(err) if aot_verify_mode()? == AotVerifyMode::Fast => {
-            let _phase = timing::phase("aot.rebuild_after_deserialize_failure");
             forget_installed_artifact(artifact_name);
             remove_cached_artifact(&artifact.path)?;
             let artifact = rebuild_artifact(artifact_name).with_context(|| {
@@ -162,10 +129,7 @@ fn install_artifact(name: &str) -> Result<InstalledArtifact> {
         return Ok(artifact);
     }
 
-    let manifest_artifact = {
-        let _phase = timing::phase("aot.manifest_validation");
-        target_manifest_artifact(name)?
-    };
+    let manifest_artifact = target_manifest_artifact(name)?;
     let verify_mode = aot_verify_mode()?;
 
     if let Some(artifact) = cached_raw_artifact(name, &manifest_artifact, verify_mode)? {
@@ -184,10 +148,7 @@ fn rebuild_artifact(name: &str) -> Result<InstalledArtifact> {
         .lock()
         .expect("AOT install lock poisoned");
     forget_installed_artifact(name);
-    let manifest_artifact = {
-        let _phase = timing::phase("aot.manifest_validation");
-        target_manifest_artifact(name)?
-    };
+    let manifest_artifact = target_manifest_artifact(name)?;
     let artifact = materialize_artifact(name, &manifest_artifact, aot_verify_mode()?)?;
     remember_installed_artifact(name, artifact.clone());
     Ok(artifact)
@@ -198,7 +159,6 @@ fn materialize_artifact(
     manifest_artifact: &AotManifestArtifact,
     verify_mode: AotVerifyMode,
 ) -> Result<InstalledArtifact> {
-    let _phase = timing::phase("aot.materialize");
     let raw = artifact_raw_bytes(name, manifest_artifact, verify_mode)?;
     let hash = expected_raw_hash(name, manifest_artifact, &raw, verify_mode)?;
     let cache_path = cache_path(name, &hash)?;
@@ -245,14 +205,12 @@ fn cached_raw_artifact(
 
     match verify_mode {
         AotVerifyMode::Fast => {
-            let _phase = timing::phase("aot.cache_receipt_verify");
             if !cache_receipt_matches(name, manifest_artifact, &cache_path, raw_sha256)? {
                 remove_cached_artifact(&cache_path)?;
                 return Ok(None);
             }
         }
         AotVerifyMode::Full => {
-            let _phase = timing::phase("aot.raw_cache_verify");
             let (actual, actual_size) = sha256_file_with_len(&cache_path)?;
             if !actual.eq_ignore_ascii_case(raw_sha256) {
                 remove_cached_artifact(&cache_path)?;
@@ -337,7 +295,6 @@ fn artifact_raw_bytes(
     }
 
     if bytes.starts_with(ZSTD_MAGIC) {
-        let _phase = timing::phase("aot.decompress");
         let mut decoder = ZstdDecoder::new(Cursor::new(bytes))
             .with_context(|| format!("decode compressed AOT artifact '{name}'"))?;
         let mut raw = Vec::new();
@@ -718,13 +675,11 @@ fn aot_verify_mode() -> Result<AotVerifyMode> {
 
 #[allow(unsafe_code)]
 fn deserialize_headless(engine: &Engine, path: &Path) -> Result<Module> {
-    let _phase = timing::phase("aot.deserialize");
     deserialize_headless_mmap(engine, path)
 }
 
 #[allow(unsafe_code)]
 fn deserialize_headless_mmap(engine: &Engine, path: &Path) -> Result<Module> {
-    let _phase = timing::phase("aot.deserialize.mmap");
     // SAFETY: same artifact ownership and cache-key constraints as the file
     // deserializer below. This path avoids reading the complete native artifact
     // into a Rust Vec before Wasmer deserializes it.

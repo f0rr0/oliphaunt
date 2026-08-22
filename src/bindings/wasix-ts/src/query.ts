@@ -47,9 +47,14 @@ export type QueryResult = {
   fields: QueryField[];
   rows: QueryRow[];
   commandTag?: string;
-  rowCount: number;
+  rowCount: number | null;
   fieldIndex(name: string): number | undefined;
   getText(row: number, column: string): string | null;
+};
+
+export type CommandResult = {
+  commandTag?: string;
+  rowCount: number | null;
 };
 
 export { simpleQuery };
@@ -75,7 +80,7 @@ export class PostgresError extends Error {
   readonly postgresMessage: string;
 
   constructor(fields: PostgresErrorField[]) {
-    const severity = fieldValue(fields, 0x53) ?? fieldValue(fields, 0x56);
+    const severity = fieldValue(fields, 0x56) ?? fieldValue(fields, 0x53);
     const sqlstate = fieldValue(fields, 0x43);
     const postgresMessage = fieldValue(fields, 0x4d) ?? 'PostgreSQL ErrorResponse';
     super(formatPostgresError(severity, sqlstate, postgresMessage));
@@ -93,10 +98,6 @@ export class PostgresError extends Error {
     this.dataTypeName = fieldValue(fields, 0x64);
     this.constraintName = fieldValue(fields, 0x6e);
     this.fields = fields;
-  }
-
-  static fallback(): PostgresError {
-    return new PostgresError([{ code: 0x4d, value: 'PostgreSQL ErrorResponse' }]);
   }
 }
 
@@ -198,7 +199,7 @@ export function parseQueryResponse(bytes: Uint8Array): QueryResult {
       case 0x64:
       case 0x63:
         throw new Error(
-          'query() does not support COPY protocol responses; use execProtocolRaw for COPY traffic',
+          'query() does not support COPY protocol responses; use a raw protocol API for COPY traffic',
         );
       case 0x5a:
         validateReadyForQuery(body);
@@ -245,7 +246,7 @@ export function parseQueryResponse(bytes: Uint8Array): QueryResult {
     fields: resultFields,
     rows,
     commandTag,
-    rowCount: rows.length,
+    rowCount: commandTagRowCount(commandTag),
     fieldIndex(name: string): number | undefined {
       const index = resultFields.findIndex((field) => field.name === name);
       return index >= 0 ? index : undefined;
@@ -264,9 +265,10 @@ export function parseQueryResponse(bytes: Uint8Array): QueryResult {
   };
 }
 
-export function assertSuccessfulQueryResponse(bytes: Uint8Array): void {
+export function parseCommandResponse(bytes: Uint8Array): CommandResult {
   const cursor = new ByteCursor(bytes);
   let sawReady = false;
+  let commandTag: string | undefined;
 
   while (!cursor.isAtEnd()) {
     const tag = cursor.readU8('backend message tag');
@@ -279,6 +281,10 @@ export function assertSuccessfulQueryResponse(bytes: Uint8Array): void {
     switch (tag) {
       case 0x45:
         throw parseErrorResponse(body);
+      case 0x43:
+        commandTag = body.readCString('CommandComplete tag');
+        body.requireEnd('CommandComplete');
+        break;
       case 0x5a:
         validateReadyForQuery(body);
         sawReady = true;
@@ -286,14 +292,72 @@ export function assertSuccessfulQueryResponse(bytes: Uint8Array): void {
           throw new Error('backend returned bytes after ReadyForQuery');
         }
         break;
-      default:
+      case 0x31:
+        body.requireEnd('ParseComplete');
         break;
+      case 0x32:
+        body.requireEnd('BindComplete');
+        break;
+      case 0x33:
+        body.requireEnd('CloseComplete');
+        break;
+      case 0x49:
+        body.requireEnd('EmptyQueryResponse');
+        break;
+      case 0x6e:
+        body.requireEnd('NoData');
+        break;
+      case 0x53:
+        validateParameterStatus(body);
+        break;
+      case 0x4e:
+        validateFieldResponse(body, 'NoticeResponse');
+        break;
+      case 0x41:
+        validateNotificationResponse(body);
+        break;
+      case 0x54:
+      case 0x44:
+        throw new Error('execute() received rows; use query() for row results');
+      case 0x47:
+      case 0x48:
+      case 0x57:
+      case 0x64:
+      case 0x63:
+        throw new Error(
+          'execute() does not support COPY protocol responses; use a raw protocol API for COPY traffic',
+        );
+      default:
+        throw new Error(`execute() received unexpected backend message tag ${hexBackendTag(tag)}`);
     }
   }
 
   if (!sawReady) {
     throw new Error('query response ended before ReadyForQuery');
   }
+
+  return { commandTag, rowCount: commandTagRowCount(commandTag) };
+}
+
+export function assertSuccessfulQueryResponse(bytes: Uint8Array): void {
+  parseCommandResponse(bytes);
+}
+
+function commandTagRowCount(commandTag: string | undefined): number | null {
+  if (commandTag === undefined) {
+    return null;
+  }
+  const parts = commandTag.trim().split(/\s+/);
+  const count = parts.at(-1);
+  if (
+    count === undefined ||
+    !/^[0-9]+$/.test(count) ||
+    !['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'MERGE', 'MOVE', 'FETCH', 'COPY'].includes(parts[0]!)
+  ) {
+    return null;
+  }
+  const value = Number(count);
+  return Number.isSafeInteger(value) ? value : null;
 }
 
 type NormalizedParam =
@@ -434,7 +498,7 @@ function parseErrorResponse(cursor: ByteCursor): PostgresError {
     try {
       code = cursor.readU8('ErrorResponse field code');
     } catch {
-      return PostgresError.fallback();
+      return fallbackPostgresError();
     }
     if (code === 0) {
       break;
@@ -443,11 +507,15 @@ function parseErrorResponse(cursor: ByteCursor): PostgresError {
     try {
       value = cursor.readCString('ErrorResponse field');
     } catch {
-      return PostgresError.fallback();
+      return fallbackPostgresError();
     }
     fields.push({ code, value });
   }
   return new PostgresError(fields);
+}
+
+function fallbackPostgresError(): PostgresError {
+  return new PostgresError([{ code: 0x4d, value: 'PostgreSQL ErrorResponse' }]);
 }
 
 function fieldValue(fields: ReadonlyArray<PostgresErrorField>, code: number): string | undefined {

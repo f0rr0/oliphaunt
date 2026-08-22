@@ -58,10 +58,7 @@ public struct OliphauntQueryResult: Equatable, Sendable {
     public var fields: [OliphauntQueryField]
     public var rows: [OliphauntQueryRow]
     public var commandTag: String?
-
-    public var rowCount: Int {
-        rows.count
-    }
+    public var rowCount: Int?
 
     public func fieldIndex(_ name: String) -> Int? {
         fields.firstIndex { $0.name == name }
@@ -75,6 +72,16 @@ public struct OliphauntQueryResult: Equatable, Sendable {
             throw OliphauntError.engine("query result has no row at index \(row)")
         }
         return try rows[row].text(columnIndex)
+    }
+}
+
+public struct OliphauntCommandResult: Equatable, Sendable {
+    public var commandTag: String?
+    public var rowCount: Int?
+
+    public init(commandTag: String?, rowCount: Int?) {
+        self.commandTag = commandTag
+        self.rowCount = rowCount
     }
 }
 
@@ -105,7 +112,7 @@ public struct OliphauntPostgresError: Equatable, Sendable, CustomStringConvertib
 
     public init(fields: [OliphauntPostgresErrorField]) {
         self.fields = fields
-        self.severity = fieldValue(fields, 0x53) ?? fieldValue(fields, 0x56)
+        self.severity = fieldValue(fields, 0x56) ?? fieldValue(fields, 0x53)
         self.sqlstate = fieldValue(fields, 0x43)
         self.message = fieldValue(fields, 0x4d) ?? "PostgreSQL ErrorResponse"
         self.detail = fieldValue(fields, 0x44)
@@ -119,7 +126,7 @@ public struct OliphauntPostgresError: Equatable, Sendable, CustomStringConvertib
         self.constraintName = fieldValue(fields, 0x6e)
     }
 
-    public static func fallback() -> OliphauntPostgresError {
+    static func fallback() -> OliphauntPostgresError {
         OliphauntPostgresError(fields: [
             OliphauntPostgresErrorField(code: 0x4d, value: "PostgreSQL ErrorResponse")
         ])
@@ -140,43 +147,43 @@ public struct OliphauntPostgresError: Equatable, Sendable, CustomStringConvertib
 }
 
 public extension OliphauntDatabase {
-    func execute(_ sql: String) async throws -> Data {
-        let response = try await execProtocolRaw(try OliphauntProtocol.simpleQuery(sql))
-        try assertSuccessfulOliphauntQueryResponse(response)
-        return response
+    func execute(
+        _ sql: String,
+        parameters: [OliphauntQueryParam] = []
+    ) async throws -> OliphauntCommandResult {
+        let request = try OliphauntProtocol.extendedQuery(sql, parameters: parameters)
+        return try await parseOliphauntCommandResponse(execProtocolRaw(request))
     }
 
-    func query(_ sql: String) async throws -> OliphauntQueryResult {
-        try await parseOliphauntQueryResponse(execute(sql))
-    }
-
-    func query(_ sql: String, parameters: [OliphauntQueryParam]) async throws -> OliphauntQueryResult {
-        try await parseOliphauntQueryResponse(
-            execProtocolRaw(try OliphauntProtocol.extendedQuery(sql, parameters: parameters))
-        )
+    func query(
+        _ sql: String,
+        parameters: [OliphauntQueryParam] = []
+    ) async throws -> OliphauntQueryResult {
+        let request = try OliphauntProtocol.extendedQuery(sql, parameters: parameters)
+        return try await parseOliphauntQueryResponse(execProtocolRaw(request))
     }
 }
 
 public extension OliphauntTransaction {
-    func execute(_ sql: String) async throws -> Data {
-        let response = try await execProtocolRaw(try OliphauntProtocol.simpleQuery(sql))
-        try assertSuccessfulOliphauntQueryResponse(response)
-        return response
+    func execute(
+        _ sql: String,
+        parameters: [OliphauntQueryParam] = []
+    ) async throws -> OliphauntCommandResult {
+        let request = try OliphauntProtocol.extendedQuery(sql, parameters: parameters)
+        return try await parseOliphauntCommandResponse(execProtocolRaw(request))
     }
 
-    func query(_ sql: String) async throws -> OliphauntQueryResult {
-        try await parseOliphauntQueryResponse(execute(sql))
-    }
-
-    func query(_ sql: String, parameters: [OliphauntQueryParam]) async throws -> OliphauntQueryResult {
-        try await parseOliphauntQueryResponse(
-            execProtocolRaw(try OliphauntProtocol.extendedQuery(sql, parameters: parameters))
-        )
+    func query(
+        _ sql: String,
+        parameters: [OliphauntQueryParam] = []
+    ) async throws -> OliphauntQueryResult {
+        let request = try OliphauntProtocol.extendedQuery(sql, parameters: parameters)
+        return try await parseOliphauntQueryResponse(execProtocolRaw(request))
     }
 }
 
-public enum OliphauntProtocol {
-    public static func simpleQuery(_ sql: String) throws -> Data {
+enum OliphauntProtocol {
+    static func simpleQuery(_ sql: String) throws -> Data {
         guard !sql.utf8.contains(0) else {
             throw OliphauntError.engine("simple query SQL must not contain NUL bytes")
         }
@@ -192,7 +199,7 @@ public enum OliphauntProtocol {
         return message
     }
 
-    public static func extendedQuery(
+    static func extendedQuery(
         _ sql: String,
         parameters: [OliphauntQueryParam]
     ) throws -> Data {
@@ -304,9 +311,10 @@ public enum OliphauntProtocol {
     }
 }
 
-func assertSuccessfulOliphauntQueryResponse(_ data: Data) throws {
+func parseOliphauntCommandResponse(_ data: Data) throws -> OliphauntCommandResult {
     var cursor = OliphauntByteCursor(data)
     var sawReady = false
+    var commandTag: String?
 
     while !cursor.isAtEnd {
         let tag = try cursor.readUInt8(label: "backend message tag")
@@ -316,27 +324,60 @@ func assertSuccessfulOliphauntQueryResponse(_ data: Data) throws {
         }
         let body = try cursor.readData(count: Int(length - 4), label: "backend message body")
 
+        var bodyCursor = OliphauntByteCursor(body)
         switch tag {
         case 0x45:
-            var bodyCursor = OliphauntByteCursor(body)
             throw OliphauntError.postgres(parseErrorResponse(&bodyCursor))
+        case 0x43:
+            commandTag = try bodyCursor.readCString(label: "CommandComplete tag")
+            try bodyCursor.requireEnd(label: "CommandComplete")
+        case 0x54, 0x44:
+            throw OliphauntError.engine(
+                "execute() received rows; use query() for row results"
+            )
+        case 0x47, 0x48, 0x57, 0x64, 0x63:
+            throw OliphauntError.engine(
+                "execute() does not support COPY protocol responses; use execProtocolRaw or execProtocolStream for COPY traffic"
+            )
         case 0x5a:
             try validateReadyForQuery(body)
             sawReady = true
             if !cursor.isAtEnd {
                 throw OliphauntError.engine("backend returned bytes after ReadyForQuery")
             }
+        case 0x31:
+            try bodyCursor.requireEnd(label: "ParseComplete")
+        case 0x32:
+            try bodyCursor.requireEnd(label: "BindComplete")
+        case 0x33:
+            try bodyCursor.requireEnd(label: "CloseComplete")
+        case 0x49:
+            try bodyCursor.requireEnd(label: "EmptyQueryResponse")
+        case 0x6e:
+            try bodyCursor.requireEnd(label: "NoData")
+        case 0x53:
+            try validateParameterStatus(&bodyCursor)
+        case 0x4e:
+            try validateFieldResponse(&bodyCursor, label: "NoticeResponse")
+        case 0x41:
+            try validateNotificationResponse(&bodyCursor)
         default:
-            break
+            throw OliphauntError.engine(
+                "execute() received unexpected backend message tag \(hexBackendTag(tag))"
+            )
         }
     }
 
     guard sawReady else {
         throw OliphauntError.engine("query response ended before ReadyForQuery")
     }
+    return OliphauntCommandResult(
+        commandTag: commandTag,
+        rowCount: commandTag.flatMap(oliphauntCommandTagRowCount)
+    )
 }
 
-public func parseOliphauntQueryResponse(_ data: Data) throws -> OliphauntQueryResult {
+func parseOliphauntQueryResponse(_ data: Data) throws -> OliphauntQueryResult {
     var cursor = OliphauntByteCursor(data)
     var fields: [OliphauntQueryField]?
     var rows: [OliphauntQueryRow] = []
@@ -374,7 +415,7 @@ public func parseOliphauntQueryResponse(_ data: Data) throws -> OliphauntQueryRe
             throw OliphauntError.postgres(parseErrorResponse(&bodyCursor))
         case 0x47, 0x48, 0x57, 0x64, 0x63:
             throw OliphauntError.engine(
-                "query() does not support COPY protocol responses; use execProtocolRaw for COPY traffic"
+                "query() does not support COPY protocol responses; use execProtocolRaw or execProtocolStream for COPY traffic"
             )
         case 0x5a:
             try validateReadyForQuery(body)
@@ -412,8 +453,22 @@ public func parseOliphauntQueryResponse(_ data: Data) throws -> OliphauntQueryRe
     return OliphauntQueryResult(
         fields: fields ?? [],
         rows: rows,
-        commandTag: commandTag
+        commandTag: commandTag,
+        rowCount: commandTag.flatMap(oliphauntCommandTagRowCount)
     )
+}
+
+private func oliphauntCommandTagRowCount(_ commandTag: String) -> Int? {
+    let parts = commandTag.split(whereSeparator: { $0 == " " || $0 == "\t" })
+    guard let command = parts.first?.uppercased(),
+          ["SELECT", "INSERT", "UPDATE", "DELETE", "MERGE", "MOVE", "FETCH", "COPY"].contains(command),
+          let value = parts.last,
+          let count = UInt64(String(value)),
+          count <= UInt64(Int.max)
+    else {
+        return nil
+    }
+    return Int(count)
 }
 
 private func parseRowDescription(_ cursor: inout OliphauntByteCursor) throws -> [OliphauntQueryField] {

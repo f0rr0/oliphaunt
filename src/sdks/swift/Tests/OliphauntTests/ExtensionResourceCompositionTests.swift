@@ -1,5 +1,5 @@
 import Foundation
-@testable import Oliphaunt
+@testable @_spi(ExtensionSupport) import Oliphaunt
 import Testing
 
 @Test

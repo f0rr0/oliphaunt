@@ -1,202 +1,99 @@
-# Native Runtime Guide
+# Native runtime contract
 
-This guide describes the native `oliphaunt` Rust SDK and `liboliphaunt`
-runtime. WASIX runtime behavior is documented separately in
-[`Rust WASIX runtime`](/sdk/wasix/runtime), with WASIX TypeScript documented
-on its own page.
+The native product family shares PostgreSQL 18 through `liboliphaunt`. Rust and
+desktop TypeScript offer direct, broker, and server modes. Swift, Kotlin, and
+React Native currently offer direct mode through their platform bindings.
 
-## Choose A Mode
+## Modes
 
-`NativeDirect` is the lowest-latency embedded mode. It loads `liboliphaunt` in
-the host process and owns one resident PostgreSQL backend for the process
-lifetime.
+| Mode | Process and sessions | Intended use |
+| --- | --- | --- |
+| Direct | One process-resident embedded backend and one serialized physical session | Lowest-overhead embedded access |
+| Broker | The same embedded boundary in an SDK-owned helper, one serialized session per instance | Process isolation and multiple application-owned instances |
+| Server | Packaged PostgreSQL process with independent client sessions and a connection string | Pools, ORMs, `psql`, `pg_dump`, and ordinary PostgreSQL clients |
 
-Use it when the Rust SDK owns the database calls and the application wants one
-fast embedded PostgreSQL session:
+SDK handles may be cloned, but direct and broker clones share one executor and
+one physical session. Transactions pin that session so unrelated work cannot
+interleave. Server connections follow normal PostgreSQL session semantics.
 
-```rust,no_run
-use oliphaunt::Oliphaunt;
+## Storage and initialization
 
-# async fn open_direct() -> oliphaunt::Result<()> {
-let db = Oliphaunt::builder()
-    .directory(".oliphaunt")
-    .native_direct()
-    .open()
-    .await?;
+Native storage is either an SDK-owned temporary directory or an explicit
+application-owned managed root. Native does not advertise a memory filesystem.
+An explicit path names `<root>`, which contains `.oliphaunt.json` and `pgdata`.
 
-let rows = db.query("SELECT 1::text AS value").await?;
-assert_eq!(rows.get_text(0, "value")?, Some("1"));
+SDKs prepare new roots from the packaged PGDATA template and publish the exact
+native descriptor last. The low-level C runtime only validates complete roots;
+it does not run `initdb`, adopt raw PGDATA, or create descriptors on open.
+Reopening a nonempty incomplete root fails without mutation.
 
-db.close().await?;
-# Ok(())
-# }
+Closing never removes an application-owned root. SDK-owned temporary roots live
+for the physical runtime lifetime; direct logical detach does not imply that
+the resident backend has stopped.
+
+## Shared application API
+
+Every native language SDK exposes its idiomatic form of:
+
+- open and close;
+- query and command execution with typed values;
+- callback transactions;
+- raw PostgreSQL protocol access where the language boundary can carry bytes;
+- checkpoint and cancellation;
+- exact extension selection before open; and
+- one physical backup and static restore where the runtime mode supports it.
+
+Direct and broker support physical backup. Native server SDK backup is not
+currently exposed; server applications use normal PostgreSQL tooling. Static
+restore accepts a new or existing-empty destination and never replaces
+nonempty data.
+
+There is no public capability object, format selector, durability profile,
+runtime-footprint profile, initialization mode, background-preparation mode, or
+restore-replacement policy. Fixed facts belong in documentation and types;
+PostgreSQL startup tuning uses validated `name=value` GUCs.
+
+## Startup and identity
+
+`username`, `database`, and validated PostgreSQL startup GUCs are chosen before
+open. Later GUC entries win, matching PostgreSQL command-line behavior. The SDK
+adds only mode-required settings. It does not translate a profile enum into a
+hidden bundle of tuning values.
+
+## Extensions and tools
+
+Extensions are exact selections. SDK packaging resolves only the artifacts
+needed by those selections; the application still runs standard PostgreSQL
+`CREATE EXTENSION`, `ALTER EXTENSION`, and related SQL. Mobile direct builds use
+the static extension registry, while desktop direct/broker and server layouts
+use packaged modules appropriate to their runtime.
+
+Desktop tool packages expose normal PostgreSQL tools separately from the SDK
+library. They are not dependencies or locator APIs of desktop TypeScript. Tool
+availability is package/target documentation, not a runtime capability query.
+
+## Errors and lifecycle
+
+PostgreSQL errors preserve SQLSTATE and available `ErrorResponse` fields.
+Transport, storage, lifecycle, unsupported-mode, and package-resolution errors
+remain distinct. Cancellation must recover the connection through PostgreSQL's
+normal readiness boundary before reuse.
+
+Direct close is generation guarded so stale async cleanup cannot terminate a
+newer logical reopen. Broker and server owners supervise their child processes
+and surface process exit as a runtime error rather than silently selecting
+another mode.
+
+## Qualification
+
+```sh
+moon run oliphaunt-rust:check
+moon run oliphaunt-typescript:check
+moon run oliphaunt-swift:check
+moon run oliphaunt-kotlin:check
+moon run oliphaunt-react-native:check
+moon run liboliphaunt-native:host-smoke
 ```
 
-`NativeBroker` runs the same direct engine in a helper process. It is the robust
-desktop/app mode for process isolation and multiple instances managed by one Rust
-SDK runtime. Each broker-owned instance still has one serialized physical
-PostgreSQL backend session.
-
-Use it when process isolation and multi-instance ownership matter more than absolute
-minimum call overhead:
-
-```rust,no_run
-use oliphaunt::Oliphaunt;
-
-# async fn open_broker() -> oliphaunt::Result<()> {
-let db = Oliphaunt::builder()
-    .directory(".oliphaunt")
-    .native_broker()
-    .broker_max_instances(4)
-    .open()
-    .await?;
-
-db.execute("CREATE TABLE IF NOT EXISTS events(id bigint PRIMARY KEY)").await?;
-db.close().await?;
-# Ok(())
-# }
-```
-
-`NativeServer` starts a real local PostgreSQL-compatible server process. It is
-the only SDK mode for independent client sessions, connection pools, `psql`,
-`pg_dump`, ORMs, and libraries that expect a PostgreSQL connection string:
-
-```rust,no_run
-use oliphaunt::Oliphaunt;
-
-# async fn open_server() -> oliphaunt::Result<String> {
-let db = Oliphaunt::builder()
-    .directory(".oliphaunt")
-    .native_server()
-    .max_client_sessions(8)
-    .open()
-    .await?;
-
-Ok(db.connection_string().expect("server mode exposes a URL").to_owned())
-# }
-```
-
-## Runtime Semantics
-
-The three modes are intentionally different. The SDK must not fake server
-semantics in direct or broker mode.
-
-| Mode | Process model | Session model | Instance model | Reopen/crash behavior |
-| --- | --- | --- | --- | --- |
-| `NativeDirect` | in-process | one serialized physical session | one resident instance per process | same-instance logical reopen only; no crash isolation |
-| `NativeBroker` | helper process per active instance | one serialized physical session per instance | multiple instances bounded by `broker_max_instances` | helper crash can be restarted; app process remains alive |
-| `NativeServer` | PostgreSQL server process | independent PostgreSQL client sessions | one server instance per opened handle | use normal server restart/recovery flows |
-
-`Oliphaunt` is cloneable as an SDK handle. Clones share the same owner executor,
-FIFO queue, session pin, cancellation handle, and close state. Cloning is not a connection pool.
-Direct and broker mode reject `max_client_sessions` values other than `1`;
-server mode is the independent-session mode.
-
-Transactions and explicit session pins reserve the single SDK-owned physical
-session. Unpinned database work, backup, restore-adjacent work, and checkpoints
-are rejected while a pin is active so direct and broker calls cannot interleave
-inside one transaction-sensitive PostgreSQL session.
-
-## Direct Lifecycle
-
-Direct mode is process-resident:
-
-- one resident backend per process;
-- one physical session;
-- serialized requests through the SDK owner executor;
-- one instance per process after the resident backend exists;
-- `close()` is a logical detach, not full PostgreSQL shutdown;
-- reopening is limited to the same instance inside the same process;
-- native PostgreSQL crashes terminate the host process.
-
-On desktop Unix, `oliphaunt_init` promotes the loaded `liboliphaunt` image to
-process-global dynamic-loader scope before PostgreSQL starts. Ordinary
-PostgreSQL extension DSOs resolve backend globals from that image, including
-when an FFI host initially loaded it locally. SDK loaders that expose flags also
-request `RTLD_GLOBAL` directly. This makes one embedded PostgreSQL image a hard
-process contract: co-loading another embedded PostgreSQL symbol provider or
-placing `liboliphaunt` in a caller-created `dlmopen` namespace is unsupported.
-Use broker or server mode when isolation from another PostgreSQL image is
-required.
-
-The reliability contract is crash consistency, not crash isolation. If the host
-process dies, the next launch reopens the same persistent storage and PostgreSQL performs WAL
-recovery. Applications that need app-process survival after database-process
-death should use broker/server modes where the target platform supports them.
-
-## Storage
-
-Native live storage is a PostgreSQL directory, not a single file. It
-contains PGDATA, Oliphaunt metadata, lock metadata, extension metadata, and
-recovery state.
-
-Persistent directories use exclusive locking in direct mode. Broker and server modes
-own their storage through the helper/server process. A second unsafe owner fails
-instead of sharing a data directory.
-
-Use SDK backup/restore APIs for ergonomic export/import:
-
-- direct and broker support same-version physical archives;
-- server supports same-version physical archives and SQL dumps through packaged
-  PostgreSQL tooling;
-- physical archives are for same-version restore, not cross-version upgrades.
-
-## Startup Configuration
-
-`OliphauntBuilder::runtime_footprint(...)` selects the startup footprint before
-PostgreSQL starts:
-
-- `RuntimeFootprintProfile::Throughput`: throughput defaults;
-- `RuntimeFootprintProfile::BalancedMobile`: lower slot counts, smaller shared
-  buffers/WAL footprint, and PG18 sync I/O for resident mobile apps;
-- `RuntimeFootprintProfile::SmallMobile`: the smallest supported resident
-  profile for memory-pressure experiments.
-
-`OliphauntBuilder::startup_guc(name, value)` and `startup_gucs(...)` append
-validated PostgreSQL `-c name=value` overrides after durability and footprint
-profiles. Later overrides win, matching PostgreSQL startup behavior. Server mode
-then appends its configured `max_connections` from `max_client_sessions(...)`
-because independent session count is the server-mode contract.
-
-## Extensions
-
-Extensions are opt-in. Select exact PostgreSQL extension names before opening:
-
-```rust,no_run
-use oliphaunt::{Extension, Oliphaunt};
-
-# async fn open_with_vector() -> oliphaunt::Result<()> {
-let db = Oliphaunt::builder()
-    .directory(".oliphaunt")
-    .native_direct()
-    .extension(Extension::Vector)
-    .open()
-    .await?;
-
-db.execute("CREATE EXTENSION IF NOT EXISTS vector").await?;
-db.close().await?;
-# Ok(())
-# }
-```
-
-`CREATE EXTENSION` succeeds only when the selected runtime resources contain
-the extension assets and, on mobile, when the required static registry entries
-are present. Desktop runtimes load only the selected, package-validated
-extension modules from that resource set; arbitrary system modules and a second
-embedded PostgreSQL symbol provider remain outside the supported contract.
-
-## Capabilities
-
-Use capabilities instead of assuming a mode can do everything:
-
-- `session_concurrency` distinguishes serialized SDK sessions from independent
-  server sessions;
-- `multiple_instances` is broker-only today;
-- `same_instance_logical_reopen`, `instance_switchable`, and `crash_restartable`
-  describe lifecycle semantics explicitly;
-- `backup_formats` and `restore_formats` gate backup/restore UI before work is
-  queued.
-
-Swift, Kotlin, and React Native expose the same product concepts with
-platform-native naming. Unsupported platform modes should report explicit
-unsupported reasons rather than aliasing to direct mode.
+The SDK parity policy is authoritative for deliberate runtime-family gaps and
+the complete deferred-feature list.

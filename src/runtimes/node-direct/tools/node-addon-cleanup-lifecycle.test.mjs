@@ -250,6 +250,30 @@ async function runChild(options) {
       addon.detach(handle);
       return;
     }
+    case "async-archive-timers": {
+      const handle = openFake(addon, options.library, options.root);
+      let backupSettled = false;
+      const backup = addon.backup(handle).finally(() => {
+        backupSettled = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(backupSettled, false, "backup must not block the Node.js event loop");
+      assert.deepEqual([...await backup], [1, 2, 3]);
+
+      let restoreSettled = false;
+      const restore = addon.restore({
+        libraryPath: options.library,
+        destination: path.join(options.root, "restored"),
+        bytes: new Uint8Array([1, 2, 3]),
+      }).finally(() => {
+        restoreSettled = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(restoreSettled, false, "restore must not block the Node.js event loop");
+      await restore;
+      addon.detach(handle);
+      return;
+    }
     case "generation-acquisition-race": {
       assert.throws(
         () => openFake(addon, options.library, options.root),
@@ -541,6 +565,18 @@ async function runParent(options) {
         blockQuery: true,
       },
       {
+        name: "async-archive-timers",
+        expectedBeforeClose: [
+          "init",
+          "backup-started",
+          "backup-finished",
+          "restore-started",
+          "restore-finished",
+          "detach",
+        ],
+        blockArchive: true,
+      },
+      {
         name: "generation-acquisition-race",
         generationAcquisitionRace: true,
       },
@@ -624,6 +660,9 @@ async function runParent(options) {
             ...(scenario.blockQuery
               ? { OLIPHAUNT_NODE_CLEANUP_TEST_BLOCK_QUERY: "1" }
               : {}),
+            ...(scenario.blockArchive
+              ? { OLIPHAUNT_NODE_CLEANUP_TEST_BLOCK_ARCHIVE: "1" }
+              : {}),
           },
           timeout: 30_000,
         });
@@ -670,7 +709,7 @@ async function runParent(options) {
   }
 
   console.log(
-    "Node direct environment cleanup lifecycle passed (34 single-image + 5 copied-image + 1 stale-acquisition cases)",
+    "Node direct environment cleanup lifecycle passed (35 single-image + 5 copied-image + 1 stale-acquisition cases)",
   );
 }
 

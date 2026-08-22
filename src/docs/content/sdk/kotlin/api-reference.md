@@ -10,15 +10,13 @@ surface by task.
 
 | Area | Public surface | Use it for |
 | --- | --- | --- |
-| Opening | `OliphauntDatabase.open`, `OliphauntConfig`, `DatabaseStorage` | Use temporary storage by default or an explicit persistent directory |
-| Android facade | `OliphauntAndroid` | Resolve Android resources, ABI assets, and app-context defaults |
-| Runtime mode | `EngineMode`, `supportedModes()` | Discover modes advertised by the selected Android target |
-| Capabilities | `EngineCapabilities` | Check protocol, streaming, backup, restore, lifecycle, and extension support |
+| Opening | `Oliphaunt.open`, `OliphauntConfig`, `DatabaseStorage` | Use temporary storage by default or an explicit persistent directory |
+| Android facade | `Oliphaunt` | Resolve Android resources, ABI assets, and app-context defaults |
 | SQL | `query`, `execute`, `QueryResult` | Run SQL and read typed values from coroutine code |
-| Raw protocol | `execProtocolRaw`, `execProtocolStream` | Send PostgreSQL protocol bytes through the serialized session |
+| Raw protocol | `execProtocolRaw` | Send PostgreSQL protocol bytes through the serialized session |
 | Transactions | `transaction`, `OliphauntTransaction` | Keep transaction work inside the pinned session boundary |
-| Lifecycle | `prepareForBackground`, `resumeFromBackground`, `cancel`, `close` | Coordinate database work with Android app lifecycle transitions |
-| Data movement | `backup`, `restore`, `BackupRequest` | Move app data through validated archives and Android file APIs |
+| Lifecycle | `checkpoint`, `cancel`, `close` | Coordinate active work and close cleanly |
+| Data movement | `backup`, static `restore` | Move app data through the native physical archive |
 | Errors | `OliphauntException`, `PostgresException` | Handle SDK errors and PostgreSQL SQLSTATE data |
 
 Android apps use the Android facade for packaged runtime resources. It keeps

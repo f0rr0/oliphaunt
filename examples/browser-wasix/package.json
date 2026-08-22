@@ -1,0 +1,17 @@
+{
+  "name": "oliphaunt-example-browser-wasix",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.4",
+    "@types/node": "^24.10.1",
+    "typescript": "catalog:",
+    "vite": "^6.0.3"
+  }
+}

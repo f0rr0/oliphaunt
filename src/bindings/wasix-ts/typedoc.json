@@ -1,0 +1,15 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["src/index.ts"],
+  "exclude": ["src/__tests__/**"],
+  "excludeInternal": true,
+  "excludePrivate": true,
+  "excludeProtected": true,
+  "gitRevision": "main",
+  "json": "../../../target/docs/generated/api/wasix-typescript/typedoc.json",
+  "name": "Oliphaunt WASIX TypeScript SDK",
+  "out": "../../../target/docs/generated/api/wasix-typescript/html",
+  "plugin": [],
+  "readme": "README.md",
+  "tsconfig": "tsconfig.build.json"
+}

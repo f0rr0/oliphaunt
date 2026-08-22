@@ -15,8 +15,6 @@ const DEFINITION_AMCHECK_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPT
 
 const DEFINITION_AMCHECK: Extension = Extension::new(
     "amcheck",
-    "amcheck",
-    "extensions/amcheck.tar.zst",
     DEFINITION_AMCHECK_NATIVE_SUPPORT_MODULES,
     Some("amcheck.so"),
     Some("extension:amcheck"),
@@ -44,8 +42,6 @@ const DEFINITION_AUTO_EXPLAIN_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] =
 
 const DEFINITION_AUTO_EXPLAIN: Extension = Extension::new(
     "auto_explain",
-    "auto_explain",
-    "extensions/auto_explain.tar.zst",
     DEFINITION_AUTO_EXPLAIN_NATIVE_SUPPORT_MODULES,
     Some("auto_explain.so"),
     Some("extension:auto_explain"),
@@ -67,8 +63,6 @@ const DEFINITION_BLOOM_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_
 
 const DEFINITION_BLOOM: Extension = Extension::new(
     "bloom",
-    "bloom",
-    "extensions/bloom.tar.zst",
     DEFINITION_BLOOM_NATIVE_SUPPORT_MODULES,
     Some("bloom.so"),
     Some("extension:bloom"),
@@ -90,8 +84,6 @@ const DEFINITION_BTREE_GIN_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EM
 
 const DEFINITION_BTREE_GIN: Extension = Extension::new(
     "btree_gin",
-    "btree_gin",
-    "extensions/btree_gin.tar.zst",
     DEFINITION_BTREE_GIN_NATIVE_SUPPORT_MODULES,
     Some("btree_gin.so"),
     Some("extension:btree_gin"),
@@ -113,8 +105,6 @@ const DEFINITION_BTREE_GIST_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = E
 
 const DEFINITION_BTREE_GIST: Extension = Extension::new(
     "btree_gist",
-    "btree_gist",
-    "extensions/btree_gist.tar.zst",
     DEFINITION_BTREE_GIST_NATIVE_SUPPORT_MODULES,
     Some("btree_gist.so"),
     Some("extension:btree_gist"),
@@ -136,8 +126,6 @@ const DEFINITION_CITEXT_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY
 
 const DEFINITION_CITEXT: Extension = Extension::new(
     "citext",
-    "citext",
-    "extensions/citext.tar.zst",
     DEFINITION_CITEXT_NATIVE_SUPPORT_MODULES,
     Some("citext.so"),
     Some("extension:citext"),
@@ -159,8 +147,6 @@ const DEFINITION_CUBE_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_N
 
 const DEFINITION_CUBE: Extension = Extension::new(
     "cube",
-    "cube",
-    "extensions/cube.tar.zst",
     DEFINITION_CUBE_NATIVE_SUPPORT_MODULES,
     Some("cube.so"),
     Some("extension:cube"),
@@ -182,8 +168,6 @@ const DEFINITION_DICT_INT_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMP
 
 const DEFINITION_DICT_INT: Extension = Extension::new(
     "dict_int",
-    "dict_int",
-    "extensions/dict_int.tar.zst",
     DEFINITION_DICT_INT_NATIVE_SUPPORT_MODULES,
     Some("dict_int.so"),
     Some("extension:dict_int"),
@@ -205,8 +189,6 @@ const DEFINITION_DICT_XSYN_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EM
 
 const DEFINITION_DICT_XSYN: Extension = Extension::new(
     "dict_xsyn",
-    "dict_xsyn",
-    "extensions/dict_xsyn.tar.zst",
     DEFINITION_DICT_XSYN_NATIVE_SUPPORT_MODULES,
     Some("dict_xsyn.so"),
     Some("extension:dict_xsyn"),
@@ -229,8 +211,6 @@ const DEFINITION_EARTHDISTANCE_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] 
 
 const DEFINITION_EARTHDISTANCE: Extension = Extension::new(
     "earthdistance",
-    "earthdistance",
-    "extensions/earthdistance.tar.zst",
     DEFINITION_EARTHDISTANCE_NATIVE_SUPPORT_MODULES,
     Some("earthdistance.so"),
     Some("extension:earthdistance"),
@@ -252,8 +232,6 @@ const DEFINITION_FILE_FDW_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMP
 
 const DEFINITION_FILE_FDW: Extension = Extension::new(
     "file_fdw",
-    "file_fdw",
-    "extensions/file_fdw.tar.zst",
     DEFINITION_FILE_FDW_NATIVE_SUPPORT_MODULES,
     Some("file_fdw.so"),
     Some("extension:file_fdw"),
@@ -276,8 +254,6 @@ const DEFINITION_FUZZYSTRMATCH_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] 
 
 const DEFINITION_FUZZYSTRMATCH: Extension = Extension::new(
     "fuzzystrmatch",
-    "fuzzystrmatch",
-    "extensions/fuzzystrmatch.tar.zst",
     DEFINITION_FUZZYSTRMATCH_NATIVE_SUPPORT_MODULES,
     Some("fuzzystrmatch.so"),
     Some("extension:fuzzystrmatch"),
@@ -299,8 +275,6 @@ const DEFINITION_HSTORE_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY
 
 const DEFINITION_HSTORE: Extension = Extension::new(
     "hstore",
-    "hstore",
-    "extensions/hstore.tar.zst",
     DEFINITION_HSTORE_NATIVE_SUPPORT_MODULES,
     Some("hstore.so"),
     Some("extension:hstore"),
@@ -322,8 +296,6 @@ const DEFINITION_INTARRAY_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMP
 
 const DEFINITION_INTARRAY: Extension = Extension::new(
     "intarray",
-    "intarray",
-    "extensions/intarray.tar.zst",
     DEFINITION_INTARRAY_NATIVE_SUPPORT_MODULES,
     Some("_int.so"),
     Some("extension:intarray"),
@@ -345,8 +317,6 @@ const DEFINITION_ISN_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NA
 
 const DEFINITION_ISN: Extension = Extension::new(
     "isn",
-    "isn",
-    "extensions/isn.tar.zst",
     DEFINITION_ISN_NATIVE_SUPPORT_MODULES,
     Some("isn.so"),
     Some("extension:isn"),
@@ -368,8 +338,6 @@ const DEFINITION_LO_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NAT
 
 const DEFINITION_LO: Extension = Extension::new(
     "lo",
-    "lo",
-    "extensions/lo.tar.zst",
     DEFINITION_LO_NATIVE_SUPPORT_MODULES,
     Some("lo.so"),
     Some("extension:lo"),
@@ -391,8 +359,6 @@ const DEFINITION_LTREE_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_
 
 const DEFINITION_LTREE: Extension = Extension::new(
     "ltree",
-    "ltree",
-    "extensions/ltree.tar.zst",
     DEFINITION_LTREE_NATIVE_SUPPORT_MODULES,
     Some("ltree.so"),
     Some("extension:ltree"),
@@ -415,8 +381,6 @@ const DEFINITION_PAGEINSPECT_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] =
 
 const DEFINITION_PAGEINSPECT: Extension = Extension::new(
     "pageinspect",
-    "pageinspect",
-    "extensions/pageinspect.tar.zst",
     DEFINITION_PAGEINSPECT_NATIVE_SUPPORT_MODULES,
     Some("pageinspect.so"),
     Some("extension:pageinspect"),
@@ -439,8 +403,6 @@ const DEFINITION_PG_BUFFERCACHE_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule]
 
 const DEFINITION_PG_BUFFERCACHE: Extension = Extension::new(
     "pg_buffercache",
-    "pg_buffercache",
-    "extensions/pg_buffercache.tar.zst",
     DEFINITION_PG_BUFFERCACHE_NATIVE_SUPPORT_MODULES,
     Some("pg_buffercache.so"),
     Some("extension:pg_buffercache"),
@@ -463,8 +425,6 @@ const DEFINITION_PG_FREESPACEMAP_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule
 
 const DEFINITION_PG_FREESPACEMAP: Extension = Extension::new(
     "pg_freespacemap",
-    "pg_freespacemap",
-    "extensions/pg_freespacemap.tar.zst",
     DEFINITION_PG_FREESPACEMAP_NATIVE_SUPPORT_MODULES,
     Some("pg_freespacemap.so"),
     Some("extension:pg_freespacemap"),
@@ -486,8 +446,6 @@ const DEFINITION_PG_HASHIDS_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = E
 
 const DEFINITION_PG_HASHIDS: Extension = Extension::new(
     "pg_hashids",
-    "pg_hashids",
-    "extensions/pg_hashids.tar.zst",
     DEFINITION_PG_HASHIDS_NATIVE_SUPPORT_MODULES,
     Some("pg_hashids.so"),
     Some("extension:pg_hashids"),
@@ -509,8 +467,6 @@ const DEFINITION_PG_IVM_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY
 
 const DEFINITION_PG_IVM: Extension = Extension::new(
     "pg_ivm",
-    "pg_ivm",
-    "extensions/pg_ivm.tar.zst",
     DEFINITION_PG_IVM_NATIVE_SUPPORT_MODULES,
     Some("pg_ivm.so"),
     Some("extension:pg_ivm"),
@@ -532,8 +488,6 @@ const DEFINITION_PG_SURGERY_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = E
 
 const DEFINITION_PG_SURGERY: Extension = Extension::new(
     "pg_surgery",
-    "pg_surgery",
-    "extensions/pg_surgery.tar.zst",
     DEFINITION_PG_SURGERY_NATIVE_SUPPORT_MODULES,
     Some("pg_surgery.so"),
     Some("extension:pg_surgery"),
@@ -557,8 +511,6 @@ const DEFINITION_PG_TEXTSEARCH_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] 
 
 const DEFINITION_PG_TEXTSEARCH: Extension = Extension::new(
     "pg_textsearch",
-    "pg_textsearch",
-    "extensions/pg_textsearch.tar.zst",
     DEFINITION_PG_TEXTSEARCH_NATIVE_SUPPORT_MODULES,
     Some("pg_textsearch.so"),
     Some("extension:pg_textsearch"),
@@ -580,8 +532,6 @@ const DEFINITION_PG_TRGM_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPT
 
 const DEFINITION_PG_TRGM: Extension = Extension::new(
     "pg_trgm",
-    "pg_trgm",
-    "extensions/pg_trgm.tar.zst",
     DEFINITION_PG_TRGM_NATIVE_SUPPORT_MODULES,
     Some("pg_trgm.so"),
     Some("extension:pg_trgm"),
@@ -603,8 +553,6 @@ const DEFINITION_PG_UUIDV7_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EM
 
 const DEFINITION_PG_UUIDV7: Extension = Extension::new(
     "pg_uuidv7",
-    "pg_uuidv7",
-    "extensions/pg_uuidv7.tar.zst",
     DEFINITION_PG_UUIDV7_NATIVE_SUPPORT_MODULES,
     Some("pg_uuidv7.so"),
     Some("extension:pg_uuidv7"),
@@ -627,8 +575,6 @@ const DEFINITION_PG_VISIBILITY_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] 
 
 const DEFINITION_PG_VISIBILITY: Extension = Extension::new(
     "pg_visibility",
-    "pg_visibility",
-    "extensions/pg_visibility.tar.zst",
     DEFINITION_PG_VISIBILITY_NATIVE_SUPPORT_MODULES,
     Some("pg_visibility.so"),
     Some("extension:pg_visibility"),
@@ -651,8 +597,6 @@ const DEFINITION_PG_WALINSPECT_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] 
 
 const DEFINITION_PG_WALINSPECT: Extension = Extension::new(
     "pg_walinspect",
-    "pg_walinspect",
-    "extensions/pg_walinspect.tar.zst",
     DEFINITION_PG_WALINSPECT_NATIVE_SUPPORT_MODULES,
     Some("pg_walinspect.so"),
     Some("extension:pg_walinspect"),
@@ -674,8 +618,6 @@ const DEFINITION_PGCRYPTO_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMP
 
 const DEFINITION_PGCRYPTO: Extension = Extension::new(
     "pgcrypto",
-    "pgcrypto",
-    "extensions/pgcrypto.tar.zst",
     DEFINITION_PGCRYPTO_NATIVE_SUPPORT_MODULES,
     Some("pgcrypto.so"),
     Some("extension:pgcrypto"),
@@ -697,8 +639,6 @@ const DEFINITION_PGTAP_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_
 
 const DEFINITION_PGTAP: Extension = Extension::new(
     "pgtap",
-    "pgtap",
-    "extensions/pgtap.tar.zst",
     DEFINITION_PGTAP_NATIVE_SUPPORT_MODULES,
     None,
     None,
@@ -723,9 +663,7 @@ const DEFINITION_POSTGIS_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] =
     )];
 
 const DEFINITION_POSTGIS: Extension = Extension::new(
-    "PostGIS",
     "postgis",
-    "extensions/postgis.tar.zst",
     DEFINITION_POSTGIS_NATIVE_SUPPORT_MODULES,
     Some("postgis-3.so"),
     Some("extension:postgis"),
@@ -747,8 +685,6 @@ const DEFINITION_SEG_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NA
 
 const DEFINITION_SEG: Extension = Extension::new(
     "seg",
-    "seg",
-    "extensions/seg.tar.zst",
     DEFINITION_SEG_NATIVE_SUPPORT_MODULES,
     Some("seg.so"),
     Some("extension:seg"),
@@ -770,8 +706,6 @@ const DEFINITION_TABLEFUNC_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EM
 
 const DEFINITION_TABLEFUNC: Extension = Extension::new(
     "tablefunc",
-    "tablefunc",
-    "extensions/tablefunc.tar.zst",
     DEFINITION_TABLEFUNC_NATIVE_SUPPORT_MODULES,
     Some("tablefunc.so"),
     Some("extension:tablefunc"),
@@ -793,8 +727,6 @@ const DEFINITION_TCN_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NA
 
 const DEFINITION_TCN: Extension = Extension::new(
     "tcn",
-    "tcn",
-    "extensions/tcn.tar.zst",
     DEFINITION_TCN_NATIVE_SUPPORT_MODULES,
     Some("tcn.so"),
     Some("extension:tcn"),
@@ -817,8 +749,6 @@ const DEFINITION_TSM_SYSTEM_ROWS_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule
 
 const DEFINITION_TSM_SYSTEM_ROWS: Extension = Extension::new(
     "tsm_system_rows",
-    "tsm_system_rows",
-    "extensions/tsm_system_rows.tar.zst",
     DEFINITION_TSM_SYSTEM_ROWS_NATIVE_SUPPORT_MODULES,
     Some("tsm_system_rows.so"),
     Some("extension:tsm_system_rows"),
@@ -841,8 +771,6 @@ const DEFINITION_TSM_SYSTEM_TIME_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule
 
 const DEFINITION_TSM_SYSTEM_TIME: Extension = Extension::new(
     "tsm_system_time",
-    "tsm_system_time",
-    "extensions/tsm_system_time.tar.zst",
     DEFINITION_TSM_SYSTEM_TIME_NATIVE_SUPPORT_MODULES,
     Some("tsm_system_time.so"),
     Some("extension:tsm_system_time"),
@@ -864,8 +792,6 @@ const DEFINITION_UNACCENT_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMP
 
 const DEFINITION_UNACCENT: Extension = Extension::new(
     "unaccent",
-    "unaccent",
-    "extensions/unaccent.tar.zst",
     DEFINITION_UNACCENT_NATIVE_SUPPORT_MODULES,
     Some("unaccent.so"),
     Some("extension:unaccent"),
@@ -887,8 +813,6 @@ const DEFINITION_UUID_OSSP_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EM
 
 const DEFINITION_UUID_OSSP: Extension = Extension::new(
     "uuid-ossp",
-    "uuid-ossp",
-    "extensions/uuid-ossp.tar.zst",
     DEFINITION_UUID_OSSP_NATIVE_SUPPORT_MODULES,
     Some("uuid-ossp.so"),
     Some("extension:uuid-ossp"),
@@ -909,9 +833,7 @@ const DEFINITION_VECTOR_STARTUP_CONFIG: &[&str] = EMPTY_STARTUP_CONFIG;
 const DEFINITION_VECTOR_NATIVE_SUPPORT_MODULES: &[ExtensionNativeModule] = EMPTY_NATIVE_MODULES;
 
 const DEFINITION_VECTOR: Extension = Extension::new(
-    "pgvector",
     "vector",
-    "extensions/vector.tar.zst",
     DEFINITION_VECTOR_NATIVE_SUPPORT_MODULES,
     Some("vector.so"),
     Some("extension:vector"),

@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000034 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Tue, 18 Aug 2026 00:00:00 +0000
+Subject: [PATCH] oliphaunt-wasix: declare hybrid protocol transport
+
+The Rust proxy switches from buffered host I/O to a hybrid stream only while
+PostgreSQL is inside COPY. Keep that bridge contract visible in the WASIX port
+header without retaining the retired process-level stdio lifecycle.
+---
+ src/include/port/wasix-dl.h | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
+--- a/src/include/port/wasix-dl.h
++++ b/src/include/port/wasix-dl.h
+@@ -38,6 +38,8 @@ extern void *oliphaunt_wasix_shmat(int shmid, const void *shmaddr, int shmflg);
+ extern int oliphaunt_wasix_shmdt(const void *shmaddr);
+ extern int oliphaunt_wasix_shmctl(int shmid, int cmd, struct shmid_ds *buf);
+ extern void oliphaunt_wasix_protocol_report_copy_response(int state);
++extern int oliphaunt_wasix_set_protocol_transport(int mode);
++extern int oliphaunt_wasix_protocol_stream_active(void);
+ 
+ #define geteuid oliphaunt_wasix_geteuid
+ #define getuid oliphaunt_wasix_getuid
+-- 
+2.49.0

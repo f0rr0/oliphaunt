@@ -3,10 +3,9 @@
 This page is maintainer documentation for packaged runtime assets, generated
 payloads, and release provenance. It is not end-user product documentation.
 Native application users should start with
-`src/docs/content/learn/native-runtime.md` and the SDK README for their
-platform. WASIX users should use the public Rust WASIX guide or WASIX TypeScript
-TypeScript page; their source pages currently live under
-`src/docs/content/sdk/wasm/` as an internal docs-generation path.
+`src/docs/content/learn/native-runtime.mdx` and the SDK README for their
+platform. WASIX users should use the public Rust WASIX or WASIX TypeScript
+guide under `src/docs/content/sdk/`.
 
 `oliphaunt-wasix` does not embed the database runtime in the SDK crate. Runtime,
 PGDATA template, extension, and AOT payloads are package-manager-resolved
@@ -70,23 +69,17 @@ or corrupted runtime.
 
 ## Extension Assets
 
-Extensions are demand-driven. An extension archive is installed into database
-storage only when the builder requests it or, for an extension with no
-startup requirements, `enable_extension` is called. Extensions whose generated
-lifecycle declares startup configuration (including
-`shared_preload_libraries`) must be selected on the builder before `open()` or
-server `start()`. Their archive and native module must exist before PostgreSQL
-starts, so post-open activation fails with an actionable error instead of
-attempting a partially initialized extension:
+Extensions are demand-driven. Select extensions on the builder before `open()`
+or server `start()`. The binding installs the selected archives and applies any
+generated startup configuration, including `shared_preload_libraries`, before
+PostgreSQL starts:
 
 ```rust,no_run
 use oliphaunt_wasix::{extensions, Oliphaunt};
 
 let mut db = Oliphaunt::builder()
-    .extension(extensions::VECTOR)
+    .extensions([extensions::VECTOR, extensions::PG_TRGM])
     .open()?;
-
-db.enable_extension(extensions::PG_TRGM)?;
 # Ok::<_, Box<dyn std::error::Error>>(())
 ```
 
@@ -101,7 +94,7 @@ Asset provenance is recorded in runtime source pins under
 `src/extensions/external/**/dependencies/**/source.toml`,
 `src/sources/toolchains/**`, the exact producer commit, and the generated
 runtime/AOT manifests produced by the
-`CI` workflow's WASM runtime lane. Generated manifests record source pins,
+`CI` workflow's WASIX runtime lane. Generated manifests record source pins,
 runtime hashes, `initdb` hashes, PGDATA template hashes, extension archive
 hashes, target information, and Wasmer engine identity. PostgreSQL ICU support
 uses the same provenance path: ICU is source-pinned in
@@ -196,7 +189,7 @@ archive snapshot availability for at least two years, so advance and qualify
 the snapshot before that retention window expires or preserve it in an
 authenticated archival mirror.
 
-The `CI` workflow's WASM runtime/AOT build lane mirrors the release topology on
+The `CI` workflow's WASIX runtime/AOT build lane mirrors the release topology on
 trusted producer runs: one Linux/Docker job builds portable WASIX modules from
 `src/runtimes/liboliphaunt/wasix/assets/build` into `target/oliphaunt-wasix/assets`,
 then native matrix jobs generate and package target-specific Wasmer AOT crates
@@ -217,11 +210,11 @@ release workspace, package-checks the target crate, and uploads the canonical
 release artifact shape.
 
 Native AOT generation intentionally installs Wasmer's LLVM 22.1.x custom build
-only inside the `CI` workflow's WASM AOT jobs or a maintainer's explicit
+only inside the `CI` workflow's WASIX AOT jobs or a maintainer's explicit
 local artifact build. Normal contributors and end users never need LLVM; they
 use committed Rust sources plus downloaded or released AOT payloads.
 
-The normal CI runtime matrix downloads a `CI` workflow WASM runtime bundle by
+The normal CI runtime matrix downloads a `CI` workflow WASIX runtime bundle by
 exact run ID or exact commit SHA, validates its packaged manifests and
 checksums, installs the payloads into ignored generated paths, and runs runtime
 tests. Changes to source pins, WASIX patches, extension catalogs, build scripts,

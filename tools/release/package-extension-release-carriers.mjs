@@ -317,11 +317,19 @@ function pnpmPackForNpmPublish(packageDir, tarballRoot) {
   const packDir = path.join(tarballRoot, safeNpmPackageFilenamePrefix(packageName));
   rmSync(packDir, { recursive: true, force: true });
   mkdirSync(packDir, { recursive: true });
-  const result = capturePackageCommandOutput("pnpm", ["pack", "--pack-destination", packDir, "--json"], {
-    cwd: packageDir,
-    label: `pnpm pack for ${packageName}`,
-    maxOutputBytes: MAX_COMMAND_CAPTURE_BYTES,
-  });
+  // Keep Corepack's version selection rooted at the repository. Package staging
+  // may live under the system temporary directory, where invoking the pnpm shim
+  // directly would select Corepack's unrelated global default before pnpm ever
+  // sees the package directory.
+  const result = capturePackageCommandOutput(
+    "pnpm",
+    ["--dir", packageDir, "pack", "--pack-destination", packDir, "--json"],
+    {
+      cwd: ROOT,
+      label: `pnpm pack for ${packageName}`,
+      maxOutputBytes: MAX_COMMAND_CAPTURE_BYTES,
+    },
+  );
   if (result.error) {
     fail(TOOL, `pnpm pack for ${packageName} failed to start: ${result.error.message}`);
   }

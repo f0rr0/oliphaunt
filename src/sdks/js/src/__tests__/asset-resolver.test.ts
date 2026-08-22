@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
   chmod,
-  copyFile as fsCopyFile,
   mkdir,
   mkdtemp,
+  realpath,
   readdir,
   readFile,
   rename,
@@ -38,7 +38,6 @@ import {
 import { liboliphauntPackageTarget } from '../native/common.js';
 import { extractTarArchive } from '../native/tar.js';
 import { extractZipArchive } from '../native/zip.js';
-import { brokerModeSupport } from '../runtime/broker.js';
 import {
   packageMetadataVersion,
   readTypeScriptPackageJson,
@@ -115,16 +114,15 @@ async function main(): Promise<void> {
   await zipExtractionWritesFilesAndRejectsTraversal();
   packageMetadataPathsAreConfinedToPackageRoot();
   await nodeResolverUsesInstalledPackages();
-  await nodeResolverMergesPackageManagedRuntimeAndSplitTools();
+  await nodeResolverUsesBaseCarrierRuntime();
   await nodeIcuResolverAcceptsValidPortablePackage();
   await nodeExtensionMaterializationValidatesSelections();
   await nodeExtensionMaterializationAcceptsBuiltInPostgresDependency();
   await explicitRuntimeExtensionValidationUsesPreparedFiles();
-  await denoPreparedRuntimePrefersSeparateEmbeddedModules();
+  await denoPreparedRuntimeRequiresSeparateEmbeddedModules();
   await nodeExtensionMaterializationCopiesPackagePayloads();
   await nodeExtensionMaterializationRejectsIncompletePackagePayloads();
   await typeScriptPackageMetadataMatchesRuntimePackages();
-  await brokerSupportUsesInstalledPackages();
 }
 
 async function zipExtractionWritesFilesAndRejectsTraversal(): Promise<void> {
@@ -169,29 +167,21 @@ function packageTargetsMatchLiboliphauntPackages(): void {
   assert.equal(target.packageName, '@oliphaunt/liboliphaunt-darwin-arm64');
   assert.equal(target.libraryRelativePath, 'lib/liboliphaunt.dylib');
   assert.equal(target.runtimeRelativePath, 'runtime');
-  assert.equal(target.toolsPackageName, '@oliphaunt/tools-darwin-arm64');
-  assert.equal(target.toolsRuntimeRelativePath, 'runtime');
   const linuxTarget = liboliphauntPackageTarget('linux', 'x64');
   assert.equal(linuxTarget.id, 'linux-x64-gnu');
   assert.equal(linuxTarget.packageName, '@oliphaunt/liboliphaunt-linux-x64-gnu');
   assert.equal(linuxTarget.libraryRelativePath, 'lib/liboliphaunt.so');
   assert.equal(linuxTarget.runtimeRelativePath, 'runtime');
-  assert.equal(linuxTarget.toolsPackageName, '@oliphaunt/tools-linux-x64-gnu');
-  assert.equal(linuxTarget.toolsRuntimeRelativePath, 'runtime');
   const linuxArmTarget = liboliphauntPackageTarget('linux', 'arm64');
   assert.equal(linuxArmTarget.id, 'linux-arm64-gnu');
   assert.equal(linuxArmTarget.packageName, '@oliphaunt/liboliphaunt-linux-arm64-gnu');
   assert.equal(linuxArmTarget.libraryRelativePath, 'lib/liboliphaunt.so');
   assert.equal(linuxArmTarget.runtimeRelativePath, 'runtime');
-  assert.equal(linuxArmTarget.toolsPackageName, '@oliphaunt/tools-linux-arm64-gnu');
-  assert.equal(linuxArmTarget.toolsRuntimeRelativePath, 'runtime');
   const windowsTarget = liboliphauntPackageTarget('win32', 'x64');
   assert.equal(windowsTarget.id, 'windows-x64-msvc');
   assert.equal(windowsTarget.packageName, '@oliphaunt/liboliphaunt-win32-x64-msvc');
   assert.equal(windowsTarget.libraryRelativePath, 'bin/oliphaunt.dll');
   assert.equal(windowsTarget.runtimeRelativePath, 'runtime');
-  assert.equal(windowsTarget.toolsPackageName, '@oliphaunt/tools-win32-x64-msvc');
-  assert.equal(windowsTarget.toolsRuntimeRelativePath, 'runtime');
 }
 
 function packageMetadataPathsAreConfinedToPackageRoot(): void {
@@ -269,7 +259,7 @@ async function nodeResolverUsesInstalledPackages(): Promise<void> {
   }
 }
 
-async function nodeResolverMergesPackageManagedRuntimeAndSplitTools(): Promise<void> {
+async function nodeResolverUsesBaseCarrierRuntime(): Promise<void> {
   const previousLibraryPath = process.env.LIBOLIPHAUNT_PATH;
   const previousRuntimeDir = process.env.OLIPHAUNT_RUNTIME_DIR;
   delete process.env.LIBOLIPHAUNT_PATH;
@@ -277,7 +267,6 @@ async function nodeResolverMergesPackageManagedRuntimeAndSplitTools(): Promise<v
 
   const target = liboliphauntPackageTarget(platform(), arch());
   const runtimePackageRoot = packageRoot(target.packageName);
-  const toolsPackageRoot = packageRoot(target.toolsPackageName);
   const createdFiles: string[] = [];
   try {
     await writeFixtureFile(
@@ -289,32 +278,14 @@ async function nodeResolverMergesPackageManagedRuntimeAndSplitTools(): Promise<v
     for (const tool of nativeRuntimeToolsForTarget(target.id)) {
       await writeFixtureFile(join(runtimeBin, tool), `runtime:${tool}`, createdFiles);
     }
-    const toolsBin = join(toolsPackageRoot, target.toolsRuntimeRelativePath, 'bin');
-    for (const tool of nativeClientToolsForTarget(target.id)) {
-      await writeFixtureFile(join(toolsBin, tool), `tools:${tool}`, createdFiles);
-    }
-
     const install = await resolveNodeNativeInstall();
     assert.equal(install.libraryPath, join(runtimePackageRoot, target.libraryRelativePath));
-    const runtimeDirectory = install.runtimeDirectory;
-    if (runtimeDirectory === undefined) {
-      assert.fail('node resolver should materialize a package-managed runtime cache');
-    }
-    assert.ok(runtimeDirectory.includes('oliphaunt-js-runtime-cache'));
+    assert.equal(install.runtimeDirectory, join(runtimePackageRoot, target.runtimeRelativePath));
     assert.equal(install.icuDataDirectory, undefined);
-    for (const tool of [
-      ...nativeRuntimeToolsForTarget(target.id),
-      ...nativeClientToolsForTarget(target.id),
-    ]) {
-      const bytes = await readFile(join(runtimeDirectory, 'bin', tool));
-      assert.ok(bytes.byteLength > 0, `${tool} should be materialized into the runtime cache`);
-    }
-    await assertNoRuntimeCacheTemporarySiblings(dirname(runtimeDirectory));
-    await rm(dirname(runtimeDirectory), { recursive: true, force: true });
   } finally {
     restoreEnv('LIBOLIPHAUNT_PATH', previousLibraryPath);
     restoreEnv('OLIPHAUNT_RUNTIME_DIR', previousRuntimeDir);
-    await removeFixtureFiles(createdFiles, [runtimePackageRoot, toolsPackageRoot]);
+    await removeFixtureFiles(createdFiles, [runtimePackageRoot]);
   }
 }
 
@@ -338,7 +309,10 @@ async function nodeIcuResolverAcceptsValidPortablePackage(): Promise<void> {
     const dataDirectory = join(root, 'OliphauntICU.bundle/share/icu');
     await mkdir(dataDirectory, { recursive: true });
     await writeFile(join(dataDirectory, 'icudt76l.dat'), 'icu');
-    assert.equal(await resolveNodeIcuDataDirectory('9.9.9', root), dataDirectory);
+    assert.equal(
+      await resolveNodeIcuDataDirectory('9.9.9', root),
+      await realpath(dataDirectory),
+    );
     await assert.rejects(
       () => resolveNodeIcuDataDirectory('9.9.8', root),
       /does not match @oliphaunt\/ts icuVersion/,
@@ -349,7 +323,9 @@ async function nodeIcuResolverAcceptsValidPortablePackage(): Promise<void> {
 }
 
 async function nodeExtensionMaterializationValidatesSelections(): Promise<void> {
-  const install: ResolvedNativeInstall = { libraryPath: '/tmp/liboliphaunt-test.so' };
+  const install: ResolvedNativeInstall = {
+    libraryPath: '/tmp/liboliphaunt-test.so',
+  };
   assert.equal(await materializeNodeExtensionInstall(install, []), install);
   await assert.rejects(
     () => materializeNodeExtensionInstall(install, ['not_a_real_extension']),
@@ -470,7 +446,9 @@ async function explicitRuntimeExtensionValidationUsesPreparedFiles(): Promise<vo
   try {
     await writePreparedHstoreRuntime(directRuntime, target.id);
     await writePreparedHstoreRuntime(releaseRuntime, target.id);
-    await mkdir(join(invalidRuntime, 'share/postgresql/extension'), { recursive: true });
+    await mkdir(join(invalidRuntime, 'share/postgresql/extension'), {
+      recursive: true,
+    });
     await mkdir(join(invalidRuntime, 'lib/postgresql'), { recursive: true });
 
     const direct = await validatePreparedNodeRuntimeExtensions(
@@ -500,20 +478,13 @@ async function explicitRuntimeExtensionValidationUsesPreparedFiles(): Promise<vo
   }
 }
 
-async function denoPreparedRuntimePrefersSeparateEmbeddedModules(): Promise<void> {
+async function denoPreparedRuntimeRequiresSeparateEmbeddedModules(): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-deno-prepared-runtime-'));
   const runtime = join(root, 'runtime');
   const embeddedModules = join(runtime, 'lib/modules');
-  const runtimeModules = join(runtime, 'lib/postgresql');
   const deno = fsBackedDenoValidationRuntime();
   try {
     await writePreparedHstoreRuntime(runtime, 'linux-x64-gnu');
-    await writeFile(join(runtimeModules, 'dict_snowball.so'), 'canonical subprocess dict_snowball');
-    await writeFile(join(runtimeModules, 'plpgsql.so'), 'canonical subprocess plpgsql');
-    await mkdir(embeddedModules, { recursive: true });
-    await writeFile(join(embeddedModules, 'dict_snowball.so'), 'embedded dict_snowball');
-    await writeFile(join(embeddedModules, 'plpgsql.so'), 'embedded plpgsql');
-    await writeFile(join(embeddedModules, 'hstore.so'), 'embedded hstore');
 
     const preferred = await validatePreparedDenoRuntimeExtensions({
       deno,
@@ -563,15 +534,6 @@ async function denoPreparedRuntimePrefersSeparateEmbeddedModules(): Promise<void
     );
 
     await rm(embeddedModules, { recursive: true });
-    const legacy = await validatePreparedDenoRuntimeExtensions({
-      deno,
-      runtimeDirectory: runtime,
-      extensions: ['hstore'],
-      source: 'Deno test runtime',
-    });
-    assert.equal(legacy.moduleDirectory, runtimeModules);
-
-    await rm(join(runtimeModules, 'hstore.so'));
     await assert.rejects(
       () =>
         validatePreparedDenoRuntimeExtensions({
@@ -593,9 +555,6 @@ function fsBackedDenoValidationRuntime(): DenoRuntime {
     async readTextFile(path: string | URL) {
       return readFile(path, 'utf8');
     },
-    async writeTextFile(path: string | URL, data: string) {
-      await writeFile(path, data, 'utf8');
-    },
     async *readDir(path: string | URL) {
       for (const entry of await readdir(path, { withFileTypes: true })) {
         yield {
@@ -610,20 +569,7 @@ function fsBackedDenoValidationRuntime(): DenoRuntime {
       return {
         isFile: metadata.isFile(),
         isDirectory: metadata.isDirectory(),
-        mtime: metadata.mtime,
       };
-    },
-    async mkdir(path: string | URL, options?: { recursive?: boolean }) {
-      await mkdir(path, options);
-    },
-    async remove(path: string | URL, options?: { recursive?: boolean }) {
-      await rm(path, options);
-    },
-    async copyFile(from: string | URL, to: string | URL) {
-      await fsCopyFile(from, to);
-    },
-    async rename(from: string | URL, to: string | URL) {
-      await rename(from, to);
     },
   };
 }
@@ -1020,7 +966,10 @@ async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void
 
     await writeFile(
       join(targetRoot, 'bundle-manifest.json'),
-      JSON.stringify({ ...bundleManifest, schema: 'oliphaunt-extension-bundle-v1' }),
+      JSON.stringify({
+        ...bundleManifest,
+        schema: 'oliphaunt-extension-bundle-v1',
+      }),
     );
     await assert.rejects(
       () =>
@@ -1229,7 +1178,10 @@ async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void
     );
   } finally {
     if (firstInstall?.runtimeDirectory !== undefined) {
-      await rm(dirname(firstInstall.runtimeDirectory), { recursive: true, force: true });
+      await rm(dirname(firstInstall.runtimeDirectory), {
+        recursive: true,
+        force: true,
+      });
     }
     await rm(root, { recursive: true, force: true });
     for (const packageRoot of createdPackageRoots.reverse()) {
@@ -1242,19 +1194,32 @@ async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void
 }
 
 async function writePreparedHstoreRuntime(runtimeDirectory: string, target: string): Promise<void> {
-  await mkdir(join(runtimeDirectory, 'share/postgresql/extension'), { recursive: true });
+  const moduleSuffix = nativeModuleSuffixForTarget(target);
+  await mkdir(join(runtimeDirectory, 'share/postgresql/extension'), {
+    recursive: true,
+  });
   await mkdir(join(runtimeDirectory, 'lib/postgresql'), { recursive: true });
   await mkdir(join(runtimeDirectory, 'lib/modules'), { recursive: true });
   await writeFile(join(runtimeDirectory, 'share/postgresql/extension/hstore.control'), 'extension');
   await writeFile(join(runtimeDirectory, 'share/postgresql/extension/hstore--1.0.sql'), 'install');
   await writeFile(
-    join(runtimeDirectory, 'lib/postgresql', `hstore${nativeModuleSuffixForTarget(target)}`),
+    join(runtimeDirectory, 'lib/postgresql', `hstore${moduleSuffix}`),
     'server module',
   );
   await writeFile(
-    join(runtimeDirectory, 'lib/modules', `hstore${nativeModuleSuffixForTarget(target)}`),
+    join(runtimeDirectory, 'lib/modules', `hstore${moduleSuffix}`),
     'embedded module',
   );
+  for (const moduleStem of ['dict_snowball', 'plpgsql']) {
+    await writeFile(
+      join(runtimeDirectory, 'lib/postgresql', `${moduleStem}${moduleSuffix}`),
+      `server module:${moduleStem}`,
+    );
+    await writeFile(
+      join(runtimeDirectory, 'lib/modules', `${moduleStem}${moduleSuffix}`),
+      `embedded module:${moduleStem}`,
+    );
+  }
 }
 
 async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): Promise<void> {
@@ -1325,8 +1290,12 @@ async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): P
       join(targetRoot, 'extension-contract.json'),
       JSON.stringify(vectorContractManifest),
     );
-    await mkdir(join(payloadRoot, 'runtime/share/postgresql/extension'), { recursive: true });
-    await mkdir(join(payloadRoot, 'runtime/lib/postgresql'), { recursive: true });
+    await mkdir(join(payloadRoot, 'runtime/share/postgresql/extension'), {
+      recursive: true,
+    });
+    await mkdir(join(payloadRoot, 'runtime/lib/postgresql'), {
+      recursive: true,
+    });
     await writeFile(
       join(payloadRoot, 'runtime/share/postgresql/extension/vector.control'),
       'extension',
@@ -1350,7 +1319,9 @@ async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): P
     );
 
     const redirectedRuntime = join(targetRoot, 'redirected-runtime');
-    await mkdir(join(redirectedRuntime, 'share/postgresql/extension'), { recursive: true });
+    await mkdir(join(redirectedRuntime, 'share/postgresql/extension'), {
+      recursive: true,
+    });
     await mkdir(join(redirectedRuntime, 'lib/postgresql'), { recursive: true });
     await mkdir(join(redirectedRuntime, 'lib/modules'), { recursive: true });
     await writeFile(
@@ -1604,7 +1575,10 @@ async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): P
         join(targetRoot, 'extension-contract.json'),
         JSON.stringify(
           fixtureExtensionContractManifest(product, extensionVersion, target.id, [
-            { ...independentlyVersionedContract, licenseFiles: [...licenseFiles] },
+            {
+              ...independentlyVersionedContract,
+              licenseFiles: [...licenseFiles],
+            },
           ]),
         ),
       );
@@ -1692,10 +1666,6 @@ async function typeScriptPackageMetadataMatchesRuntimePackages(): Promise<void> 
     '@oliphaunt/node-direct-linux-arm64-gnu',
     '@oliphaunt/node-direct-linux-x64-gnu',
     '@oliphaunt/node-direct-win32-x64-msvc',
-    '@oliphaunt/tools-darwin-arm64',
-    '@oliphaunt/tools-linux-arm64-gnu',
-    '@oliphaunt/tools-linux-x64-gnu',
-    '@oliphaunt/tools-win32-x64-msvc',
   ];
   assert.deepEqual(
     Object.keys(packageJson.optionalDependencies ?? {}).sort(),
@@ -1713,22 +1683,9 @@ async function typeScriptPackageMetadataMatchesRuntimePackages(): Promise<void> 
   for (const packageName of optionalDependencyNames.slice(8, 12)) {
     assert.equal(packageJson.optionalDependencies?.[packageName], `workspace:${nodeDirectVersion}`);
   }
-  for (const packageName of optionalDependencyNames.slice(12)) {
-    assert.equal(
-      packageJson.optionalDependencies?.[packageName],
-      `workspace:${liboliphauntVersion}`,
-    );
-  }
   await assertPlatformPackageTarget(
     '../../../../runtimes/liboliphaunt/native/packages/linux-x64-gnu/package.json',
     '@oliphaunt/liboliphaunt-linux-x64-gnu',
-    liboliphauntVersion,
-    'linux-x64-gnu',
-    'runtime',
-  );
-  await assertPlatformPackageTarget(
-    '../../../../runtimes/liboliphaunt/native/tools-packages/linux-x64-gnu/package.json',
-    '@oliphaunt/tools-linux-x64-gnu',
     liboliphauntVersion,
     'linux-x64-gnu',
     'runtime',
@@ -1745,24 +1702,6 @@ async function typeScriptPackageMetadataMatchesRuntimePackages(): Promise<void> 
     nodeDirectVersion,
     'linux-x64-gnu',
   );
-}
-
-async function brokerSupportUsesInstalledPackages(): Promise<void> {
-  const previousLibraryPath = process.env.LIBOLIPHAUNT_PATH;
-  const previousRuntimeDir = process.env.OLIPHAUNT_RUNTIME_DIR;
-  const previousBroker = process.env.OLIPHAUNT_BROKER;
-  delete process.env.LIBOLIPHAUNT_PATH;
-  delete process.env.OLIPHAUNT_RUNTIME_DIR;
-  delete process.env.OLIPHAUNT_BROKER;
-  try {
-    const support = await brokerModeSupport({});
-    assert.equal(support.available, false);
-    assert.match(support.unavailableReason ?? '', /@oliphaunt\/broker-|@oliphaunt\/liboliphaunt-/);
-  } finally {
-    restoreEnv('LIBOLIPHAUNT_PATH', previousLibraryPath);
-    restoreEnv('OLIPHAUNT_RUNTIME_DIR', previousRuntimeDir);
-    restoreEnv('OLIPHAUNT_BROKER', previousBroker);
-  }
 }
 
 type TarEntry = {
@@ -2022,10 +1961,6 @@ function nativeRuntimeToolsForTarget(target: string): string[] {
   return target === 'windows-x64-msvc'
     ? ['initdb.exe', 'pg_ctl.exe', 'postgres.exe']
     : ['initdb', 'pg_ctl', 'postgres'];
-}
-
-function nativeClientToolsForTarget(target: string): string[] {
-  return target === 'windows-x64-msvc' ? ['pg_dump.exe', 'psql.exe'] : ['pg_dump', 'psql'];
 }
 
 function nativeModuleSuffixForTarget(target: string): string {

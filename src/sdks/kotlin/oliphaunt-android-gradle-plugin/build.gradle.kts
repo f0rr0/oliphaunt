@@ -39,7 +39,7 @@ tasks.processResources {
     from(file("../../../runtimes/liboliphaunt/native/include/oliphaunt.h")) {
         into("dev/oliphaunt/android")
     }
-    from(file("../../rust/extension-artifact-archive-policy.properties")) {
+    from(file("../../../../tools/native-packaging/extension-artifact-archive-policy.properties")) {
         into("dev/oliphaunt/android")
     }
 }

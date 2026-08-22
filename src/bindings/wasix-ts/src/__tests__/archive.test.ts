@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { decompressIfNeeded, extractTar, layoutRuntime } from '../archive.js';
 
+// liboliphaunt-doc-example:wasix-typescript-backup-restore
 describe('WASIX TypeScript archives', () => {
   it('preserves uncompressed archive bytes by identity', () => {
     const bytes = Uint8Array.of(1, 2, 3);
@@ -58,6 +59,15 @@ describe('WASIX TypeScript archives', () => {
     expect(extractTar(archive).files).toEqual(new Map([['données/file', Uint8Array.of(42)]]));
   });
 
+  it('rejects pax metadata that changes entry size semantics', () => {
+    const archive = tar([
+      ['PaxHeader', paxPayload([['size', '1']]), 'x'],
+      ['ignored', Uint8Array.of(42)],
+    ]);
+
+    expect(() => extractTar(archive)).toThrow('unsupported pax key: size');
+  });
+
   it('rejects repeated tar file paths instead of applying last-entry-wins', () => {
     const archive = tar([
       ['share/postgresql/extension/pgtap.control', Uint8Array.of(1)],
@@ -108,7 +118,8 @@ function tar(
     writeOctal(header, 100, 8, 0o644);
     writeOctal(header, 124, 12, contents?.length ?? 0);
     header[156] = (explicitType ?? (contents === undefined ? '5' : '0')).charCodeAt(0);
-    writeAscii(header, 257, 'ustar');
+    writeAscii(header, 257, 'ustar\0');
+    writeAscii(header, 263, '00');
     blocks.push(header);
     if (contents === undefined) {
       continue;

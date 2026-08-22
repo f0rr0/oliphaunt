@@ -1,0 +1,40 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Fri, 21 Aug 2026 13:00:00 +0000
+Subject: [PATCH] oliphaunt-wasix: set libpq sockets nonblocking
+
+WASIX libc exposes SOCK_NONBLOCK, but Wasmer's sock_open ABI receives only the
+base socket type and creates the descriptor with empty fd flags.  PostgreSQL
+therefore skips pg_set_noblock() while the resulting socket remains blocking.
+Async libpq consumers such as psql then block while draining an otherwise
+complete response.
+
+Use PostgreSQL's existing fcntl fallback on WASIX.  Native platforms retain the
+upstream atomic socket creation path.
+---
+ src/interfaces/libpq/fe-connect.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/interfaces/libpq/fe-connect.c b/src/interfaces/libpq/fe-connect.c
+index 8ec58d4..ee6c5ad 100644
+--- a/src/interfaces/libpq/fe-connect.c
++++ b/src/interfaces/libpq/fe-connect.c
+@@ -3310,7 +3310,7 @@ keep_going:						/* We will come back to here until there is
+ 					 */
+ 					sock_type |= SOCK_CLOEXEC;
+ #endif
+-#ifdef SOCK_NONBLOCK
++#if defined(SOCK_NONBLOCK) && !defined(__wasi__)
+ 
+ 					/*
+ 					 * We might as well skip a system call for nonblocking
+@@ -3364,7 +3364,7 @@ keep_going:						/* We will come back to here until there is
+ 							goto keep_going;
+ 						}
+ 					}
+-#ifndef SOCK_NONBLOCK
++#if !defined(SOCK_NONBLOCK) || defined(__wasi__)
+ 					if (!pg_set_noblock(conn->sock))
+ 					{
+ 						libpq_append_conn_error(conn, "could not set socket to nonblocking mode: %s",
+-- 
+2.51.0

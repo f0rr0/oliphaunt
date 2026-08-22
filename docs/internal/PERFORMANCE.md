@@ -1,5 +1,10 @@
 # Performance Internals
 
+> **Historical implementation record — non-normative.** This page preserves
+> earlier performance practices, measurements, and API names. It is not current
+> release evidence or API guidance. Use `docs/maintainers/performance-evidence.md`
+> and the retained benchmark reports for current qualification.
+
 This page is maintainer documentation for performance tuning, measurement
 harnesses, and release profiling. Public benchmark results now live in
 [`src/docs/content/reference/performance.mdx`](../../src/docs/content/reference/performance.mdx).

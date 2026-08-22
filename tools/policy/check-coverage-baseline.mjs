@@ -7,6 +7,7 @@ const EXPECTED_PRODUCTS = [
   'oliphaunt-js',
   'oliphaunt-react-native',
   'oliphaunt-wasix-rust',
+  'oliphaunt-wasix-ts',
 ];
 
 function fail(message) {
@@ -64,8 +65,8 @@ for (const product of targets) {
     fail(`${product}: measured_line_coverage audit snapshot is below the aggregate threshold`);
   }
   const waivers = config.waivers;
-  if (!Array.isArray(waivers) || waivers.length === 0) {
-    fail(`${product}: coverage waivers must be explicit even when the list is short`);
+  if (!Array.isArray(waivers)) {
+    fail(`${product}: coverage waivers must be an explicit array, including when empty`);
   }
   for (const waiver of waivers) {
     if (waiver === null || typeof waiver !== 'object' || Array.isArray(waiver)) {

@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "declaration": true,
-    "declarationMap": true,
+    "declarationMap": false,
     "lib": ["ES2023", "ESNext.Disposable", "DOM", "DOM.Iterable", "WebWorker"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",

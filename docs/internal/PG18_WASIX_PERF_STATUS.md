@@ -1,5 +1,10 @@
 # PG18 WASIX Performance Status
 
+> **Historical performance snapshot — non-normative.** These dated results and
+> conclusions are preserved for investigation history, not as current release
+> evidence. Re-run the current benchmark and qualification tasks before making
+> performance claims.
+
 Date: 2026-05-29
 
 ## 2026-05-29 Recheck

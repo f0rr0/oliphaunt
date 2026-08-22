@@ -1,0 +1,174 @@
+---
+title: Build With WASIX TypeScript
+description: Open, persist, transact, back up, and restore portable PostgreSQL from TypeScript.
+---
+
+# Build With WASIX TypeScript
+
+<SdkGuideSummary id="wasix-typescript" />
+
+<Steps>
+<Step>
+
+### Install
+
+Install the same package for browsers, Node.js, Bun, and Deno:
+
+```sh
+pnpm add @oliphaunt/wasix-ts
+```
+
+Deno uses the same npm package as browsers, Node.js, and Bun:
+
+```ts
+import Oliphaunt from 'npm:@oliphaunt/wasix-ts';
+import { directory } from 'npm:@oliphaunt/wasix-ts/storage/deno';
+```
+
+</Step>
+<Step>
+
+### Open and query
+
+<!-- oliphaunt-snippet: oliphaunt-wasix-typescript -->
+
+```ts
+import Oliphaunt from '@oliphaunt/wasix-ts';
+
+await using database = await Oliphaunt.open();
+const result = await database.query('select $1::int + 1 as answer', [41]);
+console.log(result.getText(0, 'answer'));
+```
+
+Browser pages must send these response headers and keep the package's module
+Worker edge intact:
+
+```text
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+</Step>
+<Step>
+
+### Create app data
+
+Use ordinary PostgreSQL SQL and parameters. `query()` returns rows;
+`execute()` returns the PostgreSQL command result.
+
+```ts
+await database.execute(
+  'create table if not exists note (id bigserial primary key, title text not null)',
+);
+await database.execute('insert into note(title) values ($1)', ['First note']);
+const notes = await database.query('select id, title from note order by id');
+```
+
+Use `transaction(async tx => …)` for one callback-scoped transaction. Calls on
+the database handle do not interleave with the callback; use the `tx` handle
+inside it.
+
+</Step>
+<Step>
+
+### Configure
+
+Memory is the default. Persistent storage is an explicit selective import:
+
+```ts
+import { indexedDB } from '@oliphaunt/wasix-ts/storage/indexed-db';
+// Or: storage/opfs in browsers; storage/node, storage/bun, or storage/deno on servers.
+
+const database = await Oliphaunt.open({
+  storage: indexedDB('notes'),
+  startupGUCs: { application_name: 'notes' },
+});
+```
+
+IndexedDB and OPFS names are origin-owned identities. Host-runtime directory
+adapters take a managed-root path containing `.oliphaunt.json` and `pgdata`.
+Their binding-specific sibling lock is outside that root and is not backup
+content. A persistent identity may have one owner at a time within its provider;
+simultaneous cross-binding mutation is unsupported rather than coordinated by a
+new public lock protocol.
+
+</Step>
+<Step>
+
+### Choose a mode
+
+Worker placement is the default. Choose `execution: 'direct'` only when blocking
+the caller's realm during PostgreSQL work is acceptable:
+
+```ts
+const database = await Oliphaunt.open({ execution: 'direct' });
+```
+
+Both placements return the same `OliphauntDatabase`. There is no runtime
+fallback, capability profile, or host mode negotiation.
+
+</Step>
+<Step>
+
+### Handle lifecycle
+
+Ordinary operations publish persistent changes before their promises settle.
+Transactions publish once after confirmed `COMMIT` or `ROLLBACK`.
+`checkpoint()` sends PostgreSQL `CHECKPOINT` and then publishes. A publication
+failure poisons the handle because PostgreSQL may contain changes not present in
+the last durable generation; close it and reopen the last complete generation.
+
+`close()` is idempotent and releases the provider owner. `await using` calls the
+same operation through `Symbol.asyncDispose`.
+
+</Step>
+<Step>
+
+### Select extensions
+
+Import exact WASIX extension descriptors and pass them to `open()`:
+
+```ts
+import pgtap from '@oliphaunt/extension-pgtap-wasix';
+
+const database = await Oliphaunt.open({ extensions: [pgtap] });
+```
+
+The core runtime does not bundle every extension. Reopen persistent data with
+the same installed extension code. PostgreSQL's normal extension SQL remains
+authoritative; Oliphaunt does not add a generic extension-migration mode.
+
+</Step>
+<Step>
+
+### Back up and restore
+
+`backup()` creates one PostgreSQL 18 WASIX physical archive while preserving the
+open session:
+
+```ts
+const archive = await database.backup();
+await database.close();
+
+import { directory } from '@oliphaunt/wasix-ts/storage/node';
+await Oliphaunt.restore(directory('./data/restored'), archive);
+```
+
+Restore accepts persistent storage only and requires a new or empty destination.
+It validates the exact WASIX archive identity before publishing. It does not
+replace a nonempty database. The destination creates its own managed-root
+descriptor; `.oliphaunt.json` is not carried in the archive.
+
+</Step>
+</Steps>
+
+<SdkGuideProof id="wasix-typescript" />
+
+## Troubleshooting
+
+SQL failures are `PostgresError` values and include PostgreSQL fields such as
+`sqlstate`. A recovered SQL error does not poison the database. Provider load,
+ownership, compatibility, restore, or publication failures are
+`WasixStorageError` values; inspect `code` and `commitState`. A browser open
+failure commonly means the page is not cross-origin isolated or a Worker/runtime
+subresource violates COEP.

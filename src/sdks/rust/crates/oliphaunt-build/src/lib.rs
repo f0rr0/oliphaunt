@@ -1028,12 +1028,15 @@ impl ArtifactManifest {
                     &relatives,
                     &native_tool_paths(&self.target, &["postgres", "initdb", "pg_ctl"]),
                 )?;
-                self.reject_files(&relatives, &native_tool_path_variants(&["pg_dump", "psql"]))?;
+                self.reject_files(
+                    &relatives,
+                    &native_tool_path_variants(&["pg_basebackup", "pg_dump", "psql"]),
+                )?;
             }
             ArtifactKind::NativeTools => {
                 self.require_files(
                     &relatives,
-                    &native_tool_paths(&self.target, &["pg_dump", "psql"]),
+                    &native_tool_paths(&self.target, &["pg_basebackup", "pg_dump", "psql"]),
                 )?;
                 self.reject_files(
                     &relatives,
@@ -1656,6 +1659,18 @@ extensions = ["vector"]
         assert!(
             output
                 .resources_dir
+                .join("native-tools/oliphaunt-tools/runtime/bin/pg_basebackup")
+                .is_file()
+        );
+        assert!(
+            output
+                .resources_dir
+                .join("native-tools/oliphaunt-tools/runtime/bin/psql")
+                .is_file()
+        );
+        assert!(
+            output
+                .resources_dir
                 .join("broker-helper/oliphaunt-broker/bin/oliphaunt-broker")
                 .is_file()
         );
@@ -2209,35 +2224,51 @@ runtime-version = "0.1.0"
 
     #[test]
     fn artifact_manifest_rejects_incomplete_native_tools_payload() {
-        let temp = app_with_metadata("");
-        let tools_manifest = write_artifact_manifest_with_relatives(
-            &temp,
-            "tools.toml",
-            "oliphaunt-tools",
-            "0.1.0",
-            "native-tools",
-            "x86_64-unknown-linux-gnu",
-            None,
-            &["runtime/bin/pg_dump"],
-        );
-        let context = BuildContext {
-            manifest_dir: temp.path().to_path_buf(),
-            out_dir: temp.path().join("out"),
-            target: "x86_64-unknown-linux-gnu".to_owned(),
-            artifact_manifest_paths: vec![tools_manifest],
-        };
+        let required = [
+            "runtime/bin/pg_basebackup",
+            "runtime/bin/pg_dump",
+            "runtime/bin/psql",
+        ];
+        for missing in required {
+            let temp = app_with_metadata("");
+            let present = required
+                .iter()
+                .copied()
+                .filter(|relative| *relative != missing)
+                .collect::<Vec<_>>();
+            let tools_manifest = write_artifact_manifest_with_relatives(
+                &temp,
+                "tools.toml",
+                "oliphaunt-tools",
+                "0.1.0",
+                "native-tools",
+                "x86_64-unknown-linux-gnu",
+                None,
+                &present,
+            );
+            let context = BuildContext {
+                manifest_dir: temp.path().to_path_buf(),
+                out_dir: temp.path().join("out"),
+                target: "x86_64-unknown-linux-gnu".to_owned(),
+                artifact_manifest_paths: vec![tools_manifest],
+            };
 
-        let error = context
-            .read_artifact_manifests()
-            .expect_err("native tools without psql must fail validation");
+            let error = context
+                .read_artifact_manifests()
+                .expect_err("incomplete native tools must fail validation");
 
-        assert!(error.to_string().contains("missing required payload"));
-        assert!(error.to_string().contains("runtime/bin/psql"));
+            assert!(error.to_string().contains("missing required payload"));
+            assert!(error.to_string().contains(missing));
+        }
     }
 
     #[test]
     fn artifact_manifest_rejects_native_runtime_client_tool_payloads() {
-        for tool in ["runtime/bin/pg_dump", "runtime/bin/psql"] {
+        for tool in [
+            "runtime/bin/pg_basebackup",
+            "runtime/bin/pg_dump",
+            "runtime/bin/psql",
+        ] {
             let temp = app_with_metadata("");
             let runtime_manifest = write_artifact_manifest_with_relatives(
                 &temp,
@@ -2295,7 +2326,11 @@ runtime-version = "0.1.0"
             "native-tools",
             "x86_64-pc-windows-msvc",
             None,
-            &["runtime/bin/pg_dump.exe", "runtime/bin/psql.exe"],
+            &[
+                "runtime/bin/pg_basebackup.exe",
+                "runtime/bin/pg_dump.exe",
+                "runtime/bin/psql.exe",
+            ],
         );
         let context = BuildContext {
             manifest_dir: temp.path().to_path_buf(),
@@ -2354,7 +2389,11 @@ runtime-version = "0.1.0"
             "native-tools",
             "x86_64-pc-windows-msvc",
             None,
-            &["runtime/bin/pg_dump", "runtime/bin/psql"],
+            &[
+                "runtime/bin/pg_basebackup",
+                "runtime/bin/pg_dump",
+                "runtime/bin/psql",
+            ],
         );
         let context = BuildContext {
             manifest_dir: temp.path().to_path_buf(),
@@ -2368,7 +2407,7 @@ runtime-version = "0.1.0"
             .expect_err("Windows native tools must use .exe tool names");
 
         assert!(error.to_string().contains("missing required payload"));
-        assert!(error.to_string().contains("runtime/bin/pg_dump.exe"));
+        assert!(error.to_string().contains("runtime/bin/pg_basebackup.exe"));
     }
 
     #[test]
@@ -2599,6 +2638,7 @@ executable = false
                 "runtime/bin/pg_ctl".to_owned(),
             ],
             "native-tools" => vec![
+                "runtime/bin/pg_basebackup".to_owned(),
                 "runtime/bin/pg_dump".to_owned(),
                 "runtime/bin/psql".to_owned(),
             ],

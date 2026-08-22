@@ -57,12 +57,12 @@ OLIPHAUNT_BUILD_EXTENSIONS="${OLIPHAUNT_BUILD_EXTENSIONS:-0}" \
 [ -f "$lib" ] || fail "missing macOS liboliphaunt dylib at $lib"
 oliphaunt_assert_base_embedded_modules_exact "$embedded_modules" dylib ||
   fail "base $target_id embedded module inventory must contain only regular dict_snowball.dylib and plpgsql.dylib modules"
-for tool in initdb pg_ctl pg_dump postgres psql; do
+for tool in initdb pg_basebackup pg_ctl pg_dump postgres psql; do
   [ -x "$runtime/bin/$tool" ] || fail "missing macOS $tool at $runtime/bin/$tool"
 done
 
 echo "==> Verifying base liboliphaunt $target_id runtime is extension-clean"
-cargo run -p oliphaunt --bin oliphaunt-resources --locked -- --list-extensions >"$catalog_file"
+cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources --locked -- --list-extensions >"$catalog_file"
 oliphaunt_assert_base_runtime_has_no_optional_extensions "$catalog_file" "$runtime" ||
   fail "base $target_id runtime must not ship optional extension assets"
 
@@ -71,10 +71,11 @@ cp "$lib" "$stage/lib/"
 rsync -a --delete "$embedded_modules/" "$stage/lib/modules/"
 rsync -a --delete \
   --exclude '/bin/pg_dump' \
+  --exclude '/bin/pg_basebackup' \
   --exclude '/bin/psql' \
   --exclude 'share/icu/***' \
   "$runtime/" "$stage/runtime/"
-for tool in pg_dump psql; do
+for tool in pg_basebackup pg_dump psql; do
   cp -p "$runtime/bin/$tool" "$tools_stage/runtime/bin/"
 done
 

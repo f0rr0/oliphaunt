@@ -66,7 +66,7 @@ check_maven_publication_graph() {
   unsupported_publication_tasks="$(printf '%s\n' "$publication_tasks" | grep -v 'AndroidReleasePublication' || true)"
   if [ -n "$unsupported_publication_tasks" ]; then
     printf '%s\n' "$unsupported_publication_tasks" >&2
-    echo "Kotlin Maven aggregate entry points include unsupported JVM or host-native publications" >&2
+    echo "Kotlin Maven aggregate entry points include unsupported non-Android publications" >&2
     exit 1
   fi
 }
@@ -92,7 +92,7 @@ require_jar_entry() {
     echo "missing Kotlin package artifact: $jar_file" >&2
     exit 1
   fi
-  if ! jar tf "$jar_file" | grep -Fxq "$entry"; then
+  if ! jar tf "$jar_file" | grep -Fx "$entry" >/dev/null; then
     echo "$message" >&2
     echo "expected $entry in $jar_file" >&2
     exit 1
@@ -107,7 +107,7 @@ require_jar_entry_pattern() {
     echo "missing Kotlin package artifact: $jar_file" >&2
     exit 1
   fi
-  if ! jar tf "$jar_file" | grep -Eq "$pattern"; then
+  if ! jar tf "$jar_file" | grep -E "$pattern" >/dev/null; then
     echo "$message" >&2
     echo "expected pattern $pattern in $jar_file" >&2
     exit 1
@@ -131,7 +131,7 @@ reject_jar_entry_pattern() {
     echo "missing Kotlin package artifact: $jar_file" >&2
     exit 1
   fi
-  if jar tf "$jar_file" | grep -Eq "$pattern"; then
+  if jar tf "$jar_file" | grep -E "$pattern" >/dev/null; then
     echo "$message" >&2
     echo "unexpected pattern $pattern in $jar_file" >&2
     exit 1
@@ -258,47 +258,23 @@ gradle_scratch_args="-PoliphauntBuildRoot=$gradle_build_root -PoliphauntCxxBuild
 gradle_non_coverage_args="-x :oliphaunt:koverVerify"
 kotlin_build_dir="$gradle_build_root/oliphaunt"
 
-host_native_suffix() {
-  case "$(uname -s):$(uname -m)" in
-    Darwin:*)
-      printf '%s\n' MacosArm64
-      ;;
-    Linux:arm64|Linux:aarch64)
-      printf '%s\n' LinuxArm64
-      ;;
-    *)
-      printf '%s\n' LinuxX64
-      ;;
-  esac
-}
-
-host_native_compile_task() {
-  printf ':oliphaunt:compileKotlin%s\n' "$(host_native_suffix)"
-}
-
-host_native_test_task() {
-  first="$(host_native_suffix | cut -c1 | tr '[:upper:]' '[:lower:]')"
-  rest="$(host_native_suffix | cut -c2-)"
-  printf ':oliphaunt:%s%sTest\n' "$first" "$rest"
-}
-
-run_without_linked_native_runtime() {
+run_without_runtime_environment() {
   env \
     -u LIBOLIPHAUNT_PATH \
     -u OLIPHAUNT_INSTALL_DIR \
+    -u OLIPHAUNT_INITDB \
     -u OLIPHAUNT_RUNTIME_DIR \
-    -u OLIPHAUNT_KOTLIN_REQUIRE_NATIVE \
     "$@"
 }
 
-run_without_linked_native_runtime_with_repository_retry() {
+run_with_repository_retry() {
   attempt=1
   max_attempts=2
   attempt_log="$scratch_root/gradle-repository-attempt.log"
   mkdir -p "$scratch_root"
   while [ "$attempt" -le "$max_attempts" ]; do
     printf '\n==> repository-bounded attempt %s/%s: %s\n' "$attempt" "$max_attempts" "$*"
-    if run_without_linked_native_runtime "$@" >"$attempt_log" 2>&1; then
+    if run_without_runtime_environment "$@" >"$attempt_log" 2>&1; then
       cat "$attempt_log"
       rm -f "$attempt_log"
       return 0
@@ -490,7 +466,7 @@ REPORT
   static_asset_aar="$kotlin_build_dir/outputs/aar/oliphaunt-debug.aar"
   require_jar_entry "$static_asset_aar" "jni/$android_smoke_abi/liboliphaunt.so" \
     "Kotlin Android smoke AAR must include the explicitly supplied liboliphaunt runtime for $android_smoke_abi"
-  if jar tf "$static_asset_aar" | grep -Fq "assets/oliphaunt/static-registry/archives/"; then
+  if jar tf "$static_asset_aar" | grep -F "assets/oliphaunt/static-registry/archives/" >/dev/null; then
     echo "Kotlin Android AAR included build-only static extension archives" >&2
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1
@@ -515,20 +491,13 @@ if grep -Fq '"maven:dev.oliphaunt:oliphaunt"' "$project_dir/release.toml"; then
   exit 1
 fi
 
-if [ -n "${OLIPHAUNT_KOTLIN_REQUIRE_NATIVE:-}" ]; then
-  if ! oliphaunt_runtime_native_host_ready basic; then
-    oliphaunt_runtime_native_host_diagnostics basic
-    exit 1
-  fi
-fi
-
 if [ "$mode" = "smoke-runtime" ]; then
   run_android_runtime_smoke
   exit 0
 fi
 
 if [ "$mode" = "check-static" ]; then
-  static_tasks=":oliphaunt:spotlessCheck :oliphaunt:detekt :oliphaunt:checkMavenPublicationContract :oliphaunt:compileKotlinJvm :oliphaunt:compileDebugKotlinAndroid :oliphaunt:compileReleaseKotlinAndroid :oliphaunt-android-gradle-plugin:check $(host_native_compile_task)"
+  static_tasks=":oliphaunt:spotlessCheck :oliphaunt:detekt :oliphaunt:checkMavenPublicationContract :oliphaunt:compileKotlinJvm :oliphaunt:compileDebugKotlinAndroid :oliphaunt:compileReleaseKotlinAndroid :oliphaunt-android-gradle-plugin:check"
   if [ -n "${ANDROID_HOME:-}" ]; then
     # Force only the analyzer tasks so an earlier incompatible result cannot be
     # accepted from Gradle's up-to-date/build caches without replaying its fatal
@@ -554,9 +523,9 @@ if [ "$mode" = "check-static" ]; then
 fi
 
 if [ "$mode" = "test-unit" ]; then
-  unit_tasks=":oliphaunt:jvmTest :oliphaunt:testDebugUnitTest :oliphaunt:testReleaseUnitTest $(host_native_test_task)"
+  unit_tasks=":oliphaunt:jvmTest :oliphaunt:testDebugUnitTest :oliphaunt:testReleaseUnitTest"
   # shellcheck disable=SC2086
-  run run_without_linked_native_runtime_with_repository_retry "$gradle_cmd" -p "$project_dir" \
+  run run_with_repository_retry "$gradle_cmd" -p "$project_dir" \
     $unit_tasks \
     $gradle_non_coverage_args \
     $android_abi_gradle_args \
@@ -588,9 +557,6 @@ fi
 
 run cmp src/runtimes/liboliphaunt/native/include/oliphaunt.h "$project_dir/oliphaunt/src/androidMain/cpp/include/oliphaunt.h"
 package_tasks=":oliphaunt:checkMavenPublicationContract :oliphaunt:metadataSourcesJar :oliphaunt:allMetadataJar :oliphaunt:jvmJar :oliphaunt:jvmSourcesJar :oliphaunt:androidReleaseSourcesJar :oliphaunt:bundleReleaseAar :oliphaunt-android-gradle-plugin:jar"
-if [ "$(uname -s)" = "Darwin" ]; then
-  package_tasks="$package_tasks :oliphaunt:macosArm64SourcesJar"
-fi
 # shellcheck disable=SC2086
 run "$gradle_cmd" -p "$project_dir" \
   $package_tasks \
@@ -606,7 +572,6 @@ metadata_jar="$kotlin_libs/oliphaunt-metadata-$kotlin_version.jar"
 jvm_jar="$kotlin_libs/oliphaunt-jvm-$kotlin_version.jar"
 jvm_sources="$kotlin_libs/oliphaunt-jvm-$kotlin_version-sources.jar"
 android_sources="$kotlin_libs/oliphaunt-android-$kotlin_version-sources.jar"
-macos_sources="$kotlin_libs/oliphaunt-macosarm64-$kotlin_version-sources.jar"
 android_release_aar="$kotlin_outputs/aar/oliphaunt-release.aar"
 android_gradle_plugin_jar="$gradle_build_root/oliphaunt-android-gradle-plugin/libs/oliphaunt-android-gradle-plugin-$kotlin_version.jar"
 
@@ -614,21 +579,20 @@ require_jar_entry "$metadata_sources" "commonMain/dev/oliphaunt/Oliphaunt.kt" \
   "Kotlin metadata sources artifact must include the common SDK API"
 require_jar_entry "$metadata_sources" "commonMain/dev/oliphaunt/Query.kt" \
   "Kotlin metadata sources artifact must include the common query helpers"
-reject_jar_entry_pattern "$metadata_sources" '(^|/)commonTest/|(^|/)androidUnitTest/|(^|/)nativeTest/' \
+reject_jar_entry_pattern "$metadata_sources" '(^|/)commonTest/|(^|/)androidUnitTest/' \
   "Kotlin metadata sources artifact must not include test sources"
 
 require_jar_entry "$metadata_jar" "META-INF/kotlin-project-structure-metadata.json" \
   "Kotlin metadata artifact must include project-structure metadata"
-require_jar_entry_pattern "$metadata_jar" '^commonMain/default/linkdata/package_dev\.oliphaunt/[0-9]+_oliphaunt\.knm$' \
-  "Kotlin metadata artifact must include common dev.oliphaunt linkdata"
+# The SDK's Android and JVM targets are both JVM-like, so Kotlin skips the
+# common metadata compilation. Common API contents are covered by the sources
+# and compiled target artifacts checked above and below.
 
 require_jar_entry "$jvm_jar" "dev/oliphaunt/OliphauntDatabase.class" \
   "Kotlin JVM artifact must include the public SDK database class"
-require_jar_entry "$jvm_jar" "dev/oliphaunt/RuntimeUnavailableEngine.class" \
-  "Kotlin JVM artifact must preserve the explicit unavailable-runtime implementation"
+reject_jar_entry_pattern "$jvm_jar" 'dev/oliphaunt/(ProtocolRequest|ProtocolResponse|RuntimeUnavailableEngine)\.class' \
+  "Kotlin JVM artifact must not expose removed protocol wrappers or the generic unavailable-runtime abstraction"
 
-require_jar_entry "$jvm_sources" "jvmMain/dev/oliphaunt/DefaultEngine.kt" \
-  "Kotlin JVM sources artifact must include the JVM runtime boundary"
 require_jar_entry "$jvm_sources" "commonMain/dev/oliphaunt/Oliphaunt.kt" \
   "Kotlin JVM sources artifact must include the common SDK API"
 
@@ -638,18 +602,11 @@ require_jar_entry "$android_sources" "androidMain/dev/oliphaunt/OliphauntAndroid
   "Kotlin Android sources artifact must include Android runtime-resources handling"
 require_jar_entry "$android_sources" "commonMain/dev/oliphaunt/Oliphaunt.kt" \
   "Kotlin Android sources artifact must include the common SDK API"
-reject_jar_entry_pattern "$android_sources" 'androidMain/cpp/|nativeInterop/|(^|/)liboliphaunt\.so$' \
+reject_jar_entry_pattern "$android_sources" 'androidMain/cpp/|(^|/)liboliphaunt\.so$' \
   "Kotlin Android sources artifact must not include native build outputs or bundled Oliphaunt runtime binaries"
 
 require_jar_entry "$android_gradle_plugin_jar" "dev/oliphaunt/android/extension-legal-catalog.json" \
   "Kotlin Android Gradle plugin must ship the canonical extension legal catalog used for offline verification"
-
-if [ "$(uname -s)" = "Darwin" ]; then
-  require_jar_entry "$macos_sources" "nativeMain/dev/oliphaunt/NativeDirectEngine.kt" \
-    "Kotlin macOS/native sources artifact must include the native-direct engine"
-  require_jar_entry "$macos_sources" "commonMain/dev/oliphaunt/Oliphaunt.kt" \
-    "Kotlin macOS/native sources artifact must include the common SDK API"
-fi
 
 require_jar_entry "$android_release_aar" "classes.jar" \
   "Kotlin Android release AAR must include compiled classes"

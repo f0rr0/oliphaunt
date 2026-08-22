@@ -24,4 +24,4 @@ oliphaunt_wasix-*.crates.tar.gz
 /examples/tauri/src-tauri/Cargo.lock
 /examples/tauri-wasix/src-tauri/Cargo.lock
 /examples/electron-wasix/src-wasix/Cargo.lock
-/src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.lock
+/examples/browser-wasix/dist/

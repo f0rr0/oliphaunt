@@ -561,6 +561,11 @@ int32_t oliphaunt_exec_protocol(
         pthread_mutex_unlock(&handle->mutex);
         return -1;
     }
+    if (handle->backup_mode_exit_unconfirmed) {
+        set_error(handle, "native liboliphaunt backup-mode exit is unconfirmed; close the database and restart the process before reopening it");
+        pthread_mutex_unlock(&handle->mutex);
+        return -1;
+    }
     if (handle->backend_exited) {
         set_error(handle, "native backend is not running");
         pthread_mutex_unlock(&handle->mutex);
@@ -618,6 +623,11 @@ int32_t oliphaunt_exec_simple_query(
         pthread_mutex_unlock(&handle->mutex);
         return -1;
     }
+    if (handle->backup_mode_exit_unconfirmed) {
+        set_error(handle, "native liboliphaunt backup-mode exit is unconfirmed; close the database and restart the process before reopening it");
+        pthread_mutex_unlock(&handle->mutex);
+        return -1;
+    }
     if (handle->backend_exited) {
         set_error(handle, "native backend is not running");
         pthread_mutex_unlock(&handle->mutex);
@@ -658,6 +668,11 @@ int32_t oliphaunt_exec_protocol_stream(
     pthread_mutex_lock(&handle->mutex);
     if (!handle->logical_active) {
         set_error(handle, "native liboliphaunt logical handle is closed");
+        pthread_mutex_unlock(&handle->mutex);
+        return -1;
+    }
+    if (handle->backup_mode_exit_unconfirmed) {
+        set_error(handle, "native liboliphaunt backup-mode exit is unconfirmed; close the database and restart the process before reopening it");
         pthread_mutex_unlock(&handle->mutex);
         return -1;
     }

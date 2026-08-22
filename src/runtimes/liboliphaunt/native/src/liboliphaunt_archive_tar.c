@@ -9,6 +9,7 @@
 #endif
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -19,7 +20,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
-#include <time.h>
 
 #ifndef O_BINARY
 #define O_BINARY 0
@@ -264,8 +264,7 @@ static int validate_relative_archive_path(const char *path, bool require_pgdata_
     if (strcmp(path, "pgdata") == 0 || strncmp(path, "pgdata/", 7) == 0) {
         return 0;
     }
-    if (strcmp(path, "manifest.properties") == 0 ||
-        strcmp(path, ".oliphaunt/backup-manifest.properties") == 0) {
+    if (strcmp(path, ".oliphaunt/backup-manifest.properties") == 0) {
         return 0;
     }
     return -1;
@@ -305,7 +304,6 @@ static char *canonical_relative_archive_path(OliphauntHandle *handle, const char
         }
         if (component_count == 0 && require_pgdata_prefix &&
             !(len == 6 && memcmp(start, "pgdata", 6) == 0) &&
-            !(len == 19 && memcmp(start, "manifest.properties", 19) == 0) &&
             !(len == 10 && memcmp(start, ".oliphaunt", 10) == 0)) {
             free(out);
             set_error(handle, "physical archive entry is unsafe or outside pgdata");
@@ -505,7 +503,7 @@ static int tar_append_header(
         set_error(handle, message);
         return -1;
     }
-    tar_write_octal(header + 100, 8, (unsigned long long)(mode & 07777));
+    tar_write_octal(header + 100, 8, (unsigned long long)(mode & 0777));
     tar_write_octal(header + 108, 8, (unsigned long long)uid);
     tar_write_octal(header + 116, 8, (unsigned long long)gid);
     tar_write_octal(header + 124, 12, (unsigned long long)size);
@@ -593,17 +591,17 @@ static int tar_append_file(OliphauntByteBuffer *archive, OliphauntHandle *handle
             archive_path,
             '0',
             (size_t)st->st_size,
-            st->st_mode,
-            st->st_uid,
-            st->st_gid,
-            st->st_mtime,
+            0600,
+            0,
+            0,
+            0,
             NULL) != 0) {
         return -1;
     }
     return tar_append_file_contents(archive, handle, source, (size_t)st->st_size);
 }
 
-static int tar_append_directory(OliphauntByteBuffer *archive, OliphauntHandle *handle, const char *archive_path, const struct stat *st) {
+static int tar_append_directory(OliphauntByteBuffer *archive, OliphauntHandle *handle, const char *archive_path) {
     if (reserve_tar_entry(archive, handle, 0) != 0) {
         return -1;
     }
@@ -613,23 +611,38 @@ static int tar_append_directory(OliphauntByteBuffer *archive, OliphauntHandle *h
         archive_path,
         '5',
         0,
-        st->st_mode,
-        st->st_uid,
-        st->st_gid,
-        st->st_mtime,
+        0700,
+        0,
+        0,
+        0,
         NULL);
 }
 
 static int should_skip_pgdata_entry(const char *relative, bool include_wal_contents) {
-    if (strcmp(relative, "postmaster.pid") == 0 || strcmp(relative, "postmaster.opts") == 0) {
-        return 1;
-    }
-    if (strcmp(relative, ".oliphaunt.lock") == 0) {
-        return 1;
-    }
     const char *name = strrchr(relative, '/');
     name = name == NULL ? relative : name + 1;
-    if (strcmp(name, "pg_internal.init") == 0 || strncmp(name, "pgsql_tmp", 9) == 0) {
+    if (strcmp(name, ".DS_Store") == 0) {
+        return 1;
+    }
+    static const char *top_level_transient[] = {
+        "backup_label",
+        "backup_manifest",
+        "current_logfiles.tmp",
+        "postgresql.auto.conf.tmp",
+        "postmaster.opts",
+        "postmaster.pid",
+        "tablespace_map",
+    };
+    for (size_t i = 0; i < sizeof(top_level_transient) / sizeof(top_level_transient[0]); i++) {
+        if (strcmp(relative, top_level_transient[i]) == 0) {
+            return 1;
+        }
+    }
+    if (strcmp(relative, "global/pg_control") == 0) {
+        return 1;
+    }
+    if (strncmp(name, "pg_internal.init", strlen("pg_internal.init")) == 0 ||
+        strncmp(name, "pgsql_tmp", 9) == 0) {
         return 1;
     }
     const char *slash = strchr(relative, '/');
@@ -640,6 +653,7 @@ static int should_skip_pgdata_entry(const char *relative, bool include_wal_conte
     static const char *transient[] = {
         "pg_dynshmem",
         "pg_notify",
+        "pg_replslot",
         "pg_serial",
         "pg_snapshots",
         "pg_stat_tmp",
@@ -709,9 +723,18 @@ static int append_pgdata_entry(OliphauntByteBuffer *archive, OliphauntHandle *ha
         set_error(handle, message);
         return -1;
     }
+    int reparse = oliphaunt_path_is_reparse_point(source);
+    if (reparse > 0) {
+        char message[1024];
+        snprintf(message, sizeof(message), "physical archive does not support Windows reparse point %s", archive_path);
+        free(source);
+        free(archive_path);
+        set_error(handle, message);
+        return -1;
+    }
     int rc = 0;
     if (S_ISDIR(st.st_mode)) {
-        rc = tar_append_directory(archive, handle, archive_path, &st);
+        rc = tar_append_directory(archive, handle, archive_path);
         if (rc == 0) {
             rc = append_children(archive, handle, pgdata, relative, include_wal_contents);
         }
@@ -745,65 +768,239 @@ int oliphaunt_archive_append_pgdata_tree(OliphauntByteBuffer *archive, Oliphaunt
         set_error(handle, message);
         return -1;
     }
-    if (!S_ISDIR(st.st_mode)) {
+    if (oliphaunt_path_is_reparse_point(pgdata) > 0 || !S_ISDIR(st.st_mode)) {
         char message[1024];
-        snprintf(message, sizeof(message), "physical backup PGDATA %s is not a directory", pgdata);
+        snprintf(message, sizeof(message), "physical backup PGDATA %s is not a concrete directory", pgdata);
         set_error(handle, message);
         return -1;
     }
-    if (tar_append_directory(archive, handle, "pgdata", &st) != 0) {
+    if (tar_append_directory(archive, handle, "pgdata") != 0) {
         return -1;
     }
     return append_children(archive, handle, pgdata, "", false);
 }
 
-int oliphaunt_archive_append_pg_wal_tree(OliphauntByteBuffer *archive, OliphauntHandle *handle, const char *pgdata) {
+int oliphaunt_archive_append_pg_control(OliphauntByteBuffer *archive, OliphauntHandle *handle, const char *pgdata) {
+    char *source = oliphaunt_join_path(pgdata, "global/pg_control");
+    if (source == NULL) {
+        set_error(handle, "out of memory building pg_control backup path");
+        return -1;
+    }
+    struct stat st;
+    if (lstat(source, &st) != 0 || oliphaunt_path_is_reparse_point(source) > 0 || !S_ISREG(st.st_mode)) {
+        char message[1024];
+        snprintf(message, sizeof(message), "physical backup pg_control %s is not a concrete regular file", source);
+        set_error(handle, message);
+        free(source);
+        return -1;
+    }
+    int rc = tar_append_file(archive, handle, source, "pgdata/global/pg_control", &st);
+    free(source);
+    return rc;
+}
+
+typedef struct OliphauntWalPosition {
+    uint32_t timeline;
+    uint64_t ordinal;
+} OliphauntWalPosition;
+
+static int parse_wal_file(
+    OliphauntHandle *handle,
+    const char *wal_file,
+    uint64_t segments_per_xlogid,
+    OliphauntWalPosition *out) {
+    if (wal_file == NULL || strlen(wal_file) != 24) {
+        set_error(handle, "physical backup returned a malformed WAL filename");
+        return -1;
+    }
+    uint32_t parts[3] = {0, 0, 0};
+    for (size_t part = 0; part < 3; part++) {
+        for (size_t digit = 0; digit < 8; digit++) {
+            unsigned char byte = (unsigned char)wal_file[part * 8 + digit];
+            uint32_t value;
+            if (byte >= '0' && byte <= '9') {
+                value = (uint32_t)(byte - '0');
+            } else if (byte >= 'A' && byte <= 'F') {
+                value = (uint32_t)(byte - 'A' + 10);
+            } else {
+                set_error(handle, "physical backup returned a malformed WAL filename");
+                return -1;
+            }
+            parts[part] = (parts[part] << 4) | value;
+        }
+    }
+    if ((uint64_t)parts[2] >= segments_per_xlogid) {
+        set_error(handle, "physical backup WAL filename has a segment index outside the configured WAL segment size");
+        return -1;
+    }
+    out->timeline = parts[0];
+    out->ordinal = (uint64_t)parts[1] * segments_per_xlogid + (uint64_t)parts[2];
+    return 0;
+}
+
+int oliphaunt_visit_wal_range(
+    OliphauntHandle *handle,
+    const char *start_wal_file,
+    const char *stop_wal_file,
+    uint64_t wal_segment_size,
+    OliphauntWalSegmentVisitor visitor,
+    void *context) {
+    static const uint64_t xlogid_bytes = UINT64_C(1) << 32;
+    if (wal_segment_size < UINT64_C(1) * 1024 * 1024 ||
+        wal_segment_size > UINT64_C(1024) * 1024 * 1024 ||
+        (wal_segment_size & (wal_segment_size - 1)) != 0 ||
+        xlogid_bytes % wal_segment_size != 0) {
+        set_error(handle, "physical backup returned an invalid WAL segment size");
+        return -1;
+    }
+    uint64_t segments_per_xlogid = xlogid_bytes / wal_segment_size;
+    OliphauntWalPosition start;
+    OliphauntWalPosition stop;
+    if (parse_wal_file(handle, start_wal_file, segments_per_xlogid, &start) != 0 ||
+        parse_wal_file(handle, stop_wal_file, segments_per_xlogid, &stop) != 0) {
+        return -1;
+    }
+    if (start.timeline != stop.timeline) {
+        set_error(handle, "physical backup WAL range changes timeline");
+        return -1;
+    }
+    if (start.ordinal > stop.ordinal) {
+        set_error(handle, "physical backup returned a reversed WAL range");
+        return -1;
+    }
+    for (uint64_t ordinal = start.ordinal;; ordinal++) {
+        uint64_t log = ordinal / segments_per_xlogid;
+        uint64_t segment = ordinal % segments_per_xlogid;
+        char wal_file[25];
+        snprintf(
+            wal_file,
+            sizeof(wal_file),
+            "%08" PRIX32 "%08" PRIX32 "%08" PRIX32,
+            start.timeline,
+            (uint32_t)log,
+            (uint32_t)segment);
+        if (visitor != NULL && visitor(context, wal_file) != 0) {
+            return -1;
+        }
+        if (ordinal == stop.ordinal) {
+            break;
+        }
+    }
+    return 0;
+}
+
+typedef struct OliphauntWalArchiveContext {
+    OliphauntByteBuffer *archive;
+    OliphauntHandle *handle;
+    const char *pg_wal;
+    uint64_t wal_segment_size;
+} OliphauntWalArchiveContext;
+
+static int append_required_wal_segment(void *raw_context, const char *wal_file) {
+    OliphauntWalArchiveContext *context = (OliphauntWalArchiveContext *)raw_context;
+    char *source = oliphaunt_join_path(context->pg_wal, wal_file);
+    char *archive_path = oliphaunt_join_path("pgdata/pg_wal", wal_file);
+    if (source == NULL || archive_path == NULL) {
+        free(source);
+        free(archive_path);
+        set_error(context->handle, "out of memory building required WAL segment path");
+        return -1;
+    }
+    struct stat st;
+    int reparse = oliphaunt_path_is_reparse_point(source);
+    if (lstat(source, &st) != 0 || reparse > 0 || !S_ISREG(st.st_mode) ||
+        st.st_size < 0 || (uint64_t)st.st_size != context->wal_segment_size) {
+        char message[1024];
+        snprintf(
+            message,
+            sizeof(message),
+            "physical backup requires complete WAL segment %s with exactly %llu bytes",
+            wal_file,
+            (unsigned long long)context->wal_segment_size);
+        set_error(context->handle, message);
+        free(source);
+        free(archive_path);
+        return -1;
+    }
+    int rc = tar_append_file(context->archive, context->handle, source, archive_path, &st);
+    free(source);
+    free(archive_path);
+    return rc;
+}
+
+int oliphaunt_archive_append_wal_range(
+    OliphauntByteBuffer *archive,
+    OliphauntHandle *handle,
+    const char *pgdata,
+    const char *start_wal_file,
+    const char *stop_wal_file,
+    uint64_t wal_segment_size) {
     char *pg_wal = oliphaunt_join_path(pgdata, "pg_wal");
     if (pg_wal == NULL) {
         set_error(handle, "out of memory building pg_wal path");
         return -1;
     }
     struct stat st;
-    if (lstat(pg_wal, &st) != 0 || !S_ISDIR(st.st_mode)) {
+    if (lstat(pg_wal, &st) != 0) {
+        char message[1024];
+        snprintf(message, sizeof(message), "stat pg_wal %s for physical backup: %s", pg_wal, strerror(errno));
+        set_error(handle, message);
         free(pg_wal);
-        return 0;
+        return -1;
     }
+    if (oliphaunt_path_is_reparse_point(pg_wal) > 0 || !S_ISDIR(st.st_mode)) {
+        char message[1024];
+        snprintf(message, sizeof(message), "physical backup pg_wal %s is not a concrete directory", pg_wal);
+        set_error(handle, message);
+        free(pg_wal);
+        return -1;
+    }
+    OliphauntWalArchiveContext context = {
+        .archive = archive,
+        .handle = handle,
+        .pg_wal = pg_wal,
+        .wal_segment_size = wal_segment_size,
+    };
+    int rc = oliphaunt_visit_wal_range(
+        handle,
+        start_wal_file,
+        stop_wal_file,
+        wal_segment_size,
+        append_required_wal_segment,
+        &context);
     free(pg_wal);
-    return append_children(archive, handle, pgdata, "pg_wal", true);
+    return rc;
 }
 
-int oliphaunt_archive_append_generated_file(OliphauntByteBuffer *archive, OliphauntHandle *handle, const char *archive_path, const char *contents) {
+int oliphaunt_archive_append_text(OliphauntByteBuffer *archive, OliphauntHandle *handle, const char *archive_path, const char *contents) {
     size_t len = contents == NULL ? 0 : strlen(contents);
-    return oliphaunt_archive_append_generated_bytes(
+    return oliphaunt_archive_append_bytes(
         archive,
         handle,
         archive_path,
         (const uint8_t *)contents,
-        len,
-        0600);
+        len);
 }
 
-int oliphaunt_archive_append_generated_bytes(
+int oliphaunt_archive_append_bytes(
     OliphauntByteBuffer *archive,
     OliphauntHandle *handle,
     const char *archive_path,
     const uint8_t *contents,
-    size_t len,
-    uint32_t mode) {
+    size_t len) {
     if (len > 0 && contents == NULL) {
-        set_error(handle, "generated backup file has bytes but no data pointer");
+        set_error(handle, "archive entry has bytes but no data pointer");
         return -1;
     }
-    mode_t file_mode = mode == 0 ? 0600 : (mode_t)(mode & 0777u);
     if (reserve_tar_entry(archive, handle, len) != 0) {
         return -1;
     }
-    if (tar_append_header(archive, handle, archive_path, '0', len, file_mode, 0, 0, time(NULL), NULL) != 0) {
+    if (tar_append_header(archive, handle, archive_path, '0', len, 0600, 0, 0, 0, NULL) != 0) {
         return -1;
     }
     if (buffer_append(archive, contents, len) != 0 ||
         buffer_append_zeros(archive, (512 - (len % 512)) % 512) != 0) {
-        set_error(handle, "out of memory appending generated backup file");
+        set_error(handle, "out of memory appending archive entry");
         return -1;
     }
     return 0;
@@ -1018,11 +1215,11 @@ static int ensure_parent_dir_for_path(OliphauntHandle *handle, const char *path)
     return rc;
 }
 
-static int unpack_tar_file(OliphauntHandle *handle, const char *path, const uint8_t *data, size_t len, mode_t mode) {
+static int unpack_tar_file(OliphauntHandle *handle, const char *path, const uint8_t *data, size_t len) {
     if (ensure_parent_dir_for_path(handle, path) != 0) {
         return -1;
     }
-    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, mode & 07777);
+    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_BINARY, 0600);
     if (fd < 0) {
         char message[1024];
         snprintf(message, sizeof(message), "create restored file %s: %s", path, strerror(errno));
@@ -1032,7 +1229,10 @@ static int unpack_tar_file(OliphauntHandle *handle, const char *path, const uint
     size_t off = 0;
     while (off < len) {
         ssize_t written = write(fd, data + off, len - off);
-        if (written < 0) {
+        if (written <= 0) {
+            if (written == 0) {
+                errno = EIO;
+            }
             char message[1024];
             snprintf(message, sizeof(message), "write restored file %s: %s", path, strerror(errno));
             close(fd);
@@ -1041,8 +1241,21 @@ static int unpack_tar_file(OliphauntHandle *handle, const char *path, const uint
         }
         off += (size_t)written;
     }
-    (void)fchmod(fd, mode & 07777);
-    close(fd);
+    if (fchmod(fd, 0600) != 0) {
+        char message[1024];
+        snprintf(message, sizeof(message), "set restored file permissions %s: %s", path, strerror(errno));
+        close(fd);
+        unlink(path);
+        set_error(handle, message);
+        return -1;
+    }
+    if (close(fd) != 0) {
+        char message[1024];
+        snprintf(message, sizeof(message), "close restored file %s: %s", path, strerror(errno));
+        unlink(path);
+        set_error(handle, message);
+        return -1;
+    }
     return 0;
 }
 
@@ -1116,6 +1329,15 @@ static int process_physical_archive(OliphauntHandle *handle, const uint8_t *data
         }
         canonical_name = canonical_relative_archive_path(handle, name, true);
         if (canonical_name == NULL) {
+            goto cleanup;
+        }
+        if (strcmp(canonical_name, "pgdata/postmaster.pid") == 0 ||
+            strcmp(canonical_name, "pgdata/postmaster.opts") == 0) {
+            char message[256];
+            snprintf(message, sizeof(message),
+                     "physical archive contains PostgreSQL process-state file %s",
+                     canonical_name);
+            set_error(handle, message);
             goto cleanup;
         }
         if (remember_archive_path(handle, &seen_paths, &seen_count, &seen_cap, canonical_name) != 0) {
@@ -1202,14 +1424,19 @@ static int process_physical_archive(OliphauntHandle *handle, const uint8_t *data
             }
             int rc = 0;
             if (type == '5') {
-                rc = oliphaunt_mkdir_p(dest, (mode_t)(mode == 0 ? 0700 : mode));
+                rc = oliphaunt_mkdir_p(dest, 0700);
                 if (rc != 0) {
                     char message[1024];
                     snprintf(message, sizeof(message), "create restored directory %s: %s", dest, strerror(errno));
                     set_error(handle, message);
+                } else if (chmod(dest, 0700) != 0) {
+                    char message[1024];
+                    snprintf(message, sizeof(message), "set restored directory permissions %s: %s", dest, strerror(errno));
+                    set_error(handle, message);
+                    rc = -1;
                 }
             } else {
-                rc = unpack_tar_file(handle, dest, data + off, (size_t)size, (mode_t)(mode == 0 ? 0600 : mode));
+                rc = unpack_tar_file(handle, dest, data + off, (size_t)size);
             }
             free(dest);
             dest = NULL;

@@ -30,6 +30,8 @@ THIRD_PARTY_ROOT = ROOT / "src/sources/third-party"
 PRODUCTION_THIRD_PARTY_DOMAINS = ("shared", "native", "wasix")
 EXTENSIONS_ROOT = ROOT / "src/extensions"
 EXTERNAL_ROOT = EXTENSIONS_ROOT / "external"
+SMOKE_RECIPE_ROOT = ROOT / "src/shared/fixtures/extensions"
+SMOKE_RECIPE_MANIFEST = SMOKE_RECIPE_ROOT / "manifest.json"
 EXTENSION_ENVELOPE_FILENAMES = {
     "CHANGELOG.md",
     "VERSION",
@@ -63,6 +65,9 @@ GENERATED_KOTLIN_GRADLE_PLUGIN_CATALOG = (
     / "src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/extensions.properties"
 )
 GENERATED_RN_SDK_MODULE = ROOT / "src/sdks/react-native/src/generated/extensions.ts"
+GENERATED_MOBILE_SMOKE_MODULE = (
+    ROOT / "examples/react-native-expo/src/generated/extension-smoke.ts"
+)
 GENERATED_MOBILE_REGISTRY = ROOT / "src/extensions/generated/mobile/static-registry.json"
 GENERATED_MOBILE_STATIC_SPECS = ROOT / "src/extensions/generated/mobile/static-extensions.tsv"
 GENERATED_WASIX_METADATA = ROOT / "src/extensions/generated/wasix/extensions.json"
@@ -469,7 +474,11 @@ def source_digest_inputs() -> list[str]:
         and path.name != "source.toml"
         and path.name not in EXTENSION_ENVELOPE_FILENAMES
     )
-    return [*BASE_SOURCE_DIGEST_INPUTS, *source_files, *recipe_files]
+    smoke_recipe_files = [
+        rel(SMOKE_RECIPE_MANIFEST),
+        *sorted(rel(path) for path in SMOKE_RECIPE_ROOT.glob("*.sql") if path.is_file()),
+    ]
+    return [*BASE_SOURCE_DIGEST_INPUTS, *source_files, *recipe_files, *smoke_recipe_files]
 
 
 def validate_no_obsolete_extension_files(root: Path = EXTENSIONS_ROOT) -> None:
@@ -719,12 +728,6 @@ def validate_external_recipes(catalog: dict) -> None:
         for field in ("extension_sql_file_prefixes", "extension_sql_file_names"):
             if field in artifacts and not isinstance(artifacts.get(field), list):
                 fail(f"{rel(recipe)} artifacts.{field} must be an array when present")
-        tests = recipe.parent / "tests"
-        if not (tests / "smoke.sql").exists():
-            fail(f"{rel(recipe)} must provide {rel(tests / 'smoke.sql')}")
-        if "-- oliphaunt-statement" not in (tests / "smoke.sql").read_text(encoding="utf-8"):
-            fail(f"{rel(tests / 'smoke.sql')} must include explicit statement delimiters")
-
         if kind == "external-complex":
             for path in (
                 recipe.parent / "targets/native.toml",
@@ -763,6 +766,65 @@ def validate_external_recipes(catalog: dict) -> None:
         for module in artifacts.get("native_modules", []):
             if module not in generated_modules:
                 fail(f"{rel(recipe)} native module {module!r} must match generated load-order")
+
+
+def split_smoke_statements(sql: str) -> list[str]:
+    return [
+        statement.strip()
+        for statement in sql.split("-- oliphaunt-statement")
+        if statement.strip()
+    ]
+
+
+def validate_extension_smoke_recipes(catalog: dict) -> None:
+    expected = sorted(
+        validate_sql_name(
+            row.get("sql-name", row.get("id")),
+            f"{rel(CATALOG)} extension smoke SQL name",
+        )
+        for row in catalog.get("extensions", [])
+        if isinstance(row, dict)
+    )
+    manifest = read_json(SMOKE_RECIPE_MANIFEST)
+    if set(manifest) != {"format-version", "recipes"} or manifest.get("format-version") != 1:
+        fail(f"{rel(SMOKE_RECIPE_MANIFEST)} must contain only format-version 1 and recipes")
+    recipes = manifest.get("recipes")
+    if not isinstance(recipes, dict):
+        fail(f"{rel(SMOKE_RECIPE_MANIFEST)} recipes must be an object")
+    if sorted(recipes) != expected:
+        fail(
+            f"{rel(SMOKE_RECIPE_MANIFEST)} must exactly map the public extension catalog; "
+            f"recipe-only={sorted(set(recipes) - set(expected))}, "
+            f"catalog-only={sorted(set(expected) - set(recipes))}"
+        )
+    expected_files = [f"{sql_name}.sql" for sql_name in expected]
+    mapped_files = list(recipes.values())
+    if mapped_files != expected_files or len(set(mapped_files)) != len(mapped_files):
+        fail(
+            f"{rel(SMOKE_RECIPE_MANIFEST)} must map each SQL name to its unique <sql-name>.sql recipe"
+        )
+    files = sorted(path for path in SMOKE_RECIPE_ROOT.iterdir() if path.is_file())
+    invalid = [
+        rel(path)
+        for path in files
+        if path != SMOKE_RECIPE_MANIFEST and path.suffix != ".sql"
+    ]
+    if invalid:
+        fail(f"{rel(SMOKE_RECIPE_ROOT)} contains non-SQL recipe files: {invalid}")
+    sql_files = [path for path in files if path.suffix == ".sql"]
+    actual = [path.name for path in sql_files]
+    if actual != expected_files:
+        fail(
+            f"{rel(SMOKE_RECIPE_ROOT)} must exactly match the public extension catalog; "
+            f"recipe-only={sorted(set(actual) - set(expected_files))}, "
+            f"catalog-only={sorted(set(expected_files) - set(actual))}"
+        )
+    for path in sql_files:
+        text = path.read_text(encoding="utf-8")
+        if "-- oliphaunt-statement" not in text:
+            fail(f"{rel(path)} must include explicit statement delimiters")
+        if not split_smoke_statements(text):
+            fail(f"{rel(path)} must contain at least one SQL statement")
 
 
 def validate_pg_textsearch_mobile_version_flag() -> None:
@@ -1260,6 +1322,23 @@ def generated_typescript_extension_module(
     return format_typescript_source(source, GENERATED_TS_SDK_MODULE)
 
 
+def generated_mobile_extension_smoke_module(metadata: dict) -> str:
+    recipes = {
+        row["sql-name"]: split_smoke_statements(
+            (SMOKE_RECIPE_ROOT / f"{row['sql-name']}.sql").read_text(
+                encoding="utf-8"
+            )
+        )
+        for row in metadata.get("extensions", [])
+    }
+    source = (
+        f"// This file is generated by {CHECK_EXTENSION_MODEL_PATH}.\n"
+        "// Do not edit by hand. It belongs only to installed mobile qualification.\n\n"
+        f"export const GENERATED_MOBILE_EXTENSION_SMOKE = {json.dumps(recipes, indent=2, sort_keys=True)} as const satisfies Readonly<Record<string, readonly string[]>>;\n"
+    )
+    return format_typescript_source(source, GENERATED_MOBILE_SMOKE_MODULE)
+
+
 def generated_kotlin_extension_module(metadata: dict) -> str:
     rows = sorted(metadata.get("extensions", []), key=lambda row: str(row["sql-name"]))
     body = "\n".join(
@@ -1512,7 +1591,6 @@ def rust_match(
 def generated_rust_extension_module(catalog: dict) -> str:
     rows = generated_rust_extension_rows(catalog)
     rows_by_sql_name = {str(row["sql-name"]): row for row in rows}
-    first_party_rows = [row for row in rows if row["first-party"]]
 
     for row in rows:
         if len(row["shared-preload-libraries"]) > 1:
@@ -1525,11 +1603,7 @@ def generated_rust_extension_module(catalog: dict) -> str:
         f"// @generated by {CHECK_EXTENSION_MODEL_PATH} --write",
         "// Do not edit by hand.",
         "",
-        "use super::{",
-        "    ExtensionArtifactPolicy, ExtensionCoverage, ExtensionManifestEntry, ExtensionModuleAsset,",
-        "    ExtensionRuntimeEnvironment, ExtensionSmokePlan,",
-        "    ExtensionSqlAsset, MobileStaticLinkStatus,",
-        "};",
+        "use super::ExtensionRuntimeEnvironment;",
         "",
         "/// Native PostgreSQL 18 extension that can be explicitly selected by an app.",
         "#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]",
@@ -1556,24 +1630,10 @@ def generated_rust_extension_module(catalog: dict) -> str:
         [
             "}",
             "",
-        "/// First-party PostgreSQL 18 extensions generated from the shared catalog.",
-        f"pub(super) const FIRST_PARTY_PG18_SUPPORTED: &[Extension] = {rust_extension_slice(first_party_rows)};",
         "/// All PostgreSQL 18 extension rows known to the Rust SDK.",
         f"pub(super) const ALL_PG18_SUPPORTED: &[Extension] = {rust_extension_slice(rows)};",
         "",
         rust_match("sql_name", "&'static str", rows, lambda row: rust_string_literal(row["sql-name"])),
-        rust_match(
-            "artifact_product",
-            "Option<&'static str>",
-            rows,
-            lambda row: rust_option_string(row.get("artifact-product")),
-        ),
-        rust_match(
-            "release_product",
-            "Option<&'static str>",
-            rows,
-            lambda row: rust_option_string(row.get("release-product")),
-        ),
         rust_match(
             "native_module_stem",
             "Option<&'static str>",
@@ -1648,82 +1708,6 @@ def generated_rust_extension_module(catalog: dict) -> str:
             ),
         ),
     ]
-    )
-
-    artifact_arms = []
-    for row in rows:
-        policy = row.get("external-policy")
-        if policy is None:
-            artifact_arms.append(f"        {rust_extension_expr(row)} => ExtensionArtifactPolicy::FirstParty,")
-            continue
-        artifact_arms.append(
-            "\n".join(
-                [
-                    f"        {rust_extension_expr(row)} => ExtensionArtifactPolicy::External {{",
-                    f"            upstream: {rust_string_literal(policy['upstream'])},",
-                    f"            license: {rust_string_literal(policy['license'])},",
-                    f"            source_kind: ExtensionSourceKind::{policy['source-kind']},",
-                    f"            redistribution: ExtensionRedistribution::{policy['redistribution']},",
-                    f"            requires_shared_preload: {'true' if policy['requires-shared-preload'] else 'false'},",
-                    f"            notes: {rust_string_literal(policy['notes'])},",
-                    "        },",
-                ]
-            )
-        )
-    text.append(
-        "/// Generated extension packaging policy accessor.\n"
-        "pub(super) const fn artifact_policy(extension: Extension) -> ExtensionArtifactPolicy {\n"
-        "    match extension {\n"
-        + "\n".join(artifact_arms)
-        + "\n    }\n"
-        "}\n"
-    )
-
-    manifest_rows = ",\n".join(
-        f"    manifest_entry({rust_extension_expr(row)})" for row in rows
-    )
-    text.append(
-        "/// Static native extension manifest generated from the shared catalog.\n"
-        "pub(super) const NATIVE_EXTENSION_MANIFEST: &[ExtensionManifestEntry] = &[\n"
-        f"{manifest_rows},\n"
-        "];\n"
-    )
-    text.append(
-        "const fn manifest_entry(extension: Extension) -> ExtensionManifestEntry {\n"
-        "    let module = match native_module_stem(extension) {\n"
-        "        Some(stem) => ExtensionModuleAsset::NativeModule { stem },\n"
-        "        None => ExtensionModuleAsset::SqlOnly,\n"
-        "    };\n"
-        "    let sql_assets = if creates_extension(extension) {\n"
-        "        ExtensionSqlAsset::ControlAndSql\n"
-        "    } else {\n"
-        "        ExtensionSqlAsset::LoadableModuleOnly\n"
-        "    };\n"
-        "    let smoke = if creates_extension(extension) {\n"
-        "        ExtensionSmokePlan::CreateExtensionCascade\n"
-        "    } else {\n"
-        "        ExtensionSmokePlan::LoadSharedLibrary\n"
-        "    };\n"
-        "    let mobile_static_link = match module {\n"
-        "        ExtensionModuleAsset::NativeModule { .. } => MobileStaticLinkStatus::PendingRegistry,\n"
-        "        ExtensionModuleAsset::SqlOnly => MobileStaticLinkStatus::NotRequiredSqlOnly,\n"
-        "    };\n"
-        "    ExtensionManifestEntry {\n"
-        "        extension,\n"
-        "        sql_name: sql_name(extension),\n"
-        "        pg_major: 18,\n"
-        "        pg18_supported: true,\n"
-        "        creates_extension: creates_extension(extension),\n"
-        "        sql_assets,\n"
-        "        module,\n"
-        "        dependencies: dependencies(extension),\n"
-        "        data_files: extension_data_files(extension),\n"
-        "        smoke,\n"
-        "        coverage: ExtensionCoverage::GATED_RELEASE_MATRIX,\n"
-        "        mobile_static_link,\n"
-        "        artifact_policy: artifact_policy(extension),\n"
-        "    }\n"
-        "}\n"
     )
 
     return format_rust_source("\n".join(text))
@@ -1943,6 +1927,11 @@ def validate_generated_sdk_metadata(catalog: dict, write: bool) -> None:
     validate_generated_text_file(
         GENERATED_RN_SDK_MODULE,
         generated_typescript_extension_module(metadata, ios_static_dependencies),
+        write,
+    )
+    validate_generated_text_file(
+        GENERATED_MOBILE_SMOKE_MODULE,
+        generated_mobile_extension_smoke_module(metadata),
         write,
     )
     validate_generated_text_file(
@@ -2391,6 +2380,7 @@ def self_test() -> None:
     for path in [
         "src/extensions/external/postgis/recipe.toml",
         "src/extensions/catalog/native-components.toml",
+        "src/shared/fixtures/extensions/postgis.sql",
     ]:
         if path not in digest_inputs:
             fail(f"self-test expected source recipe input to stay in source digest inputs: {path}")
@@ -2578,6 +2568,7 @@ def main() -> None:
         SOURCE_CATALOG,
         CATALOG,
         CONTRIB_RECIPE,
+        SMOKE_RECIPE_ROOT,
     ):
         if not path.exists():
             fail(f"missing required extension model file: {rel(path)}")
@@ -2600,6 +2591,7 @@ def main() -> None:
     validate_contrib_recipe(catalog)
     validate_native_component_inventory(catalog)
     validate_external_recipes(catalog)
+    validate_extension_smoke_recipes(catalog)
     evidence_summary_pending = args.write_evidence_summary
     if evidence_summary_pending:
         # Validate the complete projection now, but defer the only write until

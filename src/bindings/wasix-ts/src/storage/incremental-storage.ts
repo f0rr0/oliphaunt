@@ -1,6 +1,6 @@
 import type { WasixDirectoryMount } from '../archive.js';
 import { composeWasixStorageFailure, WasixStorageError } from '../errors.js';
-import type { WasixStorageDurability } from '../errors.js';
+import type { WasixStorageCommitState } from '../errors.js';
 import type {
   StorageDirectory,
   WasixStorageLease,
@@ -26,7 +26,7 @@ export type IncrementalStorageBackend = {
   acquireLock(): Promise<ExclusiveStorageLock>;
   openStore(): Promise<IncrementalStorageStore>;
   /** Atomic stores retain `not-persisted`; filesystem stores report `unknown`. */
-  writeFailureDurability?: WasixStorageDurability;
+  writeFailureCommitState?: WasixStorageCommitState;
 };
 
 /**
@@ -50,7 +50,7 @@ export async function acquireIncrementalStorage(
       lock,
       template,
       snapshot,
-      backend.writeFailureDurability ?? 'not-persisted',
+      backend.writeFailureCommitState ?? 'not-persisted',
     );
   } catch (error) {
     let primary: Error =
@@ -58,7 +58,7 @@ export async function acquireIncrementalStorage(
         ? error
         : new WasixStorageError(`could not open ${label}: ${describeError(error)}`, {
             code: 'unavailable',
-            durability: 'unchanged',
+            commitState: 'unchanged',
             cause: error,
           });
     try {
@@ -86,7 +86,7 @@ class IncrementalStorageLease implements WasixStorageLease {
   readonly #store: IncrementalStorageStore;
   readonly #lock: ExclusiveStorageLock;
   readonly #persistedEntries = new Map<string, 'dir' | 'file'>();
-  readonly #writeFailureDurability: WasixStorageDurability;
+  readonly #writeFailureCommitState: WasixStorageCommitState;
   #closed = false;
   #hasStoredGeneration: boolean;
 
@@ -96,7 +96,7 @@ class IncrementalStorageLease implements WasixStorageLease {
     lock: ExclusiveStorageLock,
     template: WasixDirectoryMount,
     snapshot: StoredSnapshot | undefined,
-    writeFailureDurability: WasixStorageDurability,
+    writeFailureCommitState: WasixStorageCommitState,
   ) {
     this.#label = label;
     this.#store = store;
@@ -104,7 +104,7 @@ class IncrementalStorageLease implements WasixStorageLease {
     this.state = snapshot === undefined ? 'new' : 'existing';
     this.mount = snapshot === undefined ? template : snapshotToMount(snapshot);
     this.#hasStoredGeneration = snapshot !== undefined;
-    this.#writeFailureDurability = writeFailureDurability;
+    this.#writeFailureCommitState = writeFailureCommitState;
     for (const path of snapshot?.directories ?? []) this.#persistedEntries.set(path, 'dir');
     for (const { path } of snapshot?.files ?? []) this.#persistedEntries.set(path, 'file');
   }
@@ -113,10 +113,10 @@ class IncrementalStorageLease implements WasixStorageLease {
     if (this.#closed) {
       throw new WasixStorageError(`${this.#label} is closed`, {
         code: 'unavailable',
-        durability: 'unchanged',
+        commitState: 'unchanged',
       });
     }
-    let failureDurability = this.#writeFailureDurability;
+    let failureCommitState = this.#writeFailureCommitState;
     try {
       const delta = await snapshotStorageDelta(
         directory,
@@ -129,14 +129,14 @@ class IncrementalStorageLease implements WasixStorageLease {
         delta.files.length === 0 &&
         delta.deleted.length === 0
       ) {
-        failureDurability = 'unchanged';
+        failureCommitState = 'unchanged';
         await directory.clearChanges?.();
         return;
       }
       await this.#store.apply(delta);
       applyStorageDeltaToEntries(this.#persistedEntries, delta);
       this.#hasStoredGeneration = true;
-      failureDurability = 'persisted';
+      failureCommitState = 'persisted';
       // The backend commit is the acknowledgement point. Keeping the journal
       // intact until now makes a failed publication retryable on close and
       // prevents successful paths from being republished on every operation.
@@ -144,8 +144,8 @@ class IncrementalStorageLease implements WasixStorageLease {
     } catch (error) {
       if (error instanceof WasixStorageError) throw error;
       throw new WasixStorageError(`could not persist ${this.#label}: ${describeError(error)}`, {
-        code: 'checkpoint-failed',
-        durability: failureDurability,
+        code: 'publication-failed',
+        commitState: failureCommitState,
         cause: error,
       });
     }
@@ -158,8 +158,8 @@ class IncrementalStorageLease implements WasixStorageLease {
       if (outcome === 'clean') {
         if (directory === undefined) {
           throw new WasixStorageError(`cannot persist ${this.#label} without PGDATA`, {
-            code: 'checkpoint-failed',
-            durability: 'not-persisted',
+            code: 'publication-failed',
+            commitState: 'not-persisted',
           });
         }
         await this.sync(directory, 'close');
@@ -204,7 +204,7 @@ function combineCleanupFailure(
 ): Error {
   const cleanup = new WasixStorageError(message, {
     code: 'unavailable',
-    durability: persisted ? 'persisted' : 'unchanged',
+    commitState: persisted ? 'persisted' : 'unchanged',
     cause,
   });
   return prior instanceof Error ? composeWasixStorageFailure(prior, detail, cleanup) : cleanup;

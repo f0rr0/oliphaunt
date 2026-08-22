@@ -2,9 +2,8 @@ use std::collections::HashSet;
 use std::fmt;
 use std::fs;
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
 
 use anyhow::{Context, Result, ensure};
 use sha2::{Digest, Sha256};
@@ -32,7 +31,6 @@ use super::config::{PostgresConfig, StartupConfig};
 #[cfg(feature = "extensions")]
 use super::extensions::Extension;
 use super::storage::{PgDataStorage, StorageRoot};
-use super::timing;
 
 mod stdio;
 mod task_policy;
@@ -41,10 +39,7 @@ mod wasix_fs;
 pub(crate) use stdio::ProtocolStream;
 use stdio::{ProtocolStdioAttachment, ProtocolStdioFile, TailCaptureFile, TailCaptureHandle};
 use task_policy::{GuestWasmTasks, constrain_single_backend_tasks};
-use wasix_fs::{
-    EagerCopyOverlayFileSystem, host_filesystem, maybe_trace_filesystem, wasi_root_with_devices,
-};
-pub use wasix_fs::{FsTraceSnapshot, fs_trace_snapshot, reset_fs_trace};
+use wasix_fs::{host_filesystem, wasi_root_with_devices};
 
 const POSTGRES_EXE_PATH: &str = "/bin/postgres";
 const PGDATA_DIR: &str = "/base";
@@ -56,112 +51,6 @@ const RUNTIME_SIDE_MODULES: &[(&str, &str)] = &[
 ];
 const OLIPHAUNT_EXIT_ALIVE: i32 = 99;
 const POSTGRES_MAIN_LONGJMP: i32 = 100;
-
-const BACKEND_C_TIMINGS: &[(i32, &str)] = &[
-    (1, "postgres.backend.c.main_pre"),
-    (2, "postgres.backend.c.restart_single_user_main"),
-    (3, "postgres.backend.c.async_single_user_main"),
-    (4, "postgres.backend.c.standalone_process"),
-    (5, "postgres.backend.c.guc_init"),
-    (6, "postgres.backend.c.switch_parse"),
-    (7, "postgres.backend.c.config_files"),
-    (8, "postgres.backend.c.data_dir_lock"),
-    (9, "postgres.backend.c.control_file"),
-    (10, "postgres.backend.c.preload_libraries"),
-    (11, "postgres.backend.c.shared_memory"),
-    (12, "postgres.backend.c.base_init"),
-    (13, "postgres.backend.c.init_postgres"),
-    (14, "postgres.backend.c.post_init"),
-    (15, "postgres.backend.c.message_contexts"),
-    (16, "postgres.backend.c.postmaster_environment"),
-    (17, "postgres.backend.c.init_proc_phase2"),
-    (18, "postgres.backend.c.startup_xlog"),
-    (19, "postgres.backend.c.relcache_catcache_init"),
-    (20, "postgres.backend.c.transaction_snapshot"),
-    (21, "postgres.backend.c.session_user"),
-    (22, "postgres.backend.c.database_lookup"),
-    (23, "postgres.backend.c.database_lock_recheck"),
-    (24, "postgres.backend.c.database_path"),
-    (25, "postgres.backend.c.relcache_phase3"),
-    (26, "postgres.backend.c.check_my_database"),
-    (27, "postgres.backend.c.startup_options"),
-    (28, "postgres.backend.c.process_settings"),
-    (29, "postgres.backend.c.session_initialization"),
-    (30, "postgres.backend.c.session_preload_libraries"),
-    (31, "postgres.backend.c.init_max_backends"),
-    (32, "postgres.backend.c.create_shared_memory"),
-    (33, "postgres.backend.c.init_process"),
-    (34, "postgres.backend.c.relation_cache_phase3"),
-    (35, "postgres.backend.c.initialize_acl"),
-    (36, "postgres.backend.c.exec_simple_query"),
-    (37, "postgres.backend.c.exec_start_xact"),
-    (38, "postgres.backend.c.exec_drop_unnamed"),
-    (39, "postgres.backend.c.exec_parse"),
-    (40, "postgres.backend.c.exec_snapshot"),
-    (41, "postgres.backend.c.exec_analyze_rewrite"),
-    (42, "postgres.backend.c.exec_plan"),
-    (43, "postgres.backend.c.exec_portal_start"),
-    (44, "postgres.backend.c.exec_dest_receiver"),
-    (45, "postgres.backend.c.exec_portal_run"),
-    (46, "postgres.backend.c.exec_finish_xact"),
-    (47, "postgres.backend.c.exec_command_counter"),
-    (48, "postgres.backend.c.exec_end_command"),
-    (49, "postgres.backend.c.heapam_tuple_update"),
-    (50, "postgres.backend.c.btree_doinsert"),
-    (51, "postgres.backend.c.xlog_insert_record"),
-    (52, "postgres.backend.c.btree_mkscankey"),
-    (53, "postgres.backend.c.btree_search_insert"),
-    (54, "postgres.backend.c.btree_check_unique"),
-    (55, "postgres.backend.c.btree_find_insertloc"),
-    (56, "postgres.backend.c.btree_insertonpg"),
-    (57, "postgres.backend.c.btree_split"),
-    (58, "postgres.backend.c.btree_binsrch_insert"),
-    (59, "postgres.backend.c.btree_compare"),
-    (60, "postgres.backend.c.heap_determine_columns"),
-    (61, "postgres.backend.c.heap_toast_update"),
-    (62, "postgres.backend.c.heap_get_buffer_for_tuple"),
-    (63, "postgres.backend.c.heap_put_tuple"),
-    (64, "postgres.backend.c.heap_log_update"),
-    (65, "postgres.backend.c.commit_record"),
-    (66, "postgres.backend.c.commit_procarray_end"),
-    (67, "postgres.backend.c.commit_callbacks"),
-    (68, "postgres.backend.c.commit_resource_before_locks"),
-    (69, "postgres.backend.c.commit_aio"),
-    (70, "postgres.backend.c.commit_buffers"),
-    (71, "postgres.backend.c.commit_relcache_typecache"),
-    (72, "postgres.backend.c.commit_inval"),
-    (73, "postgres.backend.c.commit_resource_locks"),
-    (74, "postgres.backend.c.commit_pending_deletes"),
-    (75, "postgres.backend.c.commit_notify"),
-    (76, "postgres.backend.c.commit_local_cleanup"),
-    (77, "postgres.backend.c.commit_memory"),
-    (78, "postgres.backend.c.commit_xlog_record"),
-    (79, "postgres.backend.c.commit_xlog_flush"),
-    (80, "postgres.backend.c.commit_clog_commit_tree"),
-    (81, "postgres.backend.c.commit_async_xact_lsn"),
-    (82, "postgres.backend.c.commit_async_commit_tree"),
-    (83, "postgres.backend.c.commit_sync_rep_wait"),
-    (84, "postgres.backend.c.xlog_write_pwrite"),
-    (85, "postgres.backend.c.xlog_write_pgstat_io"),
-    (86, "postgres.backend.c.xlog_flush_wait_insertions"),
-    (87, "postgres.backend.c.xlog_flush_wal_write_lock"),
-    (88, "postgres.backend.c.xlog_flush_xlog_write"),
-    (89, "postgres.backend.c.xlog_flush_walsnd_wakeup"),
-    (90, "postgres.backend.c.xlog_write_loop"),
-    (91, "postgres.backend.c.xlog_write_loop_scan"),
-    (92, "postgres.backend.c.xlog_write_before_pwrite"),
-    (93, "postgres.backend.c.xlog_write_after_pwrite"),
-    (94, "postgres.backend.c.xlog_write_fsync"),
-    (95, "postgres.backend.c.xlog_write_walsnd_request"),
-    (96, "postgres.backend.c.xlog_write_shared_status"),
-    (97, "postgres.backend.c.xlog_write_atomic_result"),
-    (98, "postgres.backend.c.xlog_write_loop_count"),
-    (99, "postgres.backend.c.xlog_write_group_count"),
-    (100, "postgres.backend.c.xlog_write_page_count"),
-    (101, "postgres.backend.c.xlog_write_pwrite_count"),
-    (102, "postgres.backend.c.xlog_write_pwrite_bytes"),
-    (103, "postgres.backend.c.xlog_write_request_bytes"),
-];
 
 static WASIX_PROCESS_RUNTIME: OnceLock<std::result::Result<Arc<WasixProcessRuntime>, String>> =
     OnceLock::new();
@@ -194,9 +83,7 @@ pub struct PostgresMod {
     #[cfg(feature = "extensions")]
     runtime_storage: StorageRoot,
     pgdata_storage: PgDataStorage,
-    pgdata_template_root: Option<PathBuf>,
     startup_config: StartupConfig,
-    startup_response: Option<Vec<u8>>,
     cluster_ready: bool,
     backend_started: bool,
     started: bool,
@@ -271,8 +158,6 @@ struct OliphauntLifecycleExports {
     start_oliphaunt: TypedFunction<(), ()>,
     #[cfg_attr(not(feature = "extensions"), allow(dead_code))]
     run_atexit_funcs: Option<TypedFunction<(), ()>>,
-    backend_timing_reset: Option<TypedFunction<(), ()>>,
-    backend_timing_elapsed_us: Option<TypedFunction<i32, i64>>,
 }
 
 struct WasixProtocolExports {
@@ -304,21 +189,6 @@ struct WasixOliphauntIo {
 }
 
 impl PostgresMod {
-    pub(crate) fn preload_module(module_path: &std::path::Path) -> Result<()> {
-        let runtime_root = module_path
-            .parent()
-            .and_then(Path::parent)
-            .context("runtime module path must be under bin/postgres")?;
-        let (engine, _) = aot::load_runtime_module()?;
-        let process_runtime = process_wasix_runtime(&engine)?;
-        preload_runtime_side_modules(
-            &process_runtime.tokio_runtime,
-            &engine,
-            &process_runtime.wasix_module_cache,
-            runtime_root,
-        )
-    }
-
     pub(crate) fn new_prepared_with_config(
         runtime_layout: RuntimeLayout,
         pgdata_storage: PgDataStorage,
@@ -340,7 +210,6 @@ impl PostgresMod {
         let (engine, module) = aot::load_runtime_module()?;
         let process_runtime = process_wasix_runtime(&engine)?;
         {
-            let _phase = timing::phase("wasix.preload_runtime_side_modules");
             preload_runtime_side_modules(
                 &process_runtime.tokio_runtime,
                 &engine,
@@ -350,7 +219,6 @@ impl PostgresMod {
         }
         let mut store = Store::new(engine.clone());
 
-        let _phase = timing::phase("wasix.instance_create");
         let (instance, env, protocol_stdio_file, wasi_stderr) =
             instantiate_wasix_module(WasixInstantiateInput {
                 runtime: &process_runtime.tokio_runtime,
@@ -371,7 +239,6 @@ impl PostgresMod {
         )?;
 
         let (io, lifecycle, protocol, protocol_stdio) = {
-            let _phase = timing::phase("wasix.export_load");
             let io = WasixOliphauntIo::new(&mut store, &instance)?;
             ensure_integrated_oliphaunt_contract(&instance)?;
             let lifecycle = OliphauntLifecycleExports::load(&mut store, &instance)?;
@@ -398,18 +265,12 @@ impl PostgresMod {
             #[cfg(feature = "extensions")]
             runtime_storage,
             pgdata_storage,
-            pgdata_template_root: runtime_layout.pgdata_template_root.clone(),
             startup_config,
-            startup_response: None,
             cluster_ready: false,
             backend_started: false,
             started: false,
         };
         Ok(pg)
-    }
-
-    pub(crate) fn pgdata_template_root(&self) -> Option<&Path> {
-        self.pgdata_template_root.as_deref()
     }
 
     pub(crate) fn ensure_cluster(&mut self) -> Result<()> {
@@ -441,18 +302,14 @@ impl PostgresMod {
         if self.backend_started {
             return Ok(());
         }
-        let _phase = timing::phase("postgres.backend_start");
-        self.reset_backend_c_timings()?;
         self.configure_host_error_recovery()?;
         {
-            let _phase = timing::phase("postgres.backend_start.set_active");
             self.lifecycle
                 .set_active
                 .call(&mut self.store, 1)
                 .context("oliphaunt_wasix_set_active(1)")?;
         }
         {
-            let _phase = timing::phase("postgres.backend_start.single_user_main");
             match self.lifecycle.wasi_start.call(&mut self.store) {
                 Ok(()) => {}
                 Err(err) if runtime_error_exit_code(&err) == Some(OLIPHAUNT_EXIT_ALIVE) => {}
@@ -464,7 +321,6 @@ impl PostgresMod {
         if let Err(err) = self.lifecycle.start_oliphaunt.call(&mut self.store) {
             return self.startup_failure(err, "oliphaunt_wasix_start");
         }
-        self.record_backend_c_timings()?;
         self.backend_started = true;
         Ok(())
     }
@@ -527,7 +383,6 @@ impl PostgresMod {
 
     #[cfg_attr(not(feature = "extensions"), allow(dead_code))]
     pub(crate) fn shutdown_backend(&mut self) -> Result<()> {
-        let _phase = timing::phase("postgres.backend_shutdown");
         self.lifecycle
             .set_active
             .call(&mut self.store, 0)
@@ -539,35 +394,7 @@ impl PostgresMod {
         }
         self.backend_started = false;
         self.started = false;
-        self.startup_response = None;
         self.cluster_ready = false;
-        Ok(())
-    }
-
-    fn record_backend_c_timings(&mut self) -> Result<()> {
-        let Some(elapsed) = &self.lifecycle.backend_timing_elapsed_us else {
-            return Ok(());
-        };
-
-        for &(id, name) in BACKEND_C_TIMINGS {
-            let elapsed_micros = elapsed
-                .call(&mut self.store, id)
-                .with_context(|| format!("oliphaunt_wasix_backend_timing_elapsed_us({id})"))?;
-            if elapsed_micros > 0 {
-                timing::record_phase_timing(name, Duration::from_micros(elapsed_micros as u64));
-            }
-        }
-        Ok(())
-    }
-
-    fn reset_backend_c_timings(&mut self) -> Result<()> {
-        let Some(reset) = &self.lifecycle.backend_timing_reset else {
-            return Ok(());
-        };
-
-        reset
-            .call(&mut self.store)
-            .context("oliphaunt_wasix_backend_timing_reset")?;
         Ok(())
     }
 
@@ -604,43 +431,6 @@ impl PostgresMod {
         Ok(())
     }
 
-    #[cfg(feature = "extensions")]
-    pub(crate) fn preload_extension_module_from_storage(
-        runtime_storage: &StorageRoot,
-        extension: Extension,
-    ) -> Result<()> {
-        let (engine, _) = aot::load_runtime_module()?;
-        let process_runtime = process_wasix_runtime(&engine)?;
-        for module in extension.native_support_modules() {
-            seed_extension_side_module(
-                &process_runtime.tokio_runtime,
-                &engine,
-                &process_runtime.wasix_module_cache,
-                runtime_storage,
-                module.runtime_path(),
-                module.aot_name(),
-                &format!(
-                    "extension '{}' support module '{}'",
-                    extension.sql_name(),
-                    module.runtime_path()
-                ),
-            )?;
-        }
-
-        let Some(module_file) = extension.native_module_file() else {
-            return Ok(());
-        };
-        seed_extension_side_module(
-            &process_runtime.tokio_runtime,
-            &engine,
-            &process_runtime.wasix_module_cache,
-            runtime_storage,
-            &format!("lib/postgresql/{module_file}"),
-            extension.aot_name(),
-            &format!("extension '{}'", extension.sql_name()),
-        )
-    }
-
     pub(crate) fn run_split_initdb(
         runtime_layout: &RuntimeLayout,
         pgdata_storage: &PgDataStorage,
@@ -650,7 +440,6 @@ impl PostgresMod {
 
     pub fn send_protocol(&mut self, payload: &[u8]) -> Result<Vec<u8>> {
         {
-            let _phase = timing::phase("postgres.protocol.ensure_started");
             self.start_protocol()?;
         }
         if payload.is_empty() {
@@ -688,7 +477,6 @@ impl PostgresMod {
         continuation_prefix: impl FnOnce() -> Vec<u8>,
     ) -> Result<ProtocolPumpOutcome> {
         {
-            let _phase = timing::phase("postgres.protocol.ensure_started");
             self.start_protocol()?;
         }
         if payload.is_empty() {
@@ -722,19 +510,14 @@ impl PostgresMod {
     }
 
     fn send_protocol_inner(&mut self, payload: &[u8]) -> Result<Vec<u8>> {
-        self.reset_backend_c_timings()?;
-
         {
-            let _phase = timing::phase("postgres.protocol.input_reset");
             self.io.reset(&mut self.store)?;
         }
         {
-            let _phase = timing::phase("postgres.protocol.input_write");
             self.io.push_input(&mut self.store, &self.env, payload)?;
         }
 
         {
-            let _phase = timing::phase("postgres.protocol.dispatch_buffer");
             let max_attempts = (payload.len() / 5).saturating_add(2).max(1);
             let mut attempts = 0usize;
             let mut recovered_protocol_error = false;
@@ -766,14 +549,12 @@ impl PostgresMod {
             }
 
             {
-                let _phase = timing::phase("postgres.protocol.send_ready");
                 self.protocol
                     .send_ready
                     .call(&mut self.store)
                     .context("PostgresSendReadyForQueryIfNecessary")?;
             }
             {
-                let _phase = timing::phase("postgres.protocol.pq_flush");
                 self.protocol
                     .pq_flush
                     .call(&mut self.store)
@@ -781,7 +562,6 @@ impl PostgresMod {
             }
             let contains_error = self.io.output_contains_error(&mut self.store)?;
             let output = {
-                let _phase = timing::phase("postgres.protocol.output_read");
                 self.io
                     .take_output(&mut self.store, &self.env)
                     .context("take backend output after protocol buffer")?
@@ -789,7 +569,6 @@ impl PostgresMod {
             if !recovered_protocol_error && contains_error {
                 self.recover_non_trapping_protocol_error()?;
             }
-            self.record_backend_c_timings()?;
             Ok(output)
         }
     }
@@ -799,7 +578,6 @@ impl PostgresMod {
     }
 
     fn serve_protocol_stream_inner(&mut self) -> Result<()> {
-        self.reset_backend_c_timings()?;
         loop {
             if let Err(err) = self.protocol.main_loop.call(&mut self.store) {
                 if runtime_error_exit_code(&err) == Some(OLIPHAUNT_EXIT_ALIVE) {
@@ -832,7 +610,6 @@ impl PostgresMod {
                 .call(&mut self.store)
                 .context("oliphaunt_wasix_pq_flush streaming protocol")?;
         }
-        self.record_backend_c_timings()?;
         Ok(())
     }
 
@@ -901,13 +678,10 @@ impl PostgresMod {
             "Oliphaunt WASIX protocol startup has already completed for this backend"
         );
 
-        let _phase = timing::phase("postgres.startup_packet");
         {
-            let _phase = timing::phase("postgres.startup_packet.input_reset");
             self.io.reset(&mut self.store)?;
         }
         {
-            let _phase = timing::phase("postgres.startup_packet.input_write");
             self.io.push_input(&mut self.store, &self.env, startup)?;
         }
 
@@ -915,7 +689,6 @@ impl PostgresMod {
         // open the Rust-owned direct wire-protocol transport on top of that
         // lifecycle; they must not grow into a second backend lifecycle.
         let port = {
-            let _phase = timing::phase("postgres.startup_packet.get_port");
             self.protocol
                 .get_port
                 .call(&mut self.store)
@@ -924,7 +697,6 @@ impl PostgresMod {
         ensure!(port > 0, "oliphaunt_wasix_get_proc_port returned null");
 
         let status = {
-            let _phase = timing::phase("postgres.startup_packet.process_startup");
             self.protocol
                 .process_startup
                 .call(&mut self.store, port, 1, 1)
@@ -939,37 +711,25 @@ impl PostgresMod {
             });
         }
         let output = {
-            let _phase = timing::phase("postgres.startup_packet.ready");
             {
-                let _phase = timing::phase("postgres.startup_packet.send_conn_data");
                 self.protocol
                     .send_conn_data
                     .call(&mut self.store)
                     .context("oliphaunt_wasix_send_conn_data")?;
             }
             {
-                let _phase = timing::phase("postgres.startup_packet.pq_flush");
                 self.protocol
                     .pq_flush
                     .call(&mut self.store)
                     .context("oliphaunt_wasix_pq_flush after startup")?;
             }
-            {
-                let _phase = timing::phase("postgres.startup_packet.output_read");
-                self.io.take_output(&mut self.store, &self.env)?
-            }
+            self.io.take_output(&mut self.store, &self.env)?
         };
         self.started = true;
-        self.startup_response = Some(output.clone());
         Ok(StartupProtocolResponse {
             output,
             accepted: true,
         })
-    }
-
-    #[cfg(feature = "tools")]
-    pub(crate) fn existing_startup_response(&self) -> Option<Vec<u8>> {
-        self.startup_response.clone()
     }
 
     fn recover_protocol_error(&mut self, payload_len: usize) -> Result<()> {
@@ -1042,9 +802,7 @@ impl PostgresMod {
 fn process_wasix_runtime(engine: &Engine) -> Result<Arc<WasixProcessRuntime>> {
     WASIX_PROCESS_RUNTIME
         .get_or_init(|| {
-            let _phase = timing::phase("wasix.runtime_construct");
             let tokio_runtime = {
-                let _phase = timing::phase("wasix.runtime_construct.tokio");
                 Arc::new(
                     tokio::runtime::Builder::new_multi_thread()
                         .enable_all()
@@ -1053,12 +811,8 @@ fn process_wasix_runtime(engine: &Engine) -> Result<Arc<WasixProcessRuntime>> {
                         .map_err(|err| format!("{err:#}"))?,
                 )
             };
-            let wasix_module_cache = {
-                let _phase = timing::phase("wasix.runtime_construct.module_cache");
-                Arc::new(SharedCache::new())
-            };
+            let wasix_module_cache = { Arc::new(SharedCache::new()) };
             let wasix_runtime = {
-                let _phase = timing::phase("wasix.runtime_construct.pluggable_runtime");
                 build_wasix_runtime(
                     &tokio_runtime,
                     engine,
@@ -1096,12 +850,8 @@ fn instantiate_wasix_module(
     ProtocolStdioFile,
     TailCaptureHandle,
 )> {
-    let _phase = timing::phase("wasix.instantiate");
     let _guard = input.runtime.enter();
-    let root_fs = {
-        let _phase = timing::phase("wasix.instantiate.root_fs");
-        database_wasi_root(input.runtime_layout, input.pgdata_storage)?
-    };
+    let root_fs = database_wasi_root(input.runtime_layout, input.pgdata_storage)?;
 
     let mut runner = WasiRunner::new();
     runner.with_current_dir("/");
@@ -1112,7 +862,6 @@ fn instantiate_wasix_module(
     runner.with_stderr(Box::new(stderr_file));
     let wasi = Wasi::new(POSTGRES_EXE_PATH);
     let mut builder = {
-        let _phase = timing::phase("wasix.instantiate.prepare_env");
         runner
             .prepare_webc_env(
                 POSTGRES_EXE_PATH,
@@ -1124,7 +873,6 @@ fn instantiate_wasix_module(
             .context("prepare Wasmer/WASIX runner environment")?
     };
     {
-        let _phase = timing::phase("wasix.instantiate.pgdata_preopen");
         add_pgdata_preopen(&mut builder)?;
     }
     add_oliphaunt_env(&mut builder, input.startup_config, input.runtime_layout);
@@ -1137,7 +885,6 @@ fn instantiate_wasix_module(
     constrain_single_backend_tasks(&mut builder);
 
     {
-        let _phase = timing::phase("wasix.instantiate.module");
         builder
             .instantiate(input.module, input.store)
             .context("instantiate Oliphaunt WASIX module")
@@ -1163,27 +910,18 @@ fn database_wasi_root(
     runtime_layout: &RuntimeLayout,
     pgdata_storage: &PgDataStorage,
 ) -> Result<WasiFsRoot> {
-    let _phase = timing::phase("wasix.storage_mount_construct");
     let root = runtime_root_filesystem(runtime_layout)?;
-    let pgdata = pgdata_filesystem(runtime_layout, pgdata_storage)?;
+    let pgdata = pgdata_filesystem(pgdata_storage)?;
     let root = wasi_root_with_pgdata_mount(root, pgdata)?;
     Ok(WasiFsRoot::from_filesystem(wasi_root_with_devices(root)?))
 }
 
 fn pgdata_filesystem(
-    runtime_layout: &RuntimeLayout,
     pgdata_storage: &PgDataStorage,
 ) -> Result<Arc<dyn virtual_fs::FileSystem + Send + Sync>> {
     match pgdata_storage {
-        PgDataStorage::Memory(filesystem) => Ok(maybe_trace_filesystem(filesystem.clone())),
-        PgDataStorage::HostDirectory(pgdata) => {
-            if let Some(pgdata_template_root) = &runtime_layout.pgdata_template_root {
-                let fs =
-                    EagerCopyOverlayFileSystem::new(pgdata.clone(), pgdata_template_root.clone())?;
-                return Ok(maybe_trace_filesystem(Arc::new(fs)));
-            }
-            Ok(maybe_trace_filesystem(host_filesystem(pgdata)?))
-        }
+        PgDataStorage::Memory(filesystem) => Ok(filesystem.clone()),
+        PgDataStorage::HostDirectory(pgdata) => host_filesystem(pgdata),
     }
 }
 
@@ -1195,14 +933,14 @@ fn runtime_root_filesystem(
         StorageRoot::Memory(filesystem) => filesystem.clone(),
     };
     if !runtime_layout.uses_shared_overlay() {
-        return Ok(maybe_trace_filesystem(upper));
+        return Ok(upper);
     }
-    let upper = virtual_fs::ArcFileSystem::new(maybe_trace_filesystem(upper));
+    let upper = virtual_fs::ArcFileSystem::new(upper);
     let shared_root = runtime_layout
         .shared_root
         .as_ref()
         .context("shared runtime overlay is missing its immutable filesystem")?;
-    let lower = virtual_fs::ArcFileSystem::new(maybe_trace_filesystem(shared_root.clone()));
+    let lower = virtual_fs::ArcFileSystem::new(shared_root.clone());
     Ok(Arc::new(virtual_fs::OverlayFileSystem::new(upper, [lower])))
 }
 
@@ -1233,7 +971,6 @@ fn build_wasix_runtime(
 }
 
 fn run_split_initdb(runtime_layout: &RuntimeLayout, pgdata_storage: &PgDataStorage) -> Result<()> {
-    let _phase = timing::phase("initdb.split_wasix");
     let initdb_module = runtime_layout.module_root.join("bin/initdb");
     let postgres_module = runtime_layout.module_root.join("bin/postgres");
     ensure!(
@@ -1320,7 +1057,6 @@ fn run_split_initdb(runtime_layout: &RuntimeLayout, pgdata_storage: &PgDataStora
     }
 
     {
-        let _phase = timing::phase("initdb.split_wasix.run_command");
         let result =
             run_package_command_with_root(&runner, "initdb", &package, initdb_runtime, root_fs);
         if let Err(err) = result {
@@ -1354,7 +1090,7 @@ fn split_initdb_root_filesystem(
 ) -> Result<Arc<dyn virtual_fs::FileSystem + Send + Sync>> {
     let root = runtime_root_filesystem(runtime_layout)?;
 
-    let pgdata = pgdata_filesystem(runtime_layout, pgdata_storage)?;
+    let pgdata = pgdata_filesystem(pgdata_storage)?;
     // initdb execs a child postgres command during bootstrap. Keep PGDATA inside
     // the root filesystem view so both commands inherit the same /base mount.
     let root = wasi_root_with_pgdata_mount(root, pgdata)?;
@@ -1564,7 +1300,6 @@ fn preload_runtime_side_modules(
     module_cache: &Arc<SharedCache>,
     runtime_root: &Path,
 ) -> Result<()> {
-    let _phase = timing::phase("wasix.seed_runtime_side_modules");
     let lib_dir = runtime_root.join("lib/postgresql");
     for (file_name, artifact_name) in RUNTIME_SIDE_MODULES {
         let library = lib_dir.join(file_name);
@@ -1616,7 +1351,6 @@ fn seed_wasix_module_cache(
     label: &str,
 ) -> Result<()> {
     let wasm = {
-        let _phase = timing::phase("wasix.seed_side_module.read_wasm");
         fs::read(wasm_path).with_context(|| format!("read WASIX module {}", wasm_path.display()))?
     };
     seed_wasix_module_cache_bytes(runtime, engine, module_cache, &wasm, artifact_name, label)
@@ -1630,10 +1364,7 @@ fn seed_wasix_module_cache_bytes(
     artifact_name: &str,
     label: &str,
 ) -> Result<()> {
-    let module_hash = {
-        let _phase = timing::phase("wasix.seed_side_module.module_hash");
-        ModuleHash::new(&wasm)
-    };
+    let module_hash = ModuleHash::new(wasm);
     let seed_key = format!("{artifact_name}:{}:{module_hash}", aot::engine_identity());
     let mut seeded_side_modules = SEEDED_SIDE_MODULES
         .get_or_init(|| Mutex::new(HashSet::new()))
@@ -1645,12 +1376,8 @@ fn seed_wasix_module_cache_bytes(
 
     // Keep the process-wide seed check and SharedCache write atomic. Wasmer's
     // shared cache is global to all concurrent Oliphaunt instances in this process.
-    let module = {
-        let _phase = timing::phase("wasix.seed_side_module.load_aot");
-        aot::load_artifact_module(engine, artifact_name)?
-    };
+    let module = aot::load_artifact_module(engine, artifact_name)?;
     {
-        let _phase = timing::phase("wasix.seed_side_module.save_cache");
         block_on_tokio_runtime(runtime, module_cache.save(module_hash, engine, &module))
             .with_context(|| format!("seed Wasmer module cache for {label} ({module_hash})"))?;
     }
@@ -1687,10 +1414,6 @@ impl OliphauntLifecycleExports {
         let start_oliphaunt = typed_export(store, instance, "oliphaunt_wasix_start")?;
         let run_atexit_funcs =
             optional_typed_export(store, instance, "oliphaunt_wasix_run_atexit_funcs")?;
-        let backend_timing_reset =
-            optional_typed_export(store, instance, "oliphaunt_wasix_backend_timing_reset")?;
-        let backend_timing_elapsed_us =
-            optional_typed_export(store, instance, "oliphaunt_wasix_backend_timing_elapsed_us")?;
 
         Ok(Self {
             wasi_start,
@@ -1698,8 +1421,6 @@ impl OliphauntLifecycleExports {
             set_active,
             start_oliphaunt,
             run_atexit_funcs,
-            backend_timing_reset,
-            backend_timing_elapsed_us,
         })
     }
 }
@@ -2001,31 +1722,14 @@ fn oliphaunt_args(
         args.push("-F".to_owned());
     }
     args.extend(["-O", "-j"].map(str::to_owned));
-    if let Some(level) = startup_config.debug_level {
-        args.push("-d".to_owned());
-        args.push(level.to_string());
-    }
     for (name, value) in DEFAULT_STARTUP_GUCS {
         args.push("-c".to_owned());
         args.push(format!("{name}={value}"));
-    }
-    if startup_config.relaxed_durability {
-        args.push("-c".to_owned());
-        args.push("synchronous_commit=off".to_owned());
     }
     for (name, value) in postgres_config.iter() {
         args.push("-c".to_owned());
         args.push(format!("{name}={value}"));
     }
-    args.extend(
-        startup_config
-            .effective_extra_args()
-            .into_iter()
-            .map(str::to_owned),
-    );
-    // PostgreSQL's getopt accepts clustered short options. Emit invariants
-    // after every advanced caller option so the runtime-owned values win even
-    // if a future spelling is not recognized by the diagnostic validator.
     for (name, value) in crate::oliphaunt::config::SINGLE_BACKEND_STARTUP_GUCS {
         args.push("-c".to_owned());
         args.push(format!("{name}={value}"));
@@ -2186,6 +1890,7 @@ fn summarize_protocol(bytes: &[u8]) -> String {
 fn summarize_error_response(body: &[u8]) -> String {
     let mut cursor = 0usize;
     let mut severity = None;
+    let mut verbose_severity = None;
     let mut code = None;
     let mut message = None;
     while cursor < body.len() {
@@ -2204,6 +1909,7 @@ fn summarize_error_response(body: &[u8]) -> String {
         let value = String::from_utf8_lossy(&body[cursor..end]);
         match tag {
             b'S' => severity = Some(value.into_owned()),
+            b'V' => verbose_severity = Some(value.into_owned()),
             b'C' => code = Some(value.into_owned()),
             b'M' => message = Some(value.into_owned()),
             _ => {}
@@ -2212,7 +1918,7 @@ fn summarize_error_response(body: &[u8]) -> String {
     }
 
     let mut fields = Vec::new();
-    if let Some(severity) = severity {
+    if let Some(severity) = verbose_severity.or(severity) {
         fields.push(format!("severity={severity:?}"));
     }
     if let Some(code) = code {
@@ -2265,45 +1971,6 @@ mod tests {
     }
 
     #[test]
-    fn single_backend_gucs_follow_clustered_advanced_options() -> Result<()> {
-        let startup = StartupConfig {
-            extra_args: vec!["-Fcio_method=sync".to_owned()],
-            ..StartupConfig::default()
-        };
-
-        let args = oliphaunt_args(&PostgresConfig::default(), &startup, false)?;
-        let advanced = args
-            .iter()
-            .position(|arg| arg == "-Fcio_method=sync")
-            .context("missing advanced option")?;
-        let enforced = args
-            .windows(2)
-            .position(|pair| pair == ["-c", "io_method=sync"])
-            .context("missing enforced io_method")?;
-
-        assert!(advanced < enforced);
-        Ok(())
-    }
-
-    #[test]
-    fn durable_host_storage_keeps_postgresql_fsync_enabled() -> Result<()> {
-        let startup = StartupConfig {
-            relaxed_durability: true,
-            ..StartupConfig::default()
-        };
-
-        let args = oliphaunt_args(&PostgresConfig::default(), &startup, true)?;
-
-        assert!(!args.iter().any(|arg| arg == "-F"));
-        assert!(
-            args.windows(2)
-                .any(|pair| pair == ["-c", "synchronous_commit=off"])
-        );
-        assert!(!args.iter().any(|arg| arg == "fsync=off"));
-        Ok(())
-    }
-
-    #[test]
     fn protocol_stdio_fails_closed_when_detached() -> Result<()> {
         use std::task::{Context, Poll, Waker};
         use wasmer_wasix::VirtualFile;
@@ -2344,7 +2011,7 @@ mod tests {
     }
 
     #[test]
-    fn mountfs_pgdata_overlay_exposes_lower_template_files() -> Result<()> {
+    fn mountfs_root_filesystem_routes_standalone_pgdata_as_mutable_subtree() -> Result<()> {
         use tokio::io::AsyncWriteExt;
 
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -2353,105 +2020,14 @@ mod tests {
         let _guard = runtime.enter();
         let temp = tempfile::TempDir::new()?;
         let runtime_root = temp.path().join("runtime");
-        let pgdata_upper = runtime_root.join("base");
-        let pgdata_lower = temp.path().join("template");
-        fs::create_dir_all(&pgdata_upper)?;
-        fs::create_dir_all(&pgdata_lower)?;
-        fs::write(pgdata_lower.join("postgresql.conf"), b"from-template\n")?;
-
-        let root = virtual_fs::MountFileSystem::new();
-        root.mount(Path::new("/"), host_filesystem(&runtime_root)?)?;
-        root.mount(
-            Path::new(PGDATA_DIR),
-            Arc::new(EagerCopyOverlayFileSystem::new(
-                pgdata_upper.clone(),
-                pgdata_lower.clone(),
-            )?),
-        )?;
-
-        virtual_fs::FileSystem::metadata(&root, Path::new("/base/postgresql.conf"))?;
-        virtual_fs::FileSystem::new_open_options(&root)
-            .read(true)
-            .open("/base/postgresql.conf")?;
-        let mut writable = virtual_fs::FileSystem::new_open_options(&root)
-            .write(true)
-            .open("/base/postgresql.conf")?;
-        runtime.block_on(async {
-            writable.write_all(b"upper-only\n").await?;
-            writable.flush().await
-        })?;
-        assert!(pgdata_upper.join("postgresql.conf").is_file());
-        assert_eq!(
-            fs::read_to_string(pgdata_lower.join("postgresql.conf"))?,
-            "from-template\n"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn mountfs_pgdata_overlay_creates_files_in_lower_only_directories() -> Result<()> {
-        use tokio::io::AsyncWriteExt;
-
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-        let _guard = runtime.enter();
-        let temp = tempfile::TempDir::new()?;
-        let runtime_root = temp.path().join("runtime");
-        let pgdata_upper = runtime_root.join("base");
-        let pgdata_lower = temp.path().join("template");
-        fs::create_dir_all(&pgdata_upper)?;
-        fs::create_dir_all(pgdata_lower.join("global"))?;
-
-        let root = virtual_fs::MountFileSystem::new();
-        root.mount(Path::new("/"), host_filesystem(&runtime_root)?)?;
-        root.mount(
-            Path::new(PGDATA_DIR),
-            Arc::new(EagerCopyOverlayFileSystem::new(
-                pgdata_upper.clone(),
-                pgdata_lower,
-            )?),
-        )?;
-
-        let mut writable = virtual_fs::FileSystem::new_open_options(&root)
-            .write(true)
-            .create(true)
-            .open("/base/global/postmaster.pid")?;
-        runtime.block_on(async {
-            writable.write_all(b"lock\n").await?;
-            writable.flush().await
-        })?;
-
-        assert_eq!(
-            fs::read_to_string(pgdata_upper.join("global/postmaster.pid"))?,
-            "lock\n"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn mountfs_root_filesystem_routes_pgdata_as_mutable_subtree() -> Result<()> {
-        use tokio::io::AsyncWriteExt;
-
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-        let _guard = runtime.enter();
-        let temp = tempfile::TempDir::new()?;
-        let runtime_root = temp.path().join("runtime");
-        let pgdata_upper = runtime_root.join("base");
-        let pgdata_lower = temp.path().join("template");
-        fs::create_dir_all(&pgdata_upper)?;
-        fs::create_dir_all(pgdata_lower.join("global"))?;
-        fs::write(pgdata_lower.join("PG_VERSION"), b"17\n")?;
-        fs::write(pgdata_lower.join("global/pg_control"), b"control\n")?;
+        let pgdata = runtime_root.join("base");
+        fs::create_dir_all(pgdata.join("global"))?;
+        fs::write(pgdata.join("PG_VERSION"), b"18\n")?;
+        fs::write(pgdata.join("global/pg_control"), b"control\n")?;
 
         let root = wasi_root_with_pgdata_mount(
             host_filesystem(&runtime_root)?,
-            Arc::new(EagerCopyOverlayFileSystem::new(
-                pgdata_upper.clone(),
-                pgdata_lower,
-            )?),
+            host_filesystem(&pgdata)?,
         )?;
 
         virtual_fs::FileSystem::metadata(root.as_ref(), Path::new("/base/PG_VERSION"))?;
@@ -2470,10 +2046,7 @@ mod tests {
             lock_file.flush().await
         })?;
 
-        assert_eq!(
-            fs::read_to_string(pgdata_upper.join("postmaster.pid"))?,
-            "lock\n"
-        );
+        assert_eq!(fs::read_to_string(pgdata.join("postmaster.pid"))?, "lock\n");
         Ok(())
     }
 }

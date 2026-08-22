@@ -554,16 +554,13 @@ fn write_generated_extension_api(catalog: &ExtensionCatalog) -> Result<()> {
             ));
         }
         text.push('\n');
-        let archive = format!("extensions/{}.tar.zst", extension.sql_name);
         let aot_name = extension
             .native_module_file
             .as_ref()
             .map(|_| format!("extension:{}", extension.sql_name));
         text.push_str(&format!(
-            "const {definition_const}: Extension = Extension::new(\n    {:?},\n    {:?},\n    {:?},\n    {definition_const}_NATIVE_SUPPORT_MODULES,\n    {},\n    {},\n    {definition_const}_DEPENDENCIES,\n    ExtensionSetup::new(\n        {},\n        {},\n        {definition_const}_STARTUP_CONFIG,\n        {definition_const}_LOAD_SQL,\n        {definition_const}_POST_CREATE_SQL,\n    ),\n);\n\n",
-            extension.display_name,
+            "const {definition_const}: Extension = Extension::new(\n    {:?},\n    {definition_const}_NATIVE_SUPPORT_MODULES,\n    {},\n    {},\n    {definition_const}_DEPENDENCIES,\n    ExtensionSetup::new(\n        {},\n        {},\n        {definition_const}_STARTUP_CONFIG,\n        {definition_const}_LOAD_SQL,\n        {definition_const}_POST_CREATE_SQL,\n    ),\n);\n\n",
             extension.sql_name,
-            archive,
             option_string_literal(extension.native_module_file.as_deref()),
             option_string_literal(aot_name.as_deref()),
             extension.lifecycle.create_extension,

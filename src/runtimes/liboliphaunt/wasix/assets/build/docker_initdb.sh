@@ -64,7 +64,6 @@ fi
   -e OLIPHAUNT_WASM_WASM_OPT_PRESERVE_UNOPTIMIZED="${OLIPHAUNT_WASM_WASM_OPT_PRESERVE_UNOPTIMIZED-}" \
   -e OLIPHAUNT_WASM_WASIX_COMPILER_FLAGS="${OLIPHAUNT_WASM_WASIX_COMPILER_FLAGS:-}" \
   -e OLIPHAUNT_WASM_WASIX_LINKER_FLAGS="${OLIPHAUNT_WASM_WASIX_LINKER_FLAGS:-}" \
-  -e OLIPHAUNT_WASM_WASIX_BACKEND_TIMING="${OLIPHAUNT_WASM_WASIX_BACKEND_TIMING:-0}" \
   -e WASIX_HOME=/opt/wasixcc-home/.wasixcc \
   -v "$REPO_ROOT:/work" \
   -w /work \
@@ -91,14 +90,14 @@ fi
     ICU_LIBS="$(oliphaunt_wasix_icu_libs "$ICU_PREFIX")"
 
     rebuild_generic_frontend_archives() {
-      make -s -C "$BUILD_DIR/src/interfaces/libpq" clean
-      make -s -C "$BUILD_DIR/src/fe_utils" clean
-      make -s -C "$BUILD_DIR/src/port" clean
-      make -s -C "$BUILD_DIR/src/common" clean
-      make -s -C "$BUILD_DIR/src/port" all
-      make -s -C "$BUILD_DIR/src/common" all
-      make -s -C "$BUILD_DIR/src/interfaces/libpq" all
-      make -s -C "$BUILD_DIR/src/fe_utils" all
+      make -s -C "$BUILD_DIR/src/interfaces/libpq" clean CFLAGS="$COMMON_CFLAGS"
+      make -s -C "$BUILD_DIR/src/fe_utils" clean CFLAGS="$COMMON_CFLAGS"
+      make -s -C "$BUILD_DIR/src/port" clean CFLAGS="$COMMON_CFLAGS"
+      make -s -C "$BUILD_DIR/src/common" clean CFLAGS="$COMMON_CFLAGS"
+      make -s -C "$BUILD_DIR/src/port" all CFLAGS="$COMMON_CFLAGS"
+      make -s -C "$BUILD_DIR/src/common" all CFLAGS="$COMMON_CFLAGS"
+      make -s -C "$BUILD_DIR/src/interfaces/libpq" all CFLAGS="$COMMON_CFLAGS"
+      make -s -C "$BUILD_DIR/src/fe_utils" all CFLAGS="$COMMON_CFLAGS"
     }
 
     COMMON_CPPFLAGS="-I$PGSRC/src/include/port/wasix-dl $ICU_CFLAGS"
@@ -121,6 +120,10 @@ fi
       -c "$CONTAINER_ROOT/wasix_shim/oliphaunt_wasix_initdb_shim.c" \
       -o "$INITDB_SHIM"
 
+    # The configured backend remaps fcntl for its virtual protocol descriptor.
+    # The initdb frontend archives use ordinary WASIX descriptors, so rebuild
+    # them without that backend-only remapping before linking the tool.
+    rebuild_generic_frontend_archives
     make -s -C "$BUILD_DIR/src/bin/initdb" clean
     make -s -j"$JOBS" -C "$BUILD_DIR/src/bin/initdb" initdb \
       CFLAGS="$COMMON_CFLAGS -Dsystem=oliphaunt_wasix_initdb_system -Dpopen=oliphaunt_wasix_initdb_popen -Dpclose=oliphaunt_wasix_initdb_pclose -Dgeteuid=oliphaunt_wasix_geteuid -Dgetuid=oliphaunt_wasix_getuid -Dgetegid=oliphaunt_wasix_getegid -Dgetgid=oliphaunt_wasix_getgid -Dgetpwuid=oliphaunt_wasix_getpwuid -Dgetpwuid_r=oliphaunt_wasix_getpwuid_r -Wno-unused-function -Wno-missing-prototypes" \

@@ -32,24 +32,87 @@ importers:
 
   .: {}
 
-  src/bindings/wasix-rust/examples/tauri-sqlx-vanilla:
-    dependencies:
-      '@tauri-apps/api':
-        specifier: ^2
-        version: 2.11.0
-      '@tauri-apps/plugin-opener':
-        specifier: ^2
-        version: 2.5.4
+  examples/browser-wasix:
     devDependencies:
-      '@tauri-apps/cli':
-        specifier: ^2
-        version: 2.11.2
+      '@electric-sql/pglite':
+        specifier: 0.5.4
+        version: 0.5.4
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.12.4
       typescript:
-        specifier: ~5.6.2
-        version: 5.6.3
+        specifier: 'catalog:'
+        version: 6.0.3
       vite:
         specifier: ^6.0.3
         version: 6.4.2(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.22.3)(yaml@2.9.0)
+
+  examples/react-native-expo:
+    dependencies:
+      '@oliphaunt/react-native':
+        specifier: workspace:*
+        version: link:../../src/sdks/react-native
+      expo:
+        specifier: ~56.0.15
+        version: 56.0.15(@babel/core@7.29.0)(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native@0.85.3(@react-native-community/cli@20.2.0(typescript@6.0.3))(@react-native/metro-config@0.85.3)(@types/react@19.2.16)(react@19.2.3))(react@19.2.3)(typescript@6.0.3)
+      expo-dev-client:
+        specifier: ~56.0.22
+        version: 56.0.22(expo@56.0.15(@babel/core@7.29.0)(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native@0.85.3(@react-native-community/cli@20.2.0(typescript@6.0.3))(@react-native/metro-config@0.85.3)(@types/react@19.2.16)(react@19.2.3))(react@19.2.3)(typescript@6.0.3))(react-native@0.85.3(@react-native-community/cli@20.2.0(typescript@6.0.3))(@react-native/metro-config@0.85.3)(@types/react@19.2.16)(react@19.2.3))
+      expo-splash-screen:
+        specifier: ~56.0.12
+        version: 56.0.12(expo@56.0.15(@babel/core@7.29.0)(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native@0.85.3(@react-native-community/cli@20.2.0(typescript@6.0.3))(@react-native/metro-config@0.85.3)(@types/react@19.2.16)(react@19.2.3))(react@19.2.3)(typescript@6.0.3))(typescript@6.0.3)
+      expo-sqlite:
+        specifier: ~56.0.5
+        version: 56.0.5(expo@56.0.15(@babel/core@7.29.0)(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native@0.85.3(@react-native-community/cli@20.2.0(typescript@6.0.3))(@react-native/metro-config@0.85.3)(@types/react@19.2.16)(react@19.2.3))(react@19.2.3)(typescript@6.0.3))(react-native@0.85.3(@react-native-community/cli@20.2.0(typescript@6.0.3))(@react-native/metro-config@0.85.3)(@types/react@19.2.16)(react@19.2.3))(react@19.2.3)
+      expo-system-ui:
+        specifier: ~56.0.5
+        version: 56.0.5(expo@56.0.15(@babel/core@7.29.0)(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native@0.85.3(@react-native-community/cli@20.2.0(typescript@6.0.3))(@react-native/metro-config@0.85.3)(@types/react@19.2.16)(react@19.2.3))(react@19.2.3)(typescript@6.0.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native@0.85.3(@react-native-community/cli@20.2.0(typescript@6.0.3))(@react-native/metro-config@0.85.3)(@types/react@19.2.16)(react@19.2.3))
+      react:
+        specifier: 19.2.3
+        version: 19.2.3
+      react-dom:
+        specifier: 19.2.3
+        version: 19.2.3(react@19.2.3)
+      react-native:
+        specifier: 0.85.3
+        version: 0.85.3(@react-native-community/cli@20.2.0(typescript@6.0.3))(@react-native/metro-config@0.85.3)(@types/react@19.2.16)(react@19.2.3)
+      react-native-safe-area-context:
+        specifier: ~5.7.0
+        version: 5.7.0(react-native@0.85.3(@react-native-community/cli@20.2.0(typescript@6.0.3))(@react-native/metro-config@0.85.3)(@types/react@19.2.16)(react@19.2.3))(react@19.2.3)
+      react-native-web:
+        specifier: ~0.21.0
+        version: 0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+    devDependencies:
+      '@react-native-community/cli':
+        specifier: 20.2.0
+        version: 20.2.0(typescript@6.0.3)
+      '@react-native-community/cli-platform-android':
+        specifier: 20.2.0
+        version: 20.2.0
+      '@react-native-community/cli-platform-ios':
+        specifier: 20.2.0
+        version: 20.2.0
+      '@react-native/metro-config':
+        specifier: 0.85.3
+        version: 0.85.3
+      '@types/react':
+        specifier: 19.2.16
+        version: 19.2.16
+      eslint:
+        specifier: ^9.0.0
+        version: 9.39.4(jiti@2.7.0)
+      eslint-config-expo:
+        specifier: ~56.0.4
+        version: 56.0.4(eslint@9.39.4(jiti@2.7.0))(typescript@6.0.3)
+      expo-doctor:
+        specifier: ^1.19.7
+        version: 1.19.8
+      expo-mcp:
+        specifier: ~0.2.1
+        version: 0.2.4
+      typescript:
+        specifier: ~6.0.3
+        version: 6.0.3
 
   src/bindings/wasix-ts:
     dependencies:
@@ -63,6 +126,9 @@ importers:
       '@types/node':
         specifier: ^24.10.1
         version: 24.12.4
+      typedoc:
+        specifier: 'catalog:'
+        version: 0.28.19(typescript@6.0.3)
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
@@ -246,18 +312,6 @@ importers:
       '@oliphaunt/node-direct-win32-x64-msvc':
         specifier: workspace:0.1.1
         version: link:../../runtimes/node-direct/packages/win32-x64-msvc
-      '@oliphaunt/tools-darwin-arm64':
-        specifier: workspace:0.1.1
-        version: link:../../runtimes/liboliphaunt/native/tools-packages/darwin-arm64
-      '@oliphaunt/tools-linux-arm64-gnu':
-        specifier: workspace:0.1.1
-        version: link:../../runtimes/liboliphaunt/native/tools-packages/linux-arm64-gnu
-      '@oliphaunt/tools-linux-x64-gnu':
-        specifier: workspace:0.1.1
-        version: link:../../runtimes/liboliphaunt/native/tools-packages/linux-x64-gnu
-      '@oliphaunt/tools-win32-x64-msvc':
-        specifier: workspace:0.1.1
-        version: link:../../runtimes/liboliphaunt/native/tools-packages/win32-x64-msvc
 
   src/sdks/react-native:
     devDependencies:
@@ -291,73 +345,6 @@ importers:
       vitest:
         specifier: 'catalog:'
         version: 4.1.8(@types/node@24.12.4)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.22.3)(yaml@2.9.0))
-
-  src/sdks/react-native/examples/expo:
-    dependencies:
-      '@oliphaunt/react-native':
-        specifier: workspace:*
-        version: link:../..
-      expo:
-        specifier: ~56.0.15
-        version: 56.0.15(@babel/core@7.29.0)(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native@0.85.3(@react-native-community/cli@20.2.0(typescript@6.0.3))(@react-native/metro-config@0.85.3)(@types/react@19.2.16)(react@19.2.3))(react@19.2.3)(typescript@6.0.3)
-      expo-dev-client:
-        specifier: ~56.0.22
-        version: 56.0.22(expo@56.0.15(@babel/core@7.29.0)(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native@0.85.3(@react-native-community/cli@20.2.0(typescript@6.0.3))(@react-native/metro-config@0.85.3)(@types/react@19.2.16)(react@19.2.3))(react@19.2.3)(typescript@6.0.3))(react-native@0.85.3(@react-native-community/cli@20.2.0(typescript@6.0.3))(@react-native/metro-config@0.85.3)(@types/react@19.2.16)(react@19.2.3))
-      expo-splash-screen:
-        specifier: ~56.0.12
-        version: 56.0.12(expo@56.0.15(@babel/core@7.29.0)(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native@0.85.3(@react-native-community/cli@20.2.0(typescript@6.0.3))(@react-native/metro-config@0.85.3)(@types/react@19.2.16)(react@19.2.3))(react@19.2.3)(typescript@6.0.3))(typescript@6.0.3)
-      expo-sqlite:
-        specifier: ~56.0.5
-        version: 56.0.5(expo@56.0.15(@babel/core@7.29.0)(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native@0.85.3(@react-native-community/cli@20.2.0(typescript@6.0.3))(@react-native/metro-config@0.85.3)(@types/react@19.2.16)(react@19.2.3))(react@19.2.3)(typescript@6.0.3))(react-native@0.85.3(@react-native-community/cli@20.2.0(typescript@6.0.3))(@react-native/metro-config@0.85.3)(@types/react@19.2.16)(react@19.2.3))(react@19.2.3)
-      expo-system-ui:
-        specifier: ~56.0.5
-        version: 56.0.5(expo@56.0.15(@babel/core@7.29.0)(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native@0.85.3(@react-native-community/cli@20.2.0(typescript@6.0.3))(@react-native/metro-config@0.85.3)(@types/react@19.2.16)(react@19.2.3))(react@19.2.3)(typescript@6.0.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native@0.85.3(@react-native-community/cli@20.2.0(typescript@6.0.3))(@react-native/metro-config@0.85.3)(@types/react@19.2.16)(react@19.2.3))
-      react:
-        specifier: 19.2.3
-        version: 19.2.3
-      react-dom:
-        specifier: 19.2.3
-        version: 19.2.3(react@19.2.3)
-      react-native:
-        specifier: 0.85.3
-        version: 0.85.3(@react-native-community/cli@20.2.0(typescript@6.0.3))(@react-native/metro-config@0.85.3)(@types/react@19.2.16)(react@19.2.3)
-      react-native-safe-area-context:
-        specifier: ~5.7.0
-        version: 5.7.0(react-native@0.85.3(@react-native-community/cli@20.2.0(typescript@6.0.3))(@react-native/metro-config@0.85.3)(@types/react@19.2.16)(react@19.2.3))(react@19.2.3)
-      react-native-web:
-        specifier: ~0.21.0
-        version: 0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-    devDependencies:
-      '@react-native-community/cli':
-        specifier: 20.2.0
-        version: 20.2.0(typescript@6.0.3)
-      '@react-native-community/cli-platform-android':
-        specifier: 20.2.0
-        version: 20.2.0
-      '@react-native-community/cli-platform-ios':
-        specifier: 20.2.0
-        version: 20.2.0
-      '@react-native/metro-config':
-        specifier: 0.85.3
-        version: 0.85.3
-      '@types/react':
-        specifier: 19.2.16
-        version: 19.2.16
-      eslint:
-        specifier: ^9.0.0
-        version: 9.39.4(jiti@2.7.0)
-      eslint-config-expo:
-        specifier: ~56.0.4
-        version: 56.0.4(eslint@9.39.4(jiti@2.7.0))(typescript@6.0.3)
-      expo-doctor:
-        specifier: ^1.19.7
-        version: 1.19.8
-      expo-mcp:
-        specifier: ~0.2.1
-        version: 0.2.4
-      typescript:
-        specifier: ~6.0.3
-        version: 6.0.3
 
   tools/perf/wasix-node:
     dependencies:
@@ -2300,88 +2287,6 @@ packages:
   '@tailwindcss/postcss@4.3.0':
     resolution: {integrity: sha512-Jm05Tjx+9yCLGv5qw1c+84Psds8MnyrEQYCB+FFk2lgGiUjlRqdxke4mVTuYrj2xnVZqKim2Apr5ySuQRYAw/w==}
 
-  '@tauri-apps/api@2.11.0':
-    resolution: {integrity: sha512-7CinYODhky9lmO23xHnUFv0Xt43fbtWMyxZcLcRBlFkcgXKuEirBvHpmtJ89YMhyeGcq20Wuc47Fa4XjyniywA==}
-
-  '@tauri-apps/cli-darwin-arm64@2.11.2':
-    resolution: {integrity: sha512-+4UZzLt+eOAEQCwgd+TqKgyUJMrvx+BgdXLLaqJYmPqzP+nE6YZr/hY6CWLYGQb8jFn99jEkmC6uA3tNvamA1w==}
-    engines: {node: '>= 10'}
-    cpu: [arm64]
-    os: [darwin]
-
-  '@tauri-apps/cli-darwin-x64@2.11.2':
-    resolution: {integrity: sha512-VjYYtZUPqDMLutSfJEyxFE3Bz+DPi7c8wC3imckgvciLDZLq4qwKJxBicg0BXGhXjJsl8vKWgWRFNMPELQ+Xyg==}
-    engines: {node: '>= 10'}
-    cpu: [x64]
-    os: [darwin]
-
-  '@tauri-apps/cli-linux-arm-gnueabihf@2.11.2':
-    resolution: {integrity: sha512-yMemD6f4i95AQriS8EazyOFzbE34yjnP16i3IOzpHGQvBoy2DjypFMFBq0NtPuITURv/cOGguRtHR5d79/9CSA==}
-    engines: {node: '>= 10'}
-    cpu: [arm]
-    os: [linux]
-
-  '@tauri-apps/cli-linux-arm64-gnu@2.11.2':
-    resolution: {integrity: sha512-cgI91D2wL8GSgoWwZXDqt+DwnuZCP2/bz03QAE4TrhgAKIsrB4hX26W/H1EONPUUNkqrsgeCD0wU6pcNjV/5kw==}
-    engines: {node: '>= 10'}
-    cpu: [arm64]
-    os: [linux]
-    libc: [glibc]
-
-  '@tauri-apps/cli-linux-arm64-musl@2.11.2':
-    resolution: {integrity: sha512-X1rm0BERqAAggtYTESSgXrS3sz4Sb/OiPiz54UqISlXW+GkR3vNIGnsy/lejNmoXGVqri3Q53BCfQiclOIyRPw==}
-    engines: {node: '>= 10'}
-    cpu: [arm64]
-    os: [linux]
-    libc: [musl]
-
-  '@tauri-apps/cli-linux-riscv64-gnu@2.11.2':
-    resolution: {integrity: sha512-usbMLJbT3KtkOrBMDVeGYNM35aTHXx38SJSzTMSqqjeUIOQ+iVPjb2yAGNAE+KqmBbAx4FOFIyMeKXx2M/JKGQ==}
-    engines: {node: '>= 10'}
-    cpu: [riscv64]
-    os: [linux]
-    libc: [glibc]
-
-  '@tauri-apps/cli-linux-x64-gnu@2.11.2':
-    resolution: {integrity: sha512-Ru4gwJKPG0ctVGchRGpRup4Y4lW2SSfFnrbQcyHhCliKy4g8Qz97TrUgCur4CbWyAgKxvGh3SjrkA0LDYzDGiw==}
-    engines: {node: '>= 10'}
-    cpu: [x64]
-    os: [linux]
-    libc: [glibc]
-
-  '@tauri-apps/cli-linux-x64-musl@2.11.2':
-    resolution: {integrity: sha512-eUm7T6clN1MMmNSRQ9gaWsQdyehQx2Gmn5hht/QUlqZQI/qcP2OJK5dnaxqwFzCr2HdsEo9ydxaqcS1oJzMvUw==}
-    engines: {node: '>= 10'}
-    cpu: [x64]
-    os: [linux]
-    libc: [musl]
-
-  '@tauri-apps/cli-win32-arm64-msvc@2.11.2':
-    resolution: {integrity: sha512-HeeZW80jU+gVTOEX4X/hC6NVSAdDVXajwP5fxIZ/3z9WvUC7qrudX2GMTilYq6Dg0e0sk0XgsAJD1hZ5wPBXUA==}
-    engines: {node: '>= 10'}
-    cpu: [arm64]
-    os: [win32]
-
-  '@tauri-apps/cli-win32-ia32-msvc@2.11.2':
-    resolution: {integrity: sha512-YhjQNZcXfbkCLyazSv1nPnJ9iRFE1wm6kc51FDbU10/Dk09io+6PAGMLjkxnX2GdM0qMnDmTjstY8mTDVvtKeA==}
-    engines: {node: '>= 10'}
-    cpu: [ia32]
-    os: [win32]
-
-  '@tauri-apps/cli-win32-x64-msvc@2.11.2':
-    resolution: {integrity: sha512-d2JchlFIpZevZVReyqhQOekJmb1UH3rhZ5VX6sH3ty9ETE0TKQavpihvoScUXfKKpW6HZC0MrFGRU0ZtD+w3gA==}
-    engines: {node: '>= 10'}
-    cpu: [x64]
-    os: [win32]
-
-  '@tauri-apps/cli@2.11.2':
-    resolution: {integrity: sha512-bk3HemqvGRoy+5D/dVMUQHKMYLglD0jVnMm/0iGMH6ufZ+p8r14m6BpIixwij3PBvZdvORUp1YifTD8QxVZ1Nw==}
-    engines: {node: '>= 10'}
-    hasBin: true
-
-  '@tauri-apps/plugin-opener@2.5.4':
-    resolution: {integrity: sha512-1HnPkb+AmgO29HBazm4uPLKB+r7zzcTBW1d0fyYp1uP+jwtpoiNDGKMMzz58SFp49nOIrxdE3aUJtT57lfO9CQ==}
-
   '@tybys/wasm-util@0.10.2':
     resolution: {integrity: sha512-RoBvJ2X0wuKlWFIjrwffGw1IqZHKQqzIchKaadZZfnNpsAYp2mM0h36JtPCjNDAHGgYez/15uMBpfGwchhiMgg==}
 
@@ -3466,6 +3371,7 @@ packages:
   eslint@9.39.4:
     resolution: {integrity: sha512-XoMjdBOwe/esVgEvLmNsD3IRHkm7fbKIUGvrleloJXUZgDHig2IPWNniv+GwjyJXzuNqVjlr5+4yVUZjycJwfQ==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+    deprecated: This version is no longer supported. Please see https://eslint.org/version-support for other options.
     hasBin: true
     peerDependencies:
       jiti: '*'
@@ -5998,11 +5904,6 @@ packages:
     peerDependencies:
       typescript: 5.0.x || 5.1.x || 5.2.x || 5.3.x || 5.4.x || 5.5.x || 5.6.x || 5.7.x || 5.8.x || 5.9.x || 6.0.x
 
-  typescript@5.6.3:
-    resolution: {integrity: sha512-hjcS1mhfuyi4WW8IWtjP7brDrG2cuDZukyrYrSauoXGNgx0S7zceP07adYkJycEr56BOUTNPzbInooiN3fn1qw==}
-    engines: {node: '>=14.17'}
-    hasBin: true
-
   typescript@5.9.3:
     resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
     engines: {node: '>=14.17'}
@@ -8343,7 +8244,9 @@ snapshots:
       metro-config: 0.84.4
       metro-runtime: 0.84.4
     transitivePeerDependencies:
+      - bufferutil
       - supports-color
+      - utf-8-validate
 
   '@react-native/normalize-colors@0.74.89': {}
 
@@ -8579,59 +8482,6 @@ snapshots:
       '@tailwindcss/oxide': 4.3.0
       postcss: 8.5.15
       tailwindcss: 4.3.0
-
-  '@tauri-apps/api@2.11.0': {}
-
-  '@tauri-apps/cli-darwin-arm64@2.11.2':
-    optional: true
-
-  '@tauri-apps/cli-darwin-x64@2.11.2':
-    optional: true
-
-  '@tauri-apps/cli-linux-arm-gnueabihf@2.11.2':
-    optional: true
-
-  '@tauri-apps/cli-linux-arm64-gnu@2.11.2':
-    optional: true
-
-  '@tauri-apps/cli-linux-arm64-musl@2.11.2':
-    optional: true
-
-  '@tauri-apps/cli-linux-riscv64-gnu@2.11.2':
-    optional: true
-
-  '@tauri-apps/cli-linux-x64-gnu@2.11.2':
-    optional: true
-
-  '@tauri-apps/cli-linux-x64-musl@2.11.2':
-    optional: true
-
-  '@tauri-apps/cli-win32-arm64-msvc@2.11.2':
-    optional: true
-
-  '@tauri-apps/cli-win32-ia32-msvc@2.11.2':
-    optional: true
-
-  '@tauri-apps/cli-win32-x64-msvc@2.11.2':
-    optional: true
-
-  '@tauri-apps/cli@2.11.2':
-    optionalDependencies:
-      '@tauri-apps/cli-darwin-arm64': 2.11.2
-      '@tauri-apps/cli-darwin-x64': 2.11.2
-      '@tauri-apps/cli-linux-arm-gnueabihf': 2.11.2
-      '@tauri-apps/cli-linux-arm64-gnu': 2.11.2
-      '@tauri-apps/cli-linux-arm64-musl': 2.11.2
-      '@tauri-apps/cli-linux-riscv64-gnu': 2.11.2
-      '@tauri-apps/cli-linux-x64-gnu': 2.11.2
-      '@tauri-apps/cli-linux-x64-musl': 2.11.2
-      '@tauri-apps/cli-win32-arm64-msvc': 2.11.2
-      '@tauri-apps/cli-win32-ia32-msvc': 2.11.2
-      '@tauri-apps/cli-win32-x64-msvc': 2.11.2
-
-  '@tauri-apps/plugin-opener@2.5.4':
-    dependencies:
-      '@tauri-apps/api': 2.11.0
 
   '@tybys/wasm-util@0.10.2':
     dependencies:
@@ -13139,8 +12989,6 @@ snapshots:
       minimatch: 10.2.5
       typescript: 6.0.3
       yaml: 2.9.0
-
-  typescript@5.6.3: {}
 
   typescript@5.9.3: {}
 

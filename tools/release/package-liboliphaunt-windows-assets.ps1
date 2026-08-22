@@ -141,7 +141,7 @@ foreach ($EmbeddedModule in $EmbeddedModuleEntries) {
         Fail "Windows embedded module must be a regular non-link file: $($EmbeddedModule.FullName)"
     }
 }
-foreach ($Tool in @("initdb.exe", "pg_ctl.exe", "pg_dump.exe", "postgres.exe", "psql.exe")) {
+foreach ($Tool in @("initdb.exe", "pg_basebackup.exe", "pg_ctl.exe", "pg_dump.exe", "postgres.exe", "psql.exe")) {
     $ToolPath = Join-Path (Join-Path $Runtime "bin") $Tool
     if (-not (Test-Path $ToolPath)) {
         Fail "missing Windows $Tool at $ToolPath"
@@ -149,7 +149,7 @@ foreach ($Tool in @("initdb.exe", "pg_ctl.exe", "pg_dump.exe", "postgres.exe", "
 }
 
 Write-Output "==> Verifying base liboliphaunt $TargetId runtime is extension-clean"
-cargo run -p oliphaunt --bin oliphaunt-resources --locked -- --list-extensions > $CatalogFile
+cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources --locked -- --list-extensions > $CatalogFile
 if ($LASTEXITCODE -ne 0) {
     Fail "failed to read exact extension catalog"
 }
@@ -169,7 +169,7 @@ Copy-Item -Recurse -Force (Join-Path $Runtime "*") (Join-Path $Stage "runtime")
 if ($LASTEXITCODE -ne 0) {
     Fail "failed to stage the app-local VC runtime beside oliphaunt.dll"
 }
-foreach ($Tool in @("pg_dump.exe", "psql.exe")) {
+foreach ($Tool in @("pg_basebackup.exe", "pg_dump.exe", "psql.exe")) {
     Copy-Item -Force (Join-Path (Join-Path $Runtime "bin") $Tool) (Join-Path (Join-Path $ToolsStage "runtime/bin") $Tool)
     Remove-Item -Force (Join-Path (Join-Path $Stage "runtime/bin") $Tool)
 }

@@ -22,14 +22,10 @@ use crate::oliphaunt::config::{PostgresConfig, StartupConfig};
 use crate::oliphaunt::extensions::{
     Extension, postgres_config_with_extension_startup, resolve_extension_set,
 };
-use crate::oliphaunt::interface::DebugLevel;
 #[cfg(feature = "tools")]
-use crate::oliphaunt::pg_dump::{
-    PgDumpOptions, PsqlOptions, dump_server_sql, preflight_wasix_tools, run_server_psql,
-};
-use crate::oliphaunt::proxy::OliphauntProxy;
-use crate::oliphaunt::storage::{DatabaseInitialization, DatabaseStorage};
-use crate::oliphaunt::timing;
+use crate::oliphaunt::pg_dump::{PgDumpOptions, PsqlOptions, dump_server_sql, run_server_psql};
+use crate::oliphaunt::proxy::{ActiveConnection, OliphauntProxy};
+use crate::oliphaunt::storage::DatabaseStorage;
 
 /// A supervised local PostgreSQL socket backed by one embedded Oliphaunt runtime.
 ///
@@ -44,6 +40,7 @@ pub struct OliphauntServer {
     endpoint: ServerEndpoint,
     startup_config: StartupConfig,
     shutdown: Arc<AtomicBool>,
+    active_connection: Arc<ActiveConnection>,
     handle: Option<JoinHandle<Result<()>>>,
     #[cfg(unix)]
     owned_unix_socket: Option<OwnedUnixSocket>,
@@ -96,70 +93,59 @@ impl OliphauntServer {
     }
 
     /// Return a PostgreSQL connection URI for the local server.
-    pub fn connection_uri(&self) -> String {
+    pub fn connection_string(&self) -> String {
         match &self.endpoint {
-            ServerEndpoint::Tcp(addr) => tcp_connection_uri(*addr, &self.startup_config),
+            ServerEndpoint::Tcp(addr) => tcp_connection_string(*addr, &self.startup_config),
             #[cfg(unix)]
-            ServerEndpoint::Unix(endpoint) => unix_connection_uri(endpoint, &self.startup_config),
+            ServerEndpoint::Unix(endpoint) => {
+                unix_connection_string(endpoint, &self.startup_config)
+            }
         }
     }
 
     /// Run the bundled WASIX `pg_dump` against this server and return SQL text.
     #[cfg(feature = "tools")]
-    pub fn dump_sql(&self, options: PgDumpOptions) -> Result<String> {
+    pub fn pg_dump(&self, options: PgDumpOptions) -> crate::Result<String> {
+        crate::error::public_result(self.pg_dump_inner(options))
+    }
+
+    #[cfg(feature = "tools")]
+    fn pg_dump_inner(&self, options: PgDumpOptions) -> Result<String> {
         let addr = self
             .tcp_addr()
             .context("pg_dump currently requires a TCP OliphauntServer endpoint")?;
         dump_server_sql(addr, &options)
     }
 
-    /// Validate that split WASIX `pg_dump` and `psql` artifacts are installed
-    /// and loadable for this server before invoking either tool.
-    #[cfg(feature = "tools")]
-    pub fn preflight_tools(&self) -> Result<()> {
-        self.tcp_addr()
-            .context("WASIX pg_dump and psql currently require a TCP OliphauntServer endpoint")?;
-        preflight_wasix_tools()
-    }
-
-    /// Run the bundled WASIX `pg_dump` and return UTF-8 SQL bytes.
-    #[cfg(feature = "tools")]
-    pub fn dump_bytes(&self, options: PgDumpOptions) -> Result<Vec<u8>> {
-        Ok(self.dump_sql(options)?.into_bytes())
-    }
-
     /// Run the bundled WASIX `psql` against this server and return stdout text.
     #[cfg(feature = "tools")]
-    pub fn psql(&self, options: PsqlOptions) -> Result<String> {
+    pub fn psql(&self, options: PsqlOptions) -> crate::Result<String> {
+        crate::error::public_result(self.psql_inner(options))
+    }
+
+    #[cfg(feature = "tools")]
+    fn psql_inner(&self, options: PsqlOptions) -> Result<String> {
         let addr = self
             .tcp_addr()
             .context("psql currently requires a TCP OliphauntServer endpoint")?;
         run_server_psql(addr, &options)
     }
 
-    /// Run the bundled WASIX `psql` and return stdout bytes.
-    #[cfg(feature = "tools")]
-    pub fn psql_bytes(&self, options: PsqlOptions) -> Result<Vec<u8>> {
-        Ok(self.psql(options)?.into_bytes())
-    }
-
     /// Request shutdown and wait for the listener thread to exit.
     ///
-    /// Close database clients before calling this method. The current proxy owns
-    /// one blocking backend connection at a time, so an open client can keep the
-    /// worker thread busy until it disconnects.
-    pub fn shutdown(mut self) -> Result<()> {
-        self.stop()
+    /// Any active client connection is closed before the listener thread is
+    /// joined.
+    pub fn close(mut self) -> crate::Result<()> {
+        crate::error::public_result(self.stop())
     }
 
     fn stop(&mut self) -> Result<()> {
         self.shutdown.store(true, Ordering::SeqCst);
+        self.active_connection.shutdown();
         {
-            let _phase = timing::phase("server.shutdown_wake");
             wake_listener(&self.endpoint);
         }
         let worker_result = if let Some(handle) = self.handle.take() {
-            let _phase = timing::phase("server.thread_join");
             match handle.join() {
                 Ok(result) => result,
                 Err(_) => Err(anyhow!("oliphaunt server thread panicked")),
@@ -198,7 +184,6 @@ impl Drop for OliphauntServer {
 #[derive(Debug, Clone)]
 pub struct OliphauntServerBuilder {
     storage: DatabaseStorage,
-    initialization: DatabaseInitialization,
     endpoint: ServerEndpointConfig,
     postgres_config: PostgresConfig,
     startup_config: StartupConfig,
@@ -217,7 +202,6 @@ impl Default for OliphauntServerBuilder {
     fn default() -> Self {
         Self {
             storage: DatabaseStorage::Memory,
-            initialization: DatabaseInitialization::PackagedTemplate,
             endpoint: ServerEndpointConfig::Tcp(SocketAddr::from(([127, 0, 0, 1], 0))),
             postgres_config: PostgresConfig::default(),
             startup_config: StartupConfig::default(),
@@ -239,13 +223,10 @@ impl OliphauntServerBuilder {
         self
     }
 
-    /// Select how an empty storage allocation is initialized.
-    pub fn initialization(mut self, initialization: DatabaseInitialization) -> Self {
-        self.initialization = initialization;
-        self
-    }
-
-    /// Bind the server to a TCP address.
+    /// Bind the server to a loopback TCP address.
+    ///
+    /// The embedded proxy uses PostgreSQL trust authentication and rejects
+    /// non-loopback addresses when [`Self::start`] is called.
     pub fn tcp(mut self, addr: SocketAddr) -> Self {
         self.endpoint = ServerEndpointConfig::Tcp(addr);
         self
@@ -254,7 +235,7 @@ impl OliphauntServerBuilder {
     /// Bind the server to a PostgreSQL Unix-domain socket path.
     ///
     /// The filename must use PostgreSQL's `.s.PGSQL.<port>` convention so
-    /// [`OliphauntServer::connection_uri`] can address the bound socket. A
+    /// [`OliphauntServer::connection_string`] can address the bound socket. A
     /// relative path is resolved against the current working directory.
     #[cfg(unix)]
     pub fn unix(mut self, path: impl Into<PathBuf>) -> Self {
@@ -264,14 +245,14 @@ impl OliphauntServerBuilder {
 
     /// Set a PostgreSQL startup GUC for the embedded backend used by this
     /// server.
-    pub fn postgres_config(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn startup_guc(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.postgres_config.insert(name, value);
         self
     }
 
     /// Set multiple PostgreSQL startup GUCs for the embedded backend used by
     /// this server.
-    pub fn postgres_configs<K, V>(mut self, settings: impl IntoIterator<Item = (K, V)>) -> Self
+    pub fn startup_gucs<K, V>(mut self, settings: impl IntoIterator<Item = (K, V)>) -> Self
     where
         K: Into<String>,
         V: Into<String>,
@@ -282,42 +263,15 @@ impl OliphauntServerBuilder {
         self
     }
 
-    /// Default user encoded in [`OliphauntServer::connection_uri`].
+    /// Default user encoded in [`OliphauntServer::connection_string`].
     pub fn username(mut self, username: impl Into<String>) -> Self {
         self.startup_config.username = username.into();
         self
     }
 
-    /// Default database encoded in [`OliphauntServer::connection_uri`].
+    /// Default database encoded in [`OliphauntServer::connection_string`].
     pub fn database(mut self, database: impl Into<String>) -> Self {
         self.startup_config.database = database.into();
-        self
-    }
-
-    /// Enable PostgreSQL debug logging level `0..=5` for server backends.
-    pub fn debug_level(mut self, level: DebugLevel) -> Self {
-        self.startup_config.debug_level = Some(level);
-        self
-    }
-
-    /// Use lower durability settings for ephemeral or cacheable local
-    /// workloads.
-    pub fn relaxed_durability(mut self, enabled: bool) -> Self {
-        self.startup_config.relaxed_durability = enabled;
-        self
-    }
-
-    /// Append an advanced PostgreSQL startup option for server backends.
-    pub fn startup_arg(mut self, arg: impl Into<String>) -> Self {
-        self.startup_config.extra_args.push(arg.into());
-        self
-    }
-
-    /// Append advanced PostgreSQL startup arguments for server backends.
-    pub fn startup_args(mut self, args: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        self.startup_config
-            .extra_args
-            .extend(args.into_iter().map(Into::into));
         self
     }
 
@@ -336,7 +290,19 @@ impl OliphauntServerBuilder {
     }
 
     /// Install the runtime if needed, initialize the cluster, and start serving.
-    pub fn start(self) -> Result<OliphauntServer> {
+    pub fn start(self) -> crate::Result<OliphauntServer> {
+        crate::error::public_result(self.start_inner())
+    }
+
+    fn start_inner(self) -> Result<OliphauntServer> {
+        if let ServerEndpointConfig::Tcp(addr) = &self.endpoint
+            && !addr.ip().is_loopback()
+        {
+            return Err(anyhow!(
+                "Oliphaunt TCP server uses trust authentication and must bind to a loopback address"
+            ));
+        }
+
         #[cfg(unix)]
         let unix_endpoint = match &self.endpoint {
             ServerEndpointConfig::Unix(path) => Some(resolve_unix_socket_endpoint(path)?),
@@ -352,8 +318,7 @@ impl OliphauntServerBuilder {
         let startup_config = self.startup_config.clone();
 
         let prepared_database = {
-            let _phase = timing::phase("server.storage_prepare");
-            let plan = DatabasePlan::new(self.storage.clone(), self.initialization.clone());
+            let plan = DatabasePlan::new(self.storage.clone());
             run_blocking("oliphaunt-storage-prepare", move || prepare_database(plan))?
         };
         let PreparedDatabase {
@@ -363,10 +328,8 @@ impl OliphauntServerBuilder {
         } = prepared_database;
 
         let shutdown = Arc::new(AtomicBool::new(false));
-        let proxy = {
-            let _phase = timing::phase("server.proxy_create");
-            OliphauntProxy::from_prepared_database(outcome)
-        };
+        let active_connection = Arc::new(ActiveConnection::default());
+        let proxy = { OliphauntProxy::from_prepared_database(outcome) };
         let proxy = proxy
             .with_postgres_config(postgres_config)
             .with_startup_config(startup_config.clone());
@@ -376,7 +339,8 @@ impl OliphauntServerBuilder {
         #[cfg(unix)]
         let (endpoint, handle, owned_unix_socket) = match self.endpoint {
             ServerEndpointConfig::Tcp(addr) => {
-                let (endpoint, handle) = start_tcp(proxy, addr, shutdown.clone())?;
+                let (endpoint, handle) =
+                    start_tcp(proxy, addr, shutdown.clone(), active_connection.clone())?;
                 (endpoint, handle, None)
             }
             ServerEndpointConfig::Unix(_) => {
@@ -384,13 +348,16 @@ impl OliphauntServerBuilder {
                     proxy,
                     unix_endpoint.expect("Unix endpoint was resolved before database preparation"),
                     shutdown.clone(),
+                    active_connection.clone(),
                 )?;
                 (endpoint, handle, Some(socket))
             }
         };
         #[cfg(not(unix))]
         let (endpoint, handle) = match self.endpoint {
-            ServerEndpointConfig::Tcp(addr) => start_tcp(proxy, addr, shutdown.clone())?,
+            ServerEndpointConfig::Tcp(addr) => {
+                start_tcp(proxy, addr, shutdown.clone(), active_connection.clone())?
+            }
         };
 
         Ok(OliphauntServer {
@@ -399,6 +366,7 @@ impl OliphauntServerBuilder {
             endpoint,
             startup_config,
             shutdown,
+            active_connection,
             handle: Some(handle),
             #[cfg(unix)]
             owned_unix_socket,
@@ -418,35 +386,25 @@ fn start_tcp(
     proxy: OliphauntProxy,
     addr: SocketAddr,
     shutdown: Arc<AtomicBool>,
+    active_connection: Arc<ActiveConnection>,
 ) -> Result<(ServerEndpoint, JoinHandle<Result<()>>)> {
-    let listener = {
-        let _phase = timing::phase("server.tcp_bind");
-        TcpListener::bind(addr).context("bind Oliphaunt TCP server")?
-    };
+    let listener = TcpListener::bind(addr).context("bind Oliphaunt TCP server")?;
     let addr = {
-        let _phase = timing::phase("server.tcp_local_addr");
         listener
             .local_addr()
             .context("read Oliphaunt TCP address")?
     };
     let (ready_tx, ready_rx) = sync_channel(1);
-    let recorder = timing::current_recorder();
-    let handle = {
-        let _phase = timing::phase("server.thread_spawn");
-        thread::spawn(move || {
-            timing::with_recorder(recorder, || {
-                proxy.serve_tcp_listener_until_ready(listener, shutdown, Some(ready_tx))
-            })
-        })
-    };
+    let handle = thread::spawn(move || {
+        proxy.serve_tcp_listener_until_ready(listener, shutdown, active_connection, Some(ready_tx))
+    });
     {
-        let _phase = timing::phase("server.wait_ready");
         wait_until_ready(&ready_rx)?;
     }
     Ok((ServerEndpoint::Tcp(addr), handle))
 }
 
-fn tcp_connection_uri(addr: SocketAddr, startup: &StartupConfig) -> String {
+fn tcp_connection_string(addr: SocketAddr, startup: &StartupConfig) -> String {
     let username = percent_encode_uri_component(&startup.username);
     let database = percent_encode_uri_component(&startup.database);
     match addr {
@@ -472,7 +430,7 @@ fn tcp_connection_uri(addr: SocketAddr, startup: &StartupConfig) -> String {
 }
 
 #[cfg(unix)]
-fn unix_connection_uri(endpoint: &UnixSocketEndpoint, startup: &StartupConfig) -> String {
+fn unix_connection_string(endpoint: &UnixSocketEndpoint, startup: &StartupConfig) -> String {
     let host = endpoint
         .path
         .parent()
@@ -491,10 +449,9 @@ where
     T: Send + 'static,
     F: FnOnce() -> Result<T> + Send + 'static,
 {
-    let recorder = timing::current_recorder();
     thread::Builder::new()
         .name(name.to_string())
-        .spawn(move || timing::with_recorder(recorder, f))
+        .spawn(f)
         .with_context(|| format!("spawn {name} worker"))?
         .join()
         .map_err(|_| anyhow!("{name} worker panicked"))?
@@ -505,10 +462,10 @@ fn start_unix(
     proxy: OliphauntProxy,
     endpoint: UnixSocketEndpoint,
     shutdown: Arc<AtomicBool>,
+    active_connection: Arc<ActiveConnection>,
 ) -> Result<(ServerEndpoint, JoinHandle<Result<()>>, OwnedUnixSocket)> {
     let path = endpoint.path.clone();
     {
-        let _phase = timing::phase("server.unix_prepare_path");
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("create socket directory {}", parent.display()))?;
@@ -517,7 +474,6 @@ fn start_unix(
     }
 
     let listener = {
-        let _phase = timing::phase("server.unix_bind");
         UnixListener::bind(&path)
             .with_context(|| format!("bind Oliphaunt Unix socket {}", path.display()))?
     };
@@ -530,20 +486,16 @@ fn start_unix(
     };
     let server_endpoint = ServerEndpoint::Unix(endpoint);
     let (ready_tx, ready_rx) = sync_channel(1);
-    let recorder = timing::current_recorder();
     let worker_shutdown = shutdown.clone();
-    let handle = {
-        let _phase = timing::phase("server.thread_spawn");
-        thread::spawn(move || {
-            timing::with_recorder(recorder, || {
-                proxy.serve_unix_listener_until_ready(listener, worker_shutdown, Some(ready_tx))
-            })
-        })
-    };
-    let ready_result = {
-        let _phase = timing::phase("server.wait_ready");
-        wait_until_ready(&ready_rx)
-    };
+    let handle = thread::spawn(move || {
+        proxy.serve_unix_listener_until_ready(
+            listener,
+            worker_shutdown,
+            active_connection,
+            Some(ready_tx),
+        )
+    });
+    let ready_result = { wait_until_ready(&ready_rx) };
     if let Err(error) = ready_result {
         shutdown.store(true, Ordering::SeqCst);
         let _ = UnixStream::connect(&path);
@@ -731,26 +683,24 @@ mod tests {
     }
 
     #[test]
-    fn tcp_connection_uri_encodes_username_and_database_components() {
+    fn tcp_connection_string_encodes_username_and_database_components() {
         let startup = StartupConfig {
             username: "role@example:admin".to_string(),
             database: "tenant/a?mode=#100%".to_string(),
-            ..StartupConfig::default()
         };
 
         assert_eq!(
-            tcp_connection_uri(SocketAddr::from(([127, 0, 0, 1], 6543)), &startup),
+            tcp_connection_string(SocketAddr::from(([127, 0, 0, 1], 6543)), &startup),
             "postgresql://role%40example%3Aadmin@127.0.0.1:6543/tenant%2Fa%3Fmode%3D%23100%25?sslmode=disable"
         );
     }
 
     #[cfg(unix)]
     #[test]
-    fn unix_connection_uri_encodes_every_caller_controlled_component() {
+    fn unix_connection_string_encodes_every_caller_controlled_component() {
         let startup = StartupConfig {
             username: "role name".to_string(),
             database: "tenant/db#1".to_string(),
-            ..StartupConfig::default()
         };
 
         let endpoint = resolve_unix_socket_endpoint(Path::new(
@@ -758,21 +708,21 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(
-            unix_connection_uri(&endpoint, &startup),
+            unix_connection_string(&endpoint, &startup),
             "postgresql://role%20name@/tenant%2Fdb%231?host=/tmp/Application%20Support/db%3Fslot&port=6543&sslmode=disable"
         );
     }
 
     #[cfg(unix)]
     #[test]
-    fn unix_connection_uri_preserves_non_utf8_path_bytes() {
+    fn unix_connection_string_preserves_non_utf8_path_bytes() {
         use std::ffi::OsStr;
 
         let temp = tempfile::TempDir::new().unwrap();
         let directory = temp.path().join(OsStr::from_bytes(b"db-\xFF"));
         let endpoint = resolve_unix_socket_endpoint(&directory.join(".s.PGSQL.6543")).unwrap();
 
-        assert!(unix_connection_uri(&endpoint, &StartupConfig::default()).contains("db-%FF"));
+        assert!(unix_connection_string(&endpoint, &StartupConfig::default()).contains("db-%FF"));
     }
 
     #[cfg(unix)]
@@ -885,20 +835,36 @@ mod tests {
     }
 
     #[test]
-    fn default_server_builder_selects_memory_and_packaged_template() {
+    fn default_server_builder_selects_memory() {
         let builder = OliphauntServerBuilder::default();
         assert_eq!(builder.storage, DatabaseStorage::Memory);
-        assert_eq!(
-            builder.initialization,
-            DatabaseInitialization::PackagedTemplate
-        );
+    }
+
+    #[test]
+    fn tcp_server_rejects_non_loopback_addresses() {
+        for addr in [
+            SocketAddr::from(([0, 0, 0, 0], 0)),
+            SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], 0)),
+            SocketAddr::from(([192, 0, 2, 1], 0)),
+        ] {
+            let error = OliphauntServerBuilder::new()
+                .tcp(addr)
+                .start()
+                .expect_err("trust-authenticated TCP must stay on loopback");
+            assert!(
+                error
+                    .to_string()
+                    .contains("must bind to a loopback address"),
+                "unexpected error for {addr}: {error}"
+            );
+        }
     }
 
     #[cfg(feature = "extensions")]
     #[test]
     fn server_path_merges_pg_textsearch_preload_once_before_start() {
         let builder = OliphauntServerBuilder::new()
-            .postgres_config("shared_preload_libraries", "auto_explain,pg_textsearch")
+            .startup_guc("shared_preload_libraries", "auto_explain,pg_textsearch")
             .extensions([PG_TEXTSEARCH, PG_TEXTSEARCH]);
 
         let (_, postgres_config) = builder.resolved_extension_startup().unwrap();

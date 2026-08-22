@@ -31,7 +31,7 @@ extension OliphauntRuntimeResources {
     /// Applications normally call the generated `OliphauntExtension*.register()`
     /// wrapper rather than invoking this packaging API directly.
     @discardableResult
-    public static func registerPackagedExtensionResource(
+    @_spi(ExtensionSupport) public static func registerPackagedExtensionResource(
         product: String,
         version: String,
         sqlName: String,
@@ -113,7 +113,7 @@ extension OliphauntRuntimeResources {
         return true
     }
 
-    public static func unregisterPackagedExtensionResource(
+    @_spi(ExtensionSupport) public static func unregisterPackagedExtensionResource(
         sqlName: String,
         resourceRoot: URL
     ) {

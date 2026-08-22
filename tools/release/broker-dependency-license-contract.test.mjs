@@ -109,27 +109,27 @@ function spawnResult(command, args, logRoot) {
 
 test("broker contract pins the complete package-specific legal inventory", { timeout: TIMEOUT }, () => {
   const { contract } = loadBrokerDependencyLicenseContract();
-  assert.equal(contract.packages.length, 56);
+  assert.equal(contract.packages.length, 27);
   assert.equal(contract.payloadLicense, BROKER_PAYLOAD_LICENSE);
   const legalFiles = contract.packages.flatMap((row) => row.licenseFiles);
-  assert.equal(legalFiles.length, 120);
-  assert.equal(new Set(legalFiles.map(({ sha256 }) => sha256)).size, 59);
+  assert.equal(legalFiles.length, 55);
+  assert.equal(new Set(legalFiles.map(({ sha256 }) => sha256)).size, 29);
   assert.ok(contract.packages.every((row) => row.licenseFiles.length > 0));
   assert.ok(contract.packages.some((row) =>
     row.name === "memchr"
     && row.selectedLicense === "MIT"
     && row.licenseFiles.some(({ name }) => name === "UNLICENSE")));
   assert.ok(contract.packages.some((row) => row.name === "libloading" && row.selectedLicense === "ISC"));
-  assert.ok(contract.packages.some((row) => row.name === "zopfli" && row.selectedLicense === "Apache-2.0"));
+  assert.ok(contract.packages.some((row) => row.name === "serde_json" && row.version === "1.0.150"));
   assert.ok(contract.packages.some((row) => row.name === "unicode-ident" && row.selectedLicense === "MIT AND Unicode-3.0"));
   assert.ok(contract.packages.some((row) =>
     row.name === "crossbeam-channel"
     && row.selectedLicense === "MIT AND CC-BY-3.0"
     && row.licenseFiles.some(({ name }) => name === "LICENSE-THIRD-PARTY")));
   assert.ok(contract.packages.some((row) =>
-    row.name === "zstd-sys"
-    && row.selectedLicense === "MIT AND BSD-3-Clause"
-    && row.licenseFiles.some(({ name }) => name === "zstd/LICENSE")));
+    row.name === "zmij"
+    && row.selectedLicense === "MIT"
+    && row.licenseFiles.some(({ name }) => name === "LICENSE-MIT")));
 });
 
 test("production audit prefetches the exact locked all-target closure into a clean home before verification", (t) => {
@@ -245,10 +245,10 @@ test("target indexes exclude other operating systems' conditional dependencies",
     assert.equal(index.payloadLicense, BROKER_PAYLOAD_LICENSE);
     indexes.set(target, new Set(index.packages.map(({ name }) => name)));
   }
-  assert.ok(indexes.get("linux-x64-gnu").has("linux-raw-sys"));
+  assert.ok(indexes.get("linux-x64-gnu").has("libc"));
   assert.ok(!indexes.get("linux-x64-gnu").has("windows-link"));
-  assert.ok(indexes.get("macos-arm64").has("errno"));
-  assert.ok(!indexes.get("macos-arm64").has("linux-raw-sys"));
+  assert.ok(indexes.get("macos-arm64").has("libc"));
+  assert.ok(!indexes.get("macos-arm64").has("windows-link"));
   assert.ok(indexes.get("windows-x64-msvc").has("windows-link"));
   assert.ok(indexes.get("windows-x64-msvc").has("winapi"));
   assert.ok(!indexes.get("windows-x64-msvc").has("libc"));
@@ -461,8 +461,8 @@ test("contract mutations cannot omit attribution, change lock identity, lie abou
 
   {
     const file = writeMutatedContract(t, (contract) => {
-      const rustix = contract.packages.find(({ name }) => name === "rustix");
-      rustix.licenseFiles = rustix.licenseFiles.filter(({ name }) => name !== "COPYRIGHT");
+      const memchr = contract.packages.find(({ name }) => name === "memchr");
+      memchr.licenseFiles = memchr.licenseFiles.filter(({ name }) => name !== "UNLICENSE");
     });
     assert.throws(
       () => loadBrokerDependencyLicenseContract({ contractPath: file }),
@@ -482,17 +482,17 @@ test("contract mutations cannot omit attribution, change lock identity, lie abou
 
   {
     const file = writeMutatedContract(t, (contract) => {
-      contract.packages.find(({ name }) => name === "zopfli").selectedLicense = "MIT";
+      contract.packages.find(({ name }) => name === "libloading").selectedLicense = "MIT";
     });
     assert.throws(
       () => loadBrokerDependencyLicenseContract({ contractPath: file, auditGraph: false }),
-      /selects MIT but declares Apache-2.0/u,
+      /selects MIT but declares ISC/u,
     );
   }
 
   {
     const file = writeMutatedContract(t, (contract) => {
-      const key = "zopfli@0.8.3";
+      const key = "libc@0.2.186";
       contract.targets["linux-x64-gnu"].packages = contract.targets["linux-x64-gnu"].packages.filter((value) => value !== key);
     });
     assert.throws(

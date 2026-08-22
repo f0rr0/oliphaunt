@@ -142,10 +142,8 @@ function checkToolCrateBoundaries() {
   if (JSON.stringify(features.default ?? null) !== '[]') {
     errors.push('tools/xtask/Cargo.toml must keep the default feature set empty');
   }
-  for (const removedFeature of ['perf', 'legacy-oliphaunt']) {
-    if (removedFeature in features) {
-      errors.push(`tools/xtask/Cargo.toml must not define product-aware feature ${JSON.stringify(removedFeature)}; use tools/perf/runner`);
-    }
+  if ('perf' in features) {
+    errors.push('tools/xtask/Cargo.toml must not define product-aware feature "perf"; use tools/perf/runner');
   }
 
   const forbiddenXtaskDependencies = [
@@ -176,12 +174,6 @@ function checkToolCrateBoundaries() {
   if (JSON.stringify(perfFeatures.default ?? null) !== '[]') {
     errors.push('tools/perf/runner/Cargo.toml must keep the default feature set empty');
   }
-  const legacyFeature = new Set(Array.isArray(perfFeatures['legacy-oliphaunt']) ? perfFeatures['legacy-oliphaunt'] : []);
-  for (const depName of ['dep:directories', 'dep:oliphaunt-wasix']) {
-    if (!legacyFeature.has(depName)) {
-      errors.push(`tools/perf/runner/Cargo.toml legacy-oliphaunt feature must gate ${depName}`);
-    }
-  }
   for (const depName of ['oliphaunt', 'rusqlite', 'sqlx', 'tokio-postgres']) {
     if (!(depName in perfDependencies)) {
       errors.push(`tools/perf/runner/Cargo.toml must own benchmark dependency ${JSON.stringify(depName)}`);
@@ -206,11 +198,6 @@ function checkNativeScriptBoundary() {
     'tools/perf/matrix/run_native_oliphaunt_matrix.sh',
     'cargo build --release -p oliphaunt-perf -p oliphaunt --bins',
     'native perf matrix must build the dedicated perf runner and native broker helper',
-  );
-  requireText(
-    'tools/perf/matrix/run_native_oliphaunt_matrix.sh',
-    'legacyWasixControls=false',
-    'native perf matrix plan must classify itself as native-only',
   );
   requireText(
     'src/runtimes/liboliphaunt/native/tools/check-track.sh',
@@ -260,7 +247,7 @@ function* walkFiles(relativeRoots, suffixes) {
 
 checkNativeRustManifest('src/sdks/rust/Cargo.toml');
 checkJsonManifest('src/sdks/react-native/package.json');
-checkJsonManifest('src/sdks/react-native/examples/expo/package.json');
+checkJsonManifest('examples/react-native-expo/package.json');
 checkToolCrateBoundaries();
 checkNativeScriptBoundary();
 

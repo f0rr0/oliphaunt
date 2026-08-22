@@ -65,10 +65,10 @@ afterEach(() => {
   }
 });
 
-test("validates the exact eleven-file Kotlin Maven Central companion closure", () => {
+test("validates the exact ten-file Kotlin Maven Central companion closure", () => {
   const result = validateKotlinMavenStagingClosure(fixture(), VERSION);
   expect(result.publicationFiles).toEqual(kotlinMavenCentralRelativeFiles(VERSION));
-  expect(result.publicationFiles).toHaveLength(11);
+  expect(result.publicationFiles).toHaveLength(10);
   expect(result.coordinates).toEqual([
     { artifactId: "oliphaunt-android", groupId: "dev.oliphaunt", packaging: "aar" },
     { artifactId: "oliphaunt-android-gradle-plugin", groupId: "dev.oliphaunt", packaging: "jar" },
@@ -80,7 +80,7 @@ test("validates the exact eleven-file Kotlin Maven Central companion closure", (
 test("rejects missing companions and undeclared staging files", () => {
   const missing = fixture();
   unlinkSync(path.join(missing, kotlinMavenCentralRelativeFiles(VERSION)[0]));
-  expect(() => validateKotlinMavenStagingClosure(missing, VERSION)).toThrow(/exact 11-file.*missing=/u);
+  expect(() => validateKotlinMavenStagingClosure(missing, VERSION)).toThrow(/exact 10-file.*missing=/u);
 
   const unexpected = fixture();
   write("dev/oliphaunt/oliphaunt-android/1.2.3/resolver.lock", "forbidden\n", unexpected);

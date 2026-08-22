@@ -115,6 +115,45 @@ pub(super) fn copy_directory_tree(source: &Path, destination: &Path, mode: CopyM
     Ok(())
 }
 
+/// Flush a newly materialized directory tree before it is atomically published.
+///
+/// PostgreSQL's files are ordinary files at this point: no server has opened the
+/// directory yet. Sync files before their containing directories so a completed
+/// root descriptor never names an initialization that only existed in cache.
+pub(super) fn sync_directory_tree(path: &Path) -> Result<()> {
+    for entry in sorted_read_dir(path)? {
+        let entry_path = entry.path();
+        let file_type = entry.file_type().map_err(|err| {
+            Error::Engine(format!(
+                "read file type for {} while syncing: {err}",
+                entry_path.display()
+            ))
+        })?;
+        if file_type.is_dir() {
+            sync_directory_tree(&entry_path)?;
+        } else if file_type.is_file() {
+            fs::File::open(&entry_path)
+                .and_then(|file| file.sync_all())
+                .map_err(|err| {
+                    Error::Engine(format!("sync file {}: {err}", entry_path.display()))
+                })?;
+        }
+    }
+    sync_directory(path)
+}
+
+#[cfg(unix)]
+pub(super) fn sync_directory(path: &Path) -> Result<()> {
+    fs::File::open(path)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|err| Error::Engine(format!("sync directory {}: {err}", path.display())))
+}
+
+#[cfg(not(unix))]
+pub(super) fn sync_directory(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
 pub(super) fn copy_file_preserving_permissions(source: &Path, destination: &Path) -> Result<()> {
     copy_file_with_mode(source, destination, CopyMode::PreferClone)
 }

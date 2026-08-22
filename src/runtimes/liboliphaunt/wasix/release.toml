@@ -1,5 +1,5 @@
 id = "liboliphaunt-wasix"
-owner = "@oliphaunt/wasm"
+owner = "@oliphaunt/wasix"
 kind = "wasm-runtime"
 publish_targets = ["github-release-assets", "crates-io", "npm"]
 registry_packages = [

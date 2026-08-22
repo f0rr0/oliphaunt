@@ -1,12 +1,10 @@
-import { ABI_VERSION, RESTORE_REPLACE_EXISTING, nativeBackupFormat } from './common.js';
-import type { BackupFormat } from '../types.js';
+import { ABI_VERSION } from './common.js';
 import type { NativeOpenConfig, NativeRestoreOptions } from './types.js';
 
 export const POINTER_SIZE = 8;
 export const OLIPHAUNT_CONFIG_SIZE = 72;
-export const OLIPHAUNT_BACKUP_OPTIONS_SIZE = 32;
 export const OLIPHAUNT_RESPONSE_SIZE = 16;
-export const OLIPHAUNT_RESTORE_OPTIONS_SIZE = 48;
+export const OLIPHAUNT_RESTORE_OPTIONS_SIZE = 32;
 
 const textEncoder = new TextEncoder();
 
@@ -69,17 +67,6 @@ export function packConfigPointers(
   };
 }
 
-export function packBackupOptions(format: BackupFormat): Uint8Array {
-  const out = new Uint8Array(OLIPHAUNT_BACKUP_OPTIONS_SIZE);
-  const view = new DataView(out.buffer);
-  view.setUint32(0, ABI_VERSION, true);
-  view.setUint32(4, nativeBackupFormat(format), true);
-  writePointer(view, 8, 0n);
-  writeSize(view, 16, 0);
-  view.setBigUint64(24, 0n, true);
-  return out;
-}
-
 export function packRestoreOptionsPointers(
   options: NativeRestoreOptions,
   pointerOf: PointerReader,
@@ -90,10 +77,8 @@ export function packRestoreOptionsPointers(
 
   view.setUint32(0, ABI_VERSION, true);
   writePointer(view, 8, pointerOf(destination));
-  view.setUint32(16, nativeBackupFormat(options.format), true);
-  writePointer(view, 24, options.bytes.byteLength > 0 ? pointerOf(options.bytes) : 0n);
-  writeSize(view, 32, options.bytes.byteLength);
-  view.setBigUint64(40, options.replaceExisting ? RESTORE_REPLACE_EXISTING : 0n, true);
+  writePointer(view, 16, options.bytes.byteLength > 0 ? pointerOf(options.bytes) : 0n);
+  writeSize(view, 24, options.bytes.byteLength);
 
   return { options: out, keepAlive: [destination, options.bytes] };
 }

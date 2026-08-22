@@ -1,6 +1,6 @@
 {
   "nativeRuntimeToolStems": ["initdb", "pg_ctl", "postgres"],
-  "nativeToolsToolStems": ["pg_dump", "psql"],
+  "nativeToolsToolStems": ["pg_basebackup", "pg_dump", "psql"],
   "windowsVcRuntimeDlls": ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"],
   "windowsVcRuntimeProfiles": {
     "provider": ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"]

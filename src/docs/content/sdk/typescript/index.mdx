@@ -9,14 +9,14 @@ The TypeScript SDK targets Node.js, Bun, and Deno. It is the desktop
 JavaScript SDK for the native runtime, native helpers, broker/server flows, and
 runtime asset resolution.
 
-It is separate from [`@oliphaunt/wasix-ts`](/docs/sdk/wasix/browser-typescript),
+It is separate from [`@oliphaunt/wasix-ts`](/docs/sdk/wasix-typescript),
 which hosts the portable runtime directly or in a Worker in browsers and
 Node.js. Neither package selects or falls back to the other.
 
 Use this SDK for supported desktop JavaScript runtimes. Tauri apps currently
 keep the database in Rust state and expose narrow app-owned commands to the
-webview; a direct TypeScript adapter is planned. React Native apps use the React
-Native SDK because mobile execution delegates through Swift and Kotlin.
+webview. React Native apps use the React Native SDK because mobile execution
+delegates through Swift and Kotlin.
 
 ## Install
 
@@ -30,8 +30,7 @@ npm is the native-runtime distribution for Node.js, Bun, and Deno. Deno imports
 the same package through `npm:@oliphaunt/ts`.
 
 Use this SDK for Node.js, Bun, and Deno. Tauri frontends currently call narrow
-app-owned Rust commands; the direct JavaScript adapter remains planned.
-React Native apps use `@oliphaunt/react-native` because mobile execution
+app-owned Rust commands. React Native apps use `@oliphaunt/react-native` because mobile execution
 delegates through Swift and Kotlin.
 
 ## Open And Query
@@ -68,8 +67,7 @@ semantics.
 - Use server mode when existing PostgreSQL clients, pools, or ORMs need
   independent sessions.
 - Use SDK backup and restore APIs for export/import flows.
-- Check `capabilities()` before relying on direct adapters, streaming, backup
-  formats, or server compatibility.
+- Choose direct, broker, or server from the documented runtime support matrix.
 
 ## First Query
 

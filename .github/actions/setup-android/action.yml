@@ -53,7 +53,7 @@ runs:
           src/sdks/kotlin/**/*.gradle*
           src/sdks/kotlin/**/gradle-wrapper.properties
           src/sdks/kotlin/**/libs.versions.toml
-          src/sdks/react-native/examples/expo/package.json
+          examples/react-native-expo/package.json
           src/sdks/react-native/package.json
           pnpm-lock.yaml
 
@@ -71,7 +71,7 @@ runs:
         path: |
           ~/.gradle/caches
           ~/.gradle/wrapper
-        key: setup-java-${{ runner.os }}-${{ runner.arch == 'X64' && 'x64' || runner.arch == 'ARM64' && 'arm64' || runner.arch }}-gradle-${{ hashFiles('src/sdks/kotlin/**/*.gradle*', 'src/sdks/kotlin/**/gradle-wrapper.properties', 'src/sdks/kotlin/**/libs.versions.toml', 'src/sdks/react-native/examples/expo/package.json', 'src/sdks/react-native/package.json', 'pnpm-lock.yaml') }}
+        key: setup-java-${{ runner.os }}-${{ runner.arch == 'X64' && 'x64' || runner.arch == 'ARM64' && 'arm64' || runner.arch }}-gradle-${{ hashFiles('src/sdks/kotlin/**/*.gradle*', 'src/sdks/kotlin/**/gradle-wrapper.properties', 'src/sdks/kotlin/**/libs.versions.toml', 'examples/react-native-expo/package.json', 'src/sdks/react-native/package.json', 'pnpm-lock.yaml') }}
 
     - name: Prepare native Android ccache directory
       if: ${{ inputs.native-ccache == 'true' }}

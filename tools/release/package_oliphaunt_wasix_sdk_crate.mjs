@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { readdirSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,6 +21,36 @@ import {
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SOURCE_NOTICE_OPTIONS = Object.freeze({ profile: 'source-sdk' });
+const EXTENSION_SMOKE_FIXTURES = readdirSync(
+  path.join(root, 'src/shared/fixtures/extensions'),
+  { withFileTypes: true },
+)
+  .filter((entry) => entry.isFile() && entry.name.endsWith('.sql'))
+  .map((entry) => [
+    `src/testdata/extensions/${entry.name}`,
+    `src/shared/fixtures/extensions/${entry.name}`,
+  ])
+  .sort((left, right) => left[0].localeCompare(right[0]));
+const PACKAGE_FIXTURES = Object.freeze([
+  ...EXTENSION_SMOKE_FIXTURES,
+  ['src/testdata/database-root.json', 'src/shared/fixtures/storage/database-root.json'],
+  [
+    'src/testdata/physical-archive-wasix-v1.properties',
+    'src/shared/fixtures/storage/physical-archive-wasix-v1.properties',
+  ],
+  [
+    'src/testdata/physical-backup-wal-range-v1.properties',
+    'src/shared/fixtures/storage/physical-backup-wal-range-v1.properties',
+  ],
+  [
+    'src/testdata/postgres-behavior-contract.json',
+    'src/shared/fixtures/postgres/behavior-contract.json',
+  ],
+  [
+    'src/testdata/protocol-query-response-cases.json',
+    'src/shared/fixtures/protocol/query-response-cases.json',
+  ],
+]);
 
 function fail(message) {
   console.error(`package_oliphaunt_wasix_sdk_crate.mjs: ${message}`);
@@ -148,12 +179,34 @@ async function copySourceTree(source, destination, ignoredNames) {
   });
 }
 
+async function validatePackageFixtures(sourceDir) {
+  for (const [packageFixture, canonicalFixture] of PACKAGE_FIXTURES) {
+    const [packaged, canonical] = await Promise.all([
+      fs.readFile(path.join(sourceDir, packageFixture)),
+      fs.readFile(path.join(root, canonicalFixture)),
+    ]);
+    if (!packaged.equals(canonical)) {
+      fail(`${rel(path.join(sourceDir, packageFixture))} must exactly match ${canonicalFixture}`);
+    }
+  }
+}
+
+async function stagePackageFixtures(stageDir) {
+  for (const [packageFixture, canonicalFixture] of PACKAGE_FIXTURES) {
+    const destination = path.join(stageDir, packageFixture);
+    await fs.mkdir(path.dirname(destination), { recursive: true });
+    await fs.copyFile(path.join(root, canonicalFixture), destination);
+  }
+}
+
 export async function prepareOliphauntWasixReleaseSource(version) {
   const runtimeVersion = await currentLiboliphauntWasixVersion();
   const registryPackages = await wasixCargoRegistryPackages();
   const sourceDir = path.join(root, 'src/bindings/wasix-rust/crates/oliphaunt-wasix');
   const stageDir = path.join(root, 'target/release/cargo-package-sources/oliphaunt-wasix');
   await copySourceTree(sourceDir, stageDir, new Set(['target']));
+  await stagePackageFixtures(stageDir);
+  await validatePackageFixtures(stageDir);
   const cargoToml = path.join(stageDir, 'Cargo.toml');
   const rendered = renderOliphauntWasixReleaseCargoToml(
     await fs.readFile(cargoToml, 'utf8'),

@@ -5,34 +5,26 @@ NS_ASSUME_NONNULL_BEGIN
 @class OliphauntAdapterDatabase;
 
 typedef void (^OliphauntOpenCompletion)(OliphauntAdapterDatabase *_Nullable database, NSError *_Nullable error);
-typedef void (^OliphauntStringCompletion)(NSString *_Nullable value, NSError *_Nullable error);
 typedef void (^OliphauntDataCompletion)(NSData *_Nullable value, NSError *_Nullable error);
-typedef void (^OliphauntDictionaryCompletion)(NSDictionary *_Nullable value, NSError *_Nullable error);
-typedef void (^OliphauntArrayCompletion)(NSArray *_Nullable value, NSError *_Nullable error);
-typedef void (^OliphauntStreamChunk)(NSData *value);
+typedef NSError *_Nullable (^OliphauntStreamChunk)(NSData *value);
 typedef void (^OliphauntVoidCompletion)(NSError *_Nullable error);
 
 @interface OliphauntAdapterDatabase : NSObject
 
 + (void)openWithConfig:(NSDictionary *)config completion:(OliphauntOpenCompletion)completion;
-+ (void)supportedModesWithCompletion:(OliphauntArrayCompletion)completion;
-+ (void)packageSizeReportWithConfig:(NSDictionary *)config completion:(OliphauntDictionaryCompletion)completion;
-+ (void)processMemoryWithCompletion:(OliphauntDictionaryCompletion)completion;
-+ (void)restoreWithDestination:(NSString *)destination
-                 format:(NSString *)format
-            artifactData:(NSData *)artifactData
-        replaceExisting:(BOOL)replaceExisting
-            libraryPath:(NSString *_Nullable)libraryPath
-             completion:(OliphauntStringCompletion)completion;
++ (void)restoreWithStorageKind:(NSString *)storageKind
+                    storagePath:(nullable NSString *)storagePath
+                    storageName:(nullable NSString *)storageName
+                     backupData:(NSData *)backupData
+                     completion:(OliphauntVoidCompletion)completion;
 
 - (void)execProtocolData:(NSData *)request completion:(OliphauntDataCompletion)completion;
 - (void)execProtocolStreamData:(NSData *)request
                        onChunk:(OliphauntStreamChunk)onChunk
                     completion:(OliphauntVoidCompletion)completion;
-- (void)backupDataWithFormat:(NSString *)format completion:(OliphauntDataCompletion)completion;
+- (void)backupDataWithCompletion:(OliphauntDataCompletion)completion;
 - (void)cancelWithCompletion:(OliphauntVoidCompletion)completion;
 - (void)closeWithCompletion:(OliphauntVoidCompletion)completion;
-- (void)capabilitiesWithCompletion:(OliphauntDictionaryCompletion)completion;
 
 @end
 

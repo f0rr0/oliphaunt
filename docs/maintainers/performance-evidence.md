@@ -28,7 +28,8 @@ It records p50/p90/p95/p99 latency, suite totals, throughput, `/usr/bin/time`
 CPU/RSS/footprint metrics, child-process RSS for broker/server modes, artifact
 sizes, native PostgreSQL controls, a SQLite embedded speed control,
 prepared-update rows, and backup/restore timings for native PostgreSQL, SQLite,
-NativeDirect, NativeBroker, and NativeServer. The speed and backup/restore
+NativeDirect, and NativeBroker. NativeServer participates only in workloads its
+public server API supports. The speed and backup/restore
 sections report p50 elapsed time, p90 elapsed time, p95 elapsed time, median
 throughput, tail throughput, p99 tail latency, native-PostgreSQL p90 ratios,
 and command-level CPU/RSS/footprint p90/p99 so transport and persistence
@@ -42,8 +43,7 @@ with the native PostgreSQL control. The lower-level `perf diagnose-speed-cases`
 commands remain available for one-off inspection.
 
 The native matrix is native-only by default. The script builds `xtask` with
-the `perf` feature explicitly enabled, avoiding the legacy `oliphaunt-wasix`
-runtime-control path while still building the native broker helper:
+the `perf` feature explicitly enabled and builds the native broker helper:
 
 ```sh
 tools/perf/matrix/run_native_oliphaunt_matrix.sh \
@@ -66,17 +66,14 @@ Focused runs still include the relevant native PostgreSQL control for the
 selected suite, but the generated report marks them as partial coverage. They
 are not release evidence.
 
-Use `--runtime-footprint throughput|balanced-mobile|small-mobile` and repeated
-`--startup-guc name=value` flags for mobile footprint experiments. The same
-tuning is passed to NativeDirect, NativeBroker, NativeServer, and the native
-PostgreSQL control, and the JSON/report/provenance files record the effective
-profile and overrides:
+Use repeated `--startup-guc name=value` flags for native footprint experiments.
+The same explicit settings are passed to NativeDirect, NativeBroker,
+NativeServer, and the native PostgreSQL control, and the
+JSON/report/provenance files record the overrides:
 
 ```sh
 tools/perf/matrix/run_native_oliphaunt_matrix.sh \
   --quick \
-  --durability balanced \
-  --runtime-footprint balanced-mobile \
   --startup-guc shared_buffers=32MB \
   --startup-guc wal_buffers=-1
 ```
@@ -92,7 +89,6 @@ tools/perf/matrix/run_mobile_footprint_matrix.sh --quick --platform android \
   --wal-segsize 4 \
   --min-wal-size 8MB,16MB \
   --max-wal-size 32MB,64MB \
-  --durability balanced \
   --crash-recovery off
 ```
 
@@ -103,58 +99,51 @@ captures PostgreSQL's effective read-only `wal_segment_size` setting in the
 benchmark report.
 
 For Android/iOS device sweeps, use the Expo dev-client matrix wrapper. It emits
-or runs the same runtime-footprint, shared-buffer, WAL-buffer, WAL-minimum,
-WAL-maximum, and Safe/Balanced combinations against the installed React Native
-app. The default profile is `balancedMobile`; pass `--runtime-footprint all` to
-run `throughput`, `balancedMobile`, and `smallMobile` under the same GUC axes.
+or runs explicit shared-buffer, WAL-buffer, WAL-minimum, and WAL-maximum
+combinations against the installed React Native app.
 Non-plan runs store every case in its own scratch directory and write
 `summary.json` plus `summary.md` under `target/perf/mobile-footprint-<run-id>/`
-with open time, warm query p50/p90/p95/p99, bulk insert/update, background
+with open time, typed and parameterized query p50/p90/p95/p99, set-based insert throughput, background
 checkpoint latency, Android PSS/RSS, and iOS resident memory where the platform
-harness can collect them. Package footprint is reported at three separate
-levels: the Oliphaunt embedded payload reported by the app, the built Android
-APK or iOS app bundle, and the local React Native package tarball used by the
+harness can collect them. Package footprint is reported for the built Android
+APK or iOS app bundle and the local React Native package tarball used by the
 dev-client app. Benchmark reports also include a same-device Expo SQLite WAL
 baseline, including simple-query, parameterized-query, indexed lookup, indexed
 aggregate, update, checkpoint, large-result, and insert-throughput measurements
-using the same durability label, so mobile SQLite comparison is device evidence
-instead of inferred from the host matrix. Each native benchmark report also
+using an explicitly SQLite-specific durability profile, so mobile SQLite
+comparison is device evidence instead of inferred from the host matrix. Each
+native benchmark report also
 records effective PostgreSQL settings through `current_setting(..., true)`, and
 the matrix summary surfaces the core effective GUCs next to the intended startup
 overrides. Treat measurements without those effective settings as incomplete
-tuning evidence. React Native benchmark reports include app-reported process
-memory via `Oliphaunt.processMemory()`: iOS records Mach task resident and
-physical-footprint bytes, and Android records `Debug.MemoryInfo` PSS plus heap
-fields. The matrix summary prefers this in-app report and uses `devicectl` or
-`adb` process scraping only as additional harness evidence. Missing process
-memory data leaves iOS resident memory blank rather than recording a false zero.
-By default safe-durability matrix cases
-also run the installed-app
-process-death recovery lane. Balanced cases keep `synchronous_commit=off`, so
-they remain latency/footprint evidence rather than last-commit survival gates.
+tuning evidence. Process memory is harness evidence rather than SDK API:
+Android uses `adb`/`dumpsys meminfo`, while iOS uses the installed-app runner's
+process report. Missing process-memory data remains blank rather than recording
+a false zero. By default every matrix case also runs the installed-app
+process-death recovery lane. The app verifies effective PostgreSQL `fsync`,
+`full_page_writes`, and `synchronous_commit` are `on` before producing crash
+evidence.
 Use `--crash-recovery off` only for a diagnostic latency-only sweep:
 
 ```sh
 tools/perf/matrix/run_mobile_footprint_matrix.sh --plan-only --platform android
-tools/perf/matrix/run_mobile_footprint_matrix.sh --plan-only --platform android --runtime-footprint all
 tools/perf/matrix/run_mobile_footprint_matrix.sh --quick --platform android \
   --shared-buffers 8MB,32MB,128MB \
   --wal-buffers -1 \
   --min-wal-size 32MB \
   --max-wal-size 64MB \
-  --durability balanced \
   --crash-recovery off
 tools/perf/matrix/run_mobile_footprint_matrix.sh --quick --platform ios --crash-recovery off
 tools/perf/matrix/run_mobile_footprint_matrix.sh --platform ios
 ```
 
-`--quick` keeps the same GUC/profile axes but passes
+`--quick` keeps the same GUC axes but passes
 `OLIPHAUNT_EXPO_MOBILE_BENCHMARK_PRESET=quick` into the Expo dev-client app so
-the installed-app workload uses fewer warmup, latency, checkpoint, insert, and
-large-result iterations. Use it for harness validation and emulator/simulator
+the installed-app workload uses fewer warmup, latency, checkpoint, and insert
+iterations. Use it for harness validation and emulator/simulator
 sanity checks; use the default full preset for reportable numbers.
 Use `--shared-buffers`, `--wal-buffers`, `--min-wal-size`, `--max-wal-size`,
-`--wal-segsize`, and `--durability` to run a small slice with the same
+and `--wal-segsize` to run a small slice with the same
 installed-app harness before committing to the full device matrix.
 
 Current diagnostic Android emulator slice:
@@ -163,8 +152,8 @@ Current diagnostic Android emulator slice:
 - report: `target/perf/mobile-footprint-android-guc-slice-20260524T1750/summary.md`
 - platform: Android API 34 emulator through the Expo dev-client harness
 - benchmark preset: `quick`
-- fixed settings: `balancedMobile`, `balanced`,
-  `wal_buffers=-1`, `min_wal_size=32MB`, `max_wal_size=64MB`
+- fixed settings: `wal_buffers=-1`, `min_wal_size=32MB`,
+  `max_wal_size=64MB`
 
 | shared_buffers | Android PSS | Android RSS | Open ms | Param p90 ms | Insert rows/s | Checkpoint p90 ms |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -184,8 +173,8 @@ Current diagnostic Android emulator small-WAL slice:
 - report: `target/perf/mobile-footprint-android-small-wal-20260524T1833/summary.md`
 - platform: Android API 34 emulator through the Expo dev-client harness
 - benchmark preset: `quick`
-- fixed settings: `balancedMobile`, `balanced`, `shared_buffers=32MB`,
-  `wal_buffers=-1`, `max_wal_size=32MB`, `--wal-segsize 4`
+- fixed settings: `shared_buffers=32MB`, `wal_buffers=-1`,
+  `max_wal_size=32MB`, `--wal-segsize 4`
 
 | min_wal_size | Effective wal_segment_size | Android PSS | Open ms | Param p90 ms | Lookup p90 ms | Aggregate p90 ms | SQLite param p90 ms | SQLite lookup p90 ms | SQLite aggregate p90 ms |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -204,11 +193,11 @@ Latest Android emulator retry caveat:
 - report:
   `target/perf/mobile-footprint-android-emulator-shared-minwal-slice-20260525T0325/summary.md`
 - result: one quick `shared_buffers=8MB,min_wal_size=8MB` case passed with
-  app-reported `android-debug-memory-info`; the matching `min_wal_size=32MB`
+  Android harness process evidence; the matching `min_wal_size=32MB`
   case did not produce benchmark evidence.
 - passed case: `271,565 KB` app PSS, `396,424 KB` host RSS, `41,415.89 ms`
   open, `286.18 ms` parameterized p90, `7.98 rows/s` insert throughput,
-  `126.77 ms` checkpoint p90, and `34.1 MB` embedded payload.
+  and `126.77 ms` checkpoint p90.
 
 A focused `min_wal_size=32MB` retry after adding a bounded
 `Linking.getInitialURL()` path in the Expo example still failed before the
@@ -223,8 +212,8 @@ Current diagnostic iOS simulator small-WAL slice:
 - report: `target/perf/mobile-footprint-ios-small-wal-20260524T1855/summary.md`
 - platform: iOS 18.0 simulator through the Expo dev-client harness
 - benchmark preset: `quick`
-- fixed settings: `balancedMobile`, `balanced`, `shared_buffers=32MB`,
-  `wal_buffers=-1`, `max_wal_size=32MB`, `--wal-segsize 4`
+- fixed settings: `shared_buffers=32MB`, `wal_buffers=-1`,
+  `max_wal_size=32MB`, `--wal-segsize 4`
 
 | min_wal_size | Effective wal_segment_size | iOS RSS | Open ms | Param p90 ms | Lookup p90 ms | Aggregate p90 ms | SQLite param p90 ms | SQLite lookup p90 ms | SQLite aggregate p90 ms |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -268,8 +257,6 @@ Current physical iPhone install/runtime/benchmark evidence:
   `target/perf/mobile-footprint-ios-physical-full-candidate-20260525T0200`
 - device: iPhone 14 Pro, UDID `7C01EC26-8B01-56E6-872D-82BB72421567`
 - mode: `OLIPHAUNT_EXPO_IOS_SDK=iphoneos`,
-  `OLIPHAUNT_EXPO_MOBILE_DURABILITY=safe`,
-  `OLIPHAUNT_EXPO_MOBILE_RUNTIME_FOOTPRINT=balancedMobile`,
   `OLIPHAUNT_EXPO_MOBILE_WAL_SEGSIZE_MB=4`
 - startup GUCs:
   `shared_buffers=32MB,wal_buffers=-1,min_wal_size=8MB,max_wal_size=32MB`
@@ -294,25 +281,10 @@ Current physical iPhone install/runtime/benchmark evidence:
   after foreground `27.43 ms`
 - latest reuse-installed smoke after the bounded launch-URL change opened in
   `1357.67 ms`, reported select p90 `0.245 ms`, passed the
-  `active -> inactive -> background -> active` lifecycle SQL check, and reported
-  an embedded payload of `35,799,044` bytes.
-- full candidate footprint matrix: passed two physical-device cases with
-  `shared_buffers=32MB`, `wal_buffers=-1`, `min_wal_size=8MB`,
-  `max_wal_size=32MB`, 4MB WAL segments, and the full benchmark preset. Safe
-  durability reported open `1386.29 ms`, raw p90 `0.04 ms`, typed p90
-  `0.08 ms`, parameterized p90 `0.09 ms`, insert throughput `9686 rows/s`,
-  checkpoint p90 `1.13 ms`, large-result p90 `0.81 ms`, process-death
-  recovery elapsed `127.00 ms`, and recovery open `102.61 ms`. Balanced
-  durability reported open `1466.92 ms`, raw p90 `0.04 ms`,
-  typed p90 `0.09 ms`, parameterized p90 `0.10 ms`, insert throughput
-  `9726 rows/s`, checkpoint p90 `1.15 ms`, and large-result p90 `0.80 ms`.
-- same-device SQLite baseline in that full candidate matrix: Safe open
-  `6.30 ms`, parameterized p90 `0.17 ms`, insert throughput `6855 rows/s`,
-  large-result p90 `4.90 ms`; Balanced open `6.16 ms`, parameterized p90
-  `0.16 ms`, insert throughput `6910 rows/s`, large-result p90 `4.97 ms`.
-- app-reported iOS process memory source: `ios-task-vm-info`. Safe reported
-  `253.3 MB` resident and `153.3 MB` physical footprint; Balanced reported
-  `199.8 MB` resident and `137.5 MB` physical footprint.
+  `active -> inactive -> background -> active` lifecycle SQL check.
+- the historical full candidate predates the explicit-GUC-only report shape;
+  rerun it before using its performance or process-memory measurements as
+  current evidence.
 
 Current physical iPhone shared-buffer/min-WAL tuning slice:
 
@@ -322,29 +294,12 @@ Current physical iPhone shared-buffer/min-WAL tuning slice:
 - device: same iPhone 14 Pro physical dev-client install
 - platform: iPhoneOS through the Expo dev-client harness
 - benchmark preset: `quick`
-- fixed settings: `balancedMobile`, `balanced`, `wal_buffers=-1`,
-  `max_wal_size=32MB`, `--wal-segsize 4`, process-death recovery off
+- fixed settings: `wal_buffers=-1`, `max_wal_size=32MB`,
+  `--wal-segsize 4`, process-death recovery off
 - varied settings: `shared_buffers=8/16/32/64/128MB`,
   `min_wal_size=8/16/32MB`
-- result: 15 cases passed, 0 failed; every row recorded PostgreSQL effective
-  GUCs and app-reported `ios-task-vm-info` memory.
-
-| shared_buffers | effective wal_buffers | footprint median MB | footprint min-max MB | RSS median MB | open median ms | param p90 median ms | insert median rows/s |
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 8MB | 256kB | 135.5 | 135.3-136.2 | 202.7 | 1341.12 | 0.10 | 8710 |
-| 16MB | 512kB | 136.1 | 135.9-136.3 | 198.4 | 1331.04 | 0.10 | 8972 |
-| 32MB | 1MB | 137.0 | 136.9-137.3 | 199.4 | 1310.48 | 0.10 | 8907 |
-| 64MB | 2MB | 139.5 | 139.3-141.0 | 205.4 | 1346.28 | 0.10 | 8923 |
-| 128MB | 4MB | 142.8 | 142.4-146.3 | 208.5 | 1363.92 | 0.10 | 8858 |
-
-This quick physical-device slice shows that `min_wal_size=8/16/32MB` does not
-materially move app physical footprint for this small workload. Lowering
-`shared_buffers` from 128MB to the 8-32MB band saves roughly 6-11MB of physical
-footprint on this iPhone, but it does not collapse total process footprint
-because the embedded Postgres/runtime/template baseline still dominates. Treat
-this as tuning evidence for the mobile default shape, not as full release
-evidence; Safe durability, additional `wal_buffers` values, runtime footprint
-profiles, and physical Android still need corresponding device evidence.
+- result: 15 historical cases passed. Rerun the slice with the maintained iOS
+  harness process report before making a current memory claim.
 
 The iPhoneOS `liboliphaunt.xcframework` used for this run also has a stricter
 artifact gate: the device and simulator slices are rejected if they import
@@ -363,13 +318,12 @@ throughput-sized WAL ceiling.
 Crash recovery after process death is measured by the installed-app crash lanes,
 which write to a persistent app-private root, terminate the app without closing
 the direct-mode database, relaunch, and verify committed data through
-PostgreSQL recovery. The default crash invocation uses safe durability; do not
-interpret balanced/synchronous-commit-off runs as committed-row survival
-evidence:
+PostgreSQL recovery. The app accepts crash evidence only after observing
+PostgreSQL `fsync=on`, `full_page_writes=on`, and `synchronous_commit=on`:
 
 ```sh
-pnpm --dir src/sdks/react-native/examples/expo run crash:android
-pnpm --dir src/sdks/react-native/examples/expo run crash:ios
+pnpm --dir examples/react-native-expo run crash:android
+pnpm --dir examples/react-native-expo run crash:ios
 ```
 
 Use the default script invocation for release evidence. Native release gates are
@@ -378,8 +332,9 @@ read against native PostgreSQL controls. The matrix plan labels runs with
 work starts. Default runs must meet the current release minimums: 100 RTT
 samples, 10 fresh-process RTT repeats, 25,000 prepared-update rows, 10
 fresh-process prepared repeats, 20 fresh-process speed repeats, and 10
-fresh-process backup/restore repeats across the default direct/broker/server and
-rtt/speed/streaming/prepared/backup matrix. Quick or focused runs are diagnostic
+fresh-process backup/restore repeats for direct and broker alongside the
+supported direct/broker/server RTT, speed, streaming, and prepared workloads.
+Quick or focused runs are diagnostic
 evidence only, even when they are useful for investigating a regression.
 
 Each native matrix run writes `provenance.json` next to `report.md`. The
@@ -438,100 +393,6 @@ cargo run -p oliphaunt-perf -- \
 `safe`, `balanced`, and `fast-dev` map to explicit SQLite PRAGMAs inside `oliphaunt-perf`,
 so SQLite numbers are recorded as product comparison data rather than inferred
 from a separate tool.
-
-Most recent recorded complete native track matrix:
-
-- run id: `20260524T090412Z`
-- report: `target/perf/native-liboliphaunt-20260524T090412Z/report.md`
-- provenance: `target/perf/native-liboliphaunt-20260524T090412Z/provenance.json`
-- PostgreSQL control: `postgres (PostgreSQL) 18.4`
-- native durability profile: `safe`
-- native runtime footprint profile: `throughput`
-- PGDATA template hydration: `copy`
-- RTT samples: `100`
-- RTT repeats: `10`
-- prepared-update repeats: `10`
-- speed repeats: `20`
-- backup/restore repeats: `10`
-- provenance verification: passed for that recorded source/artifact set; rerun
-  the full matrix before making current-checkout release claims after the
-  later backup ABI/tar-writer changes.
-
-Key results from that run:
-
-| Metric | NativeDirect | NativeBroker | NativeServer | Native Postgres control | SQLite embedded |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| RTT repeat gate p90 | 107 us | 124 us | 127 us | 112 us | n/a |
-| Speed suite p90 | 2.668 s | 2.629 s | 2.452 s | 2.419 s | 3.871 s |
-| Backup/restore physical p90 | 0.558 s | 0.62 s | 0.567 s | 0.344 s | 0.005 s |
-| Backup payload p50 | 56.17 MB | 56.17 MB | 56.17 MB | 56.17 MB | 1.31 MB |
-| Backup tail throughput p10 | 201.3 MB/s | 181.1 MB/s | 198.1 MB/s | 326.5 MB/s | 483.9 MB/s |
-| Open p90 | 440.28 ms | 384.11 ms | 423.18 ms | 576.4 ms | 0.89 ms |
-| p90 RSS | 123.5 MB | 107.9 MB process / 109.5 MB observed helper | 93.1 MB process / 138.5 MB observed server | 90.6 MB process / 128.7 MB observed server | 36.9 MB |
-
-The packaged-template bootstrap path still fixes the prior native open-time
-miss: direct open p90 is now `0.764x` native PostgreSQL control open p90, with
-broker and server also below the native control. PGDATA template hydration
-defaults to byte-copy because same-source evidence showed better p90 stability
-than `prefer-clone`.
-
-This run is more defensible than the older one-shot RTT snapshots because the
-harness now runs 10 fresh-process RTT repeats and gates RTT on p90 across
-repeated median-p90 summaries. It also still requires at least 20 fresh-process
-speed repeats before classifying speed tail stability as release-grade. Under
-the speed-quality rule, direct, broker, native PostgreSQL tokio, and SQLite are
-`stable`; server is also `stable` on this host run.
-
-Native direct passes the repeated RTT, open p90, and RSS gates, but it does not
-yet pass the speed-suite or physical-backup gates. RTT gate p90 is `107 us`
-versus native PostgreSQL tokio at `112 us` (`0.955x`). Speed-suite p90 is
-`2.668 s` versus native PostgreSQL tokio at `2.419 s` (`1.103x`), and speed
-tail throughput p10 is `63,420.4 ops/s` versus `69,938.9 ops/s` (`0.907x`).
-Backup/restore now has a same-semantics native PostgreSQL physical control:
-direct p90 is `0.558 s` versus native PostgreSQL physical at `0.344 s`
-(`1.622x`), with equal `56.17 MB` p50 payloads. Direct backup tail throughput
-p10 is `201.3 MB/s` versus native PostgreSQL physical at `326.5 MB/s`
-(`0.617x`). The logical `pg_dump`/`pg_restore -Fc` control still appears in the
-backup table as portability comparison data; its p90 is `0.149 s` with a
-`1.27 MB` p50 payload.
-
-A focused post-report backup diagnostic at
-`target/perf/native-liboliphaunt-20260524Tbackup-final-direct/report.md`
-uses matching current-source provenance but is intentionally partial. It covers
-only NativeDirect plus native PostgreSQL backup/restore with 10 repeats after
-the C ABI gained options-based in-archive SDK metadata append, direct
-`read(2)` file copying, and per-entry tar buffer reservation. That run improves
-the direct physical backup/restore p90 to `0.534 s`, but native PostgreSQL
-physical remains `0.324 s`, so the backup gate is still a real miss. Opt-in
-`OLIPHAUNT_TRACE_BACKUP=1` phase tracing shows the remaining direct cost is
-concentrated in PostgreSQL `pg_backup_start` and PGDATA archive generation, not
-Rust-side metadata annotation or FFI response copying.
-
-Individual speed cases above the 5% tolerance in the complete matrix are `1`,
-`2`, `2.1`, `3`, `3.1`, `4`, `5`, `10`, and `13`; the generated report includes
-focused diagnostic commands for those ids. A follow-up fresh-process diagnostic run
-stored at
-`target/perf/native-speed-diagnostics-20260524T090412Z-speed-misses/summary.md`
-reproduced stable misses for `1`, `2.1`, `3`, `4`, `10`, and `13`. Cases `2`,
-`3.1`, and `5` did not reproduce above tolerance in that isolated per-case run
-and should be rechecked only if they recur in the next complete matrix.
-Compared with SQLite, native direct wins the total speed suite in this run
-(`0.689x`) but still has much higher open p90 (`493.034x`) and RSS (`3.343x`).
-
-Prepared-update p90 rows now include sequential and pipelined direct, broker,
-server, and native PostgreSQL controls. Direct sequential prepared p90 is
-`0.775 s` numeric and `0.768 s` text versus native PostgreSQL tokio at
-`0.867 s` and `0.879 s`. Direct pipelined prepared p90 is `0.337 s` numeric and
-`0.34 s` text versus native PostgreSQL tokio at `0.341 s` and `0.359 s`.
-
-Artifact rows from the same run:
-
-| Artifact | Size |
-| --- | ---: |
-| `liboliphaunt.dylib` | 11.14 MB |
-| Embedded extension modules | 2.32 MB |
-| Native PostgreSQL install | 33.62 MB |
-| Native PostgreSQL install tree | 33.42 MB |
 
 ## Snapshot
 
@@ -609,11 +470,16 @@ That command covers:
 3. SQLite embedded control runs for the speed suite;
 4. p50/p90/p95 latency, throughput, RSS, CPU, and footprint report generation.
 
-The WASM product lane has its own perf smoke target:
+The WASIX TypeScript binding owns the shared WASIX browser and Node benchmark
+plans:
 
 ```sh
-moon run oliphaunt-wasix:bench
+moon run oliphaunt-wasix-ts:bench
 ```
+
+Run measured Node or browser evidence explicitly with
+`moon run oliphaunt-wasix-ts:bench-run` or
+`moon run oliphaunt-wasix-ts:bench-browser`.
 
 Outputs land under `target/perf/`:
 

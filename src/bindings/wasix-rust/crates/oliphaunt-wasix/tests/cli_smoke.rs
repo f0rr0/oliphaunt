@@ -1,7 +1,7 @@
 #![cfg(feature = "extensions")]
 
 use anyhow::{Context, Result};
-use oliphaunt_wasix::{Oliphaunt, capture_phase_timings};
+use oliphaunt_wasix::Oliphaunt;
 use sqlx::{Connection, Row};
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
@@ -11,15 +11,13 @@ mod support;
 use support::{ChildGuard, TestTrace, trace_step};
 
 fn direct_open_diagnostic() -> String {
-    let (result, phases) = capture_phase_timings(|| Oliphaunt::builder().open());
-    let outcome = match result {
+    match Oliphaunt::builder().open() {
         Ok(mut pg) => match pg.close() {
             Ok(()) => "direct memory Oliphaunt open succeeded".to_owned(),
             Err(err) => format!("direct memory Oliphaunt open succeeded, close failed: {err:#}"),
         },
         Err(err) => format!("direct memory Oliphaunt open failed: {err:#}"),
-    };
-    format!("{outcome}\nphases:\n{phases:#?}")
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

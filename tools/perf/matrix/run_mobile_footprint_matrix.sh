@@ -7,7 +7,7 @@ if repo_root="$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)"; th
 else
   repo_root="$(cd "$script_dir/../../.." && pwd)"
 fi
-example_dir="$repo_root/src/sdks/react-native/examples/expo"
+example_dir="$repo_root/examples/react-native-expo"
 
 platform="both"
 plan_only=0
@@ -16,12 +16,10 @@ quick=0
 keep_going=0
 summarize_only=0
 crash_recovery="${OLIPHAUNT_MOBILE_FOOTPRINT_CRASH_RECOVERY:-per-case}"
-runtime_footprints_raw="${OLIPHAUNT_MOBILE_FOOTPRINT_RUNTIME_FOOTPRINTS:-balancedMobile}"
 shared_buffers_raw="${OLIPHAUNT_MOBILE_FOOTPRINT_SHARED_BUFFERS:-all}"
 wal_buffers_raw="${OLIPHAUNT_MOBILE_FOOTPRINT_WAL_BUFFERS:-all}"
 min_wal_sizes_raw="${OLIPHAUNT_MOBILE_FOOTPRINT_MIN_WAL_SIZES:-all}"
 max_wal_sizes_raw="${OLIPHAUNT_MOBILE_FOOTPRINT_MAX_WAL_SIZES:-all}"
-durabilities_raw="${OLIPHAUNT_MOBILE_FOOTPRINT_DURABILITIES:-all}"
 wal_segsize_mb="${OLIPHAUNT_MOBILE_FOOTPRINT_WAL_SEGSIZE_MB:-16}"
 run_id="${OLIPHAUNT_MOBILE_FOOTPRINT_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 output_dir="${OLIPHAUNT_MOBILE_FOOTPRINT_OUTPUT_DIR:-$repo_root/target/perf/mobile-footprint-$run_id}"
@@ -42,9 +40,6 @@ Options:
   --run-id ID                   Stable run id for the report directory.
   --output-dir DIR              Matrix output directory. Default: target/perf/mobile-footprint-<run-id>.
   --keep-going                  Continue after a failed case and summarize failures.
-  --runtime-footprint PROFILE   Runtime footprint profile to use for each case:
-                                throughput, balancedMobile, smallMobile, all, or a
-                                comma-separated list. Default: balancedMobile.
   --shared-buffers VALUES       shared_buffers values to run: all or a comma-separated
                                 subset of 8MB,16MB,32MB,64MB,128MB.
   --wal-buffers VALUES          wal_buffers values to run: all or a comma-separated
@@ -53,27 +48,21 @@ Options:
                                 subset of 8MB,16MB,32MB,80MB.
   --max-wal-size VALUES         max_wal_size values to run: all or a comma-separated
                                 subset of 32MB,64MB,default.
-  --durability VALUES           Durability profiles to run: all, safe, balanced, or a
-                                comma-separated subset. Default: all.
-  --crash-recovery off|per-case Run process-death recovery evidence for safe
-                                durability cases. Balanced keeps
-                                synchronous_commit=off and is not a last-commit
-                                survival gate. Default: per-case.
+  --crash-recovery off|per-case Run process-death recovery evidence for each case.
+                                Cases retain PostgreSQL's safe defaults alongside
+                                the explicit tuning GUCs. Default: per-case.
   --summarize-only              Rebuild summary.json and summary.md from an existing output dir.
   --quick                       Forward quick benchmark sizing to the Expo benchmark harness when
                                 supported by local overrides.
   -h, --help                    Show this help.
 
-The matrix sweeps:
-  runtime footprint: balancedMobile by default; pass --runtime-footprint all
-    to compare throughput/balancedMobile/smallMobile under the same GUC axes
+The matrix sweeps explicit PostgreSQL settings:
   shared_buffers: 8/16/32/64/128MB
   wal_buffers: -1/256kB/1MB/4MB
   min_wal_size: 8/16/32/80MB
   WAL segment size: 16MB by default; pass --wal-segsize 4 to run the 8/16MB
     min_wal_size mobile experiments against a matching template cluster
   max_wal_size: 32/64MB plus default
-  durability: safe/balanced
 USAGE
 }
 
@@ -104,10 +93,6 @@ while [[ $# -gt 0 ]]; do
       keep_going=1
       shift
       ;;
-    --runtime-footprint|--runtime-footprints)
-      runtime_footprints_raw="${2:?$1 requires a value}"
-      shift 2
-      ;;
     --shared-buffers|--shared-buffer)
       shared_buffers_raw="${2:?$1 requires a value}"
       shift 2
@@ -122,10 +107,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --max-wal-size|--max-wal-sizes)
       max_wal_sizes_raw="${2:?$1 requires a value}"
-      shift 2
-      ;;
-    --durability|--durabilities)
-      durabilities_raw="${2:?$1 requires a value}"
       shift 2
       ;;
     --crash-recovery)
@@ -194,8 +175,6 @@ shared_buffers=(8MB 16MB 32MB 64MB 128MB)
 wal_buffers=(-1 256kB 1MB 4MB)
 min_wal_sizes=(8MB 16MB 32MB 80MB)
 max_wal_sizes=(32MB 64MB default)
-durabilities=(safe balanced)
-runtime_footprints=()
 
 value_in() {
   local wanted="$1"
@@ -257,65 +236,10 @@ print_axis_values() {
   printf '%s\n' "${selected[@]}"
 }
 
-add_runtime_footprint() {
-  local profile="$1"
-  local existing
-  if [[ "${#runtime_footprints[@]}" -gt 0 ]]; then
-    for existing in "${runtime_footprints[@]}"; do
-      if [[ "$existing" = "$profile" ]]; then
-        return
-      fi
-    done
-  fi
-  runtime_footprints+=("$profile")
-}
-
-normalize_runtime_footprints() {
-  local raw="$1"
-  local old_ifs value
-  old_ifs="$IFS"
-  IFS=","
-  # shellcheck disable=SC2206
-  local values=($raw)
-  IFS="$old_ifs"
-
-  if [[ "${#values[@]}" -eq 0 ]]; then
-    echo "runtime footprint profile list must not be empty" >&2
-    exit 2
-  fi
-
-  for value in "${values[@]}"; do
-    value="$(printf '%s' "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-    [[ -n "$value" ]] || continue
-    case "$value" in
-      all)
-        add_runtime_footprint throughput
-        add_runtime_footprint balancedMobile
-        add_runtime_footprint smallMobile
-        ;;
-      throughput|balancedMobile|smallMobile)
-        add_runtime_footprint "$value"
-        ;;
-      *)
-        echo "unknown runtime footprint profile: $value" >&2
-        echo "expected throughput, balancedMobile, smallMobile, all, or a comma-separated list" >&2
-        exit 2
-        ;;
-    esac
-  done
-
-  if [[ "${#runtime_footprints[@]}" -eq 0 ]]; then
-    echo "runtime footprint profile list must not be empty" >&2
-    exit 2
-  fi
-}
-
-normalize_runtime_footprints "$runtime_footprints_raw"
 shared_buffers=($(print_axis_values shared_buffers "$shared_buffers_raw" "${shared_buffers[@]}"))
 wal_buffers=($(print_axis_values wal_buffers "$wal_buffers_raw" "${wal_buffers[@]}"))
 min_wal_sizes=($(print_axis_values min_wal_size "$min_wal_sizes_raw" "${min_wal_sizes[@]}"))
 max_wal_sizes=($(print_axis_values max_wal_size "$max_wal_sizes_raw" "${max_wal_sizes[@]}"))
-durabilities=($(print_axis_values durability "$durabilities_raw" "${durabilities[@]}"))
 
 platforms=()
 case "$platform" in
@@ -362,19 +286,15 @@ write_case_metadata() {
   local case_dir="$1"
   local case_id="$2"
   local target_platform="$3"
-  local durability="$4"
-  local runtime_footprint="$5"
-  local shared="$6"
-  local wal="$7"
-  local min_wal="$8"
-  local max_wal="$9"
-  local wal_segment_mb="${10}"
-  local startup_gucs="${11}"
-  local status="${12}"
+  local shared="$4"
+  local wal="$5"
+  local min_wal="$6"
+  local max_wal="$7"
+  local wal_segment_mb="$8"
+  local startup_gucs="$9"
+  local status="${10}"
   CASE_ID="$case_id" \
     CASE_PLATFORM="$target_platform" \
-    CASE_DURABILITY="$durability" \
-    CASE_RUNTIME_FOOTPRINT="$runtime_footprint" \
     CASE_SHARED_BUFFERS="$shared" \
     CASE_WAL_BUFFERS="$wal" \
     CASE_MIN_WAL_SIZE="$min_wal" \
@@ -386,8 +306,6 @@ write_case_metadata() {
 const data = {
   id: process.env.CASE_ID,
   platform: process.env.CASE_PLATFORM,
-  durability: process.env.CASE_DURABILITY,
-  runtimeFootprint: process.env.CASE_RUNTIME_FOOTPRINT,
   startupGUCs: process.env.CASE_STARTUP_GUCS,
   gucs: {
     shared_buffers: process.env.CASE_SHARED_BUFFERS,
@@ -464,42 +382,6 @@ function parseIosProcess(text) {
   };
 }
 
-function bytesToKb(value) {
-  return typeof value === 'number' && Number.isFinite(value) ? value / 1024 : null;
-}
-
-function parseProcessMemoryReport(report) {
-  const memory = report?.processMemoryReport;
-  if (!memory || typeof memory !== 'object') {
-    return {
-      processMemorySource: null,
-      processResidentKb: null,
-      processPhysicalFootprintKb: null,
-      processVirtualKb: null,
-      processPeakResidentKb: null,
-      processTotalPssKb: null,
-      processPrivateDirtyKb: null,
-      processSharedDirtyKb: null,
-    };
-  }
-  return {
-    processMemorySource: typeof memory.source === 'string' ? memory.source : null,
-    processResidentKb: bytesToKb(memory.residentBytes),
-    processPhysicalFootprintKb: bytesToKb(memory.physicalFootprintBytes),
-    processVirtualKb: bytesToKb(memory.virtualBytes),
-    processPeakResidentKb: bytesToKb(memory.peakResidentBytes),
-    processTotalPssKb: typeof memory.totalPssKb === 'number' && Number.isFinite(memory.totalPssKb)
-      ? memory.totalPssKb
-      : null,
-    processPrivateDirtyKb: typeof memory.totalPrivateDirtyKb === 'number' && Number.isFinite(memory.totalPrivateDirtyKb)
-      ? memory.totalPrivateDirtyKb
-      : null,
-    processSharedDirtyKb: typeof memory.totalSharedDirtyKb === 'number' && Number.isFinite(memory.totalSharedDirtyKb)
-      ? memory.totalSharedDirtyKb
-      : null,
-  };
-}
-
 if (fs.existsSync(casesDir)) {
   for (const name of fs.readdirSync(casesDir).sort()) {
     const caseDir = path.join(casesDir, name);
@@ -519,7 +401,6 @@ if (fs.existsSync(casesDir)) {
     const iosProcess = parseIosProcess(
       readText(path.join(caseDir, 'scratch', 'reports', 'benchmark-process.tsv')),
     );
-    const processMemory = parseProcessMemoryReport(report);
     const packageSizes = readJson(
       path.join(caseDir, 'scratch', 'reports', 'benchmark-package-sizes.json'),
     );
@@ -533,10 +414,6 @@ if (fs.existsSync(casesDir)) {
       openMs: typeof report?.openMs === 'number' ? report.openMs : null,
       closeMs: typeof report?.closeMs === 'number' ? report.closeMs : null,
       elapsedMs: typeof report?.elapsedMs === 'number' ? report.elapsedMs : null,
-      rawP50Ms: latency(report, 'raw_simple_query_rtt', 'p50Ms'),
-      rawP90Ms: latency(report, 'raw_simple_query_rtt', 'p90Ms'),
-      rawP95Ms: latency(report, 'raw_simple_query_rtt', 'p95Ms'),
-      rawP99Ms: latency(report, 'raw_simple_query_rtt', 'p99Ms'),
       typedP50Ms: latency(report, 'typed_select_rtt', 'p50Ms'),
       typedP90Ms: latency(report, 'typed_select_rtt', 'p90Ms'),
       typedP95Ms: latency(report, 'typed_select_rtt', 'p95Ms'),
@@ -545,26 +422,10 @@ if (fs.existsSync(casesDir)) {
       parameterizedP90Ms: latency(report, 'parameterized_select_rtt', 'p90Ms'),
       parameterizedP95Ms: latency(report, 'parameterized_select_rtt', 'p95Ms'),
       parameterizedP99Ms: latency(report, 'parameterized_select_rtt', 'p99Ms'),
-      lookupP50Ms: latency(report, 'indexed_lookup', 'p50Ms'),
-      lookupP90Ms: latency(report, 'indexed_lookup', 'p90Ms'),
-      lookupP95Ms: latency(report, 'indexed_lookup', 'p95Ms'),
-      lookupP99Ms: latency(report, 'indexed_lookup', 'p99Ms'),
-      aggregateP50Ms: latency(report, 'indexed_aggregate', 'p50Ms'),
-      aggregateP90Ms: latency(report, 'indexed_aggregate', 'p90Ms'),
-      aggregateP95Ms: latency(report, 'indexed_aggregate', 'p95Ms'),
-      aggregateP99Ms: latency(report, 'indexed_aggregate', 'p99Ms'),
-      updateP50Ms: latency(report, 'indexed_update', 'p50Ms'),
-      updateP90Ms: latency(report, 'indexed_update', 'p90Ms'),
-      updateP95Ms: latency(report, 'indexed_update', 'p95Ms'),
-      updateP99Ms: latency(report, 'indexed_update', 'p99Ms'),
       backgroundCheckpointP50Ms: latency(report, 'background_checkpoint', 'p50Ms'),
       backgroundCheckpointP90Ms: latency(report, 'background_checkpoint', 'p90Ms'),
       backgroundCheckpointP95Ms: latency(report, 'background_checkpoint', 'p95Ms'),
       backgroundCheckpointP99Ms: latency(report, 'background_checkpoint', 'p99Ms'),
-      largeResultP50Ms: latency(report, 'large_result_raw', 'p50Ms'),
-      largeResultP90Ms: latency(report, 'large_result_raw', 'p90Ms'),
-      largeResultP95Ms: latency(report, 'large_result_raw', 'p95Ms'),
-      largeResultP99Ms: latency(report, 'large_result_raw', 'p99Ms'),
       sqliteOpenMs: typeof report?.sqliteBenchmark?.openMs === 'number' ? report.sqliteBenchmark.openMs : null,
       sqliteSimpleP50Ms: latency(report?.sqliteBenchmark, 'sqlite_simple_select_rtt', 'p50Ms'),
       sqliteSimpleP90Ms: latency(report?.sqliteBenchmark, 'sqlite_simple_select_rtt', 'p90Ms'),
@@ -598,23 +459,17 @@ if (fs.existsSync(casesDir)) {
       crashRecoveryElapsedMs: typeof crashReport?.elapsedMs === 'number' ? crashReport.elapsedMs : null,
       crashRecoveryOpenMs: typeof crashReport?.openMs === 'number' ? crashReport.openMs : null,
       insertRowsPerSecond: throughput(report, 'transaction_insert'),
-      packageBytes: typeof report?.packageSizeReport?.packageBytes === 'number'
-        ? report.packageSizeReport.packageBytes
-        : (typeof report?.packageBytes === 'number' ? report.packageBytes : null),
+      sqliteDurability: typeof report?.sqliteBenchmark?.durability === 'string'
+        ? report.sqliteBenchmark.durability
+        : null,
       androidApkBytes: typeof packageSizes?.apkBytes === 'number' ? packageSizes.apkBytes : null,
       iosAppBytes: typeof packageSizes?.iosAppBytes === 'number' ? packageSizes.iosAppBytes : null,
       rnPackageBytes: typeof packageSizes?.rnPackageBytes === 'number' ? packageSizes.rnPackageBytes : null,
       jsTimerTicks: typeof report?.jsTimerTicks === 'number' ? report.jsTimerTicks : null,
-      androidPssKb: processMemory.processTotalPssKb ?? androidMemory.androidPssKb,
+      androidPssKb: androidMemory.androidPssKb,
       androidRssKb: androidMemory.androidRssKb,
-      iosResidentKb: processMemory.processResidentKb ?? iosProcess.iosResidentKb,
-      iosPhysicalFootprintKb: processMemory.processPhysicalFootprintKb,
-      iosVirtualKb: processMemory.processVirtualKb,
-      iosPeakResidentKb: processMemory.processPeakResidentKb,
+      iosResidentKb: iosProcess.iosResidentKb,
       iosCpuPercent: iosProcess.iosCpuPercent,
-      processPrivateDirtyKb: processMemory.processPrivateDirtyKb,
-      processSharedDirtyKb: processMemory.processSharedDirtyKb,
-      processMemorySource: processMemory.processMemorySource,
     });
   }
 }
@@ -655,6 +510,8 @@ function effectiveGucSummary(settings) {
     'min_wal_size',
     'max_wal_size',
     'synchronous_commit',
+    'fsync',
+    'full_page_writes',
     'io_method',
   ]
     .map(name => {
@@ -672,19 +529,14 @@ lines.push(`- Generated: ${summary.generatedAt}`);
 lines.push(`- Cases: ${summary.caseCount}; passed: ${summary.passed}; failed: ${summary.failed}`);
 lines.push('');
 const summaryColumns = [
-  'Case', 'Platform', 'Durability', 'Runtime footprint', 'Benchmark preset',
+  'Case', 'Platform', 'Benchmark preset',
   'shared_buffers', 'wal_buffers', 'min_wal_size', 'max_wal_size',
   'WAL segment MB', 'Effective GUCs', 'Open ms',
-  'Raw p50 ms', 'Raw p90 ms', 'Raw p95 ms', 'Raw p99 ms',
   'Typed p50 ms', 'Typed p90 ms', 'Typed p95 ms', 'Typed p99 ms',
   'Param p50 ms', 'Param p90 ms', 'Param p95 ms', 'Param p99 ms',
-  'Lookup p50 ms', 'Lookup p90 ms', 'Lookup p95 ms', 'Lookup p99 ms',
-  'Aggregate p50 ms', 'Aggregate p90 ms', 'Aggregate p95 ms', 'Aggregate p99 ms',
-  'Update p50 ms', 'Update p90 ms', 'Update p95 ms', 'Update p99 ms',
   'Background checkpoint p50 ms', 'Background checkpoint p90 ms',
   'Background checkpoint p95 ms', 'Background checkpoint p99 ms',
-  'Large result p50 ms', 'Large result p90 ms', 'Large result p95 ms',
-  'Large result p99 ms', 'Crash recovery ms', 'Crash recovery open ms',
+  'Crash recovery ms', 'Crash recovery open ms',
   'Insert rows/s',
   'SQLite open ms', 'SQLite simple p50 ms', 'SQLite simple p90 ms',
   'SQLite simple p95 ms', 'SQLite simple p99 ms', 'SQLite param p50 ms',
@@ -697,9 +549,9 @@ const summaryColumns = [
   'SQLite checkpoint p95 ms', 'SQLite checkpoint p99 ms',
   'SQLite large result p50 ms', 'SQLite large result p90 ms',
   'SQLite large result p95 ms', 'SQLite large result p99 ms',
-  'SQLite insert rows/s', 'Oliphaunt payload MB', 'Android APK MB',
+  'SQLite insert rows/s', 'SQLite durability', 'Android APK MB',
   'iOS app MB', 'RN package KB', 'Android PSS MB', 'Android RSS MB',
-  'iOS RSS MB', 'iOS footprint MB', 'iOS CPU %', 'Memory source', 'Report',
+  'iOS RSS MB', 'iOS CPU %', 'Report',
 ];
 
 function markdownRow(cells) {
@@ -712,8 +564,6 @@ for (const row of rows) {
   lines.push(markdownRow([
     row.status === 'passed' ? row.id : `${row.id} (${row.status})`,
     row.platform,
-    row.durability,
-    row.runtimeFootprint ?? '',
     row.benchmarkPreset ?? '',
     row.gucs?.shared_buffers ?? '',
     row.gucs?.wal_buffers ?? '',
@@ -722,10 +572,6 @@ for (const row of rows) {
     row.gucs?.wal_segment_size_mb ?? '',
     effectiveGucSummary(row.postgresSettings),
     fmt(row.openMs),
-    fmt(row.rawP50Ms),
-    fmt(row.rawP90Ms),
-    fmt(row.rawP95Ms),
-    fmt(row.rawP99Ms),
     fmt(row.typedP50Ms),
     fmt(row.typedP90Ms),
     fmt(row.typedP95Ms),
@@ -734,26 +580,10 @@ for (const row of rows) {
     fmt(row.parameterizedP90Ms),
     fmt(row.parameterizedP95Ms),
     fmt(row.parameterizedP99Ms),
-    fmt(row.lookupP50Ms),
-    fmt(row.lookupP90Ms),
-    fmt(row.lookupP95Ms),
-    fmt(row.lookupP99Ms),
-    fmt(row.aggregateP50Ms),
-    fmt(row.aggregateP90Ms),
-    fmt(row.aggregateP95Ms),
-    fmt(row.aggregateP99Ms),
-    fmt(row.updateP50Ms),
-    fmt(row.updateP90Ms),
-    fmt(row.updateP95Ms),
-    fmt(row.updateP99Ms),
     fmt(row.backgroundCheckpointP50Ms),
     fmt(row.backgroundCheckpointP90Ms),
     fmt(row.backgroundCheckpointP95Ms),
     fmt(row.backgroundCheckpointP99Ms),
-    fmt(row.largeResultP50Ms),
-    fmt(row.largeResultP90Ms),
-    fmt(row.largeResultP95Ms),
-    fmt(row.largeResultP99Ms),
     fmt(row.crashRecoveryElapsedMs),
     fmt(row.crashRecoveryOpenMs),
     fmt(row.insertRowsPerSecond, 0),
@@ -787,7 +617,7 @@ for (const row of rows) {
     fmt(row.sqliteLargeResultP95Ms),
     fmt(row.sqliteLargeResultP99Ms),
     fmt(row.sqliteInsertRowsPerSecond, 0),
-    fmtBytesMb(row.packageBytes),
+    row.sqliteDurability ?? '',
     fmtBytesMb(row.androidApkBytes),
     fmtBytesMb(row.iosAppBytes),
     typeof row.rnPackageBytes === 'number' && Number.isFinite(row.rnPackageBytes)
@@ -796,9 +626,7 @@ for (const row of rows) {
     fmtMb(row.androidPssKb),
     fmtMb(row.androidRssKb),
     fmtMb(row.iosResidentKb),
-    fmtMb(row.iosPhysicalFootprintKb),
     fmt(row.iosCpuPercent),
-    row.processMemorySource ?? '',
     row.reportPath ? `\`${row.reportPath}\`` : '',
   ]));
 }
@@ -809,19 +637,17 @@ NODE
 
 print_or_run() {
   local target_platform="$1"
-  local runtime_footprint="$2"
-  local durability="$3"
-  local shared="$4"
-  local wal="$5"
-  local min_wal="$6"
-  local max_wal="$7"
+  local shared="$2"
+  local wal="$3"
+  local min_wal="$4"
+  local max_wal="$5"
   local startup_gucs="shared_buffers=$shared,wal_buffers=$wal,min_wal_size=$min_wal"
   if [[ "$max_wal" != "default" ]]; then
     startup_gucs="$startup_gucs,max_wal_size=$max_wal"
   fi
   local script="bench:$target_platform"
   local crash_script="crash:$target_platform"
-  local raw_case_id="$target_platform-profile-$runtime_footprint-$durability-shared-$shared-wal-$wal-minwal-$min_wal-maxwal-$max_wal-walseg-${wal_segsize_mb}MB"
+  local raw_case_id="$target_platform-shared-$shared-wal-$wal-minwal-$min_wal-maxwal-$max_wal-walseg-${wal_segsize_mb}MB"
   local case_id
   case_id="$(case_slug "$raw_case_id")"
   local case_dir="$output_dir/cases/$case_id"
@@ -833,8 +659,6 @@ print_or_run() {
   fi
   local base_prefix=(
     env
-    "OLIPHAUNT_EXPO_MOBILE_DURABILITY=$durability"
-    "OLIPHAUNT_EXPO_MOBILE_RUNTIME_FOOTPRINT=$runtime_footprint"
     "OLIPHAUNT_EXPO_MOBILE_STARTUP_GUCS=$startup_gucs"
     "OLIPHAUNT_EXPO_MOBILE_WAL_SEGSIZE_MB=$wal_segsize_mb"
     "OLIPHAUNT_EXPO_MOBILE_BENCHMARK_PRESET=$benchmark_preset"
@@ -842,9 +666,7 @@ print_or_run() {
   local prefix=("${base_prefix[@]}")
   local crash_prefix=("${base_prefix[@]}")
   local run_crash=0
-  if [[ "$crash_recovery" = "per-case" && "$durability" = "safe" ]]; then
-    run_crash=1
-  fi
+  [[ "$crash_recovery" = "per-case" ]] && run_crash=1
 
   case "$target_platform" in
     android) prefix+=("OLIPHAUNT_EXPO_ANDROID_SCRATCH=$scratch") ;;
@@ -871,8 +693,8 @@ print_or_run() {
   fi
 
   if [[ "$plan_only" -eq 1 ]]; then
-    printf 'case platform=%s durability=%s runtimeFootprint=%s shared_buffers=%s wal_buffers=%s min_wal_size=%s max_wal_size=%s wal_segment_size_mb=%s\n' \
-      "$target_platform" "$durability" "$runtime_footprint" "$shared" "$wal" "$min_wal" "$max_wal" "$wal_segsize_mb"
+    printf 'case platform=%s shared_buffers=%s wal_buffers=%s min_wal_size=%s max_wal_size=%s wal_segment_size_mb=%s\n' \
+      "$target_platform" "$shared" "$wal" "$min_wal" "$max_wal" "$wal_segsize_mb"
     printf 'benchmarkPreset=%s\n' "$benchmark_preset"
     printf 'caseId=%s\n' "$case_id"
     printf 'caseOutputDir=%s\n' "$case_dir"
@@ -887,8 +709,6 @@ print_or_run() {
         printf '%s ' "$(shell_quote "$part")"
       done
       printf 'pnpm --dir %s run %s\n' "$(shell_quote "$example_dir")" "$(shell_quote "$crash_script")"
-    elif [[ "$crash_recovery" = "per-case" ]]; then
-      printf 'crashCommand=skipped durability=%s reason=synchronous_commit_off_does_not_guarantee_last_commit\n' "$durability"
     fi
     return
   fi
@@ -898,8 +718,6 @@ print_or_run() {
     "$case_dir" \
     "$case_id" \
     "$target_platform" \
-    "$durability" \
-    "$runtime_footprint" \
     "$shared" \
     "$wal" \
     "$min_wal" \
@@ -922,8 +740,6 @@ print_or_run() {
       "$case_dir" \
       "$case_id" \
       "$target_platform" \
-      "$durability" \
-      "$runtime_footprint" \
       "$shared" \
       "$wal" \
       "$min_wal" \
@@ -936,8 +752,6 @@ print_or_run() {
       "$case_dir" \
       "$case_id" \
       "$target_platform" \
-      "$durability" \
-      "$runtime_footprint" \
       "$shared" \
       "$wal" \
       "$min_wal" \
@@ -962,24 +776,20 @@ planned=0
 skipped=0
 skipped_wal_range=0
 for target_platform in "${platforms[@]}"; do
-  for runtime_footprint in "${runtime_footprints[@]}"; do
-    for durability in "${durabilities[@]}"; do
-      for shared in "${shared_buffers[@]}"; do
-        for wal in "${wal_buffers[@]}"; do
-          for min_wal in "${min_wal_sizes[@]}"; do
-            for max_wal in "${max_wal_sizes[@]}"; do
-              if ! is_valid_wal_min_for_segment "$min_wal" "$wal_segsize_mb" && [[ "$include_invalid_wal_min" -ne 1 ]]; then
-                skipped=$((skipped + 1))
-                continue
-              fi
-              if ! is_valid_wal_range "$min_wal" "$max_wal"; then
-                skipped_wal_range=$((skipped_wal_range + 1))
-                continue
-              fi
-              planned=$((planned + 1))
-              print_or_run "$target_platform" "$runtime_footprint" "$durability" "$shared" "$wal" "$min_wal" "$max_wal"
-            done
-          done
+  for shared in "${shared_buffers[@]}"; do
+    for wal in "${wal_buffers[@]}"; do
+      for min_wal in "${min_wal_sizes[@]}"; do
+        for max_wal in "${max_wal_sizes[@]}"; do
+          if ! is_valid_wal_min_for_segment "$min_wal" "$wal_segsize_mb" && [[ "$include_invalid_wal_min" -ne 1 ]]; then
+            skipped=$((skipped + 1))
+            continue
+          fi
+          if ! is_valid_wal_range "$min_wal" "$max_wal"; then
+            skipped_wal_range=$((skipped_wal_range + 1))
+            continue
+          fi
+          planned=$((planned + 1))
+          print_or_run "$target_platform" "$shared" "$wal" "$min_wal" "$max_wal"
         done
       done
     done

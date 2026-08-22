@@ -29,21 +29,24 @@ async function requestFramesRoundTrip(): Promise<void> {
     kind: 'execProtocol',
     bytes: new Uint8Array([1, 2]),
   });
-  assert.deepEqual(decodeBrokerRequest(8, new TextEncoder().encode('SELECT 1')), {
-    kind: 'execSimpleQuery',
-    sql: 'SELECT 1',
-  });
-  assert.deepEqual(decodeBrokerRequest(2, new Uint8Array()), { kind: 'checkpoint' });
-  assert.deepEqual(decodeBrokerRequest(3, new Uint8Array()), { kind: 'close' });
   assert.deepEqual(decodeBrokerRequest(4, new Uint8Array([3, 4])), {
     kind: 'execProtocolStream',
     bytes: new Uint8Array([3, 4]),
   });
-  assert.deepEqual(decodeBrokerRequest(5, new Uint8Array([2])), {
-    kind: 'backup',
-    format: 'physicalArchive',
+  assert.deepEqual(decodeBrokerRequest(8, new TextEncoder().encode('SELECT 1')), {
+    kind: 'execSimpleQuery',
+    sql: 'SELECT 1',
   });
-  assert.deepEqual(decodeBrokerRequest(7, new Uint8Array()), { kind: 'cancel' });
+  assert.deepEqual(decodeBrokerRequest(2, new Uint8Array()), {
+    kind: 'checkpoint',
+  });
+  assert.deepEqual(decodeBrokerRequest(3, new Uint8Array()), { kind: 'close' });
+  assert.deepEqual(decodeBrokerRequest(5, new Uint8Array()), {
+    kind: 'backup',
+  });
+  assert.deepEqual(decodeBrokerRequest(7, new Uint8Array()), {
+    kind: 'cancel',
+  });
 }
 
 async function responseFramesRoundTrip(): Promise<void> {
@@ -69,8 +72,7 @@ async function responseFramesRoundTrip(): Promise<void> {
 function rejectsMalformedFrames(): void {
   assert.throws(() => decodeBrokerRequest(999, new Uint8Array()), /unknown broker request/);
   assert.throws(() => decodeBrokerResponse(999, new Uint8Array()), /unknown broker response/);
-  assert.throws(() => decodeBrokerRequest(5, new Uint8Array()), /missing a format/);
-  assert.throws(() => decodeBrokerRequest(5, new Uint8Array([99])), /unknown broker backup/);
+  assert.throws(() => decodeBrokerRequest(5, new Uint8Array([99])), /unexpectedly had a payload/);
   assert.throws(() => decodeBrokerRequest(2, new Uint8Array([1])), /unexpectedly had a payload/);
 }
 
@@ -85,14 +87,27 @@ async function streamHelpersUseBinaryFrames(): Promise<void> {
     bytes: new Uint8Array([0x51, 0, 0, 0, 4]),
   });
 
+  const streamingRequest = new MemoryDuplexStream();
+  await writeBrokerRequest(streamingRequest, {
+    kind: 'execProtocolStream',
+    bytes: new Uint8Array([0x51]),
+  });
+  assert.deepEqual(await readBrokerRequest(new MemoryDuplexStream(streamingRequest.output)), {
+    kind: 'execProtocolStream',
+    bytes: new Uint8Array([0x51]),
+  });
+
   const responseStream = new MemoryDuplexStream();
-  await writeBrokerResponse(responseStream, { kind: 'ok', bytes: new Uint8Array([0x5a]) });
+  await writeBrokerResponse(responseStream, {
+    kind: 'ok',
+    bytes: new Uint8Array([0x5a]),
+  });
   assert.deepEqual(await readBrokerResponse(new MemoryDuplexStream(responseStream.output)), {
     kind: 'ok',
     bytes: new Uint8Array([0x5a]),
   });
 
-  const raw = encodeBrokerRequest({ kind: 'backup', format: 'physicalArchive' });
+  const raw = encodeBrokerRequest({ kind: 'backup' });
   assert.equal(raw[0], 0x50);
   assert.equal(raw[1], 0x47);
   assert.equal(raw[2], 0x4f);

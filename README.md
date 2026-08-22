@@ -27,8 +27,8 @@ Oliphaunt is a multi-product monorepo, not one repository-wide version:
   postmaster carrier with isolated PostgreSQL backends.
 - Native and WASIX own independent versions. A change to one does not select
   the other unless a declared directed compatibility dependency requires it.
-- Rust, Swift, Kotlin/Android, React Native, TypeScript, and WASIX Rust are
-  separately versioned SDK products.
+- Rust, Swift, Kotlin/Android, React Native, TypeScript, Rust WASIX, and WASIX
+  TypeScript are separately versioned SDK products.
 - Broker and Node-direct helpers are separately versioned runtime products.
 - Every SQL extension in the catalog remains exactly selectable. PostgreSQL 18
   contrib members share one logical artifact bundle whose native and WASIX
@@ -71,7 +71,7 @@ The declared public entry points are:
 | App surface                            | Package entry point                                           | Distribution boundary                                                    |
 | -------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | Rust/Tauri desktop                     | `oliphaunt`                                                   | Cargo and target-specific native artifact crates                         |
-| WASIX Rust                             | `oliphaunt-wasix`                                             | Cargo portable/AOT artifact crates                                       |
+| Rust WASIX                             | `oliphaunt-wasix`                                             | Cargo portable/AOT artifact crates                                       |
 | WASIX postmaster server                | `oliphaunt-wasix-postmaster` release launcher                 | GitHub `linux-x64-gnu` or `macos-arm64` sealed carrier archive           |
 | Swift                                  | `Oliphaunt`                                                   | SwiftPM source tag and checksum-pinned release assets                    |
 | Android                                | `dev.oliphaunt:oliphaunt-android` and `dev.oliphaunt.android` | Maven Central AAR, Gradle plugin/marker, and declared ABI carriers       |
@@ -80,8 +80,8 @@ The declared public entry points are:
 | Browser, Node.js, Bun, and Deno WASIX  | `@oliphaunt/wasix-ts`                                         | npm                                                                      |
 | Native bindings                        | `liboliphaunt` C ABI                                          | declared native runtime carriers                                         |
 
-Kotlin host-native and JVM compilations are development/parity evidence, not
-public Kotlin Multiplatform or JVM artifacts. The first Swift release starts at
+Kotlin common sources are compiled and tested on the JVM as development
+evidence, but only the Android facade is supported and published. The first Swift release starts at
 `0.6.0` because legacy unscoped SwiftPM tags already occupy `0.1.0` through
 `0.5.1`; other new products start at `0.1.0`.
 
@@ -130,7 +130,7 @@ promote releases.
 ## Documentation
 
 - [Public SDK documentation](src/docs/content/sdk/index.mdx)
-- [Capabilities](src/docs/content/reference/capabilities.mdx)
+- [Runtime support](src/docs/content/reference/capabilities.mdx)
 - [Exact extension model](src/docs/content/reference/extensions.mdx)
 - [Source architecture](docs/architecture/final-product-source-architecture.md)
 - [Maintainer documentation index](docs/maintainers/README.md)

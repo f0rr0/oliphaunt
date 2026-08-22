@@ -11,9 +11,10 @@
 #ifdef _WIN32
 #define OLIPHAUNT_PLATFORM_EXTERNAL_POSIX_SHIMS 1
 #endif
-#include "liboliphaunt_platform.h"
+#include "../src/liboliphaunt_internal.h"
 
 #include <stdint.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -80,28 +81,6 @@ static int verify_global_contract(void) {
     char trailing = '\0';
     if (version == NULL || sscanf(version, "%u.%u.%u%c", &major, &minor, &patch, &trailing) != 3) {
         fprintf(stderr, "unexpected liboliphaunt version: %s\n", version ? version : "(null)");
-        return 1;
-    }
-
-    uint64_t capabilities = oliphaunt_capabilities();
-    uint64_t required =
-        OLIPHAUNT_CAP_PROTOCOL_RAW |
-        OLIPHAUNT_CAP_PROTOCOL_STREAM |
-        OLIPHAUNT_CAP_EXTENSIONS |
-        OLIPHAUNT_CAP_QUERY_CANCEL |
-        OLIPHAUNT_CAP_BACKUP_RESTORE |
-        OLIPHAUNT_CAP_SIMPLE_QUERY |
-        OLIPHAUNT_CAP_STATIC_EXTENSIONS |
-        OLIPHAUNT_CAP_LOGICAL_REOPEN;
-    if ((capabilities & required) != required) {
-        fprintf(stderr, "missing required liboliphaunt capabilities: 0x%llx\n",
-                (unsigned long long)capabilities);
-        return 1;
-    }
-    if ((capabilities & OLIPHAUNT_CAP_MULTI_INSTANCE) != 0 ||
-        (capabilities & OLIPHAUNT_CAP_SERVER_MODE) != 0) {
-        fprintf(stderr, "liboliphaunt advertised unsupported v1 capabilities: 0x%llx\n",
-                (unsigned long long)capabilities);
         return 1;
     }
 
@@ -383,6 +362,271 @@ static int contains_bytes(const OliphauntResponse *response, const char *needle)
     }
     return 0;
 }
+
+static size_t tar_entry_count(const OliphauntResponse *archive, const char *expected_name);
+
+static const char *native_archive_manifest_fixture_path = NULL;
+
+static int load_native_archive_manifest_fixture(char *out, size_t capacity) {
+    const char *path = native_archive_manifest_fixture_path;
+    if (path == NULL || path[0] == '\0') {
+        fprintf(stderr, "native archive manifest fixture path was not provided\n");
+        return -1;
+    }
+    FILE *file = fopen(path, "rb");
+    if (file == NULL) {
+        fprintf(stderr, "failed to open shared native archive manifest fixture %s\n", path);
+        return -1;
+    }
+    size_t length = fread(out, 1, capacity - 1, file);
+    if (ferror(file) || !feof(file) || fclose(file) != 0) {
+        fprintf(stderr, "failed to read shared native archive manifest fixture %s\n", path);
+        return -1;
+    }
+    out[length] = '\0';
+    return 0;
+}
+
+#ifndef _WIN32
+typedef struct WalRangeFixtureCase {
+    char name[64];
+    uint64_t segment_size;
+    char start[32];
+    char stop[32];
+    char expected[512];
+    char error[64];
+} WalRangeFixtureCase;
+
+typedef struct WalRangeCollector {
+    char value[512];
+    size_t len;
+} WalRangeCollector;
+
+static int collect_wal_file(void *raw_context, const char *wal_file) {
+    WalRangeCollector *collector = (WalRangeCollector *)raw_context;
+    size_t wal_len = strlen(wal_file);
+    size_t separator = collector->len == 0 ? 0 : 1;
+    if (collector->len + separator + wal_len >= sizeof(collector->value)) {
+        return -1;
+    }
+    if (separator != 0) {
+        collector->value[collector->len++] = ',';
+    }
+    memcpy(collector->value + collector->len, wal_file, wal_len + 1);
+    collector->len += wal_len;
+    return 0;
+}
+
+static WalRangeFixtureCase *wal_fixture_case(
+    WalRangeFixtureCase *cases,
+    size_t *case_count,
+    const char *name) {
+    for (size_t i = 0; i < *case_count; i++) {
+        if (strcmp(cases[i].name, name) == 0) {
+            return &cases[i];
+        }
+    }
+    if (*case_count >= 16) {
+        return NULL;
+    }
+    WalRangeFixtureCase *item = &cases[(*case_count)++];
+    memset(item, 0, sizeof(*item));
+    snprintf(item->name, sizeof(item->name), "%s", name);
+    return item;
+}
+
+static int verify_shared_wal_range_fixture(void) {
+    const char *path = "src/shared/fixtures/storage/physical-backup-wal-range-v1.properties";
+    FILE *file = fopen(path, "rb");
+    if (file == NULL) {
+        fprintf(stderr, "failed to open shared WAL range fixture %s\n", path);
+        return 1;
+    }
+    WalRangeFixtureCase cases[16] = {0};
+    size_t case_count = 0;
+    size_t schema_count = 0;
+    char line[1024];
+    while (fgets(line, sizeof(line), file) != NULL) {
+        line[strcspn(line, "\r\n")] = '\0';
+        if (strncmp(line, "schema=", 7) == 0) {
+            if (strcmp(line, "schema=oliphaunt-physical-backup-wal-range-v1") != 0) {
+                fclose(file);
+                fprintf(stderr, "shared WAL range fixture has unexpected schema\n");
+                return 1;
+            }
+            schema_count++;
+            continue;
+        }
+        if (strncmp(line, "case.", 5) != 0) {
+            continue;
+        }
+        char *equals = strchr(line, '=');
+        char *field_separator = equals == NULL ? NULL : strrchr(line, '.');
+        if (equals == NULL || field_separator == NULL || field_separator >= equals) {
+            fclose(file);
+            fprintf(stderr, "malformed shared WAL range fixture line\n");
+            return 1;
+        }
+        *field_separator = '\0';
+        *equals = '\0';
+        WalRangeFixtureCase *item = wal_fixture_case(cases, &case_count, line + 5);
+        if (item == NULL) {
+            fclose(file);
+            fprintf(stderr, "too many shared WAL range fixture cases\n");
+            return 1;
+        }
+        const char *field = field_separator + 1;
+        const char *value = equals + 1;
+        if (strcmp(field, "segmentSizeBytes") == 0) {
+            item->segment_size = strtoull(value, NULL, 10);
+        } else if (strcmp(field, "start") == 0) {
+            snprintf(item->start, sizeof(item->start), "%s", value);
+        } else if (strcmp(field, "stop") == 0) {
+            snprintf(item->stop, sizeof(item->stop), "%s", value);
+        } else if (strcmp(field, "expected") == 0) {
+            snprintf(item->expected, sizeof(item->expected), "%s", value);
+        } else if (strcmp(field, "error") == 0) {
+            snprintf(item->error, sizeof(item->error), "%s", value);
+        }
+    }
+    if (ferror(file) || fclose(file) != 0 || schema_count != 1 || case_count == 0) {
+        fprintf(stderr, "failed to read shared WAL range fixture %s\n", path);
+        return 1;
+    }
+    for (size_t i = 0; i < case_count; i++) {
+        WalRangeCollector collector = {0};
+        int rc = oliphaunt_visit_wal_range(
+            NULL,
+            cases[i].start,
+            cases[i].stop,
+            cases[i].segment_size,
+            collect_wal_file,
+            &collector);
+        if (cases[i].expected[0] != '\0') {
+            if (rc != 0 || strcmp(collector.value, cases[i].expected) != 0) {
+                fprintf(stderr, "shared WAL range case %s produced %s: %s\n",
+                        cases[i].name,
+                        collector.value,
+                        oliphaunt_last_error(NULL));
+                return 1;
+            }
+        } else {
+            if (rc == 0) {
+                fprintf(stderr, "shared WAL range case %s unexpectedly succeeded\n", cases[i].name);
+                return 1;
+            }
+            const char *needle = NULL;
+            if (strcmp(cases[i].error, "reversed-range") == 0) {
+                needle = "reversed WAL range";
+            } else if (strcmp(cases[i].error, "timeline-change") == 0) {
+                needle = "changes timeline";
+            } else if (strcmp(cases[i].error, "segment-index-out-of-range") == 0) {
+                needle = "segment index";
+            } else if (strcmp(cases[i].error, "malformed-wal-filename") == 0) {
+                needle = "malformed WAL filename";
+            }
+            if (needle == NULL || expect_error_contains(NULL, cases[i].name, needle) != 0) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+static int write_sparse_file(const char *path, size_t size) {
+    FILE *file = fopen(path, "wb");
+    if (file == NULL || size == 0) {
+        return -1;
+    }
+    int rc = fseek(file, (long)(size - 1), SEEK_SET) == 0 && fputc(0, file) != EOF ? 0 : -1;
+    if (fclose(file) != 0) {
+        rc = -1;
+    }
+    return rc;
+}
+
+static int verify_wal_range_archive_selection(const char *pgdata) {
+    char root[4096];
+    snprintf(root, sizeof(root), "%s.wal-range-test.%ld", pgdata, (long)getpid());
+    (void)oliphaunt_remove_tree(root);
+    char pg_wal[4096];
+    snprintf(pg_wal, sizeof(pg_wal), "%s/pg_wal", root);
+    if (oliphaunt_mkdir_p(pg_wal, 0700) != 0) {
+        fprintf(stderr, "failed to create WAL range smoke root\n");
+        return 1;
+    }
+    static const char *required_start = "00000001000000000000000A";
+    static const char *required_stop = "00000001000000000000000B";
+    static const char *unrelated = "00000001000000000000000C";
+    char start_path[4096];
+    char stop_path[4096];
+    char unrelated_path[4096];
+    snprintf(start_path, sizeof(start_path), "%s/%s", pg_wal, required_start);
+    snprintf(stop_path, sizeof(stop_path), "%s/%s", pg_wal, required_stop);
+    snprintf(unrelated_path, sizeof(unrelated_path), "%s/%s", pg_wal, unrelated);
+    const size_t segment_size = 1024 * 1024;
+    if (write_sparse_file(start_path, segment_size) != 0) {
+        (void)oliphaunt_remove_tree(root);
+        return 1;
+    }
+    OliphauntByteBuffer archive = {0};
+    if (oliphaunt_archive_append_wal_range(
+            &archive, NULL, root, required_start, required_stop, segment_size) == 0 ||
+        expect_error_contains(NULL, "missing required WAL segment", "requires complete WAL segment") != 0) {
+        free(archive.data);
+        (void)oliphaunt_remove_tree(root);
+        return 1;
+    }
+    free(archive.data);
+    archive = (OliphauntByteBuffer){0};
+    if (write_sparse_file(stop_path, segment_size - 1) != 0 ||
+        oliphaunt_archive_append_wal_range(
+            &archive, NULL, root, required_start, required_stop, segment_size) == 0 ||
+        expect_error_contains(NULL, "short required WAL segment", "exactly 1048576 bytes") != 0) {
+        free(archive.data);
+        (void)oliphaunt_remove_tree(root);
+        return 1;
+    }
+    free(archive.data);
+    archive = (OliphauntByteBuffer){0};
+    if (write_sparse_file(stop_path, segment_size) != 0 ||
+        write_sparse_file(unrelated_path, segment_size) != 0 ||
+        oliphaunt_archive_append_wal_range(
+            &archive, NULL, root, required_start, required_stop, segment_size) != 0) {
+        fprintf(stderr, "failed to archive exact required WAL range: %s\n", oliphaunt_last_error(NULL));
+        free(archive.data);
+        (void)oliphaunt_remove_tree(root);
+        return 1;
+    }
+    OliphauntResponse response = {.data = archive.data, .len = archive.len};
+    char start_entry[64];
+    char stop_entry[64];
+    char unrelated_entry[64];
+    snprintf(start_entry, sizeof(start_entry), "pgdata/pg_wal/%s", required_start);
+    snprintf(stop_entry, sizeof(stop_entry), "pgdata/pg_wal/%s", required_stop);
+    snprintf(unrelated_entry, sizeof(unrelated_entry), "pgdata/pg_wal/%s", unrelated);
+    int failed = tar_entry_count(&response, start_entry) != 1 ||
+                 tar_entry_count(&response, stop_entry) != 1 ||
+                 tar_entry_count(&response, unrelated_entry) != 0;
+    if (failed) {
+        fprintf(stderr, "physical backup did not select the exact required WAL range\n");
+    }
+    free(archive.data);
+    (void)oliphaunt_remove_tree(root);
+    return failed;
+}
+#else
+static int verify_shared_wal_range_fixture(void) {
+    fprintf(stderr, "skipping internal WAL range vector smoke on Windows\n");
+    return 0;
+}
+
+static int verify_wal_range_archive_selection(const char *pgdata) {
+    (void)pgdata;
+    fprintf(stderr, "skipping internal WAL archive selection smoke on Windows\n");
+    return 0;
+}
+#endif
 
 static int32_t append_stream_chunk(void *context, const uint8_t *data, size_t len);
 
@@ -875,20 +1119,37 @@ static int parent_path(const char *path, char *out, size_t out_len) {
     return 0;
 }
 
-static int verify_root_lock_marker(const char *pgdata) {
+static int root_sibling_path(
+    char *out,
+    size_t out_len,
+    const char *pgdata,
+    const char *suffix_format,
+    ...) {
+    char root[4096];
+    if (parent_path(pgdata, root, sizeof(root)) != 0) {
+        return -1;
+    }
+    int prefix_len = snprintf(out, out_len, "%s", root);
+    if (prefix_len < 0 || (size_t)prefix_len >= out_len) {
+        return -1;
+    }
+    va_list args;
+    va_start(args, suffix_format);
+    int suffix_len = vsnprintf(out + prefix_len, out_len - (size_t)prefix_len, suffix_format, args);
+    va_end(args);
+    return suffix_len < 0 || (size_t)suffix_len >= out_len - (size_t)prefix_len ? -1 : 0;
+}
+
+static int verify_no_in_root_lock_file(const char *pgdata) {
+    char root[4096];
     char lock_path[4096];
-    if (parent_path(pgdata, lock_path, sizeof(lock_path)) != 0) {
-        fprintf(stderr, "failed to resolve native root lock marker parent\n");
+    if (parent_path(pgdata, root, sizeof(root)) != 0 ||
+        snprintf(lock_path, sizeof(lock_path), "%s/.oliphaunt.lock", root) >= (int)sizeof(lock_path)) {
+        fprintf(stderr, "failed to resolve removed in-root lock path\n");
         return 1;
     }
-    size_t len = strlen(lock_path);
-    if (snprintf(lock_path + len, sizeof(lock_path) - len, "%s.oliphaunt.lock", len > 0 && lock_path[len - 1] == '/' ? "" : "/") >=
-        (int)(sizeof(lock_path) - len)) {
-        fprintf(stderr, "native root lock marker path is too long\n");
-        return 1;
-    }
-    if (!file_exists(lock_path)) {
-        fprintf(stderr, "native root lock marker was not created at %s\n", lock_path);
+    if (file_exists(lock_path)) {
+        fprintf(stderr, "native runtime created removed in-root lock file %s\n", lock_path);
         return 1;
     }
     return 0;
@@ -1008,6 +1269,143 @@ static void test_tar_rewrite_checksum(unsigned char *header) {
     header[155] = ' ';
 }
 
+static unsigned long long test_tar_read_octal(const unsigned char *field, size_t width) {
+    unsigned long long value = 0;
+    size_t index = 0;
+    while (index < width && (field[index] == ' ' || field[index] == '\0')) {
+        index++;
+    }
+    while (index < width && field[index] >= '0' && field[index] <= '7') {
+        value = (value << 3) | (unsigned long long)(field[index] - '0');
+        index++;
+    }
+    return value;
+}
+
+static int verify_tar_entry_mode(
+    const OliphauntResponse *archive,
+    const char *expected_name,
+    char expected_type,
+    unsigned long long expected_mode) {
+    size_t offset = 0;
+    while (offset + 512 <= archive->len) {
+        const unsigned char *header = archive->data + offset;
+        if (header[0] == 0) {
+            break;
+        }
+        char name[101];
+        memcpy(name, header, 100);
+        name[100] = '\0';
+        char type = header[156] == 0 ? '0' : (char)header[156];
+        if (strcmp(name, expected_name) == 0) {
+            unsigned long long mode = test_tar_read_octal(header + 100, 8);
+            if (type == expected_type && mode == expected_mode) {
+                return 0;
+            }
+            fprintf(stderr,
+                    "physical archive entry %s has type %c mode %04llo, expected %c %04llo\n",
+                    expected_name,
+                    type,
+                    mode,
+                    expected_type,
+                    expected_mode);
+            return 1;
+        }
+        unsigned long long size = test_tar_read_octal(header + 124, 12);
+        size_t padded = ((size_t)size + 511) & ~(size_t)511;
+        if (padded > archive->len - offset - 512) {
+            break;
+        }
+        offset += 512 + padded;
+    }
+    fprintf(stderr, "physical archive omitted mode-check entry %s\n", expected_name);
+    return 1;
+}
+
+static int verify_tar_identity_metadata_is_normalized(const OliphauntResponse *archive) {
+    size_t offset = 0;
+    while (offset + 512 <= archive->len) {
+        const unsigned char *header = archive->data + offset;
+        if (header[0] == 0) {
+            return 0;
+        }
+        unsigned long long uid = test_tar_read_octal(header + 108, 8);
+        unsigned long long gid = test_tar_read_octal(header + 116, 8);
+        unsigned long long mtime = test_tar_read_octal(header + 136, 12);
+        if (uid != 0 || gid != 0 || mtime != 0) {
+            fprintf(stderr,
+                    "physical archive entry has uid=%llu gid=%llu mtime=%llu; expected zeroed identity metadata\n",
+                    uid,
+                    gid,
+                    mtime);
+            return 1;
+        }
+        unsigned long long size = test_tar_read_octal(header + 124, 12);
+        size_t padded = ((size_t)size + 511) & ~(size_t)511;
+        if (padded > archive->len - offset - 512) {
+            break;
+        }
+        offset += 512 + padded;
+    }
+    fprintf(stderr, "physical archive ended before normalized metadata could be verified\n");
+    return 1;
+}
+
+static int verify_pg_control_archive_order(const OliphauntResponse *archive) {
+    size_t offset = 0;
+    size_t pg_version_offset = SIZE_MAX;
+    size_t pg_control_offset = SIZE_MAX;
+    size_t backup_label_offset = SIZE_MAX;
+    size_t pg_control_count = 0;
+    while (offset + 512 <= archive->len) {
+        const unsigned char *header = archive->data + offset;
+        if (header[0] == 0) {
+            break;
+        }
+        char name[101];
+        memcpy(name, header, 100);
+        name[100] = '\0';
+        if (strcmp(name, "pgdata/PG_VERSION") == 0) {
+            pg_version_offset = offset;
+        } else if (strcmp(name, "pgdata/global/pg_control") == 0) {
+            pg_control_offset = offset;
+            pg_control_count++;
+        } else if (strcmp(name, "pgdata/backup_label") == 0) {
+            backup_label_offset = offset;
+        }
+        unsigned long long size = test_tar_read_octal(header + 124, 12);
+        offset += 512 + (((size_t)size + 511) & ~(size_t)511);
+    }
+    if (pg_control_count != 1 ||
+        pg_version_offset == SIZE_MAX ||
+        backup_label_offset == SIZE_MAX ||
+        !(pg_version_offset < pg_control_offset && pg_control_offset < backup_label_offset)) {
+        fprintf(stderr, "physical archive must contain one late pg_control before backup_label\n");
+        return 1;
+    }
+    return 0;
+}
+
+static size_t tar_entry_count(const OliphauntResponse *archive, const char *expected_name) {
+    size_t offset = 0;
+    size_t count = 0;
+    while (offset + 512 <= archive->len) {
+        const unsigned char *header = archive->data + offset;
+        if (header[0] == 0) {
+            break;
+        }
+        char name[101];
+        memcpy(name, header, 100);
+        name[100] = '\0';
+        if (strcmp(name, expected_name) == 0) {
+            count++;
+        }
+        unsigned long long size = test_tar_read_octal(header + 124, 12);
+        offset += 512 + (((size_t)size + 511) & ~(size_t)511);
+    }
+    return count;
+}
+
 static int test_tar_append_header(TestTarArchive *archive, const char *name, char typeflag, size_t size, const char *link_name) {
     if (archive->len + 512 > sizeof(archive->data) || strlen(name) > 100) {
         return -1;
@@ -1082,13 +1480,194 @@ static int test_tar_append_nonzero_block(TestTarArchive *archive) {
     return 0;
 }
 
+static int append_required_pgdata_files(TestTarArchive *archive) {
+    return test_tar_append_file(archive, "pgdata/PG_VERSION", "18\n") != 0 ||
+            test_tar_append_file(archive, "pgdata/global/pg_control", "control") != 0 ||
+            test_tar_append_file(archive, "pgdata/backup_label", "label") != 0
+        ? -1
+        : 0;
+}
+
+static int append_required_pgdata_entries(TestTarArchive *archive) {
+    return append_required_pgdata_files(archive) != 0 ||
+            test_tar_append_header(archive, "pgdata/base", '5', 0, NULL) != 0 ||
+            test_tar_append_header(archive, "pgdata/pg_wal", '5', 0, NULL) != 0
+        ? -1
+        : 0;
+}
+
 static int append_required_restore_entries(TestTarArchive *archive) {
-    if (test_tar_append_file(archive, "pgdata/PG_VERSION", "18\n") != 0 ||
-        test_tar_append_file(archive, "pgdata/global/pg_control", "control") != 0 ||
-        test_tar_append_file(archive, "pgdata/backup_label", "label") != 0) {
+    static const char manifest[] =
+        "archiveLayout=oliphaunt-physical-archive-v1\n"
+        "product=oliphaunt\n"
+        "engineFamily=native\n"
+        "physicalFormat=native-pg18-v1\n"
+        "postgresMajor=18\n";
+    if (append_required_pgdata_entries(archive) != 0 ||
+        test_tar_append_file(archive, ".oliphaunt/backup-manifest.properties", manifest) != 0) {
         return -1;
     }
     return 0;
+}
+
+static int verify_restore_rejects_inexact_manifest(const char *pgdata, const char *manifest, const char *case_name) {
+    TestTarArchive archive;
+    memset(&archive, 0, sizeof(archive));
+    if (append_required_pgdata_entries(&archive) != 0 ||
+        (manifest != NULL &&
+         test_tar_append_file(&archive, ".oliphaunt/backup-manifest.properties", manifest) != 0) ||
+        test_tar_finish(&archive) != 0) {
+        fprintf(stderr, "failed to build %s physical archive fixture\n", case_name);
+        return 1;
+    }
+    char restore_root[4096];
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-manifest-%s.%ld", case_name, (long)getpid());
+    OliphauntRestoreOptions options = {
+        .abi_version = OLIPHAUNT_ABI_VERSION,
+        .destination = restore_root,
+        .data = archive.data,
+        .len = archive.len,
+    };
+    if (oliphaunt_restore(&options) == 0) {
+        fprintf(stderr, "oliphaunt_restore accepted %s physical archive manifest\n", case_name);
+        return 1;
+    }
+    return expect_error_contains(NULL, "oliphaunt_restore physical archive manifest", "manifest");
+}
+
+static int verify_restore_rejects_invalid_pg_wal(const char *pgdata, const char *case_name, char typeflag) {
+    static const char manifest[] =
+        "archiveLayout=oliphaunt-physical-archive-v1\n"
+        "product=oliphaunt\n"
+        "engineFamily=native\n"
+        "physicalFormat=native-pg18-v1\n"
+        "postgresMajor=18\n";
+    TestTarArchive archive;
+    memset(&archive, 0, sizeof(archive));
+    if (append_required_pgdata_files(&archive) != 0 ||
+        test_tar_append_header(&archive, "pgdata/base", '5', 0, NULL) != 0 ||
+        (typeflag == '0' && test_tar_append_file(&archive, "pgdata/pg_wal", "not-a-directory") != 0) ||
+        (typeflag == '2' && test_tar_append_header(&archive, "pgdata/pg_wal", '2', 0, "pgdata") != 0) ||
+        test_tar_append_file(&archive, ".oliphaunt/backup-manifest.properties", manifest) != 0 ||
+        test_tar_finish(&archive) != 0) {
+        fprintf(stderr, "failed to build %s pg_wal physical archive fixture\n", case_name);
+        return 1;
+    }
+
+    char restore_root[4096];
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-pg-wal-%s.%ld", case_name, (long)getpid());
+    OliphauntRestoreOptions options = {
+        .abi_version = OLIPHAUNT_ABI_VERSION,
+        .destination = restore_root,
+        .data = archive.data,
+        .len = archive.len,
+    };
+    if (oliphaunt_restore(&options) == 0) {
+        fprintf(stderr, "oliphaunt_restore accepted %s pgdata/pg_wal\n", case_name);
+        return 1;
+    }
+    const char *expected = typeflag == '2' ? "unsupported tar entry type" : "required directory pgdata/pg_wal";
+    return expect_error_contains(NULL, "oliphaunt_restore invalid pg_wal", expected);
+}
+
+static int verify_restore_rejects_missing_base(const char *pgdata) {
+    static const char manifest[] =
+        "archiveLayout=oliphaunt-physical-archive-v1\n"
+        "product=oliphaunt\n"
+        "engineFamily=native\n"
+        "physicalFormat=native-pg18-v1\n"
+        "postgresMajor=18\n";
+    TestTarArchive archive;
+    memset(&archive, 0, sizeof(archive));
+    if (append_required_pgdata_files(&archive) != 0 ||
+        test_tar_append_header(&archive, "pgdata/pg_wal", '5', 0, NULL) != 0 ||
+        test_tar_append_file(&archive, ".oliphaunt/backup-manifest.properties", manifest) != 0 ||
+        test_tar_finish(&archive) != 0) {
+        fprintf(stderr, "failed to build missing base physical archive fixture\n");
+        return 1;
+    }
+
+    char restore_root[4096];
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-missing-base.%ld", (long)getpid());
+    OliphauntRestoreOptions options = {
+        .abi_version = OLIPHAUNT_ABI_VERSION,
+        .destination = restore_root,
+        .data = archive.data,
+        .len = archive.len,
+    };
+    if (oliphaunt_restore(&options) == 0 || file_exists(restore_root)) {
+        fprintf(stderr, "oliphaunt_restore accepted or published PGDATA without base\n");
+        return 1;
+    }
+    return expect_error_contains(NULL, "oliphaunt_restore missing base", "required directory pgdata/base");
+}
+
+static int verify_restore_rejects_invalid_pgdata_markers(
+    const char *pgdata,
+    const char *case_name,
+    const char *version,
+    const char *control,
+    const char *backup_label,
+    const char *expected_error) {
+    static const char manifest[] =
+        "archiveLayout=oliphaunt-physical-archive-v1\n"
+        "product=oliphaunt\n"
+        "engineFamily=native\n"
+        "physicalFormat=native-pg18-v1\n"
+        "postgresMajor=18\n";
+    TestTarArchive archive;
+    memset(&archive, 0, sizeof(archive));
+    if (test_tar_append_file(&archive, "pgdata/PG_VERSION", version) != 0 ||
+        test_tar_append_file(&archive, "pgdata/global/pg_control", control) != 0 ||
+        test_tar_append_file(&archive, "pgdata/backup_label", backup_label) != 0 ||
+        test_tar_append_header(&archive, "pgdata/base", '5', 0, NULL) != 0 ||
+        test_tar_append_header(&archive, "pgdata/pg_wal", '5', 0, NULL) != 0 ||
+        test_tar_append_file(&archive, ".oliphaunt/backup-manifest.properties", manifest) != 0 ||
+        test_tar_finish(&archive) != 0) {
+        fprintf(stderr, "failed to build %s PGDATA marker archive fixture\n", case_name);
+        return 1;
+    }
+
+    char restore_root[4096];
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-markers-%s.%ld", case_name, (long)getpid());
+    OliphauntRestoreOptions options = {
+        .abi_version = OLIPHAUNT_ABI_VERSION,
+        .destination = restore_root,
+        .data = archive.data,
+        .len = archive.len,
+    };
+    if (oliphaunt_restore(&options) == 0 || file_exists(restore_root)) {
+        fprintf(stderr, "oliphaunt_restore accepted or published %s PGDATA markers\n", case_name);
+        return 1;
+    }
+    return expect_error_contains(NULL, "oliphaunt_restore invalid PGDATA markers", expected_error);
+}
+
+static int verify_restore_rejects_process_state_file(const char *pgdata, const char *name) {
+    TestTarArchive archive;
+    memset(&archive, 0, sizeof(archive));
+    char archive_path[128];
+    snprintf(archive_path, sizeof(archive_path), "pgdata/%s", name);
+    if (append_required_restore_entries(&archive) != 0 ||
+        test_tar_append_file(&archive, archive_path, "stale process state") != 0 ||
+        test_tar_finish(&archive) != 0) {
+        fprintf(stderr, "failed to build %s physical archive fixture\n", name);
+        return 1;
+    }
+
+    char restore_root[4096];
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-%s.%ld", name, (long)getpid());
+    OliphauntRestoreOptions options = {
+        .abi_version = OLIPHAUNT_ABI_VERSION,
+        .destination = restore_root,
+        .data = archive.data,
+        .len = archive.len,
+    };
+    if (oliphaunt_restore(&options) == 0 || file_exists(restore_root)) {
+        fprintf(stderr, "oliphaunt_restore accepted or published %s\n", archive_path);
+        return 1;
+    }
+    return expect_error_contains(NULL, "oliphaunt_restore process-state file", "process-state file");
 }
 
 static int build_archive_with_special_entry(TestTarArchive *archive, char typeflag) {
@@ -1110,14 +1689,12 @@ static int verify_restore_rejects_special_archive_entry(const char *pgdata, char
         return 1;
     }
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-%c.%ld", pgdata, typeflag, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-%c.%ld", typeflag, (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
-        .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
-        .flags = OLIPHAUNT_RESTORE_REPLACE_EXISTING,
     };
     if (oliphaunt_restore(&options) == 0) {
         fprintf(stderr, "oliphaunt_restore accepted unsupported tar entry type '%c'\n", typeflag);
@@ -1137,14 +1714,12 @@ static int verify_restore_rejects_directory_entry_with_payload(const char *pgdat
     }
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-nonzero-dir.%ld", pgdata, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-nonzero-dir.%ld", (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
-        .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
-        .flags = OLIPHAUNT_RESTORE_REPLACE_EXISTING,
     };
     if (oliphaunt_restore(&options) == 0) {
         fprintf(stderr, "oliphaunt_restore accepted a directory archive entry with payload bytes\n");
@@ -1164,14 +1739,12 @@ static int verify_restore_rejects_bad_tar_checksum(const char *pgdata) {
     archive.data[148] = archive.data[148] == '0' ? '1' : '0';
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-checksum.%ld", pgdata, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-checksum.%ld", (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
-        .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
-        .flags = OLIPHAUNT_RESTORE_REPLACE_EXISTING,
     };
     if (oliphaunt_restore(&options) == 0) {
         fprintf(stderr, "oliphaunt_restore accepted an archive with an invalid tar checksum\n");
@@ -1191,14 +1764,12 @@ static int verify_restore_rejects_bad_tar_checksum_field(const char *pgdata) {
     archive.data[148] = 'x';
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-checksum-field.%ld", pgdata, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-checksum-field.%ld", (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
-        .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
-        .flags = OLIPHAUNT_RESTORE_REPLACE_EXISTING,
     };
     if (oliphaunt_restore(&options) == 0) {
         fprintf(stderr, "oliphaunt_restore accepted an archive with an invalid tar checksum field\n");
@@ -1219,14 +1790,12 @@ static int verify_restore_rejects_bad_tar_magic(const char *pgdata) {
     test_tar_rewrite_checksum(archive.data);
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-magic.%ld", pgdata, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-magic.%ld", (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
-        .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
-        .flags = OLIPHAUNT_RESTORE_REPLACE_EXISTING,
     };
     if (oliphaunt_restore(&options) == 0) {
         fprintf(stderr, "oliphaunt_restore accepted an archive with an unsupported tar header format\n");
@@ -1247,14 +1816,12 @@ static int verify_restore_rejects_bad_tar_numeric_field(const char *pgdata, size
     test_tar_rewrite_checksum(archive.data);
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-%s-field.%ld", pgdata, label, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-%s-field.%ld", label, (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
-        .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
-        .flags = OLIPHAUNT_RESTORE_REPLACE_EXISTING,
     };
     if (oliphaunt_restore(&options) == 0) {
         fprintf(stderr, "oliphaunt_restore accepted an archive with an invalid tar %s field\n", label);
@@ -1263,6 +1830,62 @@ static int verify_restore_rejects_bad_tar_numeric_field(const char *pgdata, size
     char expected[128];
     snprintf(expected, sizeof(expected), "invalid tar %s field", label);
     return expect_error_contains(NULL, "oliphaunt_restore invalid tar numeric field", expected);
+}
+
+static int verify_restore_masks_tar_modes(const char *pgdata) {
+    TestTarArchive archive;
+    memset(&archive, 0, sizeof(archive));
+    if (append_required_restore_entries(&archive) != 0 || test_tar_finish(&archive) != 0) {
+        fprintf(stderr, "failed to build safe-mode physical archive fixture\n");
+        return 1;
+    }
+    size_t offset = 0;
+    while (offset + 512 <= archive.len && archive.data[offset] != 0) {
+        unsigned char *header = archive.data + offset;
+        unsigned long long size = test_tar_read_octal(header + 124, 12);
+        test_tar_write_octal(header + 100, 8, header[156] == '5' ? 01777 : 06755);
+        test_tar_rewrite_checksum(header);
+        offset += 512 + (((size_t)size + 511) & ~(size_t)511);
+    }
+
+    char restore_root[4096];
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".restore-safe-mode.%ld", (long)getpid());
+    OliphauntRestoreOptions options = {
+        .abi_version = OLIPHAUNT_ABI_VERSION,
+        .destination = restore_root,
+        .data = archive.data,
+        .len = archive.len,
+    };
+    if (oliphaunt_restore(&options) != 0) {
+        fprintf(stderr, "oliphaunt_restore rejected masked archive modes: %s\n", oliphaunt_last_error(NULL));
+        return 1;
+    }
+
+    char restored_pgdata[4096];
+    char restored_version[4096];
+    char restored_descriptor[4096];
+    snprintf(restored_pgdata, sizeof(restored_pgdata), "%s/pgdata", restore_root);
+    snprintf(restored_version, sizeof(restored_version), "%s/pgdata/PG_VERSION", restore_root);
+    snprintf(restored_descriptor, sizeof(restored_descriptor), "%s/.oliphaunt.json", restore_root);
+    if (!file_exists(restored_version) || !file_exists(restored_descriptor)) {
+        fprintf(stderr, "masked-mode restore omitted managed-root files\n");
+        return 1;
+    }
+#ifndef _WIN32
+    struct stat pgdata_stat;
+    struct stat version_stat;
+    struct stat descriptor_stat;
+    if (stat(restored_pgdata, &pgdata_stat) != 0 ||
+        stat(restored_version, &version_stat) != 0 ||
+        stat(restored_descriptor, &descriptor_stat) != 0 ||
+        (pgdata_stat.st_mode & 0777) != 0700 ||
+        (version_stat.st_mode & 0777) != 0600 ||
+        (descriptor_stat.st_mode & 0777) != 0600) {
+        fprintf(stderr, "restore did not normalize managed-root permissions to 0700/0600\n");
+        return 1;
+    }
+#endif
+    return 0;
 }
 
 static int verify_restore_rejects_bad_tar_string_field(const char *pgdata, size_t field_offset, const char *label) {
@@ -1277,14 +1900,12 @@ static int verify_restore_rejects_bad_tar_string_field(const char *pgdata, size_
     test_tar_rewrite_checksum(archive.data);
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-%s-field.%ld", pgdata, label, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-%s-field.%ld", label, (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
-        .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
-        .flags = OLIPHAUNT_RESTORE_REPLACE_EXISTING,
     };
     if (oliphaunt_restore(&options) == 0) {
         fprintf(stderr, "oliphaunt_restore accepted an archive with an invalid tar %s field\n", label);
@@ -1305,14 +1926,12 @@ static int verify_restore_rejects_truncated_tar_terminator(const char *pgdata) {
     }
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-short-terminator.%ld", pgdata, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-short-terminator.%ld", (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
-        .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
-        .flags = OLIPHAUNT_RESTORE_REPLACE_EXISTING,
     };
     if (oliphaunt_restore(&options) == 0) {
         fprintf(stderr, "oliphaunt_restore accepted an archive with a truncated tar terminator\n");
@@ -1333,14 +1952,12 @@ static int verify_restore_rejects_trailing_tar_data(const char *pgdata) {
     }
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-trailing.%ld", pgdata, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-trailing.%ld", (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
-        .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
-        .flags = OLIPHAUNT_RESTORE_REPLACE_EXISTING,
     };
     if (oliphaunt_restore(&options) == 0) {
         fprintf(stderr, "oliphaunt_restore accepted an archive with trailing data after the tar terminator\n");
@@ -1360,14 +1977,12 @@ static int verify_restore_rejects_duplicate_tar_entry(const char *pgdata, const 
     }
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-duplicate.%ld", pgdata, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-duplicate.%ld", (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
-        .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
-        .flags = OLIPHAUNT_RESTORE_REPLACE_EXISTING,
     };
     if (oliphaunt_restore(&options) == 0) {
         fprintf(stderr, "oliphaunt_restore accepted a duplicate archive entry %s\n", duplicate_path);
@@ -1381,14 +1996,14 @@ static int verify_restore_rejects_file_tree_collision(const char *pgdata, int pa
     memset(&archive, 0, sizeof(archive));
     int rc = append_required_restore_entries(&archive);
     if (rc == 0 && parent_first) {
-        rc = test_tar_append_file(&archive, "pgdata/base", "parent-file");
+        rc = test_tar_append_file(&archive, "pgdata/collision", "parent-file");
         if (rc == 0) {
-            rc = test_tar_append_file(&archive, "pgdata/base/child", "child-file");
+            rc = test_tar_append_file(&archive, "pgdata/collision/child", "child-file");
         }
     } else if (rc == 0) {
-        rc = test_tar_append_file(&archive, "pgdata/base/child", "child-file");
+        rc = test_tar_append_file(&archive, "pgdata/collision/child", "child-file");
         if (rc == 0) {
-            rc = test_tar_append_file(&archive, "pgdata/base", "parent-file");
+            rc = test_tar_append_file(&archive, "pgdata/collision", "parent-file");
         }
     }
     if (rc != 0 || test_tar_finish(&archive) != 0) {
@@ -1397,22 +2012,20 @@ static int verify_restore_rejects_file_tree_collision(const char *pgdata, int pa
     }
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-file-tree.%ld.%d", pgdata, (long)getpid(), parent_first);
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-file-tree.%ld.%d", (long)getpid(), parent_first);
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
-        .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
-        .flags = OLIPHAUNT_RESTORE_REPLACE_EXISTING,
     };
     if (oliphaunt_restore(&options) == 0) {
         fprintf(stderr, "oliphaunt_restore accepted a file/tree archive collision\n");
         return 1;
     }
     const char *expected = parent_first
-        ? "entry pgdata/base/child is nested under file entry pgdata/base"
-        : "file entry pgdata/base conflicts with existing child entries";
+        ? "entry pgdata/collision/child is nested under file entry pgdata/collision"
+        : "file entry pgdata/collision conflicts with existing child entries";
     return expect_error_contains(NULL, "oliphaunt_restore file/tree archive collision", expected);
 }
 
@@ -1432,14 +2045,12 @@ static int verify_restore_rejects_regular_tar_link_metadata(const char *pgdata) 
     }
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.reject-link-metadata.%ld", pgdata, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".reject-link-metadata.%ld", (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
-        .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
-        .flags = OLIPHAUNT_RESTORE_REPLACE_EXISTING,
     };
     if (oliphaunt_restore(&options) == 0) {
         fprintf(stderr, "oliphaunt_restore accepted regular file link metadata\n");
@@ -1451,23 +2062,30 @@ static int verify_restore_rejects_regular_tar_link_metadata(const char *pgdata) 
 static int verify_restore_accepts_canonicalized_tar_paths(const char *pgdata) {
     TestTarArchive archive;
     memset(&archive, 0, sizeof(archive));
+    static const char manifest[] =
+        "archiveLayout=oliphaunt-physical-archive-v1\n"
+        "product=oliphaunt\n"
+        "engineFamily=native\n"
+        "physicalFormat=native-pg18-v1\n"
+        "postgresMajor=18\n";
     if (test_tar_append_file(&archive, "pgdata/PG_VERSION", "18\n") != 0 ||
+        test_tar_append_header(&archive, "pgdata/./base", '5', 0, NULL) != 0 ||
         test_tar_append_file(&archive, "pgdata/./global/pg_control", "control") != 0 ||
         test_tar_append_file(&archive, "pgdata/backup_label", "label") != 0 ||
+        test_tar_append_header(&archive, "pgdata/pg_wal", '5', 0, NULL) != 0 ||
+        test_tar_append_file(&archive, ".oliphaunt/backup-manifest.properties", manifest) != 0 ||
         test_tar_finish(&archive) != 0) {
         fprintf(stderr, "failed to build canonicalized-path physical archive fixture\n");
         return 1;
     }
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.restore-canonical.%ld", pgdata, (long)getpid());
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".restore-canonical.%ld", (long)getpid());
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
-        .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
-        .flags = OLIPHAUNT_RESTORE_REPLACE_EXISTING,
     };
     if (oliphaunt_restore(&options) != 0) {
         fprintf(stderr, "oliphaunt_restore rejected a canonicalizable archive path: %s\n", oliphaunt_last_error(NULL));
@@ -1498,11 +2116,7 @@ static int verify_backup_rejects_symlinked_pgdata_entry(OliphauntHandle *db, con
         return 1;
     }
     OliphauntResponse archive = {0};
-    const OliphauntBackupOptions options = {
-        .abi_version = OLIPHAUNT_ABI_VERSION,
-        .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
-    };
-    int rc = oliphaunt_backup(db, &options, &archive);
+    int rc = oliphaunt_backup(db, &archive);
     (void)unlink(link_path);
     if (rc == 0) {
         fprintf(stderr, "oliphaunt_backup accepted symlinked PGDATA entry\n");
@@ -1515,43 +2129,12 @@ static int verify_backup_rejects_symlinked_pgdata_entry(OliphauntHandle *db, con
 
 static int verify_backup_restore_contract(OliphauntHandle *db, const char *pgdata) {
     OliphauntResponse invalid = {0};
-    OliphauntBackupOptions backup_options = {
-        .abi_version = OLIPHAUNT_ABI_VERSION,
-        .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
-    };
-    if (oliphaunt_backup(db, NULL, &invalid) == 0) {
-        fprintf(stderr, "oliphaunt_backup accepted null options\n");
-        oliphaunt_free_response(&invalid);
-        return 1;
-    }
-    if (expect_error_contains(db, "oliphaunt_backup null options", "invalid oliphaunt_backup options") != 0) {
-        return 1;
-    }
-    backup_options.abi_version = OLIPHAUNT_ABI_VERSION + 1;
-    if (oliphaunt_backup(db, &backup_options, &invalid) == 0) {
-        fprintf(stderr, "oliphaunt_backup accepted an invalid options ABI version\n");
-        oliphaunt_free_response(&invalid);
-        return 1;
-    }
-    if (expect_error_contains(db, "oliphaunt_backup invalid options ABI", "invalid oliphaunt_backup options") != 0) {
-        return 1;
-    }
-    backup_options.abi_version = OLIPHAUNT_ABI_VERSION;
-    if (oliphaunt_backup(NULL, &backup_options, &invalid) == 0) {
+    if (oliphaunt_backup(NULL, &invalid) == 0) {
         fprintf(stderr, "oliphaunt_backup accepted a null handle\n");
         oliphaunt_free_response(&invalid);
         return 1;
     }
     if (expect_error_contains(NULL, "oliphaunt_backup null handle", "invalid oliphaunt_backup arguments") != 0) {
-        return 1;
-    }
-    backup_options.format = OLIPHAUNT_BACKUP_FORMAT_SQL;
-    if (oliphaunt_backup(db, &backup_options, &invalid) == 0) {
-        fprintf(stderr, "oliphaunt_backup accepted SQL format in direct mode\n");
-        oliphaunt_free_response(&invalid);
-        return 1;
-    }
-    if (expect_error_contains(db, "oliphaunt_backup sql format", "physicalArchive") != 0) {
         return 1;
     }
     if (verify_restore_rejects_special_archive_entry(pgdata, '2') != 0 ||
@@ -1562,6 +2145,7 @@ static int verify_backup_restore_contract(OliphauntHandle *db, const char *pgdat
         verify_restore_rejects_bad_tar_magic(pgdata) != 0 ||
         verify_restore_rejects_bad_tar_numeric_field(pgdata, 124, "size") != 0 ||
         verify_restore_rejects_bad_tar_numeric_field(pgdata, 100, "mode") != 0 ||
+        verify_restore_masks_tar_modes(pgdata) != 0 ||
         verify_restore_rejects_bad_tar_numeric_field(pgdata, 108, "uid") != 0 ||
         verify_restore_rejects_bad_tar_numeric_field(pgdata, 116, "gid") != 0 ||
         verify_restore_rejects_bad_tar_numeric_field(pgdata, 136, "mtime") != 0 ||
@@ -1575,6 +2159,28 @@ static int verify_backup_restore_contract(OliphauntHandle *db, const char *pgdat
         verify_restore_rejects_file_tree_collision(pgdata, 1) != 0 ||
         verify_restore_rejects_file_tree_collision(pgdata, 0) != 0 ||
         verify_restore_rejects_regular_tar_link_metadata(pgdata) != 0 ||
+        verify_restore_rejects_inexact_manifest(pgdata, NULL, "missing") != 0 ||
+        verify_restore_rejects_inexact_manifest(
+            pgdata,
+            "archiveLayout=oliphaunt-physical-archive-v1\n"
+            "product=oliphaunt\n"
+            "engineFamily=native\n"
+            "physicalFormat=native-pg18-v1\n"
+            "postgresMajor=18\n"
+            "extra=unsupported\n",
+            "extra-field") != 0 ||
+        verify_restore_rejects_invalid_pg_wal(pgdata, "missing", '\0') != 0 ||
+        verify_restore_rejects_invalid_pg_wal(pgdata, "file", '0') != 0 ||
+        verify_restore_rejects_invalid_pg_wal(pgdata, "symlink", '2') != 0 ||
+        verify_restore_rejects_missing_base(pgdata) != 0 ||
+        verify_restore_rejects_invalid_pgdata_markers(
+            pgdata, "wrong-version", "17\n", "control", "label", "PostgreSQL 17 PGDATA") != 0 ||
+        verify_restore_rejects_invalid_pgdata_markers(
+            pgdata, "empty-control", "18\n", "", "label", "regular file with content") != 0 ||
+        verify_restore_rejects_invalid_pgdata_markers(
+            pgdata, "empty-backup-label", "18\n", "control", "", "missing required file pgdata/backup_label") != 0 ||
+        verify_restore_rejects_process_state_file(pgdata, "postmaster.pid") != 0 ||
+        verify_restore_rejects_process_state_file(pgdata, "postmaster.opts") != 0 ||
         verify_restore_accepts_canonicalized_tar_paths(pgdata) != 0 ||
         verify_backup_rejects_symlinked_pgdata_entry(db, pgdata) != 0) {
         return 1;
@@ -1598,45 +2204,106 @@ static int verify_backup_restore_contract(OliphauntHandle *db, const char *pgdat
     }
 
     OliphauntResponse archive = {0};
+    char transient_backup_manifest[4096];
+    char transient_ds_store[4096];
+    char transient_internal_init[4096];
+    snprintf(transient_backup_manifest, sizeof(transient_backup_manifest), "%s/backup_manifest", pgdata);
+    snprintf(transient_ds_store, sizeof(transient_ds_store), "%s/base/.DS_Store", pgdata);
+    snprintf(transient_internal_init, sizeof(transient_internal_init), "%s/base/pg_internal.init.1", pgdata);
+    FILE *transient = fopen(transient_backup_manifest, "wb");
+    if (transient == NULL) {
+        fprintf(stderr, "failed to create transient PGDATA backup_manifest fixture\n");
+        return 1;
+    }
+    int transient_write_rc = fputs("stale test manifest\n", transient);
+    int transient_close_rc = fclose(transient);
+    if (transient_write_rc < 0 || transient_close_rc != 0) {
+        fprintf(stderr, "failed to write transient PGDATA backup_manifest fixture\n");
+        return 1;
+    }
+    transient = fopen(transient_internal_init, "wb");
+    if (transient == NULL) {
+        (void)remove(transient_backup_manifest);
+        (void)remove(transient_ds_store);
+        fprintf(stderr, "failed to create transient PGDATA pg_internal.init fixture\n");
+        return 1;
+    }
+    transient_write_rc = fputs("transient relation cache\n", transient);
+    transient_close_rc = fclose(transient);
+    if (transient_write_rc < 0 || transient_close_rc != 0) {
+        (void)remove(transient_backup_manifest);
+        (void)remove(transient_ds_store);
+        (void)remove(transient_internal_init);
+        fprintf(stderr, "failed to write transient PGDATA pg_internal.init fixture\n");
+        return 1;
+    }
+    transient = fopen(transient_ds_store, "wb");
+    if (transient == NULL) {
+        (void)remove(transient_backup_manifest);
+        (void)remove(transient_internal_init);
+        fprintf(stderr, "failed to create transient PGDATA .DS_Store fixture\n");
+        return 1;
+    }
+    transient_write_rc = fputs("Finder metadata\n", transient);
+    transient_close_rc = fclose(transient);
+    if (transient_write_rc < 0 || transient_close_rc != 0) {
+        (void)remove(transient_backup_manifest);
+        (void)remove(transient_ds_store);
+        (void)remove(transient_internal_init);
+        fprintf(stderr, "failed to write transient PGDATA .DS_Store fixture\n");
+        return 1;
+    }
     fprintf(stderr, "creating physical backup through C ABI\n");
-    backup_options.format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE;
-    if (oliphaunt_backup(db, &backup_options, &archive) != 0) {
+    if (oliphaunt_backup(db, &archive) != 0) {
+        (void)remove(transient_backup_manifest);
+        (void)remove(transient_ds_store);
         fprintf(stderr, "oliphaunt_backup failed: %s\n", oliphaunt_last_error(db));
         return 1;
     }
+    (void)remove(transient_backup_manifest);
+    (void)remove(transient_ds_store);
+    (void)remove(transient_internal_init);
     if (archive.data == NULL || archive.len < 1024 || !contains_bytes(&archive, "backup_label")) {
         fprintf(stderr, "physical backup archive did not contain expected tar payload\n");
         oliphaunt_free_response(&archive);
         return 1;
     }
-    if (contains_bytes(&archive, ".oliphaunt.lock")) {
-        fprintf(stderr, "physical backup archive included the native root lock marker\n");
+    if (verify_tar_entry_mode(&archive, "pgdata/", '5', 0700) != 0 ||
+        verify_tar_entry_mode(&archive, "pgdata/PG_VERSION", '0', 0600) != 0 ||
+        verify_tar_entry_mode(&archive, ".oliphaunt/backup-manifest.properties", '0', 0600) != 0 ||
+        verify_tar_identity_metadata_is_normalized(&archive) != 0 ||
+        verify_pg_control_archive_order(&archive) != 0 ||
+        tar_entry_count(&archive, "pgdata/backup_manifest") != 0 ||
+        tar_entry_count(&archive, "pgdata/base/.DS_Store") != 0 ||
+        tar_entry_count(&archive, "pgdata/base/pg_internal.init.1") != 0) {
+        if (tar_entry_count(&archive, "pgdata/backup_manifest") != 0) {
+            fprintf(stderr, "physical archive included transient PGDATA backup_manifest\n");
+        }
+        if (tar_entry_count(&archive, "pgdata/base/.DS_Store") != 0) {
+            fprintf(stderr, "physical archive included transient .DS_Store\n");
+        }
+        if (tar_entry_count(&archive, "pgdata/base/pg_internal.init.1") != 0) {
+            fprintf(stderr, "physical archive included transient pg_internal.init file\n");
+        }
+        oliphaunt_free_response(&archive);
+        return 1;
+    }
+    char expected_archive_manifest[512];
+    if (load_native_archive_manifest_fixture(
+            expected_archive_manifest,
+            sizeof(expected_archive_manifest)) != 0 ||
+        !contains_bytes(&archive, ".oliphaunt/backup-manifest.properties") ||
+        !contains_bytes(&archive, expected_archive_manifest) ||
+        contains_bytes(&archive, ".oliphaunt.json")) {
+        fprintf(stderr, "physical backup archive has incorrect identity metadata\n");
         oliphaunt_free_response(&archive);
         return 1;
     }
 
     char restore_root[4096];
-    snprintf(restore_root, sizeof(restore_root), "%s.restore.%ld", pgdata, (long)getpid());
-    OliphauntRestoreOptions invalid_options = {
-        .abi_version = OLIPHAUNT_ABI_VERSION,
-        .destination = restore_root,
-        .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
-        .data = archive.data,
-        .len = archive.len,
-        .flags = 1ull << 63,
-    };
-    if (oliphaunt_restore(&invalid_options) == 0) {
-        fprintf(stderr, "oliphaunt_restore accepted invalid flags\n");
-        oliphaunt_free_response(&archive);
-        return 1;
-    }
-    if (expect_error_contains(NULL, "oliphaunt_restore invalid flags", "invalid oliphaunt_restore flags") != 0) {
-        oliphaunt_free_response(&archive);
-        return 1;
-    }
-
+    root_sibling_path(restore_root, sizeof(restore_root), pgdata, ".restore.%ld", (long)getpid());
     char empty_restore_root[4096];
-    snprintf(empty_restore_root, sizeof(empty_restore_root), "%s.restore-empty.%ld", pgdata, (long)getpid());
+    root_sibling_path(empty_restore_root, sizeof(empty_restore_root), pgdata, ".restore-empty.%ld", (long)getpid());
 #ifdef _WIN32
     int create_empty_restore_root = _mkdir(empty_restore_root);
 #else
@@ -1650,26 +2317,27 @@ static int verify_backup_restore_contract(OliphauntHandle *db, const char *pgdat
     OliphauntRestoreOptions empty_root_options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = empty_restore_root,
-        .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
-        .flags = 0,
     };
+    if (oliphaunt_restore(&empty_root_options) != 0) {
+        fprintf(stderr, "oliphaunt_restore rejected an existing empty target: %s\n", oliphaunt_last_error(NULL));
+        oliphaunt_free_response(&archive);
+        return 1;
+    }
+    char empty_root_pg_version[4096];
+    snprintf(empty_root_pg_version, sizeof(empty_root_pg_version), "%s/pgdata/PG_VERSION", empty_restore_root);
+    if (!file_exists(empty_root_pg_version)) {
+        fprintf(stderr, "oliphaunt_restore did not publish into the existing empty target\n");
+        oliphaunt_free_response(&archive);
+        return 1;
+    }
     if (oliphaunt_restore(&empty_root_options) == 0) {
-        fprintf(stderr, "oliphaunt_restore replaced an existing empty target by default\n");
+        fprintf(stderr, "oliphaunt_restore replaced an existing nonempty target\n");
         oliphaunt_free_response(&archive);
         return 1;
     }
-    if (expect_error_contains(NULL, "oliphaunt_restore empty existing target", "already exists") != 0) {
-        oliphaunt_free_response(&archive);
-        return 1;
-    }
-#ifdef _WIN32
-    if (_rmdir(empty_restore_root) != 0) {
-#else
-    if (rmdir(empty_restore_root) != 0) {
-#endif
-        fprintf(stderr, "default restore modified existing empty target %s\n", empty_restore_root);
+    if (expect_error_contains(NULL, "oliphaunt_restore existing nonempty target", "not empty") != 0) {
         oliphaunt_free_response(&archive);
         return 1;
     }
@@ -1683,10 +2351,8 @@ static int verify_backup_restore_contract(OliphauntHandle *db, const char *pgdat
     OliphauntRestoreOptions live_root_options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = live_root,
-        .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
-        .flags = OLIPHAUNT_RESTORE_REPLACE_EXISTING,
     };
     if (oliphaunt_restore(&live_root_options) == 0) {
         fprintf(stderr, "oliphaunt_restore replaced a live locked native root\n");
@@ -1701,10 +2367,8 @@ static int verify_backup_restore_contract(OliphauntHandle *db, const char *pgdat
     OliphauntRestoreOptions options = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .destination = restore_root,
-        .format = OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE,
         .data = archive.data,
         .len = archive.len,
-        .flags = OLIPHAUNT_RESTORE_REPLACE_EXISTING,
     };
     fprintf(stderr, "restoring physical backup through C ABI: %s\n", restore_root);
     if (oliphaunt_restore(&options) != 0) {
@@ -1715,10 +2379,15 @@ static int verify_backup_restore_contract(OliphauntHandle *db, const char *pgdat
 
     char pg_version[4096];
     char backup_label[4096];
+    char root_descriptor[4096];
+    char archive_manifest[4096];
     snprintf(pg_version, sizeof(pg_version), "%s/pgdata/PG_VERSION", restore_root);
     snprintf(backup_label, sizeof(backup_label), "%s/pgdata/backup_label", restore_root);
-    if (!file_exists(pg_version) || !file_exists(backup_label)) {
-        fprintf(stderr, "restored physical archive is missing required files\n");
+    snprintf(root_descriptor, sizeof(root_descriptor), "%s/.oliphaunt.json", restore_root);
+    snprintf(archive_manifest, sizeof(archive_manifest), "%s/.oliphaunt/backup-manifest.properties", restore_root);
+    if (!file_exists(pg_version) || !file_exists(backup_label) ||
+        !file_exists(root_descriptor) || file_exists(archive_manifest)) {
+        fprintf(stderr, "restored physical archive has incorrect live-root metadata\n");
         oliphaunt_free_response(&archive);
         return 1;
     }
@@ -1767,7 +2436,7 @@ static int run_cycle(const char *pgdata, const char *runtime_dir) {
     }
 
     const unsigned char select_tags[] = {'T', 'D', 'C', 'Z'};
-    if (verify_root_lock_marker(pgdata) != 0 || verify_stable_root_lock_file(pgdata) != 0) {
+    if (verify_stable_root_lock_file(pgdata) != 0 || verify_no_in_root_lock_file(pgdata) != 0) {
         oliphaunt_close(db);
         return 1;
     }
@@ -1975,15 +2644,17 @@ static int expect_terminal_shutdown_reopen_rejected(const char *pgdata, const ch
 }
 
 int main(int argc, char **argv) {
-    if (argc != 3) {
-        fprintf(stderr, "usage: %s <pgdata> <runtime-dir>\n", argv[0]);
+    if (argc != 4) {
+        fprintf(stderr, "usage: %s <pgdata> <runtime-dir> <archive-manifest-fixture>\n", argv[0]);
         return 2;
     }
+    native_archive_manifest_fixture_path = argv[3];
 
     fprintf(stderr, "liboliphaunt version: %s\n", oliphaunt_version());
-    fprintf(stderr, "liboliphaunt capabilities: 0x%llx\n", (unsigned long long)oliphaunt_capabilities());
     if (verify_global_contract() != 0 ||
         verify_free_response_contract() != 0 ||
+        verify_shared_wal_range_fixture() != 0 ||
+        verify_wal_range_archive_selection(argv[1]) != 0 ||
         verify_static_extension_registry_rejects_invalid_entries() != 0) {
         return 1;
     }

@@ -9,6 +9,7 @@ import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
@@ -167,7 +168,7 @@ private fun parseOkExpectation(obj: JsonObject): SharedProtocolOkExpectation = S
         }
     },
     commandTag = obj["commandTag"]?.jsonPrimitive?.contentOrNull,
-    rowCount = obj.requiredInt("rowCount"),
+    rowCount = obj.requiredLong("rowCount"),
 )
 
 private fun parsePostgresErrorExpectation(obj: JsonObject): SharedProtocolPostgresErrorExpectation = SharedProtocolPostgresErrorExpectation(
@@ -179,6 +180,8 @@ private fun parsePostgresErrorExpectation(obj: JsonObject): SharedProtocolPostgr
 private fun JsonObject.requiredArray(name: String): JsonArray = this[name]?.jsonArray ?: error("missing shared protocol fixture array $name")
 
 private fun JsonObject.requiredInt(name: String): Int = this[name]?.jsonPrimitive?.int ?: error("missing shared protocol fixture integer $name")
+
+private fun JsonObject.requiredLong(name: String): Long = this[name]?.jsonPrimitive?.long ?: error("missing shared protocol fixture integer $name")
 
 private fun JsonObject.requiredString(name: String): String = this[name]?.jsonPrimitive?.content ?: error("missing shared protocol fixture string $name")
 
@@ -206,7 +209,7 @@ private data class SharedProtocolOkExpectation(
     val fields: List<SharedProtocolFieldExpectation>,
     val rows: List<List<String?>>,
     val commandTag: String?,
-    val rowCount: Int,
+    val rowCount: Long,
 )
 
 private data class SharedProtocolFieldExpectation(

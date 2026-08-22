@@ -8,7 +8,7 @@ export type WasixOutput = Readonly<{
 }>;
 
 export type DirectoryEntry = Readonly<{
-  type: 'dir' | 'file' | 'unknown';
+  type: "dir" | "file" | "unknown";
   name: string;
 }>;
 

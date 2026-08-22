@@ -7,6 +7,12 @@
 #include <ReactCommon/CallInvoker.h>
 #include <jsi/jsi.h>
 #include <react/bridging/Function.h>
+#include <algorithm>
+#include <atomic>
+#include <condition_variable>
+#include <exception>
+#include <mutex>
+#include <optional>
 #endif
 
 #include <cmath>
@@ -14,6 +20,104 @@
 #include <memory>
 #include <string>
 #include <vector>
+
+#ifdef RCT_NEW_ARCH_ENABLED
+class OliphauntChunkAcknowledgement final {
+ public:
+  void resolve()
+  {
+    finish(std::nullopt);
+  }
+
+  void reject(std::string message)
+  {
+    finish(std::move(message));
+  }
+
+  std::optional<std::string> wait()
+  {
+    std::unique_lock<std::mutex> lock(mutex_);
+    condition_.wait(lock, [this]() { return complete_; });
+    return error_;
+  }
+
+ private:
+  void finish(std::optional<std::string> error)
+  {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (complete_) {
+        return;
+      }
+      error_ = std::move(error);
+      complete_ = true;
+    }
+    condition_.notify_one();
+  }
+
+  std::mutex mutex_;
+  std::condition_variable condition_;
+  bool complete_ = false;
+  std::optional<std::string> error_;
+};
+
+static std::mutex gOliphauntChunkAcknowledgementsMutex;
+static std::vector<std::weak_ptr<OliphauntChunkAcknowledgement>> gOliphauntChunkAcknowledgements;
+
+static void OliphauntRegisterChunkAcknowledgement(
+    const std::shared_ptr<OliphauntChunkAcknowledgement> &acknowledgement)
+{
+  std::lock_guard<std::mutex> lock(gOliphauntChunkAcknowledgementsMutex);
+  gOliphauntChunkAcknowledgements.erase(
+      std::remove_if(
+          gOliphauntChunkAcknowledgements.begin(),
+          gOliphauntChunkAcknowledgements.end(),
+          [](const auto &entry) { return entry.expired(); }),
+      gOliphauntChunkAcknowledgements.end());
+  gOliphauntChunkAcknowledgements.emplace_back(acknowledgement);
+}
+
+static void OliphauntUnregisterChunkAcknowledgement(
+    const std::shared_ptr<OliphauntChunkAcknowledgement> &acknowledgement)
+{
+  std::lock_guard<std::mutex> lock(gOliphauntChunkAcknowledgementsMutex);
+  gOliphauntChunkAcknowledgements.erase(
+      std::remove_if(
+          gOliphauntChunkAcknowledgements.begin(),
+          gOliphauntChunkAcknowledgements.end(),
+          [&acknowledgement](const auto &entry) {
+            auto current = entry.lock();
+            return current == nullptr || current == acknowledgement;
+          }),
+      gOliphauntChunkAcknowledgements.end());
+}
+
+static void OliphauntAbortChunkAcknowledgements(void)
+{
+  std::vector<std::shared_ptr<OliphauntChunkAcknowledgement>> acknowledgements;
+  {
+    std::lock_guard<std::mutex> lock(gOliphauntChunkAcknowledgementsMutex);
+    acknowledgements.reserve(gOliphauntChunkAcknowledgements.size());
+    for (const auto &entry : gOliphauntChunkAcknowledgements) {
+      if (auto acknowledgement = entry.lock()) {
+        acknowledgements.push_back(std::move(acknowledgement));
+      }
+    }
+    gOliphauntChunkAcknowledgements.clear();
+  }
+  for (const auto &acknowledgement : acknowledgements) {
+    acknowledgement->reject("React Native Oliphaunt module has been invalidated");
+  }
+}
+
+static NSError *OliphauntProtocolStreamCallbackError(const std::string &message)
+{
+  NSString *description = [NSString stringWithUTF8String:message.c_str()];
+  return [NSError errorWithDomain:@"dev.oliphaunt.reactnative.ios"
+                             code:1
+                         userInfo:@{NSLocalizedDescriptionKey: description ?: @"protocol stream callback failed"}];
+}
+#endif
 
 static void OliphauntReject(
     RCTPromiseRejectBlock reject,
@@ -222,31 +326,17 @@ static void OliphauntSetIfPresent(NSMutableDictionary *dictionary, NSString *key
   }
 }
 
-static NSDictionary *OliphauntNativeResourceConfigToDictionary(
-    JS::NativeOliphaunt::NativeResourceConfig &config)
-{
-  NSMutableDictionary *dictionary = [NSMutableDictionary new];
-  OliphauntSetIfPresent(dictionary, @"resourceRoot", config.resourceRoot());
-  return dictionary;
-}
-
 static NSDictionary *OliphauntNativeOpenConfigToDictionary(
     JS::NativeOliphaunt::NativeOpenConfig &config)
 {
   NSMutableDictionary *dictionary = [NSMutableDictionary new];
-  OliphauntSetIfPresent(dictionary, @"engine", config.engine());
   dictionary[@"storageKind"] = config.storageKind();
   OliphauntSetIfPresent(dictionary, @"storagePath", config.storagePath());
   OliphauntSetIfPresent(dictionary, @"storageName", config.storageName());
-  OliphauntSetIfPresent(dictionary, @"durability", config.durability());
-  OliphauntSetIfPresent(dictionary, @"runtimeFootprint", config.runtimeFootprint());
   OliphauntSetIfPresent(dictionary, @"startupGUCs", RCTConvertOptionalVecToArray(config.startupGUCs()));
   OliphauntSetIfPresent(dictionary, @"username", config.username());
   OliphauntSetIfPresent(dictionary, @"database", config.database());
   OliphauntSetIfPresent(dictionary, @"extensions", RCTConvertOptionalVecToArray(config.extensions()));
-  OliphauntSetIfPresent(dictionary, @"libraryPath", config.libraryPath());
-  OliphauntSetIfPresent(dictionary, @"runtimeDirectory", config.runtimeDirectory());
-  OliphauntSetIfPresent(dictionary, @"resourceRoot", config.resourceRoot());
   return dictionary;
 }
 
@@ -554,70 +644,8 @@ RCT_EXPORT_MODULE(Oliphaunt)
       }
       resolve(handle);
     }];
-  }];
+  });
 }
-
-- (void)supportedModes:(RCTPromiseResolveBlock)resolve
-                reject:(RCTPromiseRejectBlock)reject
-{
-  [OliphauntAdapterDatabase supportedModesWithCompletion:^(
-      NSArray *_Nullable modes,
-      NSError *_Nullable error) {
-    if (error != nil) {
-      OliphauntReject(reject, @"liboliphaunt_supported_modes_failed", @"liboliphaunt supportedModes failed", error);
-      return;
-    }
-    resolve(modes ?: @[]);
-  }];
-}
-
-- (void)packageSizeReportWithConfigDictionary:(NSDictionary *)config
-                                      resolve:(RCTPromiseResolveBlock)resolve
-                                       reject:(RCTPromiseRejectBlock)reject
-{
-  NSDictionary *configCopy = [config copy] ?: @{};
-  [OliphauntAdapterDatabase packageSizeReportWithConfig:configCopy completion:^(
-      NSDictionary *_Nullable report,
-      NSError *_Nullable error) {
-    if (error != nil) {
-      OliphauntReject(reject, @"liboliphaunt_package_size_failed", @"liboliphaunt packageSizeReport failed", error);
-      return;
-    }
-    resolve(report ?: [NSNull null]);
-  }];
-}
-
-- (void)processMemory:(RCTPromiseResolveBlock)resolve
-               reject:(RCTPromiseRejectBlock)reject
-{
-  [OliphauntAdapterDatabase processMemoryWithCompletion:^(
-      NSDictionary *_Nullable report,
-      NSError *_Nullable error) {
-    if (error != nil) {
-      OliphauntReject(reject, @"liboliphaunt_process_memory_failed", @"liboliphaunt processMemory failed", error);
-      return;
-    }
-    resolve(report ?: @{});
-  }];
-}
-
-#ifdef RCT_NEW_ARCH_ENABLED
-- (void)packageSizeReport:(JS::NativeOliphaunt::NativeResourceConfig &)config
-                  resolve:(RCTPromiseResolveBlock)resolve
-                   reject:(RCTPromiseRejectBlock)reject
-{
-  [self packageSizeReportWithConfigDictionary:OliphauntNativeResourceConfigToDictionary(config)
-                                      resolve:resolve
-                                       reject:reject];
-}
-#else
-- (void)packageSizeReport:(NSDictionary *)config
-                  resolve:(RCTPromiseResolveBlock)resolve
-                   reject:(RCTPromiseRejectBlock)reject
-{
-  [self packageSizeReportWithConfigDictionary:config resolve:resolve reject:reject];
-}
-#endif
 
 - (void)execProtocolRawDataForJsi:(double)handle
                           request:(NSData *)request
@@ -660,9 +688,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
   [database execProtocolStreamData:request onChunk:onChunk completion:completion];
 }
 
-- (void)backupDataForJsi:(double)handle
-                  format:(NSString *)format
-              completion:(OliphauntDataCompletion)completion
+- (void)backupDataForJsi:(double)handle completion:(OliphauntDataCompletion)completion
 {
   if (!OliphauntIsValidHandle(handle)) {
     completion(nil, [NSError errorWithDomain:@"dev.oliphaunt.reactnative.ios"
@@ -677,21 +703,19 @@ RCT_EXPORT_MODULE(Oliphaunt)
                                     userInfo:@{NSLocalizedDescriptionKey: @"unknown Oliphaunt handle"}]);
     return;
   }
-  [database backupDataWithFormat:format completion:completion];
+  [database backupDataWithCompletion:completion];
 }
 
-- (void)restoreDataForJsi:(NSString *)destination
-                   format:(NSString *)format
-             artifactData:(NSData *)artifactData
-          replaceExisting:(BOOL)replaceExisting
-              libraryPath:(NSString *_Nullable)libraryPath
-               completion:(OliphauntStringCompletion)completion
+- (void)restoreDataForJsi:(NSString *)storageKind
+                storagePath:(NSString *_Nullable)storagePath
+                storageName:(NSString *_Nullable)storageName
+               backupData:(NSData *)backupData
+               completion:(OliphauntVoidCompletion)completion
 {
-  [OliphauntAdapterDatabase restoreWithDestination:destination
-                                            format:format
-                                      artifactData:artifactData
-                                   replaceExisting:replaceExisting
-                                       libraryPath:libraryPath
+  [OliphauntAdapterDatabase restoreWithStorageKind:storageKind
+                                        storagePath:storagePath
+                                        storageName:storageName
+                                        backupData:backupData
                                         completion:completion];
 }
 
@@ -708,7 +732,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
       facebook::jsi::Function::createFromHostFunction(
           runtime,
           facebook::jsi::PropNameID::forAscii(runtime, "liboliphauntExecProtocolRaw"),
-          2,
+          1,
           [weakSelf, callInvoker](
               facebook::jsi::Runtime &runtime,
               const facebook::jsi::Value &,
@@ -826,6 +850,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
                       runtime,
                       promiseArgs[1].asObject(runtime).getFunction(runtime),
                       callInvoker);
+                  auto settled = std::make_shared<std::atomic<bool>>(false);
                   Oliphaunt *strongSelf = weakSelf;
                   if (strongSelf == nil) {
                     reject->call([](facebook::jsi::Runtime &runtime, facebook::jsi::Function &rejectFunction) {
@@ -837,14 +862,87 @@ RCT_EXPORT_MODULE(Oliphaunt)
                   [strongSelf execProtocolStreamDataForJsi:handle
                                                    request:requestData
                                                    onChunk:^(NSData *chunk) {
+                    @synchronized (strongSelf) {
+                      if (strongSelf->_invalidated) {
+                        return [NSError errorWithDomain:@"dev.oliphaunt.reactnative.ios"
+                                                   code:1
+                                               userInfo:@{NSLocalizedDescriptionKey: @"React Native Oliphaunt module has been invalidated"}];
+                      }
+                    }
                     std::vector<uint8_t> bytes = OliphauntBytesFromNSData(chunk);
-                    chunkCallback->call([bytes = std::move(bytes)](
-                                            facebook::jsi::Runtime &runtime,
-                                            facebook::jsi::Function &chunkFunction) mutable {
-                      chunkFunction.call(runtime, OliphauntArrayBufferFromBytes(runtime, std::move(bytes)));
-                    });
+                    auto acknowledgement = std::make_shared<OliphauntChunkAcknowledgement>();
+                    OliphauntRegisterChunkAcknowledgement(acknowledgement);
+                    try {
+                      chunkCallback->call([strongSelf, bytes = std::move(bytes), acknowledgement, reject, settled](
+                                              facebook::jsi::Runtime &runtime,
+                                              facebook::jsi::Function &chunkFunction) mutable {
+                        @synchronized (strongSelf) {
+                          if (strongSelf->_invalidated) {
+                            acknowledgement->reject("React Native Oliphaunt module has been invalidated");
+                            return;
+                          }
+                        }
+                        try {
+                          auto result = chunkFunction.call(
+                              runtime,
+                              OliphauntArrayBufferFromBytes(runtime, std::move(bytes)));
+                          if (result.isObject()) {
+                            auto resultObject = result.asObject(runtime);
+                            auto failureMarker = resultObject.getProperty(
+                                runtime,
+                                "__oliphauntProtocolChunkFailure");
+                            if (failureMarker.isBool() && failureMarker.getBool()) {
+                              auto failure = std::make_shared<facebook::jsi::Value>(
+                                  runtime,
+                                  resultObject.getProperty(runtime, "error"));
+                              if (!settled->exchange(true)) {
+                                reject->call([failure](
+                                                 facebook::jsi::Runtime &runtime,
+                                                 facebook::jsi::Function &rejectFunction) {
+                                  rejectFunction.call(
+                                      runtime,
+                                      facebook::jsi::Value(runtime, *failure));
+                                });
+                              }
+                              acknowledgement->reject("protocol stream callback failed");
+                              return;
+                            }
+                          }
+                          acknowledgement->resolve();
+                        } catch (const facebook::jsi::JSError &error) {
+                          if (!settled->exchange(true)) {
+                            auto value = std::make_shared<facebook::jsi::Value>(runtime, error.value());
+                            reject->call([value](
+                                             facebook::jsi::Runtime &runtime,
+                                             facebook::jsi::Function &rejectFunction) {
+                              rejectFunction.call(runtime, facebook::jsi::Value(runtime, *value));
+                            });
+                          }
+                          acknowledgement->reject(error.what());
+                        } catch (const std::exception &error) {
+                          acknowledgement->reject(error.what());
+                        } catch (...) {
+                          acknowledgement->reject("protocol stream callback failed");
+                        }
+                      });
+                    } catch (const std::exception &error) {
+                      acknowledgement->reject(error.what());
+                    } catch (...) {
+                      acknowledgement->reject("failed to schedule protocol stream callback");
+                    }
+                    auto error = acknowledgement->wait();
+                    OliphauntUnregisterChunkAcknowledgement(acknowledgement);
+                    return error ? OliphauntProtocolStreamCallbackError(*error) : nil;
                   }
                                                 completion:^(NSError *_Nullable error) {
+                    @synchronized (strongSelf) {
+                      if (strongSelf->_invalidated) {
+                        return;
+                      }
+                    }
+                    if (settled->exchange(true)) {
+                      return;
+                    }
                     if (error != nil) {
                       const char *errorMessage = error.localizedDescription.UTF8String;
                       std::string message = errorMessage != nullptr ? errorMessage : "liboliphaunt stream failed";
@@ -873,19 +971,17 @@ RCT_EXPORT_MODULE(Oliphaunt)
               const facebook::jsi::Value &,
               const facebook::jsi::Value *args,
               size_t count) -> facebook::jsi::Value {
-            if (count != 2) {
-              throw facebook::jsi::JSError(runtime, "liboliphaunt JSI backup expects handle and format");
+            if (count != 1) {
+              throw facebook::jsi::JSError(runtime, "liboliphaunt JSI backup expects a handle");
             }
 
             double handle = OliphauntCopyHandleArgument(runtime, args[0]);
-            NSString *format = OliphauntNSStringFromString(
-                OliphauntCopyStringArgument(runtime, args[1], "backup format"));
             auto promiseConstructor = runtime.global().getPropertyAsFunction(runtime, "Promise");
             auto executor = facebook::jsi::Function::createFromHostFunction(
                 runtime,
                 facebook::jsi::PropNameID::forAscii(runtime, "liboliphauntBackupExecutor"),
                 2,
-                [weakSelf, callInvoker, handle, format](
+                [weakSelf, callInvoker, handle](
                     facebook::jsi::Runtime &runtime,
                     const facebook::jsi::Value &,
                     const facebook::jsi::Value *promiseArgs,
@@ -915,7 +1011,6 @@ RCT_EXPORT_MODULE(Oliphaunt)
                   }
 
                   [strongSelf backupDataForJsi:handle
-                                        format:format
                                     completion:^(NSData *_Nullable response, NSError *_Nullable error) {
                     if (error != nil) {
                       const char *errorMessage = error.localizedDescription.UTF8String;
@@ -942,30 +1037,41 @@ RCT_EXPORT_MODULE(Oliphaunt)
       facebook::jsi::Function::createFromHostFunction(
           runtime,
           facebook::jsi::PropNameID::forAscii(runtime, "liboliphauntRestore"),
-          5,
+          2,
           [weakSelf, callInvoker](
               facebook::jsi::Runtime &runtime,
               const facebook::jsi::Value &,
               const facebook::jsi::Value *args,
               size_t count) -> facebook::jsi::Value {
-            if (count != 5 || !args[3].isBool()) {
-              throw facebook::jsi::JSError(runtime, "liboliphaunt JSI restore expects destination, format, artifact, replaceExisting, and libraryPath");
+            if (count != 2) {
+              throw facebook::jsi::JSError(runtime, "liboliphaunt JSI restore expects destination and backup bytes");
             }
 
-            NSString *destination = OliphauntNSStringFromString(
-                OliphauntCopyStringArgument(runtime, args[0], "restore destination"));
-            NSString *format = OliphauntNSStringFromString(
-                OliphauntCopyStringArgument(runtime, args[1], "restore format"));
-            std::vector<uint8_t> artifact = OliphauntCopyBinaryArgument(runtime, args[2]);
+            if (!args[0].isObject()) {
+              throw facebook::jsi::JSError(runtime, "liboliphaunt JSI restore destination must be an object");
+            }
+            auto destination = args[0].asObject(runtime);
+            NSString *storageKind = OliphauntNSStringFromString(
+                OliphauntCopyStringArgument(
+                    runtime,
+                    destination.getProperty(runtime, "storageKind"),
+                    "restore storageKind"));
+            NSString *storagePath = OliphauntCopyOptionalNSStringArgument(
+                runtime,
+                destination.getProperty(runtime, "storagePath"),
+                "restore storagePath");
+            NSString *storageName = OliphauntCopyOptionalNSStringArgument(
+                runtime,
+                destination.getProperty(runtime, "storageName"),
+                "restore storageName");
+            std::vector<uint8_t> artifact = OliphauntCopyBinaryArgument(runtime, args[1]);
             auto artifactData = [NSData dataWithBytes:artifact.data() length:artifact.size()];
-            BOOL replaceExisting = args[3].getBool();
-            NSString *libraryPath = OliphauntCopyOptionalNSStringArgument(runtime, args[4], "restore libraryPath");
             auto promiseConstructor = runtime.global().getPropertyAsFunction(runtime, "Promise");
             auto executor = facebook::jsi::Function::createFromHostFunction(
                 runtime,
                 facebook::jsi::PropNameID::forAscii(runtime, "liboliphauntRestoreExecutor"),
                 2,
-                [weakSelf, callInvoker, destination, format, artifactData, replaceExisting, libraryPath](
+                [weakSelf, callInvoker, storageKind, storagePath, storageName, artifactData](
                     facebook::jsi::Runtime &runtime,
                     const facebook::jsi::Value &,
                     const facebook::jsi::Value *promiseArgs,
@@ -994,12 +1100,11 @@ RCT_EXPORT_MODULE(Oliphaunt)
                     return facebook::jsi::Value::undefined();
                   }
 
-                  [strongSelf restoreDataForJsi:destination
-                                         format:format
-                                   artifactData:artifactData
-                                replaceExisting:replaceExisting
-                                    libraryPath:libraryPath
-                                     completion:^(NSString *_Nullable restoredDestination, NSError *_Nullable error) {
+                  [strongSelf restoreDataForJsi:storageKind
+                                      storagePath:storagePath
+                                      storageName:storageName
+                                      backupData:artifactData
+                                      completion:^(NSError *_Nullable error) {
                     if (error != nil) {
                       const char *errorMessage = error.localizedDescription.UTF8String;
                       std::string message = errorMessage != nullptr ? errorMessage : "liboliphaunt restore failed";
@@ -1008,9 +1113,8 @@ RCT_EXPORT_MODULE(Oliphaunt)
                       });
                       return;
                     }
-                    std::string restored = restoredDestination.UTF8String != nullptr ? restoredDestination.UTF8String : "";
-                    resolve->call([restored](facebook::jsi::Runtime &runtime, facebook::jsi::Function &resolveFunction) {
-                      resolveFunction.call(runtime, facebook::jsi::String::createFromUtf8(runtime, restored));
+                    resolve->call([](facebook::jsi::Runtime &runtime, facebook::jsi::Function &resolveFunction) {
+                      resolveFunction.call(runtime, facebook::jsi::Value::undefined());
                     });
                   }];
                   return facebook::jsi::Value::undefined();
@@ -1102,31 +1206,6 @@ RCT_EXPORT_MODULE(Oliphaunt)
   }];
 }
 
-- (void)capabilities:(double)handle
-             resolve:(RCTPromiseResolveBlock)resolve
-              reject:(RCTPromiseRejectBlock)reject
-{
-  if (!OliphauntIsValidHandle(handle)) {
-    reject(
-        @"liboliphaunt_invalid_handle",
-        @"Oliphaunt handle must be a finite positive safe integer",
-        nil);
-    return;
-  }
-  OliphauntAdapterDatabase *database = [self sessionForHandle:handle];
-  if (database == nil) {
-    reject(@"liboliphaunt_unknown_handle", @"unknown Oliphaunt handle", nil);
-    return;
-  }
-  [database capabilitiesWithCompletion:^(NSDictionary *_Nullable capabilities, NSError *_Nullable error) {
-    if (error != nil) {
-      OliphauntReject(reject, @"liboliphaunt_capabilities_failed", @"liboliphaunt capabilities failed", error);
-      return;
-    }
-    resolve(capabilities ?: @{});
-  }];
-}
-
 - (OliphauntAdapterDatabase *)sessionForHandle:(double)handle
 {
   NSNumber *key = OliphauntHandleKey(handle);
@@ -1148,6 +1227,9 @@ RCT_EXPORT_MODULE(Oliphaunt)
     claim = _nativeDirectClaim;
     _nativeDirectClaim = 0;
   }
+#ifdef RCT_NEW_ARCH_ENABLED
+  OliphauntAbortChunkAcknowledgements();
+#endif
   [sessionsToClose enumerateKeysAndObjectsUsingBlock:^(
       NSNumber *key,
       OliphauntAdapterDatabase *database,

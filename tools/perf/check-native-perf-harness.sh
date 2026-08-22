@@ -251,14 +251,12 @@ SH
 
 assert_mobile_footprint_summary_smoke() {
   mobile_probe_root="$(mktemp -d)"
-  mobile_case_dir="$mobile_probe_root/cases/android-safe-shared-32MB-wal--1-minwal-32MB"
+  mobile_case_dir="$mobile_probe_root/cases/android-shared-32MB-wal--1-minwal-32MB"
   mkdir -p "$mobile_case_dir/scratch/reports" "$mobile_case_dir/crash-scratch/reports"
   cat >"$mobile_case_dir/case.json" <<'JSON'
 {
-  "id": "android-safe-shared-32MB-wal--1-minwal-32MB",
+  "id": "android-shared-32MB-wal--1-minwal-32MB",
   "platform": "android",
-  "durability": "safe",
-  "runtimeFootprint": "balancedMobile",
   "startupGUCs": "shared_buffers=32MB,wal_buffers=-1,min_wal_size=32MB",
   "gucs": {
     "shared_buffers": "32MB",
@@ -276,24 +274,19 @@ JSON
   "openMs": 12.5,
   "closeMs": 1.5,
   "elapsedMs": 250,
-  "packageSizeReport": {
-    "packageBytes": 10485760
-  },
   "postgresSettings": {
     "shared_buffers": "32MB",
     "wal_buffers": "-1",
     "wal_segment_size": "4MB",
     "min_wal_size": "32MB",
     "max_wal_size": "64MB",
-    "synchronous_commit": "off",
+    "synchronous_commit": "on",
+    "fsync": "on",
+    "full_page_writes": "on",
     "io_method": "sync"
   },
   "jsTimerTicks": 42,
   "workloads": [
-    {
-      "id": "raw_simple_query_rtt",
-      "latency": {"p50Ms": 1, "p90Ms": 1.5, "p95Ms": 2, "p99Ms": 3}
-    },
     {
       "id": "typed_select_rtt",
       "latency": {"p50Ms": 4, "p90Ms": 4.5, "p95Ms": 5, "p99Ms": 6}
@@ -307,29 +300,14 @@ JSON
       "throughput": {"rows": 1000, "totalMs": 100, "rowsPerSecond": 10000}
     },
     {
-      "id": "indexed_lookup",
-      "latency": {"p50Ms": 9.1, "p90Ms": 9.2, "p95Ms": 9.3, "p99Ms": 9.4}
-    },
-    {
-      "id": "indexed_aggregate",
-      "latency": {"p50Ms": 9.5, "p90Ms": 9.6, "p95Ms": 9.7, "p99Ms": 9.8}
-    },
-    {
-      "id": "indexed_update",
-      "latency": {"p50Ms": 10, "p90Ms": 10.5, "p95Ms": 11, "p99Ms": 12}
-    },
-    {
       "id": "background_checkpoint",
       "latency": {"p50Ms": 13, "p90Ms": 13.5, "p95Ms": 14, "p99Ms": 15}
-    },
-    {
-      "id": "large_result_raw",
-      "latency": {"p50Ms": 16, "p90Ms": 16.5, "p95Ms": 17, "p99Ms": 18}
     }
   ],
   "sqliteBenchmark": {
     "schemaVersion": 1,
     "engine": "expo-sqlite",
+    "durability": "balanced",
     "openMs": 0.8,
     "workloads": [
       {
@@ -395,18 +373,10 @@ JSON
     --run-id mobile-probe \
     --output-dir "$mobile_probe_root" >/dev/null
 
-  require_text '"rawP50Ms": 1' "$mobile_probe_root/summary.json" \
-    "mobile footprint summary JSON must include raw query p50 latency"
-  require_text '"rawP90Ms": 1.5' "$mobile_probe_root/summary.json" \
-    "mobile footprint summary JSON must include raw query p90 latency"
   require_text '"typedP95Ms": 5' "$mobile_probe_root/summary.json" \
     "mobile footprint summary JSON must include typed query p95 latency"
   require_text '"parameterizedP99Ms": 9' "$mobile_probe_root/summary.json" \
     "mobile footprint summary JSON must include parameterized query p99 latency"
-  require_text '"lookupP90Ms": 9.2' "$mobile_probe_root/summary.json" \
-    "mobile footprint summary JSON must include indexed lookup latency"
-  require_text '"aggregateP95Ms": 9.7' "$mobile_probe_root/summary.json" \
-    "mobile footprint summary JSON must include indexed aggregate latency"
   require_text '"max_wal_size": "64MB"' "$mobile_probe_root/summary.json" \
     "mobile footprint summary JSON must include WAL maximum tuning"
   require_text '"wal_segment_size_mb": "4"' "$mobile_probe_root/summary.json" \
@@ -415,8 +385,8 @@ JSON
     "mobile footprint summary JSON must preserve effective WAL segment size"
   require_text '"androidRssKb": 98304' "$mobile_probe_root/summary.json" \
     "mobile footprint summary JSON must include Android RSS"
-  require_text '"packageBytes": 10485760' "$mobile_probe_root/summary.json" \
-    "mobile footprint summary JSON must include package bytes"
+  reject_text '"packageBytes"' "$mobile_probe_root/summary.json" \
+    "mobile footprint summary JSON must not retain app-reported package bytes"
   require_text '"androidApkBytes": 209715200' "$mobile_probe_root/summary.json" \
     "mobile footprint summary JSON must include Android APK bytes"
   require_text '"iosAppBytes": 73400320' "$mobile_probe_root/summary.json" \
@@ -427,6 +397,8 @@ JSON
     "mobile footprint summary JSON must include effective PostgreSQL settings"
   require_text '"shared_buffers": "32MB"' "$mobile_probe_root/summary.json" \
     "mobile footprint summary JSON must preserve effective shared_buffers"
+  require_text '"fsync": "on"' "$mobile_probe_root/summary.json" \
+    "mobile footprint summary JSON must preserve effective crash-safety settings"
   require_text '"sqliteOpenMs": 0.8' "$mobile_probe_root/summary.json" \
     "mobile footprint summary JSON must include native-device SQLite open latency"
   require_text '"sqliteSimpleP90Ms": 0.25' "$mobile_probe_root/summary.json" \
@@ -441,16 +413,18 @@ JSON
     "mobile footprint summary JSON must include native-device SQLite checkpoint latency"
   require_text '"sqliteInsertRowsPerSecond": 20000' "$mobile_probe_root/summary.json" \
     "mobile footprint summary JSON must include native-device SQLite insert throughput"
+  require_text '"sqliteDurability": "balanced"' "$mobile_probe_root/summary.json" \
+    "mobile footprint summary JSON must keep durability explicitly SQLite-specific"
   require_text '"crashRecoveryOpenMs": 21' "$mobile_probe_root/summary.json" \
     "mobile footprint summary JSON must include crash-recovery reopen latency"
-  require_text 'Durability | Runtime footprint | Benchmark preset | shared_buffers' "$mobile_probe_root/summary.md" \
-    "mobile footprint summary markdown must expose runtime footprint and benchmark preset next to durability and GUCs"
+  require_text 'Platform | Benchmark preset | shared_buffers' "$mobile_probe_root/summary.md" \
+    "mobile footprint summary markdown must expose benchmark preset next to explicit PostgreSQL GUCs"
   require_text 'Effective GUCs | Open ms' "$mobile_probe_root/summary.md" \
     "mobile footprint summary markdown must expose effective PostgreSQL settings"
   require_text 'min_wal_size | max_wal_size | WAL segment MB | Effective GUCs | Open ms' "$mobile_probe_root/summary.md" \
     "mobile footprint summary markdown must expose WAL min/max and template segment tuning columns"
-  require_text 'Raw p50 ms | Raw p90 ms | Raw p95 ms | Raw p99 ms' "$mobile_probe_root/summary.md" \
-    "mobile footprint summary markdown must expose warm query p50/p90/p95/p99"
+  require_text 'Typed p50 ms | Typed p90 ms | Typed p95 ms | Typed p99 ms' "$mobile_probe_root/summary.md" \
+    "mobile footprint summary markdown must expose typed query p50/p90/p95/p99"
   require_text 'Crash recovery ms | Crash recovery open ms | Insert rows/s' "$mobile_probe_root/summary.md" \
     "mobile footprint summary markdown must expose process-death recovery total and reopen latency"
   require_text 'SQLite open ms | SQLite simple p50 ms | SQLite simple p90 ms | SQLite simple p95 ms | SQLite simple p99 ms' "$mobile_probe_root/summary.md" \
@@ -459,8 +433,8 @@ JSON
     "mobile footprint summary markdown must expose same-device SQLite indexed lookup columns"
   require_text 'SQLite aggregate p50 ms | SQLite aggregate p90 ms | SQLite aggregate p95 ms | SQLite aggregate p99 ms' "$mobile_probe_root/summary.md" \
     "mobile footprint summary markdown must expose same-device SQLite indexed aggregate columns"
-  require_text 'Oliphaunt payload MB | Android APK MB | iOS app MB | RN package KB | Android PSS MB' "$mobile_probe_root/summary.md" \
-    "mobile footprint summary markdown must expose package and platform memory evidence"
+  require_text 'SQLite insert rows/s | SQLite durability | Android APK MB | iOS app MB | RN package KB | Android PSS MB' "$mobile_probe_root/summary.md" \
+    "mobile footprint summary markdown must distinguish SQLite durability from harness package and memory evidence"
 
   rm -rf "$mobile_probe_root"
   mobile_probe_root=""
@@ -473,20 +447,6 @@ assert_mobile_footprint_plan_guard() {
       --platform android \
       --run-id mobile-plan-probe
   )"
-  mobile_profile_plan="$(
-    tools/perf/matrix/run_mobile_footprint_matrix.sh \
-      --plan-only \
-      --quick \
-      --platform android \
-      --runtime-footprint all \
-      --shared-buffers 32MB \
-      --wal-buffers -1 \
-      --min-wal-size 32MB \
-      --max-wal-size default \
-      --durability balanced \
-      --crash-recovery off \
-      --run-id mobile-profile-plan-probe
-  )"
   mobile_filtered_plan="$(
     tools/perf/matrix/run_mobile_footprint_matrix.sh \
       --plan-only \
@@ -496,7 +456,6 @@ assert_mobile_footprint_plan_guard() {
       --wal-buffers -1 \
       --min-wal-size 32MB \
       --max-wal-size default \
-      --durability balanced \
       --crash-recovery off \
       --run-id mobile-filtered-plan-probe
   )"
@@ -509,27 +468,22 @@ assert_mobile_footprint_plan_guard() {
       --wal-buffers -1 \
       --min-wal-size 8MB,16MB \
       --max-wal-size 32MB \
-      --durability balanced \
       --wal-segsize 4 \
       --crash-recovery off \
       --run-id mobile-walseg-plan-probe
   )"
-  require_plan_text "$mobile_plan" "planned=160" \
+  require_plan_text "$mobile_plan" "planned=80" \
     "mobile footprint matrix plan must count only runnable Android cases once"
-  require_plan_text "$mobile_plan" "runtimeFootprint=balancedMobile" \
-    "mobile footprint matrix plan must expose the runtime footprint profile for each case"
-  require_plan_text "$mobile_plan" "skippedInvalidForWalSegment=240" \
+  require_plan_text "$mobile_plan" "skippedInvalidForWalSegment=120" \
     "mobile footprint matrix plan must report invalid 8MB/16MB WAL-minimum cases"
-  require_plan_text "$mobile_plan" "skippedInvalidWalRange=80" \
+  require_plan_text "$mobile_plan" "skippedInvalidWalRange=40" \
     "mobile footprint matrix plan must report max_wal_size below min_wal_size cases"
-  require_plan_text "$mobile_plan" "crashCommand=skipped durability=balanced reason=synchronous_commit_off_does_not_guarantee_last_commit" \
-    "mobile footprint matrix plan must not advertise balanced durability as crash-recovery evidence"
-  require_plan_text "$mobile_profile_plan" "planned=3" \
-    "mobile footprint matrix all-profile probe must expand a filtered slice across three profiles"
-  require_plan_text "$mobile_profile_plan" "runtimeFootprint=throughput" \
-    "mobile footprint matrix all-profile plan must include the throughput profile"
-  require_plan_text "$mobile_profile_plan" "runtimeFootprint=smallMobile" \
-    "mobile footprint matrix all-profile plan must include the small mobile profile"
+  require_plan_text "$mobile_plan" "crashCommand=env" \
+    "mobile footprint matrix plan must run crash evidence for default-safe PostgreSQL cases"
+  reject_plan_text "$mobile_plan" "durability=" \
+    "mobile footprint matrix plan must not retain an Oliphaunt durability label"
+  reject_plan_text "$mobile_plan" "runtimeFootprint=" \
+    "mobile footprint matrix plan must not retain a runtime-footprint label"
   require_plan_text "$mobile_filtered_plan" "planned=2" \
     "mobile footprint matrix filters must shrink Android plan counts to the selected GUC slice"
   require_plan_text "$mobile_filtered_plan" "benchmarkPreset=quick" \
@@ -928,7 +882,6 @@ assert_provenance_release_gate() {
 }
 
 require_plan_text "$release_plan" "nativeOnly=true" "native performance plan must declare native-only scope"
-require_plan_text "$release_plan" "legacyWasixControls=false" "native performance plan must not include WASIX controls"
 require_plan_text "$release_plan" "nativeEngines=direct,broker,server" "native performance full plan must cover all native engines by default"
 require_plan_text "$release_plan" "suites=rtt,speed,streaming,prepared,backup" "native performance full plan must cover all suites by default"
 require_plan_text "$release_plan" "releaseEvidence=1" "native performance default plan must be classified as release evidence"
@@ -953,7 +906,7 @@ require_plan_text "$release_plan" "case=native-liboliphaunt-broker-rtt" "native 
 require_plan_text "$release_plan" "case=native-liboliphaunt-server-rtt" "native performance plan must cover server RTT"
 require_plan_text "$release_plan" "case=native-liboliphaunt-backup" "native performance plan must cover direct backup/restore"
 require_plan_text "$release_plan" "case=native-liboliphaunt-broker-backup" "native performance plan must cover broker backup/restore"
-require_plan_text "$release_plan" "case=native-liboliphaunt-server-backup" "native performance plan must cover server backup/restore"
+reject_plan_text "$release_plan" "case=native-liboliphaunt-server-backup" "native performance plan must not invent an SDK server backup path"
 require_plan_text "$release_plan" "case=native-postgres-tokio-all" "native performance plan must include native PostgreSQL control"
 require_plan_text "$release_plan" "case=native-postgres-backup" "native performance plan must include native PostgreSQL backup/restore control"
 require_plan_text "$release_plan" "case=sqlite-backup" "native performance plan must include SQLite backup/restore control"
@@ -978,10 +931,6 @@ reject_plan_text "$focused_plan" "case=native-liboliphaunt-server-streaming" "fo
 reject_plan_text "$focused_plan" "case=sqlite-speed" "focused native performance plan must not include SQLite speed"
 reject_plan_text "$focused_plan" "case=native-liboliphaunt-prepared-broker" "focused native performance plan must not include prepared updates"
 
-reject_text "WASIX controls enabled by default" docs/internal/OLIPHAUNT_README.md \
-  "internal Oliphaunt README must not describe native perf as a WASIX-control matrix"
-reject_text "--skip-wasix" docs/internal/OLIPHAUNT_README.md \
-  "internal Oliphaunt README must not require a skip-WASIX flag for native perf"
 reject_text "--skip-wasix" src/docs/content/reference/performance.mdx \
   "performance docs must not require a skip-WASIX flag for native perf"
 require_text 'command: "bash src/runtimes/liboliphaunt/native/tools/check-track.sh quick"' src/runtimes/liboliphaunt/native/moon.yml \
@@ -992,10 +941,12 @@ require_text 'OLIPHAUNT_TRACK_BUILD: "never"' src/runtimes/liboliphaunt/native/m
   "liboliphaunt host-smoke must fail fast instead of entering the native build path"
 require_text 'cargo test -p oliphaunt --locked \' src/runtimes/liboliphaunt/native/tools/check-track.sh \
   "native Rust track validation must run selected Rust targets through one cargo invocation"
+require_text '--test public_api \' src/runtimes/liboliphaunt/native/tools/check-track.sh \
+  "native Rust track validation must include the public API contract in the combined invocation"
+require_text '--test native_smoke' src/runtimes/liboliphaunt/native/tools/check-track.sh \
+  "native Rust track validation must include the direct and broker smoke coverage in the combined invocation"
 require_text '--test native_sql_regression \' src/runtimes/liboliphaunt/native/tools/check-track.sh \
-  "native Rust track validation must include native SQL regression in the combined invocation"
-reject_text 'cargo test -p oliphaunt --test sdk_shape --locked' src/runtimes/liboliphaunt/native/tools/check-track.sh \
-  "native Rust track validation must not split sdk_shape into a separate cargo invocation"
+  "native Rust track validation must retain PostgreSQL behavior regression coverage"
 require_text 'cargo test -p oliphaunt --locked \' src/sdks/rust/tools/check-sdk.sh \
   "Rust SDK validation must run selected non-doc targets through one cargo invocation"
 reject_text 'cargo test -p oliphaunt --test native_root_locking --locked' src/sdks/rust/tools/check-sdk.sh \
@@ -1028,20 +979,6 @@ require_text '- "liboliphaunt-native:release-runtime"' src/sdks/swift/moon.yml \
   "Swift SDK release-check must consume the liboliphaunt runtime producer"
 require_text '- "liboliphaunt-native:release-runtime"' src/sdks/kotlin/moon.yml \
   "Kotlin SDK release-check must consume the liboliphaunt runtime producer"
-require_text 'run_native_backlog_guard' src/runtimes/liboliphaunt/native/tools/check-track.sh \
-  "native track validation must guard the maintainer backlog against legacy runtime drift"
-require_text 'Native Product Backlog' docs/internal/TODO.md \
-  "maintainer TODO must describe the native product backlog"
-reject_text "route native product work back to WASIX" docs/internal/TODO.md \
-  "maintainer TODO must not route native product work back to WASIX"
-reject_text "WASIX fallback" docs/internal/TODO.md \
-  "maintainer TODO must not make native product readiness depend on a WASIX fallback"
-reject_text "--skip-wasix" docs/internal/TODO.md \
-  "maintainer TODO must not describe native validation as a skip-WASIX matrix"
-reject_text "Wasmer" docs/internal/TODO.md \
-  "maintainer TODO must not route native product work back to Wasmer"
-require_text 'moon run liboliphaunt-native:host-smoke' docs/internal/OLIPHAUNT_README.md \
-  "internal Oliphaunt README must advertise the no-build native product inner loop"
 require_text 'moon run liboliphaunt-native:host-smoke' docs/maintainers/development.md \
   "development docs must advertise the no-build native product inner loop"
 require_text 'normal extension files, and embedded' docs/maintainers/development.md \
@@ -1120,8 +1057,6 @@ require_text 'max_wal_sizes=(32MB 64MB default)' tools/perf/matrix/run_mobile_fo
   "mobile footprint matrix must sweep requested max_wal_size values and preserve the default baseline"
 require_text 'skippedInvalidWalRange' tools/perf/matrix/run_mobile_footprint_matrix.sh \
   "mobile footprint matrix must reject impossible max_wal_size below min_wal_size cases"
-require_text 'durabilities=(safe balanced)' tools/perf/matrix/run_mobile_footprint_matrix.sh \
-  "mobile footprint matrix must sweep Safe and Balanced durability"
 require_text '--shared-buffers VALUES' tools/perf/matrix/run_mobile_footprint_matrix.sh \
   "mobile footprint matrix must expose shared_buffers filters for measured tuning slices"
 require_text '--wal-buffers VALUES' tools/perf/matrix/run_mobile_footprint_matrix.sh \
@@ -1132,32 +1067,18 @@ require_text '--max-wal-size VALUES' tools/perf/matrix/run_mobile_footprint_matr
   "mobile footprint matrix must expose max_wal_size filters for measured tuning slices"
 require_text '--wal-segsize MB' tools/perf/matrix/run_mobile_footprint_matrix.sh \
   "mobile footprint matrix must expose template WAL segment size for 8/16MB min_wal_size experiments"
-require_text '--durability VALUES' tools/perf/matrix/run_mobile_footprint_matrix.sh \
-  "mobile footprint matrix must expose durability filters for measured tuning slices"
 require_text 'OLIPHAUNT_EXPO_MOBILE_BENCHMARK_PRESET=$benchmark_preset' tools/perf/matrix/run_mobile_footprint_matrix.sh \
   "mobile footprint matrix quick mode must propagate an installed-app benchmark preset"
-require_text '--runtime-footprint PROFILE' tools/perf/matrix/run_mobile_footprint_matrix.sh \
-  "mobile footprint matrix must expose runtime footprint selection"
-require_text 'normalize_runtime_footprints "$runtime_footprints_raw"' tools/perf/matrix/run_mobile_footprint_matrix.sh \
-  "mobile footprint matrix must validate runtime footprint selections"
-require_text "'Runtime footprint'" tools/perf/matrix/run_mobile_footprint_matrix.sh \
-  "mobile footprint matrix summary must expose the runtime footprint profile and benchmark preset"
 require_text "'Benchmark preset'" tools/perf/matrix/run_mobile_footprint_matrix.sh \
   "mobile footprint matrix summary must expose the installed-app benchmark preset"
 require_text "'Effective GUCs'" tools/perf/matrix/run_mobile_footprint_matrix.sh \
   "mobile footprint matrix summary must expose effective PostgreSQL settings"
-require_text 'runtimeFootprint=%s' tools/perf/matrix/run_mobile_footprint_matrix.sh \
-  "mobile footprint matrix plan must expose the runtime footprint profile"
 require_text "'WAL segment MB'" tools/perf/matrix/run_mobile_footprint_matrix.sh \
   "mobile footprint matrix summary must expose WAL min/max and segment tuning columns"
-require_text "'Raw p50 ms'" tools/perf/matrix/run_mobile_footprint_matrix.sh \
-  "mobile footprint matrix summary must expose warm query p50/p90/p95/p99 columns"
-require_text "'Raw p99 ms'" tools/perf/matrix/run_mobile_footprint_matrix.sh \
-  "mobile footprint matrix summary must expose warm query tail-latency columns"
-require_text 'Lookup p50 ms' tools/perf/matrix/run_mobile_footprint_matrix.sh \
-  "mobile footprint matrix summary must expose indexed lookup latency columns"
-require_text 'Aggregate p50 ms' tools/perf/matrix/run_mobile_footprint_matrix.sh \
-  "mobile footprint matrix summary must expose indexed aggregate latency columns"
+require_text "'Typed p50 ms'" tools/perf/matrix/run_mobile_footprint_matrix.sh \
+  "mobile footprint matrix summary must expose typed-query latency columns"
+require_text "'Param p99 ms'" tools/perf/matrix/run_mobile_footprint_matrix.sh \
+  "mobile footprint matrix summary must expose parameterized tail latency"
 require_text 'SQLite lookup p50 ms' tools/perf/matrix/run_mobile_footprint_matrix.sh \
   "mobile footprint matrix summary must expose SQLite indexed lookup comparison columns"
 require_text 'SQLite aggregate p50 ms' tools/perf/matrix/run_mobile_footprint_matrix.sh \
@@ -1166,14 +1087,54 @@ require_text 'SQLite large result p99 ms' tools/perf/matrix/run_mobile_footprint
   "mobile footprint matrix summary must expose full SQLite large-result latency distribution"
 require_text 'Crash recovery open ms' tools/perf/matrix/run_mobile_footprint_matrix.sh \
   "mobile footprint matrix summary must expose crash-recovery reopen latency"
-require_text "'Oliphaunt payload MB'" tools/perf/matrix/run_mobile_footprint_matrix.sh \
-  "mobile footprint matrix summary must expose package and platform memory columns"
 require_text "'Android APK MB'" tools/perf/matrix/run_mobile_footprint_matrix.sh \
   "mobile footprint matrix summary must expose Android package size columns"
 require_text "'iOS app MB'" tools/perf/matrix/run_mobile_footprint_matrix.sh \
   "mobile footprint matrix summary must expose iOS app size columns"
 require_text "'Android PSS MB'" tools/perf/matrix/run_mobile_footprint_matrix.sh \
   "mobile footprint matrix summary must expose Android PSS columns"
+require_text "'SQLite durability'" tools/perf/matrix/run_mobile_footprint_matrix.sh \
+  "mobile footprint matrix must label durability as SQLite-specific"
+require_text 'assertSafeCrashSettings(postgresSettings)' examples/react-native-expo/src/SmokeDashboard.tsx \
+  "Expo crash evidence must verify effective safe PostgreSQL settings"
+reject_text 'processMemoryReport' tools/perf/matrix/run_mobile_footprint_matrix.sh \
+  "mobile footprint summary must use platform harness memory evidence"
+reject_text 'packageSizeReport' tools/perf/matrix/run_mobile_footprint_matrix.sh \
+  "mobile footprint summary must use built artifact size evidence"
+reject_text 'OLIPHAUNT_EXPO_MOBILE_DURABILITY' tools/perf/matrix/run_mobile_footprint_matrix.sh \
+  "mobile footprint matrix must not pass a dead durability profile"
+reject_text 'OLIPHAUNT_EXPO_MOBILE_RUNTIME_FOOTPRINT' tools/perf/matrix/run_mobile_footprint_matrix.sh \
+  "mobile footprint matrix must not pass a dead runtime-footprint profile"
+reject_text '--durability' tools/perf/matrix/run_mobile_footprint_matrix.sh \
+  "mobile footprint matrix must not retain a dead durability option"
+reject_text '--runtime-footprint' tools/perf/matrix/run_mobile_footprint_matrix.sh \
+  "mobile footprint matrix must not retain a dead runtime-footprint option"
+require_text 'benchmark-meminfo.txt' tools/perf/matrix/run_mobile_footprint_matrix.sh \
+  "mobile footprint summary must read Android harness process evidence"
+require_text 'benchmark-process.tsv' tools/perf/matrix/run_mobile_footprint_matrix.sh \
+  "mobile footprint summary must read iOS harness process evidence"
+require_text 'benchmark-package-sizes.json' tools/perf/matrix/run_mobile_footprint_matrix.sh \
+  "mobile footprint summary must read built artifact sizes"
+reject_text 'processMemoryReport' examples/react-native-expo/src/SmokeDashboard.tsx \
+  "Expo app report must not expose stale process-memory metadata"
+reject_text 'packageSizeReport' examples/react-native-expo/src/SmokeDashboard.tsx \
+  "Expo app report must not expose stale package-size metadata"
+reject_text 'EXPO_PUBLIC_OLIPHAUNT_DURABILITY' src/sdks/react-native/tools/expo-android-runner.sh \
+  "Android Expo runner must not publish a dead durability profile"
+reject_text 'EXPO_PUBLIC_OLIPHAUNT_RUNTIME_FOOTPRINT' src/sdks/react-native/tools/expo-android-runner.sh \
+  "Android Expo runner must not publish a dead runtime-footprint profile"
+reject_text 'EXPO_PUBLIC_OLIPHAUNT_DURABILITY' src/sdks/react-native/tools/expo-ios-runner.sh \
+  "iOS Expo runner must not publish a dead durability profile"
+reject_text 'EXPO_PUBLIC_OLIPHAUNT_RUNTIME_FOOTPRINT' src/sdks/react-native/tools/expo-ios-runner.sh \
+  "iOS Expo runner must not publish a dead runtime-footprint profile"
+reject_text 'liboliphauntDurability' src/sdks/react-native/tools/expo-runner-android-device.sh \
+  "Android installed-app URL must not carry a dead durability profile"
+reject_text 'liboliphauntRuntimeFootprint' src/sdks/react-native/tools/expo-runner-android-device.sh \
+  "Android installed-app URL must not carry a dead runtime-footprint profile"
+reject_text 'liboliphauntDurability' src/sdks/react-native/tools/expo-runner-ios-installed-app.sh \
+  "iOS installed-app URL must not carry a dead durability profile"
+reject_text 'liboliphauntRuntimeFootprint' src/sdks/react-native/tools/expo-runner-ios-installed-app.sh \
+  "iOS installed-app URL must not carry a dead runtime-footprint profile"
 require_text 'liboliphauntBenchmarkPreset' src/sdks/react-native/tools/expo-runner-ios-installed-app.sh \
   "iOS Expo benchmark harness must pass the benchmark preset into the installed app"
 require_text 'iPhoneOS builds require a local Apple Development signing identity' src/sdks/react-native/tools/expo-runner-ios-device.sh \
@@ -1212,7 +1173,7 @@ require_text 'oliphaunt-crash-recovery-storage-$crash_storage_suffix' src/sdks/r
   "Android crash recovery must avoid stale persistent storage across benchmark runs"
 require_text 'rm -rf "$crash_storage"' src/sdks/react-native/tools/expo-runner-android-device.sh \
   "Android crash recovery must clear the per-run storage before the write phase"
-require_text 'benchmarkOptionsForPreset' src/sdks/react-native/examples/expo/src/SmokeDashboard.tsx \
+require_text 'benchmarkOptionsForPreset' examples/react-native-expo/src/SmokeDashboard.tsx \
   "Expo benchmark app must size benchmark workloads from a named preset"
 require_text 'refreshing native extension artifacts through fingerprinted build script' src/runtimes/liboliphaunt/native/tools/check-track.sh \
   "native extension/full validation must refresh extension artifacts through the fingerprinted build script"

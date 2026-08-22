@@ -101,6 +101,10 @@ for tool in "$zipalign" "$apksigner"; do
     fail "missing regular executable manifest-pinned Android tool: $tool"
   fi
 done
+apkanalyzer="$sdk_root/cmdline-tools/latest/bin/apkanalyzer"
+if [ ! -f "$apkanalyzer" ] || [ -L "$apkanalyzer" ] || [ ! -x "$apkanalyzer" ]; then
+  fail "missing regular executable Android SDK command-line tool: $apkanalyzer"
+fi
 
 apk="$1"
 if [ ! -f "$apk" ] || [ -L "$apk" ] || [ ! -s "$apk" ]; then
@@ -117,4 +121,9 @@ echo "Checking APK signature with Android build-tools $build_tools_version: $apk
 if ! "$apksigner" verify --verbose "$apk"; then
   fail "manifest-pinned apksigner rejected the APK: $apk"
 fi
-echo "Verified APK with manifest-pinned zipalign and apksigner: $apk"
+apk_classes="$("$apkanalyzer" dex packages "$apk")" ||
+  fail "Android SDK apkanalyzer could not inspect APK bytecode: $apk"
+if ! grep -Eq '^C d [^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+dev\.oliphaunt\.DatabaseStorage\$TemporaryDirectory$' <<<"$apk_classes"; then
+  fail "APK does not define the staged Kotlin SDK storage class; a stale Maven artifact may have won dependency resolution"
+fi
+echo "Verified APK alignment, signature, and staged Kotlin SDK bytecode: $apk"

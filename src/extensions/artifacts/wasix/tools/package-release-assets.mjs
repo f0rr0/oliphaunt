@@ -185,7 +185,7 @@ for (const item of extensions) {
     ? builtRow["installed-files"]
     : [];
   const missingComponentRuntimeFiles = componentClosure.runtimeFiles
-    .map((file) => `share/postgresql/${file}`)
+    .map((file) => `share/${file}`)
     .filter((file) => !installedFiles.includes(file));
   if (missingComponentRuntimeFiles.length > 0) {
     fail(

@@ -1,13 +1,11 @@
-import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { arch, platform } from 'node:os';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 
 import type { NormalizedOpenConfig } from '../config.js';
 import type { DenoRuntime } from '../native/assets-deno.js';
-import type { BackupFormat, EngineCapabilities, EngineModeSupport } from '../types.js';
 import {
   ICU_DATA_ENV,
   envVar,
@@ -23,7 +21,6 @@ import {
 } from './broker-frames.js';
 import type { ByteStream } from './byte-stream.js';
 import {
-  canonicalPath,
   connectEndpoint,
   createTempDir,
   parseReadyEndpoint,
@@ -44,65 +41,42 @@ const OLIPHAUNT_BROKER_ENV = 'OLIPHAUNT_BROKER';
 const OLIPHAUNT_BROKER_STARTUP_TIMEOUT_MS_ENV = 'OLIPHAUNT_BROKER_STARTUP_TIMEOUT_MS';
 const DEFAULT_STARTUP_TIMEOUT_MS = 60_000;
 const SHUTDOWN_TIMEOUT_MS = 5_000;
-const RESTORE_TIMEOUT_MS = 120_000;
 const require = createRequire(import.meta.url);
 
 export type BrokerRuntimeBindingOptions = {
   executable?: string;
-  maxInstances?: number;
-};
-
-export type BrokerRestoreOptions = {
-  destination: string;
-  bytes: Uint8Array;
-  replaceExisting?: boolean;
-  brokerExecutable?: string;
-  libraryPath?: string;
-  runtimeDirectory?: string;
 };
 
 export function createBrokerRuntimeBinding(
   options: BrokerRuntimeBindingOptions = {},
 ): RuntimeBinding {
-  const supervisor = new BrokerRootSupervisor(options.maxInstances ?? 1);
   return {
-    runtime: runtimeName(),
-    rawProtocolTransport: 'broker-ipc',
-    protocolStream: true,
-    capabilities(handle: RuntimeHandle): EngineCapabilities {
-      return brokerCapabilities(asBrokerHandle(handle).maxInstances);
-    },
     async open(config: NormalizedOpenConfig): Promise<BrokerHandle> {
       const executable = await resolveBrokerExecutable(
         config.brokerExecutable ?? options.executable,
       );
-      const rootLease = await supervisor.acquire(config.instanceDirectory);
-      let handle: BrokerHandle | undefined;
-      try {
-        handle = new BrokerHandle(executable, config, rootLease, supervisor.maxInstances);
-        await handle.start();
-        return handle;
-      } catch (error) {
-        await handle?.detach();
-        rootLease.release();
-        throw error;
-      }
+      const handle = new BrokerHandle(executable, config);
+      await handle.start();
+      return handle;
     },
     execProtocolRaw(handle: RuntimeHandle, request: Uint8Array): Promise<Uint8Array> {
-      return asBrokerHandle(handle).requestOk({ kind: 'execProtocol', bytes: request });
-    },
-    execSimpleQuery(handle: RuntimeHandle, sql: string): Promise<Uint8Array> {
-      return asBrokerHandle(handle).requestOk({ kind: 'execSimpleQuery', sql });
+      return asBrokerHandle(handle).requestOk({
+        kind: 'execProtocol',
+        bytes: request,
+      });
     },
     execProtocolStream(
       handle: RuntimeHandle,
       request: Uint8Array,
       onChunk: (chunk: Uint8Array) => void,
     ): Promise<void> {
-      return asBrokerHandle(handle).requestStream(request, onChunk);
+      return asBrokerHandle(handle).execProtocolStream(request, onChunk);
     },
-    backup(handle: RuntimeHandle, format: BackupFormat): Promise<Uint8Array> {
-      return asBrokerHandle(handle).requestOk({ kind: 'backup', format });
+    execSimpleQuery(handle: RuntimeHandle, sql: string): Promise<Uint8Array> {
+      return asBrokerHandle(handle).requestOk({ kind: 'execSimpleQuery', sql });
+    },
+    backup(handle: RuntimeHandle): Promise<Uint8Array> {
+      return asBrokerHandle(handle).requestOk({ kind: 'backup' });
     },
     cancel(handle: RuntimeHandle): Promise<void> {
       return asBrokerHandle(handle).cancel();
@@ -110,81 +84,6 @@ export function createBrokerRuntimeBinding(
     detach(handle: RuntimeHandle): Promise<void> {
       return asBrokerHandle(handle).detach();
     },
-  };
-}
-
-export async function brokerModeSupport(options: {
-  libraryPath?: string;
-  runtimeDirectory?: string;
-  brokerExecutable?: string;
-  brokerMaxInstances?: number;
-}): Promise<EngineModeSupport> {
-  const capabilities = brokerCapabilities(options.brokerMaxInstances ?? 1);
-  try {
-    await resolveBrokerExecutable(options.brokerExecutable);
-    await resolveBrokerNativeInstall({
-      libraryPath: options.libraryPath,
-      runtimeDirectory: options.runtimeDirectory,
-    });
-    return { engine: 'nativeBroker', available: true, capabilities };
-  } catch (error) {
-    return {
-      engine: 'nativeBroker',
-      available: false,
-      capabilities,
-      unavailableReason: `native broker helper is unavailable: ${errorString(error)}`,
-    };
-  }
-}
-
-export async function restorePhysicalArchiveWithBroker(
-  options: BrokerRestoreOptions,
-): Promise<string> {
-  const executable = await resolveBrokerExecutable(options.brokerExecutable);
-  const nativeInstall = await resolveBrokerNativeInstall({
-    libraryPath: options.libraryPath,
-    runtimeDirectory: options.runtimeDirectory,
-  });
-  const tempDir = await createTempDir('lpgr-');
-  const artifactPath = join(tempDir, 'physical-archive.tar');
-  try {
-    await writeFile(artifactPath, options.bytes);
-    const args = ['restore', '--destination', options.destination, '--artifact', artifactPath];
-    if (options.replaceExisting === true) {
-      args.push('--replace-existing');
-    }
-    await runBrokerTool(
-      executable,
-      args,
-      RESTORE_TIMEOUT_MS,
-      'native broker restore',
-      brokerNativeInstallEnv(nativeInstall),
-    );
-    return options.destination;
-  } finally {
-    await removeTree(tempDir);
-  }
-}
-
-export function brokerCapabilities(maxInstances: number): EngineCapabilities {
-  return {
-    engine: 'nativeBroker',
-    processIsolated: true,
-    multipleInstances: maxInstances > 1,
-    sameInstanceLogicalReopen: false,
-    instanceSwitchable: true,
-    crashRestartable: true,
-    independentSessions: false,
-    maxClientSessions: 1,
-    protocolRaw: true,
-    protocolStream: true,
-    queryCancel: true,
-    backupRestore: true,
-    backupFormats: ['physicalArchive'],
-    restoreFormats: ['physicalArchive'],
-    simpleQuery: true,
-    extensions: true,
-    rawProtocolTransport: 'broker-ipc',
   };
 }
 
@@ -199,8 +98,6 @@ class BrokerHandle {
   constructor(
     readonly executable: string,
     readonly config: NormalizedOpenConfig,
-    readonly rootLease: BrokerRootLease,
-    readonly maxInstances: number,
   ) {}
 
   async start(): Promise<void> {
@@ -224,29 +121,50 @@ class BrokerHandle {
       case 'error':
         throw new Error(response.message);
       case 'chunk':
-        throw new Error('broker returned a stream chunk for raw request execution');
+        throw new Error('native broker returned a stream chunk for a buffered request');
     }
   }
 
-  async requestStream(request: Uint8Array, onChunk: (chunk: Uint8Array) => void): Promise<void> {
+  async execProtocolStream(
+    request: Uint8Array,
+    onChunk: (chunk: Uint8Array) => void,
+  ): Promise<void> {
     const stream = await this.ensureStream();
+    let callbackError: unknown;
     try {
-      await writeBrokerRequest(stream, { kind: 'execProtocolStream', bytes: request });
-      for (;;) {
-        const response = await readBrokerResponse(stream);
-        switch (response.kind) {
-          case 'chunk':
-            onChunk(response.bytes);
-            break;
-          case 'ok':
-            return;
-          case 'error':
-            throw new Error(response.message);
-        }
-      }
+      await writeBrokerRequest(stream, {
+        kind: 'execProtocolStream',
+        bytes: request,
+      });
     } catch (error) {
       await this.markFailed();
       throw error;
+    }
+    for (;;) {
+      let response: BrokerResponseFrame;
+      try {
+        response = await readBrokerResponse(stream);
+      } catch (error) {
+        await this.markFailed();
+        throw error;
+      }
+      switch (response.kind) {
+        case 'chunk':
+          if (callbackError === undefined) {
+            try {
+              onChunk(response.bytes);
+            } catch (error) {
+              callbackError = error;
+            }
+          }
+          break;
+        case 'ok':
+          if (callbackError !== undefined) throw callbackError;
+          return;
+        case 'error':
+          if (callbackError !== undefined) throw callbackError;
+          throw new Error(response.message);
+      }
     }
   }
 
@@ -268,7 +186,7 @@ class BrokerHandle {
         throw new Error(`native broker cancel failed: ${response.message}`);
       }
       if (response.kind === 'chunk') {
-        throw new Error('broker returned a stream chunk for cancellation');
+        throw new Error('native broker cancel endpoint returned a stream chunk');
       }
     } finally {
       await stream.close();
@@ -303,7 +221,6 @@ class BrokerHandle {
     if (this.config.temporaryDirectory) {
       await removeTree(this.config.instanceDirectory);
     }
-    this.rootLease.release();
   }
 
   async request(frame: Parameters<typeof writeBrokerRequest>[1]): Promise<BrokerResponseFrame> {
@@ -372,7 +289,12 @@ async function launchBroker(
     const ready = parseBrokerReadyLine(line);
     const stream = await connectEndpoint(parseReadyEndpoint(ready.primary));
     await authenticateBroker(stream, authToken);
-    return { child, stream, cancelEndpoint: ready.cancel, ipcDir: endpoint.ipcDir };
+    return {
+      child,
+      stream,
+      cancelEndpoint: ready.cancel,
+      ipcDir: endpoint.ipcDir,
+    };
   } catch (error) {
     child.kill('SIGKILL');
     await child.wait();
@@ -417,7 +339,7 @@ async function resolveBrokerNativeInstall(config: {
       envVar(LIBOLIPHAUNT_RUNTIME_DIR_ENV) === undefined
     ) {
       throw new Error(
-        `Deno nativeBroker does not automatically materialize extension packages; pass runtimeDirectory with the selected extension assets or use Node/Bun nativeBroker. Selected extensions: ${extensions.join(', ')}`,
+        `Deno broker execution does not automatically materialize extension packages; pass runtimeDirectory with the selected extension assets or use Node/Bun broker execution. Selected extensions: ${extensions.join(', ')}`,
       );
     }
     const assets = await import('../native/assets-deno.js');
@@ -430,7 +352,7 @@ async function resolveBrokerNativeInstall(config: {
         (install.packageManaged && config.runtimeDirectory === undefined))
     ) {
       throw new Error(
-        `Deno nativeBroker does not automatically materialize extension packages; pass runtimeDirectory with the selected extension assets or use Node/Bun nativeBroker. Selected extensions: ${extensions.join(', ')}`,
+        `Deno broker execution does not automatically materialize extension packages; pass runtimeDirectory with the selected extension assets or use Node/Bun broker execution. Selected extensions: ${extensions.join(', ')}`,
       );
     }
     const validated =
@@ -440,7 +362,7 @@ async function resolveBrokerNativeInstall(config: {
             deno: deno as DenoRuntime,
             runtimeDirectory,
             extensions,
-            source: 'Deno nativeBroker explicit runtimeDirectory',
+            source: 'Deno broker explicit runtimeDirectory',
           });
     return {
       libraryPath: install.libraryPath,
@@ -498,9 +420,6 @@ async function authenticateBroker(stream: ByteStream, authToken: string): Promis
   if (response.kind === 'error') {
     throw new Error(`native broker authentication failed: ${response.message}`);
   }
-  if (response.kind === 'chunk') {
-    throw new Error('broker returned a stream chunk during authentication');
-  }
 }
 
 type BrokerEndpointPlan =
@@ -509,10 +428,7 @@ type BrokerEndpointPlan =
 
 async function allocateBrokerEndpoint(config: NormalizedOpenConfig): Promise<BrokerEndpointPlan> {
   const canUseUnix = process.platform !== 'win32';
-  if (config.brokerTransport === 'unix' && !canUseUnix) {
-    throw new Error('native broker Unix sockets are not supported on this platform');
-  }
-  if (config.brokerTransport !== 'tcp' && canUseUnix) {
+  if (canUseUnix) {
     const ipcDir = await createTempDir('lpgo-');
     const endpoint = {
       kind: 'unix',
@@ -522,9 +438,6 @@ async function allocateBrokerEndpoint(config: NormalizedOpenConfig): Promise<Bro
     } as const;
     if (unixSocketPathsFit(endpoint.socket, endpoint.cancelSocket)) return endpoint;
     await removeTree(ipcDir);
-    if (config.brokerTransport === 'unix') {
-      throw new Error('native broker Unix socket path exceeds the portable platform length limit');
-    }
   }
   return { kind: 'tcp', listen: '127.0.0.1:0', cancelListen: '127.0.0.1:0' };
 }
@@ -533,12 +446,6 @@ function brokerSpawnArgs(config: NormalizedOpenConfig, endpoint: BrokerEndpointP
   const args = [
     '--root',
     config.instanceDirectory,
-    '--bootstrap',
-    'packaged-template',
-    '--durability',
-    durabilityArg(config.durability),
-    '--runtime-footprint',
-    runtimeFootprintArg(config.runtimeFootprint),
     '--username',
     config.username,
     '--database',
@@ -558,7 +465,10 @@ function brokerSpawnArgs(config: NormalizedOpenConfig, endpoint: BrokerEndpointP
   return args;
 }
 
-function parseBrokerReadyLine(line: string): { primary: string; cancel: string } {
+function parseBrokerReadyLine(line: string): {
+  primary: string;
+  cancel: string;
+} {
   if (line.startsWith(ERROR_PREFIX)) {
     throw new Error(`native broker failed to start: ${line.slice(ERROR_PREFIX.length)}`);
   }
@@ -601,79 +511,6 @@ async function resolveBrokerExecutable(explicit: string | undefined): Promise<st
   throw new Error(
     `${target.packageName} ${version} is not installed; reinstall @oliphaunt/ts with optional dependencies enabled`,
   );
-}
-
-async function runBrokerTool(
-  executable: string,
-  args: string[],
-  timeoutMs: number,
-  label: string,
-  env: Record<string, string> = {},
-): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(executable, args, {
-      env: { ...process.env, ...env },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    let settled = false;
-    const timeout = setTimeout(() => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      child.kill('SIGKILL');
-      reject(new Error(`${label} did not finish within ${timeoutMs}ms`));
-    }, timeoutMs);
-
-    function finish(error?: Error): void {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timeout);
-      if (error !== undefined) {
-        reject(error);
-      } else {
-        resolve();
-      }
-    }
-
-    child.stdout?.on('data', (chunk: Buffer) => pushBounded(stdout, chunk));
-    child.stderr?.on('data', (chunk: Buffer) => pushBounded(stderr, chunk));
-    child.once('error', (error) => finish(error));
-    child.once('exit', (code, signal) => {
-      if (code === 0) {
-        finish();
-        return;
-      }
-      const output = [boundedText(stderr), boundedText(stdout)]
-        .filter((value) => value.length > 0)
-        .join('\n');
-      finish(
-        new Error(
-          `${label} failed with ${signal ?? `exit code ${code ?? 'unknown'}`}${
-            output.length > 0 ? `: ${output}` : ''
-          }`,
-        ),
-      );
-    });
-  });
-}
-
-function pushBounded(chunks: Buffer[], chunk: Buffer): void {
-  const maxBytes = 64 * 1024;
-  const total = chunks.reduce((sum, current) => sum + current.byteLength, 0);
-  if (total >= maxBytes) {
-    return;
-  }
-  const remaining = maxBytes - total;
-  chunks.push(chunk.byteLength <= remaining ? chunk : chunk.subarray(0, remaining));
-}
-
-function boundedText(chunks: Buffer[]): string {
-  return Buffer.concat(chunks).toString('utf8').trim();
 }
 
 async function requireExecutableFile(path: string, source: string): Promise<string> {
@@ -815,71 +652,12 @@ function startupAssignments(startupArgs: string[]): string[] {
   return assignments;
 }
 
-function durabilityArg(value: NormalizedOpenConfig['durability']): string {
-  return value === 'fastDev' ? 'fast-dev' : value;
-}
-
-function runtimeFootprintArg(value: NormalizedOpenConfig['runtimeFootprint']): string {
-  switch (value) {
-    case 'throughput':
-      return 'throughput';
-    case 'balancedMobile':
-      return 'balanced-mobile';
-    case 'smallMobile':
-      return 'small-mobile';
-  }
-}
-
 async function waitForChild(child: ManagedChild, timeoutMs: number): Promise<boolean> {
   const timeout = new Promise<false>((resolveTimeout) => {
     setTimeout(() => resolveTimeout(false), timeoutMs);
   });
   const result = await Promise.race([child.wait().then(() => true), timeout]);
   return result;
-}
-
-class BrokerRootSupervisor {
-  readonly #instances = new Set<string>();
-
-  constructor(readonly maxInstances: number) {}
-
-  async acquire(instanceDirectory: string): Promise<BrokerRootLease> {
-    if (this.maxInstances <= 0) {
-      throw new Error('native broker maxInstances must be greater than zero');
-    }
-    await mkdir(instanceDirectory, { recursive: true });
-    const key = await canonicalPath(instanceDirectory);
-    if (this.#instances.has(key)) {
-      throw new Error(`native broker instance ${key} is already open in this broker runtime`);
-    }
-    if (this.#instances.size >= this.maxInstances) {
-      throw new Error(
-        `native broker runtime already owns ${this.#instances.size} instance(s), at configured capacity ${this.maxInstances}`,
-      );
-    }
-    this.#instances.add(key);
-    return new BrokerRootLease(this, key);
-  }
-
-  release(key: string): void {
-    this.#instances.delete(key);
-  }
-}
-
-class BrokerRootLease {
-  #released = false;
-
-  constructor(
-    readonly supervisor: BrokerRootSupervisor,
-    readonly key: string,
-  ) {}
-
-  release(): void {
-    if (!this.#released) {
-      this.#released = true;
-      this.supervisor.release(this.key);
-    }
-  }
 }
 
 function asBrokerHandle(handle: RuntimeHandle): BrokerHandle {
@@ -897,10 +675,6 @@ function runtimeName(): 'node' | 'bun' | 'deno' {
     return 'bun';
   }
   return 'node';
-}
-
-function errorString(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function normalizeBrokerPlatform(value: string): string {

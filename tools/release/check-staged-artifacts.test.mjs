@@ -6,7 +6,6 @@ import test from "node:test";
 import { extensionReleasePropertiesText } from "./build-extension-ci-artifacts.mjs";
 import { iosBaseLegalMetadata } from "./ios-carrier-manifest.mjs";
 import {
-  CARGO_SDK_GENERATED_LEGAL_MEMBERS,
   cargoPackageMemberContractViolation,
   expectedExtensionBundleManifest,
   findSdkRuntimePayloadViolation,
@@ -20,23 +19,22 @@ import {
 } from "./check-staged-artifacts.mjs";
 import { CORE_SNOWBALL_RUNTIME_DATA_FILES } from "../../src/sdks/react-native/tools/validate-mobile-runtime-files.mjs";
 
-test("WASIX Cargo packages accept only the generated legal members", () => {
-  const listed = ["Cargo.toml", "README.md", "src/lib.rs"];
-  const legalMembers = [...CARGO_SDK_GENERATED_LEGAL_MEMBERS];
-  assert.deepEqual(legalMembers, ["LICENSE", "THIRD_PARTY_NOTICES.md"]);
+test("Cargo packages exactly match their complete package listing", () => {
+  const listed = [
+    "Cargo.toml",
+    "LICENSE",
+    "README.md",
+    "THIRD_PARTY_NOTICES.md",
+    "src/lib.rs",
+  ];
   assert.equal(
-    cargoPackageMemberContractViolation(
-      [...listed, ...legalMembers],
-      listed,
-      { generatedMembers: legalMembers },
-    ),
+    cargoPackageMemberContractViolation(listed, listed),
     null,
   );
 
   const unexpected = cargoPackageMemberContractViolation(
-    [...listed, ...legalMembers, "UNDECLARED.md"],
+    [...listed, "UNDECLARED.md"],
     listed,
-    { generatedMembers: legalMembers },
   );
   assert.deepEqual(unexpected, {
     kind: "mismatch",
@@ -56,6 +54,11 @@ test("WASIX Cargo packages accept only the generated legal members", () => {
       "src/lib.rs",
     ],
   });
+
+  assert.deepEqual(
+    cargoPackageMemberContractViolation(listed, [...listed, "LICENSE"]),
+    { kind: "listing-duplicate" },
+  );
 });
 
 const REPOSITORY_ROOT = path.join(
@@ -91,16 +94,16 @@ test("staged iOS evidence and the Expo runner share the Payload CocoaPods file-l
   assert.deepEqual(contract, {
     inputFile: path.join(
       scratchPath,
-      "src/sdks/react-native/examples/expo/ios/Pods/Target Support Files/OliphauntReactNativePayload/OliphauntReactNativePayload-xcframeworks-input-files.xcfilelist",
+      "examples/react-native-expo/ios/Pods/Target Support Files/OliphauntReactNativePayload/OliphauntReactNativePayload-xcframeworks-input-files.xcfilelist",
     ),
     outputFile: path.join(
       scratchPath,
-      "src/sdks/react-native/examples/expo/ios/Pods/Target Support Files/OliphauntReactNativePayload/OliphauntReactNativePayload-xcframeworks-output-files.xcfilelist",
+      "examples/react-native-expo/ios/Pods/Target Support Files/OliphauntReactNativePayload/OliphauntReactNativePayload-xcframeworks-output-files.xcfilelist",
     ),
     podName: "OliphauntReactNativePayload",
     supportRoot: path.join(
       scratchPath,
-      "src/sdks/react-native/examples/expo/ios/Pods/Target Support Files/OliphauntReactNativePayload",
+      "examples/react-native-expo/ios/Pods/Target Support Files/OliphauntReactNativePayload",
     ),
   });
 

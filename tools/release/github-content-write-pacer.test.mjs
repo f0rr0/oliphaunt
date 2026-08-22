@@ -108,7 +108,7 @@ for (let attempt = 0; attempt < 4; attempt += 1) {
   reserveGitHubContentWriteSync({
     environment: process.env,
     label,
-    timing: { coldStartMs: 0, intervalMs: 50, maxLockWaitMs: 300 },
+    timing: { coldStartMs: 0, intervalMs: 50, maxLockWaitMs: 2_000 },
   });
   reserveGitHubCoreRequestSync({ environment: process.env, label });
 }

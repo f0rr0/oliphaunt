@@ -3,14 +3,21 @@ import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isMainThread, Worker } from 'node:worker_threads';
 
-import { openWasixWithWorker, serializeOpenConfig, type WasixWorkerPort } from './client-common.js';
+import {
+  openWasixWithWorker,
+  restoreWasix,
+  serializeOpenConfig,
+  type WasixWorkerPort,
+} from './client-common.js';
+import { installNodeEnvironment } from './node-direct.js';
 import { releaseNodeDirectoryLockSync } from './node-directory-lock.js';
+import { hostRuntime, hostRuntimeName } from './host-runtime.js';
 import { nodeWorkerExecArgv } from './node-worker-options.js';
 import { nodeWorkerPort } from './node-worker-port.js';
 import { resolveExecutionMode } from './open-options.js';
 import type { SerializedOpenOptions } from './rpc.js';
-import { serverRuntime, serverRuntimeName } from './server-runtime.js';
-import type { OliphauntClient, OliphauntDatabase, OpenConfig } from './types.js';
+import type { BinaryInput, OliphauntClient, OliphauntDatabase, OpenConfig } from './types.js';
+import type { PersistentWasixStorage } from './storage.js';
 
 export async function openWasix(config: OpenConfig = {}): Promise<OliphauntDatabase> {
   const execution = resolveExecutionMode(config);
@@ -25,19 +32,28 @@ export async function openWasix(config: OpenConfig = {}): Promise<OliphauntDatab
 
 export const Oliphaunt: OliphauntClient = {
   open: openWasix,
+  restore: restoreNodeWasix,
 };
+
+async function restoreNodeWasix(
+  storage: PersistentWasixStorage,
+  bytes: BinaryInput,
+): Promise<void> {
+  installNodeEnvironment();
+  return restoreWasix(storage, bytes, requireNodeStorage);
+}
 
 function requireNodeStorage(options: SerializedOpenOptions): void {
   if (options.storage.kind === 'indexed-db' || options.storage.kind === 'opfs') {
     const provider = options.storage.kind === 'indexed-db' ? 'IndexedDB' : 'OPFS';
     throw new TypeError(
-      `@oliphaunt/wasix-ts ${provider} storage is browser-only; use memory or the storage/${serverRuntime()} adapter`,
+      `@oliphaunt/wasix-ts ${provider} storage is browser-only; use memory or the storage/${hostRuntime()} adapter`,
     );
   }
   if (options.storage.kind === 'directory') {
     if (!isMainThread) {
       throw new TypeError(
-        `@oliphaunt/wasix-ts ${serverRuntimeName()} directory storage must be opened from the main thread`,
+        `@oliphaunt/wasix-ts ${hostRuntimeName()} directory storage must be opened from the main thread`,
       );
     }
     options.storage = {
@@ -61,7 +77,7 @@ function createNodeWorker(options: SerializedOpenOptions): WasixWorkerPort {
       name: 'oliphaunt-wasix',
     }),
     recoverLease,
-    serverRuntimeName(),
+    hostRuntimeName(),
   );
 }
 

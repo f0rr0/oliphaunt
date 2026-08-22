@@ -655,7 +655,7 @@ Run before claiming this architecture complete:
   --require-sdk-product oliphaunt-wasix-rust`
 - [x] `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs --require-mobile ios
   --require-mobile-prebuilt-extensions` passes after rebuilding
-  `pnpm --dir src/sdks/react-native/examples/expo run mobile-build:ios` with
+  `pnpm --dir examples/react-native-expo run mobile-build:ios` with
   staged SDK, native runtime, and exact-extension artifacts. The fresh app
   keeps generated static-registry C under compile-only
   `ios/generated/static-registry`, bundles runtime resources under
@@ -728,7 +728,7 @@ Run before claiming this architecture complete:
   extension source fetch skip PostgreSQL preparation and making the Windows base
   runtime prune exact-extension artifacts before packaging:
   `bash -n src/extensions/artifacts/native/tools/package-release-assets.sh`,
-  `git diff --check`, `cargo run -p oliphaunt --bin oliphaunt-resources
+  `git diff --check`, `cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources
   --locked -- --list-extensions`, `cargo run -p xtask -- assets
   verify-committed`, `actionlint .github/workflows/ci.yml
   .github/workflows/mobile-e2e.yml .github/workflows/release.yml`,

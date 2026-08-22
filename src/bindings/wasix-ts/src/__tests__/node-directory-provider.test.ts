@@ -1,15 +1,19 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { parseDatabaseRootDescriptor, parseDatabaseRootDescriptorText } from '../database-root.js';
+import { nodeDirectoryLockPath, releaseNodeDirectoryLockSync } from '../node-directory-lock.js';
 import {
-  NODE_DIRECTORY_LOCK_CANDIDATE_PREFIX,
-  NODE_DIRECTORY_LOCK_SLOT,
-  nodeDirectoryLockName,
-} from '../node-lock-identity.js';
-import { acquireNodeDirectoryStorage } from '../storage/node-directory-provider.js';
-import type { StorageDirectory, WasixStorageCompatibility } from '../storage-provider.js';
+  acquireNodeDirectoryStorage,
+  restoreNodeDirectoryStorage,
+} from '../storage/node-directory-provider.js';
+import {
+  WASIX_PHYSICAL_IDENTITY,
+  type StorageDirectory,
+  type WasixPhysicalIdentity,
+} from '../storage-provider.js';
 
 const scratch: string[] = [];
 
@@ -17,21 +21,25 @@ afterEach(async () => {
   await Promise.all(scratch.splice(0).map((path) => rm(path, { force: true, recursive: true })));
 });
 
-describe('WASIX server-runtime directory storage', () => {
-  it('uses the selected directory as raw PGDATA and hydrates an exact reopen', async () => {
+describe('WASIX Node/Bun/Deno directory storage', () => {
+  it('uses a managed root and hydrates a compatible reopen', async () => {
     const root = await temporaryRoot('space ünicode');
     const first = await acquireNodeDirectoryStorage(root, template(), compatible());
     expect(first.state).toBe('new');
 
     await expect(acquireNodeDirectoryStorage(root, template(), compatible())).rejects.toMatchObject(
-      { code: 'busy', durability: 'unchanged' },
+      { code: 'busy', commitState: 'unchanged' },
     );
 
     await first.close(pgdataDirectory('persisted'), 'clean');
-    expect(await readFile(join(root, 'PG_VERSION'), 'utf8')).toBe('18\n');
-    expect(await readFile(join(root, 'user/value'), 'utf8')).toBe('persisted');
-    expect(JSON.parse(await readFile(join(root, '.oliphaunt-wasix.json'), 'utf8'))).toMatchObject({
-      schema: 'oliphaunt-wasix-directory-v2',
+    expect(await readFile(join(root, 'pgdata/PG_VERSION'), 'utf8')).toBe('18\n');
+    expect(await readFile(join(root, 'pgdata/user/value'), 'utf8')).toBe('persisted');
+    expect(JSON.parse(await readFile(join(root, '.oliphaunt.json'), 'utf8'))).toEqual({
+      schema: 'oliphaunt-database-root-v1',
+      engineFamily: 'wasix',
+      pgdata: 'pgdata',
+      postgresMajor: 18,
+      physicalFormat: 'wasix-pg18-v1',
     });
     expect(await pathExists(join(root, '.oliphaunt-wasix-ts'))).toBe(false);
 
@@ -47,32 +55,41 @@ describe('WASIX server-runtime directory storage', () => {
     const directory = trackedPgdataDirectory('first');
 
     await lease.sync(directory, 'operation');
+    const descriptor = await readFile(join(root, '.oliphaunt.json'));
     await writeFile(join(root, 'unrelated-host-marker'), 'outside adapter metadata');
     directory.setValue('second');
     await lease.sync(directory, 'operation');
     await lease.close(undefined, 'failed');
 
-    expect(await readFile(join(root, 'user/value'), 'utf8')).toBe('second');
+    expect(await readFile(join(root, 'pgdata/user/value'), 'utf8')).toBe('second');
     expect(await readFile(join(root, 'unrelated-host-marker'), 'utf8')).toBe(
       'outside adapter metadata',
     );
+    expect(await readFile(join(root, '.oliphaunt.json'))).toEqual(descriptor);
   });
 
-  it('fails closed for incompatible metadata and symbolic links', async () => {
+  it('rejects physical format mismatches and symbolic links', async () => {
     const root = await temporaryRoot('fail-closed');
     const first = await acquireNodeDirectoryStorage(root, template(), compatible());
     await first.close(pgdataDirectory('complete'), 'clean');
 
-    await expect(
-      acquireNodeDirectoryStorage(root, template(), {
-        ...compatible(),
-        runtime: { ...compatible().runtime, runtimeArchiveSha256: '9'.repeat(64) },
-      }),
-    ).rejects.toMatchObject({ code: 'incompatible', durability: 'unchanged' });
-
-    await symlink(join(root, 'PG_VERSION'), join(root, 'linked-version'));
+    const descriptorPath = join(root, '.oliphaunt.json');
+    const descriptor = JSON.parse(await readFile(descriptorPath, 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    await writeFile(
+      descriptorPath,
+      JSON.stringify({ ...descriptor, physicalFormat: 'wasix-pg18-v2' }),
+    );
     await expect(acquireNodeDirectoryStorage(root, template(), compatible())).rejects.toMatchObject(
-      { code: 'corrupt', durability: 'unchanged' },
+      { code: 'corrupt', commitState: 'unchanged' },
+    );
+    await writeFile(descriptorPath, JSON.stringify(descriptor));
+
+    await symlink(join(root, 'pgdata/PG_VERSION'), join(root, 'pgdata/linked-version'));
+    await expect(acquireNodeDirectoryStorage(root, template(), compatible())).rejects.toMatchObject(
+      { code: 'corrupt', commitState: 'unchanged' },
     );
   });
 
@@ -81,44 +98,174 @@ describe('WASIX server-runtime directory storage', () => {
     const lease = await acquireNodeDirectoryStorage(root, template(), compatible());
     await lease.close(pgdataDirectory('must-not-persist'), 'failed');
 
-    expect(await pathExists(join(root, 'PG_VERSION'))).toBe(false);
+    expect(await pathExists(join(root, 'pgdata/PG_VERSION'))).toBe(false);
     const reopened = await acquireNodeDirectoryStorage(root, template(), compatible());
     expect(reopened.state).toBe('new');
     await reopened.close(undefined, 'failed');
   });
 
-  it('rejects caller files and the retired nested snapshot layout', async () => {
+  it('rejects every unexpected managed-root entry without migration modes', async () => {
     const root = await temporaryRoot('collision');
     await mkdir(root, { recursive: true });
     await writeFile(join(root, 'application-data'), 'keep');
     await expect(acquireNodeDirectoryStorage(root, template(), compatible())).rejects.toMatchObject(
-      { code: 'corrupt', durability: 'unchanged' },
+      { code: 'corrupt', commitState: 'unchanged' },
     );
     expect(await readFile(join(root, 'application-data'), 'utf8')).toBe('keep');
 
-    const retired = await temporaryRoot('retired');
-    await mkdir(join(retired, '.oliphaunt-wasix-ts'), { recursive: true });
-    await expect(acquireNodeDirectoryStorage(retired, template(), compatible())).rejects.toThrow(
-      'retired snapshot storage',
-    );
+    const raw = await temporaryRoot('raw');
+    await mkdir(raw, { recursive: true });
+    await writeFile(join(raw, 'PG_VERSION'), '18\n');
+    await expect(acquireNodeDirectoryStorage(raw, template(), compatible())).rejects.toMatchObject({
+      code: 'corrupt',
+      commitState: 'unchanged',
+    });
 
     const partial = await temporaryRoot('partial');
     await mkdir(partial, { recursive: true });
     await writeFile(
-      join(partial, '.oliphaunt-wasix.json'),
-      JSON.stringify({ schema: 'oliphaunt-wasix-directory-v2', compatibility: compatible() }),
+      join(partial, '.oliphaunt.json'),
+      JSON.stringify({
+        schema: 'oliphaunt-database-root-v1',
+        engineFamily: 'wasix',
+        pgdata: 'pgdata',
+        postgresMajor: 18,
+        physicalFormat: 'wasix-pg18-v1',
+      }),
     );
-    await expect(acquireNodeDirectoryStorage(partial, template(), compatible())).rejects.toThrow(
-      'without a complete PGDATA',
+    await expect(
+      acquireNodeDirectoryStorage(partial, template(), compatible()),
+    ).rejects.toMatchObject({ code: 'incomplete', commitState: 'unchanged' });
+
+    const native = await temporaryRoot('native');
+    await mkdir(join(native, 'pgdata/global'), { recursive: true });
+    await mkdir(join(native, 'pgdata/pg_wal'));
+    await writeFile(join(native, 'pgdata/PG_VERSION'), '18\n');
+    await writeFile(join(native, 'pgdata/global/pg_control'), Uint8Array.of(1));
+    await writeFile(
+      join(native, '.oliphaunt.json'),
+      `${JSON.stringify({
+        schema: 'oliphaunt-database-root-v1',
+        engineFamily: 'native',
+        pgdata: 'pgdata',
+        postgresMajor: 18,
+        physicalFormat: 'native-pg18-v1',
+      })}\n`,
+    );
+    const nativeLease = await acquireNodeDirectoryStorage(native, template(), compatible());
+    expect(nativeLease.state).toBe('existing');
+    await nativeLease.close(undefined, 'failed');
+  });
+
+  it('rejects interrupted publication files instead of silently mutating the root', async () => {
+    const root = await temporaryRoot('interrupted-publication');
+    const first = await acquireNodeDirectoryStorage(root, template(), compatible());
+    await first.close(pgdataDirectory('complete'), 'clean');
+
+    await writeFile(join(root, '.oliphaunt.json.oliphaunt-write-abandoned'), 'partial');
+    await expect(acquireNodeDirectoryStorage(root, template(), compatible())).rejects.toMatchObject(
+      { code: 'corrupt', commitState: 'unchanged' },
     );
   });
 
-  it('elects exactly one owner during concurrent stale-lease recovery', async () => {
-    const root = await temporaryRoot('stale-race');
-    const initialized = await acquireNodeDirectoryStorage(root, template(), compatible());
-    await initialized.close(undefined, 'failed');
-    await createLockSlot(root, nodeDirectoryLockName(2_147_483_647, 'deadbeefdeadbeef'));
+  it('matches the shared database-root contract', async () => {
+    const fixture = JSON.parse(
+      await readFile(
+        new URL('../../../../shared/fixtures/storage/database-root.json', import.meta.url),
+        'utf8',
+      ),
+    ) as {
+      descriptor: string;
+      schema: string;
+      pgdata: string;
+      postgresMajor: number;
+      families: {
+        native: { physicalFormat: string };
+        wasix: { physicalFormat: string };
+      };
+      validDescriptors: unknown[];
+      invalidDescriptors: { case: string; value: unknown }[];
+      malformedJson: { case: string; value: string }[];
+    };
+    expect(fixture.descriptor).toBe('.oliphaunt.json');
+    expect(fixture.schema).toBe('oliphaunt-database-root-v1');
+    expect(fixture.pgdata).toBe('pgdata');
+    expect(fixture.postgresMajor).toBe(18);
+    expect(fixture.families.native.physicalFormat).toBe('native-pg18-v1');
+    expect(fixture.families.wasix.physicalFormat).toBe('wasix-pg18-v1');
+    for (const descriptor of fixture.validDescriptors) {
+      expect(parseDatabaseRootDescriptor(descriptor)).toBeDefined();
+    }
+    for (const invalid of fixture.invalidDescriptors) {
+      expect(parseDatabaseRootDescriptor(invalid.value), invalid.case).toBeUndefined();
+    }
+    for (const malformed of fixture.malformedJson) {
+      expect(parseDatabaseRootDescriptorText(malformed.value), malformed.case).toBeUndefined();
+    }
 
+    const valid = JSON.stringify(fixture.validDescriptors[1], undefined, 2);
+    expect(parseDatabaseRootDescriptorText(valid)).toEqual(fixture.validDescriptors[1]);
+    expect(
+      parseDatabaseRootDescriptorText(
+        valid.replace('"schema":', '"schema": "oliphaunt-database-root-v1", "schema":'),
+      ),
+    ).toBeUndefined();
+    expect(
+      parseDatabaseRootDescriptorText(valid.replace('"pgdata"', '"nested": {}, "pgdata"')),
+    ).toBeUndefined();
+  });
+
+  it('uses one stable binding-local lock for open and restore', async () => {
+    const root = await temporaryRoot('open-restore-lock');
+    const owner = await acquireNodeDirectoryStorage(root, template(), compatible());
+
+    await expect(
+      restoreNodeDirectoryStorage(root, storedSnapshot('restored'), compatible()),
+    ).rejects.toMatchObject({ code: 'busy', commitState: 'unchanged' });
+
+    await owner.close(undefined, 'failed');
+  });
+
+  it('uses one lock identity through a symlinked parent', async () => {
+    const parent = await temporaryRoot('parent-alias');
+    const realParent = join(parent, 'real');
+    const aliasParent = join(parent, 'alias');
+    await mkdir(realParent, { recursive: true });
+    await symlink(realParent, aliasParent, 'dir');
+    const realRoot = join(realParent, 'database');
+    const aliasRoot = join(aliasParent, 'database');
+    const lexicalRoot = `${realParent}/../real/database`;
+    const owner = await acquireNodeDirectoryStorage(realRoot, template(), compatible());
+
+    for (const spelling of [lexicalRoot, aliasRoot]) {
+      await expect(
+        acquireNodeDirectoryStorage(spelling, template(), compatible()),
+      ).rejects.toMatchObject({ code: 'busy', commitState: 'unchanged' });
+      await expect(
+        restoreNodeDirectoryStorage(spelling, storedSnapshot('restored'), compatible()),
+      ).rejects.toMatchObject({ code: 'busy', commitState: 'unchanged' });
+    }
+
+    await owner.close(undefined, 'failed');
+
+    await restoreNodeDirectoryStorage(aliasRoot, storedSnapshot('restored'), compatible());
+    expect(await readdir(realRoot)).toContain('pgdata');
+  });
+
+  it('does not remove an empty restore destination before staging succeeds', async () => {
+    const root = await temporaryRoot('restore-staging-failure');
+    await mkdir(root, { recursive: true });
+    const invalid = {
+      ...storedSnapshot('restored'),
+      files: [{ path: '../escape', bytes: Uint8Array.of(1) }],
+    };
+
+    await expect(restoreNodeDirectoryStorage(root, invalid, compatible())).rejects.toThrow();
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  it('elects exactly one concurrent owner', async () => {
+    const root = await temporaryRoot('ownership-race');
     const attempts = await Promise.allSettled([
       acquireNodeDirectoryStorage(root, template(), compatible(), 'aaaaaaaaaaaaaaaa'),
       acquireNodeDirectoryStorage(root, template(), compatible(), 'bbbbbbbbbbbbbbbb'),
@@ -131,19 +278,22 @@ describe('WASIX server-runtime directory storage', () => {
     await leases[0]?.close(undefined, 'failed');
   });
 
-  it('reaps abandoned lock candidates after winning the fixed slot', async () => {
-    const root = await temporaryRoot('candidate-recovery');
-    const abandoned = join(root, `${NODE_DIRECTORY_LOCK_CANDIDATE_PREFIX}abandoned-token-01`);
-    await mkdir(abandoned, { recursive: true });
-    await mkdir(join(abandoned, nodeDirectoryLockName(2_147_483_647, 'abandoned-token-01')));
+  it('fails closed on an abandoned ownership marker', async () => {
+    const root = await temporaryRoot('abandoned-owner');
+    const slot = nodeDirectoryLockPath(root);
+    await mkdir(join(slot, 'owner-abandoned-token-01'), { recursive: true });
 
-    const recovered = await acquireNodeDirectoryStorage(root, template(), compatible());
-    expect((await readdir(root)).filter((name) => name.includes('candidate'))).toEqual([]);
-    await recovered.close(undefined, 'failed');
+    await expect(acquireNodeDirectoryStorage(root, template(), compatible())).rejects.toMatchObject(
+      { code: 'busy', commitState: 'unchanged' },
+    );
+    await expect(acquireNodeDirectoryStorage(root, template(), compatible())).rejects.toThrow(
+      /remove the stale lock directory/,
+    );
+    expect(await pathExists(slot)).toBe(true);
   });
 
-  it('rejects every contender while an established owner remains', async () => {
-    const root = await temporaryRoot('established-owner');
+  it('cleans up only the worker owner token it was given', async () => {
+    const root = await temporaryRoot('exact-owner-cleanup');
     const owner = await acquireNodeDirectoryStorage(
       root,
       template(),
@@ -151,26 +301,17 @@ describe('WASIX server-runtime directory storage', () => {
       'mmmmmmmmmmmmmmmm',
     );
 
-    const attempts = await Promise.allSettled([
+    releaseNodeDirectoryLockSync(root, 'aaaaaaaaaaaaaaaa');
+    await expect(
       acquireNodeDirectoryStorage(root, template(), compatible(), 'aaaaaaaaaaaaaaaa'),
-      acquireNodeDirectoryStorage(root, template(), compatible(), 'zzzzzzzzzzzzzzzz'),
-    ]);
-    for (const attempt of attempts) {
-      expect(attempt.status).toBe('rejected');
-      if (attempt.status === 'rejected') {
-        expect(attempt.reason).toMatchObject({ code: 'busy', durability: 'unchanged' });
-      }
-    }
+    ).rejects.toMatchObject({ code: 'busy', commitState: 'unchanged' });
+
+    releaseNodeDirectoryLockSync(root, 'mmmmmmmmmmmmmmmm');
     await owner.close(undefined, 'failed');
+    const reopened = await acquireNodeDirectoryStorage(root, template(), compatible());
+    await reopened.close(undefined, 'failed');
   });
 });
-
-async function createLockSlot(root: string, ownerName: string): Promise<string> {
-  const slot = join(root, NODE_DIRECTORY_LOCK_SLOT);
-  await mkdir(slot);
-  await mkdir(join(slot, ownerName));
-  return slot;
-}
 
 async function temporaryRoot(suffix: string): Promise<string> {
   const parent = await mkdtemp(join(tmpdir(), 'oliphaunt-wasix-node-storage-'));
@@ -178,30 +319,29 @@ async function temporaryRoot(suffix: string): Promise<string> {
   return join(parent, suffix);
 }
 
-function compatible(): WasixStorageCompatibility {
-  return {
-    schema: 'oliphaunt-wasix-pgdata-compatibility-v1',
-    runtime: {
-      product: 'liboliphaunt-wasix',
-      version: '0.1.1',
-      manifestSha256: '1'.repeat(64),
-      runtimeArchiveSha256: '2'.repeat(64),
-      pgdataTemplateSha256: '3'.repeat(64),
-      moduleSha256: '4'.repeat(64),
-      sourceFingerprint: 'source-v1',
-      postgresVersion: '18.4',
-    },
-    extensions: [],
-  };
+function compatible(): WasixPhysicalIdentity {
+  return { ...WASIX_PHYSICAL_IDENTITY };
 }
 
 function template() {
   return {
-    directories: ['global'],
+    directories: ['global', 'pg_wal'],
     files: {
       PG_VERSION: new TextEncoder().encode('18\n'),
       'global/pg_control': Uint8Array.of(1),
     },
+  };
+}
+
+function storedSnapshot(value: string) {
+  return {
+    schema: 'oliphaunt-wasix-directory-snapshot-v1' as const,
+    directories: ['global', 'pg_wal', 'user'],
+    files: [
+      { path: 'PG_VERSION', bytes: new TextEncoder().encode('18\n') },
+      { path: 'global/pg_control', bytes: Uint8Array.of(1) },
+      { path: 'user/value', bytes: new TextEncoder().encode(value) },
+    ],
   };
 }
 
@@ -212,11 +352,13 @@ function pgdataDirectory(value: string): StorageDirectory {
         return [
           { type: 'file', name: 'PG_VERSION' },
           { type: 'dir', name: 'global' },
+          { type: 'dir', name: 'pg_wal' },
           { type: 'dir', name: 'user' },
           { type: 'file', name: 'postmaster.pid' },
         ];
       }
       if (path === 'global') return [{ type: 'file', name: 'pg_control' }];
+      if (path === 'pg_wal') return [];
       if (path === 'user') return [{ type: 'file', name: 'value' }];
       throw new Error(`unexpected directory ${path}`);
     },
@@ -247,7 +389,7 @@ function trackedPgdataDirectory(initialValue: string): StorageDirectory & {
       changes = [];
     },
     entryType(path) {
-      if (path === '' || path === 'global' || path === 'user') return 'dir';
+      if (path === '' || path === 'global' || path === 'pg_wal' || path === 'user') return 'dir';
       if (path === 'PG_VERSION' || path === 'global/pg_control' || path === 'user/value') {
         return 'file';
       }

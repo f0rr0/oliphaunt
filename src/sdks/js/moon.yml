@@ -14,7 +14,7 @@ dependsOn:
 
 project:
   title: "Oliphaunt TypeScript SDK"
-  description: "TypeScript SDK with nativeDirect defaults for Node.js, Bun, and Deno."
+  description: "TypeScript SDK with direct execution defaults for Node.js, Bun, and Deno."
   owner: "oliphaunt"
   release:
     component: "oliphaunt-js"
@@ -41,6 +41,7 @@ tasks:
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
       - "/tools/dev/write-scoped-pnpm-workspace.mjs"
+      - "/tools/dev/clean-package-lib.mjs"
       - "/src/sdks/js/**/*"
       - "/src/runtimes/node-direct/**/*"
       - "/tools/runtime/**/*"
@@ -61,6 +62,7 @@ tasks:
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
       - "/tools/dev/write-scoped-pnpm-workspace.mjs"
+      - "/tools/dev/clean-package-lib.mjs"
       - "/src/sdks/js/**/*"
       - "/src/runtimes/node-direct/**/*"
       - "/tools/test/run-js-tests.mjs"
@@ -76,7 +78,7 @@ tasks:
     deps:
       - "liboliphaunt-native:smoke"
       - "oliphaunt-broker:check"
-      - "oliphaunt-node-direct:check"
+      - "oliphaunt-node-direct:release-assets"
     options:
       cache: local
       runFromWorkspaceRoot: true
@@ -110,6 +112,7 @@ tasks:
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
       - "/tools/dev/write-scoped-pnpm-workspace.mjs"
+      - "/tools/dev/clean-package-lib.mjs"
       - "/src/sdks/js/**/*"
       - "/src/runtimes/node-direct/**/*"
       - "/tools/release/build-sdk-ci-artifacts.mjs"
@@ -189,6 +192,7 @@ tasks:
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
       - "/tools/dev/write-scoped-pnpm-workspace.mjs"
+      - "/tools/dev/clean-package-lib.mjs"
       - "/src/sdks/js/**/*"
       - "/src/runtimes/node-direct/**/*"
       - "/tools/release/**/*"
@@ -229,6 +233,7 @@ tasks:
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
       - "/tools/dev/write-scoped-pnpm-workspace.mjs"
+      - "/tools/dev/clean-package-lib.mjs"
       - "/src/sdks/js/**/*"
       - "/src/runtimes/node-direct/**/*"
       - "/tools/runtime/**/*"

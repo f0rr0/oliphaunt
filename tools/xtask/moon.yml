@@ -4,18 +4,18 @@ id: "xtask"
 language: "rust"
 layer: "tool"
 stack: "systems"
-tags: ["tools", "rust", "xtask", "wasm"]
+tags: ["tools", "rust", "xtask", "wasix"]
 
 project:
   title: "xtask"
-  description: "Rust helper binary for WASM assets, release staging, and source-policy checks."
+  description: "Rust helper binary for WASIX assets, release staging, and source-policy checks."
   owner: "oliphaunt"
 
 owners:
-  defaultOwner: "@oliphaunt/wasm"
+  defaultOwner: "@oliphaunt/wasix"
   paths:
-    "**/*.rs": ["@oliphaunt/wasm"]
-    "Cargo.toml": ["@oliphaunt/wasm"]
+    "**/*.rs": ["@oliphaunt/wasix"]
+    "Cargo.toml": ["@oliphaunt/wasix"]
 
 tasks:
   check:

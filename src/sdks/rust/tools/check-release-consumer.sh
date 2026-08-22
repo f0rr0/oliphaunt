@@ -123,7 +123,7 @@ run_consumer() {
   install_dir="$scratch/native/runtime"
   tools_dir="$scratch/tools/runtime"
   for file in "$install_dir/bin/postgres" "$install_dir/bin/initdb" "$install_dir/bin/pg_ctl" \
-    "$tools_dir/bin/pg_dump" "$tools_dir/bin/psql"; do
+    "$tools_dir/bin/pg_basebackup" "$tools_dir/bin/pg_dump" "$tools_dir/bin/psql"; do
     require_file "$file"
   done
 

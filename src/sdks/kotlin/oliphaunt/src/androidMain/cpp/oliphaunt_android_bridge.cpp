@@ -29,10 +29,8 @@ using OliphauntCloseFn = int32_t (*)(OliphauntHandle *);
 using OliphauntRegisterStaticExtensionsFn = int32_t (*)(const OliphauntStaticExtension *, size_t);
 using OliphauntSelectedStaticExtensionsFn = const OliphauntStaticExtension *(*)(size_t *);
 using OliphauntLastErrorFn = const char *(*)(OliphauntHandle *);
-using OliphauntCapabilitiesFn = uint64_t (*)(void);
 using OliphauntFreeResponseFn = void (*)(OliphauntResponse *);
-using OliphauntBackupFn = int32_t (*)(
-    OliphauntHandle *, const OliphauntBackupOptions *, OliphauntResponse *);
+using OliphauntBackupFn = int32_t (*)(OliphauntHandle *, OliphauntResponse *);
 using OliphauntRestoreFn = int32_t (*)(const OliphauntRestoreOptions *);
 
 struct Symbols {
@@ -46,7 +44,6 @@ struct Symbols {
   OliphauntCloseFn close = nullptr;
   OliphauntRegisterStaticExtensionsFn registerStaticExtensions = nullptr;
   OliphauntLastErrorFn lastError = nullptr;
-  OliphauntCapabilitiesFn capabilities = nullptr;
   OliphauntFreeResponseFn freeResponse = nullptr;
   OliphauntBackupFn backup = nullptr;
   OliphauntRestoreFn restore = nullptr;
@@ -180,7 +177,6 @@ bool loadSymbols(const std::string &configuredLibraryPath, Symbols *symbols, std
       !loadSymbol(symbols, "oliphaunt_close", reinterpret_cast<void **>(&symbols->close), error) ||
       !loadSymbol(symbols, "oliphaunt_register_static_extensions", reinterpret_cast<void **>(&symbols->registerStaticExtensions), error) ||
       !loadSymbol(symbols, "oliphaunt_last_error", reinterpret_cast<void **>(&symbols->lastError), error) ||
-      !loadSymbol(symbols, "oliphaunt_capabilities", reinterpret_cast<void **>(&symbols->capabilities), error) ||
       !loadSymbol(symbols, "oliphaunt_free_response", reinterpret_cast<void **>(&symbols->freeResponse), error) ||
       !loadSymbol(symbols, "oliphaunt_backup", reinterpret_cast<void **>(&symbols->backup), error) ||
       !loadSymbol(symbols, "oliphaunt_restore", reinterpret_cast<void **>(&symbols->restore), error)) {
@@ -248,34 +244,6 @@ Session *sessionFromHandle(jlong handle) {
   return reinterpret_cast<Session *>(static_cast<intptr_t>(handle));
 }
 
-std::string lastError(Session *session) {
-  if (session == nullptr) {
-    return "invalid liboliphaunt Android session";
-  }
-  const char *message = session->symbols.lastError != nullptr
-      ? session->symbols.lastError(session->handle)
-      : nullptr;
-  std::snprintf(
-      session->lastError,
-      sizeof(session->lastError),
-      "%s",
-      message != nullptr ? message : "unknown liboliphaunt Android runtime error");
-  return session->lastError;
-}
-
-uint32_t backupFormatId(const std::string &format) {
-  if (format == "physicalArchive") {
-    return OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE;
-  }
-  if (format == "sql") {
-    return OLIPHAUNT_BACKUP_FORMAT_SQL;
-  }
-  if (format == "oliphauntArchive") {
-    return OLIPHAUNT_BACKUP_FORMAT_OLIPHAUNT_ARCHIVE;
-  }
-  return 0;
-}
-
 int32_t streamCallback(void *context, const uint8_t *data, size_t len) {
   auto *stream = static_cast<StreamContext *>(context);
   if (stream == nullptr || stream->env == nullptr || stream->sink == nullptr || stream->onChunk == nullptr) {
@@ -311,6 +279,21 @@ int32_t streamCallback(void *context, const uint8_t *data, size_t len) {
     return -1;
   }
   return 0;
+}
+
+std::string lastError(Session *session) {
+  if (session == nullptr) {
+    return "invalid liboliphaunt Android session";
+  }
+  const char *message = session->symbols.lastError != nullptr
+      ? session->symbols.lastError(session->handle)
+      : nullptr;
+  std::snprintf(
+      session->lastError,
+      sizeof(session->lastError),
+      "%s",
+      message != nullptr ? message : "unknown liboliphaunt Android runtime error");
+  return session->lastError;
 }
 
 }  // namespace
@@ -497,28 +480,14 @@ extern "C" JNIEXPORT jbyteArray JNICALL
 Java_dev_oliphaunt_OliphauntAndroidNativeBridge_backupNative(
     JNIEnv *env,
     jobject,
-    jlong handle,
-    jstring format) {
+    jlong handle) {
   Session *session = sessionFromHandle(handle);
   if (session == nullptr || session->handle == nullptr) {
     throwIllegalState(env, "Oliphaunt database is closed");
     return nullptr;
   }
-  uint32_t formatId = backupFormatId(jniString(env, format));
-  if (formatId != OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE) {
-    throwRuntime(env, "Kotlin Android native-direct backup currently supports physicalArchive");
-    return nullptr;
-  }
-
   OliphauntResponse response = {nullptr, 0};
-  const OliphauntBackupOptions options = {
-      .abi_version = OLIPHAUNT_ABI_VERSION,
-      .format = formatId,
-      .generated_files = nullptr,
-      .generated_file_count = 0,
-      .reserved_flags = 0,
-  };
-  int32_t rc = session->symbols.backup(session->handle, &options, &response);
+  int32_t rc = session->symbols.backup(session->handle, &response);
   if (rc != 0) {
     std::string error = lastError(session);
     if (session->symbols.freeResponse != nullptr) {
@@ -545,17 +514,10 @@ Java_dev_oliphaunt_OliphauntAndroidNativeBridge_restoreNative(
     JNIEnv *env,
     jobject,
     jstring destination,
-    jstring format,
-    jbyteArray artifact,
-    jboolean replaceExisting,
+    jbyteArray bytes,
     jstring libraryPath) {
-  if (artifact == nullptr) {
-    throwRuntime(env, "backup artifact must not be null");
-    return;
-  }
-  uint32_t formatId = backupFormatId(jniString(env, format));
-  if (formatId != OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE) {
-    throwRuntime(env, "Kotlin Android restore currently requires physicalArchive");
+  if (bytes == nullptr) {
+    throwRuntime(env, "backup bytes must not be null");
     return;
   }
 
@@ -567,14 +529,14 @@ Java_dev_oliphaunt_OliphauntAndroidNativeBridge_restoreNative(
   }
 
   std::string destinationPath = jniString(env, destination);
-  const jsize artifactLength = env->GetArrayLength(artifact);
-  std::vector<uint8_t> artifactBytes(static_cast<size_t>(artifactLength));
-  if (artifactLength > 0) {
+  const jsize byteLength = env->GetArrayLength(bytes);
+  std::vector<uint8_t> backupBytes(static_cast<size_t>(byteLength));
+  if (byteLength > 0) {
     env->GetByteArrayRegion(
-        artifact,
+        bytes,
         0,
-        artifactLength,
-        reinterpret_cast<jbyte *>(artifactBytes.data()));
+        byteLength,
+        reinterpret_cast<jbyte *>(backupBytes.data()));
     if (env->ExceptionCheck()) {
       unloadSymbols(&symbols);
       return;
@@ -584,10 +546,8 @@ Java_dev_oliphaunt_OliphauntAndroidNativeBridge_restoreNative(
   OliphauntRestoreOptions options = {
       .abi_version = OLIPHAUNT_ABI_VERSION,
       .destination = destinationPath.c_str(),
-      .format = formatId,
-      .data = artifactBytes.empty() ? nullptr : artifactBytes.data(),
-      .len = artifactBytes.size(),
-      .flags = replaceExisting ? OLIPHAUNT_RESTORE_REPLACE_EXISTING : 0,
+      .data = backupBytes.empty() ? nullptr : backupBytes.data(),
+      .len = backupBytes.size(),
   };
   int32_t rc = symbols.restore(&options);
   if (rc != 0) {
@@ -638,17 +598,4 @@ Java_dev_oliphaunt_OliphauntAndroidNativeBridge_closeNative(
   }
   unloadSymbols(&session->symbols);
   delete session;
-}
-
-extern "C" JNIEXPORT jlong JNICALL
-Java_dev_oliphaunt_OliphauntAndroidNativeBridge_capabilitiesNative(
-    JNIEnv *env,
-    jobject,
-    jlong handle) {
-  Session *session = sessionFromHandle(handle);
-  if (session == nullptr || session->handle == nullptr) {
-    throwIllegalState(env, "Oliphaunt database is closed");
-    return 0;
-  }
-  return static_cast<jlong>(session->symbols.capabilities());
 }

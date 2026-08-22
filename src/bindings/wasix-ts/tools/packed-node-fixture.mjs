@@ -4,7 +4,11 @@ import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-
+import { WASIX_RUNTIME_NPM_ASSET_PATHS } from '../../../../tools/release/wasix-runtime-npm-contract.mjs';
+import {
+  renderWasixRuntimeDescriptorModule,
+  renderWasixRuntimeDescriptorTypes,
+} from '../../../../tools/release/wasix-runtime-npm-descriptor.mjs';
 import { prepareWasixTypescriptPackage } from '../../../../tools/release/wasix-typescript-package.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -15,6 +19,10 @@ const buildOutputsFile = resolve(
   repositoryRoot,
   'target/oliphaunt-wasix/wasix-build/build/outputs.json',
 );
+const databaseRootContractFile = resolve(
+  repositoryRoot,
+  'src/shared/fixtures/storage/database-root.json',
+);
 
 export async function createPackedWasixConsumer({
   scratch,
@@ -23,7 +31,9 @@ export async function createPackedWasixConsumer({
   useStubRuntime = false,
 }) {
   if (typeof scratch !== 'string' || !isAbsolute(scratch)) {
-    throw new Error('packed WASIX server-runtime fixture requires an absolute scratch directory');
+    throw new Error(
+      'packed WASIX Node/Bun/Deno host fixture requires an absolute scratch directory',
+    );
   }
   const releaseVersions = JSON.parse(
     await readFile(resolve(repositoryRoot, '.release-please-manifest.json'), 'utf8'),
@@ -78,12 +88,16 @@ export async function createPackedWasixConsumer({
 
 async function packStubRuntime({ scratch, tarballs, runtimeVersion }) {
   requireReleaseVersion(runtimeVersion, 'src/runtimes/liboliphaunt/wasix');
+  const identity = await wasixPhysicalIdentity();
   const staging = resolve(scratch, 'runtime');
   await mkdir(staging);
   const emptyByteSha256 = sha256(Buffer.of(0));
   await writeFile(
     resolve(staging, 'index.js'),
-    `const byte = new URL('data:application/octet-stream;base64,AA==');
+    `export const POSTGRES_MAJOR = ${JSON.stringify(identity.postgresMajor)};
+export const PHYSICAL_FORMAT = ${JSON.stringify(identity.physicalFormat)};
+
+const byte = new URL('data:application/octet-stream;base64,AA==');
 export default Object.freeze({
   schema: 'oliphaunt-wasix-runtime-v1',
   runtime: 'wasix',
@@ -139,10 +153,15 @@ async function packBinding({ scratch, tarballs }) {
 
 async function packRuntime({ scratch, tarballs, runtimeVersion }) {
   requireReleaseVersion(runtimeVersion, 'src/runtimes/liboliphaunt/wasix');
+  const identity = await wasixPhysicalIdentity();
   const staging = resolve(scratch, 'runtime');
   const assets = resolve(staging, 'assets');
   await mkdir(assets, { recursive: true });
   const manifest = JSON.parse(await readFile(resolve(assetRoot, 'manifest.json'), 'utf8'));
+  const manifestPostgresMajor = Number(manifest.runtime?.['postgres-version']?.split('.')[0]);
+  if (manifestPostgresMajor !== identity.postgresMajor) {
+    throw new Error('WASIX runtime manifest disagrees with the shared physical identity');
+  }
   const coreManifest = Buffer.from(JSON.stringify({ ...manifest, extensions: [] }));
   const runtimeSource = resolve(assetRoot, manifest.runtime.archive);
   const pgdataSource = resolve(assetRoot, manifest['pgdata-template'].archive);
@@ -155,9 +174,9 @@ async function packRuntime({ scratch, tarballs, runtimeVersion }) {
     manifest['pgdata-template'].archive,
   );
   const build = await runtimeBuildProvenance(manifest);
-  await cp(runtimeSource, resolve(assets, 'runtime.tar.zst'));
-  await cp(pgdataSource, resolve(assets, 'pgdata.tar.zst'));
-  await writeFile(resolve(assets, 'manifest.json'), coreManifest);
+  await cp(runtimeSource, resolve(staging, WASIX_RUNTIME_NPM_ASSET_PATHS.runtimeArchive));
+  await cp(pgdataSource, resolve(staging, WASIX_RUNTIME_NPM_ASSET_PATHS.pgdataArchive));
+  await writeFile(resolve(staging, WASIX_RUNTIME_NPM_ASSET_PATHS.manifest), coreManifest);
   const descriptor = {
     schema: 'oliphaunt-wasix-runtime-v1',
     runtime: 'wasix',
@@ -175,22 +194,27 @@ async function packRuntime({ scratch, tarballs, runtimeVersion }) {
     },
     manifest: { sha256: sha256(coreManifest), size: coreManifest.length },
   };
-  await writeFile(
-    resolve(staging, 'index.js'),
-    `const descriptor = ${JSON.stringify(descriptor, null, 2)};
-descriptor.runtimeArchive.source = new URL('./assets/runtime.tar.zst', import.meta.url);
-descriptor.pgdataArchive.source = new URL('./assets/pgdata.tar.zst', import.meta.url);
-descriptor.manifest.source = new URL('./assets/manifest.json', import.meta.url);
-export default Object.freeze(descriptor);
-`,
-  );
+  await writeFile(resolve(staging, 'index.js'), renderWasixRuntimeDescriptorModule(descriptor));
+  await writeFile(resolve(staging, 'index.d.ts'), renderWasixRuntimeDescriptorTypes());
   await writeJson(resolve(staging, 'package.json'), {
     name: '@oliphaunt/liboliphaunt-wasix',
     version: runtimeVersion,
     type: 'module',
-    exports: { '.': './index.js' },
+    exports: {
+      '.': { types: './index.d.ts', import: './index.js', default: './index.js' },
+    },
   });
   return { ...(await pack(staging, tarballs)), build };
+}
+
+async function wasixPhysicalIdentity() {
+  const contract = JSON.parse(await readFile(databaseRootContractFile, 'utf8'));
+  const postgresMajor = contract.postgresMajor;
+  const physicalFormat = contract.families?.wasix?.physicalFormat;
+  if (!Number.isInteger(postgresMajor) || typeof physicalFormat !== 'string' || !physicalFormat) {
+    throw new Error('shared database-root fixture has no valid WASIX physical identity');
+  }
+  return { postgresMajor, physicalFormat };
 }
 
 export async function runtimeBuildProvenance(manifest) {
@@ -259,7 +283,6 @@ export function parseBuildProfile(value) {
     wasmOptPreserveUnoptimized: 'wasm_opt_preserve_unoptimized',
     compilerFlags: 'compiler_flags',
     linkerFlags: 'linker_flags',
-    backendTiming: 'backend_timing',
   })) {
     if (!fields.has(key)) throw new Error(`WASIX build-profile omits ${key}`);
     configuration[field] = fields.get(key);
@@ -313,7 +336,7 @@ async function packPgtap({ scratch, tarballs, runtimeVersion, extensionVersion }
     version: carrier.version,
     compatibility: {
       extensionRuntimeContract: 'oliphaunt-extension-runtime-contract-v1',
-      postgresMajor: '18',
+      postgresMajor: manifest.runtime['postgres-version'].split('.')[0],
       wasixRuntimeProduct: 'liboliphaunt-wasix',
       wasixRuntimeVersion: runtimeVersion,
     },

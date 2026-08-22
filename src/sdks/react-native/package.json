@@ -20,6 +20,37 @@
   "module": "lib/module/index.js",
   "types": "lib/typescript/index.d.ts",
   "react-native": "lib/module/index.js",
+  "exports": {
+    ".": {
+      "types": "./lib/typescript/index.d.ts",
+      "react-native": "./lib/module/index.js",
+      "import": "./lib/module/index.js",
+      "require": "./lib/commonjs/index.js",
+      "default": "./lib/module/index.js"
+    },
+    "./protocol": {
+      "types": "./lib/typescript/protocol.d.ts",
+      "react-native": "./lib/module/protocol.js",
+      "import": "./lib/module/protocol.js",
+      "require": "./lib/commonjs/protocol.js",
+      "default": "./lib/module/protocol.js"
+    },
+    "./query": {
+      "types": "./lib/typescript/query.d.ts",
+      "react-native": "./lib/module/query.js",
+      "import": "./lib/module/query.js",
+      "require": "./lib/commonjs/query.js",
+      "default": "./lib/module/query.js"
+    },
+    "./extension-metadata": {
+      "types": "./lib/typescript/extension-metadata.d.ts",
+      "react-native": "./lib/module/extension-metadata.js",
+      "import": "./lib/module/extension-metadata.js",
+      "require": "./lib/commonjs/extension-metadata.js",
+      "default": "./lib/module/extension-metadata.js"
+    },
+    "./package.json": "./package.json"
+  },
   "oliphaunt": {
     "swiftSdkVersion": "0.6.1",
     "kotlinSdkVersion": "0.1.1"
@@ -56,14 +87,14 @@
     "!src/__tests__"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.types.json && tsc -p tsconfig.build.module.json && tsc -p tsconfig.build.commonjs.json",
+    "build": "node ../../../tools/dev/clean-package-lib.mjs && tsc -p tsconfig.build.types.json && tsc -p tsconfig.build.module.json && tsc -p tsconfig.build.commonjs.json",
     "codegen:check": "node ./tools/codegen-check.cjs /tmp/oliphaunt-react-native-schema.json src/specs/NativeOliphaunt.ts",
     "docs:api": "typedoc --options typedoc.json",
     "package:verify-ios": "node ./tools/verify-ios-package.mjs --package-dir .",
     "prepack": "node ./tools/verify-ios-package.mjs --package-dir .",
     "test": "node ../../../tools/test/run-js-tests.mjs src/__tests__",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf lib"
+    "clean": "node ../../../tools/dev/clean-package-lib.mjs"
   },
   "peerDependencies": {
     "expo": ">=56.0.0",

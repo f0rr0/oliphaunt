@@ -2,9 +2,9 @@ use super::*;
 
 use crate::process_rss::NativeLiboliphauntChildRssSampler;
 use oliphaunt::{
-    BackupRequest as NativeBackupRequest, Oliphaunt as NativeOliphaunt,
-    OliphauntBuilder as NativeOliphauntBuilder, ProtocolRequest as NativeProtocolRequest,
-    RestoreRequest as NativeRestoreRequest,
+    CommandResult as NativeCommandResult, Oliphaunt as NativeOliphaunt,
+    OliphauntBuilder as NativeOliphauntBuilder, OliphauntServer as NativeOliphauntServer,
+    QueryResult as NativeQueryResult,
 };
 
 pub(super) fn perf_native_liboliphaunt(args: &[String]) -> Result<()> {
@@ -111,6 +111,11 @@ pub(super) fn perf_native_liboliphaunt(args: &[String]) -> Result<()> {
     }
     ensure!(rtt_iterations > 0, "--iterations must be greater than zero");
     ensure!(prepared_rows > 0, "--rows must be greater than zero");
+    ensure!(
+        !(engine == NativeLiboliphauntEngineMode::Server
+            && suite == NativeLiboliphauntSuiteFilter::BackupRestore),
+        "native server backup is not an SDK operation; use PostgreSQL backup tools"
+    );
 
     if suite == NativeLiboliphauntSuiteFilter::PreparedUpdates {
         return perf_native_liboliphaunt_prepared_updates(engine, prepared_rows, tuning);
@@ -134,15 +139,12 @@ pub(super) fn perf_native_liboliphaunt(args: &[String]) -> Result<()> {
         }
     };
     let report = BenchmarkReport {
-        wasmer_version: "native-liboliphaunt",
-        wasmer_wasix_version: "native-liboliphaunt",
-        wasix_runtime_assets: None,
+        engine: "native-liboliphaunt",
         source_model: speed_sql_source.source_model(),
         measurement_model: engine.measurement_model(),
         native_tuning: Some(tuning.report()),
         rtt_iterations,
         speed_scale: 1.0,
-        preload_micros: 0,
         runs: vec![run],
     };
     println!("{}", serde_json::to_string_pretty(&report)?);
@@ -168,9 +170,9 @@ enum NativeLiboliphauntEngineMode {
 impl NativeLiboliphauntEngineMode {
     fn parse(value: &str) -> Result<Self> {
         match value {
-            "direct" | "native-direct" | "native_direct" => Ok(Self::Direct),
-            "broker" | "native-broker" | "native_broker" => Ok(Self::Broker),
-            "server" | "native-server" | "native_server" => Ok(Self::Server),
+            "direct" => Ok(Self::Direct),
+            "broker" => Ok(Self::Broker),
+            "server" => Ok(Self::Server),
             other => {
                 bail!("unknown native-liboliphaunt engine {other:?}; use direct, broker, or server")
             }
@@ -199,8 +201,8 @@ impl NativeLiboliphauntEngineMode {
             (Self::Direct, "speed") => {
                 "Native liboliphaunt speed suite through the in-process direct Rust API."
             }
-            (Self::Direct, "streaming") => {
-                "Native liboliphaunt large-result streaming through the in-process direct Rust API."
+            (Self::Direct, "large-results") => {
+                "Native liboliphaunt large-result raw-protocol transfer through the in-process direct Rust API."
             }
             (Self::Direct, "backup-restore") => {
                 "Native liboliphaunt physical archive backup and restore through the in-process direct Rust API."
@@ -211,23 +213,20 @@ impl NativeLiboliphauntEngineMode {
             (Self::Broker, "speed") => {
                 "Native liboliphaunt speed suite through broker helper-process IPC."
             }
-            (Self::Broker, "streaming") => {
-                "Native liboliphaunt large-result streaming through broker helper-process IPC."
+            (Self::Broker, "large-results") => {
+                "Native liboliphaunt large-result raw-protocol transfer through broker helper-process IPC."
             }
             (Self::Broker, "backup-restore") => {
                 "Native liboliphaunt physical archive backup and restore through broker helper-process IPC."
             }
             (Self::Server, "rtt") => {
-                "Native liboliphaunt server mode through a real local PostgreSQL server process."
+                "Native liboliphaunt server through a real local PostgreSQL server process."
             }
             (Self::Server, "speed") => {
                 "Native liboliphaunt speed suite through a real local PostgreSQL server process."
             }
-            (Self::Server, "streaming") => {
-                "Native liboliphaunt large-result streaming through a real local PostgreSQL server process."
-            }
-            (Self::Server, "backup-restore") => {
-                "Native liboliphaunt physical archive backup and restore through a real local PostgreSQL server process."
+            (Self::Server, "large-results") => {
+                "Native liboliphaunt large-result raw-protocol transfer through a real local PostgreSQL server process."
             }
             _ => "Native liboliphaunt benchmark.",
         }
@@ -242,8 +241,55 @@ impl NativeLiboliphauntEngineMode {
                 "Native liboliphaunt broker-mode control. xtask opens oliphaunt in broker mode, where a helper process owns the direct native backend and the Rust client sends raw protocol/control frames over local IPC. RTT sample loops run inside one Tokio runtime, sort samples, discard the lowest and highest 10% when possible, and report trimmed averages plus percentile latencies. Speed tests run each Oliphaunt fixture SQL file as one simple-query buffer."
             }
             Self::Server => {
-                "Native liboliphaunt server-mode control. xtask opens oliphaunt in server mode, which starts a real local PostgreSQL server process and sends raw PostgreSQL protocol frames through the SDK's server client. RTT sample loops run inside one Tokio runtime, sort samples, discard the lowest and highest 10% when possible, and report trimmed averages plus percentile latencies. Speed tests run each Oliphaunt fixture SQL file as one simple-query buffer."
+                "Native liboliphaunt server control. xtask opens a real local PostgreSQL server through Oliphaunt::builder().open_server() and sends raw PostgreSQL protocol frames through the SDK connection. RTT sample loops run inside one Tokio runtime, sort samples, discard the lowest and highest 10% when possible, and report trimmed averages plus percentile latencies. Speed tests run each Oliphaunt fixture SQL file as one simple-query buffer."
             }
+        }
+    }
+}
+
+enum NativeLiboliphauntDatabase {
+    Database(NativeOliphaunt),
+    Server(NativeOliphauntServer),
+}
+
+impl NativeLiboliphauntDatabase {
+    async fn open(
+        builder: NativeOliphauntBuilder,
+        execution: NativeLiboliphauntEngineMode,
+    ) -> oliphaunt::Result<Self> {
+        match execution {
+            NativeLiboliphauntEngineMode::Direct | NativeLiboliphauntEngineMode::Broker => {
+                builder.open().await.map(Self::Database)
+            }
+            NativeLiboliphauntEngineMode::Server => builder.open_server().await.map(Self::Server),
+        }
+    }
+
+    async fn execute(&self, sql: &str) -> oliphaunt::Result<NativeCommandResult> {
+        match self {
+            Self::Database(database) => database.execute(sql).await,
+            Self::Server(server) => server.execute(sql).await,
+        }
+    }
+
+    async fn query(&self, sql: &str) -> oliphaunt::Result<NativeQueryResult> {
+        match self {
+            Self::Database(database) => database.query(sql).await,
+            Self::Server(server) => server.query(sql).await,
+        }
+    }
+
+    async fn exec_protocol_raw(&self, request: &[u8]) -> oliphaunt::Result<Vec<u8>> {
+        match self {
+            Self::Database(database) => database.exec_protocol_raw(request).await,
+            Self::Server(server) => server.exec_protocol_raw(request).await,
+        }
+    }
+
+    async fn close(&self) -> oliphaunt::Result<()> {
+        match self {
+            Self::Database(database) => database.close().await,
+            Self::Server(server) => server.close().await,
         }
     }
 }
@@ -257,7 +303,10 @@ fn run_native_liboliphaunt_rtt_benchmark(
     let runtime = native_liboliphaunt_runtime()?;
     let open_started = Instant::now();
     let db = runtime
-        .block_on(native_liboliphaunt_builder(&root, engine, tuning).open())
+        .block_on(NativeLiboliphauntDatabase::open(
+            native_liboliphaunt_builder(&root, engine, tuning),
+            engine,
+        ))
         .with_context(|| format!("open native liboliphaunt {} RTT database", engine.label()))?;
     let open_micros = open_started.elapsed().as_micros();
     let mut child_rss = NativeLiboliphauntChildRssSampler::new();
@@ -317,7 +366,10 @@ fn run_native_liboliphaunt_speed_benchmark(
     let runtime = native_liboliphaunt_runtime()?;
     let open_started = Instant::now();
     let db = runtime
-        .block_on(native_liboliphaunt_builder(&root, engine, tuning).open())
+        .block_on(NativeLiboliphauntDatabase::open(
+            native_liboliphaunt_builder(&root, engine, tuning),
+            engine,
+        ))
         .with_context(|| format!("open native liboliphaunt {} speed database", engine.label()))?;
     let open_micros = open_started.elapsed().as_micros();
     let mut child_rss = NativeLiboliphauntChildRssSampler::new();
@@ -357,14 +409,17 @@ fn run_native_liboliphaunt_streaming_benchmark(
     engine: NativeLiboliphauntEngineMode,
     tuning: &NativeBenchmarkTuning,
 ) -> Result<BenchmarkRun> {
-    let root = native_liboliphaunt_benchmark_root(engine.label(), "streaming")?;
+    let root = native_liboliphaunt_benchmark_root(engine.label(), "large-results")?;
     let runtime = native_liboliphaunt_runtime()?;
     let open_started = Instant::now();
     let db = runtime
-        .block_on(native_liboliphaunt_builder(&root, engine, tuning).open())
+        .block_on(NativeLiboliphauntDatabase::open(
+            native_liboliphaunt_builder(&root, engine, tuning),
+            engine,
+        ))
         .with_context(|| {
             format!(
-                "open native liboliphaunt {} streaming database",
+                "open native liboliphaunt {} large-result database",
                 engine.label()
             )
         })?;
@@ -374,38 +429,20 @@ fn run_native_liboliphaunt_streaming_benchmark(
 
     let mut tests = Vec::new();
     for case in streaming_cases() {
-        let counters = std::sync::Arc::new(std::sync::Mutex::new((0usize, 0usize)));
-        let counters_for_callback = std::sync::Arc::clone(&counters);
         let started = Instant::now();
-        runtime
-            .block_on(
-                db.exec_protocol_raw_stream(pg_query(case.sql), move |chunk| {
-                    let mut counters = counters_for_callback.lock().map_err(|_| {
-                        oliphaunt::Error::Engine(
-                            "streaming benchmark counter lock poisoned".to_owned(),
-                        )
-                    })?;
-                    counters.0 = counters.0.saturating_add(chunk.len());
-                    counters.1 = counters.1.saturating_add(1);
-                    Ok(())
-                }),
-            )
+        let response = runtime
+            .block_on(db.exec_protocol_raw(&pg_query(case.sql)))
             .with_context(|| {
                 format!(
-                    "execute native liboliphaunt {} streaming benchmark {}",
+                    "execute native liboliphaunt {} large-result benchmark {}",
                     engine.label(),
                     case.id
                 )
             })?;
-        let (bytes, chunks) = *counters
-            .lock()
-            .map_err(|_| anyhow!("streaming benchmark counter lock poisoned"))?;
+        let bytes = response.len();
         tests.push(single_sample_result(
             case.id,
-            format!(
-                "{}; streamed {bytes} bytes across {chunks} chunk(s)",
-                case.label
-            ),
+            format!("{}; transferred {bytes} raw protocol bytes", case.label),
             "seconds",
             bytes,
             started.elapsed(),
@@ -413,12 +450,12 @@ fn run_native_liboliphaunt_streaming_benchmark(
         child_rss.sample();
     }
     runtime.block_on(db.close())?;
-    cleanup_native_liboliphaunt_benchmark_root(engine, &root, "streaming")?;
+    cleanup_native_liboliphaunt_benchmark_root(engine, &root, "large-results")?;
 
     Ok(BenchmarkRun {
-        suite: "streaming",
+        suite: "large-results",
         mode: engine.benchmark_mode(),
-        description: engine.description("streaming"),
+        description: engine.description("large-results"),
         open_micros,
         connect_micros: None,
         setup_micros: 0,
@@ -460,30 +497,26 @@ fn run_native_liboliphaunt_backup_restore_benchmark(
 
     let backup_started = Instant::now();
     let artifact = runtime
-        .block_on(db.backup(NativeBackupRequest::physical_archive()))
+        .block_on(db.backup())
         .with_context(|| format!("backup native liboliphaunt {} root", engine.label()))?;
     let backup_elapsed = backup_started.elapsed();
     ensure!(
-        !artifact.bytes.is_empty(),
+        !artifact.is_empty(),
         "native liboliphaunt {} backup returned an empty archive",
         engine.label()
     );
-    let archive_bytes = artifact.bytes.len();
+    let archive_bytes = artifact.len();
     child_rss.sample();
 
     runtime.block_on(db.close())?;
 
     let restore_started = Instant::now();
-    runtime
-        .block_on(NativeOliphaunt::restore(
-            NativeRestoreRequest::physical_archive(&restore_root, artifact),
-        ))
-        .with_context(|| {
-            format!(
-                "restore native liboliphaunt {} physical archive",
-                engine.label()
-            )
-        })?;
+    NativeOliphaunt::restore(&restore_root, artifact).with_context(|| {
+        format!(
+            "restore native liboliphaunt {} physical archive",
+            engine.label()
+        )
+    })?;
     let restore_elapsed = restore_started.elapsed();
 
     verify_native_liboliphaunt_restored_root(engine, &restore_root, tuning)?;
@@ -625,11 +658,10 @@ pub(super) fn perf_native_liboliphaunt_restore_verify_child(args: &[String]) -> 
     let root = root.context("--root is required")?;
     let runtime = native_liboliphaunt_runtime()?;
     let db = runtime
-        .block_on(
-            native_liboliphaunt_builder(&root, engine, &tuning)
-                .existing_only()
-                .open(),
-        )
+        .block_on(NativeLiboliphauntDatabase::open(
+            native_liboliphaunt_builder(&root, engine, &tuning),
+            engine,
+        ))
         .with_context(|| {
             format!(
                 "open restored native-liboliphaunt {} root {}",
@@ -672,7 +704,6 @@ fn perf_native_liboliphaunt_prepared_updates(
         PreparedUpdateRun {
             mode: sequential_mode,
             description: sequential_description,
-            protocol_stats: None,
             tests: run_native_liboliphaunt_prepared_update_tests(
                 engine,
                 rows,
@@ -683,7 +714,6 @@ fn perf_native_liboliphaunt_prepared_updates(
         PreparedUpdateRun {
             mode: pipelined_mode,
             description: pipelined_description,
-            protocol_stats: None,
             tests: run_native_liboliphaunt_prepared_update_tests(
                 engine,
                 rows,
@@ -696,8 +726,6 @@ fn perf_native_liboliphaunt_prepared_updates(
     let report = PreparedUpdateReport {
         source_model: "Exact Oliphaunt fixture benchmark2/benchmark6 setup plus update values parsed from benchmark9 and benchmark10.",
         measurement_model: "Each native-liboliphaunt prepared-update test runs in a fresh xtask child process. The child opens the selected native SDK mode, prepares one named statement over the raw frontend/backend protocol, then executes N updates inside one transaction.",
-        gate_model: None,
-        wasix_runtime_assets: None,
         native_tuning: Some(tuning.report()),
         rows,
         runs,
@@ -965,7 +993,7 @@ fn run_native_liboliphaunt_prepared_update_case(
     let open_started = Instant::now();
     let builder = native_liboliphaunt_builder(&root, engine, tuning);
     let db = runtime
-        .block_on(builder.open())
+        .block_on(NativeLiboliphauntDatabase::open(builder, engine))
         .context("open native-liboliphaunt prepared database")?;
     let open_micros = open_started.elapsed().as_micros();
 
@@ -1058,15 +1086,23 @@ fn native_liboliphaunt_builder(
     engine: NativeLiboliphauntEngineMode,
     tuning: &NativeBenchmarkTuning,
 ) -> NativeOliphauntBuilder {
+    let profile_gucs = tuning
+        .runtime_footprint
+        .postgres_gucs()
+        .iter()
+        .chain(tuning.durability.postgres_gucs())
+        .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()));
+    let explicit_gucs = tuning
+        .startup_gucs
+        .iter()
+        .map(|guc| (guc.name.clone(), guc.value.clone()));
     let builder = NativeOliphaunt::builder()
         .directory(root)
-        .durability(tuning.durability)
-        .runtime_footprint(tuning.runtime_footprint)
-        .startup_gucs(tuning.startup_gucs.clone());
+        .startup_gucs(profile_gucs.chain(explicit_gucs));
     match engine {
-        NativeLiboliphauntEngineMode::Direct => builder.native_direct(),
-        NativeLiboliphauntEngineMode::Broker => builder.native_broker(),
-        NativeLiboliphauntEngineMode::Server => builder.native_server(),
+        NativeLiboliphauntEngineMode::Direct => builder.direct(),
+        NativeLiboliphauntEngineMode::Broker => builder.broker(),
+        NativeLiboliphauntEngineMode::Server => builder,
     }
 }
 
@@ -1114,7 +1150,7 @@ enum NativeLiboliphauntPreparedValues {
 
 fn execute_native_liboliphaunt_prepared_updates<I>(
     runtime: &tokio::runtime::Runtime,
-    db: &NativeOliphaunt,
+    db: &NativeLiboliphauntDatabase,
     statement_name: &str,
     execution: PreparedExecution,
     values: I,
@@ -1159,14 +1195,14 @@ where
 
 fn exec_raw_checked(
     runtime: &tokio::runtime::Runtime,
-    db: &NativeOliphaunt,
+    db: &NativeLiboliphauntDatabase,
     message: &[u8],
     context: &'static str,
 ) -> Result<()> {
     let response = runtime
-        .block_on(db.exec_protocol_raw(NativeProtocolRequest::new(message.to_vec())))
+        .block_on(db.exec_protocol_raw(message))
         .with_context(|| context)?;
-    ensure_protocol_response_ok(response.as_bytes()).with_context(|| context)
+    ensure_protocol_response_ok(&response).with_context(|| context)
 }
 
 pub(super) fn run_native_liboliphaunt_speed_hotspot_diagnostic_case(
@@ -1182,8 +1218,14 @@ pub(super) fn run_native_liboliphaunt_speed_hotspot_diagnostic_case(
         .block_on(
             NativeOliphaunt::builder()
                 .directory(&root)
-                .native_direct()
-                .durability(options.durability)
+                .direct()
+                .startup_gucs(
+                    options
+                        .durability
+                        .postgres_gucs()
+                        .iter()
+                        .map(|(name, value)| (*name, *value)),
+                )
                 .open(),
         )
         .with_context(|| {
@@ -1212,8 +1254,8 @@ pub(super) fn run_native_liboliphaunt_speed_hotspot_diagnostic_case(
     let elapsed_micros = started.elapsed().as_micros();
     child_rss.sample();
     let settings = runtime
-        .block_on(db.execute(speed_diagnostic_settings_sql()))
-        .map(|response| diagnostic_settings_from_protocol_response(response.as_bytes()))
+        .block_on(db.exec_protocol_raw(pg_query(speed_diagnostic_settings_sql())))
+        .map(|response| diagnostic_settings_from_protocol_response(&response))
         .unwrap_or_else(|error| serde_json::json!({ "error": error.to_string() }));
 
     runtime.block_on(db.close())?;
@@ -1230,7 +1272,5 @@ pub(super) fn run_native_liboliphaunt_speed_hotspot_diagnostic_case(
         operation_count: target.operation_count,
         settings,
         observed_server_peak_rss_bytes: child_rss.peak_bytes(),
-        fs_trace: serde_json::Value::Null,
-        phases: Vec::new(),
     })
 }

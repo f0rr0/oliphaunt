@@ -1,4 +1,5 @@
 declare const storageDescriptorBrand: unique symbol;
+declare const persistentStorageDescriptorBrand: unique symbol;
 
 /**
  * An opaque storage selection created by this package's storage factories.
@@ -8,26 +9,32 @@ export type WasixStorage = Readonly<{
   [storageDescriptorBrand]: 'oliphaunt-wasix-storage';
 }>;
 
+/** Opaque persistent storage accepted by static physical restore. */
+export type PersistentWasixStorage = WasixStorage &
+  Readonly<{
+    [persistentStorageDescriptorBrand]: 'oliphaunt-wasix-persistent-storage';
+  }>;
+
 export type SerializedWasixStorage =
   | Readonly<{
-      schema: 'oliphaunt-wasix-storage-v2';
+      schema: 'oliphaunt-wasix-storage-v1';
       kind: 'memory';
     }>
   | Readonly<{
-      schema: 'oliphaunt-wasix-storage-v2';
+      schema: 'oliphaunt-wasix-storage-v1';
       kind: 'indexed-db';
       name: string;
     }>
   | Readonly<{
-      schema: 'oliphaunt-wasix-storage-v2';
+      schema: 'oliphaunt-wasix-storage-v1';
       kind: 'opfs';
       name: string;
     }>
   | Readonly<{
-      schema: 'oliphaunt-wasix-storage-v2';
+      schema: 'oliphaunt-wasix-storage-v1';
       kind: 'directory';
       path: string;
-      /** @internal Per-worker lease identity used for crash-safe lock cleanup. */
+      /** @internal Per-worker identity used for exact-owner lock cleanup. */
       ownerToken?: string;
     }>;
 
@@ -38,31 +45,46 @@ const descriptorValues = new WeakMap<object, SerializedWasixStorage>();
  * `storage` is omitted. Reusing the descriptor does not preserve data.
  */
 export function memory(): WasixStorage {
-  return defineStorage({ schema: 'oliphaunt-wasix-storage-v2', kind: 'memory' });
+  return defineStorage({
+    schema: 'oliphaunt-wasix-storage-v1',
+    kind: 'memory',
+  });
 }
 
 /** @internal Used by the selectively imported IndexedDB adapter. */
-export function defineIndexedDbStorage(name: string): WasixStorage {
+export function defineIndexedDbStorage(name: string): PersistentWasixStorage {
   validateIndexedDbDatabaseName(name);
-  return defineStorage({ schema: 'oliphaunt-wasix-storage-v2', kind: 'indexed-db', name });
+  return defineStorage({
+    schema: 'oliphaunt-wasix-storage-v1',
+    kind: 'indexed-db',
+    name,
+  }) as PersistentWasixStorage;
 }
 
 /** @internal Used by the selectively imported OPFS adapter. */
-export function defineOpfsStorage(name: string): WasixStorage {
+export function defineOpfsStorage(name: string): PersistentWasixStorage {
   validateOpfsDatabaseName(name);
-  return defineStorage({ schema: 'oliphaunt-wasix-storage-v2', kind: 'opfs', name });
+  return defineStorage({
+    schema: 'oliphaunt-wasix-storage-v1',
+    kind: 'opfs',
+    name,
+  }) as PersistentWasixStorage;
 }
 
 /** @internal Used by the selectively imported Node directory adapter. */
-export function defineDirectoryStorage(path: string): WasixStorage {
+export function defineDirectoryStorage(path: string): PersistentWasixStorage {
   validateNodeDirectoryPath(path);
-  return defineStorage({ schema: 'oliphaunt-wasix-storage-v2', kind: 'directory', path });
+  return defineStorage({
+    schema: 'oliphaunt-wasix-storage-v1',
+    kind: 'directory',
+    path,
+  }) as PersistentWasixStorage;
 }
 
 /** @internal Validate and project the opaque main-thread value for the worker. */
 export function serializeWasixStorage(storage: WasixStorage | undefined): SerializedWasixStorage {
   if (storage === undefined) {
-    return { schema: 'oliphaunt-wasix-storage-v2', kind: 'memory' };
+    return { schema: 'oliphaunt-wasix-storage-v1', kind: 'memory' };
   }
   const value = descriptorValues.get(storage as object);
   if (value === undefined) {

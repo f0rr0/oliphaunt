@@ -12,10 +12,11 @@ trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 manifest="$tmp/android-sdk.toml"
 sdk="$tmp/Android SDK"
 tools="$sdk/build-tools/36.0.0"
+command_line_tools="$sdk/cmdline-tools/latest/bin"
 apk_dir="$tmp/APK output"
 apk="$apk_dir/app release.apk"
 log="$tmp/tools.log"
-mkdir -p "$tools" "$apk_dir"
+mkdir -p "$tools" "$command_line_tools" "$apk_dir"
 cat >"$manifest" <<'EOF'
 [packages]
 build_tools = "36.0.0"
@@ -43,7 +44,19 @@ set -euo pipefail
 } >>"$OLIPHAUNT_ANDROID_APK_VERIFY_TEST_LOG"
 exit "${OLIPHAUNT_ANDROID_APK_VERIFY_TEST_APKSIGNER_EXIT:-0}"
 EOF
-chmod +x "$tools/zipalign" "$tools/apksigner"
+cat >"$command_line_tools/apkanalyzer" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+{
+  printf 'apkanalyzer'
+  printf '\t%s' "$@"
+  printf '\n'
+} >>"$OLIPHAUNT_ANDROID_APK_VERIFY_TEST_LOG"
+if [ "${OLIPHAUNT_ANDROID_APK_VERIFY_TEST_STALE_KOTLIN_AAR:-0}" != "1" ]; then
+  printf 'C d 1\t1\t1\tdev.oliphaunt.DatabaseStorage$TemporaryDirectory\n'
+fi
+EOF
+chmod +x "$tools/zipalign" "$tools/apksigner" "$command_line_tools/apkanalyzer"
 
 run_verifier() {
   env \
@@ -58,10 +71,13 @@ run_verifier() {
 # with spaces, and uses the exact official verification commands.
 : >"$log"
 run_verifier >"$tmp/success.out"
-printf 'zipalign\t-c\t-P\t16\t-v\t4\t%s\n' "$apk" >"$tmp/expected.log"
-printf 'apksigner\tverify\t--verbose\t%s\n' "$apk" >>"$tmp/expected.log"
+canonical_apk="$(cd "$(dirname "$apk")" && pwd -P)/$(basename "$apk")"
+printf 'zipalign\t-c\t-P\t16\t-v\t4\t%s\n' "$canonical_apk" >"$tmp/expected.log"
+printf 'apksigner\tverify\t--verbose\t%s\n' "$canonical_apk" >>"$tmp/expected.log"
+cp "$tmp/expected.log" "$tmp/expected-signers.log"
+printf 'apkanalyzer\tdex\tpackages\t%s\n' "$canonical_apk" >>"$tmp/expected.log"
 cmp "$tmp/expected.log" "$log"
-grep -Fq 'Verified APK with manifest-pinned zipalign and apksigner' "$tmp/success.out"
+grep -Fq 'Verified APK alignment, signature, and staged Kotlin SDK bytecode' "$tmp/success.out"
 
 expect_failure() {
   local label="$1"
@@ -87,6 +103,12 @@ mv "$tools/apksigner" "$tools/apksigner.saved"
 expect_failure missing-apksigner 'missing regular executable manifest-pinned Android tool' run_verifier
 [ ! -s "$log" ]
 mv "$tools/apksigner.saved" "$tools/apksigner"
+
+mv "$command_line_tools/apkanalyzer" "$command_line_tools/apkanalyzer.saved"
+: >"$log"
+expect_failure missing-apkanalyzer 'missing regular executable Android SDK command-line tool' run_verifier
+[ ! -s "$log" ]
+mv "$command_line_tools/apkanalyzer.saved" "$command_line_tools/apkanalyzer"
 
 chmod a-x "$tools/zipalign"
 : >"$log"
@@ -121,6 +143,17 @@ expect_failure apksigner-rejection 'manifest-pinned apksigner rejected the APK' 
   OLIPHAUNT_ANDROID_TOOLCHAIN_MANIFEST="$manifest" \
   OLIPHAUNT_ANDROID_APK_VERIFY_TEST_LOG="$log" \
   OLIPHAUNT_ANDROID_APK_VERIFY_TEST_APKSIGNER_EXIT=24 \
+  "$verifier" "$apk"
+cmp "$tmp/expected-signers.log" "$log"
+
+# A signed and aligned APK is still rejected when its DEX only references the
+# candidate Kotlin API but does not define the staged class.
+: >"$log"
+expect_failure stale-kotlin-aar 'APK does not define the staged Kotlin SDK storage class' env \
+  ANDROID_HOME="$sdk" ANDROID_SDK_ROOT="$sdk" \
+  OLIPHAUNT_ANDROID_TOOLCHAIN_MANIFEST="$manifest" \
+  OLIPHAUNT_ANDROID_APK_VERIFY_TEST_LOG="$log" \
+  OLIPHAUNT_ANDROID_APK_VERIFY_TEST_STALE_KOTLIN_AAR=1 \
   "$verifier" "$apk"
 cmp "$tmp/expected.log" "$log"
 

@@ -429,7 +429,18 @@ export function generateApiReferenceArtifacts(options = {}) {
       fullMode,
     ),
     runTypeDoc(routeById(manifest, 'oliphaunt-js'), 'src/sdks/js', 'typescript', fullMode),
-    runCargoDoc(routeById(manifest, 'oliphaunt-wasix'), 'oliphaunt-wasix', 'wasm', fullMode),
+    runCargoDoc(
+      routeById(manifest, 'oliphaunt-wasix-rust'),
+      'oliphaunt-wasix',
+      'wasix-rust',
+      fullMode,
+    ),
+    runTypeDoc(
+      routeById(manifest, 'oliphaunt-wasix-typescript'),
+      'src/bindings/wasix-ts',
+      'wasix-typescript',
+      fullMode,
+    ),
   ];
 
   const summary = {

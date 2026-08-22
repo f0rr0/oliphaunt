@@ -13,6 +13,7 @@ export type WorkerResponder = (response: WorkerResponse, transfer?: readonly Arr
 type WorkerSession = Readonly<{
   exec(input: Uint8Array, persistence?: WasixPersistenceMode): Promise<Uint8Array>;
   sync(boundary: WasixStorageSyncBoundary): Promise<void>;
+  backup?(): Promise<Uint8Array>;
   close(): Promise<void>;
 }>;
 
@@ -46,6 +47,15 @@ export function createWorkerSessionDispatcher(
           await requireProcess(process).sync(request.boundary);
           respond({ id: request.id, ok: true });
           return;
+        case 'backup': {
+          const session = requireProcess(process);
+          if (session.backup === undefined) {
+            throw new Error('this WASIX worker session does not support physical backup');
+          }
+          const archive = prepareTransferableBytes(await session.backup());
+          respond({ id: request.id, ok: true, value: archive.value }, archive.transfer);
+          return;
+        }
         case 'close':
           await requireProcess(process).close();
           process = undefined;
@@ -53,7 +63,11 @@ export function createWorkerSessionDispatcher(
           return;
       }
     } catch (error) {
-      respond({ id: request.id, ok: false, error: serializeWorkerError(error) });
+      respond({
+        id: request.id,
+        ok: false,
+        error: serializeWorkerError(error),
+      });
     }
   };
 }

@@ -7,6 +7,13 @@
 
 react_native_package_extra_excludes=()
 
+react_native_source_package_fingerprint() {
+  node "$rn_dir/tools/react-native-package-inputs.mjs" \
+    --root "$root" \
+    --rn-dir "$rn_dir" \
+    --example-package "$source_example_dir/package.json"
+}
+
 host_runtime_label() {
   case "$(uname -s):$(uname -m)" in
     Darwin:*) printf '%s\n' macos ;;
@@ -242,14 +249,14 @@ JSON
     --source "$root/pnpm-workspace.yaml" \
     --output "$scratch_root/pnpm-workspace.yaml" \
     --package "src/sdks/react-native" \
-    --package "src/sdks/react-native/examples/expo"
+    --package "examples/react-native-expo"
   if [ "$scratch_root/pnpm-lock.yaml" != "$root/pnpm-lock.yaml" ]; then
     cp "$root/pnpm-lock.yaml" "$scratch_root/pnpm-lock.yaml"
   fi
 }
 
 install_expo_example_dependencies() {
-  if [ "$example_dir" = "$scratch_root/src/sdks/react-native/examples/expo" ]; then
+  if [ "$example_dir" = "$scratch_root/examples/react-native-expo" ]; then
     run pnpm --dir "$scratch_root" install --no-frozen-lockfile --prefer-offline --filter react-native-oliphaunt-expo
   else
     run pnpm --dir "$example_dir" install --no-frozen-lockfile --prefer-offline
@@ -303,6 +310,15 @@ prepare_react_native_package_worktree() {
   fi
   rsync_args+=("$rn_dir/" "$package_work/")
   rsync "${rsync_args[@]}"
+  mkdir -p "$package_work/src/generated"
+  cp \
+    "$root/src/extensions/generated/sdk/extensions.json" \
+    "$package_work/src/generated/extensions.json"
+  cp \
+    "$root/src/extensions/generated/sdk/ios-static-dependencies.json" \
+    "$package_work/src/generated/ios-static-dependencies.json"
+  mkdir -p "$scratch_root/tools/dev"
+  cp "$root/tools/dev/clean-package-lib.mjs" "$scratch_root/tools/dev/clean-package-lib.mjs"
   if [ -d "$rn_dir/node_modules" ]; then
     ln -s "$rn_dir/node_modules" "$package_work/node_modules"
   else

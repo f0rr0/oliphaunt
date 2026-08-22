@@ -142,7 +142,8 @@ JSON
   # Generate a package-scoped scratch lockfile. The root lockfile includes
   # unrelated example importers that should not be fetched by the SDK check.
   rm -f "$scratch_root/pnpm-lock.yaml"
-  mkdir -p "$scratch_root/fixtures"
+  mkdir -p "$scratch_root/src/shared/fixtures"
+  mkdir -p "$scratch_root/src/shared/js-core/test"
   mkdir -p "$scratch_root/tools/dev"
   mkdir -p "$scratch_root/tools/policy"
   mkdir -p "$scratch_root/tools/release"
@@ -150,7 +151,10 @@ JSON
   mkdir -p "$scratch_root/src/postgres/versions/18"
   mkdir -p "$scratch_root/src/runtimes/liboliphaunt/licenses"
   mkdir -p "$scratch_root/src/sources/third-party/shared"
-  rsync -a --delete src/shared/fixtures/ "$scratch_root/fixtures/"
+  rsync -a --delete src/shared/fixtures/ "$scratch_root/src/shared/fixtures/"
+  cp src/shared/js-core/test/protocol-fixtures.mjs \
+    src/shared/js-core/test/protocol-fixtures.d.mts \
+    "$scratch_root/src/shared/js-core/test/"
   # The copied SDK tests retain repository-relative imports and their legal
   # helpers resolve canonical data from that same repository root. Materialize
   # the exact module and data closure so a dirty prior scratch tree cannot make
@@ -158,6 +162,9 @@ JSON
   cp \
     "$root/tools/dev/capture-command-output.mjs" \
     "$scratch_root/tools/dev/capture-command-output.mjs"
+  cp \
+    "$root/tools/dev/clean-package-lib.mjs" \
+    "$scratch_root/tools/dev/clean-package-lib.mjs"
   cp \
     "$root/tools/policy/source-fetch-core.mjs" \
     "$scratch_root/tools/policy/source-fetch-core.mjs"
@@ -249,7 +256,7 @@ if [ "$mode" = "coverage" ]; then
 fi
 
 if [ "$mode" = "smoke-runtime" ]; then
-  exec pnpm --dir src/sdks/react-native/examples/expo run smoke
+  exec pnpm --dir examples/react-native-expo run smoke
 fi
 
 case "${OLIPHAUNT_GRADLE_CONFIGURATION_CACHE:-1}" in
@@ -356,20 +363,56 @@ if [ "$mode" = "test-unit" ]; then
   run bash "$package_dir/tools/expo-runner-android-device.test.sh"
   run bash "$package_dir/tools/verify-android-apk.test.sh"
   run bash "$package_dir/tools/expo-runner-ios-installed-app.test.sh"
-  run "$root/tools/dev/bun.sh" test "$package_dir/tools/expo-smoke-pass-receipt.test.mjs"
-  run "$root/tools/dev/bun.sh" test "$package_dir/tools/expo-mobile-extension-proof.test.mjs"
+  run bash "$package_dir/tools/expo-runner-workspace.test.sh"
   run "$root/tools/dev/bun.sh" test "$package_dir/tools/ios-app-transport.test.mjs"
   run "$root/tools/dev/bun.sh" test "$package_dir/tools/mobile-extension-artifact-paths.test.mjs"
+  run "$root/tools/dev/bun.sh" test "$package_dir/tools/validate-android-link-evidence.test.mjs"
   run pnpm --dir "$package_dir" test --if-present
   exit 0
 fi
 
 run pnpm --dir "$package_dir" run build
+for removed in \
+  "$package_dir/lib/commonjs/benchmark.js" \
+  "$package_dir/lib/commonjs/mobileExtensionProof.js" \
+  "$package_dir/lib/commonjs/smoke.js" \
+  "$package_dir/lib/module/benchmark.js" \
+  "$package_dir/lib/module/mobileExtensionProof.js" \
+  "$package_dir/lib/module/smoke.js" \
+  "$package_dir/lib/typescript/benchmark.d.ts" \
+  "$package_dir/lib/typescript/mobileExtensionProof.d.ts" \
+  "$package_dir/lib/typescript/smoke.d.ts"
+do
+  if [ -e "$removed" ]; then
+    echo "React Native SDK fresh build retained deleted output $removed" >&2
+    exit 1
+  fi
+done
 if [ "$mode" != "package-shape" ]; then
   run pnpm --dir "$package_dir" run typecheck
 fi
 require_source_text "$package_dir/package.json" '"react-native": "lib/module/index.js"' \
   "React Native package must expose its compiled module build to Metro instead of raw TypeScript source"
+node -e "
+const pkg = require(process.argv[1]);
+const expectedExports = ['.', './extension-metadata', './package.json', './protocol', './query'].sort();
+if (JSON.stringify(Object.keys(pkg.exports || {}).sort()) !== JSON.stringify(expectedExports)) {
+  throw new Error('React Native SDK exports do not match its deliberate public surface');
+}
+for (const name of ['extension-metadata', 'protocol', 'query']) {
+  const entry = pkg.exports['./' + name];
+  const expected = {
+    types: './lib/typescript/' + name + '.d.ts',
+    'react-native': './lib/module/' + name + '.js',
+    import: './lib/module/' + name + '.js',
+    require: './lib/commonjs/' + name + '.js',
+    default: './lib/module/' + name + '.js',
+  };
+  if (JSON.stringify(entry) !== JSON.stringify(expected)) {
+    throw new Error('React Native SDK ' + name + ' subpath is not exact');
+  }
+}
+" "$package_dir/package.json"
 require_source_text "$package_dir/OliphauntReactNative.podspec" 's.dependency "Oliphaunt", native_sdk_version' \
   "React Native iOS package must consume the published Swift SDK pod instead of vendoring Swift sources"
 require_source_text "$package_dir/package.json" '"tools/verify-ios-package.mjs"' \
@@ -384,8 +427,10 @@ if grep -Fq 'install_ios_mobile_assets_into_react_native_package' "$package_dir/
   echo "React Native iOS smoke must not mutate an installed npm package to repair missing release payloads" >&2
   exit 1
 fi
-require_source_text "$package_dir/android/build.gradle" '?: "dev.oliphaunt:oliphaunt-android:${kotlinSdkVersion}"' \
+require_source_text "$package_dir/android/build.gradle" 'def kotlinSdkDependency = "dev.oliphaunt:oliphaunt-android:${kotlinSdkVersion}"' \
   "React Native Android package must default to the published Kotlin SDK Maven coordinate"
+require_source_text "$package_dir/android/build.gradle" 'implementation files(kotlinSdkAar)' \
+  "React Native Android candidate builds must consume the staged Kotlin SDK AAR by exact path"
 require_source_text "$package_dir/android/build.gradle" 'layout.projectDirectory.dir(".cxx").asFile' \
   "React Native Android CMake staging must default outside Gradle's temporary build directory"
 require_source_text "$package_dir/android/build.gradle" 'buildStagingDirectory = cxxBuildRoot' \
@@ -396,8 +441,8 @@ if grep -Fq 'layout.buildDirectory.get().asFile}/cxx' "$package_dir/android/buil
 fi
 require_source_text "$package_dir/android/settings.gradle" "if (configuredKotlinSdkDir != null && !configuredKotlinSdkDir.isBlank())" \
   "React Native Android local Kotlin SDK composite builds must be explicit development overrides"
-require_source_text "$package_dir/tools/expo-android-runner.sh" "kotlin_sdk_dependency_from_maven_repo" \
-  "React Native Android mobile runner must derive the Kotlin SDK dependency from staged Maven artifacts"
+require_source_text "$package_dir/tools/expo-android-runner.sh" '"-PliboliphauntKotlinSdkAar=$kotlin_sdk_aar"' \
+  "React Native Android mobile runner must pin the staged Kotlin SDK candidate AAR by exact path"
 require_source_text "$package_dir/tools/mobile-extension-runtime.sh" 'liboliphaunt-native-version "$native_runtime_version"' \
   "React Native mobile resources must bind extension payloads to the exact liboliphaunt native version"
 require_source_text "$package_dir/src/client.ts" "generatedExtensionBySqlName(trimmed)" \
@@ -416,6 +461,14 @@ require_source_text "$package_dir/ios/Oliphaunt.mm" "if (_invalidated)" \
   "React Native iOS must reject opens after module invalidation"
 require_source_text "$package_dir/ios/Oliphaunt.mm" "if (invalidated)" \
   "React Native iOS must close a nativeDirect session that finishes opening after invalidation"
+require_source_text "$package_dir/ios/Oliphaunt.mm" "acknowledgement->wait()" \
+  "React Native iOS protocol streaming must keep one acknowledged callback in flight"
+require_source_text "$package_dir/ios/OliphauntAdapter.swift" "if let error = chunkBox.value" \
+  "React Native iOS protocol streaming must propagate callback failures to the Swift producer"
+require_source_text "$package_dir/android/src/main/cpp/OliphauntJsiBindings.cpp" "acknowledgement->wait()" \
+  "React Native Android protocol streaming must keep one acknowledged callback in flight"
+require_source_text "$package_dir/android/src/main/java/dev/oliphaunt/reactnative/OliphauntJsiStreamCallback.kt" "nativeEmitChunk(token, chunk)?.let" \
+  "React Native Android protocol streaming must propagate callback failures to the Kotlin producer"
 reject_source_text "$package_dir/ios/Oliphaunt.mm" "dispatch_group_wait" \
   "React Native iOS invalidation must not abandon ownership after a bounded close wait"
 for removed_ios_open_alias in \
@@ -432,6 +485,8 @@ if grep -Fq "dev.oliphaunt:oliphaunt-android:0.1.0" "$package_dir/tools/expo-and
   echo "React Native Android mobile runner must not hardcode the Kotlin SDK version" >&2
   exit 1
 fi
+require_source_text "$package_dir/src/__tests__/protocol-fixtures.test.ts" "assertSharedProtocolFixtures" \
+  "React Native tests must consume the shared protocol fixture corpus"
 if [ "$mode" = "release-check" ] || [ "$mode" = "regression" ]; then
   run pnpm --dir "$package_dir" test --if-present
 fi
@@ -526,6 +581,7 @@ for required in \
   "android/src/main/cpp/include/oliphaunt.h" \
   "android/src/main/cpp/OliphauntJsiBindings.cpp" \
   "android/src/main/java/dev/oliphaunt/reactnative/OliphauntJsiPromiseCallback.kt" \
+  "android/src/main/java/dev/oliphaunt/reactnative/OliphauntJsiStreamCallback.kt" \
   "android/src/main/java/dev/oliphaunt/reactnative/OliphauntModule.kt" \
   "android/src/main/java/dev/oliphaunt/reactnative/OliphauntPackage.kt" \
   "ios/Oliphaunt.mm" \
@@ -537,14 +593,19 @@ for required in \
   "tools/stage-ios-app.mjs" \
   "tools/verify-ios-package.mjs" \
   "lib/commonjs/index.js" \
+  "lib/commonjs/extension-metadata.js" \
   "lib/commonjs/protocol.js" \
+  "lib/commonjs/query.js" \
   "lib/module/index.js" \
+  "lib/module/extension-metadata.js" \
   "lib/module/protocol.js" \
+  "lib/module/query.js" \
   "lib/typescript/index.d.ts" \
-  "lib/typescript/smoke.d.ts" \
-  "src/generated/extensions.json" \
-  "src/generated/ios-static-dependencies.json" \
-  "src/smoke.ts" \
+  "lib/typescript/extension-metadata.d.ts" \
+  "lib/typescript/client.d.ts" \
+  "lib/typescript/protocol.d.ts" \
+  "lib/typescript/query.d.ts" \
+  "src/generated/extensions.ts" \
   "lib/typescript/specs/NativeOliphaunt.d.ts"
 do
   if ! grep -Fq "$required" "$tmp_pack"; then
@@ -612,7 +673,7 @@ case "$mode" in
     run node "$package_dir/tools/ios-icu-autolinking.test.mjs" \
       --react-native-tarball "$ios_fixture_tarball" \
       --icu-source "$root/src/runtimes/liboliphaunt/native/icu-npm" \
-      --expo-project "$root/src/sdks/react-native/examples/expo"
+      --expo-project "$root/examples/react-native-expo"
     if tar -tzf "$ios_fixture_tarball" | grep -Eq \
       '^package/ios/(resources|frameworks|extension-frameworks|generated)/'; then
       echo "selection-neutral React Native npm tarball contains app-specific iOS payload" >&2
@@ -1100,7 +1161,7 @@ REPORT
   kotlin_aar="$kotlin_build_dir/outputs/aar/oliphaunt-debug.aar"
   asset_aar="$aar"
   if [ -f "$kotlin_aar" ] &&
-    jar tf "$kotlin_aar" | grep -Fxq "assets/oliphaunt/runtime/manifest.properties"; then
+    jar tf "$kotlin_aar" | grep -Fx "assets/oliphaunt/runtime/manifest.properties" >/dev/null; then
     asset_aar="$kotlin_aar"
   fi
   for required_asset in \
@@ -1114,23 +1175,23 @@ REPORT
     "assets/oliphaunt/template-pgdata/manifest.properties" \
     "assets/oliphaunt/template-pgdata/files/PG_VERSION"
   do
-    if ! jar tf "$asset_aar" | grep -Fxq "$required_asset"; then
+    if ! jar tf "$asset_aar" | grep -Fx "$required_asset" >/dev/null; then
       echo "Android AAR did not include generated asset $required_asset" >&2
       rm -rf "$tmp_assets" "$tmp_static_jni"
       exit 1
     fi
   done
-  if jar tf "$asset_aar" | grep -Fxq "assets/oliphaunt/runtime/files/share/postgresql/extension/hstore.control"; then
+  if jar tf "$asset_aar" | grep -Fx "assets/oliphaunt/runtime/files/share/postgresql/extension/hstore.control" >/dev/null; then
     echo "Android AAR included unselected hstore extension control file" >&2
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1
   fi
-  if jar tf "$asset_aar" | grep -Eq 'assets/oliphaunt/runtime/files/(lib/postgresql/auto_explain[.]so|share/postgresql/extension/auto_explain[.](control|sql))'; then
+  if jar tf "$asset_aar" | grep -E 'assets/oliphaunt/runtime/files/(lib/postgresql/auto_explain[.]so|share/postgresql/extension/auto_explain[.](control|sql))' >/dev/null; then
     echo "Android AAR incorrectly included dynamic or CREATE EXTENSION files for module-only auto_explain" >&2
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1
   fi
-  if jar tf "$asset_aar" | grep -Fq "assets/oliphaunt/static-registry/archives/"; then
+  if jar tf "$asset_aar" | grep -F "assets/oliphaunt/static-registry/archives/" >/dev/null; then
     echo "Android AAR included build-only static extension archives" >&2
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1

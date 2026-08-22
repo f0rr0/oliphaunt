@@ -21,8 +21,6 @@ export async function validatePreparedRuntimeExtensions(config: {
   target: string;
   source: string;
   host: RuntimeFileHost;
-  moduleDirectoryRelativePaths?: ReadonlyArray<string>;
-  requiredModuleStems?: ReadonlyArray<string>;
 }): Promise<PreparedRuntimeExtensions> {
   const selected = selectedExtensionClosure(config.extensions);
   if (selected.length === 0) {
@@ -35,26 +33,7 @@ export async function validatePreparedRuntimeExtensions(config: {
   }
 
   const runtimeDirectory = await preparedRuntimeDirectory(config.runtimeDirectory, config.host);
-  const moduleDirectoryRelativePaths = config.moduleDirectoryRelativePaths ?? [
-    'lib/modules',
-    'lib/postgresql',
-  ];
-  if (moduleDirectoryRelativePaths.length === 0) {
-    throw new Error(`${config.source} must declare at least one module directory`);
-  }
-  const moduleDirectoryCandidates = moduleDirectoryRelativePaths.map((relativePath) =>
-    config.host.join(runtimeDirectory, relativePath),
-  );
-  let moduleDirectory = moduleDirectoryCandidates[0];
-  for (const candidate of moduleDirectoryCandidates) {
-    if (await config.host.isDirectory(candidate)) {
-      moduleDirectory = candidate;
-      break;
-    }
-  }
-  if (moduleDirectory === undefined) {
-    throw new Error(`${config.source} cannot resolve a module directory`);
-  }
+  const moduleDirectory = config.host.join(runtimeDirectory, 'lib/modules');
   for (const sqlName of selected) {
     const extension = generatedExtensionBySqlName(sqlName);
     if (extension === undefined) {
@@ -70,7 +49,7 @@ export async function validatePreparedRuntimeExtensions(config: {
       host: config.host,
     });
   }
-  for (const moduleStem of config.requiredModuleStems ?? []) {
+  for (const moduleStem of ['dict_snowball', 'plpgsql']) {
     await requireFileInAnyRoot(
       [moduleDirectory],
       `${moduleStem}${nativeModuleSuffixForTarget(config.target)}`,
