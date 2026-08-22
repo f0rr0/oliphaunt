@@ -33305,7 +33305,7 @@ index 0abec18..4090d25 100644
 +    }
 +}
 diff --git a/lib/wasix/src/state/mod.rs b/lib/wasix/src/state/mod.rs
-index fc3463c..cc02524 100644
+index fc3463c..c74fda1 100644
 --- a/lib/wasix/src/state/mod.rs
 +++ b/lib/wasix/src/state/mod.rs
 @@ -21,12 +21,14 @@ mod env;
@@ -33921,7 +33921,7 @@ index fc3463c..cc02524 100644
      // TODO: should not be here, since this requires active work to resolve.
      // State should only hold active runtime state that can be reproducibly re-created.
      pub preopen: Vec<String>,
-@@ -210,6 +786,455 @@ impl WasiState {
+@@ -210,6 +786,465 @@ impl WasiState {
          self.fs.root_fs.new_open_options()
      }
  
@@ -34279,14 +34279,24 @@ index fc3463c..cc02524 100644
 +            .shared_memory_exec_phase
 +            .lock()
 +            .unwrap_or_else(|err| err.into_inner());
-+        if *phase != WasiSharedMemoryExecPhase::Normal {
-+            return Err(Errno::Busy);
-+        }
-+        Ok(self
++        let reservations = self
++            .shared_memory_exec_reservations
++            .lock()
++            .unwrap_or_else(|err| err.into_inner());
++        let active = self
 +            .shared_memory_mappings
 +            .lock()
-+            .unwrap()
-+            .shared_futex_registry(addr))
++            .unwrap_or_else(|err| err.into_inner());
++
++        if let Some(resolved) = active.shared_futex_registry(addr) {
++            return Ok(Some(resolved));
++        }
++        if matches!(*phase, WasiSharedMemoryExecPhase::Transition { .. })
++            && reservations.shared_futex_registry(addr).is_some()
++        {
++            return Err(Errno::Busy);
++        }
++        Ok(None)
 +    }
 +
 +    #[cfg(test)]
@@ -34377,7 +34387,7 @@ index fc3463c..cc02524 100644
      /// Turn the WasiState into bytes
      #[cfg(feature = "enable-serde")]
      pub fn freeze(&self) -> Option<Vec<u8>> {
-@@ -251,9 +1276,44 @@ impl WasiState {
+@@ -251,9 +1286,44 @@ impl WasiState {
          Ok(ret)
      }
  
@@ -34425,7 +34435,7 @@ index fc3463c..cc02524 100644
              fs: self.fs.fork(),
              secret: self.secret,
              inodes: self.inodes.clone(),
-@@ -262,7 +1322,1117 @@ impl WasiState {
+@@ -262,7 +1332,1169 @@ impl WasiState {
              args: Mutex::new(self.args.lock().unwrap().clone()),
              envs: Mutex::new(self.envs.lock().unwrap().clone()),
              signals: Mutex::new(self.signals.lock().unwrap().clone()),
@@ -34595,6 +34605,58 @@ index fc3463c..cc02524 100644
 +            (second.start, second.len)
 +        );
 +        assert!(state.shared_memory_exec_reservations().is_empty());
++        assert_eq!(
++            *state.shared_memory_exec_phase.lock().unwrap(),
++            WasiSharedMemoryExecPhase::Normal
++        );
++    }
++
++    #[test]
++    fn exec_transition_resolves_only_reattached_futex_mappings() {
++        #[cfg(not(target_arch = "wasm32"))]
++        let runtime = tokio::runtime::Builder::new_current_thread()
++            .enable_all()
++            .build()
++            .unwrap();
++        #[cfg(not(target_arch = "wasm32"))]
++        let _runtime_guard = runtime.enter();
++        let state = test_state("shared-memory-exec-partial-futex-test");
++        let active = mapping(0x20_000, 0x10_000, 0x1000);
++        let reserved = mapping(0x40_000, 0x10_000, 0x2000);
++        state.replace_shared_memory_mapping(active.clone()).unwrap();
++        state
++            .replace_shared_memory_mapping(reserved.clone())
++            .unwrap();
++
++        let transition = state.prepare_shared_memory_for_exec().unwrap();
++        state
++            .mark_shared_memory_exec_reservations_installed()
++            .unwrap();
++        state
++            .install_shared_memory_mapping(
++                active.clone(),
++                WasiSharedMemoryMapOrigin::GuestFixed,
++                || Ok(()),
++            )
++            .unwrap();
++        transition.commit();
++
++        let (registry, key) = WasiFutexRegistry::resolve(&state, active.start + 4).unwrap();
++        let WasiFutexRegistry::Shared(registry) = registry else {
++            panic!("reattached mapping resolved as a private futex");
++        };
++        assert!(Arc::ptr_eq(&registry, &active.futexs));
++        assert_eq!(key, active.file_offset + 4);
++        assert!(matches!(
++            WasiFutexRegistry::resolve(&state, reserved.start + 4),
++            Err(Errno::Busy)
++        ));
++
++        state
++            .install_shared_memory_mapping(reserved, WasiSharedMemoryMapOrigin::GuestFixed, || {
++                Ok(())
++            })
++            .unwrap();
 +        assert_eq!(
 +            *state.shared_memory_exec_phase.lock().unwrap(),
 +            WasiSharedMemoryExecPhase::Normal
@@ -37906,7 +37968,7 @@ index e2728e2..60ecb4b 100644
                  } else {
                      return Err(Errno::Badf);
 diff --git a/lib/wasix/src/syscalls/wasi/fd_read.rs b/lib/wasix/src/syscalls/wasi/fd_read.rs
-index f5de216..eec4fe2 100644
+index f5de216..400441b 100644
 --- a/lib/wasix/src/syscalls/wasi/fd_read.rs
 +++ b/lib/wasix/src/syscalls/wasi/fd_read.rs
 @@ -1,6 +1,6 @@
