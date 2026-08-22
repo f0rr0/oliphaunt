@@ -36,8 +36,10 @@ series = [
   "0012-wasmer-js-remove-retired-wasm32-wasi-target.patch",
   "0013-wasmer-wasix-fast-single-backend-clock.patch",
   "0014-wasmer-js-track-directory-mutations.patch",
+  "0015-wasmer-js-add-sync-filesystem-bridge.patch",
   "0016-wasmer-wasix-direct-single-backend-clock.patch",
   "0017-wasmer-js-direct-pgwire-memory-bridge.patch",
   "0018-wasmer-js-bound-direct-stderr.patch",
   "0019-wasmer-parse-exception-reference-types.patch",
+  "0020-wasmer-wasix-preserve-posix-close-durability.patch",
 ]

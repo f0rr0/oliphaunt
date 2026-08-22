@@ -1,6 +1,7 @@
 import type { WasixDirectoryMount } from './archive.js';
 import { DATABASE_ROOT_POSTGRES_MAJOR, WASIX_PHYSICAL_FORMAT } from './database-root.js';
 import { WasixStorageError } from './errors.js';
+import type { Directory } from './host/index.mjs';
 import type { SerializedWasixStorage } from './storage.js';
 import type { StoredSnapshot } from './storage-snapshot.js';
 import { validateIndexedDbDatabaseName, validateOpfsDatabaseName } from './storage.js';
@@ -38,11 +39,13 @@ export type StorageDirectory = {
 export type WasixStorageSyncBoundary = 'operation' | 'checkpoint' | 'close';
 
 export type WasixStorageLease = {
-  /** Whether PGDATA came from the packaged template or a durable generation. */
+  /** Whether PGDATA came from the packaged template or persistent storage. */
   readonly state: 'new' | 'existing';
-  /** Initial contents for the worker-owned `/base` Wasmer memory mount. */
+  /** Initial contents for a portable `/base` Wasmer memory mount. */
   readonly mount: WasixDirectoryMount;
-  /** Publish journaled mutations at a PostgreSQL-safe host boundary. */
+  /** Optional direct PGDATA materializer; portable providers omit it. */
+  createPgdataDirectory?(DirectoryConstructor: typeof Directory): Promise<Directory>;
+  /** Complete the provider's PostgreSQL-safe persistence boundary. */
   sync(directory: StorageDirectory, boundary: WasixStorageSyncBoundary): Promise<void>;
   close(directory: StorageDirectory | undefined, outcome: 'clean' | 'failed'): Promise<void>;
 };

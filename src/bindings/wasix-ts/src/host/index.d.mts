@@ -16,6 +16,8 @@ export type DirectoryInit = Record<string, string | Uint8Array>;
 
 export class Directory {
   constructor(files?: DirectoryInit | null);
+  /** Create a filesystem served synchronously by a caller-realm backend. */
+  static createSync(backend: object, capacity: number): Directory;
   free(): void;
   __getClassname(): string;
   createDir(path: string): Promise<void>;

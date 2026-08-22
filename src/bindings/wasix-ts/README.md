@@ -106,7 +106,9 @@ or qualified workflow.
 
 Node publication writes WAL before ordinary files and `global/pg_control`,
 then fsyncs changed files and parent directories. IndexedDB publishes a delta
-in one transaction. OPFS applies the same PostgreSQL-safe ordering. A
+in one transaction. OPFS uses direct synchronous backing files in worker
+execution and the same opaque format through a copy-on-write portable path
+elsewhere. Both OPFS paths flush or publish in PostgreSQL-safe order. A
 publication failure rejects with `WasixStorageError`; an uncertain state
 poisons the live database handle.
 

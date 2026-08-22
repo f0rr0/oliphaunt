@@ -2,7 +2,7 @@ diff --git a/src/fs/directory.rs b/src/fs/directory.rs
 index 34af7da..51fafa5 100644
 --- a/src/fs/directory.rs
 +++ b/src/fs/directory.rs
-@@ -1,12 +1,18 @@
+@@ -1,11 +1,17 @@
  use std::{
 +    collections::BTreeSet,
      path::{Path, PathBuf},
@@ -23,8 +23,7 @@ index 34af7da..51fafa5 100644
 +};
  use wasm_bindgen::{prelude::wasm_bindgen, JsCast, JsValue};
  use wasmer_wasix::runtime::task_manager::InlineWaker;
- 
-@@ -15,7 +21,10 @@ use crate::{utils::Error, StringOrBytes};
+@@ -15,7 +21,11 @@ use crate::{utils::Error, StringOrBytes};
  /// A directory that can be mounted inside a WASIX instance.
  #[derive(Debug, Clone, wasm_bindgen_derive::TryFromJsValue)]
  #[wasm_bindgen]
@@ -32,6 +31,7 @@ index 34af7da..51fafa5 100644
 +pub struct Directory {
 +    fs: Arc<dyn FileSystem>,
 +    changes: Arc<Mutex<BTreeSet<String>>>,
++    track_changes: bool,
 +}
  
  #[wasm_bindgen]
@@ -45,7 +45,7 @@ index 34af7da..51fafa5 100644
              }
              None => Ok(Directory::default()),
          }
-@@ -141,9 +150,64 @@ impl Directory {
+@@ -141,9 +150,78 @@ impl Directory {
  
          Ok(())
      }
@@ -97,20 +97,34 @@ index 34af7da..51fafa5 100644
  
  impl Directory {
 +    fn from_filesystem(fs: Arc<dyn FileSystem>) -> Self {
++        Self::from_filesystem_with_tracking(fs, true)
++    }
++
++    fn from_untracked_filesystem(fs: Arc<dyn FileSystem>) -> Self {
++        Self::from_filesystem_with_tracking(fs, false)
++    }
++
++    fn from_filesystem_with_tracking(
++        fs: Arc<dyn FileSystem>,
++        track_changes: bool,
++    ) -> Self {
 +        Self {
 +            fs,
 +            changes: Arc::new(Mutex::new(BTreeSet::new())),
++            track_changes,
 +        }
 +    }
 +
 +    fn record_change(&self, path: &Path) {
-+        record_change(&self.changes, path);
++        if self.track_changes {
++            record_change(&self.changes, path);
++        }
 +    }
 +
      async fn _read_file(&self, mut path: String) -> Result<Vec<u8>, Error> {
          if !path.starts_with('/') {
              path.insert(0, '/');
-@@ -159,24 +223,28 @@ impl Directory {
+@@ -159,24 +237,28 @@ impl Directory {
  
  impl Default for Directory {
      fn default() -> Self {
@@ -143,11 +157,14 @@ index 34af7da..51fafa5 100644
      }
  
      #[tracing::instrument(level = "trace", skip(self))]
-@@ -185,17 +253,28 @@ impl FileSystem for Directory {
+@@ -185,17 +267,31 @@ impl FileSystem for Directory {
          from: &'a std::path::Path,
          to: &'a std::path::Path,
      ) -> futures::future::BoxFuture<'a, virtual_fs::Result<()>> {
 -        Box::pin(self.0.rename(from, to).in_current_span())
++        if !self.track_changes {
++            return Box::pin(self.fs.rename(from, to).in_current_span());
++        }
 +        let operation = self.fs.rename(from, to).in_current_span();
 +        let changes = self.changes.clone();
 +        let from = from.to_path_buf();
@@ -175,7 +192,7 @@ index 34af7da..51fafa5 100644
      }
  
      fn new_open_options(&self) -> virtual_fs::OpenOptions {
-@@ -204,18 +283,22 @@ impl FileSystem for Directory {
+@@ -204,18 +300,22 @@ impl FileSystem for Directory {
  
      #[tracing::instrument(level = "trace", skip(self))]
      fn readlink(&self, path: &Path) -> virtual_fs::Result<PathBuf> {
@@ -203,11 +220,15 @@ index 34af7da..51fafa5 100644
      }
  }
  
-@@ -226,8 +309,169 @@ impl virtual_fs::FileOpener for Directory {
+@@ -226,9 +326,174 @@ impl virtual_fs::FileOpener for Directory {
          path: &std::path::Path,
          conf: &virtual_fs::OpenOptionsConfig,
      ) -> virtual_fs::Result<Box<dyn virtual_fs::VirtualFile + Send + Sync + 'static>> {
 -        self.0.new_open_options().options(conf.clone()).open(path)
++        if !self.track_changes {
++            return self.fs.new_open_options().options(conf.clone()).open(path);
++        }
++
 +        let existed = if conf.create && !conf.truncate && !conf.create_new {
 +            self.fs.metadata(path).is_ok()
 +        } else {
@@ -374,3 +395,4 @@ index 34af7da..51fafa5 100644
  }
  
  #[wasm_bindgen(typescript_custom_section)]
+ const DIRENTRY_TYPE_DEF: &'static str = r#"
