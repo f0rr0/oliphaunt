@@ -55,6 +55,32 @@ Implemented:
   honest case counts, skips invalid 8MB/16MB WAL-minimum cases for the current
   16MB WAL-segment PG18 build, and summarizes p50/p90/p95/p99, package size,
   Android PSS/RSS, and iOS resident memory.
+- the iOS device artifact lane now builds a current XCFramework with device and
+  simulator slices that fail freshness checks if PostgreSQL imports
+  mobile-forbidden shared-memory or semaphore APIs; the physical iPhone
+  installed-app path reached successful build/install, crash-recovery verify,
+  a full smoke run with automatic physical-device background/foreground
+  lifecycle exercise through Safari, and quick plus full-candidate installed-app
+  footprint matrices with Safe/Balanced durability, same-device SQLite
+  baselines, process-death WAL recovery, and app-reported Mach task
+  resident/physical-footprint memory. A follow-up physical iPhone quick tuning
+  slice varied `shared_buffers=8/16/32/64/128MB` and
+  `min_wal_size=8/16/32MB` under Balanced durability with 15/15 passing cases,
+  proving effective GUC capture and showing physical footprint is mostly flat
+  across small WAL minima while 128MB shared buffers add a modest footprint
+  step. The harness also has a reuse-installed-app retry mode for locked-device
+  launch failures, and a post-change physical iPhone reuse-installed smoke
+  passed background/foreground lifecycle SQL after adding a bounded Expo launch
+  URL read in the example app.
+- the Android Expo installed-app lane was recovered on the local API 34 emulator
+  by cold-starting the AVD with `-gpu swiftshader_indirect` and
+  `-no-snapshot-load`; the balancedMobile Safe 32MB/shared-buffers, 4MB-WAL
+  quick slice passed benchmark and process-death recovery, including same-device
+  SQLite comparison and Android PSS/RSS capture. Later Android emulator retry
+  evidence also proved app-reported `Debug.MemoryInfo` capture in one
+  balancedMobile quick case, but the same local AVD killed a follow-up app
+  process before attach/startup, so that failure is recorded as harness/device
+  instability rather than database performance evidence.
 - SDK parity checks now guard the mobile direct-mode lifecycle contract:
   one resident backend per process, one physical session, serialized requests,
   same-root logical reopen only, no crash isolation, and
@@ -1287,6 +1313,40 @@ external clients:
   `tokio-postgres`, closes the owned server, verifies the active query is
   interrupted, and verifies the external client cannot run more SQL afterward.
 
+## Native Root Manifest Gate
+
+Live native roots now carry a root-owned `manifest.properties` compatibility
+record:
+
+- root preparation adopts existing PostgreSQL 18 roots by writing the manifest
+  under the native root lock;
+- direct, broker-helper, and server paths reject roots whose manifest or
+  `pgdata/PG_VERSION` targets a PostgreSQL major other than 18 before exposing
+  the engine;
+- initdb-style uninitialized roots are marked as pending and refreshed after
+  direct/server initialization observes `PG_VERSION`;
+- unit coverage validates adoption, uninitialized-to-initialized refresh, and
+  incompatible PGDATA rejection, while broker smoke corrupts the manifest and
+  verifies `existing_only()` fails during helper startup.
+
+## Physical Archive Compatibility Metadata
+
+Native physical backups now carry compatibility metadata instead of relying on
+implicit PGDATA shape alone:
+
+- Rust direct, broker, and server backup paths annotate physical archives with
+  the root `manifest.properties` plus `.oliphaunt/backup-manifest.properties`;
+- the backup manifest records PostgreSQL major/version number, PGDATA version,
+  server encoding, locale, data-checksum state, active
+  `shared_preload_libraries`, required preload libraries, selected extensions,
+  and installed PostgreSQL extensions;
+- restore validates root and backup manifests before publishing a target root,
+  while still accepting legacy archives that only contain `pgdata/**`;
+- legacy restores adopt a current root manifest during staging, so restored
+  roots satisfy the same open-time root gate as newly bootstrapped roots;
+- C archive restore now accepts the same root-level metadata paths, keeping the
+  archive shape compatible with the C ABI boundary.
+
 ## React Native Package-Size Report Parity
 
 React Native now exposes the same package-size evidence as the platform SDKs
@@ -1596,12 +1656,29 @@ each app to invent its own native-boundary test:
   installed-app runner into iOS simulator/device and Android emulator/device CI
   jobs with real packaged `liboliphaunt` runtime resources.
 
+## Native Lifecycle Capabilities
+
+The SDKs publish distinct lifecycle capabilities instead of asking apps to
+infer recovery behavior from process isolation:
+
+- Rust `EngineCapabilities`, Swift `OliphauntCapabilities`, Kotlin
+  `EngineCapabilities`, and React Native `EngineCapabilities` expose
+  same-instance logical reopen, instance switching, and crash restart as
+  separate facts;
+- `NativeDirect` reports same-instance logical reopen but no instance switching
+  or crash restart, while broker and server modes advertise only the lifecycle
+  behaviors their process owners actually provide;
+- a local C-core experiment removed the process-spent guard and crashed on the
+  second same-process direct open in PostgreSQL relation/storage startup, which
+  shows this is not an fd-table-only reset problem. Broker/server remain the
+  robust close/reopen paths.
+
 ## Expo Android Installed-App Smoke Harness
 
 React Native now has a repeatable real-app Android validation path instead of
 only package-level checks:
 
-- `examples/react-native-expo` is an Expo SDK 56 development-build
+- `src/sdks/react-native/examples/expo` is an Expo SDK 56 development-build
   app pinned to React Native 0.85 and the local packed
   `@oliphaunt/react-native` SDK, and its app smoke now calls the installed
   package runner directly before attaching the example's CRUD/perf workload via
@@ -1615,7 +1692,7 @@ only package-level checks:
 - the smoke generates the ignored Expo `android/` project on demand, so a clean
   checkout does not need committed native project output before app-level
   validation can run;
-- `pnpm --dir examples/react-native-expo run smoke:android` exposes the same
+- `pnpm --dir src/sdks/react-native/examples/expo run smoke:android` exposes the same
   installed-app gate as a named validation lane, and SDK parity checks require
   the harness, docs, example command, and machine-readable pass signal to stay
   present;
@@ -1644,10 +1721,24 @@ Expo MCP tool path:
   packaged resource root or app frameworks when `libraryPath` is not supplied,
   so app developers do not need host-environment library overrides for normal
   packaged builds;
-- `examples/react-native-expo` installs `expo-mcp` and exposes
+- `src/sdks/react-native/examples/expo` installs `expo-mcp` and exposes
   `npm run mcp:start`, which runs
   `EXPO_UNSTABLE_MCP_SERVER=1 expo start --dev-client` for Codex/MCP-driven
   local logs, DevTools, screenshots, and automation.
+
+## Apple Mobile Template-Only Bootstrap Guard
+
+The C layer now enforces the mobile bootstrap model before the full iOS
+PostgreSQL artifact lane exists:
+
+- `src/runtimes/liboliphaunt/native/src/liboliphaunt_bootstrap.c` compiles out the `fork`/`exec` initdb
+  path on Apple mobile platforms and returns an actionable error when PGDATA has
+  no `PG_VERSION`;
+- macOS keeps the direct `initdb` tooling fallback, so desktop smoke and local
+  native iteration continue to work from an empty PGDATA root;
+- `src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.mjs --abi-only` now
+  performs a fast iOS simulator syntax check over the liboliphaunt C shim files,
+  catching forbidden mobile C APIs without rebuilding PostgreSQL for iOS.
 
 ## React Native Chunked JSI Streaming
 
@@ -1678,7 +1769,62 @@ placeholder:
   CTEs, window functions, lateral joins, partial expression indexes, `MERGE`,
   privileges, utility commands, table locks, advisory locks, COPY success,
   COPY input errors, COPY fail recovery, streaming `COPY TO STDOUT`, extended
-  protocol parse/bind error recovery, and post-error session reuse.
+  protocol parse/bind error recovery, and post-error session reuse;
+- `src/sdks/rust/tests/protocol_parser_fuzz.rs` adds deterministic
+  fuzz-style corpora for backend query response parsing, mutated valid backend
+  frames, and frontend simple-query request construction, proving parser paths
+  return structured errors instead of panicking on malformed bytes;
+- `src/sdks/rust/tests/sdk_shape.rs` now has optional native-server
+  compatibility smokes for `tokio-postgres` prepared/pipelined clients and
+  `pg_dump`, alongside the existing SQLx pool and `psql` checks. These tests
+  skip cleanly when the native artifact or matching PostgreSQL tools are absent.
+
+## Runtime Footprint Profiles And Startup GUC Overrides
+
+Rust, Swift, Kotlin, and React Native now expose the same startup-tuning shape:
+
+- Rust adds `RuntimeFootprintProfile`, `PostgresStartupGuc`, builder
+  `runtime_footprint(...)`, and builder `startup_guc(...)`/`startup_gucs(...)`;
+- direct and broker pass profile/durability/explicit GUCs through the existing
+  C ABI startup-arg vector, while broker forwards them to helper restarts and
+  server mode preserves its `max_client_sessions` contract as `max_connections`;
+- Swift, Kotlin, and React Native expose matching profile and startup-GUC
+  configuration, validate names/values before native open, and default mobile
+  SDK opens to `balanced` durability with the `balancedMobile` footprint;
+- docs now describe the throughput, balanced-mobile, and small-mobile profiles
+  plus the override precedence for benchmark matrices.
+
+The native perf harness now accepts the same tuning shape:
+
+- `oliphaunt-perf native-liboliphaunt` and `oliphaunt-perf native-postgres` accept
+  `--runtime-footprint` and repeatable `--startup-guc name=value`;
+- native benchmark JSON includes `nativeTuning` with profile, explicit
+  overrides, SDK startup assignments, and native-PostgreSQL control assignments;
+- the release matrix script records profile/GUCs in its plan, provenance, and
+  markdown summary, and forwards the tuning to direct, broker, server, prepared,
+  streaming, and native-PostgreSQL control runs;
+- Expo Android/iOS smoke and benchmark harnesses forward durability, runtime
+  footprint, and startup GUCs through Metro env and dev-client links;
+- `tools/perf/matrix/run_mobile_footprint_matrix.sh` enumerates the requested
+  Android/iOS shared-buffer, WAL-buffer, WAL-minimum, and Safe/Balanced device
+  sweep. It skips `min_wal_size=8MB/16MB` by default because the current PG18
+  artifact uses 16MB WAL segments and PostgreSQL rejects those GUC-only minima.
+
+## Explicit Lifecycle Capability Vocabulary
+
+The SDK contract uses separate lifecycle properties:
+
+- Rust `EngineCapabilities` exposes `same_instance_logical_reopen`,
+  `instance_switchable`, and `crash_restartable`;
+- Swift, Kotlin, and React Native expose matching camelCase fields in their
+  capability structs/dictionaries;
+- native direct reports same-instance resident logical reopen only, with
+  `instanceSwitchable=false` and `crashRestartable=false`;
+- broker reports process isolation, instance switching, and helper
+  crash-restartability; server reports instance switching but no in-place
+  crash restart for the current SDK-owned server handle;
+- SDK tests and docs assert these semantics so mobile callers do not infer crash
+  isolation from direct-mode logical close/reopen.
 
 ## Exact Extension Packaging Recipes
 

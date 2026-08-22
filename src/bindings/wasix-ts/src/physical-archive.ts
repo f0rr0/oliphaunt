@@ -6,12 +6,12 @@ import {
 import { extractTar } from './archive.js';
 import { WasixStorageError } from './errors.js';
 import { simpleQuery } from './protocol.js';
-import { parseQueryResponse } from './query.js';
+import { PostgresError, parseQueryResponse, type QueryResult } from './query.js';
 import type { StorageDirectory } from './storage-provider.js';
 import {
+  type StoredSnapshot,
   snapshotStorageDirectory,
   validateStoredSnapshot,
-  type StoredSnapshot,
 } from './storage-snapshot.js';
 
 const TAR_BLOCK_BYTES = 512;
@@ -24,57 +24,79 @@ const ARCHIVE_MANIFEST =
   `postgresMajor=${WASIX_POSTGRES_MAJOR}\n`;
 const encoder = new TextEncoder();
 
-type ExecProtocol = (input: Uint8Array, persistence?: 'sync' | 'defer') => Promise<Uint8Array>;
+type ExecProtocol = (input: Uint8Array) => Promise<Uint8Array>;
+
+type BackupModeState = 'not-entered' | 'exit-required' | 'exited' | 'exit-unconfirmed';
+
+type StopBackupFiles = Readonly<{
+  stopWal: string;
+  backupLabel: string;
+  tablespaceMap: string | null;
+}>;
+
+type StopBackupAttempt =
+  | Readonly<{ state: 'exited'; files?: StopBackupFiles; validationError?: unknown }>
+  | Readonly<{ state: 'exit-unconfirmed'; error: unknown }>;
+
+/** @internal Identifies the only backup failure that makes the session unsafe to reuse. */
+export class BackupModeExitUnconfirmedError extends Error {
+  constructor(message: string, cause: unknown) {
+    super(message, { cause });
+    this.name = 'BackupModeExitUnconfirmedError';
+  }
+}
 
 /** Create one PostgreSQL online physical backup without restarting its session. */
 export async function createPhysicalArchive(
   exec: ExecProtocol,
   directory: StorageDirectory,
 ): Promise<Uint8Array> {
-  const start = parseQueryResponse(
-    await exec(
-      simpleQuery(
-        "SELECT pg_walfile_name(pg_backup_start(label => 'oliphaunt physical backup', fast => true)), pg_size_bytes(current_setting('wal_segment_size'))::text",
-      ),
-      'defer',
-    ),
-  );
-  if (start.rows.length !== 1 || start.rows[0]?.values.length !== 2) {
-    throw new Error('pg_backup_start returned an unexpected result');
-  }
-  const startWal = start.rows[0].text(0);
-  const walSegmentSizeText = start.rows[0].text(1);
-  if (startWal === null || walSegmentSizeText === null) {
-    throw new Error('pg_backup_start returned an unexpected result');
-  }
-  const walSegmentSize = Number(walSegmentSizeText);
-
-  let stopped = false;
+  let state: BackupModeState = 'not-entered';
   try {
+    let startResponse: Uint8Array;
+    try {
+      startResponse = await exec(
+        simpleQuery(
+          "SELECT pg_walfile_name(pg_backup_start(label => 'oliphaunt physical backup', fast => true)), pg_size_bytes(current_setting('wal_segment_size'))::text",
+        ),
+      );
+    } catch (error) {
+      state = 'exit-unconfirmed';
+      throw error;
+    }
+    let start: QueryResult;
+    try {
+      start = parseQueryResponse(startResponse);
+      state = 'exit-required';
+    } catch (error) {
+      if (error instanceof PostgresError) throw error;
+      state = 'exit-required';
+      throw error;
+    }
+    if (start.commandTag !== 'SELECT 1') {
+      throw new Error('pg_backup_start did not return a successful PostgreSQL command tag');
+    }
+    if (start.rows.length !== 1 || start.rows[0]?.values.length !== 2) {
+      throw new Error('pg_backup_start returned an unexpected result');
+    }
+    const startWal = start.rows[0].text(0);
+    const walSegmentSizeText = start.rows[0].text(1);
+    if (startWal === null || walSegmentSizeText === null) {
+      throw new Error('pg_backup_start returned an unexpected result');
+    }
+    const walSegmentSize = Number(walSegmentSizeText);
+
     const beforeStop = refreshBackupPgControl(
       await snapshotPhysicalBackupBulk(directory),
       await directory.readFile('global/pg_control'),
     );
-    const stop = parseQueryResponse(
-      await exec(
-        simpleQuery(
-          'SELECT pg_walfile_name(lsn), labelfile, spcmapfile FROM pg_backup_stop(wait_for_archive => false)',
-        ),
-        'defer',
-      ),
-    );
-    stopped = true;
-    const row = stop.rows[0];
-    if (row === undefined || row.values.length !== 3) {
-      throw new Error('pg_backup_stop returned an unexpected result');
+    const stop = await stopPhysicalBackup(exec);
+    state = stop.state;
+    if (stop.state === 'exit-unconfirmed') {
+      throw stop.error;
     }
-    const stopWal = row.text(0);
-    const backupLabel = row.text(1);
-    const tablespaceMap = row.text(2);
-    if (stopWal === null) throw new Error('pg_backup_stop returned an unexpected result');
-    if (backupLabel === null || backupLabel.length === 0) {
-      throw new Error('pg_backup_stop returned an empty backup label');
-    }
+    if (stop.files === undefined) throw stop.validationError;
+    const { stopWal, backupLabel, tablespaceMap } = stop.files;
 
     const walNames = requiredBackupWalNames(startWal, stopWal, walSegmentSize);
     const walFiles = await Promise.all(
@@ -88,24 +110,124 @@ export async function createPhysicalArchive(
     );
     const snapshot = mergeBackupSnapshots(beforeStop, walFiles, backupLabel, tablespaceMap);
     return encodePhysicalArchive(snapshot);
-  } catch (error) {
-    if (!stopped) {
-      try {
-        await exec(
-          simpleQuery(
-            'SELECT pg_walfile_name(lsn), labelfile, spcmapfile FROM pg_backup_stop(wait_for_archive => false)',
-          ),
-          'defer',
-        );
-      } catch (stopError) {
-        throw new AggregateError(
-          [error, stopError],
-          'physical backup failed and PostgreSQL could not leave backup mode cleanly',
-        );
+  } catch (primaryError) {
+    if (state === 'exit-required' || state === 'exit-unconfirmed') {
+      const cleanup = await stopPhysicalBackup(exec);
+      state = cleanup.state;
+      if (cleanup.state === 'exit-unconfirmed') {
+        throw backupModeExitUnconfirmed(primaryError, cleanup.error);
+      }
+      if (cleanup.validationError !== undefined) {
+        throw backupCleanupFailure(primaryError, cleanup.validationError);
       }
     }
-    throw error;
+    throw primaryError;
   }
+}
+
+async function stopPhysicalBackup(exec: ExecProtocol): Promise<StopBackupAttempt> {
+  let response: Uint8Array;
+  try {
+    response = await exec(
+      simpleQuery(
+        'SELECT pg_walfile_name(lsn), labelfile, spcmapfile FROM pg_backup_stop(wait_for_archive => false)',
+      ),
+    );
+  } catch (error) {
+    return { state: 'exit-unconfirmed', error };
+  }
+
+  const exitConfirmed = responseConfirmsCommandCompletion(response);
+  let result: QueryResult;
+  try {
+    result = parseQueryResponse(response);
+  } catch (error) {
+    if (exitConfirmed && !(error instanceof PostgresError)) {
+      return { state: 'exited', validationError: error };
+    }
+    return { state: 'exit-unconfirmed', error };
+  }
+
+  if (!exitConfirmed) {
+    return {
+      state: 'exit-unconfirmed',
+      error: new Error('pg_backup_stop did not return a successful PostgreSQL command completion'),
+    };
+  }
+  if (result.commandTag !== 'SELECT 1') {
+    return {
+      state: 'exited',
+      validationError: new Error('pg_backup_stop returned an unexpected PostgreSQL command tag'),
+    };
+  }
+
+  try {
+    const row = result.rows[0];
+    if (row === undefined || row.values.length !== 3) {
+      throw new Error('pg_backup_stop returned an unexpected result');
+    }
+    const stopWal = row.text(0);
+    const backupLabel = row.text(1);
+    const tablespaceMap = row.text(2);
+    if (stopWal === null) throw new Error('pg_backup_stop returned an unexpected result');
+    if (backupLabel === null || backupLabel.length === 0) {
+      throw new Error('pg_backup_stop returned an empty backup label');
+    }
+    return { state: 'exited', files: { stopWal, backupLabel, tablespaceMap } };
+  } catch (validationError) {
+    // A fully parsed response without ErrorResponse proves pg_backup_stop ran.
+    return { state: 'exited', validationError };
+  }
+}
+
+function responseConfirmsCommandCompletion(response: Uint8Array): boolean {
+  let offset = 0;
+  let sawCommandComplete = false;
+  while (offset < response.length) {
+    if (response.length - offset < 5) return false;
+    const length = new DataView(
+      response.buffer,
+      response.byteOffset + offset + 1,
+      4,
+    ).getUint32(0);
+    if (length < 4 || length + 1 > response.length - offset) return false;
+    const tag = response[offset];
+    if (tag === 0x45) return false;
+    if (tag === 0x43) sawCommandComplete = true;
+    const next = offset + length + 1;
+    if (tag === 0x5a) {
+      const status = response[offset + 5];
+      return (
+        sawCommandComplete &&
+        length === 5 &&
+        next === response.length &&
+        (status === 0x49 || status === 0x54 || status === 0x45)
+      );
+    }
+    offset = next;
+  }
+  return false;
+}
+
+function backupCleanupFailure(primary: unknown, cleanup: unknown): AggregateError {
+  return new AggregateError(
+    [primary, cleanup],
+    `physical backup failed: ${backupFailureMessage(primary)}; PostgreSQL left backup mode but cleanup validation also failed: ${backupFailureMessage(cleanup)}`,
+  );
+}
+
+function backupModeExitUnconfirmed(
+  primary: unknown,
+  cleanup: unknown,
+): BackupModeExitUnconfirmedError {
+  return new BackupModeExitUnconfirmedError(
+    `physical backup failed: ${backupFailureMessage(primary)}; PostgreSQL could not confirm leaving backup mode cleanly: ${backupFailureMessage(cleanup)}`,
+    new AggregateError([primary, cleanup], 'physical backup and cleanup both failed'),
+  );
+}
+
+function backupFailureMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /** @internal Read the bulk backup tree without reading transient or pre-stop WAL contents. */
@@ -226,7 +348,7 @@ export function decodePhysicalArchive(bytes: Uint8Array): StoredSnapshot {
     }
     return validateStoredSnapshot(
       { schema: 'oliphaunt-wasix-directory-snapshot-v1', directories, files },
-      '18',
+      String(WASIX_POSTGRES_MAJOR),
       {
         label: 'physical archive',
         corrupt: (detail, cause) => corruptArchive(detail, cause),

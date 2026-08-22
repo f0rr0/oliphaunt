@@ -49,6 +49,7 @@ test("the successful pg_textsearch producer supplies every semantic PASS fact", 
     nativeModuleStem: "pg_textsearch",
     selectedExtensionDependencies: [],
     activationSql: ["CREATE EXTENSION pg_textsearch"],
+    smokeStatements: ["SELECT 1"],
   }]);
 
   assert.deepEqual(proof.activatedExtensions, ["pg_textsearch"]);

@@ -71,6 +71,9 @@ class OliphauntModule(
   @DoNotStrip
   external override fun getBindingsInstaller(): BindingsInstallerHolder
 
+  @DoNotStrip
+  private external fun invalidateJsiBindings()
+
   override fun open(config: ReadableMap, promise: Promise) {
     val job = scope.launch(start = CoroutineStart.LAZY) {
       runCatching {
@@ -88,8 +91,8 @@ class OliphauntModule(
             Oliphaunt.open(
               context = reactContext,
               config = openConfig.config,
-              runtimeDirectory = openConfig.runtimeDirectory?.let(::File),
-              resourceRoot = openConfig.resourceRoot?.let(::File),
+              runtimeDirectory = openConfig.runtimeDirectory,
+              resourceRoot = openConfig.resourceRoot,
             )
           } catch (error: Throwable) {
             nativeDirectProcessOwner.release(claim)
@@ -250,6 +253,7 @@ class OliphauntModule(
   override fun invalidate() {
     val openToJoin = synchronized(lifecycleLock) {
       invalidated.set(true)
+      invalidateJsiBindings()
       pendingOpen.get()
     }
     runBlocking(Dispatchers.IO) {
@@ -346,7 +350,7 @@ class OliphauntModule(
       }
       else -> throw IllegalArgumentException("unknown database storage kind '$kind'")
     }
-    val runtimeDirectory = reactNativeRuntimeDirectory(null)
+    val runtimeDirectory = reactNativeRuntimeDirectory(null)?.let(::File)
     val username = config.startupIdentity("username")
     val database = config.startupIdentity("database")
 
@@ -365,8 +369,8 @@ class OliphauntModule(
 
   private data class ReactNativeAndroidOpenConfig(
     val config: OliphauntConfig,
-    val runtimeDirectory: String?,
-    val resourceRoot: String?,
+    val runtimeDirectory: File?,
+    val resourceRoot: File?,
   )
 
   companion object {

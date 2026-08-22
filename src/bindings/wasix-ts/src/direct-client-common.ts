@@ -13,7 +13,7 @@ import type {
   WasmerInitOptions,
 } from './host/index.mjs';
 import { assertSuccessfulStartupResponse, startupPacket } from './pgwire.js';
-import { createPhysicalArchive } from './physical-archive.js';
+import { BackupModeExitUnconfirmedError, createPhysicalArchive } from './physical-archive.js';
 import { PostgresError } from './query.js';
 import type { SerializedOpenOptions } from './rpc.js';
 import {
@@ -231,12 +231,21 @@ export class DirectWasixSession implements WasixDatabaseSession {
     }
   }
 
-  backup(): Promise<Uint8Array> {
+  async backup(): Promise<Uint8Array> {
     this.#assertHealthy();
-    return createPhysicalArchive(
-      (input, persistence) => this.exec(input, persistence),
-      this.#baseDirectory,
-    );
+    try {
+      return await createPhysicalArchive(
+        (input) => this.#execBackupProtocol(input),
+        this.#baseDirectory,
+      );
+    } catch (error) {
+      if (error instanceof BackupModeExitUnconfirmedError) this.#failed = true;
+      throw error;
+    }
+  }
+
+  async #execBackupProtocol(input: Uint8Array): Promise<Uint8Array> {
+    return this.#instance.execProtocolRaw(input);
   }
 
   close(): Promise<void> {

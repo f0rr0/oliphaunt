@@ -5,6 +5,7 @@ import { WasixStorageError } from '../errors.js';
 import { PostgresError } from '../query.js';
 import type { OliphauntTransaction } from '../types.js';
 
+// liboliphaunt-doc-example:wasix-typescript-transaction
 describe('WASIX database recovery state', () => {
   it('pins callback transactions, commits results, and expires the transaction handle', async () => {
     const statements: string[] = [];

@@ -124,7 +124,7 @@ static void postgres_error_message(const uint8_t *body, size_t len, char *out, s
     }
 }
 
-static int copy_first_data_row(
+static int copy_single_data_row(
     OliphauntHandle *handle,
     const OliphauntResponse *response,
     const char *context,
@@ -133,17 +133,18 @@ static int copy_first_data_row(
     for (uint16_t column = 0; column < expected_columns; column++) {
         values[column] = NULL;
     }
+    bool found_data_row = false;
     size_t off = 0;
     while (off < response->len) {
         if (response->len - off < 5) {
             set_error(handle, "truncated PostgreSQL backend message header");
-            return -1;
+            goto fail;
         }
         uint8_t tag = response->data[off];
         uint32_t len = read_be32(response->data + off + 1);
         if (len < 4 || (size_t)len + 1 > response->len - off) {
             set_error(handle, "truncated PostgreSQL backend message body");
-            return -1;
+            goto fail;
         }
         const uint8_t *body = response->data + off + 5;
         size_t body_len = (size_t)len - 4;
@@ -153,40 +154,53 @@ static int copy_first_data_row(
             postgres_error_message(body, body_len, pg_error, sizeof(pg_error));
             snprintf(message, sizeof(message), "%s failed: %s", context, pg_error);
             set_error(handle, message);
-            return -1;
+            goto fail;
         }
         if (tag == 'D') {
-            if (body_len < 2) {
-                set_error(handle, "truncated PostgreSQL DataRow column count");
-                return -1;
+            if (found_data_row) {
+                char message[256];
+                snprintf(message, sizeof(message), "%s returned more than one DataRow", context);
+                set_error(handle, message);
+                goto fail;
+            }
+            OliphauntDataRowValidation validation =
+                oliphaunt_validate_data_row(body, body_len, expected_columns);
+            if (validation != OLIPHAUNT_DATA_ROW_VALID) {
+                char message[256];
+                switch (validation) {
+                    case OLIPHAUNT_DATA_ROW_TRUNCATED_COUNT:
+                        set_error(handle, "truncated PostgreSQL DataRow column count");
+                        break;
+                    case OLIPHAUNT_DATA_ROW_UNEXPECTED_COUNT:
+                        snprintf(message, sizeof(message), "%s returned an unexpected column count", context);
+                        set_error(handle, message);
+                        break;
+                    case OLIPHAUNT_DATA_ROW_TRUNCATED_LENGTH:
+                        set_error(handle, "truncated PostgreSQL DataRow column length");
+                        break;
+                    case OLIPHAUNT_DATA_ROW_TRUNCATED_VALUE:
+                        set_error(handle, "truncated PostgreSQL DataRow column value");
+                        break;
+                    case OLIPHAUNT_DATA_ROW_TRAILING_BYTES:
+                        snprintf(message, sizeof(message), "%s returned trailing DataRow bytes", context);
+                        set_error(handle, message);
+                        break;
+                    case OLIPHAUNT_DATA_ROW_VALID:
+                        break;
+                }
+                goto fail;
             }
             uint16_t columns = ((uint16_t)body[0] << 8) | (uint16_t)body[1];
             const uint8_t *p = body + 2;
-            size_t remaining = body_len - 2;
-            if (columns != expected_columns) {
-                char message[256];
-                snprintf(message, sizeof(message), "%s returned an unexpected column count", context);
-                set_error(handle, message);
-                return -1;
-            }
             for (uint16_t column = 0; column < columns; column++) {
-                if (remaining < 4) {
-                    set_error(handle, "truncated PostgreSQL DataRow column length");
-                    goto fail;
-                }
                 uint32_t raw_value_len = ((uint32_t)p[0] << 24) |
                                          ((uint32_t)p[1] << 16) |
                                          ((uint32_t)p[2] << 8) |
                                          (uint32_t)p[3];
                 int32_t value_len = (int32_t)raw_value_len;
                 p += 4;
-                remaining -= 4;
                 if (value_len == -1) {
                     continue;
-                }
-                if (value_len < 0 || (size_t)value_len > remaining) {
-                    set_error(handle, "truncated PostgreSQL DataRow column value");
-                    goto fail;
                 }
                 values[column] = (char *)malloc((size_t)value_len + 1);
                 if (values[column] == NULL) {
@@ -196,26 +210,55 @@ static int copy_first_data_row(
                 memcpy(values[column], p, (size_t)value_len);
                 values[column][value_len] = '\0';
                 p += value_len;
-                remaining -= (size_t)value_len;
             }
-            return 0;
-fail:
-            for (uint16_t column = 0; column < expected_columns; column++) {
-                free(values[column]);
-                values[column] = NULL;
-            }
-            return -1;
+            found_data_row = true;
         }
         off += (size_t)len + 1;
+    }
+    if (found_data_row) {
+        return 0;
     }
     char message[256];
     snprintf(message, sizeof(message), "%s returned no DataRow", context);
     set_error(handle, message);
+fail:
+    for (uint16_t column = 0; column < expected_columns; column++) {
+        free(values[column]);
+        values[column] = NULL;
+    }
     return -1;
 }
 
-static int start_physical_backup(OliphauntHandle *handle, OliphauntBackupStart *out) {
+static int response_contains_postgres_error(
+    OliphauntHandle *handle,
+    const OliphauntResponse *response,
+    bool *contains_error) {
+    *contains_error = false;
+    size_t off = 0;
+    while (off < response->len) {
+        if (response->len - off < 5) {
+            set_error(handle, "truncated PostgreSQL backend message header");
+            return -1;
+        }
+        uint32_t len = read_be32(response->data + off + 1);
+        if (len < 4 || (size_t)len + 1 > response->len - off) {
+            set_error(handle, "truncated PostgreSQL backend message body");
+            return -1;
+        }
+        if (response->data[off] == 'E') {
+            *contains_error = true;
+        }
+        off += (size_t)len + 1;
+    }
+    return 0;
+}
+
+static int start_physical_backup(
+    OliphauntHandle *handle,
+    OliphauntBackupStart *out,
+    OliphauntBackupModeState *state) {
     memset(out, 0, sizeof(*out));
+    *state = OLIPHAUNT_BACKUP_NOT_ENTERED;
     OliphauntResponse response = {NULL, 0};
     int rc = exec_simple_query(
         handle,
@@ -225,7 +268,35 @@ static int start_physical_backup(OliphauntHandle *handle, OliphauntBackupStart *
         &response);
     char *values[2] = {NULL, NULL};
     if (rc == 0) {
-        rc = copy_first_data_row(handle, &response, "pg_backup_start", 2, values);
+        bool contains_error = false;
+        if (response_contains_postgres_error(handle, &response, &contains_error) != 0) {
+            *state = OLIPHAUNT_BACKUP_EXIT_REQUIRED;
+            rc = -1;
+        } else if (contains_error) {
+            rc = copy_single_data_row(handle, &response, "pg_backup_start", 2, values);
+            if (rc == 0) {
+                set_error(handle, "pg_backup_start returned both DataRow and ErrorResponse");
+                rc = -1;
+            }
+        } else {
+            *state = OLIPHAUNT_BACKUP_EXIT_REQUIRED;
+            bool command_tag_matches = false;
+            if (!oliphaunt_response_confirms_command(
+                    response.data,
+                    response.len,
+                    "SELECT 1",
+                    &command_tag_matches)) {
+                set_error(handle, "pg_backup_start did not return a successful PostgreSQL command completion");
+                rc = -1;
+            } else if (!command_tag_matches) {
+                set_error(handle, "pg_backup_start returned an unexpected PostgreSQL command tag");
+                rc = -1;
+            } else {
+                rc = copy_single_data_row(handle, &response, "pg_backup_start", 2, values);
+            }
+        }
+    } else {
+        *state = OLIPHAUNT_BACKUP_EXIT_UNCONFIRMED;
     }
     if (rc == 0 &&
         (values[0] == NULL || values[0][0] == '\0' || values[1] == NULL || values[1][0] == '\0')) {
@@ -254,7 +325,7 @@ static int start_physical_backup(OliphauntHandle *handle, OliphauntBackupStart *
 static int parse_stop_backup_response(OliphauntHandle *handle, const OliphauntResponse *response, OliphauntBackupStopFiles *out) {
     memset(out, 0, sizeof(*out));
     char *values[3] = {NULL, NULL, NULL};
-    if (copy_first_data_row(handle, response, "pg_backup_stop", 3, values) != 0) {
+    if (copy_single_data_row(handle, response, "pg_backup_stop", 3, values) != 0) {
         return -1;
     }
     if (values[0] == NULL || values[0][0] == '\0') {
@@ -276,7 +347,12 @@ fail:
     return -1;
 }
 
-static int stop_physical_backup(OliphauntHandle *handle, OliphauntBackupStopFiles *out) {
+static int stop_physical_backup(
+    OliphauntHandle *handle,
+    OliphauntBackupStopFiles *out,
+    OliphauntBackupModeState *state) {
+    memset(out, 0, sizeof(*out));
+    *state = OLIPHAUNT_BACKUP_EXIT_UNCONFIRMED;
     OliphauntResponse response = {NULL, 0};
     int rc = exec_simple_query(
         handle,
@@ -284,7 +360,37 @@ static int stop_physical_backup(OliphauntHandle *handle, OliphauntBackupStopFile
         "FROM pg_backup_stop(wait_for_archive => false)",
         &response);
     if (rc == 0) {
-        rc = parse_stop_backup_response(handle, &response, out);
+        bool contains_error = false;
+        if (response_contains_postgres_error(handle, &response, &contains_error) == 0) {
+            bool command_tag_matches = false;
+            bool command_completed = oliphaunt_response_confirms_command(
+                response.data,
+                response.len,
+                "SELECT 1",
+                &command_tag_matches);
+            if (!contains_error && command_completed) {
+                *state = OLIPHAUNT_BACKUP_EXIT_CONFIRMED;
+            }
+            if (!contains_error && !command_completed) {
+                set_error(handle, "pg_backup_stop did not return a successful PostgreSQL command completion");
+                rc = -1;
+            } else if (!contains_error && !command_tag_matches) {
+                set_error(handle, "pg_backup_stop returned an unexpected PostgreSQL command tag");
+                rc = -1;
+            } else {
+                rc = parse_stop_backup_response(handle, &response, out);
+            }
+            if (contains_error && rc == 0) {
+                free(out->wal_file);
+                free(out->backup_label);
+                free(out->tablespace_map);
+                memset(out, 0, sizeof(*out));
+                set_error(handle, "pg_backup_stop returned both DataRow and ErrorResponse");
+                rc = -1;
+            }
+        } else {
+            rc = -1;
+        }
     }
     oliphaunt_free_response(&response);
     return rc;
@@ -303,6 +409,38 @@ static void free_backup_start(OliphauntBackupStart *start) {
     free(start->wal_file);
     start->wal_file = NULL;
     start->wal_segment_size = 0;
+}
+
+static int emergency_stop_backup(
+    void *context,
+    OliphauntBackupModeState *state,
+    char *error,
+    size_t error_capacity) {
+    OliphauntHandle *handle = (OliphauntHandle *)context;
+    OliphauntBackupStopFiles ignored = {0};
+    int rc = stop_physical_backup(handle, &ignored, state);
+    snprintf(error, error_capacity, "%s", handle->last_error);
+    free_backup_stop_files(&ignored);
+    return rc;
+}
+
+static void cleanup_failed_backup(
+    OliphauntHandle *handle,
+    OliphauntBackupModeState *state) {
+    char primary_error[sizeof(handle->last_error)];
+    snprintf(primary_error, sizeof(primary_error), "%s", handle->last_error);
+    OliphauntBackupCleanupResult result;
+    oliphaunt_run_failed_backup_cleanup(
+        *state,
+        primary_error,
+        emergency_stop_backup,
+        handle,
+        &result);
+    *state = result.state;
+    if (result.poison) {
+        handle->backup_mode_exit_unconfirmed = true;
+    }
+    set_error(handle, result.error);
 }
 
 static int append_default_backup_manifest(OliphauntByteBuffer *archive, OliphauntHandle *handle) {
@@ -344,18 +482,24 @@ static int32_t oliphaunt_backup_impl(
     }
     out->data = NULL;
     out->len = 0;
+    if (handle->backup_mode_exit_unconfirmed) {
+        set_error(handle, "native liboliphaunt backup-mode exit is unconfirmed; close the database and restart the process before reopening it");
+        return -1;
+    }
     bool trace = backup_trace_enabled();
     uint64_t total_started_ns = trace ? oliphaunt_monotonic_ns() : 0;
     uint64_t phase_started_ns = total_started_ns;
     OliphauntBackupStart start = {0};
-    if (start_physical_backup(handle, &start) != 0) {
+    OliphauntBackupModeState backup_state = OLIPHAUNT_BACKUP_NOT_ENTERED;
+    if (start_physical_backup(handle, &start, &backup_state) != 0) {
+        cleanup_failed_backup(handle, &backup_state);
+        free_backup_start(&start);
         return -1;
     }
     print_backup_trace_phase(trace, "pg_backup_start", phase_started_ns, NULL);
 
     OliphauntByteBuffer archive = {0};
     OliphauntBackupStopFiles stop_files = {0};
-    bool backup_stopped = false;
     phase_started_ns = trace ? oliphaunt_monotonic_ns() : 0;
     int rc = oliphaunt_archive_append_pgdata_tree(&archive, handle, oliphaunt_handle_pgdata(handle));
     print_backup_trace_phase(trace, "append_pgdata", phase_started_ns, &archive);
@@ -366,30 +510,11 @@ static int32_t oliphaunt_backup_impl(
     }
     if (rc == 0) {
         phase_started_ns = trace ? oliphaunt_monotonic_ns() : 0;
-        rc = stop_physical_backup(handle, &stop_files);
-        backup_stopped = rc == 0;
+        rc = stop_physical_backup(handle, &stop_files, &backup_state);
         print_backup_trace_phase(trace, "pg_backup_stop", phase_started_ns, &archive);
     }
-    if (rc != 0 && !backup_stopped) {
-        char primary_error[sizeof(handle->last_error)];
-        snprintf(primary_error, sizeof(primary_error), "%s", handle->last_error);
-        OliphauntBackupStopFiles ignored = {0};
-        int stop_rc = stop_physical_backup(handle, &ignored);
-        if (stop_rc != 0) {
-            char stop_error[sizeof(handle->last_error)];
-            char combined_error[sizeof(handle->last_error)];
-            snprintf(stop_error, sizeof(stop_error), "%s", handle->last_error);
-            snprintf(
-                combined_error,
-                sizeof(combined_error),
-                "%.470s; additionally failed to leave PostgreSQL backup mode: %.470s",
-                primary_error,
-                stop_error);
-            set_error(handle, combined_error);
-        } else {
-            set_error(handle, primary_error);
-        }
-        free_backup_stop_files(&ignored);
+    if (rc != 0) {
+        cleanup_failed_backup(handle, &backup_state);
     }
     if (rc == 0) {
         phase_started_ns = trace ? oliphaunt_monotonic_ns() : 0;

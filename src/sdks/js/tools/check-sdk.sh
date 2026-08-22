@@ -458,7 +458,7 @@ require_source_text "$package_dir/src/__tests__/protocol-fixtures.test.ts" "asse
   "TypeScript SDK tests must consume the shared protocol fixture corpus"
 require_source_text "$package_dir/src/__tests__/broker-frames.test.ts" "encodeBrokerRequest" \
   "TypeScript SDK tests must cover the native broker frame codec"
-require_source_text "$package_dir/src/__tests__/server-wire.test.ts" "encodeStartupMessage" \
+require_source_text "$package_dir/src/__tests__/runtime-adapters.test.ts" "encodeStartupMessage" \
   "TypeScript SDK tests must cover the native server wire client"
 require_source_text "$package_dir/src/__tests__/asset-resolver.test.ts" "nodeResolverUsesInstalledPackages" \
   "TypeScript SDK tests must cover package-local liboliphaunt resolution"
@@ -468,8 +468,12 @@ require_source_text "$package_dir/src/__tests__/native-smoke.ts" "execution: 'br
   "TypeScript SDK smoke must execute broker placement when OLIPHAUNT_BROKER is set"
 require_source_text "$package_dir/src/__tests__/native-smoke.ts" "Oliphaunt.openServer" \
   "TypeScript SDK smoke must execute native server mode when OLIPHAUNT_POSTGRES is set"
-require_source_text "$package_dir/src/__tests__/native-smoke.ts" "Oliphaunt.restore(restoredRoot, backup)" \
-  "TypeScript SDK smoke must restore physical backup artifacts and reopen restored instances"
+require_source_text "$package_dir/src/__tests__/native-direct-contract.mjs" "Oliphaunt.restore(restoredRoot, backup)" \
+  "TypeScript SDK runtime contract must restore physical backup artifacts"
+require_source_text "$package_dir/src/__tests__/native-smoke.ts" "assertNativeDatabaseContract" \
+  "TypeScript SDK Node smoke must consume the shared native runtime contract"
+require_source_text "$package_dir/src/__tests__/deno-native-smoke.mjs" "assertNativeDatabaseContract" \
+  "TypeScript SDK Deno smoke must consume the shared native runtime contract"
 require_source_text "$package_dir/src/runtime/broker.ts" "resolveBrokerNativeInstall" \
   "TypeScript broker mode must resolve the same liboliphaunt native install that direct mode uses"
 require_source_text "$package_dir/src/runtime/broker.ts" "OLIPHAUNT_INSTALL_DIR" \
@@ -491,6 +495,14 @@ if [ "$mode" = "smoke-runtime" ]; then
   export_default_native_smoke_runtime
   ensure_broker_smoke_helper
   oliphaunt_runtime_native_host_require basic
+  if [ -z "${OLIPHAUNT_NODE_ADDON:-}" ]; then
+    node_addon="$root/target/oliphaunt-artifacts/node-direct/$(oliphaunt_runtime_native_host_target_id)/oliphaunt_node.node"
+    if [ ! -f "$node_addon" ]; then
+      echo "OLIPHAUNT_NODE_ADDON is required for the TypeScript SDK native-direct smoke check: $node_addon" >&2
+      exit 2
+    fi
+    export OLIPHAUNT_NODE_ADDON="$node_addon"
+  fi
   if [ -z "${OLIPHAUNT_BROKER:-}" ]; then
     echo "OLIPHAUNT_BROKER is required for the TypeScript SDK native broker smoke check" >&2
     exit 2
@@ -500,4 +512,6 @@ if [ "$mode" = "smoke-runtime" ]; then
     exit 2
   fi
   run pnpm --dir "$package_dir" exec tsx src/__tests__/native-smoke.ts
+  run "$root/tools/dev/deno.sh" run --allow-all \
+    "$package_dir/src/__tests__/deno-native-smoke.mjs"
 fi

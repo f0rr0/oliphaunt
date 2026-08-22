@@ -535,10 +535,31 @@ impl Drop for Transaction {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
     use crate::engine::EngineSession;
+
+    struct ScriptedTransactionSession {
+        responses: VecDeque<Result<ProtocolResponse>>,
+    }
+
+    impl ScriptedTransactionSession {
+        fn new(responses: impl IntoIterator<Item = Result<ProtocolResponse>>) -> Self {
+            Self {
+                responses: responses.into_iter().collect(),
+            }
+        }
+    }
+
+    impl EngineSession for ScriptedTransactionSession {
+        fn exec_protocol_raw(&mut self, _request: ProtocolRequest) -> Result<ProtocolResponse> {
+            self.responses
+                .pop_front()
+                .expect("scripted transaction response")
+        }
+    }
 
     struct FailBeginAndRecovery {
         calls: AtomicUsize,
@@ -578,5 +599,205 @@ mod tests {
         runtime
             .block_on(db.close())
             .expect("poisoned database can close");
+    }
+
+    #[test]
+    fn transaction_pin_rejects_unpinned_work_until_rollback_releases_it() {
+        let session = ScriptedTransactionSession::new([
+            Ok(command_response("BEGIN")),
+            Ok(command_response("ROLLBACK")),
+            Ok(ProtocolResponse::new([7])),
+        ]);
+        let db = Oliphaunt::from_executor(EngineExecutor::spawn(Box::new(session)));
+        let runtime = test_runtime();
+
+        let transaction = runtime
+            .block_on(db.start_transaction())
+            .expect("transaction begins");
+        assert_eq!(
+            runtime
+                .block_on(db.exec_protocol_raw([9]))
+                .expect_err("unpinned work must not use a transaction-owned session"),
+            Error::TransactionActive
+        );
+        runtime
+            .block_on(transaction.rollback())
+            .expect("transaction rolls back and releases its pin");
+        assert_eq!(
+            runtime
+                .block_on(db.exec_protocol_raw([8]))
+                .expect("work resumes after rollback"),
+            vec![7]
+        );
+        runtime.block_on(db.close()).expect("database closes");
+    }
+
+    #[test]
+    fn transaction_callback_commits_and_releases_the_pin() {
+        let session = ScriptedTransactionSession::new([
+            Ok(command_response("BEGIN")),
+            Ok(command_response("COMMIT")),
+            Ok(ProtocolResponse::new([4, 1])),
+        ]);
+        let db = Oliphaunt::from_executor(EngineExecutor::spawn(Box::new(session)));
+        let runtime = test_runtime();
+
+        assert_eq!(
+            runtime
+                .block_on(db.transaction(async |_transaction| Ok(41_u8)))
+                .expect("transaction callback commits"),
+            41
+        );
+        assert_eq!(
+            runtime
+                .block_on(db.exec_protocol_raw([1]))
+                .expect("work resumes after commit"),
+            vec![4, 1]
+        );
+        runtime.block_on(db.close()).expect("database closes");
+    }
+
+    #[test]
+    fn transaction_callback_error_rolls_back_and_preserves_the_body_error() {
+        let session = ScriptedTransactionSession::new([
+            Ok(command_response("BEGIN")),
+            Ok(command_response("ROLLBACK")),
+            Ok(ProtocolResponse::new([4, 0])),
+        ]);
+        let db = Oliphaunt::from_executor(EngineExecutor::spawn(Box::new(session)));
+        let runtime = test_runtime();
+
+        assert_eq!(
+            runtime.block_on(db.transaction(async |_transaction| {
+                Err::<(), _>(Error::Engine("body failed".to_owned()))
+            })),
+            Err(Error::Engine("body failed".to_owned()))
+        );
+        assert_eq!(
+            runtime
+                .block_on(db.exec_protocol_raw([1]))
+                .expect("confirmed rollback leaves the session usable"),
+            vec![4, 0]
+        );
+        runtime.block_on(db.close()).expect("database closes");
+    }
+
+    #[test]
+    fn transaction_callback_rollback_failure_poisons_but_preserves_the_body_error() {
+        let session = ScriptedTransactionSession::new([
+            Ok(command_response("BEGIN")),
+            Err(Error::Engine("ROLLBACK transport failed".to_owned())),
+        ]);
+        let db = Oliphaunt::from_executor(EngineExecutor::spawn(Box::new(session)));
+        let runtime = test_runtime();
+
+        assert_eq!(
+            runtime.block_on(db.transaction(async |_transaction| {
+                Err::<(), _>(Error::Engine("body failed".to_owned()))
+            })),
+            Err(Error::Engine("body failed".to_owned()))
+        );
+        assert_unknown_transaction_state(&runtime, &db);
+        runtime
+            .block_on(db.close())
+            .expect("poisoned transaction can close");
+    }
+
+    #[test]
+    fn unknown_commit_outcome_poisons_the_session_until_close() {
+        let session = ScriptedTransactionSession::new([
+            Ok(command_response("BEGIN")),
+            Err(Error::Engine("COMMIT transport failed".to_owned())),
+        ]);
+        let db = Oliphaunt::from_executor(EngineExecutor::spawn(Box::new(session)));
+        let runtime = test_runtime();
+
+        let transaction = runtime
+            .block_on(db.start_transaction())
+            .expect("transaction begins");
+        assert_eq!(
+            runtime.block_on(transaction.commit()).unwrap_err(),
+            Error::Engine("COMMIT transport failed".to_owned())
+        );
+        assert_unknown_transaction_state(&runtime, &db);
+        runtime
+            .block_on(db.close())
+            .expect("unknown transaction state can close");
+    }
+
+    #[test]
+    fn commit_reported_as_rollback_is_known_idle_and_releases_the_pin() {
+        let session = ScriptedTransactionSession::new([
+            Ok(command_response("BEGIN")),
+            Ok(command_response("ROLLBACK")),
+            Ok(ProtocolResponse::new([4, 2])),
+        ]);
+        let db = Oliphaunt::from_executor(EngineExecutor::spawn(Box::new(session)));
+        let runtime = test_runtime();
+
+        let transaction = runtime
+            .block_on(db.start_transaction())
+            .expect("transaction begins");
+        assert!(matches!(
+            runtime.block_on(transaction.commit()),
+            Err(Error::Engine(message)) if message.contains("expected COMMIT, got ROLLBACK")
+        ));
+        assert_eq!(
+            runtime
+                .block_on(db.exec_protocol_raw([1]))
+                .expect("known rolled-back transaction leaves session usable"),
+            vec![4, 2]
+        );
+        runtime.block_on(db.close()).expect("database closes");
+    }
+
+    #[test]
+    fn unknown_rollback_outcome_poisons_the_session_until_close() {
+        let session = ScriptedTransactionSession::new([
+            Ok(command_response("BEGIN")),
+            Err(Error::Engine("ROLLBACK transport failed".to_owned())),
+        ]);
+        let db = Oliphaunt::from_executor(EngineExecutor::spawn(Box::new(session)));
+        let runtime = test_runtime();
+
+        let transaction = runtime
+            .block_on(db.start_transaction())
+            .expect("transaction begins");
+        assert_eq!(
+            runtime.block_on(transaction.rollback()).unwrap_err(),
+            Error::Engine("ROLLBACK transport failed".to_owned())
+        );
+        assert_unknown_transaction_state(&runtime, &db);
+        runtime
+            .block_on(db.close())
+            .expect("unknown transaction state can close");
+    }
+
+    fn test_runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("build current-thread test runtime")
+    }
+
+    fn assert_unknown_transaction_state(runtime: &tokio::runtime::Runtime, db: &Oliphaunt) {
+        assert_eq!(
+            runtime.block_on(db.exec_protocol_raw([1])).unwrap_err(),
+            Error::Engine("transaction state is unknown; close the database".to_owned())
+        );
+    }
+
+    fn command_response(tag: &str) -> ProtocolResponse {
+        let mut bytes = Vec::new();
+        let mut command = tag.as_bytes().to_vec();
+        command.push(0);
+        push_backend_message(&mut bytes, b'C', &command);
+        push_backend_message(&mut bytes, b'Z', if tag == "BEGIN" { b"T" } else { b"I" });
+        ProtocolResponse::new(bytes)
+    }
+
+    fn push_backend_message(bytes: &mut Vec<u8>, tag: u8, body: &[u8]) {
+        bytes.push(tag);
+        bytes.extend_from_slice(&i32::try_from(body.len() + 4).unwrap().to_be_bytes());
+        bytes.extend_from_slice(body);
     }
 }

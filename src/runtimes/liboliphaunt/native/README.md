@@ -24,6 +24,8 @@ PostgreSQL internals.
 - `src/liboliphaunt_static_extensions.c`: process-wide static extension registry
   used by mobile-style builds that link extension modules into the app binary.
 - `src/liboliphaunt_trace.c`: low-overhead protocol timing counters.
+- `src/liboliphaunt_backup_state.c`: physical-backup phase validation and
+  one-attempt failure cleanup.
 - `src/liboliphaunt_archive.c`: backup/restore lifecycle over the C ABI.
 - `src/liboliphaunt_archive_tar.c`: private ustar read/write implementation for
   same-version physical archives.

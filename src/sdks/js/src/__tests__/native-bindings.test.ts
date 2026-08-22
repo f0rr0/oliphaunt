@@ -214,11 +214,11 @@ module.exports = {
       globalThis.__oliphauntNodeAddonCalls.push(['execSimpleQuery', handle, sql]);
       return new Uint8Array([90, 0, 0, 0, 5, 73]);
     },
-    backup(handle) {
+    async backup(handle) {
       globalThis.__oliphauntNodeAddonCalls.push(['backup', handle]);
       return new Uint8Array([4, 5, 6]).buffer;
     },
-    restore(options) {
+    async restore(options) {
       globalThis.__oliphauntNodeAddonCalls.push(['restore', options]);
     },
     cancel(handle) {
@@ -271,7 +271,7 @@ module.exports = {
     assert.ok(execSimpleQuery !== undefined);
     assert.deepEqual([...(await execSimpleQuery(handle, 'SELECT 1'))], [90, 0, 0, 0, 5, 73]);
     assert.deepEqual([...(await binding.backup(handle))], [4, 5, 6]);
-    binding.restore({
+    await binding.restore({
       destination: join(root, 'restore'),
       bytes: new Uint8Array([1]),
     });
@@ -367,6 +367,16 @@ async function testDenoNativeBindingRejectsPackageManagedExtensions(): Promise<v
         assert.deepEqual(definitions.oliphaunt_init, {
           parameters: ['buffer', 'buffer'],
           result: 'i32',
+        });
+        assert.deepEqual(definitions.oliphaunt_backup, {
+          parameters: ['pointer', 'buffer'],
+          result: 'i32',
+          nonblocking: true,
+        });
+        assert.deepEqual(definitions.oliphaunt_restore, {
+          parameters: ['buffer'],
+          result: 'i32',
+          nonblocking: true,
         });
         return {
           symbols: {
@@ -505,6 +515,16 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
         assert.deepEqual(definitions.oliphaunt_init, {
           parameters: ['buffer', 'buffer'],
           result: 'i32',
+        });
+        assert.deepEqual(definitions.oliphaunt_backup, {
+          parameters: ['pointer', 'buffer'],
+          result: 'i32',
+          nonblocking: true,
+        });
+        assert.deepEqual(definitions.oliphaunt_restore, {
+          parameters: ['buffer'],
+          result: 'i32',
+          nonblocking: true,
         });
         return {
           symbols: {

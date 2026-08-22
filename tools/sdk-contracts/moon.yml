@@ -28,13 +28,21 @@ tasks:
       - "sdk-contracts:native-boundaries"
     inputs:
       - "/docs/maintainers/sdk-api-surface.md"
+      - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
       - "/src/sdks/js/src/**/*.ts"
+      - "/src/sdks/js/package.json"
       - "/src/sdks/kotlin/oliphaunt/src/{androidMain,commonMain,jvmMain}/**/*.kt"
+      - "/src/sdks/kotlin/oliphaunt-android-gradle-plugin/build.gradle.kts"
+      - "/src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/java/dev/oliphaunt/android/OliphauntAndroidExtension.java"
       - "/src/sdks/react-native/src/**/*.ts"
+      - "/src/sdks/react-native/package.json"
       - "/src/sdks/rust/src/**/*.rs"
+      - "/src/sdks/rust/crates/oliphaunt-build/src/**/*.rs"
       - "/src/sdks/swift/Sources/Oliphaunt/**/*.swift"
+      - "/src/sdks/swift/Sources/OliphauntExtensionSupport/**/*.swift"
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/**/*.rs"
       - "/src/bindings/wasix-ts/src/**/*.ts"
+      - "/src/bindings/wasix-ts/package.json"
       - "/tools/policy/generate-sdk-api-surface.mjs"
     options:
       cache: true
@@ -53,7 +61,10 @@ tasks:
     tags: ["quality", "static"]
     command: "node tools/policy/check-sdk-doc-examples.mjs"
     inputs:
-      - "/src/sdks/{kotlin,react-native,rust,swift}/README.md"
+      - "/src/sdks/{js,kotlin,react-native,rust,swift}/README.md"
+      - "/src/bindings/wasix-ts/README.md"
+      - "/src/bindings/wasix-ts/src/__tests__/**/*"
+      - "/src/sdks/js/src/__tests__/**/*"
       - "/src/sdks/kotlin/oliphaunt/src/**/*"
       - "/src/sdks/react-native/src/__tests__/**/*"
       - "/src/sdks/rust/tests/**/*"
@@ -80,8 +91,11 @@ tasks:
     inputs:
       - "/src/bindings/wasix-rust/moon.yml"
       - "/src/bindings/wasix-ts/moon.yml"
+      - "/src/bindings/wasix-ts/package.json"
       - "/src/sdks/*/moon.yml"
       - "/src/sdks/js/package.json"
+      - "/src/sdks/react-native/package.json"
+      - "/docs/maintainers/sdk-parity-policy.md"
       - "/tools/policy/check-sdk-manifest.mjs"
       - "/tools/policy/sdk-manifest.toml"
       - "/tools/release/release-graph.mjs"

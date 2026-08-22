@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { resolveExecutionMode } from '../open-options.js';
 
+// liboliphaunt-doc-example:wasix-typescript-direct-placement
 describe('WASIX execution selection', () => {
   it('keeps worker isolation as the default', () => {
     expect(resolveExecutionMode({})).toBe('worker');

@@ -6,6 +6,11 @@ const root = process.cwd();
 
 const readmes = [
   {
+    sdk: 'typescript',
+    path: 'src/sdks/js/README.md',
+    languages: new Set(['ts', 'typescript']),
+  },
+  {
     sdk: 'rust',
     path: 'src/sdks/rust/README.md',
     languages: new Set(['rust']),
@@ -25,13 +30,20 @@ const readmes = [
     path: 'src/sdks/react-native/README.md',
     languages: new Set(['ts', 'typescript']),
   },
+  {
+    sdk: 'wasix-typescript',
+    path: 'src/bindings/wasix-ts/README.md',
+    languages: new Set(['ts', 'typescript']),
+  },
 ];
 
 const coverageRoots = [
+  'src/sdks/js/src/__tests__',
   'src/sdks/rust/tests',
   'src/sdks/swift/Tests',
   'src/sdks/kotlin/oliphaunt/src',
   'src/sdks/react-native/src/__tests__',
+  'src/bindings/wasix-ts/src/__tests__',
 ];
 
 const markerPattern = /liboliphaunt-doc-example:([a-z0-9][a-z0-9_.-]*)/g;

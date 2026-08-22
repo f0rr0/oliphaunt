@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 
 import { extractTar } from '../archive.js';
 import {
+  BackupModeExitUnconfirmedError,
+  createPhysicalArchive,
   decodePhysicalArchive,
   encodePhysicalArchive,
   mergeBackupSnapshots,
@@ -14,9 +16,206 @@ import {
   validateBackupWalRange,
   withoutPostStopState,
 } from '../physical-archive.js';
+import { PostgresError } from '../query.js';
+import type { StorageDirectory } from '../storage-provider.js';
 import type { StoredSnapshot } from '../storage-snapshot.js';
 
 describe('WASIX physical archives', () => {
+  it('does not stop backup mode when pg_backup_start fails in PostgreSQL', async () => {
+    const calls: string[] = [];
+    await expect(
+      createPhysicalArchive(async (request) => {
+        calls.push(querySql(request));
+        return queryError('55000', 'backup is unavailable');
+      }, backupDirectory()),
+    ).rejects.toBeInstanceOf(PostgresError);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain('pg_backup_start');
+  });
+
+  it('stops backup mode after local validation of the start result fails', async () => {
+    const calls: string[] = [];
+    const responses = [queryResponse(['000000010000000000000000']), stopResponse()];
+    await expect(
+      createPhysicalArchive(async (request) => {
+        calls.push(querySql(request));
+        return nextResponse(responses);
+      }, backupDirectory()),
+    ).rejects.toThrow('pg_backup_start returned an unexpected result');
+    expect(calls.map(backupFunction)).toEqual(['pg_backup_start', 'pg_backup_stop']);
+  });
+
+  it('cleans up when pg_backup_start lacks successful command completion', async () => {
+    const calls: string[] = [];
+    const responses = [withoutCommandComplete(startResponse()), stopResponse()];
+    await expect(
+      createPhysicalArchive(async (request) => {
+        calls.push(querySql(request));
+        return nextResponse(responses);
+      }, backupDirectory()),
+    ).rejects.toThrow('pg_backup_start did not return a successful PostgreSQL command tag');
+    expect(calls.map(backupFunction)).toEqual(['pg_backup_start', 'pg_backup_stop']);
+  });
+
+  it('preserves a local archive failure after confirmed cleanup', async () => {
+    const calls: string[] = [];
+    const responses = [startResponse(), stopResponse()];
+    const directory = backupDirectory();
+    directory.readDir = async () => {
+      throw new Error('snapshot failed');
+    };
+    await expect(
+      createPhysicalArchive(async (request) => {
+        calls.push(querySql(request));
+        return nextResponse(responses);
+      }, directory),
+    ).rejects.toThrow('snapshot failed');
+    expect(calls.map(backupFunction)).toEqual(['pg_backup_start', 'pg_backup_stop']);
+  });
+
+  it('stops backup mode when the final pg_control read fails', async () => {
+    const calls: string[] = [];
+    const responses = [startResponse(), stopResponse()];
+    const directory = backupDirectory();
+    const readFile = directory.readFile.bind(directory);
+    directory.readFile = async (path) => {
+      if (path === 'global/pg_control') throw new Error('pg_control read failed');
+      return readFile(path);
+    };
+
+    await expect(
+      createPhysicalArchive(async (request) => {
+        calls.push(querySql(request));
+        return nextResponse(responses);
+      }, directory),
+    ).rejects.toThrow('pg_control read failed');
+    expect(calls.map(backupFunction)).toEqual(['pg_backup_start', 'pg_backup_stop']);
+  });
+
+  it('does not stop twice when archive assembly fails after a confirmed stop', async () => {
+    const calls: string[] = [];
+    const responses = [startResponse(), stopResponse()];
+    const directory = backupDirectory();
+    const readFile = directory.readFile.bind(directory);
+    directory.readFile = async (path) => {
+      if (path.startsWith('pg_wal/')) return new Uint8Array(1024);
+      return readFile(path);
+    };
+
+    await expect(
+      createPhysicalArchive(async (request) => {
+        calls.push(querySql(request));
+        return nextResponse(responses);
+      }, directory),
+    ).rejects.toThrow('has the wrong size');
+    expect(calls.map(backupFunction)).toEqual(['pg_backup_start', 'pg_backup_stop']);
+  });
+
+  it('preserves the first stop failure after a fully validated emergency stop', async () => {
+    const calls: string[] = [];
+    const responses = [startResponse(), queryError('55000', 'first stop failed'), stopResponse()];
+    await expect(
+      createPhysicalArchive(async (request) => {
+        calls.push(querySql(request));
+        return nextResponse(responses);
+      }, backupDirectory()),
+    ).rejects.toThrow('first stop failed');
+    expect(calls.map(backupFunction)).toEqual([
+      'pg_backup_start',
+      'pg_backup_stop',
+      'pg_backup_stop',
+    ]);
+  });
+
+  it('reports both stop failures and identifies unconfirmed cleanup', async () => {
+    const responses = [
+      startResponse(),
+      queryError('55000', 'first stop failed'),
+      queryError('55000', 'emergency stop failed'),
+    ];
+    const failure = await rejection(
+      createPhysicalArchive(async () => nextResponse(responses), backupDirectory()),
+    );
+    expect(failure).toBeInstanceOf(BackupModeExitUnconfirmedError);
+    expect(failure.cause).toBeInstanceOf(AggregateError);
+    const causes = (failure.cause as AggregateError).errors;
+    expect(causes.map((cause) => String(cause))).toEqual([
+      expect.stringContaining('first stop failed'),
+      expect.stringContaining('emergency stop failed'),
+    ]);
+  });
+
+  it('preserves primary and cleanup validation failures without poisoning', async () => {
+    const directory = backupDirectory();
+    directory.readDir = async () => {
+      throw new Error('snapshot failed');
+    };
+    const responses = [startResponse(), stopResponseWithInvalidDataRow()];
+    const failure = await rejection(
+      createPhysicalArchive(async () => nextResponse(responses), directory),
+    );
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors.map((cause) => String(cause))).toEqual([
+      expect.stringContaining('snapshot failed'),
+      expect.stringContaining('DataRow column count'),
+    ]);
+  });
+
+  it('does not retry a stop whose SQL succeeded but result metadata is invalid', async () => {
+    const calls: string[] = [];
+    const responses = [startResponse(), queryResponse(['wal-only'])];
+    await expect(
+      createPhysicalArchive(async (request) => {
+        calls.push(querySql(request));
+        return nextResponse(responses);
+      }, backupDirectory()),
+    ).rejects.toThrow('pg_backup_stop returned an unexpected result');
+    expect(calls.map(backupFunction)).toEqual(['pg_backup_start', 'pg_backup_stop']);
+  });
+
+  it('does not retry a stop whose completed command tag is unexpected', async () => {
+    const calls: string[] = [];
+    const responses = [
+      startResponse(),
+      queryResponse(['wal', 'backup label', null], 'SELECT 0'),
+    ];
+    await expect(
+      createPhysicalArchive(async (request) => {
+        calls.push(querySql(request));
+        return nextResponse(responses);
+      }, backupDirectory()),
+    ).rejects.toThrow('pg_backup_stop returned an unexpected PostgreSQL command tag');
+    expect(calls.map(backupFunction)).toEqual(['pg_backup_start', 'pg_backup_stop']);
+  });
+
+  it('does not retry a stop whose completed response has malformed result metadata', async () => {
+    const calls: string[] = [];
+    const responses = [startResponse(), stopResponseWithInvalidDataRow()];
+    await expect(
+      createPhysicalArchive(async (request) => {
+        calls.push(querySql(request));
+        return nextResponse(responses);
+      }, backupDirectory()),
+    ).rejects.toThrow('DataRow column count');
+    expect(calls.map(backupFunction)).toEqual(['pg_backup_start', 'pg_backup_stop']);
+  });
+
+  it('retries once when pg_backup_stop lacks successful command completion', async () => {
+    const calls: string[] = [];
+    const responses = [startResponse(), withoutCommandComplete(stopResponse()), stopResponse()];
+    await expect(
+      createPhysicalArchive(async (request) => {
+        calls.push(querySql(request));
+        return nextResponse(responses);
+      }, backupDirectory()),
+    ).rejects.toThrow('pg_backup_stop did not return a successful PostgreSQL command completion');
+    expect(calls.map(backupFunction)).toEqual([
+      'pg_backup_start',
+      'pg_backup_stop',
+      'pg_backup_stop',
+    ]);
+  });
+
   it('matches the shared physical archive manifest exactly', () => {
     const expected = readFileSync(
       fileURLToPath(
@@ -225,11 +424,11 @@ describe('WASIX physical archives', () => {
       '000000010000000000000FFE',
       '000000010000000000000FFF',
       '000000010000000100000000',
-    ];
+    ] as const;
     validateBackupWalRange(
       walSnapshot(names.map((name) => [name, size])),
-      names[0]!,
-      names[2]!,
+      names[0],
+      names[2],
       size,
     );
   });
@@ -263,8 +462,8 @@ describe('WASIX physical archives', () => {
     for (const id of ids) {
       const prefix = `case.${id}.`;
       const segmentSize = Number(values.get(`${prefix}segmentSizeBytes`));
-      const start = values.get(`${prefix}start`)!;
-      const stop = values.get(`${prefix}stop`)!;
+      const start = requiredFixtureValue(values, `${prefix}start`);
+      const stop = requiredFixtureValue(values, `${prefix}stop`);
       const expected = values.get(`${prefix}expected`);
       if (expected !== undefined) {
         expect(requiredBackupWalNames(start, stop, segmentSize)).toEqual(expected.split(','));
@@ -339,6 +538,199 @@ function completeSnapshot(): StoredSnapshot {
       { path: 'backup_label', bytes: new TextEncoder().encode('label') },
     ],
   };
+}
+
+function backupDirectory(): StorageDirectory {
+  const wal = '000000010000000000000000';
+  return {
+    async readDir(path) {
+      switch (path) {
+        case '':
+          return [
+            { type: 'file', name: 'PG_VERSION' },
+            { type: 'dir', name: 'base' },
+            { type: 'dir', name: 'global' },
+            { type: 'dir', name: 'pg_wal' },
+          ];
+        case 'base':
+        case 'global':
+        case 'pg_wal':
+          return path === 'global' ? [{ type: 'file', name: 'pg_control' }] : [];
+        default:
+          throw new Error(`unexpected readDir ${path}`);
+      }
+    },
+    async readFile(path) {
+      if (path === 'PG_VERSION') return new TextEncoder().encode('18\n');
+      if (path === 'global/pg_control') return Uint8Array.of(1);
+      if (path === `pg_wal/${wal}`) return new Uint8Array(1024 * 1024);
+      throw new Error(`unexpected readFile ${path}`);
+    },
+  };
+}
+
+function startResponse(): Uint8Array {
+  return queryResponse(['000000010000000000000000', String(1024 * 1024)]);
+}
+
+function stopResponse(): Uint8Array {
+  return queryResponse(['000000010000000000000000', 'backup label', null]);
+}
+
+function stopResponseWithInvalidDataRow(): Uint8Array {
+  const response = stopResponse().slice();
+  let offset = 0;
+  while (offset < response.length) {
+    const length = new DataView(response.buffer, response.byteOffset + offset + 1, 4).getUint32(0);
+    if (response[offset] === 'D'.charCodeAt(0)) {
+      new DataView(response.buffer).setUint16(offset + 5, 2);
+      return response;
+    }
+    offset += length + 1;
+  }
+  throw new Error('stop response is missing DataRow');
+}
+
+function queryResponse(
+  values: readonly (string | null)[],
+  commandTag = 'SELECT 1',
+): Uint8Array {
+  const encoder = new TextEncoder();
+  const fields = values.map((_value, index) => `column_${index}`);
+  const descriptionLength =
+    2 + fields.reduce((length, name) => length + encoder.encode(name).length + 19, 0);
+  const description = new Uint8Array(descriptionLength);
+  const descriptionView = new DataView(description.buffer);
+  descriptionView.setInt16(0, fields.length);
+  let descriptionOffset = 2;
+  for (const name of fields) {
+    const nameBytes = encoder.encode(name);
+    description.set(nameBytes, descriptionOffset);
+    descriptionOffset += nameBytes.length;
+    description[descriptionOffset++] = 0;
+    descriptionView.setUint32(descriptionOffset, 0);
+    descriptionOffset += 4;
+    descriptionView.setInt16(descriptionOffset, 0);
+    descriptionOffset += 2;
+    descriptionView.setUint32(descriptionOffset, 25);
+    descriptionOffset += 4;
+    descriptionView.setInt16(descriptionOffset, -1);
+    descriptionOffset += 2;
+    descriptionView.setInt32(descriptionOffset, -1);
+    descriptionOffset += 4;
+    descriptionView.setInt16(descriptionOffset, 0);
+    descriptionOffset += 2;
+  }
+
+  const encodedValues = values.map((value) => (value === null ? null : encoder.encode(value)));
+  const data = new Uint8Array(
+    2 + encodedValues.reduce((length, value) => length + 4 + (value?.length ?? 0), 0),
+  );
+  const dataView = new DataView(data.buffer);
+  dataView.setInt16(0, encodedValues.length);
+  let dataOffset = 2;
+  for (const value of encodedValues) {
+    dataView.setInt32(dataOffset, value?.length ?? -1);
+    dataOffset += 4;
+    if (value !== null) {
+      data.set(value, dataOffset);
+      dataOffset += value.length;
+    }
+  }
+  return concatenateMessages([
+    backendMessage('T', description),
+    backendMessage('D', data),
+    backendMessage('C', encoder.encode(`${commandTag}\0`)),
+    ready(),
+  ]);
+}
+
+function queryError(sqlstate: string, message: string): Uint8Array {
+  const encoder = new TextEncoder();
+  return concatenateMessages([
+    backendMessage(
+      'E',
+      Uint8Array.from([
+        'S'.charCodeAt(0),
+        ...encoder.encode('ERROR'),
+        0,
+        'C'.charCodeAt(0),
+        ...encoder.encode(sqlstate),
+        0,
+        'M'.charCodeAt(0),
+        ...encoder.encode(message),
+        0,
+        0,
+      ]),
+    ),
+    ready(),
+  ]);
+}
+
+function ready(): Uint8Array {
+  return backendMessage('Z', Uint8Array.of('I'.charCodeAt(0)));
+}
+
+function backendMessage(tag: string, body: Uint8Array): Uint8Array {
+  const message = new Uint8Array(body.length + 5);
+  message[0] = tag.charCodeAt(0);
+  new DataView(message.buffer).setUint32(1, body.length + 4);
+  message.set(body, 5);
+  return message;
+}
+
+function concatenateMessages(messages: readonly Uint8Array[]): Uint8Array {
+  const result = new Uint8Array(messages.reduce((length, message) => length + message.length, 0));
+  let offset = 0;
+  for (const message of messages) {
+    result.set(message, offset);
+    offset += message.length;
+  }
+  return result;
+}
+
+function withoutCommandComplete(response: Uint8Array): Uint8Array {
+  const messages: Uint8Array[] = [];
+  let offset = 0;
+  while (offset < response.length) {
+    const length = new DataView(response.buffer, response.byteOffset + offset + 1, 4).getUint32(0);
+    const next = offset + length + 1;
+    if (response[offset] !== 'C'.charCodeAt(0)) messages.push(response.slice(offset, next));
+    offset = next;
+  }
+  return concatenateMessages(messages);
+}
+
+function querySql(request: Uint8Array): string {
+  return new TextDecoder().decode(request.subarray(5, -1));
+}
+
+function backupFunction(sql: string): string {
+  if (sql.includes('pg_backup_start')) return 'pg_backup_start';
+  if (sql.includes('pg_backup_stop')) return 'pg_backup_stop';
+  throw new Error(`unexpected backup SQL ${sql}`);
+}
+
+async function rejection(promise: Promise<unknown>): Promise<Error> {
+  try {
+    await promise;
+  } catch (error) {
+    if (error instanceof Error) return error;
+    throw error;
+  }
+  throw new Error('expected rejection');
+}
+
+function nextResponse(responses: Uint8Array[]): Uint8Array {
+  const response = responses.shift();
+  if (response === undefined) throw new Error('test exhausted backup responses');
+  return response;
+}
+
+function requiredFixtureValue(values: ReadonlyMap<string, string>, key: string): string {
+  const value = values.get(key);
+  if (value === undefined) throw new Error(`shared fixture is missing ${key}`);
+  return value;
 }
 
 function rewriteChecksum(header: Uint8Array): void {

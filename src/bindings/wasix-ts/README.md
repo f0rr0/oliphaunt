@@ -17,6 +17,7 @@ runtime assets.
 
 ## Query PostgreSQL
 
+<!-- liboliphaunt-doc-example:wasix-typescript-query -->
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
 
@@ -46,6 +47,7 @@ SQLSTATE and structured diagnostic fields.
 
 ## Transactions
 
+<!-- liboliphaunt-doc-example:wasix-typescript-transaction -->
 ```ts
 await database.transaction(async (transaction) => {
   await transaction.execute('insert into todo values ($1)', ['inside transaction']);
@@ -68,6 +70,7 @@ Persistent publication completes before a successful transaction resolves.
 Omitting `storage` creates a fresh true-memory database. Persistent adapters
 are explicit, host-specific imports:
 
+<!-- liboliphaunt-doc-example:wasix-typescript-storage-node -->
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
 import { directory } from '@oliphaunt/wasix-ts/storage/node';
@@ -109,6 +112,7 @@ poisons the live database handle.
 
 ## Backup and restore
 
+<!-- liboliphaunt-doc-example:wasix-typescript-backup-restore -->
 ```ts
 const backup = await database.backup();
 await database.close();
@@ -127,6 +131,7 @@ identity.
 
 Import package-authored WASIX extension descriptors and pass them at open:
 
+<!-- liboliphaunt-doc-example:wasix-typescript-extensions -->
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
 import pgtap from '@oliphaunt/extension-pgtap-wasix';
@@ -142,6 +147,7 @@ database.
 
 ## Execution placement
 
+<!-- liboliphaunt-doc-example:wasix-typescript-direct-placement -->
 ```ts
 const direct = await Oliphaunt.open({ execution: 'direct' });
 ```

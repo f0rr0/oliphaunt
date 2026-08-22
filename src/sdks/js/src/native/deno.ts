@@ -27,8 +27,8 @@ type DenoSymbols = {
   oliphaunt_exec_protocol: (...args: unknown[]) => Promise<number>;
   oliphaunt_exec_protocol_stream: (...args: unknown[]) => number;
   oliphaunt_exec_simple_query: (...args: unknown[]) => Promise<number>;
-  oliphaunt_backup: (...args: unknown[]) => unknown;
-  oliphaunt_restore: (...args: unknown[]) => unknown;
+  oliphaunt_backup: (...args: unknown[]) => Promise<number>;
+  oliphaunt_restore: (...args: unknown[]) => Promise<number>;
   oliphaunt_cancel: (...args: unknown[]) => unknown;
   oliphaunt_detach: (...args: unknown[]) => unknown;
   oliphaunt_last_error: (...args: unknown[]) => unknown;
@@ -58,8 +58,12 @@ export async function createDenoNativeBinding(
       result: 'i32',
       nonblocking: true,
     },
-    oliphaunt_backup: { parameters: ['pointer', 'buffer'], result: 'i32' },
-    oliphaunt_restore: { parameters: ['buffer'], result: 'i32' },
+    oliphaunt_backup: {
+      parameters: ['pointer', 'buffer'],
+      result: 'i32',
+      nonblocking: true,
+    },
+    oliphaunt_restore: { parameters: ['buffer'], result: 'i32', nonblocking: true },
     oliphaunt_cancel: { parameters: ['pointer'], result: 'i32' },
     oliphaunt_detach: { parameters: ['pointer'], result: 'i32' },
     oliphaunt_last_error: { parameters: ['pointer'], result: 'pointer' },
@@ -210,9 +214,9 @@ export async function createDenoNativeBinding(
       }
       return copyResponse(deno, symbols, response);
     },
-    backup(handle: NativeHandle): Uint8Array {
+    async backup(handle: NativeHandle): Promise<Uint8Array> {
       const response = responseBuffer();
-      const rc = symbols.oliphaunt_backup(handle, response) as number;
+      const rc = await symbols.oliphaunt_backup(handle, response);
       if (rc !== 0) {
         symbols.oliphaunt_free_response(response);
         throw errorMessage(
@@ -223,9 +227,9 @@ export async function createDenoNativeBinding(
       }
       return copyResponse(deno, symbols, response);
     },
-    restore(options: NativeRestoreOptions): void {
+    async restore(options: NativeRestoreOptions): Promise<void> {
       const packed = packRestoreOptionsPointers(options, (value) => pointerOf(deno, value));
-      const rc = symbols.oliphaunt_restore(packed.options) as number;
+      const rc = await symbols.oliphaunt_restore(packed.options);
       keepAlive(packed.keepAlive);
       if (rc !== 0) {
         throw errorMessage(

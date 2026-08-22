@@ -14,12 +14,12 @@ Additional platform examples live here as well:
 
 Each app opts into `hstore`, `pg_trgm`, and `unaccent`, then uses `hstore`
 tags plus trigram/accent-insensitive search for the todo list. Native examples
-load `postgres`, `initdb`, and `pg_ctl` from `liboliphaunt-native-*`, while
-`pg_dump` and `psql` come through the `oliphaunt-tools` facade selecting
-`oliphaunt-tools-*` payload crates. WASIX examples load `postgres` and `initdb`
-from the runtime crates. WASIX examples enable the `oliphaunt-wasix` `tools`
-feature, which resolves `pg_dump`/`psql` from `oliphaunt-wasix-tools`; WASIX
-intentionally has no `pg_ctl`.
+load `postgres`, `initdb`, and `pg_ctl` from `liboliphaunt-native-*`. Native
+tool carriers separately package `pg_basebackup`, `pg_dump`, and `psql`; a
+compatible external `pg_restore` may be used but is not packaged. WASIX
+examples load `postgres` and `initdb` from the runtime crates and enable the
+`oliphaunt-wasix` `tools` feature, which resolves `pg_dump`/`psql` from
+`oliphaunt-wasix-tools`; WASIX intentionally has no `pg_ctl`.
 
 Example dependencies resolve from npm and crates.io. Cargo manifests pin the
 current Oliphaunt release versions and do not commit nested lockfiles.
@@ -29,7 +29,8 @@ Run the static Cargo manifest checks with:
 ```sh
 tools/dev/bun.sh tools/release/example-cargo-policy.mjs --check
 ```
-The native examples run a SQL backup smoke through `pg_dump` during startup.
+The native examples exercise their configured database path during startup;
+native tool compatibility is qualified separately against the local server.
 The WASIX examples run `pg_dump(PgDumpOptions)` and a non-interactive `psql`
 `SELECT 1` smoke during startup.
 

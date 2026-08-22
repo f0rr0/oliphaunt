@@ -14,7 +14,7 @@ class OliphauntJsiPromiseCallback @DoNotStrip constructor(
     nativeResolveString(token, value)
   }
 
-  fun resolveUnit() {
+  override fun resolveUnit() {
     nativeResolveUnit(token)
   }
 

@@ -7,7 +7,6 @@ use std::task::{Context as TaskContext, Poll};
 
 use anyhow::{Context, Result, anyhow};
 use tempfile::TempDir;
-use wasmer::Store;
 use wasmer_types::ModuleHash;
 use wasmer_wasix::runners::wasi::{RuntimeOrEngine, WasiRunner};
 use wasmer_wasix::runtime::task_manager::tokio::TokioTaskManager;
@@ -309,40 +308,49 @@ fn psql_wasm_asset() -> Result<&'static [u8]> {
         })
 }
 
-fn dump_sql_with_networking<N>(
+struct ToolOutput {
+    fs_root: TempDir,
+    stdout: Vec<u8>,
+}
+
+fn run_wasix_client_tool<N, F>(
+    tool_name: &'static str,
+    wasm: &'static [u8],
+    load_module: fn(&wasmer::Engine) -> Result<wasmer::Module>,
     addr: SocketAddr,
-    options: &PgDumpOptions,
+    username: &str,
     networking: N,
-) -> Result<String>
+    build_args: F,
+) -> Result<ToolOutput>
 where
     N: VirtualNetworking + Sync,
+    F: FnOnce(&Path, String, String) -> Result<Vec<String>>,
 {
-    options.validate()?;
-    let wasm = pg_dump_wasm_asset()?;
     let engine = aot::headless_engine();
-    let module = {
-        aot::load_pg_dump_module(&engine)
-            .context("load pg_dump AOT artifact from oliphaunt-wasix-tools-aot-*")?
-    };
-    let _store = Store::new(engine.clone());
+    let module = load_module(&engine).with_context(|| {
+        format!("load {tool_name} AOT artifact from oliphaunt-wasix-tools-aot-*")
+    })?;
 
-    let fs_root = TempDir::new().context("create pg_dump WASIX filesystem root")?;
+    let fs_root =
+        TempDir::new().with_context(|| format!("create {tool_name} WASIX filesystem root"))?;
     if let Some(runtime_archive) = assets::runtime_archive() {
         unpack_runtime_archive_reader(
             Cursor::new(runtime_archive),
             Path::new("oliphaunt.wasix.tar.zst"),
             fs_root.path(),
         )
-        .context("install WASIX runtime files for pg_dump")?;
+        .with_context(|| format!("install WASIX runtime files for {tool_name}"))?;
         install_optional_icu_data(&fs_root.path().join("oliphaunt"))
-            .context("install WASIX ICU data for pg_dump")?;
+            .with_context(|| format!("install WASIX ICU data for {tool_name}"))?;
     }
-    let runtime = {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .context("create Tokio runtime for WASIX pg_dump")?
-    };
+
+    let host = addr.ip().to_string();
+    let port = addr.port().to_string();
+    let args = build_args(fs_root.path(), host, port)?;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .with_context(|| format!("create Tokio runtime for WASIX {tool_name}"))?;
     let (host_fs, wasix_runtime) = {
         let _runtime_guard = runtime.enter();
         let host_fs = SyncHostFileSystem::new(fs_root.path()).with_context(|| {
@@ -360,25 +368,6 @@ where
         (host_fs, wasix_runtime)
     };
 
-    let output_path = "/host/out.sql";
-    let port = addr.port().to_string();
-    let host = match addr {
-        SocketAddr::V4(addr) => addr.ip().to_string(),
-        SocketAddr::V6(addr) => addr.ip().to_string(),
-    };
-    let mut args = options.args.clone();
-    args.extend([
-        "-U".to_owned(),
-        options.username.clone(),
-        "-h".to_owned(),
-        host,
-        "-p".to_owned(),
-        port,
-        "-f".to_owned(),
-        output_path.to_owned(),
-    ]);
-    args.push(options.database.clone());
-
     let stdout = Arc::new(Mutex::new(Vec::new()));
     let stderr = Arc::new(Mutex::new(Vec::new()));
     let mut runner = WasiRunner::new();
@@ -388,7 +377,7 @@ where
         .with_current_dir("/")
         .with_args(args)
         .with_envs([
-            ("PGUSER", options.username.as_str()),
+            ("PGUSER", username),
             ("PGPASSWORD", "password"),
             ("PGSSLMODE", "disable"),
         ])
@@ -397,53 +386,72 @@ where
     if fs_root.path().join("oliphaunt/share/icu").is_dir() {
         runner.with_envs([("ICU_DATA", "/oliphaunt/share/icu")]);
     }
-    {
-        runner
-            .run_wasm(
-                RuntimeOrEngine::Runtime(Arc::new(wasix_runtime)),
-                "pg_dump",
-                module,
-                ModuleHash::sha256(wasm),
-            )
-            .map_err(|err| {
-                let stderr =
-                    String::from_utf8_lossy(&stderr.lock().expect("stderr capture poisoned"))
-                        .trim()
-                        .to_owned();
-                if stderr.is_empty() {
-                    anyhow!(err)
-                } else {
-                    anyhow!("{err}; pg_dump stderr: {stderr}")
-                }
-            })
-            .context("run WASIX pg_dump")?;
-    }
-
-    let sql = {
-        match std::fs::read_to_string(fs_root.path().join("out.sql")) {
-            Ok(sql) => Ok(sql),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                let stdout = stdout.lock().expect("stdout capture poisoned");
-                if stdout.is_empty() {
-                    Err(err).with_context(|| {
-                        format!(
-                            "read pg_dump output {}",
-                            fs_root.path().join("out.sql").display()
-                        )
-                    })
-                } else {
-                    String::from_utf8(stdout.clone()).context("decode pg_dump stdout as UTF-8")
-                }
+    runner
+        .run_wasm(
+            RuntimeOrEngine::Runtime(Arc::new(wasix_runtime)),
+            tool_name,
+            module,
+            ModuleHash::sha256(wasm),
+        )
+        .map_err(|err| {
+            let stderr = String::from_utf8_lossy(&stderr.lock().expect("stderr capture poisoned"))
+                .trim()
+                .to_owned();
+            if stderr.is_empty() {
+                anyhow!(err)
+            } else {
+                anyhow!("{err}; {tool_name} stderr: {stderr}")
             }
-            Err(err) => Err(err).with_context(|| {
-                format!(
-                    "read pg_dump output {}",
-                    fs_root.path().join("out.sql").display()
-                )
-            }),
+        })
+        .with_context(|| format!("run WASIX {tool_name}"))?;
+
+    let stdout = stdout.lock().expect("stdout capture poisoned").clone();
+    Ok(ToolOutput { fs_root, stdout })
+}
+
+fn dump_sql_with_networking<N>(
+    addr: SocketAddr,
+    options: &PgDumpOptions,
+    networking: N,
+) -> Result<String>
+where
+    N: VirtualNetworking + Sync,
+{
+    options.validate()?;
+    let output = run_wasix_client_tool(
+        "pg_dump",
+        pg_dump_wasm_asset()?,
+        aot::load_pg_dump_module,
+        addr,
+        &options.username,
+        networking,
+        |_, host, port| {
+            let mut args = options.args.clone();
+            args.extend([
+                "-U".to_owned(),
+                options.username.clone(),
+                "-h".to_owned(),
+                host,
+                "-p".to_owned(),
+                port,
+                "-f".to_owned(),
+                "/host/out.sql".to_owned(),
+            ]);
+            args.push(options.database.clone());
+            Ok(args)
+        },
+    )?;
+
+    let output_path = output.fs_root.path().join("out.sql");
+    match std::fs::read_to_string(&output_path) {
+        Ok(sql) => Ok(sql),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound && !output.stdout.is_empty() => {
+            String::from_utf8(output.stdout).context("decode pg_dump stdout as UTF-8")
         }
-    }?;
-    Ok(sql)
+        Err(err) => {
+            Err(err).with_context(|| format!("read pg_dump output {}", output_path.display()))
+        }
+    }
 }
 
 fn run_psql_with_networking<N>(
@@ -455,123 +463,45 @@ where
     N: VirtualNetworking + Sync,
 {
     options.validate()?;
-    let wasm = psql_wasm_asset()?;
-    let engine = aot::headless_engine();
-    let module = {
-        aot::load_psql_module(&engine)
-            .context("load psql AOT artifact from oliphaunt-wasix-tools-aot-*")?
-    };
-    let _store = Store::new(engine.clone());
-
-    let fs_root = TempDir::new().context("create psql WASIX filesystem root")?;
-    if let Some(runtime_archive) = assets::runtime_archive() {
-        unpack_runtime_archive_reader(
-            Cursor::new(runtime_archive),
-            Path::new("oliphaunt.wasix.tar.zst"),
-            fs_root.path(),
-        )
-        .context("install WASIX runtime files for psql")?;
-        install_optional_icu_data(&fs_root.path().join("oliphaunt"))
-            .context("install WASIX ICU data for psql")?;
-    }
-    if let Some(PsqlInput::Script(script)) = &options.input {
-        std::fs::write(fs_root.path().join("input.sql"), script)
-            .context("stage psql input script")?;
-    }
-    let runtime = {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .context("create Tokio runtime for WASIX psql")?
-    };
-    let (host_fs, wasix_runtime) = {
-        let _runtime_guard = runtime.enter();
-        let host_fs = SyncHostFileSystem::new(fs_root.path()).with_context(|| {
-            format!(
-                "create host filesystem rooted at {}",
-                fs_root.path().display()
-            )
-        })?;
-        let host_fs = Arc::new(host_fs) as Arc<dyn virtual_fs::FileSystem + Send + Sync>;
-        let mut wasix_runtime = PluggableRuntime::new(Arc::new(TokioTaskManager::new(
-            tokio::runtime::Handle::current(),
-        )));
-        wasix_runtime.set_engine(engine.clone());
-        wasix_runtime.set_networking_implementation(networking);
-        (host_fs, wasix_runtime)
-    };
-
-    let port = addr.port().to_string();
-    let host = match addr {
-        SocketAddr::V4(addr) => addr.ip().to_string(),
-        SocketAddr::V6(addr) => addr.ip().to_string(),
-    };
-    let mut args = vec![
-        "-X".to_owned(),
-        "-v".to_owned(),
-        "ON_ERROR_STOP=1".to_owned(),
-        "-U".to_owned(),
-        options.username.clone(),
-        "-h".to_owned(),
-        host,
-        "-p".to_owned(),
-        port,
-        "-d".to_owned(),
-        options.database.clone(),
-    ];
-    args.extend(options.args.clone());
-    match &options.input {
-        Some(PsqlInput::Command(command)) => {
-            args.extend(["-c".to_owned(), command.clone()]);
-        }
-        Some(PsqlInput::Script(_)) => {
-            args.extend(["-f".to_owned(), "/host/input.sql".to_owned()]);
-        }
-        None => {}
-    }
-
-    let stdout = Arc::new(Mutex::new(Vec::new()));
-    let stderr = Arc::new(Mutex::new(Vec::new()));
-    let mut runner = WasiRunner::new();
-    runner
-        .with_mount("/".to_owned(), Arc::clone(&host_fs))
-        .with_mount("/host".to_owned(), host_fs)
-        .with_current_dir("/")
-        .with_args(args)
-        .with_envs([
-            ("PGUSER", options.username.as_str()),
-            ("PGPASSWORD", "password"),
-            ("PGSSLMODE", "disable"),
-        ])
-        .with_stdout(Box::new(CaptureFile::new(Arc::clone(&stdout))))
-        .with_stderr(Box::new(CaptureFile::new(Arc::clone(&stderr))));
-    if fs_root.path().join("oliphaunt/share/icu").is_dir() {
-        runner.with_envs([("ICU_DATA", "/oliphaunt/share/icu")]);
-    }
-    {
-        runner
-            .run_wasm(
-                RuntimeOrEngine::Runtime(Arc::new(wasix_runtime)),
-                "psql",
-                module,
-                ModuleHash::sha256(wasm),
-            )
-            .map_err(|err| {
-                let stderr =
-                    String::from_utf8_lossy(&stderr.lock().expect("stderr capture poisoned"))
-                        .trim()
-                        .to_owned();
-                if stderr.is_empty() {
-                    anyhow!(err)
-                } else {
-                    anyhow!("{err}; psql stderr: {stderr}")
+    let output = run_wasix_client_tool(
+        "psql",
+        psql_wasm_asset()?,
+        aot::load_psql_module,
+        addr,
+        &options.username,
+        networking,
+        |fs_root, host, port| {
+            if let Some(PsqlInput::Script(script)) = &options.input {
+                std::fs::write(fs_root.join("input.sql"), script)
+                    .context("stage psql input script")?;
+            }
+            let mut args = vec![
+                "-X".to_owned(),
+                "-v".to_owned(),
+                "ON_ERROR_STOP=1".to_owned(),
+                "-U".to_owned(),
+                options.username.clone(),
+                "-h".to_owned(),
+                host,
+                "-p".to_owned(),
+                port,
+                "-d".to_owned(),
+                options.database.clone(),
+            ];
+            args.extend(options.args.clone());
+            match &options.input {
+                Some(PsqlInput::Command(command)) => {
+                    args.extend(["-c".to_owned(), command.clone()]);
                 }
-            })
-            .context("run WASIX psql")?;
-    }
-
-    String::from_utf8(stdout.lock().expect("stdout capture poisoned").clone())
-        .context("decode psql stdout as UTF-8")
+                Some(PsqlInput::Script(_)) => {
+                    args.extend(["-f".to_owned(), "/host/input.sql".to_owned()]);
+                }
+                None => {}
+            }
+            Ok(args)
+        },
+    )?;
+    String::from_utf8(output.stdout).context("decode psql stdout as UTF-8")
 }
 
 #[derive(Debug)]
@@ -698,10 +628,6 @@ mod tests {
     use crate::oliphaunt::extensions;
     use crate::oliphaunt::server::OliphauntServer;
     use sqlx::{Connection, Executor, Row};
-
-    fn vector_extension_archive_is_embedded() -> bool {
-        assets::extension_archive(extensions::VECTOR.sql_name()).is_some()
-    }
 
     #[test]
     fn pg_dump_options_reject_managed_args() {
@@ -963,63 +889,109 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn pg_dump_round_trip_vector_extension() -> Result<()> {
-        if !vector_extension_archive_is_embedded() {
-            eprintln!(
-                "skipping vector pg_dump smoke; base oliphaunt-wasix assets do not embed extension archives"
-            );
+    async fn pg_dump_round_trips_every_embedded_extension() -> Result<()> {
+        let embedded = extensions::ALL
+            .iter()
+            .copied()
+            .filter(|extension| assets::extension_archive(extension.sql_name()).is_some())
+            .collect::<Vec<_>>();
+        if embedded.is_empty() {
+            eprintln!("skipping extension pg_dump smoke; no extension archives are embedded");
             return Ok(());
         }
+        anyhow::ensure!(
+            embedded
+                .windows(2)
+                .all(|pair| pair[0].sql_name() < pair[1].sql_name()),
+            "embedded extension dump/restore set must remain sorted by SQL name"
+        );
 
-        let server = OliphauntServer::builder()
-            .extension(extensions::VECTOR)
-            .start()?;
-        let mut conn = sqlx::PgConnection::connect(&server.connection_string())
+        eprintln!(
+            "WASIX extension pg_dump/psql catalog: {}",
+            embedded
+                .iter()
+                .map(|extension| extension.sql_name())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+
+        for extension in embedded {
+            pg_dump_round_trip_extension(extension).await?;
+        }
+        Ok(())
+    }
+
+    async fn pg_dump_round_trip_extension(extension: extensions::Extension) -> Result<()> {
+        let sql_name = extension.sql_name();
+        let server = OliphauntServer::builder().extension(extension).start()?;
+        let mut connection = sqlx::PgConnection::connect(&server.connection_string())
             .await
-            .context("connect to extension-enabled Oliphaunt server")?;
-        conn.execute(
-            "CREATE TABLE vector_dump_items(id INTEGER PRIMARY KEY, embedding vector(3));
-             INSERT INTO vector_dump_items(id, embedding) VALUES (1, '[1,2,3]');",
-        )
-        .await
-        .context("seed vector pg_dump source data")?;
-        drop(conn);
+            .context("connect to extension pg_dump source server")?;
+        let recipe = extensions::extension_smoke_sql(sql_name);
+        for statement in extensions::extension_smoke_statements(&recipe) {
+            connection.execute(statement).await.with_context(|| {
+                format!("run canonical source smoke for extension {sql_name}:\n{statement}")
+            })?;
+        }
+        connection.close().await?;
 
         let (server, dump) = tokio::task::spawn_blocking(move || -> Result<_> {
             let dump = server.pg_dump(PgDumpOptions::default())?;
             Ok((server, dump))
         })
         .await
-        .context("join vector pg_dump task")??;
+        .context("join extension pg_dump task")??;
         server.close()?;
 
-        assert!(
-            dump.contains("CREATE EXTENSION IF NOT EXISTS vector"),
-            "dump did not contain vector extension DDL:\n{dump}"
-        );
-        assert!(dump.contains("CREATE TABLE public.vector_dump_items"));
-        assert!(dump.contains("1\t[1,2,3]"));
+        if extension.creates_extension() {
+            let unquoted = format!("CREATE EXTENSION IF NOT EXISTS {sql_name}");
+            let quoted = format!("CREATE EXTENSION IF NOT EXISTS \"{sql_name}\"");
+            anyhow::ensure!(
+                dump.contains(&unquoted) || dump.contains(&quoted),
+                "pg_dump output omitted extension {sql_name}"
+            );
+        }
 
-        let restored = OliphauntServer::builder()
-            .extension(extensions::VECTOR)
-            .start()?;
+        let restored = OliphauntServer::builder().extension(extension).start()?;
         let restored = tokio::task::spawn_blocking(move || -> Result<_> {
             restored
                 .psql(PsqlOptions::new().script(dump))
-                .context("restore standard vector dump through packaged psql")?;
+                .context("restore catalog-extension pg_dump script through packaged psql")?;
             Ok(restored)
         })
         .await
-        .context("join vector packaged psql restore task")??;
-        let mut connection = sqlx::PgConnection::connect(&restored.connection_string()).await?;
-        let result = sqlx::query(
-            "SELECT embedding <-> '[1,2,4]'::vector AS distance \
-             FROM public.vector_dump_items WHERE id = $1",
-        )
-        .bind(1_i32)
-        .fetch_one(&mut connection)
-        .await?;
-        assert_eq!(result.try_get::<f64, _>("distance")?, 1.0);
+        .context("join catalog-extension packaged psql restore task")??;
+        let mut connection = sqlx::PgConnection::connect(&restored.connection_string())
+            .await
+            .context("connect to restored catalog-extension server")?;
+
+        if extension.creates_extension() {
+            let present = sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM pg_extension WHERE extname = $1",
+            )
+            .bind(sql_name)
+            .fetch_one(&mut connection)
+            .await
+            .with_context(|| format!("verify restored extension catalog row for {sql_name}"))?;
+            anyhow::ensure!(present == 1, "restored extension {sql_name} is missing");
+        }
+
+        if extension == extensions::VECTOR {
+            let distance = sqlx::query_scalar::<_, f64>(
+                "SELECT embedding <-> '[1,2,4]'::vector FROM oliphaunt_vector WHERE id = 1",
+            )
+            .fetch_one(&mut connection)
+            .await
+            .context("verify the canonical vector row survived pg_dump/psql restore")?;
+            anyhow::ensure!(distance == 1.0, "restored vector distance must equal 1");
+        }
+
+        let recipe = extensions::extension_smoke_sql(sql_name);
+        for statement in extensions::extension_smoke_statements(&recipe) {
+            connection.execute(statement).await.with_context(|| {
+                format!("run canonical restored smoke for extension {sql_name}:\n{statement}")
+            })?;
+        }
         connection.close().await?;
         restored.close()?;
         Ok(())

@@ -64,6 +64,7 @@ liboliphaunt_sources=(
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_process.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_trace.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_fs.c"
+  "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_backup_state.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_archive.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_archive_tar.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_static_extensions.c"

@@ -69,12 +69,10 @@ export async function restoreNodeDirectoryStorage(
   identity: WasixPhysicalIdentity,
 ): Promise<void> {
   const requested = path.startsWith('file:') ? fileURLToPath(path) : path;
-  const target = isAbsolute(requested) ? requested : resolve(requested);
+  const lock = await acquireNodeDirectoryLock(requested, randomBytes(16).toString('hex'));
+  const target = lock.root;
   const parent = dirname(target);
-  if (parent === target) throw unavailable(target, 'cannot restore over a filesystem root');
-  await mkdir(parent, { recursive: true, mode: 0o700 });
   const staging = `${target}.oliphaunt-restore-${randomBytes(8).toString('hex')}`;
-  const lock = await acquireNodeDirectoryLock(target, randomBytes(16).toString('hex'));
   let targetWasEmpty = false;
   let commitState: 'persisted' | 'unchanged' | 'unknown' = 'unchanged';
   let failure: unknown;

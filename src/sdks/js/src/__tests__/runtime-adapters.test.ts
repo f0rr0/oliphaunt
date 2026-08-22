@@ -10,6 +10,7 @@ import {
 } from '../runtime/pgwire.js';
 import { createServerRuntimeBinding } from '../runtime/server.js';
 
+// liboliphaunt-doc-example:typescript-open-server
 test('runtime adapters implement the shared internal operation boundary', () => {
   const broker = createBrokerRuntimeBinding();
   assert.equal(typeof broker.open, 'function');
@@ -44,11 +45,17 @@ test('node adapter validates local endpoints and socket path limits', () => {
 test('server wire uses PostgreSQL v3 startup and cancel packets', () => {
   const startup = encodeStartupMessage('app user', 'app/db');
   assert.equal(readI32(startup, 4), 196_608);
-  assert.match(new TextDecoder().decode(startup), /user\0app user\0/);
+  const startupText = new TextDecoder().decode(startup);
+  assert.match(startupText, /user\0app user\0/);
+  assert.match(startupText, /database\0app\/db\0/);
+  assert.match(startupText, /client_encoding\0UTF8\0/);
 
   const cancel = encodeCancelRequest({ processId: 7, secretKey: 11 });
   assert.equal(cancel.length, 16);
+  assert.equal(readI32(cancel, 0), 16);
   assert.equal(readI32(cancel, 4), 80_877_102);
+  assert.equal(readI32(cancel, 8), 7);
+  assert.equal(readI32(cancel, 12), 11);
   assert.deepEqual(parseBackendKeyData(cancel.subarray(8)), {
     processId: 7,
     secretKey: 11,

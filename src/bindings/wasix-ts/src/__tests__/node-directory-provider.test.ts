@@ -226,6 +226,32 @@ describe('WASIX Node/Bun/Deno directory storage', () => {
     await owner.close(undefined, 'failed');
   });
 
+  it('uses one lock identity through a symlinked parent', async () => {
+    const parent = await temporaryRoot('parent-alias');
+    const realParent = join(parent, 'real');
+    const aliasParent = join(parent, 'alias');
+    await mkdir(realParent, { recursive: true });
+    await symlink(realParent, aliasParent, 'dir');
+    const realRoot = join(realParent, 'database');
+    const aliasRoot = join(aliasParent, 'database');
+    const lexicalRoot = `${realParent}/../real/database`;
+    const owner = await acquireNodeDirectoryStorage(realRoot, template(), compatible());
+
+    for (const spelling of [lexicalRoot, aliasRoot]) {
+      await expect(
+        acquireNodeDirectoryStorage(spelling, template(), compatible()),
+      ).rejects.toMatchObject({ code: 'busy', commitState: 'unchanged' });
+      await expect(
+        restoreNodeDirectoryStorage(spelling, storedSnapshot('restored'), compatible()),
+      ).rejects.toMatchObject({ code: 'busy', commitState: 'unchanged' });
+    }
+
+    await owner.close(undefined, 'failed');
+
+    await restoreNodeDirectoryStorage(aliasRoot, storedSnapshot('restored'), compatible());
+    expect(await readdir(realRoot)).toContain('pgdata');
+  });
+
   it('does not remove an empty restore destination before staging succeeds', async () => {
     const root = await temporaryRoot('restore-staging-failure');
     await mkdir(root, { recursive: true });

@@ -110,11 +110,17 @@ OLIPHAUNT_API int32_t oliphaunt_exec_protocol_stream(
     size_t request_len,
     OliphauntStreamCallback callback,
     void *callback_context);
+/*
+ * Creates a session-preserving online physical archive. If an error says that
+ * backup-mode exit is unconfirmed, no later query is safe: detach/close the
+ * handle and restart the process before reopening PostgreSQL.
+ */
 OLIPHAUNT_API int32_t oliphaunt_backup(
     OliphauntHandle *handle,
     OliphauntResponse *out);
 OLIPHAUNT_API int32_t oliphaunt_restore(const OliphauntRestoreOptions *options);
 OLIPHAUNT_API int32_t oliphaunt_cancel(OliphauntHandle *handle);
+/* A poisoned backup session is terminally closed instead of retained. */
 OLIPHAUNT_API int32_t oliphaunt_detach(OliphauntHandle *handle);
 /*
  * Returns the non-zero generation of the currently published logical lease.

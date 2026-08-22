@@ -450,6 +450,7 @@ function checkIosCSourceSyntax(paths) {
     'liboliphaunt_process.c',
     'liboliphaunt_trace.c',
     'liboliphaunt_fs.c',
+    'liboliphaunt_backup_state.c',
     'liboliphaunt_archive.c',
     'liboliphaunt_archive_tar.c',
     'liboliphaunt_static_extensions.c',

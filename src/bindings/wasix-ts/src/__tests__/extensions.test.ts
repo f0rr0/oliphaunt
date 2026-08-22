@@ -17,6 +17,7 @@ import type { WasixAssetManifest } from '../types.js';
 type ProjectedExtension = ReturnType<typeof resolveWasixExtensions>['extensions'][number];
 type ProjectedLifecycle = ProjectedExtension['lifecycle'];
 
+// liboliphaunt-doc-example:wasix-typescript-extensions
 describe('WASIX TypeScript extensions', () => {
   it('resolves pgtap through the canonical manifest and runtime-provided plpgsql', () => {
     const pgtap = extension('pgtap', {

@@ -1,19 +1,25 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { Oliphaunt } from '../index.js';
-import type { OliphauntDatabase, OpenConfig } from '../types.js';
+import { assertNativeDatabaseContract } from './native-direct-contract.mjs';
 
 async function main(): Promise<void> {
   const libraryPath = requiredEnv('LIBOLIPHAUNT_PATH');
-  if (process.env.OLIPHAUNT_TS_SMOKE_NODE_DIRECT === '1') {
-    await smokeDatabase({ execution: 'direct', libraryPath }, 'direct');
-  }
+  await assertNativeDatabaseContract(
+    Oliphaunt,
+    { execution: 'direct', libraryPath },
+    'node-direct',
+  );
   const brokerExecutable = process.env.OLIPHAUNT_BROKER;
   if (brokerExecutable) {
-    await smokeDatabase({ execution: 'broker', libraryPath, brokerExecutable }, 'broker');
+    await assertNativeDatabaseContract(
+      Oliphaunt,
+      { execution: 'broker', libraryPath, brokerExecutable },
+      'broker',
+    );
   }
   const serverExecutable = process.env.OLIPHAUNT_POSTGRES;
   if (serverExecutable) {
@@ -31,32 +37,6 @@ async function main(): Promise<void> {
       await server.close();
       await rm(root, { recursive: true, force: true });
     }
-  }
-}
-
-async function smokeDatabase(config: OpenConfig, label: string): Promise<void> {
-  const root = await mkdtemp(join(tmpdir(), `oliphaunt-js-${label}-`));
-  let database: OliphauntDatabase | undefined;
-  try {
-    database = await Oliphaunt.open({
-      ...config,
-      storage: { kind: 'directory', path: root },
-    });
-    assert.equal(
-      (await database.query(`SELECT '${label}'::text AS value`)).getText(0, 'value'),
-      label,
-    );
-    const backup = await database.backup();
-    assert.ok(backup.byteLength > 0);
-    await database.close();
-    database = undefined;
-
-    const restoredRoot = join(root, 'restored');
-    await Oliphaunt.restore(restoredRoot, backup);
-    assert.match(await readFile(join(restoredRoot, 'pgdata', 'PG_VERSION'), 'utf8'), /^18\s*$/u);
-  } finally {
-    await database?.close().catch(() => {});
-    await rm(root, { recursive: true, force: true });
   }
 }
 

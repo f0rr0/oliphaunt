@@ -21,7 +21,6 @@ owners:
   paths:
     "**/*.rs": ["@oliphaunt/wasix-rust"]
     "crates/oliphaunt-wasix/**": ["@oliphaunt/wasix-rust"]
-    "examples/**": ["@oliphaunt/wasix-rust"]
     "tools/**": ["@oliphaunt/wasix-rust"]
 
 tasks:
@@ -73,7 +72,7 @@ tasks:
       - "/Cargo.toml"
       - "/rust-toolchain.toml"
       - "/src/bindings/wasix-rust/**/*"
-      - "/src/extensions/external/postgis/tests/smoke.sql"
+      - "/src/shared/fixtures/extensions/**/*"
       - "/src/shared/fixtures/postgres/behavior-contract.json"
       - "/src/shared/fixtures/protocol/query-response-cases.json"
       - "/src/shared/fixtures/storage/database-root.json"
@@ -102,6 +101,7 @@ tasks:
       - "/Cargo.toml"
       - "/rust-toolchain.toml"
       - "/src/bindings/wasix-rust/**/*"
+      - "/src/shared/fixtures/extensions/**/*"
       - "/src/shared/fixtures/postgres/behavior-contract.json"
       - "/src/shared/fixtures/protocol/query-response-cases.json"
       - "/src/shared/fixtures/storage/database-root.json"
@@ -157,7 +157,7 @@ tasks:
       - "/Cargo.toml"
       - "/rust-toolchain.toml"
       - "/src/bindings/wasix-rust/**/*"
-      - "/src/extensions/external/postgis/tests/smoke.sql"
+      - "/src/shared/fixtures/extensions/**/*"
       - "/src/shared/fixtures/postgres/behavior-contract.json"
       - "/src/shared/fixtures/protocol/query-response-cases.json"
       - "/src/shared/fixtures/storage/database-root.json"

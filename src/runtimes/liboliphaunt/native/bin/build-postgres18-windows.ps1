@@ -102,6 +102,7 @@ $LiboliphauntSources = @(
     "src/runtimes/liboliphaunt/native/src/liboliphaunt_process.c",
     "src/runtimes/liboliphaunt/native/src/liboliphaunt_trace.c",
     "src/runtimes/liboliphaunt/native/src/liboliphaunt_fs.c",
+    "src/runtimes/liboliphaunt/native/src/liboliphaunt_backup_state.c",
     "src/runtimes/liboliphaunt/native/src/liboliphaunt_archive.c",
     "src/runtimes/liboliphaunt/native/src/liboliphaunt_archive_tar.c",
     "src/runtimes/liboliphaunt/native/src/liboliphaunt_static_extensions.c",

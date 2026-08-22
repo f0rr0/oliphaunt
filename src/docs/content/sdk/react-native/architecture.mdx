@@ -36,9 +36,9 @@ await using database = await Oliphaunt.open({
 const result = await database.query('SELECT 1::text AS value');
 ```
 
-The public surface is open, typed query/execute, buffered raw protocol,
-transaction, checkpoint, cancellation, physical backup, static restore, and
-close. There is no generic protocol-stream API or app-background mode.
+The public surface is open, typed query/execute, buffered and callback-streamed
+raw protocol, transaction, checkpoint, cancellation, physical backup, static
+restore, and close. There is no app-background mode.
 
 ## Binary transport
 

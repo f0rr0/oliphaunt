@@ -229,6 +229,10 @@ func startupGUCNamesUsePortablePostgresGrammar() async throws {
 
 @Test
 func existingDatabaseFixtureCarriesCanonicalRootDescriptor() throws {
+    let fixtureDescriptor = try databaseRootDescriptorFixture(family: "native")
+    let actualDescriptor = try JSONSerialization.jsonObject(with: Data(nativeRootDescriptor.utf8))
+    #expect(try canonicalJSON(actualDescriptor) == canonicalJSON(fixtureDescriptor))
+
     let directory = try makeExistingDatabaseDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let descriptor = try String(
@@ -297,12 +301,15 @@ func nativeFirstOpenRejectsDescriptorlessNonemptyRootWithoutMutation() async thr
 }
 
 @Test
-func nativeOpenRejectsWrongMajorAndMismatchedFamilyFormatBeforeNativeLoad() async throws {
-    let invalidDescriptors = [
-        nativeRootDescriptor.replacingOccurrences(of: ":18", with: ":17"),
-        nativeRootDescriptor
-            .replacingOccurrences(of: "\"engineFamily\":\"native\"", with: "\"engineFamily\":\"wasix\""),
-    ]
+func nativeOpenRejectsEverySharedInvalidDescriptorBeforeNativeLoad() async throws {
+    let fixture = try databaseRootFixture()
+    let invalidObjects = try #require(fixture["invalidDescriptors"] as? [[String: Any]])
+    let malformedObjects = try #require(fixture["malformedJson"] as? [[String: Any]])
+    let invalidDescriptors = try invalidObjects.map { entry in
+        try JSONSerialization.data(withJSONObject: #require(entry["value"]))
+    }.map { String(decoding: $0, as: UTF8.self) } + malformedObjects.map { entry in
+        try #require(entry["value"] as? String)
+    }
     for descriptor in invalidDescriptors {
         let root = try makeExistingDatabaseDirectory(descriptor: descriptor)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -323,9 +330,12 @@ func nativeOpenRejectsWrongMajorAndMismatchedFamilyFormatBeforeNativeLoad() asyn
 
 @Test
 func nativeOpenDoesNotRejectAValidWasixRootDescriptor() async throws {
-    let wasixDescriptor = nativeRootDescriptor
-        .replacingOccurrences(of: "\"engineFamily\":\"native\"", with: "\"engineFamily\":\"wasix\"")
-        .replacingOccurrences(of: "native-pg18-v1", with: "wasix-pg18-v1")
+    let wasixDescriptor = String(
+        decoding: try JSONSerialization.data(
+            withJSONObject: databaseRootDescriptorFixture(family: "wasix")
+        ),
+        as: UTF8.self
+    )
     let root = try makeExistingDatabaseDirectory(descriptor: wasixDescriptor)
     defer { try? FileManager.default.removeItem(at: root) }
     do {
@@ -491,6 +501,29 @@ private func rowResponse(value: String, commandTag: String) -> Data {
 
 private let nativeRootDescriptor =
     "{\"schema\":\"oliphaunt-database-root-v1\",\"engineFamily\":\"native\",\"pgdata\":\"pgdata\",\"postgresMajor\":18,\"physicalFormat\":\"native-pg18-v1\"}\n"
+
+private func databaseRootFixture() throws -> [String: Any] {
+    let source = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appendingPathComponent("shared/fixtures/storage/database-root.json")
+    return try #require(
+        JSONSerialization.jsonObject(with: Data(contentsOf: source)) as? [String: Any]
+    )
+}
+
+private func databaseRootDescriptorFixture(family: String) throws -> [String: Any] {
+    let fixture = try databaseRootFixture()
+    let descriptors = try #require(fixture["validDescriptors"] as? [[String: Any]])
+    return try #require(descriptors.first { $0["engineFamily"] as? String == family })
+}
+
+private func canonicalJSON(_ value: Any) throws -> Data {
+    try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+}
 
 private func makeExistingDatabaseDirectory(descriptor: String = nativeRootDescriptor) throws -> URL {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(

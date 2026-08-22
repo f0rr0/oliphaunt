@@ -28,6 +28,7 @@ pub struct Oliphaunt {
     _directory_lock: Option<DirectoryLock>,
     in_transaction: bool,
     transaction_outcome_unknown: bool,
+    backup_mode_exit_unconfirmed: bool,
     closing: bool,
     closed: bool,
 }
@@ -87,6 +88,7 @@ impl Oliphaunt {
             _directory_lock: None,
             in_transaction: false,
             transaction_outcome_unknown: false,
+            backup_mode_exit_unconfirmed: false,
             closing: false,
             closed: false,
         };
@@ -203,22 +205,9 @@ impl Oliphaunt {
             !self.in_transaction,
             "physical backup cannot run while a transaction is active"
         );
-        let start = self.query_inner(
-            "SELECT pg_walfile_name(pg_backup_start(label => 'oliphaunt physical backup', fast => true)), pg_size_bytes(current_setting('wal_segment_size'))::text",
-        )?;
-        ensure!(
-            start.rows().len() == 1 && start.rows()[0].values().len() == 2,
-            "pg_backup_start returned an unexpected result"
-        );
-        let start_wal = start.rows()[0]
-            .text_inner(0)?
-            .context("pg_backup_start returned no WAL filename")?
-            .to_owned();
-        let wal_segment_size = start.rows()[0]
-            .text_inner(1)?
-            .context("pg_backup_start returned no WAL segment size")?
-            .parse::<u64>()
-            .context("pg_backup_start returned an invalid WAL segment size")?;
+        let start_attempt = self.start_backup();
+        let (start_wal, wal_segment_size) =
+            resolve_start_backup_attempt(start_attempt, |error| self.cleanup_failed_backup(error))?;
 
         let storage = self.backend.pgdata_storage().clone();
         let before_stop = match materialize_storage(&storage).and_then(|snapshot| {
@@ -226,20 +215,13 @@ impl Oliphaunt {
             Ok(snapshot)
         }) {
             Ok(snapshot) => snapshot,
-            Err(error) => {
-                return match self.stop_backup() {
-                    Ok(_) => Err(error),
-                    Err(stop_error) => Err(error.context(format!(
-                        "physical backup failed and PostgreSQL could not leave backup mode: {stop_error:#}"
-                    ))),
-                };
-            }
+            Err(error) => return Err(self.cleanup_failed_backup(error)),
         };
         let (stop_wal, backup_label, tablespace_map) = match self.stop_backup() {
-            Ok(result) => result,
-            Err(primary) => {
-                let _ = self.stop_backup();
-                return Err(primary);
+            StopBackupAttempt::Exited(Ok(files)) => files,
+            StopBackupAttempt::Exited(Err(error)) => return Err(error),
+            StopBackupAttempt::ExitUnconfirmed(primary) => {
+                return Err(self.cleanup_failed_backup(primary));
             }
         };
         finish_online_physical_archive(
@@ -253,26 +235,34 @@ impl Oliphaunt {
         )
     }
 
-    fn stop_backup(&mut self) -> Result<(String, String, Option<String>)> {
-        let result = self.query_inner(
+    fn start_backup(&mut self) -> StartBackupAttempt {
+        let response = match self.run_query(
+            "SELECT pg_walfile_name(pg_backup_start(label => 'oliphaunt physical backup', fast => true)), pg_size_bytes(current_setting('wal_segment_size'))::text",
+            std::iter::empty::<QueryParam>(),
+        ) {
+            Ok(response) => response,
+            Err(error) => return StartBackupAttempt::ExitUnconfirmed(error),
+        };
+        parse_start_backup_response(&response)
+    }
+
+    fn stop_backup(&mut self) -> StopBackupAttempt {
+        let response = match self.run_query(
             "SELECT pg_walfile_name(lsn), labelfile, spcmapfile FROM pg_backup_stop(wait_for_archive => false)",
-        )?;
-        ensure!(
-            result.rows().len() == 1 && result.rows()[0].values().len() == 3,
-            "pg_backup_stop returned an unexpected result"
-        );
-        let row = &result.rows()[0];
-        let stop_wal = row
-            .text_inner(0)?
-            .context("pg_backup_stop returned no WAL filename")?
-            .to_owned();
-        let label = row
-            .text_inner(1)?
-            .filter(|value| !value.is_empty())
-            .context("pg_backup_stop returned an empty backup label")?
-            .to_owned();
-        let tablespace_map = row.text_inner(2)?.map(str::to_owned);
-        Ok((stop_wal, label, tablespace_map))
+            std::iter::empty::<QueryParam>(),
+        ) {
+            Ok(response) => response,
+            Err(error) => return StopBackupAttempt::ExitUnconfirmed(error),
+        };
+        parse_stop_backup_response(&response)
+    }
+
+    fn cleanup_failed_backup(&mut self, primary: anyhow::Error) -> anyhow::Error {
+        let (error, exit_unconfirmed) = resolve_backup_cleanup(primary, self.stop_backup());
+        if exit_unconfirmed {
+            self.backup_mode_exit_unconfirmed = true;
+        }
+        error
     }
 
     /// Run a callback inside a transaction pinned to this direct session.
@@ -380,8 +370,175 @@ impl Oliphaunt {
         if self.transaction_outcome_unknown {
             bail!("Oliphaunt transaction outcome is unknown; close and reopen it");
         }
+        if self.backup_mode_exit_unconfirmed {
+            bail!("Oliphaunt backup-mode exit is unconfirmed; close and reopen it");
+        }
         Ok(())
     }
+}
+
+enum StartBackupAttempt {
+    NotEntered(anyhow::Error),
+    Entered(Result<(String, u64)>),
+    ExitUnconfirmed(anyhow::Error),
+}
+
+enum StopBackupAttempt {
+    Exited(Result<(String, String, Option<String>)>),
+    ExitUnconfirmed(anyhow::Error),
+}
+
+fn resolve_start_backup_attempt(
+    attempt: StartBackupAttempt,
+    cleanup: impl FnOnce(anyhow::Error) -> anyhow::Error,
+) -> Result<(String, u64)> {
+    match attempt {
+        StartBackupAttempt::NotEntered(error) => Err(error),
+        StartBackupAttempt::Entered(Ok(start)) => Ok(start),
+        StartBackupAttempt::Entered(Err(error)) => Err(cleanup(error)),
+        StartBackupAttempt::ExitUnconfirmed(error) => {
+            let message = format!(
+                "pg_backup_start outcome is unconfirmed; attempting emergency pg_backup_stop: {error:#}"
+            );
+            Err(cleanup(error.context(message)))
+        }
+    }
+}
+
+fn parse_start_backup_response(response: &[u8]) -> StartBackupAttempt {
+    let result = match parse_query_response(response) {
+        Ok(result) => result,
+        Err(error) if error.downcast_ref::<crate::PostgresError>().is_some() => {
+            return StartBackupAttempt::NotEntered(error);
+        }
+        Err(error) => return StartBackupAttempt::Entered(Err(error)),
+    };
+    StartBackupAttempt::Entered(parse_start_backup_result(&result))
+}
+
+fn parse_start_backup_result(result: &QueryResult) -> Result<(String, u64)> {
+    ensure!(
+        result.command_tag() == Some("SELECT 1"),
+        "pg_backup_start did not return a successful PostgreSQL command tag"
+    );
+    ensure!(
+        result.rows().len() == 1 && result.rows()[0].values().len() == 2,
+        "pg_backup_start returned an unexpected result"
+    );
+    let start_wal = result.rows()[0]
+        .text_inner(0)?
+        .context("pg_backup_start returned no WAL filename")?
+        .to_owned();
+    let wal_segment_size = result.rows()[0]
+        .text_inner(1)?
+        .context("pg_backup_start returned no WAL segment size")?
+        .parse::<u64>()
+        .context("pg_backup_start returned an invalid WAL segment size")?;
+    Ok((start_wal, wal_segment_size))
+}
+
+fn parse_stop_backup_response(response: &[u8]) -> StopBackupAttempt {
+    let exit_confirmed = response_confirms_command_completion(response);
+    let result = match parse_query_response(response) {
+        Ok(result) => result,
+        Err(error) if exit_confirmed && error.downcast_ref::<crate::PostgresError>().is_none() => {
+            return StopBackupAttempt::Exited(Err(error));
+        }
+        Err(error) => return StopBackupAttempt::ExitUnconfirmed(error),
+    };
+    if !exit_confirmed {
+        return StopBackupAttempt::ExitUnconfirmed(anyhow::anyhow!(
+            "pg_backup_stop did not return a successful PostgreSQL command completion"
+        ));
+    }
+    StopBackupAttempt::Exited(parse_stop_backup_result(&result))
+}
+
+fn response_confirms_command_completion(response: &[u8]) -> bool {
+    let mut offset = 0;
+    let mut saw_command_complete = false;
+    while offset < response.len() {
+        let Some(header) = response.get(offset..offset.saturating_add(5)) else {
+            return false;
+        };
+        let length = u32::from_be_bytes([header[1], header[2], header[3], header[4]]) as usize;
+        let Some(frame_length) = length.checked_add(1) else {
+            return false;
+        };
+        let Some(next) = offset.checked_add(frame_length) else {
+            return false;
+        };
+        if length < 4 || next > response.len() || header[0] == b'E' {
+            return false;
+        }
+        if header[0] == b'C' {
+            saw_command_complete = true;
+        }
+        if header[0] == b'Z' {
+            return saw_command_complete
+                && length == 5
+                && next == response.len()
+                && matches!(response.get(offset + 5), Some(b'I' | b'T' | b'E'));
+        }
+        offset = next;
+    }
+    false
+}
+
+fn parse_stop_backup_result(result: &QueryResult) -> Result<(String, String, Option<String>)> {
+    ensure!(
+        result.command_tag() == Some("SELECT 1"),
+        "pg_backup_stop returned an unexpected PostgreSQL command tag"
+    );
+    ensure!(
+        result.rows().len() == 1 && result.rows()[0].values().len() == 3,
+        "pg_backup_stop returned an unexpected result"
+    );
+    let row = &result.rows()[0];
+    let stop_wal = row
+        .text_inner(0)?
+        .context("pg_backup_stop returned no WAL filename")?
+        .to_owned();
+    let label = row
+        .text_inner(1)?
+        .filter(|value| !value.is_empty())
+        .context("pg_backup_stop returned an empty backup label")?
+        .to_owned();
+    let tablespace_map = row.text_inner(2)?.map(str::to_owned);
+    Ok((stop_wal, label, tablespace_map))
+}
+
+fn resolve_backup_cleanup(
+    primary: anyhow::Error,
+    cleanup: StopBackupAttempt,
+) -> (anyhow::Error, bool) {
+    match cleanup {
+        StopBackupAttempt::Exited(Ok(_)) => (primary, false),
+        StopBackupAttempt::Exited(Err(cleanup)) => (
+            combine_backup_failures(
+                primary,
+                "PostgreSQL left backup mode but cleanup validation also failed",
+                cleanup,
+            ),
+            false,
+        ),
+        StopBackupAttempt::ExitUnconfirmed(cleanup) => (
+            combine_backup_failures(
+                primary,
+                "PostgreSQL could not confirm leaving backup mode cleanly",
+                cleanup,
+            ),
+            true,
+        ),
+    }
+}
+
+fn combine_backup_failures(
+    primary: anyhow::Error,
+    cleanup_label: &str,
+    cleanup: anyhow::Error,
+) -> anyhow::Error {
+    primary.context(format!("{cleanup_label}: {cleanup:#}"))
 }
 
 impl Drop for Oliphaunt {
@@ -495,5 +652,287 @@ fn materialize_storage(storage: &PgDataStorage) -> Result<tempfile::TempDir> {
     match storage {
         PgDataStorage::HostDirectory(pgdata) => materialize_pgdata(pgdata),
         PgDataStorage::Memory(filesystem) => materialize_virtual_pgdata_view(filesystem.as_ref()),
+    }
+}
+
+#[cfg(test)]
+mod backup_state_tests {
+    use std::cell::Cell;
+
+    use super::*;
+
+    #[test]
+    fn start_sql_failure_never_enters_backup_mode() {
+        match parse_start_backup_response(&query_error("55000", "backup unavailable")) {
+            StartBackupAttempt::NotEntered(error) => {
+                let postgres = error
+                    .downcast_ref::<crate::PostgresError>()
+                    .expect("PostgreSQL error identity");
+                assert_eq!(postgres.sqlstate.as_deref(), Some("55000"));
+            }
+            _ => panic!("PostgreSQL start failure must not enter backup mode"),
+        }
+    }
+
+    #[test]
+    fn start_metadata_failure_requires_cleanup() {
+        match parse_start_backup_response(&query_response(&[Some("wal-only")])) {
+            StartBackupAttempt::Entered(Err(error)) => {
+                assert!(error.to_string().contains("unexpected result"));
+            }
+            _ => panic!("local start validation failure must require cleanup"),
+        }
+    }
+
+    #[test]
+    fn start_without_command_completion_requires_cleanup() {
+        match parse_start_backup_response(&without_command_complete(query_response(&[
+            Some("wal"),
+            Some("1048576"),
+        ]))) {
+            StartBackupAttempt::Entered(Err(error)) => {
+                assert!(
+                    error
+                        .to_string()
+                        .contains("successful PostgreSQL command tag")
+                );
+            }
+            _ => panic!("unconfirmed start completion must require cleanup"),
+        }
+    }
+
+    #[test]
+    fn unconfirmed_start_exchange_runs_emergency_stop_before_poisoning() {
+        let cleanup_calls = Cell::new(0);
+        let exit_unconfirmed = Cell::new(true);
+        let error = resolve_start_backup_attempt(
+            StartBackupAttempt::ExitUnconfirmed(anyhow::anyhow!("start transport failed")),
+            |primary| {
+                cleanup_calls.set(cleanup_calls.get() + 1);
+                let (error, poison) = resolve_backup_cleanup(
+                    primary,
+                    StopBackupAttempt::Exited(Ok(("wal".into(), "label".into(), None))),
+                );
+                exit_unconfirmed.set(poison);
+                error
+            },
+        )
+        .expect_err("unconfirmed start exchange must fail the backup");
+        assert_eq!(cleanup_calls.get(), 1);
+        assert!(format!("{error:#}").contains("start transport failed"));
+        assert!(
+            !exit_unconfirmed.get(),
+            "confirmed emergency stop must keep the session reusable"
+        );
+    }
+
+    #[test]
+    fn stop_metadata_failure_still_confirms_exit() {
+        match parse_stop_backup_response(&query_response(&[Some("wal-only")])) {
+            StopBackupAttempt::Exited(Err(error)) => {
+                assert!(error.to_string().contains("unexpected result"));
+            }
+            _ => panic!("successful stop SQL must confirm exit before local validation"),
+        }
+    }
+
+    #[test]
+    fn malformed_stop_metadata_after_ready_still_confirms_exit() {
+        let mut response = query_response(&[Some("wal"), Some("label"), None]);
+        let mut offset = 0;
+        while offset < response.len() {
+            let length = u32::from_be_bytes(
+                response[offset + 1..offset + 5]
+                    .try_into()
+                    .expect("message length"),
+            ) as usize;
+            if response[offset] == b'D' {
+                response[offset + 5..offset + 7].copy_from_slice(&2_i16.to_be_bytes());
+                break;
+            }
+            offset += length + 1;
+        }
+        match parse_stop_backup_response(&response) {
+            StopBackupAttempt::Exited(Err(error)) => {
+                assert!(error.to_string().contains("DataRow"));
+            }
+            _ => panic!("completed stop response must confirm exit before metadata parsing"),
+        }
+    }
+
+    #[test]
+    fn unexpected_stop_command_tag_still_confirms_exit() {
+        match parse_stop_backup_response(&query_response_with_tag(
+            &[Some("wal"), Some("label"), None],
+            "SELECT 0",
+        )) {
+            StopBackupAttempt::Exited(Err(error)) => {
+                assert!(
+                    error
+                        .to_string()
+                        .contains("unexpected PostgreSQL command tag")
+                );
+            }
+            _ => panic!("completed stop command must confirm exit before tag validation"),
+        }
+    }
+
+    #[test]
+    fn stop_without_command_completion_does_not_confirm_exit() {
+        match parse_stop_backup_response(&without_command_complete(query_response(&[
+            Some("wal"),
+            Some("label"),
+            None,
+        ]))) {
+            StopBackupAttempt::ExitUnconfirmed(error) => {
+                assert!(
+                    error
+                        .to_string()
+                        .contains("successful PostgreSQL command completion")
+                );
+            }
+            _ => panic!("missing stop command completion must remain unconfirmed"),
+        }
+    }
+
+    #[test]
+    fn confirmed_cleanup_preserves_primary_failure_without_poisoning() {
+        let (error, exit_unconfirmed) = resolve_backup_cleanup(
+            anyhow::anyhow!("archive failed"),
+            StopBackupAttempt::Exited(Ok(("wal".into(), "label".into(), None))),
+        );
+        assert_eq!(error.to_string(), "archive failed");
+        assert!(
+            !exit_unconfirmed,
+            "confirmed cleanup must keep the handle reusable"
+        );
+
+        let (error, exit_unconfirmed) = resolve_backup_cleanup(
+            anyhow::anyhow!("first stop failed"),
+            StopBackupAttempt::Exited(Ok(("wal".into(), "label".into(), None))),
+        );
+        assert_eq!(error.to_string(), "first stop failed");
+        assert!(
+            !exit_unconfirmed,
+            "successful emergency stop must keep the handle reusable"
+        );
+    }
+
+    #[test]
+    fn cleanup_validation_reports_both_failures_without_poisoning() {
+        let (error, exit_unconfirmed) = resolve_backup_cleanup(
+            anyhow::anyhow!("archive failed"),
+            StopBackupAttempt::Exited(Err(anyhow::anyhow!("stop metadata invalid"))),
+        );
+        let message = format!("{error:#}");
+        assert!(message.contains("archive failed"));
+        assert!(message.contains("stop metadata invalid"));
+        assert!(!exit_unconfirmed);
+    }
+
+    #[test]
+    fn unconfirmed_cleanup_reports_both_failures_and_poisons() {
+        let (error, exit_unconfirmed) = resolve_backup_cleanup(
+            anyhow::anyhow!("first stop failed"),
+            StopBackupAttempt::ExitUnconfirmed(anyhow::anyhow!("emergency stop failed")),
+        );
+        let message = format!("{error:#}");
+        assert!(message.contains("first stop failed"));
+        assert!(message.contains("emergency stop failed"));
+        assert!(exit_unconfirmed, "unconfirmed exit must poison the handle");
+    }
+
+    #[test]
+    fn combined_cleanup_failure_preserves_primary_postgres_identity() {
+        let primary = parse_query_response(&query_error("55000", "first stop failed"))
+            .expect_err("PostgreSQL error response");
+        let (error, _) = resolve_backup_cleanup(
+            primary,
+            StopBackupAttempt::ExitUnconfirmed(anyhow::anyhow!("emergency stop failed")),
+        );
+        assert_eq!(
+            error
+                .downcast_ref::<crate::PostgresError>()
+                .and_then(|error| error.sqlstate.as_deref()),
+            Some("55000")
+        );
+        assert_eq!(format!("{error:#}").matches("first stop failed").count(), 1);
+    }
+
+    fn query_response(values: &[Option<&str>]) -> Vec<u8> {
+        query_response_with_tag(values, "SELECT 1")
+    }
+
+    fn query_response_with_tag(values: &[Option<&str>], command_tag: &str) -> Vec<u8> {
+        let mut description = Vec::new();
+        description.extend_from_slice(&(values.len() as i16).to_be_bytes());
+        for _ in values {
+            description.push(0);
+            description.extend_from_slice(&0_u32.to_be_bytes());
+            description.extend_from_slice(&0_i16.to_be_bytes());
+            description.extend_from_slice(&25_u32.to_be_bytes());
+            description.extend_from_slice(&(-1_i16).to_be_bytes());
+            description.extend_from_slice(&(-1_i32).to_be_bytes());
+            description.extend_from_slice(&0_i16.to_be_bytes());
+        }
+
+        let mut row = Vec::new();
+        row.extend_from_slice(&(values.len() as i16).to_be_bytes());
+        for value in values {
+            match value {
+                Some(value) => {
+                    row.extend_from_slice(&(value.len() as i32).to_be_bytes());
+                    row.extend_from_slice(value.as_bytes());
+                }
+                None => row.extend_from_slice(&(-1_i32).to_be_bytes()),
+            }
+        }
+
+        let mut response = backend_message(b'T', &description);
+        response.extend(backend_message(b'D', &row));
+        let mut command = command_tag.as_bytes().to_vec();
+        command.push(0);
+        response.extend(backend_message(b'C', &command));
+        response.extend(backend_message(b'Z', b"I"));
+        response
+    }
+
+    fn query_error(sqlstate: &str, message: &str) -> Vec<u8> {
+        let mut body = Vec::new();
+        for (code, value) in [(b'S', "ERROR"), (b'C', sqlstate), (b'M', message)] {
+            body.push(code);
+            body.extend_from_slice(value.as_bytes());
+            body.push(0);
+        }
+        body.push(0);
+        let mut response = backend_message(b'E', &body);
+        response.extend(backend_message(b'Z', b"I"));
+        response
+    }
+
+    fn backend_message(tag: u8, body: &[u8]) -> Vec<u8> {
+        let mut message = Vec::with_capacity(body.len() + 5);
+        message.push(tag);
+        message.extend_from_slice(&((body.len() + 4) as u32).to_be_bytes());
+        message.extend_from_slice(body);
+        message
+    }
+
+    fn without_command_complete(response: Vec<u8>) -> Vec<u8> {
+        let mut filtered = Vec::new();
+        let mut offset = 0;
+        while offset < response.len() {
+            let length = u32::from_be_bytes(
+                response[offset + 1..offset + 5]
+                    .try_into()
+                    .expect("message length"),
+            ) as usize;
+            let next = offset + length + 1;
+            if response[offset] != b'C' {
+                filtered.extend_from_slice(&response[offset..next]);
+            }
+            offset = next;
+        }
+        filtered
     }
 }

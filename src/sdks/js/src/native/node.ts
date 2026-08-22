@@ -55,11 +55,11 @@ export async function createNodeNativeBinding(
     async execSimpleQuery(handle: NativeHandle, sql: string): Promise<Uint8Array> {
       return toUint8Array(await addon.execSimpleQuery(handle, sql));
     },
-    backup(handle: NativeHandle): Uint8Array {
-      return toUint8Array(addon.backup(handle));
+    async backup(handle: NativeHandle): Promise<Uint8Array> {
+      return toUint8Array(await addon.backup(handle));
     },
-    restore(options: NativeRestoreOptions): void {
-      addon.restore({
+    async restore(options: NativeRestoreOptions): Promise<void> {
+      await addon.restore({
         libraryPath: install.libraryPath,
         destination: options.destination,
         bytes: options.bytes,

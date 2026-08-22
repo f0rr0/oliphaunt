@@ -20,6 +20,7 @@ async function main(): Promise<void> {
   testCommandParserRejectsUnknownAndCopyMessages();
   await testQueryReturnsRowsAndCommandMetadata();
   await testRawProtocolCheckpointAndCancel();
+  await testProtocolStreamCallbackFailure();
   await testPhysicalBackupAndStaticRestore();
   await testTransactionsCommitAndRollback();
   await testCloseDuringTransactionIsRejected();
@@ -178,12 +179,25 @@ async function testRawProtocolCheckpointAndCancel(): Promise<void> {
   await db.execProtocolStream(Uint8Array.from([0xbb]), (chunk) => chunks.push(chunk));
   assert.deepEqual(
     chunks.map((chunk) => Array.from(chunk)),
-    [[1, 0xbb]],
+    [[1], [0xbb]],
   );
   await db.checkpoint();
   assert.match(native.requestTexts().at(-1) ?? '', /CHECKPOINT/);
   await db.cancel();
   assert.deepEqual(native.cancelledHandles, [1]);
+  await db.close();
+}
+
+async function testProtocolStreamCallbackFailure(): Promise<void> {
+  const db = await createOliphauntClient(new MockNative()).open();
+  const failure = new Error('chunk consumer failed');
+  await assert.rejects(
+    () =>
+      db.execProtocolStream(Uint8Array.from([0xcc]), () => {
+        throw failure;
+      }),
+    (error) => error === failure,
+  );
   await db.close();
 }
 
@@ -274,7 +288,10 @@ class MockNative implements Spec {
         return native.execProtocolRawJsi(handle, request);
       },
       async execProtocolStream(handle, request, onChunk) {
-        onChunk(await native.execProtocolRawJsi(handle, request));
+        const response = await native.execProtocolRawJsi(handle, request);
+        const split = Math.max(1, Math.floor(response.byteLength / 2));
+        onChunk(response.subarray(0, split));
+        onChunk(response.subarray(split));
       },
       backup(handle) {
         return native.backupJsi(handle);

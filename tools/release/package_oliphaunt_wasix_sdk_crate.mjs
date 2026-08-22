@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { readdirSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,8 +21,18 @@ import {
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SOURCE_NOTICE_OPTIONS = Object.freeze({ profile: 'source-sdk' });
+const EXTENSION_SMOKE_FIXTURES = readdirSync(
+  path.join(root, 'src/shared/fixtures/extensions'),
+  { withFileTypes: true },
+)
+  .filter((entry) => entry.isFile() && entry.name.endsWith('.sql'))
+  .map((entry) => [
+    `src/testdata/extensions/${entry.name}`,
+    `src/shared/fixtures/extensions/${entry.name}`,
+  ])
+  .sort((left, right) => left[0].localeCompare(right[0]));
 const PACKAGE_FIXTURES = Object.freeze([
-  ['src/testdata/postgis-smoke.sql', 'src/extensions/external/postgis/tests/smoke.sql'],
+  ...EXTENSION_SMOKE_FIXTURES,
   ['src/testdata/database-root.json', 'src/shared/fixtures/storage/database-root.json'],
   [
     'src/testdata/physical-archive-wasix-v1.properties',

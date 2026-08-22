@@ -78,7 +78,7 @@ tasks:
     deps:
       - "liboliphaunt-native:smoke"
       - "oliphaunt-broker:check"
-      - "oliphaunt-node-direct:check"
+      - "oliphaunt-node-direct:release-assets"
     options:
       cache: local
       runFromWorkspaceRoot: true

@@ -1,32 +1,21 @@
--- oliphaunt-statement
-CREATE EXTENSION IF NOT EXISTS pg_textsearch;
-
--- oliphaunt-statement
-SELECT extname FROM pg_extension WHERE extname = 'pg_textsearch';
-
 -- A nonempty English index must resolve PostgreSQL's Snowball runtime-support
 -- module and stopword data. An empty index does not load the dictionary and
 -- therefore cannot prove the packaged runtime closure.
--- oliphaunt-statement
 DROP TABLE IF EXISTS oliphaunt_pg_textsearch_english;
-
 -- oliphaunt-statement
 CREATE TABLE oliphaunt_pg_textsearch_english (
   id bigint PRIMARY KEY,
   body text NOT NULL
 );
-
 -- oliphaunt-statement
 INSERT INTO oliphaunt_pg_textsearch_english (id, body) VALUES
   (1, 'PostgreSQL databases support reliable runners'),
   (2, 'An unrelated document about walking');
-
 -- oliphaunt-statement
 CREATE INDEX oliphaunt_pg_textsearch_english_bm25
   ON oliphaunt_pg_textsearch_english
   USING bm25 (body)
   WITH (text_config = 'pg_catalog.english');
-
 -- oliphaunt-statement
 DO $oliphaunt$
 DECLARE
@@ -45,6 +34,3 @@ BEGIN
   END IF;
 END
 $oliphaunt$;
-
--- oliphaunt-statement
-DROP TABLE oliphaunt_pg_textsearch_english;

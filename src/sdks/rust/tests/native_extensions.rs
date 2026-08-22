@@ -25,13 +25,26 @@ const DIRECT_CHILD_ROOT_ENV: &str = "OLIPHAUNT_EXTENSION_DIRECT_ROOT";
 const DIRECT_CHILD_BACKUP_ENV: &str = "OLIPHAUNT_EXTENSION_DIRECT_BACKUP";
 const RELEASE_PROOF_RUNNER_ENV: &str = "OLIPHAUNT_NATIVE_EXTENSION_PROOF_RUNNER";
 
+fn extension_smoke_recipe(sql_name: &str) -> String {
+    support::fixture_text(
+        &format!("shared/fixtures/extensions/{sql_name}.sql"),
+        &format!("tests/fixtures/extensions/{sql_name}.sql"),
+    )
+}
+
+fn extension_smoke_statements(sql: &str) -> impl Iterator<Item = &str> {
+    sql.split("-- oliphaunt-statement")
+        .map(str::trim)
+        .filter(|statement| !statement.is_empty())
+}
+
 #[test]
-fn native_release_proof_catalog_has_the_expected_first_release_total() {
+fn native_release_proof_catalog_and_smoke_recipes_match() {
     let names = Extension::ALL_PG18_SUPPORTED
         .iter()
         .map(|extension| extension.sql_name())
         .collect::<Vec<_>>();
-    assert_eq!(names.len(), 39);
+    assert!(!names.is_empty());
     assert_eq!(
         names.iter().copied().collect::<BTreeSet<_>>().len(),
         names.len()
@@ -40,6 +53,48 @@ fn native_release_proof_catalog_has_the_expected_first_release_total() {
         names.windows(2).all(|pair| pair[0] < pair[1]),
         "native proof manifest must remain sorted by SQL name"
     );
+
+    let package_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let recipe_directory = [
+        package_root
+            .join("../..")
+            .join("shared/fixtures/extensions"),
+        package_root
+            .join("../..")
+            .join("src/shared/fixtures/extensions"),
+        package_root.join("tests/fixtures/extensions"),
+    ]
+    .into_iter()
+    .find(|candidate| candidate.is_dir())
+    .expect("canonical extension smoke recipe directory is missing");
+    let recipes = fs::read_dir(recipe_directory)
+        .expect("read canonical extension smoke recipes")
+        .filter_map(|entry| {
+            let path = entry
+                .expect("read canonical extension smoke recipe entry")
+                .path();
+            (path.extension().and_then(|extension| extension.to_str()) == Some("sql")).then(|| {
+                path.file_stem()
+                    .and_then(|name| name.to_str())
+                    .expect("extension smoke recipe must have a UTF-8 SQL filename")
+                    .to_owned()
+            })
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        recipes,
+        names
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect::<BTreeSet<_>>()
+    );
+    for sql_name in names {
+        let recipe = extension_smoke_recipe(sql_name);
+        assert!(
+            extension_smoke_statements(&recipe).next().is_some(),
+            "extension {sql_name} has an empty smoke recipe"
+        );
+    }
 }
 
 pub fn run_native_extension_release_proof(shard_index: usize, shard_count: usize) {
@@ -301,8 +356,7 @@ fn run_direct_extension_child_install_backup(
     install_or_load_extension(&db, TestMode::Direct, extension)?;
     assert_repeated_create_extension_error_recovers(&db, TestMode::Direct, extension)?;
     assert_extension_visible(&db, TestMode::Direct, extension)?;
-    setup_extension_functional_smoke(&db, TestMode::Direct, extension)?;
-    assert_extension_functional_smoke(&db, TestMode::Direct, extension)?;
+    run_extension_functional_smoke(&db, TestMode::Direct, extension)?;
     assert_extension_root_artifacts(root, TestMode::Direct, extension);
     let archive = block_on(db.backup())?;
     fs::write(backup_path, &archive).expect("failed to write direct extension backup artifact");
@@ -318,7 +372,7 @@ fn run_direct_extension_child_assert_existing(extension: Extension, root: &Path)
             .open(),
     )?);
     assert_extension_visible(&db, TestMode::Direct, extension)?;
-    assert_extension_functional_smoke(&db, TestMode::Direct, extension)?;
+    run_extension_functional_smoke(&db, TestMode::Direct, extension)?;
     assert_extension_root_artifacts(root, TestMode::Direct, extension);
     block_on(db.close())
 }
@@ -351,8 +405,7 @@ fn run_extension_recovery_smoke(
     install_or_load_extension(&db, mode, extension)?;
     assert_repeated_create_extension_error_recovers(&db, mode, extension)?;
     assert_extension_visible(&db, mode, extension)?;
-    setup_extension_functional_smoke(&db, mode, extension)?;
-    assert_extension_functional_smoke(&db, mode, extension)?;
+    run_extension_functional_smoke(&db, mode, extension)?;
     assert_extension_root_artifacts(root, mode, extension);
     let archive = if mode == TestMode::Server {
         None
@@ -363,7 +416,7 @@ fn run_extension_recovery_smoke(
 
     let reopened = block_on(open_extension_database(mode, broker, extension, root))?;
     assert_extension_visible(&reopened, mode, extension)?;
-    assert_extension_functional_smoke(&reopened, mode, extension)?;
+    run_extension_functional_smoke(&reopened, mode, extension)?;
     assert_extension_root_artifacts(root, mode, extension);
     block_on(reopened.close())?;
 
@@ -378,7 +431,7 @@ fn run_extension_recovery_smoke(
         restored_root,
     ))?;
     assert_extension_visible(&restored, mode, extension)?;
-    assert_extension_functional_smoke(&restored, mode, extension)?;
+    run_extension_functional_smoke(&restored, mode, extension)?;
     assert_extension_root_artifacts(restored_root, mode, extension);
     block_on(restored.close())
 }
@@ -521,179 +574,16 @@ fn install_sql(extension: Extension) -> String {
     }
 }
 
-fn setup_extension_functional_smoke(
+fn run_extension_functional_smoke(
     db: &TestDatabase,
     mode: TestMode,
     extension: Extension,
 ) -> Result<()> {
-    match extension {
-        Extension::PgTextsearch => exec_extension_sql(
-            db,
-            mode,
-            extension,
-            "functional setup",
-            r#"
-DROP TABLE IF EXISTS liboliphaunt_pg_textsearch_english CASCADE;
-CREATE TABLE liboliphaunt_pg_textsearch_english (
-  id bigint PRIMARY KEY,
-  body text NOT NULL
-);
-INSERT INTO liboliphaunt_pg_textsearch_english (id, body) VALUES
-  (1, 'PostgreSQL databases support reliable runners'),
-  (2, 'An unrelated document about walking');
-CREATE INDEX liboliphaunt_pg_textsearch_english_bm25
-  ON liboliphaunt_pg_textsearch_english
-  USING bm25 (body)
-  WITH (text_config = 'pg_catalog.english');
-"#,
-        )
-        .map(|_| ()),
-        _ => Ok(()),
+    let recipe = extension_smoke_recipe(extension.sql_name());
+    for statement in extension_smoke_statements(&recipe) {
+        exec_extension_sql(db, mode, extension, "functional smoke", statement)?;
     }
-}
-
-fn assert_extension_functional_smoke(
-    db: &TestDatabase,
-    mode: TestMode,
-    extension: Extension,
-) -> Result<()> {
-    match extension {
-        Extension::PgTextsearch => {
-            let response = exec_extension_sql(
-                db,
-                mode,
-                extension,
-                "functional English BM25 query",
-                r#"
-SELECT id::text AS id
-FROM liboliphaunt_pg_textsearch_english
-ORDER BY body <@> to_bm25query(
-  'running database',
-  'liboliphaunt_pg_textsearch_english_bm25'
-)
-LIMIT 1;
-"#,
-            )?;
-            assert_first_data_row_text_values(
-                response.as_slice(),
-                mode,
-                extension,
-                "functional English BM25 query",
-                &["1"],
-            );
-            Ok(())
-        }
-        Extension::Pgcrypto => exec_extension_sql(
-            db,
-            mode,
-            extension,
-            "functional pgcrypto coverage",
-            r#"
-DO $$
-DECLARE
-  hashed text;
-  encrypted bytea;
-  armored text;
-  header_count int;
-  crypto_key bytea := decode('000102030405060708090a0b0c0d0e0f', 'hex');
-  crypto_iv bytea := decode('101112131415161718191a1b1c1d1e1f', 'hex');
-BEGIN
-  IF encode(digest('abc', 'sha256'), 'hex') <> 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad' THEN
-    RAISE EXCEPTION 'sha256 digest failed';
-  END IF;
-  IF encode(hmac('test', 'key', 'sha1'), 'hex') <> '671f54ce0c540f78ffe1e26dcf9c2a047aea4fda' THEN
-    RAISE EXCEPTION 'hmac failed';
-  END IF;
-  IF length(gen_random_bytes(16)) <> 16 THEN
-    RAISE EXCEPTION 'random bytes length failed';
-  END IF;
-  IF gen_random_uuid()::text !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
-    RAISE EXCEPTION 'random uuid format failed';
-  END IF;
-  SELECT crypt('secret', gen_salt('bf', 4)) INTO hashed;
-  IF crypt('secret', hashed) <> hashed THEN
-    RAISE EXCEPTION 'password hash verify failed';
-  END IF;
-  SELECT armor(digest('test', 'sha1'), ARRAY['Version'], ARRAY['oliphaunt']) INTO armored;
-  IF position('Version: oliphaunt' in armored) = 0 THEN
-    RAISE EXCEPTION 'armor header failed';
-  END IF;
-  SELECT count(*) INTO header_count FROM pgp_armor_headers(armored);
-  IF header_count <> 1 THEN
-    RAISE EXCEPTION 'armor header count failed: %', header_count;
-  END IF;
-  SELECT pgp_sym_encrypt('oliphaunt secret', 'passphrase') INTO encrypted;
-  IF pgp_sym_decrypt(encrypted, 'passphrase') <> 'oliphaunt secret' THEN
-    RAISE EXCEPTION 'PGP symmetric decrypt failed';
-  END IF;
-  IF pgp_key_id(encrypted) <> 'SYMKEY' THEN
-    RAISE EXCEPTION 'PGP symmetric key id failed';
-  END IF;
-  SELECT encrypt(convert_to('oliphaunt raw cipher', 'UTF8'), crypto_key, 'aes') INTO encrypted;
-  IF convert_from(decrypt(encrypted, crypto_key, 'aes'), 'UTF8') <> 'oliphaunt raw cipher' THEN
-    RAISE EXCEPTION 'raw decrypt failed';
-  END IF;
-  SELECT encrypt_iv(convert_to('oliphaunt iv cipher', 'UTF8'), crypto_key, crypto_iv, 'aes-cbc') INTO encrypted;
-  IF convert_from(decrypt_iv(encrypted, crypto_key, crypto_iv, 'aes-cbc'), 'UTF8') <> 'oliphaunt iv cipher' THEN
-    RAISE EXCEPTION 'raw iv decrypt failed';
-  END IF;
-END $$;
-"#,
-        )
-        .map(|_| ()),
-        Extension::Postgis => {
-            let sql = support::fixture_text(
-                "extensions/external/postgis/tests/smoke.sql",
-                "tests/fixtures/postgis-smoke.sql",
-            );
-            exec_extension_sql(
-                db,
-                mode,
-                extension,
-                "functional postgis coverage",
-                &sql,
-            )
-            .map(|_| ())
-        }
-        Extension::UuidOssp => exec_extension_sql(
-            db,
-            mode,
-            extension,
-            "functional uuid-ossp coverage",
-            r#"
-DO $$
-DECLARE
-  id uuid;
-BEGIN
-  SELECT uuid_generate_v1() INTO id;
-  IF length(id::text) <> 36 THEN
-    RAISE EXCEPTION 'uuid-ossp v1 length failed';
-  END IF;
-  SELECT uuid_generate_v4() INTO id;
-  IF length(id::text) <> 36 THEN
-    RAISE EXCEPTION 'uuid-ossp v4 length failed';
-  END IF;
-  IF uuid_generate_v3(uuid_ns_dns(), 'www.example.com')::text <> '5df41881-3aed-3515-88a7-2f4a814cf09e' THEN
-    RAISE EXCEPTION 'uuid-ossp v3 failed';
-  END IF;
-  IF uuid_generate_v5(uuid_ns_dns(), 'www.example.com')::text <> '2ed6657d-e927-568b-95e1-2665a8aea6a2' THEN
-    RAISE EXCEPTION 'uuid-ossp v5 failed';
-  END IF;
-  IF uuid_nil()::text <> '00000000-0000-0000-0000-000000000000' THEN
-    RAISE EXCEPTION 'uuid-ossp nil failed';
-  END IF;
-  IF uuid_ns_dns()::text <> '6ba7b810-9dad-11d1-80b4-00c04fd430c8' THEN
-    RAISE EXCEPTION 'uuid-ossp dns namespace failed';
-  END IF;
-  IF uuid_ns_oid()::text <> '6ba7b812-9dad-11d1-80b4-00c04fd430c8' THEN
-    RAISE EXCEPTION 'uuid-ossp oid namespace failed';
-  END IF;
-END $$;
-"#,
-        )
-        .map(|_| ()),
-        _ => Ok(()),
-    }
+    Ok(())
 }
 
 fn exec_extension_sql(

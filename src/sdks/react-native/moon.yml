@@ -169,7 +169,9 @@ tasks:
       - "oliphaunt-kotlin:smoke"
     inputs:
       - "/Package.swift"
+      - "/examples/react-native-expo/**/*"
       - "/src/extensions/**/*"
+      - "/src/shared/fixtures/extensions/**/*"
       - "/src/runtimes/liboliphaunt/native/**/*"
       - "/src/runtimes/liboliphaunt/wasix/VERSION"
       - "/src/sources/toolchains/android-sdk.toml"
@@ -201,7 +203,9 @@ tasks:
     deps:
       - "oliphaunt-kotlin:smoke"
     inputs:
+      - "/examples/react-native-expo/**/*"
       - "/src/extensions/**/*"
+      - "/src/shared/fixtures/extensions/**/*"
       - "/src/runtimes/liboliphaunt/native/**/*"
       - "/src/runtimes/liboliphaunt/wasix/VERSION"
       - "/src/sources/toolchains/android-sdk.toml"
@@ -231,7 +235,9 @@ tasks:
       - "oliphaunt-swift:smoke"
     inputs:
       - "/Package.swift"
+      - "/examples/react-native-expo/**/*"
       - "/src/extensions/**/*"
+      - "/src/shared/fixtures/extensions/**/*"
       - "/src/runtimes/liboliphaunt/native/**/*"
       - "/src/runtimes/liboliphaunt/wasix/VERSION"
       - "/src/sdks/react-native/**/*"

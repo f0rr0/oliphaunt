@@ -101,11 +101,11 @@ not hidden modes or partly supported capabilities.
 
 | ID | Current behavior | Evidence required before implementation |
 | --- | --- | --- |
-| `FUTURE-NATIVE-SERVER-SDK-BACKUP` | Native server handles expose no SDK physical-backup method; applications use ordinary PostgreSQL tools such as `pg_basebackup`. Direct and broker physical backup work | A server-safe online backup design and round-trip tests without routing through a live direct handle |
-| `FUTURE-WASIX-TS-SERVER-TOOLS` | WASIX TypeScript exposes neither a listener nor `pg_dump`/`psql` | A concrete supported host use case and a package/runtime design that does not burden browsers |
+| `FUTURE-NATIVE-SERVER-SDK-BACKUP` | Native server handles expose no SDK physical-backup method; applications use ordinary PostgreSQL tools such as `pg_basebackup`. Direct and broker physical backup work | Any future method must implement PostgreSQL replication `BASE_BACKUP` with WAL streaming and round-trip tests; it must not archive a live root |
+| `FUTURE-WASIX-TS-SERVER-TOOLS` | WASIX TypeScript exposes neither a listener nor `pg_dump`/`psql` | Concrete Node/Bun/Deno demand for an optional host-only package using shared `liboliphaunt-wasix` artifacts and an isolated backend/session; browser support remains unpromised |
 | `FUTURE-WASIX-CANCELLATION` | WASIX app-facing bindings have no public direct-query cancellation API | A guest interrupt contract that preserves PostgreSQL recovery plus idiomatic Rust and JS cancellation tests |
 | `FUTURE-WASIX-DIRECT-COPY` | WASIX typed APIs buffer responses; no dedicated COPY stream/backpressure API is promised | A guest protocol pump and language-native stream tests for COPY IN and COPY OUT |
-| `FUTURE-RESTORE-REPLACE` | Restore accepts only a nonexistent or empty destination and rejects nonempty data without mutation | A recoverable replacement contract with crash tests and an app-facing need stronger than delete-then-restore |
+| `FUTURE-RESTORE-REPLACE` | Restore accepts only a nonexistent or empty destination and rejects nonempty data without mutation | An atomic, recoverable replacement contract for directories, IndexedDB, and OPFS, with crash tests and demonstrated app demand |
 | `FUTURE-EXTENSION-MIGRATION` | Persistent data must reopen with required extension code; PostgreSQL SQL such as `ALTER EXTENSION` is explicit application work | A real cross-version extension case that cannot be handled honestly with standard PostgreSQL operations |
 
 ## Non-goals

@@ -3,6 +3,7 @@ import {
   GENERATED_EXTENSION_METADATA,
   GENERATED_EXTENSION_METADATA_SHA256,
 } from '@oliphaunt/react-native/extension-metadata';
+import { GENERATED_MOBILE_EXTENSION_SMOKE } from './generated/extension-smoke';
 import {
   runMobileBindingProof,
   runMobileReleaseExtensionProof,
@@ -461,12 +462,21 @@ async function runSelectedIcuRuntimeProof(
 }
 
 function mobileReleaseExtensionProofPlan() {
-  return GENERATED_EXTENSION_METADATA.map((extension) => ({
-    sqlName: extension.sqlName,
-    createsExtension: extension.createsExtension,
-    selectedExtensionDependencies: extension.selectedExtensionDependencies,
-    activationSql: activationSqlForExtension(extension),
-  }));
+  return GENERATED_EXTENSION_METADATA.map((extension) => {
+    const smokeStatements = (
+      GENERATED_MOBILE_EXTENSION_SMOKE as Readonly<Record<string, readonly string[]>>
+    )[extension.sqlName];
+    if (smokeStatements === undefined) {
+      throw new Error(`mobile extension ${extension.sqlName} has no canonical smoke recipe`);
+    }
+    return {
+      sqlName: extension.sqlName,
+      createsExtension: extension.createsExtension,
+      selectedExtensionDependencies: extension.selectedExtensionDependencies,
+      activationSql: activationSqlForExtension(extension),
+      smokeStatements,
+    };
+  });
 }
 
 function activationSqlForExtension(extension: {

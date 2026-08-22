@@ -1,10 +1,10 @@
 use anyhow::{Context, Result, anyhow, bail};
 use std::io::{self, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Shutdown, TcpListener, TcpStream};
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicBool, Ordering},
     mpsc::SyncSender,
 };
@@ -39,6 +39,84 @@ pub(crate) struct OliphauntProxy {
     extensions: Arc<Vec<Extension>>,
 }
 
+/// The one client socket currently owned by the sequential proxy loop.
+///
+/// A cloned handle lets [`OliphauntServer`](super::server::OliphauntServer)
+/// interrupt a blocking client read during shutdown without adding another
+/// worker or changing the single-client execution model.
+#[derive(Debug, Default)]
+pub(crate) struct ActiveConnection {
+    stream: Mutex<Option<ActiveStream>>,
+}
+
+#[derive(Debug)]
+enum ActiveStream {
+    Tcp(TcpStream),
+    #[cfg(unix)]
+    Unix(UnixStream),
+}
+
+impl ActiveConnection {
+    fn register_tcp(self: &Arc<Self>, stream: &TcpStream) -> Result<ActiveConnectionGuard> {
+        self.register(ActiveStream::Tcp(
+            stream
+                .try_clone()
+                .context("clone active TCP proxy connection")?,
+        ))
+    }
+
+    #[cfg(unix)]
+    fn register_unix(self: &Arc<Self>, stream: &UnixStream) -> Result<ActiveConnectionGuard> {
+        self.register(ActiveStream::Unix(
+            stream
+                .try_clone()
+                .context("clone active Unix proxy connection")?,
+        ))
+    }
+
+    fn register(self: &Arc<Self>, stream: ActiveStream) -> Result<ActiveConnectionGuard> {
+        let mut active = self
+            .stream
+            .lock()
+            .map_err(|_| anyhow!("active proxy connection lock was poisoned"))?;
+        if active.is_some() {
+            bail!("proxy tried to serve more than one client at a time");
+        }
+        *active = Some(stream);
+        Ok(ActiveConnectionGuard {
+            active: Arc::clone(self),
+        })
+    }
+
+    pub(crate) fn shutdown(&self) {
+        let Ok(active) = self.stream.lock() else {
+            return;
+        };
+        match active.as_ref() {
+            Some(ActiveStream::Tcp(stream)) => {
+                let _ = stream.shutdown(Shutdown::Both);
+            }
+            #[cfg(unix)]
+            Some(ActiveStream::Unix(stream)) => {
+                let _ = stream.shutdown(Shutdown::Both);
+            }
+            None => {}
+        }
+    }
+}
+
+struct ActiveConnectionGuard {
+    active: Arc<ActiveConnection>,
+}
+
+impl Drop for ActiveConnectionGuard {
+    fn drop(&mut self) {
+        if let Ok(mut active) = self.active.stream.lock() {
+            active.take();
+        }
+    }
+}
+
 impl OliphauntProxy {
     pub(crate) fn from_prepared_database(outcome: InstallOutcome) -> Self {
         Self {
@@ -71,6 +149,7 @@ impl OliphauntProxy {
         &self,
         listener: TcpListener,
         shutdown: Arc<AtomicBool>,
+        active_connection: Arc<ActiveConnection>,
         ready: Option<SyncSender<Result<()>>>,
     ) -> Result<()> {
         if let Some(ready) = ready {
@@ -81,10 +160,20 @@ impl OliphauntProxy {
             if shutdown.load(Ordering::SeqCst) {
                 break;
             }
-            stream
-                .set_nonblocking(false)
-                .context("configure TCP proxy stream as blocking")?;
-            self.handle_stream(stream)?;
+            let result = (|| {
+                stream
+                    .set_nonblocking(false)
+                    .context("configure TCP proxy stream as blocking")?;
+                let _active = active_connection.register_tcp(&stream)?;
+                if shutdown.load(Ordering::SeqCst) {
+                    active_connection.shutdown();
+                    return Ok(());
+                }
+                self.handle_stream(stream)
+            })();
+            if let Err(error) = result {
+                tracing::debug!("closing failed TCP proxy connection: {error:#}");
+            }
         }
 
         Ok(())
@@ -95,6 +184,7 @@ impl OliphauntProxy {
         &self,
         listener: UnixListener,
         shutdown: Arc<AtomicBool>,
+        active_connection: Arc<ActiveConnection>,
         ready: Option<SyncSender<Result<()>>>,
     ) -> Result<()> {
         if let Some(ready) = ready {
@@ -105,10 +195,20 @@ impl OliphauntProxy {
             if shutdown.load(Ordering::SeqCst) {
                 break;
             }
-            stream
-                .set_nonblocking(false)
-                .context("configure Unix proxy stream as blocking")?;
-            self.handle_stream(stream)?;
+            let result = (|| {
+                stream
+                    .set_nonblocking(false)
+                    .context("configure Unix proxy stream as blocking")?;
+                let _active = active_connection.register_unix(&stream)?;
+                if shutdown.load(Ordering::SeqCst) {
+                    active_connection.shutdown();
+                    return Ok(());
+                }
+                self.handle_stream(stream)
+            })();
+            if let Err(error) = result {
+                tracing::debug!("closing failed Unix proxy connection: {error:#}");
+            }
         }
 
         Ok(())
@@ -304,7 +404,6 @@ impl OliphauntProxy {
 
         {
             if let Some(mut backend) = backend {
-                backend.rollback_connection_state();
                 backend.close();
             }
         }
@@ -457,6 +556,8 @@ impl<'a> ContinuationPrefix<'a> {
 
 struct WireBackend {
     session: BackendSession,
+    connection_started: bool,
+    closed: bool,
 }
 
 impl WireBackend {
@@ -491,7 +592,11 @@ impl WireBackend {
             startup_config.clone(),
             extensions,
         )?;
-        Ok(Self { session })
+        Ok(Self {
+            session,
+            connection_started: false,
+            closed: false,
+        })
     }
 
     #[cfg(not(feature = "extensions"))]
@@ -506,11 +611,17 @@ impl WireBackend {
             postgres_config.clone(),
             startup_config.clone(),
         )?;
-        Ok(Self { session })
+        Ok(Self {
+            session,
+            connection_started: false,
+            closed: false,
+        })
     }
 
     fn startup(&mut self, message: &[u8]) -> Result<StartupProtocolResponse> {
-        self.session.startup_with_packet(message)
+        let response = self.session.startup_with_packet(message)?;
+        self.connection_started = response.accepted && !response_contains_error(&response.output);
+        Ok(response)
     }
 
     #[cfg(feature = "extensions")]
@@ -547,10 +658,6 @@ impl WireBackend {
         self.send(&simple_query(&sql)?)
     }
 
-    fn rollback_connection_state(&mut self) {
-        let _ = self.reset_session_state();
-    }
-
     fn reset_session_state(&mut self) -> Result<()> {
         for sql in ["ROLLBACK", "DISCARD ALL"] {
             let response = self.send(&simple_query(sql)?)?;
@@ -562,7 +669,20 @@ impl WireBackend {
     }
 
     fn close(&mut self) {
+        if self.closed {
+            return;
+        }
+        if self.connection_started {
+            let _ = self.reset_session_state();
+        }
         let _ = self.session.shutdown();
+        self.closed = true;
+    }
+}
+
+impl Drop for WireBackend {
+    fn drop(&mut self) {
+        self.close();
     }
 }
 

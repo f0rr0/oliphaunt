@@ -531,7 +531,16 @@ int32_t oliphaunt_detach(OliphauntHandle *handle) {
     }
     bool can_reset = handle->sync_initialized && handle->thread_started && !handle->backend_exited && !handle->closing;
     bool in_transaction = handle->transaction_status != 'I';
+    bool backup_mode_exit_unconfirmed = handle->backup_mode_exit_unconfirmed;
     pthread_mutex_unlock(&handle->mutex);
+
+    if (backup_mode_exit_unconfirmed) {
+        /* The resident backend cannot be reused safely when PostgreSQL may
+         * still be in backup mode. Terminal close releases the root lease and
+         * restores process state; PostgreSQL embedding remains one backend per
+         * process lifetime, so callers must restart the process before open. */
+        return oliphaunt_close(handle);
+    }
 
     if (can_reset) {
         if (in_transaction) {

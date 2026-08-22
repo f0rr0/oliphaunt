@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { decompressIfNeeded, extractTar, layoutRuntime } from '../archive.js';
 
+// liboliphaunt-doc-example:wasix-typescript-backup-restore
 describe('WASIX TypeScript archives', () => {
   it('preserves uncompressed archive bytes by identity', () => {
     const bytes = Uint8Array.of(1, 2, 3);

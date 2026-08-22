@@ -120,7 +120,14 @@ With the `tools` feature, `OliphauntServer::pg_dump` and
 `OliphauntServer::psql` run the matching packaged WASIX PostgreSQL tools.
 `pg_dump` returns the standard PostgreSQL plain-text script unchanged; restore
 it through `psql(PsqlOptions::new().script(sql))` or another PostgreSQL client
-script API.
+script API. Release other server clients before invoking these methods: the
+WASIX server deliberately serves one client session at a time. `server.close()`
+deterministically disconnects any active client before joining the server
+worker.
+
+TCP endpoints are loopback-only because the embedded proxy uses PostgreSQL
+trust authentication. Use the default `127.0.0.1:0`, another loopback address,
+or a Unix-domain socket; non-loopback TCP binds are rejected by `start()`.
 
 The crate packages no mutable runtime downloads. Cargo resolves the matching
 runtime, AOT, tool, and selected extension artifacts built from the same

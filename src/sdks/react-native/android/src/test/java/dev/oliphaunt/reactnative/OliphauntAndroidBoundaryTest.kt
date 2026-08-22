@@ -74,6 +74,24 @@ class OliphauntAndroidBoundaryTest {
   }
 
   @Test
+  fun iosProtocolStreamAcknowledgesEachCallback() {
+    val iosSource = File(System.getProperty("user.dir"), "../ios/Oliphaunt.mm").readText()
+    val adapterSource = File(
+      System.getProperty("user.dir"),
+      "../ios/OliphauntAdapter.swift",
+    ).readText()
+
+    assertTrue(
+      "React Native iOS JSI must use the bounded callback contract",
+      iosSource.contains("class OliphauntChunkAcknowledgement") &&
+        iosSource.contains("acknowledgement->wait()") &&
+        iosSource.contains("OliphauntProtocolStreamCallbackError") &&
+        adapterSource.contains("if let error = chunkBox.value") &&
+        adapterSource.contains("throw error"),
+    )
+  }
+
+  @Test
   fun reactNativeAndroidDelegatesRuntimeToKotlinSdk() {
     assertEquals("dev.oliphaunt.Oliphaunt", Oliphaunt::class.java.name)
 
@@ -135,9 +153,10 @@ class OliphauntAndroidBoundaryTest {
         moduleSource.contains("session.execProtocolRaw(request)"),
     )
     assertTrue(
-      "React Native Android must stream byte-array protocol chunks through the Kotlin SDK session",
+      "React Native Android must stream through the Kotlin SDK and propagate acknowledged callback failures",
       moduleSource.contains("fun execProtocolStreamBytes") &&
-        moduleSource.contains("session.execProtocolStream(request)"),
+        moduleSource.contains("session.execProtocolStream(request)") &&
+        moduleSource.contains("callback.emitChunk(chunk)"),
     )
     assertTrue(
       "React Native Android must expose byte-array JSI backup/restore hooks instead of base64 TurboModule binary APIs",
@@ -169,10 +188,19 @@ class OliphauntAndroidBoundaryTest {
         jsiSource.contains("typed-array byteLength"),
     )
     assertTrue(
-      "React Native Android JSI must stream raw protocol chunks without exposing Kotlin SDK types",
-      jsiSource.contains("execProtocolStream") &&
-        jsiSource.contains("OliphauntJsiStreamCallback") &&
-        jsiSource.contains("arrayBufferFromBytes"),
+      "React Native Android JSI must acknowledge each stream callback before accepting another chunk",
+      jsiSource.contains("class ChunkAcknowledgement") &&
+        jsiSource.contains("acknowledgement->wait()") &&
+        jsiSource.contains("protocol stream callback failed"),
+    )
+    val callbackSource = File(
+      System.getProperty("user.dir"),
+      "src/main/java/dev/oliphaunt/reactnative/OliphauntJsiStreamCallback.kt",
+    ).readText()
+    assertTrue(
+      "React Native Android must surface a failed JSI acknowledgement to the Kotlin producer",
+      callbackSource.contains("nativeEmitChunk(token, chunk)?.let") &&
+        callbackSource.contains("throw IllegalStateException(error)"),
     )
   }
 

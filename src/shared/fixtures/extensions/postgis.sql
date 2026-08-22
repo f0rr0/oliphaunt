@@ -1,12 +1,12 @@
-DROP TABLE IF EXISTS liboliphaunt_postgis_points;
+DROP TABLE IF EXISTS oliphaunt_postgis_points;
 -- oliphaunt-statement
-CREATE TEMP TABLE liboliphaunt_postgis_points(id int PRIMARY KEY, geom geometry(Point, 4326));
+CREATE TEMP TABLE oliphaunt_postgis_points(id int PRIMARY KEY, geom geometry(Point, 4326));
 -- oliphaunt-statement
-INSERT INTO liboliphaunt_postgis_points VALUES
+INSERT INTO oliphaunt_postgis_points VALUES
   (1, ST_SetSRID(ST_MakePoint(-71.060316, 48.432044), 4326)),
   (2, ST_SetSRID(ST_MakePoint(-71.061, 48.433), 4326));
 -- oliphaunt-statement
-CREATE INDEX liboliphaunt_postgis_points_gix ON liboliphaunt_postgis_points USING GIST (geom);
+CREATE INDEX oliphaunt_postgis_points_gix ON oliphaunt_postgis_points USING GIST (geom);
 -- oliphaunt-statement
 DO $$
 DECLARE
@@ -47,7 +47,7 @@ BEGIN
     RAISE EXCEPTION 'postgis polygonize failed: %', polygons;
   END IF;
   SELECT count(*) INTO nearby
-  FROM liboliphaunt_postgis_points
+  FROM oliphaunt_postgis_points
   WHERE ST_DWithin(
     geom::geography,
     ST_SetSRID(ST_MakePoint(-71.060316, 48.432044), 4326)::geography,
@@ -57,5 +57,3 @@ BEGIN
     RAISE EXCEPTION 'postgis dwithin failed: %', nearby;
   END IF;
 END $$;
--- oliphaunt-statement
-DROP TABLE IF EXISTS liboliphaunt_postgis_points;

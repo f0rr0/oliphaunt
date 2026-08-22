@@ -16,8 +16,8 @@ export type NodeDirectAddon = {
     onChunk: (chunk: Uint8Array) => void,
   ): void;
   execSimpleQuery(handle: NativeHandle, sql: string): Promise<Uint8Array | ArrayBuffer>;
-  backup(handle: NativeHandle): Uint8Array | ArrayBuffer;
-  restore(options: NodeDirectRestoreOptions): void;
+  backup(handle: NativeHandle): Promise<Uint8Array | ArrayBuffer>;
+  restore(options: NodeDirectRestoreOptions): Promise<void>;
   cancel(handle: NativeHandle): void;
   detach(handle: NativeHandle): void;
 };

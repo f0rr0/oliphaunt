@@ -73,11 +73,29 @@ require_entry "src/oliphaunt/assets.rs"
 require_entry "src/testdata/database-root.json"
 require_entry "src/testdata/physical-archive-wasix-v1.properties"
 require_entry "src/testdata/physical-backup-wal-range-v1.properties"
-require_entry "src/testdata/postgis-smoke.sql"
 require_entry "src/testdata/postgres-behavior-contract.json"
 require_entry "src/testdata/protocol-query-response-cases.json"
 require_entry "src/testdata/wasix-toolchain.toml"
 require_entry "tests/public_api.rs"
+
+canonical_extension_smoke_count=0
+for recipe in src/shared/fixtures/extensions/*.sql; do
+  canonical_extension_smoke_count=$((canonical_extension_smoke_count + 1))
+  require_entry "src/testdata/extensions/$(basename "$recipe")"
+done
+packaged_extension_smoke_count="$(grep -Ec '^src/testdata/extensions/[^/]+\.sql$' "$listing" || true)"
+if [ "$packaged_extension_smoke_count" -ne "$canonical_extension_smoke_count" ]; then
+  echo "oliphaunt-wasix package must contain exactly the canonical extension smoke recipes: expected $canonical_extension_smoke_count, found $packaged_extension_smoke_count" >&2
+  grep -E '^src/testdata/extensions/' "$listing" >&2 || true
+  exit 1
+fi
+if git ls-files --error-unmatch \
+  src/bindings/wasix-rust/crates/oliphaunt-wasix/src/testdata/extensions/'*.sql' \
+  >/dev/null 2>&1; then
+  echo "oliphaunt-wasix source must not commit package-local extension smoke copies; package them from src/shared/fixtures/extensions" >&2
+  exit 1
+fi
+reject_pattern '^src/testdata/postgis-smoke\.sql$'
 
 cmp -s \
   src/bindings/wasix-rust/crates/oliphaunt-wasix/src/testdata/wasix-toolchain.toml \

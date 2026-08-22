@@ -1,6 +1,8 @@
 package dev.oliphaunt
 
+import org.json.JSONObject
 import java.nio.file.Files
+import java.nio.file.Path
 import java.util.Properties
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -335,15 +337,53 @@ class OliphauntAndroidRuntimeAssetsTest {
 
     @Test
     fun managedRootDescriptorClassifiesACompletePgdata() {
-        val root = Files.createTempDirectory("liboliphaunt-android-descriptor").toFile()
-        try {
-            writeCompletePgdata(root.resolve("pgdata"))
-            root.resolve(".oliphaunt.json").writeText(NATIVE_ROOT_DESCRIPTOR)
+        val fixture = databaseRootFixture()
+        val descriptors = fixture.getJSONArray("validDescriptors")
+        val nativeDescriptor =
+            (0 until descriptors.length())
+                .map(descriptors::getJSONObject)
+                .single { it.getString("engineFamily") == "native" }
+        val emittedDescriptor = JSONObject(NATIVE_ROOT_DESCRIPTOR)
+        assertEquals(nativeDescriptor.length(), emittedDescriptor.length())
+        for (key in nativeDescriptor.keys()) {
+            assertEquals(nativeDescriptor.get(key), emittedDescriptor.get(key), key)
+        }
 
-            assertEquals(NATIVE_ROOT_DESCRIPTOR, root.resolve(".oliphaunt.json").readText())
-            assertEquals(AndroidManagedRootState.Managed, classifyAndroidManagedRoot(root))
-        } finally {
-            root.deleteRecursively()
+        for (index in 0 until descriptors.length()) {
+            val root = Files.createTempDirectory("liboliphaunt-android-descriptor").toFile()
+            try {
+                writeCompletePgdata(root.resolve("pgdata"))
+                root.resolve(".oliphaunt.json").writeText(descriptors.getJSONObject(index).toString())
+                assertEquals(AndroidManagedRootState.Managed, classifyAndroidManagedRoot(root))
+            } finally {
+                root.deleteRecursively()
+            }
+        }
+    }
+
+    @Test
+    fun managedRootDescriptorRejectsEverySharedInvalidFixture() {
+        val fixture = databaseRootFixture()
+        val invalid = fixture.getJSONArray("invalidDescriptors")
+        val malformed = fixture.getJSONArray("malformedJson")
+        val descriptors = buildList {
+            for (index in 0 until invalid.length()) {
+                add(invalid.getJSONObject(index).getJSONObject("value").toString())
+            }
+            for (index in 0 until malformed.length()) {
+                add(malformed.getJSONObject(index).getString("value"))
+            }
+        }
+
+        for (descriptor in descriptors) {
+            val root = Files.createTempDirectory("liboliphaunt-android-invalid-descriptor").toFile()
+            try {
+                writeCompletePgdata(root.resolve("pgdata"))
+                root.resolve(".oliphaunt.json").writeText(descriptor)
+                assertFailsWith<OliphauntException> { classifyAndroidManagedRoot(root) }
+            } finally {
+                root.deleteRecursively()
+            }
         }
     }
 
@@ -796,6 +836,23 @@ class OliphauntAndroidRuntimeAssetsTest {
 
         assertTrue(error.message.orEmpty().contains("not-required"))
     }
+}
+
+private fun databaseRootFixture(): JSONObject {
+    val configured =
+        System
+            .getProperty("oliphaunt.sharedFixturesDir")
+            ?.takeIf(String::isNotBlank)
+            ?.let { Path.of(it, "storage", "database-root.json") }
+    val cwd = Path.of("").toAbsolutePath()
+    val fixture =
+        listOfNotNull(
+            configured,
+            cwd.resolve("src/shared/fixtures/storage/database-root.json").normalize(),
+            cwd.resolve("../../shared/fixtures/storage/database-root.json").normalize(),
+        ).firstOrNull(Files::isRegularFile)
+    checkNotNull(fixture) { "shared database-root fixture was not found from the repository checkout" }
+    return JSONObject(fixture.toFile().readText())
 }
 
 private fun manifestProperties(vararg entries: Pair<String, String>): Properties = Properties().apply {

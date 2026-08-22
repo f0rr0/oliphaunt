@@ -36,6 +36,11 @@ export type NativeBindingFactory = (
   options?: NativeBindingOptions,
 ) => NativeBinding | Promise<NativeBinding>;
 
+type RuntimeBindingOverrides = {
+  readonly broker?: RuntimeBinding;
+  readonly server?: RuntimeBinding;
+};
+
 class OliphauntDatabaseBase {
   protected readonly binding: RuntimeBinding;
   protected readonly handle: RuntimeHandle;
@@ -43,8 +48,8 @@ class OliphauntDatabaseBase {
   #closed = false;
   #closing = false;
   #closeAttempt?: Promise<void>;
-  #lifecycleOperations = 0;
-  readonly #lifecycleIdleWaiters = new Set<() => void>();
+  #operationTail = Promise.resolve();
+  #sessionOperationRunning = false;
   #activeTransaction = false;
   #transactionPoisoned = false;
 
@@ -55,16 +60,16 @@ class OliphauntDatabaseBase {
   }
 
   async execute(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<CommandResult> {
-    return this.withLifecycleOperation(async () => {
-      this.assertNoActiveTransaction();
+    this.assertNoActiveTransaction();
+    return this.withSessionOperation(async () => {
       const response = await this.#execProtocolRawUnlocked(extendedQuery(sql, parameters));
       return parseCommandResponse(response);
     });
   }
 
   async query(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<QueryResult> {
-    return this.withLifecycleOperation(async () => {
-      this.assertNoActiveTransaction();
+    this.assertNoActiveTransaction();
+    return this.withSessionOperation(async () => {
       return parseQueryResponse(
         await this.#execProtocolRawUnlocked(extendedQuery(sql, parameters)),
       );
@@ -72,38 +77,41 @@ class OliphauntDatabaseBase {
   }
 
   async execProtocolRaw(input: BinaryInput): Promise<Uint8Array> {
-    return this.withLifecycleOperation(() => {
-      this.assertNoActiveTransaction();
+    this.assertNoActiveTransaction();
+    return this.withSessionOperation(() => {
       return this.#execProtocolRawUnlocked(input);
     });
   }
 
   async execProtocolStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void> {
-    await this.withLifecycleOperation(async () => {
-      this.assertNoActiveTransaction();
+    this.assertNoActiveTransaction();
+    await this.withSessionOperation(async () => {
       await this.#execProtocolStreamUnlocked(input, onChunk);
     });
   }
 
   async checkpoint(): Promise<void> {
-    await this.withLifecycleOperation(async () => {
-      this.assertNoActiveTransaction();
+    this.assertNoActiveTransaction();
+    await this.withSessionOperation(async () => {
       parseCommandResponse(await this.#executeSimpleUnlocked('CHECKPOINT'));
     });
   }
 
   async cancel(): Promise<void> {
-    await this.withLifecycleOperation(() =>
-      this.#runNativeVoidOperation(() => this.binding.cancel(this.handle)),
-    );
+    if (this.#closed) {
+      throw new Error('Oliphaunt database is closed');
+    }
+    if (this.#closing && !this.#sessionOperationRunning) {
+      throw new Error('Oliphaunt database is closing');
+    }
+    // Cancellation must remain independent of the physical-session queue so
+    // it can interrupt the operation currently holding that queue.
+    await this.#runNativeVoidOperation(() => this.binding.cancel(this.handle));
   }
 
   async transaction<T>(body: (transaction: OliphauntTransaction) => Promise<T> | T): Promise<T> {
-    return this.withLifecycleOperation(async () => {
-      if (this.#activeTransaction) {
-        throw new Error(transactionPinnedMessage);
-      }
-
+    this.assertNoActiveTransaction();
+    return this.withSessionOperation(async () => {
       this.#activeTransaction = true;
       const transaction = new OliphauntTransactionHandle(
         (input) => this.#execProtocolRawUnlocked(input),
@@ -111,10 +119,13 @@ class OliphauntDatabaseBase {
       );
       try {
         try {
-          requireTransactionTag(await transaction.execute('BEGIN'), 'BEGIN');
+          requireTransactionTag(await this.#executeTransactionControlUnlocked('BEGIN'), 'BEGIN');
         } catch (error) {
           try {
-            requireTransactionTag(await transaction.execute('ROLLBACK'), 'ROLLBACK');
+            requireTransactionTag(
+              await this.#executeTransactionControlUnlocked('ROLLBACK'),
+              'ROLLBACK',
+            );
           } catch {
             this.#transactionPoisoned = true;
           }
@@ -124,9 +135,14 @@ class OliphauntDatabaseBase {
         let result: T;
         try {
           result = await body(transaction);
+          await transaction.deactivateAndDrain();
         } catch (error) {
+          await transaction.deactivateAndDrain();
           try {
-            requireTransactionTag(await transaction.execute('ROLLBACK'), 'ROLLBACK');
+            requireTransactionTag(
+              await this.#executeTransactionControlUnlocked('ROLLBACK'),
+              'ROLLBACK',
+            );
           } catch {
             this.#transactionPoisoned = true;
           }
@@ -135,7 +151,7 @@ class OliphauntDatabaseBase {
 
         let commit: CommandResult;
         try {
-          commit = await transaction.execute('COMMIT');
+          commit = await this.#executeTransactionControlUnlocked('COMMIT');
         } catch (error) {
           // PostgreSQL may already have committed. A follow-up ROLLBACK cannot
           // undo that boundary and would misrepresent the outcome.
@@ -168,7 +184,7 @@ class OliphauntDatabaseBase {
     }
 
     this.#closing = true;
-    const attempt = this.#waitForLifecycleIdle()
+    const attempt = this.#operationTail
       .then(() => this.binding.detach(this.handle))
       .then(() => {
         this.#closing = false;
@@ -197,6 +213,12 @@ class OliphauntDatabaseBase {
       return this.runNativeOperation(() => this.binding.execSimpleQuery?.(this.handle, sql));
     }
     return this.#execProtocolRawUnlocked(simpleQuery(sql));
+  }
+
+  async #executeTransactionControlUnlocked(
+    sql: 'BEGIN' | 'COMMIT' | 'ROLLBACK',
+  ): Promise<CommandResult> {
+    return parseCommandResponse(await this.#execProtocolRawUnlocked(extendedQuery(sql, [])));
   }
 
   async #execProtocolRawUnlocked(input: BinaryInput): Promise<Uint8Array> {
@@ -233,27 +255,24 @@ class OliphauntDatabaseBase {
     }
   }
 
-  protected async withLifecycleOperation<T>(body: () => T | Promise<T>): Promise<T> {
+  protected withSessionOperation<T>(body: () => T | Promise<T>): Promise<T> {
     this.#assertOpen();
-    this.#lifecycleOperations += 1;
-    try {
-      return await body();
-    } finally {
-      this.#lifecycleOperations -= 1;
-      if (this.#lifecycleOperations === 0) {
-        for (const resolve of this.#lifecycleIdleWaiters) {
-          resolve();
-        }
-        this.#lifecycleIdleWaiters.clear();
+    const operation = this.#operationTail.then(async () => {
+      if (this.#transactionPoisoned) {
+        throw new Error('Oliphaunt transaction state is unknown; close the database');
       }
-    }
-  }
-
-  #waitForLifecycleIdle(): Promise<void> {
-    if (this.#lifecycleOperations === 0) {
-      return Promise.resolve();
-    }
-    return new Promise((resolve) => this.#lifecycleIdleWaiters.add(resolve));
+      this.#sessionOperationRunning = true;
+      try {
+        return await body();
+      } finally {
+        this.#sessionOperationRunning = false;
+      }
+    });
+    this.#operationTail = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
   }
 
   protected async runNativeOperation<T>(
@@ -273,8 +292,8 @@ class OliphauntDatabaseBase {
 
 class OliphauntDatabaseImpl extends OliphauntDatabaseBase implements OliphauntDatabase {
   async backup(): Promise<Uint8Array> {
-    return this.withLifecycleOperation(async () => {
-      this.assertNoActiveTransaction();
+    this.assertNoActiveTransaction();
+    return this.withSessionOperation(async () => {
       const backup = this.binding.backup;
       if (backup === undefined) {
         throw new Error('database runtime binding does not implement backup');
@@ -298,6 +317,7 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
   readonly #execRaw: (input: BinaryInput) => Promise<Uint8Array>;
   readonly #execStream: (input: BinaryInput, onChunk: ProtocolChunkCallback) => Promise<void>;
   #active = true;
+  #tail = Promise.resolve();
 
   constructor(
     execRaw: (input: BinaryInput) => Promise<Uint8Array>,
@@ -318,22 +338,36 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
 
   async execProtocolRaw(input: BinaryInput): Promise<Uint8Array> {
     this.#assertActive();
-    return this.#execRaw(input);
+    return this.#enqueue(() => this.#execRaw(input));
   }
 
   async execProtocolStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void> {
     this.#assertActive();
-    await this.#execStream(input, onChunk);
+    await this.#enqueue(() => this.#execStream(input, onChunk));
   }
 
   deactivate(): void {
     this.#active = false;
   }
 
+  async deactivateAndDrain(): Promise<void> {
+    this.#active = false;
+    await this.#tail;
+  }
+
   #assertActive(): void {
     if (!this.#active) {
       throw new Error('transaction is no longer active');
     }
+  }
+
+  #enqueue<T>(body: () => Promise<T>): Promise<T> {
+    const operation = this.#tail.then(body);
+    this.#tail = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
   }
 }
 
@@ -353,10 +387,11 @@ function transactionTagError(expected: string, actual: string | undefined): Erro
 
 export function createOliphauntClient(
   bindingFactory: NativeBindingFactory = createDefaultNativeBinding,
+  runtimeOverrides: RuntimeBindingOverrides = {},
 ): OliphauntClient {
   const bindings = new Map<string, Promise<NativeBinding>>();
   const brokerBindings = new Map<string, RuntimeBinding>();
-  const serverBinding = createServerRuntimeBinding();
+  const serverBinding = runtimeOverrides.server ?? createServerRuntimeBinding();
   const directResident = {
     temporaryDirectory: undefined as string | undefined,
     activeOwner: undefined as symbol | undefined,
@@ -380,6 +415,9 @@ export function createOliphauntClient(
   }
 
   function brokerBindingFor(config: { brokerExecutable?: string }): RuntimeBinding {
+    if (runtimeOverrides.broker !== undefined) {
+      return runtimeOverrides.broker;
+    }
     const key = config.brokerExecutable ?? '';
     const cached = brokerBindings.get(key);
     if (cached !== undefined) {

@@ -467,6 +467,14 @@ require_source_text "$package_dir/ios/Oliphaunt.mm" "if (_invalidated)" \
   "React Native iOS must reject opens after module invalidation"
 require_source_text "$package_dir/ios/Oliphaunt.mm" "if (invalidated)" \
   "React Native iOS must close a nativeDirect session that finishes opening after invalidation"
+require_source_text "$package_dir/ios/Oliphaunt.mm" "acknowledgement->wait()" \
+  "React Native iOS protocol streaming must keep one acknowledged callback in flight"
+require_source_text "$package_dir/ios/OliphauntAdapter.swift" "if let error = chunkBox.value" \
+  "React Native iOS protocol streaming must propagate callback failures to the Swift producer"
+require_source_text "$package_dir/android/src/main/cpp/OliphauntJsiBindings.cpp" "acknowledgement->wait()" \
+  "React Native Android protocol streaming must keep one acknowledged callback in flight"
+require_source_text "$package_dir/android/src/main/java/dev/oliphaunt/reactnative/OliphauntJsiStreamCallback.kt" "nativeEmitChunk(token, chunk)?.let" \
+  "React Native Android protocol streaming must propagate callback failures to the Kotlin producer"
 reject_source_text "$package_dir/ios/Oliphaunt.mm" "dispatch_group_wait" \
   "React Native iOS invalidation must not abandon ownership after a bounded close wait"
 for removed_ios_open_alias in \
@@ -579,6 +587,7 @@ for required in \
   "android/src/main/cpp/include/oliphaunt.h" \
   "android/src/main/cpp/OliphauntJsiBindings.cpp" \
   "android/src/main/java/dev/oliphaunt/reactnative/OliphauntJsiPromiseCallback.kt" \
+  "android/src/main/java/dev/oliphaunt/reactnative/OliphauntJsiStreamCallback.kt" \
   "android/src/main/java/dev/oliphaunt/reactnative/OliphauntModule.kt" \
   "android/src/main/java/dev/oliphaunt/reactnative/OliphauntPackage.kt" \
   "ios/Oliphaunt.mm" \

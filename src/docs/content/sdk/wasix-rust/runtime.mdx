@@ -19,6 +19,10 @@ Use `Oliphaunt` when Rust code calls the database directly. Use
 or Unix endpoint. Both own one embedded WASIX backend; the listener does not
 turn it into a multi-backend postmaster.
 
+The embedded proxy uses PostgreSQL trust authentication, so TCP endpoints are
+restricted to loopback addresses. Use the default `127.0.0.1:0`, another
+loopback address, or a Unix-domain socket.
+
 ## Storage
 
 `DatabaseStorage::Memory` is the default true Wasmer memory filesystem.

@@ -11,19 +11,32 @@ const bindingRoot = resolve(repositoryRoot, 'src/bindings/wasix-ts');
 const bindingLibRoot = resolve(bindingRoot, 'lib');
 const assetRoot = resolve(repositoryRoot, 'target/oliphaunt-wasix/assets');
 const pgliteAssetRoot = resolve(bindingRoot, 'node_modules/@electric-sql/pglite/dist');
+const packedConsumerRoot = process.env.OLIPHAUNT_WASIX_BROWSER_PACKAGE_ROOT;
+const packedConsumer = packedConsumerRoot === undefined ? undefined : resolve(packedConsumerRoot);
 export default defineConfig({
-  root: exampleRoot,
+  root: packedConsumer ?? exampleRoot,
   resolve: {
-    alias: [
-      {
-        find: /^@oliphaunt\/wasix-ts$/,
-        replacement: resolve(bindingLibRoot, 'index.js'),
-      },
-      {
-        find: /^@oliphaunt\/wasix-ts\/(.+)$/,
-        replacement: `${bindingLibRoot}/$1.js`,
-      },
-    ],
+    ...(packedConsumer === undefined
+      ? {
+          alias: [
+            {
+              find: /^@oliphaunt\/wasix-ts$/,
+              replacement: resolve(bindingLibRoot, 'index.js'),
+            },
+            {
+              find: /^@oliphaunt\/wasix-ts\/(.+)$/,
+              replacement: `${bindingLibRoot}/$1.js`,
+            },
+          ],
+        }
+      : {
+          dedupe: [
+            '@oliphaunt/wasix-ts',
+            '@oliphaunt/liboliphaunt-wasix',
+            '@oliphaunt/extension-pgtap-wasix',
+            'fzstd',
+          ],
+        }),
   },
   optimizeDeps: {
     esbuildOptions: {
@@ -37,13 +50,53 @@ export default defineConfig({
     format: 'es',
   },
   server: {
+    fs: {
+      allow: [repositoryRoot, ...(packedConsumer === undefined ? [] : [packedConsumer])],
+    },
     headers: {
       'Cross-Origin-Embedder-Policy': 'require-corp',
       'Cross-Origin-Opener-Policy': 'same-origin',
     },
   },
-  plugins: [wasixAssets()],
+  plugins:
+    packedConsumer === undefined ? [wasixAssets()] : [packedBrowserPackageExports(packedConsumer)],
 });
+
+function packedBrowserPackageExports(consumerRoot: string): Plugin {
+  const expected = new Map([
+    ['@oliphaunt/wasix-ts', '/@oliphaunt/wasix-ts/lib/index.js'],
+    ['@oliphaunt/wasix-ts/storage/indexed-db', '/@oliphaunt/wasix-ts/lib/storage/indexed-db.js'],
+    ['@oliphaunt/liboliphaunt-wasix', '/@oliphaunt/liboliphaunt-wasix/index.js'],
+    ['@oliphaunt/extension-pgtap-wasix', '/@oliphaunt/extension-pgtap-wasix/index.js'],
+  ]);
+  return {
+    name: 'oliphaunt-packed-browser-package-exports',
+    enforce: 'pre',
+    async resolveId(source, importer) {
+      const suffix = expected.get(source);
+      if (suffix === undefined) return undefined;
+      const resolved = await this.resolve(source, importer, { skipSelf: true });
+      if (resolved === null) {
+        throw new Error(`packed browser consumer could not resolve ${source}`);
+      }
+      const id = resolved.id.split('?')[0]?.split('\\').join('/');
+      if (id === undefined || !id.endsWith(suffix)) {
+        throw new Error(
+          `packed browser consumer resolved ${source} to ${resolved.id}, expected ${suffix}`,
+        );
+      }
+      if (!id.includes('/node_modules/')) {
+        throw new Error(`packed browser consumer did not load ${source} from its install`);
+      }
+      return resolved;
+    },
+    configResolved(config) {
+      if (resolve(config.root) !== consumerRoot) {
+        throw new Error('packed browser consumer did not become the Vite project root');
+      }
+    },
+  };
+}
 
 function wasixAssets(): Plugin {
   const virtualModules = new Map([

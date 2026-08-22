@@ -73,10 +73,10 @@ oliphaunt_wasix_cargo_test \
   --test postgres_regression \
   -- --nocapture --test-threads=1
 if [ "$asset_mode" = "full" ]; then
-  # These library tests iterate every catalogued extension through direct,
-  # server, restart, materialization, and dump/restore paths.  Do not replace
-  # this with a small representative integration-test subset: the evidence
-  # matrix makes product-by-product claims.
+  # Together these library tests cover every catalogued extension through
+  # direct, server, restart, materialization, and dump/restore paths. Do not
+  # replace them with a representative subset: the evidence matrix makes
+  # product-by-product claims.
   oliphaunt_wasix_cargo_test \
     --lib candidate_tests::public_extensions \
     -- --nocapture --test-threads=1

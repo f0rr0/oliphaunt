@@ -12,8 +12,13 @@ import type {
   NativeOpenConfig,
   NativeRestoreOptions,
 } from '../native/types.js';
+import type { CommandResult } from '../query.js';
+import type { OliphauntTransaction } from '../types.js';
+import type { RuntimeBinding } from '../runtime/types.js';
 
 // OLIPHAUNT_DOCS_SNIPPET typescript-quickstart
+// liboliphaunt-doc-example:typescript-open-query
+// liboliphaunt-doc-example:typescript-backup-restore
 test('exposes the minimal database lifecycle and byte backup contract', async () => {
   const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-client-'));
   const binding = new FakeBinding();
@@ -133,41 +138,247 @@ test('transactions commit, roll back body failures, and never roll back a failed
   }
 });
 
+test('serializes physical-session work in FIFO order and pins transactions', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-session-queue-'));
+  const binding = new FakeBinding();
+  const firstStarted = deferred<void>();
+  const releaseFirst = deferred<void>();
+  binding.protocolStarted = () => firstStarted.resolve();
+  binding.protocolGate = releaseFirst.promise;
+  const db = await createOliphauntClient(() => binding).open({
+    storage: { kind: 'directory', path: root },
+  });
+  try {
+    const first = db.execute('UPDATE things SET value = 10');
+    await firstStarted.promise;
+    const backup = db.backup();
+    const checkpoint = db.checkpoint();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(binding.operationEvents, ['raw:UPDATE things SET value = 10']);
+
+    binding.protocolGate = undefined;
+    releaseFirst.resolve();
+    await Promise.all([first, backup, checkpoint]);
+    assert.deepEqual(binding.operationEvents, [
+      'raw:UPDATE things SET value = 10',
+      'backup',
+      'simple:CHECKPOINT',
+    ]);
+
+    binding.queryValues.set("SELECT 'first'", 'first');
+    binding.queryValues.set("SELECT 'second'", 'second');
+    const [firstResult, secondResult] = await Promise.all([
+      db.query("SELECT 'first'"),
+      db.query("SELECT 'second'"),
+    ]);
+    assert.equal(firstResult.rows[0]?.text(0), 'first');
+    assert.equal(secondResult.rows[0]?.text(0), 'second');
+
+    const transactionBodyStarted = deferred<void>();
+    const releaseTransactionBody = deferred<void>();
+    let completedTransactionHandle!: OliphauntTransaction;
+    const transaction = db.transaction(async (owned) => {
+      completedTransactionHandle = owned;
+      await owned.execute('UPDATE things SET value = 11');
+      transactionBodyStarted.resolve();
+      await releaseTransactionBody.promise;
+      await Promise.all([
+        owned.execute('UPDATE things SET value = 12'),
+        owned.execute('UPDATE things SET value = 13'),
+      ]);
+    });
+    await transactionBodyStarted.promise;
+    await assert.rejects(() => db.query('SELECT 1'), /physical session is pinned/);
+    releaseTransactionBody.resolve();
+    await transaction;
+    assert.deepEqual(binding.sqlCalls.slice(-5), [
+      'BEGIN',
+      'UPDATE things SET value = 11',
+      'UPDATE things SET value = 12',
+      'UPDATE things SET value = 13',
+      'COMMIT',
+    ]);
+    assert.equal(binding.maxConcurrentProtocolOperations, 1);
+    await assert.rejects(
+      () => completedTransactionHandle.execute('SELECT 1'),
+      /transaction is no longer active/,
+    );
+
+    const acceptedOperationStarted = deferred<void>();
+    const releaseAcceptedOperation = deferred<void>();
+    let acceptedOperation!: Promise<CommandResult>;
+    let sealedTransactionHandle!: OliphauntTransaction;
+    const drainingTransaction = db.transaction(async (owned) => {
+      sealedTransactionHandle = owned;
+      binding.protocolStarted = () => acceptedOperationStarted.resolve();
+      binding.protocolGate = releaseAcceptedOperation.promise;
+      acceptedOperation = owned.execute('UPDATE things SET value = 15');
+      await acceptedOperationStarted.promise;
+    });
+    await acceptedOperationStarted.promise;
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.notEqual(binding.sqlCalls.at(-1), 'COMMIT');
+    await assert.rejects(
+      () => sealedTransactionHandle.execute('UPDATE things SET value = 16'),
+      /transaction is no longer active/,
+    );
+    binding.protocolGate = undefined;
+    releaseAcceptedOperation.resolve();
+    await acceptedOperation;
+    await drainingTransaction;
+    assert.deepEqual(binding.sqlCalls.slice(-3), [
+      'BEGIN',
+      'UPDATE things SET value = 15',
+      'COMMIT',
+    ]);
+
+    await assert.rejects(
+      () =>
+        db.execProtocolStream(new Uint8Array([0x51]), () => {
+          throw new Error('stream consumer failed');
+        }),
+      /stream consumer failed/,
+    );
+    assert.deepEqual(await db.execute('UPDATE things SET value = 14'), {
+      commandTag: 'UPDATE 3',
+      rowCount: 3,
+    });
+  } finally {
+    await db.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('keeps cancellation out of band and close drains accepted work exactly once', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-session-close-'));
+  const binding = new FakeBinding();
+  const operationStarted = deferred<void>();
+  const releaseOperation = deferred<void>();
+  binding.protocolStarted = () => operationStarted.resolve();
+  binding.protocolGate = releaseOperation.promise;
+  const db = await createOliphauntClient(() => binding).open({
+    storage: { kind: 'directory', path: root },
+  });
+  try {
+    const operation = db.execute('UPDATE things SET value = 12');
+    await operationStarted.promise;
+    await db.cancel();
+    assert.deepEqual(binding.operationEvents, [
+      'raw:UPDATE things SET value = 12',
+      'cancel',
+    ]);
+
+    const firstClose = db.close();
+    const secondClose = db.close();
+    assert.equal(firstClose, secondClose);
+    await assert.rejects(() => db.backup(), /closing/);
+    assert.equal(binding.detachCalls, 0);
+
+    binding.protocolGate = undefined;
+    releaseOperation.resolve();
+    await operation;
+    await Promise.all([firstClose, secondClose]);
+    assert.equal(binding.detachCalls, 1);
+    await db.close();
+    assert.equal(binding.detachCalls, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('broker and server facades inherit the same FIFO session ownership', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-runtime-queue-'));
+  try {
+    for (const execution of ['broker', 'server'] as const) {
+      const binding = new FakeBinding();
+      const started = deferred<void>();
+      const release = deferred<void>();
+      binding.protocolStarted = () => started.resolve();
+      binding.protocolGate = release.promise;
+      const runtime = binding as unknown as RuntimeBinding;
+      runtime.connectionString = () => 'postgresql://postgres@127.0.0.1:5432/postgres';
+      const client = createOliphauntClient(() => binding, {
+        broker: runtime,
+        server: runtime,
+      });
+      const database =
+        execution === 'broker'
+          ? await client.open({ execution, storage: { kind: 'directory', path: join(root, execution) } })
+          : await client.openServer({ storage: { kind: 'directory', path: join(root, execution) } });
+      const first = database.execute('UPDATE things SET value = 20');
+      await started.promise;
+      const second = database.execute('UPDATE things SET value = 21');
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(binding.operationEvents, ['raw:UPDATE things SET value = 20']);
+      binding.protocolGate = undefined;
+      release.resolve();
+      await Promise.all([first, second]);
+      assert.deepEqual(binding.operationEvents, [
+        'raw:UPDATE things SET value = 20',
+        'raw:UPDATE things SET value = 21',
+      ]);
+      await database.close();
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 class FakeBinding implements NativeBinding {
   readonly openCalls: NativeOpenConfig[] = [];
   readonly restoreCalls: NativeRestoreOptions[] = [];
   readonly sqlCalls: string[] = [];
   readonly requestTags: string[] = [];
+  readonly operationEvents: string[] = [];
   cancelCalls = 0;
   detachCalls = 0;
   failSql?: string;
+  protocolGate?: Promise<void>;
+  protocolStarted?: () => void;
+  activeProtocolOperations = 0;
+  maxConcurrentProtocolOperations = 0;
   readonly tagForSql = new Map<string, string>();
+  readonly queryValues = new Map<string, string>();
 
   open(config: NativeOpenConfig): NativeHandle {
     this.openCalls.push(config);
     return { id: 1 };
   }
 
-  execProtocolRaw(_handle: NativeHandle, request: Uint8Array): Uint8Array {
+  async execProtocolRaw(_handle: NativeHandle, request: Uint8Array): Promise<Uint8Array> {
     this.requestTags.push(String.fromCharCode(request[0] ?? 0));
-    return this.respond(
-      decodeSimpleQuery(request) ?? decodeExtendedQuery(request) ?? 'SELECT value FROM things',
+    const sql =
+      decodeSimpleQuery(request) ?? decodeExtendedQuery(request) ?? 'SELECT value FROM things';
+    this.operationEvents.push(`raw:${sql}`);
+    this.protocolStarted?.();
+    this.activeProtocolOperations += 1;
+    this.maxConcurrentProtocolOperations = Math.max(
+      this.maxConcurrentProtocolOperations,
+      this.activeProtocolOperations,
     );
+    try {
+      await this.protocolGate;
+      return this.respond(sql);
+    } finally {
+      this.activeProtocolOperations -= 1;
+    }
   }
 
-  execProtocolStream(
+  async execProtocolStream(
     handle: NativeHandle,
     request: Uint8Array,
     onChunk: (chunk: Uint8Array) => void,
-  ): void {
-    onChunk(this.execProtocolRaw(handle, request));
+  ): Promise<void> {
+    onChunk(await this.execProtocolRaw(handle, request));
   }
 
-  execSimpleQuery(_handle: NativeHandle, sql: string): Uint8Array {
+  async execSimpleQuery(_handle: NativeHandle, sql: string): Promise<Uint8Array> {
+    this.operationEvents.push(`simple:${sql}`);
     return this.respond(sql);
   }
 
-  backup(_handle: NativeHandle): Uint8Array {
+  async backup(_handle: NativeHandle): Promise<Uint8Array> {
+    this.operationEvents.push('backup');
     return new Uint8Array([1, 2, 3]);
   }
 
@@ -177,6 +388,7 @@ class FakeBinding implements NativeBinding {
 
   cancel(_handle: NativeHandle): void {
     this.cancelCalls += 1;
+    this.operationEvents.push('cancel');
   }
 
   detach(_handle: NativeHandle): void {
@@ -190,8 +402,22 @@ class FakeBinding implements NativeBinding {
       return commandResponse(this.tagForSql.get(sql) ?? sql);
     }
     if (sql.startsWith('UPDATE')) return commandResponse('UPDATE 3');
-    return queryResponse('ok');
+    return queryResponse(this.queryValues.get(sql) ?? 'ok');
   }
+}
+
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve(value?: T): void;
+} {
+  let resolvePromise!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return {
+    promise,
+    resolve: (value) => resolvePromise(value as T),
+  };
 }
 
 function commandResponse(tag: string): Uint8Array {

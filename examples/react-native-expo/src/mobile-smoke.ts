@@ -9,6 +9,7 @@ export type MobileReleaseExtensionProof = {
   readonly createsExtension: boolean;
   readonly selectedExtensionDependencies: readonly string[];
   readonly activationSql: readonly string[];
+  readonly smokeStatements: readonly string[];
 };
 
 export type OperationCheck = {
@@ -50,6 +51,60 @@ export async function runMobileBindingProof(
 
   await record(
     checks,
+    'raw protocol stream',
+    async () => {
+      const request = simpleQuery("SELECT repeat('x', 2048) FROM generate_series(1, 1024)");
+      const expected = await db.execProtocolRaw(request);
+      let chunkCount = 0;
+      let callbackActive = false;
+      const chunks: Uint8Array[] = [];
+      await db.execProtocolStream(
+        request,
+        chunk => {
+          if (callbackActive) {
+            throw new Error('protocol stream callback was re-entered');
+          }
+          callbackActive = true;
+          try {
+            chunkCount += 1;
+            chunks.push(chunk.slice());
+          } finally {
+            callbackActive = false;
+          }
+        },
+      );
+      if (chunkCount < 2) {
+        throw new Error(`protocol stream expected multiple chunks, got ${chunkCount}`);
+      }
+      const streamed = concatenate(chunks);
+      assertBytesEqual(streamed, expected, 'protocol stream complete response');
+      assertReadyForQuery(streamed);
+
+      const failure = new Error('mobile stream callback failure');
+      try {
+        await db.execProtocolStream(simpleQuery('SELECT 1'), () => {
+          throw failure;
+        });
+        throw new Error('protocol stream unexpectedly ignored its callback failure');
+      } catch (error) {
+        if (error !== failure) {
+          throw new Error('protocol stream did not reject with the callback exception', {
+            cause: error,
+          });
+        }
+      }
+      assertEqual(
+        await scalar(db, "SELECT 'after-stream-error'::text AS value"),
+        'after-stream-error',
+        'stream callback recovery query',
+      );
+      return `${chunkCount} acknowledged chunks, ${streamed.byteLength} complete raw bytes, callback exception preserved`;
+    },
+    onCheckStage,
+  );
+
+  await record(
+    checks,
     'query cancellation and recovery',
     async () => {
       const running = db.query("SELECT pg_sleep(5), 'late'::text AS value");
@@ -76,6 +131,49 @@ export async function runMobileBindingProof(
   );
 
   return checks;
+}
+
+function concatenate(chunks: readonly Uint8Array[]): Uint8Array {
+  const total = chunks.reduce((length, chunk) => length + chunk.byteLength, 0);
+  const result = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
+}
+
+function assertBytesEqual(actual: Uint8Array, expected: Uint8Array, label: string): void {
+  if (actual.byteLength !== expected.byteLength) {
+    throw new Error(`${label}: expected ${expected.byteLength} bytes, got ${actual.byteLength}`);
+  }
+  for (let index = 0; index < actual.byteLength; index += 1) {
+    if (actual[index] !== expected[index]) {
+      throw new Error(`${label}: byte ${index} differs`);
+    }
+  }
+}
+
+function assertReadyForQuery(response: Uint8Array): void {
+  const view = new DataView(response.buffer, response.byteOffset, response.byteLength);
+  let offset = 0;
+  let finalTag = 0;
+  let finalLength = 0;
+  while (offset < response.byteLength) {
+    if (response.byteLength - offset < 5) {
+      throw new Error('protocol stream ended inside a message header');
+    }
+    finalTag = response[offset] ?? 0;
+    finalLength = view.getUint32(offset + 1, false);
+    if (finalLength < 4 || finalLength > response.byteLength - offset - 1) {
+      throw new Error(`protocol stream contained invalid message length ${finalLength}`);
+    }
+    offset += 1 + finalLength;
+  }
+  if (finalTag !== 0x5a || finalLength !== 5) {
+    throw new Error('protocol stream did not end with ReadyForQuery');
+  }
 }
 
 async function provePgTextsearchEnglishSnowball(db: OliphauntDatabase): Promise<string> {
@@ -120,6 +218,9 @@ export async function runMobileReleaseExtensionProof(
       `extension activation: ${extension.sqlName}`,
       async () => {
         for (const statement of extension.activationSql) {
+          await db.execute(statement);
+        }
+        for (const statement of extension.smokeStatements) {
           await db.execute(statement);
         }
         if (extension.createsExtension) {

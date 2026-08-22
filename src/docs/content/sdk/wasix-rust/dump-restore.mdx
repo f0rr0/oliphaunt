@@ -60,8 +60,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-The packaged tools currently require the server's TCP endpoint. They are not
-methods on the direct `Oliphaunt` handle. `pg_dump()` returns UTF-8 SQL text;
+The packaged tools currently require the server's TCP endpoint. Release any
+other connected client first because this server deliberately serves one client
+session at a time. The tools are not methods on the direct `Oliphaunt` handle.
+`pg_dump()` returns UTF-8 SQL text;
 `psql()` returns UTF-8 standard output. Use `PsqlOptions::command(...)` for one
 command or `PsqlOptions::script(...)` for a complete SQL script. `pg_dump()`
 returns standard PostgreSQL 18 plain-text output unchanged, including its

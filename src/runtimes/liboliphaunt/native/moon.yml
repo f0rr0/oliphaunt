@@ -76,6 +76,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
       - "/src/runtimes/liboliphaunt/native/src/liboliphaunt_internal.h"
       - "/src/runtimes/liboliphaunt/native/src/liboliphaunt_platform.h"
+      - "/src/runtimes/liboliphaunt/native/src/liboliphaunt_backup_state.c"
       - "/src/runtimes/liboliphaunt/native/src/liboliphaunt_process.c"
       - "/src/runtimes/liboliphaunt/native/smoke/liboliphaunt_generation_lifecycle.c"
       - "/src/runtimes/liboliphaunt/native/tools/test-generation-lifecycle.sh"

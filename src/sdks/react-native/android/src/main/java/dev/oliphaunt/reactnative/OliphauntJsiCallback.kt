@@ -5,5 +5,7 @@ interface OliphauntJsiCallback {
 
   fun resolveString(value: String)
 
+  fun resolveUnit()
+
   fun reject(code: String, message: String?)
 }

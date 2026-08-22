@@ -143,6 +143,13 @@ if (trackedNodeModules.length > 0) {
   process.exit(1);
 }
 
+const sourceLocalExamples = gitLsFiles("src/**/examples/**");
+if (sourceLocalExamples.length > 0) {
+  console.error("product examples must live under the repository-level examples/ directory");
+  console.error(sourceLocalExamples.join("\n"));
+  process.exit(1);
+}
+
 requireFile("examples/tools/run-tauri-webdriver-smoke.sh");
 requireFile("examples/tools/stage-tauri-webdriver-app.sh");
 requireFile("examples/tools/stage-tauri-webdriver-app.test.sh");

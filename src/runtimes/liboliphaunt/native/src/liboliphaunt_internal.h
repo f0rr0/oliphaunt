@@ -7,9 +7,11 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #define OLIPHAUNT_ICU_DATA_DIR_ENV "OLIPHAUNT_ICU_DATA_DIR"
 #define OLIPHAUNT_EMBEDDED_MODULE_DIR_ENV "OLIPHAUNT_EMBEDDED_MODULE_DIR"
+#define OLIPHAUNT_ERROR_CAPACITY 1024
 
 typedef struct OliphauntEmbeddedIO {
     void *context;
@@ -31,6 +33,69 @@ typedef struct OliphauntProtocolScanner {
     unsigned char ready_status;
     bool ready_status_set;
 } OliphauntProtocolScanner;
+
+typedef enum OliphauntBackupModeState {
+    OLIPHAUNT_BACKUP_NOT_ENTERED = 0,
+    OLIPHAUNT_BACKUP_EXIT_REQUIRED = 1,
+    OLIPHAUNT_BACKUP_EXIT_CONFIRMED = 2,
+    OLIPHAUNT_BACKUP_EXIT_UNCONFIRMED = 3,
+} OliphauntBackupModeState;
+
+bool oliphaunt_backup_cleanup_required(OliphauntBackupModeState state);
+
+typedef enum OliphauntBackupCleanupOutcome {
+    OLIPHAUNT_BACKUP_CLEANUP_CONFIRMED = 0,
+    OLIPHAUNT_BACKUP_CLEANUP_CONFIRMED_WITH_VALIDATION_FAILURE = 1,
+    OLIPHAUNT_BACKUP_CLEANUP_UNCONFIRMED = 2,
+} OliphauntBackupCleanupOutcome;
+
+OliphauntBackupCleanupOutcome oliphaunt_backup_cleanup_outcome(
+    int stop_rc,
+    OliphauntBackupModeState stop_state);
+
+typedef int (*OliphauntBackupStopAttempt)(
+    void *context,
+    OliphauntBackupModeState *state,
+    char *error,
+    size_t error_capacity);
+
+typedef struct OliphauntBackupCleanupResult {
+    OliphauntBackupModeState state;
+    bool poison;
+    char error[OLIPHAUNT_ERROR_CAPACITY];
+} OliphauntBackupCleanupResult;
+
+/*
+ * Private backup cleanup wiring shared by the implementation and its
+ * fault-injected lifecycle test. The stop callback is invoked exactly once
+ * only when PostgreSQL may still be in backup mode.
+ */
+void oliphaunt_run_failed_backup_cleanup(
+    OliphauntBackupModeState state,
+    const char *primary_error,
+    OliphauntBackupStopAttempt stop,
+    void *stop_context,
+    OliphauntBackupCleanupResult *out);
+
+typedef enum OliphauntDataRowValidation {
+    OLIPHAUNT_DATA_ROW_VALID = 0,
+    OLIPHAUNT_DATA_ROW_TRUNCATED_COUNT = 1,
+    OLIPHAUNT_DATA_ROW_UNEXPECTED_COUNT = 2,
+    OLIPHAUNT_DATA_ROW_TRUNCATED_LENGTH = 3,
+    OLIPHAUNT_DATA_ROW_TRUNCATED_VALUE = 4,
+    OLIPHAUNT_DATA_ROW_TRAILING_BYTES = 5,
+} OliphauntDataRowValidation;
+
+OliphauntDataRowValidation oliphaunt_validate_data_row(
+    const uint8_t *body,
+    size_t body_len,
+    uint16_t expected_columns);
+
+bool oliphaunt_response_confirms_command(
+    const uint8_t *response,
+    size_t response_len,
+    const char *expected_tag,
+    bool *tag_matches);
 
 struct OliphauntHandle {
     char *pgdata;
@@ -77,6 +142,7 @@ struct OliphauntHandle {
     size_t output_scan_off;
     bool output_ready;
     unsigned char transaction_status;
+    bool backup_mode_exit_unconfirmed;
 
     bool streaming;
     bool stream_failed;
@@ -107,7 +173,7 @@ struct OliphauntHandle {
     OliphauntEmbeddedIO io;
     int stable_root_lock_fd;
     char *stable_root_lock_path;
-    char last_error[1024];
+    char last_error[OLIPHAUNT_ERROR_CAPACITY];
 };
 
 typedef struct OliphauntByteBuffer {

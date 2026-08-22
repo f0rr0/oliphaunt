@@ -119,7 +119,7 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
     @objc(execProtocolStreamData:onChunk:completion:)
     public func execProtocolStreamData(
         _ request: Data,
-        onChunk: @escaping (NSData) -> Void,
+        onChunk: @escaping (NSData) -> NSError?,
         completion: @escaping (NSError?) -> Void
     ) {
         let completionBox = CompletionBox(completion)
@@ -127,7 +127,9 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         Task.detached(priority: .userInitiated) { [database] in
             do {
                 try await database.execProtocolStream(request) { chunk in
-                    chunkBox.value(chunk as NSData)
+                    if let error = chunkBox.value(chunk as NSData) {
+                        throw error
+                    }
                 }
                 completionBox.value(nil)
             } catch {

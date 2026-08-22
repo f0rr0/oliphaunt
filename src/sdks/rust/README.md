@@ -101,9 +101,10 @@ connection string for standard PostgreSQL clients. Its SDK-owned connection has
 the same execute, query, transaction, checkpoint, cancellation, raw protocol,
 and close vocabulary as an embedded database.
 
-The server handle deliberately has no SDK backup method. Use standard PostgreSQL
-tools: packaged `pg_basebackup` for physical backups, and `pg_dump`, `pg_restore`,
-or `psql` for logical workflows.
+The server handle deliberately has no SDK backup method. Use the packaged
+standard PostgreSQL clients: `pg_basebackup` for physical backups and `pg_dump`
+or `psql` for logical workflows. Use a compatible external `pg_restore` for
+custom-format dumps; Oliphaunt does not package it.
 
 Pass `server.connection_string()` to the standard tool and keep PostgreSQL's
 streamed-WAL behavior explicit:

@@ -24,7 +24,7 @@ use crate::oliphaunt::extensions::{
 };
 #[cfg(feature = "tools")]
 use crate::oliphaunt::pg_dump::{PgDumpOptions, PsqlOptions, dump_server_sql, run_server_psql};
-use crate::oliphaunt::proxy::OliphauntProxy;
+use crate::oliphaunt::proxy::{ActiveConnection, OliphauntProxy};
 use crate::oliphaunt::storage::DatabaseStorage;
 
 /// A supervised local PostgreSQL socket backed by one embedded Oliphaunt runtime.
@@ -40,6 +40,7 @@ pub struct OliphauntServer {
     endpoint: ServerEndpoint,
     startup_config: StartupConfig,
     shutdown: Arc<AtomicBool>,
+    active_connection: Arc<ActiveConnection>,
     handle: Option<JoinHandle<Result<()>>>,
     #[cfg(unix)]
     owned_unix_socket: Option<OwnedUnixSocket>,
@@ -132,15 +133,15 @@ impl OliphauntServer {
 
     /// Request shutdown and wait for the listener thread to exit.
     ///
-    /// Close database clients before calling this method. The current proxy owns
-    /// one blocking backend connection at a time, so an open client can keep the
-    /// worker thread busy until it disconnects.
+    /// Any active client connection is closed before the listener thread is
+    /// joined.
     pub fn close(mut self) -> crate::Result<()> {
         crate::error::public_result(self.stop())
     }
 
     fn stop(&mut self) -> Result<()> {
         self.shutdown.store(true, Ordering::SeqCst);
+        self.active_connection.shutdown();
         {
             wake_listener(&self.endpoint);
         }
@@ -222,7 +223,10 @@ impl OliphauntServerBuilder {
         self
     }
 
-    /// Bind the server to a TCP address.
+    /// Bind the server to a loopback TCP address.
+    ///
+    /// The embedded proxy uses PostgreSQL trust authentication and rejects
+    /// non-loopback addresses when [`Self::start`] is called.
     pub fn tcp(mut self, addr: SocketAddr) -> Self {
         self.endpoint = ServerEndpointConfig::Tcp(addr);
         self
@@ -291,6 +295,14 @@ impl OliphauntServerBuilder {
     }
 
     fn start_inner(self) -> Result<OliphauntServer> {
+        if let ServerEndpointConfig::Tcp(addr) = &self.endpoint
+            && !addr.ip().is_loopback()
+        {
+            return Err(anyhow!(
+                "Oliphaunt TCP server uses trust authentication and must bind to a loopback address"
+            ));
+        }
+
         #[cfg(unix)]
         let unix_endpoint = match &self.endpoint {
             ServerEndpointConfig::Unix(path) => Some(resolve_unix_socket_endpoint(path)?),
@@ -316,6 +328,7 @@ impl OliphauntServerBuilder {
         } = prepared_database;
 
         let shutdown = Arc::new(AtomicBool::new(false));
+        let active_connection = Arc::new(ActiveConnection::default());
         let proxy = { OliphauntProxy::from_prepared_database(outcome) };
         let proxy = proxy
             .with_postgres_config(postgres_config)
@@ -326,7 +339,8 @@ impl OliphauntServerBuilder {
         #[cfg(unix)]
         let (endpoint, handle, owned_unix_socket) = match self.endpoint {
             ServerEndpointConfig::Tcp(addr) => {
-                let (endpoint, handle) = start_tcp(proxy, addr, shutdown.clone())?;
+                let (endpoint, handle) =
+                    start_tcp(proxy, addr, shutdown.clone(), active_connection.clone())?;
                 (endpoint, handle, None)
             }
             ServerEndpointConfig::Unix(_) => {
@@ -334,13 +348,16 @@ impl OliphauntServerBuilder {
                     proxy,
                     unix_endpoint.expect("Unix endpoint was resolved before database preparation"),
                     shutdown.clone(),
+                    active_connection.clone(),
                 )?;
                 (endpoint, handle, Some(socket))
             }
         };
         #[cfg(not(unix))]
         let (endpoint, handle) = match self.endpoint {
-            ServerEndpointConfig::Tcp(addr) => start_tcp(proxy, addr, shutdown.clone())?,
+            ServerEndpointConfig::Tcp(addr) => {
+                start_tcp(proxy, addr, shutdown.clone(), active_connection.clone())?
+            }
         };
 
         Ok(OliphauntServer {
@@ -349,6 +366,7 @@ impl OliphauntServerBuilder {
             endpoint,
             startup_config,
             shutdown,
+            active_connection,
             handle: Some(handle),
             #[cfg(unix)]
             owned_unix_socket,
@@ -368,6 +386,7 @@ fn start_tcp(
     proxy: OliphauntProxy,
     addr: SocketAddr,
     shutdown: Arc<AtomicBool>,
+    active_connection: Arc<ActiveConnection>,
 ) -> Result<(ServerEndpoint, JoinHandle<Result<()>>)> {
     let listener = TcpListener::bind(addr).context("bind Oliphaunt TCP server")?;
     let addr = {
@@ -377,7 +396,7 @@ fn start_tcp(
     };
     let (ready_tx, ready_rx) = sync_channel(1);
     let handle = thread::spawn(move || {
-        proxy.serve_tcp_listener_until_ready(listener, shutdown, Some(ready_tx))
+        proxy.serve_tcp_listener_until_ready(listener, shutdown, active_connection, Some(ready_tx))
     });
     {
         wait_until_ready(&ready_rx)?;
@@ -443,6 +462,7 @@ fn start_unix(
     proxy: OliphauntProxy,
     endpoint: UnixSocketEndpoint,
     shutdown: Arc<AtomicBool>,
+    active_connection: Arc<ActiveConnection>,
 ) -> Result<(ServerEndpoint, JoinHandle<Result<()>>, OwnedUnixSocket)> {
     let path = endpoint.path.clone();
     {
@@ -468,7 +488,12 @@ fn start_unix(
     let (ready_tx, ready_rx) = sync_channel(1);
     let worker_shutdown = shutdown.clone();
     let handle = thread::spawn(move || {
-        proxy.serve_unix_listener_until_ready(listener, worker_shutdown, Some(ready_tx))
+        proxy.serve_unix_listener_until_ready(
+            listener,
+            worker_shutdown,
+            active_connection,
+            Some(ready_tx),
+        )
     });
     let ready_result = { wait_until_ready(&ready_rx) };
     if let Err(error) = ready_result {
@@ -813,6 +838,26 @@ mod tests {
     fn default_server_builder_selects_memory() {
         let builder = OliphauntServerBuilder::default();
         assert_eq!(builder.storage, DatabaseStorage::Memory);
+    }
+
+    #[test]
+    fn tcp_server_rejects_non_loopback_addresses() {
+        for addr in [
+            SocketAddr::from(([0, 0, 0, 0], 0)),
+            SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], 0)),
+            SocketAddr::from(([192, 0, 2, 1], 0)),
+        ] {
+            let error = OliphauntServerBuilder::new()
+                .tcp(addr)
+                .start()
+                .expect_err("trust-authenticated TCP must stay on loopback");
+            assert!(
+                error
+                    .to_string()
+                    .contains("must bind to a loopback address"),
+                "unexpected error for {addr}: {error}"
+            );
+        }
     }
 
     #[cfg(feature = "extensions")]

@@ -11,6 +11,7 @@ import { directory } from '../storage/node.js';
 import { opfs } from '../storage/opfs.js';
 import { memory, serializeWasixStorage, type WasixStorage } from '../storage.js';
 
+// liboliphaunt-doc-example:wasix-typescript-storage-node
 const persistentStorageProof: PersistentWasixStorage[] = [
   indexedDB('type-proof'),
   opfs('type-proof'),

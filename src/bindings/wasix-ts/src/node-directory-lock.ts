@@ -1,6 +1,6 @@
-import { rmdirSync } from 'node:fs';
-import { mkdir, rmdir } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { realpathSync, rmdirSync } from 'node:fs';
+import { mkdir, realpath, rmdir } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { WasixStorageError } from './errors.js';
 import { isNodeError } from './node-fs-commit-state.js';
@@ -10,7 +10,10 @@ const NODE_DIRECTORY_LOCK_SUFFIX = '.oliphaunt-wasix-ts.lock';
 const OWNER_TOKEN = /^[A-Za-z0-9-]{16,128}$/u;
 const OWNER_PREFIX = 'owner-';
 
-type HeldNodeDirectoryLock = { release(): Promise<void> };
+type HeldNodeDirectoryLock = {
+  readonly root: string;
+  release(): Promise<void>;
+};
 
 /**
  * Claim one local managed root. A pre-existing slot fails closed: callers may
@@ -24,27 +27,33 @@ export async function acquireNodeDirectoryLock(
     throw unavailable(root, 'received an invalid ownership token');
   }
 
-  const slot = nodeDirectoryLockPath(root);
+  const canonicalRoot = await canonicalLockRoot(root);
+  const slot = nodeDirectoryLockPath(canonicalRoot);
   const owner = join(slot, ownerName(ownerToken));
   try {
     await mkdir(slot, { mode: 0o700 });
   } catch (error) {
-    if (isNodeError(error, 'EEXIST')) throw busy(root, slot);
-    throw unavailable(root, `could not claim ownership: ${describeError(error)}`, error);
+    if (isNodeError(error, 'EEXIST')) throw busy(canonicalRoot, slot);
+    throw unavailable(
+      canonicalRoot,
+      `could not claim ownership: ${describeError(error)}`,
+      error,
+    );
   }
 
   try {
     await mkdir(owner, { mode: 0o700 });
   } catch (error) {
     await rmdir(slot).catch(() => undefined);
-    throw unavailable(root, `could not record ownership: ${describeError(error)}`, error);
+    throw unavailable(canonicalRoot, `could not record ownership: ${describeError(error)}`, error);
   }
 
   let released = false;
   return {
+    root: canonicalRoot,
     async release() {
       if (released) return;
-      await releaseNodeDirectoryLock(root, ownerToken);
+      await releaseNodeDirectoryLock(canonicalRoot, ownerToken);
       released = true;
     },
   };
@@ -69,7 +78,13 @@ async function releaseNodeDirectoryLock(root: string, ownerToken: string): Promi
 /** Best-effort exact-owner cleanup after the database worker exits. */
 export function releaseNodeDirectoryLockSync(root: string, ownerToken: string): void {
   if (!OWNER_TOKEN.test(ownerToken)) return;
-  const slot = nodeDirectoryLockPath(root);
+  let canonicalRoot: string;
+  try {
+    canonicalRoot = canonicalLockRootSync(root);
+  } catch {
+    return;
+  }
+  const slot = nodeDirectoryLockPath(canonicalRoot);
   try {
     rmdirSync(join(slot, ownerName(ownerToken)));
   } catch {
@@ -87,6 +102,30 @@ export function nodeDirectoryLockPath(root: string): string {
   const name = basename(root);
   if (name.length === 0) throw unavailable(root, 'cannot lock a filesystem root');
   return join(dirname(root), `.${name}${NODE_DIRECTORY_LOCK_SUFFIX}`);
+}
+
+/** Resolve parent aliases while keeping a not-yet-created database leaf intact. */
+async function canonicalLockRoot(root: string): Promise<string> {
+  const absolute = isAbsolute(root) ? root : resolve(root);
+  const name = basename(absolute);
+  const parent = dirname(absolute);
+  if (name.length === 0 || parent === absolute) {
+    throw unavailable(root, 'cannot lock a filesystem root');
+  }
+  try {
+    await mkdir(parent, { recursive: true, mode: 0o700 });
+    return join(await realpath(parent), name);
+  } catch (error) {
+    throw unavailable(root, `could not resolve its parent: ${describeError(error)}`, error);
+  }
+}
+
+function canonicalLockRootSync(root: string): string {
+  const absolute = isAbsolute(root) ? root : resolve(root);
+  const name = basename(absolute);
+  const parent = dirname(absolute);
+  if (name.length === 0 || parent === absolute) throw new Error('cannot lock a filesystem root');
+  return join(realpathSync(parent), name);
 }
 
 function ownerName(ownerToken: string): string {

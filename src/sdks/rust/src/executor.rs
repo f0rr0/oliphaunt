@@ -495,6 +495,7 @@ impl Drop for ActiveWorkGuard<'_> {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
 
     use super::*;
     use crossbeam_channel::{Receiver, Sender};
@@ -540,6 +541,9 @@ mod tests {
         runtime
             .block_on(executor.close())
             .expect("second close retries the same session");
+        runtime
+            .block_on(executor.close())
+            .expect("close is idempotent after success");
         assert_eq!(close_attempts.load(Ordering::SeqCst), 2);
     }
 
@@ -610,5 +614,91 @@ mod tests {
             .expect("join retry close")
             .expect("retry closes");
         assert_eq!(close_attempts.load(Ordering::SeqCst), 2);
+    }
+
+    struct DrainBeforeCloseSession {
+        work_started: Sender<()>,
+        release_work: Receiver<()>,
+        close_started: Sender<()>,
+    }
+
+    impl EngineSession for DrainBeforeCloseSession {
+        fn exec_protocol_raw(&mut self, request: ProtocolRequest) -> Result<ProtocolResponse> {
+            self.work_started.send(()).expect("announce active work");
+            self.release_work.recv().expect("release active work");
+            Ok(ProtocolResponse::new(request.as_bytes()))
+        }
+
+        fn close(&mut self) -> Result<()> {
+            self.close_started.send(()).expect("announce close");
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn close_drains_active_work_and_rejects_new_admission() {
+        let (work_started, work_started_rx) = unbounded();
+        let (release_work, release_work_rx) = unbounded();
+        let (close_started, close_started_rx) = unbounded();
+        let executor = EngineExecutor::spawn(Box::new(DrainBeforeCloseSession {
+            work_started,
+            release_work: release_work_rx,
+            close_started,
+        }));
+
+        let work_executor = Arc::clone(&executor);
+        let work = thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .expect("build active-work runtime");
+            runtime.block_on(work_executor.exec_protocol_raw(ProtocolRequest::new([6])))
+        });
+        work_started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("work reaches the owner");
+
+        let close_executor = Arc::clone(&executor);
+        let close = thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .expect("build close runtime");
+            runtime.block_on(close_executor.close())
+        });
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !executor.closing.load(Ordering::SeqCst) && Instant::now() < deadline {
+            thread::yield_now();
+        }
+        let barrier_established = executor.closing.load(Ordering::SeqCst);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("build admission test runtime");
+        let admission = barrier_established.then(|| {
+            runtime
+                .block_on(executor.exec_protocol_raw(ProtocolRequest::new([7])))
+                .expect_err("new work is rejected while close drains")
+        });
+        let close_waited_for_work = close_started_rx.try_recv().is_err();
+
+        release_work.send(()).expect("finish active work");
+        assert_eq!(
+            work.join()
+                .expect("join active work")
+                .expect("active work completes")
+                .as_bytes(),
+            &[6]
+        );
+        close_started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("session closes after active work");
+        close.join().expect("join close").expect("close completes");
+        assert!(
+            barrier_established,
+            "close establishes its admission barrier"
+        );
+        assert_eq!(admission, Some(Error::EngineStopped));
+        assert!(
+            close_waited_for_work,
+            "session close must wait for active work"
+        );
     }
 }

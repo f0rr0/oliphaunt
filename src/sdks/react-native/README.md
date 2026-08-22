@@ -77,8 +77,10 @@ background/resume state machine.
 
 The TurboModule owns configuration, open, cancellation, and close. A small JSI
 object owns synchronous byte transfer for raw protocol, backup, and restore so
-large binary payloads do not cross the JSON bridge. It intentionally has no
-callback stream ABI.
+large binary payloads do not cross the JSON bridge. Raw protocol streaming uses
+the same JSI boundary with one callback in flight: native production resumes
+only after the JavaScript callback returns, and a thrown callback error rejects
+the stream.
 
 iOS delegates to the Swift SDK and Android delegates to the Kotlin `Oliphaunt`
 facade. Both use exact generated PostgreSQL extension names and selected package

@@ -19,6 +19,10 @@ const buildOutputsFile = resolve(
   repositoryRoot,
   'target/oliphaunt-wasix/wasix-build/build/outputs.json',
 );
+const databaseRootContractFile = resolve(
+  repositoryRoot,
+  'src/shared/fixtures/storage/database-root.json',
+);
 
 export async function createPackedWasixConsumer({
   scratch,
@@ -84,13 +88,14 @@ export async function createPackedWasixConsumer({
 
 async function packStubRuntime({ scratch, tarballs, runtimeVersion }) {
   requireReleaseVersion(runtimeVersion, 'src/runtimes/liboliphaunt/wasix');
+  const identity = await wasixPhysicalIdentity();
   const staging = resolve(scratch, 'runtime');
   await mkdir(staging);
   const emptyByteSha256 = sha256(Buffer.of(0));
   await writeFile(
     resolve(staging, 'index.js'),
-    `export const POSTGRES_MAJOR = 18;
-export const PHYSICAL_FORMAT = 'wasix-pg18-v1';
+    `export const POSTGRES_MAJOR = ${JSON.stringify(identity.postgresMajor)};
+export const PHYSICAL_FORMAT = ${JSON.stringify(identity.physicalFormat)};
 
 const byte = new URL('data:application/octet-stream;base64,AA==');
 export default Object.freeze({
@@ -148,10 +153,15 @@ async function packBinding({ scratch, tarballs }) {
 
 async function packRuntime({ scratch, tarballs, runtimeVersion }) {
   requireReleaseVersion(runtimeVersion, 'src/runtimes/liboliphaunt/wasix');
+  const identity = await wasixPhysicalIdentity();
   const staging = resolve(scratch, 'runtime');
   const assets = resolve(staging, 'assets');
   await mkdir(assets, { recursive: true });
   const manifest = JSON.parse(await readFile(resolve(assetRoot, 'manifest.json'), 'utf8'));
+  const manifestPostgresMajor = Number(manifest.runtime?.['postgres-version']?.split('.')[0]);
+  if (manifestPostgresMajor !== identity.postgresMajor) {
+    throw new Error('WASIX runtime manifest disagrees with the shared physical identity');
+  }
   const coreManifest = Buffer.from(JSON.stringify({ ...manifest, extensions: [] }));
   const runtimeSource = resolve(assetRoot, manifest.runtime.archive);
   const pgdataSource = resolve(assetRoot, manifest['pgdata-template'].archive);
@@ -195,6 +205,16 @@ async function packRuntime({ scratch, tarballs, runtimeVersion }) {
     },
   });
   return { ...(await pack(staging, tarballs)), build };
+}
+
+async function wasixPhysicalIdentity() {
+  const contract = JSON.parse(await readFile(databaseRootContractFile, 'utf8'));
+  const postgresMajor = contract.postgresMajor;
+  const physicalFormat = contract.families?.wasix?.physicalFormat;
+  if (!Number.isInteger(postgresMajor) || typeof physicalFormat !== 'string' || !physicalFormat) {
+    throw new Error('shared database-root fixture has no valid WASIX physical identity');
+  }
+  return { postgresMajor, physicalFormat };
 }
 
 export async function runtimeBuildProvenance(manifest) {
@@ -316,7 +336,7 @@ async function packPgtap({ scratch, tarballs, runtimeVersion, extensionVersion }
     version: carrier.version,
     compatibility: {
       extensionRuntimeContract: 'oliphaunt-extension-runtime-contract-v1',
-      postgresMajor: '18',
+      postgresMajor: manifest.runtime['postgres-version'].split('.')[0],
       wasixRuntimeProduct: 'liboliphaunt-wasix',
       wasixRuntimeVersion: runtimeVersion,
     },

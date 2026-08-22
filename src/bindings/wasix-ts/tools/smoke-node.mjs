@@ -123,15 +123,15 @@ async function verifyMemory(execution) {
     'EXPLAIN (ANALYZE, FORMAT JSON) SELECT pg_sleep(0.05)',
   )).getText(0, 'QUERY PLAN'));
   const monotonicElapsedMillis = explain[0]?.['Execution Time'];
-  await db.query('CREATE TABLE smoke_transaction (value integer NOT NULL)');
+  await db.execute('CREATE TABLE smoke_transaction (value integer NOT NULL)');
   const transactionValue = await db.transaction(async (tx) => {
-    await tx.query('INSERT INTO smoke_transaction VALUES ($1)', [7]);
+    await tx.execute('INSERT INTO smoke_transaction VALUES ($1)', [7]);
     return (await tx.query('SELECT value::text AS value FROM smoke_transaction')).getText(0, 'value');
   });
   const rollbackSentinel = new Error('packed transaction rollback sentinel');
   try {
     await db.transaction(async (tx) => {
-      await tx.query('INSERT INTO smoke_transaction VALUES ($1)', [9]);
+      await tx.execute('INSERT INTO smoke_transaction VALUES ($1)', [9]);
       throw rollbackSentinel;
     });
     throw new Error('failed packed transaction unexpectedly committed');
@@ -185,10 +185,23 @@ if (direct.version !== worker.version) {
 
 const storage = directory(new URL('./database space ü', import.meta.url));
 let persistent = await Oliphaunt.open({ execution: 'direct', storage, extensions: [pgtap] });
-await persistent.query('CREATE TABLE smoke_persistence (value integer NOT NULL)');
-await persistent.query('INSERT INTO smoke_persistence VALUES (1)');
+await persistent.execute('CREATE SEQUENCE smoke_persistence_seq START WITH 10');
+await persistent.execute(
+  'CREATE TABLE smoke_persistence (' +
+    'ordinal bigint PRIMARY KEY DEFAULT nextval(\'smoke_persistence_seq\'), ' +
+    'label text NOT NULL, payload bytea NOT NULL, optional_value text NULL)'
+);
+await persistent.execute('CREATE UNIQUE INDEX smoke_persistence_label_idx ON smoke_persistence(label)');
+await persistent.execute(
+  "INSERT INTO smoke_persistence(label, payload, optional_value) VALUES " +
+    "('café 🐘', decode('00ff10', 'hex'), NULL), " +
+    "('東京', decode('deadbeef', 'hex'), 'present'), " +
+    "('mañana', decode('', 'hex'), NULL)"
+);
+await persistent.execute('CREATE TEMP TABLE smoke_direct_session(value text NOT NULL)');
+await persistent.execute("INSERT INTO smoke_direct_session VALUES ('direct-session')");
+await persistent.execute("SET application_name = 'packed-direct-session'");
 await persistent.checkpoint();
-await persistent.query('INSERT INTO smoke_persistence VALUES (2)');
 let busy;
 try {
   await Oliphaunt.open({ execution: 'worker', storage, extensions: [pgtap] });
@@ -196,6 +209,10 @@ try {
   if (!(error instanceof WasixStorageError)) throw error;
   busy = error.code;
 }
+const directArchive = await persistent.backup();
+const directSessionState = (await persistent.query(
+  "SELECT (SELECT value FROM smoke_direct_session) || ':' || current_setting('application_name') AS value",
+)).getText(0, 'value');
 await persistent.close();
 
 persistent = await Oliphaunt.open({ execution: 'worker', storage, extensions: [pgtap] });
@@ -205,24 +222,87 @@ const workerPersistedRows = (await persistent.query(
 const persistentExtension = (await persistent.query(
   'SELECT pgtap_version()::text AS version',
 )).getText(0, 'version');
-await persistent.query('INSERT INTO smoke_persistence VALUES (3)');
+await persistent.execute(
+  "INSERT INTO smoke_persistence(label, payload, optional_value) " +
+    "VALUES ('naïve', decode('010203', 'hex'), NULL)"
+);
+await persistent.execute('CREATE TEMP TABLE smoke_worker_session(value text NOT NULL)');
+await persistent.execute("INSERT INTO smoke_worker_session VALUES ('worker-session')");
+await persistent.execute("SET application_name = 'packed-worker-session'");
+await persistent.checkpoint();
+const workerArchive = await persistent.backup();
+const workerSessionState = (await persistent.query(
+  "SELECT (SELECT value FROM smoke_worker_session) || ':' || current_setting('application_name') AS value",
+)).getText(0, 'value');
 await persistent.close();
 
-persistent = await Oliphaunt.open({ execution: 'direct', storage, extensions: [pgtap] });
-const directPersistedRows = (await persistent.query(
+const directRestoreStorage = directory(new URL('./direct-backup-restore', import.meta.url));
+await Oliphaunt.restore(directRestoreStorage, directArchive);
+let restored = await Oliphaunt.open({
+  execution: 'worker',
+  storage: directRestoreStorage,
+  extensions: [pgtap],
+});
+const directBackupRows = (await restored.query(
   'SELECT count(*)::int AS count FROM smoke_persistence',
 )).getText(0, 'count');
-await persistent.close();
+const directBackupValues = await richBackupValues(restored);
+const directBackupSequence = (await restored.query(
+  "SELECT nextval('smoke_persistence_seq')::text AS value",
+)).getText(0, 'value');
+await restored.close();
+
+const workerRestoreStorage = directory(new URL('./worker-backup-restore', import.meta.url));
+await Oliphaunt.restore(workerRestoreStorage, workerArchive);
+restored = await Oliphaunt.open({
+  execution: 'direct',
+  storage: workerRestoreStorage,
+  extensions: [pgtap],
+});
+const workerBackupRows = (await restored.query(
+  'SELECT count(*)::int AS count FROM smoke_persistence',
+)).getText(0, 'count');
+const workerBackupValues = await richBackupValues(restored);
+const workerBackupSequence = (await restored.query(
+  "SELECT nextval('smoke_persistence_seq')::text AS value",
+)).getText(0, 'value');
+await restored.close();
+let corruptRestore;
+try {
+  await Oliphaunt.restore(
+    directory(new URL('./corrupt-backup-restore', import.meta.url)),
+    Uint8Array.of(1, 2, 3),
+  );
+} catch (error) {
+  if (!(error instanceof WasixStorageError)) throw error;
+  corruptRestore = error.code + ':' + error.commitState;
+}
 if (
   busy !== 'busy' ||
-  workerPersistedRows !== '2' ||
-  directPersistedRows !== '3' ||
+  workerPersistedRows !== '3' ||
+  directBackupRows !== '3' ||
+  workerBackupRows !== '4' ||
+  directBackupValues !== 'café 🐘:00ff10:NULL|mañana::NULL|東京:deadbeef:present' ||
+  workerBackupValues !== 'café 🐘:00ff10:NULL|mañana::NULL|naïve:010203:NULL|東京:deadbeef:present' ||
+  directBackupSequence !== '13' ||
+  workerBackupSequence !== '14' ||
+  directSessionState !== 'direct-session:packed-direct-session' ||
+  workerSessionState !== 'worker-session:packed-worker-session' ||
+  corruptRestore !== 'corrupt:unchanged' ||
   persistentExtension !== direct.version
 ) {
   throw new Error(JSON.stringify({
     busy,
     workerPersistedRows,
-    directPersistedRows,
+    directBackupRows,
+    workerBackupRows,
+    directBackupValues,
+    workerBackupValues,
+    directBackupSequence,
+    workerBackupSequence,
+    directSessionState,
+    workerSessionState,
+    corruptRestore,
     persistentExtension,
     version: direct.version,
   }));
@@ -235,8 +315,28 @@ console.log(JSON.stringify({
   storage: runtime + '-raw-pgdata-delta',
   busy,
   workerPersistedRows,
-  directPersistedRows,
+  backupRestore: {
+    directBackupRows,
+    workerBackupRows,
+    directBackupSequence,
+    workerBackupSequence,
+    corruptRestore,
+  },
 }));
+
+async function richBackupValues(db) {
+  const index = (await db.query(
+    "SELECT to_regclass('smoke_persistence_label_idx')::text AS value",
+  )).getText(0, 'value');
+  if (index !== 'smoke_persistence_label_idx') {
+    throw new Error('restored physical backup omitted smoke_persistence_label_idx: ' + index);
+  }
+  return (await db.query(
+    "SELECT string_agg(label || ':' || encode(payload, 'hex') || ':' || " +
+      "coalesce(optional_value, 'NULL'), '|' ORDER BY label COLLATE \"C\") AS value " +
+      'FROM smoke_persistence'
+  )).getText(0, 'value');
+}
 }
 `,
   );

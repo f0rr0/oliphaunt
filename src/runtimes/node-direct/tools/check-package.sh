@@ -149,6 +149,9 @@ try {
   require_text "$package_dir/tools/node-addon-cleanup-lifecycle.test.mjs" \
     "generation-acquisition-race" \
     "Node direct cleanup proof must reject stale handles between init and generation acquisition"
+  require_text "$package_dir/tools/node-addon-cleanup-lifecycle.test.mjs" \
+    "async-archive-timers" \
+    "Node direct backup and restore must prove that timers remain live"
   require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
     'GetString(env, config, "moduleDirectory", false)' \
     "Node direct must carry the selected extension module directory through its native boundary"

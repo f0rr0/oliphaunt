@@ -880,12 +880,23 @@ gradle.projectsEvaluated {
     }
 }
 
+val sharedFixturesDirectory =
+    listOf(
+        rootProject.layout.projectDirectory
+            .dir("../../shared/fixtures")
+            .asFile,
+        project.layout.projectDirectory
+            .dir("../../../shared/fixtures")
+            .asFile,
+    ).firstOrNull { it.isDirectory }
+        ?: rootProject.layout.projectDirectory
+            .dir("../../shared/fixtures")
+            .asFile
+
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     systemProperty(
         "oliphaunt.sharedFixturesDir",
-        rootProject.layout.projectDirectory
-            .dir("../../shared/fixtures")
-            .asFile.absolutePath,
+        sharedFixturesDirectory.absolutePath,
     )
 }
 

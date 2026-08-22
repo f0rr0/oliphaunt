@@ -416,13 +416,30 @@ for required in \
   tests/native_smoke.rs \
   tests/native_sql_regression.rs \
   tests/native_extensions.rs \
-  tests/fixtures/postgis-smoke.sql \
   testdata/query-response-cases.json \
   testdata/database-root.json \
   testdata/behavior-contract.json
 do
   require_cargo_package_entry "$package_listing" "$required"
 done
+canonical_extension_smoke_count=0
+for source_recipe in src/shared/fixtures/extensions/*.sql; do
+  canonical_extension_smoke_count=$((canonical_extension_smoke_count + 1))
+  require_cargo_package_entry \
+    "$package_listing" \
+    "tests/fixtures/extensions/$(basename "$source_recipe")"
+done
+packaged_extension_smoke_count="$(grep -Ec '^tests/fixtures/extensions/[^/]+\.sql$' "$package_listing" || true)"
+if [ "$packaged_extension_smoke_count" -ne "$canonical_extension_smoke_count" ]; then
+  echo "Rust SDK package must contain exactly the canonical extension smoke recipes: expected $canonical_extension_smoke_count, found $packaged_extension_smoke_count" >&2
+  grep -E '^tests/fixtures/extensions/' "$package_listing" >&2 || true
+  exit 1
+fi
+if git ls-files --error-unmatch src/sdks/rust/tests/fixtures/extensions/'*.sql' >/dev/null 2>&1; then
+  echo "Rust SDK source must not commit package-local extension smoke copies; package them from src/shared/fixtures/extensions" >&2
+  exit 1
+fi
+reject_cargo_package_entry_pattern "$package_listing" '^tests/fixtures/postgis-smoke\.sql$'
 reject_cargo_package_entry_pattern "$package_listing" '^(target/|oliphaunt/|sdks/|src/bindings/wasix-rust/crates/oliphaunt-wasix/)'
 reject_cargo_package_entry_pattern "$package_listing" '^src/(runtime_resources|bin/oliphaunt-(resources|extension-artifact|extension-index))'
 reject_cargo_package_entry_pattern "$package_listing" '^crates/oliphaunt-build/'
@@ -449,6 +466,8 @@ require_text src/sdks/rust/tests/sdk_extensions.rs "extension_selection_uses_exa
   "Rust SDK extension tests must pin exact-name selection without aliases"
 require_text src/sdks/rust/tests/native_smoke.rs "direct_query_transaction_backup_restore_and_process_ownership_when_available" \
   "Rust SDK native smoke tests must cover direct liboliphaunt process ownership"
+require_text src/sdks/rust/tests/native_smoke.rs "server_supports_external_psql_and_pg_basebackup_when_available" \
+  "Rust SDK native smoke tests must cover the standard external client and physical server backup path"
 require_text src/sdks/rust/tests/native_sql_regression.rs "native_postgres_types_errors_and_transaction_recovery_when_available" \
   "Rust SDK regression tests must preserve PostgreSQL type, error, and recovery coverage"
 check_release_asset_fixture

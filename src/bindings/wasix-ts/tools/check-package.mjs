@@ -5,7 +5,10 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual, promisify } from 'node:util';
 
-import { prepareWasixTypescriptPackage } from '../../../../tools/release/wasix-typescript-package.mjs';
+import {
+  prepareWasixTypescriptPackage,
+  WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES,
+} from '../../../../tools/release/wasix-typescript-package.mjs';
 import { loadHostBuildContract } from '../host/build-provenance.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -39,54 +42,9 @@ try {
   const result = JSON.parse(stdout);
   const packed = Array.isArray(result) ? result[0] : result;
   const paths = new Set(packed.files?.map((entry) => entry.path));
+  const expectedPaths = new Set(WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES);
 
-  for (const path of [
-    'package.json',
-    'README.md',
-    'ARCHITECTURE.md',
-    'CHANGELOG.md',
-    'LICENSE',
-    'THIRD_PARTY_NOTICES.md',
-    'lib/index.js',
-    'lib/index.d.ts',
-    'lib/index.bun.js',
-    'lib/index.deno.js',
-    'lib/index.node.js',
-    'lib/protocol.js',
-    'lib/protocol.d.ts',
-    'lib/query.js',
-    'lib/query.d.ts',
-    'lib/node-client.js',
-    'lib/node-direct.js',
-    'lib/node-directory-lock.js',
-    'lib/node-worker.js',
-    'lib/node-worker-options.js',
-    'lib/node-zstd.js',
-    'lib/host-runtime.js',
-    'lib/worker.js',
-    'lib/host/index.mjs',
-    'lib/host/index.d.mts',
-    'lib/host/worker.mjs',
-    'lib/host/wasmer_js_bg.wasm',
-    'lib/host/provenance.json',
-    'lib/host/LICENSE',
-    'lib/node-fs-commit-state.js',
-    'lib/storage/indexed-db.js',
-    'lib/storage/indexed-db.d.ts',
-    'lib/storage/incremental-storage.js',
-    'lib/storage/opfs.js',
-    'lib/storage/opfs.d.ts',
-    'lib/storage/opfs-provider.js',
-    'lib/storage/web-lock.js',
-    'lib/storage/bun.js',
-    'lib/storage/bun.d.ts',
-    'lib/storage/deno.js',
-    'lib/storage/deno.d.ts',
-    'lib/storage/node.js',
-    'lib/storage/node.d.ts',
-    'lib/storage/node-directory-provider.js',
-    'lib/zstd.js',
-  ]) {
+  for (const path of WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES) {
     if (!paths.has(path)) {
       throw new Error(`WASIX TypeScript package dry-run omitted ${path}`);
     }
@@ -95,6 +53,12 @@ try {
     if (paths.has(removed)) {
       throw new Error(`WASIX TypeScript package dry-run retained deleted output ${removed}`);
     }
+  }
+  const unexpectedPaths = [...paths].filter((path) => !expectedPaths.has(path)).sort();
+  if (unexpectedPaths.length > 0) {
+    throw new Error(
+      `WASIX TypeScript package dry-run contained files outside the explicit inventory: ${unexpectedPaths.join(', ')}`,
+    );
   }
 
   // New products intentionally remain at 0.0.0 until Release Please creates

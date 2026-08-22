@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { access, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, cp, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { arch, cpus, hostname, platform, release, tmpdir, totalmem } from 'node:os';
@@ -25,12 +25,13 @@ import {
   installedHostBuildProvenance,
 } from '../../../../tools/perf/wasix-node/plan.mjs';
 import { loadHostBuildContract } from '../host/build-provenance.mjs';
-import { runtimeBuildProvenance } from './packed-node-fixture.mjs';
+import { createPackedWasixConsumer, runtimeBuildProvenance } from './packed-node-fixture.mjs';
 
 const bindingRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = resolve(bindingRoot, '../../..');
 const execFileAsync = promisify(execFile);
 const benchmark = process.argv.includes('--benchmark');
+const packageOnly = process.argv.includes('--package-only');
 const quickBenchmark = benchmark && process.argv.includes('--quick');
 const planFile = resolve(argumentValue('--config') ?? defaultBrowserPlanFile);
 const planSource = benchmark ? await loadBrowserPlan(planFile) : undefined;
@@ -44,6 +45,15 @@ if (
 ) {
   throw new Error('--config and --output require --benchmark');
 }
+if (
+  packageOnly &&
+  (benchmark ||
+    quickBenchmark ||
+    process.argv.includes('--pg-uuidv7') ||
+    process.argv.includes('--postgis-worker'))
+) {
+  throw new Error('--package-only cannot be combined with benchmark or extension-canary options');
+}
 if (benchmarkOutput !== undefined) await requireAbsent(benchmarkOutput, 'benchmark output');
 const timeoutMs = Number(
   process.env.OLIPHAUNT_BROWSER_SMOKE_TIMEOUT_MS ?? (benchmark ? 900_000 : 300_000),
@@ -54,7 +64,12 @@ const requiredInputs = [
   resolve(repositoryRoot, 'target/oliphaunt-wasix/assets/oliphaunt.wasix.tar.zst'),
   resolve(repositoryRoot, 'target/oliphaunt-wasix/assets/prepopulated/pgdata-template.tar.zst'),
   resolve(repositoryRoot, 'target/oliphaunt-wasix/assets/manifest.json'),
-  resolve(repositoryRoot, 'target/oliphaunt-wasix-ts/host/wasmer-sdk/dist/index.mjs'),
+  resolve(
+    repositoryRoot,
+    packageOnly
+      ? 'src/bindings/wasix-ts/lib/host/index.mjs'
+      : 'target/oliphaunt-wasix-ts/host/wasmer-sdk/dist/index.mjs',
+  ),
 ];
 if (!benchmark) {
   requiredInputs.push(
@@ -88,13 +103,19 @@ for (const input of requiredInputs) {
 }
 
 const chrome = await findChrome();
-const profile = await mkdtemp(join(tmpdir(), 'oliphaunt-wasix-chrome-'));
 const vitePort = await freePort();
 const chromePort = await freePort();
+const profile = await mkdtemp(join(tmpdir(), 'oliphaunt-wasix-chrome-'));
 const children = [];
 let socket;
+let packageScratch;
 
 try {
+  packageScratch = packageOnly
+    ? await mkdtemp(join(tmpdir(), 'oliphaunt-wasix-browser-package-'))
+    : undefined;
+  const packedConsumer =
+    packageScratch === undefined ? undefined : await stagePackedBrowserConsumer(packageScratch);
   const vite = startChild(
     'pnpm',
     [
@@ -109,6 +130,14 @@ try {
       '--strictPort',
     ],
     'Vite',
+    packedConsumer === undefined
+      ? undefined
+      : {
+          env: {
+            ...process.env,
+            OLIPHAUNT_WASIX_BROWSER_PACKAGE_ROOT: packedConsumer,
+          },
+        },
   );
   children.push(vite);
   await waitForHttp(`http://127.0.0.1:${vitePort}/`, vite, 30_000);
@@ -155,7 +184,9 @@ try {
 
   const smokeUrl = benchmark
     ? `http://127.0.0.1:${vitePort}/benchmark.html${quickBenchmark ? '?quick=1' : ''}`
-    : `http://127.0.0.1:${vitePort}/?smoke=1${pgUuidv7Canary ? '&pg_uuidv7=1' : ''}${postgisWorkerCanary ? '&postgis_worker=1' : ''}`;
+    : packageOnly
+      ? `http://127.0.0.1:${vitePort}/?package_smoke=1`
+      : `http://127.0.0.1:${vitePort}/?smoke=1${pgUuidv7Canary ? '&pg_uuidv7=1' : ''}${postgisWorkerCanary ? '&postgis_worker=1' : ''}`;
   await cdp.send('Page.navigate', { url: smokeUrl });
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -205,7 +236,9 @@ try {
           throw new Error(`browser benchmark failed qualification: ${snapshot.status}`);
         }
       } else {
-        console.log(`wasix-ts browser smoke: PASS ${snapshot.output}`);
+        console.log(
+          `wasix-ts ${packageOnly ? 'packed browser package' : 'browser'} smoke: PASS ${snapshot.output}`,
+        );
       }
       break;
     }
@@ -228,6 +261,26 @@ try {
   socket?.close();
   await Promise.all(children.reverse().map(stopChild));
   await rm(profile, { recursive: true, force: true });
+  if (packageScratch !== undefined) {
+    await rm(packageScratch, { recursive: true, force: true });
+  }
+}
+
+async function stagePackedBrowserConsumer(scratch) {
+  const fixture = await createPackedWasixConsumer({
+    scratch,
+    consumerName: 'oliphaunt-wasix-browser-package-smoke-consumer',
+    includePgtap: true,
+  });
+  await cp(
+    resolve(repositoryRoot, 'examples/browser-wasix/index.html'),
+    resolve(fixture.consumer, 'index.html'),
+  );
+  await cp(
+    resolve(repositoryRoot, 'examples/browser-wasix/package-smoke.ts'),
+    resolve(fixture.consumer, 'main.ts'),
+  );
+  return fixture.consumer;
 }
 
 function parseBenchmarkResult(value) {
@@ -510,11 +563,11 @@ function formatCdpException(details) {
   return [description, location].filter(Boolean).join('\n');
 }
 
-function startChild(command, args, label) {
+function startChild(command, args, label, options = {}) {
   const child = spawn(command, args, {
-    cwd: bindingRoot,
+    cwd: options.cwd ?? bindingRoot,
     detached: process.platform !== 'win32',
-    env: process.env,
+    env: options.env ?? process.env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   child.label = label;
