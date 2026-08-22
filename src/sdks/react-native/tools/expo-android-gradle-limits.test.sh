@@ -83,9 +83,4 @@ assert_source_text \
   "$runner" \
   '"--max-workers=$gradle_max_workers"' \
   "Android runner Gradle worker integration"
-assert_source_text \
-  "$runner" \
-  'gradle_dependency_args+=("--refresh-dependencies")' \
-  "same-version CI artifact cache invalidation"
-
 echo "expo-android-gradle-limits.test.sh: defaults, overrides, validation, and runner integration passed"

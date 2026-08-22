@@ -305,7 +305,6 @@ install_react_native_sdk_tarball() {
 
 ensure_android_project() {
   if [ -x "$example_dir/android/gradlew" ]; then
-    ensure_android_local_kotlin_sdk_repository
     return
   fi
 
@@ -314,65 +313,6 @@ ensure_android_project() {
     cd "$example_dir"
     CI=1 EXPO_NO_TELEMETRY=1 pnpm exec expo prebuild --platform android
   )
-  ensure_android_local_kotlin_sdk_repository
-}
-
-ensure_android_local_kotlin_sdk_repository() {
-  local settings="$example_dir/android/settings.gradle"
-  local root_build="$example_dir/android/build.gradle"
-  local gradle_properties="$example_dir/android/gradle.properties"
-  [ -f "$settings" ] || fail "generated Android settings.gradle is missing: $settings"
-  [ -f "$root_build" ] || fail "generated Android build.gradle is missing: $root_build"
-  [ -f "$gradle_properties" ] || fail "generated Android gradle.properties is missing: $gradle_properties"
-  if rg -q "liboliphaunt local Kotlin SDK smoke include" "$settings"; then
-    local tmp_settings="$settings.liboliphaunt"
-    awk '/\/\/ liboliphaunt local Kotlin SDK smoke include/ { exit } { print }' "$settings" > "$tmp_settings"
-    mv "$tmp_settings" "$settings"
-  fi
-  cat >>"$settings" <<SETTINGS
-
-// liboliphaunt local Kotlin SDK smoke include
-dependencyResolutionManagement {
-  repositories {
-    exclusiveContent {
-      forRepository {
-        maven {
-          url = uri('$local_maven_repo')
-        }
-      }
-      filter {
-        includeModule('dev.oliphaunt', 'oliphaunt-android')
-      }
-    }
-  }
-}
-SETTINGS
-  if ! rg -q "liboliphaunt local Kotlin SDK smoke repository" "$root_build"; then
-    local tmp_root_build="$root_build.liboliphaunt"
-    node - "$root_build" "$local_maven_repo" "$tmp_root_build" <<'NODE'
-const fs = require('node:fs');
-const [file, repo, out] = process.argv.slice(2);
-const input = fs.readFileSync(file, 'utf8');
-const marker = 'maven { url';
-const replacement = `// liboliphaunt local Kotlin SDK smoke repository\n    maven { url '${repo.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}' }\n    ${marker}`;
-if (!input.includes(marker)) {
-  throw new Error(`could not find Gradle repositories block marker in ${file}`);
-}
-fs.writeFileSync(out, input.replace(marker, replacement));
-NODE
-    mv "$tmp_root_build" "$root_build"
-  fi
-  node - "$gradle_properties" "$android_abi" <<'NODE'
-const fs = require('node:fs');
-const [file, abi] = process.argv.slice(2);
-const input = fs.readFileSync(file, 'utf8');
-const line = `reactNativeArchitectures=${abi}`;
-if (/^reactNativeArchitectures=/m.test(input)) {
-  fs.writeFileSync(file, input.replace(/^reactNativeArchitectures=.*$/m, line));
-} else {
-  fs.appendFileSync(file, `\n${line}\n`);
-}
-NODE
 }
 
 find_android_liboliphaunt_so() {
@@ -558,7 +498,7 @@ install_kotlin_sdk_maven_artifacts_if_required() {
   return 0
 }
 
-kotlin_sdk_dependency_from_maven_repo() {
+kotlin_sdk_aar_from_maven_repo() {
   local package_root="$local_maven_repo/dev/oliphaunt/oliphaunt-android"
   [ -d "$package_root" ] ||
     fail "Kotlin SDK Maven repository is missing oliphaunt-android coordinates: $package_root"
@@ -572,16 +512,7 @@ kotlin_sdk_dependency_from_maven_repo() {
     fail "Kotlin SDK Maven repository contains $count oliphaunt-android versions; expected exactly one"
   local version
   version="$(printf '%s\n' "$versions")"
-  [ -f "$package_root/$version/oliphaunt-android-$version.aar" ] ||
-    fail "Kotlin SDK Maven repository is missing oliphaunt-android-$version.aar"
-  printf 'dev.oliphaunt:oliphaunt-android:%s\n' "$version"
-}
-
-kotlin_sdk_aar_from_maven_repo() {
-  local dependency version aar
-  dependency="$(kotlin_sdk_dependency_from_maven_repo)"
-  version="${dependency##*:}"
-  aar="$local_maven_repo/dev/oliphaunt/oliphaunt-android/$version/oliphaunt-android-$version.aar"
+  local aar="$package_root/$version/oliphaunt-android-$version.aar"
   [ -f "$aar" ] ||
     fail "Kotlin SDK Maven repository is missing candidate AAR: $aar"
   printf '%s\n' "$aar"
@@ -619,15 +550,9 @@ build_apk() {
   local runtime_resources="$1"
   local jni_libs="$2"
   local gradle_cache_arg="--no-configuration-cache"
-  local gradle_dependency_args=()
 
   if [ "${OLIPHAUNT_EXPO_ANDROID_GRADLE_CONFIGURATION_CACHE:-0}" = "1" ]; then
     gradle_cache_arg="--configuration-cache"
-  fi
-  if expo_requires_sdk_artifacts; then
-    # CI publishes every candidate under its release coordinate. A restored
-    # Gradle cache can otherwise reuse an older AAR with the same version.
-    gradle_dependency_args+=("--refresh-dependencies")
   fi
 
   if [ "${OLIPHAUNT_EXPO_ANDROID_SKIP_BUILD:-0}" = "1" ] && [ -f "$apk" ]; then
@@ -637,10 +562,9 @@ build_apk() {
     gradle_jvmargs="$(oliphaunt_android_gradle_jvmargs)"
     gradle_max_workers="$(oliphaunt_android_gradle_max_workers)"
     node_binary="$(node -p 'process.execPath')"
-    local selected_extensions extension_archives_root kotlin_sdk_dependency kotlin_sdk_aar android_link_evidence module_stems
+    local selected_extensions extension_archives_root kotlin_sdk_aar android_link_evidence module_stems
     selected_extensions="$(normalize_mobile_extensions)"
     module_stems="$(oliphaunt_dev_mobile_module_stems_for_selection "$selected_extensions")"
-    kotlin_sdk_dependency="$(kotlin_sdk_dependency_from_maven_repo)"
     kotlin_sdk_aar="$(kotlin_sdk_aar_from_maven_repo)"
     extension_archives_root="$runtime_resources/oliphaunt/static-registry/archives"
     if [ ! -d "$extension_archives_root" ]; then
@@ -661,19 +585,14 @@ build_apk() {
       OLIPHAUNT_REACT_NATIVE_ANDROID_EXTENSION_ARCHIVES_DIR="$extension_archives_root" \
       OLIPHAUNT_REACT_NATIVE_ANDROID_EXTENSIONS="$selected_extensions" \
       OLIPHAUNT_REACT_NATIVE_ANDROID_LINK_EVIDENCE_FILE="$android_link_evidence" \
-      OLIPHAUNT_REACT_NATIVE_KOTLIN_SDK_MAVEN_REPOSITORY="$local_maven_repo" \
-      OLIPHAUNT_REACT_NATIVE_KOTLIN_SDK_DEPENDENCY="$kotlin_sdk_dependency" \
       OLIPHAUNT_REACT_NATIVE_KOTLIN_SDK_AAR="$kotlin_sdk_aar" \
       "$example_dir/android/gradlew" \
       --project-dir "$example_dir/android" \
       "-Dorg.gradle.jvmargs=$gradle_jvmargs" \
       "--max-workers=$gradle_max_workers" \
-      "${gradle_dependency_args[@]}" \
       "${gradle_build_tasks[@]}" \
       "-PoliphauntAndroidAbiFilters=$android_abi" \
       "-PreactNativeArchitectures=$android_abi" \
-      "-PoliphauntKotlinSdkMavenRepository=$local_maven_repo" \
-      "-PliboliphauntKotlinSdkDependency=$kotlin_sdk_dependency" \
       "-PliboliphauntKotlinSdkAar=$kotlin_sdk_aar" \
       "-PoliphauntReactNativePackageRuntime=true" \
       "-PoliphauntRuntimeResourcesDir=$runtime_resources" \

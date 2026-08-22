@@ -96,11 +96,8 @@ def cxxBuildRoot = configuredCxxBuildRoot == null || configuredCxxBuildRoot.toSt
   ? layout.projectDirectory.dir(".cxx").asFile
   : new File(file(configuredCxxBuildRoot), project.path == ":" ? "root" : project.path.substring(1).replace(":", "/"))
 def localKotlinSdkProject = findProject(":oliphaunt")
-def kotlinSdkDependency = (project.findProperty("liboliphauntKotlinSdkDependency") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_KOTLIN_SDK_DEPENDENCY"))?.toString()
-  ?: "dev.oliphaunt:oliphaunt-android:${kotlinSdkVersion}"
+def kotlinSdkDependency = "dev.oliphaunt:oliphaunt-android:${kotlinSdkVersion}"
 def kotlinSdkAar = (project.findProperty("liboliphauntKotlinSdkAar") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_KOTLIN_SDK_AAR"))?.toString()
-  ?.trim()
-def kotlinSdkMavenRepository = (oliphauntProperty("oliphauntKotlinSdkMavenRepository") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_KOTLIN_SDK_MAVEN_REPOSITORY"))?.toString()
   ?.trim()
 if (kotlinSdkAar != null && !kotlinSdkAar.isBlank() && !file(kotlinSdkAar).isFile()) {
   throw new GradleException("Configured Oliphaunt Kotlin SDK AAR does not exist: ${kotlinSdkAar}")
@@ -802,18 +799,6 @@ kotlin {
 }
 
 repositories {
-  if (kotlinSdkMavenRepository != null && !kotlinSdkMavenRepository.isBlank()) {
-    exclusiveContent {
-      forRepository {
-        maven {
-          url = uri(kotlinSdkMavenRepository)
-        }
-      }
-      filter {
-        includeModule("dev.oliphaunt", "oliphaunt-android")
-      }
-    }
-  }
   google()
   mavenCentral()
 }

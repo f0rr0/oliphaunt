@@ -11,6 +11,10 @@ const bindingRoot = resolve(repositoryRoot, 'src/bindings/wasix-ts');
 const bindingLibRoot = resolve(bindingRoot, 'lib');
 const assetRoot = resolve(repositoryRoot, 'target/oliphaunt-wasix/assets');
 const pgliteAssetRoot = resolve(bindingRoot, 'node_modules/@electric-sql/pglite/dist');
+const databaseRootContractFile = resolve(
+  repositoryRoot,
+  'src/shared/fixtures/storage/database-root.json',
+);
 const packedConsumerRoot = process.env.OLIPHAUNT_WASIX_BROWSER_PACKAGE_ROOT;
 const packedConsumer = packedConsumerRoot === undefined ? undefined : resolve(packedConsumerRoot);
 export default defineConfig({
@@ -109,6 +113,7 @@ function wasixAssets(): Plugin {
     [...virtualModules].map(([packageName, virtualModule]) => [virtualModule, packageName]),
   );
   const descriptorPromises = new Map<string, Promise<Record<string, unknown>>>();
+  let runtimeIdentityPromise: Promise<{ postgresMajor: number; physicalFormat: string }> | undefined;
   const routes = new Map([
     ['/runtime', resolve(assetRoot, 'oliphaunt.wasix.tar.zst')],
     ['/pgdata', resolve(assetRoot, 'prepopulated/pgdata-template.tar.zst')],
@@ -136,10 +141,14 @@ function wasixAssets(): Plugin {
         descriptorPromises.set(packageName, descriptorPromise);
       }
       const descriptor = await descriptorPromise;
-      const namedRuntimeExports =
-        packageName === '@oliphaunt/liboliphaunt-wasix'
-          ? 'export const POSTGRES_MAJOR = 18;\nexport const PHYSICAL_FORMAT = "wasix-pg18-v1";\n'
-          : '';
+      let namedRuntimeExports = '';
+      if (packageName === '@oliphaunt/liboliphaunt-wasix') {
+        runtimeIdentityPromise ??= developmentWasixIdentity();
+        const identity = await runtimeIdentityPromise;
+        namedRuntimeExports =
+          `export const POSTGRES_MAJOR = ${JSON.stringify(identity.postgresMajor)};\n` +
+          `export const PHYSICAL_FORMAT = ${JSON.stringify(identity.physicalFormat)};\n`;
+      }
       return (
         namedRuntimeExports +
         `const descriptor = Object.freeze(${JSON.stringify(descriptor)});\n` +
@@ -176,6 +185,24 @@ function wasixAssets(): Plugin {
       });
     },
   };
+}
+
+async function developmentWasixIdentity(): Promise<{
+  postgresMajor: number;
+  physicalFormat: string;
+}> {
+  const contract = JSON.parse(await readFile(databaseRootContractFile, 'utf8')) as Record<
+    string,
+    unknown
+  >;
+  const families = requireRecord(contract.families, 'database-root families');
+  const wasix = requireRecord(families.wasix, 'database-root WASIX family');
+  const postgresMajor = contract.postgresMajor;
+  const physicalFormat = wasix.physicalFormat;
+  if (!Number.isInteger(postgresMajor) || typeof physicalFormat !== 'string' || !physicalFormat) {
+    throw new Error('shared database-root fixture has no valid WASIX physical identity');
+  }
+  return { postgresMajor: postgresMajor as number, physicalFormat };
 }
 
 async function developmentDescriptor(packageName: string): Promise<Record<string, unknown>> {

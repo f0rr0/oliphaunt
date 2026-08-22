@@ -223,6 +223,9 @@ cmdline_tools_valid() {
   [ -f "$directory/bin/avdmanager" ] &&
     [ ! -L "$directory/bin/avdmanager" ] &&
     [ -x "$directory/bin/avdmanager" ] || return 1
+  [ -f "$directory/bin/apkanalyzer" ] &&
+    [ ! -L "$directory/bin/apkanalyzer" ] &&
+    [ -x "$directory/bin/apkanalyzer" ] || return 1
   version="$(sdkmanager_version "$directory/bin/sdkmanager")" || return 1
   [ "$version" = "$pinned_cmdline_revision" ]
 }
@@ -288,10 +291,12 @@ install_cmdline_tools() {
     --entry-count "$cmdline_entry_count" \
     --required cmdline-tools/bin/sdkmanager \
     --required cmdline-tools/bin/avdmanager \
+    --required cmdline-tools/bin/apkanalyzer \
     --required cmdline-tools/source.properties \
     --required cmdline-tools/lib/sdkmanager-classpath.jar \
     --executable cmdline-tools/bin/sdkmanager \
-    --executable cmdline-tools/bin/avdmanager
+    --executable cmdline-tools/bin/avdmanager \
+    --executable cmdline-tools/bin/apkanalyzer
   staged="$work/extracted/cmdline-tools"
   cmdline_tools_valid "$staged" ||
     fail "staged Android command-line-tools failed exact revision or executable validation"
