@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -34,6 +35,14 @@ export default defineConfig({
           ],
         }
       : {
+          alias: [
+            {
+              find: /^fzstd$/,
+              replacement: createRequire(
+                resolve(packedConsumer, 'node_modules/@oliphaunt/wasix-ts/package.json'),
+              ).resolve('fzstd'),
+            },
+          ],
           dedupe: [
             '@oliphaunt/wasix-ts',
             '@oliphaunt/liboliphaunt-wasix',
@@ -43,6 +52,15 @@ export default defineConfig({
         }),
   },
   optimizeDeps: {
+    ...(packedConsumer === undefined
+      ? {}
+      : {
+          exclude: [
+            '@oliphaunt/wasix-ts',
+            '@oliphaunt/liboliphaunt-wasix',
+            '@oliphaunt/extension-pgtap-wasix',
+          ],
+        }),
     esbuildOptions: {
       target: 'esnext',
     },

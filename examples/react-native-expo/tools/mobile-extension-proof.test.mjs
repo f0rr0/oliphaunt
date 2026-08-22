@@ -28,9 +28,17 @@ function queryResult(values) {
 }
 
 test("the successful pg_textsearch producer supplies every semantic PASS fact", async () => {
+  const executed = [];
+  const queried = [];
   const db = {
-    async execute() {},
+    async execute(sql) {
+      executed.push(sql);
+    },
     async query(sql) {
+      queried.push(sql);
+      if (sql === "SELECT 1") {
+        return queryResult({ "?column?": "1" });
+      }
       if (sql.includes("WHERE extname = $1")) {
         return queryResult({ name: "pg_textsearch", version: "0.3.1" });
       }
@@ -55,6 +63,20 @@ test("the successful pg_textsearch producer supplies every semantic PASS fact", 
   assert.deepEqual(proof.activatedExtensions, ["pg_textsearch"]);
   assert.equal(proof.extensionCatalogComplete, true);
   assert.equal(proof.pgTextsearchEnglishBm25, true);
+  assert.deepEqual(executed, [
+    "CREATE EXTENSION pg_textsearch",
+    "DROP TABLE IF EXISTS oliphaunt_mobile_pg_textsearch_english",
+    "CREATE TABLE oliphaunt_mobile_pg_textsearch_english (id bigint PRIMARY KEY, body text NOT NULL)",
+    `INSERT INTO oliphaunt_mobile_pg_textsearch_english (id, body) VALUES
+        (1, 'PostgreSQL databases support reliable runners'),
+        (2, 'An unrelated document about walking')`,
+    `CREATE INDEX oliphaunt_mobile_pg_textsearch_english_bm25
+        ON oliphaunt_mobile_pg_textsearch_english
+        USING bm25 (body)
+        WITH (text_config = 'pg_catalog.english')`,
+    "DROP TABLE IF EXISTS oliphaunt_mobile_pg_textsearch_english",
+  ]);
+  assert.equal(queried[0], "SELECT 1");
   assert.deepEqual(proof.checks.map((check) => check.name), [
     "extension activation: pg_textsearch",
     "extension functional proof: pg_textsearch English BM25",

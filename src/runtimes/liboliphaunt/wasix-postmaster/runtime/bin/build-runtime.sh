@@ -377,21 +377,23 @@ cargo test \
 	--target-dir "$WASMER_TARGET_DIR" \
 	--manifest-path "$WASMER_ROOT/lib/virtual-fs/Cargo.toml" \
 	file_writeback
-listed_tests="$(cargo test \
-	--locked \
-	--target-dir "$WASMER_TARGET_DIR" \
-	--manifest-path "$WASMER_ROOT/lib/virtual-fs/Cargo.toml" \
-	host_file_range_writeback \
-	-- \
-	--list)"
-require_listed_test "$listed_tests" 'host_fs::tests::host_file_range_writeback_uses_existing_descriptor_without_async_clone'
-require_listed_test "$listed_tests" 'host_fs::tests::host_file_range_writeback_rejects_unrepresentable_ranges'
-require_listed_test "$listed_tests" 'host_fs::tests::host_file_range_writeback_accepts_maximum_finite_boundary'
-cargo test \
-	--locked \
-	--target-dir "$WASMER_TARGET_DIR" \
-	--manifest-path "$WASMER_ROOT/lib/virtual-fs/Cargo.toml" \
-	host_file_range_writeback
+if [ "$(uname -s)" = Linux ]; then
+	listed_tests="$(cargo test \
+		--locked \
+		--target-dir "$WASMER_TARGET_DIR" \
+		--manifest-path "$WASMER_ROOT/lib/virtual-fs/Cargo.toml" \
+		host_file_range_writeback \
+		-- \
+		--list)"
+	require_listed_test "$listed_tests" 'host_fs::tests::host_file_range_writeback_uses_existing_descriptor_without_async_clone'
+	require_listed_test "$listed_tests" 'host_fs::tests::host_file_range_writeback_rejects_unrepresentable_ranges'
+	require_listed_test "$listed_tests" 'host_fs::tests::host_file_range_writeback_accepts_maximum_finite_boundary'
+	cargo test \
+		--locked \
+		--target-dir "$WASMER_TARGET_DIR" \
+		--manifest-path "$WASMER_ROOT/lib/virtual-fs/Cargo.toml" \
+		host_file_range_writeback
+fi
 cargo test \
 	--locked \
 	--target-dir "$WASMER_TARGET_DIR" \
@@ -416,8 +418,11 @@ require_listed_tests "$listed_tests" \
 	'syscalls::wasix::fd_sync_range::tests::fd_sync_range_maps_all_exact_flag_combinations' \
 	'syscalls::wasix::fd_sync_range::tests::fd_sync_range_rejects_negative_overflowing_and_unknown_ranges' \
 	'syscalls::wasix::fd_sync_range::tests::fd_sync_range_preserves_zero_length_and_maximum_finite_range' \
-	'syscalls::wasix::fd_sync_range::tests::fd_sync_range_maps_unsupported_backends_to_nosys' \
-	'syscalls::wasix::fd_sync_range::tests::fd_sync_range_preserves_linux_writeback_errnos'
+	'syscalls::wasix::fd_sync_range::tests::fd_sync_range_maps_unsupported_backends_to_nosys'
+if [ "$(uname -s)" = Linux ]; then
+	require_listed_test "$listed_tests" \
+		'syscalls::wasix::fd_sync_range::tests::fd_sync_range_preserves_linux_writeback_errnos'
+fi
 cargo test \
 	--locked \
 	--target-dir "$WASMER_TARGET_DIR" \
@@ -658,9 +663,12 @@ listed_tests="$(cargo test \
 	os::task::task_join_handle::tests \
 	-- \
 	--list)"
-require_listed_tests "$listed_tests" \
-	'os::task::task_join_handle::tests::direct_signal_controller_is_platform_neutral_and_rejects_finished_tasks' \
-	'os::task::task_join_handle::tests::unix_supervisor_real_signals_restore_and_route_exclusively'
+require_listed_test "$listed_tests" \
+	'os::task::task_join_handle::tests::direct_signal_controller_is_platform_neutral_and_rejects_finished_tasks'
+if [ "$(uname -s)" = Linux ]; then
+	require_listed_test "$listed_tests" \
+		'os::task::task_join_handle::tests::unix_supervisor_real_signals_restore_and_route_exclusively'
+fi
 cargo test \
 	--locked \
 	--target-dir "$WASMER_TARGET_DIR" \

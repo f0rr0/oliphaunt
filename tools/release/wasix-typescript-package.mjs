@@ -326,6 +326,23 @@ export function assertWasixTypescriptNpmArchive(archive) {
     label: path.basename(file),
   });
   const entries = readPortableArchiveEntries(file);
+  const requireFile = (name) => {
+    const entry = entries.get(`package/${name}`);
+    if (!entry?.isFile || entry.isSymbolicLink || entry.size <= 0) {
+      fail(`${path.basename(file)} is missing non-empty regular package/${name}`);
+    }
+    return Buffer.from(entry.data());
+  };
+  const manifest = assertWasixTypescriptManifest(
+    JSON.parse(requireFile('package.json').toString('utf8')),
+    `${path.basename(file)} package.json`,
+  );
+  // The first-release changelog is intentionally empty and may be emitted as
+  // a zero-byte member or omitted. Every released version still has to carry
+  // the non-empty Release Please entry.
+  const requiredPackageFiles = WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES.filter(
+    (name) => name !== 'CHANGELOG.md' || manifest.version !== '0.0.0',
+  );
   const expectedFiles = new Set(
     WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES.map((name) => `package/${name}`),
   );
@@ -341,18 +358,7 @@ export function assertWasixTypescriptNpmArchive(archive) {
       fail(`${path.basename(file)} contains file outside the explicit package inventory: ${name}`);
     }
   }
-  const requireFile = (name) => {
-    const entry = entries.get(`package/${name}`);
-    if (!entry?.isFile || entry.isSymbolicLink || entry.size <= 0) {
-      fail(`${path.basename(file)} is missing non-empty regular package/${name}`);
-    }
-    return Buffer.from(entry.data());
-  };
-  const manifest = assertWasixTypescriptManifest(
-    JSON.parse(requireFile('package.json').toString('utf8')),
-    `${path.basename(file)} package.json`,
-  );
-  for (const name of WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES) requireFile(name);
+  for (const name of requiredPackageFiles) requireFile(name);
   const browserWorker = requireFile('lib/worker.js').toString('utf8');
   const nodeWorker = requireFile('lib/node-worker.js').toString('utf8');
   const nodeDirect = requireFile('lib/node-direct.js').toString('utf8');

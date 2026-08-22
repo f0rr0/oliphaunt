@@ -221,7 +221,10 @@ export async function runMobileReleaseExtensionProof(
           await db.execute(statement);
         }
         for (const statement of extension.smokeStatements) {
-          await db.execute(statement);
+          // Canonical extension recipes intentionally mix DDL/DML with
+          // row-producing SELECT/EXPLAIN statements. query() accepts both
+          // response shapes, while execute() must reject returned rows.
+          await db.query(statement);
         }
         if (extension.createsExtension) {
           const result = await db.query(

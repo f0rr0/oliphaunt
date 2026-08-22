@@ -1,4 +1,4 @@
-DROP MATERIALIZED VIEW IF EXISTS oliphaunt_ivm_summary;
+DROP TABLE IF EXISTS oliphaunt_ivm_summary;
 -- oliphaunt-statement
 DROP TABLE IF EXISTS oliphaunt_ivm_orders;
 -- oliphaunt-statement

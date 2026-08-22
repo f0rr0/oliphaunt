@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { access, cp, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, cp, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { arch, cpus, hostname, platform, release, tmpdir, totalmem } from 'node:os';
@@ -112,13 +112,15 @@ let packageScratch;
 
 try {
   packageScratch = packageOnly
-    ? await mkdtemp(join(tmpdir(), 'oliphaunt-wasix-browser-package-'))
+    ? await realpath(await mkdtemp(join(tmpdir(), 'oliphaunt-wasix-browser-package-')))
     : undefined;
   const packedConsumer =
     packageScratch === undefined ? undefined : await stagePackedBrowserConsumer(packageScratch);
   const vite = startChild(
     'pnpm',
     [
+      '--dir',
+      bindingRoot,
       'exec',
       'vite',
       '--config',
@@ -280,7 +282,7 @@ async function stagePackedBrowserConsumer(scratch) {
     resolve(repositoryRoot, 'examples/browser-wasix/package-smoke.ts'),
     resolve(fixture.consumer, 'main.ts'),
   );
-  return fixture.consumer;
+  return realpath(fixture.consumer);
 }
 
 function parseBenchmarkResult(value) {

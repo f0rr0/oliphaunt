@@ -188,7 +188,7 @@ let persistent = await Oliphaunt.open({ execution: 'direct', storage, extensions
 await persistent.execute('CREATE SEQUENCE smoke_persistence_seq START WITH 10');
 await persistent.execute(
   'CREATE TABLE smoke_persistence (' +
-    'ordinal bigint PRIMARY KEY DEFAULT nextval(\'smoke_persistence_seq\'), ' +
+    ${JSON.stringify("ordinal bigint PRIMARY KEY DEFAULT nextval('smoke_persistence_seq'), ")} +
     'label text NOT NULL, payload bytea NOT NULL, optional_value text NULL)'
 );
 await persistent.execute('CREATE UNIQUE INDEX smoke_persistence_label_idx ON smoke_persistence(label)');
@@ -332,9 +332,11 @@ async function richBackupValues(db) {
     throw new Error('restored physical backup omitted smoke_persistence_label_idx: ' + index);
   }
   return (await db.query(
-    "SELECT string_agg(label || ':' || encode(payload, 'hex') || ':' || " +
-      "coalesce(optional_value, 'NULL'), '|' ORDER BY label COLLATE \"C\") AS value " +
-      'FROM smoke_persistence'
+    ${JSON.stringify(
+      "SELECT string_agg(label || ':' || encode(payload, 'hex') || ':' || " +
+        "coalesce(optional_value, 'NULL'), '|' ORDER BY label COLLATE \"C\") AS value " +
+        'FROM smoke_persistence',
+    )}
   )).getText(0, 'value');
 }
 }

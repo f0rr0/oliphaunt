@@ -96,7 +96,7 @@ export const GENERATED_MOBILE_EXTENSION_SMOKE = {
     "DO $$ BEGIN IF id_encode(1001) <> 'jNl' THEN RAISE EXCEPTION 'pg_hashids encode failed'; END IF; IF id_decode_once('jNl') <> 1001 THEN RAISE EXCEPTION 'pg_hashids decode failed'; END IF; END $$;"
   ],
   "pg_ivm": [
-    "DROP MATERIALIZED VIEW IF EXISTS oliphaunt_ivm_summary;",
+    "DROP TABLE IF EXISTS oliphaunt_ivm_summary;",
     "DROP TABLE IF EXISTS oliphaunt_ivm_orders;",
     "CREATE TABLE oliphaunt_ivm_orders (id int, amount int);",
     "INSERT INTO oliphaunt_ivm_orders VALUES (1, 10), (2, 20);",

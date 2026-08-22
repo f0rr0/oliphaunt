@@ -9359,7 +9359,7 @@ new file mode 100644
 index 0000000..36680f7
 --- /dev/null
 +++ b/lib/oliphaunt-wasix-postmaster-executor/src/sealed.rs
-@@ -0,0 +1,3379 @@
+@@ -0,0 +1,3382 @@
 +//! Exact-five sealed carrier admission and immutable lazy AOT activation.
 +
 +use std::{
@@ -11798,12 +11798,15 @@ index 0000000..36680f7
 +            .all(|component| matches!(component, Component::Normal(_))),
 +        "carrier file path must be a normalized relative path: {relative}"
 +    );
-+    let path = root.join(relative_path);
++    let canonical_root = root
++        .canonicalize()
++        .with_context(|| format!("resolve carrier root {}", root.display()))?;
++    let path = canonical_root.join(relative_path);
 +    let canonical = path
 +        .canonicalize()
 +        .with_context(|| format!("resolve carrier file {}", path.display()))?;
 +    ensure!(
-+        canonical.starts_with(root),
++        canonical.starts_with(&canonical_root),
 +        "carrier file escapes carrier root: {relative}"
 +    );
 +    Ok(canonical)

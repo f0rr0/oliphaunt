@@ -42,9 +42,16 @@ try {
   const result = JSON.parse(stdout);
   const packed = Array.isArray(result) ? result[0] : result;
   const paths = new Set(packed.files?.map((entry) => entry.path));
+  // Release Please owns the first changelog entry, so an unreleased 0.0.0
+  // source package deliberately carries an empty CHANGELOG.md. Keep the
+  // released archive contract strict while allowing that one pre-release
+  // dry-run entry to remain empty or be omitted by the pack implementation.
+  const dryRunRequiredPaths = WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES.filter(
+    (path) => path !== 'CHANGELOG.md' || stagedPackageJson.version !== '0.0.0',
+  );
   const expectedPaths = new Set(WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES);
 
-  for (const path of WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES) {
+  for (const path of dryRunRequiredPaths) {
     if (!paths.has(path)) {
       throw new Error(`WASIX TypeScript package dry-run omitted ${path}`);
     }
