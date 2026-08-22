@@ -246,6 +246,7 @@ class OliphauntJsiPromiseCallback
     javaClassLocal()->registerNatives({
         makeNativeMethod("nativeResolveBytes", nativeResolveBytes),
         makeNativeMethod("nativeResolveString", nativeResolveString),
+        makeNativeMethod("nativeResolveUnit", nativeResolveUnit),
         makeNativeMethod("nativeReject", nativeReject),
     });
   }
@@ -282,6 +283,19 @@ class OliphauntJsiPromiseCallback
                                jsi::Runtime &runtime,
                                jsi::Function &resolveFunction) {
       resolveFunction.call(runtime, jsi::String::createFromUtf8(runtime, restored));
+    });
+  }
+
+  static void nativeResolveUnit(
+      jni::alias_ref<OliphauntJsiPromiseCallback>,
+      jlong token)
+  {
+    auto promise = takePendingPromise(static_cast<int64_t>(token));
+    if (!promise) {
+      return;
+    }
+    promise->resolve->call([](jsi::Runtime &runtime, jsi::Function &resolveFunction) {
+      resolveFunction.call(runtime, jsi::Value::undefined());
     });
   }
 

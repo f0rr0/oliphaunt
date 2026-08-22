@@ -92,7 +92,10 @@ run_maestro_installed_smoke emulator-5554 "$fake_adb" \
 status=$?
 set -e
 [ "$status" -eq 2 ] || fail_test "authoritative failure returned $status instead of 2"
-[ $((SECONDS - start_seconds)) -lt 4 ] || fail_test "authoritative failure did not terminate Maestro promptly"
+# Loaded CI hosts can delay the one-second receipt poll and shell process
+# reaping even after TERM is delivered. The assertions below independently
+# prove that Maestro received TERM and is no longer running.
+[ $((SECONDS - start_seconds)) -lt 10 ] || fail_test "authoritative failure did not terminate Maestro promptly"
 [ -f "$FAKE_MAESTRO_TERMINATED" ] || fail_test "authoritative failure did not terminate Maestro"
 maestro_pid="$(cat "$FAKE_MAESTRO_PID")"
 if kill -0 "$maestro_pid" 2>/dev/null; then

@@ -861,9 +861,38 @@ private func defaultBundleResourceURLs() -> [URL] {
     // checks need only explicitly identified resources and Bundle.main.
     let bundles = preferred + [Bundle.main]
     #endif
+    return bundleResourceURLs(
+        bundles,
+        discoveringChildBundlesAt: Bundle.main.resourceURL
+    )
+}
+
+func bundleResourceURLs(
+    _ bundles: [Bundle],
+    discoveringChildBundlesAt resourceRoot: URL?
+) -> [URL] {
+    var discovered = bundles
+    #if os(iOS) || os(macOS) || os(tvOS) || os(watchOS) || os(visionOS)
+    // CocoaPods resource bundles are copied beside the app executable but are
+    // not guaranteed to appear in Bundle.allBundles until explicitly loaded.
+    // Discover immediate child bundles so app-owned runtime payloads are
+    // visible before the first database open.
+    if let resourceRoot,
+       let children = try? FileManager.default.contentsOfDirectory(
+           at: resourceRoot,
+           includingPropertiesForKeys: [.isDirectoryKey],
+           options: [.skipsHiddenFiles]
+       )
+    {
+        discovered.append(contentsOf: children.compactMap { child in
+            guard child.pathExtension == "bundle" else { return nil }
+            return Bundle(url: child)
+        })
+    }
+    #endif
     var seen = Set<String>()
     var urls: [URL] = []
-    for bundle in bundles {
+    for bundle in discovered {
         guard let url = bundle.resourceURL else {
             continue
         }

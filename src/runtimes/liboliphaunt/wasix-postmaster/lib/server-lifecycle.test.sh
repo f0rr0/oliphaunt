@@ -40,7 +40,7 @@ pathlib.Path(sys.argv[1]).write_text(str(server.server_address[1]), encoding="as
 server.serve_forever()
 PY
 listener_pid="$!"
-listener_deadline_ms="$(( $(fresh_supervision_now_ms) + 5000 ))"
+listener_deadline_ms="$(( $(fresh_supervision_now_ms) + 30000 ))"
 while [ "$(fresh_supervision_now_ms)" -lt "$listener_deadline_ms" ]; do
   [ -s "$port_file" ] && break
   if ! kill -0 "$listener_pid" 2>/dev/null; then

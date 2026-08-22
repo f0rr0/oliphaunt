@@ -343,13 +343,17 @@ private class AndroidFlatJsonParser(private val source: String) {
 }
 
 private fun requireRealAndroidDirectory(file: File, label: String) {
-    if (!file.isDirectory || file.canonicalFile != file.absoluteFile) {
+    val parent = file.parentFile
+    val realLocation = parent?.let { File(it.canonicalFile, file.name) }
+    if (!file.isDirectory || realLocation == null || file.canonicalFile != realLocation) {
         throw OliphauntException("PGDATA $label must be a real directory: ${file.absolutePath}")
     }
 }
 
 private fun requireRealAndroidFile(file: File, label: String) {
-    if (!file.isFile || file.length() == 0L || file.canonicalFile != file.absoluteFile) {
+    val parent = file.parentFile
+    val realLocation = parent?.let { File(it.canonicalFile, file.name) }
+    if (!file.isFile || file.length() == 0L || realLocation == null || file.canonicalFile != realLocation) {
         throw OliphauntException("PGDATA $label must be a nonempty real file: ${file.absolutePath}")
     }
 }

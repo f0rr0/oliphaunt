@@ -8,6 +8,7 @@ import { defineConfig, type Plugin } from 'vite';
 const exampleRoot = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(exampleRoot, '../..');
 const bindingRoot = resolve(repositoryRoot, 'src/bindings/wasix-ts');
+const bindingLibRoot = resolve(bindingRoot, 'lib');
 const assetRoot = resolve(repositoryRoot, 'target/oliphaunt-wasix/assets');
 const pgliteAssetRoot = resolve(bindingRoot, 'node_modules/@electric-sql/pglite/dist');
 export default defineConfig({
@@ -16,11 +17,11 @@ export default defineConfig({
     alias: [
       {
         find: /^@oliphaunt\/wasix-ts$/,
-        replacement: resolve(bindingRoot, 'src/index.ts'),
+        replacement: resolve(bindingLibRoot, 'index.js'),
       },
       {
         find: /^@oliphaunt\/wasix-ts\/(.+)$/,
-        replacement: `${resolve(bindingRoot, 'src')}/$1.ts`,
+        replacement: `${bindingLibRoot}/$1.js`,
       },
     ],
   },

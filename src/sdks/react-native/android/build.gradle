@@ -798,8 +798,15 @@ kotlin {
 
 repositories {
   if (kotlinSdkMavenRepository != null && !kotlinSdkMavenRepository.isBlank()) {
-    maven {
-      url = uri(kotlinSdkMavenRepository)
+    exclusiveContent {
+      forRepository {
+        maven {
+          url = uri(kotlinSdkMavenRepository)
+        }
+      }
+      filter {
+        includeModule("dev.oliphaunt", "oliphaunt-android")
+      }
     }
   }
   google()

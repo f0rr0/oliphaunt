@@ -216,7 +216,9 @@ try {
     returnByValue: true,
   });
   if (finalState.result.value !== 'passed') {
-    throw new Error(`browser smoke timed out after ${timeoutMs}ms`);
+    throw new Error(
+      `browser smoke timed out after ${timeoutMs}ms\nVite output:\n${vite.output}\nChrome output:\n${browser.output}`,
+    );
   }
 } finally {
   socket?.close();

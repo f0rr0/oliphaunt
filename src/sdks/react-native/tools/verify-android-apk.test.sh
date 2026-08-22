@@ -58,8 +58,9 @@ run_verifier() {
 # with spaces, and uses the exact official verification commands.
 : >"$log"
 run_verifier >"$tmp/success.out"
-printf 'zipalign\t-c\t-P\t16\t-v\t4\t%s\n' "$apk" >"$tmp/expected.log"
-printf 'apksigner\tverify\t--verbose\t%s\n' "$apk" >>"$tmp/expected.log"
+canonical_apk="$(cd "$(dirname "$apk")" && pwd -P)/$(basename "$apk")"
+printf 'zipalign\t-c\t-P\t16\t-v\t4\t%s\n' "$canonical_apk" >"$tmp/expected.log"
+printf 'apksigner\tverify\t--verbose\t%s\n' "$canonical_apk" >>"$tmp/expected.log"
 cmp "$tmp/expected.log" "$log"
 grep -Fq 'Verified APK with manifest-pinned zipalign and apksigner' "$tmp/success.out"
 

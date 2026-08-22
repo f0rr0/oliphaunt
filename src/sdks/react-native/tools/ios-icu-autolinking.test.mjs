@@ -365,8 +365,8 @@ async function assertCandidateIsSafe(config, consumer, icuRoot, platform) {
 
   const resolver = createRequire(path.join(consumer, "resolve-icu.cjs"));
   assert.equal(
-    path.resolve(resolver.resolve("@oliphaunt/icu/package.json")),
-    path.join(icuRoot, "package.json"),
+    await fs.realpath(resolver.resolve("@oliphaunt/icu/package.json")),
+    await fs.realpath(path.join(icuRoot, "package.json")),
     "autolinking opt-out must not make the ICU data package unavailable to JavaScript",
   );
   const podspec = await fs.readFile(path.join(icuRoot, "OliphauntICU.podspec"), "utf8");

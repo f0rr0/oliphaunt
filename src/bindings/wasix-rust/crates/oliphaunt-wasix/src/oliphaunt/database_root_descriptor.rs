@@ -244,22 +244,11 @@ fn sync_directory(path: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(windows)]
-fn sync_directory(path: &Path) -> Result<()> {
-    use std::os::windows::fs::OpenOptionsExt;
-
-    // CreateFileW requires FILE_FLAG_BACKUP_SEMANTICS to open a directory.
-    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
-    OpenOptions::new()
-        .read(true)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-        .open(path)?
-        .sync_all()?;
-    Ok(())
-}
-
-#[cfg(not(any(unix, windows)))]
+#[cfg(not(unix))]
 fn sync_directory(_path: &Path) -> Result<()> {
+    // Directory fsync is not portable off Unix. On Windows, flushing a
+    // directory handle fails with ERROR_ACCESS_DENIED even though regular file
+    // contents have already been flushed.
     Ok(())
 }
 

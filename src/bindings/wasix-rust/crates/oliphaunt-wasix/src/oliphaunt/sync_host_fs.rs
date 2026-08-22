@@ -6,9 +6,6 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[cfg(windows)]
-use std::os::windows::fs::OpenOptionsExt;
-
 use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
 use wasmer_wasix::virtual_fs::{
     self, DirEntry, FileType, FsError, Metadata, OpenOptions, OpenOptionsConfig, ReadDir,
@@ -370,18 +367,11 @@ fn sync_directory(path: &Path) -> io::Result<()> {
     fs::File::open(path)?.sync_all()
 }
 
-#[cfg(windows)]
-fn sync_directory(path: &Path) -> io::Result<()> {
-    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
-    fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-        .open(path)?
-        .sync_all()
-}
-
-#[cfg(not(any(unix, windows)))]
+#[cfg(not(unix))]
 fn sync_directory(_path: &Path) -> io::Result<()> {
+    // Windows does not provide a portable directory fsync operation:
+    // FlushFileBuffers on a directory handle fails with ERROR_ACCESS_DENIED.
+    // File contents are still flushed by SyncHostFile::poll_flush.
     Ok(())
 }
 

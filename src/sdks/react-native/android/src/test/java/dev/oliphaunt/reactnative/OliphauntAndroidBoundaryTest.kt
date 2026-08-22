@@ -132,11 +132,12 @@ class OliphauntAndroidBoundaryTest {
     assertTrue(
       "React Native Android must expose a byte-array JSI hook that delegates to the Kotlin SDK session",
       moduleSource.contains("fun execProtocolRawBytes") &&
-        moduleSource.contains("session.execProtocolRaw(ProtocolRequest(request)).bytes"),
+        moduleSource.contains("session.execProtocolRaw(request)"),
     )
-    assertFalse(
-      "React Native Android must not mirror the unused low-level C stream API",
-      moduleSource.contains("execProtocolStream"),
+    assertTrue(
+      "React Native Android must stream byte-array protocol chunks through the Kotlin SDK session",
+      moduleSource.contains("fun execProtocolStreamBytes") &&
+        moduleSource.contains("session.execProtocolStream(request)"),
     )
     assertTrue(
       "React Native Android must expose byte-array JSI backup/restore hooks instead of base64 TurboModule binary APIs",
@@ -167,9 +168,11 @@ class OliphauntAndroidBoundaryTest {
         jsiSource.contains("typed-array byteOffset") &&
         jsiSource.contains("typed-array byteLength"),
     )
-    assertFalse(
-      "React Native Android JSI must keep the public transport to raw request/response bytes",
-      jsiSource.contains("execProtocolStream") || jsiSource.contains("OliphauntJsiStreamCallback"),
+    assertTrue(
+      "React Native Android JSI must stream raw protocol chunks without exposing Kotlin SDK types",
+      jsiSource.contains("execProtocolStream") &&
+        jsiSource.contains("OliphauntJsiStreamCallback") &&
+        jsiSource.contains("arrayBufferFromBytes"),
     )
   }
 

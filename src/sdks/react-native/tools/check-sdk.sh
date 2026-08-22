@@ -427,6 +427,10 @@ if grep -Fq 'install_ios_mobile_assets_into_react_native_package' "$package_dir/
 fi
 require_source_text "$package_dir/android/build.gradle" '?: "dev.oliphaunt:oliphaunt-android:${kotlinSdkVersion}"' \
   "React Native Android package must default to the published Kotlin SDK Maven coordinate"
+require_source_text "$package_dir/android/build.gradle" 'exclusiveContent {' \
+  "React Native Android must resolve staged Kotlin SDK candidates exclusively from their configured Maven repository"
+require_source_text "$package_dir/android/build.gradle" 'includeModule("dev.oliphaunt", "oliphaunt-android")' \
+  "React Native Android must exclude the staged Kotlin SDK coordinate from fallback repositories"
 require_source_text "$package_dir/android/build.gradle" 'layout.projectDirectory.dir(".cxx").asFile' \
   "React Native Android CMake staging must default outside Gradle's temporary build directory"
 require_source_text "$package_dir/android/build.gradle" 'buildStagingDirectory = cxxBuildRoot' \

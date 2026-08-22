@@ -430,6 +430,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `. = {"types":"./lib/typescript/index.d.ts","react-native":"./lib/module/index.js","import":"./lib/module/index.js","require":"./lib/commonjs/index.js","default":"./lib/module/index.js"}`
 - `./protocol = {"types":"./lib/typescript/protocol.d.ts","react-native":"./lib/module/protocol.js","import":"./lib/module/protocol.js","require":"./lib/commonjs/protocol.js","default":"./lib/module/protocol.js"}`
 - `./query = {"types":"./lib/typescript/query.d.ts","react-native":"./lib/module/query.js","import":"./lib/module/query.js","require":"./lib/commonjs/query.js","default":"./lib/module/query.js"}`
+- `./extension-metadata = {"types":"./lib/typescript/extension-metadata.d.ts","react-native":"./lib/module/extension-metadata.js","import":"./lib/module/extension-metadata.js","require":"./lib/commonjs/extension-metadata.js","default":"./lib/module/extension-metadata.js"}`
 - `./package.json = "./package.json"`
 
 ### Types

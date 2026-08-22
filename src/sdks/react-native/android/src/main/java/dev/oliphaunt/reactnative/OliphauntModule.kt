@@ -88,7 +88,7 @@ class OliphauntModule(
             Oliphaunt.open(
               context = reactContext,
               config = openConfig.config,
-              runtimeDirectory = openConfig.runtimeDirectory,
+              runtimeDirectory = openConfig.runtimeDirectory?.let(::File),
               resourceRoot = openConfig.resourceRoot?.let(::File),
             )
           } catch (error: Throwable) {
@@ -289,11 +289,11 @@ class OliphauntModule(
     scope.launch {
       runCatching {
         val destination = when (storageKind) {
-          "directory" -> validatePath(storagePath, "restore destination directory")
+          "directory" -> File(validatePath(storagePath, "restore destination directory"))
           "applicationData" -> File(
             File(reactContext.filesDir, "Oliphaunt"),
             validateApplicationDataName(storageName),
-          ).absolutePath
+          )
           else -> throw IllegalArgumentException("unknown restore destination kind '$storageKind'")
         }
         Oliphaunt.restore(
@@ -338,11 +338,11 @@ class OliphauntModule(
     val storage = when (val kind = config.string("storageKind") ?: "temporaryDirectory") {
       "temporaryDirectory" -> DatabaseStorage.TemporaryDirectory
       "directory" -> DatabaseStorage.Directory(
-        validatePath(config.string("storagePath"), "database storage directory"),
+        File(validatePath(config.string("storagePath"), "database storage directory")),
       )
       "applicationData" -> {
         val name = validateApplicationDataName(config.string("storageName"))
-        DatabaseStorage.Directory(File(File(reactContext.filesDir, "Oliphaunt"), name).absolutePath)
+        DatabaseStorage.Directory(File(File(reactContext.filesDir, "Oliphaunt"), name))
       }
       else -> throw IllegalArgumentException("unknown database storage kind '$kind'")
     }
