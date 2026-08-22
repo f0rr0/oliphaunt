@@ -53,52 +53,69 @@ export async function runMobileBindingProof(
     checks,
     'raw protocol stream',
     async () => {
-      const request = simpleQuery("SELECT repeat('x', 2048) FROM generate_series(1, 1024)");
-      const expected = await db.execProtocolRaw(request);
-      let chunkCount = 0;
-      let callbackActive = false;
-      const chunks: Uint8Array[] = [];
-      await db.execProtocolStream(
-        request,
-        chunk => {
-          if (callbackActive) {
-            throw new Error('protocol stream callback was re-entered');
-          }
-          callbackActive = true;
-          try {
-            chunkCount += 1;
-            chunks.push(chunk.slice());
-          } finally {
-            callbackActive = false;
-          }
-        },
+      const autoExplainLogMinDuration = await scalar(
+        db,
+        "SELECT current_setting('auto_explain.log_min_duration')::text AS value",
       );
-      if (chunkCount < 2) {
-        throw new Error(`protocol stream expected multiple chunks, got ${chunkCount}`);
-      }
-      const streamed = concatenate(chunks);
-      assertBytesEqual(streamed, expected, 'protocol stream complete response');
-      assertReadyForQuery(streamed);
-
-      const failure = new Error('mobile stream callback failure');
+      await db.execute("SET auto_explain.log_min_duration = '-1'");
       try {
-        await db.execProtocolStream(simpleQuery('SELECT 1'), () => {
-          throw failure;
-        });
-        throw new Error('protocol stream unexpectedly ignored its callback failure');
-      } catch (error) {
-        if (error !== failure) {
-          throw new Error('protocol stream did not reject with the callback exception', {
-            cause: error,
-          });
+        const request = simpleQuery("SELECT repeat('x', 2048) FROM generate_series(1, 1024)");
+        const expected = await db.execProtocolRaw(request);
+        let chunkCount = 0;
+        let callbackActive = false;
+        const chunks: Uint8Array[] = [];
+        await db.execProtocolStream(
+          request,
+          chunk => {
+            if (callbackActive) {
+              throw new Error('protocol stream callback was re-entered');
+            }
+            callbackActive = true;
+            try {
+              chunkCount += 1;
+              chunks.push(chunk.slice());
+            } finally {
+              callbackActive = false;
+            }
+          },
+        );
+        if (chunkCount < 2) {
+          throw new Error(`protocol stream expected multiple chunks, got ${chunkCount}`);
         }
+        const streamed = concatenate(chunks);
+        assertBytesEqual(streamed, expected, 'protocol stream complete response');
+        assertReadyForQuery(streamed);
+
+        const failure = new Error('mobile stream callback failure');
+        try {
+          await db.execProtocolStream(simpleQuery('SELECT 1'), () => {
+            throw failure;
+          });
+          throw new Error('protocol stream unexpectedly ignored its callback failure');
+        } catch (error) {
+          if (error !== failure) {
+            const detail =
+              error instanceof Error
+                ? `${error.name}: ${error.message}`
+                : `${typeof error}: ${String(error)}`;
+            throw new Error(
+              `protocol stream did not reject with the callback exception (received ${detail})`,
+              { cause: error },
+            );
+          }
+        }
+        assertEqual(
+          await scalar(db, "SELECT 'after-stream-error'::text AS value"),
+          'after-stream-error',
+          'stream callback recovery query',
+        );
+        return `${chunkCount} acknowledged chunks, ${streamed.byteLength} complete raw bytes, callback exception preserved`;
+      } finally {
+        await db.query(
+          "SELECT set_config('auto_explain.log_min_duration', $1, false) AS value",
+          [autoExplainLogMinDuration],
+        );
       }
-      assertEqual(
-        await scalar(db, "SELECT 'after-stream-error'::text AS value"),
-        'after-stream-error',
-        'stream callback recovery query',
-      );
-      return `${chunkCount} acknowledged chunks, ${streamed.byteLength} complete raw bytes, callback exception preserved`;
     },
     onCheckStage,
   );
@@ -150,7 +167,13 @@ function assertBytesEqual(actual: Uint8Array, expected: Uint8Array, label: strin
   }
   for (let index = 0; index < actual.byteLength; index += 1) {
     if (actual[index] !== expected[index]) {
-      throw new Error(`${label}: byte ${index} differs`);
+      const start = Math.max(0, index - 8);
+      const end = Math.min(actual.byteLength, index + 9);
+      const hex = (bytes: Uint8Array) =>
+        Array.from(bytes.subarray(start, end), byte => byte.toString(16).padStart(2, '0')).join(' ');
+      throw new Error(
+        `${label}: byte ${index} differs (actual ${actual[index]}, expected ${expected[index]}; actual ${hex(actual)}; expected ${hex(expected)})`,
+      );
     }
   }
 }

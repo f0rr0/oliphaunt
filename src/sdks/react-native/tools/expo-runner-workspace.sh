@@ -303,6 +303,15 @@ prepare_react_native_package_worktree() {
   fi
   rsync_args+=("$rn_dir/" "$package_work/")
   rsync "${rsync_args[@]}"
+  mkdir -p "$package_work/src/generated"
+  cp \
+    "$root/src/extensions/generated/sdk/extensions.json" \
+    "$package_work/src/generated/extensions.json"
+  cp \
+    "$root/src/extensions/generated/sdk/ios-static-dependencies.json" \
+    "$package_work/src/generated/ios-static-dependencies.json"
+  mkdir -p "$scratch_root/tools/dev"
+  cp "$root/tools/dev/clean-package-lib.mjs" "$scratch_root/tools/dev/clean-package-lib.mjs"
   if [ -d "$rn_dir/node_modules" ]; then
     ln -s "$rn_dir/node_modules" "$package_work/node_modules"
   else

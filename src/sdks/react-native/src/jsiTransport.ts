@@ -62,9 +62,29 @@ export async function execProtocolStreamJsi(
   request: Uint8Array,
   onChunk: (chunk: Uint8Array) => void,
 ): Promise<void> {
-  await transport.execProtocolStream(handle, request, (chunk) => {
-    onChunk(binaryResponseToUint8Array(chunk));
-  });
+  let callbackFailed = false;
+  let callbackFailure: unknown;
+  try {
+    await transport.execProtocolStream(handle, request, (chunk) => {
+      if (callbackFailed) {
+        return;
+      }
+      try {
+        onChunk(binaryResponseToUint8Array(chunk));
+      } catch (error) {
+        callbackFailed = true;
+        callbackFailure = error;
+        throw error;
+      }
+    });
+  } catch (error) {
+    if (!callbackFailed) {
+      throw error;
+    }
+  }
+  if (callbackFailed) {
+    throw callbackFailure;
+  }
 }
 
 export async function backupJsi(

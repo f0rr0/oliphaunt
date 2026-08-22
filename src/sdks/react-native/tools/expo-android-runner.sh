@@ -260,12 +260,12 @@ pack_react_native_sdk_if_needed() {
     needs_pack=1
   elif [ -n "$(
     find \
-      "$rn_dir/src" \
-      "$rn_dir/android" \
-      "$rn_dir/ios" \
-      "$rn_dir/package.json" \
-      "$rn_dir/tsconfig.build.json" \
+      "$rn_dir" \
+      "$root/src/extensions/generated/sdk/extensions.json" \
+      "$root/src/extensions/generated/sdk/ios-static-dependencies.json" \
+      "$root/tools/dev/clean-package-lib.mjs" \
       "$source_example_dir/package.json" \
+      -path "$rn_dir/node_modules" -prune -o \
       -path "$rn_dir/android/.gradle" -prune -o \
       -path "$rn_dir/android/.cxx" -prune -o \
       -path "$rn_dir/android/build" -prune -o \
@@ -571,7 +571,8 @@ build_apk() {
       extension_archives_root="$(android_build_root_for_abi)/out"
     fi
     android_link_evidence="$scratch_root/android-static-extension-link-$android_abi.tsv"
-    rm -f "$android_link_evidence"
+    # CMake writes this receipt while configuring native inputs. Preserve it when
+    # Gradle is up to date; a native reconfiguration overwrites it when needed.
     local gradle_build_tasks=(":app:assemble$build_type_capitalized")
     if [ "$build_type" = "release" ]; then
       gradle_build_tasks+=("-x" ":app:lintVitalRelease")

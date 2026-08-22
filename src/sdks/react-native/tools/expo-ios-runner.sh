@@ -395,7 +395,11 @@ pack_react_native_sdk() {
     [ -f "$tarball" ] &&
     [ -f "$package_stamp" ] &&
     [ -z "$(
-      find "$rn_dir" \
+      find \
+        "$rn_dir" \
+        "$root/src/extensions/generated/sdk/extensions.json" \
+        "$root/src/extensions/generated/sdk/ios-static-dependencies.json" \
+        "$root/tools/dev/clean-package-lib.mjs" \
         -path "$rn_dir/node_modules" -prune -o \
         -path "$rn_dir/lib" -prune -o \
         -path "$rn_dir/.build" -prune -o \
