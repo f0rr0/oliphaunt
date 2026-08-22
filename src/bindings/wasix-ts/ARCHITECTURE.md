@@ -212,6 +212,14 @@ flush WAL before ordinary files and `global/pg_control`. The portable path uses
 copy-on-write backing files and atomically replaces namespace state last. OPFS
 has PostgreSQL recovery ordering but no cross-file transaction, so a failed
 publication reports unknown state instead of claiming that nothing changed.
+The direct path keeps a bounded private reserve of preopened backing files for
+the synchronous hot path. Overflow is staged only until the mandatory host
+boundary, which allocates, writes, and flushes every staged file before
+publishing namespace state. A failure leaves the previous namespace
+authoritative and poisons the live handle. The reserve is replenished
+best-effort after successful boundaries, and hosts that cannot establish its
+initial capacity use the portable path. Its size is an implementation detail,
+not a public database-capacity limit.
 
 Compatibility uses the PostgreSQL major and versioned WASIX physical format.
 Runtime hashes and source fingerprints still reject mixed runtime, template,

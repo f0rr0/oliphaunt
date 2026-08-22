@@ -70,7 +70,6 @@ export async function acquireOpfsStorage(
       },
     });
   } catch (error) {
-    await directPool?.close(false).catch(() => undefined);
     if (lock !== undefined && !lockHandedToFallback) {
       try {
         await lock.release();
@@ -105,13 +104,20 @@ export async function restoreOpfsStorage(
       if (!isNotFound(error)) throw error;
       database = await root.getDirectoryHandle(name, { create: true });
     }
-    if ((await inspectPooledOpfsDatabase(database, name, physicalIdentity)).snapshot !== undefined) {
+    const destination = await inspectPooledOpfsDatabase(database, name, physicalIdentity);
+    if (destination.state === 'existing') {
       throw new WasixStorageError(`${label} already exists`, {
         code: 'incomplete',
         commitState: 'unchanged',
       });
     }
     cleanupDestination = true;
+    if (destination.snapshot !== undefined) {
+      // An initializing generation was never published and is disposable.
+      // Replace it instead of merging a restore over its template contents.
+      await root.removeEntry(name, { recursive: true });
+      database = await root.getDirectoryHandle(name, { create: true });
+    }
     commitState = 'unknown';
     await applyPooledOpfsDelta(database, name, physicalIdentity, {
       directories: snapshot.directories,
@@ -162,9 +168,7 @@ class DirectOpfsLease implements WasixStorageLease {
     this.#pool = pool;
   }
 
-  createPgdataDirectory = async (
-    DirectoryConstructor: typeof Directory,
-  ): Promise<Directory> => {
+  createPgdataDirectory = async (DirectoryConstructor: typeof Directory): Promise<Directory> => {
     if (this.#closed) throw this.#unavailable('is closed', 'unchanged');
     if (this.#directory !== undefined) {
       throw this.#unavailable('already materialized its direct filesystem', 'unchanged');
@@ -196,19 +200,40 @@ class DirectOpfsLease implements WasixStorageLease {
     }
   }
 
-  async close(_directory: StorageDirectory | undefined, outcome: 'clean' | 'failed'): Promise<void> {
+  async close(
+    _directory: StorageDirectory | undefined,
+    outcome: 'clean' | 'failed',
+  ): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
     let failure: Error | undefined;
     let commitState: 'persisted' | 'unknown' = 'unknown';
+    if (outcome === 'clean') {
+      try {
+        await this.#pool.sync('close');
+        commitState = 'persisted';
+      } catch (error) {
+        failure =
+          error instanceof WasixStorageError
+            ? error
+            : new WasixStorageError(
+                `direct OPFS storage ${JSON.stringify(this.#name)} could not persist on close`,
+                { code: 'publication-failed', commitState: 'unknown', cause: error },
+              );
+      }
+    }
     try {
-      await this.#pool.close(outcome === 'clean');
-      if (outcome === 'clean') commitState = 'persisted';
+      await this.#pool.close(false);
     } catch (error) {
-      failure = new WasixStorageError(
-        `direct OPFS storage ${JSON.stringify(this.#name)} could not close its pool`,
-        { code: 'publication-failed', commitState: 'unknown', cause: error },
+      const cleanup = this.#unavailable(
+        `could not close its pool: ${describeError(error)}`,
+        commitState,
+        error,
       );
+      failure =
+        failure === undefined
+          ? cleanup
+          : composeWasixStorageFailure(failure, 'pool cleanup also failed', cleanup);
     }
     const directory = this.#directory;
     this.#directory = undefined;
@@ -220,9 +245,10 @@ class DirectOpfsLease implements WasixStorageLease {
         commitState,
         error,
       );
-      failure = failure === undefined
-        ? release
-        : composeWasixStorageFailure(failure, 'host filesystem release also failed', release);
+      failure =
+        failure === undefined
+          ? release
+          : composeWasixStorageFailure(failure, 'host filesystem release also failed', release);
     }
     try {
       await this.#lock.release();
@@ -232,9 +258,10 @@ class DirectOpfsLease implements WasixStorageLease {
         commitState,
         error,
       );
-      failure = failure === undefined
-        ? release
-        : composeWasixStorageFailure(failure, 'ownership release also failed', release);
+      failure =
+        failure === undefined
+          ? release
+          : composeWasixStorageFailure(failure, 'ownership release also failed', release);
     }
     if (failure !== undefined) throw failure;
   }
@@ -254,14 +281,17 @@ class DirectOpfsLease implements WasixStorageLease {
 
 function canUseDirectOpfsPool(): boolean {
   return (
-    typeof document === 'undefined' &&
-    globalThis.navigator?.storage?.getDirectory !== undefined
+    typeof document === 'undefined' && globalThis.navigator?.storage?.getDirectory !== undefined
   );
 }
 
 function isDirectPoolUnavailable(error: unknown): boolean {
   const name = errorName(error);
-  return name === 'NotSupportedError' || name === 'NoModificationAllowedError';
+  return (
+    name === 'NotSupportedError' ||
+    name === 'NoModificationAllowedError' ||
+    name === 'QuotaExceededError'
+  );
 }
 
 function normalizeOpfsOpenError(name: string, error: unknown): WasixStorageError {

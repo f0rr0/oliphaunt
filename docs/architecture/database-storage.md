@@ -110,8 +110,12 @@ namespace over flat backing files. Its direct path honors PostgreSQL file flushe
 and drains WAL at operation boundaries; checkpoint, close, and namespace
 publication flush WAL before ordinary files and `global/pg_control`. Its
 portable path uses copy-on-write backing files and publishes the namespace
-state last. Node, Bun, and Deno apply PostgreSQL-safe publication ordering below
-the managed root's `pgdata` child.
+state last. The direct path keeps a private preopened fast-path reserve. A larger
+creation burst is staged until the mandatory host boundary, where every staged
+file is allocated, written, and flushed before namespace state can refer to it;
+failure aborts that boundary instead of publishing a partial namespace. Node,
+Bun, and Deno apply PostgreSQL-safe publication ordering below the managed
+root's `pgdata` child.
 
 Consequences are part of the public contract:
 

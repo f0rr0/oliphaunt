@@ -85,6 +85,15 @@ failure poisons the handle because the live guest may be ahead of durable
 storage. PostgreSQL statement errors that recover through `ReadyForQuery` do
 not poison storage.
 
+The direct path reserves a bounded set of preopened backing files for the
+synchronous hot path. A larger creation burst is staged only until the mandatory
+host boundary. That boundary allocates, writes, and flushes every staged file
+before publishing namespace state; failure poisons the live handle and leaves
+the previous namespace authoritative. Reserve replenishment after a successful
+boundary is best-effort housekeeping and cannot change that boundary's reported
+commit state; initial capacity failure selects the portable path. Reserve size
+is an internal performance detail, not a database-capacity setting.
+
 `backup()` produces the exact WASIX physical archive. `Oliphaunt.restore()`
 accepts that archive and new or empty persistent storage. Restore rejects
 memory and nonempty destinations. The destination creates its own descriptor.

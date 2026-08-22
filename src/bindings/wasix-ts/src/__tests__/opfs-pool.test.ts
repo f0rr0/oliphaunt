@@ -2,13 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { WasixDirectoryMount } from '../archive.js';
 import type { Directory } from '../host/index.mjs';
-import { acquireOpfsStorage, restoreOpfsStorage } from '../storage/opfs-provider.js';
 import {
   applyPooledOpfsDelta,
   DirectOpfsPool,
+  inspectPooledOpfsDatabase,
   OPFS_POOL_ROOT,
-  readPooledOpfsDatabase,
 } from '../storage/opfs-pool.js';
+import { acquireOpfsStorage, restoreOpfsStorage } from '../storage/opfs-provider.js';
 import { WASIX_PHYSICAL_IDENTITY, type WasixPhysicalIdentity } from '../storage-provider.js';
 
 const OP = {
@@ -162,7 +162,7 @@ describe('WASIX pooled OPFS storage', () => {
     await pool.close(false);
   });
 
-  it('spills safely to memory when one operation exhausts the preopened pool', async () => {
+  it('stages a creation burst beyond the preopened fast path and publishes it durably', async () => {
     installOpfs();
     const pool = await DirectOpfsPool.open('burst', template(), compatible());
     for (let index = 0; index < 140; index += 1) {
@@ -170,7 +170,7 @@ describe('WASIX pooled OPFS storage', () => {
       write(pool, descriptor, Uint8Array.of(index));
       requestOk(pool, OP.close, '', new Uint8Array(), descriptor);
     }
-    const large = open(pool, 'base/large-spill', FLAG_READ | FLAG_WRITE | FLAG_CREATE);
+    const large = open(pool, 'base/large-staged', FLAG_READ | FLAG_WRITE | FLAG_CREATE);
     const chunk = new Uint8Array(8 * 1024).fill(6);
     for (let index = 0; index < 64; index += 1) {
       write(pool, large, chunk, index * chunk.byteLength);
@@ -188,12 +188,55 @@ describe('WASIX pooled OPFS storage', () => {
       expect(read(reopened, descriptor, 1)).toEqual(Uint8Array.of(index));
       requestOk(reopened, OP.close, '', new Uint8Array(), descriptor);
     }
-    const largeReopened = open(reopened, 'base/large-spill', FLAG_READ);
-    expect(read(reopened, largeReopened, 512)).toEqual(
-      new Uint8Array(256).fill(6, 0, 128),
-    );
+    const largeReopened = open(reopened, 'base/large-staged', FLAG_READ);
+    expect(read(reopened, largeReopened, 512)).toEqual(new Uint8Array(256).fill(6, 0, 128));
     requestOk(reopened, OP.close, '', new Uint8Array(), largeReopened);
     await reopened.close(false);
+  });
+
+  it('does not publish staged overflow when backing allocation fails', async () => {
+    const io: FakeIo = {};
+    installOpfs(io);
+    const pool = await DirectOpfsPool.open('staged-failure', template(), compatible());
+    await pool.sync('checkpoint');
+    for (let index = 0; index < 40; index += 1) {
+      const descriptor = open(pool, `base/staged-${index}`, FLAG_WRITE | FLAG_CREATE);
+      write(pool, descriptor, Uint8Array.of(index));
+      requestOk(pool, OP.close, '', new Uint8Array(), descriptor);
+    }
+
+    io.syncAccessErrorName = 'QuotaExceededError';
+    await expect(pool.sync('operation')).rejects.toMatchObject({ name: 'QuotaExceededError' });
+    io.syncAccessErrorName = undefined;
+    await pool.close(false);
+
+    const reopened = await DirectOpfsPool.open('staged-failure', template(), compatible());
+    expect(reopened.state).toBe('existing');
+    expect(reopened.request(OP.metadata, 'base/staged-0', new Uint8Array(), 0, 0, 0)[0]).toBe(1);
+    await reopened.close(false);
+  });
+
+  it('does not fail a persisted boundary when optional spare replenishment fails', async () => {
+    const io: FakeIo = {};
+    const root = installOpfs(io);
+    const pool = await DirectOpfsPool.open('replenishment', template(), compatible());
+    const descriptor = open(pool, 'base/value', FLAG_WRITE | FLAG_CREATE);
+    write(pool, descriptor, Uint8Array.of(7));
+    requestOk(pool, OP.close, '', new Uint8Array(), descriptor);
+
+    io.syncAccessErrorName = 'QuotaExceededError';
+    await expect(pool.sync('checkpoint')).resolves.toBeUndefined();
+    io.syncAccessErrorName = undefined;
+    await pool.close(false);
+
+    const snapshot = await readSnapshot(
+      await databaseDirectory(root, 'replenishment'),
+      'replenishment',
+      compatible(),
+    );
+    expect(snapshot?.files.find(({ path }) => path === 'base/value')?.bytes).toEqual(
+      Uint8Array.of(7),
+    );
   });
 
   it('uses the same durable format for direct and portable fallback paths', async () => {
@@ -205,7 +248,7 @@ describe('WASIX pooled OPFS storage', () => {
     await pool.close(true);
 
     const database = await databaseDirectory(root, 'portable');
-    const snapshot = await readPooledOpfsDatabase(database.asHandle(), 'portable', compatible());
+    const snapshot = await readSnapshot(database, 'portable', compatible());
     expect(snapshot?.files.find(({ path }) => path === 'base/direct')?.bytes).toEqual(
       Uint8Array.of(1, 2, 3),
     );
@@ -220,6 +263,38 @@ describe('WASIX pooled OPFS storage', () => {
     expect(read(reopened, readDescriptor, 8)).toEqual(Uint8Array.of(4, 5));
     requestOk(reopened, OP.close, '', new Uint8Array(), readDescriptor);
     await reopened.close(false);
+  });
+
+  it('publishes portable files in PostgreSQL durability order before state', async () => {
+    const writes: string[] = [];
+    const origin = installOpfs({ writes });
+    const root = await origin.getDirectoryHandle(OPFS_POOL_ROOT, { create: true });
+    const database = await root.getDirectoryHandle('portable-order', { create: true });
+    await applyPooledOpfsDelta(database.asHandle(), 'portable-order', compatible(), {
+      directories: ['base', 'global', 'pg_wal'],
+      files: [
+        { path: 'global/pg_control', bytes: Uint8Array.of(1) },
+        { path: 'base/value', bytes: Uint8Array.of(2) },
+        { path: 'PG_VERSION', bytes: encoder.encode('18\n') },
+        { path: 'pg_wal/0001', bytes: Uint8Array.of(3) },
+      ],
+      deleted: [],
+    });
+
+    const state = JSON.parse(await database.file('state.json').text()) as {
+      entries: Array<{ path: string; backing?: string }>;
+    };
+    const logicalPath = new Map(
+      state.entries.flatMap((entry) =>
+        entry.backing === undefined ? [] : [[entry.backing, entry.path]],
+      ),
+    );
+    expect(
+      writes.map((path) => {
+        const filename = lastPathSegment(path);
+        return filename === 'state.json' ? filename : logicalPath.get(filename);
+      }),
+    ).toEqual(['pg_wal/0001', 'base/value', 'PG_VERSION', 'global/pg_control', 'state.json']);
   });
 
   it('keeps first-open setup pending when direct handles are unavailable', async () => {
@@ -248,13 +323,16 @@ describe('WASIX pooled OPFS storage', () => {
     const lease = await acquireOpfsStorage('portable-initialization', template(), compatible());
     expect(lease.state).toBe('new');
     const clearChanges = vi.fn();
-    await lease.sync({
-      readDir: async () => [],
-      readFile: async () => new Uint8Array(),
-      changedPaths: () => [],
-      entryType: async () => 'missing',
-      clearChanges,
-    }, 'checkpoint');
+    await lease.sync(
+      {
+        readDir: async () => [],
+        readFile: async () => new Uint8Array(),
+        changedPaths: () => [],
+        entryType: async () => 'missing',
+        clearChanges,
+      },
+      'checkpoint',
+    );
     await lease.close(undefined, 'failed');
 
     const database = await databaseDirectory(root, 'portable-initialization');
@@ -266,9 +344,7 @@ describe('WASIX pooled OPFS storage', () => {
   it('releases the direct host filesystem exactly once when its lease closes', async () => {
     installOpfs();
     const free = vi.fn();
-    const createSync = vi.fn(() =>
-      directDirectory({ readTextFile: async () => '18\n', free }),
-    );
+    const createSync = vi.fn(() => directDirectory({ readTextFile: async () => '18\n', free }));
     const lease = await acquireOpfsStorage('direct-lifecycle', template(), compatible());
     if (lease.createPgdataDirectory === undefined) throw new Error('expected direct OPFS storage');
 
@@ -285,11 +361,7 @@ describe('WASIX pooled OPFS storage', () => {
   it('releases a direct host filesystem when bridge validation fails', async () => {
     installOpfs();
     const free = vi.fn();
-    const lease = await acquireOpfsStorage(
-      'direct-validation-failure',
-      template(),
-      compatible(),
-    );
+    const lease = await acquireOpfsStorage('direct-validation-failure', template(), compatible());
     if (lease.createPgdataDirectory === undefined) throw new Error('expected direct OPFS storage');
 
     await expect(
@@ -308,6 +380,25 @@ describe('WASIX pooled OPFS storage', () => {
     expect(free).toHaveBeenCalledOnce();
   });
 
+  it('reports persisted when access-handle cleanup fails after a clean close sync', async () => {
+    const io: FakeIo = {};
+    installOpfs(io);
+    const free = vi.fn();
+    const lease = await acquireOpfsStorage('close-cleanup', template(), compatible());
+    if (lease.createPgdataDirectory === undefined) throw new Error('expected direct OPFS storage');
+    const directory = await lease.createPgdataDirectory({
+      createSync: () => directDirectory({ readTextFile: async () => '18\n', free }),
+    } as unknown as typeof Directory);
+    await lease.sync(directory, 'checkpoint');
+
+    io.failNextAccessClose = true;
+    await expect(lease.close(directory, 'clean')).rejects.toMatchObject({
+      code: 'unavailable',
+      commitState: 'persisted',
+    });
+    expect(free).toHaveBeenCalledOnce();
+  });
+
   it('does not publish setup completion when its final state commit fails', async () => {
     const io: FakeIo = {};
     installOpfs(io);
@@ -320,11 +411,7 @@ describe('WASIX pooled OPFS storage', () => {
     await expect(pool.sync('checkpoint')).rejects.toThrow('injected state commit failure');
     await pool.close(false);
 
-    const reopened = await DirectOpfsPool.open(
-      'initialization-marker',
-      template(),
-      compatible(),
-    );
+    const reopened = await DirectOpfsPool.open('initialization-marker', template(), compatible());
     expect(reopened.state).toBe('new');
     const restoredControl = open(reopened, 'global/pg_control', FLAG_READ);
     expect(read(reopened, restoredControl, 8)).toEqual(Uint8Array.of(1, 2, 3));
@@ -335,13 +422,10 @@ describe('WASIX pooled OPFS storage', () => {
   it('normalizes direct browser failures and classifies missing backings as corrupt', async () => {
     const io: FakeIo = { syncAccessErrorName: 'QuotaExceededError' };
     const root = installOpfs(io);
-    await expect(
-      acquireOpfsStorage('quota', template(), compatible()),
-    ).rejects.toMatchObject({
-      name: 'WasixStorageError',
-      code: 'unavailable',
-      commitState: 'unchanged',
-    });
+    const fallback = await acquireOpfsStorage('quota', template(), compatible());
+    expect(fallback.state).toBe('new');
+    expect(fallback.createPgdataDirectory).toBeUndefined();
+    await fallback.close(undefined, 'failed');
 
     io.syncAccessErrorName = undefined;
     const pool = await DirectOpfsPool.open('missing-backing', template(), compatible());
@@ -363,9 +447,7 @@ describe('WASIX pooled OPFS storage', () => {
       code: 'corrupt',
       commitState: 'unchanged',
     });
-    await expect(
-      readPooledOpfsDatabase(database.asHandle(), 'missing-backing', compatible()),
-    ).rejects.toMatchObject({
+    await expect(readSnapshot(database, 'missing-backing', compatible())).rejects.toMatchObject({
       name: 'WasixStorageError',
       code: 'corrupt',
       commitState: 'unchanged',
@@ -383,17 +465,9 @@ describe('WASIX pooled OPFS storage', () => {
       deleted: [],
     });
 
-    const snapshot = await readPooledOpfsDatabase(
-      database.asHandle(),
-      'volatile',
-      compatible(),
-    );
+    const snapshot = await readSnapshot(database, 'volatile', compatible());
     expect(snapshot?.files.some(({ path }) => path === 'postmaster.pid')).toBe(false);
-    const reopened = await readPooledOpfsDatabase(
-      database.asHandle(),
-      'volatile',
-      compatible(),
-    );
+    const reopened = await readSnapshot(database, 'volatile', compatible());
     expect(reopened?.files.some(({ path }) => path === 'postmaster.pid')).toBe(false);
   });
 
@@ -407,9 +481,10 @@ describe('WASIX pooled OPFS storage', () => {
     };
     state.physicalIdentity.physicalFormat = 'wasix-pg18-v2';
     await database.file('state.json').replaceText(JSON.stringify(state));
-    await expect(
-      readPooledOpfsDatabase(database.asHandle(), 'guarded', compatible()),
-    ).rejects.toMatchObject({ code: 'incompatible', commitState: 'unchanged' });
+    await expect(readSnapshot(database, 'guarded', compatible())).rejects.toMatchObject({
+      code: 'incompatible',
+      commitState: 'unchanged',
+    });
 
     await database.file('state.json').replaceText(
       JSON.stringify({
@@ -420,9 +495,40 @@ describe('WASIX pooled OPFS storage', () => {
         entries: [{ path: '../escape', type: 'directory' }],
       }),
     );
-    await expect(
-      readPooledOpfsDatabase(database.asHandle(), 'guarded', compatible()),
-    ).rejects.toMatchObject({ code: 'corrupt', commitState: 'unchanged' });
+    await expect(readSnapshot(database, 'guarded', compatible())).rejects.toMatchObject({
+      code: 'corrupt',
+      commitState: 'unchanged',
+    });
+  });
+
+  it('rejects malformed, duplicate, and extended state metadata', async () => {
+    const root = installOpfs();
+    const pool = await DirectOpfsPool.open('malformed-state', template(), compatible());
+    await pool.sync('checkpoint');
+    await pool.close(true);
+    const database = await databaseDirectory(root, 'malformed-state');
+    const state = JSON.parse(await database.file('state.json').text()) as Record<string, unknown>;
+    const physicalIdentity = compatible();
+    const valid = JSON.stringify(state);
+    const malformed = [
+      JSON.stringify({ ...state, physicalIdentity: 'not-an-object' }),
+      JSON.stringify({ ...state, unexpected: true }),
+      valid.replace(
+        '"schema":"oliphaunt-wasix-opfs-pool-v1"',
+        '"schema":"oliphaunt-wasix-opfs-pool-v1","schema":"oliphaunt-wasix-opfs-pool-v1"',
+      ),
+      valid.replace(
+        `"physicalFormat":"${physicalIdentity.physicalFormat}"`,
+        `"physicalFormat":"${physicalIdentity.physicalFormat}","physicalFormat":"${physicalIdentity.physicalFormat}"`,
+      ),
+    ];
+    for (const text of malformed) {
+      await database.file('state.json').replaceText(text);
+      await expect(readSnapshot(database, 'malformed-state', compatible())).rejects.toMatchObject({
+        code: 'corrupt',
+        commitState: 'unchanged',
+      });
+    }
   });
 
   it('does not publish a namespace generation when its state commit fails', async () => {
@@ -462,11 +568,7 @@ describe('WASIX pooled OPFS storage', () => {
         deleted: [],
       }),
     ).rejects.toThrow('injected state commit failure');
-    const snapshot = await readPooledOpfsDatabase(
-      database.asHandle(),
-      'portable-atomic',
-      compatible(),
-    );
+    const snapshot = await readSnapshot(database, 'portable-atomic', compatible());
     expect(snapshot?.files.find(({ path }) => path === 'base/value')?.bytes).toEqual(
       Uint8Array.of(1),
     );
@@ -481,6 +583,55 @@ describe('WASIX pooled OPFS storage', () => {
         compatible(),
       ),
     ).rejects.toMatchObject({ code: 'corrupt', commitState: 'unchanged' });
+  });
+
+  it('replaces an unpublished initialization when restoring', async () => {
+    const origin = installOpfs();
+    const pool = await DirectOpfsPool.open('restore-initializing', template(), compatible());
+    expect(pool.state).toBe('new');
+    await pool.close(false);
+
+    await restoreOpfsStorage('restore-initializing', completeSnapshot(), compatible());
+    const database = await databaseDirectory(origin, 'restore-initializing');
+    const restored = await inspectPooledOpfsDatabase(
+      database.asHandle(),
+      'restore-initializing',
+      compatible(),
+    );
+    expect(restored.state).toBe('existing');
+    expect(restored.snapshot?.directories).toEqual(['global', 'pg_wal']);
+    const restoredFiles = restored.snapshot?.files.map(({ path }) => path);
+    expect(restoredFiles).toHaveLength(2);
+    expect(restoredFiles).toEqual(expect.arrayContaining(['PG_VERSION', 'global/pg_control']));
+  });
+
+  it('leaves an interrupted restore destination retryable', async () => {
+    const io: FakeIo = {};
+    const origin = installOpfs(io);
+    const pool = await DirectOpfsPool.open('restore-retry', template(), compatible());
+    await pool.close(false);
+
+    io.failNextDataCommit = true;
+    await expect(
+      restoreOpfsStorage('restore-retry', completeSnapshot(), compatible()),
+    ).rejects.toThrow('injected OPFS write failure');
+    expect(await collectKeys(await databaseDirectory(origin, 'restore-retry'))).toEqual([]);
+
+    await restoreOpfsStorage('restore-retry', completeSnapshot(), compatible());
+    await expect(
+      readSnapshot(await databaseDirectory(origin, 'restore-retry'), 'restore-retry', compatible()),
+    ).resolves.toBeDefined();
+  });
+
+  it('rejects restoring over a published database', async () => {
+    installOpfs();
+    const pool = await DirectOpfsPool.open('restore-published', template(), compatible());
+    await pool.sync('checkpoint');
+    await pool.close(true);
+
+    await expect(
+      restoreOpfsStorage('restore-published', completeSnapshot(), compatible()),
+    ).rejects.toMatchObject({ code: 'incomplete', commitState: 'unchanged' });
   });
 
   it('preserves a caller-owned empty restore destination after publication fails', async () => {
@@ -510,9 +661,7 @@ describe('WASIX pooled OPFS storage', () => {
     ).rejects.toMatchObject({ code: 'unavailable', commitState: 'persisted' });
 
     const database = await databaseDirectory(origin, 'restore-persisted');
-    await expect(
-      readPooledOpfsDatabase(database.asHandle(), 'restore-persisted', compatible()),
-    ).resolves.toBeDefined();
+    await expect(readSnapshot(database, 'restore-persisted', compatible())).resolves.toBeDefined();
   });
 
   it('removes an SDK-created restore destination after publication fails', async () => {
@@ -547,12 +696,7 @@ function open(pool: DirectOpfsPool, path: string, flags: number): number {
   return requestOk(pool, OP.open, path, new Uint8Array(), 0, 0, flags)[2] as number;
 }
 
-function write(
-  pool: DirectOpfsPool,
-  descriptor: number,
-  bytes: Uint8Array,
-  offset = 0,
-): void {
+function write(pool: DirectOpfsPool, descriptor: number, bytes: Uint8Array, offset = 0): void {
   const result = requestOk(pool, OP.write, '', bytes, descriptor, offset);
   expect(result[2]).toBe(bytes.byteLength);
 }
@@ -588,18 +732,18 @@ function compatible(): WasixPhysicalIdentity {
   return { ...WASIX_PHYSICAL_IDENTITY };
 }
 
-function directDirectory(
-  overrides: Pick<Directory, 'readTextFile' | 'free'>,
-): Directory {
+function directDirectory(overrides: Pick<Directory, 'readTextFile' | 'free'>): Directory {
   return overrides as unknown as Directory;
 }
 
 type FakeIo = {
+  failNextAccessClose?: boolean;
   failNextStateCommit?: boolean;
   failNextDataCommit?: boolean;
   flushes?: string[];
   lockReleaseFailure?: Error;
   syncAccessErrorName?: string;
+  writes?: string[];
 };
 
 function installOpfs(io: FakeIo = {}): FakeDirectory {
@@ -622,7 +766,15 @@ function installOpfs(io: FakeIo = {}): FakeDirectory {
 }
 
 async function databaseDirectory(root: FakeDirectory, name: string): Promise<FakeDirectory> {
-  return (await (await root.getDirectoryHandle(OPFS_POOL_ROOT)).getDirectoryHandle(name));
+  return await (await root.getDirectoryHandle(OPFS_POOL_ROOT)).getDirectoryHandle(name);
+}
+
+async function readSnapshot(
+  database: FakeDirectory,
+  name: string,
+  physicalIdentity: WasixPhysicalIdentity,
+) {
+  return (await inspectPooledOpfsDatabase(database.asHandle(), name, physicalIdentity)).snapshot;
 }
 
 async function collectKeys(directory: FakeDirectory): Promise<string[]> {
@@ -725,6 +877,7 @@ class FakeFile {
           throw new Error('injected OPFS write failure');
         }
         this.#bytes = next;
+        this.#io.writes?.push(this.#path);
       },
       abort: async () => undefined,
     } as unknown as FileSystemWritableFileStream;
@@ -739,6 +892,10 @@ class FakeFile {
     return {
       close: () => {
         this.#open = false;
+        if (this.#io.failNextAccessClose === true) {
+          this.#io.failNextAccessClose = false;
+          throw new Error('injected access-handle close failure');
+        }
       },
       flush: () => {
         this.#io.flushes?.push(this.#path);

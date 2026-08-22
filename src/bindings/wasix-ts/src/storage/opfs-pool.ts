@@ -8,12 +8,12 @@ import {
   type WasixStorageSyncBoundary,
 } from '../storage-provider.js';
 import {
-  splitStorageDeltaDeletes,
-  validateDirectoryEntryName,
-  validateStoredSnapshot,
-  VOLATILE_DATABASE_FILES,
   type StorageDelta,
   type StoredSnapshot,
+  splitStorageDeltaDeletes,
+  VOLATILE_DATABASE_FILES,
+  validateDirectoryEntryName,
+  validateStoredSnapshot,
 } from '../storage-snapshot.js';
 
 export const OPFS_POOL_ROOT = '.oliphaunt-wasix-pool-v1';
@@ -21,7 +21,7 @@ export const OPFS_POOL_ROOT = '.oliphaunt-wasix-pool-v1';
 const STATE_FILE = 'state.json';
 const DATA_DIRECTORY = 'data';
 const STATE_SCHEMA = 'oliphaunt-wasix-opfs-pool-v1';
-const TARGET_SPARES = 32;
+const PREOPENED_FILE_RESERVE = 32;
 const MAX_PARALLEL_IO = 16;
 const TYPE_FILE = 1;
 const TYPE_DIRECTORY = 2;
@@ -100,8 +100,8 @@ type FileRecord = {
   path?: string;
   backing?: string;
   access?: SyncAccessHandle;
-  memory?: Uint8Array;
-  memorySize?: number;
+  staged?: Uint8Array;
+  stagedSize?: number;
   references: number;
   dirty: boolean;
 };
@@ -202,7 +202,11 @@ export class DirectOpfsPool {
         pool.#closeHandles(false);
       } catch (closeError) {
         const primary = error instanceof Error ? error : new Error(describeError(error));
-        throw composeWasixStorageFailure(primary, 'direct OPFS handle cleanup also failed', closeError);
+        throw composeWasixStorageFailure(
+          primary,
+          'direct OPFS handle cleanup also failed',
+          closeError,
+        );
       }
       throw error;
     }
@@ -213,7 +217,7 @@ export class DirectOpfsPool {
     if (boundary === 'checkpoint' || boundary === 'close') this.#flushAll();
     else this.#flushWal();
 
-    await this.#materializeMemoryFiles();
+    await this.#materializeStagedFiles();
     const completesInitialization = !this.#initializationComplete && boundary === 'checkpoint';
     if (this.#namespaceDirty || completesInitialization) {
       // A namespace publication makes newly mapped bytes reachable. Reuse the
@@ -232,7 +236,12 @@ export class DirectOpfsPool {
       if (completesInitialization) this.#initializationComplete = true;
     }
     this.#publishReclaims();
-    if (boundary !== 'close') await this.#maintainSpares();
+    if (boundary !== 'close') {
+      // The boundary is already durable. Spare replenishment is only an
+      // optimization for the next synchronous file-creation burst and must
+      // never turn a successful publication into an ambiguous failure.
+      await this.#maintainSpares().catch(() => undefined);
+    }
   }
 
   async close(clean: boolean): Promise<void> {
@@ -373,7 +382,7 @@ export class DirectOpfsPool {
     const moved = [...this.#entries.entries()]
       .filter(([path]) => path === from || path.startsWith(`${from}/`))
       .sort(([left], [right]) => left.length - right.length);
-    for (const [path, entry] of moved) this.#entries.delete(path);
+    for (const [path] of moved) this.#entries.delete(path);
     for (const [path, entry] of moved) {
       const next = path === from ? to : `${to}${path.slice(from.length)}`;
       this.#entries.set(next, entry);
@@ -414,7 +423,10 @@ export class DirectOpfsPool {
     }
     const descriptor = this.#nextDescriptor++;
     entry.record.references += 1;
-    this.#descriptors.set(descriptor, { record: entry.record, append: (flags & FLAG_APPEND) !== 0 });
+    this.#descriptors.set(descriptor, {
+      record: entry.record,
+      append: (flags & FLAG_APPEND) !== 0,
+    });
     return [RESULT.ok, 0, descriptor, this.#recordSize(entry.record)];
   }
 
@@ -430,8 +442,8 @@ export class DirectOpfsPool {
     const record = this.#descriptor(descriptor).record;
     const available = Math.max(0, Math.min(output.byteLength, this.#recordSize(record) - offset));
     if (available === 0) return [RESULT.ok, 0, 0, 0];
-    if (record.memory !== undefined) {
-      output.set(record.memory.subarray(offset, offset + available));
+    if (record.staged !== undefined) {
+      output.set(record.staged.subarray(offset, offset + available));
     } else {
       const read = requireAccess(record).read(output.subarray(0, available), { at: offset });
       validateProgress(read, available, 'read');
@@ -446,19 +458,14 @@ export class DirectOpfsPool {
     const record = state.record;
     const writeOffset = state.append ? this.#recordSize(record) : offset;
     this.#markDirty(record);
-    if (record.memory !== undefined) {
+    if (record.staged !== undefined) {
       const previousSize = this.#recordSize(record);
       const needed = writeOffset + bytes.byteLength;
       if (!Number.isSafeInteger(needed)) throw invalid();
-      if (needed > record.memory.byteLength) {
-        const capacity = Math.max(needed, record.memory.byteLength * 2, 8 * 1024);
-        const grown = new Uint8Array(capacity);
-        grown.set(record.memory.subarray(0, previousSize));
-        record.memory = grown;
-      }
-      if (writeOffset > previousSize) record.memory.fill(0, previousSize, writeOffset);
-      record.memory.set(bytes, writeOffset);
-      record.memorySize = Math.max(previousSize, needed);
+      this.#ensureStagedCapacity(record, needed, previousSize);
+      if (writeOffset > previousSize) record.staged.fill(0, previousSize, writeOffset);
+      record.staged.set(bytes, writeOffset);
+      record.stagedSize = Math.max(previousSize, needed);
     } else {
       const written = requireAccess(record).write(bytes, { at: writeOffset });
       validateProgress(written, bytes.byteLength, 'write');
@@ -481,28 +488,38 @@ export class DirectOpfsPool {
   }
 
   #recordSize(record: FileRecord): number {
-    return record.memory === undefined
+    return record.staged === undefined
       ? requireAccess(record).getSize()
-      : (record.memorySize ?? record.memory.byteLength);
+      : (record.stagedSize ?? record.staged.byteLength);
   }
 
   #setRecordSize(record: FileRecord, size: number): void {
     if (!Number.isSafeInteger(size) || size < 0) throw invalid();
     this.#markDirty(record);
-    if (record.memory !== undefined) {
+    if (record.staged !== undefined) {
       const previousSize = this.#recordSize(record);
-      if (size > record.memory.byteLength) {
-        const capacity = Math.max(size, record.memory.byteLength * 2, 8 * 1024);
-        const grown = new Uint8Array(capacity);
-        grown.set(record.memory.subarray(0, previousSize));
-        record.memory = grown;
-      }
+      this.#ensureStagedCapacity(record, size, previousSize);
       if (size !== previousSize) {
-        record.memory.fill(0, Math.min(size, previousSize), Math.max(size, previousSize));
+        record.staged.fill(0, Math.min(size, previousSize), Math.max(size, previousSize));
       }
-      record.memorySize = size;
+      record.stagedSize = size;
     } else {
       requireAccess(record).truncate(size);
+    }
+  }
+
+  #ensureStagedCapacity(record: FileRecord, size: number, previousSize: number): void {
+    const staged = record.staged;
+    if (staged === undefined || size <= staged.byteLength) return;
+    try {
+      const grown = new Uint8Array(Math.max(size, staged.byteLength * 2, 8 * 1024));
+      grown.set(staged.subarray(0, previousSize));
+      record.staged = grown;
+    } catch (error) {
+      throw new DOMException(
+        `could not stage ${size} bytes: ${describeError(error)}`,
+        'QuotaExceededError',
+      );
     }
   }
 
@@ -512,7 +529,10 @@ export class DirectOpfsPool {
   }
 
   #flushRecord(record: FileRecord): void {
-    if (!record.dirty || record.memory !== undefined) return;
+    // A staged file cannot be flushed synchronously because allocating its
+    // OPFS backing is asynchronous. It remains dirty until the mandatory host
+    // boundary materializes and flushes it before publishing the namespace.
+    if (!record.dirty || record.staged !== undefined) return;
     requireAccess(record).flush();
     record.dirty = false;
     this.#dirty.delete(record);
@@ -560,15 +580,15 @@ export class DirectOpfsPool {
       this.#markDirty(record);
       return record;
     }
-    const memory: FileRecord = {
+    const staged: FileRecord = {
       path,
-      memory: new Uint8Array(),
-      memorySize: 0,
+      staged: new Uint8Array(),
+      stagedSize: 0,
       references: 0,
       dirty: false,
     };
-    this.#records.add(memory);
-    return memory;
+    this.#records.add(staged);
+    return staged;
   }
 
   #detach(record: FileRecord): void {
@@ -577,7 +597,7 @@ export class DirectOpfsPool {
   }
 
   #queueReclaim(record: FileRecord): void {
-    if (record.memory !== undefined) {
+    if (record.staged !== undefined) {
       this.#dirty.delete(record);
       this.#records.delete(record);
       return;
@@ -630,7 +650,9 @@ export class DirectOpfsPool {
 
   async #restoreSpares(): Promise<void> {
     const referenced = new Set(
-      [...this.#records].flatMap((record) => (record.backing === undefined ? [] : [record.backing])),
+      [...this.#records].flatMap((record) =>
+        record.backing === undefined ? [] : [record.backing],
+      ),
     );
     const unused: string[] = [];
     for await (const name of this.#data.keys()) {
@@ -641,7 +663,7 @@ export class DirectOpfsPool {
       }
       if (!referenced.has(name)) unused.push(name);
     }
-    const keep = unused.sort().slice(0, TARGET_SPARES);
+    const keep = unused.sort().slice(0, PREOPENED_FILE_RESERVE);
     await parallelMap(keep, async (backing) => {
       const file = (await this.#data.getFileHandle(backing)) as SyncFileHandle;
       const access = await createAccess(file);
@@ -649,50 +671,88 @@ export class DirectOpfsPool {
       this.#records.add(record);
       this.#spares.push(record);
     });
-    await parallelMap(unused.slice(TARGET_SPARES), (backing) => this.#data.removeEntry(backing));
+    await parallelMap(unused.slice(PREOPENED_FILE_RESERVE), (backing) =>
+      this.#data.removeEntry(backing),
+    );
   }
 
   async #maintainSpares(): Promise<void> {
-    const missing = TARGET_SPARES - this.#spares.length;
+    const missing = PREOPENED_FILE_RESERVE - this.#spares.length;
     if (missing <= 0) return;
     await parallelCreate(missing, async () => {
-      const backing = newBackingName();
-      const file = (await this.#data.getFileHandle(backing, { create: true })) as SyncFileHandle;
-      const access = await createAccess(file);
+      const { backing, access } = await this.#createBacking();
       const record = { backing, access, references: 0, dirty: false } satisfies FileRecord;
       this.#records.add(record);
       this.#spares.push(record);
     });
   }
 
-  async #materializeMemoryFiles(): Promise<void> {
-    const memory = [...this.#records].filter(
-      (record) => record.memory !== undefined && record.path !== undefined,
-    );
-    await parallelMap(memory, async (record) => {
-      const bytes = (record.memory as Uint8Array).subarray(0, this.#recordSize(record));
-      const backing = newBackingName();
-      let access: SyncAccessHandle | undefined;
+  async #materializeStagedFiles(): Promise<void> {
+    const staged = [...this.#records]
+      .filter((record) => record.staged !== undefined && record.path !== undefined)
+      .sort(compareFlushOrder);
+    await parallelMap(staged, async (record) => {
+      const bytes = record.staged;
+      if (bytes === undefined) throw new Error('staged OPFS record lost its bytes');
+      const allocation = await this.#createBacking();
       try {
-        const file = (await this.#data.getFileHandle(backing, { create: true })) as SyncFileHandle;
-        access = await createAccess(file);
-        writeComplete(access, bytes, 0);
-        access.flush();
+        writeComplete(allocation.access, bytes.subarray(0, this.#recordSize(record)), 0);
+        allocation.access.flush();
       } catch (error) {
-        try {
-          access?.close();
-        } finally {
-          await this.#data.removeEntry(backing).catch(() => undefined);
-        }
-        throw error;
+        throw await this.#discardBacking(allocation.backing, allocation.access, error);
       }
-      record.backing = backing;
-      record.access = access;
-      record.memory = undefined;
-      record.memorySize = undefined;
+      record.backing = allocation.backing;
+      record.access = allocation.access;
+      record.staged = undefined;
+      record.stagedSize = undefined;
       record.dirty = false;
       this.#dirty.delete(record);
     });
+  }
+
+  async #createBacking(): Promise<{ backing: string; access: SyncAccessHandle }> {
+    const backing = newBackingName();
+    let access: SyncAccessHandle | undefined;
+    try {
+      const file = (await this.#data.getFileHandle(backing, { create: true })) as SyncFileHandle;
+      access = await createAccess(file);
+      return { backing, access };
+    } catch (error) {
+      throw await this.#discardBacking(backing, access, error);
+    }
+  }
+
+  async #discardBacking(
+    backing: string,
+    access: SyncAccessHandle | undefined,
+    error: unknown,
+  ): Promise<Error> {
+    let failure = error instanceof Error ? error : new Error(describeError(error));
+    try {
+      access?.close();
+    } catch (cleanupError) {
+      const primaryName = failure.name;
+      failure = composeWasixStorageFailure(
+        failure,
+        'backing handle cleanup also failed',
+        cleanupError,
+      );
+      failure.name = primaryName;
+    }
+    try {
+      await this.#data.removeEntry(backing);
+    } catch (cleanupError) {
+      if (errorName(cleanupError) !== 'NotFoundError') {
+        const primaryName = failure.name;
+        failure = composeWasixStorageFailure(
+          failure,
+          'backing file cleanup also failed',
+          cleanupError,
+        );
+        failure.name = primaryName;
+      }
+    }
+    return failure;
   }
 
   async #removeVolatileEntries(): Promise<void> {
@@ -775,14 +835,6 @@ export class DirectOpfsPool {
   #assertOpen(): void {
     if (this.#closed) throw new Error(`OPFS pool ${JSON.stringify(this.#name)} is closed`);
   }
-}
-
-export async function readPooledOpfsDatabase(
-  database: FileSystemDirectoryHandle,
-  name: string,
-  physicalIdentity: WasixPhysicalIdentity,
-): Promise<StoredSnapshot | undefined> {
-  return (await inspectPooledOpfsDatabase(database, name, physicalIdentity)).snapshot;
 }
 
 export async function inspectPooledOpfsDatabase(
@@ -879,7 +931,9 @@ export async function applyPooledOpfsDelta(
   validateDeltaPaths(delta, name);
   const data = await database.getDirectoryHandle(DATA_DIRECTORY, { create: true });
   const existing = await readPoolState(database, name, physicalIdentity);
-  const entries = new Map<string, StoredEntry>(existing?.entries.map((entry) => [entry.path, entry]));
+  const entries = new Map<string, StoredEntry>(
+    existing?.entries.map((entry) => [entry.path, entry]),
+  );
   await pruneUnreferencedData(data, entries.values()).catch(() => undefined);
   const deletes = splitStorageDeltaDeletes(delta);
   for (const path of deletes.replacements) removeStoredPath(entries, path);
@@ -902,7 +956,9 @@ export async function applyPooledOpfsDelta(
   await pruneUnreferencedData(data, entries.values()).catch(() => undefined);
 }
 
-export async function openPooledDatabaseDirectory(name: string): Promise<FileSystemDirectoryHandle> {
+export async function openPooledDatabaseDirectory(
+  name: string,
+): Promise<FileSystemDirectoryHandle> {
   const root = await openPooledOpfsRoot();
   return root.getDirectoryHandle(name, { create: true });
 }
@@ -967,7 +1023,8 @@ async function readPoolState(
   } catch (error) {
     if (errorName(error) === 'NotFoundError') {
       for await (const entry of database.keys()) {
-        if (entry !== DATA_DIRECTORY) throw corrupt(name, 'contains storage without state metadata');
+        if (entry !== DATA_DIRECTORY)
+          throw corrupt(name, 'contains storage without state metadata');
       }
       return undefined;
     }
@@ -1161,7 +1218,9 @@ function validateStoredPath(path: string): void {
 function segments(path: string): string[] {
   if (path === '') return [];
   const parts = path.split('/');
-  if (parts.some((part) => part.length === 0 || part === '.' || part === '..' || part.includes('\0'))) {
+  if (
+    parts.some((part) => part.length === 0 || part === '.' || part === '..' || part.includes('\0'))
+  ) {
     throw invalid();
   }
   return parts;
@@ -1200,8 +1259,8 @@ function requireAccess(record: FileRecord): SyncAccessHandle {
 }
 
 function readComplete(record: FileRecord, bytes: Uint8Array, offset: number): void {
-  if (record.memory !== undefined) {
-    bytes.set(record.memory.subarray(offset, offset + bytes.byteLength));
+  if (record.staged !== undefined) {
+    bytes.set(record.staged.subarray(offset, offset + bytes.byteLength));
     return;
   }
   const access = requireAccess(record);
@@ -1228,8 +1287,10 @@ function isWalRecord(record: FileRecord): boolean {
 }
 
 function compareFlushOrder(left: FileRecord, right: FileRecord): number {
-  return postgresRank(left.path ?? '') - postgresRank(right.path ?? '') ||
-    (left.path ?? '').localeCompare(right.path ?? '');
+  return (
+    postgresRank(left.path ?? '') - postgresRank(right.path ?? '') ||
+    (left.path ?? '').localeCompare(right.path ?? '')
+  );
 }
 
 function comparePostgresPaths(left: { path: string }, right: { path: string }): number {
@@ -1280,17 +1341,24 @@ function encodeDirectoryPage(
 
 function classifyError(error: unknown): number {
   switch (errorName(error)) {
-    case 'NotFoundError': return RESULT.notFound;
-    case 'TypeMismatchError': return RESULT.notFile;
+    case 'NotFoundError':
+      return RESULT.notFound;
+    case 'TypeMismatchError':
+      return RESULT.notFile;
     case 'NoModificationAllowedError':
     case 'NotAllowedError':
-    case 'SecurityError': return RESULT.permission;
+    case 'SecurityError':
+      return RESULT.permission;
     case 'InvalidStateError':
     case 'DataError':
-    case 'InvalidModificationError': return RESULT.invalid;
-    case 'QuotaExceededError': return RESULT.storageFull;
-    case 'NotSupportedError': return RESULT.unsupported;
-    case 'TimeoutError': return RESULT.timeout;
+    case 'InvalidModificationError':
+      return RESULT.invalid;
+    case 'QuotaExceededError':
+      return RESULT.storageFull;
+    case 'NotSupportedError':
+      return RESULT.unsupported;
+    case 'TimeoutError':
+      return RESULT.timeout;
     default:
       if (error instanceof ExistsError) return RESULT.exists;
       if (error instanceof DirectoryNotEmptyError) return RESULT.directoryNotEmpty;
@@ -1305,14 +1373,26 @@ class NotFileError extends Error {}
 class DirectoryNotEmptyError extends Error {}
 class ExistsError extends Error {}
 
-function notDirectory(): NotDirectoryError { return new NotDirectoryError(); }
-function notFile(): NotFileError { return new NotFileError(); }
-function notFound(): DOMException { return new DOMException('entry not found', 'NotFoundError'); }
-function invalid(): DOMException { return new DOMException('invalid OPFS bridge input', 'DataError'); }
+function notDirectory(): NotDirectoryError {
+  return new NotDirectoryError();
+}
+function notFile(): NotFileError {
+  return new NotFileError();
+}
+function notFound(): DOMException {
+  return new DOMException('entry not found', 'NotFoundError');
+}
+function invalid(): DOMException {
+  return new DOMException('invalid OPFS bridge input', 'DataError');
+}
 
 function validateProgress(transferred: number, available: number, operation: string): void {
-  if (!Number.isSafeInteger(transferred) || transferred < 0 || transferred > available ||
-      (available > 0 && transferred === 0)) {
+  if (
+    !Number.isSafeInteger(transferred) ||
+    transferred < 0 ||
+    transferred > available ||
+    (available > 0 && transferred === 0)
+  ) {
     throw new Error(`OPFS synchronous ${operation} made invalid progress`);
   }
 }
@@ -1325,7 +1405,8 @@ async function requireOpfsRoot(): Promise<FileSystemDirectoryHandle> {
   const storage = globalThis.navigator?.storage;
   if (storage?.getDirectory === undefined) {
     throw new WasixStorageError('OPFS is unavailable in this @oliphaunt/wasix-ts host', {
-      code: 'unavailable', commitState: 'unchanged',
+      code: 'unavailable',
+      commitState: 'unchanged',
     });
   }
   return storage.getDirectory();
@@ -1361,13 +1442,20 @@ async function parallelCreate<Output>(
   count: number,
   operation: () => Promise<Output>,
 ): Promise<Output[]> {
-  return parallelMap(Array.from({ length: count }, (_, index) => index), operation);
+  return parallelMap(
+    Array.from({ length: count }, (_, index) => index),
+    operation,
+  );
 }
 
-function poolLabel(name: string): string { return `OPFS storage ${JSON.stringify(name)}`; }
+function poolLabel(name: string): string {
+  return `OPFS storage ${JSON.stringify(name)}`;
+}
 function corrupt(name: string, detail: string, cause?: unknown): WasixStorageError {
   return new WasixStorageError(`${poolLabel(name)} ${detail}`, {
-    code: 'corrupt', commitState: 'unchanged', ...(cause === undefined ? {} : { cause }),
+    code: 'corrupt',
+    commitState: 'unchanged',
+    ...(cause === undefined ? {} : { cause }),
   });
 }
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -1380,4 +1468,6 @@ function hasExactKeys(value: Record<string, unknown>, expected: readonly string[
 function errorName(error: unknown): string {
   return typeof error === 'object' && error !== null && 'name' in error ? String(error.name) : '';
 }
-function describeError(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}

@@ -1,6 +1,16 @@
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { access, cp, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import {
+  access,
+  cp,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { arch, cpus, hostname, platform, release, tmpdir, totalmem } from 'node:os';
@@ -44,17 +54,15 @@ const git = qualifyingBenchmark ? await gitProvenance() : undefined;
 const benchmarkOutput = qualifyingBenchmark
   ? resolve(argumentValue('--output') ?? defaultBenchmarkOutput(git.commit))
   : undefined;
-if (!qualifyingBenchmark &&
-    (argumentValue('--config') !== undefined || argumentValue('--output') !== undefined)) {
+if (
+  !qualifyingBenchmark &&
+  (argumentValue('--config') !== undefined || argumentValue('--output') !== undefined)
+) {
   throw new Error('--config and --output require --benchmark');
 }
 if (
   packageOnly &&
-  (benchmark ||
-    quickBenchmark ||
-    diagnosticOpfsBenchmark ||
-    process.argv.includes('--pg-uuidv7') ||
-    process.argv.includes('--postgis-worker'))
+  (benchmark || process.argv.includes('--pg-uuidv7') || process.argv.includes('--postgis-worker'))
 ) {
   throw new Error('--package-only cannot be combined with benchmark or extension-canary options');
 }

@@ -1,8 +1,8 @@
 import pgtap from '@oliphaunt/extension-pgtap-wasix';
 import Oliphaunt, {
+  type OliphauntDatabase,
   PostgresError,
   type QueryParam,
-  type OliphauntDatabase,
   type WasixExtensionDescriptor,
   type WasixStorage,
   WasixStorageError,
@@ -90,6 +90,7 @@ try {
     }
     await database.close();
     const opfsAnswers = await expectOpfsPersistence(extensions);
+    const opfsCrash = await expectOpfsCrashRecovery();
     const postgisVersion = postgisWorkerCanary ? await expectLargePostgisWorkerModule() : undefined;
     status.textContent = 'Browser smoke passed.';
     output.textContent = JSON.stringify({
@@ -99,6 +100,8 @@ try {
       startupSqlstate: '3D000',
       directWorkers: 0,
       opfsTransport: 'direct',
+      opfsCrashAnswer: opfsCrash.answer,
+      opfsCrashRelations: opfsCrash.relations,
       ...(firstUuid === undefined ? {} : { pg_uuidv7: firstUuid }),
       ...(postgisVersion === undefined ? {} : { postgis: postgisVersion }),
     });
@@ -429,23 +432,29 @@ async function expectDirectOpfsTransport(name: string): Promise<void> {
   });
   try {
     const response = await new Promise<
-      | { ok: true; transport: 'direct' | 'portable' }
-      | { ok: false; error: string }
+      { ok: true; transport: 'direct' | 'portable' } | { ok: false; error: string }
     >((resolve, reject) => {
-      const timeout = setTimeout(
-        () => reject(new Error('OPFS transport probe timed out')),
-        10_000,
+      const timeout = setTimeout(() => reject(new Error('OPFS transport probe timed out')), 10_000);
+      worker.addEventListener(
+        'error',
+        (event) => {
+          clearTimeout(timeout);
+          reject(event.error ?? new Error(event.message));
+        },
+        { once: true },
       );
-      worker.addEventListener('error', (event) => {
-        clearTimeout(timeout);
-        reject(event.error ?? new Error(event.message));
-      }, { once: true });
-      worker.addEventListener('message', (event: MessageEvent) => {
-        clearTimeout(timeout);
-        resolve(event.data as
-          | { ok: true; transport: 'direct' | 'portable' }
-          | { ok: false; error: string });
-      }, { once: true });
+      worker.addEventListener(
+        'message',
+        (event: MessageEvent) => {
+          clearTimeout(timeout);
+          resolve(
+            event.data as
+              | { ok: true; transport: 'direct' | 'portable' }
+              | { ok: false; error: string },
+          );
+        },
+        { once: true },
+      );
       worker.postMessage({ name });
     });
     if (!response.ok) throw new Error(`OPFS transport probe failed: ${response.error}`);
@@ -454,6 +463,64 @@ async function expectDirectOpfsTransport(name: string): Promise<void> {
     }
   } finally {
     worker.terminate();
+  }
+}
+
+async function expectOpfsCrashRecovery(): Promise<Readonly<{ answer: string; relations: string }>> {
+  const name = `browser-crash-${crypto.randomUUID()}`;
+  const worker = new Worker(new URL('./opfs-crash-probe-worker.ts', import.meta.url), {
+    type: 'module',
+  });
+  try {
+    const response = await new Promise<
+      Readonly<{ ok: true }> | Readonly<{ ok: false; error: string }>
+    >((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error('OPFS crash-recovery setup timed out')),
+        60_000,
+      );
+      worker.addEventListener(
+        'error',
+        (event) => {
+          clearTimeout(timeout);
+          reject(event.error ?? new Error(event.message));
+        },
+        { once: true },
+      );
+      worker.addEventListener(
+        'message',
+        (event: MessageEvent) => {
+          clearTimeout(timeout);
+          resolve(event.data as Readonly<{ ok: true }> | Readonly<{ ok: false; error: string }>);
+        },
+        { once: true },
+      );
+      worker.postMessage({ name });
+    });
+    if (!response.ok) throw new Error(`OPFS crash-recovery setup failed: ${response.error}`);
+  } finally {
+    worker.terminate();
+  }
+
+  const database = await Oliphaunt.open({ execution: 'worker', storage: opfs(name) });
+  try {
+    const result = await database.query('SELECT answer FROM opfs_crash_probe');
+    const answer = result.getText(0, 'answer');
+    if (answer !== '73') {
+      throw new Error(`OPFS crash recovery returned an unexpected answer: ${answer}`);
+    }
+    const relationResult = await database.query(`
+      SELECT count(*)::text AS count
+      FROM pg_class
+      WHERE relname LIKE 'opfs_crash_burst_%'
+    `);
+    const relations = relationResult.getText(0, 'count');
+    if (relations !== '48') {
+      throw new Error(`OPFS crash recovery returned an unexpected relation count: ${relations}`);
+    }
+    return { answer, relations };
+  } finally {
+    await database.close();
   }
 }
 
