@@ -140,7 +140,8 @@ try {
     socket.addEventListener('error', rejectOpen, { once: true });
   });
 
-  const cdp = createCdpClient(socket);
+  const browserFailures = [];
+  const cdp = createCdpClient(socket, (failure) => browserFailures.push(failure));
   await Promise.all([
     cdp.send('Runtime.enable'),
     cdp.send('Page.enable'),
@@ -160,6 +161,9 @@ try {
   while (Date.now() < deadline) {
     assertRunning(vite);
     assertRunning(browser);
+    if (browserFailures.length > 0) {
+      throw new Error(`browser smoke observed an unhandled exception:\n${browserFailures.at(-1)}`);
+    }
     const evaluated = await cdp.send('Runtime.evaluate', {
       expression:
         "JSON.stringify({state:document.documentElement.dataset.oliphauntSmoke??'',status:document.querySelector('#status')?.textContent??'',output:document.querySelector('#output')?.textContent??''})",
@@ -448,7 +452,7 @@ function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
-function createCdpClient(webSocket) {
+function createCdpClient(webSocket, recordFailure) {
   let nextId = 1;
   const pending = new Map();
 
@@ -468,7 +472,9 @@ function createCdpClient(webSocket) {
     }
 
     if (message.method === 'Runtime.exceptionThrown') {
-      console.error(`browser exception: ${message.params.exceptionDetails.text}`);
+      const failure = formatCdpException(message.params.exceptionDetails);
+      recordFailure(failure);
+      console.error(`browser exception: ${failure}`);
     } else if (message.method === 'Runtime.consoleAPICalled') {
       const values = message.params.args.map(
         (argument) => argument.value ?? argument.description ?? argument.type,
@@ -494,6 +500,14 @@ function createCdpClient(webSocket) {
   }
 
   return { send };
+}
+
+function formatCdpException(details) {
+  const description = details.exception?.description ?? details.exception?.value ?? details.text;
+  const location = details.url
+    ? `${details.url}:${Number(details.lineNumber ?? 0) + 1}:${Number(details.columnNumber ?? 0) + 1}`
+    : undefined;
+  return [description, location].filter(Boolean).join('\n');
 }
 
 function startChild(command, args, label) {

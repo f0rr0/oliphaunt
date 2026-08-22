@@ -98,8 +98,13 @@ def cxxBuildRoot = configuredCxxBuildRoot == null || configuredCxxBuildRoot.toSt
 def localKotlinSdkProject = findProject(":oliphaunt")
 def kotlinSdkDependency = (project.findProperty("liboliphauntKotlinSdkDependency") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_KOTLIN_SDK_DEPENDENCY"))?.toString()
   ?: "dev.oliphaunt:oliphaunt-android:${kotlinSdkVersion}"
+def kotlinSdkAar = (project.findProperty("liboliphauntKotlinSdkAar") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_KOTLIN_SDK_AAR"))?.toString()
+  ?.trim()
 def kotlinSdkMavenRepository = (oliphauntProperty("oliphauntKotlinSdkMavenRepository") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_KOTLIN_SDK_MAVEN_REPOSITORY"))?.toString()
   ?.trim()
+if (kotlinSdkAar != null && !kotlinSdkAar.isBlank() && !file(kotlinSdkAar).isFile()) {
+  throw new GradleException("Configured Oliphaunt Kotlin SDK AAR does not exist: ${kotlinSdkAar}")
+}
 def boolOption = { String propertyName, String environmentName, boolean defaultValue ->
   def raw = oliphauntProperty(propertyName) ?: System.getenv(environmentName)
   if (raw == null || raw.toString().isBlank()) {
@@ -818,6 +823,11 @@ dependencies {
   implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2"
   if (localKotlinSdkProject != null) {
     implementation localKotlinSdkProject
+  } else if (kotlinSdkAar != null && !kotlinSdkAar.isBlank()) {
+    // Candidate artifacts intentionally reuse the release coordinate. Consume
+    // the staged AAR directly so an already-published artifact with the same
+    // coordinate cannot win through another Gradle repository or cache.
+    implementation files(kotlinSdkAar)
   } else {
     implementation kotlinSdkDependency
   }

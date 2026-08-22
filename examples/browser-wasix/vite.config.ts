@@ -83,7 +83,15 @@ function wasixAssets(): Plugin {
         descriptorPromises.set(packageName, descriptorPromise);
       }
       const descriptor = await descriptorPromise;
-      return `export default ${JSON.stringify(descriptor)};`;
+      const namedRuntimeExports =
+        packageName === '@oliphaunt/liboliphaunt-wasix'
+          ? 'export const POSTGRES_MAJOR = 18;\nexport const PHYSICAL_FORMAT = "wasix-pg18-v1";\n'
+          : '';
+      return (
+        namedRuntimeExports +
+        `const descriptor = Object.freeze(${JSON.stringify(descriptor)});\n` +
+        'export { descriptor };\nexport default descriptor;\n'
+      );
     },
     configureServer(server) {
       server.middlewares.use('/wasix-assets', async (request, response, next) => {

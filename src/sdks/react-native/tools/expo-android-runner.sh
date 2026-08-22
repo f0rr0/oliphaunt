@@ -577,6 +577,16 @@ kotlin_sdk_dependency_from_maven_repo() {
   printf 'dev.oliphaunt:oliphaunt-android:%s\n' "$version"
 }
 
+kotlin_sdk_aar_from_maven_repo() {
+  local dependency version aar
+  dependency="$(kotlin_sdk_dependency_from_maven_repo)"
+  version="${dependency##*:}"
+  aar="$local_maven_repo/dev/oliphaunt/oliphaunt-android/$version/oliphaunt-android-$version.aar"
+  [ -f "$aar" ] ||
+    fail "Kotlin SDK Maven repository is missing candidate AAR: $aar"
+  printf '%s\n' "$aar"
+}
+
 publish_local_kotlin_sdk() {
   local runtime_resources="$1"
   local jni_libs="$2"
@@ -627,10 +637,11 @@ build_apk() {
     gradle_jvmargs="$(oliphaunt_android_gradle_jvmargs)"
     gradle_max_workers="$(oliphaunt_android_gradle_max_workers)"
     node_binary="$(node -p 'process.execPath')"
-    local selected_extensions extension_archives_root kotlin_sdk_dependency android_link_evidence module_stems
+    local selected_extensions extension_archives_root kotlin_sdk_dependency kotlin_sdk_aar android_link_evidence module_stems
     selected_extensions="$(normalize_mobile_extensions)"
     module_stems="$(oliphaunt_dev_mobile_module_stems_for_selection "$selected_extensions")"
     kotlin_sdk_dependency="$(kotlin_sdk_dependency_from_maven_repo)"
+    kotlin_sdk_aar="$(kotlin_sdk_aar_from_maven_repo)"
     extension_archives_root="$runtime_resources/oliphaunt/static-registry/archives"
     if [ ! -d "$extension_archives_root" ]; then
       extension_archives_root="$(android_build_root_for_abi)/out"
@@ -652,6 +663,7 @@ build_apk() {
       OLIPHAUNT_REACT_NATIVE_ANDROID_LINK_EVIDENCE_FILE="$android_link_evidence" \
       OLIPHAUNT_REACT_NATIVE_KOTLIN_SDK_MAVEN_REPOSITORY="$local_maven_repo" \
       OLIPHAUNT_REACT_NATIVE_KOTLIN_SDK_DEPENDENCY="$kotlin_sdk_dependency" \
+      OLIPHAUNT_REACT_NATIVE_KOTLIN_SDK_AAR="$kotlin_sdk_aar" \
       "$example_dir/android/gradlew" \
       --project-dir "$example_dir/android" \
       "-Dorg.gradle.jvmargs=$gradle_jvmargs" \
@@ -662,6 +674,7 @@ build_apk() {
       "-PreactNativeArchitectures=$android_abi" \
       "-PoliphauntKotlinSdkMavenRepository=$local_maven_repo" \
       "-PliboliphauntKotlinSdkDependency=$kotlin_sdk_dependency" \
+      "-PliboliphauntKotlinSdkAar=$kotlin_sdk_aar" \
       "-PoliphauntReactNativePackageRuntime=true" \
       "-PoliphauntRuntimeResourcesDir=$runtime_resources" \
       "-PoliphauntAndroidJniLibsDir=$jni_libs" \

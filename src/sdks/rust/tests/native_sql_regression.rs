@@ -16,8 +16,16 @@ struct BehaviorContract {
     id: String,
     sentinel: String,
     statements: Vec<String>,
+    expected_error: BehaviorExpectedError,
+    recovery_statements: Vec<String>,
     assertion: BehaviorAssertion,
     cleanup_statements: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct BehaviorExpectedError {
+    sql: String,
+    sqlstate: String,
 }
 
 #[derive(Deserialize)]
@@ -86,9 +94,20 @@ fn run_embedded(builder: OliphauntBuilder) -> Result<()> {
     );
     let contract: BehaviorContract =
         serde_json::from_str(&source).expect("shared PostgreSQL behavior contract is valid JSON");
-    assert_eq!(contract.schema_version, 1);
+    assert_eq!(contract.schema_version, 2);
     assert_eq!(contract.id, "postgres-18-core-behavior");
     for statement in &contract.statements {
+        block_on(db.execute(statement))?;
+    }
+    let expected = block_on(db.execute(&contract.expected_error.sql)).unwrap_err();
+    let Error::Postgres(postgres) = expected else {
+        panic!("expected PostgreSQL behavior-contract error, got {expected:?}");
+    };
+    assert_eq!(
+        postgres.sqlstate.as_deref(),
+        Some(contract.expected_error.sqlstate.as_str())
+    );
+    for statement in &contract.recovery_statements {
         block_on(db.execute(statement))?;
     }
     let assertion = block_on(db.query(&contract.assertion.sql))?;

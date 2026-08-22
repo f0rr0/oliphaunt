@@ -40,7 +40,10 @@ pathlib.Path(sys.argv[1]).write_text(str(server.server_address[1]), encoding="as
 server.serve_forever()
 PY
 listener_pid="$!"
-listener_deadline_ms="$(( $(fresh_supervision_now_ms) + 30000 ))"
+# Release qualification runs this dependency beside the Rust runtime build on
+# three-core macOS runners. Keep fixture startup bounded, but allow for the
+# listener process to be descheduled under that intentional contention.
+listener_deadline_ms="$(( $(fresh_supervision_now_ms) + 120000 ))"
 while [ "$(fresh_supervision_now_ms)" -lt "$listener_deadline_ms" ]; do
   [ -s "$port_file" ] && break
   if ! kill -0 "$listener_pid" 2>/dev/null; then

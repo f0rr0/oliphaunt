@@ -427,6 +427,8 @@ if grep -Fq 'install_ios_mobile_assets_into_react_native_package' "$package_dir/
 fi
 require_source_text "$package_dir/android/build.gradle" '?: "dev.oliphaunt:oliphaunt-android:${kotlinSdkVersion}"' \
   "React Native Android package must default to the published Kotlin SDK Maven coordinate"
+require_source_text "$package_dir/android/build.gradle" 'implementation files(kotlinSdkAar)' \
+  "React Native Android candidate builds must consume the staged Kotlin SDK AAR by exact path"
 require_source_text "$package_dir/android/build.gradle" 'exclusiveContent {' \
   "React Native Android must resolve staged Kotlin SDK candidates exclusively from their configured Maven repository"
 require_source_text "$package_dir/android/build.gradle" 'includeModule("dev.oliphaunt", "oliphaunt-android")' \
@@ -443,6 +445,8 @@ require_source_text "$package_dir/android/settings.gradle" "if (configuredKotlin
   "React Native Android local Kotlin SDK composite builds must be explicit development overrides"
 require_source_text "$package_dir/tools/expo-android-runner.sh" "kotlin_sdk_dependency_from_maven_repo" \
   "React Native Android mobile runner must derive the Kotlin SDK dependency from staged Maven artifacts"
+require_source_text "$package_dir/tools/expo-android-runner.sh" '"-PliboliphauntKotlinSdkAar=$kotlin_sdk_aar"' \
+  "React Native Android mobile runner must pin the staged Kotlin SDK candidate AAR by exact path"
 require_source_text "$package_dir/tools/expo-android-runner.sh" "includeModule('dev.oliphaunt', 'oliphaunt-android')" \
   "React Native Android mobile runner must resolve the staged Kotlin SDK artifact ahead of public repositories"
 require_source_text "$package_dir/tools/mobile-extension-runtime.sh" 'liboliphaunt-native-version "$native_runtime_version"' \

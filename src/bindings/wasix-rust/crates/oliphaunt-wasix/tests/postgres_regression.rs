@@ -9,8 +9,16 @@ struct BehaviorContract {
     id: String,
     sentinel: String,
     statements: Vec<String>,
+    expected_error: BehaviorExpectedError,
+    recovery_statements: Vec<String>,
     assertion: BehaviorAssertion,
     cleanup_statements: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct BehaviorExpectedError {
+    sql: String,
+    sqlstate: String,
 }
 
 #[derive(Deserialize)]
@@ -28,7 +36,7 @@ fn shared_postgres_behavior_contract() -> Result<()> {
     )?;
     let contract: BehaviorContract = serde_json::from_str(&fixture)?;
     ensure!(
-        contract.schema_version == 1,
+        contract.schema_version == 2,
         "unsupported behavior fixture schema"
     );
     ensure!(
@@ -38,6 +46,19 @@ fn shared_postgres_behavior_contract() -> Result<()> {
 
     let mut database = Oliphaunt::open()?;
     for statement in &contract.statements {
+        database.execute(statement)?;
+    }
+    let expected = database
+        .execute(&contract.expected_error.sql)
+        .expect_err("shared PostgreSQL behavior contract expected an error");
+    ensure!(
+        expected
+            .postgres_error()
+            .and_then(|error| error.sqlstate.as_deref())
+            == Some(contract.expected_error.sqlstate.as_str()),
+        "shared PostgreSQL behavior contract returned the wrong SQLSTATE: {expected:#}"
+    );
+    for statement in &contract.recovery_statements {
         database.execute(statement)?;
     }
     let result = database.query(&contract.assertion.sql)?;
