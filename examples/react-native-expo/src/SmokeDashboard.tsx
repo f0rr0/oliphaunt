@@ -1,12 +1,8 @@
-import {
-  Oliphaunt,
-  type DatabaseStorage,
-  type OliphauntDatabase,
-} from '@oliphaunt/react-native';
+import { Oliphaunt, type DatabaseStorage, type OliphauntDatabase } from '@oliphaunt/react-native';
 import {
   GENERATED_EXTENSION_METADATA,
   GENERATED_EXTENSION_METADATA_SHA256,
-} from '../../../src/generated/extensions';
+} from '@oliphaunt/react-native/extension-metadata';
 import {
   runMobileBindingProof,
   runMobileReleaseExtensionProof,

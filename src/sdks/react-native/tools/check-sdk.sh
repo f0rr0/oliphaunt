@@ -393,11 +393,11 @@ require_source_text "$package_dir/package.json" '"react-native": "lib/module/ind
   "React Native package must expose its compiled module build to Metro instead of raw TypeScript source"
 node -e "
 const pkg = require(process.argv[1]);
-const expectedExports = ['.', './package.json', './protocol', './query'].sort();
+const expectedExports = ['.', './extension-metadata', './package.json', './protocol', './query'].sort();
 if (JSON.stringify(Object.keys(pkg.exports || {}).sort()) !== JSON.stringify(expectedExports)) {
   throw new Error('React Native SDK exports do not match its deliberate public surface');
 }
-for (const name of ['protocol', 'query']) {
+for (const name of ['extension-metadata', 'protocol', 'query']) {
   const entry = pkg.exports['./' + name];
   const expected = {
     types: './lib/typescript/' + name + '.d.ts',
@@ -582,12 +582,15 @@ for required in \
   "tools/stage-ios-app.mjs" \
   "tools/verify-ios-package.mjs" \
   "lib/commonjs/index.js" \
+  "lib/commonjs/extension-metadata.js" \
   "lib/commonjs/protocol.js" \
   "lib/commonjs/query.js" \
   "lib/module/index.js" \
+  "lib/module/extension-metadata.js" \
   "lib/module/protocol.js" \
   "lib/module/query.js" \
   "lib/typescript/index.d.ts" \
+  "lib/typescript/extension-metadata.d.ts" \
   "lib/typescript/client.d.ts" \
   "lib/typescript/protocol.d.ts" \
   "lib/typescript/query.d.ts" \

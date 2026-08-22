@@ -4,7 +4,11 @@ import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-
+import { WASIX_RUNTIME_NPM_ASSET_PATHS } from '../../../../tools/release/wasix-runtime-npm-contract.mjs';
+import {
+  renderWasixRuntimeDescriptorModule,
+  renderWasixRuntimeDescriptorTypes,
+} from '../../../../tools/release/wasix-runtime-npm-descriptor.mjs';
 import { prepareWasixTypescriptPackage } from '../../../../tools/release/wasix-typescript-package.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -85,7 +89,10 @@ async function packStubRuntime({ scratch, tarballs, runtimeVersion }) {
   const emptyByteSha256 = sha256(Buffer.of(0));
   await writeFile(
     resolve(staging, 'index.js'),
-    `const byte = new URL('data:application/octet-stream;base64,AA==');
+    `export const POSTGRES_MAJOR = 18;
+export const PHYSICAL_FORMAT = 'wasix-pg18-v1';
+
+const byte = new URL('data:application/octet-stream;base64,AA==');
 export default Object.freeze({
   schema: 'oliphaunt-wasix-runtime-v1',
   runtime: 'wasix',
@@ -157,9 +164,9 @@ async function packRuntime({ scratch, tarballs, runtimeVersion }) {
     manifest['pgdata-template'].archive,
   );
   const build = await runtimeBuildProvenance(manifest);
-  await cp(runtimeSource, resolve(assets, 'runtime.tar.zst'));
-  await cp(pgdataSource, resolve(assets, 'pgdata.tar.zst'));
-  await writeFile(resolve(assets, 'manifest.json'), coreManifest);
+  await cp(runtimeSource, resolve(staging, WASIX_RUNTIME_NPM_ASSET_PATHS.runtimeArchive));
+  await cp(pgdataSource, resolve(staging, WASIX_RUNTIME_NPM_ASSET_PATHS.pgdataArchive));
+  await writeFile(resolve(staging, WASIX_RUNTIME_NPM_ASSET_PATHS.manifest), coreManifest);
   const descriptor = {
     schema: 'oliphaunt-wasix-runtime-v1',
     runtime: 'wasix',
@@ -177,20 +184,15 @@ async function packRuntime({ scratch, tarballs, runtimeVersion }) {
     },
     manifest: { sha256: sha256(coreManifest), size: coreManifest.length },
   };
-  await writeFile(
-    resolve(staging, 'index.js'),
-    `const descriptor = ${JSON.stringify(descriptor, null, 2)};
-descriptor.runtimeArchive.source = new URL('./assets/runtime.tar.zst', import.meta.url);
-descriptor.pgdataArchive.source = new URL('./assets/pgdata.tar.zst', import.meta.url);
-descriptor.manifest.source = new URL('./assets/manifest.json', import.meta.url);
-export default Object.freeze(descriptor);
-`,
-  );
+  await writeFile(resolve(staging, 'index.js'), renderWasixRuntimeDescriptorModule(descriptor));
+  await writeFile(resolve(staging, 'index.d.ts'), renderWasixRuntimeDescriptorTypes());
   await writeJson(resolve(staging, 'package.json'), {
     name: '@oliphaunt/liboliphaunt-wasix',
     version: runtimeVersion,
     type: 'module',
-    exports: { '.': './index.js' },
+    exports: {
+      '.': { types: './index.d.ts', import: './index.js', default: './index.js' },
+    },
   });
   return { ...(await pack(staging, tarballs)), build };
 }

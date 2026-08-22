@@ -256,7 +256,7 @@ tasks:
       - "/src/bindings/wasix-ts/**/*"
       - "/src/shared/js-core/**/*"
       - "/tools/runtime/**/*"
-      - "/tools/release/wasix-runtime-npm-carrier.mjs"
+      - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"

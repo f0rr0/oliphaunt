@@ -609,9 +609,15 @@ build_apk() {
   local runtime_resources="$1"
   local jni_libs="$2"
   local gradle_cache_arg="--no-configuration-cache"
+  local gradle_dependency_args=()
 
   if [ "${OLIPHAUNT_EXPO_ANDROID_GRADLE_CONFIGURATION_CACHE:-0}" = "1" ]; then
     gradle_cache_arg="--configuration-cache"
+  fi
+  if expo_requires_sdk_artifacts; then
+    # CI publishes every candidate under its release coordinate. A restored
+    # Gradle cache can otherwise reuse an older AAR with the same version.
+    gradle_dependency_args+=("--refresh-dependencies")
   fi
 
   if [ "${OLIPHAUNT_EXPO_ANDROID_SKIP_BUILD:-0}" = "1" ] && [ -f "$apk" ]; then
@@ -650,6 +656,7 @@ build_apk() {
       --project-dir "$example_dir/android" \
       "-Dorg.gradle.jvmargs=$gradle_jvmargs" \
       "--max-workers=$gradle_max_workers" \
+      "${gradle_dependency_args[@]}" \
       "${gradle_build_tasks[@]}" \
       "-PoliphauntAndroidAbiFilters=$android_abi" \
       "-PreactNativeArchitectures=$android_abi" \

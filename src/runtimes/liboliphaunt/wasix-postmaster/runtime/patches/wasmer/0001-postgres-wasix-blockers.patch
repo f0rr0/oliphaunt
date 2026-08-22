@@ -38025,7 +38025,7 @@ index f5de216..eec4fe2 100644
 -                        env,
 -                        if fd_flags.contains(Fdflags::NONBLOCK) {
 -                            Some(Duration::ZERO)
-+                    let positioned_read = !is_stdio && !should_update_cursor;
++                    let positioned_read = !is_stdio;
 +                    let blocking_read = if !is_stdio {
 +                        if positioned_read {
 +                            let handle_guard = match handle.read() {

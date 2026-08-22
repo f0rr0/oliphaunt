@@ -91,6 +91,7 @@ tasks:
       - "/tools/dev/clean-package-lib.mjs"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
     outputs:
       - "/src/bindings/wasix-ts/lib/**/*"
@@ -114,6 +115,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix/**/*"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
     options:
       cache: false
@@ -136,6 +138,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix/**/*"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
       - "/src/sources/toolchains/bun.toml"
       - "/tools/dev/bun.sh"
@@ -161,6 +164,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix/**/*"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
       - "/src/sources/toolchains/deno.toml"
       - "/tools/dev/deno.sh"
@@ -183,6 +187,7 @@ tasks:
       - "/src/bindings/wasix-ts/**/*"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
     options:
       cache: true
@@ -203,6 +208,7 @@ tasks:
       - "/src/bindings/wasix-ts/**/*"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
       - "/src/sources/toolchains/bun.toml"
       - "/tools/dev/bun.sh"
@@ -226,6 +232,7 @@ tasks:
       - "/src/bindings/wasix-ts/**/*"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
       - "/src/sources/toolchains/deno.toml"
       - "/tools/dev/deno.sh"

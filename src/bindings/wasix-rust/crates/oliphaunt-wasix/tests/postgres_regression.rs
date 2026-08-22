@@ -83,9 +83,11 @@ fn savepoints_error_recovery_and_indexed_updates() -> Result<()> {
     let mut database = Oliphaunt::open()?;
     database.execute(
         "CREATE TABLE indexed_items(\
-           id integer PRIMARY KEY, key integer UNIQUE NOT NULL, value text NOT NULL); \
-         CREATE INDEX indexed_items_value_idx ON indexed_items(value); \
-         INSERT INTO indexed_items \
+           id integer PRIMARY KEY, key integer UNIQUE NOT NULL, value text NOT NULL)",
+    )?;
+    database.execute("CREATE INDEX indexed_items_value_idx ON indexed_items(value)")?;
+    database.execute(
+        "INSERT INTO indexed_items \
          SELECT value, value, 'value-' || value::text FROM generate_series(1, 200) value",
     )?;
 
@@ -145,9 +147,8 @@ fn savepoints_error_recovery_and_indexed_updates() -> Result<()> {
 #[test]
 fn memory_instances_are_isolated() -> Result<()> {
     let mut first = Oliphaunt::open()?;
-    first.execute(
-        "CREATE TABLE private_state(value integer); INSERT INTO private_state VALUES (1)",
-    )?;
+    first.execute("CREATE TABLE private_state(value integer)")?;
+    first.execute("INSERT INTO private_state VALUES (1)")?;
 
     let mut second = Oliphaunt::open()?;
     ensure!(
@@ -170,9 +171,8 @@ fn persistent_clean_close_reopens_with_committed_data() -> Result<()> {
         let mut database = Oliphaunt::builder()
             .storage(DatabaseStorage::Directory(root.clone()))
             .open()?;
-        database.execute(
-            "CREATE TABLE durable(value integer NOT NULL); INSERT INTO durable VALUES (42)",
-        )?;
+        database.execute("CREATE TABLE durable(value integer NOT NULL)")?;
+        database.execute("INSERT INTO durable VALUES (42)")?;
         database.close()?;
     }
 
