@@ -1,6 +1,16 @@
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { access, cp, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import {
+  access,
+  cp,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { arch, cpus, hostname, platform, release, tmpdir, totalmem } from 'node:os';
@@ -30,33 +40,36 @@ import { createPackedWasixConsumer, runtimeBuildProvenance } from './packed-node
 const bindingRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = resolve(bindingRoot, '../../..');
 const execFileAsync = promisify(execFile);
-const benchmark = process.argv.includes('--benchmark');
+const diagnosticOpfsBenchmark = process.argv.includes('--diagnostic-opfs');
+const qualifyingBenchmark = process.argv.includes('--benchmark');
+if (diagnosticOpfsBenchmark && qualifyingBenchmark) {
+  throw new Error('--diagnostic-opfs and --benchmark are mutually exclusive');
+}
+const benchmark = qualifyingBenchmark || diagnosticOpfsBenchmark;
 const packageOnly = process.argv.includes('--package-only');
 const quickBenchmark = benchmark && process.argv.includes('--quick');
 const planFile = resolve(argumentValue('--config') ?? defaultBrowserPlanFile);
-const planSource = benchmark ? await loadBrowserPlan(planFile) : undefined;
-const git = benchmark ? await gitProvenance() : undefined;
-const benchmarkOutput = benchmark
+const planSource = qualifyingBenchmark ? await loadBrowserPlan(planFile) : undefined;
+const git = qualifyingBenchmark ? await gitProvenance() : undefined;
+const benchmarkOutput = qualifyingBenchmark
   ? resolve(argumentValue('--output') ?? defaultBenchmarkOutput(git.commit))
   : undefined;
 if (
-  !benchmark &&
+  !qualifyingBenchmark &&
   (argumentValue('--config') !== undefined || argumentValue('--output') !== undefined)
 ) {
   throw new Error('--config and --output require --benchmark');
 }
 if (
   packageOnly &&
-  (benchmark ||
-    quickBenchmark ||
-    process.argv.includes('--pg-uuidv7') ||
-    process.argv.includes('--postgis-worker'))
+  (benchmark || process.argv.includes('--pg-uuidv7') || process.argv.includes('--postgis-worker'))
 ) {
   throw new Error('--package-only cannot be combined with benchmark or extension-canary options');
 }
 if (benchmarkOutput !== undefined) await requireAbsent(benchmarkOutput, 'benchmark output');
 const timeoutMs = Number(
-  process.env.OLIPHAUNT_BROWSER_SMOKE_TIMEOUT_MS ?? (benchmark ? 900_000 : 300_000),
+  process.env.OLIPHAUNT_BROWSER_SMOKE_TIMEOUT_MS ??
+    (diagnosticOpfsBenchmark && !quickBenchmark ? 1_800_000 : benchmark ? 900_000 : 300_000),
 );
 const pgUuidv7Canary = process.argv.includes('--pg-uuidv7');
 const postgisWorkerCanary = process.argv.includes('--postgis-worker');
@@ -185,7 +198,10 @@ try {
   ]);
 
   const smokeUrl = benchmark
-    ? `http://127.0.0.1:${vitePort}/benchmark.html${quickBenchmark ? '?quick=1' : ''}`
+    ? `http://127.0.0.1:${vitePort}/benchmark.html?${new URLSearchParams({
+        ...(quickBenchmark ? { quick: '1' } : {}),
+        ...(diagnosticOpfsBenchmark ? { opfs: '1' } : {}),
+      })}`
     : packageOnly
       ? `http://127.0.0.1:${vitePort}/?package_smoke=1`
       : `http://127.0.0.1:${vitePort}/?smoke=1${pgUuidv7Canary ? '&pg_uuidv7=1' : ''}${postgisWorkerCanary ? '&postgis_worker=1' : ''}`;
@@ -205,11 +221,31 @@ try {
     const snapshot = JSON.parse(evaluated.result.value ?? '{}');
     if (snapshot.state === 'passed') {
       if (benchmark) {
+        const result = parseBenchmarkResult(snapshot.output);
+        if (diagnosticOpfsBenchmark) {
+          console.log(
+            `wasix-ts OPFS diagnostic benchmark: PASS\n${JSON.stringify(
+              {
+                configuration: result.configuration,
+                postgresProfiles: result.postgresProfiles,
+                worker: Object.fromEntries(
+                  Object.entries(result.summary.workload).map(([metric, value]) => [
+                    metric,
+                    value.worker,
+                  ]),
+                ),
+                insertDiagnostic: result.insertDiagnostic.summary,
+              },
+              null,
+              2,
+            )}`,
+          );
+          break;
+        }
         const finalGit = await gitProvenance();
         if (finalGit.commit !== git.commit || finalGit.tree !== git.tree) {
           throw new Error('Git commit or tree changed while the browser benchmark was running');
         }
-        const result = parseBenchmarkResult(snapshot.output);
         const summary = summarizeBrowserResult(planSource, result);
         const report = {
           schema: 'oliphaunt-wasix-browser-benchmark-report-v1',

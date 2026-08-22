@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { PGliteWorker } from '@electric-sql/pglite/worker';
 import Oliphaunt from '@oliphaunt/wasix-ts';
+import { opfs } from '@oliphaunt/wasix-ts/storage/opfs';
 
 type QueryParameters = readonly (null | string | number | boolean)[];
 
@@ -26,6 +27,9 @@ type Engine = {
 type PostgresProfile = {
   version: string;
   fsync: string;
+  walSyncMethod: string;
+  sharedBuffers: string;
+  walBuffers: string;
   synchronousCommit: string;
   fullPageWrites: string;
   walLevel: string;
@@ -83,9 +87,44 @@ type PGliteAssets = {
   initdbWasmModule: WebAssembly.Module;
 };
 
+const durablePGliteStartParams = [
+  '--single',
+  '-O',
+  '-j',
+  '-c',
+  'search_path=public',
+  '-c',
+  'exit_on_error=false',
+  '-c',
+  'log_checkpoints=false',
+  '-c',
+  'wal_buffers=4MB',
+  '-c',
+  'min_wal_size=80MB',
+  '-c',
+  'shared_buffers=128MB',
+  '-c',
+  'max_wal_senders=0',
+  '-c',
+  'max_worker_processes=0',
+  '-c',
+  'max_parallel_workers=0',
+  '-c',
+  'max_parallel_workers_per_gather=0',
+  '-c',
+  'io_method=sync',
+  '-c',
+  'wal_sync_method=fdatasync',
+  '-c',
+  'max_parallel_maintenance_workers=0',
+] as const;
+
 const status = requireElement<HTMLParagraphElement>('status');
 const output = requireElement<HTMLPreElement>('output');
 const quick = new URL(location.href).searchParams.has('quick');
+const persistentWorkerStorage = new URL(location.href).searchParams.has('opfs');
+const persistentRun = crypto.randomUUID();
+let persistentDatabase = 0;
 const startupRuns = quick ? 2 : 5;
 const workloadRuns = quick ? 1 : 8;
 const insertDiagnosticRuns = quick ? 1 : 5;
@@ -128,7 +167,7 @@ try {
       coldStartupComparable: false,
       coldStartupNote:
         'firstReady samples are descriptive because each implementation caches compiled assets differently',
-      storage: 'ephemeral-memory',
+      storage: persistentWorkerStorage ? 'worker-opfs/direct-memory' : 'ephemeral-memory',
       workloadProfile: 'fresh database after one untimed representative warmup',
       startupRuns,
       workloadRuns,
@@ -153,8 +192,9 @@ try {
   status.textContent = 'Benchmark completed; the runner is qualifying and writing the report.';
   document.documentElement.dataset.oliphauntSmoke = 'passed';
 } catch (error) {
+  const phase = status.textContent;
   output.textContent = error instanceof Error ? (error.stack ?? error.message) : String(error);
-  status.textContent = 'Benchmark failed.';
+  status.textContent = phase ? `Benchmark failed during ${phase}.` : 'Benchmark failed.';
   document.documentElement.dataset.oliphauntSmoke = 'failed';
 }
 
@@ -543,7 +583,12 @@ function comparison(wasixMs: number | undefined, pgliteMs: number | undefined) {
 
 async function openWasix(execution: 'direct' | 'worker'): Promise<OpenResult> {
   const started = performance.now();
-  const database = await Oliphaunt.open({ execution });
+  const database = await Oliphaunt.open({
+    execution,
+    ...(persistentWorkerStorage && execution === 'worker'
+      ? { storage: opfs(nextPersistentDatabase('wasix')) }
+      : {}),
+  });
   const readyMs = performance.now() - started;
   const postgres = await readWasixPostgresProfile(database);
   return {
@@ -577,7 +622,15 @@ async function openPGliteWorker(): Promise<OpenResult> {
   const started = performance.now();
   const assets = await pgliteAssets();
   const worker = new Worker(new URL('./pglite-worker.ts', import.meta.url), { type: 'module' });
-  const database = new PGliteWorker(worker, assets);
+  const database = new PGliteWorker(worker, {
+    ...assets,
+    ...(persistentWorkerStorage
+      ? {
+          dataDir: `opfs-ahp://${nextPersistentDatabase('pglite')}`,
+          startParams: [...durablePGliteStartParams],
+        }
+      : {}),
+  });
   await database.waitReady;
   const readyMs = performance.now() - started;
   const postgres = await readPGlitePostgresProfile(database);
@@ -609,6 +662,11 @@ async function openPGliteWorker(): Promise<OpenResult> {
       },
     },
   };
+}
+
+function nextPersistentDatabase(engine: 'wasix' | 'pglite'): string {
+  persistentDatabase += 1;
+  return `benchmark-${engine}-${persistentRun}-${persistentDatabase}`;
 }
 
 async function openPGliteDirect(): Promise<OpenResult> {
@@ -676,6 +734,9 @@ async function readWasixPostgresProfile(
   return {
     version: result.getText(0, 'version') ?? 'unknown',
     fsync: result.getText(0, 'fsync') ?? 'unknown',
+    walSyncMethod: result.getText(0, 'wal_sync_method') ?? 'unknown',
+    sharedBuffers: result.getText(0, 'shared_buffers') ?? 'unknown',
+    walBuffers: result.getText(0, 'wal_buffers') ?? 'unknown',
     synchronousCommit: result.getText(0, 'synchronous_commit') ?? 'unknown',
     fullPageWrites: result.getText(0, 'full_page_writes') ?? 'unknown',
     walLevel: result.getText(0, 'wal_level') ?? 'unknown',
@@ -688,6 +749,9 @@ async function readPGlitePostgresProfile(
   const result = await database.query<{
     version: string;
     fsync: string;
+    wal_sync_method: string;
+    shared_buffers: string;
+    wal_buffers: string;
     synchronous_commit: string;
     full_page_writes: string;
     wal_level: string;
@@ -697,6 +761,9 @@ async function readPGlitePostgresProfile(
   return {
     version: row.version,
     fsync: row.fsync,
+    walSyncMethod: row.wal_sync_method,
+    sharedBuffers: row.shared_buffers,
+    walBuffers: row.wal_buffers,
     synchronousCommit: row.synchronous_commit,
     fullPageWrites: row.full_page_writes,
     walLevel: row.wal_level,
@@ -707,6 +774,9 @@ function postgresProfileSql(): string {
   return `SELECT
     current_setting('server_version') AS version,
     current_setting('fsync') AS fsync,
+    current_setting('wal_sync_method') AS wal_sync_method,
+    current_setting('shared_buffers') AS shared_buffers,
+    current_setting('wal_buffers') AS wal_buffers,
     current_setting('synchronous_commit') AS synchronous_commit,
     current_setting('full_page_writes') AS full_page_writes,
     current_setting('wal_level') AS wal_level`;

@@ -42,6 +42,18 @@ node src/bindings/wasix-ts/tools/smoke-browser.mjs --benchmark --quick
 Quick mode still requires every workload assertion and durability/WAL parity,
 but is explicitly ineligible for performance qualification.
 
+The direct OPFS path has a separate advisory comparison against PGlite's OPFS
+access-handle-pool worker path:
+
+```sh
+node src/bindings/wasix-ts/tools/smoke-browser.mjs --diagnostic-opfs --quick
+```
+
+It uses durable PostgreSQL settings on both worker engines and prints the raw
+configuration and medians. It is deliberately not evaluated with the
+memory-only plan or its gate; direct/direct remains memory while worker/worker
+uses OPFS.
+
 ## Node comparison
 
 `node-pglite-memory-v1.json` is the deterministic Node comparison plan for the

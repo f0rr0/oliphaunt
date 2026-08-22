@@ -18,6 +18,8 @@ export type ExclusiveStorageLock = { release(): Promise<void> };
 
 export type IncrementalStorageStore = {
   read(): Promise<StoredSnapshot | undefined>;
+  /** Override snapshot presence when a direct provider has incomplete setup state. */
+  initializationState?(snapshot: StoredSnapshot | undefined): 'new' | 'existing';
   apply(delta: StorageDelta): Promise<void>;
   close(): void | Promise<void>;
 };
@@ -44,12 +46,15 @@ export async function acquireIncrementalStorage(
   try {
     store = await backend.openStore();
     const snapshot = await store.read();
+    const state = store.initializationState?.(snapshot) ??
+      (snapshot === undefined ? 'new' : 'existing');
     return new IncrementalStorageLease(
       label,
       store,
       lock,
       template,
       snapshot,
+      state,
       backend.writeFailureCommitState ?? 'not-persisted',
     );
   } catch (error) {
@@ -89,6 +94,7 @@ class IncrementalStorageLease implements WasixStorageLease {
   readonly #writeFailureCommitState: WasixStorageCommitState;
   #closed = false;
   #hasStoredGeneration: boolean;
+  #initializationPending: boolean;
 
   constructor(
     label: string,
@@ -96,14 +102,16 @@ class IncrementalStorageLease implements WasixStorageLease {
     lock: ExclusiveStorageLock,
     template: WasixDirectoryMount,
     snapshot: StoredSnapshot | undefined,
+    state: 'new' | 'existing',
     writeFailureCommitState: WasixStorageCommitState,
   ) {
     this.#label = label;
     this.#store = store;
     this.#lock = lock;
-    this.state = snapshot === undefined ? 'new' : 'existing';
+    this.state = state;
     this.mount = snapshot === undefined ? template : snapshotToMount(snapshot);
     this.#hasStoredGeneration = snapshot !== undefined;
+    this.#initializationPending = state === 'new';
     this.#writeFailureCommitState = writeFailureCommitState;
     for (const path of snapshot?.directories ?? []) this.#persistedEntries.set(path, 'dir');
     for (const { path } of snapshot?.files ?? []) this.#persistedEntries.set(path, 'file');
@@ -124,6 +132,7 @@ class IncrementalStorageLease implements WasixStorageLease {
         !this.#hasStoredGeneration,
       );
       if (
+        !this.#initializationPending &&
         this.#hasStoredGeneration &&
         delta.directories.length === 0 &&
         delta.files.length === 0 &&
@@ -136,6 +145,7 @@ class IncrementalStorageLease implements WasixStorageLease {
       await this.#store.apply(delta);
       applyStorageDeltaToEntries(this.#persistedEntries, delta);
       this.#hasStoredGeneration = true;
+      this.#initializationPending = false;
       failureCommitState = 'persisted';
       // The backend commit is the acknowledgement point. Keeping the journal
       // intact until now makes a failed publication retryable on close and

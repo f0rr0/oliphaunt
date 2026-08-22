@@ -177,6 +177,28 @@ grep -Fq 'Pin::new(&mut *self.file).poll_write(cx, buffer)' \
   "$wasmer_js_dir/src/fs/directory.rs"
 grep -Fq 'conf.truncate || conf.create_new || (conf.create && !existed)' \
   "$wasmer_js_dir/src/fs/directory.rs"
+grep -Fq 'js_name = "createSync"' "$wasmer_js_dir/src/fs/directory.rs"
+grep -Fq 'Directory::from_untracked_filesystem' "$wasmer_js_dir/src/fs/directory.rs"
+grep -Fq 'if !self.track_changes {' "$wasmer_js_dir/src/fs/directory.rs"
+grep -Fq 'struct SyncBridgeFileSystem' "$wasmer_js_dir/src/fs/sync_bridge.rs"
+grep -Fq 'struct Backend' "$wasmer_js_dir/src/fs/sync_bridge.rs"
+grep -Fq '.apply(&self.backend, &arguments)' "$wasmer_js_dir/src/fs/sync_bridge.rs"
+grep -Fq 'unsafe { Uint8Array::view(payload) }' "$wasmer_js_dir/src/fs/sync_bridge.rs"
+grep -Fq 'unsafe { Uint8Array::view_mut_raw(output.as_mut_ptr(), output.len()) }' \
+  "$wasmer_js_dir/src/fs/sync_bridge.rs"
+grep -Fq 'let output = buffer.initialize_unfilled_to(requested);' \
+  "$wasmer_js_dir/src/fs/sync_bridge.rs"
+grep -Fq 'const OP_WRITE: i32 = 10;' "$wasmer_js_dir/src/fs/sync_bridge.rs"
+grep -Fq 'const OP_FILE_SIZE: i32 = 14;' "$wasmer_js_dir/src/fs/sync_bridge.rs"
+grep -Fq 'pub fn create_sync(backend: JsValue, capacity: usize)' \
+  "$wasmer_js_dir/src/fs/directory.rs"
+if grep -Eq 'Atomics|Mailbox|OP_SYNC_ALL|OP_SHUTDOWN|OP_SYNC_WAL|js_name = "(syncAll|syncWal|closeSync)"|payload\.to_vec\(\)|buffer\.put_slice' \
+  "$wasmer_js_dir/src/fs/sync_bridge.rs" "$wasmer_js_dir/src/fs/directory.rs"; then
+  echo "wasix-ts host build: synchronous bridge retained the obsolete mailbox protocol" >&2
+  exit 1
+fi
+grep -Fq 'if !env.oliphaunt_single_backend {' \
+  "$wasmer_wasix_dir/src/syscalls/wasi/fd_close.rs"
 if grep -Fq 'key != "OLIPHAUNT_WASIX_SINGLE_BACKEND"' "$wasmer_js_dir/src/options.rs"; then
   echo "wasix-ts host build: direct execution discarded the single-backend invariant" >&2
   exit 1

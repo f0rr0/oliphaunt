@@ -120,6 +120,8 @@ export const WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES = Object.freeze([
   'lib/storage/node.js',
   'lib/storage/opfs-provider.d.ts',
   'lib/storage/opfs-provider.js',
+  'lib/storage/opfs-pool.d.ts',
+  'lib/storage/opfs-pool.js',
   'lib/storage/opfs.d.ts',
   'lib/storage/opfs.js',
   'lib/storage/restore-cleanup.d.ts',
