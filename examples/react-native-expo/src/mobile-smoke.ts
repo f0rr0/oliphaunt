@@ -87,10 +87,15 @@ export async function runMobileBindingProof(
         assertReadyForQuery(streamed);
 
         const failure = new Error('mobile stream callback failure');
+        let failureCallbackCount = 0;
         try {
-          await db.execProtocolStream(simpleQuery('SELECT 1'), () => {
-            throw failure;
-          });
+          await db.execProtocolStream(
+            simpleQuery("SELECT repeat('failure', 4096) FROM generate_series(1, 128)"),
+            () => {
+              failureCallbackCount += 1;
+              throw failure;
+            },
+          );
           throw new Error('protocol stream unexpectedly ignored its callback failure');
         } catch (error) {
           if (error !== failure) {
@@ -104,6 +109,11 @@ export async function runMobileBindingProof(
             );
           }
         }
+        assertEqual(
+          failureCallbackCount,
+          1,
+          'stream callback invocation count after failure',
+        );
         assertEqual(
           await scalar(db, "SELECT 'after-stream-error'::text AS value"),
           'after-stream-error',

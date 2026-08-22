@@ -363,8 +363,10 @@ if [ "$mode" = "test-unit" ]; then
   run bash "$package_dir/tools/expo-runner-android-device.test.sh"
   run bash "$package_dir/tools/verify-android-apk.test.sh"
   run bash "$package_dir/tools/expo-runner-ios-installed-app.test.sh"
+  run bash "$package_dir/tools/expo-runner-workspace.test.sh"
   run "$root/tools/dev/bun.sh" test "$package_dir/tools/ios-app-transport.test.mjs"
   run "$root/tools/dev/bun.sh" test "$package_dir/tools/mobile-extension-artifact-paths.test.mjs"
+  run "$root/tools/dev/bun.sh" test "$package_dir/tools/validate-android-link-evidence.test.mjs"
   run pnpm --dir "$package_dir" test --if-present
   exit 0
 fi
@@ -441,14 +443,6 @@ require_source_text "$package_dir/android/settings.gradle" "if (configuredKotlin
   "React Native Android local Kotlin SDK composite builds must be explicit development overrides"
 require_source_text "$package_dir/tools/expo-android-runner.sh" '"-PliboliphauntKotlinSdkAar=$kotlin_sdk_aar"' \
   "React Native Android mobile runner must pin the staged Kotlin SDK candidate AAR by exact path"
-require_source_text "$package_dir/tools/expo-runner-workspace.sh" 'cp "$root/tools/dev/clean-package-lib.mjs" "$scratch_root/tools/dev/clean-package-lib.mjs"' \
-  "React Native source-pack mobile builds must stage their repository-relative package build helper"
-require_source_text "$package_dir/tools/expo-runner-workspace.sh" '"$package_work/src/generated/extensions.json"' \
-  "React Native source-pack mobile builds must stage generated extension metadata inside the npm package"
-require_source_text "$package_dir/tools/expo-android-runner.sh" '"$root/src/extensions/generated/sdk/extensions.json"' \
-  "React Native Android source-pack cache invalidation must include generated extension metadata"
-require_source_text "$package_dir/tools/expo-ios-runner.sh" '"$root/src/extensions/generated/sdk/extensions.json"' \
-  "React Native iOS source-pack cache invalidation must include generated extension metadata"
 require_source_text "$package_dir/tools/mobile-extension-runtime.sh" 'liboliphaunt-native-version "$native_runtime_version"' \
   "React Native mobile resources must bind extension payloads to the exact liboliphaunt native version"
 require_source_text "$package_dir/src/client.ts" "generatedExtensionBySqlName(trimmed)" \

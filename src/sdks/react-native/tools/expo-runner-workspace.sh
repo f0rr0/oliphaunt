@@ -7,6 +7,13 @@
 
 react_native_package_extra_excludes=()
 
+react_native_source_package_fingerprint() {
+  node "$rn_dir/tools/react-native-package-inputs.mjs" \
+    --root "$root" \
+    --rn-dir "$rn_dir" \
+    --example-package "$source_example_dir/package.json"
+}
+
 host_runtime_label() {
   case "$(uname -s):$(uname -m)" in
     Darwin:*) printf '%s\n' macos ;;

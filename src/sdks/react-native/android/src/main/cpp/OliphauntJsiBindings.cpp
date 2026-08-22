@@ -466,7 +466,30 @@ class OliphauntJsiStreamCallback
           return;
         }
         try {
-          chunkFunction.call(runtime, arrayBufferFromBytes(runtime, std::move(bytes)));
+          auto result = chunkFunction.call(
+              runtime,
+              arrayBufferFromBytes(runtime, std::move(bytes)));
+          if (result.isObject()) {
+            auto resultObject = result.asObject(runtime);
+            auto failureMarker = resultObject.getProperty(
+                runtime,
+                "__oliphauntProtocolChunkFailure");
+            if (failureMarker.isBool() && failureMarker.getBool()) {
+              auto failure = std::make_shared<jsi::Value>(
+                  runtime,
+                  resultObject.getProperty(runtime, "error"));
+              takePendingStream(token);
+              if (stream->settle()) {
+                stream->reject->call([failure](
+                                         jsi::Runtime &runtime,
+                                         jsi::Function &rejectFunction) {
+                  rejectFunction.call(runtime, jsi::Value(runtime, *failure));
+                });
+              }
+              acknowledgement->reject("protocol stream callback failed");
+              return;
+            }
+          }
           acknowledgement->resolve();
         } catch (const jsi::JSError &error) {
           takePendingStream(token);

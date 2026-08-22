@@ -1,3 +1,10 @@
+export type JsiProtocolChunkResult =
+  | {
+      readonly __oliphauntProtocolChunkFailure: true;
+      readonly error: unknown;
+    }
+  | undefined;
+
 export type JsiRawProtocolTransport = {
   readonly version: 1;
   readonly execProtocolRaw: (
@@ -7,7 +14,7 @@ export type JsiRawProtocolTransport = {
   readonly execProtocolStream: (
     handle: number,
     request: Uint8Array,
-    onChunk: (chunk: ArrayBuffer | ArrayBufferView) => void,
+    onChunk: (chunk: ArrayBuffer | ArrayBufferView) => JsiProtocolChunkResult,
   ) => Promise<void>;
   readonly backup: (handle: number) => Promise<ArrayBuffer | ArrayBufferView>;
   readonly restore: (
@@ -67,14 +74,15 @@ export async function execProtocolStreamJsi(
   try {
     await transport.execProtocolStream(handle, request, (chunk) => {
       if (callbackFailed) {
-        return;
+        return protocolChunkFailure(callbackFailure);
       }
       try {
         onChunk(binaryResponseToUint8Array(chunk));
+        return undefined;
       } catch (error) {
         callbackFailed = true;
         callbackFailure = error;
-        throw error;
+        return protocolChunkFailure(error);
       }
     });
   } catch (error) {
@@ -85,6 +93,13 @@ export async function execProtocolStreamJsi(
   if (callbackFailed) {
     throw callbackFailure;
   }
+}
+
+function protocolChunkFailure(error: unknown): Exclude<JsiProtocolChunkResult, undefined> {
+  return {
+    __oliphauntProtocolChunkFailure: true,
+    error,
+  };
 }
 
 export async function backupJsi(

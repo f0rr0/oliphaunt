@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test, vi } from 'vitest';
 
 import { createOliphauntClient } from '../client';
+import type { JsiProtocolChunkResult } from '../jsiTransport';
 import { parseCommandResponse } from '../query';
 import type { Spec } from '../specs/NativeOliphaunt';
 
@@ -201,13 +202,31 @@ async function testProtocolStreamCallbackFailure(): Promise<void> {
   );
 
   native.swallowStreamCallbackErrors = true;
+  let callbackCalls = 0;
   await assert.rejects(
     () =>
       db.execProtocolStream(Uint8Array.from([0xcd]), () => {
+        callbackCalls += 1;
         throw failure;
       }),
     (error) => error === failure,
   );
+  assert.equal(callbackCalls, 1);
+  assert.equal(native.streamChunkCallbackCalls, 3);
+
+  native.swallowStreamCallbackErrors = false;
+  for (const thrown of [undefined, null, 'string failure', { reason: 'object failure' }]) {
+    const outcome = await db
+      .execProtocolStream(Uint8Array.from([0xce]), () => {
+        throw thrown;
+      })
+      .then(
+        () => ({ fulfilled: true as const, error: undefined }),
+        (error: unknown) => ({ fulfilled: false as const, error }),
+      );
+    assert.equal(outcome.fulfilled, false);
+    assert.ok(Object.is(outcome.error, thrown));
+  }
   await db.close();
 }
 
@@ -277,6 +296,7 @@ async function testCloseIsIdempotent(): Promise<void> {
 
 class MockNative implements Spec {
   swallowStreamCallbackErrors = false;
+  streamChunkCallbackCalls = 0;
   readonly openCalls: unknown[] = [];
   readonly execRequests: Uint8Array[] = [];
   readonly cancelledHandles: number[] = [];
@@ -301,12 +321,11 @@ class MockNative implements Spec {
       async execProtocolStream(handle, request, onChunk) {
         const response = await native.execProtocolRawJsi(handle, request);
         const split = Math.max(1, Math.floor(response.byteLength / 2));
-        try {
-          onChunk(response.subarray(0, split));
-          onChunk(response.subarray(split));
-        } catch (error) {
-          if (!native.swallowStreamCallbackErrors) {
-            throw error;
+        for (const chunk of [response.subarray(0, split), response.subarray(split)]) {
+          native.streamChunkCallbackCalls += 1;
+          const result = onChunk(chunk);
+          if (result?.__oliphauntProtocolChunkFailure && !native.swallowStreamCallbackErrors) {
+            throw result.error;
           }
         }
       },
@@ -393,7 +412,7 @@ type GlobalWithJsi = typeof globalThis & {
     execProtocolStream(
       handle: number,
       request: Uint8Array,
-      onChunk: (chunk: ArrayBuffer | ArrayBufferView) => void,
+      onChunk: (chunk: ArrayBuffer | ArrayBufferView) => JsiProtocolChunkResult,
     ): Promise<void>;
     backup(handle: number): Promise<ArrayBuffer | ArrayBufferView>;
     restore(

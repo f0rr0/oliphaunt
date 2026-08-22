@@ -2534,6 +2534,13 @@ function checkAndroidPrebuiltExtensionLinkage(artifact, stems, report, reportPat
   if (!isFile(evidencePath)) {
     fail(`Android extension link evidence is missing: ${rel(evidencePath)}`);
   }
+  if (!/^[0-9a-f]{64}$/u.test(report.androidLinkEvidenceSha256 ?? "")) {
+    fail(`${rel(reportPath)} androidLinkEvidenceSha256 must be a lowercase SHA-256 digest`);
+  }
+  const evidenceSha256 = sha256File(evidencePath);
+  if (evidenceSha256 !== report.androidLinkEvidenceSha256) {
+    fail(`${rel(reportPath)} androidLinkEvidenceSha256 does not match ${rel(evidencePath)}`);
+  }
   const linkedStems = new Set();
   const linkedDependencies = new Set();
   let evidenceAbi = "";

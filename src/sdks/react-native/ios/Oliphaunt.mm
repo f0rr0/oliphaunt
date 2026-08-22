@@ -883,7 +883,31 @@ RCT_EXPORT_MODULE(Oliphaunt)
                           }
                         }
                         try {
-                          chunkFunction.call(runtime, OliphauntArrayBufferFromBytes(runtime, std::move(bytes)));
+                          auto result = chunkFunction.call(
+                              runtime,
+                              OliphauntArrayBufferFromBytes(runtime, std::move(bytes)));
+                          if (result.isObject()) {
+                            auto resultObject = result.asObject(runtime);
+                            auto failureMarker = resultObject.getProperty(
+                                runtime,
+                                "__oliphauntProtocolChunkFailure");
+                            if (failureMarker.isBool() && failureMarker.getBool()) {
+                              auto failure = std::make_shared<facebook::jsi::Value>(
+                                  runtime,
+                                  resultObject.getProperty(runtime, "error"));
+                              if (!settled->exchange(true)) {
+                                reject->call([failure](
+                                                 facebook::jsi::Runtime &runtime,
+                                                 facebook::jsi::Function &rejectFunction) {
+                                  rejectFunction.call(
+                                      runtime,
+                                      facebook::jsi::Value(runtime, *failure));
+                                });
+                              }
+                              acknowledgement->reject("protocol stream callback failed");
+                              return;
+                            }
+                          }
                           acknowledgement->resolve();
                         } catch (const facebook::jsi::JSError &error) {
                           if (!settled->exchange(true)) {

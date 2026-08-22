@@ -255,23 +255,13 @@ pack_react_native_sdk_if_needed() {
   need_cmd pnpm
   mkdir -p "$pack_dir"
 
+  local package_stamp="$pack_dir/.android-package-inputs.sha256"
+  local package_fingerprint
+  package_fingerprint="$(react_native_source_package_fingerprint)"
   local needs_pack=0
-  if [ ! -f "$tarball" ]; then
-    needs_pack=1
-  elif [ -n "$(
-    find \
-      "$rn_dir" \
-      "$root/src/extensions/generated/sdk/extensions.json" \
-      "$root/src/extensions/generated/sdk/ios-static-dependencies.json" \
-      "$root/tools/dev/clean-package-lib.mjs" \
-      "$source_example_dir/package.json" \
-      -path "$rn_dir/node_modules" -prune -o \
-      -path "$rn_dir/android/.gradle" -prune -o \
-      -path "$rn_dir/android/.cxx" -prune -o \
-      -path "$rn_dir/android/build" -prune -o \
-      -path "$rn_dir/lib" -prune -o \
-      -type f -newer "$tarball" -print -quit
-  )" ]; then
+  if [ ! -f "$tarball" ] ||
+    [ ! -f "$package_stamp" ] ||
+    [ "$(tr -d '\r\n' <"$package_stamp")" != "$package_fingerprint" ]; then
     needs_pack=1
   fi
 
@@ -284,8 +274,9 @@ pack_react_native_sdk_if_needed() {
       cd "$package_work"
       pnpm pack --pack-destination "$pack_dir"
     )
+    printf '%s\n' "$package_fingerprint" >"$package_stamp"
   else
-    echo "React Native SDK tarball is current: $tarball"
+    echo "React Native SDK tarball matches source content: $tarball"
   fi
 
   patch_expo_example_react_native_dependency "file:$tarball"
@@ -608,6 +599,14 @@ build_apk() {
     if [ -n "$module_stems" ] && [ ! -s "$android_link_evidence" ]; then
       fail "Android build did not emit static extension link evidence: $android_link_evidence"
     fi
+    if [ -n "$module_stems" ]; then
+      run node "$root/src/sdks/react-native/tools/validate-android-link-evidence.mjs" \
+        --evidence "$android_link_evidence" \
+        --abi "$android_abi" \
+        --module-stems "$module_stems" \
+        --static-registry "$runtime_resources/oliphaunt/static-registry/manifest.properties" \
+        --target "android-$android_abi"
+    fi
   fi
 
   run "$root/src/sdks/react-native/tools/verify-android-apk.sh" "$apk"
@@ -700,10 +699,14 @@ write_android_package_metrics() {
 
 write_android_build_artifact_report() {
   local selected_extensions="$1"
-  local apk_bytes rn_package_bytes apk_copy report android_link_evidence
+  local apk_bytes rn_package_bytes apk_copy report android_link_evidence android_link_evidence_sha256
   mkdir -p "$build_artifact_dir" "$scratch_root/reports"
   apk_copy="$build_artifact_dir/app-$build_type-$android_abi.apk"
   android_link_evidence="$scratch_root/android-static-extension-link-$android_abi.tsv"
+  android_link_evidence_sha256=""
+  if [ -f "$android_link_evidence" ]; then
+    android_link_evidence_sha256="$(shasum -a 256 "$android_link_evidence" | awk '{print $1}')"
+  fi
   cp "$apk" "$apk_copy"
   apk_bytes="$(wc -c <"$apk" | tr -d '[:space:]')"
   rn_package_bytes="$(wc -c <"$tarball" | tr -d '[:space:]')"
@@ -720,7 +723,8 @@ write_android_build_artifact_report() {
     buildType "$build_type" \
     abi "$android_abi" \
     icu "$android_icu_enabled" \
-    androidLinkEvidence "$android_link_evidence"
+    androidLinkEvidence "$android_link_evidence" \
+    androidLinkEvidenceSha256 "$android_link_evidence_sha256"
   cp "$report" "$scratch_root/reports/build-report.json"
   echo "Android mobile build artifact: $apk_copy"
   echo "Android mobile build report: $report"

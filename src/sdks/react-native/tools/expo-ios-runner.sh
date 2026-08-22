@@ -390,24 +390,13 @@ pack_react_native_sdk() {
     return
   fi
 
-  local package_stamp="$pack_dir/.ios-package.stamp"
+  local package_stamp="$pack_dir/.ios-package-inputs.sha256"
+  local package_fingerprint
+  package_fingerprint="$(react_native_source_package_fingerprint)"
   if [ "${OLIPHAUNT_EXPO_IOS_REPACK_RN:-0}" != "1" ] &&
     [ -f "$tarball" ] &&
     [ -f "$package_stamp" ] &&
-    [ -z "$(
-      find \
-        "$rn_dir" \
-        "$root/src/extensions/generated/sdk/extensions.json" \
-        "$root/src/extensions/generated/sdk/ios-static-dependencies.json" \
-        "$root/tools/dev/clean-package-lib.mjs" \
-        -path "$rn_dir/node_modules" -prune -o \
-        -path "$rn_dir/lib" -prune -o \
-        -path "$rn_dir/.build" -prune -o \
-        -path "$rn_dir/android/.gradle" -prune -o \
-        -path "$rn_dir/android/.cxx" -prune -o \
-        -path "$rn_dir/android/build" -prune -o \
-        -type f -newer "$package_stamp" -print -quit
-    )" ]; then
+    [ "$(tr -d '\r\n' <"$package_stamp")" = "$package_fingerprint" ]; then
     echo "Reusing React Native SDK package: $tarball" >&2
     if [ ! -f "$example_dir/node_modules/@oliphaunt/react-native/package.json" ]; then
       install_react_native_sdk_tarball
@@ -428,7 +417,7 @@ pack_react_native_sdk() {
   install_react_native_sdk_tarball
   local installed_package="$example_dir/node_modules/@oliphaunt/react-native"
   verify_installed_ios_package "$installed_package"
-  touch "$package_stamp"
+  printf '%s\n' "$package_fingerprint" >"$package_stamp"
 }
 
 prepare_swift_sdk_artifact_git_repo_if_required() {
