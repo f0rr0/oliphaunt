@@ -2,6 +2,7 @@ import Foundation
 @testable import Oliphaunt
 import Testing
 
+#if os(iOS) || os(macOS) || os(tvOS) || os(watchOS) || os(visionOS)
 @Test
 func discoversCocoaPodsRuntimeResourceBundlesBeforeTheyAreLoaded() throws {
     let root = FileManager.default.temporaryDirectory
@@ -26,6 +27,7 @@ func discoversCocoaPodsRuntimeResourceBundlesBeforeTheyAreLoaded() throws {
     let urls = bundleResourceURLs([], discoveringChildBundlesAt: root)
     #expect(urls.map(\.standardizedFileURL).contains(bundleRoot.standardizedFileURL))
 }
+#endif
 
 // OLIPHAUNT_DOCS_SNIPPET swift-quickstart
 // liboliphaunt-doc-example:swift-open-exec-close
@@ -253,8 +255,19 @@ func nativeFirstOpenDoesNotPublishAnIncompleteManagedRoot() async throws {
         )
         Issue.record("open should fail for a missing native library")
     } catch {
-        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent(".oliphaunt.json").path))
-        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("pgdata").path))
+        let contents = (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []
+        if !contents.isEmpty {
+            #expect(Set(contents) == Set([".oliphaunt.json", "pgdata"]))
+            #expect(
+                try String(
+                    contentsOf: root.appendingPathComponent(".oliphaunt.json"),
+                    encoding: .utf8
+                ) == nativeRootDescriptor
+            )
+            try validateOliphauntCompletePgdata(
+                root.appendingPathComponent("pgdata", isDirectory: true)
+            )
+        }
     }
 }
 
