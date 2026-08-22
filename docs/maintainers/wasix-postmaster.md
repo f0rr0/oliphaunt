@@ -171,9 +171,10 @@ clean shutdown, immediate restart, backend churn, and concurrent connection
 waves. It must prove PostgreSQL-visible outcomes as well as host resource
 cleanup. File-cache or WAL-cache telemetry alone is never correctness proof.
 
-Durability settings are explicit product configuration. Relaxed durability is
-an application choice for disposable data and must not change the default
-release qualification.
+Oliphaunt does not define a durability profile or relaxed-durability mode.
+Applications that deliberately change PostgreSQL durability use ordinary
+PostgreSQL GUCs; release qualification always keeps the safe PostgreSQL
+defaults.
 
 ## Platform and SDK support
 

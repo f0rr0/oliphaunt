@@ -23,6 +23,7 @@ const PRODUCTS = [
   'oliphaunt-js',
   'oliphaunt-react-native',
   'oliphaunt-wasix-rust',
+  'oliphaunt-wasix-ts',
 ];
 
 const PRODUCT_SOURCE_ROOTS = new Map([
@@ -32,6 +33,7 @@ const PRODUCT_SOURCE_ROOTS = new Map([
   ['oliphaunt-js', 'src/sdks/js'],
   ['oliphaunt-react-native', 'src/sdks/react-native'],
   ['oliphaunt-wasix-rust', 'src/bindings/wasix-rust/crates/oliphaunt-wasix'],
+  ['oliphaunt-wasix-ts', 'src/bindings/wasix-ts'],
 ]);
 
 const FORBIDDEN_PATH_PARTS = [
@@ -876,7 +878,11 @@ function runProduct(product) {
     runSwift();
   } else if (product === 'oliphaunt-kotlin') {
     runKotlin();
-  } else if (product === 'oliphaunt-js' || product === 'oliphaunt-react-native') {
+  } else if (
+    product === 'oliphaunt-js' ||
+    product === 'oliphaunt-react-native' ||
+    product === 'oliphaunt-wasix-ts'
+  ) {
     runJavascript(product);
   } else {
     fail(`unhandled coverage product ${product}`);

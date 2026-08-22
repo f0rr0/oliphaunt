@@ -42,7 +42,7 @@ require_text "moon.yml" "coverage-policy:"
 require_text "moon.yml" "tools/coverage/summarize"
 require_text "moon.yml" "tools/policy/check-coverage.sh all"
 
-products="oliphaunt-rust oliphaunt-swift oliphaunt-kotlin oliphaunt-js oliphaunt-react-native oliphaunt-wasix-rust"
+products="oliphaunt-rust oliphaunt-swift oliphaunt-kotlin oliphaunt-js oliphaunt-react-native oliphaunt-wasix-rust oliphaunt-wasix-ts"
 
 product_moon_yml() {
   case "$1" in
@@ -64,6 +64,9 @@ product_moon_yml() {
     oliphaunt-wasix-rust)
       printf '%s\n' "src/bindings/wasix-rust/moon.yml"
       ;;
+    oliphaunt-wasix-ts)
+      printf '%s\n' "src/bindings/wasix-ts/moon.yml"
+      ;;
   esac
 }
 
@@ -79,7 +82,7 @@ case "$product" in
       require_text "$moon_yml" "/target/coverage/$item/**/*"
     done
     ;;
-  oliphaunt-rust|oliphaunt-swift|oliphaunt-kotlin|oliphaunt-js|oliphaunt-react-native|oliphaunt-wasix-rust)
+  oliphaunt-rust|oliphaunt-swift|oliphaunt-kotlin|oliphaunt-js|oliphaunt-react-native|oliphaunt-wasix-rust|oliphaunt-wasix-ts)
     moon_yml="$(product_moon_yml "$product")"
     require_text "$baseline" "[products.$product]"
     require_text "$baseline" "summary = \"target/coverage/$product/summary.json\""

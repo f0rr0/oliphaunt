@@ -40,8 +40,12 @@ const wasmerPackages = [
 describe("ephemeral example Cargo policy", () => {
   test("owns every registry example version and native runtime binding", () => {
     const bindings = exampleCargoReleaseVersionBindings();
-    expect(bindings.filter(({ kind }) => kind === "dependency")).toHaveLength(18);
-    expect(bindings.filter(({ kind }) => kind === "runtime")).toHaveLength(1);
+    expect(bindings.filter(({ kind }) => kind === "dependency")).toHaveLength(
+      EXAMPLE_CARGO_POLICIES.reduce((count, policy) => count + policy.directPackages.length, 0),
+    );
+    expect(bindings.filter(({ kind }) => kind === "runtime")).toHaveLength(
+      EXAMPLE_CARGO_POLICIES.filter(({ runtime }) => runtime !== undefined).length,
+    );
     expect(new Set(bindings.map(({ file }) => file))).toEqual(new Set(
       EXAMPLE_CARGO_POLICIES.map(({ crateDir }) => `${crateDir}/Cargo.toml`),
     ));

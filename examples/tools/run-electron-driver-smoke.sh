@@ -160,12 +160,10 @@ fi
 if [ "$app_dir" = "examples/electron" ]; then
   typescript_version="$(example_package_version "@oliphaunt/ts")"
   liboliphaunt_linux_version="$(example_package_version "@oliphaunt/liboliphaunt-linux-x64-gnu")"
-  tools_linux_version="$(example_package_version "@oliphaunt/tools-linux-x64-gnu")"
   hstore_version="$(example_package_version "@oliphaunt/extension-hstore")"
 
   assert_npm_package "@oliphaunt/ts" "$typescript_version"
   assert_npm_package "@oliphaunt/liboliphaunt-linux-x64-gnu" "$liboliphaunt_linux_version" "@oliphaunt/ts"
-  assert_npm_package "@oliphaunt/tools-linux-x64-gnu" "$tools_linux_version" "@oliphaunt/ts"
   assert_npm_package "@oliphaunt/extension-hstore" "$hstore_version"
 fi
 pnpm --dir "$app_dir" build

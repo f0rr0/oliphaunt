@@ -1,0 +1,71 @@
+---
+title: Rust WASIX Runtime Guide
+description: Rust WASIX memory, persistent storage, startup, server, tools, and physical archive behavior.
+---
+
+# Rust WASIX Runtime Guide
+
+`oliphaunt-wasix` is the Rust host for the portable runtime. It shares the
+PostgreSQL guest and physical contracts with
+[`@oliphaunt/wasix-ts`](/docs/sdk/wasix-typescript), while keeping Rust-native
+filesystem, server, tool, and error APIs.
+
+<WasmRuntimeMap />
+
+## Direct and server hosts
+
+Use `Oliphaunt` when Rust code calls the database directly. Use
+`OliphauntServer` when an existing PostgreSQL client library needs a local TCP
+or Unix endpoint. Both own one embedded WASIX backend; the listener does not
+turn it into a multi-backend postmaster.
+
+The embedded proxy uses PostgreSQL trust authentication, so TCP endpoints are
+restricted to loopback addresses. Use the default `127.0.0.1:0`, another
+loopback address, or a Unix-domain socket.
+
+## Storage
+
+`DatabaseStorage::Memory` is the default true Wasmer memory filesystem.
+`DatabaseStorage::Directory(path)` is a caller-owned managed root. A new store
+is hydrated from the packaged template; reopening validates the descriptor and
+minimal PostgreSQL markers. Incomplete or descriptorless nonempty roots fail
+without mutation.
+
+Physical restore is the static `Oliphaunt::restore(destination, bytes)`
+operation. It accepts a new or empty destination. Tests that specifically need
+`initdb` invoke the packaged tool instead of selecting an initialization mode.
+
+## Startup and extensions
+
+Builders accept username, database, validated PostgreSQL startup GUCs, and
+exact typed extension selections. Reopening an extension-bearing root requires
+the receiving host to select the installed extension code again.
+
+## Data movement and tools
+
+`backup()` produces the one WASIX PostgreSQL 18 physical archive. Rust and
+WASIX TypeScript can restore each other's archives after a clean close. Enable
+the Rust crate's `tools` feature for `pg_dump` and `psql`; logical SQL is the
+portable upgrade and native/WASIX transfer path.
+
+## Lifecycle
+
+Persistent directories have one Rust host owner while open. Close a direct
+database explicitly. Close connected clients before shutting down
+`OliphauntServer`. App-facing raw protocol responses are buffered; cancellation
+and dedicated COPY streaming remain deferred in the shared SDK parity policy.
+
+## Errors
+
+Fallible methods return `oliphaunt_wasix::Result<T>`. The opaque SDK `Error`
+implements the standard Rust error traits and supports `postgres_error()`.
+PostgreSQL `ErrorResponse` failures expose `PostgresError`, which provides
+SQLSTATE plus the ordered raw fields without leaking host implementation error
+types into the public API.
+
+## Supported hosts
+
+Published packages carry the runtime artifacts for their documented targets.
+Missing target assets fail during open. Support is recorded in the
+[static runtime matrix](/docs/reference/capabilities), not discovered through a
+capability object.

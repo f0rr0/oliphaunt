@@ -3,9 +3,9 @@ default_install_hook_types = ["pre-commit", "commit-msg"]
 fail_fast = true
 exclude = { glob = [
   "target/**",
-  "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/node_modules/**",
-  "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/dist/**",
-  "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/target/**",
+  "examples/**/node_modules/**",
+  "examples/**/dist/**",
+  "examples/**/src-tauri/target/**",
 ] }
 
 [[repos]]
@@ -34,5 +34,5 @@ hooks = [
 repo = "local"
 hooks = [
   { id = "cargo-fmt", name = "cargo fmt", language = "system", entry = "cargo fmt --check", pass_filenames = false, files = "\\.(rs|toml)$", stages = ["pre-commit"] },
-  { id = "tauri-rustfmt", name = "Tauri rustfmt", language = "system", entry = "tools/policy/check-tauri-example-rustfmt.sh", pass_filenames = false, files = "^src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/.*\\.(rs|toml)$", stages = ["pre-commit"] },
+  { id = "tauri-rustfmt", name = "Tauri rustfmt", language = "system", entry = "tools/policy/check-tauri-example-rustfmt.sh", pass_filenames = false, files = "^examples/(tauri|tauri-wasix)/src-tauri/.*\\.(rs|toml)$", stages = ["pre-commit"] },
 ]

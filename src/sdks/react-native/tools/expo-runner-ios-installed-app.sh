@@ -554,12 +554,12 @@ ios_metro_url() {
 ios_runner_url() {
   local selected_runner="$1"
   local storage_arg="${2:-}"
-  local url="$scheme://oliphaunt-smoke?liboliphauntRunner=$selected_runner&liboliphauntLifecycle=$lifecycle_smoke&liboliphauntDurability=$(urlencode "$durability_profile")&liboliphauntRuntimeFootprint=$(urlencode "$runtime_footprint")"
+  local url="$scheme://oliphaunt-smoke?liboliphauntRunner=$selected_runner&liboliphauntLifecycle=$lifecycle_smoke"
   if uses_ios_metro; then
     local metro_url encoded_metro_url
     metro_url="$(ios_metro_url)"
     encoded_metro_url="$(urlencode "$metro_url")"
-    url="$scheme://expo-development-client/?url=$encoded_metro_url&disableOnboarding=1&liboliphauntRunner=$selected_runner&liboliphauntLifecycle=$lifecycle_smoke&liboliphauntDurability=$(urlencode "$durability_profile")&liboliphauntRuntimeFootprint=$(urlencode "$runtime_footprint")"
+    url="$scheme://expo-development-client/?url=$encoded_metro_url&disableOnboarding=1&liboliphauntRunner=$selected_runner&liboliphauntLifecycle=$lifecycle_smoke"
   fi
   if [ "$selected_runner" = "benchmark" ]; then
     url="$url&liboliphauntBenchmarkPreset=$(urlencode "$benchmark_preset")"
@@ -567,7 +567,6 @@ ios_runner_url() {
   if [ -n "$startup_gucs" ]; then
     url="$url&liboliphauntStartupGUCs=$(urlencode "$startup_gucs")"
   fi
-  url="$url&liboliphauntWalSegsizeMB=$(urlencode "$wal_segsize_mb")"
   if [ -n "$storage_arg" ]; then
     case "$storage_arg" in
       app-data:*)

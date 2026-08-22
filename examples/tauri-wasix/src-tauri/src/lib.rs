@@ -161,7 +161,7 @@ async fn connect_database(server: OliphauntServer) -> Result<TodoDatabase> {
     let pool = PgPoolOptions::new()
         .max_connections(1)
         .acquire_timeout(Duration::from_secs(30))
-        .connect(&server.connection_uri())
+        .connect(&server.connection_string())
         .await
         .context("connect SQLx pool to oliphaunt-wasix server")?;
     init_schema(&pool).await?;
@@ -181,10 +181,7 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
 }
 
 fn validate_wasix_tools(server: &OliphauntServer) -> Result<()> {
-    server
-        .preflight_tools()
-        .context("preflight split WASIX pg_dump and psql tools")?;
-    let dump = server.dump_sql(PgDumpOptions::new().arg("--schema-only"))?;
+    let dump = server.pg_dump(PgDumpOptions::new().arg("--schema-only"))?;
     anyhow::ensure!(
         dump.contains("PostgreSQL database dump"),
         "pg_dump SQL backup smoke did not look like a PostgreSQL dump"

@@ -13,12 +13,15 @@ export async function acquireExclusiveWebLock(
   lockName: string,
   label: string,
 ): Promise<ExclusiveStorageLock> {
-  const locks = (globalThis.navigator as typeof globalThis.navigator & { locks?: WebLockManager })
-    .locks;
+  const locks = (
+    globalThis.navigator as typeof globalThis.navigator & {
+      locks?: WebLockManager;
+    }
+  ).locks;
   if (locks === undefined) {
     throw new WasixStorageError(`${label} requires the browser Web Locks API`, {
       code: 'unavailable',
-      durability: 'unchanged',
+      commitState: 'unchanged',
     });
   }
 
@@ -55,14 +58,14 @@ export async function acquireExclusiveWebLock(
     void request.catch(() => undefined);
     throw new WasixStorageError(
       `could not acquire ownership of ${label}: ${describeError(error)}`,
-      { code: 'unavailable', durability: 'unchanged', cause: error },
+      { code: 'unavailable', commitState: 'unchanged', cause: error },
     );
   }
   if (!available) {
     await request;
     throw new WasixStorageError(`${label} is already open in this origin`, {
       code: 'busy',
-      durability: 'unchanged',
+      commitState: 'unchanged',
     });
   }
   let released = false;

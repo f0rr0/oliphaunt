@@ -22,6 +22,14 @@ function manifest() {
         browser: './lib/index.js',
         default: './lib/index.js',
       },
+      './protocol': {
+        types: './lib/protocol.d.ts',
+        default: './lib/protocol.js',
+      },
+      './query': {
+        types: './lib/query.d.ts',
+        default: './lib/query.js',
+      },
       './storage/node': {
         types: './lib/storage/node.d.ts',
         node: './lib/storage/node.js',
@@ -33,6 +41,17 @@ function manifest() {
       './storage/deno': {
         types: './lib/storage/deno.d.ts',
         deno: './lib/storage/deno.js',
+      },
+      './storage/indexed-db': {
+        types: './lib/storage/indexed-db.d.ts',
+        default: './lib/storage/indexed-db.js',
+      },
+      './storage/opfs': {
+        types: './lib/storage/opfs.d.ts',
+        default: './lib/storage/opfs.js',
+      },
+      './package.json': {
+        default: './package.json',
       },
     },
     engines: {
@@ -72,6 +91,22 @@ describe('WASIX TypeScript release dependency closure', () => {
     candidate.exports['./storage/deno'].default = './lib/storage/deno.js';
     expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
       'must expose Deno directory storage only under the Deno condition',
+    );
+  });
+
+  test('rejects an incomplete query entrypoint', () => {
+    const candidate = manifest();
+    delete candidate.exports['./query'].types;
+    expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
+      'must expose the exact query entrypoint',
+    );
+  });
+
+  test('rejects an extra Node storage export condition', () => {
+    const candidate = manifest();
+    candidate.exports['./storage/node'].development = './lib/storage/node.js';
+    expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
+      'must expose directory storage only under the Node condition',
     );
   });
 

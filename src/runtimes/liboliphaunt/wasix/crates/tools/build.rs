@@ -11,7 +11,7 @@ const ARTIFACT_KIND: &str = "wasix-tools";
 const ARTIFACT_TARGET: &str = "portable";
 
 fn main() {
-    println!("cargo:rerun-if-env-changed=OLIPHAUNT_WASM_GENERATED_ASSETS_DIR");
+    println!("cargo:rerun-if-env-changed=OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR");
     emit_expected_asset_inputs();
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
@@ -27,7 +27,7 @@ fn main() {
 }
 
 fn emit_expected_asset_inputs() {
-    if let Some(path) = env::var_os("OLIPHAUNT_WASM_GENERATED_ASSETS_DIR") {
+    if let Some(path) = env::var_os("OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR") {
         emit_tool_probes(&PathBuf::from(path));
     }
 
@@ -61,7 +61,7 @@ fn find_asset_dir() -> Option<PathBuf> {
         return Some(package_payload);
     }
 
-    if let Some(path) = env::var_os("OLIPHAUNT_WASM_GENERATED_ASSETS_DIR") {
+    if let Some(path) = env::var_os("OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR") {
         let path = PathBuf::from(path);
         if path.join("bin/pg_dump.wasix.wasm").is_file()
             && path.join("bin/psql.wasix.wasm").is_file()

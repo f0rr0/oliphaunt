@@ -26,7 +26,10 @@ export class WorkerRpc {
   readonly #worker: WasixWorkerPort;
   readonly #pending = new Map<
     number,
-    { resolve: (value: Uint8Array | undefined) => void; reject: (error: Error) => void }
+    {
+      resolve: (value: Uint8Array | undefined) => void;
+      reject: (error: Error) => void;
+    }
   >();
   #nextId = 1;
   #fatal: Error | undefined;
@@ -136,6 +139,14 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
 
   async sync(boundary: WasixStorageSyncBoundary): Promise<void> {
     await this.#rpc.request({ method: 'sync', boundary });
+  }
+
+  async backup(): Promise<Uint8Array> {
+    const response = await this.#rpc.request({ method: 'backup' });
+    if (!(response instanceof Uint8Array)) {
+      throw new Error('Oliphaunt WASIX worker returned an invalid physical archive');
+    }
+    return response;
   }
 
   close(): Promise<void> {

@@ -11,9 +11,30 @@ import type { PreparedWasixRuntime } from '../extensions.js';
 import type { OliphauntDirectInstance } from '../host/index.mjs';
 import { PostgresError } from '../query.js';
 import type { SerializedOpenOptions } from '../rpc.js';
-import type { WasixStorageLease } from '../storage-provider.js';
+import { WASIX_PHYSICAL_IDENTITY, type WasixStorageLease } from '../storage-provider.js';
+import { wasixPostgresArgs } from '../wasix-runtime.js';
 
 describe('direct WASIX session lifecycle', () => {
+  it('uses PostgreSQL startup GUC name and value grammar', () => {
+    const valid = openOptions();
+    valid.startupGUCs = {
+      _name: '',
+      'ext.name$1': 'value',
+      '  trimmed_name  ': '  ',
+    };
+    expect(wasixPostgresArgs(valid)).toEqual(
+      expect.arrayContaining(['-c', '_name=', '-c', 'trimmed_name=  ']),
+    );
+    for (const name of ['1name', '.foo', 'a..b', 'a.1b', 'ext.$name', 'a b']) {
+      const invalid = openOptions();
+      invalid.startupGUCs = { [name]: 'value' };
+      expect(() => wasixPostgresArgs(invalid)).toThrow('must use dot-separated components');
+    }
+    const invalidValue = openOptions();
+    invalidValue.startupGUCs = { valid_name: 'bad\0value' };
+    expect(() => wasixPostgresArgs(invalidValue)).toThrow('contains a NUL byte');
+  });
+
   it('keeps startup SQLSTATE while composing cleanup failures in ownership order', async () => {
     const events: string[] = [];
     const storage = fakeLease(async (_directory, outcome) => {
@@ -74,7 +95,10 @@ describe('direct WASIX session lifecycle', () => {
     );
 
     expect(failure).toBeInstanceOf(PostgresError);
-    expect(failure).toMatchObject({ sqlstate: '22012', postgresMessage: 'division by zero' });
+    expect(failure).toMatchObject({
+      sqlstate: '22012',
+      postgresMessage: 'division by zero',
+    });
     expect(events).toEqual(['startup', 'exec', 'close', 'storage:failed', 'free']);
   });
 
@@ -122,7 +146,100 @@ describe('direct WASIX session lifecycle', () => {
     expect(events).toEqual(['startup', 'exec', 'close', 'storage:failed', 'free']);
   });
 
-  it('defers storage publication only when the caller owns the durability boundary', async () => {
+  it('keeps the session reusable after backup validation fails and cleanup is confirmed', async () => {
+    const events: string[] = [];
+    const responses = [
+      queryRows(['000000010000000000000000']),
+      queryRows(['000000010000000000000000', 'label', null]),
+      querySuccess(),
+    ];
+    const session = await DirectWasixSession.open(
+      openOptions(),
+      fakeHost({
+        events,
+        execProtocolRaw() {
+          return nextResponse(responses);
+        },
+      }),
+      fakeDependencies(fakeLease(async () => {})),
+    );
+
+    await expect(session.backup()).rejects.toThrow('pg_backup_start returned an unexpected result');
+    await expect(session.exec(Uint8Array.of(1))).resolves.toEqual(querySuccess());
+    await session.close();
+  });
+
+  it('reaches emergency stop after backup protocol execution throws', async () => {
+    const start = queryRows(['000000010000000000000000', String(1024 * 1024)]);
+    const stop = queryRows(['000000010000000000000000', 'label', null]);
+    for (const scenario of [
+      {
+        name: 'start',
+        failure: 'start transport failed',
+        outcomes: [new Error('start transport failed'), stop, querySuccess()],
+        backupCalls: 2,
+      },
+      {
+        name: 'first stop',
+        failure: 'first stop transport failed',
+        outcomes: [start, new Error('first stop transport failed'), stop, querySuccess()],
+        backupCalls: 3,
+      },
+    ]) {
+      const events: string[] = [];
+      const outcomes = [...scenario.outcomes];
+      const session = await DirectWasixSession.open(
+        openOptions(),
+        fakeHost({
+          events,
+          execProtocolRaw() {
+            return nextProtocolOutcome(outcomes);
+          },
+        }),
+        fakeDependencies(
+          fakeLease(async (_directory, outcome) => {
+            events.push(`storage:${outcome}`);
+          }),
+        ),
+      );
+
+      await expect(session.backup(), scenario.name).rejects.toThrow(scenario.failure);
+      expect(
+        events.filter((event) => event === 'exec'),
+        scenario.name,
+      ).toHaveLength(scenario.backupCalls);
+      await expect(session.exec(Uint8Array.of(1)), scenario.name).resolves.toEqual(querySuccess());
+      await session.close();
+      expect(events.at(-2), scenario.name).toBe('storage:clean');
+    }
+  });
+
+  it('poisons the session only when backup-mode exit cannot be confirmed', async () => {
+    const events: string[] = [];
+    const responses = [
+      queryRows(['000000010000000000000000', String(1024 * 1024)]),
+      queryError('55000', 'first stop failed'),
+      queryError('55000', 'emergency stop failed'),
+    ];
+    const session = await DirectWasixSession.open(
+      openOptions(),
+      fakeHost({
+        events,
+        execProtocolRaw() {
+          return nextResponse(responses);
+        },
+      }),
+      fakeDependencies(fakeLease(async () => {})),
+    );
+
+    await expect(session.backup()).rejects.toThrow('could not confirm leaving backup mode');
+    await expect(session.exec(Uint8Array.of(1))).rejects.toThrow(
+      'Oliphaunt WASIX direct database failed',
+    );
+    await session.close();
+  });
+
+  it('defers storage publication only when the caller owns the commitState boundary', async () => {
     const events: string[] = [];
     const storage = fakeLease(async (_directory, outcome) => {
       events.push(`storage:${outcome}`);
@@ -155,12 +272,12 @@ describe('direct WASIX session lifecycle', () => {
 
   it('preserves typed checkpoint and close storage errors', async () => {
     const checkpointFailure = new WasixStorageError('checkpoint generation failed', {
-      code: 'checkpoint-failed',
-      durability: 'unknown',
+      code: 'publication-failed',
+      commitState: 'unknown',
     });
     const closeFailure = new WasixStorageError('storage metadata is corrupt', {
       code: 'corrupt',
-      durability: 'unchanged',
+      commitState: 'unchanged',
     });
     const events: string[] = [];
     const storage: WasixStorageLease = {
@@ -184,7 +301,10 @@ describe('direct WASIX session lifecycle', () => {
     const failure = await rejection(session.close());
 
     expect(failure).toBe(closeFailure);
-    expect(failure).toMatchObject({ code: 'corrupt', durability: 'unchanged' });
+    expect(failure).toMatchObject({
+      code: 'corrupt',
+      commitState: 'unchanged',
+    });
     expect(events).toEqual(['startup', 'close', 'storage:failed', 'free']);
   });
 
@@ -438,22 +558,10 @@ function preparedRuntime(setupSql: string[] = []): PreparedWasixRuntime {
       module: Uint8Array.of(0),
       mounts: { '/base': pgdataMount() },
     },
+    moduleSha256: '4'.repeat(64),
     startupGUCs: {},
     setupSql,
-    storageCompatibility: {
-      schema: 'oliphaunt-wasix-pgdata-compatibility-v1',
-      runtime: {
-        product: 'liboliphaunt-wasix',
-        version: '0.1.1',
-        manifestSha256: '1'.repeat(64),
-        runtimeArchiveSha256: '2'.repeat(64),
-        pgdataTemplateSha256: '3'.repeat(64),
-        moduleSha256: '4'.repeat(64),
-        sourceFingerprint: 'source',
-        postgresVersion: '18.4',
-      },
-      extensions: [],
-    },
+    physicalIdentity: WASIX_PHYSICAL_IDENTITY,
   };
 }
 
@@ -493,7 +601,7 @@ function openOptions(): SerializedOpenOptions {
     username: 'postgres',
     database: 'postgres',
     startupGUCs: {},
-    storage: { schema: 'oliphaunt-wasix-storage-v2', kind: 'memory' },
+    storage: { schema: 'oliphaunt-wasix-storage-v1', kind: 'memory' },
   };
 }
 
@@ -518,6 +626,50 @@ function queryError(sqlstate: string, message: string): Uint8Array {
 function querySuccess(): Uint8Array {
   return concatenate([
     backendMessage('C', new TextEncoder().encode('SELECT 1\0')),
+    backendMessage('Z', Uint8Array.of('I'.charCodeAt(0))),
+  ]);
+}
+
+function queryRows(values: readonly (string | null)[]): Uint8Array {
+  const encoder = new TextEncoder();
+  const description = new Uint8Array(2 + values.length * 19);
+  const descriptionView = new DataView(description.buffer);
+  descriptionView.setInt16(0, values.length);
+  let descriptionOffset = 2;
+  for (let index = 0; index < values.length; index += 1) {
+    description[descriptionOffset++] = 0;
+    descriptionView.setUint32(descriptionOffset, 0);
+    descriptionOffset += 4;
+    descriptionView.setInt16(descriptionOffset, 0);
+    descriptionOffset += 2;
+    descriptionView.setUint32(descriptionOffset, 25);
+    descriptionOffset += 4;
+    descriptionView.setInt16(descriptionOffset, -1);
+    descriptionOffset += 2;
+    descriptionView.setInt32(descriptionOffset, -1);
+    descriptionOffset += 4;
+    descriptionView.setInt16(descriptionOffset, 0);
+    descriptionOffset += 2;
+  }
+  const encoded = values.map((value) => (value === null ? null : encoder.encode(value)));
+  const row = new Uint8Array(
+    2 + encoded.reduce((length, value) => length + 4 + (value?.length ?? 0), 0),
+  );
+  const rowView = new DataView(row.buffer);
+  rowView.setInt16(0, encoded.length);
+  let rowOffset = 2;
+  for (const value of encoded) {
+    rowView.setInt32(rowOffset, value?.length ?? -1);
+    rowOffset += 4;
+    if (value !== null) {
+      row.set(value, rowOffset);
+      rowOffset += value.length;
+    }
+  }
+  return concatenate([
+    backendMessage('T', description),
+    backendMessage('D', row),
+    backendMessage('C', encoder.encode('SELECT 1\0')),
     backendMessage('Z', Uint8Array.of('I'.charCodeAt(0))),
   ]);
 }
@@ -556,4 +708,17 @@ function concatenate(chunks: readonly Uint8Array[]): Uint8Array {
     offset += chunk.length;
   }
   return result;
+}
+
+function nextResponse(responses: Uint8Array[]): Uint8Array {
+  const response = responses.shift();
+  if (response === undefined) throw new Error('test exhausted direct-session responses');
+  return response;
+}
+
+function nextProtocolOutcome(outcomes: Array<Uint8Array | Error>): Uint8Array {
+  const outcome = outcomes.shift();
+  if (outcome === undefined) throw new Error('test exhausted direct-session outcomes');
+  if (outcome instanceof Error) throw outcome;
+  return outcome;
 }

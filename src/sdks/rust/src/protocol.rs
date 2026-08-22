@@ -2,7 +2,7 @@ use crate::error::{Error, Result};
 
 /// Raw PostgreSQL frontend protocol bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProtocolRequest {
+pub(crate) struct ProtocolRequest {
     bytes: Vec<u8>,
 }
 
@@ -38,11 +38,6 @@ impl ProtocolRequest {
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
     }
-
-    /// Consume into raw bytes.
-    pub fn into_bytes(self) -> Vec<u8> {
-        self.bytes
-    }
 }
 
 impl From<Vec<u8>> for ProtocolRequest {
@@ -59,7 +54,7 @@ impl From<&[u8]> for ProtocolRequest {
 
 /// Raw PostgreSQL backend protocol bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProtocolResponse {
+pub(crate) struct ProtocolResponse {
     bytes: Vec<u8>,
 }
 

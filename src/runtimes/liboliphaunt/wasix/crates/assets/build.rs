@@ -369,7 +369,7 @@ const EXTENSION_PACKAGES: &[ExtensionPackage] = &[
 ];
 
 fn main() {
-    println!("cargo:rerun-if-env-changed=OLIPHAUNT_WASM_GENERATED_ASSETS_DIR");
+    println!("cargo:rerun-if-env-changed=OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR");
     println!("cargo:rerun-if-env-changed=OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT");
     for package in EXTENSION_PACKAGES {
         println!("cargo:rerun-if-env-changed={}", package.env);
@@ -396,7 +396,7 @@ fn main() {
 }
 
 fn emit_expected_asset_inputs() {
-    if let Some(path) = env::var_os("OLIPHAUNT_WASM_GENERATED_ASSETS_DIR") {
+    if let Some(path) = env::var_os("OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR") {
         emit_manifest_probe(&PathBuf::from(path));
     }
 
@@ -426,7 +426,7 @@ fn find_asset_dir() -> Option<PathBuf> {
         return Some(package_payload);
     }
 
-    if let Some(path) = env::var_os("OLIPHAUNT_WASM_GENERATED_ASSETS_DIR") {
+    if let Some(path) = env::var_os("OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR") {
         let path = PathBuf::from(path);
         if path.join("manifest.json").is_file() {
             return Some(path);

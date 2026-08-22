@@ -38,7 +38,6 @@ let appSupport = FileManager.default.urls(
 
 let database = try await OliphauntDatabase.open(
     configuration: OliphauntConfiguration(
-        mode: .nativeDirect,
         storage: .directory(appSupport.appending(path: "main.oliphaunt")),
         extensions: ["vector"]
     )
@@ -51,8 +50,7 @@ try await database.close()
 ## Runtime Shape
 
 Swift is async-first and actor-owned. Direct mode owns one resident backend per
-app process and one serialized physical session. The SDK reports capabilities
-for any additional modes available on the selected Apple target.
+app process and one serialized physical session.
 
 The actor boundary keeps database calls off the main actor. App code can issue
 concurrent Swift tasks against the same database handle; direct mode queues them
@@ -62,13 +60,10 @@ against the resident backend and preserves transaction ordering.
 
 - Use `.directory(url)` for persistent user data. Omit it for SDK-owned
   temporary storage.
-- Call lifecycle hooks around background and foreground transitions.
 - Select exact SQL extension names so the app bundle contains only selected
   extension artifacts and declared dependencies.
 - Use backup and restore APIs for export, import, and user-visible data
   movement.
-- Check `capabilities()` before enabling optional UI for streaming, backup
-  formats, or additional runtime modes.
 
 ## First Query
 

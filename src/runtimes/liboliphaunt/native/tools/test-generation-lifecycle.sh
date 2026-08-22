@@ -26,6 +26,7 @@ cc \
   -pthread \
   -I "$source_root/include" \
   -I "$source_root/src" \
+  "$source_root/src/liboliphaunt_backup_state.c" \
   "$source_root/src/liboliphaunt_process.c" \
   "$source_root/smoke/liboliphaunt_generation_lifecycle.c" \
   "${platform_libs[@]}" \

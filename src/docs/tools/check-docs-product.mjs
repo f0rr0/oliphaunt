@@ -244,7 +244,8 @@ function assertSdkSidebarPages() {
     'oliphaunt-kotlin',
     'oliphaunt-react-native',
     'oliphaunt-js',
-    'oliphaunt-wasix',
+    'oliphaunt-wasix-rust',
+    'oliphaunt-wasix-typescript',
     'liboliphaunt-native',
   ];
   const actualOrder = manifest.routes
@@ -258,8 +259,8 @@ function assertSdkSidebarPages() {
     const expected =
       route.id === 'oliphaunt-react-native'
         ? ['index', 'guide', 'architecture']
-        : route.id === 'oliphaunt-wasix'
-          ? ['index', 'browser-typescript', 'guide', 'runtime', 'dump-restore']
+        : route.id === 'oliphaunt-wasix-rust'
+          ? ['index', 'guide', 'runtime', 'dump-restore']
           : ['index', 'guide'];
     const actual = route.sidebar_pages ?? [];
     if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -584,7 +585,8 @@ function assertSdkSectionCoverage() {
     'oliphaunt-kotlin': 'kotlin',
     'oliphaunt-react-native': 'react-native',
     'oliphaunt-js': 'typescript',
-    'oliphaunt-wasix': 'wasix-rust',
+    'oliphaunt-wasix-rust': 'wasix-rust',
+    'oliphaunt-wasix-typescript': 'wasix-typescript',
   };
   const guideHeadingOrder = {
     'liboliphaunt-native': [
@@ -606,7 +608,7 @@ function assertSdkSectionCoverage() {
       'Select extensions',
       'Back up and restore',
     ],
-    'oliphaunt-wasix': [
+    'oliphaunt-wasix-rust': [
       'Install',
       'Open and query',
       'Create app data',
@@ -615,6 +617,16 @@ function assertSdkSectionCoverage() {
       'Handle lifecycle',
       'Select extensions',
       'Back up, dump, and restore',
+    ],
+    'oliphaunt-wasix-typescript': [
+      'Install',
+      'Open and query',
+      'Create app data',
+      'Configure',
+      'Choose a mode',
+      'Handle lifecycle',
+      'Select extensions',
+      'Back up and restore',
     ],
   };
   for (const route of manifest.routes.filter((entry) => entry.kind === 'sdk')) {
@@ -715,20 +727,18 @@ function assertSdkSectionCoverage() {
         fail('React Native architecture docs are missing ReactNativeBoundaryMap');
       }
       for (const heading of [
-        'Runtime Ownership',
-        'JavaScript Shape',
-        'Binary Transport',
-        'Config Plugin And Packaging',
-        'Lifecycle',
-        'Capabilities',
-        'What The React Native SDK Owns',
+        'Ownership',
+        'JavaScript surface',
+        'Binary transport',
+        'Storage and lifecycle',
+        'Extensions and packaging',
       ]) {
         if (!new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$`, 'mu').test(architectureMarkdown)) {
           fail(`React Native architecture docs are missing required section: ${heading}`);
         }
       }
     }
-    if (route.id === 'oliphaunt-wasix') {
+    if (route.id === 'oliphaunt-wasix-rust') {
       const runtimePath = routeSourcePagePath(route, 'runtime');
       if (!runtimePath) {
         fail('Rust WASIX docs are missing runtime.md or runtime.mdx');
@@ -738,13 +748,12 @@ function assertSdkSectionCoverage() {
         fail('Rust WASIX runtime docs are missing WasmRuntimeMap');
       }
       for (const heading of [
-        'Choose A Mode',
-        'Storage and initialization',
-        'Operational Limits',
-        'Persistent-storage locking and lifecycle',
-        'Startup And Preload',
-        'Supported Targets',
-        'Server-Compatible Access',
+        'Direct and server hosts',
+        'Storage',
+        'Startup and extensions',
+        'Data movement and tools',
+        'Lifecycle',
+        'Supported hosts',
       ]) {
         if (!new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$`, 'mu').test(runtimeMarkdown)) {
           fail(`Rust WASIX runtime docs are missing required section: ${heading}`);
@@ -761,8 +770,7 @@ function assertSdkSectionCoverage() {
       }
       for (const heading of [
         'Choose The Right Export Format',
-        'Direct API',
-        'Server API',
+        'Tool API',
         '`PgDumpOptions`',
         'CLI',
         'Restore',
@@ -818,9 +826,9 @@ function assertReferencePageCoverage() {
   const requirements = [
     {
       page: 'capabilities',
-      title: 'Capability Matrix',
+      title: 'Runtime Support',
       components: ['CapabilitySnapshot'],
-      headings: ['SDKs', 'Runtime Modes', 'Feature Support', 'Choosing A Product'],
+      headings: ['Products', 'Feature support', 'Selection guidance'],
     },
     {
       page: 'extensions',
@@ -915,12 +923,11 @@ function assertLearnPageCoverage() {
       components: ['ModeMatrix'],
       headings: [
         'Choose a mode',
-        'Runtime Semantics',
-        'Direct Lifecycle',
         'Storage',
-        'Startup Configuration',
+        'Startup configuration',
+        'Backup and restore',
         'Extensions',
-        'Capabilities',
+        'Fixed support',
       ],
     },
     {
@@ -1082,7 +1089,8 @@ function assertApiReferenceSummary({ requireGenerated = false } = {}) {
     'oliphaunt-kotlin': 'kotlin',
     'oliphaunt-react-native': 'react-native',
     'oliphaunt-js': 'typescript',
-    'oliphaunt-wasix': 'wasix',
+    'oliphaunt-wasix-rust': 'wasix-rust',
+    'oliphaunt-wasix-typescript': 'wasix-typescript',
   };
   const expected = new Set(
     manifest.routes.filter((entry) => entry.kind === 'sdk').map((entry) => entry.id),
@@ -1400,7 +1408,7 @@ function assertSdkInstallReleaseContracts() {
       'public Kotlin install docs must not advertise the unpublished dev.oliphaunt:oliphaunt coordinate',
     );
   }
-  const wasixTypescriptDocs = readText('src/docs/content/sdk/wasm/browser-typescript.mdx');
+  const wasixTypescriptDocs = readText('src/docs/content/sdk/wasix-typescript/guide.mdx');
   for (const contract of [
     "npm:@oliphaunt/wasix-ts';",
     "npm:@oliphaunt/wasix-ts/storage/deno';",

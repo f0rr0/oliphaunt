@@ -1,1620 +1,407 @@
 package dev.oliphaunt
 
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.async
+// liboliphaunt-doc-example:kotlin-typed-query
+// liboliphaunt-doc-example:kotlin-setup
+
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class OliphauntDatabaseTest {
     @Test
-    fun opensAndExecutesThroughInjectedEngine() = runTest {
-        val database =
-            OliphauntDatabase.open(
-                config = OliphauntConfig(mode = EngineMode.NativeDirect),
-                engine = MockEngine(EngineMode.NativeDirect),
-            )
-
-        val response = database.execProtocolRaw(ProtocolRequest(byteArrayOf(0x51)))
-        assertEquals(listOf(1, 0x51), response.bytes.map(Byte::toInt))
+    fun executeReturnsPostgresCommandMetadata() = runTest {
+        val session = TestSession(commandResponse("UPDATE 3"))
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+        val result = database.execute("UPDATE widgets SET ready = true")
+        assertEquals("UPDATE 3", result.commandTag)
+        assertEquals(3L, result.rowCount)
+        assertEquals('P'.code.toByte(), session.requests.single().first())
     }
 
     @Test
-    fun queryParsesSimpleQueryResultsThroughInjectedEngine() = runTest {
-        val database =
-            OliphauntDatabase.open(
-                config = OliphauntConfig(mode = EngineMode.NativeDirect),
-                engine = MockEngine(EngineMode.NativeDirect),
-            )
+    fun executeUsesExtendedProtocolForParameters() = runTest {
+        val session = TestSession(commandResponse("INSERT 0 1"))
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+        val result = database.execute(
+            "INSERT INTO widgets(value) VALUES ($1)",
+            listOf(QueryParam.Text("hello")),
+        )
+        assertEquals(1L, result.rowCount)
+        assertEquals('P'.code.toByte(), session.requests.single().first())
+    }
 
-        // liboliphaunt-doc-example:kotlin-typed-query
-        val result = database.query("SELECT 1::text AS value, NULL AS empty")
+    @Test
+    fun executeRejectsRows() {
+        assertFailsWith<OliphauntException> {
+            parseCommandResponse(rowResponse("1", "SELECT 1"))
+        }
+    }
 
-        assertEquals(listOf("value", "empty"), result.fields.map { it.name })
-        assertEquals(25u, result.fields[0].typeOid)
-        assertEquals(1, result.rowCount)
-        assertEquals("SELECT 1", result.commandTag)
+    @Test
+    fun queryUsesCommandTagRowCount() {
+        val result = parseQueryResponse(rowResponse("1", "SELECT 7"))
+        assertEquals(1, result.rows.size)
+        assertEquals(7L, result.rowCount)
+        assertEquals(2_147_483_648L, parseQueryResponse(commandResponse("SELECT 2147483648")).rowCount)
         assertEquals("1", result.getText(0, "value"))
-        assertEquals(null, result.getText(0, "empty"))
     }
 
     @Test
-    fun queryParametersUseExtendedProtocolThroughInjectedEngine() = runTest {
-        val database =
-            OliphauntDatabase.open(
-                config = OliphauntConfig(mode = EngineMode.NativeDirect),
-                engine = MockEngine(EngineMode.NativeDirect),
-            )
-
-        val request =
-            ProtocolRequest.extendedQuery(
-                "SELECT \$1::text AS value, \$2::text AS empty",
-                listOf(QueryParam.Text("1"), QueryParam.Null),
-            )
-        assertEquals('P'.code.toByte(), request.bytes.first())
-        assertTrue(request.bytes.contains('B'.code.toByte()))
-        assertTrue(request.bytes.contains('E'.code.toByte()))
-
-        // liboliphaunt-doc-example:kotlin-parameterized-query
-        val result =
-            database.query(
-                "SELECT \$1::text AS value, \$2::text AS empty",
-                listOf(QueryParam.Text("1"), QueryParam.Null),
-            )
-
-        assertEquals("1", result.getText(0, "value"))
-        assertEquals(null, result.getText(0, "empty"))
+    fun commandsWithoutAffectedRowsReturnNull() {
+        val result = parseCommandResponse(commandResponse("CREATE TABLE"))
+        assertNull(result.rowCount)
     }
 
     @Test
-    fun queryValueTypesExposeStableEqualityAndHelpers() {
+    fun postgresErrorPrefersNonlocalizedSeverity() {
+        val error = PostgresError.fromFields(
+            listOf(
+                PostgresErrorField('S'.code, "ERROR"),
+                PostgresErrorField('V'.code, "ERREUR"),
+                PostgresErrorField('M'.code, "bad query"),
+            ),
+        )
+        assertEquals("ERREUR", error.severity)
+    }
+
+    @Test
+    fun backupAndRestoreUsePhysicalBytesDirectly() = runTest {
+        val session = TestSession(commandResponse("OK"), byteArrayOf(1, 2, 3))
+        val engine = TestEngine(session)
+        val database = OliphauntDatabase.open(EngineConfig(), engine)
+        assertContentEquals(byteArrayOf(1, 2, 3), database.backup())
+        OliphauntDatabase.restore("/tmp/restored", byteArrayOf(4, 5), engine)
+        assertEquals("/tmp/restored", engine.restoredDestination)
+        assertContentEquals(byteArrayOf(4, 5), engine.restoredBytes)
+    }
+
+    @Test
+    fun rawProtocolStreamingForwardsOwnedChunks() = runTest {
+        val response = commandResponse("SELECT 1")
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(TestSession(response)))
+        val chunks = mutableListOf<ByteArray>()
+        database.execProtocolStream(byteArrayOf('Q'.code.toByte(), 0, 0, 0, 5, 0)) {
+            chunks += it
+        }
+        assertEquals(1, chunks.size)
+        assertContentEquals(response, chunks.single())
+    }
+
+    @Test
+    fun transactionCommitsAndPinsPhysicalSession() = runTest {
+        val session = TestSession(commandResponse("OK"))
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+        val value = database.transaction { transaction ->
+            assertFailsWith<OliphauntException> { database.execute("SELECT 1") }
+            transaction.execute("UPDATE widgets SET ready = true")
+            transaction.query("SELECT $1", listOf(QueryParam.Text("value")))
+            42
+        }
+        assertEquals(42, value)
+        assertEquals(listOf("BEGIN", "COMMIT"), session.simpleQueries())
+        assertTrue(session.requests.any { it.firstOrNull() == 'P'.code.toByte() })
+    }
+
+    @Test
+    fun transactionRollsBackOriginalFailure() = runTest {
+        class Expected : RuntimeException()
+        val session = TestSession(commandResponse("OK"))
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+        assertFailsWith<Expected> {
+            database.transaction<Unit> { throw Expected() }
+        }
+        assertEquals(listOf("BEGIN", "ROLLBACK"), session.simpleQueries())
+    }
+
+    @Test
+    fun commitRequiresExactCommitTag() = runTest {
+        val session = TestSession(commandResponse("UPDATE 1"), commitTag = "ROLLBACK")
+        val database = OliphauntDatabase.open(
+            EngineConfig(),
+            TestEngine(session),
+        )
+        val error = assertFailsWith<OliphauntException> { database.transaction { 1 } }
+        assertTrue(error.message.orEmpty().contains("COMMIT returned unexpected"))
+        database.execute("SELECT 1")
+        assertEquals(listOf("BEGIN", "COMMIT"), session.simpleQueries())
+    }
+
+    @Test
+    fun commitTransportFailureDoesNotRollbackAndPoisonsFacade() = runTest {
+        val session = TestSession(commandResponse("UPDATE 1"), failCommit = true)
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+        val primary = assertFailsWith<OliphauntException> { database.transaction { 1 } }
+        assertTrue(primary.message.orEmpty().contains("commit transport failed"))
+        assertEquals(listOf("BEGIN", "COMMIT"), session.simpleQueries())
+        val poison = assertFailsWith<OliphauntException> { database.execute("SELECT 1") }
+        assertTrue(poison.message.orEmpty().contains("COMMIT outcome is unknown"))
+        database.close()
+    }
+
+    @Test
+    fun rollbackFailurePoisonsFacadeUntilClose() = runTest {
+        class Expected : RuntimeException()
+        val session = TestSession(commandResponse("UPDATE 1"), failRollback = true)
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+        assertFailsWith<Expected> { database.transaction<Unit> { throw Expected() } }
+        val poison = assertFailsWith<OliphauntException> { database.execute("SELECT 1") }
+        assertTrue(poison.message.orEmpty().contains("rollback failed"))
+        database.close()
+    }
+
+    @Test
+    fun closeIsIdempotentAndRejectsFurtherWork() = runTest {
+        val session = TestSession(commandResponse("OK"))
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+        database.close()
+        database.close()
+        assertEquals(1, session.closeCount)
+        assertFailsWith<OliphauntException> { database.execute("SELECT 1") }
+    }
+
+    @Test
+    fun configurationForwardsOnlyExplicitPostgresSettings() = runTest {
+        val engine = TestEngine(TestSession(commandResponse("OK")))
+        OliphauntDatabase.open(
+            EngineConfig(
+                startupGucs = listOf(PostgresStartupGuc("shared_buffers", "16MB")),
+                username = "alice",
+                database = "app",
+            ),
+            engine,
+        )
+        val config = requireNotNull(engine.openedConfig)
+        assertEquals("alice", config.username)
+        assertEquals("app", config.database)
+        assertEquals(listOf("-c", "shared_buffers=16MB"), config.postgresStartupArgs())
+    }
+
+    @Test
+    fun queryValueTypesAreStrictAndValueSemantic() {
         assertEquals(QueryFormat.Binary, QueryFormat.fromCode(1))
         assertEquals(QueryFormat.Other(7), QueryFormat.fromCode(7))
-        assertEquals(QueryParam.Text("hello"), QueryParam.text("hello"))
-        assertEquals(QueryParam.Binary(byteArrayOf(1, 2)), QueryParam.binary(byteArrayOf(1, 2)))
-        assertEquals(QueryParam.Binary(byteArrayOf(1, 2)).hashCode(), QueryParam.Binary(byteArrayOf(1, 2)).hashCode())
+        assertEquals(QueryParam.Text("x"), QueryParam.text("x"))
+        val binary = QueryParam.binary(byteArrayOf(1, 2))
+        assertEquals(binary, QueryParam.Binary(byteArrayOf(1, 2)))
+        assertNotEquals(binary, QueryParam.Binary(byteArrayOf(2, 1)))
+        assertEquals(binary.hashCode(), QueryParam.Binary(byteArrayOf(1, 2)).hashCode())
 
-        val row = QueryRow(listOf("hello".encodeToByteArray(), null))
-        assertEquals("hello", row.text(0))
-        assertEquals(null, row.text(1))
-        assertEquals(QueryRow(listOf("hello".encodeToByteArray(), null)), row)
-        assertEquals(row.hashCode(), QueryRow(listOf("hello".encodeToByteArray(), null)).hashCode())
-        assertTrue(row != QueryRow(listOf(null, "hello".encodeToByteArray())))
+        val row = QueryRow(listOf("x".encodeToByteArray(), null))
+        assertEquals(row, row)
+        assertEquals(row, QueryRow(listOf("x".encodeToByteArray(), null)))
+        assertNotEquals(row, QueryRow(listOf("x".encodeToByteArray())))
+        assertNotEquals(row, QueryRow(listOf(null, null)))
+        assertTrue(!row.equals("row"))
+        row.hashCode()
+        assertNull(row.text(1))
+        assertFailsWith<OliphauntException> { row.text(2) }
+        assertFailsWith<OliphauntException> { QueryRow(listOf(byteArrayOf(0xc3.toByte()))).text(0) }
 
-        val rowError =
-            assertFailsWith<OliphauntException> {
-                row.text(2)
-            }
-        assertTrue(rowError.message.orEmpty().contains("query row has no column at index 2"))
-
-        val result =
-            QueryResult(
-                fields =
-                listOf(
-                    QueryField(
-                        name = "value",
-                        tableOid = 0u,
-                        tableAttribute = 0,
-                        typeOid = 25u,
-                        typeSize = -1,
-                        typeModifier = -1,
-                        format = QueryFormat.Text,
-                    ),
-                ),
-                rows = listOf(row),
-                commandTag = "SELECT 1",
-            )
-        val missingColumn =
-            assertFailsWith<OliphauntException> {
-                result.getText(0, "missing")
-            }
-        assertTrue(missingColumn.message.orEmpty().contains("no column named 'missing'"))
-        val missingRow =
-            assertFailsWith<OliphauntException> {
-                result.getText(3, "value")
-            }
-        assertTrue(missingRow.message.orEmpty().contains("query result has no row at index 3"))
-    }
-
-    @Test
-    fun simpleQueryRejectsNulSqlBeforeBuildingProtocol() {
-        val error =
-            assertFailsWith<OliphauntException> {
-                ProtocolRequest.simpleQuery("SELECT 1\u0000SELECT 2")
-            }
-        assertEquals("simple query SQL must not contain NUL bytes", error.message)
-    }
-
-    @Test
-    fun extendedQueryRejectsInvalidFrontendInputsBeforeBuildingProtocol() {
-        val nulError =
-            assertFailsWith<OliphauntException> {
-                ProtocolRequest.extendedQuery("SELECT \u0000", listOf(QueryParam.Null))
-            }
-        assertEquals("extended query SQL must not contain NUL bytes", nulError.message)
-
-        val tooMany = List(Short.MAX_VALUE.toInt() + 1) { QueryParam.Null }
-        val parameterCountError =
-            assertFailsWith<OliphauntException> {
-                ProtocolRequest.extendedQuery("SELECT 1", tooMany)
-            }
-        assertEquals(
-            "extended query supports at most ${Short.MAX_VALUE} parameters, got ${Short.MAX_VALUE.toInt() + 1}",
-            parameterCountError.message,
+        val result = QueryResult(emptyList(), emptyList(), null, null)
+        assertFailsWith<OliphauntException> { result.getText(0, "missing") }
+        val fieldOnly = QueryResult(
+            listOf(QueryField("value", 0u, 0, 25u, -1, -1, QueryFormat.Text)),
+            emptyList(),
+            null,
+            null,
         )
-
-        val binary = ProtocolRequest.extendedQuery("SELECT \$1::bytea", listOf(QueryParam.binary(byteArrayOf(1, 2, 3))))
-        assertEquals('P'.code.toByte(), binary.bytes.first())
-        assertTrue(binary.bytes.contains(1.toByte()))
-        assertTrue(binary.bytes.contains(3.toByte()))
+        assertFailsWith<OliphauntException> { fieldOnly.getText(0, "value") }
     }
 
     @Test
-    fun transactionCommitsAndRejectsUnpinnedInterleaving() = runTest {
-        val session = MockSession(EngineMode.NativeDirect)
-        val database =
-            OliphauntDatabase.open(
-                config = OliphauntConfig(mode = EngineMode.NativeDirect),
-                engine = FixedSessionEngine(session),
+    fun extendedProtocolSupportsNullTextAndBinaryAndValidatesInputs() {
+        val request = extendedQueryProtocol(
+            "SELECT $1, $2, $3",
+            listOf(QueryParam.Null, QueryParam.Text("text"), QueryParam.Binary(byteArrayOf(1, 2))),
+        )
+        assertEquals('P'.code.toByte(), request.first())
+        assertFailsWith<OliphauntException> {
+            extendedQueryProtocol("SELECT \u0000", emptyList())
+        }
+        assertFailsWith<OliphauntException> {
+            extendedQueryProtocol("SELECT 1", List(Short.MAX_VALUE.toInt() + 1) { QueryParam.Null })
+        }
+        assertFailsWith<OliphauntException> { simpleQueryProtocol("SELECT \u0000") }
+    }
+
+    @Test
+    fun commandParserAcceptsPostgresControlMessages() {
+        val controls =
+            backendMessage('1', ByteArray(0)) +
+                backendMessage('2', ByteArray(0)) +
+                backendMessage('3', ByteArray(0)) +
+                backendMessage('I', ByteArray(0)) +
+                backendMessage('n', ByteArray(0)) +
+                backendMessage('S', cstrings("server_version", "18")) +
+                backendMessage('N', byteArrayOf('M'.code.toByte()) + cstrings("notice") + byteArrayOf(0)) +
+                backendMessage('A', byteArrayOf(0, 0, 0, 1) + cstrings("channel", "payload")) +
+                commandResponse("DELETE 2")
+        assertEquals(2L, parseCommandResponse(controls).rowCount)
+    }
+
+    @Test
+    fun commandParserRejectsMalformedAndUnsupportedResponses() {
+        val cases = listOf(
+            byteArrayOf('C'.code.toByte(), 0, 0, 0, 3),
+            backendMessage('C', "UPDATE 1".encodeToByteArray()),
+            backendMessage('G', ByteArray(0)),
+            backendMessage('Y', ByteArray(0)),
+            backendMessage('Z', byteArrayOf('I'.code.toByte())) + backendMessage('I', ByteArray(0)),
+            backendMessage('Z', ByteArray(0)),
+            backendMessage('Z', byteArrayOf('X'.code.toByte())),
+            backendMessage('N', byteArrayOf('M'.code.toByte()) + "unterminated".encodeToByteArray()),
+            backendMessage('I', ByteArray(0)),
+        )
+        cases.forEach { bytes -> assertFailsWith<OliphauntException> { parseCommandResponse(bytes) } }
+        val postgres = backendMessage(
+            'E',
+            byteArrayOf('S'.code.toByte()) + cstrings("ERROR") +
+                byteArrayOf('C'.code.toByte()) + cstrings("22000") +
+                byteArrayOf('M'.code.toByte()) + cstrings("bad") + byteArrayOf(0),
+        )
+        assertFailsWith<PostgresException> { parseCommandResponse(postgres) }
+    }
+
+    @Test
+    fun configurationValidationRejectsInvalidValuesBeforeOpen() = runTest {
+        val engine = TestEngine(TestSession(commandResponse("OK")))
+        val invalid = listOf(
+            EngineConfig(username = " "),
+            EngineConfig(database = "bad\u0000name"),
+            EngineConfig(storage = EngineStorage.Directory("")),
+            EngineConfig(startupGucs = listOf(PostgresStartupGuc("", "1"))),
+            EngineConfig(startupGucs = listOf(PostgresStartupGuc("bad-name", "1"))),
+            EngineConfig(startupGucs = listOf(PostgresStartupGuc("1name", "1"))),
+            EngineConfig(startupGucs = listOf(PostgresStartupGuc(".foo", "1"))),
+            EngineConfig(startupGucs = listOf(PostgresStartupGuc("a..b", "1"))),
+            EngineConfig(startupGucs = listOf(PostgresStartupGuc("a.1b", "1"))),
+            EngineConfig(startupGucs = listOf(PostgresStartupGuc("ext.\$name", "1"))),
+            EngineConfig(startupGucs = listOf(PostgresStartupGuc("good", "bad\u0000value"))),
+            EngineConfig(extensions = listOf("bad/name")),
+            EngineConfig(extensions = listOf("not_in_generated_catalog")),
+        )
+        invalid.forEach { config ->
+            assertFailsWith<OliphauntException> { OliphauntDatabase.open(config, engine) }
+        }
+        assertEquals(
+            listOf("-c", "_name=", "-c", "ext.name\$1=on", "-c", "shared_preload_libraries=a,z"),
+            EngineConfig(
+                startupGucs = listOf(
+                    PostgresStartupGuc(" _name ", ""),
+                    PostgresStartupGuc("ext.name\$1", "on"),
+                ),
             )
+                .postgresStartupArgs(listOf("z", "a", "z")),
+        )
+    }
 
-        val value =
-            database.transaction { transaction ->
-                val error =
-                    assertFailsWith<OliphauntException> {
-                        database.execute("SELECT outside_transaction")
-                    }
-                assertTrue(error.message.orEmpty().contains("active OliphauntTransaction"))
-                val checkpointError =
-                    assertFailsWith<OliphauntException> {
-                        database.checkpoint()
-                    }
-                assertTrue(checkpointError.message.orEmpty().contains("active OliphauntTransaction"))
-                transaction.execute("INSERT INTO kotlin_tx VALUES (1)")
-                val chunks = mutableListOf<List<Byte>>()
-                transaction.execProtocolStream(ProtocolRequest(byteArrayOf('R'.code.toByte()))) {
-                    chunks += it.bytes.toList()
-                }
-                assertEquals(listOf(listOf(3.toByte(), 'R'.code.toByte())), chunks)
-                7
-            }
-
+    @Test
+    fun checkpointAndCancelDelegateToSession() = runTest {
+        val session = TestSession(commandResponse("CHECKPOINT"))
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
         database.checkpoint()
-        assertEquals(7, value)
-        val requests = session.requestTexts()
-        assertTrue(requests.any { it.contains("BEGIN") })
-        assertTrue(requests.any { it.contains("INSERT INTO kotlin_tx") })
-        assertTrue(requests.any { it.contains("COMMIT") })
-        assertTrue(requests.any { it.contains("CHECKPOINT") })
-        assertFalse(requests.any { it.contains("ROLLBACK") })
-
-        val escaped = database.transaction { transaction -> transaction }
-        val error =
-            assertFailsWith<OliphauntException> {
-                escaped.execute("SELECT after_commit")
-            }
-        assertTrue(error.message.orEmpty().contains("transaction is no longer active"))
-    }
-
-    @Test
-    fun transactionRollsBackWhenBodyThrows() = runTest {
-        val session = MockSession(EngineMode.NativeDirect)
-        val database =
-            OliphauntDatabase.open(
-                config = OliphauntConfig(mode = EngineMode.NativeDirect),
-                engine = FixedSessionEngine(session),
-            )
-
-        var captured: OliphauntTransaction? = null
-        val error =
-            assertFailsWith<OliphauntException> {
-                database.transaction { transaction ->
-                    captured = transaction
-                    transaction.execute("INSERT INTO kotlin_tx VALUES (2)")
-                    throw OliphauntException("boom")
-                }
-            }
-        assertEquals("boom", error.message)
-
-        val requests = session.requestTexts()
-        assertTrue(requests.any { it.contains("BEGIN") })
-        assertTrue(requests.any { it.contains("INSERT INTO kotlin_tx") })
-        assertTrue(requests.any { it.contains("ROLLBACK") })
-        val inactive =
-            assertFailsWith<OliphauntException> {
-                captured?.execute("SELECT after_rollback") ?: error("transaction was not captured")
-            }
-        assertTrue(inactive.message.orEmpty().contains("transaction is no longer active"))
-    }
-
-    @Test
-    fun closeDuringTransactionClosesSessionAndRejectsPinnedWork() = runTest {
-        val session = MockSession(EngineMode.NativeDirect)
-        val database =
-            OliphauntDatabase.open(
-                config = OliphauntConfig(mode = EngineMode.NativeDirect),
-                engine = FixedSessionEngine(session),
-            )
-
-        val error =
-            assertFailsWith<OliphauntException> {
-                database.transaction { transaction ->
-                    database.close()
-                    transaction.execute("SELECT after_close")
-                }
-            }
-        assertTrue(error.message.orEmpty().contains("database is closed"))
-
-        val afterClose =
-            assertFailsWith<OliphauntException> {
-                database.execute("SELECT after_closed_database")
-            }
-        assertTrue(afterClose.message.orEmpty().contains("database is closed"))
-
-        val requests = session.requestTexts()
-        assertTrue(requests.any { it.contains("BEGIN") })
-        assertFalse(requests.any { it.contains("SELECT after_close") })
-        assertFalse(requests.any { it.contains("COMMIT") })
-    }
-
-    @Test
-    fun rawProtocolStreamFallsBackToOwnedResponseThroughInjectedEngine() = runTest {
-        val database =
-            OliphauntDatabase.open(
-                config = OliphauntConfig(mode = EngineMode.NativeDirect),
-                engine = MockEngine(EngineMode.NativeDirect),
-            )
-
-        val chunks = mutableListOf<ProtocolResponse>()
-        database.execProtocolStream(ProtocolRequest(byteArrayOf(0x51))) { chunk ->
-            chunks += chunk
-        }
-
-        assertEquals(listOf(listOf(1, 0x51)), chunks.map { chunk -> chunk.bytes.map(Byte::toInt) })
-    }
-
-    @Test
-    fun querySurfacesPostgresErrors() {
-        val error =
-            assertFailsWith<PostgresException> {
-                parseQueryResponse(backendErrorResponse("ERROR", "42P01", "relation does not exist"))
-            }
-        assertEquals("ERROR", error.postgresError.severity)
-        assertEquals("42P01", error.postgresError.sqlstate)
-        assertEquals("relation does not exist", error.postgresError.message)
-    }
-
-    @Test
-    fun highLevelSqlSurfacesPostgresErrorsWhileRawProtocolPreservesBytes() = runTest {
-        val expected = backendErrorResponse("ERROR", "23505", "duplicate key value")
-        val database = postgresErrorDatabase("FAIL")
-        val request = ProtocolRequest.simpleQuery("SELECT FAIL")
-
-        assertTrue(database.execProtocolRaw(request).bytes.contentEquals(expected))
-
-        val executeError =
-            assertFailsWith<PostgresException> {
-                database.execute("SELECT FAIL")
-            }
-        assertEquals("23505", executeError.postgresError.sqlstate)
-        assertEquals("duplicate key value", executeError.postgresError.message)
-
-        val transactionError =
-            assertFailsWith<PostgresException> {
-                database.transaction { transaction ->
-                    transaction.execute("SELECT FAIL")
-                }
-            }
-        assertEquals("23505", transactionError.postgresError.sqlstate)
-    }
-
-    @Test
-    fun transactionControlAndCheckpointSurfacePostgresErrors() = runTest {
-        val beginDatabase = postgresErrorDatabase("BEGIN")
-        val beginError =
-            assertFailsWith<PostgresException> {
-                beginDatabase.transaction { }
-            }
-        assertEquals("23505", beginError.postgresError.sqlstate)
-        beginDatabase.execute("SELECT recovered")
-
-        val commitDatabase = postgresErrorDatabase("COMMIT")
-        val commitError =
-            assertFailsWith<PostgresException> {
-                commitDatabase.transaction { }
-            }
-        assertEquals("23505", commitError.postgresError.sqlstate)
-        commitDatabase.execute("SELECT recovered")
-
-        val checkpointError =
-            assertFailsWith<PostgresException> {
-                postgresErrorDatabase("CHECKPOINT").checkpoint()
-            }
-        assertEquals("23505", checkpointError.postgresError.sqlstate)
-    }
-
-    @Test
-    fun queryNormalizesCancellationPostgresErrors() {
-        val error =
-            assertFailsWith<PostgresException> {
-                parseQueryResponse(backendErrorResponse("ERROR", "57014", "canceling statement due to user request"))
-            }
-        assertEquals("ERROR", error.postgresError.severity)
-        assertEquals("57014", error.postgresError.sqlstate)
-        assertEquals("canceling statement due to user request", error.postgresError.message)
-    }
-
-    @Test
-    fun queryParserRejectsInvalidUtf8FieldNames() {
-        val response =
-            buildList<Byte> {
-                addRawRowDescription(listOf(byteArrayOf(0xff.toByte()) to 25u))
-                addReadyForQuery()
-            }.toByteArray()
-
-        val error =
-            assertFailsWith<OliphauntException> {
-                parseQueryResponse(response)
-            }
-        assertTrue(error.message.orEmpty().contains("field name is not valid UTF-8"))
-    }
-
-    @Test
-    fun queryTextAccessorsRejectInvalidUtf8Values() {
-        val response =
-            buildList<Byte> {
-                addRowDescription(listOf("value" to 25u))
-                addDataRow(listOf(byteArrayOf(0xff.toByte())))
-                addCommandComplete("SELECT 1")
-                addReadyForQuery()
-            }.toByteArray()
-
-        val result = parseQueryResponse(response)
-        val error =
-            assertFailsWith<OliphauntException> {
-                result.getText(0, "value")
-            }
-        assertTrue(error.message.orEmpty().contains("query value is not valid UTF-8"))
-    }
-
-    @Test
-    fun queryParserAcceptsExtendedQueryControlMessages() {
-        val response =
-            buildList<Byte> {
-                addBackendMessage('1'.code, byteArrayOf())
-                addBackendMessage('2'.code, byteArrayOf())
-                addBackendMessage('3'.code, byteArrayOf())
-                addBackendMessage('n'.code, byteArrayOf())
-                addBackendMessage('I'.code, byteArrayOf())
-                addCommandComplete("INSERT 0 0")
-                addReadyForQuery()
-            }.toByteArray()
-
-        val result = parseQueryResponse(response)
-        assertTrue(result.fields.isEmpty())
-        assertTrue(result.rows.isEmpty())
-        assertEquals("INSERT 0 0", result.commandTag)
-    }
-
-    @Test
-    fun queryParserAcceptsAsyncBackendControlMessages() {
-        val response =
-            buildList<Byte> {
-                addParameterStatus("client_encoding", "UTF8")
-                addNoticeResponse("NOTICE", "hello")
-                addNotificationResponse(123, "channel", "payload")
-                addCommandComplete("SELECT 0")
-                addReadyForQuery()
-            }.toByteArray()
-
-        val result = parseQueryResponse(response)
-        assertEquals("SELECT 0", result.commandTag)
-    }
-
-    @Test
-    fun queryParserRejectsMalformedEmptyControlMessages() {
-        val response =
-            buildList<Byte> {
-                addBackendMessage('1'.code, byteArrayOf(0))
-                addReadyForQuery()
-            }.toByteArray()
-
-        val error =
-            assertFailsWith<OliphauntException> {
-                parseQueryResponse(response)
-            }
-        assertTrue(error.message.orEmpty().contains("ParseComplete contained trailing bytes"))
-    }
-
-    @Test
-    fun queryParserRejectsMalformedResultSequencing() {
-        val missingReady =
-            buildList<Byte> {
-                addCommandComplete("SELECT 0")
-            }.toByteArray()
-        val missingReadyError =
-            assertFailsWith<OliphauntException> {
-                parseQueryResponse(missingReady)
-            }
-        assertTrue(missingReadyError.message.orEmpty().contains("ended before ReadyForQuery"))
-
-        val duplicateResult =
-            buildList<Byte> {
-                addRowDescription(listOf("one" to 25u))
-                addRowDescription(listOf("two" to 25u))
-                addReadyForQuery()
-            }.toByteArray()
-        val duplicateResultError =
-            assertFailsWith<OliphauntException> {
-                parseQueryResponse(duplicateResult)
-            }
-        assertTrue(duplicateResultError.message.orEmpty().contains("multiple result sets"))
-
-        val invalidLength =
-            byteArrayOf('Z'.code.toByte(), 0, 0, 0, 3)
-        val invalidLengthError =
-            assertFailsWith<OliphauntException> {
-                parseQueryResponse(invalidLength)
-            }
-        assertTrue(invalidLengthError.message.orEmpty().contains("invalid backend message length 3"))
-    }
-
-    @Test
-    fun queryParserRejectsInvalidRowCounts() {
-        val invalidRowDescription =
-            buildList<Byte> {
-                addBackendMessage('T'.code, byteArrayOf(0xff.toByte(), 0xff.toByte()))
-            }.toByteArray()
-        val rowDescriptionError =
-            assertFailsWith<OliphauntException> {
-                parseQueryResponse(invalidRowDescription)
-            }
-        assertTrue(rowDescriptionError.message.orEmpty().contains("invalid RowDescription field count -1"))
-
-        val invalidDataRow =
-            buildList<Byte> {
-                addRowDescription(listOf("value" to 25u))
-                addBackendMessage('D'.code, byteArrayOf(0xff.toByte(), 0xff.toByte()))
-            }.toByteArray()
-        val dataRowError =
-            assertFailsWith<OliphauntException> {
-                parseQueryResponse(invalidDataRow)
-            }
-        assertTrue(dataRowError.message.orEmpty().contains("invalid DataRow column count -1"))
-
-        val mismatchedDataRow =
-            buildList<Byte> {
-                addRowDescription(listOf("value" to 25u))
-                addBackendMessage('D'.code, byteArrayOf(0, 0))
-            }.toByteArray()
-        val mismatchError =
-            assertFailsWith<OliphauntException> {
-                parseQueryResponse(mismatchedDataRow)
-            }
-        assertTrue(mismatchError.message.orEmpty().contains("does not match RowDescription count 1"))
-    }
-
-    @Test
-    fun queryParserRejectsMalformedAsyncBackendControlMessages() {
-        val malformedParameter =
-            buildList<Byte> {
-                addBackendMessage('S'.code, "client_encoding\u0000".encodeToByteArray())
-                addReadyForQuery()
-            }.toByteArray()
-        val parameterError =
-            assertFailsWith<OliphauntException> {
-                parseQueryResponse(malformedParameter)
-            }
-        assertTrue(parameterError.message.orEmpty().contains("ParameterStatus value is missing null terminator"))
-
-        val malformedNotice =
-            buildList<Byte> {
-                addBackendMessage('N'.code, byteArrayOf('S'.code.toByte()) + "NOTICE\u0000".encodeToByteArray())
-                addReadyForQuery()
-            }.toByteArray()
-        val noticeError =
-            assertFailsWith<OliphauntException> {
-                parseQueryResponse(malformedNotice)
-            }
-        assertTrue(noticeError.message.orEmpty().contains("NoticeResponse is missing terminator"))
-
-        val malformedNotification =
-            buildList<Byte> {
-                val body =
-                    buildList<Byte> {
-                        addInt32(123)
-                        addAll("channel".encodeToByteArray().asIterable())
-                    }.toByteArray()
-                addBackendMessage('A'.code, body)
-                addReadyForQuery()
-            }.toByteArray()
-        val notificationError =
-            assertFailsWith<OliphauntException> {
-                parseQueryResponse(malformedNotification)
-            }
-        assertTrue(
-            notificationError.message
-                .orEmpty()
-                .contains("NotificationResponse channel is missing null terminator"),
-        )
-    }
-
-    @Test
-    fun queryParserRejectsUnexpectedBackendMessageTags() {
-        val response =
-            buildList<Byte> {
-                addBackendMessage('R'.code, byteArrayOf(0, 0, 0, 0))
-                addReadyForQuery()
-            }.toByteArray()
-
-        val error =
-            assertFailsWith<OliphauntException> {
-                parseQueryResponse(response)
-            }
-        assertTrue(error.message.orEmpty().contains("unexpected backend message tag 0x52"))
-    }
-
-    @Test
-    fun queryParserAcceptsReadyForQueryTransactionStates() {
-        for (status in listOf('I'.code.toByte(), 'T'.code.toByte(), 'E'.code.toByte())) {
-            val response =
-                buildList<Byte> {
-                    addCommandComplete("SELECT 0")
-                    addReadyForQuery(status)
-                }.toByteArray()
-
-            val result = parseQueryResponse(response)
-            assertEquals("SELECT 0", result.commandTag)
-        }
-    }
-
-    @Test
-    fun queryParserRejectsMalformedReadyForQueryStatus() {
-        val missing =
-            buildList<Byte> {
-                addBackendMessage('Z'.code, byteArrayOf())
-            }.toByteArray()
-        val missingError =
-            assertFailsWith<OliphauntException> {
-                parseQueryResponse(missing)
-            }
-        assertTrue(missingError.message.orEmpty().contains("ReadyForQuery contained 0 bytes, expected 1"))
-
-        val invalid =
-            buildList<Byte> {
-                addReadyForQuery(0.toByte())
-            }.toByteArray()
-        val invalidError =
-            assertFailsWith<OliphauntException> {
-                parseQueryResponse(invalid)
-            }
-        assertTrue(
-            invalidError.message
-                .orEmpty()
-                .contains("ReadyForQuery contained invalid transaction status 0x00"),
-        )
-    }
-
-    @Test
-    fun serverCapabilitiesExposeConnectionString() = runTest {
-        val database =
-            OliphauntDatabase.open(
-                config = OliphauntConfig(mode = EngineMode.NativeServer),
-                engine = MockEngine(EngineMode.NativeServer),
-            )
-
-        val capabilities = database.capabilities()
-        assertTrue(capabilities.independentSessions)
-        assertEquals(false, capabilities.multipleInstances)
-        assertTrue(capabilities.queryCancel)
-        assertTrue(capabilities.backupRestore)
-        assertEquals(
-            listOf(BackupFormat.Sql, BackupFormat.PhysicalArchive),
-            capabilities.backupFormats,
-        )
-        assertEquals(listOf(BackupFormat.PhysicalArchive), capabilities.restoreFormats)
-        assertTrue(capabilities.supportsBackupFormat(BackupFormat.Sql))
-        assertTrue(capabilities.supportsBackupFormat(BackupFormat.PhysicalArchive))
-        assertFalse(capabilities.supportsBackupFormat(BackupFormat.OliphauntArchive))
-        assertTrue(capabilities.supportsRestoreFormat(BackupFormat.PhysicalArchive))
-        assertFalse(capabilities.supportsRestoreFormat(BackupFormat.Sql))
-        assertTrue(database.supportsBackupFormat(BackupFormat.Sql))
-        assertTrue(database.supportsRestoreFormat(BackupFormat.PhysicalArchive))
-        assertFalse(database.supportsRestoreFormat(BackupFormat.Sql))
-        assertTrue(capabilities.simpleQuery)
-        assertEquals("postgres://postgres@127.0.0.1:55432/template1", capabilities.connectionString)
-    }
-
-    @Test
-    fun connectionStringIsOnlyPresentForServerCapabilities() = runTest {
-        listOf(EngineMode.NativeDirect, EngineMode.NativeBroker).forEach { mode ->
-            val database =
-                OliphauntDatabase.open(
-                    config = OliphauntConfig(mode = mode),
-                    engine = MockEngine(mode),
-                )
-            assertEquals(null, database.connectionString())
-            assertFalse(database.capabilities().independentSessions)
-        }
-
-        val server =
-            OliphauntDatabase.open(
-                config = OliphauntConfig(mode = EngineMode.NativeServer),
-                engine = MockEngine(EngineMode.NativeServer),
-            )
-        assertEquals("postgres://postgres@127.0.0.1:55432/template1", server.connectionString())
-        assertTrue(server.capabilities().independentSessions)
-    }
-
-    @Test
-    fun runtimeSupportPublishesExplicitModeContract() {
-        val support = OliphauntDatabase.supportedModes(SupportingDirectEngine())
-
-        assertEquals(
-            listOf(EngineMode.NativeDirect, EngineMode.NativeBroker, EngineMode.NativeServer),
-            support.map { it.mode },
-        )
-        assertTrue(support[0].available)
-        assertEquals(1, support[0].capabilities.maxClientSessions)
-        assertEquals(listOf(BackupFormat.PhysicalArchive), support[0].capabilities.backupFormats)
-        assertTrue(support[0].capabilities.supportsBackupFormat(BackupFormat.PhysicalArchive))
-        assertFalse(support[0].capabilities.supportsBackupFormat(BackupFormat.Sql))
-        assertEquals(false, support[0].capabilities.independentSessions)
-        assertEquals(false, support[0].capabilities.multipleInstances)
-        assertTrue(support[0].capabilities.sameInstanceLogicalReopen)
-        assertFalse(support[0].capabilities.instanceSwitchable)
-        assertFalse(support[0].capabilities.crashRestartable)
-        assertEquals(false, support[1].available)
-        assertTrue(support[1].capabilities.processIsolated)
-        assertTrue(support[1].capabilities.multipleInstances)
-        assertFalse(support[1].capabilities.sameInstanceLogicalReopen)
-        assertTrue(support[1].capabilities.instanceSwitchable)
-        assertTrue(support[1].capabilities.crashRestartable)
-        assertTrue(support[1].unavailableReason.orEmpty().contains("broker"))
-        assertEquals(false, support[2].available)
-        assertTrue(support[2].capabilities.independentSessions)
-        assertEquals(false, support[2].capabilities.multipleInstances)
-        assertFalse(support[2].capabilities.sameInstanceLogicalReopen)
-        assertTrue(support[2].capabilities.instanceSwitchable)
-        assertFalse(support[2].capabilities.crashRestartable)
-        assertEquals(
-            listOf(BackupFormat.Sql, BackupFormat.PhysicalArchive),
-            support[2].capabilities.backupFormats,
-        )
-        assertTrue(support[2].capabilities.supportsBackupFormat(BackupFormat.Sql))
-        assertTrue(support[2].capabilities.supportsRestoreFormat(BackupFormat.PhysicalArchive))
-        assertTrue(support[2].unavailableReason.orEmpty().contains("server"))
-    }
-
-    @Test
-    fun defaultRuntimeSupportPublishesConcreteModeList() {
-        val support = OliphauntDatabase.supportedModes()
-
-        assertEquals(
-            listOf(EngineMode.NativeDirect, EngineMode.NativeBroker, EngineMode.NativeServer),
-            support.map { it.mode },
-        )
-        assertTrue(support.filterNot { it.available }.all { it.unavailableReason.orEmpty().isNotBlank() })
-    }
-
-    @Test
-    fun backupUsesCanonicalFormats() = runTest {
-        val database =
-            OliphauntDatabase.open(
-                config = OliphauntConfig(mode = EngineMode.NativeServer),
-                engine = MockEngine(EngineMode.NativeServer),
-            )
-
-        val artifact = database.backup(BackupRequest(BackupFormat.Sql))
-        assertEquals(BackupFormat.Sql, artifact.format)
-        assertEquals("sql-backup", artifact.bytes.decodeToString())
-    }
-
-    @Test
-    fun backupRejectsUnsupportedFormatsBeforeEngineCall() = runTest {
-        val database =
-            OliphauntDatabase.open(
-                config = OliphauntConfig(mode = EngineMode.NativeDirect),
-                engine = MockEngine(EngineMode.NativeDirect),
-            )
-
-        val error =
-            assertFailsWith<OliphauntException> {
-                database.backup(BackupRequest(BackupFormat.Sql))
-            }
-        assertTrue(error.message.orEmpty().contains("Sql backup is not supported by NativeDirect"))
-    }
-
-    @Test
-    fun configDefaultsToTemporaryDirectoryStorage() {
-        assertEquals(DatabaseStorage.TemporaryDirectory, OliphauntConfig().storage)
-    }
-
-    @Test
-    fun openRejectsBlankStorageDirectoryBeforeEngineCall() = runTest {
-        val engine = CountingEngine()
-        val error =
-            assertFailsWith<OliphauntException> {
-                OliphauntDatabase.open(
-                    config = OliphauntConfig(
-                        mode = EngineMode.NativeDirect,
-                        storage = DatabaseStorage.Directory(" \t"),
-                    ),
-                    engine = engine,
-                )
-            }
-
-        assertTrue(error.message.orEmpty().contains("database storage directory must not be empty"))
-        assertEquals(0, engine.openCalls)
-    }
-
-    @Test
-    fun openRejectsNulStorageDirectoryBeforeEngineCall() = runTest {
-        val engine = CountingEngine()
-        val error =
-            assertFailsWith<OliphauntException> {
-                OliphauntDatabase.open(
-                    config = OliphauntConfig(
-                        mode = EngineMode.NativeDirect,
-                        storage = DatabaseStorage.Directory("/tmp/oliphaunt\u0000storage"),
-                    ),
-                    engine = engine,
-                )
-            }
-
-        assertTrue(error.message.orEmpty().contains("database storage directory must not contain NUL bytes"))
-        assertEquals(0, engine.openCalls)
-    }
-
-    @Test
-    fun openForwardsConnectionIdentityAndRejectsInvalidIdentityBeforeEngineCall() = runTest {
-        val engine = CountingEngine()
-        val blankUser =
-            assertFailsWith<OliphauntException> {
-                OliphauntDatabase.open(
-                    config = OliphauntConfig(username = " \n"),
-                    engine = engine,
-                )
-            }
-        assertTrue(blankUser.message.orEmpty().contains("username must not be empty"))
-        assertEquals(0, engine.openCalls)
-
-        val nulDatabase =
-            assertFailsWith<OliphauntException> {
-                OliphauntDatabase.open(
-                    config = OliphauntConfig(database = "app\u0000db"),
-                    engine = engine,
-                )
-            }
-        assertTrue(nulDatabase.message.orEmpty().contains("database must not contain NUL bytes"))
-        assertEquals(0, engine.openCalls)
-
-        val database =
-            OliphauntDatabase.open(
-                config =
-                OliphauntConfig(
-                    username = "app_user",
-                    database = "app_db",
-                ),
-                engine = engine,
-            )
-        assertEquals("app_user", engine.openedConfigs.single().username)
-        assertEquals("app_db", engine.openedConfigs.single().database)
-        database.close()
-    }
-
-    @Test
-    fun restoreUsesCanonicalPhysicalArchiveShape() = runTest {
-        val artifact =
-            BackupArtifact(
-                BackupFormat.PhysicalArchive,
-                "physical-backup".encodeToByteArray(),
-            )
-        val destination = "/tmp/oliphaunt-restore"
-        val restoredDestination =
-            OliphauntDatabase.restore(
-                RestoreRequest(
-                    artifact = artifact,
-                    destination = destination,
-                ).replaceExisting(),
-                engine = MockEngine(
-                    mode = EngineMode.NativeDirect,
-                    expectedRestoreDestinationPolicy = RestoreDestinationPolicy.ReplaceExisting,
-                ),
-            )
-
-        assertEquals(destination, restoredDestination)
-    }
-
-    @Test
-    fun restoreForwardsFailIfExistsByDefault() = runTest {
-        val artifact =
-            BackupArtifact(
-                BackupFormat.PhysicalArchive,
-                "physical-backup".encodeToByteArray(),
-            )
-        val destination = "/tmp/oliphaunt-restore-default-policy"
-        val restoredDestination =
-            OliphauntDatabase.restore(
-                RestoreRequest(
-                    artifact = artifact,
-                    destination = destination,
-                ),
-                engine = MockEngine(
-                    mode = EngineMode.NativeDirect,
-                    expectedRestoreDestinationPolicy = RestoreDestinationPolicy.FailIfExists,
-                ),
-            )
-
-        assertEquals(destination, restoredDestination)
-    }
-
-    @Test
-    fun restoreRejectsUnsupportedFormatsBeforeEngineCall() = runTest {
-        val error =
-            assertFailsWith<OliphauntException> {
-                OliphauntDatabase.restore(
-                    RestoreRequest(
-                        artifact =
-                        BackupArtifact(
-                            BackupFormat.Sql,
-                            "sql-backup".encodeToByteArray(),
-                        ),
-                        destination = "/tmp/oliphaunt-restore-sql",
-                    ),
-                    engine = MockEngine(EngineMode.NativeDirect),
-                )
-            }
-
-        assertTrue(
-            error.message
-                .orEmpty()
-                .contains("restore currently requires a PhysicalArchive artifact, got Sql"),
-        )
-    }
-
-    @Test
-    fun restoreRejectsBlankDestinationBeforeEngineCall() = runTest {
-        val engine = CountingEngine()
-        val error =
-            assertFailsWith<OliphauntException> {
-                OliphauntDatabase.restore(
-                    RestoreRequest(
-                        artifact =
-                        BackupArtifact(
-                            BackupFormat.PhysicalArchive,
-                            "physical-backup".encodeToByteArray(),
-                        ),
-                        destination = "\n",
-                    ),
-                    engine = engine,
-                )
-            }
-
-        assertTrue(error.message.orEmpty().contains("restore destination must not be empty"))
-        assertEquals(0, engine.restoreCalls)
-    }
-
-    @Test
-    fun restoreRejectsNulDestinationBeforeEngineCall() = runTest {
-        val engine = CountingEngine()
-        val error =
-            assertFailsWith<OliphauntException> {
-                OliphauntDatabase.restore(
-                    RestoreRequest(
-                        artifact =
-                        BackupArtifact(
-                            BackupFormat.PhysicalArchive,
-                            "physical-backup".encodeToByteArray(),
-                        ),
-                        destination = "/tmp/oliphaunt\u0000restore",
-                    ),
-                    engine = engine,
-                )
-            }
-
-        assertTrue(error.message.orEmpty().contains("restore destination must not contain NUL bytes"))
-        assertEquals(0, engine.restoreCalls)
-    }
-
-    @Test
-    fun openValidatesExtensionIdsBeforeEngineCall() = runTest {
-        val engine = CountingEngine()
-        val error =
-            assertFailsWith<OliphauntException> {
-                OliphauntDatabase.open(
-                    config = OliphauntConfig(extensions = listOf("mobile/vector")),
-                    engine = engine,
-                )
-            }
-        assertTrue(error.message.orEmpty().contains("extension id 'mobile/vector'"))
-        assertEquals(0, engine.openCalls)
-
-        val unknownError =
-            assertFailsWith<OliphauntException> {
-                OliphauntDatabase.open(
-                    config = OliphauntConfig(extensions = listOf("pg_search")),
-                    engine = engine,
-                )
-            }
-        assertTrue(
-            unknownError.message.orEmpty().contains("unknown Kotlin Oliphaunt extension id 'pg_search'"),
-        )
-        assertEquals(0, engine.openCalls)
-
-        val database =
-            OliphauntDatabase.open(
-                config = OliphauntConfig(extensions = listOf(" pg_trgm ", "", "vector", "hstore")),
-                engine = engine,
-            )
-        assertEquals(1, engine.openCalls)
-        assertEquals(listOf("pg_trgm", "vector", "hstore"), engine.openedConfigs.single().extensions)
-        database.close()
-    }
-
-    @Test
-    fun openForwardsFootprintAndStartupGucsAndRejectsInvalidGucsBeforeEngineCall() = runTest {
-        val engine = CountingEngine()
-        val error =
-            assertFailsWith<OliphauntException> {
-                OliphauntDatabase.open(
-                    config =
-                    OliphauntConfig(
-                        startupGucs = listOf(PostgresStartupGuc("shared-buffers", "16MB")),
-                    ),
-                    engine = engine,
-                )
-            }
-        assertTrue(error.message.orEmpty().contains("startup GUC name 'shared-buffers'"))
-        assertEquals(0, engine.openCalls)
-
-        val database =
-            OliphauntDatabase.open(
-                config =
-                OliphauntConfig(
-                    runtimeFootprint = RuntimeFootprintProfile.BalancedMobile,
-                    startupGucs =
-                    listOf(
-                        PostgresStartupGuc("shared_buffers", "16MB"),
-                        PostgresStartupGuc("wal_buffers", "256kB"),
-                    ),
-                ),
-                engine = engine,
-            )
-        assertEquals(1, engine.openCalls)
-        assertEquals(RuntimeFootprintProfile.BalancedMobile, engine.openedConfigs.single().runtimeFootprint)
-        assertEquals(
-            listOf(
-                PostgresStartupGuc("shared_buffers", "16MB"),
-                PostgresStartupGuc("wal_buffers", "256kB"),
-            ),
-            engine.openedConfigs.single().startupGucs,
-        )
-        database.close()
-    }
-
-    @Test
-    fun runtimeFootprintProfilesBuildTheMobileStartupGucContract() {
-        assertEquals(
-            listOf(
-                "max_connections=1",
-                "superuser_reserved_connections=0",
-                "reserved_connections=0",
-                "autovacuum_worker_slots=1",
-                "max_wal_senders=0",
-                "max_replication_slots=0",
-                "shared_buffers=32MB",
-                "wal_buffers=-1",
-                "min_wal_size=32MB",
-                "max_wal_size=64MB",
-                "io_method=sync",
-                "io_max_concurrency=1",
-                "fsync=on",
-                "full_page_writes=on",
-                "synchronous_commit=off",
-                "shared_buffers=16MB",
-            ),
-            startupAssignments(
-                OliphauntConfig(
-                    durability = DurabilityProfile.Balanced,
-                    runtimeFootprint = RuntimeFootprintProfile.BalancedMobile,
-                    startupGucs = listOf(PostgresStartupGuc(" shared_buffers ", "16MB")),
-                ).postgresStartupArgs(),
-            ),
-        )
-        assertEquals(
-            listOf(
-                "max_connections=1",
-                "superuser_reserved_connections=0",
-                "reserved_connections=0",
-                "autovacuum_worker_slots=1",
-                "max_wal_senders=0",
-                "max_replication_slots=0",
-                "shared_buffers=32MB",
-                "wal_buffers=-1",
-                "min_wal_size=32MB",
-                "max_wal_size=64MB",
-                "io_method=sync",
-                "io_max_concurrency=1",
-                "fsync=on",
-                "full_page_writes=on",
-                "synchronous_commit=off",
-                "shared_buffers=16MB",
-                "shared_preload_libraries=auto_explain,pg_search",
-            ),
-            startupAssignments(
-                OliphauntConfig(
-                    durability = DurabilityProfile.Balanced,
-                    runtimeFootprint = RuntimeFootprintProfile.BalancedMobile,
-                    startupGucs = listOf(PostgresStartupGuc(" shared_buffers ", "16MB")),
-                ).postgresStartupArgs(setOf("pg_search", "auto_explain", "pg_search")),
-            ),
-        )
-        assertEquals(
-            listOf(
-                "max_connections=1",
-                "superuser_reserved_connections=0",
-                "reserved_connections=0",
-                "autovacuum_worker_slots=1",
-                "max_wal_senders=0",
-                "max_replication_slots=0",
-                "shared_buffers=8MB",
-                "wal_buffers=256kB",
-                "min_wal_size=32MB",
-                "max_wal_size=64MB",
-                "work_mem=1MB",
-                "maintenance_work_mem=16MB",
-                "io_method=sync",
-                "io_max_concurrency=1",
-                "fsync=on",
-                "full_page_writes=on",
-                "synchronous_commit=off",
-            ),
-            startupAssignments(
-                OliphauntConfig(runtimeFootprint = RuntimeFootprintProfile.SmallMobile)
-                    .postgresStartupArgs(),
-            ),
-        )
-    }
-
-    @Test
-    fun closeIsIdempotentAndRejectsFurtherExecution() = runTest {
-        val database =
-            OliphauntDatabase.open(
-                config = OliphauntConfig(mode = EngineMode.NativeDirect),
-                engine = MockEngine(EngineMode.NativeDirect),
-            )
-
-        database.close()
-        database.close()
-
-        assertFailsWith<OliphauntException> {
-            database.execProtocolRaw(ProtocolRequest(ByteArray(0)))
-        }
-    }
-
-    @Test
-    fun failedCloseKeepsSessionUsableAndRetriesTheSameOwner() = runTest {
-        val session = FailOnceCloseSession()
-        val database =
-            OliphauntDatabase.open(
-                config = OliphauntConfig(mode = EngineMode.NativeDirect),
-                engine = FixedSessionEngine(session),
-            )
-
-        val error = assertFailsWith<OliphauntException> { database.close() }
-        assertEquals("injected detach failure", error.message)
-        assertEquals(
-            listOf(1, 2, 3),
-            database
-                .execProtocolRaw(ProtocolRequest(byteArrayOf(1, 2, 3)))
-                .bytes
-                .map(Byte::toInt),
-        )
-
-        database.close()
-        assertEquals(2, session.closeAttempts)
-    }
-
-    @Test
-    fun closeDoesNotIssueSpuriousCancelBeforeClosing() = runTest {
-        val session = BlockingSession()
-        val database =
-            OliphauntDatabase.open(
-                config = OliphauntConfig(mode = EngineMode.NativeDirect),
-                engine = FixedSessionEngine(session),
-            )
-
-        database.close()
-
-        assertFalse(session.cancelled.isCompleted)
-        assertTrue(session.closed.isCompleted)
-        assertFailsWith<OliphauntException> {
-            database.cancel()
-        }
-    }
-
-    @Test
-    fun prepareForBackgroundCheckpointsWhenIdleAndResumeProbesSession() = runTest {
-        val session = MockSession(EngineMode.NativeDirect)
-        val database =
-            OliphauntDatabase.open(
-                config = OliphauntConfig(mode = EngineMode.NativeDirect),
-                engine = FixedSessionEngine(session),
-            )
-
-        val prepared = database.prepareForBackground()
-        database.resumeFromBackground()
-
-        assertEquals(
-            BackgroundPreparationResult(
-                cancelledActiveWork = false,
-                checkpointed = true,
-            ),
-            prepared,
-        )
-        val requests = session.requestTexts()
-        assertTrue(requests.any { it.contains("CHECKPOINT") })
-        assertTrue(requests.any { it.contains("SELECT 1") })
-    }
-
-    @Test
-    fun prepareForBackgroundCancelsActiveWorkAndSkipsCheckpoint() = runTest {
-        val session = BlockingOperationSession()
-        val database =
-            OliphauntDatabase.open(
-                config = OliphauntConfig(mode = EngineMode.NativeDirect),
-                engine = FixedSessionEngine(session),
-            )
-        val running =
-            async {
-                database.execProtocolRaw(ProtocolRequest.simpleQuery("SELECT pg_sleep(5)"))
-            }
-        session.started.await()
-
-        val prepared = database.prepareForBackground()
-
-        assertEquals(
-            BackgroundPreparationResult(
-                cancelledActiveWork = true,
-                checkpointed = false,
-                skippedCheckpointReason = BackgroundCheckpointSkipReason.ActiveWork,
-            ),
-            prepared,
-        )
-        assertTrue(session.cancelled.isCompleted)
-        assertEquals("cancelled", running.await().bytes.decodeToString())
-    }
-
-    @Test
-    fun prepareForBackgroundSkipsCheckpointDuringTransaction() = runTest {
-        val session = MockSession(EngineMode.NativeDirect)
-        val database =
-            OliphauntDatabase.open(
-                config = OliphauntConfig(mode = EngineMode.NativeDirect),
-                engine = FixedSessionEngine(session),
-            )
-
-        val prepared =
-            database.transaction {
-                database.prepareForBackground()
-            }
-
-        assertEquals(
-            BackgroundPreparationResult(
-                cancelledActiveWork = false,
-                checkpointed = false,
-                skippedCheckpointReason = BackgroundCheckpointSkipReason.TransactionActive,
-            ),
-            prepared,
-        )
-        assertFalse(session.requestTexts().any { it.contains("CHECKPOINT") })
+        database.cancel()
+        assertEquals(1, session.cancelCount)
+        assertTrue(session.simpleQueries().isEmpty())
+        assertEquals('P'.code.toByte(), session.requests.single().first())
     }
 }
 
-private class MockEngine(
-    private val mode: EngineMode,
-    private val expectedRestoreDestinationPolicy: RestoreDestinationPolicy? = null,
-) : OliphauntEngine {
-    override suspend fun open(config: OliphauntConfig): OliphauntSession {
-        assertEquals(mode, config.mode)
-        return MockSession(mode)
-    }
-
-    override suspend fun restore(request: RestoreRequest): String {
-        assertEquals(BackupFormat.PhysicalArchive, request.artifact.format)
-        expectedRestoreDestinationPolicy?.let {
-            assertEquals(it, request.destinationPolicy)
-        }
-        return request.destination
-    }
-}
-
-private class SupportingDirectEngine : OliphauntEngine {
-    override fun supportedModes(): List<EngineModeSupport> = OliphauntRuntimeSupport.nativeDirectOnly(
-        brokerReason = "broker adapter is unavailable",
-        serverReason = "server adapter is unavailable",
-    )
-
-    override suspend fun open(config: OliphauntConfig): OliphauntSession = throw OliphauntException("not used")
-
-    override suspend fun restore(request: RestoreRequest): String = throw OliphauntException("not used")
-}
-
-private class CountingEngine : OliphauntEngine {
-    var openCalls = 0
-    var restoreCalls = 0
-    val openedConfigs = mutableListOf<OliphauntConfig>()
-
-    override suspend fun open(config: OliphauntConfig): OliphauntSession {
-        openCalls += 1
-        openedConfigs += config
-        return MockSession(config.mode)
-    }
-
-    override suspend fun restore(request: RestoreRequest): String {
-        restoreCalls += 1
-        return request.destination
-    }
-}
-
-private class MockSession(
-    private val mode: EngineMode,
-) : OliphauntSession {
-    private var calls = 0
-    private val requests = mutableListOf<ByteArray>()
-
-    override suspend fun capabilities(): EngineCapabilities = when (mode) {
-        EngineMode.NativeDirect -> {
-            EngineCapabilities(
-                mode = mode,
-                processIsolated = false,
-                independentSessions = false,
-                maxClientSessions = 1,
-            )
-        }
-
-        EngineMode.NativeBroker -> {
-            EngineCapabilities(
-                mode = mode,
-                processIsolated = true,
-                independentSessions = false,
-                maxClientSessions = 1,
-            )
-        }
-
-        EngineMode.NativeServer -> {
-            EngineCapabilities(
-                mode = mode,
-                processIsolated = true,
-                independentSessions = true,
-                maxClientSessions = 32,
-                backupFormats = listOf(BackupFormat.Sql, BackupFormat.PhysicalArchive),
-                connectionString = "postgres://postgres@127.0.0.1:55432/template1",
-            )
-        }
-    }
-
-    override suspend fun execProtocolRaw(request: ProtocolRequest): ProtocolResponse {
-        calls += 1
-        requests += request.bytes
-        if (
-            request.bytes.size > 5 &&
-            (request.bytes[0] == 'Q'.code.toByte() || request.bytes[0] == 'P'.code.toByte())
-        ) {
-            return ProtocolResponse(backendSelectResponse())
-        }
-        return ProtocolResponse(byteArrayOf(calls.toByte()) + request.bytes)
-    }
-
-    fun requestTexts(): List<String> = requests.map { it.decodeToString() }
-
-    override suspend fun backup(request: BackupRequest): BackupArtifact = when (request.format) {
-        BackupFormat.Sql -> {
-            BackupArtifact(BackupFormat.Sql, "sql-backup".encodeToByteArray())
-        }
-
-        BackupFormat.PhysicalArchive -> {
-            BackupArtifact(
-                BackupFormat.PhysicalArchive,
-                "physical-backup".encodeToByteArray(),
-            )
-        }
-
-        BackupFormat.OliphauntArchive -> {
-            throw OliphauntException("oliphaunt archive is not available")
-        }
-    }
-
-    override suspend fun cancel() = Unit
-
-    override suspend fun close() = Unit
-}
-
-private class FailOnceCloseSession : OliphauntSession {
-    var closeAttempts = 0
-        private set
-
-    override suspend fun capabilities(): EngineCapabilities = EngineCapabilities(
-        mode = EngineMode.NativeDirect,
-        processIsolated = false,
-        independentSessions = false,
-        maxClientSessions = 1,
-    )
-
-    override suspend fun execProtocolRaw(request: ProtocolRequest): ProtocolResponse = ProtocolResponse(request.bytes)
-
-    override suspend fun backup(request: BackupRequest): BackupArtifact = BackupArtifact(request.format, ByteArray(0))
-
-    override suspend fun cancel() = Unit
-
-    override suspend fun close() {
-        closeAttempts += 1
-        if (closeAttempts == 1) {
-            throw OliphauntException("injected detach failure")
-        }
-    }
-}
-
-private class FixedSessionEngine(
+private class TestEngine(
     private val session: OliphauntSession,
 ) : OliphauntEngine {
-    override suspend fun open(config: OliphauntConfig): OliphauntSession = session
+    var openedConfig: EngineConfig? = null
+    var restoredDestination: String? = null
+    var restoredBytes: ByteArray? = null
 
-    override suspend fun restore(request: RestoreRequest): String = request.destination
+    override suspend fun open(config: EngineConfig): OliphauntSession {
+        openedConfig = config
+        return session
+    }
+
+    override suspend fun restore(destination: String, bytes: ByteArray) {
+        restoredDestination = destination
+        restoredBytes = bytes
+    }
 }
 
-private class PostgresErrorSession(
-    private val failureSql: String,
+private class TestSession(
+    private val response: ByteArray,
+    private val backupBytes: ByteArray = ByteArray(0),
+    private val commitTag: String = "COMMIT",
+    private val failCommit: Boolean = false,
+    private val failRollback: Boolean = false,
 ) : OliphauntSession {
-    override suspend fun capabilities(): EngineCapabilities = EngineCapabilities(
-        mode = EngineMode.NativeDirect,
-        processIsolated = false,
-        independentSessions = false,
-        maxClientSessions = 1,
-    )
+    val requests = mutableListOf<ByteArray>()
+    var closeCount = 0
+    var cancelCount = 0
 
-    override suspend fun execProtocolRaw(request: ProtocolRequest): ProtocolResponse {
-        val response =
-            if (request.bytes.decodeToString().contains(failureSql)) {
-                backendErrorResponse("ERROR", "23505", "duplicate key value")
-            } else {
-                backendSelectResponse()
-            }
-        return ProtocolResponse(response)
+    override suspend fun execProtocolRaw(request: ByteArray): ByteArray {
+        requests += request
+        val sql = request.takeIf { it.firstOrNull() == 'Q'.code.toByte() && it.size >= 6 }
+            ?.copyOfRange(5, request.size - 1)
+            ?.decodeToString()
+        if (sql == "COMMIT" && failCommit) throw OliphauntException("commit transport failed")
+        if (sql == "ROLLBACK" && failRollback) throw OliphauntException("rollback transport failed")
+        if (sql in listOf("BEGIN", "COMMIT", "ROLLBACK")) {
+            return commandResponse(if (sql == "COMMIT") commitTag else requireNotNull(sql))
+        }
+        return response
     }
 
-    override suspend fun backup(request: BackupRequest): BackupArtifact = BackupArtifact(request.format, ByteArray(0))
-
-    override suspend fun cancel() = Unit
-
-    override suspend fun close() = Unit
-}
-
-private suspend fun postgresErrorDatabase(failingOn: String): OliphauntDatabase = OliphauntDatabase.open(
-    config = OliphauntConfig(mode = EngineMode.NativeDirect),
-    engine = FixedSessionEngine(PostgresErrorSession(failingOn)),
-)
-
-private class BlockingSession : OliphauntSession {
-    val started = CompletableDeferred<Unit>()
-    val cancelled = CompletableDeferred<Unit>()
-    val closed = CompletableDeferred<Unit>()
-
-    override suspend fun capabilities(): EngineCapabilities = EngineCapabilities(
-        mode = EngineMode.NativeDirect,
-        processIsolated = false,
-        independentSessions = false,
-        maxClientSessions = 1,
-    )
-
-    override suspend fun execProtocolRaw(request: ProtocolRequest): ProtocolResponse {
-        started.complete(Unit)
-        return ProtocolResponse(request.bytes)
+    override suspend fun execProtocolStream(request: ByteArray, onChunk: (ByteArray) -> Unit) {
+        onChunk(execProtocolRaw(request))
     }
 
-    override suspend fun backup(request: BackupRequest): BackupArtifact = throw OliphauntException("backup blocked")
-
+    override suspend fun backup(): ByteArray = backupBytes
     override suspend fun cancel() {
-        cancelled.complete(Unit)
+        cancelCount += 1
     }
-
     override suspend fun close() {
-        closed.complete(Unit)
+        closeCount += 1
+    }
+
+    fun simpleQueries(): List<String> = requests.mapNotNull { request ->
+        if (request.firstOrNull() != 'Q'.code.toByte() || request.size < 6) {
+            null
+        } else {
+            request.copyOfRange(5, request.size - 1).decodeToString()
+        }
     }
 }
 
-private class BlockingOperationSession : OliphauntSession {
-    val started = CompletableDeferred<Unit>()
-    val cancelled = CompletableDeferred<Unit>()
-    private val response = CompletableDeferred<ProtocolResponse>()
+private fun cstrings(vararg values: String): ByteArray = values.fold(ByteArray(0)) { bytes, value -> bytes + value.encodeToByteArray() + byteArrayOf(0) }
 
-    override suspend fun capabilities(): EngineCapabilities = EngineCapabilities(
-        mode = EngineMode.NativeDirect,
-        processIsolated = false,
-        independentSessions = false,
-        maxClientSessions = 1,
-    )
-
-    override suspend fun execProtocolRaw(request: ProtocolRequest): ProtocolResponse {
-        started.complete(Unit)
-        return response.await()
-    }
-
-    override suspend fun backup(request: BackupRequest): BackupArtifact = throw OliphauntException("backup blocked")
-
-    override suspend fun cancel() {
-        cancelled.complete(Unit)
-        response.complete(ProtocolResponse("cancelled".encodeToByteArray()))
-    }
-
-    override suspend fun close() = Unit
+private fun backendMessage(tag: Char, body: ByteArray): ByteArray {
+    val length = body.size + 4
+    return byteArrayOf(
+        tag.code.toByte(),
+        (length ushr 24).toByte(),
+        (length ushr 16).toByte(),
+        (length ushr 8).toByte(),
+        length.toByte(),
+    ) + body
 }
 
-private fun backendSelectResponse(): ByteArray = buildList<Byte> {
-    addRowDescription(listOf("value" to 25u, "empty" to 25u))
-    addDataRow(listOf("1".encodeToByteArray(), null))
-    addCommandComplete("SELECT 1")
-    addReadyForQuery()
-}.toByteArray()
+private fun commandResponse(tag: String): ByteArray = backendMessage('C', tag.encodeToByteArray() + byteArrayOf(0)) + backendMessage('Z', byteArrayOf('I'.code.toByte()))
 
-private fun backendErrorResponse(
-    severity: String,
-    sqlstate: String,
-    message: String,
-): ByteArray = buildList<Byte> {
-    val body =
-        buildList<Byte> {
-            add('S'.code.toByte())
-            addAll(severity.encodeToByteArray().asIterable())
-            add(0)
-            add('C'.code.toByte())
-            addAll(sqlstate.encodeToByteArray().asIterable())
-            add(0)
-            add('M'.code.toByte())
-            addAll(message.encodeToByteArray().asIterable())
-            add(0)
-            add(0)
-        }.toByteArray()
-    addBackendMessage('E'.code, body)
-    addReadyForQuery()
-}.toByteArray()
-
-private fun MutableList<Byte>.addRowDescription(fields: List<Pair<String, UInt>>) {
-    addRawRowDescription(fields.map { (name, typeOid) -> name.encodeToByteArray() to typeOid })
-}
-
-private fun MutableList<Byte>.addRawRowDescription(fields: List<Pair<ByteArray, UInt>>) {
-    val body =
-        buildList<Byte> {
-            addInt16(fields.size)
-            for ((name, typeOid) in fields) {
-                addAll(name.asIterable())
-                add(0)
-                addUInt32(0u)
-                addInt16(0)
-                addUInt32(typeOid)
-                addInt16(-1)
-                addInt32(-1)
-                addInt16(0)
-            }
-        }.toByteArray()
-    addBackendMessage('T'.code, body)
-}
-
-private fun MutableList<Byte>.addDataRow(values: List<ByteArray?>) {
-    val body =
-        buildList<Byte> {
-            addInt16(values.size)
-            for (value in values) {
-                if (value == null) {
-                    addInt32(-1)
-                } else {
-                    addInt32(value.size)
-                    addAll(value.asIterable())
-                }
-            }
-        }.toByteArray()
-    addBackendMessage('D'.code, body)
-}
-
-private fun MutableList<Byte>.addCommandComplete(tag: String) {
-    val body =
-        buildList<Byte> {
-            addAll(tag.encodeToByteArray().asIterable())
-            add(0)
-        }.toByteArray()
-    addBackendMessage('C'.code, body)
-}
-
-private fun MutableList<Byte>.addNoticeResponse(
-    severity: String,
-    message: String,
-) {
-    val body =
-        buildList<Byte> {
-            add('S'.code.toByte())
-            addAll(severity.encodeToByteArray().asIterable())
-            add(0)
-            add('M'.code.toByte())
-            addAll(message.encodeToByteArray().asIterable())
-            add(0)
-            add(0)
-        }.toByteArray()
-    addBackendMessage('N'.code, body)
-}
-
-private fun MutableList<Byte>.addParameterStatus(
-    name: String,
-    value: String,
-) {
-    val body =
-        buildList<Byte> {
-            addAll(name.encodeToByteArray().asIterable())
-            add(0)
-            addAll(value.encodeToByteArray().asIterable())
-            add(0)
-        }.toByteArray()
-    addBackendMessage('S'.code, body)
-}
-
-private fun MutableList<Byte>.addNotificationResponse(
-    pid: Int,
-    channel: String,
-    payload: String,
-) {
-    val body =
-        buildList<Byte> {
-            addInt32(pid)
-            addAll(channel.encodeToByteArray().asIterable())
-            add(0)
-            addAll(payload.encodeToByteArray().asIterable())
-            add(0)
-        }.toByteArray()
-    addBackendMessage('A'.code, body)
-}
-
-private fun MutableList<Byte>.addReadyForQuery(status: Byte = 'I'.code.toByte()) {
-    addBackendMessage('Z'.code, byteArrayOf(status))
-}
-
-private fun startupAssignments(args: List<String>): List<String> {
-    val assignments = mutableListOf<String>()
-    var index = 0
-    while (index < args.size) {
-        require(args[index] == "-c") { "unexpected startup flag ${args[index]}" }
-        require(index + 1 < args.size) { "missing startup assignment after -c" }
-        assignments += args[index + 1]
-        index += 2
-    }
-    return assignments
-}
-
-private fun MutableList<Byte>.addBackendMessage(
-    tag: Int,
-    body: ByteArray,
-) {
-    add(tag.toByte())
-    addInt32(body.size + 4)
-    addAll(body.asIterable())
-}
-
-private fun MutableList<Byte>.addUInt32(value: UInt) {
-    add(((value shr 24) and 0xffu).toByte())
-    add(((value shr 16) and 0xffu).toByte())
-    add(((value shr 8) and 0xffu).toByte())
-    add((value and 0xffu).toByte())
-}
-
-private fun MutableList<Byte>.addInt32(value: Int) {
-    addUInt32(value.toUInt())
-}
-
-private fun MutableList<Byte>.addInt16(value: Int) {
-    val bits = value and 0xffff
-    add(((bits ushr 8) and 0xff).toByte())
-    add((bits and 0xff).toByte())
+private fun rowResponse(value: String, commandTag: String): ByteArray {
+    val rowDescription = byteArrayOf(0, 1) + "value".encodeToByteArray() + byteArrayOf(0) +
+        ByteArray(6) + byteArrayOf(0, 0, 0, 25, -1, -1, -1, -1, -1, -1, 0, 0)
+    val encoded = value.encodeToByteArray()
+    val length = encoded.size
+    val dataRow = byteArrayOf(
+        0,
+        1,
+        (length ushr 24).toByte(),
+        (length ushr 16).toByte(),
+        (length ushr 8).toByte(),
+        length.toByte(),
+    ) + encoded
+    return backendMessage('T', rowDescription) + backendMessage('D', dataRow) + commandResponse(commandTag)
 }

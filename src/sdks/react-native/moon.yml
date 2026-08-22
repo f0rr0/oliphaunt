@@ -39,6 +39,7 @@ tasks:
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
       - "/tools/dev/write-scoped-pnpm-workspace.mjs"
+      - "/tools/dev/clean-package-lib.mjs"
       - "/src/sdks/react-native/**/*"
       - "!/src/sdks/react-native/**/node_modules"
       - "!/src/sdks/react-native/**/node_modules/**"
@@ -65,6 +66,7 @@ tasks:
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
       - "/tools/dev/write-scoped-pnpm-workspace.mjs"
+      - "/tools/dev/clean-package-lib.mjs"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
       - "/src/sdks/react-native/**/*"
       - "!/src/sdks/react-native/**/node_modules"
@@ -95,9 +97,10 @@ tasks:
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
       - "/tools/dev/write-scoped-pnpm-workspace.mjs"
+      - "/tools/dev/clean-package-lib.mjs"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
       - "/src/sdks/kotlin/**/*"
-      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
+      - "/tools/native-packaging/extension-artifact-archive-policy.properties"
       - "/src/sdks/react-native/**/*"
       - "!/src/sdks/react-native/**/node_modules"
       - "!/src/sdks/react-native/**/node_modules/**"
@@ -137,6 +140,7 @@ tasks:
       - "/pnpm-workspace.yaml"
       - "/tools/dev/capture-command-output.mjs"
       - "/tools/dev/write-scoped-pnpm-workspace.mjs"
+      - "/tools/dev/clean-package-lib.mjs"
       - "/tools/policy/source-fetch-core.mjs"
       - "/tools/release/extension-upstream-licenses.mjs"
       - "/tools/release/portable-archive.mjs"
@@ -159,18 +163,20 @@ tasks:
       runFromWorkspaceRoot: true
   smoke:
     tags: ["runtime", "smoke"]
-    command: "pnpm --dir src/sdks/react-native/examples/expo run smoke"
+    command: "pnpm --dir examples/react-native-expo run smoke"
     deps:
       - "oliphaunt-swift:smoke"
       - "oliphaunt-kotlin:smoke"
     inputs:
       - "/Package.swift"
+      - "/examples/react-native-expo/**/*"
       - "/src/extensions/**/*"
+      - "/src/shared/fixtures/extensions/**/*"
       - "/src/runtimes/liboliphaunt/native/**/*"
       - "/src/runtimes/liboliphaunt/wasix/VERSION"
       - "/src/sources/toolchains/android-sdk.toml"
       - "/src/sdks/kotlin/**/*"
-      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
+      - "/tools/native-packaging/extension-artifact-archive-policy.properties"
       - "/src/sdks/react-native/**/*"
       - "!/src/sdks/react-native/**/node_modules"
       - "!/src/sdks/react-native/**/node_modules/**"
@@ -193,16 +199,18 @@ tasks:
       runFromWorkspaceRoot: true
   smoke-android:
     tags: ["runtime", "smoke", "android"]
-    command: "pnpm --dir src/sdks/react-native/examples/expo run smoke:android"
+    command: "pnpm --dir examples/react-native-expo run smoke:android"
     deps:
       - "oliphaunt-kotlin:smoke"
     inputs:
+      - "/examples/react-native-expo/**/*"
       - "/src/extensions/**/*"
+      - "/src/shared/fixtures/extensions/**/*"
       - "/src/runtimes/liboliphaunt/native/**/*"
       - "/src/runtimes/liboliphaunt/wasix/VERSION"
       - "/src/sources/toolchains/android-sdk.toml"
       - "/src/sdks/kotlin/**/*"
-      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
+      - "/tools/native-packaging/extension-artifact-archive-policy.properties"
       - "/src/sdks/react-native/**/*"
       - "!/src/sdks/react-native/**/node_modules"
       - "!/src/sdks/react-native/**/node_modules/**"
@@ -222,12 +230,14 @@ tasks:
       runFromWorkspaceRoot: true
   smoke-ios:
     tags: ["runtime", "smoke", "ios"]
-    command: "pnpm --dir src/sdks/react-native/examples/expo run smoke:ios"
+    command: "pnpm --dir examples/react-native-expo run smoke:ios"
     deps:
       - "oliphaunt-swift:smoke"
     inputs:
       - "/Package.swift"
+      - "/examples/react-native-expo/**/*"
       - "/src/extensions/**/*"
+      - "/src/shared/fixtures/extensions/**/*"
       - "/src/runtimes/liboliphaunt/native/**/*"
       - "/src/runtimes/liboliphaunt/wasix/VERSION"
       - "/src/sdks/react-native/**/*"
@@ -252,7 +262,7 @@ tasks:
       runFromWorkspaceRoot: true
   smoke-mobile:
     tags: ["runtime", "smoke", "mobile"]
-    command: "pnpm --dir src/sdks/react-native/examples/expo run smoke"
+    command: "pnpm --dir examples/react-native-expo run smoke"
     deps:
       - "oliphaunt-swift:smoke"
       - "oliphaunt-kotlin:smoke"
@@ -263,7 +273,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix/VERSION"
       - "/src/sources/toolchains/android-sdk.toml"
       - "/src/sdks/kotlin/**/*"
-      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
+      - "/tools/native-packaging/extension-artifact-archive-policy.properties"
       - "/src/sdks/react-native/**/*"
       - "!/src/sdks/react-native/**/node_modules"
       - "!/src/sdks/react-native/**/node_modules/**"
@@ -298,7 +308,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/native/**/*"
       - "/src/runtimes/liboliphaunt/wasix/VERSION"
       - "/src/sdks/kotlin/**/*"
-      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
+      - "/tools/native-packaging/extension-artifact-archive-policy.properties"
       - "/src/sdks/react-native/**/*"
       - "!/src/sdks/react-native/**/node_modules"
       - "!/src/sdks/react-native/**/node_modules/**"
@@ -324,7 +334,7 @@ tasks:
       runInCI: false
   mobile-build-android:
     tags: ["mobile", "build", "android", "ci-mobile-build-android"]
-    command: "pnpm --dir src/sdks/react-native/examples/expo run mobile-build:android"
+    command: "pnpm --dir examples/react-native-expo run mobile-build:android"
     deps:
       - "oliphaunt-kotlin:package-artifacts"
       - "oliphaunt-react-native:package-artifacts"
@@ -352,7 +362,8 @@ tasks:
       - "/rust-toolchain.toml"
       - "/src/sdks/rust/Cargo.toml"
       - "/src/sdks/rust/build.rs"
-      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
+      - "/tools/native-packaging/extension-artifact-archive-policy.properties"
+      - "/tools/native-packaging/**/*"
       - "/src/sdks/rust/src/**/*"
       - "/src/sdks/react-native/**/*"
       - "!/src/sdks/react-native/**/node_modules"
@@ -382,14 +393,14 @@ tasks:
       runFromWorkspaceRoot: true
   mobile-e2e-android:
     tags: ["mobile", "e2e", "android"]
-    command: "pnpm --dir src/sdks/react-native/examples/expo run mobile-e2e:android"
+    command: "pnpm --dir examples/react-native-expo run mobile-e2e:android"
     deps:
       - target: "oliphaunt-react-native:mobile-build-android"
         cacheStrategy: "outputs"
     inputs:
-      - "/src/sdks/react-native/examples/expo/src/**/*"
-      - "/src/sdks/react-native/examples/expo/maestro/**/*"
-      - "/src/sdks/react-native/examples/expo/package.json"
+      - "/examples/react-native-expo/src/**/*"
+      - "/examples/react-native-expo/maestro/**/*"
+      - "/examples/react-native-expo/package.json"
       - "/src/sdks/react-native/tools/mobile-e2e.sh"
       - "/src/sdks/react-native/tools/expo-runner-common.sh"
       - "/src/sdks/react-native/tools/expo-runner-metro.sh"
@@ -412,7 +423,7 @@ tasks:
       runInCI: skip
   mobile-drill-android:
     tags: ["mobile", "drill", "android"]
-    command: "pnpm --dir src/sdks/react-native/examples/expo run mobile-drill:android"
+    command: "pnpm --dir examples/react-native-expo run mobile-drill:android"
     deps:
       - "oliphaunt-kotlin:smoke"
     inputs:
@@ -421,7 +432,8 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix/VERSION"
       - "/src/sources/toolchains/android-sdk.toml"
       - "/src/sdks/kotlin/**/*"
-      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
+      - "/tools/native-packaging/extension-artifact-archive-policy.properties"
+      - "/tools/native-packaging/**/*"
       - "/src/sdks/react-native/**/*"
       - "!/src/sdks/react-native/**/node_modules"
       - "!/src/sdks/react-native/**/node_modules/**"
@@ -444,7 +456,7 @@ tasks:
       runInCI: false
   mobile-build-ios:
     tags: ["mobile", "build", "ios", "ci-mobile-build-ios"]
-    command: "pnpm --dir src/sdks/react-native/examples/expo run mobile-build:ios"
+    command: "pnpm --dir examples/react-native-expo run mobile-build:ios"
     deps:
       - "oliphaunt-swift:package-artifacts"
       - "oliphaunt-react-native:package-artifacts"
@@ -467,6 +479,7 @@ tasks:
       - "/src/sources/third-party/shared/icu.toml"
       - "/src/sources/third-party/shared/openssl.toml"
       - "/src/sdks/react-native/**/*"
+      - "/tools/native-packaging/**/*"
       - "!/src/sdks/react-native/**/node_modules"
       - "!/src/sdks/react-native/**/node_modules/**"
       - "!/src/sdks/react-native/**/.build"
@@ -498,14 +511,14 @@ tasks:
       runFromWorkspaceRoot: true
   mobile-e2e-ios:
     tags: ["mobile", "e2e", "ios"]
-    command: "pnpm --dir src/sdks/react-native/examples/expo run mobile-e2e:ios"
+    command: "pnpm --dir examples/react-native-expo run mobile-e2e:ios"
     deps:
       - target: "oliphaunt-react-native:mobile-build-ios"
         cacheStrategy: "outputs"
     inputs:
-      - "/src/sdks/react-native/examples/expo/src/**/*"
-      - "/src/sdks/react-native/examples/expo/maestro/**/*"
-      - "/src/sdks/react-native/examples/expo/package.json"
+      - "/examples/react-native-expo/src/**/*"
+      - "/examples/react-native-expo/maestro/**/*"
+      - "/examples/react-native-expo/package.json"
       - "/src/sdks/react-native/tools/mobile-e2e.sh"
       - "/src/sdks/react-native/tools/expo-runner-common.sh"
       - "/src/sdks/react-native/tools/expo-runner-metro.sh"
@@ -527,7 +540,7 @@ tasks:
       runInCI: skip
   mobile-drill-ios:
     tags: ["mobile", "drill", "ios"]
-    command: "pnpm --dir src/sdks/react-native/examples/expo run mobile-drill:ios"
+    command: "pnpm --dir examples/react-native-expo run mobile-drill:ios"
     deps:
       - "oliphaunt-swift:smoke"
     inputs:
@@ -536,6 +549,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/native/**/*"
       - "/src/runtimes/liboliphaunt/wasix/VERSION"
       - "/src/sdks/react-native/**/*"
+      - "/tools/native-packaging/**/*"
       - "!/src/sdks/react-native/**/node_modules"
       - "!/src/sdks/react-native/**/node_modules/**"
       - "!/src/sdks/react-native/**/.build"
@@ -573,6 +587,7 @@ tasks:
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
       - "/tools/dev/write-scoped-pnpm-workspace.mjs"
+      - "/tools/dev/clean-package-lib.mjs"
       - "/src/sdks/react-native/**/*"
       - "!/src/sdks/react-native/**/node_modules"
       - "!/src/sdks/react-native/**/node_modules/**"
@@ -668,9 +683,10 @@ tasks:
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
       - "/tools/dev/write-scoped-pnpm-workspace.mjs"
+      - "/tools/dev/clean-package-lib.mjs"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
       - "/src/sdks/kotlin/**/*"
-      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
+      - "/tools/native-packaging/extension-artifact-archive-policy.properties"
       - "/src/sdks/react-native/**/*"
       - "!/src/sdks/react-native/**/node_modules"
       - "!/src/sdks/react-native/**/node_modules/**"
@@ -698,7 +714,7 @@ tasks:
       - "/src/shared/fixtures/**/*"
       - "/src/shared/js-core/**/*"
       - "/src/sdks/kotlin/**/*"
-      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
+      - "/tools/native-packaging/extension-artifact-archive-policy.properties"
       - "/src/sdks/react-native/**/*"
       - "!/src/sdks/react-native/**/node_modules"
       - "!/src/sdks/react-native/**/node_modules/**"
@@ -735,9 +751,10 @@ tasks:
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
       - "/tools/dev/write-scoped-pnpm-workspace.mjs"
+      - "/tools/dev/clean-package-lib.mjs"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
       - "/src/sdks/kotlin/**/*"
-      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
+      - "/tools/native-packaging/extension-artifact-archive-policy.properties"
       - "/src/sdks/react-native/**/*"
       - "!/src/sdks/react-native/**/node_modules"
       - "!/src/sdks/react-native/**/node_modules/**"
@@ -793,7 +810,7 @@ tasks:
       - "/src/shared/fixtures/**/*"
       - "/src/shared/js-core/**/*"
       - "/src/sdks/kotlin/**/*"
-      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
+      - "/tools/native-packaging/extension-artifact-archive-policy.properties"
       - "/src/sdks/react-native/**/*"
       - "!/src/sdks/react-native/**/node_modules"
       - "!/src/sdks/react-native/**/node_modules/**"

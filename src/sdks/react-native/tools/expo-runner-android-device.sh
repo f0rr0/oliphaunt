@@ -192,28 +192,26 @@ foreground_android_app() {
 android_runner_url() {
   local selected_runner="$1"
   local storage_directory_arg="${2:-}"
-  local url="$scheme://oliphaunt-smoke?liboliphauntRunner=$selected_runner&liboliphauntLifecycle=$lifecycle_smoke&liboliphauntDurability=$(urlencode "$durability_profile")&liboliphauntRuntimeFootprint=$(urlencode "$runtime_footprint")"
+  local url="$scheme://oliphaunt-smoke?liboliphauntRunner=$selected_runner&liboliphauntLifecycle=$lifecycle_smoke"
   if [ "$selected_runner" = "benchmark" ]; then
     url="$url&liboliphauntBenchmarkPreset=$(urlencode "$benchmark_preset")"
   fi
   if [ -n "$startup_gucs" ]; then
     url="$url&liboliphauntStartupGUCs=$(urlencode "$startup_gucs")"
   fi
-  url="$url&liboliphauntWalSegsizeMB=$(urlencode "$wal_segsize_mb")"
   if [ -n "$storage_directory_arg" ]; then
     url="$url&liboliphauntStorageDirectory=$(urlencode "$storage_directory_arg")"
   fi
   if [ "$build_type" = "debug" ]; then
     local metro_url
     metro_url="http://$metro_host:$metro_port"
-    url="$dev_client_scheme://expo-development-client/?url=$(urlencode "$metro_url")&disableOnboarding=1&liboliphauntRunner=$selected_runner&liboliphauntLifecycle=$lifecycle_smoke&liboliphauntDurability=$(urlencode "$durability_profile")&liboliphauntRuntimeFootprint=$(urlencode "$runtime_footprint")"
+    url="$dev_client_scheme://expo-development-client/?url=$(urlencode "$metro_url")&disableOnboarding=1&liboliphauntRunner=$selected_runner&liboliphauntLifecycle=$lifecycle_smoke"
     if [ "$selected_runner" = "benchmark" ]; then
       url="$url&liboliphauntBenchmarkPreset=$(urlencode "$benchmark_preset")"
     fi
     if [ -n "$startup_gucs" ]; then
       url="$url&liboliphauntStartupGUCs=$(urlencode "$startup_gucs")"
     fi
-    url="$url&liboliphauntWalSegsizeMB=$(urlencode "$wal_segsize_mb")"
     if [ -n "$storage_directory_arg" ]; then
       url="$url&liboliphauntStorageDirectory=$(urlencode "$storage_directory_arg")"
     fi

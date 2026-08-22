@@ -90,7 +90,6 @@ export function kotlinMavenCentralCoordinates(version) {
     coordinate("dev.oliphaunt", "oliphaunt-android", version, "aar", [
       ".aar",
       ".pom",
-      ".module",
       "-sources.jar",
       "-javadoc.jar",
     ]),
@@ -135,7 +134,7 @@ export function currentKotlinProductVersion() {
  * Validate the complete unsigned Maven Central input staged by the Kotlin SDK.
  * Gradle's three maven-metadata-local.xml files are permitted because the
  * producer uses publishToMavenLocal, but they are explicitly excluded from the
- * immutable eleven-file Central closure returned by this function.
+ * immutable ten-file Central closure returned by this function.
  */
 export function validateKotlinMavenStagingClosure(
   root,

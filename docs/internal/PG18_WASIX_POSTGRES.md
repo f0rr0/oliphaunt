@@ -1,5 +1,9 @@
 # PG18 WASIX PostgreSQL Runtime
 
+> **Historical implementation snapshot — non-normative.** This document records
+> an earlier runtime design and may name superseded artifacts or APIs. Current
+> source, package metadata, and maintainer contracts are authoritative.
+
 This runtime is the fresh PostgreSQL 18 WASIX build that keeps the released
 Oliphaunt WASM product shape: one embedded backend behind the direct Rust API
 and the local server wrapper. It is the single-backend peer of the concurrent

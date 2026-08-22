@@ -1,8 +1,10 @@
 import type { WasixDirectoryMount } from '../archive.js';
+import { parseJsonWithUniqueObjectKeys } from '../database-root.js';
 import { WasixStorageError } from '../errors.js';
 import {
-  canonicalStorageContract,
-  type WasixStorageCompatibility,
+  assertWasixPhysicalIdentity,
+  physicalIdentityMatches,
+  type WasixPhysicalIdentity,
   type WasixStorageLease,
 } from '../storage-provider.js';
 import {
@@ -14,68 +16,140 @@ import {
   VOLATILE_DATABASE_FILES,
 } from '../storage-snapshot.js';
 import { acquireIncrementalStorage } from './incremental-storage.js';
+import { releaseRestoreLock } from './restore-cleanup.js';
 import { acquireExclusiveWebLock } from './web-lock.js';
 
-const ROOT_DIRECTORY = '.oliphaunt-wasix-v2';
-const METADATA_FILE = '.oliphaunt-wasix.json';
+const ROOT_DIRECTORY = '.oliphaunt-wasix-v1';
+const METADATA_FILE = '.oliphaunt-storage.json';
 
 type OpfsMetadata = {
-  schema: 'oliphaunt-wasix-opfs-v2';
+  schema: 'oliphaunt-wasix-opfs-v1';
   name: string;
-  compatibility: WasixStorageCompatibility;
+  physicalIdentity: WasixPhysicalIdentity;
 };
 
 export async function acquireOpfsStorage(
   name: string,
   template: WasixDirectoryMount,
-  compatibility: WasixStorageCompatibility,
+  identity: WasixPhysicalIdentity,
 ): Promise<WasixStorageLease> {
   const label = `OPFS storage ${JSON.stringify(name)}`;
   return acquireIncrementalStorage(label, template, {
-    writeFailureDurability: 'unknown',
+    writeFailureCommitState: 'unknown',
     acquireLock: () => acquireExclusiveWebLock(`@oliphaunt/wasix-ts:opfs:${name}`, label),
     async openStore() {
       const storage = globalThis.navigator?.storage;
       if (storage?.getDirectory === undefined) {
         throw new WasixStorageError('OPFS is unavailable in this @oliphaunt/wasix-ts host', {
           code: 'unavailable',
-          durability: 'unchanged',
+          commitState: 'unchanged',
         });
       }
       const origin = await storage.getDirectory();
-      const root = await origin.getDirectoryHandle(ROOT_DIRECTORY, { create: true });
+      const root = await origin.getDirectoryHandle(ROOT_DIRECTORY, {
+        create: true,
+      });
       const pgdata = await root.getDirectoryHandle(name, { create: true });
       return {
-        read: () => readOpfsDatabase(pgdata, name, compatibility),
-        apply: (delta) => applyOpfsDelta(pgdata, name, compatibility, delta),
+        read: () => readOpfsDatabase(pgdata, name, identity),
+        apply: (delta) => applyOpfsDelta(pgdata, name, identity, delta),
         close() {},
       };
     },
   });
 }
 
+export async function restoreOpfsStorage(
+  name: string,
+  snapshot: StoredSnapshot,
+  identity: WasixPhysicalIdentity,
+): Promise<void> {
+  const label = `OPFS storage ${JSON.stringify(name)}`;
+  const lock = await acquireExclusiveWebLock(`@oliphaunt/wasix-ts:opfs:${name}`, label);
+  let root: FileSystemDirectoryHandle | undefined;
+  let cleanupDestination = false;
+  let destinationExisted = false;
+  let commitState: 'persisted' | 'unchanged' | 'unknown' = 'unchanged';
+  let failure: unknown;
+  try {
+    const storage = globalThis.navigator?.storage;
+    if (storage?.getDirectory === undefined) {
+      throw new WasixStorageError('OPFS is unavailable in this @oliphaunt/wasix-ts host', {
+        code: 'unavailable',
+        commitState: 'unchanged',
+      });
+    }
+    const origin = await storage.getDirectory();
+    root = await origin.getDirectoryHandle(ROOT_DIRECTORY, { create: true });
+    let pgdata: FileSystemDirectoryHandle;
+    try {
+      pgdata = await root.getDirectoryHandle(name);
+      destinationExisted = true;
+    } catch (error) {
+      if (!isNotFound(error)) throw error;
+      pgdata = await root.getDirectoryHandle(name, { create: true });
+    }
+    if ((await readOpfsDatabase(pgdata, name, identity)) !== undefined) {
+      throw new WasixStorageError(`${label} already exists`, {
+        code: 'incomplete',
+        commitState: 'unchanged',
+      });
+    }
+    cleanupDestination = true;
+    commitState = 'unknown';
+    await applyOpfsDelta(pgdata, name, identity, {
+      directories: snapshot.directories,
+      files: snapshot.files,
+      deleted: [],
+    });
+    cleanupDestination = false;
+    commitState = 'persisted';
+  } catch (error) {
+    failure = error;
+    if (cleanupDestination && root !== undefined) {
+      try {
+        await root.removeEntry(name, { recursive: true });
+        if (destinationExisted) {
+          await root.getDirectoryHandle(name, { create: true });
+        }
+        commitState = 'unchanged';
+      } catch (cleanupError) {
+        failure = new AggregateError([error, cleanupError], `${label} restore cleanup failed`);
+        commitState = 'unknown';
+      }
+    }
+  } finally {
+    failure = await releaseRestoreLock(lock, label, commitState, failure);
+  }
+  if (failure !== undefined) throw failure;
+}
+
 export async function readOpfsDatabase(
   pgdata: FileSystemDirectoryHandle,
   name: string,
-  compatibility: WasixStorageCompatibility,
+  identity: WasixPhysicalIdentity,
 ): Promise<StoredSnapshot | undefined> {
   const label = `OPFS storage ${JSON.stringify(name)}`;
   const metadata = await readMetadata(pgdata, name);
   if (metadata === undefined) {
     for await (const entryName of pgdata.keys()) {
       if (entryName !== METADATA_FILE) {
-        throw corrupt(name, 'contains PGDATA without compatibility metadata');
+        throw corrupt(name, 'contains PGDATA without identity metadata');
       }
     }
     return undefined;
   }
-  if (
-    canonicalStorageContract(metadata.compatibility) !== canonicalStorageContract(compatibility)
-  ) {
-    throw new WasixStorageError(
-      `${label} is incompatible with the selected runtime or extensions`,
-      { code: 'incompatible', durability: 'unchanged' },
-    );
+  let compatible: boolean;
+  try {
+    compatible = physicalIdentityMatches(metadata.physicalIdentity, identity);
+  } catch (error) {
+    throw corrupt(name, `has malformed identity metadata: ${describeError(error)}`, error);
+  }
+  if (!compatible) {
+    throw new WasixStorageError(`${label} is incompatible with the selected WASIX runtime`, {
+      code: 'incompatible',
+      commitState: 'unchanged',
+    });
   }
 
   const directories: string[] = [];
@@ -83,7 +157,7 @@ export async function readOpfsDatabase(
   await readDirectory(pgdata, '', directories, files);
   return validateStoredSnapshot(
     { schema: 'oliphaunt-wasix-directory-snapshot-v1', directories, files },
-    compatibility.runtime.postgresVersion.split('.')[0] ?? '',
+    String(identity.postgresMajor),
     {
       label,
       corrupt: (detail, cause) => corrupt(name, detail, cause),
@@ -94,7 +168,7 @@ export async function readOpfsDatabase(
 export async function applyOpfsDelta(
   pgdata: FileSystemDirectoryHandle,
   name: string,
-  compatibility: WasixStorageCompatibility,
+  identity: WasixPhysicalIdentity,
   delta: StorageDelta,
 ): Promise<void> {
   const deletes = splitStorageDeltaDeletes(delta);
@@ -109,9 +183,9 @@ export async function applyOpfsDelta(
     METADATA_FILE,
     new TextEncoder().encode(
       JSON.stringify({
-        schema: 'oliphaunt-wasix-opfs-v2',
+        schema: 'oliphaunt-wasix-opfs-v1',
         name,
-        compatibility,
+        physicalIdentity: assertWasixPhysicalIdentity(identity),
       } satisfies OpfsMetadata),
     ),
   );
@@ -130,29 +204,28 @@ async function readMetadata(
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(await (await handle.getFile()).text());
+    parsed = parseJsonWithUniqueObjectKeys(await (await handle.getFile()).text());
   } catch (error) {
-    throw corrupt(name, `has malformed compatibility metadata: ${describeError(error)}`, error);
+    throw corrupt(name, `has malformed identity metadata: ${describeError(error)}`, error);
   }
   if (
+    parsed === undefined ||
     parsed === null ||
     typeof parsed !== 'object' ||
     Array.isArray(parsed) ||
-    (parsed as Partial<OpfsMetadata>).schema !== 'oliphaunt-wasix-opfs-v2' ||
+    (parsed as Partial<OpfsMetadata>).schema !== 'oliphaunt-wasix-opfs-v1' ||
     (parsed as Partial<OpfsMetadata>).name !== name ||
-    (parsed as Partial<OpfsMetadata>).compatibility === undefined
+    (parsed as Partial<OpfsMetadata>).physicalIdentity === undefined ||
+    !hasExactKeys(parsed as Record<string, unknown>, ['name', 'physicalIdentity', 'schema'])
   ) {
-    throw corrupt(name, 'has unsupported or mismatched compatibility metadata');
-  }
-  const storedCompatibility = (parsed as Partial<OpfsMetadata>).compatibility;
-  if (
-    storedCompatibility === null ||
-    typeof storedCompatibility !== 'object' ||
-    Array.isArray(storedCompatibility)
-  ) {
-    throw corrupt(name, 'has malformed compatibility metadata');
+    throw corrupt(name, 'has unsupported or mismatched identity metadata');
   }
   return parsed as OpfsMetadata;
+}
+
+function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const keys = Object.keys(value).sort();
+  return keys.length === expected.length && keys.every((key, index) => key === expected[index]);
 }
 
 async function readDirectory(
@@ -172,7 +245,10 @@ async function readDirectory(
       directories.push(path);
       await readDirectory(handle, path, directories, files);
     } else {
-      files.push({ path, bytes: new Uint8Array(await (await handle.getFile()).arrayBuffer()) });
+      files.push({
+        path,
+        bytes: new Uint8Array(await (await handle.getFile()).arrayBuffer()),
+      });
     }
   }
 }
@@ -260,7 +336,7 @@ function isNotFound(error: unknown): boolean {
 function corrupt(name: string, detail: string, cause?: unknown): WasixStorageError {
   return new WasixStorageError(`OPFS storage ${JSON.stringify(name)} ${detail}`, {
     code: 'corrupt',
-    durability: 'unchanged',
+    commitState: 'unchanged',
     ...(cause === undefined ? {} : { cause }),
   });
 }

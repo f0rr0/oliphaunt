@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 #[cfg(feature = "extensions")]
 use oliphaunt_wasix::extensions;
-use oliphaunt_wasix::{DatabaseInitialization, DatabaseStorage, OliphauntServer};
+use oliphaunt_wasix::{DatabaseStorage, OliphauntServer};
 use std::env;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -16,7 +16,6 @@ enum Bind {
 #[derive(Debug)]
 struct Args {
     storage: DatabaseStorage,
-    initialization: DatabaseInitialization,
     bind: Bind,
     print_uri: bool,
     postgres_config: Vec<(String, String)>,
@@ -25,16 +24,14 @@ struct Args {
 
 fn main() -> Result<()> {
     let args = parse_args()?;
-    let mut builder = OliphauntServer::builder()
-        .storage(args.storage)
-        .initialization(args.initialization);
+    let mut builder = OliphauntServer::builder().storage(args.storage);
 
     builder = match args.bind {
         Bind::Tcp(addr) => builder.tcp(addr),
         #[cfg(unix)]
         Bind::Unix(path) => builder.unix(path),
     };
-    builder = builder.postgres_configs(args.postgres_config);
+    builder = builder.startup_gucs(args.postgres_config);
 
     #[cfg(feature = "extensions")]
     {
@@ -51,9 +48,9 @@ fn main() -> Result<()> {
 
     let server = builder.start()?;
     if args.print_uri {
-        println!("{}", server.connection_uri());
+        println!("{}", server.connection_string());
     } else {
-        eprintln!("listening: {}", server.connection_uri());
+        eprintln!("listening: {}", server.connection_string());
     }
 
     loop {
@@ -63,7 +60,6 @@ fn main() -> Result<()> {
 
 fn parse_args() -> Result<Args> {
     let mut storage = DatabaseStorage::Memory;
-    let mut initialization = DatabaseInitialization::PackagedTemplate;
     let mut print_uri = false;
     let mut postgres_config = Vec::new();
     let mut extensions = Vec::new();
@@ -78,19 +74,6 @@ fn parse_args() -> Result<Args> {
                     .next()
                     .ok_or_else(|| anyhow::anyhow!("--directory requires a path"))?;
                 storage = DatabaseStorage::Directory(PathBuf::from(value));
-            }
-            "--packaged-template" => {
-                initialization = DatabaseInitialization::PackagedTemplate;
-            }
-            "--fresh-initdb" => initialization = DatabaseInitialization::FreshInitdb,
-            "--physical-archive" => {
-                let path = PathBuf::from(
-                    args.next()
-                        .ok_or_else(|| anyhow::anyhow!("--physical-archive requires a path"))?,
-                );
-                let bytes = std::fs::read(&path)
-                    .with_context(|| format!("read database archive {}", path.display()))?;
-                initialization = DatabaseInitialization::PhysicalArchive(bytes);
             }
             "--tcp" => {
                 let value = args.next().unwrap_or_else(|| "127.0.0.1:5432".to_string());
@@ -108,13 +91,13 @@ fn parse_args() -> Result<Args> {
                 bind = Bind::Unix(PathBuf::from(value));
             }
             "--print-uri" => print_uri = true,
-            "--postgres-config" => {
+            "--startup-guc" => {
                 let value = args
                     .next()
-                    .ok_or_else(|| anyhow::anyhow!("--postgres-config requires name=value"))?;
+                    .ok_or_else(|| anyhow::anyhow!("--startup-guc requires name=value"))?;
                 let (name, value) = value
                     .split_once('=')
-                    .ok_or_else(|| anyhow::anyhow!("--postgres-config requires name=value"))?;
+                    .ok_or_else(|| anyhow::anyhow!("--startup-guc requires name=value"))?;
                 postgres_config.push((name.to_owned(), value.to_owned()));
             }
             "--extension" => {
@@ -133,7 +116,6 @@ fn parse_args() -> Result<Args> {
 
     Ok(Args {
         storage,
-        initialization,
         bind,
         print_uri,
         postgres_config,
@@ -143,18 +125,15 @@ fn parse_args() -> Result<Args> {
 
 fn print_usage() {
     eprintln!(
-        "Usage: oliphaunt-wasix-proxy [--memory | --directory PATH] [--packaged-template | --fresh-initdb | --physical-archive PATH] [--tcp ADDR | --unix PATH] [--print-uri] [--postgres-config NAME=VALUE] [--extension NAME]"
+        "Usage: oliphaunt-wasix-proxy [--memory | --directory PATH] [--tcp ADDR | --unix PATH] [--print-uri] [--startup-guc NAME=VALUE] [--extension NAME]"
     );
     eprintln!("  --memory          Store PGDATA in memory. This is the default");
     eprintln!("  --directory PATH  Store PGDATA in a retained host directory");
-    eprintln!("  --packaged-template  Initialize an empty database from the packaged template");
-    eprintln!("  --fresh-initdb       Initialize an empty database with WASIX initdb");
-    eprintln!("  --physical-archive PATH  Initialize empty storage from a physical backup");
     eprintln!("  --tcp ADDR        Listen on TCP. Use 127.0.0.1:0 for a random port");
     #[cfg(unix)]
     eprintln!("  --unix PATH       Listen on a PostgreSQL .s.PGSQL.<port> socket path");
     eprintln!("  --print-uri       Print the PostgreSQL connection URI to stdout");
-    eprintln!("  --postgres-config NAME=VALUE");
+    eprintln!("  --startup-guc NAME=VALUE");
     eprintln!("                    Set a PostgreSQL startup GUC on the embedded backend");
     eprintln!("  --extension NAME  Enable an installed extension by SQL name");
 }

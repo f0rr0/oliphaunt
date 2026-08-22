@@ -102,6 +102,24 @@
       }
     },
     {
+      "name": "postgres_error_nonlocalized_severity_wins",
+      "description": "Structured PostgreSQL errors prefer nonlocalized V severity over localized S severity.",
+      "responseHex": "450000002b5345525245555200564552524f5200433232303030004d737461626c65206d65737361676500005a0000000549",
+      "queryExpectation": {
+        "postgresError": {
+          "severity": "ERROR",
+          "sqlstate": "22000",
+          "message": "stable message"
+        }
+      },
+      "wireExpectation": {
+        "messageNames": [
+          "error",
+          "readyForQuery"
+        ]
+      }
+    },
+    {
       "name": "bytes_after_ready_for_query",
       "description": "Typed query parsers must reject trailing bytes after ReadyForQuery.",
       "responseHex": "430000000d53454c4543542030005a000000054900",

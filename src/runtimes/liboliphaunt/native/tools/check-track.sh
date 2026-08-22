@@ -34,23 +34,6 @@ require() {
   fi
 }
 
-run_native_backlog_guard() {
-  run src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --check
-  if ! grep -Fq "Native Product Backlog" docs/internal/TODO.md; then
-    echo "docs/internal/TODO.md must track the native product backlog" >&2
-    exit 1
-  fi
-  if ! grep -Fq "Benchmarks release claims" docs/internal/TODO.md &&
-    ! grep -Fq "Make Benchmarks Release-Grade" docs/internal/TODO.md; then
-    echo "docs/internal/TODO.md must keep native benchmark release work visible" >&2
-    exit 1
-  fi
-  if grep -Eiq -- 'route native product work back to WASIX|WASIX fallback|--skip-wasix|Wasmer' docs/internal/TODO.md; then
-    echo "docs/internal/TODO.md must not route native product work back to the legacy runtime lane" >&2
-    exit 1
-  fi
-}
-
 runtime_ready() {
   [ -f "${LIBOLIPHAUNT_PATH:-$default_liboliphaunt}" ] &&
     [ -x "${OLIPHAUNT_INITDB:-$default_initdb}" ] &&
@@ -260,8 +243,9 @@ run_rust_quick() {
   require cargo
   native_runtime_lock cargo test -p oliphaunt --locked \
     --lib \
-    --test sdk_shape \
-    --test native_root_locking \
+    --test public_api \
+    --test sdk_extensions \
+    --test native_smoke \
     --test native_sql_regression \
     -- \
     --test-threads=1
@@ -300,7 +284,7 @@ run_sdks() {
 
 run_external_extension_pin_guard
 
-run_native_backlog_guard
+run src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --check
 
 case "$mode" in
   host-smoke)

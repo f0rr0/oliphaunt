@@ -1,89 +1,65 @@
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use crate::broker::NativeBrokerRuntime;
 use crate::config::{
-    DEFAULT_DATABASE, DEFAULT_USERNAME, DurabilityProfile, EngineMode, NativeBrokerConfig,
-    NativeDirectConfig, NativeServerConfig, OpenConfig, PostgresStartupGuc,
-    RuntimeFootprintProfile,
+    DEFAULT_DATABASE, DEFAULT_USERNAME, EngineMode, NativeBrokerConfig, NativeServerConfig,
+    OpenConfig, PostgresStartupGuc,
 };
-use crate::database::Oliphaunt;
+use crate::database::{Oliphaunt, OliphauntServer};
 use crate::engine::NativeRuntime;
 use crate::error::Result;
 use crate::executor::EngineExecutor;
 use crate::extension::Extension;
 use crate::liboliphaunt::OliphauntRuntime;
 use crate::server::NativeServerRuntime;
-use crate::storage::{DatabaseInitialization, DatabaseStorage};
+use crate::storage::DatabaseStorage;
 
 /// Builder for opening native Oliphaunt databases.
 pub struct OliphauntBuilder {
     mode: EngineMode,
     storage: DatabaseStorage,
-    initialization: DatabaseInitialization,
-    direct: NativeDirectConfig,
     broker: NativeBrokerConfig,
     server: NativeServerConfig,
-    durability: DurabilityProfile,
-    runtime_footprint: RuntimeFootprintProfile,
     startup_gucs: Vec<PostgresStartupGuc>,
     username: String,
     database: String,
     extensions: Vec<Extension>,
-    runtime: Option<Arc<dyn NativeRuntime>>,
 }
 
 impl Default for OliphauntBuilder {
     fn default() -> Self {
         Self {
-            mode: EngineMode::NativeDirect,
+            mode: EngineMode::Direct,
             storage: DatabaseStorage::TemporaryDirectory,
-            initialization: DatabaseInitialization::PackagedTemplate,
-            direct: NativeDirectConfig::default(),
             broker: NativeBrokerConfig::default(),
             server: NativeServerConfig::default(),
-            durability: DurabilityProfile::Safe,
-            runtime_footprint: RuntimeFootprintProfile::Throughput,
             startup_gucs: Vec::new(),
             username: DEFAULT_USERNAME.to_owned(),
             database: DEFAULT_DATABASE.to_owned(),
             extensions: Vec::new(),
-            runtime: None,
         }
     }
 }
 
 impl OliphauntBuilder {
-    /// Create a native builder. Defaults to `NativeDirect`.
+    /// Create a native builder. Defaults to direct mode.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Select native direct mode.
-    pub fn native_direct(mut self) -> Self {
-        self.mode = EngineMode::NativeDirect;
+    /// Select direct execution.
+    pub fn direct(mut self) -> Self {
+        self.mode = EngineMode::Direct;
         self
     }
 
-    /// Select native broker mode.
-    pub fn native_broker(mut self) -> Self {
-        self.mode = EngineMode::NativeBroker;
+    /// Select broker execution.
+    pub fn broker(mut self) -> Self {
+        self.mode = EngineMode::Broker;
         self
     }
 
-    /// Select native server mode.
-    pub fn native_server(mut self) -> Self {
-        self.mode = EngineMode::NativeServer;
-        self
-    }
-
-    /// Select a native engine mode.
-    pub fn engine(mut self, mode: EngineMode) -> Self {
-        self.mode = mode;
-        self
-    }
-
-    /// Select the storage used by this database instance.
+    /// Select database storage.
     pub fn storage(mut self, storage: DatabaseStorage) -> Self {
         self.storage = storage;
         self
@@ -99,51 +75,6 @@ impl OliphauntBuilder {
         self.storage(DatabaseStorage::TemporaryDirectory)
     }
 
-    /// Select how an empty storage directory is initialized.
-    pub fn initialization(mut self, initialization: DatabaseInitialization) -> Self {
-        self.initialization = initialization;
-        self
-    }
-
-    /// Initialize empty storage from the packaged template cluster.
-    pub fn packaged_template(mut self) -> Self {
-        self.initialization = DatabaseInitialization::PackagedTemplate;
-        self
-    }
-
-    /// Require an existing already-initialized storage directory.
-    pub fn existing_only(mut self) -> Self {
-        self.initialization = DatabaseInitialization::ExistingOnly;
-        self
-    }
-
-    /// Initialize empty storage with the packaged `initdb` executable.
-    pub fn fresh_initdb(mut self) -> Self {
-        self.initialization = DatabaseInitialization::FreshInitdb;
-        self
-    }
-
-    /// Set logical client sessions for modes that expose client sessions.
-    ///
-    /// Direct and broker mode validate this as exactly `1`; server mode is the
-    /// mode for true independent PostgreSQL client sessions.
-    pub fn max_client_sessions(mut self, sessions: usize) -> Self {
-        self.direct.max_client_sessions = sessions;
-        self.broker.max_client_sessions = sessions;
-        self.server.max_client_sessions = sessions;
-        self
-    }
-
-    /// Configure the maximum database instances supervised by one broker.
-    ///
-    /// Broker mode supervises one isolated helper process per active instance while
-    /// each helper owns one physical PostgreSQL backend session. Use this to
-    /// bound how many instances one shared broker runtime may own at once.
-    pub fn broker_max_instances(mut self, instances: usize) -> Self {
-        self.broker.max_instances = instances;
-        self
-    }
-
     /// Use an explicit broker helper executable.
     pub fn broker_executable(mut self, path: impl Into<PathBuf>) -> Self {
         self.broker.executable = Some(path.into());
@@ -156,47 +87,38 @@ impl OliphauntBuilder {
         self
     }
 
-    /// Use an explicit server port instead of allocating an ephemeral one.
+    /// Use an explicit server port instead of an ephemeral port.
     pub fn server_port(mut self, port: u16) -> Self {
         self.server.port = Some(port);
         self
     }
 
-    /// Set durability profile.
-    pub fn durability(mut self, durability: DurabilityProfile) -> Self {
-        self.durability = durability;
-        self
-    }
-
-    /// Set runtime footprint profile.
-    pub fn runtime_footprint(mut self, profile: RuntimeFootprintProfile) -> Self {
-        self.runtime_footprint = profile;
-        self
-    }
-
-    /// Add an explicit PostgreSQL startup GUC override.
-    ///
-    /// Later overrides win when PostgreSQL receives the generated `-c`
-    /// arguments, so this method can intentionally override the selected
-    /// footprint or durability profile.
+    /// Add an explicit PostgreSQL startup GUC.
     pub fn startup_guc(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.startup_gucs.push(PostgresStartupGuc::new(name, value));
         self
     }
 
-    /// Add explicit PostgreSQL startup GUC overrides.
-    pub fn startup_gucs(mut self, gucs: impl IntoIterator<Item = PostgresStartupGuc>) -> Self {
-        self.startup_gucs.extend(gucs);
+    /// Add explicit PostgreSQL startup GUCs.
+    pub fn startup_gucs<N, V>(mut self, gucs: impl IntoIterator<Item = (N, V)>) -> Self
+    where
+        N: Into<String>,
+        V: Into<String>,
+    {
+        self.startup_gucs.extend(
+            gucs.into_iter()
+                .map(|(name, value)| PostgresStartupGuc::new(name, value)),
+        );
         self
     }
 
-    /// Set the PostgreSQL startup user/role for SDK-owned connections.
+    /// Set the PostgreSQL startup user.
     pub fn username(mut self, username: impl Into<String>) -> Self {
         self.username = username.into();
         self
     }
 
-    /// Set the PostgreSQL database name for SDK-owned connections.
+    /// Set the PostgreSQL database name.
     pub fn database(mut self, database: impl Into<String>) -> Self {
         self.database = database.into();
         self
@@ -214,29 +136,12 @@ impl OliphauntBuilder {
         self
     }
 
-    /// Use a concrete native runtime implementation.
-    pub fn runtime(mut self, runtime: impl NativeRuntime) -> Self {
-        self.runtime = Some(Arc::new(runtime));
-        self
-    }
-
-    /// Use a shared native runtime implementation.
-    pub fn runtime_arc(mut self, runtime: Arc<dyn NativeRuntime>) -> Self {
-        self.runtime = Some(runtime);
-        self
-    }
-
-    /// Build and validate the open configuration without opening the engine.
-    pub fn build_config(&self) -> Result<OpenConfig> {
+    pub(crate) fn build_config(&self) -> Result<OpenConfig> {
         let config = OpenConfig {
             mode: self.mode,
             storage: self.storage.clone(),
-            initialization: self.initialization.clone(),
-            direct: self.direct.clone(),
             broker: self.broker.clone(),
             server: self.server.clone(),
-            durability: self.durability,
-            runtime_footprint: self.runtime_footprint,
             startup_gucs: self.startup_gucs.clone(),
             username: self.username.clone(),
             database: self.database.clone(),
@@ -249,17 +154,25 @@ impl OliphauntBuilder {
     /// Open the database.
     pub async fn open(self) -> Result<Oliphaunt> {
         let config = self.build_config()?;
-        let runtime = self.runtime.unwrap_or_else(|| default_runtime_for(&config));
-        let session = runtime.open(config)?;
-        let executor = EngineExecutor::spawn(session);
-        Ok(Oliphaunt::from_executor(executor))
+        let session = match config.mode {
+            EngineMode::Direct => OliphauntRuntime::from_env().open(config)?,
+            EngineMode::Broker => NativeBrokerRuntime::from_config(&config.broker).open(config)?,
+            EngineMode::Server => unreachable!("server mode uses open_server"),
+        };
+        Ok(Oliphaunt::from_executor(EngineExecutor::spawn(session)))
     }
-}
 
-fn default_runtime_for(config: &OpenConfig) -> Arc<dyn NativeRuntime> {
-    match config.mode {
-        EngineMode::NativeDirect => Arc::new(OliphauntRuntime::from_env()),
-        EngineMode::NativeBroker => Arc::new(NativeBrokerRuntime::from_config(&config.broker)),
-        EngineMode::NativeServer => Arc::new(NativeServerRuntime::from_config(&config.server)),
+    /// Open a local PostgreSQL server and return its server handle.
+    pub async fn open_server(mut self) -> Result<OliphauntServer> {
+        self.mode = EngineMode::Server;
+        let config = self.build_config()?;
+        let session = NativeServerRuntime::from_config(&config.server).open(config)?;
+        let connection_string = session.connection_string().ok_or_else(|| {
+            crate::Error::Engine("native server did not expose its connection string".to_owned())
+        })?;
+        Ok(OliphauntServer::from_executor(
+            EngineExecutor::spawn(session),
+            connection_string,
+        ))
     }
 }

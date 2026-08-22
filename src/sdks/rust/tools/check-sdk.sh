@@ -81,17 +81,6 @@ reject_cargo_package_entry_pattern() {
   fi
 }
 
-require_exact_package_fixture() {
-  package_fixture="$1"
-  canonical_fixture="$2"
-  if ! cmp -s "$package_fixture" "$canonical_fixture"; then
-    echo "Rust SDK package fixture must exactly match its canonical repository source:" >&2
-    echo "  package:   $package_fixture" >&2
-    echo "  canonical: $canonical_fixture" >&2
-    exit 1
-  fi
-}
-
 check_release_asset_fixture() {
   liboliphaunt_version="$(cat src/runtimes/liboliphaunt/native/VERSION)"
   fixture_assets="$(prepare_scratch_dir liboliphaunt-release-assets)"
@@ -103,7 +92,7 @@ check_release_asset_fixture() {
     --version "$liboliphaunt_version"
   run tools/dev/bun.sh tools/release/check-liboliphaunt-release-assets.mjs \
     --asset-dir "$fixture_assets"
-  run cargo run -p oliphaunt --bin oliphaunt-resources --locked -- \
+  run cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources --locked -- \
     --resolve-release-assets \
     --liboliphaunt-native-version "$liboliphaunt_version" \
     --release-asset-base-url "file://$fixture_assets" \
@@ -133,7 +122,7 @@ check_broker_release_asset_fixture() {
     --version "$broker_version"
   run tools/dev/bun.sh tools/release/check-broker-release-assets.mjs \
     --asset-dir "$fixture_assets"
-  run cargo run -p oliphaunt --bin oliphaunt-resources --locked -- \
+  run cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources --locked -- \
     --resolve-broker-release-assets \
     --broker-version "$broker_version" \
     --broker-release-asset-base-url "file://$fixture_assets" \
@@ -152,7 +141,7 @@ check_broker_release_asset_fixture() {
   fi
   windows_fixture_output="$(prepare_scratch_dir broker-release-output-windows)"
   windows_fixture_log="$scratch_base/$mode/broker-release-assets-windows.log"
-  run cargo run -p oliphaunt --bin oliphaunt-resources --locked -- \
+  run cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources --locked -- \
     --resolve-broker-release-assets \
     --broker-version "$broker_version" \
     --broker-release-asset-base-url "file://$fixture_assets" \
@@ -350,6 +339,7 @@ if [ "$mode" = "regression" ]; then
     exit 1
   fi
   native_runtime_lock cargo test -p oliphaunt --locked \
+    --test native_smoke \
     --test native_sql_regression \
     -- \
     --test-threads=1
@@ -372,7 +362,7 @@ if [ "$mode" = "smoke-runtime" ]; then
     oliphaunt_runtime_native_host_diagnostics extensions
     exit 1
   fi
-  native_runtime_lock cargo test -p oliphaunt --locked --test sdk_native_smoke -- --test-threads=1
+  native_runtime_lock cargo test -p oliphaunt --locked --test native_smoke -- --test-threads=1
   exit 0
 fi
 
@@ -393,24 +383,14 @@ if [ "$mode" = "test-unit" ]; then
     echo "missing cargo-nextest; run tools/dev/bootstrap-tools.sh" >&2
     exit 1
   fi
-  require_text src/sdks/rust/tests/sdk_config_modes.rs "rust_handle_types_are_thread_safe_shared_executor_handles" \
-    "Rust SDK tests must prove Oliphaunt handles remain thread-safe shared-executor handles"
-  require_text src/sdks/rust/tests/sdk_shape.rs "cloned_handles_share_one_serial_owner_executor" \
-    "Rust SDK tests must prove cloned handles share one serial owner executor"
-  require_text src/sdks/rust/tests/protocol_query_fixtures.rs "query-response-cases.json" \
-    "Rust SDK tests must consume the shared protocol fixture corpus"
+  require_text src/sdks/rust/tests/public_api.rs "public_api_has_only_the_deliberate_native_vocabulary" \
+    "Rust SDK tests must lock the minimal PostgreSQL-shaped API"
   run cargo test -p oliphaunt --doc --locked
   run cargo test -p oliphaunt-build --locked
   native_runtime_lock cargo nextest run -p oliphaunt --locked --profile ci --no-tests=fail --test-threads=1
   exit 0
 fi
 
-require_exact_package_fixture \
-  src/sdks/rust/tests/fixtures/postgis-smoke.sql \
-  src/extensions/external/postgis/tests/smoke.sql
-require_exact_package_fixture \
-  src/sdks/rust/tests/fixtures/sdk-mode-support.json \
-  src/shared/fixtures/sdk-capabilities/mode-support.json
 require_text src/sdks/rust/Cargo.toml 'license = "MIT"' \
   "Rust SDK source-only Cargo package must declare its MIT license truthfully"
 require_text src/sdks/rust/crates/oliphaunt-build/Cargo.toml 'license = "MIT"' \
@@ -418,8 +398,10 @@ require_text src/sdks/rust/crates/oliphaunt-build/Cargo.toml 'license = "MIT"' \
 
 package_listing="$root/target/liboliphaunt-sdk-check/rust-cargo-package-list.txt"
 mkdir -p "$(dirname "$package_listing")"
-printf '\n==> cargo package -p oliphaunt --locked --allow-dirty --list\n'
-cargo package -p oliphaunt --locked --allow-dirty --list >"$package_listing"
+run tools/dev/bun.sh tools/release/prepare-rust-release-source.mjs
+release_manifest="$root/target/release/cargo-package-sources/oliphaunt/Cargo.toml"
+printf '\n==> cargo package --manifest-path %s --allow-dirty --list\n' "$release_manifest"
+cargo package --manifest-path "$release_manifest" --allow-dirty --list >"$package_listing"
 cat "$package_listing"
 for required in \
   Cargo.toml \
@@ -429,21 +411,37 @@ for required in \
   src/lib.rs \
   src/database.rs \
   src/query.rs \
-  src/runtime_resources.rs \
-  src/bin/extension_artifact.rs \
-  src/bin/extension_index.rs \
-  src/bin/package_resources.rs \
-  tests/sdk_config_modes.rs \
-  tests/sdk_shape.rs \
+  tests/public_api.rs \
   tests/sdk_extensions.rs \
-  tests/sdk_native_smoke.rs \
+  tests/native_smoke.rs \
   tests/native_sql_regression.rs \
-  tests/fixtures/postgis-smoke.sql \
-  tests/fixtures/sdk-mode-support.json
+  tests/native_extensions.rs \
+  testdata/query-response-cases.json \
+  testdata/database-root.json \
+  testdata/behavior-contract.json
 do
   require_cargo_package_entry "$package_listing" "$required"
 done
+canonical_extension_smoke_count=0
+for source_recipe in src/shared/fixtures/extensions/*.sql; do
+  canonical_extension_smoke_count=$((canonical_extension_smoke_count + 1))
+  require_cargo_package_entry \
+    "$package_listing" \
+    "tests/fixtures/extensions/$(basename "$source_recipe")"
+done
+packaged_extension_smoke_count="$(grep -Ec '^tests/fixtures/extensions/[^/]+\.sql$' "$package_listing" || true)"
+if [ "$packaged_extension_smoke_count" -ne "$canonical_extension_smoke_count" ]; then
+  echo "Rust SDK package must contain exactly the canonical extension smoke recipes: expected $canonical_extension_smoke_count, found $packaged_extension_smoke_count" >&2
+  grep -E '^tests/fixtures/extensions/' "$package_listing" >&2 || true
+  exit 1
+fi
+if git ls-files --error-unmatch src/sdks/rust/tests/fixtures/extensions/'*.sql' >/dev/null 2>&1; then
+  echo "Rust SDK source must not commit package-local extension smoke copies; package them from src/shared/fixtures/extensions" >&2
+  exit 1
+fi
+reject_cargo_package_entry_pattern "$package_listing" '^tests/fixtures/postgis-smoke\.sql$'
 reject_cargo_package_entry_pattern "$package_listing" '^(target/|oliphaunt/|sdks/|src/bindings/wasix-rust/crates/oliphaunt-wasix/)'
+reject_cargo_package_entry_pattern "$package_listing" '^src/(runtime_resources|bin/oliphaunt-(resources|extension-artifact|extension-index))'
 reject_cargo_package_entry_pattern "$package_listing" '^crates/oliphaunt-build/'
 reject_cargo_package_entry_pattern "$package_listing" '^(\.gitignore|moon.yml|release.toml|tools/)'
 
@@ -460,32 +458,18 @@ do
 done
 reject_cargo_package_entry_pattern "$build_package_listing" '^(target/|src/sdks/rust/src/|src/bindings/|src/runtimes/)'
 
-require_text src/sdks/rust/tests/sdk_config_modes.rs "rust_handle_types_are_thread_safe_shared_executor_handles" \
-  "Rust SDK tests must prove Oliphaunt handles remain thread-safe shared-executor handles"
-require_text src/sdks/rust/tests/sdk_config_modes.rs "direct_mode_rejects_fake_multi_session_pools" \
-  "Rust SDK tests must reject fake direct-mode multi-session pools"
-require_text src/sdks/rust/tests/sdk_config_modes.rs "broker_mode_rejects_fake_multi_session_pools" \
-  "Rust SDK tests must reject fake broker-mode multi-session pools"
-require_text src/sdks/rust/tests/sdk_config_modes.rs "server_mode_advertises_true_independent_sessions" \
-  "Rust SDK tests must prove server mode is the independent-session mode"
-require_text src/sdks/rust/tests/sdk_config_modes.rs "direct_broker_server_lifecycle_capabilities_are_honest" \
-  "Rust SDK tests must lock direct/broker/server lifecycle capability semantics"
-require_text src/sdks/rust/tests/sdk_shape.rs "cloned_handles_share_one_serial_owner_executor" \
-  "Rust SDK tests must prove cloned handles share one serial owner executor"
-require_text src/sdks/rust/tests/sdk_shape.rs "cloned_handles_share_pin_and_close_state_for_every_sdk_mode" \
-  "Rust SDK tests must prove clones share pin and close state for direct/broker/server"
-require_text src/sdks/rust/tests/sdk_shape.rs "cloned_handles_queue_fifo_on_one_owner_executor_for_every_sdk_mode" \
-  "Rust SDK tests must prove cloned handles queue fairly on one owner executor for direct/broker/server"
-require_text src/sdks/rust/tests/sdk_extensions.rs "native_extension_manifest_covers_every_supported_pg18_extension" \
-  "Rust SDK extension tests must lock the PG18 extension manifest"
-require_text src/sdks/rust/tests/sdk_extensions.rs "supported_extension_catalog_is_exact" \
-  "Rust SDK extension tests must pin the exact canonical extension catalog"
-require_text src/sdks/rust/tests/sdk_native_smoke.rs "native_liboliphaunt_runtime_select_one_when_env_is_available" \
-  "Rust SDK native smoke tests must cover direct liboliphaunt runtime selection"
-require_text src/sdks/rust/README.md "never creates an independent PostgreSQL connection" \
-  "Rust SDK README must document clone/executor semantics"
-require_text src/sdks/rust/README.md "shared executor runs FIFO" \
-  "Rust SDK README must document FIFO executor semantics"
+require_text src/sdks/rust/tests/public_api.rs "public_api_has_only_the_deliberate_native_vocabulary" \
+  "Rust SDK tests must lock the minimal PostgreSQL-shaped API"
+require_text src/sdks/rust/tests/sdk_extensions.rs "public_extension_catalog_matches_generated_extension_selection_metadata" \
+  "Rust SDK extension tests must lock public selection to generated metadata"
+require_text src/sdks/rust/tests/sdk_extensions.rs "extension_selection_uses_exact_sql_names_without_aliases" \
+  "Rust SDK extension tests must pin exact-name selection without aliases"
+require_text src/sdks/rust/tests/native_smoke.rs "direct_query_transaction_backup_restore_and_process_ownership_when_available" \
+  "Rust SDK native smoke tests must cover direct liboliphaunt process ownership"
+require_text src/sdks/rust/tests/native_smoke.rs "server_supports_external_psql_and_pg_basebackup_when_available" \
+  "Rust SDK native smoke tests must cover the standard external client and physical server backup path"
+require_text src/sdks/rust/tests/native_sql_regression.rs "native_postgres_types_errors_and_transaction_recovery_when_available" \
+  "Rust SDK regression tests must preserve PostgreSQL type, error, and recovery coverage"
 check_release_asset_fixture
 check_broker_release_asset_fixture
 

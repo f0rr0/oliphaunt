@@ -4,7 +4,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <condition_variable>
+#include <chrono>
 #include <mutex>
+#include <thread>
 
 struct OliphauntHandle {
   bool logical_active = false;
@@ -78,6 +80,11 @@ int32_t UnsupportedResponse(OliphauntResponse *out) {
   return -1;
 }
 
+bool BlockArchiveOperation() {
+  const char *block = std::getenv("OLIPHAUNT_NODE_CLEANUP_TEST_BLOCK_ARCHIVE");
+  return block != nullptr && std::strcmp(block, "1") == 0;
+}
+
 }  // namespace
 
 extern "C" {
@@ -129,12 +136,35 @@ OLIPHAUNT_API int32_t oliphaunt_exec_protocol_stream(
 
 OLIPHAUNT_API int32_t oliphaunt_backup(
     OliphauntHandle *,
-    const OliphauntBackupOptions *,
     OliphauntResponse *out) {
+  if (BlockArchiveOperation()) {
+    RecordEvent("backup-started");
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    if (out == nullptr) {
+      SetError("fake backup received a null response");
+      return -1;
+    }
+    out->data = static_cast<uint8_t *>(std::malloc(3));
+    if (out->data == nullptr) {
+      SetError("fake backup allocation failed");
+      return -1;
+    }
+    out->data[0] = 1;
+    out->data[1] = 2;
+    out->data[2] = 3;
+    out->len = 3;
+    RecordEvent("backup-finished");
+    return 0;
+  }
   return UnsupportedResponse(out);
 }
 
 OLIPHAUNT_API int32_t oliphaunt_restore(const OliphauntRestoreOptions *) {
+  if (BlockArchiveOperation()) {
+    RecordEvent("restore-started");
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    RecordEvent("restore-finished");
+  }
   return 0;
 }
 
@@ -240,10 +270,6 @@ OLIPHAUNT_API const char *oliphaunt_last_error(OliphauntHandle *) {
 
 OLIPHAUNT_API const char *oliphaunt_version(void) {
   return "cleanup-fixture";
-}
-
-OLIPHAUNT_API uint64_t oliphaunt_capabilities(void) {
-  return OLIPHAUNT_CAP_LOGICAL_REOPEN;
 }
 
 OLIPHAUNT_API void oliphaunt_free_response(OliphauntResponse *response) {

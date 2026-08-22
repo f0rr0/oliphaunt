@@ -100,12 +100,12 @@ package_ios() {
   [ ! -f "$static_registry" ] ||
     fail "base iOS release asset must not include mobile static extension registry $static_registry"
 
-  cargo run -p oliphaunt --bin oliphaunt-resources --locked -- --list-extensions >"$catalog_file"
+  cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources --locked -- --list-extensions >"$catalog_file"
   oliphaunt_assert_base_runtime_has_no_optional_extensions "$catalog_file" "$macos_runtime" ||
     fail "base iOS release runtime must not ship optional extension assets; selected extensions belong in exact extension artifacts"
 
   env OLIPHAUNT_INSTALL_DIR="$macos_runtime" \
-    cargo run -p oliphaunt --bin oliphaunt-resources --locked -- \
+    cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources --locked -- \
       --output "$runtime_stage" \
       --force >/tmp/liboliphaunt-release-mobile-runtime-resources.log
   local base_runtime_resources="$runtime_stage/oliphaunt"

@@ -1,4 +1,9 @@
-import { openWasixWithWorker, serializeOpenConfig, type WasixWorkerPort } from './client-common.js';
+import {
+  openWasixWithWorker,
+  restoreWasix,
+  serializeOpenConfig,
+  type WasixWorkerPort,
+} from './client-common.js';
 import { resolveExecutionMode } from './open-options.js';
 import type { OliphauntClient, OliphauntDatabase, OpenConfig } from './types.js';
 
@@ -25,6 +30,7 @@ export async function openWasix(config: OpenConfig = {}): Promise<OliphauntDatab
 
 export const Oliphaunt: OliphauntClient = {
   open: openWasix,
+  restore: restoreWasix,
 };
 
 function createBrowserWorker(): WasixWorkerPort {

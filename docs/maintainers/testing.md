@@ -6,14 +6,13 @@ Oliphaunt is a polyglot product repo. Product-native tests stay in product-nativ
 Each SDK is validated with the same tools its consumers use:
 
 - Rust SDK: `src/sdks/rust/tests/`
-- WASM crate: `src/bindings/wasix-rust/crates/oliphaunt-wasix/tests/`
+- Rust WASIX binding: `src/bindings/wasix-rust/crates/oliphaunt-wasix/tests/`
 - Swift SDK: `src/sdks/swift/Tests/`
 - Kotlin SDK: `src/sdks/kotlin/oliphaunt/src/commonTest/`,
-  `src/sdks/kotlin/oliphaunt/src/androidUnitTest/`, and
-  `src/sdks/kotlin/oliphaunt/src/nativeTest/`
+  and `src/sdks/kotlin/oliphaunt/src/androidUnitTest/`
 - React Native package: `src/sdks/react-native/src/__tests__/`
 - Installed React Native app smoke and benchmark coverage:
-  `src/sdks/react-native/examples/expo/`
+  `examples/react-native-expo/`
 
 Use the tier model below when deciding whether a check belongs in PR fast
 feedback, affected integration, an explicit full manual run, release dry-run, or post-publish
@@ -92,22 +91,23 @@ Shared fixture domains are small, semantic contracts consumed by
 product-native tests or policy checks:
 
 - `src/shared/fixtures/protocol/query-response-cases.json`: PostgreSQL backend-response
-  corpus consumed by Rust, Swift, Kotlin, React Native, TypeScript, and WASM
+  corpus consumed by Rust, Swift, Kotlin, React Native, TypeScript, and WASIX
   protocol tests.
-- `src/shared/fixtures/sdk-capabilities/mode-support.json`: direct, broker, and server
-  capability expectations used to keep mode support assertions aligned.
-- `src/shared/fixtures/runtime-resources/manifest.properties`,
-  `src/shared/fixtures/runtime-resources/template-pgdata-manifest.properties`, and
-  `src/shared/fixtures/runtime-resources/package-size.tsv`: runtime-resource and
-  exact-extension package-size contracts used by Rust, Swift, Kotlin,
-  TypeScript, and React Native packaging/resource tests.
-- `src/shared/fixtures/backup/physical-archive-manifest.json`: physical archive metadata
-  expectations for backup/restore contract tests.
-- `src/shared/fixtures/lifecycle/session-lifecycle.json`: close, cancel,
-  background/foreground, and transaction-pinning lifecycle expectations.
-- `src/shared/fixtures/react-native-jsi/binary-transport.json`: RN-only JSI ArrayBuffer,
-  typed-array offset, stream chunk, callback, and handle-validation cases.
+- `src/shared/fixtures/postgres/behavior-contract.json`: common PostgreSQL
+  behavior cases that are meaningful in more than one SDK.
+- `src/shared/fixtures/storage/database-root.json`: the exact five-field
+  managed-root descriptor cases consumed by native and WASIX validators.
+- `src/shared/fixtures/storage/physical-archive-native-v1.properties` and
+  `physical-archive-wasix-v1.properties`: exact physical archive identities
+  consumed by the runtime-family backup and restore tests.
+- `src/shared/fixtures/storage/physical-backup-wal-range-v1.properties`: exact
+  inclusive WAL segment-range vectors consumed by native and both WASIX online
+  backup implementations, including non-default segment size arithmetic.
 
+`bun tools/policy/check-shared-fixtures.mjs` validates the manifest and rejects
+byte-for-byte source copies outside the canonical fixture root. Published
+source packages receive any required standalone copies only in their generated
+staging directories.
 Reusable benchmark datasets, benchmark plans, and published reports belong in
 `benchmarks/`. Executable benchmark harnesses belong in `tools/perf/` unless
 the harness is intentionally part of a product's public developer API.
@@ -133,7 +133,7 @@ runtime probes and must be run with `--cache off` in CI/release evidence lanes
 where current device/simulator/runtime state matters.
 
 Runtime prerequisites are centralized in `tools/runtime/preflight.sh`. Rust,
-Swift, Kotlin, TypeScript, and WASM smoke/regression lanes use that helper for
+Swift, Kotlin, TypeScript, and WASIX smoke/regression lanes use that helper for
 host liboliphaunt, Android liboliphaunt, iOS simulator probe, and WASIX
 asset/AOT checks. Static, package, unit, and coverage lanes remain
 artifact-light; they may warn about missing local runtimes but must not claim
@@ -199,21 +199,21 @@ the failure proves a concrete requirement this model cannot satisfy.
 ## Coverage
 
 Coverage is measured evidence, not a policy-only check. Product tasks run the
-native reporter for their ecosystem: `cargo-llvm-cov` for Rust and WASM library
+native reporter for their ecosystem: `cargo-llvm-cov` for Rust and WASIX library
 coverage, `swift test --enable-code-coverage` for Swift, Kover for Kotlin, and
 Vitest V8 coverage for TypeScript and React Native TypeScript code. Each product writes
 `target/coverage/<product>/summary.json` plus its native report formats, and
 `moon run repo:coverage` aggregates those summaries into `target/coverage/summary.json`
 and `target/coverage/summary.md`.
 
-Rust and WASM executable unit tests run through `cargo nextest` with the `ci`
+Rust and WASIX executable unit tests run through `cargo nextest` with the `ci`
 profile. Unit lanes still run doctests through `cargo test --doc` because
 nextest does not own doctest execution. Coverage lanes measure line coverage
 through `cargo llvm-cov nextest` and then run `cargo test --doc` as stable-Rust
 correctness evidence. Doctest coverage itself requires nightly rustdoc flags, so
 it is not part of the default stable LCOV gate.
-WASM library unit coverage intentionally uses `--no-default-features`, while
-WASM doctests run with default features because the README extension examples
+WASIX library unit coverage intentionally uses `--no-default-features`, while
+WASIX doctests run with default features because the README extension examples
 exercise the default extension surface. Runtime Postgres/WASIX execution stays
 in `smoke` and `regression`, where missing runtime assets must fail or skip
 explicitly according to the lane policy.
@@ -245,7 +245,7 @@ moon run :coverage
 moon run :coverage --affected
 ```
 
-## WASM Runtime Tests
+## WASIX Runtime Tests
 
 `oliphaunt-wasix` is intended for tests that need real Postgres semantics without
 Docker.
@@ -260,32 +260,20 @@ use oliphaunt_wasix::Oliphaunt;
 fn stores_rows() -> Result<(), Box<dyn std::error::Error>> {
     let mut db = Oliphaunt::open()?;
 
-    db.exec("CREATE TABLE items (id int primary key, name text)", None)?;
-    db.exec("INSERT INTO items VALUES (1, 'alpha')", None)?;
+    db.execute("CREATE TABLE items (id int primary key, name text)")?;
+    db.execute("INSERT INTO items VALUES (1, 'alpha')")?;
 
-    let rows = db.query("SELECT name FROM items WHERE id = 1", &[], None)?;
-    assert_eq!(rows.rows[0].get("name").unwrap(), "alpha");
+    let rows = db.query("SELECT name FROM items WHERE id = 1")?;
+    assert_eq!(rows.get_text(0, "name")?, Some("alpha"));
 
     db.close()?;
     Ok(())
 }
 ```
 
-Select `DatabaseInitialization::FreshInitdb` only when the test must validate
-fresh-cluster initialization behavior:
-
-```rust,no_run
-use oliphaunt_wasix::{DatabaseInitialization, Oliphaunt};
-
-#[test]
-fn fresh_cluster_path() -> Result<(), Box<dyn std::error::Error>> {
-    let mut db = Oliphaunt::builder()
-        .initialization(DatabaseInitialization::FreshInitdb)
-        .open()?;
-    db.close()?;
-    Ok(())
-}
-```
+Tests that specifically exercise `initdb` invoke the packaged WASIX tool.
+Ordinary open always uses the packaged template, and physical restore is tested
+through the dedicated restore API rather than an initialization selector.
 
 ## Server Tests
 
@@ -299,7 +287,7 @@ use sqlx::{Connection, Row};
 #[tokio::test]
 async fn sqlx_query() -> Result<(), Box<dyn std::error::Error>> {
     let server = OliphauntServer::builder().start()?;
-    let mut conn = sqlx::PgConnection::connect(&server.connection_uri()).await?;
+    let mut conn = sqlx::PgConnection::connect(&server.connection_string()).await?;
 
     let row = sqlx::query("SELECT $1::int4 + 1 AS n")
         .bind(41_i32)
@@ -308,7 +296,7 @@ async fn sqlx_query() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(row.try_get::<i32, _>("n")?, 42);
 
     conn.close().await?;
-    server.shutdown()?;
+    server.close()?;
     Ok(())
 }
 ```
@@ -328,40 +316,45 @@ fn vector_query() -> Result<(), Box<dyn std::error::Error>> {
         .extension(extensions::VECTOR)
         .open()?;
 
-    db.exec("CREATE TABLE items (embedding vector(3))", None)?;
-    db.exec("INSERT INTO items VALUES ('[1,2,3]')", None)?;
-    db.exec("SELECT embedding <-> '[1,2,4]' FROM items", None)?;
+    db.execute("CREATE TABLE items (embedding vector(3))")?;
+    db.execute("INSERT INTO items VALUES ('[1,2,3]')")?;
+    let rows = db.query("SELECT embedding <-> '[1,2,4]' AS distance FROM items")?;
+    assert!(rows.get_text(0, "distance")?.is_some());
 
     db.close()?;
     Ok(())
 }
 ```
 
-Use the builder path for extension tests by default. It resolves bundled
-dependencies before startup. It is mandatory when generated lifecycle metadata
-declares startup configuration or preload requirements; post-open
-`enable_extension(...)` intentionally rejects those extensions because the
-running backend cannot safely acquire startup-only state.
+The builder resolves bundled dependencies and any generated startup
+configuration before PostgreSQL starts. Extension selection is not a post-open
+lifecycle operation.
 
-## Snapshot Setup
+## Physical Fixture Setup
 
-Use physical data-dir archives or `try_clone()` when a test suite needs a
-pre-populated same-version fixture:
+Use `backup()` and static `restore()` when a test suite needs a pre-populated
+same-version independent root:
 
 ```rust,no_run
-use oliphaunt_wasix::Oliphaunt;
+use oliphaunt_wasix::{DatabaseStorage, Oliphaunt};
 
 #[test]
 fn clone_fixture() -> Result<(), Box<dyn std::error::Error>> {
     let mut seed = Oliphaunt::open()?;
-    seed.exec("CREATE TABLE items(value TEXT)", None)?;
-    seed.exec("INSERT INTO items VALUES ('alpha')", None)?;
+    seed.execute("CREATE TABLE items(value TEXT)")?;
+    seed.execute("INSERT INTO items VALUES ('alpha')")?;
+    let backup = seed.backup()?;
+    seed.close()?;
 
-    let mut clone = seed.try_clone()?;
-    clone.exec("SELECT * FROM items", None)?;
+    let parent = tempfile::tempdir()?;
+    let root = parent.path().join("clone");
+    Oliphaunt::restore(&root, backup)?;
+    let mut clone = Oliphaunt::builder()
+        .storage(DatabaseStorage::Directory(root))
+        .open()?;
+    assert_eq!(clone.query("SELECT value FROM items")?.get_text(0, "value")?, Some("alpha"));
 
     clone.close()?;
-    seed.close()?;
     Ok(())
 }
 ```
@@ -383,4 +376,7 @@ standard Postgres client.
 
 Direct `Oliphaunt` supports `/dev/blob` for `COPY TO` and `COPY FROM`. Server
 mode supports ordinary client-driven `COPY FROM STDIN` and other standard wire
-protocol flows through the local Postgres endpoint.
+protocol flows through the local Postgres endpoint. Native SDK regression tests
+exercise callback-streamed raw responses in direct, broker, server, and
+transaction-owned sessions; language unit tests lock callback forwarding at
+the Swift, Kotlin, React Native, and desktop TypeScript facades.

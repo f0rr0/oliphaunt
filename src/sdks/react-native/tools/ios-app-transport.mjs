@@ -26,6 +26,7 @@ const ZIP_MAX_ENTRIES = 1_000_000;
 const ZIP_MAX_MEMBER_NAME_BYTES = 4096;
 const ZIP_MAX_SYMLINK_TARGET_BYTES = 64 * 1024;
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
+const ARCHIVE_TIMESTAMP = new Date("2000-01-01T00:00:00.000Z");
 
 function fail(message) {
   throw new Error(`${PREFIX}: ${message}`);
@@ -1143,6 +1144,20 @@ async function writeJsonAtomic(file, value) {
   }
 }
 
+async function normalizeTreeTimes(file) {
+  const stat = await fs.lstat(file);
+  if (stat.isDirectory()) {
+    const children = await fs.readdir(file);
+    children.sort(compareNames);
+    for (const child of children) await normalizeTreeTimes(path.join(file, child));
+  }
+  if (stat.isSymbolicLink()) {
+    await fs.lutimes(file, ARCHIVE_TIMESTAMP, ARCHIVE_TIMESTAMP);
+  } else {
+    await fs.utimes(file, ARCHIVE_TIMESTAMP, ARCHIVE_TIMESTAMP);
+  }
+}
+
 export async function packIosAppTransport({ appDir, transportDir, buildReport = undefined }) {
   const tools = await appleTools();
   await requireDirectory(appDir, "iOS app artifact directory");
@@ -1167,11 +1182,22 @@ export async function packIosAppTransport({ appDir, transportDir, buildReport = 
     transportDir,
     `.${ARCHIVE_NAME}.${process.pid}.${randomUUID()}.tmp.zip`,
   );
+  const archiveStage = path.join(
+    transportDir,
+    `.archive-stage.${process.pid}.${randomUUID()}`,
+  );
+  const stagedApp = path.join(archiveStage, appData.name);
   try {
+    await fs.mkdir(archiveStage);
+    run(tools.ditto, [appData.name, stagedApp], {
+      cwd: appDir,
+      label: "iOS app deterministic archive staging",
+    });
+    await normalizeTreeTimes(stagedApp);
     run(
       tools.ditto,
       ["-c", "-k", "--sequesterRsrc", "--keepParent", appData.name, temporaryArchive],
-      { cwd: appDir, label: "iOS app ditto archive" },
+      { cwd: archiveStage, label: "iOS app ditto archive" },
     );
     await requireRegularFile(temporaryArchive, "iOS app ditto archive");
     await fs.rename(temporaryArchive, archive);
@@ -1202,9 +1228,9 @@ export async function packIosAppTransport({ appDir, transportDir, buildReport = 
       `${JSON.stringify({ archive, buildReport: report === undefined ? null : copiedReport, manifest: manifestFile })}\n`,
     );
     return { archive, buildReport: report === undefined ? null : copiedReport, manifest: manifestFile };
-  } catch (error) {
+  } finally {
     await fs.rm(temporaryArchive, { force: true });
-    throw error;
+    await fs.rm(archiveStage, { force: true, recursive: true });
   }
 }
 

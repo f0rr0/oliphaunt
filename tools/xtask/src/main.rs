@@ -101,8 +101,6 @@ const RUST_HOST_REQUIRED_RUNTIME_EXPORTS: &[&str] = &[
 const RUST_HOST_OPTIONAL_RUNTIME_EXPORTS: &[&str] = &[
     "oliphaunt_wasix_set_force_host_error_recovery",
     "oliphaunt_wasix_run_atexit_funcs",
-    "oliphaunt_wasix_backend_timing_reset",
-    "oliphaunt_wasix_backend_timing_elapsed_us",
     "oliphaunt_wasix_set_protocol_transport",
 ];
 const RUNTIME_EXPORT_LIST_COMPAT_EXPORTS: &[&str] = &[

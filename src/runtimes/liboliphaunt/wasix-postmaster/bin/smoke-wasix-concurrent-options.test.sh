@@ -60,9 +60,5 @@ expect_env_rejected WASIX_CONCURRENT_VERIFY_TIMEOUT 0 \
   'WASIX_CONCURRENT_VERIFY_TIMEOUT requires a positive integer'
 expect_env_rejected WASIX_CONCURRENT_SHUTDOWN_TIMEOUT_MS 0 \
   'WASIX_CONCURRENT_SHUTDOWN_TIMEOUT_MS requires a positive integer'
-for delay in invalid -1 1.5; do
-  expect_env_rejected WASIX_CONCURRENT_LAUNCH_DELAY_SECONDS "$delay" \
-    'WASIX_CONCURRENT_LAUNCH_DELAY_SECONDS requires a nonnegative integer'
-done
 
 printf 'WASIX concurrent smoke option validation tests passed\n'

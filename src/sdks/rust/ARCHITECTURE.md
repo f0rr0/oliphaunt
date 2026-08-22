@@ -1,160 +1,89 @@
-# Rust SDK Architecture
+# Rust SDK architecture
 
-`oliphaunt` is the clean native path for the Rust SDK. It is not a
-compatibility layer over the current WASIX runtime and it should not grow
-WASIX-specific fallback policy.
+The Rust SDK is a native binding over `liboliphaunt`. It does not wrap the
+WASIX binding and has no runtime fallback matrix.
 
-## Runtime Modes
+## Public boundary
 
-- `NativeDirect` is the embedded default. It owns one physical PostgreSQL
-  backend session and serializes all work through an owner executor. Handles are
-  cloneable, but they share the same physical session.
-- `NativeBroker` is the robust desktop shape. A helper process owns database
-  instances, workers, filesystem locks, recovery, upgrades, and extension loading.
-- `NativeServer` is the true multi-client mode. It is the only mode that should
-  advertise independent PostgreSQL client sessions or support general-purpose
-  pools.
+The public database boundary is:
 
-The SDK must not fake independent Postgres sessions in direct mode.
+- `Oliphaunt::builder()` for direct and broker databases.
+- `OliphauntBuilder::open_server()` for the distinct local-server handle.
+- PostgreSQL-shaped execute, query, parameter, result, transaction, checkpoint,
+  cancellation, raw protocol, and close methods.
+- One byte physical-backup method on direct and broker databases.
+- One static restore operation into an absent or empty destination.
 
-## Rust Boundary
+Internal engine modes, runtime profiles, lifecycle requests, backup envelopes,
+resource manifests, package reports, and protocol parsers are not public API.
 
-The public Rust boundary is `OliphauntBuilder -> Oliphaunt`. Concrete PostgreSQL
-bindings implement `NativeRuntime` and return an `EngineSession`. The SDK owns
-configuration, capabilities, extension selection, and serialized execution;
-the runtime owns PostgreSQL lifecycle and protocol execution.
+## Runtime ownership
 
-`OliphauntRuntime` is the concrete runtime for the native C ABI. It loads
-`liboliphaunt` from `LIBOLIPHAUNT_PATH` or an explicit path and serves
-`NativeDirect`.
+Direct mode owns one embedded PostgreSQL backend in the application process.
+Broker mode owns the same backend in one authenticated helper process. Both
+present the same `Oliphaunt` API and serialize commands through one owner
+executor.
 
-`NativeBrokerRuntime` supervises `oliphaunt-broker` worker processes. Each
-worker owns one instance and one direct backend, and the shared Rust runtime admits
-up to `.broker_max_instances(n)` active instances. This keeps broker crash/process
-isolation real instead of simulating it inside the client process, while still
-supporting multiple-instance desktop apps without violating the native direct
-process-global backend constraint. On Unix platforms the SDK uses a
-Unix-domain socket by default to keep broker traffic off the TCP stack; set
-`OLIPHAUNT_BROKER_TRANSPORT=tcp` only when debugging or forcing the
-portable fallback path. The SDK generates a per-session authentication token,
-passes it to the helper through the child environment, and sends it as the first
-IPC frame before protocol or control messages are accepted. Cancellation uses a
-separate authenticated IPC endpoint, so a cancel request is not blocked behind
-the query response stream. The parent initialization policy is passed to the
-helper, so `ExistingOnly` and packaged `FreshInitdb` behave the same way in broker mode
-as they do in direct mode. If the helper exits between operations, the session
-relaunches a fresh helper against the same instance before the next operation. If a
-helper dies while a request is in flight, that request returns an error rather
-than being replayed with unknown commit state; later operations can relaunch and
-recover through PostgreSQL WAL recovery.
+Server mode starts a normal local PostgreSQL server, opens one SDK connection,
+and returns `OliphauntServer` with a nonoptional libpq connection string. It is
+the only product that supports independent external client connections. Its
+handle has no physical-backup method because PostgreSQL already provides
+`pg_basebackup`; logical backup uses `pg_dump`/`pg_restore`/`psql`.
 
-`NativeServerRuntime` starts a real local PostgreSQL server process, connects to
-it using the PostgreSQL v3 startup/query protocol, and exposes a connection
-string. This is the only mode that advertises independent sessions. SDK-owned
-query cancellation uses PostgreSQL's native CancelRequest packet with the
-`BackendKeyData` returned during startup.
+The engine traits, C symbols, broker frames, server wire client, and artifact
+materialization helpers are crate-internal. The only `#[doc(hidden)]` exports are
+narrow cross-crate boundaries consumed by the unpublished broker and packaging
+tools.
 
-Internally, the `liboliphaunt` runtime is split so the C boundary does not become a
-catch-all module:
+## Execution and transactions
 
-- `oliphaunt/mod.rs`: runtime/session behavior and `EngineSession`
-  implementation.
-- `oliphaunt/ffi.rs`: ABI structs, symbol loading, and native library
-  resolution.
-- `oliphaunt/root.rs`: root locking, PGDATA path preparation, and temporary-root
-  cleanup.
-- `oliphaunt/root/runtime.rs`: profile-aware runtime-cache orchestration.
-- `oliphaunt/root/runtime/locate.rs`: native PostgreSQL install and embedded
-  module discovery.
-- `oliphaunt/root/runtime/install.rs`: selected runtime asset installation for
-  direct/broker and server profiles.
-- `oliphaunt/root/runtime/cache_key.rs`: runtime cache key, manifest, and
-  validation logic.
-- `oliphaunt/root/files.rs`: deterministic filesystem copying, APFS clone
-  fallback behavior, directory utilities, and cleanup helpers.
-- `oliphaunt/root/fingerprint.rs`: content fingerprinting used by runtime and
-  template cache keys.
-- `oliphaunt/root/extensions.rs`: selected extension SQL/data/module
-  materialization and filters that keep unselected extension assets invisible.
-- `oliphaunt/root/template.rs`: packaged-template PGDATA cache construction,
-  `initdb` bootstrap, and atomic root hydration.
-- `broker.rs` and `ipc.rs`: helper process supervision and local IPC.
-- `server.rs` and `pgwire.rs`: local PostgreSQL server lifecycle and raw wire
-  protocol client.
+An owner thread is the single place that calls a runtime session. Cloneable SDK
+handles share it; cloning does not create a PostgreSQL connection.
 
-## Concurrency
+A transaction pin rejects unrelated work while its callback is active. Body
+failure rolls back. A failed rollback poisons the session. COMMIT uncertainty
+never triggers a later ROLLBACK because PostgreSQL may already have committed;
+the session is poisoned unless PostgreSQL explicitly returns the known idle
+`ROLLBACK` command tag. Pin cleanup remains admissible after poisoning so close
+cannot strand the owner thread.
 
-Direct mode uses an owner thread. `Oliphaunt` handles are cheap clones that send
-commands to that owner. `SessionPin` reserves the physical session for
-transaction or session-state-sensitive work, and unpinned work is rejected while
-the pin is active.
+Cancellation is out of band: the C cancellation hook in direct mode, a separate
+authenticated endpoint in broker mode, and PostgreSQL CancelRequest in server
+mode. Close is a queue boundary and does not implicitly cancel active work.
 
-`Transaction` is built on `SessionPin`: it sends `BEGIN`, keeps all work pinned,
-and releases the physical session on `COMMIT` or `ROLLBACK`.
+## Storage and identity
 
-Close is a lifecycle boundary, not another ordinary queued query. When close
-begins, new and already queued non-close work is rejected with `EngineStopped`.
-If backend work is active, close waits for that work to finish before queueing
-the runtime close or direct-mode logical detach. Query interruption is explicit
-through `Oliphaunt::cancel()`; idle close does not send a spurious cancel.
+Public storage is either a caller-owned directory or an SDK-owned temporary
+directory. A persistent directory contains an outer `.oliphaunt.json`
+descriptor and `pgdata/`.
 
-## Storage
+Root validation is shared in contract, not by pretending all host filesystems
+are one implementation. The native adapter rejects symlink roots and symlink
+structural directories, validates PostgreSQL 18 PGDATA, and writes the exact
+five-field descriptor last. A sibling admission lock prevents multiple
+supported native owners from opening the same root. The lock is an internal
+lifecycle implementation detail, not a public cross-binding coordination mode.
 
-The public storage model is `DatabaseStorage::{TemporaryDirectory,
-Directory(PathBuf)}`. `TemporaryDirectory` is the builder default, while
-`Directory` is caller-owned persistence. Database initialization remains a
-separate `DatabaseInitialization`; filesystem locking is derived internally from the
-selected engine and is not a consumer policy switch.
+The descriptor records schema, engine family, PGDATA directory name,
+PostgreSQL major, and physical format. A valid native or WASIX family/format
+pair is accepted. Cross-family rejection and conversion are not part of root
+admission.
 
-Internally, both variants materialize a filesystem root containing PGDATA and
-runtime metadata. The native C ABI and broker CLI retain their established
-root vocabulary and layout, but neither is a second public storage model.
-Failed setup cleans SDK-owned temporary state. Broker and server clean it after
-terminal engine shutdown. Direct close is only a logical detach from a resident
-backend, so direct temporary storage cannot be removed safely at close and is
-reused by later temporary opens, then left to host temporary-file cleanup after
-process exit.
+Direct and broker backup bytes carry a PostgreSQL physical initialization
+payload. They do not carry the outer descriptor. Restore stages and validates
+PGDATA, then creates the receiving root identity. Existing nonempty destinations
+are rejected; there is no replacement option.
 
-`DatabaseInitialization::PackagedTemplate` is the production first-open path. New
-storage directories are hydrated from a content-keyed base PGDATA template before the engine is
-entered, which avoids paying `initdb` on every fresh open. The template is built
-with the standalone PostgreSQL server runtime, then copied into storage directories with
-copy-on-write cloning on macOS when the filesystem supports it. The diagnostic
-environment variable `OLIPHAUNT_PGDATA_COPY_MODE=copy` forces physical
-byte copies when investigating first-write copy-on-write effects. Direct and
-broker execution still use the liboliphaunt-embedded runtime profile after the directory
-exists.
+## Artifacts and extensions
 
-Runtime resources are also content-keyed. Direct/broker runtimes use
-liboliphaunt-linked extension modules; server runtimes use standalone PostgreSQL
-extension modules. Both profiles share the same manifest-gated
-`share/postgresql` filtering so unselected extensions stay invisible.
+Build and release tooling stages the runtime, PostgreSQL tools, templates, and
+selected extension artifacts. The SDK selects extensions by exact generated SQL
+name and passes only runtime-relevant selection into root preparation.
 
-Physical backup follows PostgreSQL's online backup protocol instead of copying a
-live data directory blindly. Direct and server mode call `pg_backup_start`,
-archive the `pgdata` tree with transient files omitted, then append the
-`backup_label` and `tablespace_map` returned by `pg_backup_stop`. The `pg_wal`
-contents are collected after `pg_backup_stop` so the archive carries the WAL
-needed to recover a same-version clone. Broker mode delegates to the direct
-runtime inside the helper process. Logical SQL backup is server-only and uses
-packaged `pg_dump`.
+Runtime materialization maintains two internal layouts where PostgreSQL requires
+them: embedded modules for direct/broker and standalone server modules. This is
+natural implementation separation, not a public capability profile.
 
-`DatabaseInitialization::FreshInitdb` runs the `initdb` executable from the
-selected packaged runtime; callers never provide a tooling path. `ExistingOnly`
-refuses to open an empty or partial storage directory in direct, broker, and
-server mode.
-
-## Extensions
-
-Extensions are opt-in exact PostgreSQL extension names. `CREATE EXTENSION`
-should only succeed when the selected extension assets are present and, on
-mobile, when required static registry rows are linked. Static registry loading is
-the portable mobile path; signed dynamic desktop loading is a separate future
-capability and not a grouping abstraction.
-
-## Performance Contract
-
-Native implementations should benchmark direct protocol RTT, typed query
-overhead, batched writes, large result streaming, cold/warm open, package size,
-memory, backup/restore, SQLite comparison, and native PostgreSQL controls before
-becoming a default.
+Performance profiles and diagnostic knobs belong to the perf harness. They must
+not leak into the SDK unless a concrete application need establishes a stable
+public contract.

@@ -23,11 +23,11 @@ TypeScript, Rust WASIX, or WASIX TypeScript SDK.
 
 The public boundary is intentionally small:
 
-- initialize a native direct database session;
+- open a native direct session over an already-prepared managed root;
 - execute raw PostgreSQL protocol bytes or simple SQL;
 - stream large protocol responses;
-- back up or restore supported archive formats;
-- read capability bits and error strings;
+- back up or restore the native physical archive;
+- read error strings;
 - close or detach according to the process lifecycle.
 
 The ABI owns handles and response buffers. Language bindings own serialization,
@@ -61,9 +61,8 @@ oliphaunt_close(handle);
 
 ## Runtime Shape
 
-The C ABI is the native direct runtime boundary. It exposes capabilities for the
-target artifact so bindings can report protocol, streaming, backup/restore,
-extension, cancellation, and lifecycle support.
+The C ABI is the native direct runtime boundary. Its fixed ABI defines protocol,
+streaming, backup/restore, extension, cancellation, and lifecycle support.
 
 Direct mode owns one serialized embedded PostgreSQL session. Language SDK APIs
 provide the higher-level broker and server modes.
@@ -76,7 +75,7 @@ Bindings and direct C consumers own the app-facing contract above the ABI:
   simple SQL helpers provided by the ABI.
 - Serialize work according to the selected runtime mode.
 - Select exact SQL extension names before opening the database.
-- Translate capability bits and error strings into ecosystem-native types.
+- Translate error strings into ecosystem-native types.
 - Use ABI backup and restore calls instead of copying live PGDATA.
 - Capture the logical generation immediately after init when more than one host
   environment or finalizer can own cleanup, and use generation-guarded terminal

@@ -19,19 +19,20 @@ The product line has distinct native and WASIX hosts.
 | --- | --- |
 | Native `liboliphaunt` SDKs | Rust, Swift, Kotlin, React Native, TypeScript, and C ABI consumers |
 | Rust WASIX `oliphaunt-wasix` | Rust applications hosting the portable runtime |
-| WASIX TypeScript `@oliphaunt/wasix-ts` | Browser, Node, Bun, or Deno direct/Worker placement with memory; browsers may opt into IndexedDB snapshots and server runtimes may opt into directory snapshots |
+| WASIX TypeScript `@oliphaunt/wasix-ts` | Browser, Node, Bun, or Deno direct/Worker placement with memory; browsers may opt into IndexedDB or OPFS persistence and Node, Bun, and Deno hosts may opt into directory persistence |
 
 The products share storage, exact extension selection, structured errors, and
-lifecycle concepts. Capabilities, backup/restore, server access, and persistence
-mechanisms remain product-specific.
+lifecycle concepts. Backup/restore, server access, and persistence mechanisms
+remain product-specific and are recorded in the static runtime-support matrix.
 
 ## Database storage
 
-Oliphaunt storage contains PostgreSQL data, WAL, Oliphaunt metadata, locks,
-selected-extension metadata, and recovery state. Native persistent storage is
-an application-owned directory. Native temporary storage is SDK-owned. WASIX
-uses a true memory filesystem by default and offers host-specific persistent
-storage explicitly.
+A managed persistent root contains `.oliphaunt.json` and `pgdata`. PostgreSQL
+owns the data, WAL, catalog state for installed extensions, and recovery state
+inside `pgdata`. Binding-local locks or leases are host coordination state, not
+database contents. Native temporary storage is SDK-owned. WASIX uses a true
+memory filesystem by default and offers host-specific persistent storage
+explicitly.
 
 That storage model is deliberate: app developers get PostgreSQL's recovery and SQL
 behavior, while the SDK owns the app-facing safety rails around paths, locking,
@@ -46,13 +47,13 @@ lifecycle phases are present only where the host supports them:
 | --- | --- |
 | Open | Create or attach to storage, validate ownership, and materialize selected runtime resources |
 | Query | Route work through the selected engine and preserve mode-specific concurrency rules |
-| Background/checkpoint | Use platform lifecycle hooks or host-specific WASIX snapshot publication where exposed |
+| Checkpoint | Request a PostgreSQL checkpoint; WASIX TypeScript then publishes the durable PGDATA delta through its selected provider |
 | Close | Reject new work, wait for active work, and detach cleanly from the selected runtime |
-| Backup/restore | Use native or Rust WASIX data-movement APIs where exposed |
+| Backup/restore | Use each binding's physical data-movement API where exposed |
 
-Mobile SDKs connect these phases to app background and foreground transitions.
-Desktop SDKs add broker and server modes where a helper process or local server
-is the better runtime shape.
+Applications decide when platform lifecycle events trigger checkpoint,
+cancellation, or close. Desktop SDKs add broker and server modes where a helper
+process or local server is the better runtime shape.
 
 ## Extension Selection
 

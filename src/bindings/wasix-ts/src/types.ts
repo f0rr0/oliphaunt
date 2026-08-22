@@ -1,5 +1,5 @@
-import type { QueryParam, QueryResult } from './query.js';
-import type { WasixStorage } from './storage.js';
+import type { CommandResult, QueryParam, QueryResult } from './query.js';
+import type { PersistentWasixStorage, WasixStorage } from './storage.js';
 
 export type BinaryInput = ArrayBuffer | ArrayBufferView | Uint8Array | ReadonlyArray<number>;
 
@@ -160,8 +160,6 @@ export type ExecutionMode = 'direct' | 'worker';
 export type OpenConfig = {
   /** Worker-isolated by default; direct opens in and then blocks the caller's realm. */
   execution?: ExecutionMode;
-  /** Low-level, indivisible runtime-carrier override; ordinary consumers should omit this. */
-  advanced?: Readonly<{ runtime?: WasixRuntimeDescriptor }>;
   /** Existing PostgreSQL role selected after the fixed superuser bootstrap. */
   username?: string;
   database?: string;
@@ -174,9 +172,11 @@ export type OpenConfig = {
 };
 
 export type OliphauntDatabase = {
-  execute(sql: string): Promise<Uint8Array>;
+  execute(sql: string, parameters?: ReadonlyArray<QueryParam>): Promise<CommandResult>;
   query(sql: string, parameters?: ReadonlyArray<QueryParam>): Promise<QueryResult>;
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
+  /** Create a session-preserving PostgreSQL online physical backup. */
+  backup(): Promise<Uint8Array>;
   /** CHECKPOINT PostgreSQL, then publish the resulting journaled PGDATA delta. */
   checkpoint(): Promise<void>;
   transaction<T>(body: (transaction: OliphauntTransaction) => Promise<T> | T): Promise<T>;
@@ -186,11 +186,12 @@ export type OliphauntDatabase = {
 
 /** A database session pinned to one callback-scoped PostgreSQL transaction. */
 export type OliphauntTransaction = {
-  execute(sql: string): Promise<Uint8Array>;
+  execute(sql: string, parameters?: ReadonlyArray<QueryParam>): Promise<CommandResult>;
   query(sql: string, parameters?: ReadonlyArray<QueryParam>): Promise<QueryResult>;
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
 };
 
 export type OliphauntClient = {
   open(config?: OpenConfig): Promise<OliphauntDatabase>;
+  restore(storage: PersistentWasixStorage, bytes: BinaryInput): Promise<void>;
 };

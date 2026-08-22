@@ -235,7 +235,7 @@ pub const FIXTURE: bool = true;
       "runtime/bin/postgres", "runtime/bin/initdb", "runtime/bin/pg_ctl",
     ]);
     const tools = genericCarrier("fixture-native-tools", "oliphaunt-tools", nativeRuntimeVersion, "native-tools", [
-      "runtime/bin/pg_dump", "runtime/bin/psql",
+      "runtime/bin/pg_basebackup", "runtime/bin/pg_dump", "runtime/bin/psql",
     ]);
     const broker = genericCarrier("fixture-broker", "oliphaunt-broker", graph.products["oliphaunt-broker"].version, "broker-helper", [
       "bin/oliphaunt-broker",

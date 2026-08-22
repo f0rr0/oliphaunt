@@ -536,8 +536,8 @@ fresh_ensure_dirs() {
 
 # Serialize publication and consumption of the canonical PostgreSQL baseline.
 # Callers keep the descriptor open for the complete interval in which they read
-# BASELINE_DIR.  The lock lives outside that replaceable directory, so staged
-# publication cannot invalidate the lock identity held by another process.
+# BASELINE_DIR. The permanent lock file lives outside that replaceable directory,
+# so staged publication cannot change the synchronization object.
 fresh_lock_postgres_baseline() {
   local mode="${1-}"
   local lock_dir="$FRESH_WORK_ROOT/baseline-locks"
@@ -574,8 +574,7 @@ fresh_lock_postgres_baseline() {
     return 2
   }
   exec {FRESH_POSTGRES_BASELINE_LOCK_FD}>"$lock_path"
-  [ -f "$lock_path" ] && [ ! -L "$lock_path" ] &&
-    [ "$lock_path" -ef "/dev/fd/$FRESH_POSTGRES_BASELINE_LOCK_FD" ] || {
+  [ -f "$lock_path" ] && [ ! -L "$lock_path" ] || {
     printf 'PostgreSQL baseline lock changed while opening: %s\n' "$lock_path" >&2
     exec {FRESH_POSTGRES_BASELINE_LOCK_FD}>&-
     unset FRESH_POSTGRES_BASELINE_LOCK_FD

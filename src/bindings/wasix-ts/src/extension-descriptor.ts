@@ -107,7 +107,10 @@ export function serializeWasixExtensionDescriptors(
   const rootSqlNames = new Set<string>();
   const carrierBySqlName = new Map<
     string,
-    { carrier: WasixExtensionCarrier; compatibility: WasixExtensionCompatibility }
+    {
+      carrier: WasixExtensionCarrier;
+      compatibility: WasixExtensionCompatibility;
+    }
   >();
   const sqlNameByArchive = new Map<string, string>();
 
@@ -368,7 +371,9 @@ function serializeCarrier(
         startupConfig: [...carrier.install.lifecycle.startupConfig],
       },
       installedFiles: [...carrier.install.installedFiles],
-      unresolvedImports: carrier.install.unresolvedImports.map((entry) => ({ ...entry })),
+      unresolvedImports: carrier.install.unresolvedImports.map((entry) => ({
+        ...entry,
+      })),
     },
   };
 }

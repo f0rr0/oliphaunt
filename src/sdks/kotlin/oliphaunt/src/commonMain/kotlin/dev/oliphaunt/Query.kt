@@ -10,7 +10,7 @@ public sealed class QueryFormat {
     ) : QueryFormat()
 
     public companion object {
-        public fun fromCode(code: Int): QueryFormat = when (code) {
+        internal fun fromCode(code: Int): QueryFormat = when (code) {
             0 -> Text
             1 -> Binary
             else -> Other(code)
@@ -84,8 +84,8 @@ public data class QueryResult(
     val fields: List<QueryField>,
     val rows: List<QueryRow>,
     val commandTag: String?,
+    val rowCount: Long?,
 ) {
-    public val rowCount: Int get() = rows.size
 
     public fun fieldIndex(name: String): Int? {
         val index = fields.indexOfFirst { it.name == name }
@@ -105,6 +105,11 @@ public data class QueryResult(
         return rows[row].text(columnIndex)
     }
 }
+
+public data class CommandResult(
+    val commandTag: String?,
+    val rowCount: Long?,
+)
 
 public data class PostgresErrorField(
     val code: Int,
@@ -134,8 +139,8 @@ public data class PostgresError(
     }
 
     public companion object {
-        public fun fromFields(fields: List<PostgresErrorField>): PostgresError = PostgresError(
-            severity = fields.value('S'.code) ?: fields.value('V'.code),
+        internal fun fromFields(fields: List<PostgresErrorField>): PostgresError = PostgresError(
+            severity = fields.value('V'.code) ?: fields.value('S'.code),
             sqlstate = fields.value('C'.code),
             message = fields.value('M'.code) ?: "PostgreSQL ErrorResponse",
             detail = fields.value('D'.code),
@@ -150,30 +155,44 @@ public data class PostgresError(
             fields = fields,
         )
 
-        public fun fallback(): PostgresError = fromFields(
+        internal fun fallback(): PostgresError = fromFields(
             listOf(PostgresErrorField('M'.code, "PostgreSQL ErrorResponse")),
         )
     }
 }
 
-public suspend fun OliphauntDatabase.query(sql: String): QueryResult = parseQueryResponse(execute(sql).bytes)
+public suspend fun OliphauntDatabase.execute(
+    sql: String,
+    parameters: List<QueryParam> = emptyList(),
+): CommandResult = parseCommandResponse(
+    execProtocolRaw(extendedQueryProtocol(sql, parameters)),
+)
 
 public suspend fun OliphauntDatabase.query(
     sql: String,
-    parameters: List<QueryParam>,
-): QueryResult = parseQueryResponse(execProtocolRaw(ProtocolRequest.extendedQuery(sql, parameters)).bytes)
+    parameters: List<QueryParam> = emptyList(),
+): QueryResult = parseQueryResponse(
+    execProtocolRaw(extendedQueryProtocol(sql, parameters)),
+)
 
-public suspend fun OliphauntTransaction.query(sql: String): QueryResult = parseQueryResponse(execute(sql).bytes)
+public suspend fun OliphauntTransaction.execute(
+    sql: String,
+    parameters: List<QueryParam> = emptyList(),
+): CommandResult = parseCommandResponse(
+    execProtocolRaw(extendedQueryProtocol(sql, parameters)),
+)
 
 public suspend fun OliphauntTransaction.query(
     sql: String,
-    parameters: List<QueryParam>,
-): QueryResult = parseQueryResponse(execProtocolRaw(ProtocolRequest.extendedQuery(sql, parameters)).bytes)
+    parameters: List<QueryParam> = emptyList(),
+): QueryResult = parseQueryResponse(
+    execProtocolRaw(extendedQueryProtocol(sql, parameters)),
+)
 
-public fun ProtocolRequest.Companion.extendedQuery(
+internal fun extendedQueryProtocol(
     sql: String,
     parameters: List<QueryParam>,
-): ProtocolRequest {
+): ByteArray {
     if (parameters.size > Short.MAX_VALUE.toInt()) {
         throw OliphauntException("extended query supports at most ${Short.MAX_VALUE} parameters, got ${parameters.size}")
     }
@@ -187,12 +206,13 @@ public fun ProtocolRequest.Companion.extendedQuery(
     packet.addDescribePortal()
     packet.addExecute()
     packet.addFrontendMessage('S'.code, ByteArray(0))
-    return ProtocolRequest(packet.toByteArray())
+    return packet.toByteArray()
 }
 
-internal fun assertSuccessfulQueryResponse(bytes: ByteArray) {
+internal fun parseCommandResponse(bytes: ByteArray): CommandResult {
     val cursor = ByteCursor(bytes)
     var sawReady = false
+    var commandTag: String? = null
 
     while (!cursor.isAtEnd) {
         val tag = cursor.readUByte("backend message tag").toInt()
@@ -205,6 +225,19 @@ internal fun assertSuccessfulQueryResponse(bytes: ByteArray) {
         when (tag) {
             0x45 -> throw PostgresException(parseErrorResponse(body))
 
+            0x43 -> {
+                commandTag = body.readCString("CommandComplete tag")
+                body.requireEnd("CommandComplete")
+            }
+
+            0x54, 0x44 -> throw OliphauntException(
+                "execute() received rows; use query() for row results",
+            )
+
+            0x47, 0x48, 0x57, 0x64, 0x63 -> throw OliphauntException(
+                "execute() does not support COPY protocol responses; use execProtocolRaw or execProtocolStream for COPY traffic",
+            )
+
             0x5a -> {
                 validateReadyForQuery(body)
                 sawReady = true
@@ -212,15 +245,36 @@ internal fun assertSuccessfulQueryResponse(bytes: ByteArray) {
                     throw OliphauntException("backend returned bytes after ReadyForQuery")
                 }
             }
+
+            0x31 -> body.requireEnd("ParseComplete")
+
+            0x32 -> body.requireEnd("BindComplete")
+
+            0x33 -> body.requireEnd("CloseComplete")
+
+            0x49 -> body.requireEnd("EmptyQueryResponse")
+
+            0x6e -> body.requireEnd("NoData")
+
+            0x53 -> validateParameterStatus(body)
+
+            0x4e -> validateFieldResponse(body, "NoticeResponse")
+
+            0x41 -> validateNotificationResponse(body)
+
+            else -> throw OliphauntException(
+                "execute() received unexpected backend message tag ${tag.hexBackendTag()}",
+            )
         }
     }
 
     if (!sawReady) {
         throw OliphauntException("query response ended before ReadyForQuery")
     }
+    return CommandResult(commandTag, commandTag?.commandTagRowCount())
 }
 
-public fun parseQueryResponse(bytes: ByteArray): QueryResult {
+internal fun parseQueryResponse(bytes: ByteArray): QueryResult {
     val cursor = ByteCursor(bytes)
     var fields: List<QueryField>? = null
     val rows = mutableListOf<QueryRow>()
@@ -263,7 +317,7 @@ public fun parseQueryResponse(bytes: ByteArray): QueryResult {
 
             0x47, 0x48, 0x57, 0x64, 0x63 -> {
                 throw OliphauntException(
-                    "query() does not support COPY protocol responses; use execProtocolRaw for COPY traffic",
+                    "query() does not support COPY protocol responses; use execProtocolRaw or execProtocolStream for COPY traffic",
                 )
             }
 
@@ -323,7 +377,26 @@ public fun parseQueryResponse(bytes: ByteArray): QueryResult {
         fields = fields.orEmpty(),
         rows = rows,
         commandTag = commandTag,
+        rowCount = commandTag?.commandTagRowCount(),
     )
+}
+
+private fun String.commandTagRowCount(): Long? {
+    val parts = trim().split(Regex("\\s+")).filter(String::isNotEmpty)
+    if (parts.isEmpty() || parts.first().uppercase() !in setOf(
+            "SELECT",
+            "INSERT",
+            "UPDATE",
+            "DELETE",
+            "MERGE",
+            "MOVE",
+            "FETCH",
+            "COPY",
+        )
+    ) {
+        return null
+    }
+    return parts.last().toLongOrNull()?.takeIf { it >= 0 }
 }
 
 private fun parseRowDescription(cursor: ByteCursor): List<QueryField> {

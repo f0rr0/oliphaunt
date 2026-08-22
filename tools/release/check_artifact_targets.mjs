@@ -576,7 +576,7 @@ export function validateCarrierCoverage({ graph, catalog, targets, jsManifest, r
     `workspace:${graph.products[row.product].version}`,
   ]));
   const actualOptional = object(jsManifest.optionalDependencies ?? {}, "TypeScript optionalDependencies");
-  assertSameStrings(Object.keys(actualOptional), expectedOptional.keys(), "TypeScript optional runtime packages");
+  assertSameStrings(Object.keys(actualOptional), [...expectedOptional.keys()], "TypeScript optional runtime packages");
   for (const [name, version] of expectedOptional) invariant(actualOptional[name] === version, `TypeScript optional runtime ${name} must use ${version}`);
   const brokerMetadata = object(object(rustManifest.package, "Rust package").metadata?.oliphaunt, "Rust broker metadata");
   invariant(brokerMetadata["broker-helper"] === "oliphaunt-broker", "Rust SDK broker helper identity must be oliphaunt-broker");

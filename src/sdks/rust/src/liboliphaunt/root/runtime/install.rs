@@ -149,7 +149,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
-    use crate::extension::resolve_extension_selection;
+    use crate::extension::resolve_extensions;
 
     #[test]
     fn install_rejects_missing_transitive_extension_dependency_assets() {
@@ -158,7 +158,7 @@ mod tests {
         write_minimal_install(&install_dir);
         write_extension_assets(&install_dir, Extension::Earthdistance);
 
-        let extensions = resolve_extension_selection(&[Extension::Earthdistance]).unwrap();
+        let extensions = resolve_extensions(&[Extension::Earthdistance]).unwrap();
         assert_eq!(extensions, vec![Extension::Cube, Extension::Earthdistance]);
 
         let error = install_cached_runtime(
@@ -377,9 +377,17 @@ mod tests {
         write_minimal_install(&install_dir);
         write_file(&install_dir.join("bin/initdb"), b"initdb");
         write_file(&install_dir.join("bin/pg_ctl"), b"pg_ctl");
+        write_file(&install_dir.join("bin/pg_basebackup"), b"pg_basebackup");
         write_file(&install_dir.join("bin/pg_dump"), b"pg_dump");
         write_file(&install_dir.join("bin/psql"), b"psql");
-        for tool in ["postgres", "initdb", "pg_ctl", "pg_dump", "psql"] {
+        for tool in [
+            "postgres",
+            "initdb",
+            "pg_ctl",
+            "pg_basebackup",
+            "pg_dump",
+            "psql",
+        ] {
             fs::set_permissions(
                 install_dir.join("bin").join(tool),
                 fs::Permissions::from_mode(0o644),
@@ -398,7 +406,14 @@ mod tests {
         )
         .unwrap();
 
-        for tool in ["postgres", "initdb", "pg_ctl", "pg_dump", "psql"] {
+        for tool in [
+            "postgres",
+            "initdb",
+            "pg_ctl",
+            "pg_basebackup",
+            "pg_dump",
+            "psql",
+        ] {
             let mode = fs::metadata(runtime_dir.join("bin").join(tool))
                 .expect("stat copied runtime tool")
                 .permissions()
@@ -501,6 +516,10 @@ mod tests {
         write_file(&install_dir.join("bin/initdb"), b"initdb");
         write_file(&install_dir.join("bin/pg_ctl"), b"pg_ctl");
         write_file(&tools_dir.join("bin/pg_dump"), b"pg_dump-from-tools");
+        write_file(
+            &tools_dir.join("bin/pg_basebackup"),
+            b"pg_basebackup-from-tools",
+        );
         write_file(&tools_dir.join("bin/psql"), b"psql-from-tools");
 
         install_cached_runtime(
@@ -514,6 +533,10 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(
+            fs::read(runtime_dir.join("bin/pg_basebackup")).unwrap(),
+            b"pg_basebackup-from-tools"
+        );
         assert_eq!(
             fs::read(runtime_dir.join("bin/pg_dump")).unwrap(),
             b"pg_dump-from-tools"
@@ -557,6 +580,7 @@ mod tests {
         write_file(&install_dir.join("bin/postgres"), b"postgres");
         write_file(&install_dir.join("bin/initdb"), b"initdb");
         write_file(&install_dir.join("bin/pg_ctl"), b"pg_ctl");
+        write_file(&install_dir.join("bin/pg_basebackup"), b"pg_basebackup");
         write_file(&install_dir.join("bin/pg_dump"), b"pg_dump");
         write_file(&install_dir.join("bin/psql"), b"psql");
         write_file(

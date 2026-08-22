@@ -33,7 +33,6 @@ USAGE
 connections="${WASIX_CONCURRENT_CONNECTIONS:-2}"
 iterations="${WASIX_CONCURRENT_ITERATIONS:-4}"
 hold_seconds="${WASIX_CONCURRENT_HOLD_SECONDS:-1}"
-launch_delay_seconds="${WASIX_CONCURRENT_LAUNCH_DELAY_SECONDS:-2}"
 client_timeout="${WASIX_CONCURRENT_TIMEOUT:-60}"
 verify_timeout="${WASIX_CONCURRENT_VERIFY_TIMEOUT:-20}"
 shutdown_timeout_ms="${WASIX_CONCURRENT_SHUTDOWN_TIMEOUT_MS:-5000}"
@@ -144,7 +143,6 @@ done
 
 case "$connections" in ''|*[!0-9]*|0) echo "--connections requires a positive integer" >&2; exit 2 ;; esac
 case "$iterations" in ''|*[!0-9]*|0) echo "--iterations requires a positive integer" >&2; exit 2 ;; esac
-case "$launch_delay_seconds" in ''|*[!0-9]*) echo "WASIX_CONCURRENT_LAUNCH_DELAY_SECONDS requires a nonnegative integer" >&2; exit 2 ;; esac
 case "$client_timeout" in ''|*[!0-9]*|0) echo "--timeout requires a positive integer" >&2; exit 2 ;; esac
 case "$verify_timeout" in ''|*[!0-9]*|0) echo "WASIX_CONCURRENT_VERIFY_TIMEOUT requires a positive integer" >&2; exit 2 ;; esac
 case "$shutdown_timeout_ms" in ''|*[!0-9]*|0) echo "WASIX_CONCURRENT_SHUTDOWN_TIMEOUT_MS requires a positive integer" >&2; exit 2 ;; esac
@@ -215,6 +213,8 @@ suite_root="$RUN_DIR/$label"
 report_dir="$REPORT_DIR/$label"
 pgdata="$suite_root/pgdata"
 dev_shm="$suite_root/dev-shm"
+client_gate="$suite_root/client-gate"
+client_start_gate="$client_gate/start"
 client_sql="$suite_root/concurrent-client.sql"
 initdb_log="$report_dir/initdb.log"
 server_log="$report_dir/server.log"
@@ -230,15 +230,16 @@ fresh_require_managed_generated_path "$suite_root" "concurrent smoke run root"
 fresh_require_managed_generated_path "$report_dir" "concurrent smoke report root"
 fresh_require_managed_generated_path "$pgdata" "concurrent smoke PGDATA"
 fresh_require_managed_generated_path "$dev_shm" "concurrent smoke shared-memory root"
+fresh_require_managed_generated_path "$client_gate" "concurrent smoke client gate"
 rm -rf "$suite_root" "$report_dir"
-mkdir -p "$pgdata" "$dev_shm" "$report_dir"
+mkdir -p "$pgdata" "$dev_shm" "$client_gate" "$report_dir"
 
 fresh_write_report_header "$summary" "WASIX Concurrent Connections Smoke"
 {
   printf -- '- Connections: `%s`\n' "$connections"
   printf -- '- Iterations per connection: `%s`\n' "$iterations"
   printf -- '- Hold seconds: `%s`\n' "$hold_seconds"
-  printf -- '- Synchronized launch delay: `%s seconds`\n' "$launch_delay_seconds"
+  printf -- '- Client synchronization: `all transactions inserted before release`\n'
   printf -- '- Client fanout timeout: `%s seconds`\n' "$client_timeout"
   printf -- '- Verification timeout: `%s seconds`\n' "$verify_timeout"
   printf -- '- Graceful shutdown timeout: `%s milliseconds`\n' "$shutdown_timeout_ms"
@@ -322,15 +323,12 @@ cat >"$client_sql" <<'SQL'
 \set ON_ERROR_STOP 1
 \pset tuples_only on
 \pset format unaligned
-select pg_sleep(greatest(
-  0::double precision,
-  :launch_at_epoch::double precision - extract(epoch from clock_timestamp())
-));
 begin;
 select pg_backend_pid() as backend_pid \gset
 insert into wasix_concurrent_probe(client_id, iteration, backend_pid, started_at, payload)
 select :client_id, g, :backend_pid, clock_timestamp(), md5((:client_id::text || ':' || g::text))
 from generate_series(1, :iterations) as g;
+\! : >"$WASIX_CLIENT_READY_FILE"; while [ ! -e "$WASIX_CLIENT_START_FILE" ]; do sleep 0.05; done
 select pg_sleep(:hold_seconds);
 update wasix_concurrent_probe
 set finished_at = clock_timestamp(),
@@ -491,17 +489,20 @@ SQL
 
 client_pids=()
 client_logs=()
-launch_at_epoch=$(( $(date +%s) + launch_delay_seconds ))
+client_ready_files=()
 for client in $(seq 1 "$connections"); do
   client_log="$report_dir/client-$client.log"
+  client_ready="$client_gate/client-$client.ready"
   client_logs+=("$client_log")
+  client_ready_files+=("$client_ready")
+  WASIX_CLIENT_READY_FILE="$client_ready" \
+  WASIX_CLIENT_START_FILE="$client_start_gate" \
   PGCONNECT_TIMEOUT=10 "$CLIENT_TOOLS_INSTALL_DIR/bin/psql" "$conn" \
     -X -q \
     -v ON_ERROR_STOP=1 \
     -v "client_id=$client" \
     -v "iterations=$iterations" \
     -v "hold_seconds=$hold_seconds" \
-    -v "launch_at_epoch=$launch_at_epoch" \
     -f "$client_sql" \
     >"$client_log" 2>&1 &
   client_pids+=("$!")
@@ -509,6 +510,37 @@ done
 
 deadline=$(( $(date +%s) + client_timeout ))
 timed_out=0
+gate_ready=0
+while :; do
+  ready_count=0
+  for ready_file in "${client_ready_files[@]}"; do
+    [ -f "$ready_file" ] && ready_count=$((ready_count + 1))
+  done
+  if [ "$ready_count" -eq "$connections" ]; then
+    : >"$client_start_gate"
+    gate_ready=1
+    break
+  fi
+  client_exited=0
+  for pid in "${client_pids[@]}"; do
+    if ! fresh_supervision_pid_running "$pid"; then
+      client_exited=1
+      break
+    fi
+  done
+  if [ "$client_exited" -eq 1 ]; then
+    break
+  fi
+  if [ "$(date +%s)" -ge "$deadline" ]; then
+    timed_out=1
+    break
+  fi
+  sleep 0.05
+done
+# Release any surviving clients after a failed rendezvous so they can be
+# reaped by the ordinary bounded fanout path below.
+[ -e "$client_start_gate" ] || : >"$client_start_gate"
+
 while :; do
   running=0
   for pid in "${client_pids[@]}"; do
@@ -592,7 +624,7 @@ EOF
 fi
 
 overall_status=0
-if [ "$client_status" -ne 0 ] || [ "$verify_status" -ne 0 ]; then
+if [ "$gate_ready" -ne 1 ] || [ "$client_status" -ne 0 ] || [ "$verify_status" -ne 0 ]; then
   overall_status=1
 fi
 if [ "${rows_written:-0}" != "$expected_rows" ]; then
@@ -620,6 +652,7 @@ esac
   printf -- '- Clients seen: `%s`\n' "${clients_seen:-}"
   printf -- '- Distinct backend PIDs: `%s`\n' "${backends_seen:-}"
   printf -- '- All clients overlapped: `%s`\n' "${all_clients_overlapped:-}"
+  printf -- '- All clients reached transaction gate: `%s`\n' "$gate_ready"
   printf -- '- Client fanout timed out: `%s`\n' "$timed_out"
   if [ "$timed_out" -eq 1 ]; then
     printf -- '- Timeout activity: `%s`\n' "$timeout_activity_log"
@@ -634,6 +667,12 @@ esac
 
 if [ "$overall_status" -ne 0 ]; then
   printf 'failed: WASIX concurrent connections smoke; see %s\n' "$summary" >&2
+  sed -n '1,240p' "$summary" >&2
+  for log in "$summary_tsv" "$verify_log" "$timeout_activity_log" "$server_log" "${client_logs[@]}"; do
+    [ -s "$log" ] || continue
+    printf '\n--- %s ---\n' "$log" >&2
+    tail -n 200 "$log" >&2
+  done
 else
   printf 'passed: WASIX concurrent connections smoke; see %s\n' "$summary"
 fi

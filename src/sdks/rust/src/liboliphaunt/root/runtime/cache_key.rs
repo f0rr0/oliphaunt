@@ -708,7 +708,14 @@ mod tests {
     }
 
     fn write_fake_install(install_dir: &Path) {
-        for tool in ["postgres", "initdb", "pg_ctl", "pg_dump", "psql"] {
+        for tool in [
+            "postgres",
+            "initdb",
+            "pg_ctl",
+            "pg_basebackup",
+            "pg_dump",
+            "psql",
+        ] {
             write_file(&install_dir.join("bin").join(tool), tool.as_bytes());
         }
         write_file(
@@ -765,6 +772,7 @@ mod tests {
         write_file(&cache_dir.join("bin/postgres"), b"postgres");
         write_file(&cache_dir.join("bin/initdb"), b"initdb");
         write_file(&cache_dir.join("bin/pg_ctl"), b"pg_ctl");
+        write_file(&cache_dir.join("bin/pg_basebackup"), b"pg_basebackup");
         write_file(&cache_dir.join("bin/pg_dump"), b"pg_dump");
         write_file(&cache_dir.join("bin/psql"), b"psql");
         write_file(

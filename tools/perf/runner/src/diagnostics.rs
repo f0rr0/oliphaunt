@@ -1,144 +1,8 @@
 use super::*;
 
-#[cfg(feature = "legacy-oliphaunt")]
-pub(super) fn perf_diagnose_indexed_update() -> Result<()> {
-    Oliphaunt::preload()?;
-
-    let benchmark2 = read_oliphaunt_benchmark_sql("2")?;
-    let benchmark6 = read_oliphaunt_benchmark_sql("6")?;
-    let benchmark9 = read_oliphaunt_benchmark_sql("9")?;
-    let benchmark10 = read_oliphaunt_benchmark_sql("10")?;
-    let unlogged_benchmark2 = benchmark2.replace("CREATE TABLE", "CREATE UNLOGGED TABLE");
-    let lookup_index_only = "CREATE INDEX i2a ON t2(a);\n";
-
-    let cases = vec![
-        run_indexed_update_diagnostic_case(
-            "exact_numeric_indexed",
-            "Oliphaunt benchmark2 + benchmark6, then exact benchmark9 numeric updates",
-            &[benchmark2.as_str(), benchmark6.as_str()],
-            &benchmark9,
-            25_000,
-        )?,
-        run_indexed_update_diagnostic_case(
-            "exact_text_indexed",
-            "Oliphaunt benchmark2 + benchmark6, then exact benchmark10 text updates",
-            &[benchmark2.as_str(), benchmark6.as_str()],
-            &benchmark10,
-            25_000,
-        )?,
-        run_indexed_update_diagnostic_case(
-            "numeric_lookup_index_only",
-            "Oliphaunt benchmark2 + index on lookup column a only, then exact benchmark9 numeric updates",
-            &[benchmark2.as_str(), lookup_index_only],
-            &benchmark9,
-            25_000,
-        )?,
-        run_indexed_update_diagnostic_case(
-            "text_lookup_index_only",
-            "Oliphaunt benchmark2 + index on lookup column a only, then exact benchmark10 text updates",
-            &[benchmark2.as_str(), lookup_index_only],
-            &benchmark10,
-            25_000,
-        )?,
-        run_indexed_update_diagnostic_case(
-            "numeric_unlogged_indexed",
-            "Oliphaunt benchmark2 rewritten to UNLOGGED + benchmark6, then exact benchmark9 numeric updates",
-            &[unlogged_benchmark2.as_str(), benchmark6.as_str()],
-            &benchmark9,
-            25_000,
-        )?,
-        run_indexed_update_diagnostic_case(
-            "text_unlogged_indexed",
-            "Oliphaunt benchmark2 rewritten to UNLOGGED + benchmark6, then exact benchmark10 text updates",
-            &[unlogged_benchmark2.as_str(), benchmark6.as_str()],
-            &benchmark10,
-            25_000,
-        )?,
-        run_indexed_update_diagnostic_case(
-            "text_after_numeric_indexed",
-            "Oliphaunt benchmark2 + benchmark6 + exact benchmark9 numeric updates, then exact benchmark10 text updates",
-            &[
-                benchmark2.as_str(),
-                benchmark6.as_str(),
-                benchmark9.as_str(),
-            ],
-            &benchmark10,
-            25_000,
-        )?,
-        run_indexed_update_diagnostic_case(
-            "text_after_numeric_vacuumed",
-            "Oliphaunt benchmark2 + benchmark6 + exact benchmark9 numeric updates + VACUUM t2, then exact benchmark10 text updates",
-            &[
-                benchmark2.as_str(),
-                benchmark6.as_str(),
-                benchmark9.as_str(),
-                "VACUUM t2;\n",
-            ],
-            &benchmark10,
-            25_000,
-        )?,
-        run_indexed_update_diagnostic_case(
-            "text_after_numeric_vacuum_full",
-            "Oliphaunt benchmark2 + benchmark6 + exact benchmark9 numeric updates + VACUUM FULL t2, then exact benchmark10 text updates",
-            &[
-                benchmark2.as_str(),
-                benchmark6.as_str(),
-                benchmark9.as_str(),
-                "VACUUM FULL t2;\n",
-            ],
-            &benchmark10,
-            25_000,
-        )?,
-        run_indexed_update_diagnostic_case(
-            "set_based_numeric_indexed",
-            "Oliphaunt benchmark2 + benchmark6, then one set-based numeric update that changes every row",
-            &[benchmark2.as_str(), benchmark6.as_str()],
-            "BEGIN;\nUPDATE t2 SET b = b + 1;\nCOMMIT;\n",
-            1,
-        )?,
-        run_indexed_update_diagnostic_case(
-            "set_based_text_indexed",
-            "Oliphaunt benchmark2 + benchmark6, then one set-based text update that changes every row",
-            &[benchmark2.as_str(), benchmark6.as_str()],
-            "BEGIN;\nUPDATE t2 SET c = c || ' updated';\nCOMMIT;\n",
-            1,
-        )?,
-    ];
-
-    let report = IndexedUpdateDiagnosticReport {
-        source_model: "Exact Oliphaunt fixture benchmark SQL files from benchmarks/native/sql plus controlled variants.",
-        measurement_model: "Each case opens a fresh disposable database, runs setup outside the measured section, then records the measured update SQL and internal Rust/WASIX phase timings.",
-        wasix_runtime_assets: wasix_runtime_asset_report()?,
-        cases,
-    };
-    println!("{}", serde_json::to_string_pretty(&report)?);
-    Ok(())
-}
-
-#[cfg(not(feature = "legacy-oliphaunt"))]
-pub(super) fn perf_diagnose_indexed_update() -> Result<()> {
-    legacy_oliphaunt_unavailable("perf diagnose-indexed-update")
-}
-
-#[cfg(feature = "legacy-oliphaunt")]
-pub(super) fn perf_diagnose_speed_hotspots() -> Result<()> {
-    let options = SpeedDiagnosticOptions {
-        engine: DiagnosticEngine::WasixLegacy,
-        postgres_bin: default_native_postgres_tool("postgres", &["OLIPHAUNT_POSTGRES"]),
-        initdb_bin: default_native_postgres_tool("initdb", &["OLIPHAUNT_INITDB"]),
-        durability: NativeDurabilityProfile::Safe,
-    };
-    perf_diagnose_speed_ids(&["9", "10", "11", "14"], &options)
-}
-
-#[cfg(not(feature = "legacy-oliphaunt"))]
-pub(super) fn perf_diagnose_speed_hotspots() -> Result<()> {
-    legacy_oliphaunt_unavailable("perf diagnose-speed-hotspots")
-}
-
 pub(super) fn perf_diagnose_speed_cases(args: &[String]) -> Result<()> {
     let mut ids: Option<Vec<String>> = None;
-    let mut engine = DiagnosticEngine::WasixLegacy;
+    let mut engine = DiagnosticEngine::NativeOliphaunt;
     let mut postgres_bin = default_native_postgres_tool("postgres", &["OLIPHAUNT_POSTGRES"]);
     let mut initdb_bin = default_native_postgres_tool("initdb", &["OLIPHAUNT_INITDB"]);
     let mut durability = NativeDurabilityProfile::Safe;
@@ -220,7 +84,6 @@ pub(super) fn perf_diagnose_speed_cases(args: &[String]) -> Result<()> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DiagnosticEngine {
-    WasixLegacy,
     NativeOliphaunt,
     NativePostgres,
 }
@@ -228,18 +91,16 @@ pub(super) enum DiagnosticEngine {
 impl DiagnosticEngine {
     fn parse(value: &str) -> Result<Self> {
         match value {
-            "wasix" | "wasix-legacy" | "legacy" => Ok(Self::WasixLegacy),
             "native" | "native-liboliphaunt" | "liboliphaunt" => Ok(Self::NativeOliphaunt),
             "native-postgres" | "postgres" | "pg" => Ok(Self::NativePostgres),
             other => bail!(
-                "unknown diagnostic engine {other:?}; use wasix, native-liboliphaunt, or native-postgres"
+                "unknown diagnostic engine {other:?}; use native-liboliphaunt or native-postgres"
             ),
         }
     }
 
     pub(super) fn label(self) -> &'static str {
         match self {
-            Self::WasixLegacy => "wasix_legacy",
             Self::NativeOliphaunt => "native_liboliphaunt",
             Self::NativePostgres => "native_postgres",
         }
@@ -254,12 +115,7 @@ pub(super) struct SpeedDiagnosticOptions {
 }
 
 fn perf_diagnose_speed_ids(ids: &[&str], options: &SpeedDiagnosticOptions) -> Result<()> {
-    if options.engine == DiagnosticEngine::WasixLegacy {
-        #[cfg(feature = "legacy-oliphaunt")]
-        Oliphaunt::preload()?;
-        #[cfg(not(feature = "legacy-oliphaunt"))]
-        legacy_oliphaunt_unavailable("perf diagnose-speed-cases --engine wasix")?;
-    } else if options.engine == DiagnosticEngine::NativeOliphaunt {
+    if options.engine == DiagnosticEngine::NativeOliphaunt {
         ensure!(
             ids.len() == 1,
             "native liboliphaunt direct diagnostics can run one case per process; pass a single --ids value"
@@ -273,199 +129,11 @@ fn perf_diagnose_speed_ids(ids: &[&str], options: &SpeedDiagnosticOptions) -> Re
 
     let report = SpeedHotspotDiagnosticReport {
         source_model: "Exact Oliphaunt fixture benchmark SQL files from benchmarks/native/sql.",
-        measurement_model: "Each case opens a fresh disposable database, runs all earlier Oliphaunt speed tests outside the measured section, then records the selected speed-test SQL. WASIX diagnostics include FS trace and internal Rust phase timings. Native direct diagnostics run one case per process. Native PostgreSQL diagnostics start a fresh temporary cluster per case and use the same database target as liboliphaunt.",
-        wasix_runtime_assets: (options.engine == DiagnosticEngine::WasixLegacy)
-            .then(wasix_runtime_asset_report)
-            .transpose()?,
+        measurement_model: "Each case opens a fresh disposable database, runs all earlier Oliphaunt speed tests outside the measured section, then records the selected speed-test SQL. Native direct diagnostics run one case per process. Native PostgreSQL diagnostics start a fresh temporary cluster per case and use the same database target as liboliphaunt.",
         cases: diagnostics,
     };
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
-}
-
-#[cfg(feature = "legacy-oliphaunt")]
-pub(super) fn perf_diagnose_buffer_cache() -> Result<()> {
-    Oliphaunt::preload()?;
-    let cases = speed_cases(1.0, SpeedSqlSource::OliphauntFixture)?;
-    let diagnostics = vec![
-        run_buffer_cache_diagnostic_case(
-            &cases,
-            "11",
-            &[
-                "BEGIN",
-                "INSERT INTO t1 SELECT b,a,c FROM t2",
-                "INSERT INTO t2 SELECT b,a,c FROM t1",
-                "COMMIT",
-            ],
-        )?,
-        run_buffer_cache_diagnostic_case(&cases, "14", &["INSERT INTO t2 SELECT * FROM t1"])?,
-    ];
-
-    let report = BufferCacheDiagnosticReport {
-        source_model: "Exact Oliphaunt fixture benchmark SQL files from benchmarks/native/sql.",
-        measurement_model: "Each case opens a fresh disposable database, runs all earlier Oliphaunt speed tests outside the measured section, then executes EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) for the target data-moving statements.",
-        wasix_runtime_assets: wasix_runtime_asset_report()?,
-        cases: diagnostics,
-    };
-    println!("{}", serde_json::to_string_pretty(&report)?);
-    Ok(())
-}
-
-#[cfg(not(feature = "legacy-oliphaunt"))]
-pub(super) fn perf_diagnose_buffer_cache() -> Result<()> {
-    legacy_oliphaunt_unavailable("perf diagnose-buffer-cache")
-}
-
-#[cfg(feature = "legacy-oliphaunt")]
-fn run_buffer_cache_diagnostic_case(
-    cases: &[SpeedCase],
-    id: &str,
-    statements: &[&str],
-) -> Result<BufferCacheDiagnosticCase> {
-    let target_index = cases
-        .iter()
-        .position(|case| case.id == id)
-        .ok_or_else(|| anyhow!("unknown speed hotspot case {id}"))?;
-    let target = &cases[target_index];
-
-    let mut builder = Oliphaunt::builder().storage(DatabaseStorage::Memory);
-    if let Some(config) = perf_postgres_config_from_env()? {
-        builder = builder.postgres_configs(config);
-    }
-    let mut db = builder
-        .open()
-        .with_context(|| format!("open buffer-cache diagnostic database for {}", target.id))?;
-
-    let setup_started = Instant::now();
-    for setup_case in &cases[..target_index] {
-        db.exec(&setup_case.sql, None)
-            .with_context(|| format!("run buffer-cache setup case {}", setup_case.id))?;
-    }
-    let setup_micros = setup_started.elapsed().as_micros();
-
-    let settings = exec_rows_json(
-        &mut db,
-        "SELECT current_setting('shared_buffers') AS shared_buffers, current_setting('fsync') AS fsync, current_setting('full_page_writes') AS full_page_writes, current_setting('synchronous_commit') AS synchronous_commit, current_setting('wal_buffers') AS wal_buffers, current_setting('work_mem') AS work_mem",
-    )?;
-    let relation_sizes = exec_rows_json(
-        &mut db,
-        "SELECT relname, pg_relation_size(oid)::bigint AS bytes FROM pg_class WHERE relname IN ('t1', 't2', 'i2a', 'i2b') ORDER BY relname",
-    )?;
-
-    let mut explained = Vec::new();
-    for statement in statements {
-        if matches!(*statement, "BEGIN" | "COMMIT") {
-            let (result, phases) = capture_phase_timings(|| {
-                let started = Instant::now();
-                let result = db.exec(statement, None);
-                (result, started.elapsed())
-            });
-            let (result, elapsed) = result;
-            result.with_context(|| format!("run transaction control statement {statement}"))?;
-            explained.push(BufferCacheDiagnosticStatement {
-                sql: (*statement).to_owned(),
-                elapsed_micros: elapsed.as_micros(),
-                explain_rows: serde_json::Value::Null,
-                fs_trace: serde_json::Value::Null,
-                wal_state: buffer_cache_wal_state_json(&mut db)?,
-                phases,
-            });
-            continue;
-        }
-
-        reset_fs_trace();
-        let explain_sql = format!("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {statement}");
-        let (result, phases) = capture_phase_timings(|| {
-            let started = Instant::now();
-            let result = db.exec(&explain_sql, None);
-            (result, started.elapsed())
-        });
-        let (result, elapsed) = result;
-        let result = result.with_context(|| format!("run buffer-cache explain for {statement}"))?;
-        let fs_trace = serde_json::to_value(fs_trace_snapshot())?;
-        explained.push(BufferCacheDiagnosticStatement {
-            sql: (*statement).to_owned(),
-            elapsed_micros: elapsed.as_micros(),
-            explain_rows: results_to_json(result),
-            fs_trace,
-            wal_state: buffer_cache_wal_state_json(&mut db)?,
-            phases,
-        });
-    }
-
-    db.close()
-        .with_context(|| format!("close buffer-cache diagnostic database for {}", target.id))?;
-
-    Ok(BufferCacheDiagnosticCase {
-        id: target.id.to_owned(),
-        label: target.label.clone(),
-        setup_micros,
-        settings,
-        relation_sizes,
-        statements: explained,
-    })
-}
-
-#[cfg(feature = "legacy-oliphaunt")]
-fn buffer_cache_wal_state_json(db: &mut Oliphaunt) -> Result<serde_json::Value> {
-    exec_rows_json(
-        db,
-        "SELECT pg_current_wal_insert_lsn()::text AS insert_lsn, pg_current_wal_lsn()::text AS write_lsn, pg_current_wal_flush_lsn()::text AS flush_lsn, pg_wal_lsn_diff(pg_current_wal_insert_lsn(), pg_current_wal_flush_lsn())::bigint AS insert_flush_bytes",
-    )
-}
-
-#[cfg(feature = "legacy-oliphaunt")]
-fn perf_postgres_config_from_env() -> Result<Option<Vec<(String, String)>>> {
-    let mut config = Vec::new();
-    for (env_name, guc_name) in [
-        ("OLIPHAUNT_WASM_PERF_WAL_BUFFERS", "wal_buffers"),
-        (
-            "OLIPHAUNT_WASM_PERF_SYNCHRONOUS_COMMIT",
-            "synchronous_commit",
-        ),
-        ("OLIPHAUNT_WASM_PERF_FULL_PAGE_WRITES", "full_page_writes"),
-    ] {
-        let Ok(value) = env::var(env_name) else {
-            continue;
-        };
-        ensure!(
-            !value.contains('\0') && !value.trim().is_empty(),
-            "{env_name} must be a non-empty PostgreSQL GUC value without NUL bytes"
-        );
-        config.push((guc_name.to_owned(), value));
-    }
-    Ok((!config.is_empty()).then_some(config))
-}
-
-#[cfg(feature = "legacy-oliphaunt")]
-fn exec_rows_json(db: &mut Oliphaunt, sql: &str) -> Result<serde_json::Value> {
-    let results = db.exec(sql, None)?;
-    Ok(results_to_json(results))
-}
-
-#[cfg(feature = "legacy-oliphaunt")]
-fn results_to_json(results: Vec<oliphaunt_wasix::Results>) -> serde_json::Value {
-    serde_json::Value::Array(
-        results
-            .into_iter()
-            .map(|result| {
-                serde_json::json!({
-                    "fields": result
-                        .fields
-                        .into_iter()
-                        .map(|field| {
-                            serde_json::json!({
-                                "name": field.name,
-                                "dataTypeId": field.data_type_id,
-                            })
-                        })
-                        .collect::<Vec<_>>(),
-                    "rows": result.rows,
-                    "affectedRows": result.affected_rows,
-                })
-            })
-            .collect(),
-    )
 }
 
 fn run_speed_hotspot_diagnostic_case(
@@ -481,63 +149,7 @@ fn run_speed_hotspot_diagnostic_case(
     if options.engine == DiagnosticEngine::NativeOliphaunt {
         return run_native_liboliphaunt_speed_hotspot_diagnostic_case(cases, target_index, options);
     }
-    if options.engine == DiagnosticEngine::NativePostgres {
-        return run_native_postgres_speed_hotspot_diagnostic_case(cases, target_index, options);
-    }
-
-    #[cfg(feature = "legacy-oliphaunt")]
-    return run_wasix_speed_hotspot_diagnostic_case(cases, target_index, options);
-
-    #[cfg(not(feature = "legacy-oliphaunt"))]
-    legacy_oliphaunt_unavailable("perf diagnose-speed-cases --engine wasix")
-}
-
-#[cfg(feature = "legacy-oliphaunt")]
-fn run_wasix_speed_hotspot_diagnostic_case(
-    cases: &[SpeedCase],
-    target_index: usize,
-    options: &SpeedDiagnosticOptions,
-) -> Result<SpeedHotspotDiagnosticCase> {
-    let target = &cases[target_index];
-    let mut db = Oliphaunt::builder()
-        .storage(DatabaseStorage::Memory)
-        .open()
-        .with_context(|| format!("open speed hotspot diagnostic database for {}", target.id))?;
-
-    let setup_started = Instant::now();
-    for setup_case in &cases[..target_index] {
-        db.exec(&setup_case.sql, None)
-            .with_context(|| format!("run speed hotspot setup case {}", setup_case.id))?;
-    }
-    let setup_micros = setup_started.elapsed().as_micros();
-
-    reset_fs_trace();
-    let (result, phases) = capture_phase_timings(|| {
-        let started = Instant::now();
-        let result = db.exec(&target.sql, None);
-        (result, started.elapsed())
-    });
-    let (result, elapsed) = result;
-    result.with_context(|| format!("run speed hotspot measured case {}", target.id))?;
-    let fs_trace = serde_json::to_value(fs_trace_snapshot())?;
-    db.close()
-        .with_context(|| format!("close speed hotspot diagnostic database for {}", target.id))?;
-
-    Ok(SpeedHotspotDiagnosticCase {
-        engine: options.engine.label(),
-        process_model: "wasix_legacy_embedded_runtime",
-        id: target.id.to_owned(),
-        label: target.label.clone(),
-        open_micros: None,
-        connect_micros: None,
-        setup_micros,
-        elapsed_micros: elapsed.as_micros(),
-        operation_count: target.operation_count,
-        settings: serde_json::Value::Null,
-        observed_server_peak_rss_bytes: None,
-        fs_trace,
-        phases,
-    })
+    run_native_postgres_speed_hotspot_diagnostic_case(cases, target_index, options)
 }
 
 fn run_native_postgres_speed_hotspot_diagnostic_case(
@@ -625,8 +237,6 @@ fn run_native_postgres_speed_hotspot_diagnostic_case(
             operation_count: target.operation_count,
             settings,
             observed_server_peak_rss_bytes: server_rss.peak_bytes(),
-            fs_trace: serde_json::Value::Null,
-            phases: Vec::new(),
         })
     })?;
 
@@ -730,73 +340,4 @@ fn parse_protocol_data_row_text_values(payload: &[u8]) -> Vec<String> {
         offset += len;
     }
     values
-}
-
-#[cfg(feature = "legacy-oliphaunt")]
-fn run_indexed_update_diagnostic_case(
-    name: &'static str,
-    description: &'static str,
-    setup_sql: &[&str],
-    measured_sql: &str,
-    operation_count: usize,
-) -> Result<IndexedUpdateDiagnosticCase> {
-    let mut db = Oliphaunt::builder()
-        .storage(DatabaseStorage::Memory)
-        .open()
-        .with_context(|| format!("open diagnostic database for {name}"))?;
-
-    let setup_started = Instant::now();
-    for sql in setup_sql {
-        db.exec(sql, None)
-            .with_context(|| format!("run diagnostic setup for {name}"))?;
-    }
-    let setup_micros = setup_started.elapsed().as_micros();
-    let stats_before = indexed_update_stats(&mut db)
-        .with_context(|| format!("collect diagnostic pre-stats for {name}"))?;
-
-    reset_fs_trace();
-    let (result, phases) = capture_phase_timings(|| {
-        let started = Instant::now();
-        let result = db.exec(measured_sql, None);
-        (result, started.elapsed())
-    });
-    let (result, elapsed) = result;
-    result.with_context(|| format!("run diagnostic measured SQL for {name}"))?;
-    let fs_trace = serde_json::to_value(fs_trace_snapshot())?;
-    let stats_after = indexed_update_stats(&mut db)
-        .with_context(|| format!("collect diagnostic post-stats for {name}"))?;
-    db.close()
-        .with_context(|| format!("close diagnostic database for {name}"))?;
-
-    Ok(IndexedUpdateDiagnosticCase {
-        name,
-        description,
-        setup_micros,
-        elapsed_micros: elapsed.as_micros(),
-        operation_count,
-        stats_before,
-        stats_after,
-        fs_trace,
-        phases,
-    })
-}
-
-#[cfg(feature = "legacy-oliphaunt")]
-fn indexed_update_stats(db: &mut Oliphaunt) -> Result<serde_json::Value> {
-    let result = db.query(
-        "SELECT \
-             pg_relation_size('t2'::regclass)::text AS t2_size, \
-             pg_relation_size('i2a'::regclass)::text AS i2a_size, \
-             coalesce(pg_relation_size(to_regclass('i2b')), 0)::text AS i2b_size, \
-             coalesce((SELECT n_tup_upd FROM pg_stat_user_tables WHERE relname = 't2'), 0)::text AS n_tup_upd, \
-             coalesce((SELECT n_tup_hot_upd FROM pg_stat_user_tables WHERE relname = 't2'), 0)::text AS n_tup_hot_upd, \
-             coalesce((SELECT n_dead_tup FROM pg_stat_user_tables WHERE relname = 't2'), 0)::text AS n_dead_tup",
-        &[],
-        None,
-    )?;
-    Ok(result
-        .rows
-        .into_iter()
-        .next()
-        .unwrap_or(serde_json::Value::Null))
 }

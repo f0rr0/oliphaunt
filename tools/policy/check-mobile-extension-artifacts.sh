@@ -51,7 +51,7 @@ require() {
 
 mobile_catalog() {
   if [ -z "$mobile_catalog_cache" ]; then
-    mobile_catalog_cache="$(cargo run -p oliphaunt --bin oliphaunt-resources --locked -- --list-extensions)"
+    mobile_catalog_cache="$(cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources --locked -- --list-extensions)"
   fi
   printf '%s\n' "$mobile_catalog_cache"
 }
@@ -361,7 +361,7 @@ if [ "${#selected_module_extensions[@]}" -gt 0 ]; then
     src/runtimes/liboliphaunt/native/bin/build-macos-extension-archives.sh
 fi
 
-run env "${native_resource_env[@]}" cargo run -p oliphaunt --bin oliphaunt-resources --locked -- \
+run env "${native_resource_env[@]}" cargo run -p oliphaunt-native-packaging --bin oliphaunt-resources --locked -- \
   --output "$resource_output" \
   --extension "$selected_csv" \
   "${mobile_static_args[@]}" \

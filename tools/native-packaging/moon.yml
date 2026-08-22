@@ -1,0 +1,53 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "native-packaging"
+language: "rust"
+layer: "tool"
+stack: "systems"
+tags: ["maintainer-tool", "native", "rust"]
+dependsOn:
+  - "oliphaunt-rust"
+
+project:
+  title: "Native packaging tools"
+  description: "Unpublished maintainer tooling for native runtime and extension packages."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/sdk-rust"
+
+tasks:
+  check:
+    tags: ["quality", "static", "ci-rust"]
+    command: "cargo check -p oliphaunt-native-packaging --locked --all-targets"
+    deps:
+      - "oliphaunt-rust:check"
+    env:
+      CARGO_TARGET_DIR: "target/moon/native-packaging/check"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/extensions/generated/sdk/extensions.json"
+      - "/src/sdks/rust/**/*"
+      - "/tools/native-packaging/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  test:
+    tags: ["quality", "unit", "ci-rust"]
+    command: "cargo test -p oliphaunt-native-packaging --locked"
+    deps:
+      - "native-packaging:check"
+    env:
+      CARGO_TARGET_DIR: "target/moon/native-packaging/test"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/extensions/generated/sdk/extensions.json"
+      - "/src/sdks/rust/**/*"
+      - "/tools/native-packaging/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

@@ -177,6 +177,8 @@ tasks:
         cacheStrategy: "outputs"
       - target: "oliphaunt-wasix-rust:coverage"
         cacheStrategy: "outputs"
+      - target: "oliphaunt-wasix-ts:coverage"
+        cacheStrategy: "outputs"
     inputs:
       - "/coverage/baseline.toml"
       - "/tools/coverage/**/*"

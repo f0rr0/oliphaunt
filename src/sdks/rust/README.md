@@ -1,28 +1,14 @@
-# oliphaunt
+# Oliphaunt Rust SDK
 
-## Install
+`oliphaunt` embeds PostgreSQL 18 through the native `liboliphaunt` runtime. The
+public API is intentionally small and PostgreSQL-shaped: open, execute, query,
+transaction, checkpoint, cancel, physical backup, restore, and close.
 
-Add the Rust SDK like any other Cargo dependency:
+## Installation
 
-```toml
-[dependencies]
-oliphaunt = "0.1.0"
-oliphaunt-extension-vector = "0.1.0"
-
-[build-dependencies]
-oliphaunt-build = "0.1.0"
-```
-
-Select the runtime and exact extension set in your application manifest:
-
-```toml
-[package.metadata.oliphaunt]
-runtime = "liboliphaunt-native"
-runtime-version = "0.1.0"
-extensions = ["vector"]
-```
-
-Add a build script:
+Add `oliphaunt` and use `oliphaunt-build` from the build script so the matching
+native runtime, tools, and selected extension artifacts are staged for the
+target platform.
 
 <!-- liboliphaunt-doc-example:rust-build-script -->
 ```rust
@@ -31,363 +17,135 @@ fn main() {
 }
 ```
 
-Direct application dependencies expose Cargo-resolved runtime, broker, ICU, and
-extension artifact manifests to the application build script. `oliphaunt-build`
-validates those manifests, stages the resolved files into
-`OUT_DIR/oliphaunt/resources`, and writes
-`OUT_DIR/oliphaunt/oliphaunt-assets.lock`. It performs no network I/O and does
-not mutate `Cargo.toml`.
+## Direct and broker databases
 
-`oliphaunt-resources` remains a maintainer and CI packaging tool. It is not the
-consumer installation path for Rust applications.
-
-## Compatibility
-
-| SDK | Native core | Distribution |
-| --- | --- | --- |
-| `oliphaunt` `0.1.0` | `liboliphaunt-native` `0.1.0` | crates.io packages selected by Cargo |
-
-Apps that use `NativeBroker` select the broker helper through the same Cargo
-artifact graph. Packaged apps do not set runtime or broker asset environment
-variables as part of normal installation.
-
-## Quickstart
-
-```text
-use oliphaunt::Oliphaunt;
-
-# async fn demo() -> oliphaunt::Result<()> {
-let db = Oliphaunt::builder()
-    .directory(".oliphaunt")
-    .native_direct()
-    .extension(oliphaunt::Extension::Vector)
-    .open()
-    .await?;
-
-let result = db.query("SELECT 1::text AS value").await?;
-assert_eq!(result.get_text(0, "value")?, Some("1"));
-
-db.close().await?;
-# Ok(())
-# }
-```
-
-`execute`, transaction statements, and `checkpoint` inspect PostgreSQL
-`ErrorResponse` frames and return `Error::Postgres(PostgresError)` with the
-SQLSTATE and raw fields intact. `exec_protocol_raw` remains byte-preserving for
-custom protocol and recovery work.
-
-This crate is the native-first Rust SDK path for Oliphaunt. Rust is a product SDK
-surface for Tauri and Rust desktop apps, not an internal implementation detail.
-It is intentionally separate from the existing WASIX-oriented `oliphaunt-wasix`
-API so the final shape can be designed around native PostgreSQL instead of
-compatibility constraints.
-
-The public model is:
-
-- `NativeDirect`: in-process, one physical PostgreSQL session, serialized by an
-  owner executor.
-- `NativeBroker`: helper-process mode that isolates database instances from the
-  application process. A shared broker runtime supervises one worker process
-  per instance and admits up to `.broker_max_instances(n)` active instances.
-- `NativeServer`: PostgreSQL-compatible local server mode for true independent
-  client sessions.
-
-Lifecycle is exposed only through precise capabilities. `NativeDirect` sets
-`same_instance_logical_reopen=true`, `instance_switchable=false`, and
-`crash_restartable=false`: it can logically close and reopen the same resident
-instance in the same process, but it remains single-instance and process-global.
-`NativeBroker` is process-isolated, instance-switchable, and crash-restartable for
-its helper process. `NativeServer` is instance-switchable and exposes independent
-client sessions, but the current SDK-owned server handle does not restart a
-crashed server process in place.
-
-The crate defines the SDK contract, configuration model, exact-extension model,
-typed query helpers, structured PostgreSQL errors, startup user/database
-identity, capabilities, and owner-thread execution boundary. Concrete
-PostgreSQL 18 bindings plug in through `NativeRuntime`.
-
-## Storage
-
-`OpenConfig::storage` and `OliphauntBuilder::storage(...)` accept the native-only
-`DatabaseStorage` variants:
-
-- `TemporaryDirectory`: an SDK-owned host directory and the builder default;
-- `Directory(path)`: a caller-owned persistent directory.
-
-The convenience methods are `.temporary_directory()` and `.directory(path)`.
-There is no public lock-policy switch: direct, broker, and server modes choose
-their safe ownership and locking policy internally. The physical child layout
-and the native C ABI's historical `root` vocabulary remain implementation
-details rather than additional storage variants.
-
-Failed setup drops an SDK-owned temporary directory. Broker and server modes
-also remove it after their engine process stops. Native direct is the explicit
-divergence: `close()` logically detaches from a process-resident backend, so its
-temporary directory cannot be removed safely at close and remains subject to
-the host operating system's temporary-file cleanup after process exit. Later
-temporary opens reuse that resident instance. Use
-`Directory` for durable data or broker/server mode when close-time cleanup is
-required.
-
-## Runtime Footprint
-
-`OliphauntBuilder::runtime_footprint(...)` selects the PostgreSQL startup
-footprint before the backend starts:
-
-- `RuntimeFootprintProfile::Throughput`: current throughput lane
-  (`shared_buffers=128MB`, `wal_buffers=4MB`, `min_wal_size=80MB`).
-- `RuntimeFootprintProfile::BalancedMobile`: one-session mobile defaults with
-  lower server slot counts, `shared_buffers=32MB`, `min_wal_size=32MB`, and
-  PG18 sync I/O.
-- `RuntimeFootprintProfile::SmallMobile`: the same one-session shape with
-  `shared_buffers=8MB`, smaller work memory, `min_wal_size=32MB`, and PG18
-  sync I/O.
-
-The current PG18 artifact uses 16MB WAL segments, so `min_wal_size` below 32MB
-is not a valid runtime GUC override. Testing 8MB/16MB WAL minima requires a
-separate PostgreSQL build with a smaller WAL segment size.
-
-`OliphauntBuilder::startup_guc(name, value)` appends explicit PostgreSQL `-c`
-overrides after the selected footprint and durability profile, so benchmark
-matrices can test individual GUCs without adding new API for each PostgreSQL
-knob. Server mode still appends its configured `max_client_sessions` as
-`max_connections`, because that API is the server-mode session contract.
-
-Swift, Kotlin, and React Native should preserve this contract where their
-platforms can do so honestly:
-
-- Swift owns iOS and macOS runtime behavior.
-- Kotlin owns Android runtime behavior.
-- React Native owns the TypeScript and TurboModule layer while delegating
-  runtime behavior to those platform SDKs.
-
-Parity gaps must be explicit unsupported errors with a documented reason, not
-silent API drift.
-
-The default builder runtime matches the selected mode:
-
-- `NativeDirect` loads the in-process C ABI through `OliphauntRuntime`.
-- `NativeBroker` starts the packaged `oliphaunt-broker` helper and talks
-  to it over local IPC. Unix platforms use Unix-domain sockets by default;
-  `OLIPHAUNT_BROKER_TRANSPORT=tcp` forces the portable TCP fallback. The
-  helper requires a generated per-session authentication frame before accepting
-  protocol, backup, checkpoint, or close requests. Builder initialization policy is
-  passed through to the helper, so `.existing_only()` remains strict in broker
-  mode. Multiple-instance broker apps use one isolated helper per active instance, bounded
-  by `.broker_max_instances(n)`.
-- `NativeServer` starts a real local PostgreSQL server process and exposes a
-  connection string.
-
-The crate does not depend on `oliphaunt-wasix`; native PostgreSQL lifecycle,
-runtime resources, and exact extension materialization are owned here.
-
-## Extensions
-
-Extensions are opt-in by exact PostgreSQL SQL extension name. Rust callers use
-`.extension(Extension::Vector)` or `.extension(Extension::PgTrgm)`. The
-application also declares the exact extension Cargo packages it uses:
-
-```toml
-[dependencies]
-oliphaunt-extension-vector = "0.1.0"
-oliphaunt-extension-contrib-pg18 = "0.1.0"
-
-[package.metadata.oliphaunt]
-extensions = ["vector", "pg_trgm"]
-```
-
-Cargo resolves the target-specific extension artifact crates. The application
-build script calls `oliphaunt_build::configure()`, and `oliphaunt-build` stages
-only the selected extension files into `OUT_DIR/oliphaunt/resources`. Selecting
-`vector` includes `vector` only, plus mandatory dependencies declared by the
-artifact manifest. For example, `earthdistance` materializes `cube` because
-PostgreSQL requires it.
-
-The published carrier envelope (`manifest.properties` plus `files/`) is not the
-runtime resource layout. `oliphaunt-build` strips that envelope and stages each
-PostgreSQL-relative payload under `extension/<artifact-product>/`, for example
-`extension/oliphaunt-extension-vector/share/postgresql/extension/vector.control`.
-The directory is the artifact product, not necessarily the tag owner: contrib
-members share `extension/oliphaunt-extension-contrib-pg18/`, while independently
-released external extensions use their own artifact roots.
-
-Contrib and external extensions use the same consumer shape. Contrib extension
-packages are versioned and released with the Oliphaunt runtimes they are built
-for. External extension packages carry their own versions and declare the
-Oliphaunt runtime compatibility they support. Applications never use
-release-asset download commands as their normal Rust install path.
-
-Maintainer tooling uses one canonical `oliphaunt-extension-artifact-v1`
-manifest. Its exact 22-field set always includes
-`nativeRuntimeProduct=liboliphaunt-native` and a stable
-`nativeRuntimeVersion=X.Y.Z`; carrier-frozen `extensionSqlFileNames` and
-`extensionSqlFilePrefixes` bind ancillary SQL without consulting a mutable SDK
-catalog, while `licenseProfile` and `licenseFiles` bind the legal leaf inventory.
-`contrib-native` requires the root `LICENSE`, `THIRD_PARTY_NOTICES.md`, and
-`THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT`; `contrib-native-openssl` also
-requires `THIRD_PARTY_LICENSES/OpenSSL-LICENSE.txt`. `external-native` requires
-the two root notices and at least one exact upstream-license leaf beneath
-`files/share/licenses/`. The producer requires
-`NativeExtensionArtifactOptions::legal_contract(...)` (CLI:
-`--license-profile`, `--legal-files-root`, and one or more `--license-file`
-arguments for external artifacts). Producer and consumer both reject missing,
-extra, unsafe, symlinked, empty, wrongly profiled, or non-canonical legal
-leaves. `NativeExtensionArtifactOptions::new(...)`
-requires that version when producing an unpacked directory, `.tar`, `.tar.gz`,
-or `.tar.zst` artifact. Desktop native-module artifacts additionally require
-`.embedded_module_root(...)` (CLI: `--embedded-module-root`) and preserve the
-standalone server module under `files/lib/postgresql` separately from the
-embedded native-direct/native-broker module under `files/lib/modules`.
-Packaging any direct or index-resolved prebuilt
-artifact with `NativeRuntimeResourceOptions` accepts those same forms and
-likewise requires `.native_runtime_version(...)`; the artifact versions must
-all match before the output runtime-resource tree is materialized. The CLI
-equivalents are `oliphaunt-extension-artifact --native-runtime-version` and
-`oliphaunt-resources --liboliphaunt-native-version` (or
-`OLIPHAUNT_LIBOLIPHAUNT_VERSION`). Archive consumption is bounded before
-extraction: compressed carriers are at most 128 MiB, the declared expanded tar
-tree is at most 512 MiB, each regular member is at most 256 MiB, and an archive
-contains at most 4096 members. Symlink carriers and non-file tar entries are
-rejected. These producer/package/consumer bounds come from the canonical
-`extension-artifact-archive-policy.properties` file shipped inside this crate;
-keeping the source in the package lets clean crates.io consumers enforce the
-same policy without reaching back into the Oliphaunt monorepo.
-
-Mobile static registries are intentionally marked per generated resource
-package. SQL-only extensions do not need static registration. Module-backed
-extensions remain `pending` until the selected extension has an Oliphaunt
-prebuilt mobile artifact and the platform package declares its exact module
-stem.
-Runtime resources also record package-level `mobileStaticRegistryState` metadata;
-use `oliphaunt-resources --require-mobile-static-registry` for iOS/Android
-release packaging. Platform package builds that actually link static extension
-registry rows declare exact module stems with `--mobile-static-module <stem>`;
-unknown, unselected, or non-mobile-ready stems are rejected. Complete mobile
-packages also emit
-`static-registry/oliphaunt_static_registry.c`, generated from selected
-extension SQL assets, copied selected third-party archives under
-`static-registry/archives`, plus `mobileStaticRegistrySource` in the runtime
-manifest. Swift/Kotlin/React Native bridges register that generated table before
-`oliphaunt_init`. Selected extension preload requirements are recorded as
-`sharedPreloadLibraries` in the generated runtime manifest.
-
-The runtime-resource CLI only accepts exact public extension names. External
-candidate metadata, such as pgGraph and ParadeDB, remains internal until the
-extension has pinned artifacts, redistribution clearance, and direct, broker,
-server, restart, backup, restore, and mobile static-registry evidence.
-
-## Backup
-
-`BackupRequest::physical_archive()` is the same-version clone/export path for
-native database instances. Direct and server mode enter PostgreSQL backup mode with
-`pg_backup_start`, archive the `pgdata` tree, then write PostgreSQL's generated
-`backup_label` and `tablespace_map` from `pg_backup_stop` into the archive. WAL
-is collected after `pg_backup_stop`, making the archive self-contained for
-same-version restore. Broker mode forwards the same operation through its helper
-process.
-
-`Oliphaunt::restore(RestoreRequest::physical_archive(...))` restores those
-physical archives through the SDK instead of exposing tar layout details to
-applications. Restore is staged in a sibling directory, rejects path traversal
-and unsafe archive entries, extracts only through validated canonical archive
-paths, validates archive tree shape before writing staging files, validates the
-required `pgdata` recovery files, and refuses to overwrite an existing destination
-unless the request uses `replace_existing()`. Physical
-archives are deliberately concrete and
-single-instance: they contain only regular files and directories under `pgdata`, so
-links, device nodes, FIFOs, sockets, sparse/special tar records, and external
-tablespace indirection fail instead of producing a non-portable mobile/Desktop
-artifact.
-
-`BackupRequest::sql()` is available in `NativeServer`, where the SDK can run the
-packaged `pg_dump` against the real local server connection string. Direct mode
-does not fake a logical dump path because it intentionally exposes one raw
-embedded protocol session, not a general server endpoint.
-
-<!-- liboliphaunt-doc-example:rust-backup-restore -->
-```rust
-use oliphaunt::{BackupRequest, Oliphaunt, RestoreRequest};
-
-# async fn backup_restore() -> oliphaunt::Result<()> {
-let source = Oliphaunt::builder()
-    .directory(".liboliphaunt-source")
-    .native_direct()
-    .open()
-    .await?;
-
-let archive = source.backup(BackupRequest::physical_archive()).await?;
-source.close().await?;
-
-Oliphaunt::restore(RestoreRequest::physical_archive(
-    ".liboliphaunt-restored",
-    archive,
-))
-.await?;
-# Ok(())
-# }
-```
-
-## Capability Honesty
-
-Direct mode is a serialized single physical PostgreSQL session. Broker mode is
-process-isolated but still serializes one physical backend session per opened
-instance. Server mode is the only mode that advertises independent sessions.
-`Oliphaunt` is cloneable as an SDK handle, but every clone shares the same owner
-executor, session pin, cancellation handle, and close state. Cloning a handle
-never creates an independent PostgreSQL connection; in `NativeServer`, true
-independent sessions come from the exposed connection string and normal
-PostgreSQL clients. Work accepted by the shared executor runs FIFO on that
-single owner, so cloned handles do not interleave direct, broker, or SDK-owned
-server protocol calls inside one physical session.
-
-`NativeDirect` advertises `protocol_stream` when the loaded C ABI exports
-`oliphaunt_exec_protocol_stream`. `NativeBroker` forwards those native chunks over
-IPC and also advertises streaming. `NativeServer` streams complete PostgreSQL
-wire frames from the local server connection.
-
-All three modes expose `Oliphaunt::cancel()` for the SDK-owned active query.
-Direct mode calls the native C ABI cancellation hook, broker mode uses a
-separate authenticated cancel IPC endpoint, and server mode sends PostgreSQL's
-native CancelRequest packet.
-
-`Oliphaunt::close()` rejects queued work with `EngineStopped`. For native direct it
-logically detaches the SDK handle and keeps the resident PostgreSQL backend
-alive for same-instance reopen; terminal PostgreSQL shutdown is not part of ordinary
-SDK close.
+Direct mode is the default. It runs the embedded backend in the application
+process. Broker mode uses the same database API while placing that backend in a
+helper process.
 
 <!-- liboliphaunt-doc-example:rust-basic-query -->
 ```rust
-use oliphaunt::Oliphaunt;
+use oliphaunt::{Oliphaunt, QueryParam};
 
-# async fn demo() -> oliphaunt::Result<()> {
+# async fn example() -> oliphaunt::Result<()> {
 let db = Oliphaunt::builder()
     .directory(".oliphaunt")
-    .native_direct()
+    .startup_guc("application_name", "my-app")
     .open()
     .await?;
 
-let result = db.query("SELECT 1::text AS value").await?;
-assert_eq!(result.get_text(0, "value")?, Some("1"));
-
-let parameterized = db
-    .query_params(
-        "SELECT ($1::int4 + $2::int4)::text AS sum",
-        [1_i32, 41_i32],
-    )
-    .await?;
-assert_eq!(parameterized.get_text(0, "sum")?, Some("42"));
-
-db.execute("CREATE TABLE items(id bigint PRIMARY KEY)").await?;
-
-db.with_transaction(async |tx| {
-    tx.query_params("INSERT INTO items VALUES ($1)", [1_i64])
-        .await?;
-    Ok(())
-})
-.await?;
-
+db.execute_with_params(
+    "INSERT INTO events(value) VALUES ($1)",
+    [QueryParam::from("ready")],
+).await?;
+let result = db.query("SELECT value FROM events").await?;
+assert_eq!(result.get_text(0, "value")?, Some("ready"));
 db.close().await?;
 # Ok(())
 # }
 ```
+
+Select broker mode with `.broker()`. An explicit
+`.broker_executable(path)` is normally only needed by development and packaging
+harnesses; installed packages resolve their helper artifact automatically.
+
+`execute` and `execute_with_params` return `CommandResult`. `query` and
+`query_with_params` return `QueryResult`. Both expose the PostgreSQL command tag
+and row count reported by PostgreSQL. Query results additionally expose field
+metadata and rows. SQL errors are returned as structured `PostgresError` values.
+
+`transaction` pins the one SDK-owned physical session while its callback runs.
+It commits on success and rolls back a callback failure. A transport failure at
+COMMIT is treated as an uncertain outcome: the SDK does not issue a misleading
+ROLLBACK and the handle must be closed. PostgreSQL's known `COMMIT` → `ROLLBACK`
+response remains a recoverable, idle-session error.
+
+For COPY, multi-result responses, or another protocol flow that the typed
+helpers cannot represent, use `exec_protocol_raw` for one owned response or
+`exec_protocol_raw_stream` to consume backend protocol chunks as they arrive.
+The stream is the raw PostgreSQL protocol; the SDK does not publish a second
+parser or a separate COPY-specific abstraction.
+
+## Physical backup and restore
+
+Direct and broker databases expose one physical backup format as bytes. Restore
+is a static operation into an absent or empty destination. It never overwrites
+an existing managed database.
+
+<!-- liboliphaunt-doc-example:rust-backup-restore -->
+```rust
+use oliphaunt::Oliphaunt;
+
+# async fn example() -> oliphaunt::Result<()> {
+let source = Oliphaunt::builder()
+    .directory(".oliphaunt-source")
+    .open()
+    .await?;
+let backup = source.backup().await?;
+source.close().await?;
+
+Oliphaunt::restore(".oliphaunt-restored", backup)?;
+# Ok(())
+# }
+```
+
+The archive is a PostgreSQL physical initialization payload. It contains
+PGDATA and its backup metadata, not the outer managed-root descriptor. Restore
+creates and validates the receiving root and publishes `.oliphaunt.json` only
+after complete PGDATA exists.
+
+## Local server
+
+`open_server()` returns `OliphauntServer`, including a nonoptional libpq
+connection string for standard PostgreSQL clients. Its SDK-owned connection has
+the same execute, query, transaction, checkpoint, cancellation, raw protocol,
+and close vocabulary as an embedded database.
+
+The server handle deliberately has no SDK backup method. Use the packaged
+standard PostgreSQL clients: `pg_basebackup` for physical backups and `pg_dump`
+or `psql` for logical workflows. Use a compatible external `pg_restore` for
+custom-format dumps; Oliphaunt does not package it.
+
+Pass `server.connection_string()` to the standard tool and keep PostgreSQL's
+streamed-WAL behavior explicit:
+
+```sh
+pg_basebackup --dbname "$CONNECTION_STRING" --pgdata ./server-backup --wal-method=stream
+```
+
+## Storage ownership
+
+A persistent database is a managed root:
+
+```text
+.oliphaunt.json
+pgdata/
+```
+
+The descriptor has one exact five-field schema: schema name, engine family,
+PGDATA directory name, PostgreSQL major, and physical format. It describes the
+root layout; it is not a lock file and it does not encode an SDK or host
+language. Native and WASIX descriptors are both valid when family and format
+form one of the two defined pairs.
+
+Opening validates before mutating. Existing roots must have PostgreSQL 18
+`PG_VERSION`, a real `global` directory with nonempty `global/pg_control`, and a
+real `pg_wal` directory. Symlink roots and symlink structural directories are
+rejected. The descriptor is written last during initialization.
+
+The SDK prevents two supported owners from opening the same managed root at the
+same time by using a sibling admission lock. It does not add a public cross-SDK
+coordination protocol, and concurrent mutation by unrelated runtimes remains
+application error.
+
+## Extensions and platform support
+
+Choose extensions with `.extension(Extension::...)` or `.extensions(...)`.
+Selection uses exact PostgreSQL SQL names and the generated PostgreSQL 18
+catalog. Build and release tooling owns artifact resolution; the runtime API does
+not expose package manifests, size reports, capability profiles, or packaging
+internals.
+
+Supported native products and targets are declared by the repository SDK
+manifest and release packages. WASIX is a separate binding family and is not a
+fallback mode of this crate.

@@ -3,43 +3,52 @@ package dev.oliphaunt
 import android.content.Context
 import java.io.File
 
-public object OliphauntAndroid {
-    public fun supportedModes(): List<EngineModeSupport> = OliphauntRuntimeSupport.nativeDirectOnly(
-        brokerReason = "Android broker mode requires a platform broker adapter; it is not aliased to direct mode",
-        serverReason = "Android server mode requires a platform server adapter; it is not aliased to direct mode",
-    )
+public sealed interface DatabaseStorage {
+    public data object TemporaryDirectory : DatabaseStorage
 
-    public fun packageSizeReport(context: Context): OliphauntPackageSizeReport? = OliphauntAndroidRuntimeAssets.packageSizeReport(context.applicationContext.assets)
+    public data class Directory(val path: File) : DatabaseStorage
+}
 
-    public fun packageSizeReport(resourceRoot: File): OliphauntPackageSizeReport? = OliphauntAndroidRuntimeAssets.packageSizeReport(resourceRoot)
+public data class OliphauntConfig(
+    val storage: DatabaseStorage = DatabaseStorage.TemporaryDirectory,
+    val startupGucs: List<PostgresStartupGuc> = emptyList(),
+    val username: String? = null,
+    val database: String? = null,
+    val extensions: List<String> = emptyList(),
+)
 
+public object Oliphaunt {
     public suspend fun open(
         context: Context,
         config: OliphauntConfig = OliphauntConfig(),
-        libraryPath: String? = null,
-        runtimeDirectory: String? = null,
+        runtimeDirectory: File? = null,
         resourceRoot: File? = null,
-        username: String = "postgres",
-        database: String = "postgres",
     ): OliphauntDatabase = OliphauntDatabase.open(
-        config = config,
+        config = config.toEngineConfig(),
         engine =
         AndroidNativeDirectEngine(
             context = context,
-            libraryPath = libraryPath,
-            runtimeDirectory = runtimeDirectory,
+            runtimeDirectory = runtimeDirectory?.absolutePath,
             resourceRoot = resourceRoot,
-            username = username,
-            database = database,
         ),
     )
 
     public suspend fun restore(
         context: Context,
-        request: RestoreRequest,
-        libraryPath: String? = null,
-    ): String = AndroidNativeDirectEngine(
-        context = context,
-        libraryPath = libraryPath,
-    ).restore(request)
+        destination: File,
+        bytes: ByteArray,
+    ) {
+        AndroidNativeDirectEngine(context = context).restore(destination.absolutePath, bytes)
+    }
 }
+
+private fun OliphauntConfig.toEngineConfig(): EngineConfig = EngineConfig(
+    storage = when (val selected = storage) {
+        DatabaseStorage.TemporaryDirectory -> EngineStorage.TemporaryDirectory
+        is DatabaseStorage.Directory -> EngineStorage.Directory(selected.path.absolutePath)
+    },
+    startupGucs = startupGucs,
+    username = username,
+    database = database,
+    extensions = extensions,
+)

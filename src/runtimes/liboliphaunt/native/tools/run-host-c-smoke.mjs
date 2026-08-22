@@ -349,17 +349,44 @@ function smokeEnv(paths) {
   const sharedPathEnv = process.platform === 'win32'
     ? { PATH: [path.dirname(paths.libPath), path.join(paths.installDir, 'bin'), process.env.PATH ?? ''].join(path.delimiter) }
     : process.platform === 'darwin'
-      ? { DYLD_LIBRARY_PATH: [path.dirname(paths.libPath), process.env.DYLD_LIBRARY_PATH ?? ''].join(path.delimiter) }
-      : { LD_LIBRARY_PATH: [path.dirname(paths.libPath), process.env.LD_LIBRARY_PATH ?? ''].join(path.delimiter) };
+      ? { DYLD_LIBRARY_PATH: [path.dirname(paths.libPath), path.join(paths.installDir, 'lib'), process.env.DYLD_LIBRARY_PATH ?? ''].join(path.delimiter) }
+      : { LD_LIBRARY_PATH: [path.dirname(paths.libPath), path.join(paths.installDir, 'lib'), process.env.LD_LIBRARY_PATH ?? ''].join(path.delimiter) };
   return {
     ...process.env,
     ...sharedPathEnv,
     LIBOLIPHAUNT_PATH: paths.libPath,
-    OLIPHAUNT_INITDB: paths.initdb,
     OLIPHAUNT_POSTGRES: paths.postgres,
     OLIPHAUNT_INSTALL_DIR: paths.installDir,
     OLIPHAUNT_STREAM_QUEUE_MAX_BYTES: process.env.OLIPHAUNT_STREAM_QUEUE_MAX_BYTES ?? '4096',
   };
+}
+
+function prepareSmokeManagedRoot(paths, root, pgdata, env) {
+  const descriptor = path.join(root, '.oliphaunt.json');
+  if (fs.existsSync(descriptor)) {
+    return;
+  }
+  if (fs.readdirSync(root).length !== 0) {
+    throw new Error(`native smoke root is nonempty but unmanaged: ${root}`);
+  }
+  run(paths.initdb, [
+    '-D',
+    pgdata,
+    '-U',
+    'postgres',
+    '--auth=trust',
+    '--no-sync',
+    '--locale-provider=libc',
+    '--locale=C',
+    '--encoding=UTF8',
+  ], { env });
+  const staging = `${descriptor}.tmp`;
+  fs.writeFileSync(
+    staging,
+    '{"schema":"oliphaunt-database-root-v1","engineFamily":"native","pgdata":"pgdata","postgresMajor":18,"physicalFormat":"native-pg18-v1"}\n',
+    { encoding: 'utf8', flag: 'wx', mode: 0o600 },
+  );
+  fs.renameSync(staging, descriptor);
 }
 
 function runSmoke(paths, smokeBin, rootArg) {
@@ -373,10 +400,20 @@ function runSmoke(paths, smokeBin, rootArg) {
     ? path.resolve(rootArg)
     : fs.mkdtempSync(path.join(smokeRoot, 'smoke.'));
   const keepRoot = Boolean(rootArg);
-  const pgdata = path.join(root, '.oliphaunt-pgdata');
-  const args = [normalizeForC(pgdata), normalizeForC(paths.installDir)];
+  const pgdata = path.join(root, 'pgdata');
+  const archiveManifestFixture = path.join(
+    paths.root,
+    'src/shared/fixtures/storage/physical-archive-native-v1.properties',
+  );
+  requireFile(archiveManifestFixture, 'shared native archive manifest fixture');
+  const args = [
+    normalizeForC(pgdata),
+    normalizeForC(paths.installDir),
+    normalizeForC(archiveManifestFixture),
+  ];
   const env = smokeEnv(paths);
   try {
+    prepareSmokeManagedRoot(paths, root, pgdata, env);
     run(smokeBin, args, { env });
     run(smokeBin, args, { env });
     if (!keepRoot) {
@@ -409,10 +446,11 @@ function checkIosCSourceSyntax(paths) {
     'liboliphaunt_native.c',
     'liboliphaunt_runtime.c',
     'liboliphaunt_protocol.c',
-    'liboliphaunt_bootstrap.c',
+    'liboliphaunt_config.c',
     'liboliphaunt_process.c',
     'liboliphaunt_trace.c',
     'liboliphaunt_fs.c',
+    'liboliphaunt_backup_state.c',
     'liboliphaunt_archive.c',
     'liboliphaunt_archive_tar.c',
     'liboliphaunt_static_extensions.c',

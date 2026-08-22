@@ -1,22 +1,16 @@
 use std::env;
-use std::fs;
 use std::io::{self, Read, Write};
 use std::net::TcpListener;
 #[cfg(unix)]
 use std::os::unix::net::UnixListener;
-use std::path::PathBuf;
 use std::process;
-use std::sync::Arc;
 use std::thread;
 
-use oliphaunt::{
-    BackupArtifact, BackupFormat, DEFAULT_DATABASE, DEFAULT_USERNAME, DatabaseInitialization,
-    DatabaseStorage, DurabilityProfile, EngineCancel, EngineMode, Extension, NativeDirectConfig,
-    NativeRuntime, Oliphaunt, OliphauntRuntime, OpenConfig, PostgresStartupGuc, RestoreRequest,
-    RuntimeFootprintProfile,
-};
+use oliphaunt::{Extension, broker_support};
 
 const ENV_BROKER_AUTH_TOKEN: &str = "OLIPHAUNT_BROKER_AUTH_TOKEN";
+const DEFAULT_USERNAME: &str = "postgres";
+const DEFAULT_DATABASE: &str = "postgres";
 
 fn main() {
     if let Err(error) = run() {
@@ -27,31 +21,15 @@ fn main() {
 
 fn run() -> oliphaunt::Result<()> {
     let args: Vec<String> = env::args().skip(1).collect();
-    if matches!(args.first().map(String::as_str), Some("restore")) {
-        return RestoreArgs::parse(args.into_iter().skip(1).collect())?.run();
-    }
     let args = BrokerArgs::parse(args)?;
-    let config = OpenConfig {
-        mode: EngineMode::NativeDirect,
-        storage: DatabaseStorage::Directory(args.root),
-        initialization: args.bootstrap,
-        direct: NativeDirectConfig::default(),
-        broker: Default::default(),
-        server: Default::default(),
-        durability: args.durability,
-        runtime_footprint: args.runtime_footprint,
-        startup_gucs: args.startup_gucs,
-        username: args.username,
-        database: args.database,
-        extensions: args.extensions,
-    };
-    config.validate()?;
-    let mut session = OliphauntRuntime::from_env().open(config)?;
-    let cancel = session.cancel_handle().ok_or_else(|| {
-        oliphaunt::Error::Engine(
-            "native broker direct session does not expose cancellation".to_owned(),
-        )
-    })?;
+    let mut session = broker_support::open(
+        args.root,
+        args.startup_gucs,
+        Some(args.username),
+        Some(args.database),
+        args.extensions,
+    )?;
+    let cancel = session.cancel_handle()?;
     let listener = BrokerListener::bind(args.endpoint)?;
     let cancel_listener = BrokerListener::bind(args.cancel_endpoint)?;
     let cancel_ready_endpoint = cancel_listener.ready_endpoint();
@@ -78,15 +56,10 @@ fn run() -> oliphaunt::Result<()> {
                 break;
             }
             oliphaunt::BrokerIpcRequest::ExecProtocol(bytes) => {
-                let response = session.exec_protocol_raw(bytes.into());
-                write_broker_response(&mut stream, response.map(|response| response.into_bytes()))?;
-            }
-            oliphaunt::BrokerIpcRequest::ExecSimpleQuery(sql) => {
-                let response = session.exec_simple_query(&sql);
-                write_broker_response(&mut stream, response.map(|response| response.into_bytes()))?;
+                write_broker_response(&mut stream, session.exec_protocol(bytes))?;
             }
             oliphaunt::BrokerIpcRequest::ExecProtocolStream(bytes) => {
-                let result = session.exec_protocol_stream(bytes.into(), &mut |chunk| {
+                let result = session.exec_protocol_stream(bytes, &mut |chunk| {
                     oliphaunt::broker_ipc_write_chunk(&mut stream, chunk)
                 });
                 match result {
@@ -96,14 +69,14 @@ fn run() -> oliphaunt::Result<()> {
                     }
                 }
             }
+            oliphaunt::BrokerIpcRequest::ExecSimpleQuery(sql) => {
+                write_broker_response(&mut stream, session.execute(&sql))?;
+            }
             oliphaunt::BrokerIpcRequest::Checkpoint => {
                 write_broker_response(&mut stream, session.checkpoint().map(|()| Vec::new()))?;
             }
-            oliphaunt::BrokerIpcRequest::Backup(request) => {
-                write_broker_response(
-                    &mut stream,
-                    session.backup(request).map(|artifact| artifact.bytes),
-                )?;
+            oliphaunt::BrokerIpcRequest::Backup => {
+                write_broker_response(&mut stream, session.backup())?;
             }
             oliphaunt::BrokerIpcRequest::Cancel => {
                 write_broker_response(
@@ -123,81 +96,9 @@ fn run() -> oliphaunt::Result<()> {
     Ok(())
 }
 
-struct RestoreArgs {
-    destination: PathBuf,
-    artifact: PathBuf,
-    replace_existing: bool,
-}
-
-impl RestoreArgs {
-    fn parse(args: Vec<String>) -> oliphaunt::Result<Self> {
-        let mut destination = None;
-        let mut artifact = None;
-        let mut replace_existing = false;
-        let mut iter = args.into_iter();
-        while let Some(arg) = iter.next() {
-            match arg.as_str() {
-                "--destination" => {
-                    destination = Some(iter.next().ok_or_else(|| {
-                        oliphaunt::Error::InvalidConfig(
-                            "restore --destination requires a filesystem path".to_owned(),
-                        )
-                    })?);
-                }
-                "--artifact" => {
-                    artifact = Some(iter.next().ok_or_else(|| {
-                        oliphaunt::Error::InvalidConfig(
-                            "restore --artifact requires a physical archive path".to_owned(),
-                        )
-                    })?);
-                }
-                "--replace-existing" => replace_existing = true,
-                _ => {
-                    return Err(oliphaunt::Error::InvalidConfig(format!(
-                        "unknown broker restore argument '{arg}'"
-                    )));
-                }
-            }
-        }
-
-        Ok(Self {
-            destination: destination
-                .ok_or_else(|| {
-                    oliphaunt::Error::InvalidConfig("restore --destination is required".to_owned())
-                })?
-                .into(),
-            artifact: artifact
-                .ok_or_else(|| {
-                    oliphaunt::Error::InvalidConfig("restore --artifact is required".to_owned())
-                })?
-                .into(),
-            replace_existing,
-        })
-    }
-
-    fn run(self) -> oliphaunt::Result<()> {
-        let bytes = fs::read(&self.artifact).map_err(|err| {
-            oliphaunt::Error::Engine(format!(
-                "read restore artifact {}: {err}",
-                self.artifact.display()
-            ))
-        })?;
-        let artifact = BackupArtifact {
-            format: BackupFormat::PhysicalArchive,
-            bytes,
-        };
-        let mut request = RestoreRequest::physical_archive(self.destination, artifact);
-        if self.replace_existing {
-            request = request.replace_existing();
-        }
-        Oliphaunt::restore_blocking(request)?;
-        Ok(())
-    }
-}
-
 fn start_cancel_listener(
     listener: BrokerListener,
-    cancel: Arc<dyn EngineCancel>,
+    cancel: broker_support::BrokerCancel,
     expected_token: String,
 ) {
     thread::Builder::new()
@@ -207,7 +108,7 @@ fn start_cancel_listener(
                 match listener.accept() {
                     Ok(mut stream) => {
                         if let Err(error) =
-                            handle_cancel_client(&mut stream, cancel.as_ref(), &expected_token)
+                            handle_cancel_client(&mut stream, &cancel, &expected_token)
                         {
                             eprintln!("OLIPHAUNT_BROKER_CANCEL_ERROR {error}");
                         }
@@ -224,7 +125,7 @@ fn start_cancel_listener(
 
 fn handle_cancel_client(
     stream: &mut Box<dyn BrokerTransport>,
-    cancel: &dyn EngineCancel,
+    cancel: &broker_support::BrokerCancel,
     expected_token: &str,
 ) -> oliphaunt::Result<()> {
     authenticate_client(stream, expected_token)?;
@@ -286,10 +187,7 @@ struct BrokerArgs {
     root: std::path::PathBuf,
     endpoint: BrokerListenEndpoint,
     cancel_endpoint: BrokerListenEndpoint,
-    bootstrap: DatabaseInitialization,
-    durability: DurabilityProfile,
-    runtime_footprint: RuntimeFootprintProfile,
-    startup_gucs: Vec<PostgresStartupGuc>,
+    startup_gucs: Vec<(String, String)>,
     username: String,
     database: String,
     extensions: Vec<Extension>,
@@ -301,9 +199,6 @@ impl BrokerArgs {
         let mut root = None;
         let mut endpoint = BrokerListenEndpoint::Tcp("127.0.0.1:0".to_owned());
         let mut cancel_endpoint = BrokerListenEndpoint::Tcp("127.0.0.1:0".to_owned());
-        let mut bootstrap = "packaged-template".to_owned();
-        let mut durability = DurabilityProfile::Safe;
-        let mut runtime_footprint = RuntimeFootprintProfile::Throughput;
         let mut startup_gucs = Vec::new();
         let mut username = DEFAULT_USERNAME.to_owned();
         let mut database = DEFAULT_DATABASE.to_owned();
@@ -341,24 +236,6 @@ impl BrokerArgs {
                         )
                     })?;
                     cancel_endpoint = BrokerListenEndpoint::unix(socket)?;
-                }
-                "--bootstrap" => {
-                    bootstrap = iter.next().ok_or_else(|| {
-                        oliphaunt::Error::InvalidConfig("--bootstrap requires a value".to_owned())
-                    })?;
-                }
-                "--durability" => {
-                    durability = parse_durability(&iter.next().ok_or_else(|| {
-                        oliphaunt::Error::InvalidConfig("--durability requires a value".to_owned())
-                    })?)?;
-                }
-                "--runtime-footprint" => {
-                    runtime_footprint =
-                        parse_runtime_footprint(&iter.next().ok_or_else(|| {
-                            oliphaunt::Error::InvalidConfig(
-                                "--runtime-footprint requires a value".to_owned(),
-                            )
-                        })?)?;
                 }
                 "--startup-guc" => {
                     let assignment = iter.next().ok_or_else(|| {
@@ -402,7 +279,6 @@ impl BrokerArgs {
                 }
             }
         }
-        let bootstrap = parse_bootstrap(&bootstrap)?;
         let auth_token = env::var(ENV_BROKER_AUTH_TOKEN).map_err(|_| {
             oliphaunt::Error::InvalidConfig(format!("{ENV_BROKER_AUTH_TOKEN} is required"))
         })?;
@@ -417,9 +293,6 @@ impl BrokerArgs {
                 .ok_or_else(|| oliphaunt::Error::InvalidConfig("--root is required".to_owned()))?,
             endpoint,
             cancel_endpoint,
-            bootstrap,
-            durability,
-            runtime_footprint,
             startup_gucs,
             username,
             database,
@@ -429,46 +302,13 @@ impl BrokerArgs {
     }
 }
 
-fn parse_bootstrap(value: &str) -> oliphaunt::Result<DatabaseInitialization> {
-    match value {
-        "packaged-template" => Ok(DatabaseInitialization::PackagedTemplate),
-        "fresh-initdb" => Ok(DatabaseInitialization::FreshInitdb),
-        "existing-only" => Ok(DatabaseInitialization::ExistingOnly),
-        _ => Err(oliphaunt::Error::InvalidConfig(format!(
-            "unknown bootstrap strategy '{value}'"
-        ))),
-    }
-}
-
-fn parse_durability(value: &str) -> oliphaunt::Result<DurabilityProfile> {
-    match value {
-        "safe" => Ok(DurabilityProfile::Safe),
-        "balanced" => Ok(DurabilityProfile::Balanced),
-        "fast-dev" => Ok(DurabilityProfile::FastDev),
-        _ => Err(oliphaunt::Error::InvalidConfig(format!(
-            "unknown durability profile '{value}'"
-        ))),
-    }
-}
-
-fn parse_runtime_footprint(value: &str) -> oliphaunt::Result<RuntimeFootprintProfile> {
-    match value {
-        "throughput" => Ok(RuntimeFootprintProfile::Throughput),
-        "balanced-mobile" => Ok(RuntimeFootprintProfile::BalancedMobile),
-        "small-mobile" => Ok(RuntimeFootprintProfile::SmallMobile),
-        _ => Err(oliphaunt::Error::InvalidConfig(format!(
-            "unknown runtime footprint profile '{value}'"
-        ))),
-    }
-}
-
-fn parse_startup_guc(value: &str) -> oliphaunt::Result<PostgresStartupGuc> {
+fn parse_startup_guc(value: &str) -> oliphaunt::Result<(String, String)> {
     let Some((name, guc_value)) = value.split_once('=') else {
         return Err(oliphaunt::Error::InvalidConfig(
             "--startup-guc requires name=value".to_owned(),
         ));
     };
-    Ok(PostgresStartupGuc::new(name, guc_value))
+    Ok((name.to_owned(), guc_value.to_owned()))
 }
 
 enum BrokerListenEndpoint {

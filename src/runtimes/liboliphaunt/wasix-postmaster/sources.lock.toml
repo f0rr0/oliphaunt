@@ -46,8 +46,8 @@ native_behavior_preserved = true
 [current_runtime_patches.wasmer]
 path = "runtime/patches/wasmer/0001-postgres-wasix-blockers.patch"
 base_commit = "1d1b3420beef28550afbb4692b664bd7f6bc2581"
-sha256 = "3406534fb297c690567b7df5cb31937dcf1708e13973562859cbc7d8a50bdc21"
-bytes = 1719460
+sha256 = "203e342cba2c6308fedc801fbba8700126abc706fc29b9f9601d44b4d7c4706a"
+bytes = 1721954
 
 [current_runtime_patches.wasix_libc]
 path = "runtime/patches/wasix-libc/0001-postgres-wasix-blockers.patch"

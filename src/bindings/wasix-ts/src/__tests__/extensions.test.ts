@@ -17,6 +17,7 @@ import type { WasixAssetManifest } from '../types.js';
 type ProjectedExtension = ReturnType<typeof resolveWasixExtensions>['extensions'][number];
 type ProjectedLifecycle = ProjectedExtension['lifecycle'];
 
+// liboliphaunt-doc-example:wasix-typescript-extensions
 describe('WASIX TypeScript extensions', () => {
   it('resolves pgtap through the canonical manifest and runtime-provided plpgsql', () => {
     const pgtap = extension('pgtap', {
@@ -41,7 +42,9 @@ describe('WASIX TypeScript extensions', () => {
 
   it('orders selected extension carriers after their manifest dependencies', () => {
     const cube = extension('cube');
-    const earthdistance = extension('earthdistance', { dependencies: ['cube'] });
+    const earthdistance = extension('earthdistance', {
+      dependencies: ['cube'],
+    });
 
     expect(
       resolveWasixExtensions(manifest(), carrierMap(earthdistance, cube), [
@@ -83,7 +86,9 @@ describe('WASIX TypeScript extensions', () => {
 
   it('requires the imported carrier closure to equal manifest-resolved extensions', () => {
     const cube = extension('cube');
-    const earthdistance = extension('earthdistance', { dependencies: ['cube'] });
+    const earthdistance = extension('earthdistance', {
+      dependencies: ['cube'],
+    });
     const resolved = resolveWasixExtensions(manifest(), carrierMap(earthdistance, cube), [
       'earthdistance',
     ]);
@@ -97,7 +102,9 @@ describe('WASIX TypeScript extensions', () => {
       }),
     ).not.toThrow();
     expect(() =>
-      assertExactCarrierClosure(resolved.extensions, { earthdistance: earthdistanceCarrier }),
+      assertExactCarrierClosure(resolved.extensions, {
+        earthdistance: earthdistanceCarrier,
+      }),
     ).toThrow('missing cube');
     expect(() =>
       assertExactCarrierClosure(resolved.extensions, {
@@ -115,13 +122,18 @@ describe('WASIX TypeScript extensions', () => {
     core.runtime.link.exports = [{ name: 'required_export', kind: 'func' }];
 
     expect(() =>
-      assertExtensionCarriersCompatible(runtimeDescriptor(), core, { native: carrier }),
+      assertExtensionCarriersCompatible(runtimeDescriptor(), core, {
+        native: carrier,
+      }),
     ).not.toThrow();
     expect(() =>
       assertExtensionCarriersCompatible(runtimeDescriptor(), core, {
         native: {
           ...carrier,
-          compatibility: { ...carrier.compatibility, wasixRuntimeVersion: '0.2.0' },
+          compatibility: {
+            ...carrier.compatibility,
+            wasixRuntimeVersion: '0.2.0',
+          },
         },
       }),
     ).toThrow('targets liboliphaunt-wasix@0.2.0');
@@ -129,7 +141,10 @@ describe('WASIX TypeScript extensions', () => {
       assertExtensionCarriersCompatible(runtimeDescriptor(), core, {
         native: {
           ...carrier,
-          install: { ...carrier.install, coreExportsRequired: ['missing_export'] },
+          install: {
+            ...carrier.install,
+            coreExportsRequired: ['missing_export'],
+          },
         },
       }),
     ).toThrow('requires exports absent from the selected core runtime: missing_export');
@@ -151,7 +166,10 @@ describe('WASIX TypeScript extensions', () => {
   });
 
   it('does not create a lifecycle schema when extension creation is disabled', () => {
-    const manual = extension('manual', { createExtension: false, schema: 'manual_schema' });
+    const manual = extension('manual', {
+      createExtension: false,
+      schema: 'manual_schema',
+    });
     expect(
       extensionSetupSql(resolveWasixExtensions(manifest(), carrierMap(manual), ['manual'])),
     ).toEqual([]);
@@ -311,8 +329,6 @@ function extension(
     'load-sql': [],
     'post-create-sql': [],
     'startup-config': startupConfig,
-    'preload-required': startupConfig.length > 0,
-    'restart-required': startupConfig.length > 0,
     'shared-memory-required': sharedMemoryRequired,
   };
   return {
@@ -360,8 +376,8 @@ function serializedCarrier(extension: ProjectedExtension): SerializedExtensionCa
         loadSql: [...extension.lifecycle['load-sql']],
         postCreateSql: [...extension.lifecycle['post-create-sql']],
         startupConfig: [...extension.lifecycle['startup-config']],
-        preloadRequired: extension.lifecycle['preload-required'],
-        restartRequired: extension.lifecycle['restart-required'],
+        preloadRequired: extension.lifecycle['startup-config'].length > 0,
+        restartRequired: extension.lifecycle['startup-config'].length > 0,
         sharedMemoryRequired: extension.lifecycle['shared-memory-required'],
       },
       installedFiles: [...extension['installed-files']],

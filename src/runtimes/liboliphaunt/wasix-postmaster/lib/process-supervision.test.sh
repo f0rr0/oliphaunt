@@ -86,10 +86,16 @@ assert_pid_gone() {
 export LEADER_PID_FILE="$TEST_ROOT/leader.pid"
 export CHILD_PID_FILE="$TEST_ROOT/child.pid"
 export GRANDCHILD_PID_FILE="$TEST_ROOT/grandchild.pid"
+timeout_tree_ms=400
+if [ "$(uname -s)" = Darwin ]; then
+  # A loaded macOS runner can spend most of the short Linux fixture window
+  # scheduling the nested Bash tree before it writes its PID evidence.
+  timeout_tree_ms=2000
+fi
 set +e
 WASIX_PROCESS_TERM_GRACE_MS=100 \
 WASIX_PROCESS_KILL_GRACE_MS=3000 \
-  fresh_run_process_group_timeout_ms 400 -- "$TIMEOUT_TREE" \
+  fresh_run_process_group_timeout_ms "$timeout_tree_ms" -- "$TIMEOUT_TREE" \
     >"$TEST_ROOT/timeout.log" 2>&1
 timeout_status=$?
 set -e

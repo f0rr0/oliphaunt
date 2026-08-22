@@ -24,7 +24,7 @@
   "bundle": {
     "active": false,
     "icon": [
-      "../../../src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/icons/icon.png"
+      "../../assets/tauri-icon.png"
     ]
   }
 }

@@ -7,7 +7,7 @@ import {
   type WasixRuntimeLayout,
 } from './archive.js';
 import type { SerializedOpenOptions, SerializedRuntimeDescriptor } from './rpc.js';
-import { canonicalStorageContract, type WasixStorageCompatibility } from './storage-provider.js';
+import { WASIX_PHYSICAL_IDENTITY, type WasixPhysicalIdentity } from './storage-provider.js';
 import type { WasixAssetManifest } from './types.js';
 
 const decoder = new TextDecoder('utf-8', { fatal: true });
@@ -22,8 +22,6 @@ type ProjectedExtensionLifecycle = {
   'load-sql': readonly string[];
   'post-create-sql': readonly string[];
   'startup-config': readonly string[];
-  'preload-required': boolean;
-  'restart-required': boolean;
   'shared-memory-required': boolean;
 };
 
@@ -50,9 +48,10 @@ export type ResolvedWasixExtensions = {
 
 export type PreparedWasixRuntime = {
   layout: WasixRuntimeLayout;
+  moduleSha256: string;
   startupGUCs: Record<string, string>;
   setupSql: string[];
-  storageCompatibility: WasixStorageCompatibility;
+  physicalIdentity: WasixPhysicalIdentity;
 };
 
 /**
@@ -121,41 +120,10 @@ export async function prepareWasixRuntime(
 
   return {
     layout,
+    moduleSha256: manifest.runtime['module-sha256'],
     startupGUCs: mergeExtensionStartupGUCs(options.startupGUCs, resolved.extensions),
     setupSql: extensionSetupSql(resolved),
-    storageCompatibility: storageCompatibility(descriptor, manifest, options.extensionCarriers),
-  };
-}
-
-function storageCompatibility(
-  runtime: SerializedRuntimeDescriptor,
-  manifest: WasixAssetManifest,
-  carriers: SerializedOpenOptions['extensionCarriers'],
-): WasixStorageCompatibility {
-  return {
-    schema: 'oliphaunt-wasix-pgdata-compatibility-v1',
-    runtime: {
-      product: runtime.product,
-      version: runtime.version,
-      manifestSha256: runtime.manifest.sha256,
-      runtimeArchiveSha256: runtime.runtimeArchive.sha256,
-      pgdataTemplateSha256: runtime.pgdataArchive.sha256,
-      moduleSha256: manifest.runtime['module-sha256'],
-      sourceFingerprint: manifest['source-fingerprint'],
-      postgresVersion: manifest.runtime['postgres-version'],
-    },
-    extensions: Object.values(carriers)
-      .sort((left, right) => left.sqlName.localeCompare(right.sqlName))
-      .map((carrier) => ({
-        sqlName: carrier.sqlName,
-        product: carrier.product,
-        version: carrier.version,
-        archiveSha256: carrier.sha256,
-        installContract: canonicalStorageContract({
-          compatibility: carrier.compatibility,
-          install: carrier.install,
-        }),
-      })),
+    physicalIdentity: WASIX_PHYSICAL_IDENTITY,
   };
 }
 
@@ -315,7 +283,10 @@ export function resolveWasixExtensions(
     }
     visit(extension);
   }
-  return { extensions: resolved, runtimeDependencies: [...runtimeDependencies].sort() };
+  return {
+    extensions: resolved,
+    runtimeDependencies: [...runtimeDependencies].sort(),
+  };
 }
 
 function extensionFromCarrier(
@@ -338,8 +309,6 @@ function extensionFromCarrier(
       'load-sql': lifecycle.loadSql,
       'post-create-sql': lifecycle.postCreateSql,
       'startup-config': lifecycle.startupConfig,
-      'preload-required': lifecycle.preloadRequired,
-      'restart-required': lifecycle.restartRequired,
       'shared-memory-required': lifecycle.sharedMemoryRequired,
     },
     'installed-files': carrier.install.installedFiles,

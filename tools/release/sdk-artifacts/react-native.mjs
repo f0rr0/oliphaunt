@@ -47,15 +47,8 @@ export function stageArtifacts(artifactRoot) {
   };
   packageJson.files = [...new Set([...(packageJson.files ?? []), IOS_CARRIER_FILENAME])];
   packageJson.exports = {
-    ".": {
-      types: "./lib/typescript/index.d.ts",
-      "react-native": "./lib/module/index.js",
-      import: "./lib/module/index.js",
-      require: "./lib/commonjs/index.js",
-      default: "./lib/module/index.js",
-    },
+    ...(packageJson.exports ?? {}),
     "./ios-carriers": `./${IOS_CARRIER_FILENAME}`,
-    "./package.json": "./package.json",
   };
   writeFileSync(packageJsonFile, `${JSON.stringify(packageJson, null, 2)}\n`, "utf8");
   requireCommand("node");

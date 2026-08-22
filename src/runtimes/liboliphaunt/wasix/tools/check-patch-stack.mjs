@@ -29,11 +29,9 @@ const EXPECTED_TOUCHPOINTS = new Map([
   ['src/Makefile.shlib', 'Defines the WASIX dynamic-link shared-library shape.'],
   ['src/backend/Makefile', 'Builds the dynamic-main backend module without changing other ports.'],
   ['src/backend/common.mk', 'Scopes scalar atomics to PostgreSQL backend objects instead of PGXS side modules.'],
-  ['src/backend/access/heap/heapam.c', 'Adds embedded timing probes and heap fast-path scope.'],
-  ['src/backend/access/heap/heapam_handler.c', 'Keeps embedded heap update timing observable.'],
   ['src/backend/access/nbtree/nbtdedup.c', 'Keeps btree delete scratch storage on stack under embedded WASIX.'],
-  ['src/backend/access/nbtree/nbtinsert.c', 'Adds embedded btree insert timing and int4 fast-path scope.'],
-  ['src/backend/access/nbtree/nbtsearch.c', 'Adds embedded btree search timing and guarded int4 leaf fast paths.'],
+  ['src/backend/access/nbtree/nbtinsert.c', 'Adds the guarded int4 insert fast path.'],
+  ['src/backend/access/nbtree/nbtsearch.c', 'Adds guarded int4 leaf fast paths.'],
   ['src/backend/access/transam/xact.c', 'Adds top-level current-transaction shortcut for embedded WASIX.'],
   ['src/backend/access/transam/xlog.c', 'Avoids expensive segment division under embedded WASIX.'],
   ['src/backend/commands/copyfromparse.c', 'Reports COPY protocol state to the host.'],
@@ -48,7 +46,7 @@ const EXPECTED_TOUCHPOINTS = new Map([
   ['src/backend/replication/walsender.c', 'Suppresses activity identifier reporting in embedded WASIX.'],
   ['src/backend/storage/file/fd.c', 'Keeps real fsync while narrowing unsupported WASIX directory and writeback-hint behavior.'],
   ['src/backend/tcop/backend_startup.c', 'Exports the startup packet parser for host-driven startup.'],
-  ['src/backend/tcop/postgres.c', 'Owns embedded lifecycle, protocol loop, error recovery, and timing hooks.'],
+  ['src/backend/tcop/postgres.c', 'Owns embedded lifecycle, protocol loop, and error recovery.'],
   ['src/backend/utils/adt/like.c', 'Adds guarded LIKE literal fast path for embedded WASIX.'],
   ['src/backend/utils/adt/like_match.c', 'Adds guarded LIKE literal fast path for embedded WASIX.'],
   ['src/backend/utils/init/miscinit.c', 'Routes process identity through the WASIX port layer.'],
@@ -71,6 +69,7 @@ const EXPECTED_TOUCHPOINTS = new Map([
   ['src/include/port/wasix-dl/sys/ipc.h', 'Provides the WASIX SysV IPC shim surface.'],
   ['src/include/port/wasix-dl/sys/shm.h', 'Provides the WASIX SysV shared-memory shim surface.'],
   ['src/include/storage/s_lock.h', 'Specializes spinlocks only for the enforced single-backend WASIX runtime.'],
+  ['src/interfaces/libpq/fe-connect.c', 'Makes libpq socket nonblocking state explicit where WASIX socket creation ignores type flags.'],
   ['src/makefiles/Makefile.wasix-dl', 'Builds side modules and PGXS artifacts for WASIX dynamic linking.'],
   ['src/makefiles/pgxs.mk', 'Installs PGXS extension artifacts for WASIX packaging.'],
   ['src/template/wasix-dl', 'Keeps the WASIX template and atomics invariants source-controlled.'],
@@ -143,21 +142,21 @@ const REQUIRED_AUDIT_CHECKS = [
     requirement: 'Tool/runtime platform stubs fail closed',
     patches: [
       '0021-oliphaunt-wasix-declare-wasix-fork.patch',
-      '0029-oliphaunt-wasix-stub-pg-dump-parallel-fork.patch',
-      '0037-oliphaunt-wasix-treat-directory-fsync-eisdir-as-unsupported.patch',
+      '0025-oliphaunt-wasix-stub-pg-dump-parallel-fork.patch',
+      '0032-oliphaunt-wasix-treat-directory-fsync-eisdir-as-unsupported.patch',
     ],
     evidence: ['fork_process', 'oliphaunt_wasix_pgdump_fork', 'errno == EISDIR'],
     posture: 'Unavailable WASIX behavior is explicit and narrow instead of silently emulated.',
   },
   {
     requirement: 'Optional ICU data stays optional during initdb',
-    patches: ['0038-oliphaunt-wasix-skip-icu-collation-setup-without-icu-data.patch'],
+    patches: ['0033-oliphaunt-wasix-skip-icu-collation-setup-without-icu-data.patch'],
     evidence: ['getenv("ICU_DATA")', 'pg_collation_actual_version', 'pg_import_system_collations'],
     posture: 'WASIX initdb skips ICU-backed collation setup until the optional ICU data package is present.',
   },
   {
     requirement: 'Rust COPY streaming keeps an explicit hybrid transport ABI',
-    patches: ['0039-oliphaunt-wasix-declare-hybrid-protocol-transport.patch'],
+    patches: ['0034-oliphaunt-wasix-declare-hybrid-protocol-transport.patch'],
     evidence: [
       'oliphaunt_wasix_set_protocol_transport(int mode)',
       'oliphaunt_wasix_protocol_stream_active(void)',
@@ -166,7 +165,7 @@ const REQUIRED_AUDIT_CHECKS = [
   },
   {
     requirement: 'Single-backend WASIX spinlocks preserve their ABI and scope',
-    patches: ['0040-oliphaunt-wasix-use-single-backend-spinlocks.patch'],
+    patches: ['0035-oliphaunt-wasix-use-single-backend-spinlocks.patch'],
     evidence: [
       'defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER)',
       'OLIPHAUNT_WASM_SINGLE_BACKEND_ATOMICS',
@@ -177,7 +176,7 @@ const REQUIRED_AUDIT_CHECKS = [
   },
   {
     requirement: 'Single-backend WASIX atomics preserve ABI and operation contracts',
-    patches: ['0041-oliphaunt-wasix-specialize-single-backend-atomics.patch'],
+    patches: ['0036-oliphaunt-wasix-specialize-single-backend-atomics.patch'],
     evidence: [
       'override CPPFLAGS += -DOLIPHAUNT_WASM_SINGLE_BACKEND_ATOMICS',
       'postmaster mode is unavailable in the single-backend WASIX runtime',
@@ -189,7 +188,7 @@ const REQUIRED_AUDIT_CHECKS = [
   },
   {
     requirement: 'Single-backend strong randomness remains checked and non-repeating',
-    patches: ['0042-oliphaunt-wasix-buffer-strong-random.patch'],
+    patches: ['0037-oliphaunt-wasix-buffer-strong-random.patch'],
     evidence: [
       'defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER)',
       'getrandom(wasix_strong_random_pool + filled',
@@ -200,7 +199,7 @@ const REQUIRED_AUDIT_CHECKS = [
   },
   {
     requirement: 'Unsupported writeback hints stay separate from real durability',
-    patches: ['0043-oliphaunt-wasix-disable-unsupported-writeback-hints.patch'],
+    patches: ['0038-oliphaunt-wasix-disable-unsupported-writeback-hints.patch'],
     evidence: [
       '#if defined(OLIPHAUNT_WASM_SINGLE_USER)',
       'Actual fsync/fdatasync durability remains enabled.',
@@ -210,7 +209,7 @@ const REQUIRED_AUDIT_CHECKS = [
   },
   {
     requirement: 'PostgreSQL side modules own their SJLJ catch frames',
-    patches: ['0044-oliphaunt-wasix-inline-sigsetjmp.patch'],
+    patches: ['0039-oliphaunt-wasix-inline-sigsetjmp.patch'],
     evidence: [
       '-DOLIPHAUNT_WASM_SIDE_MODULE',
       'WebAssembly SJLJ requires setjmp to be visible at the protected call site.',
@@ -219,6 +218,16 @@ const REQUIRED_AUDIT_CHECKS = [
       '#define sigsetjmp(env, savesigs) ((void) (savesigs), setjmp(env))',
     ],
     posture: 'PG_TRY expands to a compiler-recognized setjmp in every PostgreSQL side module, so nested errors unwind to the live module-local handler.',
+  },
+  {
+    requirement: 'Standalone WASIX libpq sockets are actually nonblocking',
+    patches: ['0040-oliphaunt-wasix-set-libpq-sockets-nonblocking.patch'],
+    evidence: [
+      'defined(SOCK_NONBLOCK) && !defined(__wasi__)',
+      '!defined(SOCK_NONBLOCK) || defined(__wasi__)',
+      'pg_set_noblock(conn->sock)',
+    ],
+    posture: 'WASIX uses PostgreSQL\'s existing fcntl fallback because Wasmer ignores socket type flags; native platforms retain upstream atomic socket creation.',
   },
 ];
 

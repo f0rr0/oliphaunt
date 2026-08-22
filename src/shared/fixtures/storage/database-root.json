@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 1,
+  "descriptor": ".oliphaunt.json",
+  "schema": "oliphaunt-database-root-v1",
+  "pgdata": "pgdata",
+  "postgresMajor": 18,
+  "families": {
+    "native": {
+      "physicalFormat": "native-pg18-v1"
+    },
+    "wasix": {
+      "physicalFormat": "wasix-pg18-v1"
+    }
+  },
+  "validDescriptors": [
+    {
+      "schema": "oliphaunt-database-root-v1",
+      "engineFamily": "native",
+      "pgdata": "pgdata",
+      "postgresMajor": 18,
+      "physicalFormat": "native-pg18-v1"
+    },
+    {
+      "schema": "oliphaunt-database-root-v1",
+      "engineFamily": "wasix",
+      "pgdata": "pgdata",
+      "postgresMajor": 18,
+      "physicalFormat": "wasix-pg18-v1"
+    }
+  ],
+  "malformedJson": [
+    {
+      "case": "truncated-object",
+      "value": "{\"schema\":\"oliphaunt-database-root-v1\""
+    },
+    {
+      "case": "duplicate-field",
+      "value": "{\"schema\":\"oliphaunt-database-root-v1\",\"schema\":\"oliphaunt-database-root-v1\",\"engineFamily\":\"native\",\"pgdata\":\"pgdata\",\"postgresMajor\":18,\"physicalFormat\":\"native-pg18-v1\"}"
+    }
+  ],
+  "invalidDescriptors": [
+    {
+      "case": "wrong-schema",
+      "value": {
+        "schema": "oliphaunt-database-root-v2",
+        "engineFamily": "native",
+        "pgdata": "pgdata",
+        "postgresMajor": 18,
+        "physicalFormat": "native-pg18-v1"
+      }
+    },
+    {
+      "case": "unknown-family",
+      "value": {
+        "schema": "oliphaunt-database-root-v1",
+        "engineFamily": "other",
+        "pgdata": "pgdata",
+        "postgresMajor": 18,
+        "physicalFormat": "native-pg18-v1"
+      }
+    },
+    {
+      "case": "wrong-major",
+      "value": {
+        "schema": "oliphaunt-database-root-v1",
+        "engineFamily": "native",
+        "pgdata": "pgdata",
+        "postgresMajor": 17,
+        "physicalFormat": "native-pg18-v1"
+      }
+    },
+    {
+      "case": "mismatched-family-format",
+      "value": {
+        "schema": "oliphaunt-database-root-v1",
+        "engineFamily": "wasix",
+        "pgdata": "pgdata",
+        "postgresMajor": 18,
+        "physicalFormat": "native-pg18-v1"
+      }
+    },
+    {
+      "case": "wrong-pgdata",
+      "value": {
+        "schema": "oliphaunt-database-root-v1",
+        "engineFamily": "native",
+        "pgdata": "data",
+        "postgresMajor": 18,
+        "physicalFormat": "native-pg18-v1"
+      }
+    },
+    {
+      "case": "non-integer-major",
+      "value": {
+        "schema": "oliphaunt-database-root-v1",
+        "engineFamily": "native",
+        "pgdata": "pgdata",
+        "postgresMajor": 18.5,
+        "physicalFormat": "native-pg18-v1"
+      }
+    },
+    {
+      "case": "empty-format",
+      "value": {
+        "schema": "oliphaunt-database-root-v1",
+        "engineFamily": "native",
+        "pgdata": "pgdata",
+        "postgresMajor": 18,
+        "physicalFormat": ""
+      }
+    },
+    {
+      "case": "missing-field",
+      "value": {
+        "schema": "oliphaunt-database-root-v1",
+        "engineFamily": "native",
+        "pgdata": "pgdata",
+        "postgresMajor": 18
+      }
+    },
+    {
+      "case": "unknown-field",
+      "value": {
+        "schema": "oliphaunt-database-root-v1",
+        "engineFamily": "native",
+        "pgdata": "pgdata",
+        "postgresMajor": 18,
+        "physicalFormat": "native-pg18-v1",
+        "runtimeVersion": "1"
+      }
+    }
+  ]
+}

@@ -26,7 +26,7 @@
       "src/sdks/js/src/**/*.ts",
       "src/bindings/wasix-ts/package.json",
       "src/bindings/wasix-ts/src/**/*.ts",
-      "src/bindings/wasix-ts/examples/browser/**/*.ts",
+      "examples/browser-wasix/**/*.ts",
       "src/bindings/wasix-ts/tools/**/*.mjs",
       "tools/perf/matrix/**/*.json",
       "tools/perf/matrix/**/*.ts",

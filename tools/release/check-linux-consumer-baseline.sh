@@ -179,7 +179,7 @@ timeout 300 docker run \
           [ "$output" = "OLIPHAUNT_BROKER_ERROR unknown broker argument '\''--oliphaunt-linux-abi-probe'\''" ]
           execution_count=$((execution_count + 1))
           ;;
-        initdb|pg_ctl|pg_dump|postgres|psql)
+        initdb|pg_basebackup|pg_ctl|pg_dump|postgres|psql)
           timeout 10 "$file" --version >/dev/null
           execution_count=$((execution_count + 1))
           ;;

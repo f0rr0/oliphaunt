@@ -20,11 +20,11 @@ PostgreSQL-compatible embedded runtime is worth the extra footprint.
 | SQLite concept | Oliphaunt concept |
 | --- | --- |
 | One database file | One PostgreSQL storage directory |
-| Pragmas | PostgreSQL settings and SDK durability profiles |
+| Pragmas | PostgreSQL startup and session settings (GUCs) |
 | SQLite transaction | PostgreSQL transaction |
 | SQLite extension loading | Exact PostgreSQL extension selection before open |
 | File copy backup | SDK backup/export API |
-| Multiple library handles | Mode-specific Oliphaunt handles and session semantics |
+| Multiple library handles | Database sessions or the native server product |
 
 ## Schema And SQL Differences
 
@@ -44,8 +44,9 @@ path at a time so type and constraint differences are visible early.
 
 SQLite apps often back up by copying one file. Oliphaunt live storage is a
 PostgreSQL directory, so data movement goes through SDK backup and restore
-APIs. That keeps locks, WAL, selected extensions, archive format, and restore
-target checks together.
+APIs. Backup coordinates PostgreSQL online-backup state and required WAL.
+Restore validates one fixed physical archive and publishes a new managed root.
+Required extension code is still selected and packaged separately with the app.
 
 For mobile apps, keep persistent database storage app-private and use the platform's
 normal user-data protection choices. For desktop apps, choose direct, broker, or
@@ -57,8 +58,8 @@ server mode based on the concurrency and process-isolation model your app needs.
 2. Open an Oliphaunt database with temporary storage and port the schema.
 3. Port read paths before write-heavy sync/import paths.
 4. Add selected extensions explicitly.
-5. Add backup/restore and package-size checks before shipping.
-6. Compare app-start, first-query, memory, and package-size numbers against the
+5. Add backup/restore and inspect the built app artifact before shipping.
+6. Compare app-start, first-query, memory, and built artifact size against the
    SQLite baseline.
 
 ## When SQLite Is Still The Better Fit

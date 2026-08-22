@@ -16,7 +16,7 @@ import {
 } from './release-fixture-utils.mjs';
 
 const NATIVE_RUNTIME_TOOL_STEMS = ['initdb', 'pg_ctl', 'postgres'];
-const NATIVE_TOOLS_TOOL_STEMS = ['pg_dump', 'psql'];
+const NATIVE_TOOLS_TOOL_STEMS = ['pg_basebackup', 'pg_dump', 'psql'];
 const SNOWBALL_STOPWORDS = [
   'danish.stop',
   'dutch.stop',

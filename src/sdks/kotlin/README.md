@@ -1,311 +1,96 @@
 # Oliphaunt Kotlin SDK
 
-## Install
+Oliphaunt embeds PostgreSQL 18 behind a small coroutine-native Android API. The
+common implementation is also compiled and tested on the JVM, but Android is
+the only supported and published application facade.
 
-Add the Android SDK and the app-applied Oliphaunt Android plugin from Maven
-Central:
+## Android setup
 
-```gradle
+Apply `dev.oliphaunt.android` and depend on
+`dev.oliphaunt:oliphaunt-android`. The plugin packages the matching runtime and
+only the selected extension artifacts; applications do not build PostgreSQL at
+runtime.
+
+<!-- liboliphaunt-doc-example:kotlin-setup -->
+```kotlin
 plugins {
-    id("com.android.application")
     id("dev.oliphaunt.android") version "0.1.1"
 }
 
 dependencies {
     implementation("dev.oliphaunt:oliphaunt-android:0.1.1")
 }
-
-oliphaunt {
-    selectedExtensions.add("vector")
-    // Optional: androidAbis.set(listOf("arm64-v8a"))
-}
 ```
 
-The plugin wires Maven-resolved runtime and extension artifacts into the Android
-source sets. If the app selects `vector`, unrelated extension files are not
-copied into the APK/AAB. Normal Android app consumers use Gradle, Maven Central,
-and the Android toolchain they already have. They do not install Rust, run
-Cargo, build PostgreSQL, download GitHub release assets, or copy Oliphaunt
-native artifacts by hand.
-
-Base Android packages do not include full ICU data. Applications that need
-PostgreSQL ICU collations enable the ICU runtime feature in the same Gradle
-extension:
-
-```gradle
-oliphaunt {
-    icu.set(true)
-}
-```
-
-The plugin then adds
-`dev.oliphaunt.runtime:oliphaunt-icu:<liboliphauntVersion>@tar.gz`, merges
-`share/icu` into the packaged runtime assets, and records `runtimeFeatures=icu`
-in `manifest.properties`. Leave `icu` disabled for applications that do not use
-ICU collations.
-
-## Compatibility
-
-| SDK | Native core | Android distribution |
-| --- | --- | --- |
-| `dev.oliphaunt:oliphaunt-android` `0.1.1` | `liboliphaunt` `0.1.1` | Android AAR, Android plugin, and Maven runtime artifact packages |
-
-The Android release lane publishes `arm64-v8a` and `x86_64` artifacts. Apps may
-restrict ABI packaging with `-PoliphauntAndroidAbiFilters=arm64-v8a` or another
-comma-separated subset.
-
-## Quickstart
-
-<!-- liboliphaunt-doc-example:kotlin-android-open -->
-```kotlin
-val db = OliphauntAndroid.open(
-    context = applicationContext,
-    config = OliphauntConfig(
-        mode = EngineMode.NativeDirect,
-        runtimeFootprint = RuntimeFootprintProfile.BalancedMobile,
-        startupGucs = listOf(PostgresStartupGuc("shared_buffers", "32MB")),
-        username = "postgres",
-        database = "postgres",
-        extensions = listOf("vector"),
-    ),
-)
-val result = db.query("SELECT 1::text AS value")
-val value = result.getText(0, "value")
-db.close()
-```
-
-Android SDK for the native `liboliphaunt` product line. The repository uses a
-Kotlin Multiplatform build to share API code and run host-native conformance
-tests, but the released consumer package is Android-only: the AAR, Gradle
-plugin/marker, and declared Android ABI carriers. No JVM artifact or Kotlin/Native
-Maven package is published.
-
-The common API mirrors the Rust SDK shape and uses suspend functions plus a
-serialized `OliphauntDatabase` handle. Raw protocol execution, capability reporting,
-SQL/physical backup artifacts, transaction closures, explicit PostgreSQL
-checkpoints, startup `username`/`database` identity, and same-version physical
-restore all use this shared shape. JVM, Android, and Kotlin/Native implementations can share the API
-while platform modules provide the actual native runtime.
-Use `OliphauntDatabase.supportedModes()` to discover the current platform default,
-or pass an injected engine to inspect that engine. On Android,
-`OliphauntAndroid.supportedModes()` reports the same Android facade contract. The
-support entries still carry canonical direct/broker/server capability semantics
-so unavailable modes are explicit and not confused with direct-mode aliases.
-Capabilities report the same product contract as Rust: raw and streaming
-protocol support, cancellation, backup/restore, simple-query execution,
-extensions, session semantics, multiple-instance support, and the concrete backup/restore formats
-the opened mode accepts. Use `supportsBackupFormat(...)` and
-`supportsRestoreFormat(...)` on either `EngineCapabilities` or `OliphauntDatabase`
-for UI/action gating instead of manually matching lists. `backup(...)` enforces
-those capabilities before it calls the platform session, and
-`OliphauntDatabase.restore(...)` rejects unsupported restore artifact formats
-before it calls the platform engine. `RestoreRequest` fails when its destination
-exists by default; replacement requires an explicit `.replaceExisting()`.
-Lifecycle capability fields follow the Rust contract: `sameInstanceLogicalReopen`,
-`instanceSwitchable`, and `crashRestartable`
-distinguish direct's resident-instance reopen from broker/server
-process-managed behavior. Native direct is not instance-switchable or
-crash-restartable. Mobile direct mode has one resident backend per app process
-and one physical session. Use server mode only where the SDK reports true
-server support; it is not a crash-isolated server and it does not provide
-independent concurrent client sessions.
-
-`OliphauntConfig` defaults to `DatabaseStorage.TemporaryDirectory`, so the
-quickstart does not require a filesystem path. Android places that process-owned
-database below the application's cache directory; Kotlin/Native uses the host
-temporary directory. Native direct retains it while the process-resident
-database can be logically reopened. It is not durable storage and the operating
-system may reclaim it after process exit. Use
-`DatabaseStorage.Directory(path)` for persistence. `close()` never deletes an
-application-supplied directory.
-
-The development build uses a Kotlin Multiplatform structure: common API in
-`commonMain`, Kotlin/Native cinterop metadata under `src/nativeInterop`, Android
-JNI/CMake sources under `src/androidMain/cpp`, and platform runtimes layered
-behind `OliphauntEngine`. Kotlin/Native is a source-checkout validation surface,
-not a supported registry distribution.
-
-Kotlin/Native now includes a native-direct runtime over the `liboliphaunt` C ABI.
-It builds a tiny static cinterop bridge that dynamically loads `liboliphaunt`,
-opens one embedded PostgreSQL backend on a dedicated owner thread, serializes
-handle-bound native work on that queue, and keeps `cancel()` outside that queue
-so long-running SQL can be interrupted. `close()` marks the handle closed, waits
-for the execution queue, and detaches the logical native session while keeping
-the resident backend alive for same-instance reopen.
-
-Android includes a native-direct runtime over JNI with the same owner-thread
-session model.
-Native Android apps should use the Android entrypoint because it needs a
-`Context` for app storage and packaged assets:
-
-Kotlin defaults to the mobile resident profile: `runtimeFootprint =
-RuntimeFootprintProfile.BalancedMobile` and `durability =
-DurabilityProfile.Balanced`. Use `Safe` when last-commit survival matters more
-than commit latency, `Throughput` for throughput-lane diagnostics, or
-`SmallMobile` for memory-pressure experiments. `startupGucs` are validated and
-appended after the footprint and durability defaults so profiling builds can
-override specific PostgreSQL GUCs without changing the native ABI.
-
-Use `database.transaction { tx -> ... }` for multi-step work that must stay on
-the same physical session. Database calls outside the active `OliphauntTransaction`
-are rejected until the transaction commits or rolls back.
-Use `database.checkpoint()` to request a PostgreSQL checkpoint through the same
-serialized session; it is rejected while a transaction is active.
-
-Calling the common `OliphauntDatabase.open(...)` or `OliphauntDatabase.restore(...)`
-defaults on Android fails with a targeted diagnostic that points to
-`OliphauntAndroid.open(context, config)` or
-`OliphauntAndroid.restore(context, request)`. This keeps the common API honest
-without hiding Android's required `Context`.
-
-For large responses or COPY-style traffic, use the streaming raw-protocol API so
-native-direct runtimes can forward backend bytes without building a single owned
-response first:
-
-<!-- liboliphaunt-doc-example:kotlin-streaming -->
-```kotlin
-db.execProtocolStream(ProtocolRequest.simpleQuery("SELECT 1")) { chunk ->
-    consume(chunk.bytes)
-}
-```
-
-For ordinary one-result-set SQL, use the typed simple-query helper:
+Open with the Android `Oliphaunt` object and an application `Context`.
 
 <!-- liboliphaunt-doc-example:kotlin-typed-query -->
 ```kotlin
-val result = db.query("SELECT 1::text AS value")
-val value = result.getText(0, "value")
-```
+val db = Oliphaunt.open(
+    context = applicationContext,
+    config = OliphauntConfig(
+        storage = DatabaseStorage.Directory(filesDir.resolve("database").path),
+        startupGucs = listOf(PostgresStartupGuc("application_name", "my-app")),
+        extensions = listOf("vector"),
+    ),
+)
 
-`query(sql)` parses normal PostgreSQL backend protocol frames into field
-metadata, rows, command tags, and nulls. `query`, `execute`, transaction
-statements, and `checkpoint` surface PostgreSQL failures through
-`PostgresException(PostgresError)`, preserving SQLSTATE and raw `ErrorResponse`
-fields. Multi-result-set, COPY, and custom recovery traffic stay on the
-byte-preserving `execProtocolRaw`.
-Pass a `List<QueryParam>` for PostgreSQL extended-protocol parameters:
+db.execute(
+    "INSERT INTO widgets(name) VALUES ($1)",
+    listOf(QueryParam.Text("ready")),
+)
+val rows = db.query("SELECT name FROM widgets")
+println(rows.getText(row = 0, column = "name"))
 
-<!-- liboliphaunt-doc-example:kotlin-parameterized-query -->
-```kotlin
-val result = db.query(
-    "SELECT $1::text AS value",
-    listOf(QueryParam.Text("hello")),
+val bytes = db.backup()
+db.close()
+Oliphaunt.restore(
+    context = applicationContext,
+    destination = filesDir.resolve("restored-database").path,
+    bytes = bytes,
 )
 ```
 
-JVM keeps the shared API shape but intentionally reports an unavailable runtime;
-desktop JVM apps should use the Rust/Tauri SDK path or a future server/broker
-JVM binding rather than a fake direct-mode implementation.
+## API contract
 
-## Local Development
+`execute` returns `CommandResult`; `query` returns `QueryResult` fields and rows.
+Both expose the PostgreSQL command tag and nullable row count reported by
+PostgreSQL. Parameters are explicit `QueryParam` values. SQL failures expose
+structured `PostgresError` through `PostgresException`.
 
-On Kotlin/Native, `OliphauntDatabase.open(config)` and
-`OliphauntDatabase.restore(request)` default to `NativeDirectEngine` for
-`EngineMode.NativeDirect`. During local development the bridge resolves the
-runtime through:
+The database also provides callback `transaction`, `checkpoint`, out-of-band
+`cancel`, buffered `execProtocolRaw`, callback `execProtocolStream`, byte
+`backup`, and idempotent `close`. The stream contains raw PostgreSQL backend
+frames; there is no separate public protocol parser.
 
-- `LIBOLIPHAUNT_PATH`: path to `liboliphaunt.dylib` or equivalent shared
-  library;
-- `OLIPHAUNT_INSTALL_DIR`: PostgreSQL install/runtime directory;
-- `OLIPHAUNT_KOTLIN_LIBRARY`: Kotlin-specific override for the shared library.
+Transactions pin the single physical session. Callback failure rolls back; a
+failed rollback poisons the handle. COMMIT uncertainty is never followed by a
+misleading ROLLBACK. PostgreSQL's explicit `COMMIT` → `ROLLBACK` command tag is
+the known idle-session exception.
 
-```bash
-cd src/sdks/kotlin
-./gradlew check
+Backup has one representation: PostgreSQL physical initialization bytes.
+Restore requires an absent or empty destination and never replaces an existing
+root. The payload contains PGDATA and backup metadata, not the outer managed-root
+descriptor; the receiving root publishes its descriptor after PGDATA validates.
 
-LIBOLIPHAUNT_PATH=/path/to/liboliphaunt.dylib \
-OLIPHAUNT_INSTALL_DIR=/path/to/postgres-install \
-  ./gradlew :oliphaunt:macosArm64Test --rerun-tasks
-```
+## Storage and extensions
 
-`src/sdks/kotlin/tools/check-sdk.sh` defaults Android Gradle/CMake work to one
-host-appropriate ABI for fast local iteration. Use
-`OLIPHAUNT_KOTLIN_ANDROID_ABI_FILTERS=all` for all locally buildable ABIs, or a
-comma-separated subset such as `arm64-v8a,x86_64`. This setting does not expand
-the published support envelope: releases contain only `arm64-v8a` and
-`x86_64`. React Native forwards its
-matching ABI setting through the same `-PoliphauntAndroidAbiFilters=...` Gradle
-property so the delegated Android runtime and RN adapter validate the same ABI
-matrix.
+A persistent root contains `.oliphaunt.json` and `pgdata/`. The descriptor's
+exact fields are schema, engine family, PGDATA directory name, PostgreSQL major,
+and physical format. Initialization validates PGDATA first and publishes the
+descriptor last. Nonempty descriptorless roots and symlink structural
+directories are rejected without mutation.
 
-Kotlin/Native accepts `OliphauntConfig(extensions = listOf("vector"))` when
-`NativeDirectEngine` has a runtime directory, or when
-`OLIPHAUNT_INSTALL_DIR`/`OLIPHAUNT_RUNTIME_DIR` points at a runtime built
-with those extensions. Extension names are validated before native code is loaded.
+`PostgresStartupGuc` is the only tuning vocabulary. Values map directly to
+PostgreSQL `-c name=value` settings; the SDK has no durability, memory, runtime,
+or capability profiles.
 
-The Maven Central artifact is the Android SDK and JNI adapter. App builds select
-the compatible `liboliphaunt` runtime with Gradle dependencies. Consumer devices
-receive the base runtime and only the exact SQL extensions the app selected.
+`OliphauntConfig.extensions` accepts exact generated PostgreSQL SQL names.
+Packaging resolves dependencies and native registration; package manifests and
+size reports remain internal build concerns.
 
-Android app builds package runtime/template assets from Maven-resolved artifacts
-through the `dev.oliphaunt.android` plugin. Selected extensions resolve from
-exact ABI packages such as
-`dev.oliphaunt.extensions:oliphaunt-extension-vector-android-arm64-v8a:0.1.1`;
-each extension package provides its own runtime artifact, Android static archive,
-and declared static dependency archives. External extensions move independently
-from the base runtime by setting their version in the plugin extension:
+## Local checks
 
-```gradle
-oliphaunt {
-    liboliphauntVersion.set("0.1.1")
-    selectedExtensions.add("vector")
-    extensionVersions.put("vector", "0.1.1")
-}
-```
-
-The Android SDK requires `schema=oliphaunt-runtime-resources-v1`, validates the runtime
-`layout=postgres-runtime-files-v1` and template
-`layout=postgres-template-pgdata-v1`, and preserves the full
-`selectedExtensions` domain, its exact `creates-extension=true` subset in
-`extensions`, `sharedPreloadLibraries`, and `mobileStaticRegistryState` from
-`manifest.properties`. The registered SQL identities and `nativeModuleStems`
-must exactly match the selected native-module subset. Runtime availability is
-checked against `selectedExtensions`, so module-only entries are not mistaken
-for missing resources. It rejects a selected extension when the package does
-not advertise that exact selection or reports pending mobile static-registry
-rows. Release mobile extension artifacts include
-`static-registry/oliphaunt_static_registry.c` when complete. The Android native
-bridge first looks for the registry in `liboliphaunt.so`, then in an optional
-`liboliphaunt_extensions.so`, and registers those rows through the loaded
-`oliphaunt_register_static_extensions` symbol before the first `oliphaunt_init`.
-The same runtime-resource output includes `package-size.tsv`; Android apps can call
-`OliphauntAndroid.packageSizeReport(context)` for packaged app assets or
-`OliphauntAndroid.packageSizeReport(resourceRoot)` for local unpacked resource
-smoke tests. Both paths inspect total package bytes,
-runtime/template/static-registry bytes, de-duplicated selected extension bytes,
-and per-extension footprints without rewalking packaged assets.
-
-Package the Android native C ABI library with a normal `jniLibs` directory:
-
-```text
-jniLibs/
-  arm64-v8a/liboliphaunt.so
-  x86_64/liboliphaunt.so
-```
-
-```bash
-./gradlew :oliphaunt:assembleDebug \
-  -PoliphauntRuntimeResourcesDir=../../../target/oliphaunt-resources \
-  -PoliphauntAndroidJniLibsDir=/path/to/jniLibs
-```
-
-Each ABI directory may include additional `.so` dependencies, but it must
-include `liboliphaunt.so`. The Gradle task rejects symlinks, unknown ABI names, and
-nested library layouts so the AAR shape remains predictable.
-
-For exact mobile extension selection, the Android app plugin stages only selected
-extension archives and their declared static dependency archives into a generated
-extension-archives root. The plugin uses Android Gradle Plugin's public
-`sdkComponents.ndkDirectory` provider to compile the generated registry and link
-those inputs into a small, per-ABI `liboliphaunt_extensions.so`, then adds that
-library to the app's generated `jniLibs`. Configure a normal `android.ndkVersion`
-(or `android.ndkPath`) when selecting a module-backed extension. Builds with no
-extensions, or only SQL-only extensions, do not resolve or require an NDK for this
-link step. Missing, extra, cross-ABI, or undeclared archives fail before packaging.
-
-The AAR stores the unified runtime resources under `assets/oliphaunt/` with
-content-keyed manifests. At runtime the SDK materializes the selected runtime
-once under `noBackupFilesDir`
-and hydrates new PGDATA directories from the packaged template. Empty Android
-storage requires a packaged template PGDATA or an existing storage directory
-whose `pgdata` child contains `PG_VERSION`.
+Run `./gradlew :oliphaunt:jvmTest :oliphaunt:testDebugUnitTest` with
+`ANDROID_HOME` configured. Android runtime smoke tests use explicitly packaged
+runtime resources and JNI libraries.

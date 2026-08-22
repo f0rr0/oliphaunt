@@ -3,213 +3,87 @@ import { test } from 'vitest';
 
 import {
   buildStartupArgs,
-  normalizeDurability,
   normalizeOpenConfig,
-  normalizeRuntimeFootprint,
-  validateBrokerMaxInstances,
-  validateBrokerTransport,
-  validateMaxClientSessions,
-  validateOptionalPathOverride,
-  validateExtensionIds,
   validateDirectoryPath,
+  validateExtensionIds,
+  validateOptionalPathOverride,
   validateServerPort,
   validateStartupGUCs,
   validateStartupIdentity,
 } from '../config.js';
-import {
-  GENERATED_EXTENSION_METADATA,
-  generatedExtensionBySqlName,
-  generatedSharedPreloadLibraries,
-} from '../generated/extensions.js';
 
-function throwsMessage(fn: () => unknown, message: RegExp): void {
-  assert.throws(fn, message);
-}
+test('normalizes only the public database and server configuration', () => {
+  const direct = normalizeOpenConfig(
+    {},
+    { instanceDirectory: '/temporary/root', temporaryDirectory: true },
+  );
+  assert.equal(direct.execution, 'direct');
 
-test('normalizes explicit config contracts for broker and server modes', () => {
   const broker = normalizeOpenConfig(
     {
-      engine: 'nativeBroker',
+      execution: 'broker',
       storage: { kind: 'directory', path: '/app/root' },
-      durability: 'balanced',
-      runtimeFootprint: 'balancedMobile',
       brokerExecutable: '/opt/oliphaunt-broker',
-      brokerMaxInstances: 8,
-      brokerTransport: 'tcp',
-      maxClientSessions: 1,
+      startupGUCs: { work_mem: '16MB' },
       username: 'app_user',
       database: 'app_db',
       extensions: [' vector ', '', 'hstore'],
     },
     { instanceDirectory: '/app/root', temporaryDirectory: false },
   );
-
+  assert.equal(broker.execution, 'broker');
   assert.equal(broker.pgdata, '/app/root/pgdata');
-  assert.equal(broker.durability, 'balanced');
-  assert.equal(broker.runtimeFootprint, 'balancedMobile');
   assert.equal(broker.brokerExecutable, '/opt/oliphaunt-broker');
-  assert.equal(broker.brokerMaxInstances, 8);
-  assert.equal(broker.brokerTransport, 'tcp');
   assert.deepEqual(broker.extensions, ['vector', 'hstore']);
-  assert.ok(broker.startupArgs.includes('max_connections=1'));
-  assert.ok(broker.startupArgs.includes('synchronous_commit=off'));
+  assert.deepEqual(broker.startupArgs.slice(0, 2), ['-c', 'work_mem=16MB']);
 
   const server = normalizeOpenConfig(
     {
-      engine: 'nativeServer',
-      storage: { kind: 'directory', path: '/server/root' },
-      runtimeFootprint: 'smallMobile',
-      durability: 'fastDev',
+      execution: 'server',
       serverExecutable: '/opt/postgres',
-      serverToolDirectory: '/opt/postgres/bin',
       serverPort: 15432,
     },
-    { instanceDirectory: '/server/root', temporaryDirectory: false },
+    { instanceDirectory: '/server/root', temporaryDirectory: true },
   );
-
-  assert.equal(server.maxClientSessions, 32);
-  assert.equal(server.serverPort, 15432);
+  assert.equal(server.execution, 'server');
   assert.equal(server.serverExecutable, '/opt/postgres');
-  assert.equal(server.serverToolDirectory, '/opt/postgres/bin');
-  assert.ok(server.startupArgs.includes('shared_buffers=8MB'));
-  assert.ok(server.startupArgs.includes('fsync=off'));
+  assert.equal(server.serverPort, 15432);
 });
 
-test('validates config error surfaces deterministically', () => {
+test('validates the small public configuration vocabulary', () => {
   validateDirectoryPath(undefined, 'database storage directory');
   validateStartupIdentity(undefined, 'username');
   assert.equal(validateOptionalPathOverride(undefined, 'libraryPath'), undefined);
-  assert.equal(validateMaxClientSessions(undefined, 'nativeDirect'), 1);
-  assert.equal(validateMaxClientSessions(undefined, 'nativeServer'), 32);
-  assert.equal(validateBrokerMaxInstances(undefined), 1);
   assert.equal(validateServerPort(undefined), undefined);
-  assert.equal(validateBrokerTransport('auto'), 'auto');
-  assert.equal(validateBrokerTransport('unix'), 'unix');
 
-  throwsMessage(
-    () => validateDirectoryPath('', 'restore destination'),
-    /restore destination must not be empty/,
-  );
-  throwsMessage(
-    () => validateDirectoryPath('\0', 'restore destination'),
-    /restore destination must not contain NUL/,
-  );
-  throwsMessage(() => validateDirectoryPath('', 'custom path'), /custom path must not be empty/);
-  throwsMessage(
-    () => validateDirectoryPath('\0', 'custom path'),
-    /custom path must not contain NUL/,
-  );
-  throwsMessage(() => validateStartupIdentity(' \t', 'database'), /database must not be empty/);
-  throwsMessage(
-    () => validateStartupIdentity('bad\0db', 'database'),
-    /database must not contain NUL/,
-  );
-  throwsMessage(
-    () => validateOptionalPathOverride(' ', 'libraryPath'),
-    /libraryPath must not be empty/,
-  );
-  throwsMessage(
-    () => validateOptionalPathOverride('\0', 'runtimeDirectory'),
-    /runtimeDirectory must not contain NUL/,
-  );
-  throwsMessage(
-    () => validateOptionalPathOverride('', 'brokerExecutable'),
-    /brokerExecutable must not be empty/,
-  );
-  throwsMessage(
-    () => validateOptionalPathOverride('\0', 'serverExecutable'),
-    /serverExecutable must not contain NUL/,
-  );
-  throwsMessage(
-    () => validateOptionalPathOverride('', 'serverToolDirectory'),
-    /serverToolDirectory must not be empty/,
-  );
-  throwsMessage(
-    () => validateOptionalPathOverride('\0', 'custom executable'),
-    /custom executable must not contain NUL/,
-  );
-  throwsMessage(() => validateMaxClientSessions(1.5, 'nativeDirect'), /must be an integer/);
-  throwsMessage(() => validateMaxClientSessions(0, 'nativeServer'), /greater than zero/);
-  throwsMessage(() => validateMaxClientSessions(2, 'nativeDirect'), /supports exactly 1/);
-  throwsMessage(() => validateBrokerMaxInstances(1.5), /must be an integer/);
-  throwsMessage(() => validateBrokerMaxInstances(0), /maxInstances must be greater than zero/);
-  throwsMessage(() => validateServerPort(1.5), /port must be an integer/);
-  throwsMessage(() => validateServerPort(0), /range 1..65535/);
-  throwsMessage(() => validateServerPort(65_536), /range 1..65535/);
-  throwsMessage(
-    () => validateBrokerTransport('named-pipe' as never),
-    /unknown native broker transport/,
-  );
-  throwsMessage(
-    () => normalizeRuntimeFootprint('desktopTiny' as never),
-    /unknown liboliphaunt runtime footprint/,
-  );
-  throwsMessage(() => normalizeDurability('unsafe' as never), /unknown liboliphaunt durability/);
-  throwsMessage(() => validateStartupGUCs(['missing_equals']), /must use name=value/);
-  throwsMessage(
-    () => validateStartupGUCs([{ name: 'work_mem', value: '' }]),
-    /value must not be empty/,
-  );
-  throwsMessage(() => validateStartupGUCs([{ name: 'bad-name', value: '1' }]), /must contain only/);
-  throwsMessage(
-    () => validateStartupGUCs([{ name: 'ok', value: 'bad\0' }]),
-    /must not contain NUL/,
-  );
+  assert.throws(() => validateDirectoryPath('', 'restore destination'), /must not be empty/);
+  assert.throws(() => validateDirectoryPath('\0', 'restore destination'), /must not contain NUL/);
+  assert.throws(() => validateStartupIdentity(' ', 'database'), /must not be empty/);
+  assert.throws(() => validateOptionalPathOverride(' ', 'libraryPath'), /must not be empty/);
+  assert.throws(() => validateServerPort(1.5), /must be an integer/);
+  assert.throws(() => validateServerPort(0), /range 1\.\.65535/);
+  assert.throws(() => validateServerPort(65_536), /range 1\.\.65535/);
+  assert.deepEqual(validateStartupGUCs({ _name: '16MB', 'ext.name$1': 'on' }), [
+    '_name=16MB',
+    'ext.name$1=on',
+  ]);
+  for (const name of ['1name', '.foo', 'a..b', 'a.1b', 'ext.$name', 'bad-name']) {
+    assert.throws(() => validateStartupGUCs({ [name]: '1' }), /each dot-separated component/);
+  }
+  assert.deepEqual(validateStartupGUCs({ search_path: '' }), ['search_path=']);
+  assert.throws(() => validateStartupGUCs({ good: 'bad\0value' }), /must not contain NUL/);
   assert.deepEqual(validateExtensionIds([' earthdistance ', '', 'cube']), [
     'earthdistance',
     'cube',
   ]);
-  throwsMessage(() => validateExtensionIds(['bad/value']), /extension id/);
-  throwsMessage(
-    () => validateExtensionIds(['pg_search']),
-    /unknown Oliphaunt extension id 'pg_search'/,
-  );
+  assert.throws(() => validateExtensionIds(['bad/value']), /extension id/);
+  assert.throws(() => validateExtensionIds(['pg_search']), /unknown Oliphaunt extension/);
 });
 
-test('uses generated extension metadata for startup requirements', () => {
-  assert.equal(GENERATED_EXTENSION_METADATA.length, 39);
-  assert.deepEqual(generatedExtensionBySqlName('earthdistance')?.selectedExtensionDependencies, [
-    'cube',
-  ]);
-  assert.deepEqual(generatedExtensionBySqlName('pgtap')?.dependencies, ['plpgsql']);
-  assert.deepEqual(generatedExtensionBySqlName('pgtap')?.selectedExtensionDependencies, []);
-  const postgis = generatedExtensionBySqlName('postgis');
-  assert.equal(postgis?.nativeModuleStem, 'postgis-3');
-  assert.ok(
-    postgis?.dataFiles.includes('share/postgresql/contrib/postgis-3.6/spatial_ref_sys.sql'),
-    'PostGIS metadata must include its contrib data files',
-  );
-  assert.ok(
-    postgis?.dataFiles.includes('share/postgresql/proj/proj.db'),
-    'PostGIS metadata must include PROJ data',
-  );
-  assert.deepEqual(
-    postgis?.dataFiles.map((file) => file.replace(/^share\/postgresql\//, '')),
-    postgis?.runtimeShareDataFiles,
-    'PostGIS packaged data files must match runtime share data files',
-  );
-  assert.equal(generatedExtensionBySqlName('pg_search'), undefined);
-  assert.deepEqual(generatedSharedPreloadLibraries(['hstore', 'pg_search']), []);
-
+test('builds PostgreSQL startup arguments without SDK-specific profiles', () => {
   const args = buildStartupArgs({
-    durability: 'safe',
-    runtimeFootprint: 'throughput',
-    startupGUCs: [{ name: 'app.setting', value: 'enabled' }],
+    startupGUCs: { 'app.setting': 'enabled' },
     extensions: ['hstore'],
   });
-  assert.ok(args.includes('app.setting=enabled'));
-  assert.equal(
-    args.some((value) => value.startsWith('shared_preload_libraries=')),
-    false,
-    'extensions without generated preload rules must not create startup preload rules',
-  );
-  throwsMessage(
-    () =>
-      buildStartupArgs({
-        durability: 'safe',
-        runtimeFootprint: 'throughput',
-        extensions: ['hstore', 'pg_search'],
-      }),
-    /unknown Oliphaunt extension id 'pg_search'/,
-  );
+  assert.deepEqual(args, ['-c', 'app.setting=enabled']);
 });

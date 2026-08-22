@@ -34,10 +34,6 @@ pub(super) fn parse_startup_guc(value: &str) -> Result<PostgresStartupGuc> {
         "startup GUC name {name:?} must contain only ASCII letters, digits, '_' or '.'"
     );
     ensure!(
-        !guc_value.trim().is_empty(),
-        "startup GUC {name:?} value must not be empty"
-    );
-    ensure!(
         !name.as_bytes().contains(&0) && !guc_value.as_bytes().contains(&0),
         "startup GUC must not contain NUL bytes"
     );

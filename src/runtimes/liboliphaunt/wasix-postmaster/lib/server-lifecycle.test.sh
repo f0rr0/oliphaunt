@@ -29,14 +29,36 @@ if fresh_wait_cgroup_empty "$fixture/empty" wrong-identity 10 >/dev/null 2>&1; t
   exit 1
 fi
 
-port=$((42000 + ($$ % 10000)))
-fresh_wait_tcp_port_closed 127.0.0.1 "$port" 100
-python3 -m http.server "$port" --bind 127.0.0.1 >"$fixture/listener.log" 2>&1 &
+port_file="$fixture/listener.port"
+python3 - "$port_file" >"$fixture/listener.log" 2>&1 <<'PY' &
+import http.server
+import pathlib
+import sys
+
+server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), http.server.SimpleHTTPRequestHandler)
+pathlib.Path(sys.argv[1]).write_text(str(server.server_address[1]), encoding="ascii")
+server.serve_forever()
+PY
 listener_pid="$!"
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-  fresh_tcp_port_open 127.0.0.1 "$port" && break
+# Release qualification runs this dependency beside the Rust runtime build on
+# three-core macOS runners. Keep fixture startup bounded, but allow for the
+# listener process to be descheduled under that intentional contention.
+listener_deadline_ms="$(( $(fresh_supervision_now_ms) + 120000 ))"
+while [ "$(fresh_supervision_now_ms)" -lt "$listener_deadline_ms" ]; do
+  [ -s "$port_file" ] && break
+  if ! kill -0 "$listener_pid" 2>/dev/null; then
+    cat "$fixture/listener.log" >&2
+    echo "test TCP listener exited before publishing its port" >&2
+    exit 1
+  fi
   sleep 0.05
 done
+[ -s "$port_file" ] || {
+  cat "$fixture/listener.log" >&2
+  echo "test TCP listener did not publish its port" >&2
+  exit 1
+}
+port="$(cat "$port_file")"
 fresh_tcp_port_open 127.0.0.1 "$port"
 if fresh_wait_tcp_port_closed 127.0.0.1 "$port" 10 >/dev/null 2>&1; then
   echo "live TCP listener passed residue gate" >&2

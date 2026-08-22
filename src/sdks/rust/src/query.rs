@@ -107,6 +107,26 @@ pub struct QueryResult {
     fields: Vec<QueryField>,
     rows: Vec<QueryRow>,
     command_tag: Option<String>,
+    row_count: Option<u64>,
+}
+
+/// Result of a PostgreSQL command that does not expose rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandResult {
+    command_tag: Option<String>,
+    row_count: Option<u64>,
+}
+
+impl CommandResult {
+    /// PostgreSQL command tag returned by the last command.
+    pub fn command_tag(&self) -> Option<&str> {
+        self.command_tag.as_deref()
+    }
+
+    /// Affected-row count encoded by PostgreSQL in the command tag.
+    pub fn row_count(&self) -> Option<u64> {
+        self.row_count
+    }
 }
 
 impl QueryResult {
@@ -125,9 +145,9 @@ impl QueryResult {
         self.command_tag.as_deref()
     }
 
-    /// Number of rows returned by the query.
-    pub fn row_count(&self) -> usize {
-        self.rows.len()
+    /// Row count encoded by PostgreSQL in the command tag.
+    pub fn row_count(&self) -> Option<u64> {
+        self.row_count
     }
 
     /// Return the index for a column name.
@@ -221,14 +241,16 @@ impl QueryRow {
 /// This parser intentionally supports the normal simple-query shape used by
 /// the Rust SDK `query()` API: zero or one row-producing statement followed by
 /// `ReadyForQuery`. Multi-result-set and COPY responses should use
-/// `exec_protocol_raw` or streaming APIs instead.
+/// `exec_protocol_raw` instead.
 pub fn parse_query_response(response: &ProtocolResponse) -> Result<QueryResult> {
     parse_query_response_bytes(response.as_bytes())
 }
 
-pub(crate) fn ensure_successful_query_response(response: &ProtocolResponse) -> Result<()> {
+/// Parse a successful backend response into its PostgreSQL command result.
+pub fn parse_command_response(response: &ProtocolResponse) -> Result<CommandResult> {
     let mut input = response.as_bytes();
     let mut saw_ready = false;
+    let mut command_tag = None;
 
     while !input.is_empty() {
         let (tag, body, rest) = read_backend_message(input)?;
@@ -239,6 +261,7 @@ pub(crate) fn ensure_successful_query_response(response: &ProtocolResponse) -> R
                     body,
                 ))));
             }
+            b'C' => command_tag = Some(parse_command_complete(body)?),
             b'Z' => {
                 validate_ready_for_query(body)?;
                 saw_ready = true;
@@ -248,7 +271,30 @@ pub(crate) fn ensure_successful_query_response(response: &ProtocolResponse) -> R
                     ));
                 }
             }
-            _ => {}
+            b'1' => require_empty_backend_message(body, "ParseComplete")?,
+            b'2' => require_empty_backend_message(body, "BindComplete")?,
+            b'3' => require_empty_backend_message(body, "CloseComplete")?,
+            b'I' => require_empty_backend_message(body, "EmptyQueryResponse")?,
+            b'n' => require_empty_backend_message(body, "NoData")?,
+            b'S' => validate_parameter_status(body)?,
+            b'N' => validate_field_response(body, "NoticeResponse")?,
+            b'A' => validate_notification_response(body)?,
+            b'T' | b'D' => {
+                return Err(Error::Engine(
+                    "execute() received rows; use query() for row results".to_owned(),
+                ));
+            }
+            b'G' | b'H' | b'W' | b'd' | b'c' => {
+                return Err(Error::Engine(
+                    "execute() does not support COPY protocol responses; use exec_protocol_raw or exec_protocol_raw_stream for COPY traffic"
+                        .to_owned(),
+                ));
+            }
+            _ => {
+                return Err(Error::Engine(format!(
+                    "execute() received unexpected backend message tag 0x{tag:02x}"
+                )));
+            }
         }
     }
 
@@ -258,7 +304,11 @@ pub(crate) fn ensure_successful_query_response(response: &ProtocolResponse) -> R
         ));
     }
 
-    Ok(())
+    let row_count = command_tag.as_deref().and_then(command_tag_row_count);
+    Ok(CommandResult {
+        command_tag,
+        row_count,
+    })
 }
 
 pub(crate) fn extended_query_request<I, P>(sql: &str, params: I) -> Result<ProtocolRequest>
@@ -328,7 +378,7 @@ pub(crate) fn parse_query_response_bytes(bytes: &[u8]) -> Result<QueryResult> {
             }
             b'G' | b'H' | b'W' | b'd' | b'c' => {
                 return Err(Error::Engine(
-                    "query() does not support COPY protocol responses; use exec_protocol_raw_stream"
+                    "query() does not support COPY protocol responses; use exec_protocol_raw or exec_protocol_raw_stream"
                         .to_owned(),
                 ));
             }
@@ -363,11 +413,25 @@ pub(crate) fn parse_query_response_bytes(bytes: &[u8]) -> Result<QueryResult> {
         ));
     }
 
+    let row_count = command_tag.as_deref().and_then(command_tag_row_count);
     Ok(QueryResult {
         fields: fields.unwrap_or_default(),
         rows,
         command_tag,
+        row_count,
     })
+}
+
+fn command_tag_row_count(tag: &str) -> Option<u64> {
+    let mut parts = tag.split_ascii_whitespace();
+    let command = parts.next()?;
+    if !matches!(
+        command,
+        "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "MERGE" | "MOVE" | "FETCH" | "COPY"
+    ) {
+        return None;
+    }
+    parts.last().or(Some(command))?.parse().ok()
 }
 
 fn push_parse(out: &mut Vec<u8>, sql: &str) -> Result<()> {
@@ -650,6 +714,97 @@ mod tests {
     use super::*;
 
     #[test]
+    fn consumes_shared_query_response_contract() {
+        let source = crate::test_fixtures::text(
+            "protocol/query-response-cases.json",
+            "testdata/query-response-cases.json",
+        );
+        let fixture: serde_json::Value =
+            serde_json::from_str(&source).expect("shared query response fixture is valid JSON");
+        assert_eq!(fixture["schemaVersion"], 1);
+        for case in fixture["cases"].as_array().expect("fixture cases") {
+            let name = case["name"].as_str().expect("case name");
+            let bytes = decode_hex(case["responseHex"].as_str().expect("response hex"));
+            let expectation = &case["queryExpectation"];
+            match parse_query_response_bytes(&bytes) {
+                Ok(result) => {
+                    let expected = expectation["ok"]
+                        .as_object()
+                        .unwrap_or_else(|| panic!("{name}: expected parser error"));
+                    assert_eq!(
+                        result.command_tag(),
+                        expected["commandTag"].as_str(),
+                        "{name}"
+                    );
+                    assert_eq!(result.row_count(), expected["rowCount"].as_u64(), "{name}");
+                    let fields = expected["fields"].as_array().expect("expected fields");
+                    assert_eq!(result.fields().len(), fields.len(), "{name}");
+                    for (actual, expected) in result.fields().iter().zip(fields) {
+                        assert_eq!(actual.name, expected["name"].as_str().unwrap(), "{name}");
+                        assert_eq!(
+                            u64::from(actual.type_oid),
+                            expected["typeOid"].as_u64().unwrap(),
+                            "{name}"
+                        );
+                        assert_eq!(actual.format, QueryFormat::Text, "{name}");
+                    }
+                    let rows = expected["rows"].as_array().expect("expected rows");
+                    assert_eq!(result.rows().len(), rows.len(), "{name}");
+                    for (actual, expected) in result.rows().iter().zip(rows) {
+                        let expected = expected.as_array().expect("expected row values");
+                        assert_eq!(actual.values().len(), expected.len(), "{name}");
+                        for (column, expected) in expected.iter().enumerate() {
+                            assert_eq!(actual.text(column).unwrap(), expected.as_str(), "{name}");
+                        }
+                    }
+                }
+                Err(Error::Postgres(error)) => {
+                    let expected = expectation["postgresError"]
+                        .as_object()
+                        .unwrap_or_else(|| panic!("{name}: unexpected PostgreSQL error {error:?}"));
+                    assert_eq!(
+                        error.severity.as_deref(),
+                        expected["severity"].as_str(),
+                        "{name}"
+                    );
+                    assert_eq!(
+                        error.sqlstate.as_deref(),
+                        expected["sqlstate"].as_str(),
+                        "{name}"
+                    );
+                    assert_eq!(
+                        error.message,
+                        expected["message"].as_str().unwrap(),
+                        "{name}"
+                    );
+                }
+                Err(Error::Engine(message)) => {
+                    let expected = expectation["engineErrorContains"]
+                        .as_str()
+                        .unwrap_or_else(|| panic!("{name}: unexpected engine error {message}"));
+                    assert!(
+                        message.contains(expected),
+                        "{name}: {message:?} omitted {expected:?}"
+                    );
+                }
+                Err(error) => panic!("{name}: unexpected query parser error {error:?}"),
+            }
+        }
+    }
+
+    fn decode_hex(value: &str) -> Vec<u8> {
+        assert_eq!(value.len() % 2, 0, "hex fixture has even length");
+        value
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| {
+                let pair = std::str::from_utf8(pair).expect("hex pair is ASCII");
+                u8::from_str_radix(pair, 16).expect("hex pair is valid")
+            })
+            .collect()
+    }
+
+    #[test]
     fn parses_simple_query_result() {
         let mut bytes = Vec::new();
         push_row_description(&mut bytes, &[("value", 23), ("empty", 25)]);
@@ -660,7 +815,7 @@ mod tests {
         let result = parse_query_response_bytes(&bytes).unwrap();
         assert_eq!(result.fields()[0].name, "value");
         assert_eq!(result.fields()[0].type_oid, 23);
-        assert_eq!(result.row_count(), 1);
+        assert_eq!(result.row_count(), Some(1));
         assert_eq!(result.command_tag(), Some("SELECT 1"));
         assert_eq!(result.get_text(0, "value").unwrap(), Some("1"));
         assert_eq!(result.get_text(0, "empty").unwrap(), None);
@@ -682,7 +837,7 @@ mod tests {
     }
 
     #[test]
-    fn validates_execute_responses_without_restricting_result_shape() {
+    fn execute_rejects_rows_and_directs_callers_to_query() {
         let mut bytes = Vec::new();
         push_row_description(&mut bytes, &[("one", 23)]);
         push_data_row(&mut bytes, &[Some("1")]);
@@ -692,7 +847,10 @@ mod tests {
         push_command_complete(&mut bytes, "SELECT 1");
         push_ready_for_query(&mut bytes);
 
-        ensure_successful_query_response(&ProtocolResponse::new(bytes)).unwrap();
+        assert!(matches!(
+            parse_command_response(&ProtocolResponse::new(bytes)),
+            Err(Error::Engine(message)) if message.contains("execute() received rows; use query()")
+        ));
     }
 
     #[test]
@@ -701,7 +859,7 @@ mod tests {
         push_error_response(&mut bytes, "ERROR", "23505", "duplicate key value");
         push_ready_for_query(&mut bytes);
 
-        let error = ensure_successful_query_response(&ProtocolResponse::new(bytes)).unwrap_err();
+        let error = parse_command_response(&ProtocolResponse::new(bytes)).unwrap_err();
         let Error::Postgres(postgres) = error else {
             panic!("expected structured PostgreSQL error, got {error:?}");
         };
@@ -854,6 +1012,55 @@ mod tests {
         assert!(matches!(
             parse_query_response_bytes(&bytes),
             Err(Error::Engine(message)) if message.contains("unexpected backend message tag 0x52")
+        ));
+    }
+
+    #[test]
+    fn backend_parser_is_panic_free_for_deterministic_malformed_input() {
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+
+        let mut state = 0x6f6c_6970_6861_756e_u64;
+        for case in 0..1_000 {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            let len = (state as usize) % 384;
+            let mut bytes = Vec::with_capacity(len);
+            for _ in 0..len {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1);
+                bytes.push((state >> 56) as u8);
+            }
+            if bytes.len() >= 5 && case % 4 == 0 {
+                bytes[0] = [b'T', b'D', b'C', b'E', b'Z', b'S', b'N', b'A'][case % 8];
+                let declared = ((state as usize % 256) as i32) - 32;
+                bytes[1..5].copy_from_slice(&declared.to_be_bytes());
+            }
+
+            assert!(
+                catch_unwind(AssertUnwindSafe(|| parse_query_response_bytes(&bytes))).is_ok(),
+                "backend parser panicked for deterministic case {case}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_copy_and_bytes_after_ready_for_query() {
+        let mut copy = Vec::new();
+        push_backend_message(&mut copy, b'G', &[0, 0, 0]);
+        assert!(matches!(
+            parse_query_response_bytes(&copy),
+            Err(Error::Engine(message)) if message.contains("does not support COPY")
+        ));
+
+        let mut trailing = Vec::new();
+        push_command_complete(&mut trailing, "SELECT 0");
+        push_ready_for_query(&mut trailing);
+        trailing.push(0);
+        assert!(matches!(
+            parse_query_response_bytes(&trailing),
+            Err(Error::Engine(message)) if message.contains("bytes after ReadyForQuery")
         ));
     }
 

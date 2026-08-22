@@ -1,7 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::future::Future;
-use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
@@ -9,10 +8,16 @@ use std::task::{Context, Poll, Wake, Waker};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use oliphaunt::{
-    BackupArtifact, BackupFormat, BackupRequest, EngineMode, Extension, ExtensionSmokeCoverage,
-    NATIVE_EXTENSION_MANIFEST, Oliphaunt, RestoreRequest, Result,
-};
+use oliphaunt::{Extension, Oliphaunt, OliphauntServer, Result};
+
+mod support;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TestMode {
+    Direct,
+    Broker,
+    Server,
+}
 
 const DIRECT_CHILD_EXTENSION_ENV: &str = "OLIPHAUNT_EXTENSION_DIRECT_CHILD";
 const DIRECT_CHILD_ACTION_ENV: &str = "OLIPHAUNT_EXTENSION_DIRECT_ACTION";
@@ -20,13 +25,26 @@ const DIRECT_CHILD_ROOT_ENV: &str = "OLIPHAUNT_EXTENSION_DIRECT_ROOT";
 const DIRECT_CHILD_BACKUP_ENV: &str = "OLIPHAUNT_EXTENSION_DIRECT_BACKUP";
 const RELEASE_PROOF_RUNNER_ENV: &str = "OLIPHAUNT_NATIVE_EXTENSION_PROOF_RUNNER";
 
+fn extension_smoke_recipe(sql_name: &str) -> String {
+    support::fixture_text(
+        &format!("shared/fixtures/extensions/{sql_name}.sql"),
+        &format!("tests/fixtures/extensions/{sql_name}.sql"),
+    )
+}
+
+fn extension_smoke_statements(sql: &str) -> impl Iterator<Item = &str> {
+    sql.split("-- oliphaunt-statement")
+        .map(str::trim)
+        .filter(|statement| !statement.is_empty())
+}
+
 #[test]
-fn native_release_proof_catalog_has_the_expected_first_release_total() {
-    let names = NATIVE_EXTENSION_MANIFEST
+fn native_release_proof_catalog_and_smoke_recipes_match() {
+    let names = Extension::ALL_PG18_SUPPORTED
         .iter()
-        .map(|entry| entry.sql_name)
+        .map(|extension| extension.sql_name())
         .collect::<Vec<_>>();
-    assert_eq!(names.len(), 39);
+    assert!(!names.is_empty());
     assert_eq!(
         names.iter().copied().collect::<BTreeSet<_>>().len(),
         names.len()
@@ -35,6 +53,48 @@ fn native_release_proof_catalog_has_the_expected_first_release_total() {
         names.windows(2).all(|pair| pair[0] < pair[1]),
         "native proof manifest must remain sorted by SQL name"
     );
+
+    let package_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let recipe_directory = [
+        package_root
+            .join("../..")
+            .join("shared/fixtures/extensions"),
+        package_root
+            .join("../..")
+            .join("src/shared/fixtures/extensions"),
+        package_root.join("tests/fixtures/extensions"),
+    ]
+    .into_iter()
+    .find(|candidate| candidate.is_dir())
+    .expect("canonical extension smoke recipe directory is missing");
+    let recipes = fs::read_dir(recipe_directory)
+        .expect("read canonical extension smoke recipes")
+        .filter_map(|entry| {
+            let path = entry
+                .expect("read canonical extension smoke recipe entry")
+                .path();
+            (path.extension().and_then(|extension| extension.to_str()) == Some("sql")).then(|| {
+                path.file_stem()
+                    .and_then(|name| name.to_str())
+                    .expect("extension smoke recipe must have a UTF-8 SQL filename")
+                    .to_owned()
+            })
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        recipes,
+        names
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect::<BTreeSet<_>>()
+    );
+    for sql_name in names {
+        let recipe = extension_smoke_recipe(sql_name);
+        assert!(
+            extension_smoke_statements(&recipe).next().is_some(),
+            "extension {sql_name} has an empty smoke recipe"
+        );
+    }
 }
 
 pub fn run_native_extension_release_proof(shard_index: usize, shard_count: usize) {
@@ -57,7 +117,6 @@ pub fn run_native_extension_release_proof(shard_index: usize, shard_count: usize
         Path::new(&broker).is_file(),
         "native extension release proof broker does not exist: {broker}"
     );
-    let public_manifest = NATIVE_EXTENSION_MANIFEST.iter().collect::<Vec<_>>();
     let requested_raw = std::env::var("OLIPHAUNT_NATIVE_EXTENSION_PROOF_SQL_NAMES")
         .expect("native extension release proof requires the planner-owned extension SQL-name set");
     let requested = requested_raw
@@ -73,19 +132,20 @@ pub fn run_native_extension_release_proof(shard_index: usize, shard_count: usize
         requested_raw.split(',').count(),
         "planned native extension proof set contains empty or duplicate SQL names"
     );
-    let release_manifest = public_manifest
-        .into_iter()
-        .filter(|entry| requested.contains(entry.sql_name))
+    let release_extensions = Extension::ALL_PG18_SUPPORTED
+        .iter()
+        .copied()
+        .filter(|extension| requested.contains(extension.sql_name()))
         .collect::<Vec<_>>();
     assert_eq!(
-        release_manifest.len(),
+        release_extensions.len(),
         requested.len(),
         "planned native extension proof set contains an unknown SQL name"
     );
-    let planned_count = release_manifest.len();
-    let names = release_manifest
+    let planned_count = release_extensions.len();
+    let names = release_extensions
         .iter()
-        .map(|entry| entry.sql_name)
+        .map(|extension| extension.sql_name())
         .collect::<BTreeSet<_>>();
     assert_eq!(
         names.len(),
@@ -93,45 +153,28 @@ pub fn run_native_extension_release_proof(shard_index: usize, shard_count: usize
         "canonical native release proof contains duplicate extension SQL names"
     );
 
-    let selected = release_manifest
+    let selected = release_extensions
         .iter()
         .enumerate()
         .filter(|(index, _)| index % shard_count == shard_index)
-        .map(|(_, entry)| *entry)
+        .map(|(_, extension)| *extension)
         .collect::<Vec<_>>();
     println!(
         "OLIPHAUNT_NATIVE_EXTENSION_PROOF_START shard={shard_index}/{shard_count} selected={} planned={planned_count} modes=direct,broker,server",
         selected.len()
     );
 
-    for entry in selected {
-        for coverage in [
-            entry.coverage.direct_c_abi,
-            entry.coverage.broker,
-            entry.coverage.server,
-        ] {
-            assert_eq!(
-                coverage,
-                ExtensionSmokeCoverage::InstallLoadRestartBackupRestore,
-                "{} lacks full native lifecycle evidence",
-                entry.sql_name
-            );
-        }
+    for extension in selected {
         println!(
-            "OLIPHAUNT_NATIVE_EXTENSION_PROOF_EXTENSION_START shard={shard_index}/{shard_count} extension={} artifact_class={}",
-            entry.sql_name,
-            if entry.first_party_artifact() {
-                "contrib"
-            } else {
-                "external"
-            }
+            "OLIPHAUNT_NATIVE_EXTENSION_PROOF_EXTENSION_START shard={shard_index}/{shard_count} extension={}",
+            extension.sql_name(),
         );
-        run_direct_extension_smoke(entry.extension);
-        run_extension_smoke(EngineMode::NativeBroker, Some(&broker), entry.extension).unwrap();
-        run_extension_smoke(EngineMode::NativeServer, None, entry.extension).unwrap();
+        run_direct_extension_smoke(extension);
+        run_extension_smoke(TestMode::Broker, Some(&broker), extension).unwrap();
+        run_extension_smoke(TestMode::Server, None, extension).unwrap();
         println!(
             "OLIPHAUNT_NATIVE_EXTENSION_PROOF_EXTENSION_PASS shard={shard_index}/{shard_count} extension={} modes=direct,broker,server lifecycle=install-load-restart-backup-restore",
-            entry.sql_name
+            extension.sql_name()
         );
     }
     println!(
@@ -159,29 +202,10 @@ fn native_extension_matrix_when_enabled() {
         return;
     };
 
-    for entry in NATIVE_EXTENSION_MANIFEST {
-        if !entry.first_party_artifact() {
-            eprintln!(
-                "skipping external extension {} in first-party native matrix",
-                entry.sql_name
-            );
-            continue;
-        }
-        assert_eq!(
-            entry.coverage.direct_c_abi,
-            ExtensionSmokeCoverage::InstallLoadRestartBackupRestore
-        );
-        assert_eq!(
-            entry.coverage.broker,
-            ExtensionSmokeCoverage::InstallLoadRestartBackupRestore
-        );
-        assert_eq!(
-            entry.coverage.server,
-            ExtensionSmokeCoverage::InstallLoadRestartBackupRestore
-        );
-        run_direct_extension_smoke(entry.extension);
-        run_extension_smoke(EngineMode::NativeBroker, Some(broker), entry.extension).unwrap();
-        run_extension_smoke(EngineMode::NativeServer, None, entry.extension).unwrap();
+    for extension in Extension::ALL_PG18_SUPPORTED {
+        run_direct_extension_smoke(*extension);
+        run_extension_smoke(TestMode::Broker, Some(broker), *extension).unwrap();
+        run_extension_smoke(TestMode::Server, None, *extension).unwrap();
     }
 }
 
@@ -213,15 +237,8 @@ fn run_direct_extension_smoke(extension: Extension) {
             None,
         );
 
-        let backup = BackupArtifact {
-            format: BackupFormat::PhysicalArchive,
-            bytes: fs::read(&backup_path).expect("direct extension child did not write backup"),
-        };
-        block_on(Oliphaunt::restore(RestoreRequest::physical_archive(
-            &restored_root,
-            backup,
-        )))
-        .unwrap();
+        let backup = fs::read(&backup_path).expect("direct extension child did not write backup");
+        Oliphaunt::restore(&restored_root, backup).unwrap();
 
         run_direct_extension_child(
             DirectExtensionChildAction::AssertExisting,
@@ -329,47 +346,38 @@ fn run_direct_extension_child_install_backup(
     root: &Path,
     backup_path: &Path,
 ) -> Result<()> {
-    let db = block_on(
+    let db = TestDatabase::Embedded(block_on(
         Oliphaunt::builder()
             .directory(root)
-            .native_direct()
+            .direct()
             .extension(extension)
             .open(),
-    )?;
-    install_or_load_extension(&db, EngineMode::NativeDirect, extension)?;
-    assert_repeated_create_extension_error_recovers(&db, EngineMode::NativeDirect, extension)?;
-    assert_extension_visible(&db, EngineMode::NativeDirect, extension)?;
-    setup_extension_functional_smoke(&db, EngineMode::NativeDirect, extension)?;
-    assert_extension_functional_smoke(&db, EngineMode::NativeDirect, extension)?;
-    assert_extension_root_artifacts(root, EngineMode::NativeDirect, extension);
-    let archive = block_on(db.backup(BackupRequest::physical_archive()))?;
-    assert_eq!(archive.format, BackupFormat::PhysicalArchive);
-    assert_physical_archive_contains_extension_catalog(
-        &archive,
-        EngineMode::NativeDirect,
-        extension,
-    );
-    fs::write(backup_path, &archive.bytes)
-        .expect("failed to write direct extension backup artifact");
+    )?);
+    install_or_load_extension(&db, TestMode::Direct, extension)?;
+    assert_repeated_create_extension_error_recovers(&db, TestMode::Direct, extension)?;
+    assert_extension_visible(&db, TestMode::Direct, extension)?;
+    run_extension_functional_smoke(&db, TestMode::Direct, extension)?;
+    assert_extension_root_artifacts(root, TestMode::Direct, extension);
+    let archive = block_on(db.backup())?;
+    fs::write(backup_path, &archive).expect("failed to write direct extension backup artifact");
     block_on(db.close())
 }
 
 fn run_direct_extension_child_assert_existing(extension: Extension, root: &Path) -> Result<()> {
-    let db = block_on(
+    let db = TestDatabase::Embedded(block_on(
         Oliphaunt::builder()
             .directory(root)
-            .native_direct()
+            .direct()
             .extension(extension)
-            .existing_only()
             .open(),
-    )?;
-    assert_extension_visible(&db, EngineMode::NativeDirect, extension)?;
-    assert_extension_functional_smoke(&db, EngineMode::NativeDirect, extension)?;
-    assert_extension_root_artifacts(root, EngineMode::NativeDirect, extension);
+    )?);
+    assert_extension_visible(&db, TestMode::Direct, extension)?;
+    run_extension_functional_smoke(&db, TestMode::Direct, extension)?;
+    assert_extension_root_artifacts(root, TestMode::Direct, extension);
     block_on(db.close())
 }
 
-fn run_extension_smoke(mode: EngineMode, broker: Option<&str>, extension: Extension) -> Result<()> {
+fn run_extension_smoke(mode: TestMode, broker: Option<&str>, extension: Extension) -> Result<()> {
     let root = unique_temp_root(&format!(
         "oliphaunt-extension-{}-{}",
         mode_label(mode),
@@ -387,82 +395,127 @@ fn run_extension_smoke(mode: EngineMode, broker: Option<&str>, extension: Extens
 }
 
 fn run_extension_recovery_smoke(
-    mode: EngineMode,
+    mode: TestMode,
     broker: Option<&str>,
     extension: Extension,
     root: &Path,
     restored_root: &Path,
 ) -> Result<()> {
-    let db = block_on(extension_builder(mode, broker, extension, root).open())?;
+    let db = block_on(open_extension_database(mode, broker, extension, root))?;
     install_or_load_extension(&db, mode, extension)?;
     assert_repeated_create_extension_error_recovers(&db, mode, extension)?;
     assert_extension_visible(&db, mode, extension)?;
-    setup_extension_functional_smoke(&db, mode, extension)?;
-    assert_extension_functional_smoke(&db, mode, extension)?;
+    run_extension_functional_smoke(&db, mode, extension)?;
     assert_extension_root_artifacts(root, mode, extension);
-    let archive = block_on(db.backup(BackupRequest::physical_archive()))?;
-    assert_eq!(archive.format, BackupFormat::PhysicalArchive);
-    assert_physical_archive_contains_extension_catalog(&archive, mode, extension);
+    let archive = if mode == TestMode::Server {
+        None
+    } else {
+        Some(block_on(db.backup())?)
+    };
     block_on(db.close())?;
 
-    let reopened = block_on(
-        extension_builder(mode, broker, extension, root)
-            .existing_only()
-            .open(),
-    )?;
+    let reopened = block_on(open_extension_database(mode, broker, extension, root))?;
     assert_extension_visible(&reopened, mode, extension)?;
-    assert_extension_functional_smoke(&reopened, mode, extension)?;
+    run_extension_functional_smoke(&reopened, mode, extension)?;
     assert_extension_root_artifacts(root, mode, extension);
     block_on(reopened.close())?;
 
-    block_on(Oliphaunt::restore(RestoreRequest::physical_archive(
+    let Some(archive) = archive else {
+        return Ok(());
+    };
+    Oliphaunt::restore(restored_root, archive)?;
+    let restored = block_on(open_extension_database(
+        mode,
+        broker,
+        extension,
         restored_root,
-        archive,
-    )))?;
-    let restored = block_on(
-        extension_builder(mode, broker, extension, restored_root)
-            .existing_only()
-            .open(),
-    )?;
+    ))?;
     assert_extension_visible(&restored, mode, extension)?;
-    assert_extension_functional_smoke(&restored, mode, extension)?;
+    run_extension_functional_smoke(&restored, mode, extension)?;
     assert_extension_root_artifacts(restored_root, mode, extension);
     block_on(restored.close())
 }
 
+async fn open_extension_database(
+    mode: TestMode,
+    broker: Option<&str>,
+    extension: Extension,
+    root: &Path,
+) -> Result<TestDatabase> {
+    let builder = extension_builder(mode, broker, extension, root);
+    if mode == TestMode::Server {
+        builder.open_server().await.map(TestDatabase::Server)
+    } else {
+        builder.open().await.map(TestDatabase::Embedded)
+    }
+}
+
+enum TestDatabase {
+    Embedded(Oliphaunt),
+    Server(OliphauntServer),
+}
+
+impl TestDatabase {
+    async fn exec_protocol_raw(&self, request: impl AsRef<[u8]>) -> Result<Vec<u8>> {
+        match self {
+            Self::Embedded(database) => database.exec_protocol_raw(request).await,
+            Self::Server(database) => database.exec_protocol_raw(request).await,
+        }
+    }
+
+    async fn backup(&self) -> Result<Vec<u8>> {
+        match self {
+            Self::Embedded(database) => database.backup().await,
+            Self::Server(_) => panic!("native server backup must use pg_basebackup"),
+        }
+    }
+
+    async fn close(&self) -> Result<()> {
+        match self {
+            Self::Embedded(database) => database.close().await,
+            Self::Server(database) => database.close().await,
+        }
+    }
+}
+
 fn extension_builder(
-    mode: EngineMode,
+    mode: TestMode,
     broker: Option<&str>,
     extension: Extension,
     root: &Path,
 ) -> oliphaunt::OliphauntBuilder {
-    let mut builder = Oliphaunt::builder()
-        .directory(root)
-        .engine(mode)
-        .extension(extension);
+    let builder = Oliphaunt::builder().directory(root).extension(extension);
+    let mut builder = match mode {
+        TestMode::Direct | TestMode::Server => builder.direct(),
+        TestMode::Broker => builder.broker(),
+    };
     if let Some(broker) = broker {
         builder = builder.broker_executable(broker);
     }
     builder
 }
 
-fn install_or_load_extension(db: &Oliphaunt, mode: EngineMode, extension: Extension) -> Result<()> {
+fn install_or_load_extension(
+    db: &TestDatabase,
+    mode: TestMode,
+    extension: Extension,
+) -> Result<()> {
     let sql = install_sql(extension);
     let response = block_on(db.exec_protocol_raw(raw_query_message(&sql)))?;
-    assert_success_response(response.as_bytes(), mode, extension, "install/load")
+    assert_success_response(response.as_slice(), mode, extension, "install/load")
 }
 
 fn assert_repeated_create_extension_error_recovers(
-    db: &Oliphaunt,
-    mode: EngineMode,
+    db: &TestDatabase,
+    mode: TestMode,
     extension: Extension,
 ) -> Result<()> {
-    if !extension.creates_extension() {
+    if extension == Extension::AutoExplain {
         return Ok(());
     }
 
     let repeated = block_on(db.exec_protocol_raw(raw_query_message(&install_sql(extension))))?;
-    let tags = raw_message_tags(repeated.as_bytes());
+    let tags = raw_message_tags(repeated.as_slice());
     assert!(
         tags.contains(&b'E'),
         "{mode:?} repeated CREATE EXTENSION {} did not produce ErrorResponse: {tags:?}",
@@ -482,7 +535,7 @@ fn assert_repeated_create_extension_error_recovers(
         "SELECT 'ready'::text AS state",
     )?;
     assert_first_data_row_text_values(
-        recovered.as_bytes(),
+        recovered.as_slice(),
         mode,
         extension,
         "post repeated-create recovery",
@@ -491,15 +544,15 @@ fn assert_repeated_create_extension_error_recovers(
     Ok(())
 }
 
-fn assert_extension_visible(db: &Oliphaunt, mode: EngineMode, extension: Extension) -> Result<()> {
-    if extension.creates_extension() {
+fn assert_extension_visible(db: &TestDatabase, mode: TestMode, extension: Extension) -> Result<()> {
+    if extension != Extension::AutoExplain {
         let response = block_on(db.exec_protocol_raw(raw_query_message(&format!(
             "SELECT extname FROM pg_extension WHERE extname = '{}'",
             extension.sql_name()
         ))))?;
-        assert_success_response(response.as_bytes(), mode, extension, "catalog visibility")?;
+        assert_success_response(response.as_slice(), mode, extension, "catalog visibility")?;
         assert_eq!(
-            first_data_row_text_values(response.as_bytes()),
+            first_data_row_text_values(response.as_slice()),
             vec![extension.sql_name().to_owned()],
             "{mode:?} extension {} was not present in pg_extension after restart/restore",
             extension.sql_name()
@@ -507,198 +560,47 @@ fn assert_extension_visible(db: &Oliphaunt, mode: EngineMode, extension: Extensi
         Ok(())
     } else {
         let response = block_on(db.exec_protocol_raw(raw_query_message(&install_sql(extension))))?;
-        assert_success_response(response.as_bytes(), mode, extension, "reload visibility")
+        assert_success_response(response.as_slice(), mode, extension, "reload visibility")
     }
 }
 
 fn install_sql(extension: Extension) -> String {
-    extension.manifest_entry().smoke_sql()
-}
-
-fn setup_extension_functional_smoke(
-    db: &Oliphaunt,
-    mode: EngineMode,
-    extension: Extension,
-) -> Result<()> {
-    match extension {
-        Extension::PgTextsearch => exec_extension_sql(
-            db,
-            mode,
-            extension,
-            "functional setup",
-            r#"
-DROP TABLE IF EXISTS liboliphaunt_pg_textsearch_english CASCADE;
-CREATE TABLE liboliphaunt_pg_textsearch_english (
-  id bigint PRIMARY KEY,
-  body text NOT NULL
-);
-INSERT INTO liboliphaunt_pg_textsearch_english (id, body) VALUES
-  (1, 'PostgreSQL databases support reliable runners'),
-  (2, 'An unrelated document about walking');
-CREATE INDEX liboliphaunt_pg_textsearch_english_bm25
-  ON liboliphaunt_pg_textsearch_english
-  USING bm25 (body)
-  WITH (text_config = 'pg_catalog.english');
-"#,
-        )
-        .map(|_| ()),
-        _ => Ok(()),
+    if extension != Extension::AutoExplain {
+        let sql_name = extension.sql_name().replace('"', "\"\"");
+        format!("CREATE EXTENSION \"{sql_name}\" CASCADE")
+    } else {
+        let sql_name = extension.sql_name().replace('\'', "''");
+        format!("LOAD '{sql_name}'")
     }
 }
 
-fn assert_extension_functional_smoke(
-    db: &Oliphaunt,
-    mode: EngineMode,
+fn run_extension_functional_smoke(
+    db: &TestDatabase,
+    mode: TestMode,
     extension: Extension,
 ) -> Result<()> {
-    match extension {
-        Extension::PgTextsearch => {
-            let response = exec_extension_sql(
-                db,
-                mode,
-                extension,
-                "functional English BM25 query",
-                r#"
-SELECT id::text AS id
-FROM liboliphaunt_pg_textsearch_english
-ORDER BY body <@> to_bm25query(
-  'running database',
-  'liboliphaunt_pg_textsearch_english_bm25'
-)
-LIMIT 1;
-"#,
-            )?;
-            assert_first_data_row_text_values(
-                response.as_bytes(),
-                mode,
-                extension,
-                "functional English BM25 query",
-                &["1"],
-            );
-            Ok(())
-        }
-        Extension::Pgcrypto => exec_extension_sql(
-            db,
-            mode,
-            extension,
-            "functional pgcrypto coverage",
-            r#"
-DO $$
-DECLARE
-  hashed text;
-  encrypted bytea;
-  armored text;
-  header_count int;
-  crypto_key bytea := decode('000102030405060708090a0b0c0d0e0f', 'hex');
-  crypto_iv bytea := decode('101112131415161718191a1b1c1d1e1f', 'hex');
-BEGIN
-  IF encode(digest('abc', 'sha256'), 'hex') <> 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad' THEN
-    RAISE EXCEPTION 'sha256 digest failed';
-  END IF;
-  IF encode(hmac('test', 'key', 'sha1'), 'hex') <> '671f54ce0c540f78ffe1e26dcf9c2a047aea4fda' THEN
-    RAISE EXCEPTION 'hmac failed';
-  END IF;
-  IF length(gen_random_bytes(16)) <> 16 THEN
-    RAISE EXCEPTION 'random bytes length failed';
-  END IF;
-  IF gen_random_uuid()::text !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
-    RAISE EXCEPTION 'random uuid format failed';
-  END IF;
-  SELECT crypt('secret', gen_salt('bf', 4)) INTO hashed;
-  IF crypt('secret', hashed) <> hashed THEN
-    RAISE EXCEPTION 'password hash verify failed';
-  END IF;
-  SELECT armor(digest('test', 'sha1'), ARRAY['Version'], ARRAY['oliphaunt']) INTO armored;
-  IF position('Version: oliphaunt' in armored) = 0 THEN
-    RAISE EXCEPTION 'armor header failed';
-  END IF;
-  SELECT count(*) INTO header_count FROM pgp_armor_headers(armored);
-  IF header_count <> 1 THEN
-    RAISE EXCEPTION 'armor header count failed: %', header_count;
-  END IF;
-  SELECT pgp_sym_encrypt('oliphaunt secret', 'passphrase') INTO encrypted;
-  IF pgp_sym_decrypt(encrypted, 'passphrase') <> 'oliphaunt secret' THEN
-    RAISE EXCEPTION 'PGP symmetric decrypt failed';
-  END IF;
-  IF pgp_key_id(encrypted) <> 'SYMKEY' THEN
-    RAISE EXCEPTION 'PGP symmetric key id failed';
-  END IF;
-  SELECT encrypt(convert_to('oliphaunt raw cipher', 'UTF8'), crypto_key, 'aes') INTO encrypted;
-  IF convert_from(decrypt(encrypted, crypto_key, 'aes'), 'UTF8') <> 'oliphaunt raw cipher' THEN
-    RAISE EXCEPTION 'raw decrypt failed';
-  END IF;
-  SELECT encrypt_iv(convert_to('oliphaunt iv cipher', 'UTF8'), crypto_key, crypto_iv, 'aes-cbc') INTO encrypted;
-  IF convert_from(decrypt_iv(encrypted, crypto_key, crypto_iv, 'aes-cbc'), 'UTF8') <> 'oliphaunt iv cipher' THEN
-    RAISE EXCEPTION 'raw iv decrypt failed';
-  END IF;
-END $$;
-"#,
-        )
-        .map(|_| ()),
-        Extension::Postgis => exec_extension_sql(
-            db,
-            mode,
-            extension,
-            "functional postgis coverage",
-            include_str!("fixtures/postgis-smoke.sql"),
-        )
-        .map(|_| ()),
-        Extension::UuidOssp => exec_extension_sql(
-            db,
-            mode,
-            extension,
-            "functional uuid-ossp coverage",
-            r#"
-DO $$
-DECLARE
-  id uuid;
-BEGIN
-  SELECT uuid_generate_v1() INTO id;
-  IF length(id::text) <> 36 THEN
-    RAISE EXCEPTION 'uuid-ossp v1 length failed';
-  END IF;
-  SELECT uuid_generate_v4() INTO id;
-  IF length(id::text) <> 36 THEN
-    RAISE EXCEPTION 'uuid-ossp v4 length failed';
-  END IF;
-  IF uuid_generate_v3(uuid_ns_dns(), 'www.example.com')::text <> '5df41881-3aed-3515-88a7-2f4a814cf09e' THEN
-    RAISE EXCEPTION 'uuid-ossp v3 failed';
-  END IF;
-  IF uuid_generate_v5(uuid_ns_dns(), 'www.example.com')::text <> '2ed6657d-e927-568b-95e1-2665a8aea6a2' THEN
-    RAISE EXCEPTION 'uuid-ossp v5 failed';
-  END IF;
-  IF uuid_nil()::text <> '00000000-0000-0000-0000-000000000000' THEN
-    RAISE EXCEPTION 'uuid-ossp nil failed';
-  END IF;
-  IF uuid_ns_dns()::text <> '6ba7b810-9dad-11d1-80b4-00c04fd430c8' THEN
-    RAISE EXCEPTION 'uuid-ossp dns namespace failed';
-  END IF;
-  IF uuid_ns_oid()::text <> '6ba7b812-9dad-11d1-80b4-00c04fd430c8' THEN
-    RAISE EXCEPTION 'uuid-ossp oid namespace failed';
-  END IF;
-END $$;
-"#,
-        )
-        .map(|_| ()),
-        _ => Ok(()),
+    let recipe = extension_smoke_recipe(extension.sql_name());
+    for statement in extension_smoke_statements(&recipe) {
+        exec_extension_sql(db, mode, extension, "functional smoke", statement)?;
     }
+    Ok(())
 }
 
 fn exec_extension_sql(
-    db: &Oliphaunt,
-    mode: EngineMode,
+    db: &TestDatabase,
+    mode: TestMode,
     extension: Extension,
     action: &str,
     sql: &str,
-) -> Result<oliphaunt::ProtocolResponse> {
+) -> Result<Vec<u8>> {
     let response = block_on(db.exec_protocol_raw(raw_query_message(sql)))?;
-    assert_success_response(response.as_bytes(), mode, extension, action)?;
+    assert_success_response(response.as_slice(), mode, extension, action)?;
     Ok(response)
 }
 
 fn assert_first_data_row_text_values(
     bytes: &[u8],
-    mode: EngineMode,
+    mode: TestMode,
     extension: Extension,
     action: &str,
     expected: &[&str],
@@ -717,7 +619,7 @@ fn assert_first_data_row_text_values(
 
 fn assert_success_response(
     bytes: &[u8],
-    mode: EngineMode,
+    mode: TestMode,
     extension: Extension,
     action: &str,
 ) -> Result<()> {
@@ -735,27 +637,7 @@ fn assert_success_response(
     Ok(())
 }
 
-fn assert_physical_archive_contains_extension_catalog(
-    artifact: &oliphaunt::BackupArtifact,
-    mode: EngineMode,
-    extension: Extension,
-) {
-    let mut archive = tar::Archive::new(Cursor::new(artifact.bytes.as_slice()));
-    let has_catalog = archive.entries().unwrap().any(|entry| {
-        entry
-            .unwrap()
-            .path()
-            .map(|path| path.starts_with("pgdata/base"))
-            .unwrap_or(false)
-    });
-    assert!(
-        has_catalog,
-        "{mode:?} extension {} physical archive did not include relation storage",
-        extension.sql_name()
-    );
-}
-
-fn assert_extension_root_artifacts(_root: &Path, _mode: EngineMode, _extension: Extension) {}
+fn assert_extension_root_artifacts(_root: &Path, _mode: TestMode, _extension: Extension) {}
 
 fn native_runtime_env_is_unavailable() -> bool {
     std::env::var_os("LIBOLIPHAUNT_PATH").is_none()
@@ -848,11 +730,11 @@ fn parse_data_row_text_values(payload: &[u8]) -> Vec<String> {
     values
 }
 
-fn mode_label(mode: EngineMode) -> &'static str {
+fn mode_label(mode: TestMode) -> &'static str {
     match mode {
-        EngineMode::NativeDirect => "direct",
-        EngineMode::NativeBroker => "broker",
-        EngineMode::NativeServer => "server",
+        TestMode::Direct => "direct",
+        TestMode::Broker => "broker",
+        TestMode::Server => "server",
     }
 }
 

@@ -1,5 +1,13 @@
 #!/usr/bin/env bun
-import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  cpSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import {
   allArtifactTargets,
@@ -27,6 +35,21 @@ const RUST_PRODUCT = "oliphaunt-rust";
 const DEFAULT_STAGE_DIR = path.join(ROOT, "target/release/cargo-package-sources/oliphaunt");
 const DEFAULT_BUILD_STAGE_DIR = path.join(ROOT, "target/release/cargo-package-sources/oliphaunt-build");
 const SOURCE_NOTICE_OPTIONS = Object.freeze({ profile: "source-sdk" });
+const EXTENSION_SMOKE_TESTDATA = readdirSync(path.join(ROOT, "src/shared/fixtures/extensions"), {
+  withFileTypes: true,
+})
+  .filter((entry) => entry.isFile() && entry.name.endsWith(".sql"))
+  .map((entry) => [
+    `tests/fixtures/extensions/${entry.name}`,
+    `src/shared/fixtures/extensions/${entry.name}`,
+  ])
+  .sort((left, right) => left[0].localeCompare(right[0]));
+const RUST_SDK_TESTDATA = Object.freeze([
+  ["testdata/query-response-cases.json", "src/shared/fixtures/protocol/query-response-cases.json"],
+  ["testdata/database-root.json", "src/shared/fixtures/storage/database-root.json"],
+  ["testdata/behavior-contract.json", "src/shared/fixtures/postgres/behavior-contract.json"],
+  ...EXTENSION_SMOKE_TESTDATA,
+]);
 
 function fail(message) {
   console.error(`${TOOL}: ${message}`);
@@ -181,6 +204,14 @@ function releaseStageDir(stageDir) {
   return resolved;
 }
 
+function stageRustSdkTestdata(outputDir) {
+  for (const [packageRelative, canonicalRelative] of RUST_SDK_TESTDATA) {
+    const destination = path.join(outputDir, packageRelative);
+    mkdirSync(path.dirname(destination), { recursive: true });
+    copyFileSync(path.join(ROOT, canonicalRelative), destination);
+  }
+}
+
 export function prepareRustReleaseSource({ stageDir = DEFAULT_STAGE_DIR, log = true } = {}) {
   const version = currentProductVersionSync(RUST_PRODUCT, TOOL);
   const nativeVersion = currentProductVersionSync(LIBOLIPHAUNT_NATIVE_PRODUCT, TOOL);
@@ -193,6 +224,7 @@ export function prepareRustReleaseSource({ stageDir = DEFAULT_STAGE_DIR, log = t
     recursive: true,
     filter: (source) => path.basename(source) !== "target",
   });
+  stageRustSdkTestdata(outputDir);
   rmSync(path.join(outputDir, "crates/oliphaunt-build"), { recursive: true, force: true });
 
   const cargoToml = path.join(outputDir, "Cargo.toml");

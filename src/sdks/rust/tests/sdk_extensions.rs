@@ -1,307 +1,54 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::process::Command;
 
-use oliphaunt::{
-    Extension, ExtensionModuleAsset, ExtensionSmokeCoverage, ExtensionSmokePlan, ExtensionSqlAsset,
-    MobileStaticLinkStatus, NATIVE_EXTENSION_MANIFEST, Oliphaunt,
-    required_shared_preload_libraries, resolve_extension_selection,
-};
+use oliphaunt::Extension;
 
-fn generated_wasm_extension_catalog() -> serde_json::Value {
-    let catalog_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../extensions/generated/extensions.catalog.json");
-    let catalog_text = std::fs::read_to_string(&catalog_path)
-        .unwrap_or_else(|error| panic!("read {}: {error}", catalog_path.display()));
-    serde_json::from_str(&catalog_text)
-        .unwrap_or_else(|error| panic!("parse {}: {error}", catalog_path.display()))
-}
-
-fn generated_rust_sdk_extension_metadata() -> serde_json::Value {
-    let catalog_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+fn generated_extension_metadata() -> serde_json::Value {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../extensions/generated/sdk/extensions.json");
-    let catalog_text = std::fs::read_to_string(&catalog_path)
-        .unwrap_or_else(|error| panic!("read {}: {error}", catalog_path.display()));
-    serde_json::from_str(&catalog_text)
-        .unwrap_or_else(|error| panic!("parse {}: {error}", catalog_path.display()))
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+    serde_json::from_str(&text).unwrap_or_else(|error| panic!("parse {}: {error}", path.display()))
 }
 
 #[test]
-fn extension_metadata_distinguishes_sql_only_modules_and_dependencies() {
-    assert_eq!(Extension::Pgtap.native_module_file(), None);
-    assert_eq!(Extension::Pgtap.native_module_stem(), None);
-    assert_eq!(Extension::Hstore.native_module_stem(), Some("hstore"));
-    assert_eq!(
-        Extension::PgHashids.native_module_stem(),
-        Some("pg_hashids")
-    );
-    assert_eq!(Extension::Pgcrypto.native_module_stem(), Some("pgcrypto"));
-    assert_eq!(Extension::Postgis.native_module_stem(), Some("postgis-3"));
-    assert_eq!(Extension::UuidOssp.native_module_stem(), Some("uuid-ossp"));
-    let postgis_data_files = NATIVE_EXTENSION_MANIFEST
-        .iter()
-        .find(|entry| entry.extension == Extension::Postgis)
-        .expect("PostGIS must have a native extension manifest row")
-        .data_files;
-    assert!(postgis_data_files.contains(&"contrib/postgis-3.6/postgis.sql"));
-    assert!(postgis_data_files.contains(&"contrib/postgis-3.6/spatial_ref_sys.sql"));
-    assert!(postgis_data_files.contains(&"proj/proj.db"));
-    assert_eq!(Extension::Earthdistance.dependencies(), &[Extension::Cube]);
-    assert!(Extension::ALL_PG18_SUPPORTED.contains(&Extension::Pgtap));
-    assert_eq!(
-        Extension::PgTextsearch.required_shared_preload_library(),
-        Some("pg_textsearch")
-    );
-    assert_eq!(
-        required_shared_preload_libraries(&[Extension::PgTextsearch, Extension::PgTextsearch]),
-        vec!["pg_textsearch"]
-    );
-}
-
-#[test]
-fn native_extension_manifest_covers_every_supported_pg18_extension() {
-    let manifest_extensions = NATIVE_EXTENSION_MANIFEST
-        .iter()
-        .map(|entry| entry.extension)
-        .collect::<Vec<_>>();
-    assert_eq!(manifest_extensions, Extension::ALL_PG18_SUPPORTED);
-
-    for entry in NATIVE_EXTENSION_MANIFEST {
-        assert_eq!(entry.pg_major, 18);
-        assert!(entry.pg18_supported);
-        assert_eq!(entry.sql_name, entry.extension.sql_name());
-        assert_eq!(entry.creates_extension, entry.extension.creates_extension());
-        assert_eq!(entry.dependencies, entry.extension.dependencies());
-        assert_eq!(
-            entry.module_file_name(),
-            entry.extension.native_module_file()
-        );
-        assert_eq!(
-            Extension::by_sql_name(entry.sql_name),
-            Some(entry.extension)
-        );
-        assert_eq!(
-            entry.coverage.direct_c_abi,
-            ExtensionSmokeCoverage::InstallLoadRestartBackupRestore
-        );
-        assert_eq!(
-            entry.coverage.broker,
-            ExtensionSmokeCoverage::InstallLoadRestartBackupRestore
-        );
-        assert_eq!(
-            entry.coverage.server,
-            ExtensionSmokeCoverage::InstallLoadRestartBackupRestore
-        );
-        assert_eq!(
-            entry.first_party_artifact(),
-            entry.extension.first_party_artifact()
-        );
-        match entry.extension.native_module_stem() {
-            Some(stem) => {
-                assert_eq!(entry.module, ExtensionModuleAsset::NativeModule { stem });
-                assert_eq!(
-                    entry.mobile_static_link,
-                    MobileStaticLinkStatus::PendingRegistry
-                );
-            }
-            None => {
-                assert_eq!(entry.module, ExtensionModuleAsset::SqlOnly);
-                assert_eq!(
-                    entry.mobile_static_link,
-                    MobileStaticLinkStatus::NotRequiredSqlOnly
-                );
-            }
-        }
-        if entry.creates_extension {
-            assert_eq!(entry.sql_assets, ExtensionSqlAsset::ControlAndSql);
-            assert_eq!(entry.smoke, ExtensionSmokePlan::CreateExtensionCascade);
-            let sql_name = if entry.sql_name == "uuid-ossp" {
-                "\"uuid-ossp\""
-            } else {
-                entry.sql_name
-            };
-            assert_eq!(
-                entry.smoke_sql(),
-                format!("CREATE EXTENSION {sql_name} CASCADE")
-            );
-        } else {
-            assert_eq!(entry.sql_assets, ExtensionSqlAsset::LoadableModuleOnly);
-            assert_eq!(entry.smoke, ExtensionSmokePlan::LoadSharedLibrary);
-            assert_eq!(entry.smoke_sql(), format!("LOAD '{}'", entry.sql_name));
-        }
-    }
-}
-
-#[test]
-fn native_manifest_matches_generated_extension_metadata() {
-    let metadata = generated_rust_sdk_extension_metadata();
-    let generated_rows = metadata["extensions"]
+fn public_extension_catalog_matches_generated_extension_selection_metadata() {
+    let metadata = generated_extension_metadata();
+    let rows = metadata["extensions"]
         .as_array()
         .expect("generated Rust SDK extension metadata must define extensions");
-    let catalog_sql_names = Extension::ALL_PG18_SUPPORTED
-        .iter()
-        .map(|extension| extension.sql_name().to_owned())
-        .collect::<BTreeSet<_>>();
-    let generated_sql_names = generated_rows
+    let generated_names = rows
         .iter()
         .map(|row| {
             row["sql-name"]
                 .as_str()
-                .expect("generated Rust SDK extension rows must define sql-name")
-                .to_owned()
+                .expect("extension row must define sql-name")
         })
         .collect::<BTreeSet<_>>();
-    assert_eq!(
-        generated_sql_names, catalog_sql_names,
-        "Rust SDK extension set must come from generated metadata"
-    );
+    let public_names = Extension::ALL_PG18_SUPPORTED
+        .iter()
+        .map(|extension| extension.sql_name())
+        .collect::<BTreeSet<_>>();
 
-    for row in generated_rows {
-        let sql_name = row["sql-name"]
-            .as_str()
-            .expect("generated Rust SDK extension rows must define sql-name");
-        let extension = Extension::by_sql_name(sql_name)
-            .unwrap_or_else(|| panic!("generated Rust SDK metadata contains unknown {sql_name}"));
-        assert_eq!(row["postgres-major"].as_u64(), Some(18));
+    assert_eq!(public_names, generated_names);
+    assert_eq!(public_names.len(), Extension::ALL_PG18_SUPPORTED.len());
+
+    for extension in Extension::ALL_PG18_SUPPORTED {
         assert_eq!(
-            row["creates-extension"].as_bool(),
-            Some(extension.creates_extension())
-        );
-        assert_eq!(
-            row["native-module-stem"].as_str(),
-            extension.native_module_stem()
-        );
-        assert!(row.get("mobile-release-ready").is_none());
-        assert!(row.get("desktop-release-ready").is_none());
-        let dependencies = extension
-            .dependencies()
-            .iter()
-            .map(|dependency| dependency.sql_name())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            row["selected-extension-dependencies"]
-                .as_array()
-                .expect(
-                    "generated Rust SDK extension rows must define selected-extension-dependencies"
-                )
-                .iter()
-                .map(|value| value.as_str().expect("dependency names must be strings"))
-                .collect::<Vec<_>>(),
-            dependencies
-        );
-        assert_eq!(
-            row["runtime-share-data-files"]
-                .as_array()
-                .expect("generated Rust SDK extension rows must define runtime-share-data-files")
-                .iter()
-                .map(|value| value.as_str().expect("data file paths must be strings"))
-                .collect::<Vec<_>>(),
-            NATIVE_EXTENSION_MANIFEST
-                .iter()
-                .find(|entry| entry.extension == extension)
-                .expect("native manifest must include generated extension")
-                .data_files
-                .to_vec()
+            Extension::by_sql_name(extension.sql_name()),
+            Some(*extension)
         );
     }
 }
 
 #[test]
-fn native_extension_manifest_matches_build_required_artifacts() {
-    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh");
-    let output = Command::new(&script)
-        .arg("--print-required-extension-artifacts")
-        .output()
-        .unwrap_or_else(|error| {
-            panic!(
-                "failed to run native extension artifact inventory {}: {error}",
-                script.display()
-            )
-        });
-    assert!(
-        output.status.success(),
-        "native extension artifact inventory failed with status {} stdout={} stderr={}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let mut actual_controls = BTreeSet::new();
-    let mut actual_modules = BTreeSet::new();
-    for line in String::from_utf8(output.stdout).unwrap().lines() {
-        let Some((kind, name)) = line.split_once(':') else {
-            panic!("native extension artifact inventory line must use <kind>:<name>: {line}");
-        };
-        match kind {
-            "control" => {
-                actual_controls.insert(name.to_owned());
-            }
-            "module" => {
-                actual_modules.insert(name.to_owned());
-            }
-            _ => panic!("unknown native extension artifact kind '{kind}' in line {line}"),
-        }
-    }
-
-    let expected_controls = NATIVE_EXTENSION_MANIFEST
-        .iter()
-        .filter(|entry| entry.first_party_artifact())
-        .filter(|entry| entry.creates_extension)
-        .map(|entry| entry.sql_name.to_owned())
-        .collect::<BTreeSet<_>>();
-    let expected_modules = NATIVE_EXTENSION_MANIFEST
-        .iter()
-        .filter(|entry| entry.first_party_artifact())
-        .filter_map(|entry| match entry.module {
-            ExtensionModuleAsset::NativeModule { stem } => Some(stem.to_owned()),
-            ExtensionModuleAsset::SqlOnly => None,
-        })
-        .collect::<BTreeSet<_>>();
-
-    assert_eq!(
-        actual_controls, expected_controls,
-        "build-required extension control files must match NATIVE_EXTENSION_MANIFEST"
-    );
-    assert_eq!(
-        actual_modules, expected_modules,
-        "build-required native extension modules must match NATIVE_EXTENSION_MANIFEST"
-    );
-}
-
-#[test]
-fn supported_extension_catalog_is_exact() {
-    assert!(Extension::ALL_PG18_SUPPORTED.contains(&Extension::Hstore));
-    assert!(Extension::ALL_PG18_SUPPORTED.contains(&Extension::PgHashids));
-    assert!(Extension::ALL_PG18_SUPPORTED.contains(&Extension::Pgcrypto));
-    assert!(Extension::ALL_PG18_SUPPORTED.contains(&Extension::UuidOssp));
-    assert!(Extension::ALL_PG18_SUPPORTED.contains(&Extension::Vector));
-    assert!(Extension::FIRST_PARTY_PG18_SUPPORTED.contains(&Extension::Postgis));
-    assert!(Extension::ALL_PG18_SUPPORTED.contains(&Extension::Postgis));
-    assert!(Extension::Hstore.requires_mobile_static_registry());
-    assert!(Extension::UuidOssp.requires_mobile_static_registry());
-    assert!(!Extension::Pgtap.requires_mobile_static_registry());
-
+fn extension_selection_uses_exact_sql_names_without_aliases() {
     assert_eq!(Extension::by_sql_name("vector"), Some(Extension::Vector));
     assert_eq!(
         Extension::by_sql_name("uuid-ossp"),
         Some(Extension::UuidOssp)
     );
-    assert_eq!(
-        Extension::by_sql_name("pg_search"),
-        None,
-        "ParadeDB is tracked as an external candidate but must not enter release packages implicitly"
-    );
-    assert_eq!(Extension::by_sql_name("postgis"), Some(Extension::Postgis));
-    let metadata = generated_rust_sdk_extension_metadata();
-    let metadata_rows = metadata["extensions"].as_array().unwrap();
-    let postgis_metadata = metadata_rows
-        .iter()
-        .find(|row| row["sql-name"] == "postgis")
-        .expect("PostGIS metadata row must exist");
-    assert!(postgis_metadata.get("desktop-release-ready").is_none());
-    assert!(postgis_metadata.get("mobile-release-ready").is_none());
-    for alias in [
+    for unsupported_alias in [
         "core",
         "search",
         "geo",
@@ -309,143 +56,6 @@ fn supported_extension_catalog_is_exact() {
         "vector_pack",
         "vector+search",
     ] {
-        assert_eq!(
-            Extension::by_sql_name(alias),
-            None,
-            "{alias} must not resolve as an extension selection alias or multi-extension selector"
-        );
+        assert_eq!(Extension::by_sql_name(unsupported_alias), None);
     }
-}
-
-#[test]
-fn target_specific_support_remains_explicit() {
-    let catalog = generated_wasm_extension_catalog();
-    let wasm_postgis = catalog["extensions"]
-        .as_array()
-        .expect("generated wasm extension catalog must have an extensions array")
-        .iter()
-        .find(|extension| extension["sql-name"].as_str() == Some("postgis"))
-        .expect("generated wasm extension catalog must contain PostGIS");
-
-    assert_eq!(
-        wasm_postgis["native-module-file"].as_str(),
-        Some("postgis-3.so")
-    );
-    assert!(Extension::Postgis.first_party_artifact());
-    assert_eq!(Extension::by_sql_name("postgis"), Some(Extension::Postgis));
-}
-
-#[test]
-fn extension_catalog_cli_lists_prebuilt_availability_without_native_env() {
-    let Some(resources_bin) = option_env!("CARGO_BIN_EXE_oliphaunt-resources") else {
-        eprintln!(
-            "skipping extension catalog CLI smoke: cargo did not provide runtime-resource generator binary path"
-        );
-        return;
-    };
-
-    let output = Command::new(resources_bin)
-        .arg("--list-extensions")
-        .env_remove("LIBOLIPHAUNT_PATH")
-        .env_remove("OLIPHAUNT_POSTGRES")
-        .env_remove("OLIPHAUNT_INITDB")
-        .env_remove("OLIPHAUNT_INSTALL_DIR")
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "extension catalog CLI failed with status {} stdout={} stderr={}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.starts_with(
-        "sql_name\tpg_major\tcreates_extension\tnative_module_stem\tdependencies\tshared_preload\tdesktop_prebuilt\tmobile_prebuilt\tmobile_static_registry_required\tmobile_static_archive_targets\tdata_files\tartifact\n"
-    ));
-    let catalog_lines = stdout.lines().skip(1).collect::<Vec<_>>();
-    let catalog = catalog_lines
-        .iter()
-        .map(|line| {
-            let columns = line.split('\t').collect::<Vec<_>>();
-            assert_eq!(
-                columns.len(),
-                12,
-                "catalog row must have 12 columns: {line}"
-            );
-            (columns[0], columns)
-        })
-        .collect::<std::collections::BTreeMap<_, _>>();
-    for expected in Extension::ALL_PG18_SUPPORTED {
-        let row = catalog
-            .get(expected.sql_name())
-            .unwrap_or_else(|| panic!("catalog must advertise {}", expected.sql_name()));
-        assert_eq!(row[1], "18");
-        assert_eq!(
-            row[2],
-            if expected.creates_extension() {
-                "yes"
-            } else {
-                "no"
-            }
-        );
-        assert_eq!(row[3], expected.native_module_stem().unwrap_or("-"));
-        assert_eq!(row[6], "yes");
-        assert_eq!(row[7], "yes");
-        assert_eq!(
-            row[8],
-            if expected.requires_mobile_static_registry() {
-                "yes"
-            } else {
-                "no"
-            }
-        );
-        assert_eq!(row[11], "first-party");
-    }
-    for extension in [Extension::DictXsyn, Extension::Postgis, Extension::Unaccent] {
-        let row = catalog
-            .get(extension.sql_name())
-            .unwrap_or_else(|| panic!("catalog must advertise {}", extension.sql_name()));
-        let expected = NATIVE_EXTENSION_MANIFEST
-            .iter()
-            .find(|entry| entry.extension == extension)
-            .expect("native manifest must include extension")
-            .data_files
-            .join(",");
-        assert!(
-            row[10] == expected,
-            "catalog data_files for {} must be {}, got {}",
-            extension.sql_name(),
-            expected,
-            row[10],
-        );
-    }
-    let postgis = catalog
-        .get("postgis")
-        .expect("catalog must advertise PostGIS first-party inventory");
-    assert_eq!(postgis[6], "yes");
-    assert_eq!(postgis[7], "yes");
-    assert!(
-        !stdout.contains("pg_search\t"),
-        "ParadeDB must remain an internal external candidate until release gates and redistribution are resolved"
-    );
-}
-
-#[test]
-fn extension_selection_resolves_only_exact_extensions_and_required_dependencies() {
-    let config = Oliphaunt::builder()
-        .directory("target/test-roots/native-direct")
-        .extension(Extension::Earthdistance)
-        .extension(Extension::Earthdistance)
-        .build_config()
-        .unwrap();
-
-    assert_eq!(
-        config.resolved_extensions().unwrap(),
-        vec![Extension::Cube, Extension::Earthdistance]
-    );
-    assert_eq!(
-        resolve_extension_selection(&[Extension::Vector, Extension::Vector]).unwrap(),
-        vec![Extension::Vector]
-    );
 }

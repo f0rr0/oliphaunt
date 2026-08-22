@@ -44,11 +44,11 @@ cmp "$root/examples/tauri/src/main.ts" "$shared_main" >/dev/null ||
 cmp "$root/examples/tauri/src/styles.css" "$shared_styles" >/dev/null ||
   fail "tauri-wasix scratch tree is missing its shared stylesheet"
 
-icon_relative='../../../src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/icons/icon.png'
+icon_relative='../../assets/tauri-icon.png'
 for app in "$tauri" "$tauri_wasix"; do
   icon="$app/src-tauri/$icon_relative"
   [[ -f "$icon" ]] || fail "$(basename "$app") scratch tree is missing its configured icon"
-  cmp "$root/src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/icons/icon.png" "$icon" >/dev/null ||
+  cmp "$root/examples/assets/tauri-icon.png" "$icon" >/dev/null ||
     fail "$(basename "$app") scratch icon differs from its declared source"
 done
 

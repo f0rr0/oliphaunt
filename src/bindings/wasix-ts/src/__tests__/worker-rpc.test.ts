@@ -26,7 +26,11 @@ describe('WASIX worker RPC', () => {
   it('rejects every pending and later request with one fatal worker error', async () => {
     const port = new FakeWorkerPort();
     const rpc = new WorkerRpc(port);
-    const first = rpc.request({ method: 'exec', input: Uint8Array.of(1), persistence: 'sync' });
+    const first = rpc.request({
+      method: 'exec',
+      input: Uint8Array.of(1),
+      persistence: 'sync',
+    });
     const second = rpc.request({ method: 'sync', boundary: 'checkpoint' });
     const failure = new Error('worker exited unexpectedly');
     const firstRejection = expect(first).rejects.toBe(failure);
@@ -59,7 +63,12 @@ describe('WASIX worker RPC', () => {
     );
 
     await dispatch({ id: 1, method: 'open', options: workerOpenOptions() });
-    await dispatch({ id: 2, method: 'exec', input: Uint8Array.of(0), persistence: 'defer' });
+    await dispatch({
+      id: 2,
+      method: 'exec',
+      input: Uint8Array.of(0),
+      persistence: 'defer',
+    });
     await dispatch({ id: 3, method: 'sync', boundary: 'operation' });
 
     expect(events).toEqual(['exec:defer', 'sync:operation']);
@@ -69,4 +78,169 @@ describe('WASIX worker RPC', () => {
       { id: 3, ok: true },
     ]);
   });
+
+  it('fails closed around open state and transfers optional physical backups', async () => {
+    const responses: Array<{ id: number; ok: boolean; value?: Uint8Array }> = [];
+    const dispatch = createWorkerSessionDispatcher(
+      async () => ({
+        async exec(input) {
+          return input;
+        },
+        async sync() {},
+        async backup() {
+          return Uint8Array.of(7, 8, 9);
+        },
+        async close() {},
+      }),
+      (response) => responses.push(response),
+    );
+
+    await dispatch({
+      id: 1,
+      method: 'exec',
+      input: Uint8Array.of(1),
+      persistence: 'sync',
+    });
+    await dispatch({ id: 2, method: 'open', options: workerOpenOptions() });
+    await dispatch({ id: 3, method: 'open', options: workerOpenOptions() });
+    await dispatch({ id: 4, method: 'backup' });
+    await dispatch({ id: 5, method: 'close' });
+    await dispatch({ id: 6, method: 'close' });
+
+    expect(responses.map(({ id, ok }) => ({ id, ok }))).toEqual([
+      { id: 1, ok: false },
+      { id: 2, ok: true },
+      { id: 3, ok: false },
+      { id: 4, ok: true },
+      { id: 5, ok: true },
+      { id: 6, ok: false },
+    ]);
+    expect(responses[3]?.value).toEqual(Uint8Array.of(7, 8, 9));
+  });
+
+  it('rejects backup when the opened worker session does not provide it', async () => {
+    const responses: Array<{ id: number; ok: boolean }> = [];
+    const dispatch = createWorkerSessionDispatcher(
+      async () => ({
+        async exec(input) {
+          return input;
+        },
+        async sync() {},
+        async close() {},
+      }),
+      (response) => responses.push(response),
+    );
+
+    await dispatch({ id: 1, method: 'open', options: workerOpenOptions() });
+    await dispatch({ id: 2, method: 'backup' });
+
+    expect(responses.map(({ id, ok }) => ({ id, ok }))).toEqual([
+      { id: 1, ok: true },
+      { id: 2, ok: false },
+    ]);
+  });
+
+  it('normalizes synchronous transport failures and reports termination failures', async () => {
+    const listeners: { fatal?: (error: Error) => void } = {};
+    const rpc = new WorkerRpc({
+      postMessage() {
+        throw 'post failed';
+      },
+      terminate() {
+        throw 'termination failed';
+      },
+      onMessage() {},
+      onFatal(listener) {
+        listeners.fatal = listener;
+      },
+    });
+
+    await expect(
+      rpc.request({
+        method: 'exec',
+        input: Uint8Array.of(1),
+        persistence: 'sync',
+      }),
+    ).rejects.toThrow('post failed');
+    await expect(rpc.terminate()).rejects.toThrow('termination failed');
+    listeners.fatal?.(new Error('late fatal event'));
+    await expect(rpc.request({ method: 'close' })).rejects.toThrow(
+      'Oliphaunt WASIX worker was terminated',
+    );
+  });
+
+  it('ignores responses for requests the caller no longer owns', () => {
+    const port = new FakeWorkerPort();
+    new WorkerRpc(port);
+    port.respond({ id: 999, ok: true });
+    expect(port.requests).toEqual([]);
+  });
+
+  it('carries raw protocol and backup bytes through one orderly worker session', async () => {
+    const port = new FakeWorkerPort();
+    const opening = openWorkerDatabase(port, workerOpenOptions());
+    const open = await postedRequest(port, 0);
+    port.respond({ id: open.id, ok: true });
+    const database = await opening;
+
+    const raw = database.execProtocolRaw(Uint8Array.of(1, 2));
+    const exec = await postedRequest(port, 1);
+    expect(exec).toMatchObject({ method: 'exec', persistence: 'sync' });
+    port.respond({ id: exec.id, ok: true, value: Uint8Array.of(3, 4) });
+    await expect(raw).resolves.toEqual(Uint8Array.of(3, 4));
+
+    const backup = database.backup();
+    const backupRequest = await postedRequest(port, 2);
+    expect(backupRequest.method).toBe('backup');
+    port.respond({
+      id: backupRequest.id,
+      ok: true,
+      value: Uint8Array.of(5, 6),
+    });
+    const sync = await postedRequest(port, 3);
+    expect(sync).toMatchObject({ method: 'sync', boundary: 'operation' });
+    port.respond({ id: sync.id, ok: true });
+    await expect(backup).resolves.toEqual(Uint8Array.of(5, 6));
+
+    const closing = database.close();
+    const close = await postedRequest(port, 4);
+    expect(close.method).toBe('close');
+    port.respond({ id: close.id, ok: true });
+    await closing;
+    expect(port.terminations).toBe(1);
+  });
+
+  it('rejects malformed byte responses from a worker without poisoning the session', async () => {
+    const port = new FakeWorkerPort();
+    const opening = openWorkerDatabase(port, workerOpenOptions());
+    const open = await postedRequest(port, 0);
+    port.respond({ id: open.id, ok: true });
+    const database = await opening;
+
+    const raw = database.execProtocolRaw(Uint8Array.of(1));
+    const exec = await postedRequest(port, 1);
+    port.respond({ id: exec.id, ok: true });
+    await expect(raw).rejects.toThrow('invalid protocol response');
+
+    const backup = database.backup();
+    const backupRequest = await postedRequest(port, 2);
+    port.respond({ id: backupRequest.id, ok: true });
+    await expect(backup).rejects.toThrow('invalid physical archive');
+
+    const closing = database.close();
+    const close = await postedRequest(port, 3);
+    port.respond({ id: close.id, ok: true });
+    await closing;
+  });
 });
+
+async function postedRequest(port: FakeWorkerPort, index: number) {
+  for (let attempt = 0; attempt < 10 && port.requests[index] === undefined; attempt += 1) {
+    await Promise.resolve();
+  }
+  const request = port.requests[index]?.message;
+  if (request === undefined) {
+    throw new Error(`worker request ${index} was not posted`);
+  }
+  return request;
+}

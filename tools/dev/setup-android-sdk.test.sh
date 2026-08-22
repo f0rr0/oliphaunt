@@ -107,11 +107,18 @@ set -euo pipefail
 exit 0
 '''
 
+def apkanalyzer():
+    return b'''#!/usr/bin/env bash
+set -euo pipefail
+exit 0
+'''
+
 def write_archive(name, version, layout="cmdline-tools"):
     path = fixtures / name
     entries = {
         f"{layout}/bin/sdkmanager": sdkmanager(version),
         f"{layout}/bin/avdmanager": avdmanager(),
+        f"{layout}/bin/apkanalyzer": apkanalyzer(),
         f"{layout}/source.properties": b"Pkg.Revision=20.0\n",
         f"{layout}/lib/sdkmanager-classpath.jar": b"fake-classpath\n",
     }
@@ -121,7 +128,7 @@ def write_archive(name, version, layout="cmdline-tools"):
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = (
                 stat.S_IFREG
-                | (0o755 if member.endswith(("sdkmanager", "avdmanager")) else 0o644)
+                | (0o755 if member.endswith(("sdkmanager", "avdmanager", "apkanalyzer")) else 0o644)
             ) << 16
             archive.writestr(info, contents)
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -143,13 +150,13 @@ build_tools = "36.0.0"
 url = "https://dl.google.com/android/repository/commandlinetools-linux-14742923_latest.zip"
 mirror_url = "https://edgedl.me.gvt1.com/edgedl/android/repository/commandlinetools-linux-14742923_latest.zip"
 sha256 = "{digest}"
-entry_count = "4"
+entry_count = "5"
 
 [command_line_tools.mac]
 url = "https://dl.google.com/android/repository/commandlinetools-mac-14742923_latest.zip"
 mirror_url = "https://edgedl.me.gvt1.com/edgedl/android/repository/commandlinetools-mac-14742923_latest.zip"
 sha256 = "{digest}"
-entry_count = "4"
+entry_count = "5"
 ''', encoding="utf-8")
 
 manifest("android.toml", good_sha)
@@ -231,6 +238,7 @@ grep -q '^https://dl.google.com/android/repository/' "$tmp/curl.log"
 grep -q '^https://edgedl.me.gvt1.com/edgedl/android/repository/' "$tmp/curl.log"
 grep -qx 'Pkg.Revision=20.0' "$tmp/sdk/cmdline-tools/latest/source.properties"
 [ -x "$tmp/sdk/cmdline-tools/latest/bin/avdmanager" ]
+[ -x "$tmp/sdk/cmdline-tools/latest/bin/apkanalyzer" ]
 grep -qx 'Pkg.Revision = 27.0.12077973' "$tmp/sdk/ndk/27.0.12077973/source.properties"
 grep -qx 'Pkg.Revision = 3.22.1' "$tmp/sdk/cmake/3.22.1/source.properties"
 grep -qx 'Pkg.Revision=36.0.0' "$tmp/sdk/build-tools/36.0.0/source.properties"
@@ -253,6 +261,12 @@ chmod a-x "$tmp/sdk/cmdline-tools/latest/bin/avdmanager"
 : > "$tmp/curl.log"
 run_android > "$tmp/avdmanager-repair.out"
 [ -x "$tmp/sdk/cmdline-tools/latest/bin/avdmanager" ]
+[ "$(wc -l < "$tmp/curl.log" | tr -d ' ')" = "2" ]
+
+chmod a-x "$tmp/sdk/cmdline-tools/latest/bin/apkanalyzer"
+: > "$tmp/curl.log"
+run_android > "$tmp/apkanalyzer-repair.out"
+[ -x "$tmp/sdk/cmdline-tools/latest/bin/apkanalyzer" ]
 [ "$(wc -l < "$tmp/curl.log" | tr -d ' ')" = "2" ]
 
 # A corrupt command-line-tools cache is replaced from verified archive bytes.

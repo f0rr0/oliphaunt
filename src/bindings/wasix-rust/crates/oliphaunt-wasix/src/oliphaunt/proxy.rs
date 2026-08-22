@@ -1,16 +1,15 @@
 use anyhow::{Context, Result, anyhow, bail};
-use serde::Serialize;
 use std::io::{self, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Shutdown, TcpListener, TcpStream};
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::{
-    Arc,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
     mpsc::SyncSender,
 };
 
-use crate::oliphaunt::backend::{BackendOpenKind, BackendSession};
+use crate::oliphaunt::backend::BackendSession;
 use crate::oliphaunt::base::InstallOutcome;
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::base::install_missing_extension_archives;
@@ -20,166 +19,11 @@ use crate::oliphaunt::extensions::Extension;
 use crate::oliphaunt::postgres_mod::{
     ProtocolPumpOutcome, ProtocolStream, StartupProtocolResponse, startup_error_response_output,
 };
-use crate::oliphaunt::timing;
+use crate::oliphaunt::query::simple_query;
 use crate::oliphaunt::wire::{
     FrontendFrameKind, FrontendFrameReader, classify_frontend_message, error_response,
-    response_contains_error, simple_query_message, startup_config_for_message, startup_parameter,
+    response_contains_error, startup_config_for_message, startup_parameter,
 };
-
-static PROTOCOL_STATS: ProtocolStats = ProtocolStats::new();
-
-#[doc(hidden)]
-#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ProtocolStatsSnapshot {
-    pub frontend_reads: u64,
-    pub frontend_bytes: u64,
-    pub frontend_messages: u64,
-    pub startup_messages: u64,
-    pub protocol_messages: u64,
-    pub simple_query_messages: u64,
-    pub parse_messages: u64,
-    pub bind_messages: u64,
-    pub execute_messages: u64,
-    pub sync_messages: u64,
-    pub flush_messages: u64,
-    pub copy_data_messages: u64,
-    pub protocol_batches: u64,
-    pub protocol_batch_bytes: u64,
-    pub backend_send_calls: u64,
-    pub backend_send_bytes: u64,
-    pub response_writes: u64,
-    pub response_bytes: u64,
-    pub socket_flushes: u64,
-    pub copy_guard_rejections: u64,
-    pub streaming_copy_handoffs: u64,
-}
-
-struct ProtocolStats {
-    enabled: AtomicBool,
-    frontend_reads: AtomicU64,
-    frontend_bytes: AtomicU64,
-    frontend_messages: AtomicU64,
-    startup_messages: AtomicU64,
-    protocol_messages: AtomicU64,
-    simple_query_messages: AtomicU64,
-    parse_messages: AtomicU64,
-    bind_messages: AtomicU64,
-    execute_messages: AtomicU64,
-    sync_messages: AtomicU64,
-    flush_messages: AtomicU64,
-    copy_data_messages: AtomicU64,
-    protocol_batches: AtomicU64,
-    protocol_batch_bytes: AtomicU64,
-    backend_send_calls: AtomicU64,
-    backend_send_bytes: AtomicU64,
-    response_writes: AtomicU64,
-    response_bytes: AtomicU64,
-    socket_flushes: AtomicU64,
-    copy_guard_rejections: AtomicU64,
-    streaming_copy_handoffs: AtomicU64,
-}
-
-impl ProtocolStats {
-    const fn new() -> Self {
-        Self {
-            enabled: AtomicBool::new(false),
-            frontend_reads: AtomicU64::new(0),
-            frontend_bytes: AtomicU64::new(0),
-            frontend_messages: AtomicU64::new(0),
-            startup_messages: AtomicU64::new(0),
-            protocol_messages: AtomicU64::new(0),
-            simple_query_messages: AtomicU64::new(0),
-            parse_messages: AtomicU64::new(0),
-            bind_messages: AtomicU64::new(0),
-            execute_messages: AtomicU64::new(0),
-            sync_messages: AtomicU64::new(0),
-            flush_messages: AtomicU64::new(0),
-            copy_data_messages: AtomicU64::new(0),
-            protocol_batches: AtomicU64::new(0),
-            protocol_batch_bytes: AtomicU64::new(0),
-            backend_send_calls: AtomicU64::new(0),
-            backend_send_bytes: AtomicU64::new(0),
-            response_writes: AtomicU64::new(0),
-            response_bytes: AtomicU64::new(0),
-            socket_flushes: AtomicU64::new(0),
-            copy_guard_rejections: AtomicU64::new(0),
-            streaming_copy_handoffs: AtomicU64::new(0),
-        }
-    }
-
-    fn reset(&self) {
-        self.enabled.store(true, Ordering::Relaxed);
-        self.frontend_reads.store(0, Ordering::Relaxed);
-        self.frontend_bytes.store(0, Ordering::Relaxed);
-        self.frontend_messages.store(0, Ordering::Relaxed);
-        self.startup_messages.store(0, Ordering::Relaxed);
-        self.protocol_messages.store(0, Ordering::Relaxed);
-        self.simple_query_messages.store(0, Ordering::Relaxed);
-        self.parse_messages.store(0, Ordering::Relaxed);
-        self.bind_messages.store(0, Ordering::Relaxed);
-        self.execute_messages.store(0, Ordering::Relaxed);
-        self.sync_messages.store(0, Ordering::Relaxed);
-        self.flush_messages.store(0, Ordering::Relaxed);
-        self.copy_data_messages.store(0, Ordering::Relaxed);
-        self.protocol_batches.store(0, Ordering::Relaxed);
-        self.protocol_batch_bytes.store(0, Ordering::Relaxed);
-        self.backend_send_calls.store(0, Ordering::Relaxed);
-        self.backend_send_bytes.store(0, Ordering::Relaxed);
-        self.response_writes.store(0, Ordering::Relaxed);
-        self.response_bytes.store(0, Ordering::Relaxed);
-        self.socket_flushes.store(0, Ordering::Relaxed);
-        self.copy_guard_rejections.store(0, Ordering::Relaxed);
-        self.streaming_copy_handoffs.store(0, Ordering::Relaxed);
-    }
-
-    fn snapshot(&self) -> ProtocolStatsSnapshot {
-        ProtocolStatsSnapshot {
-            frontend_reads: self.frontend_reads.load(Ordering::Relaxed),
-            frontend_bytes: self.frontend_bytes.load(Ordering::Relaxed),
-            frontend_messages: self.frontend_messages.load(Ordering::Relaxed),
-            startup_messages: self.startup_messages.load(Ordering::Relaxed),
-            protocol_messages: self.protocol_messages.load(Ordering::Relaxed),
-            simple_query_messages: self.simple_query_messages.load(Ordering::Relaxed),
-            parse_messages: self.parse_messages.load(Ordering::Relaxed),
-            bind_messages: self.bind_messages.load(Ordering::Relaxed),
-            execute_messages: self.execute_messages.load(Ordering::Relaxed),
-            sync_messages: self.sync_messages.load(Ordering::Relaxed),
-            flush_messages: self.flush_messages.load(Ordering::Relaxed),
-            copy_data_messages: self.copy_data_messages.load(Ordering::Relaxed),
-            protocol_batches: self.protocol_batches.load(Ordering::Relaxed),
-            protocol_batch_bytes: self.protocol_batch_bytes.load(Ordering::Relaxed),
-            backend_send_calls: self.backend_send_calls.load(Ordering::Relaxed),
-            backend_send_bytes: self.backend_send_bytes.load(Ordering::Relaxed),
-            response_writes: self.response_writes.load(Ordering::Relaxed),
-            response_bytes: self.response_bytes.load(Ordering::Relaxed),
-            socket_flushes: self.socket_flushes.load(Ordering::Relaxed),
-            copy_guard_rejections: self.copy_guard_rejections.load(Ordering::Relaxed),
-            streaming_copy_handoffs: self.streaming_copy_handoffs.load(Ordering::Relaxed),
-        }
-    }
-
-    fn add(counter: &AtomicU64, value: u64) {
-        if PROTOCOL_STATS.enabled.load(Ordering::Relaxed) {
-            counter.fetch_add(value, Ordering::Relaxed);
-        }
-    }
-}
-
-#[doc(hidden)]
-pub fn reset_protocol_stats() {
-    PROTOCOL_STATS.reset();
-}
-
-#[doc(hidden)]
-pub fn disable_protocol_stats() {
-    PROTOCOL_STATS.enabled.store(false, Ordering::Relaxed);
-}
-
-#[doc(hidden)]
-pub fn protocol_stats_snapshot() -> ProtocolStatsSnapshot {
-    PROTOCOL_STATS.snapshot()
-}
 
 /// Blocking PostgreSQL socket proxy for the embedded Oliphaunt runtime.
 ///
@@ -193,6 +37,84 @@ pub(crate) struct OliphauntProxy {
     startup_config: Arc<StartupConfig>,
     #[cfg(feature = "extensions")]
     extensions: Arc<Vec<Extension>>,
+}
+
+/// The one client socket currently owned by the sequential proxy loop.
+///
+/// A cloned handle lets [`OliphauntServer`](super::server::OliphauntServer)
+/// interrupt a blocking client read during shutdown without adding another
+/// worker or changing the single-client execution model.
+#[derive(Debug, Default)]
+pub(crate) struct ActiveConnection {
+    stream: Mutex<Option<ActiveStream>>,
+}
+
+#[derive(Debug)]
+enum ActiveStream {
+    Tcp(TcpStream),
+    #[cfg(unix)]
+    Unix(UnixStream),
+}
+
+impl ActiveConnection {
+    fn register_tcp(self: &Arc<Self>, stream: &TcpStream) -> Result<ActiveConnectionGuard> {
+        self.register(ActiveStream::Tcp(
+            stream
+                .try_clone()
+                .context("clone active TCP proxy connection")?,
+        ))
+    }
+
+    #[cfg(unix)]
+    fn register_unix(self: &Arc<Self>, stream: &UnixStream) -> Result<ActiveConnectionGuard> {
+        self.register(ActiveStream::Unix(
+            stream
+                .try_clone()
+                .context("clone active Unix proxy connection")?,
+        ))
+    }
+
+    fn register(self: &Arc<Self>, stream: ActiveStream) -> Result<ActiveConnectionGuard> {
+        let mut active = self
+            .stream
+            .lock()
+            .map_err(|_| anyhow!("active proxy connection lock was poisoned"))?;
+        if active.is_some() {
+            bail!("proxy tried to serve more than one client at a time");
+        }
+        *active = Some(stream);
+        Ok(ActiveConnectionGuard {
+            active: Arc::clone(self),
+        })
+    }
+
+    pub(crate) fn shutdown(&self) {
+        let Ok(active) = self.stream.lock() else {
+            return;
+        };
+        match active.as_ref() {
+            Some(ActiveStream::Tcp(stream)) => {
+                let _ = stream.shutdown(Shutdown::Both);
+            }
+            #[cfg(unix)]
+            Some(ActiveStream::Unix(stream)) => {
+                let _ = stream.shutdown(Shutdown::Both);
+            }
+            None => {}
+        }
+    }
+}
+
+struct ActiveConnectionGuard {
+    active: Arc<ActiveConnection>,
+}
+
+impl Drop for ActiveConnectionGuard {
+    fn drop(&mut self) {
+        if let Ok(mut active) = self.active.stream.lock() {
+            active.take();
+        }
+    }
 }
 
 impl OliphauntProxy {
@@ -227,23 +149,31 @@ impl OliphauntProxy {
         &self,
         listener: TcpListener,
         shutdown: Arc<AtomicBool>,
+        active_connection: Arc<ActiveConnection>,
         ready: Option<SyncSender<Result<()>>>,
     ) -> Result<()> {
         if let Some(ready) = ready {
             let _ = ready.send(Ok(()));
         }
         while !shutdown.load(Ordering::SeqCst) {
-            let (stream, _) = {
-                let _phase = timing::phase("proxy.accept_wait");
-                listener.accept().context("accept TCP proxy connection")?
-            };
+            let (stream, _) = listener.accept().context("accept TCP proxy connection")?;
             if shutdown.load(Ordering::SeqCst) {
                 break;
             }
-            stream
-                .set_nonblocking(false)
-                .context("configure TCP proxy stream as blocking")?;
-            self.handle_stream(stream)?;
+            let result = (|| {
+                stream
+                    .set_nonblocking(false)
+                    .context("configure TCP proxy stream as blocking")?;
+                let _active = active_connection.register_tcp(&stream)?;
+                if shutdown.load(Ordering::SeqCst) {
+                    active_connection.shutdown();
+                    return Ok(());
+                }
+                self.handle_stream(stream)
+            })();
+            if let Err(error) = result {
+                tracing::debug!("closing failed TCP proxy connection: {error:#}");
+            }
         }
 
         Ok(())
@@ -254,23 +184,31 @@ impl OliphauntProxy {
         &self,
         listener: UnixListener,
         shutdown: Arc<AtomicBool>,
+        active_connection: Arc<ActiveConnection>,
         ready: Option<SyncSender<Result<()>>>,
     ) -> Result<()> {
         if let Some(ready) = ready {
             let _ = ready.send(Ok(()));
         }
         while !shutdown.load(Ordering::SeqCst) {
-            let (stream, _) = {
-                let _phase = timing::phase("proxy.accept_wait");
-                listener.accept().context("accept Unix proxy connection")?
-            };
+            let (stream, _) = listener.accept().context("accept Unix proxy connection")?;
             if shutdown.load(Ordering::SeqCst) {
                 break;
             }
-            stream
-                .set_nonblocking(false)
-                .context("configure Unix proxy stream as blocking")?;
-            self.handle_stream(stream)?;
+            let result = (|| {
+                stream
+                    .set_nonblocking(false)
+                    .context("configure Unix proxy stream as blocking")?;
+                let _active = active_connection.register_unix(&stream)?;
+                if shutdown.load(Ordering::SeqCst) {
+                    active_connection.shutdown();
+                    return Ok(());
+                }
+                self.handle_stream(stream)
+            })();
+            if let Err(error) = result {
+                tracing::debug!("closing failed Unix proxy connection: {error:#}");
+            }
         }
 
         Ok(())
@@ -280,17 +218,13 @@ impl OliphauntProxy {
     where
         S: CloneProtocolStream,
     {
-        let _phase = timing::phase("proxy.handle_stream");
         let mut backend = None::<WireBackend>;
         let mut reader = FrontendFrameReader::default();
         let mut buffer = [0u8; 64 * 1024];
         let mut protocol_batch = Vec::new();
 
         loop {
-            let read = {
-                let _phase = timing::phase("proxy.stream_read");
-                stream.read(&mut buffer).context("read frontend socket")?
-            };
+            let read = stream.read(&mut buffer).context("read frontend socket")?;
             if read == 0 {
                 flush_protocol_batch_if_started(
                     &mut protocol_batch,
@@ -299,16 +233,9 @@ impl OliphauntProxy {
                 )?;
                 break;
             }
-            ProtocolStats::add(&PROTOCOL_STATS.frontend_reads, 1);
-            ProtocolStats::add(&PROTOCOL_STATS.frontend_bytes, read as u64);
-
             let mut close_after_flush = false;
-            let messages = {
-                let _phase = timing::phase("proxy.frontend_parse");
-                reader.push(&buffer[..read])?
-            };
+            let messages = reader.push(&buffer[..read])?;
             let message_count = messages.len();
-            ProtocolStats::add(&PROTOCOL_STATS.frontend_messages, message_count as u64);
             let mut message_index = 0usize;
             while message_index < message_count {
                 let message = &messages[message_index];
@@ -320,7 +247,6 @@ impl OliphauntProxy {
                             &mut stream,
                         )?;
                         {
-                            let _phase = timing::phase("proxy.startup_response_write");
                             if !write_frontend(&mut stream, b"N", "write SSL refusal")? {
                                 close_after_flush = true;
                             }
@@ -343,7 +269,6 @@ impl OliphauntProxy {
                         close_after_flush = true;
                     }
                     FrontendFrameKind::Startup => {
-                        ProtocolStats::add(&PROTOCOL_STATS.startup_messages, 1);
                         if backend.is_some() {
                             bail!("received a second startup packet on one proxy connection");
                         }
@@ -355,7 +280,6 @@ impl OliphauntProxy {
                         let connection_startup_config =
                             startup_config_for_message(&self.startup_config, message)?;
                         let opened_result = {
-                            let _phase = timing::phase("proxy.backend_open");
                             WireBackend::open(
                                 &self.prepared_database,
                                 &self.postgres_config,
@@ -377,10 +301,7 @@ impl OliphauntProxy {
                                 break;
                             }
                         };
-                        let response = {
-                            let _phase = timing::phase("proxy.startup_response_backend");
-                            opened.startup(message)?
-                        };
+                        let response = opened.startup(message)?;
                         let response_accepted =
                             response.accepted && !response_contains_error(&response.output);
                         if response_accepted {
@@ -388,7 +309,6 @@ impl OliphauntProxy {
                             {
                                 // Use the serving backend for idempotent extension setup; a separate
                                 // setup backend adds a full Postgres startup and can force WAL recovery.
-                                let _phase = timing::phase("proxy.startup_extension_setup");
                                 opened.enable_extensions(self.extensions())?;
                             }
                             if let Some(user) = startup_parameter(message, "user")?
@@ -408,7 +328,6 @@ impl OliphauntProxy {
                             }
                         }
                         {
-                            let _phase = timing::phase("proxy.startup_response_write");
                             if !write_frontend(
                                 &mut stream,
                                 &response.output,
@@ -434,7 +353,6 @@ impl OliphauntProxy {
                         }
                     }
                     FrontendFrameKind::Protocol => {
-                        record_protocol_message(message);
                         let is_last_message_in_read = message_index + 1 == message_count;
                         let flush_after =
                             should_flush_protocol_batch(message, is_last_message_in_read);
@@ -468,8 +386,6 @@ impl OliphauntProxy {
                 message_index += 1;
             }
             {
-                let _phase = timing::phase("proxy.stream_flush");
-                ProtocolStats::add(&PROTOCOL_STATS.socket_flushes, 1);
                 if let Err(err) = stream.flush().context("flush frontend socket") {
                     if close_after_flush
                         && err
@@ -487,9 +403,7 @@ impl OliphauntProxy {
         }
 
         {
-            let _phase = timing::phase("proxy.connection_cleanup");
             if let Some(mut backend) = backend {
-                backend.rollback_connection_state();
                 backend.close();
             }
         }
@@ -640,22 +554,10 @@ impl<'a> ContinuationPrefix<'a> {
     }
 }
 
-fn record_protocol_message(message: &[u8]) {
-    ProtocolStats::add(&PROTOCOL_STATS.protocol_messages, 1);
-    match message.first() {
-        Some(b'Q') => ProtocolStats::add(&PROTOCOL_STATS.simple_query_messages, 1),
-        Some(b'P') => ProtocolStats::add(&PROTOCOL_STATS.parse_messages, 1),
-        Some(b'B') => ProtocolStats::add(&PROTOCOL_STATS.bind_messages, 1),
-        Some(b'E') => ProtocolStats::add(&PROTOCOL_STATS.execute_messages, 1),
-        Some(b'S') => ProtocolStats::add(&PROTOCOL_STATS.sync_messages, 1),
-        Some(b'H') => ProtocolStats::add(&PROTOCOL_STATS.flush_messages, 1),
-        Some(b'd' | b'c' | b'f') => ProtocolStats::add(&PROTOCOL_STATS.copy_data_messages, 1),
-        _ => {}
-    }
-}
-
 struct WireBackend {
     session: BackendSession,
+    connection_started: bool,
+    closed: bool,
 }
 
 impl WireBackend {
@@ -667,7 +569,6 @@ impl WireBackend {
         extensions: &[Extension],
     ) -> Result<Self> {
         {
-            let _phase = timing::phase("proxy.extension_install");
             install_missing_extension_archives(prepared_database, extensions)?;
         }
         Self::open_prepared(
@@ -689,10 +590,13 @@ impl WireBackend {
             outcome.clone(),
             postgres_config.clone(),
             startup_config.clone(),
-            BackendOpenKind::Proxy,
             extensions,
         )?;
-        Ok(Self { session })
+        Ok(Self {
+            session,
+            connection_started: false,
+            closed: false,
+        })
     }
 
     #[cfg(not(feature = "extensions"))]
@@ -706,26 +610,27 @@ impl WireBackend {
             prepared_database.clone(),
             postgres_config.clone(),
             startup_config.clone(),
-            BackendOpenKind::Proxy,
         )?;
-        Ok(Self { session })
+        Ok(Self {
+            session,
+            connection_started: false,
+            closed: false,
+        })
     }
 
     fn startup(&mut self, message: &[u8]) -> Result<StartupProtocolResponse> {
-        self.session.startup_with_packet(message)
+        let response = self.session.startup_with_packet(message)?;
+        self.connection_started = response.accepted && !response_contains_error(&response.output);
+        Ok(response)
     }
 
     #[cfg(feature = "extensions")]
     fn enable_extensions(&mut self, extensions: &[Extension]) -> Result<()> {
-        let _phase = timing::phase("proxy.extension_enable");
         self.session.enable_extensions(extensions)
     }
 
     fn send(&mut self, message: &[u8]) -> Result<Vec<u8>> {
-        let _phase = timing::phase("proxy.backend_send");
-        ProtocolStats::add(&PROTOCOL_STATS.backend_send_calls, 1);
-        ProtocolStats::add(&PROTOCOL_STATS.backend_send_bytes, message.len() as u64);
-        self.session.send_buffered(message, None)
+        self.session.send_buffered(message)
     }
 
     fn supports_protocol_pump(&self) -> bool {
@@ -736,7 +641,6 @@ impl WireBackend {
     where
         S: ProtocolStream + 'static,
     {
-        let _phase = timing::phase("proxy.backend_attach_protocol_stream");
         self.session.attach_protocol_stream(stream)
     }
 
@@ -745,29 +649,18 @@ impl WireBackend {
         message: &[u8],
         continuation_prefix: ContinuationPrefix<'_>,
     ) -> Result<ProtocolPumpOutcome> {
-        let _phase = timing::phase("proxy.backend_send");
-        ProtocolStats::add(&PROTOCOL_STATS.backend_send_calls, 1);
-        ProtocolStats::add(&PROTOCOL_STATS.backend_send_bytes, message.len() as u64);
         self.session
             .send_with_protocol_pump(message, || continuation_prefix.into_vec())
     }
 
     fn set_role(&mut self, user: &str) -> Result<Vec<u8>> {
-        let sql = format!(
-            "SET ROLE {}",
-            crate::oliphaunt::templating::quote_identifier(user)
-        );
-        self.send(&simple_query_message(&sql))
-    }
-
-    fn rollback_connection_state(&mut self) {
-        let _ = self.reset_session_state();
+        let sql = format!("SET ROLE {}", crate::oliphaunt::sql::quote_identifier(user));
+        self.send(&simple_query(&sql)?)
     }
 
     fn reset_session_state(&mut self) -> Result<()> {
-        let _phase = timing::phase("proxy.reset_session_state");
         for sql in ["ROLLBACK", "DISCARD ALL"] {
-            let response = self.send(&simple_query_message(sql))?;
+            let response = self.send(&simple_query(sql)?)?;
             if response.first() == Some(&b'E') {
                 bail!("reset proxy backend session state failed while running {sql}");
             }
@@ -776,8 +669,20 @@ impl WireBackend {
     }
 
     fn close(&mut self) {
-        let _phase = timing::phase("proxy.backend_shutdown");
+        if self.closed {
+            return;
+        }
+        if self.connection_started {
+            let _ = self.reset_session_state();
+        }
         let _ = self.session.shutdown();
+        self.closed = true;
+    }
+}
+
+impl Drop for WireBackend {
+    fn drop(&mut self) {
+        self.close();
     }
 }
 
@@ -870,25 +775,14 @@ where
         return Ok(FlushOutcome::Continue);
     }
 
-    let outcome = {
-        let _phase = timing::phase("proxy.protocol_batch");
-        ProtocolStats::add(&PROTOCOL_STATS.protocol_batches, 1);
-        ProtocolStats::add(
-            &PROTOCOL_STATS.protocol_batch_bytes,
-            protocol_batch.len() as u64,
-        );
-        backend.send_with_protocol_pump(protocol_batch, continuation_prefix)?
-    };
+    let outcome = backend.send_with_protocol_pump(protocol_batch, continuation_prefix)?;
     protocol_batch.clear();
     match outcome {
         ProtocolPumpOutcome::Buffered(response) => {
             write_backend_response(stream, &response)?;
             Ok(FlushOutcome::Continue)
         }
-        ProtocolPumpOutcome::Streamed => {
-            ProtocolStats::add(&PROTOCOL_STATS.streaming_copy_handoffs, 1);
-            Ok(FlushOutcome::Streamed)
-        }
+        ProtocolPumpOutcome::Streamed => Ok(FlushOutcome::Streamed),
     }
 }
 
@@ -897,9 +791,6 @@ where
     S: Write,
 {
     if !response.is_empty() {
-        let _phase = timing::phase("proxy.response_write");
-        ProtocolStats::add(&PROTOCOL_STATS.response_writes, 1);
-        ProtocolStats::add(&PROTOCOL_STATS.response_bytes, response.len() as u64);
         stream
             .write_all(response)
             .context("write backend response")?;

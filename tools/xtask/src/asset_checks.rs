@@ -817,7 +817,6 @@ pub(crate) fn verify_generated_extension_surface() -> Result<()> {
             ),
             (format!("    {rust_constant},"), "extensions::ALL entry"),
             (format!("{:?}", extension.sql_name), "extension SQL name"),
-            (format!("{:?}", extension.archive), "extension archive path"),
         ] {
             if !generated.contains(&needle) {
                 bail!("generated extension API is stale: missing {description} {needle}");
@@ -1012,7 +1011,6 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
             "WASIXCC_RUN_WASM_OPT",
             "WASIXCC_WASM_OPT_FLAGS",
             "OLIPHAUNT_WASM_ALLOW_ASYNCIFY_EXPERIMENT",
-            "OLIPHAUNT_WASM_WASIX_BACKEND_TIMING",
             "production WASIX artifacts require WebAssembly exceptions",
             "build_wasix_icu_sha256",
         ],
@@ -1109,12 +1107,6 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
     ensure_file_contains_all(
         WASIX_BRIDGE_PATH,
         &[
-            "oliphaunt_wasix_backend_timing_reset",
-            "oliphaunt_wasix_backend_timing_start",
-            "oliphaunt_wasix_backend_timing_end",
-            "oliphaunt_wasix_backend_timing_elapsed_us",
-            "CLOCK_MONOTONIC",
-            "#ifdef OLIPHAUNT_WASIX_BACKEND_TIMING",
             "oliphaunt_wasix_set_force_host_error_recovery",
             "force_host_error_recovery",
             "Hosts without that support",
@@ -1132,7 +1124,6 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_oliphaunt.sh",
         &[
             "OLIPHAUNT_WASM_BUILD_PROFILE",
-            "OLIPHAUNT_WASM_WASIX_BACKEND_TIMING",
             ".oliphaunt-wasix-build-profile",
             ".oliphaunt-wasix-icu-build",
             "oliphaunt_wasix_wasix_profile_signature",

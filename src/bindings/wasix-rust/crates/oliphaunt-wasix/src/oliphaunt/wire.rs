@@ -75,29 +75,6 @@ pub(crate) fn frontend_message_len_if_complete(buffer: &[u8]) -> Result<Option<u
     Ok((buffer.len() >= total).then_some(total))
 }
 
-pub(crate) fn raw_protocol_message_len(buffer: &[u8]) -> Result<usize> {
-    if buffer.len() < 5 {
-        bail!("raw protocol stream input contains an incomplete frontend message header");
-    }
-    let len = i32::from_be_bytes(buffer[1..5].try_into().unwrap());
-    if len < 4 {
-        bail!("raw protocol stream input contains invalid frontend message length {len}");
-    }
-    let total = 1usize
-        .checked_add(len as usize)
-        .ok_or_else(|| anyhow!("raw protocol stream frontend message length overflow"))?;
-    if total > MAX_FRONTEND_MESSAGE {
-        bail!("raw protocol stream frontend message length {total} exceeds limit");
-    }
-    if buffer.len() < total {
-        bail!(
-            "raw protocol stream input contains incomplete frontend message: expected {total} bytes, got {}",
-            buffer.len()
-        );
-    }
-    Ok(total)
-}
-
 pub(crate) fn classify_frontend_message(message: &[u8]) -> Result<FrontendFrameKind> {
     if message.is_empty() {
         bail!("empty frontend message");
@@ -208,15 +185,6 @@ pub(crate) fn error_response(severity: &str, code: &str, message: &str) -> Vec<u
     response.extend_from_slice(&((body.len() + 4) as i32).to_be_bytes());
     response.extend_from_slice(&body);
     response
-}
-
-pub(crate) fn simple_query_message(sql: &str) -> Vec<u8> {
-    let mut message = Vec::with_capacity(sql.len() + 6);
-    message.push(b'Q');
-    message.extend_from_slice(&((sql.len() + 5) as i32).to_be_bytes());
-    message.extend_from_slice(sql.as_bytes());
-    message.push(0);
-    message
 }
 
 fn push_error_field(body: &mut Vec<u8>, tag: u8, value: &str) {

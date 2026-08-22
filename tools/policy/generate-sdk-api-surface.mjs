@@ -107,7 +107,131 @@ function extractRustSurface(
     }
   }
 
+  const exportedNames = new Set(
+    symbols
+      .map(symbol => symbol.slice(`${crateName}::`.length))
+      .filter(name => /^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)),
+  );
+  const exportedTypes = new Set();
+  for (const file of listFiles(sourceDir, '.rs')) {
+    const source = readRelative(file);
+    for (const match of source.matchAll(
+      /^\s*pub\s+(?:struct|enum|union|trait|type)\s+([A-Za-z_][A-Za-z0-9_]*)/gmu,
+    )) {
+      if (exportedNames.has(match[1])) {
+        exportedTypes.add(match[1]);
+      }
+    }
+  }
+  symbols.push(...extractRustInherentMethods(sourceDir, crateName, exportedTypes));
+
   return sorted(symbols);
+}
+
+function extractRustModuleSurface(files, sourceDir, crateName) {
+  const symbols = [];
+  const exportedTypes = new Set();
+  for (const file of files) {
+    const source = readRelative(file);
+    for (const match of source.matchAll(
+      /^pub\s+(struct|enum|union|trait|type|const|static|fn)\s+([A-Za-z_][A-Za-z0-9_]*)/gmu,
+    )) {
+      const [, kind, name] = match;
+      symbols.push(`${crateName}::${name}${kind === 'fn' ? '()' : ''}`);
+      if (['struct', 'enum', 'union', 'trait', 'type'].includes(kind)) {
+        exportedTypes.add(name);
+      }
+    }
+  }
+  symbols.push(...extractRustInherentMethods(sourceDir, crateName, exportedTypes));
+  return sorted(symbols);
+}
+
+function rustInherentImplType(header) {
+  const beforeBody = header.slice(0, header.indexOf('{')).trim();
+  if (!beforeBody.startsWith('impl') || /\bfor\b/u.test(beforeBody)) {
+    return null;
+  }
+  let cursor = 'impl'.length;
+  while (/\s/u.test(beforeBody[cursor] ?? '')) cursor += 1;
+  if (beforeBody[cursor] === '<') {
+    let angleDepth = 0;
+    do {
+      const char = beforeBody[cursor];
+      if (char === '<') angleDepth += 1;
+      if (char === '>') angleDepth -= 1;
+      cursor += 1;
+    } while (cursor < beforeBody.length && angleDepth > 0);
+  }
+  while (/\s/u.test(beforeBody[cursor] ?? '')) cursor += 1;
+  return beforeBody.slice(cursor).match(/^([A-Za-z_][A-Za-z0-9_]*)/u)?.[1] ?? null;
+}
+
+function extractRustInherentMethods(sourceDir, crateName, exportedTypes) {
+  const methods = [];
+  for (const file of listFiles(sourceDir, '.rs')) {
+    let depth = 0;
+    let pendingImpl = null;
+    let activeImpl = null;
+
+    for (const line of readRelative(file).split('\n')) {
+      if (activeImpl && depth < activeImpl.depth) {
+        activeImpl = null;
+      }
+      const trimmed = line.trim();
+
+      if (activeImpl && depth === activeImpl.depth) {
+        const method = trimmed.match(
+          /^pub\s+(?:(?:async|const|unsafe)\s+)*fn\s+([A-Za-z_][A-Za-z0-9_]*)/u,
+        );
+        if (method) {
+          methods.push(`${crateName}::${activeImpl.name}.${method[1]}()`);
+        }
+      } else if (!activeImpl && pendingImpl) {
+        pendingImpl += ` ${trimmed}`;
+      } else if (!activeImpl && /^impl(?:\s|<)/u.test(trimmed)) {
+        pendingImpl = trimmed;
+      }
+
+      const braces = countBraces(line);
+      depth += braces.opens - braces.closes;
+      if (pendingImpl?.includes('{')) {
+        const name = rustInherentImplType(pendingImpl);
+        if (name && exportedTypes.has(name) && braces.opens > braces.closes) {
+          activeImpl = {name, depth};
+        }
+        pendingImpl = null;
+      }
+    }
+  }
+  return methods;
+}
+
+function extractNativeCSurface() {
+  const header = readRelative('src/runtimes/liboliphaunt/native/include/oliphaunt.h');
+  const namedTypes = Array.from(
+    header.matchAll(/typedef[\s\S]*?\b(Oliphaunt[A-Za-z0-9_]*)\s*;/gu),
+    match => match[1],
+  );
+  const functionPointerTypes = Array.from(
+    header.matchAll(
+      /typedef\s+[^;()]*\(\s*\*\s*(Oliphaunt[A-Za-z0-9_]*)\s*\)\s*\([^;]*\)\s*;/gu,
+    ),
+    match => match[1],
+  );
+  const constants = Array.from(
+    header.matchAll(/^#define\s+(OLIPHAUNT_[A-Z0-9_]+)\s+[^\r\n]+$/gmu),
+    match => match[1],
+  ).filter(name => !['OLIPHAUNT_API', 'OLIPHAUNT_H'].includes(name));
+  const functions = Array.from(
+    header.matchAll(/^OLIPHAUNT_API\s+[\s\S]*?\b(oliphaunt_[a-z0-9_]+)\s*\(/gmu),
+    match => `${match[1]}()`,
+  );
+  return {
+    types: sorted([...namedTypes, ...functionPointerTypes]),
+    constants: sorted(constants),
+    functions: sorted(functions),
+  };
 }
 
 function countBraces(line) {
@@ -142,8 +266,10 @@ function swiftMemberName(line) {
   return null;
 }
 
-function extractSwiftSurface() {
-  const files = listFiles('src/sdks/swift/Sources/Oliphaunt', '.swift');
+function extractSwiftSurface(
+  sourceDir = 'src/sdks/swift/Sources/Oliphaunt',
+) {
+  const files = listFiles(sourceDir, '.swift');
   const symbols = [];
 
   for (const file of files) {
@@ -184,7 +310,8 @@ function extractSwiftSurface() {
         const isPublicMember = /^public\s+(?:static\s+)?(?:func|var|let|init)\b/u.test(trimmed);
         const isExtensionMember =
           inPublicExtension && /^(?:static\s+)?(?:func|var|let|init)\b/u.test(trimmed);
-        if (isPublicMember || isExtensionMember) {
+        const isDeclarationDepth = active ? depth === active.depth : depth === 0;
+        if ((isPublicMember || isExtensionMember) && isDeclarationDepth) {
           const member = swiftMemberName(trimmed);
           if (member) {
             symbols.push(active ? `${active.name}.${member}` : member);
@@ -234,7 +361,7 @@ function kotlinMemberName(line) {
 }
 
 function extractKotlinSurface() {
-  const sourceSets = ['commonMain', 'androidMain', 'jvmMain', 'nativeMain'];
+  const sourceSets = ['commonMain', 'androidMain', 'jvmMain'];
   const sections = [];
 
   for (const sourceSet of sourceSets) {
@@ -306,6 +433,28 @@ function extractKotlinSurface() {
   }
 
   return sections;
+}
+
+function extractKotlinGradlePluginSurface() {
+  const build = readRelative(
+    'src/sdks/kotlin/oliphaunt-android-gradle-plugin/build.gradle.kts',
+  );
+  const extension = readRelative(
+    'src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/java/dev/oliphaunt/android/OliphauntAndroidExtension.java',
+  );
+  const symbols = [];
+  const pluginId = build.match(/^\s*id\s*=\s*"([^"]+)"/mu)?.[1];
+  if (pluginId) symbols.push(`plugin ${pluginId}`);
+  const className = extension.match(/public\s+abstract\s+class\s+([A-Za-z_][A-Za-z0-9_]*)/u)?.[1];
+  if (className) {
+    symbols.push(`class ${className}`);
+    for (const match of extension.matchAll(
+      /public\s+abstract\s+[^;()]+\s+(get[A-Za-z_][A-Za-z0-9_]*)\s*\(\s*\)\s*;/gu,
+    )) {
+      symbols.push(`${className}.${match[1]}()`);
+    }
+  }
+  return sorted(symbols);
 }
 
 function extractTypeScriptSurface(indexFile, memberFiles) {
@@ -395,25 +544,33 @@ function extractOliphauntWasixTsSurface() {
   ]);
 }
 
+function extractPackageExports(manifestFile) {
+  const manifest = JSON.parse(readRelative(manifestFile));
+  return Object.entries(manifest.exports ?? {}).map(([subpath, entry]) =>
+    `${subpath} = ${JSON.stringify(entry)}`,
+  );
+}
+
 function typeScriptMemberName(line) {
-  const getterMatch = line.match(/^get\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/u);
+  const declaration = line.replace(/^(?:public\s+)?(?:static\s+)?/u, '');
+  const getterMatch = declaration.match(/^get\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/u);
   if (getterMatch) {
     return getterMatch[1];
   }
-  const computedMethodMatch = line.match(
+  const computedMethodMatch = declaration.match(
     /^\[Symbol\.([A-Za-z_][A-Za-z0-9_]*)\]\s*\(/u,
   );
   if (computedMethodMatch) {
     return `[Symbol.${computedMethodMatch[1]}]()`;
   }
-  const methodMatch = line.match(
+  const methodMatch = declaration.match(
     /^(?:async\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:<[^>]+>)?\s*\(/u,
   );
   if (methodMatch) {
     return `${methodMatch[1]}()`;
   }
-  const propertyMatch = line.includes(';')
-    ? line.match(/^(?:readonly\s+)?([A-Za-z_][A-Za-z0-9_]*)\??:/u)
+  const propertyMatch = declaration.includes(';')
+    ? declaration.match(/^(?:readonly\s+)?([A-Za-z_][A-Za-z0-9_]*)\??:/u)
     : null;
   if (propertyMatch) {
     return propertyMatch[1];
@@ -428,12 +585,17 @@ function extractTypeScriptMembers(exportedTypes, exportedValues, files) {
     let depth = 0;
     const stack = [];
     let awaitingContext = null;
+    let skipInternalMember = false;
     for (const line of readRelative(file).split('\n')) {
       while (stack.length > 0 && depth < stack[stack.length - 1].depth) {
         stack.pop();
       }
 
       const trimmed = line.trim();
+      if (trimmed === '/** @internal */') {
+        skipInternalMember = true;
+        continue;
+      }
       if (trimmed.length === 0 || trimmed.startsWith('//')) {
         const braces = countBraces(line);
         depth += braces.opens - braces.closes;
@@ -455,20 +617,17 @@ function extractTypeScriptMembers(exportedTypes, exportedValues, files) {
         if (exportedValues.has(classMatch[1])) {
           pendingContext = {name: classMatch[1], depth: depth + 1};
         }
-      } else if (functionMatch) {
-        if (exportedValues.has(functionMatch[1])) {
-          members.push(`${functionMatch[1]}()`);
-        }
-      } else if (constMatch) {
-        if (exportedValues.has(constMatch[1])) {
-          members.push(constMatch[1]);
-        }
+      } else if (functionMatch || constMatch) {
+        // Top-level exports are already recorded in Values.
       } else if (active && depth === active.depth && !trimmed.startsWith('#')) {
-        const member = typeScriptMemberName(trimmed);
-        if (member && !['constructor'].includes(member.replace(/\(\)$/u, ''))) {
-          members.push(`${active.name}.${member}`);
+        if (!skipInternalMember && !/^(?:private|protected)\b/u.test(trimmed)) {
+          const member = typeScriptMemberName(trimmed);
+          if (member) {
+            members.push(`${active.name}.${member}`);
+          }
         }
       }
+      skipInternalMember = false;
 
       const braces = countBraces(line);
       depth += braces.opens - braces.closes;
@@ -499,13 +658,19 @@ function markdownList(items) {
 }
 
 function render() {
+  const nativeC = extractNativeCSurface();
   const kotlin = extractKotlinSurface();
+  const kotlinGradlePlugin = extractKotlinGradlePluginSurface();
   const rn = extractReactNativeSurface();
   const ts = extractOliphauntTsSurface();
   const wasixTs = extractOliphauntWasixTsSurface();
   const wasixIndexedDb = extractTypeScriptSurface(
     'src/bindings/wasix-ts/src/storage/indexed-db.ts',
     ['src/bindings/wasix-ts/src/storage/indexed-db.ts'],
+  );
+  const wasixOpfs = extractTypeScriptSurface(
+    'src/bindings/wasix-ts/src/storage/opfs.ts',
+    ['src/bindings/wasix-ts/src/storage/opfs.ts'],
   );
   const wasixNodeDirectory = extractTypeScriptSurface(
     'src/bindings/wasix-ts/src/storage/node.ts',
@@ -528,23 +693,58 @@ function render() {
   output += `\`\`\`\n\n`;
   output += `## Rust: oliphaunt\n\n`;
   output += markdownList(extractRustSurface());
-  output += `\n## Rust WASIX: oliphaunt-wasix\n\n`;
+  output += `\n## Rust build integration: oliphaunt-build\n\n`;
   output += markdownList(
-    extractRustSurface(
-      'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs',
-      'src/bindings/wasix-rust/crates/oliphaunt-wasix/src',
-      'oliphaunt_wasix',
+    extractRustModuleSurface(
+      ['src/sdks/rust/crates/oliphaunt-build/src/lib.rs'],
+      'src/sdks/rust/crates/oliphaunt-build/src',
+      'oliphaunt_build',
     ),
   );
+  output += `\n## Rust WASIX: oliphaunt-wasix\n\n`;
+  output += markdownList(
+    sorted([
+      ...extractRustSurface(
+        'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs',
+        'src/bindings/wasix-rust/crates/oliphaunt-wasix/src',
+        'oliphaunt_wasix',
+      ),
+      ...extractRustModuleSurface(
+        [
+          'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/extensions.rs',
+          'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/generated_extensions.rs',
+        ],
+        'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt',
+        'oliphaunt_wasix::extensions',
+      ),
+    ]),
+  );
+  output += `\n## Native C ABI: liboliphaunt\n\n`;
+  output += `### Types\n\n`;
+  output += markdownList(nativeC.types);
+  output += `\n### Constants\n\n`;
+  output += markdownList(nativeC.constants);
+  output += `\n### Functions\n\n`;
+  output += markdownList(nativeC.functions);
   output += `\n## Swift: Oliphaunt\n\n`;
   output += markdownList(extractSwiftSurface());
+  output += `\n## Swift: OliphauntExtensionSupport\n\n`;
+  output += markdownList(
+    extractSwiftSurface('src/sdks/swift/Sources/OliphauntExtensionSupport'),
+  );
   output += `\n## Kotlin: oliphaunt\n\n`;
   for (const section of kotlin) {
     output += `### ${section.sourceSet}\n\n`;
     output += markdownList(section.symbols);
     output += `\n`;
   }
+  output += `## Kotlin Android Gradle plugin\n\n`;
+  output += markdownList(kotlinGradlePlugin);
+  output += `\n`;
   output += `## React Native: @oliphaunt/react-native\n\n`;
+  output += `### Package exports\n\n`;
+  output += markdownList(extractPackageExports('src/sdks/react-native/package.json'));
+  output += `\n`;
   output += `### Types\n\n`;
   output += markdownList(rn.types);
   output += `\n### Values\n\n`;
@@ -552,13 +752,19 @@ function render() {
   output += `\n### Members\n\n`;
   output += markdownList(rn.members);
   output += `\n## TypeScript: @oliphaunt/ts\n\n`;
+  output += `### Package exports\n\n`;
+  output += markdownList(extractPackageExports('src/sdks/js/package.json'));
+  output += `\n`;
   output += `### Types\n\n`;
   output += markdownList(ts.types);
   output += `\n### Values\n\n`;
   output += markdownList(ts.values);
   output += `\n### Members\n\n`;
   output += markdownList(ts.members);
-  output += `\n## TypeScript WASIX: @oliphaunt/wasix-ts\n\n`;
+  output += `\n## WASIX TypeScript: @oliphaunt/wasix-ts\n\n`;
+  output += `### Package exports\n\n`;
+  output += markdownList(extractPackageExports('src/bindings/wasix-ts/package.json'));
+  output += `\n`;
   output += `### Types\n\n`;
   output += markdownList(wasixTs.types);
   output += `\n### Values\n\n`;
@@ -567,6 +773,8 @@ function render() {
   output += markdownList(wasixTs.members);
   output += `\n### Storage subpath: @oliphaunt/wasix-ts/storage/indexed-db\n\n`;
   output += markdownList([...wasixIndexedDb.types, ...wasixIndexedDb.values]);
+  output += `\n### Storage subpath: @oliphaunt/wasix-ts/storage/opfs\n\n`;
+  output += markdownList([...wasixOpfs.types, ...wasixOpfs.values]);
   output += `\n### Storage subpath: @oliphaunt/wasix-ts/storage/node\n\n`;
   output += markdownList([...wasixNodeDirectory.types, ...wasixNodeDirectory.values]);
   output += `\n### Storage subpath: @oliphaunt/wasix-ts/storage/bun\n\n`;

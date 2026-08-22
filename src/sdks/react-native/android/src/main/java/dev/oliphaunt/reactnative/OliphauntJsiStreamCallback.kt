@@ -7,7 +7,9 @@ class OliphauntJsiStreamCallback @DoNotStrip constructor(
   private val token: Long,
 ) {
   fun emitChunk(chunk: ByteArray) {
-    nativeEmitChunk(token, chunk)
+    nativeEmitChunk(token, chunk)?.let { error ->
+      throw IllegalStateException(error)
+    }
   }
 
   fun resolveUnit() {
@@ -18,7 +20,7 @@ class OliphauntJsiStreamCallback @DoNotStrip constructor(
     nativeReject(token, if (message.isNullOrBlank()) code else "$code: $message")
   }
 
-  private external fun nativeEmitChunk(token: Long, chunk: ByteArray)
+  private external fun nativeEmitChunk(token: Long, chunk: ByteArray): String?
 
   private external fun nativeResolveUnit(token: Long)
 

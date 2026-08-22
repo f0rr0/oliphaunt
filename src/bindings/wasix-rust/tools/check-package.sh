@@ -11,7 +11,9 @@ out_dir="target/oliphaunt-wasix-rust/package"
 listing="$out_dir/oliphaunt-wasix.package-files.txt"
 mkdir -p "$out_dir"
 
-cargo package --list -p oliphaunt-wasix --locked --allow-dirty >"$listing"
+crate_dir="$out_dir/crate"
+crate_path="$(tools/dev/bun.sh tools/release/package_oliphaunt_wasix_sdk_crate.mjs --output-dir "$crate_dir")"
+tar -tzf "$crate_path" | sed 's|^[^/]*/||' | sed '/^$/d' >"$listing"
 
 require_entry() {
   local entry="$1"
@@ -40,17 +42,6 @@ require_source_text() {
   fi
 }
 
-require_exact_package_fixture() {
-  local package_fixture="$1"
-  local canonical_fixture="$2"
-  if ! cmp -s "$package_fixture" "$canonical_fixture"; then
-    echo "oliphaunt-wasix package fixture must exactly match its canonical repository source:" >&2
-    echo "  package:   $package_fixture" >&2
-    echo "  canonical: $canonical_fixture" >&2
-    exit 1
-  fi
-}
-
 require_cfg_tools_line() {
   local file="$1"
   local line="$2"
@@ -73,21 +64,45 @@ require_cfg_tools_line() {
 
 require_entry "Cargo.toml"
 require_entry "README.md"
+require_entry "src/error.rs"
 require_entry "src/lib.rs"
 require_entry "src/bin/oliphaunt_wasix_dump.rs"
 require_entry "src/bin/oliphaunt_wasix_proxy.rs"
 require_entry "src/oliphaunt/aot.rs"
 require_entry "src/oliphaunt/assets.rs"
-require_entry "src/protocol/parser.rs"
-require_entry "src/testdata/postgis-smoke.sql"
+require_entry "src/testdata/database-root.json"
+require_entry "src/testdata/physical-archive-wasix-v1.properties"
+require_entry "src/testdata/physical-backup-wal-range-v1.properties"
+require_entry "src/testdata/postgres-behavior-contract.json"
+require_entry "src/testdata/protocol-query-response-cases.json"
 require_entry "src/testdata/wasix-toolchain.toml"
+require_entry "tests/public_api.rs"
 
-require_exact_package_fixture \
-  src/bindings/wasix-rust/crates/oliphaunt-wasix/src/testdata/postgis-smoke.sql \
-  src/extensions/external/postgis/tests/smoke.sql
-require_exact_package_fixture \
+canonical_extension_smoke_count=0
+for recipe in src/shared/fixtures/extensions/*.sql; do
+  canonical_extension_smoke_count=$((canonical_extension_smoke_count + 1))
+  require_entry "src/testdata/extensions/$(basename "$recipe")"
+done
+packaged_extension_smoke_count="$(grep -Ec '^src/testdata/extensions/[^/]+\.sql$' "$listing" || true)"
+if [ "$packaged_extension_smoke_count" -ne "$canonical_extension_smoke_count" ]; then
+  echo "oliphaunt-wasix package must contain exactly the canonical extension smoke recipes: expected $canonical_extension_smoke_count, found $packaged_extension_smoke_count" >&2
+  grep -E '^src/testdata/extensions/' "$listing" >&2 || true
+  exit 1
+fi
+if git ls-files --error-unmatch \
+  src/bindings/wasix-rust/crates/oliphaunt-wasix/src/testdata/extensions/'*.sql' \
+  >/dev/null 2>&1; then
+  echo "oliphaunt-wasix source must not commit package-local extension smoke copies; package them from src/shared/fixtures/extensions" >&2
+  exit 1
+fi
+reject_pattern '^src/testdata/postgis-smoke\.sql$'
+
+cmp -s \
   src/bindings/wasix-rust/crates/oliphaunt-wasix/src/testdata/wasix-toolchain.toml \
-  src/sources/toolchains/wasix.toml
+  src/sources/toolchains/wasix.toml || {
+  echo "oliphaunt-wasix packaged toolchain fixture must match src/sources/toolchains/wasix.toml" >&2
+  exit 1
+}
 
 reject_pattern '(^|/)(payload|artifacts|target)(/|$)'
 reject_pattern '(^|/)assets/generated(/|$)'
@@ -140,11 +155,17 @@ require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml '"
   "oliphaunt-wasix tools feature must select the macOS arm64 tools-AOT crate"
 require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml '"dep:oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",' \
   "oliphaunt-wasix tools feature must select the Windows x64 tools-AOT crate"
-require_cfg_tools_line src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/mod.rs "pub mod pg_dump;" \
-  "WASIX split-tools public module must stay behind cfg(feature = \"tools\")"
-require_cfg_tools_line src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/mod.rs "pub use pg_dump::{PgDumpOptions, PsqlOptions, preflight_wasix_tools};" \
+require_cfg_tools_line src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/mod.rs "pub(crate) mod pg_dump;" \
+  "WASIX split-tools implementation module must stay private behind cfg(feature = \"tools\")"
+require_cfg_tools_line src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/mod.rs "pub use pg_dump::{PgDumpOptions, PsqlOptions};" \
   "WASIX split-tools internal exports must stay behind cfg(feature = \"tools\")"
-require_cfg_tools_line src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs "pub use oliphaunt::{PgDumpOptions, PsqlOptions, preflight_wasix_tools};" \
+require_cfg_tools_line src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs "pub use oliphaunt::{PgDumpOptions, PsqlOptions};" \
   "WASIX split-tools crate-root exports must stay behind cfg(feature = \"tools\")"
+require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/server.rs "pub fn pg_dump(&self, options: PgDumpOptions)" \
+  "WASIX server must expose pg_dump through PgDumpOptions"
+require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/server.rs "pub fn psql(&self, options: PsqlOptions)" \
+  "WASIX server must expose psql through PsqlOptions"
+require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/pg_dump.rs "pub fn script(mut self, sql: impl Into<String>)" \
+  "WASIX PsqlOptions must expose standard script input"
 
 echo "oliphaunt-wasix package shape verified: $listing"

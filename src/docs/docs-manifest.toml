@@ -30,14 +30,18 @@ docs_entry = "target/docs/generated/api/kotlin/html/index.html"
 package_path = "src/sdks/js"
 docs_entry = "target/docs/generated/api/typescript/html/index.html"
 
+[api_reference.wasix_typescript]
+package_path = "src/bindings/wasix-ts"
+docs_entry = "target/docs/generated/api/wasix-typescript/html/index.html"
+
 [api_reference.react_native]
 package_path = "src/sdks/react-native"
 docs_entry = "target/docs/generated/api/react-native/html/index.html"
 
-# Internal rustdoc artifact key. Public routes and labels use WASIX.
-[api_reference.wasm]
+# Rust WASIX rustdoc artifact.
+[api_reference.wasix_rust]
 package = "oliphaunt-wasix"
-docs_entry = "target/docs/generated/api/wasm/doc/oliphaunt_wasix/index.html"
+docs_entry = "target/docs/generated/api/wasix-rust/doc/oliphaunt_wasix/index.html"
 
 [[routes]]
 id = "start"
@@ -119,7 +123,7 @@ route = "sdk/rust"
 source = "src/docs/content/sdk/rust"
 version_source = "src/sdks/rust/release.toml:id"
 reference_kind = "rustdoc"
-tested_snippet_path = "src/sdks/rust/tests/sdk_shape.rs"
+tested_snippet_path = "src/sdks/rust/tests/public_api.rs"
 tested_snippet_marker = "OLIPHAUNT_DOCS_SNIPPET rust-quickstart"
 required_pages = [
   "index",
@@ -253,16 +257,16 @@ reference_artifact = "target/docs/generated/api/typescript/html/index.html"
 snippet_language = "typescript"
 
 [[routes]]
-id = "oliphaunt-wasix"
+id = "oliphaunt-wasix-rust"
 product_id = "oliphaunt-wasix-rust"
 title = "Rust WASIX SDK"
 kind = "sdk"
-route = "sdk/wasix"
-source = "src/docs/content/sdk/wasm"
+route = "sdk/wasix-rust"
+source = "src/docs/content/sdk/wasix-rust"
 version_source = "src/bindings/wasix-rust/crates/oliphaunt-wasix/release.toml:id"
 reference_kind = "rustdoc"
 tested_snippet_path = "src/bindings/wasix-rust/crates/oliphaunt-wasix/tests/runtime_smoke.rs"
-tested_snippet_marker = "OLIPHAUNT_DOCS_SNIPPET wasm-quickstart"
+tested_snippet_marker = "OLIPHAUNT_DOCS_SNIPPET wasix-rust-quickstart"
 required_pages = [
   "index",
   "guide",
@@ -270,7 +274,6 @@ required_pages = [
 ]
 page_order = [
   "index",
-  "browser-typescript",
   "guide",
   "runtime",
   "dump-restore",
@@ -278,13 +281,40 @@ page_order = [
 ]
 sidebar_pages = [
   "index",
-  "browser-typescript",
   "guide",
   "runtime",
   "dump-restore",
 ]
-reference_artifact = "target/docs/generated/api/wasm/doc/oliphaunt_wasix/index.html"
+reference_artifact = "target/docs/generated/api/wasix-rust/doc/oliphaunt_wasix/index.html"
 snippet_language = "rust"
+
+[[routes]]
+id = "oliphaunt-wasix-typescript"
+product_id = "oliphaunt-wasix-ts"
+title = "WASIX TypeScript SDK"
+kind = "sdk"
+route = "sdk/wasix-typescript"
+source = "src/docs/content/sdk/wasix-typescript"
+version_source = "src/bindings/wasix-ts/release.toml:id"
+reference_kind = "typedoc"
+tested_snippet_path = "src/bindings/wasix-ts/tools/smoke-node.mjs"
+tested_snippet_marker = "OLIPHAUNT_DOCS_SNIPPET wasix-typescript-quickstart"
+required_pages = [
+  "index",
+  "guide",
+  "api-reference",
+]
+page_order = [
+  "index",
+  "guide",
+  "api-reference",
+]
+sidebar_pages = [
+  "index",
+  "guide",
+]
+reference_artifact = "target/docs/generated/api/wasix-typescript/html/index.html"
+snippet_language = "typescript"
 
 [[routes]]
 id = "liboliphaunt-native"

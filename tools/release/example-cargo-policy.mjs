@@ -118,24 +118,6 @@ export const EXAMPLE_CARGO_POLICIES = Object.freeze([
       "oliphaunt-extension-contrib-pg18-aot-linux-x64",
     ]),
   }),
-  exampleCargoPolicy({
-    id: "wasix-tauri-sqlx",
-    crateDir: "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri",
-    ignoredLock: "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.lock",
-    wasixToolchain: true,
-    dependencyBindings: [
-      dependencyBinding("oliphaunt-wasix", ["dependencies"]),
-      dependencyBinding("oliphaunt-wasix-tools", ["dependencies"]),
-      dependencyBinding("liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu", ["target", LINUX_X64_GNU_TARGET, "dependencies"]),
-      dependencyBinding("oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu", ["target", LINUX_X64_GNU_TARGET, "dependencies"]),
-    ],
-    requiredPackages: Object.freeze([
-      "oliphaunt-wasix",
-      "oliphaunt-wasix-tools",
-      "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
-      "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
-    ]),
-  }),
 ]);
 
 function fail(message) {

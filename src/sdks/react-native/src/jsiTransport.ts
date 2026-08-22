@@ -1,22 +1,30 @@
+export type JsiProtocolChunkResult =
+  | {
+      readonly __oliphauntProtocolChunkFailure: true;
+      readonly error: unknown;
+    }
+  | undefined;
+
 export type JsiRawProtocolTransport = {
   readonly version: 1;
   readonly execProtocolRaw: (
     handle: number,
     request: Uint8Array,
   ) => Promise<ArrayBuffer | ArrayBufferView>;
-  readonly execProtocolStream?: (
+  readonly execProtocolStream: (
     handle: number,
     request: Uint8Array,
-    onChunk: (chunk: ArrayBuffer | ArrayBufferView) => void,
+    onChunk: (chunk: ArrayBuffer | ArrayBufferView) => JsiProtocolChunkResult,
   ) => Promise<void>;
-  readonly backup: (handle: number, format: string) => Promise<ArrayBuffer | ArrayBufferView>;
+  readonly backup: (handle: number) => Promise<ArrayBuffer | ArrayBufferView>;
   readonly restore: (
-    destination: string,
-    format: string,
+    destination: {
+      storageKind: 'directory' | 'applicationData';
+      storagePath?: string;
+      storageName?: string;
+    },
     artifact: Uint8Array,
-    replaceExisting: boolean,
-    libraryPath: string | null,
-  ) => Promise<string>;
+  ) => Promise<void>;
 };
 
 type GlobalWithOliphauntJsi = typeof globalThis & {
@@ -28,6 +36,7 @@ export function resolveJsiRawProtocolTransport(): JsiRawProtocolTransport | null
   if (
     candidate?.version === 1 &&
     typeof candidate.execProtocolRaw === 'function' &&
+    typeof candidate.execProtocolStream === 'function' &&
     typeof candidate.backup === 'function' &&
     typeof candidate.restore === 'function'
   ) {
@@ -59,60 +68,57 @@ export async function execProtocolStreamJsi(
   handle: number,
   request: Uint8Array,
   onChunk: (chunk: Uint8Array) => void,
-): Promise<boolean> {
-  if (!jsiTransportSupportsProtocolStream(transport)) {
-    return false;
-  }
-  let chunkError: unknown;
-  await transport.execProtocolStream(handle, request, (chunk) => {
-    if (chunkError !== undefined) {
-      return;
+): Promise<void> {
+  let callbackFailed = false;
+  let callbackFailure: unknown;
+  try {
+    await transport.execProtocolStream(handle, request, (chunk) => {
+      if (callbackFailed) {
+        return protocolChunkFailure(callbackFailure);
+      }
+      try {
+        onChunk(binaryResponseToUint8Array(chunk));
+        return undefined;
+      } catch (error) {
+        callbackFailed = true;
+        callbackFailure = error;
+        return protocolChunkFailure(error);
+      }
+    });
+  } catch (error) {
+    if (!callbackFailed) {
+      throw error;
     }
-    try {
-      onChunk(binaryResponseToUint8Array(chunk));
-    } catch (error) {
-      chunkError = error;
-    }
-  });
-  if (chunkError !== undefined) {
-    throw chunkError;
   }
-  return true;
+  if (callbackFailed) {
+    throw callbackFailure;
+  }
 }
 
-export function jsiTransportSupportsProtocolStream(
-  transport: JsiRawProtocolTransport | null | undefined,
-): transport is JsiRawProtocolTransport &
-  Required<Pick<JsiRawProtocolTransport, 'execProtocolStream'>> {
-  return typeof transport?.execProtocolStream === 'function';
+function protocolChunkFailure(error: unknown): Exclude<JsiProtocolChunkResult, undefined> {
+  return {
+    __oliphauntProtocolChunkFailure: true,
+    error,
+  };
 }
+
 export async function backupJsi(
   transport: JsiRawProtocolTransport,
   handle: number,
-  format: string,
 ): Promise<Uint8Array> {
-  return binaryResponseToUint8Array(await transport.backup(handle, format));
+  return binaryResponseToUint8Array(await transport.backup(handle));
 }
 
 export async function restoreJsi(
   transport: JsiRawProtocolTransport,
-  destination: string,
-  format: string,
+  destination: {
+    storageKind: 'directory' | 'applicationData';
+    storagePath?: string;
+    storageName?: string;
+  },
   artifact: Uint8Array,
-  replaceExisting: boolean,
-  libraryPath: string | null,
-): Promise<string> {
-  const restored = await transport.restore(
-    destination,
-    format,
-    artifact,
-    replaceExisting,
-    libraryPath,
-  );
-  if (typeof restored !== 'string') {
-    throw new Error('liboliphaunt JSI restore returned a non-string response');
-  }
-  return restored;
+): Promise<void> {
+  await transport.restore(destination, artifact);
 }
 
 function binaryResponseToUint8Array(response: ArrayBuffer | ArrayBufferView): Uint8Array {
