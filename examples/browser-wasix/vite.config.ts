@@ -164,6 +164,7 @@ function wasixAssets(): Plugin {
   ]);
   return {
     name: 'oliphaunt-wasix-assets',
+    enforce: 'pre',
     resolveId(id) {
       return virtualModules.get(id);
     },
