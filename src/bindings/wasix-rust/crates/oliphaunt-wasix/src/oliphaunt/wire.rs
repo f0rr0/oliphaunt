@@ -14,17 +14,28 @@ pub(crate) struct FrontendFrameReader {
 }
 
 impl FrontendFrameReader {
-    pub(crate) fn push(&mut self, input: &[u8]) -> Result<Vec<Vec<u8>>> {
+    pub(crate) fn append(&mut self, input: &[u8]) {
         self.buffer.extend_from_slice(input);
+    }
+
+    pub(crate) fn next_frame(&mut self) -> Result<Option<Vec<u8>>> {
+        let Some(message_len) = frontend_message_len_if_complete(&self.buffer)? else {
+            return Ok(None);
+        };
+        Ok(Some(self.buffer.drain(..message_len).collect()))
+    }
+
+    #[cfg(feature = "tools")]
+    pub(crate) fn take_pending(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.buffer)
+    }
+
+    pub(crate) fn push(&mut self, input: &[u8]) -> Result<Vec<Vec<u8>>> {
+        self.append(input);
         let mut messages = Vec::new();
-
-        loop {
-            let Some(message_len) = frontend_message_len_if_complete(&self.buffer)? else {
-                break;
-            };
-            messages.push(self.buffer.drain(..message_len).collect());
+        while let Some(message) = self.next_frame()? {
+            messages.push(message);
         }
-
         Ok(messages)
     }
 

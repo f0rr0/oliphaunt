@@ -11,7 +11,7 @@ dependsOn:
 
 project:
   title: "Oliphaunt WASIX TypeScript binding"
-  description: "Portable WASIX TypeScript binding for browser, Node, Bun, and Deno direct/Worker placement."
+  description: "Portable WASIX TypeScript binding for browser, Node, Bun, and Deno direct, Worker, and local-server placement."
   owner: "oliphaunt"
   release:
     component: "oliphaunt-wasix-ts"
@@ -48,6 +48,7 @@ tasks:
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
       - "/src/shared/js-core/**/*"
+      - "/src/shared/fixtures/postgres/server-listen.json"
       - "/src/shared/fixtures/protocol/query-response-cases.json"
       - "/src/shared/fixtures/storage/database-root.json"
       - "/src/shared/fixtures/storage/physical-archive-wasix-v1.properties"
@@ -364,6 +365,7 @@ tasks:
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
       - "/src/bindings/wasix-ts/**/*"
+      - "/src/bindings/wasix-tools/**/*"
       - "/tools/dev/capture-command-output.mjs"
       - "/tools/release/build-sdk-ci-artifacts.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
@@ -372,6 +374,8 @@ tasks:
       - "/tools/release/sdk-artifacts/npm.mjs"
       - "/tools/release/sdk-artifacts/shared.mjs"
       - "/tools/release/sdk-artifacts/wasix-ts.mjs"
+      - "/tools/release/sdk-artifacts/wasix-tools-ts.mjs"
+      - "/tools/release/wasix-tools-typescript-package.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
     outputs:
       - "/target/sdk-artifacts/oliphaunt-wasix-ts/**/*"

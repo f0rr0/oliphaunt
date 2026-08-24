@@ -2,11 +2,16 @@ import {
   WasixDatabaseImpl,
   type WasixDatabaseSession,
   type WasixPersistenceMode,
+  type WasixProtocolConnectionMode,
 } from './database.js';
 import type { SerializedOpenOptions, WorkerRequest, WorkerResponse } from './rpc.js';
 import { deserializeWorkerError } from './rpc.js';
 import type { WasixStorageSyncBoundary } from './storage-provider.js';
 import type { OliphauntDatabase } from './types.js';
+import type { WasixProtocolConnection } from './pgwire-connection.js';
+
+const STREAM_ACK = 0;
+const STREAM_FAILED = 1;
 
 type WorkerRequestWithoutId = WorkerRequest extends infer Request
   ? Request extends { id: number }
@@ -29,6 +34,9 @@ export class WorkerRpc {
     {
       resolve: (value: Uint8Array | undefined) => void;
       reject: (error: Error) => void;
+      onChunk?: (chunk: Uint8Array) => void;
+      control?: Int32Array;
+      callbackFailure?: Error;
     }
   >();
   #nextId = 1;
@@ -42,7 +50,27 @@ export class WorkerRpc {
       if (pending === undefined) {
         return;
       }
+      if ('kind' in message) {
+        try {
+          pending.onChunk?.(message.value);
+        } catch (error) {
+          pending.callbackFailure = error instanceof Error ? error : new Error(String(error));
+          if (pending.control !== undefined) {
+            Atomics.store(pending.control, STREAM_FAILED, 1);
+          }
+        } finally {
+          if (pending.control !== undefined) {
+            Atomics.store(pending.control, STREAM_ACK, message.sequence);
+            Atomics.notify(pending.control, STREAM_ACK);
+          }
+        }
+        return;
+      }
       this.#pending.delete(message.id);
+      if (pending.callbackFailure !== undefined) {
+        pending.reject(pending.callbackFailure);
+        return;
+      }
       if (message.ok) {
         pending.resolve(message.value);
       } else {
@@ -64,6 +92,39 @@ export class WorkerRpc {
       this.#pending.set(id, { resolve, reject });
       try {
         this.#worker.postMessage({ ...request, id } satisfies WorkerRequest, transfer);
+      } catch (error) {
+        this.#pending.delete(id);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  }
+
+  stream(
+    input: Uint8Array,
+    persistence: WasixPersistenceMode,
+    onChunk: (chunk: Uint8Array) => void,
+  ): Promise<void> {
+    if (this.#fatal !== undefined) {
+      return Promise.reject(this.#fatal);
+    }
+    const id = this.#nextId++;
+    const control = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 2));
+    return new Promise((resolve, reject) => {
+      this.#pending.set(id, {
+        resolve: () => resolve(),
+        reject,
+        onChunk,
+        control,
+      });
+      const request: WorkerRequest = {
+        id,
+        method: 'execStream',
+        input,
+        persistence,
+        control: control.buffer as SharedArrayBuffer,
+      };
+      try {
+        this.#worker.postMessage(request, [input.buffer]);
       } catch (error) {
         this.#pending.delete(id);
         reject(error instanceof Error ? error : new Error(String(error)));
@@ -121,6 +182,7 @@ export async function openWorkerDatabase(
 }
 
 class WorkerDatabaseSession implements WasixDatabaseSession {
+  readonly isolated = true;
   readonly #rpc: WorkerRpc;
 
   constructor(rpc: WorkerRpc) {
@@ -137,6 +199,14 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
     return response;
   }
 
+  execStream(
+    input: Uint8Array,
+    onChunk: (chunk: Uint8Array) => void,
+    persistence: WasixPersistenceMode = 'sync',
+  ): Promise<void> {
+    return this.#rpc.stream(input, persistence, onChunk);
+  }
+
   async sync(boundary: WasixStorageSyncBoundary): Promise<void> {
     await this.#rpc.request({ method: 'sync', boundary });
   }
@@ -147,6 +217,13 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
       throw new Error('Oliphaunt WASIX worker returned an invalid physical archive');
     }
     return response;
+  }
+
+  async serve(
+    connection: WasixProtocolConnection,
+    mode: WasixProtocolConnectionMode,
+  ): Promise<void> {
+    await this.#rpc.request({ method: 'serve', connection, mode });
   }
 
   close(): Promise<void> {

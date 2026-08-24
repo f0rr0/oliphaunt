@@ -557,7 +557,12 @@ function verifyPostgresIdentity(
   }
 }
 
-async function assertSha256(bytes: Uint8Array, expected: string, label: string): Promise<void> {
+/** @internal Shared verification for separately carried WASIX tool modules. */
+export async function assertSha256(
+  bytes: Uint8Array,
+  expected: string,
+  label: string,
+): Promise<void> {
   if (globalThis.crypto?.subtle === undefined) {
     throw new Error(`Web Crypto is required to verify ${label}`);
   }

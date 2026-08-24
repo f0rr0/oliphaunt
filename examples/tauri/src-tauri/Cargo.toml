@@ -23,7 +23,6 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 anyhow = "1"
 oliphaunt = { version = "=0.1.1" }
-oliphaunt-tools = { version = "=0.1.1" }
 serde = { version = "1", features = ["derive"] }
 tauri = { version = "2", features = [] }
 thiserror = "2"

@@ -6,7 +6,10 @@
     "noEmit": true,
     "paths": {
       "@oliphaunt/liboliphaunt-wasix": ["../../src/bindings/wasix-ts/src/runtime-carrier-shim.d.ts"],
+      "@oliphaunt/liboliphaunt-wasix-tools": ["../../src/bindings/wasix-tools/src/runtime-carrier-shim.d.ts"],
       "@oliphaunt/wasix-ts": ["../../src/bindings/wasix-ts/src/index.ts"],
+      "@oliphaunt/wasix-ts/internal/tools": ["../../src/bindings/wasix-ts/src/internal.ts"],
+      "@oliphaunt/wasix-tools": ["../../src/bindings/wasix-tools/src/index.ts"],
       "@oliphaunt/wasix-ts/*": ["../../src/bindings/wasix-ts/src/*"]
     },
     "rootDir": "../..",

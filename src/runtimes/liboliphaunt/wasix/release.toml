@@ -15,6 +15,7 @@ registry_packages = [
   "crates:oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
   "crates:oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
   "npm:@oliphaunt/liboliphaunt-wasix",
+  "npm:@oliphaunt/liboliphaunt-wasix-tools",
 ]
 release_artifacts = [
   "release-assets",

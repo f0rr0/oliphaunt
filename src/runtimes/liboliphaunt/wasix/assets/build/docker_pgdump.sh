@@ -73,10 +73,7 @@ fi
     . ./src/runtimes/liboliphaunt/wasix/assets/build/docker_wasix_env.sh
     . ./src/runtimes/liboliphaunt/wasix/assets/build/profile_flags.sh
     . ./src/runtimes/liboliphaunt/wasix/assets/build/source_lane.sh
-    . ./src/runtimes/liboliphaunt/wasix/assets/build/wasix_icu_link.sh
-    icu_prefix="$(./src/runtimes/liboliphaunt/wasix/assets/build/build_wasix_icu.sh)"
-    ICU_CFLAGS="$(oliphaunt_wasix_icu_cflags "$icu_prefix")"
-    ICU_LIBS="$(oliphaunt_wasix_icu_libs "$icu_prefix")"
+    . ./src/runtimes/liboliphaunt/wasix/assets/build/wasix_frontend_tools.sh
     oliphaunt_wasix_apply_wasix_profile build
     export AR=wasixar
     export RANLIB=wasixranlib
@@ -87,12 +84,17 @@ fi
     oliphaunt_wasix_check_source_markers
     sha256sum -c "$BUILD_DIR/.oliphaunt-wasix-bridge-sha256" >/dev/null
     test "$(oliphaunt_wasix_wasix_profile_signature)" = "$(cat "$BUILD_DIR/.oliphaunt-wasix-build-profile")"
-    make -s -C "$BUILD_DIR/src/bin/pg_dump" clean
-    make -s -C "$BUILD_DIR/src/bin/pg_dump" pg_dump \
-      libpq="$BUILD_DIR/src/interfaces/libpq/libpq.a" \
-      LIBS="$BUILD_DIR/src/common/libpgcommon.a $BUILD_DIR/src/port/libpgport.a $ICU_LIBS -lm"
-    test -f "$BUILD_DIR/src/bin/pg_dump/pg_dump"
-    if wasixnm -u "$BUILD_DIR/src/bin/pg_dump/pg_dump" | grep -E " PQ[A-Za-z0-9_]+$"; then
+
+    runtime_build_dir="$BUILD_DIR"
+    oliphaunt_wasix_prepare_frontend_tools
+    make -s -C "$OLIPHAUNT_WASIX_FRONTEND_BUILD_DIR/src/bin/pg_dump" clean
+    make -s -C "$OLIPHAUNT_WASIX_FRONTEND_BUILD_DIR/src/bin/pg_dump" pg_dump \
+      libpq="$OLIPHAUNT_WASIX_FRONTEND_BUILD_DIR/src/interfaces/libpq/libpq.a" \
+      LIBS="$OLIPHAUNT_WASIX_FRONTEND_BUILD_DIR/src/common/libpgcommon.a $OLIPHAUNT_WASIX_FRONTEND_BUILD_DIR/src/port/libpgport.a $OLIPHAUNT_WASIX_FRONTEND_ICU_LIBS -lm"
+    install -m 0755 \
+      "$OLIPHAUNT_WASIX_FRONTEND_BUILD_DIR/src/bin/pg_dump/pg_dump" \
+      "$runtime_build_dir/src/bin/pg_dump/pg_dump"
+    if wasixnm -u "$runtime_build_dir/src/bin/pg_dump/pg_dump" | grep -E " PQ[A-Za-z0-9_]+$"; then
       echo "pg_dump still imports libpq symbols; expected standalone WASIX pg_dump" >&2
       exit 1
     fi

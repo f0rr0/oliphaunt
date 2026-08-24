@@ -61,6 +61,7 @@ import {
   SOURCE_ONLY_NPM_PROFILES,
 } from "./source-only-sdk-package.mjs";
 import { assertWasixTypescriptNpmArchive } from "./wasix-typescript-package.mjs";
+import { assertWasixToolsTypescriptNpmArchive } from "./wasix-tools-typescript-package.mjs";
 import { assertWasixExtensionMemberInstall } from "./wasix-extension-install-contract.mjs";
 import {
   validateSelectionNeutralSwiftCarrierIdentity,
@@ -665,15 +666,9 @@ async function validateRustSdkCrate(crate) {
   }
 
   const nativeTargets = rustSdkArtifactTargets("liboliphaunt-native", "native-runtime", "rust-native-direct");
-  const toolsTargets = rustSdkArtifactTargets("liboliphaunt-native", "native-tools", "rust-native-direct");
   const brokerTargets = rustSdkArtifactTargets("oliphaunt-broker", "broker-helper", "rust-broker");
   const targetIds = nativeTargets.map((target) => target.target);
   try {
-    assertSameNativeTargetSet(
-      "staged oliphaunt Rust SDK native runtime/tools",
-      targetIds,
-      toolsTargets.map((target) => target.target),
-    );
     assertSameNativeTargetSet(
       "staged oliphaunt Rust SDK native runtime/broker",
       targetIds,
@@ -705,7 +700,6 @@ async function validateRustSdkCrate(crate) {
     }
     const expectedDependencies = [
       `liboliphaunt-native-${target.target}`,
-      "oliphaunt-tools",
       `oliphaunt-broker-${target.target}`,
     ];
     exactSortedStrings(
@@ -714,8 +708,7 @@ async function validateRustSdkCrate(crate) {
       expectedDependencies,
     );
     requireRegistryTargetDependency(crate, dependencies, cfg, expectedDependencies[0], nativeVersion);
-    requireRegistryTargetDependency(crate, dependencies, cfg, expectedDependencies[1], nativeVersion);
-    requireRegistryTargetDependency(crate, dependencies, cfg, expectedDependencies[2], brokerVersion);
+    requireRegistryTargetDependency(crate, dependencies, cfg, expectedDependencies[1], brokerVersion);
   }
 
   const sourceMembers = archiveTarNames(crate).filter((name) => name.endsWith("/src/lib.rs"));
@@ -1087,11 +1080,17 @@ async function checkSdkProduct(product, { require }) {
       .filter((name) => name.endsWith(".tgz"))
       .map((name) => path.join(root, name))
       .sort(compareText);
-    if (tarballs.length !== 1) {
-      fail(`${product} must stage exactly one npm tarball under ${rel(root)}`);
+    if (tarballs.length !== 2) {
+      fail(`${product} must stage the binding and tools npm tarballs under ${rel(root)}`);
     }
     try {
-      assertWasixTypescriptNpmArchive(tarballs[0]);
+      const binding = tarballs.find((file) => path.basename(file).startsWith('oliphaunt-wasix-ts-'));
+      const tools = tarballs.find((file) => path.basename(file).startsWith('oliphaunt-wasix-tools-'));
+      if (binding === undefined || tools === undefined) {
+        fail(`${product} staged unexpected npm tarball names`);
+      }
+      assertWasixTypescriptNpmArchive(binding);
+      assertWasixToolsTypescriptNpmArchive(tools);
     } catch (error) {
       fail(error instanceof Error ? error.message : String(error));
     }

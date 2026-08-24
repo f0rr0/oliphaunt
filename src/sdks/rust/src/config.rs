@@ -63,7 +63,61 @@ pub(crate) struct NativeBrokerConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct NativeServerConfig {
     pub(crate) executable: Option<PathBuf>,
-    pub(crate) port: Option<u16>,
+    pub(crate) listen: ServerListen,
+}
+
+/// Local endpoint exposed by a native PostgreSQL server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServerListen {
+    /// Listen on the fixed loopback address. `None` allocates an ephemeral port.
+    Tcp {
+        /// PostgreSQL port, or `None` for an ephemeral port.
+        port: Option<u16>,
+    },
+    /// Listen in a PostgreSQL Unix-domain socket directory.
+    #[cfg(unix)]
+    Unix {
+        /// Directory containing `.s.PGSQL.<port>`.
+        directory: PathBuf,
+        /// PostgreSQL port encoded in the socket filename.
+        port: u16,
+    },
+}
+
+impl Default for ServerListen {
+    fn default() -> Self {
+        Self::tcp()
+    }
+}
+
+impl ServerListen {
+    /// Listen on loopback using an ephemeral TCP port.
+    pub const fn tcp() -> Self {
+        Self::Tcp { port: None }
+    }
+
+    /// Listen on loopback using a fixed TCP port.
+    pub const fn tcp_port(port: u16) -> Self {
+        Self::Tcp { port: Some(port) }
+    }
+
+    /// Listen in a Unix-domain socket directory using PostgreSQL port 5432.
+    #[cfg(unix)]
+    pub fn unix(directory: impl Into<PathBuf>) -> Self {
+        Self::Unix {
+            directory: directory.into(),
+            port: 5432,
+        }
+    }
+
+    /// Listen in a Unix-domain socket directory using a fixed PostgreSQL port.
+    #[cfg(unix)]
+    pub fn unix_port(directory: impl Into<PathBuf>, port: u16) -> Self {
+        Self::Unix {
+            directory: directory.into(),
+            port,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,11 +164,29 @@ impl OpenConfig {
                 }
             }
             EngineMode::Server => {
-                if self.server.port == Some(0) {
-                    return Err(Error::InvalidConfig(
-                        "native server port must be greater than zero; omit the port to allocate one"
-                            .to_owned(),
-                    ));
+                match &self.server.listen {
+                    ServerListen::Tcp { port: Some(0) } => {
+                        return Err(Error::InvalidConfig(
+                            "native TCP server port must be greater than zero; omit the port to allocate one"
+                                .to_owned(),
+                        ));
+                    }
+                    #[cfg(unix)]
+                    ServerListen::Unix { directory, port } => {
+                        validate_config_path("native server Unix socket directory", directory)?;
+                        if directory.to_str().is_none() {
+                            return Err(Error::InvalidConfig(
+                                "native server Unix socket directory must be valid UTF-8 so it can be represented in a PostgreSQL connection string"
+                                    .to_owned(),
+                            ));
+                        }
+                        if *port == 0 {
+                            return Err(Error::InvalidConfig(
+                                "native Unix server port must be greater than zero".to_owned(),
+                            ));
+                        }
+                    }
+                    _ => {}
                 }
                 if let Some(executable) = &self.server.executable {
                     validate_config_path("native server executable path", executable)?;
@@ -190,7 +262,7 @@ fn validate_postgres_startup_guc(guc: &PostgresStartupGuc) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{OpenConfig, PostgresStartupGuc};
+    use super::{EngineMode, OpenConfig, PostgresStartupGuc, ServerListen};
 
     #[test]
     fn startup_guc_names_use_portable_postgres_grammar() {
@@ -213,6 +285,27 @@ mod tests {
             );
         }
         config.startup_gucs = vec![PostgresStartupGuc::new("good", "bad\0value")];
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn server_listen_matches_shared_postgres_vocabulary() {
+        let fixture: serde_json::Value = serde_json::from_str(&crate::test_fixtures::text(
+            "postgres/server-listen.json",
+            "testdata/server-listen.json",
+        ))
+        .unwrap();
+        assert_eq!(fixture["tcp"]["host"], "127.0.0.1");
+        assert_eq!(fixture["unix"]["defaultPort"], 5432);
+        assert_eq!(fixture["unix"]["filePrefix"], ".s.PGSQL.");
+
+        let mut config = OpenConfig::direct("target/test-roots/native-server-listen");
+        config.mode = EngineMode::Server;
+        for port in fixture["tcp"]["validPorts"].as_array().unwrap() {
+            config.server.listen = ServerListen::tcp_port(port.as_u64().unwrap() as u16);
+            config.validate().unwrap();
+        }
+        config.server.listen = ServerListen::tcp_port(0);
         assert!(config.validate().is_err());
     }
 }

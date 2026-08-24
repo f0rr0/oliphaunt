@@ -15,17 +15,18 @@ canonical PostgreSQL and toolchain inputs where their semantics agree, while
 owning separate guest patch stacks and runtime artifacts where concurrency
 changes the contract.
 
-The public distinction is topology:
+The products have different execution models:
 
 - `single` is a small in-process database with one PostgreSQL execution
   context and no guest process/thread creation;
 - `postmaster` is a multi-session PostgreSQL server with a listener, isolated
   backends, shared memory, signals, timers, and process lifecycle semantics.
 
-SDKs should expose topology as a configuration choice over their established
-database API. Topology-specific capabilities and unsupported hosts must be
-reported explicitly; they must not be silently emulated by a different
-backend.
+They remain separate public products. SDKs must not hide the postmaster behind
+a `topology` option on the portable single-backend database API: its storage,
+packaging, listener, concurrency, and lifecycle contracts are different. A
+future postmaster SDK may supervise the postmaster carrier explicitly, but it
+must not silently substitute either product for the other.
 
 ## Process and ownership model
 

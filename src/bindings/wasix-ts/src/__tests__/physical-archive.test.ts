@@ -175,10 +175,7 @@ describe('WASIX physical archives', () => {
 
   it('does not retry a stop whose completed command tag is unexpected', async () => {
     const calls: string[] = [];
-    const responses = [
-      startResponse(),
-      queryResponse(['wal', 'backup label', null], 'SELECT 0'),
-    ];
+    const responses = [startResponse(), queryResponse(['wal', 'backup label', null], 'SELECT 0')];
     await expect(
       createPhysicalArchive(async (request) => {
         calls.push(querySql(request));
@@ -591,10 +588,7 @@ function stopResponseWithInvalidDataRow(): Uint8Array {
   throw new Error('stop response is missing DataRow');
 }
 
-function queryResponse(
-  values: readonly (string | null)[],
-  commandTag = 'SELECT 1',
-): Uint8Array {
+function queryResponse(values: readonly (string | null)[], commandTag = 'SELECT 1'): Uint8Array {
   const encoder = new TextEncoder();
   const fields = values.map((_value, index) => `column_${index}`);
   const descriptionLength =

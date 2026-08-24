@@ -73,12 +73,12 @@ icu = ["dep:oliphaunt-icu"]
 postgres-version = "18.4"
 postgres-source-url = "https://ftp.postgresql.org/pub/source/v18.4/postgresql-18.4.tar.bz2"
 postgres-source-sha256 = "81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094"
-postgres-patch-count = "41"
+postgres-patch-count = "40"
 oliphaunt-npm-version-checked = "0.4.5"
-runtime-archive-sha256 = "7dccedb08fdc32b0092ff92a0882d911230e0361d0f4fdf228d6a6cb7d981178"
-oliphaunt-wasix-sha256 = "da58c392818149789b8ca9824952abf20ed1a084e7b580369a5478e6db280b05"
-pgdata-template-archive-sha256 = "6155909517d8e5e8979a49fbd635d980474fccf7f5124e77316d213655f6235a"
-initdb-wasix-sha256 = "8c2b936abfd01ba7d7272897a1719ce2a0e2bfaa4835bea3458f462afe74f8fc"
+runtime-archive-sha256 = "e39a4f4eb976b81daeaec88dd0049b530a6f1c202a3a9182937b3b905dfbf931"
+oliphaunt-wasix-sha256 = "1109c759ca61cf1db756e8b2d610799156838b6b554e34f7166fa7297f675244"
+pgdata-template-archive-sha256 = "d776829530dd62834ad8fdb2e192ade6c5516cb03a66527f55c58719f9ff1a1a"
+initdb-wasix-sha256 = "c2438dd844943811da9de5dd5c2786c7b2cb1b03df41d8b71108dce1d632758b"
 
 [dependencies]
 anyhow = "1"

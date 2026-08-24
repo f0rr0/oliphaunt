@@ -23,7 +23,6 @@ export function cargoSdkPackageClosure(product) {
     return {
       cratePath: path.join(artifactRoot, `oliphaunt-${version}.crate`),
       allFeatures: true,
-      stubDependencies: ["oliphaunt-tools"],
       stubDependencyPrefixes: ["liboliphaunt-native-", "oliphaunt-broker-"],
     };
   }

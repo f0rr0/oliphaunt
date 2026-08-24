@@ -309,15 +309,17 @@ async function stagePackedBrowserConsumer(scratch) {
     scratch,
     consumerName: 'oliphaunt-wasix-browser-package-smoke-consumer',
     includePgtap: true,
+    includeTools: true,
   });
-  await cp(
-    resolve(repositoryRoot, 'examples/browser-wasix/index.html'),
-    resolve(fixture.consumer, 'index.html'),
-  );
-  await cp(
-    resolve(repositoryRoot, 'examples/browser-wasix/package-smoke.ts'),
-    resolve(fixture.consumer, 'main.ts'),
-  );
+  for (const [source, destination] of [
+    ['examples/browser-wasix/index.html', 'index.html'],
+    ['examples/browser-wasix/package-smoke.ts', 'main.ts'],
+    ['src/shared/fixtures/postgres/logical-tools.json', 'logical-tools.json'],
+    ['src/shared/fixtures/postgres/logical-tools-seed.sql', 'logical-tools-seed.sql'],
+    ['src/shared/fixtures/postgres/logical-tools-verify.sql', 'logical-tools-verify.sql'],
+  ]) {
+    await cp(resolve(repositoryRoot, source), resolve(fixture.consumer, destination));
+  }
   return realpath(fixture.consumer);
 }
 

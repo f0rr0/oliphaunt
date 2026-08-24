@@ -791,6 +791,30 @@ export function typescriptOptionalRuntimePackageProducts(prefix = "release-artif
   return rows.sort((left, right) => compareText(left.packageName, right.packageName));
 }
 
+export function nativeToolsOptionalPackageProducts(prefix = "release-artifact-targets.mjs") {
+  const selected = allArtifactTargets(
+    { product: "liboliphaunt-native", kind: "native-tools" },
+    prefix,
+  );
+  if (selected.length === 0) {
+    fail(prefix, "no native tools optional package targets found");
+  }
+  return selected
+    .map((target) => {
+      if (typeof target.npmPackage !== "string" || !target.npmPackage) {
+        fail(prefix, `${target.id} must declare npmPackage for the native tools facade`);
+      }
+      return {
+        packageName: target.npmPackage,
+        product: target.product,
+        target: target.target,
+        kind: target.kind,
+        artifactTarget: target.id,
+      };
+    })
+    .sort((left, right) => compareText(left.packageName, right.packageName));
+}
+
 export function artifactTargets(product, kind, prefix) {
   return allArtifactTargets({ product, kind }, prefix);
 }

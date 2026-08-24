@@ -202,6 +202,7 @@ build = "build.rs"
 
 [dependencies]
 oliphaunt = { path = "$root/target/release/cargo-package-sources/oliphaunt" }
+oliphaunt-tools = "=$liboliphaunt_version"
 
 [build-dependencies]
 oliphaunt-build = { path = "$root/src/sdks/rust/crates/oliphaunt-build" }

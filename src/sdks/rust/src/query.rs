@@ -286,7 +286,7 @@ pub fn parse_command_response(response: &ProtocolResponse) -> Result<CommandResu
             }
             b'G' | b'H' | b'W' | b'd' | b'c' => {
                 return Err(Error::Engine(
-                    "execute() does not support COPY protocol responses; use exec_protocol_raw or exec_protocol_raw_stream for COPY traffic"
+                    "execute() does not support COPY protocol responses; use exec_protocol_raw or exec_protocol_stream for COPY traffic"
                         .to_owned(),
                 ));
             }
@@ -378,7 +378,7 @@ pub(crate) fn parse_query_response_bytes(bytes: &[u8]) -> Result<QueryResult> {
             }
             b'G' | b'H' | b'W' | b'd' | b'c' => {
                 return Err(Error::Engine(
-                    "query() does not support COPY protocol responses; use exec_protocol_raw or exec_protocol_raw_stream"
+                    "query() does not support COPY protocol responses; use exec_protocol_raw or exec_protocol_stream"
                         .to_owned(),
                 ));
             }

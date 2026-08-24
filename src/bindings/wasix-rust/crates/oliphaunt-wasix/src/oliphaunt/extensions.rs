@@ -115,11 +115,6 @@ impl Extension {
     pub(crate) const fn setup(self) -> ExtensionSetup {
         self.setup
     }
-
-    #[cfg(all(test, feature = "tools", feature = "extensions"))]
-    pub(crate) const fn creates_extension(self) -> bool {
-        self.setup.create_extension
-    }
 }
 
 pub fn by_sql_name(sql_name: &str) -> Option<Extension> {

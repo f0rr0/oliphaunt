@@ -2,6 +2,7 @@ import type { CommandResult, QueryParam, QueryResult } from './query.js';
 import type { PersistentWasixStorage, WasixStorage } from './storage.js';
 
 export type BinaryInput = ArrayBuffer | ArrayBufferView | Uint8Array | ReadonlyArray<number>;
+export type ProtocolChunkCallback = (chunk: Uint8Array) => void;
 
 /** A host-neutral asset reference accepted by the portable WASIX carrier contract. */
 export type WasixAssetSource = string | URL | ArrayBuffer | Uint8Array;
@@ -175,6 +176,7 @@ export type OliphauntDatabase = {
   execute(sql: string, parameters?: ReadonlyArray<QueryParam>): Promise<CommandResult>;
   query(sql: string, parameters?: ReadonlyArray<QueryParam>): Promise<QueryResult>;
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
+  execProtocolStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
   /** Create a session-preserving PostgreSQL online physical backup. */
   backup(): Promise<Uint8Array>;
   /** CHECKPOINT PostgreSQL, then publish the resulting journaled PGDATA delta. */
@@ -189,6 +191,7 @@ export type OliphauntTransaction = {
   execute(sql: string, parameters?: ReadonlyArray<QueryParam>): Promise<CommandResult>;
   query(sql: string, parameters?: ReadonlyArray<QueryParam>): Promise<QueryResult>;
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
+  execProtocolStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
 };
 
 export type OliphauntClient = {

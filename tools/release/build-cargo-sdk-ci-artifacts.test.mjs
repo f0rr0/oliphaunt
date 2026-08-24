@@ -14,7 +14,7 @@ test("selects exact final-crate closure checks only for the two Cargo SDKs", () 
     path.join(ROOT, `target/sdk-artifacts/oliphaunt-rust/oliphaunt-${rustVersion}.crate`),
   );
   assert.equal(rust.allFeatures, true);
-  assert.deepEqual(rust.stubDependencies, ["oliphaunt-tools"]);
+  assert.equal(rust.stubDependencies, undefined);
   assert.deepEqual(rust.stubDependencyPrefixes, [
     "liboliphaunt-native-",
     "oliphaunt-broker-",

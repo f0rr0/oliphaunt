@@ -157,21 +157,27 @@ export function layoutRuntime(
   runtime: ExtractedArchive,
   pgdata: ExtractedArchive,
 ): WasixRuntimeLayout {
-  const runtimeFiles = runtime.files;
   const pgdataFiles = pgdata.files;
+  if (!pgdataFiles.has('PG_VERSION') || !pgdataFiles.has('global/pg_control')) {
+    throw new Error('PGDATA template is missing PG_VERSION or global/pg_control');
+  }
+  const layout = layoutRuntimeSupport(runtime);
+  layout.mounts['/base'] = {
+    files: mapToDirectory(pgdataFiles),
+    directories: [...pgdata.directories],
+  };
+  return layout;
+}
+
+/** @internal Materialize runtime support mounts without loading a PGDATA template. */
+export function layoutRuntimeSupport(runtime: ExtractedArchive): WasixRuntimeLayout {
+  const runtimeFiles = runtime.files;
   const module = runtimeFiles.get('oliphaunt/bin/postgres');
   if (module === undefined || module.length === 0) {
     throw new Error('runtime archive is missing oliphaunt/bin/postgres');
   }
-  if (!pgdataFiles.has('PG_VERSION') || !pgdataFiles.has('global/pg_control')) {
-    throw new Error('PGDATA template is missing PG_VERSION or global/pg_control');
-  }
 
   const mounts: Record<string, WasixDirectoryMount> = {
-    '/base': {
-      files: mapToDirectory(pgdataFiles),
-      directories: [...pgdata.directories],
-    },
     '/home': { files: {}, directories: ['postgres'] },
     '/tmp': { files: {}, directories: [] },
   };
@@ -233,7 +239,12 @@ export async function loadAsset(source: SerializedAssetSource, label: string): P
   if (source.startsWith('file:')) {
     return readPackageAsset(source, label);
   }
-  const response = await fetch(source);
+  let response: Response;
+  try {
+    response = await fetch(source);
+  } catch (cause) {
+    throw new Error(`failed to fetch ${label} from ${JSON.stringify(source)}`, { cause });
+  }
   if (!response.ok) {
     throw new Error(`failed to fetch ${label} (${response.status} ${response.statusText})`);
   }

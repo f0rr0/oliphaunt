@@ -217,6 +217,16 @@ grep -Fq 'const STDERR_LIMIT_BYTES: usize = 16 * 1024' \
   "$wasmer_js_dir/src/postgres_direct.rs"
 grep -Fq 'WASIX stderr (last 16 KiB)' "$wasmer_js_dir/src/postgres_direct.rs"
 grep -Fq 'builder.set_stderr(stderr)' "$wasmer_js_dir/src/options.rs"
+grep -Fq 'js_name = execProtocolStream' "$wasmer_js_dir/src/postgres_direct.rs"
+grep -Fq 'js_name = execProtocolDuplex' "$wasmer_js_dir/src/postgres_direct.rs"
+grep -Fq 'const PROTOCOL_CHUNK_BYTES: usize = 64 * 1024' "$wasmer_js_dir/src/postgres_direct.rs"
+grep -Fq 'const TOOL_PROTOCOL_CAPACITY_BYTES: usize = 256 * 1024' \
+  "$wasmer_js_dir/src/streams.rs"
+grep -Fq 'const TOOL_PROTOCOL_CHUNK_BYTES: usize = 64 * 1024' \
+  "$wasmer_js_dir/src/streams.rs"
+grep -Fq 'bounded_duplex_pipe' "$wasmer_js_dir/src/options.rs"
+grep -Fq 'builder.set_stdout(stdout)' "$wasmer_js_dir/src/options.rs"
+grep -Fq 'builder.set_stdin(stdin)' "$wasmer_js_dir/src/options.rs"
 grep -Fq 'wasmparser::RefType::EXNREF' "$wasmer_dir/src/utils/polyfill.rs"
 grep -Fq 'wasmparser::RefType::NULLEXNREF' "$wasmer_dir/src/utils/polyfill.rs"
 grep -Fq 'Ok(Type::ExceptionRef)' "$wasmer_dir/src/utils/polyfill.rs"

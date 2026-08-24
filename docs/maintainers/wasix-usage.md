@@ -42,8 +42,8 @@ PGDATA-only restore path; nonempty descriptorless roots and incomplete stores
 fail without mutation.
 
 `OliphauntServer` supplies a local PostgreSQL endpoint when an existing Rust
-client needs one. The optional `tools` feature supplies `pg_dump` and `psql`.
-These are Rust host facilities, not features implied for a browser package.
+client needs one. The optional `tools` feature supplies direct `pg_dump` and
+non-interactive `psql`.
 
 Extensions are exact Cargo feature/package selections. Reopening a database
 whose catalog uses an extension requires the receiving host to provide that
@@ -98,9 +98,24 @@ is an internal performance detail, not a database-capacity setting.
 accepts that archive and new or empty persistent storage. Restore rejects
 memory and nonempty destinations. The destination creates its own descriptor.
 
-TypeScript has no current server, `pg_dump`/`psql`, cancellation, or direct COPY
-streaming API. These absences are recorded in the SDK parity policy rather than
-represented as capability flags.
+`execProtocolStream()` is the bounded callback form of the raw protocol escape
+hatch. The optional `@oliphaunt/wasix-tools` package runs standard plain
+`pg_dump` and non-interactive `psql` directly against an open worker-backed
+database, including in browsers. It preserves PostgreSQL's normal COPY-based
+plain dump rather than rewriting it.
+
+Node, Bun, and Deno applications may import `openServer` from the matching
+`@oliphaunt/wasix-ts/server/*` subpath. It opens a loopback TCP endpoint or a
+PostgreSQL-named Unix socket and admits one complete client connection at a
+time, matching the single embedded backend; concurrent connections are
+rejected. The listener and storage lease persist, while each admitted client
+receives a fresh backend. Browsers have no server subpath.
+This compatibility endpoint remains distinct from the concurrent
+`liboliphaunt-wasix-postmaster` product.
+
+TypeScript still has no cancellation or dedicated typed COPY API. Those
+absences are recorded in the SDK parity policy rather than represented as
+capability flags.
 
 ## Shared storage contract
 
@@ -136,6 +151,7 @@ already naturally portable.
 ```sh
 moon run oliphaunt-wasix-rust:package
 moon run oliphaunt-wasix-ts:package
+moon run oliphaunt-wasix-tools-ts:check
 ```
 
 Product package and smoke tasks own the host/runtime combinations they publish.

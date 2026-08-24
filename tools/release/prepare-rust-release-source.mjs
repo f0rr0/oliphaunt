@@ -29,7 +29,6 @@ import {
 
 const TOOL = "prepare-rust-release-source.mjs";
 const LIBOLIPHAUNT_NATIVE_PRODUCT = "liboliphaunt-native";
-const LIBOLIPHAUNT_TOOLS_PRODUCT = "oliphaunt-tools";
 const BROKER_PRODUCT = "oliphaunt-broker";
 const RUST_PRODUCT = "oliphaunt-rust";
 const DEFAULT_STAGE_DIR = path.join(ROOT, "target/release/cargo-package-sources/oliphaunt");
@@ -48,6 +47,7 @@ const RUST_SDK_TESTDATA = Object.freeze([
   ["testdata/query-response-cases.json", "src/shared/fixtures/protocol/query-response-cases.json"],
   ["testdata/database-root.json", "src/shared/fixtures/storage/database-root.json"],
   ["testdata/behavior-contract.json", "src/shared/fixtures/postgres/behavior-contract.json"],
+  ["testdata/server-listen.json", "src/shared/fixtures/postgres/server-listen.json"],
   ...EXTENSION_SMOKE_TESTDATA,
 ]);
 
@@ -86,22 +86,12 @@ function nativeSdkArtifactTargets() {
     kind: "native-runtime",
     surface: "rust-native-direct",
   });
-  const toolsTargets = artifactTargets({
-    product: LIBOLIPHAUNT_NATIVE_PRODUCT,
-    kind: "native-tools",
-    surface: "rust-native-direct",
-  });
   const brokerTargets = artifactTargets({
     product: BROKER_PRODUCT,
     kind: "broker-helper",
     surface: "rust-broker",
   });
   const nativeTargetIds = nativeTargets.map((target) => target.target);
-  assertSameNativeTargetSet(
-    "oliphaunt Rust SDK native runtime/tools",
-    nativeTargetIds,
-    toolsTargets.map((target) => target.target),
-  );
   assertSameNativeTargetSet(
     "oliphaunt Rust SDK native runtime/broker",
     nativeTargetIds,
@@ -144,7 +134,6 @@ function renderReleaseCargoToml(source, nativeVersion, brokerVersion, artifactTa
   for (const target of artifactTargets.nativeTargets) {
     const cfg = rustNativeTargetCfg(target);
     addTargetDependency(cfg, `${liboliphauntCargoPackageName(target.target)} = { version = "=${nativeVersion}" }`);
-    addTargetDependency(cfg, `${LIBOLIPHAUNT_TOOLS_PRODUCT} = { version = "=${nativeVersion}" }`);
   }
   for (const target of artifactTargets.brokerTargets) {
     const cfg = rustNativeTargetCfg(target);
@@ -183,15 +172,6 @@ function validateReleaseArtifactCoverage(manifest, nativeVersion, nativeTargets)
   );
   if (missingNative.length > 0) {
     fail(`generated oliphaunt release source is missing native runtime Cargo artifact dependencies: ${missingNative.join(", ")}`);
-  }
-  if (!manifest.includes(`${LIBOLIPHAUNT_TOOLS_PRODUCT} = { version = "=${nativeVersion}" }`)) {
-    fail(`generated oliphaunt release source is missing native tools facade dependency ${LIBOLIPHAUNT_TOOLS_PRODUCT}`);
-  }
-  const directToolDeps = nativeCrates
-    .filter((crate) => crate.startsWith(`${LIBOLIPHAUNT_TOOLS_PRODUCT}-`) && manifest.includes(`${crate} = `))
-    .sort(compareText);
-  if (directToolDeps.length > 0) {
-    fail(`generated oliphaunt release source must depend on oliphaunt-tools, not target tools crates: ${directToolDeps.join(", ")}`);
   }
 }
 

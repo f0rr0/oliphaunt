@@ -38,5 +38,9 @@ done
 run bash src/bindings/wasix-rust/tools/check-package.sh
 
 run env OLIPHAUNT_WASM_AOT_VERIFY=full \
-  cargo test -p oliphaunt-wasix --locked --no-default-features --features extensions,tools \
+  cargo test -p oliphaunt-wasix --locked --no-default-features --features extensions,tools,extension-pgtap \
     --lib preflight_wasix_tools_loads_split_artifacts -- --nocapture
+
+run env OLIPHAUNT_WASM_AOT_VERIFY=full \
+  cargo test -p oliphaunt-wasix --locked --no-default-features --features extensions,tools,extension-pgtap \
+    --lib public_tools_round_trip_shared_logical_fixture -- --nocapture

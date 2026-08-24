@@ -631,9 +631,9 @@ const capabilityCards = [
   },
   {
     title: 'WASIX TypeScript',
-    value: 'one host Worker',
+    value: 'portable host API',
     description:
-      'The browser and Node/Bun/Deno binding has memory, persistent providers, and physical backup/restore.',
+      'The browser and Node/Bun/Deno binding has bounded protocol streaming, optional tools, and host-only local server subpaths.',
     icon: ListChecks,
   },
   {
@@ -1035,7 +1035,7 @@ const wasmDataMovementRows = [
   {
     format: 'Logical dump',
     use: 'Portable SQL export, version upgrade, runtime-to-runtime movement.',
-    api: 'OliphauntServer::pg_dump(PgDumpOptions), ::psql(PsqlOptions), CLI',
+    api: 'tools::pg_dump(&mut database, options), tools::psql(...), CLI',
   },
   {
     format: 'Physical archive',
@@ -1291,7 +1291,7 @@ const guideProofs: Record<string, Array<{ title: string; description: string }>>
     },
     {
       title: 'Data movement',
-      description: 'One physical backup restores into new or empty persistent storage.',
+      description: 'Physical archives restore same-format storage; optional pg_dump and psql provide portable logical SQL.',
     },
   ],
 };

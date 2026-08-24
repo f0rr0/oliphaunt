@@ -12,19 +12,16 @@ use super::super::fingerprint::{
     fingerprint_named_extension_sql_files, fingerprint_optional_file, hash_path, hash_str,
     new_state,
 };
-use super::super::{
-    NATIVE_RUNTIME_TOOLS, NATIVE_TOOLS_PACKAGE_TOOLS, existing_native_tool_path, native_tool_path,
-};
+use super::super::{NATIVE_RUNTIME_TOOLS, existing_native_tool_path, native_tool_path};
 use super::extension_artifact_root_for;
 use crate::error::{Error, Result};
 use crate::extension::Extension;
 
-const RUNTIME_CACHE_VERSION: &str = "pg18-runtime-cache-v6";
+const RUNTIME_CACHE_VERSION: &str = "pg18-runtime-cache-v7";
 
 pub(super) fn runtime_cache_key(
     profile: NativeRuntimeProfile,
     install_dir: &Path,
-    tools_dir: Option<&Path>,
     embedded_modules: Option<&Path>,
     extension_artifact_dirs: &[PathBuf],
     extensions: &[Extension],
@@ -33,12 +30,6 @@ pub(super) fn runtime_cache_key(
     hash_str(&mut state, RUNTIME_CACHE_VERSION);
     hash_str(&mut state, profile.cache_id());
     hash_path(&mut state, &canonical_or_original(install_dir));
-    if let Some(tools_dir) = tools_dir {
-        hash_str(&mut state, "native-tools");
-        hash_path(&mut state, &canonical_or_original(tools_dir));
-    } else {
-        hash_str(&mut state, "native-tools:none");
-    }
     if let Some(embedded_modules) = embedded_modules {
         hash_path(&mut state, &canonical_or_original(embedded_modules));
     }
@@ -55,15 +46,6 @@ pub(super) fn runtime_cache_key(
             &existing_native_tool_path(install_dir, tool),
         )?;
     }
-    let tools_dir = tools_dir.unwrap_or(install_dir);
-    for tool in NATIVE_TOOLS_PACKAGE_TOOLS {
-        fingerprint_optional_file(
-            &mut state,
-            tools_dir,
-            &existing_native_tool_path(tools_dir, tool),
-        )?;
-    }
-
     let source_share = install_dir.join("share/postgresql");
     fingerprint_directory_filtered(&mut state, &source_share, &source_share, core_share_file)?;
     fingerprint_named_extension_sql_files(&mut state, &source_share, "plpgsql")?;
@@ -173,9 +155,6 @@ pub(super) fn cached_runtime_is_valid(
 ) -> bool {
     if !cache_dir.join(".complete").is_file()
         || !NATIVE_RUNTIME_TOOLS
-            .iter()
-            .all(|tool| native_tool_path(cache_dir, tool).is_file())
-        || !NATIVE_TOOLS_PACKAGE_TOOLS
             .iter()
             .all(|tool| native_tool_path(cache_dir, tool).is_file())
         || !cache_dir
@@ -307,7 +286,6 @@ mod tests {
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
             None,
-            None,
             &[],
             &[Extension::Hstore],
         )
@@ -320,7 +298,6 @@ mod tests {
         let changed_sql = runtime_cache_key(
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
-            None,
             None,
             &[],
             &[Extension::Hstore],
@@ -340,7 +317,6 @@ mod tests {
         let changed_module = runtime_cache_key(
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
-            None,
             None,
             &[],
             &[Extension::Hstore],
@@ -370,7 +346,6 @@ mod tests {
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
             None,
-            None,
             std::slice::from_ref(&extension_dir),
             &[Extension::Hstore],
         )
@@ -384,7 +359,6 @@ mod tests {
         let second = runtime_cache_key(
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
-            None,
             None,
             std::slice::from_ref(&extension_dir),
             &[Extension::Hstore],
@@ -425,7 +399,6 @@ mod tests {
         let first = runtime_cache_key(
             NativeRuntimeProfile::OliphauntEmbedded,
             &install_dir,
-            None,
             Some(&embedded_modules),
             std::slice::from_ref(&extension_dir),
             &[Extension::Hstore],
@@ -439,7 +412,6 @@ mod tests {
         let server_changed = runtime_cache_key(
             NativeRuntimeProfile::OliphauntEmbedded,
             &install_dir,
-            None,
             Some(&embedded_modules),
             std::slice::from_ref(&extension_dir),
             &[Extension::Hstore],
@@ -457,7 +429,6 @@ mod tests {
         let embedded_changed = runtime_cache_key(
             NativeRuntimeProfile::OliphauntEmbedded,
             &install_dir,
-            None,
             Some(&embedded_modules),
             &[extension_dir],
             &[Extension::Hstore],
@@ -478,7 +449,6 @@ mod tests {
         let first = runtime_cache_key(
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
-            None,
             None,
             &[],
             &[],
@@ -503,7 +473,6 @@ mod tests {
         let second = runtime_cache_key(
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
-            None,
             None,
             &[],
             &[],
@@ -533,7 +502,6 @@ mod tests {
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
             None,
-            None,
             &[],
             &[],
         )
@@ -546,7 +514,6 @@ mod tests {
         let second = runtime_cache_key(
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
-            None,
             None,
             &[],
             &[],
@@ -638,24 +605,6 @@ mod tests {
                 &[Extension::Hstore],
             ),
             "selected extension cache is valid only after required assets are present"
-        );
-    }
-
-    #[test]
-    fn runtime_validation_requires_split_tools() {
-        let temp = TempTree::new("validation-tools");
-        let cache_dir = temp.path().join("cache");
-        write_minimal_cache_dir(&cache_dir, "cache-key");
-        std::fs::remove_file(cache_dir.join("bin/pg_dump")).expect("remove pg_dump");
-
-        assert!(
-            !cached_runtime_is_valid(
-                NativeRuntimeProfile::PostgresServer,
-                &cache_dir,
-                "cache-key",
-                &[],
-            ),
-            "runtime cache must require tools from the split oliphaunt-tools artifact"
         );
     }
 

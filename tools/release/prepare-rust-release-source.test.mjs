@@ -66,7 +66,7 @@ test("freezes the generated target-wired Rust SDK source instead of the workspac
       assert.ok(manifest.includes(`oliphaunt-broker-${target.target} = { version = "=${brokerVersion}" }`));
       assert.ok(source.includes(target.target));
     }
-    assert.equal((manifest.match(/^oliphaunt-tools = /gmu) ?? []).length, targets.length);
+    assert.doesNotMatch(manifest, /^oliphaunt-tools = /mu);
     assert.match(source, /Generated release-only native target guard[.]/u);
     assert.match(source, /compile_error!/u);
     assert.match(source, /separately versioned oliphaunt-wasix crate/u);
@@ -94,13 +94,13 @@ test("freezes the generated target-wired Rust SDK source instead of the workspac
     const repeatedToolsRows = packagedCarrier.dependencies.filter(
       ({ ecosystem, name }) => ecosystem === "cargo" && name === "oliphaunt-tools",
     );
-    assert.equal(repeatedToolsRows.length, targets.length);
+    assert.equal(repeatedToolsRows.length, 0);
     assert.deepEqual(
       projectInternalDependencyIds(
         [{ id: "cargo:oliphaunt" }, { id: "cargo:oliphaunt-tools" }],
         packagedCarrier.dependencies,
       ),
-      ["cargo:oliphaunt-tools"],
+      [],
     );
 
     // The product metadata intentionally points the Rust SDK at the broker

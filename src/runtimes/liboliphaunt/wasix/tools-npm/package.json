@@ -1,0 +1,16 @@
+{
+  "name": "@oliphaunt/liboliphaunt-wasix-tools",
+  "version": "0.1.1",
+  "description": "Portable WASIX pg_dump and psql modules for Oliphaunt hosts.",
+  "license": "MIT AND PostgreSQL AND Unicode-3.0",
+  "type": "module",
+  "sideEffects": false,
+  "private": true,
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./package.json": "./package.json"
+  }
+}

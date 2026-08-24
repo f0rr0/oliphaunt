@@ -47,6 +47,22 @@ const PACKAGE_FIXTURES = Object.freeze([
     'src/shared/fixtures/postgres/behavior-contract.json',
   ],
   [
+    'src/testdata/postgres-logical-tools.json',
+    'src/shared/fixtures/postgres/logical-tools.json',
+  ],
+  [
+    'src/testdata/postgres-logical-tools-seed.sql',
+    'src/shared/fixtures/postgres/logical-tools-seed.sql',
+  ],
+  [
+    'src/testdata/postgres-logical-tools-verify.sql',
+    'src/shared/fixtures/postgres/logical-tools-verify.sql',
+  ],
+  [
+    'src/testdata/postgres-server-listen.json',
+    'src/shared/fixtures/postgres/server-listen.json',
+  ],
+  [
     'src/testdata/protocol-query-response-cases.json',
     'src/shared/fixtures/protocol/query-response-cases.json',
   ],

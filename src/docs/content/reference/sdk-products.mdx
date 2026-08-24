@@ -39,13 +39,16 @@ The native TypeScript npm package carries native runtime integration for Node.js
 Bun, and Deno. WASIX TypeScript is a separate npm product supporting every
 declared host, including its Deno directory-storage subpath.
 
-Rust WASIX and WASIX TypeScript are peer bindings over portable WASIX
-runtime assets and the WASIX physical archive contract. Rust alone owns server
-hosting and optional logical dump tooling. The TypeScript binding owns
-direct and worker-isolated browser, Node, Bun, and Deno adapters, pgwire error
-recovery, callback-scoped transactions, optional host-specific persistence
-(IndexedDB or OPFS in browsers, directories on Node/Bun/Deno), and a narrow asynchronous API.
-Carrier reuse is not API parity.
+Rust WASIX and WASIX TypeScript are peer bindings over portable WASIX runtime
+and tool assets plus the WASIX physical archive contract. Both expose the same
+single-backend local-endpoint concept on socket-capable hosts and optional
+direct `pg_dump`/non-interactive `psql`; TypeScript keeps sockets absent in
+browsers while its direct tools remain available there through a private
+in-process pgwire bridge. The TypeScript binding also owns worker-isolated host
+adapters, pgwire error recovery, callback-scoped transactions, and
+host-specific persistence (IndexedDB or OPFS in browsers, directories on
+Node/Bun/Deno). Shared concepts and carriers do not force identical host code
+or language signatures.
 
 ## Cohesive Concepts
 

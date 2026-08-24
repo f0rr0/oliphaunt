@@ -8,7 +8,6 @@ use crate::build_resources::registered_build_resources_dir;
 use crate::error::{Error, Result};
 
 const ENV_RESOURCES_DIR: &str = "OLIPHAUNT_RESOURCES_DIR";
-const ENV_TOOLS_DIR: &str = "OLIPHAUNT_TOOLS_DIR";
 
 pub(super) fn locate_native_install_dir() -> Result<PathBuf> {
     let mut candidates = Vec::new();
@@ -45,18 +44,6 @@ pub(super) fn locate_native_install_dir() -> Result<PathBuf> {
     Err(Error::Engine(format!(
         "could not locate native PostgreSQL 18 install tree; set {ENV_INSTALL_DIR} or {ENV_POSTGRES}"
     )))
-}
-
-pub(super) fn locate_native_tools_dir(install_dir: &Path) -> Option<PathBuf> {
-    let mut candidates = Vec::new();
-    candidates.extend(env_path_candidates([ENV_TOOLS_DIR]));
-    for path in resources_dir_candidates() {
-        candidates.push(path.join("native-tools/oliphaunt-tools/runtime"));
-    }
-    candidates.push(install_dir.to_path_buf());
-    candidates
-        .into_iter()
-        .find(|candidate| native_tools_dir_is_valid(candidate))
 }
 
 pub(super) fn locate_native_extension_artifact_dirs() -> Vec<PathBuf> {
@@ -129,12 +116,6 @@ fn native_install_dir_is_valid(path: &Path) -> bool {
             .join("share/postgresql/postgresql.conf.sample")
             .is_file()
         && path.join("lib/postgresql").is_dir()
-}
-
-fn native_tools_dir_is_valid(path: &Path) -> bool {
-    native_tool_is_file(path, "pg_basebackup")
-        && native_tool_is_file(path, "pg_dump")
-        && native_tool_is_file(path, "psql")
 }
 
 fn native_tool_is_file(path: &Path, tool: &str) -> bool {

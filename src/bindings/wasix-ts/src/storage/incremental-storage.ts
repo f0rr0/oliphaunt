@@ -46,8 +46,8 @@ export async function acquireIncrementalStorage(
   try {
     store = await backend.openStore();
     const snapshot = await store.read();
-    const state = store.initializationState?.(snapshot) ??
-      (snapshot === undefined ? 'new' : 'existing');
+    const state =
+      store.initializationState?.(snapshot) ?? (snapshot === undefined ? 'new' : 'existing');
     return new IncrementalStorageLease(
       label,
       store,

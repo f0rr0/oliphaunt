@@ -9,8 +9,6 @@ pub(crate) mod data_dir;
 pub(crate) mod database_root_descriptor;
 #[cfg(feature = "extensions")]
 pub mod extensions;
-#[cfg(feature = "tools")]
-pub(crate) mod pg_dump;
 pub(crate) mod postgres_mod;
 pub(crate) mod proxy;
 pub(crate) mod query;
@@ -20,16 +18,16 @@ pub(crate) mod storage;
 pub(crate) mod sync_host_fs;
 #[cfg(test)]
 pub(crate) mod test_fixtures;
+#[cfg(feature = "tools")]
+pub mod tools;
 pub(crate) mod transport;
 pub(crate) mod wire;
 
 pub use builder::OliphauntBuilder;
 pub use client::{Oliphaunt, Transaction};
-#[cfg(feature = "tools")]
-pub use pg_dump::{PgDumpOptions, PsqlOptions};
 pub use query::{
     CommandResult, PostgresError, PostgresErrorField, QueryField, QueryFormat, QueryParam,
     QueryResult, QueryRow,
 };
-pub use server::{OliphauntServer, OliphauntServerBuilder};
+pub use server::{OliphauntServer, OliphauntServerBuilder, ServerListen};
 pub use storage::DatabaseStorage;

@@ -39,10 +39,11 @@ The products use a cohesive vocabulary where the host actually supports it:
   released.
 
 Those concepts are not a signature-parity promise. Native SDKs expose their
-engine modes. Rust WASIX adds Rust host, server, physical archive, and
-optional dump tooling. WASIX TypeScript exposes `open`, typed and raw query
-operations, callback transactions, `checkpoint`, physical `backup`, static
-`restore`, and `close`; it does not expose Rust's server or PostgreSQL tool APIs.
+engine modes. Rust WASIX adds Rust host, server, physical archive, and optional
+tool APIs. WASIX TypeScript exposes `open`, typed and raw query operations,
+callback transactions, `checkpoint`, physical `backup`, static `restore`, and
+`close`; its optional tools package adds direct `pg_dump`/`psql`, while explicit
+server subpaths add a local endpoint on Node, Bun, and Deno.
 
 <ModeMatrix />
 

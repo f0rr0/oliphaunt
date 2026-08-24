@@ -1,9 +1,9 @@
 #![cfg(feature = "extensions")]
 
 use anyhow::{Context, Result, bail, ensure};
-use oliphaunt_wasix::OliphauntServer;
+use oliphaunt_wasix::{OliphauntServer, ServerListen};
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpStream};
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 #[cfg(unix)]
@@ -18,10 +18,8 @@ const PROTOCOL_3: i32 = 196_608;
 
 #[test]
 fn tcp_proxy_handles_psql_style_and_fragmented_connections() -> Result<()> {
-    let probe = TcpListener::bind(("127.0.0.1", 0))?;
-    let addr = probe.local_addr()?;
-    drop(probe);
-    let server = OliphauntServer::builder().tcp(addr).start()?;
+    let server = OliphauntServer::builder().start()?;
+    let addr = server.tcp_addr().context("TCP server address")?;
 
     let first = query_proxy(addr, false, "SELECT 1 AS one")?;
     assert_eq!(first, vec!["1"]);
@@ -38,10 +36,8 @@ fn tcp_proxy_handles_psql_style_and_fragmented_connections() -> Result<()> {
 
 #[test]
 fn tcp_proxy_survives_a_malformed_client() -> Result<()> {
-    let probe = TcpListener::bind(("127.0.0.1", 0))?;
-    let addr = probe.local_addr()?;
-    drop(probe);
-    let server = OliphauntServer::builder().tcp(addr).start()?;
+    let server = OliphauntServer::builder().start()?;
+    let addr = server.tcp_addr().context("TCP server address")?;
 
     let mut malformed = TcpStream::connect(addr)?;
     malformed.set_read_timeout(Some(Duration::from_secs(30)))?;
@@ -69,10 +65,8 @@ fn tcp_proxy_survives_a_malformed_client() -> Result<()> {
 
 #[test]
 fn tcp_proxy_contains_each_startup_and_control_failure() -> Result<()> {
-    let probe = TcpListener::bind(("127.0.0.1", 0))?;
-    let addr = probe.local_addr()?;
-    drop(probe);
-    let server = OliphauntServer::builder().tcp(addr).start()?;
+    let server = OliphauntServer::builder().start()?;
+    let addr = server.tcp_addr().context("TCP server address")?;
 
     malformed_then_recover(addr, "malformed startup", |stream| {
         let mut message = Vec::from(12_i32.to_be_bytes());
@@ -117,10 +111,8 @@ fn tcp_proxy_contains_each_startup_and_control_failure() -> Result<()> {
 
 #[test]
 fn tcp_proxy_accepts_a_fragmented_message_larger_than_64_kib() -> Result<()> {
-    let probe = TcpListener::bind(("127.0.0.1", 0))?;
-    let addr = probe.local_addr()?;
-    drop(probe);
-    let server = OliphauntServer::builder().tcp(addr).start()?;
+    let server = OliphauntServer::builder().start()?;
+    let addr = server.tcp_addr().context("TCP server address")?;
     let mut stream = TcpStream::connect(addr)?;
     stream.set_read_timeout(Some(Duration::from_secs(30)))?;
     stream.set_write_timeout(Some(Duration::from_secs(30)))?;
@@ -135,26 +127,9 @@ fn tcp_proxy_accepts_a_fragmented_message_larger_than_64_kib() -> Result<()> {
 }
 
 #[test]
-fn tcp_proxy_accepts_ipv6_loopback_when_available() -> Result<()> {
-    let probe = match TcpListener::bind(("::1", 0)) {
-        Ok(probe) => probe,
-        Err(error) if error.kind() == std::io::ErrorKind::AddrNotAvailable => return Ok(()),
-        Err(error) => return Err(error.into()),
-    };
-    let addr = probe.local_addr()?;
-    drop(probe);
-    let server = OliphauntServer::builder().tcp(addr).start()?;
-    assert_eq!(query_proxy(addr, false, "SELECT 6")?, vec!["6"]);
-    server.close()?;
-    Ok(())
-}
-
-#[test]
 fn tcp_server_close_interrupts_an_active_client() -> Result<()> {
-    let probe = TcpListener::bind(("127.0.0.1", 0))?;
-    let addr = probe.local_addr()?;
-    drop(probe);
-    let server = OliphauntServer::builder().tcp(addr).start()?;
+    let server = OliphauntServer::builder().start()?;
+    let addr = server.tcp_addr().context("TCP server address")?;
     let mut client = TcpStream::connect(addr)?;
     client.set_read_timeout(Some(Duration::from_secs(30)))?;
     client.write_all(&startup_message())?;
@@ -175,7 +150,9 @@ fn tcp_server_close_interrupts_an_active_client() -> Result<()> {
 fn unix_proxy_survives_a_malformed_client() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let socket = directory.path().join(".s.PGSQL.5432");
-    let server = OliphauntServer::builder().unix(&socket).start()?;
+    let server = OliphauntServer::builder()
+        .listen(ServerListen::unix(directory.path()))
+        .start()?;
 
     let mut malformed = UnixStream::connect(&socket)?;
     malformed.write_all(&3_i32.to_be_bytes())?;

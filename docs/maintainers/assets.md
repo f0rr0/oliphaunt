@@ -19,7 +19,8 @@ The WASIX artifact products contain:
 - a prepopulated PGDATA template for faster temporary databases;
 - bundled extension archives for supported SQL extensions;
 - the packaged `initdb` module used by asset CI and explicit fresh-initdb paths;
-- the packaged `pg_dump` module used by the public dump API and CLI;
+- the packaged `pg_dump` and `psql` modules used by the optional tools APIs and
+  maintenance CLI;
 - a target-specific Wasmer AOT pack when the current host target is supported.
 
 Application code depends on `oliphaunt-wasix` plus the selected artifact

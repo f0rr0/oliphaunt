@@ -166,6 +166,62 @@ replace a nonempty database. The destination creates its own managed-root
 descriptor; `.oliphaunt.json` is not carried in the archive.
 
 </Step>
+<Step>
+
+### Use PostgreSQL tools
+
+Add the optional package when standard logical SQL is needed:
+
+```sh
+pnpm add @oliphaunt/wasix-tools
+```
+
+```ts
+import { pgDump, psql } from '@oliphaunt/wasix-tools';
+
+const sql = await pgDump(database, { args: ['--schema-only'] });
+await psql(database, { script: sql });
+```
+
+Tools work in browsers, Node.js, Bun, and Deno against a worker-backed database.
+`pgDump()` returns PostgreSQL's ordinary plain UTF-8 dump, including its normal
+COPY statements. It does not force inserts or rewrite valid SQL. `psql()` is
+included so the same standard output can be applied without inventing a second
+logical restore API. Interactive psql, custom archives, parallel jobs, and
+`pg_restore` are outside this minimal tools product.
+
+Direct tools exclusively own and reset the embedded PostgreSQL session. Do not
+expect raw-protocol prepared statements or session settings to survive a tool
+run.
+
+</Step>
+<Step>
+
+### Open a local endpoint
+
+Node, Bun, and Deno may expose the single embedded backend through an explicit
+host subpath:
+
+```ts
+import { openServer } from '@oliphaunt/wasix-ts/server/node';
+import { directory } from '@oliphaunt/wasix-ts/storage/node';
+
+await using server = await openServer({
+  storage: directory('./data/server'),
+  listen: { transport: 'tcp' },
+});
+console.log(server.connectionString);
+```
+
+Use `/server/bun` or `/server/deno` on those hosts. TCP is IPv4 loopback-only;
+omitting the port chooses an available port. Unix hosts may use
+`{ transport: 'unix', directory, port? }`, which creates
+`.s.PGSQL.<port>`. The compatibility endpoint admits one complete connection at
+a time and rejects concurrent connections. Each admitted client receives a
+fresh embedded backend while the listener and storage lease remain open. The
+endpoint is absent in browsers and is not the concurrent WASIX postmaster.
+
+</Step>
 </Steps>
 
 <SdkGuideProof id="wasix-typescript" />
@@ -178,3 +234,7 @@ ownership, compatibility, restore, or publication failures are
 `WasixStorageError` values; inspect `code` and `commitState`. A browser open
 failure commonly means the page is not cross-origin isolated or a Worker/runtime
 subresource violates COEP.
+
+Use `execProtocolStream(input, callback)` instead of `execProtocolRaw(input)`
+when an adapter expects a large protocol response. The synchronous callback is
+backpressured and receives bounded chunks; typed query results remain buffered.

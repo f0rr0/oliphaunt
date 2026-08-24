@@ -8,6 +8,14 @@ const ELECTRON_RELEASE_DEPENDENCIES = [
     versionSource: { type: "json", path: "src/sdks/js/package.json", keys: ["version"] },
   },
   {
+    packageName: "@oliphaunt/tools",
+    versionSource: {
+      type: "json",
+      path: "src/runtimes/liboliphaunt/native/tools-npm/package.json",
+      keys: ["version"],
+    },
+  },
+  {
     packageName: "@oliphaunt/extension-contrib-pg18",
     versionSource: { type: "text", path: "src/runtimes/liboliphaunt/native/VERSION" },
   },
