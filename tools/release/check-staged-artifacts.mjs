@@ -201,7 +201,7 @@ const INTERNAL_EXTENSION_BUNDLE_CARRIER_ASSET_KEYS = new Set([
 ]);
 const SDK_RUNTIME_PAYLOAD_PATTERNS = [
   /(^|\/)assets\/oliphaunt\/runtime\//u,
-  /(^|\/)assets\/oliphaunt\/template-pgdata\//u,
+  /(^|\/)assets\/oliphaunt\/cluster-seed\//u,
   /(^|\/)assets\/oliphaunt\/static-registry\/archives\//u,
   /(^|\/)oliphaunt\/runtime\/files\//u,
   /(^|\/)runtime\/files\/share\/postgresql\//u,

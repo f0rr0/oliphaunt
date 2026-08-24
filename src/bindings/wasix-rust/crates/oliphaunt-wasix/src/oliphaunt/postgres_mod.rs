@@ -302,7 +302,7 @@ impl PostgresMod {
         };
         ensure!(
             initialized,
-            "PGDATA is not initialized; install the WASIX runtime assets and PGDATA template before opening"
+            "PGDATA is not initialized; install the WASIX runtime assets and cluster seed before opening"
         );
         self.cluster_ready = true;
         Ok(())
@@ -1006,7 +1006,7 @@ fn run_split_initdb(runtime_layout: &RuntimeLayout, pgdata_storage: &PgDataStora
     let postgres_module = runtime_layout.module_root.join("bin/postgres");
     ensure!(
         initdb_module.exists(),
-        "split WASIX initdb module is not installed at {}; regenerate assets with `xtask assets template`",
+        "split WASIX initdb module is not installed at {}; regenerate assets with `xtask assets cluster-seeds`",
         initdb_module.display()
     );
     ensure!(
@@ -1084,7 +1084,10 @@ fn run_split_initdb(runtime_layout: &RuntimeLayout, pgdata_storage: &PgDataStora
         .with_stdout(Box::new(stdout_file))
         .with_stderr(Box::new(stderr_file));
     if wasix_icu_data_is_available(runtime_layout) {
-        runner.with_envs([("ICU_DATA", ICU_DATA_DIR)]);
+        runner.with_envs([
+            ("ICU_DATA", ICU_DATA_DIR),
+            ("OLIPHAUNT_INTERNAL_ICU_READY", "1"),
+        ]);
     }
 
     {

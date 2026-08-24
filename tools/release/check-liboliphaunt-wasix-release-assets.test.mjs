@@ -139,6 +139,7 @@ test("ICU release assets admit only their exact canonical notice closure", () =>
     [
       "LICENSE",
       "THIRD_PARTY_LICENSES/ICU-LICENSE",
+      "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
       "THIRD_PARTY_NOTICES.md",
       "THIRD_PARTY_NOTICES.oliphaunt-wasix.md",
     ],
@@ -148,10 +149,10 @@ test("ICU release assets admit only their exact canonical notice closure", () =>
   const members = withParents(expected);
   assert.deepEqual(unexpectedTreeMembers(members, expected), []);
 
-  members.add("THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT");
+  members.add("THIRD_PARTY_LICENSES/OpenSSL-LICENSE.txt");
   assert.deepEqual(
     unexpectedTreeMembers(members, expected),
-    ["THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT"],
+    ["THIRD_PARTY_LICENSES/OpenSSL-LICENSE.txt"],
   );
 });
 
@@ -200,7 +201,7 @@ test("every AOT target admits its prefixed canonical notice closure and rejects 
   }
 });
 
-test("the real ICU validator accepts producer-shaped notices and rejects extra or wrong-profile notices", (t) => {
+test("the real ICU validator accepts producer-shaped notices and rejects extra or incomplete notices", (t) => {
   const root = fixture(t);
   const validStage = path.join(root, "icu-valid");
   stageIcuPayload(validStage);
@@ -234,15 +235,15 @@ test("the real ICU validator accepts producer-shaped notices and rejects extra o
   );
 
   const wrongStage = path.join(root, "icu-wrong-profile");
-  stageIcuPayload(wrongStage, "wasix-runtime");
+  stageIcuPayload(wrongStage, "code-facade");
   const wrong = archiveStage(wrongStage, path.join(root, "icu-wrong-profile.tar.zst"), ".");
   assert.throws(
     () => validateIcuReleaseAsset(wrong),
-    /unexpected release license member THIRD_PARTY_LICENSES\/PostgreSQL-COPYRIGHT/u,
+    /missing regular release notice member THIRD_PARTY_NOTICES[.]oliphaunt-wasix[.]md/u,
   );
 });
 
-test("the real AOT validator accepts every target and rejects extra or wrong-profile notices", (t) => {
+test("the real AOT validator accepts every target and rejects extra or incomplete notices", (t) => {
   const root = fixture(t);
   const targets = Object.values(AOT_TARGET_TRIPLES).sort();
   for (const [index, target] of targets.entries()) {
@@ -265,11 +266,11 @@ test("the real AOT validator accepts every target and rejects extra or wrong-pro
   );
 
   const wrongStage = path.join(root, "aot-wrong-profile");
-  stageAotPayload(wrongStage, target, "wasix-icu-data");
+  stageAotPayload(wrongStage, target, "code-facade");
   const wrong = archiveStage(wrongStage, path.join(root, "aot-wrong-profile.tar.zst"), archiveRoot);
   assert.throws(
     () => validateAotReleaseAsset(wrong, target),
-    new RegExp(`${archiveRoot}/THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT`, "u"),
+    new RegExp(`${archiveRoot}/THIRD_PARTY_NOTICES[.]oliphaunt-wasix[.]md`, "u"),
   );
 });
 

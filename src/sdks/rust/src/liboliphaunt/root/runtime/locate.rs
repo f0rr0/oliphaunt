@@ -122,7 +122,7 @@ fn native_tool_is_file(path: &Path, tool: &str) -> bool {
     path.join("bin").join(tool).is_file() || path.join("bin").join(format!("{tool}.exe")).is_file()
 }
 
-fn resources_dir_candidates() -> Vec<PathBuf> {
+pub(super) fn resources_dir_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(path) = registered_build_resources_dir() {
         candidates.push(path);
@@ -131,6 +131,127 @@ fn resources_dir_candidates() -> Vec<PathBuf> {
         candidates.push(PathBuf::from(path));
     }
     candidates
+}
+
+pub(super) fn locate_native_icu_data_dir() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    for resources_dir in resources_dir_candidates() {
+        candidates.push(resources_dir.join("icu-data/oliphaunt-icu/share/icu"));
+    }
+    if let Some(path) = std::env::var_os("OLIPHAUNT_ICU_DATA_DIR") {
+        candidates.push(PathBuf::from(path));
+    }
+    candidates
+        .into_iter()
+        .find(|candidate| icu_data_dir_is_valid(candidate))
+}
+
+pub(super) fn locate_native_cluster_seed_dir(
+    profile: super::super::NativeCatalogProfile,
+) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) = std::env::var_os("OLIPHAUNT_CLUSTER_SEED_DIR") {
+        candidates.push(PathBuf::from(path));
+    }
+    for resources_dir in resources_dir_candidates() {
+        match profile {
+            super::super::NativeCatalogProfile::Standard => candidates
+                .push(resources_dir.join("native-runtime/liboliphaunt-native/cluster-seed")),
+            super::super::NativeCatalogProfile::Icu => {
+                let cargo_carrier =
+                    resources_dir.join("native-runtime/liboliphaunt-native/cluster-seed-icu");
+                if native_cluster_seed_dir_is_valid(
+                    &cargo_carrier,
+                    super::super::NativeCatalogProfile::Icu,
+                ) {
+                    candidates.push(cargo_carrier);
+                }
+                candidates.push(resources_dir.join("icu-data/oliphaunt-icu/cluster-seed"));
+            }
+        }
+    }
+    candidates
+        .into_iter()
+        .find(|candidate| native_cluster_seed_dir_is_valid(candidate, profile))
+}
+
+pub(super) fn package_managed_resources_are_registered() -> bool {
+    !resources_dir_candidates().is_empty()
+}
+
+fn native_cluster_seed_dir_is_valid(
+    path: &Path,
+    profile: super::super::NativeCatalogProfile,
+) -> bool {
+    if !path.join("files/PG_VERSION").is_file() || !path.join("files/global/pg_control").is_file() {
+        return false;
+    }
+    let Ok(manifest) = std::fs::read_to_string(path.join("manifest.properties")) else {
+        return false;
+    };
+    let mut fields = std::collections::BTreeMap::new();
+    for line in manifest.lines().filter(|line| !line.is_empty()) {
+        let Some((key, value)) = line.split_once('=') else {
+            return false;
+        };
+        if key.is_empty() || fields.insert(key, value).is_some() {
+            return false;
+        }
+    }
+    let expected_role = format!("cluster-seed-{}", profile.id());
+    let expected_features = if profile == super::super::NativeCatalogProfile::Icu {
+        "icu"
+    } else {
+        ""
+    };
+    if fields.get("schema") != Some(&"oliphaunt-runtime-resources-v1")
+        || fields.get("layout") != Some(&"oliphaunt-cluster-seed-v1")
+        || fields.get("artifactRole") != Some(&expected_role.as_str())
+        || fields.get("catalogProfile") != Some(&profile.id())
+        || fields.get("postgresMajor") != Some(&"18")
+        || fields.get("physicalFormat") != Some(&"native-pg18-v1")
+        || fields.get("compatibilityKey") != Some(&"native-pg18-datum64-v1")
+        || fields.get("initialSuperuser") != Some(&"postgres")
+        || fields.get("runtimeFeatures") != Some(&expected_features)
+    {
+        return false;
+    }
+    match profile {
+        super::super::NativeCatalogProfile::Standard => {
+            fields.get("icuDataVersion") == Some(&"")
+                && fields.get("icuDataForm") == Some(&"")
+                && fields.get("icuDataTreeSha256") == Some(&"")
+        }
+        super::super::NativeCatalogProfile::Icu => {
+            fields.get("icuDataVersion") == Some(&"76.1")
+                && fields.get("icuDataForm") == Some(&"files-le")
+                && fields.get("icuDataTreeSha256").is_some_and(|digest| {
+                    digest.len() == 64
+                        && digest
+                            .bytes()
+                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                })
+        }
+    }
+}
+
+fn icu_data_dir_is_valid(path: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let path = entry.path();
+        (path.is_file() && name.starts_with("icudt") && name.ends_with(".dat"))
+            || (path.is_dir()
+                && name.starts_with("icudt")
+                && std::fs::read_dir(path)
+                    .ok()
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .any(|child| child.path().is_file()))
+    })
 }
 
 fn native_host_target_id() -> Option<&'static str> {

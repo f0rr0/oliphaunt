@@ -142,6 +142,12 @@ package_ios() {
 
   mkdir -p "$icu_stage/share/icu"
   rsync -a --delete "$icu_source/" "$icu_stage/share/icu/"
+  tools/dev/bun.sh tools/release/stage-native-cluster-seed.mjs \
+    --runtime "$macos_runtime" \
+    --embedded-modules "$macos_work_root/out/modules" \
+    --destination "$icu_stage/cluster-seed" \
+    --profile icu \
+    --icu-data "$icu_source"
   tools/dev/bun.sh tools/release/release-notices.mjs stage \
     "$icu_stage" \
     --profile native-icu-data

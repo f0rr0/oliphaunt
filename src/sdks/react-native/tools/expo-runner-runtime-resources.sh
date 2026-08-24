@@ -77,7 +77,7 @@ prepare_mobile_runtime_resource_package() {
   fi
 
   local runtime_dest="$package_root/oliphaunt/runtime/files"
-  local template_dest="$package_root/oliphaunt/template-pgdata/files"
+  local template_dest="$package_root/oliphaunt/cluster-seed/files"
   local static_registry_dest="$package_root/oliphaunt/static-registry"
   rm -rf "$package_root"
   mkdir -p "$runtime_dest" "$template_dest" "$static_registry_dest"
@@ -91,7 +91,7 @@ prepare_mobile_runtime_resource_package() {
     --exclude 'pg_stat_tmp/*' \
     "$template_source/" "$template_dest/"
   rm -f "$template_dest/postmaster.pid" "$template_dest/postmaster.opts"
-  normalize_template_pgdata "$template_dest"
+  normalize_cluster_seed "$template_dest"
 
   local static_registry_files=0 static_registry_bytes=0
   local manifest_selected_extensions="" manifest_extensions="" mobile_static_state="not-required"
@@ -143,7 +143,7 @@ prepare_mobile_runtime_resource_package() {
   runtime_key="$(directory_fingerprint "$runtime_dest")"
   template_key="$(directory_fingerprint "$template_dest")"
 
-  mkdir -p "$package_root/oliphaunt/runtime" "$package_root/oliphaunt/template-pgdata"
+  mkdir -p "$package_root/oliphaunt/runtime" "$package_root/oliphaunt/cluster-seed"
   cat >"$package_root/oliphaunt/runtime/manifest.properties" <<MANIFEST
 schema=oliphaunt-runtime-resources-v1
 cacheKey=$runtime_key
@@ -159,11 +159,11 @@ mobileStaticRegistryPending=
 nativeModuleStems=$native_module_stems
 mobileStaticRegistrySource=$mobile_static_source
 MANIFEST
-  cat >"$package_root/oliphaunt/template-pgdata/manifest.properties" <<MANIFEST
+  cat >"$package_root/oliphaunt/cluster-seed/manifest.properties" <<MANIFEST
 schema=oliphaunt-runtime-resources-v1
 cacheKey=$template_key
-layout=postgres-template-pgdata-v1
-source=template-pgdata
+layout=oliphaunt-cluster-seed-v1
+source=cluster-seed
 walSegmentSizeMB=$wal_segsize_mb
 selectedExtensions=
 extensions=
@@ -179,7 +179,7 @@ MANIFEST
 kind	id	extensions	files	bytes
 package	total	-	$total_files	$total_bytes
 package	runtime	-	$runtime_files	$runtime_bytes
-package	template-pgdata	-	$template_files	$template_bytes
+package	cluster-seed	-	$template_files	$template_bytes
 package	static-registry	-	$static_registry_files	$static_registry_bytes
 extensions	selected	-	$selected_extension_files	$selected_extension_bytes
 REPORT

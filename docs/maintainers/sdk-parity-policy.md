@@ -67,6 +67,15 @@ These are language-native deltas, not parity failures:
 runtime, archive format, capability profile, initialization mode, or extension
 set.
 
+Cluster initialization and ICU are separate product concepts. The locked
+convergence target is that ordinary new roots transparently use a runtime-bound
+cluster seed, while language-native package/build selection enables optional
+ICU runtime data. A new ICU-enabled root must use the matching `icu` seed
+so its per-database collation catalogue matches normal ICU-aware `initdb`.
+Existing roots are never replaced or silently catalogue-migrated. The complete
+decision register and cross-SDK qualification matrix are in
+[Cluster seeds and ICU](../architecture/cluster-seeds-and-icu.md).
+
 Filesystem-backed SDK storage is a managed root with exactly one
 `.oliphaunt.json` object and one `pgdata` child. The descriptor has exactly five
 fields: `schema`, `engineFamily`, `pgdata`, `postgresMajor`, and

@@ -200,8 +200,8 @@ prepare_runtime_resources() {
   template_source="$(
     find_latest_mobile_pgdata \
       iOS \
-      "${OLIPHAUNT_EXPO_IOS_TEMPLATE_PGDATA_DIR:-}" \
-      OLIPHAUNT_EXPO_IOS_TEMPLATE_PGDATA_DIR \
+      "${OLIPHAUNT_EXPO_IOS_CLUSTER_SEED_DIR:-}" \
+      OLIPHAUNT_EXPO_IOS_CLUSTER_SEED_DIR \
       OLIPHAUNT_EXPO_IOS_INITDB
   )"
   local selected_extensions
@@ -808,7 +808,7 @@ build_ios_app() {
     fail "iOS app is missing OliphauntReactNativeResources.bundle/oliphaunt resource root"
   echo "bundled: $resource_root ($(directory_files "$resource_root") files, $(directory_bytes "$resource_root") bytes)" >&2
   for required in \
-    "$resource_root/template-pgdata/files/PG_VERSION" \
+    "$resource_root/cluster-seed/files/PG_VERSION" \
     "$resource_root/runtime/files/share/postgresql/postgres.bki"; do
     [ -e "$required" ] || fail "iOS app is missing packaged Oliphaunt resource: $required"
     echo "bundled: $required" >&2

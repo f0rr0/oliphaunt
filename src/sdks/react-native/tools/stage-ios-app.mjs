@@ -2272,11 +2272,57 @@ async function validateBaseResources(root) {
     fail("base React Native iOS carrier contains native extension stems");
   }
   requireProperty(manifest, "mobileStaticRegistryState", "not-required", manifestFile);
-  const template = path.join(root, "template-pgdata", "manifest.properties");
+  const template = path.join(root, "cluster-seed", "manifest.properties");
   const templateManifest = parseProperties(await fs.readFile(template, "utf8"), template);
   requireProperty(templateManifest, "schema", "oliphaunt-runtime-resources-v1", template);
-  requireProperty(templateManifest, "layout", "postgres-template-pgdata-v1", template);
+  requireProperty(templateManifest, "layout", "oliphaunt-cluster-seed-v1", template);
+  validateNativeClusterSeedManifest(templateManifest, "standard", template);
   return manifest;
+}
+
+function validateNativeClusterSeedManifest(values, profile, source, dataTreeSha256 = "") {
+  requireProperty(values, "artifactRole", `cluster-seed-${profile}`, source);
+  requireProperty(values, "catalogProfile", profile, source);
+  requireProperty(values, "postgresMajor", "18", source);
+  requireProperty(values, "physicalFormat", "native-pg18-v1", source);
+  requireProperty(values, "compatibilityKey", "native-pg18-datum64-v1", source);
+  requireProperty(values, "initialSuperuser", "postgres", source);
+  requireProperty(values, "runtimeFeatures", profile === "icu" ? "icu" : "", source);
+  requireProperty(values, "icuDataVersion", profile === "icu" ? "76.1" : "", source);
+  requireProperty(values, "icuDataForm", profile === "icu" ? "files-le" : "", source);
+  requireProperty(values, "icuDataTreeSha256", dataTreeSha256, source);
+}
+
+async function logicalTreeSha256(root) {
+  const files = [];
+  async function visit(directory) {
+    const entries = await fs.readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const file = path.join(directory, entry.name);
+      const metadata = await fs.lstat(file);
+      if (metadata.isSymbolicLink()) fail(`ICU data tree contains a symbolic link: ${file}`);
+      if (metadata.isDirectory()) await visit(file);
+      else if (metadata.isFile()) files.push(file);
+      else fail(`ICU data tree contains a special file: ${file}`);
+    }
+  }
+  await visit(root);
+  files.sort((left, right) => Buffer.compare(
+    Buffer.from(path.relative(root, left).split(path.sep).join("/")),
+    Buffer.from(path.relative(root, right).split(path.sep).join("/")),
+  ));
+  const digest = createHash("sha256");
+  for (const file of files) {
+    const relative = path.relative(root, file).split(path.sep).join("/");
+    const bytes = await fs.readFile(file);
+    digest.update(relative);
+    digest.update(Buffer.of(0));
+    digest.update(String(bytes.length));
+    digest.update(Buffer.of(0));
+    digest.update(bytes);
+    digest.update("\n");
+  }
+  return digest.digest("hex");
 }
 
 async function extensionResourceRoot(carrier, base, cacheDir, carrierMemberCache) {
@@ -2401,7 +2447,8 @@ function selectedClosure(requested, bySqlName) {
 
 function writeProperties(values) {
   const preferred = [
-    "schema", "layout", "cacheKey", "source", "selectedExtensions", "extensions", "runtimeFeatures",
+    "schema", "layout", "artifactRole", "catalogProfile", "postgresMajor", "physicalFormat", "compatibilityKey",
+    "initialSuperuser", "icuDataVersion", "icuDataForm", "icuDataTreeSha256", "cacheKey", "source", "selectedExtensions", "extensions", "runtimeFeatures",
     "sharedPreloadLibraries", "mobileStaticRegistryState", "mobileStaticRegistryRegistered",
     "mobileStaticRegistryPending", "nativeModuleStems", "mobileStaticRegistrySource",
   ];
@@ -2513,9 +2560,30 @@ async function stage(args, base, selected) {
     );
     await copyTree(baseResources, resourceRoot);
     if (args.icu) {
-      const icuData = await resolveAsset(base.assets.icu, args.cacheDir);
+      const icuClosure = await resolveAsset(base.assets.icu, args.cacheDir);
+      await requirePayloadDirectory(icuClosure, "ICU closure carrier member");
+      const icuData = path.join(icuClosure, "share", "icu");
+      const icuSeed = path.join(icuClosure, "cluster-seed");
       await requirePayloadDirectory(icuData, "ICU data carrier member");
+      await requirePayloadDirectory(icuSeed, "ICU cluster-seed carrier member");
+      await fs.access(path.join(icuSeed, "files", "PG_VERSION"));
+      await fs.access(path.join(icuSeed, "files", "global", "pg_control"));
+      const icuSeedManifestFile = path.join(icuSeed, "manifest.properties");
+      const icuSeedManifest = parseProperties(
+        await fs.readFile(icuSeedManifestFile, "utf8"),
+        icuSeedManifestFile,
+      );
+      requireProperty(icuSeedManifest, "schema", "oliphaunt-runtime-resources-v1", icuSeedManifestFile);
+      requireProperty(icuSeedManifest, "layout", "oliphaunt-cluster-seed-v1", icuSeedManifestFile);
+      validateNativeClusterSeedManifest(
+        icuSeedManifest,
+        "icu",
+        icuSeedManifestFile,
+        await logicalTreeSha256(icuData),
+      );
       await mergeTree(icuData, path.join(resourceRoot, "runtime", "files", "share", "icu"));
+      await fs.rm(path.join(resourceRoot, "cluster-seed"), { force: true, recursive: true });
+      await copyTree(icuSeed, path.join(resourceRoot, "cluster-seed"));
     }
     const baseFramework = await resolveAsset(base.assets.framework, args.cacheDir);
     const baseFrameworkName = path.posix.basename(base.assets.framework.member);
@@ -2628,7 +2696,7 @@ async function stage(args, base, selected) {
     }
 
     const runtimeSize = await treeSize(path.join(resourceRoot, "runtime"));
-    const templateSize = await treeSize(path.join(resourceRoot, "template-pgdata"));
+    const templateSize = await treeSize(path.join(resourceRoot, "cluster-seed"));
     const registrySize = await treeSize(registryRoot);
     const selectedBytes = extensionRows.reduce((total, row) => total + row.bytes, 0);
     const selectedFiles = extensionRows.reduce((total, row) => total + row.files, 0);
@@ -2639,7 +2707,7 @@ async function stage(args, base, selected) {
         "kind\tid\textensions\tfiles\tbytes",
         `package\ttotal\t${extensionNames}\t${runtimeSize.files + templateSize.files + registrySize.files}\t${runtimeSize.bytes + templateSize.bytes + registrySize.bytes}`,
         `package\truntime\t${extensionNames}\t${runtimeSize.files}\t${runtimeSize.bytes}`,
-        `package\ttemplate-pgdata\t-\t${templateSize.files}\t${templateSize.bytes}`,
+        `package\tcluster-seed\t-\t${templateSize.files}\t${templateSize.bytes}`,
         `package\tstatic-registry\t${extensionNames}\t${registrySize.files}\t${registrySize.bytes}`,
         `extensions\tselected\t${extensionNames}\t${selectedFiles}\t${selectedBytes}`,
         ...extensionRows.sort((left, right) => compareText(left.sqlName, right.sqlName))

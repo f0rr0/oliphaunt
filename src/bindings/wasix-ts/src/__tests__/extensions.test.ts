@@ -158,11 +158,11 @@ describe('WASIX TypeScript extensions', () => {
       assertRuntimeDescriptorMatchesManifest(
         {
           ...runtimeDescriptor(),
-          pgdataArchive: { ...runtimeDescriptor().pgdataArchive, size: 101 },
+          standardSeedArchive: { ...runtimeDescriptor().standardSeedArchive, size: 101 },
         },
         manifest(),
       ),
-    ).toThrow('PGDATA archive size does not match the canonical manifest');
+    ).toThrow('standard cluster seed archive size does not match the canonical manifest');
   });
 
   it('does not create a lifecycle schema when extension creation is disabled', () => {
@@ -289,10 +289,10 @@ describe('WASIX TypeScript extensions', () => {
     const parsed = parseWasixAssetManifest(new TextEncoder().encode(JSON.stringify(expected)));
     expect(parsed.extensions).toEqual([]);
 
-    const invalid = { ...expected, 'format-version': 2 };
+    const invalid = { ...expected, 'format-version': 1 };
     expect(() =>
       parseWasixAssetManifest(new TextEncoder().encode(JSON.stringify(invalid))),
-    ).toThrow('format-version 1');
+    ).toThrow('format-version 2');
 
     const missingFingerprint = { ...expected, 'source-fingerprint': undefined };
     expect(() =>
@@ -396,7 +396,7 @@ function carrierMap(
 
 function manifest(): WasixAssetManifest {
   return {
-    'format-version': 1,
+    'format-version': 2,
     'source-fingerprint': 'postgres-source-fingerprint',
     runtime: {
       archive: 'oliphaunt.wasix.tar.zst',
@@ -412,13 +412,34 @@ function manifest(): WasixAssetManifest {
         sha256: '3'.repeat(64),
       },
     ],
-    'pgdata-template': {
-      archive: 'prepopulated/pgdata-template.tar.zst',
-      sha256: '4'.repeat(64),
-      size: 100,
-      'runtime-module-sha256': '1'.repeat(64),
-      'source-fingerprint': 'postgres-source-fingerprint',
-      'postgres-version': '18',
+    'cluster-seeds': {
+      standard: {
+        'artifact-role': 'cluster-seed-standard',
+        'catalog-profile': 'standard',
+        archive: 'cluster-seeds/standard.tar.zst',
+        manifest: 'cluster-seeds/standard.json',
+        sha256: '4'.repeat(64),
+        size: 100,
+        'runtime-module-sha256': '1'.repeat(64),
+        'source-fingerprint': 'postgres-source-fingerprint',
+        'postgres-version': '18',
+        'physical-format': 'wasix-pg18-v1',
+        'compatibility-key': 'wasix-pg18-datum32-v1',
+      },
+      icu: {
+        'artifact-role': 'cluster-seed-icu',
+        'catalog-profile': 'icu',
+        archive: 'cluster-seeds/icu.tar.zst',
+        manifest: 'cluster-seeds/icu.json',
+        sha256: '6'.repeat(64),
+        size: 101,
+        'runtime-module-sha256': '1'.repeat(64),
+        'source-fingerprint': 'postgres-source-fingerprint',
+        'postgres-version': '18',
+        'physical-format': 'wasix-pg18-v1',
+        'compatibility-key': 'wasix-pg18-datum32-v1',
+        'icu-data-tree-sha256': '7'.repeat(64),
+      },
     },
     extensions: [],
   };
@@ -426,7 +447,7 @@ function manifest(): WasixAssetManifest {
 
 function runtimeDescriptor(): SerializedRuntimeDescriptor {
   return {
-    schema: 'oliphaunt-wasix-runtime-v1',
+    schema: 'oliphaunt-wasix-runtime-v2',
     runtime: 'wasix',
     product: 'liboliphaunt-wasix',
     version: '0.1.1',
@@ -436,11 +457,16 @@ function runtimeDescriptor(): SerializedRuntimeDescriptor {
       size: 100,
       source: '/runtime.tar.zst',
     },
-    pgdataArchive: {
-      archive: 'prepopulated/pgdata-template.tar.zst',
+    standardSeedArchive: {
+      archive: 'cluster-seeds/standard.tar.zst',
       sha256: '4'.repeat(64),
       size: 100,
-      source: '/pgdata.tar.zst',
+      source: '/standard-seed.tar.zst',
+    },
+    standardSeedManifest: {
+      sha256: '8'.repeat(64),
+      size: 100,
+      source: '/standard-seed.json',
     },
     manifest: {
       sha256: '5'.repeat(64),

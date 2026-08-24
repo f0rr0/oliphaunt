@@ -1657,7 +1657,7 @@ public final class OliphauntExtensionCatalogContractTest {
 
     Path runtimeFiles = resourceRoot.resolve("runtime/files");
     long runtimeBytes = fixtureTreeBytes(runtimeFiles);
-    long templateBytes = fixtureTreeBytes(resourceRoot.resolve("template-pgdata/files"));
+    long templateBytes = fixtureTreeBytes(resourceRoot.resolve("cluster-seed/files"));
     long registryBytes = fixtureTreeBytes(resourceRoot.resolve("static-registry"));
     TreeSet<Path> selectedFiles = new TreeSet<>();
     List<String> rows = new ArrayList<>();
@@ -1687,7 +1687,7 @@ public final class OliphauntExtensionCatalogContractTest {
     expected.add("kind\tid\textensions\tfiles\tbytes");
     expected.add("package\ttotal\t-\t-\t" + (runtimeBytes + templateBytes + registryBytes));
     expected.add("package\truntime\t-\t-\t" + runtimeBytes);
-    expected.add("package\ttemplate-pgdata\t-\t-\t" + templateBytes);
+    expected.add("package\tcluster-seed\t-\t-\t" + templateBytes);
     expected.add("package\tstatic-registry\t-\t-\t" + registryBytes);
     expected.add("extensions\tselected\t-\t-\t" + fixtureFileBytes(selectedFiles));
     expected.addAll(rows);

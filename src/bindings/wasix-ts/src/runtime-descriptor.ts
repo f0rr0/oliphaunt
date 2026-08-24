@@ -12,11 +12,12 @@ import type { WasixRuntimeArchive, WasixRuntimeDescriptor, WasixRuntimeManifest 
 
 const DESCRIPTOR_FIELDS = [
   'manifest',
-  'pgdataArchive',
   'product',
   'runtime',
   'runtimeArchive',
   'schema',
+  'standardSeedArchive',
+  'standardSeedManifest',
   'version',
 ];
 const ARCHIVE_FIELDS = ['archive', 'sha256', 'size', 'source'];
@@ -31,7 +32,8 @@ export function serializeWasixRuntimeDescriptor(value: unknown): SerializedRunti
     product: value.product,
     version: value.version,
     runtimeArchive: serializeArchive(value.runtimeArchive),
-    pgdataArchive: serializeArchive(value.pgdataArchive),
+    standardSeedArchive: serializeArchive(value.standardSeedArchive),
+    standardSeedManifest: serializeManifest(value.standardSeedManifest),
     manifest: {
       sha256: value.manifest.sha256,
       size: value.manifest.size,
@@ -45,7 +47,7 @@ function validateRuntimeDescriptor(
   label: string,
 ): asserts value is WasixRuntimeDescriptor {
   const descriptor = requireExactObject(value, DESCRIPTOR_FIELDS, label);
-  if (descriptor.schema !== 'oliphaunt-wasix-runtime-v1') {
+  if (descriptor.schema !== 'oliphaunt-wasix-runtime-v2') {
     throw new Error(`${label} has unsupported schema`);
   }
   if (descriptor.runtime !== 'wasix') {
@@ -56,10 +58,11 @@ function validateRuntimeDescriptor(
   }
   requireVersion(descriptor.version, `${label} version`);
   validateArchive(descriptor.runtimeArchive, `${label} runtime archive`);
-  validateArchive(descriptor.pgdataArchive, `${label} PGDATA archive`);
+  validateArchive(descriptor.standardSeedArchive, `${label} standard cluster seed archive`);
+  validateManifest(descriptor.standardSeedManifest, `${label} standard cluster seed manifest`);
   validateManifest(descriptor.manifest, `${label} manifest`);
-  if (descriptor.runtimeArchive.archive === descriptor.pgdataArchive.archive) {
-    throw new Error(`${label} runtime and PGDATA archives must have distinct paths`);
+  if (descriptor.runtimeArchive.archive === descriptor.standardSeedArchive.archive) {
+    throw new Error(`${label} runtime and standard cluster seed archives must have distinct paths`);
   }
 }
 
@@ -86,5 +89,15 @@ function serializeArchive(
     sha256: archive.sha256,
     size: archive.size,
     source: serializeAssetSource(archive.source),
+  };
+}
+
+function serializeManifest(
+  manifest: WasixRuntimeManifest,
+): SerializedRuntimeDescriptor['manifest'] {
+  return {
+    sha256: manifest.sha256,
+    size: manifest.size,
+    source: serializeAssetSource(manifest.source),
   };
 }

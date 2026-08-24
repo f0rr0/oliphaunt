@@ -19,12 +19,31 @@ use crate::extension::Extension;
 
 const RUNTIME_CACHE_VERSION: &str = "pg18-runtime-cache-v7";
 
+#[cfg(test)]
 pub(super) fn runtime_cache_key(
     profile: NativeRuntimeProfile,
     install_dir: &Path,
     embedded_modules: Option<&Path>,
     extension_artifact_dirs: &[PathBuf],
     extensions: &[Extension],
+) -> Result<String> {
+    runtime_cache_key_with_icu(
+        profile,
+        install_dir,
+        embedded_modules,
+        extension_artifact_dirs,
+        extensions,
+        None,
+    )
+}
+
+pub(super) fn runtime_cache_key_with_icu(
+    profile: NativeRuntimeProfile,
+    install_dir: &Path,
+    embedded_modules: Option<&Path>,
+    extension_artifact_dirs: &[PathBuf],
+    extensions: &[Extension],
+    icu_data: Option<&Path>,
 ) -> Result<String> {
     let mut state = new_state();
     hash_str(&mut state, RUNTIME_CACHE_VERSION);
@@ -37,6 +56,17 @@ pub(super) fn runtime_cache_key(
 
     for name in selected_extension_names(extensions) {
         hash_str(&mut state, name);
+    }
+    hash_str(
+        &mut state,
+        if icu_data.is_some() {
+            "catalog-icu"
+        } else {
+            "catalog-standard"
+        },
+    );
+    if let Some(icu_data) = icu_data {
+        fingerprint_directory_filtered(&mut state, icu_data, icu_data, |_| true)?;
     }
 
     for tool in NATIVE_RUNTIME_TOOLS {
@@ -147,11 +177,22 @@ pub(super) fn runtime_cache_key(
     Ok(format!("{state:016x}"))
 }
 
+#[cfg(test)]
 pub(super) fn cached_runtime_is_valid(
     profile: NativeRuntimeProfile,
     cache_dir: &Path,
     key: &str,
     extensions: &[Extension],
+) -> bool {
+    cached_runtime_is_valid_with_icu(profile, cache_dir, key, extensions, false)
+}
+
+pub(super) fn cached_runtime_is_valid_with_icu(
+    profile: NativeRuntimeProfile,
+    cache_dir: &Path,
+    key: &str,
+    extensions: &[Extension],
+    has_icu_data: bool,
 ) -> bool {
     if !cache_dir.join(".complete").is_file()
         || !NATIVE_RUNTIME_TOOLS
@@ -176,6 +217,13 @@ pub(super) fn cached_runtime_is_valid(
             .lines()
             .any(|line| line == format!("profile={}", profile.cache_id()))
         || !manifest.lines().any(|line| line == format!("key={key}"))
+        || !manifest.lines().any(|line| {
+            line == format!(
+                "catalogProfile={}",
+                if has_icu_data { "icu" } else { "standard" }
+            )
+        })
+        || (has_icu_data && !cache_dir.join("share/icu").is_dir())
     {
         return false;
     }
@@ -226,15 +274,26 @@ fn cache_contains_extension_sql_file(cache_dir: &Path, extension: Extension) -> 
     })
 }
 
+#[cfg(test)]
 pub(super) fn runtime_cache_manifest(
     profile: NativeRuntimeProfile,
     key: &str,
     extensions: &[Extension],
 ) -> String {
+    runtime_cache_manifest_with_icu(profile, key, extensions, false)
+}
+
+pub(super) fn runtime_cache_manifest_with_icu(
+    profile: NativeRuntimeProfile,
+    key: &str,
+    extensions: &[Extension],
+    has_icu_data: bool,
+) -> String {
     let extension_names = selected_extension_names(extensions);
     format!(
-        "version={RUNTIME_CACHE_VERSION}\nprofile={}\nkey={key}\nextensions={}\n",
+        "version={RUNTIME_CACHE_VERSION}\nprofile={}\ncatalogProfile={}\nkey={key}\nextensions={}\n",
         profile.cache_id(),
+        if has_icu_data { "icu" } else { "standard" },
         extension_names.join(",")
     )
 }

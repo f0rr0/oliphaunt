@@ -245,7 +245,7 @@ function selectionNeutralCarrier(version = "1.2.3") {
   const assets = [
     ["base-xcframework", `liboliphaunt-${version}-apple-spm-xcframework.zip`, "zip", "liboliphaunt.xcframework", "a"],
     ["runtime-resources", `liboliphaunt-${version}-runtime-resources.tar.gz`, "tar.gz", "oliphaunt", "b"],
-    ["icu-data", `liboliphaunt-${version}-icu-data.tar.gz`, "tar.gz", "share/icu", "c"],
+    ["icu-data", `liboliphaunt-${version}-icu-data.tar.gz`, "tar.gz", ".", "c"],
   ].map(([role, name, format, member, digit], index) => ({
     bytes: index + 1,
     format,

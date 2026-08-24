@@ -152,8 +152,8 @@ const REQUIRED_AUDIT_CHECKS = [
   {
     requirement: 'Optional ICU data stays optional during initdb',
     patches: ['0033-oliphaunt-wasix-skip-icu-collation-setup-without-icu-data.patch'],
-    evidence: ['getenv("ICU_DATA")', 'pg_collation_actual_version', 'pg_import_system_collations'],
-    posture: 'WASIX initdb skips ICU-backed collation setup until the optional ICU data package is present.',
+    evidence: ['OLIPHAUNT_INTERNAL_ICU_READY', 'strcmp', 'pg_collation_actual_version', 'pg_import_system_collations'],
+    posture: 'WASIX standard seeds skip ICU-backed catalogue setup; only a producer-controlled readiness signal after exact ICU-data verification enables the ICU profile.',
   },
   {
     requirement: 'COPY streaming keeps an explicit hybrid transport ABI',

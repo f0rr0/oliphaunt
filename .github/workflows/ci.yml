@@ -781,9 +781,16 @@ jobs:
         env:
           NATIVE_BUILD_ROOT: ${{ matrix.build-root }}
         run: |
+          tools/dev/bun.sh tools/release/stage-native-cluster-seed.mjs \
+            --runtime "$NATIVE_BUILD_ROOT/install" \
+            --embedded-modules "$NATIVE_BUILD_ROOT/out/modules" \
+            --destination target/liboliphaunt/native-icu-cluster-seed \
+            --profile icu \
+            --icu-data "$NATIVE_BUILD_ROOT/icu/share/icu"
           tools/release/package-liboliphaunt-icu-data.sh \
             "$NATIVE_BUILD_ROOT/icu/share/icu" \
-            target/liboliphaunt/portable-icu-assets
+            target/liboliphaunt/portable-icu-assets \
+            target/liboliphaunt/native-icu-cluster-seed
 
       - name: Package liboliphaunt Linux release asset
         if: ${{ startsWith(matrix.target, 'linux-') }}

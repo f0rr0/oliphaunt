@@ -748,6 +748,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OpenConfig.database`
 - `OpenConfig.execution`
 - `OpenConfig.extensions`
+- `OpenConfig.icu`
 - `OpenConfig.startupGUCs`
 - `OpenConfig.storage`
 - `OpenConfig.username`

@@ -37,6 +37,7 @@ import {
   releaseProfilePackageLicense,
   stageReleaseNotices,
 } from "./release-notices.mjs";
+import { validateNativeClusterSeedDirectory } from "./native-cluster-seed-contract.mjs";
 
 const PREFIX = "package-liboliphaunt-cargo-artifacts.mjs";
 const PRODUCT = "liboliphaunt-native";
@@ -413,6 +414,23 @@ function validateNativePayload(payloadRoot, target, { toolSet }) {
     toolSet,
     "--check",
   ]);
+}
+
+function stageNativeCargoClusterSeeds(runtimeRoot, icuRoot) {
+  const standardSeed = path.join(runtimeRoot, "cluster-seed");
+  const icuSeed = path.join(icuRoot, "cluster-seed");
+  const icuData = path.join(icuRoot, "share/icu");
+  try {
+    validateNativeClusterSeedDirectory(standardSeed, "standard");
+    validateNativeClusterSeedDirectory(icuSeed, "icu", { icuData });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
+  const destination = path.join(runtimeRoot, "cluster-seed-icu");
+  if (existsSync(destination)) {
+    fail(`${rel(runtimeRoot)} must not already contain Cargo-only cluster-seed-icu`);
+  }
+  cpSync(icuSeed, destination, { recursive: true, dereference: true, errorOnExist: true });
 }
 
 function writePartCrate(
@@ -1011,6 +1029,7 @@ function packageTarget(
     outputDir,
     cargoTargetDir,
     partBytes,
+    icuRoot,
   },
 ) {
   validateToolsTargetPair(target, toolsTarget);
@@ -1026,6 +1045,7 @@ function packageTarget(
   assertReleaseNoticesInArchive(toolsArchive, { profile: "native-tools" });
   const extractedRoot = path.join(sourceRoot, `${target.target}-extracted`);
   extractArchive(archive, extractedRoot);
+  stageNativeCargoClusterSeeds(extractedRoot, icuRoot);
   const toolsRoot = path.join(sourceRoot, `${target.target}-tools-extracted`);
   extractArchive(toolsArchive, toolsRoot);
   validateNativePayload(extractedRoot, target.target, { toolSet: "runtime" });
@@ -1192,6 +1212,13 @@ async function main(argv) {
   }
 
   const packages = [];
+  const icuArchive = path.join(args.assetDir, `liboliphaunt-${args.version}-icu-data.tar.gz`);
+  if (!isFile(icuArchive)) {
+    fail(`missing liboliphaunt native ICU data release asset: ${rel(icuArchive)}`);
+  }
+  assertReleaseNoticesInArchive(icuArchive, { profile: "native-icu-data" });
+  const icuRoot = path.join(sourceRoot, "icu-data-extracted");
+  extractArchive(icuArchive, icuRoot);
   const selectedToolsTargets = [];
   for (const target of targets) {
     const toolsTarget = toolsTargets.get(target.target);
@@ -1207,6 +1234,7 @@ async function main(argv) {
       outputDir: args.outputDir,
       cargoTargetDir,
       partBytes: args.partBytes,
+      icuRoot,
     }));
   }
   packages.push(freezeSourceCrate(writeToolsFacadeCrate(sourceRoot, {

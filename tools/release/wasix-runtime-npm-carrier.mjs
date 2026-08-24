@@ -30,7 +30,8 @@ import {
   stageReleaseNotices,
 } from "./release-notices.mjs";
 import {
-  WASIX_PGDATA_ARCHIVE_PATH,
+  WASIX_STANDARD_SEED_ARCHIVE_PATH,
+  WASIX_STANDARD_SEED_MANIFEST_PATH,
   WASIX_PORTABLE_RELEASE_MEMBERS,
   WASIX_RUNTIME_ARCHIVE_PATH,
   WASIX_RUNTIME_NPM_ASSET_PATHS,
@@ -148,9 +149,9 @@ function requireRegularEntry(entries, member, label) {
  * Keep this producer-side gate in lockstep with the binding's parser so a
  * package cannot be publishable but unusable by every consumer.
  */
-function assertCoreManifestContract(manifest, runtimeEntries, pgdataEntries) {
-  if (manifest["format-version"] !== 1) {
-    fail("frozen WASIX core manifest must use format-version 1");
+function assertCoreManifestContract(manifest, runtimeEntries, standardSeedEntries, seedManifest) {
+  if (manifest["format-version"] !== 2) {
+    fail("frozen WASIX core manifest must use format-version 2");
   }
   const sourceFingerprint = nonEmptyString(
     manifest["source-fingerprint"],
@@ -212,35 +213,45 @@ function assertCoreManifestContract(manifest, runtimeEntries, pgdataEntries) {
     );
   }
 
-  const pgdata = object(
-    manifest["pgdata-template"],
-    "frozen WASIX core manifest pgdata-template",
-  );
-  safeRelativePath(pgdata.archive, "frozen WASIX core manifest pgdata-template.archive");
-  checkedSha256(pgdata.sha256, "frozen WASIX core manifest pgdata-template.sha256");
-  if (!Number.isSafeInteger(pgdata.size) || pgdata.size <= 0) {
-    fail("frozen WASIX core manifest pgdata-template.size must be a positive safe integer");
+  const seeds = object(manifest["cluster-seeds"], "frozen WASIX core manifest cluster-seeds");
+  if (Object.keys(seeds).sort().join(",") !== "icu,standard") {
+    fail("frozen WASIX core manifest must contain exactly standard and icu cluster seeds");
   }
-  const pgdataRuntimeModuleSha256 = checkedSha256(
-    pgdata["runtime-module-sha256"],
-    "frozen WASIX core manifest pgdata-template.runtime-module-sha256",
-  );
-  const pgdataFingerprint = nonEmptyString(
-    pgdata["source-fingerprint"],
-    "frozen WASIX core manifest pgdata-template.source-fingerprint",
-  );
-  const pgdataPostgresMajor = postgresMajor(
-    pgdata["postgres-version"],
-    "frozen WASIX core manifest pgdata-template.postgres-version",
-  );
-  if (runtimeModuleSha256 !== pgdataRuntimeModuleSha256) {
-    fail("frozen WASIX core manifest runtime and PGDATA identify different runtime modules");
+  const standardSeed = object(seeds.standard, "frozen WASIX standard cluster seed");
+  if (
+    standardSeed["artifact-role"] !== "cluster-seed-standard"
+    || standardSeed["catalog-profile"] !== "standard"
+    || standardSeed["physical-format"] !== "wasix-pg18-v1"
+    || standardSeed["compatibility-key"] !== "wasix-pg18-datum32-v1"
+    || standardSeed.manifest !== WASIX_STANDARD_SEED_MANIFEST_PATH
+  ) {
+    fail("frozen WASIX standard cluster seed has an incompatible identity");
   }
-  if (sourceFingerprint !== pgdataFingerprint) {
-    fail("frozen WASIX core manifest runtime and PGDATA identify different source fingerprints");
+  safeRelativePath(standardSeed.archive, "frozen WASIX standard cluster seed archive");
+  checkedSha256(standardSeed.sha256, "frozen WASIX standard cluster seed archive SHA-256");
+  if (!Number.isSafeInteger(standardSeed.size) || standardSeed.size <= 0) {
+    fail("frozen WASIX standard cluster seed size must be a positive safe integer");
   }
-  if (runtimePostgresMajor !== pgdataPostgresMajor) {
-    fail("frozen WASIX core manifest runtime and PGDATA identify different PostgreSQL majors");
+  const standardSeedRuntimeModuleSha256 = checkedSha256(
+    standardSeed["runtime-module-sha256"],
+    "frozen WASIX standard cluster seed runtime-module-sha256",
+  );
+  const standardSeedFingerprint = nonEmptyString(
+    standardSeed["source-fingerprint"],
+    "frozen WASIX standard cluster seed source-fingerprint",
+  );
+  const standardSeedPostgresMajor = postgresMajor(
+    standardSeed["postgres-version"],
+    "frozen WASIX standard cluster seed postgres-version",
+  );
+  if (runtimeModuleSha256 !== standardSeedRuntimeModuleSha256) {
+    fail("frozen WASIX core manifest runtime and standard cluster seed identify different runtime modules");
+  }
+  if (sourceFingerprint !== standardSeedFingerprint) {
+    fail("frozen WASIX core manifest runtime and standard cluster seed identify different source fingerprints");
+  }
+  if (runtimePostgresMajor !== standardSeedPostgresMajor) {
+    fail("frozen WASIX core manifest runtime and standard cluster seed identify different PostgreSQL majors");
   }
 
   const runtimeModule = requireRegularEntry(
@@ -252,10 +263,25 @@ function assertCoreManifestContract(manifest, runtimeEntries, pgdataEntries) {
     fail("frozen WASIX runtime module does not match manifest runtime.module-sha256");
   }
   const pgVersion = Buffer.from(
-    requireRegularEntry(pgdataEntries, "PG_VERSION", "frozen WASIX PGDATA archive").data(),
+    requireRegularEntry(standardSeedEntries, "PG_VERSION", "frozen WASIX standard cluster seed archive").data(),
   ).toString("utf8").trim();
-  if (pgVersion !== runtimePostgresMajor || pgVersion !== pgdataPostgresMajor) {
-    fail("frozen WASIX PGDATA PG_VERSION does not match the manifest PostgreSQL major");
+  if (pgVersion !== runtimePostgresMajor || pgVersion !== standardSeedPostgresMajor) {
+    fail("frozen WASIX cluster seed PG_VERSION does not match the manifest PostgreSQL major");
+  }
+  if (
+    seedManifest.schema !== "oliphaunt-cluster-seed-v1"
+    || seedManifest.artifactRole !== "cluster-seed-standard"
+    || seedManifest.catalogProfile !== "standard"
+    || seedManifest.archive?.path !== WASIX_STANDARD_SEED_ARCHIVE_PATH
+    || seedManifest.archive?.sha256 !== standardSeed.sha256
+    || seedManifest.archive?.compressedBytes !== standardSeed.size
+    || seedManifest.runtime?.consumerSha256 !== runtimeModuleSha256
+    || seedManifest.runtime?.producerSha256 !== runtimeModuleSha256
+    || seedManifest.source?.fingerprint !== sourceFingerprint
+    || JSON.stringify(seedManifest.requiredRuntimeFeatures) !== "[]"
+    || seedManifest.icu !== null
+  ) {
+    fail("frozen WASIX standard cluster seed manifest does not match the runtime closure");
   }
 }
 
@@ -306,14 +332,23 @@ export function wasixRuntimeNpmInputs({
     WASIX_PORTABLE_RELEASE_MEMBERS.runtimeArchive,
     releaseArchive,
   );
-  const pgdataBytes = requireArchiveEntry(
+  const standardSeedBytes = requireArchiveEntry(
     releaseEntries,
-    WASIX_PORTABLE_RELEASE_MEMBERS.pgdataArchive,
+    WASIX_PORTABLE_RELEASE_MEMBERS.standardSeedArchive,
+    releaseArchive,
+  );
+  const standardSeedManifestBytes = requireArchiveEntry(
+    releaseEntries,
+    WASIX_PORTABLE_RELEASE_MEMBERS.standardSeedManifest,
     releaseArchive,
   );
   const manifest = parseJsonBytes(
     manifestBytes,
     `${rel(releaseArchive)} ${WASIX_PORTABLE_RELEASE_MEMBERS.manifest}`,
+  );
+  const standardSeedManifest = parseJsonBytes(
+    standardSeedManifestBytes,
+    `${rel(releaseArchive)} ${WASIX_PORTABLE_RELEASE_MEMBERS.standardSeedManifest}`,
   );
   if (!Array.isArray(manifest.extensions) || manifest.extensions.length !== 0) {
     fail("frozen WASIX core manifest must contain an empty extensions array");
@@ -326,13 +361,13 @@ export function wasixRuntimeNpmInputs({
     WASIX_RUNTIME_ARCHIVE_PATH,
     "frozen WASIX core manifest runtime",
   );
-  const pgdata = checkedAssetMetadata(
-    manifest["pgdata-template"],
-    WASIX_PGDATA_ARCHIVE_PATH,
-    "frozen WASIX core manifest pgdata-template",
+  const standardSeed = checkedAssetMetadata(
+    object(manifest["cluster-seeds"], "frozen WASIX core manifest cluster-seeds").standard,
+    WASIX_STANDARD_SEED_ARCHIVE_PATH,
+    "frozen WASIX standard cluster seed",
   );
-  if (!Number.isSafeInteger(pgdata.size) || pgdata.size <= 0) {
-    fail("frozen WASIX core manifest pgdata-template.size must be a positive safe integer");
+  if (!Number.isSafeInteger(standardSeed.size) || standardSeed.size <= 0) {
+    fail("frozen WASIX standard cluster seed size must be a positive safe integer");
   }
   if (sha256Bytes(runtimeBytes) !== runtime.sha256) {
     fail("frozen WASIX runtime archive does not match manifest.runtime.sha256");
@@ -340,18 +375,18 @@ export function wasixRuntimeNpmInputs({
   if (runtime.size !== undefined && runtimeBytes.length !== runtime.size) {
     fail("frozen WASIX runtime archive does not match manifest.runtime.size");
   }
-  if (pgdataBytes.length !== pgdata.size || sha256Bytes(pgdataBytes) !== pgdata.sha256) {
-    fail("frozen WASIX PGDATA archive does not match manifest pgdata-template size/digest");
+  if (standardSeedBytes.length !== standardSeed.size || sha256Bytes(standardSeedBytes) !== standardSeed.sha256) {
+    fail("frozen WASIX standard cluster seed archive does not match the manifest size/digest");
   }
   const runtimeEntries = checkedInputArchive(
     runtimeBytes,
     `${rel(releaseArchive)} runtime archive`,
   );
-  const pgdataEntries = checkedInputArchive(
-    pgdataBytes,
-    `${rel(releaseArchive)} PGDATA archive`,
+  const standardSeedEntries = checkedInputArchive(
+    standardSeedBytes,
+    `${rel(releaseArchive)} standard cluster seed archive`,
   );
-  assertCoreManifestContract(manifest, runtimeEntries, pgdataEntries);
+  assertCoreManifestContract(manifest, runtimeEntries, standardSeedEntries, standardSeedManifest);
 
   return Object.freeze({
     manifest: Object.freeze({
@@ -365,11 +400,16 @@ export function wasixRuntimeNpmInputs({
       sha256: runtime.sha256,
       size: runtimeBytes.length,
     }),
-    pgdataArchive: Object.freeze({
-      archive: pgdata.archive,
-      bytes: pgdataBytes,
-      sha256: pgdata.sha256,
-      size: pgdataBytes.length,
+    standardSeedArchive: Object.freeze({
+      archive: standardSeed.archive,
+      bytes: standardSeedBytes,
+      sha256: standardSeed.sha256,
+      size: standardSeedBytes.length,
+    }),
+    standardSeedManifest: Object.freeze({
+      bytes: standardSeedManifestBytes,
+      sha256: sha256Bytes(standardSeedManifestBytes),
+      size: standardSeedManifestBytes.length,
     }),
   });
 }
@@ -410,7 +450,8 @@ export function stageWasixRuntimeNpmCarrier({
   mkdirSync(path.join(output, "assets"), { recursive: true });
   for (const [name, input] of Object.entries({
     runtimeArchive: inputs.runtimeArchive,
-    pgdataArchive: inputs.pgdataArchive,
+    standardSeedArchive: inputs.standardSeedArchive,
+    standardSeedManifest: inputs.standardSeedManifest,
     manifest: inputs.manifest,
   })) {
     const destination = path.join(output, ...WASIX_RUNTIME_NPM_ASSET_PATHS[name].split("/"));
@@ -500,7 +541,7 @@ export function assertWasixRuntimeNpmArchive(archive, { version, descriptor }) {
   if (packageJson.name !== WASIX_RUNTIME_NPM_PACKAGE || packageJson.version !== version) {
     fail(`${rel(file)} must identify ${WASIX_RUNTIME_NPM_PACKAGE}@${version}`);
   }
-  for (const name of ["runtimeArchive", "pgdataArchive", "manifest"]) {
+  for (const name of ["runtimeArchive", "standardSeedArchive", "standardSeedManifest", "manifest"]) {
     const bytes = requireArchiveEntry(entries, `package/${WASIX_RUNTIME_NPM_ASSET_PATHS[name]}`, file);
     if (bytes.length !== descriptor[name].size || sha256Bytes(bytes) !== descriptor[name].sha256) {
       fail(`${rel(file)} ${name} bytes differ from the generated descriptor`);

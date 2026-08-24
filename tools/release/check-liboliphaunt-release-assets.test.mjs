@@ -25,7 +25,7 @@ test("release archive validation requires canonical producer markers", () => {
   assert.match(canonicalTarEntryMarkerError("runtime\/manifest.properties/", "0"), /regular-file member must not use a trailing slash/u);
 });
 
-test("base runtime validation requires the exact current empty static-registry manifest", () => {
+test("standard runtime validation requires the exact current empty static-registry manifest", () => {
   const canonical = [
     "packageLayout=oliphaunt-static-registry-v1",
     "abiVersion=1",

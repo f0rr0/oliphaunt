@@ -5,27 +5,78 @@ mod locate;
 use std::fs::{self, OpenOptions};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use fs2::FileExt;
 
-use cache_key::{cached_runtime_is_valid, runtime_cache_key, runtime_cache_manifest};
-use install::install_cached_runtime;
+use cache_key::{
+    cached_runtime_is_valid_with_icu, runtime_cache_key_with_icu, runtime_cache_manifest_with_icu,
+};
+use install::install_cached_runtime_with_icu;
 use locate::{
-    locate_native_embedded_modules_dir, locate_native_extension_artifact_dirs,
-    locate_native_install_dir,
+    locate_native_cluster_seed_dir, locate_native_embedded_modules_dir,
+    locate_native_extension_artifact_dirs, locate_native_icu_data_dir, locate_native_install_dir,
+    package_managed_resources_are_registered,
 };
 
-use super::NativeRuntimeProfile;
+use super::{NativeCatalogProfile, NativeRuntimeProfile};
 use crate::error::{Error, Result};
 use crate::extension::Extension;
 
 const ENV_RUNTIME_CACHE_DIR: &str = "OLIPHAUNT_RUNTIME_CACHE_DIR";
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ResolvedRuntimeClosure {
+    pub(super) runtime_dir: PathBuf,
+    pub(super) catalog_profile: NativeCatalogProfile,
+    pub(super) cluster_seed_dir: Option<PathBuf>,
+}
+
+pub(super) fn resolve_runtime_closure(
+    profile: NativeRuntimeProfile,
+    extensions: &[Extension],
+    requested_catalog_profile: Option<NativeCatalogProfile>,
+) -> Result<ResolvedRuntimeClosure> {
+    let available_icu_data = locate_native_icu_data_dir();
+    let catalog_profile = requested_catalog_profile.unwrap_or_else(|| {
+        if available_icu_data.is_some() {
+            NativeCatalogProfile::Icu
+        } else {
+            NativeCatalogProfile::Standard
+        }
+    });
+    let icu_data = match catalog_profile {
+        NativeCatalogProfile::Standard => None,
+        NativeCatalogProfile::Icu => Some(available_icu_data.ok_or_else(|| {
+            Error::Engine(
+                "ICU was selected, but the package-managed ICU data tree is unavailable; add the matching oliphaunt-icu artifact or set OLIPHAUNT_ICU_DATA_DIR"
+                    .to_owned(),
+            )
+        })?),
+    };
+    let runtime_dir = materialize_runtime(profile, extensions, icu_data.as_deref())?;
+    let cluster_seed_dir = locate_native_cluster_seed_dir(catalog_profile);
+    if requested_catalog_profile.is_none()
+        && package_managed_resources_are_registered()
+        && cluster_seed_dir.is_none()
+    {
+        return Err(Error::Engine(format!(
+            "the package-managed {} runtime closure is missing its matching cluster seed",
+            catalog_profile.id()
+        )));
+    }
+    Ok(ResolvedRuntimeClosure {
+        runtime_dir,
+        catalog_profile,
+        cluster_seed_dir,
+    })
+}
+
 pub(super) fn materialize_runtime(
     profile: NativeRuntimeProfile,
     extensions: &[Extension],
+    icu_data: Option<&Path>,
 ) -> Result<PathBuf> {
     let install_dir = locate_native_install_dir()?;
     let extension_artifact_dirs = locate_native_extension_artifact_dirs();
@@ -34,12 +85,13 @@ pub(super) fn materialize_runtime(
     } else {
         None
     };
-    let key = runtime_cache_key(
+    let key = runtime_cache_key_with_icu(
         profile,
         &install_dir,
         embedded_modules.as_deref(),
         &extension_artifact_dirs,
         extensions,
+        icu_data,
     )?;
     let cache_root = runtime_cache_root()?;
     fs::create_dir_all(&cache_root).map_err(|err| {
@@ -77,7 +129,8 @@ pub(super) fn materialize_runtime(
         ))
     })?;
 
-    if !cached_runtime_is_valid(profile, &cache_dir, &key, extensions) {
+    if !cached_runtime_is_valid_with_icu(profile, &cache_dir, &key, extensions, icu_data.is_some())
+    {
         let build_dir = cache_root.join(format!(
             ".build-{}-{}",
             std::process::id(),
@@ -98,13 +151,14 @@ pub(super) fn materialize_runtime(
             ))
         })?;
 
-        let build_result = install_cached_runtime(
+        let build_result = install_cached_runtime_with_icu(
             profile,
             &install_dir,
             embedded_modules.as_deref(),
             &extension_artifact_dirs,
             &build_dir,
             extensions,
+            icu_data,
         );
         if let Err(error) = build_result {
             let _ = fs::remove_dir_all(&build_dir);
@@ -112,7 +166,7 @@ pub(super) fn materialize_runtime(
         }
         fs::write(
             build_dir.join(".manifest"),
-            runtime_cache_manifest(profile, &key, extensions),
+            runtime_cache_manifest_with_icu(profile, &key, extensions, icu_data.is_some()),
         )
         .map_err(|err| {
             Error::Engine(format!(

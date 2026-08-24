@@ -22,7 +22,8 @@
   "oliphaunt": {
     "target": "linux-arm64-gnu",
     "libraryRelativePath": "lib/liboliphaunt.so",
-    "runtimeRelativePath": "runtime"
+    "runtimeRelativePath": "runtime",
+    "clusterSeedRelativePath": "cluster-seed"
   },
   "publishConfig": {
     "access": "public",
@@ -36,6 +37,7 @@
   "files": [
     "lib",
     "runtime",
+    "cluster-seed",
     "README.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",

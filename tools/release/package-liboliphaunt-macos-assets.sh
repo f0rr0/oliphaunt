@@ -75,6 +75,11 @@ rsync -a --delete \
   --exclude '/bin/psql' \
   --exclude 'share/icu/***' \
   "$runtime/" "$stage/runtime/"
+tools/dev/bun.sh tools/release/stage-native-cluster-seed.mjs \
+  --runtime "$runtime" \
+  --embedded-modules "$embedded_modules" \
+  --destination "$stage/cluster-seed" \
+  --profile standard
 for tool in pg_basebackup pg_dump psql; do
   cp -p "$runtime/bin/$tool" "$tools_stage/runtime/bin/"
 done

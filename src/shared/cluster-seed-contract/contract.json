@@ -1,0 +1,34 @@
+{
+  "schema": "oliphaunt-cluster-seed-contract-v1",
+  "manifestSchema": "oliphaunt-cluster-seed-v1",
+  "icuDataSchema": "oliphaunt-icu-data-v1",
+  "profiles": {
+    "standard": {
+      "artifactRole": "cluster-seed-standard",
+      "requiredRuntimeFeatures": []
+    },
+    "icu": {
+      "artifactRole": "cluster-seed-icu",
+      "requiredRuntimeFeatures": [
+        "icu"
+      ]
+    }
+  },
+  "icu": {
+    "artifactRole": "icu-data",
+    "dataForm": "files-le",
+    "dataVersion": "76.1",
+    "internalReadinessEnvironment": "OLIPHAUNT_INTERNAL_ICU_READY",
+    "internalReadinessValue": "1",
+    "logicalTreeDigest": "sha256(path-nul-size-nul-bytes-lf)",
+    "runtimePath": "share/icu"
+  },
+  "compatibilityKeys": {
+    "nativeDatum64": "native-pg18-datum64-v1",
+    "wasixDatum32": "wasix-pg18-datum32-v1"
+  },
+  "physicalFormats": {
+    "native": "native-pg18-v1",
+    "wasix": "wasix-pg18-v1"
+  }
+}

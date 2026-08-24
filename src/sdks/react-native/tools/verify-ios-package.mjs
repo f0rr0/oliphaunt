@@ -442,13 +442,13 @@ async function validateStagedPackage(payloadDir, allowRuntimeDylib) {
   );
   await requireDirectory(resourceRoot, "React Native iOS runtime-resource bundle");
   const runtimeManifestFile = path.join(resourceRoot, "runtime/manifest.properties");
-  const templateManifestFile = path.join(resourceRoot, "template-pgdata/manifest.properties");
+  const templateManifestFile = path.join(resourceRoot, "cluster-seed/manifest.properties");
   const runtime = await readProperties(runtimeManifestFile);
   const template = await readProperties(templateManifestFile);
   requireProperty(runtime, "schema", "oliphaunt-runtime-resources-v1", runtimeManifestFile);
   requireProperty(runtime, "layout", "postgres-runtime-files-v1", runtimeManifestFile);
   requireProperty(template, "schema", "oliphaunt-runtime-resources-v1", templateManifestFile);
-  requireProperty(template, "layout", "postgres-template-pgdata-v1", templateManifestFile);
+  requireProperty(template, "layout", "oliphaunt-cluster-seed-v1", templateManifestFile);
   const selectedExtensions = portableCsv(runtime, "selectedExtensions", runtimeManifestFile);
   const extensions = portableCsv(runtime, "extensions", runtimeManifestFile);
   const stems = portableCsv(runtime, "nativeModuleStems", runtimeManifestFile);
@@ -569,7 +569,7 @@ async function validateStagedPackage(payloadDir, allowRuntimeDylib) {
   requireProperty(template, "mobileStaticRegistrySource", "", templateManifestFile);
   await requirePayloadFiles(path.join(resourceRoot, "runtime/files"), "iOS PostgreSQL runtime");
   await requirePayloadFiles(
-    path.join(resourceRoot, "template-pgdata/files"),
+    path.join(resourceRoot, "cluster-seed/files"),
     "iOS template PGDATA",
   );
   await requireFile(path.join(resourceRoot, "package-size.tsv"), "iOS package-size report");

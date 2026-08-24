@@ -848,6 +848,8 @@ function preparedRuntime(setupSql: string[] = []): PreparedWasixRuntime {
       mounts: { '/base': pgdataMount() },
     },
     moduleSha256: '4'.repeat(64),
+    catalogProfile: 'standard',
+    icuEnabled: false,
     startupGUCs: {},
     setupSql,
     physicalIdentity: WASIX_PHYSICAL_IDENTITY,
@@ -867,7 +869,7 @@ function pgdataMount() {
 function openOptions(): SerializedOpenOptions {
   return {
     runtime: {
-      schema: 'oliphaunt-wasix-runtime-v1',
+      schema: 'oliphaunt-wasix-runtime-v2',
       runtime: 'wasix',
       product: 'liboliphaunt-wasix',
       version: '0.1.1',
@@ -877,11 +879,16 @@ function openOptions(): SerializedOpenOptions {
         size: 1,
         source: Uint8Array.of(1),
       },
-      pgdataArchive: {
+      standardSeedArchive: {
         archive: 'pgdata.tar.zst',
         sha256: '2'.repeat(64),
         size: 1,
         source: Uint8Array.of(2),
+      },
+      standardSeedManifest: {
+        sha256: '5'.repeat(64),
+        size: 1,
+        source: Uint8Array.of(5),
       },
       manifest: { sha256: '3'.repeat(64), size: 1, source: Uint8Array.of(3) },
     },

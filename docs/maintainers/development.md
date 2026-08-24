@@ -406,7 +406,7 @@ the authority for the full macOS, Linux, and Windows AOT matrix.
 Contributors do not need upstream source checkouts for normal Rust, docs,
 examples, or package validation. Maintainers fetch sources only when rebuilding
 the portable WASIX runtime, extensions, `initdb`, `pg_dump`, `psql`, or the generated
-PGDATA template. Portable WASIX artifacts, generated PGDATA templates, and
+cluster seed. Portable WASIX artifacts, generated cluster seeds, and
 native AOT artifacts are generated under `target/oliphaunt-wasix/**` locally or by
 CI; they are not committed to git.
 

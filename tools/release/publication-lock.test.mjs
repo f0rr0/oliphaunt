@@ -105,7 +105,7 @@ function selectionNeutralSwiftSourceCarrier(version = "1.2.3") {
   const assets = [
     ["base-xcframework", `liboliphaunt-${version}-apple-spm-xcframework.zip`, "zip", "liboliphaunt.xcframework", "1"],
     ["runtime-resources", `liboliphaunt-${version}-runtime-resources.tar.gz`, "tar.gz", "oliphaunt", "2"],
-    ["icu-data", `liboliphaunt-${version}-icu-data.tar.gz`, "tar.gz", "share/icu", "3"],
+    ["icu-data", `liboliphaunt-${version}-icu-data.tar.gz`, "tar.gz", ".", "3"],
   ].map(([role, name, format, member, digestDigit], index) => ({
     bytes: index + 1,
     format,
@@ -550,11 +550,11 @@ describe("canonical publication catalog", () => {
   test("normalizes products and stable carriers without duplicate identities", () => {
     const catalog = loadPublicationCatalog("publication-lock.test");
     expect(catalog.products).toHaveLength(19);
-    expect(catalog.carriers).toHaveLength(198);
+    expect(catalog.carriers).toHaveLength(199);
     expect(catalog.carriers.reduce((counts, { ecosystem }) => ({
       ...counts,
       [ecosystem]: (counts[ecosystem] ?? 0) + 1,
-    }), {})).toEqual({ cargo: 103, npm: 72, maven: 23 });
+    }), {})).toEqual({ cargo: 103, npm: 73, maven: 23 });
     expect(catalog.products.some(({ id }) => id === "oliphaunt-extension-postgis")).toBe(true);
     expect(catalog.carriers.filter(({ product }) => product === "oliphaunt-extension-postgis")).toHaveLength(18);
     expect(new Set(catalog.carriers.map((carrier) => carrier.id)).size).toBe(catalog.carriers.length);

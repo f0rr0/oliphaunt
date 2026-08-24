@@ -249,13 +249,17 @@ async function base() {
   const icuSource = path.join(root, "base", "icu", "share", "icu");
   await fs.mkdir(icuSource, { recursive: true });
   await fs.writeFile(path.join(icuSource, "icudt.dat"), "icu\n");
+  const icuSeed = path.join(root, "base", "icu", "cluster-seed", "files");
+  await fs.mkdir(path.join(icuSeed, "global"), { recursive: true });
+  await fs.writeFile(path.join(icuSeed, "PG_VERSION"), "18\n");
+  await fs.writeFile(path.join(icuSeed, "global", "pg_control"), "fixture\n");
   const icu = path.join(archives, "liboliphaunt-0.1.0-icu-data.tar.gz");
-  run("tar", ["--no-xattrs", "-czf", icu, "-C", path.join(root, "base", "icu"), "share/icu"]);
+  run("tar", ["--no-xattrs", "-czf", icu, "-C", path.join(root, "base", "icu"), "."]);
   return {
     assets: [
       await asset("base-xcframework", framework, "zip", "liboliphaunt.xcframework"),
       await asset("runtime-resources", runtime, "tar.gz", "oliphaunt"),
-      await asset("icu-data", icu, "tar.gz", "share/icu"),
+      await asset("icu-data", icu, "tar.gz", "."),
     ],
     product: "liboliphaunt-native",
     tag: "liboliphaunt-native-v0.1.0",

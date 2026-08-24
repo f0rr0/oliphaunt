@@ -93,8 +93,8 @@ tools/perf/matrix/run_mobile_footprint_matrix.sh --quick --platform android \
 ```
 
 The harness passes `OLIPHAUNT_EXPO_MOBILE_WAL_SEGSIZE_MB` into the Android/iOS
-dev-client scripts, regenerates the packaged template PGDATA with
-`initdb --wal-segsize`, records `walSegmentSizeMB` in the template manifest, and
+dev-client scripts, regenerates the packaged cluster seed with
+`initdb --wal-segsize`, records `walSegmentSizeMB` in the seed manifest, and
 captures PostgreSQL's effective read-only `wal_segment_size` setting in the
 benchmark report.
 
@@ -376,7 +376,7 @@ process model and key PostgreSQL GUCs so direct-mode misses can be separated
 from control mismatch. The same command supports `--engine native-postgres`; it
 uses `OLIPHAUNT_POSTGRES` / `OLIPHAUNT_INITDB` or the repo's
 `target/liboliphaunt-pg18/install/bin` tools when present, with `--postgres-bin`
-and `--initdb-bin` available for explicit overrides. PGDATA template hydration
+and `--initdb-bin` available for explicit overrides. Cluster-seed hydration
 defaults to physical byte-copy because local matrix evidence showed better p90
 stability than APFS clone-on-write. Set
 `OLIPHAUNT_PGDATA_COPY_MODE=prefer-clone` only when investigating

@@ -223,9 +223,9 @@ support behavior honestly; gaps must be explicit and justified in
   reusable host adapters:
   - `src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/base.rs` for
     install/root preparation, runtime layout selection, archive validation, and
-    PGDATA template orchestration.
-  - `src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/base/template_clone.rs`
-    for PGDATA template copy/clone mechanics, runtime-state exclusion, reflink
+    cluster-seed orchestration.
+  - `src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/base/cluster_seed_clone.rs`
+    for cluster-seed copy/clone mechanics, runtime-state exclusion, reflink
     fallback, and symlink handling.
   - `src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/postgres_mod.rs`
     for PostgreSQL WASIX module lifecycle, exported function wiring, startup

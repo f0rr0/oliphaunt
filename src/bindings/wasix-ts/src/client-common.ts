@@ -1,6 +1,7 @@
 import defaultWasixRuntime from '@oliphaunt/liboliphaunt-wasix';
 
 import { serializeWasixExtensionDescriptors } from './extension-descriptor.js';
+import { serializeWasixIcuDescriptor } from './icu-descriptor.js';
 import { decodePhysicalArchive } from './physical-archive.js';
 import { toUint8Array } from './query.js';
 import type { SerializedAssetSource, SerializedOpenOptions } from './rpc.js';
@@ -26,6 +27,7 @@ export function serializeOpenConfig(
   const storage = serializeWasixStorage(config.storage);
   return {
     runtime,
+    ...(config.icu === undefined ? {} : { icu: serializeWasixIcuDescriptor(config.icu) }),
     extensionCarriers: extensions.carriers,
     extensions: extensions.selectedSqlNames,
     username: config.username ?? 'postgres',
@@ -60,8 +62,15 @@ function assetTransfers(options: SerializedOpenOptions): Transferable[] {
   const transfer: Transferable[] = [];
   const seen = new Set<ArrayBuffer>();
   appendAssetTransfer(options.runtime.runtimeArchive.source, transfer, seen);
-  appendAssetTransfer(options.runtime.pgdataArchive.source, transfer, seen);
   appendAssetTransfer(options.runtime.manifest.source, transfer, seen);
+  if (options.icu !== undefined) {
+    appendAssetTransfer(options.icu.dataArchive.source, transfer, seen);
+    appendAssetTransfer(options.icu.clusterSeedArchive.source, transfer, seen);
+    appendAssetTransfer(options.icu.clusterSeedManifest.source, transfer, seen);
+  } else {
+    appendAssetTransfer(options.runtime.standardSeedArchive.source, transfer, seen);
+    appendAssetTransfer(options.runtime.standardSeedManifest.source, transfer, seen);
+  }
   for (const carrier of Object.values(options.extensionCarriers)) {
     appendAssetTransfer(carrier.source, transfer, seen);
   }

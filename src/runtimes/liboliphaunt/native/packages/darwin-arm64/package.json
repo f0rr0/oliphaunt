@@ -19,7 +19,8 @@
   "oliphaunt": {
     "target": "macos-arm64",
     "libraryRelativePath": "lib/liboliphaunt.dylib",
-    "runtimeRelativePath": "runtime"
+    "runtimeRelativePath": "runtime",
+    "clusterSeedRelativePath": "cluster-seed"
   },
   "publishConfig": {
     "access": "public",
@@ -33,6 +34,7 @@
   "files": [
     "lib",
     "runtime",
+    "cluster-seed",
     "README.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",

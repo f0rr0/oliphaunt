@@ -640,7 +640,7 @@ function Assert-PatchedSource {
     Assert-FileContains (Join-Path $BuildDir "src/backend/tcop/postgres.c") "oliphaunt_embedded_main"
     Assert-FileContains (Join-Path $BuildDir "src/port/pqsignal.c") "oliphaunt_embedded_kill"
     Assert-FileContains (Join-Path $BuildDir "src/port/pqsignal.c") "oliphaunt_embedded_raise"
-    Assert-FileContains (Join-Path $BuildDir "src/bin/initdb/initdb.c") 'getenv("ICU_DATA")'
+    Assert-FileContains (Join-Path $BuildDir "src/bin/initdb/initdb.c") 'OLIPHAUNT_INTERNAL_ICU_READY'
     Assert-FileContains (Join-Path $BuildDir "meson_options.txt") "oliphaunt_embedded"
     Assert-FileContains (Join-Path $BuildDir "meson_options.txt") "oliphaunt_embedded_module_provider"
     Assert-FileContains (Join-Path $BuildDir "meson.build") "OLIPHAUNT_EMBEDDED"

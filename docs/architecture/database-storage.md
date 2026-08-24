@@ -8,7 +8,7 @@ does not require relearning what storage means.
 ## Public vocabulary
 
 `storage` answers one question: where PostgreSQL's mutable database files live.
-It does not select the runtime, extension artifacts, packaged PGDATA template,
+It does not select the runtime, extension artifacts, packaged cluster seed,
 or initialization policy.
 
 | Storage | Lifetime | Owner | Default |
@@ -76,11 +76,17 @@ to the same opaque format. Portable `@oliphaunt/wasix-ts` and native
 
 ## Initialization and restore
 
-Opening a new or empty store initializes it with the product's packaged
-template. Reopening a non-empty persistent store never silently reinitializes
-it. Restore is a separate static operation into a new or empty destination.
-Tooling that needs `initdb` invokes the packaged tool directly; ordinary SDKs do
-not expose an initialization-mode abstraction.
+Every ordinary package-managed new or empty store uses its runtime product's
+packaged cluster seed. Native and WASIX use different physical compatibility
+keys, and ICU selection resolves ICU data with the matching `icu` seed. Custom
+native initialization inputs may use the explicit `initdb` fallback. The
+decisions and recurring release gates are recorded in
+[Cluster seeds and ICU](cluster-seeds-and-icu.md).
+
+Reopening a non-empty persistent store never silently reinitializes it. Restore
+is a separate static operation into a new or empty destination. Tooling that
+needs `initdb` invokes the packaged tool directly; ordinary SDKs do not expose
+an initialization-mode abstraction.
 
 A published non-empty persistent cluster is never silently reinitialized. A
 provider may discard and rebuild only its explicitly unpublished first-open

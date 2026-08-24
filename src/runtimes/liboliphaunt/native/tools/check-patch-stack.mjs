@@ -161,8 +161,8 @@ const REQUIRED_AUDIT_CHECKS = [
     id: 'optional-icu-initdb',
     requirement: 'Optional ICU data stays optional during initdb',
     patches: ['0016-liboliphaunt-skip-icu-collation-version-without-icu-data.patch'],
-    evidence: ['getenv("ICU_DATA")', 'pg_collation_actual_version', 'pg_import_system_collations'],
-    posture: 'Base liboliphaunt runtimes can bootstrap non-ICU databases without bundling optional ICU data; ICU packages keep upstream collation setup by setting ICU_DATA.',
+    evidence: ['OLIPHAUNT_INTERNAL_ICU_READY', 'strcmp', 'pg_collation_actual_version', 'pg_import_system_collations'],
+    posture: 'Standard seeds skip ICU-backed catalogue setup; only a producer-controlled readiness signal after exact ICU-data verification enables the ICU profile.',
   },
   {
     id: 'apple-dynahash-namespace',

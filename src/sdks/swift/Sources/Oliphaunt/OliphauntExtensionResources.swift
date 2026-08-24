@@ -646,7 +646,8 @@ private func writePackagedExtensionProperties(
     to destination: URL
 ) throws {
     let preferred = [
-        "schema", "layout", "cacheKey", "source", "selectedExtensions", "extensions", "runtimeFeatures",
+        "schema", "layout", "artifactRole", "catalogProfile", "postgresMajor", "physicalFormat", "compatibilityKey",
+        "initialSuperuser", "icuDataVersion", "icuDataForm", "icuDataTreeSha256", "cacheKey", "source", "selectedExtensions", "extensions", "runtimeFeatures",
         "sharedPreloadLibraries", "mobileStaticRegistryState", "mobileStaticRegistryRegistered",
         "mobileStaticRegistryPending", "nativeModuleStems", "mobileStaticRegistrySource",
     ]
@@ -695,7 +696,7 @@ private func writeComposedPackageSizeReport(
     selected: [OliphauntPackagedExtensionResource]
 ) throws {
     let runtime = try packagedTreeSize(resourceRoot.appendingPathComponent("runtime", isDirectory: true))
-    let template = try packagedTreeSize(resourceRoot.appendingPathComponent("template-pgdata", isDirectory: true))
+    let template = try packagedTreeSize(resourceRoot.appendingPathComponent("cluster-seed", isDirectory: true))
     let registry = try packagedTreeSize(resourceRoot.appendingPathComponent("static-registry", isDirectory: true))
     let extensionRows = selected.sorted(by: { $0.sqlName < $1.sqlName }).map { resource in
         let bytes = resource.files.reduce(UInt64(0)) { $0 + $1.bytes }
@@ -708,7 +709,7 @@ private func writeComposedPackageSizeReport(
         "kind\tid\textensions\tfiles\tbytes",
         "package\ttotal\t\(extensions.isEmpty ? "-" : extensions)\t\(runtime.files + template.files + registry.files)\t\(runtime.bytes + template.bytes + registry.bytes)",
         "package\truntime\t\(extensions.isEmpty ? "-" : extensions)\t\(runtime.files)\t\(runtime.bytes)",
-        "package\ttemplate-pgdata\t-\t\(template.files)\t\(template.bytes)",
+        "package\tcluster-seed\t-\t\(template.files)\t\(template.bytes)",
         "package\tstatic-registry\t\(extensions.isEmpty ? "-" : extensions)\t\(registry.files)\t\(registry.bytes)",
         "extensions\tselected\t\(selectedExtensions.isEmpty ? "-" : selectedExtensions)\t\(selected.flatMap(\.files).count)\t\(selectedBytes)",
     ] + extensionRows + [""]

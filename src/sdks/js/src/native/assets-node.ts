@@ -26,11 +26,17 @@ import {
   type RuntimeFileHost,
   validatePreparedRuntimeExtensions,
 } from './extension-runtime.js';
+import {
+  validateNativeClusterSeedManifest,
+  type NativeCatalogProfile,
+} from './cluster-seed.js';
 
 export type ResolvedNativeInstall = {
   libraryPath: string;
   runtimeDirectory?: string;
   icuDataDirectory?: string;
+  clusterSeedDirectory?: string;
+  catalogProfile?: NativeCatalogProfile;
   moduleDirectory?: string;
   packageManaged?: boolean;
 };
@@ -51,6 +57,7 @@ type LiboliphauntPackageMetadata = {
     target?: string;
     libraryRelativePath?: string;
     runtimeRelativePath?: string;
+    clusterSeedRelativePath?: string;
   };
 };
 
@@ -62,7 +69,13 @@ type IcuPackageMetadata = {
     kind?: string;
     target?: string;
     dataRelativePath?: string;
+    clusterSeedRelativePath?: string;
   };
+};
+
+type ResolvedNodeIcuResources = {
+  dataDirectory: string;
+  clusterSeedDirectory: string;
 };
 
 type ExtensionPackageMetadata = {
@@ -151,22 +164,24 @@ export async function resolveNodeNativeInstall(
   libraryPath?: string,
 ): Promise<ResolvedNativeInstall> {
   const versions = await packageVersions();
-  const icuDataDirectory = await resolveNodeIcuDataDirectory(
-    versions.icuVersion,
-    versions.icuPackage,
-  );
   const explicit = resolveExplicitLibraryPath(libraryPath);
   if (explicit !== undefined) {
+    const icuDataDirectory = await resolveNodeIcuDataDirectory(
+      versions.icuVersion,
+      versions.icuPackage,
+    );
     return {
       libraryPath: explicit,
       runtimeDirectory: resolveExplicitRuntimeDirectory(),
       icuDataDirectory,
+      catalogProfile: icuDataDirectory === undefined ? 'standard' : 'icu',
       packageManaged: false,
     };
   }
 
+  const icu = await resolveNodeIcuResources(versions.icuVersion, versions.icuPackage);
   const target = liboliphauntPackageTarget(platform(), arch());
-  return resolvePackageNativeInstall(target, versions.liboliphauntVersion, icuDataDirectory);
+  return resolvePackageNativeInstall(target, versions.liboliphauntVersion, icu);
 }
 
 export async function prepareNodeExtensionInstall(
@@ -295,6 +310,13 @@ export async function resolveNodeIcuDataDirectory(
   expectedVersion?: string,
   packageName?: string,
 ): Promise<string | undefined> {
+  return (await resolveNodeIcuResources(expectedVersion, packageName))?.dataDirectory;
+}
+
+async function resolveNodeIcuResources(
+  expectedVersion?: string,
+  packageName?: string,
+): Promise<ResolvedNodeIcuResources | undefined> {
   const versions =
     expectedVersion === undefined || packageName === undefined
       ? await packageVersions()
@@ -330,7 +352,13 @@ export async function resolveNodeIcuDataDirectory(
     `${name} ICU data directory metadata`,
   );
   await requireIcuDataDirectory(dataDirectory, `${name} ICU data directory`);
-  return dataDirectory;
+  const clusterSeedDirectory = resolvePackageRelativePath(
+    packageRoot,
+    packageJson.oliphaunt.clusterSeedRelativePath ?? 'cluster-seed',
+    `${name} ICU cluster seed metadata`,
+  );
+  await requireClusterSeedDirectory(clusterSeedDirectory, 'icu', `${name} ICU cluster seed`);
+  return { dataDirectory, clusterSeedDirectory };
 }
 
 async function packageVersions(): Promise<{
@@ -1267,7 +1295,7 @@ async function requireExactExtensionRuntimeInventory(config: {
 async function resolvePackageNativeInstall(
   target: NativePackageTarget,
   expectedVersion: string,
-  icuDataDirectory: string | undefined,
+  icu: ResolvedNodeIcuResources | undefined,
 ): Promise<ResolvedNativeInstall> {
   const packageJsonPath = resolvePackageJson(target.packageName);
   const packageRoot = dirname(packageJsonPath);
@@ -1305,10 +1333,22 @@ async function resolvePackageNativeInstall(
       `${target.packageName} runtime tool bin/${tool}`,
     );
   }
+  const standardClusterSeedDirectory = resolvePackageRelativePath(
+    packageRoot,
+    packageJson.oliphaunt?.clusterSeedRelativePath ?? 'cluster-seed',
+    `${target.packageName} standard cluster seed metadata`,
+  );
+  await requireClusterSeedDirectory(
+    standardClusterSeedDirectory,
+    'standard',
+    `${target.packageName} standard cluster seed`,
+  );
   return {
     libraryPath,
     runtimeDirectory,
-    icuDataDirectory,
+    icuDataDirectory: icu?.dataDirectory,
+    clusterSeedDirectory: icu?.clusterSeedDirectory ?? standardClusterSeedDirectory,
+    catalogProfile: icu === undefined ? 'standard' : 'icu',
     packageManaged: true,
   };
 }
@@ -1591,6 +1631,18 @@ async function requireIcuDataDirectory(path: string, source: string): Promise<vo
     }
   }
   throw new Error(`${source} does not contain ICU icudt data files: ${path}`);
+}
+
+async function requireClusterSeedDirectory(
+  path: string,
+  profile: NativeCatalogProfile,
+  source: string,
+): Promise<void> {
+  await requireDirectory(path, source);
+  await requireFile(join(path, 'files', 'PG_VERSION'), `${source} PG_VERSION`);
+  await requireFile(join(path, 'files', 'global', 'pg_control'), `${source} pg_control`);
+  const manifest = await readFile(join(path, 'manifest.properties'), 'utf8').catch(() => '');
+  validateNativeClusterSeedManifest(manifest, profile, source);
 }
 
 async function optionalRead(path: string): Promise<string | undefined> {

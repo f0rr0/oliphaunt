@@ -885,8 +885,8 @@ if [ "$run_android_platform_checks" = "1" ]; then
     "$tmp_assets/oliphaunt/runtime/files/share/postgresql/extension" \
     "$tmp_assets/oliphaunt/runtime/files/lib/postgresql" \
     "$tmp_assets/oliphaunt/static-registry" \
-    "$tmp_assets/oliphaunt/template-pgdata/files/base"
-  printf '18\n' >"$tmp_assets/oliphaunt/template-pgdata/files/PG_VERSION"
+    "$tmp_assets/oliphaunt/cluster-seed/files/base"
+  printf '18\n' >"$tmp_assets/oliphaunt/cluster-seed/files/PG_VERSION"
   printf 'runtime smoke\n' >"$tmp_assets/oliphaunt/runtime/files/share/postgresql/README.liboliphaunt-smoke"
   printf "comment = 'vector smoke control'\n" >"$tmp_assets/oliphaunt/runtime/files/share/postgresql/extension/vector.control"
   printf "select 'vector smoke sql';\n" >"$tmp_assets/oliphaunt/runtime/files/share/postgresql/extension/vector--1.0.sql"
@@ -924,7 +924,7 @@ MANIFEST
     "$tmp_assets" \
     "$tmp_static_jni" \
     auto_explain
-  printf 'template smoke\n' >"$tmp_assets/oliphaunt/template-pgdata/files/base/README.liboliphaunt-smoke"
+  printf 'template smoke\n' >"$tmp_assets/oliphaunt/cluster-seed/files/base/README.liboliphaunt-smoke"
   cat >"$tmp_assets/oliphaunt/runtime/manifest.properties" <<'MANIFEST'
 schema=oliphaunt-runtime-resources-v1
 cacheKey=runtime-smoke
@@ -939,10 +939,10 @@ mobileStaticRegistryPending=
 nativeModuleStems=auto_explain,vector
 mobileStaticRegistrySource=static-registry/oliphaunt_static_registry.c
 MANIFEST
-  cat >"$tmp_assets/oliphaunt/template-pgdata/manifest.properties" <<'MANIFEST'
+  cat >"$tmp_assets/oliphaunt/cluster-seed/manifest.properties" <<'MANIFEST'
 schema=oliphaunt-runtime-resources-v1
 cacheKey=template-smoke
-layout=postgres-template-pgdata-v1
+layout=oliphaunt-cluster-seed-v1
 selectedExtensions=
 extensions=
 runtimeFeatures=
@@ -957,13 +957,13 @@ MANIFEST
 kind	id	extensions	files	bytes
 package	total	-	-	185
 package	runtime	-	-	100
-package	template-pgdata	-	-	40
+package	cluster-seed	-	-	40
 package	static-registry	-	-	45
 extensions	selected	-	-	30
 extension	auto_explain	-	0	0
 extension	vector	-	3	30
 REPORT
-  for manifest_package in runtime template-pgdata; do
+  for manifest_package in runtime cluster-seed; do
     tmp_assets_missing_selection="$(prepare_scratch_dir "react-native-runtime-resources-missing-selected-extensions-$manifest_package")"
     cp -R "$tmp_assets/." "$tmp_assets_missing_selection/"
     sed -i.bak \
@@ -997,7 +997,7 @@ REPORT
 
   tmp_assets_empty_selection="$(prepare_scratch_dir react-native-runtime-resources-empty-selected-extensions)"
   cp -R "$tmp_assets/." "$tmp_assets_empty_selection/"
-  for manifest_package in runtime template-pgdata; do
+  for manifest_package in runtime cluster-seed; do
     sed -i.bak \
       's/^selectedExtensions=.*$/selectedExtensions=/' \
       "$tmp_assets_empty_selection/oliphaunt/$manifest_package/manifest.properties"
@@ -1010,7 +1010,7 @@ REPORT
     $gradle_smoke_cache_args
   require_manifest_line "$generated_assets/oliphaunt/runtime/manifest.properties" "selectedExtensions=" \
     "React Native Android prebuilt runtime resources did not accept an empty runtime selected-extension domain"
-  require_manifest_line "$generated_assets/oliphaunt/template-pgdata/manifest.properties" "selectedExtensions=" \
+  require_manifest_line "$generated_assets/oliphaunt/cluster-seed/manifest.properties" "selectedExtensions=" \
     "React Native Android prebuilt runtime resources did not accept an empty template selected-extension domain"
   rm -rf "$tmp_assets_empty_selection"
 
@@ -1172,8 +1172,8 @@ REPORT
     "assets/oliphaunt/package-size.tsv" \
     "assets/oliphaunt/static-registry/oliphaunt_static_registry.c" \
     "assets/oliphaunt/static-registry/manifest.properties" \
-    "assets/oliphaunt/template-pgdata/manifest.properties" \
-    "assets/oliphaunt/template-pgdata/files/PG_VERSION"
+    "assets/oliphaunt/cluster-seed/manifest.properties" \
+    "assets/oliphaunt/cluster-seed/files/PG_VERSION"
   do
     if ! jar tf "$asset_aar" | grep -Fx "$required_asset" >/dev/null; then
       echo "Android AAR did not include generated asset $required_asset" >&2

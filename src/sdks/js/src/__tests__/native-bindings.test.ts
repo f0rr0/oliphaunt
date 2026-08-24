@@ -42,7 +42,7 @@ async function main(): Promise<void> {
   testPackagedRuntimeLibraryEnvironment();
   await testNodeNativeBindingUsesExplicitAssetsAndAddon();
   await testDenoAssetResolverHonorsExplicitPaths();
-  await testDenoPackageManagedResolverUsesBaseCarrierRuntime();
+  await testDenoPackageManagedResolverUsesStandardCarrierRuntime();
   await testDenoNativeBindingRejectsPackageManagedExtensions();
   await testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMutation();
 }
@@ -310,6 +310,7 @@ async function testDenoAssetResolverHonorsExplicitPaths(): Promise<void> {
       libraryPath: '/tmp/liboliphaunt.dylib',
       runtimeDirectory: '/tmp/oliphaunt-deno-runtime',
       icuDataDirectory: undefined,
+      catalogProfile: 'standard',
       packageManaged: false,
     });
     await assert.rejects(async () => resolveDenoNativeInstall(), /only be used inside Deno/);
@@ -608,7 +609,7 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
   }
 }
 
-async function testDenoPackageManagedResolverUsesBaseCarrierRuntime(): Promise<void> {
+async function testDenoPackageManagedResolverUsesStandardCarrierRuntime(): Promise<void> {
   const previousDeno = (globalThis as { Deno?: unknown }).Deno;
   const previousLibraryPath = process.env.LIBOLIPHAUNT_PATH;
   const previousRuntimeDir = process.env.OLIPHAUNT_RUNTIME_DIR;
@@ -630,6 +631,11 @@ async function testDenoPackageManagedResolverUsesBaseCarrierRuntime(): Promise<v
     for (const tool of nativeRuntimeToolsForTarget(target.id)) {
       await writeFixtureFile(join(runtimeBin, tool), `runtime:${tool}`, createdFiles);
     }
+    await writeClusterSeedFixture(
+      join(runtimePackageRoot, 'cluster-seed'),
+      'standard',
+      createdFiles,
+    );
     const install = await resolveDenoNativeInstall();
     assert.equal(install.libraryPath, join(runtimePackageRoot, target.libraryRelativePath));
     assert.equal(install.packageManaged, true);
@@ -701,6 +707,20 @@ async function writeFixtureFile(
   await fsMkdir(dirname(path), { recursive: true });
   await writeFile(path, contents, 'utf8');
   createdFiles.push(path);
+}
+
+async function writeClusterSeedFixture(
+  root: string,
+  profile: 'standard' | 'icu',
+  createdFiles: string[],
+): Promise<void> {
+  await writeFixtureFile(join(root, 'files', 'PG_VERSION'), '18\n', createdFiles);
+  await writeFixtureFile(join(root, 'files', 'global', 'pg_control'), 'control', createdFiles);
+  await writeFixtureFile(
+    join(root, 'manifest.properties'),
+    `schema=oliphaunt-runtime-resources-v1\nlayout=oliphaunt-cluster-seed-v1\nartifactRole=cluster-seed-${profile}\ncatalogProfile=${profile}\npostgresMajor=18\nphysicalFormat=native-pg18-v1\ncompatibilityKey=native-pg18-datum64-v1\ninitialSuperuser=postgres\nicuDataVersion=${profile === 'icu' ? '76.1' : ''}\nicuDataForm=${profile === 'icu' ? 'files-le' : ''}\nicuDataTreeSha256=${profile === 'icu' ? 'a'.repeat(64) : ''}\nruntimeFeatures=${profile === 'icu' ? 'icu' : ''}\n`,
+    createdFiles,
+  );
 }
 
 async function removeFixtureFiles(files: string[], stopRoots: string[]): Promise<void> {

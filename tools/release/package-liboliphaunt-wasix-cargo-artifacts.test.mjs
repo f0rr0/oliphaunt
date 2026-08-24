@@ -343,10 +343,12 @@ liboliphaunt-wasix-portable = { path = ${JSON.stringify(path.join(ROOT, "src/run
 
     const payload = path.join(root, "payload");
     mkdirSync(path.join(payload, "bin"), { recursive: true });
-    mkdirSync(path.join(payload, "prepopulated"), { recursive: true });
+    mkdirSync(path.join(payload, "cluster-seeds"), { recursive: true });
     writeFileSync(path.join(payload, "bin/initdb.wasix.wasm"), "initdb-wasm\n");
-    writeFileSync(path.join(payload, "prepopulated/pgdata-template.tar.zst"), "template\n");
-    writeFileSync(path.join(payload, "prepopulated/pgdata-template.json"), "{}\n");
+    for (const profile of ["standard", "icu"]) {
+      writeFileSync(path.join(payload, `cluster-seeds/${profile}.tar.zst`), `${profile}\n`);
+      writeFileSync(path.join(payload, `cluster-seeds/${profile}.json`), "{}\n");
+    }
     writeFileSync(path.join(payload, "oliphaunt.wasix.tar.zst"), runtimeBytes);
     const manifestPath = path.join(payload, "manifest.json");
     const manifest = {

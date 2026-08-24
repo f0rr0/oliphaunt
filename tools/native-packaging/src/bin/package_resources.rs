@@ -98,12 +98,9 @@ fn run_with_package_args(args: PackageArgs) -> oliphaunt::Result<()> {
     let package = build_native_runtime_resources(options)?;
     println!("root={}", package.root.display());
     println!("runtimeFiles={}", package.runtime_files.display());
-    println!(
-        "templatePgdataFiles={}",
-        package.template_pgdata_files.display()
-    );
+    println!("clusterSeedFiles={}", package.cluster_seed_files.display());
     println!("runtimeCacheKey={}", package.runtime_cache_key);
-    println!("templateCacheKey={}", package.template_cache_key);
+    println!("clusterSeedCacheKey={}", package.cluster_seed_cache_key);
     println!("extensions={}", package.extension_names.join(","));
     println!(
         "runtimeFeatures={}",
@@ -157,8 +154,8 @@ fn run_with_package_args(args: PackageArgs) -> oliphaunt::Result<()> {
     println!("packageBytes={}", package.size_report.package_bytes);
     println!("runtimeBytes={}", package.size_report.runtime_bytes);
     println!(
-        "templatePgdataBytes={}",
-        package.size_report.template_pgdata_bytes
+        "clusterSeedBytes={}",
+        package.size_report.cluster_seed_bytes
     );
     println!(
         "staticRegistryBytes={}",
@@ -1256,8 +1253,8 @@ Usage:
 The output directory receives:
   oliphaunt/runtime/manifest.properties
   oliphaunt/runtime/files/...
-  oliphaunt/template-pgdata/manifest.properties
-  oliphaunt/template-pgdata/files/...
+  oliphaunt/cluster-seed/manifest.properties
+  oliphaunt/cluster-seed/files/...
   oliphaunt/static-registry/manifest.properties
   oliphaunt/static-registry/oliphaunt_static_registry.c when mobile-ready
   oliphaunt/package-size.tsv
@@ -1394,7 +1391,7 @@ mod tests {
         );
         assert!(
             output
-                .join("oliphaunt/template-pgdata/files/PG_VERSION")
+                .join("oliphaunt/cluster-seed/files/PG_VERSION")
                 .is_file()
         );
         for executable in ["postgres", "pg_ctl"] {

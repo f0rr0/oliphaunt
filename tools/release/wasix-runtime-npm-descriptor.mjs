@@ -1,5 +1,5 @@
 import {
-  WASIX_PGDATA_ARCHIVE_PATH,
+  WASIX_STANDARD_SEED_ARCHIVE_PATH,
   WASIX_RUNTIME_ARCHIVE_PATH,
   WASIX_RUNTIME_NPM_ASSET_PATHS,
   WASIX_RUNTIME_NPM_DESCRIPTOR_SCHEMA,
@@ -9,11 +9,11 @@ import {
 const TOOL = 'wasix-runtime-npm-carrier.mjs';
 const LOWER_SHA256 = /^[0-9a-f]{64}$/u;
 
-function checkedDescriptorInput({ version, runtimeArchive, pgdataArchive, manifest }) {
+function checkedDescriptorInput({ version, runtimeArchive, standardSeedArchive, standardSeedManifest, manifest }) {
   if (typeof version !== 'string' || version.length === 0) {
     throw new TypeError(`${TOOL}: runtime descriptor version must be a non-empty string`);
   }
-  for (const [name, value] of Object.entries({ runtimeArchive, pgdataArchive, manifest })) {
+  for (const [name, value] of Object.entries({ runtimeArchive, standardSeedArchive, standardSeedManifest, manifest })) {
     if (
       value === null ||
       Array.isArray(value) ||
@@ -29,14 +29,14 @@ function checkedDescriptorInput({ version, runtimeArchive, pgdataArchive, manife
   if (runtimeArchive.archive !== WASIX_RUNTIME_ARCHIVE_PATH) {
     throw new TypeError(`${TOOL}: invalid runtime archive descriptor path`);
   }
-  if (pgdataArchive.archive !== WASIX_PGDATA_ARCHIVE_PATH) {
-    throw new TypeError(`${TOOL}: invalid PGDATA archive descriptor path`);
+  if (standardSeedArchive.archive !== WASIX_STANDARD_SEED_ARCHIVE_PATH) {
+    throw new TypeError(`${TOOL}: invalid standard cluster seed archive descriptor path`);
   }
 }
 
 export function renderWasixRuntimeDescriptorModule(input) {
   checkedDescriptorInput(input);
-  const { version, runtimeArchive, pgdataArchive, manifest } = input;
+  const { version, runtimeArchive, standardSeedArchive, standardSeedManifest, manifest } = input;
   const asset = (value, sourcePath, includeArchive) =>
     [
       '  Object.freeze({',
@@ -52,8 +52,10 @@ export function renderWasixRuntimeDescriptorModule(input) {
     '',
     'const runtimeArchive =',
     `${asset(runtimeArchive, WASIX_RUNTIME_NPM_ASSET_PATHS.runtimeArchive, true)};`,
-    'const pgdataArchive =',
-    `${asset(pgdataArchive, WASIX_RUNTIME_NPM_ASSET_PATHS.pgdataArchive, true)};`,
+    'const standardSeedArchive =',
+    `${asset(standardSeedArchive, WASIX_RUNTIME_NPM_ASSET_PATHS.standardSeedArchive, true)};`,
+    'const standardSeedManifest =',
+    `${asset(standardSeedManifest, WASIX_RUNTIME_NPM_ASSET_PATHS.standardSeedManifest, false)};`,
     'const manifest =',
     `${asset(manifest, WASIX_RUNTIME_NPM_ASSET_PATHS.manifest, false)};`,
     '',
@@ -63,7 +65,8 @@ export function renderWasixRuntimeDescriptorModule(input) {
     `  product: ${JSON.stringify(WASIX_RUNTIME_PRODUCT)},`,
     `  version: ${JSON.stringify(version)},`,
     '  runtimeArchive,',
-    '  pgdataArchive,',
+    '  standardSeedArchive,',
+    '  standardSeedManifest,',
     '  manifest,',
     '});',
     '',
@@ -96,7 +99,8 @@ export type OliphauntWasixRuntimeDescriptor = Readonly<{
   product: "${WASIX_RUNTIME_PRODUCT}";
   version: string;
   runtimeArchive: OliphauntWasixRuntimeAsset;
-  pgdataArchive: OliphauntWasixRuntimeAsset;
+  standardSeedArchive: OliphauntWasixRuntimeAsset;
+  standardSeedManifest: OliphauntWasixRuntimeManifest;
   manifest: OliphauntWasixRuntimeManifest;
 }>;
 

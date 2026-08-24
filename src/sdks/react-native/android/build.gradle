@@ -338,7 +338,7 @@ abstract class PrepareOliphauntAndroidAssetsTask extends DefaultTask {
   }
 
   private static void validateRuntimeResourcesSchema(File root) {
-    ["runtime", "template-pgdata"].each { name ->
+    ["runtime", "cluster-seed"].each { name ->
       File manifest = new File(new File(root, name), "manifest.properties")
       if (!manifest.isFile()) {
         throw new GradleException("Oliphaunt React Native Android runtime resources are missing ${name}/manifest.properties under ${root.absolutePath}")

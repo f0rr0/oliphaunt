@@ -65,14 +65,14 @@ function portableReleaseFixture(root, { transformManifest = (manifest) => manife
   }
   const runtimeBytes = zstdCompressSync(deterministicTar(runtimeStage, "oliphaunt"));
 
-  const pgdataStage = path.join(root, "pgdata-stage");
-  writeMember(pgdataStage, "PG_VERSION", "18\n");
-  const pgdataBytes = zstdCompressSync(deterministicTar(pgdataStage, "."));
+  const seedStage = path.join(root, "seed-stage");
+  writeMember(seedStage, "PG_VERSION", "18\n");
+  const seedBytes = zstdCompressSync(deterministicTar(seedStage, "."));
 
   const sourceFingerprint = "fixture-postgres-source-fingerprint";
   const runtimeModuleSha256 = sha256(Buffer.from("fixture:oliphaunt/bin/postgres\n"));
   const manifest = transformManifest({
-    "format-version": 1,
+    "format-version": 2,
     "source-fingerprint": sourceFingerprint,
     runtime: {
       archive: "oliphaunt.wasix.tar.zst",
@@ -83,20 +83,71 @@ function portableReleaseFixture(root, { transformManifest = (manifest) => manife
       link: { exports: [] },
     },
     "runtime-support": [],
-    "pgdata-template": {
-      archive: "prepopulated/pgdata-template.tar.zst",
-      sha256: sha256(pgdataBytes),
-      size: pgdataBytes.length,
-      "runtime-module-sha256": runtimeModuleSha256,
-      "source-fingerprint": sourceFingerprint,
-      "postgres-version": "18",
+    "cluster-seeds": {
+      standard: {
+        "artifact-role": "cluster-seed-standard",
+        "catalog-profile": "standard",
+        archive: "cluster-seeds/standard.tar.zst",
+        manifest: "cluster-seeds/standard.json",
+        sha256: sha256(seedBytes),
+        size: seedBytes.length,
+        "runtime-module-sha256": runtimeModuleSha256,
+        "source-fingerprint": sourceFingerprint,
+        "postgres-version": "18",
+        "physical-format": "wasix-pg18-v1",
+        "compatibility-key": "wasix-pg18-datum32-v1",
+      },
+      icu: {
+        "artifact-role": "cluster-seed-icu",
+        "catalog-profile": "icu",
+        archive: "cluster-seeds/icu.tar.zst",
+        manifest: "cluster-seeds/icu.json",
+        sha256: "c".repeat(64),
+        size: 1,
+        "runtime-module-sha256": runtimeModuleSha256,
+        "source-fingerprint": sourceFingerprint,
+        "postgres-version": "18",
+        "physical-format": "wasix-pg18-v1",
+        "compatibility-key": "wasix-pg18-datum32-v1",
+        "icu-data-tree-sha256": "d".repeat(64),
+      },
     },
     extensions: [],
   });
+  const seedManifestBytes = Buffer.from(`${JSON.stringify({
+    schema: "oliphaunt-cluster-seed-v1",
+    artifactRole: "cluster-seed-standard",
+    catalogProfile: "standard",
+    runtime: {
+      product: "liboliphaunt-wasix",
+      version: "7.8.9",
+      engineFamily: "wasix",
+      physicalFormat: "wasix-pg18-v1",
+      postgresMajor: 18,
+      compatibilityKey: "wasix-pg18-datum32-v1",
+      consumerSha256: runtimeModuleSha256,
+      producerSha256: runtimeModuleSha256,
+      initdbSha256: "e".repeat(64),
+    },
+    source: { fingerprint: sourceFingerprint, catalogVersion: "202505281", lane: "stable", producer: "wasix-initdb" },
+    initProfile: "encoding=UTF8,locale=C.UTF-8,locale-provider=libc,auth=trust,no-sync",
+    archive: {
+      path: "cluster-seeds/standard.tar.zst",
+      sha256: sha256(seedBytes),
+      compressedBytes: seedBytes.length,
+      expandedBytes: 3,
+      regularFiles: 1,
+      directories: 1,
+    },
+    requiredRuntimeFeatures: [],
+    extensions: { selected: [], startupConfiguration: [] },
+    icu: null,
+  }, null, 2)}\n`);
   const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
   const releaseStage = path.join(root, "release-stage");
   writeMember(releaseStage, WASIX_PORTABLE_RELEASE_MEMBERS.runtimeArchive, runtimeBytes);
-  writeMember(releaseStage, WASIX_PORTABLE_RELEASE_MEMBERS.pgdataArchive, pgdataBytes);
+  writeMember(releaseStage, WASIX_PORTABLE_RELEASE_MEMBERS.standardSeedArchive, seedBytes);
+  writeMember(releaseStage, WASIX_PORTABLE_RELEASE_MEMBERS.standardSeedManifest, seedManifestBytes);
   writeMember(releaseStage, WASIX_PORTABLE_RELEASE_MEMBERS.manifest, manifestBytes);
   writeMember(releaseStage, "target/oliphaunt-wasix/assets/bin/pg_dump.wasix.wasm", "pg_dump");
   writeMember(releaseStage, "target/oliphaunt-wasix/assets/bin/psql.wasix.wasm", "psql");
@@ -115,11 +166,12 @@ test("renders the package-authored runtime identity without consumer asset URLs"
       sha256: digest,
       size: 1,
     },
-    pgdataArchive: {
-      archive: "prepopulated/pgdata-template.tar.zst",
+    standardSeedArchive: {
+      archive: "cluster-seeds/standard.tar.zst",
       sha256: digest,
       size: 2,
     },
+    standardSeedManifest: { sha256: digest, size: 4 },
     manifest: { sha256: digest, size: 3 },
   });
   expect(module).toContain('product: "liboliphaunt-wasix"');
@@ -185,14 +237,14 @@ test("packs the exact qualified core projection as one host-neutral npm carrier"
 import { pathToFileURL } from "node:url";
 const descriptor = (await import(pathToFileURL(process.env.ENTRYPOINT).href)).default;
 if (!Object.isFrozen(descriptor)) throw new Error("descriptor is mutable");
-for (const value of [descriptor.runtimeArchive, descriptor.pgdataArchive, descriptor.manifest]) {
+for (const value of [descriptor.runtimeArchive, descriptor.standardSeedArchive, descriptor.standardSeedManifest, descriptor.manifest]) {
   if (!Object.isFrozen(value)) throw new Error("asset descriptor is mutable");
 }
 console.log(JSON.stringify({
   product: descriptor.product,
   runtime: descriptor.runtime,
   runtimeSource: descriptor.runtimeArchive.source.href,
-  pgdataSource: descriptor.pgdataArchive.source.href,
+  seedSource: descriptor.standardSeedArchive.source.href,
   manifestSource: descriptor.manifest.source.href,
 }));
 `;

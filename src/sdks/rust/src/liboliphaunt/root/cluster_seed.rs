@@ -8,29 +8,49 @@ use std::process::{Command, Stdio};
 use fs2::FileExt;
 
 use super::files::{
-    copy_directory_tree, directory_is_empty, pgdata_template_copy_mode, remove_file_if_exists,
+    cluster_seed_copy_mode, copy_directory_tree, directory_is_empty, remove_file_if_exists,
     sync_directory, sync_directory_tree,
 };
 use super::fingerprint::{hash_path, hash_str, new_state};
-use super::runtime::{materialize_runtime, monotonic_cache_nonce, runtime_cache_root};
-use super::{NativeRuntimeProfile, configure_native_tool_env, native_tool_path};
+use super::runtime::{monotonic_cache_nonce, runtime_cache_root};
+use super::{
+    NativeCatalogProfile, NativeRuntimeProfile, configure_native_tool_env, native_tool_path,
+};
 use crate::error::{Error, Result};
 
-const PGDATA_TEMPLATE_VERSION: &str = "pg18-pgdata-template-v4";
+const CLUSTER_SEED_CACHE_VERSION: &str = "pg18-cluster-seed-v5";
 
 pub(super) fn bootstrap_pgdata_if_needed(
     profile: NativeRuntimeProfile,
-    _runtime_dir: &Path,
+    runtime_dir: &Path,
+    catalog_profile: super::NativeCatalogProfile,
+    packaged_cluster_seed: Option<&Path>,
+    username: &str,
     pgdata: &Path,
 ) -> Result<()> {
     if pgdata.join("PG_VERSION").is_file() {
         return Ok(());
     }
 
-    restore_pgdata_template(profile, pgdata)
+    if username != "postgres" {
+        return run_initdb(runtime_dir, catalog_profile, pgdata, username, "database");
+    }
+    restore_cluster_seed(
+        profile,
+        runtime_dir,
+        catalog_profile,
+        packaged_cluster_seed,
+        pgdata,
+    )
 }
 
-fn run_initdb(runtime_dir: &Path, pgdata: &Path, username: &str, context: &str) -> Result<()> {
+fn run_initdb(
+    runtime_dir: &Path,
+    catalog_profile: NativeCatalogProfile,
+    pgdata: &Path,
+    username: &str,
+    context: &str,
+) -> Result<()> {
     let initdb = native_tool_path(runtime_dir, "initdb");
     if !initdb.is_file() {
         return Err(Error::Engine(format!(
@@ -39,7 +59,7 @@ fn run_initdb(runtime_dir: &Path, pgdata: &Path, username: &str, context: &str) 
         )));
     }
     let mut command = Command::new(&initdb);
-    configure_template_runtime_env(&mut command, runtime_dir);
+    configure_cluster_seed_runtime_env(&mut command, runtime_dir, catalog_profile);
     let output = command
         .args(initdb_args(runtime_dir, pgdata, username))
         .stdout(Stdio::null())
@@ -78,30 +98,45 @@ fn initdb_args(runtime_dir: &Path, pgdata: &Path, username: &str) -> Vec<OsStrin
     ]
 }
 
-fn restore_pgdata_template(profile: NativeRuntimeProfile, pgdata: &Path) -> Result<()> {
-    let template_pgdata = materialize_pgdata_template(profile)?;
-    copy_pgdata_template(&template_pgdata, pgdata)
+fn restore_cluster_seed(
+    profile: NativeRuntimeProfile,
+    runtime_dir: &Path,
+    catalog_profile: super::NativeCatalogProfile,
+    packaged_cluster_seed: Option<&Path>,
+    pgdata: &Path,
+) -> Result<()> {
+    let generated;
+    let cluster_seed = if let Some(packaged) = packaged_cluster_seed {
+        packaged.join("files")
+    } else {
+        generated = materialize_cluster_seed(profile, runtime_dir, catalog_profile)?;
+        generated
+    };
+    copy_cluster_seed(&cluster_seed, pgdata)
 }
 
-pub(super) fn materialize_pgdata_template(_profile: NativeRuntimeProfile) -> Result<PathBuf> {
-    let bootstrap_runtime = materialize_runtime(NativeRuntimeProfile::PostgresServer, &[])?;
-    let key = pgdata_template_key(&bootstrap_runtime)?;
-    let cache_root = runtime_cache_root()?.join("pgdata-templates");
+pub(super) fn materialize_cluster_seed(
+    _profile: NativeRuntimeProfile,
+    runtime_dir: &Path,
+    catalog_profile: super::NativeCatalogProfile,
+) -> Result<PathBuf> {
+    let key = cluster_seed_key(runtime_dir, catalog_profile)?;
+    let cache_root = runtime_cache_root()?.join("cluster-seeds");
     fs::create_dir_all(&cache_root).map_err(|err| {
         Error::Engine(format!(
-            "create native PGDATA template cache root {}: {err}",
+            "create native PGDATA cluster seed cache root {}: {err}",
             cache_root.display()
         ))
     })?;
     #[cfg(unix)]
     fs::set_permissions(&cache_root, fs::Permissions::from_mode(0o700)).map_err(|err| {
         Error::Engine(format!(
-            "set permissions on native PGDATA template cache root {}: {err}",
+            "set permissions on native PGDATA cluster seed cache root {}: {err}",
             cache_root.display()
         ))
     })?;
 
-    let template_dir = cache_root.join(&key);
+    let seed_dir = cache_root.join(&key);
     let lock_path = cache_root.join(format!("{key}.lock"));
     let lock = OpenOptions::new()
         .create(true)
@@ -111,18 +146,18 @@ pub(super) fn materialize_pgdata_template(_profile: NativeRuntimeProfile) -> Res
         .open(&lock_path)
         .map_err(|err| {
             Error::Engine(format!(
-                "open native PGDATA template lock {}: {err}",
+                "open native cluster-seed lock {}: {err}",
                 lock_path.display()
             ))
         })?;
     lock.lock_exclusive().map_err(|err| {
         Error::Engine(format!(
-            "lock native PGDATA template {}: {err}",
+            "lock native cluster seed {}: {err}",
             lock_path.display()
         ))
     })?;
 
-    if !pgdata_template_is_valid(&template_dir, &key) {
+    if !cluster_seed_is_valid(&seed_dir, &key) {
         let build_dir = cache_root.join(format!(
             ".build-{}-{}",
             std::process::id(),
@@ -131,35 +166,33 @@ pub(super) fn materialize_pgdata_template(_profile: NativeRuntimeProfile) -> Res
         if build_dir.exists() {
             fs::remove_dir_all(&build_dir).map_err(|err| {
                 Error::Engine(format!(
-                    "remove stale native PGDATA template build dir {}: {err}",
+                    "remove stale native cluster-seed build dir {}: {err}",
                     build_dir.display()
                 ))
             })?;
         }
         fs::create_dir_all(&build_dir).map_err(|err| {
             Error::Engine(format!(
-                "create native PGDATA template build dir {}: {err}",
+                "create native cluster-seed build dir {}: {err}",
                 build_dir.display()
             ))
         })?;
 
         let pgdata = build_dir.join("pgdata");
-        let build_result = run_template_initdb(&bootstrap_runtime, &pgdata)
-            .and_then(|()| clean_pgdata_template(&pgdata, native_dynamic_shared_memory_type()))
+        let build_result = run_cluster_seed_initdb(runtime_dir, catalog_profile, &pgdata)
+            .and_then(|()| clean_cluster_seed(&pgdata, native_dynamic_shared_memory_type()))
             .and_then(|()| {
-                fs::write(build_dir.join(".manifest"), pgdata_template_manifest(&key)).map_err(
-                    |err| {
-                        Error::Engine(format!(
-                            "write native PGDATA template manifest {}: {err}",
-                            build_dir.display()
-                        ))
-                    },
-                )
+                fs::write(build_dir.join(".manifest"), cluster_seed_manifest(&key)).map_err(|err| {
+                    Error::Engine(format!(
+                        "write native cluster-seed manifest {}: {err}",
+                        build_dir.display()
+                    ))
+                })
             })
             .and_then(|()| {
                 fs::write(build_dir.join(".complete"), b"ok\n").map_err(|err| {
                     Error::Engine(format!(
-                        "write native PGDATA template completion marker {}: {err}",
+                        "write native cluster-seed completion marker {}: {err}",
                         build_dir.display()
                     ))
                 })
@@ -170,19 +203,19 @@ pub(super) fn materialize_pgdata_template(_profile: NativeRuntimeProfile) -> Res
             let _ = fs::remove_dir_all(&build_dir);
             return Err(error);
         }
-        if template_dir.exists() {
-            fs::remove_dir_all(&template_dir).map_err(|err| {
+        if seed_dir.exists() {
+            fs::remove_dir_all(&seed_dir).map_err(|err| {
                 Error::Engine(format!(
-                    "remove invalid native PGDATA template {}: {err}",
-                    template_dir.display()
+                    "remove invalid native cluster seed {}: {err}",
+                    seed_dir.display()
                 ))
             })?;
         }
-        fs::rename(&build_dir, &template_dir).map_err(|err| {
+        fs::rename(&build_dir, &seed_dir).map_err(|err| {
             Error::Engine(format!(
-                "publish native PGDATA template {} -> {}: {err}",
+                "publish native cluster seed {} -> {}: {err}",
                 build_dir.display(),
-                template_dir.display()
+                seed_dir.display()
             ))
         })?;
         sync_directory(&cache_root)?;
@@ -190,14 +223,17 @@ pub(super) fn materialize_pgdata_template(_profile: NativeRuntimeProfile) -> Res
 
     lock.unlock().map_err(|err| {
         Error::Engine(format!(
-            "unlock native PGDATA template {}: {err}",
+            "unlock native cluster seed {}: {err}",
             lock_path.display()
         ))
     })?;
-    Ok(template_dir.join("pgdata"))
+    Ok(seed_dir.join("pgdata"))
 }
 
-fn pgdata_template_key(bootstrap_runtime: &Path) -> Result<String> {
+fn cluster_seed_key(
+    bootstrap_runtime: &Path,
+    catalog_profile: super::NativeCatalogProfile,
+) -> Result<String> {
     let runtime_manifest =
         fs::read_to_string(bootstrap_runtime.join(".manifest")).map_err(|err| {
             Error::Engine(format!(
@@ -206,41 +242,59 @@ fn pgdata_template_key(bootstrap_runtime: &Path) -> Result<String> {
             ))
         })?;
     let mut state = new_state();
-    hash_str(&mut state, PGDATA_TEMPLATE_VERSION);
+    hash_str(&mut state, CLUSTER_SEED_CACHE_VERSION);
+    hash_str(&mut state, catalog_profile.id());
     hash_path(&mut state, bootstrap_runtime);
     hash_str(&mut state, &runtime_manifest);
     Ok(format!("{state:016x}"))
 }
 
-fn pgdata_template_manifest(key: &str) -> String {
-    format!("version={PGDATA_TEMPLATE_VERSION}\nkey={key}\n")
+fn cluster_seed_manifest(key: &str) -> String {
+    format!("version={CLUSTER_SEED_CACHE_VERSION}\nkey={key}\n")
 }
 
-fn pgdata_template_is_valid(template_dir: &Path, key: &str) -> bool {
-    if !template_dir.join(".complete").is_file()
-        || !template_dir.join("pgdata/PG_VERSION").is_file()
-        || !template_dir.join("pgdata/global/pg_control").is_file()
+fn cluster_seed_is_valid(seed_dir: &Path, key: &str) -> bool {
+    if !seed_dir.join(".complete").is_file()
+        || !seed_dir.join("pgdata/PG_VERSION").is_file()
+        || !seed_dir.join("pgdata/global/pg_control").is_file()
     {
         return false;
     }
-    let Ok(manifest) = fs::read_to_string(template_dir.join(".manifest")) else {
+    let Ok(manifest) = fs::read_to_string(seed_dir.join(".manifest")) else {
         return false;
     };
     manifest
         .lines()
-        .any(|line| line == format!("version={PGDATA_TEMPLATE_VERSION}"))
+        .any(|line| line == format!("version={CLUSTER_SEED_CACHE_VERSION}"))
         && manifest.lines().any(|line| line == format!("key={key}"))
 }
 
-fn run_template_initdb(runtime_dir: &Path, pgdata: &Path) -> Result<()> {
-    run_initdb(runtime_dir, pgdata, "postgres", "PGDATA template")
+fn run_cluster_seed_initdb(
+    runtime_dir: &Path,
+    catalog_profile: super::NativeCatalogProfile,
+    pgdata: &Path,
+) -> Result<()> {
+    run_initdb(
+        runtime_dir,
+        catalog_profile,
+        pgdata,
+        "postgres",
+        "cluster seed",
+    )
 }
 
-fn configure_template_runtime_env(command: &mut Command, runtime_dir: &Path) {
+fn configure_cluster_seed_runtime_env(
+    command: &mut Command,
+    runtime_dir: &Path,
+    catalog_profile: super::NativeCatalogProfile,
+) {
     configure_native_tool_env(command, runtime_dir);
+    command.env_remove("ICU_DATA");
+    command.env_remove("OLIPHAUNT_INTERNAL_ICU_READY");
     let icu_data = runtime_dir.join("share/icu");
-    if icu_data.is_dir() {
+    if catalog_profile == super::NativeCatalogProfile::Icu && icu_data.is_dir() {
         command.env("ICU_DATA", icu_data);
+        command.env("OLIPHAUNT_INTERNAL_ICU_READY", "1");
     }
 }
 
@@ -252,26 +306,27 @@ const fn native_dynamic_shared_memory_type() -> &'static str {
     }
 }
 
-fn clean_pgdata_template(pgdata: &Path, dynamic_shared_memory_type: &str) -> Result<()> {
+fn clean_cluster_seed(pgdata: &Path, dynamic_shared_memory_type: &str) -> Result<()> {
     for relative in ["postmaster.pid", "postmaster.opts"] {
         remove_file_if_exists(&pgdata.join(relative))?;
     }
-    normalize_pgdata_template_conf(pgdata, dynamic_shared_memory_type)?;
+    normalize_cluster_seed_conf(pgdata, dynamic_shared_memory_type)?;
     Ok(())
 }
 
-fn normalize_pgdata_template_conf(pgdata: &Path, dynamic_shared_memory_type: &str) -> Result<()> {
+fn normalize_cluster_seed_conf(pgdata: &Path, dynamic_shared_memory_type: &str) -> Result<()> {
     let conf = pgdata.join("postgresql.conf");
     if !conf.is_file() {
         return Ok(());
     }
     let contents = fs::read_to_string(&conf).map_err(|err| {
         Error::Engine(format!(
-            "read native PGDATA template config {}: {err}",
+            "read native cluster-seed config {}: {err}",
             conf.display()
         ))
     })?;
     let settings = [
+        ("shared_memory_type", dynamic_shared_memory_type),
         ("dynamic_shared_memory_type", dynamic_shared_memory_type),
         ("log_timezone", "'UTC'"),
         ("timezone", "'UTC'"),
@@ -308,7 +363,7 @@ fn normalize_pgdata_template_conf(pgdata: &Path, dynamic_shared_memory_type: &st
     if normalized != contents {
         fs::write(&conf, normalized).map_err(|err| {
             Error::Engine(format!(
-                "write native PGDATA template config {}: {err}",
+                "write native cluster-seed config {}: {err}",
                 conf.display()
             ))
         })?;
@@ -326,7 +381,7 @@ fn active_config_key(line: &str) -> Option<&str> {
     (!key.is_empty()).then_some(key)
 }
 
-fn copy_pgdata_template(template_pgdata: &Path, pgdata: &Path) -> Result<()> {
+fn copy_cluster_seed(cluster_seed: &Path, pgdata: &Path) -> Result<()> {
     if pgdata.join("PG_VERSION").is_file() {
         return Ok(());
     }
@@ -361,8 +416,13 @@ fn copy_pgdata_template(template_pgdata: &Path, pgdata: &Path) -> Result<()> {
         })?;
     }
 
-    let copy_result = copy_directory_tree(template_pgdata, &staging, pgdata_template_copy_mode());
+    let copy_result = copy_directory_tree(cluster_seed, &staging, cluster_seed_copy_mode());
     if let Err(error) = copy_result {
+        let _ = fs::remove_dir_all(&staging);
+        let _ = fs::create_dir_all(pgdata);
+        return Err(error);
+    }
+    if let Err(error) = normalize_cluster_seed_conf(&staging, native_dynamic_shared_memory_type()) {
         let _ = fs::remove_dir_all(&staging);
         let _ = fs::create_dir_all(pgdata);
         return Err(error);
@@ -384,15 +444,16 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        configure_template_runtime_env, initdb_args, native_dynamic_shared_memory_type,
-        normalize_pgdata_template_conf,
+        configure_cluster_seed_runtime_env, initdb_args, native_dynamic_shared_memory_type,
+        normalize_cluster_seed_conf,
     };
+    use crate::liboliphaunt::root::NativeCatalogProfile;
 
     #[test]
-    fn template_initdb_forces_mobile_safe_locale() {
+    fn cluster_seed_initdb_forces_mobile_safe_locale() {
         let args = initdb_args(
             Path::new("/runtime"),
-            Path::new("/cache/template/pgdata"),
+            Path::new("/cache/cluster-seed/pgdata"),
             "postgres",
         );
 
@@ -425,9 +486,9 @@ mod tests {
     }
 
     #[test]
-    fn template_initdb_sets_icu_data_when_materialized() {
+    fn cluster_seed_initdb_sets_icu_data_when_materialized() {
         let root = std::env::temp_dir().join(format!(
-            "oliphaunt-template-icu-{}-{}",
+            "oliphaunt-cluster-seed-icu-{}-{}",
             std::process::id(),
             std::thread::current().name().unwrap_or("test")
         ));
@@ -437,7 +498,7 @@ mod tests {
         fs::create_dir_all(&icu_data).unwrap();
 
         let mut command = std::process::Command::new("initdb");
-        configure_template_runtime_env(&mut command, &runtime);
+        configure_cluster_seed_runtime_env(&mut command, &runtime, NativeCatalogProfile::Icu);
 
         assert_eq!(
             command
@@ -447,13 +508,46 @@ mod tests {
                 .map(std::path::PathBuf::from),
             Some(icu_data)
         );
+        assert_eq!(
+            command
+                .get_envs()
+                .find(|(key, _)| *key == OsStr::new("OLIPHAUNT_INTERNAL_ICU_READY"))
+                .and_then(|(_, value)| value),
+            Some(OsStr::new("1"))
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn template_config_normalization_forces_posix_host_values() {
+    fn standard_seed_clears_ambient_icu_selection() {
+        let mut command = std::process::Command::new("initdb");
+        command.env("ICU_DATA", "/ambient/icu");
+        command.env("OLIPHAUNT_INTERNAL_ICU_READY", "1");
+        configure_cluster_seed_runtime_env(
+            &mut command,
+            Path::new("/runtime"),
+            NativeCatalogProfile::Standard,
+        );
+        assert_eq!(
+            command
+                .get_envs()
+                .find(|(key, _)| *key == OsStr::new("ICU_DATA"))
+                .and_then(|(_, value)| value),
+            None
+        );
+        assert_eq!(
+            command
+                .get_envs()
+                .find(|(key, _)| *key == OsStr::new("OLIPHAUNT_INTERNAL_ICU_READY"))
+                .and_then(|(_, value)| value),
+            None
+        );
+    }
+
+    #[test]
+    fn cluster_seed_config_normalization_forces_posix_host_values() {
         let root = std::env::temp_dir().join(format!(
-            "oliphaunt-template-normalize-{}-{}",
+            "oliphaunt-cluster-seed-normalize-{}-{}",
             std::process::id(),
             std::thread::current().name().unwrap_or("test")
         ));
@@ -476,7 +570,7 @@ mod tests {
         )
         .unwrap();
 
-        normalize_pgdata_template_conf(&root, "mmap").unwrap();
+        normalize_cluster_seed_conf(&root, "mmap").unwrap();
 
         let normalized = fs::read_to_string(&conf).unwrap();
         assert!(normalized.contains("# dynamic_shared_memory_type = posix"));
@@ -491,9 +585,9 @@ mod tests {
     }
 
     #[test]
-    fn template_config_normalization_uses_windows_dsm_on_windows() {
+    fn cluster_seed_config_normalization_uses_windows_dsm_on_windows() {
         let root = std::env::temp_dir().join(format!(
-            "oliphaunt-template-normalize-windows-{}-{}",
+            "oliphaunt-cluster-seed-normalize-windows-{}-{}",
             std::process::id(),
             std::thread::current().name().unwrap_or("test")
         ));
@@ -510,7 +604,7 @@ mod tests {
         )
         .unwrap();
 
-        normalize_pgdata_template_conf(&root, "windows").unwrap();
+        normalize_cluster_seed_conf(&root, "windows").unwrap();
 
         let normalized = fs::read_to_string(&conf).unwrap();
         assert!(normalized.contains("# dynamic_shared_memory_type = windows"));

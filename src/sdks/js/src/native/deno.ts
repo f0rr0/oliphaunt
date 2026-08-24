@@ -5,7 +5,7 @@ import {
 } from './common.js';
 import { resolveDenoNativeInstall, validatePreparedDenoRuntimeExtensions } from './assets-deno.js';
 import { dirname, join } from 'node:path';
-import { initializeNativePgdata } from './initialize.js';
+import { copyNativeClusterSeed, initializeNativePgdata } from './initialize.js';
 import {
   packConfigPointers,
   packRestoreOptionsPointers,
@@ -108,6 +108,8 @@ export async function createDenoNativeBinding(
         openConfig.pgdata,
         openConfig.username,
         openConfig.runtimeDirectory,
+        config.runtimeDirectory === undefined ? install.clusterSeedDirectory : undefined,
+        install.catalogProfile,
       );
       const packed = packConfigPointers({ ...openConfig, moduleDirectory }, (value) =>
         pointerOf(deno, value),
@@ -267,11 +269,17 @@ async function prepareDenoPgdata(
   pgdata: string,
   username: string,
   runtimeDirectory?: string,
+  clusterSeedDirectory?: string,
+  catalogProfile: 'standard' | 'icu' = 'standard',
 ): Promise<void> {
   await initializeNativePgdata({
     root: dirname(pgdata),
     pgdata,
-    runInitdb: async (staging) => {
+    populatePgdata: async (staging) => {
+      if (username === 'postgres' && clusterSeedDirectory !== undefined) {
+        await copyNativeClusterSeed(clusterSeedDirectory, staging);
+        return;
+      }
       if (runtimeDirectory === undefined || typeof deno.Command !== 'function') {
         throw new Error(
           'initializing a Deno native database requires runtimeDirectory and Deno.Command',
@@ -282,6 +290,14 @@ async function prepareDenoPgdata(
         'bin',
         deno.build?.os === 'windows' ? 'initdb.exe' : 'initdb',
       );
+      const env: Record<string, string> = {};
+      if (catalogProfile === 'icu') {
+        const icuData = deno.env?.get('ICU_DATA');
+        if (icuData !== undefined) {
+          env.ICU_DATA = icuData;
+          env.OLIPHAUNT_INTERNAL_ICU_READY = '1';
+        }
+      }
       const output = await new deno.Command(executable, {
         args: [
           '-D',
@@ -295,6 +311,7 @@ async function prepareDenoPgdata(
         ],
         stdout: 'null',
         stderr: 'piped',
+        env,
       }).output();
       if (!output.success) {
         throw new Error(`initdb failed: ${new TextDecoder().decode(output.stderr).trim()}`);

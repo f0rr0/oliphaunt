@@ -45,7 +45,7 @@ class OliphauntAndroidRuntimeAssetsTest {
                 kind	id	extensions	files	bytes
                 package	total	-	-	185
                 package	runtime	-	-	100
-                package	template-pgdata	-	-	40
+                package	cluster-seed	-	-	40
                 package	static-registry	-	-	45
                 extensions	selected	-	-	30
                 extension	hstore	-	2	12
@@ -56,7 +56,7 @@ class OliphauntAndroidRuntimeAssetsTest {
 
         assertEquals(185L, report.packageBytes)
         assertEquals(100L, report.runtimeBytes)
-        assertEquals(40L, report.templatePgdataBytes)
+        assertEquals(40L, report.clusterSeedBytes)
         assertEquals(45L, report.staticRegistryBytes)
         assertEquals(30L, report.selectedExtensionBytes)
         assertEquals(
@@ -85,7 +85,7 @@ class OliphauntAndroidRuntimeAssetsTest {
                 kind	id	extensions	files	bytes
                 package	total	-	-	185
                 package	runtime	-	-	100
-                package	template-pgdata	-	-	40
+                package	cluster-seed	-	-	40
                 package	static-registry	-	-	45
                 extensions	selected	-	-	30
                 extension	vector	-	3	30
@@ -121,6 +121,8 @@ class OliphauntAndroidRuntimeAssetsTest {
                 """
                 schema=oliphaunt-runtime-resources-v1
                 layout=postgres-runtime-files-v1
+                artifactRole=runtime
+                catalogProfile=
                 cacheKey=runtime-smoke
                 selectedExtensions=hstore,vector
                 extensions=hstore,vector
@@ -303,10 +305,10 @@ class OliphauntAndroidRuntimeAssetsTest {
     }
 
     @Test
-    fun restoresAndroidTemplatePgdataEmptyDirectories() {
+    fun restoresAndroidClusterSeedEmptyDirectories() {
         val pgdata = Files.createTempDirectory("liboliphaunt-android-pgdata").toFile()
         try {
-            OliphauntAndroidRuntimeAssets.ensureTemplatePgdataDirectoriesForAndroid(pgdata)
+            OliphauntAndroidRuntimeAssets.ensureClusterSeedDirectoriesForAndroid(pgdata)
 
             assertTrue(pgdata.resolve("pg_notify").isDirectory)
             assertTrue(pgdata.resolve("pg_wal/archive_status").isDirectory)
@@ -458,7 +460,7 @@ class OliphauntAndroidRuntimeAssetsTest {
                     package	total	-	-	185
                     package	total	-	-	200
                     package	runtime	-	-	100
-                    package	template-pgdata	-	-	40
+                    package	cluster-seed	-	-	40
                     package	static-registry	-	-	45
                     extensions	selected	-	-	30
                     """.trimIndent(),
@@ -477,7 +479,7 @@ class OliphauntAndroidRuntimeAssetsTest {
                     """
                     kind	id	extensions	files	bytes
                     package	total	-	-	185
-                    package	template-pgdata	-	-	40
+                    package	cluster-seed	-	-	40
                     package	static-registry	-	-	45
                     extensions	selected	-	-	30
                     """.trimIndent(),
@@ -675,7 +677,7 @@ class OliphauntAndroidRuntimeAssetsTest {
                     "oliphaunt/runtime",
                     manifestProperties(
                         "schema" to "oliphaunt-runtime-resources-v1",
-                        "layout" to "postgres-template-pgdata-v1",
+                        "layout" to "oliphaunt-cluster-seed-v1",
                         "cacheKey" to "runtime-smoke",
                     ),
                 )
@@ -689,7 +691,7 @@ class OliphauntAndroidRuntimeAssetsTest {
         val error =
             assertFailsWith<OliphauntException> {
                 OliphauntAndroidRuntimeAssets.parseManifestProperties(
-                    "oliphaunt/template-pgdata",
+                    "oliphaunt/cluster-seed",
                     manifestProperties(
                         "schema" to "oliphaunt-runtime-resources-v1",
                         "layout" to "postgres-runtime-files-v1",
@@ -856,6 +858,8 @@ private fun databaseRootFixture(): JSONObject {
 }
 
 private fun manifestProperties(vararg entries: Pair<String, String>): Properties = Properties().apply {
+    setProperty("artifactRole", "runtime")
+    setProperty("catalogProfile", "")
     for ((key, value) in entries) {
         setProperty(key, value)
     }
@@ -867,7 +871,7 @@ private fun validPackageSizeReport(vararg extensionRows: String): String {
             "kind\tid\textensions\tfiles\tbytes",
             "package\ttotal\t-\t-\t185",
             "package\truntime\t-\t-\t100",
-            "package\ttemplate-pgdata\t-\t-\t40",
+            "package\tcluster-seed\t-\t-\t40",
             "package\tstatic-registry\t-\t-\t45",
             "extensions\tselected\t-\t-\t30",
         ) + extensionRows
@@ -897,6 +901,8 @@ private fun writeReleaseShapedRuntime(
         """
         schema=oliphaunt-runtime-resources-v1
         layout=postgres-runtime-files-v1
+        artifactRole=runtime
+        catalogProfile=
         cacheKey=runtime-smoke
         selectedExtensions=$extensions
         extensions=$createableExtensions

@@ -78,7 +78,7 @@ ensure_host_runtime_assets() {
   printf '%s\n' "$runtime_source"
 }
 
-normalize_template_pgdata() {
+normalize_cluster_seed() {
   local pgdata="$1"
   local conf="$pgdata/postgresql.conf"
   [ -f "$conf" ] || return 0
@@ -135,14 +135,14 @@ ensure_mobile_runtime_tool_permissions() {
   done
 }
 
-prepare_mobile_template_pgdata() {
+prepare_mobile_cluster_seed() {
   local initdb="${mobile_template_initdb:-}"
   if [ -z "$initdb" ]; then
     local runtime_source
     runtime_source="$(ensure_host_runtime_assets)"
     initdb="$runtime_source/bin/initdb"
   fi
-  local pgdata="$scratch_root/mobile-template-pgdata"
+  local pgdata="$scratch_root/mobile-cluster-seed"
   local stamp="$pgdata/.liboliphaunt-mobile-template-v1"
 
   [ -x "$initdb" ] || return 1
@@ -173,7 +173,7 @@ prepare_mobile_template_pgdata() {
     --locale=C \
     --wal-segsize="$wal_segsize_mb" \
     --encoding=UTF8 >/dev/null
-  normalize_template_pgdata "$pgdata"
+  normalize_cluster_seed "$pgdata"
   printf '%s' "$wanted" > "$stamp"
   printf '%s\n' "$pgdata"
 }
@@ -189,7 +189,7 @@ find_latest_mobile_pgdata() {
     return
   fi
 
-  if prepare_mobile_template_pgdata; then
+  if prepare_mobile_cluster_seed; then
     return
   fi
 

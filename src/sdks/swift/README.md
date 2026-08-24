@@ -287,7 +287,7 @@ oliphaunt/
   runtime/
     manifest.properties
     files/
-  template-pgdata/
+  cluster-seed/
     manifest.properties
     files/
       PG_VERSION
@@ -312,8 +312,8 @@ members of `extensions`. Producers must always write both fields. The SDK
 rejects a missing `selectedExtensions`; an explicitly empty value means that
 no extensions were selected.
 
-`template-pgdata` manifests must use
-`layout=postgres-template-pgdata-v1`. Current packages also record
+`cluster-seed` manifests must use
+`layout=oliphaunt-cluster-seed-v1`. Current packages also record
 `sharedPreloadLibraries`, `mobileStaticRegistryState`,
 `mobileStaticRegistryPending`, `mobileStaticRegistryRegistered`, and
 `nativeModuleStems`. `mobileStaticRegistryRegistered` is exactly the selected
@@ -322,7 +322,7 @@ corresponding exact native-module-stem set; neither may claim an unselected SQL
 identity. iOS-family targets reject selected extensions while the registry
 state is `pending`. The Swift SDK rejects unknown package layouts, materializes
 runtime files into Application Support using the cache key, and hydrates new
-PGDATA roots from `template-pgdata/files`.
+PGDATA roots from `cluster-seed/files`.
 Apple mobile platforms require either a packaged template PGDATA or existing
 storage whose `pgdata` child contains `PG_VERSION`; they do not rely on executing `initdb` from app storage.
 When a selected extension contains native modules, the Swift package must

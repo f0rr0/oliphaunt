@@ -6,16 +6,16 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 
-use super::TEMPLATE_RUNTIME_STATE_FILES;
+use super::CLUSTER_SEED_RUNTIME_STATE_FILES;
 
-pub(super) fn clone_pgdata_template_dir(source_pgdata: &Path, dest_pgdata: &Path) -> Result<()> {
+pub(super) fn clone_cluster_seed_dir(source_pgdata: &Path, dest_pgdata: &Path) -> Result<()> {
     if try_clone_dir(source_pgdata, dest_pgdata)? {
         return Ok(());
     }
-    copy_pgdata_template_dir_inner(source_pgdata, dest_pgdata)
+    copy_cluster_seed_dir_inner(source_pgdata, dest_pgdata)
 }
 
-fn copy_pgdata_template_dir_inner(source_pgdata: &Path, dest_pgdata: &Path) -> Result<()> {
+fn copy_cluster_seed_dir_inner(source_pgdata: &Path, dest_pgdata: &Path) -> Result<()> {
     fs::create_dir_all(dest_pgdata)
         .with_context(|| format!("create directory {}", dest_pgdata.display()))?;
 
@@ -25,7 +25,7 @@ fn copy_pgdata_template_dir_inner(source_pgdata: &Path, dest_pgdata: &Path) -> R
         let entry =
             entry.with_context(|| format!("read entry under {}", source_pgdata.display()))?;
         let file_name = entry.file_name();
-        if should_skip_template_entry(&file_name) {
+        if should_skip_seed_entry(&file_name) {
             continue;
         }
 
@@ -36,13 +36,13 @@ fn copy_pgdata_template_dir_inner(source_pgdata: &Path, dest_pgdata: &Path) -> R
             .with_context(|| format!("stat {}", src_path.display()))?;
 
         if file_type.is_dir() {
-            copy_pgdata_template_dir_inner(&src_path, &dest_path)?;
+            copy_cluster_seed_dir_inner(&src_path, &dest_path)?;
         } else if file_type.is_file() {
             if let Some(parent) = dest_path.parent() {
                 fs::create_dir_all(parent)
                     .with_context(|| format!("create directory {}", parent.display()))?;
             }
-            clone_mutable_template_file(&src_path, &dest_path)?;
+            clone_mutable_seed_file(&src_path, &dest_path)?;
         } else if file_type.is_symlink() {
             copy_symlink(&src_path, &dest_path)?;
         }
@@ -51,11 +51,11 @@ fn copy_pgdata_template_dir_inner(source_pgdata: &Path, dest_pgdata: &Path) -> R
     Ok(())
 }
 
-fn clone_mutable_template_file(src: &Path, dest: &Path) -> Result<()> {
+fn clone_mutable_seed_file(src: &Path, dest: &Path) -> Result<()> {
     if try_reflink_file(src, dest)? {
         return Ok(());
     }
-    copy_template_file(src, dest)
+    copy_seed_file(src, dest)
 }
 
 fn try_clone_dir(src: &Path, dest: &Path) -> Result<bool> {
@@ -104,7 +104,7 @@ fn clone_dir_command(_src: &Path, _dest: &Path) -> std::io::Result<std::process:
     ))
 }
 
-fn copy_template_file(src: &Path, dest: &Path) -> Result<()> {
+fn copy_seed_file(src: &Path, dest: &Path) -> Result<()> {
     fs::copy(src, dest).with_context(|| format!("copy {} to {}", src.display(), dest.display()))?;
     Ok(())
 }
@@ -143,9 +143,9 @@ fn try_reflink_file(_src: &Path, _dest: &Path) -> Result<bool> {
     Ok(false)
 }
 
-fn should_skip_template_entry(file_name: &OsStr) -> bool {
+fn should_skip_seed_entry(file_name: &OsStr) -> bool {
     let name = file_name.to_string_lossy();
-    name.starts_with(".s.PGSQL.") || TEMPLATE_RUNTIME_STATE_FILES.contains(&name.as_ref())
+    name.starts_with(".s.PGSQL.") || CLUSTER_SEED_RUNTIME_STATE_FILES.contains(&name.as_ref())
 }
 
 #[cfg(unix)]
@@ -170,7 +170,7 @@ fn copy_symlink(src: &Path, dest: &Path) -> Result<()> {
     };
 
     if target_path.is_dir() {
-        copy_pgdata_template_dir_inner(&target_path, dest)
+        copy_cluster_seed_dir_inner(&target_path, dest)
     } else {
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)
@@ -183,9 +183,9 @@ fn copy_symlink(src: &Path, dest: &Path) -> Result<()> {
 }
 
 #[cfg(test)]
-fn copy_template_pgdata(template_root: &Path, dest_root: &Path) -> Result<()> {
-    let source_pgdata = template_root.join("tmp/oliphaunt/base");
-    clone_pgdata_template_dir(&source_pgdata, &dest_root.join("tmp/oliphaunt/base"))
+fn copy_cluster_seed_pgdata(seed_root: &Path, dest_root: &Path) -> Result<()> {
+    let source_pgdata = seed_root.join("tmp/oliphaunt/base");
+    clone_cluster_seed_dir(&source_pgdata, &dest_root.join("tmp/oliphaunt/base"))
 }
 
 #[cfg(test)]
@@ -194,7 +194,7 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn template_copy_keeps_cluster_files_and_skips_runtime_state() -> Result<()> {
+    fn cluster_seed_copy_keeps_cluster_files_and_skips_runtime_state() -> Result<()> {
         let source = TempDir::new()?;
         let pgdata = source.path().join("tmp/oliphaunt/base");
         fs::create_dir_all(&pgdata)?;
@@ -206,7 +206,7 @@ mod tests {
 
         let dest = TempDir::new()?;
         let dest_pgdata = dest.path().join("tmp/oliphaunt/base");
-        copy_pgdata_template_dir_inner(&pgdata, &dest_pgdata)?;
+        copy_cluster_seed_dir_inner(&pgdata, &dest_pgdata)?;
 
         assert!(
             dest_pgdata.join("PG_VERSION").exists(),
@@ -222,7 +222,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn template_clone_does_not_hardlink_mutable_pgdata_files() -> Result<()> {
+    fn cluster_seed_clone_does_not_hardlink_mutable_pgdata_files() -> Result<()> {
         use std::os::unix::fs::MetadataExt;
 
         let source = TempDir::new()?;
@@ -232,7 +232,7 @@ mod tests {
 
         let dest = TempDir::new()?;
         let dest_pgdata = dest.path().join("tmp/oliphaunt/base");
-        copy_pgdata_template_dir_inner(&pgdata, &dest_pgdata)?;
+        copy_cluster_seed_dir_inner(&pgdata, &dest_pgdata)?;
 
         let source_pg_version = pgdata.join("PG_VERSION");
         let dest_pg_version = dest_pgdata.join("PG_VERSION");
@@ -252,14 +252,14 @@ mod tests {
         assert_ne!(
             (source_meta.dev(), source_meta.ino()),
             (dest_meta.dev(), dest_meta.ino()),
-            "mutable PGDATA template files must be copied or reflinked, not hardlinked"
+            "mutable cluster seed files must be copied or reflinked, not hardlinked"
         );
         Ok(())
     }
 
     #[cfg(unix)]
     #[test]
-    fn fallback_template_pgdata_copy_does_not_hardlink_mutable_files() -> Result<()> {
+    fn fallback_cluster_seed_copy_does_not_hardlink_mutable_files() -> Result<()> {
         use std::os::unix::fs::MetadataExt;
 
         let source = TempDir::new()?;
@@ -268,7 +268,7 @@ mod tests {
         fs::write(pgdata.join("PG_VERSION"), b"17\n")?;
 
         let dest = TempDir::new()?;
-        copy_template_pgdata(source.path(), dest.path())?;
+        copy_cluster_seed_pgdata(source.path(), dest.path())?;
 
         let source_pg_version = pgdata.join("PG_VERSION");
         let dest_pg_version = dest.path().join("tmp/oliphaunt/base/PG_VERSION");
@@ -278,13 +278,13 @@ mod tests {
         assert_ne!(
             (source_meta.dev(), source_meta.ino()),
             (dest_meta.dev(), dest_meta.ino()),
-            "fallback PGDATA template copy must not hardlink mutable files"
+            "fallback cluster seed copy must not hardlink mutable files"
         );
         Ok(())
     }
 
     #[test]
-    fn fallback_template_pgdata_copy_does_not_share_mutable_files() -> Result<()> {
+    fn fallback_cluster_seed_copy_does_not_share_mutable_files() -> Result<()> {
         let source = TempDir::new()?;
         let pgdata = source.path().join("base");
         fs::create_dir_all(&pgdata)?;
@@ -292,13 +292,13 @@ mod tests {
 
         let dest = TempDir::new()?;
         let cloned = dest.path().join("base");
-        copy_pgdata_template_dir_inner(&pgdata, &cloned)?;
+        copy_cluster_seed_dir_inner(&pgdata, &cloned)?;
         fs::write(cloned.join("PG_VERSION"), b"changed\n")?;
 
         assert_eq!(
             fs::read(pgdata.join("PG_VERSION"))?,
             b"17\n",
-            "fallback PGDATA template copy must not share mutable file storage with the source"
+            "fallback cluster seed copy must not share mutable file storage with the source"
         );
         Ok(())
     }

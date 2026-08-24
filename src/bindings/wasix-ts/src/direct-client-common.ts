@@ -117,7 +117,7 @@ export async function openWasixDirect(
   host: DirectWasixHost,
 ): Promise<OliphauntDatabase> {
   const session = await DirectWasixSession.open(options, host, defaultDependencies, 'browser-main');
-  return new WasixDatabaseImpl(session);
+  return new WasixDatabaseImpl(session, { runtime: options.runtime, icu: options.icu });
 }
 
 /** @internal Open a direct-memory session inside the dedicated browser worker realm. */
@@ -207,7 +207,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
             program: '/bin/postgres',
             args: wasixPostgresArgs(runtimeOptions),
             cwd: '/',
-            env: wasixPostgresEnvironment(runtimeOptions),
+            env: wasixPostgresEnvironment(runtimeOptions, prepared.icuEnabled),
             mount: materialized.mounts,
           }),
         );
@@ -881,12 +881,30 @@ function preparedRuntimeIdentity(options: SerializedOpenOptions): string {
       product: runtime.product,
       version: runtime.version,
       runtimeArchive: assetIdentity(runtime.runtimeArchive),
-      pgdataArchive: assetIdentity(runtime.pgdataArchive),
+      standardSeedArchive: assetIdentity(runtime.standardSeedArchive),
+      standardSeedManifest: {
+        sha256: runtime.standardSeedManifest.sha256,
+        size: runtime.standardSeedManifest.size,
+      },
       manifest: {
         sha256: runtime.manifest.sha256,
         size: runtime.manifest.size,
       },
     },
+    icu:
+      options.icu === undefined
+        ? null
+        : {
+            product: options.icu.product,
+            version: options.icu.version,
+            compatibility: options.icu.compatibility,
+            dataArchive: assetIdentity(options.icu.dataArchive),
+            clusterSeedArchive: assetIdentity(options.icu.clusterSeedArchive),
+            clusterSeedManifest: {
+              sha256: options.icu.clusterSeedManifest.sha256,
+              size: options.icu.clusterSeedManifest.size,
+            },
+          },
     extensions: options.extensions,
     carriers: Object.values(options.extensionCarriers)
       .sort((left, right) => left.sqlName.localeCompare(right.sqlName))

@@ -1,9 +1,9 @@
+mod cluster_seed;
 mod descriptor;
 mod extensions;
 mod files;
 mod fingerprint;
 mod runtime;
-mod template;
 
 use std::env;
 use std::ffi::OsString;
@@ -26,12 +26,27 @@ use files::{sync_directory, sync_directory_tree};
 static ACTIVE_ROOTS: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
 pub(super) const NATIVE_RUNTIME_TOOLS: [&str; 3] = ["postgres", "initdb", "pg_ctl"];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum NativeCatalogProfile {
+    Standard,
+    Icu,
+}
+
+impl NativeCatalogProfile {
+    pub(super) const fn id(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Icu => "icu",
+        }
+    }
+}
+
 #[cfg(feature = "internal-native-packaging")]
 pub(crate) struct MaterializedNativeResources {
     pub(crate) runtime_dir: PathBuf,
-    pub(crate) template_pgdata: PathBuf,
+    pub(crate) cluster_seed: PathBuf,
     pub(crate) runtime_cache_key: String,
-    pub(crate) template_cache_key: String,
+    pub(crate) cluster_seed_cache_key: String,
 }
 
 pub(crate) struct PreparedNativeRoot {
@@ -90,8 +105,12 @@ impl PreparedNativeRoot {
         })?;
         let initialized = descriptor::validate_root_for_open(&root)?;
         let pgdata = root.join("pgdata");
-        let runtime_dir =
-            runtime::materialize_runtime(NativeRuntimeProfile::for_mode(config.mode), extensions)?;
+        let runtime_closure = runtime::resolve_runtime_closure(
+            NativeRuntimeProfile::for_mode(config.mode),
+            extensions,
+            None,
+        )?;
+        let runtime_dir = runtime_closure.runtime_dir;
         let mut pgdata_cleanup = CreatedPgdataCleanup::new();
         if !initialized {
             let staging_pgdata = root.join(format!(
@@ -106,9 +125,12 @@ impl PreparedNativeRoot {
                 ))
             })?;
             pgdata_cleanup.arm(staging_pgdata.clone());
-            template::bootstrap_pgdata_if_needed(
+            cluster_seed::bootstrap_pgdata_if_needed(
                 NativeRuntimeProfile::for_mode(config.mode),
                 &runtime_dir,
+                runtime_closure.catalog_profile,
+                runtime_closure.cluster_seed_dir.as_deref(),
+                &config.username,
                 &staging_pgdata,
             )?;
             sync_directory_tree(&staging_pgdata)?;
@@ -441,26 +463,33 @@ fn release_active_root(key: &Path) {
 pub(crate) fn materialize_native_resources_for_runtime(
     mode: EngineMode,
     extensions: &[Extension],
+    catalog_profile: NativeCatalogProfile,
 ) -> Result<MaterializedNativeResources> {
     let profile = NativeRuntimeProfile::for_mode(mode);
-    let runtime_dir = runtime::materialize_runtime(profile, extensions)?;
-    let template_pgdata = template::materialize_pgdata_template(profile)?;
+    let runtime_closure =
+        runtime::resolve_runtime_closure(profile, extensions, Some(catalog_profile))?;
+    let runtime_dir = runtime_closure.runtime_dir;
+    let cluster_seed = cluster_seed::materialize_cluster_seed(
+        profile,
+        &runtime_dir,
+        runtime_closure.catalog_profile,
+    )?;
     let runtime_cache_key = cache_key_from_leaf(&runtime_dir, "native runtime cache")?;
-    let template_cache_key = template_pgdata
+    let cluster_seed_cache_key = cluster_seed
         .parent()
         .ok_or_else(|| {
             Error::Engine(format!(
-                "native PGDATA template path {} has no cache-key parent",
-                template_pgdata.display()
+                "native cluster-seed path {} has no cache-key parent",
+                cluster_seed.display()
             ))
         })
-        .and_then(|parent| cache_key_from_leaf(parent, "native PGDATA template cache"))?;
+        .and_then(|parent| cache_key_from_leaf(parent, "native PGDATA cluster seed cache"))?;
 
     Ok(MaterializedNativeResources {
         runtime_dir,
-        template_pgdata,
+        cluster_seed,
         runtime_cache_key,
-        template_cache_key,
+        cluster_seed_cache_key,
     })
 }
 

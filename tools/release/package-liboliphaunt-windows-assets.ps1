@@ -184,6 +184,14 @@ $StagedIcu = Join-Path $Stage "runtime/share/icu"
 if (Test-Path $StagedIcu) {
     Remove-Item -Recurse -Force $StagedIcu
 }
+& bun tools/release/stage-native-cluster-seed.mjs `
+    --runtime $Runtime `
+    --embedded-modules $EmbeddedModules `
+    --destination (Join-Path $Stage "cluster-seed") `
+    --profile standard
+if ($LASTEXITCODE -ne 0) {
+    Fail "failed to stage the standard native cluster seed"
+}
 
 Write-Output "==> Optimizing staged liboliphaunt $TargetId release payload"
 bun tools/release/optimize_native_runtime_payload.mjs $Stage --target $TargetId --tool-set runtime

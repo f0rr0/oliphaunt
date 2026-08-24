@@ -2025,6 +2025,32 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
     File destination = new File(runtimeFiles, "share/icu");
     fileSystemOperations.delete(spec -> spec.delete(destination));
     copyTree(icuRoot.toPath(), destination.toPath());
+    File icuClusterSeed = new File(extractRoot, "cluster-seed");
+    File icuClusterSeedManifest = new File(icuClusterSeed, "manifest.properties");
+    if (!new File(icuClusterSeed, "files/PG_VERSION").isFile()
+        || !new File(icuClusterSeed, "files/global/pg_control").isFile()
+        || !icuClusterSeedManifest.isFile()) {
+      throw new GradleException(
+          "Oliphaunt ICU artifact " + archive.getName() + " does not contain its matching cluster seed");
+    }
+    Properties seedProperties = readProperties(icuClusterSeedManifest);
+    if (!"cluster-seed-icu".equals(seedProperties.getProperty("artifactRole"))
+        || !"icu".equals(seedProperties.getProperty("catalogProfile"))
+        || !"18".equals(seedProperties.getProperty("postgresMajor"))
+        || !"native-pg18-v1".equals(seedProperties.getProperty("physicalFormat"))
+        || !"native-pg18-datum64-v1".equals(seedProperties.getProperty("compatibilityKey"))
+        || !"postgres".equals(seedProperties.getProperty("initialSuperuser"))
+        || !"icu".equals(seedProperties.getProperty("runtimeFeatures"))
+        || !"76.1".equals(seedProperties.getProperty("icuDataVersion"))
+        || !"files-le".equals(seedProperties.getProperty("icuDataForm"))
+        || !logicalTreeSha256(icuRoot.toPath())
+            .equals(seedProperties.getProperty("icuDataTreeSha256"))) {
+      throw new GradleException(
+          "Oliphaunt ICU artifact " + archive.getName() + " has a mismatched ICU runtime closure");
+    }
+    File clusterSeedDestination = new File(root, "cluster-seed");
+    fileSystemOperations.delete(spec -> spec.delete(clusterSeedDestination));
+    copyTree(icuClusterSeed.toPath(), clusterSeedDestination.toPath());
     updateRuntimeFeatures(new File(runtimePackage, "manifest.properties"), List.of("icu"));
   }
 
@@ -3042,7 +3068,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
       updateDigestString(digest, properties.getProperty(key));
     }
     for (String relativeRoot :
-        List.of("runtime/files", "template-pgdata/files", "static-registry")) {
+        List.of("runtime/files", "cluster-seed/files", "static-registry")) {
       updateDigestTree(digest, resourceRoot.toPath(), relativeRoot);
     }
     properties.setProperty("cacheKey", "android-" + hex(digest.digest()));
@@ -3101,6 +3127,70 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
     digest.update(bytes);
   }
 
+  private static String logicalTreeSha256(Path root) {
+    MessageDigest digest = newSha256Digest();
+    final List<Path> files;
+    try (var paths = Files.walk(root)) {
+      files =
+          paths
+              .filter(path -> !path.equals(root))
+              .peek(
+                  path -> {
+                    if (Files.isSymbolicLink(path)) {
+                      throw new GradleException(
+                          "Oliphaunt ICU data tree contains a symbolic link: " + path);
+                    }
+                  })
+              .filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
+              .sorted(
+                  (left, right) ->
+                      compareUnsignedBytes(
+                          portableRelativePath(root, left).getBytes(StandardCharsets.UTF_8),
+                          portableRelativePath(root, right).getBytes(StandardCharsets.UTF_8)))
+              .toList();
+    } catch (IOException error) {
+      throw new GradleException("failed to enumerate Oliphaunt ICU data tree " + root, error);
+    }
+    byte[] buffer = new byte[64 * 1024];
+    for (Path file : files) {
+      String relative = portableRelativePath(root, file);
+      digest.update(relative.getBytes(StandardCharsets.UTF_8));
+      digest.update((byte) 0);
+      try {
+        digest.update(Long.toString(Files.size(file)).getBytes(StandardCharsets.UTF_8));
+      } catch (IOException error) {
+        throw new GradleException("failed to inspect Oliphaunt ICU data file " + file, error);
+      }
+      digest.update((byte) 0);
+      try (var input = Files.newInputStream(file)) {
+        int read;
+        while ((read = input.read(buffer)) != -1) {
+          digest.update(buffer, 0, read);
+        }
+      } catch (IOException error) {
+        throw new GradleException("failed to read Oliphaunt ICU data file " + file, error);
+      }
+      digest.update((byte) '\n');
+    }
+    return hex(digest.digest());
+  }
+
+  private static String portableRelativePath(Path root, Path file) {
+    return root.relativize(file).toString().replace(File.separatorChar, '/');
+  }
+
+  private static int compareUnsignedBytes(byte[] left, byte[] right) {
+    int limit = Math.min(left.length, right.length);
+    for (int index = 0; index < limit; index++) {
+      int comparison =
+          Integer.compare(Byte.toUnsignedInt(left[index]), Byte.toUnsignedInt(right[index]));
+      if (comparison != 0) {
+        return comparison;
+      }
+    }
+    return Integer.compare(left.length, right.length);
+  }
+
   private static MessageDigest newSha256Digest() {
     try {
       return MessageDigest.getInstance("SHA-256");
@@ -3124,8 +3214,8 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
     long runtimeBytes = treeBytes(runtimeFiles, "runtime/files");
     long templateBytes =
         treeBytes(
-            new File(root, "template-pgdata/files").toPath().toAbsolutePath().normalize(),
-            "template-pgdata/files");
+            new File(root, "cluster-seed/files").toPath().toAbsolutePath().normalize(),
+            "cluster-seed/files");
     long staticRegistryBytes =
         treeBytes(
             new File(root, "static-registry").toPath().toAbsolutePath().normalize(),
@@ -3163,7 +3253,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
     lines.add("kind\tid\textensions\tfiles\tbytes");
     lines.add("package\ttotal\t-\t-\t" + packageBytes);
     lines.add("package\truntime\t-\t-\t" + runtimeBytes);
-    lines.add("package\ttemplate-pgdata\t-\t-\t" + templateBytes);
+    lines.add("package\tcluster-seed\t-\t-\t" + templateBytes);
     lines.add("package\tstatic-registry\t-\t-\t" + staticRegistryBytes);
     lines.add("extensions\tselected\t-\t-\t" + fileBytes(selectedFiles));
     lines.addAll(extensionRows);
@@ -3392,6 +3482,15 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
             "schema",
             "cacheKey",
             "layout",
+            "artifactRole",
+            "catalogProfile",
+            "postgresMajor",
+            "physicalFormat",
+            "compatibilityKey",
+            "initialSuperuser",
+            "icuDataVersion",
+            "icuDataForm",
+            "icuDataTreeSha256",
             "source",
             "selectedExtensions",
             "extensions",

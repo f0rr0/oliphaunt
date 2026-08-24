@@ -423,8 +423,8 @@ prepare_runtime_resources() {
   template_source="$(
     find_latest_mobile_pgdata \
       Android \
-      "${OLIPHAUNT_EXPO_ANDROID_TEMPLATE_PGDATA_DIR:-}" \
-      OLIPHAUNT_EXPO_ANDROID_TEMPLATE_PGDATA_DIR \
+      "${OLIPHAUNT_EXPO_ANDROID_CLUSTER_SEED_DIR:-}" \
+      OLIPHAUNT_EXPO_ANDROID_CLUSTER_SEED_DIR \
       OLIPHAUNT_EXPO_ANDROID_INITDB
   )"
   local selected_extensions
@@ -617,7 +617,7 @@ build_apk() {
     fail "APK is missing lib/$android_abi/liboliphaunt.so"
   grep -Fxq "assets/oliphaunt/runtime/manifest.properties" "$apk_files" ||
     fail "APK is missing Oliphaunt runtime manifest"
-  grep -Fxq "assets/oliphaunt/template-pgdata/manifest.properties" "$apk_files" ||
+  grep -Fxq "assets/oliphaunt/cluster-seed/manifest.properties" "$apk_files" ||
     fail "APK is missing liboliphaunt template manifest"
   grep -Fxq "assets/oliphaunt/package-size.tsv" "$apk_files" ||
     fail "APK is missing Oliphaunt package-size report"

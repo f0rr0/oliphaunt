@@ -1,7 +1,7 @@
 import { applyNativeIcuDataEnvironment, applyNativeRuntimeLibraryEnvironment } from './common.js';
 import { loadNodeDirectAddon } from './node-addon.js';
 import { prepareNodeExtensionInstall, resolveNodeNativeInstall } from './assets-node.js';
-import { initializeNativePgdata } from './initialize.js';
+import { copyNativeClusterSeed, initializeNativePgdata } from './initialize.js';
 import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import type {
@@ -26,6 +26,8 @@ export async function createNodeNativeBinding(
         {
           ...install,
           runtimeDirectory: config.runtimeDirectory ?? install.runtimeDirectory,
+          clusterSeedDirectory:
+            config.runtimeDirectory === undefined ? install.clusterSeedDirectory : undefined,
         },
         config.extensions,
         {
@@ -34,7 +36,13 @@ export async function createNodeNativeBinding(
         },
       );
       applyNativeRuntimeLibraryEnvironment(extensionInstall.runtimeDirectory);
-      await prepareNodePgdata(config.pgdata, config.username, extensionInstall.runtimeDirectory);
+      await prepareNodePgdata(
+        config.pgdata,
+        config.username,
+        extensionInstall.runtimeDirectory,
+        extensionInstall.clusterSeedDirectory,
+        extensionInstall.catalogProfile,
+      );
       return addon.open({
         ...config,
         libraryPath: extensionInstall.libraryPath,
@@ -78,6 +86,8 @@ async function prepareNodePgdata(
   pgdata: string,
   username: string,
   runtimeDirectory?: string,
+  clusterSeedDirectory?: string,
+  catalogProfile: 'standard' | 'icu' = 'standard',
 ): Promise<void> {
   if (runtimeDirectory === undefined) {
     throw new Error('initializing a native database requires runtimeDirectory with initdb');
@@ -90,8 +100,16 @@ async function prepareNodePgdata(
   await initializeNativePgdata({
     root: dirname(pgdata),
     pgdata,
-    runInitdb: (staging) =>
-      new Promise<void>((resolve, reject) => {
+    populatePgdata: (staging) => {
+      if (username === 'postgres' && clusterSeedDirectory !== undefined) {
+        return copyNativeClusterSeed(clusterSeedDirectory, staging);
+      }
+      return new Promise<void>((resolve, reject) => {
+        const env = { ...process.env };
+        delete env.OLIPHAUNT_INTERNAL_ICU_READY;
+        if (catalogProfile === 'icu' && env.ICU_DATA !== undefined) {
+          env.OLIPHAUNT_INTERNAL_ICU_READY = '1';
+        }
         const child = spawn(
           executable,
           [
@@ -104,7 +122,7 @@ async function prepareNodePgdata(
             '--locale=C',
             '--encoding=UTF8',
           ],
-          { env: process.env, stdio: ['ignore', 'ignore', 'pipe'] },
+          { env, stdio: ['ignore', 'ignore', 'pipe'] },
         );
         const errors: Buffer[] = [];
         child.stderr.on('data', (chunk: Buffer) => errors.push(chunk));
@@ -118,7 +136,8 @@ async function prepareNodePgdata(
                 ),
               ),
         );
-      }),
+      });
+    },
   });
 }
 

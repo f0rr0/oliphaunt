@@ -337,54 +337,92 @@ pub(crate) fn verify_asset_manifest_hashes() -> Result<()> {
         }
     }
 
-    let pgdata_archive = base.join("prepopulated/pgdata-template.tar.zst");
-    verify_pgdata_template_hash(&pgdata_archive)?;
-    if let Some(template) = &manifest.pgdata_template {
-        verify_file_sha256(
-            &base.join(&template.archive),
-            &template.sha256,
-            "PGDATA template",
+    for (profile, seed) in &manifest.cluster_seeds {
+        verify_cluster_seed_hash(
+            profile,
+            &base.join(&seed.archive),
+            &base.join(&seed.manifest),
         )?;
-        ensure_file(&base.join(&template.manifest))?;
+        verify_file_sha256(
+            &base.join(&seed.archive),
+            &seed.sha256,
+            &format!("{profile} cluster seed"),
+        )?;
+        ensure_file(&base.join(&seed.manifest))?;
         ensure_eq(
-            &template.runtime_module_sha256,
+            &seed.runtime_module_sha256,
             &manifest.runtime.module_sha256,
-            "PGDATA template runtime module sha256",
+            &format!("{profile} cluster seed runtime module sha256"),
         )?;
         if let Some(initdb) = &manifest.initdb {
             ensure_eq(
-                &template.initdb_module_sha256,
+                &seed.initdb_module_sha256,
                 &initdb.module_sha256,
-                "PGDATA template initdb module sha256",
+                &format!("{profile} cluster seed initdb module sha256"),
             )?;
         }
     }
+    ensure!(
+        manifest
+            .cluster_seeds
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            == ["icu", "standard"],
+        "generated asset manifest must contain exactly the icu and standard cluster seeds"
+    );
 
     if is_release_staged_workspace() {
         verify_root_asset_metadata(&manifest, &manifest.runtime.module_sha256)?;
+        for profile in ["standard", "icu"] {
+            let seed = manifest.cluster_seeds.get(profile).ok_or_else(|| {
+                anyhow!("generated asset manifest is missing {profile} cluster seed")
+            })?;
+            verify_file_sha256(
+                &base.join(&seed.archive),
+                &cargo_metadata_value(
+                    "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml",
+                    &format!("cluster-seed-{profile}-archive-sha256"),
+                )?,
+                &format!("{profile} cluster seed archive metadata"),
+            )?;
+        }
     }
 
     println!("generated asset hashes match manifests");
     Ok(())
 }
 
-fn verify_pgdata_template_hash(pgdata_archive: &Path) -> Result<()> {
-    let manifest_path = Path::new(GENERATED_ASSETS_DIR).join("prepopulated/pgdata-template.json");
+fn verify_cluster_seed_hash(profile: &str, archive: &Path, manifest_path: &Path) -> Result<()> {
     ensure!(
-        manifest_path.exists() && pgdata_archive.exists(),
-        "generated assets must include the bundled PGDATA template required by the default runtime; expected both {} and {}",
+        manifest_path.exists() && archive.exists(),
+        "generated assets must include the {profile} cluster seed archive and manifest; expected both {} and {}",
         manifest_path.display(),
-        pgdata_archive.display()
+        archive.display()
     );
     let text = fs::read_to_string(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
     let manifest: serde_json::Value = serde_json::from_str(&text)
         .with_context(|| format!("parse {}", manifest_path.display()))?;
     let expected = manifest
-        .get("archiveSha256")
+        .get("archive")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|archive| archive.get("sha256"))
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| anyhow!("{} is missing archiveSha256", manifest_path.display()))?;
-    verify_file_sha256(pgdata_archive, expected, "PGDATA template archive")?;
+        .ok_or_else(|| anyhow!("{} is missing archive.sha256", manifest_path.display()))?;
+    ensure_eq(
+        manifest
+            .get("catalogProfile")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("<missing>"),
+        profile,
+        "cluster seed catalogProfile",
+    )?;
+    verify_file_sha256(
+        archive,
+        expected,
+        &format!("{profile} cluster seed archive"),
+    )?;
     Ok(())
 }
 
@@ -1278,7 +1316,8 @@ fn check_root_asset_metadata_keys() -> Result<()> {
         "postgres-patch-count",
         "runtime-archive-sha256",
         "oliphaunt-wasix-sha256",
-        "pgdata-template-archive-sha256",
+        "cluster-seed-standard-archive-sha256",
+        "cluster-seed-icu-archive-sha256",
         "initdb-wasix-sha256",
     ] {
         let needle = format!("{required} = \"");

@@ -3,11 +3,40 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 
+#[cfg(feature = "template-runner")]
+pub(crate) const INTERNAL_ICU_READY_ENV: &str = "OLIPHAUNT_INTERNAL_ICU_READY";
+#[cfg(feature = "template-runner")]
+pub(crate) const INTERNAL_ICU_READY_VALUE: &str = "1";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CatalogProfile {
+    Standard,
+    Icu,
+}
+
+impl CatalogProfile {
+    pub(crate) const ALL: [Self; 2] = [Self::Standard, Self::Icu];
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Icu => "icu",
+        }
+    }
+
+    pub(crate) const fn artifact_role(self) -> &'static str {
+        match self {
+            Self::Standard => "cluster-seed-standard",
+            Self::Icu => "cluster-seed-icu",
+        }
+    }
+}
+
 pub(crate) fn default_initdb_profile() -> &'static str {
     "allow-group-access,encoding=UTF8,locale=C.UTF-8,locale-provider=libc,auth=trust,no-sync"
 }
 
-pub(crate) fn clean_generated_pgdata_template(pgdata: &Path) -> Result<()> {
+pub(crate) fn clean_generated_cluster_seed(pgdata: &Path) -> Result<()> {
     for name in ["postmaster.pid", "postmaster.opts"] {
         let path = pgdata.join(name);
         if path.exists() {
@@ -18,7 +47,12 @@ pub(crate) fn clean_generated_pgdata_template(pgdata: &Path) -> Result<()> {
 }
 
 #[cfg(feature = "template-runner")]
-pub(crate) fn run_wasix_initdb_template(runtime_stage: &Path, work_root: &Path) -> Result<()> {
+pub(crate) fn run_wasix_initdb_cluster_seed(
+    runtime_stage: &Path,
+    work_root: &Path,
+    profile: CatalogProfile,
+    icu_data_root: Option<&Path>,
+) -> Result<()> {
     use std::env;
     use std::sync::Arc;
 
@@ -40,6 +74,23 @@ pub(crate) fn run_wasix_initdb_template(runtime_stage: &Path, work_root: &Path) 
     fs::create_dir_all(&pgdata_root)
         .with_context(|| format!("create {}", pgdata_root.display()))?;
     copy_tree_filtered(runtime_stage, &package_root, None)?;
+    let staged_icu_data = package_root.join("share/icu");
+    if staged_icu_data.exists() {
+        fs::remove_dir_all(&staged_icu_data)
+            .with_context(|| format!("remove {}", staged_icu_data.display()))?;
+    }
+    match (profile, icu_data_root) {
+        (CatalogProfile::Standard, None) => {}
+        (CatalogProfile::Standard, Some(_)) => {
+            bail!("standard cluster-seed generation must not receive ICU data")
+        }
+        (CatalogProfile::Icu, Some(icu_data_root)) => {
+            copy_tree_filtered(icu_data_root, &staged_icu_data, None)?;
+        }
+        (CatalogProfile::Icu, None) => {
+            bail!("ICU cluster-seed generation requires verified ICU data")
+        }
+    }
     copy_file(
         &runtime_stage.join("bin/initdb"),
         &package_dir.join("modules/initdb.wasm"),
@@ -50,9 +101,9 @@ pub(crate) fn run_wasix_initdb_template(runtime_stage: &Path, work_root: &Path) 
     )?;
     let wasmer_toml = r#"
 [package]
-name = "oliphaunt-wasix/initdb-template"
+name = "oliphaunt-wasix/initdb-cluster-seed"
 version = "0.0.0"
-description = "oliphaunt-wasix generated PGDATA template builder"
+description = "oliphaunt-wasix generated cluster-seed builder"
 
 [[module]]
 name = "initdb"
@@ -116,7 +167,7 @@ module = "postgres"
         runner.with_mount("/".to_owned(), root_fs);
         runner.with_mount("/base".to_owned(), pgdata_fs);
         runner.with_args(default_initdb_args());
-        runner.with_envs([
+        let mut environment = vec![
             ("PGDATA", "/base"),
             ("PGSYSCONFDIR", "/base"),
             ("HOME", "/home/postgres"),
@@ -128,7 +179,12 @@ module = "postgres"
             ("TZ", "UTC"),
             ("PGTZ", "UTC"),
             ("PG_COLOR", "never"),
-        ]);
+        ];
+        if profile == CatalogProfile::Icu {
+            environment.push(("ICU_DATA", "/share/icu"));
+            environment.push((INTERNAL_ICU_READY_ENV, INTERNAL_ICU_READY_VALUE));
+        }
+        runner.with_envs(environment);
         runner.with_stdin(Box::<NullFile>::default());
         runner.with_stdout(Box::new(stdout_file));
         runner.with_stderr(Box::new(stderr_file));
@@ -140,13 +196,18 @@ module = "postgres"
         print_captured_wasix_output("initdb stdout", &stdout);
         print_captured_wasix_output("initdb stderr", &stderr);
     }
-    run_result.context("run WASIX initdb to generate PGDATA template")
+    run_result.context("run WASIX initdb to generate cluster seed")
 }
 
 #[cfg(not(feature = "template-runner"))]
-pub(crate) fn run_wasix_initdb_template(_runtime_stage: &Path, _work_root: &Path) -> Result<()> {
+pub(crate) fn run_wasix_initdb_cluster_seed(
+    _runtime_stage: &Path,
+    _work_root: &Path,
+    _profile: CatalogProfile,
+    _icu_data_root: Option<&Path>,
+) -> Result<()> {
     bail!(
-        "`assets template` and template generation during release-build require `cargo run -p xtask --features template-runner -- ...` so xtask has a maintainer-only Wasmer compiler backend"
+        "`assets cluster-seeds` and seed generation during release-build require `cargo run -p xtask --features template-runner -- ...` so xtask has a maintainer-only Wasmer compiler backend"
     )
 }
 

@@ -114,7 +114,7 @@ export const PHYSICAL_FORMAT = ${JSON.stringify(identity.physicalFormat)};
 
 const byte = new URL('data:application/octet-stream;base64,AA==');
 export default Object.freeze({
-  schema: 'oliphaunt-wasix-runtime-v1',
+  schema: 'oliphaunt-wasix-runtime-v2',
   runtime: 'wasix',
   product: 'liboliphaunt-wasix',
   version: ${JSON.stringify(runtimeVersion)},
@@ -124,8 +124,13 @@ export default Object.freeze({
     size: 1,
     source: byte,
   },
-  pgdataArchive: {
-    archive: 'pgdata.tar.zst',
+  standardSeedArchive: {
+    archive: 'cluster-seeds/standard.tar.zst',
+    sha256: ${JSON.stringify(emptyByteSha256)},
+    size: 1,
+    source: byte,
+  },
+  standardSeedManifest: {
     sha256: ${JSON.stringify(emptyByteSha256)},
     size: 1,
     source: byte,
@@ -229,21 +234,25 @@ async function packRuntime({ scratch, tarballs, runtimeVersion }) {
   }
   const coreManifest = Buffer.from(JSON.stringify({ ...manifest, extensions: [] }));
   const runtimeSource = resolve(assetRoot, manifest.runtime.archive);
-  const pgdataSource = resolve(assetRoot, manifest['pgdata-template'].archive);
+  const standardSeed = manifest['cluster-seeds'].standard;
+  const seedSource = resolve(assetRoot, standardSeed.archive);
+  const seedManifestSource = resolve(assetRoot, standardSeed.manifest);
   const runtimeBytes = await readFile(runtimeSource);
-  const pgdataBytes = await readFile(pgdataSource);
+  const seedBytes = await readFile(seedSource);
+  const seedManifestBytes = await readFile(seedManifestSource);
   requireDigest(runtimeBytes, manifest.runtime.sha256, manifest.runtime.archive);
   requireDigest(
-    pgdataBytes,
-    manifest['pgdata-template'].sha256,
-    manifest['pgdata-template'].archive,
+    seedBytes,
+    standardSeed.sha256,
+    standardSeed.archive,
   );
   const build = await runtimeBuildProvenance(manifest);
   await cp(runtimeSource, resolve(staging, WASIX_RUNTIME_NPM_ASSET_PATHS.runtimeArchive));
-  await cp(pgdataSource, resolve(staging, WASIX_RUNTIME_NPM_ASSET_PATHS.pgdataArchive));
+  await cp(seedSource, resolve(staging, WASIX_RUNTIME_NPM_ASSET_PATHS.standardSeedArchive));
+  await cp(seedManifestSource, resolve(staging, WASIX_RUNTIME_NPM_ASSET_PATHS.standardSeedManifest));
   await writeFile(resolve(staging, WASIX_RUNTIME_NPM_ASSET_PATHS.manifest), coreManifest);
   const descriptor = {
-    schema: 'oliphaunt-wasix-runtime-v1',
+    schema: 'oliphaunt-wasix-runtime-v2',
     runtime: 'wasix',
     product: 'liboliphaunt-wasix',
     version: runtimeVersion,
@@ -252,10 +261,14 @@ async function packRuntime({ scratch, tarballs, runtimeVersion }) {
       sha256: sha256(runtimeBytes),
       size: runtimeBytes.length,
     },
-    pgdataArchive: {
-      archive: manifest['pgdata-template'].archive,
-      sha256: sha256(pgdataBytes),
-      size: pgdataBytes.length,
+    standardSeedArchive: {
+      archive: standardSeed.archive,
+      sha256: sha256(seedBytes),
+      size: seedBytes.length,
+    },
+    standardSeedManifest: {
+      sha256: sha256(seedManifestBytes),
+      size: seedManifestBytes.length,
     },
     manifest: { sha256: sha256(coreManifest), size: coreManifest.length },
   };
@@ -302,7 +315,7 @@ export async function runtimeBuildProvenance(manifest) {
     outputs['source-lane'] !== manifest['source-lane'] ||
     outputs['postgres-version'] !== manifest.runtime?.['postgres-version'] ||
     runtime?.sha256 !== manifest.runtime?.['module-sha256'] ||
-    manifest['pgdata-template']?.['runtime-module-sha256'] !== runtime?.sha256
+    manifest['cluster-seeds']?.standard?.['runtime-module-sha256'] !== runtime?.sha256
   ) {
     throw new Error('WASIX build outputs do not describe the packaged runtime assets');
   }

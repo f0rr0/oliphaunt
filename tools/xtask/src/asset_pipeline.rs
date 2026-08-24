@@ -1709,7 +1709,12 @@ fn package_assets_with_options(
     if include_aot {
         package_aot_artifacts(target, &outputs, manifest)?;
     }
-    generate_pgdata_template_from_runtime_stage(manifest, &outputs, &runtime_stage, assets_dir)?;
+    generate_cluster_seed_assets_from_runtime_stage(
+        manifest,
+        &outputs,
+        &runtime_stage,
+        assets_dir,
+    )?;
     write_asset_manifest(
         manifest,
         &outputs,
@@ -1743,7 +1748,7 @@ fn package_assets_with_options(
     Ok(())
 }
 
-pub(crate) fn generate_pgdata_template_asset(
+pub(crate) fn generate_cluster_seed_assets(
     manifest: &SourcesManifest,
     source_lane: &str,
 ) -> Result<()> {
@@ -1754,7 +1759,7 @@ pub(crate) fn generate_pgdata_template_asset(
             .with_context(|| format!("remove {}", stage_root.display()))?;
     }
     stage_runtime_tree(&outputs.build_dir, &outputs.source_dir, &stage_root)?;
-    generate_pgdata_template_from_runtime_stage(
+    generate_cluster_seed_assets_from_runtime_stage(
         manifest,
         &outputs,
         &stage_root,
@@ -1762,62 +1767,125 @@ pub(crate) fn generate_pgdata_template_asset(
     )
 }
 
-fn generate_pgdata_template_from_runtime_stage(
+fn generate_cluster_seed_assets_from_runtime_stage(
     manifest: &SourcesManifest,
     outputs: &BuildOutputs,
     runtime_stage: &Path,
     assets_dir: &Path,
 ) -> Result<()> {
-    let output_dir = assets_dir.join("prepopulated");
+    let output_dir = assets_dir.join("cluster-seeds");
     if output_dir.exists() {
         fs::remove_dir_all(&output_dir)
             .with_context(|| format!("remove {}", output_dir.display()))?;
     }
     fs::create_dir_all(&output_dir).with_context(|| format!("create {}", output_dir.display()))?;
 
-    let work_root = assets_dir.join("template-work");
-    if work_root.exists() {
+    let source_pins = effective_source_pins(manifest, outputs)?;
+    let source_fingerprint = outputs
+        .source_fingerprint
+        .as_deref()
+        .ok_or_else(|| anyhow!("cluster seeds require an exact PostgreSQL source fingerprint"))?;
+    let runtime_sha256 = sha256_file(outputs.module_path("runtime:oliphaunt")?)?;
+    let initdb_sha256 = sha256_file(outputs.module_path("tool:initdb")?)?;
+    let catalog_version = postgres_catalog_version(&outputs.source_dir)?;
+    let runtime_version = release_product_version("src/runtimes/liboliphaunt/wasix")?;
+    let icu_data_root = wasix_icu_data_root()?;
+    let icu_tree_sha256 = logical_tree_sha256(&icu_data_root)?;
+    let icu_source = source_pins
+        .iter()
+        .find(|source| source.name == "icu")
+        .ok_or_else(|| anyhow!("WASIX cluster-seed source pins do not contain ICU"))?;
+
+    for profile in template_runner::CatalogProfile::ALL {
+        let work_root = assets_dir.join(format!("cluster-seed-work-{}", profile.as_str()));
+        if work_root.exists() {
+            fs::remove_dir_all(&work_root)
+                .with_context(|| format!("remove {}", work_root.display()))?;
+        }
+        fs::create_dir_all(&work_root)
+            .with_context(|| format!("create {}", work_root.display()))?;
+        template_runner::run_wasix_initdb_cluster_seed(
+            runtime_stage,
+            &work_root,
+            profile,
+            (profile == template_runner::CatalogProfile::Icu).then_some(icu_data_root.as_path()),
+        )?;
+
+        let pgdata = work_root.join("pgdata");
+        ensure!(
+            pgdata.join("PG_VERSION").is_file() && pgdata.join("global/pg_control").is_file(),
+            "WASIX initdb did not create a complete {} cluster seed at {}",
+            profile.as_str(),
+            pgdata.display()
+        );
+        template_runner::clean_generated_cluster_seed(&pgdata)?;
+
+        let archive_relative = format!("cluster-seeds/{}.tar.zst", profile.as_str());
+        let archive = assets_dir.join(&archive_relative);
+        deterministic_tar_zst(&pgdata, Path::new(""), &archive)?;
+        let (expanded_bytes, regular_files, directories) = tree_stats(&pgdata)?;
+        let icu = (profile == template_runner::CatalogProfile::Icu).then(|| {
+            serde_json::json!({
+                "artifactRole": "icu-data",
+                "upstreamVersion": "76.1",
+                "sourceCommit": icu_source.commit,
+                "dataTreeSha256": icu_tree_sha256,
+                "dataVersion": "76.1",
+                "dataForm": "files-le"
+            })
+        });
+        let seed_manifest = serde_json::json!({
+            "schema": "oliphaunt-cluster-seed-v1",
+            "artifactRole": profile.artifact_role(),
+            "catalogProfile": profile.as_str(),
+            "runtime": {
+                "product": "liboliphaunt-wasix",
+                "version": runtime_version,
+                "engineFamily": "wasix",
+                "physicalFormat": "wasix-pg18-v1",
+                "postgresMajor": 18,
+                "compatibilityKey": "wasix-pg18-datum32-v1",
+                "consumerSha256": runtime_sha256,
+                "producerSha256": runtime_sha256,
+                "initdbSha256": initdb_sha256
+            },
+            "source": {
+                "fingerprint": source_fingerprint,
+                "catalogVersion": catalog_version,
+                "lane": outputs.source_lane,
+                "producer": "wasix-initdb"
+            },
+            "initProfile": template_runner::default_initdb_profile(),
+            "archive": {
+                "path": archive_relative,
+                "sha256": sha256_file(&archive)?,
+                "compressedBytes": fs::metadata(&archive)
+                    .with_context(|| format!("metadata {}", archive.display()))?
+                    .len(),
+                "expandedBytes": expanded_bytes,
+                "regularFiles": regular_files,
+                "directories": directories
+            },
+            "requiredRuntimeFeatures": if profile == template_runner::CatalogProfile::Icu {
+                vec!["icu"]
+            } else {
+                Vec::<&str>::new()
+            },
+            "extensions": {
+                "selected": Vec::<String>::new(),
+                "startupConfiguration": Vec::<String>::new()
+            },
+            "icu": icu
+        });
+        let manifest_path = output_dir.join(format!("{}.json", profile.as_str()));
+        fs::write(
+            &manifest_path,
+            format!("{}\n", serde_json::to_string_pretty(&seed_manifest)?),
+        )
+        .with_context(|| format!("write {}", manifest_path.display()))?;
         fs::remove_dir_all(&work_root)
             .with_context(|| format!("remove {}", work_root.display()))?;
     }
-    fs::create_dir_all(&work_root).with_context(|| format!("create {}", work_root.display()))?;
-
-    template_runner::run_wasix_initdb_template(runtime_stage, &work_root)?;
-
-    let pgdata = work_root.join("pgdata");
-    ensure!(
-        pgdata.join("PG_VERSION").is_file() && pgdata.join("global/pg_control").is_file(),
-        "WASIX initdb did not create a complete PGDATA template at {}",
-        pgdata.display()
-    );
-    template_runner::clean_generated_pgdata_template(&pgdata)?;
-
-    let archive = output_dir.join("pgdata-template.tar.zst");
-    deterministic_tar_zst(&pgdata, Path::new(""), &archive)?;
-    let manifest_path = output_dir.join("pgdata-template.json");
-    let source_pins = effective_source_pins(manifest, outputs)?;
-    let mut manifest_json = serde_json::json!({
-        "architectureIndependent": true,
-        "archiveSha256": sha256_file(&archive)?,
-        "catalogVersion": postgres_catalog_version(&outputs.source_dir)?,
-        "generatedBy": "wasix-initdb",
-        "initProfile": template_runner::default_initdb_profile(),
-        "initdbSha256": sha256_file(outputs.module_path("tool:initdb")?)?,
-        "postgresVersion": postgres_major_version(&outputs.postgres_version),
-        "sourceLane": outputs.source_lane.as_str(),
-        "sourcePinsSha256": source_pins_sha256(&source_pins)?,
-        "wasmerVersion": manifest.toolchain.wasmer,
-        "wasmSha256": sha256_file(outputs.module_path("runtime:oliphaunt")?)?,
-    });
-    if let Some(source_fingerprint) = &outputs.source_fingerprint {
-        manifest_json["sourceFingerprint"] = serde_json::json!(source_fingerprint);
-    }
-    fs::write(
-        &manifest_path,
-        format!("{}\n", serde_json::to_string_pretty(&manifest_json)?),
-    )
-    .with_context(|| format!("write {}", manifest_path.display()))?;
-    fs::remove_dir_all(&work_root).with_context(|| format!("remove {}", work_root.display()))?;
     Ok(())
 }
 
@@ -2342,7 +2410,7 @@ fn package_aot_artifacts(
     );
 
     let manifest = AotManifest {
-        format_version: 1,
+        format_version: 2,
         source_lane: Some(outputs.source_lane.clone()),
         source_fingerprint: outputs.source_fingerprint.clone(),
         postgres_version: Some(outputs.postgres_version.clone()),
@@ -2725,14 +2793,20 @@ fn write_asset_manifest(
                 .len(),
             link: read_wasm_link_metadata(initdb)?,
         }),
-        pgdata_template: Some(pgdata_template_asset_out(
-            sources,
-            outputs,
-            runtime_module,
-            initdb,
-            &assets_dir.join("prepopulated/pgdata-template.tar.zst"),
-            &assets_dir.join("prepopulated/pgdata-template.json"),
-        )?),
+        cluster_seeds: template_runner::CatalogProfile::ALL
+            .into_iter()
+            .map(|profile| {
+                cluster_seed_asset_out(
+                    sources,
+                    outputs,
+                    runtime_module,
+                    initdb,
+                    assets_dir,
+                    profile,
+                )
+                .map(|asset| (profile.as_str().to_owned(), asset))
+            })
+            .collect::<Result<BTreeMap<_, _>>>()?,
         extensions: extensions
             .iter()
             .map(|extension| {
@@ -3374,61 +3448,125 @@ mod tests {
     }
 }
 
-fn pgdata_template_asset_out(
+fn cluster_seed_asset_out(
     sources: &SourcesManifest,
     outputs: &BuildOutputs,
     runtime_module: &Path,
     initdb_module: &Path,
-    archive: &Path,
-    manifest: &Path,
-) -> Result<PgDataTemplateAssetOut> {
-    ensure_file(archive)?;
-    ensure_file(manifest)?;
+    assets_dir: &Path,
+    profile: template_runner::CatalogProfile,
+) -> Result<ClusterSeedAssetOut> {
+    let archive_relative = format!("cluster-seeds/{}.tar.zst", profile.as_str());
+    let manifest_relative = format!("cluster-seeds/{}.json", profile.as_str());
+    let archive = assets_dir.join(&archive_relative);
+    let manifest = assets_dir.join(&manifest_relative);
+    ensure_file(&archive)?;
+    ensure_file(&manifest)?;
     let manifest_text =
-        fs::read_to_string(manifest).with_context(|| format!("read {}", manifest.display()))?;
+        fs::read_to_string(&manifest).with_context(|| format!("read {}", manifest.display()))?;
     let manifest_json: serde_json::Value = serde_json::from_str(&manifest_text)
         .with_context(|| format!("parse {}", manifest.display()))?;
-    let template_source_lane = manifest_json
-        .get("sourceLane")
+    let seed_source = manifest_json
+        .get("source")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| anyhow!("{} is missing source identity", manifest.display()))?;
+    let seed_runtime = manifest_json
+        .get("runtime")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| anyhow!("{} is missing runtime identity", manifest.display()))?;
+    let seed_source_lane = seed_source
+        .get("lane")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("<missing>");
     ensure_eq(
-        template_source_lane,
+        seed_source_lane,
         outputs.source_lane.as_str(),
-        "PGDATA template manifest sourceLane",
+        "cluster seed manifest source.lane",
     )?;
     if let Some(source_fingerprint) = outputs.source_fingerprint.as_deref() {
-        let template_source_fingerprint = manifest_json
-            .get("sourceFingerprint")
+        let seed_source_fingerprint = seed_source
+            .get("fingerprint")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("<missing>");
         ensure_eq(
-            template_source_fingerprint,
+            seed_source_fingerprint,
             source_fingerprint,
-            "PGDATA template manifest sourceFingerprint",
+            "cluster seed manifest source.fingerprint",
         )?;
     }
+    ensure_eq(
+        manifest_json
+            .get("catalogProfile")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("<missing>"),
+        profile.as_str(),
+        "cluster seed manifest catalogProfile",
+    )?;
+    ensure_eq(
+        manifest_json
+            .get("artifactRole")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("<missing>"),
+        profile.artifact_role(),
+        "cluster seed manifest artifactRole",
+    )?;
+    let runtime_module_sha256 = sha256_file(runtime_module)?;
+    let initdb_module_sha256 = sha256_file(initdb_module)?;
+    ensure_eq(
+        seed_runtime
+            .get("consumerSha256")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("<missing>"),
+        &runtime_module_sha256,
+        "cluster seed manifest runtime.consumerSha256",
+    )?;
+    ensure_eq(
+        seed_runtime
+            .get("initdbSha256")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("<missing>"),
+        &initdb_module_sha256,
+        "cluster seed manifest runtime.initdbSha256",
+    )?;
     let source_pins = effective_source_pins(sources, outputs)?;
-    Ok(PgDataTemplateAssetOut {
-        archive: "prepopulated/pgdata-template.tar.zst".to_owned(),
-        manifest: "prepopulated/pgdata-template.json".to_owned(),
-        sha256: sha256_file(archive)?,
-        size: fs::metadata(archive)
+    Ok(ClusterSeedAssetOut {
+        artifact_role: profile.artifact_role().to_owned(),
+        catalog_profile: profile.as_str().to_owned(),
+        archive: archive_relative,
+        manifest: manifest_relative,
+        sha256: sha256_file(&archive)?,
+        size: fs::metadata(&archive)
             .with_context(|| format!("metadata {}", archive.display()))?
             .len(),
-        runtime_module_sha256: sha256_file(runtime_module)?,
-        initdb_module_sha256: sha256_file(initdb_module)?,
+        runtime_module_sha256,
+        initdb_module_sha256,
         source_pins_sha256: source_pins_sha256(&source_pins)?,
         source_lane: Some(outputs.source_lane.clone()),
         source_fingerprint: outputs.source_fingerprint.clone(),
         postgres_version: postgres_major_version(&outputs.postgres_version),
-        catalog_version: manifest_json
+        catalog_version: seed_source
             .get("catalogVersion")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("unknown")
             .to_owned(),
         init_profile: template_runner::default_initdb_profile().to_owned(),
         wasmer_version: sources.toolchain.wasmer.clone(),
+        physical_format: seed_runtime
+            .get("physicalFormat")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("<missing>")
+            .to_owned(),
+        compatibility_key: seed_runtime
+            .get("compatibilityKey")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("<missing>")
+            .to_owned(),
+        icu_data_tree_sha256: manifest_json
+            .get("icu")
+            .and_then(serde_json::Value::as_object)
+            .and_then(|icu| icu.get("dataTreeSha256"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
     })
 }
 
@@ -3527,6 +3665,114 @@ fn source_pins_sha256(sources: &[SourcePin]) -> Result<String> {
     Ok(sha256_bytes(&pins))
 }
 
+fn release_product_version(product_path: &str) -> Result<String> {
+    let path = Path::new(".release-please-manifest.json");
+    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let manifest: serde_json::Value =
+        serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
+    manifest
+        .get(product_path)
+        .and_then(serde_json::Value::as_str)
+        .filter(|version| !version.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            anyhow!(
+                "{} does not identify release product {product_path}",
+                path.display()
+            )
+        })
+}
+
+fn wasix_icu_data_root() -> Result<PathBuf> {
+    let root = Path::new(WASIX_POSTGRES_GENERATED_BUILD_DIR).join("work/icu-wasix/share/icu");
+    ensure!(
+        root.is_dir() && tree_contains_icu_files_data(&root)?,
+        "ICU cluster-seed generation requires the exact WASIX ICU files-data tree at {}; build the WASIX runtime first",
+        root.display()
+    );
+    Ok(root)
+}
+
+fn tree_contains_icu_files_data(root: &Path) -> Result<bool> {
+    for file in sorted_files(root)? {
+        let relative = file
+            .strip_prefix(root)
+            .with_context(|| format!("strip {} from {}", root.display(), file.display()))?;
+        if relative.components().any(|component| {
+            component
+                .as_os_str()
+                .to_str()
+                .is_some_and(|name| name.starts_with("icudt"))
+        }) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Digest the logical portable files tree, independent of host metadata.
+/// Each sorted row is `path NUL size NUL file-bytes LF`.
+fn logical_tree_sha256(root: &Path) -> Result<String> {
+    let mut digest = Sha256::new();
+    for file in sorted_files(root)? {
+        let relative = file
+            .strip_prefix(root)
+            .with_context(|| format!("strip {} from {}", root.display(), file.display()))?;
+        let relative = relative
+            .to_str()
+            .ok_or_else(|| anyhow!("ICU data path is not UTF-8: {}", file.display()))?
+            .replace('\\', "/");
+        ensure!(
+            !relative.is_empty() && !relative.contains('\0'),
+            "ICU data path is not portable: {}",
+            file.display()
+        );
+        let size = fs::metadata(&file)
+            .with_context(|| format!("metadata {}", file.display()))?
+            .len();
+        digest.update(relative.as_bytes());
+        digest.update([0]);
+        digest.update(size.to_string().as_bytes());
+        digest.update([0]);
+        digest.update(fs::read(&file).with_context(|| format!("read {}", file.display()))?);
+        digest.update([b'\n']);
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
+fn tree_stats(root: &Path) -> Result<(u64, u64, u64)> {
+    let mut expanded_bytes = 0_u64;
+    let mut regular_files = 0_u64;
+    let mut directories = 0_u64;
+    for entry in WalkDir::new(root) {
+        let entry = entry.with_context(|| format!("walk {}", root.display()))?;
+        if entry.path() == root {
+            continue;
+        }
+        if entry.file_type().is_file() {
+            regular_files += 1;
+            expanded_bytes = expanded_bytes
+                .checked_add(entry.metadata()?.len())
+                .ok_or_else(|| {
+                    anyhow!("expanded tree size overflow at {}", entry.path().display())
+                })?;
+        } else if entry.file_type().is_dir() {
+            directories += 1;
+        } else {
+            bail!(
+                "cluster seed must contain only regular files and directories: {}",
+                entry.path().display()
+            );
+        }
+    }
+    ensure!(
+        regular_files > 0 && directories > 0,
+        "cluster seed tree {} must contain files and directories",
+        root.display()
+    );
+    Ok((expanded_bytes, regular_files, directories))
+}
+
 fn postgres_catalog_version(source_dir: &Path) -> Result<String> {
     let path = source_dir.join("src/include/catalog/catversion.h");
     let text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
@@ -3574,15 +3820,16 @@ fn update_root_asset_metadata_in(
     );
     text = replace_metadata_value(text, "runtime-archive-sha256", &manifest.runtime.sha256);
     text = replace_metadata_value(text, "oliphaunt-wasix-sha256", runtime_module_sha256);
-    let pgdata_template = manifest
-        .pgdata_template
-        .as_ref()
-        .context("generated asset manifest is missing the PGDATA template")?;
-    text = replace_metadata_value(
-        text,
-        "pgdata-template-archive-sha256",
-        &pgdata_template.sha256,
-    );
+    for profile in ["standard", "icu"] {
+        let seed = asset_dir.join(format!("cluster-seeds/{profile}.tar.zst"));
+        if seed.exists() {
+            text = replace_metadata_value(
+                text,
+                &format!("cluster-seed-{profile}-archive-sha256"),
+                &sha256_file(&seed)?,
+            );
+        }
+    }
     let (pg_dump, psql) = required_wasix_tool_assets(manifest)?;
     let tools_npm_text = update_wasix_tools_npm_descriptor_rows(&tools_npm_text, pg_dump, psql)?;
     tools_text = replace_metadata_value(tools_text, "pg-dump-wasix-sha256", &pg_dump.sha256);

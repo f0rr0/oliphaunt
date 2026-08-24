@@ -2,12 +2,12 @@ import Foundation
 
 private let oliphauntRuntimeResourcesSchema = "oliphaunt-runtime-resources-v1"
 private let oliphauntRuntimePackageLayout = "postgres-runtime-files-v1"
-private let oliphauntTemplatePgdataPackageLayout = "postgres-template-pgdata-v1"
+private let oliphauntClusterSeedPackageLayout = "oliphaunt-cluster-seed-v1"
 
 struct OliphauntRuntimeResourceSizeReport: Equatable, Sendable {
     var packageBytes: UInt64
     var runtimeBytes: UInt64
-    var templatePgdataBytes: UInt64
+    var clusterSeedBytes: UInt64
     var staticRegistryBytes: UInt64
     var selectedExtensionBytes: UInt64
     var extensions: [OliphauntExtensionSizeReport]
@@ -20,7 +20,7 @@ struct OliphauntRuntimeResourceSizeReport: Equatable, Sendable {
     init(
         packageBytes: UInt64,
         runtimeBytes: UInt64,
-        templatePgdataBytes: UInt64,
+        clusterSeedBytes: UInt64,
         staticRegistryBytes: UInt64,
         selectedExtensionBytes: UInt64,
         extensions: [OliphauntExtensionSizeReport],
@@ -32,7 +32,7 @@ struct OliphauntRuntimeResourceSizeReport: Equatable, Sendable {
     ) {
         self.packageBytes = packageBytes
         self.runtimeBytes = runtimeBytes
-        self.templatePgdataBytes = templatePgdataBytes
+        self.clusterSeedBytes = clusterSeedBytes
         self.staticRegistryBytes = staticRegistryBytes
         self.selectedExtensionBytes = selectedExtensionBytes
         self.extensions = extensions
@@ -219,7 +219,7 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
         guard FileManager.default.fileExists(
             atPath: resourceRoot.appendingPathComponent("runtime/manifest.properties").path
         ) || FileManager.default.fileExists(
-            atPath: resourceRoot.appendingPathComponent("template-pgdata/manifest.properties").path
+            atPath: resourceRoot.appendingPathComponent("cluster-seed/manifest.properties").path
         ) else {
             return false
         }
@@ -242,7 +242,21 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
             try hardenOliphauntPgdataPermissions(at: pgdata)
             return true
         }
-        let template = try optionalAssetPackage(kind: .templatePgdata)
+        let template: AssetPackage?
+        if let icuResourceRoot = try Self.defaultIcuResourceRoot() {
+            let icuResources = OliphauntRuntimeResources(
+                resourceRoot: icuResourceRoot,
+                cacheRoot: cacheRoot
+            )
+            template = try icuResources.optionalAssetPackage(kind: .clusterSeed)
+            guard template != nil else {
+                throw OliphauntError.engine(
+                    "packaged ICU data is missing its matching ICU cluster seed"
+                )
+            }
+        } else {
+            template = try optionalAssetPackage(kind: .clusterSeed)
+        }
         guard let template else {
             return false
         }
@@ -263,7 +277,7 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
         let parent = pgdata.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
         let temp = parent.appendingPathComponent(
-            ".pgdata-template-\(template.cacheKey)-\(UUID().uuidString)",
+            ".cluster-seed-\(template.cacheKey)-\(UUID().uuidString)",
             isDirectory: true
         )
         try? FileManager.default.removeItem(at: temp)
@@ -446,6 +460,52 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
         let runtimeFeatures = try Self.validateRuntimeFeatures(
             manifest["runtimeFeatures"]?.split(separator: ",").map(String.init) ?? []
         )
+        let artifactRole = manifest["artifactRole"] ?? ""
+        let catalogProfile = manifest["catalogProfile"] ?? ""
+        switch kind {
+        case .runtime:
+            guard artifactRole == "runtime", catalogProfile.isEmpty else {
+                throw OliphauntError.engine(
+                    "liboliphaunt runtime manifest must declare artifactRole=runtime and an empty catalogProfile"
+                )
+            }
+        case .clusterSeed:
+            let expectedProfile = runtimeFeatures.contains("icu") ? "icu" : "standard"
+            let expectedRole = "cluster-seed-\(expectedProfile)"
+            guard runtimeFeatures.isSubset(of: ["icu"]),
+                  artifactRole == expectedRole,
+                  catalogProfile == expectedProfile,
+                  manifest["postgresMajor"] == "18",
+                  manifest["physicalFormat"] == "native-pg18-v1",
+                  manifest["compatibilityKey"] == "native-pg18-datum64-v1",
+                  manifest["initialSuperuser"] == "postgres"
+            else {
+                throw OliphauntError.engine(
+                    "liboliphaunt cluster-seed manifest has an incompatible native catalogue contract"
+                )
+            }
+            let icuDigest = manifest["icuDataTreeSha256"] ?? ""
+            if expectedProfile == "icu" {
+                guard manifest["icuDataVersion"] == "76.1",
+                      manifest["icuDataForm"] == "files-le",
+                      icuDigest.count == 64,
+                      icuDigest.utf8.allSatisfy({ byte in
+                          (48...57).contains(byte) || (97...102).contains(byte)
+                      })
+                else {
+                    throw OliphauntError.engine(
+                        "liboliphaunt ICU cluster-seed manifest does not bind the canonical ICU data tree"
+                    )
+                }
+            } else if !(manifest["icuDataVersion"] ?? "").isEmpty
+                        || !(manifest["icuDataForm"] ?? "").isEmpty
+                        || !icuDigest.isEmpty
+            {
+                throw OliphauntError.engine(
+                    "liboliphaunt standard cluster-seed manifest must not select ICU data"
+                )
+            }
+        }
         let mobileStaticRegistryState = try Self.validateMobileStaticRegistryState(
             manifest["mobileStaticRegistryState"]?.trimmingCharacters(in: .whitespacesAndNewlines)
         )
@@ -515,7 +575,7 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
     ) throws -> OliphauntRuntimeResourceSizeReport {
         var packageBytes: UInt64?
         var runtimeBytes: UInt64?
-        var templatePgdataBytes: UInt64?
+        var clusterSeedBytes: UInt64?
         var staticRegistryBytes: UInt64?
         var selectedExtensionBytes: UInt64?
         var extensionReports: [OliphauntExtensionSizeReport] = []
@@ -557,11 +617,11 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
                     source: source,
                     line: index + 2
                 )
-            case ("package", "template-pgdata"):
+            case ("package", "cluster-seed"):
                 try Self.setSizeReportValue(
-                    &templatePgdataBytes,
+                    &clusterSeedBytes,
                     bytes,
-                    row: "package/template-pgdata",
+                    row: "package/cluster-seed",
                     source: source,
                     line: index + 2
                 )
@@ -618,9 +678,9 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
         return OliphauntRuntimeResourceSizeReport(
             packageBytes: try Self.requireSizeReportValue(packageBytes, "package/total", source),
             runtimeBytes: try Self.requireSizeReportValue(runtimeBytes, "package/runtime", source),
-            templatePgdataBytes: try Self.requireSizeReportValue(
-                templatePgdataBytes,
-                "package/template-pgdata",
+            clusterSeedBytes: try Self.requireSizeReportValue(
+                clusterSeedBytes,
+                "package/cluster-seed",
                 source
             ),
             staticRegistryBytes: try Self.requireSizeReportValue(
@@ -811,14 +871,33 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
     }
 
     private static func defaultIcuDataURL() throws -> URL? {
+        guard let root = try defaultIcuResourceRoot() else {
+            return nil
+        }
+        return root
+            .appendingPathComponent("share", isDirectory: true)
+            .appendingPathComponent("icu", isDirectory: true)
+    }
+
+    private static func defaultIcuResourceRoot() throws -> URL? {
         for resourceDirectory in defaultBundleResourceURLs() {
-            for relative in [
-                "oliphaunt-icu/share/icu",
-                "share/icu",
-            ] {
-                let candidate = resourceDirectory.appendingPathComponent(relative, isDirectory: true)
-                if try icuDataRootContainsData(candidate) {
-                    return candidate
+            for relativeRoot in ["oliphaunt-icu", ""] {
+                let root = relativeRoot.isEmpty
+                    ? resourceDirectory
+                    : resourceDirectory.appendingPathComponent(relativeRoot, isDirectory: true)
+                let data = root
+                    .appendingPathComponent("share", isDirectory: true)
+                    .appendingPathComponent("icu", isDirectory: true)
+                if try icuDataRootContainsData(data) {
+                    let manifest = root
+                        .appendingPathComponent("cluster-seed", isDirectory: true)
+                        .appendingPathComponent("manifest.properties", isDirectory: false)
+                    guard FileManager.default.fileExists(atPath: manifest.path) else {
+                        throw OliphauntError.engine(
+                            "packaged ICU data at \(data.path) is missing its matching cluster seed"
+                        )
+                    }
+                    return root
                 }
             }
         }
@@ -906,14 +985,14 @@ func bundleResourceURLs(
 
 private enum AssetPackageKind {
     case runtime
-    case templatePgdata
+    case clusterSeed
 
     var label: String {
         switch self {
         case .runtime:
             return "runtime"
-        case .templatePgdata:
-            return "template-pgdata"
+        case .clusterSeed:
+            return "cluster-seed"
         }
     }
 
@@ -921,8 +1000,8 @@ private enum AssetPackageKind {
         switch self {
         case .runtime:
             return oliphauntRuntimePackageLayout
-        case .templatePgdata:
-            return oliphauntTemplatePgdataPackageLayout
+        case .clusterSeed:
+            return oliphauntClusterSeedPackageLayout
         }
     }
 

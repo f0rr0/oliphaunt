@@ -8,8 +8,9 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use oliphaunt::{
-    Error, Extension, NativePackagingResources as MaterializedNativeResources,
-    NativePackagingRuntime, Result, materialize_native_packaging_resources,
+    Error, Extension, NativePackagingCatalogProfile,
+    NativePackagingResources as MaterializedNativeResources, NativePackagingRuntime, Result,
+    materialize_native_packaging_resources,
 };
 
 /// Native product whose resources are being assembled.
@@ -108,7 +109,7 @@ const EXTENSION_ARTIFACT_INDEX_LAYOUT: &str = "oliphaunt-extension-artifact-inde
 const EXTENSION_ARTIFACT_INDEX_SIGNATURE_LAYOUT: &str =
     "oliphaunt-extension-artifact-index-signature-v1";
 const RUNTIME_FILES_LAYOUT: &str = "postgres-runtime-files-v1";
-const TEMPLATE_PGDATA_LAYOUT: &str = "postgres-template-pgdata-v1";
+const CLUSTER_SEED_LAYOUT: &str = "oliphaunt-cluster-seed-v1";
 const STATIC_REGISTRY_PACKAGE_LAYOUT: &str = "oliphaunt-static-registry-v1";
 const STATIC_REGISTRY_SOURCE_FILE: &str = "oliphaunt_static_registry.c";
 const STATIC_REGISTRY_SOURCE_MANIFEST_VALUE: &str = "static-registry/oliphaunt_static_registry.c";
@@ -1232,8 +1233,8 @@ pub struct NativeRuntimeResourceSizeReport {
     pub package_bytes: u64,
     /// Bytes in `runtime/files`.
     pub runtime_bytes: u64,
-    /// Bytes in `template-pgdata/files`.
-    pub template_pgdata_bytes: u64,
+    /// Bytes in `cluster-seed/files`.
+    pub cluster_seed_bytes: u64,
     /// Bytes in `static-registry`.
     pub static_registry_bytes: u64,
     /// De-duplicated bytes for all selected extension assets present in the
@@ -1258,16 +1259,16 @@ pub struct ExtensionSizeReport {
 /// and React Native SDKs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeRuntimeResources {
-    /// Root directory containing `runtime` and `template-pgdata` resources.
+    /// Root directory containing `runtime` and `cluster-seed` resources.
     pub root: PathBuf,
     /// Runtime files directory copied into app storage before opening.
     pub runtime_files: PathBuf,
     /// Template PGDATA files directory copied for first open on mobile.
-    pub template_pgdata_files: PathBuf,
+    pub cluster_seed_files: PathBuf,
     /// Content key of the source runtime cache.
     pub runtime_cache_key: String,
     /// Content key of the source template PGDATA cache.
-    pub template_cache_key: String,
+    pub cluster_seed_cache_key: String,
     /// Built-in extensions materialized into the runtime resources.
     pub extensions: Vec<Extension>,
     /// Optional runtime features materialized into the runtime resources.
@@ -1404,7 +1405,13 @@ pub fn build_native_runtime_resources(
         }
         NativePackagingMode::NativeServer => NativePackagingRuntime::PostgresServer,
     };
-    let materialized = materialize_native_packaging_resources(runtime, &extensions)?;
+    let catalog_profile = if runtime_features.contains(&NativeRuntimeFeature::Icu) {
+        NativePackagingCatalogProfile::Icu
+    } else {
+        NativePackagingCatalogProfile::Standard
+    };
+    let materialized =
+        materialize_native_packaging_resources(runtime, &extensions, catalog_profile)?;
     let root = options.output_dir.join("oliphaunt");
     prepare_output_root(&root, options.replace_existing)?;
 
@@ -1428,14 +1435,14 @@ pub fn build_native_runtime_resources(
 
     Ok(NativeRuntimeResources {
         runtime_files: root.join("runtime/files"),
-        template_pgdata_files: root.join("template-pgdata/files"),
+        cluster_seed_files: root.join("cluster-seed/files"),
         static_registry_manifest: root.join("static-registry/manifest.properties"),
         static_registry_source: (mobile_static_registry.state
             == MobileStaticRegistryState::Complete)
             .then(|| root.join(format!("static-registry/{STATIC_REGISTRY_SOURCE_FILE}"))),
         root,
         runtime_cache_key: materialized.runtime_cache_key,
-        template_cache_key: materialized.template_cache_key,
+        cluster_seed_cache_key: materialized.cluster_seed_cache_key,
         extensions,
         runtime_features,
         extension_names,
@@ -1979,6 +1986,9 @@ mod tests {
         let manifest = RuntimeResourceManifest {
             cache_key: "runtime-smoke",
             layout: RUNTIME_FILES_LAYOUT,
+            artifact_role: "runtime",
+            catalog_profile: "",
+            icu_data_tree_sha256: "",
             mode: NativePackagingMode::NativeDirect,
             extensions: &extensions,
             runtime_features: &[],
@@ -2004,6 +2014,9 @@ mod tests {
         let manifest = RuntimeResourceManifest {
             cache_key: "runtime-smoke",
             layout: RUNTIME_FILES_LAYOUT,
+            artifact_role: "runtime",
+            catalog_profile: "",
+            icu_data_tree_sha256: "",
             mode: NativePackagingMode::NativeDirect,
             extensions: &extensions,
             runtime_features: &[],
@@ -2023,6 +2036,9 @@ mod tests {
         let manifest = RuntimeResourceManifest {
             cache_key: "runtime-domain-smoke",
             layout: RUNTIME_FILES_LAYOUT,
+            artifact_role: "runtime",
+            catalog_profile: "",
+            icu_data_tree_sha256: "",
             mode: NativePackagingMode::NativeDirect,
             extensions: &extensions,
             runtime_features: &[],
@@ -2041,9 +2057,9 @@ mod tests {
         let root = temp.join("oliphaunt");
         let materialized = MaterializedNativeResources {
             runtime_dir: temp.join("materialized/runtime"),
-            template_pgdata: temp.join("materialized/template-pgdata"),
+            cluster_seed: temp.join("materialized/cluster-seed"),
             runtime_cache_key: "runtime-icu".to_owned(),
-            template_cache_key: "template".to_owned(),
+            cluster_seed_cache_key: "template".to_owned(),
         };
         write_file(
             &materialized
@@ -2055,7 +2071,7 @@ mod tests {
             &materialized.runtime_dir.join("share/icu/icudt76l.dat"),
             b"icu-data",
         );
-        write_file(&materialized.template_pgdata.join("PG_VERSION"), b"18\n");
+        write_file(&materialized.cluster_seed.join("PG_VERSION"), b"18\n");
         fs::create_dir_all(&root).unwrap();
 
         let metadata = mobile_static_registry_metadata(&[], &[]).unwrap();
@@ -2085,9 +2101,9 @@ mod tests {
         let root = temp.join("oliphaunt");
         let materialized = MaterializedNativeResources {
             runtime_dir: temp.join("materialized/runtime"),
-            template_pgdata: temp.join("materialized/template-pgdata"),
+            cluster_seed: temp.join("materialized/cluster-seed"),
             runtime_cache_key: "runtime-icu".to_owned(),
-            template_cache_key: "template".to_owned(),
+            cluster_seed_cache_key: "template".to_owned(),
         };
         write_file(
             &materialized
@@ -2099,7 +2115,7 @@ mod tests {
             &materialized.runtime_dir.join("share/icu/icudt76l.dat"),
             b"icu-data",
         );
-        write_file(&materialized.template_pgdata.join("PG_VERSION"), b"18\n");
+        write_file(&materialized.cluster_seed.join("PG_VERSION"), b"18\n");
         fs::create_dir_all(&root).unwrap();
 
         let metadata = mobile_static_registry_metadata(&[], &[]).unwrap();
@@ -2144,7 +2160,7 @@ mod tests {
             &root.join("runtime/files/share/postgresql/postgresql.conf.sample"),
             b"core-runtime",
         );
-        write_file(&root.join("template-pgdata/files/PG_VERSION"), b"18\n");
+        write_file(&root.join("cluster-seed/files/PG_VERSION"), b"18\n");
         write_file(
             &root.join("static-registry/manifest.properties"),
             b"state=pending\n",
@@ -2204,7 +2220,7 @@ mod tests {
             &root.join("runtime/files/share/postgresql/postgresql.conf.sample"),
             b"core-runtime",
         );
-        write_file(&root.join("template-pgdata/files/PG_VERSION"), b"18\n");
+        write_file(&root.join("cluster-seed/files/PG_VERSION"), b"18\n");
         write_file(
             &root.join("static-registry/manifest.properties"),
             b"state=pending\n",
@@ -2347,7 +2363,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             &runtime_files.join("share/postgresql/postgresql.conf.sample"),
             b"core-runtime",
         );
-        write_file(&temp.join("template-pgdata/files/PG_VERSION"), b"18\n");
+        write_file(&temp.join("cluster-seed/files/PG_VERSION"), b"18\n");
         let pending_metadata = mobile_static_registry_metadata(&extensions, &[]).unwrap();
         copy_prebuilt_extension_artifacts(
             &runtime_files,
@@ -2442,8 +2458,8 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         );
         copy_portable_tree(&runtime_files, &temp.join("oliphaunt/runtime/files")).unwrap();
         copy_portable_tree(
-            &temp.join("template-pgdata"),
-            &temp.join("oliphaunt/template-pgdata"),
+            &temp.join("cluster-seed"),
+            &temp.join("oliphaunt/cluster-seed"),
         )
         .unwrap();
         let report = runtime_resource_size_report(
@@ -2587,7 +2603,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             b"state=complete\n",
         );
         copy_portable_tree(&runtime_files, &root.join("runtime/files")).unwrap();
-        write_file(&root.join("template-pgdata/files/PG_VERSION"), b"18\n");
+        write_file(&root.join("cluster-seed/files/PG_VERSION"), b"18\n");
         let report =
             runtime_resource_size_report(&root, &extensions, Some("ios-xcframework"), &metadata)
                 .unwrap();
@@ -2600,7 +2616,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
     fn runtime_resource_tree_generates_static_registry_from_packaged_prebuilt_sql() {
         let temp = unique_temp_root("oliphaunt-prebuilt-extension-packaged-static-registry");
         let base_runtime = temp.join("base-runtime");
-        let template_pgdata = temp.join("template-pgdata");
+        let cluster_seed = temp.join("cluster-seed");
         write_file(
             &base_runtime.join("share/postgresql/postgresql.conf.sample"),
             b"core-runtime\n",
@@ -2623,7 +2639,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
                 .join(format!("acme_ext{}", std::env::consts::DLL_SUFFIX)),
             b"base-acme-module\n",
         );
-        write_file(&template_pgdata.join("PG_VERSION"), b"18\n");
+        write_file(&cluster_seed.join("PG_VERSION"), b"18\n");
 
         let artifact = temp.join("acme_ext");
         write_prebuilt_extension_artifact(
@@ -2657,9 +2673,9 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             NativePackagingMode::NativeServer,
             &MaterializedNativeResources {
                 runtime_dir: base_runtime,
-                template_pgdata,
+                cluster_seed,
                 runtime_cache_key: "runtime-cache".to_owned(),
-                template_cache_key: "template-cache".to_owned(),
+                cluster_seed_cache_key: "template-cache".to_owned(),
             },
             &extensions,
             &[],

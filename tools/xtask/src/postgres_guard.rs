@@ -1241,14 +1241,14 @@ pub(crate) fn check_source_lane_isolation() -> Result<()> {
         &[
             "AssetManifestMetadata",
             "asset_manifest_metadata",
-            "pgdata_template_source_fingerprint",
+            "cluster_seed_source_fingerprint",
         ],
     )?;
     ensure_file_contains_all(
         "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/base.rs",
         &[
-            "source_fingerprint: Option<String>",
-            "embedded PGDATA template source fingerprint mismatch",
+            ".cluster_seed_source_fingerprint",
+            "embedded cluster seed source fingerprint mismatch",
             "full_runtime_layout_matches_current",
             "ensure_existing_pgdata_matches_runtime",
             "existing PGDATA at {} is PostgreSQL {}",

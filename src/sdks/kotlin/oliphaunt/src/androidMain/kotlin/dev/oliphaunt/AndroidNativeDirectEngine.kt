@@ -69,7 +69,7 @@ internal class AndroidNativeDirectEngine(
                     OliphauntAndroidRuntimeAssets.preparePgdata(
                         assetManager = appContext.assets,
                         pgdata = pgdata,
-                        templatePgdata = runtime.templatePgdata,
+                        clusterSeed = runtime.clusterSeed,
                     )
                     validateCompleteAndroidPgdata(pgdata)
                     writeAndroidManagedRootDescriptor(storageDirectory)

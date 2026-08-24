@@ -25,6 +25,8 @@ func swiftPMExtensionResourcesComposeBaseNativeDependenciesMultipleAndSQLOnly() 
         """
         schema=oliphaunt-runtime-resources-v1
         layout=postgres-runtime-files-v1
+        artifactRole=runtime
+        catalogProfile=
         cacheKey=swiftpm-base-v1
         source=swiftpm-test
         selectedExtensions=
@@ -202,6 +204,8 @@ func swiftPMExtensionResourceCompositionFailsClosedOnMissingDependency() throws 
         """
         schema=oliphaunt-runtime-resources-v1
         layout=postgres-runtime-files-v1
+        artifactRole=runtime
+        catalogProfile=
         cacheKey=swiftpm-missing-base-v1
         extensions=
         runtimeFeatures=

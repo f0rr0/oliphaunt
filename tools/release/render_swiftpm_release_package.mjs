@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { readPortableArchiveEntries } from "./portable-archive.mjs";
 import { currentVersion } from "./product-version.mjs";
+import { validateNativeClusterSeedDirectory } from "./native-cluster-seed-contract.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const REPOSITORY = "f0rr0/oliphaunt";
@@ -302,6 +303,23 @@ function safeIcuRelativePath(memberName) {
   return relative;
 }
 
+function safeIcuClusterSeedRelativePath(memberName) {
+  const trimmed = memberName.replace(/^\.\//u, "").replace(/\/+$/u, "");
+  if (trimmed === "cluster-seed" || !trimmed.startsWith("cluster-seed/")) {
+    return undefined;
+  }
+  const relative = trimmed.slice("cluster-seed/".length);
+  const parts = relative.split("/");
+  if (
+    relative.length === 0
+    || path.posix.isAbsolute(relative)
+    || parts.some((part) => part.length === 0 || part === "." || part === "..")
+  ) {
+    fail(`SwiftPM ICU cluster-seed asset contains unsafe path: ${memberName}`);
+  }
+  return relative;
+}
+
 async function prepareIcuResourceTree(assetDir, version, generatedTree) {
   if (generatedTree === undefined) {
     return;
@@ -313,6 +331,7 @@ async function prepareIcuResourceTree(assetDir, version, generatedTree) {
   const target = path.join(generatedTree, "generated/swiftpm/OliphauntICU");
   await fs.rm(target, { recursive: true, force: true });
   await fs.mkdir(path.join(target, "share/icu"), { recursive: true });
+  await fs.mkdir(path.join(target, "cluster-seed"), { recursive: true });
 
   let copied = 0;
   let entries;
@@ -335,12 +354,32 @@ async function prepareIcuResourceTree(assetDir, version, generatedTree) {
       } else {
         fail(`SwiftPM ICU data asset member must be a regular file or directory: ${memberName}`);
       }
+      continue;
+    }
+    const seedRelative = safeIcuClusterSeedRelativePath(memberName);
+    if (seedRelative !== undefined) {
+      const destination = path.join(target, "cluster-seed", ...seedRelative.split("/"));
+      if (entry.isDirectory) {
+        await fs.mkdir(destination, { recursive: true });
+      } else if (entry.isFile) {
+        await fs.mkdir(path.dirname(destination), { recursive: true });
+        await fs.writeFile(destination, entry.data());
+      } else {
+        fail(`SwiftPM ICU cluster-seed member must be a regular file or directory: ${memberName}`);
+      }
     }
   }
 
   const icuEntries = await fs.readdir(path.join(target, "share/icu")).catch(() => []);
   if (copied === 0 || !icuEntries.some((name) => name.startsWith("icudt"))) {
     fail(`SwiftPM ICU resource product did not extract ICU icudt data from ${archivePath}`);
+  }
+  try {
+    validateNativeClusterSeedDirectory(path.join(target, "cluster-seed"), "icu", {
+      icuData: path.join(target, "share/icu"),
+    });
+  } catch (error) {
+    fail(`SwiftPM ICU resource product did not extract its matching ICU cluster seed from ${archivePath}: ${error instanceof Error ? error.message : String(error)}`);
   }
   await fs.writeFile(
     path.join(target, "OliphauntICU.swift"),
@@ -485,7 +524,7 @@ let package = Package(
         .target(
             name: "OliphauntICU",
             path: "generated/swiftpm/OliphauntICU",
-            resources: [.copy("share")]
+            resources: [.copy("share"), .copy("cluster-seed")]
         )
     ]
 )

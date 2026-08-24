@@ -29,8 +29,14 @@ pub(super) fn write_runtime_resource_tree(
     let runtime_package = root.join("runtime");
     let runtime_files = runtime_package.join("files");
     copy_portable_tree(&materialized.runtime_dir, &runtime_files)?;
-    remove_base_icu_data(&runtime_files)?;
-    copy_runtime_feature_assets(materialized, &runtime_files, runtime_features)?;
+    let icu_data_tree_sha256 = if runtime_features.contains(&NativeRuntimeFeature::Icu) {
+        logical_tree_sha256(&runtime_files.join("share/icu"))?
+    } else {
+        String::new()
+    };
+    if !runtime_features.contains(&NativeRuntimeFeature::Icu) {
+        remove_unselected_icu_data(&runtime_files)?;
+    }
     prune_unselected_built_in_extension_artifacts(
         &runtime_files,
         extensions,
@@ -49,6 +55,9 @@ pub(super) fn write_runtime_resource_tree(
         &RuntimeResourceManifest {
             cache_key: &materialized.runtime_cache_key,
             layout: RUNTIME_FILES_LAYOUT,
+            artifact_role: "runtime",
+            catalog_profile: "",
+            icu_data_tree_sha256: &icu_data_tree_sha256,
             mode,
             extensions,
             runtime_features,
@@ -58,17 +67,28 @@ pub(super) fn write_runtime_resource_tree(
     )?;
 
     let template_mobile_static_registry = mobile_static_registry_metadata(&[], &[])?;
-    let template_package = root.join("template-pgdata");
+    let template_package = root.join("cluster-seed");
     let template_files = template_package.join("files");
-    copy_portable_tree(&materialized.template_pgdata, &template_files)?;
+    copy_portable_tree(&materialized.cluster_seed, &template_files)?;
     write_manifest(
         &template_package,
         &RuntimeResourceManifest {
-            cache_key: &materialized.template_cache_key,
-            layout: TEMPLATE_PGDATA_LAYOUT,
+            cache_key: &materialized.cluster_seed_cache_key,
+            layout: CLUSTER_SEED_LAYOUT,
+            artifact_role: if runtime_features.contains(&NativeRuntimeFeature::Icu) {
+                "cluster-seed-icu"
+            } else {
+                "cluster-seed-standard"
+            },
+            catalog_profile: if runtime_features.contains(&NativeRuntimeFeature::Icu) {
+                "icu"
+            } else {
+                "standard"
+            },
+            icu_data_tree_sha256: &icu_data_tree_sha256,
             mode,
             extensions: &[],
-            runtime_features: &[],
+            runtime_features,
             shared_preload_libraries: &[],
             mobile_static_registry: &template_mobile_static_registry,
         },
@@ -77,126 +97,13 @@ pub(super) fn write_runtime_resource_tree(
     Ok(())
 }
 
-fn remove_base_icu_data(runtime_files: &Path) -> Result<()> {
+fn remove_unselected_icu_data(runtime_files: &Path) -> Result<()> {
     let icu = runtime_files.join("share/icu");
     if icu.exists() {
-        fs::remove_dir_all(&icu).map_err(|err| {
-            Error::Engine(format!(
-                "remove base runtime ICU data {}: {err}",
-                icu.display()
-            ))
-        })?;
+        fs::remove_dir_all(&icu)
+            .map_err(|err| Error::Engine(format!("remove {}: {err}", icu.display())))?;
     }
     Ok(())
-}
-
-fn copy_runtime_feature_assets(
-    materialized: &MaterializedNativeResources,
-    runtime_files: &Path,
-    runtime_features: &[NativeRuntimeFeature],
-) -> Result<()> {
-    if runtime_features.contains(&NativeRuntimeFeature::Icu) {
-        copy_icu_data(materialized, runtime_files)?;
-    }
-    Ok(())
-}
-
-fn copy_icu_data(materialized: &MaterializedNativeResources, runtime_files: &Path) -> Result<()> {
-    let source = find_icu_data_root(materialized).ok_or_else(|| {
-        Error::InvalidConfig(
-            "runtime feature 'icu' was selected, but no ICU data was found; install/stage the oliphaunt-icu package or set OLIPHAUNT_ICU_DATA_DIR"
-                .to_owned(),
-        )
-    })?;
-    let destination = runtime_files.join("share/icu");
-    if destination.exists() {
-        fs::remove_dir_all(&destination)
-            .map_err(|err| Error::Engine(format!("remove {}: {err}", destination.display())))?;
-    }
-    copy_portable_tree(&source, &destination)?;
-    if !icu_data_root_contains_data(&destination) {
-        return Err(Error::InvalidConfig(format!(
-            "runtime feature 'icu' source {} did not provide icudt data",
-            source.display()
-        )));
-    }
-    Ok(())
-}
-
-fn find_icu_data_root(materialized: &MaterializedNativeResources) -> Option<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Some(path) = std::env::var_os("OLIPHAUNT_ICU_DATA_DIR") {
-        candidates.push(PathBuf::from(path));
-    }
-    if let Some(path) = std::env::var_os("OLIPHAUNT_RESOURCES_DIR") {
-        candidates.push(PathBuf::from(path).join("icu-data/oliphaunt-icu/share/icu"));
-    }
-    candidates.push(materialized.runtime_dir.join("share/icu"));
-    if let Ok(cwd) = std::env::current_dir() {
-        candidates.push(cwd.join("target/oliphaunt-wasix/icu/share/icu"));
-        candidates.push(cwd.join("target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu"));
-        candidates.push(cwd.join("target/liboliphaunt-pg18/icu/share/icu"));
-        candidates.push(cwd.join("target/liboliphaunt-pg18/install/share/icu"));
-        candidates.push(cwd.join("target/native-liboliphaunt-pg18/install/share/icu"));
-        if let Ok(entries) = fs::read_dir(cwd.join("target")) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-                    continue;
-                };
-                if name.starts_with("liboliphaunt-pg18-") {
-                    candidates.push(path.join("icu/share/icu"));
-                }
-            }
-        }
-    }
-    candidates
-        .into_iter()
-        .find_map(|candidate| canonical_icu_data_root(&candidate))
-}
-
-fn canonical_icu_data_root(root: &Path) -> Option<PathBuf> {
-    if icu_data_root_contains_data(root) {
-        return Some(root.to_path_buf());
-    }
-    let entries = fs::read_dir(root).ok()?;
-    let mut candidates = entries
-        .filter_map(std::result::Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir() && icu_data_root_contains_data(path))
-        .collect::<Vec<_>>();
-    candidates.sort();
-    if candidates.len() == 1 {
-        candidates.pop()
-    } else {
-        None
-    }
-}
-
-fn icu_data_root_contains_data(root: &Path) -> bool {
-    let Ok(entries) = fs::read_dir(root) else {
-        return false;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if path.is_file() && name.starts_with("icudt") && name.ends_with(".dat") {
-            return true;
-        }
-        if path.is_dir() && name.starts_with("icudt") && directory_contains_file(&path) {
-            return true;
-        }
-    }
-    false
-}
-
-fn directory_contains_file(path: &Path) -> bool {
-    fs::read_dir(path)
-        .ok()
-        .into_iter()
-        .flatten()
-        .flatten()
-        .any(|entry| entry.path().is_file())
 }
 
 fn prune_unselected_built_in_extension_artifacts(
@@ -487,7 +394,7 @@ pub(super) fn runtime_resource_size_report(
     mobile_static_registry: &MobileStaticRegistryMetadata,
 ) -> Result<NativeRuntimeResourceSizeReport> {
     let runtime_files = root.join("runtime/files");
-    let template_pgdata_files = root.join("template-pgdata/files");
+    let cluster_seed_files = root.join("cluster-seed/files");
     let static_registry = root.join("static-registry");
     let selected_extension_paths = extension_asset_paths(
         &runtime_files,
@@ -513,13 +420,13 @@ pub(super) fn runtime_resource_size_report(
     extension_reports.sort_by(|left, right| left.name.cmp(&right.name));
 
     let runtime_bytes = tree_size(&runtime_files)?;
-    let template_pgdata_bytes = tree_size(&template_pgdata_files)?;
+    let cluster_seed_bytes = tree_size(&cluster_seed_files)?;
     let static_registry_bytes = tree_size(&static_registry)?;
     Ok(NativeRuntimeResourceSizeReport {
         path: root.join("package-size.tsv"),
-        package_bytes: runtime_bytes + template_pgdata_bytes + static_registry_bytes,
+        package_bytes: runtime_bytes + cluster_seed_bytes + static_registry_bytes,
         runtime_bytes,
-        template_pgdata_bytes,
+        cluster_seed_bytes,
         static_registry_bytes,
         selected_extension_bytes: byte_sum(&runtime_files, &selected_extension_paths)?,
         extensions: extension_reports,
@@ -533,10 +440,7 @@ pub(super) fn write_runtime_resource_size_report(
         "kind\tid\textensions\tfiles\tbytes".to_owned(),
         format!("package\ttotal\t-\t-\t{}", report.package_bytes),
         format!("package\truntime\t-\t-\t{}", report.runtime_bytes),
-        format!(
-            "package\ttemplate-pgdata\t-\t-\t{}",
-            report.template_pgdata_bytes
-        ),
+        format!("package\tcluster-seed\t-\t-\t{}", report.cluster_seed_bytes),
         format!(
             "package\tstatic-registry\t-\t-\t{}",
             report.static_registry_bytes
@@ -747,6 +651,9 @@ fn tree_size(path: &Path) -> Result<u64> {
 pub(super) struct RuntimeResourceManifest<'a> {
     pub(super) cache_key: &'a str,
     pub(super) layout: &'a str,
+    pub(super) artifact_role: &'a str,
+    pub(super) catalog_profile: &'a str,
+    pub(super) icu_data_tree_sha256: &'a str,
     pub(super) mode: NativePackagingMode,
     pub(super) extensions: &'a [RuntimeResourceExtension],
     pub(super) runtime_features: &'a [NativeRuntimeFeature],
@@ -770,9 +677,40 @@ fn write_manifest(package_dir: &Path, manifest: &RuntimeResourceManifest<'_>) ->
 }
 
 pub(super) fn manifest_text(manifest: &RuntimeResourceManifest<'_>) -> String {
+    let is_cluster_seed = manifest.artifact_role.starts_with("cluster-seed-");
+    let compatibility_key = if is_cluster_seed {
+        "native-pg18-datum64-v1"
+    } else {
+        ""
+    };
+    let physical_format = if is_cluster_seed {
+        "native-pg18-v1"
+    } else {
+        ""
+    };
+    let initial_superuser = if is_cluster_seed { "postgres" } else { "" };
+    let icu_data_version = if manifest.catalog_profile == "icu" {
+        "76.1"
+    } else {
+        ""
+    };
+    let icu_data_form = if manifest.catalog_profile == "icu" {
+        "files-le"
+    } else {
+        ""
+    };
     format!(
-        "schema={RUNTIME_RESOURCES_SCHEMA}\nlayout={}\nmode={}\ncacheKey={}\nselectedExtensions={}\nextensions={}\nruntimeFeatures={}\nsharedPreloadLibraries={}\nmobileStaticRegistryState={}\nmobileStaticRegistryRegistered={}\nmobileStaticRegistryPending={}\nnativeModuleStems={}\nmobileStaticRegistrySource={}\n",
+        "schema={RUNTIME_RESOURCES_SCHEMA}\nlayout={}\nartifactRole={}\ncatalogProfile={}\npostgresMajor={}\nphysicalFormat={}\ncompatibilityKey={}\ninitialSuperuser={}\nicuDataVersion={}\nicuDataForm={}\nicuDataTreeSha256={}\nmode={}\ncacheKey={}\nselectedExtensions={}\nextensions={}\nruntimeFeatures={}\nsharedPreloadLibraries={}\nmobileStaticRegistryState={}\nmobileStaticRegistryRegistered={}\nmobileStaticRegistryPending={}\nnativeModuleStems={}\nmobileStaticRegistrySource={}\n",
         manifest.layout,
+        manifest.artifact_role,
+        manifest.catalog_profile,
+        if is_cluster_seed { "18" } else { "" },
+        physical_format,
+        compatibility_key,
+        initial_superuser,
+        icu_data_version,
+        icu_data_form,
+        manifest.icu_data_tree_sha256,
         manifest.mode.as_manifest_value(),
         manifest.cache_key,
         selected_extension_names(manifest.extensions).join(","),
@@ -791,6 +729,66 @@ pub(super) fn manifest_text(manifest: &RuntimeResourceManifest<'_>) -> String {
             .join(","),
         mobile_static_registry_source_value(manifest.mobile_static_registry),
     )
+}
+
+fn logical_tree_sha256(root: &Path) -> Result<String> {
+    fn visit(root: &Path, current: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+        let entries = fs::read_dir(current)
+            .map_err(|err| Error::Engine(format!("read {}: {err}", current.display())))?;
+        for entry in entries {
+            let entry = entry.map_err(|err| {
+                Error::Engine(format!("read entry in {}: {err}", current.display()))
+            })?;
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path)
+                .map_err(|err| Error::Engine(format!("inspect {}: {err}", path.display())))?;
+            if metadata.file_type().is_symlink() {
+                return Err(Error::Engine(format!(
+                    "logical portable tree contains a symlink: {}",
+                    path.display()
+                )));
+            }
+            if metadata.is_dir() {
+                visit(root, &path, files)?;
+            } else if metadata.is_file() {
+                files.push(path);
+            }
+        }
+        let _ = root;
+        Ok(())
+    }
+
+    let mut files = Vec::new();
+    visit(root, root, &mut files)?;
+    files.sort_by(|left, right| {
+        left.strip_prefix(root)
+            .unwrap_or(left)
+            .as_os_str()
+            .cmp(right.strip_prefix(root).unwrap_or(right).as_os_str())
+    });
+    let mut digest = Sha256::new();
+    for file in files {
+        let relative = file
+            .strip_prefix(root)
+            .map_err(|err| Error::Engine(format!("strip {}: {err}", file.display())))?
+            .to_str()
+            .ok_or_else(|| {
+                Error::Engine(format!(
+                    "logical tree path is not UTF-8: {}",
+                    file.display()
+                ))
+            })?
+            .replace('\\', "/");
+        let bytes = fs::read(&file)
+            .map_err(|err| Error::Engine(format!("read {}: {err}", file.display())))?;
+        digest.update(relative.as_bytes());
+        digest.update([0]);
+        digest.update(bytes.len().to_string().as_bytes());
+        digest.update([0]);
+        digest.update(&bytes);
+        digest.update([b'\n']);
+    }
+    Ok(format!("{:x}", digest.finalize()))
 }
 
 pub(super) fn copy_portable_tree(source: &Path, destination: &Path) -> Result<()> {

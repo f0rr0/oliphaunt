@@ -44,6 +44,7 @@ function safeArchiveMember(value, label) {
   ) {
     throw error(label, "must be a safe POSIX archive path");
   }
+  if (value === ".") return value;
   const parts = value.split("/");
   if (parts.some((part) => part.length === 0 || part === "." || part === "..")) {
     throw error(label, "must be a safe POSIX archive path");
@@ -135,7 +136,7 @@ export function validateSelectionNeutralSwiftSourceCarrier(
     },
     {
       format: "tar.gz",
-      member: "share/icu",
+      member: ".",
       name: `liboliphaunt-${base.version}-icu-data.tar.gz`,
       role: "icu-data",
     },

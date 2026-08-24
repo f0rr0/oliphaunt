@@ -18,6 +18,7 @@ import {
   stageReleaseNotices,
 } from "./release-notices.mjs";
 import { requiredCoreRuntimePaths } from "./optimize_native_runtime_payload.mjs";
+import { logicalTreeSha256 } from "./native-cluster-seed-contract.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 
@@ -46,6 +47,28 @@ function archiveFixture(source, archive) {
 
 function sha256(file) {
   return createHash("sha256").update(readFileSync(file)).digest("hex");
+}
+
+function stageClusterSeed(root, profile, icuDataTreeSha256 = "") {
+  const seed = path.join(root, "cluster-seed");
+  mkdirSync(path.join(seed, "files/global"), { recursive: true });
+  writeFileSync(path.join(seed, "files/PG_VERSION"), "18\n");
+  writeFileSync(path.join(seed, "files/global/pg_control"), `${profile}\n`);
+  writeFileSync(path.join(seed, "manifest.properties"), [
+    "schema=oliphaunt-runtime-resources-v1",
+    "layout=oliphaunt-cluster-seed-v1",
+    `artifactRole=cluster-seed-${profile}`,
+    `catalogProfile=${profile}`,
+    "postgresMajor=18",
+    "physicalFormat=native-pg18-v1",
+    "compatibilityKey=native-pg18-datum64-v1",
+    "initialSuperuser=postgres",
+    `runtimeFeatures=${profile === "icu" ? "icu" : ""}`,
+    `icuDataVersion=${profile === "icu" ? "76.1" : ""}`,
+    `icuDataForm=${profile === "icu" ? "files-le" : ""}`,
+    `icuDataTreeSha256=${icuDataTreeSha256}`,
+    "",
+  ].join("\n"));
 }
 
 test("requires the exact Windows runtime import library when packaging the runtime carrier", () => {
@@ -96,11 +119,20 @@ test("freezes .crate bytes for native parts, aggregators, and facade and rejects
     for (const name of ["pg_basebackup", "pg_dump", "psql"]) {
       writeExecutable(path.join(tools, "runtime/bin", name), fixtureElf);
     }
+    stageClusterSeed(runtime, "standard");
+    const icu = path.join(root, "icu-fixture");
+    const icuData = path.join(icu, "share/icu");
+    mkdirSync(icuData, { recursive: true });
+    const icuBytes = Buffer.from("fixture ICU data\n");
+    writeFileSync(path.join(icuData, "icudt76l.dat"), icuBytes);
+    stageClusterSeed(icu, "icu", logicalTreeSha256([{ path: "icudt76l.dat", bytes: icuBytes }]));
     stageReleaseNotices(runtime, { profile: "native-runtime" });
     stageReleaseNotices(tools, { profile: "native-tools" });
+    stageReleaseNotices(icu, { profile: "native-icu-data" });
     mkdirSync(assets, { recursive: true });
     archiveFixture(runtime, path.join(assets, "liboliphaunt-9.8.7-linux-x64-gnu.tar.gz"));
     archiveFixture(tools, path.join(assets, "oliphaunt-tools-9.8.7-linux-x64-gnu.tar.gz"));
+    archiveFixture(icu, path.join(assets, "liboliphaunt-9.8.7-icu-data.tar.gz"));
 
     const packageArgs = [
       "tools/release/package-liboliphaunt-cargo-artifacts.mjs",
@@ -124,6 +156,11 @@ test("freezes .crate bytes for native parts, aggregators, and facade and rejects
     assert.deepEqual(new Set(manifest.packages.map(({ role }) => role)), new Set(["part", "aggregator", "facade"]));
     assert.ok(manifest.packages.every(({ cratePath }) => typeof cratePath === "string" && cratePath.endsWith(".crate")));
     assert.equal(readdirSync(output).filter((name) => name.endsWith(".crate")).length, manifest.packages.length);
+    const runtimeParts = manifest.packages.filter(({ role, kind }) => role === "part" && kind === "native-runtime");
+    assert.ok(runtimeParts.some(({ cratePath, name }) => commandOutput("tar", [
+      "-tzf",
+      path.resolve(ROOT, cratePath),
+    ]).includes(`${name}-9.8.7/payload/files/cluster-seed-icu/manifest.properties`)));
     for (const item of manifest.packages) {
       const expectedProfile = item.role === "part" ? item.kind : "code-facade";
       assert.equal(item.noticeProfile, expectedProfile, `${item.name} must freeze its carrier notice profile`);

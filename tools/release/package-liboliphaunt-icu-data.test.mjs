@@ -14,6 +14,7 @@ import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 
 import { currentProductVersionSync } from "./release-artifact-targets.mjs";
 import { ROOT } from "./release-graph.mjs";
+import { filesystemTreeRows, logicalTreeSha256 } from "./native-cluster-seed-contract.mjs";
 
 const SCRIPT = path.join(ROOT, "tools/release/package-liboliphaunt-icu-data.sh");
 const scratch = [];
@@ -29,7 +30,21 @@ function temporaryRoot() {
 }
 
 function run(source, output, { env = process.env } = {}) {
-  return spawnSync("bash", [SCRIPT, source, output], {
+  let icuDataTreeSha256;
+  try {
+    icuDataTreeSha256 = logicalTreeSha256(filesystemTreeRows(source));
+  } catch {
+    icuDataTreeSha256 = "a".repeat(64);
+  }
+  const seed = path.join(path.dirname(output), "icu-cluster-seed");
+  mkdirSync(path.join(seed, "files/global"), { recursive: true });
+  writeFileSync(path.join(seed, "files/PG_VERSION"), "18\n");
+  writeFileSync(path.join(seed, "files/global/pg_control"), "control\n");
+  writeFileSync(
+    path.join(seed, "manifest.properties"),
+    `schema=oliphaunt-runtime-resources-v1\nlayout=oliphaunt-cluster-seed-v1\nartifactRole=cluster-seed-icu\ncatalogProfile=icu\npostgresMajor=18\nphysicalFormat=native-pg18-v1\ncompatibilityKey=native-pg18-datum64-v1\ninitialSuperuser=postgres\nicuDataVersion=76.1\nicuDataForm=files-le\nicuDataTreeSha256=${icuDataTreeSha256}\nruntimeFeatures=icu\n`,
+  );
+  return spawnSync("bash", [SCRIPT, source, output, seed], {
     cwd: ROOT,
     encoding: "utf8",
     env,
@@ -56,20 +71,17 @@ test("packages the portable ICU payload deterministically outside platform relea
 
   const listing = spawnSync("tar", ["-tzf", archive], { encoding: "utf8" });
   expect(listing.status, listing.stderr).toBe(0);
-  expect(listing.stdout.split(/\r?\n/u).filter(Boolean)).toEqual([
-    ".",
-    "THIRD_PARTY_LICENSES/",
-    "share/",
-    "LICENSE",
-    "THIRD_PARTY_NOTICES.liboliphaunt-native.md",
-    "THIRD_PARTY_NOTICES.md",
-    "THIRD_PARTY_LICENSES/ICU-LICENSE",
-    "share/icu/",
-    "share/icu/icudt76l/",
-    "share/icu/icudt76l/coll/",
-    "share/icu/icudt76l/root.res",
-    "share/icu/icudt76l/coll/en.res",
-  ]);
+  const members = listing.stdout.split(/\r?\n/u).filter(Boolean);
+  expect(members).toContain("share/icu/icudt76l/root.res");
+  expect(members).toContain("cluster-seed/manifest.properties");
+  expect(members).toContain("cluster-seed/files/PG_VERSION");
+  expect(members).toContain("cluster-seed/files/global/pg_control");
+  expect(members).toContain("package-size.tsv");
+  expect(members).toContain("THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT");
+  expect(members).toContain("THIRD_PARTY_LICENSES/ICU-LICENSE");
+  const sizeReport = spawnSync("tar", ["-xOzf", archive, "package-size.tsv"], { encoding: "utf8" });
+  expect(sizeReport.status, sizeReport.stderr).toBe(0);
+  expect(sizeReport.stdout).toMatch(/^kind\tid\textensions\tfiles\tbytes\npackage\ttotal\t-\t-\t[0-9]+\npackage\ticu-data\t-\t-\t[0-9]+\npackage\tcluster-seed-icu\t-\t-\t[0-9]+\n$/u);
 
   const second = run(path.dirname(source), output);
   expect(second.status, second.stderr).toBe(0);

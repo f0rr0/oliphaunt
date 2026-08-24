@@ -28,7 +28,7 @@ internal data class OliphauntAndroidAssetPackage(
 internal data class OliphauntPackageSizeReport(
     val packageBytes: Long,
     val runtimeBytes: Long,
-    val templatePgdataBytes: Long,
+    val clusterSeedBytes: Long,
     val staticRegistryBytes: Long,
     val selectedExtensionBytes: Long,
     val extensions: List<OliphauntExtensionSizeReport>,
@@ -47,21 +47,21 @@ internal data class OliphauntExtensionSizeReport(
 
 internal data class OliphauntAndroidResolvedRuntime(
     val runtimeDirectory: String,
-    val templatePgdata: OliphauntAndroidAssetPackage?,
+    val clusterSeed: OliphauntAndroidAssetPackage?,
     val sharedPreloadLibraries: Set<String> = emptySet(),
 )
 
 internal object OliphauntAndroidRuntimeAssets {
     private const val RUNTIME_ASSET_ROOT = "oliphaunt/runtime"
-    private const val TEMPLATE_PGDATA_ASSET_ROOT = "oliphaunt/template-pgdata"
+    private const val CLUSTER_SEED_ASSET_ROOT = "oliphaunt/cluster-seed"
     private const val PACKAGE_SIZE_REPORT_ASSET = "oliphaunt/package-size.tsv"
     private const val RUNTIME_RESOURCES_SCHEMA = "oliphaunt-runtime-resources-v1"
     private const val RUNTIME_PACKAGE_LAYOUT = "postgres-runtime-files-v1"
-    private const val TEMPLATE_PGDATA_PACKAGE_LAYOUT = "postgres-template-pgdata-v1"
+    private const val CLUSTER_SEED_PACKAGE_LAYOUT = "oliphaunt-cluster-seed-v1"
     private const val MANIFEST_NAME = "manifest.properties"
     private const val FILES_DIR_NAME = "files"
     private const val STAMP_NAME = ".liboliphaunt-asset-cache-key"
-    private val requiredTemplatePgdataDirectories =
+    private val requiredClusterSeedDirectories =
         listOf(
             "pg_commit_ts",
             "pg_dynshmem",
@@ -87,11 +87,11 @@ internal object OliphauntAndroidRuntimeAssets {
     ): OliphauntAndroidResolvedRuntime {
         val requestedExtensionSet = validateExtensionIds(requestedExtensions)
         val explicitRuntime = explicitRuntimeDirectory?.takeIf(String::isNotEmpty)
-        val templatePgdata =
+        val clusterSeed =
             if (resourceRoot == null) {
-                packageManifestOrNull(context.assets, TEMPLATE_PGDATA_ASSET_ROOT)
+                packageManifestOrNull(context.assets, CLUSTER_SEED_ASSET_ROOT)
             } else {
-                filePackageManifestOrNull(resourceRoot, TEMPLATE_PGDATA_ASSET_ROOT)
+                filePackageManifestOrNull(resourceRoot, CLUSTER_SEED_ASSET_ROOT)
             }
         val packagedRuntime =
             if (resourceRoot == null) {
@@ -107,7 +107,7 @@ internal object OliphauntAndroidRuntimeAssets {
                 )
             return OliphauntAndroidResolvedRuntime(
                 runtimeDirectory = explicitRuntime,
-                templatePgdata = templatePgdata,
+                clusterSeed = clusterSeed,
                 sharedPreloadLibraries = sharedPreloadLibraries,
             )
         }
@@ -115,7 +115,7 @@ internal object OliphauntAndroidRuntimeAssets {
         val runtimeDirectory = materializePackagedRuntime(context, requestedExtensionSet, packagedRuntime)
         return OliphauntAndroidResolvedRuntime(
             runtimeDirectory = runtimeDirectory,
-            templatePgdata = templatePgdata,
+            clusterSeed = clusterSeed,
             sharedPreloadLibraries = packagedRuntime?.sharedPreloadLibraries.orEmpty(),
         )
     }
@@ -173,16 +173,16 @@ internal object OliphauntAndroidRuntimeAssets {
     fun preparePgdata(
         assetManager: AssetManager,
         pgdata: File,
-        templatePgdata: OliphauntAndroidAssetPackage?,
+        clusterSeed: OliphauntAndroidAssetPackage?,
     ) {
         if (File(pgdata, "PG_VERSION").isFile) {
             validateCompleteAndroidPgdata(pgdata)
             return
         }
-        if (templatePgdata == null) {
+        if (clusterSeed == null) {
             throw OliphauntException(
                 "Kotlin Android Oliphaunt requires packaged template PGDATA for new storage. " +
-                    "Package oliphaunt/template-pgdata assets or open storage whose pgdata directory already contains PG_VERSION.",
+                    "Package oliphaunt/cluster-seed assets or open storage whose pgdata directory already contains PG_VERSION.",
             )
         }
         if (pgdata.exists()) {
@@ -202,12 +202,12 @@ internal object OliphauntAndroidRuntimeAssets {
             throw OliphauntException("failed to create PGDATA parent at ${parent.absolutePath}")
         }
 
-        val temp = File(parent, ".pgdata-template-${templatePgdata.cacheKey}-${UUID.randomUUID()}")
+        val temp = File(parent, ".cluster-seed-${clusterSeed.cacheKey}-${UUID.randomUUID()}")
         temp.deleteRecursively()
         try {
-            copyPackageTree(assetManager, templatePgdata, temp)
-            ensureTemplatePgdataDirectoriesForAndroid(temp)
-            normalizeTemplatePgdataForAndroid(temp)
+            copyPackageTree(assetManager, clusterSeed, temp)
+            ensureClusterSeedDirectoriesForAndroid(temp)
+            normalizeClusterSeedForAndroid(temp)
             publishPreparedAndroidPgdata(temp, pgdata)
         } catch (error: Throwable) {
             temp.deleteRecursively()
@@ -374,6 +374,52 @@ internal object OliphauntAndroidRuntimeAssets {
             validateRuntimeFeatures(
                 properties.getProperty("runtimeFeatures").orEmpty().split(','),
             )
+        val artifactRole = properties.getProperty("artifactRole").orEmpty()
+        val catalogProfile = properties.getProperty("catalogProfile").orEmpty()
+        if (assetRoot == RUNTIME_ASSET_ROOT) {
+            if (artifactRole != "runtime" || catalogProfile.isNotEmpty()) {
+                throw OliphauntException(
+                    "Oliphaunt runtime manifest must declare artifactRole=runtime and an empty catalogProfile",
+                )
+            }
+        } else {
+            val expectedProfile = if ("icu" in runtimeFeatures) "icu" else "standard"
+            if (
+                runtimeFeatures.any { it != "icu" } ||
+                artifactRole != "cluster-seed-$expectedProfile" ||
+                catalogProfile != expectedProfile ||
+                properties.getProperty("postgresMajor") != "18" ||
+                properties.getProperty("physicalFormat") != "native-pg18-v1" ||
+                properties.getProperty("compatibilityKey") != "native-pg18-datum64-v1" ||
+                properties.getProperty("initialSuperuser") != "postgres"
+            ) {
+                throw OliphauntException(
+                    "Oliphaunt cluster-seed manifest has an incompatible native catalogue contract",
+                )
+            }
+            val icuDataVersion = properties.getProperty("icuDataVersion").orEmpty()
+            val icuDataForm = properties.getProperty("icuDataForm").orEmpty()
+            val icuDataTreeSha256 = properties.getProperty("icuDataTreeSha256").orEmpty()
+            if (expectedProfile == "icu") {
+                if (
+                    icuDataVersion != "76.1" ||
+                    icuDataForm != "files-le" ||
+                    !Regex("[0-9a-f]{64}").matches(icuDataTreeSha256)
+                ) {
+                    throw OliphauntException(
+                        "Oliphaunt ICU cluster-seed manifest does not bind the canonical ICU data tree",
+                    )
+                }
+            } else if (
+                icuDataVersion.isNotEmpty() ||
+                icuDataForm.isNotEmpty() ||
+                icuDataTreeSha256.isNotEmpty()
+            ) {
+                throw OliphauntException(
+                    "Oliphaunt standard cluster-seed manifest must not select ICU data",
+                )
+            }
+        }
         val mobileStaticRegistryState =
             validateMobileStaticRegistryState(
                 properties.getProperty("mobileStaticRegistryState")?.trim(),
@@ -459,7 +505,7 @@ internal object OliphauntAndroidRuntimeAssets {
 
         var packageBytes: Long? = null
         var runtimeBytes: Long? = null
-        var templatePgdataBytes: Long? = null
+        var clusterSeedBytes: Long? = null
         var staticRegistryBytes: Long? = null
         var selectedExtensionBytes: Long? = null
         val extensionReports = mutableListOf<OliphauntExtensionSizeReport>()
@@ -497,12 +543,12 @@ internal object OliphauntAndroidRuntimeAssets {
                         )
                 }
 
-                "package" to "template-pgdata" -> {
-                    templatePgdataBytes =
+                "package" to "cluster-seed" -> {
+                    clusterSeedBytes =
                         setSizeReportValue(
-                            current = templatePgdataBytes,
+                            current = clusterSeedBytes,
                             value = bytes,
-                            row = "package/template-pgdata",
+                            row = "package/cluster-seed",
                             source = source,
                             line = lineNumber,
                         )
@@ -566,10 +612,10 @@ internal object OliphauntAndroidRuntimeAssets {
         return OliphauntPackageSizeReport(
             packageBytes = requireSizeReportValue(packageBytes, "package/total", source),
             runtimeBytes = requireSizeReportValue(runtimeBytes, "package/runtime", source),
-            templatePgdataBytes =
+            clusterSeedBytes =
             requireSizeReportValue(
-                templatePgdataBytes,
-                "package/template-pgdata",
+                clusterSeedBytes,
+                "package/cluster-seed",
                 source,
             ),
             staticRegistryBytes =
@@ -594,8 +640,8 @@ internal object OliphauntAndroidRuntimeAssets {
         return normalized
     }
 
-    internal fun ensureTemplatePgdataDirectoriesForAndroid(pgdata: File) {
-        requiredTemplatePgdataDirectories.forEach { relative ->
+    internal fun ensureClusterSeedDirectoriesForAndroid(pgdata: File) {
+        requiredClusterSeedDirectories.forEach { relative ->
             val directory = File(pgdata, relative)
             if (!directory.mkdirs() && !directory.isDirectory) {
                 throw OliphauntException(
@@ -605,7 +651,7 @@ internal object OliphauntAndroidRuntimeAssets {
         }
     }
 
-    private fun normalizeTemplatePgdataForAndroid(pgdata: File) {
+    private fun normalizeClusterSeedForAndroid(pgdata: File) {
         val config = File(pgdata, "postgresql.conf")
         if (!config.isFile) {
             return
@@ -672,7 +718,7 @@ internal object OliphauntAndroidRuntimeAssets {
 
     private fun expectedLayout(assetRoot: String): String = when (assetRoot) {
         RUNTIME_ASSET_ROOT -> RUNTIME_PACKAGE_LAYOUT
-        TEMPLATE_PGDATA_ASSET_ROOT -> TEMPLATE_PGDATA_PACKAGE_LAYOUT
+        CLUSTER_SEED_ASSET_ROOT -> CLUSTER_SEED_PACKAGE_LAYOUT
         else -> throw OliphauntException("unsupported Oliphaunt asset root '$assetRoot'")
     }
 

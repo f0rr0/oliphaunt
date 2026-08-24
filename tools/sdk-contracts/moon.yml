@@ -21,6 +21,7 @@ tasks:
     tags: ["quality", "static"]
     command: "node tools/policy/generate-sdk-api-surface.mjs --check"
     deps:
+      - "sdk-contracts:cluster-seeds"
       - "sdk-contracts:doc-examples"
       - "sdk-contracts:fixtures"
       - "sdk-contracts:headers"
@@ -44,6 +45,16 @@ tasks:
       - "/src/bindings/wasix-ts/src/**/*.ts"
       - "/src/bindings/wasix-ts/package.json"
       - "/tools/policy/generate-sdk-api-surface.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  cluster-seeds:
+    tags: ["quality", "static"]
+    command: "bun tools/policy/check-cluster-seed-contract.mjs"
+    inputs:
+      - "/src/shared/cluster-seed-contract/**/*"
+      - "/tools/policy/check-cluster-seed-contract.mjs"
+      - "/tools/release/native-cluster-seed-contract.mjs"
     options:
       cache: true
       runFromWorkspaceRoot: true

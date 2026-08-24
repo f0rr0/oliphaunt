@@ -17,7 +17,7 @@ import {
   type ManagedChild,
 } from './node-adapter.js';
 import { PostgresWireClient } from './pgwire.js';
-import { initializeNativePgdata } from '../native/initialize.js';
+import { copyNativeClusterSeed, initializeNativePgdata } from '../native/initialize.js';
 import type { RuntimeBinding, RuntimeHandle } from './types.js';
 import {
   materializeNodeExtensionInstall,
@@ -36,6 +36,8 @@ type ServerTools = {
   executable: string;
   toolDirectory: string;
   icuDataDirectory?: string;
+  clusterSeedDirectory?: string;
+  catalogProfile?: 'standard' | 'icu';
 };
 
 export function createServerRuntimeBinding(): RuntimeBinding {
@@ -160,7 +162,7 @@ async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
     });
     const executable = tools.executable;
     const toolDirectory = tools.toolDirectory;
-    await initializeServerDataDir(config, toolDirectory);
+    await initializeServerDataDir(config, toolDirectory, tools);
     const pgCtl = await optionalTool(toolDirectory, 'pg_ctl');
     if (pgCtl === undefined) {
       throw new Error(`native server shutdown requires pg_ctl in ${toolDirectory}`);
@@ -214,6 +216,7 @@ async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
 export async function initializeServerDataDir(
   config: NormalizedOpenConfig,
   toolDirectory: string,
+  closure: Pick<ServerTools, 'icuDataDirectory' | 'clusterSeedDirectory' | 'catalogProfile'> = {},
 ): Promise<void> {
   const initdb = await optionalTool(toolDirectory, 'initdb');
   if (initdb === undefined) {
@@ -222,7 +225,16 @@ export async function initializeServerDataDir(
   await initializeNativePgdata({
     root: config.instanceDirectory,
     pgdata: config.pgdata,
-    runInitdb: async (staging) => {
+    populatePgdata: async (staging) => {
+      if (config.username === 'postgres' && closure.clusterSeedDirectory !== undefined) {
+        await copyNativeClusterSeed(closure.clusterSeedDirectory, staging);
+        return;
+      }
+      const env = await nativeServerRuntimeEnv(toolDirectory, closure.icuDataDirectory);
+      delete env.OLIPHAUNT_INTERNAL_ICU_READY;
+      if (closure.catalogProfile === 'icu' && env.ICU_DATA !== undefined) {
+        env.OLIPHAUNT_INTERNAL_ICU_READY = '1';
+      }
       await runCommand(
         initdb,
         [
@@ -235,7 +247,7 @@ export async function initializeServerDataDir(
           '--locale=C',
           '--encoding=UTF8',
         ],
-        await nativeServerRuntimeEnv(toolDirectory),
+        env,
       );
     },
   });
@@ -406,6 +418,8 @@ async function resolveServerTools(options: {
         executable,
         toolDirectory,
         icuDataDirectory: install.icuDataDirectory,
+        clusterSeedDirectory: install.clusterSeedDirectory,
+        catalogProfile: install.catalogProfile,
       };
     }
   }
@@ -416,7 +430,12 @@ async function resolveServerTools(options: {
 
 async function resolvePackageManagedServerInstall(
   extensions: readonly string[],
-): Promise<{ runtimeDirectory?: string; icuDataDirectory?: string }> {
+): Promise<{
+  runtimeDirectory?: string;
+  icuDataDirectory?: string;
+  clusterSeedDirectory?: string;
+  catalogProfile?: 'standard' | 'icu';
+}> {
   if (runtimeName() === 'deno') {
     if (extensions.length > 0) {
       throw new Error(
@@ -429,6 +448,8 @@ async function resolvePackageManagedServerInstall(
     return {
       runtimeDirectory: install.runtimeDirectory,
       icuDataDirectory: install.icuDataDirectory,
+      clusterSeedDirectory: install.clusterSeedDirectory,
+      catalogProfile: install.catalogProfile,
     };
   }
 

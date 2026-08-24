@@ -361,7 +361,7 @@ abstract class PrepareOliphauntAndroidAssetsTask : DefaultTask() {
     }
 
     private fun validateRuntimeResourcesSchema(root: File) {
-        for (name in listOf("runtime", "template-pgdata")) {
+        for (name in listOf("runtime", "cluster-seed")) {
             val manifest = root.resolve("$name/manifest.properties")
             require(manifest.isFile) {
                 "Oliphaunt Kotlin Android runtime resources are missing $name/manifest.properties under ${root.absolutePath}"

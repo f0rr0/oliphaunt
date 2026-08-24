@@ -16,6 +16,7 @@ import { gzipSync, gunzipSync } from "node:zlib";
 
 import {
   ICU_DATA_RELATIVE_PATH,
+  ICU_CLUSTER_SEED_RELATIVE_PATH,
   assertIcuPackedDataMatchesSource,
   assertIcuPackageManifest,
   assertIcuPackedInventory,
@@ -39,7 +40,21 @@ const canonicalEntries = [
   { name: "package/OliphauntICU.podspec", isFile: true },
   { name: "package/OliphauntICU.bundle/", isFile: false },
   { name: "package/OliphauntICU.bundle/share/icu/icudt77l/root.res", isFile: true },
+  { name: "package/OliphauntICU.bundle/cluster-seed/manifest.properties", isFile: true },
+  { name: "package/OliphauntICU.bundle/cluster-seed/files/PG_VERSION", isFile: true },
+  { name: "package/OliphauntICU.bundle/cluster-seed/files/global/pg_control", isFile: true },
 ];
+
+function stageIcuSeed(root) {
+  const seed = path.join(root, ...ICU_CLUSTER_SEED_RELATIVE_PATH.split("/"));
+  mkdirSync(path.join(seed, "files/global"), { recursive: true });
+  writeFileSync(
+    path.join(seed, "manifest.properties"),
+    "schema=oliphaunt-runtime-resources-v1\nlayout=oliphaunt-cluster-seed-v1\nartifactRole=cluster-seed-icu\ncatalogProfile=icu\n",
+  );
+  writeFileSync(path.join(seed, "files/PG_VERSION"), "18\n");
+  writeFileSync(path.join(seed, "files/global/pg_control"), "control\n");
+}
 
 test("ICU npm source descriptors encode the autolink-excluded, structure-preserving carrier contract", () => {
   assert.equal(manifest.oliphaunt.dataRelativePath, ICU_DATA_RELATIVE_PATH);
@@ -67,6 +82,7 @@ test("ICU npm pack includes one canonical bundle and preserves both native descr
     path.join(stage, ...ICU_DATA_RELATIVE_PATH.split("/"), "icudt-test", "root.res"),
     "fixture\n",
   );
+  stageIcuSeed(stage);
   stageReleaseNotices(stage, { profile: "native-icu-data" });
   mkdirSync(output);
   const packed = spawnSync(

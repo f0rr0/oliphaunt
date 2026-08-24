@@ -1055,6 +1055,17 @@ impl ArtifactManifest {
                     &relatives,
                     &native_tool_paths(&self.target, &["postgres", "initdb", "pg_ctl"]),
                 )?;
+                self.require_files(
+                    &relatives,
+                    &[
+                        "cluster-seed/manifest.properties",
+                        "cluster-seed/files/PG_VERSION",
+                        "cluster-seed/files/global/pg_control",
+                        "cluster-seed-icu/manifest.properties",
+                        "cluster-seed-icu/files/PG_VERSION",
+                        "cluster-seed-icu/files/global/pg_control",
+                    ],
+                )?;
                 self.reject_files(
                     &relatives,
                     &native_tool_path_variants(&["pg_basebackup", "pg_dump", "psql"]),
@@ -1073,7 +1084,14 @@ impl ArtifactManifest {
             ArtifactKind::WasixRuntime => {
                 self.require_files(
                     &relatives,
-                    &["oliphaunt.wasix.tar.zst", "bin/initdb.wasix.wasm"],
+                    &[
+                        "oliphaunt.wasix.tar.zst",
+                        "bin/initdb.wasix.wasm",
+                        "cluster-seeds/standard.tar.zst",
+                        "cluster-seeds/standard.json",
+                        "cluster-seeds/icu.tar.zst",
+                        "cluster-seeds/icu.json",
+                    ],
                 )?;
                 self.reject_files(
                     &relatives,
@@ -2327,6 +2345,12 @@ runtime-version = "0.1.0"
                     "runtime/bin/initdb",
                     "runtime/bin/pg_ctl",
                     tool,
+                    "cluster-seed/manifest.properties",
+                    "cluster-seed/files/PG_VERSION",
+                    "cluster-seed/files/global/pg_control",
+                    "cluster-seed-icu/manifest.properties",
+                    "cluster-seed-icu/files/PG_VERSION",
+                    "cluster-seed-icu/files/global/pg_control",
                 ],
             );
             let context = BuildContext {
@@ -2360,6 +2384,12 @@ runtime-version = "0.1.0"
                 "runtime/bin/postgres.exe",
                 "runtime/bin/initdb.exe",
                 "runtime/bin/pg_ctl.exe",
+                "cluster-seed/manifest.properties",
+                "cluster-seed/files/PG_VERSION",
+                "cluster-seed/files/global/pg_control",
+                "cluster-seed-icu/manifest.properties",
+                "cluster-seed-icu/files/PG_VERSION",
+                "cluster-seed-icu/files/global/pg_control",
             ],
         );
         let tools_manifest = write_artifact_manifest_with_relatives(
@@ -2405,6 +2435,12 @@ runtime-version = "0.1.0"
                 "runtime/bin/postgres.exe",
                 "runtime/bin/initdb.exe",
                 "runtime/bin/pg_ctl.exe",
+                "cluster-seed/manifest.properties",
+                "cluster-seed/files/PG_VERSION",
+                "cluster-seed/files/global/pg_control",
+                "cluster-seed-icu/manifest.properties",
+                "cluster-seed-icu/files/PG_VERSION",
+                "cluster-seed-icu/files/global/pg_control",
             ],
         );
         let context = BuildContext {
@@ -2466,7 +2502,15 @@ runtime-version = "0.1.0"
                 "wasix-runtime",
                 "portable",
                 None,
-                &["oliphaunt.wasix.tar.zst", "bin/initdb.wasix.wasm", tool],
+                &[
+                    "oliphaunt.wasix.tar.zst",
+                    "bin/initdb.wasix.wasm",
+                    "cluster-seeds/standard.tar.zst",
+                    "cluster-seeds/standard.json",
+                    "cluster-seeds/icu.tar.zst",
+                    "cluster-seeds/icu.json",
+                    tool,
+                ],
             );
             let context = BuildContext {
                 manifest_dir: temp.path().to_path_buf(),
@@ -2680,6 +2724,12 @@ executable = false
                 "runtime/bin/postgres".to_owned(),
                 "runtime/bin/initdb".to_owned(),
                 "runtime/bin/pg_ctl".to_owned(),
+                "cluster-seed/manifest.properties".to_owned(),
+                "cluster-seed/files/PG_VERSION".to_owned(),
+                "cluster-seed/files/global/pg_control".to_owned(),
+                "cluster-seed-icu/manifest.properties".to_owned(),
+                "cluster-seed-icu/files/PG_VERSION".to_owned(),
+                "cluster-seed-icu/files/global/pg_control".to_owned(),
             ],
             "native-tools" => vec![
                 "runtime/bin/pg_basebackup".to_owned(),
@@ -2689,8 +2739,10 @@ executable = false
             "wasix-runtime" => vec![
                 "manifest.json".to_owned(),
                 "oliphaunt.wasix.tar.zst".to_owned(),
-                "prepopulated/pgdata-template.tar.zst".to_owned(),
-                "prepopulated/pgdata-template.json".to_owned(),
+                "cluster-seeds/standard.tar.zst".to_owned(),
+                "cluster-seeds/standard.json".to_owned(),
+                "cluster-seeds/icu.tar.zst".to_owned(),
+                "cluster-seeds/icu.json".to_owned(),
                 "bin/initdb.wasix.wasm".to_owned(),
             ],
             "wasix-tools" => vec![

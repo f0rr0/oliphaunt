@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 
 import { releaseNoticeRows } from '../release/release-notices.mjs';
+import { logicalTreeSha256 } from '../release/native-cluster-seed-contract.mjs';
 
 import {
   elfFixture,
@@ -95,6 +96,7 @@ function nativeRuntimeEntries(target) {
   for (const stopword of SNOWBALL_STOPWORDS) {
     entries[`runtime/share/postgresql/tsearch_data/${stopword}`] = `${stopword}\n`;
   }
+  Object.assign(entries, nativeClusterSeedEntries('standard'));
   return entries;
 }
 
@@ -147,13 +149,13 @@ function byteSize(entries, prefix) {
 
 function runtimeResourcePackageSizeReport(entries) {
   const runtimeBytes = byteSize(entries, 'oliphaunt/runtime/files/');
-  const templateBytes = byteSize(entries, 'oliphaunt/template-pgdata/files/');
+  const clusterSeedBytes = byteSize(entries, 'oliphaunt/cluster-seed/files/');
   const staticRegistryBytes = byteSize(entries, 'oliphaunt/static-registry/');
   return [
     'kind\tid\textensions\tfiles\tbytes',
-    `package\ttotal\t-\t-\t${runtimeBytes + templateBytes + staticRegistryBytes}`,
+    `package\ttotal\t-\t-\t${runtimeBytes + clusterSeedBytes + staticRegistryBytes}`,
     `package\truntime\t-\t-\t${runtimeBytes}`,
-    `package\ttemplate-pgdata\t-\t-\t${templateBytes}`,
+    `package\tcluster-seed\t-\t-\t${clusterSeedBytes}`,
     `package\tstatic-registry\t-\t-\t${staticRegistryBytes}`,
     'extensions\tselected\t-\t-\t0',
     '',
@@ -169,11 +171,7 @@ function runtimeResourceEntries() {
       'release-fixture-runtime',
       'postgres-runtime-files-v1',
     ),
-    'oliphaunt/template-pgdata/files/PG_VERSION': '18\n',
-    'oliphaunt/template-pgdata/manifest.properties': runtimeResourceManifest(
-      'release-fixture-template',
-      'postgres-template-pgdata-v1',
-    ),
+    ...nativeClusterSeedEntries('standard', 'oliphaunt/cluster-seed'),
   };
   entries['oliphaunt/runtime/files/share/postgresql/extension/plpgsql.control'] =
     "default_version = '1.0'\n";
@@ -185,6 +183,51 @@ function runtimeResourceEntries() {
     entries[`oliphaunt/runtime/files/share/postgresql/tsearch_data/${stopword}`] = `${stopword}\n`;
   }
   entries['oliphaunt/package-size.tsv'] = runtimeResourcePackageSizeReport(entries);
+  return entries;
+}
+
+function nativeClusterSeedEntries(profile, prefix = 'cluster-seed', icuDataTreeSha256 = '') {
+  const runtimeFeatures = profile === 'icu' ? 'icu' : '';
+  const manifest = [
+    'schema=oliphaunt-runtime-resources-v1',
+    'layout=oliphaunt-cluster-seed-v1',
+    `artifactRole=cluster-seed-${profile}`,
+    `catalogProfile=${profile}`,
+    'postgresMajor=18',
+    'physicalFormat=native-pg18-v1',
+    'compatibilityKey=native-pg18-datum64-v1',
+    'initialSuperuser=postgres',
+    `runtimeFeatures=${runtimeFeatures}`,
+    `icuDataVersion=${profile === 'icu' ? '76.1' : ''}`,
+    `icuDataForm=${profile === 'icu' ? 'files-le' : ''}`,
+    `icuDataTreeSha256=${icuDataTreeSha256}`,
+    '',
+  ].join('\n');
+  return {
+    [`${prefix}/manifest.properties`]: manifest,
+    [`${prefix}/files/PG_VERSION`]: '18\n',
+    [`${prefix}/files/global/pg_control`]: `${profile}-fixture-control\n`,
+  };
+}
+
+function icuClosureEntries() {
+  const data = Buffer.from('not-real-icu-data\n');
+  const entries = {
+    'share/icu/icudt76l.dat': data,
+  };
+  const icuDataTreeSha256 = logicalTreeSha256([
+    { path: 'icudt76l.dat', bytes: data },
+  ]);
+  Object.assign(entries, nativeClusterSeedEntries('icu', 'cluster-seed', icuDataTreeSha256));
+  const icuDataBytes = byteSize(entries, 'share/icu/');
+  const clusterSeedBytes = byteSize(entries, 'cluster-seed/');
+  entries['package-size.tsv'] = [
+    'kind\tid\textensions\tfiles\tbytes',
+    `package\ttotal\t-\t-\t${icuDataBytes + clusterSeedBytes}`,
+    `package\ticu-data\t-\t-\t${icuDataBytes}`,
+    `package\tcluster-seed-icu\t-\t-\t${clusterSeedBytes}`,
+    '',
+  ].join('\n');
   return entries;
 }
 
@@ -328,7 +371,7 @@ async function writeFixtureAssets(assetDir, version) {
   );
   await writeProfiledArchive(
     path.join(assetDir, `liboliphaunt-${version}-icu-data.tar.gz`),
-    { 'share/icu/icudt76l.dat': 'not-real-icu-data\n' },
+    icuClosureEntries(),
     'native-icu-data',
   );
   await writeProfiledArchive(

@@ -162,7 +162,10 @@ const SINGLE_BACKEND_GUCS = {
 } as const;
 
 /** @internal PostgreSQL environment shared by both execution placements. */
-export function wasixPostgresEnvironment(options: SerializedOpenOptions): Record<string, string> {
+export function wasixPostgresEnvironment(
+  options: SerializedOpenOptions,
+  icuEnabled = false,
+): Record<string, string> {
   return {
     PREFIX: '/',
     PGDATA: '/base',
@@ -181,6 +184,7 @@ export function wasixPostgresEnvironment(options: SerializedOpenOptions): Record
     PGTZ: 'UTC',
     PG_COLOR: 'never',
     PROJ_DATA: '/share/proj',
+    ...(icuEnabled ? { ICU_DATA: '/share/icu' } : {}),
     // The canonical guest specializes backend atomics for a one-backend
     // WebAssembly instance. Every host placement must enforce that invariant.
     OLIPHAUNT_WASIX_SINGLE_BACKEND: '1',

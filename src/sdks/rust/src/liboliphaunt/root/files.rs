@@ -22,7 +22,7 @@ pub(super) enum CopyMode {
     ByteCopy,
 }
 
-pub(super) fn pgdata_template_copy_mode() -> CopyMode {
+pub(super) fn cluster_seed_copy_mode() -> CopyMode {
     match std::env::var(ENV_PGDATA_COPY_MODE) {
         Ok(value) if matches!(value.as_str(), "clone" | "prefer-clone" | "prefer_clone") => {
             CopyMode::PreferClone

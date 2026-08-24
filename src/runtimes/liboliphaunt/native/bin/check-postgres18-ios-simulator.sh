@@ -211,7 +211,7 @@ verify_probe_symbols() {
   rg -q --fixed-strings "oliphaunt_embedded_main" "$source_root/include/tcop/tcopprot.h"
   rg -q --fixed-strings "oliphaunt_embedded_kill" "$source_root/port/pqsignal.c"
   rg -q --fixed-strings "oliphaunt_embedded_raise" "$source_root/port/pqsignal.c"
-  rg -q --fixed-strings 'getenv("ICU_DATA")' "$source_root/bin/initdb/initdb.c"
+  rg -q --fixed-strings 'OLIPHAUNT_INTERNAL_ICU_READY' "$source_root/bin/initdb/initdb.c"
   rg -q --fixed-strings "oliphaunt_static_extension_magic(file_scanner->static_extension)" "$source_root/backend/utils/fmgr/dfmgr.c"
 }
 

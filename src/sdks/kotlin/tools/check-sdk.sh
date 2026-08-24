@@ -305,7 +305,7 @@ run_android_runtime_smoke() {
   mkdir -p \
     "$tmp_assets/oliphaunt/runtime/files/share/postgresql/extension" \
     "$tmp_assets/oliphaunt/static-registry" \
-    "$tmp_assets/oliphaunt/template-pgdata/files/base"
+    "$tmp_assets/oliphaunt/cluster-seed/files/base"
   printf 'runtime smoke\n' >"$tmp_assets/oliphaunt/runtime/files/share/postgresql/README.liboliphaunt-smoke"
   printf "comment = 'vector smoke control'\n" >"$tmp_assets/oliphaunt/runtime/files/share/postgresql/extension/vector.control"
   printf "select 'vector smoke sql';\n" >"$tmp_assets/oliphaunt/runtime/files/share/postgresql/extension/vector--1.0.sql"
@@ -332,8 +332,8 @@ MANIFEST
     "$tmp_assets" \
     "$tmp_static_jni" \
     vector
-  printf '18\n' >"$tmp_assets/oliphaunt/template-pgdata/files/PG_VERSION"
-  printf 'template smoke\n' >"$tmp_assets/oliphaunt/template-pgdata/files/base/README.liboliphaunt-smoke"
+  printf '18\n' >"$tmp_assets/oliphaunt/cluster-seed/files/PG_VERSION"
+  printf 'template smoke\n' >"$tmp_assets/oliphaunt/cluster-seed/files/base/README.liboliphaunt-smoke"
   cat >"$tmp_assets/oliphaunt/runtime/manifest.properties" <<'MANIFEST'
 schema=oliphaunt-runtime-resources-v1
 cacheKey=runtime-smoke
@@ -348,10 +348,10 @@ mobileStaticRegistryPending=
 nativeModuleStems=vector
 mobileStaticRegistrySource=static-registry/oliphaunt_static_registry.c
 MANIFEST
-  cat >"$tmp_assets/oliphaunt/template-pgdata/manifest.properties" <<'MANIFEST'
+  cat >"$tmp_assets/oliphaunt/cluster-seed/manifest.properties" <<'MANIFEST'
 schema=oliphaunt-runtime-resources-v1
 cacheKey=template-smoke
-layout=postgres-template-pgdata-v1
+layout=oliphaunt-cluster-seed-v1
 selectedExtensions=
 extensions=
 runtimeFeatures=
@@ -366,7 +366,7 @@ MANIFEST
 kind	id	extensions	files	bytes
 package	total	-	-	185
 package	runtime	-	-	100
-package	template-pgdata	-	-	40
+package	cluster-seed	-	-	40
 package	static-registry	-	-	45
 extensions	selected	-	-	30
 extension	vector	-	3	30
@@ -392,7 +392,7 @@ REPORT
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1
   fi
-  if [ ! -f "$generated/oliphaunt/template-pgdata/files/PG_VERSION" ]; then
+  if [ ! -f "$generated/oliphaunt/cluster-seed/files/PG_VERSION" ]; then
     echo "Kotlin Android generated assets did not include runtime-resources template PGDATA" >&2
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1
@@ -447,7 +447,7 @@ REPORT
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1
   fi
-  if ! grep -Fxq "runtimeFeatures=" "$generated/oliphaunt/template-pgdata/manifest.properties"; then
+  if ! grep -Fxq "runtimeFeatures=" "$generated/oliphaunt/cluster-seed/manifest.properties"; then
     echo "Kotlin Android generated template manifest did not preserve runtime feature metadata" >&2
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1

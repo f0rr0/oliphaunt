@@ -114,7 +114,7 @@ async function main(): Promise<void> {
   await zipExtractionWritesFilesAndRejectsTraversal();
   packageMetadataPathsAreConfinedToPackageRoot();
   await nodeResolverUsesInstalledPackages();
-  await nodeResolverUsesBaseCarrierRuntime();
+  await nodeResolverUsesStandardCarrierRuntime();
   await nodeIcuResolverAcceptsValidPortablePackage();
   await nodeExtensionMaterializationValidatesSelections();
   await nodeExtensionMaterializationAcceptsBuiltInPostgresDependency();
@@ -259,7 +259,7 @@ async function nodeResolverUsesInstalledPackages(): Promise<void> {
   }
 }
 
-async function nodeResolverUsesBaseCarrierRuntime(): Promise<void> {
+async function nodeResolverUsesStandardCarrierRuntime(): Promise<void> {
   const previousLibraryPath = process.env.LIBOLIPHAUNT_PATH;
   const previousRuntimeDir = process.env.OLIPHAUNT_RUNTIME_DIR;
   delete process.env.LIBOLIPHAUNT_PATH;
@@ -278,10 +278,17 @@ async function nodeResolverUsesBaseCarrierRuntime(): Promise<void> {
     for (const tool of nativeRuntimeToolsForTarget(target.id)) {
       await writeFixtureFile(join(runtimeBin, tool), `runtime:${tool}`, createdFiles);
     }
+    await writeClusterSeedFixture(
+      join(runtimePackageRoot, 'cluster-seed'),
+      'standard',
+      createdFiles,
+    );
     const install = await resolveNodeNativeInstall();
     assert.equal(install.libraryPath, join(runtimePackageRoot, target.libraryRelativePath));
     assert.equal(install.runtimeDirectory, join(runtimePackageRoot, target.runtimeRelativePath));
     assert.equal(install.icuDataDirectory, undefined);
+    assert.equal(install.clusterSeedDirectory, join(runtimePackageRoot, 'cluster-seed'));
+    assert.equal(install.catalogProfile, 'standard');
   } finally {
     restoreEnv('LIBOLIPHAUNT_PATH', previousLibraryPath);
     restoreEnv('OLIPHAUNT_RUNTIME_DIR', previousRuntimeDir);
@@ -302,6 +309,7 @@ async function nodeIcuResolverAcceptsValidPortablePackage(): Promise<void> {
           kind: 'icu-data',
           target: 'portable',
           dataRelativePath: 'OliphauntICU.bundle/share/icu',
+          clusterSeedRelativePath: 'OliphauntICU.bundle/cluster-seed',
         },
       }),
       'utf8',
@@ -309,6 +317,7 @@ async function nodeIcuResolverAcceptsValidPortablePackage(): Promise<void> {
     const dataDirectory = join(root, 'OliphauntICU.bundle/share/icu');
     await mkdir(dataDirectory, { recursive: true });
     await writeFile(join(dataDirectory, 'icudt76l.dat'), 'icu');
+    await writeClusterSeedFixture(join(root, 'OliphauntICU.bundle/cluster-seed'), 'icu', []);
     assert.equal(await resolveNodeIcuDataDirectory('9.9.9', root), await realpath(dataDirectory));
     await assert.rejects(
       () => resolveNodeIcuDataDirectory('9.9.8', root),
@@ -1915,6 +1924,34 @@ async function writeFixtureFile(
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, contents, 'utf8');
   createdFiles.push(path);
+}
+
+async function writeClusterSeedFixture(
+  root: string,
+  profile: 'standard' | 'icu',
+  createdFiles: string[],
+): Promise<void> {
+  await writeFixtureFile(join(root, 'files', 'PG_VERSION'), '18\n', createdFiles);
+  await writeFixtureFile(join(root, 'files', 'global', 'pg_control'), 'control', createdFiles);
+  await writeFixtureFile(
+    join(root, 'manifest.properties'),
+    [
+      'schema=oliphaunt-runtime-resources-v1',
+      'layout=oliphaunt-cluster-seed-v1',
+      `artifactRole=cluster-seed-${profile}`,
+      `catalogProfile=${profile}`,
+      'postgresMajor=18',
+      'physicalFormat=native-pg18-v1',
+      'compatibilityKey=native-pg18-datum64-v1',
+      'initialSuperuser=postgres',
+      `icuDataVersion=${profile === 'icu' ? '76.1' : ''}`,
+      `icuDataForm=${profile === 'icu' ? 'files-le' : ''}`,
+      `icuDataTreeSha256=${profile === 'icu' ? 'a'.repeat(64) : ''}`,
+      `runtimeFeatures=${profile === 'icu' ? 'icu' : ''}`,
+      '',
+    ].join('\n'),
+    createdFiles,
+  );
 }
 
 async function removeFixtureFiles(files: string[], stopRoots: string[]): Promise<void> {

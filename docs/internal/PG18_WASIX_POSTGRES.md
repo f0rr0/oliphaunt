@@ -419,7 +419,7 @@ the applied runtime, tool, contrib, and hot-path patch markers.  The PG18
 source-spine command defaults to source-only validation; `--strict-local` also
 requires the shared non-backend source checkouts to be present, clean, and pinned.
 
-Once those outputs exist, `assets template` and
+Once those outputs exist, `assets cluster-seeds` and
 `assets package` discover the PG18 build tree,
 derive manifest PostgreSQL versions from the prepared PG18 source markers, and
 write explicit PG18 source-fingerprint and PG18 source pins into
@@ -436,11 +436,10 @@ those markers after configure, companion build stages fail closed if either
 marker drifts, and xtask checks the markers again before packaging, template, or
 build-output manifest generation can consume an existing build tree.
 
-PGDATA template manifests produced by `assets template --source fingerprint ...` also
-carry camelCase `sourceLane` metadata, and the asset manifest's
-`pgdata-template` entry records the same lane.  PG18 templates also carry the
-same source fingerprint as the runtime assets.  Older released templates without
-those fields still parse as released-lane templates.
+Cluster seed manifests produced by `assets cluster-seeds` also carry camelCase
+`sourceLane` metadata, and the asset manifest's `cluster-seeds` entries record
+the same lane. PG18 cluster seeds also carry the same source fingerprint as the
+runtime assets.
 
 The source-spine guard also checks the prepared PG18 tree against the runtime
 assets and promoted contrib build plan.  The required `plpgsql`,
@@ -484,7 +483,7 @@ AOT outputs write to the stable generated directory
 `assets check-aot` verifies those fields before checking module hashes.
 
 The Rust asset parser preserves the same source-fingerprint metadata that xtask
-writes into PG18 asset manifests. Embedded PGDATA template manifests must match
+writes into PG18 asset manifests. Embedded cluster seed manifests must match
 the top-level asset manifest fingerprint, and bundled AOT manifests must match
 the same fingerprint and PostgreSQL version before their module hashes are
 accepted. The `liboliphaunt-wasix-portable` build script probes
@@ -607,11 +606,10 @@ Verified locally:
   fingerprint and PostgreSQL version markers match the prepared source.
 - Packaged AOT manifests now carry explicit `source fingerprint`, `postgres-version`,
   and source-fingerprint metadata.
-- PGDATA template manifests and asset-manifest `pgdata-template` entries now
-  carry lane metadata as well, plus PG18 source fingerprints for experimental
-  PG18 templates.
-- Runtime asset parsing preserves PG18 source fingerprints, and embedded PGDATA
-  template/AOT manifests are checked against the bundled asset manifest before
+- Cluster seed manifests and asset-manifest `cluster-seeds` entries now carry
+  lane metadata as well, plus PG18 source fingerprints.
+- Runtime asset parsing preserves PG18 source fingerprints, and embedded cluster
+  seed/AOT manifests are checked against the bundled asset manifest before
   use.
 - WASIX perf reports include bundled runtime asset provenance, so benchmark JSON
   identifies the measured source selection, PostgreSQL version, and PG18 source

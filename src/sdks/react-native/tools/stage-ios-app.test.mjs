@@ -324,11 +324,17 @@ async function craftedTar(archive, entries) {
 async function highCardinalityIcuTar(archive, localeCount, legalRoot) {
   await fs.mkdir(path.dirname(archive), { recursive: true });
   const script = [
-    "import io, os, sys, tarfile",
+    "import hashlib, io, os, sys, tarfile",
     "archive, encoded_count, legal_root = sys.argv[1:]",
+    "rows = [('share/icu/icudt77l.dat', b'fixture')] + [(f'share/icu/locale-{index:04d}.res', b'fixture') for index in range(int(encoded_count))]",
+    "digest = hashlib.sha256()",
+    "for name, data in rows:",
+    "  relative = name.removeprefix('share/icu/')",
+    "  digest.update(relative.encode()); digest.update(b'\\0'); digest.update(str(len(data)).encode()); digest.update(b'\\0'); digest.update(data); digest.update(b'\\n')",
+    "seed_manifest = ('schema=oliphaunt-runtime-resources-v1\\nlayout=oliphaunt-cluster-seed-v1\\nartifactRole=cluster-seed-icu\\ncatalogProfile=icu\\npostgresMajor=18\\nphysicalFormat=native-pg18-v1\\ncompatibilityKey=native-pg18-datum64-v1\\ninitialSuperuser=postgres\\nicuDataVersion=76.1\\nicuDataForm=files-le\\nicuDataTreeSha256=' + digest.hexdigest() + '\\ncacheKey=fixture-icu-seed\\nselectedExtensions=\\nextensions=\\nruntimeFeatures=icu\\nsharedPreloadLibraries=\\nmobileStaticRegistryState=not-required\\nmobileStaticRegistryRegistered=\\nmobileStaticRegistryPending=\\nnativeModuleStems=\\nmobileStaticRegistrySource=\\n').encode()",
+    "rows += [('cluster-seed/manifest.properties', seed_manifest), ('cluster-seed/files/PG_VERSION', b'18\\n'), ('cluster-seed/files/global/pg_control', b'control\\n')]",
     "with tarfile.open(archive, 'w:gz', format=tarfile.USTAR_FORMAT) as output:",
-    "  for name in ['share/icu/icudt77l.dat'] + [f'share/icu/locale-{index:04d}.res' for index in range(int(encoded_count))]:",
-    "    data = b'fixture'",
+    "  for name, data in rows:",
     "    info = tarfile.TarInfo(name)",
     "    info.mode = 0o644",
     "    info.size = len(data)",
@@ -337,7 +343,7 @@ async function highCardinalityIcuTar(archive, localeCount, legalRoot) {
     "    for leaf in sorted(names):",
     "      source = os.path.join(directory, leaf)",
     "      name = os.path.relpath(source, legal_root).replace(os.sep, '/')",
-    "      if name.startswith('share/icu/'): continue",
+    "      if name.startswith('share/icu/') or name.startswith('cluster-seed/'): continue",
     "      data = open(source, 'rb').read()",
     "      info = tarfile.TarInfo(name)",
     "      info.mode = 0o644",
@@ -369,6 +375,8 @@ async function baseAssets(root) {
       "schema=oliphaunt-runtime-resources-v1",
       "cacheKey=fixture-base",
       "layout=postgres-runtime-files-v1",
+      "artifactRole=runtime",
+      "catalogProfile=",
       "source=fixture",
       "selectedExtensions=",
       "extensions=",
@@ -383,11 +391,20 @@ async function baseAssets(root) {
     ].join("\n"),
   );
   await write(
-    path.join(runtime, "template-pgdata", "manifest.properties"),
+    path.join(runtime, "cluster-seed", "manifest.properties"),
     [
       "schema=oliphaunt-runtime-resources-v1",
       "cacheKey=fixture-template",
-      "layout=postgres-template-pgdata-v1",
+      "layout=oliphaunt-cluster-seed-v1",
+      "artifactRole=cluster-seed-standard",
+      "catalogProfile=standard",
+      "postgresMajor=18",
+      "physicalFormat=native-pg18-v1",
+      "compatibilityKey=native-pg18-datum64-v1",
+      "initialSuperuser=postgres",
+      "icuDataVersion=",
+      "icuDataForm=",
+      "icuDataTreeSha256=",
       "source=fixture",
       "selectedExtensions=",
       "extensions=",
@@ -402,7 +419,8 @@ async function baseAssets(root) {
     ].join("\n"),
   );
   await write(path.join(runtime, "runtime", "files", "share", "postgresql", "postgres.bki"), "base\n");
-  await write(path.join(runtime, "template-pgdata", "files", "base", "PG_VERSION"), "18\n");
+  await write(path.join(runtime, "cluster-seed", "files", "PG_VERSION"), "18\n");
+  await write(path.join(runtime, "cluster-seed", "files", "global", "pg_control"), "control\n");
   await write(
     path.join(runtime, "package-size.tsv"),
     "kind\tid\textensions\tfiles\tbytes\npackage\ttotal\t-\t2\t8\n",
@@ -416,6 +434,41 @@ async function baseAssets(root) {
   );
   const icu = path.join(source, "icu", "share", "icu");
   await write(path.join(icu, "icudt77l.dat"), "fixture icu\n");
+  const icuDigest = createHash("sha256")
+    .update("icudt77l.dat\0" + Buffer.byteLength("fixture icu\n") + "\0")
+    .update("fixture icu\n")
+    .update("\n")
+    .digest("hex");
+  const icuSeed = path.join(source, "icu", "cluster-seed");
+  await write(
+    path.join(icuSeed, "manifest.properties"),
+    [
+      "schema=oliphaunt-runtime-resources-v1",
+      "layout=oliphaunt-cluster-seed-v1",
+      "artifactRole=cluster-seed-icu",
+      "catalogProfile=icu",
+      "postgresMajor=18",
+      "physicalFormat=native-pg18-v1",
+      "compatibilityKey=native-pg18-datum64-v1",
+      "initialSuperuser=postgres",
+      "icuDataVersion=76.1",
+      "icuDataForm=files-le",
+      `icuDataTreeSha256=${icuDigest}`,
+      "cacheKey=fixture-icu-seed",
+      "selectedExtensions=",
+      "extensions=",
+      "runtimeFeatures=icu",
+      "sharedPreloadLibraries=",
+      "mobileStaticRegistryState=not-required",
+      "mobileStaticRegistryRegistered=",
+      "mobileStaticRegistryPending=",
+      "nativeModuleStems=",
+      "mobileStaticRegistrySource=",
+      "",
+    ].join("\n"),
+  );
+  await write(path.join(icuSeed, "files", "PG_VERSION"), "18\n");
+  await write(path.join(icuSeed, "files", "global", "pg_control"), "control\n");
 
   const baseLegalSpecs = [
     {
@@ -447,10 +500,11 @@ async function baseAssets(root) {
       assetRole: "icu-data",
       root: path.join(source, "icu"),
       profile: "native-icu-data",
-      spdx: "MIT AND Unicode-3.0",
+      spdx: "MIT AND PostgreSQL AND Unicode-3.0",
       files: [
         "LICENSE",
         "THIRD_PARTY_LICENSES/ICU-LICENSE",
+        "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
         "THIRD_PARTY_NOTICES.liboliphaunt-native.md",
         "THIRD_PARTY_NOTICES.md",
       ],
@@ -486,6 +540,7 @@ async function baseAssets(root) {
   await zipMember(path.dirname(baseFramework), path.basename(baseFramework), frameworkArchive);
   await tarMembers(path.join(source, "icu"), icuArchive, [
     "share/icu",
+    "cluster-seed",
     "LICENSE",
     "THIRD_PARTY_LICENSES",
     "THIRD_PARTY_NOTICES.liboliphaunt-native.md",
@@ -495,7 +550,7 @@ async function baseAssets(root) {
     assets: [
       await asset("base-xcframework", frameworkArchive, "zip", "liboliphaunt.xcframework"),
       await asset("runtime-resources", runtimeArchive, "tar.gz", "oliphaunt"),
-      await asset("icu-data", icuArchive, "tar.gz", "share/icu"),
+      await asset("icu-data", icuArchive, "tar.gz", "."),
     ],
     legal,
   };
@@ -1895,7 +1950,7 @@ async function main() {
     const highCardinalityIcu = structuredClone(carrier);
     highCardinalityIcu.base.assets = await Promise.all(
       highCardinalityIcu.base.assets.map(async (row) => row.role === "icu-data"
-        ? asset("icu-data", highCardinalityIcuArchive, "tar.gz", "share/icu")
+        ? asset("icu-data", highCardinalityIcuArchive, "tar.gz", ".")
         : row),
     );
     const highCardinalityIcuFile = path.join(root, "high-cardinality-icu.json");

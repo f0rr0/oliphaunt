@@ -22,7 +22,7 @@ Native storage is either an SDK-owned temporary directory or an explicit
 application-owned managed root. Native does not advertise a memory filesystem.
 An explicit path names `<root>`, which contains `.oliphaunt.json` and `pgdata`.
 
-SDKs prepare new roots from the packaged PGDATA template and publish the exact
+SDKs prepare new roots from the packaged cluster seed and publish the exact
 native descriptor last. The low-level C runtime only validates complete roots;
 it does not run `initdb`, adopt raw PGDATA, or create descriptors on open.
 Reopening a nonempty incomplete root fails without mutation.

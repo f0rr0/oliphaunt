@@ -20,10 +20,18 @@ export type WasixRuntimeLayout = {
 };
 
 const BLOCK_SIZE = 512;
+const MAX_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024;
+const MAX_ENTRY_BYTES = 512 * 1024 * 1024;
+const MAX_ENTRIES = 65_536;
+const MAX_PATH_BYTES = 1_024;
+const MAX_PATH_DEPTH = 64;
 const ZSTD_MAGIC = [0x28, 0xb5, 0x2f, 0xfd] as const;
 const decoder = new TextDecoder('utf-8', { fatal: true });
 
 export function extractTar(archive: Uint8Array): ExtractedArchive {
+  if (archive.length > MAX_ARCHIVE_BYTES) {
+    throw new Error(`tar archive exceeds the ${MAX_ARCHIVE_BYTES}-byte extraction limit`);
+  }
   const files = new Map<string, Uint8Array>();
   const directories = new Set<string>();
   const explicitPaths = new Set<string>();
@@ -31,6 +39,7 @@ export function extractTar(archive: Uint8Array): ExtractedArchive {
   let nextPax: Record<string, string> | undefined;
   let globalPax: Record<string, string> = {};
   let nextLongName: string | undefined;
+  let entries = 0;
 
   while (offset + BLOCK_SIZE <= archive.length) {
     const header = archive.subarray(offset, offset + BLOCK_SIZE);
@@ -50,8 +59,13 @@ export function extractTar(archive: Uint8Array): ExtractedArchive {
     }
 
     validateTarHeaderFormat(header);
+    entries += 1;
+    if (entries > MAX_ENTRIES) throw new Error(`tar archive exceeds the ${MAX_ENTRIES}-entry limit`);
     const type = String.fromCharCode(header[156] ?? 0).replace('\0', '') || '0';
     const size = parseOctal(header.subarray(124, 136), 'tar entry size');
+    if (size > MAX_ENTRY_BYTES) {
+      throw new Error(`tar entry exceeds the ${MAX_ENTRY_BYTES}-byte size limit`);
+    }
     const payloadEnd = offset + size;
     if (payloadEnd > archive.length) {
       throw new Error('tar archive ended in the middle of an entry payload');
@@ -155,16 +169,16 @@ function parentPaths(path: string): string[] {
 
 export function layoutRuntime(
   runtime: ExtractedArchive,
-  pgdata: ExtractedArchive,
+  clusterSeed: ExtractedArchive,
 ): WasixRuntimeLayout {
-  const pgdataFiles = pgdata.files;
+  const pgdataFiles = clusterSeed.files;
   if (!pgdataFiles.has('PG_VERSION') || !pgdataFiles.has('global/pg_control')) {
-    throw new Error('PGDATA template is missing PG_VERSION or global/pg_control');
+    throw new Error('cluster seed is missing PG_VERSION or global/pg_control');
   }
   const layout = layoutRuntimeSupport(runtime);
   layout.mounts['/base'] = {
     files: mapToDirectory(pgdataFiles),
-    directories: [...pgdata.directories],
+    directories: [...clusterSeed.directories],
   };
   return layout;
 }
@@ -307,10 +321,17 @@ function sanitizeTarPath(path: string): string | undefined {
     throw new Error('tar entry path contains a NUL byte');
   }
   const segments = normalized.split('/').filter((segment) => segment.length > 0);
+  if (textByteLength(normalized) > MAX_PATH_BYTES || segments.length > MAX_PATH_DEPTH) {
+    throw new Error(`tar entry path exceeds portability limits: ${path}`);
+  }
   if (segments.some((segment) => segment === '.' || segment === '..')) {
     throw new Error(`tar entry path escapes the install root: ${path}`);
   }
   return segments.join('/');
+}
+
+function textByteLength(value: string): number {
+  return new TextEncoder().encode(value).length;
 }
 
 function parsePaxPayload(payload: Uint8Array): Record<string, string> {

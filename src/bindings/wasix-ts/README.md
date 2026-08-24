@@ -11,9 +11,19 @@ blocking the caller's JavaScript realm is acceptable.
 pnpm add @oliphaunt/wasix-ts
 ```
 
-The runtime and PGDATA template come from the matching
+The runtime and `standard` cluster seed come from the matching
 `@oliphaunt/liboliphaunt-wasix` carrier. Applications do not configure raw
 runtime assets.
+
+Optional ICU data and its matching `icu` seed are selected explicitly:
+
+<!-- liboliphaunt-doc-example:wasix-typescript-icu -->
+```ts
+import Oliphaunt from '@oliphaunt/wasix-ts';
+import icu from '@oliphaunt/wasix-icu';
+
+await using database = await Oliphaunt.open({ icu });
+```
 
 ## Query PostgreSQL
 

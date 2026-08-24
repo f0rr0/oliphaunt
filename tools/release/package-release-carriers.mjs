@@ -67,10 +67,11 @@ import {
   normalizeBrokerDependencyLicenseModes,
 } from "./broker-dependency-license-contract.mjs";
 import {
+  ICU_CLUSTER_SEED_RELATIVE_PATH,
   ICU_DATA_RELATIVE_PATH,
   ICU_PODSPEC,
   ICU_REACT_NATIVE_CONFIG,
-  assertIcuPackedDataMatchesSource,
+  assertIcuPackedClosureMatchesSource,
   assertIcuPackageManifest,
   assertIcuPodspec,
   assertIcuReactNativeConfig,
@@ -80,6 +81,7 @@ import { stageMavenArtifactManifest } from "./maven-artifact-staging.mjs";
 import { buildMavenArtifactManifest } from "./build_maven_artifact_manifest.mjs";
 import { readPortableArchiveEntries } from "./portable-archive.mjs";
 import { packWasixRuntimeNpmCarrier } from "./wasix-runtime-npm-carrier.mjs";
+import { packWasixIcuNpmCarrier } from "./wasix-icu-npm-carrier.mjs";
 import { packWasixToolsNpmCarrier } from "./wasix-tools-npm-carrier.mjs";
 
 const TOOL = "package-release-carriers.mjs";
@@ -925,6 +927,7 @@ function stageLiboliphauntNpmPayloads(version) {
     extractReleaseArchiveFile(archive, libraryRelativePath, path.join(stage, libraryRelativePath));
     extractReleaseArchiveTree(archive, "lib/modules", path.join(stage, "lib/modules"));
     extractReleaseArchiveTree(archive, "runtime", path.join(stage, "runtime"));
+    extractReleaseArchiveTree(archive, "cluster-seed", path.join(stage, "cluster-seed"));
     const vcRuntimeMembers = [
       ...stageWindowsVcRuntimeMembers(archive, stage, target.target, "bin", { profile: "provider" }),
       ...stageWindowsVcRuntimeMembers(archive, stage, target.target, "runtime/bin", {
@@ -1016,10 +1019,20 @@ function stageLiboliphauntIcuNpmPayload(version) {
       target: "portable",
     },
   );
+  const sourceArchive = path.join(
+    ROOT,
+    "target/liboliphaunt/release-assets",
+    `liboliphaunt-${version}-icu-data.tar.gz`,
+  );
   extractReleaseArchiveTree(
-    path.join(ROOT, "target/liboliphaunt/release-assets", `liboliphaunt-${version}-icu-data.tar.gz`),
+    sourceArchive,
     "share/icu",
     path.join(stage, ...ICU_DATA_RELATIVE_PATH.split("/")),
+  );
+  extractReleaseArchiveTree(
+    sourceArchive,
+    "cluster-seed",
+    path.join(stage, ...ICU_CLUSTER_SEED_RELATIVE_PATH.split("/")),
   );
   stageReleaseNotices(stage, { profile: "native-icu-data" });
   assertReleaseNoticesInDirectory(stage, { profile: "native-icu-data" });
@@ -1080,7 +1093,7 @@ function validatePackedIcuPackage(packageName, version, tarball, sourceArchive) 
       sourcePodspec: readFileSync(path.join(LIBOLIPHAUNT_ICU_PACKAGE_ROOT, ICU_PODSPEC)),
       label: rel(tarball),
     });
-    assertIcuPackedDataMatchesSource({
+    assertIcuPackedClosureMatchesSource({
       packedEntries: entries,
       sourceEntries,
       label: rel(tarball),
@@ -1104,6 +1117,9 @@ export function liboliphauntNpmTarballs(version) {
     );
     const requiredMembers = [
       `package/${libraryRelativePath}`,
+      "package/cluster-seed/manifest.properties",
+      "package/cluster-seed/files/PG_VERSION",
+      "package/cluster-seed/files/global/pg_control",
       ...embeddedCoreModuleMembers(target.target, "package/lib/modules"),
       ...runtimeMembers,
       ...coreRuntimeMembers,
@@ -1593,6 +1609,14 @@ function packageWasixRuntimeCarriers() {
   packWasixRuntimeNpmCarrier({
     version,
     portableReleaseArchive,
+  });
+  packWasixIcuNpmCarrier({
+    version,
+    portableReleaseArchive,
+    icuDataReleaseArchive: path.join(
+      ROOT,
+      `target/oliphaunt-wasix/release-assets/liboliphaunt-wasix-${version}-icu-data.tar.zst`,
+    ),
   });
   packWasixToolsNpmCarrier({ version, portableReleaseArchive });
   packageExtensionNpmCarriers(contrib.artifactProduct, { family: "wasix" });

@@ -9,7 +9,7 @@ describe('WASIX runtime descriptors', () => {
     const serialized = serializeWasixRuntimeDescriptor(value);
 
     expect(serialized).toMatchObject({
-      schema: 'oliphaunt-wasix-runtime-v1',
+      schema: 'oliphaunt-wasix-runtime-v2',
       product: 'liboliphaunt-wasix',
       version: '0.1.1',
       runtimeArchive: {
@@ -50,16 +50,16 @@ describe('WASIX runtime descriptors', () => {
     ).toThrow('byte length must match declared asset size 2');
   });
 
-  it('requires runtime and PGDATA archives to have distinct canonical paths', () => {
+  it('requires runtime and standard cluster seed archives to have distinct canonical paths', () => {
     expect(() =>
       serializeWasixRuntimeDescriptor({
         ...descriptor(),
-        pgdataArchive: {
-          ...descriptor().pgdataArchive,
+        standardSeedArchive: {
+          ...descriptor().standardSeedArchive,
           archive: descriptor().runtimeArchive.archive,
         },
       }),
-    ).toThrow('runtime and PGDATA archives must have distinct paths');
+    ).toThrow('runtime and standard cluster seed archives must have distinct paths');
   });
 
   it('rejects malformed scalar fields before loading package-owned assets', () => {
@@ -107,7 +107,7 @@ describe('WASIX runtime descriptors', () => {
 
 function descriptor(): WasixRuntimeDescriptor {
   return {
-    schema: 'oliphaunt-wasix-runtime-v1',
+    schema: 'oliphaunt-wasix-runtime-v2',
     runtime: 'wasix',
     product: 'liboliphaunt-wasix',
     version: '0.1.1',
@@ -117,11 +117,16 @@ function descriptor(): WasixRuntimeDescriptor {
       size: 100,
       source: new URL('https://example.test/runtime.tar.zst'),
     },
-    pgdataArchive: {
-      archive: 'prepopulated/pgdata-template.tar.zst',
+    standardSeedArchive: {
+      archive: 'cluster-seeds/standard.tar.zst',
       sha256: '2'.repeat(64),
       size: 200,
-      source: new URL('https://example.test/pgdata.tar.zst'),
+      source: new URL('https://example.test/standard-seed.tar.zst'),
+    },
+    standardSeedManifest: {
+      sha256: '4'.repeat(64),
+      size: 250,
+      source: new URL('https://example.test/standard-seed.json'),
     },
     manifest: {
       sha256: '3'.repeat(64),
