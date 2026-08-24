@@ -119,6 +119,14 @@ The validation entrypoint is split by maintainer workflow:
   proving the native perf script plans direct/broker/server/native-PostgreSQL
   work with explicit `--perf-runner` support, without invoking the separate
   WASIX comparison lane;
+- `pnpm --dir tools/perf/wasix-node bench:streaming`: quick local WASIX
+  TypeScript transport benchmark. It reuses staged packages and portable assets,
+  compares direct and worker round-trip latency, exercises bounded COPY,
+  backpressure, event-loop delay, process RSS, the local server, `pg_dump`, and
+  `psql`, and prints a readable report (`-- --json` prints the complete JSON).
+  Process RSS deltas are descriptive because the quick run reuses one process.
+  If inputs are absent, first run
+  `moon run oliphaunt-wasix-tools-ts:package liboliphaunt-wasix:runtime-portable`;
 - `moon run oliphaunt-rust:check`: static Cargo checks for `oliphaunt` and
   `oliphaunt-build`, plus the artifact-relay build-script test. Unit, package,
   and native runtime evidence remain separate `test`, `package`, and `smoke`
