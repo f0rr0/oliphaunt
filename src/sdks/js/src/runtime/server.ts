@@ -1,10 +1,11 @@
 import { spawn } from 'node:child_process';
-import { chmod, mkdtemp, readdir, stat } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { delimiter, dirname, join } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { createServer } from 'node:net';
 
 import type { NormalizedOpenConfig } from '../config.js';
+import type { ServerListen } from '../types.js';
 import { simpleQuery } from '../protocol.js';
 import { envVar } from '../native/common.js';
 import {
@@ -77,7 +78,7 @@ class ServerHandle {
     readonly pgdata: string,
     readonly pgCtl: string,
     readonly toolEnvironment: Record<string, string>,
-    readonly socketDir: string | undefined,
+    readonly ownedSocketDir: string | undefined,
     readonly connectionString: string,
     readonly temporaryDirectory: boolean,
   ) {}
@@ -124,7 +125,7 @@ class ServerHandle {
       failure ??= new Error(`native server did not stop within ${STOP_TIMEOUT_MS}ms`);
     }
     try {
-      await removeTree(this.socketDir);
+      await removeTree(this.ownedSocketDir);
     } catch (error) {
       failure ??= error;
     }
@@ -148,7 +149,7 @@ class ServerHandle {
 }
 
 async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
-  let socketDir: string | undefined;
+  let ownedSocketDir: string | undefined;
   let child: ManagedChild | undefined;
   try {
     const startupTimeoutMs = serverStartupTimeoutMs();
@@ -165,15 +166,17 @@ async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
       throw new Error(`native server shutdown requires pg_ctl in ${toolDirectory}`);
     }
     const toolEnvironment = await nativeServerRuntimeEnv(toolDirectory, tools.icuDataDirectory);
-    const port = config.serverPort ?? (await pickPort());
-    socketDir = hostPlatform() === 'win32' ? undefined : await createSocketDir();
-    if (socketDir !== undefined && !unixSocketPathsFit(join(socketDir, `.s.PGSQL.${port}`))) {
-      await removeTree(socketDir);
-      socketDir = undefined;
-    }
+    const configuredListen = config.serverListen ?? { transport: 'tcp' as const };
+    const listen: ServerListen =
+      configuredListen.transport === 'unix'
+        ? { ...configuredListen, directory: resolve(configuredListen.directory) }
+        : configuredListen;
+    const port = listen.port ?? (listen.transport === 'tcp' ? await pickPort() : 5432);
+    const socketDir = await prepareSocketDirectory(listen, port);
+    ownedSocketDir = listen.transport === 'tcp' ? socketDir : undefined;
     child = spawnManagedChild({
       executable,
-      args: postgresArgs(config, port, socketDir),
+      args: postgresArgs(config, listen, port, socketDir),
       env: toolEnvironment,
     });
     const endpoint = sdkEndpoint(port, socketDir);
@@ -191,8 +194,8 @@ async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
       config.pgdata,
       pgCtl,
       toolEnvironment,
-      socketDir,
-      serverConnectionString(config.username, config.database, port),
+      ownedSocketDir,
+      serverConnectionString(config.username, config.database, listen, port),
       config.temporaryDirectory,
     );
   } catch (error) {
@@ -200,7 +203,7 @@ async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
       child.kill('SIGKILL');
       await child.wait();
     }
-    await removeTree(socketDir);
+    await removeTree(ownedSocketDir);
     if (config.temporaryDirectory) {
       await removeTree(config.instanceDirectory);
     }
@@ -240,6 +243,7 @@ export async function initializeServerDataDir(
 
 function postgresArgs(
   config: NormalizedOpenConfig,
+  listen: ServerListen,
   port: number,
   socketDir: string | undefined,
 ): string[] {
@@ -247,13 +251,13 @@ function postgresArgs(
     '-D',
     config.pgdata,
     '-h',
-    SERVER_HOST,
+    listen.transport === 'tcp' ? SERVER_HOST : '',
     '-p',
     String(port),
     '-c',
     'logging_collector=off',
     '-c',
-    'listen_addresses=127.0.0.1',
+    listen.transport === 'tcp' ? 'listen_addresses=127.0.0.1' : 'listen_addresses=',
   ];
   args.push(
     '-c',
@@ -297,8 +301,62 @@ function sdkEndpoint(port: number, socketDir: string | undefined): LocalEndpoint
   return { kind: 'tcp', host: SERVER_HOST, port };
 }
 
-function serverConnectionString(username: string, database: string, port: number): string {
-  return `postgres://${encodeURIComponent(username)}@${SERVER_HOST}:${port}/${encodeURIComponent(database)}`;
+function serverConnectionString(
+  username: string,
+  database: string,
+  listen: ServerListen,
+  port: number,
+): string {
+  const user = encodeURIComponent(username);
+  const db = encodeURIComponent(database);
+  if (listen.transport === 'unix') {
+    return `postgresql:///${db}?host=${encodeURIComponent(listen.directory)}&port=${port}&user=${user}&sslmode=disable`;
+  }
+  return `postgresql://${user}@${SERVER_HOST}:${port}/${db}?sslmode=disable`;
+}
+
+async function prepareSocketDirectory(
+  listen: ServerListen,
+  port: number,
+): Promise<string | undefined> {
+  if (listen.transport === 'unix') {
+    if (hostPlatform() === 'win32') {
+      throw new Error('Unix-domain server listeners are not supported on Windows');
+    }
+    await mkdir(listen.directory, { recursive: true, mode: 0o700 });
+    const metadata = await lstat(listen.directory);
+    if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+      throw new Error('server Unix socket directory must be a real directory, not a symlink');
+    }
+    if (!unixSocketPathsFit(join(listen.directory, `.s.PGSQL.${port}`))) {
+      throw new Error('server Unix socket path is too long for this platform');
+    }
+    const socket = join(listen.directory, `.s.PGSQL.${port}`);
+    await rejectExistingUnixEndpoint(socket);
+    await rejectExistingUnixEndpoint(`${socket}.lock`);
+    return listen.directory;
+  }
+  if (hostPlatform() === 'win32') {
+    return undefined;
+  }
+  const directory = await createSocketDir();
+  if (!unixSocketPathsFit(join(directory, `.s.PGSQL.${port}`))) {
+    await removeTree(directory);
+    return undefined;
+  }
+  return directory;
+}
+
+async function rejectExistingUnixEndpoint(path: string): Promise<void> {
+  try {
+    await lstat(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
+  }
+  throw new Error(
+    `native server refuses to replace existing Unix endpoint ${path}; remove it explicitly if it is stale`,
+  );
 }
 
 function serverStartupTimeoutMs(): number {

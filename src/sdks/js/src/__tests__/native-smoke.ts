@@ -30,7 +30,7 @@ async function main(): Promise<void> {
       runtimeDirectory: process.env.OLIPHAUNT_POSTGRES_TOOL_DIR ?? dirname(serverExecutable),
     });
     try {
-      assert.match(server.connectionString, /^postgres:\/\//u);
+      assert.match(server.connectionString, /^postgresql:\/\//u);
       assert.equal((await server.query('SELECT 1 AS value')).getText(0, 'value'), '1');
       assert.equal('backup' in server, false);
     } finally {

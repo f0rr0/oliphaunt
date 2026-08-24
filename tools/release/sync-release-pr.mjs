@@ -14,6 +14,7 @@ import {
   currentProductVersion,
   exactExtensionReleaseProducts,
   extensionRegistryPackageTargetSets,
+  nativeToolsOptionalPackageProducts,
   typescriptOptionalRuntimePackageProducts,
 } from "./release-artifact-targets.mjs";
 import { compatibilityVersionEntries, loadGraph } from "./release-graph.mjs";
@@ -44,12 +45,22 @@ const PNPM_LOCKFILE = path.join(ROOT, "pnpm-lock.yaml");
 const RELEASE_PLEASE_CONFIG = path.join(ROOT, "release-please-config.json");
 const RELEASE_PLEASE_MANIFEST = path.join(ROOT, ".release-please-manifest.json");
 const ELECTRON_EXAMPLE_PACKAGE = path.join(ROOT, "examples/electron/package.json");
+const NATIVE_TOOLS_FACADE_PACKAGE = path.join(
+  ROOT,
+  "src/runtimes/liboliphaunt/native/tools-npm/package.json",
+);
+const WASIX_TOOLS_FACADE_PACKAGE = path.join(
+  ROOT,
+  "src/bindings/wasix-tools/package.json",
+);
+const WASIX_TOOLS_CARRIER_PACKAGE = "@oliphaunt/liboliphaunt-wasix-tools";
+const WASIX_TYPESCRIPT_BINDING_PACKAGE = "@oliphaunt/wasix-ts";
 const PACKAGE_START_RE = /^\s*\[\[package\]\]\s*$/u;
 const STRING_KEY_RE = /^\s*([A-Za-z0-9_-]+)\s*=\s*"([^"]*)"\s*(?:#.*)?$/u;
 const VERSION_LINE_RE = /^(\s*version\s*=\s*)"[^"]*"(\s*(?:#.*)?)$/u;
 const TOML_TABLE_RE = /^\s*\[([A-Za-z0-9_.-]+)\]\s*(?:#.*)?$/u;
 const PNPM_TYPESCRIPT_OPTIONAL_RUNTIME_KEY_RE =
-  /^(\s*)'(@oliphaunt\/(?:broker|liboliphaunt|node-direct|tools)-[^']+)':\s*$/u;
+  /^(\s*)'(@oliphaunt\/(?:(?:broker|liboliphaunt|node-direct|tools)-[^']+|wasix-ts))':\s*$/u;
 const PNPM_SPECIFIER_RE = /^(\s*specifier:\s*)(\S+)(\s*)$/u;
 const EXTENSION_EVIDENCE_SUMMARY_PATH = path.join(
   ROOT,
@@ -323,18 +334,111 @@ async function expectedTypescriptOptionalRuntimeVersions() {
   return versions;
 }
 
+async function expectedNativeToolsOptionalVersions() {
+  const versions = {};
+  for (const { packageName, product } of nativeToolsOptionalPackageProducts(PREFIX)) {
+    versions[packageName] = `workspace:${await currentProductVersion(product, PREFIX)}`;
+  }
+  return versions;
+}
+
 function typescriptOptionalRuntimePackages() {
   return typescriptOptionalRuntimePackageProducts(PREFIX).map(({ packageName }) => packageName);
 }
 
 function typescriptOptionalRuntimeVersionsFromPackage() {
-  const file = path.join(ROOT, "src/sdks/js/package.json");
+  return optionalRuntimeVersionsFromPackage(
+    path.join(ROOT, "src/sdks/js/package.json"),
+    typescriptOptionalRuntimePackages(),
+  );
+}
+
+function nativeToolsOptionalVersionsFromPackage() {
+  return optionalRuntimeVersionsFromPackage(
+    NATIVE_TOOLS_FACADE_PACKAGE,
+    nativeToolsOptionalPackageProducts(PREFIX).map(({ packageName }) => packageName),
+  );
+}
+
+function wasixToolsDependencyVersionsFromPackage() {
+  const data = readJsonObject(WASIX_TOOLS_FACADE_PACKAGE);
+  const dependencies = data.dependencies;
+  const peerDependencies = data.peerDependencies;
+  const devDependencies = data.devDependencies;
+  if (
+    dependencies === null ||
+    Array.isArray(dependencies) ||
+    typeof dependencies !== "object" ||
+    !setsEqual(new Set(Object.keys(dependencies)), new Set([WASIX_TOOLS_CARRIER_PACKAGE])) ||
+    peerDependencies === null ||
+    Array.isArray(peerDependencies) ||
+    typeof peerDependencies !== "object" ||
+    !setsEqual(new Set(Object.keys(peerDependencies)), new Set([WASIX_TYPESCRIPT_BINDING_PACKAGE])) ||
+    devDependencies === null ||
+    Array.isArray(devDependencies) ||
+    typeof devDependencies !== "object" ||
+    devDependencies[WASIX_TYPESCRIPT_BINDING_PACKAGE] !==
+      peerDependencies[WASIX_TYPESCRIPT_BINDING_PACKAGE]
+  ) {
+    fail(
+      `${rel(WASIX_TOOLS_FACADE_PACKAGE)} must depend only on ${WASIX_TOOLS_CARRIER_PACKAGE}, peer only with ${WASIX_TYPESCRIPT_BINDING_PACKAGE}, and develop against that peer version`,
+    );
+  }
+  return {
+    [WASIX_TOOLS_CARRIER_PACKAGE]: dependencies[WASIX_TOOLS_CARRIER_PACKAGE],
+    [WASIX_TYPESCRIPT_BINDING_PACKAGE]: peerDependencies[WASIX_TYPESCRIPT_BINDING_PACKAGE],
+  };
+}
+
+async function syncWasixToolsDependencies(changes, { write, transitions }) {
+  if (
+    !transitions.some(({ product }) =>
+      product === "liboliphaunt-wasix" || product === "oliphaunt-wasix-ts"
+    )
+  ) {
+    return;
+  }
+  const data = readJsonObject(WASIX_TOOLS_FACADE_PACKAGE);
+  const expected = {
+    [WASIX_TOOLS_CARRIER_PACKAGE]: `workspace:${await currentProductVersion("liboliphaunt-wasix", PREFIX)}`,
+    [WASIX_TYPESCRIPT_BINDING_PACKAGE]: `workspace:${await currentProductVersion("oliphaunt-wasix-ts", PREFIX)}`,
+  };
+  const details = [];
+  const carrierVersion = expected[WASIX_TOOLS_CARRIER_PACKAGE];
+  const actualCarrier = data.dependencies?.[WASIX_TOOLS_CARRIER_PACKAGE];
+  if (actualCarrier !== carrierVersion) {
+    data.dependencies[WASIX_TOOLS_CARRIER_PACKAGE] = carrierVersion;
+    details.push(
+      `${WASIX_TOOLS_CARRIER_PACKAGE} ${JSON.stringify(actualCarrier)} -> ${JSON.stringify(carrierVersion)}`,
+    );
+  }
+  const bindingVersion = expected[WASIX_TYPESCRIPT_BINDING_PACKAGE];
+  for (const dependencyTable of ["peerDependencies", "devDependencies"]) {
+    const actual = data[dependencyTable]?.[WASIX_TYPESCRIPT_BINDING_PACKAGE];
+    if (actual !== bindingVersion) {
+      data[dependencyTable][WASIX_TYPESCRIPT_BINDING_PACKAGE] = bindingVersion;
+      details.push(
+        `${dependencyTable}.${WASIX_TYPESCRIPT_BINDING_PACKAGE} ${JSON.stringify(actual)} -> ${JSON.stringify(bindingVersion)}`,
+      );
+    }
+  }
+  if (details.length > 0) {
+    writeTextIfChanged(
+      WASIX_TOOLS_FACADE_PACKAGE,
+      jsonText(data),
+      changes,
+      details.join("; "),
+      { write },
+    );
+  }
+}
+
+function optionalRuntimeVersionsFromPackage(file, expectedPackages) {
   const data = readJsonObject(file);
   const optional = data.optionalDependencies;
   if (optional === null || Array.isArray(optional) || typeof optional !== "object") {
     fail(`${rel(file)} must declare optionalDependencies`);
   }
-  const expectedPackages = typescriptOptionalRuntimePackages();
   const expectedKeys = new Set(expectedPackages);
   const actualKeys = new Set(Object.keys(optional));
   if (!setsEqual(actualKeys, expectedKeys)) {
@@ -352,7 +456,30 @@ export async function syncTypescriptOptionalRuntimeDependencies(
     runtimeVersions,
   },
 ) {
-  if (!transitions.some(({ product }) => product === "oliphaunt-js")) {
+  return syncOptionalRuntimeDependencies(changes, {
+    write,
+    transitions,
+    ownerProduct: "oliphaunt-js",
+    packageFile,
+    runtimeVersions,
+  });
+}
+
+async function syncNativeToolsOptionalDependencies(changes, { write, transitions }) {
+  return syncOptionalRuntimeDependencies(changes, {
+    write,
+    transitions,
+    ownerProduct: "liboliphaunt-native",
+    packageFile: NATIVE_TOOLS_FACADE_PACKAGE,
+    runtimeVersions: await expectedNativeToolsOptionalVersions(),
+  });
+}
+
+async function syncOptionalRuntimeDependencies(
+  changes,
+  { write, transitions, ownerProduct, packageFile, runtimeVersions },
+) {
+  if (!transitions.some(({ product }) => product === ownerProduct)) {
     return;
   }
   const file = packageFile;
@@ -401,9 +528,13 @@ function syncElectronExampleDependencies(changes, { write }) {
 }
 
 async function syncPnpmTypescriptOptionalRuntimeSpecifiers(changes, { write }) {
-  const expectedVersions = typescriptOptionalRuntimeVersionsFromPackage();
+  const expectedVersions = {
+    ...typescriptOptionalRuntimeVersionsFromPackage(),
+    ...nativeToolsOptionalVersionsFromPackage(),
+    ...wasixToolsDependencyVersionsFromPackage(),
+  };
   const lines = readText(PNPM_LOCKFILE).split(/(?<=\n)/u);
-  const expectedPackages = new Set(typescriptOptionalRuntimePackages());
+  const expectedPackages = new Set(Object.keys(expectedVersions));
   const seen = new Set();
   const fileChanges = [];
 
@@ -415,7 +546,7 @@ async function syncPnpmTypescriptOptionalRuntimeSpecifiers(changes, { write }) {
     }
     const packageName = packageMatch[2];
     if (!expectedPackages.has(packageName)) {
-      fail(`${rel(PNPM_LOCKFILE)} contains unexpected TypeScript optional runtime package ${packageName}`);
+      fail(`${rel(PNPM_LOCKFILE)} contains unexpected managed TypeScript runtime dependency ${packageName}`);
     }
     seen.add(packageName);
     const packageIndent = packageMatch[1].length;
@@ -449,7 +580,7 @@ async function syncPnpmTypescriptOptionalRuntimeSpecifiers(changes, { write }) {
 
   const missing = [...expectedPackages].filter((name) => !seen.has(name)).sort(compareText);
   if (missing.length > 0) {
-    fail(`${rel(PNPM_LOCKFILE)} is missing TypeScript optional runtime package specifiers: ${missing.join(", ")}`);
+    fail(`${rel(PNPM_LOCKFILE)} is missing managed TypeScript runtime dependency specifiers: ${missing.join(", ")}`);
   }
   if (fileChanges.length > 0) {
     writeTextIfChanged(PNPM_LOCKFILE, lines.join(""), changes, fileChanges.join("; "), { write });
@@ -1035,6 +1166,8 @@ async function main(argv) {
   await syncCompatibilityVersions(changes, { write, transitions });
   syncExtensionRegistryMetadata(changes, { write });
   await syncTypescriptOptionalRuntimeDependencies(changes, { write, transitions });
+  await syncNativeToolsOptionalDependencies(changes, { write, transitions });
+  await syncWasixToolsDependencies(changes, { write, transitions });
   syncElectronExampleDependencies(changes, { write });
   await syncPnpmTypescriptOptionalRuntimeSpecifiers(changes, { write });
   syncCargoPathDependencyPins(changes, { write, transitions });

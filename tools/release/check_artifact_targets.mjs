@@ -33,6 +33,7 @@ import {
   extensionReleaseProduct,
   extensionRegistryPackageTargetSets,
   extensionSqlNames,
+  nativeToolsOptionalPackageProducts,
   rawArtifactTargetRows,
   registryPackageRows,
   releaseMetadata,
@@ -550,7 +551,15 @@ function manifestArray(value) {
   return value === undefined ? [] : Array.isArray(value) ? value.map(String) : [];
 }
 
-export function validateCarrierCoverage({ graph, catalog, targets, jsManifest, rustManifest, platformManifests }) {
+export function validateCarrierCoverage({
+  graph,
+  catalog,
+  targets,
+  jsManifest,
+  nativeToolsManifest,
+  rustManifest,
+  platformManifests,
+}) {
   const carriers = declaredCarrierMap(catalog);
   const runtimeProducts = new Set(["liboliphaunt-native", "oliphaunt-broker", "oliphaunt-node-direct"]);
   for (const product of runtimeProducts) {
@@ -578,6 +587,25 @@ export function validateCarrierCoverage({ graph, catalog, targets, jsManifest, r
   const actualOptional = object(jsManifest.optionalDependencies ?? {}, "TypeScript optionalDependencies");
   assertSameStrings(Object.keys(actualOptional), [...expectedOptional.keys()], "TypeScript optional runtime packages");
   for (const [name, version] of expectedOptional) invariant(actualOptional[name] === version, `TypeScript optional runtime ${name} must use ${version}`);
+  const expectedToolsOptional = new Map(nativeToolsOptionalPackageProducts(TOOL).map((row) => [
+    row.packageName,
+    `workspace:${graph.products[row.product].version}`,
+  ]));
+  const actualToolsOptional = object(
+    nativeToolsManifest.optionalDependencies ?? {},
+    "native tools facade optionalDependencies",
+  );
+  assertSameStrings(
+    Object.keys(actualToolsOptional),
+    [...expectedToolsOptional.keys()],
+    "native tools facade optional packages",
+  );
+  for (const [name, version] of expectedToolsOptional) {
+    invariant(
+      actualToolsOptional[name] === version,
+      `native tools facade optional package ${name} must use ${version}`,
+    );
+  }
   const brokerMetadata = object(object(rustManifest.package, "Rust package").metadata?.oliphaunt, "Rust broker metadata");
   invariant(brokerMetadata["broker-helper"] === "oliphaunt-broker", "Rust SDK broker helper identity must be oliphaunt-broker");
   invariant(brokerMetadata["broker-version"] === graph.products["oliphaunt-broker"].version, "Rust SDK broker helper version must match the broker product");
@@ -946,6 +974,7 @@ export function validateRepository() {
     catalog: inventory.catalog,
     targets: inventory.targets,
     jsManifest: readJson("src/sdks/js/package.json"),
+    nativeToolsManifest: readJson("src/runtimes/liboliphaunt/native/tools-npm/package.json"),
     rustManifest: readToml("src/sdks/rust/Cargo.toml"),
     platformManifests: platformPackageManifests(inventory.graph, inventory.targets),
   });

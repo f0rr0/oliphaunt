@@ -40,7 +40,9 @@ values remain `Uint8Array`; text decoding is explicit through `row.text()` or
 `result.getText()`.
 
 `execProtocolRaw` is the buffered PostgreSQL frontend-protocol escape hatch.
-It does not add streaming or interpret responses for the caller.
+`execProtocolStream` delivers the same response through a synchronous callback
+with bounded backpressure, so COPY-sized responses need not be retained as one
+JavaScript value. Neither method interprets responses for the caller.
 
 PostgreSQL `ErrorResponse` values reject with `PostgresError`, including the
 SQLSTATE and structured diagnostic fields.
@@ -159,12 +161,53 @@ blocks its JavaScript realm during PostgreSQL work. Browser direct mode also
 requires cross-origin isolation; large synchronous side-module compilation may
 require worker placement.
 
+## Optional PostgreSQL tools
+
+Install `@oliphaunt/wasix-tools` when the application needs standard plain
+`pg_dump` or non-interactive `psql`:
+
+<!-- liboliphaunt-doc-example:wasix-typescript-tools -->
+```ts
+import { pgDump, psql } from '@oliphaunt/wasix-tools';
+
+const sql = await pgDump(database, { args: ['--schema-only'] });
+await psql(database, { script: sql });
+```
+
+The optional package runs directly against a worker-backed database in every
+supported host, including browsers. It preserves PostgreSQL's normal plain SQL
+and COPY output. It does not support direct execution placement, interactive
+psql, custom dump archives, parallel jobs, or pg_restore.
+
+## Optional local server
+
+Node, Bun, and Deno may import `openServer` from the matching server subpath:
+
+<!-- liboliphaunt-doc-example:wasix-typescript-server -->
+```ts
+import { openServer } from '@oliphaunt/wasix-ts/server/node';
+
+await using server = await openServer({
+  listen: { transport: 'tcp' },
+});
+console.log(server.connectionString);
+```
+
+The lightweight compatibility endpoint binds IPv4 loopback with an automatic
+port when `port` is omitted. Unix hosts may instead pass
+`{ transport: 'unix', directory, port? }`; the socket follows PostgreSQL's
+`.s.PGSQL.<port>` convention. One complete client connection owns the single
+embedded backend at a time; concurrent connections are rejected. The listener
+and storage lease persist, while each admitted client receives a fresh backend.
+Use the separate WASIX postmaster product for concurrent PostgreSQL sessions.
+
 ## Scope
 
-The public WASIX TypeScript surface is deliberately limited to open,
-execute/query, raw buffered protocol, checkpoint, callback transaction,
-physical backup/restore, and close. PostgreSQL tools, a socket server,
-cancellation, and COPY streaming are not exposed by this binding today.
+The core database surface remains limited to open, execute/query, buffered and
+callback-streamed raw protocol, checkpoint, callback transaction, physical
+backup/restore, and close. Tools and local sockets stay in optional packages or
+host-only subpaths. Cancellation and a dedicated typed COPY reader/writer are
+not exposed today.
 
 ## Qualification
 

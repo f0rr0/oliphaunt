@@ -25,7 +25,6 @@ use files::{sync_directory, sync_directory_tree};
 
 static ACTIVE_ROOTS: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
 pub(super) const NATIVE_RUNTIME_TOOLS: [&str; 3] = ["postgres", "initdb", "pg_ctl"];
-pub(super) const NATIVE_TOOLS_PACKAGE_TOOLS: [&str; 3] = ["pg_basebackup", "pg_dump", "psql"];
 
 #[cfg(feature = "internal-native-packaging")]
 pub(crate) struct MaterializedNativeResources {

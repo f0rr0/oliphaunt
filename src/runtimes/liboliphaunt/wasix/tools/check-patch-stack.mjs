@@ -155,13 +155,13 @@ const REQUIRED_AUDIT_CHECKS = [
     posture: 'WASIX initdb skips ICU-backed collation setup until the optional ICU data package is present.',
   },
   {
-    requirement: 'Rust COPY streaming keeps an explicit hybrid transport ABI',
+    requirement: 'COPY streaming keeps an explicit hybrid transport ABI',
     patches: ['0034-oliphaunt-wasix-declare-hybrid-protocol-transport.patch'],
     evidence: [
       'oliphaunt_wasix_set_protocol_transport(int mode)',
       'oliphaunt_wasix_protocol_stream_active(void)',
     ],
-    posture: 'Only COPY switches the Rust proxy from buffered protocol I/O to its attached stream; TypeScript has no process-level stdio lifecycle.',
+    posture: 'Only COPY switches an embedded host from buffered protocol I/O to its attached stream; Rust and TypeScript provide language-native bounded stream adapters over the same guest ABI.',
   },
   {
     requirement: 'Single-backend WASIX spinlocks preserve their ABI and scope',

@@ -6,6 +6,7 @@ import { electronReleaseDependencies } from "../../examples/tools/example-releas
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { exampleCargoReleaseVersionBindings } from "./example-cargo-policy.mjs";
 import {
+  nativeToolsOptionalPackageProducts,
   registryPackageRows,
   typescriptOptionalRuntimePackageProducts,
 } from "./release-artifact-targets.mjs";
@@ -226,6 +227,29 @@ function derivedVersionRules() {
       "yaml",
       "pnpm-lock.yaml",
       ["importers", "src/sdks/js", "optionalDependencies", packageName, "specifier"],
+      product,
+      true,
+    );
+  }
+
+  for (const { packageName, product } of nativeToolsOptionalPackageProducts(TOOL)) {
+    addStructured(
+      "json",
+      "src/runtimes/liboliphaunt/native/tools-npm/package.json",
+      ["optionalDependencies", packageName],
+      product,
+      true,
+    );
+    addStructured(
+      "yaml",
+      "pnpm-lock.yaml",
+      [
+        "importers",
+        "src/runtimes/liboliphaunt/native/tools-npm",
+        "optionalDependencies",
+        packageName,
+        "specifier",
+      ],
       product,
       true,
     );

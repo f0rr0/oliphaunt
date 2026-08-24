@@ -80,6 +80,7 @@ import { stageMavenArtifactManifest } from "./maven-artifact-staging.mjs";
 import { buildMavenArtifactManifest } from "./build_maven_artifact_manifest.mjs";
 import { readPortableArchiveEntries } from "./portable-archive.mjs";
 import { packWasixRuntimeNpmCarrier } from "./wasix-runtime-npm-carrier.mjs";
+import { packWasixToolsNpmCarrier } from "./wasix-tools-npm-carrier.mjs";
 
 const TOOL = "package-release-carriers.mjs";
 const LIBOLIPHAUNT_NATIVE_PRODUCT = "liboliphaunt-native";
@@ -88,6 +89,8 @@ const LIBOLIPHAUNT_NATIVE_TOOLS_PRODUCT = "oliphaunt-tools";
 const LIBOLIPHAUNT_NATIVE_TOOLS_KIND = "native-tools";
 const LIBOLIPHAUNT_NATIVE_PACKAGE_ROOT = path.join(ROOT, "src/runtimes/liboliphaunt/native/packages");
 const LIBOLIPHAUNT_NATIVE_TOOLS_PACKAGE_ROOT = path.join(ROOT, "src/runtimes/liboliphaunt/native/tools-packages");
+const LIBOLIPHAUNT_NATIVE_TOOLS_FACADE_PACKAGE = "@oliphaunt/tools";
+const LIBOLIPHAUNT_NATIVE_TOOLS_FACADE_ROOT = path.join(ROOT, "src/runtimes/liboliphaunt/native/tools-npm");
 const LIBOLIPHAUNT_ICU_PACKAGE_NAME = "@oliphaunt/icu";
 const LIBOLIPHAUNT_ICU_PACKAGE_ROOT = path.join(ROOT, "src/runtimes/liboliphaunt/native/icu-npm");
 const BROKER_PRODUCT = "oliphaunt-broker";
@@ -957,6 +960,31 @@ function stageLiboliphauntToolsNpmPayloads(version) {
   return stages;
 }
 
+function stageLiboliphauntToolsNpmFacade(version) {
+  const stage = stageNpmPackageDescriptor(
+    LIBOLIPHAUNT_NATIVE_TOOLS_FACADE_PACKAGE,
+    LIBOLIPHAUNT_NATIVE_TOOLS_FACADE_ROOT,
+    version,
+  );
+  for (const descriptor of ["index.js", "index.d.ts"]) {
+    copyFileSync(
+      path.join(LIBOLIPHAUNT_NATIVE_TOOLS_FACADE_ROOT, descriptor),
+      path.join(stage, descriptor),
+    );
+  }
+  const manifestFile = path.join(stage, "package.json");
+  const manifest = JSON.parse(readFileSync(manifestFile, "utf8"));
+  manifest.optionalDependencies = Object.fromEntries(
+    Object.keys(manifest.optionalDependencies ?? {})
+      .sort(compareText)
+      .map((name) => [name, version]),
+  );
+  writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
+  stageReleaseNotices(stage, { profile: "source-sdk" });
+  assertReleaseNoticesInDirectory(stage, { profile: "source-sdk" });
+  return stage;
+}
+
 function stageLiboliphauntIcuNpmPayload(version) {
   const stage = stageNpmPackageDescriptor(
     LIBOLIPHAUNT_ICU_PACKAGE_NAME,
@@ -1091,6 +1119,23 @@ export function liboliphauntNpmTarballs(version) {
     assertReleaseNoticesInArchive(tarball, { profile: "native-tools", prefix: "package" });
     packages.push([packageName, tarball]);
   }
+  const toolsFacadeStage = stageLiboliphauntToolsNpmFacade(version);
+  const toolsFacadeTarball = pnpmPackForNpmPublish(toolsFacadeStage);
+  validatePackedNpmPackage({
+    packageName: LIBOLIPHAUNT_NATIVE_TOOLS_FACADE_PACKAGE,
+    version,
+    tarball: toolsFacadeTarball,
+    requiredMembers: [
+      "package/index.js",
+      "package/index.d.ts",
+      ...releaseNoticeRows({ profile: "source-sdk" }).map((row) => `package/${row.member}`),
+    ],
+  });
+  assertReleaseNoticesInArchive(toolsFacadeTarball, {
+    profile: "source-sdk",
+    prefix: "package",
+  });
+  packages.push([LIBOLIPHAUNT_NATIVE_TOOLS_FACADE_PACKAGE, toolsFacadeTarball]);
   const icuStage = stageLiboliphauntIcuNpmPayload(version);
   const icuTarball = pnpmPackForNpmPublish(icuStage);
   validatePackedIcuPackage(
@@ -1511,13 +1556,15 @@ function packageWasixRuntimeCarriers() {
   liboliphauntWasixCargoArtifactPackages(version, {
     extensionArtifactRoots: [extensionPackageDir(contrib.artifactProduct, "wasix")],
   });
+  const portableReleaseArchive = path.join(
+    ROOT,
+    `target/oliphaunt-wasix/release-assets/liboliphaunt-wasix-${version}-runtime-portable.tar.zst`,
+  );
   packWasixRuntimeNpmCarrier({
     version,
-    portableReleaseArchive: path.join(
-      ROOT,
-      `target/oliphaunt-wasix/release-assets/liboliphaunt-wasix-${version}-runtime-portable.tar.zst`,
-    ),
+    portableReleaseArchive,
   });
+  packWasixToolsNpmCarrier({ version, portableReleaseArchive });
   packageExtensionNpmCarriers(contrib.artifactProduct, { family: "wasix" });
 }
 

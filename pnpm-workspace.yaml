@@ -4,6 +4,7 @@ packages:
   - "src/runtimes/liboliphaunt/native/icu-npm"
   - "src/runtimes/liboliphaunt/native/packages/*"
   - "src/runtimes/liboliphaunt/native/tools-packages/*"
+  - "src/runtimes/liboliphaunt/native/tools-npm"
   - "src/runtimes/broker/packages/*"
   - "src/runtimes/node-direct"
   - "src/runtimes/node-direct/packages/*"
@@ -11,6 +12,8 @@ packages:
   - "examples/browser-wasix"
   - "examples/react-native-expo"
   - "src/bindings/wasix-ts"
+  - "src/bindings/wasix-tools"
+  - "src/runtimes/liboliphaunt/wasix/tools-npm"
   - "tools/perf/wasix-node"
 
 catalog:

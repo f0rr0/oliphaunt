@@ -9,12 +9,6 @@ description: Use the Rust binding's logical dumps, physical archives, CLI export
 runtime asset for portable SQL exports, restores, and version-to-version
 upgrades.
 
-<Callout type="info" title="Rust-only data-movement APIs">
-This page documents `oliphaunt-wasix`. The
-[WASIX TypeScript binding](/docs/sdk/wasix-typescript) exposes the shared WASIX
-physical archive, but not the Rust-only `pg_dump`, `psql`, or server tool APIs.
-</Callout>
-
 <WasmDataMovement />
 
 ## Choose The Right Export Format
@@ -36,35 +30,37 @@ same-version clones and restores.
 
 ## Tool API
 
-Enable the `tools` feature for `PgDumpOptions`, `PsqlOptions`,
-`OliphauntServer::pg_dump()`, and `OliphauntServer::psql()`:
+Enable the `tools` feature for the optional `tools` namespace:
 
 ```toml
 [dependencies]
 oliphaunt-wasix = { version = "0.1", features = ["tools"] }
 ```
 
-Start a TCP `OliphauntServer` and dump it to SQL:
+Run the tools directly against an open database:
 
 ```rust,no_run
-use oliphaunt_wasix::{PgDumpOptions, OliphauntServer};
+use oliphaunt_wasix::{Oliphaunt, tools};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let server = OliphauntServer::builder().start()?;
-
-    let sql = server.pg_dump(PgDumpOptions::new().arg("--schema-only"))?;
+    let mut database = Oliphaunt::open()?;
+    let sql = tools::pg_dump(
+        &mut database,
+        tools::PgDumpOptions::new().arg("--schema-only"),
+    )?;
     assert!(!sql.is_empty());
-
-    server.close()?;
+    database.close()?;
     Ok(())
 }
 ```
 
-The packaged tools currently require the server's TCP endpoint. Release any
-other connected client first because this server deliberately serves one client
-session at a time. The tools are not methods on the direct `Oliphaunt` handle.
-`pg_dump()` returns UTF-8 SQL text;
-`psql()` returns UTF-8 standard output. Use `PsqlOptions::command(...)` for one
+The tools are free functions rather than database or server methods, so the
+core database API stays focused. They exclusively borrow the direct database
+for the complete invocation and cannot run inside a callback transaction. The
+tool connection resets PostgreSQL session state before and after it runs, so
+prepared statements and session settings on the direct handle do not survive.
+`tools::pg_dump()` returns UTF-8 SQL text and `tools::psql()` returns UTF-8
+standard output. Use `PsqlOptions::command(...)` for one
 command or `PsqlOptions::script(...)` for a complete SQL script. `pg_dump()`
 returns standard PostgreSQL 18 plain-text output unchanged, including its
 `COPY` data and `\\restrict`/`\\unrestrict` security delimiters.
@@ -74,11 +70,9 @@ returns standard PostgreSQL 18 plain-text output unchanged, including its
 `PgDumpOptions` controls the managed parts of the dump command:
 
 ```rust,no_run
-use oliphaunt_wasix::PgDumpOptions;
+use oliphaunt_wasix::tools::PgDumpOptions;
 
 let options = PgDumpOptions::new()
-    .username("postgres")
-    .database("template1")
     .args(["--schema-only", "--quote-all-identifiers"]);
 ```
 
@@ -129,12 +123,11 @@ For same-version physical copies, use direct `backup()` and static
 empty managed-root directory and publishes a new root only after validating and
 staging the complete archive.
 
-For a logical restore, connect a standard PostgreSQL client to
-`server.connection_string()` and feed it the `pg_dump` SQL using that client's
-normal script/input API, or run the packaged tool with
-`server.psql(PsqlOptions::new().script(sql))`. Do not pass the script to the
-direct database `execute` method: plain `pg_dump` output includes `psql` meta
-commands. Oliphaunt does not expose a second logical-restore abstraction.
+For a logical restore, run
+`tools::psql(&mut database, PsqlOptions::new().script(sql))`. Do not pass the
+script to the database `execute` method: plain `pg_dump` output can include
+`psql` meta commands. Oliphaunt does not expose a second logical-restore
+abstraction.
 
 ## Upgrade Guidance
 
@@ -142,11 +135,11 @@ Use logical dump and restore when upgrading between `oliphaunt-wasix` versions o
 changing shipped runtime assets:
 
 1. Open the old database with the old crate/runtime.
-2. Start a TCP `OliphauntServer` and create a logical dump with
-   `server.pg_dump(...)`, or use `oliphaunt-wasix-dump`.
-3. Start a fresh TCP `OliphauntServer` with the new crate/runtime.
-4. Feed the script through `server.psql(PsqlOptions::new().script(sql))` or
-   another standard PostgreSQL client's script API.
+2. Create a logical dump with `tools::pg_dump(&mut database, ...)`, or use
+   `oliphaunt-wasix-dump`.
+3. Open a fresh database with the new crate/runtime.
+4. Feed the script through
+   `tools::psql(&mut database, PsqlOptions::new().script(sql))`.
 
 Use logical dumps for general upgrades. Physical data-dir archives are for the
 same runtime family and database format.

@@ -17,10 +17,9 @@ performance constraint.
 - Existing released-lane capabilities preserved before replacement:
   protocol execution, template packaging, initdb, pg_dump, bundled extensions,
   runtime support modules, and the server wrapper.
-- The released artifact pipeline packages standalone WASIX `initdb` and
-  `pg_dump` tools.  `pg_dumpall.c` is patched only because it shares the
-  renamed pg_dump helper; pg_dumpall and psql are not separate packaged WASIX
-  tools in this lane.
+- The released artifact pipeline packages standalone WASIX `initdb`,
+  `pg_dump`, and `psql` tools. `pg_dumpall.c` is patched only because it shares
+  the renamed pg_dump helper; `pg_dumpall` is not a packaged WASIX tool.
 - Patch series kept small, ordered, and reviewable.  Each patch should explain
   which PostgreSQL invariant it changes and why the embedded WASIX runtime
   still preserves the useful part of that invariant.

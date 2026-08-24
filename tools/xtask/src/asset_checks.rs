@@ -1081,7 +1081,7 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
         &["ICU_DATA", "/share/icu", "wasix_icu_data_is_available"],
     )?;
     ensure_file_contains_all(
-        "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/pg_dump.rs",
+        "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/tools.rs",
         &[
             "ICU_DATA",
             "/oliphaunt/share/icu",
@@ -1140,28 +1140,39 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
         ],
     )?;
     ensure_file_contains_all(
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_pgdump.sh",
+        "src/runtimes/liboliphaunt/wasix/assets/build/wasix_frontend_tools.sh",
         &[
             "build_wasix_icu.sh",
-            "oliphaunt_wasix_icu_cflags",
+            "wasix_icu_link.sh",
             "oliphaunt_wasix_icu_libs",
-            "ICU_CFLAGS",
-            "ICU_LIBS",
-        ],
-    )?;
-    ensure_file_contains_all(
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_psql.sh",
-        &[
-            "build_wasix_icu.sh",
-            "oliphaunt_wasix_icu_cflags",
-            "oliphaunt_wasix_icu_libs",
-            "ICU_CFLAGS",
-            "ICU_LIBS",
+            "configure_wasix_dl.sh",
+            "docker-frontend-tools",
             "icu-native-tools",
             "OLIPHAUNT_WASM_BUILD_PROFILE=release-os",
             "OLIPHAUNT_WASM_WASIX_COPT=\"-O2 -g0\"",
             "OLIPHAUNT_WASM_WASIX_LOPT=\"-Wl,--threads=1\"",
             "OLIPHAUNT_WASM_SHIM_OBJECT=\"$tool_shim\"",
+            "src/interfaces/libpq",
+            "src/fe_utils",
+        ],
+    )?;
+    ensure_file_contains_all(
+        "src/runtimes/liboliphaunt/wasix/assets/build/docker_pgdump.sh",
+        &[
+            "wasix_frontend_tools.sh",
+            "oliphaunt_wasix_prepare_frontend_tools",
+            "OLIPHAUNT_WASIX_FRONTEND_BUILD_DIR",
+            "OLIPHAUNT_WASIX_FRONTEND_ICU_LIBS",
+            "wasixnm -u",
+        ],
+    )?;
+    ensure_file_contains_all(
+        "src/runtimes/liboliphaunt/wasix/assets/build/docker_psql.sh",
+        &[
+            "wasix_frontend_tools.sh",
+            "oliphaunt_wasix_prepare_frontend_tools",
+            "OLIPHAUNT_WASIX_FRONTEND_BUILD_DIR",
+            "OLIPHAUNT_WASIX_FRONTEND_ICU_LIBS",
             "wasixnm -u",
         ],
     )?;

@@ -448,7 +448,8 @@ function pyTruthy(value) {
 const manifest = await Bun.file("target/oliphaunt-wasix/assets/manifest.json").json();
 const hasExtensions = pyTruthy(manifest.extensions);
 const hasPgDump = pyTruthy(manifest["pg-dump"]);
-console.log(hasExtensions && hasPgDump ? "full" : "core");
+const hasPsql = pyTruthy(manifest.psql);
+console.log(hasExtensions && hasPgDump && hasPsql ? "full" : "core");
 '
 }
 
@@ -468,7 +469,7 @@ oliphaunt_runtime_wasm_require() {
   oliphaunt_runtime_asset_mode="$(oliphaunt_runtime_wasm_asset_mode)"
   if [ "$oliphaunt_runtime_asset_mode" = "core" ]; then
     if [ "$oliphaunt_runtime_mode" = "regression" ]; then
-      echo "full WASIX assets are required for liboliphaunt-wasix:regression; core-only assets would skip extension and pg_dump evidence" >&2
+      echo "full WASIX assets are required for liboliphaunt-wasix:regression; core-only assets would skip extension and frontend-tool evidence" >&2
       return 1
     fi
     export OLIPHAUNT_WASM_SKIP_EXTENSIONS_FOR_PERF=1

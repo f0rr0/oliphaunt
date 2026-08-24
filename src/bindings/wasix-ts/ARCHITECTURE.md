@@ -114,9 +114,10 @@ smaller qualified side modules remain supported in direct placement.
    non-default user is selected from existing roles with `SET ROLE`; standalone
    bootstrap itself remains the fixed `postgres` identity.
 6. The binding frames later responses through `ReadyForQuery` and exposes
-   serialized `query`, `execute`, `execProtocolRaw`, `checkpoint`, and
-   callback-scoped `transaction` calls through one database contract. The same
-   contract supports explicit `close()` and `await using` disposal.
+   serialized `query`, `execute`, buffered `execProtocolRaw`, callback
+   `execProtocolStream`, `checkpoint`, and callback-scoped `transaction` calls
+   through one database contract. The same contract supports explicit
+   `close()` and `await using` disposal.
    Every successfully completed protocol operation reaches `ReadyForQuery`, then
    asks a persistent provider to publish only journaled `/base` paths before the
    Promise resolves. A callback transaction defers publication for `BEGIN`, its
@@ -160,6 +161,32 @@ worker starts. Directory persistence is exposed through matching
 `storage/node`, `storage/bun`, and `storage/deno` entrypoints backed by one
 portable managed-root provider with exclusive path ownership. No host falls back
 to native `@oliphaunt/ts`.
+
+## Protocol streams, tools, and local endpoints
+
+The public callback stream reuses the guest's COPY-aware hybrid transport.
+Direct placement invokes its synchronous callback in the owning realm. Worker
+placement transfers at most 64 KiB per callback and blocks only the worker with
+an atomic acknowledgement until the event-loop callback returns. Buffered raw
+protocol execution remains the simpler fast path when the complete response is
+already appropriate.
+
+`@oliphaunt/wasix-tools` is an optional facade over the separately published
+`@oliphaunt/liboliphaunt-wasix-tools` asset carrier. A tool runs in its own
+worker with ordinary stdin/stdout/stderr. Its private pgwire connection uses
+one fixed 256 KiB channel in each direction and 64 KiB transfers; neither size
+is public configuration. The database session is exclusively serialized,
+reset before and after the tool, and published only at a safe PostgreSQL
+boundary. This keeps `pg_dump` and `psql` out of the core database download and
+surface while still allowing browser tools without pretending the browser has
+a TCP stack.
+
+The Node, Bun, and Deno server subpaths all export the same implementation. It
+adapts one loopback TCP or PostgreSQL-named Unix listener to that bounded
+connection bridge, rejects a concurrent client, and creates a fresh embedded
+backend for each admitted connection. `ReadyForQuery` at idle is withheld until
+provider publication succeeds. The concurrent WASIX postmaster remains a
+separate runtime product rather than a mode of this single-backend SDK.
 
 ## Browser storage boundary
 

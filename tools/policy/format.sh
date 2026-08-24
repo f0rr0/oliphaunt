@@ -32,8 +32,10 @@ pnpm --package=@biomejs/biome@2.4.16 dlx biome "${biome_args[@]}" \
   src/docs/tools \
   src/bindings/wasix-ts/package.json \
   src/bindings/wasix-ts/src \
+  src/bindings/wasix-tools \
   examples/browser-wasix \
   src/bindings/wasix-ts/tools \
+  src/runtimes/liboliphaunt/native/tools-npm \
   src/sdks/react-native/package.json \
   src/sdks/react-native/typedoc.json \
   src/sdks/react-native/react-native.config.js \

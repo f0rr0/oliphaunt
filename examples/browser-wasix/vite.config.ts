@@ -25,6 +25,14 @@ export default defineConfig({
       ? {
           alias: [
             {
+              find: /^@oliphaunt\/wasix-tools$/,
+              replacement: resolve(repositoryRoot, 'src/bindings/wasix-tools/src/index.ts'),
+            },
+            {
+              find: /^@oliphaunt\/wasix-ts\/internal\/tools$/,
+              replacement: resolve(bindingLibRoot, 'internal.js'),
+            },
+            {
               find: /^@oliphaunt\/wasix-ts$/,
               replacement: resolve(bindingLibRoot, 'index.js'),
             },
@@ -46,6 +54,8 @@ export default defineConfig({
           dedupe: [
             '@oliphaunt/wasix-ts',
             '@oliphaunt/liboliphaunt-wasix',
+            '@oliphaunt/wasix-tools',
+            '@oliphaunt/liboliphaunt-wasix-tools',
             '@oliphaunt/extension-pgtap-wasix',
             'fzstd',
           ],
@@ -58,6 +68,8 @@ export default defineConfig({
           exclude: [
             '@oliphaunt/wasix-ts',
             '@oliphaunt/liboliphaunt-wasix',
+            '@oliphaunt/wasix-tools',
+            '@oliphaunt/liboliphaunt-wasix-tools',
             '@oliphaunt/extension-pgtap-wasix',
           ],
         }),
@@ -89,6 +101,8 @@ function packedBrowserPackageExports(consumerRoot: string): Plugin {
     ['@oliphaunt/wasix-ts', '/@oliphaunt/wasix-ts/lib/index.js'],
     ['@oliphaunt/wasix-ts/storage/indexed-db', '/@oliphaunt/wasix-ts/lib/storage/indexed-db.js'],
     ['@oliphaunt/liboliphaunt-wasix', '/@oliphaunt/liboliphaunt-wasix/index.js'],
+    ['@oliphaunt/wasix-tools', '/@oliphaunt/wasix-tools/lib/index.js'],
+    ['@oliphaunt/liboliphaunt-wasix-tools', '/@oliphaunt/liboliphaunt-wasix-tools/index.js'],
     ['@oliphaunt/extension-pgtap-wasix', '/@oliphaunt/extension-pgtap-wasix/index.js'],
   ]);
   return {
@@ -123,6 +137,7 @@ function packedBrowserPackageExports(consumerRoot: string): Plugin {
 function wasixAssets(): Plugin {
   const virtualModules = new Map([
     ['@oliphaunt/liboliphaunt-wasix', '\0oliphaunt:liboliphaunt-wasix'],
+    ['@oliphaunt/liboliphaunt-wasix-tools', '\0oliphaunt:liboliphaunt-wasix-tools'],
     ['@oliphaunt/extension-pgtap-wasix', '\0oliphaunt:extension-pgtap-wasix'],
     ['@oliphaunt/extension-pg-uuidv7-wasix', '\0oliphaunt:extension-pg-uuidv7-wasix'],
     ['@oliphaunt/extension-postgis-wasix', '\0oliphaunt:extension-postgis-wasix'],
@@ -131,11 +146,15 @@ function wasixAssets(): Plugin {
     [...virtualModules].map(([packageName, virtualModule]) => [virtualModule, packageName]),
   );
   const descriptorPromises = new Map<string, Promise<Record<string, unknown>>>();
-  let runtimeIdentityPromise: Promise<{ postgresMajor: number; physicalFormat: string }> | undefined;
+  let runtimeIdentityPromise:
+    | Promise<{ postgresMajor: number; physicalFormat: string }>
+    | undefined;
   const routes = new Map([
     ['/runtime', resolve(assetRoot, 'oliphaunt.wasix.tar.zst')],
     ['/pgdata', resolve(assetRoot, 'prepopulated/pgdata-template.tar.zst')],
     ['/manifest', resolve(assetRoot, 'manifest.json')],
+    ['/tools/pg_dump', resolve(assetRoot, 'bin/pg_dump.wasix.wasm')],
+    ['/tools/psql', resolve(assetRoot, 'bin/psql.wasix.wasm')],
     ['/extensions/pgtap', resolve(assetRoot, 'extensions/pgtap.tar.zst')],
     ['/extensions/pg_uuidv7', resolve(assetRoot, 'extensions/pg_uuidv7.tar.zst')],
     ['/extensions/postgis', resolve(assetRoot, 'extensions/postgis.tar.zst')],
@@ -258,6 +277,30 @@ async function developmentDescriptor(packageName: string): Promise<Record<string
         sha256: sha256(projectedManifest),
         size: projectedManifest.length,
         source: '/wasix-assets/manifest',
+      },
+    };
+  }
+
+  if (packageName === '@oliphaunt/liboliphaunt-wasix-tools') {
+    const pgDump = requireRecord(manifest['pg-dump'], 'pg_dump manifest entry');
+    const psql = requireRecord(manifest.psql, 'psql manifest entry');
+    return {
+      schema: 'oliphaunt-wasix-tools-v1',
+      product: 'oliphaunt-wasix-tools',
+      version: runtimeVersion,
+      runtimeProduct: 'liboliphaunt-wasix',
+      runtimeVersion,
+      pgDump: {
+        name: 'pg_dump',
+        sha256: pgDump.sha256,
+        size: pgDump.size,
+        source: '/wasix-assets/tools/pg_dump',
+      },
+      psql: {
+        name: 'psql',
+        sha256: psql.sha256,
+        size: psql.size,
+        source: '/wasix-assets/tools/psql',
       },
     };
   }

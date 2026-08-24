@@ -1,16 +1,18 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 #[cfg(feature = "extensions")]
 use oliphaunt_wasix::extensions;
-use oliphaunt_wasix::{DatabaseStorage, OliphauntServer};
+use oliphaunt_wasix::{DatabaseStorage, OliphauntServer, ServerListen};
 use std::env;
-use std::net::SocketAddr;
 use std::path::PathBuf;
 
 #[derive(Debug)]
 enum Bind {
-    Tcp(SocketAddr),
+    Tcp(u16),
     #[cfg(unix)]
-    Unix(PathBuf),
+    Unix {
+        directory: PathBuf,
+        port: u16,
+    },
 }
 
 #[derive(Debug)]
@@ -27,9 +29,10 @@ fn main() -> Result<()> {
     let mut builder = OliphauntServer::builder().storage(args.storage);
 
     builder = match args.bind {
-        Bind::Tcp(addr) => builder.tcp(addr),
+        Bind::Tcp(0) => builder.listen(ServerListen::tcp()),
+        Bind::Tcp(port) => builder.listen(ServerListen::tcp_port(port)),
         #[cfg(unix)]
-        Bind::Unix(path) => builder.unix(path),
+        Bind::Unix { directory, port } => builder.listen(ServerListen::unix_port(directory, port)),
     };
     builder = builder.startup_gucs(args.postgres_config);
 
@@ -63,7 +66,7 @@ fn parse_args() -> Result<Args> {
     let mut print_uri = false;
     let mut postgres_config = Vec::new();
     let mut extensions = Vec::new();
-    let mut bind = Bind::Tcp("127.0.0.1:5432".parse().expect("valid default TCP addr"));
+    let mut bind = Bind::Tcp(0);
 
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -76,19 +79,20 @@ fn parse_args() -> Result<Args> {
                 storage = DatabaseStorage::Directory(PathBuf::from(value));
             }
             "--tcp" => {
-                let value = args.next().unwrap_or_else(|| "127.0.0.1:5432".to_string());
-                bind = Bind::Tcp(
-                    value
-                        .parse()
-                        .with_context(|| format!("parse TCP bind address {value}"))?,
-                );
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--tcp requires a port"))?;
+                bind = Bind::Tcp(parse_port("--tcp", &value)?);
             }
             #[cfg(unix)]
             "--unix" | "--uds" => {
-                let value = args
+                let directory = args
                     .next()
-                    .unwrap_or_else(|| "/tmp/.s.PGSQL.5432".to_string());
-                bind = Bind::Unix(PathBuf::from(value));
+                    .ok_or_else(|| anyhow::anyhow!("--unix requires a directory"))?;
+                bind = Bind::Unix {
+                    directory: PathBuf::from(directory),
+                    port: 5432,
+                };
             }
             "--print-uri" => print_uri = true,
             "--startup-guc" => {
@@ -123,15 +127,25 @@ fn parse_args() -> Result<Args> {
     })
 }
 
+fn parse_port(flag: &str, value: &str) -> Result<u16> {
+    let port = value
+        .parse::<u16>()
+        .map_err(|_| anyhow::anyhow!("{flag} requires a port in the range 1..=65535"))?;
+    if port == 0 {
+        bail!("{flag} requires a port in the range 1..=65535");
+    }
+    Ok(port)
+}
+
 fn print_usage() {
     eprintln!(
-        "Usage: oliphaunt-wasix-proxy [--memory | --directory PATH] [--tcp ADDR | --unix PATH] [--print-uri] [--startup-guc NAME=VALUE] [--extension NAME]"
+        "Usage: oliphaunt-wasix-proxy [--memory | --directory PATH] [--tcp PORT | --unix DIRECTORY] [--print-uri] [--startup-guc NAME=VALUE] [--extension NAME]"
     );
     eprintln!("  --memory          Store PGDATA in memory. This is the default");
     eprintln!("  --directory PATH  Store PGDATA in a retained host directory");
-    eprintln!("  --tcp ADDR        Listen on TCP. Use 127.0.0.1:0 for a random port");
+    eprintln!("  --tcp PORT        Listen on IPv4 loopback using PORT");
     #[cfg(unix)]
-    eprintln!("  --unix PATH       Listen on a PostgreSQL .s.PGSQL.<port> socket path");
+    eprintln!("  --unix DIRECTORY  Listen on DIRECTORY/.s.PGSQL.5432");
     eprintln!("  --print-uri       Print the PostgreSQL connection URI to stdout");
     eprintln!("  --startup-guc NAME=VALUE");
     eprintln!("                    Set a PostgreSQL startup GUC on the embedded backend");

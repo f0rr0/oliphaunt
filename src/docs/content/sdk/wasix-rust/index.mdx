@@ -54,10 +54,11 @@ Rust WASIX is separate from native direct, native broker, and native server. It
 has its own filesystem, startup, server/proxy, dump/restore, and extension
 behavior.
 
-The Rust binding can expose direct APIs or a local PostgreSQL-compatible URL.
-Those Rust-only server and dump APIs must not be inferred for the
-TypeScript binding, whose intentionally smaller surface is documented on its
-own page.
+The Rust binding exposes direct APIs, optional direct `pg_dump`/`psql`, and a
+local PostgreSQL-compatible URL. WASIX TypeScript provides the same concepts
+where its host supports them, through its optional tools package and explicit
+Node, Bun, and Deno server subpaths; language-specific signatures remain
+documented on each binding's page.
 
 Applications that need a real concurrent PostgreSQL listener on Linux x64 GNU or macOS arm64
 can instead deploy the separate [WASIX postmaster](/docs/sdk/wasix-rust/runtime#wasix-postmaster)

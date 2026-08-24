@@ -59,7 +59,9 @@ describe('WASIX worker RPC', () => {
         },
         async close() {},
       }),
-      (response) => responses.push(response),
+      (response) => {
+        if ('ok' in response) responses.push(response);
+      },
     );
 
     await dispatch({ id: 1, method: 'open', options: workerOpenOptions() });
@@ -92,7 +94,9 @@ describe('WASIX worker RPC', () => {
         },
         async close() {},
       }),
-      (response) => responses.push(response),
+      (response) => {
+        if ('ok' in response) responses.push(response);
+      },
     );
 
     await dispatch({
@@ -128,7 +132,9 @@ describe('WASIX worker RPC', () => {
         async sync() {},
         async close() {},
       }),
-      (response) => responses.push(response),
+      (response) => {
+        if ('ok' in response) responses.push(response);
+      },
     );
 
     await dispatch({ id: 1, method: 'open', options: workerOpenOptions() });
@@ -208,6 +214,68 @@ describe('WASIX worker RPC', () => {
     port.respond({ id: close.id, ok: true });
     await closing;
     expect(port.terminations).toBe(1);
+  });
+
+  it('acknowledges streamed chunks only after the consumer has handled them', async () => {
+    const port = new FakeWorkerPort();
+    const opening = openWorkerDatabase(port, workerOpenOptions());
+    const open = await postedRequest(port, 0);
+    port.respond({ id: open.id, ok: true });
+    const database = await opening;
+    const chunks: number[][] = [];
+
+    const streaming = database.execProtocolStream(Uint8Array.of(1, 2), (chunk) => {
+      chunks.push([...chunk]);
+    });
+    const request = await postedRequest(port, 1);
+    if (request.method !== 'execStream') throw new Error('expected streaming request');
+    const control = new Int32Array(request.control);
+    expect(Atomics.load(control, 0)).toBe(0);
+    port.respond({
+      id: request.id,
+      kind: 'chunk',
+      sequence: 1,
+      value: Uint8Array.of(3, 4),
+    });
+    expect(chunks).toEqual([[3, 4]]);
+    expect(Atomics.load(control, 0)).toBe(1);
+    port.respond({ id: request.id, ok: true });
+    await streaming;
+
+    const closing = database.close();
+    const close = await postedRequest(port, 2);
+    port.respond({ id: close.id, ok: true });
+    await closing;
+  });
+
+  it('preserves the stream consumer failure and signals the blocked worker', async () => {
+    const port = new FakeWorkerPort();
+    const opening = openWorkerDatabase(port, workerOpenOptions());
+    const open = await postedRequest(port, 0);
+    port.respond({ id: open.id, ok: true });
+    const database = await opening;
+    const consumerFailure = new Error('consumer stopped');
+
+    const streaming = database.execProtocolStream(Uint8Array.of(1), () => {
+      throw consumerFailure;
+    });
+    const request = await postedRequest(port, 1);
+    if (request.method !== 'execStream') throw new Error('expected streaming request');
+    const control = new Int32Array(request.control);
+    port.respond({ id: request.id, kind: 'chunk', sequence: 1, value: Uint8Array.of(2) });
+    expect(Atomics.load(control, 0)).toBe(1);
+    expect(Atomics.load(control, 1)).toBe(1);
+    port.respond({
+      id: request.id,
+      ok: false,
+      error: { name: 'Error', message: 'protocol stream consumer failed' },
+    });
+    await expect(streaming).rejects.toBe(consumerFailure);
+
+    const closing = database.close();
+    const close = await postedRequest(port, 2);
+    port.respond({ id: close.id, ok: true });
+    await closing;
   });
 
   it('rejects malformed byte responses from a worker without poisoning the session', async () => {

@@ -1,0 +1,542 @@
+diff --git a/src/options.rs b/src/options.rs
+index 98d0e04..f25a697 100644
+--- a/src/options.rs
++++ b/src/options.rs
+@@ -232,7 +232,8 @@ impl RunOptions {
+         ),
+         Error,
+     > {
+-        let (protocol_file, protocol_input, protocol_output) = crate::streams::duplex_pipe();
++        let (protocol_file, protocol_input, protocol_output) =
++            crate::streams::bounded_duplex_pipe();
+         self.configure_common_builder(builder, Some(protocol_file))?;
+         let (stdin, stdout, stderr) = self.configure_stdio(builder);
+ 
+@@ -268,7 +269,7 @@ impl RunOptions {
+     fn configure_common_builder(
+         &self,
+         builder: &mut WasiEnvBuilder,
+-        protocol_file: Option<virtual_fs::Pipe>,
++        protocol_file: Option<crate::streams::BoundedDuplexFile>,
+     ) -> Result<(), Error> {
+         for arg in self.parse_args()? {
+             builder.add_arg(arg);
+diff --git a/src/streams.rs b/src/streams.rs
+index 27d8e34..2381141 100644
+--- a/src/streams.rs
++++ b/src/streams.rs
+@@ -1,9 +1,18 @@
++use std::{
++    collections::VecDeque,
++    io::{self, SeekFrom},
++    pin::Pin,
++    sync::{Arc, Mutex},
++    task::{Context as TaskContext, Poll, Waker},
++};
++
+ use anyhow::Context;
+ use bytes::BytesMut;
+ use futures::{future::Either, Stream};
+ use js_sys::{JsString, Promise, Reflect, Uint8Array};
++use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
+ use tracing::Instrument;
+-use virtual_fs::{AsyncReadExt, AsyncWriteExt, Pipe};
++use virtual_fs::{AsyncReadExt, AsyncWriteExt, Pipe, VirtualFile};
+ use wasm_bindgen::{prelude::wasm_bindgen, JsCast, JsValue};
+ use wasm_bindgen_futures::JsFuture;
+ use web_sys::{
+@@ -12,36 +21,26 @@ use web_sys::{
+ 
+ use crate::utils::Error;
+ 
++const TOOL_PROTOCOL_CAPACITY_BYTES: usize = 256 * 1024;
++const TOOL_PROTOCOL_CHUNK_BYTES: usize = 64 * 1024;
++
+ /// Set up a pipe where data written from JavaScript can be read by the WASIX
+ /// process.
+ pub(crate) fn input_pipe() -> (Pipe, WritableStream) {
+     let (left, right) = Pipe::channel();
+ 
+-    let sink = JsValue::from(WritableStreamSink { pipe: right });
+-
+-    let callback: wasm_bindgen::prelude::Closure<dyn Fn(Uint8Array) -> f64> =
+-        wasm_bindgen::closure::Closure::new(|chunk: Uint8Array| chunk.byte_length() as f64);
+-
+-    let stream = WritableStream::new_with_underlying_sink_and_strategy(
+-        sink.unchecked_ref(),
+-        web_sys::QueuingStrategy::new()
+-            .high_water_mark(256.0)
+-            .size(callback.into_js_value().unchecked_ref()),
+-    )
+-    .unwrap();
+-
+-    (left, stream)
++    (left, writable_stream(StreamWriter::Unbounded(right)))
+ }
+ 
+-/// Set up one full-duplex pipe between a WASIX process and JavaScript.
+-pub(crate) fn duplex_pipe() -> (Pipe, WritableStream, ReadableStream) {
+-    let (guest, host) = Pipe::channel();
+-    let input = writable_stream(host.clone());
+-    let output = readable_stream(host);
++/// Set up an exactly bounded full-duplex pipe between a tool and JavaScript.
++pub(crate) fn bounded_duplex_pipe() -> (BoundedDuplexFile, WritableStream, ReadableStream) {
++    let (guest, input, output) = BoundedDuplexFile::channel();
++    let input = writable_stream(StreamWriter::Bounded(input));
++    let output = readable_stream(StreamReader::Bounded(output));
+     (guest, input, output)
+ }
+ 
+-fn writable_stream(pipe: Pipe) -> WritableStream {
++fn writable_stream(pipe: StreamWriter) -> WritableStream {
+     let sink = JsValue::from(WritableStreamSink { pipe });
+ 
+     let callback: wasm_bindgen::prelude::Closure<dyn Fn(Uint8Array) -> f64> =
+@@ -56,10 +55,373 @@ fn writable_stream(pipe: Pipe) -> WritableStream {
+     .unwrap()
+ }
+ 
++#[derive(Clone, Debug)]
++enum StreamWriter {
++    Unbounded(Pipe),
++    Bounded(BoundedWriter),
++}
++
++impl StreamWriter {
++    fn close(&mut self) {
++        match self {
++            Self::Unbounded(pipe) => pipe.close(),
++            Self::Bounded(pipe) => pipe.close(),
++        }
++    }
++}
++
++impl AsyncWrite for StreamWriter {
++    fn poll_write(
++        self: Pin<&mut Self>,
++        cx: &mut TaskContext<'_>,
++        input: &[u8],
++    ) -> Poll<io::Result<usize>> {
++        match self.get_mut() {
++            Self::Unbounded(pipe) => Pin::new(pipe).poll_write(cx, input),
++            Self::Bounded(pipe) => Pin::new(pipe).poll_write(cx, input),
++        }
++    }
++
++    fn poll_flush(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
++        match self.get_mut() {
++            Self::Unbounded(pipe) => Pin::new(pipe).poll_flush(cx),
++            Self::Bounded(pipe) => Pin::new(pipe).poll_flush(cx),
++        }
++    }
++
++    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
++        match self.get_mut() {
++            Self::Unbounded(pipe) => Pin::new(pipe).poll_shutdown(cx),
++            Self::Bounded(pipe) => Pin::new(pipe).poll_shutdown(cx),
++        }
++    }
++}
++
++#[derive(Clone, Debug)]
++enum StreamReader {
++    Unbounded(Pipe),
++    Bounded(BoundedReader),
++}
++
++impl StreamReader {
++    fn close(&mut self) {
++        match self {
++            Self::Unbounded(pipe) => pipe.close(),
++            Self::Bounded(pipe) => pipe.close(),
++        }
++    }
++
++    fn read_capacity(&self, desired: usize) -> usize {
++        match self {
++            Self::Unbounded(_) => desired,
++            Self::Bounded(_) => TOOL_PROTOCOL_CHUNK_BYTES,
++        }
++    }
++}
++
++impl AsyncRead for StreamReader {
++    fn poll_read(
++        self: Pin<&mut Self>,
++        cx: &mut TaskContext<'_>,
++        buffer: &mut ReadBuf<'_>,
++    ) -> Poll<io::Result<()>> {
++        match self.get_mut() {
++            Self::Unbounded(pipe) => Pin::new(pipe).poll_read(cx, buffer),
++            Self::Bounded(pipe) => Pin::new(pipe).poll_read(cx, buffer),
++        }
++    }
++}
++
++#[derive(Debug)]
++struct BoundedDirection {
++    buffer: VecDeque<u8>,
++    writer_closed: bool,
++    reader_closed: bool,
++    reader_waker: Option<Waker>,
++    writer_waker: Option<Waker>,
++}
++
++impl BoundedDirection {
++    fn new() -> Self {
++        Self {
++            buffer: VecDeque::with_capacity(TOOL_PROTOCOL_CAPACITY_BYTES),
++            writer_closed: false,
++            reader_closed: false,
++            reader_waker: None,
++            writer_waker: None,
++        }
++    }
++}
++
++#[derive(Clone, Debug)]
++struct BoundedWriter {
++    direction: Arc<Mutex<BoundedDirection>>,
++}
++
++impl BoundedWriter {
++    fn close(&mut self) {
++        let waker = if let Ok(mut direction) = self.direction.lock() {
++            direction.writer_closed = true;
++            direction.reader_waker.take()
++        } else {
++            None
++        };
++        if let Some(waker) = waker {
++            waker.wake();
++        }
++    }
++}
++
++impl AsyncWrite for BoundedWriter {
++    fn poll_write(
++        self: Pin<&mut Self>,
++        cx: &mut TaskContext<'_>,
++        input: &[u8],
++    ) -> Poll<io::Result<usize>> {
++        if input.is_empty() {
++            return Poll::Ready(Ok(0));
++        }
++        let mut direction = self
++            .direction
++            .lock()
++            .map_err(|_| io::Error::other("bounded pipe lock poisoned"))?;
++        if direction.reader_closed || direction.writer_closed {
++            return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
++        }
++        let available = TOOL_PROTOCOL_CAPACITY_BYTES - direction.buffer.len();
++        if available == 0 {
++            direction.writer_waker = Some(cx.waker().clone());
++            return Poll::Pending;
++        }
++        let count = available.min(input.len()).min(TOOL_PROTOCOL_CHUNK_BYTES);
++        direction.buffer.extend(&input[..count]);
++        let waker = direction.reader_waker.take();
++        drop(direction);
++        if let Some(waker) = waker {
++            waker.wake();
++        }
++        Poll::Ready(Ok(count))
++    }
++
++    fn poll_flush(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
++        Poll::Ready(Ok(()))
++    }
++
++    fn poll_shutdown(mut self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
++        self.close();
++        Poll::Ready(Ok(()))
++    }
++}
++
++#[derive(Clone, Debug)]
++struct BoundedReader {
++    direction: Arc<Mutex<BoundedDirection>>,
++}
++
++impl BoundedReader {
++    fn close(&mut self) {
++        let waker = if let Ok(mut direction) = self.direction.lock() {
++            direction.reader_closed = true;
++            direction.buffer.clear();
++            direction.writer_waker.take()
++        } else {
++            None
++        };
++        if let Some(waker) = waker {
++            waker.wake();
++        }
++    }
++
++    fn poll_ready(&mut self, cx: &mut TaskContext<'_>) -> Poll<io::Result<usize>> {
++        let mut direction = self
++            .direction
++            .lock()
++            .map_err(|_| io::Error::other("bounded pipe lock poisoned"))?;
++        if direction.reader_closed {
++            return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
++        }
++        if !direction.buffer.is_empty() {
++            return Poll::Ready(Ok(direction.buffer.len().min(TOOL_PROTOCOL_CHUNK_BYTES)));
++        }
++        if direction.writer_closed {
++            return Poll::Ready(Ok(0));
++        }
++        direction.reader_waker = Some(cx.waker().clone());
++        Poll::Pending
++    }
++}
++
++impl AsyncRead for BoundedReader {
++    fn poll_read(
++        self: Pin<&mut Self>,
++        cx: &mut TaskContext<'_>,
++        output: &mut ReadBuf<'_>,
++    ) -> Poll<io::Result<()>> {
++        if output.remaining() == 0 {
++            return Poll::Ready(Ok(()));
++        }
++        let mut direction = self
++            .direction
++            .lock()
++            .map_err(|_| io::Error::other("bounded pipe lock poisoned"))?;
++        if direction.reader_closed {
++            return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
++        }
++        if direction.buffer.is_empty() {
++            if direction.writer_closed {
++                return Poll::Ready(Ok(()));
++            }
++            direction.reader_waker = Some(cx.waker().clone());
++            return Poll::Pending;
++        }
++        let count = output
++            .remaining()
++            .min(direction.buffer.len())
++            .min(TOOL_PROTOCOL_CHUNK_BYTES);
++        let (first, second) = direction.buffer.as_slices();
++        let first_count = first.len().min(count);
++        output.put_slice(&first[..first_count]);
++        if first_count < count {
++            output.put_slice(&second[..count - first_count]);
++        }
++        direction.buffer.drain(..count);
++        let waker = direction.writer_waker.take();
++        drop(direction);
++        if let Some(waker) = waker {
++            waker.wake();
++        }
++        Poll::Ready(Ok(()))
++    }
++}
++
++#[derive(Debug)]
++pub(crate) struct BoundedDuplexFile {
++    reader: BoundedReader,
++    writer: BoundedWriter,
++}
++
++impl BoundedDuplexFile {
++    fn channel() -> (Self, BoundedWriter, BoundedReader) {
++        let to_guest = Arc::new(Mutex::new(BoundedDirection::new()));
++        let from_guest = Arc::new(Mutex::new(BoundedDirection::new()));
++        (
++            Self {
++                reader: BoundedReader {
++                    direction: Arc::clone(&to_guest),
++                },
++                writer: BoundedWriter {
++                    direction: Arc::clone(&from_guest),
++                },
++            },
++            BoundedWriter {
++                direction: to_guest,
++            },
++            BoundedReader {
++                direction: from_guest,
++            },
++        )
++    }
++}
++
++impl Drop for BoundedDuplexFile {
++    fn drop(&mut self) {
++        self.reader.close();
++        self.writer.close();
++    }
++}
++
++impl AsyncRead for BoundedDuplexFile {
++    fn poll_read(
++        mut self: Pin<&mut Self>,
++        cx: &mut TaskContext<'_>,
++        output: &mut ReadBuf<'_>,
++    ) -> Poll<io::Result<()>> {
++        Pin::new(&mut self.reader).poll_read(cx, output)
++    }
++}
++
++impl AsyncWrite for BoundedDuplexFile {
++    fn poll_write(
++        mut self: Pin<&mut Self>,
++        cx: &mut TaskContext<'_>,
++        input: &[u8],
++    ) -> Poll<io::Result<usize>> {
++        Pin::new(&mut self.writer).poll_write(cx, input)
++    }
++
++    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
++        Pin::new(&mut self.writer).poll_flush(cx)
++    }
++
++    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
++        Pin::new(&mut self.writer).poll_shutdown(cx)
++    }
++}
++
++impl AsyncSeek for BoundedDuplexFile {
++    fn start_seek(self: Pin<&mut Self>, _position: SeekFrom) -> io::Result<()> {
++        Ok(())
++    }
++
++    fn poll_complete(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<io::Result<u64>> {
++        Poll::Ready(Ok(0))
++    }
++}
++
++impl VirtualFile for BoundedDuplexFile {
++    fn last_accessed(&self) -> u64 {
++        0
++    }
++
++    fn last_modified(&self) -> u64 {
++        0
++    }
++
++    fn created_time(&self) -> u64 {
++        0
++    }
++
++    fn size(&self) -> u64 {
++        0
++    }
++
++    fn set_len(&mut self, _new_size: u64) -> virtual_fs::Result<()> {
++        Ok(())
++    }
++
++    fn unlink(&mut self) -> virtual_fs::Result<()> {
++        Ok(())
++    }
++
++    fn poll_read_ready(
++        mut self: Pin<&mut Self>,
++        cx: &mut TaskContext<'_>,
++    ) -> Poll<io::Result<usize>> {
++        self.reader.poll_ready(cx)
++    }
++
++    fn poll_write_ready(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<usize>> {
++        let mut direction = self
++            .writer
++            .direction
++            .lock()
++            .map_err(|_| io::Error::other("bounded pipe lock poisoned"))?;
++        if direction.reader_closed || direction.writer_closed {
++            return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
++        }
++        let available = TOOL_PROTOCOL_CAPACITY_BYTES - direction.buffer.len();
++        if available > 0 {
++            return Poll::Ready(Ok(available.min(TOOL_PROTOCOL_CHUNK_BYTES)));
++        }
++        direction.writer_waker = Some(cx.waker().clone());
++        Poll::Pending
++    }
++}
++
+ #[derive(Debug)]
+ #[wasm_bindgen(skip_typescript)]
+ struct WritableStreamSink {
+-    pipe: Pipe,
++    pipe: StreamWriter,
+ }
+ 
+ #[wasm_bindgen]
+@@ -136,10 +498,10 @@ impl WritableStreamSink {
+ pub(crate) fn output_pipe() -> (Pipe, ReadableStream) {
+     let (left, right) = Pipe::channel();
+ 
+-    (left, readable_stream(right))
++    (left, readable_stream(StreamReader::Unbounded(right)))
+ }
+ 
+-fn readable_stream(pipe: Pipe) -> ReadableStream {
++fn readable_stream(pipe: StreamReader) -> ReadableStream {
+     let source = JsValue::from(ReadableStreamSource { pipe });
+ 
+     let callback: wasm_bindgen::prelude::Closure<dyn Fn(Uint8Array) -> f64> =
+@@ -157,7 +519,7 @@ fn readable_stream(pipe: Pipe) -> ReadableStream {
+ #[derive(Debug)]
+ #[wasm_bindgen(skip_typescript)]
+ struct ReadableStreamSource {
+-    pipe: Pipe,
++    pipe: StreamReader,
+ }
+ 
+ #[wasm_bindgen]
+@@ -182,10 +544,11 @@ impl ReadableStreamSource {
+                 /// The maximum buffer size we will allow - helps avoid OOMs.
+                 const MAX_CAPACITY: usize = 10_000_000;
+ 
+-                let capacity = controller
++                let desired = controller
+                     .desired_size()
+                     .map(|size| std::cmp::min(size as usize, MAX_CAPACITY))
+                     .unwrap_or(128);
++                let capacity = pipe.read_capacity(desired);
+                 let mut buffer = BytesMut::with_capacity(capacity);
+ 
+                 match pipe.read_buf(&mut buffer).await.context("Read failed") {
+@@ -303,6 +666,37 @@ mod tests {
+ 
+     use super::*;
+ 
++    #[wasm_bindgen_test]
++    fn tool_pipe_stops_writers_at_its_exact_capacity() {
++        let (mut guest, mut host_input, _host_output) = BoundedDuplexFile::channel();
++        let chunk = vec![0u8; TOOL_PROTOCOL_CHUNK_BYTES];
++        let waker = futures::task::noop_waker();
++        let mut context = TaskContext::from_waker(&waker);
++
++        for _ in 0..TOOL_PROTOCOL_CAPACITY_BYTES / TOOL_PROTOCOL_CHUNK_BYTES {
++            assert!(matches!(
++                Pin::new(&mut host_input).poll_write(&mut context, &chunk),
++                Poll::Ready(Ok(TOOL_PROTOCOL_CHUNK_BYTES))
++            ));
++        }
++        assert!(matches!(
++            Pin::new(&mut host_input).poll_write(&mut context, &chunk),
++            Poll::Pending
++        ));
++
++        let mut bytes = vec![0u8; TOOL_PROTOCOL_CHUNK_BYTES];
++        let mut output = ReadBuf::new(&mut bytes);
++        assert!(matches!(
++            Pin::new(&mut guest).poll_read(&mut context, &mut output),
++            Poll::Ready(Ok(()))
++        ));
++        assert_eq!(output.filled().len(), TOOL_PROTOCOL_CHUNK_BYTES);
++        assert!(matches!(
++            Pin::new(&mut host_input).poll_write(&mut context, &chunk),
++            Poll::Ready(Ok(TOOL_PROTOCOL_CHUNK_BYTES))
++        ));
++    }
++
+     #[wasm_bindgen_test]
+     async fn writing_to_the_pipe_is_readable_from_js() {
+         let (mut pipe, stream) = output_pipe();

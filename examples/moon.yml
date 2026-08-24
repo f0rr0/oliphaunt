@@ -31,6 +31,7 @@ tasks:
       - "!/examples/**/node_modules"
       - "!/examples/**/node_modules/**"
       - "/src/runtimes/liboliphaunt/native/VERSION"
+      - "/src/runtimes/liboliphaunt/native/tools-npm/package.json"
       - "/src/sdks/js/package.json"
       - "/src/sources/toolchains/wasix.toml"
       - "/src/bindings/wasix-rust/moon.yml"

@@ -21,6 +21,7 @@ registry_packages = [
   "npm:@oliphaunt/tools-linux-x64-gnu",
   "npm:@oliphaunt/tools-linux-arm64-gnu",
   "npm:@oliphaunt/tools-win32-x64-msvc",
+  "npm:@oliphaunt/tools",
   "maven:dev.oliphaunt.runtime:oliphaunt-icu",
   "maven:dev.oliphaunt.runtime:liboliphaunt-runtime-resources",
   "maven:dev.oliphaunt.runtime:liboliphaunt-android-arm64-v8a",

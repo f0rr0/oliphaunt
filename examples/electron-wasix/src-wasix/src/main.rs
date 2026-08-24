@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::thread;
 
 use anyhow::{bail, Context, Result};
-use oliphaunt_wasix::{extensions, DatabaseStorage, OliphauntServer, PgDumpOptions, PsqlOptions};
+use oliphaunt_wasix::{extensions, tools, DatabaseStorage, Oliphaunt, OliphauntServer};
 use serde_json::json;
 
 fn main() -> Result<()> {
@@ -24,6 +24,7 @@ fn main() -> Result<()> {
 }
 
 fn start_server(directory: PathBuf) -> Result<OliphauntServer> {
+    validate_wasix_tools()?;
     let server = OliphauntServer::builder()
         .storage(DatabaseStorage::Directory(directory))
         .extensions([
@@ -33,21 +34,28 @@ fn start_server(directory: PathBuf) -> Result<OliphauntServer> {
         ])
         .start()
         .context("start oliphaunt-wasix server")?;
-    validate_wasix_tools(&server)?;
     Ok(server)
 }
 
-fn validate_wasix_tools(server: &OliphauntServer) -> Result<()> {
-    let dump = server.pg_dump(PgDumpOptions::new().arg("--schema-only"))?;
+fn validate_wasix_tools() -> Result<()> {
+    let mut database = Oliphaunt::open()?;
+    let dump = tools::pg_dump(
+        &mut database,
+        tools::PgDumpOptions::new().arg("--schema-only"),
+    )?;
     anyhow::ensure!(
         dump.contains("PostgreSQL database dump"),
         "pg_dump SQL backup smoke did not look like a PostgreSQL dump"
     );
-    let psql = server.psql(PsqlOptions::new().arg("-tA").command("SELECT 1"))?;
+    let psql = tools::psql(
+        &mut database,
+        tools::PsqlOptions::new().arg("-tA").command("SELECT 1"),
+    )?;
     anyhow::ensure!(
         psql.lines().any(|line| line.trim() == "1"),
         "psql smoke did not return SELECT 1 output"
     );
+    database.close()?;
     Ok(())
 }
 

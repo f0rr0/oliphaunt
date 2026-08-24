@@ -30,6 +30,8 @@ export const WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES = Object.freeze([
   'lib/archive.js',
   'lib/asset-source.d.ts',
   'lib/asset-source.js',
+  'lib/byte-channel.d.ts',
+  'lib/byte-channel.js',
   'lib/client-common.d.ts',
   'lib/client-common.js',
   'lib/client.d.ts',
@@ -64,6 +66,12 @@ export const WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES = Object.freeze([
   'lib/index.js',
   'lib/index.node.d.ts',
   'lib/index.node.js',
+  'lib/internal-common.d.ts',
+  'lib/internal-common.js',
+  'lib/internal.d.ts',
+  'lib/internal.js',
+  'lib/internal.node.d.ts',
+  'lib/internal.node.js',
   'lib/node-client.d.ts',
   'lib/node-client.js',
   'lib/node-direct.d.ts',
@@ -74,6 +82,12 @@ export const WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES = Object.freeze([
   'lib/node-fs-commit-state.js',
   'lib/node-host.d.ts',
   'lib/node-host.js',
+  'lib/node-tool-worker.d.ts',
+  'lib/node-tool-worker.js',
+  'lib/node-web-worker-bootstrap.d.ts',
+  'lib/node-web-worker-bootstrap.js',
+  'lib/node-web-worker.d.ts',
+  'lib/node-web-worker.js',
   'lib/node-worker-options.d.ts',
   'lib/node-worker-options.js',
   'lib/node-worker-port.d.ts',
@@ -86,6 +100,8 @@ export const WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES = Object.freeze([
   'lib/open-options.js',
   'lib/pgwire.d.ts',
   'lib/pgwire.js',
+  'lib/pgwire-connection.d.ts',
+  'lib/pgwire-connection.js',
   'lib/physical-archive.d.ts',
   'lib/physical-archive.js',
   'lib/protocol.d.ts',
@@ -98,6 +114,8 @@ export const WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES = Object.freeze([
   'lib/rpc.js',
   'lib/runtime-descriptor.d.ts',
   'lib/runtime-descriptor.js',
+  'lib/server.node.d.ts',
+  'lib/server.node.js',
   'lib/storage-provider.d.ts',
   'lib/storage-provider.js',
   'lib/storage-snapshot.d.ts',
@@ -130,6 +148,12 @@ export const WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES = Object.freeze([
   'lib/storage/web-lock.js',
   'lib/types.d.ts',
   'lib/types.js',
+  'lib/tool-runtime.d.ts',
+  'lib/tool-runtime.js',
+  'lib/tool-worker-common.d.ts',
+  'lib/tool-worker-common.js',
+  'lib/tool-worker.d.ts',
+  'lib/tool-worker.js',
   'lib/wasix-runtime.d.ts',
   'lib/wasix-runtime.js',
   'lib/worker-dispatch.d.ts',
@@ -197,8 +221,12 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
   const expectedExports = [
     '.',
     './package.json',
+    './internal/tools',
     './protocol',
     './query',
+    './server/bun',
+    './server/deno',
+    './server/node',
     './storage/bun',
     './storage/deno',
     './storage/indexed-db',
@@ -228,6 +256,27 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
       || entry?.default !== `./lib/${name}.js`
     ) {
       fail(`${label} must expose the exact ${name} entrypoint`);
+    }
+  }
+  const internalTools = manifest.exports?.['./internal/tools'];
+  if (
+    internalTools?.types !== './lib/internal.d.ts'
+    || internalTools?.deno !== './lib/internal.node.js'
+    || internalTools?.bun !== './lib/internal.node.js'
+    || internalTools?.node !== './lib/internal.node.js'
+    || internalTools?.browser !== './lib/internal.js'
+    || internalTools?.default !== './lib/internal.js'
+  ) {
+    fail(`${label} must expose the exact version-locked optional-tools bridge`);
+  }
+  for (const runtime of ['node', 'bun', 'deno']) {
+    const server = manifest.exports?.[`./server/${runtime}`];
+    if (
+      server?.types !== './lib/server.node.d.ts'
+      || server?.[runtime] !== './lib/server.node.js'
+      || sortedKeys(server).some((condition) => !['types', runtime].includes(condition))
+    ) {
+      fail(`${label} must expose the local server only under the ${runtime} condition`);
     }
   }
   const nodeStorage = manifest.exports?.['./storage/node'];

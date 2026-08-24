@@ -34,6 +34,8 @@ fn extensions_expose_only_the_selection_contract() {
 #[cfg(feature = "tools")]
 #[test]
 fn packaged_psql_accepts_standard_script_input() {
-    let options = oliphaunt_wasix::PsqlOptions::new().script("SELECT 1;");
-    let _: oliphaunt_wasix::PsqlOptions = options;
+    let options = oliphaunt_wasix::tools::PsqlOptions::new().script("SELECT 1;");
+    let _: oliphaunt_wasix::tools::PsqlOptions = options;
+    fn assert_tool_error<T: std::error::Error + Send + Sync + 'static>() {}
+    assert_tool_error::<oliphaunt_wasix::tools::PostgresToolError>();
 }

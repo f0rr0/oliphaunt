@@ -303,10 +303,6 @@ Implemented:
 - `OliphauntBuilder::extensions`;
 - `OliphauntBuilder::username`;
 - `OliphauntBuilder::database`;
-- `OliphauntBuilder::debug_level`;
-- `OliphauntBuilder::relaxed_durability`;
-- `OliphauntBuilder::startup_arg`;
-- `OliphauntBuilder::startup_args`;
 - `DatabaseInitialization::PhysicalArchive`;
 - `Oliphaunt::enable_extension`;
 - `Oliphaunt::preload`;
@@ -323,21 +319,19 @@ Implemented:
   this is a same-runtime/same-version physical import/export path, not a
   cross-version backup protocol;
 - `Oliphaunt::exec_protocol_raw`;
-- `Oliphaunt::exec_protocol_raw_stream`;
-- `Oliphaunt::dump_sql`;
-- `Oliphaunt::dump_bytes`;
+- `Oliphaunt::exec_protocol_stream`;
+- `tools::pg_dump`;
+- `tools::psql`;
+- `tools::PgDumpOptions`;
+- `tools::PsqlOptions`;
 - `OliphauntServerBuilder::extension`;
 - `OliphauntServerBuilder::extensions`;
 - `OliphauntServerBuilder::username`;
 - `OliphauntServerBuilder::database`;
-- `OliphauntServerBuilder::debug_level`;
-- `OliphauntServerBuilder::relaxed_durability`;
-- `OliphauntServerBuilder::startup_arg`;
-- `OliphauntServerBuilder::startup_args`;
-- `OliphauntServer::connection_uri`;
-- `OliphauntServer::dump_sql`;
-- `OliphauntServer::dump_bytes`;
-- `PgDumpOptions`;
+- `OliphauntServerBuilder::listen`;
+- `ServerListen::tcp` / `ServerListen::tcp_port`;
+- Unix hosts: `ServerListen::unix` / `ServerListen::unix_port`;
+- `OliphauntServer::connection_string`;
 - 37 public extension constants plus `extensions::ALL`, covering the smoke-gated
   packaged Oliphaunt/Postgres catalog: `amcheck`, `auto_explain`, `bloom`,
   `age`, `btree_gin`, `btree_gist`, `citext`, `cube`, `dict_int`, `dict_xsyn`,
@@ -350,11 +344,6 @@ Implemented:
 
 `oliphaunt-wasix-dump` no longer exposes the old archive-unpack behavior. It is now a
 real logical dump CLI backed by the packaged WASIX `pg_dump` module.
-
-`relaxed_durability` is a startup-profile flag rather than a hidden mutation of
-`PostgresConfig`; explicit user `postgres_config` values win and
-`relaxed_durability(true).relaxed_durability(false)` returns to the normal
-profile.
 
 ## Protocol And Server Correctness
 
@@ -435,13 +424,13 @@ Review conclusions:
   `pgl_protocol_report_copy_response`; the proxy no longer parses SQL text,
   fabricates COPY state, scans whole backend buffers, or eagerly copies
   continuation bytes for ordinary traffic;
-- direct raw protocol streaming and direct `pg_dump` use the shared
+- direct raw protocol streaming and direct `pg_dump`/`psql` tools use the shared
   `BackendSession` transport instead of a separate clone/server path;
 - startup role/database failures are PostgreSQL-owned: WASIX backend open
   captures `InitPostgres` `ErrorResponse` bytes, the proxy forwards those bytes,
   and Rust no longer probes `pg_database` or string-guesses `3D000`;
 - direct API, server API, proxy CLI, raw protocol, physical archive/clone, and
-  direct `pg_dump` share `RootPlan`/`prepare_root` and `BackendSession`
+  direct tools share `RootPlan`/`prepare_root` and `BackendSession`
   lifecycle paths;
 - side-module cache seeding is keyed by artifact name, source module hash,
   Wasmer version, Wasmer-WASIX version, and engine identity;
@@ -527,23 +516,22 @@ Implemented coverage:
   runtime-support/extension side-module imports, rather than being a
   hand-maintained export allowlist;
 - extension archive hash mismatch rejection;
-- public WASIX `pg_dump` runner loads through the AOT manifest, connects to
-  `OliphauntServer`, dumps plain SQL, restores into fresh `Oliphaunt`, and verifies
-  schema/data;
-- direct `Oliphaunt::dump_sql` no longer uses a temporary physical clone, public
+- the public WASIX tools namespace loads `pg_dump` and `psql` through the AOT
+  manifest, runs both against an open `Oliphaunt`, restores plain SQL into a
+  fresh database, and verifies schema/data;
+- direct `tools::pg_dump` does not use a temporary physical clone, public
   `OliphauntServer`, or OS loopback TCP; it runs the standalone WASIX `pg_dump`
   against an in-process Wasmer virtual TCP connection whose host side is routed
   through the same direct raw-protocol backend;
-- direct `Oliphaunt::dump_sql` rejects database/user options that would imply a
-  different backend than the already-open direct session; callers needing that
-  use the server `pg_dump` path;
+- direct tools reject connection, output, format, and parallel-job options that
+  conflict with the already-open session and the plain captured-output contract;
 - the direct `pg_dump` transport keeps `pg_dump`/libpq stock and owns the only
   required semantic adapter in Rust: a first-write-readiness normalization for
   Wasmer's in-memory `TcpSocketHalf` so libpq's connect-time and first-write
   polls remain level-triggered;
-- public `pg_dump` coverage includes indexes, views, sequences,
-  `--schema-only`, `--quote-all-identifiers`, source-server reuse after dump,
-  and vector extension dump/restore;
+- public tool coverage includes indexes, views, sequences, COPY data,
+  `--schema-only`, quoted identifiers, source-database reuse, and a packaged
+  extension dump/restore;
 - `PgDumpOptions` rejects passthrough flags that conflict with the typed
   output/connection contract instead of letting callers override the internal
   output file, format, host, port, username, database, or job count.
@@ -1048,12 +1036,12 @@ following completed work was removed from `TODO.md`:
   crate templates, staged release workspaces, exact-SHA artifact downloads,
   package-size gates, and Release workflow trusted-publishing permissions
   through `id-token: write`;
-- public `pg_dump` functionality that is already implemented and tested:
-  `PgDumpOptions`, direct and server `dump_sql`/`dump_bytes`, the `oliphaunt-wasix-dump`
-  CLI, typed rejection of managed passthrough flags, no-clone/no-public-server
-  direct dumps, stock libpq over virtual networking, indexes/views/sequences,
-  `--schema-only`, `--quote-all-identifiers`, source-server reuse after dump,
-  and vector dump/restore coverage;
+- public `pg_dump`/`psql` functionality that is already implemented and tested:
+  the optional `tools` namespace, the `oliphaunt-wasix-dump` CLI, typed rejection
+  of managed passthrough flags, no-clone/no-public-server direct tools, stock
+  libpq over virtual networking, indexes/views/sequences, COPY data,
+  `--schema-only`, quoted identifiers, source-database reuse, and a packaged
+  extension dump/restore;
 - split WASIX `initdb` runtime support that is present locally: direct and
   explicit `DatabaseInitialization::FreshInitdb`, split-initdb module
   execution, interrupted-PGDATA cleanup, initdb shim ABI/source-spine checks,

@@ -15,9 +15,8 @@ Additional platform examples live here as well:
 Each app opts into `hstore`, `pg_trgm`, and `unaccent`, then uses `hstore`
 tags plus trigram/accent-insensitive search for the todo list. Native examples
 load `postgres`, `initdb`, and `pg_ctl` from `liboliphaunt-native-*`. Native
-tool carriers separately package `pg_basebackup`, `pg_dump`, and `psql`; a
-compatible external `pg_restore` may be used but is not packaged. WASIX
-examples load `postgres` and `initdb` from the runtime crates and enable the
+tool carriers separately package `pg_basebackup`, `pg_dump`, and `psql`.
+WASIX examples load `postgres` and `initdb` from the runtime crates and enable the
 `oliphaunt-wasix` `tools` feature, which resolves `pg_dump`/`psql` from
 `oliphaunt-wasix-tools`; WASIX intentionally has no `pg_ctl`.
 
@@ -31,8 +30,8 @@ tools/dev/bun.sh tools/release/example-cargo-policy.mjs --check
 ```
 The native examples exercise their configured database path during startup;
 native tool compatibility is qualified separately against the local server.
-The WASIX examples run `pg_dump(PgDumpOptions)` and a non-interactive `psql`
-`SELECT 1` smoke during startup.
+The WASIX examples use the optional `tools` namespace to run a schema-only
+`pg_dump` and a non-interactive `psql` `SELECT 1` smoke during startup.
 
 Run Tauri GUI smoke tests through WebDriver on Linux:
 

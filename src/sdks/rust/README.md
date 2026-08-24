@@ -62,7 +62,7 @@ response remains a recoverable, idle-session error.
 
 For COPY, multi-result responses, or another protocol flow that the typed
 helpers cannot represent, use `exec_protocol_raw` for one owned response or
-`exec_protocol_raw_stream` to consume backend protocol chunks as they arrive.
+`exec_protocol_stream` to consume backend protocol chunks as they arrive.
 The stream is the raw PostgreSQL protocol; the SDK does not publish a second
 parser or a separate COPY-specific abstraction.
 
@@ -101,10 +101,35 @@ connection string for standard PostgreSQL clients. Its SDK-owned connection has
 the same execute, query, transaction, checkpoint, cancellation, raw protocol,
 and close vocabulary as an embedded database.
 
-The server handle deliberately has no SDK backup method. Use the packaged
-standard PostgreSQL clients: `pg_basebackup` for physical backups and `pg_dump`
-or `psql` for logical workflows. Use a compatible external `pg_restore` for
-custom-format dumps; Oliphaunt does not package it.
+The default listener is IPv4 loopback with an automatically assigned port.
+Select a fixed loopback port or, on Unix hosts, a PostgreSQL socket directory:
+
+```rust,no_run
+use oliphaunt::{Oliphaunt, ServerListen};
+
+# async fn open() -> oliphaunt::Result<()> {
+let server = Oliphaunt::builder()
+    .listen(ServerListen::tcp_port(15432))
+    .open_server()
+    .await?;
+println!("{}", server.connection_string());
+server.close().await?;
+# Ok(())
+# }
+```
+
+The server handle deliberately has no SDK backup method. Use `pg_basebackup`
+for a standard server physical backup. The optional `oliphaunt-tools` crate
+provides endpoint-oriented plain `pg_dump` and non-interactive `psql` runners;
+the core `oliphaunt` crate does not depend on or install client tools.
+
+```rust,no_run
+use oliphaunt_tools::{PgDumpOptions, pg_dump};
+
+# fn dump(connection_string: &str) -> Result<String, oliphaunt_tools::PostgresToolError> {
+pg_dump(connection_string, PgDumpOptions::new().arg("--schema-only"))
+# }
+```
 
 Pass `server.connection_string()` to the standard tool and keep PostgreSQL's
 streamed-WAL behavior explicit:

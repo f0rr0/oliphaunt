@@ -10,6 +10,7 @@ import {
   renderWasixRuntimeDescriptorTypes,
 } from '../../../../tools/release/wasix-runtime-npm-descriptor.mjs';
 import { prepareWasixTypescriptPackage } from '../../../../tools/release/wasix-typescript-package.mjs';
+import { prepareWasixToolsTypescriptPackage } from '../../../../tools/release/wasix-tools-typescript-package.mjs';
 
 const execFileAsync = promisify(execFile);
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -28,6 +29,7 @@ export async function createPackedWasixConsumer({
   scratch,
   consumerName = 'oliphaunt-wasix-node-consumer',
   includePgtap = false,
+  includeTools = false,
   useStubRuntime = false,
 }) {
   if (typeof scratch !== 'string' || !isAbsolute(scratch)) {
@@ -44,6 +46,12 @@ export async function createPackedWasixConsumer({
   await mkdir(tarballs, { recursive: true });
 
   const binding = await packBinding({ scratch, tarballs });
+  const toolsCarrier = includeTools
+    ? await packToolsCarrier({ scratch, tarballs, runtimeVersion })
+    : undefined;
+  const toolsFacade = includeTools
+    ? await packToolsFacade({ scratch, tarballs, bindingVersion: binding.version })
+    : undefined;
   if (includePgtap && useStubRuntime) {
     throw new Error('the packed WASIX stub runtime cannot carry extensions');
   }
@@ -60,6 +68,8 @@ export async function createPackedWasixConsumer({
     [binding.name]: `file:${binding.file}`,
   };
   if (extension !== undefined) dependencies[extension.name] = `file:${extension.file}`;
+  if (toolsCarrier !== undefined) dependencies[toolsCarrier.name] = `file:${toolsCarrier.file}`;
+  if (toolsFacade !== undefined) dependencies[toolsFacade.name] = `file:${toolsFacade.file}`;
   await writeJson(resolve(consumer, 'package.json'), {
     name: consumerName,
     version: '0.0.0',
@@ -67,9 +77,12 @@ export async function createPackedWasixConsumer({
     type: 'module',
     dependencies,
   });
+  const localPackages = [runtime, binding, extension, toolsCarrier, toolsFacade].filter(Boolean);
   await writeFile(
     resolve(consumer, 'pnpm-workspace.yaml'),
-    `packages:\n  - .\noverrides:\n  '${runtime.name}': file:${runtime.file}\n`,
+    `packages:\n  - .\noverrides:\n${localPackages
+      .map((candidate) => `  '${candidate.name}': file:${candidate.file}`)
+      .join('\n')}\n`,
   );
   await runFixtureCommand(
     'pnpm',
@@ -82,6 +95,8 @@ export async function createPackedWasixConsumer({
       binding,
       runtime,
       ...(extension === undefined ? {} : { extension }),
+      ...(toolsCarrier === undefined ? {} : { toolsCarrier }),
+      ...(toolsFacade === undefined ? {} : { toolsFacade }),
     },
   };
 }
@@ -148,6 +163,55 @@ async function packBinding({ scratch, tarballs }) {
     await cp(resolve(packageRoot, name), resolve(staging, name), { recursive: true });
   }
   prepareWasixTypescriptPackage(staging);
+  return pack(staging, tarballs);
+}
+
+async function packToolsCarrier({ scratch, tarballs, runtimeVersion }) {
+  requireReleaseVersion(runtimeVersion, 'src/runtimes/liboliphaunt/wasix');
+  const staging = resolve(scratch, 'tools-carrier');
+  const assets = resolve(staging, 'assets');
+  await mkdir(assets, { recursive: true });
+  const manifest = JSON.parse(await readFile(resolve(assetRoot, 'manifest.json'), 'utf8'));
+  const descriptors = {};
+  for (const [field, key, filename] of [
+    ['pgDump', 'pg-dump', 'pg_dump.wasix.wasm'],
+    ['psql', 'psql', 'psql.wasix.wasm'],
+  ]) {
+    const row = manifest[key];
+    const bytes = await readFile(resolve(assetRoot, row.path));
+    requireDigest(bytes, row.sha256, row.path);
+    if (bytes.length !== row.size) throw new Error(`${row.path} size differs from its manifest`);
+    await writeFile(resolve(assets, filename), bytes);
+    descriptors[field] = {
+      name: row.name,
+      sha256: row.sha256,
+      size: row.size,
+      filename,
+    };
+  }
+  const tool = ({ name, sha256: digest, size, filename }) =>
+    `Object.freeze({ name: ${JSON.stringify(name)}, sha256: ${JSON.stringify(digest)}, size: ${size}, source: new URL('./assets/${filename}', import.meta.url).href })`;
+  await writeFile(
+    resolve(staging, 'index.js'),
+    `export default Object.freeze({\n  schema: 'oliphaunt-wasix-tools-v1',\n  product: 'oliphaunt-wasix-tools',\n  version: ${JSON.stringify(runtimeVersion)},\n  runtimeProduct: 'liboliphaunt-wasix',\n  runtimeVersion: ${JSON.stringify(runtimeVersion)},\n  pgDump: ${tool(descriptors.pgDump)},\n  psql: ${tool(descriptors.psql)},\n});\n`,
+  );
+  await writeJson(resolve(staging, 'package.json'), {
+    name: '@oliphaunt/liboliphaunt-wasix-tools',
+    version: runtimeVersion,
+    type: 'module',
+    exports: { '.': './index.js' },
+  });
+  return pack(staging, tarballs);
+}
+
+async function packToolsFacade({ scratch, tarballs, bindingVersion }) {
+  const source = resolve(repositoryRoot, 'src/bindings/wasix-tools');
+  const staging = resolve(scratch, 'tools-facade');
+  await mkdir(staging);
+  for (const name of ['package.json', 'README.md', 'CHANGELOG.md', 'lib']) {
+    await cp(resolve(source, name), resolve(staging, name), { recursive: true });
+  }
+  prepareWasixToolsTypescriptPackage(staging, bindingVersion);
   return pack(staging, tarballs);
 }
 

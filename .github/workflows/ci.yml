@@ -1502,6 +1502,11 @@ jobs:
           node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime bun
           node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime deno
           node src/bindings/wasix-ts/tools/smoke-browser.mjs --postgis-worker
+          node src/bindings/wasix-ts/tools/smoke-browser.mjs --package-only
+          pnpm --dir src/bindings/wasix-tools build
+          node src/bindings/wasix-tools/tools/smoke-host.mjs --runtime node
+          tools/dev/bun.sh src/bindings/wasix-tools/tools/smoke-host.mjs --runtime bun
+          tools/dev/deno.sh run --allow-all src/bindings/wasix-tools/tools/smoke-host.mjs --runtime deno
           OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh wasix-ts-sdk-package
 
       - name: Upload WASIX TypeScript SDK package artifacts

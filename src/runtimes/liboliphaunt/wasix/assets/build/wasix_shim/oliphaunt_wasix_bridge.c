@@ -56,10 +56,11 @@ extern const char *pg_encoding_to_char_private(int encoding);
 /*
  * Oliphaunt's libpq sources intentionally use private encoding symbols in the
  * embedded backend build so libpq does not leak a second copy of the encoding
- * table into the main module. A standalone WASIX pg_dump links the same static
- * libpq archive, whose connection path still expects libpq's public aliases.
- * Provide only those aliases here so pg_dump can use the normal static
- * libpgcommon archive without also pulling in libpgcommon_shlib.
+ * table into the main module. The standalone WASIX frontend tools link the
+ * same static libpq archive, whose connection path still expects libpq's
+ * public aliases. Provide only those aliases here so the tools can use the
+ * normal static libpgcommon archive without also pulling in
+ * libpgcommon_shlib.
  */
 int __attribute__((weak)) EMSCRIPTEN_KEEPALIVE
 pg_char_to_encoding(const char *name)
@@ -99,6 +100,10 @@ enum
 };
 
 static int oliphaunt_wasix_protocol_transport;
+static int oliphaunt_wasix_protocol_fd = OLIPHAUNT_PROTOCOL_FD;
+static int oliphaunt_wasix_protocol_status_flags;
+static bool oliphaunt_wasix_direct_tool_active;
+static bool oliphaunt_wasix_direct_tool_read_permitted;
 static int oliphaunt_wasix_protocol_copy_state_value;
 static bool oliphaunt_wasix_protocol_stream_requested;
 static bool oliphaunt_wasix_protocol_stream_active_value;
@@ -106,6 +111,7 @@ static void (*atexit_funcs[MAX_ATEXIT_FUNCS])(void);
 static int atexit_func_count;
 
 int oliphaunt_wasix_set_protocol_transport(int mode);
+int oliphaunt_wasix_socket(int domain, int type, int protocol);
 ssize_t oliphaunt_wasix_recv(int fd, void *buf, size_t n, int flags);
 ssize_t oliphaunt_wasix_send(int fd, const void *buf, size_t n, int flags);
 
@@ -438,14 +444,14 @@ ssize_t
 oliphaunt_wasix_host_read(void *context, void *buffer, size_t max_length)
 {
 	(void) context;
-	return oliphaunt_wasix_recv(OLIPHAUNT_PROTOCOL_FD, buffer, max_length, 0);
+	return oliphaunt_wasix_recv(oliphaunt_wasix_protocol_fd, buffer, max_length, 0);
 }
 
 ssize_t
 oliphaunt_wasix_host_write(void *context, const void *buffer, size_t length)
 {
 	(void) context;
-	return oliphaunt_wasix_send(OLIPHAUNT_PROTOCOL_FD, buffer, length, 0);
+	return oliphaunt_wasix_send(oliphaunt_wasix_protocol_fd, buffer, length, 0);
 }
 
 int EMSCRIPTEN_KEEPALIVE
@@ -699,13 +705,13 @@ oliphaunt_wasix_fcntl(int fd, int cmd, ...)
 	{
 #ifdef F_GETFL
 		case F_GETFL:
-			if (fd == OLIPHAUNT_PROTOCOL_FD)
-				return 0;
+			if (fd == oliphaunt_wasix_protocol_fd)
+				return oliphaunt_wasix_protocol_status_flags;
 			return fcntl(fd, cmd);
 #endif
 #ifdef F_GETFD
 		case F_GETFD:
-			if (fd == OLIPHAUNT_PROTOCOL_FD)
+			if (fd == oliphaunt_wasix_protocol_fd)
 				return 0;
 			return fcntl(fd, cmd);
 #endif
@@ -714,11 +720,14 @@ oliphaunt_wasix_fcntl(int fd, int cmd, ...)
 			va_start(args, cmd);
 			arg = va_arg(args, long);
 			va_end(args);
-			if (fd == OLIPHAUNT_PROTOCOL_FD)
+			if (fd == oliphaunt_wasix_protocol_fd)
 			{
 #ifdef O_NONBLOCK
 				if ((arg & ~((long) O_NONBLOCK)) == 0)
+				{
+					oliphaunt_wasix_protocol_status_flags = (int) arg;
 					return 0;
+				}
 #else
 				if (arg == 0)
 					return 0;
@@ -733,7 +742,7 @@ oliphaunt_wasix_fcntl(int fd, int cmd, ...)
 			va_start(args, cmd);
 			arg = va_arg(args, long);
 			va_end(args);
-			if (fd == OLIPHAUNT_PROTOCOL_FD)
+			if (fd == oliphaunt_wasix_protocol_fd)
 			{
 #ifdef FD_CLOEXEC
 				if ((arg & ~((long) FD_CLOEXEC)) == 0)
@@ -769,7 +778,7 @@ oliphaunt_wasix_write_int_sockopt(void *optval, socklen_t *optlen, int value)
 int EMSCRIPTEN_KEEPALIVE
 oliphaunt_wasix_setsockopt(int fd, int level, int optname, const void *optval, socklen_t optlen)
 {
-	if (fd != OLIPHAUNT_PROTOCOL_FD)
+	if (fd != oliphaunt_wasix_protocol_fd)
 		return setsockopt(fd, level, optname, optval, optlen);
 
 	if (optval == NULL && optlen != 0)
@@ -835,7 +844,7 @@ oliphaunt_wasix_setsockopt(int fd, int level, int optname, const void *optval, s
 int EMSCRIPTEN_KEEPALIVE
 oliphaunt_wasix_getsockopt(int fd, int level, int optname, void *optval, socklen_t *optlen)
 {
-	if (fd != OLIPHAUNT_PROTOCOL_FD)
+	if (fd != oliphaunt_wasix_protocol_fd)
 		return getsockopt(fd, level, optname, optval, optlen);
 
 	if (level == SOL_SOCKET)
@@ -892,7 +901,7 @@ oliphaunt_wasix_getsockopt(int fd, int level, int optname, void *optval, socklen
 int EMSCRIPTEN_KEEPALIVE
 oliphaunt_wasix_getsockname(int fd, struct sockaddr *addr, socklen_t *len)
 {
-	if (fd != OLIPHAUNT_PROTOCOL_FD)
+	if (fd != oliphaunt_wasix_protocol_fd)
 		return getsockname(fd, addr, len);
 
 	if (addr == NULL || len == NULL || *len < (socklen_t) sizeof(sa_family_t))
@@ -910,13 +919,20 @@ oliphaunt_wasix_getsockname(int fd, struct sockaddr *addr, socklen_t *len)
 ssize_t EMSCRIPTEN_KEEPALIVE
 oliphaunt_wasix_recv(int fd, void *buf, size_t n, int flags)
 {
-	if (fd != OLIPHAUNT_PROTOCOL_FD)
+	if (fd != oliphaunt_wasix_protocol_fd)
 		return recv(fd, buf, n, flags);
 	if (oliphaunt_wasix_protocol_transport == OLIPHAUNT_WASIX_PROTOCOL_STREAM ||
 		oliphaunt_wasix_protocol_stream_active_value)
 	{
 		(void) flags;
-		return read(STDIN_FILENO, buf, n);
+		if (oliphaunt_wasix_direct_tool_active &&
+			!oliphaunt_wasix_direct_tool_read_permitted)
+		{
+			errno = EAGAIN;
+			return -1;
+		}
+		oliphaunt_wasix_direct_tool_read_permitted = false;
+		return read(oliphaunt_wasix_direct_tool_active ? fd : STDIN_FILENO, buf, n);
 	}
 	return oliphaunt_wasix_buffer_read(buf, n);
 }
@@ -924,21 +940,61 @@ oliphaunt_wasix_recv(int fd, void *buf, size_t n, int flags)
 ssize_t EMSCRIPTEN_KEEPALIVE
 oliphaunt_wasix_send(int fd, const void *buf, size_t n, int flags)
 {
-	if (fd != OLIPHAUNT_PROTOCOL_FD)
+	if (fd != oliphaunt_wasix_protocol_fd)
 		return send(fd, buf, n, flags);
 	if (oliphaunt_wasix_protocol_transport == OLIPHAUNT_WASIX_PROTOCOL_STREAM ||
 		oliphaunt_wasix_protocol_stream_active_value)
 	{
 		(void) flags;
-		return write(STDOUT_FILENO, buf, n);
+		return write(oliphaunt_wasix_direct_tool_active ? fd : STDOUT_FILENO, buf, n);
 	}
 	return oliphaunt_wasix_buffer_write(buf, n);
+}
+
+static const char *
+oliphaunt_wasix_direct_tool_path(void)
+{
+	const char *value = getenv("OLIPHAUNT_DIRECT_PGWIRE");
+	return value != NULL && value[0] != '\0' ? value : NULL;
+}
+
+int EMSCRIPTEN_KEEPALIVE
+oliphaunt_wasix_socket(int domain, int type, int protocol)
+{
+	const char *path = oliphaunt_wasix_direct_tool_path();
+	if (path == NULL)
+		return socket(domain, type, protocol);
+
+	/*
+	 * Direct tools use a private full-duplex virtual file. Claim the descriptor
+	 * here, before libpq configures it with fcntl and socket options, while
+	 * leaving the tool's standard streams available for normal PostgreSQL I/O.
+	 */
+	int fd = open(path, O_RDWR);
+	if (fd < 0)
+		return -1;
+
+	oliphaunt_wasix_protocol_fd = fd;
+	oliphaunt_wasix_protocol_status_flags = 0;
+	oliphaunt_wasix_direct_tool_active = true;
+	oliphaunt_wasix_direct_tool_read_permitted = false;
+	return fd;
 }
 
 int EMSCRIPTEN_KEEPALIVE
 oliphaunt_wasix_connect(int socket, const struct sockaddr *address, socklen_t address_len)
 {
-	if (socket != OLIPHAUNT_PROTOCOL_FD)
+	if (oliphaunt_wasix_direct_tool_path() != NULL)
+	{
+		oliphaunt_wasix_protocol_fd = socket;
+		oliphaunt_wasix_protocol_status_flags = 0;
+		oliphaunt_wasix_direct_tool_active = true;
+		oliphaunt_wasix_direct_tool_read_permitted = false;
+		oliphaunt_wasix_protocol_transport = OLIPHAUNT_WASIX_PROTOCOL_STREAM;
+		oliphaunt_wasix_protocol_stream_active_value = true;
+		return 0;
+	}
+	if (socket != oliphaunt_wasix_protocol_fd)
 		return connect(socket, address, address_len);
 	errno = ENOSYS;
 	return -1;
@@ -952,7 +1008,7 @@ oliphaunt_wasix_poll(struct pollfd fds[], nfds_t nfds, int timeout)
 
 	for (nfds_t i = 0; i < nfds; i++)
 	{
-		if (fds[i].fd == OLIPHAUNT_PROTOCOL_FD)
+		if (fds[i].fd == oliphaunt_wasix_protocol_fd)
 		{
 			has_protocol_fd = true;
 			break;
@@ -965,7 +1021,7 @@ oliphaunt_wasix_poll(struct pollfd fds[], nfds_t nfds, int timeout)
 	for (nfds_t i = 0; i < nfds; i++)
 	{
 		fds[i].revents = 0;
-		if (fds[i].fd != OLIPHAUNT_PROTOCOL_FD)
+		if (fds[i].fd != oliphaunt_wasix_protocol_fd)
 		{
 			struct pollfd one = fds[i];
 			int rc = poll(&one, 1, 0);
@@ -979,6 +1035,26 @@ oliphaunt_wasix_poll(struct pollfd fds[], nfds_t nfds, int timeout)
 		if (oliphaunt_wasix_protocol_transport == OLIPHAUNT_WASIX_PROTOCOL_STREAM ||
 			oliphaunt_wasix_protocol_stream_active_value)
 		{
+			if (oliphaunt_wasix_direct_tool_active)
+			{
+				/*
+				 * The synthetic socket writes to stdout immediately. The generic
+				 * Wasmer stdio pipe does not reliably wake poll(2), so a blocking
+				 * libpq read wait is made readable and the following recv(2) blocks
+				 * on stdin itself. Zero-timeout readiness probes must remain false:
+				 * claiming those are readable makes libpq perform an opportunistic
+				 * recv with no protocol response pending and deadlocks the tool.
+				 */
+				fds[i].revents = fds[i].events & POLLOUT;
+				if ((fds[i].events & POLLIN) && timeout != 0)
+				{
+					fds[i].revents |= POLLIN;
+					oliphaunt_wasix_direct_tool_read_permitted = true;
+				}
+				if (fds[i].revents)
+					ready++;
+				continue;
+			}
 			struct pollfd one;
 			int rc;
 

@@ -55,7 +55,7 @@ OLIPHAUNT_CFLAGS="\
  -Dfcntl=oliphaunt_wasix_fcntl\
  -Datexit=oliphaunt_wasix_atexit\
  -Dsetsockopt=oliphaunt_wasix_setsockopt -Dgetsockopt=oliphaunt_wasix_getsockopt -Dgetsockname=oliphaunt_wasix_getsockname\
- -Dconnect=oliphaunt_wasix_connect\
+ -Dsocket=oliphaunt_wasix_socket -Dconnect=oliphaunt_wasix_connect -Drecv=oliphaunt_wasix_recv -Dsend=oliphaunt_wasix_send\
  -Dpoll=oliphaunt_wasix_poll\
  -Dlongjmp=oliphaunt_wasix_longjmp -Dsiglongjmp=oliphaunt_wasix_siglongjmp\
  -Wno-declaration-after-statement\

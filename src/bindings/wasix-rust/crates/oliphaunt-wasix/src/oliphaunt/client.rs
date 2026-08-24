@@ -1,7 +1,17 @@
+use std::io::{self, Read, Write};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, bail, ensure};
 use tempfile::TempDir;
+#[cfg(feature = "tools")]
+use tokio::io::AsyncWriteExt;
+#[cfg(feature = "tools")]
+use tokio::runtime::Runtime;
+#[cfg(feature = "tools")]
+use wasmer_wasix::virtual_net::tcp_pair::TcpSocketHalfRx;
+#[cfg(feature = "tools")]
+use wasmer_wasix::virtual_net::tcp_pair::TcpSocketHalfTx;
 
 use crate::oliphaunt::backend::BackendSession;
 use crate::oliphaunt::base::{DirectoryLock, InstallOutcome};
@@ -13,6 +23,7 @@ use crate::oliphaunt::data_dir::{
 };
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::extensions::Extension;
+use crate::oliphaunt::postgres_mod::{PROTOCOL_CHUNK_BYTES, ProtocolPumpOutcome, ProtocolStream};
 use crate::oliphaunt::query::{
     CommandResult, QueryParam, QueryResult, extended_query, parse_command_response,
     parse_query_response,
@@ -20,6 +31,13 @@ use crate::oliphaunt::query::{
 use crate::oliphaunt::storage::PgDataStorage;
 #[cfg(all(feature = "extensions", test))]
 use crate::oliphaunt::storage::StorageRoot;
+#[cfg(feature = "tools")]
+use crate::oliphaunt::tools::{
+    DirectToolOutcomeUnknown, DirectToolSocket, PgDumpOptions, PsqlOptions, run_direct_pg_dump,
+    run_direct_psql,
+};
+#[cfg(feature = "tools")]
+use crate::oliphaunt::wire::{FrontendFrameKind, FrontendFrameReader, classify_frontend_message};
 
 /// Direct, single-session Oliphaunt WASIX database.
 pub struct Oliphaunt {
@@ -31,6 +49,98 @@ pub struct Oliphaunt {
     backup_mode_exit_unconfirmed: bool,
     closing: bool,
     closed: bool,
+    protocol_stream: Arc<Mutex<CallbackProtocolState>>,
+    protocol_stream_attached: bool,
+}
+
+type ProtocolCallback = Box<dyn FnMut(&[u8]) -> crate::Result<()> + Send>;
+
+#[derive(Default)]
+struct CallbackProtocolState {
+    callback: Option<ProtocolCallback>,
+    error: Option<crate::Error>,
+    #[cfg(feature = "tools")]
+    tool_io: Option<DirectToolProtocolIo>,
+}
+
+struct CallbackProtocolStream {
+    state: Arc<Mutex<CallbackProtocolState>>,
+}
+
+impl Read for CallbackProtocolStream {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        #[cfg(feature = "tools")]
+        {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| io::Error::other("WASIX protocol callback lock poisoned"))?;
+            if let Some(tool_io) = state.tool_io.as_mut() {
+                return tool_io.read(buffer);
+            }
+        }
+        let _ = buffer;
+        Err(io::Error::from(io::ErrorKind::WouldBlock))
+    }
+}
+
+impl Write for CallbackProtocolStream {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("WASIX protocol callback lock poisoned"))?;
+        #[cfg(feature = "tools")]
+        if let Some(tool_io) = state.tool_io.as_mut() {
+            return tool_io.write(buffer);
+        }
+        let callback = state.callback.as_mut().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "WASIX protocol callback is not active",
+            )
+        })?;
+        for chunk in buffer.chunks(PROTOCOL_CHUNK_BYTES) {
+            if let Err(error) = callback(chunk) {
+                state.error = Some(error);
+                return Err(io::Error::other("WASIX protocol callback failed"));
+            }
+        }
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        #[cfg(feature = "tools")]
+        {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| io::Error::other("WASIX protocol callback lock poisoned"))?;
+            if let Some(tool_io) = state.tool_io.as_mut() {
+                return tool_io.flush();
+            }
+        }
+        Ok(())
+    }
+}
+
+impl ProtocolStream for CallbackProtocolStream {
+    fn read_ready(&mut self) -> io::Result<bool> {
+        #[cfg(feature = "tools")]
+        {
+            let state = self
+                .state
+                .lock()
+                .map_err(|_| io::Error::other("WASIX protocol callback lock poisoned"))?;
+            if state.tool_io.is_some() {
+                // The protocol pump exclusively owns the tool connection while COPY
+                // is active. As with the Unix socket proxy, reads may block until the
+                // frontend supplies its next protocol frame.
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
 }
 
 impl Oliphaunt {
@@ -91,6 +201,8 @@ impl Oliphaunt {
             backup_mode_exit_unconfirmed: false,
             closing: false,
             closed: false,
+            protocol_stream: Arc::new(Mutex::new(CallbackProtocolState::default())),
+            protocol_stream_attached: false,
         };
         if startup_config.username != "postgres" {
             let sql = format!(
@@ -187,6 +299,239 @@ impl Oliphaunt {
     fn exec_protocol_raw_inner(&mut self, request: &[u8]) -> Result<Vec<u8>> {
         self.check_ready()?;
         self.backend.send_buffered(request)
+    }
+
+    /// Execute raw PostgreSQL protocol bytes and deliver response chunks as they arrive.
+    pub fn exec_protocol_stream<F>(
+        &mut self,
+        request: impl AsRef<[u8]>,
+        on_chunk: F,
+    ) -> crate::Result<()>
+    where
+        F: FnMut(&[u8]) -> crate::Result<()> + Send + 'static,
+    {
+        crate::error::public_result(self.exec_protocol_stream_inner(request.as_ref(), on_chunk))
+    }
+
+    fn exec_protocol_stream_inner<F>(&mut self, request: &[u8], on_chunk: F) -> Result<()>
+    where
+        F: FnMut(&[u8]) -> crate::Result<()> + Send + 'static,
+    {
+        self.check_ready()?;
+        self.ensure_protocol_stream_attached()?;
+        {
+            let mut state = self
+                .protocol_stream
+                .lock()
+                .map_err(|_| anyhow::anyhow!("WASIX protocol callback lock poisoned"))?;
+            ensure!(
+                state.callback.is_none(),
+                "WASIX protocol callback is already active"
+            );
+            state.callback = Some(Box::new(on_chunk));
+            state.error = None;
+        }
+        let outcome = self.backend.send_with_protocol_pump(request, Vec::new);
+        let (callback_error, callback) = {
+            let mut state = self
+                .protocol_stream
+                .lock()
+                .map_err(|_| anyhow::anyhow!("WASIX protocol callback lock poisoned"))?;
+            (state.error.take(), state.callback.take())
+        };
+        if let Some(error) = callback_error {
+            return Err(anyhow::Error::new(error));
+        }
+        let mut callback = callback.context("WASIX protocol callback disappeared")?;
+        match outcome? {
+            ProtocolPumpOutcome::Buffered(response) => {
+                for chunk in response.chunks(PROTOCOL_CHUNK_BYTES) {
+                    callback(chunk).map_err(anyhow::Error::new)?;
+                }
+            }
+            ProtocolPumpOutcome::Streamed => {}
+        }
+        Ok(())
+    }
+
+    fn ensure_protocol_stream_attached(&mut self) -> Result<()> {
+        if !self.protocol_stream_attached {
+            self.backend
+                .attach_protocol_stream(CallbackProtocolStream {
+                    state: Arc::clone(&self.protocol_stream),
+                })?;
+            self.protocol_stream_attached = true;
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "tools")]
+    pub(crate) fn run_pg_dump_tool(&mut self, options: PgDumpOptions) -> Result<String> {
+        options.validate()?;
+        self.prepare_tool_session()?;
+        let startup = self.backend.startup_config().clone();
+        let result = run_direct_pg_dump(&startup.username, &startup.database, &options, |socket| {
+            self.serve_direct_tool_protocol(socket)
+        });
+        self.finish_tool_session(result)
+    }
+
+    #[cfg(feature = "tools")]
+    pub(crate) fn run_psql_tool(&mut self, options: PsqlOptions) -> Result<String> {
+        options.validate()?;
+        self.prepare_tool_session()?;
+        let startup = self.backend.startup_config().clone();
+        let result = run_direct_psql(&startup.username, &startup.database, &options, |socket| {
+            self.serve_direct_tool_protocol(socket)
+        });
+        self.finish_tool_session(result)
+    }
+
+    #[cfg(feature = "tools")]
+    fn prepare_tool_session(&mut self) -> Result<()> {
+        self.check_ready()?;
+        ensure!(
+            !self.in_transaction,
+            "WASIX tools cannot run while a callback transaction is active"
+        );
+        self.reset_tool_session()
+            .context("prepare embedded session for WASIX tool")
+    }
+
+    #[cfg(feature = "tools")]
+    fn finish_tool_session(&mut self, result: Result<String>) -> Result<String> {
+        let outcome_unknown = result
+            .as_ref()
+            .err()
+            .is_some_and(|error| error.downcast_ref::<DirectToolOutcomeUnknown>().is_some());
+        let cleanup = self.reset_tool_session();
+        match (result, cleanup) {
+            (Ok(output), Ok(())) => Ok(output),
+            (Err(error), Ok(())) => {
+                self.transaction_outcome_unknown |= outcome_unknown;
+                Err(error)
+            }
+            (Ok(_), Err(error)) => {
+                self.transaction_outcome_unknown = true;
+                Err(error.context("reset embedded session after WASIX tool"))
+            }
+            (Err(error), Err(cleanup)) => {
+                self.transaction_outcome_unknown = true;
+                Err(error.context(format!(
+                    "embedded session cleanup also failed after WASIX tool: {cleanup:#}"
+                )))
+            }
+        }
+    }
+
+    #[cfg(feature = "tools")]
+    fn reset_tool_session(&mut self) -> Result<()> {
+        self.execute_inner("ROLLBACK")?;
+        self.execute_inner("DISCARD ALL")?;
+        let username = self.backend.startup_config().username.clone();
+        if username != "postgres" {
+            self.execute_inner(&format!(
+                "SET ROLE {}",
+                crate::oliphaunt::sql::quote_identifier(&username)
+            ))?;
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "tools")]
+    fn serve_direct_tool_protocol(&mut self, socket: DirectToolSocket) -> Result<()> {
+        self.ensure_protocol_stream_attached()?;
+        {
+            let mut state = self
+                .protocol_stream
+                .lock()
+                .map_err(|_| anyhow::anyhow!("WASIX protocol callback lock poisoned"))?;
+            ensure!(
+                state.callback.is_none(),
+                "WASIX protocol callback is active"
+            );
+            ensure!(
+                state.tool_io.is_none(),
+                "WASIX tool protocol is already active"
+            );
+            state.tool_io = Some(DirectToolProtocolIo::new(socket)?);
+        }
+        let result = self.serve_direct_tool_protocol_inner();
+        let cleanup = self
+            .protocol_stream
+            .lock()
+            .map_err(|_| anyhow::anyhow!("WASIX protocol callback lock poisoned"))
+            .map(|mut state| {
+                state.tool_io.take();
+            });
+        result.and(cleanup)
+    }
+
+    #[cfg(feature = "tools")]
+    fn serve_direct_tool_protocol_inner(&mut self) -> Result<()> {
+        let mut reader = FrontendFrameReader::default();
+        let mut buffer = [0u8; PROTOCOL_CHUNK_BYTES];
+        loop {
+            let read = self.with_direct_tool_io(|tool_io| tool_io.read(&mut buffer))?;
+            if read == 0 {
+                return Ok(());
+            }
+            reader.append(&buffer[..read]);
+            while let Some(message) = reader.next_frame()? {
+                match classify_frontend_message(&message)? {
+                    FrontendFrameKind::SslOrGssRequest => {
+                        self.write_direct_tool_protocol(b"N")?;
+                    }
+                    FrontendFrameKind::CancelRequest | FrontendFrameKind::Terminate => {
+                        return Ok(());
+                    }
+                    FrontendFrameKind::Startup => {
+                        let response =
+                            self.backend.existing_startup_response().ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "embedded WASIX protocol startup response is unavailable"
+                                )
+                            })?;
+                        self.write_direct_tool_protocol(&response)?;
+                    }
+                    FrontendFrameKind::Protocol => {
+                        match self
+                            .backend
+                            .send_with_protocol_pump(&message, || reader.take_pending())?
+                        {
+                            ProtocolPumpOutcome::Buffered(response) => {
+                                self.write_direct_tool_protocol(&response)?;
+                            }
+                            ProtocolPumpOutcome::Streamed => {}
+                        }
+                    }
+                }
+            }
+            self.with_direct_tool_io(Write::flush)?;
+        }
+    }
+
+    #[cfg(feature = "tools")]
+    fn write_direct_tool_protocol(&self, bytes: &[u8]) -> Result<()> {
+        self.with_direct_tool_io(|tool_io| tool_io.write_all(bytes))
+    }
+
+    #[cfg(feature = "tools")]
+    fn with_direct_tool_io<T>(
+        &self,
+        operation: impl FnOnce(&mut DirectToolProtocolIo) -> io::Result<T>,
+    ) -> Result<T> {
+        let mut state = self
+            .protocol_stream
+            .lock()
+            .map_err(|_| anyhow::anyhow!("WASIX protocol callback lock poisoned"))?;
+        operation(
+            state
+                .tool_io
+                .as_mut()
+                .context("WASIX tool protocol is not active")?,
+        )
+        .context("access direct WASIX tool protocol socket")
     }
 
     /// Force a PostgreSQL checkpoint.
@@ -541,6 +886,64 @@ fn combine_backup_failures(
     primary.context(format!("{cleanup_label}: {cleanup:#}"))
 }
 
+#[cfg(feature = "tools")]
+struct DirectToolProtocolIo {
+    runtime: Runtime,
+    writer: TcpSocketHalfTx,
+    reader: TcpSocketHalfRx,
+}
+
+#[cfg(feature = "tools")]
+impl DirectToolProtocolIo {
+    fn new(socket: DirectToolSocket) -> Result<Self> {
+        let (writer, reader) = socket.split();
+        Ok(Self {
+            runtime: tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .context("create direct WASIX tool socket runtime")?,
+            writer,
+            reader,
+        })
+    }
+}
+
+#[cfg(feature = "tools")]
+impl Read for DirectToolProtocolIo {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.runtime.block_on(async {
+            std::future::poll_fn(|context| {
+                let read = match self.reader.poll_fill_buf(context) {
+                    std::task::Poll::Ready(Ok(available)) => {
+                        let read = available.len().min(buffer.len());
+                        buffer[..read].copy_from_slice(&available[..read]);
+                        read
+                    }
+                    std::task::Poll::Ready(Err(error)) => {
+                        return std::task::Poll::Ready(Err(error));
+                    }
+                    std::task::Poll::Pending => return std::task::Poll::Pending,
+                };
+                self.reader.consume(read);
+                std::task::Poll::Ready(Ok(read))
+            })
+            .await
+        })
+    }
+}
+
+#[cfg(feature = "tools")]
+impl Write for DirectToolProtocolIo {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.runtime.block_on(self.writer.write_all(bytes))?;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.runtime.block_on(self.writer.flush())
+    }
+}
+
 impl Drop for Oliphaunt {
     fn drop(&mut self) {
         if !self.closed {
@@ -592,6 +995,18 @@ impl Transaction<'_> {
     pub fn exec_protocol_raw(&mut self, request: impl AsRef<[u8]>) -> crate::Result<Vec<u8>> {
         crate::error::public_result(self.ensure_open())?;
         self.client.exec_protocol_raw(request)
+    }
+
+    pub fn exec_protocol_stream<F>(
+        &mut self,
+        request: impl AsRef<[u8]>,
+        on_chunk: F,
+    ) -> crate::Result<()>
+    where
+        F: FnMut(&[u8]) -> crate::Result<()> + Send + 'static,
+    {
+        crate::error::public_result(self.ensure_open())?;
+        self.client.exec_protocol_stream(request, on_chunk)
     }
 
     fn commit_internal(&mut self) -> crate::Result<()> {

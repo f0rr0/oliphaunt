@@ -99,7 +99,7 @@ declared dependencies.
 Direct and broker databases expose one byte physical-backup API and static
 restore into an absent or empty destination. Local server handles intentionally
 omit SDK backup: use ordinary PostgreSQL `pg_basebackup` for physical backups or
-`pg_dump`/`pg_restore` for logical workflows through the connection string.
+plain `pg_dump`/`psql` for logical workflows through the connection string.
 
 ## Operational Guidance
 

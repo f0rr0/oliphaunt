@@ -61,6 +61,7 @@ import {
   SOURCE_ONLY_NPM_PROFILES,
 } from "./source-only-sdk-package.mjs";
 import { assertWasixTypescriptNpmArchive } from "./wasix-typescript-package.mjs";
+import { assertWasixToolsTypescriptNpmArchive } from "./wasix-tools-typescript-package.mjs";
 import { assertWasixExtensionMemberInstall } from "./wasix-extension-install-contract.mjs";
 import {
   validateSelectionNeutralSwiftCarrierIdentity,
@@ -1087,11 +1088,17 @@ async function checkSdkProduct(product, { require }) {
       .filter((name) => name.endsWith(".tgz"))
       .map((name) => path.join(root, name))
       .sort(compareText);
-    if (tarballs.length !== 1) {
-      fail(`${product} must stage exactly one npm tarball under ${rel(root)}`);
+    if (tarballs.length !== 2) {
+      fail(`${product} must stage the binding and tools npm tarballs under ${rel(root)}`);
     }
     try {
-      assertWasixTypescriptNpmArchive(tarballs[0]);
+      const binding = tarballs.find((file) => path.basename(file).startsWith('oliphaunt-wasix-ts-'));
+      const tools = tarballs.find((file) => path.basename(file).startsWith('oliphaunt-wasix-tools-'));
+      if (binding === undefined || tools === undefined) {
+        fail(`${product} staged unexpected npm tarball names`);
+      }
+      assertWasixTypescriptNpmArchive(binding);
+      assertWasixToolsTypescriptNpmArchive(tools);
     } catch (error) {
       fail(error instanceof Error ? error.message : String(error));
     }

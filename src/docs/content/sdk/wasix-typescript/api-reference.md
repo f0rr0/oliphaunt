@@ -10,7 +10,7 @@ Use the generated TypeDoc reference for exact declarations.
 | Area | Public surface | Purpose |
 | --- | --- | --- |
 | Client | `Oliphaunt.open`, `Oliphaunt.restore` | Open a database or restore an archive into persistent storage |
-| Database | `query`, `execute`, `execProtocolRaw` | Run typed SQL or advanced PostgreSQL protocol bytes |
+| Database | `query`, `execute`, `execProtocolRaw`, `execProtocolStream` | Run typed SQL or buffered/bounded callback PostgreSQL protocol bytes |
 | Transactions | `transaction` and `OliphauntTransaction` | Reserve the session for a callback with automatic commit or rollback |
 | Data movement | `backup` | Create the single supported WASIX physical archive |
 | Persistence | `checkpoint` | Run PostgreSQL `CHECKPOINT` and publish persistent changes |
@@ -19,8 +19,11 @@ Use the generated TypeDoc reference for exact declarations.
 | Query values | `QueryParam`, `QueryResult`, `QueryRow`, `CommandResult` | Use PostgreSQL parameter and result values |
 | Errors | `PostgresError`, `WasixStorageError` | Distinguish PostgreSQL failures from host persistence failures |
 | Extensions | `WasixExtensionDescriptor` | Select an exact independently packaged WASIX extension |
+| Optional tools | `pgDump`, `psql`, `PostgresToolError` from `@oliphaunt/wasix-tools` | Run standard plain logical dump or non-interactive psql directly against a worker-backed database |
+| Optional local server | `openServer`, `ServerListen`, `OliphauntServer` from `@oliphaunt/wasix-ts/server/node`, `/bun`, or `/deno` | Publish one loopback TCP or PostgreSQL-named Unix endpoint on a socket-capable host |
 
 The public API has no backup-format enum, capability object, initialization
-profile, replace policy, runtime fallback, server, tools, cancellation, or COPY
-streaming mode. Those are either fixed semantics or deferred features, not
-configuration switches.
+profile, replace policy, runtime fallback, cancellation, or dedicated COPY
+streaming mode. Server and tool support is deliberately absent from the core
+database object and exposed only through the optional surfaces above. These are
+fixed semantics rather than configuration switches.

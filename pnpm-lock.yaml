@@ -114,6 +114,25 @@ importers:
         specifier: ~6.0.3
         version: 6.0.3
 
+  src/bindings/wasix-tools:
+    dependencies:
+      '@oliphaunt/liboliphaunt-wasix-tools':
+        specifier: workspace:0.1.1
+        version: link:../../runtimes/liboliphaunt/wasix/tools-npm
+    devDependencies:
+      '@oliphaunt/wasix-ts':
+        specifier: workspace:0.0.0
+        version: link:../wasix-ts
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.12.4
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.8(@types/node@24.12.4)(@vitest/coverage-v8@4.1.8)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.22.3)(yaml@2.9.0)
+
   src/bindings/wasix-ts:
     dependencies:
       fzstd:
@@ -137,7 +156,7 @@ importers:
         version: 6.4.2(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.22.3)(yaml@2.9.0)
       vitest:
         specifier: 'catalog:'
-        version: 4.1.8(@types/node@24.12.4)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.22.3)(yaml@2.9.0))
+        version: 4.1.8(@types/node@24.12.4)(@vitest/coverage-v8@4.1.8)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.22.3)(yaml@2.9.0)
 
   src/docs:
     dependencies:
@@ -233,6 +252,21 @@ importers:
 
   src/runtimes/liboliphaunt/native/packages/win32-x64-msvc: {}
 
+  src/runtimes/liboliphaunt/native/tools-npm:
+    optionalDependencies:
+      '@oliphaunt/tools-darwin-arm64':
+        specifier: workspace:0.1.1
+        version: link:../tools-packages/darwin-arm64
+      '@oliphaunt/tools-linux-arm64-gnu':
+        specifier: workspace:0.1.1
+        version: link:../tools-packages/linux-arm64-gnu
+      '@oliphaunt/tools-linux-x64-gnu':
+        specifier: workspace:0.1.1
+        version: link:../tools-packages/linux-x64-gnu
+      '@oliphaunt/tools-win32-x64-msvc':
+        specifier: workspace:0.1.1
+        version: link:../tools-packages/win32-x64-msvc
+
   src/runtimes/liboliphaunt/native/tools-packages/darwin-arm64: {}
 
   src/runtimes/liboliphaunt/native/tools-packages/linux-arm64-gnu: {}
@@ -240,6 +274,8 @@ importers:
   src/runtimes/liboliphaunt/native/tools-packages/linux-x64-gnu: {}
 
   src/runtimes/liboliphaunt/native/tools-packages/win32-x64-msvc: {}
+
+  src/runtimes/liboliphaunt/wasix/tools-npm: {}
 
   src/runtimes/node-direct:
     devDependencies:
@@ -274,7 +310,7 @@ importers:
         version: 6.0.3
       vitest:
         specifier: 'catalog:'
-        version: 4.1.8(@types/node@24.12.4)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.22.3)(yaml@2.9.0))
+        version: 4.1.8(@types/node@24.12.4)(@vitest/coverage-v8@4.1.8)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.22.3)(yaml@2.9.0)
     optionalDependencies:
       '@oliphaunt/broker-darwin-arm64':
         specifier: workspace:0.1.1
@@ -344,7 +380,7 @@ importers:
         version: 6.0.3
       vitest:
         specifier: 'catalog:'
-        version: 4.1.8(@types/node@24.12.4)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.22.3)(yaml@2.9.0))
+        version: 4.1.8(@types/node@24.12.4)(@vitest/coverage-v8@4.1.8)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.22.3)(yaml@2.9.0)
 
   tools/perf/wasix-node:
     dependencies:
@@ -6095,7 +6131,6 @@ packages:
       '@vitest/ui': 4.1.8
       happy-dom: '*'
       jsdom: '*'
-      vite: ^6.0.0 || ^7.0.0 || ^8.0.0
     peerDependenciesMeta:
       '@edge-runtime/vm':
         optional: true
@@ -8734,7 +8769,7 @@ snapshots:
       obug: 2.1.1
       std-env: 4.1.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.8(@types/node@24.12.4)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.22.3)(yaml@2.9.0))
+      vitest: 4.1.8(@types/node@24.12.4)(@vitest/coverage-v8@4.1.8)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.22.3)(yaml@2.9.0)
 
   '@vitest/expect@4.1.8':
     dependencies:
@@ -13160,7 +13195,7 @@ snapshots:
       tsx: 4.22.3
       yaml: 2.9.0
 
-  vitest@4.1.8(@types/node@24.12.4)(@vitest/coverage-v8@4.1.8)(vite@6.4.2(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.22.3)(yaml@2.9.0)):
+  vitest@4.1.8(@types/node@24.12.4)(@vitest/coverage-v8@4.1.8)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.22.3)(yaml@2.9.0):
     dependencies:
       '@vitest/expect': 4.1.8
       '@vitest/mocker': 4.1.8(vite@6.4.2(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.22.3)(yaml@2.9.0))
@@ -13186,7 +13221,17 @@ snapshots:
       '@types/node': 24.12.4
       '@vitest/coverage-v8': 4.1.8(vitest@4.1.8)
     transitivePeerDependencies:
+      - jiti
+      - less
+      - lightningcss
       - msw
+      - sass
+      - sass-embedded
+      - stylus
+      - sugarss
+      - terser
+      - tsx
+      - yaml
 
   vlq@1.0.1: {}
 

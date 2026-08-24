@@ -34,11 +34,7 @@ export async function acquireNodeDirectoryLock(
     await mkdir(slot, { mode: 0o700 });
   } catch (error) {
     if (isNodeError(error, 'EEXIST')) throw busy(canonicalRoot, slot);
-    throw unavailable(
-      canonicalRoot,
-      `could not claim ownership: ${describeError(error)}`,
-      error,
-    );
+    throw unavailable(canonicalRoot, `could not claim ownership: ${describeError(error)}`, error);
   }
 
   try {

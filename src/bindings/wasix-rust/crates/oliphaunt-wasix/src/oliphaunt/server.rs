@@ -22,8 +22,6 @@ use crate::oliphaunt::config::{PostgresConfig, StartupConfig};
 use crate::oliphaunt::extensions::{
     Extension, postgres_config_with_extension_startup, resolve_extension_set,
 };
-#[cfg(feature = "tools")]
-use crate::oliphaunt::pg_dump::{PgDumpOptions, PsqlOptions, dump_server_sql, run_server_psql};
 use crate::oliphaunt::proxy::{ActiveConnection, OliphauntProxy};
 use crate::oliphaunt::storage::DatabaseStorage;
 
@@ -69,7 +67,7 @@ struct OwnedUnixSocket {
 
 impl OliphauntServer {
     /// Build a local Oliphaunt server. The default is an in-memory database
-    /// served on `127.0.0.1:0`.
+    /// served on IPv4 loopback with an automatically assigned port.
     pub fn builder() -> OliphauntServerBuilder {
         OliphauntServerBuilder::new()
     }
@@ -101,34 +99,6 @@ impl OliphauntServer {
                 unix_connection_string(endpoint, &self.startup_config)
             }
         }
-    }
-
-    /// Run the bundled WASIX `pg_dump` against this server and return SQL text.
-    #[cfg(feature = "tools")]
-    pub fn pg_dump(&self, options: PgDumpOptions) -> crate::Result<String> {
-        crate::error::public_result(self.pg_dump_inner(options))
-    }
-
-    #[cfg(feature = "tools")]
-    fn pg_dump_inner(&self, options: PgDumpOptions) -> Result<String> {
-        let addr = self
-            .tcp_addr()
-            .context("pg_dump currently requires a TCP OliphauntServer endpoint")?;
-        dump_server_sql(addr, &options)
-    }
-
-    /// Run the bundled WASIX `psql` against this server and return stdout text.
-    #[cfg(feature = "tools")]
-    pub fn psql(&self, options: PsqlOptions) -> crate::Result<String> {
-        crate::error::public_result(self.psql_inner(options))
-    }
-
-    #[cfg(feature = "tools")]
-    fn psql_inner(&self, options: PsqlOptions) -> Result<String> {
-        let addr = self
-            .tcp_addr()
-            .context("psql currently requires a TCP OliphauntServer endpoint")?;
-        run_server_psql(addr, &options)
     }
 
     /// Request shutdown and wait for the listener thread to exit.
@@ -184,25 +154,53 @@ impl Drop for OliphauntServer {
 #[derive(Debug, Clone)]
 pub struct OliphauntServerBuilder {
     storage: DatabaseStorage,
-    endpoint: ServerEndpointConfig,
+    listen: ServerListen,
     postgres_config: PostgresConfig,
     startup_config: StartupConfig,
     #[cfg(feature = "extensions")]
     extensions: Vec<Extension>,
 }
 
-#[derive(Debug, Clone)]
-enum ServerEndpointConfig {
-    Tcp(SocketAddr),
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServerListen {
+    /// Listen on IPv4 loopback. An omitted port asks the operating system for one.
+    Tcp { port: Option<u16> },
     #[cfg(unix)]
-    Unix(PathBuf),
+    /// Listen in a directory using PostgreSQL's `.s.PGSQL.<port>` filename.
+    Unix { directory: PathBuf, port: u16 },
+}
+
+impl ServerListen {
+    pub fn tcp() -> Self {
+        Self::Tcp { port: None }
+    }
+
+    pub fn tcp_port(port: u16) -> Self {
+        Self::Tcp { port: Some(port) }
+    }
+
+    #[cfg(unix)]
+    pub fn unix(directory: impl Into<PathBuf>) -> Self {
+        Self::Unix {
+            directory: directory.into(),
+            port: 5432,
+        }
+    }
+
+    #[cfg(unix)]
+    pub fn unix_port(directory: impl Into<PathBuf>, port: u16) -> Self {
+        Self::Unix {
+            directory: directory.into(),
+            port,
+        }
+    }
 }
 
 impl Default for OliphauntServerBuilder {
     fn default() -> Self {
         Self {
             storage: DatabaseStorage::Memory,
-            endpoint: ServerEndpointConfig::Tcp(SocketAddr::from(([127, 0, 0, 1], 0))),
+            listen: ServerListen::tcp(),
             postgres_config: PostgresConfig::default(),
             startup_config: StartupConfig::default(),
             #[cfg(feature = "extensions")]
@@ -212,7 +210,8 @@ impl Default for OliphauntServerBuilder {
 }
 
 impl OliphauntServerBuilder {
-    /// Create a builder. Defaults to a memory database on `127.0.0.1:0`.
+    /// Create a builder. Defaults to a memory database on IPv4 loopback with
+    /// an automatically assigned port.
     pub fn new() -> Self {
         Self::default()
     }
@@ -223,23 +222,9 @@ impl OliphauntServerBuilder {
         self
     }
 
-    /// Bind the server to a loopback TCP address.
-    ///
-    /// The embedded proxy uses PostgreSQL trust authentication and rejects
-    /// non-loopback addresses when [`Self::start`] is called.
-    pub fn tcp(mut self, addr: SocketAddr) -> Self {
-        self.endpoint = ServerEndpointConfig::Tcp(addr);
-        self
-    }
-
-    /// Bind the server to a PostgreSQL Unix-domain socket path.
-    ///
-    /// The filename must use PostgreSQL's `.s.PGSQL.<port>` convention so
-    /// [`OliphauntServer::connection_string`] can address the bound socket. A
-    /// relative path is resolved against the current working directory.
-    #[cfg(unix)]
-    pub fn unix(mut self, path: impl Into<PathBuf>) -> Self {
-        self.endpoint = ServerEndpointConfig::Unix(path.into());
+    /// Select a loopback TCP or PostgreSQL Unix-domain listener.
+    pub fn listen(mut self, listen: ServerListen) -> Self {
+        self.listen = listen;
         self
     }
 
@@ -295,18 +280,17 @@ impl OliphauntServerBuilder {
     }
 
     fn start_inner(self) -> Result<OliphauntServer> {
-        if let ServerEndpointConfig::Tcp(addr) = &self.endpoint
-            && !addr.ip().is_loopback()
-        {
+        if matches!(self.listen, ServerListen::Tcp { port: Some(0) }) {
             return Err(anyhow!(
-                "Oliphaunt TCP server uses trust authentication and must bind to a loopback address"
+                "TCP port must be in the range 1..=65535; omit it to allocate one"
             ));
         }
-
         #[cfg(unix)]
-        let unix_endpoint = match &self.endpoint {
-            ServerEndpointConfig::Unix(path) => Some(resolve_unix_socket_endpoint(path)?),
-            ServerEndpointConfig::Tcp(_) => None,
+        let unix_endpoint = match &self.listen {
+            ServerListen::Unix { directory, port } => {
+                Some(resolve_unix_socket_endpoint(directory, *port)?)
+            }
+            ServerListen::Tcp { .. } => None,
         };
 
         #[cfg(feature = "extensions")]
@@ -337,13 +321,14 @@ impl OliphauntServerBuilder {
         let proxy = proxy.with_extensions(extensions);
 
         #[cfg(unix)]
-        let (endpoint, handle, owned_unix_socket) = match self.endpoint {
-            ServerEndpointConfig::Tcp(addr) => {
+        let (endpoint, handle, owned_unix_socket) = match self.listen {
+            ServerListen::Tcp { port } => {
+                let addr = SocketAddr::from(([127, 0, 0, 1], port.unwrap_or(0)));
                 let (endpoint, handle) =
                     start_tcp(proxy, addr, shutdown.clone(), active_connection.clone())?;
                 (endpoint, handle, None)
             }
-            ServerEndpointConfig::Unix(_) => {
+            ServerListen::Unix { .. } => {
                 let (endpoint, handle, socket) = start_unix(
                     proxy,
                     unix_endpoint.expect("Unix endpoint was resolved before database preparation"),
@@ -354,8 +339,9 @@ impl OliphauntServerBuilder {
             }
         };
         #[cfg(not(unix))]
-        let (endpoint, handle) = match self.endpoint {
-            ServerEndpointConfig::Tcp(addr) => {
+        let (endpoint, handle) = match self.listen {
+            ServerListen::Tcp { port } => {
+                let addr = SocketAddr::from(([127, 0, 0, 1], port.unwrap_or(0)));
                 start_tcp(proxy, addr, shutdown.clone(), active_connection.clone())?
             }
         };
@@ -436,11 +422,11 @@ fn unix_connection_string(endpoint: &UnixSocketEndpoint, startup: &StartupConfig
         .parent()
         .expect("resolved Unix socket path is absolute");
     format!(
-        "postgresql://{}@/{}?host={}&port={}&sslmode=disable",
-        percent_encode_uri_component(&startup.username),
-        percent_encode_uri_component(&startup.database),
-        percent_encode_bytes(host.as_os_str().as_bytes(), true),
-        endpoint.port
+        "postgresql:///{database}?host={host}&port={port}&user={user}&sslmode=disable",
+        database = percent_encode_uri_component(&startup.database),
+        host = percent_encode_bytes(host.as_os_str().as_bytes()),
+        port = endpoint.port,
+        user = percent_encode_uri_component(&startup.username),
     )
 }
 
@@ -465,13 +451,8 @@ fn start_unix(
     active_connection: Arc<ActiveConnection>,
 ) -> Result<(ServerEndpoint, JoinHandle<Result<()>>, OwnedUnixSocket)> {
     let path = endpoint.path.clone();
-    {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("create socket directory {}", parent.display()))?;
-        }
-        ensure_unix_socket_path_available(&path)?;
-    }
+    prepare_unix_socket_directory(&path)?;
+    ensure_unix_socket_path_available(&path)?;
 
     let listener = {
         UnixListener::bind(&path)
@@ -597,6 +578,27 @@ fn ensure_unix_socket_path_available(path: &Path) -> Result<()> {
     ))
 }
 
+#[cfg(unix)]
+fn prepare_unix_socket_directory(path: &Path) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("Unix socket path has no parent: {}", path.display()))?;
+    std::fs::create_dir_all(parent)
+        .with_context(|| format!("create socket directory {}", parent.display()))?;
+    let metadata = std::fs::symlink_metadata(parent)
+        .with_context(|| format!("inspect socket directory {}", parent.display()))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(anyhow!(
+            "Unix socket directory must be a real directory, not a symlink: {}",
+            parent.display()
+        ));
+    }
+    if path.as_os_str().as_bytes().len() >= 100 {
+        return Err(anyhow!("Unix socket path is too long: {}", path.display()));
+    }
+    Ok(())
+}
+
 fn wait_until_ready(ready_rx: &Receiver<Result<()>>) -> Result<()> {
     ready_rx
         .recv()
@@ -616,47 +618,33 @@ fn wake_listener(endpoint: &ServerEndpoint) {
 }
 
 #[cfg(unix)]
-fn resolve_unix_socket_endpoint(path: &Path) -> Result<UnixSocketEndpoint> {
-    let port = parse_unix_socket_port(path).with_context(|| {
-        format!(
-            "Unix socket path {} must end with .s.PGSQL.<port>",
-            path.display()
-        )
-    })?;
+fn resolve_unix_socket_endpoint(directory: &Path, port: u16) -> Result<UnixSocketEndpoint> {
     if port == 0 {
         return Err(anyhow!("Unix socket port must be in the range 1..=65535"));
     }
-    let path = if path.is_absolute() {
-        path.to_path_buf()
+    let directory = if directory.is_absolute() {
+        directory.to_path_buf()
     } else {
         std::env::current_dir()
-            .context("resolve current directory for Unix socket")?
-            .join(path)
+            .context("resolve current directory for Unix socket directory")?
+            .join(directory)
     };
+    let path = directory.join(format!(".s.PGSQL.{port}"));
     Ok(UnixSocketEndpoint { path, port })
 }
 
-#[cfg(unix)]
-fn parse_unix_socket_port(path: &Path) -> Option<u16> {
-    let name = path.file_name()?.to_str()?;
-    let suffix = name.strip_prefix(".s.PGSQL.")?;
-    let port = suffix.parse::<u16>().ok()?;
-    (suffix == port.to_string()).then_some(port)
-}
-
 fn percent_encode_uri_component(value: &str) -> String {
-    percent_encode_bytes(value.as_bytes(), false)
+    percent_encode_bytes(value.as_bytes())
 }
 
-fn percent_encode_bytes(value: &[u8], preserve_slashes: bool) -> String {
+fn percent_encode_bytes(value: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     let mut encoded = String::with_capacity(value.len());
     for &byte in value {
         if matches!(
             byte,
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~'
-        ) || (preserve_slashes && byte == b'/')
-        {
+        ) {
             encoded.push(byte as char);
         } else {
             encoded.push('%');
@@ -677,8 +665,8 @@ mod tests {
     #[test]
     fn unix_socket_uri_host_is_query_encoded() {
         assert_eq!(
-            percent_encode_bytes(b"/tmp/Application Support/oliphaunt", true),
-            "/tmp/Application%20Support/oliphaunt"
+            percent_encode_bytes(b"/tmp/Application Support/oliphaunt"),
+            "%2Ftmp%2FApplication%20Support%2Foliphaunt"
         );
     }
 
@@ -703,13 +691,12 @@ mod tests {
             database: "tenant/db#1".to_string(),
         };
 
-        let endpoint = resolve_unix_socket_endpoint(Path::new(
-            "/tmp/Application Support/db?slot/.s.PGSQL.6543",
-        ))
-        .unwrap();
+        let endpoint =
+            resolve_unix_socket_endpoint(Path::new("/tmp/Application Support/db?slot"), 6543)
+                .unwrap();
         assert_eq!(
             unix_connection_string(&endpoint, &startup),
-            "postgresql://role%20name@/tenant%2Fdb%231?host=/tmp/Application%20Support/db%3Fslot&port=6543&sslmode=disable"
+            "postgresql:///tenant%2Fdb%231?host=%2Ftmp%2FApplication%20Support%2Fdb%3Fslot&port=6543&user=role%20name&sslmode=disable"
         );
     }
 
@@ -720,37 +707,22 @@ mod tests {
 
         let temp = tempfile::TempDir::new().unwrap();
         let directory = temp.path().join(OsStr::from_bytes(b"db-\xFF"));
-        let endpoint = resolve_unix_socket_endpoint(&directory.join(".s.PGSQL.6543")).unwrap();
+        let endpoint = resolve_unix_socket_endpoint(&directory, 6543).unwrap();
 
         assert!(unix_connection_string(&endpoint, &StartupConfig::default()).contains("db-%FF"));
     }
 
     #[cfg(unix)]
     #[test]
-    fn unix_socket_endpoint_rejects_non_postgresql_names() {
-        let error = resolve_unix_socket_endpoint(Path::new("/tmp/oliphaunt.sock")).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "Unix socket path /tmp/oliphaunt.sock must end with .s.PGSQL.<port>"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn unix_socket_endpoint_rejects_noncanonical_ports() {
-        for path in ["/tmp/.s.PGSQL.0001", "/tmp/.s.PGSQL.+1"] {
-            let error = resolve_unix_socket_endpoint(Path::new(path)).unwrap_err();
-            assert!(
-                error.to_string().contains("must end with .s.PGSQL.<port>"),
-                "unexpected error for {path}: {error:#}"
-            );
-        }
+    fn unix_socket_endpoint_rejects_zero_port() {
+        let error = resolve_unix_socket_endpoint(Path::new("/tmp"), 0).unwrap_err();
+        assert!(error.to_string().contains("range 1..=65535"));
     }
 
     #[cfg(unix)]
     #[test]
     fn unix_socket_endpoint_resolves_relative_paths() -> Result<()> {
-        let endpoint = resolve_unix_socket_endpoint(Path::new("run/.s.PGSQL.6543"))?;
+        let endpoint = resolve_unix_socket_endpoint(Path::new("run"), 6543)?;
         assert_eq!(
             endpoint.path,
             std::env::current_dir()?.join("run/.s.PGSQL.6543")
@@ -841,23 +813,30 @@ mod tests {
     }
 
     #[test]
-    fn tcp_server_rejects_non_loopback_addresses() {
-        for addr in [
-            SocketAddr::from(([0, 0, 0, 0], 0)),
-            SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], 0)),
-            SocketAddr::from(([192, 0, 2, 1], 0)),
-        ] {
-            let error = OliphauntServerBuilder::new()
-                .tcp(addr)
-                .start()
-                .expect_err("trust-authenticated TCP must stay on loopback");
-            assert!(
-                error
-                    .to_string()
-                    .contains("must bind to a loopback address"),
-                "unexpected error for {addr}: {error}"
-            );
-        }
+    fn server_listen_contract_cannot_express_a_remote_tcp_bind() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(&crate::oliphaunt::test_fixtures::text(
+                "postgres/server-listen.json",
+                "postgres-server-listen.json",
+            ))
+            .unwrap();
+        assert_eq!(fixture["tcp"]["host"], "127.0.0.1");
+        assert_eq!(fixture["unix"]["defaultPort"], 5432);
+        assert_eq!(fixture["unix"]["filePrefix"], ".s.PGSQL.");
+        assert_eq!(ServerListen::tcp(), ServerListen::Tcp { port: None });
+        assert_eq!(
+            ServerListen::tcp_port(15432),
+            ServerListen::Tcp { port: Some(15432) }
+        );
+    }
+
+    #[test]
+    fn explicit_zero_tcp_port_is_rejected_before_runtime_work() {
+        let error = OliphauntServer::builder()
+            .listen(ServerListen::tcp_port(0))
+            .start()
+            .unwrap_err();
+        assert!(error.to_string().contains("omit it to allocate one"));
     }
 
     #[cfg(feature = "extensions")]

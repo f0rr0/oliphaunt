@@ -8,10 +8,10 @@ mod oliphaunt;
 pub use oliphaunt::extensions;
 
 pub use error::{Error, Result};
+#[cfg(feature = "tools")]
+pub use oliphaunt::tools;
 pub use oliphaunt::{
     CommandResult, DatabaseStorage, Oliphaunt, OliphauntBuilder, OliphauntServer,
     OliphauntServerBuilder, PostgresError, PostgresErrorField, QueryField, QueryFormat, QueryParam,
-    QueryResult, QueryRow, Transaction,
+    QueryResult, QueryRow, ServerListen, Transaction,
 };
-#[cfg(feature = "tools")]
-pub use oliphaunt::{PgDumpOptions, PsqlOptions};

@@ -37,6 +37,33 @@ export async function materializeWasixMounts(
   pgdata: WasixDirectoryMount,
   createPgdataDirectory?: (DirectoryConstructor: typeof Directory) => Promise<Directory>,
 ): Promise<{ mounts: Record<string, Directory>; baseDirectory: Directory }> {
+  const mounts = await materializeMountMap(
+    DirectoryConstructor,
+    layout,
+    pgdata,
+    createPgdataDirectory,
+  );
+  const baseDirectory = mounts['/base'];
+  if (baseDirectory === undefined) {
+    throw new Error('materialized WASIX runtime has no /base mount');
+  }
+  return { mounts, baseDirectory };
+}
+
+/** @internal Materialize runtime support mounts for frontend tools. */
+export function materializeWasixSupportMounts(
+  DirectoryConstructor: typeof Directory,
+  layout: WasixRuntimeLayout,
+): Promise<Record<string, Directory>> {
+  return materializeMountMap(DirectoryConstructor, layout);
+}
+
+async function materializeMountMap(
+  DirectoryConstructor: typeof Directory,
+  layout: WasixRuntimeLayout,
+  pgdata?: WasixDirectoryMount,
+  createPgdataDirectory?: (DirectoryConstructor: typeof Directory) => Promise<Directory>,
+): Promise<Record<string, Directory>> {
   const mounts: Record<string, Directory> = {};
   for (const [mountPath, contents] of Object.entries(layout.mounts)) {
     mounts[mountPath] =
@@ -44,14 +71,10 @@ export async function materializeWasixMounts(
         ? await createPgdataDirectory(DirectoryConstructor)
         : await materializeDirectory(
             DirectoryConstructor,
-            mountPath === '/base' ? pgdata : contents,
+            mountPath === '/base' && pgdata !== undefined ? pgdata : contents,
           );
   }
-  const baseDirectory = mounts['/base'];
-  if (baseDirectory === undefined) {
-    throw new Error('materialized WASIX runtime has no /base mount');
-  }
-  return { mounts, baseDirectory };
+  return mounts;
 }
 
 async function materializeDirectory(
@@ -226,8 +249,15 @@ export async function configureWasixDatabase(
       assertSuccessfulQueryResponse(await exec(simpleQuery(sql)));
     }
   }
-  if (options.username !== 'postgres') {
-    const username = options.username.replaceAll('"', '""');
-    assertSuccessfulQueryResponse(await exec(simpleQuery(`SET ROLE "${username}"`)));
-  }
+  await configureWasixRole(options.username, exec);
+}
+
+/** @internal Restore the configured application role after DISCARD ALL. */
+export async function configureWasixRole(
+  username: string,
+  exec: (input: Uint8Array) => Promise<Uint8Array>,
+): Promise<void> {
+  if (username === 'postgres') return;
+  const quoted = username.replaceAll('"', '""');
+  assertSuccessfulQueryResponse(await exec(simpleQuery(`SET ROLE "${quoted}"`)));
 }

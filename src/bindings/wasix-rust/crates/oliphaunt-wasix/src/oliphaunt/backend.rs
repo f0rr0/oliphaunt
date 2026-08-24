@@ -8,7 +8,7 @@ use crate::oliphaunt::config::{PostgresConfig, StartupConfig};
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::extensions::{Extension, extension_setup_sql};
 use crate::oliphaunt::postgres_mod::{
-    PostgresMod, ProtocolPumpOutcome, ProtocolStream, StartupProtocolResponse,
+    PostgresMod, ProtocolPumpOutcome, ProtocolPumpScope, ProtocolStream, StartupProtocolResponse,
 };
 use crate::oliphaunt::transport::Transport;
 #[cfg(feature = "extensions")]
@@ -143,6 +143,16 @@ impl WasixBackendSession {
         self.pg.start_protocol_with_startup_packet(message)
     }
 
+    #[cfg(feature = "tools")]
+    pub(crate) fn existing_startup_response(&self) -> Option<Vec<u8>> {
+        self.pg.existing_startup_response()
+    }
+
+    #[cfg(feature = "tools")]
+    pub(crate) fn startup_config(&self) -> &StartupConfig {
+        self.pg.startup_config()
+    }
+
     #[cfg(feature = "extensions")]
     pub(crate) fn enable_extensions(&mut self, extensions: &[Extension]) -> Result<()> {
         for extension in extensions {
@@ -181,7 +191,21 @@ impl WasixBackendSession {
             self.supports_protocol_pump(),
             "WASIX runtime is missing backend-owned protocol pump exports"
         );
-        self.pg.send_protocol_pump(message, continuation_prefix)
+        self.pg
+            .send_protocol_pump(message, continuation_prefix, ProtocolPumpScope::Copy)
+    }
+
+    pub(crate) fn send_with_connection_protocol_pump(
+        &mut self,
+        message: &[u8],
+        continuation_prefix: impl FnOnce() -> Vec<u8>,
+    ) -> Result<ProtocolPumpOutcome> {
+        ensure!(
+            self.supports_protocol_pump(),
+            "WASIX runtime is missing backend-owned protocol pump exports"
+        );
+        self.pg
+            .send_protocol_pump(message, continuation_prefix, ProtocolPumpScope::Connection)
     }
 
     pub(crate) fn shutdown(&mut self) -> Result<()> {
@@ -237,6 +261,16 @@ impl BackendSession {
         self.0.startup_with_packet(message)
     }
 
+    #[cfg(feature = "tools")]
+    pub(crate) fn existing_startup_response(&self) -> Option<Vec<u8>> {
+        self.0.existing_startup_response()
+    }
+
+    #[cfg(feature = "tools")]
+    pub(crate) fn startup_config(&self) -> &StartupConfig {
+        self.0.startup_config()
+    }
+
     #[cfg(feature = "extensions")]
     pub(crate) fn enable_extensions(&mut self, extensions: &[Extension]) -> Result<()> {
         self.0.enable_extensions(extensions)
@@ -259,6 +293,15 @@ impl BackendSession {
         continuation_prefix: impl FnOnce() -> Vec<u8>,
     ) -> Result<ProtocolPumpOutcome> {
         self.0.send_with_protocol_pump(message, continuation_prefix)
+    }
+
+    pub(crate) fn send_with_connection_protocol_pump(
+        &mut self,
+        message: &[u8],
+        continuation_prefix: impl FnOnce() -> Vec<u8>,
+    ) -> Result<ProtocolPumpOutcome> {
+        self.0
+            .send_with_connection_protocol_pump(message, continuation_prefix)
     }
 
     pub(crate) fn shutdown(&mut self) -> Result<()> {

@@ -31,10 +31,10 @@ and lifecycle; typed queries and callback transactions belong in language SDKs.
 | Exact extension selection | yes | yes | yes |
 | Physical backup | direct and broker; mobile direct | yes | yes |
 | Physical restore | new or empty destination | static restore into a new or empty directory | static restore into new or empty persistent storage |
-| Listening server | Rust and desktop TypeScript | yes | no |
-| PostgreSQL tools | separate desktop products; desktop TypeScript has no SDK tools API or dependency | `tools` feature: `pg_dump` and `psql` | no |
+| Listening server | Rust and desktop TypeScript | yes | Node, Bun, and Deno through explicit server subpaths; no browser socket API |
+| PostgreSQL tools | optional endpoint-oriented Rust and desktop TypeScript products; no core SDK dependency | `tools` feature: direct `pg_dump` and non-interactive `psql` | optional `@oliphaunt/wasix-tools`: direct `pg_dump` and non-interactive `psql` |
 | Cancellation | native C and language SDKs | no public direct cancellation contract | no |
-| Protocol/COPY response streaming | callback streaming in every native SDK, backed by the native C callback ABI | buffered raw protocol | buffered raw protocol |
+| Protocol/COPY response streaming | callback raw-protocol streaming in every native SDK, backed by the native C callback ABI | callback raw-protocol streaming; COPY uses the guest stream pump | buffered and callback raw-protocol streaming with bounded backpressure |
 
 These are language-native deltas, not parity failures:
 
@@ -45,9 +45,16 @@ These are language-native deltas, not parity failures:
   TypeScript/TurboModule boundary.
 - TypeScript uses promises, opaque storage values, `Uint8Array`, selective
   package subpaths, and `Symbol.asyncDispose` where appropriate.
-- Rust WASIX exposes its local server and optional tools because a Rust host can
-  provide sockets and tool execution. The browser-capable TypeScript package
-  does not pretend those host facilities are universal.
+- Rust WASIX and WASIX TypeScript expose the same lightweight single-backend
+  endpoint where the host has local sockets. TypeScript keeps the server absent
+  in browsers and exports it only from the Node, Bun, and Deno server subpaths.
+- WASIX tools run directly against the embedded database in both bindings.
+  Their optional carriers stay outside the core SDK packages; the TypeScript
+  tools work in browsers because they use an internal bounded pgwire transport,
+  not a browser socket.
+- Native tools are endpoint-oriented optional products. `oliphaunt-tools` and
+  `@oliphaunt/tools` accept a PostgreSQL connection string and do not become
+  dependencies or methods of the embedded database SDKs.
 - Native Rust server mode owns an SDK pgwire client, so its database handle
   retains the ordinary session helpers. Rust WASIX dedicates its one embedded
   backend to the listener; its server handle therefore owns only the endpoint
@@ -102,9 +109,9 @@ not hidden modes or partly supported capabilities.
 | ID | Current behavior | Evidence required before implementation |
 | --- | --- | --- |
 | `FUTURE-NATIVE-SERVER-SDK-BACKUP` | Native server handles expose no SDK physical-backup method; applications use ordinary PostgreSQL tools such as `pg_basebackup`. Direct and broker physical backup work | Any future method must implement PostgreSQL replication `BASE_BACKUP` with WAL streaming and round-trip tests; it must not archive a live root |
-| `FUTURE-WASIX-TS-SERVER-TOOLS` | WASIX TypeScript exposes neither a listener nor `pg_dump`/`psql` | Concrete Node/Bun/Deno demand for an optional host-only package using shared `liboliphaunt-wasix` artifacts and an isolated backend/session; browser support remains unpromised |
+| `FUTURE-SWIFT-MACOS-SERVER-TOOLS` | Swift remains a direct embedded SDK on both iOS and macOS; it exposes no server or frontend-tool product | A separately distributed macOS-only product that carries the native server/tool artifacts, provides the same listener and endpoint lifecycle contract as Rust/TypeScript, and leaves every server/tool symbol absent on iOS; an endpoint-only wrapper or an iOS throwing stub does not qualify |
 | `FUTURE-WASIX-CANCELLATION` | WASIX app-facing bindings have no public direct-query cancellation API | A guest interrupt contract that preserves PostgreSQL recovery plus idiomatic Rust and JS cancellation tests |
-| `FUTURE-WASIX-DIRECT-COPY` | WASIX typed APIs buffer responses; no dedicated COPY stream/backpressure API is promised | A guest protocol pump and language-native stream tests for COPY IN and COPY OUT |
+| `FUTURE-WASIX-DIRECT-COPY` | Both WASIX bindings expose bounded raw response streaming, but neither exposes a dedicated typed COPY reader/writer | A language-native bounded reader/writer API with COPY IN, COPY OUT, early-close, error, and recovery tests; it must reuse protocol framing rather than parse SQL text |
 | `FUTURE-RESTORE-REPLACE` | Restore accepts only a nonexistent or empty destination and rejects nonempty data without mutation | An atomic, recoverable replacement contract for directories, IndexedDB, and OPFS, with crash tests and demonstrated app demand |
 | `FUTURE-EXTENSION-MIGRATION` | Persistent data must reopen with required extension code; PostgreSQL SQL such as `ALTER EXTENSION` is explicit application work | A real cross-version extension case that cannot be handled honestly with standard PostgreSQL operations |
 

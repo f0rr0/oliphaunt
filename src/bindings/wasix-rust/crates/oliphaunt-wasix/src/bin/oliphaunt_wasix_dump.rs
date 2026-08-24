@@ -2,7 +2,7 @@ use anyhow::Result;
 #[cfg(all(feature = "tools", feature = "extensions"))]
 use oliphaunt_wasix::extensions;
 #[cfg(feature = "tools")]
-use oliphaunt_wasix::{DatabaseStorage, OliphauntServer, OliphauntServerBuilder, PgDumpOptions};
+use oliphaunt_wasix::{DatabaseStorage, Oliphaunt, OliphauntBuilder, tools};
 #[cfg(feature = "tools")]
 use std::env;
 #[cfg(feature = "tools")]
@@ -32,19 +32,14 @@ fn main() -> Result<()> {
             extensions,
             passthrough,
         } = parse_args()?;
-        let builder = OliphauntServer::builder()
+        let builder = Oliphaunt::builder()
             .storage(DatabaseStorage::Directory(directory))
             .database(&database)
             .username(&username);
-        let server = configure_extensions(builder, &extensions)?.start()?;
-        let sql = server.pg_dump(
-            PgDumpOptions::new()
-                .database(database)
-                .username(username)
-                .args(passthrough),
-        )?;
+        let mut database = configure_extensions(builder, &extensions)?.open()?;
+        let sql = tools::pg_dump(&mut database, tools::PgDumpOptions::new().args(passthrough))?;
         print!("{sql}");
-        server.close()?;
+        database.close()?;
         Ok(())
     }
 }
@@ -108,9 +103,9 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<Args> {
 
 #[cfg(all(feature = "tools", feature = "extensions"))]
 fn configure_extensions(
-    mut builder: OliphauntServerBuilder,
+    mut builder: OliphauntBuilder,
     extension_names: &[String],
-) -> Result<OliphauntServerBuilder> {
+) -> Result<OliphauntBuilder> {
     for name in extension_names {
         let extension = extensions::by_sql_name(name)
             .ok_or_else(|| anyhow::anyhow!("unknown extension: {name}"))?;
@@ -121,9 +116,9 @@ fn configure_extensions(
 
 #[cfg(all(feature = "tools", not(feature = "extensions")))]
 fn configure_extensions(
-    builder: OliphauntServerBuilder,
+    builder: OliphauntBuilder,
     extension_names: &[String],
-) -> Result<OliphauntServerBuilder> {
+) -> Result<OliphauntBuilder> {
     if !extension_names.is_empty() {
         anyhow::bail!("this oliphaunt-wasix-dump build was compiled without extension support");
     }
@@ -173,14 +168,8 @@ mod tests {
         assert_eq!(args.extensions, ["vector", "pg_trgm"]);
         assert_eq!(args.passthrough, ["--schema-only"]);
         assert_eq!(
-            PgDumpOptions::new()
-                .database(args.database)
-                .username(args.username)
-                .args(args.passthrough),
-            PgDumpOptions::new()
-                .database("app")
-                .username("owner")
-                .arg("--schema-only")
+            tools::PgDumpOptions::new().args(args.passthrough),
+            tools::PgDumpOptions::new().arg("--schema-only")
         );
         Ok(())
     }
@@ -204,7 +193,7 @@ mod tests {
     #[cfg(not(feature = "extensions"))]
     #[test]
     fn extension_selection_fails_before_start_when_support_is_not_compiled() {
-        let error = configure_extensions(OliphauntServer::builder(), &["vector".to_owned()])
+        let error = configure_extensions(Oliphaunt::builder(), &["vector".to_owned()])
             .expect_err("extension selection must be explicit about missing feature support");
         assert!(
             error

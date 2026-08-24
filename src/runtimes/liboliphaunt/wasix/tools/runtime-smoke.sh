@@ -85,5 +85,5 @@ if [ "$asset_mode" = "full" ]; then
   fi
   oliphaunt_wasix_cargo_test --lib pg_dump -- --nocapture
 else
-  echo "core-only WASIX assets detected; skipping extension and pg_dump smoke tests"
+  echo "core-only WASIX assets detected; skipping extension and frontend-tool smoke tests"
 fi

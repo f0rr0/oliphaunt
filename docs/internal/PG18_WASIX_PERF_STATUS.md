@@ -968,6 +968,6 @@ Next high-signal checks:
   PG18 defers more WAL to COMMIT than PG17.5 under the same `wal_buffers=4MB`;
 - evaluate a WASIX-single-user fast path that writes WAL from contiguous buffer
   ranges without the full per-page scan when the target range is known ready;
-- separately test `relaxed_durability(true)` / `synchronous_commit=off`, because
-  that should bypass the synchronous `XLogFlush()` commit path and establish the
-  upper bound for Test 11 parity.
+- separately test PostgreSQL's standard `synchronous_commit=off` setting,
+  because that should bypass the synchronous `XLogFlush()` commit path and
+  establish the upper bound for Test 11 parity.
