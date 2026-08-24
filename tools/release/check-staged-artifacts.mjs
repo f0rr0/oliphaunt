@@ -666,15 +666,9 @@ async function validateRustSdkCrate(crate) {
   }
 
   const nativeTargets = rustSdkArtifactTargets("liboliphaunt-native", "native-runtime", "rust-native-direct");
-  const toolsTargets = rustSdkArtifactTargets("liboliphaunt-native", "native-tools", "rust-native-direct");
   const brokerTargets = rustSdkArtifactTargets("oliphaunt-broker", "broker-helper", "rust-broker");
   const targetIds = nativeTargets.map((target) => target.target);
   try {
-    assertSameNativeTargetSet(
-      "staged oliphaunt Rust SDK native runtime/tools",
-      targetIds,
-      toolsTargets.map((target) => target.target),
-    );
     assertSameNativeTargetSet(
       "staged oliphaunt Rust SDK native runtime/broker",
       targetIds,
@@ -706,7 +700,6 @@ async function validateRustSdkCrate(crate) {
     }
     const expectedDependencies = [
       `liboliphaunt-native-${target.target}`,
-      "oliphaunt-tools",
       `oliphaunt-broker-${target.target}`,
     ];
     exactSortedStrings(
@@ -715,8 +708,7 @@ async function validateRustSdkCrate(crate) {
       expectedDependencies,
     );
     requireRegistryTargetDependency(crate, dependencies, cfg, expectedDependencies[0], nativeVersion);
-    requireRegistryTargetDependency(crate, dependencies, cfg, expectedDependencies[1], nativeVersion);
-    requireRegistryTargetDependency(crate, dependencies, cfg, expectedDependencies[2], brokerVersion);
+    requireRegistryTargetDependency(crate, dependencies, cfg, expectedDependencies[1], brokerVersion);
   }
 
   const sourceMembers = archiveTarNames(crate).filter((name) => name.endsWith("/src/lib.rs"));
