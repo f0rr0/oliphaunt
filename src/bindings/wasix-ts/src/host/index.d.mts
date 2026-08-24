@@ -44,11 +44,26 @@ export class Instance {
   wait(): Promise<WasixOutput>;
 }
 
+/** Internal PostgreSQL frontend tool process with a private pgwire transport. */
+export class OliphauntToolInstance {
+  private constructor();
+  readonly protocolInput: WritableStream<Uint8Array>;
+  readonly protocolOutput: ReadableStream<Uint8Array>;
+  free(): void;
+  wait(): Promise<WasixOutput>;
+}
+
 /** Caller-realm Oliphaunt driver. Methods run synchronously and never create a Worker. */
 export class OliphauntDirectInstance {
   private constructor();
   startup(packet: Uint8Array): Uint8Array;
   execProtocolRaw(input: Uint8Array): Uint8Array;
+  execProtocolStream(input: Uint8Array, onChunk: (chunk: Uint8Array) => void): void;
+  execProtocolDuplex(
+    input: Uint8Array,
+    onRead: (maximumBytes: number) => Uint8Array,
+    onChunk: (chunk: Uint8Array) => void,
+  ): void;
   close(): void;
   free(): void;
 }
@@ -56,6 +71,7 @@ export class OliphauntDirectInstance {
 export type RunWasixOptions = Readonly<{
   program?: string;
   moduleBytes?: Uint8Array;
+  stdin?: string | Uint8Array;
   args?: string[];
   cwd?: string;
   env?: Record<string, string>;
@@ -83,6 +99,10 @@ export function runWasix(
   module: Uint8Array | WebAssembly.Module,
   options: RunWasixOptions,
 ): Promise<Instance>;
+export function runOliphauntTool(
+  module: Uint8Array | WebAssembly.Module,
+  options: RunWasixOptions,
+): Promise<OliphauntToolInstance>;
 export function instantiateOliphauntDirect(
   module: WebAssembly.Module,
   moduleBytes: Uint8Array,

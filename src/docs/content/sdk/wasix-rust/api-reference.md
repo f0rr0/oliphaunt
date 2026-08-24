@@ -14,11 +14,11 @@ maps the Rust binding by task; it does not describe the separate
 | Opening | `Oliphaunt`, `OliphauntBuilder`, `OliphauntServerBuilder` | Open a memory database by default or configure storage explicitly |
 | Storage | `DatabaseStorage` | Select memory or a caller-supplied host directory |
 | SQL | query and execute helpers | Run SQL through the WASIX runtime |
-| Raw protocol | `exec_protocol_raw` | Send PostgreSQL protocol bytes to the WASIX backend |
+| Raw protocol | `exec_protocol_raw`, `exec_protocol_stream` | Send PostgreSQL protocol bytes or consume bounded response chunks; COPY output uses the guest stream pump |
 | Server/proxy | WASIX server helper APIs | Expose PostgreSQL-compatible access where the WASIX runtime supports it |
 | Extensions | `extensions::Extension`, exact constants, `ALL`, `by_sql_name` | Select WASIX-built extension artifacts by SQL name |
 | Backup/restore | `backup()`, `Oliphaunt::restore` | Move the one WASIX physical archive between compatible stores |
-| Tools | `PgDumpOptions`, `PsqlOptions::command`, `PsqlOptions::script` with the `tools` feature | Run packaged PostgreSQL logical dump and non-interactive psql input |
+| Tools | `tools::pg_dump`, `tools::psql`, `tools::PgDumpOptions`, `tools::PsqlOptions` with the `tools` feature | Run packaged PostgreSQL logical dump and non-interactive psql directly against an open database |
 | Errors | `Result<T>`, `Error`, `PostgresError`, `PostgresErrorField` | Handle SDK failures and inspect PostgreSQL errors for SQLSTATE data |
 
 The Rust WASIX binding owns its packaged PostgreSQL runtime assets and Rust host

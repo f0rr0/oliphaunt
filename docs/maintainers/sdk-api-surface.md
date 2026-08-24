@@ -26,7 +26,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::Oliphaunt.checkpoint()`
 - `oliphaunt::Oliphaunt.close()`
 - `oliphaunt::Oliphaunt.exec_protocol_raw()`
-- `oliphaunt::Oliphaunt.exec_protocol_raw_stream()`
+- `oliphaunt::Oliphaunt.exec_protocol_stream()`
 - `oliphaunt::Oliphaunt.execute()`
 - `oliphaunt::Oliphaunt.execute_with_params()`
 - `oliphaunt::Oliphaunt.query()`
@@ -41,11 +41,11 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::OliphauntBuilder.directory()`
 - `oliphaunt::OliphauntBuilder.extension()`
 - `oliphaunt::OliphauntBuilder.extensions()`
+- `oliphaunt::OliphauntBuilder.listen()`
 - `oliphaunt::OliphauntBuilder.new()`
 - `oliphaunt::OliphauntBuilder.open()`
 - `oliphaunt::OliphauntBuilder.open_server()`
 - `oliphaunt::OliphauntBuilder.server_executable()`
-- `oliphaunt::OliphauntBuilder.server_port()`
 - `oliphaunt::OliphauntBuilder.startup_guc()`
 - `oliphaunt::OliphauntBuilder.startup_gucs()`
 - `oliphaunt::OliphauntBuilder.storage()`
@@ -57,7 +57,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::OliphauntServer.close()`
 - `oliphaunt::OliphauntServer.connection_string()`
 - `oliphaunt::OliphauntServer.exec_protocol_raw()`
-- `oliphaunt::OliphauntServer.exec_protocol_raw_stream()`
+- `oliphaunt::OliphauntServer.exec_protocol_stream()`
 - `oliphaunt::OliphauntServer.execute()`
 - `oliphaunt::OliphauntServer.execute_with_params()`
 - `oliphaunt::OliphauntServer.query()`
@@ -81,9 +81,14 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::QueryRow.text()`
 - `oliphaunt::QueryRow.values()`
 - `oliphaunt::Result`
+- `oliphaunt::ServerListen`
+- `oliphaunt::ServerListen.tcp()`
+- `oliphaunt::ServerListen.tcp_port()`
+- `oliphaunt::ServerListen.unix()`
+- `oliphaunt::ServerListen.unix_port()`
 - `oliphaunt::Transaction`
 - `oliphaunt::Transaction.exec_protocol_raw()`
-- `oliphaunt::Transaction.exec_protocol_raw_stream()`
+- `oliphaunt::Transaction.exec_protocol_stream()`
 - `oliphaunt::Transaction.execute()`
 - `oliphaunt::Transaction.execute_with_params()`
 - `oliphaunt::Transaction.query()`
@@ -98,6 +103,24 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt_build::configure()`
 - `oliphaunt_build::try_configure()`
 
+## Native Rust tools: oliphaunt-tools
+
+- `oliphaunt_tools::KIND`
+- `oliphaunt_tools::PRODUCT`
+- `oliphaunt_tools::PgDumpOptions`
+- `oliphaunt_tools::PgDumpOptions.arg()`
+- `oliphaunt_tools::PgDumpOptions.args()`
+- `oliphaunt_tools::PgDumpOptions.new()`
+- `oliphaunt_tools::PostgresToolError`
+- `oliphaunt_tools::PsqlOptions`
+- `oliphaunt_tools::PsqlOptions.arg()`
+- `oliphaunt_tools::PsqlOptions.args()`
+- `oliphaunt_tools::PsqlOptions.command()`
+- `oliphaunt_tools::PsqlOptions.new()`
+- `oliphaunt_tools::PsqlOptions.script()`
+- `oliphaunt_tools::pg_dump()`
+- `oliphaunt_tools::psql()`
+
 ## Rust WASIX: oliphaunt-wasix
 
 - `oliphaunt_wasix::CommandResult`
@@ -106,12 +129,14 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt_wasix::DatabaseStorage`
 - `oliphaunt_wasix::Error`
 - `oliphaunt_wasix::Error.postgres_error()`
+- `oliphaunt_wasix::Error.tool_error()`
 - `oliphaunt_wasix::Oliphaunt`
 - `oliphaunt_wasix::Oliphaunt.backup()`
 - `oliphaunt_wasix::Oliphaunt.builder()`
 - `oliphaunt_wasix::Oliphaunt.checkpoint()`
 - `oliphaunt_wasix::Oliphaunt.close()`
 - `oliphaunt_wasix::Oliphaunt.exec_protocol_raw()`
+- `oliphaunt_wasix::Oliphaunt.exec_protocol_stream()`
 - `oliphaunt_wasix::Oliphaunt.execute()`
 - `oliphaunt_wasix::Oliphaunt.execute_with_params()`
 - `oliphaunt_wasix::Oliphaunt.open()`
@@ -133,38 +158,21 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt_wasix::OliphauntServer.builder()`
 - `oliphaunt_wasix::OliphauntServer.close()`
 - `oliphaunt_wasix::OliphauntServer.connection_string()`
-- `oliphaunt_wasix::OliphauntServer.pg_dump()`
-- `oliphaunt_wasix::OliphauntServer.psql()`
 - `oliphaunt_wasix::OliphauntServer.socket_path()`
 - `oliphaunt_wasix::OliphauntServer.tcp_addr()`
 - `oliphaunt_wasix::OliphauntServerBuilder`
 - `oliphaunt_wasix::OliphauntServerBuilder.database()`
 - `oliphaunt_wasix::OliphauntServerBuilder.extension()`
 - `oliphaunt_wasix::OliphauntServerBuilder.extensions()`
+- `oliphaunt_wasix::OliphauntServerBuilder.listen()`
 - `oliphaunt_wasix::OliphauntServerBuilder.new()`
 - `oliphaunt_wasix::OliphauntServerBuilder.start()`
 - `oliphaunt_wasix::OliphauntServerBuilder.startup_guc()`
 - `oliphaunt_wasix::OliphauntServerBuilder.startup_gucs()`
 - `oliphaunt_wasix::OliphauntServerBuilder.storage()`
-- `oliphaunt_wasix::OliphauntServerBuilder.tcp()`
-- `oliphaunt_wasix::OliphauntServerBuilder.unix()`
 - `oliphaunt_wasix::OliphauntServerBuilder.username()`
-- `oliphaunt_wasix::PgDumpOptions`
-- `oliphaunt_wasix::PgDumpOptions.arg()`
-- `oliphaunt_wasix::PgDumpOptions.args()`
-- `oliphaunt_wasix::PgDumpOptions.database()`
-- `oliphaunt_wasix::PgDumpOptions.new()`
-- `oliphaunt_wasix::PgDumpOptions.username()`
 - `oliphaunt_wasix::PostgresError`
 - `oliphaunt_wasix::PostgresErrorField`
-- `oliphaunt_wasix::PsqlOptions`
-- `oliphaunt_wasix::PsqlOptions.arg()`
-- `oliphaunt_wasix::PsqlOptions.args()`
-- `oliphaunt_wasix::PsqlOptions.command()`
-- `oliphaunt_wasix::PsqlOptions.database()`
-- `oliphaunt_wasix::PsqlOptions.new()`
-- `oliphaunt_wasix::PsqlOptions.script()`
-- `oliphaunt_wasix::PsqlOptions.username()`
 - `oliphaunt_wasix::QueryField`
 - `oliphaunt_wasix::QueryFormat`
 - `oliphaunt_wasix::QueryParam`
@@ -181,8 +189,14 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt_wasix::QueryRow.text()`
 - `oliphaunt_wasix::QueryRow.values()`
 - `oliphaunt_wasix::Result`
+- `oliphaunt_wasix::ServerListen`
+- `oliphaunt_wasix::ServerListen.tcp()`
+- `oliphaunt_wasix::ServerListen.tcp_port()`
+- `oliphaunt_wasix::ServerListen.unix()`
+- `oliphaunt_wasix::ServerListen.unix_port()`
 - `oliphaunt_wasix::Transaction`
 - `oliphaunt_wasix::Transaction.exec_protocol_raw()`
+- `oliphaunt_wasix::Transaction.exec_protocol_stream()`
 - `oliphaunt_wasix::Transaction.execute()`
 - `oliphaunt_wasix::Transaction.execute_with_params()`
 - `oliphaunt_wasix::Transaction.query()`
@@ -231,6 +245,24 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt_wasix::extensions::UUID_OSSP`
 - `oliphaunt_wasix::extensions::VECTOR`
 - `oliphaunt_wasix::extensions::by_sql_name()`
+- `oliphaunt_wasix::tools`
+- `oliphaunt_wasix::tools::PgDumpOptions`
+- `oliphaunt_wasix::tools::PgDumpOptions.arg()`
+- `oliphaunt_wasix::tools::PgDumpOptions.args()`
+- `oliphaunt_wasix::tools::PgDumpOptions.new()`
+- `oliphaunt_wasix::tools::PostgresToolError`
+- `oliphaunt_wasix::tools::PostgresToolError.exit_code()`
+- `oliphaunt_wasix::tools::PostgresToolError.stderr()`
+- `oliphaunt_wasix::tools::PostgresToolError.stdout()`
+- `oliphaunt_wasix::tools::PostgresToolError.tool()`
+- `oliphaunt_wasix::tools::PsqlOptions`
+- `oliphaunt_wasix::tools::PsqlOptions.arg()`
+- `oliphaunt_wasix::tools::PsqlOptions.args()`
+- `oliphaunt_wasix::tools::PsqlOptions.command()`
+- `oliphaunt_wasix::tools::PsqlOptions.new()`
+- `oliphaunt_wasix::tools::PsqlOptions.script()`
+- `oliphaunt_wasix::tools::pg_dump()`
+- `oliphaunt_wasix::tools::psql()`
 
 ## Native C ABI: liboliphaunt
 
@@ -537,6 +569,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `QueryParam`
 - `QueryResult`
 - `QueryRow`
+- `ServerListen`
 - `ServerOpenConfig`
 
 ### Values
@@ -616,6 +649,36 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `QueryRow.text()`
 - `QueryRow.values`
 
+## Native TypeScript tools: @oliphaunt/tools
+
+### Package exports
+
+- `. = {"types":"./index.d.ts","default":"./index.js"}`
+- `./package.json = "./package.json"`
+
+### Types
+
+- `PgDumpOptions`
+- `PsqlOptions`
+
+### Values
+
+- `PostgresToolError`
+- `pgDump`
+- `psql`
+
+### Members
+
+- `PgDumpOptions.args`
+- `PostgresToolError.exitCode`
+- `PostgresToolError.signal`
+- `PostgresToolError.stderr`
+- `PostgresToolError.stdout`
+- `PostgresToolError.tool`
+- `PsqlOptions.args`
+- `PsqlOptions.command`
+- `PsqlOptions.script`
+
 ## WASIX TypeScript: @oliphaunt/wasix-ts
 
 ### Package exports
@@ -623,6 +686,10 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `. = {"types":"./lib/index.d.ts","deno":"./lib/index.deno.js","bun":"./lib/index.bun.js","node":"./lib/index.node.js","browser":"./lib/index.js","default":"./lib/index.js"}`
 - `./protocol = {"types":"./lib/protocol.d.ts","default":"./lib/protocol.js"}`
 - `./query = {"types":"./lib/query.d.ts","default":"./lib/query.js"}`
+- `./internal/tools = {"types":"./lib/internal.d.ts","deno":"./lib/internal.node.js","bun":"./lib/internal.node.js","node":"./lib/internal.node.js","browser":"./lib/internal.js","default":"./lib/internal.js"}`
+- `./server/node = {"types":"./lib/server.node.d.ts","node":"./lib/server.node.js"}`
+- `./server/bun = {"types":"./lib/server.node.d.ts","bun":"./lib/server.node.js"}`
+- `./server/deno = {"types":"./lib/server.node.d.ts","deno":"./lib/server.node.js"}`
 - `./storage/indexed-db = {"types":"./lib/storage/indexed-db.d.ts","default":"./lib/storage/indexed-db.js"}`
 - `./storage/opfs = {"types":"./lib/storage/opfs.d.ts","default":"./lib/storage/opfs.js"}`
 - `./storage/node = {"types":"./lib/storage/node.d.ts","node":"./lib/storage/node.js"}`
@@ -670,10 +737,12 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OliphauntDatabase.checkpoint()`
 - `OliphauntDatabase.close()`
 - `OliphauntDatabase.execProtocolRaw()`
+- `OliphauntDatabase.execProtocolStream()`
 - `OliphauntDatabase.execute()`
 - `OliphauntDatabase.query()`
 - `OliphauntDatabase.transaction()`
 - `OliphauntTransaction.execProtocolRaw()`
+- `OliphauntTransaction.execProtocolStream()`
 - `OliphauntTransaction.execute()`
 - `OliphauntTransaction.query()`
 - `OpenConfig.database`
@@ -736,3 +805,43 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 ### Storage subpath: @oliphaunt/wasix-ts/storage/deno
 
 - `directory`
+
+### Server subpaths: @oliphaunt/wasix-ts/server/{node,bun,deno}
+
+- `OliphauntServer`
+- `ServerListen`
+- `ServerOpenConfig`
+- `openServer`
+- `OliphauntServer.[Symbol.asyncDispose]()`
+- `OliphauntServer.close()`
+- `OliphauntServer.connectionString`
+
+## WASIX TypeScript tools: @oliphaunt/wasix-tools
+
+### Package exports
+
+- `. = {"types":"./lib/index.d.ts","default":"./lib/index.js"}`
+- `./package.json = "./package.json"`
+
+### Types
+
+- `PgDumpOptions`
+- `PsqlOptions`
+
+### Values
+
+- `PostgresToolError`
+- `pgDump`
+- `psql`
+
+### Members
+
+- `PgDumpOptions.args`
+- `PostgresToolError.constructor()`
+- `PostgresToolError.exitCode`
+- `PostgresToolError.stderr`
+- `PostgresToolError.stdout`
+- `PostgresToolError.tool`
+- `PsqlOptions.args`
+- `PsqlOptions.command`
+- `PsqlOptions.script`

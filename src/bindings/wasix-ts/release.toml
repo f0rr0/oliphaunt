@@ -2,7 +2,10 @@ id = "oliphaunt-wasix-ts"
 owner = "@oliphaunt/sdk-js"
 kind = "sdk"
 publish_targets = ["npm"]
-registry_packages = ["npm:@oliphaunt/wasix-ts"]
+registry_packages = [
+  "npm:@oliphaunt/wasix-ts",
+  "npm:@oliphaunt/wasix-tools",
+]
 release_artifacts = [
   "npm-package",
   "browser-worker",
@@ -12,4 +15,9 @@ release_artifacts = [
 [compatibility_versions.oliphaunt-wasix-ts-runtime]
 source_product = "liboliphaunt-wasix"
 path = "src/bindings/wasix-ts/package.json"
+parser = "json:oliphaunt.runtimeVersion"
+
+[compatibility_versions.oliphaunt-wasix-tools-runtime]
+source_product = "liboliphaunt-wasix"
+path = "src/bindings/wasix-tools/package.json"
 parser = "json:oliphaunt.runtimeVersion"

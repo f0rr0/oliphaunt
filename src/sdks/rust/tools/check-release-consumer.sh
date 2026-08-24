@@ -70,14 +70,14 @@ build_consumer() {
   OLIPHAUNT_CARGO_METADATA="$metadata" tools/dev/bun.sh -e '
     const metadata = await Bun.file(process.env.OLIPHAUNT_CARGO_METADATA).json();
     for (const dependency of metadata.packages[0].dependencies) {
-      if (dependency.name === "oliphaunt-tools" || dependency.name.startsWith("liboliphaunt-native-") || dependency.name.startsWith("oliphaunt-broker-")) {
+      if (dependency.name.startsWith("liboliphaunt-native-") || dependency.name.startsWith("oliphaunt-broker-")) {
         const version = dependency.req.match(/^=([0-9A-Za-z.+-]+)$/)?.[1];
         if (!version) throw new Error(`artifact dependency ${dependency.name} must use an exact version`);
         console.log(`${dependency.name}\t${version}`);
       }
     }
   ' | sort -u >"$dependency_rows"
-  for pattern in '^liboliphaunt-native-' '^oliphaunt-broker-' '^oliphaunt-tools\t'; do
+  for pattern in '^liboliphaunt-native-' '^oliphaunt-broker-'; do
     rg -q "$pattern" "$dependency_rows" || fail "packed crate is missing artifact dependency $pattern"
   done
 

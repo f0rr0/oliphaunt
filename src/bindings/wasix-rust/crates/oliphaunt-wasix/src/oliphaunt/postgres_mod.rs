@@ -42,6 +42,7 @@ use task_policy::{GuestWasmTasks, constrain_single_backend_tasks};
 use wasix_fs::{host_filesystem, wasi_root_with_devices};
 
 const POSTGRES_EXE_PATH: &str = "/bin/postgres";
+pub(crate) const PROTOCOL_CHUNK_BYTES: usize = 64 * 1024;
 const PGDATA_DIR: &str = "/base";
 const ICU_DATA_DIR: &str = "/share/icu";
 const WASM_PREFIX: &str = "/";
@@ -84,6 +85,7 @@ pub struct PostgresMod {
     runtime_storage: StorageRoot,
     pgdata_storage: PgDataStorage,
     startup_config: StartupConfig,
+    startup_response: Option<Vec<u8>>,
     cluster_ready: bool,
     backend_started: bool,
     started: bool,
@@ -131,6 +133,14 @@ pub(crate) fn startup_error_response_output(err: &anyhow::Error) -> Option<&[u8]
 pub(crate) enum ProtocolPumpOutcome {
     Buffered(Vec<u8>),
     Streamed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProtocolPumpScope {
+    /// Return after PostgreSQL completes the COPY command that activated the stream.
+    Copy,
+    /// Keep pumping until the frontend connection ends.
+    Connection,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -266,6 +276,7 @@ impl PostgresMod {
             runtime_storage,
             pgdata_storage,
             startup_config,
+            startup_response: None,
             cluster_ready: false,
             backend_started: false,
             started: false,
@@ -394,6 +405,7 @@ impl PostgresMod {
         }
         self.backend_started = false;
         self.started = false;
+        self.startup_response = None;
         self.cluster_ready = false;
         Ok(())
     }
@@ -475,6 +487,7 @@ impl PostgresMod {
         &mut self,
         payload: &[u8],
         continuation_prefix: impl FnOnce() -> Vec<u8>,
+        scope: ProtocolPumpScope,
     ) -> Result<ProtocolPumpOutcome> {
         {
             self.start_protocol()?;
@@ -495,7 +508,7 @@ impl PostgresMod {
         let active = self.protocol_stream_active().unwrap_or(false);
         if active {
             self.set_protocol_stream_prefix(continuation_prefix())?;
-            let stream_result = result.and_then(|_| self.serve_protocol_stream_inner());
+            let stream_result = result.and_then(|_| self.serve_protocol_stream_inner(scope));
             let restore_result = self.restore_protocol_transport(previous_mode);
             let clear_result = self.clear_protocol_stream_prefix();
             stream_result.and(restore_result).and(clear_result)?;
@@ -577,7 +590,7 @@ impl PostgresMod {
         self.protocol_stdio.is_some()
     }
 
-    fn serve_protocol_stream_inner(&mut self) -> Result<()> {
+    fn serve_protocol_stream_inner(&mut self, scope: ProtocolPumpScope) -> Result<()> {
         loop {
             if let Err(err) = self.protocol.main_loop.call(&mut self.store) {
                 if runtime_error_exit_code(&err) == Some(OLIPHAUNT_EXIT_ALIVE) {
@@ -609,6 +622,9 @@ impl PostgresMod {
                 .pq_flush
                 .call(&mut self.store)
                 .context("oliphaunt_wasix_pq_flush streaming protocol")?;
+            if scope == ProtocolPumpScope::Copy {
+                break;
+            }
         }
         Ok(())
     }
@@ -726,10 +742,21 @@ impl PostgresMod {
             self.io.take_output(&mut self.store, &self.env)?
         };
         self.started = true;
+        self.startup_response = Some(output.clone());
         Ok(StartupProtocolResponse {
             output,
             accepted: true,
         })
+    }
+
+    #[cfg(feature = "tools")]
+    pub(crate) fn existing_startup_response(&self) -> Option<Vec<u8>> {
+        self.startup_response.clone()
+    }
+
+    #[cfg(feature = "tools")]
+    pub(crate) fn startup_config(&self) -> &StartupConfig {
+        &self.startup_config
     }
 
     fn recover_protocol_error(&mut self, payload_len: usize) -> Result<()> {

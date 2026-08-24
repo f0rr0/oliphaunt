@@ -16,6 +16,7 @@ export type {
   OliphauntTransaction,
   OliphauntServer,
   OpenConfig,
+  ServerListen,
   ServerOpenConfig,
 } from './types.js';
 

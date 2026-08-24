@@ -1,11 +1,14 @@
 import { readFile } from 'node:fs/promises';
 
 import * as host from './host/index.mjs';
+import { installNodeWebWorker } from './node-web-worker.js';
 
 export const Directory = host.Directory;
 export const instantiateOliphauntDirect = host.instantiateOliphauntDirect;
+export const runOliphauntTool = host.runOliphauntTool;
 
 export async function init(options: Record<string, unknown> = {}): Promise<unknown> {
+  installNodeWebWorker();
   const module = await readFile(new URL('./host/wasmer_js_bg.wasm', import.meta.url));
   return host.init({
     ...options,

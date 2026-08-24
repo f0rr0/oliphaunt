@@ -1,9 +1,9 @@
 # oliphaunt-tools
 
-Cargo facade for target-specific Oliphaunt native PostgreSQL client tool
-artifacts.
+Optional endpoint-oriented runner for target-specific Oliphaunt native
+PostgreSQL client tool artifacts.
 
-Applications normally receive this crate through `oliphaunt`. It selects the
-matching `oliphaunt-tools-*` artifact crate for the Cargo target and relays the
-resolved `pg_basebackup`, `pg_dump`, and `psql` payload manifest to
-`oliphaunt-build`.
+It selects the matching `oliphaunt-tools-*` artifact crate for the Cargo target
+and exposes thin `pg_dump` and non-interactive `psql` functions. The core
+`oliphaunt` SDK does not depend on this crate. Set `OLIPHAUNT_TOOLS_DIR` only
+when overriding packaged tool discovery during development.

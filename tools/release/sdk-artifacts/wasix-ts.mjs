@@ -7,6 +7,7 @@ import {
 } from '../wasix-typescript-package.mjs';
 import { packageNpmWorkspace } from './npm.mjs';
 import { ROOT, requireDir } from './shared.mjs';
+import { stageWasixToolsArtifact } from './wasix-tools-ts.mjs';
 
 export function stageArtifacts(artifactRoot, workRoot) {
   const packageRoot = path.join(ROOT, 'src/bindings/wasix-ts');
@@ -22,7 +23,8 @@ export function stageArtifacts(artifactRoot, workRoot) {
   ]) {
     cpSync(path.join(packageRoot, name), path.join(staging, name), { recursive: true });
   }
-  prepareWasixTypescriptPackage(staging);
+  const manifest = prepareWasixTypescriptPackage(staging);
   const archive = packageNpmWorkspace(staging, artifactRoot);
   assertWasixTypescriptNpmArchive(archive);
+  stageWasixToolsArtifact(artifactRoot, path.join(workRoot, 'tools'), manifest.version);
 }

@@ -6,6 +6,11 @@ import {
   DirectWasixSession,
   prepareRuntimeCached,
 } from '../direct-client-common.js';
+import {
+  closeWasixByteChannel,
+  createWasixByteChannel,
+  failWasixByteChannel,
+} from '../byte-channel.js';
 import { WasixStorageError } from '../errors.js';
 import type { PreparedWasixRuntime } from '../extensions.js';
 import type { OliphauntDirectInstance } from '../host/index.mjs';
@@ -148,6 +153,87 @@ describe('direct WASIX session lifecycle', () => {
     await session.close();
 
     expect(events).toEqual(['startup', 'close', 'storage:clean', 'free']);
+  });
+
+  it('starts a fresh backend for each server client but reuses one backend for tools', async () => {
+    const baseHost = fakeHost({});
+    let instantiations = 0;
+    const host: DirectWasixHost = {
+      ...baseHost,
+      async instantiateOliphauntDirect(module, moduleBytes, options) {
+        instantiations += 1;
+        return baseHost.instantiateOliphauntDirect(module, moduleBytes, options);
+      },
+    };
+    const session = await DirectWasixSession.open(
+      openOptions(),
+      host,
+      fakeDependencies(fakeLease(async () => undefined)),
+    );
+
+    const serveClosedConnection = async (mode: 'server' | 'tool') => {
+      const frontend = createWasixByteChannel();
+      closeWasixByteChannel(frontend);
+      await session.serve({ frontend, backend: createWasixByteChannel() }, mode);
+    };
+
+    expect(instantiations).toBe(1);
+    await serveClosedConnection('server');
+    expect(instantiations).toBe(2);
+    await serveClosedConnection('server');
+    expect(instantiations).toBe(3);
+    await serveClosedConnection('tool');
+    expect(instantiations).toBe(3);
+    await session.close();
+  });
+
+  it('restores the configured role around a tool session', async () => {
+    const queries: string[] = [];
+    const options = openOptions();
+    options.username = 'app"role';
+    const session = await DirectWasixSession.open(
+      options,
+      fakeHost({
+        execProtocolRaw(input) {
+          queries.push(decodeSimpleQuery(input));
+          return querySuccess();
+        },
+      }),
+      fakeDependencies(fakeLease(async () => undefined)),
+    );
+    const frontend = createWasixByteChannel();
+    closeWasixByteChannel(frontend);
+
+    await session.serve({ frontend, backend: createWasixByteChannel() }, 'tool');
+    await session.close();
+
+    expect(queries).toEqual([
+      'SET ROLE "app""role"',
+      'ROLLBACK',
+      'DISCARD ALL',
+      'SET ROLE "app""role"',
+      'ROLLBACK',
+      'DISCARD ALL',
+      'SET ROLE "app""role"',
+    ]);
+  });
+
+  it('poisons a tool session whose protocol outcome is unknown', async () => {
+    const session = await DirectWasixSession.open(
+      openOptions(),
+      fakeHost({}),
+      fakeDependencies(fakeLease(async () => undefined)),
+    );
+    const frontend = createWasixByteChannel();
+    failWasixByteChannel(frontend);
+
+    await expect(
+      session.serve({ frontend, backend: createWasixByteChannel() }, 'tool'),
+    ).rejects.toThrow('byte channel failed');
+    await expect(session.exec(Uint8Array.of(1))).rejects.toThrow(
+      'Oliphaunt WASIX direct database failed',
+    );
+    await session.close();
   });
 
   it('poisons the session after an execution trap and releases storage as failed', async () => {
@@ -526,7 +612,8 @@ type FakeHostOptions = {
   events?: string[];
   init?(): Promise<void>;
   startup?(): Uint8Array;
-  execProtocolRaw?(): Uint8Array;
+  execProtocolRaw?(input: Uint8Array): Uint8Array;
+  execProtocolStream?(onChunk: (chunk: Uint8Array) => void): void;
   close?(): void;
   free?(): void;
   instantiate?(): Promise<OliphauntDirectInstance>;
@@ -539,9 +626,24 @@ function fakeHost(options: FakeHostOptions): DirectWasixHost {
       events?.push('startup');
       return options.startup?.() ?? startupSuccess();
     },
-    execProtocolRaw() {
+    execProtocolRaw(input: Uint8Array) {
       events?.push('exec');
-      return options.execProtocolRaw?.() ?? querySuccess();
+      return options.execProtocolRaw?.(input) ?? querySuccess();
+    },
+    execProtocolStream(_input: Uint8Array, onChunk: (chunk: Uint8Array) => void) {
+      events?.push('execStream');
+      if (options.execProtocolStream !== undefined) {
+        options.execProtocolStream(onChunk);
+        return;
+      }
+      onChunk(options.execProtocolRaw?.(_input) ?? querySuccess());
+    },
+    execProtocolDuplex(
+      input: Uint8Array,
+      _onRead: (maximumBytes: number) => Uint8Array,
+      onChunk: (chunk: Uint8Array) => void,
+    ) {
+      this.execProtocolStream(input, onChunk);
     },
     close() {
       if (options.close === undefined) events?.push('close');
@@ -739,6 +841,11 @@ function concatenate(chunks: readonly Uint8Array[]): Uint8Array {
     offset += chunk.length;
   }
   return result;
+}
+
+function decodeSimpleQuery(input: Uint8Array): string {
+  expect(input[0]).toBe('Q'.charCodeAt(0));
+  return new TextDecoder().decode(input.subarray(5, -1));
 }
 
 function nextResponse(responses: Uint8Array[]): Uint8Array {

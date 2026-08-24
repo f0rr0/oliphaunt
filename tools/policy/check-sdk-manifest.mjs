@@ -9,10 +9,10 @@ const parityPolicyPath = 'docs/maintainers/sdk-parity-policy.md';
 const deferredIds = [
   'FUTURE-EXTENSION-MIGRATION',
   'FUTURE-NATIVE-SERVER-SDK-BACKUP',
+  'FUTURE-SWIFT-MACOS-SERVER-TOOLS',
   'FUTURE-RESTORE-REPLACE',
   'FUTURE-WASIX-CANCELLATION',
   'FUTURE-WASIX-DIRECT-COPY',
-  'FUTURE-WASIX-TS-SERVER-TOOLS',
 ];
 const releaseProducts = loadGraph('check-sdk-manifest.mjs').products;
 const releaseSdkProducts = Object.values(releaseProducts).filter((product) => product.kind === 'sdk');
@@ -86,9 +86,10 @@ if (!['check', '--list', '--json'].includes(mode)) fail(`unknown option: ${mode}
 const manifest = Bun.TOML.parse(readFileSync(manifestPath, 'utf8'));
 const parityPolicy = readFileSync(parityPolicyPath, 'utf8');
 const actualDeferredIds = [...parityPolicy.matchAll(/\bFUTURE-[A-Z0-9-]+\b/g)].map(([id]) => id);
+const expectedDeferredIds = [...deferredIds].sort();
 if (
   actualDeferredIds.length !== deferredIds.length
-  || [...actualDeferredIds].sort().some((id, index) => id !== deferredIds[index])
+  || [...actualDeferredIds].sort().some((id, index) => id !== expectedDeferredIds[index])
 ) {
   errors.push(
     `${parityPolicyPath} must contain each canonical deferred ID exactly once; found ${formatValue(actualDeferredIds)}`,

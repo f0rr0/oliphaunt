@@ -28,7 +28,8 @@ Server mode starts a normal local PostgreSQL server, opens one SDK connection,
 and returns `OliphauntServer` with a nonoptional libpq connection string. It is
 the only product that supports independent external client connections. Its
 handle has no physical-backup method because PostgreSQL already provides
-`pg_basebackup`; logical backup uses `pg_dump`/`pg_restore`/`psql`.
+`pg_basebackup`; the optional endpoint-oriented `oliphaunt-tools` crate runs
+plain `pg_dump` and non-interactive `psql` without entering the core SDK API.
 
 The engine traits, C symbols, broker frames, server wire client, and artifact
 materialization helpers are crate-internal. The only `#[doc(hidden)]` exports are

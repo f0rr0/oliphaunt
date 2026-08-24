@@ -31,6 +31,7 @@ mod test_fixtures;
 
 pub use build_resources::register_build_resources_dir;
 pub use builder::OliphauntBuilder;
+pub use config::ServerListen;
 pub use database::{Oliphaunt, OliphauntServer, Transaction};
 pub use error::{Error, PostgresError, PostgresErrorField, Result};
 pub use extension::Extension;

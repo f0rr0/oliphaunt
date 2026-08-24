@@ -207,8 +207,10 @@ for (const { packageName, version } of electronReleaseDependencies(ROOT)) {
 requireText("examples/electron/package.json", String.raw`"pg": "\^8\.16\.3"`);
 rejectFile("examples/electron/src/oliphaunt-kysely.ts");
 rejectText("examples/tauri/src-tauri/Cargo.toml", 'registry\\s*=\\s*"oliphaunt-local"');
-requireText("examples/tauri/src-tauri/Cargo.toml", "oliphaunt-tools =");
 requireText("examples/tauri/src-tauri/Cargo.toml", "oliphaunt-extension-contrib-pg18-linux-x64-gnu");
+requireText("examples/electron/src/todos.ts", String.raw`from "@oliphaunt/tools"`);
+requireText("examples/electron/src/todos.ts", String.raw`pgDump\(connectionString`);
+requireText("examples/electron/src/todos.ts", String.raw`psql\(connectionString`);
 rejectText("examples/tauri-wasix/src-tauri/Cargo.toml", 'registry\\s*=\\s*"oliphaunt-local"');
 requireText("examples/tauri-wasix/src-tauri/Cargo.toml", '"tools"');
 requireText("examples/tauri-wasix/src-tauri/Cargo.toml", "oliphaunt-wasix-tools");

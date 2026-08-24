@@ -1,0 +1,1042 @@
+use std::error::Error as StdError;
+use std::fmt;
+use std::io::{Cursor, Read, Seek, Write};
+use std::mem::MaybeUninit;
+use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr};
+use std::path::Path;
+use std::pin::Pin;
+use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::sync::{Arc, Mutex};
+use std::task::{Context as TaskContext, Poll};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use anyhow::{Context, Result, anyhow, bail};
+use tempfile::TempDir;
+use wasmer_types::ModuleHash;
+use wasmer_wasix::WasiRuntimeError;
+use wasmer_wasix::runners::wasi::{RuntimeOrEngine, WasiRunner};
+use wasmer_wasix::runtime::task_manager::tokio::TokioTaskManager;
+use wasmer_wasix::virtual_fs::{self, AsyncRead, AsyncSeek, AsyncWrite};
+use wasmer_wasix::virtual_net::tcp_pair::TcpSocketHalf;
+use wasmer_wasix::virtual_net::{
+    self, InterestHandler, NetworkError, SocketStatus, VirtualConnectedSocket, VirtualIoSource,
+    VirtualNetworking, VirtualSocket, VirtualTcpSocket,
+};
+use wasmer_wasix::{PluggableRuntime, VirtualFile};
+
+use crate::oliphaunt::base::{install_optional_icu_data, unpack_runtime_archive_reader};
+use crate::oliphaunt::sync_host_fs::SyncHostFileSystem;
+use crate::oliphaunt::{aot, assets};
+
+/// Options for the bundled WASIX `pg_dump` runner.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PgDumpOptions {
+    args: Vec<String>,
+}
+
+/// Structured failure from a packaged PostgreSQL frontend program.
+#[derive(Debug)]
+pub struct PostgresToolError {
+    tool: &'static str,
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+    cause: anyhow::Error,
+}
+
+/// Internal marker for a broken virtual connection after a tool may have sent work.
+#[derive(Debug)]
+pub(crate) struct DirectToolOutcomeUnknown;
+
+impl fmt::Display for DirectToolOutcomeUnknown {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("direct WASIX tool protocol outcome is unknown")
+    }
+}
+
+impl StdError for DirectToolOutcomeUnknown {}
+
+impl PostgresToolError {
+    pub fn tool(&self) -> &'static str {
+        self.tool
+    }
+
+    pub fn exit_code(&self) -> Option<i32> {
+        self.exit_code
+    }
+
+    pub fn stdout(&self) -> &str {
+        &self.stdout
+    }
+
+    pub fn stderr(&self) -> &str {
+        &self.stderr
+    }
+}
+
+impl fmt::Display for PostgresToolError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self
+            .cause
+            .downcast_ref::<std::string::FromUtf8Error>()
+            .is_some()
+        {
+            return write!(
+                formatter,
+                "{} produced non-UTF-8 output: {}",
+                self.tool, self.cause
+            );
+        }
+        write!(formatter, "{} failed", self.tool)?;
+        if let Some(code) = self.exit_code {
+            write!(formatter, " with status {code}")?;
+        }
+        if !self.stderr.trim().is_empty() {
+            write!(formatter, ": {}", self.stderr.trim())?;
+        }
+        Ok(())
+    }
+}
+
+impl StdError for PostgresToolError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        Some(self.cause.as_ref())
+    }
+}
+
+impl PgDumpOptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add one raw `pg_dump` argument.
+    pub fn arg(mut self, arg: impl Into<String>) -> Self {
+        self.args.push(arg.into());
+        self
+    }
+
+    /// Add raw `pg_dump` arguments.
+    pub fn args(mut self, args: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.args.extend(args.into_iter().map(Into::into));
+        self
+    }
+
+    pub(crate) fn validate(&self) -> Result<()> {
+        for arg in &self.args {
+            anyhow::ensure!(
+                !arg.contains('\0'),
+                "pg_dump argument must not contain NUL bytes"
+            );
+            validate_passthrough_arg(arg)?;
+        }
+        Ok(())
+    }
+}
+
+/// Options for the bundled WASIX `psql` runner.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PsqlOptions {
+    args: Vec<String>,
+    input: Option<PsqlInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PsqlInput {
+    Command(String),
+    Script(String),
+}
+
+impl PsqlOptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add one raw `psql` argument.
+    pub fn arg(mut self, arg: impl Into<String>) -> Self {
+        self.args.push(arg.into());
+        self
+    }
+
+    /// Add raw `psql` arguments.
+    pub fn args(mut self, args: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.args.extend(args.into_iter().map(Into::into));
+        self
+    }
+
+    /// Run a non-interactive SQL command with `psql -c`.
+    pub fn command(mut self, sql: impl Into<String>) -> Self {
+        self.input = Some(PsqlInput::Command(sql.into()));
+        self
+    }
+
+    /// Run a SQL script through `psql` standard input.
+    pub fn script(mut self, sql: impl Into<String>) -> Self {
+        self.input = Some(PsqlInput::Script(sql.into()));
+        self
+    }
+
+    pub(crate) fn validate(&self) -> Result<()> {
+        anyhow::ensure!(
+            !self.args.is_empty() || self.input.is_some(),
+            "psql runner requires non-interactive input; use PsqlOptions::command, PsqlOptions::script, or pass a non-input psql argument"
+        );
+        for arg in &self.args {
+            anyhow::ensure!(
+                !arg.contains('\0'),
+                "psql argument must not contain NUL bytes"
+            );
+            validate_psql_passthrough_arg(arg)?;
+        }
+        if let Some(input) = &self.input {
+            let (name, value) = match input {
+                PsqlInput::Command(value) => ("command", value),
+                PsqlInput::Script(value) => ("script", value),
+            };
+            anyhow::ensure!(
+                !value.contains('\0'),
+                "psql {name} must not contain NUL bytes"
+            );
+        }
+        Ok(())
+    }
+}
+
+fn validate_passthrough_arg(arg: &str) -> Result<()> {
+    if let Some(flag) = disallowed_pg_dump_flag(arg) {
+        anyhow::bail!("pg_dump argument '{arg}' conflicts with oliphaunt-wasix's managed {flag}");
+    }
+    Ok(())
+}
+
+fn disallowed_pg_dump_flag(arg: &str) -> Option<&'static str> {
+    const LONG_FLAGS: &[(&str, &str)] = &[
+        ("--file", "output file"),
+        ("--format", "output format"),
+        ("--compress", "output compression"),
+        ("--encoding", "output encoding"),
+        ("--host", "host"),
+        ("--port", "port"),
+        ("--username", "username"),
+        ("--dbname", "database"),
+        ("--jobs", "job count"),
+    ];
+    for (flag, label) in LONG_FLAGS {
+        if arg == *flag
+            || arg
+                .strip_prefix(*flag)
+                .is_some_and(|tail| tail.starts_with('='))
+        {
+            return Some(label);
+        }
+    }
+
+    const SHORT_FLAGS: &[(&str, &str)] = &[
+        ("-f", "output file"),
+        ("-F", "output format"),
+        ("-Z", "output compression"),
+        ("-E", "output encoding"),
+        ("-h", "host"),
+        ("-p", "port"),
+        ("-U", "username"),
+        ("-d", "database"),
+        ("-j", "job count"),
+    ];
+    for (flag, label) in SHORT_FLAGS {
+        if arg == *flag || (arg.starts_with(*flag) && arg.len() > flag.len()) {
+            return Some(label);
+        }
+    }
+    None
+}
+
+fn validate_psql_passthrough_arg(arg: &str) -> Result<()> {
+    if let Some(flag) = disallowed_psql_flag(arg) {
+        anyhow::bail!("psql argument '{arg}' conflicts with oliphaunt-wasix's managed {flag}");
+    }
+    Ok(())
+}
+
+fn disallowed_psql_flag(arg: &str) -> Option<&'static str> {
+    const LONG_FLAGS: &[(&str, &str)] = &[
+        ("--host", "host"),
+        ("--port", "port"),
+        ("--username", "username"),
+        ("--dbname", "database"),
+        ("--output", "stdout capture"),
+        ("--log-file", "stderr capture"),
+        ("--command", "input"),
+        ("--file", "input"),
+    ];
+    for (flag, label) in LONG_FLAGS {
+        if arg == *flag
+            || arg
+                .strip_prefix(*flag)
+                .is_some_and(|tail| tail.starts_with('='))
+        {
+            return Some(label);
+        }
+    }
+
+    const SHORT_FLAGS: &[(&str, &str)] = &[
+        ("-h", "host"),
+        ("-p", "port"),
+        ("-U", "username"),
+        ("-d", "database"),
+        ("-o", "stdout capture"),
+        ("-L", "stderr capture"),
+        ("-c", "input"),
+        ("-f", "input"),
+    ];
+    for (flag, label) in SHORT_FLAGS {
+        if arg == *flag || (arg.starts_with(*flag) && arg.len() > flag.len()) {
+            return Some(label);
+        }
+    }
+    None
+}
+
+fn pg_dump_wasm_asset() -> Result<&'static [u8]> {
+    assets::pg_dump_wasm()
+        .filter(|bytes| !bytes.is_empty())
+        .ok_or_else(|| {
+            anyhow!(
+                "WASIX pg_dump asset is not bundled; enable the oliphaunt-wasix `tools` feature so Cargo installs oliphaunt-wasix-tools"
+            )
+        })
+}
+
+fn psql_wasm_asset() -> Result<&'static [u8]> {
+    assets::psql_wasm()
+        .filter(|bytes| !bytes.is_empty())
+        .ok_or_else(|| {
+            anyhow!(
+                "WASIX psql asset is not bundled; enable the oliphaunt-wasix `tools` feature so Cargo installs oliphaunt-wasix-tools"
+            )
+        })
+}
+
+struct ToolOutput {
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+struct ToolInvocation<'a, N> {
+    name: &'static str,
+    wasm: &'static [u8],
+    load_module: fn(&wasmer::Engine) -> Result<wasmer::Module>,
+    username: &'a str,
+    networking: N,
+    stdin: Option<Vec<u8>>,
+    args: Vec<String>,
+}
+
+fn run_wasix_client_tool<N>(invocation: ToolInvocation<'_, N>) -> Result<ToolOutput>
+where
+    N: VirtualNetworking + Sync,
+{
+    let ToolInvocation {
+        name,
+        wasm,
+        load_module,
+        username,
+        networking,
+        stdin,
+        args,
+    } = invocation;
+    let engine = aot::headless_engine();
+    let module = load_module(&engine)
+        .with_context(|| format!("load {name} AOT artifact from oliphaunt-wasix-tools-aot-*"))?;
+
+    let fs_root = TempDir::new().with_context(|| format!("create {name} WASIX filesystem root"))?;
+    if let Some(runtime_archive) = assets::runtime_archive() {
+        unpack_runtime_archive_reader(
+            Cursor::new(runtime_archive),
+            Path::new("oliphaunt.wasix.tar.zst"),
+            fs_root.path(),
+        )
+        .with_context(|| format!("install WASIX runtime files for {name}"))?;
+        install_optional_icu_data(&fs_root.path().join("oliphaunt"))
+            .with_context(|| format!("install WASIX ICU data for {name}"))?;
+    }
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .with_context(|| format!("create Tokio runtime for WASIX {name}"))?;
+    let (host_fs, wasix_runtime) = {
+        let _runtime_guard = runtime.enter();
+        let host_fs = SyncHostFileSystem::new(fs_root.path()).with_context(|| {
+            format!(
+                "create host filesystem rooted at {}",
+                fs_root.path().display()
+            )
+        })?;
+        let host_fs = Arc::new(host_fs) as Arc<dyn virtual_fs::FileSystem + Send + Sync>;
+        let mut wasix_runtime = PluggableRuntime::new(Arc::new(TokioTaskManager::new(
+            tokio::runtime::Handle::current(),
+        )));
+        wasix_runtime.set_engine(engine.clone());
+        wasix_runtime.set_networking_implementation(networking);
+        (host_fs, wasix_runtime)
+    };
+
+    let stdout = Arc::new(Mutex::new(Vec::new()));
+    let stderr = Arc::new(Mutex::new(Vec::new()));
+    let mut runner = WasiRunner::new();
+    runner
+        .with_mount("/".to_owned(), Arc::clone(&host_fs))
+        .with_current_dir("/")
+        .with_args(args)
+        .with_envs([
+            ("PGUSER", username),
+            ("PGPASSWORD", "password"),
+            ("PGSSLMODE", "disable"),
+            ("PGCLIENTENCODING", "UTF8"),
+        ])
+        .with_stdout(Box::new(CaptureFile::new(Arc::clone(&stdout))))
+        .with_stderr(Box::new(CaptureFile::new(Arc::clone(&stderr))));
+    match stdin {
+        Some(input) => runner.with_stdin(Box::new(virtual_fs::StaticFile::new(input))),
+        None => runner.with_stdin(Box::<virtual_fs::null_file::NullFile>::default()),
+    };
+    if fs_root.path().join("oliphaunt/share/icu").is_dir() {
+        runner.with_envs([("ICU_DATA", "/oliphaunt/share/icu")]);
+    }
+    if let Err(cause) = runner.run_wasm(
+        RuntimeOrEngine::Runtime(Arc::new(wasix_runtime)),
+        name,
+        module,
+        ModuleHash::sha256(wasm),
+    ) {
+        let exit_code = cause
+            .chain()
+            .find_map(|error| error.downcast_ref::<WasiRuntimeError>())
+            .and_then(WasiRuntimeError::as_exit_code)
+            .map(|code| code.raw());
+        let stdout =
+            String::from_utf8_lossy(&stdout.lock().expect("stdout capture poisoned")).into_owned();
+        let stderr =
+            String::from_utf8_lossy(&stderr.lock().expect("stderr capture poisoned")).into_owned();
+        return Err(anyhow::Error::new(PostgresToolError {
+            tool: name,
+            exit_code,
+            stdout,
+            stderr,
+            cause,
+        }));
+    }
+
+    let stdout = stdout.lock().expect("stdout capture poisoned").clone();
+    let stderr = stderr.lock().expect("stderr capture poisoned").clone();
+    Ok(ToolOutput { stdout, stderr })
+}
+
+fn pg_dump_with_networking<N>(
+    addr: SocketAddr,
+    username: &str,
+    database: &str,
+    options: &PgDumpOptions,
+    networking: N,
+) -> Result<String>
+where
+    N: VirtualNetworking + Sync,
+{
+    options.validate()?;
+    let mut args = options.args.clone();
+    args.extend([
+        "--encoding=UTF8".to_owned(),
+        "-U".to_owned(),
+        username.to_owned(),
+        "-h".to_owned(),
+        addr.ip().to_string(),
+        "-p".to_owned(),
+        addr.port().to_string(),
+    ]);
+    args.push(database.to_owned());
+    let output = run_wasix_client_tool(ToolInvocation {
+        name: "pg_dump",
+        wasm: pg_dump_wasm_asset()?,
+        load_module: aot::load_pg_dump_module,
+        username,
+        networking,
+        stdin: None,
+        args,
+    })?;
+    decode_tool_output("pg_dump", output)
+}
+
+fn run_psql_with_networking<N>(
+    addr: SocketAddr,
+    username: &str,
+    database: &str,
+    options: &PsqlOptions,
+    networking: N,
+) -> Result<String>
+where
+    N: VirtualNetworking + Sync,
+{
+    options.validate()?;
+    let stdin = match &options.input {
+        Some(PsqlInput::Script(script)) => Some(script.as_bytes().to_vec()),
+        _ => None,
+    };
+    let mut args = options.args.clone();
+    args.extend([
+        "-X".to_owned(),
+        "-v".to_owned(),
+        "ON_ERROR_STOP=1".to_owned(),
+        "-U".to_owned(),
+        username.to_owned(),
+        "-h".to_owned(),
+        addr.ip().to_string(),
+        "-p".to_owned(),
+        addr.port().to_string(),
+        "-d".to_owned(),
+        database.to_owned(),
+    ]);
+    if let Some(PsqlInput::Command(command)) = &options.input {
+        args.extend(["-c".to_owned(), command.clone()]);
+    }
+    let output = run_wasix_client_tool(ToolInvocation {
+        name: "psql",
+        wasm: psql_wasm_asset()?,
+        load_module: aot::load_psql_module,
+        username,
+        networking,
+        stdin,
+        args,
+    })?;
+    decode_tool_output("psql", output)
+}
+
+fn decode_tool_output(tool: &'static str, output: ToolOutput) -> Result<String> {
+    let ToolOutput { stdout, stderr } = output;
+    String::from_utf8(stdout).map_err(|cause| {
+        let stdout = String::from_utf8_lossy(cause.as_bytes()).into_owned();
+        anyhow::Error::new(PostgresToolError {
+            tool,
+            exit_code: Some(0),
+            stdout,
+            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+            cause: anyhow!(cause),
+        })
+    })
+}
+
+/// Run bundled `pg_dump` directly against an open WASIX database.
+pub fn pg_dump(database: &mut crate::Oliphaunt, options: PgDumpOptions) -> crate::Result<String> {
+    crate::error::public_result(database.run_pg_dump_tool(options))
+}
+
+/// Run bundled non-interactive `psql` directly against an open WASIX database.
+pub fn psql(database: &mut crate::Oliphaunt, options: PsqlOptions) -> crate::Result<String> {
+    crate::error::public_result(database.run_psql_tool(options))
+}
+
+pub(crate) type DirectToolSocket = TcpSocketHalf;
+
+pub(crate) fn run_direct_pg_dump<F>(
+    username: &str,
+    database: &str,
+    options: &PgDumpOptions,
+    serve: F,
+) -> Result<String>
+where
+    F: FnOnce(DirectToolSocket) -> Result<()>,
+{
+    let username = username.to_owned();
+    let database = database.to_owned();
+    let options = options.clone();
+    run_direct_tool(
+        move |networking| {
+            pg_dump_with_networking(DIRECT_TOOL_ADDR, &username, &database, &options, networking)
+        },
+        serve,
+    )
+}
+
+pub(crate) fn run_direct_psql<F>(
+    username: &str,
+    database: &str,
+    options: &PsqlOptions,
+    serve: F,
+) -> Result<String>
+where
+    F: FnOnce(DirectToolSocket) -> Result<()>,
+{
+    let username = username.to_owned();
+    let database = database.to_owned();
+    let options = options.clone();
+    run_direct_tool(
+        move |networking| {
+            run_psql_with_networking(DIRECT_TOOL_ADDR, &username, &database, &options, networking)
+        },
+        serve,
+    )
+}
+
+fn run_direct_tool<R, F>(run: R, serve: F) -> Result<String>
+where
+    R: FnOnce(DirectToolNetworking) -> Result<String> + Send + 'static,
+    F: FnOnce(DirectToolSocket) -> Result<()>,
+{
+    let (socket_tx, socket_rx) = mpsc::sync_channel(1);
+    let runner = thread::spawn(move || run(DirectToolNetworking::new(socket_tx)));
+    let accepted = receive_direct_tool_socket(&socket_rx, &runner)
+        .context("accept direct WASIX tool protocol connection");
+    drop(socket_rx);
+    let serve_result = accepted.and_then(serve);
+    let run_result = runner
+        .join()
+        .map_err(|_| anyhow!("direct WASIX tool runner thread panicked"))?;
+    match (serve_result, run_result) {
+        (Ok(()), Ok(output)) => Ok(output),
+        (Err(error), Ok(_)) => Err(error.context(DirectToolOutcomeUnknown)),
+        (Ok(()), Err(error)) => Err(error),
+        (Err(error), Err(tool_error)) => Err(error
+            .context(format!("WASIX tool also failed: {tool_error:#}"))
+            .context(DirectToolOutcomeUnknown)),
+    }
+}
+
+const DIRECT_TOOL_PORT: u16 = 65_432;
+const DIRECT_TOOL_LOCAL_PORT: u16 = 65_431;
+const DIRECT_TOOL_SOCKET_BUFFER: usize = 256 * 1024;
+const DIRECT_TOOL_ADDR: SocketAddr =
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), DIRECT_TOOL_PORT);
+const DIRECT_TOOL_LOCAL_ADDR: SocketAddr =
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), DIRECT_TOOL_LOCAL_PORT);
+
+struct DirectToolNetworking {
+    socket_tx: Mutex<Option<SyncSender<DirectToolSocket>>>,
+}
+
+impl DirectToolNetworking {
+    fn new(socket_tx: SyncSender<DirectToolSocket>) -> Self {
+        Self {
+            socket_tx: Mutex::new(Some(socket_tx)),
+        }
+    }
+}
+
+impl fmt::Debug for DirectToolNetworking {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DirectToolNetworking")
+            .finish_non_exhaustive()
+    }
+}
+
+#[async_trait::async_trait]
+impl VirtualNetworking for DirectToolNetworking {
+    async fn connect_tcp(
+        &self,
+        addr: SocketAddr,
+        peer: SocketAddr,
+    ) -> virtual_net::Result<Box<dyn VirtualTcpSocket + Sync>> {
+        if peer != DIRECT_TOOL_ADDR {
+            return Err(NetworkError::ConnectionRefused);
+        }
+        let sender = self
+            .socket_tx
+            .lock()
+            .map_err(|_| NetworkError::IOError)?
+            .take()
+            .ok_or(NetworkError::ConnectionRefused)?;
+        let local = if addr.port() == 0 {
+            DIRECT_TOOL_LOCAL_ADDR
+        } else {
+            addr
+        };
+        let (guest, host) = TcpSocketHalf::channel(DIRECT_TOOL_SOCKET_BUFFER, local, peer);
+        sender
+            .send(host)
+            .map_err(|_| NetworkError::ConnectionAborted)?;
+        Ok(Box::new(DirectToolTcpSocket {
+            inner: guest,
+            first_write_ready_probe: true,
+        }))
+    }
+
+    async fn resolve(
+        &self,
+        host: &str,
+        _port: Option<u16>,
+        _dns_server: Option<IpAddr>,
+    ) -> virtual_net::Result<Vec<IpAddr>> {
+        match host {
+            "localhost" | "127.0.0.1" => Ok(vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]),
+            _ => Err(NetworkError::AddressNotAvailable),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct DirectToolTcpSocket {
+    inner: TcpSocketHalf,
+    first_write_ready_probe: bool,
+}
+
+impl VirtualIoSource for DirectToolTcpSocket {
+    fn remove_handler(&mut self) {
+        self.inner.remove_handler();
+    }
+
+    fn poll_read_ready(&mut self, cx: &mut TaskContext<'_>) -> Poll<virtual_net::Result<usize>> {
+        self.inner.poll_read_ready(cx)
+    }
+
+    fn poll_write_ready(&mut self, cx: &mut TaskContext<'_>) -> Poll<virtual_net::Result<usize>> {
+        if self.first_write_ready_probe {
+            self.first_write_ready_probe = false;
+            return Poll::Ready(Ok(self.inner.send_buf_size().unwrap_or(1).max(1)));
+        }
+        self.inner.poll_write_ready(cx)
+    }
+}
+
+impl VirtualSocket for DirectToolTcpSocket {
+    fn set_ttl(&mut self, ttl: u32) -> virtual_net::Result<()> {
+        self.inner.set_ttl(ttl)
+    }
+    fn ttl(&self) -> virtual_net::Result<u32> {
+        self.inner.ttl()
+    }
+    fn addr_local(&self) -> virtual_net::Result<SocketAddr> {
+        self.inner.addr_local()
+    }
+    fn status(&self) -> virtual_net::Result<SocketStatus> {
+        self.inner.status()
+    }
+    fn set_handler(
+        &mut self,
+        handler: Box<dyn InterestHandler + Send + Sync>,
+    ) -> virtual_net::Result<()> {
+        self.inner.set_handler(handler)
+    }
+}
+
+impl VirtualConnectedSocket for DirectToolTcpSocket {
+    fn set_linger(&mut self, linger: Option<Duration>) -> virtual_net::Result<()> {
+        self.inner.set_linger(linger)
+    }
+    fn linger(&self) -> virtual_net::Result<Option<Duration>> {
+        self.inner.linger()
+    }
+    fn try_send(&mut self, data: &[u8]) -> virtual_net::Result<usize> {
+        self.inner.try_send(data)
+    }
+    fn try_flush(&mut self) -> virtual_net::Result<()> {
+        self.inner.try_flush()
+    }
+    fn close(&mut self) -> virtual_net::Result<()> {
+        self.inner.close()
+    }
+    fn try_recv(
+        &mut self,
+        buffer: &mut [MaybeUninit<u8>],
+        peek: bool,
+    ) -> virtual_net::Result<usize> {
+        self.inner.try_recv(buffer, peek)
+    }
+}
+
+impl VirtualTcpSocket for DirectToolTcpSocket {
+    fn set_recv_buf_size(&mut self, size: usize) -> virtual_net::Result<()> {
+        self.inner.set_recv_buf_size(size)
+    }
+    fn recv_buf_size(&self) -> virtual_net::Result<usize> {
+        self.inner.recv_buf_size()
+    }
+    fn set_send_buf_size(&mut self, size: usize) -> virtual_net::Result<()> {
+        self.inner.set_send_buf_size(size)
+    }
+    fn send_buf_size(&self) -> virtual_net::Result<usize> {
+        self.inner.send_buf_size()
+    }
+    fn set_nodelay(&mut self, enabled: bool) -> virtual_net::Result<()> {
+        self.inner.set_nodelay(enabled)
+    }
+    fn nodelay(&self) -> virtual_net::Result<bool> {
+        self.inner.nodelay()
+    }
+    fn set_keepalive(&mut self, enabled: bool) -> virtual_net::Result<()> {
+        self.inner.set_keepalive(enabled)
+    }
+    fn keepalive(&self) -> virtual_net::Result<bool> {
+        self.inner.keepalive()
+    }
+    fn set_dontroute(&mut self, enabled: bool) -> virtual_net::Result<()> {
+        self.inner.set_dontroute(enabled)
+    }
+    fn dontroute(&self) -> virtual_net::Result<bool> {
+        self.inner.dontroute()
+    }
+    fn addr_peer(&self) -> virtual_net::Result<SocketAddr> {
+        self.inner.addr_peer()
+    }
+    fn shutdown(&mut self, how: Shutdown) -> virtual_net::Result<()> {
+        self.inner.shutdown(how)
+    }
+    fn is_closed(&self) -> bool {
+        self.inner.is_closed()
+    }
+}
+
+fn receive_direct_tool_socket(
+    socket_rx: &Receiver<DirectToolSocket>,
+    runner: &thread::JoinHandle<Result<String>>,
+) -> Result<DirectToolSocket> {
+    let started = Instant::now();
+    loop {
+        match socket_rx.recv_timeout(Duration::from_millis(5)) {
+            Ok(socket) => return Ok(socket),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if runner.is_finished() {
+                    bail!("WASIX tool exited before opening its virtual protocol connection");
+                }
+                if started.elapsed() > Duration::from_secs(30) {
+                    bail!("timed out waiting for WASIX tool virtual protocol connection");
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                bail!("WASIX tool virtual networking channel closed before connect")
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct CaptureFile {
+    buffer: Arc<Mutex<Vec<u8>>>,
+}
+
+impl CaptureFile {
+    fn new(buffer: Arc<Mutex<Vec<u8>>>) -> Self {
+        Self { buffer }
+    }
+}
+
+impl VirtualFile for CaptureFile {
+    fn last_accessed(&self) -> u64 {
+        0
+    }
+
+    fn last_modified(&self) -> u64 {
+        0
+    }
+
+    fn created_time(&self) -> u64 {
+        0
+    }
+
+    fn size(&self) -> u64 {
+        self.buffer.lock().expect("capture lock poisoned").len() as u64
+    }
+
+    fn set_len(&mut self, _new_size: u64) -> Result<(), wasmer_wasix::FsError> {
+        Err(wasmer_wasix::FsError::PermissionDenied)
+    }
+
+    fn unlink(&mut self) -> Result<(), wasmer_wasix::FsError> {
+        Ok(())
+    }
+
+    fn poll_read_ready(
+        self: Pin<&mut Self>,
+        _cx: &mut TaskContext<'_>,
+    ) -> Poll<std::io::Result<usize>> {
+        Poll::Ready(Ok(0))
+    }
+
+    fn poll_write_ready(
+        self: Pin<&mut Self>,
+        _cx: &mut TaskContext<'_>,
+    ) -> Poll<std::io::Result<usize>> {
+        Poll::Ready(Ok(8192))
+    }
+}
+
+impl AsyncRead for CaptureFile {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        _cx: &mut TaskContext<'_>,
+        _buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl AsyncWrite for CaptureFile {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        _cx: &mut TaskContext<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Poll::Ready(self.write(buf))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl AsyncSeek for CaptureFile {
+    fn start_seek(self: Pin<&mut Self>, _position: std::io::SeekFrom) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn poll_complete(
+        self: Pin<&mut Self>,
+        _cx: &mut TaskContext<'_>,
+    ) -> Poll<std::io::Result<u64>> {
+        Poll::Ready(Ok(0))
+    }
+}
+
+impl Read for CaptureFile {
+    fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+        Ok(0)
+    }
+}
+
+impl Write for CaptureFile {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.buffer
+            .lock()
+            .expect("capture lock poisoned")
+            .extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Seek for CaptureFile {
+    fn seek(&mut self, _pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        Ok(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_option_fixture_matches_wasix_validation() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(&crate::oliphaunt::test_fixtures::text(
+                "postgres/logical-tools.json",
+                "postgres-logical-tools.json",
+            ))
+            .expect("logical tools fixture must be valid JSON");
+        for argument in fixture["pgDump"]["acceptedArgs"].as_array().unwrap() {
+            PgDumpOptions::new()
+                .arg(argument.as_str().unwrap())
+                .validate()
+                .expect("shared pg_dump argument must be accepted");
+        }
+        for argument in fixture["pgDump"]["rejectedArgs"].as_array().unwrap() {
+            PgDumpOptions::new()
+                .arg(argument.as_str().unwrap())
+                .validate()
+                .expect_err("shared pg_dump argument must be rejected");
+        }
+        for argument in fixture["psql"]["acceptedArgs"].as_array().unwrap() {
+            PsqlOptions::new()
+                .command("SELECT 1")
+                .arg(argument.as_str().unwrap())
+                .validate()
+                .expect("shared psql argument must be accepted");
+        }
+        for argument in fixture["psql"]["rejectedArgs"].as_array().unwrap() {
+            PsqlOptions::new()
+                .command("SELECT 1")
+                .arg(argument.as_str().unwrap())
+                .validate()
+                .expect_err("shared psql argument must be rejected");
+        }
+    }
+
+    #[test]
+    fn psql_is_non_interactive_and_inputs_reject_nul() {
+        PsqlOptions::new()
+            .script("\\restrict token\nSELECT 1;\n\\unrestrict token\n")
+            .validate()
+            .unwrap();
+        let error = PsqlOptions::new()
+            .validate()
+            .expect_err("psql without input or args must be rejected");
+        assert!(error.to_string().contains("requires non-interactive input"));
+        let error = PsqlOptions::new()
+            .script("SELECT '\0'")
+            .validate()
+            .expect_err("NUL-bearing psql input must be rejected");
+        assert!(error.to_string().contains("must not contain NUL bytes"));
+    }
+
+    #[cfg(feature = "extension-pgtap")]
+    #[test]
+    fn public_tools_round_trip_shared_logical_fixture() -> crate::Result<()> {
+        let seed = crate::oliphaunt::test_fixtures::text(
+            "postgres/logical-tools-seed.sql",
+            "postgres-logical-tools-seed.sql",
+        );
+        let verify = crate::oliphaunt::test_fixtures::text(
+            "postgres/logical-tools-verify.sql",
+            "postgres-logical-tools-verify.sql",
+        );
+        let expected: serde_json::Value =
+            serde_json::from_str(&crate::oliphaunt::test_fixtures::text(
+                "postgres/logical-tools.json",
+                "postgres-logical-tools.json",
+            ))
+            .expect("logical tool contract must be valid JSON");
+
+        let mut source = crate::Oliphaunt::builder()
+            .extension(crate::extensions::PGTAP)
+            .open()?;
+        psql(&mut source, PsqlOptions::new().script(seed))?;
+        let schema = pg_dump(&mut source, PgDumpOptions::new().arg("--schema-only"))?;
+        assert!(schema.contains("CREATE TABLE public.logical_items"));
+        assert!(!schema.contains("COPY public.logical_items"));
+        let dump = pg_dump(&mut source, PgDumpOptions::new())?;
+        assert!(dump.contains("COPY public.logical_items"));
+        source.close()?;
+
+        let mut restored = crate::Oliphaunt::builder()
+            .extension(crate::extensions::PGTAP)
+            .open()?;
+        psql(&mut restored, PsqlOptions::new().script(dump))?;
+        let result = restored.query(&verify)?;
+        let values = &expected["expected"];
+        let rows = values["rows"].as_i64().unwrap().to_string();
+        let sum = values["sum"].as_i64().unwrap().to_string();
+        let sequence_last_value = values["sequenceLastValue"].as_i64().unwrap().to_string();
+        let normalized_matches = values["normalizedMatches"].as_i64().unwrap().to_string();
+        assert_eq!(result.get_text(0, "rows")?, Some(rows.as_str()));
+        assert_eq!(result.get_text(0, "sum")?, Some(sum.as_str()));
+        assert_eq!(
+            result.get_text(0, "sequence_last_value")?,
+            Some(sequence_last_value.as_str())
+        );
+        assert_eq!(
+            result.get_text(0, "quoted_value")?,
+            values["quotedValue"].as_str()
+        );
+        assert_eq!(
+            result.get_text(0, "normalized_matches")?,
+            Some(normalized_matches.as_str())
+        );
+        assert_eq!(result.get_text(0, "extension_loaded")?, Some("t"));
+        restored.close()?;
+        Ok(())
+    }
+}

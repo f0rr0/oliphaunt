@@ -17,7 +17,8 @@ use crate::oliphaunt::config::{PostgresConfig, StartupConfig};
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::extensions::Extension;
 use crate::oliphaunt::postgres_mod::{
-    ProtocolPumpOutcome, ProtocolStream, StartupProtocolResponse, startup_error_response_output,
+    PROTOCOL_CHUNK_BYTES, ProtocolPumpOutcome, ProtocolStream, StartupProtocolResponse,
+    startup_error_response_output,
 };
 use crate::oliphaunt::query::simple_query;
 use crate::oliphaunt::wire::{
@@ -220,7 +221,7 @@ impl OliphauntProxy {
     {
         let mut backend = None::<WireBackend>;
         let mut reader = FrontendFrameReader::default();
-        let mut buffer = [0u8; 64 * 1024];
+        let mut buffer = [0u8; PROTOCOL_CHUNK_BYTES];
         let mut protocol_batch = Vec::new();
 
         loop {
@@ -650,7 +651,7 @@ impl WireBackend {
         continuation_prefix: ContinuationPrefix<'_>,
     ) -> Result<ProtocolPumpOutcome> {
         self.session
-            .send_with_protocol_pump(message, || continuation_prefix.into_vec())
+            .send_with_connection_protocol_pump(message, || continuation_prefix.into_vec())
     }
 
     fn set_role(&mut self, user: &str) -> Result<Vec<u8>> {

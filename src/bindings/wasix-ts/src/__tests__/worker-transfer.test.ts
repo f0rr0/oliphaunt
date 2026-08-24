@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { toolWorkerResponseTransfers } from '../tool-worker-common.js';
 import { prepareTransferableBytes } from '../worker-transfer.js';
 
 describe('WASIX worker response transfer', () => {
@@ -20,5 +21,20 @@ describe('WASIX worker response transfer', () => {
 
     expect(response.value).toBe(value);
     expect(response.transfer).toEqual([value.buffer]);
+  });
+
+  it('transfers each owned tool output buffer exactly once', () => {
+    const diagnostics = Uint8Array.of(1, 2, 3);
+
+    expect(
+      toolWorkerResponseTransfers({
+        id: 1,
+        ok: true,
+        exitCode: 0,
+        stdout: diagnostics,
+        stderr: diagnostics.subarray(1),
+      }),
+    ).toEqual([diagnostics.buffer]);
+    expect(toolWorkerResponseTransfers({ id: 1, ok: false, message: 'failed' })).toEqual([]);
   });
 });

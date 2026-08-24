@@ -31,20 +31,20 @@ query after open.
 | Default storage | SDK-owned temporary directory | Memory filesystem | Memory filesystem |
 | Persistent storage | Managed directory; React Native also resolves application-data names | Managed directory | IndexedDB/OPFS in browsers; managed directory on Node, Bun, Deno |
 | Typed query and command helpers | Yes | Yes | Yes |
-| Raw PostgreSQL protocol | Yes where the language boundary carries bytes | Yes, buffered | Yes, buffered |
+| Raw PostgreSQL protocol | Buffered and callback-streamed | Buffered and callback-streamed; COPY uses the guest stream pump | Buffered and callback-streamed with bounded backpressure |
 | Callback transactions | Yes | Yes | Yes |
 | Checkpoint | Yes | Yes | Yes, followed by provider publication |
 | Cancellation | Yes | No public direct-query cancellation | No public direct-query cancellation |
 | Dedicated COPY streaming | No | No | No |
 | Exact extension selection | SQL names | Typed Cargo selections | Selectively imported WASIX descriptors |
 | Physical backup/restore | Backup in direct/broker and mobile direct; static restore to new/empty storage | Yes | Backup from memory or persistent open sessions; static restore to a new or empty persistent provider |
-| Listening server | Rust and desktop TypeScript | Yes | No |
-| `pg_dump` / `psql` | Separate desktop products; desktop TypeScript has no SDK tools API or dependency | Optional `tools` feature | No |
+| Listening server | Rust and desktop TypeScript | Yes | Node, Bun, and Deno explicit server subpaths; no browser sockets |
+| `pg_dump` / `psql` | Optional endpoint-oriented `oliphaunt-tools` / `@oliphaunt/tools` products on Rust and desktop TypeScript | Optional direct-handle `tools` feature | Optional direct-handle `@oliphaunt/wasix-tools` package on every host |
 | Independent client sessions | Native server only | No; the local endpoint accepts one connected client at a time | No |
 
-The low-level C ABI retains a callback raw-protocol boundary for native binding
-adapters. App-facing SDK raw and typed calls remain buffered until a deliberate
-COPY stream API exists.
+The native SDKs and both WASIX bindings expose callback raw-protocol response
+streaming. Typed query helpers remain buffered, and no dedicated typed COPY
+reader/writer API is promised.
 
 ## Selection guidance
 
@@ -52,7 +52,8 @@ Choose a native SDK when the application ships native runtime artifacts and
 wants direct, helper-process, or server integration. Choose Rust WASIX when a
 Rust host needs the portable runtime, optional local endpoint, or packaged
 tools. Choose WASIX TypeScript for portable browser or Node/Bun/Deno embedding
-with memory or explicit persistent providers.
+with memory or explicit persistent providers; add its optional tools package or
+host-specific server subpath only when the application needs those capabilities.
 
 Native and WASIX packages never select or fall back to one another. Native and
 WASIX physical archives are family scoped; logical PostgreSQL dump/restore is

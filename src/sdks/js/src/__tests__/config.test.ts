@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'vitest';
 
 import {
@@ -41,13 +42,25 @@ test('normalizes only the public database and server configuration', () => {
     {
       execution: 'server',
       serverExecutable: '/opt/postgres',
-      serverPort: 15432,
+      listen: { transport: 'tcp', port: 15432 },
     },
     { instanceDirectory: '/server/root', temporaryDirectory: true },
   );
   assert.equal(server.execution, 'server');
   assert.equal(server.serverExecutable, '/opt/postgres');
-  assert.equal(server.serverPort, 15432);
+  assert.deepEqual(server.serverListen, { transport: 'tcp', port: 15432 });
+
+  const unixServer = normalizeOpenConfig(
+    {
+      execution: 'server',
+      listen: { transport: 'unix', directory: '/tmp/oliphaunt sockets' },
+    },
+    { instanceDirectory: '/server/root', temporaryDirectory: true },
+  );
+  assert.deepEqual(unixServer.serverListen, {
+    transport: 'unix',
+    directory: '/tmp/oliphaunt sockets',
+  });
 });
 
 test('validates the small public configuration vocabulary', () => {
@@ -78,6 +91,24 @@ test('validates the small public configuration vocabulary', () => {
   ]);
   assert.throws(() => validateExtensionIds(['bad/value']), /extension id/);
   assert.throws(() => validateExtensionIds(['pg_search']), /unknown Oliphaunt extension/);
+});
+
+test('matches the shared server-listen port contract', () => {
+  const fixture = JSON.parse(
+    readFileSync(
+      new URL('../../../../shared/fixtures/postgres/server-listen.json', import.meta.url),
+      'utf8',
+    ),
+  ) as {
+    tcp: { validPorts: number[]; invalidPorts: number[] };
+    unix: { defaultPort: number; filePrefix: string };
+  };
+  for (const port of fixture.tcp.validPorts) assert.equal(validateServerPort(port), port);
+  for (const port of fixture.tcp.invalidPorts) {
+    assert.throws(() => validateServerPort(port));
+  }
+  assert.equal(fixture.unix.defaultPort, 5432);
+  assert.equal(fixture.unix.filePrefix, '.s.PGSQL.');
 });
 
 test('builds PostgreSQL startup arguments without SDK-specific profiles', () => {

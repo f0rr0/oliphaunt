@@ -20,8 +20,9 @@ or Unix endpoint. Both own one embedded WASIX backend; the listener does not
 turn it into a multi-backend postmaster.
 
 The embedded proxy uses PostgreSQL trust authentication, so TCP endpoints are
-restricted to loopback addresses. Use the default `127.0.0.1:0`, another
-loopback address, or a Unix-domain socket.
+fixed to IPv4 loopback. The default assigns a port automatically; use
+`ServerListen::tcp_port` for a fixed port or `ServerListen::unix` for a
+PostgreSQL-style Unix socket directory.
 
 ## Storage
 
@@ -43,17 +44,19 @@ the receiving host to select the installed extension code again.
 
 ## Data movement and tools
 
-`backup()` produces the one WASIX PostgreSQL 18 physical archive. Rust and
-WASIX TypeScript can restore each other's archives after a clean close. Enable
-the Rust crate's `tools` feature for `pg_dump` and `psql`; logical SQL is the
-portable upgrade and native/WASIX transfer path.
+`backup()` produces the one WASIX PostgreSQL 18 physical archive. Each binding
+qualifies restore through its own storage provider; cross-binding root/archive
+transfer is not a supported workflow. Enable the Rust crate's `tools` feature
+for direct `pg_dump` and non-interactive `psql`; logical SQL is the portable
+upgrade and native/WASIX transfer path.
 
 ## Lifecycle
 
 Persistent directories have one Rust host owner while open. Close a direct
 database explicitly. Close connected clients before shutting down
-`OliphauntServer`. App-facing raw protocol responses are buffered; cancellation
-and dedicated COPY streaming remain deferred in the shared SDK parity policy.
+`OliphauntServer`. The raw stream callback delivers bounded chunks and the
+guest protocol pump streams COPY output. Typed COPY helpers and cancellation
+remain deferred in the shared SDK parity policy.
 
 ## Errors
 

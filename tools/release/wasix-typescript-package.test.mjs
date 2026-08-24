@@ -30,6 +30,26 @@ function manifest() {
         types: './lib/query.d.ts',
         default: './lib/query.js',
       },
+      './internal/tools': {
+        types: './lib/internal.d.ts',
+        deno: './lib/internal.node.js',
+        bun: './lib/internal.node.js',
+        node: './lib/internal.node.js',
+        browser: './lib/internal.js',
+        default: './lib/internal.js',
+      },
+      './server/node': {
+        types: './lib/server.node.d.ts',
+        node: './lib/server.node.js',
+      },
+      './server/bun': {
+        types: './lib/server.node.d.ts',
+        bun: './lib/server.node.js',
+      },
+      './server/deno': {
+        types: './lib/server.node.d.ts',
+        deno: './lib/server.node.js',
+      },
       './storage/node': {
         types: './lib/storage/node.d.ts',
         node: './lib/storage/node.js',

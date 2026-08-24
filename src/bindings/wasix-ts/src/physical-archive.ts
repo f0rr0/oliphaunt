@@ -185,11 +185,7 @@ function responseConfirmsCommandCompletion(response: Uint8Array): boolean {
   let sawCommandComplete = false;
   while (offset < response.length) {
     if (response.length - offset < 5) return false;
-    const length = new DataView(
-      response.buffer,
-      response.byteOffset + offset + 1,
-      4,
-    ).getUint32(0);
+    const length = new DataView(response.buffer, response.byteOffset + offset + 1, 4).getUint32(0);
     if (length < 4 || length + 1 > response.length - offset) return false;
     const tag = response[offset];
     if (tag === 0x45) return false;

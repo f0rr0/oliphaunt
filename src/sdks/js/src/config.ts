@@ -4,7 +4,7 @@ import {
   generatedExtensionBySqlName,
   generatedSharedPreloadLibraries,
 } from './generated/extensions.js';
-import type { OpenConfig, ServerOpenConfig } from './types.js';
+import type { OpenConfig, ServerListen, ServerOpenConfig } from './types.js';
 
 type Execution = 'direct' | 'broker' | 'server';
 
@@ -26,7 +26,7 @@ export type NormalizedOpenConfig = {
   runtimeDirectory?: string;
   brokerExecutable?: string;
   serverExecutable?: string;
-  serverPort?: number;
+  serverListen?: ServerListen;
 };
 
 export function normalizeOpenConfig(
@@ -61,7 +61,7 @@ export function normalizeOpenConfig(
     'serverExecutable',
   );
   const execution = config.execution ?? 'direct';
-  const serverPort = validateServerPort('serverPort' in config ? config.serverPort : undefined);
+  const serverListen = 'listen' in config ? validateServerListen(config.listen) : undefined;
 
   return {
     execution,
@@ -76,8 +76,22 @@ export function normalizeOpenConfig(
     runtimeDirectory,
     brokerExecutable,
     serverExecutable,
-    serverPort,
+    serverListen,
   };
+}
+
+function validateServerListen(listen: ServerListen | undefined): ServerListen | undefined {
+  if (listen === undefined) {
+    return undefined;
+  }
+  const port = validateServerPort(listen.port);
+  if (listen.transport === 'tcp') {
+    return port === undefined ? { transport: 'tcp' } : { transport: 'tcp', port };
+  }
+  validateDirectoryPath(listen.directory, 'server Unix socket directory');
+  return port === undefined
+    ? { transport: 'unix', directory: listen.directory }
+    : { transport: 'unix', directory: listen.directory, port };
 }
 
 export function buildStartupArgs(options: {

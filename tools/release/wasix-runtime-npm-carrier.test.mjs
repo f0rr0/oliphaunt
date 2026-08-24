@@ -20,6 +20,7 @@ import {
   packWasixRuntimeNpmCarrier,
   renderWasixRuntimeDescriptorModule,
 } from "./wasix-runtime-npm-carrier.mjs";
+import { packWasixToolsNpmCarrier } from "./wasix-tools-npm-carrier.mjs";
 import {
   WASIX_PORTABLE_RELEASE_MEMBERS,
   WASIX_RUNTIME_NPM_PACKAGE,
@@ -204,4 +205,22 @@ console.log(JSON.stringify({
     product: "liboliphaunt-wasix",
     runtime: "wasix",
   });
+});
+
+test("packs split pg_dump and psql bytes from the same qualified release archive", () => {
+  const root = temporaryRoot("oliphaunt-wasix-tools-npm-");
+  const fixture = portableReleaseFixture(root);
+  const packed = packWasixToolsNpmCarrier({
+    version: "7.8.9",
+    portableReleaseArchive: fixture.archive,
+    packageDir: path.join(root, "package"),
+    tarballRoot: path.join(root, "tarballs"),
+  });
+  const packageJson = JSON.parse(readFileSync(path.join(packed.packageDir, "package.json"), "utf8"));
+  expect(packageJson.name).toBe("@oliphaunt/liboliphaunt-wasix-tools");
+  expect(packageJson.version).toBe("7.8.9");
+  expect(readFileSync(path.join(packed.packageDir, "assets/pg_dump.wasix.wasm"), "utf8")).toBe("pg_dump");
+  expect(readFileSync(path.join(packed.packageDir, "assets/psql.wasix.wasm"), "utf8")).toBe("psql");
+  expect(packed.descriptor.pgDump.sha256).toBe(sha256(Buffer.from("pg_dump")));
+  expect(packed.descriptor.psql.sha256).toBe(sha256(Buffer.from("psql")));
 });

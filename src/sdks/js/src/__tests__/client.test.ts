@@ -263,10 +263,7 @@ test('keeps cancellation out of band and close drains accepted work exactly once
     const operation = db.execute('UPDATE things SET value = 12');
     await operationStarted.promise;
     await db.cancel();
-    assert.deepEqual(binding.operationEvents, [
-      'raw:UPDATE things SET value = 12',
-      'cancel',
-    ]);
+    assert.deepEqual(binding.operationEvents, ['raw:UPDATE things SET value = 12', 'cancel']);
 
     const firstClose = db.close();
     const secondClose = db.close();
@@ -303,8 +300,13 @@ test('broker and server facades inherit the same FIFO session ownership', async 
       });
       const database =
         execution === 'broker'
-          ? await client.open({ execution, storage: { kind: 'directory', path: join(root, execution) } })
-          : await client.openServer({ storage: { kind: 'directory', path: join(root, execution) } });
+          ? await client.open({
+              execution,
+              storage: { kind: 'directory', path: join(root, execution) },
+            })
+          : await client.openServer({
+              storage: { kind: 'directory', path: join(root, execution) },
+            });
       const first = database.execute('UPDATE things SET value = 20');
       await started.promise;
       const second = database.execute('UPDATE things SET value = 21');

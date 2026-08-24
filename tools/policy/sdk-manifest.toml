@@ -32,7 +32,7 @@ documentation_path = "src/docs/content/sdk/wasix-typescript"
 consumer_targets = ["browser", "node", "bun", "deno"]
 runtime_owner = true
 runtime_boundary = "@oliphaunt/wasix-ts"
-execution_modes = ["wasix-direct", "wasix-worker"]
+execution_modes = ["wasix-direct", "wasix-worker", "wasix-server"]
 
 [sdks.swift]
 package_identity = "swiftpm:Oliphaunt"

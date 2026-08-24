@@ -1,0 +1,15 @@
+{
+  "schema": "oliphaunt-server-listen-v1",
+  "tcp": {
+    "host": "127.0.0.1",
+    "automaticPort": "omitted",
+    "validPorts": [1, 5432, 65535],
+    "invalidPorts": [0, -1, 65536, 1.5]
+  },
+  "unix": {
+    "defaultPort": 5432,
+    "filePrefix": ".s.PGSQL.",
+    "validPorts": [1, 5432, 65535],
+    "invalidPorts": [0, -1, 65536, 1.5]
+  }
+}

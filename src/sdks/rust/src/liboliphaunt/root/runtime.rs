@@ -14,7 +14,7 @@ use cache_key::{cached_runtime_is_valid, runtime_cache_key, runtime_cache_manife
 use install::install_cached_runtime;
 use locate::{
     locate_native_embedded_modules_dir, locate_native_extension_artifact_dirs,
-    locate_native_install_dir, locate_native_tools_dir,
+    locate_native_install_dir,
 };
 
 use super::NativeRuntimeProfile;
@@ -28,12 +28,6 @@ pub(super) fn materialize_runtime(
     extensions: &[Extension],
 ) -> Result<PathBuf> {
     let install_dir = locate_native_install_dir()?;
-    let tools_dir = locate_native_tools_dir(&install_dir).ok_or_else(|| {
-        Error::Engine(
-            "could not locate native PostgreSQL client tools pg_basebackup, pg_dump, and psql; add the oliphaunt-tools Cargo facade or set OLIPHAUNT_TOOLS_DIR"
-                .to_owned(),
-        )
-    })?;
     let extension_artifact_dirs = locate_native_extension_artifact_dirs();
     let embedded_modules = if profile.needs_embedded_modules() {
         Some(locate_native_embedded_modules_dir(&install_dir)?)
@@ -43,7 +37,6 @@ pub(super) fn materialize_runtime(
     let key = runtime_cache_key(
         profile,
         &install_dir,
-        Some(tools_dir.as_path()),
         embedded_modules.as_deref(),
         &extension_artifact_dirs,
         extensions,
@@ -108,7 +101,6 @@ pub(super) fn materialize_runtime(
         let build_result = install_cached_runtime(
             profile,
             &install_dir,
-            Some(tools_dir.as_path()),
             embedded_modules.as_deref(),
             &extension_artifact_dirs,
             &build_dir,

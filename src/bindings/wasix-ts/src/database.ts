@@ -1,4 +1,5 @@
 import { composeWasixStorageFailure, WasixStorageError } from './errors.js';
+import { WASIX_STREAM_CHUNK_BYTES } from './byte-channel.js';
 import { simpleQuery } from './protocol.js';
 import {
   assertSuccessfulQueryResponse,
@@ -12,21 +13,37 @@ import {
   toUint8Array,
 } from './query.js';
 import type { WasixStorageSyncBoundary } from './storage-provider.js';
-import type { BinaryInput, OliphauntDatabase, OliphauntTransaction } from './types.js';
+import type { WasixProtocolConnection } from './pgwire-connection.js';
+import type {
+  BinaryInput,
+  OliphauntDatabase,
+  OliphauntTransaction,
+  ProtocolChunkCallback,
+} from './types.js';
 
 const transactionPinnedMessage =
   'Oliphaunt WASIX database is pinned to an active transaction; use the callback transaction handle';
 const CLOSE_DEADLINE_MS = 120_000;
+const protocolConnectionTargets = new WeakSet<OliphauntDatabase>();
+const transactionPinnedTargets = new WeakSet<OliphauntDatabase>();
 
 /** @internal Host-publication policy for one pgwire exchange. */
 export type WasixPersistenceMode = 'sync' | 'defer';
+export type WasixProtocolConnectionMode = 'server' | 'tool';
 
 /** @internal Execution seam shared by direct and worker-backed database handles. */
 export type WasixDatabaseSession = {
+  readonly isolated?: boolean;
   exec(input: Uint8Array, persistence?: WasixPersistenceMode): Promise<Uint8Array>;
+  execStream?(
+    input: Uint8Array,
+    onChunk: ProtocolChunkCallback,
+    persistence?: WasixPersistenceMode,
+  ): Promise<void>;
   sync(boundary: WasixStorageSyncBoundary): Promise<void>;
   /** Internal test seams may omit backup; production sessions always provide it. */
   backup?(): Promise<Uint8Array>;
+  serve?(connection: WasixProtocolConnection, mode: WasixProtocolConnectionMode): Promise<void>;
   close(): Promise<void>;
   /** Force-stop an isolated execution placement when orderly shutdown stalls. */
   abort?(): void | Promise<void>;
@@ -44,6 +61,9 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
 
   constructor(session: WasixDatabaseSession) {
     this.#session = session;
+    if (session.isolated === true && session.serve !== undefined) {
+      protocolConnectionTargets.add(this);
+    }
   }
 
   async execute(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<CommandResult> {
@@ -58,6 +78,30 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     return this.#execOwned(toUint8Array(input).slice());
   }
 
+  async execProtocolStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void> {
+    if (typeof onChunk !== 'function') {
+      throw new TypeError('protocol stream callback must be a function');
+    }
+    this.#assertAvailable();
+    const bytes = toUint8Array(input).slice();
+    await this.#serialize(async () => {
+      this.#assertHealthy();
+      try {
+        if (this.#session.execStream === undefined) {
+          const response = await this.#session.exec(bytes, 'sync');
+          for (let offset = 0; offset < response.length; offset += WASIX_STREAM_CHUNK_BYTES) {
+            onChunk(response.slice(offset, offset + WASIX_STREAM_CHUNK_BYTES));
+          }
+          return;
+        }
+        await this.#session.execStream(bytes, onChunk, 'sync');
+      } catch (error) {
+        if (error instanceof WasixStorageError) this.#persistenceFailure = error;
+        throw error;
+      }
+    });
+  }
+
   async backup(): Promise<Uint8Array> {
     this.#assertAvailable();
     return this.#serialize(async () => {
@@ -68,6 +112,29 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
       const bytes = await this.#session.backup();
       await this.#syncPersistence('operation');
       return bytes;
+    });
+  }
+
+  /** @internal Serialized connection ownership used by optional server/tool packages. */
+  runProtocolConnection(
+    connection: WasixProtocolConnection,
+    mode: WasixProtocolConnectionMode,
+  ): Promise<void> {
+    this.#assertAvailable();
+    return this.#serialize(async () => {
+      this.#assertHealthy();
+      if (this.#session.serve === undefined) {
+        throw new Error('this WASIX execution placement does not support protocol connections');
+      }
+      if (!this.#session.isolated) {
+        throw new Error('WASIX tools and local servers require worker execution');
+      }
+      try {
+        await this.#session.serve(connection, mode);
+      } catch (error) {
+        if (error instanceof WasixStorageError) this.#persistenceFailure = error;
+        throw error;
+      }
     });
   }
 
@@ -105,9 +172,22 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
       throw new TypeError('Oliphaunt WASIX transaction body must be a function');
     }
     this.#activeTransaction = true;
+    transactionPinnedTargets.add(this);
     const attempt = this.#serialize(async () => {
       this.#assertHealthy();
-      const transaction = new WasixTransactionImpl((input) => this.#session.exec(input, 'defer'));
+      const transaction = new WasixTransactionImpl(
+        (input) => this.#session.exec(input, 'defer'),
+        (input, onChunk) => {
+          if (this.#session.execStream === undefined) {
+            return this.#session.exec(input, 'defer').then((response) => {
+              for (let offset = 0; offset < response.length; offset += WASIX_STREAM_CHUNK_BYTES) {
+                onChunk(response.slice(offset, offset + WASIX_STREAM_CHUNK_BYTES));
+              }
+            });
+          }
+          return this.#session.execStream(input, onChunk, 'defer');
+        },
+      );
       let commitAttempted = false;
       let commitConfirmed = false;
       try {
@@ -177,6 +257,7 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     });
     return await attempt.finally(() => {
       this.#activeTransaction = false;
+      transactionPinnedTargets.delete(this);
     });
   }
 
@@ -264,6 +345,31 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
   }
 }
 
+/** @internal Optional packages acquire exclusive ownership without expanding the public class. */
+export function runWasixProtocolConnection(
+  database: OliphauntDatabase,
+  connection: WasixProtocolConnection,
+  mode: WasixProtocolConnectionMode,
+): Promise<void> {
+  assertWasixProtocolConnectionTarget(database);
+  return database.runProtocolConnection(connection, mode);
+}
+
+/** @internal Fail before loading a tool or opening a listener for unsupported placement. */
+export function assertWasixProtocolConnectionTarget(
+  database: OliphauntDatabase,
+): asserts database is WasixDatabaseImpl {
+  if (!(database instanceof WasixDatabaseImpl)) {
+    throw new TypeError('database is not an @oliphaunt/wasix-ts handle');
+  }
+  if (!protocolConnectionTargets.has(database)) {
+    throw new Error('WASIX tools and local servers require worker execution');
+  }
+  if (transactionPinnedTargets.has(database)) {
+    throw new Error(transactionPinnedMessage);
+  }
+}
+
 function withDeadline<T>(
   operation: Promise<T>,
   milliseconds: number,
@@ -295,13 +401,18 @@ function withDeadline<T>(
 
 class WasixTransactionImpl implements OliphauntTransaction {
   readonly #exec: (input: Uint8Array) => Promise<Uint8Array>;
+  readonly #execStream: (input: Uint8Array, onChunk: ProtocolChunkCallback) => Promise<void>;
   #tail = Promise.resolve();
   #active = true;
   #failed = false;
   #firstFailure: unknown;
 
-  constructor(exec: (input: Uint8Array) => Promise<Uint8Array>) {
+  constructor(
+    exec: (input: Uint8Array) => Promise<Uint8Array>,
+    execStream: (input: Uint8Array, onChunk: ProtocolChunkCallback) => Promise<void>,
+  ) {
     this.#exec = exec;
+    this.#execStream = execStream;
   }
 
   execute(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<CommandResult> {
@@ -314,6 +425,16 @@ class WasixTransactionImpl implements OliphauntTransaction {
 
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array> {
     return this.#execOwned(toUint8Array(input).slice(), (response) => response);
+  }
+
+  execProtocolStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void> {
+    if (typeof onChunk !== 'function') {
+      return Promise.reject(new TypeError('protocol stream callback must be a function'));
+    }
+    if (!this.#active) {
+      return Promise.reject(new Error('Oliphaunt WASIX transaction is no longer active'));
+    }
+    return this.#enqueue(() => this.#execStream(toUint8Array(input).slice(), onChunk));
   }
 
   seal(): void {

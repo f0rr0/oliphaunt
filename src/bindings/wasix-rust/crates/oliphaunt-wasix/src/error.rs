@@ -15,6 +15,12 @@ impl Error {
         self.inner.downcast_ref()
     }
 
+    /// Return structured frontend-program failure details for `pg_dump` or `psql`.
+    #[cfg(feature = "tools")]
+    pub fn tool_error(&self) -> Option<&crate::tools::PostgresToolError> {
+        self.inner.downcast_ref()
+    }
+
     pub(crate) fn from_anyhow(inner: anyhow::Error) -> Self {
         Self { inner }
     }

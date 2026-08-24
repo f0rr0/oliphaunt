@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::broker::NativeBrokerRuntime;
 use crate::config::{
     DEFAULT_DATABASE, DEFAULT_USERNAME, EngineMode, NativeBrokerConfig, NativeServerConfig,
-    OpenConfig, PostgresStartupGuc,
+    OpenConfig, PostgresStartupGuc, ServerListen,
 };
 use crate::database::{Oliphaunt, OliphauntServer};
 use crate::engine::NativeRuntime;
@@ -87,9 +87,9 @@ impl OliphauntBuilder {
         self
     }
 
-    /// Use an explicit server port instead of an ephemeral port.
-    pub fn server_port(mut self, port: u16) -> Self {
-        self.server.port = Some(port);
+    /// Select the local endpoint exposed by server mode.
+    pub fn listen(mut self, listen: ServerListen) -> Self {
+        self.server.listen = listen;
         self
     }
 

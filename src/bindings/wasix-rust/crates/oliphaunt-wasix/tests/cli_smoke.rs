@@ -24,7 +24,7 @@ fn direct_open_diagnostic() -> String {
 async fn oliphaunt_proxy_print_uri_accepts_sqlx_connection() -> Result<()> {
     let _trace = TestTrace::new("oliphaunt_proxy_print_uri_accepts_sqlx_connection");
     let process = Command::new(env!("CARGO_BIN_EXE_oliphaunt-wasix-proxy"))
-        .args(["--memory", "--tcp", "127.0.0.1:0", "--print-uri"])
+        .args(["--memory", "--print-uri"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -60,10 +60,7 @@ async fn oliphaunt_proxy_print_uri_accepts_sqlx_connection() -> Result<()> {
         anyhow::bail!("oliphaunt-wasix-proxy exited before printing URI\n\nstderr:\n{stderr}");
     }
     let uri = uri.trim();
-    assert!(
-        uri.starts_with("postgresql://") || uri.starts_with("postgres://"),
-        "unexpected URI: {uri}"
-    );
+    assert!(uri.starts_with("postgresql://"), "unexpected URI: {uri}");
     trace_step("oliphaunt_proxy printed URI");
 
     let mut conn = match timeout(Duration::from_secs(30), sqlx::PgConnection::connect(uri)).await {

@@ -39,10 +39,12 @@ API in the caller's JavaScript realm and blocks that realm while PostgreSQL is
 working. This is host placement, not a second database engine or compatibility
 mode.
 
-The package provides queries, commands, callback transactions, raw PostgreSQL
-protocol bytes, checkpoint, one physical backup, restore into persistent
-storage, and close. It does not currently expose a listening server, PostgreSQL
-tools, cancellation, or a direct COPY streaming API.
+The core package provides queries, commands, callback transactions, buffered
+and callback-streamed raw PostgreSQL protocol bytes, checkpoint, one physical
+backup, restore into persistent storage, and close. Optional
+`@oliphaunt/wasix-tools` adds direct `pg_dump` and non-interactive `psql` on
+every host. Explicit server subpaths add a local endpoint on Node, Bun, and
+Deno. Cancellation and a dedicated typed COPY API remain absent.
 
 ## App Responsibilities
 
@@ -53,10 +55,12 @@ tools, cancellation, or a direct COPY streaming API.
   needs an explicit PostgreSQL checkpoint and publication boundary.
 - Treat physical archives as same-format recovery artifacts. Use logical SQL
   dumps for version upgrades or transfers outside the WASIX physical format.
+- Keep tools on worker-backed databases. Use the lightweight local endpoint for
+  one compatibility client, or the separate postmaster product for concurrency.
 
 ## First Query
 
 Use the [guide](/docs/sdk/wasix-typescript/guide) for storage, transactions,
-backup, and restore. Use the [API reference](/docs/sdk/wasix-typescript/api-reference)
+backup, restore, tools, and local endpoints. Use the [API reference](/docs/sdk/wasix-typescript/api-reference)
 for the exact exported declarations. Rust hosts use the separate
 [Rust WASIX SDK](/docs/sdk/wasix-rust).

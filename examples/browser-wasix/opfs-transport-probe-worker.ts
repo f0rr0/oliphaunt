@@ -15,7 +15,9 @@ async function probe(name: string): Promise<'direct' | 'portable'> {
   const origin = await navigator.storage.getDirectory();
   const root = await origin.getDirectoryHandle('.oliphaunt-wasix-pool-v1');
   const database = await root.getDirectoryHandle(name);
-  const state = JSON.parse(await (await database.getFileHandle('state.json')).getFile().then((file) => file.text())) as {
+  const state = JSON.parse(
+    await (await database.getFileHandle('state.json')).getFile().then((file) => file.text()),
+  ) as {
     entries?: Array<{ path?: unknown; type?: unknown; backing?: unknown }>;
   };
   const version = state.entries?.find(

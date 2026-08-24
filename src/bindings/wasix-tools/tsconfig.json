@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "declaration": true,
+    "declarationMap": false,
+    "lib": ["ES2023", "DOM", "WebWorker"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true,
+    "noUncheckedIndexedAccess": true,
+    "outDir": "lib",
+    "paths": {
+      "@oliphaunt/liboliphaunt-wasix-tools": ["./src/runtime-carrier-shim.d.ts"],
+      "@oliphaunt/wasix-ts": ["./src/wasix-ts-public-shim.d.ts"],
+      "@oliphaunt/wasix-ts/internal/tools": ["./src/wasix-ts-internal-shim.d.ts"]
+    },
+    "rootDir": "src",
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2022",
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["src/**/*"],
+  "exclude": ["lib", "node_modules"]
+}

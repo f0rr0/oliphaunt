@@ -62,7 +62,7 @@ impl Oliphaunt {
     }
 
     /// Execute raw PostgreSQL protocol bytes and receive bounded backend chunks.
-    pub async fn exec_protocol_raw_stream<F>(
+    pub async fn exec_protocol_stream<F>(
         &self,
         request: impl AsRef<[u8]>,
         on_chunk: F,
@@ -247,7 +247,7 @@ impl OliphauntServer {
     }
 
     /// Execute raw PostgreSQL protocol bytes and receive bounded backend chunks.
-    pub async fn exec_protocol_raw_stream<F>(
+    pub async fn exec_protocol_stream<F>(
         &self,
         request: impl AsRef<[u8]>,
         on_chunk: F,
@@ -255,9 +255,7 @@ impl OliphauntServer {
     where
         F: FnMut(&[u8]) -> Result<()> + Send + 'static,
     {
-        self.database
-            .exec_protocol_raw_stream(request, on_chunk)
-            .await
+        self.database.exec_protocol_stream(request, on_chunk).await
     }
 
     /// Run a callback in a transaction pinned to the SDK connection.
@@ -320,7 +318,7 @@ impl SessionPin {
             .await
     }
 
-    async fn exec_protocol_raw_stream<F>(&self, request: ProtocolRequest, on_chunk: F) -> Result<()>
+    async fn exec_protocol_stream<F>(&self, request: ProtocolRequest, on_chunk: F) -> Result<()>
     where
         F: FnMut(&[u8]) -> Result<()> + Send + 'static,
     {
@@ -430,7 +428,7 @@ impl Transaction {
 
     /// Execute raw PostgreSQL protocol bytes and receive bounded backend chunks
     /// inside the active transaction.
-    pub async fn exec_protocol_raw_stream<F>(
+    pub async fn exec_protocol_stream<F>(
         &self,
         request: impl AsRef<[u8]>,
         on_chunk: F,
@@ -441,7 +439,7 @@ impl Transaction {
         self.pin
             .as_ref()
             .expect("transaction pin is present until commit or rollback")
-            .exec_protocol_raw_stream(ProtocolRequest::new(request.as_ref().to_vec()), on_chunk)
+            .exec_protocol_stream(ProtocolRequest::new(request.as_ref().to_vec()), on_chunk)
             .await
     }
 

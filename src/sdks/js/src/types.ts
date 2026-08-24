@@ -22,8 +22,12 @@ export type ServerOpenConfig = Omit<
   'execution' | 'brokerExecutable' | 'libraryPath'
 > & {
   serverExecutable?: string;
-  serverPort?: number;
+  listen?: ServerListen;
 };
+
+export type ServerListen =
+  | { readonly transport: 'tcp'; readonly port?: number }
+  | { readonly transport: 'unix'; readonly directory: string; readonly port?: number };
 
 export type OliphauntTransaction = {
   execute(

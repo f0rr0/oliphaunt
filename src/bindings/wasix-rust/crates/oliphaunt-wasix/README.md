@@ -42,7 +42,9 @@ database.close()?;
 `execute` and `query` are the parameter-free forms;
 `execute_with_params` and `query_with_params` use PostgreSQL positional
 parameters. `exec_protocol_raw` is the buffered escape hatch for callers that
-need PostgreSQL frontend-protocol bytes. Every fallible API returns the
+need PostgreSQL frontend-protocol bytes. `exec_protocol_stream` delivers
+bounded callback chunks and streams COPY output through the guest protocol
+pump instead of accumulating the complete response. Every fallible API returns the
 crate-owned `Result<T>`. Its opaque `Error` implements `std::error::Error` and
 offers `postgres_error()`; PostgreSQL failures return the exported
 `PostgresError` details for fields such as SQLSTATE.
@@ -116,18 +118,37 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-With the `tools` feature, `OliphauntServer::pg_dump` and
-`OliphauntServer::psql` run the matching packaged WASIX PostgreSQL tools.
-`pg_dump` returns the standard PostgreSQL plain-text script unchanged; restore
-it through `psql(PsqlOptions::new().script(sql))` or another PostgreSQL client
-script API. Release other server clients before invoking these methods: the
-WASIX server deliberately serves one client session at a time. `server.close()`
-deterministically disconnects any active client before joining the server
-worker.
+With the `tools` feature, the optional `tools` namespace runs the matching
+packaged WASIX PostgreSQL programs directly against an open database:
+
+```rust,no_run
+use oliphaunt_wasix::{Oliphaunt, tools};
+
+# fn main() -> anyhow::Result<()> {
+let mut database = Oliphaunt::open()?;
+let sql = tools::pg_dump(
+    &mut database,
+    tools::PgDumpOptions::new().arg("--schema-only"),
+)?;
+tools::psql(&mut database, tools::PsqlOptions::new().script(sql))?;
+database.close()?;
+# Ok(())
+# }
+```
+
+`pg_dump` returns standard plain PostgreSQL SQL unchanged. `psql` is
+non-interactive and accepts a command, a script, or ordinary passthrough
+arguments. Connection, output, format, compression, encoding, and parallel-job
+flags are managed and rejected from passthrough arguments. Direct tools are
+exclusive operations on the database handle and reset session state before and
+after the tool run.
 
 TCP endpoints are loopback-only because the embedded proxy uses PostgreSQL
-trust authentication. Use the default `127.0.0.1:0`, another loopback address,
-or a Unix-domain socket; non-loopback TCP binds are rejected by `start()`.
+trust authentication. The default listener uses an automatically assigned
+loopback port. `ServerListen::tcp_port` selects a fixed port and
+`ServerListen::unix` selects a PostgreSQL-style Unix socket directory. The
+server deliberately owns one connected client at a time; use the separate
+postmaster product for concurrent sessions.
 
 The crate packages no mutable runtime downloads. Cargo resolves the matching
 runtime, AOT, tool, and selected extension artifacts built from the same

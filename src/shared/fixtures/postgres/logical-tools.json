@@ -1,0 +1,68 @@
+{
+  "schema": "oliphaunt-logical-tools-v1",
+  "database": "postgres",
+  "username": "postgres",
+  "extension": "pgtap",
+  "pgDump": {
+    "acceptedArgs": [
+      "--schema-only",
+      "--inserts",
+      "--quote-all-identifiers",
+      "--no-owner",
+      "--table=public.logical_items"
+    ],
+    "rejectedArgs": [
+      "--file=out.sql",
+      "-fout.sql",
+      "--format=custom",
+      "-Fc",
+      "--compress=9",
+      "-Z9",
+      "--encoding=UTF8",
+      "-EUTF8",
+      "--host=localhost",
+      "-hlocalhost",
+      "--port=5432",
+      "-p5432",
+      "--username=postgres",
+      "-Upostgres",
+      "--dbname=postgres",
+      "-dpostgres",
+      "--jobs=2",
+      "-j2"
+    ]
+  },
+  "psql": {
+    "acceptedArgs": [
+      "--echo-errors",
+      "--no-psqlrc",
+      "--set=ON_ERROR_STOP=1"
+    ],
+    "rejectedArgs": [
+      "--host=localhost",
+      "-hlocalhost",
+      "--port=5432",
+      "-p5432",
+      "--username=postgres",
+      "-Upostgres",
+      "--dbname=postgres",
+      "-dpostgres",
+      "--output=out.txt",
+      "-oout.txt",
+      "--log-file=errors.txt",
+      "-Lerrors.txt",
+      "--command=SELECT 1",
+      "-cSELECT 1",
+      "--file=input.sql",
+      "-finput.sql"
+    ]
+  },
+  "expected": {
+    "rows": 3,
+    "sum": 123,
+    "sequenceLastValue": 42,
+    "quotedValue": "quoted-value",
+    "normalizedMatches": 1,
+    "extensionLoaded": true
+  }
+}

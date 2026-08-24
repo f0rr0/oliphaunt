@@ -6,6 +6,26 @@ path = "postgres/behavior-contract.json"
 owner = "postgres-engine-runners"
 
 [[fixtures]]
+id = "postgres-logical-tools-v1"
+path = "postgres/logical-tools.json"
+owner = "native-and-wasix-tools"
+
+[[fixtures]]
+id = "postgres-logical-tools-seed-v1"
+path = "postgres/logical-tools-seed.sql"
+owner = "native-and-wasix-tools"
+
+[[fixtures]]
+id = "postgres-logical-tools-verify-v1"
+path = "postgres/logical-tools-verify.sql"
+owner = "native-and-wasix-tools"
+
+[[fixtures]]
+id = "postgres-server-listen-v1"
+path = "postgres/server-listen.json"
+owner = "desktop-native-and-wasix-servers"
+
+[[fixtures]]
 id = "database-root-v1"
 path = "storage/database-root.json"
 owner = "native-and-wasix-storage"

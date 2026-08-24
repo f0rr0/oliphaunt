@@ -1,6 +1,7 @@
 import { join } from "node:path";
 
 import { Oliphaunt, type OliphauntServer } from "@oliphaunt/ts";
+import { pgDump, psql } from "@oliphaunt/tools";
 import { Kysely, PostgresDialect, sql, type Generated } from "kysely";
 import pg from "pg";
 
@@ -81,7 +82,22 @@ async function openDatabase(userData: string): Promise<Store> {
   for (const statement of schemaStatements) {
     await sql.raw(statement).execute(db);
   }
+  await validatePostgresTools(connectionString);
   return { native, db };
+}
+
+async function validatePostgresTools(connectionString: string): Promise<void> {
+  const dump = await pgDump(connectionString, { args: ["--schema-only"] });
+  if (!dump.includes("PostgreSQL database dump")) {
+    throw new Error("pg_dump schema smoke did not return a PostgreSQL dump");
+  }
+  const output = await psql(connectionString, {
+    args: ["-tA"],
+    command: "SELECT 1",
+  });
+  if (!output.split("\n").some((line) => line.trim() === "1")) {
+    throw new Error("psql smoke did not return SELECT 1 output");
+  }
 }
 
 export async function listTodos(

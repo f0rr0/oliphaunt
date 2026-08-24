@@ -59,7 +59,6 @@ export const EXAMPLE_CARGO_POLICIES = Object.freeze([
     dependencyBindings: [
       dependencyBinding("oliphaunt-build", ["build-dependencies"]),
       dependencyBinding("oliphaunt", ["dependencies"]),
-      dependencyBinding("oliphaunt-tools", ["dependencies"]),
       dependencyBinding("liboliphaunt-native-linux-x64-gnu", ["target", LINUX_X64_GNU_TARGET, "dependencies"]),
       dependencyBinding("oliphaunt-broker-linux-x64-gnu", ["target", LINUX_X64_GNU_TARGET, "dependencies"]),
       dependencyBinding("oliphaunt-extension-contrib-pg18-linux-x64-gnu", ["target", LINUX_X64_GNU_TARGET, "dependencies"]),
@@ -72,7 +71,6 @@ export const EXAMPLE_CARGO_POLICIES = Object.freeze([
     requiredPackages: Object.freeze([
       "oliphaunt",
       "oliphaunt-build",
-      "oliphaunt-tools",
       "liboliphaunt-native-linux-x64-gnu",
       "oliphaunt-broker-linux-x64-gnu",
       "oliphaunt-extension-contrib-pg18-linux-x64-gnu",

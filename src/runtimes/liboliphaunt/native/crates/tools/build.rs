@@ -1,15 +1,28 @@
 use std::collections::BTreeMap;
 use std::env;
+use std::path::{Path, PathBuf};
 
 const ARTIFACT_ENV_PREFIX: &str = "DEP_OLIPHAUNT_ARTIFACT_";
 const ARTIFACT_ENV_SUFFIX: &str = "_MANIFEST";
 const RELAY_ENV_PREFIX: &str = "DEP_OLIPHAUNT_ARTIFACT_OLIPHAUNT_TOOLS_RELAY_";
 
 fn main() {
-    match relay_manifest_instructions(env::vars()) {
+    let variables = env::vars().collect::<Vec<_>>();
+    match relay_manifest_instructions(variables.clone()) {
         Ok(instructions) => {
             for instruction in instructions {
                 println!("{instruction}");
+            }
+            match packaged_tools_dir(&variables) {
+                Ok(Some(directory)) => println!(
+                    "cargo::rustc-env=OLIPHAUNT_PACKAGED_TOOLS_DIR={}",
+                    directory.display()
+                ),
+                Ok(None) => {}
+                Err(error) => {
+                    println!("cargo::error={error}");
+                    panic!("oliphaunt-tools artifact resolution failed: {error}");
+                }
             }
         }
         Err(error) => {
@@ -17,6 +30,55 @@ fn main() {
             panic!("oliphaunt-tools artifact relay failed: {error}");
         }
     }
+}
+
+fn packaged_tools_dir(variables: &[(String, String)]) -> Result<Option<PathBuf>, String> {
+    let mut resolved: Option<PathBuf> = None;
+    for (key, manifest) in variables {
+        if !key.starts_with(ARTIFACT_ENV_PREFIX)
+            || !key.ends_with(ARTIFACT_ENV_SUFFIX)
+            || key.starts_with(RELAY_ENV_PREFIX)
+            || !key.contains("_OLIPHAUNT_TOOLS_")
+            || manifest.is_empty()
+        {
+            continue;
+        }
+        let manifest = Path::new(manifest);
+        let directory = manifest
+            .parent()
+            .ok_or_else(|| {
+                format!(
+                    "native tools artifact manifest has no parent directory: {}",
+                    manifest.display()
+                )
+            })?
+            .join("payload/runtime");
+        if !is_tool_executable_file(&directory, "pg_dump")
+            || !is_tool_executable_file(&directory, "psql")
+            || !is_tool_executable_file(&directory, "pg_basebackup")
+        {
+            return Err(format!(
+                "native tools artifact has no complete pg_dump/psql/pg_basebackup runtime: {}",
+                directory.display()
+            ));
+        }
+        if let Some(previous) = &resolved
+            && previous != &directory
+        {
+            return Err(format!(
+                "conflicting native tools artifact roots: {} and {}",
+                previous.display(),
+                directory.display()
+            ));
+        }
+        resolved = Some(directory);
+    }
+    Ok(resolved)
+}
+
+fn is_tool_executable_file(runtime: &Path, name: &str) -> bool {
+    let bin = runtime.join("bin");
+    bin.join(name).is_file() || bin.join(format!("{name}.exe")).is_file()
 }
 
 fn relay_manifest_instructions<I>(vars: I) -> Result<Vec<String>, String>
@@ -85,5 +147,31 @@ mod tests {
         )])
         .unwrap();
         assert!(instructions.is_empty());
+    }
+
+    #[test]
+    fn locates_complete_runtime_beside_the_dependency_manifest() {
+        let root = std::env::temp_dir().join(format!(
+            "oliphaunt-tools-build-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let manifest = root.join("out/oliphaunt-artifact.toml");
+        let runtime = root.join("out/payload/release/runtime");
+        std::fs::create_dir_all(runtime.join("bin")).unwrap();
+        std::fs::write(&manifest, "product = \"oliphaunt-tools\"\n").unwrap();
+        for tool in ["pg_dump", "psql", "pg_basebackup"] {
+            std::fs::write(runtime.join("bin").join(tool), b"fixture").unwrap();
+        }
+
+        let variables = vec![(
+            "DEP_OLIPHAUNT_ARTIFACT_OLIPHAUNT_TOOLS_LINUX_X64_GNU_MANIFEST".to_owned(),
+            manifest.display().to_string(),
+        )];
+        assert_eq!(packaged_tools_dir(&variables).unwrap(), Some(runtime));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

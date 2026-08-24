@@ -9,6 +9,22 @@ import Oliphaunt, {
 } from '@oliphaunt/wasix-ts';
 import { indexedDB } from '@oliphaunt/wasix-ts/storage/indexed-db';
 import { opfs } from '@oliphaunt/wasix-ts/storage/opfs';
+import { pgDump, psql } from '@oliphaunt/wasix-tools';
+
+import logicalToolsFixtureJson from '../../src/shared/fixtures/postgres/logical-tools.json?raw';
+import logicalToolsSeed from '../../src/shared/fixtures/postgres/logical-tools-seed.sql?raw';
+import logicalToolsVerify from '../../src/shared/fixtures/postgres/logical-tools-verify.sql?raw';
+
+const logicalToolsFixture = JSON.parse(logicalToolsFixtureJson) as {
+  expected: {
+    rows: number;
+    sum: number;
+    sequenceLastValue: number;
+    quotedValue: string;
+    normalizedMatches: number;
+    extensionLoaded: boolean;
+  };
+};
 
 const status = requireElement<HTMLParagraphElement>('status');
 const sql = requireElement<HTMLTextAreaElement>('sql');
@@ -89,6 +105,7 @@ try {
       await readPgUuidv7(database);
     }
     await database.close();
+    const logicalTools = await expectLogicalTools();
     const opfsAnswers = await expectOpfsPersistence(extensions);
     const opfsCrash = await expectOpfsCrashRecovery();
     const postgisVersion = postgisWorkerCanary ? await expectLargePostgisWorkerModule() : undefined;
@@ -102,6 +119,7 @@ try {
       opfsTransport: 'direct',
       opfsCrashAnswer: opfsCrash.answer,
       opfsCrashRelations: opfsCrash.relations,
+      logicalTools,
       ...(firstUuid === undefined ? {} : { pg_uuidv7: firstUuid }),
       ...(postgisVersion === undefined ? {} : { postgis: postgisVersion }),
     });
@@ -297,6 +315,42 @@ async function expectDirectMemoryProtocol(database: OliphauntDatabase): Promise<
     !retained.every((byte, index) => byte === snapshot[index])
   ) {
     throw new Error('browser worker response changed after the guest reused its output memory');
+  }
+}
+
+async function expectLogicalTools(): Promise<string> {
+  const source = await Oliphaunt.open({ execution: 'worker', extensions: [pgtap] });
+  let sql: string;
+  try {
+    await psql(source, { script: logicalToolsSeed });
+    sql = await pgDump(source);
+    if (!sql.includes('COPY public.logical_items') || sql.includes('--inserts')) {
+      throw new Error('browser pg_dump did not preserve standard plain COPY output');
+    }
+  } finally {
+    await source.close();
+  }
+
+  const target = await Oliphaunt.open({ execution: 'worker', extensions: [pgtap] });
+  try {
+    await psql(target, { script: sql });
+    const result = await target.query(logicalToolsVerify);
+    const actual = {
+      rows: Number(result.getText(0, 'rows')),
+      sum: Number(result.getText(0, 'sum')),
+      sequenceLastValue: Number(result.getText(0, 'sequence_last_value')),
+      quotedValue: result.getText(0, 'quoted_value'),
+      normalizedMatches: Number(result.getText(0, 'normalized_matches')),
+      extensionLoaded: result.getText(0, 'extension_loaded') === 't',
+    };
+    if (JSON.stringify(actual) !== JSON.stringify(logicalToolsFixture.expected)) {
+      throw new Error(
+        `browser logical tool round trip differed from the shared fixture: ${JSON.stringify(actual)}`,
+      );
+    }
+    return `${actual.rows}:${actual.sum}:${actual.sequenceLastValue}`;
+  } finally {
+    await target.close();
   }
 }
 

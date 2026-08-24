@@ -1353,7 +1353,6 @@ mod tests {
         write_test_extension_artifact(&artifact, "1.2.3");
         let _env = TestEnvironment::replace([
             ("OLIPHAUNT_INSTALL_DIR", Some(install.as_os_str())),
-            ("OLIPHAUNT_TOOLS_DIR", Some(install.as_os_str())),
             (
                 "OLIPHAUNT_RUNTIME_CACHE_DIR",
                 Some(temp.join("runtime-cache").as_os_str()),
@@ -1398,13 +1397,22 @@ mod tests {
                 .join("oliphaunt/template-pgdata/files/PG_VERSION")
                 .is_file()
         );
-        for tool in ["pg_basebackup", "pg_dump", "psql"] {
+        for executable in ["postgres", "pg_ctl"] {
             assert!(
                 output
                     .join("oliphaunt/runtime/files/bin")
-                    .join(tool)
+                    .join(executable)
                     .is_file(),
-                "packaged native runtime is missing {tool}"
+                "packaged native server runtime is missing {executable}"
+            );
+        }
+        for tool in ["pg_basebackup", "pg_dump", "psql"] {
+            assert!(
+                !output
+                    .join("oliphaunt/runtime/files/bin")
+                    .join(tool)
+                    .exists(),
+                "optional PostgreSQL tool leaked into the core runtime: {tool}"
             );
         }
 

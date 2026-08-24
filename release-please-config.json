@@ -90,6 +90,11 @@
           "jsonpath": "$.version"
         },
         {
+          "type": "json",
+          "path": "tools-npm/package.json",
+          "jsonpath": "$.version"
+        },
+        {
           "type": "toml",
           "path": "crates/tools/Cargo.toml",
           "jsonpath": "$.package.version"
@@ -337,6 +342,11 @@
           "type": "toml",
           "path": "crates/tools-aot/x86_64-unknown-linux-gnu/Cargo.toml",
           "jsonpath": "$.package.version"
+        },
+        {
+          "type": "json",
+          "path": "tools-npm/package.json",
+          "jsonpath": "$.version"
         }
       ]
     },

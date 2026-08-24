@@ -73,17 +73,31 @@ There is no archive selector and no replace-existing option.
 ```ts
 const server = await Oliphaunt.openServer({
   storage: { kind: 'directory', path: '.oliphaunt-server' },
+  listen: { transport: 'tcp' },
 });
 console.log(server.connectionString);
 await server.close();
 ```
 
 The server handle has the same execute, query, transaction, raw protocol,
-checkpoint, cancellation, and close methods, but no SDK backup method. Use
-ordinary PostgreSQL tools available in the application environment:
-`pg_basebackup` for physical backups and `pg_dump`, `pg_restore`, or `psql` for
-logical workflows. `@oliphaunt/ts` neither installs nor locates these client
+checkpoint, cancellation, and close methods, but no SDK backup method. TCP is
+fixed to IPv4 loopback; omit `port` for automatic assignment. Unix hosts may
+instead pass `{ transport: 'unix', directory, port? }`, which uses
+`.s.PGSQL.<port>` and never removes the caller's directory.
+
+Use `pg_basebackup` for a standard server physical backup. Plain `pg_dump` and
+non-interactive `psql` are available from the optional endpoint-oriented
+`@oliphaunt/tools` package. `@oliphaunt/ts` does not depend on or install client
 tools.
+
+```js
+import { pgDump, psql } from '@oliphaunt/tools';
+
+const sql = await pgDump(server.connectionString, {
+  args: ['--schema-only'],
+});
+await psql(server.connectionString, { script: sql });
+```
 
 Pass the server's `connectionString` to the standard PostgreSQL tool:
 

@@ -1,8 +1,9 @@
-import type { WasixPersistenceMode } from './database.js';
+import type { WasixPersistenceMode, WasixProtocolConnectionMode } from './database.js';
 import { WasixStorageError } from './errors.js';
 import { PostgresError, type PostgresErrorField } from './query.js';
 import type { SerializedWasixStorage } from './storage.js';
 import type { WasixStorageSyncBoundary } from './storage-provider.js';
+import type { WasixProtocolConnection } from './pgwire-connection.js';
 
 export type SerializedAssetSource = string | Uint8Array;
 
@@ -93,8 +94,21 @@ export type WorkerRequest =
       input: Uint8Array;
       persistence: WasixPersistenceMode;
     }
+  | {
+      id: number;
+      method: 'execStream';
+      input: Uint8Array;
+      persistence: WasixPersistenceMode;
+      control: SharedArrayBuffer;
+    }
   | { id: number; method: 'sync'; boundary: WasixStorageSyncBoundary }
   | { id: number; method: 'backup' }
+  | {
+      id: number;
+      method: 'serve';
+      connection: WasixProtocolConnection;
+      mode: WasixProtocolConnectionMode;
+    }
   | { id: number; method: 'close' };
 
 export type SerializedWorkerError =
@@ -108,6 +122,7 @@ export type SerializedWorkerError =
   | { name: 'Error'; message: string };
 
 export type WorkerResponse =
+  | { id: number; kind: 'chunk'; sequence: number; value: Uint8Array }
   | { id: number; ok: true; value?: Uint8Array }
   | { id: number; ok: false; error: SerializedWorkerError };
 

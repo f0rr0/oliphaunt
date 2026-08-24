@@ -10,9 +10,7 @@ use super::super::extensions::{
 use super::super::files::{
     copy_directory_filtered, copy_file_preserving_permissions, remove_file_if_exists,
 };
-use super::super::{
-    NATIVE_RUNTIME_TOOLS, NATIVE_TOOLS_PACKAGE_TOOLS, existing_native_tool_path, native_tool_path,
-};
+use super::super::{NATIVE_RUNTIME_TOOLS, existing_native_tool_path, native_tool_path};
 use super::extension_artifact_root_for;
 use crate::error::{Error, Result};
 use crate::extension::Extension;
@@ -20,7 +18,6 @@ use crate::extension::Extension;
 pub(super) fn install_cached_runtime(
     profile: NativeRuntimeProfile,
     install_dir: &Path,
-    tools_dir: Option<&Path>,
     embedded_modules: Option<&Path>,
     extension_artifact_dirs: &[PathBuf],
     runtime_dir: &Path,
@@ -35,10 +32,6 @@ pub(super) fn install_cached_runtime(
 
     for tool in NATIVE_RUNTIME_TOOLS {
         install_required_runtime_tool(install_dir, runtime_dir, tool, "native runtime")?;
-    }
-    let tools_dir = tools_dir.unwrap_or(install_dir);
-    for tool in NATIVE_TOOLS_PACKAGE_TOOLS {
-        install_required_runtime_tool(tools_dir, runtime_dir, tool, "native tools")?;
     }
 
     install_native_share_tree(
@@ -165,7 +158,6 @@ mod tests {
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
             None,
-            None,
             &[],
             &temp.path().join("runtime"),
             &extensions,
@@ -193,7 +185,6 @@ mod tests {
         install_cached_runtime(
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
-            None,
             None,
             &[],
             &runtime_dir,
@@ -241,7 +232,6 @@ mod tests {
         install_cached_runtime(
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
-            None,
             None,
             &[extension_dir],
             &runtime_dir,
@@ -300,7 +290,6 @@ mod tests {
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
             None,
-            None,
             std::slice::from_ref(&extension_dir),
             &server_runtime,
             &[Extension::Hstore],
@@ -309,7 +298,6 @@ mod tests {
         install_cached_runtime(
             NativeRuntimeProfile::OliphauntEmbedded,
             &install_dir,
-            None,
             Some(&embedded_modules),
             &[extension_dir],
             &embedded_runtime,
@@ -348,7 +336,6 @@ mod tests {
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
             None,
-            None,
             &[extension_dir],
             &runtime_dir,
             &[Extension::AutoExplain],
@@ -377,17 +364,7 @@ mod tests {
         write_minimal_install(&install_dir);
         write_file(&install_dir.join("bin/initdb"), b"initdb");
         write_file(&install_dir.join("bin/pg_ctl"), b"pg_ctl");
-        write_file(&install_dir.join("bin/pg_basebackup"), b"pg_basebackup");
-        write_file(&install_dir.join("bin/pg_dump"), b"pg_dump");
-        write_file(&install_dir.join("bin/psql"), b"psql");
-        for tool in [
-            "postgres",
-            "initdb",
-            "pg_ctl",
-            "pg_basebackup",
-            "pg_dump",
-            "psql",
-        ] {
+        for tool in ["postgres", "initdb", "pg_ctl"] {
             fs::set_permissions(
                 install_dir.join("bin").join(tool),
                 fs::Permissions::from_mode(0o644),
@@ -399,21 +376,13 @@ mod tests {
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
             None,
-            None,
             &[],
             &runtime_dir,
             &[],
         )
         .unwrap();
 
-        for tool in [
-            "postgres",
-            "initdb",
-            "pg_ctl",
-            "pg_basebackup",
-            "pg_dump",
-            "psql",
-        ] {
+        for tool in ["postgres", "initdb", "pg_ctl"] {
             let mode = fs::metadata(runtime_dir.join("bin").join(tool))
                 .expect("stat copied runtime tool")
                 .permissions()
@@ -445,7 +414,6 @@ mod tests {
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
             None,
-            None,
             &[],
             &runtime_dir,
             &[],
@@ -468,7 +436,6 @@ mod tests {
         install_cached_runtime(
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
-            None,
             None,
             &[],
             &runtime_dir,
@@ -497,54 +464,12 @@ mod tests {
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
             None,
-            None,
             &[],
             &runtime_dir,
             &[],
         )
         .unwrap();
         assert!(!runtime_dir.join("share/icu").exists());
-    }
-
-    #[test]
-    fn install_copies_sidecar_native_tools_into_runtime_cache() {
-        let temp = TempTree::new("sidecar-tools");
-        let install_dir = temp.path().join("install");
-        let tools_dir = temp.path().join("tools");
-        let runtime_dir = temp.path().join("runtime");
-        write_minimal_install(&install_dir);
-        write_file(&install_dir.join("bin/initdb"), b"initdb");
-        write_file(&install_dir.join("bin/pg_ctl"), b"pg_ctl");
-        write_file(&tools_dir.join("bin/pg_dump"), b"pg_dump-from-tools");
-        write_file(
-            &tools_dir.join("bin/pg_basebackup"),
-            b"pg_basebackup-from-tools",
-        );
-        write_file(&tools_dir.join("bin/psql"), b"psql-from-tools");
-
-        install_cached_runtime(
-            NativeRuntimeProfile::PostgresServer,
-            &install_dir,
-            Some(&tools_dir),
-            None,
-            &[],
-            &runtime_dir,
-            &[],
-        )
-        .unwrap();
-
-        assert_eq!(
-            fs::read(runtime_dir.join("bin/pg_basebackup")).unwrap(),
-            b"pg_basebackup-from-tools"
-        );
-        assert_eq!(
-            fs::read(runtime_dir.join("bin/pg_dump")).unwrap(),
-            b"pg_dump-from-tools"
-        );
-        assert_eq!(
-            fs::read(runtime_dir.join("bin/psql")).unwrap(),
-            b"psql-from-tools"
-        );
     }
 
     struct TempTree {

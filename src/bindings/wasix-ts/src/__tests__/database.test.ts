@@ -1,12 +1,69 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { WasixDatabaseImpl, type WasixDatabaseSession } from '../database.js';
+import {
+  assertWasixProtocolConnectionTarget,
+  WasixDatabaseImpl,
+  type WasixDatabaseSession,
+} from '../database.js';
 import { WasixStorageError } from '../errors.js';
 import { PostgresError } from '../query.js';
 import type { OliphauntTransaction } from '../types.js';
 
 // liboliphaunt-doc-example:wasix-typescript-transaction
 describe('WASIX database recovery state', () => {
+  it('identifies worker protocol targets without exposing a public capability flag', () => {
+    const direct = new WasixDatabaseImpl({
+      async exec() {
+        return ready();
+      },
+      async sync() {},
+      async close() {},
+    });
+    const worker = new WasixDatabaseImpl({
+      isolated: true,
+      async exec() {
+        return ready();
+      },
+      async sync() {},
+      async serve() {},
+      async close() {},
+    });
+
+    expect(() => assertWasixProtocolConnectionTarget(direct)).toThrow(/worker execution/);
+    expect(() => assertWasixProtocolConnectionTarget(worker)).not.toThrow();
+  });
+
+  it('rejects a protocol owner while a callback transaction is active', async () => {
+    let release!: () => void;
+    let enteredTransaction!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enteredTransaction = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const database = new WasixDatabaseImpl({
+      isolated: true,
+      async exec(input) {
+        return querySql(input) === 'COMMIT'
+          ? concatenate(commandComplete('COMMIT'), ready())
+          : ready();
+      },
+      async sync() {},
+      async serve() {},
+      async close() {},
+    });
+    const transaction = database.transaction(async () => {
+      enteredTransaction();
+      await blocked;
+    });
+    await entered;
+    expect(() => assertWasixProtocolConnectionTarget(database)).toThrow(/active transaction/);
+    release();
+    await transaction;
+    expect(() => assertWasixProtocolConnectionTarget(database)).not.toThrow();
+  });
+
   it('pins callback transactions, commits results, and expires the transaction handle', async () => {
     const statements: string[] = [];
     const persistenceModes: Array<string | undefined> = [];
@@ -444,6 +501,88 @@ describe('WASIX database recovery state', () => {
     expect(executions[1]).not.toBe(raw);
     expect(executions[1]?.buffer).not.toBe(raw.buffer);
     expect(raw).toEqual(Uint8Array.of('Q'.charCodeAt(0), 0, 0, 0, 5, 0));
+    await database.close();
+  });
+
+  it('streams protocol responses in order without retaining caller-owned input', async () => {
+    const inputs: Uint8Array[] = [];
+    const persistenceModes: Array<string | undefined> = [];
+    const chunks = [Uint8Array.of(1, 2), Uint8Array.of(3)];
+    const database = new WasixDatabaseImpl({
+      async exec() {
+        throw new Error('buffered execution must not be used');
+      },
+      async execStream(input, onChunk, persistence) {
+        inputs.push(input);
+        persistenceModes.push(persistence);
+        for (const chunk of chunks) onChunk(chunk);
+      },
+      async sync() {},
+      async close() {},
+    });
+    const input = Uint8Array.of(9, 8, 7);
+    const received: Uint8Array[] = [];
+
+    await database.execProtocolStream(input, (chunk) => received.push(chunk));
+
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]).not.toBe(input);
+    expect(inputs[0]?.buffer).not.toBe(input.buffer);
+    expect(inputs[0]).toEqual(input);
+    expect(persistenceModes).toEqual(['sync']);
+    expect(received).toEqual(chunks);
+    await database.close();
+  });
+
+  it('uses deferred streaming inside a callback transaction and expires the handle', async () => {
+    const persistenceModes: Array<string | undefined> = [];
+    const streamed: number[] = [];
+    let expired: OliphauntTransaction | undefined;
+    const database = new WasixDatabaseImpl({
+      async exec(input, persistence) {
+        persistenceModes.push(persistence);
+        const statement = querySql(input);
+        return statement === 'COMMIT' ? concatenate(commandComplete('COMMIT'), ready()) : ready();
+      },
+      async execStream(_input, onChunk, persistence) {
+        persistenceModes.push(persistence);
+        onChunk(Uint8Array.of(4, 5));
+      },
+      async sync() {},
+      async close() {},
+    });
+
+    await database.transaction(async (transaction) => {
+      expired = transaction;
+      await transaction.execProtocolStream(Uint8Array.of(1), (chunk) => {
+        streamed.push(...chunk);
+      });
+    });
+
+    expect(streamed).toEqual([4, 5]);
+    expect(persistenceModes).toEqual(['defer', 'defer', 'defer']);
+    if (expired === undefined) throw new Error('transaction handle was not captured');
+    await expect(expired.execProtocolStream(Uint8Array.of(1), () => undefined)).rejects.toThrow(
+      /no longer active/,
+    );
+    await database.close();
+  });
+
+  it('rejects an invalid protocol stream callback without executing the guest', async () => {
+    let executions = 0;
+    const database = new WasixDatabaseImpl({
+      async exec() {
+        executions += 1;
+        return ready();
+      },
+      async sync() {},
+      async close() {},
+    });
+
+    await expect(database.execProtocolStream(Uint8Array.of(1), undefined as never)).rejects.toThrow(
+      TypeError,
+    );
+    expect(executions).toBe(0);
     await database.close();
   });
 

@@ -89,8 +89,12 @@ try {
   const expectedExports = [
     '.',
     './package.json',
+    './internal/tools',
     './protocol',
     './query',
+    './server/bun',
+    './server/deno',
+    './server/node',
     './storage/bun',
     './storage/deno',
     './storage/indexed-db',
@@ -111,6 +115,27 @@ try {
       entry?.default !== `./lib/${name}.js`
     ) {
       throw new Error(`WASIX TypeScript package ${name} subpath is not exact`);
+    }
+  }
+  const internalTools = exports['./internal/tools'];
+  if (
+    internalTools?.types !== './lib/internal.d.ts' ||
+    internalTools?.deno !== './lib/internal.node.js' ||
+    internalTools?.bun !== './lib/internal.node.js' ||
+    internalTools?.node !== './lib/internal.node.js' ||
+    internalTools?.browser !== './lib/internal.js' ||
+    internalTools?.default !== './lib/internal.js'
+  ) {
+    throw new Error('WASIX TypeScript package omitted its version-locked tools bridge');
+  }
+  for (const runtime of ['node', 'bun', 'deno']) {
+    const server = exports[`./server/${runtime}`];
+    if (
+      server?.types !== './lib/server.node.d.ts' ||
+      server?.[runtime] !== './lib/server.node.js' ||
+      Object.keys(server ?? {}).some((condition) => !['types', runtime].includes(condition))
+    ) {
+      throw new Error(`WASIX TypeScript package omitted its ${runtime}-only server entrypoint`);
     }
   }
   if (
