@@ -2,15 +2,28 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   assertWasixProtocolConnectionTarget,
+  normalizeWasixDatabaseIdentity,
   WasixDatabaseImpl,
   type WasixDatabaseSession,
 } from '../database.js';
+import { createWasixByteChannel } from '../byte-channel.js';
 import { WasixStorageError } from '../errors.js';
 import { PostgresError } from '../query.js';
 import type { OliphauntTransaction } from '../types.js';
 
 // liboliphaunt-doc-example:wasix-typescript-transaction
 describe('WASIX database recovery state', () => {
+  it('normalizes an empty database name like PostgreSQL startup', () => {
+    expect(normalizeWasixDatabaseIdentity('application', '')).toEqual({
+      username: 'application',
+      database: 'application',
+    });
+    expect(normalizeWasixDatabaseIdentity('application', 'products')).toEqual({
+      username: 'application',
+      database: 'products',
+    });
+  });
+
   it('identifies worker protocol targets without exposing a public capability flag', () => {
     const direct = new WasixDatabaseImpl({
       async exec() {
@@ -31,6 +44,70 @@ describe('WASIX database recovery state', () => {
 
     expect(() => assertWasixProtocolConnectionTarget(direct)).toThrow(/worker execution/);
     expect(() => assertWasixProtocolConnectionTarget(worker)).not.toThrow();
+  });
+
+  it('reserves protocol FIFO order without entering a canceled guest connection', async () => {
+    const events: string[] = [];
+    const database = new WasixDatabaseImpl({
+      isolated: true,
+      async exec() {
+        events.push('query');
+        return ready();
+      },
+      async sync() {},
+      async serve() {
+        events.push('serve');
+      },
+      async close() {},
+    });
+    const reservation = database.reserveProtocolConnection(
+      { frontend: createWasixByteChannel(), backend: createWasixByteChannel() },
+      'tool',
+    );
+    const query = database.execProtocolRaw(Uint8Array.of(1));
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(events).toEqual([]);
+    reservation.cancel();
+    await query;
+    expect(events).toEqual(['query']);
+    expect(() => reservation.start()).toThrow(/canceled before start/);
+    await database.close();
+  });
+
+  it('cancels a queued transaction while closing an unstarted protocol reservation', async () => {
+    const events: string[] = [];
+    const database = new WasixDatabaseImpl({
+      isolated: true,
+      async exec() {
+        events.push('exec');
+        return ready();
+      },
+      async sync() {},
+      async serve() {
+        events.push('serve');
+      },
+      async close() {
+        events.push('close');
+      },
+    });
+    const reservation = database.reserveProtocolConnection(
+      { frontend: createWasixByteChannel(), backend: createWasixByteChannel() },
+      'tool',
+    );
+    let bodyEntered = false;
+    const transaction = database.transaction(() => {
+      bodyEntered = true;
+    });
+    const transactionFailure = expect(transaction).rejects.toThrow(/database is closed/);
+
+    await database.close();
+    await transactionFailure;
+
+    expect(bodyEntered).toBe(false);
+    expect(events).toEqual(['close']);
+    expect(() => reservation.start()).toThrow(/database is closing/);
   });
 
   it('rejects a protocol owner while a callback transaction is active', async () => {
@@ -630,6 +707,43 @@ describe('WASIX database recovery state', () => {
     await expect(second).rejects.toBe(failure);
     await expect(database.close()).rejects.toBe(failure);
     expect(closes).toBe(1);
+  });
+
+  it('preserves session and every registered resource cleanup failure', async () => {
+    const sessionFailure = new Error('session close failed');
+    const firstResourceFailure = new Error('first resource close failed');
+    const secondResourceFailure = new Error('second resource close failed');
+    const database = new WasixDatabaseImpl({
+      async exec() {
+        return ready();
+      },
+      async sync() {},
+      async close() {
+        throw sessionFailure;
+      },
+    });
+    database.registerResource({
+      close() {
+        throw firstResourceFailure;
+      },
+    });
+    database.registerResource({
+      async close() {
+        throw secondResourceFailure;
+      },
+    });
+
+    const failure = await database.close().catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    if (!(failure instanceof AggregateError)) throw new Error('expected aggregate close failure');
+    expect(failure.errors[0]).toBe(sessionFailure);
+    const resourceFailure = failure.errors[1];
+    expect(resourceFailure).toBeInstanceOf(AggregateError);
+    if (!(resourceFailure instanceof AggregateError)) {
+      throw new Error('expected aggregate resource failure');
+    }
+    expect(resourceFailure.errors).toEqual([firstResourceFailure, secondResourceFailure]);
   });
 
   it('aborts isolated execution when queued work prevents bounded shutdown', async () => {

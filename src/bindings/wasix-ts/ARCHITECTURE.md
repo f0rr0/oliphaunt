@@ -48,7 +48,7 @@ PGDATA, and the canonical runtime manifest remain owned by
 carrier envelope and portable extension bytes.
 
 The canonical guest also owns the backend-only single-backend spinlock and
-scalar-atomic specializations carried by PostgreSQL patches 0040 and 0041.
+scalar-atomic specializations carried by PostgreSQL patches 0035 and 0036.
 They follow the guest into the Rust binding's AOT artifacts and the portable
 module used by browser direct, browser worker, and Node/Bun/Deno worker execution; they
 are not a TypeScript or Node/Bun/Deno host optimization. Frontends, PGXS side modules,
@@ -172,14 +172,35 @@ protocol execution remains the simpler fast path when the complete response is
 already appropriate.
 
 `@oliphaunt/wasix-tools` is an optional facade over the separately published
-`@oliphaunt/liboliphaunt-wasix-tools` asset carrier. A tool runs in its own
-worker with ordinary stdin/stdout/stderr. Its private pgwire connection uses
-one fixed 256 KiB channel in each direction and 64 KiB transfers; neither size
-is public configuration. The database session is exclusively serialized,
-reset before and after the tool, and published only at a safe PostgreSQL
-boundary. This keeps `pg_dump` and `psql` out of the core database download and
-surface while still allowing browser tools without pretending the browser has
-a TCP stack.
+`@oliphaunt/liboliphaunt-wasix-tools` asset carrier. `pg_dump` is compiled and
+run in the realm that already owns the database: the caller realm for direct
+placement or the existing database worker for worker placement. Its synchronous
+socket callbacks enter the already-stepped PostgreSQL backend directly, and an
+owned O(1) chunk deque returns responses without a second worker, shared
+channel, or Web Stream.
+
+`psql` keeps a separate, persistent tool worker because COPY input is genuinely
+full duplex: PostgreSQL can request later input while the frontend is still
+running. Its private pgwire connection has one fixed 256 KiB shared-memory ring
+in each direction and reads or writes at most 64 KiB at a time. These bounds
+provide four chunks of burst capacity and bounded backpressure; they are
+neither public tuning nor used by `pg_dump`.
+
+Both paths verify and cache the immutable compiled frontend module. Every
+invocation still receives a fresh Store, WASI process, stdio capture, and
+`/bin`, `/home`, and `/tmp` mounts, all released on every outcome. The real
+frontend module remains mounted at `/bin/<tool>`; server-only `/lib/postgresql`
+and `/share/postgresql` assets are not copied into frontend processes. Wasmer
+currently describes captured standard streams as character devices, so the
+runner marks only facade-owned `psql` invocations as noninteractive; standalone
+guest `psql` retains normal terminal detection.
+
+The database session is exclusively serialized. It resets PostgreSQL with
+`ROLLBACK`, `DISCARD ALL`, and the configured role before and after a tool, then
+publishes storage once after the final safe cleanup boundary. An uncertain tool
+transport outcome poisons the handle after making its stored state safe. This
+keeps `pg_dump` and `psql` out of the core database download and surface while
+still allowing browser tools without pretending the browser has a TCP stack.
 
 The Node, Bun, and Deno server subpaths all export the same implementation. It
 adapts one loopback TCP or PostgreSQL-named Unix listener to that bounded
@@ -349,58 +370,33 @@ into `lib/host`; direct browser execution imports the host in the caller realm,
 while browser and Node/Bun/Deno direct/worker placements import the same
 package-relative module.
 
-This is not a general backport of WASIX 0.702 to Wasmer 0.601. The seventeen patches:
+This is not a general backport of WASIX 0.702 to Wasmer 0.601. The authoritative
+patch order is the `series` in `host/source.toml`; this document records the
+resulting invariants instead of duplicating that filename inventory. Together,
+the patches:
 
-1. compile the large module asynchronously, preserve raw module bytes across
-   the blocking worker, and launch the configured `WasiEnvBuilder` rather than
-   discarding args, environment, mounts, and stdio;
-2. map `proc_exit2` to normal 0.601 process exit and return `ENOTSUP` from
-   `proc_fork_env` and context create/switch/destroy for both memory widths;
-3. add ephemeral `/dev/shm` and Wasmer's unbounded random device without
-   replacing the SDK's stream-backed stdio;
-4. call wasm-bindgen through the object-form initializer required by the pinned
-   host toolchain;
-5. accept a verified precompiled guest `WebAssembly.Module` together with its
-   original bytes, so the blocking inner worker can reuse compilation without
-   depending on unsupported Wasmer module serialization; and
-6. add a narrow caller-realm Oliphaunt driver that owns one Store, invokes the
-   existing PostgreSQL startup/protocol/cleanup exports synchronously, and
-   rejects generic WASIX task, thread, fork, and network work that would require
-   another execution context;
-7. add Wasmer's Promise-backed JavaScript instance construction for modules
-   that exceed Chromium's synchronous main-realm limit; and
-8. carry that async boundary through the pinned WASIX builder and linker only
-   while constructing the main module. The returned database driver remains
-   synchronous, and oversized dynamic side modules are rejected before open;
-   and
-9. repair the pinned source commit's stale npm-lock root metadata, then install
-    that integrity-pinned dependency graph without lockfile mutation; and
-10. deny guest process replacement, process creation, and thread creation in
-    every TypeScript placement while the explicit single-backend contract is
-    active;
-11. remove the retired `wasm32-wasi` target from the pinned Wasmer JS build;
-    and
-12. cache the single-backend profile and use distinct realtime and monotonic
-    JavaScript clocks, while amortizing pending-signal checks across high-volume
-    PostgreSQL timing samples; and
-13. expose a current-state mutation journal whose write-file wrapper records
-    later writes and truncates through PostgreSQL descriptors retained across
-    protocol operations;
-14. bind the single-backend guest's WASI clock directly to its imported
-    `WebAssembly.Memory`, cache its view until memory growth, and retain the Rust
-    syscall as a bounded pending-work, invalid-input, and compatibility fallback;
-    and
-15. add a narrow direct-PGWire bridge with guest-owned reusable buffers, so
-    requests enter canonical guest memory directly and responses make one final
-    copy into owned JavaScript storage that remains valid after PostgreSQL reuses
-    or grows guest memory; and
-16. retain a bounded 16 KiB tail of direct-session stderr and attach it only to
-    failed startup, protocol, and close operations, avoiding both silent worker
-    failures and an unbounded capture buffer on long-lived databases; and
-17. teach the pinned Wasmer JavaScript module parser to map standard nullable
-    and non-nullable WebAssembly exception references to its existing
-    `ExceptionRef` type, allowing worker-loaded side modules that use native
-    exception handling without adding extension-specific behavior.
+- honor configured args, environment, mounts, cwd, and stdio; preserve original
+  module bytes where the generic blocking worker needs them; and repair the
+  pinned npm/toolchain inputs without mutating their lock;
+- provide only the 0.702 compatibility imports and runtime devices required by
+  the shipped guests, reject unavailable fork/context/thread/process behavior,
+  remove the retired Rust target, and recognize standard WebAssembly exception
+  reference types;
+- make oversized main-module construction asynchronous through the builder and
+  linker while keeping the returned database driver synchronous and rejecting
+  unsupported oversized side modules before open;
+- enforce the single-backend profile, use correct realtime and monotonic clocks,
+  amortize bounded pending-work checks, and avoid turning synchronous-file POSIX
+  close into an implicit fsync that bypasses PostgreSQL durability policy;
+- expose the current-state mutation journal and the narrow caller-realm
+  synchronous filesystem bridge used by direct OPFS, without reviving the old
+  mailbox transport;
+- provide the caller-realm PostgreSQL lifecycle and reusable-memory pgwire
+  driver, including COPY-aware callback streaming, top-level error recovery,
+  and a bounded 16 KiB failure-only stderr tail; and
+- run only the packaged PostgreSQL frontend tools through a fresh caller-realm
+  WASIX process with captured stdio and synchronous pgwire callbacks. This path
+  uses neither the generic Wasmer scheduler worker nor a Web Streams pump.
 
 The clock specialization is intentionally narrower than a general syscall
 shortcut. Realtime uses the JavaScript epoch clock, while monotonic reads

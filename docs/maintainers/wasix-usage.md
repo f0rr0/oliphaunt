@@ -100,9 +100,9 @@ memory and nonempty destinations. The destination creates its own descriptor.
 
 `execProtocolStream()` is the bounded callback form of the raw protocol escape
 hatch. The optional `@oliphaunt/wasix-tools` package runs standard plain
-`pg_dump` and non-interactive `psql` directly against an open worker-backed
-database, including in browsers. It preserves PostgreSQL's normal COPY-based
-plain dump rather than rewriting it.
+`pg_dump` against direct or worker placement and non-interactive `psql` against
+worker placement, including in browsers. It preserves PostgreSQL's normal
+COPY-based plain dump rather than rewriting it.
 
 Node, Bun, and Deno applications may import `openServer` from the matching
 `@oliphaunt/wasix-ts/server/*` subpath. It opens a loopback TCP endpoint or a
@@ -151,7 +151,7 @@ already naturally portable.
 ```sh
 moon run oliphaunt-wasix-rust:package
 moon run oliphaunt-wasix-ts:package
-moon run oliphaunt-wasix-tools-ts:check
+moon run oliphaunt-wasix-ts:tools-check
 ```
 
 Product package and smoke tasks own the host/runtime combinations they publish.

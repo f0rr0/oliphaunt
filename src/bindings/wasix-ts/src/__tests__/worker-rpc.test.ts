@@ -1,9 +1,63 @@
 import { describe, expect, it } from 'vitest';
+import { runWasixPgDumpProcess } from '../database.js';
 import { createWorkerSessionDispatcher } from '../worker-dispatch.js';
 import { openWorkerDatabase, WorkerRpc } from '../worker-rpc.js';
 import { FakeWorkerPort, workerOpenOptions } from './worker-helpers.js';
 
 describe('WASIX worker RPC', () => {
+  it('runs pg_dump in the database worker and returns both owned output streams', async () => {
+    const port = new FakeWorkerPort();
+    const opening = openWorkerDatabase(port, workerOpenOptions());
+    const open = await postedRequest(port, 0);
+    port.respond({ id: open.id, ok: true });
+    const database = await opening;
+    const dumping = runWasixPgDumpProcess(database, {
+      runtimeVersion: '0.1.1',
+      tool: {
+        name: 'pg_dump',
+        sha256: '4'.repeat(64),
+        size: 1,
+        source: Uint8Array.of(4),
+      },
+      args: ['--schema-only'],
+    });
+    const request = await postedRequest(port, 1);
+    expect(request).toMatchObject({ method: 'runPgDump', args: ['--schema-only'] });
+    port.respond({
+      id: request.id,
+      ok: true,
+      value: {
+        exitCode: 0,
+        stdout: Uint8Array.of(1, 2),
+        stderr: Uint8Array.of(3),
+      },
+    });
+    await expect(dumping).resolves.toEqual({
+      exitCode: 0,
+      stdout: Uint8Array.of(1, 2),
+      stderr: Uint8Array.of(3),
+    });
+
+    const malformed = runWasixPgDumpProcess(database, {
+      runtimeVersion: '0.1.1',
+      tool: {
+        name: 'pg_dump',
+        sha256: '4'.repeat(64),
+        size: 1,
+        source: Uint8Array.of(4),
+      },
+      args: [],
+    });
+    const malformedRequest = await postedRequest(port, 2);
+    port.respond({ id: malformedRequest.id, ok: true, value: Uint8Array.of(9) });
+    await expect(malformed).rejects.toThrow(/invalid pg_dump result/);
+
+    const closing = database.close();
+    const close = await postedRequest(port, 3);
+    port.respond({ id: close.id, ok: true });
+    await closing;
+  });
+
   it('terminates the worker when opening returns an error', async () => {
     const port = new FakeWorkerPort();
     const opening = openWorkerDatabase(port, workerOpenOptions());
@@ -81,8 +135,53 @@ describe('WASIX worker RPC', () => {
     ]);
   });
 
+  it('dispatches pg_dump in the opened session and transfers its outputs', async () => {
+    const responses: Array<{ response: unknown; transfer: readonly ArrayBuffer[] }> = [];
+    const dispatch = createWorkerSessionDispatcher(
+      async () => ({
+        async exec(input) {
+          return input;
+        },
+        async sync() {},
+        async runPgDump() {
+          return {
+            exitCode: 7,
+            stdout: Uint8Array.of(1, 2),
+            stderr: Uint8Array.of(3, 4),
+          };
+        },
+        async close() {},
+      }),
+      (response, transfer = []) => responses.push({ response, transfer }),
+    );
+
+    await dispatch({ id: 1, method: 'open', options: workerOpenOptions() });
+    await dispatch({
+      id: 2,
+      method: 'runPgDump',
+      tool: {
+        name: 'pg_dump',
+        sha256: '4'.repeat(64),
+        size: 1,
+        source: Uint8Array.of(4),
+      },
+      args: ['--schema-only'],
+    });
+
+    expect(responses[1]?.response).toEqual({
+      id: 2,
+      ok: true,
+      value: {
+        exitCode: 7,
+        stdout: Uint8Array.of(1, 2),
+        stderr: Uint8Array.of(3, 4),
+      },
+    });
+    expect(responses[1]?.transfer).toHaveLength(2);
+  });
+
   it('fails closed around open state and transfers optional physical backups', async () => {
-    const responses: Array<{ id: number; ok: boolean; value?: Uint8Array }> = [];
+    const responses: Array<{ id: number; ok: boolean; value?: unknown }> = [];
     const dispatch = createWorkerSessionDispatcher(
       async () => ({
         async exec(input) {

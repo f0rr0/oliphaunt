@@ -344,6 +344,7 @@ if [ "$mode" = "regression" ]; then
     --test native_sql_regression \
     -- \
     --test-threads=1
+  native_runtime_lock cargo test -p oliphaunt-native-tools-proof --locked -- --test-threads=1
   exit 0
 fi
 
@@ -363,7 +364,11 @@ if [ "$mode" = "smoke-runtime" ]; then
     oliphaunt_runtime_native_host_diagnostics extensions
     exit 1
   fi
-  native_runtime_lock cargo test -p oliphaunt --locked --test native_smoke -- --test-threads=1
+  native_runtime_lock cargo test -p oliphaunt --locked \
+    --test native_smoke \
+    -- \
+    --test-threads=1
+  native_runtime_lock cargo test -p oliphaunt-native-tools-proof --locked -- --test-threads=1
   exit 0
 fi
 
@@ -441,6 +446,7 @@ if git ls-files --error-unmatch src/sdks/rust/tests/fixtures/extensions/'*.sql' 
   exit 1
 fi
 reject_cargo_package_entry_pattern "$package_listing" '^tests/fixtures/postgis-smoke\.sql$'
+reject_cargo_package_entry_pattern "$package_listing" '^testdata/logical-tools([.-]|$)'
 reject_cargo_package_entry_pattern "$package_listing" '^(target/|oliphaunt/|sdks/|src/bindings/wasix-rust/crates/oliphaunt-wasix/)'
 reject_cargo_package_entry_pattern "$package_listing" '^src/(runtime_resources|bin/oliphaunt-(resources|extension-artifact|extension-index))'
 reject_cargo_package_entry_pattern "$package_listing" '^crates/oliphaunt-build/'

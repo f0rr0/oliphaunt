@@ -140,6 +140,23 @@ existing-empty destination and rejects nonempty data without mutation. Native
 server applications use normal PostgreSQL tools.
 
 </Step>
+<Step>
+
+### Use logical tools
+
+Install the separate `@oliphaunt/tools` package when a server application needs
+plain `pg_dump` or non-interactive `psql`. Pass `server.connectionString` to the
+tool; the core `@oliphaunt/ts` package does not install client programs.
+
+```ts
+import { pgDump } from '@oliphaunt/tools';
+
+const sql = await pgDump(server.connectionString, {
+  args: ['--schema-only'],
+});
+```
+
+</Step>
 </Steps>
 
 <SdkGuideProof id="typescript" />

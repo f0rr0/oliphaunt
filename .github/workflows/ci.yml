@@ -1503,10 +1503,10 @@ jobs:
           node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime deno
           node src/bindings/wasix-ts/tools/smoke-browser.mjs --postgis-worker
           node src/bindings/wasix-ts/tools/smoke-browser.mjs --package-only
-          pnpm --dir src/bindings/wasix-tools build
-          node src/bindings/wasix-tools/tools/smoke-host.mjs --runtime node
-          tools/dev/bun.sh src/bindings/wasix-tools/tools/smoke-host.mjs --runtime bun
-          tools/dev/deno.sh run --allow-all src/bindings/wasix-tools/tools/smoke-host.mjs --runtime deno
+          pnpm --dir src/bindings/wasix-ts/tools-package build
+          node src/bindings/wasix-ts/tools-package/tools/smoke-host.mjs --runtime node
+          tools/dev/bun.sh src/bindings/wasix-ts/tools-package/tools/smoke-host.mjs --runtime bun
+          tools/dev/deno.sh run --allow-all src/bindings/wasix-ts/tools-package/tools/smoke-host.mjs --runtime deno
           OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh wasix-ts-sdk-package
 
       - name: Upload WASIX TypeScript SDK package artifacts
@@ -2031,6 +2031,12 @@ jobs:
         uses: ./.github/actions/setup-moon
         with:
           install-workspace: "false"
+
+      - name: Set up Deno for packed native tools smoke
+        if: ${{ matrix.shard == 0 }}
+        uses: ./.github/actions/setup-deno
+        with:
+          deno-version: ${{ env.DENO_VERSION }}
 
       - name: Download same-run Linux native runtime
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c

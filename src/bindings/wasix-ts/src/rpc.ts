@@ -4,6 +4,7 @@ import { PostgresError, type PostgresErrorField } from './query.js';
 import type { SerializedWasixStorage } from './storage.js';
 import type { WasixStorageSyncBoundary } from './storage-provider.js';
 import type { WasixProtocolConnection } from './pgwire-connection.js';
+import type { WasixToolDescriptor, WasixToolProcessResult } from './tool-runtime.js';
 
 export type SerializedAssetSource = string | Uint8Array;
 
@@ -105,6 +106,12 @@ export type WorkerRequest =
   | { id: number; method: 'backup' }
   | {
       id: number;
+      method: 'runPgDump';
+      tool: WasixToolDescriptor;
+      args: string[];
+    }
+  | {
+      id: number;
       method: 'serve';
       connection: WasixProtocolConnection;
       mode: WasixProtocolConnectionMode;
@@ -123,7 +130,7 @@ export type SerializedWorkerError =
 
 export type WorkerResponse =
   | { id: number; kind: 'chunk'; sequence: number; value: Uint8Array }
-  | { id: number; ok: true; value?: Uint8Array }
+  | { id: number; ok: true; value?: Uint8Array | WasixToolProcessResult }
   | { id: number; ok: false; error: SerializedWorkerError };
 
 export function serializeWorkerError(error: unknown): SerializedWorkerError {

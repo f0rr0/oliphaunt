@@ -171,19 +171,27 @@ test("freezes .crate bytes for native parts, aggregators, and facade and rejects
 
     const facade = manifest.packages.find(({ role }) => role === "facade");
     assert.ok(facade);
-    const facadeSource = path.join(path.dirname(path.resolve(ROOT, facade.manifestPath)), "src/lib.rs");
+    const facadeRoot = path.dirname(path.resolve(ROOT, facade.manifestPath));
+    const facadeManifestText = readFileSync(path.join(facadeRoot, "Cargo.toml"), "utf8");
+    assert.doesNotMatch(facadeManifestText, /\[dev-dependencies\]|serde_json/u);
+    const facadeSource = path.join(facadeRoot, "src/lib.rs");
     const facadeText = readFileSync(facadeSource, "utf8");
     assert.match(facadeText, /Generated release-only native target guard[.]/u);
     assert.match(facadeText, /compile_error!/u);
     assert.match(facadeText, /linux-x64-gnu/u);
+    assert.match(facadeText, /mod arguments;/u);
     const packedFacadeSource = commandOutput("tar", [
       "-xOzf",
       path.resolve(ROOT, facade.cratePath),
       `${facade.name}-9.8.7/src/lib.rs`,
     ]);
     assert.equal(packedFacadeSource, facadeText);
+    const repositoryFacadeText = readFileSync(
+      path.join(ROOT, "src/runtimes/liboliphaunt/native/crates/tools/src/lib.rs"),
+      "utf8",
+    );
     assert.doesNotMatch(
-      readFileSync(path.join(ROOT, "src/runtimes/liboliphaunt/native/crates/tools/src/lib.rs"), "utf8"),
+      repositoryFacadeText,
       /Generated release-only native target guard|compile_error!/u,
     );
 

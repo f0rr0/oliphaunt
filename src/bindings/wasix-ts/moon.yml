@@ -58,6 +58,51 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
+  tools-check:
+    tags: ["quality", "static"]
+    command: "pnpm --dir src/bindings/wasix-ts/tools-package typecheck"
+    deps:
+      - "oliphaunt-wasix-ts:check"
+    inputs:
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/tools-package/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  tools-test:
+    tags: ["quality", "unit"]
+    command: "pnpm --dir src/bindings/wasix-ts/tools-package test"
+    deps:
+      - "oliphaunt-wasix-ts:test"
+    inputs:
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/tools-package/**/*"
+      - "/src/shared/fixtures/postgres/logical-tools.json"
+      - "/tools/test/run-js-tests.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  tools-package:
+    tags: ["package"]
+    command: "pnpm --dir src/bindings/wasix-ts/tools-package build"
+    deps:
+      - "oliphaunt-wasix-ts:tools-check"
+      - "oliphaunt-wasix-ts:tools-test"
+    inputs:
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/bindings/wasix-ts/tools-package/**/*"
+      - "/tools/dev/clean-package-lib.mjs"
+    outputs:
+      - "/src/bindings/wasix-ts/tools-package/lib/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
   coverage:
     tags: ["coverage", "quality"]
     command: "tools/coverage/run-product oliphaunt-wasix-ts"
@@ -82,6 +127,7 @@ tasks:
     deps:
       - "oliphaunt-wasix-ts:check"
       - "oliphaunt-wasix-ts:test"
+      - "oliphaunt-wasix-ts:tools-package"
     inputs:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
@@ -170,6 +216,72 @@ tasks:
       - "/src/sources/toolchains/deno.toml"
       - "/tools/dev/deno.sh"
       - "/tools/dev/install-pinned-js-runtime.sh"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  tools-smoke-node:
+    tags: ["quality", "smoke", "node"]
+    command: "node src/bindings/wasix-ts/tools-package/tools/smoke-host.mjs --runtime node"
+    deps:
+      - "oliphaunt-wasix-ts:package"
+      - "liboliphaunt-wasix:runtime-portable"
+    inputs:
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/shared/fixtures/postgres/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/tools-npm/**/*"
+      - "/target/oliphaunt-wasix/assets/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  tools-smoke-browser:
+    tags: ["quality", "smoke", "browser"]
+    command: "node src/bindings/wasix-ts/tools/smoke-browser.mjs"
+    deps:
+      - "oliphaunt-wasix-ts:package"
+      - "liboliphaunt-wasix:runtime-portable"
+    inputs:
+      - "/.release-please-manifest.json"
+      - "/examples/browser-wasix/**/*"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "/target/oliphaunt-wasix/assets/**/*"
+      - "/tools/perf/wasix-browser/plan.mjs"
+      - "/tools/perf/wasix-node/installed-closure.mjs"
+      - "/tools/perf/wasix-node/plan.mjs"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  tools-smoke-bun:
+    tags: ["quality", "smoke", "bun"]
+    command: "tools/dev/bun.sh src/bindings/wasix-ts/tools-package/tools/smoke-host.mjs --runtime bun"
+    deps:
+      - "oliphaunt-wasix-ts:package"
+      - "liboliphaunt-wasix:runtime-portable"
+    inputs:
+      - "/.prototools"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/shared/fixtures/postgres/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/tools-npm/**/*"
+      - "/src/sources/toolchains/bun.toml"
+      - "/target/oliphaunt-wasix/assets/**/*"
+      - "/tools/dev/bun.sh"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  tools-smoke-deno:
+    tags: ["quality", "smoke", "deno"]
+    command: "tools/dev/deno.sh run --allow-all src/bindings/wasix-ts/tools-package/tools/smoke-host.mjs --runtime deno"
+    deps:
+      - "oliphaunt-wasix-ts:package"
+      - "liboliphaunt-wasix:runtime-portable"
+    inputs:
+      - "/.prototools"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/shared/fixtures/postgres/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/tools-npm/**/*"
+      - "/src/sources/toolchains/deno.toml"
+      - "/target/oliphaunt-wasix/assets/**/*"
+      - "/tools/dev/deno.sh"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -275,6 +387,9 @@ tasks:
       node --check tools/perf/wasix-node/engine-runner.mjs
       node --check tools/perf/wasix-node/benchmark.mjs
       node --check tools/perf/wasix-node/pglite-node-worker.mjs
+      node --check tools/perf/wasix-node/pgwire-client.mjs
+      node --check tools/perf/wasix-node/rss-sampler-worker.mjs
+      node --check tools/perf/wasix-node/streaming-quick.mjs
       node tools/perf/wasix-node/benchmark.mjs --validate
     deps:
       - "benchmarks:check"
@@ -365,7 +480,6 @@ tasks:
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
       - "/src/bindings/wasix-ts/**/*"
-      - "/src/bindings/wasix-tools/**/*"
       - "/tools/dev/capture-command-output.mjs"
       - "/tools/release/build-sdk-ci-artifacts.mjs"
       - "/tools/release/check-staged-artifacts.mjs"

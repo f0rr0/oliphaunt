@@ -13,11 +13,25 @@ import {
 } from '../byte-channel.js';
 import { WasixStorageError } from '../errors.js';
 import type { PreparedWasixRuntime } from '../extensions.js';
-import type { OliphauntDirectInstance } from '../host/index.mjs';
+import type {
+  OliphauntDirectInstance,
+  OliphauntPreparedTool,
+  OliphauntToolOutput,
+  RunWasixOptions,
+} from '../host/index.mjs';
 import { PostgresError } from '../query.js';
 import type { SerializedOpenOptions } from '../rpc.js';
 import { WASIX_PHYSICAL_IDENTITY, type WasixStorageLease } from '../storage-provider.js';
 import { wasixPostgresArgs } from '../wasix-runtime.js';
+
+const EMPTY_WASM = Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0);
+const EMPTY_WASM_SHA256 = '93a44bbb96c751218e4c00d479e4c14358122a389acca16205b1e4d0dc5f9476';
+const pgDumpDescriptor = {
+  name: 'pg_dump' as const,
+  sha256: EMPTY_WASM_SHA256,
+  size: EMPTY_WASM.length,
+  source: EMPTY_WASM,
+};
 
 describe('direct WASIX session lifecycle', () => {
   it('uses PostgreSQL startup GUC name and value grammar', () => {
@@ -216,6 +230,123 @@ describe('direct WASIX session lifecycle', () => {
       'DISCARD ALL',
       'SET ROLE "app""role"',
     ]);
+  });
+
+  it('reuses prepared pg_dump but creates fresh processes and publishes once per run', async () => {
+    let prepareCount = 0;
+    let runCount = 0;
+    let preparedFreeCount = 0;
+    let syncCount = 0;
+    const storage = fakeLease(async () => undefined);
+    storage.sync = async () => {
+      syncCount += 1;
+    };
+    const session = await DirectWasixSession.open(
+      openOptions(),
+      fakeHost({
+        prepareTool() {
+          prepareCount += 1;
+          return {
+            free() {
+              preparedFreeCount += 1;
+            },
+          } as OliphauntPreparedTool;
+        },
+        async runTool() {
+          runCount += 1;
+          return {
+            code: runCount === 1 ? 0 : 7,
+            stdoutBytes: Uint8Array.of(runCount),
+            stderrBytes: new Uint8Array(),
+          };
+        },
+      }),
+      fakeDependencies(storage),
+    );
+
+    await expect(session.runPgDump({ tool: pgDumpDescriptor, args: [] })).resolves.toMatchObject({
+      exitCode: 0,
+      stdout: Uint8Array.of(1),
+    });
+    await expect(session.runPgDump({ tool: pgDumpDescriptor, args: [] })).resolves.toMatchObject({
+      exitCode: 7,
+      stdout: Uint8Array.of(2),
+    });
+    await session.exec(Uint8Array.of(1));
+    await session.close();
+
+    expect(prepareCount).toBe(1);
+    expect(runCount).toBe(2);
+    expect(syncCount).toBe(3);
+    expect(preparedFreeCount).toBe(1);
+  });
+
+  it('keeps the session usable when pg_dump fails before entering the protocol', async () => {
+    const session = await DirectWasixSession.open(
+      openOptions(),
+      fakeHost({
+        async runTool() {
+          throw new Error('pg_dump failed before connect');
+        },
+      }),
+      fakeDependencies(fakeLease(async () => undefined)),
+    );
+
+    await expect(session.runPgDump({ tool: pgDumpDescriptor, args: [] })).rejects.toThrow(
+      'pg_dump failed before connect',
+    );
+    await expect(session.exec(Uint8Array.of(1))).resolves.toBeInstanceOf(Uint8Array);
+    await session.close();
+  });
+
+  it('poisons the session when pg_dump traps after entering its protocol lifecycle', async () => {
+    const session = await DirectWasixSession.open(
+      openOptions(),
+      fakeHost({
+        async runTool(_options, _read, write) {
+          write(startupPacket('postgres', 'postgres'));
+          throw new Error('pg_dump trapped');
+        },
+      }),
+      fakeDependencies(fakeLease(async () => undefined)),
+    );
+
+    await expect(session.runPgDump({ tool: pgDumpDescriptor, args: [] })).rejects.toThrow(
+      'pg_dump trapped',
+    );
+    await expect(session.exec(Uint8Array.of(1))).rejects.toThrow(/database failed/);
+    await session.close();
+  });
+
+  it('does not poison PostgreSQL when only a private pg_dump mount fails to release', async () => {
+    class ToolCleanupFailingDirectory extends FakeDirectory {
+      override free(): void {
+        if (this.hasFile('pg_dump')) throw new Error('pg_dump mount release failed');
+      }
+    }
+    const session = await DirectWasixSession.open(
+      openOptions(),
+      fakeHost({
+        Directory: ToolCleanupFailingDirectory,
+        async runTool(_options, read, write) {
+          write(startupPacket('postgres', 'postgres'));
+          read(1024 * 1024);
+          write(frontendMessage('X', new Uint8Array()));
+          return {
+            code: 0,
+            stdoutBytes: new Uint8Array(),
+            stderrBytes: new Uint8Array(),
+          };
+        },
+      }),
+      fakeDependencies(fakeLease(async () => undefined)),
+    );
+
+    await expect(session.runPgDump({ tool: pgDumpDescriptor, args: [] })).rejects.toThrow(
+      'WASIX tool mount cleanup failed',
+    );
+    await expect(session.exec(Uint8Array.of(1))).resolves.toBeInstanceOf(Uint8Array);
+    await session.close();
   });
 
   it('poisons a tool session whose protocol outcome is unknown', async () => {
@@ -609,6 +740,7 @@ function fakeLease(
 }
 
 type FakeHostOptions = {
+  Directory?: typeof FakeDirectory;
   events?: string[];
   init?(): Promise<void>;
   startup?(): Uint8Array;
@@ -617,6 +749,12 @@ type FakeHostOptions = {
   close?(): void;
   free?(): void;
   instantiate?(): Promise<OliphauntDirectInstance>;
+  prepareTool?(): OliphauntPreparedTool;
+  runTool?(
+    options: RunWasixOptions,
+    read: (maximumBytes: number) => Uint8Array,
+    write: (chunk: Uint8Array) => void,
+  ): Promise<OliphauntToolOutput>;
 };
 
 function fakeHost(options: FakeHostOptions): DirectWasixHost {
@@ -655,12 +793,24 @@ function fakeHost(options: FakeHostOptions): DirectWasixHost {
     },
   } as OliphauntDirectInstance;
   return {
-    Directory: FakeDirectory as unknown as DirectWasixHost['Directory'],
+    Directory: (options.Directory ?? FakeDirectory) as unknown as DirectWasixHost['Directory'],
     async init() {
       await options.init?.();
     },
     async instantiateOliphauntDirect() {
       return options.instantiate?.() ?? instance;
+    },
+    prepareOliphauntTool() {
+      return options.prepareTool?.() ?? ({ free() {} } as OliphauntPreparedTool);
+    },
+    async runOliphauntToolDirect(_prepared, runOptions, read, write) {
+      return (
+        (await options.runTool?.(runOptions, read, write)) ?? {
+          code: 0,
+          stdoutBytes: new Uint8Array(),
+          stderrBytes: new Uint8Array(),
+        }
+      );
     },
   };
 }
@@ -683,6 +833,12 @@ class FakeDirectory {
     if (value === undefined) throw new Error(`missing fake file ${path}`);
     return value;
   }
+
+  hasFile(path: string): boolean {
+    return this.#files[path] !== undefined;
+  }
+
+  free(): void {}
 }
 
 function preparedRuntime(setupSql: string[] = []): PreparedWasixRuntime {
@@ -743,6 +899,24 @@ function startupSuccess(): Uint8Array {
     backendMessage('R', Uint8Array.of(0, 0, 0, 0)),
     backendMessage('Z', Uint8Array.of('I'.charCodeAt(0))),
   ]);
+}
+
+function startupPacket(username: string, database: string): Uint8Array {
+  const bytes = new TextEncoder().encode(`user\0${username}\0database\0${database}\0\0`);
+  const output = new Uint8Array(8 + bytes.length);
+  const view = new DataView(output.buffer);
+  view.setInt32(0, output.length);
+  view.setInt32(4, 196_608);
+  output.set(bytes, 8);
+  return output;
+}
+
+function frontendMessage(tag: string, body: Uint8Array): Uint8Array {
+  const output = new Uint8Array(5 + body.length);
+  output[0] = tag.charCodeAt(0);
+  new DataView(output.buffer).setInt32(1, body.length + 4);
+  output.set(body, 5);
+  return output;
 }
 
 function startupError(sqlstate: string, message: string): Uint8Array {

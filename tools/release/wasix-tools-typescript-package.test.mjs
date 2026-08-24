@@ -11,7 +11,7 @@ function manifest() {
     repository: {
       type: 'git',
       url: 'git+https://github.com/f0rr0/oliphaunt.git',
-      directory: 'src/bindings/wasix-tools',
+      directory: 'src/bindings/wasix-ts/tools-package',
     },
     publishConfig: { access: 'public', provenance: true },
     oliphaunt: {

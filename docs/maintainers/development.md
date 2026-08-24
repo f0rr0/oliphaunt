@@ -126,7 +126,7 @@ The validation entrypoint is split by maintainer workflow:
   `psql`, and prints a readable report (`-- --json` prints the complete JSON).
   Process RSS deltas are descriptive because the quick run reuses one process.
   If inputs are absent, first run
-  `moon run oliphaunt-wasix-tools-ts:package liboliphaunt-wasix:runtime-portable`;
+  `moon run oliphaunt-wasix-ts:tools-package liboliphaunt-wasix:runtime-portable`;
 - `moon run oliphaunt-rust:check`: static Cargo checks for `oliphaunt` and
   `oliphaunt-build`, plus the artifact-relay build-script test. Unit, package,
   and native runtime evidence remain separate `test`, `package`, and `smoke`

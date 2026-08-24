@@ -3,9 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import {
-  createPackedWasixConsumer,
-} from '../../wasix-ts/tools/packed-node-fixture.mjs';
+import { createPackedWasixConsumer } from '../../tools/packed-node-fixture.mjs';
 import {
   connect,
   controlPacket,
@@ -16,9 +14,9 @@ import {
   readSingleByte,
   simpleQuery,
   startupPacket,
-} from '../../wasix-ts/tools/pgwire-client.mjs';
+} from '../../tools/pgwire-client.mjs';
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../..');
 const runtimeName = readRuntime(process.argv.slice(2));
 const seed = await readFile(
   resolve(root, 'src/shared/fixtures/postgres/logical-tools-seed.sql'),
@@ -45,9 +43,8 @@ try {
     await import(pathToFileURL(resolve(packageRoot(packed.packages.runtime.name), 'index.js')).href)
   ).default;
   const { default: Oliphaunt } = await import(
-    pathToFileURL(
-      resolve(packageRoot(packed.packages.binding.name), `lib/index.${runtimeName}.js`),
-    ).href
+    pathToFileURL(resolve(packageRoot(packed.packages.binding.name), `lib/index.${runtimeName}.js`))
+      .href
   );
   const { PostgresToolError, pgDump, psql } = await import(
     pathToFileURL(resolve(packageRoot(packed.packages.toolsFacade.name), 'lib/index.js')).href
@@ -107,6 +104,10 @@ async function verifyLogicalTools({ Oliphaunt, PostgresToolError, pgDump, psql, 
     await source.close();
   }
 
+  if (runtimeName === 'node') {
+    await verifyDirectPgDump(Oliphaunt, pgDump);
+  }
+
   const target = await Oliphaunt.open({ execution: 'worker', extensions: [extension] });
   try {
     console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: psql restore`);
@@ -122,10 +123,33 @@ async function verifyLogicalTools({ Oliphaunt, PostgresToolError, pgDump, psql, 
       extensionLoaded: result.getText(0, 'extension_loaded') === 't',
     };
     if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-      throw new Error(`logical tool round trip differed from the shared fixture: ${JSON.stringify(actual)}`);
+      throw new Error(
+        `logical tool round trip differed from the shared fixture: ${JSON.stringify(actual)}`,
+      );
     }
   } finally {
     await target.close();
+  }
+}
+
+async function verifyDirectPgDump(Oliphaunt, pgDump) {
+  console.log('WASIX TypeScript node tools/server smoke: direct pg_dump');
+  const database = await Oliphaunt.open({ execution: 'direct' });
+  try {
+    await database.execute(
+      'CREATE TABLE direct_dump_probe (id integer PRIMARY KEY, value text NOT NULL)',
+    );
+    await database.execute("INSERT INTO direct_dump_probe VALUES (1, 'same-realm')");
+    const sql = await pgDump(database);
+    if (!sql.includes('COPY public.direct_dump_probe') || !sql.includes('same-realm')) {
+      throw new Error('direct pg_dump did not preserve standard plain COPY output');
+    }
+    const result = await database.query('SELECT count(*)::int AS rows FROM direct_dump_probe');
+    if (result.getText(0, 'rows') !== '1') {
+      throw new Error('direct database was not usable after pg_dump');
+    }
+  } finally {
+    await database.close();
   }
 }
 
@@ -138,7 +162,9 @@ async function verifyServer(openServer, listen) {
       socket.write(controlPacket(code));
       const response = await readSingleByte(socket);
       if (response !== 'N'.charCodeAt(0)) {
-        throw new Error(`local server returned ${response} for PostgreSQL negotiation request ${code}`);
+        throw new Error(
+          `local server returned ${response} for PostgreSQL negotiation request ${code}`,
+        );
       }
     }
     socket.write(startupPacket('postgres', 'postgres'));

@@ -114,15 +114,15 @@ importers:
         specifier: ~6.0.3
         version: 6.0.3
 
-  src/bindings/wasix-tools:
+  src/bindings/wasix-ts/tools-package:
     dependencies:
       '@oliphaunt/liboliphaunt-wasix-tools':
         specifier: workspace:0.1.1
-        version: link:../../runtimes/liboliphaunt/wasix/tools-npm
+        version: link:../../../runtimes/liboliphaunt/wasix/tools-npm
     devDependencies:
       '@oliphaunt/wasix-ts':
         specifier: workspace:0.0.0
-        version: link:../wasix-ts
+        version: link:..
       '@types/node':
         specifier: ^24.10.1
         version: 24.12.4

@@ -1,5 +1,5 @@
 export type PgDumpOptions = Readonly<{
-  /** Ordinary PostgreSQL pg_dump arguments. Connection, output, format, compression, encoding, and job flags are managed. */
+  /** Ordinary PostgreSQL pg_dump arguments. Connection, file input/output, format, compression, encoding, and job flags are managed. */
   args?: readonly string[];
 }>;
 

@@ -2,7 +2,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use oliphaunt_wasix::{extensions, tools, Oliphaunt, OliphauntServer};
+use oliphaunt_wasix::{OliphauntServer, extensions};
+#[cfg(test)]
+use oliphaunt_wasix::{Oliphaunt, tools};
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
@@ -144,7 +146,6 @@ fn open_database(directory: PathBuf) -> Result<TodoDatabase> {
 }
 
 fn start_database_server(directory: PathBuf) -> Result<OliphauntServer> {
-    validate_wasix_tools()?;
     let server = OliphauntServer::builder()
         .storage(oliphaunt_wasix::DatabaseStorage::Directory(directory))
         .extensions([
@@ -180,6 +181,7 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 fn validate_wasix_tools() -> Result<()> {
     let mut database = Oliphaunt::open()?;
     let dump = tools::pg_dump(
@@ -307,8 +309,9 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&directory);
+        validate_wasix_tools().expect("run explicit split WASIX tools smoke");
         let db = open_database(directory.clone())
-            .expect("start oliphaunt-wasix example database and run pg_dump smoke");
+            .expect("start oliphaunt-wasix example database after tools smoke");
         drop(db);
         let _ = std::fs::remove_dir_all(directory);
     }

@@ -69,6 +69,7 @@ const EXPECTED_TOUCHPOINTS = new Map([
   ['src/include/port/wasix-dl/sys/ipc.h', 'Provides the WASIX SysV IPC shim surface.'],
   ['src/include/port/wasix-dl/sys/shm.h', 'Provides the WASIX SysV shared-memory shim surface.'],
   ['src/include/storage/s_lock.h', 'Specializes spinlocks only for the enforced single-backend WASIX runtime.'],
+  ['src/bin/psql/startup.c', 'Keeps captured Oliphaunt psql invocations noninteractive despite WASIX virtual descriptor types.'],
   ['src/interfaces/libpq/fe-connect.c', 'Makes libpq socket nonblocking state explicit where WASIX socket creation ignores type flags.'],
   ['src/makefiles/Makefile.wasix-dl', 'Builds side modules and PGXS artifacts for WASIX dynamic linking.'],
   ['src/makefiles/pgxs.mk', 'Installs PGXS extension artifacts for WASIX packaging.'],
@@ -228,6 +229,16 @@ const REQUIRED_AUDIT_CHECKS = [
       'pg_set_noblock(conn->sock)',
     ],
     posture: 'WASIX uses PostgreSQL\'s existing fcntl fallback because Wasmer ignores socket type flags; native platforms retain upstream atomic socket creation.',
+  },
+  {
+    requirement: 'Captured Oliphaunt psql scripts remain noninteractive',
+    patches: ['0041-oliphaunt-wasix-honor-noninteractive-psql-invocations.patch'],
+    evidence: [
+      'OLIPHAUNT_PSQL_NONINTERACTIVE',
+      'strcmp(oliphaunt_noninteractive, "1") == 0',
+      '!isatty(fileno(stdin)) || !isatty(fileno(stdout))',
+    ],
+    posture: 'Only the private exact-value marker overrides virtual terminal detection; ordinary WASIX psql retains upstream isatty semantics.',
   },
 ];
 

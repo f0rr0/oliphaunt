@@ -7,6 +7,8 @@ import {
 } from './internal-common.js';
 import type { WasixToolWorkerRequest, WasixToolWorkerResponse } from './tool-worker-common.js';
 
+export { getWasixDatabaseIdentity } from './database.js';
+
 export type {
   WasixToolDescriptor,
   WasixToolProcessOptions,
@@ -28,21 +30,31 @@ function createBrowserToolWorker(): WasixToolWorkerPort {
     type: 'module',
     name: 'oliphaunt-wasix-tool',
   });
+  let messageListener: ((response: WasixToolWorkerResponse) => void) | undefined;
+  let fatalListener: ((error: Error) => void) | undefined;
+  let fatalDelivered = false;
+  worker.addEventListener('message', (event: MessageEvent<WasixToolWorkerResponse>) => {
+    messageListener?.(event.data);
+  });
+  worker.addEventListener('error', (event) => {
+    if (fatalDelivered) return;
+    fatalDelivered = true;
+    fatalListener?.(new Error(event.message || 'Oliphaunt WASIX tool worker crashed'));
+  });
+  worker.addEventListener('messageerror', () => {
+    if (fatalDelivered) return;
+    fatalDelivered = true;
+    fatalListener?.(new Error('Oliphaunt WASIX tool worker returned an unreadable response'));
+  });
   return {
-    postMessage: (request: WasixToolWorkerRequest, transfer: ArrayBuffer[]) =>
+    postMessage: (request: WasixToolWorkerRequest, transfer: ArrayBuffer[] = []) =>
       worker.postMessage(request, transfer),
-    response: () =>
-      new Promise<WasixToolWorkerResponse>((resolve, reject) => {
-        worker.addEventListener('message', (event: MessageEvent<WasixToolWorkerResponse>) =>
-          resolve(event.data),
-        );
-        worker.addEventListener('error', (event) =>
-          reject(new Error(event.message || 'Oliphaunt WASIX tool worker crashed')),
-        );
-        worker.addEventListener('messageerror', () =>
-          reject(new Error('Oliphaunt WASIX tool worker returned an unreadable response')),
-        );
-      }),
+    onMessage: (listener) => {
+      messageListener = listener;
+    },
+    onFatal: (listener) => {
+      fatalListener = listener;
+    },
     terminate: () => worker.terminate(),
   };
 }

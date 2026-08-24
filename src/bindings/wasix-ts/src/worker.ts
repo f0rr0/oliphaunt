@@ -11,6 +11,8 @@ const directHost: DirectWasixHost = {
   Directory: host.Directory,
   init: host.init,
   instantiateOliphauntDirect: host.instantiateOliphauntDirect,
+  prepareOliphauntTool: host.prepareOliphauntTool,
+  runOliphauntToolDirect: host.runOliphauntToolDirect,
 };
 // This package worker is the isolation boundary. Opening the direct session
 // here keeps PostgreSQL and synchronous OPFS handles in the same realm.

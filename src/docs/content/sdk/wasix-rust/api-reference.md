@@ -23,8 +23,9 @@ maps the Rust binding by task; it does not describe the separate
 
 The Rust WASIX binding owns its packaged PostgreSQL runtime assets and Rust host
 behavior. Native direct, broker, and server modes are documented in the native
-SDK sections. The TypeScript binding intentionally omits the Rust server and
-tool APIs but shares WASIX physical backup/restore.
+SDK sections. WASIX TypeScript exposes equivalent optional tools and a local
+server on socket-capable hosts through TypeScript-native package entry points;
+it shares the WASIX physical backup/restore contract without copying Rust APIs.
 
 All fallible methods return the crate-owned `Result<T>`. `Error` keeps runtime
 implementation details private, implements `std::error::Error`, and exposes

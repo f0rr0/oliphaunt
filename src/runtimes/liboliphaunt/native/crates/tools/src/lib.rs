@@ -1,5 +1,7 @@
 #![deny(unsafe_code)]
 
+mod arguments;
+
 use std::error::Error as StdError;
 use std::ffi::OsString;
 use std::fmt;
@@ -7,6 +9,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
+
+use arguments::{validate_pg_dump_arguments, validate_psql_arguments};
 
 /// Product id for the native PostgreSQL client tools artifact family.
 pub const PRODUCT: &str = "oliphaunt-tools";
@@ -131,13 +135,15 @@ pub fn pg_dump(
     options: PgDumpOptions,
 ) -> Result<String, PostgresToolError> {
     validate_connection_string("pg_dump", connection_string)?;
-    validate_args("pg_dump", &options.args, disallowed_pg_dump_flag)?;
+    validate_pg_dump_arguments(&options.args)
+        .map_err(|message| configuration_error("pg_dump", &message))?;
     let mut arguments = options
         .args
         .into_iter()
         .map(OsString::from)
         .collect::<Vec<_>>();
     arguments.push(OsString::from("--encoding=UTF8"));
+    arguments.push(OsString::from("--no-password"));
     arguments.push(OsString::from(format!("--dbname={connection_string}")));
     run_tool("pg_dump", arguments, None)
 }
@@ -145,35 +151,51 @@ pub fn pg_dump(
 /// Run packaged non-interactive `psql` against a PostgreSQL connection string.
 pub fn psql(connection_string: &str, options: PsqlOptions) -> Result<String, PostgresToolError> {
     validate_connection_string("psql", connection_string)?;
-    validate_args("psql", &options.args, disallowed_psql_flag)?;
+    validate_psql_arguments(&options.args)
+        .map_err(|message| configuration_error("psql", &message))?;
     if options.input.is_none() && options.args.is_empty() {
         return Err(configuration_error(
             "psql",
             "psql requires command(), script(), or a non-input argument",
         ));
     }
+    match options.input.as_ref() {
+        Some(PsqlInput::Command(command)) => validate_text("psql", "command", command)?,
+        Some(PsqlInput::Script(script)) => validate_text("psql", "script", script)?,
+        None => {}
+    }
+    let (arguments, stdin) = psql_invocation(connection_string, options);
+    run_tool("psql", arguments, stdin)
+}
+
+fn psql_invocation(
+    connection_string: &str,
+    options: PsqlOptions,
+) -> (Vec<OsString>, Option<Vec<u8>>) {
     let mut arguments = options
         .args
         .into_iter()
         .map(OsString::from)
         .collect::<Vec<_>>();
-    arguments.push(OsString::from("--no-psqlrc"));
-    arguments.push(OsString::from("--set=ON_ERROR_STOP=1"));
-    arguments.push(OsString::from(format!("--dbname={connection_string}")));
+    arguments.extend([
+        OsString::from("--no-psqlrc"),
+        OsString::from("--no-password"),
+        OsString::from("--set=ON_ERROR_STOP=1"),
+        OsString::from(format!("--dbname={connection_string}")),
+    ]);
     let stdin = match options.input {
         Some(PsqlInput::Command(command)) => {
-            validate_text("psql", "command", &command)?;
             arguments.push(OsString::from("--command"));
             arguments.push(OsString::from(command));
             None
         }
         Some(PsqlInput::Script(script)) => {
-            validate_text("psql", "script", &script)?;
+            arguments.push(OsString::from("--file=-"));
             Some(script.into_bytes())
         }
         None => None,
     };
-    run_tool("psql", arguments, stdin)
+    (arguments, stdin)
 }
 
 fn run_tool(
@@ -218,8 +240,6 @@ fn run_tool(
             stderr: String::new(),
             source: Some(source),
         })?;
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     let input_failure = input_writer.and_then(|writer| match writer.join() {
         Ok(Ok(())) => None,
         Ok(Err(error)) => Some(error),
@@ -229,8 +249,8 @@ fn run_tool(
         return Err(PostgresToolError {
             tool,
             exit_code: output.status.code(),
-            stdout,
-            stderr,
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
             source: None,
         });
     }
@@ -238,16 +258,20 @@ fn run_tool(
         return Err(PostgresToolError {
             tool,
             exit_code: output.status.code(),
-            stdout,
-            stderr,
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
             source: Some(source),
         });
     }
     String::from_utf8(output.stdout).map_err(|error| PostgresToolError {
         tool,
         exit_code: output.status.code(),
-        stdout,
-        stderr: format!("{stderr}{} produced non-UTF-8 output: {error}", tool),
+        stdout: String::from_utf8_lossy(error.as_bytes()).into_owned(),
+        stderr: format!(
+            "{}{} produced non-UTF-8 output: {error}",
+            String::from_utf8_lossy(&output.stderr),
+            tool
+        ),
         source: None,
     })
 }
@@ -335,99 +359,6 @@ fn validate_text(tool: &'static str, label: &str, value: &str) -> Result<(), Pos
     Ok(())
 }
 
-fn validate_args(
-    tool: &'static str,
-    arguments: &[String],
-    disallowed: fn(&str) -> Option<&'static str>,
-) -> Result<(), PostgresToolError> {
-    for argument in arguments {
-        validate_text(tool, "argument", argument)?;
-        if let Some(managed) = disallowed(argument) {
-            return Err(configuration_error(
-                tool,
-                &format!("argument {argument:?} conflicts with Oliphaunt-managed {managed}"),
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn disallowed_pg_dump_flag(argument: &str) -> Option<&'static str> {
-    disallowed_flag(
-        argument,
-        &[
-            ("--file", "output"),
-            ("--format", "plain format"),
-            ("--compress", "compression"),
-            ("--encoding", "UTF-8 encoding"),
-            ("--host", "connection"),
-            ("--port", "connection"),
-            ("--username", "connection"),
-            ("--dbname", "connection"),
-            ("--jobs", "job count"),
-        ],
-        &[
-            ("-f", "output"),
-            ("-F", "plain format"),
-            ("-Z", "compression"),
-            ("-E", "UTF-8 encoding"),
-            ("-h", "connection"),
-            ("-p", "connection"),
-            ("-U", "connection"),
-            ("-d", "connection"),
-            ("-j", "job count"),
-        ],
-    )
-}
-
-fn disallowed_psql_flag(argument: &str) -> Option<&'static str> {
-    disallowed_flag(
-        argument,
-        &[
-            ("--host", "connection"),
-            ("--port", "connection"),
-            ("--username", "connection"),
-            ("--dbname", "connection"),
-            ("--output", "stdout capture"),
-            ("--log-file", "stderr capture"),
-            ("--command", "input"),
-            ("--file", "input"),
-        ],
-        &[
-            ("-h", "connection"),
-            ("-p", "connection"),
-            ("-U", "connection"),
-            ("-d", "connection"),
-            ("-o", "stdout capture"),
-            ("-L", "stderr capture"),
-            ("-c", "input"),
-            ("-f", "input"),
-        ],
-    )
-}
-
-fn disallowed_flag(
-    argument: &str,
-    long: &[(&'static str, &'static str)],
-    short: &[(&'static str, &'static str)],
-) -> Option<&'static str> {
-    for (flag, label) in long {
-        if argument == *flag
-            || argument
-                .strip_prefix(*flag)
-                .is_some_and(|tail| tail.starts_with('='))
-        {
-            return Some(label);
-        }
-    }
-    for (flag, label) in short {
-        if argument == *flag || (argument.starts_with(*flag) && argument.len() > flag.len()) {
-            return Some(label);
-        }
-    }
-    None
-}
-
 fn configuration_error(tool: &'static str, message: &str) -> PostgresToolError {
     PostgresToolError {
         tool,
@@ -443,45 +374,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn shared_option_fixture_matches_native_validation() {
-        let fixture = include_str!("../../../../../../shared/fixtures/postgres/logical-tools.json");
-        for argument in fixture_arguments(fixture, "pgDump", "acceptedArgs") {
-            assert!(disallowed_pg_dump_flag(&argument).is_none());
-        }
-        for argument in fixture_arguments(fixture, "pgDump", "rejectedArgs") {
-            assert!(disallowed_pg_dump_flag(&argument).is_some());
-        }
-        for argument in fixture_arguments(fixture, "psql", "acceptedArgs") {
-            assert!(disallowed_psql_flag(&argument).is_none());
-        }
-        for argument in fixture_arguments(fixture, "psql", "rejectedArgs") {
-            assert!(disallowed_psql_flag(&argument).is_some());
-        }
-    }
+    fn psql_scripts_explicitly_read_standard_input() {
+        let (script, stdin) = psql_invocation(
+            "postgresql://localhost/postgres",
+            PsqlOptions::new().script("SELECT 1;"),
+        );
+        assert!(script.iter().any(|argument| argument == "--file=-"));
+        assert_eq!(stdin.as_deref(), Some(b"SELECT 1;".as_slice()));
 
-    fn fixture_arguments(fixture: &str, section: &str, field: &str) -> Vec<String> {
-        let section = fixture
-            .split_once(&format!("\"{section}\": {{"))
-            .expect("shared logical-tools fixture section")
-            .1;
-        let array = section
-            .split_once(&format!("\"{field}\": ["))
-            .expect("shared logical-tools fixture argument array")
-            .1
-            .split_once(']')
-            .expect("shared logical-tools fixture argument array terminator")
-            .0;
-        array
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(|line| {
-                line.trim_end_matches(',')
-                    .strip_prefix('"')
-                    .and_then(|line| line.strip_suffix('"'))
-                    .expect("shared logical-tools arguments must be JSON strings")
-                    .to_owned()
-            })
-            .collect()
+        let (command, stdin) = psql_invocation(
+            "postgresql://localhost/postgres",
+            PsqlOptions::new().command("SELECT 1"),
+        );
+        assert!(!command.iter().any(|argument| argument == "--file=-"));
+        assert!(
+            command
+                .windows(2)
+                .any(|arguments| arguments == ["--command", "SELECT 1"])
+        );
+        assert!(stdin.is_none());
     }
 }

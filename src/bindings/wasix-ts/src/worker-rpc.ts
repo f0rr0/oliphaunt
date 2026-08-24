@@ -1,5 +1,7 @@
 import {
   WasixDatabaseImpl,
+  normalizeWasixDatabaseIdentity,
+  type WasixDatabaseIdentity,
   type WasixDatabaseSession,
   type WasixPersistenceMode,
   type WasixProtocolConnectionMode,
@@ -9,6 +11,9 @@ import { deserializeWorkerError } from './rpc.js';
 import type { WasixStorageSyncBoundary } from './storage-provider.js';
 import type { OliphauntDatabase } from './types.js';
 import type { WasixProtocolConnection } from './pgwire-connection.js';
+import type { WasixPgDumpProcessOptions, WasixToolProcessResult } from './tool-runtime.js';
+
+type WorkerResponseValue = Uint8Array | WasixToolProcessResult | undefined;
 
 const STREAM_ACK = 0;
 const STREAM_FAILED = 1;
@@ -32,7 +37,7 @@ export class WorkerRpc {
   readonly #pending = new Map<
     number,
     {
-      resolve: (value: Uint8Array | undefined) => void;
+      resolve: (value: WorkerResponseValue) => void;
       reject: (error: Error) => void;
       onChunk?: (chunk: Uint8Array) => void;
       control?: Int32Array;
@@ -83,7 +88,7 @@ export class WorkerRpc {
   request(
     request: WorkerRequestWithoutId,
     transfer: Transferable[] = [],
-  ): Promise<Uint8Array | undefined> {
+  ): Promise<WorkerResponseValue> {
     if (this.#fatal !== undefined) {
       return Promise.reject(this.#fatal);
     }
@@ -174,7 +179,7 @@ export async function openWorkerDatabase(
   const rpc = new WorkerRpc(worker);
   try {
     await rpc.request({ method: 'open', options }, transfer);
-    return new WasixDatabaseImpl(new WorkerDatabaseSession(rpc));
+    return new WasixDatabaseImpl(new WorkerDatabaseSession(rpc, options));
   } catch (error) {
     await rpc.terminate().catch(() => undefined);
     throw error;
@@ -183,10 +188,12 @@ export async function openWorkerDatabase(
 
 class WorkerDatabaseSession implements WasixDatabaseSession {
   readonly isolated = true;
+  readonly identity: WasixDatabaseIdentity;
   readonly #rpc: WorkerRpc;
 
-  constructor(rpc: WorkerRpc) {
+  constructor(rpc: WorkerRpc, options: SerializedOpenOptions) {
     this.#rpc = rpc;
+    this.identity = normalizeWasixDatabaseIdentity(options.username, options.database);
   }
 
   async exec(input: Uint8Array, persistence: WasixPersistenceMode = 'sync'): Promise<Uint8Array> {
@@ -215,6 +222,18 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
     const response = await this.#rpc.request({ method: 'backup' });
     if (!(response instanceof Uint8Array)) {
       throw new Error('Oliphaunt WASIX worker returned an invalid physical archive');
+    }
+    return response;
+  }
+
+  async runPgDump(options: WasixPgDumpProcessOptions): Promise<WasixToolProcessResult> {
+    const response = await this.#rpc.request({
+      method: 'runPgDump',
+      tool: options.tool,
+      args: [...options.args],
+    });
+    if (!isWasixToolProcessResult(response)) {
+      throw new Error('Oliphaunt WASIX worker returned an invalid pg_dump result');
     }
     return response;
   }
@@ -252,4 +271,15 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
       throw requestFailure;
     }
   }
+}
+
+function isWasixToolProcessResult(value: WorkerResponseValue): value is WasixToolProcessResult {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !(value instanceof Uint8Array) &&
+    Number.isSafeInteger(value.exitCode) &&
+    value.stdout instanceof Uint8Array &&
+    value.stderr instanceof Uint8Array
+  );
 }

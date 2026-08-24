@@ -23,6 +23,13 @@ test('native npm tools accept every shared ordinary argument before process star
       argument,
     );
   }
+  for (const args of fixture.pgDump.acceptedArgv) {
+    await assert.rejects(
+      pgDump('postgresql://postgres@127.0.0.1:1/postgres', { args }),
+      (error) => error instanceof PostgresToolError && error.tool === 'pg_dump',
+      args.join(' '),
+    );
+  }
   for (const argument of fixture.psql.acceptedArgs) {
     await assert.rejects(
       psql('postgresql://postgres@127.0.0.1:1/postgres', {
@@ -33,6 +40,16 @@ test('native npm tools accept every shared ordinary argument before process star
       argument,
     );
   }
+  for (const args of fixture.psql.acceptedArgv) {
+    await assert.rejects(
+      psql('postgresql://postgres@127.0.0.1:1/postgres', {
+        args,
+        command: 'SELECT 1',
+      }),
+      (error) => error instanceof PostgresToolError && error.tool === 'psql',
+      args.join(' '),
+    );
+  }
 });
 
 test('native npm tools reject every shared managed pg_dump argument', async () => {
@@ -41,6 +58,13 @@ test('native npm tools reject every shared managed pg_dump argument', async () =
       pgDump('postgresql://postgres@127.0.0.1/postgres', { args: [argument] }),
       /conflicts with Oliphaunt's managed/u,
       argument,
+    );
+  }
+  for (const args of fixture.pgDump.rejectedArgv) {
+    await assert.rejects(
+      pgDump('postgresql://postgres@127.0.0.1/postgres', { args }),
+      /conflicts with Oliphaunt's managed|requires a value/u,
+      args.join(' '),
     );
   }
 });
@@ -54,6 +78,16 @@ test('native npm tools reject every shared managed psql argument', async () => {
       }),
       /conflicts with Oliphaunt's managed/u,
       argument,
+    );
+  }
+  for (const args of fixture.psql.rejectedArgv) {
+    await assert.rejects(
+      psql('postgresql://postgres@127.0.0.1/postgres', {
+        args,
+        command: 'SELECT 1',
+      }),
+      /conflicts with Oliphaunt's managed|requires a value/u,
+      args.join(' '),
     );
   }
 });

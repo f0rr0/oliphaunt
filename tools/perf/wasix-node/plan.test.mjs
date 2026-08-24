@@ -37,7 +37,7 @@ test('the checked-in plan pins identities, generated SQL, and the comfortable-wi
   assert.deepEqual(summary.engines.candidate.hostBuild, {
     wasmerJsCommit: '93b8b738ebd3ee57e118da0f0eb795b97d5b999e',
     wasmerWasixVersion: '0.601.0',
-    inputsSha256: 'b7df7f675e0aa06409ee895c6994263b8673155745d8a291c61c2171156fb503',
+    inputsSha256: '722f44d6a53742aef649e0d9cf6ead004482f36344e6cf95c6a0b701bdb4f533',
     guestConcurrency: 'denied-for-oliphaunt-single-backend',
     optimization: {
       cargoProfile: 'release',

@@ -29,6 +29,39 @@ use crate::oliphaunt::base::{install_optional_icu_data, unpack_runtime_archive_r
 use crate::oliphaunt::sync_host_fs::SyncHostFileSystem;
 use crate::oliphaunt::{aot, assets};
 
+const PG_DUMP_SHORT_OPTIONS: &str = "abBcCd:e:E:f:F:h:j:n:N:Op:RsS:t:T:U:vwWxXZ:";
+const PSQL_SHORT_OPTIONS: &str = "aAbc:d:eEf:F:h:HlL:no:p:P:qR:sStT:U:v:VwWxXz?01";
+const PG_DUMP_VALUE_OPTIONS: &[&str] = &[
+    "--extension",
+    "--schema",
+    "--exclude-schema",
+    "--superuser",
+    "--table",
+    "--exclude-table",
+    "--exclude-table-data",
+    "--extra-float-digits",
+    "--lock-wait-timeout",
+    "--role",
+    "--section",
+    "--snapshot",
+    "--rows-per-insert",
+    "--include-foreign-data",
+    "--table-and-children",
+    "--exclude-table-and-children",
+    "--exclude-table-data-and-children",
+    "--sync-method",
+    "--exclude-extension",
+    "--restrict-key",
+];
+const PSQL_VALUE_OPTIONS: &[&str] = &[
+    "--field-separator",
+    "--pset",
+    "--record-separator",
+    "--table-attr",
+    "--set",
+    "--variable",
+];
+
 /// Options for the bundled WASIX `pg_dump` runner.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PgDumpOptions {
@@ -56,6 +89,10 @@ impl fmt::Display for DirectToolOutcomeUnknown {
 }
 
 impl StdError for DirectToolOutcomeUnknown {}
+
+pub(crate) fn is_direct_tool_outcome_unknown(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<DirectToolOutcomeUnknown>().is_some()
+}
 
 impl PostgresToolError {
     pub fn tool(&self) -> &'static str {
@@ -123,14 +160,13 @@ impl PgDumpOptions {
     }
 
     pub(crate) fn validate(&self) -> Result<()> {
-        for arg in &self.args {
-            anyhow::ensure!(
-                !arg.contains('\0'),
-                "pg_dump argument must not contain NUL bytes"
-            );
-            validate_passthrough_arg(arg)?;
-        }
-        Ok(())
+        validate_tool_args(
+            "pg_dump",
+            &self.args,
+            disallowed_pg_dump_flag,
+            PG_DUMP_SHORT_OPTIONS,
+            PG_DUMP_VALUE_OPTIONS,
+        )
     }
 }
 
@@ -181,13 +217,13 @@ impl PsqlOptions {
             !self.args.is_empty() || self.input.is_some(),
             "psql runner requires non-interactive input; use PsqlOptions::command, PsqlOptions::script, or pass a non-input psql argument"
         );
-        for arg in &self.args {
-            anyhow::ensure!(
-                !arg.contains('\0'),
-                "psql argument must not contain NUL bytes"
-            );
-            validate_psql_passthrough_arg(arg)?;
-        }
+        validate_tool_args(
+            "psql",
+            &self.args,
+            disallowed_psql_flag,
+            PSQL_SHORT_OPTIONS,
+            PSQL_VALUE_OPTIONS,
+        )?;
         if let Some(input) = &self.input {
             let (name, value) = match input {
                 PsqlInput::Command(value) => ("command", value),
@@ -202,15 +238,68 @@ impl PsqlOptions {
     }
 }
 
-fn validate_passthrough_arg(arg: &str) -> Result<()> {
-    if let Some(flag) = disallowed_pg_dump_flag(arg) {
-        anyhow::bail!("pg_dump argument '{arg}' conflicts with oliphaunt-wasix's managed {flag}");
+fn validate_tool_args(
+    tool: &'static str,
+    arguments: &[String],
+    disallowed: fn(&str) -> Option<&'static str>,
+    short_options: &str,
+    value_options: &[&str],
+) -> Result<()> {
+    let mut expects_value = false;
+    for argument in arguments {
+        anyhow::ensure!(
+            !argument.contains('\0'),
+            "{tool} argument must not contain NUL bytes"
+        );
+        if expects_value {
+            expects_value = false;
+            continue;
+        }
+        if let Some(flag) = disallowed(argument) {
+            bail!("{tool} argument '{argument}' conflicts with oliphaunt-wasix's managed {flag}");
+        }
+        anyhow::ensure!(
+            argument != "-" && argument.starts_with('-'),
+            "{tool} argument '{argument}' conflicts with oliphaunt-wasix's managed database or username"
+        );
+        expects_value = option_consumes_next(argument, short_options, value_options);
+    }
+    if expects_value {
+        bail!(
+            "{tool} argument '{}' requires a value",
+            arguments.last().expect("a pending option has an argument")
+        );
     }
     Ok(())
 }
 
+fn option_consumes_next(argument: &str, short_options: &str, value_options: &[&str]) -> bool {
+    if argument.starts_with("--") {
+        return !argument.contains('=')
+            && value_options
+                .iter()
+                .any(|option| option.starts_with(argument));
+    }
+    let bytes = argument.as_bytes();
+    let option_spec = short_options.as_bytes();
+    for (index, option) in bytes[1..].iter().enumerate() {
+        let Some(position) = option_spec.iter().position(|candidate| candidate == option) else {
+            return false;
+        };
+        if option_spec.get(position + 1) == Some(&b':') {
+            return index + 2 == bytes.len();
+        }
+    }
+    false
+}
+
 fn disallowed_pg_dump_flag(arg: &str) -> Option<&'static str> {
+    if arg == "--" {
+        return Some("option terminator");
+    }
     const LONG_FLAGS: &[(&str, &str)] = &[
+        ("--password", "password prompting"),
+        ("--filter", "input file"),
         ("--file", "output file"),
         ("--format", "output format"),
         ("--compress", "output compression"),
@@ -221,17 +310,8 @@ fn disallowed_pg_dump_flag(arg: &str) -> Option<&'static str> {
         ("--dbname", "database"),
         ("--jobs", "job count"),
     ];
-    for (flag, label) in LONG_FLAGS {
-        if arg == *flag
-            || arg
-                .strip_prefix(*flag)
-                .is_some_and(|tail| tail.starts_with('='))
-        {
-            return Some(label);
-        }
-    }
-
     const SHORT_FLAGS: &[(&str, &str)] = &[
+        ("-W", "password prompting"),
         ("-f", "output file"),
         ("-F", "output format"),
         ("-Z", "output compression"),
@@ -242,23 +322,16 @@ fn disallowed_pg_dump_flag(arg: &str) -> Option<&'static str> {
         ("-d", "database"),
         ("-j", "job count"),
     ];
-    for (flag, label) in SHORT_FLAGS {
-        if arg == *flag || (arg.starts_with(*flag) && arg.len() > flag.len()) {
-            return Some(label);
-        }
-    }
-    None
-}
-
-fn validate_psql_passthrough_arg(arg: &str) -> Result<()> {
-    if let Some(flag) = disallowed_psql_flag(arg) {
-        anyhow::bail!("psql argument '{arg}' conflicts with oliphaunt-wasix's managed {flag}");
-    }
-    Ok(())
+    disallowed_flag(arg, LONG_FLAGS, SHORT_FLAGS, PG_DUMP_SHORT_OPTIONS)
 }
 
 fn disallowed_psql_flag(arg: &str) -> Option<&'static str> {
+    if arg == "--" {
+        return Some("option terminator");
+    }
     const LONG_FLAGS: &[(&str, &str)] = &[
+        ("--password", "password prompting"),
+        ("--single-step", "interactive prompting"),
         ("--host", "host"),
         ("--port", "port"),
         ("--username", "username"),
@@ -268,17 +341,9 @@ fn disallowed_psql_flag(arg: &str) -> Option<&'static str> {
         ("--command", "input"),
         ("--file", "input"),
     ];
-    for (flag, label) in LONG_FLAGS {
-        if arg == *flag
-            || arg
-                .strip_prefix(*flag)
-                .is_some_and(|tail| tail.starts_with('='))
-        {
-            return Some(label);
-        }
-    }
-
     const SHORT_FLAGS: &[(&str, &str)] = &[
+        ("-W", "password prompting"),
+        ("-s", "interactive prompting"),
         ("-h", "host"),
         ("-p", "port"),
         ("-U", "username"),
@@ -288,9 +353,41 @@ fn disallowed_psql_flag(arg: &str) -> Option<&'static str> {
         ("-c", "input"),
         ("-f", "input"),
     ];
-    for (flag, label) in SHORT_FLAGS {
-        if arg == *flag || (arg.starts_with(*flag) && arg.len() > flag.len()) {
+    disallowed_flag(arg, LONG_FLAGS, SHORT_FLAGS, PSQL_SHORT_OPTIONS)
+}
+
+fn disallowed_flag(
+    argument: &str,
+    long: &[(&'static str, &'static str)],
+    short: &[(&'static str, &'static str)],
+    short_options: &str,
+) -> Option<&'static str> {
+    let long_name = argument.split_once('=').map_or(argument, |(name, _)| name);
+    for (flag, label) in long {
+        // Native getopt_long accepts unique prefixes while PostgreSQL's
+        // bundled fallback requires exact names. Reject either spelling
+        // consistently so a managed option cannot become host-dependent.
+        if long_name.len() > 2 && long_name.starts_with("--") && flag.starts_with(long_name) {
             return Some(label);
+        }
+    }
+    let bytes = argument.as_bytes();
+    if bytes.len() < 2 || bytes[0] != b'-' || bytes[1] == b'-' {
+        return None;
+    }
+    let option_spec = short_options.as_bytes();
+    for option in &bytes[1..] {
+        let position = option_spec
+            .iter()
+            .position(|candidate| candidate == option)?;
+        if let Some((_, label)) = short
+            .iter()
+            .find(|(flag, _)| flag.as_bytes() == [b'-', *option])
+        {
+            return Some(label);
+        }
+        if option_spec.get(position + 1) == Some(&b':') {
+            return None;
         }
     }
     None
@@ -396,6 +493,9 @@ where
         ])
         .with_stdout(Box::new(CaptureFile::new(Arc::clone(&stdout))))
         .with_stderr(Box::new(CaptureFile::new(Arc::clone(&stderr))));
+    if name == "psql" {
+        runner.with_envs([("OLIPHAUNT_PSQL_NONINTERACTIVE", "1")]);
+    }
     match stdin {
         Some(input) => runner.with_stdin(Box::new(virtual_fs::StaticFile::new(input))),
         None => runner.with_stdin(Box::<virtual_fs::null_file::NullFile>::default()),
@@ -427,8 +527,8 @@ where
         }));
     }
 
-    let stdout = stdout.lock().expect("stdout capture poisoned").clone();
-    let stderr = stderr.lock().expect("stderr capture poisoned").clone();
+    let stdout = std::mem::take(&mut *stdout.lock().expect("stdout capture poisoned"));
+    let stderr = std::mem::take(&mut *stderr.lock().expect("stderr capture poisoned"));
     Ok(ToolOutput { stdout, stderr })
 }
 
@@ -446,14 +546,12 @@ where
     let mut args = options.args.clone();
     args.extend([
         "--encoding=UTF8".to_owned(),
-        "-U".to_owned(),
-        username.to_owned(),
-        "-h".to_owned(),
-        addr.ip().to_string(),
-        "-p".to_owned(),
-        addr.port().to_string(),
+        "--no-password".to_owned(),
+        format!("--username={username}"),
+        format!("--host={}", addr.ip()),
+        format!("--port={}", addr.port()),
+        format!("--dbname={database}"),
     ]);
-    args.push(database.to_owned());
     let output = run_wasix_client_tool(ToolInvocation {
         name: "pg_dump",
         wasm: pg_dump_wasm_asset()?,
@@ -481,23 +579,7 @@ where
         Some(PsqlInput::Script(script)) => Some(script.as_bytes().to_vec()),
         _ => None,
     };
-    let mut args = options.args.clone();
-    args.extend([
-        "-X".to_owned(),
-        "-v".to_owned(),
-        "ON_ERROR_STOP=1".to_owned(),
-        "-U".to_owned(),
-        username.to_owned(),
-        "-h".to_owned(),
-        addr.ip().to_string(),
-        "-p".to_owned(),
-        addr.port().to_string(),
-        "-d".to_owned(),
-        database.to_owned(),
-    ]);
-    if let Some(PsqlInput::Command(command)) = &options.input {
-        args.extend(["-c".to_owned(), command.clone()]);
-    }
+    let args = psql_args(addr, username, database, options);
     let output = run_wasix_client_tool(ToolInvocation {
         name: "psql",
         wasm: psql_wasm_asset()?,
@@ -508,6 +590,32 @@ where
         args,
     })?;
     decode_tool_output("psql", output)
+}
+
+fn psql_args(
+    addr: SocketAddr,
+    username: &str,
+    database: &str,
+    options: &PsqlOptions,
+) -> Vec<String> {
+    let mut args = options.args.clone();
+    args.extend([
+        "--no-psqlrc".to_owned(),
+        "--no-password".to_owned(),
+        "--set=ON_ERROR_STOP=1".to_owned(),
+        format!("--username={username}"),
+        format!("--host={}", addr.ip()),
+        format!("--port={}", addr.port()),
+        format!("--dbname={database}"),
+    ]);
+    match &options.input {
+        Some(PsqlInput::Command(command)) => {
+            args.extend(["--command".to_owned(), command.clone()]);
+        }
+        Some(PsqlInput::Script(_)) => args.push("--file=-".to_owned()),
+        None => {}
+    }
+    args
 }
 
 fn decode_tool_output(tool: &'static str, output: ToolOutput) -> Result<String> {
@@ -585,19 +693,42 @@ where
     let runner = thread::spawn(move || run(DirectToolNetworking::new(socket_tx)));
     let accepted = receive_direct_tool_socket(&socket_rx, &runner)
         .context("accept direct WASIX tool protocol connection");
+    let connection_started = accepted.is_ok();
     drop(socket_rx);
     let serve_result = accepted.and_then(serve);
-    let run_result = runner
-        .join()
-        .map_err(|_| anyhow!("direct WASIX tool runner thread panicked"))?;
+    let run_result = match runner.join() {
+        Ok(result) => result,
+        Err(_) => Err(anyhow!("direct WASIX tool runner thread panicked")),
+    };
+    finish_direct_tool(connection_started, serve_result, run_result)
+}
+
+fn finish_direct_tool(
+    connection_started: bool,
+    serve_result: Result<()>,
+    run_result: Result<String>,
+) -> Result<String> {
     match (serve_result, run_result) {
         (Ok(()), Ok(output)) => Ok(output),
-        (Err(error), Ok(_)) => Err(error.context(DirectToolOutcomeUnknown)),
+        (Err(error), Ok(_)) if connection_started => Err(error.context(DirectToolOutcomeUnknown)),
+        (Err(_), Ok(output)) => Ok(output),
+        (Ok(()), Err(error)) if connection_started && !is_completed_postgres_tool_exit(&error) => {
+            Err(error.context(DirectToolOutcomeUnknown))
+        }
         (Ok(()), Err(error)) => Err(error),
-        (Err(error), Err(tool_error)) => Err(error
+        (Err(error), Err(tool_error)) if connection_started => Err(error
             .context(format!("WASIX tool also failed: {tool_error:#}"))
             .context(DirectToolOutcomeUnknown)),
+        (Err(error), Err(tool_error)) => {
+            Err(error.context(format!("WASIX tool also failed: {tool_error:#}")))
+        }
     }
+}
+
+fn is_completed_postgres_tool_exit(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<PostgresToolError>()
+        .is_some_and(|error| error.exit_code.is_some())
 }
 
 const DIRECT_TOOL_PORT: u16 = 65_432;
@@ -943,11 +1074,23 @@ mod tests {
                 .validate()
                 .expect("shared pg_dump argument must be accepted");
         }
+        for arguments in fixture["pgDump"]["acceptedArgv"].as_array().unwrap() {
+            PgDumpOptions::new()
+                .args(fixture_argv(arguments))
+                .validate()
+                .expect("shared pg_dump argv must be accepted");
+        }
         for argument in fixture["pgDump"]["rejectedArgs"].as_array().unwrap() {
             PgDumpOptions::new()
                 .arg(argument.as_str().unwrap())
                 .validate()
                 .expect_err("shared pg_dump argument must be rejected");
+        }
+        for arguments in fixture["pgDump"]["rejectedArgv"].as_array().unwrap() {
+            PgDumpOptions::new()
+                .args(fixture_argv(arguments))
+                .validate()
+                .expect_err("shared pg_dump argv must be rejected");
         }
         for argument in fixture["psql"]["acceptedArgs"].as_array().unwrap() {
             PsqlOptions::new()
@@ -956,6 +1099,13 @@ mod tests {
                 .validate()
                 .expect("shared psql argument must be accepted");
         }
+        for arguments in fixture["psql"]["acceptedArgv"].as_array().unwrap() {
+            PsqlOptions::new()
+                .command("SELECT 1")
+                .args(fixture_argv(arguments))
+                .validate()
+                .expect("shared psql argv must be accepted");
+        }
         for argument in fixture["psql"]["rejectedArgs"].as_array().unwrap() {
             PsqlOptions::new()
                 .command("SELECT 1")
@@ -963,14 +1113,47 @@ mod tests {
                 .validate()
                 .expect_err("shared psql argument must be rejected");
         }
+        for arguments in fixture["psql"]["rejectedArgv"].as_array().unwrap() {
+            PsqlOptions::new()
+                .command("SELECT 1")
+                .args(fixture_argv(arguments))
+                .validate()
+                .expect_err("shared psql argv must be rejected");
+        }
+    }
+
+    fn fixture_argv(arguments: &serde_json::Value) -> Vec<&str> {
+        arguments
+            .as_array()
+            .expect("shared logical-tools argv must be arrays")
+            .iter()
+            .map(|argument| {
+                argument
+                    .as_str()
+                    .expect("shared logical-tools argv must contain strings")
+            })
+            .collect()
     }
 
     #[test]
     fn psql_is_non_interactive_and_inputs_reject_nul() {
-        PsqlOptions::new()
+        let script = PsqlOptions::new()
             .script("\\restrict token\nSELECT 1;\n\\unrestrict token\n")
-            .validate()
-            .unwrap();
+            .arg("--echo-errors");
+        script.validate().unwrap();
+        let script_args = psql_args(DIRECT_TOOL_ADDR, "user", "database", &script);
+        assert!(script_args.iter().any(|arg| arg == "--file=-"));
+        assert!(script_args.iter().any(|arg| arg == "--echo-errors"));
+
+        let command = PsqlOptions::new().command("SELECT 1");
+        let command_args = psql_args(DIRECT_TOOL_ADDR, "user", "database", &command);
+        assert!(!command_args.iter().any(|arg| arg == "--file=-"));
+        assert!(
+            command_args
+                .windows(2)
+                .any(|args| args == ["--command", "SELECT 1"])
+        );
+
         let error = PsqlOptions::new()
             .validate()
             .expect_err("psql without input or args must be rejected");
@@ -980,6 +1163,81 @@ mod tests {
             .validate()
             .expect_err("NUL-bearing psql input must be rejected");
         assert!(error.to_string().contains("must not contain NUL bytes"));
+    }
+
+    #[test]
+    fn failure_before_direct_tool_connection_has_known_outcome() {
+        let error = run_direct_tool(
+            |_| Err(anyhow!("tool failed before opening its virtual connection")),
+            |_| panic!("a pre-connection failure must not enter the database protocol server"),
+        )
+        .expect_err("the tool runner must report its pre-connection failure");
+
+        // This is the exact predicate used by the database client to decide
+        // whether a failed tool run poisons the handle.
+        assert!(!is_direct_tool_outcome_unknown(&error));
+        assert!(format!("{error:#}").contains("tool failed before opening its virtual connection"));
+    }
+
+    #[test]
+    fn successful_direct_tool_without_connection_returns_output() {
+        let output = run_direct_tool(
+            |_| Ok("pg_dump (PostgreSQL) 18.4\n".to_owned()),
+            |_| panic!("a successful pre-connection tool must not enter the protocol server"),
+        )
+        .expect("version-style tool invocations must succeed without opening a connection");
+
+        assert_eq!(output, "pg_dump (PostgreSQL) 18.4\n");
+    }
+
+    #[test]
+    fn runner_panic_is_unknown_only_after_direct_tool_connection() {
+        let before_connection = run_direct_tool(
+            |_| panic!("tool runner panicked before opening its virtual connection"),
+            |_| panic!("a pre-connection panic must not enter the database protocol server"),
+        )
+        .expect_err("the tool runner panic must become an ordinary error");
+        assert!(!is_direct_tool_outcome_unknown(&before_connection));
+        assert!(
+            before_connection
+                .to_string()
+                .contains("runner thread panicked")
+        );
+
+        let after_connection = finish_direct_tool(
+            true,
+            Ok(()),
+            Err(anyhow!("direct WASIX tool runner thread panicked")),
+        )
+        .expect_err("a connected tool runner panic must have an unknown outcome");
+        assert!(is_direct_tool_outcome_unknown(&after_connection));
+
+        let broken_connection = finish_direct_tool(
+            true,
+            Err(anyhow!("virtual protocol connection failed")),
+            Ok(String::new()),
+        )
+        .expect_err("a broken accepted connection must have an unknown outcome");
+        assert!(is_direct_tool_outcome_unknown(&broken_connection));
+
+        let ordinary_tool_failure =
+            finish_direct_tool(true, Ok(()), Err(postgres_tool_failure(Some(1))))
+                .expect_err("a normal tool failure remains an error");
+        assert!(!is_direct_tool_outcome_unknown(&ordinary_tool_failure));
+
+        let runtime_failure = finish_direct_tool(true, Ok(()), Err(postgres_tool_failure(None)))
+            .expect_err("an internal WASIX tool failure has an unknown outcome after connect");
+        assert!(is_direct_tool_outcome_unknown(&runtime_failure));
+    }
+
+    fn postgres_tool_failure(exit_code: Option<i32>) -> anyhow::Error {
+        anyhow::Error::new(PostgresToolError {
+            tool: "psql",
+            exit_code,
+            stdout: String::new(),
+            stderr: "tool failed".to_owned(),
+            cause: anyhow!("WASIX tool process failed"),
+        })
     }
 
     #[cfg(feature = "extension-pgtap")]

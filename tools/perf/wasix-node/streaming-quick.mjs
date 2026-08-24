@@ -475,7 +475,7 @@ async function requireInputs() {
   const required = [
     'src/bindings/wasix-ts/lib/index.node.js',
     'src/bindings/wasix-ts/lib/host/index.mjs',
-    'src/bindings/wasix-tools/lib/index.js',
+    'src/bindings/wasix-ts/tools-package/lib/index.js',
     'target/oliphaunt-wasix/assets/manifest.json',
     'target/oliphaunt-wasix/assets/bin/pg_dump.wasix.wasm',
     'target/oliphaunt-wasix/assets/bin/psql.wasix.wasm',
@@ -485,7 +485,7 @@ async function requireInputs() {
   } catch (cause) {
     throw new Error(
       'quick WASIX streaming benchmark needs staged TypeScript packages and portable runtime assets; ' +
-        'run `moon run oliphaunt-wasix-tools-ts:package liboliphaunt-wasix:runtime-portable` first',
+        'run `moon run oliphaunt-wasix-ts:tools-package liboliphaunt-wasix:runtime-portable` first',
       { cause },
     );
   }

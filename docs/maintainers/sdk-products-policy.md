@@ -28,9 +28,9 @@ not source-text assertions, prove runtime delegation and consumer behavior.
 - `src/bindings/wasix-rust/crates/oliphaunt-wasix/`: Rust SDK over the portable
   and host-AOT `liboliphaunt-wasix` runtime products.
 - `src/bindings/wasix-ts/`: TypeScript SDK over the portable WASIX carrier for
-  browser, Node.js, Bun, and Deno direct or Worker placement.
-- `src/bindings/wasix-tools/`: optional TypeScript facade for direct
-  `pg_dump` and non-interactive `psql` against worker-backed WASIX database
+  browser, Node.js, Bun, and Deno direct or Worker placement. Its
+  `tools-package/` owns the optional TypeScript facade for `pg_dump` against
+  direct or worker database handles and non-interactive `psql` against worker
   handles; the executable modules are a separate `liboliphaunt-wasix` carrier.
 - `src/sdks/swift/`: Swift package with an actor-first `Oliphaunt` API and a
   native-direct C ABI product boundary over `liboliphaunt`; it can materialize
@@ -70,7 +70,7 @@ Validation is package-native:
 moon run oliphaunt-rust:check
 moon run oliphaunt-wasix-rust:check
 moon run oliphaunt-wasix-ts:check
-moon run oliphaunt-wasix-tools-ts:check
+moon run oliphaunt-wasix-ts:tools-check
 moon run oliphaunt-swift:check
 moon run oliphaunt-kotlin:check
 moon run oliphaunt-react-native:check

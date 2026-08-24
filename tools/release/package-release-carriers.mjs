@@ -940,10 +940,31 @@ function stageLiboliphauntNpmPayloads(version) {
   return stages;
 }
 
-function stageLiboliphauntToolsNpmPayloads(version) {
-  const assetDir = path.join(ROOT, "target/liboliphaunt/release-assets");
+function selectedLiboliphauntToolsNpmPackageTargets(version, targetIds) {
+  const targets = liboliphauntToolsNpmPackageTargets(version);
+  if (targetIds === undefined) return targets;
+  const selected = new Set(targetIds);
+  const filtered = targets.filter(([, , target]) => selected.has(target.target));
+  const actual = new Set(filtered.map(([, , target]) => target.target));
+  const missing = [...selected].filter((target) => !actual.has(target)).sort(compareText);
+  if (missing.length > 0) {
+    fail(`unknown native tools npm target(s): ${missing.join(", ")}`);
+  }
+  return filtered;
+}
+
+function stageLiboliphauntToolsNpmPayloads(
+  version,
+  {
+    assetDir = path.join(ROOT, "target/liboliphaunt/release-assets"),
+    targetIds,
+  } = {},
+) {
   const stages = new Map();
-  for (const [packageName, packageDir, target] of liboliphauntToolsNpmPackageTargets(version)) {
+  for (const [packageName, packageDir, target] of selectedLiboliphauntToolsNpmPackageTargets(
+    version,
+    targetIds,
+  )) {
     const stage = stageNpmPackageDescriptor(packageName, packageDir, version, { target: target.target });
     stageReleaseNotices(stage, { profile: "native-tools" });
     const archive = path.join(assetDir, target.asset.replaceAll("{version}", version));
@@ -1074,7 +1095,6 @@ function validatePackedIcuPackage(packageName, version, tarball, sourceArchive) 
 export function liboliphauntNpmTarballs(version) {
   const packages = [];
   const runtimeStages = stageLiboliphauntNpmPayloads(version);
-  const toolsStages = stageLiboliphauntToolsNpmPayloads(version);
   for (const [packageName, , target] of liboliphauntRuntimeNpmPackageTargets(version)) {
     const payload = runtimeStages.get(packageName);
     const libraryRelativePath = target.libraryRelativePath ?? target.library_relative_path;
@@ -1101,7 +1121,26 @@ export function liboliphauntNpmTarballs(version) {
     assertReleaseNoticesInArchive(tarball, { profile: "native-runtime", prefix: "package" });
     packages.push([packageName, tarball]);
   }
-  for (const [packageName, , target] of liboliphauntToolsNpmPackageTargets(version)) {
+  packages.push(...liboliphauntToolsNpmTarballs(version));
+  const icuStage = stageLiboliphauntIcuNpmPayload(version);
+  const icuTarball = pnpmPackForNpmPublish(icuStage);
+  validatePackedIcuPackage(
+    LIBOLIPHAUNT_ICU_PACKAGE_NAME,
+    version,
+    icuTarball,
+    path.join(ROOT, "target/liboliphaunt/release-assets", `liboliphaunt-${version}-icu-data.tar.gz`),
+  );
+  packages.push([LIBOLIPHAUNT_ICU_PACKAGE_NAME, icuTarball]);
+  return packages;
+}
+
+export function liboliphauntToolsNpmTarballs(version, options = {}) {
+  const packages = [];
+  const toolsStages = stageLiboliphauntToolsNpmPayloads(version, options);
+  for (const [packageName, , target] of selectedLiboliphauntToolsNpmPackageTargets(
+    version,
+    options.targetIds,
+  )) {
     const payload = toolsStages.get(packageName);
     const runtimeMembers = requiredToolsMemberPaths(target.target, "package/runtime/bin");
     const tarball = pnpmPackForNpmPublish(payload.stage);
@@ -1136,15 +1175,6 @@ export function liboliphauntNpmTarballs(version) {
     prefix: "package",
   });
   packages.push([LIBOLIPHAUNT_NATIVE_TOOLS_FACADE_PACKAGE, toolsFacadeTarball]);
-  const icuStage = stageLiboliphauntIcuNpmPayload(version);
-  const icuTarball = pnpmPackForNpmPublish(icuStage);
-  validatePackedIcuPackage(
-    LIBOLIPHAUNT_ICU_PACKAGE_NAME,
-    version,
-    icuTarball,
-    path.join(ROOT, "target/liboliphaunt/release-assets", `liboliphaunt-${version}-icu-data.tar.gz`),
-  );
-  packages.push([LIBOLIPHAUNT_ICU_PACKAGE_NAME, icuTarball]);
   return packages;
 }
 

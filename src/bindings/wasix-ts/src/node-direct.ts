@@ -24,6 +24,8 @@ const directHost: DirectWasixHost = {
   Directory: host.Directory,
   init: host.init,
   instantiateOliphauntDirect: host.instantiateOliphauntDirect,
+  prepareOliphauntTool: host.prepareOliphauntTool,
+  runOliphauntToolDirect: host.runOliphauntToolDirect,
 };
 
 /** @internal Own one Node-realm WASIX session without an RPC boundary. */

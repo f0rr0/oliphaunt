@@ -168,15 +168,19 @@ Install `@oliphaunt/wasix-tools` when the application needs standard plain
 
 <!-- liboliphaunt-doc-example:wasix-typescript-tools -->
 ```ts
+import Oliphaunt from '@oliphaunt/wasix-ts';
 import { pgDump, psql } from '@oliphaunt/wasix-tools';
 
-const sql = await pgDump(database, { args: ['--schema-only'] });
-await psql(database, { script: sql });
+await using source = await Oliphaunt.open();
+const sql = await pgDump(source, { args: ['--schema-only'] });
+await using target = await Oliphaunt.open();
+await psql(target, { script: sql });
 ```
 
-The optional package runs directly against a worker-backed database in every
-supported host, including browsers. It preserves PostgreSQL's normal plain SQL
-and COPY output. It does not support direct execution placement, interactive
+`pgDump()` runs in the database's existing realm, so it supports both direct
+and worker placement, including browsers. `psql()` requires worker placement
+because restoring COPY input is full duplex. The package preserves
+PostgreSQL's normal plain SQL and COPY output. It does not support interactive
 psql, custom dump archives, parallel jobs, or pg_restore.
 
 ## Optional local server

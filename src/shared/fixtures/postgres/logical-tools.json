@@ -9,13 +9,30 @@
       "--inserts",
       "--quote-all-identifiers",
       "--no-owner",
-      "--table=public.logical_items"
+      "--table=public.logical_items",
+      "-tpublic.logical_items"
+    ],
+    "acceptedArgv": [
+      ["--table", "public.logical_items"],
+      ["-vt", "public.logical_items"],
+      ["--role", "postgres"]
     ],
     "rejectedArgs": [
+      "--",
+      "--password",
+      "--pass",
+      "-W",
+      "-vW",
       "--file=out.sql",
+      "--fil=out.sql",
+      "--filter=filters.txt",
+      "--filt=filters.txt",
       "-fout.sql",
+      "-vfout.sql",
       "--format=custom",
+      "--form=custom",
       "-Fc",
+      "-vFc",
       "--compress=9",
       "-Z9",
       "--encoding=UTF8",
@@ -30,15 +47,38 @@
       "-dpostgres",
       "--jobs=2",
       "-j2"
+    ],
+    "rejectedArgv": [
+      ["postgres"],
+      ["--", "postgres"],
+      ["--schema-only", "postgres"],
+      ["--table", "public.logical_items", "postgres"],
+      ["--table"],
+      ["-t"]
     ]
   },
   "psql": {
     "acceptedArgs": [
       "--echo-errors",
       "--no-psqlrc",
-      "--set=ON_ERROR_STOP=1"
+      "--set=ON_ERROR_STOP=1",
+      "-vAPP_MODE=test"
+    ],
+    "acceptedArgv": [
+      ["--set", "APP_MODE=test"],
+      ["-Av", "APP_MODE=test"],
+      ["--field-separator", "|"]
     ],
     "rejectedArgs": [
+      "--",
+      "--password",
+      "--pass",
+      "-W",
+      "-AW",
+      "--single-step",
+      "--single-st",
+      "-s",
+      "-As",
       "--host=localhost",
       "-hlocalhost",
       "--port=5432",
@@ -48,13 +88,26 @@
       "--dbname=postgres",
       "-dpostgres",
       "--output=out.txt",
+      "--out=out.txt",
       "-oout.txt",
+      "-Aoout.txt",
       "--log-file=errors.txt",
       "-Lerrors.txt",
       "--command=SELECT 1",
+      "--comm=SELECT 1",
       "-cSELECT 1",
+      "-AtcSELECT 1",
       "--file=input.sql",
-      "-finput.sql"
+      "-finput.sql",
+      "-Afoops.sql"
+    ],
+    "rejectedArgv": [
+      ["postgres"],
+      ["--", "postgres"],
+      ["--echo-errors", "postgres"],
+      ["--set", "APP_MODE=test", "postgres"],
+      ["--set"],
+      ["-v"]
     ]
   },
   "expected": {

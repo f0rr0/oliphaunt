@@ -125,23 +125,25 @@ packaged WASIX PostgreSQL programs directly against an open database:
 use oliphaunt_wasix::{Oliphaunt, tools};
 
 # fn main() -> anyhow::Result<()> {
-let mut database = Oliphaunt::open()?;
+let mut source = Oliphaunt::open()?;
 let sql = tools::pg_dump(
-    &mut database,
+    &mut source,
     tools::PgDumpOptions::new().arg("--schema-only"),
 )?;
-tools::psql(&mut database, tools::PsqlOptions::new().script(sql))?;
-database.close()?;
+source.close()?;
+let mut target = Oliphaunt::open()?;
+tools::psql(&mut target, tools::PsqlOptions::new().script(sql))?;
+target.close()?;
 # Ok(())
 # }
 ```
 
 `pg_dump` returns standard plain PostgreSQL SQL unchanged. `psql` is
 non-interactive and accepts a command, a script, or ordinary passthrough
-arguments. Connection, output, format, compression, encoding, and parallel-job
-flags are managed and rejected from passthrough arguments. Direct tools are
-exclusive operations on the database handle and reset session state before and
-after the tool run.
+arguments. Connection, file input/output, format, compression, encoding, and
+parallel-job flags are managed and rejected from passthrough arguments. Direct
+tools are exclusive operations on the database handle and reset session state
+before and after the tool run.
 
 TCP endpoints are loopback-only because the embedded proxy uses PostgreSQL
 trust authentication. The default listener uses an automatically assigned

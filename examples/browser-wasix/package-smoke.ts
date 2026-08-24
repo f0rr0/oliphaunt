@@ -6,6 +6,7 @@ import { pgDump, psql } from '@oliphaunt/wasix-tools';
 import logicalToolsFixtureJson from './logical-tools.json?raw';
 import logicalToolsSeed from './logical-tools-seed.sql?raw';
 import logicalToolsVerify from './logical-tools-verify.sql?raw';
+import { expectDirectPgDump } from './direct-pg-dump-smoke.js';
 
 const logicalToolsFixture = JSON.parse(logicalToolsFixtureJson) as {
   expected: {
@@ -37,6 +38,7 @@ try {
       await transaction.execute('INSERT INTO packed_reopen_probe VALUES ($1)', [42]);
     });
     await database.checkpoint();
+    await expectDirectPgDump(database);
   } finally {
     await database.close();
   }
@@ -70,6 +72,7 @@ try {
     status.textContent = 'Packed browser package smoke passed.';
     output.textContent = JSON.stringify({
       direct: 42,
+      directPgDump: true,
       worker: 42,
       indexedDB: answer,
       transactionRows: count,

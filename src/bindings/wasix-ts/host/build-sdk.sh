@@ -220,13 +220,50 @@ grep -Fq 'builder.set_stderr(stderr)' "$wasmer_js_dir/src/options.rs"
 grep -Fq 'js_name = execProtocolStream' "$wasmer_js_dir/src/postgres_direct.rs"
 grep -Fq 'js_name = execProtocolDuplex' "$wasmer_js_dir/src/postgres_direct.rs"
 grep -Fq 'const PROTOCOL_CHUNK_BYTES: usize = 64 * 1024' "$wasmer_js_dir/src/postgres_direct.rs"
-grep -Fq 'const TOOL_PROTOCOL_CAPACITY_BYTES: usize = 256 * 1024' \
-  "$wasmer_js_dir/src/streams.rs"
-grep -Fq 'const TOOL_PROTOCOL_CHUNK_BYTES: usize = 64 * 1024' \
-  "$wasmer_js_dir/src/streams.rs"
-grep -Fq 'bounded_duplex_pipe' "$wasmer_js_dir/src/options.rs"
-grep -Fq 'builder.set_stdout(stdout)' "$wasmer_js_dir/src/options.rs"
-grep -Fq 'builder.set_stdin(stdin)' "$wasmer_js_dir/src/options.rs"
+grep -Fq 'input.copy_to(buffer.initialize_unfilled_to(length))' \
+  "$wasmer_js_dir/src/postgres_direct.rs"
+grep -Fq 'buffer.advance(length)' "$wasmer_js_dir/src/postgres_direct.rs"
+grep -Fq 'let input = match value.dyn_into::<Uint8Array>()' \
+  "$wasmer_js_dir/src/postgres_direct.rs"
+grep -Fq 'if requested == 0 {' "$wasmer_js_dir/src/postgres_direct.rs"
+grep -Fq 'js_name = prepareOliphauntTool' "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'struct OliphauntPreparedTool' "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'ModuleHash::xxhash(&module_bytes)' "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'js_name = runOliphauntToolDirect' "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'Ok((module.clone().into(), bytes))' \
+  "$wasmer_js_dir/src/run.rs"
+grep -Fq 'CallerRealmTaskManager' "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'prepared.runtime.reset()' "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq '.instantiate_ext_async(prepared.module.clone(), prepared.module_hash, &mut store)' \
+  "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'const PROTOCOL_CHUNK_BYTES: usize = 64 * 1024' \
+  "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'ActiveProtocolCallbacks::begin' "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'input.copy_to(buffer.initialize_unfilled_to(length))' \
+  "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'buffer.advance(length)' "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'never mutate, and never retain' "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'unsafe { Uint8Array::view(&input[..length]) }' \
+  "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'struct CaptureFile' "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'typescript_type = "OliphauntToolOutput"' "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'Ok(tool_output(code, stdout.take(), stderr.take()))' \
+  "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'configure_tool_direct_builder' "$wasmer_js_dir/src/options.rs"
+grep -Fq 'OLIPHAUNT_WASIX_SINGLE_BACKEND' "$wasmer_js_dir/src/options.rs"
+grep -Fq 'OLIPHAUNT_DIRECT_PGWIRE' "$wasmer_js_dir/src/options.rs"
+grep -Fq '/dev/oliphaunt-pgwire' "$wasmer_js_dir/src/options.rs"
+grep -Fq 'StaticFile::new(input)' "$wasmer_js_dir/src/options.rs"
+if grep -Eq 'ThreadPool|ReadableStream|WritableStream|bounded_duplex_pipe|TOOL_PROTOCOL_CAPACITY_BYTES|ArcFile|BufferFile|read_capture|\.to_module\(|JsOutput|lazily_decoded' \
+  "$wasmer_js_dir/src/tool_direct.rs"; then
+  echo "wasix-ts host build: direct tool runner regained per-run preparation or output copying" >&2
+  exit 1
+fi
+if grep -R -Eq 'OliphauntToolInstance|bounded_duplex_pipe|TOOL_PROTOCOL_CAPACITY_BYTES' \
+  "$wasmer_js_dir/src"; then
+  echo "wasix-ts host build: retired tool WebStream transport returned" >&2
+  exit 1
+fi
 grep -Fq 'wasmparser::RefType::EXNREF' "$wasmer_dir/src/utils/polyfill.rs"
 grep -Fq 'wasmparser::RefType::NULLEXNREF' "$wasmer_dir/src/utils/polyfill.rs"
 grep -Fq 'Ok(Type::ExceptionRef)' "$wasmer_dir/src/utils/polyfill.rs"

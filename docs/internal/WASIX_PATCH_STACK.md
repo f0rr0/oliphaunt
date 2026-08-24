@@ -61,6 +61,7 @@ src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs --write
 | 38 | `0038-oliphaunt-wasix-disable-unsupported-writeback-hints.patch` | Oliphaunt Maintainers <dev@oliphaunt.dev> | oliphaunt-wasix: disable unsupported writeback hints |
 | 39 | `0039-oliphaunt-wasix-inline-sigsetjmp.patch` | Oliphaunt Maintainers <dev@oliphaunt.dev> | oliphaunt-wasix: inline sigsetjmp |
 | 40 | `0040-oliphaunt-wasix-set-libpq-sockets-nonblocking.patch` | Oliphaunt Maintainers <dev@oliphaunt.dev> | oliphaunt-wasix: set libpq sockets nonblocking |
+| 41 | `0041-oliphaunt-wasix-honor-noninteractive-psql-invocations.patch` | Oliphaunt Maintainers <dev@oliphaunt.dev> | oliphaunt-wasix: honor noninteractive psql invocations |
 
 ## Changed Upstream Files
 
@@ -98,6 +99,7 @@ src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs --write
 | `src/bin/pg_dump/connectdb.h` | `0018-oliphaunt-wasix-avoid-pg-dump-executequery-lto-collision.patch` | Avoids pg_dump LTO symbol collisions. |
 | `src/bin/pg_dump/parallel.c` | `0025-oliphaunt-wasix-stub-pg-dump-parallel-fork.patch` | Stubs unavailable pg_dump parallel fork behavior under WASIX. |
 | `src/bin/pg_dump/pg_dumpall.c` | `0018-oliphaunt-wasix-avoid-pg-dump-executequery-lto-collision.patch` | Avoids pg_dump LTO symbol collisions. |
+| `src/bin/psql/startup.c` | `0041-oliphaunt-wasix-honor-noninteractive-psql-invocations.patch` | Keeps captured Oliphaunt psql invocations noninteractive despite WASIX virtual descriptor types. |
 | `src/common/file_utils.c` | `0032-oliphaunt-wasix-treat-directory-fsync-eisdir-as-unsupported.patch`, `0038-oliphaunt-wasix-disable-unsupported-writeback-hints.patch` | Keeps real fsync while narrowing unsupported WASIX directory and writeback-hint behavior. |
 | `src/common/hashfn.c` | `0014-oliphaunt-wasix-speed-up-hash-bytes-unaligned-loads.patch` | Uses defined unaligned load fast path under WASIX. |
 | `src/include/access/xlog.h` | `0027-oliphaunt-wasix-avoid-xlog-size-checkpoint-requests.patch` | Exposes the embedded idle-boundary checkpoint handoff within PostgreSQL. |
@@ -135,6 +137,7 @@ src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs --write
 | Unsupported writeback hints stay separate from real durability | `0038-oliphaunt-wasix-disable-unsupported-writeback-hints.patch` | `#if defined(OLIPHAUNT_WASM_SINGLE_USER)`, `Actual fsync/fdatasync durability remains enabled.`, `#elif defined(HAVE_SYNC_FILE_RANGE)` | The single-backend guest omits only pg_flush_data hints that WASIX rejects on read-only descriptors; PostgreSQL fsync and fdatasync remain active. |
 | PostgreSQL side modules own their SJLJ catch frames | `0039-oliphaunt-wasix-inline-sigsetjmp.patch` | `-DOLIPHAUNT_WASM_SIDE_MODULE`, `WebAssembly SJLJ requires setjmp to be visible at the protected call site.`, `defined(__wasm_exception_handling__) && defined(OLIPHAUNT_WASM_SIDE_MODULE)`, `#undef sigsetjmp`, `#define sigsetjmp(env, savesigs) ((void) (savesigs), setjmp(env))` | PG_TRY expands to a compiler-recognized setjmp in every PostgreSQL side module, so nested errors unwind to the live module-local handler. |
 | Standalone WASIX libpq sockets are actually nonblocking | `0040-oliphaunt-wasix-set-libpq-sockets-nonblocking.patch` | `defined(SOCK_NONBLOCK) && !defined(__wasi__)`, `!defined(SOCK_NONBLOCK) || defined(__wasi__)`, `pg_set_noblock(conn->sock)` | WASIX uses PostgreSQL's existing fcntl fallback because Wasmer ignores socket type flags; native platforms retain upstream atomic socket creation. |
+| Captured Oliphaunt psql scripts remain noninteractive | `0041-oliphaunt-wasix-honor-noninteractive-psql-invocations.patch` | `OLIPHAUNT_PSQL_NONINTERACTIVE`, `strcmp(oliphaunt_noninteractive, "1") == 0`, `!isatty(fileno(stdin)) || !isatty(fileno(stdout))` | Only the private exact-value marker overrides virtual terminal detection; ordinary WASIX psql retains upstream isatty semantics. |
 
 ## PostgreSQL Patch Symbols
 
