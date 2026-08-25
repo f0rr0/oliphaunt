@@ -90,12 +90,16 @@ test("native npm descriptors publish every staged payload root", () => {
     const libraryRoot = packageJson.oliphaunt?.libraryRelativePath?.split("/")[0];
     const runtimeRoot = packageJson.oliphaunt?.runtimeRelativePath?.split("/")[0];
     const clusterSeedRoot = packageJson.oliphaunt?.clusterSeedRelativePath?.split("/")[0];
+    const icuClusterSeedRoot = packageJson.oliphaunt?.icuClusterSeedRelativePath?.split("/")[0];
+    expect(packageJson.oliphaunt?.clusterSeedTarget).toBe(packageJson.oliphaunt?.target);
     const expected = [
       ...new Set([
         libraryRoot,
         "lib",
         runtimeRoot,
         clusterSeedRoot,
+        icuClusterSeedRoot,
+        "manifest.properties",
         "README.md",
         ...REQUIRED_LEGAL_FILES,
       ]),

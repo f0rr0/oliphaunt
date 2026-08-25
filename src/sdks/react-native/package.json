@@ -64,6 +64,7 @@
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
     "tools/codegen-check.cjs",
+    "tools/native-resource-closure.mjs",
     "tools/stage-ios-app.mjs",
     "tools/verify-ios-package.mjs",
     "OliphauntReactNative.podspec",

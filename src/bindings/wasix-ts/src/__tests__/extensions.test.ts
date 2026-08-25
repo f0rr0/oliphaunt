@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import type { ExtractedArchive, WasixRuntimeLayout } from '../archive.js';
@@ -6,8 +8,10 @@ import {
   assertExtensionCarriersCompatible,
   assertRuntimeDescriptorMatchesManifest,
   extensionSetupSql,
+  assertClusterSeedProfileContract,
   mergeExtensionStartupGUCs,
   overlayExtensionArchive,
+  overlayIcuArchive,
   parseWasixAssetManifest,
   resolveWasixExtensions,
 } from '../extensions.js';
@@ -19,6 +23,33 @@ type ProjectedLifecycle = ProjectedExtension['lifecycle'];
 
 // liboliphaunt-doc-example:wasix-typescript-extensions
 describe('WASIX TypeScript extensions', () => {
+  it('uses the shared cluster-seed profile fixtures', () => {
+    const standard = sharedSeedFixture('standard.valid.json');
+    const icu = sharedSeedFixture('icu.valid.json');
+    const mismatch = sharedSeedFixture('profile-mismatch.invalid.json');
+
+    expect(() => assertClusterSeedProfileContract(standard, 'standard')).not.toThrow();
+    expect(() => assertClusterSeedProfileContract(icu, 'icu')).not.toThrow();
+    expect(() => assertClusterSeedProfileContract(mismatch, 'standard')).toThrow(
+      'profile mismatch',
+    );
+  });
+
+  it('validates the complete ICU overlay before mutating the runtime', () => {
+    const runtime: ExtractedArchive = {
+      files: new Map(),
+      directories: new Set(),
+    };
+    const icu: ExtractedArchive = {
+      files: new Map([['share/icu/icudt76l.dat', Uint8Array.of(1)]]),
+      directories: new Set(['share/icu', 'outside']),
+    };
+
+    expect(() => overlayIcuArchive(runtime, icu)).toThrow('directory outside share/icu');
+    expect(runtime.files.size).toBe(0);
+    expect(runtime.directories.size).toBe(0);
+  });
+
   it('resolves pgtap through the canonical manifest and runtime-provided plpgsql', () => {
     const pgtap = extension('pgtap', {
       dependencies: ['plpgsql'],
@@ -490,4 +521,13 @@ function runtimeLayout(): WasixRuntimeLayout {
       },
     },
   };
+}
+
+function sharedSeedFixture(name: string): unknown {
+  return JSON.parse(
+    readFileSync(
+      new URL(`../../../../shared/cluster-seed-contract/fixtures/${name}`, import.meta.url),
+      'utf8',
+    ),
+  );
 }

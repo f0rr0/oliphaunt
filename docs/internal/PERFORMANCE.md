@@ -114,11 +114,10 @@ values (`32MB`, `64MB`, and default) so WAL footprint wins are attributable to
 bounded checkpoint behavior rather than hidden defaults. Explicit startup GUC
 overrides are appended after the profile and durability settings so benchmark
 reports can attribute wins or regressions to concrete PostgreSQL knobs.
-Experiments below `min_wal_size=32MB` require a template cluster initialized
-with a smaller WAL segment size, such as `initdb --wal-segsize=4`; this is a
-PGDATA/template property, not a startup GUC. The Expo mobile footprint harness
-passes the requested segment size through to template generation and records the
-effective read-only `wal_segment_size` setting next to the intended GUCs.
+The mobile cluster seeds use PostgreSQL's standard 16MB WAL segments, so the
+Expo mobile footprint harness rejects `min_wal_size` below 32MB. It varies only
+startup GUCs and records the effective read-only `wal_segment_size`; it never
+regenerates or relabels release seeds.
 
 Detailed C-side backend startup timers are an instrumented-build diagnostic, not
 production runtime surface. Build WASIX assets with

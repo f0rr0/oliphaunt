@@ -76,11 +76,13 @@ to the same opaque format. Portable `@oliphaunt/wasix-ts` and native
 
 ## Initialization and restore
 
-Every ordinary package-managed new or empty store uses its runtime product's
-packaged cluster seed. Native and WASIX use different physical compatibility
-keys, and ICU selection resolves ICU data with the matching `icu` seed. Custom
-native initialization inputs may use the explicit `initdb` fallback. The
-decisions and recurring release gates are recorded in
+Every ordinary package-managed new or empty embedded store uses its runtime
+product's packaged cluster seed. Native targets and WASIX use separately
+qualified physical compatibility identities, and ICU selection resolves ICU
+data with the matching `icu` seed. Explicit locally built native runtimes and
+new native server roots use the internal `initdb` path with the fixed
+`postgres` bootstrap role. Public usernames always select existing connection
+roles. The decisions and recurring release gates are recorded in
 [Cluster seeds and ICU](cluster-seeds-and-icu.md).
 
 Reopening a non-empty persistent store never silently reinitializes it. Restore
@@ -157,8 +159,9 @@ build physically interchangeable. Native roots are shared among compatible
 native SDKs. Rust and WASIX TypeScript use the same root descriptor and WASIX
 physical-format value, but cross-binding root handoff is not a supported or
 qualified workflow. The managed-root descriptor is
-written once when the root is created. Source fingerprints remain asset-graph coherence identities
-used to reject mixed runtime, template, AOT, and extension build outputs; they
+written once when the root is created. WASIX source fingerprints remain
+asset-graph coherence identities used to reject mixed runtime, cluster-seed,
+AOT, and extension build outputs; they
 are not a physical-reopen key or binding identity in the root. Both runtime
 families validate either exact descriptor shape. Opening another family's root
 is not a supported transfer path, so the SDKs add no cross-family rejection

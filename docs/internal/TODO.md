@@ -266,7 +266,6 @@ Remaining work:
   transport.
 - Add zero-copy or single-copy transport paths where the platform API supports
   them.
-- Investigate warm template cache behavior and file-copy strategy per platform.
 - Keep any startup GUC tuning explicit, documented, and safe for persistent
   roots.
 

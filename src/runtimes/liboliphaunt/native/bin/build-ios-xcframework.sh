@@ -12,7 +12,8 @@ headers_dir="$work_root/include"
 xcframework_out="$out_dir/liboliphaunt.xcframework"
 stamp="$work_root/.liboliphaunt-ios-xcframework.sha256"
 script_mode="${1:-build}"
-runtime_resources_root="${OLIPHAUNT_IOS_RUNTIME_RESOURCES_ROOT:-}"
+macos_runtime_resources_root="${OLIPHAUNT_MACOS_RUNTIME_RESOURCES_ROOT:-}"
+ios_runtime_resources_root="${OLIPHAUNT_IOS_RUNTIME_RESOURCES_ROOT:-}"
 runtime_version_file="$repo_root/src/runtimes/liboliphaunt/native/VERSION"
 
 if [ "$(uname -s)" != "Darwin" ]; then
@@ -61,7 +62,8 @@ MSG
 desired_hash() {
   {
     printf 'mobile_static_extensions=%s\n' "${OLIPHAUNT_MOBILE_STATIC_EXTENSIONS:-}"
-    printf 'runtime_resources_root=%s\n' "$runtime_resources_root"
+    printf 'macos_runtime_resources_root=%s\n' "$macos_runtime_resources_root"
+    printf 'ios_runtime_resources_root=%s\n' "$ios_runtime_resources_root"
     printf 'script_sha256=%s\n' "$(shasum -a 256 "$script_path" | awk '{print $1}')"
     shasum -a 256 \
       "$macos_script" \
@@ -69,9 +71,11 @@ desired_hash() {
       "$device_script" \
       "$public_header" \
       "$runtime_version_file"
-  if [ -d "$runtime_resources_root" ]; then
-    find "$runtime_resources_root" -type f -print0 | sort -z | xargs -0 shasum -a 256
-  fi
+  for resource_root in "$macos_runtime_resources_root" "$ios_runtime_resources_root"; do
+    if [ -d "$resource_root" ]; then
+      find "$resource_root" -type f -print0 | sort -z | xargs -0 shasum -a 256
+    fi
+  done
   if [ -f "$default_simulator_library" ]; then
     shasum -a 256 "$default_simulator_library"
   fi
@@ -267,6 +271,7 @@ prepare_framework_slice() {
   local framework="$2"
   local platform="$3"
   local platform_family="$4"
+  local runtime_resources_root="$5"
   rm -rf "$framework"
   mkdir -p "$framework/Headers" "$framework/Modules"
   cp "$library" "$framework/liboliphaunt"
@@ -274,7 +279,7 @@ prepare_framework_slice() {
   rsync -a --delete "$headers_dir/" "$framework/Headers/"
   if [ -n "$runtime_resources_root" ]; then
     [ -d "$runtime_resources_root" ] || {
-      echo "OLIPHAUNT_IOS_RUNTIME_RESOURCES_ROOT does not exist: $runtime_resources_root" >&2
+      echo "runtime resource root does not exist: $runtime_resources_root" >&2
       exit 1
     }
     mkdir -p "$framework/Resources/oliphaunt"
@@ -325,9 +330,9 @@ build_xcframework() {
   assert_library_slice "$macos_library" MACOS
   assert_library_slice "$simulator_library" IOSSIMULATOR
   assert_library_slice "$device_library" IOS
-  prepare_framework_slice "$macos_library" "$macos_framework" "MacOSX" "0"
-  prepare_framework_slice "$device_library" "$device_framework" "iPhoneOS" "1"
-  prepare_framework_slice "$simulator_library" "$simulator_framework" "iPhoneSimulator" "1"
+  prepare_framework_slice "$macos_library" "$macos_framework" "MacOSX" "0" "$macos_runtime_resources_root"
+  prepare_framework_slice "$device_library" "$device_framework" "iPhoneOS" "1" "$ios_runtime_resources_root"
+  prepare_framework_slice "$simulator_library" "$simulator_framework" "iPhoneSimulator" "1" "$ios_runtime_resources_root"
 
   rm -rf "$xcframework_out"
   xcodebuild -create-xcframework \

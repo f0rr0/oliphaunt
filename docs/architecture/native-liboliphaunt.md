@@ -7,7 +7,7 @@ backup/restore, cancellation, raw protocol execution, and static extension
 registration.
 
 Language SDKs own typed query values, builders, paths, async adapters, package
-resolution, template hydration, server and broker process orchestration, and
+resolution, cluster-seed hydration, server and broker process orchestration, and
 language-native errors. They do not reimplement the C runtime's direct
 lifecycle, archive parser, or root validation.
 
@@ -45,7 +45,7 @@ than multiple direct handles.
 ## Managed roots
 
 The configured path is always `<root>/pgdata`. `oliphaunt_init` validates an
-already-prepared root and never runs `initdb`, hydrates a template, creates a
+already-prepared root and never runs `initdb`, hydrates a cluster seed, creates a
 descriptor, or adopts raw PGDATA. Before backend startup it requires:
 
 - a real root, `pgdata`, and `pgdata/global` directory, with no symbolic-link,

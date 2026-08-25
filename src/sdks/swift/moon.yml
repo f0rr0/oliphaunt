@@ -47,6 +47,7 @@ tasks:
     inputs:
       - "/Package.swift"
       - "/src/shared/fixtures/**/*"
+      - "/src/shared/cluster-seed-contract/**/*"
       - "/src/sdks/swift/**/*"
       - "!/src/sdks/swift/.build"
       - "!/src/sdks/swift/.build/**"

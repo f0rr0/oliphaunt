@@ -68,10 +68,14 @@ JSON
   cp pnpm-lock.yaml "$scratch_root/pnpm-lock.yaml"
   cp LICENSE "$scratch_root/LICENSE"
   mkdir -p "$scratch_root/src/shared/fixtures"
+  mkdir -p "$scratch_root/src/shared/cluster-seed-contract/fixtures"
   mkdir -p "$scratch_root/src/shared/js-core/test"
   mkdir -p "$scratch_root/tools/dev"
   mkdir -p "$scratch_root/tools/test"
   rsync -a --delete src/shared/fixtures/ "$scratch_root/src/shared/fixtures/"
+  rsync -a --delete \
+    src/shared/cluster-seed-contract/fixtures/ \
+    "$scratch_root/src/shared/cluster-seed-contract/fixtures/"
   cp src/shared/js-core/test/protocol-fixtures.mjs \
     src/shared/js-core/test/protocol-fixtures.d.mts \
     "$scratch_root/src/shared/js-core/test/"

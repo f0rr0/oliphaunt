@@ -272,7 +272,7 @@ fn stores_rows() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 Tests that specifically exercise `initdb` invoke the packaged WASIX tool.
-Ordinary open always uses the packaged template, and physical restore is tested
+Ordinary embedded open uses the packaged cluster seed, and physical restore is tested
 through the dedicated restore API rather than an initialization selector.
 
 ## Server Tests

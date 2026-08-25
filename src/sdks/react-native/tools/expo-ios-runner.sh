@@ -108,10 +108,14 @@ else
   mobile_extensions_raw="vector"
 fi
 startup_gucs="${OLIPHAUNT_EXPO_IOS_STARTUP_GUCS:-${OLIPHAUNT_EXPO_MOBILE_STARTUP_GUCS:-}}"
-wal_segsize_mb="${OLIPHAUNT_EXPO_IOS_WAL_SEGSIZE_MB:-${OLIPHAUNT_EXPO_MOBILE_WAL_SEGSIZE_MB:-16}}"
 benchmark_preset="${OLIPHAUNT_EXPO_IOS_BENCHMARK_PRESET:-${OLIPHAUNT_EXPO_MOBILE_BENCHMARK_PRESET:-full}}"
 crash_storage_override="${OLIPHAUNT_EXPO_IOS_CRASH_STORAGE:-}"
-mobile_template_initdb="${OLIPHAUNT_EXPO_IOS_INITDB:-}"
+mobile_packaging_initdb="${OLIPHAUNT_EXPO_IOS_INITDB:-}"
+if is_truthy "${OLIPHAUNT_EXPO_IOS_ICU:-0}"; then
+  configure_mobile_catalog_profile_probe icu
+else
+  configure_mobile_catalog_profile_probe standard
+fi
 metro_pid=""
 metro_bundle_runner=""
 metro_bundle_storage=""
@@ -194,15 +198,14 @@ prepare_runtime_resources() {
   [ -f "$runtime_source/share/postgresql/postgres.bki" ] ||
     fail "runtime assets are missing postgres.bki: $runtime_source"
   ensure_mobile_runtime_tool_permissions "$runtime_source"
-  ensure_mobile_tool_executable "$mobile_template_initdb"
+  ensure_mobile_tool_executable "$mobile_packaging_initdb"
 
-  local template_source
-  template_source="$(
-    find_latest_mobile_pgdata \
+  local seed_closure
+  seed_closure="$(
+    require_mobile_runtime_seed_closure \
       iOS \
-      "${OLIPHAUNT_EXPO_IOS_CLUSTER_SEED_DIR:-}" \
-      OLIPHAUNT_EXPO_IOS_CLUSTER_SEED_DIR \
-      OLIPHAUNT_EXPO_IOS_INITDB
+      "${OLIPHAUNT_EXPO_IOS_SEED_CLOSURE_DIR:-}" \
+      OLIPHAUNT_EXPO_IOS_SEED_CLOSURE_DIR
   )"
   local selected_extensions
   selected_extensions="$(normalize_mobile_extensions)"
@@ -210,15 +213,17 @@ prepare_runtime_resources() {
   if oliphaunt_dev_prepare_prebuilt_mobile_runtime_resource_package \
     iOS \
     "$runtime_source" \
-    "$mobile_template_initdb" \
+    "$mobile_packaging_initdb" \
     "$selected_extensions" \
     "$package_root"; then
+    install_mobile_runtime_seed_closure "$package_root" "$seed_closure"
+    bind_mobile_runtime_manifest_to_seed_closure "$package_root" "$seed_closure"
     return 0
   fi
   prepare_mobile_runtime_resource_package \
     iOS \
     "$runtime_source" \
-    "$template_source" \
+    "$seed_closure" \
     "$static_registry_source" \
     "$selected_extensions" \
     "${OLIPHAUNT_EXPO_IOS_REPACKAGE_ASSETS:-0}" \

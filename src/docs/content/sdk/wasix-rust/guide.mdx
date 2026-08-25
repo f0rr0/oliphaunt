@@ -34,7 +34,7 @@ cargo add oliphaunt-wasix
 ### Open and query
 
 Omitting storage opens a fresh in-memory database initialized from the packaged
-template.
+cluster seed.
 
 <!-- oliphaunt-snippet: oliphaunt-wasix-rust -->
 
@@ -90,7 +90,7 @@ let database = Oliphaunt::builder()
 
 `DatabaseStorage::Memory` is the default. `Directory` uses a caller-owned host
 directory; applications resolve temporary or platform app-data paths with
-their preferred host library. New stores use the packaged template.
+their preferred host library. New stores use the packaged cluster seed.
 
 </Step>
 <Step>
@@ -148,7 +148,7 @@ Do not copy a live PostgreSQL directory.
 ## Troubleshooting
 
 Check whether the selected managed root is new or complete, the packaged
-template and exact runtime/AOT asset pair, enabled extension features,
+cluster seed and exact runtime/AOT asset pair, enabled extension features,
 directory ownership, and SQLSTATE-bearing
 PostgreSQL errors. Browser, Node, Bun, and Deno direct/Worker placement, IndexedDB, and
 recovery behavior are documented on the

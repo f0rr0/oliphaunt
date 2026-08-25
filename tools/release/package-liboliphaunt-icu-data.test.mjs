@@ -14,7 +14,7 @@ import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 
 import { currentProductVersionSync } from "./release-artifact-targets.mjs";
 import { ROOT } from "./release-graph.mjs";
-import { filesystemTreeRows, logicalTreeSha256 } from "./native-cluster-seed-contract.mjs";
+import { parseProperties } from "./native-cluster-seed-contract.mjs";
 
 const SCRIPT = path.join(ROOT, "tools/release/package-liboliphaunt-icu-data.sh");
 const scratch = [];
@@ -30,21 +30,7 @@ function temporaryRoot() {
 }
 
 function run(source, output, { env = process.env } = {}) {
-  let icuDataTreeSha256;
-  try {
-    icuDataTreeSha256 = logicalTreeSha256(filesystemTreeRows(source));
-  } catch {
-    icuDataTreeSha256 = "a".repeat(64);
-  }
-  const seed = path.join(path.dirname(output), "icu-cluster-seed");
-  mkdirSync(path.join(seed, "files/global"), { recursive: true });
-  writeFileSync(path.join(seed, "files/PG_VERSION"), "18\n");
-  writeFileSync(path.join(seed, "files/global/pg_control"), "control\n");
-  writeFileSync(
-    path.join(seed, "manifest.properties"),
-    `schema=oliphaunt-runtime-resources-v1\nlayout=oliphaunt-cluster-seed-v1\nartifactRole=cluster-seed-icu\ncatalogProfile=icu\npostgresMajor=18\nphysicalFormat=native-pg18-v1\ncompatibilityKey=native-pg18-datum64-v1\ninitialSuperuser=postgres\nicuDataVersion=76.1\nicuDataForm=files-le\nicuDataTreeSha256=${icuDataTreeSha256}\nruntimeFeatures=icu\n`,
-  );
-  return spawnSync("bash", [SCRIPT, source, output, seed], {
+  return spawnSync("bash", [SCRIPT, source, output], {
     cwd: ROOT,
     encoding: "utf8",
     env,
@@ -60,8 +46,11 @@ test("packages the portable ICU payload deterministically outside platform relea
   const source = path.join(root, "source", "icudt76l");
   const output = path.join(root, "output");
   mkdirSync(path.join(source, "coll"), { recursive: true });
+  mkdirSync(path.join(root, "source", "76.1", "config"), { recursive: true });
   writeFileSync(path.join(source, "root.res"), "root\n");
   writeFileSync(path.join(source, "coll", "en.res"), "en\n");
+  writeFileSync(path.join(root, "source", "76.1", "config", "mh-darwin"), "build-only\n");
+  writeFileSync(path.join(root, "source", "LICENSE"), "install-scaffolding\n");
 
   const first = run(path.dirname(source), output);
   expect(first.status, first.stderr).toBe(0);
@@ -73,15 +62,26 @@ test("packages the portable ICU payload deterministically outside platform relea
   expect(listing.status, listing.stderr).toBe(0);
   const members = listing.stdout.split(/\r?\n/u).filter(Boolean);
   expect(members).toContain("share/icu/icudt76l/root.res");
-  expect(members).toContain("cluster-seed/manifest.properties");
-  expect(members).toContain("cluster-seed/files/PG_VERSION");
-  expect(members).toContain("cluster-seed/files/global/pg_control");
+  expect(members.some((member) => member.startsWith("share/icu/76.1"))).toBe(false);
+  expect(members).not.toContain("share/icu/LICENSE");
+  expect(members).toContain("manifest.properties");
+  expect(members.some((member) => member.startsWith("cluster-seed"))).toBe(false);
   expect(members).toContain("package-size.tsv");
-  expect(members).toContain("THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT");
+  expect(members).not.toContain("THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT");
   expect(members).toContain("THIRD_PARTY_LICENSES/ICU-LICENSE");
+  const receipt = spawnSync("tar", ["-xOzf", archive, "manifest.properties"], { encoding: "utf8" });
+  expect(receipt.status, receipt.stderr).toBe(0);
+  const fields = parseProperties(receipt.stdout, "portable ICU data receipt");
+  expect(Object.fromEntries(fields)).toEqual({
+    schema: "oliphaunt-icu-data-v1",
+    artifactRole: "icu-data",
+    icuDataVersion: "76.1",
+    icuDataForm: "files-le",
+    icuDataTreeSha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+  });
   const sizeReport = spawnSync("tar", ["-xOzf", archive, "package-size.tsv"], { encoding: "utf8" });
   expect(sizeReport.status, sizeReport.stderr).toBe(0);
-  expect(sizeReport.stdout).toMatch(/^kind\tid\textensions\tfiles\tbytes\npackage\ttotal\t-\t-\t[0-9]+\npackage\ticu-data\t-\t-\t[0-9]+\npackage\tcluster-seed-icu\t-\t-\t[0-9]+\n$/u);
+  expect(sizeReport.stdout).toMatch(/^kind\tid\textensions\tfiles\tbytes\npackage\ttotal\t-\t-\t[0-9]+\npackage\ticu-data\t-\t-\t[0-9]+\n$/u);
 
   const second = run(path.dirname(source), output);
   expect(second.status, second.stderr).toBe(0);

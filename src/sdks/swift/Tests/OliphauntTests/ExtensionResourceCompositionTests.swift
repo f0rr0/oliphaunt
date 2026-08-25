@@ -22,28 +22,13 @@ func swiftPMExtensionResourcesComposeBaseNativeDependenciesMultipleAndSQLOnly() 
 
     try writeExtensionCompositionText(
         baseRoot.appendingPathComponent("runtime/manifest.properties"),
-        """
-        schema=oliphaunt-runtime-resources-v1
-        layout=postgres-runtime-files-v1
-        artifactRole=runtime
-        catalogProfile=
-        cacheKey=swiftpm-base-v1
-        source=swiftpm-test
-        selectedExtensions=
-        extensions=
-        runtimeFeatures=
-        sharedPreloadLibraries=
-        mobileStaticRegistryState=not-required
-        mobileStaticRegistryRegistered=
-        mobileStaticRegistryPending=
-        nativeModuleStems=
-        mobileStaticRegistrySource=
-        """
+        extensionCompositionRuntimeManifest(cacheKey: "swiftpm-base-v1")
     )
     try writeExtensionCompositionText(
         baseRoot.appendingPathComponent("runtime/files/share/postgresql/postgres.bki"),
         "base runtime\n"
     )
+    try writeExtensionCompositionStandardSeeds(baseRoot)
 
     let rows: [(String, String, String, Bool, [String], String?, [String], [String])] = [
         (
@@ -201,25 +186,13 @@ func swiftPMExtensionResourceCompositionFailsClosedOnMissingDependency() throws 
     }
     try writeExtensionCompositionText(
         baseRoot.appendingPathComponent("runtime/manifest.properties"),
-        """
-        schema=oliphaunt-runtime-resources-v1
-        layout=postgres-runtime-files-v1
-        artifactRole=runtime
-        catalogProfile=
-        cacheKey=swiftpm-missing-base-v1
-        extensions=
-        runtimeFeatures=
-        sharedPreloadLibraries=
-        mobileStaticRegistryState=not-required
-        mobileStaticRegistryRegistered=
-        mobileStaticRegistryPending=
-        nativeModuleStems=
-        """
+        extensionCompositionRuntimeManifest(cacheKey: "swiftpm-missing-base-v1")
     )
     try writeExtensionCompositionText(
         baseRoot.appendingPathComponent("runtime/files/share/postgresql/postgres.bki"),
         "base runtime\n"
     )
+    try writeExtensionCompositionStandardSeeds(baseRoot)
     try makeExtensionCompositionFragment(
         at: fragment,
         product: "oliphaunt-extension-missing-parent",
@@ -253,6 +226,356 @@ func swiftPMExtensionResourceCompositionFailsClosedOnMissingDependency() throws 
         #expect(message.contains("missing_child"))
         #expect(message.contains("required by missing_parent"))
     }
+}
+
+@Test
+func swiftRuntimeResourcesRejectDuplicateManifestProperties() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "oliphaunt-swift-duplicate-manifest-\(UUID().uuidString)",
+        isDirectory: true
+    )
+    defer { try? FileManager.default.removeItem(at: root) }
+    try writeExtensionCompositionStandardSeeds(root)
+    try writeExtensionCompositionText(
+        root.appendingPathComponent("runtime/manifest.properties"),
+        """
+        schema=oliphaunt-runtime-resources-v1
+        schema=duplicate
+        layout=postgres-runtime-files-v1
+        """
+    )
+    try writeExtensionCompositionText(
+        root.appendingPathComponent("runtime/files/share/postgresql/postgres.bki"),
+        "runtime\n"
+    )
+    do {
+        _ = try OliphauntRuntimeResources(
+            resourceRoot: root,
+            cacheRoot: root.appendingPathComponent("cache")
+        ).materializeRuntime()
+        Issue.record("Swift runtime resources accepted duplicate manifest properties")
+    } catch OliphauntError.engine(let message) {
+        #expect(message.contains("duplicate"))
+    }
+}
+
+@Test
+func swiftRuntimeResourcesRejectSharedWhitespaceInvalidClusterSeedManifest() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "oliphaunt-swift-whitespace-manifest-\(UUID().uuidString)",
+        isDirectory: true
+    )
+    defer { try? FileManager.default.removeItem(at: root) }
+    try writeExtensionCompositionStandardSeeds(root)
+    try writeExtensionCompositionText(
+        root.appendingPathComponent("cluster-seed/manifest.properties"),
+        try nativeClusterSeedFixture(
+            named: "native-whitespace.invalid.properties",
+            target: "macos-arm64"
+        )
+    )
+    try writeExtensionCompositionText(
+        root.appendingPathComponent("runtime/manifest.properties"),
+        extensionCompositionRuntimeManifest(cacheKey: "swiftpm-whitespace-v1")
+    )
+    try writeExtensionCompositionText(
+        root.appendingPathComponent("runtime/files/share/postgresql/postgres.bki"),
+        "runtime\n"
+    )
+    do {
+        _ = try OliphauntRuntimeResources(
+            resourceRoot: root,
+            cacheRoot: root.appendingPathComponent("cache")
+        ).materializeRuntime()
+        Issue.record("Swift runtime resources accepted whitespace-normalized cluster-seed metadata")
+    } catch OliphauntError.engine(let message) {
+        #expect(message.contains("cacheKey"))
+    }
+}
+
+@Test
+func swiftRuntimeResourcesRejectSharedPathTraversalClusterSeedCacheKeys() throws {
+    for fixture in [
+        "native-dot-cache-key.invalid.properties",
+        "native-dotdot-cache-key.invalid.properties",
+    ] {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "oliphaunt-swift-cache-key-contract-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try writeExtensionCompositionStandardSeeds(root)
+        try writeExtensionCompositionText(
+            root.appendingPathComponent("cluster-seed/manifest.properties"),
+            try nativeClusterSeedFixture(named: fixture, target: "macos-arm64")
+        )
+        try writeExtensionCompositionText(
+            root.appendingPathComponent("runtime/manifest.properties"),
+            extensionCompositionRuntimeManifest(cacheKey: "swiftpm-cache-key-contract-v1")
+        )
+        try writeExtensionCompositionText(
+            root.appendingPathComponent("runtime/files/share/postgresql/postgres.bki"),
+            "runtime\n"
+        )
+        do {
+            _ = try OliphauntRuntimeResources(
+                resourceRoot: root,
+                cacheRoot: root.appendingPathComponent("cache")
+            ).materializeRuntime()
+            Issue.record("Swift runtime resources accepted \(fixture)")
+        } catch OliphauntError.engine(let message) {
+            #expect(message.contains("invalid cacheKey"))
+        }
+    }
+}
+
+@Test
+func swiftRuntimeResourcesRejectNoncanonicalRuntimeManifestContracts() throws {
+    let scenarios: [(name: String, manifest: String, expected: String)] = [
+        (
+            "missing-field",
+            extensionCompositionRuntimeManifest(
+                cacheKey: "swiftpm-missing-field-v1",
+                omitting: ["selectedExtensions"]
+            ),
+            "missing=selectedExtensions"
+        ),
+        (
+            "extra-field",
+            extensionCompositionRuntimeManifest(
+                cacheKey: "swiftpm-extra-field-v1",
+                extra: ["legacy": "value"]
+            ),
+            "unsupported=legacy"
+        ),
+        ("dot-cache-key", extensionCompositionRuntimeManifest(cacheKey: "."), "invalid cacheKey"),
+        ("dotdot-cache-key", extensionCompositionRuntimeManifest(cacheKey: ".."), "invalid cacheKey"),
+        (
+            "mode",
+            extensionCompositionRuntimeManifest(cacheKey: "swiftpm-mode-v1", mode: "other"),
+            "mode=native-direct"
+        ),
+        (
+            "missing-registry-source",
+            extensionCompositionRuntimeManifest(
+                cacheKey: "swiftpm-source-v1",
+                registryState: "complete",
+                registrySource: ""
+            ),
+            "mobileStaticRegistrySource"
+        ),
+        (
+            "unknown-registry-source",
+            extensionCompositionRuntimeManifest(
+                cacheKey: "swiftpm-unknown-source-v1",
+                registryState: "complete",
+                registrySource: "other"
+            ),
+            "mobileStaticRegistrySource"
+        ),
+        (
+            "unexpected-registry-source",
+            extensionCompositionRuntimeManifest(
+                cacheKey: "swiftpm-unexpected-source-v1",
+                registrySource: "static-registry/oliphaunt_static_registry.c"
+            ),
+            "mobileStaticRegistrySource"
+        ),
+    ]
+
+    for scenario in scenarios {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "oliphaunt-swift-runtime-contract-\(scenario.name)-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try writeExtensionCompositionStandardSeeds(root)
+        try writeExtensionCompositionText(
+            root.appendingPathComponent("runtime/manifest.properties"),
+            scenario.manifest
+        )
+        try writeExtensionCompositionText(
+            root.appendingPathComponent("runtime/files/share/postgresql/postgres.bki"),
+            "runtime\n"
+        )
+        do {
+            _ = try OliphauntRuntimeResources(
+                resourceRoot: root,
+                cacheRoot: root.appendingPathComponent("cache")
+            ).materializeRuntime()
+            Issue.record("Swift runtime resources accepted \(scenario.name)")
+        } catch OliphauntError.engine(let message) {
+            #expect(message.contains(scenario.expected))
+        }
+    }
+}
+
+@Test
+func swiftRuntimeResourcesAcceptOnlyTheTwoCompleteRegistrySources() throws {
+    for source in [
+        "static-registry/oliphaunt_static_registry.c",
+        "swiftpm-linked-products",
+    ] {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "oliphaunt-swift-registry-source-contract-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try writeExtensionCompositionStandardSeeds(root)
+        try writeExtensionCompositionText(
+            root.appendingPathComponent("runtime/manifest.properties"),
+            extensionCompositionRuntimeManifest(
+                cacheKey: "swiftpm-registry-source-v1",
+                registryState: "complete",
+                registrySource: source
+            )
+        )
+        try writeExtensionCompositionText(
+            root.appendingPathComponent("runtime/files/share/postgresql/postgres.bki"),
+            "runtime\n"
+        )
+        _ = try OliphauntRuntimeResources(
+            resourceRoot: root,
+            cacheRoot: root.appendingPathComponent("cache")
+        ).materializeRuntime()
+    }
+}
+
+@Test
+func swiftRuntimeCacheNeverReplacesAnInvalidPublishedTarget() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "oliphaunt-swift-runtime-cache-contract-\(UUID().uuidString)",
+        isDirectory: true
+    )
+    let cache = root.appendingPathComponent("cache", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try writeExtensionCompositionStandardSeeds(root)
+    try writeExtensionCompositionText(
+        root.appendingPathComponent("runtime/manifest.properties"),
+        extensionCompositionRuntimeManifest(cacheKey: "swiftpm-cache-contract-v1")
+    )
+    try writeExtensionCompositionText(
+        root.appendingPathComponent("runtime/files/share/postgresql/postgres.bki"),
+        "runtime\n"
+    )
+    let resources = OliphauntRuntimeResources(resourceRoot: root, cacheRoot: cache)
+    let published = try resources.materializeRuntime()
+    let sentinel = published.appendingPathComponent("sentinel")
+    try "preserve\n".write(to: sentinel, atomically: true, encoding: .utf8)
+    try "invalid\n".write(
+        to: published.appendingPathComponent(".liboliphaunt-asset-cache-key"),
+        atomically: true,
+        encoding: .utf8
+    )
+
+    do {
+        _ = try resources.materializeRuntime()
+        Issue.record("Swift runtime cache replaced an invalid published target")
+    } catch OliphauntError.engine(let message) {
+        #expect(message.contains("immutable Swift Oliphaunt runtime cache"))
+        #expect(try String(contentsOf: sentinel, encoding: .utf8) == "preserve\n")
+    }
+}
+
+private func writeExtensionCompositionStandardSeeds(_ resourceRoot: URL) throws {
+    let target = "macos-arm64"
+    try writeExtensionCompositionText(
+        resourceRoot.appendingPathComponent("manifest.properties"),
+        """
+        schema=oliphaunt-native-runtime-carrier-v1
+        clusterSeedTarget=\(target)
+        clusterSeedRelativePath=cluster-seed
+        icuClusterSeedRelativePath=cluster-seed-icu
+        """
+    )
+    let seed = resourceRoot.appendingPathComponent("cluster-seed", isDirectory: true)
+    try writeExtensionCompositionText(
+        seed.appendingPathComponent("manifest.properties"),
+        try nativeClusterSeedFixture(profile: "standard", target: target)
+    )
+    try writeExtensionCompositionText(
+        seed.appendingPathComponent("files/PG_VERSION"),
+        "18\n"
+    )
+    try writeExtensionCompositionText(
+        seed.appendingPathComponent("files/global/pg_control"),
+        "control\n"
+    )
+    let icuSeed = resourceRoot.appendingPathComponent("cluster-seed-icu", isDirectory: true)
+    try writeExtensionCompositionText(
+        icuSeed.appendingPathComponent("manifest.properties"),
+        try nativeClusterSeedFixture(profile: "icu", target: target)
+    )
+    try writeExtensionCompositionText(
+        icuSeed.appendingPathComponent("files/PG_VERSION"),
+        "18\n"
+    )
+    try writeExtensionCompositionText(
+        icuSeed.appendingPathComponent("files/global/pg_control"),
+        "control\n"
+    )
+}
+
+private func extensionCompositionRuntimeManifest(
+    cacheKey: String,
+    mode: String = "native-direct",
+    registryState: String = "not-required",
+    registrySource: String = "",
+    omitting: Set<String> = [],
+    extra: [String: String] = [:]
+) -> String {
+    let registryExtensions = registryState == "complete" ? "vector" : ""
+    var fields: [(String, String)] = [
+        ("schema", "oliphaunt-runtime-resources-v1"),
+        ("layout", "postgres-runtime-files-v1"),
+        ("artifactRole", "runtime"),
+        ("catalogProfile", ""),
+        ("clusterSeedTarget", "macos-arm64"),
+        ("icuDataTreeSha256", ""),
+        ("mode", mode),
+        ("cacheKey", cacheKey),
+        ("selectedExtensions", registryExtensions),
+        ("extensions", registryExtensions),
+        ("runtimeFeatures", ""),
+        ("sharedPreloadLibraries", ""),
+        ("mobileStaticRegistryState", registryState),
+        ("mobileStaticRegistryRegistered", registryExtensions),
+        ("mobileStaticRegistryPending", ""),
+        ("nativeModuleStems", registryExtensions),
+        ("mobileStaticRegistrySource", registrySource),
+    ]
+    fields.removeAll { omitting.contains($0.0) }
+    fields.append(contentsOf: extra.sorted { $0.key < $1.key }.map { ($0.key, $0.value) })
+    return fields.map { "\($0.0)=\($0.1)" }.joined(separator: "\n") + "\n"
+}
+
+private func nativeClusterSeedFixture(profile: String, target: String) throws -> String {
+    try nativeClusterSeedFixture(
+        named: "native-\(profile).valid.properties",
+        target: target
+    )
+}
+
+private func nativeClusterSeedFixture(named name: String, target: String) throws -> String {
+    var sourceRoot = URL(fileURLWithPath: #filePath)
+    for _ in 0..<5 {
+        sourceRoot.deleteLastPathComponent()
+    }
+    let fixture = sourceRoot
+        .appendingPathComponent("shared/cluster-seed-contract/fixtures")
+        .appendingPathComponent(name)
+    let source = try String(contentsOf: fixture, encoding: .utf8)
+    let overrides = [
+        "target": target,
+        "compatibilityKey": "native-pg18-\(target)-v1",
+    ]
+    return source.split(separator: "\n", omittingEmptySubsequences: false).map { row in
+        let line = String(row)
+        guard let separator = line.firstIndex(of: "=") else { return line }
+        let key = String(line[..<separator])
+        guard let value = overrides[key] else { return line }
+        return "\(key)=\(value)"
+    }.joined(separator: "\n")
 }
 
 @Test

@@ -120,12 +120,12 @@ export function wasixIcuNpmInputs({ version, portableReleaseArchive, icuDataRele
   );
   const seedArchiveBytes = requireEntry(
     runtimeEntries,
-    "target/oliphaunt-wasix/assets/cluster-seeds/icu.tar.zst",
+    WASIX_PORTABLE_RELEASE_MEMBERS.icuSeedArchive,
     "WASIX runtime release",
   );
   const seedManifestBytes = requireEntry(
     runtimeEntries,
-    "target/oliphaunt-wasix/assets/cluster-seeds/icu.json",
+    WASIX_PORTABLE_RELEASE_MEMBERS.icuSeedManifest,
     "WASIX runtime release",
   );
   const seed = parseJson(seedManifestBytes, "WASIX ICU cluster seed manifest");
@@ -207,7 +207,7 @@ export function stageWasixIcuNpmCarrier({ version, portableReleaseArchive, icuDa
   }
   writeFileSync(path.join(output, "index.js"), renderDescriptor({ version, inputs }), { mode: 0o644 });
   writeFileSync(path.join(output, "index.d.ts"), descriptorTypes(), { mode: 0o644 });
-  writeFileSync(path.join(output, "README.md"), `# ${WASIX_ICU_NPM_PACKAGE}\n\nOptional ICU data and matching ICU catalogue cluster seed for ${WASIX_RUNTIME_NPM_PACKAGE}.\n\n\`import icu from '${WASIX_ICU_NPM_PACKAGE}'\` and pass \`{ icu }\` to \`Oliphaunt.open\`.\n`, { mode: 0o644 });
+  writeFileSync(path.join(output, "README.md"), `# ${WASIX_ICU_NPM_PACKAGE}\n\nOptional ICU data and matching ICU catalog cluster seed for ${WASIX_RUNTIME_NPM_PACKAGE}.\n\n\`import icu from '${WASIX_ICU_NPM_PACKAGE}'\` and pass \`{ icu }\` to \`Oliphaunt.open\`.\n`, { mode: 0o644 });
   stageReleaseNotices(output, NOTICE_OPTIONS);
   const packageJson = {
     name: WASIX_ICU_NPM_PACKAGE,

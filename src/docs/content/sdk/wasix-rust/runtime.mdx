@@ -28,7 +28,7 @@ PostgreSQL-style Unix socket directory.
 
 `DatabaseStorage::Memory` is the default true Wasmer memory filesystem.
 `DatabaseStorage::Directory(path)` is a caller-owned managed root. A new store
-is hydrated from the packaged template; reopening validates the descriptor and
+is hydrated from the packaged cluster seed; reopening validates the descriptor and
 minimal PostgreSQL markers. Incomplete or descriptorless nonempty roots fail
 without mutation.
 

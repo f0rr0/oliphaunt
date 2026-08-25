@@ -11,6 +11,29 @@ oliphaunt_icu_source_commit() {
   git -C "$source_dir/../../" rev-parse HEAD
 }
 
+oliphaunt_icu_canonical_data_archive() {
+  local source_dir="${1:?ICU source dir is required}"
+  printf '%s\n' "${OLIPHAUNT_ICU_DATA_ARCHIVE:-$source_dir/../../../icu-data/icudt76l.dat}"
+}
+
+oliphaunt_icu_canonical_data_sha256() {
+  printf '%s\n' 'dbc14e1c48ef209f230adc2aa6854bd4d6bba8f5e6733e75897a4263d97920f0'
+}
+
+oliphaunt_icu_require_canonical_data() {
+  local archive="${1:?ICU data archive is required}"
+  [ -f "$archive" ] || {
+    echo "missing pinned ICU 76.1 data archive at $archive; run \`cargo run -p xtask -- assets fetch\` first" >&2
+    return 1
+  }
+  local actual
+  actual="$(shasum -a 256 "$archive" | awk '{print $1}')"
+  [ "$actual" = "$(oliphaunt_icu_canonical_data_sha256)" ] || {
+    echo "ICU data archive checksum mismatch: expected $(oliphaunt_icu_canonical_data_sha256), got $actual" >&2
+    return 1
+  }
+}
+
 oliphaunt_icu_script_sha256() {
   local script_dir="${1:?script dir is required}"
   shasum -a 256 "$script_dir/icu.sh" | awk '{print $1}'
@@ -20,7 +43,7 @@ oliphaunt_icu_native_tools_stamp() {
   local source_dir="$1"
   local script_dir="$2"
   {
-    printf 'schema=oliphaunt-icu-native-tools-v2\n'
+    printf 'schema=oliphaunt-icu-native-tools-v4\n'
     printf 'source=%s\n' "$(oliphaunt_icu_source_commit "$source_dir")"
     printf 'script=%s\n' "$(oliphaunt_icu_script_sha256 "$script_dir")"
     printf 'configure=static-no-tests-no-samples-no-extras-no-icuio-no-layoutex-tools-only\n'
@@ -40,7 +63,7 @@ oliphaunt_icu_target_stamp() {
   local cxxflags="${10}"
   local ldflags="${11}"
   {
-    printf 'schema=oliphaunt-icu-target-v5\n'
+    printf 'schema=oliphaunt-icu-target-v8\n'
     printf 'source=%s\n' "$(oliphaunt_icu_source_commit "$source_dir")"
     printf 'script=%s\n' "$(oliphaunt_icu_script_sha256 "$script_dir")"
     printf 'target=%s\n' "$target_label"
@@ -52,7 +75,8 @@ oliphaunt_icu_target_stamp() {
     printf 'cflags=%s\n' "$cflags"
     printf 'cxxflags=%s\n' "$cxxflags"
     printf 'ldflags=%s\n' "$ldflags"
-    printf 'configure=files-data-static-libs-static-consumer-no-extra-target-tools-stub-data-archive\n'
+    printf 'canonical-data-sha256=%s\n' "$(oliphaunt_icu_canonical_data_sha256)"
+    printf 'configure=files-data-static-libs-static-consumer-no-extra-target-tools-stub-data-archive-pinned-upstream-data\n'
   } | shasum -a 256 | awk '{print $1}'
 }
 
@@ -179,31 +203,29 @@ oliphaunt_icu_install_stub_data_archive() {
   mv "$tmp_archive" "$installed_archive"
 }
 
-oliphaunt_icu_built_files_data_dir() {
-  local target_build_dir="${1:?target ICU build dir is required}"
-  local build_root="$target_build_dir/data/out/build"
-  local -a candidates=()
-  local child
-  while IFS= read -r child; do
-    if oliphaunt_icu_data_root_contains_data "$child"; then
-      candidates+=("$child")
-    fi
-  done < <(find "$build_root" -mindepth 1 -maxdepth 1 -type d -name 'icudt*' 2>/dev/null | LC_ALL=C sort)
-  [ "${#candidates[@]}" -eq 1 ] || return 1
-  printf '%s\n' "${candidates[0]}"
-}
-
-oliphaunt_icu_install_files_data() {
-  local target_build_dir="${1:?target ICU build dir is required}"
-  local prefix="${2:?ICU prefix is required}"
-  local source
-  source="$(oliphaunt_icu_built_files_data_dir "$target_build_dir")" || return 1
-  local destination="$prefix/share/icu/$(basename "$source")"
-  local tmp_destination="$destination.tmp"
+oliphaunt_icu_install_canonical_files_data() {
+  local source_dir="${1:?ICU source dir is required}"
+  local native_build_dir="${2:?native ICU build dir is required}"
+  local prefix="${3:?ICU prefix is required}"
+  local archive
+  archive="$(oliphaunt_icu_canonical_data_archive "$source_dir")"
+  oliphaunt_icu_require_canonical_data "$archive"
+  local icupkg="$native_build_dir/bin/icupkg"
+  [ -x "$icupkg" ] || {
+    echo "missing ICU package tool at $icupkg" >&2
+    return 1
+  }
+  local destination="$prefix/share/icu"
+  local tmp_destination="$prefix/share/icu.tmp"
 
   rm -rf "$tmp_destination"
-  mkdir -p "$prefix/share/icu"
-  cp -pR "$source" "$tmp_destination"
+  mkdir -p "$tmp_destination/icudt76l"
+  "$icupkg" -x '*' -d "$tmp_destination/icudt76l" "$archive"
+  [ "$(find "$tmp_destination/icudt76l" -type f | wc -l | tr -d '[:space:]')" = 4136 ] || {
+    echo "pinned ICU data archive did not extract the expected 4136 files" >&2
+    rm -rf "$tmp_destination"
+    return 1
+  }
   rm -rf "$destination"
   mv "$tmp_destination" "$destination"
   oliphaunt_icu_files_data_ready "$prefix/share/icu"
@@ -256,9 +278,37 @@ oliphaunt_icu_stage_data() {
   local destination="${2:?destination ICU data root is required}"
   local source
   source="$(oliphaunt_icu_data_source_dir "$prefix")" || return 1
+  oliphaunt_icu_copy_files_data "$source" "$destination"
+}
+
+oliphaunt_icu_copy_files_data() {
+  local source="${1:?source ICU data root is required}"
+  local destination="${2:?destination ICU data root is required}"
+  [ -d "$source" ] || return 1
+  if find "$source" -type l -print -quit | grep -q .; then
+    echo "ICU files-data source must not contain symbolic links: $source" >&2
+    return 1
+  fi
   rm -rf "$destination"
   mkdir -p "$destination"
-  cp -pR "$source/." "$destination/"
+  local copied=0
+  local child name
+  while IFS= read -r child; do
+    name="$(basename "$child")"
+    if [ -f "$child" ] && [[ "$name" =~ ^icudt[0-9]+[a-z]*[.]dat$ ]]; then
+      cp -p "$child" "$destination/$name"
+      copied=$((copied + 1))
+    elif [ -d "$child" ] && [[ "$name" =~ ^icudt[0-9]+[a-z]*$ ]] &&
+      find "$child" -type f -print -quit | grep -q .; then
+      cp -pR "$child" "$destination/$name"
+      copied=$((copied + 1))
+    fi
+  done < <(find "$source" -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort)
+  if [ "$copied" -ne 1 ]; then
+    echo "ICU data root must contain exactly one canonical icudt files-data payload: $source" >&2
+    rm -rf "$destination"
+    return 1
+  fi
   oliphaunt_icu_files_data_ready "$destination"
 }
 
@@ -324,6 +374,7 @@ oliphaunt_icu_build_target() {
   local ldflags="${15:-}"
 
   oliphaunt_icu_build_native_tools "$source_dir" "$script_dir" "$native_build_dir" "$jobs"
+  oliphaunt_icu_require_canonical_data "$(oliphaunt_icu_canonical_data_archive "$source_dir")"
 
   local stamp_file="$prefix/.oliphaunt-icu-build"
   local stamp
@@ -375,7 +426,7 @@ oliphaunt_icu_build_target() {
     oliphaunt_icu_prepare_files_data_install_dirs "$target_build_dir" "$prefix"
     make install PKGDATA_OPTS="$icu_pkgdata_opts"
     make -j"$jobs" -C data packagedata PKGDATA_OPTS="$icu_pkgdata_opts"
-    oliphaunt_icu_install_files_data "$target_build_dir" "$prefix"
+    oliphaunt_icu_install_canonical_files_data "$source_dir" "$native_build_dir" "$prefix"
     oliphaunt_icu_install_stub_data_archive "$target_build_dir" "$prefix"
   )
 

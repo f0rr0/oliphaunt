@@ -4,6 +4,26 @@
 # own platform metrics and artifact copying; this file only normalizes runner
 # pass/report JSON emitted from Metro logs or Maestro installed-app flows.
 
+configure_mobile_catalog_profile_probe() {
+  local profile="$1"
+  local fixture="$root/src/shared/cluster-seed-contract/profile-probe.json"
+  case "$profile" in
+    standard|icu) ;;
+    *) echo "unsupported mobile catalog profile: $profile" >&2; return 1 ;;
+  esac
+  [ -s "$fixture" ] || {
+    echo "mobile catalog profile probe is missing: $fixture" >&2
+    return 1
+  }
+  export EXPO_PUBLIC_OLIPHAUNT_CATALOG_PROFILE="$profile"
+  export EXPO_PUBLIC_OLIPHAUNT_CATALOG_PROFILE_PROBE_SQL="$({
+    node -e 'const fs=require("node:fs"); const [file, profile]=process.argv.slice(1); process.stdout.write(JSON.parse(fs.readFileSync(file, "utf8")).profiles[profile].sql);' "$fixture" "$profile"
+  })"
+  export EXPO_PUBLIC_OLIPHAUNT_CATALOG_PROFILE_PROBE_EXPECTED="$({
+    node -e 'const fs=require("node:fs"); const [file, profile]=process.argv.slice(1); process.stdout.write(JSON.parse(fs.readFileSync(file, "utf8")).profiles[profile].expected);' "$fixture" "$profile"
+  })"
+}
+
 require_nonempty_json_file() {
   local file="$1"
   local label="$2"
@@ -29,7 +49,7 @@ NODE
 export_mobile_e2e_icu_expectation_from_manifest() {
   local manifest="$1"
   local label="$2"
-  local runtime_feature_rows runtime_features
+  local runtime_feature_rows runtime_features seed_manifest catalog_profile
   [ -s "$manifest" ] || {
     echo "$label runtime manifest is missing or empty: $manifest" >&2
     return 1
@@ -45,35 +65,55 @@ export_mobile_e2e_icu_expectation_from_manifest() {
   )"
   if printf '%s\n' "$runtime_features" | tr ',' '\n' | grep -Fxq icu; then
     export OLIPHAUNT_MOBILE_E2E_EXPECT_ICU=1
+    catalog_profile=icu
+    seed_manifest="$(dirname "$(dirname "$manifest")")/cluster-seed-icu/manifest.properties"
   else
     export OLIPHAUNT_MOBILE_E2E_EXPECT_ICU=0
+    catalog_profile=standard
+    seed_manifest="$(dirname "$(dirname "$manifest")")/cluster-seed/manifest.properties"
   fi
+  [ -s "$seed_manifest" ] || {
+    echo "$label selected cluster-seed manifest is missing or empty: $seed_manifest" >&2
+    return 1
+  }
+  [ "$(grep -c '^catalogProfile=' "$seed_manifest" || true)" = "1" ] &&
+    grep -Fxq "catalogProfile=$catalog_profile" "$seed_manifest" || {
+      echo "$label selected cluster seed does not declare catalogProfile=$catalog_profile" >&2
+      return 1
+    }
+  export OLIPHAUNT_MOBILE_E2E_EXPECT_CATALOG_PROFILE="$catalog_profile"
 }
 
 export_mobile_e2e_icu_expectation_from_android_apk() {
   local apk="$1"
   local label="$2"
-  local manifest
+  local extracted manifest
   [ -f "$apk" ] || {
     echo "$label is missing: $apk" >&2
     return 1
   }
-  manifest="$(mktemp "${TMPDIR:-/tmp}/oliphaunt-android-runtime-manifest.XXXXXX")" || {
-    echo "failed to create a temporary $label runtime manifest" >&2
+  extracted="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-android-runtime-manifests.XXXXXX")" || {
+    echo "failed to create temporary $label runtime manifests" >&2
     return 1
   }
+  manifest="$extracted/runtime/manifest.properties"
+  mkdir -p "$extracted/runtime" "$extracted/cluster-seed" "$extracted/cluster-seed-icu"
   local extract_status=0
   unzip -p "$apk" "assets/oliphaunt/runtime/manifest.properties" >"$manifest" ||
     extract_status=$?
+  unzip -p "$apk" "assets/oliphaunt/cluster-seed/manifest.properties" >"$extracted/cluster-seed/manifest.properties" ||
+    extract_status=$?
+  unzip -p "$apk" "assets/oliphaunt/cluster-seed-icu/manifest.properties" >"$extracted/cluster-seed-icu/manifest.properties" ||
+    extract_status=$?
   if [ "$extract_status" -ne 0 ]; then
-    rm -f "$manifest"
-    echo "$label is missing its runtime manifest: $apk" >&2
+    rm -rf "$extracted"
+    echo "$label is missing its runtime or cluster-seed manifest: $apk" >&2
     return 1
   fi
   local expectation_status=0
   export_mobile_e2e_icu_expectation_from_manifest "$manifest" "$label" ||
     expectation_status=$?
-  rm -f "$manifest"
+  rm -rf "$extracted"
   return "$expectation_status"
 }
 
@@ -250,6 +290,7 @@ if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
 }
 const expectedKeys = [
   'allExtensionsActivated',
+  'catalogProfile',
   'extensionCatalogSha256',
   'extensionCatalogComplete',
   'extensionCount',
@@ -263,15 +304,19 @@ const actualKeys = Object.keys(payload).sort();
 if (JSON.stringify(actualKeys) !== JSON.stringify(expectedKeys)) {
   throw new Error(`${platform} app PASS receipt keys mismatch: expected=${expectedKeys.join(',')}; actual=${actualKeys.join(',')}`);
 }
-if (payload.schema !== 'oliphaunt-expo-smoke-pass-v3' || payload.runner !== 'smoke' || payload.platform !== platform) {
+if (payload.schema !== 'oliphaunt-expo-smoke-pass-v4' || payload.runner !== 'smoke' || payload.platform !== platform) {
   throw new Error(`${platform} app PASS receipt schema, runner, or platform identity mismatch`);
 }
 const expectedIcu = process.env.OLIPHAUNT_MOBILE_E2E_EXPECT_ICU;
+const expectedCatalogProfile = process.env.OLIPHAUNT_MOBILE_E2E_EXPECT_CATALOG_PROFILE;
 if (expectedIcu !== '0' && expectedIcu !== '1') {
   throw new Error(`${platform} app PASS receipt requires an exact artifact ICU expectation`);
 }
 if (payload.icuRuntimeProof !== (expectedIcu === '1')) {
   throw new Error(`${platform} app PASS ICU runtime proof does not match the exact artifact selection`);
+}
+if ((expectedCatalogProfile !== 'standard' && expectedCatalogProfile !== 'icu') || payload.catalogProfile !== expectedCatalogProfile) {
+  throw new Error(`${platform} app PASS catalog profile does not match the selected packaged cluster seed`);
 }
 const passEventBytes = Buffer.byteLength(`OLIPHAUNT_EXPO_SMOKE_PASS ${JSON.stringify(payload)}`);
 if (passEventBytes > 768) {
@@ -298,6 +343,7 @@ if (!/^[0-9a-f]{64}$/.test(catalogSha256) || payload.extensionCatalogSha256 !== 
 const receipt = {
   schema: 'oliphaunt-mobile-installed-extension-proof-v1',
   platform,
+  catalogProfile: expectedCatalogProfile,
   candidateSha,
   candidateTree,
   extensionCount: expected.length,
@@ -357,6 +403,7 @@ const receipt = JSON.parse(fs.readFileSync(receiptFile, 'utf8'));
 const metadata = JSON.parse(fs.readFileSync(metadataFile, 'utf8'));
 const expectedReportKeys = [
   'allExtensionsActivated',
+  'catalogProfile',
   'extensionCatalogSha256',
   'extensionCatalogComplete',
   'extensionCount',
@@ -371,16 +418,21 @@ if (JSON.stringify(actualReportKeys) !== JSON.stringify(expectedReportKeys)) {
   throw new Error(`${platform} mobile E2E PASS report keys mismatch`);
 }
 const expectedIcu = process.env.OLIPHAUNT_MOBILE_E2E_EXPECT_ICU;
+const expectedCatalogProfile = process.env.OLIPHAUNT_MOBILE_E2E_EXPECT_CATALOG_PROFILE;
 if (expectedIcu !== '0' && expectedIcu !== '1') {
   throw new Error(`${platform} mobile E2E PASS report requires an exact artifact ICU expectation`);
 }
 if (report.icuRuntimeProof !== (expectedIcu === '1')) {
   throw new Error(`${platform} mobile E2E ICU runtime proof does not match the exact artifact selection`);
 }
+if ((expectedCatalogProfile !== 'standard' && expectedCatalogProfile !== 'icu') || report.catalogProfile !== expectedCatalogProfile) {
+  throw new Error(`${platform} mobile E2E catalog profile does not match the selected packaged cluster seed`);
+}
 const expectedKeys = [
   'appPassPayloadSha256',
   'candidateSha',
   'candidateTree',
+  'catalogProfile',
   'extensionCatalogSha256',
   'extensionCount',
   'extensions',
@@ -399,12 +451,15 @@ if (
 ) {
   throw new Error(`${platform} mobile E2E receipt is not bound to the current commit and tree`);
 }
+if (receipt.catalogProfile !== expectedCatalogProfile) {
+  throw new Error(`${platform} mobile E2E receipt catalog profile mismatch`);
+}
 const expected = (metadata.extensions ?? [])
   .map(row => row['sql-name'])
   .sort();
 if (
   expected.length === 0 ||
-  report.schema !== 'oliphaunt-expo-smoke-pass-v3' ||
+  report.schema !== 'oliphaunt-expo-smoke-pass-v4' ||
   report.runner !== 'smoke' ||
   report.platform !== platform ||
   report.extensionCount !== expected.length ||

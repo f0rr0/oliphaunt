@@ -1228,7 +1228,7 @@ pub struct MobileStaticRegistryMetadata {
 pub struct NativeRuntimeResourceSizeReport {
     /// Stable TSV report path under the resource root.
     pub path: PathBuf,
-    /// Bytes in runtime, template, and static-registry resource trees. This
+    /// Bytes in runtime, cluster-seed, and static-registry resource trees. This
     /// intentionally excludes the report file itself to avoid circular output.
     pub package_bytes: u64,
     /// Bytes in `runtime/files`.
@@ -1263,11 +1263,11 @@ pub struct NativeRuntimeResources {
     pub root: PathBuf,
     /// Runtime files directory copied into app storage before opening.
     pub runtime_files: PathBuf,
-    /// Template PGDATA files directory copied for first open on mobile.
+    /// Cluster-seed PGDATA files copied for first open on mobile.
     pub cluster_seed_files: PathBuf,
     /// Content key of the source runtime cache.
     pub runtime_cache_key: String,
-    /// Content key of the source template PGDATA cache.
+    /// Content key of the source cluster-seed PGDATA cache.
     pub cluster_seed_cache_key: String,
     /// Built-in extensions materialized into the runtime resources.
     pub extensions: Vec<Extension>,
@@ -2003,6 +2003,67 @@ mod tests {
         assert!(text.contains("mobileStaticRegistryPending=vector\n"));
         assert!(text.contains("nativeModuleStems=vector\n"));
         assert!(text.contains("mobileStaticRegistrySource=\n"));
+        assert_eq!(
+            text.lines()
+                .map(|line| line.split_once('=').unwrap().0)
+                .collect::<Vec<_>>(),
+            vec![
+                "schema",
+                "layout",
+                "artifactRole",
+                "catalogProfile",
+                "clusterSeedTarget",
+                "icuDataTreeSha256",
+                "mode",
+                "cacheKey",
+                "selectedExtensions",
+                "extensions",
+                "runtimeFeatures",
+                "sharedPreloadLibraries",
+                "mobileStaticRegistryState",
+                "mobileStaticRegistryRegistered",
+                "mobileStaticRegistryPending",
+                "nativeModuleStems",
+                "mobileStaticRegistrySource",
+            ]
+        );
+    }
+
+    #[test]
+    fn cluster_seed_manifest_omits_runtime_only_fields() {
+        let metadata = mobile_static_registry_metadata(&[], &[]).unwrap();
+        let manifest = RuntimeResourceManifest {
+            cache_key: "seed-smoke",
+            layout: CLUSTER_SEED_LAYOUT,
+            artifact_role: "cluster-seed-standard",
+            catalog_profile: "standard",
+            icu_data_tree_sha256: "",
+            mode: NativePackagingMode::NativeDirect,
+            extensions: &[],
+            runtime_features: &[],
+            shared_preload_libraries: &[],
+            mobile_static_registry: &metadata,
+        };
+        let text = manifest_text(&manifest);
+        assert_eq!(
+            text.lines()
+                .map(|line| line.split_once('=').unwrap().0)
+                .collect::<Vec<_>>(),
+            vec![
+                "schema",
+                "layout",
+                "artifactRole",
+                "catalogProfile",
+                "postgresMajor",
+                "physicalFormat",
+                "initialSuperuser",
+                "icuDataVersion",
+                "icuDataForm",
+                "icuDataTreeSha256",
+                "runtimeFeatures",
+                "cacheKey",
+            ]
+        );
     }
 
     #[test]

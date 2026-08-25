@@ -28,6 +28,7 @@ import {
 } from './source-fetch-core.mjs';
 
 const archiveTool = path.join(import.meta.dirname, 'source-archive.py');
+const zipArchiveTool = path.join(import.meta.dirname, 'source-zip.py');
 const treeVerifier = path.join(import.meta.dirname, 'verify-source-tree.py');
 
 function command(commandName, args, options = {}) {
@@ -181,6 +182,32 @@ function validateArchive(archive) {
   return spawnSync('python3', [archiveTool, 'validate', archive, 'pkg'], {encoding: 'utf8'});
 }
 
+function createZipFixtures(root) {
+  const program = String.raw`
+import pathlib
+import stat
+import sys
+import zipfile
+
+root = pathlib.Path(sys.argv[1])
+with zipfile.ZipFile(root / "valid.zip", "w", zipfile.ZIP_DEFLATED) as archive:
+    archive.writestr("LICENSE", "license\n")
+    archive.writestr("payload/data.bin", b"trusted bytes")
+with zipfile.ZipFile(root / "traversal.zip", "w", zipfile.ZIP_DEFLATED) as archive:
+    archive.writestr("../escape", b"bad")
+with zipfile.ZipFile(root / "symlink.zip", "w", zipfile.ZIP_DEFLATED) as archive:
+    info = zipfile.ZipInfo("link")
+    info.create_system = 3
+    info.external_attr = (stat.S_IFLNK | 0o777) << 16
+    archive.writestr(info, "payload/data.bin")
+`;
+  command('python3', ['-c', program, root]);
+}
+
+function validateZipArchive(archive) {
+  return spawnSync('python3', [zipArchiveTool, 'validate', archive, '.'], {encoding: 'utf8'});
+}
+
 function archiveSource(fixture, name = 'fixture') {
   const sha256 = sha256File(fixture);
   return {
@@ -263,6 +290,54 @@ test('archive validator extracts only the declared safe root', () => {
     assert.equal(readFileSync(path.join(destination, 'link.txt'), 'utf8'), 'trusted bytes');
     assert.equal(readFileSync(path.join(destination, 'hard.txt'), 'utf8'), 'trusted bytes');
     assert.equal(existsSync(path.join(destination, 'pkg')), false);
+  } finally {
+    rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('ZIP source validator extracts a safe rootless release and rejects unsafe members', () => {
+  const root = makeRoot('source-zip-valid');
+  try {
+    createZipFixtures(root);
+    const archive = path.join(root, 'valid.zip');
+    assert.equal(validateZipArchive(archive).status, 0);
+    const destination = path.join(root, 'out');
+    const extraction = spawnSync(
+      'python3',
+      [zipArchiveTool, 'extract', archive, '.', destination],
+      {encoding: 'utf8'},
+    );
+    assert.equal(extraction.status, 0, extraction.stderr);
+    assert.equal(readFileSync(path.join(destination, 'payload/data.bin'), 'utf8'), 'trusted bytes');
+    assert.notEqual(validateZipArchive(path.join(root, 'traversal.zip')).status, 0);
+    assert.notEqual(validateZipArchive(path.join(root, 'symlink.zip')).status, 0);
+  } finally {
+    rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('source fetcher materializes a pinned rootless ZIP release', async () => {
+  const root = makeRoot('source-zip-materialize');
+  try {
+    createZipFixtures(root);
+    const fixture = path.join(root, 'valid.zip');
+    const sha256 = sha256File(fixture);
+    const source = {
+      name: 'zip-fixture',
+      kind: 'archive',
+      url: 'https://example.invalid/zip-fixture.zip',
+      branch: 'archive-1.0',
+      commit: sha256,
+      sha256,
+      stripPrefix: '.',
+    };
+    const fetcher = sourceFetcher(root, {
+      downloadFile: (_source, output) => copyFileSync(fixture, output),
+    });
+    const checkout = path.join(root, 'checkouts', source.name);
+    await fetcher.materialize(source, checkout);
+    assert.equal(readFileSync(path.join(checkout, 'payload/data.bin'), 'utf8'), 'trusted bytes');
+    fetcher.verify(source, checkout);
   } finally {
     rmSync(root, {recursive: true, force: true});
   }

@@ -77,6 +77,12 @@ export type SerializedRuntimeDescriptor = {
   };
 };
 
+/** Runtime subset required by PostgreSQL frontend tools. */
+export type SerializedToolRuntimeDescriptor = Pick<
+  SerializedRuntimeDescriptor,
+  'product' | 'version' | 'runtimeArchive' | 'manifest'
+>;
+
 export type SerializedIcuDescriptor = {
   schema: 'oliphaunt-wasix-icu-v1';
   runtime: 'wasix';

@@ -165,20 +165,25 @@ export type WasixAssetManifest = {
     path: string;
     sha256: string;
   }[];
-  'cluster-seeds': Readonly<Record<'standard' | 'icu', {
-    'artifact-role': 'cluster-seed-standard' | 'cluster-seed-icu';
-    'catalog-profile': 'standard' | 'icu';
-    archive: string;
-    manifest: string;
-    sha256: string;
-    size: number;
-    'runtime-module-sha256': string;
-    'source-fingerprint': string;
-    'postgres-version': string;
-    'physical-format': 'wasix-pg18-v1';
-    'compatibility-key': 'wasix-pg18-datum32-v1';
-    'icu-data-tree-sha256'?: string;
-  }>>;
+  'cluster-seeds': Readonly<
+    Record<
+      'standard' | 'icu',
+      {
+        'artifact-role': 'cluster-seed-standard' | 'cluster-seed-icu';
+        'catalog-profile': 'standard' | 'icu';
+        archive: string;
+        manifest: string;
+        sha256: string;
+        size: number;
+        'runtime-module-sha256': string;
+        'source-fingerprint': string;
+        'postgres-version': string;
+        'physical-format': 'wasix-pg18-v1';
+        'compatibility-key': 'wasix-pg18-datum32-v1';
+        'icu-data-tree-sha256'?: string;
+      }
+    >
+  >;
   /** The core runtime carrier is intentionally extension-free. */
   extensions: readonly [];
 };
@@ -194,7 +199,7 @@ export type OpenConfig = {
   database?: string;
   /** PostgreSQL `-c name=value` settings applied before the database opens. */
   startupGUCs?: Readonly<Record<string, string>>;
-  /** Optional ICU data plus the matching ICU-catalogue cluster seed. */
+  /** Optional ICU data plus the matching PostgreSQL ICU-catalog cluster seed. */
   icu?: WasixIcuDescriptor;
   /** Selectively imported WASIX carriers. SQL strings are intentionally not accepted. */
   extensions?: readonly WasixExtensionDescriptor[];

@@ -241,15 +241,14 @@ async function packRuntime({ scratch, tarballs, runtimeVersion }) {
   const seedBytes = await readFile(seedSource);
   const seedManifestBytes = await readFile(seedManifestSource);
   requireDigest(runtimeBytes, manifest.runtime.sha256, manifest.runtime.archive);
-  requireDigest(
-    seedBytes,
-    standardSeed.sha256,
-    standardSeed.archive,
-  );
+  requireDigest(seedBytes, standardSeed.sha256, standardSeed.archive);
   const build = await runtimeBuildProvenance(manifest);
   await cp(runtimeSource, resolve(staging, WASIX_RUNTIME_NPM_ASSET_PATHS.runtimeArchive));
   await cp(seedSource, resolve(staging, WASIX_RUNTIME_NPM_ASSET_PATHS.standardSeedArchive));
-  await cp(seedManifestSource, resolve(staging, WASIX_RUNTIME_NPM_ASSET_PATHS.standardSeedManifest));
+  await cp(
+    seedManifestSource,
+    resolve(staging, WASIX_RUNTIME_NPM_ASSET_PATHS.standardSeedManifest),
+  );
   await writeFile(resolve(staging, WASIX_RUNTIME_NPM_ASSET_PATHS.manifest), coreManifest);
   const descriptor = {
     schema: 'oliphaunt-wasix-runtime-v2',

@@ -52,6 +52,8 @@ export const WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES = Object.freeze([
   'lib/extensions.js',
   'lib/host-runtime.d.ts',
   'lib/host-runtime.js',
+  'lib/icu-descriptor.d.ts',
+  'lib/icu-descriptor.js',
   'lib/host/LICENSE',
   'lib/host/index.d.mts',
   'lib/host/index.mjs',

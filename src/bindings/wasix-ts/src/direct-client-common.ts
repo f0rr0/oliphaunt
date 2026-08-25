@@ -1,4 +1,3 @@
-import type { WasixDirectoryMount } from './archive.js';
 import {
   WasixDatabaseImpl,
   normalizeWasixDatabaseIdentity,
@@ -25,6 +24,7 @@ import type { SerializedOpenOptions } from './rpc.js';
 import {
   acquireWasixStorage,
   canonicalJson,
+  type WasixClusterSeedLoader,
   type WasixStorageLease,
   type WasixStorageSyncBoundary,
 } from './storage-provider.js';
@@ -80,7 +80,7 @@ export type DirectWasixDependencies = Readonly<{
   prepareRuntime(options: SerializedOpenOptions): Promise<PreparedWasixRuntime>;
   acquireStorage(
     storage: SerializedOpenOptions['storage'],
-    template: WasixDirectoryMount,
+    loadClusterSeed: WasixClusterSeedLoader,
     identity: PreparedWasixRuntime['physicalIdentity'],
   ): Promise<WasixStorageLease>;
   compileModule(module: Uint8Array, sha256: string): Promise<WebAssembly.Module>;
@@ -117,7 +117,7 @@ export async function openWasixDirect(
   host: DirectWasixHost,
 ): Promise<OliphauntDatabase> {
   const session = await DirectWasixSession.open(options, host, defaultDependencies, 'browser-main');
-  return new WasixDatabaseImpl(session, { runtime: options.runtime, icu: options.icu });
+  return new WasixDatabaseImpl(session);
 }
 
 /** @internal Open a direct-memory session inside the dedicated browser worker realm. */
@@ -173,19 +173,27 @@ export class DirectWasixSession implements WasixDatabaseSession {
     environment: DirectWasixEnvironment = 'browser-main',
   ): Promise<DirectWasixSession> {
     if (environment === 'browser-main') assertDirectExtensionCompatibility(options);
-    const prepared = await dependencies.prepareRuntime(options);
-    const pgdataTemplate = prepared.layout.mounts['/base'];
-    if (pgdataTemplate === undefined) {
-      throw new Error('prepared WASIX runtime has no PGDATA mount');
+    if (options.storage.kind === 'memory' && options.username !== 'postgres') {
+      throw newStorageRoleError(options.username);
     }
-
-    await initializeHost(host);
-    const module = await dependencies.compileModule(prepared.layout.module, prepared.moduleSha256);
+    const prepared = await dependencies.prepareRuntime(options);
+    const eagerClusterSeed =
+      options.storage.kind === 'memory' ? prepared.loadClusterSeed() : undefined;
+    const [, module] = await Promise.all([
+      initializeHost(host),
+      dependencies.compileModule(prepared.layout.module, prepared.moduleSha256),
+      eagerClusterSeed,
+    ]);
     // Acquire persistent ownership only after every non-owning preparation
     // step succeeds, so a compilation rejection cannot strand its lock.
     const storage = await dependencies.acquireStorage(
       options.storage,
-      pgdataTemplate,
+      () => {
+        if (options.username !== 'postgres') {
+          throw newStorageRoleError(options.username);
+        }
+        return eagerClusterSeed ?? prepared.loadClusterSeed();
+      },
       prepared.physicalIdentity,
     );
 
@@ -770,6 +778,13 @@ function directStartupFailure(error: unknown): Error {
   });
 }
 
+function newStorageRoleError(username: string): WasixStorageError {
+  return new WasixStorageError(
+    `PostgreSQL username ${JSON.stringify(username)} selects an existing role; new storage must first be opened as postgres`,
+    { code: 'unavailable', commitState: 'unchanged' },
+  );
+}
+
 function directProtocolResponse(error: unknown): Uint8Array | undefined {
   if (typeof error !== 'object' || error === null || !('protocolResponse' in error)) {
     return undefined;
@@ -814,11 +829,6 @@ export function prepareRuntimeCached(
       if (oldest === undefined) break;
       preparedRuntimes.delete(oldest);
     }
-    void prepared.catch(() => {
-      if (preparedRuntimes.get(identity) === prepared) {
-        preparedRuntimes.delete(identity);
-      }
-    });
   }
   return prepared;
 }

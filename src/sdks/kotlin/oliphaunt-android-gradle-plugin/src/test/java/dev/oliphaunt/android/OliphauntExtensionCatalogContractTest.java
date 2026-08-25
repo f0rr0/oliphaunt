@@ -29,7 +29,9 @@ public final class OliphauntExtensionCatalogContractTest {
       "(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)";
   private static final Pattern RUNTIME_REPLAY_RESOURCES =
       Pattern.compile(
-          "^liboliphaunt-(" + STABLE_RELEASE_VERSION_REGEX + ")-runtime-resources\\.tar\\.gz$");
+          "^liboliphaunt-("
+              + STABLE_RELEASE_VERSION_REGEX
+              + ")-runtime-resources-android-datum64\\.tar\\.gz$");
 
   private OliphauntExtensionCatalogContractTest() {}
 
@@ -37,6 +39,7 @@ public final class OliphauntExtensionCatalogContractTest {
     createsManagedPluginExtensionWithoutGradleNameCollision();
     resolvesRuntimeBoundBundleOnceWithDependencyClosure();
     acceptsProductionShapedRuntimeBundlesForBothAndroidAbis();
+    validatesExactAndroidRuntimeManifestContract();
     validatesExactNestedArtifactContract();
     validatesGeneratedExtensionLegalCatalog();
     validatesStrictExtensionManifestParser();
@@ -87,6 +90,70 @@ public final class OliphauntExtensionCatalogContractTest {
     } finally {
       deleteRecursively(projectDir);
     }
+  }
+
+  private static void validatesExactAndroidRuntimeManifestContract() throws Exception {
+    Path root = Files.createTempDirectory("oliphaunt-android-runtime-manifest-");
+    try {
+      writeAndroidRuntimeClosure(root, androidRuntimeManifest("runtime-smoke"));
+      ResolveOliphauntAndroidAssetsTask.validateAndroidRuntimeClosureForContractTest(root.toFile());
+
+      Path manifest = root.resolve("runtime/manifest.properties");
+      String canonical = Files.readString(manifest, StandardCharsets.UTF_8);
+      Files.writeString(
+          manifest,
+          canonical.replace("mode=native-direct\n", ""),
+          StandardCharsets.UTF_8);
+      expectFailure(
+          () -> ResolveOliphauntAndroidAssetsTask.validateAndroidRuntimeClosureForContractTest(root.toFile()),
+          "exact canonical manifest fields");
+
+      Files.writeString(manifest, canonical + "legacy=value\n", StandardCharsets.UTF_8);
+      expectFailure(
+          () -> ResolveOliphauntAndroidAssetsTask.validateAndroidRuntimeClosureForContractTest(root.toFile()),
+          "unsupported=legacy");
+
+      Files.writeString(
+          manifest,
+          canonical.replace("cacheKey=runtime-smoke", "cacheKey=.."),
+          StandardCharsets.UTF_8);
+      expectFailure(
+          () -> ResolveOliphauntAndroidAssetsTask.validateAndroidRuntimeClosureForContractTest(root.toFile()),
+          "invalid cacheKey");
+    } finally {
+      deleteRecursively(root);
+    }
+  }
+
+  private static void writeAndroidRuntimeClosure(Path root, String runtimeManifest)
+      throws Exception {
+    writeInventoryFile(
+        root,
+        "manifest.properties",
+        "schema=oliphaunt-native-runtime-carrier-v1\n"
+            + "clusterSeedTarget=android-datum64\n"
+            + "clusterSeedRelativePath=cluster-seed\n"
+            + "icuClusterSeedRelativePath=cluster-seed-icu\n");
+    writeInventoryFile(root, "runtime/manifest.properties", runtimeManifest);
+    writeInventoryFile(root, "runtime/files/README", "runtime\n");
+    writeInventoryFile(
+        root,
+        "cluster-seed/manifest.properties",
+        androidClusterSeedManifest("cluster-seed-standard", "standard", "", "", "", ""));
+    writeInventoryFile(root, "cluster-seed/files/PG_VERSION", "18\n");
+    writeInventoryFile(root, "cluster-seed/files/global/pg_control", "control\n");
+    writeInventoryFile(
+        root,
+        "cluster-seed-icu/manifest.properties",
+        androidClusterSeedManifest(
+            "cluster-seed-icu",
+            "icu",
+            "icu",
+            "76.1",
+            "files-le",
+            "a".repeat(64)));
+    writeInventoryFile(root, "cluster-seed-icu/files/PG_VERSION", "18\n");
+    writeInventoryFile(root, "cluster-seed-icu/files/global/pg_control", "control\n");
   }
 
   private static void validatesPublicTarGzArchivePreflight() throws Exception {
@@ -305,6 +372,76 @@ public final class OliphauntExtensionCatalogContractTest {
 
   private static TarFixtureEntry tarFile(String path, String contents) {
     return new TarFixtureEntry(path, '0', contents.getBytes(StandardCharsets.UTF_8));
+  }
+
+  private static TarFixtureEntry standardAndroidClusterSeedManifestTarFile() {
+    return tarFile(
+        "oliphaunt/cluster-seed/manifest.properties",
+        androidClusterSeedManifest("cluster-seed-standard", "standard", "", "", "", ""));
+  }
+
+  private static TarFixtureEntry androidRuntimeCarrierReceiptTarFile() {
+    return tarFile(
+        "oliphaunt/manifest.properties",
+        "schema=oliphaunt-native-runtime-carrier-v1\n"
+            + "clusterSeedTarget=android-datum64\n"
+            + "clusterSeedRelativePath=cluster-seed\n"
+            + "icuClusterSeedRelativePath=cluster-seed-icu\n");
+  }
+
+  private static TarFixtureEntry icuAndroidClusterSeedManifestTarFile() {
+    return tarFile(
+        "oliphaunt/cluster-seed-icu/manifest.properties",
+        androidClusterSeedManifest(
+            "cluster-seed-icu",
+            "icu",
+            "icu",
+            "76.1",
+            "files-le",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+  }
+
+  private static String androidClusterSeedManifest(
+      String artifactRole,
+      String profile,
+      String runtimeFeatures,
+      String icuVersion,
+      String icuForm,
+      String icuDigest) {
+    return "schema=oliphaunt-runtime-resources-v1\n"
+        + "layout=oliphaunt-cluster-seed-v1\n"
+        + "artifactRole=" + artifactRole + "\n"
+        + "catalogProfile=" + profile + "\n"
+        + "postgresMajor=18\n"
+        + "physicalFormat=native-pg18-v1\n"
+        + "target=android-datum64\n"
+        + "compatibilityKey=native-pg18-android-datum64-v1\n"
+        + "initialSuperuser=postgres\n"
+        + "cacheKey=fixture-" + profile + "-cluster-seed\n"
+        + "runtimeFeatures=" + runtimeFeatures + "\n"
+        + "icuDataVersion=" + icuVersion + "\n"
+        + "icuDataForm=" + icuForm + "\n"
+        + "icuDataTreeSha256=" + icuDigest + "\n";
+  }
+
+  private static String androidRuntimeManifest(String cacheKey) {
+    return "schema=oliphaunt-runtime-resources-v1\n"
+        + "layout=postgres-runtime-files-v1\n"
+        + "artifactRole=runtime\n"
+        + "catalogProfile=\n"
+        + "clusterSeedTarget=android-datum64\n"
+        + "icuDataTreeSha256=\n"
+        + "mode=native-direct\n"
+        + "cacheKey=" + cacheKey + "\n"
+        + "selectedExtensions=\n"
+        + "extensions=\n"
+        + "runtimeFeatures=\n"
+        + "sharedPreloadLibraries=\n"
+        + "mobileStaticRegistryState=not-required\n"
+        + "mobileStaticRegistryRegistered=\n"
+        + "mobileStaticRegistryPending=\n"
+        + "nativeModuleStems=\n"
+        + "mobileStaticRegistrySource=\n";
   }
 
   private static TarFixtureEntry tarDirectory(String path) {
@@ -888,7 +1025,9 @@ public final class OliphauntExtensionCatalogContractTest {
     List<Path> runtimeArtifacts =
         List.of(
             runtimeRoot.resolve(
-                "liboliphaunt-" + runtimeVersion + "-runtime-resources.tar.gz"),
+                "liboliphaunt-"
+                    + runtimeVersion
+                    + "-runtime-resources-android-datum64.tar.gz"),
             runtimeRoot.resolve(
                 "liboliphaunt-" + runtimeVersion + "-android-arm64-v8a.tar.gz"),
             runtimeRoot.resolve(
@@ -977,7 +1116,8 @@ public final class OliphauntExtensionCatalogContractTest {
         "noncanonical exact extension replay version");
 
     Matcher runtime =
-        RUNTIME_REPLAY_RESOURCES.matcher("liboliphaunt-12.34.56-runtime-resources.tar.gz");
+        RUNTIME_REPLAY_RESOURCES.matcher(
+            "liboliphaunt-12.34.56-runtime-resources-android-datum64.tar.gz");
     equal(true, runtime.matches(), "versioned exact runtime replay name");
     equal("12.34.56", runtime.group(1), "versioned exact runtime replay version");
   }
@@ -1199,23 +1339,20 @@ public final class OliphauntExtensionCatalogContractTest {
       throws Exception {
     Path resources =
         writeTarGz(
-            carriers.resolve("liboliphaunt-1.2.3-runtime-resources.tar.gz"),
+            carriers.resolve("liboliphaunt-1.2.3-runtime-resources-android-datum64.tar.gz"),
             tarBytes(
                 List.of(
+                    androidRuntimeCarrierReceiptTarFile(),
                     tarFile(
                         "oliphaunt/runtime/manifest.properties",
-                        "schema=oliphaunt-runtime-resources-v1\n"
-                            + "cacheKey=canonical-runtime-fixture\n"
-                            + "layout=postgres-runtime-files-v1\n"
-                            + "extensions=\n"
-                            + "runtimeFeatures=\n"
-                            + "sharedPreloadLibraries=\n"
-                            + "mobileStaticRegistryState=not-required\n"
-                            + "mobileStaticRegistryRegistered=\n"
-                            + "mobileStaticRegistryPending=\n"
-                            + "nativeModuleStems=\n"
-                            + "mobileStaticRegistrySource=\n"),
+                        androidRuntimeManifest("canonical-runtime-fixture")),
                     tarFile("oliphaunt/runtime/files/README.fixture", "runtime\n"),
+                    standardAndroidClusterSeedManifestTarFile(),
+                    tarFile("oliphaunt/cluster-seed/files/PG_VERSION", "18\n"),
+                    tarFile("oliphaunt/cluster-seed/files/global/pg_control", "control\n"),
+                    icuAndroidClusterSeedManifestTarFile(),
+                    tarFile("oliphaunt/cluster-seed-icu/files/PG_VERSION", "18\n"),
+                    tarFile("oliphaunt/cluster-seed-icu/files/global/pg_control", "control\n"),
                     tarFile(
                         "oliphaunt/static-registry/manifest.properties",
                         canonicalEmptyStaticRegistryManifest()))));
@@ -1240,23 +1377,20 @@ public final class OliphauntExtensionCatalogContractTest {
       Path carriers = Files.createDirectories(root.resolve("carriers"));
       Path runtimeResources =
           writeTarGz(
-              carriers.resolve("liboliphaunt-1.2.3-runtime-resources.tar.gz"),
+              carriers.resolve("liboliphaunt-1.2.3-runtime-resources-android-datum64.tar.gz"),
               tarBytes(
                   List.of(
+                      androidRuntimeCarrierReceiptTarFile(),
                       tarFile(
                           "oliphaunt/runtime/manifest.properties",
-                          "schema=oliphaunt-runtime-resources-v1\n"
-                              + "cacheKey=aggregate-resolve-fixture\n"
-                              + "layout=postgres-runtime-files-v1\n"
-                              + "extensions=\n"
-                              + "runtimeFeatures=\n"
-                              + "sharedPreloadLibraries=\n"
-                              + "mobileStaticRegistryState=not-required\n"
-                              + "mobileStaticRegistryRegistered=\n"
-                              + "mobileStaticRegistryPending=\n"
-                              + "nativeModuleStems=\n"
-                              + "mobileStaticRegistrySource=\n"),
+                          androidRuntimeManifest("aggregate-resolve-fixture")),
                       tarFile("oliphaunt/runtime/files/README.fixture", "runtime\n"),
+                      standardAndroidClusterSeedManifestTarFile(),
+                      tarFile("oliphaunt/cluster-seed/files/PG_VERSION", "18\n"),
+                      tarFile("oliphaunt/cluster-seed/files/global/pg_control", "control\n"),
+                      icuAndroidClusterSeedManifestTarFile(),
+                      tarFile("oliphaunt/cluster-seed-icu/files/PG_VERSION", "18\n"),
+                      tarFile("oliphaunt/cluster-seed-icu/files/global/pg_control", "control\n"),
                       tarFile(
                           "oliphaunt/static-registry/manifest.properties",
                           canonicalEmptyStaticRegistryManifest()))));
@@ -1657,7 +1791,8 @@ public final class OliphauntExtensionCatalogContractTest {
 
     Path runtimeFiles = resourceRoot.resolve("runtime/files");
     long runtimeBytes = fixtureTreeBytes(runtimeFiles);
-    long templateBytes = fixtureTreeBytes(resourceRoot.resolve("cluster-seed/files"));
+    long standardClusterSeedBytes = fixtureTreeBytes(resourceRoot.resolve("cluster-seed"));
+    long icuClusterSeedBytes = fixtureTreeBytes(resourceRoot.resolve("cluster-seed-icu"));
     long registryBytes = fixtureTreeBytes(resourceRoot.resolve("static-registry"));
     TreeSet<Path> selectedFiles = new TreeSet<>();
     List<String> rows = new ArrayList<>();
@@ -1685,9 +1820,12 @@ public final class OliphauntExtensionCatalogContractTest {
     }
     List<String> expected = new ArrayList<>();
     expected.add("kind\tid\textensions\tfiles\tbytes");
-    expected.add("package\ttotal\t-\t-\t" + (runtimeBytes + templateBytes + registryBytes));
+    expected.add(
+        "package\ttotal\t-\t-\t"
+            + (runtimeBytes + standardClusterSeedBytes + icuClusterSeedBytes + registryBytes));
     expected.add("package\truntime\t-\t-\t" + runtimeBytes);
-    expected.add("package\tcluster-seed\t-\t-\t" + templateBytes);
+    expected.add("package\tcluster-seed\t-\t-\t" + standardClusterSeedBytes);
+    expected.add("package\tcluster-seed-icu\t-\t-\t" + icuClusterSeedBytes);
     expected.add("package\tstatic-registry\t-\t-\t" + registryBytes);
     expected.add("extensions\tselected\t-\t-\t" + fixtureFileBytes(selectedFiles));
     expected.addAll(rows);

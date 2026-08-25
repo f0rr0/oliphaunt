@@ -37,11 +37,11 @@ pub struct OliphauntRuntime;
 pub struct NativePackagingResources {
     /// Fully materialized PostgreSQL runtime directory.
     pub runtime_dir: PathBuf,
-    /// Fully initialized template PGDATA directory.
+    /// Fully initialized PostgreSQL cluster seed directory.
     pub cluster_seed: PathBuf,
     /// Content key for the runtime directory.
     pub runtime_cache_key: String,
-    /// Content key for the template PGDATA directory.
+    /// Content key for the PostgreSQL cluster seed directory.
     pub cluster_seed_cache_key: String,
 }
 
@@ -56,7 +56,7 @@ pub enum NativePackagingRuntime {
     PostgresServer,
 }
 
-/// PostgreSQL catalogue profile requested by unpublished native packaging tools.
+/// PostgreSQL catalog profile requested by unpublished native packaging tools.
 #[cfg(feature = "internal-native-packaging")]
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

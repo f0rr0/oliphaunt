@@ -1753,7 +1753,7 @@ pub(crate) fn generate_cluster_seed_assets(
     source_lane: &str,
 ) -> Result<()> {
     let outputs = BuildOutputs::discover_for_source_lane(source_lane)?;
-    let stage_root = outputs.package_stage.join("template-runtime");
+    let stage_root = outputs.package_stage.join("cluster-seed-runtime");
     if stage_root.exists() {
         fs::remove_dir_all(&stage_root)
             .with_context(|| format!("remove {}", stage_root.display()))?;
@@ -1796,7 +1796,7 @@ fn generate_cluster_seed_assets_from_runtime_stage(
         .find(|source| source.name == "icu")
         .ok_or_else(|| anyhow!("WASIX cluster-seed source pins do not contain ICU"))?;
 
-    for profile in template_runner::CatalogProfile::ALL {
+    for profile in cluster_seed_runner::CatalogProfile::ALL {
         let work_root = assets_dir.join(format!("cluster-seed-work-{}", profile.as_str()));
         if work_root.exists() {
             fs::remove_dir_all(&work_root)
@@ -1804,11 +1804,12 @@ fn generate_cluster_seed_assets_from_runtime_stage(
         }
         fs::create_dir_all(&work_root)
             .with_context(|| format!("create {}", work_root.display()))?;
-        template_runner::run_wasix_initdb_cluster_seed(
+        cluster_seed_runner::run_wasix_initdb_cluster_seed(
             runtime_stage,
             &work_root,
             profile,
-            (profile == template_runner::CatalogProfile::Icu).then_some(icu_data_root.as_path()),
+            (profile == cluster_seed_runner::CatalogProfile::Icu)
+                .then_some(icu_data_root.as_path()),
         )?;
 
         let pgdata = work_root.join("pgdata");
@@ -1818,13 +1819,13 @@ fn generate_cluster_seed_assets_from_runtime_stage(
             profile.as_str(),
             pgdata.display()
         );
-        template_runner::clean_generated_cluster_seed(&pgdata)?;
+        cluster_seed_runner::clean_generated_cluster_seed(&pgdata)?;
 
         let archive_relative = format!("cluster-seeds/{}.tar.zst", profile.as_str());
         let archive = assets_dir.join(&archive_relative);
         deterministic_tar_zst(&pgdata, Path::new(""), &archive)?;
         let (expanded_bytes, regular_files, directories) = tree_stats(&pgdata)?;
-        let icu = (profile == template_runner::CatalogProfile::Icu).then(|| {
+        let icu = (profile == cluster_seed_runner::CatalogProfile::Icu).then(|| {
             serde_json::json!({
                 "artifactRole": "icu-data",
                 "upstreamVersion": "76.1",
@@ -1855,7 +1856,7 @@ fn generate_cluster_seed_assets_from_runtime_stage(
                 "lane": outputs.source_lane,
                 "producer": "wasix-initdb"
             },
-            "initProfile": template_runner::default_initdb_profile(),
+            "initProfile": cluster_seed_runner::default_initdb_profile(),
             "archive": {
                 "path": archive_relative,
                 "sha256": sha256_file(&archive)?,
@@ -1866,7 +1867,7 @@ fn generate_cluster_seed_assets_from_runtime_stage(
                 "regularFiles": regular_files,
                 "directories": directories
             },
-            "requiredRuntimeFeatures": if profile == template_runner::CatalogProfile::Icu {
+            "requiredRuntimeFeatures": if profile == cluster_seed_runner::CatalogProfile::Icu {
                 vec!["icu"]
             } else {
                 Vec::<&str>::new()
@@ -2793,7 +2794,7 @@ fn write_asset_manifest(
                 .len(),
             link: read_wasm_link_metadata(initdb)?,
         }),
-        cluster_seeds: template_runner::CatalogProfile::ALL
+        cluster_seeds: cluster_seed_runner::CatalogProfile::ALL
             .into_iter()
             .map(|profile| {
                 cluster_seed_asset_out(
@@ -3057,6 +3058,39 @@ mod tests {
                 .expect("update already-current descriptor"),
             updated
         );
+    }
+
+    #[test]
+    fn wasix_icu_data_uses_the_canonical_work_root() {
+        assert_eq!(
+            wasix_icu_data_path(),
+            Path::new(WASIX_GENERATED_WORK_DIR).join("icu-wasix/share/icu")
+        );
+        assert!(!wasix_icu_data_path().starts_with(WASIX_POSTGRES_GENERATED_BUILD_DIR));
+    }
+
+    #[test]
+    fn wasix_icu_identity_rejects_install_scaffolding() -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "oliphaunt-wasix-icu-identity-{}-{now}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("icudt76l/coll"))?;
+        fs::write(root.join("icudt76l/root.res"), b"root")?;
+        fs::write(root.join("icudt76l/coll/en.res"), b"en")?;
+        validate_canonical_wasix_icu_data_root(&root)?;
+
+        fs::create_dir_all(root.join("76.1/config"))?;
+        fs::write(root.join("76.1/config/mh-linux"), b"build-only")?;
+        let error = validate_canonical_wasix_icu_data_root(&root)
+            .expect_err("install scaffolding must not enter the logical ICU identity");
+        assert!(error.to_string().contains("only canonical icudt"));
+        fs::remove_dir_all(root)?;
+        Ok(())
     }
 
     fn manifest_extension_metadata(
@@ -3454,7 +3488,7 @@ fn cluster_seed_asset_out(
     runtime_module: &Path,
     initdb_module: &Path,
     assets_dir: &Path,
-    profile: template_runner::CatalogProfile,
+    profile: cluster_seed_runner::CatalogProfile,
 ) -> Result<ClusterSeedAssetOut> {
     let archive_relative = format!("cluster-seeds/{}.tar.zst", profile.as_str());
     let manifest_relative = format!("cluster-seeds/{}.json", profile.as_str());
@@ -3549,7 +3583,7 @@ fn cluster_seed_asset_out(
             .and_then(serde_json::Value::as_str)
             .unwrap_or("unknown")
             .to_owned(),
-        init_profile: template_runner::default_initdb_profile().to_owned(),
+        init_profile: cluster_seed_runner::default_initdb_profile().to_owned(),
         wasmer_version: sources.toolchain.wasmer.clone(),
         physical_format: seed_runtime
             .get("physicalFormat")
@@ -3684,13 +3718,37 @@ fn release_product_version(product_path: &str) -> Result<String> {
 }
 
 fn wasix_icu_data_root() -> Result<PathBuf> {
-    let root = Path::new(WASIX_POSTGRES_GENERATED_BUILD_DIR).join("work/icu-wasix/share/icu");
+    let root = wasix_icu_data_path();
+    validate_canonical_wasix_icu_data_root(&root)?;
+    Ok(root)
+}
+
+fn validate_canonical_wasix_icu_data_root(root: &Path) -> Result<()> {
     ensure!(
         root.is_dir() && tree_contains_icu_files_data(&root)?,
         "ICU cluster-seed generation requires the exact WASIX ICU files-data tree at {}; build the WASIX runtime first",
         root.display()
     );
-    Ok(root)
+    for file in sorted_files(&root)? {
+        let relative = file
+            .strip_prefix(&root)
+            .with_context(|| format!("strip {} from {}", root.display(), file.display()))?;
+        let first = relative
+            .components()
+            .next()
+            .and_then(|component| component.as_os_str().to_str())
+            .unwrap_or_default();
+        ensure!(
+            first.starts_with("icudt"),
+            "WASIX ICU data root must contain only canonical icudt files-data payloads, found {}",
+            relative.display()
+        );
+    }
+    Ok(())
+}
+
+fn wasix_icu_data_path() -> PathBuf {
+    Path::new(WASIX_GENERATED_WORK_DIR).join("icu-wasix/share/icu")
 }
 
 fn tree_contains_icu_files_data(root: &Path) -> Result<bool> {

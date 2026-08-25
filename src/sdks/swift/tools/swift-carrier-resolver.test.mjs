@@ -244,15 +244,25 @@ async function base() {
   const runtimeSource = path.join(root, "base", "runtime", "oliphaunt");
   await fs.mkdir(runtimeSource, { recursive: true });
   await fs.writeFile(path.join(runtimeSource, "fixture.txt"), "runtime\n");
-  const runtime = path.join(archives, "liboliphaunt-0.1.0-runtime-resources.tar.gz");
+  const runtime = path.join(
+    archives,
+    "liboliphaunt-0.1.0-runtime-resources-ios-datum64.tar.gz",
+  );
   run("tar", ["--no-xattrs", "-czf", runtime, "-C", path.dirname(runtimeSource), path.basename(runtimeSource)]);
   const icuSource = path.join(root, "base", "icu", "share", "icu");
   await fs.mkdir(icuSource, { recursive: true });
   await fs.writeFile(path.join(icuSource, "icudt.dat"), "icu\n");
-  const icuSeed = path.join(root, "base", "icu", "cluster-seed", "files");
-  await fs.mkdir(path.join(icuSeed, "global"), { recursive: true });
-  await fs.writeFile(path.join(icuSeed, "PG_VERSION"), "18\n");
-  await fs.writeFile(path.join(icuSeed, "global", "pg_control"), "fixture\n");
+  const icuDigest = createHash("sha256")
+    .update("icudt.dat\0" + Buffer.byteLength("icu\n") + "\0icu\n\n")
+    .digest("hex");
+  await fs.writeFile(
+    path.join(root, "base", "icu", "manifest.properties"),
+    "schema=oliphaunt-icu-data-v1\n"
+      + "artifactRole=icu-data\n"
+      + "icuDataVersion=76.1\n"
+      + "icuDataForm=files-le\n"
+      + `icuDataTreeSha256=${icuDigest}\n`,
+  );
   const icu = path.join(archives, "liboliphaunt-0.1.0-icu-data.tar.gz");
   run("tar", ["--no-xattrs", "-czf", icu, "-C", path.join(root, "base", "icu"), "."]);
   return {

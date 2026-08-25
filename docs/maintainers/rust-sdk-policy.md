@@ -2,7 +2,7 @@
 
 The published `oliphaunt` crate is the idiomatic native Rust SDK. It owns app
 configuration, typed queries, transactions, async execution, direct/broker/
-server orchestration, exact extension selection, template hydration, and
+server orchestration, exact extension selection, cluster-seed hydration, and
 language-native errors. `liboliphaunt` remains the compiled direct/broker
 boundary.
 

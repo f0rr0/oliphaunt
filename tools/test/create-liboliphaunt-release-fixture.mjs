@@ -4,7 +4,11 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 
 import { releaseNoticeRows } from '../release/release-notices.mjs';
-import { logicalTreeSha256 } from '../release/native-cluster-seed-contract.mjs';
+import {
+  logicalTreeSha256,
+  nativeClusterSeedCompatibilityKey,
+} from '../release/native-cluster-seed-contract.mjs';
+import { NATIVE_MOBILE_ABI_TARGETS_BY_DOMAIN } from '../release/native-mobile-abi-contract.mjs';
 
 import {
   elfFixture,
@@ -15,6 +19,7 @@ import {
   writeChecksumManifest,
   writeEntriesArchive,
 } from './release-fixture-utils.mjs';
+import { nativeRuntimeResourceManifestFixture } from './native-runtime-fixture.mjs';
 
 const NATIVE_RUNTIME_TOOL_STEMS = ['initdb', 'pg_ctl', 'postgres'];
 const NATIVE_TOOLS_TOOL_STEMS = ['pg_basebackup', 'pg_dump', 'psql'];
@@ -36,6 +41,7 @@ const SNOWBALL_STOPWORDS = [
   'turkish.stop',
 ];
 const WINDOWS_VC_RUNTIME_DLLS = ['msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll'];
+const WINDOWS_ICU_RUNTIME_DLLS = ['icudt76.dll', 'icuin76.dll', 'icuuc76.dll'];
 
 function windowsVcRuntimeEntries() {
   const entries = {};
@@ -48,6 +54,16 @@ function windowsVcRuntimeEntries() {
         const digest = createHash('sha256').update(entries[`${directory}/${name}`]).digest('hex');
         return `${digest}  ${name}`;
       }).join('\n') + '\n';
+  }
+  return entries;
+}
+
+function windowsIcuRuntimeEntries() {
+  const entries = {};
+  for (const directory of ['bin', 'runtime/bin']) {
+    for (const name of WINDOWS_ICU_RUNTIME_DLLS) {
+      entries[`${directory}/${name}`] = nativeBinary('windows-x64-msvc', { provider: true });
+    }
   }
   return entries;
 }
@@ -74,7 +90,7 @@ function nativeBinary(target, { provider = false } = {}) {
   throw new Error(`unsupported liboliphaunt release fixture target ${target}`);
 }
 
-function nativeRuntimeEntries(target) {
+function nativeRuntimeEntries(target, icuDataTreeSha256) {
   const windows = target === 'windows-x64-msvc';
   const suffix = windows ? '.exe' : '';
   const moduleSuffix = windows ? '.dll' : target === 'macos-arm64' ? '.dylib' : '.so';
@@ -86,6 +102,10 @@ function nativeRuntimeEntries(target) {
   );
   entries['runtime/share/postgresql/README.release-fixture'] =
     'release-shaped native runtime fixture\n';
+  entries['runtime/manifest.properties'] = nativeRuntimeResourceManifestFixture({
+    cacheKey: 'release-fixture-runtime',
+    target,
+  });
   entries[`runtime/lib/postgresql/dict_snowball${moduleSuffix}`] = nativeBinary(target);
   entries[`runtime/lib/postgresql/plpgsql${moduleSuffix}`] = nativeBinary(target);
   entries['runtime/share/postgresql/extension/plpgsql.control'] = "default_version = '1.0'\n";
@@ -96,7 +116,12 @@ function nativeRuntimeEntries(target) {
   for (const stopword of SNOWBALL_STOPWORDS) {
     entries[`runtime/share/postgresql/tsearch_data/${stopword}`] = `${stopword}\n`;
   }
-  Object.assign(entries, nativeClusterSeedEntries('standard'));
+  Object.assign(
+    entries,
+    nativeRuntimeCarrierReceipt(target),
+    nativeClusterSeedEntries('standard', 'cluster-seed', target),
+    nativeClusterSeedEntries('icu', 'cluster-seed-icu', target, icuDataTreeSha256),
+  );
   return entries;
 }
 
@@ -147,31 +172,47 @@ function byteSize(entries, prefix) {
     .reduce((total, [, data]) => total + Buffer.byteLength(data), 0);
 }
 
-function runtimeResourcePackageSizeReport(entries) {
-  const runtimeBytes = byteSize(entries, 'oliphaunt/runtime/files/');
-  const clusterSeedBytes = byteSize(entries, 'oliphaunt/cluster-seed/files/');
-  const staticRegistryBytes = byteSize(entries, 'oliphaunt/static-registry/');
+function runtimeResourcePackageSizeReport(entries, prefix = 'oliphaunt/') {
+  const runtimeBytes = byteSize(entries, `${prefix}runtime/files/`);
+  const clusterSeedBytes = byteSize(entries, `${prefix}cluster-seed/files/`);
+  const icuClusterSeedBytes = byteSize(entries, `${prefix}cluster-seed-icu/files/`);
+  const staticRegistryBytes = byteSize(entries, `${prefix}static-registry/`);
   return [
     'kind\tid\textensions\tfiles\tbytes',
-    `package\ttotal\t-\t-\t${runtimeBytes + clusterSeedBytes + staticRegistryBytes}`,
+    `package\ttotal\t-\t-\t${runtimeBytes + clusterSeedBytes + icuClusterSeedBytes + staticRegistryBytes}`,
     `package\truntime\t-\t-\t${runtimeBytes}`,
     `package\tcluster-seed\t-\t-\t${clusterSeedBytes}`,
+    `package\tcluster-seed-icu\t-\t-\t${icuClusterSeedBytes}`,
     `package\tstatic-registry\t-\t-\t${staticRegistryBytes}`,
     'extensions\tselected\t-\t-\t0',
     '',
   ].join('\n');
 }
 
-function runtimeResourceEntries() {
+function nativeRuntimeCarrierReceipt(target, prefix = '') {
+  return {
+    [`${prefix}manifest.properties`]: [
+      'schema=oliphaunt-native-runtime-carrier-v1',
+      `clusterSeedTarget=${target}`,
+      'clusterSeedRelativePath=cluster-seed',
+      'icuClusterSeedRelativePath=cluster-seed-icu',
+      '',
+    ].join('\n'),
+  };
+}
+
+function runtimeResourceEntries(target, icuDataTreeSha256) {
   const entries = {
     'oliphaunt/runtime/files/share/postgresql/README.release-fixture':
       'release-shaped runtime fixture\n',
     'oliphaunt/static-registry/manifest.properties': emptyStaticRegistryManifest(),
-    'oliphaunt/runtime/manifest.properties': runtimeResourceManifest(
-      'release-fixture-runtime',
-      'postgres-runtime-files-v1',
-    ),
-    ...nativeClusterSeedEntries('standard', 'oliphaunt/cluster-seed'),
+    'oliphaunt/runtime/manifest.properties': nativeRuntimeResourceManifestFixture({
+      cacheKey: 'release-fixture-runtime',
+      target,
+    }),
+    ...nativeRuntimeCarrierReceipt(target, 'oliphaunt/'),
+    ...nativeClusterSeedEntries('standard', 'oliphaunt/cluster-seed', target),
+    ...nativeClusterSeedEntries('icu', 'oliphaunt/cluster-seed-icu', target, icuDataTreeSha256),
   };
   entries['oliphaunt/runtime/files/share/postgresql/extension/plpgsql.control'] =
     "default_version = '1.0'\n";
@@ -182,71 +223,86 @@ function runtimeResourceEntries() {
   for (const stopword of SNOWBALL_STOPWORDS) {
     entries[`oliphaunt/runtime/files/share/postgresql/tsearch_data/${stopword}`] = `${stopword}\n`;
   }
+  if (NATIVE_MOBILE_ABI_TARGETS_BY_DOMAIN[target] !== undefined) {
+    Object.assign(entries, mobileAbiProofEntries(target));
+  }
   entries['oliphaunt/package-size.tsv'] = runtimeResourcePackageSizeReport(entries);
   return entries;
 }
 
-function nativeClusterSeedEntries(profile, prefix = 'cluster-seed', icuDataTreeSha256 = '') {
+function mobileAbiProofEntries(domain) {
+  return Object.fromEntries(
+    NATIVE_MOBILE_ABI_TARGETS_BY_DOMAIN[domain].map((target) => [
+      `oliphaunt/provenance/native-mobile-abi/${target}.properties`,
+      [
+        'schema=oliphaunt-native-mobile-abi-v1',
+        `target=${target}`,
+        'byteOrder=little',
+        'datumBytes=8',
+        'maximumAlignof=8',
+        'float8ByVal=1',
+        'blockSize=8192',
+        'walBlockSize=8192',
+        'relationSegmentSize=131072',
+        'nameDataLength=64',
+        'indexMaxKeys=32',
+        'catalogVersion=202506291',
+        'pgControlVersion=1800',
+        '',
+      ].join('\n'),
+    ]),
+  );
+}
+
+function nativeClusterSeedEntries(profile, prefix, target, icuDataTreeSha256 = '') {
   const runtimeFeatures = profile === 'icu' ? 'icu' : '';
   const manifest = [
     'schema=oliphaunt-runtime-resources-v1',
     'layout=oliphaunt-cluster-seed-v1',
     `artifactRole=cluster-seed-${profile}`,
     `catalogProfile=${profile}`,
+    `target=${target}`,
     'postgresMajor=18',
     'physicalFormat=native-pg18-v1',
-    'compatibilityKey=native-pg18-datum64-v1',
+    `compatibilityKey=${nativeClusterSeedCompatibilityKey(target)}`,
     'initialSuperuser=postgres',
-    `runtimeFeatures=${runtimeFeatures}`,
     `icuDataVersion=${profile === 'icu' ? '76.1' : ''}`,
     `icuDataForm=${profile === 'icu' ? 'files-le' : ''}`,
     `icuDataTreeSha256=${icuDataTreeSha256}`,
+    `runtimeFeatures=${runtimeFeatures}`,
+    `cacheKey=${createHash('sha256').update(`${target}:${profile}`).digest('hex').slice(0, 16)}`,
     '',
   ].join('\n');
   return {
     [`${prefix}/manifest.properties`]: manifest,
     [`${prefix}/files/PG_VERSION`]: '18\n',
     [`${prefix}/files/global/pg_control`]: `${profile}-fixture-control\n`,
+    [`${prefix}/files/pg_wal/`]: '',
   };
 }
 
-function icuClosureEntries() {
+function icuClosure() {
   const data = Buffer.from('not-real-icu-data\n');
   const entries = {
     'share/icu/icudt76l.dat': data,
   };
-  const icuDataTreeSha256 = logicalTreeSha256([
-    { path: 'icudt76l.dat', bytes: data },
-  ]);
-  Object.assign(entries, nativeClusterSeedEntries('icu', 'cluster-seed', icuDataTreeSha256));
+  const icuDataTreeSha256 = logicalTreeSha256([{ path: 'icudt76l.dat', bytes: data }]);
   const icuDataBytes = byteSize(entries, 'share/icu/');
-  const clusterSeedBytes = byteSize(entries, 'cluster-seed/');
+  entries['manifest.properties'] = [
+    'schema=oliphaunt-icu-data-v1',
+    'artifactRole=icu-data',
+    'icuDataVersion=76.1',
+    'icuDataForm=files-le',
+    `icuDataTreeSha256=${icuDataTreeSha256}`,
+    '',
+  ].join('\n');
   entries['package-size.tsv'] = [
     'kind\tid\textensions\tfiles\tbytes',
-    `package\ttotal\t-\t-\t${icuDataBytes + clusterSeedBytes}`,
+    `package\ttotal\t-\t-\t${icuDataBytes}`,
     `package\ticu-data\t-\t-\t${icuDataBytes}`,
-    `package\tcluster-seed-icu\t-\t-\t${clusterSeedBytes}`,
     '',
   ].join('\n');
-  return entries;
-}
-
-function runtimeResourceManifest(cacheKey, layout) {
-  return [
-    'schema=oliphaunt-runtime-resources-v1',
-    `cacheKey=${cacheKey}`,
-    `layout=${layout}`,
-    'selectedExtensions=',
-    'extensions=',
-    'runtimeFeatures=',
-    'sharedPreloadLibraries=',
-    'mobileStaticRegistryState=not-required',
-    'mobileStaticRegistryRegistered=',
-    'mobileStaticRegistryPending=',
-    'nativeModuleStems=',
-    'mobileStaticRegistrySource=',
-    '',
-  ].join('\n');
+  return { entries, icuDataTreeSha256 };
 }
 
 function xmlEscape(value) {
@@ -289,7 +345,7 @@ function plist(dictionary) {
   ].join('\n');
 }
 
-function xcframeworkEntries() {
+function xcframeworkEntries({ macosRuntimeResources, iosRuntimeResources }) {
   const libraries = [
     {
       LibraryIdentifier: 'macos-arm64',
@@ -333,6 +389,11 @@ function xcframeworkEntries() {
       CFBundleName: 'liboliphaunt',
       CFBundlePackageType: 'FMWK',
     });
+    const runtimeResources =
+      library.SupportedPlatform === 'macos' ? macosRuntimeResources : iosRuntimeResources;
+    for (const [name, data] of Object.entries(runtimeResources)) {
+      entries[`${frameworkRoot}/Resources/${name}`] = data;
+    }
   }
   return entries;
 }
@@ -356,22 +417,28 @@ async function writeProfiledArchive(output, entries, profile, modes = {}, notice
 
 async function writeFixtureAssets(assetDir, version) {
   await fs.mkdir(assetDir, { recursive: true });
-  const runtimeResources = runtimeResourceEntries();
-
-  await fs.writeFile(
-    path.join(assetDir, `liboliphaunt-${version}-package-size.tsv`),
-    runtimeResources['oliphaunt/package-size.tsv'],
-    'utf8',
-  );
+  const icu = icuClosure();
+  const macosRuntimeResources = runtimeResourceEntries('macos-arm64', icu.icuDataTreeSha256);
+  const iosRuntimeResources = runtimeResourceEntries('ios-datum64', icu.icuDataTreeSha256);
+  const androidRuntimeResources = runtimeResourceEntries('android-datum64', icu.icuDataTreeSha256);
+  const appleXcframeworkEntries = xcframeworkEntries({
+    macosRuntimeResources,
+    iosRuntimeResources,
+  });
 
   await writeProfiledArchive(
-    path.join(assetDir, `liboliphaunt-${version}-runtime-resources.tar.gz`),
-    runtimeResources,
+    path.join(assetDir, `liboliphaunt-${version}-runtime-resources-ios-datum64.tar.gz`),
+    iosRuntimeResources,
+    'native-runtime-resources',
+  );
+  await writeProfiledArchive(
+    path.join(assetDir, `liboliphaunt-${version}-runtime-resources-android-datum64.tar.gz`),
+    androidRuntimeResources,
     'native-runtime-resources',
   );
   await writeProfiledArchive(
     path.join(assetDir, `liboliphaunt-${version}-icu-data.tar.gz`),
-    icuClosureEntries(),
+    icu.entries,
     'native-icu-data',
   );
   await writeProfiledArchive(
@@ -380,7 +447,7 @@ async function writeFixtureAssets(assetDir, version) {
       'lib/liboliphaunt.dylib': nativeBinary('macos-arm64'),
       'lib/modules/dict_snowball.dylib': nativeBinary('macos-arm64'),
       'lib/modules/plpgsql.dylib': nativeBinary('macos-arm64'),
-      ...nativeRuntimeEntries('macos-arm64'),
+      ...nativeRuntimeEntries('macos-arm64', icu.icuDataTreeSha256),
     },
     'native-runtime',
     nativeRuntimeModes('macos-arm64'),
@@ -397,7 +464,7 @@ async function writeFixtureAssets(assetDir, version) {
       'lib/liboliphaunt.so': nativeBinary('linux-x64-gnu'),
       'lib/modules/dict_snowball.so': nativeBinary('linux-x64-gnu'),
       'lib/modules/plpgsql.so': nativeBinary('linux-x64-gnu'),
-      ...nativeRuntimeEntries('linux-x64-gnu'),
+      ...nativeRuntimeEntries('linux-x64-gnu', icu.icuDataTreeSha256),
     },
     'native-runtime',
     nativeRuntimeModes('linux-x64-gnu'),
@@ -414,7 +481,7 @@ async function writeFixtureAssets(assetDir, version) {
       'lib/liboliphaunt.so': nativeBinary('linux-arm64-gnu'),
       'lib/modules/dict_snowball.so': nativeBinary('linux-arm64-gnu'),
       'lib/modules/plpgsql.so': nativeBinary('linux-arm64-gnu'),
-      ...nativeRuntimeEntries('linux-arm64-gnu'),
+      ...nativeRuntimeEntries('linux-arm64-gnu', icu.icuDataTreeSha256),
     },
     'native-runtime',
     nativeRuntimeModes('linux-arm64-gnu'),
@@ -427,7 +494,7 @@ async function writeFixtureAssets(assetDir, version) {
   );
   await writeProfiledArchive(
     path.join(assetDir, `liboliphaunt-${version}-ios-xcframework.tar.gz`),
-    xcframeworkEntries(),
+    appleXcframeworkEntries,
     'native-runtime',
     xcframeworkModes(),
   );
@@ -448,7 +515,8 @@ async function writeFixtureAssets(assetDir, version) {
       'lib/oliphaunt.lib': windowsImportLibraryFixture(),
       'lib/modules/dict_snowball.dll': nativeBinary('windows-x64-msvc', { provider: true }),
       'lib/modules/plpgsql.dll': nativeBinary('windows-x64-msvc', { provider: true }),
-      ...nativeRuntimeEntries('windows-x64-msvc'),
+      ...nativeRuntimeEntries('windows-x64-msvc', icu.icuDataTreeSha256),
+      ...windowsIcuRuntimeEntries(),
       ...windowsVcRuntimeEntries(),
     },
     'native-runtime',
@@ -462,7 +530,7 @@ async function writeFixtureAssets(assetDir, version) {
   );
   await writeProfiledArchive(
     path.join(assetDir, `liboliphaunt-${version}-apple-spm-xcframework.zip`),
-    xcframeworkEntries(),
+    appleXcframeworkEntries,
     'native-runtime',
     xcframeworkModes(),
     'liboliphaunt.xcframework',

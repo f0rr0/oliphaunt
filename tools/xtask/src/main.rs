@@ -14,12 +14,12 @@ mod asset_checks;
 mod asset_io;
 mod asset_manifest;
 mod asset_pipeline;
+mod cluster_seed_runner;
 mod extension_catalog;
 mod fs_utils;
 mod postgres_guard;
 mod release_workspace;
 mod source_spine;
-mod template_runner;
 
 use crate::aot_serializer::aot_serializer;
 use crate::asset_checks::*;
@@ -531,9 +531,9 @@ fn print_usage() {
     eprintln!(
         "  cargo run -p xtask -- assets build --profile release --target-triple <triple> [--execute]"
     );
-    eprintln!("  cargo run -p xtask --features template-runner -- assets cluster-seeds");
+    eprintln!("  cargo run -p xtask --features cluster-seed-runner -- assets cluster-seeds");
     eprintln!(
-        "  cargo run -p xtask --features template-runner -- assets release-build --profile release --target-triple <triple> [--fetch]"
+        "  cargo run -p xtask --features cluster-seed-runner -- assets release-build --profile release --target-triple <triple> [--fetch]"
     );
     eprintln!("  cargo run -p xtask -- assets aot --target-triple <triple>");
     eprintln!(

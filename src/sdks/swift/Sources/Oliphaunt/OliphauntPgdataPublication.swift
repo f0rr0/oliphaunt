@@ -30,29 +30,119 @@ func validateOliphauntCompletePgdata(_ pgdata: URL) throws {
     )
 }
 
-func publishOliphauntPreparedPgdata(_ staging: URL, to destination: URL) throws {
+enum OliphauntPgdataPublication: Equatable {
+    case published
+    case existing
+}
+
+@discardableResult
+func publishOliphauntPreparedPgdata(
+    _ staging: URL,
+    to destination: URL,
+    didPublishDestination: () -> Void = {}
+) throws -> OliphauntPgdataPublication {
     if FileManager.default.fileExists(atPath: destination.path),
        (try? validateOliphauntCompletePgdata(destination)) != nil
     {
-        return
+        return .existing
     }
     try hardenOliphauntPgdataPermissions(at: staging)
     try validateOliphauntCompletePgdata(staging)
-    try makeOliphauntTreeDurable(staging)
+    try makeOliphauntPublicationTreeDurable(staging)
     try removeOliphauntEmptyDirectoryIfPresent(destination)
 
     do {
         try FileManager.default.moveItem(at: staging, to: destination)
-        try syncOliphauntDirectory(destination.deletingLastPathComponent())
-        try validateOliphauntCompletePgdata(destination)
     } catch let publicationError {
-        do {
-            try validateOliphauntCompletePgdata(destination)
-            return
-        } catch {
-            throw publicationError
+        if (try? validateOliphauntCompletePgdata(destination)) != nil {
+            return .existing
+        }
+        throw publicationError
+    }
+    didPublishDestination()
+    try syncOliphauntDirectory(destination.deletingLastPathComponent())
+    try validateOliphauntCompletePgdata(destination)
+    return .published
+}
+
+func recoverOliphauntManagedRootPublicationFailure(
+    _ publicationError: Error,
+    ownsPublishedPgdata: Bool,
+    descriptorDefinitelyAbsent: () throws -> Bool,
+    removePublishedPgdata: () throws -> Void,
+    syncRoot: () throws -> Void
+) throws -> Never {
+    guard ownsPublishedPgdata else {
+        throw publicationError
+    }
+    let descriptorIsAbsent: Bool
+    do {
+        descriptorIsAbsent = try descriptorDefinitelyAbsent()
+    } catch let inspectionError {
+        throw OliphauntError.engine(
+            "database root descriptor publication failed (\(publicationError)); "
+                + "preserved PGDATA because descriptor publication is uncertain (\(inspectionError))"
+        )
+    }
+    guard descriptorIsAbsent else {
+        throw publicationError
+    }
+    do {
+        try removePublishedPgdata()
+        try syncRoot()
+    } catch let cleanupError {
+        throw OliphauntError.engine(
+            "database root descriptor publication failed (\(publicationError)); "
+                + "failed to clean uncommitted PGDATA (\(cleanupError))"
+        )
+    }
+    throw publicationError
+}
+
+func isOliphauntPathDefinitelyAbsent(_ path: URL) throws -> Bool {
+    var metadata = stat()
+    let result = path.path.withCString { lstat($0, &metadata) }
+    if result == 0 {
+        return false
+    }
+    let inspectionErrno = errno
+    if inspectionErrno == ENOENT {
+        return true
+    }
+    throw OliphauntError.engine(
+        "failed to inspect \(path.path): \(String(cString: strerror(inspectionErrno)))"
+    )
+}
+
+func finishOliphauntStaging<T>(
+    _ result: Result<T, Error>,
+    operation: String,
+    cleanup: () throws -> Void
+) throws -> T {
+    do {
+        try cleanup()
+    } catch let cleanupError {
+        switch result {
+        case .success:
+            throw OliphauntError.engine(
+                "\(operation) staging cleanup failed (\(cleanupError))"
+            )
+        case .failure(let primaryError):
+            throw OliphauntError.engine(
+                "\(operation) failed (\(primaryError)); "
+                    + "staging cleanup failed (\(cleanupError))"
+            )
         }
     }
+    return try result.get()
+}
+
+func removeOliphauntStagingIfPresent(_ staging: URL) throws {
+    guard !(try isOliphauntPathDefinitelyAbsent(staging)) else {
+        return
+    }
+    try FileManager.default.removeItem(at: staging)
+    try syncOliphauntDirectory(staging.deletingLastPathComponent())
 }
 
 func hardenOliphauntPgdataPermissions(at pgdata: URL) throws {
@@ -94,7 +184,7 @@ private func removeOliphauntEmptyDirectoryIfPresent(_ directory: URL) throws {
     )
 }
 
-private func makeOliphauntTreeDurable(_ root: URL) throws {
+func makeOliphauntPublicationTreeDurable(_ root: URL) throws {
     let fileManager = FileManager.default
     var directories = [root]
     guard let enumerator = fileManager.enumerator(
@@ -109,7 +199,7 @@ private func makeOliphauntTreeDurable(_ root: URL) throws {
             forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]
         )
         if values.isSymbolicLink == true {
-            throw OliphauntError.engine("PGDATA staging contains a symbolic link: \(url.path)")
+            throw OliphauntError.engine("publication tree contains a symbolic link: \(url.path)")
         }
         if values.isDirectory == true {
             directories.append(url)
@@ -117,6 +207,8 @@ private func makeOliphauntTreeDurable(_ root: URL) throws {
             let handle = try FileHandle(forWritingTo: url)
             try handle.synchronize()
             try handle.close()
+        } else {
+            throw OliphauntError.engine("publication tree contains a special entry: \(url.path)")
         }
     }
     for directory in directories.reversed() {
@@ -127,14 +219,14 @@ private func makeOliphauntTreeDurable(_ root: URL) throws {
 func syncOliphauntDirectory(_ directory: URL) throws {
     let descriptor = directory.path.withCString { open($0, O_RDONLY) }
     guard descriptor >= 0 else {
-        throw OliphauntError.engine("failed to open PGDATA directory for fsync: \(directory.path)")
+        throw OliphauntError.engine("failed to open publication directory for fsync: \(directory.path)")
     }
     let result = fsync(descriptor)
     let savedError = errno
     _ = close(descriptor)
     guard result == 0 else {
         throw OliphauntError.engine(
-            "failed to fsync PGDATA directory \(directory.path): \(String(cString: strerror(savedError)))"
+            "failed to fsync publication directory \(directory.path): \(String(cString: strerror(savedError)))"
         )
     }
 }

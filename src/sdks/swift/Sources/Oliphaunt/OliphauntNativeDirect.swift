@@ -38,22 +38,58 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
         case .managed:
             try validateOliphauntCompletePgdata(pgdata)
         case .empty:
-            let preparedPgdata = try packagedRuntimeResources?.preparePgdata(at: pgdata) ?? false
-            if !preparedPgdata {
-                let staging = storageDirectory.appendingPathComponent(
-                    ".pgdata-initdb-\(UUID().uuidString)",
-                    isDirectory: true
+            try requireOliphauntFreshRootRole(username)
+            var ownsPublishedPgdata = false
+            do {
+                let preparation = try resolvedRuntime.resources?.preparePgdata(
+                    at: pgdata,
+                    profile: resolvedRuntime.catalogProfile,
+                    didPublishDestination: { ownsPublishedPgdata = true }
                 )
-                defer { try? FileManager.default.removeItem(at: staging) }
-                try Self.runPackagedInitdb(
-                    pgdata: staging,
-                    runtimeDirectory: resolvedRuntime.directory,
-                    username: username
+                if preparation == nil {
+                    let staging = storageDirectory.appendingPathComponent(
+                        ".pgdata-initdb-\(UUID().uuidString)",
+                        isDirectory: true
+                    )
+                    let result: Result<OliphauntPgdataPublication, Error> = Result {
+                        try Self.runPackagedInitdb(
+                            pgdata: staging,
+                            runtimeDirectory: resolvedRuntime.directory,
+                            username: "postgres",
+                            catalogProfile: resolvedRuntime.catalogProfile
+                        )
+                        return try publishOliphauntPreparedPgdata(
+                            staging,
+                            to: pgdata,
+                            didPublishDestination: { ownsPublishedPgdata = true }
+                        )
+                    }
+                    _ = try finishOliphauntStaging(result, operation: "PGDATA preparation") {
+                        try removeOliphauntStagingIfPresent(staging)
+                    }
+                }
+                try validateOliphauntCompletePgdata(pgdata)
+                try Self.writeManagedRootDescriptor(storageDirectory)
+            } catch let publicationError {
+                try recoverOliphauntManagedRootPublicationFailure(
+                    publicationError,
+                    ownsPublishedPgdata: ownsPublishedPgdata,
+                    descriptorDefinitelyAbsent: {
+                        try isOliphauntPathDefinitelyAbsent(
+                            storageDirectory.appendingPathComponent(
+                                ".oliphaunt.json",
+                                isDirectory: false
+                            )
+                        )
+                    },
+                    removePublishedPgdata: {
+                        if !(try isOliphauntPathDefinitelyAbsent(pgdata)) {
+                            try FileManager.default.removeItem(at: pgdata)
+                        }
+                    },
+                    syncRoot: { try syncOliphauntDirectory(storageDirectory) }
                 )
-                try publishOliphauntPreparedPgdata(staging, to: pgdata)
             }
-            try validateOliphauntCompletePgdata(pgdata)
-            try Self.writeManagedRootDescriptor(storageDirectory)
         }
 
         let startupArgs = configuration.postgresStartupArgs(
@@ -129,9 +165,12 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
             )
         }
         if let runtimeResources {
+            let closure = try runtimeResources.resolveRuntime(requestedExtensions: extensions)
             return ResolvedNativeRuntime(
-                directory: try runtimeResources.materializeRuntime(requestedExtensions: extensions),
-                sharedPreloadLibraries: try runtimeResources.sharedPreloadLibraries(requestedExtensions: extensions)
+                directory: closure.directory,
+                sharedPreloadLibraries: closure.sharedPreloadLibraries,
+                catalogProfile: closure.catalogProfile,
+                resources: closure.owner
             )
         }
         if let environmentRuntimeDirectory = Self.environmentRuntimeDirectory() {
@@ -160,12 +199,15 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
                 runtimeResources: runtimeResources
             )
         if let resources {
+            let closure = try resources.resolveRuntime(
+                at: directory,
+                requestedExtensions: extensions
+            )
             return ResolvedNativeRuntime(
-                directory: directory,
-                sharedPreloadLibraries: try resources.sharedPreloadLibraries(
-                    forRuntimeDirectory: directory,
-                    requestedExtensions: extensions
-                )
+                directory: closure.directory,
+                sharedPreloadLibraries: closure.sharedPreloadLibraries,
+                catalogProfile: closure.catalogProfile,
+                resources: closure.owner
             )
         }
         if !extensions.isEmpty {
@@ -194,6 +236,8 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
     private struct ResolvedNativeRuntime {
         var directory: URL? = nil
         var sharedPreloadLibraries: [String] = []
+        var catalogProfile: OliphauntNativeCatalogProfile = .standard
+        var resources: OliphauntRuntimeResources? = nil
     }
 
     private static func environmentRuntimeDirectory() -> URL? {
@@ -212,7 +256,8 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
     private static func runPackagedInitdb(
         pgdata: URL,
         runtimeDirectory: URL?,
-        username: String
+        username: String,
+        catalogProfile: OliphauntNativeCatalogProfile
     ) throws {
 #if os(macOS)
         let environment = ProcessInfo.processInfo.environment
@@ -243,6 +288,13 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
             "--encoding=UTF8",
         ]
         var childEnvironment = environment
+        childEnvironment.removeValue(forKey: "ICU_DATA")
+        childEnvironment.removeValue(forKey: "OLIPHAUNT_INTERNAL_ICU_READY")
+        childEnvironment.removeValue(forKey: "OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY")
+        childEnvironment.removeValue(forKey: "OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY")
+        if catalogProfile == .standard {
+            childEnvironment["OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY"] = "1"
+        }
         if let runtimeDirectory {
             let libraryDirectory = runtimeDirectory.appendingPathComponent("lib", isDirectory: true).path
             let inherited = environment["DYLD_LIBRARY_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -250,9 +302,15 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
                 .compactMap { $0 }
                 .filter { !$0.isEmpty }
                 .joined(separator: ":")
-            let icuData = runtimeDirectory.appendingPathComponent("share/icu", isDirectory: true)
-            if FileManager.default.fileExists(atPath: icuData.path) {
+            if catalogProfile == .icu {
+                let icuData = runtimeDirectory.appendingPathComponent("share/icu", isDirectory: true)
+                guard FileManager.default.fileExists(atPath: icuData.path) else {
+                    throw OliphauntError.engine(
+                        "verified ICU runtime closure is missing share/icu at \(icuData.path)"
+                    )
+                }
                 childEnvironment["ICU_DATA"] = icuData.path
+                childEnvironment["OLIPHAUNT_INTERNAL_ICU_READY"] = "1"
             }
         }
         process.environment = childEnvironment
@@ -270,7 +328,7 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
         }
 #else
         throw OliphauntError.engine(
-            "new Swift database storage requires packaged template PGDATA on this platform"
+            "new Swift database storage requires a packaged cluster seed on this platform"
         )
 #endif
     }
@@ -298,7 +356,7 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
         return directory
     }
 
-    private enum ManagedRootState {
+    private enum ManagedRootState: Equatable {
         case empty
         case managed
     }
@@ -332,29 +390,36 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
         )
         let json =
             "{\"schema\":\"oliphaunt-database-root-v1\",\"engineFamily\":\"native\",\"pgdata\":\"pgdata\",\"postgresMajor\":18,\"physicalFormat\":\"native-pg18-v1\"}\n"
-        defer { try? FileManager.default.removeItem(at: staging) }
-        guard FileManager.default.createFile(
-            atPath: staging.path,
-            contents: Data(json.utf8),
-            attributes: [.posixPermissions: 0o600]
-        ) else {
-            throw OliphauntError.engine(
-                "failed to create database root descriptor staging file at \(staging.path)"
-            )
-        }
-        let handle = try FileHandle(forWritingTo: staging)
-        try handle.synchronize()
-        try handle.close()
-        do {
-            try FileManager.default.moveItem(at: staging, to: descriptor)
-        } catch let publicationError {
-            do {
-                try validateManagedRootDescriptor(descriptor)
-            } catch {
-                throw publicationError
+        let result: Result<Void, Error> = Result {
+            guard FileManager.default.createFile(
+                atPath: staging.path,
+                contents: Data(json.utf8),
+                attributes: [.posixPermissions: 0o600]
+            ) else {
+                throw OliphauntError.engine(
+                    "failed to create database root descriptor staging file at \(staging.path)"
+                )
             }
+            let handle = try FileHandle(forWritingTo: staging)
+            try handle.synchronize()
+            try handle.close()
+            do {
+                try FileManager.default.moveItem(at: staging, to: descriptor)
+            } catch let publicationError {
+                do {
+                    try validateManagedRootDescriptor(descriptor)
+                } catch {
+                    throw publicationError
+                }
+            }
+            try syncOliphauntDirectory(directory)
         }
-        try syncOliphauntDirectory(directory)
+        try finishOliphauntStaging(
+            result,
+            operation: "database root descriptor publication"
+        ) {
+            try removeOliphauntStagingIfPresent(staging)
+        }
     }
 
     private static func validateManagedRootDescriptor(_ descriptor: URL) throws {

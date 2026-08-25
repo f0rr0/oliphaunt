@@ -55,6 +55,16 @@ function buildMacosRuntimeAssets() {
   });
 }
 
+function writeMobileAbiReceipt(buildRoot, target, output) {
+  run("bun", [
+    "tools/release/native-mobile-abi-contract.mjs",
+    "write",
+    "--build-root", buildRoot,
+    "--target", target,
+    "--output", output,
+  ]);
+}
+
 const root = path.resolve(import.meta.dir, "../../../../..");
 process.chdir(root);
 
@@ -89,6 +99,16 @@ if (target === "android-arm64-v8a") {
     },
   });
   buildLinuxRuntimeAssets();
+  writeMobileAbiReceipt(
+    path.join(root, "target/liboliphaunt-pg18-linux-x64-gnu/postgresql-18.4"),
+    "linux-x64-gnu",
+    path.join(root, "target/liboliphaunt-pg18-android-arm64/out/native-mobile-abi-producer.properties"),
+  );
+  writeMobileAbiReceipt(
+    path.join(root, "target/liboliphaunt-pg18-android-arm64/postgresql-18.4"),
+    "android-arm64-v8a",
+    path.join(root, "target/liboliphaunt-pg18-android-arm64/out/native-mobile-abi.properties"),
+  );
   stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-pg18-android-arm64/out"));
   stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-pg18-linux-x64-gnu/install"));
   stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-pg18-linux-x64-gnu/icu/share/icu"));
@@ -100,12 +120,48 @@ if (target === "android-arm64-v8a") {
     },
   });
   buildLinuxRuntimeAssets();
+  writeMobileAbiReceipt(
+    path.join(root, "target/liboliphaunt-pg18-linux-x64-gnu/postgresql-18.4"),
+    "linux-x64-gnu",
+    path.join(root, "target/liboliphaunt-pg18-android-x86_64/out/native-mobile-abi-producer.properties"),
+  );
+  writeMobileAbiReceipt(
+    path.join(root, "target/liboliphaunt-pg18-android-x86_64/postgresql-18.4"),
+    "android-x86_64",
+    path.join(root, "target/liboliphaunt-pg18-android-x86_64/out/native-mobile-abi.properties"),
+  );
   stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-pg18-android-x86_64/out"));
   stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-pg18-linux-x64-gnu/install"));
   stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-pg18-linux-x64-gnu/icu/share/icu"));
 } else if (target === "ios-xcframework") {
   run("src/runtimes/liboliphaunt/native/bin/build-ios-xcframework.sh");
   buildMacosRuntimeAssets();
+  const iosDeviceReceipt = path.join(root, "target/liboliphaunt-ios-device/out/native-mobile-abi.properties");
+  const iosSimulatorReceipt = path.join(root, "target/liboliphaunt-ios-simulator/out/native-mobile-abi.properties");
+  const macosProducerReceipt = path.join(root, "target/liboliphaunt-ios-xcframework/out/native-mobile-abi-producer.properties");
+  writeMobileAbiReceipt(
+    path.join(root, "target/liboliphaunt-pg18/postgresql-18.4"),
+    "macos-arm64",
+    macosProducerReceipt,
+  );
+  writeMobileAbiReceipt(
+    path.join(root, "target/liboliphaunt-ios-device/postgresql-18.4"),
+    "ios-arm64",
+    iosDeviceReceipt,
+  );
+  writeMobileAbiReceipt(
+    path.join(root, "target/liboliphaunt-ios-simulator/postgresql-18.4"),
+    "ios-arm64-simulator",
+    iosSimulatorReceipt,
+  );
+  run("bun", [
+    "tools/release/native-mobile-abi-contract.mjs",
+    "compare",
+    "--domain", "ios-datum64",
+    "--receipt", iosDeviceReceipt,
+    "--receipt", iosSimulatorReceipt,
+    "--receipt", macosProducerReceipt,
+  ]);
   stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-ios-xcframework/out"));
   stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-ios-simulator/out"));
   stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-ios-device/out"));

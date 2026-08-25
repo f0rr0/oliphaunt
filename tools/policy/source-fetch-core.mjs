@@ -385,13 +385,21 @@ function validateSource(source) {
     }
     if (
       typeof source.stripPrefix !== 'string' ||
-      !/^[A-Za-z0-9][A-Za-z0-9._+-]*$/u.test(source.stripPrefix) ||
-      source.stripPrefix.includes('..')
+      (source.stripPrefix !== '.' &&
+        (!/^[A-Za-z0-9][A-Za-z0-9._+-]*$/u.test(source.stripPrefix) ||
+          source.stripPrefix.includes('..')))
     ) {
       throw new Error(`archive source '${source.name}' has an unsafe strip prefix`);
     }
-    if (!parsedUrl.pathname.endsWith('.tar.gz') && !parsedUrl.pathname.endsWith('.tgz')) {
-      throw new Error(`archive source '${source.name}' URL must identify a .tar.gz or .tgz file`);
+    if (
+      !parsedUrl.pathname.endsWith('.tar.gz') &&
+      !parsedUrl.pathname.endsWith('.tgz') &&
+      !parsedUrl.pathname.endsWith('.zip')
+    ) {
+      throw new Error(`archive source '${source.name}' URL must identify a .tar.gz, .tgz, or .zip file`);
+    }
+    if (source.stripPrefix === '.' && !parsedUrl.pathname.endsWith('.zip')) {
+      throw new Error(`archive source '${source.name}' may use a rootless strip prefix only for ZIP releases`);
     }
   } else {
     throw new Error(`source '${source.name}' has unsupported kind '${source.kind}'`);
@@ -655,6 +663,7 @@ export function createSourceFetcher({
   checkoutRoot,
   archiveRoot,
   archiveTool = join(workspaceRoot, 'tools', 'policy', 'source-archive.py'),
+  zipArchiveTool = join(workspaceRoot, 'tools', 'policy', 'source-zip.py'),
   runProcess = defaultRunProcess,
   sleep = defaultSleep,
   gitAttempts = 5,
@@ -678,14 +687,14 @@ export function createSourceFetcher({
   const validate =
     validateArchive ??
     ((archive, source) =>
-      run('python3', [archiveTool, 'validate', archive, source.stripPrefix], {
+      run('python3', [source.url.endsWith('.zip') ? zipArchiveTool : archiveTool, 'validate', archive, source.stripPrefix], {
         label: `validate archive structure for ${source.name}`,
         timeoutMs: ARCHIVE_VALIDATE_TIMEOUT_MS,
       }));
   const extract =
     extractArchive ??
     ((archive, destination, source) =>
-      run('python3', [archiveTool, 'extract', archive, source.stripPrefix, destination], {
+      run('python3', [source.url.endsWith('.zip') ? zipArchiveTool : archiveTool, 'extract', archive, source.stripPrefix, destination], {
         label: `safely extract ${source.name}`,
         timeoutMs: ARCHIVE_EXTRACT_TIMEOUT_MS,
       }));
@@ -965,13 +974,14 @@ export function createSourceFetcher({
 
   async function ensureArchive(source) {
     mkdirSync(archiveRoot, {recursive: true});
-    const archive = join(archiveRoot, `${source.name}-${source.sha256}.tar.gz`);
+    const extension = source.url.endsWith('.zip') ? '.zip' : '.tar.gz';
+    const archive = join(archiveRoot, `${source.name}-${source.sha256}${extension}`);
     if (cachedArchiveIsValid(archive, source)) {
       return archive;
     }
 
     const stage = makeStageDirectory(archiveRoot, `${source.name}-download`);
-    const candidate = join(stage, 'download.tar.gz');
+    const candidate = join(stage, source.url.endsWith('.zip') ? 'download.zip' : 'download.tar.gz');
     try {
       await download(source, candidate);
       if (!isRegularFile(candidate, DOWNLOAD_MAX_BYTES)) {

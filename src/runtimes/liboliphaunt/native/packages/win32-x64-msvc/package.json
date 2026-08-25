@@ -18,9 +18,11 @@
   "optional": true,
   "oliphaunt": {
     "target": "windows-x64-msvc",
+    "clusterSeedTarget": "windows-x64-msvc",
     "libraryRelativePath": "bin/oliphaunt.dll",
     "runtimeRelativePath": "runtime",
-    "clusterSeedRelativePath": "cluster-seed"
+    "clusterSeedRelativePath": "cluster-seed",
+    "icuClusterSeedRelativePath": "cluster-seed-icu"
   },
   "publishConfig": {
     "access": "public",
@@ -36,6 +38,8 @@
     "lib",
     "runtime",
     "cluster-seed",
+    "cluster-seed-icu",
+    "manifest.properties",
     "README.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",

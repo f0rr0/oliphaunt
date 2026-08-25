@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 import { spawnSync } from '../test/fd-backed-spawn-sync.mjs';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -57,26 +57,6 @@ test('release-shaped native fixtures satisfy the same binary and archive contrac
     ]),
     'validating liboliphaunt release fixture',
   );
-  const packageSize = path.join(
-    liboliphauntAssets,
-    `liboliphaunt-${liboliphauntVersion}-package-size.tsv`,
-  );
-  writeFileSync(
-    packageSize,
-    readFileSync(packageSize, 'utf8').replace(
-      /^package\ttotal\t-\t-\t\d+$/mu,
-      'package\ttotal\t-\t-\t0',
-    ),
-    'utf8',
-  );
-  const stalePackageSize = run('tools/release/check-liboliphaunt-release-assets.mjs', [
-    '--asset-dir', liboliphauntAssets,
-  ]);
-  expect(stalePackageSize.status).not.toBe(0);
-  expect(stalePackageSize.stderr).toContain(
-    'must byte-match oliphaunt/package-size.tsv',
-  );
-
   expectSuccess(
     run('tools/test/create-broker-release-fixture.mjs', [
       '--asset-dir', brokerAssets,

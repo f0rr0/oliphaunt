@@ -3,12 +3,12 @@
   "artifactRole": "cluster-seed-icu",
   "catalogProfile": "icu",
   "runtime": {
-    "product": "liboliphaunt-native",
+    "product": "liboliphaunt-wasix",
     "version": "1.2.3",
-    "engineFamily": "native",
-    "physicalFormat": "native-pg18-v1",
+    "engineFamily": "wasix",
+    "physicalFormat": "wasix-pg18-v1",
     "postgresMajor": 18,
-    "compatibilityKey": "native-pg18-datum64-v1",
+    "compatibilityKey": "wasix-pg18-datum32-v1",
     "consumerSha256": "5555555555555555555555555555555555555555555555555555555555555555",
     "producerSha256": "6666666666666666666666666666666666666666666666666666666666666666",
     "initdbSha256": "7777777777777777777777777777777777777777777777777777777777777777"

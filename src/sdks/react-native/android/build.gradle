@@ -337,24 +337,137 @@ abstract class PrepareOliphauntAndroidAssetsTask extends DefaultTask {
     return nested
   }
 
+  private static boolean validCacheKey(String value) {
+    value != "." && value != ".." && value.matches("[A-Za-z0-9._-]{1,128}")
+  }
+
   private static void validateRuntimeResourcesSchema(File root) {
-    ["runtime", "cluster-seed"].each { name ->
+    Set<String> runtimeManifestFields = [
+      "schema", "layout", "artifactRole", "catalogProfile", "clusterSeedTarget",
+      "icuDataTreeSha256", "mode", "cacheKey",
+      "selectedExtensions", "extensions", "runtimeFeatures", "sharedPreloadLibraries",
+      "mobileStaticRegistryState", "mobileStaticRegistryRegistered", "mobileStaticRegistryPending",
+      "nativeModuleStems", "mobileStaticRegistrySource",
+    ] as Set<String>
+    Set<String> seedManifestFields = [
+      "schema", "layout", "artifactRole", "catalogProfile", "postgresMajor", "physicalFormat",
+      "target", "compatibilityKey", "initialSuperuser", "runtimeFeatures", "icuDataVersion",
+      "icuDataForm", "icuDataTreeSha256", "cacheKey",
+    ] as Set<String>
+    File receiptFile = new File(root, "manifest.properties")
+    Map<String, String> receipt = readStrictManifest(receiptFile)
+    Map<String, String> expectedReceipt = [
+      schema: "oliphaunt-native-runtime-carrier-v1",
+      clusterSeedTarget: "android-datum64",
+      clusterSeedRelativePath: "cluster-seed",
+      icuClusterSeedRelativePath: "cluster-seed-icu",
+    ]
+    if (receipt != expectedReceipt) {
+      throw new GradleException("Oliphaunt React Native Android runtime resources have an invalid target seed receipt")
+    }
+    String runtimeIcuDigest = ""
+    boolean runtimeUsesIcu = false
+    String icuSeedDigest = ""
+    ["runtime", "cluster-seed", "cluster-seed-icu"].each { name ->
       File manifest = new File(new File(root, name), "manifest.properties")
       if (!manifest.isFile()) {
         throw new GradleException("Oliphaunt React Native Android runtime resources are missing ${name}/manifest.properties under ${root.absolutePath}")
       }
-      def properties = new Properties()
-      manifest.withInputStream { properties.load(it) }
-      String schema = properties.getProperty("schema")?.trim() ?: ""
+      Map<String, String> properties = readStrictManifest(manifest)
+      Set<String> expectedFields = name == "runtime" ? runtimeManifestFields : seedManifestFields
+      Set<String> unsupported = new TreeSet<>(properties.keySet())
+      unsupported.removeAll(expectedFields)
+      if (!unsupported.isEmpty() || (name != "runtime" && properties.keySet() != expectedFields)) {
+        throw new GradleException("Oliphaunt React Native Android ${name} manifest does not contain its exact canonical field set")
+      }
+      String schema = properties["schema"] ?: ""
       if (schema != "oliphaunt-runtime-resources-v1") {
         throw new GradleException("Oliphaunt React Native Android runtime resources ${name} manifest has unsupported schema '${schema.isEmpty() ? "<missing>" : schema}'; expected oliphaunt-runtime-resources-v1")
       }
-      if (!properties.containsKey("selectedExtensions")) {
+      if (name == "runtime" && !properties.containsKey("selectedExtensions")) {
         throw new GradleException(
           "Oliphaunt React Native Android runtime resources ${name} manifest is missing required selectedExtensions property"
         )
       }
+      if (name == "runtime") {
+        if (properties["layout"] != "postgres-runtime-files-v1" ||
+            properties["artifactRole"] != "runtime" ||
+            properties["catalogProfile"] != "" ||
+            properties["clusterSeedTarget"] != "android-datum64" ||
+            !validCacheKey(properties["cacheKey"] ?: "")) {
+          throw new GradleException("Oliphaunt React Native Android runtime manifest is not bound to android-datum64")
+        }
+        Set<String> features = (properties["runtimeFeatures"] ?: "")
+          .split(",")
+          .findAll { !it.isBlank() }
+          .toSet()
+        if (!features.every { it == "icu" }) {
+          throw new GradleException("Oliphaunt React Native Android runtime manifest contains unsupported runtime features")
+        }
+        runtimeUsesIcu = features.contains("icu")
+        runtimeIcuDigest = properties["icuDataTreeSha256"] ?: ""
+        if (runtimeUsesIcu != runtimeIcuDigest.matches("[0-9a-f]{64}")) {
+          throw new GradleException("Oliphaunt React Native Android runtime manifest has inconsistent ICU identity")
+        }
+      } else {
+        String profile = name == "cluster-seed" ? "standard" : "icu"
+        File files = new File(root, "${name}/files")
+        if (!new File(files, "PG_VERSION").isFile() ||
+            !new File(files, "global/pg_control").isFile()) {
+          throw new GradleException("Oliphaunt React Native Android runtime resources are missing the complete ${name} payload")
+        }
+        String expectedFeatures = profile == "icu" ? "icu" : ""
+        String expectedIcuVersion = profile == "icu" ? "76.1" : ""
+        String expectedIcuForm = profile == "icu" ? "files-le" : ""
+        String digest = properties["icuDataTreeSha256"] ?: ""
+        if (properties["layout"] != "oliphaunt-cluster-seed-v1" ||
+            properties["artifactRole"] != "cluster-seed-${profile}" ||
+            properties["catalogProfile"] != profile ||
+            properties["postgresMajor"] != "18" ||
+            properties["physicalFormat"] != "native-pg18-v1" ||
+            properties["target"] != "android-datum64" ||
+            properties["compatibilityKey"] != "native-pg18-android-datum64-v1" ||
+            properties["initialSuperuser"] != "postgres" ||
+            properties["runtimeFeatures"] != expectedFeatures ||
+            properties["icuDataVersion"] != expectedIcuVersion ||
+            properties["icuDataForm"] != expectedIcuForm ||
+            !validCacheKey(properties["cacheKey"] ?: "") ||
+            (profile == "icu" ? !digest.matches("[0-9a-f]{64}") : !digest.isEmpty())) {
+          throw new GradleException("Oliphaunt React Native Android ${name} manifest is incompatible")
+        }
+        if (profile == "icu") {
+          icuSeedDigest = digest
+        }
+      }
     }
+    if (runtimeUsesIcu && runtimeIcuDigest != icuSeedDigest) {
+      throw new GradleException("Oliphaunt React Native Android runtime ICU identity does not match cluster-seed-icu")
+    }
+  }
+
+  private static Map<String, String> readStrictManifest(File manifest) {
+    if (!manifest.isFile()) {
+      throw new GradleException("missing Oliphaunt runtime-resource manifest: ${manifest.absolutePath}")
+    }
+    Map<String, String> result = new LinkedHashMap<>()
+    manifest.readLines("UTF-8").eachWithIndex { raw, index ->
+      String line = raw
+      if (!line.isEmpty()) {
+        int separator = line.indexOf('=')
+        if (separator < 1) {
+          throw new GradleException("${manifest.absolutePath}:${index + 1} is not key=value")
+        }
+        String key = line.substring(0, separator)
+        if (result.containsKey(key)) {
+          throw new GradleException("${manifest.absolutePath}:${index + 1} repeats ${key}")
+        }
+        result[key] = line.substring(separator + 1)
+      }
+    }
+    if (result.isEmpty()) {
+      throw new GradleException("empty Oliphaunt runtime-resource manifest: ${manifest.absolutePath}")
+    }
+    return result
   }
 
   private static void validateSelectedExtensionFiles(

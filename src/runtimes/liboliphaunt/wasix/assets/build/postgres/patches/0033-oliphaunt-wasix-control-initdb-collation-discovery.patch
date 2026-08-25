@@ -1,0 +1,84 @@
+From 0000000000000000000000000000000000000033 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 22 Jun 2026 00:00:00 +0000
+Subject: [PATCH] oliphaunt-wasix: control initdb collation discovery
+
+Oliphaunt packages ICU data as an optional runtime resource. PostgreSQL 18
+refreshes the built-in unicode collation version and imports ICU collations
+during initdb. Both paths can open ICU data before the embedded WASIX runtime
+has a database to start.
+
+Keep the public import function at PostgreSQL semantics unless a controlled
+seed producer explicitly suppresses host discovery. Distributed standard seeds
+suppress both OS and ICU discovery; distributed ICU seeds suppress only OS
+discovery and use verified ICU data. The readiness signal gates only initdb's
+unicode-version probe, where optional ICU data might otherwise be opened too
+early.
+---
+ src/backend/commands/collationcmds.c | 17 ++++++++++++++---
+ src/bin/initdb/initdb.c              |  9 ++++++++-
+ 2 files changed, 22 insertions(+), 4 deletions(-)
+
+diff --git a/src/backend/commands/collationcmds.c b/src/backend/commands/collationcmds.c
+--- a/src/backend/commands/collationcmds.c
++++ b/src/backend/commands/collationcmds.c
+@@ -841,4 +841,11 @@ pg_import_system_collations(PG_FUNCTION_ARGS)
++	bool		oliphaunt_skip_system_collation_discovery =
++		getenv("OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY") != NULL &&
++		strcmp(getenv("OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY"),
++			   "1") == 0;
++	bool		oliphaunt_skip_icu_collation_discovery =
++		getenv("OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY") != NULL &&
++		strcmp(getenv("OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY"), "1") == 0;
+ 	if (!superuser())
+ 		ereport(ERROR,
+ 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+ 				 errmsg("must be superuser to import system collations")));
+@@ -851,6 +858,7 @@ pg_import_system_collations(PG_FUNCTION_ARGS)
+ 	/* Load collations known to libc, using "locale -a" to enumerate them */
+ #ifdef READ_LOCALE_A_OUTPUT
+-	{
++	if (!oliphaunt_skip_system_collation_discovery)
++	{
+ 		FILE	   *locale_a_handle;
+ 		char		localebuf[LOCALE_NAME_BUFLEN];
+ 		int			nvalid = 0;
+@@ -976,7 +985,8 @@ pg_import_system_collations(PG_FUNCTION_ARGS)
+ 	 * confusing.
+ 	 */
+ #ifdef USE_ICU
+-	{
++	if (!oliphaunt_skip_icu_collation_discovery)
++	{
+ 		int			i;
+ 
+ 		/*
+@@ -1027,7 +1037,8 @@ pg_import_system_collations(PG_FUNCTION_ARGS)
+ 
+ 	/* Load collations known to WIN32 */
+ #ifdef ENUM_SYSTEM_LOCALE
+-	{
++	if (!oliphaunt_skip_system_collation_discovery)
++	{
+ 		int			nvalid = 0;
+ 		CollParam	param;
+ 
+diff --git a/src/bin/initdb/initdb.c b/src/bin/initdb/initdb.c
+--- a/src/bin/initdb/initdb.c
++++ b/src/bin/initdb/initdb.c
+@@ -1778,4 +1778,11 @@ setup_collation(FILE *cmdfd)
+-	PG_CMD_PUTS("UPDATE pg_collation SET collversion = pg_collation_actual_version(oid) WHERE collname = 'unicode';\n\n");
+-
++	/*
++	 * Oliphaunt standard seeds intentionally omit optional ICU data. Only the
++	 * internal readiness signal is allowed to select the ICU catalog profile;
++	 * inherited or user-authored ICU_DATA must not silently change initdb output.
++	 */
++	if (getenv("OLIPHAUNT_INTERNAL_ICU_READY") != NULL &&
++		strcmp(getenv("OLIPHAUNT_INTERNAL_ICU_READY"), "1") == 0)
++		PG_CMD_PUTS("UPDATE pg_collation SET collversion = pg_collation_actual_version(oid) WHERE collname = 'unicode';\n\n");
++
+ 	/* Import all collations we can find in the operating system */
+ 	PG_CMD_PUTS("SELECT pg_import_system_collations('pg_catalog');\n\n");
+--
+2.39.5

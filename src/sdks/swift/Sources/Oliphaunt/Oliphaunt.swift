@@ -1,5 +1,10 @@
 import Foundation
 
+enum OliphauntNativeCatalogProfile: String, Sendable {
+    case standard
+    case icu
+}
+
 public struct OliphauntStartupGUC: Equatable, Sendable {
     public var name: String
     public var value: String
@@ -46,6 +51,15 @@ func validateOliphauntStartupIdentity(_ value: String?, label: String) throws {
     }
     if value.utf8.contains(0) {
         throw OliphauntError.engine("\(label) must not contain NUL bytes")
+    }
+}
+
+func requireOliphauntFreshRootRole(_ username: String) throws {
+    guard username == "postgres" else {
+        throw OliphauntError.engine(
+            "a new Swift Oliphaunt database is initialized with the postgres role; " +
+                "username selects an existing role and cannot be '\(username)' on first open"
+        )
     }
 }
 

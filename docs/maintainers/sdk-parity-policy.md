@@ -71,10 +71,18 @@ Cluster initialization and ICU are separate product concepts. The locked
 convergence target is that ordinary new roots transparently use a runtime-bound
 cluster seed, while language-native package/build selection enables optional
 ICU runtime data. A new ICU-enabled root must use the matching `icu` seed
-so its per-database collation catalogue matches normal ICU-aware `initdb`.
-Existing roots are never replaced or silently catalogue-migrated. The complete
+so its per-database collation catalog matches normal ICU-aware `initdb`.
+Existing roots are never replaced or silently catalog-migrated. The complete
 decision register and cross-SDK qualification matrix are in
 [Cluster seeds and ICU](../architecture/cluster-seeds-and-icu.md).
+
+Every SDK bootstraps the fixed PostgreSQL `postgres` role. Public `username`
+configuration selects an existing connection role; it never changes initdb or
+creates a superuser. A first open with another username fails before seed
+loading or PGDATA mutation/publication. Native server roots are the deliberate
+initialization exception to
+seed hydration: they run normal server `initdb` so independent replication/WAL
+systems receive independent PostgreSQL system identifiers.
 
 Filesystem-backed SDK storage is a managed root with exactly one
 `.oliphaunt.json` object and one `pgdata` child. The descriptor has exactly five

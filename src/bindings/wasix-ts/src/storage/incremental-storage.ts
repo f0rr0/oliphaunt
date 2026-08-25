@@ -2,6 +2,7 @@ import type { WasixDirectoryMount } from '../archive.js';
 import { composeWasixStorageFailure, WasixStorageError } from '../errors.js';
 import type { WasixStorageCommitState } from '../errors.js';
 import type {
+  WasixClusterSeedLoader,
   StorageDirectory,
   WasixStorageLease,
   WasixStorageSyncBoundary,
@@ -38,7 +39,7 @@ export type IncrementalStorageBackend = {
  */
 export async function acquireIncrementalStorage(
   label: string,
-  template: WasixDirectoryMount,
+  loadClusterSeed: WasixClusterSeedLoader,
   backend: IncrementalStorageBackend,
 ): Promise<WasixStorageLease> {
   const lock = await backend.acquireLock();
@@ -48,12 +49,13 @@ export async function acquireIncrementalStorage(
     const snapshot = await store.read();
     const state =
       store.initializationState?.(snapshot) ?? (snapshot === undefined ? 'new' : 'existing');
+    const mount = snapshot === undefined ? await loadClusterSeed() : snapshotToMount(snapshot);
     return new IncrementalStorageLease(
       label,
       store,
       lock,
-      template,
-      snapshot,
+      mount,
+      snapshot !== undefined,
       state,
       backend.writeFailureCommitState ?? 'not-persisted',
     );
@@ -100,8 +102,8 @@ class IncrementalStorageLease implements WasixStorageLease {
     label: string,
     store: IncrementalStorageStore,
     lock: ExclusiveStorageLock,
-    template: WasixDirectoryMount,
-    snapshot: StoredSnapshot | undefined,
+    mount: WasixDirectoryMount,
+    hasStoredGeneration: boolean,
     state: 'new' | 'existing',
     writeFailureCommitState: WasixStorageCommitState,
   ) {
@@ -109,12 +111,14 @@ class IncrementalStorageLease implements WasixStorageLease {
     this.#store = store;
     this.#lock = lock;
     this.state = state;
-    this.mount = snapshot === undefined ? template : snapshotToMount(snapshot);
-    this.#hasStoredGeneration = snapshot !== undefined;
+    this.mount = mount;
+    this.#hasStoredGeneration = hasStoredGeneration;
     this.#initializationPending = state === 'new';
     this.#writeFailureCommitState = writeFailureCommitState;
-    for (const path of snapshot?.directories ?? []) this.#persistedEntries.set(path, 'dir');
-    for (const { path } of snapshot?.files ?? []) this.#persistedEntries.set(path, 'file');
+    if (hasStoredGeneration) {
+      for (const path of mount.directories) this.#persistedEntries.set(path, 'dir');
+      for (const path of Object.keys(mount.files)) this.#persistedEntries.set(path, 'file');
+    }
   }
 
   async sync(directory: StorageDirectory, _boundary: WasixStorageSyncBoundary): Promise<void> {

@@ -201,10 +201,21 @@ describe('direct WASIX session lifecycle', () => {
     await session.close();
   });
 
-  it('restores the configured role around a tool session', async () => {
+  it('keeps an existing configured role across a tool session without loading a seed', async () => {
     const queries: string[] = [];
     const options = openOptions();
     options.username = 'app"role';
+    options.storage = {
+      schema: 'oliphaunt-wasix-storage-v1',
+      kind: 'directory',
+      path: '/database',
+    };
+    let seedLoads = 0;
+    const prepared = preparedRuntime();
+    prepared.loadClusterSeed = async () => {
+      seedLoads += 1;
+      return pgdataMount();
+    };
     const session = await DirectWasixSession.open(
       options,
       fakeHost({
@@ -213,7 +224,10 @@ describe('direct WASIX session lifecycle', () => {
           return querySuccess();
         },
       }),
-      fakeDependencies(fakeLease(async () => undefined)),
+      fakeDependencies(
+        fakeLease(async () => undefined, 'existing'),
+        prepared,
+      ),
     );
     const frontend = createWasixByteChannel();
     closeWasixByteChannel(frontend);
@@ -221,6 +235,7 @@ describe('direct WASIX session lifecycle', () => {
     await session.serve({ frontend, backend: createWasixByteChannel() }, 'tool');
     await session.close();
 
+    expect(seedLoads).toBe(0);
     expect(queries).toEqual([
       'SET ROLE "app""role"',
       'ROLLBACK',
@@ -347,6 +362,117 @@ describe('direct WASIX session lifecycle', () => {
     );
     await expect(session.exec(Uint8Array.of(1))).resolves.toBeInstanceOf(Uint8Array);
     await session.close();
+  });
+
+  it('overlaps a required memory seed with host initialization and module compilation', async () => {
+    const events: string[] = [];
+    const seed = deferred<ReturnType<typeof pgdataMount>>();
+    const compilation = deferred<WebAssembly.Module>();
+    const prepared = preparedRuntime();
+    prepared.loadClusterSeed = () => {
+      events.push('seed');
+      return seed.promise;
+    };
+    const dependencies: DirectWasixDependencies = {
+      async prepareRuntime() {
+        return prepared;
+      },
+      async acquireStorage(_storage, loadClusterSeed) {
+        events.push('storage');
+        await loadClusterSeed();
+        return fakeLease(async () => undefined, 'new');
+      },
+      compileModule() {
+        events.push('compile');
+        return compilation.promise;
+      },
+    };
+    const host = fakeHost({
+      async init() {
+        events.push('host');
+      },
+    });
+
+    const opening = DirectWasixSession.open(openOptions(), host, dependencies);
+    await vi.waitFor(() => expect(events).toEqual(['seed', 'host', 'compile']));
+    seed.resolve(pgdataMount());
+    compilation.resolve({} as WebAssembly.Module);
+    const session = await opening;
+
+    expect(events).toEqual(['seed', 'host', 'compile', 'storage']);
+    await session.close();
+  });
+
+  it('does not acquire persistent ownership until compilation succeeds', async () => {
+    const options = openOptions();
+    options.storage = {
+      schema: 'oliphaunt-wasix-storage-v1',
+      kind: 'directory',
+      path: '/database',
+    };
+    const compilation = deferred<WebAssembly.Module>();
+    let acquired = false;
+    const dependencies: DirectWasixDependencies = {
+      async prepareRuntime() {
+        return preparedRuntime();
+      },
+      async acquireStorage() {
+        acquired = true;
+        return fakeLease(async () => undefined, 'existing');
+      },
+      compileModule() {
+        return compilation.promise;
+      },
+    };
+
+    const opening = DirectWasixSession.open(options, fakeHost({}), dependencies);
+    await Promise.resolve();
+    expect(acquired).toBe(false);
+    compilation.resolve({} as WebAssembly.Module);
+    const session = await opening;
+
+    expect(acquired).toBe(true);
+    await session.close();
+  });
+
+  it('rejects a non-postgres role before loading a seed for new storage', async () => {
+    const options = openOptions();
+    options.username = 'app_user';
+    let seedLoads = 0;
+    let instantiations = 0;
+    const prepared = preparedRuntime();
+    prepared.loadClusterSeed = async () => {
+      seedLoads += 1;
+      return pgdataMount();
+    };
+    const dependencies: DirectWasixDependencies = {
+      async prepareRuntime() {
+        return prepared;
+      },
+      async acquireStorage(_storage, loadClusterSeed) {
+        await loadClusterSeed();
+        throw new Error('unreachable');
+      },
+      async compileModule() {
+        return {} as WebAssembly.Module;
+      },
+    };
+
+    await expect(
+      DirectWasixSession.open(
+        options,
+        fakeHost({
+          async instantiate() {
+            instantiations += 1;
+            throw new Error('unreachable');
+          },
+        }),
+        dependencies,
+      ),
+    ).rejects.toThrow('new storage must first be opened as postgres');
+
+    expect(seedLoads).toBe(0);
+    expect(instantiations).toBe(0);
   });
 
   it('poisons a tool session whose protocol outcome is unknown', async () => {
@@ -606,14 +732,15 @@ describe('direct WASIX session lifecycle', () => {
     options.startupGUCs.cache_retry_test = crypto.randomUUID();
     const transientFailure = new Error('transient runtime asset failure');
     let attempts = 0;
+    const prepared = preparedRuntime();
     const prepare = async (): Promise<PreparedWasixRuntime> => {
       attempts += 1;
       if (attempts === 1) throw transientFailure;
-      return preparedRuntime();
+      return prepared;
     };
 
     await expect(prepareRuntimeCached(options, prepare)).rejects.toBe(transientFailure);
-    await expect(prepareRuntimeCached(options, prepare)).resolves.toEqual(preparedRuntime());
+    await expect(prepareRuntimeCached(options, prepare)).resolves.toBe(prepared);
 
     expect(attempts).toBe(2);
   });
@@ -845,7 +972,10 @@ function preparedRuntime(setupSql: string[] = []): PreparedWasixRuntime {
   return {
     layout: {
       module: Uint8Array.of(0),
-      mounts: { '/base': pgdataMount() },
+      mounts: {},
+    },
+    async loadClusterSeed() {
+      return pgdataMount();
     },
     moduleSha256: '4'.repeat(64),
     catalogProfile: 'standard',
@@ -899,6 +1029,17 @@ function openOptions(): SerializedOpenOptions {
     startupGUCs: {},
     storage: { schema: 'oliphaunt-wasix-storage-v1', kind: 'memory' },
   };
+}
+
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve(value: T): void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((accept) => {
+    resolve = accept;
+  });
+  return { promise, resolve };
 }
 
 function startupSuccess(): Uint8Array {

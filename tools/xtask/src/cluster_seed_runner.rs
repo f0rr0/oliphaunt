@@ -3,10 +3,15 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 
-#[cfg(feature = "template-runner")]
+#[cfg(feature = "cluster-seed-runner")]
 pub(crate) const INTERNAL_ICU_READY_ENV: &str = "OLIPHAUNT_INTERNAL_ICU_READY";
-#[cfg(feature = "template-runner")]
+#[cfg(feature = "cluster-seed-runner")]
 pub(crate) const INTERNAL_ICU_READY_VALUE: &str = "1";
+#[cfg(feature = "cluster-seed-runner")]
+const SKIP_SYSTEM_COLLATION_DISCOVERY_ENV: &str =
+    "OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY";
+#[cfg(feature = "cluster-seed-runner")]
+const SKIP_ICU_COLLATION_DISCOVERY_ENV: &str = "OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CatalogProfile {
@@ -46,7 +51,7 @@ pub(crate) fn clean_generated_cluster_seed(pgdata: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "template-runner")]
+#[cfg(feature = "cluster-seed-runner")]
 pub(crate) fn run_wasix_initdb_cluster_seed(
     runtime_stage: &Path,
     work_root: &Path,
@@ -101,9 +106,9 @@ pub(crate) fn run_wasix_initdb_cluster_seed(
     )?;
     let wasmer_toml = r#"
 [package]
-name = "oliphaunt-wasix/initdb-cluster-seed"
+name = "oliphaunt-wasix/cluster-seed-producer"
 version = "0.0.0"
-description = "oliphaunt-wasix generated cluster-seed builder"
+description = "Oliphaunt WASIX cluster seed producer"
 
 [[module]]
 name = "initdb"
@@ -129,7 +134,7 @@ module = "postgres"
     let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .context("create Tokio runtime for WASIX initdb template generation")?;
+        .context("create Tokio runtime for WASIX cluster-seed generation")?;
     let _guard = tokio_runtime.enter();
     let engine = Engine::default();
     let task_manager = Arc::new(TokioTaskManager::new(tokio_runtime.handle().clone()));
@@ -144,7 +149,7 @@ module = "postgres"
         virtual_fs::host_fs::FileSystem::new(tokio_runtime.handle().clone(), &package_root)
             .with_context(|| {
                 format!(
-                    "create WASIX template root filesystem at {}",
+                    "create WASIX cluster-seed root filesystem at {}",
                     package_root.display()
                 )
             })?,
@@ -153,7 +158,7 @@ module = "postgres"
         virtual_fs::host_fs::FileSystem::new(tokio_runtime.handle().clone(), &pgdata_root)
             .with_context(|| {
                 format!(
-                    "create WASIX template PGDATA filesystem at {}",
+                    "create WASIX cluster-seed PGDATA filesystem at {}",
                     pgdata_root.display()
                 )
             })?,
@@ -164,42 +169,30 @@ module = "postgres"
     let run_result = {
         let mut runner = WasiRunner::new();
         runner.with_current_dir("/");
-        runner.with_mount("/".to_owned(), root_fs);
-        runner.with_mount("/base".to_owned(), pgdata_fs);
+        runner.with_mount("/".to_owned(), root_fs.clone());
+        runner.with_mount("/base".to_owned(), pgdata_fs.clone());
         runner.with_args(default_initdb_args());
-        let mut environment = vec![
-            ("PGDATA", "/base"),
-            ("PGSYSCONFDIR", "/base"),
-            ("HOME", "/home/postgres"),
-            ("USER", "postgres"),
-            ("LOGNAME", "postgres"),
-            ("PGCLIENTENCODING", "UTF8"),
-            ("PATH", "/bin"),
-            ("LC_CTYPE", "C.UTF-8"),
-            ("TZ", "UTC"),
-            ("PGTZ", "UTC"),
-            ("PG_COLOR", "never"),
-        ];
-        if profile == CatalogProfile::Icu {
-            environment.push(("ICU_DATA", "/share/icu"));
-            environment.push((INTERNAL_ICU_READY_ENV, INTERNAL_ICU_READY_VALUE));
-        }
-        runner.with_envs(environment);
+        runner.with_envs(cluster_seed_producer_environment(profile));
         runner.with_stdin(Box::<NullFile>::default());
         runner.with_stdout(Box::new(stdout_file));
         runner.with_stderr(Box::new(stderr_file));
-        runner.run_command("initdb", &package, RuntimeOrEngine::Runtime(runtime))
+        runner.run_command(
+            "initdb",
+            &package,
+            RuntimeOrEngine::Runtime(runtime.clone()),
+        )
     };
     let stdout = stdout_capture.text();
     let stderr = stderr_capture.text();
-    if env::var_os("OLIPHAUNT_WASM_TEMPLATE_LOG").is_some() || run_result.is_err() {
+    if env::var_os("OLIPHAUNT_WASM_CLUSTER_SEED_LOG").is_some() || run_result.is_err() {
         print_captured_wasix_output("initdb stdout", &stdout);
         print_captured_wasix_output("initdb stderr", &stderr);
     }
-    run_result.context("run WASIX initdb to generate cluster seed")
+    run_result.context("run WASIX initdb to generate cluster seed")?;
+    verify_wasix_cluster_seed_profile(&package, runtime, root_fs, pgdata_fs, profile)
 }
 
-#[cfg(not(feature = "template-runner"))]
+#[cfg(not(feature = "cluster-seed-runner"))]
 pub(crate) fn run_wasix_initdb_cluster_seed(
     _runtime_stage: &Path,
     _work_root: &Path,
@@ -207,11 +200,11 @@ pub(crate) fn run_wasix_initdb_cluster_seed(
     _icu_data_root: Option<&Path>,
 ) -> Result<()> {
     bail!(
-        "`assets cluster-seeds` and seed generation during release-build require `cargo run -p xtask --features template-runner -- ...` so xtask has a maintainer-only Wasmer compiler backend"
+        "`assets cluster-seeds` and seed generation during release-build require `cargo run -p xtask --features cluster-seed-runner -- ...` so xtask has a maintainer-only Wasmer compiler backend"
     )
 }
 
-#[cfg_attr(not(feature = "template-runner"), allow(dead_code))]
+#[cfg_attr(not(feature = "cluster-seed-runner"), allow(dead_code))]
 fn default_initdb_args() -> Vec<&'static str> {
     vec![
         "--allow-group-access",
@@ -226,7 +219,133 @@ fn default_initdb_args() -> Vec<&'static str> {
     ]
 }
 
-#[cfg(feature = "template-runner")]
+#[cfg(feature = "cluster-seed-runner")]
+fn cluster_seed_environment(profile: CatalogProfile) -> Vec<(&'static str, &'static str)> {
+    let mut environment = vec![
+        ("PGDATA", "/base"),
+        ("PGSYSCONFDIR", "/base"),
+        ("HOME", "/home/postgres"),
+        ("USER", "postgres"),
+        ("LOGNAME", "postgres"),
+        ("PGCLIENTENCODING", "UTF8"),
+        ("PATH", "/bin"),
+        ("LC_CTYPE", "C.UTF-8"),
+        ("TZ", "UTC"),
+        ("PGTZ", "UTC"),
+        ("PG_COLOR", "never"),
+    ];
+    if profile == CatalogProfile::Icu {
+        environment.push(("ICU_DATA", "/share/icu"));
+    }
+    environment
+}
+
+#[cfg(feature = "cluster-seed-runner")]
+fn cluster_seed_producer_environment(profile: CatalogProfile) -> Vec<(&'static str, &'static str)> {
+    let mut environment = cluster_seed_environment(profile);
+    environment.push((SKIP_SYSTEM_COLLATION_DISCOVERY_ENV, "1"));
+    if profile == CatalogProfile::Standard {
+        environment.push((SKIP_ICU_COLLATION_DISCOVERY_ENV, "1"));
+    } else {
+        environment.push((INTERNAL_ICU_READY_ENV, INTERNAL_ICU_READY_VALUE));
+    }
+    environment
+}
+
+#[cfg(feature = "cluster-seed-runner")]
+fn verify_wasix_cluster_seed_profile(
+    package: &wasmer_wasix::bin_factory::BinaryPackage,
+    runtime: std::sync::Arc<dyn wasmer_wasix::runtime::Runtime + Send + Sync>,
+    root_fs: std::sync::Arc<dyn wasmer_wasix::virtual_fs::FileSystem + Send + Sync>,
+    pgdata_fs: std::sync::Arc<dyn wasmer_wasix::virtual_fs::FileSystem + Send + Sync>,
+    profile: CatalogProfile,
+) -> Result<()> {
+    use wasmer_wasix::runners::wasi::{RuntimeOrEngine, WasiRunner};
+    use wasmer_wasix::virtual_fs;
+
+    const CONTRACT_JSON: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../src/shared/cluster-seed-contract/profile-probe.json"
+    ));
+
+    let contract: ClusterSeedProfileProbeContract =
+        serde_json::from_str(CONTRACT_JSON).context("parse shared cluster-seed profile probe")?;
+    if contract.schema != "oliphaunt-cluster-seed-profile-probe-v1" {
+        bail!(
+            "unsupported shared cluster-seed profile probe schema {}",
+            contract.schema
+        );
+    }
+    let probe = match profile {
+        CatalogProfile::Standard => &contract.profiles.standard,
+        CatalogProfile::Icu => &contract.profiles.icu,
+    };
+
+    for attempt in 1..=2 {
+        let (stdout_file, stdout_capture) = TailCaptureFile::new(64 * 1024);
+        let (stderr_file, stderr_capture) = TailCaptureFile::new(64 * 1024);
+        let mut runner = WasiRunner::new();
+        runner.with_current_dir("/");
+        runner.with_mount("/".to_owned(), root_fs.clone());
+        runner.with_mount("/base".to_owned(), pgdata_fs.clone());
+        runner.with_args(vec!["--single", "-D", "/base", "postgres"]);
+        runner.with_envs(cluster_seed_environment(profile));
+        runner.with_stdin(Box::new(virtual_fs::StaticFile::new(
+            format!("{};\n", probe.sql).into_bytes(),
+        )));
+        runner.with_stdout(Box::new(stdout_file));
+        runner.with_stderr(Box::new(stderr_file));
+        let result = runner.run_command(
+            "postgres",
+            package,
+            RuntimeOrEngine::Runtime(runtime.clone()),
+        );
+        let stdout = stdout_capture.text();
+        let stderr = stderr_capture.text();
+        let failed = result.is_err() || !stdout.contains(&probe.expected);
+        if std::env::var_os("OLIPHAUNT_WASM_CLUSTER_SEED_LOG").is_some() || failed {
+            print_captured_wasix_output("profile probe stdout", &stdout);
+            print_captured_wasix_output("profile probe stderr", &stderr);
+        }
+        result.with_context(|| {
+            format!(
+                "run {} WASIX cluster-seed profile probe (attempt {attempt})",
+                profile.as_str()
+            )
+        })?;
+        if !stdout.contains(&probe.expected) {
+            bail!(
+                "{} WASIX cluster-seed profile probe attempt {attempt} did not emit {:?}",
+                profile.as_str(),
+                probe.expected
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "cluster-seed-runner")]
+#[derive(Debug, serde::Deserialize)]
+struct ClusterSeedProfileProbeContract {
+    schema: String,
+    profiles: ClusterSeedProfileProbes,
+}
+
+#[cfg(feature = "cluster-seed-runner")]
+#[derive(Debug, serde::Deserialize)]
+struct ClusterSeedProfileProbes {
+    standard: ClusterSeedProfileProbe,
+    icu: ClusterSeedProfileProbe,
+}
+
+#[cfg(feature = "cluster-seed-runner")]
+#[derive(Debug, serde::Deserialize)]
+struct ClusterSeedProfileProbe {
+    sql: String,
+    expected: String,
+}
+
+#[cfg(feature = "cluster-seed-runner")]
 fn print_captured_wasix_output(label: &str, output: &str) {
     if output.trim().is_empty() {
         eprintln!("{label}: <empty>");
@@ -240,30 +359,30 @@ fn print_captured_wasix_output(label: &str, output: &str) {
     }
 }
 
-#[cfg(feature = "template-runner")]
+#[cfg(feature = "cluster-seed-runner")]
 #[derive(Debug, Default)]
 struct LocalOnlyPackageLoader;
 
-#[cfg(feature = "template-runner")]
+#[cfg(feature = "cluster-seed-runner")]
 #[derive(Debug, Clone)]
 struct TailCaptureFile {
     inner: std::sync::Arc<std::sync::Mutex<TailCaptureState>>,
     limit: usize,
 }
 
-#[cfg(feature = "template-runner")]
+#[cfg(feature = "cluster-seed-runner")]
 #[derive(Debug, Default)]
 struct TailCaptureState {
     bytes: std::collections::VecDeque<u8>,
 }
 
-#[cfg(feature = "template-runner")]
+#[cfg(feature = "cluster-seed-runner")]
 #[derive(Debug, Clone)]
 struct TailCaptureHandle {
     inner: std::sync::Arc<std::sync::Mutex<TailCaptureState>>,
 }
 
-#[cfg(feature = "template-runner")]
+#[cfg(feature = "cluster-seed-runner")]
 impl TailCaptureFile {
     fn new(limit: usize) -> (Self, TailCaptureHandle) {
         let inner = std::sync::Arc::new(std::sync::Mutex::new(TailCaptureState::default()));
@@ -289,18 +408,18 @@ impl TailCaptureFile {
     }
 }
 
-#[cfg(feature = "template-runner")]
+#[cfg(feature = "cluster-seed-runner")]
 impl TailCaptureHandle {
     fn text(&self) -> String {
         let Ok(state) = self.inner.lock() else {
-            return "<template output capture lock poisoned>".to_owned();
+            return "<cluster-seed output capture lock poisoned>".to_owned();
         };
         let bytes = state.bytes.iter().copied().collect::<Vec<_>>();
         String::from_utf8_lossy(&bytes).into_owned()
     }
 }
 
-#[cfg(feature = "template-runner")]
+#[cfg(feature = "cluster-seed-runner")]
 impl wasmer_wasix::virtual_fs::AsyncSeek for TailCaptureFile {
     fn start_seek(
         self: std::pin::Pin<&mut Self>,
@@ -317,7 +436,7 @@ impl wasmer_wasix::virtual_fs::AsyncSeek for TailCaptureFile {
     }
 }
 
-#[cfg(feature = "template-runner")]
+#[cfg(feature = "cluster-seed-runner")]
 impl wasmer_wasix::virtual_fs::AsyncRead for TailCaptureFile {
     fn poll_read(
         self: std::pin::Pin<&mut Self>,
@@ -328,7 +447,7 @@ impl wasmer_wasix::virtual_fs::AsyncRead for TailCaptureFile {
     }
 }
 
-#[cfg(feature = "template-runner")]
+#[cfg(feature = "cluster-seed-runner")]
 impl wasmer_wasix::virtual_fs::AsyncWrite for TailCaptureFile {
     fn poll_write(
         self: std::pin::Pin<&mut Self>,
@@ -371,7 +490,7 @@ impl wasmer_wasix::virtual_fs::AsyncWrite for TailCaptureFile {
     }
 }
 
-#[cfg(feature = "template-runner")]
+#[cfg(feature = "cluster-seed-runner")]
 impl wasmer_wasix::virtual_fs::VirtualFile for TailCaptureFile {
     fn last_accessed(&self) -> u64 {
         0
@@ -415,7 +534,7 @@ impl wasmer_wasix::virtual_fs::VirtualFile for TailCaptureFile {
     }
 }
 
-#[cfg(feature = "template-runner")]
+#[cfg(feature = "cluster-seed-runner")]
 #[async_trait::async_trait]
 impl wasmer_wasix::runtime::package_loader::PackageLoader for LocalOnlyPackageLoader {
     async fn load(
@@ -423,7 +542,7 @@ impl wasmer_wasix::runtime::package_loader::PackageLoader for LocalOnlyPackageLo
         summary: &wasmer_wasix::runtime::resolver::PackageSummary,
     ) -> Result<webc::Container> {
         bail!(
-            "WASIX template generation only supports local packages; unexpected dependency {}",
+            "WASIX cluster-seed generation only supports local packages; unexpected dependency {}",
             summary.pkg.id
         )
     }

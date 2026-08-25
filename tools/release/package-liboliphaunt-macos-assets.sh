@@ -77,9 +77,21 @@ rsync -a --delete \
   "$runtime/" "$stage/runtime/"
 tools/dev/bun.sh tools/release/stage-native-cluster-seed.mjs \
   --runtime "$runtime" \
-  --embedded-modules "$embedded_modules" \
   --destination "$stage/cluster-seed" \
+  --target "$target_id" \
   --profile standard
+tools/dev/bun.sh tools/release/stage-native-cluster-seed.mjs \
+  --runtime "$runtime" \
+  --destination "$stage/cluster-seed-icu" \
+  --target "$target_id" \
+  --profile icu \
+  --icu-data "$work_root/icu/share/icu"
+tools/dev/bun.sh tools/release/finalize-native-runtime-carrier.mjs \
+  --root "$stage" \
+  --target "$target_id" \
+  --icu-data "$work_root/icu/share/icu" \
+  --runtime-source "$runtime" \
+  --embedded-modules "$embedded_modules"
 for tool in pg_basebackup pg_dump psql; do
   cp -p "$runtime/bin/$tool" "$tools_stage/runtime/bin/"
 done
@@ -109,7 +121,10 @@ env \
   OLIPHAUNT_INSTALL_DIR="$stage/runtime" \
   OLIPHAUNT_SMOKE_BIN_DIR="$stage_root/smoke-bin-$target_id" \
   OLIPHAUNT_SMOKE_ROOT="$stage_root/smoke-root-$target_id" \
-  node src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.mjs
+  OLIPHAUNT_STANDARD_CLUSTER_SEED="$stage/cluster-seed" \
+  OLIPHAUNT_ICU_CLUSTER_SEED="$stage/cluster-seed-icu" \
+  OLIPHAUNT_ICU_DATA_DIR="$work_root/icu/share/icu" \
+  node src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.mjs --cluster-seeds
 
 tools/release/archive_dir.mjs "$stage" "$out_dir/$asset"
 tools/release/archive_dir.mjs "$tools_stage" "$out_dir/$tools_asset"

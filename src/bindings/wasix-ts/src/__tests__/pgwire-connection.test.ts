@@ -107,6 +107,37 @@ describe('WASIX PostgreSQL connection framing', () => {
     reader.finish();
   });
 
+  it('assembles a large fragmented frontend frame with one linear coalescing pass', () => {
+    const body = new Uint8Array(4 * 1024 * 1024);
+    body[0] = 1;
+    body[body.length - 1] = 2;
+    const query = frontend('Q', body);
+    const reader = new FrontendFrameReader();
+    for (let offset = 0; offset < query.length; offset += 64 * 1024) {
+      reader.append(query.subarray(offset, offset + 64 * 1024));
+    }
+
+    const result = reader.shift();
+    expect(result?.length).toBe(query.length);
+    expect(result?.[5]).toBe(1);
+    expect(result?.at(-1)).toBe(2);
+    expect(reader.shift()).toBeUndefined();
+  });
+
+  it('streams an incomplete COPY frame as soon as its header and current bytes arrive', () => {
+    const reader = new FrontendFrameReader();
+    const headerAndPrefix = new Uint8Array(9);
+    headerAndPrefix[0] = 'd'.charCodeAt(0);
+    new DataView(headerAndPrefix.buffer).setInt32(1, 1024 * 1024 + 4);
+    headerAndPrefix.set([1, 2, 3, 4], 5);
+    reader.append(headerAndPrefix);
+
+    const result = reader.readFrameChunk(64 * 1024, unexpectedRead);
+    expect(result).toEqual(headerAndPrefix);
+    expect(result.buffer).toBe(headerAndPrefix.buffer);
+    expect(() => reader.finishPull()).toThrow('stopped inside a frontend message');
+  });
+
   it('keeps coalesced COPY input available without pulling a later frame early', () => {
     const query = frontend('Q', new TextEncoder().encode('COPY items FROM STDIN\0'));
     const copyData = frontend('d', new TextEncoder().encode('1\tvalue\n'));
@@ -120,6 +151,32 @@ describe('WASIX PostgreSQL connection framing', () => {
     expect(reader.readFrameChunk(64, unexpectedRead)).toEqual(copyDone);
     reader.finishPull();
     expect(reader.shift()).toBeUndefined();
+  });
+
+  it('rejects truncated, oversized, and concurrently shifted pull frames', () => {
+    const splitHeader = new FrontendFrameReader();
+    splitHeader.append(Uint8Array.of('d'.charCodeAt(0), 0));
+    expect(() => splitHeader.readFrameChunk(64, () => new Uint8Array())).toThrow(
+      'ended inside a message',
+    );
+
+    const splitBody = new FrontendFrameReader();
+    const partial = new Uint8Array(6);
+    partial[0] = 'd'.charCodeAt(0);
+    new DataView(partial.buffer).setInt32(1, 8);
+    splitBody.append(partial);
+    expect(splitBody.readFrameChunk(64, unexpectedRead)).toEqual(partial);
+    expect(() => splitBody.shift()).toThrow('pull frame is still active');
+    expect(() => splitBody.readFrameChunk(64, () => new Uint8Array())).toThrow(
+      'stopped inside a frontend message',
+    );
+
+    const oversized = new FrontendFrameReader();
+    const header = new Uint8Array(5);
+    header[0] = 'd'.charCodeAt(0);
+    new DataView(header.buffer).setInt32(1, 128 * 1024 * 1024 + 4);
+    oversized.append(header);
+    expect(() => oversized.shift()).toThrow('exceeds limit');
   });
 
   it('classifies startup, SSL, cancel, terminate, and protocol frames', () => {
@@ -231,7 +288,6 @@ describe('WASIX PostgreSQL connection framing', () => {
       gate.push(backend('C', new TextEncoder().encode('SELECT 1\0')), () => undefined),
     ).toThrow(/after ReadyForQuery/);
   });
-
   it('coalesces fragmented and multiple non-Ready messages within one host callback', () => {
     const gate = new BackendResponseGate();
     const output: Uint8Array[] = [];

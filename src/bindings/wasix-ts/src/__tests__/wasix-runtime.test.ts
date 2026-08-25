@@ -34,7 +34,6 @@ describe('WASIX host runtime helpers', () => {
       {
         module: Uint8Array.of(),
         mounts: {
-          '/base': { files: {}, directories: [] },
           '/runtime': {
             files: { 'share/data/value': Uint8Array.of(1) },
             directories: ['share', 'share/data', 'empty', 'nested/empty'],
@@ -49,17 +48,17 @@ describe('WASIX host runtime helpers', () => {
 
     expect(result.baseDirectory).toBe(result.mounts['/base']);
     expect(RecordingDirectory.created).toEqual([
-      ['global', 'pg_wal'],
       ['empty', 'nested/empty'],
+      ['global', 'pg_wal'],
     ]);
 
     await expect(
       materializeWasixMounts(
         RecordingDirectory as never,
         { module: Uint8Array.of(), mounts: {} },
-        { files: {}, directories: [] },
+        undefined,
       ),
-    ).rejects.toThrow('no /base mount');
+    ).rejects.toThrow('did not provide a PGDATA mount');
   });
 
   it('keeps host environment and lifecycle errors structured', () => {

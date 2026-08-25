@@ -49,9 +49,10 @@ export function spawnManagedChild(options: {
   executable: string;
   args: string[];
   env?: Record<string, string>;
+  replaceEnv?: boolean;
 }): ManagedChild {
   const child: ChildProcessByStdio<null, Readable, null> = spawn(options.executable, options.args, {
-    env: { ...process.env, ...options.env },
+    env: options.replaceEnv ? options.env : { ...process.env, ...options.env },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   const exited = new Promise<number | null>((resolve) => {

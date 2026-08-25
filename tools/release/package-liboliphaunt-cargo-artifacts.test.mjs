@@ -13,12 +13,15 @@ import {
 } from "./package-liboliphaunt-cargo-artifacts.mjs";
 import { assertLockedArtifactSet, discoverPublicationArtifacts } from "./publication-lock.mjs";
 import { elfFixture } from "../test/release-fixture-utils.mjs";
+import { nativeRuntimeResourceManifestFixture } from "../test/native-runtime-fixture.mjs";
 import {
   assertReleaseNoticesInArchive,
   stageReleaseNotices,
 } from "./release-notices.mjs";
 import { requiredCoreRuntimePaths } from "./optimize_native_runtime_payload.mjs";
 import { logicalTreeSha256 } from "./native-cluster-seed-contract.mjs";
+import { nativeIcuDataManifest } from "./native-icu-data-contract.mjs";
+import { nativeRuntimeCarrierManifest } from "./native-runtime-carrier-contract.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 
@@ -49,9 +52,10 @@ function sha256(file) {
   return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
 
-function stageClusterSeed(root, profile, icuDataTreeSha256 = "") {
-  const seed = path.join(root, "cluster-seed");
+function stageClusterSeed(root, directory, profile, target, icuDataTreeSha256 = "") {
+  const seed = path.join(root, directory);
   mkdirSync(path.join(seed, "files/global"), { recursive: true });
+  mkdirSync(path.join(seed, "files/pg_wal"), { recursive: true });
   writeFileSync(path.join(seed, "files/PG_VERSION"), "18\n");
   writeFileSync(path.join(seed, "files/global/pg_control"), `${profile}\n`);
   writeFileSync(path.join(seed, "manifest.properties"), [
@@ -61,12 +65,14 @@ function stageClusterSeed(root, profile, icuDataTreeSha256 = "") {
     `catalogProfile=${profile}`,
     "postgresMajor=18",
     "physicalFormat=native-pg18-v1",
-    "compatibilityKey=native-pg18-datum64-v1",
+    `target=${target}`,
+    `compatibilityKey=native-pg18-${target}-v1`,
     "initialSuperuser=postgres",
     `runtimeFeatures=${profile === "icu" ? "icu" : ""}`,
     `icuDataVersion=${profile === "icu" ? "76.1" : ""}`,
     `icuDataForm=${profile === "icu" ? "files-le" : ""}`,
     `icuDataTreeSha256=${icuDataTreeSha256}`,
+    "cacheKey=0123456789abcdef",
     "",
   ].join("\n"));
 }
@@ -119,13 +125,20 @@ test("freezes .crate bytes for native parts, aggregators, and facade and rejects
     for (const name of ["pg_basebackup", "pg_dump", "psql"]) {
       writeExecutable(path.join(tools, "runtime/bin", name), fixtureElf);
     }
-    stageClusterSeed(runtime, "standard");
     const icu = path.join(root, "icu-fixture");
     const icuData = path.join(icu, "share/icu");
     mkdirSync(icuData, { recursive: true });
     const icuBytes = Buffer.from("fixture ICU data\n");
     writeFileSync(path.join(icuData, "icudt76l.dat"), icuBytes);
-    stageClusterSeed(icu, "icu", logicalTreeSha256([{ path: "icudt76l.dat", bytes: icuBytes }]));
+    const icuDigest = logicalTreeSha256([{ path: "icudt76l.dat", bytes: icuBytes }]);
+    stageClusterSeed(runtime, "cluster-seed", "standard", "linux-x64-gnu");
+    stageClusterSeed(runtime, "cluster-seed-icu", "icu", "linux-x64-gnu", icuDigest);
+    writeFileSync(path.join(runtime, "manifest.properties"), nativeRuntimeCarrierManifest("linux-x64-gnu"));
+    writeFileSync(path.join(runtime, "runtime/manifest.properties"), nativeRuntimeResourceManifestFixture({
+      cacheKey: "fixture-runtime",
+      target: "linux-x64-gnu",
+    }));
+    writeFileSync(path.join(icu, "manifest.properties"), nativeIcuDataManifest(icuData));
     stageReleaseNotices(runtime, { profile: "native-runtime" });
     stageReleaseNotices(tools, { profile: "native-tools" });
     stageReleaseNotices(icu, { profile: "native-icu-data" });

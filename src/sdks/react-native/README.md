@@ -11,6 +11,20 @@ plugin when using Expo prebuild. The supported platforms and packaged targets
 are declared by the repository SDK manifest; the package does not advertise
 future platform targets.
 
+Enable PostgreSQL ICU collations through the Expo plugin only when the app needs
+them:
+
+```json
+{
+  "expo": {
+    "plugins": [["@oliphaunt/react-native", { "icu": true }]]
+  }
+}
+```
+
+The plugin packages ICU data with the matching platform cluster seed; this is a
+build-time choice and does not add a database-open option.
+
 <!-- liboliphaunt-doc-example:react-native-open-query -->
 ```typescript
 import { Oliphaunt } from '@oliphaunt/react-native';
@@ -32,6 +46,9 @@ await Oliphaunt.restore(
   bytes,
 );
 ```
+
+`username` selects an existing PostgreSQL role. New roots are bootstrapped with
+`postgres`; create other roles before reopening the root as them.
 
 Storage is `temporaryDirectory`, an explicit `directory`, or an
 `applicationData` name resolved by the native platform adapter. Restore accepts

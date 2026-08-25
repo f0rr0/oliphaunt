@@ -37,7 +37,8 @@ import {
   releaseProfilePackageLicense,
   stageReleaseNotices,
 } from "./release-notices.mjs";
-import { validateNativeClusterSeedDirectory } from "./native-cluster-seed-contract.mjs";
+import { validateNativeIcuDataManifest } from "./native-icu-data-contract.mjs";
+import { validateNativeRuntimeCarrier } from "./native-runtime-carrier-contract.mjs";
 
 const PREFIX = "package-liboliphaunt-cargo-artifacts.mjs";
 const PRODUCT = "liboliphaunt-native";
@@ -416,21 +417,16 @@ function validateNativePayload(payloadRoot, target, { toolSet }) {
   ]);
 }
 
-function stageNativeCargoClusterSeeds(runtimeRoot, icuRoot) {
-  const standardSeed = path.join(runtimeRoot, "cluster-seed");
-  const icuSeed = path.join(icuRoot, "cluster-seed");
+function validateNativeCargoRuntimeClosure(runtimeRoot, target, icuRoot) {
   const icuData = path.join(icuRoot, "share/icu");
   try {
-    validateNativeClusterSeedDirectory(standardSeed, "standard");
-    validateNativeClusterSeedDirectory(icuSeed, "icu", { icuData });
+    const { target: actualTarget } = validateNativeRuntimeCarrier(runtimeRoot, { icuData });
+    if (actualTarget !== target) {
+      fail(`${rel(runtimeRoot)} carries ${actualTarget} cluster seeds, expected ${target}`);
+    }
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
   }
-  const destination = path.join(runtimeRoot, "cluster-seed-icu");
-  if (existsSync(destination)) {
-    fail(`${rel(runtimeRoot)} must not already contain Cargo-only cluster-seed-icu`);
-  }
-  cpSync(icuSeed, destination, { recursive: true, dereference: true, errorOnExist: true });
 }
 
 function writePartCrate(
@@ -1045,7 +1041,7 @@ function packageTarget(
   assertReleaseNoticesInArchive(toolsArchive, { profile: "native-tools" });
   const extractedRoot = path.join(sourceRoot, `${target.target}-extracted`);
   extractArchive(archive, extractedRoot);
-  stageNativeCargoClusterSeeds(extractedRoot, icuRoot);
+  validateNativeCargoRuntimeClosure(extractedRoot, target.target, icuRoot);
   const toolsRoot = path.join(sourceRoot, `${target.target}-tools-extracted`);
   extractArchive(toolsArchive, toolsRoot);
   validateNativePayload(extractedRoot, target.target, { toolSet: "runtime" });
@@ -1219,6 +1215,15 @@ async function main(argv) {
   assertReleaseNoticesInArchive(icuArchive, { profile: "native-icu-data" });
   const icuRoot = path.join(sourceRoot, "icu-data-extracted");
   extractArchive(icuArchive, icuRoot);
+  try {
+    validateNativeIcuDataManifest(
+      readFileSync(path.join(icuRoot, "manifest.properties")),
+      path.join(icuRoot, "share/icu"),
+      `${rel(icuArchive)} manifest.properties`,
+    );
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
   const selectedToolsTargets = [];
   for (const target of targets) {
     const toolsTarget = toolsTargets.get(target.target);

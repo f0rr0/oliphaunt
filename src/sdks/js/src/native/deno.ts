@@ -2,10 +2,16 @@ import {
   applyNativeIcuDataEnvironment,
   applyNativeRuntimeLibraryEnvironment,
   errorMessage,
+  replaceNativeIcuDataEnvironment,
 } from './common.js';
 import { resolveDenoNativeInstall, validatePreparedDenoRuntimeExtensions } from './assets-deno.js';
 import { dirname, join } from 'node:path';
-import { copyNativeClusterSeed, initializeNativePgdata } from './initialize.js';
+import {
+  copyNativeClusterSeed,
+  initializeNativePgdata,
+  nativeInitdbArgs,
+  nativePostgresChildEnvironment,
+} from './initialize.js';
 import {
   packConfigPointers,
   packRestoreOptionsPointers,
@@ -20,6 +26,7 @@ import type {
   NativeOpenConfig,
   NativeRestoreOptions,
 } from './types.js';
+import { resolveExactNativeRuntimeProfile } from './runtime-profile.js';
 
 type DenoPointer = object | null;
 type DenoSymbols = {
@@ -73,6 +80,8 @@ export async function createDenoNativeBinding(
 
   return {
     async open(config: NativeOpenConfig): Promise<NativeHandle> {
+      const explicitRuntimeDirectory =
+        config.runtimeDirectory !== undefined || install.packageManaged === false;
       let openConfig = {
         ...config,
         runtimeDirectory: config.runtimeDirectory ?? install.runtimeDirectory,
@@ -103,13 +112,25 @@ export async function createDenoNativeBinding(
         moduleDirectory = validated.moduleDirectory;
         applyNativeRuntimeLibraryEnvironment(validated.runtimeDirectory);
       }
+      const runtimeProfile =
+        explicitRuntimeDirectory && openConfig.runtimeDirectory !== undefined
+          ? await resolveExactNativeRuntimeProfile(openConfig.runtimeDirectory)
+          : {
+              icuDataDirectory: install.icuDataDirectory,
+              catalogProfile: install.catalogProfile ?? ('standard' as const),
+            };
+      if (explicitRuntimeDirectory) {
+        replaceNativeIcuDataEnvironment(runtimeProfile.icuDataDirectory);
+        applyNativeRuntimeLibraryEnvironment(openConfig.runtimeDirectory);
+      }
       await prepareDenoPgdata(
         deno,
         openConfig.pgdata,
         openConfig.username,
         openConfig.runtimeDirectory,
         config.runtimeDirectory === undefined ? install.clusterSeedDirectory : undefined,
-        install.catalogProfile,
+        runtimeProfile.icuDataDirectory,
+        runtimeProfile.catalogProfile,
       );
       const packed = packConfigPointers({ ...openConfig, moduleDirectory }, (value) =>
         pointerOf(deno, value),
@@ -270,13 +291,15 @@ async function prepareDenoPgdata(
   username: string,
   runtimeDirectory?: string,
   clusterSeedDirectory?: string,
+  icuDataDirectory?: string,
   catalogProfile: 'standard' | 'icu' = 'standard',
 ): Promise<void> {
   await initializeNativePgdata({
     root: dirname(pgdata),
     pgdata,
+    username,
     populatePgdata: async (staging) => {
-      if (username === 'postgres' && clusterSeedDirectory !== undefined) {
+      if (clusterSeedDirectory !== undefined) {
         await copyNativeClusterSeed(clusterSeedDirectory, staging);
         return;
       }
@@ -290,28 +313,17 @@ async function prepareDenoPgdata(
         'bin',
         deno.build?.os === 'windows' ? 'initdb.exe' : 'initdb',
       );
-      const env: Record<string, string> = {};
-      if (catalogProfile === 'icu') {
-        const icuData = deno.env?.get('ICU_DATA');
-        if (icuData !== undefined) {
-          env.ICU_DATA = icuData;
-          env.OLIPHAUNT_INTERNAL_ICU_READY = '1';
-        }
-      }
+      const ambient = typeof deno.env?.toObject === 'function' ? deno.env.toObject() : {};
+      const env = nativePostgresChildEnvironment(ambient, {
+        icuDataDirectory,
+        initdbCatalogProfile: catalogProfile,
+      });
       const output = await new deno.Command(executable, {
-        args: [
-          '-D',
-          staging,
-          '-U',
-          username,
-          '--auth=trust',
-          '--locale-provider=libc',
-          '--locale=C',
-          '--encoding=UTF8',
-        ],
+        args: nativeInitdbArgs(staging),
         stdout: 'null',
         stderr: 'piped',
         env,
+        clearEnv: true,
       }).output();
       if (!output.success) {
         throw new Error(`initdb failed: ${new TextDecoder().decode(output.stderr).trim()}`);

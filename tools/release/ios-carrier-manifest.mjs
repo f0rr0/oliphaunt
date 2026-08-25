@@ -487,7 +487,7 @@ function baseCarrier({ baseAssetDir, repository, localUrls, verifyMembers, archi
     },
     {
       role: "runtime-resources",
-      name: `liboliphaunt-${version}-runtime-resources.tar.gz`,
+      name: `liboliphaunt-${version}-runtime-resources-ios-datum64.tar.gz`,
       member: "oliphaunt",
     },
     {

@@ -678,38 +678,35 @@ fn write_manifest(package_dir: &Path, manifest: &RuntimeResourceManifest<'_>) ->
 
 pub(super) fn manifest_text(manifest: &RuntimeResourceManifest<'_>) -> String {
     let is_cluster_seed = manifest.artifact_role.starts_with("cluster-seed-");
-    let compatibility_key = if is_cluster_seed {
-        "native-pg18-datum64-v1"
-    } else {
-        ""
-    };
-    let physical_format = if is_cluster_seed {
-        "native-pg18-v1"
-    } else {
-        ""
-    };
-    let initial_superuser = if is_cluster_seed { "postgres" } else { "" };
-    let icu_data_version = if manifest.catalog_profile == "icu" {
-        "76.1"
-    } else {
-        ""
-    };
-    let icu_data_form = if manifest.catalog_profile == "icu" {
-        "files-le"
-    } else {
-        ""
-    };
+    if is_cluster_seed {
+        let icu_data_version = if manifest.catalog_profile == "icu" {
+            "76.1"
+        } else {
+            ""
+        };
+        let icu_data_form = if manifest.catalog_profile == "icu" {
+            "files-le"
+        } else {
+            ""
+        };
+        return format!(
+            "schema={RUNTIME_RESOURCES_SCHEMA}\nlayout={}\nartifactRole={}\ncatalogProfile={}\npostgresMajor=18\nphysicalFormat=native-pg18-v1\ninitialSuperuser=postgres\nicuDataVersion={icu_data_version}\nicuDataForm={icu_data_form}\nicuDataTreeSha256={}\nruntimeFeatures={}\ncacheKey={}\n",
+            manifest.layout,
+            manifest.artifact_role,
+            manifest.catalog_profile,
+            manifest.icu_data_tree_sha256,
+            runtime_feature_names(manifest.runtime_features).join(","),
+            manifest.cache_key,
+        );
+    }
+
+    // Generic materialization is an unbound producer intermediate. Release
+    // staging fills clusterSeedTarget before the carrier reaches an SDK.
     format!(
-        "schema={RUNTIME_RESOURCES_SCHEMA}\nlayout={}\nartifactRole={}\ncatalogProfile={}\npostgresMajor={}\nphysicalFormat={}\ncompatibilityKey={}\ninitialSuperuser={}\nicuDataVersion={}\nicuDataForm={}\nicuDataTreeSha256={}\nmode={}\ncacheKey={}\nselectedExtensions={}\nextensions={}\nruntimeFeatures={}\nsharedPreloadLibraries={}\nmobileStaticRegistryState={}\nmobileStaticRegistryRegistered={}\nmobileStaticRegistryPending={}\nnativeModuleStems={}\nmobileStaticRegistrySource={}\n",
+        "schema={RUNTIME_RESOURCES_SCHEMA}\nlayout={}\nartifactRole={}\ncatalogProfile={}\nclusterSeedTarget=\nicuDataTreeSha256={}\nmode={}\ncacheKey={}\nselectedExtensions={}\nextensions={}\nruntimeFeatures={}\nsharedPreloadLibraries={}\nmobileStaticRegistryState={}\nmobileStaticRegistryRegistered={}\nmobileStaticRegistryPending={}\nnativeModuleStems={}\nmobileStaticRegistrySource={}\n",
         manifest.layout,
         manifest.artifact_role,
         manifest.catalog_profile,
-        if is_cluster_seed { "18" } else { "" },
-        physical_format,
-        compatibility_key,
-        initial_superuser,
-        icu_data_version,
-        icu_data_form,
         manifest.icu_data_tree_sha256,
         manifest.mode.as_manifest_value(),
         manifest.cache_key,

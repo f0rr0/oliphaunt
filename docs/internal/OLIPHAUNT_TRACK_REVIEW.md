@@ -44,7 +44,7 @@ are:
   input change and reject stale reports;
 - mobile packaging: Swift and Kotlin/Native now have concrete native-direct
   C ABI runtime paths; React Native has the typed New Architecture package
-  shape, and Android now has a content-keyed runtime/template asset lane, but
+  shape, and Android now has a content-keyed runtime/cluster-seed asset lane, but
   final platform artifacts and device distribution are not wired end to end;
 - extensions: extensions are opt-in in the Rust model, and the packaged
   PG18 extension matrix now passes install/load, restart, physical backup, and
@@ -94,9 +94,9 @@ This track pass addressed concrete gaps:
   and materialization are split across `oliphaunt/root/runtime.rs`,
   `oliphaunt/root/runtime/locate.rs`, `oliphaunt/root/runtime/install.rs`, and
   `oliphaunt/root/runtime/cache_key.rs`; deterministic filesystem copying lives
-  in `oliphaunt/root/files.rs`; runtime/template cache fingerprinting lives in
-  `oliphaunt/root/fingerprint.rs`; and packaged-template PGDATA cache
-  construction lives in `oliphaunt/root/template.rs`.
+  in `oliphaunt/root/files.rs`; runtime cache fingerprinting lives in
+  `oliphaunt/root/fingerprint.rs`; and target-qualified packaged cluster-seed
+  validation and hydration live in `oliphaunt/root/cluster_seed.rs`.
 - Selected extension asset materialization now lives in
   `oliphaunt/root/extensions.rs`, including SQL/control file selection, data
   files, module-file sets, and the filters that hide unselected extension
@@ -207,8 +207,8 @@ This track pass addressed concrete gaps:
   harness registers a fixture extension before `oliphaunt_init` and proves
   `CREATE FUNCTION ... AS 'module', 'symbol' LANGUAGE C` executes through that
   registry.
-- The Rust runtime resourcesr now emits a static-registry package alongside
-  runtime/template resources. Mobile-ready packages contain
+- The Rust runtime resources tool now emits a static-registry package alongside
+  runtime/cluster-seed resources. Mobile-ready packages contain
   `static-registry/oliphaunt_static_registry.c`, generated from selected
   extension SQL assets, plus a manifest that records module stems, symbol
   prefixes, and SQL-callable symbols. The generated source exports
@@ -219,8 +219,8 @@ This track pass addressed concrete gaps:
   duplicate extension names, empty or non-portable IDs, unsupported extension
   source/loading combinations, and source/loading mismatches.
   This keeps extension packaging mistakes out of runtime materialization.
-- `DatabaseInitialization::PackagedTemplate` now materializes a content-keyed base
-  PGDATA template and hydrates new roots before entering the engine. Template
+- Packaged cluster-seed initialization now materializes a content-keyed base
+  PGDATA and hydrates new roots before entering the engine. Seed
   hydration now defaults to physical byte-copy because paired local evidence
   showed better p90 stability than APFS copy-on-write cloning; clone mode
   remains available as an explicit diagnostic setting.
@@ -321,17 +321,17 @@ This track pass addressed concrete gaps:
   through an Objective-C-visible Swift adapter. The Objective-C++ file keeps
   only React Native handle/promise plumbing and New Architecture registration;
   Swift owns open, protocol execution, backup, restore, cancellation, close,
-  resource materialization, template hydration, and extension checks.
+  resource materialization, cluster-seed hydration, and extension checks.
 - React Native Android now delegates its TurboModule implementation through the
   Kotlin SDK `OliphauntAndroid` facade and stores the returned `OliphauntDatabase`
   handle. The package Gradle build includes the local `:oliphaunt`
   project in this repo, falls back to the published Kotlin SDK coordinate for
   packaged app builds, generates the official Codegen TurboModule base class,
   compiles Kotlin, verifies the Kotlin SDK JNI bridge, and exercises synthetic
-  runtime/template asset packaging in the verifier. Runtime materialization,
-  template hydration, JNI loading, and extension manifest checks are owned
+  runtime/cluster-seed asset packaging in the verifier. Runtime materialization,
+  cluster-seed hydration, JNI loading, and extension manifest checks are owned
   by the Kotlin SDK instead of duplicated in the RN package. Device validation
-  remains blocked on packaged Android `liboliphaunt.so` and real runtime/template
+  remains blocked on packaged Android `liboliphaunt.so` and real runtime/cluster-seed
   artifacts.
 - Server compatibility coverage now includes real `psql`, `tokio-postgres`
   independent-client, `sqlx` pool, packaged `pg_dump` through SQL backup, and
@@ -505,10 +505,10 @@ Gaps:
   exposes logical SQL backup through `pg_dump`. Physical restore/import is now
   a first-class Rust SDK API with safe staging and locked replacement, and the
   server restore smoke proves the archive can recover user data.
-- root/runtime/template materialization is no longer carrying the low-level
+- root runtime/cluster-seed materialization is no longer carrying the low-level
   filesystem copy, fingerprinting, selected-extension asset policy,
   runtime-cache orchestration, runtime asset installation, runtime cache
-  key/validation, or packaged-template bootstrap policy in the same file.
+  key/validation, or packaged cluster-seed bootstrap policy in the same file.
   Focused cache-key tests now prove selected extension SQL/module changes
   invalidate runtime caches, unselected extension assets remain invisible, and
   selected extensions are required during cache validation.
@@ -558,6 +558,11 @@ Android split-resource builds now stay pending for module-backed extensions
 instead of accepting a static-module declaration without generated registry
 source; mobile-complete Android/iOS selected-extension artifacts must consume Rust
 runtime-resource generator output that includes `static-registry/oliphaunt_static_registry.c`.
+Native mobile runtime manifests use their exact canonical field set and
+`mode=native-direct`. A complete generated registry records
+`mobileStaticRegistrySource=static-registry/oliphaunt_static_registry.c`;
+SwiftPM product composition records the other closed, truthful value
+`swiftpm-linked-products`. The source field is empty for non-complete states.
 pgGraph `graph` and ParadeDB `pg_search` are represented as internal external
 PG18 candidates, not release-ready first-party selections, so they cannot
 silently enter mobile or desktop bundles. Generated runtime resources now

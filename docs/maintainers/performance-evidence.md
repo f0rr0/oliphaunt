@@ -78,25 +78,21 @@ tools/perf/matrix/run_native_oliphaunt_matrix.sh \
   --startup-guc wal_buffers=-1
 ```
 
-The default PostgreSQL 18 template uses 16MB WAL segments, so
-`min_wal_size=8MB` and `min_wal_size=16MB` are invalid for the default mobile
-cluster. WAL segment size is an `initdb`/template-cluster property, not a
-startup GUC. For the small-WAL mobile experiments, run the Expo matrix with a
-matching template segment size:
+The PostgreSQL 18 mobile cluster seeds use standard 16MB WAL segments, so
+`min_wal_size=8MB` and `min_wal_size=16MB` are invalid. WAL segment size is a
+physical cluster property, not a startup GUC; the performance harness does not
+regenerate or relabel release seeds. Mobile sweeps therefore select valid
+startup settings only:
 
 ```sh
 tools/perf/matrix/run_mobile_footprint_matrix.sh --quick --platform android \
-  --wal-segsize 4 \
-  --min-wal-size 8MB,16MB \
+  --min-wal-size 32MB,80MB \
   --max-wal-size 32MB,64MB \
   --crash-recovery off
 ```
 
-The harness passes `OLIPHAUNT_EXPO_MOBILE_WAL_SEGSIZE_MB` into the Android/iOS
-dev-client scripts, regenerates the packaged cluster seed with
-`initdb --wal-segsize`, records `walSegmentSizeMB` in the seed manifest, and
-captures PostgreSQL's effective read-only `wal_segment_size` setting in the
-benchmark report.
+The benchmark report captures PostgreSQL's effective read-only
+`wal_segment_size` setting alongside the startup GUCs.
 
 For Android/iOS device sweeps, use the Expo dev-client matrix wrapper. It emits
 or runs explicit shared-buffer, WAL-buffer, WAL-minimum, and WAL-maximum
@@ -142,8 +138,8 @@ tools/perf/matrix/run_mobile_footprint_matrix.sh --platform ios
 the installed-app workload uses fewer warmup, latency, checkpoint, and insert
 iterations. Use it for harness validation and emulator/simulator
 sanity checks; use the default full preset for reportable numbers.
-Use `--shared-buffers`, `--wal-buffers`, `--min-wal-size`, `--max-wal-size`,
-and `--wal-segsize` to run a small slice with the same
+Use `--shared-buffers`, `--wal-buffers`, `--min-wal-size`, and `--max-wal-size`
+to run a small slice with the same
 installed-app harness before committing to the full device matrix.
 
 Current diagnostic Android emulator slice:
@@ -163,29 +159,9 @@ Current diagnostic Android emulator slice:
 This is diagnostic emulator evidence, not a release claim. It does show that
 lowering `shared_buffers` from 32MB to 8MB does not currently buy a proportional
 resident-memory reduction in the React Native app process; fixed mappings,
-runtime/template assets, extension registry, or other PostgreSQL/React Native
+runtime/cluster-seed assets, extension registry, or other PostgreSQL/React Native
 process costs are still dominating the measured PSS/RSS. Keep the full device
 matrix and source/build-cut investigations separate from this quick slice.
-
-Current diagnostic Android emulator small-WAL slice:
-
-- run id: `android-small-wal-20260524T1833`
-- report: `target/perf/mobile-footprint-android-small-wal-20260524T1833/summary.md`
-- platform: Android API 34 emulator through the Expo dev-client harness
-- benchmark preset: `quick`
-- fixed settings: `shared_buffers=32MB`, `wal_buffers=-1`,
-  `max_wal_size=32MB`, `--wal-segsize 4`
-
-| min_wal_size | Effective wal_segment_size | Android PSS | Open ms | Param p90 ms | Lookup p90 ms | Aggregate p90 ms | SQLite param p90 ms | SQLite lookup p90 ms | SQLite aggregate p90 ms |
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 8MB | 4MB | 257.9 MB | 11223.12 | 45.02 | 40.72 | 26.98 | 79.90 | 67.94 | 733.46 |
-| 16MB | 4MB | 260.5 MB | 22116.32 | 71.35 | 37.20 | 47.34 | 78.57 | 34.45 | 31.58 |
-
-This proves the harness can build and run an installed Android package against
-template clusters with 4MB WAL segments and verify the effective PostgreSQL
-`wal_segment_size`. The open-time spread is too noisy to treat this quick
-emulator slice as a tuning decision; use it as harness evidence and run the full
-physical-device matrix before picking the mobile default.
 
 Latest Android emulator retry caveat:
 
@@ -206,22 +182,6 @@ React Native app attached: Android killed the app process for `failed to attach`
 instability, not PostgreSQL tuning evidence. Physical Android device evidence is
 still required before Android defaults can be selected.
 
-Current diagnostic iOS simulator small-WAL slice:
-
-- run id: `ios-small-wal-20260524T1855`
-- report: `target/perf/mobile-footprint-ios-small-wal-20260524T1855/summary.md`
-- platform: iOS 18.0 simulator through the Expo dev-client harness
-- benchmark preset: `quick`
-- fixed settings: `shared_buffers=32MB`, `wal_buffers=-1`,
-  `max_wal_size=32MB`, `--wal-segsize 4`
-
-| min_wal_size | Effective wal_segment_size | iOS RSS | Open ms | Param p90 ms | Lookup p90 ms | Aggregate p90 ms | SQLite param p90 ms | SQLite lookup p90 ms | SQLite aggregate p90 ms |
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 8MB | 4MB | 380.1 MB | 1109.52 | 0.50 | 0.67 | 0.95 | 0.94 | 0.84 | 0.94 |
-| 16MB | 4MB | 382.2 MB | 1534.13 | 0.98 | 1.67 | 1.91 | 1.78 | 1.66 | 1.47 |
-
-This proves the iOS harness can package the same 4MB-WAL template and capture
-effective GUCs, package size, resident memory, and same-device SQLite baselines.
 It is simulator evidence only. Physical iOS benchmark runs additionally require
 a valid Apple Development signing identity or a working Xcode account that can
 create one through automatic provisioning.
@@ -256,8 +216,7 @@ Current physical iPhone install/runtime/benchmark evidence:
 - full candidate footprint matrix scratch:
   `target/perf/mobile-footprint-ios-physical-full-candidate-20260525T0200`
 - device: iPhone 14 Pro, UDID `7C01EC26-8B01-56E6-872D-82BB72421567`
-- mode: `OLIPHAUNT_EXPO_IOS_SDK=iphoneos`,
-  `OLIPHAUNT_EXPO_MOBILE_WAL_SEGSIZE_MB=4`
+- mode: `OLIPHAUNT_EXPO_IOS_SDK=iphoneos`
 - startup GUCs:
   `shared_buffers=32MB,wal_buffers=-1,min_wal_size=8MB,max_wal_size=32MB`
 - result: Xcode `Debug-iphoneos` build succeeded and `devicectl device install
@@ -294,12 +253,10 @@ Current physical iPhone shared-buffer/min-WAL tuning slice:
 - device: same iPhone 14 Pro physical dev-client install
 - platform: iPhoneOS through the Expo dev-client harness
 - benchmark preset: `quick`
-- fixed settings: `wal_buffers=-1`, `max_wal_size=32MB`,
-  `--wal-segsize 4`, process-death recovery off
-- varied settings: `shared_buffers=8/16/32/64/128MB`,
-  `min_wal_size=8/16/32MB`
-- result: 15 historical cases passed. Rerun the slice with the maintained iOS
-  harness process report before making a current memory claim.
+- fixed settings: `wal_buffers=-1`, `max_wal_size=32MB`, process-death recovery off
+- varied settings: `shared_buffers=8/16/32/64/128MB`
+- result: historical cases passed. Rerun the slice with qualified release seeds
+  before making a current memory claim.
 
 The iPhoneOS `liboliphaunt.xcframework` used for this run also has a stricter
 artifact gate: the device and simulator slices are rejected if they import
@@ -307,10 +264,9 @@ mobile-forbidden SysV/POSIX shared-memory or semaphore APIs (`shm*`,
 `shm_open`, or external `sem*`). This was added after a real-device `SIGSYS`
 crash report showed PostgreSQL reaching `shmget` during embedded startup.
 
-By default the wrapper skips `min_wal_size` values below two WAL segments. With
-the default `--wal-segsize 16`, that skips 8MB and 16MB. With
-`--wal-segsize 4`, both become valid and are included. Pass
-`--include-invalid-wal-min` only for negative validation. The wrapper also skips
+The wrapper skips `min_wal_size` values below two fixed 16MB WAL segments, so
+8MB and 16MB are negative-only cases. Pass `--include-invalid-wal-min` only for
+negative validation. The wrapper also skips
 impossible WAL ranges such as `max_wal_size=32MB` with `min_wal_size=80MB`,
 while preserving a `max_wal_size=default` baseline for the current
 throughput-sized WAL ceiling.

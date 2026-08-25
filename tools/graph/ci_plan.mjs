@@ -91,6 +91,7 @@ const MOBILE_E2E_JOBS = {
   "mobile-build-android": "mobile-e2e-android",
   "mobile-build-ios": "mobile-e2e-ios",
 };
+const REACT_NATIVE_ANDROID_REPRESENTATIVE_TARGETS = new Set(["android-x86_64"]);
 export const NATIVE_EXTENSION_LIFECYCLE_JOB = "native-extension-lifecycle";
 export const NATIVE_EXTENSION_LIFECYCLE_AGGREGATE_JOB =
   "native-extension-lifecycle-aggregate";
@@ -519,18 +520,20 @@ export function liboliphauntNativeDesktopRuntimeMatrixForPlan(
 
 function focusedMobileNativeTargets(mobileTarget, nativeTarget, focusedMobileJobs) {
   const targets = mobileNativeTargetsForJobs(focusedMobileJobs);
-  if (nativeTarget === "all") {
-    return targets;
+  if (nativeTarget !== "all") {
+    if (mobileTarget === "both") {
+      throw new Error("focused mobile_target=both requires native_target=all");
+    }
+    if (!targets.has(nativeTarget)) {
+      throw new Error(
+        `native_target=${nativeTarget} is not valid for mobile_target=${mobileTarget}; expected one of: all, ${sorted(targets).join(", ")}`,
+      );
+    }
   }
-  if (mobileTarget === "both") {
-    throw new Error("focused mobile_target=both requires native_target=all");
-  }
-  if (!targets.has(nativeTarget)) {
-    throw new Error(
-      `native_target=${nativeTarget} is not valid for mobile_target=${mobileTarget}; expected one of: all, ${sorted(targets).join(", ")}`,
-    );
-  }
-  return new Set([nativeTarget]);
+  // Mobile qualification admits one physical compatibility domain. A focused
+  // target may select that domain, but must not silently omit one of its ABI
+  // receipts or the representative emulator app that consumes the closure.
+  return targets;
 }
 
 export function planForPullRequest() {
@@ -767,7 +770,7 @@ export function renderPlanForFullRun({
 } = {}) {
   return renderPlan(
     planForFullRun({ wasmTarget, nativeTarget, mobileTarget }),
-    { nativeTarget, wasmTarget },
+    { nativeTarget: mobileTarget === "all" ? nativeTarget : "all", wasmTarget },
   );
 }
 
@@ -916,7 +919,7 @@ export function renderPlanWithSelection({
     mobile_extension_package_native_targets: mobileExtensionPackageNativeTargets(jobs, selectedTargets),
     mobile_extension_package_native_targets_csv: mobileExtensionPackageNativeTargets(jobs, selectedTargets).join(","),
     react_native_android_mobile_app_matrix: jobs.has("mobile-build-android")
-      ? reactNativeAndroidMobileAppMatrix(nativeTarget, selectedTargets ?? undefined)
+      ? reactNativeAndroidMobileAppMatrix("all", REACT_NATIVE_ANDROID_REPRESENTATIVE_TARGETS)
       : emptyMatrix(),
     broker_runtime_matrix: jobs.has("broker-runtime")
       ? brokerRuntimeMatrix(

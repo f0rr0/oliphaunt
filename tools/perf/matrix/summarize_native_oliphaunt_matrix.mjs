@@ -1024,7 +1024,7 @@ async function main() {
   if (startupGucs.length > 0) {
     lines.push(`- Native startup GUC overrides: \`${startupGucs}\`.`)
   }
-  lines.push(`- PGDATA template hydration: \`${pgdataCopyMode}\`.`)
+  lines.push(`- Cluster-seed hydration: \`${pgdataCopyMode}\`.`)
   lines.push(`- Selected native engines: \`${selectedNativeEngines}\`.`)
   lines.push(`- Selected suites: \`${selectedSuites}\`.`)
   lines.push(

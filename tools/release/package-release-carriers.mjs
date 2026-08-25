@@ -67,8 +67,8 @@ import {
   normalizeBrokerDependencyLicenseModes,
 } from "./broker-dependency-license-contract.mjs";
 import {
-  ICU_CLUSTER_SEED_RELATIVE_PATH,
   ICU_DATA_RELATIVE_PATH,
+  ICU_MANIFEST_RELATIVE_PATH,
   ICU_PODSPEC,
   ICU_REACT_NATIVE_CONFIG,
   assertIcuPackedClosureMatchesSource,
@@ -928,6 +928,8 @@ function stageLiboliphauntNpmPayloads(version) {
     extractReleaseArchiveTree(archive, "lib/modules", path.join(stage, "lib/modules"));
     extractReleaseArchiveTree(archive, "runtime", path.join(stage, "runtime"));
     extractReleaseArchiveTree(archive, "cluster-seed", path.join(stage, "cluster-seed"));
+    extractReleaseArchiveTree(archive, "cluster-seed-icu", path.join(stage, "cluster-seed-icu"));
+    extractReleaseArchiveFile(archive, "manifest.properties", path.join(stage, "manifest.properties"));
     const vcRuntimeMembers = [
       ...stageWindowsVcRuntimeMembers(archive, stage, target.target, "bin", { profile: "provider" }),
       ...stageWindowsVcRuntimeMembers(archive, stage, target.target, "runtime/bin", {
@@ -1029,11 +1031,20 @@ function stageLiboliphauntIcuNpmPayload(version) {
     "share/icu",
     path.join(stage, ...ICU_DATA_RELATIVE_PATH.split("/")),
   );
-  extractReleaseArchiveTree(
+  extractReleaseArchiveFile(
     sourceArchive,
-    "cluster-seed",
-    path.join(stage, ...ICU_CLUSTER_SEED_RELATIVE_PATH.split("/")),
+    "manifest.properties",
+    path.join(stage, ...ICU_MANIFEST_RELATIVE_PATH.split("/")),
   );
+  const manifestFile = path.join(stage, "package.json");
+  const packageJson = JSON.parse(readFileSync(manifestFile, "utf8"));
+  const icuReceipt = readFileSync(path.join(stage, ...ICU_MANIFEST_RELATIVE_PATH.split("/")), "utf8");
+  const digest = /^icuDataTreeSha256=([0-9a-f]{64})$/mu.exec(icuReceipt)?.[1];
+  if (digest === undefined) {
+    fail(`${rel(sourceArchive)} has no canonical ICU data tree digest`);
+  }
+  packageJson.oliphaunt.icuDataTreeSha256 = digest;
+  writeFileSync(manifestFile, `${JSON.stringify(packageJson, null, 2)}\n`);
   stageReleaseNotices(stage, { profile: "native-icu-data" });
   assertReleaseNoticesInDirectory(stage, { profile: "native-icu-data" });
   try {
@@ -1096,6 +1107,7 @@ function validatePackedIcuPackage(packageName, version, tarball, sourceArchive) 
     assertIcuPackedClosureMatchesSource({
       packedEntries: entries,
       sourceEntries,
+      packageJson,
       label: rel(tarball),
       sourceLabel: rel(sourceArchive),
     });
@@ -1120,6 +1132,10 @@ export function liboliphauntNpmTarballs(version) {
       "package/cluster-seed/manifest.properties",
       "package/cluster-seed/files/PG_VERSION",
       "package/cluster-seed/files/global/pg_control",
+      "package/cluster-seed-icu/manifest.properties",
+      "package/cluster-seed-icu/files/PG_VERSION",
+      "package/cluster-seed-icu/files/global/pg_control",
+      "package/manifest.properties",
       ...embeddedCoreModuleMembers(target.target, "package/lib/modules"),
       ...runtimeMembers,
       ...coreRuntimeMembers,

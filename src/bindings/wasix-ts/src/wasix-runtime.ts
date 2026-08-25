@@ -34,19 +34,20 @@ export function compileWasixModule(
 export async function materializeWasixMounts(
   DirectoryConstructor: typeof Directory,
   layout: WasixRuntimeLayout,
-  pgdata: WasixDirectoryMount,
+  pgdata: WasixDirectoryMount | undefined,
   createPgdataDirectory?: (DirectoryConstructor: typeof Directory) => Promise<Directory>,
 ): Promise<{ mounts: Record<string, Directory>; baseDirectory: Directory }> {
-  const mounts = await materializeMountMap(
-    DirectoryConstructor,
-    layout,
-    pgdata,
-    createPgdataDirectory,
-  );
-  const baseDirectory = mounts['/base'];
-  if (baseDirectory === undefined) {
-    throw new Error('materialized WASIX runtime has no /base mount');
+  const mounts = await materializeMountMap(DirectoryConstructor, layout);
+  let baseDirectory: Directory;
+  if (createPgdataDirectory !== undefined) {
+    baseDirectory = await createPgdataDirectory(DirectoryConstructor);
+  } else {
+    if (pgdata === undefined) {
+      throw new Error('portable WASIX storage did not provide a PGDATA mount');
+    }
+    baseDirectory = await materializeDirectory(DirectoryConstructor, pgdata);
   }
+  mounts['/base'] = baseDirectory;
   return { mounts, baseDirectory };
 }
 
@@ -61,18 +62,10 @@ export function materializeWasixSupportMounts(
 async function materializeMountMap(
   DirectoryConstructor: typeof Directory,
   layout: Pick<WasixRuntimeLayout, 'mounts'>,
-  pgdata?: WasixDirectoryMount,
-  createPgdataDirectory?: (DirectoryConstructor: typeof Directory) => Promise<Directory>,
 ): Promise<Record<string, Directory>> {
   const mounts: Record<string, Directory> = {};
   for (const [mountPath, contents] of Object.entries(layout.mounts)) {
-    mounts[mountPath] =
-      mountPath === '/base' && createPgdataDirectory !== undefined
-        ? await createPgdataDirectory(DirectoryConstructor)
-        : await materializeDirectory(
-            DirectoryConstructor,
-            mountPath === '/base' && pgdata !== undefined ? pgdata : contents,
-          );
+    mounts[mountPath] = await materializeDirectory(DirectoryConstructor, contents);
   }
   return mounts;
 }

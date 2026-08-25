@@ -1,57 +1,73 @@
 use std::ffi::OsString;
-use std::fs::{self, OpenOptions};
-#[cfg(unix)]
+use std::fs;
+#[cfg(feature = "internal-native-packaging")]
+use std::fs::OpenOptions;
+#[cfg(all(unix, feature = "internal-native-packaging"))]
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(feature = "internal-native-packaging")]
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
+#[cfg(feature = "internal-native-packaging")]
 use fs2::FileExt;
 
-use super::files::{
-    cluster_seed_copy_mode, copy_directory_tree, directory_is_empty, remove_file_if_exists,
-    sync_directory, sync_directory_tree,
-};
+use super::files::{cluster_seed_copy_mode, copy_directory_tree, directory_is_empty};
+#[cfg(feature = "internal-native-packaging")]
+use super::files::{remove_file_if_exists, sync_directory, sync_directory_tree};
+#[cfg(feature = "internal-native-packaging")]
 use super::fingerprint::{hash_path, hash_str, new_state};
-use super::runtime::{monotonic_cache_nonce, runtime_cache_root};
+use super::runtime::monotonic_cache_nonce;
+#[cfg(feature = "internal-native-packaging")]
+use super::runtime::runtime_cache_root;
 use super::{
     NativeCatalogProfile, NativeRuntimeProfile, configure_native_tool_env, native_tool_path,
 };
 use crate::error::{Error, Result};
 
-const CLUSTER_SEED_CACHE_VERSION: &str = "pg18-cluster-seed-v5";
+#[cfg(feature = "internal-native-packaging")]
+const CLUSTER_SEED_CACHE_VERSION: &str = "pg18-cluster-seed-v6";
+const SKIP_SYSTEM_COLLATION_DISCOVERY_ENV: &str =
+    "OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY";
+const SKIP_ICU_COLLATION_DISCOVERY_ENV: &str = "OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY";
 
 pub(super) fn bootstrap_pgdata_if_needed(
     profile: NativeRuntimeProfile,
     runtime_dir: &Path,
+    initdb_runtime_dir: &Path,
     catalog_profile: super::NativeCatalogProfile,
     packaged_cluster_seed: Option<&Path>,
-    username: &str,
     pgdata: &Path,
 ) -> Result<()> {
     if pgdata.join("PG_VERSION").is_file() {
         return Ok(());
     }
 
-    if username != "postgres" {
-        return run_initdb(runtime_dir, catalog_profile, pgdata, username, "database");
+    if profile == NativeRuntimeProfile::PostgresServer || packaged_cluster_seed.is_none() {
+        return run_initdb(
+            initdb_runtime_dir,
+            runtime_dir,
+            catalog_profile,
+            pgdata,
+            "database",
+            false,
+        );
     }
     restore_cluster_seed(
-        profile,
-        runtime_dir,
-        catalog_profile,
-        packaged_cluster_seed,
+        packaged_cluster_seed.expect("packaged cluster seed checked above"),
         pgdata,
     )
 }
 
 fn run_initdb(
+    initdb_runtime_dir: &Path,
     runtime_dir: &Path,
     catalog_profile: NativeCatalogProfile,
     pgdata: &Path,
-    username: &str,
     context: &str,
+    skip_system_collation_discovery: bool,
 ) -> Result<()> {
-    let initdb = native_tool_path(runtime_dir, "initdb");
+    let initdb = native_tool_path(initdb_runtime_dir, "initdb");
     if !initdb.is_file() {
         return Err(Error::Engine(format!(
             "native {context} initialization requires initdb at {}",
@@ -59,9 +75,15 @@ fn run_initdb(
         )));
     }
     let mut command = Command::new(&initdb);
-    configure_cluster_seed_runtime_env(&mut command, runtime_dir, catalog_profile);
+    configure_cluster_seed_runtime_env(
+        &mut command,
+        initdb_runtime_dir,
+        runtime_dir,
+        catalog_profile,
+        skip_system_collation_discovery,
+    );
     let output = command
-        .args(initdb_args(runtime_dir, pgdata, username))
+        .args(initdb_args(initdb_runtime_dir, pgdata))
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .output()
@@ -83,12 +105,12 @@ fn run_initdb(
     )))
 }
 
-fn initdb_args(runtime_dir: &Path, pgdata: &Path, username: &str) -> Vec<OsString> {
+fn initdb_args(runtime_dir: &Path, pgdata: &Path) -> Vec<OsString> {
     vec![
         "-D".into(),
         pgdata.as_os_str().to_owned(),
         "-U".into(),
-        username.into(),
+        "postgres".into(),
         "--auth=trust".into(),
         "--locale-provider=libc".into(),
         "--locale=C".into(),
@@ -98,29 +120,24 @@ fn initdb_args(runtime_dir: &Path, pgdata: &Path, username: &str) -> Vec<OsStrin
     ]
 }
 
-fn restore_cluster_seed(
-    profile: NativeRuntimeProfile,
-    runtime_dir: &Path,
-    catalog_profile: super::NativeCatalogProfile,
-    packaged_cluster_seed: Option<&Path>,
-    pgdata: &Path,
-) -> Result<()> {
-    let generated;
-    let cluster_seed = if let Some(packaged) = packaged_cluster_seed {
-        packaged.join("files")
-    } else {
-        generated = materialize_cluster_seed(profile, runtime_dir, catalog_profile)?;
-        generated
-    };
+fn restore_cluster_seed(packaged_cluster_seed: &Path, pgdata: &Path) -> Result<()> {
+    let cluster_seed = packaged_cluster_seed.join("files");
     copy_cluster_seed(&cluster_seed, pgdata)
 }
 
+#[cfg(feature = "internal-native-packaging")]
 pub(super) fn materialize_cluster_seed(
     _profile: NativeRuntimeProfile,
     runtime_dir: &Path,
+    initdb_runtime_dir: &Path,
     catalog_profile: super::NativeCatalogProfile,
 ) -> Result<PathBuf> {
-    let key = cluster_seed_key(runtime_dir, catalog_profile)?;
+    let skip_system_collation_discovery = distributed_seed_requested();
+    let key = cluster_seed_key(
+        runtime_dir,
+        catalog_profile,
+        skip_system_collation_discovery,
+    )?;
     let cache_root = runtime_cache_root()?.join("cluster-seeds");
     fs::create_dir_all(&cache_root).map_err(|err| {
         Error::Engine(format!(
@@ -179,25 +196,31 @@ pub(super) fn materialize_cluster_seed(
         })?;
 
         let pgdata = build_dir.join("pgdata");
-        let build_result = run_cluster_seed_initdb(runtime_dir, catalog_profile, &pgdata)
-            .and_then(|()| clean_cluster_seed(&pgdata, native_dynamic_shared_memory_type()))
-            .and_then(|()| {
-                fs::write(build_dir.join(".manifest"), cluster_seed_manifest(&key)).map_err(|err| {
-                    Error::Engine(format!(
-                        "write native cluster-seed manifest {}: {err}",
-                        build_dir.display()
-                    ))
-                })
+        let build_result = run_cluster_seed_initdb(
+            initdb_runtime_dir,
+            runtime_dir,
+            catalog_profile,
+            &pgdata,
+            skip_system_collation_discovery,
+        )
+        .and_then(|()| clean_cluster_seed(&pgdata, native_dynamic_shared_memory_type()))
+        .and_then(|()| {
+            fs::write(build_dir.join(".manifest"), cluster_seed_manifest(&key)).map_err(|err| {
+                Error::Engine(format!(
+                    "write native cluster-seed manifest {}: {err}",
+                    build_dir.display()
+                ))
             })
-            .and_then(|()| {
-                fs::write(build_dir.join(".complete"), b"ok\n").map_err(|err| {
-                    Error::Engine(format!(
-                        "write native cluster-seed completion marker {}: {err}",
-                        build_dir.display()
-                    ))
-                })
+        })
+        .and_then(|()| {
+            fs::write(build_dir.join(".complete"), b"ok\n").map_err(|err| {
+                Error::Engine(format!(
+                    "write native cluster-seed completion marker {}: {err}",
+                    build_dir.display()
+                ))
             })
-            .and_then(|()| sync_directory_tree(&build_dir));
+        })
+        .and_then(|()| sync_directory_tree(&build_dir));
 
         if let Err(error) = build_result {
             let _ = fs::remove_dir_all(&build_dir);
@@ -230,9 +253,11 @@ pub(super) fn materialize_cluster_seed(
     Ok(seed_dir.join("pgdata"))
 }
 
+#[cfg(feature = "internal-native-packaging")]
 fn cluster_seed_key(
     bootstrap_runtime: &Path,
     catalog_profile: super::NativeCatalogProfile,
+    skip_system_collation_discovery: bool,
 ) -> Result<String> {
     let runtime_manifest =
         fs::read_to_string(bootstrap_runtime.join(".manifest")).map_err(|err| {
@@ -244,15 +269,25 @@ fn cluster_seed_key(
     let mut state = new_state();
     hash_str(&mut state, CLUSTER_SEED_CACHE_VERSION);
     hash_str(&mut state, catalog_profile.id());
+    hash_str(
+        &mut state,
+        if skip_system_collation_discovery {
+            "distributed"
+        } else {
+            "host"
+        },
+    );
     hash_path(&mut state, bootstrap_runtime);
     hash_str(&mut state, &runtime_manifest);
     Ok(format!("{state:016x}"))
 }
 
+#[cfg(feature = "internal-native-packaging")]
 fn cluster_seed_manifest(key: &str) -> String {
     format!("version={CLUSTER_SEED_CACHE_VERSION}\nkey={key}\n")
 }
 
+#[cfg(feature = "internal-native-packaging")]
 fn cluster_seed_is_valid(seed_dir: &Path, key: &str) -> bool {
     if !seed_dir.join(".complete").is_file()
         || !seed_dir.join("pgdata/PG_VERSION").is_file()
@@ -269,28 +304,47 @@ fn cluster_seed_is_valid(seed_dir: &Path, key: &str) -> bool {
         && manifest.lines().any(|line| line == format!("key={key}"))
 }
 
+#[cfg(feature = "internal-native-packaging")]
 fn run_cluster_seed_initdb(
+    initdb_runtime_dir: &Path,
     runtime_dir: &Path,
     catalog_profile: super::NativeCatalogProfile,
     pgdata: &Path,
+    skip_system_collation_discovery: bool,
 ) -> Result<()> {
     run_initdb(
+        initdb_runtime_dir,
         runtime_dir,
         catalog_profile,
         pgdata,
-        "postgres",
         "cluster seed",
+        skip_system_collation_discovery,
     )
+}
+
+#[cfg(feature = "internal-native-packaging")]
+fn distributed_seed_requested() -> bool {
+    std::env::var_os(SKIP_SYSTEM_COLLATION_DISCOVERY_ENV).is_some_and(|value| value == "1")
 }
 
 fn configure_cluster_seed_runtime_env(
     command: &mut Command,
+    initdb_runtime_dir: &Path,
     runtime_dir: &Path,
     catalog_profile: super::NativeCatalogProfile,
+    skip_system_collation_discovery: bool,
 ) {
-    configure_native_tool_env(command, runtime_dir);
+    configure_native_tool_env(command, initdb_runtime_dir);
     command.env_remove("ICU_DATA");
     command.env_remove("OLIPHAUNT_INTERNAL_ICU_READY");
+    command.env_remove(SKIP_SYSTEM_COLLATION_DISCOVERY_ENV);
+    command.env_remove(SKIP_ICU_COLLATION_DISCOVERY_ENV);
+    if skip_system_collation_discovery {
+        command.env(SKIP_SYSTEM_COLLATION_DISCOVERY_ENV, "1");
+    }
+    if catalog_profile == super::NativeCatalogProfile::Standard {
+        command.env(SKIP_ICU_COLLATION_DISCOVERY_ENV, "1");
+    }
     let icu_data = runtime_dir.join("share/icu");
     if catalog_profile == super::NativeCatalogProfile::Icu && icu_data.is_dir() {
         command.env("ICU_DATA", icu_data);
@@ -306,6 +360,7 @@ const fn native_dynamic_shared_memory_type() -> &'static str {
     }
 }
 
+#[cfg(feature = "internal-native-packaging")]
 fn clean_cluster_seed(pgdata: &Path, dynamic_shared_memory_type: &str) -> Result<()> {
     for relative in ["postmaster.pid", "postmaster.opts"] {
         remove_file_if_exists(&pgdata.join(relative))?;
@@ -444,6 +499,7 @@ mod tests {
     use std::path::Path;
 
     use super::{
+        SKIP_ICU_COLLATION_DISCOVERY_ENV, SKIP_SYSTEM_COLLATION_DISCOVERY_ENV,
         configure_cluster_seed_runtime_env, initdb_args, native_dynamic_shared_memory_type,
         normalize_cluster_seed_conf,
     };
@@ -454,7 +510,6 @@ mod tests {
         let args = initdb_args(
             Path::new("/runtime"),
             Path::new("/cache/cluster-seed/pgdata"),
-            "postgres",
         );
 
         assert!(args.iter().any(|arg| arg == OsStr::new("--locale=C")));
@@ -466,17 +521,13 @@ mod tests {
     }
 
     #[test]
-    fn fresh_initdb_uses_the_requested_identity_and_packaged_storage() {
-        let args = initdb_args(
-            Path::new("/runtime"),
-            Path::new("/app/database/pgdata"),
-            "app_user",
-        );
+    fn fresh_initdb_uses_fixed_bootstrap_identity_and_packaged_storage() {
+        let args = initdb_args(Path::new("/runtime"), Path::new("/app/database/pgdata"));
 
         assert_eq!(args[0], OsStr::new("-D"));
         assert_eq!(args[1], OsStr::new("/app/database/pgdata"));
         assert_eq!(args[2], OsStr::new("-U"));
-        assert_eq!(args[3], OsStr::new("app_user"));
+        assert_eq!(args[3], OsStr::new("postgres"));
         assert!(args.iter().any(|arg| arg == OsStr::new("--auth=trust")));
         assert!(!args.iter().any(|arg| arg == OsStr::new("--no-sync")));
         assert!(
@@ -498,7 +549,13 @@ mod tests {
         fs::create_dir_all(&icu_data).unwrap();
 
         let mut command = std::process::Command::new("initdb");
-        configure_cluster_seed_runtime_env(&mut command, &runtime, NativeCatalogProfile::Icu);
+        configure_cluster_seed_runtime_env(
+            &mut command,
+            &runtime,
+            &runtime,
+            NativeCatalogProfile::Icu,
+            false,
+        );
 
         assert_eq!(
             command
@@ -526,7 +583,9 @@ mod tests {
         configure_cluster_seed_runtime_env(
             &mut command,
             Path::new("/runtime"),
+            Path::new("/runtime"),
             NativeCatalogProfile::Standard,
+            false,
         );
         assert_eq!(
             command
@@ -538,10 +597,92 @@ mod tests {
         assert_eq!(
             command
                 .get_envs()
+                .find(|(key, _)| *key == OsStr::new(SKIP_SYSTEM_COLLATION_DISCOVERY_ENV))
+                .and_then(|(_, value)| value),
+            None
+        );
+        assert_eq!(
+            command
+                .get_envs()
+                .find(|(key, _)| *key == OsStr::new(SKIP_ICU_COLLATION_DISCOVERY_ENV))
+                .and_then(|(_, value)| value),
+            Some(OsStr::new("1"))
+        );
+        assert_eq!(
+            command
+                .get_envs()
                 .find(|(key, _)| *key == OsStr::new("OLIPHAUNT_INTERNAL_ICU_READY"))
                 .and_then(|(_, value)| value),
             None
         );
+    }
+
+    #[test]
+    fn distributed_icu_seed_suppresses_only_host_locale_discovery() {
+        let root = std::env::temp_dir().join(format!(
+            "oliphaunt-cluster-seed-mobile-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let runtime = root.join("runtime");
+        fs::create_dir_all(runtime.join("share/icu")).unwrap();
+
+        let mut command = std::process::Command::new("initdb");
+        configure_cluster_seed_runtime_env(
+            &mut command,
+            &runtime,
+            &runtime,
+            NativeCatalogProfile::Icu,
+            true,
+        );
+
+        assert_eq!(
+            command
+                .get_envs()
+                .find(|(key, _)| *key == OsStr::new(SKIP_SYSTEM_COLLATION_DISCOVERY_ENV))
+                .and_then(|(_, value)| value),
+            Some(OsStr::new("1"))
+        );
+        assert_eq!(
+            command
+                .get_envs()
+                .find(|(key, _)| *key == OsStr::new(SKIP_ICU_COLLATION_DISCOVERY_ENV))
+                .and_then(|(_, value)| value),
+            None
+        );
+        assert_eq!(
+            command
+                .get_envs()
+                .find(|(key, _)| *key == OsStr::new("OLIPHAUNT_INTERNAL_ICU_READY"))
+                .and_then(|(_, value)| value),
+            Some(OsStr::new("1"))
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn distributed_standard_seed_suppresses_host_and_icu_discovery() {
+        let mut command = std::process::Command::new("initdb");
+        configure_cluster_seed_runtime_env(
+            &mut command,
+            Path::new("/runtime"),
+            Path::new("/runtime"),
+            NativeCatalogProfile::Standard,
+            true,
+        );
+        for key in [
+            SKIP_SYSTEM_COLLATION_DISCOVERY_ENV,
+            SKIP_ICU_COLLATION_DISCOVERY_ENV,
+        ] {
+            assert_eq!(
+                command
+                    .get_envs()
+                    .find(|(candidate, _)| *candidate == OsStr::new(key))
+                    .and_then(|(_, value)| value),
+                Some(OsStr::new("1"))
+            );
+        }
     }
 
     #[test]

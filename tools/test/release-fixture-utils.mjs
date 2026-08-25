@@ -37,6 +37,10 @@ export async function writeEntriesArchive(output, entries, modes = {}) {
       left.localeCompare(right),
     )) {
       const file = path.join(stage, ...name.split('/'));
+      if (name.endsWith('/')) {
+        await fs.mkdir(file, { recursive: true });
+        continue;
+      }
       await fs.mkdir(path.dirname(file), { recursive: true });
       await fs.writeFile(file, data);
       await fs.chmod(file, modes[name] ?? 0o644);

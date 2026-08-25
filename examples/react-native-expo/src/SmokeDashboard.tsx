@@ -37,6 +37,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 type RunState = 'idle' | 'running' | 'passed' | 'failed';
 type RunnerMode = 'smoke' | 'benchmark' | 'crash-write' | 'crash-verify';
 type BenchmarkPreset = 'full' | 'quick';
+type CatalogProfile = 'standard' | 'icu';
 
 type SmokeReport = {
   engine: string;
@@ -103,6 +104,13 @@ type NativeBenchmarkReport = {
 
 const smokeGlobalKey = '__OLIPHAUNT_EXPO_SMOKE_STATE__';
 const initialUrlTimeoutMs = 2_500;
+const defaultSmokeStorageName =
+  `installed-smoke-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+const packagedCatalogProfile = process.env.EXPO_PUBLIC_OLIPHAUNT_CATALOG_PROFILE;
+const packagedCatalogProfileProbeSql =
+  process.env.EXPO_PUBLIC_OLIPHAUNT_CATALOG_PROFILE_PROBE_SQL;
+const packagedCatalogProfileProbeExpected =
+  process.env.EXPO_PUBLIC_OLIPHAUNT_CATALOG_PROFILE_PROBE_EXPECTED;
 let initialLaunchUrlPromise: Promise<string | null> | undefined;
 
 function smokeGlobalState(): SmokeGlobalState {
@@ -180,8 +188,9 @@ export default function HomeScreen() {
               checkElapsedMs: check.elapsedMs === undefined ? undefined : Math.round(check.elapsedMs),
             }),
         );
-        const icuProof = await runSelectedIcuRuntimeProof(db, stage);
         const lifecycle = await runLifecycleResumeValidation(db, stage);
+        const profileProof = await runCatalogProfileReopenProof(db, extensions, stage);
+        const icuProof = profileProof.check;
         liveness.stop();
         const checks = [
           ...extensionProof,
@@ -212,7 +221,8 @@ export default function HomeScreen() {
           extensionCatalogComplete: extensionProofResult.extensionCatalogComplete,
           pgTextsearchEnglishBm25: extensionProofResult.pgTextsearchEnglishBm25,
           extensionCatalogSha256: GENERATED_EXTENSION_METADATA_SHA256,
-          icuRuntimeProof: icuProof !== undefined,
+          catalogProfile: profileProof.catalogProfile,
+          icuRuntimeProof: profileProof.catalogProfile === 'icu',
         });
         setReport(nextReport);
         (globalThis as Record<string, unknown>).__OLIPHAUNT_EXPO_SMOKE_REPORT__ = nextReport;
@@ -420,45 +430,84 @@ async function runLifecycleResumeValidation(
   return { ...check, detail };
 }
 
-async function runSelectedIcuRuntimeProof(
+async function runCatalogProfileReopenProof(
   db: OliphauntDatabase,
+  extensions: readonly string[],
   stage: (name: string, extra?: Record<string, unknown>) => void,
-): Promise<OperationCheck> {
+): Promise<{ catalogProfile: CatalogProfile; check: OperationCheck }> {
   const started = now();
-  stage('icu:runtime:start');
-  await db.execute('DROP COLLATION IF EXISTS public.oliphaunt_icu_numeric');
+  const catalogProfile = selectedCatalogProfile();
+  const sql = requiredPublicEnvironment(
+    'EXPO_PUBLIC_OLIPHAUNT_CATALOG_PROFILE_PROBE_SQL',
+    packagedCatalogProfileProbeSql,
+  );
+  const expected = requiredPublicEnvironment(
+    'EXPO_PUBLIC_OLIPHAUNT_CATALOG_PROFILE_PROBE_EXPECTED',
+    packagedCatalogProfileProbeExpected,
+  );
+  stage('catalog-profile:start', { catalogProfile });
+  await assertCatalogProfileProbe(db, sql, expected, catalogProfile);
+  const marker = `marker-${Platform.OS}-${Math.round(started)}`;
   await db.execute(`
-    CREATE COLLATION public.oliphaunt_icu_numeric (
-      provider = icu,
-      locale = 'und-u-kn-true',
-      deterministic = true
-    )
+    CREATE TABLE IF NOT EXISTS oliphaunt_mobile_reopen_marker (
+      id integer PRIMARY KEY,
+      value text NOT NULL
+    );
+    INSERT INTO oliphaunt_mobile_reopen_marker (id, value)
+    VALUES (1, '${sqlLiteral(marker)}')
+    ON CONFLICT (id) DO UPDATE SET value = excluded.value;
   `);
-  const metadata = await db.query(`
-    SELECT collprovider::text AS provider,
-           coalesce(collversion, '')::text AS version
-    FROM pg_collation
-    WHERE oid = 'public.oliphaunt_icu_numeric'::regcollation
-  `);
-  const provider = metadata.getText(0, 'provider') ?? '';
-  if (provider !== 'i') {
-    throw new Error(`ICU collation provider mismatch: expected i, got '${provider}'`);
+  await db.close();
+  const smokeState = smokeGlobalState();
+  smokeState.databaseInstance = undefined;
+  smokeState.databasePromise = undefined;
+  const reopened = (await openDatabase(stage, extensions)).database;
+  const persisted = await reopened.query(
+    'SELECT value FROM oliphaunt_mobile_reopen_marker WHERE id = 1',
+  );
+  const reopenedMarker = persisted.getText(0, 'value') ?? '';
+  if (reopenedMarker !== marker) {
+    throw new Error(`database reopen marker mismatch: expected '${marker}', got '${reopenedMarker}'`);
   }
-
-  const ordered = await db.query(`
-    SELECT string_agg(value, ',' ORDER BY value COLLATE public.oliphaunt_icu_numeric) AS values
-    FROM (VALUES ('10'::text), ('2'::text), ('1'::text)) AS input(value)
-  `);
-  const values = ordered.getText(0, 'values') ?? '';
-  if (values !== '1,2,10') {
-    throw new Error(`ICU numeric collation mismatch: expected 1,2,10, got '${values}'`);
-  }
-
+  await assertCatalogProfileProbe(reopened, sql, expected, catalogProfile);
   const elapsedMs = now() - started;
-  const version = metadata.getText(0, 'version') ?? '';
-  const detail = `provider=icu; numeric order ${values}${version ? `; version ${version}` : ''}`;
-  stage('icu:runtime:done', { detail, elapsedMs });
-  return { name: 'ICU numeric collation', detail, elapsedMs };
+  const detail = `catalogProfile=${catalogProfile}; probe=${expected}; reopen marker persisted`;
+  stage('catalog-profile:done', { detail, elapsedMs });
+  return {
+    catalogProfile,
+    check: { name: 'packaged catalog profile and reopen', detail, elapsedMs },
+  };
+}
+
+async function assertCatalogProfileProbe(
+  db: OliphauntDatabase,
+  sql: string,
+  expected: string,
+  profile: CatalogProfile,
+): Promise<void> {
+  const result = await db.query(`SELECT (${sql})::text AS result`);
+  const actual = result.getText(0, 'result') ?? '';
+  if (actual !== expected) {
+    throw new Error(`${profile} packaged catalog probe failed: expected '${expected}', got '${actual}'`);
+  }
+}
+
+function selectedCatalogProfile(): CatalogProfile {
+  const profile = requiredPublicEnvironment(
+    'EXPO_PUBLIC_OLIPHAUNT_CATALOG_PROFILE',
+    packagedCatalogProfile,
+  );
+  if (profile !== 'standard' && profile !== 'icu') {
+    throw new Error(`unsupported packaged catalog profile '${profile}'`);
+  }
+  return profile;
+}
+
+function requiredPublicEnvironment(name: string, value: string | undefined): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`installed mobile qualification requires ${name}`);
+  }
+  return value;
 }
 
 function mobileReleaseExtensionProofPlan() {
@@ -859,7 +908,7 @@ async function openDatabase(
     const started = now();
     const { storage, storageLabel: _storageLabel, ...tuning } = openTuning;
     const config = {
-      ...(storage ? { storage } : {}),
+      storage: storage ?? ({ kind: 'applicationData', name: defaultSmokeStorageName } as const),
       ...tuning,
       extensions,
       username: 'postgres',

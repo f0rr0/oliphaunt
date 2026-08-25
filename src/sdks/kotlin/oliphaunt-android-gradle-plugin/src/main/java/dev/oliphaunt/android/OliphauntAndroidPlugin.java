@@ -280,7 +280,11 @@ public final class OliphauntAndroidPlugin implements Plugin<Project> {
     String runtimeVersion = extension.getLiboliphauntVersion().get();
     project
         .getDependencies()
-        .add(runtimeArtifacts.getName(), "dev.oliphaunt.runtime:liboliphaunt-runtime-resources:" + runtimeVersion + "@tar.gz");
+        .add(
+            runtimeArtifacts.getName(),
+            "dev.oliphaunt.runtime:liboliphaunt-runtime-resources-android-datum64:"
+                + runtimeVersion
+                + "@tar.gz");
     for (String abi : extension.getAndroidAbis().get()) {
       String artifact = switch (abi) {
         case "arm64-v8a" -> "liboliphaunt-android-arm64-v8a";

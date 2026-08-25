@@ -13,6 +13,8 @@ export const WASIX_PORTABLE_RELEASE_MEMBERS = Object.freeze({
   runtimeArchive: `${RELEASE_ASSET_ROOT}/${WASIX_RUNTIME_ARCHIVE_PATH}`,
   standardSeedArchive: `${RELEASE_ASSET_ROOT}/${WASIX_STANDARD_SEED_ARCHIVE_PATH}`,
   standardSeedManifest: `${RELEASE_ASSET_ROOT}/${WASIX_STANDARD_SEED_MANIFEST_PATH}`,
+  icuSeedArchive: `${RELEASE_ASSET_ROOT}/cluster-seeds/icu.tar.zst`,
+  icuSeedManifest: `${RELEASE_ASSET_ROOT}/cluster-seeds/icu.json`,
   manifest: `${RELEASE_ASSET_ROOT}/manifest.json`,
 });
 

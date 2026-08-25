@@ -178,14 +178,14 @@ The validation entrypoint is split by maintainer workflow:
 - `pnpm --dir examples/react-native-expo run smoke:android`: real Android Expo
   development-client smoke for the installed React Native package. It reuses
   current native artifacts, generates the ignored Expo `android/` project only
-  when missing, packages `liboliphaunt.so` plus runtime/template resources, starts
+  when missing, packages `liboliphaunt.so` plus runtime/cluster-seed resources, starts
   Metro when needed, installs the app, and waits for
   `OLIPHAUNT_EXPO_SMOKE_PASS`;
 - `pnpm --dir examples/react-native-expo run smoke:ios`: real iOS Expo
   development-client build/smoke harness for the installed React Native package.
   For simulator builds it produces or reuses the current iOS simulator
   `liboliphaunt.dylib` automatically when no explicit artifact override is set,
-  packages the same runtime/template resources, patches only the ignored
+  packages the same runtime/cluster-seed resources, patches only the ignored
   generated `ios/` Podfile for local Swift pods, rejects macOS dylibs, and can
   run in `OLIPHAUNT_EXPO_IOS_BUILD_ONLY=1` mode when CoreSimulator is
   unavailable;
@@ -273,9 +273,9 @@ The repository includes maintenance commands:
   the embedded server; arguments after `--` shape `pg_dump` output.
 - `oliphaunt-wasix-proxy` exposes a local PostgreSQL socket backed by the embedded
   runtime.
-- `xtask assets template` generates the architecture-independent PGDATA
-  template from the split WASIX `initdb` module. Portable WASIX, PGDATA
-  templates, and native AOT payloads remain generated-only.
+- `xtask assets cluster-seeds` generates the architecture-independent PGDATA
+  seeds from the split WASIX `initdb` module. Portable WASIX, cluster seeds,
+  and native AOT payloads remain generated-only.
 
 Asset and source checks:
 
@@ -284,7 +284,7 @@ cargo run -p xtask -- assets verify-committed
 cargo run -p xtask -- assets fetch
 cargo run -p xtask -- assets check --strict-local
 cargo run -p xtask -- assets check --strict-generated
-cargo run -p xtask --features template-runner -- assets template
+cargo run -p xtask --features cluster-seed-runner -- assets cluster-seeds
 cargo run -p xtask -- assets source-spine --check-patch-applies
 cargo run -p xtask -- assets audit-upstream --strict
 cargo run -p xtask -- package-size --enforce

@@ -281,6 +281,7 @@ async function nodeResolverUsesStandardCarrierRuntime(): Promise<void> {
     await writeClusterSeedFixture(
       join(runtimePackageRoot, 'cluster-seed'),
       'standard',
+      target.id,
       createdFiles,
     );
     const install = await resolveNodeNativeInstall();
@@ -309,7 +310,8 @@ async function nodeIcuResolverAcceptsValidPortablePackage(): Promise<void> {
           kind: 'icu-data',
           target: 'portable',
           dataRelativePath: 'OliphauntICU.bundle/share/icu',
-          clusterSeedRelativePath: 'OliphauntICU.bundle/cluster-seed',
+          manifestRelativePath: 'OliphauntICU.bundle/manifest.properties',
+          icuDataTreeSha256: 'a'.repeat(64),
         },
       }),
       'utf8',
@@ -317,7 +319,11 @@ async function nodeIcuResolverAcceptsValidPortablePackage(): Promise<void> {
     const dataDirectory = join(root, 'OliphauntICU.bundle/share/icu');
     await mkdir(dataDirectory, { recursive: true });
     await writeFile(join(dataDirectory, 'icudt76l.dat'), 'icu');
-    await writeClusterSeedFixture(join(root, 'OliphauntICU.bundle/cluster-seed'), 'icu', []);
+    await writeFile(
+      join(root, 'OliphauntICU.bundle/manifest.properties'),
+      `schema=oliphaunt-icu-data-v1\nartifactRole=icu-data\nicuDataVersion=76.1\nicuDataForm=files-le\nicuDataTreeSha256=${'a'.repeat(64)}\n`,
+      'utf8',
+    );
     assert.equal(await resolveNodeIcuDataDirectory('9.9.9', root), await realpath(dataDirectory));
     await assert.rejects(
       () => resolveNodeIcuDataDirectory('9.9.8', root),
@@ -1929,8 +1935,16 @@ async function writeFixtureFile(
 async function writeClusterSeedFixture(
   root: string,
   profile: 'standard' | 'icu',
+  target: string,
   createdFiles: string[],
 ): Promise<void> {
+  if (profile === 'standard') {
+    await writeFixtureFile(
+      join(dirname(root), 'manifest.properties'),
+      `schema=oliphaunt-native-runtime-carrier-v1\nclusterSeedTarget=${target}\nclusterSeedRelativePath=cluster-seed\nicuClusterSeedRelativePath=cluster-seed-icu\n`,
+      createdFiles,
+    );
+  }
   await writeFixtureFile(join(root, 'files', 'PG_VERSION'), '18\n', createdFiles);
   await writeFixtureFile(join(root, 'files', 'global', 'pg_control'), 'control', createdFiles);
   await writeFixtureFile(
@@ -1940,14 +1954,16 @@ async function writeClusterSeedFixture(
       'layout=oliphaunt-cluster-seed-v1',
       `artifactRole=cluster-seed-${profile}`,
       `catalogProfile=${profile}`,
+      `target=${target}`,
       'postgresMajor=18',
       'physicalFormat=native-pg18-v1',
-      'compatibilityKey=native-pg18-datum64-v1',
+      `compatibilityKey=native-pg18-${target}-v1`,
       'initialSuperuser=postgres',
       `icuDataVersion=${profile === 'icu' ? '76.1' : ''}`,
       `icuDataForm=${profile === 'icu' ? 'files-le' : ''}`,
       `icuDataTreeSha256=${profile === 'icu' ? 'a'.repeat(64) : ''}`,
       `runtimeFeatures=${profile === 'icu' ? 'icu' : ''}`,
+      'cacheKey=fixture-seed',
       '',
     ].join('\n'),
     createdFiles,

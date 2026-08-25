@@ -20,7 +20,10 @@ prek validate-config prek.toml
 
 printf '\n==> prek run --tracked-files --stage pre-commit\n'
 git ls-files |
-  while IFS= read -r file; do
-    [ -e "$file" ] && printf '%s\0' "$file"
-  done |
+  {
+    while IFS= read -r file; do
+      [ -e "$file" ] && printf '%s\0' "$file"
+    done
+    true
+  } |
   xargs -0 prek run --stage pre-commit --files

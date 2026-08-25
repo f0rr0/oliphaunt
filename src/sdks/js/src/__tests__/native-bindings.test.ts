@@ -336,6 +336,9 @@ async function testDenoNativeBindingRejectsPackageManagedExtensions(): Promise<v
       build: { os: 'linux', arch: 'x86_64' },
       async readTextFile(path: string | URL) {
         const text = String(path);
+        if (text.endsWith('/OliphauntICU.bundle/manifest.properties')) {
+          return `schema=oliphaunt-icu-data-v1\nartifactRole=icu-data\nicuDataVersion=76.1\nicuDataForm=files-le\nicuDataTreeSha256=${'a'.repeat(64)}\n`;
+        }
         if (text.includes('@oliphaunt/icu')) {
           return JSON.stringify({
             name: '@oliphaunt/icu',
@@ -345,6 +348,8 @@ async function testDenoNativeBindingRejectsPackageManagedExtensions(): Promise<v
               kind: 'icu-data',
               target: 'portable',
               dataRelativePath: 'OliphauntICU.bundle/share/icu',
+              manifestRelativePath: 'OliphauntICU.bundle/manifest.properties',
+              icuDataTreeSha256: 'a'.repeat(64),
             },
           });
         }
@@ -357,8 +362,10 @@ async function testDenoNativeBindingRejectsPackageManagedExtensions(): Promise<v
           },
         });
       },
-      async stat() {
-        return { isDirectory: true };
+      async stat(path: string | URL) {
+        return String(path).endsWith('/manifest.properties')
+          ? { isFile: true, isDirectory: false }
+          : { isFile: false, isDirectory: true };
       },
       async *readDir() {
         yield { name: 'icudt76l.dat', isFile: true };
@@ -634,6 +641,7 @@ async function testDenoPackageManagedResolverUsesStandardCarrierRuntime(): Promi
     await writeClusterSeedFixture(
       join(runtimePackageRoot, 'cluster-seed'),
       'standard',
+      target.id,
       createdFiles,
     );
     const install = await resolveDenoNativeInstall();
@@ -712,13 +720,21 @@ async function writeFixtureFile(
 async function writeClusterSeedFixture(
   root: string,
   profile: 'standard' | 'icu',
+  target: string,
   createdFiles: string[],
 ): Promise<void> {
+  if (profile === 'standard') {
+    await writeFixtureFile(
+      join(dirname(root), 'manifest.properties'),
+      `schema=oliphaunt-native-runtime-carrier-v1\nclusterSeedTarget=${target}\nclusterSeedRelativePath=cluster-seed\nicuClusterSeedRelativePath=cluster-seed-icu\n`,
+      createdFiles,
+    );
+  }
   await writeFixtureFile(join(root, 'files', 'PG_VERSION'), '18\n', createdFiles);
   await writeFixtureFile(join(root, 'files', 'global', 'pg_control'), 'control', createdFiles);
   await writeFixtureFile(
     join(root, 'manifest.properties'),
-    `schema=oliphaunt-runtime-resources-v1\nlayout=oliphaunt-cluster-seed-v1\nartifactRole=cluster-seed-${profile}\ncatalogProfile=${profile}\npostgresMajor=18\nphysicalFormat=native-pg18-v1\ncompatibilityKey=native-pg18-datum64-v1\ninitialSuperuser=postgres\nicuDataVersion=${profile === 'icu' ? '76.1' : ''}\nicuDataForm=${profile === 'icu' ? 'files-le' : ''}\nicuDataTreeSha256=${profile === 'icu' ? 'a'.repeat(64) : ''}\nruntimeFeatures=${profile === 'icu' ? 'icu' : ''}\n`,
+    `schema=oliphaunt-runtime-resources-v1\nlayout=oliphaunt-cluster-seed-v1\nartifactRole=cluster-seed-${profile}\ncatalogProfile=${profile}\ntarget=${target}\npostgresMajor=18\nphysicalFormat=native-pg18-v1\ncompatibilityKey=native-pg18-${target}-v1\ninitialSuperuser=postgres\nicuDataVersion=${profile === 'icu' ? '76.1' : ''}\nicuDataForm=${profile === 'icu' ? 'files-le' : ''}\nicuDataTreeSha256=${profile === 'icu' ? 'a'.repeat(64) : ''}\nruntimeFeatures=${profile === 'icu' ? 'icu' : ''}\ncacheKey=fixture-seed\n`,
     createdFiles,
   );
 }

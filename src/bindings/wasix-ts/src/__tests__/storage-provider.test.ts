@@ -35,7 +35,7 @@ describe('WASIX incremental PGDATA storage', () => {
           kind: 'directory',
           path: '/tmp/oliphaunt-test',
         },
-        pgdataTemplate(),
+        clusterSeed(),
         compatible(),
       ),
     ).rejects.toThrow('directory storage is unavailable in this @oliphaunt/wasix-ts host');
@@ -232,13 +232,13 @@ describe('WASIX incremental PGDATA storage', () => {
     harness.failNextOpen(new Error('database open aborted'));
 
     await expect(
-      acquireIndexedDbStorageWithBackend('todos', pgdataTemplate(), compatible(), harness.backend),
+      acquireIndexedDbStorageWithBackend('todos', clusterSeed(), compatible(), harness.backend),
     ).rejects.toMatchObject({ code: 'unavailable', commitState: 'unchanged' });
     expect(harness.isHeld()).toBe(false);
 
     const acquired = await acquireIndexedDbStorageWithBackend(
       'todos',
-      pgdataTemplate(),
+      clusterSeed(),
       compatible(),
       harness.backend,
     );
@@ -285,13 +285,8 @@ describe('WASIX incremental PGDATA storage', () => {
     const harness = providerHarness();
 
     const [todos, analytics] = await Promise.all([
-      acquireIndexedDbStorageWithBackend('todos', pgdataTemplate(), compatible(), harness.backend),
-      acquireIndexedDbStorageWithBackend(
-        'analytics',
-        pgdataTemplate(),
-        compatible(),
-        harness.backend,
-      ),
+      acquireIndexedDbStorageWithBackend('todos', clusterSeed(), compatible(), harness.backend),
+      acquireIndexedDbStorageWithBackend('analytics', clusterSeed(), compatible(), harness.backend),
     ]);
 
     expect(indexedDbDatabaseName('todos')).not.toBe(indexedDbDatabaseName('analytics'));
@@ -308,7 +303,7 @@ describe('WASIX incremental PGDATA storage', () => {
     const harness = providerHarness();
     const lease = await acquireIndexedDbStorageWithBackend(
       'todos',
-      pgdataTemplate(),
+      clusterSeed(),
       compatible(),
       harness.backend,
     );
@@ -322,7 +317,7 @@ describe('WASIX incremental PGDATA storage', () => {
 
     const reacquired = await acquireIndexedDbStorageWithBackend(
       'todos',
-      pgdataTemplate(),
+      clusterSeed(),
       compatible(),
       harness.backend,
     );
@@ -334,7 +329,7 @@ describe('WASIX incremental PGDATA storage', () => {
     const harness = providerHarness();
     const first = await acquireIndexedDbStorageWithBackend(
       'todos',
-      pgdataTemplate(),
+      clusterSeed(),
       compatible(),
       harness.backend,
     );
@@ -346,11 +341,14 @@ describe('WASIX incremental PGDATA storage', () => {
 
     const second = await acquireIndexedDbStorageWithBackend(
       'todos',
-      pgdataTemplate(),
+      async () => {
+        throw new Error('existing IndexedDB storage must not load the cluster seed');
+      },
       compatible(),
       harness.backend,
     );
     expect(second.state).toBe('existing');
+    if (second.mount === undefined) throw new Error('IndexedDB did not provide a portable mount');
     expect(new TextDecoder().decode(second.mount.files.PG_VERSION)).toBe('18\n');
     expect(second.mount.files['global/pg_control']).toEqual(Uint8Array.of(1, 2, 3));
     await second.close(undefined, 'failed');
@@ -360,7 +358,7 @@ describe('WASIX incremental PGDATA storage', () => {
     const harness = providerHarness();
     const lease = await acquireIndexedDbStorageWithBackend(
       'todos',
-      pgdataTemplate(),
+      clusterSeed(),
       compatible(),
       harness.backend,
     );
@@ -381,7 +379,7 @@ describe('WASIX incremental PGDATA storage', () => {
     const harness = providerHarness();
     const lease = await acquireIndexedDbStorageWithBackend(
       'todos',
-      pgdataTemplate(),
+      clusterSeed(),
       compatible(),
       harness.backend,
     );
@@ -446,30 +444,32 @@ describe('WASIX incremental PGDATA storage', () => {
       commitState: 'unchanged',
     });
 
-    const lease = await acquireIndexedDbStorage('todos', pgdataTemplate(), compatible());
+    const lease = await acquireIndexedDbStorage('todos', clusterSeed(), compatible());
     expect(lease.state).toBe('existing');
+    if (lease.mount === undefined) throw new Error('IndexedDB did not provide a portable mount');
     expect(new TextDecoder().decode(lease.mount.files.PG_VERSION)).toBe('18\n');
     expect(lease.mount.files['global/pg_control']).toEqual(Uint8Array.of(1, 2, 3));
     await lease.close(undefined, 'failed');
   });
 
   it('routes memory and installed directory storage without weakening descriptors', async () => {
-    const template = pgdataTemplate();
+    const seedMount = clusterSeedMount();
+    const loadClusterSeed = async () => seedMount;
     const memory = await acquireWasixStorage(
       { schema: 'oliphaunt-wasix-storage-v1', kind: 'memory' },
-      template,
+      loadClusterSeed,
       compatible(),
     );
-    expect(memory).toMatchObject({ state: 'new', mount: template });
+    expect(memory).toMatchObject({ state: 'new', mount: seedMount });
     await memory.sync(pgdataDirectory(), 'operation');
     await memory.close(undefined, 'clean');
 
     const calls: string[] = [];
-    installNodeDirectoryStorageProvider(async (path, mounted, _compatibility, ownerToken) => {
+    installNodeDirectoryStorageProvider(async (path, load, _compatibility, ownerToken) => {
       calls.push(`open:${path}:${ownerToken}`);
       return {
         state: 'new',
-        mount: mounted,
+        mount: await load(),
         async sync() {},
         async close() {},
       };
@@ -484,7 +484,7 @@ describe('WASIX incremental PGDATA storage', () => {
         path: '/tmp/todos',
         ownerToken: '0123456789abcdef',
       },
-      template,
+      loadClusterSeed,
       compatible(),
     );
     await directory.close(undefined, 'failed');
@@ -509,7 +509,7 @@ describe('WASIX incremental PGDATA storage', () => {
     await expect(
       acquireWasixStorage(
         { schema: 'unsupported' as never, kind: 'memory' },
-        template,
+        loadClusterSeed,
         compatible(),
       ),
     ).rejects.toMatchObject({ code: 'unavailable', commitState: 'unchanged' });
@@ -553,7 +553,12 @@ function fakeDirectory(
   };
 }
 
-function pgdataTemplate() {
+function clusterSeed() {
+  const mount = clusterSeedMount();
+  return async () => mount;
+}
+
+function clusterSeedMount() {
   return {
     directories: ['global', 'pg_wal'],
     files: {

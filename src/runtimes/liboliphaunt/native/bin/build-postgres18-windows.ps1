@@ -70,6 +70,14 @@ $VcRuntimeClosureTool = Join-Path $RepoRoot "tools/release/windows-vc-runtime-cl
 $Stamp = Join-Path $OutDir "oliphaunt-windows.inputs.sha256"
 $ExternalCheckoutRoot = Join-Path $RepoRoot "target/oliphaunt-sources/checkouts"
 $OpenSslSourceManifest = Join-Path $RepoRoot "src/sources/third-party/shared/openssl.toml"
+$IcuDataSourceManifest = Join-Path $RepoRoot "src/sources/third-party/shared/icu-data.toml"
+$IcuWindowsSourceManifest = Join-Path $RepoRoot "src/sources/third-party/native/icu-windows.toml"
+$IcuDataArchive = Join-Path $ExternalCheckoutRoot "icu-data/icudt76l.dat"
+$IcuWindowsRoot = Join-Path $ExternalCheckoutRoot "icu-windows"
+$IcuDataRoot = Join-Path $WorkRoot "icu/share/icu"
+$IcuDataArchiveSha256 = "dbc14e1c48ef209f230adc2aa6854bd4d6bba8f5e6733e75897a4263d97920f0"
+$IcuDataTreeSha256 = "0523cc164d698d95d844e3683bbe23d415b575b84f4a04287d372e1c132cf1d1"
+$IcuRuntimeDllNames = @("icudt76.dll", "icuin76.dll", "icuuc76.dll")
 $NativeComponentTool = Join-Path $RepoRoot "src/extensions/tools/native-component-contract.mjs"
 $PgxsBuildPlan = Join-Path $RepoRoot "src/extensions/generated/pgxs-build.tsv"
 $PortableUuidDir = Join-Path $RepoRoot "src/runtimes/liboliphaunt/native/portable-uuid"
@@ -520,6 +528,8 @@ function Get-DesiredHash {
     }
     $sourceInputs = @(
         $OpenSslSourceManifest,
+        $IcuDataSourceManifest,
+        $IcuWindowsSourceManifest,
         (Join-Path $RepoRoot "src/extensions/catalog/native-components.toml"),
         $PgxsBuildPlan,
         (Join-Path $PortableUuidDir "portable_uuid.c"),
@@ -546,6 +556,78 @@ function Get-DesiredHash {
         (($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join "")
     } finally {
         $sha.Dispose()
+    }
+}
+
+function Assert-WindowsIcuDependency {
+    foreach ($required in @(
+        (Join-Path $IcuWindowsRoot "include/unicode/ucol.h"),
+        (Join-Path $IcuWindowsRoot "lib64/icudt.lib"),
+        (Join-Path $IcuWindowsRoot "lib64/icuin.lib"),
+        (Join-Path $IcuWindowsRoot "lib64/icuuc.lib"),
+        (Join-Path $IcuWindowsRoot "bin64/icupkg.exe")
+    )) {
+        if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
+            Fail "missing pinned Windows ICU dependency file: $required"
+        }
+    }
+    foreach ($name in $IcuRuntimeDllNames) {
+        $dll = Join-Path $IcuWindowsRoot "bin64/$name"
+        if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) {
+            Fail "missing pinned Windows ICU runtime DLL: $dll"
+        }
+    }
+    if (-not (Test-Path -LiteralPath $IcuDataArchive -PathType Leaf)) {
+        Fail "missing pinned ICU data archive: $IcuDataArchive"
+    }
+    $actualDataSha256 = Get-FileSha256 $IcuDataArchive
+    if ($actualDataSha256 -ne $IcuDataArchiveSha256) {
+        Fail "ICU data archive checksum mismatch: expected $IcuDataArchiveSha256, got $actualDataSha256"
+    }
+}
+
+function Prepare-WindowsIcuData {
+    Assert-WindowsIcuDependency
+    $receipt = Join-Path $WorkRoot "icu/manifest.properties"
+    $ready = (Test-Path -LiteralPath $IcuDataRoot -PathType Container) -and
+        (Test-Path -LiteralPath $receipt -PathType Leaf) -and
+        ((Get-Content -LiteralPath $receipt -Raw).Contains("icuDataTreeSha256=$IcuDataTreeSha256`n"))
+    if ($ready) {
+        & bun tools/release/native-icu-data-contract.mjs $IcuDataRoot $receipt
+        if ($LASTEXITCODE -eq 0 -and
+            (Get-Content -LiteralPath $receipt -Raw).Contains("icuDataTreeSha256=$IcuDataTreeSha256`n")) {
+            return
+        }
+    }
+
+    $icuRoot = Split-Path -Parent (Split-Path -Parent $IcuDataRoot)
+    Remove-Item -LiteralPath $icuRoot -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path (Join-Path $IcuDataRoot "icudt76l") | Out-Null
+    $previousPath = $env:Path
+    try {
+        Prepend-ProcessPath @((Join-Path $IcuWindowsRoot "bin64"))
+        & (Join-Path $IcuWindowsRoot "bin64/icupkg.exe") -x "*" -d (Join-Path $IcuDataRoot "icudt76l") $IcuDataArchive
+        if ($LASTEXITCODE -ne 0) {
+            Fail "failed to extract pinned ICU data archive"
+        }
+    } finally {
+        Set-Item -Path Env:Path -Value $previousPath
+    }
+    $files = @(Get-ChildItem -LiteralPath (Join-Path $IcuDataRoot "icudt76l") -Recurse -File)
+    if ($files.Count -ne 4136) {
+        Fail "pinned ICU data archive must extract exactly 4136 files; found $($files.Count)"
+    }
+    & bun tools/release/native-icu-data-contract.mjs $IcuDataRoot $receipt
+    if ($LASTEXITCODE -ne 0 -or
+        -not (Get-Content -LiteralPath $receipt -Raw).Contains("icuDataTreeSha256=$IcuDataTreeSha256`n")) {
+        Fail "pinned ICU data tree does not have the canonical identity $IcuDataTreeSha256"
+    }
+}
+
+function Stage-WindowsIcuRuntime([string]$Destination) {
+    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+    foreach ($name in $IcuRuntimeDllNames) {
+        Copy-Item -LiteralPath (Join-Path $IcuWindowsRoot "bin64/$name") -Destination (Join-Path $Destination $name) -Force
     }
 }
 
@@ -2602,9 +2684,19 @@ function Test-SnowballRuntimeClosure {
 }
 
 function Runtime-Installed([string]$DesiredHash) {
-    return (Test-Path (Join-Path $InstallDir "bin/initdb.exe")) -and
+    $icuRuntimeReady = $true
+    foreach ($name in $IcuRuntimeDllNames) {
+        if (-not (Test-Path -LiteralPath (Join-Path $InstallDir "bin/$name") -PathType Leaf)) {
+            $icuRuntimeReady = $false
+            break
+        }
+    }
+    return $icuRuntimeReady -and
+        (Test-Path (Join-Path $InstallDir "bin/initdb.exe")) -and
         (Test-Path (Join-Path $InstallDir "bin/postgres.exe")) -and
         (Test-Path (Join-Path $InstallDir "bin/pg_config.exe")) -and
+        (Test-Path (Join-Path $InstallDir "include/pg_config.h")) -and
+        ((Get-Content -LiteralPath (Join-Path $InstallDir "include/pg_config.h") -Raw).Contains("#define USE_ICU 1")) -and
         (Test-Path (Join-Path $InstallDir "share/postgresql/postgresql.conf.sample")) -and
         (Test-Path (Join-Path $InstallDir "share/postgresql/timezone/UTC")) -and
         (Test-SnowballRuntimeClosure) -and
@@ -2624,7 +2716,7 @@ function Build-Runtime([string]$DesiredHash) {
         "--buildtype=release",
         "-Db_pch=false",
         "-Dreadline=disabled",
-        "-Dicu=disabled",
+        "-Dicu=enabled",
         "-Dldap=disabled",
         "-Dllvm=disabled",
         "-Dzlib=disabled",
@@ -2643,6 +2735,7 @@ function Build-Runtime([string]$DesiredHash) {
     }
     Invoke-Logged "meson-runtime-compile.log" { meson compile -C $RuntimeBuildDir }
     Invoke-Logged "meson-runtime-install.log" { meson install -C $RuntimeBuildDir }
+    Stage-WindowsIcuRuntime (Join-Path $InstallDir "bin")
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
     Install-WindowsPgtapExtension
     Prune-BaseRuntimeOptionalExtensions
@@ -2778,7 +2871,7 @@ function Build-EmbeddedBackend {
         "-Doliphaunt_embedded_module_provider=",
         "-Db_pch=false",
         "-Dreadline=disabled",
-        "-Dicu=disabled",
+        "-Dicu=enabled",
         "-Dldap=disabled",
         "-Dllvm=disabled",
         "-Dzlib=disabled",
@@ -2935,6 +3028,9 @@ function Link-LiboliphauntDll([System.Collections.Generic.List[string]]$Objects)
         $lines += $object
     }
     $lines += @(
+        (Join-Path $IcuWindowsRoot "lib64/icuin.lib"),
+        (Join-Path $IcuWindowsRoot "lib64/icuuc.lib"),
+        (Join-Path $IcuWindowsRoot "lib64/icudt.lib"),
         "ws2_32.lib",
         "secur32.lib",
         "advapi32.lib",
@@ -3136,6 +3232,11 @@ function Artifact-Ready {
         -not (Embedded-ModulesReady)) {
         return $false
     }
+    foreach ($name in $IcuRuntimeDllNames) {
+        if (-not (Test-Path -LiteralPath (Join-Path $OutDir "bin/$name") -PathType Leaf)) {
+            return $false
+        }
+    }
     if (-not (Test-VcRuntimeClosure)) {
         return $false
     }
@@ -3176,6 +3277,8 @@ Configure-MsvcToolchainPath
 $desiredHash = Get-DesiredHash
 Prepare-Source $desiredHash
 Prepare-WindowsExtensionInputs
+Prepare-WindowsIcuData
+$env:ICU_ROOT = $IcuWindowsRoot
 
 if ($CheckCurrent) {
     if ((Runtime-Installed $desiredHash) -and (Artifact-Ready) -and (Test-Path $Stamp) -and ((Get-Content $Stamp -Raw).Trim() -eq $desiredHash)) {
@@ -3190,6 +3293,7 @@ Build-Runtime $desiredHash
 Build-EmbeddedBackend
 $objects = Compile-LiboliphauntSources
 Link-LiboliphauntDll $objects
+Stage-WindowsIcuRuntime (Join-Path $OutDir "bin")
 Build-EmbeddedModules
 Stage-VcRuntimeClosure
 if (-not (Artifact-Ready)) {

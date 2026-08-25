@@ -3,6 +3,11 @@ export const LIBOLIPHAUNT_RUNTIME_DIR_ENV = 'OLIPHAUNT_RUNTIME_DIR';
 export const OLIPHAUNT_ICU_DATA_DIR_ENV = 'OLIPHAUNT_ICU_DATA_DIR';
 export const ICU_DATA_ENV = 'ICU_DATA';
 export const OLIPHAUNT_EMBEDDED_MODULE_DIR_ENV = 'OLIPHAUNT_EMBEDDED_MODULE_DIR';
+export const INTERNAL_NATIVE_POSTGRES_ENVIRONMENT = [
+  'OLIPHAUNT_INTERNAL_ICU_READY',
+  'OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY',
+  'OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY',
+] as const;
 
 export type NativePackageTarget = {
   id: string;
@@ -49,6 +54,20 @@ export function applyNativeIcuDataEnvironment(icuDataDirectory?: string): void {
   }
   if (icuDataDirectory.includes('\0')) {
     throw new Error(`${OLIPHAUNT_ICU_DATA_DIR_ENV} must not contain NUL bytes`);
+  }
+  setRuntimeEnvironment(OLIPHAUNT_ICU_DATA_DIR_ENV, icuDataDirectory);
+  setRuntimeEnvironment(ICU_DATA_ENV, icuDataDirectory);
+}
+
+/** Replace ambient ICU selection with one exact resolved runtime closure. */
+export function replaceNativeIcuDataEnvironment(icuDataDirectory?: string): void {
+  if (icuDataDirectory === undefined) {
+    unsetRuntimeEnvironment(OLIPHAUNT_ICU_DATA_DIR_ENV);
+    unsetRuntimeEnvironment(ICU_DATA_ENV);
+    return;
+  }
+  if (icuDataDirectory.trim().length === 0 || icuDataDirectory.includes('\0')) {
+    throw new Error(`${OLIPHAUNT_ICU_DATA_DIR_ENV} must be a nonempty path without NUL bytes`);
   }
   setRuntimeEnvironment(OLIPHAUNT_ICU_DATA_DIR_ENV, icuDataDirectory);
   setRuntimeEnvironment(ICU_DATA_ENV, icuDataDirectory);
@@ -172,6 +191,24 @@ function setRuntimeEnvironment(name: string, value: string): void {
       {
         cause: error,
       },
+    );
+  }
+}
+
+function unsetRuntimeEnvironment(name: string): void {
+  const processEnv = globalThis.process?.env;
+  if (processEnv !== undefined) {
+    delete processEnv[name];
+    return;
+  }
+  const deno = (globalThis as { Deno?: { env?: { delete(name: string): void } } }).Deno;
+  if (deno?.env?.delete === undefined) return;
+  try {
+    deno.env.delete(name);
+  } catch (error) {
+    throw new Error(
+      `cannot clear ${name}; grant environment-write permission for native runtime data`,
+      { cause: error },
     );
   }
 }

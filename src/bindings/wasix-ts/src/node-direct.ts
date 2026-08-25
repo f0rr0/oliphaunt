@@ -38,10 +38,7 @@ export async function openNodeDirectSession(
 
 /** @internal Open the public database contract in the current Node realm. */
 export async function openNodeDirect(options: SerializedOpenOptions): Promise<OliphauntDatabase> {
-  return new WasixDatabaseImpl(await openNodeDirectSession(options), {
-    runtime: options.runtime,
-    icu: options.icu,
-  });
+  return new WasixDatabaseImpl(await openNodeDirectSession(options));
 }
 
 export function installNodeEnvironment(): void {

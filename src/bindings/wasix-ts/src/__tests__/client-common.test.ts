@@ -40,7 +40,10 @@ import { FakeWorkerPort, workerOpenOptions } from './worker-helpers.js';
 describe('WASIX shared client orchestration', () => {
   // liboliphaunt-doc-example:wasix-typescript-icu
   it('serializes the explicit ICU data and matching seed as one closure', () => {
-    const options = serializeOpenConfig({ icu: icuDescriptor() }, runtimeDescriptor(Uint8Array.of(1)));
+    const options = serializeOpenConfig(
+      { icu: icuDescriptor() },
+      runtimeDescriptor(Uint8Array.of(1)),
+    );
 
     expect(options.icu).toMatchObject({
       schema: 'oliphaunt-wasix-icu-v1',

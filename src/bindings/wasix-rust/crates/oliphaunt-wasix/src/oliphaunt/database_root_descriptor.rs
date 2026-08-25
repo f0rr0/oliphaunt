@@ -239,13 +239,13 @@ fn current_postgres_major() -> Result<u32> {
 }
 
 #[cfg(unix)]
-fn sync_directory(path: &Path) -> Result<()> {
+pub(crate) fn sync_directory(path: &Path) -> Result<()> {
     fs::File::open(path)?.sync_all()?;
     Ok(())
 }
 
 #[cfg(not(unix))]
-fn sync_directory(_path: &Path) -> Result<()> {
+pub(crate) fn sync_directory(_path: &Path) -> Result<()> {
     // Directory fsync is not portable off Unix. On Windows, flushing a
     // directory handle fails with ERROR_ACCESS_DENIED even though regular file
     // contents have already been flushed.

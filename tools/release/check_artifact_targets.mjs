@@ -3,7 +3,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
-import { BUILDER_JOBS, planForFullRun } from "../graph/ci_plan.mjs";
+import { BUILDER_JOBS, planForFullRun, renderPlanForFullRun } from "../graph/ci_plan.mjs";
 import {
   extensionNativeRegistryPackageStrings,
   extensionRegistryPackageStrings,
@@ -306,13 +306,22 @@ export function expectedArtifactTargetContract() {
       triple: "apple-xcframework",
       runner: "macos-26",
     }),
-    portableRow(
-      "liboliphaunt-native",
-      "runtime-resources",
-      "runtime-resources",
-      "liboliphaunt-{version}-runtime-resources.tar.gz",
-      [GITHUB, "maven", "rust-native-direct", "swiftpm", "typescript-native-direct"],
-    ),
+    targetRow({
+      product: "liboliphaunt-native",
+      id: "runtime-resources-ios-datum64",
+      kind: "runtime-resources",
+      target: "ios-datum64",
+      asset: "liboliphaunt-{version}-runtime-resources-ios-datum64.tar.gz",
+      surfaces: [GITHUB, "react-native-ios"],
+    }),
+    targetRow({
+      product: "liboliphaunt-native",
+      id: "runtime-resources-android-datum64",
+      kind: "runtime-resources",
+      target: "android-datum64",
+      asset: "liboliphaunt-{version}-runtime-resources-android-datum64.tar.gz",
+      surfaces: [GITHUB, "maven", "react-native-android"],
+    }),
     targetRow({
       product: "liboliphaunt-native",
       id: "icu-data",
@@ -322,13 +331,6 @@ export function expectedArtifactTargetContract() {
       surfaces: [GITHUB, "maven", "react-native-android", "react-native-ios", "rust-native-direct", "swiftpm", "typescript-native-direct"],
       npm: "@oliphaunt/icu",
     }),
-    portableRow(
-      "liboliphaunt-native",
-      "package-size",
-      "package-footprint",
-      "liboliphaunt-{version}-package-size.tsv",
-      [GITHUB, "maven", "react-native-android", "react-native-ios", "rust-native-direct", "swiftpm", "typescript-native-direct"],
-    ),
     portableRow("liboliphaunt-native", "checksums", "checksums", "liboliphaunt-{version}-release-assets.sha256"),
     portableRow("liboliphaunt-wasix", "runtime-portable", "wasix-runtime", "liboliphaunt-wasix-{version}-runtime-portable.tar.zst"),
     portableRow("liboliphaunt-wasix", "icu-data", "icu-data", "liboliphaunt-wasix-{version}-icu-data.tar.zst"),
@@ -650,6 +652,36 @@ function actionSteps(workflow, jobId, action) {
   return steps.filter((step) => String(step.uses ?? "").startsWith(action));
 }
 
+function namedStep(workflow, jobId, name) {
+  const steps = workflowJob(workflow, jobId).steps;
+  invariant(Array.isArray(steps), `${jobId} must declare steps`);
+  return steps.find((step) => step.name === name);
+}
+
+function validateCrossFamilyIcuWorkflow(ci, release) {
+  const condition = "${{ contains(fromJson(needs.affected.outputs.builder_jobs), 'liboliphaunt-native-release-assets') && contains(fromJson(needs.affected.outputs.builder_jobs), 'liboliphaunt-wasix-release-assets') }}";
+  const native = namedStep(ci, "builds", "Download native ICU release asset for cross-family validation");
+  const wasix = namedStep(ci, "builds", "Download WASIX release assets for cross-family ICU validation");
+  const proof = namedStep(ci, "builds", "Prove native and WASIX ICU data identity");
+  invariant(
+    native?.if === condition
+      && native.with?.name === "liboliphaunt-native-icu-data"
+      && wasix?.if === condition
+      && wasix.with?.name === "liboliphaunt-wasix-release-assets"
+      && proof?.if === condition
+      && String(proof.run ?? "").includes("check-cross-family-icu-data.mjs"),
+    "final build qualification must compare canonical native and WASIX ICU receipts only when both release families exist",
+  );
+
+  const releaseProof = namedStep(release, "publish-dry-run", "Prove native and WASIX ICU data identity");
+  invariant(
+    String(releaseProof?.if ?? "").includes("'liboliphaunt-native'")
+      && String(releaseProof?.if ?? "").includes("'liboliphaunt-wasix'")
+      && String(releaseProof?.run ?? "").includes("check-cross-family-icu-data.mjs"),
+    "release publication must recheck cross-family ICU identity when both products are selected",
+  );
+}
+
 function expandTemplate(template, rows) {
   const values = [];
   for (const row of rows) {
@@ -741,6 +773,20 @@ export function validateCiArtifactCoverage(workflow, inventory) {
   );
   validateWorkflowProducer(workflow, "liboliphaunt-native-android", "liboliphaunt-native-release-assets-${{ matrix.target }}", matrixRows.nativeAndroid, nativeBy((target) => target.startsWith("android-")));
   validateWorkflowProducer(workflow, "liboliphaunt-native-ios", "liboliphaunt-native-release-assets-${{ matrix.target }}", matrixRows.nativeIos, nativeBy((target) => target === "ios-xcframework"));
+  validateWorkflowProducer(
+    workflow,
+    "liboliphaunt-native-android-abi",
+    "liboliphaunt-native-abi-compatible-release-assets-android-datum64",
+    [{}],
+    ["liboliphaunt-native-abi-compatible-release-assets-android-datum64"],
+  );
+  validateWorkflowProducer(
+    workflow,
+    "liboliphaunt-native-ios-abi",
+    "liboliphaunt-native-abi-compatible-release-assets-ios-datum64",
+    [{}],
+    ["liboliphaunt-native-abi-compatible-release-assets-ios-datum64"],
+  );
   validateWorkflowProducer(workflow, "broker-runtime", "oliphaunt-broker-release-assets-${{ matrix.target }}", matrixRows.broker, releaseAssets("oliphaunt-broker", "broker-helper"));
   validateWorkflowProducer(workflow, "node-direct", "oliphaunt-node-direct-release-assets-${{ matrix.target }}", matrixRows.nodeDirect, releaseAssets("oliphaunt-node-direct", "node-direct-addon"));
   validateWorkflowProducer(workflow, "node-direct", "oliphaunt-node-direct-npm-package-${{ matrix.target }}", matrixRows.nodeDirect, npmPackages("oliphaunt-node-direct", "node-direct-addon"));
@@ -870,7 +916,41 @@ export function validateCiArtifactCoverage(workflow, inventory) {
       `${jobId} must validate same-run target artifacts without uploading a duplicate product artifact`,
     );
   }
-  validateWorkflowConsumer(workflow, "liboliphaunt-native-release-assets", ["liboliphaunt-native-desktop", "liboliphaunt-native-android", "liboliphaunt-native-ios"], nativeRelease);
+  validateWorkflowConsumer(
+    workflow,
+    "liboliphaunt-native-android-abi",
+    ["liboliphaunt-native-android"],
+    [
+      "liboliphaunt-native-target-android-arm64-v8a",
+      "liboliphaunt-native-target-android-x86_64",
+      "liboliphaunt-native-release-assets-android-x86_64",
+    ],
+  );
+  validateWorkflowConsumer(
+    workflow,
+    "liboliphaunt-native-ios-abi",
+    ["liboliphaunt-native-ios"],
+    [
+      "liboliphaunt-native-target-ios-xcframework",
+      "liboliphaunt-native-release-assets-ios-xcframework",
+    ],
+  );
+  validateWorkflowConsumer(
+    workflow,
+    "liboliphaunt-native-release-assets",
+    [
+      "liboliphaunt-native-desktop",
+      "liboliphaunt-native-android",
+      "liboliphaunt-native-android-abi",
+      "liboliphaunt-native-ios",
+      "liboliphaunt-native-ios-abi",
+    ],
+    [
+      ...nativeRelease,
+      "liboliphaunt-native-abi-compatible-release-assets-android-datum64",
+      "liboliphaunt-native-abi-compatible-release-assets-ios-datum64",
+    ],
+  );
   validateWorkflowConsumer(workflow, "extension-artifacts-wasix", ["liboliphaunt-wasix-runtime"], ["liboliphaunt-wasix-runtime-portable"]);
   validateWorkflowConsumer(workflow, "liboliphaunt-wasix-aot", ["liboliphaunt-wasix-runtime"], ["liboliphaunt-wasix-runtime-portable"]);
   validateWorkflowConsumer(workflow, "wasix-release-regression", ["extension-artifacts-wasix", "liboliphaunt-wasix-runtime", "liboliphaunt-wasix-aot"], [
@@ -882,22 +962,74 @@ export function validateCiArtifactCoverage(workflow, inventory) {
   validateWorkflowConsumer(workflow, "liboliphaunt-wasix-release-assets", ["liboliphaunt-wasix-runtime", "liboliphaunt-wasix-aot"], ["liboliphaunt-wasix-runtime-portable", ...wasixAot]);
   validateWorkflowConsumer(workflow, "extension-packages", ["extension-artifacts-native", "extension-artifacts-wasix", "liboliphaunt-wasix-aot"], [...nativeExtensionArtifacts, ...wasixExtensionArtifacts, ...extensionAot]);
   validateWorkflowConsumer(workflow, "mobile-extension-packages", ["extension-artifacts-native"], nativeExtensionArtifacts);
-  const iosRelease = ["liboliphaunt-native-release-assets-ios-xcframework"];
-  validateWorkflowConsumer(workflow, "swift-sdk-package", ["liboliphaunt-native-ios"], iosRelease);
-  validateWorkflowConsumer(workflow, "react-native-sdk-package", ["liboliphaunt-native-ios"], iosRelease);
-  validateWorkflowConsumer(workflow, "mobile-build-android", ["liboliphaunt-native-android", "mobile-extension-packages", "kotlin-sdk-package", "react-native-sdk-package"], [
+  const abiCompatibleIosRelease = ["liboliphaunt-native-abi-compatible-release-assets-ios-datum64"];
+  validateWorkflowConsumer(workflow, "swift-sdk-package", ["liboliphaunt-native-ios-abi"], abiCompatibleIosRelease);
+  validateWorkflowConsumer(workflow, "react-native-sdk-package", ["liboliphaunt-native-ios-abi"], abiCompatibleIosRelease);
+  validateWorkflowConsumer(workflow, "mobile-build-android", ["liboliphaunt-native-android", "liboliphaunt-native-android-abi", "mobile-extension-packages", "kotlin-sdk-package", "react-native-sdk-package"], [
     ...matrixRows.reactNativeAndroid.map(({ target }) => `liboliphaunt-native-target-${target}`),
+    "liboliphaunt-native-abi-compatible-release-assets-android-datum64",
     "oliphaunt-mobile-extension-package-artifacts",
     "oliphaunt-kotlin-sdk-package-artifacts",
     "oliphaunt-react-native-sdk-package-artifacts",
   ], matrixRows.reactNativeAndroid);
-  validateWorkflowConsumer(workflow, "mobile-build-ios", ["liboliphaunt-native-ios", "mobile-extension-packages", "react-native-sdk-package", "swift-sdk-package"], [
+  validateWorkflowConsumer(workflow, "mobile-build-ios", ["liboliphaunt-native-ios", "liboliphaunt-native-ios-abi", "mobile-extension-packages", "react-native-sdk-package", "swift-sdk-package"], [
     "liboliphaunt-native-target-ios-xcframework",
-    ...iosRelease,
+    ...abiCompatibleIosRelease,
     "oliphaunt-mobile-extension-package-artifacts",
     "oliphaunt-react-native-sdk-package-artifacts",
     "oliphaunt-swift-sdk-package-artifacts",
   ]);
+  for (const jobId of ["swift-sdk-package", "react-native-sdk-package", "mobile-build-ios"]) {
+    invariant(
+      actionSteps(workflow, jobId, "actions/download-artifact@")
+        .every((step) => step.with?.name !== "liboliphaunt-native-release-assets-ios-xcframework"),
+      `${jobId} must not bypass iOS ABI-compatibility admission`,
+    );
+  }
+  invariant(
+    actionSteps(workflow, "mobile-build-android", "actions/download-artifact@")
+      .every((step) => step.with?.name !== "liboliphaunt-native-release-assets-android-x86_64"),
+    "mobile-build-android must not bypass Android ABI-compatibility admission",
+  );
+  validateWorkflowConsumer(
+    workflow,
+    "mobile-e2e-android",
+    ["mobile-build-android"],
+    ["react-native-mobile-android-app-android-x86_64"],
+  );
+  validateWorkflowConsumer(
+    workflow,
+    "mobile-e2e-ios",
+    ["mobile-build-ios"],
+    ["react-native-mobile-ios-app"],
+  );
+  for (const [jobId, platform] of [["mobile-e2e-android", "android"], ["mobile-e2e-ios", "ios"]]) {
+    const execution = workflowJob(workflow, jobId).steps.find(
+      (step) => step.name === `Run ${platform === "android" ? "Android" : "iOS"} installed-app E2E`,
+    );
+    invariant(
+      String(execution?.run ?? "").includes(`mobile-e2e.sh ${platform}`),
+      `${jobId} must execute the installed-app receipt validator`,
+    );
+  }
+  const finalE2eNeeds = workflowNeeds(workflow, "e2e");
+  invariant(
+    finalE2eNeeds.has("mobile-e2e-android") && finalE2eNeeds.has("mobile-e2e-ios"),
+    "final E2E qualification must depend on both representative mobile executions",
+  );
+  const finalExecutionGate = workflowJob(workflow, "e2e").steps.find(
+    (step) => step.name === "Check final release execution qualification",
+  );
+  invariant(
+    finalExecutionGate?.env?.SELECTED_JOBS_JSON === "${{ needs.affected.outputs.e2e_jobs }}"
+      && String(finalExecutionGate.run ?? "").includes("check-ci-gate.mjs selected"),
+    "final release execution qualification must enforce the planner-selected E2E jobs",
+  );
+  invariant(
+    workflowNeeds(workflow, "required").has("e2e")
+      && workflowNeeds(workflow, "qualified").has("required"),
+    "release qualification must remain downstream of final mobile execution qualification",
+  );
 }
 
 function platformPackageManifests(graph, targets) {
@@ -981,12 +1113,29 @@ export function validateRepository() {
   validateExtensionCarrierCoverage(inventory.graph, inventory.catalog, inventory.products);
   validateStructuredExtensionRecipes(inventory.products, inventory.extensions, inventory.graph);
   const ci = parseWorkflow(ROOT, ".github/workflows/ci.yml");
+  const release = parseWorkflow(ROOT, ".github/workflows/release.yml");
   validateCiArtifactCoverage(ci, inventory);
+  validateCrossFamilyIcuWorkflow(ci, release);
   const fullPlan = planForFullRun({ wasmTarget: "all", nativeTarget: "all", mobileTarget: "all" });
   const requiredProductBuilders = new Set([...BUILDER_JOBS].filter((job) => job !== "wasix-release-regression"));
   invariant([...requiredProductBuilders].every((job) => fullPlan.jobs.has(job)), "full CI planning must select every product artifact builder");
   const focusedWasix = planForFullRun({ wasmTarget: "linux-x64-gnu", nativeTarget: "all", mobileTarget: "all" });
   assertSameStrings(focusedWasix.jobs, ["affected", "extension-artifacts-wasix", "liboliphaunt-wasix-aot", "liboliphaunt-wasix-runtime"], "focused WASIX CI jobs");
+  const focusedAndroid = renderPlanForFullRun({
+    wasmTarget: "all",
+    nativeTarget: "android-arm64-v8a",
+    mobileTarget: "android",
+  });
+  assertSameStrings(
+    focusedAndroid.liboliphaunt_native_android_runtime_matrix.include.map(({ target }) => target),
+    ["android-arm64-v8a", "android-x86_64"],
+    "focused Android compatibility-domain runtime targets",
+  );
+  assertSameStrings(
+    focusedAndroid.react_native_android_mobile_app_matrix.include.map(({ target }) => target),
+    ["android-x86_64"],
+    "focused Android representative app target",
+  );
   invariant(rawArtifactTargetRows(TOOL).length === inventory.targets.length, "raw and normalized artifact target inventories must have equal cardinality");
   return {
     artifactTargets: inventory.targets.length,

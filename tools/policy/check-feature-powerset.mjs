@@ -11,5 +11,5 @@ run(PREFIX, "cargo", [
   "--feature-powerset",
   "--no-dev-deps",
   "--exclude-features",
-  "aot-serializer,template-runner",
+  "aot-serializer,cluster-seed-runner",
 ]);

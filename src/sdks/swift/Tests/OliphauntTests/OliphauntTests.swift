@@ -2,6 +2,12 @@ import Foundation
 @testable import Oliphaunt
 import Testing
 
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
+
 #if os(iOS) || os(macOS) || os(tvOS) || os(watchOS) || os(visionOS)
 @Test
 func discoversCocoaPodsRuntimeResourceBundlesBeforeTheyAreLoaded() throws {
@@ -212,6 +218,14 @@ func configurationForwardsOnlyExplicitPostgresSettings() async throws {
 }
 
 @Test
+func freshRootAcceptsOnlyFixedBootstrapRole() throws {
+    try requireOliphauntFreshRootRole("postgres")
+    #expect(throws: OliphauntError.self) {
+        try requireOliphauntFreshRootRole("alice")
+    }
+}
+
+@Test
 func startupGUCNamesUsePortablePostgresGrammar() async throws {
     try validateOliphauntStartupGUCs([
         .init("_name", ""),
@@ -365,10 +379,146 @@ func pgdataPublicationAdoptsACompleteWinnerWithoutReplacingIt() throws {
     let sentinel = destination.appendingPathComponent("winner")
     try Data("keep".utf8).write(to: sentinel)
 
-    try publishOliphauntPreparedPgdata(staging, to: destination)
+    let publication = try publishOliphauntPreparedPgdata(staging, to: destination)
 
+    #expect(publication == .existing)
     #expect(try String(contentsOf: sentinel, encoding: .utf8) == "keep")
     #expect(FileManager.default.fileExists(atPath: staging.path))
+}
+
+@Test
+func pgdataPublicationReportsAnOwnedDestination() throws {
+    let parent = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "oliphaunt-swift-owned-publication-\(UUID().uuidString)",
+        isDirectory: true
+    )
+    let staging = parent.appendingPathComponent("staging", isDirectory: true)
+    let destination = parent.appendingPathComponent("pgdata", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: parent) }
+    try makeCompletePgdata(at: staging)
+
+    var didPublish = false
+    let publication = try publishOliphauntPreparedPgdata(
+        staging,
+        to: destination,
+        didPublishDestination: { didPublish = true }
+    )
+
+    #expect(publication == .published)
+    #expect(didPublish)
+    #expect(!FileManager.default.fileExists(atPath: staging.path))
+    try validateOliphauntCompletePgdata(destination)
+}
+
+@Test
+func publicationTreeDurabilityRejectsSpecialEntries() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "oliphaunt-swift-special-publication-\(UUID().uuidString)",
+        isDirectory: true
+    )
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let fifo = root.appendingPathComponent("fifo")
+    let result = fifo.path.withCString { mkfifo($0, 0o600) }
+    #expect(result == 0)
+
+    do {
+        try makeOliphauntPublicationTreeDurable(root)
+        Issue.record("publication durability accepted a special entry")
+    } catch OliphauntError.engine(let message) {
+        #expect(message.contains("publication tree contains a special entry"))
+    }
+}
+
+@Test
+func stagingCleanupFailurePreventsSuccessAndComposesPrimaryFailure() {
+    let success: Result<Int, Error> = .success(1)
+    do {
+        _ = try finishOliphauntStaging(success, operation: "PGDATA preparation") {
+            throw ManagedRootPublicationTestError.cleanup
+        }
+        Issue.record("cleanup failure must prevent PGDATA preparation success")
+    } catch OliphauntError.engine(let message) {
+        #expect(message.contains("PGDATA preparation staging cleanup failed"))
+    } catch {
+        Issue.record("unexpected PGDATA staging cleanup error: \(error)")
+    }
+
+    let failure: Result<Int, Error> = .failure(ManagedRootPublicationTestError.publication)
+    do {
+        _ = try finishOliphauntStaging(failure, operation: "PGDATA preparation") {
+            throw ManagedRootPublicationTestError.cleanup
+        }
+    } catch OliphauntError.engine(let message) {
+        #expect(message.contains("PGDATA preparation failed"))
+        #expect(message.contains("staging cleanup failed"))
+    } catch {
+        Issue.record("unexpected composed PGDATA staging error: \(error)")
+    }
+}
+
+@Test
+func managedRootFailureCleansOnlyWhenDescriptorIsDefinitelyAbsent() {
+    let scenarios: [(owns: Bool, descriptorAbsent: Bool, expectedCalls: [String])] = [
+        (true, true, ["remove", "sync"]),
+        (true, false, []),
+        (false, true, []),
+    ]
+    for scenario in scenarios {
+        var calls: [String] = []
+        do {
+            try recoverOliphauntManagedRootPublicationFailure(
+                ManagedRootPublicationTestError.publication,
+                ownsPublishedPgdata: scenario.owns,
+                descriptorDefinitelyAbsent: { scenario.descriptorAbsent },
+                removePublishedPgdata: { calls.append("remove") },
+                syncRoot: { calls.append("sync") }
+            )
+        } catch ManagedRootPublicationTestError.publication {
+            #expect(calls == scenario.expectedCalls)
+        } catch {
+            Issue.record("unexpected managed-root recovery error: \(error)")
+        }
+    }
+}
+
+@Test
+func managedRootFailureSurfacesCleanupFailure() {
+    do {
+        try recoverOliphauntManagedRootPublicationFailure(
+            ManagedRootPublicationTestError.publication,
+            ownsPublishedPgdata: true,
+            descriptorDefinitelyAbsent: { true },
+            removePublishedPgdata: { throw ManagedRootPublicationTestError.cleanup },
+            syncRoot: {}
+        )
+        Issue.record("managed-root recovery should throw")
+    } catch OliphauntError.engine(let message) {
+        #expect(message.contains("descriptor publication failed"))
+        #expect(message.contains("failed to clean uncommitted PGDATA"))
+    } catch {
+        Issue.record("unexpected managed-root recovery error: \(error)")
+    }
+}
+
+@Test
+func managedRootFailurePreservesPgdataWhenDescriptorInspectionIsUncertain() {
+    var calls: [String] = []
+    do {
+        try recoverOliphauntManagedRootPublicationFailure(
+            ManagedRootPublicationTestError.publication,
+            ownsPublishedPgdata: true,
+            descriptorDefinitelyAbsent: { throw ManagedRootPublicationTestError.inspection },
+            removePublishedPgdata: { calls.append("remove") },
+            syncRoot: { calls.append("sync") }
+        )
+    } catch OliphauntError.engine(let message) {
+        #expect(message.contains("descriptor publication is uncertain"))
+        #expect(message.contains("publication"))
+        #expect(calls.isEmpty)
+    } catch {
+        Issue.record("unexpected descriptor-inspection error: \(error)")
+    }
 }
 
 private final class TestEngine: OliphauntEngine, @unchecked Sendable {
@@ -501,6 +651,12 @@ private func rowResponse(value: String, commandTag: String) -> Data {
 
 private let nativeRootDescriptor =
     "{\"schema\":\"oliphaunt-database-root-v1\",\"engineFamily\":\"native\",\"pgdata\":\"pgdata\",\"postgresMajor\":18,\"physicalFormat\":\"native-pg18-v1\"}\n"
+
+private enum ManagedRootPublicationTestError: Error {
+    case publication
+    case cleanup
+    case inspection
+}
 
 private func databaseRootFixture() throws -> [String: Any] {
     let source = URL(fileURLWithPath: #filePath)

@@ -25,7 +25,7 @@ use wasmer_wasix::virtual_net::{
 };
 use wasmer_wasix::{PluggableRuntime, VirtualFile};
 
-use crate::oliphaunt::base::{install_optional_icu_data, unpack_runtime_archive_reader};
+use crate::oliphaunt::base::unpack_runtime_archive_reader;
 use crate::oliphaunt::sync_host_fs::SyncHostFileSystem;
 use crate::oliphaunt::{aot, assets};
 
@@ -453,8 +453,6 @@ where
             fs_root.path(),
         )
         .with_context(|| format!("install WASIX runtime files for {name}"))?;
-        install_optional_icu_data(&fs_root.path().join("oliphaunt"))
-            .with_context(|| format!("install WASIX ICU data for {name}"))?;
     }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -500,9 +498,6 @@ where
         Some(input) => runner.with_stdin(Box::new(virtual_fs::StaticFile::new(input))),
         None => runner.with_stdin(Box::<virtual_fs::null_file::NullFile>::default()),
     };
-    if fs_root.path().join("oliphaunt/share/icu").is_dir() {
-        runner.with_envs([("ICU_DATA", "/oliphaunt/share/icu")]);
-    }
     if let Err(cause) = runner.run_wasm(
         RuntimeOrEngine::Runtime(Arc::new(wasix_runtime)),
         name,

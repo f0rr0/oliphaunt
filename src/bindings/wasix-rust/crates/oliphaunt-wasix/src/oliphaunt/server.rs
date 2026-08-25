@@ -303,7 +303,10 @@ impl OliphauntServerBuilder {
 
         let prepared_database = {
             let plan = DatabasePlan::new(self.storage.clone());
-            run_blocking("oliphaunt-storage-prepare", move || prepare_database(plan))?
+            let initial_username = startup_config.username.clone();
+            run_blocking("oliphaunt-storage-prepare", move || {
+                prepare_database(plan, &initial_username)
+            })?
         };
         let PreparedDatabase {
             workspace,

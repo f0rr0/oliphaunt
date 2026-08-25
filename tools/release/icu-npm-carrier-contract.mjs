@@ -1,14 +1,12 @@
 #!/usr/bin/env bun
 
 import { createHash } from "node:crypto";
-import {
-  logicalTreeSha256,
-  validateNativeClusterSeedManifest,
-} from "./native-cluster-seed-contract.mjs";
+import { validateNativeIcuDataManifestRows } from "./native-icu-data-contract.mjs";
 
 export const ICU_BUNDLE_DIRECTORY = "OliphauntICU.bundle";
 export const ICU_DATA_RELATIVE_PATH = `${ICU_BUNDLE_DIRECTORY}/share/icu`;
-export const ICU_CLUSTER_SEED_RELATIVE_PATH = `${ICU_BUNDLE_DIRECTORY}/cluster-seed`;
+export const ICU_MANIFEST_RELATIVE_PATH = `${ICU_BUNDLE_DIRECTORY}/manifest.properties`;
+export const ICU_UNSTAGED_TREE_SHA256 = "x-release-icu-data-tree-sha256";
 export const ICU_REACT_NATIVE_CONFIG = "react-native.config.js";
 export const ICU_PODSPEC = "OliphauntICU.podspec";
 
@@ -66,7 +64,11 @@ export function assertIcuPodspec(bytes, label = ICU_PODSPEC) {
   }
 }
 
-export function assertIcuPackageManifest(packageJson, label = "@oliphaunt/icu package.json") {
+export function assertIcuPackageManifest(
+  packageJson,
+  label = "@oliphaunt/icu package.json",
+  { allowUnstagedDigest = false } = {},
+) {
   if (packageJson === null || typeof packageJson !== "object" || Array.isArray(packageJson)) {
     contractError(label, "must be an object");
   }
@@ -79,11 +81,15 @@ export function assertIcuPackageManifest(packageJson, label = "@oliphaunt/icu pa
     || metadata?.kind !== "icu-data"
     || metadata?.target !== "portable"
     || metadata?.dataRelativePath !== ICU_DATA_RELATIVE_PATH
-    || metadata?.clusterSeedRelativePath !== ICU_CLUSTER_SEED_RELATIVE_PATH
+    || metadata?.manifestRelativePath !== ICU_MANIFEST_RELATIVE_PATH
+    || !(
+      /^[0-9a-f]{64}$/u.test(metadata?.icuDataTreeSha256 ?? "")
+      || (allowUnstagedDigest && metadata?.icuDataTreeSha256 === ICU_UNSTAGED_TREE_SHA256)
+    )
   ) {
     contractError(
       label,
-      `must declare portable oliphaunt-icu metadata with matching ICU data and cluster-seed paths`,
+      "must declare portable oliphaunt-icu metadata with matching ICU data, manifest, and tree digest",
     );
   }
   if (!Array.isArray(packageJson.files)) {
@@ -207,35 +213,34 @@ export function assertIcuPackedDataMatchesSource({
 export function assertIcuPackedClosureMatchesSource({
   packedEntries,
   sourceEntries,
+  packageJson,
   label = "@oliphaunt/icu npm tarball",
   sourceLabel = "liboliphaunt ICU data release asset",
 }) {
   assertIcuPackedDataMatchesSource({ packedEntries, sourceEntries, label, sourceLabel });
-  const packedSeedRoot = `${PACKED_ROOT}/${ICU_CLUSTER_SEED_RELATIVE_PATH}`;
-  const packedSeed = archiveFileManifest(packedEntries, packedSeedRoot, label);
-  const sourceSeed = archiveFileManifest(sourceEntries, "cluster-seed", sourceLabel);
-  if (JSON.stringify(packedSeed) !== JSON.stringify(sourceSeed)) {
-    contractError(label, `ICU cluster seed differs from ${sourceLabel}`);
-  }
-  const sourceDataRows = [...sourceEntries]
-    .filter(([name, entry]) => entry.isFile === true && name.startsWith("share/icu/"))
-    .map(([name, entry]) => ({
-      path: name.slice("share/icu/".length),
-      bytes: entry.data(),
-    }));
-  const packedManifest = packedEntries.get(`${packedSeedRoot}/manifest.properties`)?.data();
-  const sourceManifest = sourceEntries.get("cluster-seed/manifest.properties")?.data();
+  const packedManifest = packedEntries.get(`${PACKED_ROOT}/${ICU_MANIFEST_RELATIVE_PATH}`)?.data();
+  const sourceManifest = sourceEntries.get("manifest.properties")?.data();
   if (packedManifest === undefined || sourceManifest === undefined) {
-    contractError(label, "ICU runtime closure is missing its cluster seed manifest");
+    contractError(label, "ICU data closure is missing its manifest");
   }
   if (!Buffer.from(packedManifest).equals(Buffer.from(sourceManifest))) {
-    contractError(label, `ICU cluster seed manifest differs from ${sourceLabel}`);
+    contractError(label, `ICU data manifest differs from ${sourceLabel}`);
   }
   try {
-    validateNativeClusterSeedManifest(packedManifest, "icu", {
-      icuDataTreeSha256: logicalTreeSha256(sourceDataRows),
-      label: `${label} ${packedSeedRoot}/manifest.properties`,
-    });
+    const sourceDataRows = [...sourceEntries]
+      .filter(([name, entry]) => entry.isFile === true && name.startsWith("share/icu/"))
+      .map(([name, entry]) => ({
+        path: name.slice("share/icu/".length),
+        bytes: entry.data(),
+      }));
+    const receipt = validateNativeIcuDataManifestRows(
+      packedManifest,
+      sourceDataRows,
+      `${label} ${ICU_MANIFEST_RELATIVE_PATH}`,
+    );
+    if (packageJson?.oliphaunt?.icuDataTreeSha256 !== receipt.icuDataTreeSha256) {
+      contractError(label, "package metadata and ICU data manifest identify different logical trees");
+    }
   } catch (error) {
     contractError(label, error instanceof Error ? error.message : String(error));
   }
@@ -288,11 +293,13 @@ export function assertIcuPackedInventory(entries, label = "@oliphaunt/icu npm ta
   })) {
     contractError(label, `is missing ${PACKED_DATA_ROOT}/icudt* data files`);
   }
-  const seedRoot = `${PACKED_ROOT}/${ICU_CLUSTER_SEED_RELATIVE_PATH}`;
-  for (const relative of ["manifest.properties", "files/PG_VERSION", "files/global/pg_control"]) {
-    if (byName.get(`${seedRoot}/${relative}`)?.isFile !== true) {
-      contractError(label, `is missing ICU cluster seed file ${seedRoot}/${relative}`);
-    }
+  const manifest = `${PACKED_ROOT}/${ICU_MANIFEST_RELATIVE_PATH}`;
+  if (byName.get(manifest)?.isFile !== true) {
+    contractError(label, `is missing ICU data manifest ${manifest}`);
+  }
+  const seedMembers = inventory.filter(({ name }) => /(?:^|\/)cluster-seed(?:\/|$)/u.test(name));
+  if (seedMembers.length > 0) {
+    contractError(label, `must not contain a target-specific cluster seed: ${seedMembers[0].name}`);
   }
 }
 

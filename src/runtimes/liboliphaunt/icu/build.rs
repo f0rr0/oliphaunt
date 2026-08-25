@@ -20,14 +20,12 @@ fn main() {
     if let Some(archive) = find_packaged_icu_archive() {
         println!("cargo:rerun-if-changed={}", archive.display());
         let extracted_root = unpack_icu_archive(&archive, &out_dir.join("icu-data-expanded"));
-        write_generated_icu(&out, Some(&archive));
-        emit_artifact_manifest(&out_dir, &extracted_root);
+        emit_icu_artifact(&out, &out_dir, &archive, &extracted_root);
     } else if let Some(icu_root) = find_icu_data_root() {
         emit_rerun_directives(&icu_root);
         let archive = out_dir.join("icu-data.tar.zst");
         write_icu_archive(&icu_root, &archive);
-        write_generated_icu(&out, Some(&archive));
-        emit_artifact_manifest(&out_dir, &icu_root);
+        emit_icu_artifact(&out, &out_dir, &archive, &icu_root);
     } else {
         if env::var_os("OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD").is_some() {
             panic!(
@@ -36,6 +34,13 @@ fn main() {
         }
         write_generated_icu(&out, None);
     }
+}
+
+fn emit_icu_artifact(out: &Path, out_dir: &Path, archive: &Path, icu_root: &Path) {
+    let archive_sha256 = sha256_file(archive).expect("digest ICU data archive");
+    let data_tree_sha256 = logical_tree_sha256(icu_root).expect("digest ICU logical data tree");
+    write_generated_icu(out, Some((archive, &archive_sha256, &data_tree_sha256)));
+    emit_artifact_manifest(out_dir, icu_root, &data_tree_sha256);
 }
 
 fn find_packaged_icu_archive() -> Option<PathBuf> {
@@ -179,22 +184,8 @@ fn directory_has_file(path: &Path) -> bool {
 
 fn emit_rerun_directives(root: &Path) {
     println!("cargo:rerun-if-changed={}", root.display());
-    visit_files(root, &mut |path| {
+    for path in collect_files(root).expect("collect ICU data files for rerun tracking") {
         println!("cargo:rerun-if-changed={}", path.display());
-    });
-}
-
-fn visit_files(path: &Path, f: &mut impl FnMut(&Path)) {
-    let Ok(entries) = fs::read_dir(path) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            visit_files(&path, f);
-        } else if path.is_file() {
-            f(&path);
-        }
     }
 }
 
@@ -223,24 +214,28 @@ fn write_icu_archive(icu_root: &Path, archive: &Path) {
     encoder.finish().expect("finish ICU zstd archive");
 }
 
-fn write_generated_icu(out: &Path, archive: Option<&Path>) {
+fn write_generated_icu(out: &Path, archive: Option<(&Path, &str, &str)>) {
     let text = match archive {
-        Some(archive) => format!(
+        Some((archive, archive_sha256, data_tree_sha256)) => format!(
             "pub const HAS_ICU_DATA: bool = true;\n\
+             pub const ICU_DATA_ARCHIVE_SHA256: Option<&str> = Some({archive_sha256:?});\n\
+             pub const ICU_DATA_TREE_SHA256: Option<&str> = Some({data_tree_sha256:?});\n\
              pub fn icu_data_archive() -> Option<&'static [u8]> {{ Some(include_bytes!({archive:?})) }}\n",
             archive = archive.to_string_lossy(),
         ),
-        None => "pub const HAS_ICU_DATA: bool = false;\npub fn icu_data_archive() -> Option<&'static [u8]> { None }\n"
+        None => "pub const HAS_ICU_DATA: bool = false;\n\
+                 pub const ICU_DATA_ARCHIVE_SHA256: Option<&str> = None;\n\
+                 pub const ICU_DATA_TREE_SHA256: Option<&str> = None;\n\
+                 pub fn icu_data_archive() -> Option<&'static [u8]> { None }\n"
             .to_owned(),
     };
     fs::write(out, text).expect("write generated ICU data module");
 }
 
-fn emit_artifact_manifest(out_dir: &Path, icu_root: &Path) {
+fn emit_artifact_manifest(out_dir: &Path, icu_root: &Path, data_tree_sha256: &str) {
     let version = env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION is set by Cargo");
     let manifest_path = out_dir.join("oliphaunt-artifact.toml");
     let files = collect_files(icu_root).expect("collect ICU data files for manifest");
-    let data_tree_sha256 = logical_tree_sha256(icu_root).expect("digest ICU logical data tree");
     let mut text = format!(
         "schema = {ARTIFACT_SCHEMA:?}\nproduct = {ARTIFACT_PRODUCT:?}\nversion = {version:?}\nkind = {ARTIFACT_KIND:?}\ntarget = {ARTIFACT_TARGET:?}\ndata_tree_sha256 = {data_tree_sha256:?}\ndata_version = \"76.1\"\ndata_form = \"files-le\"\n"
     );

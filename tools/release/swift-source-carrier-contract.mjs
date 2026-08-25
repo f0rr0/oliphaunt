@@ -131,7 +131,7 @@ export function validateSelectionNeutralSwiftSourceCarrier(
     {
       format: "tar.gz",
       member: "oliphaunt",
-      name: `liboliphaunt-${base.version}-runtime-resources.tar.gz`,
+      name: `liboliphaunt-${base.version}-runtime-resources-ios-datum64.tar.gz`,
       role: "runtime-resources",
     },
     {

@@ -137,6 +137,16 @@ pub(super) fn sync_directory_tree(path: &Path) -> Result<()> {
                 .map_err(|err| {
                     Error::Engine(format!("sync file {}: {err}", entry_path.display()))
                 })?;
+        } else if file_type.is_symlink() {
+            return Err(Error::Engine(format!(
+                "native PGDATA publication contains a symbolic link: {}",
+                entry_path.display()
+            )));
+        } else {
+            return Err(Error::Engine(format!(
+                "native PGDATA publication contains a special file: {}",
+                entry_path.display()
+            )));
         }
     }
     sync_directory(path)

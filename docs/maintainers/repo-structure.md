@@ -177,8 +177,8 @@ support behavior honestly; gaps must be explicit and justified in
   release workspace assembly lives in `tools/xtask/src/release_workspace.rs`,
   source-pin and source-spine handling lives in
   `tools/xtask/src/source_spine.rs`, PostgreSQL source/patch-surface guards
-  live in `tools/xtask/src/postgres_guard.rs`, template execution lives in
-  `tools/xtask/src/template_runner.rs`, and AOT serialization lives in
+  live in `tools/xtask/src/postgres_guard.rs`, cluster-seed execution lives in
+  `tools/xtask/src/cluster_seed_runner.rs`, and AOT serialization lives in
   `tools/xtask/src/aot_serializer.rs`. Performance benchmark workload/result
   construction lives in `tools/perf/runner/src/benchmarks.rs`, and report DTOs
   live in `tools/perf/runner/src/report.rs`. Native liboliphaunt execution,

@@ -44,6 +44,7 @@ use wasix_fs::{host_filesystem, wasi_root_with_devices};
 const POSTGRES_EXE_PATH: &str = "/bin/postgres";
 const PGDATA_DIR: &str = "/base";
 const ICU_DATA_DIR: &str = "/share/icu";
+const SKIP_ICU_COLLATION_DISCOVERY_ENV: &str = "OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY";
 const WASM_PREFIX: &str = "/";
 const RUNTIME_SIDE_MODULES: &[(&str, &str)] = &[
     ("plpgsql.so", "runtime-support:plpgsql"),
@@ -1083,12 +1084,9 @@ fn run_split_initdb(runtime_layout: &RuntimeLayout, pgdata_storage: &PgDataStora
         .with_stdin(Box::<NullFile>::default())
         .with_stdout(Box::new(stdout_file))
         .with_stderr(Box::new(stderr_file));
-    if wasix_icu_data_is_available(runtime_layout) {
-        runner.with_envs([
-            ("ICU_DATA", ICU_DATA_DIR),
-            ("OLIPHAUNT_INTERNAL_ICU_READY", "1"),
-        ]);
-    }
+    runner.with_envs(split_initdb_profile_environment(
+        wasix_icu_data_is_available(runtime_layout),
+    ));
 
     {
         let result =
@@ -1705,6 +1703,17 @@ fn wasix_icu_data_is_available(runtime_layout: &RuntimeLayout) -> bool {
         || runtime_layout.module_root.join("share/icu").is_dir()
 }
 
+fn split_initdb_profile_environment(icu_data_available: bool) -> Vec<(&'static str, &'static str)> {
+    if icu_data_available {
+        vec![
+            ("ICU_DATA", ICU_DATA_DIR),
+            ("OLIPHAUNT_INTERNAL_ICU_READY", "1"),
+        ]
+    } else {
+        vec![(SKIP_ICU_COLLATION_DISCOVERY_ENV, "1")]
+    }
+}
+
 fn add_oliphaunt_env(
     builder: &mut wasmer_wasix::WasiEnvBuilder,
     startup_config: &StartupConfig,
@@ -1988,6 +1997,21 @@ mod tests {
                 .any(|tail| tail == ["--", "--io-method=worker"])
         );
         Ok(())
+    }
+
+    #[test]
+    fn split_initdb_selects_exact_collation_profile_environment() {
+        assert_eq!(
+            split_initdb_profile_environment(false),
+            vec![(SKIP_ICU_COLLATION_DISCOVERY_ENV, "1")]
+        );
+        assert_eq!(
+            split_initdb_profile_environment(true),
+            vec![
+                ("ICU_DATA", ICU_DATA_DIR),
+                ("OLIPHAUNT_INTERNAL_ICU_READY", "1"),
+            ]
+        );
     }
 
     #[test]

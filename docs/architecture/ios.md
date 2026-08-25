@@ -7,7 +7,7 @@ Apple platforms delegates to the same Swift implementation.
 
 - One PostgreSQL backend is resident in the app process.
 - One physical PostgreSQL session is serialized by the SDK.
-- Native runtime, template, and exact selected-extension resources are packaged
+- Native runtime, cluster-seed, and exact selected-extension resources are packaged
   into the app.
 - App-owned storage is a managed root containing exactly `pgdata` and the
   `.oliphaunt.json` descriptor. PostgreSQL owns `pg_wal` inside `pgdata`.

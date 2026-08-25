@@ -329,60 +329,40 @@ function decodeStartupText(bytes: Uint8Array, label: string): string {
 }
 
 export class FrontendFrameReader {
-  #buffer = new Uint8Array();
-  #start = 0;
-  #end = 0;
-  #pullFrame: Uint8Array | undefined;
-  #pullOffset = 0;
+  readonly #chunks: Uint8Array[] = [];
+  readonly #header = new Uint8Array(5);
+  #headIndex = 0;
+  #headOffset = 0;
+  #bufferedBytes = 0;
+  #frameLength: number | undefined;
+  #pullRemaining: number | undefined;
 
   append(input: Uint8Array): void {
     if (input.length === 0) return;
-    const buffered = this.#end - this.#start;
-    if (input.length > this.#buffer.length - this.#end) {
-      if (input.length <= this.#buffer.length - buffered) {
-        this.#buffer.copyWithin(0, this.#start, this.#end);
-      } else {
-        const required = buffered + input.length;
-        const capacity = Math.max(
-          required,
-          this.#buffer.length === 0 ? 1024 : this.#buffer.length * 2,
-        );
-        const grown = new Uint8Array(capacity);
-        grown.set(this.#buffer.subarray(this.#start, this.#end));
-        this.#buffer = grown;
-      }
-      this.#start = 0;
-      this.#end = buffered;
-    }
-    this.#buffer.set(input, this.#end);
-    this.#end += input.length;
+    this.#chunks.push(input);
+    this.#bufferedBytes += input.length;
   }
 
   shift(): Uint8Array | undefined {
-    if (this.#pullFrame !== undefined) {
+    if (this.#pullRemaining !== undefined) {
       throw new Error('PostgreSQL frontend pull frame is still active');
     }
-    const length = frontendFrameLength(this.#buffer.subarray(this.#start, this.#end));
-    if (length === undefined) return undefined;
-    const frame = this.#buffer.slice(this.#start, this.#start + length);
-    this.#start += length;
-    if (this.#start === this.#end) {
-      this.#start = 0;
-      this.#end = 0;
-    }
-    return frame;
+    const length = this.#nextFrameLength();
+    if (length === undefined || this.#bufferedBytes < length) return undefined;
+    this.#frameLength = undefined;
+    return this.#take(length);
   }
 
-  /** Supply at most one complete frontend frame at a time to COPY's pull transport. */
+  /** Stream one frontend frame at a time to COPY's synchronous pull transport. */
   readFrameChunk(maximumBytes: number, read: () => Uint8Array): Uint8Array {
     if (!Number.isSafeInteger(maximumBytes) || maximumBytes <= 0) {
       throw new TypeError('maximum frontend byte count must be a positive integer');
     }
-    while (this.#pullFrame === undefined) {
-      const frame = this.shift();
-      if (frame !== undefined) {
-        this.#pullFrame = frame;
-        this.#pullOffset = 0;
+    while (this.#pullRemaining === undefined) {
+      const length = this.#nextFrameLength();
+      if (length !== undefined) {
+        this.#pullRemaining = length;
+        this.#frameLength = undefined;
         break;
       }
       const input = read();
@@ -392,41 +372,117 @@ export class FrontendFrameReader {
       }
       this.append(input);
     }
-    const frame = this.#pullFrame;
-    if (frame === undefined) return new Uint8Array();
-    const end = Math.min(frame.length, this.#pullOffset + maximumBytes);
-    // The pull callback consumes the bytes synchronously, so retain a view of
-    // the already-owned frame instead of copying every COPY input chunk.
-    const output = frame.subarray(this.#pullOffset, end);
-    this.#pullOffset = end;
-    if (end === frame.length) {
-      this.#pullFrame = undefined;
-      this.#pullOffset = 0;
+    while (this.#bufferedBytes === 0) {
+      const input = read();
+      if (input.length === 0) {
+        this.finish();
+        return input;
+      }
+      this.append(input);
     }
+    const remaining = this.#pullRemaining;
+    if (remaining === undefined) return new Uint8Array();
+    const output = this.#take(Math.min(maximumBytes, remaining, this.#bufferedBytes), false);
+    const nextRemaining = remaining - output.length;
+    this.#pullRemaining = nextRemaining === 0 ? undefined : nextRemaining;
     return output;
   }
 
   finishPull(): void {
-    if (this.#pullFrame !== undefined) {
+    if (this.#pullRemaining !== undefined) {
       throw new Error('PostgreSQL COPY input stopped inside a frontend message');
     }
   }
 
   finish(): void {
     this.finishPull();
-    if (this.#start !== this.#end) {
+    if (this.#bufferedBytes !== 0) {
       throw new Error('PostgreSQL frontend connection ended inside a message');
+    }
+  }
+
+  #nextFrameLength(): number | undefined {
+    if (this.#frameLength !== undefined) return this.#frameLength;
+    const required = this.#peekByte() === 0 ? 4 : 5;
+    if (this.#bufferedBytes < required) return undefined;
+    this.#copyPrefix(this.#header, required);
+    const length = frontendFrameLengthFromHeader(this.#header.subarray(0, required));
+    if (length !== undefined) this.#frameLength = length;
+    return length;
+  }
+
+  #peekByte(): number | undefined {
+    return this.#chunks[this.#headIndex]?.[this.#headOffset];
+  }
+
+  #copyPrefix(output: Uint8Array, length: number): void {
+    let outputOffset = 0;
+    let chunkIndex = this.#headIndex;
+    let chunkOffset = this.#headOffset;
+    while (outputOffset < length) {
+      const chunk = this.#chunks[chunkIndex];
+      if (chunk === undefined) throw new Error('PostgreSQL frontend buffer is inconsistent');
+      const copied = Math.min(length - outputOffset, chunk.length - chunkOffset);
+      output.set(chunk.subarray(chunkOffset, chunkOffset + copied), outputOffset);
+      outputOffset += copied;
+      chunkIndex += 1;
+      chunkOffset = 0;
+    }
+  }
+
+  #take(maximumBytes: number, coalesce = true): Uint8Array {
+    const head = this.#chunks[this.#headIndex];
+    if (head === undefined || maximumBytes <= 0 || maximumBytes > this.#bufferedBytes) {
+      throw new Error('PostgreSQL frontend buffer is inconsistent');
+    }
+    const available = head.length - this.#headOffset;
+    const length = coalesce ? maximumBytes : Math.min(maximumBytes, available);
+    if (length <= available) {
+      const output = head.subarray(this.#headOffset, this.#headOffset + length);
+      this.#consume(length);
+      return output;
+    }
+    const output = new Uint8Array(length);
+    let offset = 0;
+    while (offset < length) {
+      const chunk = this.#chunks[this.#headIndex];
+      if (chunk === undefined) throw new Error('PostgreSQL frontend buffer is inconsistent');
+      const copied = Math.min(length - offset, chunk.length - this.#headOffset);
+      output.set(chunk.subarray(this.#headOffset, this.#headOffset + copied), offset);
+      this.#consume(copied);
+      offset += copied;
+    }
+    return output;
+  }
+
+  #consume(length: number): void {
+    const head = this.#chunks[this.#headIndex];
+    if (head === undefined || length > head.length - this.#headOffset) {
+      throw new Error('PostgreSQL frontend buffer is inconsistent');
+    }
+    this.#headOffset += length;
+    this.#bufferedBytes -= length;
+    if (this.#headOffset === head.length) {
+      this.#headIndex += 1;
+      this.#headOffset = 0;
+      if (this.#headIndex === this.#chunks.length) {
+        this.#chunks.length = 0;
+        this.#headIndex = 0;
+      } else if (this.#headIndex >= 1_024 && this.#headIndex * 2 >= this.#chunks.length) {
+        this.#chunks.splice(0, this.#headIndex);
+        this.#headIndex = 0;
+      }
     }
   }
 }
 
-function frontendFrameLength(input: Uint8Array): number | undefined {
+function frontendFrameLengthFromHeader(input: Uint8Array): number | undefined {
   if (input.length < 4) return undefined;
   const view = new DataView(input.buffer, input.byteOffset, input.byteLength);
   if (input[0] === 0) {
     const length = view.getInt32(0);
     validateFrontendLength(length, 8, 'startup/control packet');
-    return input.length >= length ? length : undefined;
+    return length;
   }
   if (input.length < 5) return undefined;
   const bodyLength = view.getInt32(1);
@@ -435,7 +491,7 @@ function frontendFrameLength(input: Uint8Array): number | undefined {
   if (length > MAX_FRONTEND_MESSAGE_BYTES) {
     throw new Error(`PostgreSQL frontend message length ${length} exceeds limit`);
   }
-  return input.length >= length ? length : undefined;
+  return length;
 }
 
 function validateFrontendLength(length: number, minimum: number, label: string): void {

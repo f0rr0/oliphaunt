@@ -172,7 +172,7 @@ test("produces exact local and GitHub carrier envelopes without consulting trunc
       insideMember: true,
       profile: "native-runtime",
     });
-    archive(base, `liboliphaunt-${version}-runtime-resources.tar.gz`, "oliphaunt", "tar.gz", {
+    archive(base, `liboliphaunt-${version}-runtime-resources-ios-datum64.tar.gz`, "oliphaunt", "tar.gz", {
       insideMember: false,
       profile: "native-runtime-resources",
     });
@@ -232,7 +232,7 @@ test("produces exact local and GitHub carrier envelopes without consulting trunc
     assert.deepEqual(local.legal.base.map(({ spdx }) => spdx), [
       "MIT AND PostgreSQL AND Unicode-3.0",
       "MIT AND PostgreSQL",
-      "MIT AND PostgreSQL AND Unicode-3.0",
+      "MIT AND Unicode-3.0",
     ]);
     assert.deepEqual(local.extensions.map(({ sqlName }) => sqlName), ["pgtap", "postgis"]);
     assert.deepEqual(local.legal.extensions.map(({ sqlName }) => sqlName), ["pgtap", "postgis"]);

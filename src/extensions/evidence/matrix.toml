@@ -20,6 +20,8 @@ source-digest-inputs = [
   "src/extensions/external/postgis/dependencies/sqlite/source.toml",
   "src/extensions/external/postgis/source.toml",
   "src/extensions/external/vector/source.toml",
+  "src/sources/third-party/native/icu-windows.toml",
+  "src/sources/third-party/shared/icu-data.toml",
   "src/sources/third-party/shared/icu.toml",
   "src/sources/third-party/shared/openssl.toml",
   "src/extensions/external/README.md",

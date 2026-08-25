@@ -892,11 +892,27 @@ val sharedFixturesDirectory =
         ?: rootProject.layout.projectDirectory
             .dir("../../shared/fixtures")
             .asFile
+val sharedClusterSeedFixturesDirectory =
+    listOf(
+        rootProject.layout.projectDirectory
+            .dir("../../shared/cluster-seed-contract/fixtures")
+            .asFile,
+        project.layout.projectDirectory
+            .dir("../../../shared/cluster-seed-contract/fixtures")
+            .asFile,
+    ).firstOrNull { it.isDirectory }
+        ?: rootProject.layout.projectDirectory
+            .dir("../../shared/cluster-seed-contract/fixtures")
+            .asFile
 
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     systemProperty(
         "oliphaunt.sharedFixturesDir",
         sharedFixturesDirectory.absolutePath,
+    )
+    systemProperty(
+        "oliphaunt.clusterSeedFixturesDir",
+        sharedClusterSeedFixturesDirectory.absolutePath,
     )
 }
 

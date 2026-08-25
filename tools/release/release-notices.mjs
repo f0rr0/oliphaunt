@@ -30,7 +30,7 @@ export const RELEASE_CARRIER_PROFILES = Object.freeze({
   "native-runtime": Object.freeze({ products: Object.freeze(["native"]), components: Object.freeze(["postgresql", "icu"]) }),
   "native-tools": Object.freeze({ products: Object.freeze(["native"]), components: Object.freeze(["postgresql"]) }),
   "native-runtime-resources": Object.freeze({ products: Object.freeze(["native"]), components: Object.freeze(["postgresql"]) }),
-  "native-icu-data": Object.freeze({ products: Object.freeze(["native"]), components: Object.freeze(["postgresql", "icu"]) }),
+  "native-icu-data": Object.freeze({ products: Object.freeze(["native"]), components: Object.freeze(["icu"]) }),
   "wasix-runtime": Object.freeze({ products: Object.freeze(["wasix"]), components: Object.freeze(["postgresql", "icu"]) }),
   "wasix-tools": Object.freeze({ products: Object.freeze(["wasix"]), components: Object.freeze(["postgresql", "icu"]) }),
   "wasix-aot": Object.freeze({ products: Object.freeze(["wasix"]), components: Object.freeze(["postgresql", "icu"]) }),

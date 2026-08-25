@@ -38,11 +38,14 @@ export type StorageDirectory = {
 
 export type WasixStorageSyncBoundary = 'operation' | 'checkpoint' | 'close';
 
+/** Load the package-owned seed only after exclusive storage inspection finds a new root. */
+export type WasixClusterSeedLoader = () => Promise<WasixDirectoryMount>;
+
 export type WasixStorageLease = {
-  /** Whether PGDATA came from the packaged template or persistent storage. */
+  /** Whether PGDATA came from the packaged cluster seed or persistent storage. */
   readonly state: 'new' | 'existing';
   /** Initial contents for a portable `/base` Wasmer memory mount. */
-  readonly mount: WasixDirectoryMount;
+  readonly mount?: WasixDirectoryMount;
   /** Optional direct PGDATA materializer; portable providers omit it. */
   createPgdataDirectory?(DirectoryConstructor: typeof Directory): Promise<Directory>;
   /** Complete the provider's PostgreSQL-safe persistence boundary. */
@@ -52,7 +55,7 @@ export type WasixStorageLease = {
 
 export type NodeDirectoryStorageAcquirer = (
   path: string,
-  template: WasixDirectoryMount,
+  loadClusterSeed: WasixClusterSeedLoader,
   identity: WasixPhysicalIdentity,
   ownerToken?: string,
 ) => Promise<WasixStorageLease>;
@@ -111,7 +114,7 @@ export async function restoreWasixStorage(
 
 export async function acquireWasixStorage(
   storage: SerializedWasixStorage,
-  template: WasixDirectoryMount,
+  loadClusterSeed: WasixClusterSeedLoader,
   identity: WasixPhysicalIdentity,
 ): Promise<WasixStorageLease> {
   if (storage.schema !== 'oliphaunt-wasix-storage-v1') {
@@ -122,16 +125,16 @@ export async function acquireWasixStorage(
   }
   switch (storage.kind) {
     case 'memory':
-      return memoryLease(template);
+      return memoryLease(await loadClusterSeed());
     case 'indexed-db': {
       validateIndexedDbDatabaseName(storage.name);
       const { acquireIndexedDbStorage } = await import('./storage/indexed-db-provider.js');
-      return acquireIndexedDbStorage(storage.name, template, identity);
+      return acquireIndexedDbStorage(storage.name, loadClusterSeed, identity);
     }
     case 'opfs': {
       validateOpfsDatabaseName(storage.name);
       const { acquireOpfsStorage } = await import('./storage/opfs-provider.js');
-      return acquireOpfsStorage(storage.name, template, identity);
+      return acquireOpfsStorage(storage.name, loadClusterSeed, identity);
     }
     case 'directory':
       if (acquireNodeDirectory === undefined) {
@@ -143,7 +146,7 @@ export async function acquireWasixStorage(
           },
         );
       }
-      return acquireNodeDirectory(storage.path, template, identity, storage.ownerToken);
+      return acquireNodeDirectory(storage.path, loadClusterSeed, identity, storage.ownerToken);
   }
 }
 
@@ -234,10 +237,10 @@ export function canonicalJson(value: unknown): string {
   return JSON.stringify(canonicalize(value));
 }
 
-function memoryLease(template: WasixDirectoryMount): WasixStorageLease {
+function memoryLease(clusterSeed: WasixDirectoryMount): WasixStorageLease {
   return {
     state: 'new',
-    mount: template,
+    mount: clusterSeed,
     async sync() {},
     async close() {},
   };

@@ -18,9 +18,11 @@
   "optional": true,
   "oliphaunt": {
     "target": "macos-arm64",
+    "clusterSeedTarget": "macos-arm64",
     "libraryRelativePath": "lib/liboliphaunt.dylib",
     "runtimeRelativePath": "runtime",
-    "clusterSeedRelativePath": "cluster-seed"
+    "clusterSeedRelativePath": "cluster-seed",
+    "icuClusterSeedRelativePath": "cluster-seed-icu"
   },
   "publishConfig": {
     "access": "public",
@@ -35,6 +37,8 @@
     "lib",
     "runtime",
     "cluster-seed",
+    "cluster-seed-icu",
+    "manifest.properties",
     "README.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",

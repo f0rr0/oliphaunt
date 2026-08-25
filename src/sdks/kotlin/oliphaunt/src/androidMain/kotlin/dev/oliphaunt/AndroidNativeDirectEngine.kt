@@ -53,6 +53,8 @@ internal class AndroidNativeDirectEngine(
         }
         val pgdata = File(storageDirectory, "pgdata")
         val rootState = classifyAndroidManagedRoot(storageDirectory)
+        val effectiveUsername = config.username ?: "postgres"
+        val effectiveDatabase = config.database ?: "postgres"
         val executionDispatcher =
             Executors
                 .newSingleThreadExecutor { runnable ->
@@ -66,17 +68,43 @@ internal class AndroidNativeDirectEngine(
                 AndroidManagedRootState.Managed -> validateCompleteAndroidPgdata(pgdata)
 
                 AndroidManagedRootState.Empty -> {
-                    OliphauntAndroidRuntimeAssets.preparePgdata(
-                        assetManager = appContext.assets,
-                        pgdata = pgdata,
-                        clusterSeed = runtime.clusterSeed,
-                    )
-                    validateCompleteAndroidPgdata(pgdata)
-                    writeAndroidManagedRootDescriptor(storageDirectory)
+                    requireAndroidFreshRootRole(effectiveUsername)
+                    var ownsPublishedPgdata = false
+                    try {
+                        OliphauntAndroidRuntimeAssets.preparePgdata(
+                            assetManager = appContext.assets,
+                            pgdata = pgdata,
+                            clusterSeed = runtime.clusterSeed,
+                            didPublishDestination = { ownsPublishedPgdata = true },
+                        )
+                        validateCompleteAndroidPgdata(pgdata)
+                        writeAndroidManagedRootDescriptor(storageDirectory)
+                    } catch (publicationError: Throwable) {
+                        recoverAndroidManagedRootPublicationFailure(
+                            publicationError = publicationError,
+                            ownsPublishedPgdata = ownsPublishedPgdata,
+                            descriptorDefinitelyAbsent = {
+                                isAndroidPathDefinitelyAbsent(
+                                    File(storageDirectory, ".oliphaunt.json"),
+                                )
+                            },
+                            removePublishedPgdata = {
+                                if (
+                                    !isAndroidPathDefinitelyAbsent(pgdata) &&
+                                    !pgdata.deleteRecursively()
+                                ) {
+                                    throw OliphauntException(
+                                        "failed to remove uncommitted PGDATA at ${pgdata.absolutePath}",
+                                    )
+                                }
+                            },
+                            syncRoot = {
+                                OliphauntAndroidRuntimeAssets.syncAndroidDirectory(storageDirectory)
+                            },
+                        )
+                    }
                 }
             }
-            val effectiveUsername = config.username ?: "postgres"
-            val effectiveDatabase = config.database ?: "postgres"
             val effectiveLibraryPath =
                 resolveAndroidLiboliphauntLibraryPath(
                     explicitLibraryPath = libraryPath,
@@ -128,6 +156,15 @@ internal class AndroidNativeDirectEngine(
     }
 }
 
+internal fun requireAndroidFreshRootRole(username: String) {
+    if (username != "postgres") {
+        throw OliphauntException(
+            "a new Android Oliphaunt database is initialized with the postgres role; " +
+                "username selects an existing role and cannot be '$username' on first open",
+        )
+    }
+}
+
 internal fun isAndroidSymbolicLink(file: File): Boolean = try {
     OsConstants.S_ISLNK(Os.lstat(file.absolutePath).st_mode)
 } catch (error: ErrnoException) {
@@ -167,7 +204,7 @@ internal fun classifyAndroidManagedRoot(directory: File): AndroidManagedRootStat
 internal fun writeAndroidManagedRootDescriptor(directory: File) {
     val descriptor = File(directory, ".oliphaunt.json")
     val temporary = File(directory, ".oliphaunt.json.tmp-${UUID.randomUUID()}")
-    try {
+    val result = runCatching {
         FileOutputStream(temporary).use { output ->
             output.write(NATIVE_ROOT_DESCRIPTOR.encodeToByteArray())
             Os.fchmod(output.fd, OWNER_READ_WRITE_MODE)
@@ -177,10 +214,61 @@ internal fun writeAndroidManagedRootDescriptor(directory: File) {
             validateAndroidManagedRootDescriptor(descriptor)
         }
         OliphauntAndroidRuntimeAssets.syncAndroidDirectory(directory)
-    } finally {
-        temporary.delete()
+    }
+    finishAndroidStaging(result, operation = "database root descriptor publication") {
+        removeAndroidStagingIfPresent(temporary)
     }
 }
+
+internal fun recoverAndroidManagedRootPublicationFailure(
+    publicationError: Throwable,
+    ownsPublishedPgdata: Boolean,
+    descriptorDefinitelyAbsent: () -> Boolean,
+    removePublishedPgdata: () -> Unit,
+    syncRoot: () -> Unit,
+): Nothing {
+    if (!ownsPublishedPgdata) throw publicationError
+    val descriptorIsAbsent =
+        try {
+            descriptorDefinitelyAbsent()
+        } catch (inspectionError: Throwable) {
+            throw OliphauntException(
+                "database root descriptor publication failed (${publicationError.message}); " +
+                    "preserved PGDATA because descriptor publication is uncertain (${inspectionError.message})",
+            ).apply {
+                addSuppressed(publicationError)
+                addSuppressed(inspectionError)
+            }
+        }
+    if (!descriptorIsAbsent) throw publicationError
+    try {
+        removePublishedPgdata()
+        syncRoot()
+    } catch (cleanupError: Throwable) {
+        throw OliphauntException(
+            "database root descriptor publication failed (${publicationError.message}); " +
+                "failed to clean uncommitted PGDATA (${cleanupError.message})",
+        ).apply {
+            addSuppressed(publicationError)
+            addSuppressed(cleanupError)
+        }
+    }
+    throw publicationError
+}
+
+internal fun isAndroidPathDefinitelyAbsent(path: File): Boolean =
+    try {
+        Os.lstat(path.absolutePath)
+        false
+    } catch (error: ErrnoException) {
+        if (error.errno == OsConstants.ENOENT) {
+            true
+        } else {
+            throw OliphauntException(
+                "failed to inspect ${path.absolutePath}: ${error.message}",
+            )
+        }
+    }
 
 internal fun validateCompleteAndroidPgdata(pgdata: File) {
     val version = File(pgdata, "PG_VERSION")

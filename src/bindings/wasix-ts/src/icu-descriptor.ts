@@ -53,9 +53,11 @@ function validateWasixIcuDescriptor(
   label: string,
 ): asserts value is WasixIcuDescriptor {
   const descriptor = requireExactObject(value, DESCRIPTOR_FIELDS, label);
-  if (descriptor.schema !== 'oliphaunt-wasix-icu-v1') throw new Error(`${label} has unsupported schema`);
+  if (descriptor.schema !== 'oliphaunt-wasix-icu-v1')
+    throw new Error(`${label} has unsupported schema`);
   if (descriptor.runtime !== 'wasix') throw new Error(`${label} must target runtime 'wasix'`);
-  if (descriptor.product !== 'oliphaunt-icu') throw new Error(`${label} product must be 'oliphaunt-icu'`);
+  if (descriptor.product !== 'oliphaunt-icu')
+    throw new Error(`${label} product must be 'oliphaunt-icu'`);
   requireVersion(descriptor.version, `${label} version`);
   const compatibility = requireExactObject(
     descriptor.compatibility,
@@ -63,12 +65,12 @@ function validateWasixIcuDescriptor(
     `${label} compatibility`,
   );
   if (
-    compatibility.runtimeProduct !== 'liboliphaunt-wasix'
-    || compatibility.postgresMajor !== '18'
-    || compatibility.physicalFormat !== 'wasix-pg18-v1'
-    || compatibility.compatibilityKey !== 'wasix-pg18-datum32-v1'
-    || compatibility.dataVersion !== '76.1'
-    || compatibility.dataForm !== 'files-le'
+    compatibility.runtimeProduct !== 'liboliphaunt-wasix' ||
+    compatibility.postgresMajor !== '18' ||
+    compatibility.physicalFormat !== 'wasix-pg18-v1' ||
+    compatibility.compatibilityKey !== 'wasix-pg18-datum32-v1' ||
+    compatibility.dataVersion !== '76.1' ||
+    compatibility.dataForm !== 'files-le'
   ) {
     throw new Error(`${label} has an incompatible WASIX/ICU identity`);
   }
@@ -106,7 +108,9 @@ function serializeArchive(archive: WasixRuntimeArchive): SerializedRuntimeArchiv
   };
 }
 
-function serializeManifest(manifest: WasixRuntimeManifest): SerializedIcuDescriptor['clusterSeedManifest'] {
+function serializeManifest(
+  manifest: WasixRuntimeManifest,
+): SerializedIcuDescriptor['clusterSeedManifest'] {
   return {
     sha256: manifest.sha256,
     size: manifest.size,

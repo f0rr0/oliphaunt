@@ -134,6 +134,7 @@ tasks:
       - "/src/sources/third-party/shared/icu.toml"
       - "/src/sources/third-party/shared/openssl.toml"
       - "/src/shared/fixtures/**/*"
+      - "/src/shared/cluster-seed-contract/**/*"
       - "/src/shared/js-core/**/*"
       - "/package.json"
       - "/pnpm-lock.yaml"

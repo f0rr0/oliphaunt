@@ -35,7 +35,7 @@ The managed root contains `.oliphaunt.json` and `pgdata`. Runtime overlays and
 other mutable guest directories are SDK-owned state elsewhere. A host-directory
 owner prevents a second Rust open while the database is live.
 
-Ordinary open initializes a new store from the packaged template. Tests or
+Ordinary open initializes a new store from the packaged cluster seed. Tests or
 tools that specifically need `initdb` invoke the packaged tool directly.
 Physical archives use the dedicated restore API. There is no legacy
 PGDATA-only restore path; nonempty descriptorless roots and incomplete stores

@@ -21,9 +21,11 @@
   "optional": true,
   "oliphaunt": {
     "target": "linux-x64-gnu",
+    "clusterSeedTarget": "linux-x64-gnu",
     "libraryRelativePath": "lib/liboliphaunt.so",
     "runtimeRelativePath": "runtime",
-    "clusterSeedRelativePath": "cluster-seed"
+    "clusterSeedRelativePath": "cluster-seed",
+    "icuClusterSeedRelativePath": "cluster-seed-icu"
   },
   "publishConfig": {
     "access": "public",
@@ -38,6 +40,8 @@
     "lib",
     "runtime",
     "cluster-seed",
+    "cluster-seed-icu",
+    "manifest.properties",
     "README.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",

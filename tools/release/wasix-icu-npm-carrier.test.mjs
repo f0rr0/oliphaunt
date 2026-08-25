@@ -90,7 +90,7 @@ test("stages one exact ICU data and ICU cluster-seed closure", () => {
   expect(readFileSync(path.join(staged.packageDir, "assets/cluster-seed-icu.tar.zst"))).toEqual(Buffer.from("seed\n"));
 });
 
-test("rejects ICU data that does not match the ICU seed catalogue identity", () => {
+test("rejects ICU data that does not match the ICU seed catalog identity", () => {
   const value = fixture();
   const wrong = path.join(value.root, "wrong-icu");
   write(wrong, "target/oliphaunt-wasix/icu/share/icu/icudt76l/coll/en.res", "wrong\n");

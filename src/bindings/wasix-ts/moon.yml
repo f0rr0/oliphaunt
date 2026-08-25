@@ -53,6 +53,7 @@ tasks:
       - "/src/shared/fixtures/storage/database-root.json"
       - "/src/shared/fixtures/storage/physical-archive-wasix-v1.properties"
       - "/src/shared/fixtures/storage/physical-backup-wal-range-v1.properties"
+      - "/src/shared/cluster-seed-contract/fixtures/**/*"
       - "/src/bindings/wasix-ts/**/*"
       - "/tools/test/run-js-tests.mjs"
     options:

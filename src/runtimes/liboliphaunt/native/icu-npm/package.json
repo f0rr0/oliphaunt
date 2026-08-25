@@ -2,7 +2,7 @@
   "name": "@oliphaunt/icu",
   "version": "0.1.1",
   "description": "Portable ICU data files for Oliphaunt runtimes.",
-  "license": "MIT AND PostgreSQL AND Unicode-3.0",
+  "license": "MIT AND Unicode-3.0",
   "type": "commonjs",
   "repository": {
     "type": "git",
@@ -18,7 +18,8 @@
     "kind": "icu-data",
     "target": "portable",
     "dataRelativePath": "OliphauntICU.bundle/share/icu",
-    "clusterSeedRelativePath": "OliphauntICU.bundle/cluster-seed"
+    "manifestRelativePath": "OliphauntICU.bundle/manifest.properties",
+    "icuDataTreeSha256": "x-release-icu-data-tree-sha256"
   },
   "publishConfig": {
     "access": "public",
@@ -32,7 +33,6 @@
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
     "THIRD_PARTY_NOTICES.liboliphaunt-native.md",
-    "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
     "THIRD_PARTY_LICENSES/ICU-LICENSE"
   ],
   "exports": {

@@ -18,13 +18,11 @@ require() {
 
 source_dir="${1:-}"
 out_dir="${2:-}"
-cluster_seed_dir="${3:-}"
-[ -n "$source_dir" ] && [ -n "$out_dir" ] && [ -n "$cluster_seed_dir" ] ||
-  fail "usage: tools/release/package-liboliphaunt-icu-data.sh SOURCE_DIR OUTPUT_DIR ICU_CLUSTER_SEED_DIR"
+[ -n "$source_dir" ] && [ -n "$out_dir" ] ||
+  fail "usage: tools/release/package-liboliphaunt-icu-data.sh SOURCE_DIR OUTPUT_DIR"
 [ -d "$source_dir" ] || fail "missing portable ICU data directory: $source_dir"
 
 require mktemp
-require rsync
 require bun
 
 source "$root/src/runtimes/liboliphaunt/native/bin/icu.sh"
@@ -33,11 +31,6 @@ if find "$source_dir" -type l -print -quit | grep -q .; then
 fi
 oliphaunt_icu_files_data_ready "$source_dir" ||
   fail "portable ICU data directory has no ICU files payload: $source_dir"
-tools/dev/bun.sh tools/release/native-cluster-seed-contract.mjs \
-  --profile icu \
-  --seed "$cluster_seed_dir" \
-  --icu-data "$source_dir" >/dev/null
-
 version="$(tools/dev/bun.sh tools/release/product-version.mjs version liboliphaunt-native)"
 asset="liboliphaunt-${version}-icu-data.tar.gz"
 mkdir -p "$out_dir"
@@ -57,14 +50,15 @@ trap cleanup EXIT INT TERM HUP
 stage_root="$(cd "$stage_root" && pwd -P)"
 stage="$stage_root/liboliphaunt-${version}-icu-data"
 
-mkdir -p "$stage/share/icu"
-rsync -a --delete "$source_dir/" "$stage/share/icu/"
-rsync -a --delete "$cluster_seed_dir/" "$stage/cluster-seed/"
+oliphaunt_icu_copy_files_data "$source_dir" "$stage/share/icu" ||
+  fail "portable ICU data directory does not contain one canonical files-data payload"
 oliphaunt_icu_files_data_ready "$stage/share/icu" ||
   fail "staged portable ICU data payload is incomplete"
+tools/dev/bun.sh tools/release/native-icu-data-contract.mjs \
+  "$stage/share/icu" \
+  "$stage/manifest.properties"
 tools/dev/bun.sh tools/release/write-icu-package-size-report.mjs \
   "$stage/share/icu" \
-  "$stage/cluster-seed" \
   "$stage/package-size.tsv"
 
 tools/dev/bun.sh tools/release/release-notices.mjs stage "$stage" --profile native-icu-data

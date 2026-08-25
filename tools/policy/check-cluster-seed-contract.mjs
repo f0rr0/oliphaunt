@@ -3,6 +3,8 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
+import { validateNativeClusterSeedManifest } from "../release/native-cluster-seed-contract.mjs";
+
 const root = path.resolve(import.meta.dirname, "../..");
 const contractRoot = path.join(root, "src/shared/cluster-seed-contract");
 const contract = readJson("contract.json");
@@ -13,14 +15,35 @@ assertExactKeys(contract, [
   "compatibilityKeys",
   "icu",
   "icuDataSchema",
-  "manifestSchema",
+  "manifests",
   "physicalFormats",
   "profiles",
   "schema",
 ], "contract");
 assert(contract.schema === "oliphaunt-cluster-seed-contract-v1", "unsupported contract schema");
-assert(contract.manifestSchema === "oliphaunt-cluster-seed-v1", "unsupported manifest schema");
 assert(contract.icuDataSchema === "oliphaunt-icu-data-v1", "unsupported ICU-data schema");
+assertExactKeys(contract.manifests, ["native", "wasix"], "manifest families");
+assertExactKeys(contract.manifests.native, [
+  "cacheKeyDisallowedValues",
+  "cacheKeyPattern",
+  "layout",
+  "schema",
+], "native manifest contract");
+assertExactKeys(contract.manifests.wasix, ["schema"], "WASIX manifest contract");
+assert(
+  contract.manifests.native.schema === "oliphaunt-runtime-resources-v1"
+    && contract.manifests.native.layout === "oliphaunt-cluster-seed-v1",
+  "unsupported native manifest contract",
+);
+assert(contract.manifests.wasix.schema === "oliphaunt-cluster-seed-v1", "unsupported WASIX manifest schema");
+assert(
+  contract.manifests.native.cacheKeyPattern === "^[A-Za-z0-9._-]{1,128}$",
+  "cluster-seed cache-key grammar is invalid",
+);
+assert(
+  JSON.stringify(contract.manifests.native.cacheKeyDisallowedValues) === JSON.stringify([".", ".."]),
+  "cluster-seed cache-key path components are invalid",
+);
 assertExactKeys(contract.profiles, ["icu", "standard"], "contract profiles");
 assertProfileContract("standard", "cluster-seed-standard", []);
 assertProfileContract("icu", "cluster-seed-icu", ["icu"]);
@@ -47,12 +70,46 @@ assert(
   "internal ICU readiness must use the exact locked name and value",
 );
 assert(
-  contract.compatibilityKeys.nativeDatum64 !== contract.compatibilityKeys.wasixDatum32,
-  "native Datum64 and WASIX Datum32 seeds must have different compatibility keys",
+  Object.keys(contract.compatibilityKeys.native).length === 6,
+  "native compatibility domains must be explicit",
 );
+for (const [target, key] of Object.entries(contract.compatibilityKeys.native)) {
+  assert(key === `native-pg18-${target}-v1`, `native compatibility key for ${target} is invalid`);
+  assert(key !== contract.compatibilityKeys.wasixDatum32, `${target} and WASIX seeds must have different compatibility keys`);
+}
 
 validateSeed(readJson("fixtures/standard.valid.json"), "standard fixture");
 validateSeed(readJson("fixtures/icu.valid.json"), "ICU fixture");
+validateNativeClusterSeedManifest(
+  readFixture("native-standard.valid.properties"),
+  "standard",
+  { target: "linux-x64-gnu" },
+);
+validateNativeClusterSeedManifest(
+  readFixture("native-icu.valid.properties"),
+  "icu",
+  { target: "linux-x64-gnu", icuDataTreeSha256: "a".repeat(64) },
+);
+for (const name of [
+  "native-malformed.invalid.properties",
+  "native-whitespace.invalid.properties",
+  "native-cache-key.invalid.properties",
+  "native-dot-cache-key.invalid.properties",
+  "native-dotdot-cache-key.invalid.properties",
+  "native-extra-field.invalid.properties",
+  "native-target-mismatch.invalid.properties",
+  "native-profile-mismatch.invalid.properties",
+]) {
+  let nativeRejected = false;
+  try {
+    validateNativeClusterSeedManifest(readFixture(name), "standard", {
+      target: "linux-x64-gnu",
+    });
+  } catch {
+    nativeRejected = true;
+  }
+  assert(nativeRejected, `${name} must be rejected`);
+}
 let rejected = false;
 try {
   validateSeed(readJson("fixtures/profile-mismatch.invalid.json"), "invalid fixture");
@@ -61,7 +118,7 @@ try {
 }
 assert(rejected, "profile-mismatch.invalid.json must be rejected");
 
-console.log("cluster seed contract passed (standard, icu, icu-data; invalid mismatch rejected)");
+console.log("cluster seed contract passed (WASIX and native standard/ICU fixtures; invalid vectors rejected)");
 
 export function validateSeed(seed, label = "cluster seed") {
   assertObject(seed, label);
@@ -77,7 +134,7 @@ export function validateSeed(seed, label = "cluster seed") {
     "schema",
     "source",
   ], label);
-  assert(seed.schema === contract.manifestSchema, `${label} has unsupported schema`);
+  assert(seed.schema === contract.manifests.wasix.schema, `${label} has unsupported schema`);
   const profile = contract.profiles[seed.catalogProfile];
   assert(profile !== undefined, `${label} has unsupported catalogProfile`);
   assert(seed.artifactRole === profile.artifactRole, `${label} artifactRole/profile mismatch`);
@@ -85,7 +142,7 @@ export function validateSeed(seed, label = "cluster seed") {
     JSON.stringify(seed.requiredRuntimeFeatures) === JSON.stringify(profile.requiredRuntimeFeatures),
     `${label} requiredRuntimeFeatures/profile mismatch`,
   );
-  assertExactKeys(seed.runtime, [
+  const runtimeKeys = [
     "compatibilityKey",
     "consumerSha256",
     "engineFamily",
@@ -95,15 +152,17 @@ export function validateSeed(seed, label = "cluster seed") {
     "producerSha256",
     "product",
     "version",
-  ], `${label} runtime`);
-  assert(["native", "wasix"].includes(seed.runtime.engineFamily), `${label} engineFamily is invalid`);
-  const family = seed.runtime.engineFamily;
-  const physicalFormat = contract.physicalFormats[family];
-  const compatibilityKey = family === "native"
-    ? contract.compatibilityKeys.nativeDatum64
-    : contract.compatibilityKeys.wasixDatum32;
-  assert(seed.runtime.physicalFormat === physicalFormat, `${label} physicalFormat/family mismatch`);
-  assert(seed.runtime.compatibilityKey === compatibilityKey, `${label} compatibilityKey/family mismatch`);
+  ];
+  assertExactKeys(seed.runtime, runtimeKeys, `${label} runtime`);
+  assert(seed.runtime.engineFamily === "wasix", `${label} engineFamily must be wasix`);
+  assert(
+    seed.runtime.physicalFormat === contract.physicalFormats.wasix,
+    `${label} physicalFormat must be the WASIX format`,
+  );
+  assert(
+    seed.runtime.compatibilityKey === contract.compatibilityKeys.wasixDatum32,
+    `${label} compatibilityKey must be the WASIX Datum32 key`,
+  );
   assert(seed.runtime.postgresMajor === 18, `${label} must target PostgreSQL 18`);
   for (const key of ["consumerSha256", "producerSha256", "initdbSha256"]) {
     assert(SHA256.test(seed.runtime[key]), `${label} runtime.${key} must be SHA-256`);
@@ -164,6 +223,10 @@ function assertProfileContract(profile, artifactRole, requiredRuntimeFeatures) {
 
 function readJson(relative) {
   return JSON.parse(readFileSync(path.join(contractRoot, ...relative.split("/")), "utf8"));
+}
+
+function readFixture(name) {
+  return readFileSync(path.join(contractRoot, "fixtures", name));
 }
 
 function assertObject(value, label) {

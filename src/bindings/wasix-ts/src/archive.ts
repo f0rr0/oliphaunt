@@ -60,7 +60,8 @@ export function extractTar(archive: Uint8Array): ExtractedArchive {
 
     validateTarHeaderFormat(header);
     entries += 1;
-    if (entries > MAX_ENTRIES) throw new Error(`tar archive exceeds the ${MAX_ENTRIES}-entry limit`);
+    if (entries > MAX_ENTRIES)
+      throw new Error(`tar archive exceeds the ${MAX_ENTRIES}-entry limit`);
     const type = String.fromCharCode(header[156] ?? 0).replace('\0', '') || '0';
     const size = parseOctal(header.subarray(124, 136), 'tar entry size');
     if (size > MAX_ENTRY_BYTES) {
@@ -167,23 +168,19 @@ function parentPaths(path: string): string[] {
   return parents;
 }
 
-export function layoutRuntime(
-  runtime: ExtractedArchive,
-  clusterSeed: ExtractedArchive,
-): WasixRuntimeLayout {
+/** @internal Validate and project an extracted cluster seed for a `/base` mount. */
+export function clusterSeedMount(clusterSeed: ExtractedArchive): WasixDirectoryMount {
   const pgdataFiles = clusterSeed.files;
   if (!pgdataFiles.has('PG_VERSION') || !pgdataFiles.has('global/pg_control')) {
     throw new Error('cluster seed is missing PG_VERSION or global/pg_control');
   }
-  const layout = layoutRuntimeSupport(runtime);
-  layout.mounts['/base'] = {
+  return {
     files: mapToDirectory(pgdataFiles),
     directories: [...clusterSeed.directories],
   };
-  return layout;
 }
 
-/** @internal Materialize runtime support mounts without loading a PGDATA template. */
+/** @internal Materialize runtime support mounts without loading a cluster seed. */
 export function layoutRuntimeSupport(runtime: ExtractedArchive): WasixRuntimeLayout {
   const runtimeFiles = runtime.files;
   const module = runtimeFiles.get('oliphaunt/bin/postgres');
@@ -229,6 +226,10 @@ export function layoutRuntimeSupport(runtime: ExtractedArchive): WasixRuntimeLay
       mounts[mountPath] = mount;
     }
     mount.directories.push(child);
+  }
+
+  if (mounts['/base'] !== undefined) {
+    throw new Error('runtime archive must not provide the storage-owned /base mount');
   }
 
   for (const required of ['/bin', '/lib', '/share']) {

@@ -57,6 +57,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/licenses/openssl-3.5.6-LICENSE.txt"
       - "/src/runtimes/liboliphaunt/licenses/postgresql-18.4-COPYRIGHT"
       - "/src/shared/fixtures/**/*"
+      - "/src/shared/cluster-seed-contract/**/*"
       - "/src/sdks/kotlin/**/*"
       - "/tools/native-packaging/extension-artifact-archive-policy.properties"
       - "/src/sdks/react-native/tools/android-smoke-artifacts.sh"

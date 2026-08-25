@@ -13,7 +13,7 @@ const ROOT = path.resolve(import.meta.dir, "../..");
 const CODE_LICENSE = "MIT";
 const NATIVE_RUNTIME_LICENSE = "MIT AND PostgreSQL AND Unicode-3.0";
 const NATIVE_TOOLS_LICENSE = "MIT AND PostgreSQL";
-const ICU_CARRIER_LICENSE = "MIT AND PostgreSQL AND Unicode-3.0";
+const ICU_CARRIER_LICENSE = "MIT AND Unicode-3.0";
 
 function readCargoLicense(relative) {
   const file = path.join(ROOT, relative);
@@ -79,7 +79,7 @@ test("native source facades and payload carriers declare their exact role licens
   );
 });
 
-test("portable ICU carrier declares the cluster-seed and ICU data license closure", () => {
+test("portable ICU carrier declares its exact data-only license closure", () => {
   assertNpmLicenses([
     "src/runtimes/liboliphaunt/native/icu-npm/package.json",
   ], ICU_CARRIER_LICENSE);

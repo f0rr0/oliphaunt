@@ -105,13 +105,15 @@ runtime/AOT manifests produced by the
 `CI` workflow's WASIX runtime lane. Generated manifests record source pins,
 runtime hashes, `initdb` hashes, cluster-seed hashes, extension archive
 hashes, target information, and Wasmer engine identity. PostgreSQL ICU support
-uses the same provenance path: ICU is source-pinned in
-`src/sources/third-party/shared/icu.toml`, checked out under
-`target/oliphaunt-sources/checkouts/icu`, and built as target-specific static
-libraries by the native and WASIX runtime builders. ICU data is packaged as a
-separate `oliphaunt-icu` payload; standard native and WASIX runtime artifacts do
-not carry `share/icu`. That payload supplies runtime capability; it is distinct
-from the per-database `pg_collation` catalogue state created during `initdb`.
+uses the same provenance path: ICU code is source-pinned in
+`src/sources/third-party/shared/icu.toml`, while the canonical official
+little-endian data archive is independently pinned in
+`src/sources/third-party/shared/icu-data.toml`. Native and WASIX builders compile
+target-specific ICU code but expand that one data archive into the shared
+files-data identity. ICU data is packaged as a separate `oliphaunt-icu`
+payload; standard native and WASIX runtime artifacts do not carry `share/icu`.
+That payload supplies runtime capability; it is distinct
+from the per-database `pg_collation` catalog state created during `initdb`.
 An ICU-enabled new root therefore requires the matching `icu` cluster seed
 as well as the ICU data payload.
 

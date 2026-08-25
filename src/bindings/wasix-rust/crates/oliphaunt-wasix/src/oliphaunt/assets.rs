@@ -70,16 +70,16 @@ pub fn asset_manifest_metadata() -> Result<AssetManifestMetadata> {
 
 fn validate_embedded_source_fingerprints(
     asset_fingerprint: Option<&str>,
-    template_fingerprint: Option<&str>,
+    seed_fingerprint: Option<&str>,
 ) -> Result<()> {
     let asset_fingerprint = asset_fingerprint
         .filter(|value| !value.trim().is_empty())
         .context("embedded WASIX asset manifest is missing source-fingerprint metadata")?;
-    let template_fingerprint = template_fingerprint
+    let seed_fingerprint = seed_fingerprint
         .filter(|value| !value.trim().is_empty())
         .context("embedded WASIX cluster seed is missing source-fingerprint metadata")?;
     ensure!(
-        template_fingerprint == asset_fingerprint,
+        seed_fingerprint == asset_fingerprint,
         "embedded WASIX runtime and cluster seed source fingerprints differ"
     );
     Ok(())
@@ -137,15 +137,32 @@ pub(crate) fn psql_wasm() -> Option<&'static [u8]> {
     oliphaunt_wasix_tools::psql_wasm()
 }
 
-#[allow(dead_code)]
-pub(crate) fn initdb_wasm() -> Option<&'static [u8]> {
-    liboliphaunt_wasix_portable::initdb_wasm()
-}
-
 pub(crate) fn icu_data_archive() -> Option<&'static [u8]> {
     #[cfg(feature = "icu")]
     {
         oliphaunt_icu::icu_data_archive()
+    }
+    #[cfg(not(feature = "icu"))]
+    {
+        None
+    }
+}
+
+pub(crate) fn expected_icu_data_archive_sha256() -> Option<&'static str> {
+    #[cfg(feature = "icu")]
+    {
+        oliphaunt_icu::ICU_DATA_ARCHIVE_SHA256
+    }
+    #[cfg(not(feature = "icu"))]
+    {
+        None
+    }
+}
+
+pub(crate) fn expected_icu_data_tree_sha256() -> Option<&'static str> {
+    #[cfg(feature = "icu")]
+    {
+        oliphaunt_icu::ICU_DATA_TREE_SHA256
     }
     #[cfg(not(feature = "icu"))]
     {
@@ -187,6 +204,6 @@ mod tests {
             .expect("matching identities");
         assert!(validate_embedded_source_fingerprints(None, Some("source-key")).is_err());
         assert!(validate_embedded_source_fingerprints(Some("source-key"), Some(" ")).is_err());
-        assert!(validate_embedded_source_fingerprints(Some("runtime"), Some("template")).is_err());
+        assert!(validate_embedded_source_fingerprints(Some("runtime"), Some("seed")).is_err());
     }
 }
