@@ -41,7 +41,11 @@ describe('WASIX PostgreSQL connection framing', () => {
       ['user', 'application'],
       ['database', 'products'],
     ]);
-    connection.write(start.subarray(0, 7));
+    const borrowedPrefix = start.slice(0, 7);
+    connection.write(borrowedPrefix);
+    // The Wasmer callback lends a guest-memory view only until write returns.
+    // Mutating that view must not corrupt the retained fragmented frame.
+    borrowedPrefix.fill(0xff);
     connection.write(start.subarray(7));
     expect(connection.read(2)).toEqual(startupResponse.subarray(0, 2));
     expect(connection.read(8)).toEqual(startupResponse.subarray(2));

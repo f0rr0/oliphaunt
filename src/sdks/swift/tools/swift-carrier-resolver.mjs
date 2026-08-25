@@ -23,7 +23,10 @@ const STABLE_SEMVER = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u;
 const EXTRACTED_CACHE_SCHEMA = "oliphaunt-extracted-carrier-tree-v1";
 const MAX_CARRIER_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_ZIP_CARRIER_BYTES = 512 * 1024 * 1024;
-const MAX_ARCHIVE_ENTRIES = 8192;
+// Match the release-side iOS carrier envelope. Current XCFrameworks contain
+// one runtime-resource tree per slice, so the consumer must accept the same
+// bounded archive shape that the producer validates.
+const MAX_ARCHIVE_ENTRIES = 32_768;
 const MAX_ARCHIVE_MEMBER_BYTES = 1024 * 1024 * 1024;
 const MAX_ARCHIVE_EXPANDED_BYTES = 4 * 1024 * 1024 * 1024;
 const ALLOWED_ZIP_EXTRA_FIELDS = new Set([0x5455, 0x5855, 0x7875]);

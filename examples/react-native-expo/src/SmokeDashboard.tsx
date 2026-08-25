@@ -452,11 +452,16 @@ async function runCatalogProfileReopenProof(
     CREATE TABLE IF NOT EXISTS oliphaunt_mobile_reopen_marker (
       id integer PRIMARY KEY,
       value text NOT NULL
-    );
-    INSERT INTO oliphaunt_mobile_reopen_marker (id, value)
-    VALUES (1, '${sqlLiteral(marker)}')
-    ON CONFLICT (id) DO UPDATE SET value = excluded.value;
+    )
   `);
+  await db.execute(
+    `
+    INSERT INTO oliphaunt_mobile_reopen_marker (id, value)
+    VALUES (1, $1)
+    ON CONFLICT (id) DO UPDATE SET value = excluded.value
+    `,
+    [marker],
+  );
   await db.close();
   const smokeState = smokeGlobalState();
   smokeState.databaseInstance = undefined;
@@ -782,12 +787,17 @@ async function runCrashRecoveryPhase(
         id integer PRIMARY KEY,
         value text NOT NULL,
         written_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
-      );
-      INSERT INTO rn_crash_recovery (id, value)
-      VALUES (1, '${sqlLiteral(value)}')
-      ON CONFLICT (id)
-      DO UPDATE SET value = excluded.value, written_at = CURRENT_TIMESTAMP;
+      )
     `);
+    await db.execute(
+      `
+      INSERT INTO rn_crash_recovery (id, value)
+      VALUES (1, $1)
+      ON CONFLICT (id)
+      DO UPDATE SET value = excluded.value, written_at = CURRENT_TIMESTAMP
+      `,
+      [value],
+    );
     const check = await db.query('SELECT value FROM rn_crash_recovery WHERE id = 1');
     const persisted = check.getText(0, 'value') ?? '';
     if (persisted !== value) {
@@ -1043,10 +1053,6 @@ function optionalNonBlankString(value: string | undefined, label: string): strin
     throw new Error(`${label} must not contain NUL bytes`);
   }
   return value;
-}
-
-function sqlLiteral(value: string): string {
-  return value.replace(/'/g, "''");
 }
 
 function extractQueryParam(url: string | null, name: string): string | undefined {

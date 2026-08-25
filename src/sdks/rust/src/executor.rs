@@ -159,18 +159,22 @@ impl EngineExecutor {
                             }
                             let terminal_drop = reply.is_none();
                             let result = session.close();
-                            let detached = result.is_ok();
-                            if detached {
+                            if result.is_ok() {
                                 owner_closed.store(true, Ordering::SeqCst);
                                 owner_session_pinned.store(false, Ordering::SeqCst);
+                                owner_closing.store(false, Ordering::SeqCst);
+                                // Successful close includes releasing every
+                                // session-owned root lock. Do that before
+                                // waking a caller that may immediately reopen.
+                                drop(session);
+                                if let Some(reply) = reply {
+                                    reply.send(result);
+                                }
+                                return;
                             }
                             owner_closing.store(false, Ordering::SeqCst);
                             if let Some(reply) = reply {
                                 reply.send(result);
-                            }
-                            if detached {
-                                drop(session);
-                                return;
                             }
                             if terminal_drop {
                                 // The public executor no longer exists, but the
@@ -518,6 +522,39 @@ mod tests {
                 Ok(())
             }
         }
+    }
+
+    struct DropObservedSession {
+        dropped: Arc<AtomicBool>,
+    }
+
+    impl EngineSession for DropObservedSession {
+        fn exec_protocol_raw(&mut self, request: ProtocolRequest) -> Result<ProtocolResponse> {
+            Ok(ProtocolResponse::new(request.as_bytes()))
+        }
+    }
+
+    impl Drop for DropObservedSession {
+        fn drop(&mut self) {
+            self.dropped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn successful_close_releases_the_session_before_it_resolves() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let executor = EngineExecutor::spawn(Box::new(DropObservedSession {
+            dropped: Arc::clone(&dropped),
+        }));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("build current-thread test runtime");
+
+        runtime.block_on(executor.close()).expect("close session");
+        assert!(
+            dropped.load(Ordering::SeqCst),
+            "close must not resolve while the session still owns its root lock"
+        );
     }
 
     #[test]

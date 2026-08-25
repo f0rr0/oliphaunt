@@ -57,7 +57,10 @@ export class SynchronousPgDumpConnection {
     if (this.#terminated) {
       throw new Error('pg_dump wrote after terminating its PostgreSQL connection');
     }
-    this.#frontend.append(input);
+    // The Wasmer host lends this callback a view into its guest memory only
+    // for the duration of the call. Own the bytes before the frame reader can
+    // retain a fragmented frontend message across writes.
+    this.#frontend.append(input.slice());
     for (;;) {
       const frame = this.#frontend.shift();
       if (frame === undefined) return;
