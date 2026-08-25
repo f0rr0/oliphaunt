@@ -154,57 +154,63 @@ async function verifyDirectPgDump(Oliphaunt, pgDump) {
 }
 
 async function verifyServer(openServer, listen) {
-  await using server = await openServer({ listen });
-  const socket = connect(server.connectionString);
+  const server = await openServer({ listen });
   try {
-    await onceConnected(socket);
-    for (const code of [80_877_103, 80_877_104]) {
-      socket.write(controlPacket(code));
-      const response = await readSingleByte(socket);
-      if (response !== 'N'.charCodeAt(0)) {
-        throw new Error(
-          `local server returned ${response} for PostgreSQL negotiation request ${code}`,
-        );
+    const socket = connect(server.connectionString);
+    try {
+      await onceConnected(socket);
+      for (const code of [80_877_103, 80_877_104]) {
+        socket.write(controlPacket(code));
+        const response = await readSingleByte(socket);
+        if (response !== 'N'.charCodeAt(0)) {
+          throw new Error(
+            `local server returned ${response} for PostgreSQL negotiation request ${code}`,
+          );
+        }
       }
-    }
-    socket.write(startupPacket('postgres', 'postgres'));
-    await readExchange(socket);
-    console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: first startup`);
-    const rejected = connect(server.connectionString);
-    try {
-      await onceConnected(rejected);
-      const rejection = expectClosedBeforeReady(rejected);
-      rejected.write(startupPacket('postgres', 'postgres'));
-      await rejection;
-      console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: concurrent client rejected`);
-    } finally {
-      rejected.destroy();
-    }
-    socket.write(simpleQuery('COPY (SELECT generate_series(1, 100000)) TO STDOUT'));
-    const copied = await readExchange(socket);
-    console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: first COPY`);
-    if (copied.copyBytes < 500_000) {
-      throw new Error(`local server truncated COPY output at ${copied.copyBytes} bytes`);
-    }
-    socket.write(simpleQuery('BEGIN'));
-    await readExchange(socket);
-    socket.write(simpleQuery('CREATE TABLE disconnect_must_rollback(value integer)'));
-    await readExchange(socket);
-    socket.destroy();
-    await onceClosed(socket);
-    console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: disconnect recovered`);
+      socket.write(startupPacket('postgres', 'postgres'));
+      await readExchange(socket);
+      console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: first startup`);
+      const rejected = connect(server.connectionString);
+      try {
+        await onceConnected(rejected);
+        const rejection = expectClosedBeforeReady(rejected);
+        rejected.write(startupPacket('postgres', 'postgres'));
+        await rejection;
+        console.log(
+          `WASIX TypeScript ${runtimeName} tools/server smoke: concurrent client rejected`,
+        );
+      } finally {
+        rejected.destroy();
+      }
+      socket.write(simpleQuery('COPY (SELECT generate_series(1, 100000)) TO STDOUT'));
+      const copied = await readExchange(socket);
+      console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: first COPY`);
+      if (copied.copyBytes < 500_000) {
+        throw new Error(`local server truncated COPY output at ${copied.copyBytes} bytes`);
+      }
+      socket.write(simpleQuery('BEGIN'));
+      await readExchange(socket);
+      socket.write(simpleQuery('CREATE TABLE disconnect_must_rollback(value integer)'));
+      await readExchange(socket);
+      socket.destroy();
+      await onceClosed(socket);
+      console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: disconnect recovered`);
 
-    const next = await connectWhenReady(server.connectionString);
-    try {
-      next.write(simpleQuery('CREATE TABLE disconnect_must_rollback(value integer)'));
-      await readExchange(next);
-      next.end(Uint8Array.of('X'.charCodeAt(0), 0, 0, 0, 4));
-      console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: next client accepted`);
+      const next = await connectWhenReady(server.connectionString);
+      try {
+        next.write(simpleQuery('CREATE TABLE disconnect_must_rollback(value integer)'));
+        await readExchange(next);
+        next.end(Uint8Array.of('X'.charCodeAt(0), 0, 0, 0, 4));
+        console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: next client accepted`);
+      } finally {
+        next.destroy();
+      }
     } finally {
-      next.destroy();
+      socket.destroy();
     }
   } finally {
-    socket.destroy();
+    await server.close();
   }
 }
 

@@ -52,6 +52,15 @@ fi
 mapfile -t patch_series < <(node "$provenance_script" --patch-series)
 input_hash="$(node "$provenance_script" --inputs-sha256)"
 
+patch_command="patch"
+sha256sum_command="sha256sum"
+if command -v gpatch >/dev/null 2>&1; then
+  patch_command="gpatch"
+fi
+if command -v gsha256sum >/dev/null 2>&1; then
+  sha256sum_command="gsha256sum"
+fi
+
 if [[ -f "$target_dir/.oliphaunt-input-sha256" ]] \
     && [[ "$(<"$target_dir/.oliphaunt-input-sha256")" == "$input_hash" ]] \
     && [[ -f "$target_dir/dist/index.mjs" ]] \
@@ -63,7 +72,7 @@ fi
 
 mkdir -p "$target_parent"
 
-for command_name in awk curl git node npm patch sha256sum tar wasm-pack; do
+for command_name in awk curl git node npm "$patch_command" "$sha256sum_command" tar wasm-pack; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "wasix-ts host build: required command not found: $command_name" >&2
     exit 1
@@ -99,13 +108,13 @@ fi
 curl --fail --location --silent --show-error \
   --user-agent "oliphaunt-wasix-ts-source-build/0.0.0" \
   "$wasmer_wasix_url" --output "$wasmer_wasix_archive"
-echo "$wasmer_wasix_sha256  $wasmer_wasix_archive" | sha256sum --check --status
+echo "$wasmer_wasix_sha256  $wasmer_wasix_archive" | "$sha256sum_command" --check --status
 tar -xzf "$wasmer_wasix_archive" -C "$build_root"
 
 curl --fail --location --silent --show-error \
   --user-agent "oliphaunt-wasix-ts-source-build/0.0.0" \
   "$wasmer_url" --output "$wasmer_archive"
-echo "$wasmer_sha256  $wasmer_archive" | sha256sum --check --status
+echo "$wasmer_sha256  $wasmer_archive" | "$sha256sum_command" --check --status
 tar -xzf "$wasmer_archive" -C "$build_root"
 
 for patch_name in "${patch_series[@]}"; do
@@ -125,7 +134,7 @@ for patch_name in "${patch_series[@]}"; do
       exit 1
       ;;
   esac
-  patch --batch --forward -d "$patch_dir" -p1 < "$patch_file"
+  "$patch_command" --batch --forward -d "$patch_dir" -p1 < "$patch_file"
 done
 
 # The browser host runs every WASIX syscall and virtual-filesystem operation.

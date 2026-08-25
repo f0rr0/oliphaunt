@@ -19,32 +19,44 @@ case "${OLIPHAUNT_WASIX_POSTMASTER_PORTABLE_INPUTS:-0}" in
 		;;
 esac
 
+probes=(
+	mmap-fixed
+	mmap-writeback
+	directory-fsync
+	dir-readdir-unlink
+	futex-timeout
+	rlimit-stack
+	spawn-shmem-reattach
+	exec-shared-latch-sigurg
+	posix-spawn-sigchld-default
+	posix-spawn-sigchld
+	waitpid-wnohang-any
+	posix-spawn-blocking-wait
+	posix-spawn-pipe
+	epoll-listen-accept
+	epoll-listen-after-vfork-exec
+	epoll-listen-external
+	epoll-listen-external-after-pipe
+	epoll-ofd-lifecycle
+	socket-nonblock
+	dynamic-dlopen
+	dynamic-vfork-exec
+	wasm-eh-sjlj
+)
+if [ "$(uname -s)" = Linux ]; then
+	# This advisory writeback primitive has exact Linux semantics and the
+	# runtime deliberately reports it as unsupported on other hosts.
+	probes+=(sync-file-range)
+fi
+probe_args=()
+for probe in "${probes[@]}"; do
+	probe_args+=(--probe "$probe")
+done
+
 exec env UPSTREAM_WORK_ROOT="$UPSTREAM_WORK_ROOT" \
 	"$FRESH_ROOT/runtime/bin/validate-runtime-capabilities.sh" \
 	--wasmer-bin "$WASMER_BIN" \
 	"${portable_args[@]}" \
 	--strict \
-	--probe mmap-fixed \
-	--probe mmap-writeback \
-	--probe sync-file-range \
-	--probe directory-fsync \
-	--probe dir-readdir-unlink \
-	--probe futex-timeout \
-	--probe rlimit-stack \
-	--probe spawn-shmem-reattach \
-	--probe exec-shared-latch-sigurg \
-	--probe posix-spawn-sigchld-default \
-	--probe posix-spawn-sigchld \
-	--probe waitpid-wnohang-any \
-	--probe posix-spawn-blocking-wait \
-	--probe posix-spawn-pipe \
-	--probe epoll-listen-accept \
-	--probe epoll-listen-after-vfork-exec \
-	--probe epoll-listen-external \
-	--probe epoll-listen-external-after-pipe \
-	--probe epoll-ofd-lifecycle \
-	--probe socket-nonblock \
-	--probe dynamic-dlopen \
-	--probe dynamic-vfork-exec \
-	--probe wasm-eh-sjlj \
+	"${probe_args[@]}" \
 	"$@"

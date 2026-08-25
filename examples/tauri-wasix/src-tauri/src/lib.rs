@@ -2,9 +2,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use oliphaunt_wasix::{OliphauntServer, extensions};
+use oliphaunt_wasix::{extensions, OliphauntServer};
 #[cfg(test)]
-use oliphaunt_wasix::{Oliphaunt, tools};
+use oliphaunt_wasix::{tools, Oliphaunt};
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
