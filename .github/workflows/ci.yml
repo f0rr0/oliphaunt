@@ -2615,6 +2615,10 @@ jobs:
             exit 1
           fi
           tools/release/check-icu-npm-cocoapods-consumer.sh "$1"
+          icu_root=target/liboliphaunt/icu-data/ios
+          mkdir -p "$icu_root"
+          tar -xzf "$1" -C "$icu_root" share/icu
+          echo "OLIPHAUNT_IOS_ICU_DATA_DIR=$GITHUB_WORKSPACE/$icu_root/share/icu" >> "$GITHUB_ENV"
 
       - name: Extract ABI-compatible iOS runtime-resource closure
         run: |
@@ -2646,7 +2650,7 @@ jobs:
             const [root, icuData] = process.argv.slice(1);
             const { target } = validateNativeRuntimeCarrier(root, { icuData });
             if (target !== "ios-datum64") throw new Error(`expected ios-datum64, got ${target}`);
-          ' "$closure" target/liboliphaunt-pg18/icu/share/icu
+          ' "$closure" "$OLIPHAUNT_IOS_ICU_DATA_DIR"
           echo "OLIPHAUNT_EXPO_IOS_SEED_CLOSURE_DIR=$GITHUB_WORKSPACE/$closure" >> "$GITHUB_ENV"
 
       - name: Download Swift SDK package artifacts

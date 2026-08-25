@@ -15,6 +15,7 @@ import {
   validateReactNativePackagedCarrier,
   validateMobileExtensionManifestDomains,
   validatePackagedMobileRuntimeFiles,
+  validatePackagedMobileRuntimeManifest,
   validateSwiftSourceFixtureEntries,
 } from "./check-staged-artifacts.mjs";
 import { CORE_SNOWBALL_RUNTIME_DATA_FILES } from "../../src/sdks/react-native/tools/validate-mobile-runtime-files.mjs";
@@ -87,6 +88,20 @@ function packagedMobileRuntimeNames(prefix, extensionAssets) {
     ),
   ];
 }
+
+test("packaged mobile apps require the native-direct runtime contract", () => {
+  assert.doesNotThrow(() => validatePackagedMobileRuntimeManifest({
+    schema: "oliphaunt-runtime-resources-v1",
+    mode: "native-direct",
+  }));
+  assert.throws(
+    () => validatePackagedMobileRuntimeManifest({
+      schema: "oliphaunt-runtime-resources-v1",
+      mode: "native-server",
+    }),
+    /mode=native-direct/u,
+  );
+});
 
 test("staged iOS evidence and the Expo runner share the Payload CocoaPods file-list contract", () => {
   const scratchPath = path.join(path.sep, "candidate-scratch");

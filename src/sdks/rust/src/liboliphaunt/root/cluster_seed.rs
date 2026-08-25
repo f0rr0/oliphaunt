@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::fs;
 #[cfg(feature = "internal-native-packaging")]
 use std::fs::OpenOptions;
-#[cfg(all(unix, feature = "internal-native-packaging"))]
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 #[cfg(feature = "internal-native-packaging")]
@@ -30,6 +30,21 @@ const CLUSTER_SEED_CACHE_VERSION: &str = "pg18-cluster-seed-v6";
 const SKIP_SYSTEM_COLLATION_DISCOVERY_ENV: &str =
     "OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY";
 const SKIP_ICU_COLLATION_DISCOVERY_ENV: &str = "OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY";
+
+#[cfg(unix)]
+fn set_private_directory_permissions(path: &Path, context: &str) -> Result<()> {
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|err| {
+        Error::Engine(format!(
+            "set permissions on {context} {}: {err}",
+            path.display()
+        ))
+    })
+}
+
+#[cfg(not(unix))]
+fn set_private_directory_permissions(_path: &Path, _context: &str) -> Result<()> {
+    Ok(())
+}
 
 pub(super) fn bootstrap_pgdata_if_needed(
     profile: NativeRuntimeProfile,
@@ -145,13 +160,7 @@ pub(super) fn materialize_cluster_seed(
             cache_root.display()
         ))
     })?;
-    #[cfg(unix)]
-    fs::set_permissions(&cache_root, fs::Permissions::from_mode(0o700)).map_err(|err| {
-        Error::Engine(format!(
-            "set permissions on native PGDATA cluster seed cache root {}: {err}",
-            cache_root.display()
-        ))
-    })?;
+    set_private_directory_permissions(&cache_root, "native PGDATA cluster seed cache root")?;
 
     let seed_dir = cache_root.join(&key);
     let lock_path = cache_root.join(format!("{key}.lock"));
@@ -471,7 +480,10 @@ fn copy_cluster_seed(cluster_seed: &Path, pgdata: &Path) -> Result<()> {
         })?;
     }
 
-    let copy_result = copy_directory_tree(cluster_seed, &staging, cluster_seed_copy_mode());
+    let copy_result = copy_directory_tree(cluster_seed, &staging, cluster_seed_copy_mode())
+        .and_then(|()| {
+            set_private_directory_permissions(&staging, "native PGDATA bootstrap directory")
+        });
     if let Err(error) = copy_result {
         let _ = fs::remove_dir_all(&staging);
         let _ = fs::create_dir_all(pgdata);
@@ -496,12 +508,16 @@ fn copy_cluster_seed(cluster_seed: &Path, pgdata: &Path) -> Result<()> {
 mod tests {
     use std::ffi::OsStr;
     use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
+    #[cfg(unix)]
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
         SKIP_ICU_COLLATION_DISCOVERY_ENV, SKIP_SYSTEM_COLLATION_DISCOVERY_ENV,
-        configure_cluster_seed_runtime_env, initdb_args, native_dynamic_shared_memory_type,
-        normalize_cluster_seed_conf,
+        configure_cluster_seed_runtime_env, copy_cluster_seed, initdb_args,
+        native_dynamic_shared_memory_type, normalize_cluster_seed_conf,
     };
     use crate::liboliphaunt::root::NativeCatalogProfile;
 
@@ -764,5 +780,36 @@ mod tests {
                 "mmap"
             }
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copied_cluster_seed_publishes_private_pgdata() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "oliphaunt-cluster-seed-permissions-{}-{nonce}",
+            std::process::id()
+        ));
+        let source = root.join("source");
+        let pgdata = root.join("database/pgdata");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(pgdata.parent().unwrap()).unwrap();
+        fs::write(source.join("PG_VERSION"), "18\n").unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
+
+        copy_cluster_seed(&source, &pgdata).unwrap();
+
+        assert_eq!(
+            fs::metadata(&pgdata).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::read_to_string(pgdata.join("PG_VERSION")).unwrap(),
+            "18\n"
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 }

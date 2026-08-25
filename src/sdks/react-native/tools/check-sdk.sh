@@ -83,7 +83,7 @@ require_source_text() {
   file="$1"
   expected="$2"
   message="$3"
-  if ! grep -Fq "$expected" "$file"; then
+  if ! grep -Fq -- "$expected" "$file"; then
     echo "$message" >&2
     echo "expected '$expected' in $file" >&2
     exit 1
@@ -94,7 +94,7 @@ reject_source_text() {
   file="$1"
   rejected="$2"
   message="$3"
-  if grep -Fq "$rejected" "$file"; then
+  if grep -Fq -- "$rejected" "$file"; then
     echo "$message" >&2
     echo "rejected '$rejected' in $file" >&2
     exit 1
@@ -449,6 +449,8 @@ require_source_text "$package_dir/tools/expo-android-runner.sh" '"-Pliboliphaunt
   "React Native Android mobile runner must pin the staged Kotlin SDK candidate AAR by exact path"
 require_source_text "$package_dir/tools/mobile-extension-runtime.sh" 'liboliphaunt-native-version "$native_runtime_version"' \
   "React Native mobile resources must bind extension payloads to the exact liboliphaunt native version"
+require_source_text "$package_dir/tools/mobile-extension-runtime.sh" '--mode native-direct' \
+  "React Native mobile resources must package the native-direct runtime contract"
 require_source_text "$package_dir/src/client.ts" "generatedExtensionBySqlName(trimmed)" \
   "React Native JS boundary must validate selected extensions against the generated extension catalog before crossing the bridge"
 require_source_text "$package_dir/src/client.ts" "unknown React Native Oliphaunt extension id" \

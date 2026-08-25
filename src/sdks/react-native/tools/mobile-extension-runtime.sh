@@ -300,7 +300,7 @@ oliphaunt_dev_prepare_prebuilt_mobile_runtime_resource_package() {
   module_stems="$(oliphaunt_dev_mobile_module_stems_for_selection "$selected_extensions")"
   local -a package_args=(
     run -p oliphaunt-native-packaging --bin oliphaunt-resources --locked --
-    --mode native-server
+    --mode native-direct
     --output "$package_root"
     --extension-target "$extension_target"
     --liboliphaunt-native-version "$native_runtime_version"
@@ -340,6 +340,8 @@ oliphaunt_dev_prepare_prebuilt_mobile_runtime_resource_package() {
     fi
     return 1
   fi
+  grep -Fxq 'mode=native-direct' "$package_root/oliphaunt/runtime/manifest.properties" ||
+    fail "prebuilt $platform runtime resource package did not produce a native-direct manifest"
   touch "$package_root/.prepared"
   printf '%s\n' "$package_root"
 }

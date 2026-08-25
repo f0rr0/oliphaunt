@@ -2652,14 +2652,25 @@ function checkAndroidPrebuiltExtensionLinkage(artifact, stems, report, reportPat
   }
 }
 
+export function validatePackagedMobileRuntimeManifest(runtime, source = "mobile runtime manifest") {
+  if (runtime.schema !== "oliphaunt-runtime-resources-v1") {
+    throw new Error(`${source} has invalid runtime resource manifest schema`);
+  }
+  if (runtime.mode !== "native-direct") {
+    throw new Error(`${source} must declare mode=native-direct`);
+  }
+}
+
 function checkMobileArtifact(artifact, { requirePrebuiltExtensions }) {
   const prefix = mobilePrefix(artifact.platform);
   const runtimeManifestName = `${prefix}runtime/manifest.properties`;
   const staticRegistryManifestName = `${prefix}static-registry/manifest.properties`;
   const packageSizeName = `${prefix}package-size.tsv`;
   const runtime = readPropertiesText(artifact.readText(runtimeManifestName));
-  if (runtime.schema !== "oliphaunt-runtime-resources-v1") {
-    fail(`${rel(artifact.path)} has invalid runtime resource manifest schema`);
+  try {
+    validatePackagedMobileRuntimeManifest(runtime, `${rel(artifact.path)} runtime resource manifest`);
+  } catch (error) {
+    fail(error.message);
   }
   const rows = generatedExtensionRows();
   const staticRegistry = readPropertiesText(artifact.readText(staticRegistryManifestName));
