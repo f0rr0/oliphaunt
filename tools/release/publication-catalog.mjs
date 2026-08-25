@@ -17,6 +17,7 @@ import {
   WASIX_RUNTIME_NPM_TARGET,
   WASIX_RUNTIME_PRODUCT,
 } from "./wasix-runtime-npm-contract.mjs";
+import { WASIX_ICU_NPM_PACKAGE } from "./wasix-icu-npm-contract.mjs";
 
 export const PUBLICATION_CATALOG_SCHEMA = "oliphaunt-publication-catalog-v1";
 
@@ -89,7 +90,7 @@ function carrierTarget(product, ecosystem, name) {
   if (
     product === WASIX_RUNTIME_PRODUCT
     && ecosystem === "npm"
-    && name === WASIX_RUNTIME_NPM_PACKAGE
+    && (name === WASIX_RUNTIME_NPM_PACKAGE || name === WASIX_ICU_NPM_PACKAGE)
   ) {
     return WASIX_RUNTIME_NPM_TARGET;
   }

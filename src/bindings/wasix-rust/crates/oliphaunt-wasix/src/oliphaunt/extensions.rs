@@ -136,7 +136,7 @@ pub(crate) fn resolve_extension_set(extensions: &[Extension]) -> Result<Vec<Exte
 }
 
 /// Merge startup settings required by selected extensions into the caller's
-/// PostgreSQL configuration before either a template or a backend is started.
+/// PostgreSQL configuration before either a cluster seed or a backend is started.
 ///
 /// `shared_preload_libraries` is a list-valued GUC, so caller-provided and
 /// extension-required entries are unioned in stable first-seen order. Other

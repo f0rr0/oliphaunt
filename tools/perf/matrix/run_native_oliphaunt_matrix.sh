@@ -55,7 +55,7 @@ Options:
   --startup-guc NAME=VALUE
                          PostgreSQL startup GUC override. Repeatable; applied after footprint
                          and durability defaults.
-  --pgdata-copy-mode MODE PGDATA template hydration: copy or prefer-clone. Default: copy.
+  --pgdata-copy-mode MODE Cluster-seed hydration: copy or prefer-clone. Default: copy.
   --engines LIST         Comma-separated native engines: direct, broker, server, or all.
                          Default: direct,broker,server.
   --suite LIST           Alias for --suites.

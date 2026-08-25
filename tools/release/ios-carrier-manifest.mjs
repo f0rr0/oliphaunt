@@ -487,13 +487,13 @@ function baseCarrier({ baseAssetDir, repository, localUrls, verifyMembers, archi
     },
     {
       role: "runtime-resources",
-      name: `liboliphaunt-${version}-runtime-resources.tar.gz`,
+      name: `liboliphaunt-${version}-runtime-resources-ios-datum64.tar.gz`,
       member: "oliphaunt",
     },
     {
       role: "icu-data",
       name: `liboliphaunt-${version}-icu-data.tar.gz`,
-      member: "share/icu",
+      member: ".",
     },
   ];
   const assets = rows.map((row) => asset({

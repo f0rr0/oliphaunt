@@ -9,7 +9,11 @@ import {
   OPFS_POOL_ROOT,
 } from '../storage/opfs-pool.js';
 import { acquireOpfsStorage, restoreOpfsStorage } from '../storage/opfs-provider.js';
-import { WASIX_PHYSICAL_IDENTITY, type WasixPhysicalIdentity } from '../storage-provider.js';
+import {
+  WASIX_PHYSICAL_IDENTITY,
+  type WasixClusterSeedLoader,
+  type WasixPhysicalIdentity,
+} from '../storage-provider.js';
 
 const OP = {
   metadata: 1,
@@ -34,7 +38,7 @@ describe('WASIX pooled OPFS storage', () => {
 
   it('persists the opaque logical namespace across direct reopen', async () => {
     const root = installOpfs();
-    const pool = await DirectOpfsPool.open('todos', template(), compatible());
+    const pool = await DirectOpfsPool.open('todos', clusterSeed(), compatible());
     expect(pool.state).toBe('new');
 
     requestOk(pool, OP.createDirectory, 'base/1');
@@ -47,7 +51,13 @@ describe('WASIX pooled OPFS storage', () => {
     const database = await databaseDirectory(root, 'todos');
     expect(await collectKeys(database)).toEqual(['data', 'state.json']);
 
-    const reopened = await DirectOpfsPool.open('todos', template(), compatible());
+    const reopened = await DirectOpfsPool.open(
+      'todos',
+      async () => {
+        throw new Error('existing OPFS storage must not load the cluster seed');
+      },
+      compatible(),
+    );
     expect(reopened.state).toBe('existing');
     const readDescriptor = open(reopened, 'base/1/value', FLAG_READ);
     expect(decoder.decode(read(reopened, readDescriptor, 32))).toBe('persisted');
@@ -57,7 +67,7 @@ describe('WASIX pooled OPFS storage', () => {
 
   it('keeps an unlinked descriptor alive without resurrecting its path', async () => {
     installOpfs();
-    const pool = await DirectOpfsPool.open('unlink', template(), compatible());
+    const pool = await DirectOpfsPool.open('unlink', clusterSeed(), compatible());
     const descriptor = open(pool, 'base/transient', FLAG_READ | FLAG_WRITE | FLAG_CREATE);
     write(pool, descriptor, encoder.encode('still open'));
     requestOk(pool, OP.unlink, '', new Uint8Array(), descriptor);
@@ -67,14 +77,14 @@ describe('WASIX pooled OPFS storage', () => {
     await pool.sync('operation');
     await pool.close(true);
 
-    const reopened = await DirectOpfsPool.open('unlink', template(), compatible());
+    const reopened = await DirectOpfsPool.open('unlink', clusterSeed(), compatible());
     expect(reopened.request(OP.metadata, 'base/transient', new Uint8Array(), 0, 0, 0)[0]).toBe(1);
     await reopened.close(false);
   });
 
   it('keeps an open descriptor attached to its file across rename replacement', async () => {
     installOpfs();
-    const pool = await DirectOpfsPool.open('rename-open', template(), compatible());
+    const pool = await DirectOpfsPool.open('rename-open', clusterSeed(), compatible());
     const descriptor = open(pool, 'base/source', FLAG_READ | FLAG_WRITE | FLAG_CREATE);
     write(pool, descriptor, encoder.encode('before'));
     const replaced = open(pool, 'base/destination', FLAG_WRITE | FLAG_CREATE);
@@ -87,7 +97,7 @@ describe('WASIX pooled OPFS storage', () => {
     await pool.sync('checkpoint');
     await pool.close(true);
 
-    const reopened = await DirectOpfsPool.open('rename-open', template(), compatible());
+    const reopened = await DirectOpfsPool.open('rename-open', clusterSeed(), compatible());
     expect(reopened.request(OP.metadata, 'base/source', new Uint8Array(), 0, 0, 0)[0]).toBe(1);
     const destination = open(reopened, 'base/destination', FLAG_READ);
     expect(decoder.decode(read(reopened, destination, 32))).toBe('before-after');
@@ -99,7 +109,7 @@ describe('WASIX pooled OPFS storage', () => {
     const flushes: string[] = [];
     const io: FakeIo = { flushes };
     const root = installOpfs(io);
-    const pool = await DirectOpfsPool.open('flush-order', template(), compatible());
+    const pool = await DirectOpfsPool.open('flush-order', clusterSeed(), compatible());
     for (const path of ['base/value', 'base/other', 'pg_wal/0001']) {
       const descriptor = open(pool, path, FLAG_WRITE | FLAG_CREATE);
       write(pool, descriptor, Uint8Array.of(1));
@@ -164,7 +174,7 @@ describe('WASIX pooled OPFS storage', () => {
 
   it('stages a creation burst beyond the preopened fast path and publishes it durably', async () => {
     installOpfs();
-    const pool = await DirectOpfsPool.open('burst', template(), compatible());
+    const pool = await DirectOpfsPool.open('burst', clusterSeed(), compatible());
     for (let index = 0; index < 140; index += 1) {
       const descriptor = open(pool, `base/file-${index}`, FLAG_WRITE | FLAG_CREATE);
       write(pool, descriptor, Uint8Array.of(index));
@@ -182,7 +192,7 @@ describe('WASIX pooled OPFS storage', () => {
     await pool.sync('checkpoint');
     await pool.close(true);
 
-    const reopened = await DirectOpfsPool.open('burst', template(), compatible());
+    const reopened = await DirectOpfsPool.open('burst', clusterSeed(), compatible());
     for (let index = 0; index < 140; index += 1) {
       const descriptor = open(reopened, `base/file-${index}`, FLAG_READ);
       expect(read(reopened, descriptor, 1)).toEqual(Uint8Array.of(index));
@@ -197,7 +207,7 @@ describe('WASIX pooled OPFS storage', () => {
   it('does not publish staged overflow when backing allocation fails', async () => {
     const io: FakeIo = {};
     installOpfs(io);
-    const pool = await DirectOpfsPool.open('staged-failure', template(), compatible());
+    const pool = await DirectOpfsPool.open('staged-failure', clusterSeed(), compatible());
     await pool.sync('checkpoint');
     for (let index = 0; index < 40; index += 1) {
       const descriptor = open(pool, `base/staged-${index}`, FLAG_WRITE | FLAG_CREATE);
@@ -210,7 +220,7 @@ describe('WASIX pooled OPFS storage', () => {
     io.syncAccessErrorName = undefined;
     await pool.close(false);
 
-    const reopened = await DirectOpfsPool.open('staged-failure', template(), compatible());
+    const reopened = await DirectOpfsPool.open('staged-failure', clusterSeed(), compatible());
     expect(reopened.state).toBe('existing');
     expect(reopened.request(OP.metadata, 'base/staged-0', new Uint8Array(), 0, 0, 0)[0]).toBe(1);
     await reopened.close(false);
@@ -219,7 +229,7 @@ describe('WASIX pooled OPFS storage', () => {
   it('does not fail a persisted boundary when optional spare replenishment fails', async () => {
     const io: FakeIo = {};
     const root = installOpfs(io);
-    const pool = await DirectOpfsPool.open('replenishment', template(), compatible());
+    const pool = await DirectOpfsPool.open('replenishment', clusterSeed(), compatible());
     const descriptor = open(pool, 'base/value', FLAG_WRITE | FLAG_CREATE);
     write(pool, descriptor, Uint8Array.of(7));
     requestOk(pool, OP.close, '', new Uint8Array(), descriptor);
@@ -241,7 +251,7 @@ describe('WASIX pooled OPFS storage', () => {
 
   it('uses the same durable format for direct and portable fallback paths', async () => {
     const root = installOpfs();
-    const pool = await DirectOpfsPool.open('portable', template(), compatible());
+    const pool = await DirectOpfsPool.open('portable', clusterSeed(), compatible());
     const descriptor = open(pool, 'base/direct', FLAG_WRITE | FLAG_CREATE);
     write(pool, descriptor, Uint8Array.of(1, 2, 3));
     requestOk(pool, OP.close, '', new Uint8Array(), descriptor);
@@ -258,7 +268,7 @@ describe('WASIX pooled OPFS storage', () => {
       deleted: [],
     });
 
-    const reopened = await DirectOpfsPool.open('portable', template(), compatible());
+    const reopened = await DirectOpfsPool.open('portable', clusterSeed(), compatible());
     const readDescriptor = open(reopened, 'base/direct', FLAG_READ);
     expect(read(reopened, readDescriptor, 8)).toEqual(Uint8Array.of(4, 5));
     requestOk(reopened, OP.close, '', new Uint8Array(), readDescriptor);
@@ -301,18 +311,18 @@ describe('WASIX pooled OPFS storage', () => {
     const io: FakeIo = { syncAccessErrorName: 'NotSupportedError' };
     installOpfs(io);
 
-    const fallback = await acquireOpfsStorage('first-fallback', template(), compatible());
+    const fallback = await acquireOpfsStorage('first-fallback', clusterSeed(), compatible());
     expect(fallback.state).toBe('new');
     expect(fallback.createPgdataDirectory).toBeUndefined();
     await fallback.close(undefined, 'failed');
 
     io.syncAccessErrorName = undefined;
-    const direct = await DirectOpfsPool.open('first-fallback', template(), compatible());
+    const direct = await DirectOpfsPool.open('first-fallback', clusterSeed(), compatible());
     expect(direct.state).toBe('new');
     await direct.sync('checkpoint');
     await direct.close(true);
 
-    const reopened = await DirectOpfsPool.open('first-fallback', template(), compatible());
+    const reopened = await DirectOpfsPool.open('first-fallback', clusterSeed(), compatible());
     expect(reopened.state).toBe('existing');
     await reopened.close(false);
   });
@@ -320,7 +330,7 @@ describe('WASIX pooled OPFS storage', () => {
   it('publishes an unchanged portable first-open generation as ready', async () => {
     const root = installOpfs();
     vi.stubGlobal('document', {});
-    const lease = await acquireOpfsStorage('portable-initialization', template(), compatible());
+    const lease = await acquireOpfsStorage('portable-initialization', clusterSeed(), compatible());
     expect(lease.state).toBe('new');
     const clearChanges = vi.fn();
     await lease.sync(
@@ -345,7 +355,7 @@ describe('WASIX pooled OPFS storage', () => {
     installOpfs();
     const free = vi.fn();
     const createSync = vi.fn(() => directDirectory({ readTextFile: async () => '18\n', free }));
-    const lease = await acquireOpfsStorage('direct-lifecycle', template(), compatible());
+    const lease = await acquireOpfsStorage('direct-lifecycle', clusterSeed(), compatible());
     if (lease.createPgdataDirectory === undefined) throw new Error('expected direct OPFS storage');
 
     const directory = await lease.createPgdataDirectory({
@@ -361,7 +371,11 @@ describe('WASIX pooled OPFS storage', () => {
   it('releases a direct host filesystem when bridge validation fails', async () => {
     installOpfs();
     const free = vi.fn();
-    const lease = await acquireOpfsStorage('direct-validation-failure', template(), compatible());
+    const lease = await acquireOpfsStorage(
+      'direct-validation-failure',
+      clusterSeed(),
+      compatible(),
+    );
     if (lease.createPgdataDirectory === undefined) throw new Error('expected direct OPFS storage');
 
     await expect(
@@ -384,7 +398,7 @@ describe('WASIX pooled OPFS storage', () => {
     const io: FakeIo = {};
     installOpfs(io);
     const free = vi.fn();
-    const lease = await acquireOpfsStorage('close-cleanup', template(), compatible());
+    const lease = await acquireOpfsStorage('close-cleanup', clusterSeed(), compatible());
     if (lease.createPgdataDirectory === undefined) throw new Error('expected direct OPFS storage');
     const directory = await lease.createPgdataDirectory({
       createSync: () => directDirectory({ readTextFile: async () => '18\n', free }),
@@ -402,7 +416,7 @@ describe('WASIX pooled OPFS storage', () => {
   it('does not publish setup completion when its final state commit fails', async () => {
     const io: FakeIo = {};
     installOpfs(io);
-    const pool = await DirectOpfsPool.open('initialization-marker', template(), compatible());
+    const pool = await DirectOpfsPool.open('initialization-marker', clusterSeed(), compatible());
     const control = open(pool, 'global/pg_control', FLAG_WRITE);
     requestOk(pool, OP.truncate, '', new Uint8Array(), control, 1);
     write(pool, control, Uint8Array.of(9));
@@ -411,7 +425,11 @@ describe('WASIX pooled OPFS storage', () => {
     await expect(pool.sync('checkpoint')).rejects.toThrow('injected state commit failure');
     await pool.close(false);
 
-    const reopened = await DirectOpfsPool.open('initialization-marker', template(), compatible());
+    const reopened = await DirectOpfsPool.open(
+      'initialization-marker',
+      clusterSeed(),
+      compatible(),
+    );
     expect(reopened.state).toBe('new');
     const restoredControl = open(reopened, 'global/pg_control', FLAG_READ);
     expect(read(reopened, restoredControl, 8)).toEqual(Uint8Array.of(1, 2, 3));
@@ -422,13 +440,13 @@ describe('WASIX pooled OPFS storage', () => {
   it('normalizes direct browser failures and classifies missing backings as corrupt', async () => {
     const io: FakeIo = { syncAccessErrorName: 'QuotaExceededError' };
     const root = installOpfs(io);
-    const fallback = await acquireOpfsStorage('quota', template(), compatible());
+    const fallback = await acquireOpfsStorage('quota', clusterSeed(), compatible());
     expect(fallback.state).toBe('new');
     expect(fallback.createPgdataDirectory).toBeUndefined();
     await fallback.close(undefined, 'failed');
 
     io.syncAccessErrorName = undefined;
-    const pool = await DirectOpfsPool.open('missing-backing', template(), compatible());
+    const pool = await DirectOpfsPool.open('missing-backing', clusterSeed(), compatible());
     await pool.sync('checkpoint');
     await pool.close(true);
     const database = await databaseDirectory(root, 'missing-backing');
@@ -441,7 +459,7 @@ describe('WASIX pooled OPFS storage', () => {
     await database.file('state.json').replaceText(JSON.stringify(state));
 
     await expect(
-      acquireOpfsStorage('missing-backing', template(), compatible()),
+      acquireOpfsStorage('missing-backing', clusterSeed(), compatible()),
     ).rejects.toMatchObject({
       name: 'WasixStorageError',
       code: 'corrupt',
@@ -456,7 +474,7 @@ describe('WASIX pooled OPFS storage', () => {
 
   it('scrubs transient PostgreSQL process files before portable hydration', async () => {
     const root = installOpfs();
-    const pool = await DirectOpfsPool.open('volatile', template(), compatible());
+    const pool = await DirectOpfsPool.open('volatile', clusterSeed(), compatible());
     await pool.close(true);
     const database = await databaseDirectory(root, 'volatile');
     await applyPooledOpfsDelta(database.asHandle(), 'volatile', compatible(), {
@@ -473,7 +491,7 @@ describe('WASIX pooled OPFS storage', () => {
 
   it('fails closed for incompatible or structurally invalid state', async () => {
     const root = installOpfs();
-    const pool = await DirectOpfsPool.open('guarded', template(), compatible());
+    const pool = await DirectOpfsPool.open('guarded', clusterSeed(), compatible());
     await pool.close(true);
     const database = await databaseDirectory(root, 'guarded');
     const state = JSON.parse(await database.file('state.json').text()) as {
@@ -503,7 +521,7 @@ describe('WASIX pooled OPFS storage', () => {
 
   it('rejects malformed, duplicate, and extended state metadata', async () => {
     const root = installOpfs();
-    const pool = await DirectOpfsPool.open('malformed-state', template(), compatible());
+    const pool = await DirectOpfsPool.open('malformed-state', clusterSeed(), compatible());
     await pool.sync('checkpoint');
     await pool.close(true);
     const database = await databaseDirectory(root, 'malformed-state');
@@ -534,7 +552,7 @@ describe('WASIX pooled OPFS storage', () => {
   it('does not publish a namespace generation when its state commit fails', async () => {
     const io: FakeIo = {};
     const root = installOpfs(io);
-    const pool = await DirectOpfsPool.open('atomic', template(), compatible());
+    const pool = await DirectOpfsPool.open('atomic', clusterSeed(), compatible());
     const descriptor = open(pool, 'base/uncommitted', FLAG_WRITE | FLAG_CREATE);
     write(pool, descriptor, Uint8Array.of(7));
     requestOk(pool, OP.close, '', new Uint8Array(), descriptor);
@@ -542,7 +560,7 @@ describe('WASIX pooled OPFS storage', () => {
     await expect(pool.sync('checkpoint')).rejects.toThrow('injected state commit failure');
     await pool.close(false);
 
-    const reopened = await DirectOpfsPool.open('atomic', template(), compatible());
+    const reopened = await DirectOpfsPool.open('atomic', clusterSeed(), compatible());
     expect(reopened.request(OP.metadata, 'base/uncommitted', new Uint8Array(), 0, 0, 0)[0]).toBe(1);
     await reopened.close(false);
     expect((await databaseDirectory(root, 'atomic')).file('state.json')).toBeDefined();
@@ -551,7 +569,7 @@ describe('WASIX pooled OPFS storage', () => {
   it('keeps the preceding portable generation when publication fails', async () => {
     const io: FakeIo = {};
     const root = installOpfs(io);
-    const pool = await DirectOpfsPool.open('portable-atomic', template(), compatible());
+    const pool = await DirectOpfsPool.open('portable-atomic', clusterSeed(), compatible());
     await pool.close(true);
     const database = await databaseDirectory(root, 'portable-atomic');
     await applyPooledOpfsDelta(database.asHandle(), 'portable-atomic', compatible(), {
@@ -574,12 +592,15 @@ describe('WASIX pooled OPFS storage', () => {
     );
   });
 
-  it('rejects a template without essential PostgreSQL control files', async () => {
+  it('rejects a cluster seed without essential PostgreSQL control files', async () => {
     installOpfs();
     await expect(
       DirectOpfsPool.open(
-        'invalid-template',
-        { directories: ['base', 'global'], files: { PG_VERSION: encoder.encode('18\n') } },
+        'invalid-seed',
+        async () => ({
+          directories: ['base', 'global'],
+          files: { PG_VERSION: encoder.encode('18\n') },
+        }),
         compatible(),
       ),
     ).rejects.toMatchObject({ code: 'corrupt', commitState: 'unchanged' });
@@ -587,7 +608,7 @@ describe('WASIX pooled OPFS storage', () => {
 
   it('replaces an unpublished initialization when restoring', async () => {
     const origin = installOpfs();
-    const pool = await DirectOpfsPool.open('restore-initializing', template(), compatible());
+    const pool = await DirectOpfsPool.open('restore-initializing', clusterSeed(), compatible());
     expect(pool.state).toBe('new');
     await pool.close(false);
 
@@ -608,7 +629,7 @@ describe('WASIX pooled OPFS storage', () => {
   it('leaves an interrupted restore destination retryable', async () => {
     const io: FakeIo = {};
     const origin = installOpfs(io);
-    const pool = await DirectOpfsPool.open('restore-retry', template(), compatible());
+    const pool = await DirectOpfsPool.open('restore-retry', clusterSeed(), compatible());
     await pool.close(false);
 
     io.failNextDataCommit = true;
@@ -625,7 +646,7 @@ describe('WASIX pooled OPFS storage', () => {
 
   it('rejects restoring over a published database', async () => {
     installOpfs();
-    const pool = await DirectOpfsPool.open('restore-published', template(), compatible());
+    const pool = await DirectOpfsPool.open('restore-published', clusterSeed(), compatible());
     await pool.sync('checkpoint');
     await pool.close(true);
 
@@ -707,14 +728,15 @@ function read(pool: DirectOpfsPool, descriptor: number, capacity: number): Uint8
   return output.slice(0, result[1]);
 }
 
-function template(): WasixDirectoryMount {
-  return {
+function clusterSeed(): WasixClusterSeedLoader {
+  const mount: WasixDirectoryMount = {
     directories: ['base', 'global', 'pg_wal'],
     files: {
       PG_VERSION: encoder.encode('18\n'),
       'global/pg_control': Uint8Array.of(1, 2, 3),
     },
   };
+  return async () => mount;
 }
 
 function completeSnapshot() {

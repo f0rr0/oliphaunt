@@ -1354,7 +1354,7 @@ patches_applied() {
     grep -q 'oliphaunt_embedded_proc_exit' src/include/storage/ipc.h &&
     grep -q 'original_cwd' src/backend/tcop/postgres.c &&
     grep -q 'oliphaunt_static_extension_lookup' src/backend/utils/fmgr/dfmgr.c &&
-    grep -q 'getenv("ICU_DATA")' src/bin/initdb/initdb.c &&
+    grep -q 'OLIPHAUNT_INTERNAL_ICU_READY' src/bin/initdb/initdb.c &&
     grep -q 'OLIPHAUNT_EMBEDDED_NO_SHELL_COMMANDS' src/backend/archive/shell_archive.c &&
     grep -q 'OLIPHAUNT_EMBEDDED_NO_SHELL_COMMANDS' src/backend/access/transam/xlogarchive.c &&
     grep -q 'oliphaunt_pg_hash_create' src/include/utils/hsearch.h &&

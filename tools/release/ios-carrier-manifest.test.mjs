@@ -172,7 +172,7 @@ test("produces exact local and GitHub carrier envelopes without consulting trunc
       insideMember: true,
       profile: "native-runtime",
     });
-    archive(base, `liboliphaunt-${version}-runtime-resources.tar.gz`, "oliphaunt", "tar.gz", {
+    archive(base, `liboliphaunt-${version}-runtime-resources-ios-datum64.tar.gz`, "oliphaunt", "tar.gz", {
       insideMember: false,
       profile: "native-runtime-resources",
     });

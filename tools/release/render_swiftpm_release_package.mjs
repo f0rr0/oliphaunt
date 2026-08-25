@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { readPortableArchiveEntries } from "./portable-archive.mjs";
 import { currentVersion } from "./product-version.mjs";
+import { validateNativeIcuDataManifest } from "./native-icu-data-contract.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const REPOSITORY = "f0rr0/oliphaunt";
@@ -335,12 +336,25 @@ async function prepareIcuResourceTree(assetDir, version, generatedTree) {
       } else {
         fail(`SwiftPM ICU data asset member must be a regular file or directory: ${memberName}`);
       }
+      continue;
+    }
+    if (memberName.replace(/^\.\//u, "") === "manifest.properties" && entry.isFile) {
+      await fs.writeFile(path.join(target, "manifest.properties"), entry.data());
     }
   }
 
   const icuEntries = await fs.readdir(path.join(target, "share/icu")).catch(() => []);
   if (copied === 0 || !icuEntries.some((name) => name.startsWith("icudt"))) {
     fail(`SwiftPM ICU resource product did not extract ICU icudt data from ${archivePath}`);
+  }
+  try {
+    validateNativeIcuDataManifest(
+      await fs.readFile(path.join(target, "manifest.properties")),
+      path.join(target, "share/icu"),
+      `${archivePath} manifest.properties`,
+    );
+  } catch (error) {
+    fail(`SwiftPM ICU resource product did not extract its exact data receipt from ${archivePath}: ${error instanceof Error ? error.message : String(error)}`);
   }
   await fs.writeFile(
     path.join(target, "OliphauntICU.swift"),
@@ -485,7 +499,7 @@ let package = Package(
         .target(
             name: "OliphauntICU",
             path: "generated/swiftpm/OliphauntICU",
-            resources: [.copy("share")]
+            resources: [.copy("share"), .copy("manifest.properties")]
         )
     ]
 )

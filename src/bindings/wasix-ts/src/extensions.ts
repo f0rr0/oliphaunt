@@ -1,12 +1,18 @@
 import {
+  clusterSeedMount,
   decompressIfNeeded,
   type ExtractedArchive,
   extractTar,
-  layoutRuntime,
+  layoutRuntimeSupport,
   loadAsset,
+  type WasixDirectoryMount,
   type WasixRuntimeLayout,
 } from './archive.js';
-import type { SerializedOpenOptions, SerializedRuntimeDescriptor } from './rpc.js';
+import type {
+  SerializedOpenOptions,
+  SerializedRuntimeDescriptor,
+  SerializedToolRuntimeDescriptor,
+} from './rpc.js';
 import { WASIX_PHYSICAL_IDENTITY, type WasixPhysicalIdentity } from './storage-provider.js';
 import type { WasixAssetManifest } from './types.js';
 
@@ -14,6 +20,53 @@ const decoder = new TextDecoder('utf-8', { fatal: true });
 const SQL_NAME = /^[a-z0-9][a-z0-9_-]*$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const SHARED_PRELOAD_LIBRARIES = 'shared_preload_libraries';
+
+type CatalogProfile = 'standard' | 'icu';
+
+type ClusterSeedManifest = {
+  schema: 'oliphaunt-cluster-seed-v1';
+  artifactRole: 'cluster-seed-standard' | 'cluster-seed-icu';
+  catalogProfile: CatalogProfile;
+  runtime: {
+    product: string;
+    version: string;
+    engineFamily: string;
+    physicalFormat: string;
+    postgresMajor: number;
+    compatibilityKey: string;
+    consumerSha256: string;
+    producerSha256: string;
+    initdbSha256: string;
+  };
+  source: {
+    fingerprint: string;
+    catalogVersion: string;
+    lane: string;
+    producer: string;
+  };
+  initProfile: string;
+  archive: {
+    path: string;
+    sha256: string;
+    compressedBytes: number;
+    expandedBytes: number;
+    regularFiles: number;
+    directories: number;
+  };
+  requiredRuntimeFeatures: string[];
+  extensions: {
+    selected: string[];
+    startupConfiguration: string[];
+  };
+  icu: null | {
+    artifactRole: string;
+    upstreamVersion: string;
+    sourceCommit: string;
+    dataTreeSha256: string;
+    dataVersion: string;
+    dataForm: string;
+  };
+};
 
 /** Internal kebab-case projection used while installing an imported carrier. */
 type ProjectedExtensionLifecycle = {
@@ -48,36 +101,97 @@ export type ResolvedWasixExtensions = {
 
 export type PreparedWasixRuntime = {
   layout: WasixRuntimeLayout;
+  loadClusterSeed(): Promise<WasixDirectoryMount>;
   moduleSha256: string;
+  catalogProfile: 'standard' | 'icu';
+  icuEnabled: boolean;
   startupGUCs: Record<string, string>;
   setupSql: string[];
   physicalIdentity: WasixPhysicalIdentity;
 };
 
 /**
- * Loads and verifies one exact runtime/PGDATA/extension asset set. Extension
- * bytes are overlaid before Wasmer sees the mounts, while lifecycle SQL stays
- * separate for execution after PostgreSQL reaches ReadyForQuery.
+ * Loads and verifies one exact runtime/ICU/extension closure. The matching
+ * cluster seed stays lazy until an exclusively leased storage provider reports
+ * a new root. Extension lifecycle SQL remains separate for execution after
+ * PostgreSQL reaches ReadyForQuery.
  */
 export async function prepareWasixRuntime(
   options: SerializedOpenOptions,
 ): Promise<PreparedWasixRuntime> {
   const descriptor = options.runtime;
-  const [manifestBytes, runtimeBytes, pgdataBytes] = await Promise.all([
+  const profile = options.icu === undefined ? 'standard' : 'icu';
+  const seedArchiveDescriptor = options.icu?.clusterSeedArchive ?? descriptor.standardSeedArchive;
+  const seedManifestDescriptor =
+    options.icu?.clusterSeedManifest ?? descriptor.standardSeedManifest;
+  const prefetchedSeedAssets =
+    options.storage.kind === 'memory'
+      ? loadClusterSeedAssets(profile, seedArchiveDescriptor, seedManifestDescriptor)
+      : undefined;
+  // Memory storage is always new, so overlap its required seed download with
+  // the runtime closure. Persistent providers must inspect storage first.
+  void prefetchedSeedAssets?.catch(() => undefined);
+  const [manifestBytes, runtimeBytes, icuDataBytes] = await Promise.all([
     loadAsset(descriptor.manifest.source, 'WASIX asset manifest'),
     loadAsset(descriptor.runtimeArchive.source, 'WASIX runtime archive'),
-    loadAsset(descriptor.pgdataArchive.source, 'WASIX PGDATA template'),
+    options.icu === undefined
+      ? Promise.resolve(undefined)
+      : loadAsset(options.icu.dataArchive.source, 'WASIX ICU data archive'),
   ]);
-  await verifyRuntimeDescriptorBytes(descriptor, manifestBytes, runtimeBytes, pgdataBytes);
+  await Promise.all([
+    assertDeclaredAssetBytes(
+      manifestBytes,
+      descriptor.manifest.size,
+      descriptor.manifest.sha256,
+      'WASIX asset manifest',
+    ),
+    assertDeclaredAssetBytes(
+      runtimeBytes,
+      descriptor.runtimeArchive.size,
+      descriptor.runtimeArchive.sha256,
+      'WASIX runtime archive',
+    ),
+    ...(options.icu === undefined || icuDataBytes === undefined
+      ? []
+      : [
+          assertDeclaredAssetBytes(
+            icuDataBytes,
+            options.icu.dataArchive.size,
+            options.icu.dataArchive.sha256,
+            'WASIX ICU data archive',
+          ),
+        ]),
+  ]);
   const manifest = parseWasixAssetManifest(manifestBytes);
   assertRuntimeDescriptorMatchesManifest(descriptor, manifest);
-  verifyCoreIdentity(manifest);
-
+  const selectedSeed = manifest['cluster-seeds'][profile];
+  assertRuntimeArchiveMatchesManifest(
+    seedArchiveDescriptor,
+    selectedSeed,
+    `WASIX ${profile} cluster seed archive`,
+  );
+  if (options.icu !== undefined) {
+    assertIcuDescriptorMatchesRuntime(options.runtime, options.icu, manifest);
+  }
+  const eagerClusterSeed =
+    prefetchedSeedAssets === undefined
+      ? undefined
+      : loadClusterSeed(
+          options,
+          manifest,
+          selectedSeed,
+          profile,
+          seedArchiveDescriptor,
+          seedManifestDescriptor,
+          prefetchedSeedAssets,
+        );
+  void eagerClusterSeed?.catch(() => undefined);
   const runtime = extractTar(decompressIfNeeded(runtimeBytes));
-  const pgdata = extractTar(decompressIfNeeded(pgdataBytes));
-  const layout = layoutRuntime(runtime, pgdata);
-  await assertSha256(layout.module, manifest.runtime['module-sha256'], 'WASIX runtime module');
-  verifyPostgresIdentity(manifest, pgdata.files.get('PG_VERSION'));
+  if (options.icu !== undefined && icuDataBytes !== undefined) {
+    const icuArchive = extractTar(decompressIfNeeded(icuDataBytes));
+    overlayIcuArchive(runtime, icuArchive);
+  }
+  const layout = layoutRuntimeSupport(runtime);
   assertExtensionCarriersCompatible(descriptor, manifest, options.extensionCarriers);
 
   const resolved = resolveWasixExtensions(manifest, options.extensionCarriers, options.extensions);
@@ -120,11 +234,100 @@ export async function prepareWasixRuntime(
 
   return {
     layout,
+    loadClusterSeed: lazyClusterSeedLoader(
+      options,
+      manifest,
+      selectedSeed,
+      profile,
+      seedArchiveDescriptor,
+      seedManifestDescriptor,
+      eagerClusterSeed,
+    ),
     moduleSha256: manifest.runtime['module-sha256'],
+    catalogProfile: profile,
+    icuEnabled: options.icu !== undefined,
     startupGUCs: mergeExtensionStartupGUCs(options.startupGUCs, resolved.extensions),
     setupSql: extensionSetupSql(resolved),
     physicalIdentity: WASIX_PHYSICAL_IDENTITY,
   };
+}
+
+function lazyClusterSeedLoader(
+  options: SerializedOpenOptions,
+  manifest: WasixAssetManifest,
+  selectedSeed: WasixAssetManifest['cluster-seeds'][CatalogProfile],
+  profile: CatalogProfile,
+  archiveDescriptor: SerializedRuntimeDescriptor['standardSeedArchive'],
+  manifestDescriptor: SerializedRuntimeDescriptor['standardSeedManifest'],
+  eager?: Promise<WasixDirectoryMount>,
+): () => Promise<WasixDirectoryMount> {
+  let cached = eager;
+  const forgetRejectedAttempt = (attempt: Promise<WasixDirectoryMount>) => {
+    void attempt.catch(() => {
+      if (cached === attempt) cached = undefined;
+    });
+  };
+  if (cached !== undefined) forgetRejectedAttempt(cached);
+  return () => {
+    if (cached === undefined) {
+      const attempt = loadClusterSeed(
+        options,
+        manifest,
+        selectedSeed,
+        profile,
+        archiveDescriptor,
+        manifestDescriptor,
+      );
+      cached = attempt;
+      forgetRejectedAttempt(attempt);
+    }
+    return cached;
+  };
+}
+
+type ClusterSeedAssets = readonly [archive: Uint8Array, manifest: Uint8Array];
+
+function loadClusterSeedAssets(
+  profile: CatalogProfile,
+  archiveDescriptor: SerializedRuntimeDescriptor['standardSeedArchive'],
+  manifestDescriptor: SerializedRuntimeDescriptor['standardSeedManifest'],
+): Promise<ClusterSeedAssets> {
+  return Promise.all([
+    loadAsset(archiveDescriptor.source, `WASIX ${profile} cluster seed`),
+    loadAsset(manifestDescriptor.source, `WASIX ${profile} cluster seed manifest`),
+  ]);
+}
+
+async function loadClusterSeed(
+  options: SerializedOpenOptions,
+  manifest: WasixAssetManifest,
+  selectedSeed: WasixAssetManifest['cluster-seeds'][CatalogProfile],
+  profile: CatalogProfile,
+  archiveDescriptor: SerializedRuntimeDescriptor['standardSeedArchive'],
+  manifestDescriptor: SerializedRuntimeDescriptor['standardSeedManifest'],
+  assets?: Promise<ClusterSeedAssets>,
+): Promise<WasixDirectoryMount> {
+  const [archiveBytes, manifestBytes] = await (assets ??
+    loadClusterSeedAssets(profile, archiveDescriptor, manifestDescriptor));
+  await Promise.all([
+    assertDeclaredAssetBytes(
+      archiveBytes,
+      archiveDescriptor.size,
+      archiveDescriptor.sha256,
+      `WASIX ${profile} cluster seed`,
+    ),
+    assertDeclaredAssetBytes(
+      manifestBytes,
+      manifestDescriptor.size,
+      manifestDescriptor.sha256,
+      `WASIX ${profile} cluster seed manifest`,
+    ),
+  ]);
+  const seedManifest = parseClusterSeedManifest(manifestBytes, profile);
+  verifyClusterSeedIdentity(options, manifest, selectedSeed, seedManifest, archiveDescriptor);
+  const seed = extractTar(decompressIfNeeded(archiveBytes));
+  verifyPostgresIdentity(manifest, selectedSeed, seed.files.get('PG_VERSION'));
+  return clusterSeedMount(seed);
 }
 
 /** Require the package-authored archive identities to match the canonical manifest. */
@@ -132,15 +335,23 @@ export function assertRuntimeDescriptorMatchesManifest(
   descriptor: SerializedRuntimeDescriptor,
   manifest: WasixAssetManifest,
 ): void {
+  assertToolRuntimeDescriptorMatchesManifest(descriptor, manifest);
+  assertRuntimeArchiveMatchesManifest(
+    descriptor.standardSeedArchive,
+    manifest['cluster-seeds'].standard,
+    'WASIX standard cluster seed archive',
+  );
+}
+
+/** Verify only the runtime assets consumed by PostgreSQL frontend tools. */
+export function assertToolRuntimeDescriptorMatchesManifest(
+  descriptor: SerializedToolRuntimeDescriptor,
+  manifest: WasixAssetManifest,
+): void {
   assertRuntimeArchiveMatchesManifest(
     descriptor.runtimeArchive,
     manifest.runtime,
     'WASIX runtime archive',
-  );
-  assertRuntimeArchiveMatchesManifest(
-    descriptor.pgdataArchive,
-    manifest['pgdata-template'],
-    'WASIX PGDATA archive',
   );
 }
 
@@ -164,13 +375,13 @@ export function assertExactCarrierClosure(
 export function parseWasixAssetManifest(bytes: Uint8Array): WasixAssetManifest {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(decoder.decode(bytes));
+    parsed = JSON.parse(decodeUtf8(bytes));
   } catch (error) {
     throw new Error(`WASIX asset manifest is not valid UTF-8 JSON: ${describeError(error)}`);
   }
   const manifest = requireObject(parsed, 'WASIX asset manifest');
-  if (manifest['format-version'] !== 1) {
-    throw new Error('WASIX asset manifest must use format-version 1');
+  if (manifest['format-version'] !== 2) {
+    throw new Error('WASIX asset manifest must use format-version 2');
   }
 
   const runtime = requireObject(manifest.runtime, 'WASIX asset manifest runtime');
@@ -189,13 +400,33 @@ export function parseWasixAssetManifest(bytes: Uint8Array): WasixAssetManifest {
     requireString(entry.kind, `WASIX runtime export ${index} kind`);
   }
 
-  const pgdata = requireObject(manifest['pgdata-template'], 'WASIX asset manifest PGDATA template');
-  requireAssetPath(pgdata.archive, 'WASIX PGDATA archive');
-  requireSha256(pgdata.sha256, 'WASIX PGDATA archive');
-  requireSafeInteger(pgdata.size, 'WASIX PGDATA archive size');
-  requireSha256(pgdata['runtime-module-sha256'], 'WASIX PGDATA runtime module');
-  requireString(pgdata['postgres-version'], 'WASIX PGDATA PostgreSQL version');
-  requireString(pgdata['source-fingerprint'], 'WASIX PGDATA source fingerprint');
+  const seeds = requireObject(manifest['cluster-seeds'], 'WASIX asset manifest cluster-seeds');
+  requireExactKeys(seeds, ['icu', 'standard'], 'WASIX asset manifest cluster-seeds');
+  for (const profile of ['standard', 'icu'] as const) {
+    const seed = requireObject(seeds[profile], `WASIX ${profile} cluster seed`);
+    const expectedRole = profile === 'standard' ? 'cluster-seed-standard' : 'cluster-seed-icu';
+    if (seed['catalog-profile'] !== profile || seed['artifact-role'] !== expectedRole) {
+      throw new Error(`WASIX ${profile} cluster seed has a mismatched profile or artifact role`);
+    }
+    requireAssetPath(seed.archive, `WASIX ${profile} cluster seed archive`);
+    requireAssetPath(seed.manifest, `WASIX ${profile} cluster seed manifest`);
+    requireSha256(seed.sha256, `WASIX ${profile} cluster seed archive`);
+    requireSafeInteger(seed.size, `WASIX ${profile} cluster seed archive size`);
+    requireSha256(seed['runtime-module-sha256'], `WASIX ${profile} seed runtime module`);
+    requireString(seed['postgres-version'], `WASIX ${profile} seed PostgreSQL version`);
+    requireString(seed['source-fingerprint'], `WASIX ${profile} seed source fingerprint`);
+    if (
+      seed['physical-format'] !== 'wasix-pg18-v1' ||
+      seed['compatibility-key'] !== 'wasix-pg18-datum32-v1'
+    ) {
+      throw new Error(`WASIX ${profile} cluster seed has an incompatible physical identity`);
+    }
+    if (profile === 'icu') {
+      requireSha256(seed['icu-data-tree-sha256'], 'WASIX ICU seed data tree');
+    } else if (seed['icu-data-tree-sha256'] !== undefined) {
+      throw new Error('WASIX standard cluster seed must not identify ICU data');
+    }
+  }
   requireString(manifest['source-fingerprint'], 'WASIX asset source fingerprint');
 
   const runtimeSupport = requireArray(manifest['runtime-support'], 'WASIX runtime-support entries');
@@ -471,41 +702,292 @@ export function extensionSetupSql(resolved: ResolvedWasixExtensions): string[] {
   return statements;
 }
 
-async function verifyRuntimeDescriptorBytes(
-  descriptor: SerializedRuntimeDescriptor,
-  manifestBytes: Uint8Array,
-  runtimeBytes: Uint8Array,
-  pgdataBytes: Uint8Array,
-): Promise<void> {
-  await Promise.all([
-    assertDeclaredAssetBytes(
-      manifestBytes,
-      descriptor.manifest.size,
-      descriptor.manifest.sha256,
-      'WASIX asset manifest',
-    ),
-    assertDeclaredAssetBytes(
-      runtimeBytes,
-      descriptor.runtimeArchive.size,
-      descriptor.runtimeArchive.sha256,
-      'WASIX runtime archive',
-    ),
-    assertDeclaredAssetBytes(
-      pgdataBytes,
-      descriptor.pgdataArchive.size,
-      descriptor.pgdataArchive.sha256,
-      'WASIX PGDATA archive',
-    ),
-  ]);
+function parseClusterSeedManifest(
+  bytes: Uint8Array,
+  expectedProfile: CatalogProfile,
+): ClusterSeedManifest {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(decodeUtf8(bytes));
+  } catch (error) {
+    throw new Error(
+      `WASIX ${expectedProfile} cluster seed manifest is not valid UTF-8 JSON: ${describeError(error)}`,
+    );
+  }
+  const label = `WASIX ${expectedProfile} cluster seed manifest`;
+  const root = requireObject(parsed, label);
+  requireExactKeys(
+    root,
+    [
+      'archive',
+      'artifactRole',
+      'catalogProfile',
+      'extensions',
+      'icu',
+      'initProfile',
+      'requiredRuntimeFeatures',
+      'runtime',
+      'schema',
+      'source',
+    ],
+    label,
+  );
+  assertClusterSeedProfileContract(root, expectedProfile);
+  requireString(root.initProfile, `${label} init profile`);
+
+  const runtime = requireObject(root.runtime, `${label} runtime`);
+  requireExactKeys(
+    runtime,
+    [
+      'compatibilityKey',
+      'consumerSha256',
+      'engineFamily',
+      'initdbSha256',
+      'physicalFormat',
+      'postgresMajor',
+      'producerSha256',
+      'product',
+      'version',
+    ],
+    `${label} runtime`,
+  );
+  for (const field of [
+    'product',
+    'version',
+    'engineFamily',
+    'physicalFormat',
+    'compatibilityKey',
+  ] as const) {
+    requireString(runtime[field], `${label} runtime ${field}`);
+  }
+  requirePositiveInteger(runtime.postgresMajor, `${label} runtime PostgreSQL major`);
+  for (const field of ['consumerSha256', 'producerSha256', 'initdbSha256'] as const) {
+    requireSha256(runtime[field], `${label} runtime ${field}`);
+  }
+
+  const source = requireObject(root.source, `${label} source`);
+  requireExactKeys(
+    source,
+    ['catalogVersion', 'fingerprint', 'lane', 'producer'],
+    `${label} source`,
+  );
+  for (const field of ['catalogVersion', 'fingerprint', 'lane', 'producer'] as const) {
+    requireString(source[field], `${label} source ${field}`);
+  }
+
+  const archive = requireObject(root.archive, `${label} archive`);
+  requireExactKeys(
+    archive,
+    ['compressedBytes', 'directories', 'expandedBytes', 'path', 'regularFiles', 'sha256'],
+    `${label} archive`,
+  );
+  requireAssetPath(archive.path, `${label} archive path`);
+  requireSha256(archive.sha256, `${label} archive`);
+  for (const field of [
+    'compressedBytes',
+    'directories',
+    'expandedBytes',
+    'regularFiles',
+  ] as const) {
+    requirePositiveInteger(archive[field], `${label} archive ${field}`);
+  }
+
+  const extensions = requireObject(root.extensions, `${label} extensions`);
+  requireExactKeys(extensions, ['selected', 'startupConfiguration'], `${label} extensions`);
+  const selected = requireStringArray(extensions.selected, `${label} selected extensions`);
+  const startupConfiguration = requireStringArray(
+    extensions.startupConfiguration,
+    `${label} startup configuration`,
+  );
+  if (selected.length !== 0 || startupConfiguration.length !== 0) {
+    throw new Error(`${label} must be extension-free`);
+  }
+
+  return parsed as ClusterSeedManifest;
 }
 
-function verifyCoreIdentity(manifest: WasixAssetManifest): void {
-  if (manifest.runtime['module-sha256'] !== manifest['pgdata-template']['runtime-module-sha256']) {
-    throw new Error('WASIX runtime and PGDATA template identify different runtime modules');
+/** @internal Validate the host-independent standard/ICU seed profile contract. */
+export function assertClusterSeedProfileContract(
+  value: unknown,
+  expectedProfile: CatalogProfile,
+): void {
+  const label = `WASIX ${expectedProfile} cluster seed manifest`;
+  const root = requireObject(value, label);
+  if (root.schema !== 'oliphaunt-cluster-seed-v1') {
+    throw new Error(`${label} has an unsupported schema`);
   }
-  if (manifest['source-fingerprint'] !== manifest['pgdata-template']['source-fingerprint']) {
-    throw new Error('WASIX runtime and PGDATA template identify different source fingerprints');
+  if (root.catalogProfile !== expectedProfile) {
+    throw new Error(
+      `${label} profile mismatch: expected ${expectedProfile}, got ${String(root.catalogProfile)}`,
+    );
   }
+  const expectedRole =
+    expectedProfile === 'standard' ? 'cluster-seed-standard' : 'cluster-seed-icu';
+  if (root.artifactRole !== expectedRole) {
+    throw new Error(
+      `${label} profile mismatch: expected role ${expectedRole}, got ${String(root.artifactRole)}`,
+    );
+  }
+
+  const requiredFeatures = requireStringArray(
+    root.requiredRuntimeFeatures,
+    `${label} required features`,
+  );
+  if (expectedProfile === 'standard') {
+    if (requiredFeatures.length !== 0 || root.icu !== null) {
+      throw new Error(`${label} must not require or identify ICU data`);
+    }
+    return;
+  }
+  if (requiredFeatures.length !== 1 || requiredFeatures[0] !== 'icu') {
+    throw new Error(`${label} must require exactly the ICU runtime feature`);
+  }
+  const icu = requireObject(root.icu, `${label} ICU identity`);
+  requireExactKeys(
+    icu,
+    [
+      'artifactRole',
+      'dataForm',
+      'dataTreeSha256',
+      'dataVersion',
+      'sourceCommit',
+      'upstreamVersion',
+    ],
+    `${label} ICU identity`,
+  );
+  for (const field of [
+    'artifactRole',
+    'dataForm',
+    'dataVersion',
+    'sourceCommit',
+    'upstreamVersion',
+  ] as const) {
+    requireString(icu[field], `${label} ICU ${field}`);
+  }
+  requireSha256(icu.dataTreeSha256, `${label} ICU data tree`);
+  if (
+    icu.artifactRole !== 'icu-data' ||
+    icu.upstreamVersion !== '76.1' ||
+    icu.dataVersion !== '76.1' ||
+    icu.dataForm !== 'files-le'
+  ) {
+    throw new Error(`${label} has an incompatible ICU identity`);
+  }
+}
+
+/** @internal Verify that a separately distributed ICU carrier belongs to this runtime. */
+export function assertIcuDescriptorMatchesRuntime(
+  runtime: SerializedRuntimeDescriptor,
+  icu: NonNullable<SerializedOpenOptions['icu']>,
+  manifest: WasixAssetManifest,
+): void {
+  if (
+    icu.compatibility.runtimeProduct !== runtime.product ||
+    icu.compatibility.runtimeVersion !== runtime.version
+  ) {
+    throw new Error(
+      `WASIX ICU carrier targets ${icu.compatibility.runtimeProduct}@${icu.compatibility.runtimeVersion}, not ${runtime.product}@${runtime.version}`,
+    );
+  }
+  if (icu.compatibility.dataTreeSha256 !== manifest['cluster-seeds'].icu['icu-data-tree-sha256']) {
+    throw new Error('WASIX ICU data and ICU cluster seed identify different logical data trees');
+  }
+}
+
+function verifyClusterSeedIdentity(
+  options: SerializedOpenOptions,
+  outer: WasixAssetManifest,
+  selected: WasixAssetManifest['cluster-seeds'][CatalogProfile],
+  seed: ClusterSeedManifest,
+  archive: SerializedRuntimeDescriptor['runtimeArchive'],
+): void {
+  const profile = seed.catalogProfile;
+  if (
+    seed.runtime.product !== options.runtime.product ||
+    seed.runtime.version !== options.runtime.version ||
+    seed.runtime.engineFamily !== 'wasix' ||
+    seed.runtime.physicalFormat !== 'wasix-pg18-v1' ||
+    seed.runtime.compatibilityKey !== 'wasix-pg18-datum32-v1' ||
+    seed.runtime.postgresMajor !== 18
+  ) {
+    throw new Error(`WASIX ${profile} cluster seed has an incompatible runtime identity`);
+  }
+  if (
+    seed.runtime.consumerSha256 !== seed.runtime.producerSha256 ||
+    seed.runtime.consumerSha256 !== outer.runtime['module-sha256'] ||
+    seed.runtime.consumerSha256 !== selected['runtime-module-sha256']
+  ) {
+    throw new Error(`WASIX ${profile} cluster seed was produced by a different runtime module`);
+  }
+  if (
+    seed.source.fingerprint !== outer['source-fingerprint'] ||
+    seed.source.fingerprint !== selected['source-fingerprint']
+  ) {
+    throw new Error(`WASIX ${profile} cluster seed has a different source fingerprint`);
+  }
+  if (
+    seed.archive.path !== archive.archive ||
+    seed.archive.path !== selected.archive ||
+    seed.archive.sha256 !== archive.sha256 ||
+    seed.archive.sha256 !== selected.sha256 ||
+    seed.archive.compressedBytes !== archive.size ||
+    seed.archive.compressedBytes !== selected.size
+  ) {
+    throw new Error(`WASIX ${profile} cluster seed archive identity is inconsistent`);
+  }
+  if (seed.archive.path !== `cluster-seeds/${profile}.tar.zst`) {
+    throw new Error(`WASIX ${profile} cluster seed has a non-canonical archive path`);
+  }
+  if (profile === 'icu') {
+    const icu = options.icu;
+    if (
+      icu === undefined ||
+      seed.icu === null ||
+      seed.icu.artifactRole !== 'icu-data' ||
+      seed.icu.upstreamVersion !== icu.compatibility.dataVersion ||
+      seed.icu.dataVersion !== icu.compatibility.dataVersion ||
+      seed.icu.dataForm !== icu.compatibility.dataForm ||
+      seed.icu.dataTreeSha256 !== icu.compatibility.dataTreeSha256
+    ) {
+      throw new Error('WASIX ICU cluster seed does not match the selected ICU data carrier');
+    }
+  }
+}
+
+/** @internal Validate and add exact-archive-verified ICU files to the runtime tree. */
+export function overlayIcuArchive(runtime: ExtractedArchive, icu: ExtractedArchive): void {
+  const prefix = 'share/icu/';
+  const rows: { path: string; bytes: Uint8Array }[] = [];
+  const directories: string[] = [];
+  let hasDataFile = false;
+  for (const [path, bytes] of icu.files) {
+    if (!path.startsWith(prefix) || path.length === prefix.length) {
+      throw new Error(`WASIX ICU data archive contains a file outside share/icu: ${path}`);
+    }
+    const relative = path.slice(prefix.length);
+    if (relative.split('/').some((segment) => segment.startsWith('icudt'))) hasDataFile = true;
+    rows.push({ path: relative, bytes });
+    const target = `oliphaunt/${path}`;
+    if (runtime.files.has(target) || runtime.directories.has(target)) {
+      throw new Error(`WASIX ICU data collides with runtime path ${target}`);
+    }
+  }
+  if (rows.length === 0 || !hasDataFile) {
+    throw new Error('WASIX ICU data archive contains no ICU data files under share/icu');
+  }
+  for (const path of icu.directories) {
+    if (path !== 'share' && path !== 'share/icu' && !path.startsWith(prefix)) {
+      throw new Error(`WASIX ICU data archive contains a directory outside share/icu: ${path}`);
+    }
+    if (path === 'share') continue;
+    const target = `oliphaunt/${path}`;
+    if (runtime.files.has(target)) {
+      throw new Error(`WASIX ICU data collides with runtime path ${target}`);
+    }
+    directories.push(target);
+  }
+  for (const { path, bytes } of rows) runtime.files.set(`oliphaunt/share/icu/${path}`, bytes);
+  for (const path of directories) runtime.directories.add(path);
 }
 
 function assertRuntimeArchiveMatchesManifest(
@@ -542,19 +1024,28 @@ async function assertDeclaredAssetBytes(
 
 function verifyPostgresIdentity(
   manifest: WasixAssetManifest,
+  seed: WasixAssetManifest['cluster-seeds'][CatalogProfile],
   pgVersionBytes: Uint8Array | undefined,
 ): void {
   if (pgVersionBytes === undefined) {
-    throw new Error('WASIX PGDATA template is missing PG_VERSION');
+    throw new Error('WASIX cluster seed is missing PG_VERSION');
   }
-  const pgVersion = decoder.decode(pgVersionBytes).trim();
+  const pgVersion = decodeUtf8(pgVersionBytes).trim();
   const runtimeMajor = manifest.runtime['postgres-version'].split('.')[0];
-  const templateMajor = manifest['pgdata-template']['postgres-version'].split('.')[0];
-  if (pgVersion !== runtimeMajor || pgVersion !== templateMajor) {
+  const seedMajor = seed['postgres-version'].split('.')[0];
+  if (pgVersion !== runtimeMajor || pgVersion !== seedMajor) {
     throw new Error(
-      `WASIX runtime/PGDATA PostgreSQL major mismatch: runtime ${runtimeMajor}, template ${templateMajor}, PG_VERSION ${pgVersion}`,
+      `WASIX runtime/cluster seed PostgreSQL major mismatch: runtime ${runtimeMajor}, seed ${seedMajor}, PG_VERSION ${pgVersion}`,
     );
   }
+}
+
+function decodeUtf8(bytes: Uint8Array): string {
+  const input =
+    typeof SharedArrayBuffer !== 'undefined' && bytes.buffer instanceof SharedArrayBuffer
+      ? Uint8Array.from(bytes)
+      : bytes;
+  return decoder.decode(input);
 }
 
 /** @internal Shared verification for separately carried WASIX tool modules. */
@@ -566,15 +1057,22 @@ export async function assertSha256(
   if (globalThis.crypto?.subtle === undefined) {
     throw new Error(`Web Crypto is required to verify ${label}`);
   }
+  const actual = await sha256Hex(bytes);
+  if (actual !== expected) {
+    throw new Error(`${label} SHA-256 mismatch: expected ${expected}, received ${actual}`);
+  }
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  if (globalThis.crypto?.subtle === undefined) {
+    throw new Error('Web Crypto is required to calculate SHA-256');
+  }
   const source =
     bytes.buffer instanceof ArrayBuffer
       ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)
       : bytes.slice().buffer;
   const digest = new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', source));
-  const actual = [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-  if (actual !== expected) {
-    throw new Error(`${label} SHA-256 mismatch: expected ${expected}, received ${actual}`);
-  }
+  return [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 function extensionMountTarget(
@@ -646,6 +1144,29 @@ function requireArray(value: unknown, label: string): unknown[] {
   return value;
 }
 
+function requireExactKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+  label: string,
+): void {
+  const actual = Object.keys(value).sort();
+  const canonical = [...expected].sort();
+  if (actual.length !== canonical.length || actual.some((key, index) => key !== canonical[index])) {
+    const missing = canonical.filter((key) => !Object.hasOwn(value, key));
+    const unexpected = actual.filter((key) => !canonical.includes(key));
+    throw new Error(
+      `${label} fields do not match the contract` +
+        `${missing.length > 0 ? `; missing ${missing.join(', ')}` : ''}` +
+        `${unexpected.length > 0 ? `; unexpected ${unexpected.join(', ')}` : ''}`,
+    );
+  }
+}
+
+function requireStringArray(value: unknown, label: string): string[] {
+  const values = requireArray(value, label);
+  return values.map((entry, index) => requireString(entry, `${label} entry ${index}`));
+}
+
 function requireString(value: unknown, label: string): string {
   if (typeof value !== 'string' || value.length === 0 || value.includes('\0')) {
     throw new Error(`${label} must be a non-empty string without NUL bytes`);
@@ -674,6 +1195,12 @@ function requireSafeInteger(value: unknown, label: string): number {
     throw new Error(`${label} must be a non-negative safe integer`);
   }
   return value;
+}
+
+function requirePositiveInteger(value: unknown, label: string): number {
+  const integer = requireSafeInteger(value, label);
+  if (integer === 0) throw new Error(`${label} must be positive`);
+  return integer;
 }
 
 function requireAssetPath(value: unknown, label: string): string {

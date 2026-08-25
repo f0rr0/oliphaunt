@@ -35,7 +35,7 @@ src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --write
 | 13 | `0013-liboliphaunt-fix-embedded-backend-main-return-contract.patch` | liboliphaunt <liboliphaunt@example.invalid> | liboliphaunt: fix embedded BackendMain return contract |
 | 14 | `0014-liboliphaunt-use-portable-embedded-socketpair.patch` | liboliphaunt <liboliphaunt@example.invalid> | liboliphaunt: use portable embedded socketpair |
 | 15 | `0015-liboliphaunt-add-embedded-meson-option.patch` | liboliphaunt <liboliphaunt@example.invalid> | liboliphaunt: add embedded meson option |
-| 16 | `0016-liboliphaunt-skip-icu-collation-version-without-icu-data.patch` | liboliphaunt <liboliphaunt@example.invalid> | liboliphaunt: skip ICU collation setup without ICU data |
+| 16 | `0016-liboliphaunt-control-initdb-collation-discovery.patch` | liboliphaunt <liboliphaunt@example.invalid> | liboliphaunt: control initdb collation discovery |
 | 17 | `0017-liboliphaunt-namespace-dynahash-host-collisions.patch` | liboliphaunt <liboliphaunt@example.invalid> | liboliphaunt: namespace Apple dynahash host collisions |
 | 18 | `0018-liboliphaunt-contain-embedded-proc-signals.patch` | liboliphaunt <liboliphaunt@example.invalid> | liboliphaunt: contain embedded process signals |
 | 19 | `0019-liboliphaunt-link-windows-embedded-modules-to-host.patch` | liboliphaunt <liboliphaunt@example.invalid> | liboliphaunt: link Windows embedded modules to host |
@@ -47,6 +47,7 @@ src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --write
 - `meson_options.txt` (`0015-liboliphaunt-add-embedded-meson-option.patch`, `0019-liboliphaunt-link-windows-embedded-modules-to-host.patch`)
 - `src/backend/access/transam/xlogarchive.c` (`0007-liboliphaunt-disable-shell-commands-on-apple-mobile.patch`)
 - `src/backend/archive/shell_archive.c` (`0007-liboliphaunt-disable-shell-commands-on-apple-mobile.patch`)
+- `src/backend/commands/collationcmds.c` (`0016-liboliphaunt-control-initdb-collation-discovery.patch`)
 - `src/backend/commands/event_trigger.c` (`0012-liboliphaunt-enable-event-triggers-in-embedded-backend.patch`)
 - `src/backend/libpq/be-secure.c` (`0001-liboliphaunt-add-backend-host-io.patch`)
 - `src/backend/libpq/pqcomm.c` (`0001-liboliphaunt-add-backend-host-io.patch`)
@@ -59,7 +60,7 @@ src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --write
 - `src/backend/storage/ipc/procsignal.c` (`0018-liboliphaunt-contain-embedded-proc-signals.patch`)
 - `src/backend/tcop/postgres.c` (`0002-liboliphaunt-add-embedded-entrypoint.patch`, `0003-liboliphaunt-return-from-embedded-frontend-terminate.patch`, `0004-liboliphaunt-run-embedded-exit-cleanup.patch`, `0005-liboliphaunt-restore-host-cwd.patch`, `0009-liboliphaunt-guard-embedded-proc-exit.patch`, `0010-liboliphaunt-use-host-runtime-paths.patch`, `0014-liboliphaunt-use-portable-embedded-socketpair.patch`, `0018-liboliphaunt-contain-embedded-proc-signals.patch`)
 - `src/backend/utils/fmgr/dfmgr.c` (`0006-liboliphaunt-add-static-extension-loader.patch`, `0008-liboliphaunt-clean-embedded-symbols.patch`)
-- `src/bin/initdb/initdb.c` (`0016-liboliphaunt-skip-icu-collation-version-without-icu-data.patch`)
+- `src/bin/initdb/initdb.c` (`0016-liboliphaunt-control-initdb-collation-discovery.patch`)
 - `src/include/libpq/libpq-be.h` (`0001-liboliphaunt-add-backend-host-io.patch`)
 - `src/include/port.h` (`0011-liboliphaunt-add-android-embedded-shared-memory.patch`, `0020-liboliphaunt-enforce-embedded-signal-boundary.patch`)
 - `src/include/storage/dsm_impl.h` (`0011-liboliphaunt-add-android-embedded-shared-memory.patch`)
@@ -78,6 +79,7 @@ src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --write
 | `meson_options.txt` | Meson-hosted embedded builds declare opt-in backend and Windows module-provider options without changing default PostgreSQL builds. |
 | `src/backend/access/transam/xlogarchive.c` | Apple mobile embedded builds compile out optional archive shell commands. |
 | `src/backend/archive/shell_archive.c` | Apple mobile embedded builds compile out optional archive shell commands. |
+| `src/backend/commands/collationcmds.c` | System-collation import preserves host providers except during deliberate deterministic distributed-seed production; verified ICU readiness independently gates only the ICU provider. |
 | `src/backend/commands/event_trigger.c` | Embedded FE/BE protocol sessions can run event triggers without changing standalone recovery behavior. |
 | `src/backend/libpq/be-secure.c` | Backend secure read/write path delegates to a host I/O vtable only when OLIPHAUNT_EMBEDDED is set. |
 | `src/backend/libpq/pqcomm.c` | Standalone embedded sessions avoid waiting on a non-existent postmaster death latch. |
@@ -90,7 +92,7 @@ src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --write
 | `src/backend/storage/ipc/procsignal.c` | The one-backend embedded runtime dispatches ProcSignal flags without sending process-directed host signals. |
 | `src/backend/tcop/postgres.c` | Embedded backend entrypoint, protocol lifecycle, cwd restoration, host runtime paths, and host-owned SIGUSR1 disposition. |
 | `src/backend/utils/fmgr/dfmgr.c` | Static extension lookup reuses PostgreSQL dynamic function manager semantics. |
-| `src/bin/initdb/initdb.c` | Base runtimes skip ICU-backed collation setup until optional ICU data is present. |
+| `src/bin/initdb/initdb.c` | Controlled seed production selects standard or verified ICU collation discovery without changing ordinary initdb semantics. |
 | `src/include/libpq/libpq-be.h` | Host I/O vtable is attached to PostgreSQL Port state under OLIPHAUNT_EMBEDDED. |
 | `src/include/port.h` | Embedded mobile builds avoid POSIX shared memory declarations and route embedded backend signal calls through the host-safe provider boundary. |
 | `src/include/storage/dsm_impl.h` | Embedded mobile builds keep DSM on mmap instead of POSIX or SysV shared memory. |
@@ -136,7 +138,7 @@ src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --write
 | Embedded mobile shared memory and semaphores are process-local | `0011-liboliphaunt-add-android-embedded-shared-memory.patch` | `oliphaunt_embedded_shmem.c`, `oliphaunt_embedded_sema.c`, `OLIPHAUNT_EMBEDDED_MOBILE_SHMEM` | Android and Apple mobile builds avoid unavailable SysV shared memory and semaphores while direct mode remains one backend per process. |
 | Event triggers run in embedded protocol sessions | `0012-liboliphaunt-enable-event-triggers-in-embedded-backend.patch` | `EventTriggersHaveRunnableBackend`, `OLIPHAUNT_EMBEDDED`, `event_triggers` | Keeps upstream single-user escape hatch outside OLIPHAUNT_EMBEDDED but treats embedded protocol sessions as runnable backends. |
 | Meson builds expose an explicit embedded backend option | `0015-liboliphaunt-add-embedded-meson-option.patch` | `oliphaunt_embedded`, `add_project_arguments`, `-DOLIPHAUNT_EMBEDDED` | Windows and other Meson-hosted embedded builds enable the backend entrypoint through PostgreSQL build configuration while default server builds remain unchanged. |
-| Optional ICU data stays optional during initdb | `0016-liboliphaunt-skip-icu-collation-version-without-icu-data.patch` | `getenv("ICU_DATA")`, `pg_collation_actual_version`, `pg_import_system_collations` | Base liboliphaunt runtimes can bootstrap non-ICU databases without bundling optional ICU data; ICU packages keep upstream collation setup by setting ICU_DATA. |
+| Optional ICU data stays optional during initdb | `0016-liboliphaunt-control-initdb-collation-discovery.patch` | `OLIPHAUNT_INTERNAL_ICU_READY`, `OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY`, `OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY`, `strcmp`, `pg_collation_actual_version`, `pg_import_system_collations` | Ordinary initdb and public collation import retain PostgreSQL host discovery. Distributed standard seeds suppress OS and ICU discovery; ICU seeds suppress only OS discovery and verify ICU readiness for initdb's unicode-version probe. |
 | Apple builds namespace PostgreSQL dynahash symbols that collide with libSystem | `0017-liboliphaunt-namespace-dynahash-host-collisions.patch` | `#ifdef __APPLE__`, `oliphaunt_pg_hash_create`, `oliphaunt_pg_hash_destroy`, `oliphaunt_pg_hash_search` | Apple backend and extension objects share collision-free dynahash names; non-Apple PostgreSQL binary names remain unchanged. |
 | Embedded ProcSignal delivery cannot escape into the host process | `0018-liboliphaunt-contain-embedded-proc-signals.patch` | `oliphaunt_send_proc_signal`, `pid != MyProcPid`, `procsignal_sigusr1_handler(SIGUSR1)`, `host owns SIGUSR1` | The one-backend embedded runtime dispatches ProcSignal flags synchronously, rejects foreign PIDs, and leaves the host SIGUSR1 disposition untouched; normal PostgreSQL server builds retain upstream signal delivery. |
 | Windows embedded extension modules link to the host DLL provider | `0019-liboliphaunt-link-windows-embedded-modules-to-host.patch` | `oliphaunt_embedded_module_provider`, `requires an embedded MSVC Windows build`, `pg_mod_link_args += oliphaunt_embedded_module_provider`, `oliphaunt_embedded_module_provider == ''` | Embedded MSVC extension modules resolve PostgreSQL backend symbols from the oliphaunt host import library; ordinary PostgreSQL modules retain the upstream postgres executable link contract. |

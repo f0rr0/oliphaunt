@@ -23,7 +23,7 @@ pub struct AssetManifest {
     #[serde(default)]
     pub initdb: Option<BinaryAsset>,
     #[serde(default)]
-    pub pgdata_template: Option<PgDataTemplateAsset>,
+    pub cluster_seeds: std::collections::BTreeMap<String, ClusterSeedAsset>,
     #[serde(default)]
     pub extensions: Vec<ExtensionAsset>,
     #[serde(default)]
@@ -60,7 +60,9 @@ pub struct BinaryAsset {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
-pub struct PgDataTemplateAsset {
+pub struct ClusterSeedAsset {
+    pub artifact_role: String,
+    pub catalog_profile: String,
     pub archive: String,
     pub manifest: String,
     pub sha256: String,
@@ -76,6 +78,10 @@ pub struct PgDataTemplateAsset {
     pub catalog_version: String,
     pub init_profile: String,
     pub wasmer_version: String,
+    pub physical_format: String,
+    pub compatibility_key: String,
+    #[serde(default)]
+    pub icu_data_tree_sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -234,7 +240,7 @@ mod tests {
     fn pg18_manifest_metadata_round_trips() {
         let manifest: AssetManifest = serde_json::from_str(
             r#"{
-              "format-version": 1,
+              "format-version": 2,
               "source-lane": "stable",
               "source-fingerprint": "postgresql-18.4:patch-stack",
               "runtime": {
@@ -245,20 +251,26 @@ mod tests {
                 "runtime-kind": "wasix-dynamic-main"
               },
               "runtime-support": [],
-              "pgdata-template": {
-                "archive": "prepopulated/pgdata-template.tar.zst",
-                "manifest": "prepopulated/pgdata-template.json",
-                "sha256": "template-archive",
-                "size": 1,
-                "runtime-module-sha256": "runtime-module",
-                "initdb-module-sha256": "initdb-module",
-                "source-pins-sha256": "source-pins",
-                "source-lane": "stable",
-                "source-fingerprint": "postgresql-18.4:patch-stack",
-                "postgres-version": "18",
-                "catalog-version": "202505281",
-                "init-profile": "default",
-                "wasmer-version": "6.0.0"
+              "cluster-seeds": {
+                "standard": {
+                  "artifact-role": "cluster-seed-standard",
+                  "catalog-profile": "standard",
+                  "archive": "cluster-seeds/standard.tar.zst",
+                  "manifest": "cluster-seeds/standard.json",
+                  "sha256": "seed-archive",
+                  "size": 1,
+                  "runtime-module-sha256": "runtime-module",
+                  "initdb-module-sha256": "initdb-module",
+                  "source-pins-sha256": "source-pins",
+                  "source-lane": "stable",
+                  "source-fingerprint": "postgresql-18.4:patch-stack",
+                  "postgres-version": "18",
+                  "catalog-version": "202505281",
+                  "init-profile": "default",
+                  "wasmer-version": "6.0.0",
+                  "physical-format": "wasix-pg18-v1",
+                  "compatibility-key": "wasix-pg18-datum32-v1"
+                }
               },
               "extensions": [],
               "sources": []
@@ -271,10 +283,14 @@ mod tests {
             manifest.source_fingerprint.as_deref(),
             Some("postgresql-18.4:patch-stack")
         );
-        let template = manifest.pgdata_template.expect("PGDATA template asset");
-        assert_eq!(template.source_lane.as_deref(), Some("stable"));
+        let seed = manifest
+            .cluster_seeds
+            .get("standard")
+            .expect("standard cluster seed asset");
+        assert_eq!(seed.catalog_profile, "standard");
+        assert_eq!(seed.source_lane.as_deref(), Some("stable"));
         assert_eq!(
-            template.source_fingerprint.as_deref(),
+            seed.source_fingerprint.as_deref(),
             Some("postgresql-18.4:patch-stack")
         );
     }

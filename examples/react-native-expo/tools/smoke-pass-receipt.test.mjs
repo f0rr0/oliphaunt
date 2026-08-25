@@ -26,6 +26,7 @@ function receiptInput(platform, overrides = {}) {
     extensionCatalogComplete: true,
     pgTextsearchEnglishBm25: extensions.includes("pg_textsearch"),
     extensionCatalogSha256: GENERATED_EXTENSION_METADATA_SHA256,
+    catalogProfile: "icu",
     icuRuntimeProof: true,
     ...overrides,
   };
@@ -39,6 +40,7 @@ test("the exact mobile catalog produces a bounded authoritative receipt", () => 
     assert(Buffer.byteLength(event) <= EXPO_SMOKE_PASS_EVENT_MAX_BYTES);
     assert.deepEqual(Object.keys(JSON.parse(serialized)).sort(), [
       "allExtensionsActivated",
+      "catalogProfile",
       "extensionCatalogComplete",
       "extensionCatalogSha256",
       "extensionCount",
@@ -83,6 +85,12 @@ test("receipt serialization fails closed on proof drift and remains constant-siz
     })),
     /ICU runtime proof boolean/u,
   );
+  assert.throws(
+    () => serializeExpoSmokePassReceipt(receiptInput("ios", {
+      catalogProfile: "standard",
+    })),
+    /ICU proof must match its catalog profile/u,
+  );
   const largeCatalog = Array.from({ length: 500 }, (_, index) => `extension_${index}`);
   const serialized = serializeExpoSmokePassReceipt({
     platform: "ios",
@@ -91,6 +99,7 @@ test("receipt serialization fails closed on proof drift and remains constant-siz
     extensionCatalogComplete: true,
     pgTextsearchEnglishBm25: false,
     extensionCatalogSha256: GENERATED_EXTENSION_METADATA_SHA256,
+    catalogProfile: "standard",
     icuRuntimeProof: false,
   });
   assert(Buffer.byteLength(`${EXPO_SMOKE_PASS_TAG} ${serialized}`) <= EXPO_SMOKE_PASS_EVENT_MAX_BYTES);

@@ -22,24 +22,32 @@ pub(super) fn check_sources_manifest(strict_local: bool) -> Result<SourcesManife
     Ok(manifest)
 }
 
-pub(super) fn check_sources_manifest_for_asset_build(args: &[String]) -> Result<SourcesManifest> {
+pub(super) fn check_sources_manifest_for_wasix_asset_build(
+    args: &[String],
+) -> Result<SourcesManifest> {
     let manifest = load_sources_manifest()?;
     validate_sources_manifest(&manifest)?;
     let source_lane =
         canonical_source_lane(value_after(args, "--source-lane").unwrap_or(DEFAULT_SOURCE_LANE))?;
+    let source_scope = SourceFetchScope::WasixRuntime;
     if args.iter().any(|arg| arg == "--fetch") {
-        fetch_pinned_sources_for_source_lane(
+        fetch_pinned_sources_for_source_lane(&manifest, source_lane, true, source_scope)?;
+    } else {
+        check_source_spine_for_source_lane_filtered(
             &manifest,
             source_lane,
             true,
-            SourceFetchScope::ProductionAll,
+            false,
+            |source| source_scope.includes(source.origin),
         )?;
-    } else {
-        check_source_spine_for_source_lane(&manifest, source_lane, true, false)?;
     }
     println!(
         "validated {} pinned asset sources for {source_lane}",
-        manifest.sources.len()
+        manifest
+            .sources
+            .iter()
+            .filter(|source| source_scope.includes(source.origin))
+            .count()
     );
     Ok(manifest)
 }
@@ -150,15 +158,16 @@ fn archive_strip_prefix(source: &SourcePin) -> Result<&str> {
         .strip_prefix
         .as_deref()
         .filter(|prefix| {
-            !prefix.is_empty()
-                && !prefix.contains("..")
-                && prefix
-                    .chars()
-                    .next()
-                    .is_some_and(|ch| ch.is_ascii_alphanumeric())
-                && prefix
-                    .chars()
-                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '+'))
+            *prefix == "."
+                || (!prefix.is_empty()
+                    && !prefix.contains("..")
+                    && prefix
+                        .chars()
+                        .next()
+                        .is_some_and(|ch| ch.is_ascii_alphanumeric())
+                    && prefix.chars().all(|ch| {
+                        ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '+')
+                    }))
         })
         .ok_or_else(|| anyhow!("archive source '{}' has invalid strip-prefix", source.name))
 }
@@ -731,9 +740,18 @@ fn validate_source_pin(source: &SourcePin) -> Result<()> {
                 &format!("{} archive commit must equal archive sha256", source.name),
             )?;
             let url_path = source.url.split('?').next().unwrap_or_default();
-            if !url_path.ends_with(".tar.gz") && !url_path.ends_with(".tgz") {
+            if !url_path.ends_with(".tar.gz")
+                && !url_path.ends_with(".tgz")
+                && !url_path.ends_with(".zip")
+            {
                 bail!(
-                    "archive source '{}' must point at a .tar.gz or .tgz URL",
+                    "archive source '{}' must point at a .tar.gz, .tgz, or .zip URL",
+                    source.name
+                );
+            }
+            if source.strip_prefix.as_deref() == Some(".") && !url_path.ends_with(".zip") {
+                bail!(
+                    "archive source '{}' may use a rootless strip prefix only for ZIP releases",
                     source.name
                 );
             }
@@ -840,6 +858,20 @@ mod tests {
             SourceFetchScope::parse("all").unwrap(),
             SourceFetchScope::All
         );
+    }
+
+    #[test]
+    fn runtime_fetch_scopes_include_only_their_platform_sources() {
+        for origin in [SourceOrigin::SharedThirdParty, SourceOrigin::Extension] {
+            assert!(SourceFetchScope::NativeRuntime.includes(origin));
+            assert!(SourceFetchScope::WasixRuntime.includes(origin));
+        }
+        assert!(SourceFetchScope::NativeRuntime.includes(SourceOrigin::NativeThirdParty));
+        assert!(!SourceFetchScope::NativeRuntime.includes(SourceOrigin::WasixThirdParty));
+        assert!(SourceFetchScope::WasixRuntime.includes(SourceOrigin::WasixThirdParty));
+        assert!(!SourceFetchScope::WasixRuntime.includes(SourceOrigin::NativeThirdParty));
+        assert!(!SourceFetchScope::NativeRuntime.includes(SourceOrigin::Generated));
+        assert!(!SourceFetchScope::WasixRuntime.includes(SourceOrigin::Generated));
     }
 
     #[test]
@@ -950,6 +982,34 @@ mod tests {
             error
                 .to_string()
                 .contains("archive source 'libiconv' must not set mirror_url"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn rootless_zip_release_is_a_valid_pinned_archive_source() {
+        let sha256 = "8577bb036a5c08204b1622a85485b92cdfaea521c251d22fd36899e99e426d9a";
+        let mut source = SourcePin {
+            name: "icu-data".to_owned(),
+            kind: SourceKind::Archive,
+            url: "https://github.com/unicode-org/icu/releases/download/release-76-1/icu4c-76_1-data-bin-l.zip".to_owned(),
+            mirror_url: None,
+            branch: "release-76-1".to_owned(),
+            commit: sha256.to_owned(),
+            source_date_epoch: None,
+            sha256: Some(sha256.to_owned()),
+            strip_prefix: Some(".".to_owned()),
+            origin: SourceOrigin::SharedThirdParty,
+        };
+        validate_source_pin(&source).expect("pinned rootless ZIP release must pass");
+
+        source.url = "https://example.test/icu-data.tar.gz".to_owned();
+        let error = validate_source_pin(&source)
+            .expect_err("rootless tar releases must remain unsupported");
+        assert!(
+            error
+                .to_string()
+                .contains("rootless strip prefix only for ZIP releases"),
             "unexpected error: {error:#}"
         );
     }

@@ -9,8 +9,16 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { stageIosApp } from "./stage-ios-app.mjs";
+import {
+  parseProperties,
+  validateNativeRuntimeClosure,
+} from "./native-resource-closure.mjs";
 
 const SCHEMA = "oliphaunt-react-native-ios-carrier-v1";
+assert.throws(
+  () => parseProperties("schema=one\nschema=two\n", "duplicate.properties"),
+  /repeats schema/u,
+);
 const GENERATED_EXTENSION_CATALOG = JSON.parse(
   await fs.readFile(
     await Promise.any([
@@ -38,6 +46,25 @@ const GENERATED_IOS_DEPENDENCIES_BY_SQL_NAME = new Map(JSON.parse(
     "utf8",
   ),
 ).extensions.map((row) => [row["sql-name"], row["static-dependencies"]]));
+const SHARED_NATIVE_SEED_FIXTURES = Object.freeze({
+  standard: await fs.readFile(
+    new URL("../../../shared/cluster-seed-contract/fixtures/native-standard.valid.properties", import.meta.url),
+    "utf8",
+  ),
+  icu: await fs.readFile(
+    new URL("../../../shared/cluster-seed-contract/fixtures/native-icu.valid.properties", import.meta.url),
+    "utf8",
+  ),
+});
+const SHARED_NATIVE_INVALID_CACHE_FIXTURES = await Promise.all([
+  "native-whitespace.invalid.properties",
+  "native-cache-key.invalid.properties",
+  "native-dot-cache-key.invalid.properties",
+  "native-dotdot-cache-key.invalid.properties",
+].map((name) => fs.readFile(
+  new URL(`../../../shared/cluster-seed-contract/fixtures/${name}`, import.meta.url),
+  "utf8",
+)));
 
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -65,6 +92,27 @@ function runFailure(command, args, pattern, cwd) {
 async function write(file, contents) {
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(file, contents);
+}
+
+function retargetNativeSeedFixture(source, target, icuDataTreeSha256) {
+  const overrides = new Map([
+    ["target", target],
+    ["compatibilityKey", `native-pg18-${target}-v1`],
+  ]);
+  if (icuDataTreeSha256 !== undefined) overrides.set("icuDataTreeSha256", icuDataTreeSha256);
+  return source.split("\n").map((line) => {
+    const separator = line.indexOf("=");
+    const key = separator < 0 ? line : line.slice(0, separator);
+    return overrides.has(key) ? `${key}=${overrides.get(key)}` : line;
+  }).join("\n");
+}
+
+function nativeSeedFixture(profile, target, icuDataTreeSha256 = "") {
+  return retargetNativeSeedFixture(
+    SHARED_NATIVE_SEED_FIXTURES[profile],
+    target,
+    profile === "icu" ? icuDataTreeSha256 : undefined,
+  );
 }
 
 async function sha256(file) {
@@ -252,6 +300,24 @@ async function maliciousZip(archive, entry, kind) {
   run("python3", ["-c", script, archive, entry, kind]);
 }
 
+async function appendZipFiles(archive, prefix, count) {
+  const script = [
+    "import stat, sys, zipfile",
+    "archive, prefix, count = sys.argv[1], sys.argv[2], int(sys.argv[3])",
+    "with zipfile.ZipFile(archive, 'a') as output:",
+    "  directory = zipfile.ZipInfo(prefix + '/')",
+    "  directory.create_system = 3",
+    "  directory.external_attr = ((stat.S_IFDIR | 0o755) << 16) | 0x10",
+    "  output.writestr(directory, b'')",
+    "  for index in range(count):",
+    "    info = zipfile.ZipInfo(f'{prefix}/file-{index:04d}')",
+    "    info.create_system = 3",
+    "    info.external_attr = ((stat.S_IFREG | 0o644) << 16) | 0x20",
+    "    output.writestr(info, b'')",
+  ].join("\n");
+  run("python3", ["-c", script, archive, prefix, String(count)]);
+}
+
 async function metadataZip(archive, creator, legalRoot = "") {
   await fs.mkdir(path.dirname(archive), { recursive: true });
   const script = [
@@ -275,9 +341,13 @@ async function metadataZip(archive, creator, legalRoot = "") {
     "      for leaf in sorted(names):",
     "        source = os.path.join(directory, leaf)",
     "        relative = os.path.relpath(source, legal_root).replace(os.sep, '/')",
-    "        if relative == 'Info.plist' or ('LICENSE' not in relative and 'NOTICE' not in relative and 'COPYRIGHT' not in relative): continue",
+    "        if relative == 'Info.plist': continue",
     "        legal_files.append((relative, source))",
-    "    parents = sorted({relative.rsplit('/', 1)[0] for relative, _ in legal_files if '/' in relative})",
+    "    parents = set()",
+    "    for relative, _ in legal_files:",
+    "      parts = relative.split('/')[:-1]",
+    "      for index in range(1, len(parts) + 1): parents.add('/'.join(parts[:index]))",
+    "    parents = sorted(parents)",
     "    for parent in parents:",
     "      info = zipfile.ZipInfo('liboliphaunt.xcframework/' + parent + '/')",
     "      info.create_system = host",
@@ -324,11 +394,17 @@ async function craftedTar(archive, entries) {
 async function highCardinalityIcuTar(archive, localeCount, legalRoot) {
   await fs.mkdir(path.dirname(archive), { recursive: true });
   const script = [
-    "import io, os, sys, tarfile",
+    "import hashlib, io, os, sys, tarfile",
     "archive, encoded_count, legal_root = sys.argv[1:]",
+    "rows = [('share/icu/icudt77l.dat', b'fixture')] + [(f'share/icu/locale-{index:04d}.res', b'fixture') for index in range(int(encoded_count))]",
+    "digest = hashlib.sha256()",
+    "for name, data in rows:",
+    "  relative = name.removeprefix('share/icu/')",
+    "  digest.update(relative.encode()); digest.update(b'\\0'); digest.update(str(len(data)).encode()); digest.update(b'\\0'); digest.update(data); digest.update(b'\\n')",
+    "manifest = ('schema=oliphaunt-icu-data-v1\\nartifactRole=icu-data\\nicuDataVersion=76.1\\nicuDataForm=files-le\\nicuDataTreeSha256=' + digest.hexdigest() + '\\n').encode()",
+    "rows += [('manifest.properties', manifest)]",
     "with tarfile.open(archive, 'w:gz', format=tarfile.USTAR_FORMAT) as output:",
-    "  for name in ['share/icu/icudt77l.dat'] + [f'share/icu/locale-{index:04d}.res' for index in range(int(encoded_count))]:",
-    "    data = b'fixture'",
+    "  for name, data in rows:",
     "    info = tarfile.TarInfo(name)",
     "    info.mode = 0o644",
     "    info.size = len(data)",
@@ -337,7 +413,7 @@ async function highCardinalityIcuTar(archive, localeCount, legalRoot) {
     "    for leaf in sorted(names):",
     "      source = os.path.join(directory, leaf)",
     "      name = os.path.relpath(source, legal_root).replace(os.sep, '/')",
-    "      if name.startswith('share/icu/'): continue",
+    "      if name == 'manifest.properties' or name.startswith('share/icu/'): continue",
     "      data = open(source, 'rb').read()",
     "      info = tarfile.TarInfo(name)",
     "      info.mode = 0o644",
@@ -364,12 +440,26 @@ async function baseAssets(root) {
   const source = path.join(root, "source", "base");
   const runtime = path.join(source, "runtime", "oliphaunt");
   await write(
+    path.join(runtime, "manifest.properties"),
+    [
+      "schema=oliphaunt-native-runtime-carrier-v1",
+      "clusterSeedTarget=ios-datum64",
+      "clusterSeedRelativePath=cluster-seed",
+      "icuClusterSeedRelativePath=cluster-seed-icu",
+      "",
+    ].join("\n"),
+  );
+  await write(
     path.join(runtime, "runtime", "manifest.properties"),
     [
       "schema=oliphaunt-runtime-resources-v1",
       "cacheKey=fixture-base",
       "layout=postgres-runtime-files-v1",
-      "source=fixture",
+      "artifactRole=runtime",
+      "catalogProfile=",
+      "clusterSeedTarget=ios-datum64",
+      "icuDataTreeSha256=",
+      "mode=native-direct",
       "selectedExtensions=",
       "extensions=",
       "runtimeFeatures=",
@@ -383,26 +473,12 @@ async function baseAssets(root) {
     ].join("\n"),
   );
   await write(
-    path.join(runtime, "template-pgdata", "manifest.properties"),
-    [
-      "schema=oliphaunt-runtime-resources-v1",
-      "cacheKey=fixture-template",
-      "layout=postgres-template-pgdata-v1",
-      "source=fixture",
-      "selectedExtensions=",
-      "extensions=",
-      "runtimeFeatures=",
-      "sharedPreloadLibraries=",
-      "mobileStaticRegistryState=not-required",
-      "mobileStaticRegistryRegistered=",
-      "mobileStaticRegistryPending=",
-      "nativeModuleStems=",
-      "mobileStaticRegistrySource=",
-      "",
-    ].join("\n"),
+    path.join(runtime, "cluster-seed", "manifest.properties"),
+    nativeSeedFixture("standard", "ios-datum64"),
   );
   await write(path.join(runtime, "runtime", "files", "share", "postgresql", "postgres.bki"), "base\n");
-  await write(path.join(runtime, "template-pgdata", "files", "base", "PG_VERSION"), "18\n");
+  await write(path.join(runtime, "cluster-seed", "files", "PG_VERSION"), "18\n");
+  await write(path.join(runtime, "cluster-seed", "files", "global", "pg_control"), "control\n");
   await write(
     path.join(runtime, "package-size.tsv"),
     "kind\tid\textensions\tfiles\tbytes\npackage\ttotal\t-\t2\t8\n",
@@ -416,6 +492,50 @@ async function baseAssets(root) {
   );
   const icu = path.join(source, "icu", "share", "icu");
   await write(path.join(icu, "icudt77l.dat"), "fixture icu\n");
+  const icuDigest = createHash("sha256")
+    .update("icudt77l.dat\0" + Buffer.byteLength("fixture icu\n") + "\0")
+    .update("fixture icu\n")
+    .update("\n")
+    .digest("hex");
+  const icuSeed = path.join(runtime, "cluster-seed-icu");
+  await write(
+    path.join(icuSeed, "manifest.properties"),
+    nativeSeedFixture("icu", "ios-datum64", icuDigest),
+  );
+  await write(path.join(icuSeed, "files", "PG_VERSION"), "18\n");
+  await write(path.join(icuSeed, "files", "global", "pg_control"), "control\n");
+  for (const [index, invalidFixture] of SHARED_NATIVE_INVALID_CACHE_FIXTURES.entries()) {
+    const invalidRoot = path.join(source, `invalid-cache-runtime-${index}`, "oliphaunt");
+    await fs.cp(runtime, invalidRoot, { recursive: true });
+    await write(
+      path.join(invalidRoot, "cluster-seed", "manifest.properties"),
+      retargetNativeSeedFixture(invalidFixture, "ios-datum64"),
+    );
+    await assert.rejects(validateNativeRuntimeClosure(invalidRoot), /cache key/u);
+    await fs.rm(path.dirname(invalidRoot), { recursive: true });
+  }
+  await write(
+    path.join(source, "icu", "manifest.properties"),
+    [
+      "schema=oliphaunt-icu-data-v1",
+      "artifactRole=icu-data",
+      "icuDataVersion=76.1",
+      "icuDataForm=files-le",
+      `icuDataTreeSha256=${icuDigest}`,
+      "",
+    ].join("\n"),
+  );
+  await fs.cp(
+    runtime,
+    path.join(
+      baseFramework,
+      "ios-arm64",
+      "liboliphaunt.framework",
+      "Resources",
+      "oliphaunt",
+    ),
+    { recursive: true },
+  );
 
   const baseLegalSpecs = [
     {
@@ -447,10 +567,11 @@ async function baseAssets(root) {
       assetRole: "icu-data",
       root: path.join(source, "icu"),
       profile: "native-icu-data",
-      spdx: "MIT AND Unicode-3.0",
+      spdx: "MIT AND PostgreSQL AND Unicode-3.0",
       files: [
         "LICENSE",
         "THIRD_PARTY_LICENSES/ICU-LICENSE",
+        "THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
         "THIRD_PARTY_NOTICES.liboliphaunt-native.md",
         "THIRD_PARTY_NOTICES.md",
       ],
@@ -470,7 +591,10 @@ async function baseAssets(root) {
   }
 
   const archiveRoot = path.join(root, "archives");
-  const runtimeArchive = path.join(archiveRoot, "liboliphaunt-1.0.0-runtime-resources.tar.gz");
+  const runtimeArchive = path.join(
+    archiveRoot,
+    "liboliphaunt-1.0.0-runtime-resources-ios-datum64.tar.gz",
+  );
   const frameworkArchive = path.join(archiveRoot, "liboliphaunt-1.0.0-apple-spm-xcframework.zip");
   const icuArchive = path.join(archiveRoot, "liboliphaunt-1.0.0-icu-data.tar.gz");
   await tarMembers(path.dirname(runtime), runtimeArchive, [
@@ -485,6 +609,7 @@ async function baseAssets(root) {
   await removeTarDirectorySlash(runtimeArchive, `${path.basename(runtime)}/`);
   await zipMember(path.dirname(baseFramework), path.basename(baseFramework), frameworkArchive);
   await tarMembers(path.join(source, "icu"), icuArchive, [
+    "manifest.properties",
     "share/icu",
     "LICENSE",
     "THIRD_PARTY_LICENSES",
@@ -495,7 +620,7 @@ async function baseAssets(root) {
     assets: [
       await asset("base-xcframework", frameworkArchive, "zip", "liboliphaunt.xcframework"),
       await asset("runtime-resources", runtimeArchive, "tar.gz", "oliphaunt"),
-      await asset("icu-data", icuArchive, "tar.gz", "share/icu"),
+      await asset("icu-data", icuArchive, "tar.gz", "."),
     ],
     legal,
   };
@@ -998,6 +1123,18 @@ async function main() {
       "liboliphaunt.framework",
       "liboliphaunt",
     ));
+    await assert.rejects(
+      fs.access(path.join(
+        output,
+        "frameworks",
+        "base",
+        "liboliphaunt.xcframework",
+        "ios-arm64",
+        "liboliphaunt.framework",
+        "Resources",
+        "oliphaunt",
+      )),
+    );
 
     const frameworkNames = (await fs.readdir(path.join(output, "frameworks", "extensions"))).sort();
     assert.deepEqual(frameworkNames, [
@@ -1116,6 +1253,37 @@ async function main() {
     );
     assert.deepEqual(selection.requestedExtensions, [...requested].sort());
     assert.deepEqual(selection.extensions.map(({ sqlName }) => sqlName), result.selected);
+
+    const duplicateClosureOutput = path.join(root, "duplicate-framework-closure-output");
+    await fs.cp(output, duplicateClosureOutput, { recursive: true });
+    await fs.cp(
+      path.join(
+        duplicateClosureOutput,
+        "resources",
+        "OliphauntReactNativeResources.bundle",
+        "oliphaunt",
+      ),
+      path.join(
+        duplicateClosureOutput,
+        "frameworks",
+        "base",
+        "liboliphaunt.xcframework",
+        "ios-arm64",
+        "liboliphaunt.framework",
+        "Resources",
+        "oliphaunt",
+      ),
+      { recursive: true },
+    );
+    runFailure(
+      process.execPath,
+      [
+        path.join(import.meta.dirname, "verify-ios-package.mjs"),
+        "--payload-dir",
+        duplicateClosureOutput,
+      ],
+      /must not embed a second runtime-resource closure/u,
+    );
 
     const missingCreateableOutput = path.join(root, "missing-createable-output");
     await fs.cp(output, missingCreateableOutput, { recursive: true });
@@ -1379,7 +1547,7 @@ async function main() {
     );
     run("diff", ["-ru", output, recoveredOutput]);
 
-    async function expectCarrierFailure(name, candidate, extensions, pattern) {
+    async function expectCarrierFailure(name, candidate, extensions, pattern, options = {}) {
       const file = path.join(root, `${name}.json`);
       await write(file, `${JSON.stringify(candidate, null, 2)}\n`);
       await expectReject(
@@ -1388,6 +1556,7 @@ async function main() {
           cacheDir: path.join(root, `${name}-cache`),
           carriers: [file],
           extensions,
+          icu: options.icu ?? false,
           outputDir: path.join(root, `${name}-output`),
         }),
         pattern,
@@ -1433,7 +1602,12 @@ async function main() {
       path.join(moduleOnlyBaseRoot, "runtime", "files", "lib", "postgresql", "auto_explain.dylib"),
       "hidden module-only base payload\n",
     );
-    const moduleOnlyBaseArchive = path.join(root, "archives", "module-only-base.tar.gz");
+    const moduleOnlyBaseArchive = path.join(
+      root,
+      "archives",
+      "module-only-base",
+      "liboliphaunt-1.0.0-runtime-resources-ios-datum64.tar.gz",
+    );
     await tarDirectory(path.dirname(moduleOnlyBaseRoot), moduleOnlyBaseArchive, "oliphaunt");
     moduleOnlyBase.base.assets = await Promise.all(
       moduleOnlyBase.base.assets.map(async (row) => row.role === "runtime-resources"
@@ -1895,38 +2069,31 @@ async function main() {
     const highCardinalityIcu = structuredClone(carrier);
     highCardinalityIcu.base.assets = await Promise.all(
       highCardinalityIcu.base.assets.map(async (row) => row.role === "icu-data"
-        ? asset("icu-data", highCardinalityIcuArchive, "tar.gz", "share/icu")
+        ? asset("icu-data", highCardinalityIcuArchive, "tar.gz", ".")
         : row),
     );
-    const highCardinalityIcuFile = path.join(root, "high-cardinality-icu.json");
-    await write(highCardinalityIcuFile, `${JSON.stringify(highCardinalityIcu, null, 2)}\n`);
-    const highCardinalityIcuOutput = path.join(root, "high-cardinality-icu-output");
-    await stageIosApp({
-      allowFileUrls: true,
-      cacheDir: path.join(root, "high-cardinality-icu-cache"),
-      carriers: [highCardinalityIcuFile],
-      extensions: [],
-      icu: true,
-      outputDir: highCardinalityIcuOutput,
-    });
-    await fs.access(path.join(
-      highCardinalityIcuOutput,
-      "resources",
-      "OliphauntReactNativeResources.bundle",
-      "oliphaunt",
-      "runtime",
-      "files",
-      "share",
-      "icu",
-      "locale-4097.res",
-    ));
+    await expectCarrierFailure(
+      "high-cardinality-icu",
+      highCardinalityIcu,
+      [],
+      /does not match the target runtime's cluster-seed-icu/u,
+      { icu: true },
+    );
 
     const highCardinalityRuntime = structuredClone(carrier);
+    const highCardinalityRuntimeArchive = path.join(
+      root,
+      "archives",
+      "high-cardinality-runtime",
+      "liboliphaunt-1.0.0-runtime-resources-ios-datum64.tar.gz",
+    );
+    await fs.mkdir(path.dirname(highCardinalityRuntimeArchive), { recursive: true });
+    await fs.copyFile(highCardinalityIcuArchive, highCardinalityRuntimeArchive);
     highCardinalityRuntime.base.assets = await Promise.all(
       highCardinalityRuntime.base.assets.map(async (row) => row.role === "runtime-resources"
         ? asset(
             "runtime-resources",
-            highCardinalityIcuArchive,
+            highCardinalityRuntimeArchive,
             "tar.gz",
             "share/icu",
           )
@@ -1938,6 +2105,51 @@ async function main() {
       [],
       /exceeds the maximum supported 4096 archive entries/u,
     );
+
+    const highCardinalityFrameworkArchive = path.join(
+      root,
+      "archives",
+      "liboliphaunt-1.0.0-high-cardinality.xcframework.zip",
+    );
+    const baseFrameworkAsset = carrier.base.assets.find(({ role }) => role === "base-xcframework");
+    await fs.copyFile(fileURLToPath(baseFrameworkAsset.url), highCardinalityFrameworkArchive);
+    await appendZipFiles(
+      highCardinalityFrameworkArchive,
+      "liboliphaunt.xcframework/ios-arm64/liboliphaunt.framework/Resources/oliphaunt/high-cardinality",
+      8192,
+    );
+    const highCardinalityFramework = structuredClone(carrier);
+    highCardinalityFramework.base.assets = await Promise.all(
+      highCardinalityFramework.base.assets.map(async (row) => row.role === "base-xcframework"
+        ? asset(
+            "base-xcframework",
+            highCardinalityFrameworkArchive,
+            "zip",
+            "liboliphaunt.xcframework",
+          )
+        : row),
+    );
+    const highCardinalityFrameworkCarrierFile = path.join(root, "high-cardinality-framework.json");
+    await write(
+      highCardinalityFrameworkCarrierFile,
+      `${JSON.stringify(highCardinalityFramework, null, 2)}\n`,
+    );
+    const highCardinalityFrameworkOutput = path.join(root, "high-cardinality-framework-output");
+    await stageIosApp({
+      allowFileUrls: true,
+      cacheDir: path.join(root, "high-cardinality-framework-cache"),
+      carriers: [highCardinalityFrameworkCarrierFile],
+      extensions: [],
+      icu: false,
+      outputDir: highCardinalityFrameworkOutput,
+    });
+    await fs.access(path.join(
+      highCardinalityFrameworkOutput,
+      "frameworks",
+      "base",
+      "liboliphaunt.xcframework",
+      "Info.plist",
+    ));
 
     const traversalArchive = path.join(root, "archives", "malicious-traversal.zip");
     await maliciousZip(traversalArchive, "../escaped-from-rn.txt", "file");

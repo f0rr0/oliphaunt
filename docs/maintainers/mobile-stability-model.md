@@ -20,7 +20,7 @@ isolation is required.
 
 ## Storage
 
-Mobile SDKs hydrate a packaged template into app-private storage and publish
+Mobile SDKs hydrate a packaged cluster seed into app-private storage and publish
 the managed-root descriptor last. The C boundary validates complete PGDATA and
 never runs `initdb`. A failed initialization cannot leave a descriptor-only
 root that later opens as valid.
@@ -44,6 +44,13 @@ config plugin arranges those same artifacts in the app build. Runtime selection
 must match what the installed application actually carries.
 
 ## Qualification
+
+The pre-build mobile closure gates prove compile/header ABI compatibility only.
+They intentionally do not claim runtime execution. Android x86_64 emulator and
+iOS simulator installed-app tests consume those exact candidate closures,
+validate the selected catalog profile, and reopen persistent storage. Their
+PASS receipts are required by the top-level E2E gate, which is the final mobile
+release execution qualification.
 
 Mobile release evidence covers:
 

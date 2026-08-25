@@ -31,7 +31,18 @@ export FAKE_MAESTRO_RECEIPT=""
 export OLIPHAUNT_EXPO_IOS_LOG_CAPTURE_STARTUP_SECONDS=0.1
 export OLIPHAUNT_EXPO_IOS_RECEIPT_GRACE_SECONDS=3
 export OLIPHAUNT_MOBILE_E2E_EXPECT_ICU=0
+export OLIPHAUNT_MOBILE_E2E_EXPECT_CATALOG_PROFILE=standard
 export CI_HEAD_SHA="$(git rev-parse HEAD)"
+
+configure_mobile_catalog_profile_probe standard
+[ "$EXPO_PUBLIC_OLIPHAUNT_CATALOG_PROFILE" = standard ] || {
+  echo "standard catalog profile probe did not preserve its profile identity" >&2
+  exit 1
+}
+[ "$EXPO_PUBLIC_OLIPHAUNT_CATALOG_PROFILE_PROBE_EXPECTED" = oliphaunt-standard-seed-ok ] || {
+  echo "standard catalog profile probe did not use the canonical fixture" >&2
+  exit 1
+}
 
 receipt_json_for_platform() {
   local icu_runtime_proof="${2:-$OLIPHAUNT_MOBILE_E2E_EXPECT_ICU}"
@@ -47,7 +58,7 @@ const extensions = (metadata.extensions ?? [])
   .map(row => row['sql-name'])
   .sort();
 process.stdout.write(JSON.stringify({
-  schema: 'oliphaunt-expo-smoke-pass-v3',
+  schema: 'oliphaunt-expo-smoke-pass-v4',
   runner: 'smoke',
   platform,
   extensionCount: extensions.length,
@@ -55,6 +66,7 @@ process.stdout.write(JSON.stringify({
   extensionCatalogComplete: true,
   pgTextsearchEnglishBm25: extensions.includes('pg_textsearch'),
   extensionCatalogSha256: metadata['extension-catalog-sha256'],
+  catalogProfile: icuRuntimeProof === '1' ? 'icu' : 'standard',
   icuRuntimeProof: icuRuntimeProof === '1',
 }));
 NODE
@@ -355,6 +367,7 @@ const reordered = {
   pgTextsearchEnglishBm25: report.pgTextsearchEnglishBm25,
   extensionCount: report.extensionCount,
   extensionCatalogSha256: report.extensionCatalogSha256,
+  catalogProfile: report.catalogProfile,
   icuRuntimeProof: report.icuRuntimeProof,
 };
 fs.writeFileSync(file, `${JSON.stringify(reordered, null, 2)}\n`);
@@ -431,6 +444,7 @@ const reordered = {
   pgTextsearchEnglishBm25: report.pgTextsearchEnglishBm25,
   extensionCount: report.extensionCount,
   extensionCatalogSha256: report.extensionCatalogSha256,
+  catalogProfile: report.catalogProfile,
   icuRuntimeProof: report.icuRuntimeProof,
 };
 fs.writeFileSync(file, `${JSON.stringify(reordered, null, 2)}\n`);
@@ -452,6 +466,7 @@ mobile_platform="ios"
 for platform in ios android; do
   mobile_platform="$platform"
   export OLIPHAUNT_MOBILE_E2E_EXPECT_ICU=1
+  export OLIPHAUNT_MOBILE_E2E_EXPECT_CATALOG_PROFILE=icu
   icu_receipt_json="$(receipt_json_for_platform "$platform" 1)"
   icu_pass_line="07-18 12:00:03.244 ReactNativeJS: '$success_tag', '$icu_receipt_json'"
   write_runner_report "$icu_pass_line" ||
@@ -475,6 +490,7 @@ for platform in ios android; do
   write_runner_report "$icu_pass_line" ||
     fail_test "$platform failed to recreate its matching ICU proof fixture"
   export OLIPHAUNT_MOBILE_E2E_EXPECT_ICU=0
+  export OLIPHAUNT_MOBILE_E2E_EXPECT_CATALOG_PROFILE=standard
   rejected=0
   if ! verify_mobile_e2e_smoke_receipt "$platform" "$scratch_root" \
     >"$test_root/$platform-missing-icu-outer.stdout" \
@@ -487,6 +503,7 @@ for platform in ios android; do
     fail_test "$platform outer ICU mismatch omitted its typed diagnostic"
 done
 export OLIPHAUNT_MOBILE_E2E_EXPECT_ICU=0
+export OLIPHAUNT_MOBILE_E2E_EXPECT_CATALOG_PROFILE=standard
 mobile_platform="ios"
 
 echo "iOS Maestro exact-launch receipt tests passed"

@@ -177,8 +177,8 @@ support behavior honestly; gaps must be explicit and justified in
   release workspace assembly lives in `tools/xtask/src/release_workspace.rs`,
   source-pin and source-spine handling lives in
   `tools/xtask/src/source_spine.rs`, PostgreSQL source/patch-surface guards
-  live in `tools/xtask/src/postgres_guard.rs`, template execution lives in
-  `tools/xtask/src/template_runner.rs`, and AOT serialization lives in
+  live in `tools/xtask/src/postgres_guard.rs`, cluster-seed execution lives in
+  `tools/xtask/src/cluster_seed_runner.rs`, and AOT serialization lives in
   `tools/xtask/src/aot_serializer.rs`. Performance benchmark workload/result
   construction lives in `tools/perf/runner/src/benchmarks.rs`, and report DTOs
   live in `tools/perf/runner/src/report.rs`. Native liboliphaunt execution,
@@ -223,9 +223,9 @@ support behavior honestly; gaps must be explicit and justified in
   reusable host adapters:
   - `src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/base.rs` for
     install/root preparation, runtime layout selection, archive validation, and
-    PGDATA template orchestration.
-  - `src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/base/template_clone.rs`
-    for PGDATA template copy/clone mechanics, runtime-state exclusion, reflink
+    cluster-seed orchestration.
+  - `src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/base/cluster_seed_clone.rs`
+    for cluster-seed copy/clone mechanics, runtime-state exclusion, reflink
     fallback, and symlink handling.
   - `src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/postgres_mod.rs`
     for PostgreSQL WASIX module lifecycle, exported function wiring, startup

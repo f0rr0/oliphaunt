@@ -1,0 +1,7 @@
+name = "icu-data"
+kind = "archive"
+url = "https://github.com/unicode-org/icu/releases/download/release-76-1/icu4c-76_1-data-bin-l.zip"
+branch = "release-76-1"
+commit = "8577bb036a5c08204b1622a85485b92cdfaea521c251d22fd36899e99e426d9a"
+sha256 = "8577bb036a5c08204b1622a85485b92cdfaea521c251d22fd36899e99e426d9a"
+strip_prefix = "."

@@ -49,9 +49,9 @@ The runtime uses several cache layers:
 - a persistent AOT artifact cache;
 - a runtime asset cache for immutable files;
 - an extension asset cache;
-- a template PGDATA cache for roots that use template initialization;
-- an eager PGDATA template overlay that avoids cloning the whole initialized
-  template before first query.
+- a cluster seed cache for roots that use packaged initialization;
+- an eager cluster seed overlay that avoids cloning the whole initialized seed
+  before first query.
 
 The older full-local path hardlinks immutable files into database roots when
 the filesystem supports it, then falls back to copying when linking is
@@ -67,10 +67,10 @@ for that root. The same prepared layout is used by direct databases, persistent
 paths, app-id paths, fresh and cached temporary databases, proxy roots, and
 local server mode.
 
-The eager PGDATA template overlay is also enabled by default. It mounts the
-cached initialized template as the lower `/base` filesystem and starts each
+The eager cluster seed overlay is also enabled by default. It mounts the cached
+initialized seed as the lower `/base` filesystem and starts each
 database with a tiny per-instance upper directory. When PostgreSQL opens a
-template-backed file for mutation, the runtime copies that one file into the
+seed-backed file for mutation, the runtime copies that one file into the
 upper directory before opening it.
 
 This is intentionally not a pre-provisioned pool: each database root is still
@@ -114,11 +114,10 @@ values (`32MB`, `64MB`, and default) so WAL footprint wins are attributable to
 bounded checkpoint behavior rather than hidden defaults. Explicit startup GUC
 overrides are appended after the profile and durability settings so benchmark
 reports can attribute wins or regressions to concrete PostgreSQL knobs.
-Experiments below `min_wal_size=32MB` require a template cluster initialized
-with a smaller WAL segment size, such as `initdb --wal-segsize=4`; this is a
-PGDATA/template property, not a startup GUC. The Expo mobile footprint harness
-passes the requested segment size through to template generation and records the
-effective read-only `wal_segment_size` setting next to the intended GUCs.
+The mobile cluster seeds use PostgreSQL's standard 16MB WAL segments, so the
+Expo mobile footprint harness rejects `min_wal_size` below 32MB. It varies only
+startup GUCs and records the effective read-only `wal_segment_size`; it never
+regenerates or relabels release seeds.
 
 Detailed C-side backend startup timers are an instrumented-build diagnostic, not
 production runtime surface. Build WASIX assets with
@@ -198,8 +197,8 @@ deserialization fails, the cache entry is deleted, rebuilt once from the bundled
 artifact, and retried.
 
 Set `OLIPHAUNT_WASM_AOT_VERIFY=full` to force full SHA-256 verification of cached
-AOT files, bundled runtime archives, bundled extension archives, PGDATA template
-archives, and runtime/template module matches. This is useful for debugging
+AOT files, bundled runtime archives, bundled extension archives, cluster seed
+archives, and runtime/seed module matches. This is useful for debugging
 cache corruption or CI integrity checks, but it adds cold-start latency and is
 not the default.
 
@@ -210,7 +209,7 @@ captures store globals. That is not enough by itself to ship an instant restore
 path for Postgres: a promoted design must prove correctness for PGDATA state,
 mount state, file descriptors, direct protocol state, server mode, extensions,
 and `pg_dump`. This remains a first-class performance track, but it must beat
-the current template/overlay path while passing the same runtime and extension
+the current cluster-seed overlay path while passing the same runtime and extension
 suite before it becomes default.
 
 ## Measuring Locally

@@ -9,14 +9,14 @@ publish = false
 [features]
 default = []
 wasix-runner = ["dep:wasmer", "dep:wasmer-wasix", "dep:webc"]
-template-runner = [
+cluster-seed-runner = [
   "wasix-runner",
   "wasmer/llvm",
   "wasmer-wasix/host-fs",
   "dep:tokio",
 ]
 aot-serializer = [
-  "template-runner",
+  "cluster-seed-runner",
   "wasmer/wasmer-artifact-create",
   "dep:wasmer-types",
 ]

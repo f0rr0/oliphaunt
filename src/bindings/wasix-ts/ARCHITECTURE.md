@@ -86,7 +86,7 @@ smaller qualified side modules remain supported in direct placement.
    package-relative host lazily in the caller realm.
 2. The binding resolves the default `@oliphaunt/liboliphaunt-wasix` descriptor
    internally. The worker fetches or receives its canonical manifest, runtime,
-   and PGDATA `.tar.zst` artifacts as one product/version identity. Each
+   and cluster-seed `.tar.zst` artifacts as one product/version identity. Each
    uncached identity verifies descriptor sizes and hashes plus the manifest's
    core/module and PostgreSQL/source identity; every open uses that exact
    verified identity. Imported extension descriptors add their exact carrier
@@ -94,8 +94,8 @@ smaller qualified side modules remain supported in direct placement.
 3. The selected realm safely expands the core artifacts and overlays only each
    extension carrier's install-contract files into separate `/bin`, `/lib`, `/share`,
    writable `/base`, `/home`, and `/tmp` Wasmer memory mounts. Before `/base` is
-   materialized, a storage provider lease supplies either the packaged PGDATA
-   template or an exact-compatible persistent PGDATA. The source-pinned
+   materialized, a storage provider lease supplies either the packaged cluster
+   seed or an exact-compatible persistent PGDATA. The source-pinned
    host adds ephemeral `/dev/shm` and a real Wasmer `RandomFile` at
    `/dev/urandom`. Its narrow `Directory` mutation journal records successful
    writes and truncates through already-open descriptors as well as file,
@@ -270,7 +270,7 @@ initial capacity use the portable path. Its size is an implementation detail,
 not a public database-capacity limit.
 
 Compatibility uses the PostgreSQL major and versioned WASIX physical format.
-Runtime hashes and source fingerprints still reject mixed runtime, template,
+Runtime hashes and source fingerprints still reject mixed runtime, cluster-seed,
 AOT, and extension build outputs, while package and carrier changes do not
 rewrite the managed-root descriptor or reject an unchanged physical format.
 Safe extension upgrade or removal remains an explicit migration concern rather

@@ -1,9 +1,19 @@
-import { applyNativeIcuDataEnvironment, applyNativeRuntimeLibraryEnvironment } from './common.js';
+import {
+  applyNativeIcuDataEnvironment,
+  applyNativeRuntimeLibraryEnvironment,
+  replaceNativeIcuDataEnvironment,
+} from './common.js';
 import { loadNodeDirectAddon } from './node-addon.js';
 import { prepareNodeExtensionInstall, resolveNodeNativeInstall } from './assets-node.js';
-import { initializeNativePgdata } from './initialize.js';
+import {
+  copyNativeClusterSeed,
+  initializeNativePgdata,
+  nativeInitdbArgs,
+  nativePostgresChildEnvironment,
+} from './initialize.js';
 import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
+import { resolveExactNativeRuntimeProfile } from './runtime-profile.js';
 import type {
   NativeBinding,
   NativeBindingOptions,
@@ -22,19 +32,37 @@ export async function createNodeNativeBinding(
 
   return {
     async open(config: NativeOpenConfig): Promise<NativeHandle> {
-      const extensionInstall = await prepareNodeExtensionInstall(
+      const explicitRuntimeDirectory =
+        config.runtimeDirectory !== undefined || install.packageManaged === false;
+      let extensionInstall = await prepareNodeExtensionInstall(
         {
           ...install,
           runtimeDirectory: config.runtimeDirectory ?? install.runtimeDirectory,
+          clusterSeedDirectory:
+            config.runtimeDirectory === undefined ? install.clusterSeedDirectory : undefined,
         },
         config.extensions,
         {
-          explicitRuntimeDirectory:
-            config.runtimeDirectory !== undefined || install.packageManaged === false,
+          explicitRuntimeDirectory,
         },
       );
+      if (explicitRuntimeDirectory && extensionInstall.runtimeDirectory !== undefined) {
+        extensionInstall = {
+          ...extensionInstall,
+          ...(await resolveExactNativeRuntimeProfile(extensionInstall.runtimeDirectory)),
+          clusterSeedDirectory: undefined,
+        };
+        replaceNativeIcuDataEnvironment(extensionInstall.icuDataDirectory);
+      }
       applyNativeRuntimeLibraryEnvironment(extensionInstall.runtimeDirectory);
-      await prepareNodePgdata(config.pgdata, config.username, extensionInstall.runtimeDirectory);
+      await prepareNodePgdata(
+        config.pgdata,
+        config.username,
+        extensionInstall.runtimeDirectory,
+        extensionInstall.clusterSeedDirectory,
+        extensionInstall.icuDataDirectory,
+        extensionInstall.catalogProfile,
+      );
       return addon.open({
         ...config,
         libraryPath: extensionInstall.libraryPath,
@@ -78,6 +106,9 @@ async function prepareNodePgdata(
   pgdata: string,
   username: string,
   runtimeDirectory?: string,
+  clusterSeedDirectory?: string,
+  icuDataDirectory?: string,
+  catalogProfile: 'standard' | 'icu' = 'standard',
 ): Promise<void> {
   if (runtimeDirectory === undefined) {
     throw new Error('initializing a native database requires runtimeDirectory with initdb');
@@ -90,22 +121,20 @@ async function prepareNodePgdata(
   await initializeNativePgdata({
     root: dirname(pgdata),
     pgdata,
-    runInitdb: (staging) =>
-      new Promise<void>((resolve, reject) => {
-        const child = spawn(
-          executable,
-          [
-            '-D',
-            staging,
-            '-U',
-            username,
-            '--auth=trust',
-            '--locale-provider=libc',
-            '--locale=C',
-            '--encoding=UTF8',
-          ],
-          { env: process.env, stdio: ['ignore', 'ignore', 'pipe'] },
-        );
+    username,
+    populatePgdata: (staging) => {
+      if (clusterSeedDirectory !== undefined) {
+        return copyNativeClusterSeed(clusterSeedDirectory, staging);
+      }
+      return new Promise<void>((resolve, reject) => {
+        const env = nativePostgresChildEnvironment(process.env, {
+          icuDataDirectory,
+          initdbCatalogProfile: catalogProfile,
+        });
+        const child = spawn(executable, nativeInitdbArgs(staging), {
+          env,
+          stdio: ['ignore', 'ignore', 'pipe'],
+        });
         const errors: Buffer[] = [];
         child.stderr.on('data', (chunk: Buffer) => errors.push(chunk));
         child.once('error', reject);
@@ -118,7 +147,8 @@ async function prepareNodePgdata(
                 ),
               ),
         );
-      }),
+      });
+    },
   });
 }
 

@@ -3,12 +3,14 @@
 Portable ICU data files for Oliphaunt runtimes.
 
 Install this package only when an application needs PostgreSQL ICU collations.
-Base Oliphaunt runtime packages do not include ICU data.
+Ordinary Oliphaunt runtime packages do not include ICU data.
 
-The published package stores the ICU tree once, under
-`OliphauntICU.bundle/share/icu`. Node, Bun, and Deno consumers should resolve
-that directory from `oliphaunt.dataRelativePath` in the package metadata rather
-than hard-coding its location.
+The published package stores the ICU tree once under
+`OliphauntICU.bundle/share/icu`, with its exact data receipt at
+`OliphauntICU.bundle/manifest.properties`. Target-specific native runtime
+packages carry their own matching PostgreSQL ICU-catalog cluster seed. Node, Bun, and
+Deno consumers should resolve the data directory from
+`oliphaunt.dataRelativePath` rather than hard-coding its location.
 
 On Apple platforms, `OliphauntICU.podspec` installs the prebuilt
 `OliphauntICU.bundle` as one resource. Copying the bundle atomically preserves

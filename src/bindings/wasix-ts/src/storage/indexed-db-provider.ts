@@ -1,8 +1,8 @@
-import type { WasixDirectoryMount } from '../archive.js';
 import { WasixStorageError } from '../errors.js';
 import {
   assertWasixPhysicalIdentity,
   physicalIdentityMatches,
+  type WasixClusterSeedLoader,
   type WasixPhysicalIdentity,
   type WasixStorageLease,
 } from '../storage-provider.js';
@@ -48,10 +48,10 @@ export type IndexedDbStorageBackend = {
 
 export async function acquireIndexedDbStorage(
   name: string,
-  template: WasixDirectoryMount,
+  loadClusterSeed: WasixClusterSeedLoader,
   identity: WasixPhysicalIdentity,
 ): Promise<WasixStorageLease> {
-  return acquireIndexedDbStorageWithBackend(name, template, identity, browserBackend());
+  return acquireIndexedDbStorageWithBackend(name, loadClusterSeed, identity, browserBackend());
 }
 
 export async function restoreIndexedDbStorage(
@@ -104,11 +104,11 @@ export async function restoreIndexedDbStorage(
 /** @internal Narrow dependency seam for deterministic provider failure tests. */
 export async function acquireIndexedDbStorageWithBackend(
   name: string,
-  template: WasixDirectoryMount,
+  loadClusterSeed: WasixClusterSeedLoader,
   identity: WasixPhysicalIdentity,
   backend: IndexedDbStorageBackend,
 ): Promise<WasixStorageLease> {
-  return acquireIncrementalStorage(`IndexedDB storage ${JSON.stringify(name)}`, template, {
+  return acquireIncrementalStorage(`IndexedDB storage ${JSON.stringify(name)}`, loadClusterSeed, {
     acquireLock: () => backend.acquireLock(name),
     async openStore() {
       const database = await backend.openDatabase(name);

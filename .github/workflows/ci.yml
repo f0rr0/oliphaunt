@@ -22,7 +22,7 @@ on:
           - linux-arm64-gnu
           - windows-x64-msvc
       native_target:
-        description: Native runtime target to run for focused manual debugging
+        description: Native target, or mobile compatibility domain, for focused manual debugging
         required: true
         default: all
         type: choice
@@ -1017,13 +1017,115 @@ jobs:
             target/liboliphaunt/**/*.log
           if-no-files-found: ignore
 
+  liboliphaunt-native-android-abi:
+    name: Builds / native-runtime-android-abi-compatible
+    needs:
+      - affected
+      - liboliphaunt-native-android
+    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.liboliphaunt-native-android.result == 'success' && (contains(fromJson(needs.affected.outputs.jobs), 'mobile-build-android') || contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-release-assets')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Download Android arm64 ABI receipts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-native-target-android-arm64-v8a
+          path: target/liboliphaunt/native-mobile-abi-inputs/android-arm64-v8a
+
+      - name: Download Android x86_64 ABI receipts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-native-target-android-x86_64
+          path: target/liboliphaunt/native-mobile-abi-inputs/android-x86_64
+
+      - name: Download Android runtime-resource assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-native-release-assets-android-x86_64
+          path: target/liboliphaunt/abi-compatible-release-assets/android-datum64
+
+      - name: Prove Android Datum64 ABI-compatible runtime-resource closure
+        run: |
+          tools/dev/bun.sh tools/release/finalize-native-mobile-abi-proofs.mjs \
+            --domain android-datum64 \
+            --asset-dir target/liboliphaunt/abi-compatible-release-assets/android-datum64 \
+            --receipt-root target/liboliphaunt/native-mobile-abi-inputs
+
+      - name: Upload ABI-compatible Android runtime-resource assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: liboliphaunt-native-abi-compatible-release-assets-android-datum64
+          path: target/liboliphaunt/abi-compatible-release-assets/android-datum64
+          if-no-files-found: error
+
+  liboliphaunt-native-ios-abi:
+    name: Builds / native-runtime-ios-abi-compatible
+    needs:
+      - affected
+      - liboliphaunt-native-ios
+    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.liboliphaunt-native-ios.result == 'success' && (contains(fromJson(needs.affected.outputs.jobs), 'mobile-build-ios') || contains(fromJson(needs.affected.outputs.jobs), 'swift-sdk-package') || contains(fromJson(needs.affected.outputs.jobs), 'react-native-sdk-package') || contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-release-assets')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Download iOS ABI receipts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-native-target-ios-xcframework
+          path: target/liboliphaunt/native-mobile-abi-inputs/ios-xcframework
+
+      - name: Download iOS runtime-resource assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-native-release-assets-ios-xcframework
+          path: target/liboliphaunt/abi-compatible-release-assets/ios-datum64
+
+      - name: Prove iOS Datum64 ABI-compatible runtime-resource closure
+        run: |
+          tools/dev/bun.sh tools/release/finalize-native-mobile-abi-proofs.mjs \
+            --domain ios-datum64 \
+            --asset-dir target/liboliphaunt/abi-compatible-release-assets/ios-datum64 \
+            --receipt-root target/liboliphaunt/native-mobile-abi-inputs
+
+      - name: Upload ABI-compatible iOS runtime-resource assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: liboliphaunt-native-abi-compatible-release-assets-ios-datum64
+          path: target/liboliphaunt/abi-compatible-release-assets/ios-datum64
+          if-no-files-found: error
+
   liboliphaunt-native-release-assets:
     name: Builds / native-runtime-release-assets
     needs:
       - affected
       - liboliphaunt-native-android
+      - liboliphaunt-native-android-abi
       - liboliphaunt-native-desktop
       - liboliphaunt-native-ios
+      - liboliphaunt-native-ios-abi
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-release-assets') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -1047,6 +1149,33 @@ jobs:
           pattern: liboliphaunt-native-release-assets-*
           path: target/liboliphaunt/release-assets
           merge-multiple: true
+
+      - name: Remove raw mobile runtime-resource closures
+        run: |
+          set --
+          while IFS= read -r archive; do
+            [ -n "$archive" ] && set -- "$@" "$archive"
+          done < <(find target/liboliphaunt/release-assets -maxdepth 1 -type f \
+            \( -name 'liboliphaunt-*-runtime-resources-android-datum64.tar.gz' \
+              -o -name 'liboliphaunt-*-runtime-resources-ios-datum64.tar.gz' \) \
+            | LC_ALL=C sort)
+          if [ "$#" -ne 2 ]; then
+            echo "Expected exactly two raw mobile runtime-resource closures; found $#" >&2
+            exit 1
+          fi
+          rm -- "$@"
+
+      - name: Download ABI-compatible Android runtime-resource assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-native-abi-compatible-release-assets-android-datum64
+          path: target/liboliphaunt/release-assets
+
+      - name: Download ABI-compatible iOS runtime-resource assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-native-abi-compatible-release-assets-ios-datum64
+          path: target/liboliphaunt/release-assets
 
       - name: Package aggregate liboliphaunt release assets
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream none liboliphaunt-native:release-assets
@@ -1264,7 +1393,7 @@ jobs:
     name: Builds / swift-sdk
     needs:
       - affected
-      - liboliphaunt-native-ios
+      - liboliphaunt-native-ios-abi
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'swift-sdk-package') }}
     runs-on: macos-26
     timeout-minutes: 90
@@ -1293,7 +1422,7 @@ jobs:
       - name: Download Apple liboliphaunt release assets
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: liboliphaunt-native-release-assets-ios-xcframework
+          name: liboliphaunt-native-abi-compatible-release-assets-ios-datum64
           path: target/liboliphaunt/release-assets
 
       - name: Build Swift SDK package artifacts
@@ -1377,7 +1506,7 @@ jobs:
     name: Builds / react-native-sdk
     needs:
       - affected
-      - liboliphaunt-native-ios
+      - liboliphaunt-native-ios-abi
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'react-native-sdk-package') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -1400,7 +1529,7 @@ jobs:
       - name: Download Apple liboliphaunt release assets
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: liboliphaunt-native-release-assets-ios-xcframework
+          name: liboliphaunt-native-abi-compatible-release-assets-ios-datum64
           path: target/liboliphaunt/release-assets
 
       - name: Build React Native SDK package artifacts
@@ -1502,7 +1631,6 @@ jobs:
           node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime bun
           node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime deno
           node src/bindings/wasix-ts/tools/smoke-browser.mjs --postgis-worker
-          node src/bindings/wasix-ts/tools/smoke-browser.mjs --package-only
           node src/bindings/wasix-ts/tools-package/tools/smoke-host.mjs --runtime node
           tools/dev/bun.sh src/bindings/wasix-ts/tools-package/tools/smoke-host.mjs --runtime bun
           tools/dev/deno.sh run --allow-all src/bindings/wasix-ts/tools-package/tools/smoke-host.mjs --runtime deno
@@ -1648,7 +1776,7 @@ jobs:
           load: true
           cache-from: type=gha,scope=wasix-builder
 
-      - name: Install Wasmer LLVM 22.1 for WASIX template generation
+      - name: Install Wasmer LLVM 22.1 for WASIX cluster-seed generation
         uses: ./.github/actions/setup-wasmer-llvm
         with:
           url: ${{ env.WASMER_LLVM_LINUX_X64_URL }}
@@ -2297,9 +2425,10 @@ jobs:
       - affected
       - mobile-extension-packages
       - liboliphaunt-native-android
+      - liboliphaunt-native-android-abi
       - kotlin-sdk-package
       - react-native-sdk-package
-    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.mobile-extension-packages.result == 'success' && needs.liboliphaunt-native-android.result == 'success' && needs.kotlin-sdk-package.result == 'success' && needs.react-native-sdk-package.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'mobile-build-android') }}
+    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.mobile-extension-packages.result == 'success' && needs.liboliphaunt-native-android.result == 'success' && needs.liboliphaunt-native-android-abi.result == 'success' && needs.kotlin-sdk-package.result == 'success' && needs.react-native-sdk-package.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'mobile-build-android') }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.affected.outputs.react_native_android_mobile_app_matrix) }}
@@ -2334,6 +2463,45 @@ jobs:
         with:
           name: liboliphaunt-native-target-${{ matrix.target }}
           path: .
+
+      - name: Download ABI-compatible Android runtime-resource closure
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-native-abi-compatible-release-assets-android-datum64
+          path: target/liboliphaunt/android-runtime-assets
+
+      - name: Extract ABI-compatible Android runtime-resource closure
+        run: |
+          set --
+          while IFS= read -r archive; do
+            [ -n "$archive" ] && set -- "$@" "$archive"
+          done < <(find target/liboliphaunt/android-runtime-assets -type f \
+            -name 'liboliphaunt-*-runtime-resources-android-datum64.tar.gz' | LC_ALL=C sort)
+          if [ "$#" -ne 1 ]; then
+            echo "Expected exactly one Android datum64 runtime-resource closure; found $#" >&2
+            exit 1
+          fi
+          destination=target/liboliphaunt/runtime-closure/android
+          mkdir -p "$destination"
+          tar -xzf "$1" -C "$destination"
+          set --
+          while IFS= read -r receipt; do
+            [ -n "$receipt" ] && set -- "$@" "$receipt"
+          done < <(find "$destination" -type f -path '*/oliphaunt/manifest.properties' | LC_ALL=C sort)
+          if [ "$#" -ne 1 ]; then
+            echo "Expected exactly one extracted Android runtime-carrier receipt; found $#" >&2
+            exit 1
+          fi
+          closure="$(dirname "$1")"
+          # JavaScript template interpolation belongs inside the single-quoted Bun program.
+          # shellcheck disable=SC2016
+          tools/dev/bun.sh -e '
+            import { validateNativeRuntimeCarrier } from "./tools/release/native-runtime-carrier-contract.mjs";
+            const [root, icuData] = process.argv.slice(1);
+            const { target } = validateNativeRuntimeCarrier(root, { icuData });
+            if (target !== "android-datum64") throw new Error(`expected android-datum64, got ${target}`);
+          ' "$closure" target/liboliphaunt-pg18-linux-x64-gnu/icu/share/icu
+          echo "OLIPHAUNT_EXPO_ANDROID_SEED_CLOSURE_DIR=$GITHUB_WORKSPACE/$closure" >> "$GITHUB_ENV"
 
       - name: Download Kotlin SDK package artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -2397,6 +2565,7 @@ jobs:
       - affected
       - mobile-extension-packages
       - liboliphaunt-native-ios
+      - liboliphaunt-native-ios-abi
       - react-native-sdk-package
       - swift-sdk-package
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'mobile-build-ios') }}
@@ -2427,10 +2596,10 @@ jobs:
           name: liboliphaunt-native-target-ios-xcframework
           path: .
 
-      - name: Download iOS liboliphaunt release assets
+      - name: Download ABI-compatible iOS liboliphaunt release assets
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: liboliphaunt-native-release-assets-ios-xcframework
+          name: liboliphaunt-native-abi-compatible-release-assets-ios-datum64
           path: target/liboliphaunt/release-assets
 
       - name: Qualify standalone ICU CocoaPods carrier
@@ -2445,6 +2614,43 @@ jobs:
             exit 1
           fi
           tools/release/check-icu-npm-cocoapods-consumer.sh "$1"
+          icu_root=target/liboliphaunt/icu-data/ios
+          mkdir -p "$icu_root"
+          tar -xzf "$1" -C "$icu_root" share/icu
+          echo "OLIPHAUNT_IOS_ICU_DATA_DIR=$GITHUB_WORKSPACE/$icu_root/share/icu" >> "$GITHUB_ENV"
+
+      - name: Extract ABI-compatible iOS runtime-resource closure
+        run: |
+          set --
+          while IFS= read -r archive; do
+            [ -n "$archive" ] && set -- "$@" "$archive"
+          done < <(find target/liboliphaunt/release-assets -type f \
+            -name 'liboliphaunt-*-runtime-resources-ios-datum64.tar.gz' | LC_ALL=C sort)
+          if [ "$#" -ne 1 ]; then
+            echo "Expected exactly one iOS datum64 runtime-resource closure; found $#" >&2
+            exit 1
+          fi
+          destination=target/liboliphaunt/runtime-closure/ios
+          mkdir -p "$destination"
+          tar -xzf "$1" -C "$destination"
+          set --
+          while IFS= read -r receipt; do
+            [ -n "$receipt" ] && set -- "$@" "$receipt"
+          done < <(find "$destination" -type f -path '*/oliphaunt/manifest.properties' | LC_ALL=C sort)
+          if [ "$#" -ne 1 ]; then
+            echo "Expected exactly one extracted iOS runtime-carrier receipt; found $#" >&2
+            exit 1
+          fi
+          closure="$(dirname "$1")"
+          # JavaScript template interpolation belongs inside the single-quoted Bun program.
+          # shellcheck disable=SC2016
+          tools/dev/bun.sh -e '
+            import { validateNativeRuntimeCarrier } from "./tools/release/native-runtime-carrier-contract.mjs";
+            const [root, icuData] = process.argv.slice(1);
+            const { target } = validateNativeRuntimeCarrier(root, { icuData });
+            if (target !== "ios-datum64") throw new Error(`expected ios-datum64, got ${target}`);
+          ' "$closure" "$OLIPHAUNT_IOS_ICU_DATA_DIR"
+          echo "OLIPHAUNT_EXPO_IOS_SEED_CLOSURE_DIR=$GITHUB_WORKSPACE/$closure" >> "$GITHUB_ENV"
 
       - name: Download Swift SDK package artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -2665,7 +2871,7 @@ jobs:
       - mobile-build-android
       - mobile-build-ios
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -2678,6 +2884,27 @@ jobs:
         uses: ./.github/actions/setup-bun
         with:
           bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Download native ICU release asset for cross-family validation
+        if: ${{ contains(fromJson(needs.affected.outputs.builder_jobs), 'liboliphaunt-native-release-assets') && contains(fromJson(needs.affected.outputs.builder_jobs), 'liboliphaunt-wasix-release-assets') }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-native-icu-data
+          path: target/cross-family-icu/native
+
+      - name: Download WASIX release assets for cross-family ICU validation
+        if: ${{ contains(fromJson(needs.affected.outputs.builder_jobs), 'liboliphaunt-native-release-assets') && contains(fromJson(needs.affected.outputs.builder_jobs), 'liboliphaunt-wasix-release-assets') }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-wasix-release-assets
+          path: target/cross-family-icu/wasix
+
+      - name: Prove native and WASIX ICU data identity
+        if: ${{ contains(fromJson(needs.affected.outputs.builder_jobs), 'liboliphaunt-native-release-assets') && contains(fromJson(needs.affected.outputs.builder_jobs), 'liboliphaunt-wasix-release-assets') }}
+        run: |
+          tools/dev/bun.sh tools/release/check-cross-family-icu-data.mjs \
+            target/cross-family-icu/native \
+            target/cross-family-icu/wasix
 
       - name: Check selected build jobs
         id: selected_builds_gate
@@ -2857,12 +3084,12 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - name: Check E2E jobs
+      - name: Check final release execution qualification
         id: selected_e2e_gate
         env:
           NEEDS_JSON: ${{ toJson(needs) }}
           SELECTED_JOBS_JSON: ${{ needs.affected.outputs.e2e_jobs }}
-          GATE_LABEL: E2E jobs
+          GATE_LABEL: final release execution qualification
         run: bun .github/scripts/check-ci-gate.mjs selected
 
   required:

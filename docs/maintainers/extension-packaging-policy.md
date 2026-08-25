@@ -449,7 +449,7 @@ oliphaunt/
       lib/postgresql/  # standalone PostgreSQL server profile
       lib/modules/     # embedded direct/broker profile when selected
       share/postgresql/
-  template-pgdata/
+  cluster-seed/
     manifest.properties
     files/
       PG_VERSION
@@ -495,7 +495,7 @@ The size report is exact-extension based:
 kind	id	extensions	files	bytes
 package	total	-	42	123456
 package	runtime	-	30	100000
-package	template-pgdata	-	10	20000
+package	cluster-seed	-	10	20000
 package	static-registry	-	2	3456
 extensions	selected	-	3	63478
 extension	vector	-	3	63478

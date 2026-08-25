@@ -19,12 +19,33 @@ use crate::extension::Extension;
 
 const RUNTIME_CACHE_VERSION: &str = "pg18-runtime-cache-v7";
 
+#[cfg(test)]
 pub(super) fn runtime_cache_key(
     profile: NativeRuntimeProfile,
     install_dir: &Path,
     embedded_modules: Option<&Path>,
     extension_artifact_dirs: &[PathBuf],
     extensions: &[Extension],
+) -> Result<String> {
+    runtime_cache_key_with_icu(
+        profile,
+        install_dir,
+        embedded_modules,
+        extension_artifact_dirs,
+        extensions,
+        None,
+        None,
+    )
+}
+
+pub(super) fn runtime_cache_key_with_icu(
+    profile: NativeRuntimeProfile,
+    install_dir: &Path,
+    embedded_modules: Option<&Path>,
+    extension_artifact_dirs: &[PathBuf],
+    extensions: &[Extension],
+    icu_data: Option<&Path>,
+    icu_data_tree_sha256: Option<&str>,
 ) -> Result<String> {
     let mut state = new_state();
     hash_str(&mut state, RUNTIME_CACHE_VERSION);
@@ -37,6 +58,22 @@ pub(super) fn runtime_cache_key(
 
     for name in selected_extension_names(extensions) {
         hash_str(&mut state, name);
+    }
+    hash_str(
+        &mut state,
+        if icu_data.is_some() {
+            "catalog-icu"
+        } else {
+            "catalog-standard"
+        },
+    );
+    if let Some(icu_data) = icu_data {
+        if let Some(digest) = icu_data_tree_sha256 {
+            hash_str(&mut state, "package-icu-data-tree-sha256");
+            hash_str(&mut state, digest);
+        } else {
+            fingerprint_directory_filtered(&mut state, icu_data, icu_data, |_| true)?;
+        }
     }
 
     for tool in NATIVE_RUNTIME_TOOLS {
@@ -147,11 +184,22 @@ pub(super) fn runtime_cache_key(
     Ok(format!("{state:016x}"))
 }
 
+#[cfg(test)]
 pub(super) fn cached_runtime_is_valid(
     profile: NativeRuntimeProfile,
     cache_dir: &Path,
     key: &str,
     extensions: &[Extension],
+) -> bool {
+    cached_runtime_is_valid_with_icu(profile, cache_dir, key, extensions, false)
+}
+
+pub(super) fn cached_runtime_is_valid_with_icu(
+    profile: NativeRuntimeProfile,
+    cache_dir: &Path,
+    key: &str,
+    extensions: &[Extension],
+    has_icu_data: bool,
 ) -> bool {
     if !cache_dir.join(".complete").is_file()
         || !NATIVE_RUNTIME_TOOLS
@@ -176,6 +224,13 @@ pub(super) fn cached_runtime_is_valid(
             .lines()
             .any(|line| line == format!("profile={}", profile.cache_id()))
         || !manifest.lines().any(|line| line == format!("key={key}"))
+        || !manifest.lines().any(|line| {
+            line == format!(
+                "catalogProfile={}",
+                if has_icu_data { "icu" } else { "standard" }
+            )
+        })
+        || (has_icu_data && !cache_dir.join("share/icu").is_dir())
     {
         return false;
     }
@@ -226,15 +281,26 @@ fn cache_contains_extension_sql_file(cache_dir: &Path, extension: Extension) -> 
     })
 }
 
+#[cfg(test)]
 pub(super) fn runtime_cache_manifest(
     profile: NativeRuntimeProfile,
     key: &str,
     extensions: &[Extension],
 ) -> String {
+    runtime_cache_manifest_with_icu(profile, key, extensions, false)
+}
+
+pub(super) fn runtime_cache_manifest_with_icu(
+    profile: NativeRuntimeProfile,
+    key: &str,
+    extensions: &[Extension],
+    has_icu_data: bool,
+) -> String {
     let extension_names = selected_extension_names(extensions);
     format!(
-        "version={RUNTIME_CACHE_VERSION}\nprofile={}\nkey={key}\nextensions={}\n",
+        "version={RUNTIME_CACHE_VERSION}\nprofile={}\ncatalogProfile={}\nkey={key}\nextensions={}\n",
         profile.cache_id(),
+        if has_icu_data { "icu" } else { "standard" },
         extension_names.join(",")
     )
 }
@@ -524,6 +590,87 @@ mod tests {
             first, second,
             "external ICU package contents must not change the base runtime cache identity"
         );
+    }
+
+    #[test]
+    fn managed_icu_uses_receipt_identity_while_unmanaged_icu_hashes_the_tree() {
+        let temp = TempTree::new("icu-receipt-identity");
+        let install_dir = temp.path().join("install");
+        let icu_data = temp.path().join("icu");
+        let first_digest = "a".repeat(64);
+        let second_digest = "b".repeat(64);
+        write_fake_install(&install_dir);
+        write_file(&icu_data.join("icudt76l.dat"), b"icu-data-v1");
+
+        let managed_first = runtime_cache_key_with_icu(
+            NativeRuntimeProfile::PostgresServer,
+            &install_dir,
+            None,
+            &[],
+            &[],
+            Some(&icu_data),
+            Some(&first_digest),
+        )
+        .expect("create managed ICU runtime key");
+        write_file(&icu_data.join("icudt76l.dat"), b"icu-data-v2");
+        let managed_same_receipt = runtime_cache_key_with_icu(
+            NativeRuntimeProfile::PostgresServer,
+            &install_dir,
+            None,
+            &[],
+            &[],
+            Some(&icu_data),
+            Some(&first_digest),
+        )
+        .expect("create managed ICU runtime key after tree mutation");
+        let managed_without_tree_access = runtime_cache_key_with_icu(
+            NativeRuntimeProfile::PostgresServer,
+            &install_dir,
+            None,
+            &[],
+            &[],
+            Some(&temp.path().join("missing-managed-icu-tree")),
+            Some(&first_digest),
+        )
+        .expect("create managed ICU runtime key without reading the tree");
+        let managed_changed_receipt = runtime_cache_key_with_icu(
+            NativeRuntimeProfile::PostgresServer,
+            &install_dir,
+            None,
+            &[],
+            &[],
+            Some(&icu_data),
+            Some(&second_digest),
+        )
+        .expect("create managed ICU runtime key with changed receipt");
+
+        assert_eq!(managed_first, managed_same_receipt);
+        assert_eq!(managed_same_receipt, managed_without_tree_access);
+        assert_ne!(managed_same_receipt, managed_changed_receipt);
+
+        let unmanaged_first = runtime_cache_key_with_icu(
+            NativeRuntimeProfile::PostgresServer,
+            &install_dir,
+            None,
+            &[],
+            &[],
+            Some(&icu_data),
+            None,
+        )
+        .expect("create unmanaged ICU runtime key");
+        write_file(&icu_data.join("icudt76l.dat"), b"icu-data-v3");
+        let unmanaged_changed = runtime_cache_key_with_icu(
+            NativeRuntimeProfile::PostgresServer,
+            &install_dir,
+            None,
+            &[],
+            &[],
+            Some(&icu_data),
+            None,
+        )
+        .expect("create changed unmanaged ICU runtime key");
+
+        assert_ne!(unmanaged_first, unmanaged_changed);
     }
 
     #[test]

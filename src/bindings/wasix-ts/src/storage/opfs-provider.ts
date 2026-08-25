@@ -1,8 +1,8 @@
-import type { WasixDirectoryMount } from '../archive.js';
 import { composeWasixStorageFailure, WasixStorageError } from '../errors.js';
 import type { Directory } from '../host/index.mjs';
 import type {
   StorageDirectory,
+  WasixClusterSeedLoader,
   WasixPhysicalIdentity,
   WasixStorageLease,
   WasixStorageSyncBoundary,
@@ -24,7 +24,7 @@ const DIRECT_BRIDGE_CAPACITY = 1024 * 1024;
 
 export async function acquireOpfsStorage(
   name: string,
-  template: WasixDirectoryMount,
+  loadClusterSeed: WasixClusterSeedLoader,
   physicalIdentity: WasixPhysicalIdentity,
 ): Promise<WasixStorageLease> {
   const label = `OPFS storage ${JSON.stringify(name)}`;
@@ -37,19 +37,19 @@ export async function acquireOpfsStorage(
     if (canUseDirectOpfsPool()) {
       directAttempted = true;
       try {
-        directPool = await DirectOpfsPool.open(name, template, physicalIdentity);
+        directPool = await DirectOpfsPool.open(name, loadClusterSeed, physicalIdentity);
       } catch (error) {
         if (!isDirectPoolUnavailable(error)) throw normalizeOpfsOpenError(name, error);
       }
     }
     if (directPool !== undefined) {
-      return new DirectOpfsLease(name, template, lock, directPool);
+      return new DirectOpfsLease(name, lock, directPool);
     }
 
     const database = await openPooledDatabaseDirectory(name);
     let initializationState: 'new' | 'existing' = 'new';
     lockHandedToFallback = true;
-    return await acquireIncrementalStorage(label, template, {
+    return await acquireIncrementalStorage(label, loadClusterSeed, {
       writeFailureCommitState: 'unknown',
       acquireLock: async () => lock as ExclusiveStorageLock,
       async openStore() {
@@ -59,7 +59,7 @@ export async function acquireOpfsStorage(
             // generation. Placements that never attempted it reset here.
             const opened = await (directAttempted
               ? inspectPooledOpfsDatabase(database, name, physicalIdentity)
-              : preparePooledOpfsDatabase(database, name, template, physicalIdentity));
+              : preparePooledOpfsDatabase(database, name, loadClusterSeed, physicalIdentity));
             initializationState = opened.state;
             return opened.snapshot;
           },
@@ -114,7 +114,7 @@ export async function restoreOpfsStorage(
     cleanupDestination = true;
     if (destination.snapshot !== undefined) {
       // An initializing generation was never published and is disposable.
-      // Replace it instead of merging a restore over its template contents.
+      // Replace it instead of merging a restore over its unpublished seed contents.
       await root.removeEntry(name, { recursive: true });
       database = await root.getDirectoryHandle(name, { create: true });
     }
@@ -148,22 +148,15 @@ export async function restoreOpfsStorage(
 
 class DirectOpfsLease implements WasixStorageLease {
   readonly state: 'new' | 'existing';
-  readonly mount: WasixDirectoryMount;
   readonly #name: string;
   readonly #lock: ExclusiveStorageLock;
   readonly #pool: DirectOpfsPool;
   #directory: Directory | undefined;
   #closed = false;
 
-  constructor(
-    name: string,
-    template: WasixDirectoryMount,
-    lock: ExclusiveStorageLock,
-    pool: DirectOpfsPool,
-  ) {
+  constructor(name: string, lock: ExclusiveStorageLock, pool: DirectOpfsPool) {
     this.#name = name;
     this.state = pool.state;
-    this.mount = template;
     this.#lock = lock;
     this.#pool = pool;
   }

@@ -26,9 +26,10 @@ and checksum-pinned binary/runtime assets for the selected release.
 Base Apple packages do not include full ICU data. Applications that need
 PostgreSQL ICU collations add the `OliphauntICU` SwiftPM product to the same app
 target as `Oliphaunt`. The generated release manifest exposes `OliphauntICU` as
-a resource-only product containing `share/icu`; `Oliphaunt` discovers that
-bundle resource at runtime. Do not add `OliphauntICU` for applications that do
-not use ICU collations.
+a resource-only product containing the canonical ICU data. The target runtime
+resources carry the matching platform-qualified cluster seed, and `Oliphaunt`
+resolves the pair as one checked closure. Do not add `OliphauntICU` for
+applications that do not use ICU collations.
 
 Optional PostgreSQL extensions are exact-extension artifacts. PostgreSQL 18
 contrib members share the logical `oliphaunt-extension-contrib-pg18` artifact;
@@ -187,6 +188,10 @@ print(command.rowCount as Any)
 try await db.close()
 ```
 
+`username` selects an existing PostgreSQL role. New roots are always
+bootstrapped with `postgres`; create another role from that account before
+reopening the root with a different username.
+
 Swift package for iOS and macOS apps on the native `liboliphaunt` product line.
 
 The public API is actor-based and deliberately small: `query`, `execute`,
@@ -247,7 +252,7 @@ A persistent database directory is a managed root:
 pgdata/
 ```
 
-The descriptor is published only after a packaged template or packaged `initdb`
+The descriptor is published only after a packaged cluster seed or packaged `initdb`
 has produced complete PGDATA. Existing managed roots must contain PostgreSQL 18 `PG_VERSION`, `global/pg_control`, and
 `pg_wal`. A pre-existing nonempty directory without the descriptor is rejected
 without modification. Physical archives contain PGDATA and the exact physical
@@ -284,24 +289,36 @@ this layout; the SDK discovers them automatically:
 
 ```text
 oliphaunt/
+  manifest.properties
   runtime/
     manifest.properties
     files/
-  template-pgdata/
+  cluster-seed/
     manifest.properties
     files/
       PG_VERSION
+      global/pg_control
+  cluster-seed-icu/
+    manifest.properties
+    files/
+      PG_VERSION
+      global/pg_control
 ```
 
-Release automation publishes `liboliphaunt-<version>-runtime-resources.tar.gz`
-with that layout and covers it in
-`liboliphaunt-<version>-release-assets.sha256`. App integrations should consume
-that artifact through the SwiftPM/RN package integration or through a clean
-release asset resolver, never by asking app developers to build PostgreSQL from
-this repository.
+The macOS XCFramework slice embeds the `macos-arm64` closure. Both iOS slices
+embed the `ios-datum64` closure. SwiftPM links exactly one platform slice, so an
+application receives one target-qualified closure. React Native uses the separate
+`liboliphaunt-<version>-runtime-resources-ios-datum64.tar.gz` carrier when it
+composes its app-owned resource bundle; there is no generic or multi-target
+runtime-resource archive.
+
+The root receipt binds the closure to one seed target and the two sibling seed
+paths. Both seed manifests use the exact native cluster-seed contract; extension
+selection and static-registry metadata belong only to the runtime manifest.
 `runtime/manifest.properties` must include
 `schema=oliphaunt-runtime-resources-v1`,
-`layout=postgres-runtime-files-v1`, `cacheKey=<portable-id>`, and
+`layout=postgres-runtime-files-v1`, `mode=native-direct`,
+`cacheKey=<portable-id>`, and
 two distinct extension domains. `selectedExtensions` is the complete,
 dependency-closed set of packaged SQL identities, including module-only
 products such as `auto_explain`. `extensions` is exactly the subset whose
@@ -311,19 +328,18 @@ catalog rows support `CREATE EXTENSION`; it must be a subset of
 members of `extensions`. Producers must always write both fields. The SDK
 rejects a missing `selectedExtensions`; an explicitly empty value means that
 no extensions were selected.
+The runtime manifest uses an exact field set. When
+`mobileStaticRegistryState=complete`, `mobileStaticRegistrySource` is exactly
+`static-registry/oliphaunt_static_registry.c` for packaged generator output or
+`swiftpm-linked-products` for SwiftPM product composition; it is empty for all
+other registry states.
 
-`template-pgdata` manifests must use
-`layout=postgres-template-pgdata-v1`. Current packages also record
-`sharedPreloadLibraries`, `mobileStaticRegistryState`,
-`mobileStaticRegistryPending`, `mobileStaticRegistryRegistered`, and
-`nativeModuleStems`. `mobileStaticRegistryRegistered` is exactly the selected
-SQL-name subset that has native modules, and `nativeModuleStems` is the
-corresponding exact native-module-stem set; neither may claim an unselected SQL
-identity. iOS-family targets reject selected extensions while the registry
-state is `pending`. The Swift SDK rejects unknown package layouts, materializes
-runtime files into Application Support using the cache key, and hydrates new
-PGDATA roots from `template-pgdata/files`.
-Apple mobile platforms require either a packaged template PGDATA or existing
+The Swift SDK rejects unknown package layouts, materializes runtime files into
+Application Support using the cache key, and hydrates a new standard or ICU
+PGDATA root from its matching target-qualified cluster seed. iOS-family targets
+reject selected extensions while the runtime static-registry state is
+`pending`.
+Apple mobile platforms require either a packaged cluster seed or existing
 storage whose `pgdata` child contains `PG_VERSION`; they do not rely on executing `initdb` from app storage.
 When a selected extension contains native modules, the Swift package must
 link those modules with the generated static-registry source. Complete Rust

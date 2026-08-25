@@ -28,6 +28,16 @@ import {
   releaseNoticeRows,
 } from "./release-notices.mjs";
 import { SNOWBALL_STOPWORD_LANGUAGES } from "./optimize_native_runtime_payload.mjs";
+import {
+  parseProperties,
+  validateNativeClusterSeedManifest,
+} from "./native-cluster-seed-contract.mjs";
+import { validateNativeIcuDataManifestRows } from "./native-icu-data-contract.mjs";
+import { NATIVE_RUNTIME_CARRIER_SCHEMA } from "./native-runtime-carrier-contract.mjs";
+import {
+  compareNativeMobileAbiReceipts,
+  NATIVE_MOBILE_ABI_TARGETS_BY_DOMAIN,
+} from "./native-mobile-abi-contract.mjs";
 
 const PREFIX = "check-liboliphaunt-release-assets.mjs";
 const PRODUCT = "liboliphaunt-native";
@@ -177,7 +187,7 @@ export function canonicalEmptyStaticRegistryManifestError(text) {
   if (text === EMPTY_STATIC_REGISTRY_MANIFEST) {
     return null;
   }
-  return "base runtime static-registry manifest must be the canonical empty oliphaunt-static-registry-v1 manifest";
+  return "standard runtime static-registry manifest must be the canonical empty oliphaunt-static-registry-v1 manifest";
 }
 
 function readArchiveEntries(file) {
@@ -235,19 +245,52 @@ function archiveTreeBytes(entries, file, prefix) {
   return total;
 }
 
-function expectedBasePackageSizeReport(entries, file) {
+function archiveLogicalTreeRows(entries, file, prefix) {
+  const rows = [];
+  for (const [name, entry] of entries) {
+    if (!name.startsWith(prefix) || entry.isDirectory) continue;
+    if (!entry.isFile) fail(`${file} member ${name} under ${prefix} must be a regular file`);
+    rows.push({
+      path: name.slice(prefix.length),
+      bytes: typeof entry.data === "function" ? entry.data() : entry.data,
+    });
+  }
+  if (rows.length === 0) fail(`${file} contains no files under ${prefix}`);
+  return rows;
+}
+
+function expectedRuntimeResourcePackageSizeReport(entries, file) {
   const runtimeBytes = archiveTreeBytes(entries, file, "oliphaunt/runtime/files/");
-  const templateBytes = archiveTreeBytes(entries, file, "oliphaunt/template-pgdata/files/");
+  const standardSeedBytes = archiveTreeBytes(entries, file, "oliphaunt/cluster-seed/files/");
+  const icuSeedBytes = archiveTreeBytes(entries, file, "oliphaunt/cluster-seed-icu/files/");
   const staticRegistryBytes = archiveTreeBytes(entries, file, "oliphaunt/static-registry/");
   return [
     "kind\tid\textensions\tfiles\tbytes",
-    `package\ttotal\t-\t-\t${runtimeBytes + templateBytes + staticRegistryBytes}`,
+    `package\ttotal\t-\t-\t${runtimeBytes + standardSeedBytes + icuSeedBytes + staticRegistryBytes}`,
     `package\truntime\t-\t-\t${runtimeBytes}`,
-    `package\ttemplate-pgdata\t-\t-\t${templateBytes}`,
+    `package\tcluster-seed\t-\t-\t${standardSeedBytes}`,
+    `package\tcluster-seed-icu\t-\t-\t${icuSeedBytes}`,
     `package\tstatic-registry\t-\t-\t${staticRegistryBytes}`,
     "extensions\tselected\t-\t-\t0",
     "",
   ].join("\n");
+}
+
+function validateMobileAbiProofEntries(entries, file, domain, prefix = "oliphaunt/") {
+  const targets = NATIVE_MOBILE_ABI_TARGETS_BY_DOMAIN[domain];
+  if (targets === undefined) fail(`${file} uses unsupported mobile ABI domain ${domain}`);
+  const proofPrefix = `${prefix}provenance/native-mobile-abi/`;
+  try {
+    compareNativeMobileAbiReceipts(
+      domain,
+      targets.map((target) => {
+        const member = `${proofPrefix}${target}.properties`;
+        return { label: `${file} ${member}`, text: archiveText(entries, file, member) };
+      }),
+    );
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
 }
 
 function extractArchive(file, destination) {
@@ -270,7 +313,103 @@ function extractArchive(file, destination) {
   }
 }
 
-async function validateNativeTargetArtifact(file, target, { requireRuntime, toolSet }) {
+function validateNativeRuntimeCarrierEntries(
+  entries,
+  file,
+  { prefix = "", target, icuDataTreeSha256 },
+) {
+  const member = (relative) => `${prefix}${relative}`;
+  for (const required of [
+    "manifest.properties",
+    "cluster-seed/manifest.properties",
+    "cluster-seed/files/PG_VERSION",
+    "cluster-seed/files/global/pg_control",
+    "cluster-seed-icu/manifest.properties",
+    "cluster-seed-icu/files/PG_VERSION",
+    "cluster-seed-icu/files/global/pg_control",
+  ]) {
+    if (!entries.get(member(required))?.isFile) {
+      fail(`${file} is missing native runtime closure member ${member(required)}`);
+    }
+  }
+  for (const profile of ["cluster-seed", "cluster-seed-icu"]) {
+    const filesPrefix = member(`${profile}/files/`);
+    const pgVersion = entries.get(`${filesPrefix}PG_VERSION`);
+    const control = entries.get(`${filesPrefix}global/pg_control`);
+    const pgWal = entries.get(`${filesPrefix}pg_wal/`) ?? entries.get(`${filesPrefix}pg_wal`);
+    if (pgVersion?.isSymbolicLink
+      || archiveText(entries, file, `${filesPrefix}PG_VERSION`).trim() !== "18") {
+      fail(`${file} has invalid ${filesPrefix}PG_VERSION`);
+    }
+    if (control?.isSymbolicLink || control?.size <= 0) {
+      fail(`${file} has invalid ${filesPrefix}global/pg_control`);
+    }
+    if (!pgWal?.isDirectory || pgWal.isSymbolicLink) {
+      fail(`${file} is missing real directory ${filesPrefix}pg_wal/`);
+    }
+    for (const [name, entry] of entries) {
+      if (!name.startsWith(filesPrefix)) continue;
+      if (entry.isSymbolicLink || (!entry.isFile && !entry.isDirectory)) {
+        fail(`${file} cluster seed member ${name} must be a regular file or directory`);
+      }
+    }
+    for (const transient of ["postmaster.pid", "postmaster.opts"]) {
+      if (entries.has(`${filesPrefix}${transient}`)) {
+        fail(`${file} cluster seed contains transient ${filesPrefix}${transient}`);
+      }
+    }
+  }
+  try {
+    const receipt = parseProperties(
+      Buffer.from(archiveText(entries, file, member("manifest.properties"))),
+      `${file} ${member("manifest.properties")}`,
+    );
+    if (receipt.size !== 4
+      || receipt.get("schema") !== NATIVE_RUNTIME_CARRIER_SCHEMA
+      || receipt.get("clusterSeedTarget") !== target
+      || receipt.get("clusterSeedRelativePath") !== "cluster-seed"
+      || receipt.get("icuClusterSeedRelativePath") !== "cluster-seed-icu") {
+      fail(`${file} has an invalid ${target} native runtime carrier receipt`);
+    }
+    validateNativeClusterSeedManifest(
+      Buffer.from(archiveText(entries, file, member("cluster-seed/manifest.properties"))),
+      "standard",
+      { label: `${file} ${member("cluster-seed/manifest.properties")}`, target },
+    );
+    validateNativeClusterSeedManifest(
+      Buffer.from(archiveText(entries, file, member("cluster-seed-icu/manifest.properties"))),
+      "icu",
+      {
+        label: `${file} ${member("cluster-seed-icu/manifest.properties")}`,
+        target,
+        icuDataTreeSha256,
+      },
+    );
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function validateNativeTargetArtifact(
+  file,
+  target,
+  { requireRuntime, toolSet, icuDataTreeSha256 },
+) {
+  if (requireRuntime && toolSet === "runtime") {
+    const entries = readPortableArchiveEntries(file);
+    validateNativeRuntimeCarrierEntries(entries, file, { target, icuDataTreeSha256 });
+    if (target === "windows-x64-msvc") {
+      for (const directory of ["bin", "runtime/bin"]) {
+        for (const name of ["icudt76.dll", "icuin76.dll", "icuuc76.dll"]) {
+          const member = `${directory}/${name}`;
+          const entry = entries.get(member);
+          if (entry === undefined || !entry.isFile || entry.isSymbolicLink || entry.size <= 0) {
+            fail(`${file} ICU-enabled Windows runtime is missing ${member}`);
+          }
+        }
+      }
+    }
+  }
   const temp = mkdtempSync(path.join(tmpdir(), `oliphaunt-native-${target}-`));
   try {
     const extracted = path.join(temp, "payload");
@@ -310,7 +449,7 @@ function assetName(target, version) {
   return target.asset.replaceAll("{version}", version);
 }
 
-async function validateNativeTargetArtifacts(assetDir, version) {
+async function validateNativeTargetArtifacts(assetDir, version, icuDataTreeSha256) {
   const runtimeTargets = new Set(
     allArtifactTargets({
       product: PRODUCT,
@@ -326,6 +465,7 @@ async function validateNativeTargetArtifacts(assetDir, version) {
     await validateNativeTargetArtifact(path.join(assetDir, assetName(target, version)), target.target, {
       requireRuntime: runtimeTargets.has(target.target),
       toolSet: "runtime",
+      icuDataTreeSha256,
     });
   }
   for (const target of allArtifactTargets({
@@ -340,15 +480,24 @@ async function validateNativeTargetArtifacts(assetDir, version) {
   }
 }
 
-function validateBaseRuntimeArtifactContents(file, packageSizeFile, extensionMetadata) {
+function validateRuntimeResourceArtifactContents(
+  file,
+  { target, icuDataTreeSha256, extensionMetadata },
+) {
   const entries = readArchiveEntries(file);
   const names = new Set(entries.keys());
   const runtimePrefix = "oliphaunt/runtime/files/";
   for (const requiredMember of [
+    "oliphaunt/manifest.properties",
     "oliphaunt/package-size.tsv",
     "oliphaunt/runtime/manifest.properties",
     "oliphaunt/static-registry/manifest.properties",
-    "oliphaunt/template-pgdata/manifest.properties",
+    "oliphaunt/cluster-seed/manifest.properties",
+    "oliphaunt/cluster-seed/files/PG_VERSION",
+    "oliphaunt/cluster-seed/files/global/pg_control",
+    "oliphaunt/cluster-seed-icu/manifest.properties",
+    "oliphaunt/cluster-seed-icu/files/PG_VERSION",
+    "oliphaunt/cluster-seed-icu/files/global/pg_control",
   ]) {
     if (!names.has(requiredMember)) {
       fail(`${file} must contain ${requiredMember}`);
@@ -358,7 +507,7 @@ function validateBaseRuntimeArtifactContents(file, packageSizeFile, extensionMet
     fail(`${file} must contain an oliphaunt/runtime/files tree`);
   }
   if ([...names].some((name) => name.startsWith(`${runtimePrefix}share/icu/`))) {
-    fail(`${file} base runtime must not contain ICU data under ${runtimePrefix}share/icu`);
+    fail(`${file} standard runtime must not contain ICU data under ${runtimePrefix}share/icu`);
   }
   for (const required of [
     `${runtimePrefix}share/postgresql/extension/plpgsql--1.0.sql`,
@@ -370,29 +519,36 @@ function validateBaseRuntimeArtifactContents(file, packageSizeFile, extensionMet
   ]) {
     const entry = entries.get(required);
     if (entry === undefined || !entry.isFile || entry.isSymbolicLink || entry.size <= 0) {
-      fail(`${file} base runtime is missing required core PostgreSQL resource ${required}`);
+      fail(`${file} standard runtime is missing required core PostgreSQL resource ${required}`);
     }
   }
   for (const [sqlName, metadata] of extensionMetadata) {
     const control = `${runtimePrefix}share/postgresql/extension/${sqlName}.control`;
     if (names.has(control)) {
-      fail(`${file} base runtime must not contain optional extension control file ${control}`);
+      fail(`${file} standard runtime must not contain optional extension control file ${control}`);
     }
     for (const dataFile of metadata.dataFiles) {
       const dataPath = `${runtimePrefix}share/postgresql/${dataFile}`;
       if (names.has(dataPath)) {
-        fail(`${file} base runtime must not contain optional extension data file ${dataPath}`);
+        fail(`${file} standard runtime must not contain optional extension data file ${dataPath}`);
       }
     }
     if (typeof metadata.nativeModuleStem === "string" && metadata.nativeModuleStem) {
       for (const suffix of [".dylib", ".so", ".dll"]) {
         const module = `${runtimePrefix}lib/postgresql/${metadata.nativeModuleStem}${suffix}`;
         if (names.has(module)) {
-          fail(`${file} base runtime must not contain optional extension module ${module}`);
+          fail(`${file} standard runtime must not contain optional extension module ${module}`);
         }
       }
     }
   }
+
+  validateNativeRuntimeCarrierEntries(entries, file, {
+    prefix: "oliphaunt/",
+    target,
+    icuDataTreeSha256,
+  });
+  validateMobileAbiProofEntries(entries, file, target);
 
   const staticRegistryManifest = archiveText(
     entries,
@@ -405,11 +561,7 @@ function validateBaseRuntimeArtifactContents(file, packageSizeFile, extensionMet
   }
 
   const embeddedPackageSize = archiveText(entries, file, "oliphaunt/package-size.tsv");
-  const releasedPackageSize = readFileSync(packageSizeFile, "utf8");
-  if (embeddedPackageSize !== releasedPackageSize) {
-    fail(`${packageSizeFile} must byte-match oliphaunt/package-size.tsv in ${file}`);
-  }
-  const expectedPackageSize = expectedBasePackageSizeReport(entries, file);
+  const expectedPackageSize = expectedRuntimeResourcePackageSizeReport(entries, file);
   if (embeddedPackageSize !== expectedPackageSize) {
     fail(`${file} package-size report does not match the actual packaged resource bytes`);
   }
@@ -417,7 +569,8 @@ function validateBaseRuntimeArtifactContents(file, packageSizeFile, extensionMet
 
 function validateIcuDataArtifactContents(file) {
   assertReleaseNoticesInArchive(file, { profile: "native-icu-data" });
-  const names = archiveMemberNames(file);
+  const entries = readArchiveEntries(file);
+  const names = new Set(entries.keys());
   const icuEntries = [...names]
     .filter((name) => {
       if (!name.startsWith("share/icu/")) {
@@ -430,6 +583,26 @@ function validateIcuDataArtifactContents(file) {
   if (icuEntries.length === 0) {
     fail(`${file} must contain ICU data files under share/icu/icudt*`);
   }
+  let receipt;
+  try {
+    receipt = validateNativeIcuDataManifestRows(
+      Buffer.from(archiveText(entries, file, "manifest.properties")),
+      archiveLogicalTreeRows(entries, file, "share/icu/"),
+      `${file} manifest.properties`,
+    );
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
+  const icuDataBytes = archiveTreeBytes(entries, file, "share/icu/");
+  const expectedSizeReport = [
+    "kind\tid\textensions\tfiles\tbytes",
+    `package\ttotal\t-\t-\t${icuDataBytes}`,
+    `package\ticu-data\t-\t-\t${icuDataBytes}`,
+    "",
+  ].join("\n");
+  if (archiveText(entries, file, "package-size.tsv") !== expectedSizeReport) {
+    fail(`${file} ICU package-size report does not match the actual data bytes`);
+  }
   const legalNames = releaseNoticeNamespaceNames("native-icu-data");
   const unexpected = [...names]
     .filter((name) =>
@@ -437,11 +610,14 @@ function validateIcuDataArtifactContents(file) {
       && name !== "share"
       && name !== "share/icu"
       && !name.startsWith("share/icu/")
+      && name !== "manifest.properties"
+      && name !== "package-size.tsv"
       && !legalNames.has(name))
     .sort(compareText);
   if (unexpected.length > 0) {
-    fail(`${file} must contain only share/icu data, found: ${unexpected.slice(0, 5).join(", ")}`);
+    fail(`${file} must contain only ICU data and its receipt, found: ${unexpected.slice(0, 5).join(", ")}`);
   }
+  return receipt.icuDataTreeSha256;
 }
 
 const RELEASE_NOTICE_OPTIONS_BY_KIND = new Map([
@@ -479,81 +655,6 @@ function validateReleaseNoticeClosure(assetDir, version) {
   }
 }
 
-function parseSizeValue(value, file, lineNumber, field) {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed) || String(parsed) !== value) {
-    fail(`${file} line ${lineNumber} has invalid ${field}: ${JSON.stringify(value)}`);
-  }
-  if (parsed < 0) {
-    fail(`${file} line ${lineNumber} has negative ${field}: ${JSON.stringify(value)}`);
-  }
-  return parsed;
-}
-
-function parseTsv(file, expectedHeader) {
-  const lines = readFileSync(file, "utf8").split(/\r?\n/u);
-  const header = lines.shift()?.split("\t") ?? [];
-  if (JSON.stringify(header) !== JSON.stringify(expectedHeader)) {
-    fail(`${file} has unexpected header: ${JSON.stringify(header)}`);
-  }
-  return lines
-    .filter((line) => line.length > 0)
-    .map((line, index) => {
-      const values = line.split("\t");
-      const row = Object.fromEntries(header.map((column, columnIndex) => [column, values[columnIndex] ?? ""]));
-      return { row, lineNumber: index + 2 };
-    });
-}
-
-function validatePackageSizeReport(file) {
-  requireFile(file, "liboliphaunt package-size release report");
-  const rows = new Map();
-  const extensionRows = [];
-  for (const { row, lineNumber } of parseTsv(file, ["kind", "id", "extensions", "files", "bytes"])) {
-    const key = `${row.kind}\0${row.id}`;
-    if (rows.has(key)) {
-      fail(`${file} repeats row ${row.kind}/${row.id}`);
-    }
-    rows.set(key, row);
-    parseSizeValue(row.bytes, file, lineNumber, "bytes");
-    if (row.kind === "extension") {
-      extensionRows.push(row.id);
-      parseSizeValue(row.files, file, lineNumber, "files");
-    } else if (row.files !== "-") {
-      fail(`${file} line ${lineNumber} package rows must use '-' for files`);
-    }
-  }
-
-  const requiredRows = [
-    ["package", "total"],
-    ["package", "runtime"],
-    ["package", "template-pgdata"],
-    ["package", "static-registry"],
-    ["extensions", "selected"],
-  ];
-  const missing = requiredRows
-    .filter(([kind, id]) => !rows.has(`${kind}\0${id}`))
-    .map(([kind, id]) => `${kind}/${id}`);
-  if (missing.length > 0) {
-    fail(`${file} is missing required row(s): ${missing.join(", ")}`);
-  }
-  if (rows.get("extensions\0selected").bytes !== "0") {
-    fail(`${file} base package-size report must have zero selected extension bytes`);
-  }
-  if (extensionRows.length > 0) {
-    fail(`${file} base package-size report must not include selected extension rows: ${extensionRows.sort(compareText).join(", ")}`);
-  }
-  const total = parseSizeValue(rows.get("package\0total").bytes, file, 0, "package total bytes");
-  const parts = [
-    ["package", "runtime"],
-    ["package", "template-pgdata"],
-    ["package", "static-registry"],
-  ].reduce((sum, [kind, id]) => sum + parseSizeValue(rows.get(`${kind}\0${id}`).bytes, file, 0, `${kind}/${id} bytes`), 0);
-  if (total !== parts) {
-    fail(`${file} package total bytes must equal runtime + template-pgdata + static-registry`);
-  }
-}
-
 function expectedGithubAssets(version) {
   return allArtifactTargets({
     product: PRODUCT,
@@ -588,14 +689,31 @@ async function validate(assetDir) {
         `publish them through oliphaunt-extension-* products instead: ${leakedExtensionAssets.join(", ")}`,
     );
   }
-  validateBaseRuntimeArtifactContents(
-    path.join(assetDir, `liboliphaunt-${version}-runtime-resources.tar.gz`),
-    path.join(assetDir, `liboliphaunt-${version}-package-size.tsv`),
-    metadata,
+  const icuDataTreeSha256 = validateIcuDataArtifactContents(
+    path.join(assetDir, `liboliphaunt-${version}-icu-data.tar.gz`),
   );
-  await validateNativeTargetArtifacts(assetDir, version);
-  validateIcuDataArtifactContents(path.join(assetDir, `liboliphaunt-${version}-icu-data.tar.gz`));
-  validatePackageSizeReport(path.join(assetDir, `liboliphaunt-${version}-package-size.tsv`));
+  for (const target of ["ios-datum64", "android-datum64"]) {
+    validateRuntimeResourceArtifactContents(
+      path.join(assetDir, `liboliphaunt-${version}-runtime-resources-${target}.tar.gz`),
+      { target, icuDataTreeSha256, extensionMetadata: metadata },
+    );
+  }
+  for (const filename of [
+    `liboliphaunt-${version}-ios-xcframework.tar.gz`,
+    `liboliphaunt-${version}-apple-spm-xcframework.zip`,
+  ]) {
+    const file = path.join(assetDir, filename);
+    const entries = readArchiveEntries(file);
+    for (const slice of ["ios-arm64", "ios-arm64-simulator"]) {
+      validateMobileAbiProofEntries(
+        entries,
+        file,
+        "ios-datum64",
+        `liboliphaunt.xcframework/${slice}/liboliphaunt.framework/Resources/oliphaunt/`,
+      );
+    }
+  }
+  await validateNativeTargetArtifacts(assetDir, version, icuDataTreeSha256);
   validateChecksums(assetDir, path.join(assetDir, `liboliphaunt-${version}-release-assets.sha256`));
 }
 

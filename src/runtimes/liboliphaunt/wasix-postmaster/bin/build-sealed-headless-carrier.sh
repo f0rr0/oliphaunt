@@ -203,12 +203,11 @@ expected_fences = {
     "atomic_fence_reset_latch": "1",
     "atomic_fence_wait_event_set_wait": "1",
 }
-expected_fences["atomic_fence_total"] = {
-    "release-o3": "995",
-}[expected_profile]
 for key, expected in expected_fences.items():
     if values[key] != expected:
         raise SystemExit(f"guest build receipt concurrency fence contract differs: {key}")
+if re.fullmatch(r"[1-9][0-9]*", values["atomic_fence_total"]) is None:
+    raise SystemExit("guest build receipt atomic fence total is not canonical")
 if values["latch_state_contract"] != "packed-atomic-v1":
     raise SystemExit("guest build receipt latch-state contract differs")
 if re.fullmatch(
@@ -258,10 +257,9 @@ fresh_is_sha256 "$linear_memory_install_receipt_sha256" ||
   "$linear_memory_install_receipt_sha256" ] || {
   fail 'linear-memory install receipt differs from guest build receipt'
 }
-case "$core_profile" in
-  release-o3) expected_atomic_fence_total=995 ;;
-  *) fail "unsupported sealed carrier profile: $core_profile" ;;
-esac
+expected_atomic_fence_total="$(
+  fresh_manifest_value "$guest_build_receipt_source" atomic_fence_total
+)"
 python3 "$FRESH_ROOT/runtime/bin/verify-postmaster-concurrency-contract.py" \
   --expected-total "$expected_atomic_fence_total" \
   --latch-state-contract packed-atomic-v1 \

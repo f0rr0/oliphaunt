@@ -63,7 +63,7 @@ data/main/
 └── pgdata/
 ```
 
-A new empty root is initialized from the packaged PGDATA template. An existing
+A new empty root is initialized from the matching packaged cluster seed. An existing
 root must contain an exact descriptor and complete PostgreSQL 18 PGDATA;
 incomplete or unexpected contents fail without being adopted, deleted, or
 reinitialized.

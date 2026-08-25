@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { decompressIfNeeded, extractTar, layoutRuntime } from '../archive.js';
+import {
+  clusterSeedMount,
+  decompressIfNeeded,
+  extractTar,
+  layoutRuntimeSupport,
+} from '../archive.js';
 
 // liboliphaunt-doc-example:wasix-typescript-backup-restore
 describe('WASIX TypeScript archives', () => {
@@ -79,7 +84,7 @@ describe('WASIX TypeScript archives', () => {
     );
   });
 
-  it('separates canonical runtime and PGDATA files into Wasmer mounts', () => {
+  it('separates canonical runtime support from the cluster seed mount', () => {
     const runtime = {
       files: new Map([
         ['oliphaunt/bin/postgres', Uint8Array.of(0, 97, 115, 109)],
@@ -96,15 +101,20 @@ describe('WASIX TypeScript archives', () => {
       directories: new Set(['global', 'pg_notify']),
     };
 
-    const layout = layoutRuntime(runtime, pgdata);
+    const layout = layoutRuntimeSupport(runtime);
+    const seed = clusterSeedMount(pgdata);
 
     expect(layout.module).toEqual(Uint8Array.of(0, 97, 115, 109));
     expect(layout.mounts['/bin']?.files.postgres).toEqual(layout.module);
     expect(layout.mounts['/bin']?.files.oliphaunt).toBeUndefined();
     expect(layout.mounts['/lib']?.files['postgresql/plpgsql.so']).toEqual(Uint8Array.of(1));
     expect(layout.mounts['/lib']?.directories).toContain('postgresql');
-    expect(layout.mounts['/base']?.files['global/pg_control']).toEqual(Uint8Array.of(3));
-    expect(layout.mounts['/base']?.directories).toContain('pg_notify');
+    expect(layout.mounts['/base']).toBeUndefined();
+    expect(seed.files['global/pg_control']).toEqual(Uint8Array.of(3));
+    expect(seed.directories).toContain('pg_notify');
+
+    runtime.files.set('oliphaunt/base/PG_VERSION', new TextEncoder().encode('18'));
+    expect(() => layoutRuntimeSupport(runtime)).toThrow('storage-owned /base mount');
   });
 });
 

@@ -21,7 +21,8 @@ use zstd::stream::read::Decoder as ZstdDecoder;
 use super::postgres_mod::PostgresMod;
 use crate::oliphaunt::assets;
 use crate::oliphaunt::database_root_descriptor::{
-    DirectoryState, PGDATA_DIRECTORY, inspect_directory_root, write_database_root_descriptor,
+    DirectoryState, PGDATA_DIRECTORY, inspect_directory_root, sync_directory,
+    write_database_root_descriptor,
 };
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::extensions::Extension;
@@ -32,27 +33,28 @@ use crate::oliphaunt::storage::{
 use tempfile::TempDir;
 use wasmer_wasix::virtual_fs::FileSystem as VirtualFileSystem;
 
-mod template_clone;
+mod cluster_seed_clone;
 
-use template_clone::clone_pgdata_template_dir;
+use cluster_seed_clone::clone_cluster_seed_dir;
 
 const RUNTIME_ARCHIVE_NAME: &str = "oliphaunt.wasix.tar.zst";
 const MOUNTFS_RUNTIME_MARKER: &str = ".oliphaunt-wasix-mountfs-runtime";
 const RUNTIME_LAYOUT_MANIFEST_NAME: &str = ".oliphaunt-wasix-runtime-layout.json";
+const RUNTIME_CACHE_COMPLETION_MARKER: &str = ".oliphaunt-wasix-runtime-cache-v1";
 const ICU_DATA_MARKER_NAME: &str = ".oliphaunt-icu-data.sha256";
-// Bump these when cache materialization semantics change; old mutable PGDATA
-// template caches may have been modified by earlier clone strategies.
-const PGDATA_TEMPLATE_CACHE_FORMAT: &str = "v2";
+// Bump this when cache materialization semantics change.
+const CLUSTER_SEED_CACHE_FORMAT: &str = "v1";
 const DEFAULT_PASSWORD_FILE: &[u8] = b"password\n";
 const DATABASE_LOCK_FILE_SUFFIX: &str = ".oliphaunt-wasix-rust.lock";
 
 static RUNTIME_CACHE: OnceLock<std::result::Result<Arc<CachedRuntime>, String>> = OnceLock::new();
-static PGDATA_TEMPLATE_CACHE: OnceLock<std::result::Result<Arc<CachedPgDataTemplate>, String>> =
+static RUNTIME_CACHE_KEY: OnceLock<std::result::Result<String, String>> = OnceLock::new();
+static CLUSTER_SEED_CACHE: OnceLock<std::result::Result<Arc<CachedClusterSeed>, String>> =
     OnceLock::new();
-static PGDATA_TEMPLATE_MANIFEST: OnceLock<std::result::Result<PgDataTemplateManifest, String>> =
+static CLUSTER_SEED_MANIFEST: OnceLock<std::result::Result<ClusterSeedManifest, String>> =
     OnceLock::new();
 static ROOT_LOCKED_PATHS: OnceLock<Mutex<BTreeSet<PathBuf>>> = OnceLock::new();
-const TEMPLATE_RUNTIME_STATE_FILES: &[&str] = &["postmaster.pid", "postmaster.opts"];
+const CLUSTER_SEED_RUNTIME_STATE_FILES: &[&str] = &["postmaster.pid", "postmaster.opts"];
 
 #[derive(Debug)]
 struct CachedRuntime {
@@ -61,7 +63,7 @@ struct CachedRuntime {
 }
 
 #[derive(Debug)]
-struct CachedPgDataTemplate {
+struct CachedClusterSeed {
     pgdata: PathBuf,
 }
 
@@ -132,20 +134,73 @@ impl RuntimeLayout {
     }
 }
 
-/// Manifest that binds a PGDATA template to the Oliphaunt WASIX runtime it was
+/// Manifest that binds a cluster seed to the Oliphaunt WASIX runtime it was
 /// created with.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-struct PgDataTemplateManifest {
-    postgres_version: String,
-    #[serde(default)]
-    source_lane: Option<String>,
-    #[serde(default)]
-    source_fingerprint: Option<String>,
-    wasm_sha256: String,
-    archive_sha256: String,
-    #[serde(default)]
-    architecture_independent: bool,
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ClusterSeedRuntimeIdentity {
+    product: String,
+    version: String,
+    engine_family: String,
+    physical_format: String,
+    postgres_major: u32,
+    compatibility_key: String,
+    consumer_sha256: String,
+    producer_sha256: String,
+    initdb_sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ClusterSeedSourceIdentity {
+    fingerprint: String,
+    catalog_version: String,
+    lane: String,
+    producer: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ClusterSeedArchiveIdentity {
+    path: String,
+    sha256: String,
+    compressed_bytes: u64,
+    expanded_bytes: u64,
+    regular_files: u64,
+    directories: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ClusterSeedExtensionIdentity {
+    selected: Vec<String>,
+    startup_configuration: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ClusterSeedIcuIdentity {
+    artifact_role: String,
+    upstream_version: String,
+    source_commit: String,
+    data_tree_sha256: String,
+    data_version: String,
+    data_form: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ClusterSeedManifest {
+    schema: String,
+    artifact_role: String,
+    catalog_profile: String,
+    runtime: ClusterSeedRuntimeIdentity,
+    source: ClusterSeedSourceIdentity,
+    init_profile: String,
+    archive: ClusterSeedArchiveIdentity,
+    required_runtime_features: Vec<String>,
+    extensions: ClusterSeedExtensionIdentity,
+    icu: Option<ClusterSeedIcuIdentity>,
 }
 
 impl OliphauntPaths {
@@ -457,12 +512,25 @@ pub(crate) fn install_optional_icu_data(runtime_root: &Path) -> Result<bool> {
         return Ok(changed);
     };
 
-    let expected = sha256_hex(archive);
+    let expected_archive = assets::expected_icu_data_archive_sha256()
+        .context("embedded ICU data archive is missing its packaged digest")?;
+    let expected_tree = assets::expected_icu_data_tree_sha256()
+        .context("embedded ICU data archive is missing its logical tree digest")?;
+    let strict = strict_asset_verification()?;
+    if strict {
+        let actual_archive = sha256_hex(archive);
+        ensure!(
+            actual_archive.eq_ignore_ascii_case(expected_archive),
+            "embedded ICU data archive hash mismatch: manifest={expected_archive} actual={actual_archive}"
+        );
+    }
+
     if icu_data_root_contains_data(&icu_dir)?
-        && fs::read_to_string(&marker)
-            .map(|value| value.trim() == expected)
-            .unwrap_or(false)
+        && installed_icu_marker_matches(runtime_root, expected_archive)?
     {
+        if strict {
+            ensure_installed_icu_tree_matches(&icu_dir, expected_tree)?;
+        }
         return Ok(false);
     }
 
@@ -476,9 +544,30 @@ pub(crate) fn install_optional_icu_data(runtime_root: &Path) -> Result<bool> {
         "embedded ICU data archive did not install icudt data under {}",
         icu_dir.display()
     );
-    fs::write(&marker, format!("{expected}\n"))
+    if strict {
+        ensure_installed_icu_tree_matches(&icu_dir, expected_tree)?;
+    }
+    fs::write(&marker, format!("{expected_archive}\n"))
         .with_context(|| format!("write {}", marker.display()))?;
     Ok(true)
+}
+
+fn installed_icu_marker_matches(runtime_root: &Path, expected_archive: &str) -> Result<bool> {
+    let marker = runtime_root.join(ICU_DATA_MARKER_NAME);
+    match fs::read_to_string(&marker) {
+        Ok(value) => Ok(value.trim().eq_ignore_ascii_case(expected_archive)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err).with_context(|| format!("read {}", marker.display())),
+    }
+}
+
+fn ensure_installed_icu_tree_matches(icu_root: &Path, expected_tree: &str) -> Result<()> {
+    let actual_tree = logical_tree_sha256(icu_root)?;
+    ensure!(
+        actual_tree.eq_ignore_ascii_case(expected_tree),
+        "installed ICU data tree hash mismatch: manifest={expected_tree} actual={actual_tree}"
+    );
+    Ok(())
 }
 
 fn unpack_icu_data_archive_reader<R: Read>(reader: R, destination: &Path) -> Result<()> {
@@ -671,143 +760,426 @@ fn validate_embedded_runtime_archive_strict(bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn try_install_embedded_pgdata_template(
-    paths: &OliphauntPaths,
-    module_path: &Path,
-) -> Result<bool> {
+fn try_install_embedded_cluster_seed(paths: &OliphauntPaths, module_path: &Path) -> Result<bool> {
     if cluster_is_complete(paths) {
         return Ok(false);
     }
 
-    let Some(manifest) = validated_embedded_pgdata_template_manifest()? else {
+    let Some(manifest) = validated_embedded_cluster_seed_manifest()? else {
         return Ok(false);
     };
 
-    ensure_module_matches_template(module_path, &manifest)?;
-    let template = pgdata_template_cache()?;
+    ensure_module_matches_seed(module_path, &manifest)?;
+    let seed = cluster_seed_cache()?;
 
-    if let Some(parent) = paths.pgdata.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("create pgdata parent {}", parent.display()))?;
-    }
-    if paths.pgdata.exists() {
-        fs::remove_dir_all(&paths.pgdata)
-            .with_context(|| format!("remove existing pgdata {}", paths.pgdata.display()))?;
-    }
-    {
-        clone_pgdata_template_dir(&template.pgdata, &paths.pgdata)?;
-    }
-    remove_template_runtime_state(&paths.pgdata)?;
+    publish_cluster_seed_clone(&seed.pgdata, &paths.pgdata)?;
     Ok(true)
 }
 
-fn ensure_module_matches_template(
-    module_path: &Path,
-    manifest: &PgDataTemplateManifest,
-) -> Result<()> {
-    if !strict_asset_verification()? {
+fn publish_cluster_seed_clone(source: &Path, pgdata: &Path) -> Result<()> {
+    let root = pgdata
+        .parent()
+        .context("PGDATA has no managed-root parent")?;
+    fs::create_dir_all(root).with_context(|| format!("create pgdata parent {}", root.display()))?;
+    let staging = cluster_seed_publication_staging(pgdata)?;
+    if staging.exists() {
+        fs::remove_dir_all(&staging)
+            .with_context(|| format!("remove stale cluster seed staging {}", staging.display()))?;
+    }
+    if pgdata.exists() {
+        fs::remove_dir_all(pgdata)
+            .with_context(|| format!("remove existing pgdata {}", pgdata.display()))?;
+    }
+    let result = (|| -> Result<()> {
+        clone_cluster_seed_dir(source, &staging)?;
+        remove_cluster_seed_runtime_state(&staging)?;
+        promote_synced_directory(&staging, pgdata, root, "cluster seed")?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&staging);
+    }
+    result
+}
+
+fn cluster_seed_publication_staging(pgdata: &Path) -> Result<PathBuf> {
+    let root = pgdata
+        .parent()
+        .context("PGDATA has no managed-root parent")?;
+    let parent = root
+        .parent()
+        .context("managed database root has no parent directory")?;
+    let name = root
+        .file_name()
+        .context("managed database root has no directory name")?;
+    let mut staging = OsString::from(".");
+    staging.push(name);
+    staging.push(".pgdata.oliphaunt-seed");
+    Ok(parent.join(staging))
+}
+
+fn sync_publication_tree(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("inspect publication entry {}", path.display()))?;
+    ensure!(
+        !metadata.file_type().is_symlink(),
+        "cluster seed publication contains a symbolic link: {}",
+        path.display()
+    );
+    if metadata.is_file() {
+        sync_publication_file(path)
+            .with_context(|| format!("sync publication file {}", path.display()))?;
         return Ok(());
     }
-
-    let actual_wasm = sha256_file(module_path)?;
     ensure!(
-        actual_wasm.eq_ignore_ascii_case(&manifest.wasm_sha256),
-        "embedded PGDATA template wasm hash mismatch: manifest={} actual={actual_wasm}",
-        manifest.wasm_sha256
+        metadata.is_dir(),
+        "cluster seed publication contains a special file: {}",
+        path.display()
     );
+    let mut entries = fs::read_dir(path)
+        .with_context(|| format!("read publication directory {}", path.display()))?
+        .collect::<std::io::Result<Vec<_>>>()?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        sync_publication_tree(&entry.path())?;
+    }
+    sync_directory(path).with_context(|| format!("sync publication directory {}", path.display()))
+}
+
+#[cfg(windows)]
+fn sync_publication_file(path: &Path) -> std::io::Result<()> {
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?
+        .sync_all()
+}
+
+#[cfg(not(windows))]
+fn sync_publication_file(path: &Path) -> std::io::Result<()> {
+    fs::File::open(path)?.sync_all()
+}
+
+fn promote_synced_directory(
+    staging: &Path,
+    target: &Path,
+    parent: &Path,
+    label: &str,
+) -> Result<()> {
+    sync_publication_tree(staging)?;
+    fs::rename(staging, target).with_context(|| {
+        format!(
+            "promote {label} {} -> {}",
+            staging.display(),
+            target.display()
+        )
+    })?;
+    sync_directory(parent).with_context(|| format!("sync {label} parent {}", parent.display()))
+}
+
+fn ensure_module_matches_seed(module_path: &Path, manifest: &ClusterSeedManifest) -> Result<()> {
+    let strict = strict_asset_verification()?;
+    if let Some(icu) = &manifest.icu {
+        let runtime_root = module_path
+            .parent()
+            .and_then(Path::parent)
+            .context("WASIX runtime module has no runtime root")?;
+        ensure_installed_icu_matches_seed(runtime_root, &icu.data_tree_sha256, strict)?;
+    }
+    if strict {
+        let actual_wasm = sha256_file(module_path)?;
+        ensure!(
+            actual_wasm.eq_ignore_ascii_case(&manifest.runtime.consumer_sha256),
+            "embedded cluster seed wasm hash mismatch: manifest={} actual={actual_wasm}",
+            manifest.runtime.consumer_sha256
+        );
+    }
     Ok(())
 }
 
-fn validated_embedded_pgdata_template_manifest() -> Result<Option<PgDataTemplateManifest>> {
-    let Some(template_manifest) = assets::pgdata_template_manifest() else {
+fn ensure_installed_icu_matches_seed(
+    runtime_root: &Path,
+    seed_tree_sha256: &str,
+    strict: bool,
+) -> Result<()> {
+    let expected_archive = assets::expected_icu_data_archive_sha256()
+        .context("ICU cluster seed requires packaged ICU data")?;
+    let expected_tree = assets::expected_icu_data_tree_sha256()
+        .context("packaged ICU data is missing its logical tree digest")?;
+    ensure_installed_icu_identity(
+        runtime_root,
+        seed_tree_sha256,
+        expected_archive,
+        expected_tree,
+        strict,
+    )
+}
+
+fn ensure_installed_icu_identity(
+    runtime_root: &Path,
+    seed_tree_sha256: &str,
+    expected_archive: &str,
+    expected_tree: &str,
+    strict: bool,
+) -> Result<()> {
+    ensure!(
+        seed_tree_sha256.eq_ignore_ascii_case(expected_tree),
+        "packaged ICU data does not match the ICU cluster seed: seed={seed_tree_sha256} packaged={expected_tree}"
+    );
+    let icu_root = runtime_root.join("share/icu");
+    ensure!(
+        icu_data_root_contains_data(&icu_root)?,
+        "installed ICU data is missing under {}",
+        icu_root.display()
+    );
+    ensure!(
+        installed_icu_marker_matches(runtime_root, expected_archive)?,
+        "installed ICU data receipt does not match the packaged ICU data"
+    );
+    if strict {
+        ensure_installed_icu_tree_matches(&icu_root, expected_tree)?;
+    }
+    Ok(())
+}
+
+/// Digest the logical portable files tree as sorted `path NUL size NUL file-bytes LF` rows.
+fn logical_tree_sha256(root: &Path) -> Result<String> {
+    ensure!(
+        root.is_dir(),
+        "ICU data directory is missing: {}",
+        root.display()
+    );
+    let mut files = Vec::new();
+    collect_regular_files(root, root, &mut files)?;
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    ensure!(
+        !files.is_empty(),
+        "ICU data directory is empty: {}",
+        root.display()
+    );
+    let mut digest = Sha256::new();
+    for (relative, file) in files {
+        let size = fs::metadata(&file)
+            .with_context(|| format!("metadata {}", file.display()))?
+            .len();
+        digest.update(relative.as_bytes());
+        digest.update([0]);
+        digest.update(size.to_string().as_bytes());
+        digest.update([0]);
+        digest.update(fs::read(&file).with_context(|| format!("read {}", file.display()))?);
+        digest.update([b'\n']);
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
+fn collect_regular_files(
+    root: &Path,
+    directory: &Path,
+    files: &mut Vec<(String, PathBuf)>,
+) -> Result<()> {
+    let mut entries = fs::read_dir(directory)
+        .with_context(|| format!("read {}", directory.display()))?
+        .collect::<std::io::Result<Vec<_>>>()?;
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    for entry in entries {
+        let path = entry.path();
+        let metadata =
+            fs::symlink_metadata(&path).with_context(|| format!("inspect {}", path.display()))?;
+        ensure!(
+            !metadata.file_type().is_symlink(),
+            "ICU data must not contain symlinks: {}",
+            path.display()
+        );
+        if metadata.is_dir() {
+            collect_regular_files(root, &path, files)?;
+        } else {
+            ensure!(
+                metadata.is_file(),
+                "ICU data must contain only files and directories: {}",
+                path.display()
+            );
+            let relative = path
+                .strip_prefix(root)?
+                .to_str()
+                .context("ICU data path is not UTF-8")?
+                .replace('\\', "/");
+            files.push((relative, path));
+        }
+    }
+    Ok(())
+}
+
+fn validated_embedded_cluster_seed_manifest() -> Result<Option<ClusterSeedManifest>> {
+    let Some(seed_manifest) = assets::cluster_seed_manifest() else {
         return Ok(None);
     };
-    let Some(template_archive) = assets::pgdata_template_archive() else {
+    let Some(seed_archive) = assets::cluster_seed_archive() else {
         return Ok(None);
     };
 
-    let manifest = PGDATA_TEMPLATE_MANIFEST
+    let manifest = CLUSTER_SEED_MANIFEST
         .get_or_init(|| {
-            let manifest: PgDataTemplateManifest = serde_json::from_slice(template_manifest)
-                .context("parse embedded PGDATA template manifest")
+            let manifest: ClusterSeedManifest = serde_json::from_slice(seed_manifest)
+                .context("parse embedded cluster seed manifest")
                 .map_err(|err| format!("{err:#}"))?;
-            if !manifest.architecture_independent {
-                return Err(
-                    "embedded PGDATA template manifest must set architectureIndependent=true"
-                        .to_string(),
-                );
-            }
-            validate_pgdata_template_manifest_metadata(&manifest)
-                .map_err(|err| format!("{err:#}"))?;
+            validate_cluster_seed_manifest_metadata(&manifest).map_err(|err| format!("{err:#}"))?;
 
             Ok(manifest)
         })
         .clone()
         .map_err(|message| anyhow!(message))?;
     if strict_asset_verification()? {
-        let actual_archive = sha256_hex(template_archive);
+        let actual_archive = sha256_hex(seed_archive);
         ensure!(
-            actual_archive.eq_ignore_ascii_case(&manifest.archive_sha256),
-            "embedded PGDATA template archive hash mismatch: manifest={} actual={actual_archive}",
-            manifest.archive_sha256
+            actual_archive.eq_ignore_ascii_case(&manifest.archive.sha256),
+            "embedded cluster seed archive hash mismatch: manifest={} actual={actual_archive}",
+            manifest.archive.sha256
         );
     }
     Ok(Some(manifest))
 }
 
-fn validate_pgdata_template_manifest_metadata(manifest: &PgDataTemplateManifest) -> Result<()> {
+fn validate_cluster_seed_manifest_metadata(manifest: &ClusterSeedManifest) -> Result<()> {
+    let selected_profile = assets::selected_catalog_profile().as_str();
+    validate_cluster_seed_profile_contract(ClusterSeedProfile::from(manifest), selected_profile)?;
+    ensure!(
+        manifest.runtime.product == "liboliphaunt-wasix"
+            && manifest.runtime.engine_family == "wasix"
+            && manifest.runtime.physical_format == "wasix-pg18-v1"
+            && manifest.runtime.compatibility_key == "wasix-pg18-datum32-v1"
+            && manifest.runtime.postgres_major == 18,
+        "embedded cluster seed has an incompatible WASIX physical identity"
+    );
+    ensure!(
+        manifest.runtime.consumer_sha256 == manifest.runtime.producer_sha256,
+        "embedded cluster seed producer and consumer runtime digests differ"
+    );
+    ensure!(
+        manifest.archive.path == format!("cluster-seeds/{selected_profile}.tar.zst")
+            && manifest.archive.compressed_bytes > 0
+            && manifest.archive.expanded_bytes > 0
+            && manifest.archive.regular_files > 0
+            && manifest.archive.directories > 0,
+        "embedded cluster seed archive identity is invalid"
+    );
+    ensure!(
+        manifest.extensions.selected.is_empty()
+            && manifest.extensions.startup_configuration.is_empty(),
+        "embedded cluster seed must be extension-free"
+    );
     let metadata = assets::asset_manifest_metadata()?;
+    ensure!(
+        metadata.cluster_seed_profile == selected_profile
+            && metadata.cluster_seed_compatibility_key == "wasix-pg18-datum32-v1",
+        "asset manifest selected cluster seed identity is inconsistent"
+    );
     let asset_source_lane = metadata
         .source_lane
         .as_deref()
         .context("asset manifest is missing source-lane metadata")?;
-    let template_source_lane = manifest
-        .source_lane
-        .as_deref()
-        .context("embedded PGDATA template manifest is missing source-lane metadata")?;
+    let seed_source_lane = manifest.source.lane.as_str();
     ensure!(
-        template_source_lane == asset_source_lane,
-        "embedded PGDATA template source lane mismatch: template={} assets={asset_source_lane}",
-        template_source_lane
+        seed_source_lane == asset_source_lane,
+        "embedded cluster seed source lane mismatch: seed={} assets={asset_source_lane}",
+        seed_source_lane
     );
-    if let Some(pgdata_source_lane) = metadata.pgdata_template_source_lane.as_deref() {
+    if let Some(pgdata_source_lane) = metadata.cluster_seed_source_lane.as_deref() {
         ensure!(
-            template_source_lane == pgdata_source_lane,
-            "embedded PGDATA template source lane mismatch: template={} asset-entry={pgdata_source_lane}",
-            template_source_lane
+            seed_source_lane == pgdata_source_lane,
+            "embedded cluster seed source lane mismatch: seed={} asset-entry={pgdata_source_lane}",
+            seed_source_lane
         );
     }
 
-    if let Some(expected) = metadata.pgdata_template_postgres_version.as_deref() {
+    if let Some(expected) = metadata.cluster_seed_postgres_version.as_deref() {
         ensure!(
-            manifest.postgres_version == expected,
-            "embedded PGDATA template PostgreSQL version mismatch: template={} asset-entry={expected}",
-            manifest.postgres_version
+            manifest.runtime.postgres_major.to_string() == expected,
+            "embedded cluster seed PostgreSQL version mismatch: seed={} asset-entry={expected}",
+            manifest.runtime.postgres_major
         );
     }
 
     let expected_fingerprint = metadata
-        .pgdata_template_source_fingerprint
+        .cluster_seed_source_fingerprint
         .as_deref()
         .or(metadata.source_fingerprint.as_deref());
     if let Some(expected) = expected_fingerprint {
         ensure!(
-            manifest.source_fingerprint.as_deref() == Some(expected),
-            "embedded PGDATA template source fingerprint mismatch: template={} assets={expected}",
-            manifest
-                .source_fingerprint
-                .as_deref()
-                .unwrap_or("<missing>")
+            manifest.source.fingerprint == expected,
+            "embedded cluster seed source fingerprint mismatch: seed={} assets={expected}",
+            manifest.source.fingerprint
         );
     }
 
     Ok(())
 }
 
-fn pgdata_template_cache() -> Result<Arc<CachedPgDataTemplate>> {
-    PGDATA_TEMPLATE_CACHE
+#[derive(Debug, Clone, Copy)]
+struct ClusterSeedProfile<'a> {
+    schema: &'a str,
+    artifact_role: &'a str,
+    catalog_profile: &'a str,
+    required_runtime_features: &'a [String],
+    icu: Option<&'a ClusterSeedIcuIdentity>,
+}
+
+impl<'a> From<&'a ClusterSeedManifest> for ClusterSeedProfile<'a> {
+    fn from(manifest: &'a ClusterSeedManifest) -> Self {
+        Self {
+            schema: &manifest.schema,
+            artifact_role: &manifest.artifact_role,
+            catalog_profile: &manifest.catalog_profile,
+            required_runtime_features: &manifest.required_runtime_features,
+            icu: manifest.icu.as_ref(),
+        }
+    }
+}
+
+fn validate_cluster_seed_profile_contract(
+    manifest: ClusterSeedProfile<'_>,
+    selected_profile: &str,
+) -> Result<()> {
+    let expected_role = if selected_profile == "icu" {
+        "cluster-seed-icu"
+    } else {
+        "cluster-seed-standard"
+    };
+    ensure!(
+        manifest.schema == "oliphaunt-cluster-seed-v1",
+        "unsupported cluster seed schema"
+    );
+    ensure!(
+        manifest.catalog_profile == selected_profile && manifest.artifact_role == expected_role,
+        "embedded cluster seed profile mismatch: selected={selected_profile} manifest={} role={}",
+        manifest.catalog_profile,
+        manifest.artifact_role
+    );
+    if selected_profile == "icu" {
+        let icu = manifest
+            .icu
+            .as_ref()
+            .context("ICU cluster seed is missing ICU identity")?;
+        ensure!(
+            manifest.required_runtime_features == ["icu"]
+                && icu.artifact_role == "icu-data"
+                && icu.upstream_version == "76.1"
+                && icu.data_version == "76.1"
+                && icu.data_form == "files-le",
+            "ICU cluster seed has an incompatible ICU identity"
+        );
+    } else {
+        ensure!(
+            manifest.required_runtime_features.is_empty() && manifest.icu.is_none(),
+            "standard cluster seed must not require or identify ICU data"
+        );
+    }
+    Ok(())
+}
+
+fn cluster_seed_cache() -> Result<Arc<CachedClusterSeed>> {
+    CLUSTER_SEED_CACHE
         .get_or_init(|| {
-            build_pgdata_template_cache()
+            build_cluster_seed_cache()
                 .map(Arc::new)
                 .map_err(|err| format!("{err:#}"))
         })
@@ -815,81 +1187,97 @@ fn pgdata_template_cache() -> Result<Arc<CachedPgDataTemplate>> {
         .map_err(|message| anyhow!(message))
 }
 
-fn build_pgdata_template_cache() -> Result<CachedPgDataTemplate> {
-    let Some(manifest) = validated_embedded_pgdata_template_manifest()? else {
-        bail!("embedded PGDATA template manifest is unavailable");
+fn build_cluster_seed_cache() -> Result<CachedClusterSeed> {
+    let Some(manifest) = validated_embedded_cluster_seed_manifest()? else {
+        bail!("embedded cluster seed manifest is unavailable");
     };
-    let Some(template_archive) = assets::pgdata_template_archive() else {
-        bail!("embedded PGDATA template archive is unavailable");
+    let Some(seed_archive) = assets::cluster_seed_archive() else {
+        bail!("embedded cluster seed archive is unavailable");
     };
 
     let dirs = ProjectDirs::from("dev", "oliphaunt-wasix", "oliphaunt-wasix")
         .context("could not resolve oliphaunt-wasix cache directory")?;
     let cache_root = dirs
         .cache_dir()
-        .join("pgdata-template")
-        .join(PGDATA_TEMPLATE_CACHE_FORMAT);
+        .join("cluster-seeds")
+        .join(assets::selected_catalog_profile().as_str())
+        .join(CLUSTER_SEED_CACHE_FORMAT);
     let _cache_lock = CacheLock::acquire(
         &cache_root
             .join(".locks")
-            .join(format!("{}.lock", manifest.archive_sha256)),
+            .join(format!("{}.lock", manifest.archive.sha256)),
     )?;
-    let root = cache_root.join(&manifest.archive_sha256);
+    let root = cache_root.join(&manifest.archive.sha256);
     let pgdata = root.join("base");
     if pgdata.join("PG_VERSION").is_file() && pgdata.join("global/pg_control").is_file() {
-        return Ok(CachedPgDataTemplate { pgdata });
+        return Ok(CachedClusterSeed { pgdata });
     }
 
     if root.exists() {
         fs::remove_dir_all(&root)
-            .with_context(|| format!("remove stale PGDATA template cache {}", root.display()))?;
+            .with_context(|| format!("remove stale cluster seed cache {}", root.display()))?;
     }
     fs::create_dir_all(&root)
-        .with_context(|| format!("create PGDATA template cache {}", root.display()))?;
+        .with_context(|| format!("create cluster seed cache {}", root.display()))?;
     let staging = root.join(format!(".base-{}-{}", std::process::id(), tmp_suffix()));
-    if let Err(err) = unpack_pgdata_template_archive(template_archive, &staging) {
-        let _ = fs::remove_dir_all(&staging);
-        return Err(err);
+    let result = (|| -> Result<()> {
+        unpack_cluster_seed_archive(seed_archive, &staging)?;
+        validate_cluster_seed_dir(&staging, &manifest)?;
+        remove_cluster_seed_runtime_state(&staging)?;
+        promote_synced_directory(&staging, &pgdata, &root, "cluster seed cache")
+    })();
+    if let Err(error) = result {
+        let cleanup = (|| -> Result<()> {
+            if staging.exists() {
+                fs::remove_dir_all(&staging).with_context(|| {
+                    format!("remove failed cache staging {}", staging.display())
+                })?;
+            }
+            if pgdata.exists() {
+                fs::remove_dir_all(&pgdata).with_context(|| {
+                    format!("remove uncertain cache PGDATA {}", pgdata.display())
+                })?;
+            }
+            sync_directory(&root)
+                .with_context(|| format!("sync cleaned cache root {}", root.display()))
+        })();
+        if let Err(cleanup) = cleanup {
+            return Err(error.context(format!(
+                "cluster seed cache cleanup also failed: {cleanup:#}"
+            )));
+        }
+        return Err(error);
     }
-    validate_pgdata_template_dir(&staging, &manifest)?;
-    remove_template_runtime_state(&staging)?;
-    fs::rename(&staging, &pgdata).with_context(|| {
-        format!(
-            "promote PGDATA template cache {} -> {}",
-            staging.display(),
-            pgdata.display()
-        )
-    })?;
-    Ok(CachedPgDataTemplate { pgdata })
+    Ok(CachedClusterSeed { pgdata })
 }
 
-fn validate_pgdata_template_dir(pgdata: &Path, manifest: &PgDataTemplateManifest) -> Result<()> {
+fn validate_cluster_seed_dir(pgdata: &Path, manifest: &ClusterSeedManifest) -> Result<()> {
     let pg_version = fs::read_to_string(pgdata.join("PG_VERSION"))
         .with_context(|| format!("read {}", pgdata.join("PG_VERSION").display()))?;
     ensure!(
-        pg_version.trim() == manifest.postgres_version.trim(),
-        "embedded PGDATA template postgres version mismatch: manifest={} actual={}",
-        manifest.postgres_version,
+        pg_version.trim() == manifest.runtime.postgres_major.to_string(),
+        "embedded cluster seed postgres version mismatch: manifest={} actual={}",
+        manifest.runtime.postgres_major,
         pg_version.trim()
     );
     ensure!(
         pgdata.join("global").join("pg_control").exists(),
-        "embedded PGDATA template did not contain global/pg_control at archive root"
+        "embedded cluster seed did not contain global/pg_control at archive root"
     );
     Ok(())
 }
 
-fn unpack_pgdata_template_archive(bytes: &[u8], destination: &Path) -> Result<()> {
-    let decoder = ZstdDecoder::new(Cursor::new(bytes)).context("decode PGDATA template archive")?;
+fn unpack_cluster_seed_archive(bytes: &[u8], destination: &Path) -> Result<()> {
+    let decoder = ZstdDecoder::new(Cursor::new(bytes)).context("decode cluster seed archive")?;
     let mut archive = Archive::new(decoder);
     unpack_archive_entries(&mut archive, destination)
 }
 
-fn unpack_pgdata_template_archive_virtual(
+fn unpack_cluster_seed_archive_virtual(
     bytes: &[u8],
     filesystem: &(dyn VirtualFileSystem + Send + Sync),
 ) -> Result<()> {
-    let decoder = ZstdDecoder::new(Cursor::new(bytes)).context("decode PGDATA template archive")?;
+    let decoder = ZstdDecoder::new(Cursor::new(bytes)).context("decode cluster seed archive")?;
     let mut archive = Archive::new(decoder);
     unpack_archive_entries_virtual(&mut archive, filesystem)
         .context("unpack packaged archive into memory")
@@ -970,8 +1358,8 @@ fn unpack_archive_entries_with_path_map<R: Read>(
     Ok(())
 }
 
-fn remove_template_runtime_state(pgdata: &Path) -> Result<()> {
-    for name in TEMPLATE_RUNTIME_STATE_FILES {
+fn remove_cluster_seed_runtime_state(pgdata: &Path) -> Result<()> {
+    for name in CLUSTER_SEED_RUNTIME_STATE_FILES {
         let path = pgdata.join(name);
         if path.exists() {
             fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
@@ -981,7 +1369,7 @@ fn remove_template_runtime_state(pgdata: &Path) -> Result<()> {
 }
 
 fn remove_virtual_runtime_state(filesystem: &(dyn VirtualFileSystem + Send + Sync)) -> Result<()> {
-    for name in TEMPLATE_RUNTIME_STATE_FILES {
+    for name in CLUSTER_SEED_RUNTIME_STATE_FILES {
         vfs_remove_file_if_exists(filesystem, &Path::new("/").join(name))?;
     }
     Ok(())
@@ -1117,8 +1505,12 @@ fn prepare_host_database(
     })
 }
 
-pub(crate) fn prepare_database(plan: DatabasePlan) -> Result<PreparedDatabase> {
+pub(crate) fn prepare_database(
+    plan: DatabasePlan,
+    initial_username: &str,
+) -> Result<PreparedDatabase> {
     if matches!(plan.storage, DatabaseStorage::Memory) {
+        ensure_initial_username(DirectoryState::New, initial_username)?;
         return prepare_memory_database(plan);
     }
 
@@ -1126,8 +1518,16 @@ pub(crate) fn prepare_database(plan: DatabasePlan) -> Result<PreparedDatabase> {
         unreachable!("memory storage handled above")
     };
     let directory_lock = DirectoryLock::acquire(directory)?;
-    fs::create_dir_all(directory)
-        .with_context(|| format!("create database directory {}", directory.display()))?;
+    let directory_exists = match fs::symlink_metadata(directory) {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error).context("inspect database directory"),
+    };
+    if !directory_exists {
+        ensure_initial_username(DirectoryState::New, initial_username)?;
+        fs::create_dir(directory)
+            .with_context(|| format!("create database directory {}", directory.display()))?;
+    }
     let metadata = fs::symlink_metadata(directory)
         .with_context(|| format!("inspect database directory {}", directory.display()))?;
     ensure!(
@@ -1136,6 +1536,7 @@ pub(crate) fn prepare_database(plan: DatabasePlan) -> Result<PreparedDatabase> {
         directory.display()
     );
     let state = inspect_directory_root(directory)?;
+    ensure_initial_username(state, initial_username)?;
     let workspace = TempDir::new().context("create WASIX runtime workspace")?;
     let paths = OliphauntPaths::with_pgdata(workspace.path(), directory.join(PGDATA_DIRECTORY));
     let prepared = match prepare_host_database(
@@ -1156,25 +1557,50 @@ pub(crate) fn prepare_database(plan: DatabasePlan) -> Result<PreparedDatabase> {
         // A failure after rename/fsync has an uncertain publication state;
         // leave the complete root untouched. Before publication, PGDATA is
         // solely ours and must not strand the caller's empty root.
-        if !directory
-            .join(crate::oliphaunt::database_root_descriptor::DESCRIPTOR_FILE)
-            .exists()
-        {
-            return Err(cleanup_owned_new_pgdata(directory, error));
+        let descriptor =
+            directory.join(crate::oliphaunt::database_root_descriptor::DESCRIPTOR_FILE);
+        match fs::symlink_metadata(&descriptor) {
+            Ok(_) => return Err(error),
+            Err(inspect) if inspect.kind() == std::io::ErrorKind::NotFound => {
+                return Err(cleanup_owned_new_pgdata(directory, error));
+            }
+            Err(inspect) => {
+                return Err(error.context(format!(
+                    "preserved PGDATA because root descriptor publication at {} is uncertain: {inspect}",
+                    descriptor.display()
+                )));
+            }
         }
-        return Err(error);
     }
     Ok(prepared)
 }
 
+fn ensure_initial_username(state: DirectoryState, username: &str) -> Result<()> {
+    ensure!(
+        state == DirectoryState::Existing || username == "postgres",
+        "PostgreSQL username {username:?} selects an existing role; new storage must first be opened as postgres"
+    );
+    Ok(())
+}
+
 fn cleanup_owned_new_pgdata(root: &Path, error: anyhow::Error) -> anyhow::Error {
     let pgdata = root.join(PGDATA_DIRECTORY);
-    match fs::remove_dir_all(&pgdata) {
-        Ok(()) => error,
-        Err(cleanup) if cleanup.kind() == std::io::ErrorKind::NotFound => error,
-        Err(cleanup) => error.context(format!(
-            "failed to clean PGDATA created during first open at {}: {cleanup}",
+    let removal = match fs::remove_dir_all(&pgdata) {
+        Ok(()) => Ok(()),
+        Err(cleanup) if cleanup.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(cleanup) => Err(anyhow!(
+            "remove PGDATA created during first open at {}: {cleanup}",
             pgdata.display()
+        )),
+    };
+    let cleanup = removal.and_then(|()| {
+        sync_directory(root)
+            .with_context(|| format!("sync database root {} after cleanup", root.display()))
+    });
+    match cleanup {
+        Ok(()) => error,
+        Err(cleanup) => error.context(format!(
+            "failed to clean unpublished PGDATA created during first open: {cleanup:#}"
         )),
     }
 }
@@ -1186,12 +1612,12 @@ fn prepare_memory_database(_plan: DatabasePlan) -> Result<PreparedDatabase> {
         .memory_filesystem()
         .expect("memory storage has a virtual filesystem");
 
-    let manifest = validated_embedded_pgdata_template_manifest()?
-        .context("packaged PGDATA template is unavailable")?;
-    ensure_module_matches_template(&runtime_layout.module_path(), &manifest)?;
-    let archive = assets::pgdata_template_archive()
-        .context("packaged PGDATA template archive is unavailable")?;
-    unpack_pgdata_template_archive_virtual(archive, filesystem.as_ref())?;
+    let manifest = validated_embedded_cluster_seed_manifest()?
+        .context("packaged cluster seed is unavailable")?;
+    ensure_module_matches_seed(&runtime_layout.module_path(), &manifest)?;
+    let archive =
+        assets::cluster_seed_archive().context("packaged cluster seed archive is unavailable")?;
+    unpack_cluster_seed_archive_virtual(archive, filesystem.as_ref())?;
 
     remove_virtual_runtime_state(filesystem.as_ref())?;
     ensure!(
@@ -1250,7 +1676,7 @@ fn prepare_pgdata(
 ) -> Result<()> {
     if cluster_is_complete(paths) {
         ensure_existing_pgdata_matches_runtime(paths)?;
-        remove_template_runtime_state(&paths.pgdata)?;
+        remove_cluster_seed_runtime_state(&paths.pgdata)?;
         return Ok(());
     }
     ensure!(
@@ -1258,21 +1684,26 @@ fn prepare_pgdata(
         "existing managed database root has incomplete PGDATA at {}",
         paths.pgdata.display()
     );
-    if try_install_embedded_pgdata_template(paths, &runtime_layout.module_path())? {
+    if try_install_embedded_cluster_seed(paths, &runtime_layout.module_path())? {
         return Ok(());
     }
-    {
+    if std::env::var("OLIPHAUNT_WASIX_DEVELOPMENT_INITDB").as_deref() == Ok("1") {
         PostgresMod::run_split_initdb(
             runtime_layout,
             &PgDataStorage::host_directory(paths.pgdata.clone()),
         )?;
+    } else {
+        bail!(
+            "the selected packaged {} cluster seed is unavailable; published packages do not silently fall back to initdb",
+            assets::selected_catalog_profile().as_str()
+        );
     }
     ensure!(
         cluster_is_complete(paths),
         "split WASIX initdb finished but did not create a complete PGDATA cluster at {}",
         paths.pgdata.display()
     );
-    remove_template_runtime_state(&paths.pgdata)
+    remove_cluster_seed_runtime_state(&paths.pgdata)
 }
 
 fn runtime_cache() -> Result<Arc<CachedRuntime>> {
@@ -1398,9 +1829,37 @@ fn build_runtime_cache() -> Result<CachedRuntime> {
     let cache_root = dirs.cache_dir().join("runtime");
     let _cache_lock = CacheLock::acquire(&cache_root.join(".locks").join(format!("{key}.lock")))?;
     let root = cache_root.join(&key);
-    let paths = OliphauntPaths::with_root(root);
-    {
-        ensure_full_runtime(&paths)?;
+    let mut paths = OliphauntPaths::with_root(&root);
+    let cache_is_current = runtime_cache_completion_matches(&root, &key)?
+        && locate_runtime_module(&paths).is_some()
+        && full_runtime_layout_matches_current(&paths, &key)?
+        && !runtime_support_files_need_repair(&paths)?;
+    if !cache_is_current {
+        let staging = cache_root.join(format!(".{key}.build"));
+        if staging.exists() {
+            fs::remove_dir_all(&staging).with_context(|| {
+                format!("remove stale runtime cache staging {}", staging.display())
+            })?;
+        }
+        let staging_paths = OliphauntPaths::with_root(&staging);
+        let build_result = (|| -> Result<()> {
+            ensure_full_runtime(&staging_paths)?;
+            reset_runtime_cache_mutable_state(&staging_paths.runtime_root())?;
+            let marker = staging.join(RUNTIME_CACHE_COMPLETION_MARKER);
+            fs::write(&marker, format!("{key}\n")).with_context(|| {
+                format!("write runtime cache completion marker {}", marker.display())
+            })?;
+            if root.exists() {
+                fs::remove_dir_all(&root)
+                    .with_context(|| format!("remove invalid runtime cache {}", root.display()))?;
+            }
+            promote_synced_directory(&staging, &root, &cache_root, "runtime cache")
+        })();
+        if let Err(error) = build_result {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(error);
+        }
+        paths = OliphauntPaths::with_root(&root);
     }
     let (module_path, _) = {
         locate_runtime_module(&paths).ok_or_else(|| {
@@ -1411,18 +1870,15 @@ fn build_runtime_cache() -> Result<CachedRuntime> {
         })?
     };
     if strict_asset_verification()?
-        && let Some(manifest) = validated_embedded_pgdata_template_manifest()?
+        && let Some(manifest) = validated_embedded_cluster_seed_manifest()?
     {
-        ensure_module_matches_template(&module_path, &manifest)?;
+        ensure_module_matches_seed(&module_path, &manifest)?;
     }
     let runtime_root = module_path
         .parent()
         .and_then(Path::parent)
         .map(Path::to_path_buf)
         .unwrap_or_else(|| paths.runtime_root());
-    {
-        reset_runtime_cache_mutable_state(&runtime_root)?;
-    }
     let filesystem: Arc<dyn VirtualFileSystem + Send + Sync> =
         Arc::new(virtual_fs::mem_fs::FileSystem::default());
     copy_host_directory_into_virtual(&runtime_root, Path::new("/"), filesystem.as_ref())?;
@@ -1430,6 +1886,15 @@ fn build_runtime_cache() -> Result<CachedRuntime> {
         runtime_root,
         filesystem,
     })
+}
+
+fn runtime_cache_completion_matches(root: &Path, key: &str) -> Result<bool> {
+    let marker = root.join(RUNTIME_CACHE_COMPLETION_MARKER);
+    match fs::read_to_string(&marker) {
+        Ok(value) => Ok(value.trim() == key),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error).with_context(|| format!("read {}", marker.display())),
+    }
 }
 
 fn copy_host_directory_into_virtual(
@@ -1503,21 +1968,42 @@ fn ensure_runtime_password_file(runtime_root: &Path) -> Result<()> {
 }
 
 fn runtime_cache_key() -> Result<String> {
-    if let Some(runtime_archive) = assets::runtime_archive() {
-        let mut hasher = Sha256::new();
-        hasher.update(b"oliphaunt-wasix-runtime-cache-v2\nruntime=");
-        hasher.update(sha256_hex(runtime_archive).as_bytes());
-        hasher.update(b"\nicu=");
-        if let Some(icu_archive) = assets::icu_data_archive() {
-            hasher.update(sha256_hex(icu_archive).as_bytes());
-        } else {
-            hasher.update(b"absent");
-        }
-        return Ok(format!("{:x}", hasher.finalize()));
-    }
-    bail!(
+    RUNTIME_CACHE_KEY
+        .get_or_init(|| build_runtime_cache_key().map_err(|error| format!("{error:#}")))
+        .clone()
+        .map_err(|message| anyhow!(message))
+}
+
+fn build_runtime_cache_key() -> Result<String> {
+    ensure!(
+        assets::runtime_archive().is_some(),
         "Oliphaunt WASIX runtime assets are unavailable; package-manager-resolved runtime artifacts were not staged"
-    )
+    );
+    let runtime_sha256 = assets::expected_runtime_archive_sha256()?;
+    let icu_sha256 = if assets::icu_data_archive().is_some() {
+        Some(
+            assets::expected_icu_data_archive_sha256()
+                .context("embedded ICU data archive is missing its packaged digest")?,
+        )
+    } else {
+        None
+    };
+    Ok(runtime_cache_key_from_digests(&runtime_sha256, icu_sha256))
+}
+
+fn runtime_cache_key_from_digests(runtime_sha256: &str, icu_sha256: Option<&str>) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"oliphaunt-wasix-resolved-runtime-closure-v2\nruntime=");
+    hasher.update(runtime_sha256.to_ascii_lowercase().as_bytes());
+    hasher.update(b"\nicu=");
+    hasher.update(
+        icu_sha256
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+            .unwrap_or("absent")
+            .as_bytes(),
+    );
+    format!("{:x}", hasher.finalize())
 }
 
 fn prepare_shared_runtime_upper_root(src_runtime: &Path, paths: &OliphauntPaths) -> Result<()> {
@@ -1583,6 +2069,166 @@ fn copy_runtime_file_if_exists(src: PathBuf, dest: PathBuf) -> Result<()> {
 mod tests {
     use super::*;
 
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct SharedClusterSeedProfile {
+        schema: String,
+        artifact_role: String,
+        catalog_profile: String,
+        required_runtime_features: Vec<String>,
+        icu: Option<ClusterSeedIcuIdentity>,
+    }
+
+    impl SharedClusterSeedProfile {
+        fn as_contract(&self) -> ClusterSeedProfile<'_> {
+            ClusterSeedProfile {
+                schema: &self.schema,
+                artifact_role: &self.artifact_role,
+                catalog_profile: &self.catalog_profile,
+                required_runtime_features: &self.required_runtime_features,
+                icu: self.icu.as_ref(),
+            }
+        }
+    }
+
+    #[test]
+    fn runtime_cache_key_uses_only_declared_runtime_closure_digests() {
+        let runtime = "a".repeat(64);
+        let other_runtime = "b".repeat(64);
+        let icu = "c".repeat(64);
+        let other_icu = "d".repeat(64);
+
+        let standard = runtime_cache_key_from_digests(&runtime, None);
+        assert_eq!(
+            standard,
+            runtime_cache_key_from_digests(&runtime.to_ascii_uppercase(), None)
+        );
+        assert_ne!(
+            standard,
+            runtime_cache_key_from_digests(&other_runtime, None)
+        );
+        let with_icu = runtime_cache_key_from_digests(&runtime, Some(&icu));
+        assert_ne!(standard, with_icu);
+        assert_ne!(
+            with_icu,
+            runtime_cache_key_from_digests(&runtime, Some(&other_icu))
+        );
+    }
+
+    #[test]
+    fn runtime_cache_completion_marker_binds_the_published_key() -> Result<()> {
+        let root = TempDir::new()?;
+        assert!(!runtime_cache_completion_matches(root.path(), "expected")?);
+
+        fs::write(
+            root.path().join(RUNTIME_CACHE_COMPLETION_MARKER),
+            b"other\n",
+        )?;
+        assert!(!runtime_cache_completion_matches(root.path(), "expected")?);
+
+        fs::write(
+            root.path().join(RUNTIME_CACHE_COMPLETION_MARKER),
+            b"expected\n",
+        )?;
+        assert!(runtime_cache_completion_matches(root.path(), "expected")?);
+        Ok(())
+    }
+
+    #[test]
+    fn installed_icu_uses_receipt_normally_and_hashes_the_tree_only_when_strict() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let icu_root = root.path().join("share/icu/icudt76l");
+        fs::create_dir_all(&icu_root)?;
+        fs::write(icu_root.join("data.dat"), b"installed bytes")?;
+
+        let archive_sha256 = "a".repeat(64);
+        let declared_tree_sha256 = "b".repeat(64);
+        fs::write(
+            root.path().join(ICU_DATA_MARKER_NAME),
+            format!("{archive_sha256}\n"),
+        )?;
+
+        ensure_installed_icu_identity(
+            root.path(),
+            &declared_tree_sha256,
+            &archive_sha256,
+            &declared_tree_sha256,
+            false,
+        )?;
+        let error = ensure_installed_icu_identity(
+            root.path(),
+            &declared_tree_sha256,
+            &archive_sha256,
+            &declared_tree_sha256,
+            true,
+        )
+        .expect_err("strict verification must hash the installed tree");
+        assert!(error.to_string().contains("tree hash mismatch"));
+
+        let actual_tree_sha256 = logical_tree_sha256(&root.path().join("share/icu"))?;
+        ensure_installed_icu_identity(
+            root.path(),
+            &actual_tree_sha256,
+            &archive_sha256,
+            &actual_tree_sha256,
+            true,
+        )?;
+
+        fs::write(root.path().join(ICU_DATA_MARKER_NAME), "stale\n")?;
+        let error = ensure_installed_icu_identity(
+            root.path(),
+            &declared_tree_sha256,
+            &archive_sha256,
+            &declared_tree_sha256,
+            false,
+        )
+        .expect_err("normal verification must reject a stale receipt");
+        assert!(error.to_string().contains("receipt does not match"));
+        Ok(())
+    }
+
+    #[test]
+    fn shared_cluster_seed_profile_fixtures_match_binding_semantics() -> Result<()> {
+        let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../../shared/cluster-seed-contract/fixtures");
+        let standard: SharedClusterSeedProfile = serde_json::from_str(&fs::read_to_string(
+            fixture_root.join("standard.valid.json"),
+        )?)?;
+        validate_cluster_seed_profile_contract(standard.as_contract(), "standard")?;
+
+        let icu: SharedClusterSeedProfile =
+            serde_json::from_str(&fs::read_to_string(fixture_root.join("icu.valid.json"))?)?;
+        validate_cluster_seed_profile_contract(icu.as_contract(), "icu")?;
+
+        let mismatch: SharedClusterSeedProfile = serde_json::from_str(&fs::read_to_string(
+            fixture_root.join("profile-mismatch.invalid.json"),
+        )?)?;
+        let error = validate_cluster_seed_profile_contract(mismatch.as_contract(), "standard")
+            .expect_err("profile mismatch fixture must be rejected");
+        assert!(error.to_string().contains("profile mismatch"));
+        Ok(())
+    }
+
+    #[test]
+    fn username_selects_an_existing_role_without_mutating_new_storage() -> Result<()> {
+        ensure_initial_username(DirectoryState::Existing, "app_user")?;
+        let parent = tempfile::tempdir()?;
+        let root = parent.path().join("database");
+        let error = prepare_database(
+            DatabasePlan::new(DatabaseStorage::Directory(root.clone())),
+            "app_user",
+        )
+        .expect_err("a non-postgres role cannot initialize a new root");
+
+        assert!(
+            error
+                .to_string()
+                .contains("new storage must first be opened as postgres")
+        );
+        assert!(!root.exists());
+        Ok(())
+    }
+
     #[test]
     fn failed_first_open_removes_only_owned_pgdata() -> Result<()> {
         let root = tempfile::tempdir()?;
@@ -1600,14 +2246,70 @@ mod tests {
     }
 
     #[test]
+    fn cluster_seed_publication_replaces_staging_then_promotes_complete_pgdata() -> Result<()> {
+        let source = TempDir::new()?;
+        fs::create_dir_all(source.path().join("global"))?;
+        fs::create_dir(source.path().join("pg_wal"))?;
+        fs::write(source.path().join("PG_VERSION"), b"18\n")?;
+        fs::write(source.path().join("global/pg_control"), b"control")?;
+        fs::write(source.path().join("postmaster.pid"), b"stale")?;
+
+        let parent = TempDir::new()?;
+        let root = parent.path().join("database");
+        fs::create_dir(&root)?;
+        let pgdata = root.join(PGDATA_DIRECTORY);
+        let staging = cluster_seed_publication_staging(&pgdata)?;
+        fs::create_dir(&staging)?;
+        fs::write(staging.join("interrupted"), b"stale")?;
+
+        publish_cluster_seed_clone(source.path(), &pgdata)?;
+
+        assert!(pgdata.join("PG_VERSION").is_file());
+        assert!(pgdata.join("global/pg_control").is_file());
+        assert!(!pgdata.join("postmaster.pid").exists());
+        assert!(!staging.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn publication_tree_syncs_regular_files_on_this_host() -> Result<()> {
+        let root = TempDir::new()?;
+        fs::create_dir(root.path().join("nested"))?;
+        fs::write(root.path().join("nested/marker"), b"complete\n")?;
+
+        sync_publication_tree(root.path())?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cluster_seed_publication_failure_leaves_no_partial_pgdata_or_staging() -> Result<()> {
+        let source = TempDir::new()?;
+        fs::write(source.path().join("PG_VERSION"), b"18\n")?;
+        std::os::unix::fs::symlink("PG_VERSION", source.path().join("unsafe-link"))?;
+
+        let parent = TempDir::new()?;
+        let root = parent.path().join("database");
+        fs::create_dir(&root)?;
+        let pgdata = root.join(PGDATA_DIRECTORY);
+        let staging = cluster_seed_publication_staging(&pgdata)?;
+
+        let error = publish_cluster_seed_clone(source.path(), &pgdata)
+            .expect_err("symbolic links must fail before publication");
+
+        assert!(format!("{error:#}").contains("symbolic link"));
+        assert!(!pgdata.exists());
+        assert!(!staging.exists());
+        Ok(())
+    }
+
+    #[test]
     fn memory_storage_uses_no_host_workspace() -> Result<()> {
-        if assets::pgdata_template_archive().is_none()
-            || assets::pgdata_template_manifest().is_none()
-        {
+        if assets::cluster_seed_archive().is_none() || assets::cluster_seed_manifest().is_none() {
             return Ok(());
         }
 
-        let prepared = prepare_database(DatabasePlan::new(DatabaseStorage::Memory))?;
+        let prepared = prepare_database(DatabasePlan::new(DatabaseStorage::Memory), "postgres")?;
         assert!(prepared.workspace.is_none());
         assert!(matches!(
             &prepared.outcome.runtime_layout.mutable_root,
@@ -1653,8 +2355,8 @@ mod tests {
 
     #[cfg(feature = "extensions")]
     #[test]
-    fn embedded_pgdata_template_installs_valid_cluster() -> Result<()> {
-        if !embedded_pgdata_template_is_available() {
+    fn embedded_cluster_seed_installs_valid_cluster() -> Result<()> {
+        if !embedded_cluster_seed_is_available() {
             return Ok(());
         }
 
@@ -1664,7 +2366,7 @@ mod tests {
 
         let (module_path, _) =
             locate_runtime_module(&paths).context("runtime module should be installed")?;
-        assert!(try_install_embedded_pgdata_template(&paths, &module_path,)?);
+        assert!(try_install_embedded_cluster_seed(&paths, &module_path,)?);
 
         assert!(paths.pgdata.join("PG_VERSION").exists());
         assert!(paths.pgdata.join("global/pg_control").exists());
@@ -1674,8 +2376,8 @@ mod tests {
 
     #[cfg(feature = "extensions")]
     #[test]
-    fn embedded_pgdata_template_replaces_interrupted_pgdata() -> Result<()> {
-        if !embedded_pgdata_template_is_available() {
+    fn embedded_cluster_seed_replaces_interrupted_pgdata() -> Result<()> {
+        if !embedded_cluster_seed_is_available() {
             return Ok(());
         }
 
@@ -1688,7 +2390,7 @@ mod tests {
 
         let (module_path, _) =
             locate_runtime_module(&paths).context("runtime module should be installed")?;
-        assert!(try_install_embedded_pgdata_template(&paths, &module_path,)?);
+        assert!(try_install_embedded_cluster_seed(&paths, &module_path,)?);
 
         assert!(paths.pgdata.join("PG_VERSION").exists());
         assert!(paths.pgdata.join("global/pg_control").exists());
@@ -1698,8 +2400,8 @@ mod tests {
     }
 
     #[cfg(feature = "extensions")]
-    fn embedded_pgdata_template_is_available() -> bool {
-        assets::pgdata_template_archive().is_some() && assets::pgdata_template_manifest().is_some()
+    fn embedded_cluster_seed_is_available() -> bool {
+        assets::cluster_seed_archive().is_some() && assets::cluster_seed_manifest().is_some()
     }
 
     #[test]

@@ -20,7 +20,6 @@ shared_buffers_raw="${OLIPHAUNT_MOBILE_FOOTPRINT_SHARED_BUFFERS:-all}"
 wal_buffers_raw="${OLIPHAUNT_MOBILE_FOOTPRINT_WAL_BUFFERS:-all}"
 min_wal_sizes_raw="${OLIPHAUNT_MOBILE_FOOTPRINT_MIN_WAL_SIZES:-all}"
 max_wal_sizes_raw="${OLIPHAUNT_MOBILE_FOOTPRINT_MAX_WAL_SIZES:-all}"
-wal_segsize_mb="${OLIPHAUNT_MOBILE_FOOTPRINT_WAL_SEGSIZE_MB:-16}"
 run_id="${OLIPHAUNT_MOBILE_FOOTPRINT_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 output_dir="${OLIPHAUNT_MOBILE_FOOTPRINT_OUTPUT_DIR:-$repo_root/target/perf/mobile-footprint-$run_id}"
 output_dir_explicit=0
@@ -35,8 +34,6 @@ Options:
   --plan-only                   Print concrete benchmark commands without running them.
   --include-invalid-wal-min     Include min_wal_size combinations smaller than two WAL segments.
                                 Use only for negative validation.
-  --wal-segsize MB              Template-cluster WAL segment size in megabytes. Default: 16.
-                                Pass 4 to make min_wal_size=8MB and 16MB valid.
   --run-id ID                   Stable run id for the report directory.
   --output-dir DIR              Matrix output directory. Default: target/perf/mobile-footprint-<run-id>.
   --keep-going                  Continue after a failed case and summarize failures.
@@ -60,8 +57,7 @@ The matrix sweeps explicit PostgreSQL settings:
   shared_buffers: 8/16/32/64/128MB
   wal_buffers: -1/256kB/1MB/4MB
   min_wal_size: 8/16/32/80MB
-  WAL segment size: 16MB by default; pass --wal-segsize 4 to run the 8/16MB
-    min_wal_size mobile experiments against a matching template cluster
+  WAL segment size: fixed by the qualified PostgreSQL seed (16MB)
   max_wal_size: 32/64MB plus default
 USAGE
 }
@@ -83,11 +79,6 @@ while [[ $# -gt 0 ]]; do
     --quick)
       quick=1
       shift
-      ;;
-    --wal-segsize|--wal-segsize-mb)
-      wal_segsize_mb="${2:?$1 requires a value}"
-      wal_segsize_mb="${wal_segsize_mb%MB}"
-      shift 2
       ;;
     --keep-going)
       keep_going=1
@@ -156,16 +147,6 @@ case "$crash_recovery" in
     exit 2
     ;;
 esac
-case "$wal_segsize_mb" in
-  ''|*[!0-9]*)
-    echo "--wal-segsize must be a positive integer number of megabytes" >&2
-    exit 2
-    ;;
-esac
-if [[ "$wal_segsize_mb" -le 0 ]]; then
-  echo "--wal-segsize must be greater than zero" >&2
-  exit 2
-fi
 if [[ "$summarize_only" -eq 1 && "$output_dir_explicit" -eq 1 && "$run_id_explicit" -eq 0 ]]; then
   output_basename="$(basename "$output_dir")"
   run_id="${output_basename#mobile-footprint-}"
@@ -259,10 +240,9 @@ size_mb() {
   esac
 }
 
-is_valid_wal_min_for_segment() {
+is_valid_wal_min_size() {
   local min_wal="$1"
-  local segment_mb="$2"
-  [[ "$(size_mb "$min_wal")" -ge $((segment_mb * 2)) ]]
+  [[ "$(size_mb "$min_wal")" -ge 32 ]]
 }
 
 is_valid_wal_range() {
@@ -290,16 +270,14 @@ write_case_metadata() {
   local wal="$5"
   local min_wal="$6"
   local max_wal="$7"
-  local wal_segment_mb="$8"
-  local startup_gucs="$9"
-  local status="${10}"
+  local startup_gucs="$8"
+  local status="$9"
   CASE_ID="$case_id" \
     CASE_PLATFORM="$target_platform" \
     CASE_SHARED_BUFFERS="$shared" \
     CASE_WAL_BUFFERS="$wal" \
     CASE_MIN_WAL_SIZE="$min_wal" \
     CASE_MAX_WAL_SIZE="$max_wal" \
-    CASE_WAL_SEGMENT_SIZE_MB="$wal_segment_mb" \
     CASE_STARTUP_GUCS="$startup_gucs" \
     CASE_STATUS="$status" \
     node <<'NODE' >"$case_dir/case.json"
@@ -312,7 +290,6 @@ const data = {
     wal_buffers: process.env.CASE_WAL_BUFFERS,
     min_wal_size: process.env.CASE_MIN_WAL_SIZE,
     max_wal_size: process.env.CASE_MAX_WAL_SIZE,
-    wal_segment_size_mb: process.env.CASE_WAL_SEGMENT_SIZE_MB,
   },
   status: process.env.CASE_STATUS,
 };
@@ -531,7 +508,7 @@ lines.push('');
 const summaryColumns = [
   'Case', 'Platform', 'Benchmark preset',
   'shared_buffers', 'wal_buffers', 'min_wal_size', 'max_wal_size',
-  'WAL segment MB', 'Effective GUCs', 'Open ms',
+  'Effective GUCs', 'Open ms',
   'Typed p50 ms', 'Typed p90 ms', 'Typed p95 ms', 'Typed p99 ms',
   'Param p50 ms', 'Param p90 ms', 'Param p95 ms', 'Param p99 ms',
   'Background checkpoint p50 ms', 'Background checkpoint p90 ms',
@@ -569,7 +546,6 @@ for (const row of rows) {
     row.gucs?.wal_buffers ?? '',
     row.gucs?.min_wal_size ?? '',
     row.gucs?.max_wal_size ?? '',
-    row.gucs?.wal_segment_size_mb ?? '',
     effectiveGucSummary(row.postgresSettings),
     fmt(row.openMs),
     fmt(row.typedP50Ms),
@@ -647,7 +623,7 @@ print_or_run() {
   fi
   local script="bench:$target_platform"
   local crash_script="crash:$target_platform"
-  local raw_case_id="$target_platform-shared-$shared-wal-$wal-minwal-$min_wal-maxwal-$max_wal-walseg-${wal_segsize_mb}MB"
+  local raw_case_id="$target_platform-shared-$shared-wal-$wal-minwal-$min_wal-maxwal-$max_wal"
   local case_id
   case_id="$(case_slug "$raw_case_id")"
   local case_dir="$output_dir/cases/$case_id"
@@ -660,7 +636,6 @@ print_or_run() {
   local base_prefix=(
     env
     "OLIPHAUNT_EXPO_MOBILE_STARTUP_GUCS=$startup_gucs"
-    "OLIPHAUNT_EXPO_MOBILE_WAL_SEGSIZE_MB=$wal_segsize_mb"
     "OLIPHAUNT_EXPO_MOBILE_BENCHMARK_PRESET=$benchmark_preset"
   )
   local prefix=("${base_prefix[@]}")
@@ -693,8 +668,8 @@ print_or_run() {
   fi
 
   if [[ "$plan_only" -eq 1 ]]; then
-    printf 'case platform=%s shared_buffers=%s wal_buffers=%s min_wal_size=%s max_wal_size=%s wal_segment_size_mb=%s\n' \
-      "$target_platform" "$shared" "$wal" "$min_wal" "$max_wal" "$wal_segsize_mb"
+    printf 'case platform=%s shared_buffers=%s wal_buffers=%s min_wal_size=%s max_wal_size=%s\n' \
+      "$target_platform" "$shared" "$wal" "$min_wal" "$max_wal"
     printf 'benchmarkPreset=%s\n' "$benchmark_preset"
     printf 'caseId=%s\n' "$case_id"
     printf 'caseOutputDir=%s\n' "$case_dir"
@@ -722,7 +697,6 @@ print_or_run() {
     "$wal" \
     "$min_wal" \
     "$max_wal" \
-    "$wal_segsize_mb" \
     "$startup_gucs" \
     "running"
 
@@ -744,7 +718,6 @@ print_or_run() {
       "$wal" \
       "$min_wal" \
       "$max_wal" \
-      "$wal_segsize_mb" \
       "$startup_gucs" \
       "passed"
   else
@@ -756,7 +729,6 @@ print_or_run() {
       "$wal" \
       "$min_wal" \
       "$max_wal" \
-      "$wal_segsize_mb" \
       "$startup_gucs" \
       "failed"
     if [[ "$keep_going" -ne 1 ]]; then
@@ -780,7 +752,7 @@ for target_platform in "${platforms[@]}"; do
     for wal in "${wal_buffers[@]}"; do
       for min_wal in "${min_wal_sizes[@]}"; do
         for max_wal in "${max_wal_sizes[@]}"; do
-          if ! is_valid_wal_min_for_segment "$min_wal" "$wal_segsize_mb" && [[ "$include_invalid_wal_min" -ne 1 ]]; then
+          if ! is_valid_wal_min_size "$min_wal" && [[ "$include_invalid_wal_min" -ne 1 ]]; then
             skipped=$((skipped + 1))
             continue
           fi
@@ -800,8 +772,7 @@ if [[ "$plan_only" -eq 1 ]]; then
   printf 'runId=%s\n' "$run_id"
   printf 'outputDir=%s\n' "$output_dir"
   printf 'planned=%s\n' "$planned"
-  printf 'walSegmentSizeMB=%s\n' "$wal_segsize_mb"
-  printf 'skippedInvalidForWalSegment=%s\n' "$skipped"
+  printf 'skippedInvalidMinWalSize=%s\n' "$skipped"
   printf 'skippedInvalidWalRange=%s\n' "$skipped_wal_range"
 else
   summarize_matrix

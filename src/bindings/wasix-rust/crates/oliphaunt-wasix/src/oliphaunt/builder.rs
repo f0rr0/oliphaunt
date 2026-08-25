@@ -35,7 +35,7 @@ impl Default for OliphauntBuilder {
 
 impl OliphauntBuilder {
     /// Create a builder for a memory database initialized from the packaged
-    /// template.
+    /// cluster seed.
     pub fn new() -> Self {
         Self::default()
     }
@@ -105,7 +105,7 @@ impl OliphauntBuilder {
         postgres_config.validate()?;
         self.startup_config.validate()?;
         let plan = DatabasePlan::new(self.storage.clone());
-        let prepared = prepare_database(plan)?;
+        let prepared = prepare_database(plan, &self.startup_config.username)?;
         #[cfg(feature = "extensions")]
         {
             self.open_prepared_database(prepared, extensions, postgres_config)

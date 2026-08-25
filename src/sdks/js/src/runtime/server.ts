@@ -17,13 +17,17 @@ import {
   type ManagedChild,
 } from './node-adapter.js';
 import { PostgresWireClient } from './pgwire.js';
-import { initializeNativePgdata } from '../native/initialize.js';
+import {
+  initializeNativePgdata,
+  nativeInitdbArgs,
+  nativePostgresChildEnvironment,
+} from '../native/initialize.js';
 import type { RuntimeBinding, RuntimeHandle } from './types.js';
 import {
   materializeNodeExtensionInstall,
-  resolveNodeIcuDataDirectory,
   resolveNodeNativeInstall,
 } from '../native/assets-node.js';
+import { resolveExactNativeRuntimeProfile } from '../native/runtime-profile.js';
 
 const SERVER_HOST = '127.0.0.1';
 const SERVER_STARTUP_TIMEOUT_MS_ENV = 'OLIPHAUNT_SERVER_STARTUP_TIMEOUT_MS';
@@ -36,6 +40,7 @@ type ServerTools = {
   executable: string;
   toolDirectory: string;
   icuDataDirectory?: string;
+  catalogProfile: 'standard' | 'icu';
 };
 
 export function createServerRuntimeBinding(): RuntimeBinding {
@@ -160,7 +165,7 @@ async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
     });
     const executable = tools.executable;
     const toolDirectory = tools.toolDirectory;
-    await initializeServerDataDir(config, toolDirectory);
+    await initializeServerDataDir(config, toolDirectory, tools);
     const pgCtl = await optionalTool(toolDirectory, 'pg_ctl');
     if (pgCtl === undefined) {
       throw new Error(`native server shutdown requires pg_ctl in ${toolDirectory}`);
@@ -178,6 +183,7 @@ async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
       executable,
       args: postgresArgs(config, listen, port, socketDir),
       env: toolEnvironment,
+      replaceEnv: true,
     });
     const endpoint = sdkEndpoint(port, socketDir);
     const client = await waitForServer(
@@ -214,6 +220,9 @@ async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
 export async function initializeServerDataDir(
   config: NormalizedOpenConfig,
   toolDirectory: string,
+  closure: Pick<ServerTools, 'icuDataDirectory' | 'catalogProfile'> = {
+    catalogProfile: 'standard',
+  },
 ): Promise<void> {
   const initdb = await optionalTool(toolDirectory, 'initdb');
   if (initdb === undefined) {
@@ -222,21 +231,13 @@ export async function initializeServerDataDir(
   await initializeNativePgdata({
     root: config.instanceDirectory,
     pgdata: config.pgdata,
-    runInitdb: async (staging) => {
-      await runCommand(
-        initdb,
-        [
-          '-D',
-          staging,
-          '-U',
-          config.username,
-          '--auth=trust',
-          '--locale-provider=libc',
-          '--locale=C',
-          '--encoding=UTF8',
-        ],
-        await nativeServerRuntimeEnv(toolDirectory),
-      );
+    username: config.username,
+    populatePgdata: async (staging) => {
+      const env = await nativeServerInitdbEnvironment(toolDirectory, {
+        icuDataDirectory: closure.icuDataDirectory,
+        catalogProfile: closure.catalogProfile,
+      });
+      await runCommand(initdb, nativeInitdbArgs(staging), env);
     },
   });
 }
@@ -373,7 +374,7 @@ function serverStartupTimeoutMs(): number {
   return parsed;
 }
 
-async function resolveServerTools(options: {
+export async function resolveServerTools(options: {
   serverExecutable?: string;
   runtimeDirectory?: string;
   extensions?: readonly string[];
@@ -388,9 +389,11 @@ async function resolveServerTools(options: {
   for (const candidate of candidates) {
     if (await isFile(candidate)) {
       const toolDirectory = options.runtimeDirectory ?? dirname(candidate);
+      const profile = await resolveExactNativeRuntimeProfile(dirname(toolDirectory));
       return {
         executable: candidate,
         toolDirectory,
+        ...profile,
       };
     }
   }
@@ -402,10 +405,15 @@ async function resolveServerTools(options: {
     const toolDirectory = join(install.runtimeDirectory, 'bin');
     const executable = join(toolDirectory, executableName('postgres'));
     if (await isFile(executable)) {
+      const catalogProfile = install.catalogProfile ?? 'standard';
+      if (catalogProfile === 'icu' && install.icuDataDirectory === undefined) {
+        throw new Error('package-managed ICU server runtime is missing verified ICU data');
+      }
       return {
         executable,
         toolDirectory,
         icuDataDirectory: install.icuDataDirectory,
+        catalogProfile,
       };
     }
   }
@@ -414,9 +422,11 @@ async function resolveServerTools(options: {
   );
 }
 
-async function resolvePackageManagedServerInstall(
-  extensions: readonly string[],
-): Promise<{ runtimeDirectory?: string; icuDataDirectory?: string }> {
+async function resolvePackageManagedServerInstall(extensions: readonly string[]): Promise<{
+  runtimeDirectory?: string;
+  icuDataDirectory?: string;
+  catalogProfile?: 'standard' | 'icu';
+}> {
   if (runtimeName() === 'deno') {
     if (extensions.length > 0) {
       throw new Error(
@@ -429,6 +439,7 @@ async function resolvePackageManagedServerInstall(
     return {
       runtimeDirectory: install.runtimeDirectory,
       icuDataDirectory: install.icuDataDirectory,
+      catalogProfile: install.catalogProfile,
     };
   }
 
@@ -471,34 +482,29 @@ export async function nativeServerRuntimeEnv(
   icuDataDirectory?: string,
 ): Promise<Record<string, string>> {
   const runtimeDirectory = dirname(toolDirectory);
-  const env: Record<string, string> = {};
   const dynamicLibraryDirs = await nativeDynamicLibraryDirs(runtimeDirectory);
   const dynamicLibraryEnv = prependEnvPaths(
     nativeDynamicLibraryEnvName(),
     dynamicLibraryDirs,
     envVar(nativeDynamicLibraryEnvName()),
   );
-  if (dynamicLibraryEnv !== undefined) {
-    env[nativeDynamicLibraryEnvName()] = dynamicLibraryEnv;
-  }
 
-  const icuData = join(runtimeDirectory, 'share/icu');
-  if (await isDirectory(icuData)) {
-    env.ICU_DATA = icuData;
-    return env;
-  }
-  if (icuDataDirectory !== undefined) {
-    env.ICU_DATA = icuDataDirectory;
-    return env;
-  }
-  if (runtimeName() === 'deno') {
-    return env;
-  }
-  const packagedIcuData = await resolveNodeIcuDataDirectory();
-  if (packagedIcuData !== undefined) {
-    env.ICU_DATA = packagedIcuData;
-  }
+  const env = nativePostgresChildEnvironment(process.env, {
+    icuDataDirectory,
+  });
+  if (dynamicLibraryEnv !== undefined) env[nativeDynamicLibraryEnvName()] = dynamicLibraryEnv;
   return env;
+}
+
+export async function nativeServerInitdbEnvironment(
+  toolDirectory: string,
+  profile: Pick<ServerTools, 'icuDataDirectory' | 'catalogProfile'>,
+): Promise<Record<string, string>> {
+  const liveEnvironment = await nativeServerRuntimeEnv(toolDirectory, profile.icuDataDirectory);
+  return nativePostgresChildEnvironment(liveEnvironment, {
+    icuDataDirectory: profile.icuDataDirectory,
+    initdbCatalogProfile: profile.catalogProfile,
+  });
 }
 
 function nativeDynamicLibraryEnvName(): 'DYLD_LIBRARY_PATH' | 'LD_LIBRARY_PATH' | 'PATH' {
@@ -566,7 +572,7 @@ async function runCommand(
   timeoutMs?: number,
 ): Promise<Uint8Array> {
   const child = spawn(command, args, {
-    env: { ...process.env, ...env },
+    env: env ?? process.env,
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   const chunks: Uint8Array[] = [];

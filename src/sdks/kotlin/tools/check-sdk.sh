@@ -305,7 +305,9 @@ run_android_runtime_smoke() {
   mkdir -p \
     "$tmp_assets/oliphaunt/runtime/files/share/postgresql/extension" \
     "$tmp_assets/oliphaunt/static-registry" \
-    "$tmp_assets/oliphaunt/template-pgdata/files/base"
+    "$tmp_assets/oliphaunt/cluster-seed/files/base" \
+    "$tmp_assets/oliphaunt/cluster-seed/files/global" \
+    "$tmp_assets/oliphaunt/cluster-seed-icu/files/global"
   printf 'runtime smoke\n' >"$tmp_assets/oliphaunt/runtime/files/share/postgresql/README.liboliphaunt-smoke"
   printf "comment = 'vector smoke control'\n" >"$tmp_assets/oliphaunt/runtime/files/share/postgresql/extension/vector.control"
   printf "select 'vector smoke sql';\n" >"$tmp_assets/oliphaunt/runtime/files/share/postgresql/extension/vector--1.0.sql"
@@ -332,12 +334,26 @@ MANIFEST
     "$tmp_assets" \
     "$tmp_static_jni" \
     vector
-  printf '18\n' >"$tmp_assets/oliphaunt/template-pgdata/files/PG_VERSION"
-  printf 'template smoke\n' >"$tmp_assets/oliphaunt/template-pgdata/files/base/README.liboliphaunt-smoke"
+  printf '18\n' >"$tmp_assets/oliphaunt/cluster-seed/files/PG_VERSION"
+  printf 'control\n' >"$tmp_assets/oliphaunt/cluster-seed/files/global/pg_control"
+  printf '18\n' >"$tmp_assets/oliphaunt/cluster-seed-icu/files/PG_VERSION"
+  printf 'control\n' >"$tmp_assets/oliphaunt/cluster-seed-icu/files/global/pg_control"
+  printf 'cluster seed smoke\n' >"$tmp_assets/oliphaunt/cluster-seed/files/base/README.liboliphaunt-smoke"
+  cat >"$tmp_assets/oliphaunt/manifest.properties" <<'MANIFEST'
+schema=oliphaunt-native-runtime-carrier-v1
+clusterSeedTarget=android-datum64
+clusterSeedRelativePath=cluster-seed
+icuClusterSeedRelativePath=cluster-seed-icu
+MANIFEST
   cat >"$tmp_assets/oliphaunt/runtime/manifest.properties" <<'MANIFEST'
 schema=oliphaunt-runtime-resources-v1
 cacheKey=runtime-smoke
 layout=postgres-runtime-files-v1
+artifactRole=runtime
+catalogProfile=
+clusterSeedTarget=android-datum64
+icuDataTreeSha256=
+mode=native-direct
 selectedExtensions=vector
 extensions=vector
 runtimeFeatures=
@@ -348,25 +364,44 @@ mobileStaticRegistryPending=
 nativeModuleStems=vector
 mobileStaticRegistrySource=static-registry/oliphaunt_static_registry.c
 MANIFEST
-  cat >"$tmp_assets/oliphaunt/template-pgdata/manifest.properties" <<'MANIFEST'
+  cat >"$tmp_assets/oliphaunt/cluster-seed/manifest.properties" <<'MANIFEST'
 schema=oliphaunt-runtime-resources-v1
-cacheKey=template-smoke
-layout=postgres-template-pgdata-v1
-selectedExtensions=
-extensions=
+layout=oliphaunt-cluster-seed-v1
+artifactRole=cluster-seed-standard
+catalogProfile=standard
+postgresMajor=18
+physicalFormat=native-pg18-v1
+target=android-datum64
+compatibilityKey=native-pg18-android-datum64-v1
+initialSuperuser=postgres
 runtimeFeatures=
-sharedPreloadLibraries=
-mobileStaticRegistryState=not-required
-mobileStaticRegistryRegistered=
-mobileStaticRegistryPending=
-nativeModuleStems=
-mobileStaticRegistrySource=
+icuDataVersion=
+icuDataForm=
+icuDataTreeSha256=
+cacheKey=cluster-seed-standard-smoke
+MANIFEST
+  cat >"$tmp_assets/oliphaunt/cluster-seed-icu/manifest.properties" <<'MANIFEST'
+schema=oliphaunt-runtime-resources-v1
+layout=oliphaunt-cluster-seed-v1
+artifactRole=cluster-seed-icu
+catalogProfile=icu
+postgresMajor=18
+physicalFormat=native-pg18-v1
+target=android-datum64
+compatibilityKey=native-pg18-android-datum64-v1
+initialSuperuser=postgres
+runtimeFeatures=icu
+icuDataVersion=76.1
+icuDataForm=files-le
+icuDataTreeSha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+cacheKey=cluster-seed-icu-smoke
 MANIFEST
   cat >"$tmp_assets/oliphaunt/package-size.tsv" <<'REPORT'
 kind	id	extensions	files	bytes
-package	total	-	-	185
+package	total	-	-	205
 package	runtime	-	-	100
-package	template-pgdata	-	-	40
+package	cluster-seed	-	-	40
+package	cluster-seed-icu	-	-	20
 package	static-registry	-	-	45
 extensions	selected	-	-	30
 extension	vector	-	3	30
@@ -392,8 +427,13 @@ REPORT
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1
   fi
-  if [ ! -f "$generated/oliphaunt/template-pgdata/files/PG_VERSION" ]; then
-    echo "Kotlin Android generated assets did not include runtime-resources template PGDATA" >&2
+  if [ ! -f "$generated/oliphaunt/cluster-seed/files/PG_VERSION" ]; then
+    echo "Kotlin Android generated assets did not include the runtime-resource cluster seed" >&2
+    rm -rf "$tmp_assets" "$tmp_static_jni"
+    exit 1
+  fi
+  if [ ! -f "$generated/oliphaunt/cluster-seed-icu/files/global/pg_control" ]; then
+    echo "Kotlin Android generated assets did not include the target-matched ICU cluster seed" >&2
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1
   fi
@@ -447,8 +487,9 @@ REPORT
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1
   fi
-  if ! grep -Fxq "runtimeFeatures=" "$generated/oliphaunt/template-pgdata/manifest.properties"; then
-    echo "Kotlin Android generated template manifest did not preserve runtime feature metadata" >&2
+  if ! grep -Fxq "catalogProfile=standard" "$generated/oliphaunt/cluster-seed/manifest.properties" ||
+    ! grep -Fxq "catalogProfile=icu" "$generated/oliphaunt/cluster-seed-icu/manifest.properties"; then
+    echo "Kotlin Android generated assets did not preserve both exact cluster-seed profiles" >&2
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1
   fi

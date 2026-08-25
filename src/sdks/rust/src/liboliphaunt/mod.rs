@@ -37,12 +37,12 @@ pub struct OliphauntRuntime;
 pub struct NativePackagingResources {
     /// Fully materialized PostgreSQL runtime directory.
     pub runtime_dir: PathBuf,
-    /// Fully initialized template PGDATA directory.
-    pub template_pgdata: PathBuf,
+    /// Fully initialized PostgreSQL cluster seed directory.
+    pub cluster_seed: PathBuf,
     /// Content key for the runtime directory.
     pub runtime_cache_key: String,
-    /// Content key for the template PGDATA directory.
-    pub template_cache_key: String,
+    /// Content key for the PostgreSQL cluster seed directory.
+    pub cluster_seed_cache_key: String,
 }
 
 /// Physical runtime layout requested by unpublished native packaging tools.
@@ -56,23 +56,40 @@ pub enum NativePackagingRuntime {
     PostgresServer,
 }
 
+/// PostgreSQL catalog profile requested by unpublished native packaging tools.
+#[cfg(feature = "internal-native-packaging")]
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativePackagingCatalogProfile {
+    /// Cluster initialized without the optional ICU data carrier.
+    Standard,
+    /// Cluster initialized with the exact optional ICU data carrier.
+    Icu,
+}
+
 /// Materialize the exact native inputs used by the unpublished packaging tool.
 #[cfg(feature = "internal-native-packaging")]
 #[doc(hidden)]
 pub fn materialize_native_packaging_resources(
     runtime: NativePackagingRuntime,
     extensions: &[Extension],
+    catalog_profile: NativePackagingCatalogProfile,
 ) -> Result<NativePackagingResources> {
     let mode = match runtime {
         NativePackagingRuntime::Embedded => EngineMode::Direct,
         NativePackagingRuntime::PostgresServer => EngineMode::Server,
     };
-    let resources = root::materialize_native_resources_for_runtime(mode, extensions)?;
+    let catalog_profile = match catalog_profile {
+        NativePackagingCatalogProfile::Standard => root::NativeCatalogProfile::Standard,
+        NativePackagingCatalogProfile::Icu => root::NativeCatalogProfile::Icu,
+    };
+    let resources =
+        root::materialize_native_resources_for_runtime(mode, extensions, catalog_profile)?;
     Ok(NativePackagingResources {
         runtime_dir: resources.runtime_dir,
-        template_pgdata: resources.template_pgdata,
+        cluster_seed: resources.cluster_seed,
         runtime_cache_key: resources.runtime_cache_key,
-        template_cache_key: resources.template_cache_key,
+        cluster_seed_cache_key: resources.cluster_seed_cache_key,
     })
 }
 

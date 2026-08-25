@@ -160,9 +160,9 @@ const REQUIRED_AUDIT_CHECKS = [
   {
     id: 'optional-icu-initdb',
     requirement: 'Optional ICU data stays optional during initdb',
-    patches: ['0016-liboliphaunt-skip-icu-collation-version-without-icu-data.patch'],
-    evidence: ['getenv("ICU_DATA")', 'pg_collation_actual_version', 'pg_import_system_collations'],
-    posture: 'Base liboliphaunt runtimes can bootstrap non-ICU databases without bundling optional ICU data; ICU packages keep upstream collation setup by setting ICU_DATA.',
+    patches: ['0016-liboliphaunt-control-initdb-collation-discovery.patch'],
+    evidence: ['OLIPHAUNT_INTERNAL_ICU_READY', 'OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY', 'OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY', 'strcmp', 'pg_collation_actual_version', 'pg_import_system_collations'],
+    posture: 'Ordinary initdb and public collation import retain PostgreSQL host discovery. Distributed standard seeds suppress OS and ICU discovery; ICU seeds suppress only OS discovery and verify ICU readiness for initdb\'s unicode-version probe.',
   },
   {
     id: 'apple-dynahash-namespace',
@@ -210,6 +210,7 @@ const EXPECTED_UPSTREAM_TOUCHPOINTS = new Map([
   ['src/backend/access/transam/xlogarchive.c', 'Apple mobile embedded builds compile out optional archive shell commands.'],
   ['src/backend/archive/shell_archive.c', 'Apple mobile embedded builds compile out optional archive shell commands.'],
   ['src/backend/commands/event_trigger.c', 'Embedded FE/BE protocol sessions can run event triggers without changing standalone recovery behavior.'],
+  ['src/backend/commands/collationcmds.c', 'System-collation import preserves host providers except during deliberate deterministic distributed-seed production; verified ICU readiness independently gates only the ICU provider.'],
   ['src/backend/libpq/be-secure.c', 'Backend secure read/write path delegates to a host I/O vtable only when OLIPHAUNT_EMBEDDED is set.'],
   ['src/backend/libpq/pqcomm.c', 'Standalone embedded sessions avoid waiting on a non-existent postmaster death latch.'],
   ['src/backend/port/Makefile', 'Embedded mobile builds swap unavailable SysV shared memory and semaphores for process-local implementations.'],
@@ -221,7 +222,10 @@ const EXPECTED_UPSTREAM_TOUCHPOINTS = new Map([
   ['src/backend/storage/ipc/procsignal.c', 'The one-backend embedded runtime dispatches ProcSignal flags without sending process-directed host signals.'],
   ['src/backend/tcop/postgres.c', 'Embedded backend entrypoint, protocol lifecycle, cwd restoration, host runtime paths, and host-owned SIGUSR1 disposition.'],
   ['src/backend/utils/fmgr/dfmgr.c', 'Static extension lookup reuses PostgreSQL dynamic function manager semantics.'],
-  ['src/bin/initdb/initdb.c', 'Base runtimes skip ICU-backed collation setup until optional ICU data is present.'],
+  [
+    'src/bin/initdb/initdb.c',
+    'Controlled seed production selects standard or verified ICU collation discovery without changing ordinary initdb semantics.',
+  ],
   ['src/include/libpq/libpq-be.h', 'Host I/O vtable is attached to PostgreSQL Port state under OLIPHAUNT_EMBEDDED.'],
   ['src/include/tcop/backend_startup.h', 'Embedded BackendMain may return after its returning PostgresMain call without retaining an invalid pg_noreturn declaration.'],
   ['src/include/port.h', 'Embedded mobile builds avoid POSIX shared memory declarations and route embedded backend signal calls through the host-safe provider boundary.'],

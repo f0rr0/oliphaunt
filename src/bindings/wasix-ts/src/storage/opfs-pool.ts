@@ -4,6 +4,7 @@ import { composeWasixStorageFailure, WasixStorageError } from '../errors.js';
 import {
   assertWasixPhysicalIdentity,
   physicalIdentityMatches,
+  type WasixClusterSeedLoader,
   type WasixPhysicalIdentity,
   type WasixStorageSyncBoundary,
 } from '../storage-provider.js';
@@ -172,7 +173,7 @@ export class DirectOpfsPool {
 
   static async open(
     name: string,
-    template: WasixDirectoryMount,
+    loadClusterSeed: WasixClusterSeedLoader,
     physicalIdentity: WasixPhysicalIdentity,
   ): Promise<DirectOpfsPool> {
     const selectedIdentity = assertWasixPhysicalIdentity(physicalIdentity);
@@ -180,14 +181,20 @@ export class DirectOpfsPool {
     let data = await database.getDirectoryHandle(DATA_DIRECTORY, { create: true });
     let stored = await readPoolState(database, name, selectedIdentity);
     if (stored?.phase === 'initializing') {
-      ({ data, state: stored } = await resetPoolTemplate(
+      ({ data, state: stored } = await resetPoolClusterSeed(
         database,
         name,
-        template,
+        await loadClusterSeed(),
         selectedIdentity,
       ));
     } else if (stored === undefined) {
-      stored = await initializePoolState(database, data, name, template, selectedIdentity);
+      stored = await initializePoolState(
+        database,
+        data,
+        name,
+        await loadClusterSeed(),
+        selectedIdentity,
+      );
     }
     const state = stored.phase === 'ready' ? 'existing' : 'new';
     const pool = new DirectOpfsPool(name, database, data, selectedIdentity, state);
@@ -850,15 +857,15 @@ export async function inspectPooledOpfsDatabase(
 export async function preparePooledOpfsDatabase(
   database: FileSystemDirectoryHandle,
   name: string,
-  template: WasixDirectoryMount,
+  loadClusterSeed: WasixClusterSeedLoader,
   physicalIdentity: WasixPhysicalIdentity,
 ): Promise<PooledOpfsDatabase> {
   let state = await readPoolState(database, name, physicalIdentity);
   if (state?.phase === 'initializing') {
-    ({ state } = await resetPoolTemplate(
+    ({ state } = await resetPoolClusterSeed(
       database,
       name,
-      template,
+      await loadClusterSeed(),
       assertWasixPhysicalIdentity(physicalIdentity),
     ));
   }
@@ -972,14 +979,14 @@ async function initializePoolState(
   database: FileSystemDirectoryHandle,
   data: FileSystemDirectoryHandle,
   name: string,
-  template: WasixDirectoryMount,
+  clusterSeed: WasixDirectoryMount,
   physicalIdentity: WasixPhysicalIdentity,
 ): Promise<PoolState> {
-  const entries: StoredEntry[] = [...new Set(template.directories)].map((path) => ({
+  const entries: StoredEntry[] = [...new Set(clusterSeed.directories)].map((path) => ({
     path,
     type: 'directory',
   }));
-  const files = await parallelMap(Object.entries(template.files), async ([path, bytes]) => {
+  const files = await parallelMap(Object.entries(clusterSeed.files), async ([path, bytes]) => {
     const backing = newBackingName();
     await writeAtomicDataFile(data, backing, bytes);
     return { path, type: 'file', backing } satisfies StoredFile;
@@ -996,10 +1003,10 @@ async function initializePoolState(
   return state;
 }
 
-async function resetPoolTemplate(
+async function resetPoolClusterSeed(
   database: FileSystemDirectoryHandle,
   name: string,
-  template: WasixDirectoryMount,
+  clusterSeed: WasixDirectoryMount,
   physicalIdentity: WasixPhysicalIdentity,
 ): Promise<{ data: FileSystemDirectoryHandle; state: PoolState }> {
   try {
@@ -1008,7 +1015,7 @@ async function resetPoolTemplate(
     if (errorName(error) !== 'NotFoundError') throw error;
   }
   const data = await database.getDirectoryHandle(DATA_DIRECTORY, { create: true });
-  const state = await initializePoolState(database, data, name, template, physicalIdentity);
+  const state = await initializePoolState(database, data, name, clusterSeed, physicalIdentity);
   return { data, state };
 }
 

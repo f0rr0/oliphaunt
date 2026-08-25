@@ -5,7 +5,7 @@ Subject: [PATCH] liboliphaunt: disable shell commands on Apple mobile targets
 
 Apple mobile SDKs mark system(3) unavailable. Embedded liboliphaunt must not
 depend on shell archive, restore, cleanup, or recovery-end commands on mobile
-anyway: the app owns packaged runtime/template assets, and direct mode has no
+anyway: the app owns packaged runtime/cluster-seed assets, and direct mode has no
 postmaster-owned process environment for shell command execution.
 
 Keep desktop/server PostgreSQL behavior unchanged, but compile the system(3)

@@ -122,7 +122,7 @@ need different PostgreSQL settings do not need a new C ABI; they pass validated
 arguments win, so SDKs and benchmark harnesses can apply concrete PostgreSQL
 GUC overrides above the stable C boundary without inventing tuning profiles.
 
-SDKs must hydrate PGDATA from a packaged template before calling
+SDKs must hydrate PGDATA from a packaged cluster seed before calling
 `oliphaunt_init`; the C boundary never runs `initdb` or initializes an empty
 root. `tools/run-host-c-smoke.mjs` performs that preparation explicitly before
 running the C consumer and includes a fast iOS simulator syntax

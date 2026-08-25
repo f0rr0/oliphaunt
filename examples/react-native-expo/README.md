@@ -80,8 +80,8 @@ The smoke script:
 - installs the packed SDK into this Expo app when needed;
 - runs Expo prebuild for Android when the ignored generated `android/` project
   is missing;
-- builds a clean Android `liboliphaunt` runtime resources with runtime files,
-  template PGDATA, package-size evidence, and `liboliphaunt.so`;
+- builds clean Android `liboliphaunt` runtime resources with runtime files,
+  a standard cluster seed, package-size evidence, and `liboliphaunt.so`;
 - builds and installs the dev-client APK;
 - launches through Expo dev-client and waits for
   `OLIPHAUNT_EXPO_SMOKE_PASS` from logcat.
@@ -96,7 +96,7 @@ OLIPHAUNT_EXPO_ANDROID_KEEP_METRO=1 pnpm run smoke:android
 OLIPHAUNT_EXPO_ANDROID_REPACKAGE_ASSETS=1 pnpm run smoke:android
 OLIPHAUNT_EXPO_ANDROID_GRADLE_CONFIGURATION_CACHE=1 pnpm run smoke:android
 OLIPHAUNT_EXPO_ANDROID_RUNTIME_DIR=/path/to/runtime pnpm run smoke:android
-OLIPHAUNT_EXPO_ANDROID_TEMPLATE_PGDATA_DIR=/path/to/pgdata pnpm run smoke:android
+OLIPHAUNT_EXPO_ANDROID_SEED_CLOSURE_DIR=/path/to/android-datum64-runtime-closure pnpm run smoke:android
 OLIPHAUNT_EXPO_ANDROID_OLIPHAUNT_SO=/path/to/liboliphaunt.so pnpm run smoke:android
 ```
 
@@ -132,7 +132,7 @@ Fast iOS build/smoke harness:
 ```sh
 OLIPHAUNT_EXPO_IOS_OLIPHAUNT_XCFRAMEWORK=/path/to/liboliphaunt.xcframework \
 OLIPHAUNT_EXPO_IOS_RUNTIME_DIR=/path/to/postgres-runtime \
-OLIPHAUNT_EXPO_IOS_TEMPLATE_PGDATA_DIR=/path/to/template-pgdata \
+OLIPHAUNT_EXPO_IOS_SEED_CLOSURE_DIR=/path/to/ios-datum64-runtime-closure \
 pnpm run smoke:ios
 ```
 
@@ -151,7 +151,7 @@ Physical iOS runs use Xcode's `devicectl` path:
 OLIPHAUNT_EXPO_IOS_SDK=iphoneos \
 OLIPHAUNT_EXPO_IOS_OLIPHAUNT_XCFRAMEWORK=/path/to/liboliphaunt.xcframework \
 OLIPHAUNT_EXPO_IOS_RUNTIME_DIR=/path/to/postgres-runtime \
-OLIPHAUNT_EXPO_IOS_TEMPLATE_PGDATA_DIR=/path/to/template-pgdata \
+OLIPHAUNT_EXPO_IOS_SEED_CLOSURE_DIR=/path/to/ios-datum64-runtime-closure \
 pnpm run bench:ios
 ```
 

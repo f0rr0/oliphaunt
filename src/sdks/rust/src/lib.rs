@@ -43,7 +43,8 @@ pub use ipc::{
 #[cfg(feature = "internal-native-packaging")]
 #[doc(hidden)]
 pub use liboliphaunt::{
-    NativePackagingResources, NativePackagingRuntime, materialize_native_packaging_resources,
+    NativePackagingCatalogProfile, NativePackagingResources, NativePackagingRuntime,
+    materialize_native_packaging_resources,
 };
 pub use query::{CommandResult, QueryField, QueryFormat, QueryParam, QueryResult, QueryRow};
 pub use storage::DatabaseStorage;

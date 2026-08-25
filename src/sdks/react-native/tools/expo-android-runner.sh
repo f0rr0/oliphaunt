@@ -102,16 +102,20 @@ else
   mobile_extensions_raw="vector"
 fi
 startup_gucs="${OLIPHAUNT_EXPO_ANDROID_STARTUP_GUCS:-${OLIPHAUNT_EXPO_MOBILE_STARTUP_GUCS:-}}"
-wal_segsize_mb="${OLIPHAUNT_EXPO_ANDROID_WAL_SEGSIZE_MB:-${OLIPHAUNT_EXPO_MOBILE_WAL_SEGSIZE_MB:-16}}"
 benchmark_preset="${OLIPHAUNT_EXPO_ANDROID_BENCHMARK_PRESET:-${OLIPHAUNT_EXPO_MOBILE_BENCHMARK_PRESET:-full}}"
 crash_storage_override="${OLIPHAUNT_EXPO_ANDROID_CRASH_STORAGE:-}"
 crash_storage="${crash_storage_override:-/data/data/$app_id/files/oliphaunt-crash-recovery-storage-$crash_storage_suffix}"
-mobile_template_initdb="${OLIPHAUNT_EXPO_ANDROID_INITDB:-}"
+mobile_packaging_initdb="${OLIPHAUNT_EXPO_ANDROID_INITDB:-}"
 case "${OLIPHAUNT_EXPO_ANDROID_ICU:-0}" in
   1|true|TRUE|yes|YES|on|ON) android_icu_enabled=1 ;;
   0|false|FALSE|no|NO|off|OFF) android_icu_enabled=0 ;;
   *) fail "OLIPHAUNT_EXPO_ANDROID_ICU must be a boolean value" ;;
 esac
+if [ "$android_icu_enabled" = "1" ]; then
+  configure_mobile_catalog_profile_probe icu
+else
+  configure_mobile_catalog_profile_probe standard
+fi
 android_icu_data_dir="${OLIPHAUNT_EXPO_ANDROID_ICU_DATA_DIR:-}"
 react_native_package_extra_excludes=(--exclude ios/vendor)
 metro_pid=""
@@ -417,15 +421,14 @@ prepare_runtime_resources() {
   [ -f "$runtime_source/share/postgresql/postgres.bki" ] ||
     fail "runtime assets are missing postgres.bki: $runtime_source"
   ensure_mobile_runtime_tool_permissions "$runtime_source"
-  ensure_mobile_tool_executable "$mobile_template_initdb"
+  ensure_mobile_tool_executable "$mobile_packaging_initdb"
 
-  local template_source
-  template_source="$(
-    find_latest_mobile_pgdata \
+  local seed_closure
+  seed_closure="$(
+    require_mobile_runtime_seed_closure \
       Android \
-      "${OLIPHAUNT_EXPO_ANDROID_TEMPLATE_PGDATA_DIR:-}" \
-      OLIPHAUNT_EXPO_ANDROID_TEMPLATE_PGDATA_DIR \
-      OLIPHAUNT_EXPO_ANDROID_INITDB
+      "${OLIPHAUNT_EXPO_ANDROID_SEED_CLOSURE_DIR:-}" \
+      OLIPHAUNT_EXPO_ANDROID_SEED_CLOSURE_DIR
   )"
   local selected_extensions
   selected_extensions="$(normalize_mobile_extensions)"
@@ -440,11 +443,13 @@ prepare_runtime_resources() {
   if prepared_package="$(oliphaunt_dev_prepare_prebuilt_mobile_runtime_resource_package \
     Android \
     "$runtime_source" \
-    "$mobile_template_initdb" \
+    "$mobile_packaging_initdb" \
     "$selected_extensions" \
     "$package_root" \
     "$android_icu_enabled" \
     "$android_icu_data_dir")"; then
+    install_mobile_runtime_seed_closure "$prepared_package" "$seed_closure"
+    bind_mobile_runtime_manifest_to_seed_closure "$prepared_package" "$seed_closure"
     assert_android_icu_payload \
       "$prepared_package/oliphaunt/runtime/manifest.properties" \
       "$prepared_package/oliphaunt/runtime/files/share/icu" \
@@ -458,7 +463,7 @@ prepare_runtime_resources() {
   prepared_package="$(prepare_mobile_runtime_resource_package \
     Android \
     "$runtime_source" \
-    "$template_source" \
+    "$seed_closure" \
     "$static_registry_source" \
     "$selected_extensions" \
     "${OLIPHAUNT_EXPO_ANDROID_REPACKAGE_ASSETS:-0}" \
@@ -617,7 +622,7 @@ build_apk() {
     fail "APK is missing lib/$android_abi/liboliphaunt.so"
   grep -Fxq "assets/oliphaunt/runtime/manifest.properties" "$apk_files" ||
     fail "APK is missing Oliphaunt runtime manifest"
-  grep -Fxq "assets/oliphaunt/template-pgdata/manifest.properties" "$apk_files" ||
+  grep -Fxq "assets/oliphaunt/cluster-seed/manifest.properties" "$apk_files" ||
     fail "APK is missing liboliphaunt template manifest"
   grep -Fxq "assets/oliphaunt/package-size.tsv" "$apk_files" ||
     fail "APK is missing Oliphaunt package-size report"

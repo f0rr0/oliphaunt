@@ -542,8 +542,13 @@ function validateBase(value, label, allowFileUrls) {
   const unsupported = [...new Set(rows.filter(({ role }) => !allowed.has(role)).map(({ role }) => role))].sort(compareText);
   if (unsupported.length) fail(`${label}.assets has unsupported roles: ${unsupported.join(",")}`);
   const framework = oneRole(rows, "base-xcframework", `${label}.assets`);
-  oneRole(rows, "runtime-resources", `${label}.assets`);
+  const runtime = oneRole(rows, "runtime-resources", `${label}.assets`);
   oneRole(rows, "icu-data", `${label}.assets`);
+  const expectedRuntimeName =
+    `liboliphaunt-${version}-runtime-resources-ios-datum64.tar.gz`;
+  if (runtime.name !== expectedRuntimeName) {
+    fail(`${label} runtime-resources asset must be ${expectedRuntimeName}`);
+  }
   if (!path.posix.basename(framework.member).endsWith(".xcframework")) fail(`${label} base framework member must be an XCFramework`);
   return { assets: rows, product: row.product, tag: row.tag, version };
 }

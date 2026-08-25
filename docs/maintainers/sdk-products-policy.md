@@ -34,7 +34,7 @@ not source-text assertions, prove runtime delegation and consumer behavior.
   handles; the executable modules are a separate `liboliphaunt-wasix` carrier.
 - `src/sdks/swift/`: Swift package with an actor-first `Oliphaunt` API and a
   native-direct C ABI product boundary over `liboliphaunt`; it can materialize
-  packaged runtime/template resources for iOS and macOS apps.
+  packaged runtime/cluster-seed resources for iOS and macOS apps.
 - `src/sdks/kotlin/`: Android SDK with a suspend-first common implementation,
   JVM contract tests, and the Android native-direct JNI engine. Maven
   publication is deliberately limited to the Android consumer surface.

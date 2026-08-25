@@ -83,7 +83,7 @@ require_source_text() {
   file="$1"
   expected="$2"
   message="$3"
-  if ! grep -Fq "$expected" "$file"; then
+  if ! grep -Fq -- "$expected" "$file"; then
     echo "$message" >&2
     echo "expected '$expected' in $file" >&2
     exit 1
@@ -94,7 +94,7 @@ reject_source_text() {
   file="$1"
   rejected="$2"
   message="$3"
-  if grep -Fq "$rejected" "$file"; then
+  if grep -Fq -- "$rejected" "$file"; then
     echo "$message" >&2
     echo "rejected '$rejected' in $file" >&2
     exit 1
@@ -144,6 +144,7 @@ JSON
   rm -f "$scratch_root/pnpm-lock.yaml"
   mkdir -p "$scratch_root/src/shared/fixtures"
   mkdir -p "$scratch_root/src/shared/js-core/test"
+  mkdir -p "$scratch_root/shared/cluster-seed-contract/fixtures"
   mkdir -p "$scratch_root/tools/dev"
   mkdir -p "$scratch_root/tools/policy"
   mkdir -p "$scratch_root/tools/release"
@@ -152,6 +153,9 @@ JSON
   mkdir -p "$scratch_root/src/runtimes/liboliphaunt/licenses"
   mkdir -p "$scratch_root/src/sources/third-party/shared"
   rsync -a --delete src/shared/fixtures/ "$scratch_root/src/shared/fixtures/"
+  rsync -a --delete \
+    src/shared/cluster-seed-contract/fixtures/ \
+    "$scratch_root/shared/cluster-seed-contract/fixtures/"
   cp src/shared/js-core/test/protocol-fixtures.mjs \
     src/shared/js-core/test/protocol-fixtures.d.mts \
     "$scratch_root/src/shared/js-core/test/"
@@ -445,6 +449,8 @@ require_source_text "$package_dir/tools/expo-android-runner.sh" '"-Pliboliphaunt
   "React Native Android mobile runner must pin the staged Kotlin SDK candidate AAR by exact path"
 require_source_text "$package_dir/tools/mobile-extension-runtime.sh" 'liboliphaunt-native-version "$native_runtime_version"' \
   "React Native mobile resources must bind extension payloads to the exact liboliphaunt native version"
+require_source_text "$package_dir/tools/mobile-extension-runtime.sh" '--mode native-direct' \
+  "React Native mobile resources must package the native-direct runtime contract"
 require_source_text "$package_dir/src/client.ts" "generatedExtensionBySqlName(trimmed)" \
   "React Native JS boundary must validate selected extensions against the generated extension catalog before crossing the bridge"
 require_source_text "$package_dir/src/client.ts" "unknown React Native Oliphaunt extension id" \
@@ -885,8 +891,13 @@ if [ "$run_android_platform_checks" = "1" ]; then
     "$tmp_assets/oliphaunt/runtime/files/share/postgresql/extension" \
     "$tmp_assets/oliphaunt/runtime/files/lib/postgresql" \
     "$tmp_assets/oliphaunt/static-registry" \
-    "$tmp_assets/oliphaunt/template-pgdata/files/base"
-  printf '18\n' >"$tmp_assets/oliphaunt/template-pgdata/files/PG_VERSION"
+    "$tmp_assets/oliphaunt/cluster-seed/files/base" \
+    "$tmp_assets/oliphaunt/cluster-seed/files/global" \
+    "$tmp_assets/oliphaunt/cluster-seed-icu/files/global"
+  printf '18\n' >"$tmp_assets/oliphaunt/cluster-seed/files/PG_VERSION"
+  printf 'control\n' >"$tmp_assets/oliphaunt/cluster-seed/files/global/pg_control"
+  printf '18\n' >"$tmp_assets/oliphaunt/cluster-seed-icu/files/PG_VERSION"
+  printf 'control\n' >"$tmp_assets/oliphaunt/cluster-seed-icu/files/global/pg_control"
   printf 'runtime smoke\n' >"$tmp_assets/oliphaunt/runtime/files/share/postgresql/README.liboliphaunt-smoke"
   printf "comment = 'vector smoke control'\n" >"$tmp_assets/oliphaunt/runtime/files/share/postgresql/extension/vector.control"
   printf "select 'vector smoke sql';\n" >"$tmp_assets/oliphaunt/runtime/files/share/postgresql/extension/vector--1.0.sql"
@@ -924,11 +935,22 @@ MANIFEST
     "$tmp_assets" \
     "$tmp_static_jni" \
     auto_explain
-  printf 'template smoke\n' >"$tmp_assets/oliphaunt/template-pgdata/files/base/README.liboliphaunt-smoke"
+  printf 'cluster seed smoke\n' >"$tmp_assets/oliphaunt/cluster-seed/files/base/README.liboliphaunt-smoke"
+  cat >"$tmp_assets/oliphaunt/manifest.properties" <<'MANIFEST'
+schema=oliphaunt-native-runtime-carrier-v1
+clusterSeedTarget=android-datum64
+clusterSeedRelativePath=cluster-seed
+icuClusterSeedRelativePath=cluster-seed-icu
+MANIFEST
   cat >"$tmp_assets/oliphaunt/runtime/manifest.properties" <<'MANIFEST'
 schema=oliphaunt-runtime-resources-v1
 cacheKey=runtime-smoke
 layout=postgres-runtime-files-v1
+artifactRole=runtime
+catalogProfile=
+clusterSeedTarget=android-datum64
+icuDataTreeSha256=
+mode=native-direct
 selectedExtensions=auto_explain,vector
 extensions=vector
 runtimeFeatures=
@@ -939,70 +961,85 @@ mobileStaticRegistryPending=
 nativeModuleStems=auto_explain,vector
 mobileStaticRegistrySource=static-registry/oliphaunt_static_registry.c
 MANIFEST
-  cat >"$tmp_assets/oliphaunt/template-pgdata/manifest.properties" <<'MANIFEST'
+  cat >"$tmp_assets/oliphaunt/cluster-seed/manifest.properties" <<'MANIFEST'
 schema=oliphaunt-runtime-resources-v1
-cacheKey=template-smoke
-layout=postgres-template-pgdata-v1
-selectedExtensions=
-extensions=
+layout=oliphaunt-cluster-seed-v1
+artifactRole=cluster-seed-standard
+catalogProfile=standard
+postgresMajor=18
+physicalFormat=native-pg18-v1
+target=android-datum64
+compatibilityKey=native-pg18-android-datum64-v1
+initialSuperuser=postgres
 runtimeFeatures=
-sharedPreloadLibraries=
-mobileStaticRegistryState=not-required
-mobileStaticRegistryRegistered=
-mobileStaticRegistryPending=
-nativeModuleStems=
-mobileStaticRegistrySource=
+icuDataVersion=
+icuDataForm=
+icuDataTreeSha256=
+cacheKey=cluster-seed-standard-smoke
+MANIFEST
+  cat >"$tmp_assets/oliphaunt/cluster-seed-icu/manifest.properties" <<'MANIFEST'
+schema=oliphaunt-runtime-resources-v1
+layout=oliphaunt-cluster-seed-v1
+artifactRole=cluster-seed-icu
+catalogProfile=icu
+postgresMajor=18
+physicalFormat=native-pg18-v1
+target=android-datum64
+compatibilityKey=native-pg18-android-datum64-v1
+initialSuperuser=postgres
+runtimeFeatures=icu
+icuDataVersion=76.1
+icuDataForm=files-le
+icuDataTreeSha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+cacheKey=cluster-seed-icu-smoke
 MANIFEST
   cat >"$tmp_assets/oliphaunt/package-size.tsv" <<'REPORT'
 kind	id	extensions	files	bytes
-package	total	-	-	185
+package	total	-	-	205
 package	runtime	-	-	100
-package	template-pgdata	-	-	40
+package	cluster-seed	-	-	40
+package	cluster-seed-icu	-	-	20
 package	static-registry	-	-	45
 extensions	selected	-	-	30
 extension	auto_explain	-	0	0
 extension	vector	-	3	30
 REPORT
-  for manifest_package in runtime template-pgdata; do
-    tmp_assets_missing_selection="$(prepare_scratch_dir "react-native-runtime-resources-missing-selected-extensions-$manifest_package")"
-    cp -R "$tmp_assets/." "$tmp_assets_missing_selection/"
-    sed -i.bak \
-      '/^selectedExtensions=/d' \
-      "$tmp_assets_missing_selection/oliphaunt/$manifest_package/manifest.properties"
-    rm -f "$tmp_assets_missing_selection/oliphaunt/$manifest_package/manifest.properties.bak"
-    missing_selection_log="$scratch_root/react-native-runtime-resources-missing-selected-extensions-$manifest_package.log"
-    rm -f "$missing_selection_log"
-    printf '\n==> %s\n' "$gradle_cmd -p $android_dir prepareOliphauntAndroidAssets -PoliphauntRuntimeResourcesDir=<missing-$manifest_package-selected-extensions>"
-    if "$gradle_cmd" -p "$android_dir" prepareOliphauntAndroidAssets \
-      "-PoliphauntRuntimeResourcesDir=$tmp_assets_missing_selection" \
-      --rerun-tasks \
-      $gradle_scratch_args \
-      $gradle_smoke_cache_args >"$missing_selection_log" 2>&1; then
-      echo "React Native Android prebuilt runtime resources accepted a $manifest_package manifest without selectedExtensions" >&2
-      cat "$missing_selection_log" >&2
-      rm -f "$missing_selection_log"
-      rm -rf "$tmp_assets_missing_selection"
-      exit 1
-    fi
-    if ! grep -Fq "$manifest_package manifest is missing required selectedExtensions property" "$missing_selection_log"; then
-      echo "React Native Android prebuilt runtime resources failed without the expected missing selectedExtensions diagnostic for $manifest_package" >&2
-      cat "$missing_selection_log" >&2
-      rm -f "$missing_selection_log"
-      rm -rf "$tmp_assets_missing_selection"
-      exit 1
-    fi
+  tmp_assets_missing_selection="$(prepare_scratch_dir react-native-runtime-resources-missing-selected-extensions)"
+  cp -R "$tmp_assets/." "$tmp_assets_missing_selection/"
+  sed -i.bak \
+    '/^selectedExtensions=/d' \
+    "$tmp_assets_missing_selection/oliphaunt/runtime/manifest.properties"
+  rm -f "$tmp_assets_missing_selection/oliphaunt/runtime/manifest.properties.bak"
+  missing_selection_log="$scratch_root/react-native-runtime-resources-missing-selected-extensions.log"
+  rm -f "$missing_selection_log"
+  printf '\n==> %s\n' "$gradle_cmd -p $android_dir prepareOliphauntAndroidAssets -PoliphauntRuntimeResourcesDir=<missing-runtime-selected-extensions>"
+  if "$gradle_cmd" -p "$android_dir" prepareOliphauntAndroidAssets \
+    "-PoliphauntRuntimeResourcesDir=$tmp_assets_missing_selection" \
+    --rerun-tasks \
+    $gradle_scratch_args \
+    $gradle_smoke_cache_args >"$missing_selection_log" 2>&1; then
+    echo "React Native Android prebuilt runtime resources accepted a runtime manifest without selectedExtensions" >&2
+    cat "$missing_selection_log" >&2
     rm -f "$missing_selection_log"
     rm -rf "$tmp_assets_missing_selection"
-  done
+    exit 1
+  fi
+  if ! grep -Fq "runtime manifest is missing required selectedExtensions property" "$missing_selection_log"; then
+    echo "React Native Android prebuilt runtime resources failed without the expected missing selectedExtensions diagnostic" >&2
+    cat "$missing_selection_log" >&2
+    rm -f "$missing_selection_log"
+    rm -rf "$tmp_assets_missing_selection"
+    exit 1
+  fi
+  rm -f "$missing_selection_log"
+  rm -rf "$tmp_assets_missing_selection"
 
   tmp_assets_empty_selection="$(prepare_scratch_dir react-native-runtime-resources-empty-selected-extensions)"
   cp -R "$tmp_assets/." "$tmp_assets_empty_selection/"
-  for manifest_package in runtime template-pgdata; do
-    sed -i.bak \
-      's/^selectedExtensions=.*$/selectedExtensions=/' \
-      "$tmp_assets_empty_selection/oliphaunt/$manifest_package/manifest.properties"
-    rm -f "$tmp_assets_empty_selection/oliphaunt/$manifest_package/manifest.properties.bak"
-  done
+  sed -i.bak \
+    's/^selectedExtensions=.*$/selectedExtensions=/' \
+    "$tmp_assets_empty_selection/oliphaunt/runtime/manifest.properties"
+  rm -f "$tmp_assets_empty_selection/oliphaunt/runtime/manifest.properties.bak"
   run "$gradle_cmd" -p "$android_dir" prepareOliphauntAndroidAssets \
     "-PoliphauntRuntimeResourcesDir=$tmp_assets_empty_selection" \
     --rerun-tasks \
@@ -1010,8 +1047,6 @@ REPORT
     $gradle_smoke_cache_args
   require_manifest_line "$generated_assets/oliphaunt/runtime/manifest.properties" "selectedExtensions=" \
     "React Native Android prebuilt runtime resources did not accept an empty runtime selected-extension domain"
-  require_manifest_line "$generated_assets/oliphaunt/template-pgdata/manifest.properties" "selectedExtensions=" \
-    "React Native Android prebuilt runtime resources did not accept an empty template selected-extension domain"
   rm -rf "$tmp_assets_empty_selection"
 
   # Android materialization deliberately omits target-specific shared objects
@@ -1172,8 +1207,13 @@ REPORT
     "assets/oliphaunt/package-size.tsv" \
     "assets/oliphaunt/static-registry/oliphaunt_static_registry.c" \
     "assets/oliphaunt/static-registry/manifest.properties" \
-    "assets/oliphaunt/template-pgdata/manifest.properties" \
-    "assets/oliphaunt/template-pgdata/files/PG_VERSION"
+    "assets/oliphaunt/manifest.properties" \
+    "assets/oliphaunt/cluster-seed/manifest.properties" \
+    "assets/oliphaunt/cluster-seed/files/PG_VERSION" \
+    "assets/oliphaunt/cluster-seed/files/global/pg_control" \
+    "assets/oliphaunt/cluster-seed-icu/manifest.properties" \
+    "assets/oliphaunt/cluster-seed-icu/files/PG_VERSION" \
+    "assets/oliphaunt/cluster-seed-icu/files/global/pg_control"
   do
     if ! jar tf "$asset_aar" | grep -Fx "$required_asset" >/dev/null; then
       echo "Android AAR did not include generated asset $required_asset" >&2

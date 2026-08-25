@@ -4,6 +4,12 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import {
+  parseProperties,
+  requireProperty,
+  validateNativeRuntimeClosure,
+} from "./native-resource-closure.mjs";
+
 const PREFIX = "verify-ios-package.mjs";
 
 function compareText(left, right) {
@@ -109,37 +115,9 @@ async function requirePayloadFiles(root, label) {
   }
 }
 
-function parseProperties(text, source) {
-  const values = new Map();
-  for (const [lineIndex, rawLine] of text.split(/\r?\n/u).entries()) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) {
-      continue;
-    }
-    const separator = line.indexOf("=");
-    if (separator < 1) {
-      fail(`${source}:${lineIndex + 1} is not a key=value property`);
-    }
-    const key = line.slice(0, separator).trim();
-    const value = line.slice(separator + 1).trim();
-    if (values.has(key)) {
-      fail(`${source}:${lineIndex + 1} repeats property ${key}`);
-    }
-    values.set(key, value);
-  }
-  return values;
-}
-
 async function readProperties(file) {
   await requireFile(file, "runtime-resource manifest");
   return parseProperties(await fs.readFile(file, "utf8"), file);
-}
-
-function requireProperty(properties, key, expected, source) {
-  const actual = properties.get(key);
-  if (actual !== expected) {
-    fail(`${source} must declare ${key}=${expected}; got ${actual ?? "<missing>"}`);
-  }
 }
 
 function portableCsv(properties, key, source) {
@@ -406,6 +384,18 @@ async function validateBaseLibrary(payloadDir, resourceRoot, allowRuntimeDylib) 
     }
     for (const { entry, file } of frameworks) {
       await requireFile(path.join(file, "Info.plist"), `${entry.name} metadata`);
+      const embeddedClosures = (await walk(file)).filter(
+        ({ entry: member, file: memberFile }) =>
+          member.isDirectory() &&
+          member.name === "oliphaunt" &&
+          path.basename(path.dirname(memberFile)) === "Resources",
+      );
+      if (embeddedClosures.length > 0) {
+        fail(
+          `staged React Native base framework must not embed a second runtime-resource closure: ` +
+            embeddedClosures.map(({ file: memberFile }) => memberFile).join(", "),
+        );
+      }
     }
     return frameworks.length;
   }
@@ -440,15 +430,22 @@ async function validateStagedPackage(payloadDir, allowRuntimeDylib) {
     payloadDir,
     "resources/OliphauntReactNativeResources.bundle/oliphaunt",
   );
+  const resourceRoots = (await walk(path.join(payloadDir, "resources"))).filter(
+    ({ entry, file }) =>
+      entry.isDirectory() &&
+      entry.name === "oliphaunt" &&
+      path.basename(path.dirname(file)) === "OliphauntReactNativeResources.bundle",
+  );
+  if (
+    resourceRoots.length !== 1 ||
+    path.resolve(resourceRoots[0].file) !== path.resolve(resourceRoot)
+  ) {
+    fail("staged React Native payload must contain exactly one composed runtime-resource root");
+  }
   await requireDirectory(resourceRoot, "React Native iOS runtime-resource bundle");
   const runtimeManifestFile = path.join(resourceRoot, "runtime/manifest.properties");
-  const templateManifestFile = path.join(resourceRoot, "template-pgdata/manifest.properties");
-  const runtime = await readProperties(runtimeManifestFile);
-  const template = await readProperties(templateManifestFile);
-  requireProperty(runtime, "schema", "oliphaunt-runtime-resources-v1", runtimeManifestFile);
-  requireProperty(runtime, "layout", "postgres-runtime-files-v1", runtimeManifestFile);
-  requireProperty(template, "schema", "oliphaunt-runtime-resources-v1", templateManifestFile);
-  requireProperty(template, "layout", "postgres-template-pgdata-v1", templateManifestFile);
+  const closure = await validateNativeRuntimeClosure(resourceRoot);
+  const runtime = closure.runtime;
   const selectedExtensions = portableCsv(runtime, "selectedExtensions", runtimeManifestFile);
   const extensions = portableCsv(runtime, "extensions", runtimeManifestFile);
   const stems = portableCsv(runtime, "nativeModuleStems", runtimeManifestFile);
@@ -532,45 +529,17 @@ async function validateStagedPackage(payloadDir, allowRuntimeDylib) {
   requireProperty(
     runtime,
     "mobileStaticRegistrySource",
-    frozenNative.length > 0 ? "oliphaunt_static_registry.c" : "",
+    frozenNative.length > 0 ? "static-registry/oliphaunt_static_registry.c" : "",
     runtimeManifestFile,
   );
-  requireExactDomain(
-    portableCsv(template, "extensions", templateManifestFile),
-    [],
-    `${templateManifestFile} extensions`,
-  );
-  requireExactDomain(
-    portableCsv(template, "selectedExtensions", templateManifestFile),
-    [],
-    `${templateManifestFile} selectedExtensions`,
-  );
-  requireExactDomain(
-    portableCsv(template, "nativeModuleStems", templateManifestFile),
-    [],
-    `${templateManifestFile} nativeModuleStems`,
-  );
-  requireExactDomain(
-    portableCsv(template, "mobileStaticRegistryRegistered", templateManifestFile),
-    [],
-    `${templateManifestFile} mobileStaticRegistryRegistered`,
-  );
-  requireExactDomain(
-    portableCsv(template, "mobileStaticRegistryPending", templateManifestFile),
-    [],
-    `${templateManifestFile} mobileStaticRegistryPending`,
-  );
-  requireProperty(
-    template,
-    "mobileStaticRegistryState",
-    "not-required",
-    templateManifestFile,
-  );
-  requireProperty(template, "mobileStaticRegistrySource", "", templateManifestFile);
   await requirePayloadFiles(path.join(resourceRoot, "runtime/files"), "iOS PostgreSQL runtime");
   await requirePayloadFiles(
-    path.join(resourceRoot, "template-pgdata/files"),
-    "iOS template PGDATA",
+    path.join(resourceRoot, "cluster-seed/files"),
+    "iOS standard cluster seed",
+  );
+  await requirePayloadFiles(
+    path.join(resourceRoot, "cluster-seed-icu/files"),
+    "iOS ICU cluster seed",
   );
   await requireFile(path.join(resourceRoot, "package-size.tsv"), "iOS package-size report");
   const baseFrameworks = await validateBaseLibrary(payloadDir, resourceRoot, allowRuntimeDylib);

@@ -7,7 +7,7 @@ import path from 'node:path';
 const PG_VERSION = '18.4';
 
 function usage() {
-  console.error(`usage: src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.mjs [--abi-only|--smoke-only] [--root <dir>]
+  console.error(`usage: src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.mjs [--abi-only|--smoke-only] [--cluster-seeds] [--root <dir>]
 
 Compiles and runs the host liboliphaunt C ABI smoke against the current native
 runtime artifacts for macOS, Linux, or Windows.
@@ -22,6 +22,7 @@ function parseArgs(argv) {
   const args = {
     abiOnly: false,
     smokeOnly: false,
+    clusterSeeds: false,
     root: '',
   };
   for (let index = 0; index < argv.length; index++) {
@@ -30,6 +31,8 @@ function parseArgs(argv) {
       args.abiOnly = true;
     } else if (arg === '--smoke-only') {
       args.smokeOnly = true;
+    } else if (arg === '--cluster-seeds') {
+      args.clusterSeeds = true;
     } else if (arg === '--root') {
       index++;
       if (index >= argv.length) {
@@ -47,6 +50,9 @@ function parseArgs(argv) {
   }
   if (args.abiOnly && args.smokeOnly) {
     throw new Error('--abi-only and --smoke-only are mutually exclusive');
+  }
+  if (args.abiOnly && args.clusterSeeds) {
+    throw new Error('--abi-only and --cluster-seeds are mutually exclusive');
   }
   return args;
 }
@@ -345,6 +351,18 @@ function compileSmoke(paths) {
   return output;
 }
 
+function compileClusterSeedSmoke(paths) {
+  const source = path.join(paths.root, 'src/runtimes/liboliphaunt/native/smoke/liboliphaunt_cluster_seed_smoke.c');
+  const output = path.join(paths.binDir, executableName('liboliphaunt_cluster_seed_smoke'));
+  fs.mkdirSync(path.dirname(output), { recursive: true });
+  if (process.platform === 'win32') {
+    compileWindows(paths, source, output, []);
+  } else {
+    compileUnix(paths, 'smoke', source, output, []);
+  }
+  return output;
+}
+
 function smokeEnv(paths) {
   const sharedPathEnv = process.platform === 'win32'
     ? { PATH: [path.dirname(paths.libPath), path.join(paths.installDir, 'bin'), process.env.PATH ?? ''].join(path.delimiter) }
@@ -369,6 +387,11 @@ function prepareSmokeManagedRoot(paths, root, pgdata, env) {
   if (fs.readdirSync(root).length !== 0) {
     throw new Error(`native smoke root is nonempty but unmanaged: ${root}`);
   }
+  const initdbEnv = {
+    ...env,
+    OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY: '1',
+    OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY: '1',
+  };
   run(paths.initdb, [
     '-D',
     pgdata,
@@ -379,7 +402,12 @@ function prepareSmokeManagedRoot(paths, root, pgdata, env) {
     '--locale-provider=libc',
     '--locale=C',
     '--encoding=UTF8',
-  ], { env });
+  ], { env: initdbEnv });
+  publishSmokeManagedRootDescriptor(root);
+}
+
+function publishSmokeManagedRootDescriptor(root) {
+  const descriptor = path.join(root, '.oliphaunt.json');
   const staging = `${descriptor}.tmp`;
   fs.writeFileSync(
     staging,
@@ -423,6 +451,73 @@ function runSmoke(paths, smokeBin, rootArg) {
     console.error(`native smoke root: ${root}`);
     throw error;
   }
+}
+
+function runClusterSeedSmoke(paths, smokeBin) {
+  const standardSeed = process.env.OLIPHAUNT_STANDARD_CLUSTER_SEED;
+  const icuSeed = process.env.OLIPHAUNT_ICU_CLUSTER_SEED;
+  const icuData = process.env.OLIPHAUNT_ICU_DATA_DIR;
+  if (!standardSeed || !icuSeed || !icuData) {
+    throw new Error('cluster-seed qualification requires OLIPHAUNT_STANDARD_CLUSTER_SEED, OLIPHAUNT_ICU_CLUSTER_SEED, and OLIPHAUNT_ICU_DATA_DIR');
+  }
+  const fixturePath = path.join(paths.root, 'src/shared/cluster-seed-contract/profile-probe.json');
+  const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
+  if (fixture.schema !== 'oliphaunt-cluster-seed-profile-probe-v1') {
+    throw new Error(`unsupported cluster-seed profile probe: ${fixturePath}`);
+  }
+  const scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-cluster-seed-smoke.'));
+  const runtimeIcuData = path.join(paths.installDir, 'share/icu');
+  const removeRuntimeIcuData = !fs.existsSync(runtimeIcuData);
+  try {
+    if (removeRuntimeIcuData) {
+      fs.mkdirSync(path.dirname(runtimeIcuData), { recursive: true });
+      fs.cpSync(icuData, runtimeIcuData, { recursive: true, errorOnExist: true });
+    }
+    for (const [profile, seed] of [['standard', standardSeed], ['icu', icuSeed]]) {
+      const root = path.join(scratchRoot, profile);
+      const pgdata = path.join(root, 'pgdata');
+      fs.cpSync(path.join(seed, 'files'), pgdata, { recursive: true, errorOnExist: true });
+      fs.chmodSync(pgdata, 0o700);
+      publishSmokeManagedRootDescriptor(root);
+      const probe = fixture.profiles?.[profile];
+      if (typeof probe?.sql !== 'string' || typeof probe?.expected !== 'string') {
+        throw new Error(`cluster-seed fixture is missing ${profile}`);
+      }
+      const env = smokeEnv(paths);
+      delete env.OLIPHAUNT_ICU_DATA_DIR;
+      env.ICU_DATA = '/ambient/unverified-icu';
+      const args = [normalizeForC(pgdata), normalizeForC(paths.installDir), probe.sql, probe.expected];
+      run(smokeBin, args, { env });
+      run(smokeBin, args, { env });
+    }
+
+    const importRoot = path.join(scratchRoot, 'standard-icu-import');
+    const importPgdata = path.join(importRoot, 'pgdata');
+    fs.cpSync(path.join(standardSeed, 'files'), importPgdata, { recursive: true, errorOnExist: true });
+    fs.chmodSync(importPgdata, 0o700);
+    publishSmokeManagedRootDescriptor(importRoot);
+    const importSql = [
+      "SELECT pg_import_system_collations('pg_catalog')",
+      "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_collation WHERE collname LIKE '%-x-icu') THEN 'OLIPHAUNT_ICU_IMPORT_OK' ELSE 'OLIPHAUNT_ICU_IMPORT_MISSING' END",
+    ].join('; ');
+    const importEnv = smokeEnv(paths);
+    importEnv.ICU_DATA = '/ambient/unverified-icu';
+    importEnv.OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY = '1';
+    const importArgs = [
+      normalizeForC(importPgdata),
+      normalizeForC(paths.installDir),
+      importSql,
+      'OLIPHAUNT_ICU_IMPORT_OK',
+    ];
+    run(smokeBin, importArgs, { env: importEnv });
+    run(smokeBin, importArgs, { env: importEnv });
+  } finally {
+    if (removeRuntimeIcuData) {
+      fs.rmSync(runtimeIcuData, { recursive: true, force: true });
+    }
+    fs.rmSync(scratchRoot, { recursive: true, force: true });
+  }
+  console.error('native standard and ICU cluster seeds passed open, catalog, close, and reopen qualification');
 }
 
 function checkIosCSourceSyntax(paths) {
@@ -494,6 +589,9 @@ function main() {
   if (!args.abiOnly) {
     const smokeBin = compileSmoke(paths);
     runSmoke(paths, smokeBin, args.root);
+    if (args.clusterSeeds) {
+      runClusterSeedSmoke(paths, compileClusterSeedSmoke(paths));
+    }
   }
 }
 

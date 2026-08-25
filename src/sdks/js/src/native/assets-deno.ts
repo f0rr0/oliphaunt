@@ -9,11 +9,23 @@ import {
   resolveExplicitRuntimeDirectory,
 } from './common.js';
 import { type RuntimeFileHost, validatePreparedRuntimeExtensions } from './extension-runtime.js';
+import {
+  requireIcuDataTreeSha256,
+  requireIcuManifestRelativePath,
+  requireNativeClusterSeedPath,
+  requireNativeClusterSeedTarget,
+  validateNativeClusterSeedManifest,
+  validateNativeIcuDataReceipt,
+  validateNativeRuntimeCarrierReceipt,
+  type NativeCatalogProfile,
+} from './cluster-seed.js';
 
 export type ResolvedDenoNativeInstall = {
   libraryPath: string;
   runtimeDirectory?: string;
   icuDataDirectory?: string;
+  clusterSeedDirectory?: string;
+  catalogProfile?: NativeCatalogProfile;
   packageManaged: boolean;
 };
 
@@ -44,6 +56,9 @@ type LiboliphauntPackageMetadata = {
     target?: string;
     libraryRelativePath?: string;
     runtimeRelativePath?: string;
+    clusterSeedRelativePath?: string;
+    icuClusterSeedRelativePath?: string;
+    clusterSeedTarget?: string;
   };
 };
 
@@ -55,7 +70,14 @@ type IcuPackageMetadata = {
     kind?: string;
     target?: string;
     dataRelativePath?: string;
+    manifestRelativePath?: string;
+    icuDataTreeSha256?: string;
   };
+};
+
+type ResolvedDenoIcuResources = {
+  dataDirectory: string;
+  dataTreeSha256: string;
 };
 
 export async function resolveDenoNativeInstall(
@@ -68,24 +90,22 @@ export async function resolveDenoNativeInstall(
     const icuDataDirectory =
       deno === undefined || versions === undefined
         ? undefined
-        : await resolveDenoIcuDataDirectory(deno, versions.icuVersion, versions.icuPackage);
+        : (await resolveDenoIcuResources(deno, versions.icuVersion, versions.icuPackage))
+            ?.dataDirectory;
     return {
       libraryPath: explicit,
       runtimeDirectory: resolveExplicitRuntimeDirectory(),
       icuDataDirectory,
+      catalogProfile: icuDataDirectory === undefined ? 'standard' : 'icu',
       packageManaged: false,
     };
   }
 
   const deno = denoRuntime();
   const versions = await packageVersions(deno);
-  const icuDataDirectory = await resolveDenoIcuDataDirectory(
-    deno,
-    versions.icuVersion,
-    versions.icuPackage,
-  );
+  const icu = await resolveDenoIcuResources(deno, versions.icuVersion, versions.icuPackage);
   const target = liboliphauntPackageTarget(deno.build.os, deno.build.arch);
-  return resolvePackageNativeInstall(deno, target, versions.liboliphauntVersion, icuDataDirectory);
+  return resolvePackageNativeInstall(deno, target, versions.liboliphauntVersion, icu);
 }
 
 export async function validatePreparedDenoRuntimeExtensions(config: {
@@ -131,7 +151,7 @@ async function resolvePackageNativeInstall(
   deno: DenoRuntime,
   target: NativePackageTarget,
   expectedVersion: string,
-  icuDataDirectory: string | undefined,
+  icu: ResolvedDenoIcuResources | undefined,
 ): Promise<ResolvedDenoNativeInstall> {
   const packageJsonUrl = resolvePackageJsonUrl(target.packageName);
   const packageJson = JSON.parse(
@@ -150,7 +170,29 @@ async function resolvePackageNativeInstall(
   if (packageJson.oliphaunt?.target !== target.id) {
     throw new Error(`${target.packageName} package metadata does not target ${target.id}`);
   }
+  const clusterSeedTarget = requireNativeClusterSeedTarget(
+    packageJson.oliphaunt.clusterSeedTarget,
+    target.id,
+    `${target.packageName} package metadata`,
+  );
+  const standardClusterSeedRelativePath = requireNativeClusterSeedPath(
+    packageJson.oliphaunt.clusterSeedRelativePath,
+    'cluster-seed',
+    `${target.packageName} clusterSeedRelativePath`,
+  );
+  const icuClusterSeedRelativePath = requireNativeClusterSeedPath(
+    packageJson.oliphaunt.icuClusterSeedRelativePath,
+    'cluster-seed-icu',
+    `${target.packageName} icuClusterSeedRelativePath`,
+  );
   const packageRoot = new URL('.', packageJsonUrl);
+  const carrierManifestUrl = new URL('manifest.properties', packageRoot);
+  await requireFile(deno, carrierManifestUrl, `${target.packageName} runtime carrier receipt`);
+  validateNativeRuntimeCarrierReceipt(
+    await deno.readTextFile(carrierManifestUrl),
+    clusterSeedTarget,
+    `${target.packageName} runtime carrier receipt`,
+  );
   const libraryUrl = resolvePackageRelativeUrl(
     packageRoot,
     packageJson.oliphaunt?.libraryRelativePath ?? target.libraryRelativePath,
@@ -170,25 +212,103 @@ async function resolvePackageNativeInstall(
       `${target.packageName} runtime tool bin/${tool}`,
     );
   }
+  const standardClusterSeedUrl = resolvePackageRelativeUrl(
+    packageRoot,
+    standardClusterSeedRelativePath,
+    `${target.packageName} standard cluster seed metadata`,
+  );
+  await requireClusterSeedDirectory(
+    deno,
+    standardClusterSeedUrl,
+    'standard',
+    clusterSeedTarget,
+    `${target.packageName} standard cluster seed`,
+  );
+  const selectedClusterSeedUrl =
+    icu === undefined
+      ? standardClusterSeedUrl
+      : resolvePackageRelativeUrl(
+          packageRoot,
+          icuClusterSeedRelativePath,
+          `${target.packageName} ICU cluster seed metadata`,
+        );
+  let icuDataTreeSha256: string | undefined;
+  if (icu !== undefined) {
+    icuDataTreeSha256 = await requireClusterSeedDirectory(
+      deno,
+      selectedClusterSeedUrl,
+      'icu',
+      clusterSeedTarget,
+      `${target.packageName} ICU cluster seed`,
+    );
+    if (icuDataTreeSha256 !== icu.dataTreeSha256) {
+      throw new Error(
+        `${target.packageName} ICU cluster seed and the selected ICU data package identify different logical trees`,
+      );
+    }
+  }
   const libraryPath = fileURLToPath(libraryUrl);
   return {
     libraryPath,
     runtimeDirectory: fileURLToPath(runtimeUrl),
-    icuDataDirectory,
+    icuDataDirectory: icu?.dataDirectory,
+    clusterSeedDirectory: fileURLToPath(selectedClusterSeedUrl),
+    catalogProfile: icu === undefined ? 'standard' : 'icu',
     packageManaged: true,
   };
 }
 
-async function resolveDenoIcuDataDirectory(
+async function resolveDenoIcuResources(
   deno: DenoRuntime,
   expectedVersion: string,
   packageName: string,
-): Promise<string | undefined> {
+): Promise<ResolvedDenoIcuResources | undefined> {
   const packageJsonUrl = optionalResolvePackageJsonUrl(packageName);
   if (packageJsonUrl === undefined) {
     return undefined;
   }
   const packageJson = JSON.parse(await deno.readTextFile(packageJsonUrl)) as IcuPackageMetadata;
+  validateDenoIcuPackageMetadata(packageJson, packageName, expectedVersion);
+  const metadata = packageJson.oliphaunt!;
+  const dataUrl = resolvePackageRelativeUrl(
+    new URL('.', packageJsonUrl),
+    metadata.dataRelativePath ?? 'share/icu',
+    `${packageName} ICU data directory metadata`,
+  );
+  await requireIcuDataDirectory(deno, dataUrl, `${packageName} ICU data directory`);
+  const manifestRelativePath = requireIcuManifestRelativePath(
+    metadata.dataRelativePath,
+    metadata.manifestRelativePath,
+    `${packageName} package metadata`,
+  );
+  const manifestUrl = resolvePackageRelativeUrl(
+    new URL('.', packageJsonUrl),
+    manifestRelativePath,
+    `${packageName} ICU data manifest metadata`,
+  );
+  await requireFile(deno, manifestUrl, `${packageName} ICU data manifest`);
+  const dataTreeSha256 = requireIcuDataTreeSha256(
+    metadata.icuDataTreeSha256,
+    `${packageName} package metadata`,
+  );
+  const receiptDigest = validateNativeIcuDataReceipt(
+    await deno.readTextFile(manifestUrl),
+    `${packageName} ICU data manifest`,
+  );
+  if (receiptDigest !== dataTreeSha256) {
+    throw new Error(`${packageName} ICU data receipt does not match package metadata`);
+  }
+  return {
+    dataDirectory: fileURLToPath(dataUrl),
+    dataTreeSha256,
+  };
+}
+
+function validateDenoIcuPackageMetadata(
+  packageJson: IcuPackageMetadata,
+  packageName: string,
+  expectedVersion: string,
+): void {
   if (packageJson.name !== packageName) {
     throw new Error(`${packageName} package metadata has name ${packageJson.name ?? '<missing>'}`);
   }
@@ -206,13 +326,6 @@ async function resolveDenoIcuDataDirectory(
   if (packageJson.oliphaunt?.target !== 'portable') {
     throw new Error(`${packageName} package metadata must target portable ICU data`);
   }
-  const dataUrl = resolvePackageRelativeUrl(
-    new URL('.', packageJsonUrl),
-    packageJson.oliphaunt.dataRelativePath ?? 'share/icu',
-    `${packageName} ICU data directory metadata`,
-  );
-  await requireIcuDataDirectory(deno, dataUrl, `${packageName} ICU data directory`);
-  return fileURLToPath(dataUrl);
 }
 
 export function resolvePackageRelativeUrl(
@@ -363,6 +476,21 @@ async function requireIcuDataDirectory(
   throw new Error(
     `${source} does not contain ICU icudt data files: ${decodeURIComponent(path.pathname)}`,
   );
+}
+
+async function requireClusterSeedDirectory(
+  deno: DenoRuntime,
+  path: URL,
+  profile: NativeCatalogProfile,
+  target: string,
+  source: string,
+): Promise<string | undefined> {
+  await requireDirectory(deno, path, source);
+  const root = directoryUrl(path);
+  await requireFile(deno, new URL('files/PG_VERSION', root), `${source} PG_VERSION`);
+  await requireFile(deno, new URL('files/global/pg_control', root), `${source} pg_control`);
+  const manifest = await deno.readTextFile(new URL('manifest.properties', root)).catch(() => '');
+  return validateNativeClusterSeedManifest(manifest, profile, target, source);
 }
 
 function denoRuntime(): DenoRuntime {

@@ -338,9 +338,9 @@ function liboliphauntNativeAssets(version) {
   }
   assets.push(
     `liboliphaunt-${version}-apple-spm-xcframework.zip`,
-    `liboliphaunt-${version}-runtime-resources.tar.gz`,
+    `liboliphaunt-${version}-runtime-resources-ios-datum64.tar.gz`,
+    `liboliphaunt-${version}-runtime-resources-android-datum64.tar.gz`,
     `liboliphaunt-${version}-icu-data.tar.gz`,
-    `liboliphaunt-${version}-package-size.tsv`,
     `liboliphaunt-${version}-release-assets.sha256`,
   );
   return [...new Set(assets)].sort(compareText);

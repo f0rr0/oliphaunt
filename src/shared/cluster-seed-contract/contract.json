@@ -1,0 +1,54 @@
+{
+  "schema": "oliphaunt-cluster-seed-contract-v1",
+  "icuDataSchema": "oliphaunt-icu-data-v1",
+  "manifests": {
+    "native": {
+      "schema": "oliphaunt-runtime-resources-v1",
+      "layout": "oliphaunt-cluster-seed-v1",
+      "cacheKeyPattern": "^[A-Za-z0-9._-]{1,128}$",
+      "cacheKeyDisallowedValues": [
+        ".",
+        ".."
+      ]
+    },
+    "wasix": {
+      "schema": "oliphaunt-cluster-seed-v1"
+    }
+  },
+  "profiles": {
+    "standard": {
+      "artifactRole": "cluster-seed-standard",
+      "requiredRuntimeFeatures": []
+    },
+    "icu": {
+      "artifactRole": "cluster-seed-icu",
+      "requiredRuntimeFeatures": [
+        "icu"
+      ]
+    }
+  },
+  "icu": {
+    "artifactRole": "icu-data",
+    "dataForm": "files-le",
+    "dataVersion": "76.1",
+    "internalReadinessEnvironment": "OLIPHAUNT_INTERNAL_ICU_READY",
+    "internalReadinessValue": "1",
+    "logicalTreeDigest": "sha256(path-nul-size-nul-bytes-lf)",
+    "runtimePath": "share/icu"
+  },
+  "compatibilityKeys": {
+    "native": {
+      "android-datum64": "native-pg18-android-datum64-v1",
+      "ios-datum64": "native-pg18-ios-datum64-v1",
+      "linux-arm64-gnu": "native-pg18-linux-arm64-gnu-v1",
+      "linux-x64-gnu": "native-pg18-linux-x64-gnu-v1",
+      "macos-arm64": "native-pg18-macos-arm64-v1",
+      "windows-x64-msvc": "native-pg18-windows-x64-msvc-v1"
+    },
+    "wasixDatum32": "wasix-pg18-datum32-v1"
+  },
+  "physicalFormats": {
+    "native": "native-pg18-v1",
+    "wasix": "wasix-pg18-v1"
+  }
+}

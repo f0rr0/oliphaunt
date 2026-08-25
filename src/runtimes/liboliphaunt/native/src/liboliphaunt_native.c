@@ -176,6 +176,38 @@ static void restore_backend_env_var(
     *overridden = false;
 }
 
+static int unset_backend_env_var(
+    OliphauntHandle *handle,
+    const char *name,
+    char **previous,
+    bool *had_previous,
+    bool *overridden,
+    const char *label) {
+    const char *current = getenv(name);
+    *had_previous = current != NULL;
+    if (current == NULL) {
+        return 0;
+    }
+    *previous = strdup(current);
+    if (*previous == NULL) {
+        char message[1024];
+        snprintf(message, sizeof(message), "out of memory saving %s environment", name);
+        set_error(handle, message);
+        return -1;
+    }
+    if (unsetenv(name) != 0) {
+        char message[1024];
+        snprintf(message, sizeof(message), "clear %s environment for embedded backend %s: %s", name, label, strerror(errno));
+        set_error(handle, message);
+        free(*previous);
+        *previous = NULL;
+        *had_previous = false;
+        return -1;
+    }
+    *overridden = true;
+    return 0;
+}
+
 static int set_backend_pgdata_env(OliphauntHandle *handle) {
     return set_backend_env_var(
         handle,
@@ -187,10 +219,43 @@ static int set_backend_pgdata_env(OliphauntHandle *handle) {
         "data directory");
 }
 
+static int clear_backend_internal_collation_env(OliphauntHandle *handle) {
+    if (unset_backend_env_var(
+            handle,
+            "OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY",
+            &handle->previous_skip_system_collation_discovery_env,
+            &handle->had_previous_skip_system_collation_discovery_env,
+            &handle->skip_system_collation_discovery_env_overridden,
+            "collation discovery") != 0 ||
+        unset_backend_env_var(
+            handle,
+            "OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY",
+            &handle->previous_skip_icu_collation_discovery_env,
+            &handle->had_previous_skip_icu_collation_discovery_env,
+            &handle->skip_icu_collation_discovery_env_overridden,
+            "ICU collation discovery") != 0 ||
+        unset_backend_env_var(
+            handle,
+            "OLIPHAUNT_INTERNAL_ICU_READY",
+            &handle->previous_internal_icu_ready_env,
+            &handle->had_previous_internal_icu_ready_env,
+            &handle->internal_icu_ready_env_overridden,
+            "ICU initdb readiness") != 0) {
+        return -1;
+    }
+    return 0;
+}
+
 static int set_backend_icu_data_env(OliphauntHandle *handle) {
     char *icu_data_dir = oliphaunt_runtime_icu_data_dir(handle->runtime_dir);
     if (icu_data_dir == NULL) {
-        return 0;
+        return unset_backend_env_var(
+            handle,
+            "ICU_DATA",
+            &handle->previous_icu_data_env,
+            &handle->had_previous_icu_data_env,
+            &handle->icu_data_env_overridden,
+            "ICU data");
     }
     int rc = set_backend_env_var(
         handle,
@@ -263,6 +328,9 @@ static int set_backend_runtime_env(OliphauntHandle *handle) {
     if (set_backend_pgdata_env(handle) != 0) {
         return -1;
     }
+    if (clear_backend_internal_collation_env(handle) != 0) {
+        return -1;
+    }
     if (set_backend_icu_data_env(handle) != 0) {
         return -1;
     }
@@ -294,6 +362,21 @@ static void restore_backend_runtime_env(OliphauntHandle *handle) {
         &handle->previous_icu_data_env,
         &handle->had_previous_icu_data_env,
         &handle->icu_data_env_overridden);
+    restore_backend_env_var(
+        "OLIPHAUNT_INTERNAL_ICU_READY",
+        &handle->previous_internal_icu_ready_env,
+        &handle->had_previous_internal_icu_ready_env,
+        &handle->internal_icu_ready_env_overridden);
+    restore_backend_env_var(
+        "OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY",
+        &handle->previous_skip_icu_collation_discovery_env,
+        &handle->had_previous_skip_icu_collation_discovery_env,
+        &handle->skip_icu_collation_discovery_env_overridden);
+    restore_backend_env_var(
+        "OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY",
+        &handle->previous_skip_system_collation_discovery_env,
+        &handle->had_previous_skip_system_collation_discovery_env,
+        &handle->skip_system_collation_discovery_env_overridden);
     restore_backend_env_var(
         "PGDATA",
         &handle->previous_pgdata_env,
@@ -614,6 +697,9 @@ int32_t oliphaunt_close_claimed_global_instance(OliphauntHandle *handle) {
     free(handle->previous_pgdata_env);
     free(handle->previous_proj_data_env);
     free(handle->previous_icu_data_env);
+    free(handle->previous_skip_system_collation_discovery_env);
+    free(handle->previous_skip_icu_collation_discovery_env);
+    free(handle->previous_internal_icu_ready_env);
     free(handle->previous_module_dir_env);
     oliphaunt_release_root_lock(handle);
     for (size_t i = 0; i < handle->startup_arg_count; i++) {

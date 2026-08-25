@@ -204,18 +204,22 @@ oliphaunt_runtime_native_host_can_initdb() {
   [ -x "$oliphaunt_runtime_initdb" ] || return 1
 
   oliphaunt_runtime_probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-runtime-initdb.XXXXXX")"
-  if [ -d "$oliphaunt_runtime_icu_data" ]; then
-    if ICU_DATA="$oliphaunt_runtime_icu_data" "$oliphaunt_runtime_initdb" -D "$oliphaunt_runtime_probe_dir/pgdata" --no-sync --locale-provider=libc --locale=C --encoding=UTF8 >/dev/null 2>&1; then
-      oliphaunt_runtime_initdb_status=0
+  if (
+    unset ICU_DATA
+    unset OLIPHAUNT_INTERNAL_ICU_READY
+    unset OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY
+    unset OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY
+    if [ -d "$oliphaunt_runtime_icu_data" ]; then
+      export ICU_DATA="$oliphaunt_runtime_icu_data"
+      export OLIPHAUNT_INTERNAL_ICU_READY=1
     else
-      oliphaunt_runtime_initdb_status="$?"
+      export OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY=1
     fi
+    "$oliphaunt_runtime_initdb" -D "$oliphaunt_runtime_probe_dir/pgdata" --no-sync --locale-provider=libc --locale=C --encoding=UTF8 >/dev/null 2>&1
+  ); then
+    oliphaunt_runtime_initdb_status=0
   else
-    if "$oliphaunt_runtime_initdb" -D "$oliphaunt_runtime_probe_dir/pgdata" --no-sync --locale-provider=libc --locale=C --encoding=UTF8 >/dev/null 2>&1; then
-      oliphaunt_runtime_initdb_status=0
-    else
-      oliphaunt_runtime_initdb_status="$?"
-    fi
+    oliphaunt_runtime_initdb_status="$?"
   fi
   rm -rf "$oliphaunt_runtime_probe_dir"
   return "$oliphaunt_runtime_initdb_status"

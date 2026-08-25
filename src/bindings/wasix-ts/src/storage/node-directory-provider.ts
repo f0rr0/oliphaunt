@@ -3,7 +3,6 @@ import { lstat, mkdir, open, readdir, realpath, rename, rm, rmdir } from 'node:f
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { WasixDirectoryMount } from '../archive.js';
 import {
   DATABASE_ROOT_DESCRIPTOR,
   DATABASE_ROOT_PGDATA,
@@ -16,6 +15,7 @@ import { acquireNodeDirectoryLock } from '../node-directory-lock.js';
 import { isNodeError, syncNodeDirectory } from '../node-fs-commit-state.js';
 import {
   assertWasixPhysicalIdentity,
+  type WasixClusterSeedLoader,
   type WasixPhysicalIdentity,
   type WasixStorageLease,
 } from '../storage-provider.js';
@@ -35,18 +35,19 @@ const WRITE_TEMP_MARKER = '.oliphaunt-write-';
 
 export async function acquireNodeDirectoryStorage(
   path: string,
-  template: WasixDirectoryMount,
+  loadClusterSeed: WasixClusterSeedLoader,
   identity: WasixPhysicalIdentity,
   ownerToken = randomBytes(16).toString('hex'),
 ): Promise<WasixStorageLease> {
   const root = await prepareRoot(path);
   const pgdata = join(root, PGDATA_DIRECTORY);
   const label = `directory storage ${JSON.stringify(root)}`;
-  return acquireIncrementalStorage(label, template, {
+  return acquireIncrementalStorage(label, loadClusterSeed, {
     writeFailureCommitState: 'unknown',
     acquireLock: () => acquireNodeDirectoryLock(root, ownerToken),
     async openStore() {
       let descriptorExists = false;
+      let ownsUnpublishedPgdata = false;
       return {
         async read() {
           const snapshot = await readHostPgData(root, pgdata, identity);
@@ -54,13 +55,35 @@ export async function acquireNodeDirectoryStorage(
           return snapshot;
         },
         async apply(delta) {
-          await publishHostDelta(root, pgdata, delta, identity, !descriptorExists);
+          const initializing = !descriptorExists;
+          if (initializing) ownsUnpublishedPgdata = true;
+          await publishHostDelta(root, pgdata, delta, identity, initializing);
           descriptorExists = true;
+          ownsUnpublishedPgdata = false;
         },
-        close() {},
+        async close() {
+          if (!ownsUnpublishedPgdata) return;
+          if (await hasPublishedDescriptor(root)) {
+            ownsUnpublishedPgdata = false;
+            return;
+          }
+          await rm(pgdata, { recursive: true, force: true });
+          await syncNodeDirectory(root);
+          ownsUnpublishedPgdata = false;
+        },
       };
     },
   });
+}
+
+async function hasPublishedDescriptor(root: string): Promise<boolean> {
+  try {
+    const metadata = await lstat(join(root, DESCRIPTOR_FILE));
+    return metadata.isFile() && !metadata.isSymbolicLink();
+  } catch (error) {
+    if (isNodeError(error, 'ENOENT')) return false;
+    throw error;
+  }
 }
 
 export async function restoreNodeDirectoryStorage(
@@ -304,12 +327,12 @@ async function publishHostDelta(
     syncedParents.add(dirname(target));
   }
 
+  for (const parent of [...syncedParents].sort(comparePathDepthDescending)) {
+    await syncNodeDirectory(parent);
+  }
   if (writeDescriptorFile) {
     assertWasixPhysicalIdentity(identity);
     await writeDescriptor(root, wasixDatabaseRootDescriptor());
-  }
-  for (const parent of [...syncedParents].sort(comparePathDepthDescending)) {
-    await syncNodeDirectory(parent);
   }
 }
 

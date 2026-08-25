@@ -15,6 +15,7 @@ import {
   validateReactNativePackagedCarrier,
   validateMobileExtensionManifestDomains,
   validatePackagedMobileRuntimeFiles,
+  validatePackagedMobileRuntimeManifest,
   validateSwiftSourceFixtureEntries,
 } from "./check-staged-artifacts.mjs";
 import { CORE_SNOWBALL_RUNTIME_DATA_FILES } from "../../src/sdks/react-native/tools/validate-mobile-runtime-files.mjs";
@@ -87,6 +88,20 @@ function packagedMobileRuntimeNames(prefix, extensionAssets) {
     ),
   ];
 }
+
+test("packaged mobile apps require the native-direct runtime contract", () => {
+  assert.doesNotThrow(() => validatePackagedMobileRuntimeManifest({
+    schema: "oliphaunt-runtime-resources-v1",
+    mode: "native-direct",
+  }));
+  assert.throws(
+    () => validatePackagedMobileRuntimeManifest({
+      schema: "oliphaunt-runtime-resources-v1",
+      mode: "native-server",
+    }),
+    /mode=native-direct/u,
+  );
+});
 
 test("staged iOS evidence and the Expo runner share the Payload CocoaPods file-list contract", () => {
   const scratchPath = path.join(path.sep, "candidate-scratch");
@@ -244,8 +259,8 @@ function selectionNeutralCarrier(version = "1.2.3") {
   const tag = `${product}-v${version}`;
   const assets = [
     ["base-xcframework", `liboliphaunt-${version}-apple-spm-xcframework.zip`, "zip", "liboliphaunt.xcframework", "a"],
-    ["runtime-resources", `liboliphaunt-${version}-runtime-resources.tar.gz`, "tar.gz", "oliphaunt", "b"],
-    ["icu-data", `liboliphaunt-${version}-icu-data.tar.gz`, "tar.gz", "share/icu", "c"],
+    ["runtime-resources", `liboliphaunt-${version}-runtime-resources-ios-datum64.tar.gz`, "tar.gz", "oliphaunt", "b"],
+    ["icu-data", `liboliphaunt-${version}-icu-data.tar.gz`, "tar.gz", ".", "c"],
   ].map(([role, name, format, member, digit], index) => ({
     bytes: index + 1,
     format,

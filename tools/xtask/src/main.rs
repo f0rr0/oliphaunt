@@ -14,12 +14,12 @@ mod asset_checks;
 mod asset_io;
 mod asset_manifest;
 mod asset_pipeline;
+mod cluster_seed_runner;
 mod extension_catalog;
 mod fs_utils;
 mod postgres_guard;
 mod release_workspace;
 mod source_spine;
-mod template_runner;
 
 use crate::aot_serializer::aot_serializer;
 use crate::asset_checks::*;
@@ -39,7 +39,7 @@ use crate::release_workspace::{
 };
 use crate::source_spine::{
     SourceFetchScope, check_source_spine_for_source_lane, check_sources_manifest,
-    check_sources_manifest_for_asset_build, fetch_pinned_sources_for_source_lane,
+    check_sources_manifest_for_wasix_asset_build, fetch_pinned_sources_for_source_lane,
     load_sources_manifest, load_wasix_toolchain_manifest, validate_sources_manifest,
 };
 
@@ -195,10 +195,10 @@ fn assets(args: Vec<String>) -> Result<()> {
             let target = value_after(&args, "--target-triple").unwrap_or(env::consts::ARCH);
             build_asset_spine(&manifest, profile, target, &args)
         }
-        Some("template") => {
+        Some("cluster-seeds") => {
             let manifest = check_sources_manifest(false)?;
             let source_lane = value_after(&args, "--source-lane").unwrap_or(DEFAULT_SOURCE_LANE);
-            generate_pgdata_template_asset(&manifest, source_lane)
+            generate_cluster_seed_assets(&manifest, source_lane)
         }
         Some("fetch") => {
             let manifest = load_sources_manifest()?;
@@ -215,13 +215,13 @@ fn assets(args: Vec<String>) -> Result<()> {
             )
         }
         Some("release-build") => {
-            let manifest = check_sources_manifest_for_asset_build(&args)?;
+            let manifest = check_sources_manifest_for_wasix_asset_build(&args)?;
             let profile = value_after(&args, "--profile").unwrap_or(DEFAULT_ASSET_BUILD_PROFILE);
             let target = value_after(&args, "--target-triple").unwrap_or(host_target_triple());
             release_build_assets(&manifest, profile, target, &args)
         }
         Some("build-host") => {
-            let manifest = check_sources_manifest_for_asset_build(&args)?;
+            let manifest = check_sources_manifest_for_wasix_asset_build(&args)?;
             release_build_assets(
                 &manifest,
                 DEFAULT_ASSET_BUILD_PROFILE,
@@ -292,7 +292,7 @@ fn assets(args: Vec<String>) -> Result<()> {
         Some(other) => bail!("unknown assets subcommand: {other}"),
         None => {
             bail!(
-                "usage: cargo run -p xtask -- assets <check|verify-committed|audit-upstream|source-spine|fetch|build|template|build-host|release-build|download|install-local|update-root-metadata|ci-matrix|ci-artifacts|aot-targets|internal-packages|package|package-aot|check-aot|smoke>"
+                "usage: cargo run -p xtask -- assets <check|verify-committed|audit-upstream|source-spine|fetch|build|cluster-seeds|build-host|release-build|download|install-local|update-root-metadata|ci-matrix|ci-artifacts|aot-targets|internal-packages|package|package-aot|check-aot|smoke>"
             )
         }
     }
@@ -531,9 +531,9 @@ fn print_usage() {
     eprintln!(
         "  cargo run -p xtask -- assets build --profile release --target-triple <triple> [--execute]"
     );
-    eprintln!("  cargo run -p xtask --features template-runner -- assets template");
+    eprintln!("  cargo run -p xtask --features cluster-seed-runner -- assets cluster-seeds");
     eprintln!(
-        "  cargo run -p xtask --features template-runner -- assets release-build --profile release --target-triple <triple> [--fetch]"
+        "  cargo run -p xtask --features cluster-seed-runner -- assets release-build --profile release --target-triple <triple> [--fetch]"
     );
     eprintln!("  cargo run -p xtask -- assets aot --target-triple <triple>");
     eprintln!(

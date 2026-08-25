@@ -233,6 +233,9 @@ pub const FIXTURE: bool = true;
     });
     const runtime = genericCarrier("fixture-native-runtime", "liboliphaunt-native", nativeRuntimeVersion, "native-runtime", [
       "runtime/bin/postgres", "runtime/bin/initdb", "runtime/bin/pg_ctl",
+      "cluster-seed/manifest.properties", "cluster-seed/files/PG_VERSION",
+      "cluster-seed/files/global/pg_control", "cluster-seed-icu/manifest.properties",
+      "cluster-seed-icu/files/PG_VERSION", "cluster-seed-icu/files/global/pg_control",
     ]);
     const tools = genericCarrier("fixture-native-tools", "oliphaunt-tools", nativeRuntimeVersion, "native-tools", [
       "runtime/bin/pg_basebackup", "runtime/bin/pg_dump", "runtime/bin/psql",

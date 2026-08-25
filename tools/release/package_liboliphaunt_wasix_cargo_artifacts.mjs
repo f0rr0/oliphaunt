@@ -310,8 +310,10 @@ export function validateRuntimePayload(root) {
   for (const required of [
     "oliphaunt.wasix.tar.zst",
     "bin/initdb.wasix.wasm",
-    "prepopulated/pgdata-template.tar.zst",
-    "prepopulated/pgdata-template.json",
+    "cluster-seeds/standard.tar.zst",
+    "cluster-seeds/standard.json",
+    "cluster-seeds/icu.tar.zst",
+    "cluster-seeds/icu.json",
   ]) {
     if (!isFile(path.join(root, required))) {
       fail(`WASIX runtime Cargo payload is missing ${required}`);
@@ -647,7 +649,7 @@ function patchToolsAotTemplate(crateDir, target) {
 }
 
 function noticeProfileForSpec(spec) {
-  if (spec.kind === "icu-data") return "wasix-icu-data";
+  if (spec.kind === "icu-data") return "wasix-icu-data-crate";
   if (spec.kind === "wasix-runtime") return "wasix-runtime";
   if (spec.kind === "wasix-tools") return "wasix-tools";
   if (spec.kind === "wasix-aot" || spec.kind === "wasix-tools-aot") return "wasix-aot";

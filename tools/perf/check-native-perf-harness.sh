@@ -262,8 +262,7 @@ assert_mobile_footprint_summary_smoke() {
     "shared_buffers": "32MB",
     "wal_buffers": "-1",
     "min_wal_size": "32MB",
-    "max_wal_size": "64MB",
-    "wal_segment_size_mb": "4"
+    "max_wal_size": "64MB"
   },
   "status": "passed"
 }
@@ -277,7 +276,7 @@ JSON
   "postgresSettings": {
     "shared_buffers": "32MB",
     "wal_buffers": "-1",
-    "wal_segment_size": "4MB",
+    "wal_segment_size": "16MB",
     "min_wal_size": "32MB",
     "max_wal_size": "64MB",
     "synchronous_commit": "on",
@@ -379,9 +378,7 @@ JSON
     "mobile footprint summary JSON must include parameterized query p99 latency"
   require_text '"max_wal_size": "64MB"' "$mobile_probe_root/summary.json" \
     "mobile footprint summary JSON must include WAL maximum tuning"
-  require_text '"wal_segment_size_mb": "4"' "$mobile_probe_root/summary.json" \
-    "mobile footprint summary JSON must include template WAL segment size"
-  require_text '"wal_segment_size": "4MB"' "$mobile_probe_root/summary.json" \
+  require_text '"wal_segment_size": "16MB"' "$mobile_probe_root/summary.json" \
     "mobile footprint summary JSON must preserve effective WAL segment size"
   require_text '"androidRssKb": 98304' "$mobile_probe_root/summary.json" \
     "mobile footprint summary JSON must include Android RSS"
@@ -421,8 +418,8 @@ JSON
     "mobile footprint summary markdown must expose benchmark preset next to explicit PostgreSQL GUCs"
   require_text 'Effective GUCs | Open ms' "$mobile_probe_root/summary.md" \
     "mobile footprint summary markdown must expose effective PostgreSQL settings"
-  require_text 'min_wal_size | max_wal_size | WAL segment MB | Effective GUCs | Open ms' "$mobile_probe_root/summary.md" \
-    "mobile footprint summary markdown must expose WAL min/max and template segment tuning columns"
+  require_text 'min_wal_size | max_wal_size | Effective GUCs | Open ms' "$mobile_probe_root/summary.md" \
+    "mobile footprint summary markdown must expose WAL min/max and effective PostgreSQL settings"
   require_text 'Typed p50 ms | Typed p90 ms | Typed p95 ms | Typed p99 ms' "$mobile_probe_root/summary.md" \
     "mobile footprint summary markdown must expose typed query p50/p90/p95/p99"
   require_text 'Crash recovery ms | Crash recovery open ms | Insert rows/s' "$mobile_probe_root/summary.md" \
@@ -459,22 +456,9 @@ assert_mobile_footprint_plan_guard() {
       --crash-recovery off \
       --run-id mobile-filtered-plan-probe
   )"
-  mobile_walseg_plan="$(
-    tools/perf/matrix/run_mobile_footprint_matrix.sh \
-      --plan-only \
-      --quick \
-      --platform android \
-      --shared-buffers 32MB \
-      --wal-buffers -1 \
-      --min-wal-size 8MB,16MB \
-      --max-wal-size 32MB \
-      --wal-segsize 4 \
-      --crash-recovery off \
-      --run-id mobile-walseg-plan-probe
-  )"
   require_plan_text "$mobile_plan" "planned=80" \
     "mobile footprint matrix plan must count only runnable Android cases once"
-  require_plan_text "$mobile_plan" "skippedInvalidForWalSegment=120" \
+  require_plan_text "$mobile_plan" "skippedInvalidMinWalSize=120" \
     "mobile footprint matrix plan must report invalid 8MB/16MB WAL-minimum cases"
   require_plan_text "$mobile_plan" "skippedInvalidWalRange=40" \
     "mobile footprint matrix plan must report max_wal_size below min_wal_size cases"
@@ -492,16 +476,8 @@ assert_mobile_footprint_plan_guard() {
     "mobile footprint matrix filters must include selected shared_buffers values"
   require_plan_text "$mobile_filtered_plan" "shared_buffers=32MB" \
     "mobile footprint matrix filters must include every selected shared_buffers value"
-  require_plan_text "$mobile_filtered_plan" "skippedInvalidForWalSegment=0" \
+  require_plan_text "$mobile_filtered_plan" "skippedInvalidMinWalSize=0" \
     "mobile footprint matrix filters must not report skipped WAL-min cases when only valid minima are selected"
-  require_plan_text "$mobile_walseg_plan" "planned=2" \
-    "mobile footprint matrix must run 8MB/16MB minima with a matching smaller WAL segment template"
-  require_plan_text "$mobile_walseg_plan" "walSegmentSizeMB=4" \
-    "mobile footprint matrix plan must report the selected template WAL segment size"
-  require_plan_text "$mobile_walseg_plan" "OLIPHAUNT_EXPO_MOBILE_WAL_SEGSIZE_MB=4" \
-    "mobile footprint matrix plan must pass the template WAL segment size to the Expo harness"
-  require_plan_text "$mobile_walseg_plan" "min_wal_size=8MB" \
-    "mobile footprint matrix plan must include the requested 8MB WAL minimum when segment size makes it valid"
 }
 
 write_release_probe_outputs() {
@@ -1065,16 +1041,12 @@ require_text '--min-wal-size VALUES' tools/perf/matrix/run_mobile_footprint_matr
   "mobile footprint matrix must expose min_wal_size filters for measured tuning slices"
 require_text '--max-wal-size VALUES' tools/perf/matrix/run_mobile_footprint_matrix.sh \
   "mobile footprint matrix must expose max_wal_size filters for measured tuning slices"
-require_text '--wal-segsize MB' tools/perf/matrix/run_mobile_footprint_matrix.sh \
-  "mobile footprint matrix must expose template WAL segment size for 8/16MB min_wal_size experiments"
 require_text 'OLIPHAUNT_EXPO_MOBILE_BENCHMARK_PRESET=$benchmark_preset' tools/perf/matrix/run_mobile_footprint_matrix.sh \
   "mobile footprint matrix quick mode must propagate an installed-app benchmark preset"
 require_text "'Benchmark preset'" tools/perf/matrix/run_mobile_footprint_matrix.sh \
   "mobile footprint matrix summary must expose the installed-app benchmark preset"
 require_text "'Effective GUCs'" tools/perf/matrix/run_mobile_footprint_matrix.sh \
   "mobile footprint matrix summary must expose effective PostgreSQL settings"
-require_text "'WAL segment MB'" tools/perf/matrix/run_mobile_footprint_matrix.sh \
-  "mobile footprint matrix summary must expose WAL min/max and segment tuning columns"
 require_text "'Typed p50 ms'" tools/perf/matrix/run_mobile_footprint_matrix.sh \
   "mobile footprint matrix summary must expose typed-query latency columns"
 require_text "'Param p99 ms'" tools/perf/matrix/run_mobile_footprint_matrix.sh \

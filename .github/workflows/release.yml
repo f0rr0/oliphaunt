@@ -721,6 +721,13 @@ jobs:
             --job Builds \
             --artifact liboliphaunt-native-release-assets
 
+      - name: Prove native and WASIX ICU data identity
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-native') && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix') }}
+        run: |
+          tools/dev/bun.sh tools/release/check-cross-family-icu-data.mjs \
+            target/liboliphaunt/release-assets \
+            target/oliphaunt-wasix/release-assets
+
       - name: Set up Bun for TypeScript npm consumer checks
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-js') }}
         uses: ./.github/actions/setup-bun

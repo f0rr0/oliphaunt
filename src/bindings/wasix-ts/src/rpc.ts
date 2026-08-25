@@ -59,13 +59,48 @@ export type SerializedRuntimeArchive = {
 };
 
 export type SerializedRuntimeDescriptor = {
-  schema: 'oliphaunt-wasix-runtime-v1';
+  schema: 'oliphaunt-wasix-runtime-v2';
   runtime: 'wasix';
   product: 'liboliphaunt-wasix';
   version: string;
   runtimeArchive: SerializedRuntimeArchive;
-  pgdataArchive: SerializedRuntimeArchive;
+  standardSeedArchive: SerializedRuntimeArchive;
+  standardSeedManifest: {
+    sha256: string;
+    size: number;
+    source: SerializedAssetSource;
+  };
   manifest: {
+    sha256: string;
+    size: number;
+    source: SerializedAssetSource;
+  };
+};
+
+/** Runtime subset required by PostgreSQL frontend tools. */
+export type SerializedToolRuntimeDescriptor = Pick<
+  SerializedRuntimeDescriptor,
+  'product' | 'version' | 'runtimeArchive' | 'manifest'
+>;
+
+export type SerializedIcuDescriptor = {
+  schema: 'oliphaunt-wasix-icu-v1';
+  runtime: 'wasix';
+  product: 'oliphaunt-icu';
+  version: string;
+  compatibility: {
+    runtimeProduct: 'liboliphaunt-wasix';
+    runtimeVersion: string;
+    postgresMajor: '18';
+    physicalFormat: 'wasix-pg18-v1';
+    compatibilityKey: 'wasix-pg18-datum32-v1';
+    dataVersion: '76.1';
+    dataForm: 'files-le';
+    dataTreeSha256: string;
+  };
+  dataArchive: SerializedRuntimeArchive;
+  clusterSeedArchive: SerializedRuntimeArchive;
+  clusterSeedManifest: {
     sha256: string;
     size: number;
     source: SerializedAssetSource;
@@ -75,6 +110,7 @@ export type SerializedRuntimeDescriptor = {
 /** Host-ready open options shared by direct and worker execution. */
 export type SerializedOpenOptions = {
   runtime: SerializedRuntimeDescriptor;
+  icu?: SerializedIcuDescriptor;
   /** Exact imported carrier closure, keyed by PostgreSQL SQL name. */
   extensionCarriers: Record<string, SerializedExtensionCarrier>;
   extensions: string[];

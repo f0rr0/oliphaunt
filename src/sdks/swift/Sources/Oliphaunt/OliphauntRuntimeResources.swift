@@ -2,12 +2,37 @@ import Foundation
 
 private let oliphauntRuntimeResourcesSchema = "oliphaunt-runtime-resources-v1"
 private let oliphauntRuntimePackageLayout = "postgres-runtime-files-v1"
-private let oliphauntTemplatePgdataPackageLayout = "postgres-template-pgdata-v1"
+private let oliphauntClusterSeedPackageLayout = "oliphaunt-cluster-seed-v1"
+private let oliphauntIcuDataSchema = "oliphaunt-icu-data-v1"
+
+private var oliphauntSwiftClusterSeedTarget: String {
+    #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
+    return "ios-datum64"
+    #else
+    return "macos-arm64"
+    #endif
+}
+
+private var oliphauntSwiftClusterSeedCompatibilityKey: String {
+    "native-pg18-\(oliphauntSwiftClusterSeedTarget)-v1"
+}
+
+struct ResolvedOliphauntRuntimeResources {
+    var directory: URL
+    var sharedPreloadLibraries: [String]
+    var catalogProfile: OliphauntNativeCatalogProfile
+    var owner: OliphauntRuntimeResources
+}
+
+private struct OliphauntIcuDataCarrier {
+    var dataURL: URL
+    var treeSha256: String
+}
 
 struct OliphauntRuntimeResourceSizeReport: Equatable, Sendable {
     var packageBytes: UInt64
     var runtimeBytes: UInt64
-    var templatePgdataBytes: UInt64
+    var clusterSeedBytes: UInt64
     var staticRegistryBytes: UInt64
     var selectedExtensionBytes: UInt64
     var extensions: [OliphauntExtensionSizeReport]
@@ -20,7 +45,7 @@ struct OliphauntRuntimeResourceSizeReport: Equatable, Sendable {
     init(
         packageBytes: UInt64,
         runtimeBytes: UInt64,
-        templatePgdataBytes: UInt64,
+        clusterSeedBytes: UInt64,
         staticRegistryBytes: UInt64,
         selectedExtensionBytes: UInt64,
         extensions: [OliphauntExtensionSizeReport],
@@ -32,7 +57,7 @@ struct OliphauntRuntimeResourceSizeReport: Equatable, Sendable {
     ) {
         self.packageBytes = packageBytes
         self.runtimeBytes = runtimeBytes
-        self.templatePgdataBytes = templatePgdataBytes
+        self.clusterSeedBytes = clusterSeedBytes
         self.staticRegistryBytes = staticRegistryBytes
         self.selectedExtensionBytes = selectedExtensionBytes
         self.extensions = extensions
@@ -59,10 +84,16 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
 @_spi(ExtensionSupport) public struct OliphauntRuntimeResources: Sendable {
     var resourceRoot: URL
     var cacheRoot: URL
+    var icuResourceDirectories: [URL]?
 
-    init(resourceRoot: URL, cacheRoot: URL = Self.defaultCacheRoot()) {
+    init(
+        resourceRoot: URL,
+        cacheRoot: URL = Self.defaultCacheRoot(),
+        icuResourceDirectories: [URL]? = nil
+    ) {
         self.resourceRoot = resourceRoot
         self.cacheRoot = cacheRoot
+        self.icuResourceDirectories = icuResourceDirectories
     }
 
     init(bundle: Bundle, cacheRoot: URL = Self.defaultCacheRoot()) throws {
@@ -154,15 +185,54 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
     }
 
     func materializeRuntime(requestedExtensions: [String] = []) throws -> URL {
+        return try resolveRuntime(requestedExtensions: requestedExtensions).directory
+    }
+
+    func resolveRuntime(
+        requestedExtensions: [String] = []
+    ) throws -> ResolvedOliphauntRuntimeResources {
         let requested = try Self.validateExtensionIds(requestedExtensions)
         let runtime = try assetPackage(kind: .runtime)
         try require(runtime: runtime, contains: requested)
-        let target = cacheRoot
-            .appendingPathComponent("runtime", isDirectory: true)
-            .appendingPathComponent(runtime.cacheKey, isDirectory: true)
-        try materialize(runtime, to: target)
-        try syncDiscoveredIcuData(into: target, runtime: runtime)
-        return target
+        let integratedIcu = runtime.runtimeFeatures.contains("icu")
+        let externalIcu = integratedIcu ? nil : try Self.icuDataCarrier(
+            inResourceDirectories: icuResourceDirectories ?? defaultBundleResourceURLs()
+        )
+        let profile: OliphauntNativeCatalogProfile = integratedIcu || externalIcu != nil ? .icu : .standard
+        let seed = try matchingClusterSeed(
+            profile: profile,
+            runtime: runtime,
+            icuDataTreeSha256: externalIcu?.treeSha256
+        )
+        let target = try materialize(runtime, seed: seed, profile: profile, externalIcu: externalIcu)
+        return ResolvedOliphauntRuntimeResources(
+            directory: target,
+            sharedPreloadLibraries: runtime.sharedPreloadLibraries.sorted(),
+            catalogProfile: profile,
+            owner: self
+        )
+    }
+
+    func resolveRuntime(
+        at runtimeDirectory: URL,
+        requestedExtensions: [String] = []
+    ) throws -> ResolvedOliphauntRuntimeResources {
+        let requested = try Self.validateExtensionIds(requestedExtensions)
+        let runtime = try assetPackage(kind: .runtime)
+        guard Self.sameFileURL(runtime.filesURL, runtimeDirectory) else {
+            throw OliphauntError.engine(
+                "Swift Oliphaunt runtimeDirectory \(runtimeDirectory.path) is not owned by runtime resources \(runtime.rootURL.path)"
+            )
+        }
+        try require(runtime: runtime, contains: requested)
+        let profile: OliphauntNativeCatalogProfile = runtime.runtimeFeatures.contains("icu") ? .icu : .standard
+        _ = try matchingClusterSeed(profile: profile, runtime: runtime, icuDataTreeSha256: nil)
+        return ResolvedOliphauntRuntimeResources(
+            directory: runtimeDirectory,
+            sharedPreloadLibraries: runtime.sharedPreloadLibraries.sorted(),
+            catalogProfile: profile,
+            owner: self
+        )
     }
 
     func sharedPreloadLibraries(requestedExtensions: [String] = []) throws -> [String] {
@@ -219,7 +289,10 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
         guard FileManager.default.fileExists(
             atPath: resourceRoot.appendingPathComponent("runtime/manifest.properties").path
         ) || FileManager.default.fileExists(
-            atPath: resourceRoot.appendingPathComponent("template-pgdata/manifest.properties").path
+            atPath: AssetPackageKind.clusterSeed(.standard)
+                .root(in: resourceRoot)
+                .appendingPathComponent("manifest.properties")
+                .path
         ) else {
             return false
         }
@@ -233,18 +306,21 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
     }
 
     @discardableResult
-    func preparePgdata(at pgdata: URL) throws -> Bool {
+    func preparePgdata(
+        at pgdata: URL,
+        profile: OliphauntNativeCatalogProfile,
+        didPublishDestination: () -> Void
+    ) throws -> OliphauntPgdataPublication? {
         if FileManager.default.fileExists(
             atPath: pgdata.appendingPathComponent("PG_VERSION").path
         ) {
             try validateOliphauntCompletePgdata(pgdata)
             try ensurePgdataDirectoryLayout(at: pgdata)
             try hardenOliphauntPgdataPermissions(at: pgdata)
-            return true
+            return .existing
         }
-        let template = try optionalAssetPackage(kind: .templatePgdata)
-        guard let template else {
-            return false
+        guard let seed = try optionalAssetPackage(kind: .clusterSeed(profile)) else {
+            return nil
         }
 
         if FileManager.default.fileExists(atPath: pgdata.path) {
@@ -263,27 +339,74 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
         let parent = pgdata.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
         let temp = parent.appendingPathComponent(
-            ".pgdata-template-\(template.cacheKey)-\(UUID().uuidString)",
+            ".cluster-seed-\(seed.cacheKey)-\(UUID().uuidString)",
             isDirectory: true
         )
-        try? FileManager.default.removeItem(at: temp)
-        do {
-            try copyTree(from: template.filesURL, to: temp)
+        let result: Result<OliphauntPgdataPublication, Error> = Result {
+            try copyTree(from: seed.filesURL, to: temp)
             try ensurePgdataDirectoryLayout(at: temp)
-            try publishOliphauntPreparedPgdata(temp, to: pgdata)
-            return true
-        } catch {
-            try? FileManager.default.removeItem(at: temp)
-            throw error
+            return try publishOliphauntPreparedPgdata(
+                temp,
+                to: pgdata,
+                didPublishDestination: didPublishDestination
+            )
+        }
+        return try finishOliphauntStaging(result, operation: "PGDATA preparation") {
+            try removeOliphauntStagingIfPresent(temp)
         }
     }
 
-    private func materialize(_ package: AssetPackage, to target: URL) throws {
+    private func matchingClusterSeed(
+        profile: OliphauntNativeCatalogProfile,
+        runtime: AssetPackage,
+        icuDataTreeSha256: String?
+    ) throws -> AssetPackage {
+        guard runtime.clusterSeedTarget == oliphauntSwiftClusterSeedTarget else {
+            throw OliphauntError.engine(
+                "Swift Oliphaunt runtime resources do not carry cluster seeds for \(oliphauntSwiftClusterSeedTarget)"
+            )
+        }
+        let seed = try assetPackage(kind: .clusterSeed(profile))
+        if profile == .icu {
+            let selectedDigest = icuDataTreeSha256 ?? runtime.icuDataTreeSha256
+            guard !selectedDigest.isEmpty, selectedDigest == seed.icuDataTreeSha256 else {
+                throw OliphauntError.engine(
+                    "Swift Oliphaunt ICU data does not match the \(oliphauntSwiftClusterSeedTarget) ICU cluster seed"
+                )
+            }
+        }
+        return seed
+    }
+
+    private func materialize(
+        _ runtime: AssetPackage,
+        seed: AssetPackage,
+        profile: OliphauntNativeCatalogProfile,
+        externalIcu: OliphauntIcuDataCarrier?
+    ) throws -> URL {
+        let digest = profile == .icu ? seed.icuDataTreeSha256 : "none"
+        let target = cacheRoot
+            .appendingPathComponent("runtime", isDirectory: true)
+            .appendingPathComponent(runtime.cacheKey, isDirectory: true)
+            .appendingPathComponent(profile.rawValue, isDirectory: true)
+            .appendingPathComponent(seed.cacheKey, isDirectory: true)
+            .appendingPathComponent(digest, isDirectory: true)
+        let identity = [
+            "runtime=\(runtime.cacheKey)",
+            "target=\(oliphauntSwiftClusterSeedTarget)",
+            "profile=\(profile.rawValue)",
+            "seed=\(seed.cacheKey)",
+            "icuDataTreeSha256=\(profile == .icu ? digest : "")",
+            "",
+        ].joined(separator: "\n")
         let stamp = target.appendingPathComponent(".liboliphaunt-asset-cache-key")
-        if FileManager.default.fileExists(atPath: target.path),
-           (try? String(contentsOf: stamp, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)) == package.cacheKey
-        {
-            return
+        if Self.hasRuntimeCacheIdentity(target: target, stamp: stamp, identity: identity) {
+            return target
+        }
+        if FileManager.default.fileExists(atPath: target.path) {
+            throw OliphauntError.engine(
+                "immutable Swift Oliphaunt runtime cache has an invalid identity at \(target.path)"
+            )
         }
 
         let parent = target.deletingLastPathComponent()
@@ -292,40 +415,66 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
             ".\(target.lastPathComponent).tmp-\(UUID().uuidString)",
             isDirectory: true
         )
-        try? FileManager.default.removeItem(at: temp)
-        do {
-            try copyTree(from: package.filesURL, to: temp)
-            try package.cacheKey.write(
+        let result: Result<URL, Error> = Result {
+            try copyTree(from: runtime.filesURL, to: temp)
+            if let externalIcu {
+                let destination = temp
+                    .appendingPathComponent("share", isDirectory: true)
+                    .appendingPathComponent("icu", isDirectory: true)
+                if try Self.icuDataRootContainsData(destination) {
+                    throw OliphauntError.engine(
+                        "base Swift Oliphaunt runtime already contains ICU data while composing an external ICU carrier"
+                    )
+                }
+                if FileManager.default.fileExists(atPath: destination.path) {
+                    try FileManager.default.removeItem(at: destination)
+                }
+                try copyTree(from: externalIcu.dataURL, to: destination)
+            }
+            if profile == .icu {
+                let data = temp.appendingPathComponent("share/icu", isDirectory: true)
+                guard try Self.icuDataRootContainsData(data) else {
+                    throw OliphauntError.engine(
+                        "Swift Oliphaunt ICU runtime closure contains no ICU data at \(data.path)"
+                    )
+                }
+            }
+            try identity.write(
                 to: temp.appendingPathComponent(".liboliphaunt-asset-cache-key"),
                 atomically: true,
                 encoding: .utf8
             )
-            if FileManager.default.fileExists(atPath: target.path) {
-                try FileManager.default.removeItem(at: target)
+            try makeOliphauntPublicationTreeDurable(temp)
+            do {
+                try FileManager.default.moveItem(at: temp, to: target)
+            } catch let publicationError {
+                if Self.hasRuntimeCacheIdentity(target: target, stamp: stamp, identity: identity) {
+                    return target
+                }
+                throw publicationError
             }
-            try FileManager.default.moveItem(at: temp, to: target)
-        } catch {
-            try? FileManager.default.removeItem(at: temp)
-            throw error
+            try syncOliphauntDirectory(parent)
+            return target
+        }
+        return try finishOliphauntStaging(result, operation: "runtime cache publication") {
+            try removeOliphauntStagingIfPresent(temp)
         }
     }
 
-    private func syncDiscoveredIcuData(into runtimeDirectory: URL, runtime: AssetPackage) throws {
-        let destination = runtimeDirectory
-            .appendingPathComponent("share", isDirectory: true)
-            .appendingPathComponent("icu", isDirectory: true)
-        if let source = try Self.defaultIcuDataURL() {
-            if FileManager.default.fileExists(atPath: destination.path) {
-                try FileManager.default.removeItem(at: destination)
-            }
-            try copyTree(from: source, to: destination)
-            return
+    private static func hasRuntimeCacheIdentity(
+        target: URL,
+        stamp: URL,
+        identity: String
+    ) -> Bool {
+        guard let values = try? target.resourceValues(
+            forKeys: [.isDirectoryKey, .isSymbolicLinkKey]
+        ),
+              values.isDirectory == true,
+              values.isSymbolicLink != true
+        else {
+            return false
         }
-        if !runtime.runtimeFeatures.contains("icu"),
-           FileManager.default.fileExists(atPath: destination.path)
-        {
-            try FileManager.default.removeItem(at: destination)
-        }
+        return (try? String(contentsOf: stamp, encoding: .utf8)) == identity
     }
 
     private func require(runtime: AssetPackage, contains requested: Set<String>) throws {
@@ -404,39 +553,83 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
     }
 
     private func optionalAssetPackage(kind: AssetPackageKind) throws -> AssetPackage? {
+        if case .runtime = kind {
+            try validateRuntimeCarrierReceipt()
+        }
         let rootURL = kind.root(in: resourceRoot)
         let manifestURL = rootURL.appendingPathComponent("manifest.properties")
         guard FileManager.default.fileExists(atPath: manifestURL.path) else {
             return nil
         }
         let manifest = try readManifest(manifestURL)
-        let schema = manifest["schema"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let isRuntime: Bool
+        switch kind {
+        case .runtime: isRuntime = true
+        case .clusterSeed: isRuntime = false
+        }
+        let manifestKeys = Set(manifest.keys)
+        let allowedManifestKeys: Set<String>
+        switch kind {
+        case .runtime:
+            allowedManifestKeys = [
+                "schema", "layout", "artifactRole", "catalogProfile", "clusterSeedTarget",
+                "icuDataTreeSha256", "mode", "cacheKey", "selectedExtensions", "extensions",
+                "runtimeFeatures", "sharedPreloadLibraries", "mobileStaticRegistryState",
+                "mobileStaticRegistryRegistered", "mobileStaticRegistryPending",
+                "nativeModuleStems", "mobileStaticRegistrySource",
+            ]
+        case .clusterSeed:
+            allowedManifestKeys = [
+                "schema", "layout", "artifactRole", "catalogProfile", "postgresMajor",
+                "physicalFormat", "target", "compatibilityKey", "initialSuperuser",
+                "runtimeFeatures", "icuDataVersion", "icuDataForm", "icuDataTreeSha256",
+                "cacheKey",
+            ]
+        }
+        let unsupported = manifestKeys.subtracting(allowedManifestKeys)
+        let missing = allowedManifestKeys.subtracting(manifestKeys)
+        guard manifestKeys == allowedManifestKeys else {
+            throw OliphauntError.engine(
+                "liboliphaunt \(kind.label) manifest does not contain its exact canonical field set; missing=\(missing.sorted().joined(separator: ",")); unsupported=\(unsupported.sorted().joined(separator: ","))"
+            )
+        }
+        let schema = manifest["schema"] ?? ""
         guard schema == oliphauntRuntimeResourcesSchema else {
             throw OliphauntError.engine(
                 "liboliphaunt \(kind.label) manifest has unsupported runtime resource schema '\(schema.isEmpty ? "<missing>" : schema)'; expected \(oliphauntRuntimeResourcesSchema)"
             )
         }
-        let layout = manifest["layout"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let layout = manifest["layout"] ?? ""
         guard layout == kind.expectedLayout else {
             throw OliphauntError.engine(
                 "liboliphaunt \(kind.label) manifest has unsupported layout '\(layout.isEmpty ? "<missing>" : layout)'; expected \(kind.expectedLayout)"
             )
         }
-        let cacheKey = manifest["cacheKey"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard Self.isPortableId(cacheKey) else {
+        let cacheKey = manifest["cacheKey"] ?? ""
+        guard Self.isPortableId(cacheKey), cacheKey != ".", cacheKey != ".." else {
             throw OliphauntError.engine("liboliphaunt \(kind.label) manifest has invalid cacheKey '\(cacheKey)'")
         }
-        let extensions = try Self.validateExtensionIds(
-            manifest["extensions"]?.split(separator: ",").map(String.init) ?? []
-        )
-        guard let selectedExtensionsValue = manifest["selectedExtensions"] else {
-            throw OliphauntError.engine(
-                "liboliphaunt \(kind.label) manifest is missing selectedExtensions"
-            )
+        if isRuntime, manifest["mode"] != "native-direct" {
+            throw OliphauntError.engine("liboliphaunt runtime manifest must declare mode=native-direct")
         }
-        let selectedExtensions = try Self.validateExtensionIds(
-            selectedExtensionsValue.split(separator: ",").map(String.init)
-        )
+        let extensions: Set<String>
+        let selectedExtensions: Set<String>
+        if isRuntime {
+            extensions = try Self.validateExtensionIds(
+                manifest["extensions"]?.split(separator: ",").map(String.init) ?? []
+            )
+            guard let selectedExtensionsValue = manifest["selectedExtensions"] else {
+                throw OliphauntError.engine(
+                    "liboliphaunt runtime manifest is missing selectedExtensions"
+                )
+            }
+            selectedExtensions = try Self.validateExtensionIds(
+                selectedExtensionsValue.split(separator: ",").map(String.init)
+            )
+        } else {
+            extensions = []
+            selectedExtensions = []
+        }
         guard extensions.isSubset(of: selectedExtensions) else {
             let unselected = extensions.subtracting(selectedExtensions).sorted()
             throw OliphauntError.engine(
@@ -446,35 +639,129 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
         let runtimeFeatures = try Self.validateRuntimeFeatures(
             manifest["runtimeFeatures"]?.split(separator: ",").map(String.init) ?? []
         )
-        let mobileStaticRegistryState = try Self.validateMobileStaticRegistryState(
-            manifest["mobileStaticRegistryState"]?.trimmingCharacters(in: .whitespacesAndNewlines)
-        )
-        let mobileStaticRegistryPending = try Self.validatePortableIds(
-            manifest["mobileStaticRegistryPending"]?.split(separator: ",").map(String.init) ?? [],
-            label: "mobile static registry extension"
-        )
-        let mobileStaticRegistryRegistered = try Self.validatePortableIds(
-            manifest["mobileStaticRegistryRegistered"]?.split(separator: ",").map(String.init) ?? [],
-            label: "mobile static registry extension"
-        )
-        let nativeModuleStems = try Self.validatePortableIds(
-            manifest["nativeModuleStems"]?.split(separator: ",").map(String.init) ?? [],
-            label: "native module stem"
-        )
+        let clusterSeedTarget = manifest["clusterSeedTarget"] ?? ""
+        let icuDataTreeSha256 = manifest["icuDataTreeSha256"] ?? ""
+        let artifactRole = manifest["artifactRole"] ?? ""
+        let catalogProfile = manifest["catalogProfile"] ?? ""
+        switch kind {
+        case .runtime:
+            guard artifactRole == "runtime",
+                  catalogProfile.isEmpty,
+                  clusterSeedTarget == oliphauntSwiftClusterSeedTarget
+            else {
+                throw OliphauntError.engine(
+                    "liboliphaunt runtime manifest must declare artifactRole=runtime, an empty catalogProfile, and cluster seeds for \(oliphauntSwiftClusterSeedTarget)"
+                )
+            }
+            if runtimeFeatures.contains("icu") {
+                guard Self.isSha256(icuDataTreeSha256) else {
+                    throw OliphauntError.engine(
+                        "liboliphaunt ICU runtime manifest does not bind the canonical ICU data tree"
+                    )
+                }
+            } else if !icuDataTreeSha256.isEmpty {
+                throw OliphauntError.engine(
+                    "liboliphaunt standard runtime manifest must not select ICU data"
+                )
+            }
+        case .clusterSeed(let profile):
+            let expectedProfile = profile.rawValue
+            let expectedRole = "cluster-seed-\(expectedProfile)"
+            let expectedRuntimeFeatures: Set<String> = profile == .icu ? ["icu"] : []
+            guard runtimeFeatures == expectedRuntimeFeatures,
+                  artifactRole == expectedRole,
+                  catalogProfile == expectedProfile,
+                  manifest["target"] == oliphauntSwiftClusterSeedTarget,
+                  manifest["postgresMajor"] == "18",
+                  manifest["physicalFormat"] == "native-pg18-v1",
+                  manifest["compatibilityKey"] == oliphauntSwiftClusterSeedCompatibilityKey,
+                  manifest["initialSuperuser"] == "postgres"
+            else {
+                throw OliphauntError.engine(
+                    "liboliphaunt cluster-seed manifest has an incompatible native catalog contract"
+                )
+            }
+            if expectedProfile == "icu" {
+                guard manifest["icuDataVersion"] == "76.1",
+                      manifest["icuDataForm"] == "files-le",
+                      Self.isSha256(icuDataTreeSha256)
+                else {
+                    throw OliphauntError.engine(
+                        "liboliphaunt ICU cluster-seed manifest does not bind the canonical ICU data tree"
+                    )
+                }
+            } else if !(manifest["icuDataVersion"] ?? "").isEmpty
+                        || !(manifest["icuDataForm"] ?? "").isEmpty
+                        || !icuDataTreeSha256.isEmpty
+            {
+                throw OliphauntError.engine(
+                    "liboliphaunt standard cluster-seed manifest must not select ICU data"
+                )
+            }
+        }
+        let mobileStaticRegistryState: String?
+        let mobileStaticRegistryPending: Set<String>
+        let mobileStaticRegistryRegistered: Set<String>
+        let nativeModuleStems: Set<String>
+        if isRuntime {
+            mobileStaticRegistryState = try Self.validateMobileStaticRegistryState(
+                manifest["mobileStaticRegistryState"]
+            )
+            let registrySource = manifest["mobileStaticRegistrySource"] ?? ""
+            let sourceIsValid = mobileStaticRegistryState == "complete"
+                ? [
+                    "static-registry/oliphaunt_static_registry.c",
+                    "swiftpm-linked-products",
+                ].contains(registrySource)
+                : registrySource.isEmpty
+            guard sourceIsValid else {
+                throw OliphauntError.engine(
+                    "liboliphaunt runtime manifest has mobileStaticRegistrySource inconsistent with mobileStaticRegistryState"
+                )
+            }
+            mobileStaticRegistryPending = try Self.validatePortableIds(
+                manifest["mobileStaticRegistryPending"]?.split(separator: ",").map(String.init) ?? [],
+                label: "mobile static registry extension"
+            )
+            mobileStaticRegistryRegistered = try Self.validatePortableIds(
+                manifest["mobileStaticRegistryRegistered"]?.split(separator: ",").map(String.init) ?? [],
+                label: "mobile static registry extension"
+            )
+            nativeModuleStems = try Self.validatePortableIds(
+                manifest["nativeModuleStems"]?.split(separator: ",").map(String.init) ?? [],
+                label: "native module stem"
+            )
+            try Self.validateMobileStaticRegistryManifest(
+                state: mobileStaticRegistryState,
+                registered: mobileStaticRegistryRegistered,
+                pending: mobileStaticRegistryPending,
+                nativeModuleStems: nativeModuleStems,
+                selectedExtensions: selectedExtensions
+            )
+        } else {
+            mobileStaticRegistryState = nil
+            mobileStaticRegistryPending = []
+            mobileStaticRegistryRegistered = []
+            nativeModuleStems = []
+        }
         let sharedPreloadLibraries = try Self.validatePortableIds(
             manifest["sharedPreloadLibraries"]?.split(separator: ",").map(String.init) ?? [],
             label: "shared preload library"
         )
-        try Self.validateMobileStaticRegistryManifest(
-            state: mobileStaticRegistryState,
-            registered: mobileStaticRegistryRegistered,
-            pending: mobileStaticRegistryPending,
-            nativeModuleStems: nativeModuleStems,
-            selectedExtensions: selectedExtensions
-        )
         let filesURL = rootURL.appendingPathComponent("files", isDirectory: true)
         guard FileManager.default.fileExists(atPath: filesURL.path) else {
             throw OliphauntError.engine("liboliphaunt \(kind.label) package is missing files directory at \(filesURL.path)")
+        }
+        if case .clusterSeed = kind {
+            for relative in ["PG_VERSION", "global/pg_control"] {
+                guard FileManager.default.fileExists(
+                    atPath: filesURL.appendingPathComponent(relative).path
+                ) else {
+                    throw OliphauntError.engine(
+                        "liboliphaunt \(kind.label) package is missing \(relative)"
+                    )
+                }
+            }
         }
         return AssetPackage(
             rootURL: rootURL,
@@ -487,24 +774,53 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
             mobileStaticRegistryState: mobileStaticRegistryState,
             mobileStaticRegistryRegistered: mobileStaticRegistryRegistered,
             mobileStaticRegistryPending: mobileStaticRegistryPending,
-            nativeModuleStems: nativeModuleStems
+            nativeModuleStems: nativeModuleStems,
+            clusterSeedTarget: clusterSeedTarget,
+            icuDataTreeSha256: icuDataTreeSha256
         )
+    }
+
+    private func validateRuntimeCarrierReceipt() throws {
+        let url = resourceRoot.appendingPathComponent("manifest.properties")
+        let values = try readManifest(url)
+        let expectedKeys: Set<String> = [
+            "schema", "clusterSeedTarget", "clusterSeedRelativePath",
+            "icuClusterSeedRelativePath",
+        ]
+        guard Set(values.keys) == expectedKeys,
+              values["schema"] == "oliphaunt-native-runtime-carrier-v1",
+              values["clusterSeedTarget"] == oliphauntSwiftClusterSeedTarget,
+              values["clusterSeedRelativePath"] == "cluster-seed",
+              values["icuClusterSeedRelativePath"] == "cluster-seed-icu"
+        else {
+            throw OliphauntError.engine(
+                "liboliphaunt runtime carrier does not contain the exact \(oliphauntSwiftClusterSeedTarget) seed receipt"
+            )
+        }
+        _ = try assetPackage(kind: .clusterSeed(.standard))
+        _ = try assetPackage(kind: .clusterSeed(.icu))
     }
 
     private func readManifest(_ url: URL) throws -> [String: String] {
         let text = try String(contentsOf: url, encoding: .utf8)
         var values: [String: String] = [:]
         for rawLine in text.split(whereSeparator: { $0.isNewline }) {
-            let line = String(rawLine).trimmingCharacters(in: .whitespaces)
-            if line.isEmpty || line.hasPrefix("#") {
-                continue
-            }
+            let line = String(rawLine)
             guard let separator = line.firstIndex(of: "=") else {
-                continue
+                throw OliphauntError.engine(
+                    "malformed liboliphaunt resource manifest at \(url.path)"
+                )
             }
-            let key = String(line[..<separator]).trimmingCharacters(in: .whitespaces)
-            let value = String(line[line.index(after: separator)...]).trimmingCharacters(in: .whitespaces)
-            values[key] = value
+            let key = String(line[..<separator])
+            let value = String(line[line.index(after: separator)...])
+            guard !key.isEmpty, values.updateValue(value, forKey: key) == nil else {
+                throw OliphauntError.engine(
+                    "invalid or duplicate property in liboliphaunt resource manifest at \(url.path)"
+                )
+            }
+        }
+        guard !values.isEmpty else {
+            throw OliphauntError.engine("empty liboliphaunt resource manifest at \(url.path)")
         }
         return values
     }
@@ -515,7 +831,8 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
     ) throws -> OliphauntRuntimeResourceSizeReport {
         var packageBytes: UInt64?
         var runtimeBytes: UInt64?
-        var templatePgdataBytes: UInt64?
+        var clusterSeedBytes: UInt64?
+        var icuClusterSeedBytes: UInt64?
         var staticRegistryBytes: UInt64?
         var selectedExtensionBytes: UInt64?
         var extensionReports: [OliphauntExtensionSizeReport] = []
@@ -557,11 +874,19 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
                     source: source,
                     line: index + 2
                 )
-            case ("package", "template-pgdata"):
+            case ("package", "cluster-seed"):
                 try Self.setSizeReportValue(
-                    &templatePgdataBytes,
+                    &clusterSeedBytes,
                     bytes,
-                    row: "package/template-pgdata",
+                    row: "package/cluster-seed",
+                    source: source,
+                    line: index + 2
+                )
+            case ("package", "cluster-seed-icu"):
+                try Self.setSizeReportValue(
+                    &icuClusterSeedBytes,
+                    bytes,
+                    row: "package/cluster-seed-icu",
                     source: source,
                     line: index + 2
                 )
@@ -615,14 +940,26 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
             }
         }
 
+        let standardSeedBytes = try Self.requireSizeReportValue(
+            clusterSeedBytes,
+            "package/cluster-seed",
+            source
+        )
+        let icuSeedBytes = try Self.requireSizeReportValue(
+            icuClusterSeedBytes,
+            "package/cluster-seed-icu",
+            source
+        )
+        let (allSeedBytes, overflow) = standardSeedBytes.addingReportingOverflow(icuSeedBytes)
+        guard !overflow else {
+            throw OliphauntError.engine(
+                "Oliphaunt package size report \(source) cluster-seed bytes overflow UInt64"
+            )
+        }
         return OliphauntRuntimeResourceSizeReport(
             packageBytes: try Self.requireSizeReportValue(packageBytes, "package/total", source),
             runtimeBytes: try Self.requireSizeReportValue(runtimeBytes, "package/runtime", source),
-            templatePgdataBytes: try Self.requireSizeReportValue(
-                templatePgdataBytes,
-                "package/template-pgdata",
-                source
-            ),
+            clusterSeedBytes: allSeedBytes,
             staticRegistryBytes: try Self.requireSizeReportValue(
                 staticRegistryBytes,
                 "package/static-registry",
@@ -810,19 +1147,95 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
         }
     }
 
-    private static func defaultIcuDataURL() throws -> URL? {
-        for resourceDirectory in defaultBundleResourceURLs() {
-            for relative in [
-                "oliphaunt-icu/share/icu",
-                "share/icu",
-            ] {
-                let candidate = resourceDirectory.appendingPathComponent(relative, isDirectory: true)
-                if try icuDataRootContainsData(candidate) {
-                    return candidate
+    private static func isSha256(_ value: String) -> Bool {
+        value.utf8.count == 64 && value.utf8.allSatisfy { byte in
+            (48...57).contains(byte) || (97...102).contains(byte)
+        }
+    }
+
+    private static func icuDataCarrier(
+        inResourceDirectories resourceDirectories: [URL]
+    ) throws -> OliphauntIcuDataCarrier? {
+        var carriers: [OliphauntIcuDataCarrier] = []
+        var seen = Set<String>()
+        for resourceDirectory in resourceDirectories {
+            var roots = [resourceDirectory.appendingPathComponent("oliphaunt-icu", isDirectory: true)]
+            if isGeneratedIcuBundleResourceURL(resourceDirectory) {
+                roots.append(resourceDirectory)
+            }
+            for root in roots {
+                let key = root.standardizedFileURL.path
+                guard seen.insert(key).inserted else { continue }
+                let manifestURL = root.appendingPathComponent("manifest.properties", isDirectory: false)
+                guard FileManager.default.fileExists(atPath: manifestURL.path) else { continue }
+                let values = try readIcuDataManifest(manifestURL)
+                let dataURL = root.appendingPathComponent("share/icu", isDirectory: true)
+                guard try icuDataRootContainsData(dataURL) else {
+                    throw OliphauntError.engine(
+                        "Oliphaunt ICU data carrier contains no ICU data at \(dataURL.path)"
+                    )
                 }
+                carriers.append(
+                    OliphauntIcuDataCarrier(
+                        dataURL: dataURL,
+                        treeSha256: values["icuDataTreeSha256"]!
+                    )
+                )
             }
         }
-        return nil
+        guard let selected = carriers.first else { return nil }
+        let mismatched = carriers.first { $0.treeSha256 != selected.treeSha256 }
+        guard mismatched == nil else {
+            throw OliphauntError.engine(
+                "multiple generated Oliphaunt ICU data carriers expose different logical tree digests"
+            )
+        }
+        return selected
+    }
+
+    private static func readIcuDataManifest(_ url: URL) throws -> [String: String] {
+        let text = try String(contentsOf: url, encoding: .utf8)
+        var values: [String: String] = [:]
+        for rawLine in text.split(whereSeparator: { $0.isNewline }) {
+            let line = String(rawLine)
+            guard let separator = line.firstIndex(of: "=") else {
+                throw OliphauntError.engine("malformed Oliphaunt ICU data manifest at \(url.path)")
+            }
+            let key = String(line[..<separator])
+            let value = String(line[line.index(after: separator)...])
+            guard !key.isEmpty, values.updateValue(value, forKey: key) == nil else {
+                throw OliphauntError.engine("invalid Oliphaunt ICU data manifest at \(url.path)")
+            }
+        }
+        let expectedKeys: Set<String> = [
+            "schema", "artifactRole", "icuDataVersion", "icuDataForm", "icuDataTreeSha256",
+        ]
+        guard Set(values.keys) == expectedKeys,
+              values["schema"] == oliphauntIcuDataSchema,
+              values["artifactRole"] == "icu-data",
+              values["icuDataVersion"] == "76.1",
+              values["icuDataForm"] == "files-le",
+              isSha256(values["icuDataTreeSha256"] ?? "")
+        else {
+            throw OliphauntError.engine(
+                "Oliphaunt ICU data manifest at \(url.path) does not declare the canonical data contract"
+            )
+        }
+        return values
+    }
+
+    private static func isGeneratedIcuBundleResourceURL(_ url: URL) -> Bool {
+        var candidate = url.standardizedFileURL
+        for _ in 0..<4 {
+            let name = candidate.lastPathComponent
+            if name == "OliphauntICU.bundle" || name.hasSuffix("_OliphauntICU.bundle") {
+                return true
+            }
+            let parent = candidate.deletingLastPathComponent()
+            if parent.path == candidate.path { break }
+            candidate = parent
+        }
+        return false
     }
 
     private static func icuDataRootContainsData(_ root: URL) throws -> Bool {
@@ -906,14 +1319,14 @@ func bundleResourceURLs(
 
 private enum AssetPackageKind {
     case runtime
-    case templatePgdata
+    case clusterSeed(OliphauntNativeCatalogProfile)
 
     var label: String {
         switch self {
         case .runtime:
             return "runtime"
-        case .templatePgdata:
-            return "template-pgdata"
+        case .clusterSeed(let profile):
+            return "\(profile.rawValue) cluster seed"
         }
     }
 
@@ -921,13 +1334,19 @@ private enum AssetPackageKind {
         switch self {
         case .runtime:
             return oliphauntRuntimePackageLayout
-        case .templatePgdata:
-            return oliphauntTemplatePgdataPackageLayout
+        case .clusterSeed:
+            return oliphauntClusterSeedPackageLayout
         }
     }
 
     func root(in resourceRoot: URL) -> URL {
-        resourceRoot.appendingPathComponent(label, isDirectory: true)
+        switch self {
+        case .runtime:
+            return resourceRoot.appendingPathComponent("runtime", isDirectory: true)
+        case .clusterSeed(let profile):
+            let name = profile == .standard ? "cluster-seed" : "cluster-seed-icu"
+            return resourceRoot.appendingPathComponent(name, isDirectory: true)
+        }
     }
 }
 
@@ -943,6 +1362,8 @@ private struct AssetPackage {
     var mobileStaticRegistryRegistered: Set<String>
     var mobileStaticRegistryPending: Set<String>
     var nativeModuleStems: Set<String>
+    var clusterSeedTarget: String
+    var icuDataTreeSha256: String
 }
 
 private func copyTree(from source: URL, to destination: URL) throws {

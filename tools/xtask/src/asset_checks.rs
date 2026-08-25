@@ -337,28 +337,40 @@ pub(crate) fn verify_asset_manifest_hashes() -> Result<()> {
         }
     }
 
-    let pgdata_archive = base.join("prepopulated/pgdata-template.tar.zst");
-    verify_pgdata_template_hash(&pgdata_archive)?;
-    if let Some(template) = &manifest.pgdata_template {
-        verify_file_sha256(
-            &base.join(&template.archive),
-            &template.sha256,
-            "PGDATA template",
+    for (profile, seed) in &manifest.cluster_seeds {
+        verify_cluster_seed_hash(
+            profile,
+            &base.join(&seed.archive),
+            &base.join(&seed.manifest),
         )?;
-        ensure_file(&base.join(&template.manifest))?;
+        verify_file_sha256(
+            &base.join(&seed.archive),
+            &seed.sha256,
+            &format!("{profile} cluster seed"),
+        )?;
+        ensure_file(&base.join(&seed.manifest))?;
         ensure_eq(
-            &template.runtime_module_sha256,
+            &seed.runtime_module_sha256,
             &manifest.runtime.module_sha256,
-            "PGDATA template runtime module sha256",
+            &format!("{profile} cluster seed runtime module sha256"),
         )?;
         if let Some(initdb) = &manifest.initdb {
             ensure_eq(
-                &template.initdb_module_sha256,
+                &seed.initdb_module_sha256,
                 &initdb.module_sha256,
-                "PGDATA template initdb module sha256",
+                &format!("{profile} cluster seed initdb module sha256"),
             )?;
         }
     }
+    ensure!(
+        manifest
+            .cluster_seeds
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            == ["icu", "standard"],
+        "generated asset manifest must contain exactly the icu and standard cluster seeds"
+    );
 
     if is_release_staged_workspace() {
         verify_root_asset_metadata(&manifest, &manifest.runtime.module_sha256)?;
@@ -368,23 +380,36 @@ pub(crate) fn verify_asset_manifest_hashes() -> Result<()> {
     Ok(())
 }
 
-fn verify_pgdata_template_hash(pgdata_archive: &Path) -> Result<()> {
-    let manifest_path = Path::new(GENERATED_ASSETS_DIR).join("prepopulated/pgdata-template.json");
+fn verify_cluster_seed_hash(profile: &str, archive: &Path, manifest_path: &Path) -> Result<()> {
     ensure!(
-        manifest_path.exists() && pgdata_archive.exists(),
-        "generated assets must include the bundled PGDATA template required by the default runtime; expected both {} and {}",
+        manifest_path.exists() && archive.exists(),
+        "generated assets must include the {profile} cluster seed archive and manifest; expected both {} and {}",
         manifest_path.display(),
-        pgdata_archive.display()
+        archive.display()
     );
     let text = fs::read_to_string(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
     let manifest: serde_json::Value = serde_json::from_str(&text)
         .with_context(|| format!("parse {}", manifest_path.display()))?;
     let expected = manifest
-        .get("archiveSha256")
+        .get("archive")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|archive| archive.get("sha256"))
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| anyhow!("{} is missing archiveSha256", manifest_path.display()))?;
-    verify_file_sha256(pgdata_archive, expected, "PGDATA template archive")?;
+        .ok_or_else(|| anyhow!("{} is missing archive.sha256", manifest_path.display()))?;
+    ensure_eq(
+        manifest
+            .get("catalogProfile")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("<missing>"),
+        profile,
+        "cluster seed catalogProfile",
+    )?;
+    verify_file_sha256(
+        archive,
+        expected,
+        &format!("{profile} cluster seed archive"),
+    )?;
     Ok(())
 }
 
@@ -423,15 +448,16 @@ fn verify_root_asset_metadata(
         &pg18.patches.series.len().to_string(),
         "PostgreSQL patch count metadata",
     )?;
-    let pgdata_template = manifest
-        .pgdata_template
-        .as_ref()
-        .context("generated asset manifest is missing the PGDATA template")?;
-    verify_root_metadata_value(
-        "pgdata-template-archive-sha256",
-        &pgdata_template.sha256,
-        "PGDATA template archive metadata",
-    )?;
+    for profile in ["standard", "icu"] {
+        let seed = manifest.cluster_seeds.get(profile).with_context(|| {
+            format!("generated asset manifest is missing {profile} cluster seed")
+        })?;
+        verify_root_metadata_value(
+            &format!("cluster-seed-{profile}-archive-sha256"),
+            &seed.sha256,
+            &format!("{profile} cluster seed archive metadata"),
+        )?;
+    }
     if let Some(pg_dump) = &manifest.pg_dump {
         verify_tools_metadata_value("pg-dump-wasix-sha256", &pg_dump.sha256, "pg_dump metadata")?;
     }
@@ -934,6 +960,7 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
         "src/runtimes/liboliphaunt/wasix/assets/build/build_wasix_proj.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/build_wasix_libiconv.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/build_wasix_icu.sh",
+        "src/runtimes/liboliphaunt/native/bin/icu.sh",
         "src/extensions/external/postgis/tools/build_wasix.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_pgxs_extensions.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_contrib_extensions.sh",
@@ -1067,7 +1094,12 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
             "icu_stub_data_archive_ready",
             "icu_files_data_ready",
             "icu_install_stub_data_archive",
-            "members=\"$(ar -t \"$archive\")\"",
+            ". \"$NATIVE_ICU_HELPER\"",
+            "native_icu_helper_sha256",
+            "icu_canonical_data_sha256",
+            "icu_require_canonical_data",
+            "icu_build_native_tools",
+            "icu_install_canonical_files_data",
             "icu_wasix_config_ready",
             "icu_cv_host_frag=mh-linux",
             "wasix-platform-fragment=mh-linux",
@@ -1076,12 +1108,10 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
             "wasix-timezone-cache=no-tzname",
             "icu_pkgdata_opts=\"-O $ICU_BUILD_DIR/data/icupkg.inc -w\"",
             "wasix-data-packaging=files-without-assembly",
-            "stubdata\\.ao",
             "packagedata",
             "--disable-tools",
             "--disable-icuio",
             "--disable-layoutex",
-            "makeconv",
             "genrb",
             "pkgdata",
             "libicui18n.a",
@@ -1090,16 +1120,21 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
         ],
     )?;
     ensure_file_contains_all(
-        "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/postgres_mod.rs",
-        &["ICU_DATA", "/share/icu", "wasix_icu_data_is_available"],
+        "src/runtimes/liboliphaunt/native/bin/icu.sh",
+        &[
+            "oliphaunt_icu_canonical_data_sha256",
+            "oliphaunt_icu_require_canonical_data",
+            "oliphaunt_icu_install_canonical_files_data",
+            "members=\"$(ar -t \"$archive\")\"",
+            "stubdata\\.ao",
+            "makeconv",
+            "genrb",
+            "pkgdata",
+        ],
     )?;
     ensure_file_contains_all(
-        "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/tools.rs",
-        &[
-            "ICU_DATA",
-            "/oliphaunt/share/icu",
-            "install_optional_icu_data",
-        ],
+        "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/postgres_mod.rs",
+        &["ICU_DATA", "/share/icu", "wasix_icu_data_is_available"],
     )?;
     ensure_file_contains_all(
         "src/runtimes/liboliphaunt/wasix/assets/build/pg_config_wasix.sh",
@@ -1278,7 +1313,8 @@ fn check_root_asset_metadata_keys() -> Result<()> {
         "postgres-patch-count",
         "runtime-archive-sha256",
         "oliphaunt-wasix-sha256",
-        "pgdata-template-archive-sha256",
+        "cluster-seed-standard-archive-sha256",
+        "cluster-seed-icu-archive-sha256",
         "initdb-wasix-sha256",
     ] {
         let needle = format!("{required} = \"");

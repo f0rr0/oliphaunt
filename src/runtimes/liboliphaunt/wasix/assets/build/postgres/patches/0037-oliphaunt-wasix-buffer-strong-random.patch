@@ -3,28 +3,58 @@ From: Oliphaunt Maintainers <dev@oliphaunt.dev>
 Date: Mon, 17 Aug 2026 00:00:00 +0000
 Subject: [PATCH] oliphaunt-wasix: buffer strong random
 
-The embedded WASIX backend otherwise opens the virtual /dev/urandom device
-for every UUID and causes one host entropy request for every 8 or 16 bytes.
+PostgreSQL otherwise opens the virtual /dev/urandom device for every strong
+random request. Concurrent WASIX backends can transiently exhaust their guest
+descriptor budget while creating cancel keys, and the embedded backend causes
+one host entropy request for every 8 or 16 bytes.
 
-Use the pinned WASIX libc getrandom interface directly and keep a small
-guest-side reservoir for the explicitly single-backend build. Refill errors
-and short reads remain visible through pg_strong_random's existing boolean
-contract. Concurrent and non-WASIX PostgreSQL builds retain upstream behavior.
+Use the pinned WASIX libc getrandom interface directly in every WASIX build.
+Keep a small guest-side reservoir only for the explicitly single-backend
+build; concurrent backends retain no state that a fork could duplicate.
+Errors and short reads remain visible through pg_strong_random's existing
+boolean contract. Non-WASIX PostgreSQL builds retain upstream behavior.
 ---
- src/port/pg_strong_random.c | 77 +++++++++++++++++++++++++++++++++++++
- 1 file changed, 77 insertions(+)
+ src/port/pg_strong_random.c | 103 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 103 insertions(+)
 
 diff --git a/src/port/pg_strong_random.c b/src/port/pg_strong_random.c
 index ea6780d..c0f42f4 100644
 --- a/src/port/pg_strong_random.c
 +++ b/src/port/pg_strong_random.c
-@@ -92,6 +92,83 @@ pg_strong_random(void *buf, size_t len)
+@@ -92,6 +92,109 @@ pg_strong_random(void *buf, size_t len)
  	return false;
  }
  
-+#elif defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER)
++#elif defined(__wasi__)
 +
 +#include <sys/random.h>
++
++static bool
++wasix_strong_random_fill(void *buf, size_t len)
++{
++	unsigned char *p = buf;
++
++	while (len > 0)
++	{
++		ssize_t		res;
++
++		res = getrandom(p, len, 0);
++		if (res < 0)
++		{
++			if (errno == EINTR)
++				continue;
++			return false;
++		}
++		if (res == 0)
++			return false;
++		p += res;
++		len -= res;
++	}
++
++	return true;
++}
++
++#if defined(OLIPHAUNT_WASM_SINGLE_USER)
 +
 +/*
 + * WASIX random_get crosses the guest/host boundary.  Keep a small reservoir
@@ -40,29 +70,12 @@ index ea6780d..c0f42f4 100644
 +static bool
 +wasix_strong_random_refill(void)
 +{
-+	size_t		filled = 0;
-+
-+	while (filled < sizeof(wasix_strong_random_pool))
++	if (!wasix_strong_random_fill(wasix_strong_random_pool,
++								 sizeof(wasix_strong_random_pool)))
 +	{
-+		ssize_t		res;
-+
-+		res = getrandom(wasix_strong_random_pool + filled,
-+						sizeof(wasix_strong_random_pool) - filled, 0);
-+		if (res < 0)
-+		{
-+			if (errno == EINTR)
-+				continue;
-+			wasix_strong_random_used = sizeof(wasix_strong_random_pool);
-+			return false;
-+		}
-+		if (res == 0)
-+		{
-+			wasix_strong_random_used = sizeof(wasix_strong_random_pool);
-+			return false;
-+		}
-+		filled += (size_t) res;
++		wasix_strong_random_used = sizeof(wasix_strong_random_pool);
++		return false;
 +	}
-+
 +	wasix_strong_random_used = 0;
 +	return true;
 +}
@@ -98,6 +111,22 @@ index ea6780d..c0f42f4 100644
 +
 +	return true;
 +}
++
++#else
++
++void
++pg_strong_random_init(void)
++{
++	/* No guest-side state in a process that may fork. */
++}
++
++bool
++pg_strong_random(void *buf, size_t len)
++{
++	return wasix_strong_random_fill(buf, len);
++}
++
++#endif
 +
  #elif WIN32
  

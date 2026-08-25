@@ -481,8 +481,10 @@ fn write_generated_assets(out: &Path, asset_dir: &Path, selected_extensions: &[S
         .join("manifest.json");
     write_core_manifest(&manifest, &generated_manifest, selected_extensions);
     let runtime = asset_dir.join("oliphaunt.wasix.tar.zst");
-    let pgdata_archive = asset_dir.join("prepopulated/pgdata-template.tar.zst");
-    let pgdata_manifest = asset_dir.join("prepopulated/pgdata-template.json");
+    let standard_seed_archive = asset_dir.join("cluster-seeds/standard.tar.zst");
+    let standard_seed_manifest = asset_dir.join("cluster-seeds/standard.json");
+    let icu_seed_archive = asset_dir.join("cluster-seeds/icu.tar.zst");
+    let icu_seed_manifest = asset_dir.join("cluster-seeds/icu.json");
     let initdb = asset_dir.join("bin/initdb.wasix.wasm");
 
     for required in [&manifest, &runtime, &initdb] {
@@ -493,16 +495,23 @@ fn write_generated_assets(out: &Path, asset_dir: &Path, selected_extensions: &[S
             required.display()
         );
     }
-    assert!(
-        pgdata_archive.is_file() && pgdata_manifest.is_file(),
-        "generated asset directory {} is missing the required PGDATA template; expected both {} and {}",
-        asset_dir.display(),
-        pgdata_archive.display(),
-        pgdata_manifest.display()
-    );
+    for (profile, archive, seed_manifest) in [
+        ("standard", &standard_seed_archive, &standard_seed_manifest),
+        ("icu", &icu_seed_archive, &icu_seed_manifest),
+    ] {
+        assert!(
+            archive.is_file() && seed_manifest.is_file(),
+            "generated asset directory {} is missing the required {profile} cluster seed; expected both {} and {}",
+            asset_dir.display(),
+            archive.display(),
+            seed_manifest.display()
+        );
+    }
 
-    let pgdata_archive_body = optional_include_bytes_body(&pgdata_archive);
-    let pgdata_manifest_body = optional_include_bytes_body(&pgdata_manifest);
+    let standard_seed_archive_body = optional_include_bytes_body(&standard_seed_archive);
+    let standard_seed_manifest_body = optional_include_bytes_body(&standard_seed_manifest);
+    let icu_seed_archive_body = optional_include_bytes_body(&icu_seed_archive);
+    let icu_seed_manifest_body = optional_include_bytes_body(&icu_seed_manifest);
     let extension_sql_names = selected_extension_sql_names_body(selected_extensions);
     let extension_aot_sql_names = selected_extension_aot_sql_names_body(selected_extensions);
     let extension_archive_body = extension_archive_body(selected_extensions);
@@ -516,8 +525,10 @@ fn write_generated_assets(out: &Path, asset_dir: &Path, selected_extensions: &[S
          pub const SELECTED_EXTENSION_AOT_SQL_NAMES: &[&str] = {extension_aot_sql_names};\n\
          pub const MANIFEST_JSON: &str = include_str!({manifest});\n\
          pub fn runtime_archive() -> Option<&'static [u8]> {{ Some(include_bytes!({runtime})) }}\n\
-         pub fn pgdata_template_archive() -> Option<&'static [u8]> {{ {pgdata_archive_body} }}\n\
-         pub fn pgdata_template_manifest() -> Option<&'static [u8]> {{ {pgdata_manifest_body} }}\n\
+         pub fn standard_cluster_seed_archive() -> Option<&'static [u8]> {{ {standard_seed_archive_body} }}\n\
+         pub fn standard_cluster_seed_manifest() -> Option<&'static [u8]> {{ {standard_seed_manifest_body} }}\n\
+         pub fn icu_cluster_seed_archive() -> Option<&'static [u8]> {{ {icu_seed_archive_body} }}\n\
+         pub fn icu_cluster_seed_manifest() -> Option<&'static [u8]> {{ {icu_seed_manifest_body} }}\n\
          pub fn initdb_wasm() -> Option<&'static [u8]> {{ Some(include_bytes!({initdb})) }}\n\
          pub fn extension_archive(name: &str) -> Option<&'static [u8]> {{\n{extension_archive_body}         }}\n\
          pub fn expected_extension_archive_sha256(name: &str) -> Option<&'static str> {{\n{extension_sha256_body}         }}\n\
@@ -526,8 +537,10 @@ fn write_generated_assets(out: &Path, asset_dir: &Path, selected_extensions: &[S
          pub fn extension_aot_artifact_bytes(target: &str, name: &str) -> Option<&'static [u8]> {{\n{extension_aot_bytes_body}         }}\n",
         manifest = rust_string_literal(&generated_manifest),
         runtime = rust_string_literal(&runtime),
-        pgdata_archive_body = pgdata_archive_body,
-        pgdata_manifest_body = pgdata_manifest_body,
+        standard_seed_archive_body = standard_seed_archive_body,
+        standard_seed_manifest_body = standard_seed_manifest_body,
+        icu_seed_archive_body = icu_seed_archive_body,
+        icu_seed_manifest_body = icu_seed_manifest_body,
         initdb = rust_string_literal(&initdb),
         extension_sql_names = extension_sql_names,
         extension_aot_sql_names = extension_aot_sql_names,
@@ -543,8 +556,10 @@ fn write_generated_assets(out: &Path, asset_dir: &Path, selected_extensions: &[S
         &[
             &generated_manifest,
             &runtime,
-            &pgdata_archive,
-            &pgdata_manifest,
+            &standard_seed_archive,
+            &standard_seed_manifest,
+            &icu_seed_archive,
+            &icu_seed_manifest,
             &initdb,
         ],
     );
@@ -563,10 +578,12 @@ fn write_source_only_assets(out: &Path, selected_extensions: &[SelectedExtension
          pub const SELECTED_EXTENSION_AOT_SQL_NAMES: &[&str] = {extension_aot_sql_names};\n"
     );
     text.push_str(
-        r##"pub const MANIFEST_JSON: &str = r#"{"format-version":1,"runtime":{"archive":"","sha256":"","module-sha256":"","postgres-version":"","runtime-kind":"source-only-template"},"runtime-support":[],"extensions":[],"sources":[]}"#;
+        r##"pub const MANIFEST_JSON: &str = r#"{"format-version":2,"runtime":{"archive":"","sha256":"","module-sha256":"","postgres-version":"","runtime-kind":"source-only-template"},"runtime-support":[],"cluster-seeds":{},"extensions":[],"sources":[]}"#;
 pub fn runtime_archive() -> Option<&'static [u8]> { None }
-pub fn pgdata_template_archive() -> Option<&'static [u8]> { None }
-pub fn pgdata_template_manifest() -> Option<&'static [u8]> { None }
+pub fn standard_cluster_seed_archive() -> Option<&'static [u8]> { None }
+pub fn standard_cluster_seed_manifest() -> Option<&'static [u8]> { None }
+pub fn icu_cluster_seed_archive() -> Option<&'static [u8]> { None }
+pub fn icu_cluster_seed_manifest() -> Option<&'static [u8]> { None }
 pub fn initdb_wasm() -> Option<&'static [u8]> { None }
 "##,
     );

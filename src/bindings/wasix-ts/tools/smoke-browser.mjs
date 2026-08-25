@@ -75,7 +75,8 @@ const pgUuidv7Canary = process.argv.includes('--pg-uuidv7');
 const postgisWorkerCanary = process.argv.includes('--postgis-worker');
 const requiredInputs = [
   resolve(repositoryRoot, 'target/oliphaunt-wasix/assets/oliphaunt.wasix.tar.zst'),
-  resolve(repositoryRoot, 'target/oliphaunt-wasix/assets/prepopulated/pgdata-template.tar.zst'),
+  resolve(repositoryRoot, 'target/oliphaunt-wasix/assets/cluster-seeds/standard.tar.zst'),
+  resolve(repositoryRoot, 'target/oliphaunt-wasix/assets/cluster-seeds/standard.json'),
   resolve(repositoryRoot, 'target/oliphaunt-wasix/assets/manifest.json'),
   resolve(
     repositoryRoot,
@@ -380,9 +381,9 @@ async function candidateProvenance(plan) {
   if (runtime === null || typeof runtime !== 'object') {
     throw new Error('canonical WASIX manifest has no runtime entry');
   }
-  const pgdata = manifest['pgdata-template'];
-  if (pgdata === null || typeof pgdata !== 'object') {
-    throw new Error('canonical WASIX manifest has no PGDATA template entry');
+  const clusterSeed = manifest['cluster-seeds']?.standard;
+  if (clusterSeed === null || typeof clusterSeed !== 'object') {
+    throw new Error('canonical WASIX manifest has no standard cluster seed entry');
   }
   const archiveBytes = await readFile(
     resolve(repositoryRoot, 'target/oliphaunt-wasix/assets', runtime.archive),
@@ -391,12 +392,12 @@ async function candidateProvenance(plan) {
   if (archiveSha256 !== runtime.sha256) {
     throw new Error('canonical WASIX runtime archive does not match its manifest');
   }
-  const pgdataBytes = await readFile(
-    resolve(repositoryRoot, 'target/oliphaunt-wasix/assets', pgdata.archive),
+  const clusterSeedBytes = await readFile(
+    resolve(repositoryRoot, 'target/oliphaunt-wasix/assets', clusterSeed.archive),
   );
-  const pgdataSha256 = sha256(pgdataBytes);
-  if (pgdataSha256 !== pgdata.sha256) {
-    throw new Error('canonical WASIX PGDATA template does not match its manifest');
+  const clusterSeedSha256 = sha256(clusterSeedBytes);
+  if (clusterSeedSha256 !== clusterSeed.sha256) {
+    throw new Error('canonical WASIX standard cluster seed does not match its manifest');
   }
   const hostBuild = await installedHostBuildProvenance(
     packageFile,
@@ -438,10 +439,11 @@ async function candidateProvenance(plan) {
       sourceFingerprint: manifest['source-fingerprint'],
       sourceLane: manifest['source-lane'],
     },
-    pgdataTemplate: {
-      archive: pgdata.archive,
-      archiveSha256: pgdataSha256,
-      archiveSize: pgdataBytes.length,
+    clusterSeed: {
+      profile: 'standard',
+      archive: clusterSeed.archive,
+      archiveSha256: clusterSeedSha256,
+      archiveSize: clusterSeedBytes.length,
     },
   };
 }

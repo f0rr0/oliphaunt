@@ -38,7 +38,7 @@ export class FakeWorkerPort implements WasixWorkerPort {
 export function workerOpenOptions(): WorkerOpenOptions {
   return {
     runtime: {
-      schema: 'oliphaunt-wasix-runtime-v1',
+      schema: 'oliphaunt-wasix-runtime-v2',
       runtime: 'wasix',
       product: 'liboliphaunt-wasix',
       version: '0.1.1',
@@ -48,11 +48,16 @@ export function workerOpenOptions(): WorkerOpenOptions {
         size: 1,
         source: 'file:///runtime.tar.zst',
       },
-      pgdataArchive: {
-        archive: 'prepopulated/pgdata-template.tar.zst',
+      standardSeedArchive: {
+        archive: 'cluster-seeds/standard.tar.zst',
         sha256: '2'.repeat(64),
         size: 1,
-        source: 'file:///pgdata.tar.zst',
+        source: 'file:///standard-seed.tar.zst',
+      },
+      standardSeedManifest: {
+        sha256: '4'.repeat(64),
+        size: 1,
+        source: 'file:///standard-seed.json',
       },
       manifest: {
         sha256: '3'.repeat(64),

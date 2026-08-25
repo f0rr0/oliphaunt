@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 use crate::error::{Error, Result};
 
-const ROOT_DESCRIPTOR_FILE: &str = ".oliphaunt.json";
+pub(super) const ROOT_DESCRIPTOR_FILE: &str = ".oliphaunt.json";
 const ROOT_POSTGRES_MAJOR: &str = "18";
 const NATIVE_ROOT_DESCRIPTOR: &str = "{\"schema\":\"oliphaunt-database-root-v1\",\"engineFamily\":\"native\",\"pgdata\":\"pgdata\",\"postgresMajor\":18,\"physicalFormat\":\"native-pg18-v1\"}\n";
 
@@ -124,10 +124,17 @@ pub(super) fn publish_native_root_descriptor(root: &Path) -> Result<()> {
         })?;
         sync_directory(root)
     })();
-    if result.is_err() {
-        let _ = fs::remove_file(staging);
+    if let Err(error) = result {
+        return match fs::remove_file(&staging) {
+            Ok(()) => Err(error),
+            Err(cleanup) if cleanup.kind() == std::io::ErrorKind::NotFound => Err(error),
+            Err(cleanup) => Err(Error::Engine(format!(
+                "{error}; additionally failed to remove staged root descriptor {}: {cleanup}",
+                staging.display()
+            ))),
+        };
     }
-    result
+    Ok(())
 }
 
 #[cfg(not(windows))]

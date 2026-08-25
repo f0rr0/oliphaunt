@@ -32,6 +32,7 @@ import {
   type ManagedChild,
 } from './node-adapter.js';
 import type { RuntimeBinding, RuntimeHandle } from './types.js';
+import { resolveExactNativeRuntimeProfile } from '../native/runtime-profile.js';
 
 const READY_PREFIX = 'OLIPHAUNT_BROKER_READY ';
 const ERROR_PREFIX = 'OLIPHAUNT_BROKER_ERROR ';
@@ -278,6 +279,7 @@ async function launchBroker(
     executable,
     args: brokerSpawnArgs(config, endpoint),
     env: brokerSpawnEnv(authToken, nativeInstall),
+    replaceEnv: true,
   });
   try {
     const line = await Promise.race([
@@ -323,6 +325,7 @@ type BrokerNativeInstall = {
   libraryPath: string;
   runtimeDirectory?: string;
   icuDataDirectory?: string;
+  catalogProfile: 'standard' | 'icu';
   moduleDirectory?: string;
 };
 
@@ -364,32 +367,61 @@ async function resolveBrokerNativeInstall(config: {
             extensions,
             source: 'Deno broker explicit runtimeDirectory',
           });
+    const explicitRuntimeDirectory =
+      config.runtimeDirectory !== undefined || install.packageManaged === false;
+    const profile =
+      explicitRuntimeDirectory && validated.runtimeDirectory !== undefined
+        ? await resolveExactNativeRuntimeProfile(validated.runtimeDirectory)
+        : {
+            icuDataDirectory: install.icuDataDirectory,
+            catalogProfile: install.catalogProfile ?? ('standard' as const),
+          };
     return {
       libraryPath: install.libraryPath,
       runtimeDirectory: validated.runtimeDirectory,
-      icuDataDirectory: install.icuDataDirectory,
+      ...profile,
       moduleDirectory: validated.moduleDirectory,
     };
   }
 
   const assets = await import('../native/assets-node.js');
   const install = await assets.resolveNodeNativeInstall(config.libraryPath);
+  const explicitRuntimeDirectory =
+    config.runtimeDirectory !== undefined || install.packageManaged === false;
   const resolved = {
     libraryPath: install.libraryPath,
     runtimeDirectory: config.runtimeDirectory ?? install.runtimeDirectory,
     icuDataDirectory: install.icuDataDirectory,
+    catalogProfile: install.catalogProfile ?? ('standard' as const),
   };
-  return assets.prepareNodeExtensionInstall(resolved, extensions, {
-    explicitRuntimeDirectory:
-      config.runtimeDirectory !== undefined || install.packageManaged === false,
+  const prepared = await assets.prepareNodeExtensionInstall(resolved, extensions, {
+    explicitRuntimeDirectory,
   });
+  if (!explicitRuntimeDirectory || prepared.runtimeDirectory === undefined) {
+    return {
+      ...prepared,
+      catalogProfile: prepared.catalogProfile ?? 'standard',
+    };
+  }
+  return {
+    ...prepared,
+    ...(await resolveExactNativeRuntimeProfile(prepared.runtimeDirectory)),
+  };
 }
 
 function brokerSpawnEnv(
   authToken: string,
   nativeInstall: BrokerNativeInstall,
 ): Record<string, string> {
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
+  );
+  delete env[OLIPHAUNT_ICU_DATA_DIR_ENV];
+  delete env[ICU_DATA_ENV];
   return {
+    ...env,
     OLIPHAUNT_BROKER_AUTH_TOKEN: authToken,
     ...brokerNativeInstallEnv(nativeInstall),
   };

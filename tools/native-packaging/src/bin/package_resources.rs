@@ -98,12 +98,9 @@ fn run_with_package_args(args: PackageArgs) -> oliphaunt::Result<()> {
     let package = build_native_runtime_resources(options)?;
     println!("root={}", package.root.display());
     println!("runtimeFiles={}", package.runtime_files.display());
-    println!(
-        "templatePgdataFiles={}",
-        package.template_pgdata_files.display()
-    );
+    println!("clusterSeedFiles={}", package.cluster_seed_files.display());
     println!("runtimeCacheKey={}", package.runtime_cache_key);
-    println!("templateCacheKey={}", package.template_cache_key);
+    println!("clusterSeedCacheKey={}", package.cluster_seed_cache_key);
     println!("extensions={}", package.extension_names.join(","));
     println!(
         "runtimeFeatures={}",
@@ -157,8 +154,8 @@ fn run_with_package_args(args: PackageArgs) -> oliphaunt::Result<()> {
     println!("packageBytes={}", package.size_report.package_bytes);
     println!("runtimeBytes={}", package.size_report.runtime_bytes);
     println!(
-        "templatePgdataBytes={}",
-        package.size_report.template_pgdata_bytes
+        "clusterSeedBytes={}",
+        package.size_report.cluster_seed_bytes
     );
     println!(
         "staticRegistryBytes={}",
@@ -594,10 +591,15 @@ fn resolve_release_assets(args: &PackageArgs) -> oliphaunt::Result<()> {
     verify_release_asset_checksum(&checksums, &checksum_name, &checksum_path, "liboliphaunt").ok();
 
     if let Some(output_dir) = &args.output_dir {
-        let runtime_asset = format!("liboliphaunt-{version}-runtime-resources.tar.gz");
+        let runtime_asset = runtime_carrier_asset_name(version, &release_target)?;
         let runtime_path = cache_dir.join(&runtime_asset);
-        if runtime_path.is_file() {
+        if release_target.ends_with("datum64")
+            || release_target.starts_with("android-")
+            || release_target == "ios-xcframework"
+        {
             extract_runtime_resources_archive(&runtime_path, output_dir, args.force)?;
+        } else {
+            extract_native_runtime_archive(&runtime_path, output_dir, args.force)?;
         }
     }
 
@@ -710,7 +712,7 @@ fn default_release_asset_target() -> &'static str {
         ("ios", _) => "ios-xcframework",
         ("android", "aarch64") => "android-arm64-v8a",
         ("android", "x86_64") => "android-x86_64",
-        _ => "runtime-resources",
+        _ => "unsupported",
     }
 }
 
@@ -726,9 +728,8 @@ fn default_broker_release_asset_target() -> String {
 }
 
 fn release_asset_names_for_target(version: &str, target: &str) -> oliphaunt::Result<Vec<String>> {
-    let mut assets = vec![format!("liboliphaunt-{version}-runtime-resources.tar.gz")];
+    let mut assets = Vec::new();
     match target {
-        "runtime-resources" | "runtime-only" => {}
         "macos-arm64" => {
             assets.push(format!("liboliphaunt-{version}-macos-arm64.tar.gz"));
             assets.push(format!("oliphaunt-tools-{version}-macos-arm64.tar.gz"));
@@ -745,14 +746,33 @@ fn release_asset_names_for_target(version: &str, target: &str) -> oliphaunt::Res
             assets.push(format!("liboliphaunt-{version}-windows-x64-msvc.zip"));
             assets.push(format!("oliphaunt-tools-{version}-windows-x64-msvc.zip"));
         }
-        "ios-xcframework" | "ios" => {
+        "ios-xcframework" => {
             assets.push(format!("liboliphaunt-{version}-ios-xcframework.tar.gz"));
+            assets.push(format!(
+                "liboliphaunt-{version}-runtime-resources-ios-datum64.tar.gz"
+            ));
         }
-        "android-arm64-v8a" | "arm64-v8a" => {
+        "android-arm64-v8a" => {
             assets.push(format!("liboliphaunt-{version}-android-arm64-v8a.tar.gz"));
+            assets.push(format!(
+                "liboliphaunt-{version}-runtime-resources-android-datum64.tar.gz"
+            ));
         }
-        "android-x86_64" | "x86_64" => {
+        "android-x86_64" => {
             assets.push(format!("liboliphaunt-{version}-android-x86_64.tar.gz"));
+            assets.push(format!(
+                "liboliphaunt-{version}-runtime-resources-android-datum64.tar.gz"
+            ));
+        }
+        "ios-datum64" => {
+            assets.push(format!(
+                "liboliphaunt-{version}-runtime-resources-ios-datum64.tar.gz"
+            ));
+        }
+        "android-datum64" => {
+            assets.push(format!(
+                "liboliphaunt-{version}-runtime-resources-android-datum64.tar.gz"
+            ));
         }
         value => {
             return Err(oliphaunt::Error::InvalidConfig(format!(
@@ -761,6 +781,27 @@ fn release_asset_names_for_target(version: &str, target: &str) -> oliphaunt::Res
         }
     }
     Ok(assets)
+}
+
+fn runtime_carrier_asset_name(version: &str, target: &str) -> oliphaunt::Result<String> {
+    let name = match target {
+        "macos-arm64" => format!("liboliphaunt-{version}-macos-arm64.tar.gz"),
+        "linux-x64-gnu" => format!("liboliphaunt-{version}-linux-x64-gnu.tar.gz"),
+        "linux-arm64-gnu" => format!("liboliphaunt-{version}-linux-arm64-gnu.tar.gz"),
+        "windows-x64-msvc" => format!("liboliphaunt-{version}-windows-x64-msvc.zip"),
+        "ios-xcframework" | "ios-datum64" => {
+            format!("liboliphaunt-{version}-runtime-resources-ios-datum64.tar.gz")
+        }
+        "android-arm64-v8a" | "android-x86_64" | "android-datum64" => {
+            format!("liboliphaunt-{version}-runtime-resources-android-datum64.tar.gz")
+        }
+        value => {
+            return Err(oliphaunt::Error::InvalidConfig(format!(
+                "unsupported liboliphaunt release asset target '{value}'"
+            )));
+        }
+    };
+    Ok(name)
 }
 
 fn broker_release_asset_name_for_target(version: &str, target: &str) -> oliphaunt::Result<String> {
@@ -953,6 +994,28 @@ fn extract_runtime_resources_archive(
         ))
     })?;
     Ok(())
+}
+
+fn extract_native_runtime_archive(
+    archive_path: &Path,
+    output_dir: &Path,
+    replace_existing: bool,
+) -> oliphaunt::Result<()> {
+    prepare_archive_output_dir(output_dir, replace_existing, "liboliphaunt")?;
+    if archive_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".tar.gz"))
+    {
+        extract_tar_gz_archive(archive_path, output_dir, "liboliphaunt")
+    } else if archive_path.extension().and_then(|value| value.to_str()) == Some("zip") {
+        extract_zip_archive(archive_path, output_dir, "liboliphaunt")
+    } else {
+        Err(oliphaunt::Error::InvalidConfig(format!(
+            "unsupported liboliphaunt runtime archive {}",
+            archive_path.display()
+        )))
+    }
 }
 
 fn extract_broker_release_archive(
@@ -1249,15 +1312,15 @@ Build portable Oliphaunt runtime resources from the Rust SDK for Swift, Kotlin, 
 
 Usage:
   oliphaunt-resources --output <dir> [--mode native-direct|native-broker|native-server] [--runtime-feature icu] [--extension hstore,vector] [--extension-index <index.toml>] [--extension-target <target>] [--extension-cache <dir>] [--trusted-extension-index-key-file <key-id>:<path>] [--prebuilt-extension <artifact> --liboliphaunt-native-version <X.Y.Z>] [--mobile-static-module vector] [--force] [--require-mobile-static-registry]
-  oliphaunt-resources --resolve-release-assets --liboliphaunt-native-version <version> [--output <dir>] [--release-target macos-arm64|linux-x64-gnu|linux-arm64-gnu|windows-x64-msvc|ios-xcframework|android-arm64-v8a|android-x86_64|runtime-resources] [--release-asset-cache <dir>] [--release-asset-base-url <url>] [--force]
+  oliphaunt-resources --resolve-release-assets --liboliphaunt-native-version <version> [--output <dir>] [--release-target macos-arm64|linux-x64-gnu|linux-arm64-gnu|windows-x64-msvc|ios-xcframework|ios-datum64|android-arm64-v8a|android-x86_64|android-datum64] [--release-asset-cache <dir>] [--release-asset-base-url <url>] [--force]
   oliphaunt-resources --resolve-broker-release-assets --broker-version <version> [--output <dir>] [--broker-release-target macos-arm64|linux-x64-gnu|linux-arm64-gnu|windows-x64-msvc] [--broker-release-asset-cache <dir>] [--broker-release-asset-base-url <url>] [--force]
   oliphaunt-resources --list-extensions [--extension-index <index.toml>] [--extension-target <target>] [--trusted-extension-index-key-file <key-id>:<path>]
 
 The output directory receives:
   oliphaunt/runtime/manifest.properties
   oliphaunt/runtime/files/...
-  oliphaunt/template-pgdata/manifest.properties
-  oliphaunt/template-pgdata/files/...
+  oliphaunt/cluster-seed/manifest.properties
+  oliphaunt/cluster-seed/files/...
   oliphaunt/static-registry/manifest.properties
   oliphaunt/static-registry/oliphaunt_static_registry.c when mobile-ready
   oliphaunt/package-size.tsv
@@ -1296,7 +1359,7 @@ to require and verify an Ed25519 detached signature sidecar at <index>.sig
 before any indexed artifact is used. The key file must contain a hex-encoded
 32-byte Ed25519 public key. For local automation only,
 --trusted-extension-index-key <key-id>:<hex-key> is also accepted.
-package-size.tsv records the runtime/template/static-registry byte footprint,
+package-size.tsv records the runtime/cluster-seed/static-registry byte footprint,
 the de-duplicated selected extension asset bytes, and each selected extension's
 asset bytes.
 
@@ -1314,8 +1377,8 @@ share/postgresql that are shipped only when the exact extension is selected.
 Use --resolve-release-assets for app-developer installs from a published
 liboliphaunt-native-v<version> GitHub release. The resolver downloads
 liboliphaunt-<version>-release-assets.sha256, verifies each selected asset
-against it, caches the exact artifacts, and unpacks
-liboliphaunt-<version>-runtime-resources.tar.gz into --output when provided.
+against it, caches the exact artifacts, and unpacks the selected desktop
+target carrier or target-qualified iOS/Android datum64 closure into --output.
 The default base URL is
 https://github.com/f0rr0/oliphaunt/releases/download/liboliphaunt-native-v<version>.
 HTTPS downloads require the extension-download feature; file:// release asset
@@ -1340,6 +1403,29 @@ mod tests {
 
     #[cfg(unix)]
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    #[test]
+    fn release_asset_selection_uses_only_target_owned_runtime_closures() {
+        assert_eq!(
+            release_asset_names_for_target("1.2.3", "linux-x64-gnu").unwrap(),
+            vec![
+                "liboliphaunt-1.2.3-linux-x64-gnu.tar.gz",
+                "oliphaunt-tools-1.2.3-linux-x64-gnu.tar.gz",
+            ]
+        );
+        assert_eq!(
+            release_asset_names_for_target("1.2.3", "android-x86_64").unwrap(),
+            vec![
+                "liboliphaunt-1.2.3-android-x86_64.tar.gz",
+                "liboliphaunt-1.2.3-runtime-resources-android-datum64.tar.gz",
+            ]
+        );
+        assert_eq!(
+            runtime_carrier_asset_name("1.2.3", "ios-xcframework").unwrap(),
+            "liboliphaunt-1.2.3-runtime-resources-ios-datum64.tar.gz"
+        );
+        assert!(release_asset_names_for_target("1.2.3", "runtime-resources").is_err());
+    }
 
     #[cfg(unix)]
     #[test]
@@ -1394,7 +1480,7 @@ mod tests {
         );
         assert!(
             output
-                .join("oliphaunt/template-pgdata/files/PG_VERSION")
+                .join("oliphaunt/cluster-seed/files/PG_VERSION")
                 .is_file()
         );
         for executable in ["postgres", "pg_ctl"] {

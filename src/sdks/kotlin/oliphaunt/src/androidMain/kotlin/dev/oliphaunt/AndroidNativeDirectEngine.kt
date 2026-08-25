@@ -41,10 +41,11 @@ internal class AndroidNativeDirectEngine(
                 requestedExtensions = config.extensions,
                 resourceRoot = resourceRoot,
             )
-        val storageDirectory = when (val storage = config.storage) {
-            EngineStorage.TemporaryDirectory -> AndroidDirectTemporaryStorage.resolve(appContext)
-            is EngineStorage.Directory -> File(storage.path)
-        }
+        val storageDirectory =
+            when (val storage = config.storage) {
+                EngineStorage.TemporaryDirectory -> AndroidDirectTemporaryStorage.resolve(appContext)
+                is EngineStorage.Directory -> File(storage.path)
+            }
         if (isAndroidSymbolicLink(storageDirectory)) {
             throw OliphauntException("database storage directory must be a real directory: ${storageDirectory.absolutePath}")
         }
@@ -53,6 +54,8 @@ internal class AndroidNativeDirectEngine(
         }
         val pgdata = File(storageDirectory, "pgdata")
         val rootState = classifyAndroidManagedRoot(storageDirectory)
+        val effectiveUsername = config.username ?: "postgres"
+        val effectiveDatabase = config.database ?: "postgres"
         val executionDispatcher =
             Executors
                 .newSingleThreadExecutor { runnable ->
@@ -63,20 +66,48 @@ internal class AndroidNativeDirectEngine(
         var nativeOpenAttempted = false
         try {
             when (rootState) {
-                AndroidManagedRootState.Managed -> validateCompleteAndroidPgdata(pgdata)
+                AndroidManagedRootState.Managed -> {
+                    validateCompleteAndroidPgdata(pgdata)
+                }
 
                 AndroidManagedRootState.Empty -> {
-                    OliphauntAndroidRuntimeAssets.preparePgdata(
-                        assetManager = appContext.assets,
-                        pgdata = pgdata,
-                        templatePgdata = runtime.templatePgdata,
-                    )
-                    validateCompleteAndroidPgdata(pgdata)
-                    writeAndroidManagedRootDescriptor(storageDirectory)
+                    requireAndroidFreshRootRole(effectiveUsername)
+                    var ownsPublishedPgdata = false
+                    try {
+                        OliphauntAndroidRuntimeAssets.preparePgdata(
+                            assetManager = appContext.assets,
+                            pgdata = pgdata,
+                            clusterSeed = runtime.clusterSeed,
+                            didPublishDestination = { ownsPublishedPgdata = true },
+                        )
+                        validateCompleteAndroidPgdata(pgdata)
+                        writeAndroidManagedRootDescriptor(storageDirectory)
+                    } catch (publicationError: Throwable) {
+                        recoverAndroidManagedRootPublicationFailure(
+                            publicationError = publicationError,
+                            ownsPublishedPgdata = ownsPublishedPgdata,
+                            descriptorDefinitelyAbsent = {
+                                isAndroidPathDefinitelyAbsent(
+                                    File(storageDirectory, ".oliphaunt.json"),
+                                )
+                            },
+                            removePublishedPgdata = {
+                                if (
+                                    !isAndroidPathDefinitelyAbsent(pgdata) &&
+                                    !pgdata.deleteRecursively()
+                                ) {
+                                    throw OliphauntException(
+                                        "failed to remove uncommitted PGDATA at ${pgdata.absolutePath}",
+                                    )
+                                }
+                            },
+                            syncRoot = {
+                                OliphauntAndroidRuntimeAssets.syncAndroidDirectory(storageDirectory)
+                            },
+                        )
+                    }
                 }
             }
-            val effectiveUsername = config.username ?: "postgres"
-            val effectiveDatabase = config.database ?: "postgres"
             val effectiveLibraryPath =
                 resolveAndroidLiboliphauntLibraryPath(
                     explicitLibraryPath = libraryPath,
@@ -112,7 +143,10 @@ internal class AndroidNativeDirectEngine(
         }
     }
 
-    override suspend fun restore(destination: String, bytes: ByteArray) {
+    override suspend fun restore(
+        destination: String,
+        bytes: ByteArray,
+    ) {
         validateDirectoryPath(destination, "restore destination")
         OliphauntAndroidNativeBridge.restoreNative(
             destination = destination,
@@ -124,6 +158,15 @@ internal class AndroidNativeDirectEngine(
                 sourceArchivePaths = appContext.applicationInfo.liboliphauntSourceArchivePaths(),
                 supportedAbis = Build.SUPPORTED_ABIS.asList(),
             ),
+        )
+    }
+}
+
+internal fun requireAndroidFreshRootRole(username: String) {
+    if (username != "postgres") {
+        throw OliphauntException(
+            "a new Android Oliphaunt database is initialized with the postgres role; " +
+                "username selects an existing role and cannot be '$username' on first open",
         )
     }
 }
@@ -147,8 +190,9 @@ internal fun classifyAndroidManagedRoot(directory: File): AndroidManagedRootStat
     val descriptor = File(directory, ".oliphaunt.json")
     if (descriptor.exists()) {
         validateAndroidManagedRootDescriptor(descriptor)
-        val entries = directory.list()?.toList()
-            ?: throw OliphauntException("could not inspect database storage directory: ${directory.absolutePath}")
+        val entries =
+            directory.list()?.toList()
+                ?: throw OliphauntException("could not inspect database storage directory: ${directory.absolutePath}")
         if (entries.size != 2 || entries.toSet() != setOf(".oliphaunt.json", "pgdata")) {
             throw OliphauntException(
                 "managed database storage directory must contain exactly .oliphaunt.json and pgdata: ${directory.absolutePath}",
@@ -167,18 +211,69 @@ internal fun classifyAndroidManagedRoot(directory: File): AndroidManagedRootStat
 internal fun writeAndroidManagedRootDescriptor(directory: File) {
     val descriptor = File(directory, ".oliphaunt.json")
     val temporary = File(directory, ".oliphaunt.json.tmp-${UUID.randomUUID()}")
+    val result =
+        runCatching {
+            FileOutputStream(temporary).use { output ->
+                output.write(NATIVE_ROOT_DESCRIPTOR.encodeToByteArray())
+                Os.fchmod(output.fd, OWNER_READ_WRITE_MODE)
+                output.fd.sync()
+            }
+            if (!temporary.renameTo(descriptor)) {
+                validateAndroidManagedRootDescriptor(descriptor)
+            }
+            OliphauntAndroidRuntimeAssets.syncAndroidDirectory(directory)
+        }
+    finishAndroidStaging(result, operation = "database root descriptor publication") {
+        removeAndroidStagingIfPresent(temporary)
+    }
+}
+
+internal fun recoverAndroidManagedRootPublicationFailure(
+    publicationError: Throwable,
+    ownsPublishedPgdata: Boolean,
+    descriptorDefinitelyAbsent: () -> Boolean,
+    removePublishedPgdata: () -> Unit,
+    syncRoot: () -> Unit,
+): Nothing {
+    if (!ownsPublishedPgdata) throw publicationError
+    val descriptorIsAbsent =
+        try {
+            descriptorDefinitelyAbsent()
+        } catch (inspectionError: Throwable) {
+            throw OliphauntException(
+                "database root descriptor publication failed (${publicationError.message}); " +
+                    "preserved PGDATA because descriptor publication is uncertain (${inspectionError.message})",
+            ).apply {
+                addSuppressed(publicationError)
+                addSuppressed(inspectionError)
+            }
+        }
+    if (!descriptorIsAbsent) throw publicationError
     try {
-        FileOutputStream(temporary).use { output ->
-            output.write(NATIVE_ROOT_DESCRIPTOR.encodeToByteArray())
-            Os.fchmod(output.fd, OWNER_READ_WRITE_MODE)
-            output.fd.sync()
+        removePublishedPgdata()
+        syncRoot()
+    } catch (cleanupError: Throwable) {
+        throw OliphauntException(
+            "database root descriptor publication failed (${publicationError.message}); " +
+                "failed to clean uncommitted PGDATA (${cleanupError.message})",
+        ).apply {
+            addSuppressed(publicationError)
+            addSuppressed(cleanupError)
         }
-        if (!temporary.renameTo(descriptor)) {
-            validateAndroidManagedRootDescriptor(descriptor)
-        }
-        OliphauntAndroidRuntimeAssets.syncAndroidDirectory(directory)
-    } finally {
-        temporary.delete()
+    }
+    throw publicationError
+}
+
+internal fun isAndroidPathDefinitelyAbsent(path: File): Boolean = try {
+    Os.lstat(path.absolutePath)
+    false
+} catch (error: ErrnoException) {
+    if (error.errno == OsConstants.ENOENT) {
+        true
+    } else {
+        throw OliphauntException(
+            "failed to inspect ${path.absolutePath}: ${error.message}",
+        )
     }
 }
 
@@ -194,14 +289,16 @@ internal fun validateCompleteAndroidPgdata(pgdata: File) {
 }
 
 private fun validateAndroidManagedRootDescriptor(descriptor: File) {
-    val parent = descriptor.parentFile
-        ?: throw OliphauntException("database root descriptor has no parent: ${descriptor.absolutePath}")
+    val parent =
+        descriptor.parentFile
+            ?: throw OliphauntException("database root descriptor has no parent: ${descriptor.absolutePath}")
     val realLocation = File(parent.canonicalFile, descriptor.name)
     if (!descriptor.isFile || descriptor.length() == 0L || descriptor.canonicalFile != realLocation) {
         throw OliphauntException("database root descriptor must be a nonempty real file: ${descriptor.absolutePath}")
     }
-    val value = runCatching { AndroidFlatJsonParser(descriptor.readText()).parse() }
-        .getOrElse { throw OliphauntException("invalid database root descriptor: ${descriptor.absolutePath}") }
+    val value =
+        runCatching { AndroidFlatJsonParser(descriptor.readText()).parse() }
+            .getOrElse { throw OliphauntException("invalid database root descriptor: ${descriptor.absolutePath}") }
     val family = (value["engineFamily"] as? AndroidJsonValue.StringValue)?.value
     val format = (value["physicalFormat"] as? AndroidJsonValue.StringValue)?.value
     val expectedFormat = mapOf("native" to "native-pg18-v1", "wasix" to "wasix-pg18-v1")[family]
@@ -218,12 +315,18 @@ private fun validateAndroidManagedRootDescriptor(descriptor: File) {
 }
 
 private sealed interface AndroidJsonValue {
-    data class StringValue(val value: String) : AndroidJsonValue
+    data class StringValue(
+        val value: String,
+    ) : AndroidJsonValue
 
-    data class IntegerValue(val value: Long) : AndroidJsonValue
+    data class IntegerValue(
+        val value: Long,
+    ) : AndroidJsonValue
 }
 
-private class AndroidFlatJsonParser(private val source: String) {
+private class AndroidFlatJsonParser(
+    private val source: String,
+) {
     private var offset = 0
 
     fun parse(): Map<String, AndroidJsonValue> {
@@ -241,11 +344,12 @@ private class AndroidFlatJsonParser(private val source: String) {
             skipWhitespace()
             expect(':')
             skipWhitespace()
-            values[key] = if (peek() == '"') {
-                AndroidJsonValue.StringValue(parseString())
-            } else {
-                AndroidJsonValue.IntegerValue(parseInteger())
-            }
+            values[key] =
+                if (peek() == '"') {
+                    AndroidJsonValue.StringValue(parseString())
+                } else {
+                    AndroidJsonValue.IntegerValue(parseInteger())
+                }
             skipWhitespace()
             if (consume('}')) break
             expect(',')
@@ -261,36 +365,61 @@ private class AndroidFlatJsonParser(private val source: String) {
         while (offset < source.length) {
             val character = source[offset++]
             when {
-                character == '"' -> return result.toString()
+                character == '"' -> {
+                    return result.toString()
+                }
 
-                character.code < 0x20 -> throw IllegalArgumentException("unescaped control character")
+                character.code < 0x20 -> {
+                    throw IllegalArgumentException("unescaped control character")
+                }
 
-                character != '\\' -> result.append(character)
+                character != '\\' -> {
+                    result.append(character)
+                }
 
-                offset >= source.length -> throw IllegalArgumentException("incomplete escape")
+                offset >= source.length -> {
+                    throw IllegalArgumentException("incomplete escape")
+                }
 
-                else -> when (val escaped = source[offset++]) {
-                    '"', '\\', '/' -> result.append(escaped)
+                else -> {
+                    when (val escaped = source[offset++]) {
+                        '"', '\\', '/' -> {
+                            result.append(escaped)
+                        }
 
-                    'b' -> result.append('\b')
+                        'b' -> {
+                            result.append('\b')
+                        }
 
-                    'f' -> result.append('\u000c')
+                        'f' -> {
+                            result.append('\u000c')
+                        }
 
-                    'n' -> result.append('\n')
+                        'n' -> {
+                            result.append('\n')
+                        }
 
-                    'r' -> result.append('\r')
+                        'r' -> {
+                            result.append('\r')
+                        }
 
-                    't' -> result.append('\t')
+                        't' -> {
+                            result.append('\t')
+                        }
 
-                    'u' -> {
-                        if (offset + 4 > source.length) throw IllegalArgumentException("incomplete unicode escape")
-                        val code = source.substring(offset, offset + 4).toIntOrNull(16)
-                            ?: throw IllegalArgumentException("invalid unicode escape")
-                        result.append(code.toChar())
-                        offset += 4
+                        'u' -> {
+                            if (offset + 4 > source.length) throw IllegalArgumentException("incomplete unicode escape")
+                            val code =
+                                source.substring(offset, offset + 4).toIntOrNull(16)
+                                    ?: throw IllegalArgumentException("invalid unicode escape")
+                            result.append(code.toChar())
+                            offset += 4
+                        }
+
+                        else -> {
+                            throw IllegalArgumentException("invalid escape")
+                        }
                     }
-
-                    else -> throw IllegalArgumentException("invalid escape")
                 }
             }
         }
@@ -306,9 +435,13 @@ private class AndroidFlatJsonParser(private val source: String) {
                 if (peek()?.isDigit() == true) throw IllegalArgumentException("leading zero")
             }
 
-            in '1'..'9' -> while (peek()?.isDigit() == true) offset += 1
+            in '1'..'9' -> {
+                while (peek()?.isDigit() == true) offset += 1
+            }
 
-            else -> throw IllegalArgumentException("expected integer")
+            else -> {
+                throw IllegalArgumentException("expected integer")
+            }
         }
         return source.substring(start, offset).toLongOrNull()
             ?: throw IllegalArgumentException("invalid integer")
@@ -342,7 +475,10 @@ private class AndroidFlatJsonParser(private val source: String) {
     }
 }
 
-private fun requireRealAndroidDirectory(file: File, label: String) {
+private fun requireRealAndroidDirectory(
+    file: File,
+    label: String,
+) {
     val parent = file.parentFile
     val realLocation = parent?.let { File(it.canonicalFile, file.name) }
     if (!file.isDirectory || realLocation == null || file.canonicalFile != realLocation) {
@@ -350,7 +486,10 @@ private fun requireRealAndroidDirectory(file: File, label: String) {
     }
 }
 
-private fun requireRealAndroidFile(file: File, label: String) {
+private fun requireRealAndroidFile(
+    file: File,
+    label: String,
+) {
     val parent = file.parentFile
     val realLocation = parent?.let { File(it.canonicalFile, file.name) }
     if (!file.isFile || file.length() == 0L || realLocation == null || file.canonicalFile != realLocation) {

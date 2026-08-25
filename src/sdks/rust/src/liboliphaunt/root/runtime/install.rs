@@ -8,13 +8,15 @@ use super::super::extensions::{
     packaged_extension_module_files,
 };
 use super::super::files::{
-    copy_directory_filtered, copy_file_preserving_permissions, remove_file_if_exists,
+    copy_directory_filtered, copy_directory_tree, copy_file_preserving_permissions,
+    remove_file_if_exists,
 };
 use super::super::{NATIVE_RUNTIME_TOOLS, existing_native_tool_path, native_tool_path};
 use super::extension_artifact_root_for;
 use crate::error::{Error, Result};
 use crate::extension::Extension;
 
+#[cfg(test)]
 pub(super) fn install_cached_runtime(
     profile: NativeRuntimeProfile,
     install_dir: &Path,
@@ -22,6 +24,26 @@ pub(super) fn install_cached_runtime(
     extension_artifact_dirs: &[PathBuf],
     runtime_dir: &Path,
     extensions: &[Extension],
+) -> Result<()> {
+    install_cached_runtime_with_icu(
+        profile,
+        install_dir,
+        embedded_modules,
+        extension_artifact_dirs,
+        runtime_dir,
+        extensions,
+        None,
+    )
+}
+
+pub(super) fn install_cached_runtime_with_icu(
+    profile: NativeRuntimeProfile,
+    install_dir: &Path,
+    embedded_modules: Option<&Path>,
+    extension_artifact_dirs: &[PathBuf],
+    runtime_dir: &Path,
+    extensions: &[Extension],
+    icu_data: Option<&Path>,
 ) -> Result<()> {
     fs::create_dir_all(runtime_dir).map_err(|err| {
         Error::Engine(format!(
@@ -47,7 +69,15 @@ pub(super) fn install_cached_runtime(
         extension_artifact_dirs,
         runtime_dir,
         extensions,
-    )
+    )?;
+    if let Some(icu_data) = icu_data {
+        copy_directory_tree(
+            icu_data,
+            &runtime_dir.join("share/icu"),
+            super::super::files::CopyMode::ByteCopy,
+        )?;
+    }
+    Ok(())
 }
 
 fn install_required_runtime_tool(

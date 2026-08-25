@@ -433,8 +433,15 @@ function validateSourcePin(source) {
   const sha256 = archiveSha256(source);
   archiveStripPrefix(source);
   assertEquals(source.commit, sha256, `${source.name} archive commit must equal archive sha256`);
-  if (!parsedUrl.pathname.endsWith('.tar.gz') && !parsedUrl.pathname.endsWith('.tgz')) {
-    throw new Error(`archive source '${source.name}' must point at a .tar.gz or .tgz URL`);
+  if (
+    !parsedUrl.pathname.endsWith('.tar.gz') &&
+    !parsedUrl.pathname.endsWith('.tgz') &&
+    !parsedUrl.pathname.endsWith('.zip')
+  ) {
+    throw new Error(`archive source '${source.name}' must point at a .tar.gz, .tgz, or .zip URL`);
+  }
+  if (source.stripPrefix === '.' && !parsedUrl.pathname.endsWith('.zip')) {
+    throw new Error(`archive source '${source.name}' may use a rootless strip prefix only for ZIP releases`);
   }
 }
 
@@ -480,8 +487,9 @@ function archiveSha256(source) {
 function archiveStripPrefix(source) {
   if (
     source.stripPrefix === undefined ||
-    !/^[A-Za-z0-9][A-Za-z0-9._+-]*$/u.test(source.stripPrefix) ||
-    source.stripPrefix.includes('..') ||
+    (source.stripPrefix !== '.' &&
+      (!/^[A-Za-z0-9][A-Za-z0-9._+-]*$/u.test(source.stripPrefix) ||
+        source.stripPrefix.includes('..'))) ||
     source.stripPrefix.startsWith('/')
   ) {
     throw new Error(`archive source '${source.name}' has invalid strip-prefix`);

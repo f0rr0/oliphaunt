@@ -1,9 +1,13 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use wasmparser::{Dylink0Subsection, ExternalKind, KnownCustom, Parser, Payload, TypeRef};
+
+pub(super) const ASSET_MANIFEST_FORMAT_VERSION: u32 = 2;
+pub(super) const AOT_MANIFEST_FORMAT_VERSION: u32 = 1;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct SourcesManifest {
@@ -261,8 +265,8 @@ pub(super) struct AssetManifestOut {
     pub(super) psql: Option<BinaryAssetOut>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) initdb: Option<BinaryAssetOut>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) pgdata_template: Option<PgDataTemplateAssetOut>,
+    #[serde(default)]
+    pub(super) cluster_seeds: BTreeMap<String, ClusterSeedAssetOut>,
     pub(super) extensions: Vec<ExtensionAssetOut>,
     pub(super) sources: Vec<SourcePin>,
 }
@@ -291,7 +295,9 @@ pub(super) struct BinaryAssetOut {
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
-pub(super) struct PgDataTemplateAssetOut {
+pub(super) struct ClusterSeedAssetOut {
+    pub(super) artifact_role: String,
+    pub(super) catalog_profile: String,
     pub(super) archive: String,
     pub(super) manifest: String,
     pub(super) sha256: String,
@@ -307,6 +313,10 @@ pub(super) struct PgDataTemplateAssetOut {
     pub(super) catalog_version: String,
     pub(super) init_profile: String,
     pub(super) wasmer_version: String,
+    pub(super) physical_format: String,
+    pub(super) compatibility_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) icu_data_tree_sha256: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

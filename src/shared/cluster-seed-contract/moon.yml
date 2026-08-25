@@ -1,0 +1,28 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "cluster-seed-contract"
+language: "javascript"
+layer: "configuration"
+stack: "systems"
+tags: ["postgres", "contract", "runtime"]
+
+project:
+  title: "Cluster Seed Contract"
+  description: "Canonical standard/ICU seed and portable ICU-data identity contract."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+tasks:
+  check:
+    tags: ["quality", "static", "contract"]
+    command: "tools/dev/bun.sh tools/policy/check-cluster-seed-contract.mjs"
+    inputs:
+      - "/src/shared/cluster-seed-contract/**/*"
+      - "/tools/policy/check-cluster-seed-contract.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

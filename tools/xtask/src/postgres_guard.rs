@@ -160,11 +160,14 @@ pub(crate) fn check_postgres_source_spine() -> Result<()> {
     ensure_file_contains_all(
         &Path::new(POSTGRES_PATCH_DIR).join("0037-oliphaunt-wasix-buffer-strong-random.patch"),
         &[
-            "defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER)",
+            "#elif defined(__wasi__)",
             "#include <sys/random.h>",
+            "wasix_strong_random_fill(void *buf, size_t len)",
+            "#if defined(OLIPHAUNT_WASM_SINGLE_USER)",
             "WASIX_STRONG_RANDOM_POOL_SIZE 4096",
-            "getrandom(wasix_strong_random_pool + filled",
+            "wasix_strong_random_fill(wasix_strong_random_pool",
             "if (errno == EINTR)",
+            "No guest-side state in a process that may fork.",
             "return false;",
         ],
     )?;
@@ -1039,10 +1042,12 @@ fn check_postgres_applied_perf_patches(source: &Path) -> Result<()> {
     ensure_file_contains_all(
         source.join("src/port/pg_strong_random.c"),
         &[
-            "#elif defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER)",
+            "#elif defined(__wasi__)",
+            "#if defined(OLIPHAUNT_WASM_SINGLE_USER)",
             "WASIX_STRONG_RANDOM_POOL_SIZE 4096",
-            "getrandom(wasix_strong_random_pool + filled",
+            "wasix_strong_random_fill(wasix_strong_random_pool,",
             "wasix_strong_random_used = sizeof(wasix_strong_random_pool)",
+            "return wasix_strong_random_fill(buf, len);",
         ],
     )?;
     ensure_file_contains_all(
@@ -1241,14 +1246,14 @@ pub(crate) fn check_source_lane_isolation() -> Result<()> {
         &[
             "AssetManifestMetadata",
             "asset_manifest_metadata",
-            "pgdata_template_source_fingerprint",
+            "cluster_seed_source_fingerprint",
         ],
     )?;
     ensure_file_contains_all(
         "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/base.rs",
         &[
-            "source_fingerprint: Option<String>",
-            "embedded PGDATA template source fingerprint mismatch",
+            ".cluster_seed_source_fingerprint",
+            "embedded cluster seed source fingerprint mismatch",
             "full_runtime_layout_matches_current",
             "ensure_existing_pgdata_matches_runtime",
             "existing PGDATA at {} is PostgreSQL {}",

@@ -44,6 +44,7 @@ function safeArchiveMember(value, label) {
   ) {
     throw error(label, "must be a safe POSIX archive path");
   }
+  if (value === ".") return value;
   const parts = value.split("/");
   if (parts.some((part) => part.length === 0 || part === "." || part === "..")) {
     throw error(label, "must be a safe POSIX archive path");
@@ -130,12 +131,12 @@ export function validateSelectionNeutralSwiftSourceCarrier(
     {
       format: "tar.gz",
       member: "oliphaunt",
-      name: `liboliphaunt-${base.version}-runtime-resources.tar.gz`,
+      name: `liboliphaunt-${base.version}-runtime-resources-ios-datum64.tar.gz`,
       role: "runtime-resources",
     },
     {
       format: "tar.gz",
-      member: "share/icu",
+      member: ".",
       name: `liboliphaunt-${base.version}-icu-data.tar.gz`,
       role: "icu-data",
     },

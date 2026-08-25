@@ -22,7 +22,7 @@ pub(super) enum CopyMode {
     ByteCopy,
 }
 
-pub(super) fn pgdata_template_copy_mode() -> CopyMode {
+pub(super) fn cluster_seed_copy_mode() -> CopyMode {
     match std::env::var(ENV_PGDATA_COPY_MODE) {
         Ok(value) if matches!(value.as_str(), "clone" | "prefer-clone" | "prefer_clone") => {
             CopyMode::PreferClone
@@ -132,14 +132,38 @@ pub(super) fn sync_directory_tree(path: &Path) -> Result<()> {
         if file_type.is_dir() {
             sync_directory_tree(&entry_path)?;
         } else if file_type.is_file() {
-            fs::File::open(&entry_path)
-                .and_then(|file| file.sync_all())
-                .map_err(|err| {
-                    Error::Engine(format!("sync file {}: {err}", entry_path.display()))
-                })?;
+            sync_file(&entry_path)?;
+        } else if file_type.is_symlink() {
+            return Err(Error::Engine(format!(
+                "native PGDATA publication contains a symbolic link: {}",
+                entry_path.display()
+            )));
+        } else {
+            return Err(Error::Engine(format!(
+                "native PGDATA publication contains a special file: {}",
+                entry_path.display()
+            )));
         }
     }
     sync_directory(path)
+}
+
+#[cfg(windows)]
+pub(super) fn sync_file(path: &Path) -> Result<()> {
+    // FlushFileBuffers requires a write-capable handle on Windows.
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .and_then(|file| file.sync_all())
+        .map_err(|err| Error::Engine(format!("sync file {}: {err}", path.display())))
+}
+
+#[cfg(not(windows))]
+pub(super) fn sync_file(path: &Path) -> Result<()> {
+    fs::File::open(path)
+        .and_then(|file| file.sync_all())
+        .map_err(|err| Error::Engine(format!("sync file {}: {err}", path.display())))
 }
 
 #[cfg(unix)]

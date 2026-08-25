@@ -23,6 +23,7 @@ use crate::pgwire::{PostgresCancelToken, PostgresEndpoint, PostgresWireClient};
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
 
 const SERVER_HOST: &str = "127.0.0.1";
+#[cfg(unix)]
 const ENV_SERVER_SDK_TRANSPORT: &str = "OLIPHAUNT_SERVER_SDK_TRANSPORT";
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -342,6 +343,7 @@ fn configure_native_runtime_env(
 }
 
 fn configure_icu_data_env(command: &mut Command, runtime_dir: &Path) {
+    command.env_remove("ICU_DATA");
     let icu_data = runtime_dir.join("share/icu");
     if icu_data.is_dir() {
         command.env("ICU_DATA", icu_data);
@@ -836,13 +838,35 @@ mod tests {
         let _cleanup = RuntimeDirCleanup(runtime_dir.clone());
 
         let mut missing = Command::new("postgres");
+        for key in [
+            "OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY",
+            "OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY",
+            "OLIPHAUNT_INTERNAL_ICU_READY",
+            "ICU_DATA",
+        ] {
+            missing.env(key, "ambient");
+        }
         configure_native_runtime_env(&mut missing, &runtime_dir, &[]);
         assert_eq!(
             missing
                 .get_envs()
-                .find(|(key, _)| *key == std::ffi::OsStr::new("ICU_DATA")),
+                .find(|(key, _)| *key == std::ffi::OsStr::new("ICU_DATA"))
+                .and_then(|(_, value)| value),
             None
         );
+        for key in [
+            "OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY",
+            "OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY",
+            "OLIPHAUNT_INTERNAL_ICU_READY",
+        ] {
+            assert_eq!(
+                missing
+                    .get_envs()
+                    .find(|(candidate, _)| *candidate == std::ffi::OsStr::new(key))
+                    .and_then(|(_, value)| value),
+                None
+            );
+        }
 
         let icu_data = runtime_dir.join("share/icu");
         std::fs::create_dir_all(&icu_data).expect("create ICU data dir");

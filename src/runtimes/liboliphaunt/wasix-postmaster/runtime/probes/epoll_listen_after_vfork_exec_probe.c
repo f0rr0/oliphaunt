@@ -171,7 +171,10 @@ main(int argc, char **argv)
 		return 10;
 	}
 
-	n = epoll_wait(epfd, &out, 1, 5000);
+	do
+	{
+		n = epoll_wait(epfd, &out, 1, 5000);
+	} while (n < 0 && errno == EINTR);
 	if (n < 0)
 	{
 		perror("epoll_wait");

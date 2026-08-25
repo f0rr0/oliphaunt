@@ -30,7 +30,7 @@ Native defaults to an SDK-owned temporary directory. Persistent storage is an
 explicit application-owned managed root with `.oliphaunt.json` and `pgdata`.
 Native does not label a temporary directory as memory storage.
 
-SDKs initialize new roots from the packaged template and publish the descriptor
+SDKs initialize new roots from the packaged cluster seed and publish the descriptor
 last. The low-level C runtime only validates a complete managed root; it never
 runs `initdb`, adopts raw PGDATA, or creates a descriptor during open.
 

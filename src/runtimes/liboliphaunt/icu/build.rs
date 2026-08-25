@@ -20,14 +20,12 @@ fn main() {
     if let Some(archive) = find_packaged_icu_archive() {
         println!("cargo:rerun-if-changed={}", archive.display());
         let extracted_root = unpack_icu_archive(&archive, &out_dir.join("icu-data-expanded"));
-        write_generated_icu(&out, Some(&archive));
-        emit_artifact_manifest(&out_dir, &extracted_root);
+        emit_icu_artifact(&out, &out_dir, &archive, &extracted_root);
     } else if let Some(icu_root) = find_icu_data_root() {
         emit_rerun_directives(&icu_root);
         let archive = out_dir.join("icu-data.tar.zst");
         write_icu_archive(&icu_root, &archive);
-        write_generated_icu(&out, Some(&archive));
-        emit_artifact_manifest(&out_dir, &icu_root);
+        emit_icu_artifact(&out, &out_dir, &archive, &icu_root);
     } else {
         if env::var_os("OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD").is_some() {
             panic!(
@@ -36,6 +34,13 @@ fn main() {
         }
         write_generated_icu(&out, None);
     }
+}
+
+fn emit_icu_artifact(out: &Path, out_dir: &Path, archive: &Path, icu_root: &Path) {
+    let archive_sha256 = sha256_file(archive).expect("digest ICU data archive");
+    let data_tree_sha256 = logical_tree_sha256(icu_root).expect("digest ICU logical data tree");
+    write_generated_icu(out, Some((archive, &archive_sha256, &data_tree_sha256)));
+    emit_artifact_manifest(out_dir, icu_root, &data_tree_sha256);
 }
 
 fn find_packaged_icu_archive() -> Option<PathBuf> {
@@ -62,34 +67,7 @@ fn icu_candidates(manifest_dir: &Path) -> Vec<PathBuf> {
     if let Some(path) = env::var_os("OLIPHAUNT_ICU_DATA_DIR") {
         candidates.push(PathBuf::from(path));
     }
-    if let Some(repo) = repo_root_from_manifest_dir(manifest_dir) {
-        candidates.push(repo.join("target/oliphaunt-wasix/icu/share/icu"));
-        candidates.push(repo.join("target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu"));
-        candidates.push(repo.join("target/liboliphaunt-pg18/icu/share/icu"));
-        candidates.push(repo.join("target/liboliphaunt-pg18/install/share/icu"));
-        candidates.push(repo.join("target/native-liboliphaunt-pg18/install/share/icu"));
-        if let Ok(entries) = fs::read_dir(repo.join("target")) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-                    continue;
-                };
-                if name.starts_with("liboliphaunt-pg18-") {
-                    candidates.push(path.join("icu/share/icu"));
-                }
-            }
-        }
-    }
     candidates
-}
-
-fn repo_root_from_manifest_dir(manifest_dir: &Path) -> Option<&Path> {
-    manifest_dir.ancestors().find(|candidate| {
-        candidate.join("Cargo.toml").is_file()
-            && candidate
-                .join("src/runtimes/liboliphaunt/icu/Cargo.toml")
-                .is_file()
-    })
 }
 
 fn unpack_icu_archive(archive: &Path, destination: &Path) -> PathBuf {
@@ -103,7 +81,13 @@ fn unpack_icu_archive(archive: &Path, destination: &Path) -> PathBuf {
     let entries = archive_reader
         .entries()
         .expect("read packaged ICU data archive entries");
+    let mut entry_count = 0_usize;
     for entry in entries {
+        entry_count += 1;
+        assert!(
+            entry_count <= 8192,
+            "packaged ICU data archive has too many entries"
+        );
         let mut entry = entry.expect("read packaged ICU data archive entry");
         let path = entry
             .path()
@@ -200,22 +184,8 @@ fn directory_has_file(path: &Path) -> bool {
 
 fn emit_rerun_directives(root: &Path) {
     println!("cargo:rerun-if-changed={}", root.display());
-    visit_files(root, &mut |path| {
+    for path in collect_files(root).expect("collect ICU data files for rerun tracking") {
         println!("cargo:rerun-if-changed={}", path.display());
-    });
-}
-
-fn visit_files(path: &Path, f: &mut impl FnMut(&Path)) {
-    let Ok(entries) = fs::read_dir(path) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            visit_files(&path, f);
-        } else if path.is_file() {
-            f(&path);
-        }
     }
 }
 
@@ -228,33 +198,46 @@ fn write_icu_archive(icu_root: &Path, archive: &Path) {
             .strip_prefix(icu_root)
             .expect("ICU file stays under ICU root");
         let archive_path = Path::new("share/icu").join(relative);
+        let bytes = fs::read(&source).expect("read ICU data file");
+        let mut header = tar::Header::new_gnu();
+        header.set_size(bytes.len() as u64);
+        header.set_mode(0o644);
+        header.set_uid(0);
+        header.set_gid(0);
+        header.set_mtime(0);
+        header.set_cksum();
         builder
-            .append_path_with_name(&source, &archive_path)
+            .append_data(&mut header, &archive_path, bytes.as_slice())
             .expect("append ICU data file");
     }
     let encoder = builder.into_inner().expect("finish ICU tar archive");
     encoder.finish().expect("finish ICU zstd archive");
 }
 
-fn write_generated_icu(out: &Path, archive: Option<&Path>) {
+fn write_generated_icu(out: &Path, archive: Option<(&Path, &str, &str)>) {
     let text = match archive {
-        Some(archive) => format!(
+        Some((archive, archive_sha256, data_tree_sha256)) => format!(
             "pub const HAS_ICU_DATA: bool = true;\n\
+             pub const ICU_DATA_ARCHIVE_SHA256: Option<&str> = Some({archive_sha256:?});\n\
+             pub const ICU_DATA_TREE_SHA256: Option<&str> = Some({data_tree_sha256:?});\n\
              pub fn icu_data_archive() -> Option<&'static [u8]> {{ Some(include_bytes!({archive:?})) }}\n",
             archive = archive.to_string_lossy(),
         ),
-        None => "pub const HAS_ICU_DATA: bool = false;\npub fn icu_data_archive() -> Option<&'static [u8]> { None }\n"
+        None => "pub const HAS_ICU_DATA: bool = false;\n\
+                 pub const ICU_DATA_ARCHIVE_SHA256: Option<&str> = None;\n\
+                 pub const ICU_DATA_TREE_SHA256: Option<&str> = None;\n\
+                 pub fn icu_data_archive() -> Option<&'static [u8]> { None }\n"
             .to_owned(),
     };
     fs::write(out, text).expect("write generated ICU data module");
 }
 
-fn emit_artifact_manifest(out_dir: &Path, icu_root: &Path) {
+fn emit_artifact_manifest(out_dir: &Path, icu_root: &Path, data_tree_sha256: &str) {
     let version = env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION is set by Cargo");
     let manifest_path = out_dir.join("oliphaunt-artifact.toml");
     let files = collect_files(icu_root).expect("collect ICU data files for manifest");
     let mut text = format!(
-        "schema = {ARTIFACT_SCHEMA:?}\nproduct = {ARTIFACT_PRODUCT:?}\nversion = {version:?}\nkind = {ARTIFACT_KIND:?}\ntarget = {ARTIFACT_TARGET:?}\n"
+        "schema = {ARTIFACT_SCHEMA:?}\nproduct = {ARTIFACT_PRODUCT:?}\nversion = {version:?}\nkind = {ARTIFACT_KIND:?}\ntarget = {ARTIFACT_TARGET:?}\ndata_tree_sha256 = {data_tree_sha256:?}\ndata_version = \"76.1\"\ndata_form = \"files-le\"\n"
     );
     for file in files {
         let relative = file
@@ -277,8 +260,20 @@ fn emit_artifact_manifest(out_dir: &Path, icu_root: &Path) {
 fn collect_files(root: &Path) -> io::Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     collect_files_inner(root, &mut files)?;
-    files.sort();
-    Ok(files)
+    let mut files = files
+        .into_iter()
+        .map(|file| {
+            let relative = file
+                .strip_prefix(root)
+                .expect("ICU file stays under ICU root")
+                .to_str()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "ICU path is not UTF-8"))?
+                .replace('\\', "/");
+            Ok((relative, file))
+        })
+        .collect::<io::Result<Vec<_>>>()?;
+    files.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
+    Ok(files.into_iter().map(|(_, file)| file).collect())
 }
 
 fn collect_files_inner(path: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
@@ -288,13 +283,52 @@ fn collect_files_inner(path: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> 
     for entry in fs::read_dir(path)? {
         let entry = entry?;
         let path = entry.path();
-        if path.is_dir() {
+        let metadata = fs::symlink_metadata(&path)?;
+        if metadata.file_type().is_symlink() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("ICU data must not contain symlinks: {}", path.display()),
+            ));
+        }
+        if metadata.is_dir() {
             collect_files_inner(&path, files)?;
-        } else if path.is_file() {
+        } else if metadata.is_file() {
             files.push(path);
+        } else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("ICU data contains an unsupported entry: {}", path.display()),
+            ));
         }
     }
     Ok(())
+}
+
+fn logical_tree_sha256(root: &Path) -> io::Result<String> {
+    let files = collect_files(root)?;
+    if files.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "ICU data tree is empty",
+        ));
+    }
+    let mut digest = Sha256::new();
+    for file in files {
+        let relative = file
+            .strip_prefix(root)
+            .expect("ICU file stays below logical root")
+            .to_str()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "ICU path is not UTF-8"))?
+            .replace('\\', "/");
+        let bytes = fs::read(&file)?;
+        digest.update(relative.as_bytes());
+        digest.update([0]);
+        digest.update(bytes.len().to_string().as_bytes());
+        digest.update([0]);
+        digest.update(bytes);
+        digest.update([b'\n']);
+    }
+    Ok(format!("{:x}", digest.finalize()))
 }
 
 fn sha256_file(path: &Path) -> io::Result<String> {

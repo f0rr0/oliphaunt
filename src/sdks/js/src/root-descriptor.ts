@@ -1,7 +1,9 @@
 import { lstat, open, readFile, readdir, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
-const descriptorName = '.oliphaunt.json';
+import { syncDirectory } from './native/filesystem-durability.js';
+
+export const NATIVE_DESCRIPTOR_NAME = '.oliphaunt.json';
 const nativeDescriptor = {
   schema: 'oliphaunt-database-root-v1',
   engineFamily: 'native',
@@ -18,13 +20,15 @@ export async function validateManagedRoot(root: string): Promise<boolean> {
   }
   const entries = await readdir(root);
   if (entries.length === 0) return false;
-  if (!entries.includes(descriptorName)) {
-    throw new Error(`database root ${root} is nonempty but has no ${descriptorName}`);
+  if (!entries.includes(NATIVE_DESCRIPTOR_NAME)) {
+    throw new Error(`database root ${root} is nonempty but has no ${NATIVE_DESCRIPTOR_NAME}`);
   }
-  if (entries.some((entry) => entry !== descriptorName && entry !== 'pgdata')) {
-    throw new Error(`database root ${root} contains files outside ${descriptorName} and pgdata`);
+  if (entries.some((entry) => entry !== NATIVE_DESCRIPTOR_NAME && entry !== 'pgdata')) {
+    throw new Error(
+      `database root ${root} contains files outside ${NATIVE_DESCRIPTOR_NAME} and pgdata`,
+    );
   }
-  const descriptorPath = join(root, descriptorName);
+  const descriptorPath = join(root, NATIVE_DESCRIPTOR_NAME);
   const descriptorMetadata = await lstat(descriptorPath);
   if (!descriptorMetadata.isFile() || descriptorMetadata.isSymbolicLink()) {
     throw new Error(`database root descriptor ${descriptorPath} is not a regular file`);
@@ -41,7 +45,10 @@ export async function validateManagedRoot(root: string): Promise<boolean> {
 
 export async function publishNativeDescriptor(root: string): Promise<void> {
   await validateCompletePgdata(join(root, 'pgdata'));
-  const staging = join(root, `${descriptorName}.tmp-${globalThis.process?.pid ?? 0}-${Date.now()}`);
+  const staging = join(
+    root,
+    `${NATIVE_DESCRIPTOR_NAME}.tmp-${globalThis.process?.pid ?? 0}-${Date.now()}`,
+  );
   try {
     const file = await open(staging, 'wx');
     try {
@@ -50,10 +57,17 @@ export async function publishNativeDescriptor(root: string): Promise<void> {
     } finally {
       await file.close();
     }
-    await rename(staging, join(root, descriptorName));
+    await rename(staging, join(root, NATIVE_DESCRIPTOR_NAME));
     await syncDirectory(root);
   } catch (error) {
-    await rm(staging, { force: true });
+    try {
+      await rm(staging, { force: true });
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        'native root descriptor publication and cleanup failed',
+      );
+    }
     throw error;
   }
 }
@@ -83,7 +97,7 @@ export async function validateCompletePgdata(pgdata: string): Promise<void> {
   }
 }
 
-export function validateDescriptor(text: string, source = descriptorName): void {
+export function validateDescriptor(text: string, source = NATIVE_DESCRIPTOR_NAME): void {
   let record: Record<string, unknown>;
   try {
     record = parseFlatJsonObject(text);
@@ -183,19 +197,4 @@ function skipWhitespace(text: string, start: number): number {
     offset += 1;
   }
   return offset;
-}
-
-async function syncDirectory(root: string): Promise<void> {
-  let directory;
-  try {
-    directory = await open(root, 'r');
-    await directory.sync();
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== 'EISDIR' && code !== 'EINVAL' && code !== 'EPERM' && code !== 'ENOTSUP') {
-      throw error;
-    }
-  } finally {
-    await directory?.close();
-  }
 }

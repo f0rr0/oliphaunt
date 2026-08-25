@@ -13,9 +13,9 @@ describe("GitHub release HTTP boundaries", () => {
     expect(() => assertExactReleaseAssetNames({
       product: "liboliphaunt-native",
       tag: "liboliphaunt-native-v1.2.3",
-      expectedNames: ["liboliphaunt-1.2.3-runtime-resources.tar.gz"],
+      expectedNames: ["liboliphaunt-1.2.3-runtime-resources-ios-datum64.tar.gz"],
       actualNames: [
-        "liboliphaunt-1.2.3-runtime-resources.tar.gz",
+        "liboliphaunt-1.2.3-runtime-resources-ios-datum64.tar.gz",
         "stale-unlocked-binary.tar.gz",
       ],
     })).toThrow(

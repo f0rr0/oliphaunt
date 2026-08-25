@@ -17,7 +17,9 @@
     "product": "oliphaunt-icu",
     "kind": "icu-data",
     "target": "portable",
-    "dataRelativePath": "OliphauntICU.bundle/share/icu"
+    "dataRelativePath": "OliphauntICU.bundle/share/icu",
+    "manifestRelativePath": "OliphauntICU.bundle/manifest.properties",
+    "icuDataTreeSha256": "x-release-icu-data-tree-sha256"
   },
   "publishConfig": {
     "access": "public",

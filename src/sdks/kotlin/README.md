@@ -20,9 +20,20 @@ plugins {
 dependencies {
     implementation("dev.oliphaunt:oliphaunt-android:0.1.1")
 }
+
+oliphaunt {
+    icu.set(true) // Omit unless PostgreSQL ICU collations are required.
+}
 ```
 
+The Gradle plugin resolves ICU data together with the matching Android cluster
+seed. This is a build-time package choice, not a database-open mode.
+
 Open with the Android `Oliphaunt` object and an application `Context`.
+
+`username` selects an existing PostgreSQL role. A new root is bootstrapped with
+the fixed `postgres` role, so create additional roles from `postgres` before
+opening that root as them.
 
 <!-- liboliphaunt-doc-example:kotlin-typed-query -->
 ```kotlin

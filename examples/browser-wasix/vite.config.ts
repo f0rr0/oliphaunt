@@ -154,7 +154,8 @@ function wasixAssets(): Plugin {
     | undefined;
   const routes = new Map([
     ['/runtime', resolve(assetRoot, 'oliphaunt.wasix.tar.zst')],
-    ['/pgdata', resolve(assetRoot, 'prepopulated/pgdata-template.tar.zst')],
+    ['/cluster-seed-standard', resolve(assetRoot, 'cluster-seeds/standard.tar.zst')],
+    ['/cluster-seed-standard-manifest', resolve(assetRoot, 'cluster-seeds/standard.json')],
     ['/manifest', resolve(assetRoot, 'manifest.json')],
     ['/tools/pg_dump', resolve(assetRoot, 'bin/pg_dump.wasix.wasm')],
     ['/tools/psql', resolve(assetRoot, 'bin/psql.wasix.wasm')],
@@ -256,12 +257,16 @@ async function developmentDescriptor(packageName: string): Promise<Record<string
 
   if (packageName === '@oliphaunt/liboliphaunt-wasix') {
     const runtime = requireRecord(manifest.runtime, 'runtime manifest entry');
-    const pgdata = requireRecord(manifest['pgdata-template'], 'PGDATA manifest entry');
+    const clusterSeeds = requireRecord(manifest['cluster-seeds'], 'cluster seed manifest entry');
+    const standardSeed = requireRecord(clusterSeeds.standard, 'standard cluster seed entry');
     const runtimeBytes = await readFile(resolve(assetRoot, String(runtime.archive)));
-    const pgdataBytes = await readFile(resolve(assetRoot, String(pgdata.archive)));
+    const standardSeedBytes = await readFile(resolve(assetRoot, String(standardSeed.archive)));
+    const standardSeedManifestBytes = await readFile(
+      resolve(assetRoot, String(standardSeed.manifest)),
+    );
     const projectedManifest = coreManifest(manifestBytes);
     return {
-      schema: 'oliphaunt-wasix-runtime-v1',
+      schema: 'oliphaunt-wasix-runtime-v2',
       runtime: 'wasix',
       product: 'liboliphaunt-wasix',
       version: runtimeVersion,
@@ -271,11 +276,16 @@ async function developmentDescriptor(packageName: string): Promise<Record<string
         size: runtimeBytes.length,
         source: '/wasix-assets/runtime',
       },
-      pgdataArchive: {
-        archive: pgdata.archive,
-        sha256: sha256(pgdataBytes),
-        size: pgdataBytes.length,
-        source: '/wasix-assets/pgdata',
+      standardSeedArchive: {
+        archive: standardSeed.archive,
+        sha256: sha256(standardSeedBytes),
+        size: standardSeedBytes.length,
+        source: '/wasix-assets/cluster-seed-standard',
+      },
+      standardSeedManifest: {
+        sha256: sha256(standardSeedManifestBytes),
+        size: standardSeedManifestBytes.length,
+        source: '/wasix-assets/cluster-seed-standard-manifest',
       },
       manifest: {
         sha256: sha256(projectedManifest),

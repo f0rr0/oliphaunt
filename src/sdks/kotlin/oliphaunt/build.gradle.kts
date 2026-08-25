@@ -361,7 +361,7 @@ abstract class PrepareOliphauntAndroidAssetsTask : DefaultTask() {
     }
 
     private fun validateRuntimeResourcesSchema(root: File) {
-        for (name in listOf("runtime", "template-pgdata")) {
+        for (name in listOf("runtime", "cluster-seed")) {
             val manifest = root.resolve("$name/manifest.properties")
             require(manifest.isFile) {
                 "Oliphaunt Kotlin Android runtime resources are missing $name/manifest.properties under ${root.absolutePath}"
@@ -892,11 +892,27 @@ val sharedFixturesDirectory =
         ?: rootProject.layout.projectDirectory
             .dir("../../shared/fixtures")
             .asFile
+val sharedClusterSeedFixturesDirectory =
+    listOf(
+        rootProject.layout.projectDirectory
+            .dir("../../shared/cluster-seed-contract/fixtures")
+            .asFile,
+        project.layout.projectDirectory
+            .dir("../../../shared/cluster-seed-contract/fixtures")
+            .asFile,
+    ).firstOrNull { it.isDirectory }
+        ?: rootProject.layout.projectDirectory
+            .dir("../../shared/cluster-seed-contract/fixtures")
+            .asFile
 
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     systemProperty(
         "oliphaunt.sharedFixturesDir",
         sharedFixturesDirectory.absolutePath,
+    )
+    systemProperty(
+        "oliphaunt.clusterSeedFixturesDir",
+        sharedClusterSeedFixturesDirectory.absolutePath,
     )
 }
 

@@ -30,7 +30,7 @@
 0030-oliphaunt-wasix-avoid-xlogwrite-prevseg-division.patch
 0031-oliphaunt-wasix-skip-activity-id-reporting.patch
 0032-oliphaunt-wasix-treat-directory-fsync-eisdir-as-unsupported.patch
-0033-oliphaunt-wasix-skip-icu-collation-setup-without-icu-data.patch
+0033-oliphaunt-wasix-control-initdb-collation-discovery.patch
 0034-oliphaunt-wasix-declare-hybrid-protocol-transport.patch
 0035-oliphaunt-wasix-use-single-backend-spinlocks.patch
 0036-oliphaunt-wasix-specialize-single-backend-atomics.patch

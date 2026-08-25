@@ -16,6 +16,7 @@ import { gzipSync, gunzipSync } from "node:zlib";
 
 import {
   ICU_DATA_RELATIVE_PATH,
+  ICU_MANIFEST_RELATIVE_PATH,
   assertIcuPackedDataMatchesSource,
   assertIcuPackageManifest,
   assertIcuPackedInventory,
@@ -23,6 +24,7 @@ import {
   assertIcuReactNativeConfig,
   assertPackedIcuCarrier,
 } from "./icu-npm-carrier-contract.mjs";
+import { nativeIcuDataManifest } from "./native-icu-data-contract.mjs";
 import { readPortableArchiveEntries } from "./portable-archive.mjs";
 import { stageReleaseNotices } from "./release-notices.mjs";
 import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
@@ -31,6 +33,10 @@ const ROOT = path.resolve(import.meta.dirname, "../..");
 const ICU_PACKAGE_ROOT = path.join(ROOT, "src/runtimes/liboliphaunt/native/icu-npm");
 const PNPM = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const manifest = JSON.parse(readFileSync(path.join(ICU_PACKAGE_ROOT, "package.json"), "utf8"));
+const stagedManifest = {
+  ...manifest,
+  oliphaunt: { ...manifest.oliphaunt, icuDataTreeSha256: "a".repeat(64) },
+};
 const config = readFileSync(path.join(ICU_PACKAGE_ROOT, "react-native.config.js"));
 const podspec = readFileSync(path.join(ICU_PACKAGE_ROOT, "OliphauntICU.podspec"));
 const canonicalEntries = [
@@ -39,21 +45,28 @@ const canonicalEntries = [
   { name: "package/OliphauntICU.podspec", isFile: true },
   { name: "package/OliphauntICU.bundle/", isFile: false },
   { name: "package/OliphauntICU.bundle/share/icu/icudt77l/root.res", isFile: true },
+  { name: "package/OliphauntICU.bundle/manifest.properties", isFile: true },
 ];
+
+function stageIcuReceipt(root) {
+  const data = path.join(root, ...ICU_DATA_RELATIVE_PATH.split("/"));
+  const receipt = nativeIcuDataManifest(data);
+  writeFileSync(path.join(root, ...ICU_MANIFEST_RELATIVE_PATH.split("/")), receipt);
+  const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+  packageJson.oliphaunt.icuDataTreeSha256 = /^icuDataTreeSha256=([0-9a-f]{64})$/mu.exec(receipt.toString("utf8"))[1];
+  writeFileSync(path.join(root, "package.json"), `${JSON.stringify(packageJson, null, 2)}\n`);
+}
 
 test("ICU npm source descriptors encode the autolink-excluded, structure-preserving carrier contract", () => {
   assert.equal(manifest.oliphaunt.dataRelativePath, ICU_DATA_RELATIVE_PATH);
-  assert.doesNotThrow(() => assertIcuPackageManifest(manifest));
+  assert.doesNotThrow(() => assertIcuPackageManifest(
+    manifest,
+    "@oliphaunt/icu source package.json",
+    { allowUnstagedDigest: true },
+  ));
   assert.doesNotThrow(() => assertIcuReactNativeConfig(config));
   assert.doesNotThrow(() => assertIcuPodspec(podspec));
-  assert.doesNotThrow(() => assertPackedIcuCarrier({
-    entries: canonicalEntries,
-    packageJson: manifest,
-    packedConfig: config,
-    packedPodspec: podspec,
-    sourceConfig: config,
-    sourcePodspec: podspec,
-  }));
+  assert.equal(manifest.oliphaunt.manifestRelativePath, ICU_MANIFEST_RELATIVE_PATH);
 });
 
 test("ICU npm pack includes one canonical bundle and preserves both native descriptors byte-for-byte", (t) => {
@@ -67,6 +80,7 @@ test("ICU npm pack includes one canonical bundle and preserves both native descr
     path.join(stage, ...ICU_DATA_RELATIVE_PATH.split("/"), "icudt-test", "root.res"),
     "fixture\n",
   );
+  stageIcuReceipt(stage);
   stageReleaseNotices(stage, { profile: "native-icu-data" });
   mkdirSync(output);
   const packed = spawnSync(
@@ -151,11 +165,11 @@ test("ICU npm pack includes one canonical bundle and preserves both native descr
 
 test("ICU npm manifest rejects ESM autolinking and the legacy payload selector", () => {
   assert.throws(
-    () => assertIcuPackageManifest({ ...manifest, type: "module" }),
+    () => assertIcuPackageManifest({ ...stagedManifest, type: "module" }),
     /type must be "commonjs"/u,
   );
   assert.throws(
-    () => assertIcuPackageManifest({ ...manifest, files: [...manifest.files, "share"] }),
+    () => assertIcuPackageManifest({ ...stagedManifest, files: [...manifest.files, "share"] }),
     /must not include the legacy ICU tree/u,
   );
 });
@@ -208,7 +222,7 @@ test("ICU config validation rejects executable changes and full inventory compar
   );
 });
 
-test("ICU packed inventory accepts one bundle tree and rejects legacy, additional, or duplicate trees", () => {
+test("ICU packed inventory accepts one data-only bundle and rejects legacy, additional, or duplicate trees", () => {
   assert.doesNotThrow(() => assertIcuPackedInventory(canonicalEntries));
   assert.throws(
     () => assertIcuPackedInventory([
@@ -234,7 +248,7 @@ test("ICU packed carrier preserves the reviewed config and podspec bytes exactly
   assert.throws(
     () => assertPackedIcuCarrier({
       entries: canonicalEntries,
-      packageJson: manifest,
+      packageJson: stagedManifest,
       packedConfig: Buffer.concat([config, Buffer.from("\n")]),
       packedPodspec: podspec,
       sourceConfig: config,
@@ -245,7 +259,7 @@ test("ICU packed carrier preserves the reviewed config and podspec bytes exactly
   assert.throws(
     () => assertPackedIcuCarrier({
       entries: canonicalEntries,
-      packageJson: manifest,
+      packageJson: stagedManifest,
       packedConfig: config,
       packedPodspec: Buffer.concat([podspec, Buffer.from("\n")]),
       sourceConfig: config,

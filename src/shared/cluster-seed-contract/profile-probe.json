@@ -1,0 +1,13 @@
+{
+  "schema": "oliphaunt-cluster-seed-profile-probe-v1",
+  "profiles": {
+    "standard": {
+      "sql": "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_collation WHERE collname = 'default' AND collprovider = 'd') AND EXISTS (SELECT 1 FROM pg_collation WHERE collname = 'C' AND collprovider = 'c') AND EXISTS (SELECT 1 FROM pg_collation WHERE collname = 'POSIX' AND collprovider = 'c') AND EXISTS (SELECT 1 FROM pg_collation WHERE collname = 'unicode' AND collprovider = 'i' AND collversion IS NULL) AND NOT EXISTS (SELECT 1 FROM pg_collation WHERE collprovider = 'c' AND collname NOT IN ('C', 'POSIX')) AND NOT EXISTS (SELECT 1 FROM pg_collation WHERE collprovider = 'i' AND collname LIKE '%-x-icu') THEN 'oliphaunt-standard-seed-ok' ELSE 'oliphaunt-standard-seed-invalid' END",
+      "expected": "oliphaunt-standard-seed-ok"
+    },
+    "icu": {
+      "sql": "WITH ordered AS (SELECT item FROM (VALUES ('z'), ('a'), (chr(228))) AS input(item) ORDER BY item COLLATE \"en-x-icu\") SELECT CASE WHEN (SELECT string_agg(item, ',') FROM ordered) = 'a,' || chr(228) || ',z' AND EXISTS (SELECT 1 FROM pg_collation WHERE collprovider = 'i' AND collname = 'en-x-icu' AND collversion IS NOT NULL) AND EXISTS (SELECT 1 FROM pg_collation WHERE collname = 'unicode' AND collversion IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pg_collation WHERE collprovider = 'c' AND collname NOT IN ('C', 'POSIX')) THEN 'oliphaunt-icu-seed-ok' ELSE 'oliphaunt-icu-seed-invalid' END",
+      "expected": "oliphaunt-icu-seed-ok"
+    }
+  }
+}

@@ -449,13 +449,14 @@ private func packagedExtensionProperties(at url: URL) throws -> [String: String]
     let text = try String(contentsOf: url, encoding: .utf8)
     var values: [String: String] = [:]
     for (index, rawLine) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
-        let line = String(rawLine).trimmingCharacters(in: .whitespacesAndNewlines)
-        if line.isEmpty || line.hasPrefix("#") { continue }
+        var line = String(rawLine)
+        if line.last == "\r" { line.removeLast() }
+        if line.isEmpty { continue }
         guard let separator = line.firstIndex(of: "=") else {
             throw OliphauntError.engine("\(url.path):\(index + 1) is not a key=value property")
         }
-        let key = String(line[..<separator]).trimmingCharacters(in: .whitespaces)
-        let value = String(line[line.index(after: separator)...]).trimmingCharacters(in: .whitespaces)
+        let key = String(line[..<separator])
+        let value = String(line[line.index(after: separator)...])
         guard values.updateValue(value, forKey: key) == nil else {
             throw OliphauntError.engine("\(url.path):\(index + 1) repeats property \(key)")
         }
@@ -646,7 +647,8 @@ private func writePackagedExtensionProperties(
     to destination: URL
 ) throws {
     let preferred = [
-        "schema", "layout", "cacheKey", "source", "selectedExtensions", "extensions", "runtimeFeatures",
+        "schema", "layout", "artifactRole", "catalogProfile", "postgresMajor", "physicalFormat", "compatibilityKey",
+        "initialSuperuser", "icuDataVersion", "icuDataForm", "icuDataTreeSha256", "cacheKey", "source", "selectedExtensions", "extensions", "runtimeFeatures",
         "sharedPreloadLibraries", "mobileStaticRegistryState", "mobileStaticRegistryRegistered",
         "mobileStaticRegistryPending", "nativeModuleStems", "mobileStaticRegistrySource",
     ]
@@ -694,8 +696,13 @@ private func writeComposedPackageSizeReport(
     at resourceRoot: URL,
     selected: [OliphauntPackagedExtensionResource]
 ) throws {
-    let runtime = try packagedTreeSize(resourceRoot.appendingPathComponent("runtime", isDirectory: true))
-    let template = try packagedTreeSize(resourceRoot.appendingPathComponent("template-pgdata", isDirectory: true))
+    let runtime = try packagedTreeSize(resourceRoot.appendingPathComponent("runtime/files", isDirectory: true))
+    let standardSeed = try packagedTreeSize(
+        resourceRoot.appendingPathComponent("cluster-seed/files", isDirectory: true)
+    )
+    let icuSeed = try packagedTreeSize(
+        resourceRoot.appendingPathComponent("cluster-seed-icu/files", isDirectory: true)
+    )
     let registry = try packagedTreeSize(resourceRoot.appendingPathComponent("static-registry", isDirectory: true))
     let extensionRows = selected.sorted(by: { $0.sqlName < $1.sqlName }).map { resource in
         let bytes = resource.files.reduce(UInt64(0)) { $0 + $1.bytes }
@@ -706,9 +713,10 @@ private func writeComposedPackageSizeReport(
     let extensions = selected.filter(\.createsExtension).map(\.sqlName).sorted().joined(separator: ",")
     let rows = [
         "kind\tid\textensions\tfiles\tbytes",
-        "package\ttotal\t\(extensions.isEmpty ? "-" : extensions)\t\(runtime.files + template.files + registry.files)\t\(runtime.bytes + template.bytes + registry.bytes)",
+        "package\ttotal\t\(extensions.isEmpty ? "-" : extensions)\t\(runtime.files + standardSeed.files + icuSeed.files + registry.files)\t\(runtime.bytes + standardSeed.bytes + icuSeed.bytes + registry.bytes)",
         "package\truntime\t\(extensions.isEmpty ? "-" : extensions)\t\(runtime.files)\t\(runtime.bytes)",
-        "package\ttemplate-pgdata\t-\t\(template.files)\t\(template.bytes)",
+        "package\tcluster-seed\t-\t\(standardSeed.files)\t\(standardSeed.bytes)",
+        "package\tcluster-seed-icu\t-\t\(icuSeed.files)\t\(icuSeed.bytes)",
         "package\tstatic-registry\t\(extensions.isEmpty ? "-" : extensions)\t\(registry.files)\t\(registry.bytes)",
         "extensions\tselected\t\(selectedExtensions.isEmpty ? "-" : selectedExtensions)\t\(selected.flatMap(\.files).count)\t\(selectedBytes)",
     ] + extensionRows + [""]

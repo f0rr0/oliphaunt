@@ -61,8 +61,8 @@ intentionally not maintained here.
 - [x] Stable CI job names are derived from Moon task `ci-*` tags. Evidence:
   `tools/graph/ci_plan.mjs` and `tools/policy/check-moon-product-graph.mjs`.
 - [x] Runtime target fan-out is metadata-driven, not hardcoded in mobile jobs.
-  Evidence: focused mobile planner output narrows native runtime and native
-  extension matrices by surface, and `tools/policy/check-release-policy.py`
+  Evidence: focused mobile planner output selects complete native runtime and
+  native extension compatibility domains by surface, and `tools/policy/check-release-policy.py`
   asserts Android mobile builds request only `android-arm64-v8a` and
   `android-x86_64` extension artifacts while iOS mobile builds request only
   `ios-xcframework`.
@@ -682,11 +682,11 @@ Run before claiming this architecture complete:
 - [x] Focused mobile builder plans are target-consistent:
   `GITHUB_EVENT_NAME=workflow_dispatch NATIVE_TARGET=android-arm64-v8a
   WASM_TARGET=all MOBILE_TARGET=android tools/dev/bun.sh tools/graph/ci_plan.mjs`
-  emits one Android exact-extension row, one Android app row, and
-  `mobile_extension_package_native_targets=["android-arm64-v8a"]`; the matching
-  iOS probe emits only `ios-xcframework`. Incompatible focused inputs such as
-  `MOBILE_TARGET=android NATIVE_TARGET=ios-xcframework` now fail closed in the
-  planner.
+  expands to both Android ABI receipt/extension producers and one representative
+  `android-x86_64` emulator app; the matching iOS probe emits only
+  `ios-xcframework`. Incompatible focused inputs such as
+  `MOBILE_TARGET=android NATIVE_TARGET=ios-xcframework` fail closed in the
+  planner instead of producing a partial compatibility-domain proof.
 - [x] Android SDK provisioning is shared and reproducible. Evidence:
   `.github/actions/setup-android` calls `tools/dev/setup-android-sdk.sh`; the
   script bootstraps Android command-line tools when `sdkmanager` is absent,

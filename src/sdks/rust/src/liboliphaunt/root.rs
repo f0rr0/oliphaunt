@@ -1,9 +1,9 @@
+mod cluster_seed;
 mod descriptor;
 mod extensions;
 mod files;
 mod fingerprint;
 mod runtime;
-mod template;
 
 use std::env;
 use std::ffi::OsString;
@@ -17,7 +17,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use fs2::FileExt;
 use sha2::{Digest, Sha256};
 
-use crate::config::{EngineMode, OpenConfig};
+use crate::config::{DEFAULT_USERNAME, EngineMode, OpenConfig};
 use crate::error::{Error, Result};
 use crate::extension::Extension;
 use crate::storage::DatabaseStorage;
@@ -26,12 +26,27 @@ use files::{sync_directory, sync_directory_tree};
 static ACTIVE_ROOTS: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
 pub(super) const NATIVE_RUNTIME_TOOLS: [&str; 3] = ["postgres", "initdb", "pg_ctl"];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum NativeCatalogProfile {
+    Standard,
+    Icu,
+}
+
+impl NativeCatalogProfile {
+    pub(super) const fn id(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Icu => "icu",
+        }
+    }
+}
+
 #[cfg(feature = "internal-native-packaging")]
 pub(crate) struct MaterializedNativeResources {
     pub(crate) runtime_dir: PathBuf,
-    pub(crate) template_pgdata: PathBuf,
+    pub(crate) cluster_seed: PathBuf,
     pub(crate) runtime_cache_key: String,
-    pub(crate) template_cache_key: String,
+    pub(crate) cluster_seed_cache_key: String,
 }
 
 pub(crate) struct PreparedNativeRoot {
@@ -89,39 +104,61 @@ impl PreparedNativeRoot {
             ))
         })?;
         let initialized = descriptor::validate_root_for_open(&root)?;
+        if !initialized && config.username != DEFAULT_USERNAME {
+            return Err(Error::InvalidConfig(format!(
+                "new native database storage is bootstrapped as {DEFAULT_USERNAME}; create role {:?} before selecting it as username",
+                config.username
+            )));
+        }
         let pgdata = root.join("pgdata");
-        let runtime_dir =
-            runtime::materialize_runtime(NativeRuntimeProfile::for_mode(config.mode), extensions)?;
+        let runtime_closure = runtime::resolve_runtime_closure(
+            NativeRuntimeProfile::for_mode(config.mode),
+            extensions,
+            None,
+        )?;
+        let runtime_dir = runtime_closure.runtime_dir;
         let mut pgdata_cleanup = CreatedPgdataCleanup::new();
         if !initialized {
-            let staging_pgdata = root.join(format!(
-                ".pgdata.tmp-{}-{}",
-                std::process::id(),
-                temporary_file_nonce()?
-            ));
-            fs::create_dir(&staging_pgdata).map_err(|err| {
-                Error::Engine(format!(
-                    "create staged native PGDATA {}: {err}",
-                    staging_pgdata.display()
-                ))
-            })?;
-            pgdata_cleanup.arm(staging_pgdata.clone());
-            template::bootstrap_pgdata_if_needed(
-                NativeRuntimeProfile::for_mode(config.mode),
-                &runtime_dir,
-                &staging_pgdata,
-            )?;
-            sync_directory_tree(&staging_pgdata)?;
-            fs::rename(&staging_pgdata, &pgdata).map_err(|err| {
-                Error::Engine(format!(
-                    "publish native PGDATA {} -> {}: {err}",
-                    staging_pgdata.display(),
-                    pgdata.display()
-                ))
-            })?;
-            pgdata_cleanup.arm(pgdata.clone());
-            sync_directory(&root)?;
-            descriptor::publish_native_root_descriptor(&root)?;
+            let initialization = (|| -> Result<()> {
+                let staging_pgdata = root.join(format!(
+                    ".pgdata.tmp-{}-{}",
+                    std::process::id(),
+                    temporary_file_nonce()?
+                ));
+                fs::create_dir(&staging_pgdata).map_err(|err| {
+                    Error::Engine(format!(
+                        "create staged native PGDATA {}: {err}",
+                        staging_pgdata.display()
+                    ))
+                })?;
+                pgdata_cleanup.arm(staging_pgdata.clone());
+                cluster_seed::bootstrap_pgdata_if_needed(
+                    NativeRuntimeProfile::for_mode(config.mode),
+                    &runtime_dir,
+                    &runtime_closure.initdb_runtime_dir,
+                    runtime_closure.catalog_profile,
+                    runtime_closure.cluster_seed_dir.as_deref(),
+                    &staging_pgdata,
+                )?;
+                sync_directory_tree(&staging_pgdata)?;
+                fs::rename(&staging_pgdata, &pgdata).map_err(|err| {
+                    Error::Engine(format!(
+                        "publish native PGDATA {} -> {}: {err}",
+                        staging_pgdata.display(),
+                        pgdata.display()
+                    ))
+                })?;
+                pgdata_cleanup.arm(pgdata.clone());
+                sync_directory(&root)?;
+                descriptor::publish_native_root_descriptor(&root)
+            })();
+            if let Err(error) = initialization {
+                return Err(recover_failed_native_root_initialization(
+                    &root,
+                    &mut pgdata_cleanup,
+                    error,
+                ));
+            }
         }
 
         let prepared = Self {
@@ -165,12 +202,58 @@ impl CreatedPgdataCleanup {
     fn disarm(&mut self) {
         self.path = None;
     }
+
+    fn cleanup(&mut self, root: &Path, primary: Error) -> Error {
+        let Some(path) = self.path.take() else {
+            return primary;
+        };
+        let removal = match fs::remove_dir_all(&path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(Error::Engine(format!(
+                "remove native initialization path {}: {error}",
+                path.display()
+            ))),
+        };
+        let cleanup = removal.and_then(|()| sync_directory(root));
+        match cleanup {
+            Ok(()) => primary,
+            Err(cleanup) => Error::Engine(format!(
+                "{primary}; additionally failed to clean unpublished native initialization: {cleanup}"
+            )),
+        }
+    }
 }
 
 impl Drop for CreatedPgdataCleanup {
     fn drop(&mut self) {
         if let Some(path) = self.path.take() {
             let _ = fs::remove_dir_all(path);
+        }
+    }
+}
+
+fn recover_failed_native_root_initialization(
+    root: &Path,
+    cleanup: &mut CreatedPgdataCleanup,
+    error: Error,
+) -> Error {
+    // The descriptor rename is the publication commit point. A following
+    // directory-fsync failure must not turn a complete managed root into a
+    // descriptor that names deleted PGDATA.
+    match fs::symlink_metadata(root.join(descriptor::ROOT_DESCRIPTOR_FILE)) {
+        Ok(_) => {
+            cleanup.disarm();
+            error
+        }
+        Err(inspect) if inspect.kind() == std::io::ErrorKind::NotFound => {
+            cleanup.cleanup(root, error)
+        }
+        Err(inspect) => {
+            cleanup.disarm();
+            Error::Engine(format!(
+                "{error}; preserved PGDATA because root descriptor publication is uncertain: {inspect}"
+            ))
         }
     }
 }
@@ -211,6 +294,13 @@ pub(super) fn existing_native_tool_path(root: &Path, tool_name: &str) -> PathBuf
 }
 
 pub(crate) fn configure_native_tool_env(command: &mut Command, runtime_dir: &Path) {
+    for key in [
+        "OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY",
+        "OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY",
+        "OLIPHAUNT_INTERNAL_ICU_READY",
+    ] {
+        command.env_remove(key);
+    }
     let dirs = native_dynamic_library_dirs(runtime_dir);
     if dirs.is_empty() {
         return;
@@ -441,26 +531,34 @@ fn release_active_root(key: &Path) {
 pub(crate) fn materialize_native_resources_for_runtime(
     mode: EngineMode,
     extensions: &[Extension],
+    catalog_profile: NativeCatalogProfile,
 ) -> Result<MaterializedNativeResources> {
     let profile = NativeRuntimeProfile::for_mode(mode);
-    let runtime_dir = runtime::materialize_runtime(profile, extensions)?;
-    let template_pgdata = template::materialize_pgdata_template(profile)?;
+    let runtime_closure =
+        runtime::resolve_runtime_closure(profile, extensions, Some(catalog_profile))?;
+    let runtime_dir = runtime_closure.runtime_dir;
+    let cluster_seed = cluster_seed::materialize_cluster_seed(
+        profile,
+        &runtime_dir,
+        &runtime_closure.initdb_runtime_dir,
+        runtime_closure.catalog_profile,
+    )?;
     let runtime_cache_key = cache_key_from_leaf(&runtime_dir, "native runtime cache")?;
-    let template_cache_key = template_pgdata
+    let cluster_seed_cache_key = cluster_seed
         .parent()
         .ok_or_else(|| {
             Error::Engine(format!(
-                "native PGDATA template path {} has no cache-key parent",
-                template_pgdata.display()
+                "native cluster-seed path {} has no cache-key parent",
+                cluster_seed.display()
             ))
         })
-        .and_then(|parent| cache_key_from_leaf(parent, "native PGDATA template cache"))?;
+        .and_then(|parent| cache_key_from_leaf(parent, "native PGDATA cluster seed cache"))?;
 
     Ok(MaterializedNativeResources {
         runtime_dir,
-        template_pgdata,
+        cluster_seed,
         runtime_cache_key,
-        template_cache_key,
+        cluster_seed_cache_key,
     })
 }
 
@@ -545,6 +643,7 @@ fn temporary_file_nonce() -> Result<u128> {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsStr;
     use std::io::{BufRead, BufReader, Write as _};
     use std::process::{Command, Stdio};
 
@@ -554,6 +653,32 @@ mod tests {
     };
 
     #[test]
+    fn native_tool_environment_drops_producer_only_collation_signals() {
+        let mut command = Command::new("postgres");
+        for key in [
+            "OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY",
+            "OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY",
+            "OLIPHAUNT_INTERNAL_ICU_READY",
+        ] {
+            command.env(key, "1");
+        }
+        configure_native_tool_env(&mut command, Path::new("/missing-runtime"));
+        for key in [
+            "OLIPHAUNT_INTERNAL_SKIP_SYSTEM_COLLATION_DISCOVERY",
+            "OLIPHAUNT_INTERNAL_SKIP_ICU_DISCOVERY",
+            "OLIPHAUNT_INTERNAL_ICU_READY",
+        ] {
+            assert_eq!(
+                command
+                    .get_envs()
+                    .find(|(candidate, _)| *candidate == OsStr::new(key))
+                    .and_then(|(_, value)| value),
+                None
+            );
+        }
+    }
+
+    #[test]
     fn temporary_root_cleanup_removes_unclaimed_directories() {
         let root = create_temporary_root().unwrap();
         {
@@ -561,6 +686,108 @@ mod tests {
             assert!(root.is_dir());
         }
         assert!(!root.exists());
+    }
+
+    #[test]
+    fn failed_native_publication_keeps_pgdata_after_descriptor_commit() {
+        let root = create_temporary_root().unwrap();
+        let pgdata = root.join("pgdata");
+        fs::create_dir_all(pgdata.join("global")).unwrap();
+        fs::create_dir(pgdata.join("pg_wal")).unwrap();
+        fs::write(pgdata.join("PG_VERSION"), b"18\n").unwrap();
+        fs::write(pgdata.join("global/pg_control"), b"control").unwrap();
+        descriptor::publish_native_root_descriptor(&root).unwrap();
+
+        let mut cleanup = CreatedPgdataCleanup::new();
+        cleanup.arm(pgdata.clone());
+        let error = recover_failed_native_root_initialization(
+            &root,
+            &mut cleanup,
+            Error::Engine("root fsync failed".to_owned()),
+        );
+
+        assert_eq!(error.to_string(), "root fsync failed");
+        assert!(pgdata.is_dir());
+        assert!(root.join(".oliphaunt.json").is_file());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn failed_native_publication_does_not_validate_away_a_renamed_descriptor() {
+        let root = create_temporary_root().unwrap();
+        let pgdata = root.join("pgdata");
+        fs::create_dir(&pgdata).unwrap();
+        fs::write(
+            root.join(descriptor::ROOT_DESCRIPTOR_FILE),
+            b"publication marker",
+        )
+        .unwrap();
+
+        let mut cleanup = CreatedPgdataCleanup::new();
+        cleanup.arm(pgdata.clone());
+        recover_failed_native_root_initialization(
+            &root,
+            &mut cleanup,
+            Error::Engine("directory sync failed".to_owned()),
+        );
+
+        assert!(pgdata.is_dir());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn failed_native_publication_removes_uncommitted_pgdata() {
+        let root = create_temporary_root().unwrap();
+        let pgdata = root.join("pgdata");
+        fs::create_dir(&pgdata).unwrap();
+        fs::write(pgdata.join("partial"), b"partial").unwrap();
+
+        let mut cleanup = CreatedPgdataCleanup::new();
+        cleanup.arm(pgdata.clone());
+        let error = recover_failed_native_root_initialization(
+            &root,
+            &mut cleanup,
+            Error::Engine("descriptor publication failed".to_owned()),
+        );
+
+        assert_eq!(error.to_string(), "descriptor publication failed");
+        assert!(!pgdata.exists());
+        assert!(root.is_dir());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_pgdata_publication_rejects_symbolic_links() {
+        use std::os::unix::fs::symlink;
+
+        let root = create_temporary_root().unwrap();
+        let pgdata = root.join("pgdata");
+        fs::create_dir(&pgdata).unwrap();
+        fs::write(pgdata.join("target"), b"target").unwrap();
+        symlink("target", pgdata.join("link")).unwrap();
+
+        let error = sync_directory_tree(&pgdata).unwrap_err();
+
+        assert!(error.to_string().contains("symbolic link"), "{error}");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn fresh_native_root_rejects_non_bootstrap_role_before_pgdata_mutation() {
+        let root = create_temporary_root().unwrap();
+        let mut config = OpenConfig::direct(&root);
+        config.username = "app_user".to_owned();
+
+        let error = match PreparedNativeRoot::prepare(&config, &[]) {
+            Ok(_) => panic!("a fresh root cannot bootstrap an arbitrary connection role"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("bootstrapped as postgres"));
+        assert!(!root.join("pgdata").exists());
+        assert!(fs::read_dir(&root).unwrap().next().is_none());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

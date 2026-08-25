@@ -163,6 +163,50 @@ fn server_supports_external_psql_and_pg_basebackup_when_available() {
     }
 }
 
+#[test]
+fn fresh_server_roots_have_distinct_postgres_system_identifiers_when_available() {
+    if std::env::var_os("LIBOLIPHAUNT_PATH").is_none() {
+        eprintln!("skipping native server system-ID smoke: LIBOLIPHAUNT_PATH is unset");
+        return;
+    }
+
+    let first_root = unique_root("native-server-system-id-first");
+    let second_root = unique_root("native-server-system-id-second");
+    let result = std::panic::catch_unwind(|| {
+        let first = fresh_server_system_identifier(&first_root);
+        let second = fresh_server_system_identifier(&second_root);
+        assert_ne!(
+            first, second,
+            "independent fresh server roots must not clone one PostgreSQL system identifier"
+        );
+    });
+    let _ = std::fs::remove_dir_all(first_root);
+    let _ = std::fs::remove_dir_all(second_root);
+    if let Err(payload) = result {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+fn fresh_server_system_identifier(root: &Path) -> String {
+    let server = block_on(Oliphaunt::builder().directory(root).open_server())
+        .expect("open fresh native server root");
+    let result = block_on(
+        server
+            .query("SELECT system_identifier::text AS system_identifier FROM pg_control_system()"),
+    )
+    .expect("query PostgreSQL system identifier");
+    let identifier = result
+        .get_text(0, "system_identifier")
+        .expect("read PostgreSQL system identifier")
+        .expect("PostgreSQL system identifier is not null")
+        .to_owned();
+    identifier
+        .parse::<u64>()
+        .expect("PostgreSQL system identifier is an unsigned integer");
+    block_on(server.close()).expect("close native server after system identifier query");
+    identifier
+}
+
 struct PgCtlGuard {
     pg_ctl: PathBuf,
     pgdata: PathBuf,

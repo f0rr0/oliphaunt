@@ -2,6 +2,7 @@ export const EXPO_SMOKE_PASS_TAG = 'OLIPHAUNT_EXPO_SMOKE_PASS' as const;
 export const EXPO_SMOKE_PASS_EVENT_MAX_BYTES = 768;
 
 export type ExpoSmokePassPlatform = 'android' | 'ios';
+export type ExpoSmokePassCatalogProfile = 'standard' | 'icu';
 
 export type ExpoSmokePassReceiptInput = {
   readonly platform: ExpoSmokePassPlatform;
@@ -10,6 +11,7 @@ export type ExpoSmokePassReceiptInput = {
   readonly extensionCatalogComplete: boolean;
   readonly pgTextsearchEnglishBm25: boolean;
   readonly extensionCatalogSha256: string;
+  readonly catalogProfile: ExpoSmokePassCatalogProfile;
   readonly icuRuntimeProof: boolean;
 };
 
@@ -31,6 +33,12 @@ export function serializeExpoSmokePassReceipt(input: ExpoSmokePassReceiptInput):
   }
   if (typeof input.icuRuntimeProof !== 'boolean') {
     throw new Error('installed-app receipt requires an ICU runtime proof boolean');
+  }
+  if (input.catalogProfile !== 'standard' && input.catalogProfile !== 'icu') {
+    throw new Error(`installed-app receipt has unsupported catalog profile: ${String(input.catalogProfile)}`);
+  }
+  if (input.icuRuntimeProof !== (input.catalogProfile === 'icu')) {
+    throw new Error('installed-app receipt ICU proof must match its catalog profile');
   }
 
   const extensions = [...input.extensions].sort();
@@ -65,7 +73,7 @@ export function serializeExpoSmokePassReceipt(input: ExpoSmokePassReceiptInput):
   }
 
   const serialized = JSON.stringify({
-    schema: 'oliphaunt-expo-smoke-pass-v3',
+    schema: 'oliphaunt-expo-smoke-pass-v4',
     runner: 'smoke',
     platform: input.platform,
     extensionCount: extensions.length,
@@ -73,6 +81,7 @@ export function serializeExpoSmokePassReceipt(input: ExpoSmokePassReceiptInput):
     extensionCatalogComplete: true,
     pgTextsearchEnglishBm25: input.pgTextsearchEnglishBm25,
     extensionCatalogSha256: input.extensionCatalogSha256,
+    catalogProfile: input.catalogProfile,
     icuRuntimeProof: input.icuRuntimeProof,
   });
   const eventBytes = utf8ByteLength(`${EXPO_SMOKE_PASS_TAG} ${serialized}`);

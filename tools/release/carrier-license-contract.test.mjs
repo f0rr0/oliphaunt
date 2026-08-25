@@ -13,7 +13,7 @@ const ROOT = path.resolve(import.meta.dir, "../..");
 const CODE_LICENSE = "MIT";
 const NATIVE_RUNTIME_LICENSE = "MIT AND PostgreSQL AND Unicode-3.0";
 const NATIVE_TOOLS_LICENSE = "MIT AND PostgreSQL";
-const ICU_LICENSE = "MIT AND Unicode-3.0";
+const ICU_CARRIER_LICENSE = "MIT AND Unicode-3.0";
 
 function readCargoLicense(relative) {
   const file = path.join(ROOT, relative);
@@ -79,15 +79,15 @@ test("native source facades and payload carriers declare their exact role licens
   );
 });
 
-test("portable ICU carrier declares only Oliphaunt and ICU payload licenses", () => {
+test("portable ICU carrier declares its exact data-only license closure", () => {
   assertNpmLicenses([
     "src/runtimes/liboliphaunt/native/icu-npm/package.json",
-  ], ICU_LICENSE);
+  ], ICU_CARRIER_LICENSE);
   const podspec = readFileSync(
     path.join(ROOT, "src/runtimes/liboliphaunt/native/icu-npm/OliphauntICU.podspec"),
     "utf8",
   );
   const declarations = [...podspec.matchAll(/^[ \t]*s[.]license[ \t]*=[ \t]*\{[ \t]*:type[ \t]*=>[ \t]*'([^']+)'[ \t]*\}[ \t]*$/gmu)];
   assert.equal(declarations.length, 1, "OliphauntICU.podspec must declare exactly one simple license type");
-  assert.equal(declarations[0][1], ICU_LICENSE);
+  assert.equal(declarations[0][1], ICU_CARRIER_LICENSE);
 });

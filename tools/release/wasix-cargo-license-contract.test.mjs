@@ -13,7 +13,7 @@ const ROOT = path.resolve(import.meta.dirname, "../..");
 const CORE_TEMPLATES = [
   ["src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml", "wasix-runtime"],
   ["src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml", "wasix-tools"],
-  ["src/runtimes/liboliphaunt/icu/Cargo.toml", "wasix-icu-data"],
+  ["src/runtimes/liboliphaunt/icu/Cargo.toml", "wasix-icu-data-crate"],
   ...[
     "aarch64-apple-darwin",
     "aarch64-unknown-linux-gnu",

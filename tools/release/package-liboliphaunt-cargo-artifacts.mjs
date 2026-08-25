@@ -37,6 +37,8 @@ import {
   releaseProfilePackageLicense,
   stageReleaseNotices,
 } from "./release-notices.mjs";
+import { validateNativeIcuDataManifest } from "./native-icu-data-contract.mjs";
+import { validateNativeRuntimeCarrier } from "./native-runtime-carrier-contract.mjs";
 
 const PREFIX = "package-liboliphaunt-cargo-artifacts.mjs";
 const PRODUCT = "liboliphaunt-native";
@@ -413,6 +415,18 @@ function validateNativePayload(payloadRoot, target, { toolSet }) {
     toolSet,
     "--check",
   ]);
+}
+
+function validateNativeCargoRuntimeClosure(runtimeRoot, target, icuRoot) {
+  const icuData = path.join(icuRoot, "share/icu");
+  try {
+    const { target: actualTarget } = validateNativeRuntimeCarrier(runtimeRoot, { icuData });
+    if (actualTarget !== target) {
+      fail(`${rel(runtimeRoot)} carries ${actualTarget} cluster seeds, expected ${target}`);
+    }
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
 }
 
 function writePartCrate(
@@ -1011,6 +1025,7 @@ function packageTarget(
     outputDir,
     cargoTargetDir,
     partBytes,
+    icuRoot,
   },
 ) {
   validateToolsTargetPair(target, toolsTarget);
@@ -1026,6 +1041,7 @@ function packageTarget(
   assertReleaseNoticesInArchive(toolsArchive, { profile: "native-tools" });
   const extractedRoot = path.join(sourceRoot, `${target.target}-extracted`);
   extractArchive(archive, extractedRoot);
+  validateNativeCargoRuntimeClosure(extractedRoot, target.target, icuRoot);
   const toolsRoot = path.join(sourceRoot, `${target.target}-tools-extracted`);
   extractArchive(toolsArchive, toolsRoot);
   validateNativePayload(extractedRoot, target.target, { toolSet: "runtime" });
@@ -1192,6 +1208,22 @@ async function main(argv) {
   }
 
   const packages = [];
+  const icuArchive = path.join(args.assetDir, `liboliphaunt-${args.version}-icu-data.tar.gz`);
+  if (!isFile(icuArchive)) {
+    fail(`missing liboliphaunt native ICU data release asset: ${rel(icuArchive)}`);
+  }
+  assertReleaseNoticesInArchive(icuArchive, { profile: "native-icu-data" });
+  const icuRoot = path.join(sourceRoot, "icu-data-extracted");
+  extractArchive(icuArchive, icuRoot);
+  try {
+    validateNativeIcuDataManifest(
+      readFileSync(path.join(icuRoot, "manifest.properties")),
+      path.join(icuRoot, "share/icu"),
+      `${rel(icuArchive)} manifest.properties`,
+    );
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
   const selectedToolsTargets = [];
   for (const target of targets) {
     const toolsTarget = toolsTargets.get(target.target);
@@ -1207,6 +1239,7 @@ async function main(argv) {
       outputDir: args.outputDir,
       cargoTargetDir,
       partBytes: args.partBytes,
+      icuRoot,
     }));
   }
   packages.push(freezeSourceCrate(writeToolsFacadeCrate(sourceRoot, {

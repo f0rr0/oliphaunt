@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import type { ExtractedArchive, WasixRuntimeLayout } from '../archive.js';
@@ -6,8 +8,10 @@ import {
   assertExtensionCarriersCompatible,
   assertRuntimeDescriptorMatchesManifest,
   extensionSetupSql,
+  assertClusterSeedProfileContract,
   mergeExtensionStartupGUCs,
   overlayExtensionArchive,
+  overlayIcuArchive,
   parseWasixAssetManifest,
   resolveWasixExtensions,
 } from '../extensions.js';
@@ -19,6 +23,33 @@ type ProjectedLifecycle = ProjectedExtension['lifecycle'];
 
 // liboliphaunt-doc-example:wasix-typescript-extensions
 describe('WASIX TypeScript extensions', () => {
+  it('uses the shared cluster-seed profile fixtures', () => {
+    const standard = sharedSeedFixture('standard.valid.json');
+    const icu = sharedSeedFixture('icu.valid.json');
+    const mismatch = sharedSeedFixture('profile-mismatch.invalid.json');
+
+    expect(() => assertClusterSeedProfileContract(standard, 'standard')).not.toThrow();
+    expect(() => assertClusterSeedProfileContract(icu, 'icu')).not.toThrow();
+    expect(() => assertClusterSeedProfileContract(mismatch, 'standard')).toThrow(
+      'profile mismatch',
+    );
+  });
+
+  it('validates the complete ICU overlay before mutating the runtime', () => {
+    const runtime: ExtractedArchive = {
+      files: new Map(),
+      directories: new Set(),
+    };
+    const icu: ExtractedArchive = {
+      files: new Map([['share/icu/icudt76l.dat', Uint8Array.of(1)]]),
+      directories: new Set(['share/icu', 'outside']),
+    };
+
+    expect(() => overlayIcuArchive(runtime, icu)).toThrow('directory outside share/icu');
+    expect(runtime.files.size).toBe(0);
+    expect(runtime.directories.size).toBe(0);
+  });
+
   it('resolves pgtap through the canonical manifest and runtime-provided plpgsql', () => {
     const pgtap = extension('pgtap', {
       dependencies: ['plpgsql'],
@@ -158,11 +189,11 @@ describe('WASIX TypeScript extensions', () => {
       assertRuntimeDescriptorMatchesManifest(
         {
           ...runtimeDescriptor(),
-          pgdataArchive: { ...runtimeDescriptor().pgdataArchive, size: 101 },
+          standardSeedArchive: { ...runtimeDescriptor().standardSeedArchive, size: 101 },
         },
         manifest(),
       ),
-    ).toThrow('PGDATA archive size does not match the canonical manifest');
+    ).toThrow('standard cluster seed archive size does not match the canonical manifest');
   });
 
   it('does not create a lifecycle schema when extension creation is disabled', () => {
@@ -289,10 +320,10 @@ describe('WASIX TypeScript extensions', () => {
     const parsed = parseWasixAssetManifest(new TextEncoder().encode(JSON.stringify(expected)));
     expect(parsed.extensions).toEqual([]);
 
-    const invalid = { ...expected, 'format-version': 2 };
+    const invalid = { ...expected, 'format-version': 1 };
     expect(() =>
       parseWasixAssetManifest(new TextEncoder().encode(JSON.stringify(invalid))),
-    ).toThrow('format-version 1');
+    ).toThrow('format-version 2');
 
     const missingFingerprint = { ...expected, 'source-fingerprint': undefined };
     expect(() =>
@@ -396,7 +427,7 @@ function carrierMap(
 
 function manifest(): WasixAssetManifest {
   return {
-    'format-version': 1,
+    'format-version': 2,
     'source-fingerprint': 'postgres-source-fingerprint',
     runtime: {
       archive: 'oliphaunt.wasix.tar.zst',
@@ -412,13 +443,34 @@ function manifest(): WasixAssetManifest {
         sha256: '3'.repeat(64),
       },
     ],
-    'pgdata-template': {
-      archive: 'prepopulated/pgdata-template.tar.zst',
-      sha256: '4'.repeat(64),
-      size: 100,
-      'runtime-module-sha256': '1'.repeat(64),
-      'source-fingerprint': 'postgres-source-fingerprint',
-      'postgres-version': '18',
+    'cluster-seeds': {
+      standard: {
+        'artifact-role': 'cluster-seed-standard',
+        'catalog-profile': 'standard',
+        archive: 'cluster-seeds/standard.tar.zst',
+        manifest: 'cluster-seeds/standard.json',
+        sha256: '4'.repeat(64),
+        size: 100,
+        'runtime-module-sha256': '1'.repeat(64),
+        'source-fingerprint': 'postgres-source-fingerprint',
+        'postgres-version': '18',
+        'physical-format': 'wasix-pg18-v1',
+        'compatibility-key': 'wasix-pg18-datum32-v1',
+      },
+      icu: {
+        'artifact-role': 'cluster-seed-icu',
+        'catalog-profile': 'icu',
+        archive: 'cluster-seeds/icu.tar.zst',
+        manifest: 'cluster-seeds/icu.json',
+        sha256: '6'.repeat(64),
+        size: 101,
+        'runtime-module-sha256': '1'.repeat(64),
+        'source-fingerprint': 'postgres-source-fingerprint',
+        'postgres-version': '18',
+        'physical-format': 'wasix-pg18-v1',
+        'compatibility-key': 'wasix-pg18-datum32-v1',
+        'icu-data-tree-sha256': '7'.repeat(64),
+      },
     },
     extensions: [],
   };
@@ -426,7 +478,7 @@ function manifest(): WasixAssetManifest {
 
 function runtimeDescriptor(): SerializedRuntimeDescriptor {
   return {
-    schema: 'oliphaunt-wasix-runtime-v1',
+    schema: 'oliphaunt-wasix-runtime-v2',
     runtime: 'wasix',
     product: 'liboliphaunt-wasix',
     version: '0.1.1',
@@ -436,11 +488,16 @@ function runtimeDescriptor(): SerializedRuntimeDescriptor {
       size: 100,
       source: '/runtime.tar.zst',
     },
-    pgdataArchive: {
-      archive: 'prepopulated/pgdata-template.tar.zst',
+    standardSeedArchive: {
+      archive: 'cluster-seeds/standard.tar.zst',
       sha256: '4'.repeat(64),
       size: 100,
-      source: '/pgdata.tar.zst',
+      source: '/standard-seed.tar.zst',
+    },
+    standardSeedManifest: {
+      sha256: '8'.repeat(64),
+      size: 100,
+      source: '/standard-seed.json',
     },
     manifest: {
       sha256: '5'.repeat(64),
@@ -464,4 +521,13 @@ function runtimeLayout(): WasixRuntimeLayout {
       },
     },
   };
+}
+
+function sharedSeedFixture(name: string): unknown {
+  return JSON.parse(
+    readFileSync(
+      new URL(`../../../../shared/cluster-seed-contract/fixtures/${name}`, import.meta.url),
+      'utf8',
+    ),
+  );
 }

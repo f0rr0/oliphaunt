@@ -15,6 +15,13 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { createGunzip } from "node:zlib";
 
+import {
+  parseProperties,
+  requireProperty,
+  validateIcuDataCarrier,
+  validateNativeRuntimeClosure,
+} from "./native-resource-closure.mjs";
+
 const PREFIX = "stage-ios-app.mjs";
 const SCHEMA = "oliphaunt-react-native-ios-carrier-v1";
 const OUTPUT_SCHEMA = "oliphaunt-react-native-ios-selection-v1";
@@ -29,11 +36,11 @@ const EXTRACTED_CACHE_SCHEMA = "oliphaunt-extracted-carrier-tree-v1";
 const MAX_CARRIER_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_ZIP_CARRIER_BYTES = 512 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES = 4096;
-// The canonical ICU data payload contains one file per locale/resource and is
-// legitimately larger than the general carrier ceiling. Keep that exception
-// tied to the validated base-carrier role instead of weakening extension and
-// framework archive protection globally.
-const MAX_ICU_ARCHIVE_ENTRIES = 8192;
+// The canonical ICU data payload and base XCFramework contain the complete
+// bundled runtime resource trees and legitimately exceed the general carrier
+// ceiling. Keep that exception tied to those validated base-carrier roles
+// instead of weakening extension and runtime archive protection globally.
+const MAX_BUNDLED_RESOURCE_ARCHIVE_ENTRIES = 16384;
 const MAX_ARCHIVE_MEMBER_BYTES = 1024 * 1024 * 1024;
 const MAX_ARCHIVE_EXPANDED_BYTES = 4 * 1024 * 1024 * 1024;
 const MAX_LEGAL_FILE_BYTES = 16 * 1024 * 1024;
@@ -388,7 +395,9 @@ function boundedBytes(value, label, maximum = MAX_CARRIER_BYTES) {
 }
 
 function archiveEntryLimit(asset) {
-  return asset.role === "icu-data" ? MAX_ICU_ARCHIVE_ENTRIES : MAX_ARCHIVE_ENTRIES;
+  return asset.role === "icu-data" || asset.role === "base-xcframework"
+    ? MAX_BUNDLED_RESOURCE_ARCHIVE_ENTRIES
+    : MAX_ARCHIVE_ENTRIES;
 }
 
 function archiveStreamLimit(maxEntries) {
@@ -638,6 +647,11 @@ function validateBase(value, label, allowFileUrls) {
     fail(`${label} base-xcframework member must be an XCFramework directory`);
   }
   const version = stableVersion(base.version, `${label}.version`);
+  const expectedRuntimeName =
+    `liboliphaunt-${version}-runtime-resources-ios-datum64.tar.gz`;
+  if (runtime.name !== expectedRuntimeName) {
+    fail(`${label} runtime-resources asset must be ${expectedRuntimeName}`);
+  }
   const expectedTag = `${base.product}-v${version}`;
   if (base.tag !== expectedTag) fail(`${label}.tag must be ${expectedTag}`);
   return {
@@ -1728,6 +1742,45 @@ async function copyTree(source, destination) {
   }
 }
 
+async function stripEmbeddedRuntimeClosures(frameworkRoot) {
+  let removed = 0;
+  const visit = async (directory) => {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      const file = path.join(directory, entry.name);
+      if (!entry.isDirectory()) continue;
+      if (entry.name === "oliphaunt" && path.basename(directory) === "Resources") {
+        const receiptFile = path.join(file, "manifest.properties");
+        const receipt = parseProperties(await fs.readFile(receiptFile, "utf8"), receiptFile);
+        const fields = new Set([
+          "schema",
+          "clusterSeedTarget",
+          "clusterSeedRelativePath",
+          "icuClusterSeedRelativePath",
+        ]);
+        const target = receipt.get("clusterSeedTarget");
+        if (
+          receipt.size !== fields.size ||
+          [...fields].some((field) => !receipt.has(field)) ||
+          receipt.get("schema") !== "oliphaunt-native-runtime-carrier-v1" ||
+          !new Set(["ios-datum64", "macos-arm64"]).has(target) ||
+          receipt.get("clusterSeedRelativePath") !== "cluster-seed" ||
+          receipt.get("icuClusterSeedRelativePath") !== "cluster-seed-icu"
+        ) {
+          fail(`base framework contains an invalid embedded runtime closure: ${file}`);
+        }
+        await fs.rm(file, { recursive: true });
+        removed += 1;
+      } else {
+        await visit(file);
+      }
+    }
+  };
+  await visit(frameworkRoot);
+  if (removed === 0) {
+    fail("base framework does not contain its per-slice runtime resource closure");
+  }
+}
+
 async function mergeTree(source, destination) {
   const stat = await fs.lstat(source);
   if (stat.isSymbolicLink()) fail(`refusing to merge carrier symlink: ${source}`);
@@ -1946,29 +1999,8 @@ async function stageSelectedLegalFiles({
   };
 }
 
-function parseProperties(text, source) {
-  const values = new Map();
-  for (const [index, raw] of text.split(/\r?\n/u).entries()) {
-    const line = raw.trim();
-    if (!line || line.startsWith("#")) continue;
-    const separator = line.indexOf("=");
-    if (separator < 1) fail(`${source}:${index + 1} is not key=value`);
-    const key = line.slice(0, separator).trim();
-    const value = line.slice(separator + 1).trim();
-    if (values.has(key)) fail(`${source}:${index + 1} repeats ${key}`);
-    values.set(key, value);
-  }
-  return values;
-}
-
 function csv(value, label) {
   return value ? uniquePortable(value.split(","), label) : [];
-}
-
-function requireProperty(values, key, expected, source) {
-  if (values.get(key) !== expected) {
-    fail(`${source} must declare ${key}=${expected}; got ${values.get(key) ?? "<missing>"}`);
-  }
 }
 
 function rejectUnsupportedProperties(values, allowed, source) {
@@ -2256,10 +2288,9 @@ async function validateExactExtensionArtifactInventory(
 }
 
 async function validateBaseResources(root) {
+  const closure = await validateNativeRuntimeClosure(root, { integrated: false });
+  const manifest = closure.runtime;
   const manifestFile = path.join(root, "runtime", "manifest.properties");
-  const manifest = parseProperties(await fs.readFile(manifestFile, "utf8"), manifestFile);
-  requireProperty(manifest, "schema", "oliphaunt-runtime-resources-v1", manifestFile);
-  requireProperty(manifest, "layout", "postgres-runtime-files-v1", manifestFile);
   const createable = csv(manifest.get("extensions"), `${manifestFile} extensions`);
   if (!manifest.has("selectedExtensions")) {
     fail(`${manifestFile} is missing selectedExtensions`);
@@ -2272,11 +2303,7 @@ async function validateBaseResources(root) {
     fail("base React Native iOS carrier contains native extension stems");
   }
   requireProperty(manifest, "mobileStaticRegistryState", "not-required", manifestFile);
-  const template = path.join(root, "template-pgdata", "manifest.properties");
-  const templateManifest = parseProperties(await fs.readFile(template, "utf8"), template);
-  requireProperty(templateManifest, "schema", "oliphaunt-runtime-resources-v1", template);
-  requireProperty(templateManifest, "layout", "postgres-template-pgdata-v1", template);
-  return manifest;
+  return closure;
 }
 
 async function extensionResourceRoot(carrier, base, cacheDir, carrierMemberCache) {
@@ -2401,7 +2428,10 @@ function selectedClosure(requested, bySqlName) {
 
 function writeProperties(values) {
   const preferred = [
-    "schema", "layout", "cacheKey", "source", "selectedExtensions", "extensions", "runtimeFeatures",
+    "schema", "layout", "artifactRole", "catalogProfile", "clusterSeedTarget", "target",
+    "postgresMajor", "physicalFormat", "compatibilityKey", "initialSuperuser",
+    "icuDataVersion", "icuDataForm", "icuDataTreeSha256", "mode", "cacheKey",
+    "selectedExtensions", "extensions", "runtimeFeatures",
     "sharedPreloadLibraries", "mobileStaticRegistryState", "mobileStaticRegistryRegistered",
     "mobileStaticRegistryPending", "nativeModuleStems", "mobileStaticRegistrySource",
   ];
@@ -2504,7 +2534,8 @@ async function stage(args, base, selected) {
   try {
     const carrierMemberCache = new Map();
     const baseResources = await resolveAsset(base.assets.runtime, args.cacheDir);
-    const baseManifest = await validateBaseResources(baseResources);
+    const baseClosure = await validateBaseResources(baseResources);
+    const baseManifest = baseClosure.runtime;
     const resourceRoot = path.join(
       temporary,
       "resources",
@@ -2512,10 +2543,16 @@ async function stage(args, base, selected) {
       "oliphaunt",
     );
     await copyTree(baseResources, resourceRoot);
+    let icuDataTreeSha256 = "";
     if (args.icu) {
-      const icuData = await resolveAsset(base.assets.icu, args.cacheDir);
-      await requirePayloadDirectory(icuData, "ICU data carrier member");
-      await mergeTree(icuData, path.join(resourceRoot, "runtime", "files", "share", "icu"));
+      const icuClosure = await resolveAsset(base.assets.icu, args.cacheDir);
+      await requirePayloadDirectory(icuClosure, "ICU closure carrier member");
+      const icu = await validateIcuDataCarrier(icuClosure);
+      if (icu.digest !== baseClosure.icuDigest) {
+        fail("iOS ICU data does not match the target runtime's cluster-seed-icu");
+      }
+      icuDataTreeSha256 = icu.digest;
+      await mergeTree(icu.data, path.join(resourceRoot, "runtime", "files", "share", "icu"));
     }
     const baseFramework = await resolveAsset(base.assets.framework, args.cacheDir);
     const baseFrameworkName = path.posix.basename(base.assets.framework.member);
@@ -2525,7 +2562,13 @@ async function stage(args, base, selected) {
     ) {
       fail("base framework carrier member must resolve to its declared .xcframework directory");
     }
-    await copyTree(baseFramework, path.join(temporary, "frameworks", "base", baseFrameworkName));
+    const stagedBaseFramework = path.join(temporary, "frameworks", "base", baseFrameworkName);
+    await copyTree(baseFramework, stagedBaseFramework);
+    // Swift consumes the per-slice closure embedded by the XCFramework. React
+    // Native publishes one composed app-owned bundle instead, so retaining the
+    // embedded copies would ship the same PostgreSQL runtime and both seeds
+    // twice. Validate their receipts before removing only the staged copies.
+    await stripEmbeddedRuntimeClosures(stagedBaseFramework);
 
     const extensionRows = [];
     const nativeCarriers = selected.filter(({ nativeModuleStem }) => nativeModuleStem !== null);
@@ -2590,12 +2633,16 @@ async function stage(args, base, selected) {
     if (args.icu) runtimeFeatures.add("icu");
     else runtimeFeatures.delete("icu");
     baseManifest.set("runtimeFeatures", [...runtimeFeatures].sort(compareText).join(","));
+    baseManifest.set("icuDataTreeSha256", icuDataTreeSha256);
     baseManifest.set("sharedPreloadLibraries", sharedPreload.join(","));
     baseManifest.set("mobileStaticRegistryState", nativeStems.length > 0 ? "complete" : "not-required");
     baseManifest.set("mobileStaticRegistryRegistered", nativeExtensions.join(","));
     baseManifest.set("mobileStaticRegistryPending", "");
     baseManifest.set("nativeModuleStems", nativeStems.join(","));
-    baseManifest.set("mobileStaticRegistrySource", nativeStems.length > 0 ? "oliphaunt_static_registry.c" : "");
+    baseManifest.set(
+      "mobileStaticRegistrySource",
+      nativeStems.length > 0 ? "static-registry/oliphaunt_static_registry.c" : "",
+    );
     await fs.writeFile(path.join(resourceRoot, "runtime", "manifest.properties"), writeProperties(baseManifest));
 
     const registryRoot = path.join(resourceRoot, "static-registry");
@@ -2627,8 +2674,9 @@ async function stage(args, base, selected) {
       );
     }
 
-    const runtimeSize = await treeSize(path.join(resourceRoot, "runtime"));
-    const templateSize = await treeSize(path.join(resourceRoot, "template-pgdata"));
+    const runtimeSize = await treeSize(path.join(resourceRoot, "runtime", "files"));
+    const standardClusterSeedSize = await treeSize(path.join(resourceRoot, "cluster-seed", "files"));
+    const icuClusterSeedSize = await treeSize(path.join(resourceRoot, "cluster-seed-icu", "files"));
     const registrySize = await treeSize(registryRoot);
     const selectedBytes = extensionRows.reduce((total, row) => total + row.bytes, 0);
     const selectedFiles = extensionRows.reduce((total, row) => total + row.files, 0);
@@ -2637,9 +2685,10 @@ async function stage(args, base, selected) {
       path.join(resourceRoot, "package-size.tsv"),
       [
         "kind\tid\textensions\tfiles\tbytes",
-        `package\ttotal\t${extensionNames}\t${runtimeSize.files + templateSize.files + registrySize.files}\t${runtimeSize.bytes + templateSize.bytes + registrySize.bytes}`,
+        `package\ttotal\t${extensionNames}\t${runtimeSize.files + standardClusterSeedSize.files + icuClusterSeedSize.files + registrySize.files}\t${runtimeSize.bytes + standardClusterSeedSize.bytes + icuClusterSeedSize.bytes + registrySize.bytes}`,
         `package\truntime\t${extensionNames}\t${runtimeSize.files}\t${runtimeSize.bytes}`,
-        `package\ttemplate-pgdata\t-\t${templateSize.files}\t${templateSize.bytes}`,
+        `package\tcluster-seed\t-\t${standardClusterSeedSize.files}\t${standardClusterSeedSize.bytes}`,
+        `package\tcluster-seed-icu\t-\t${icuClusterSeedSize.files}\t${icuClusterSeedSize.bytes}`,
         `package\tstatic-registry\t${extensionNames}\t${registrySize.files}\t${registrySize.bytes}`,
         `extensions\tselected\t${extensionNames}\t${selectedFiles}\t${selectedBytes}`,
         ...extensionRows.sort((left, right) => compareText(left.sqlName, right.sqlName))

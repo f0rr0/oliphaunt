@@ -28,13 +28,35 @@ export type WasixRuntimeManifest = Readonly<{
  * `@oliphaunt/liboliphaunt-wasix`; callers normally never handle it directly.
  */
 export type WasixRuntimeDescriptor = Readonly<{
-  schema: 'oliphaunt-wasix-runtime-v1';
+  schema: 'oliphaunt-wasix-runtime-v2';
   runtime: 'wasix';
   product: 'liboliphaunt-wasix';
   version: string;
   runtimeArchive: WasixRuntimeArchive;
-  pgdataArchive: WasixRuntimeArchive;
+  standardSeedArchive: WasixRuntimeArchive;
+  standardSeedManifest: WasixRuntimeManifest;
   manifest: WasixRuntimeManifest;
+}>;
+
+/** Explicit optional ICU closure authored by `@oliphaunt/wasix-icu`. */
+export type WasixIcuDescriptor = Readonly<{
+  schema: 'oliphaunt-wasix-icu-v1';
+  runtime: 'wasix';
+  product: 'oliphaunt-icu';
+  version: string;
+  compatibility: Readonly<{
+    runtimeProduct: 'liboliphaunt-wasix';
+    runtimeVersion: string;
+    postgresMajor: '18';
+    physicalFormat: 'wasix-pg18-v1';
+    compatibilityKey: 'wasix-pg18-datum32-v1';
+    dataVersion: '76.1';
+    dataForm: 'files-le';
+    dataTreeSha256: string;
+  }>;
+  dataArchive: WasixRuntimeArchive;
+  clusterSeedArchive: WasixRuntimeArchive;
+  clusterSeedManifest: WasixRuntimeManifest;
 }>;
 
 export type WasixExtensionCarrier = Readonly<{
@@ -122,7 +144,7 @@ export type WasixExtensionLifecycle = {
 
 /** Host-relevant subset of the generated liboliphaunt WASIX asset manifest. */
 export type WasixAssetManifest = {
-  'format-version': 1;
+  'format-version': 2;
   'source-fingerprint': string;
   runtime: {
     archive: string;
@@ -143,14 +165,25 @@ export type WasixAssetManifest = {
     path: string;
     sha256: string;
   }[];
-  'pgdata-template': {
-    archive: string;
-    sha256: string;
-    size: number;
-    'runtime-module-sha256': string;
-    'source-fingerprint': string;
-    'postgres-version': string;
-  };
+  'cluster-seeds': Readonly<
+    Record<
+      'standard' | 'icu',
+      {
+        'artifact-role': 'cluster-seed-standard' | 'cluster-seed-icu';
+        'catalog-profile': 'standard' | 'icu';
+        archive: string;
+        manifest: string;
+        sha256: string;
+        size: number;
+        'runtime-module-sha256': string;
+        'source-fingerprint': string;
+        'postgres-version': string;
+        'physical-format': 'wasix-pg18-v1';
+        'compatibility-key': 'wasix-pg18-datum32-v1';
+        'icu-data-tree-sha256'?: string;
+      }
+    >
+  >;
   /** The core runtime carrier is intentionally extension-free. */
   extensions: readonly [];
 };
@@ -166,6 +199,8 @@ export type OpenConfig = {
   database?: string;
   /** PostgreSQL `-c name=value` settings applied before the database opens. */
   startupGUCs?: Readonly<Record<string, string>>;
+  /** Optional ICU data plus the matching PostgreSQL ICU-catalog cluster seed. */
+  icu?: WasixIcuDescriptor;
   /** Selectively imported WASIX carriers. SQL strings are intentionally not accepted. */
   extensions?: readonly WasixExtensionDescriptor[];
   /** Fresh memory by default, or an explicitly imported host storage adapter. */

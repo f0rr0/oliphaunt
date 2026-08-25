@@ -121,7 +121,7 @@ test("the real Maven manifest builder feeds the canonical ten-field schema into 
   expect(records.map(({ name }) => name).sort()).toEqual([
     "dev.oliphaunt.runtime:liboliphaunt-android-arm64-v8a",
     "dev.oliphaunt.runtime:liboliphaunt-android-x86_64",
-    "dev.oliphaunt.runtime:liboliphaunt-runtime-resources",
+    "dev.oliphaunt.runtime:liboliphaunt-runtime-resources-android-datum64",
     "dev.oliphaunt.runtime:oliphaunt-icu",
   ]);
   expect(records.every((record) =>

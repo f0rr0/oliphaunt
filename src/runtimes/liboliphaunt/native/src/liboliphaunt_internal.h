@@ -107,6 +107,9 @@ struct OliphauntHandle {
     char *previous_pgdata_env;
     char *previous_proj_data_env;
     char *previous_icu_data_env;
+    char *previous_skip_system_collation_discovery_env;
+    char *previous_skip_icu_collation_discovery_env;
+    char *previous_internal_icu_ready_env;
     char *previous_module_dir_env;
     char **startup_args;
     size_t startup_arg_count;
@@ -116,6 +119,12 @@ struct OliphauntHandle {
     bool proj_data_env_overridden;
     bool had_previous_icu_data_env;
     bool icu_data_env_overridden;
+    bool had_previous_skip_system_collation_discovery_env;
+    bool skip_system_collation_discovery_env_overridden;
+    bool had_previous_skip_icu_collation_discovery_env;
+    bool skip_icu_collation_discovery_env_overridden;
+    bool had_previous_internal_icu_ready_env;
+    bool internal_icu_ready_env_overridden;
     bool had_previous_module_dir_env;
     bool module_dir_env_overridden;
 

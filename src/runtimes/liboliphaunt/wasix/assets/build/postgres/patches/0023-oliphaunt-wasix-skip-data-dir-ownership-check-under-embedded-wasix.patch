@@ -7,7 +7,7 @@ WASIX host filesystem metadata can report the embedding host uid while the
 Postgres process identity shim exposes the synthetic oliphaunt uid.  Keep the
 normal upstream ownership interlock everywhere else, but bypass it for the
 embedded WASIX runtime so initdb bootstrap can start the backend against the
-mounted template data directory.
+mounted PGDATA directory.
 ---
  src/backend/utils/init/miscinit.c | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)
