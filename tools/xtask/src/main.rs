@@ -39,7 +39,7 @@ use crate::release_workspace::{
 };
 use crate::source_spine::{
     SourceFetchScope, check_source_spine_for_source_lane, check_sources_manifest,
-    check_sources_manifest_for_asset_build, fetch_pinned_sources_for_source_lane,
+    check_sources_manifest_for_wasix_asset_build, fetch_pinned_sources_for_source_lane,
     load_sources_manifest, load_wasix_toolchain_manifest, validate_sources_manifest,
 };
 
@@ -215,13 +215,13 @@ fn assets(args: Vec<String>) -> Result<()> {
             )
         }
         Some("release-build") => {
-            let manifest = check_sources_manifest_for_asset_build(&args)?;
+            let manifest = check_sources_manifest_for_wasix_asset_build(&args)?;
             let profile = value_after(&args, "--profile").unwrap_or(DEFAULT_ASSET_BUILD_PROFILE);
             let target = value_after(&args, "--target-triple").unwrap_or(host_target_triple());
             release_build_assets(&manifest, profile, target, &args)
         }
         Some("build-host") => {
-            let manifest = check_sources_manifest_for_asset_build(&args)?;
+            let manifest = check_sources_manifest_for_wasix_asset_build(&args)?;
             release_build_assets(
                 &manifest,
                 DEFAULT_ASSET_BUILD_PROFILE,

@@ -35,9 +35,9 @@ internal class AndroidNativeDirectEngine(
             OliphauntAndroidRuntimeAssets.resolve(
                 context = appContext,
                 explicitRuntimeDirectory =
-                    runtimeDirectory
-                        ?: env("OLIPHAUNT_INSTALL_DIR")
-                        ?: env("OLIPHAUNT_RUNTIME_DIR"),
+                runtimeDirectory
+                    ?: env("OLIPHAUNT_INSTALL_DIR")
+                    ?: env("OLIPHAUNT_RUNTIME_DIR"),
                 requestedExtensions = config.extensions,
                 resourceRoot = resourceRoot,
             )
@@ -152,12 +152,12 @@ internal class AndroidNativeDirectEngine(
             destination = destination,
             bytes = bytes,
             libraryPath =
-                resolveAndroidLiboliphauntLibraryPath(
-                    explicitLibraryPath = libraryPath,
-                    nativeLibraryDirectory = appContext.applicationInfo.nativeLibraryDir,
-                    sourceArchivePaths = appContext.applicationInfo.liboliphauntSourceArchivePaths(),
-                    supportedAbis = Build.SUPPORTED_ABIS.asList(),
-                ),
+            resolveAndroidLiboliphauntLibraryPath(
+                explicitLibraryPath = libraryPath,
+                nativeLibraryDirectory = appContext.applicationInfo.nativeLibraryDir,
+                sourceArchivePaths = appContext.applicationInfo.liboliphauntSourceArchivePaths(),
+                supportedAbis = Build.SUPPORTED_ABIS.asList(),
+            ),
         )
     }
 }
@@ -171,16 +171,15 @@ internal fun requireAndroidFreshRootRole(username: String) {
     }
 }
 
-internal fun isAndroidSymbolicLink(file: File): Boolean =
-    try {
-        OsConstants.S_ISLNK(Os.lstat(file.absolutePath).st_mode)
-    } catch (error: ErrnoException) {
-        if (error.errno == OsConstants.ENOENT) {
-            false
-        } else {
-            throw OliphauntException("failed to inspect database storage path ${file.absolutePath}: ${error.message}")
-        }
+internal fun isAndroidSymbolicLink(file: File): Boolean = try {
+    OsConstants.S_ISLNK(Os.lstat(file.absolutePath).st_mode)
+} catch (error: ErrnoException) {
+    if (error.errno == OsConstants.ENOENT) {
+        false
+    } else {
+        throw OliphauntException("failed to inspect database storage path ${file.absolutePath}: ${error.message}")
     }
+}
 
 internal enum class AndroidManagedRootState {
     Empty,
@@ -265,19 +264,18 @@ internal fun recoverAndroidManagedRootPublicationFailure(
     throw publicationError
 }
 
-internal fun isAndroidPathDefinitelyAbsent(path: File): Boolean =
-    try {
-        Os.lstat(path.absolutePath)
-        false
-    } catch (error: ErrnoException) {
-        if (error.errno == OsConstants.ENOENT) {
-            true
-        } else {
-            throw OliphauntException(
-                "failed to inspect ${path.absolutePath}: ${error.message}",
-            )
-        }
+internal fun isAndroidPathDefinitelyAbsent(path: File): Boolean = try {
+    Os.lstat(path.absolutePath)
+    false
+} catch (error: ErrnoException) {
+    if (error.errno == OsConstants.ENOENT) {
+        true
+    } else {
+        throw OliphauntException(
+            "failed to inspect ${path.absolutePath}: ${error.message}",
+        )
     }
+}
 
 internal fun validateCompleteAndroidPgdata(pgdata: File) {
     val version = File(pgdata, "PG_VERSION")
@@ -465,13 +463,12 @@ private class AndroidFlatJsonParser(
 
     private fun peek(): Char? = source.getOrNull(offset)
 
-    private fun consume(expected: Char): Boolean =
-        if (peek() == expected) {
-            offset += 1
-            true
-        } else {
-            false
-        }
+    private fun consume(expected: Char): Boolean = if (peek() == expected) {
+        offset += 1
+        true
+    } else {
+        false
+    }
 
     private fun expect(expected: Char) {
         if (!consume(expected)) throw IllegalArgumentException("expected $expected")
@@ -507,13 +504,12 @@ private object AndroidDirectTemporaryStorage {
     @Volatile
     private var root: File? = null
 
-    fun resolve(context: Context): File =
-        synchronized(this) {
-            root ?: File(
-                context.cacheDir,
-                "oliphaunt-direct-${Process.myPid()}-${UUID.randomUUID()}",
-            ).also { root = it }
-        }
+    fun resolve(context: Context): File = synchronized(this) {
+        root ?: File(
+            context.cacheDir,
+            "oliphaunt-direct-${Process.myPid()}-${UUID.randomUUID()}",
+        ).also { root = it }
+    }
 }
 
 private class AndroidNativeDirectSession(
@@ -527,15 +523,14 @@ private class AndroidNativeDirectSession(
     private var closed = false
     private var activeCalls = 0
 
-    override suspend fun execProtocolRaw(request: ByteArray): ByteArray =
-        withContext(executionDispatcher) {
-            val current = beginCall()
-            try {
-                OliphauntAndroidNativeBridge.execProtocolRawNative(current, request)
-            } finally {
-                endCall()
-            }
+    override suspend fun execProtocolRaw(request: ByteArray): ByteArray = withContext(executionDispatcher) {
+        val current = beginCall()
+        try {
+            OliphauntAndroidNativeBridge.execProtocolRawNative(current, request)
+        } finally {
+            endCall()
         }
+    }
 
     override suspend fun execProtocolStream(
         request: ByteArray,
@@ -558,15 +553,14 @@ private class AndroidNativeDirectSession(
         }
     }
 
-    override suspend fun backup(): ByteArray =
-        withContext(executionDispatcher) {
-            val current = beginCall()
-            try {
-                OliphauntAndroidNativeBridge.backupNative(current)
-            } finally {
-                endCall()
-            }
+    override suspend fun backup(): ByteArray = withContext(executionDispatcher) {
+        val current = beginCall()
+        try {
+            OliphauntAndroidNativeBridge.backupNative(current)
+        } finally {
+            endCall()
         }
+    }
 
     override suspend fun cancel() {
         val current = beginCall()
@@ -666,27 +660,24 @@ internal fun resolveAndroidLiboliphauntLibraryPath(
     sourceArchivePaths: List<String> = emptyList(),
     supportedAbis: List<String> = emptyList(),
     envProvider: (String) -> String? = ::env,
-): String? =
-    explicitLibraryPath?.takeIf(String::isNotBlank)
-        ?: envProvider("OLIPHAUNT_KOTLIN_ANDROID_LIBRARY")?.takeIf(String::isNotBlank)
-        ?: envProvider("LIBOLIPHAUNT_PATH")?.takeIf(String::isNotBlank)
-        ?: envProvider("OLIPHAUNT_LIBRARY")?.takeIf(String::isNotBlank)
-        ?: packagedAndroidLiboliphauntPath(nativeLibraryDirectory)
-        ?: packagedAndroidLiboliphauntZipPath(sourceArchivePaths, supportedAbis)
+): String? = explicitLibraryPath?.takeIf(String::isNotBlank)
+    ?: envProvider("OLIPHAUNT_KOTLIN_ANDROID_LIBRARY")?.takeIf(String::isNotBlank)
+    ?: envProvider("LIBOLIPHAUNT_PATH")?.takeIf(String::isNotBlank)
+    ?: envProvider("OLIPHAUNT_LIBRARY")?.takeIf(String::isNotBlank)
+    ?: packagedAndroidLiboliphauntPath(nativeLibraryDirectory)
+    ?: packagedAndroidLiboliphauntZipPath(sourceArchivePaths, supportedAbis)
 
-private fun packagedAndroidLiboliphauntPath(nativeLibraryDirectory: String?): String? =
-    nativeLibraryDirectory
-        ?.takeIf(String::isNotBlank)
-        ?.let { File(it, "liboliphaunt.so") }
-        ?.takeIf(File::isFile)
-        ?.absolutePath
+private fun packagedAndroidLiboliphauntPath(nativeLibraryDirectory: String?): String? = nativeLibraryDirectory
+    ?.takeIf(String::isNotBlank)
+    ?.let { File(it, "liboliphaunt.so") }
+    ?.takeIf(File::isFile)
+    ?.absolutePath
 
-private fun android.content.pm.ApplicationInfo.liboliphauntSourceArchivePaths(): List<String> =
-    buildList {
-        add(sourceDir)
-        add(publicSourceDir)
-        splitSourceDirs?.forEach(::add)
-    }.filter { path -> path.isNotBlank() }.distinct()
+private fun android.content.pm.ApplicationInfo.liboliphauntSourceArchivePaths(): List<String> = buildList {
+    add(sourceDir)
+    add(publicSourceDir)
+    splitSourceDirs?.forEach(::add)
+}.filter { path -> path.isNotBlank() }.distinct()
 
 private fun packagedAndroidLiboliphauntZipPath(
     sourceArchivePaths: List<String>,

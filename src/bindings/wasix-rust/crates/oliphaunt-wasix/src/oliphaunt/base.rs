@@ -2177,19 +2177,20 @@ mod tests {
 
     #[test]
     fn shared_cluster_seed_profile_fixtures_match_binding_semantics() -> Result<()> {
-        let standard: SharedClusterSeedProfile = serde_json::from_str(include_str!(
-            "../../../../../../shared/cluster-seed-contract/fixtures/standard.valid.json"
-        ))?;
+        let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../../shared/cluster-seed-contract/fixtures");
+        let standard: SharedClusterSeedProfile = serde_json::from_str(&fs::read_to_string(
+            fixture_root.join("standard.valid.json"),
+        )?)?;
         validate_cluster_seed_profile_contract(standard.as_contract(), "standard")?;
 
-        let icu: SharedClusterSeedProfile = serde_json::from_str(include_str!(
-            "../../../../../../shared/cluster-seed-contract/fixtures/icu.valid.json"
-        ))?;
+        let icu: SharedClusterSeedProfile =
+            serde_json::from_str(&fs::read_to_string(fixture_root.join("icu.valid.json"))?)?;
         validate_cluster_seed_profile_contract(icu.as_contract(), "icu")?;
 
-        let mismatch: SharedClusterSeedProfile = serde_json::from_str(include_str!(
-            "../../../../../../shared/cluster-seed-contract/fixtures/profile-mismatch.invalid.json"
-        ))?;
+        let mismatch: SharedClusterSeedProfile = serde_json::from_str(&fs::read_to_string(
+            fixture_root.join("profile-mismatch.invalid.json"),
+        )?)?;
         let error = validate_cluster_seed_profile_contract(mismatch.as_contract(), "standard")
             .expect_err("profile mismatch fixture must be rejected");
         assert!(error.to_string().contains("profile mismatch"));

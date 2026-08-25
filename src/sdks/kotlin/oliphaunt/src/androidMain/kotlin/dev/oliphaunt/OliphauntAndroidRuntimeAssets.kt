@@ -253,17 +253,16 @@ internal object OliphauntAndroidRuntimeAssets {
         return runtimePackage.sharedPreloadLibraries
     }
 
-    fun packageSizeReport(assetManager: AssetManager): OliphauntPackageSizeReport? =
-        try {
-            assetManager.open(PACKAGE_SIZE_REPORT_ASSET).bufferedReader().use { reader ->
-                parsePackageSizeReport(reader.readText(), PACKAGE_SIZE_REPORT_ASSET)
-                    .withRuntimeManifest(packageManifestOrNull(assetManager, RUNTIME_ASSET_ROOT))
-            }
-        } catch (_: FileNotFoundException) {
-            null
-        } catch (error: IOException) {
-            throw OliphauntException("failed to read Oliphaunt package size report: ${error.message}")
+    fun packageSizeReport(assetManager: AssetManager): OliphauntPackageSizeReport? = try {
+        assetManager.open(PACKAGE_SIZE_REPORT_ASSET).bufferedReader().use { reader ->
+            parsePackageSizeReport(reader.readText(), PACKAGE_SIZE_REPORT_ASSET)
+                .withRuntimeManifest(packageManifestOrNull(assetManager, RUNTIME_ASSET_ROOT))
         }
+    } catch (_: FileNotFoundException) {
+        null
+    } catch (error: IOException) {
+        throw OliphauntException("failed to read Oliphaunt package size report: ${error.message}")
+    }
 
     private fun matchingClusterSeed(
         runtime: OliphauntAndroidAssetPackage?,
@@ -369,10 +368,12 @@ internal object OliphauntAndroidRuntimeAssets {
         staging: File,
         destination: File,
         didPublishDestination: () -> Unit = {},
+        syncPublicationTree: (File) -> Unit = ::syncAndroidPublicationTree,
+        syncParentDirectory: (File) -> Unit = ::syncAndroidDirectory,
     ): AndroidPgdataPublication {
         validateCompleteAndroidPgdata(staging)
         if (isCompleteAndroidPgdata(destination)) return AndroidPgdataPublication.Existing
-        syncAndroidPublicationTree(staging)
+        syncPublicationTree(staging)
 
         if (destination.exists()) {
             val entries = destination.list()
@@ -392,7 +393,7 @@ internal object OliphauntAndroidRuntimeAssets {
 
         if (staging.renameTo(destination)) {
             didPublishDestination()
-            syncAndroidDirectory(
+            syncParentDirectory(
                 destination.parentFile
                     ?: throw OliphauntException("PGDATA has no parent directory: ${destination.absolutePath}"),
             )
@@ -403,13 +404,12 @@ internal object OliphauntAndroidRuntimeAssets {
         throw OliphauntException("failed to publish cluster seed at ${destination.absolutePath}")
     }
 
-    private fun isCompleteAndroidPgdata(pgdata: File): Boolean =
-        try {
-            validateCompleteAndroidPgdata(pgdata)
-            true
-        } catch (_: Throwable) {
-            false
-        }
+    private fun isCompleteAndroidPgdata(pgdata: File): Boolean = try {
+        validateCompleteAndroidPgdata(pgdata)
+        true
+    } catch (_: Throwable) {
+        false
+    }
 
     internal fun syncAndroidPublicationTree(root: File) {
         syncAndroidPublicationEntry(root)
@@ -666,11 +666,15 @@ internal object OliphauntAndroidRuntimeAssets {
                 )
             }
         }
-        val mobileStaticRegistryState =
-            validateMobileStaticRegistryState(
-                properties.getProperty("mobileStaticRegistryState"),
-            )
+        val mobileStaticRegistryState: String?
+        val mobileStaticRegistryPending: Set<String>
+        val mobileStaticRegistryRegistered: Set<String>
+        val nativeModuleStems: Set<String>
         if (isRuntime) {
+            mobileStaticRegistryState =
+                validateMobileStaticRegistryState(
+                    properties.getProperty("mobileStaticRegistryState"),
+                )
             val expectedRegistrySource =
                 if (mobileStaticRegistryState == "complete") {
                     "static-registry/oliphaunt_static_registry.c"
@@ -683,34 +687,39 @@ internal object OliphauntAndroidRuntimeAssets {
                         "mobileStaticRegistryState",
                 )
             }
+            mobileStaticRegistryPending =
+                validatePortableIds(
+                    properties.getProperty("mobileStaticRegistryPending").orEmpty().split(','),
+                    label = "mobile static registry extension",
+                )
+            mobileStaticRegistryRegistered =
+                validatePortableIds(
+                    properties.getProperty("mobileStaticRegistryRegistered").orEmpty().split(','),
+                    label = "mobile static registry extension",
+                )
+            nativeModuleStems =
+                validatePortableIds(
+                    properties.getProperty("nativeModuleStems").orEmpty().split(','),
+                    label = "native module stem",
+                )
+            validateMobileStaticRegistryManifest(
+                state = mobileStaticRegistryState,
+                registered = mobileStaticRegistryRegistered,
+                pending = mobileStaticRegistryPending,
+                nativeModuleStems = nativeModuleStems,
+                selectedExtensions = selectedExtensions,
+            )
+        } else {
+            mobileStaticRegistryState = null
+            mobileStaticRegistryPending = emptySet()
+            mobileStaticRegistryRegistered = emptySet()
+            nativeModuleStems = emptySet()
         }
-        val mobileStaticRegistryPending =
-            validatePortableIds(
-                properties.getProperty("mobileStaticRegistryPending").orEmpty().split(','),
-                label = "mobile static registry extension",
-            )
-        val mobileStaticRegistryRegistered =
-            validatePortableIds(
-                properties.getProperty("mobileStaticRegistryRegistered").orEmpty().split(','),
-                label = "mobile static registry extension",
-            )
-        val nativeModuleStems =
-            validatePortableIds(
-                properties.getProperty("nativeModuleStems").orEmpty().split(','),
-                label = "native module stem",
-            )
         val sharedPreloadLibraries =
             validatePortableIds(
                 properties.getProperty("sharedPreloadLibraries").orEmpty().split(','),
                 label = "shared preload library",
             )
-        validateMobileStaticRegistryManifest(
-            state = mobileStaticRegistryState,
-            registered = mobileStaticRegistryRegistered,
-            pending = mobileStaticRegistryPending,
-            nativeModuleStems = nativeModuleStems,
-            selectedExtensions = selectedExtensions,
-        )
         return OliphauntAndroidAssetPackage(
             assetRoot = assetRoot,
             cacheKey = cacheKey,
@@ -742,20 +751,19 @@ internal object OliphauntAndroidRuntimeAssets {
         return parseManifestProperties(assetRoot, properties, resourceRoot = resourceRoot)
     }
 
-    private fun OliphauntPackageSizeReport.withRuntimeManifest(runtime: OliphauntAndroidAssetPackage?): OliphauntPackageSizeReport =
-        if (runtime ==
-            null
-        ) {
-            this
-        } else {
-            copy(
-                mobileStaticRegistryState = runtime.mobileStaticRegistryState,
-                mobileStaticRegistryRegistered = runtime.mobileStaticRegistryRegistered.sorted(),
-                mobileStaticRegistryPending = runtime.mobileStaticRegistryPending.sorted(),
-                nativeModuleStems = runtime.nativeModuleStems.sorted(),
-                runtimeFeatures = runtime.runtimeFeatures.sorted(),
-            )
-        }
+    private fun OliphauntPackageSizeReport.withRuntimeManifest(runtime: OliphauntAndroidAssetPackage?): OliphauntPackageSizeReport = if (runtime ==
+        null
+    ) {
+        this
+    } else {
+        copy(
+            mobileStaticRegistryState = runtime.mobileStaticRegistryState,
+            mobileStaticRegistryRegistered = runtime.mobileStaticRegistryRegistered.sorted(),
+            mobileStaticRegistryPending = runtime.mobileStaticRegistryPending.sorted(),
+            nativeModuleStems = runtime.nativeModuleStems.sorted(),
+            runtimeFeatures = runtime.runtimeFeatures.sorted(),
+        )
+    }
 
     internal fun parsePackageSizeReport(
         text: String,
@@ -892,22 +900,22 @@ internal object OliphauntAndroidRuntimeAssets {
             packageBytes = requireSizeReportValue(packageBytes, "package/total", source),
             runtimeBytes = requireSizeReportValue(runtimeBytes, "package/runtime", source),
             clusterSeedBytes =
-                Math.addExact(
-                    requireSizeReportValue(clusterSeedBytes, "package/cluster-seed", source),
-                    requireSizeReportValue(icuClusterSeedBytes, "package/cluster-seed-icu", source),
-                ),
+            Math.addExact(
+                requireSizeReportValue(clusterSeedBytes, "package/cluster-seed", source),
+                requireSizeReportValue(icuClusterSeedBytes, "package/cluster-seed-icu", source),
+            ),
             staticRegistryBytes =
-                requireSizeReportValue(
-                    staticRegistryBytes,
-                    "package/static-registry",
-                    source,
-                ),
+            requireSizeReportValue(
+                staticRegistryBytes,
+                "package/static-registry",
+                source,
+            ),
             selectedExtensionBytes =
-                requireSizeReportValue(
-                    selectedExtensionBytes,
-                    "extensions/selected",
-                    source,
-                ),
+            requireSizeReportValue(
+                selectedExtensionBytes,
+                "extensions/selected",
+                source,
+            ),
             extensions = extensionReports.sortedBy(OliphauntExtensionSizeReport::name),
         )
     }
@@ -979,36 +987,32 @@ internal object OliphauntAndroidRuntimeAssets {
         source: String,
         line: Int,
         field: String,
-    ): Long =
-        value.toLongOrNull()?.takeIf { it >= 0 }
-            ?: throw OliphauntException(
-                "Oliphaunt package size report $source line $line has invalid $field value '$value'",
-            )
+    ): Long = value.toLongOrNull()?.takeIf { it >= 0 }
+        ?: throw OliphauntException(
+            "Oliphaunt package size report $source line $line has invalid $field value '$value'",
+        )
 
     private fun parseSizeReportInt(
         value: String,
         source: String,
         line: Int,
         field: String,
-    ): Int =
-        value.toIntOrNull()?.takeIf { it >= 0 }
-            ?: throw OliphauntException(
-                "Oliphaunt package size report $source line $line has invalid $field value '$value'",
-            )
+    ): Int = value.toIntOrNull()?.takeIf { it >= 0 }
+        ?: throw OliphauntException(
+            "Oliphaunt package size report $source line $line has invalid $field value '$value'",
+        )
 
-    private fun expectedLayout(assetRoot: String): String =
-        when (assetRoot) {
-            RUNTIME_ASSET_ROOT -> RUNTIME_PACKAGE_LAYOUT
-            STANDARD_CLUSTER_SEED_ASSET_ROOT, ICU_CLUSTER_SEED_ASSET_ROOT -> CLUSTER_SEED_PACKAGE_LAYOUT
-            else -> throw OliphauntException("unsupported Oliphaunt asset root '$assetRoot'")
-        }
+    private fun expectedLayout(assetRoot: String): String = when (assetRoot) {
+        RUNTIME_ASSET_ROOT -> RUNTIME_PACKAGE_LAYOUT
+        STANDARD_CLUSTER_SEED_ASSET_ROOT, ICU_CLUSTER_SEED_ASSET_ROOT -> CLUSTER_SEED_PACKAGE_LAYOUT
+        else -> throw OliphauntException("unsupported Oliphaunt asset root '$assetRoot'")
+    }
 
-    private fun profileForClusterSeedAssetRoot(assetRoot: String): String =
-        when (assetRoot) {
-            STANDARD_CLUSTER_SEED_ASSET_ROOT -> "standard"
-            ICU_CLUSTER_SEED_ASSET_ROOT -> "icu"
-            else -> throw OliphauntException("unsupported Oliphaunt cluster-seed root '$assetRoot'")
-        }
+    private fun profileForClusterSeedAssetRoot(assetRoot: String): String = when (assetRoot) {
+        STANDARD_CLUSTER_SEED_ASSET_ROOT -> "standard"
+        ICU_CLUSTER_SEED_ASSET_ROOT -> "icu"
+        else -> throw OliphauntException("unsupported Oliphaunt cluster-seed root '$assetRoot'")
+    }
 
     private fun requirePackagedExtensions(
         runtimePackage: OliphauntAndroidAssetPackage,
@@ -1135,8 +1139,7 @@ internal object OliphauntAndroidRuntimeAssets {
         return filePackageManifestOrNull(resourceRoot, RUNTIME_ASSET_ROOT)
     }
 
-    private fun validateExtensionIds(values: Collection<String>): Set<String> =
-        validateGeneratedExtensionIds(values, label = "liboliphaunt extension id").toSortedSet()
+    private fun validateExtensionIds(values: Collection<String>): Set<String> = validateGeneratedExtensionIds(values, label = "liboliphaunt extension id").toSortedSet()
 
     private fun validateRuntimeFeatures(values: Collection<String>): Set<String> {
         val features = validatePortableIds(values, label = "runtime feature")
@@ -1152,19 +1155,18 @@ internal object OliphauntAndroidRuntimeAssets {
     private fun validatePortableIds(
         values: Collection<String>,
         label: String,
-    ): Set<String> =
-        values
-            .map(String::trim)
-            .filter(String::isNotEmpty)
-            .also { ids ->
-                ids.forEach { value ->
-                    if (!portableId.matches(value)) {
-                        throw OliphauntException(
-                            "liboliphaunt $label '$value' must contain only ASCII letters, digits, '.', '_' or '-'",
-                        )
-                    }
+    ): Set<String> = values
+        .map(String::trim)
+        .filter(String::isNotEmpty)
+        .also { ids ->
+            ids.forEach { value ->
+                if (!portableId.matches(value)) {
+                    throw OliphauntException(
+                        "liboliphaunt $label '$value' must contain only ASCII letters, digits, '.', '_' or '-'",
+                    )
                 }
-            }.toSortedSet()
+            }
+        }.toSortedSet()
 
     private fun validateMobileStaticRegistryState(state: String?): String? {
         if (state.isNullOrEmpty()) {
@@ -1275,12 +1277,13 @@ internal object OliphauntAndroidRuntimeAssets {
         target: File,
         stamp: File,
         cacheKey: String,
+        isSymbolicLink: (File) -> Boolean = ::isAndroidSymbolicLink,
     ): Boolean {
-        val isSymbolicLink = isAndroidSymbolicLink(target)
-        if (target.isDirectory && !isSymbolicLink && stamp.readTextOrNull() == cacheKey) {
+        val targetIsSymbolicLink = isSymbolicLink(target)
+        if (target.isDirectory && !targetIsSymbolicLink && stamp.readTextOrNull() == cacheKey) {
             return true
         }
-        if (target.exists() || isSymbolicLink) {
+        if (target.exists() || targetIsSymbolicLink) {
             throw OliphauntException(
                 "immutable Android Oliphaunt runtime cache has an invalid identity at ${target.absolutePath}",
             )
@@ -1365,17 +1368,15 @@ internal object OliphauntAndroidRuntimeAssets {
         }
     }
 
-    private fun File.readTextOrNull(): String? =
-        try {
-            if (isFile) readText() else null
-        } catch (_: IOException) {
-            null
-        }
+    private fun File.readTextOrNull(): String? = try {
+        if (isFile) readText() else null
+    } catch (_: IOException) {
+        null
+    }
 
-    private fun File.canonicalPathOrAbsolute(): String =
-        try {
-            canonicalPath
-        } catch (_: IOException) {
-            absolutePath
-        }
+    private fun File.canonicalPathOrAbsolute(): String = try {
+        canonicalPath
+    } catch (_: IOException) {
+        absolutePath
+    }
 }

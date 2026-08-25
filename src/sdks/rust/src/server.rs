@@ -23,6 +23,7 @@ use crate::pgwire::{PostgresCancelToken, PostgresEndpoint, PostgresWireClient};
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
 
 const SERVER_HOST: &str = "127.0.0.1";
+#[cfg(unix)]
 const ENV_SERVER_SDK_TRANSPORT: &str = "OLIPHAUNT_SERVER_SDK_TRANSPORT";
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);

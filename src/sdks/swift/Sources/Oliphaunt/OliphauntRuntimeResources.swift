@@ -699,10 +699,14 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
                 )
             }
         }
-        let mobileStaticRegistryState = try Self.validateMobileStaticRegistryState(
-            manifest["mobileStaticRegistryState"]
-        )
+        let mobileStaticRegistryState: String?
+        let mobileStaticRegistryPending: Set<String>
+        let mobileStaticRegistryRegistered: Set<String>
+        let nativeModuleStems: Set<String>
         if isRuntime {
+            mobileStaticRegistryState = try Self.validateMobileStaticRegistryState(
+                manifest["mobileStaticRegistryState"]
+            )
             let registrySource = manifest["mobileStaticRegistrySource"] ?? ""
             let sourceIsValid = mobileStaticRegistryState == "complete"
                 ? [
@@ -715,29 +719,34 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
                     "liboliphaunt runtime manifest has mobileStaticRegistrySource inconsistent with mobileStaticRegistryState"
                 )
             }
+            mobileStaticRegistryPending = try Self.validatePortableIds(
+                manifest["mobileStaticRegistryPending"]?.split(separator: ",").map(String.init) ?? [],
+                label: "mobile static registry extension"
+            )
+            mobileStaticRegistryRegistered = try Self.validatePortableIds(
+                manifest["mobileStaticRegistryRegistered"]?.split(separator: ",").map(String.init) ?? [],
+                label: "mobile static registry extension"
+            )
+            nativeModuleStems = try Self.validatePortableIds(
+                manifest["nativeModuleStems"]?.split(separator: ",").map(String.init) ?? [],
+                label: "native module stem"
+            )
+            try Self.validateMobileStaticRegistryManifest(
+                state: mobileStaticRegistryState,
+                registered: mobileStaticRegistryRegistered,
+                pending: mobileStaticRegistryPending,
+                nativeModuleStems: nativeModuleStems,
+                selectedExtensions: selectedExtensions
+            )
+        } else {
+            mobileStaticRegistryState = nil
+            mobileStaticRegistryPending = []
+            mobileStaticRegistryRegistered = []
+            nativeModuleStems = []
         }
-        let mobileStaticRegistryPending = try Self.validatePortableIds(
-            manifest["mobileStaticRegistryPending"]?.split(separator: ",").map(String.init) ?? [],
-            label: "mobile static registry extension"
-        )
-        let mobileStaticRegistryRegistered = try Self.validatePortableIds(
-            manifest["mobileStaticRegistryRegistered"]?.split(separator: ",").map(String.init) ?? [],
-            label: "mobile static registry extension"
-        )
-        let nativeModuleStems = try Self.validatePortableIds(
-            manifest["nativeModuleStems"]?.split(separator: ",").map(String.init) ?? [],
-            label: "native module stem"
-        )
         let sharedPreloadLibraries = try Self.validatePortableIds(
             manifest["sharedPreloadLibraries"]?.split(separator: ",").map(String.init) ?? [],
             label: "shared preload library"
-        )
-        try Self.validateMobileStaticRegistryManifest(
-            state: mobileStaticRegistryState,
-            registered: mobileStaticRegistryRegistered,
-            pending: mobileStaticRegistryPending,
-            nativeModuleStems: nativeModuleStems,
-            selectedExtensions: selectedExtensions
         )
         let filesURL = rootURL.appendingPathComponent("files", isDirectory: true)
         guard FileManager.default.fileExists(atPath: filesURL.path) else {

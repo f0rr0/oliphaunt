@@ -1791,8 +1791,8 @@ public final class OliphauntExtensionCatalogContractTest {
 
     Path runtimeFiles = resourceRoot.resolve("runtime/files");
     long runtimeBytes = fixtureTreeBytes(runtimeFiles);
-    long standardClusterSeedBytes = fixtureTreeBytes(resourceRoot.resolve("cluster-seed"));
-    long icuClusterSeedBytes = fixtureTreeBytes(resourceRoot.resolve("cluster-seed-icu"));
+    long standardClusterSeedBytes = fixtureTreeBytes(resourceRoot.resolve("cluster-seed/files"));
+    long icuClusterSeedBytes = fixtureTreeBytes(resourceRoot.resolve("cluster-seed-icu/files"));
     long registryBytes = fixtureTreeBytes(resourceRoot.resolve("static-registry"));
     TreeSet<Path> selectedFiles = new TreeSet<>();
     List<String> rows = new ArrayList<>();

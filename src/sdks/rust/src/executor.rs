@@ -9,6 +9,8 @@ use crate::error::{Error, Result};
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
 use crate::reply;
 
+type ProtocolChunkCallback = Box<dyn FnMut(&[u8]) -> Result<()> + Send>;
+
 pub(crate) struct EngineExecutor {
     sender: Sender<Command>,
     admission: Mutex<()>,
@@ -402,13 +404,13 @@ enum Command {
     },
     Stream {
         request: ProtocolRequest,
-        on_chunk: Box<dyn FnMut(&[u8]) -> Result<()> + Send>,
+        on_chunk: ProtocolChunkCallback,
         reply: reply::Sender<Result<()>>,
     },
     PinnedStream {
         token: u64,
         request: ProtocolRequest,
-        on_chunk: Box<dyn FnMut(&[u8]) -> Result<()> + Send>,
+        on_chunk: ProtocolChunkCallback,
         reply: reply::Sender<Result<()>>,
     },
     Pin {

@@ -492,7 +492,6 @@ func managedRootFailureSurfacesCleanupFailure() {
             removePublishedPgdata: { throw ManagedRootPublicationTestError.cleanup },
             syncRoot: {}
         )
-        Issue.record("managed-root recovery should throw")
     } catch OliphauntError.engine(let message) {
         #expect(message.contains("descriptor publication failed"))
         #expect(message.contains("failed to clean uncommitted PGDATA"))

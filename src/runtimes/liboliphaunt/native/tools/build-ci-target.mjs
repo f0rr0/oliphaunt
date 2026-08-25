@@ -49,6 +49,10 @@ function buildLinuxRuntimeAssets() {
   run("src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh", ["--runtime-only"]);
 }
 
+function buildLinuxDirectRuntimeAssets() {
+  run("src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh");
+}
+
 function buildMacosRuntimeAssets() {
   run("src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh", ["--runtime-only"], {
     env: { OLIPHAUNT_BUILD_EXTENSIONS: process.env.OLIPHAUNT_BUILD_EXTENSIONS ?? "0" },
@@ -119,7 +123,7 @@ if (target === "android-arm64-v8a") {
       OLIPHAUNT_ANDROID_X86_64_ROOT: path.join(root, "target/liboliphaunt-pg18-android-x86_64"),
     },
   });
-  buildLinuxRuntimeAssets();
+  buildLinuxDirectRuntimeAssets();
   writeMobileAbiReceipt(
     path.join(root, "target/liboliphaunt-pg18-linux-x64-gnu/postgresql-18.4"),
     "linux-x64-gnu",

@@ -63,6 +63,30 @@ class OliphauntAndroidRuntimeAssetsTest {
     }
 
     @Test
+    fun parsesCanonicalClusterSeedsWithoutRuntimeOnlyRegistryMetadata() {
+        for ((profile, assetRoot) in listOf(
+            "standard" to "oliphaunt/cluster-seed",
+            "icu" to "oliphaunt/cluster-seed-icu",
+        )) {
+            val properties =
+                OliphauntAndroidRuntimeAssets.parseManifestText(
+                    nativeClusterSeedFixture(profile, "android-datum64", "a".repeat(64)),
+                    "native-$profile.valid.properties",
+                )
+            val parsed =
+                OliphauntAndroidRuntimeAssets.parseManifestProperties(
+                    assetRoot,
+                    properties,
+                )
+            assertEquals(if (profile == "icu") setOf("icu") else emptySet(), parsed.runtimeFeatures)
+            assertEquals(null, parsed.mobileStaticRegistryState)
+            assertTrue(parsed.mobileStaticRegistryRegistered.isEmpty())
+            assertTrue(parsed.mobileStaticRegistryPending.isEmpty())
+            assertTrue(parsed.nativeModuleStems.isEmpty())
+        }
+    }
+
+    @Test
     fun freshRootAcceptsOnlyFixedBootstrapRole() {
         requireAndroidFreshRootRole("postgres")
         assertFailsWith<OliphauntException> {
@@ -248,6 +272,7 @@ class OliphauntAndroidRuntimeAssetsTest {
                     target,
                     stamp,
                     "runtime-smoke",
+                    isSymbolicLink = { Files.isSymbolicLink(it.toPath()) },
                 ),
             )
             val sentinel = target.resolve("sentinel").apply { writeText("preserve") }
@@ -259,6 +284,7 @@ class OliphauntAndroidRuntimeAssetsTest {
                         target,
                         stamp,
                         "runtime-smoke",
+                        isSymbolicLink = { Files.isSymbolicLink(it.toPath()) },
                     )
                 }
             assertTrue(error.message.orEmpty().contains("immutable Android Oliphaunt runtime cache"))
@@ -329,10 +355,14 @@ class OliphauntAndroidRuntimeAssetsTest {
             assertTrue(stemError.message.orEmpty().contains("do not list native module stem auto_explain"))
 
             manifest.writeText(
-                completeManifest.replace(
-                    "mobileStaticRegistryRegistered=auto_explain",
-                    "mobileStaticRegistryRegistered=wrong_extension",
-                ),
+                completeManifest
+                    .replace(
+                        "selectedExtensions=auto_explain",
+                        "selectedExtensions=auto_explain,vector",
+                    ).replace(
+                        "mobileStaticRegistryRegistered=auto_explain",
+                        "mobileStaticRegistryRegistered=vector",
+                    ),
             )
             val error =
                 assertFailsWith<OliphauntException> {
@@ -473,6 +503,8 @@ class OliphauntAndroidRuntimeAssetsTest {
                     staging,
                     destination,
                     didPublishDestination = { didPublish = true },
+                    syncPublicationTree = {},
+                    syncParentDirectory = {},
                 )
 
             assertEquals(AndroidPgdataPublication.Published, publication)
@@ -1038,20 +1070,17 @@ class OliphauntAndroidRuntimeAssetsTest {
 
     @Test
     fun rejectsManifestWithoutMobileStaticRegistryState() {
+        val manifest = manifestProperties()
+        manifest.remove("mobileStaticRegistryState")
         val error =
             assertFailsWith<OliphauntException> {
                 OliphauntAndroidRuntimeAssets.parseManifestProperties(
                     "oliphaunt/runtime",
-                    manifestProperties(
-                        "schema" to "oliphaunt-runtime-resources-v1",
-                        "layout" to "postgres-runtime-files-v1",
-                        "cacheKey" to "runtime-smoke",
-                        "selectedExtensions" to "",
-                    ),
+                    manifest,
                 )
             }
 
-        assertTrue(error.message.orEmpty().contains("omits mobileStaticRegistryState"))
+        assertTrue(error.message.orEmpty().contains("missing=mobileStaticRegistryState"))
     }
 
     @Test
@@ -1154,51 +1183,51 @@ private fun databaseRootFixture(): JSONObject {
     return JSONObject(fixture.toFile().readText())
 }
 
-private fun manifestProperties(vararg entries: Pair<String, String>): Properties =
-    Properties().apply {
-        mapOf(
-            "schema" to "oliphaunt-runtime-resources-v1",
-            "layout" to "postgres-runtime-files-v1",
-            "artifactRole" to "runtime",
-            "catalogProfile" to "",
-            "clusterSeedTarget" to "android-datum64",
-            "icuDataTreeSha256" to "",
-            "mode" to "native-direct",
-            "cacheKey" to "runtime-smoke",
-            "selectedExtensions" to "",
-            "extensions" to "",
-            "runtimeFeatures" to "",
-            "sharedPreloadLibraries" to "",
-            "mobileStaticRegistryState" to "not-required",
-            "mobileStaticRegistryRegistered" to "",
-            "mobileStaticRegistryPending" to "",
-            "nativeModuleStems" to "",
-        ).forEach { (key, value) -> setProperty(key, value) }
-        for ((key, value) in entries) {
-            setProperty(key, value)
-        }
-        if (getProperty("artifactRole") == "runtime") {
-            putIfAbsent("clusterSeedTarget", "android-datum64")
-            putIfAbsent(
-                "mobileStaticRegistrySource",
-                if (getProperty("mobileStaticRegistryState") == "complete") {
-                    "static-registry/oliphaunt_static_registry.c"
-                } else {
-                    ""
-                },
-            )
-            putIfAbsent(
-                "icuDataTreeSha256",
-                if (getProperty("runtimeFeatures").orEmpty().split(',').contains("icu")) "a".repeat(64) else "",
-            )
+private fun manifestProperties(vararg entries: Pair<String, String>): Properties = Properties().apply {
+    mapOf(
+        "schema" to "oliphaunt-runtime-resources-v1",
+        "layout" to "postgres-runtime-files-v1",
+        "artifactRole" to "runtime",
+        "catalogProfile" to "",
+        "clusterSeedTarget" to "android-datum64",
+        "icuDataTreeSha256" to "",
+        "mode" to "native-direct",
+        "cacheKey" to "runtime-smoke",
+        "selectedExtensions" to "",
+        "extensions" to "",
+        "runtimeFeatures" to "",
+        "sharedPreloadLibraries" to "",
+        "mobileStaticRegistryState" to "not-required",
+        "mobileStaticRegistryRegistered" to "",
+        "mobileStaticRegistryPending" to "",
+        "nativeModuleStems" to "",
+    ).forEach { (key, value) -> setProperty(key, value) }
+    for ((key, value) in entries) {
+        setProperty(key, value)
+    }
+    if (getProperty("artifactRole") == "runtime") {
+        putIfAbsent("clusterSeedTarget", "android-datum64")
+        putIfAbsent(
+            "mobileStaticRegistrySource",
+            if (getProperty("mobileStaticRegistryState") == "complete") {
+                "static-registry/oliphaunt_static_registry.c"
+            } else {
+                ""
+            },
+        )
+        if (
+            getProperty("runtimeFeatures").orEmpty().split(',').contains("icu") &&
+            getProperty("icuDataTreeSha256").isNullOrEmpty()
+        ) {
+            setProperty("icuDataTreeSha256", "a".repeat(64))
         }
     }
+}
 
-private fun standardClusterSeedManifestProperties(vararg entries: Pair<String, String>): Properties =
-    Properties().apply {
-        load(java.io.StringReader(nativeClusterSeedFixture("standard", "android-datum64")))
-        entries.forEach { (key, value) -> setProperty(key, value) }
-    }
+private fun standardClusterSeedManifestProperties(vararg entries: Pair<String, String>): Properties = Properties().apply {
+    load(java.io.StringReader(nativeClusterSeedFixture("standard", "android-datum64")))
+    entries.forEach { (key, value) -> setProperty(key, value) }
+}
 
 private fun validPackageSizeReport(vararg extensionRows: String): String {
     val rows =
@@ -1298,12 +1327,11 @@ private fun nativeClusterSeedFixture(
     profile: String,
     target: String,
     icuDataTreeSha256: String = "",
-): String =
-    retargetNativeClusterSeedFixture(
-        "native-$profile.valid.properties",
-        target,
-        if (profile == "icu") icuDataTreeSha256 else null,
-    )
+): String = retargetNativeClusterSeedFixture(
+    "native-$profile.valid.properties",
+    target,
+    if (profile == "icu") icuDataTreeSha256 else null,
+)
 
 private fun retargetNativeClusterSeedFixture(
     name: String,

@@ -20,7 +20,7 @@ use locate::{
     package_resources_root_for_install,
 };
 
-use super::files::{sorted_read_dir, sync_directory};
+use super::files::{sorted_read_dir, sync_directory, sync_file};
 use super::{NativeCatalogProfile, NativeRuntimeProfile};
 use crate::error::{Error, Result};
 use crate::extension::Extension;
@@ -283,14 +283,7 @@ fn sync_runtime_cache_tree(path: &Path) -> Result<()> {
         if file_type.is_dir() {
             sync_runtime_cache_tree(&entry_path)?;
         } else if file_type.is_file() {
-            fs::File::open(&entry_path)
-                .and_then(|file| file.sync_all())
-                .map_err(|err| {
-                    Error::Engine(format!(
-                        "sync native runtime cache file {}: {err}",
-                        entry_path.display()
-                    ))
-                })?;
+            sync_file(&entry_path)?;
         } else if file_type.is_symlink() {
             fs::read_link(&entry_path).map_err(|err| {
                 Error::Engine(format!(
@@ -420,6 +413,15 @@ mod tests {
         symlink("libicu.so.1", lib.join("libicu.so")).expect("create packaged symlink");
 
         sync_runtime_cache_tree(temp.path()).expect("sync runtime cache with symlink");
+    }
+
+    #[test]
+    fn runtime_cache_sync_flushes_regular_files() {
+        let temp = TempTree::new("runtime-cache-regular-file");
+        fs::write(temp.path().join(".complete"), b"ok\n")
+            .expect("write runtime cache completion marker");
+
+        sync_runtime_cache_tree(temp.path()).expect("sync runtime cache regular file");
     }
 
     fn write_artifact_file(root: &Path, relative: &str) {

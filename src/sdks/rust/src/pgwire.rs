@@ -2,6 +2,7 @@ use std::io::{self, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
+#[cfg(unix)]
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;

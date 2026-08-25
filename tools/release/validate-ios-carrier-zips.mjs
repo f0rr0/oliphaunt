@@ -4,7 +4,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import {
+  DEFAULT_PORTABLE_ARCHIVE_LIMITS,
+  readPortableArchiveEntries,
+} from "./portable-archive.mjs";
 
 const PREFIX = "validate-ios-carrier-zips.mjs";
 const XCFRAMEWORK_ROOT = /^[A-Za-z0-9][A-Za-z0-9._-]*[.]xcframework$/u;
@@ -14,7 +17,7 @@ const XCFRAMEWORK_ROOT = /^[A-Za-z0-9][A-Za-z0-9._-]*[.]xcframework$/u;
 const IOS_ZIP_LIMITS = Object.freeze({
   format: "zip",
   maxArchiveBytes: 512 * 1024 * 1024,
-  maxEntries: 8192,
+  maxEntries: DEFAULT_PORTABLE_ARCHIVE_LIMITS.maxEntries,
   maxEntryBytes: 1024 * 1024 * 1024,
   maxExpandedBytes: 4 * 1024 * 1024 * 1024,
 });

@@ -22,24 +22,32 @@ pub(super) fn check_sources_manifest(strict_local: bool) -> Result<SourcesManife
     Ok(manifest)
 }
 
-pub(super) fn check_sources_manifest_for_asset_build(args: &[String]) -> Result<SourcesManifest> {
+pub(super) fn check_sources_manifest_for_wasix_asset_build(
+    args: &[String],
+) -> Result<SourcesManifest> {
     let manifest = load_sources_manifest()?;
     validate_sources_manifest(&manifest)?;
     let source_lane =
         canonical_source_lane(value_after(args, "--source-lane").unwrap_or(DEFAULT_SOURCE_LANE))?;
+    let source_scope = SourceFetchScope::WasixRuntime;
     if args.iter().any(|arg| arg == "--fetch") {
-        fetch_pinned_sources_for_source_lane(
+        fetch_pinned_sources_for_source_lane(&manifest, source_lane, true, source_scope)?;
+    } else {
+        check_source_spine_for_source_lane_filtered(
             &manifest,
             source_lane,
             true,
-            SourceFetchScope::ProductionAll,
+            false,
+            |source| source_scope.includes(source.origin),
         )?;
-    } else {
-        check_source_spine_for_source_lane(&manifest, source_lane, true, false)?;
     }
     println!(
         "validated {} pinned asset sources for {source_lane}",
-        manifest.sources.len()
+        manifest
+            .sources
+            .iter()
+            .filter(|source| source_scope.includes(source.origin))
+            .count()
     );
     Ok(manifest)
 }
@@ -850,6 +858,20 @@ mod tests {
             SourceFetchScope::parse("all").unwrap(),
             SourceFetchScope::All
         );
+    }
+
+    #[test]
+    fn runtime_fetch_scopes_include_only_their_platform_sources() {
+        for origin in [SourceOrigin::SharedThirdParty, SourceOrigin::Extension] {
+            assert!(SourceFetchScope::NativeRuntime.includes(origin));
+            assert!(SourceFetchScope::WasixRuntime.includes(origin));
+        }
+        assert!(SourceFetchScope::NativeRuntime.includes(SourceOrigin::NativeThirdParty));
+        assert!(!SourceFetchScope::NativeRuntime.includes(SourceOrigin::WasixThirdParty));
+        assert!(SourceFetchScope::WasixRuntime.includes(SourceOrigin::WasixThirdParty));
+        assert!(!SourceFetchScope::WasixRuntime.includes(SourceOrigin::NativeThirdParty));
+        assert!(!SourceFetchScope::NativeRuntime.includes(SourceOrigin::Generated));
+        assert!(!SourceFetchScope::WasixRuntime.includes(SourceOrigin::Generated));
     }
 
     #[test]
