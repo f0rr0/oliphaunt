@@ -21,6 +21,13 @@ function fixture(name) {
   return readFileSync(new URL(`../../src/shared/cluster-seed-contract/fixtures/${name}`, import.meta.url));
 }
 
+test("keeps process-argument profile probes independent of the host code page", () => {
+  const probe = readFileSync(
+    new URL("../../src/shared/cluster-seed-contract/profile-probe.json", import.meta.url),
+  );
+  expect(probe.every((byte) => byte <= 0x7f)).toBe(true);
+});
+
 test("validates independent standard and ICU native cluster seed roles", () => {
   const target = "linux-x64-gnu";
   const digest = logicalTreeSha256([
