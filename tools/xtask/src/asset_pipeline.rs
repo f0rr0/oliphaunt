@@ -3926,14 +3926,14 @@ fn update_root_asset_metadata_in(
     text = replace_metadata_value(text, "runtime-archive-sha256", &manifest.runtime.sha256);
     text = replace_metadata_value(text, "oliphaunt-wasix-sha256", runtime_module_sha256);
     for profile in ["standard", "icu"] {
-        let seed = asset_dir.join(format!("cluster-seeds/{profile}.tar.zst"));
-        if seed.exists() {
-            text = replace_metadata_value(
-                text,
-                &format!("cluster-seed-{profile}-archive-sha256"),
-                &sha256_file(&seed)?,
-            );
-        }
+        let seed = manifest.cluster_seeds.get(profile).with_context(|| {
+            format!("generated asset manifest is missing {profile} cluster seed")
+        })?;
+        text = replace_metadata_value(
+            text,
+            &format!("cluster-seed-{profile}-archive-sha256"),
+            &seed.sha256,
+        );
     }
     let (pg_dump, psql) = required_wasix_tool_assets(manifest)?;
     let tools_npm_text = update_wasix_tools_npm_descriptor_rows(&tools_npm_text, pg_dump, psql)?;

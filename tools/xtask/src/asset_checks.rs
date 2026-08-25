@@ -374,19 +374,6 @@ pub(crate) fn verify_asset_manifest_hashes() -> Result<()> {
 
     if is_release_staged_workspace() {
         verify_root_asset_metadata(&manifest, &manifest.runtime.module_sha256)?;
-        for profile in ["standard", "icu"] {
-            let seed = manifest.cluster_seeds.get(profile).ok_or_else(|| {
-                anyhow!("generated asset manifest is missing {profile} cluster seed")
-            })?;
-            verify_file_sha256(
-                &base.join(&seed.archive),
-                &cargo_metadata_value(
-                    "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml",
-                    &format!("cluster-seed-{profile}-archive-sha256"),
-                )?,
-                &format!("{profile} cluster seed archive metadata"),
-            )?;
-        }
     }
 
     println!("generated asset hashes match manifests");
@@ -461,15 +448,16 @@ fn verify_root_asset_metadata(
         &pg18.patches.series.len().to_string(),
         "PostgreSQL patch count metadata",
     )?;
-    let pgdata_template = manifest
-        .pgdata_template
-        .as_ref()
-        .context("generated asset manifest is missing the PGDATA template")?;
-    verify_root_metadata_value(
-        "pgdata-template-archive-sha256",
-        &pgdata_template.sha256,
-        "PGDATA template archive metadata",
-    )?;
+    for profile in ["standard", "icu"] {
+        let seed = manifest.cluster_seeds.get(profile).with_context(|| {
+            format!("generated asset manifest is missing {profile} cluster seed")
+        })?;
+        verify_root_metadata_value(
+            &format!("cluster-seed-{profile}-archive-sha256"),
+            &seed.sha256,
+            &format!("{profile} cluster seed archive metadata"),
+        )?;
+    }
     if let Some(pg_dump) = &manifest.pg_dump {
         verify_tools_metadata_value("pg-dump-wasix-sha256", &pg_dump.sha256, "pg_dump metadata")?;
     }
