@@ -4,7 +4,7 @@ export const POSTGRES_MAJOR = 18 as const;
 export const PHYSICAL_FORMAT = 'wasix-pg18-v1' as const;
 
 const runtime: WasixRuntimeDescriptor = {
-  schema: 'oliphaunt-wasix-runtime-v1',
+  schema: 'oliphaunt-wasix-runtime-v2',
   runtime: 'wasix',
   product: 'liboliphaunt-wasix',
   version: '0.1.1',
@@ -14,11 +14,16 @@ const runtime: WasixRuntimeDescriptor = {
     size: 1,
     source: Uint8Array.of(1),
   },
-  pgdataArchive: {
-    archive: 'prepopulated/pgdata-template.tar.zst',
+  standardSeedArchive: {
+    archive: 'cluster-seeds/standard.tar.zst',
     sha256: '2'.repeat(64),
     size: 1,
     source: Uint8Array.of(2),
+  },
+  standardSeedManifest: {
+    sha256: '4'.repeat(64),
+    size: 1,
+    source: Uint8Array.of(4),
   },
   manifest: {
     sha256: '3'.repeat(64),

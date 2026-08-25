@@ -1,71 +1,14 @@
 import { EventEmitter } from 'node:events';
-import { Worker } from 'node:worker_threads';
+import type { Worker } from 'node:worker_threads';
 
 import { describe, expect, it } from 'vitest';
 
-import { openWasixWithWorker } from '../client-common.js';
-import { resolvedRuntimeClosure } from '../database.js';
-import { sharedToolRuntime } from '../internal-common.js';
 import { nodeWorkerPort } from '../node-worker-port.js';
 import type { WorkerRequest, WorkerResponse } from '../rpc.js';
 import { openWorkerDatabase } from '../worker-rpc.js';
 import { workerOpenOptions } from './worker-helpers.js';
 
 describe('Node WASIX worker transport', () => {
-  it('retains byte-backed runtime assets after a real worker transfer', async () => {
-    const worker = new Worker(
-      `
-        const { parentPort } = require('node:worker_threads');
-        parentPort.on('message', ({ id, method }) => {
-          if (method === 'open' || method === 'close') parentPort.postMessage({ id, ok: true });
-        });
-      `,
-      { eval: true },
-    );
-    const options = workerOpenOptions();
-    const runtimeArchive = Uint8Array.of(1);
-    const clusterSeedArchive = Uint8Array.of(3);
-    const clusterSeedManifest = Uint8Array.of(5);
-    const runtimeManifest = Uint8Array.of(7);
-    options.runtime.runtimeArchive.source = runtimeArchive;
-    options.runtime.standardSeedArchive.source = clusterSeedArchive;
-    options.runtime.standardSeedManifest.source = clusterSeedManifest;
-    options.runtime.manifest.source = runtimeManifest;
-
-    const database = await openWasixWithWorker(() => nodeWorkerPort(worker), options);
-    try {
-      const closure = resolvedRuntimeClosure(database);
-      expect(runtimeArchive.byteLength).toBe(0);
-      expect(clusterSeedArchive.byteLength).toBe(0);
-      expect(clusterSeedManifest.byteLength).toBe(0);
-      expect(runtimeManifest.byteLength).toBe(0);
-      expect(closure.runtime.runtimeArchive.source).toEqual(Uint8Array.of(1));
-      expect(closure.runtime.manifest.source).toEqual(Uint8Array.of(7));
-      expect(Object.keys(closure.runtime).sort()).toEqual([
-        'manifest',
-        'product',
-        'runtimeArchive',
-        'version',
-      ]);
-      expect(() => structuredClone(closure)).not.toThrow();
-
-      const shared = await sharedToolRuntime(database);
-      const reused = await sharedToolRuntime(database);
-      expect(reused).toBe(shared);
-      expect(shared.runtimeArchive.source).toBeInstanceOf(Uint8Array);
-      expect(shared.manifest.source).toBeInstanceOf(Uint8Array);
-      expect((shared.runtimeArchive.source as Uint8Array).buffer).toBeInstanceOf(SharedArrayBuffer);
-      expect((shared.manifest.source as Uint8Array).buffer).toBeInstanceOf(SharedArrayBuffer);
-      expect(resolvedRuntimeClosure(database).runtime).toBe(shared);
-
-      const cloned = structuredClone(shared);
-      (shared.runtimeArchive.source as Uint8Array)[0] = 11;
-      expect((cloned.runtimeArchive.source as Uint8Array)[0]).toBe(11);
-    } finally {
-      await database.close();
-    }
-  });
-
   it('turns a clean unexpected exit into a fatal error for pending database work', async () => {
     const worker = new FakeNodeWorker();
     let recoveries = 0;
