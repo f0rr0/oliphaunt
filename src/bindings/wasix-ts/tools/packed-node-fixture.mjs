@@ -9,8 +9,8 @@ import {
   renderWasixRuntimeDescriptorModule,
   renderWasixRuntimeDescriptorTypes,
 } from '../../../../tools/release/wasix-runtime-npm-descriptor.mjs';
-import { prepareWasixTypescriptPackage } from '../../../../tools/release/wasix-typescript-package.mjs';
 import { prepareWasixToolsTypescriptPackage } from '../../../../tools/release/wasix-tools-typescript-package.mjs';
+import { prepareWasixTypescriptPackage } from '../../../../tools/release/wasix-typescript-package.mjs';
 
 const execFileAsync = promisify(execFile);
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -205,12 +205,13 @@ async function packToolsCarrier({ scratch, tarballs, runtimeVersion }) {
 }
 
 async function packToolsFacade({ scratch, tarballs, bindingVersion }) {
-  const source = resolve(repositoryRoot, 'src/bindings/wasix-tools');
+  const source = resolve(packageRoot, 'tools-package');
   const staging = resolve(scratch, 'tools-facade');
   await mkdir(staging);
-  for (const name of ['package.json', 'README.md', 'CHANGELOG.md', 'lib']) {
+  for (const name of ['package.json', 'README.md', 'lib']) {
     await cp(resolve(source, name), resolve(staging, name), { recursive: true });
   }
+  await cp(resolve(packageRoot, 'CHANGELOG.md'), resolve(staging, 'CHANGELOG.md'));
   prepareWasixToolsTypescriptPackage(staging, bindingVersion);
   return pack(staging, tarballs);
 }
@@ -430,9 +431,15 @@ async function pack(directory, tarballs) {
     ['pack', '--pack-destination', tarballs, '--json'],
     directory,
   );
-  const result = JSON.parse(stdout);
-  const filename = Array.isArray(result) ? result[0]?.filename : result.filename;
-  if (typeof filename !== 'string') throw new Error(`pnpm pack returned ${stdout}`);
+  const result = stdout.trim() === '' ? undefined : JSON.parse(stdout);
+  const reportedFilename = Array.isArray(result) ? result[0]?.filename : result?.filename;
+  const filename =
+    typeof reportedFilename === 'string'
+      ? reportedFilename
+      : resolve(
+          tarballs,
+          `${manifest.name.replace(/^@/u, '').replaceAll('/', '-')}-${manifest.version}.tgz`,
+        );
   const file = resolve(directory, filename);
   const bytes = await readFile(file);
   return {

@@ -1,0 +1,33 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "native-tools-proof"
+language: "rust"
+layer: "tool"
+stack: "systems"
+tags: ["maintainer-tool", "native", "rust", "tools"]
+
+project:
+  title: "Native tools proof"
+  description: "Unpublished cross-product conformance for native SDK servers and PostgreSQL tool facades."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/sdk-rust"
+
+tasks:
+  check:
+    tags: ["quality", "unit", "ci-rust"]
+    command: "cargo test -p oliphaunt-native-tools-proof --locked"
+    env:
+      CARGO_TARGET_DIR: "target/moon/native-tools-proof/check"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/runtimes/liboliphaunt/native/crates/tools/**/*"
+      - "/src/sdks/rust/**/*"
+      - "/src/shared/fixtures/postgres/logical-tools*"
+      - "/tools/native-tools-proof/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

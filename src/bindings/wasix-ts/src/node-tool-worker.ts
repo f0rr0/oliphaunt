@@ -2,7 +2,7 @@ import { parentPort } from 'node:worker_threads';
 import * as host from './node-host.js';
 import { installNodeEnvironment } from './node-direct.js';
 import {
-  runWasixToolWorker,
+  createWasixToolWorkerDispatcher,
   toolWorkerResponseTransfers,
   type WasixToolWorkerRequest,
   type WasixToolWorkerResponse,
@@ -13,9 +13,10 @@ if (parentPort === null) {
 }
 
 const port = parentPort;
+installNodeEnvironment();
+const dispatch = createWasixToolWorkerDispatcher(host);
 port.on('message', (request: WasixToolWorkerRequest) => {
-  installNodeEnvironment();
-  void runWasixToolWorker(request, host).then((response) => {
+  void dispatch(request).then((response) => {
     port.postMessage(
       response satisfies WasixToolWorkerResponse,
       toolWorkerResponseTransfers(response),

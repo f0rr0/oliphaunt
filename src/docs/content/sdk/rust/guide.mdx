@@ -154,6 +154,24 @@ restore accepts a new or existing-empty destination. Server applications use
 normal PostgreSQL tooling.
 
 </Step>
+<Step>
+
+### Use logical tools
+
+Add the separate `oliphaunt-tools` crate when a server application needs plain
+`pg_dump` or non-interactive `psql`. Pass `server.connection_string()` to the
+tool; the core `oliphaunt` crate does not install or depend on client programs.
+
+```rust
+use oliphaunt_tools::{PgDumpOptions, pg_dump};
+
+let sql = pg_dump(
+    server.connection_string(),
+    PgDumpOptions::new().arg("--schema-only"),
+)?;
+```
+
+</Step>
 </Steps>
 
 <SdkGuideProof id="rust" />

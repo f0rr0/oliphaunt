@@ -1,6 +1,39 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 6803f8e..0708da4 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -18,6 +18,7 @@ mod run;
+ mod runtime;
+ mod streams;
+ mod tasks;
++mod tool_direct;
+ mod utils;
+ mod wasmer;
+ mod ws;
+@@ -33,6 +34,9 @@ pub use crate::{
+     postgres_direct::{instantiate_oliphaunt_direct, OliphauntDirectInstance},
+     registry::RegistryConfig,
+     run::run_wasix,
++    tool_direct::{
++        prepare_oliphaunt_tool, run_oliphaunt_tool_direct, OliphauntPreparedTool,
++    },
+     utils::StringOrBytes,
+     wasmer::Wasmer,
+ };
+diff --git a/src/options.rs b/src/options.rs
+index d2f8d00..8c0ff2f 100644
 --- a/src/options.rs
 +++ b/src/options.rs
-@@ -189,12 +189,14 @@
+@@ -12,6 +12,8 @@ use wasmer_wasix::WasiEnvBuilder;
+ 
+ use crate::{runtime::Runtime, utils::Error, Directory, DirectoryInit, JsRuntime, StringOrBytes};
+ 
++const OLIPHAUNT_PROTOCOL_DEVICE: &str = "/dev/oliphaunt-pgwire";
++
+ #[wasm_bindgen]
+ extern "C" {
+     /// A proxy for `Option<&Runtime>`.
+@@ -189,12 +191,14 @@ impl RunOptions {
      pub(crate) fn configure_direct_builder(
          &self,
          builder: &mut WasiEnvBuilder,
@@ -8,7 +41,8 @@
 +        stdout: Box<dyn virtual_fs::VirtualFile + Send + Sync + 'static>,
          stderr: Box<dyn virtual_fs::VirtualFile + Send + Sync + 'static>,
      ) -> Result<(), Error> {
-         self.configure_common_builder(builder)?;
+-        self.configure_common_builder(builder)?;
++        self.configure_common_builder(builder, None)?;
  
 -        builder.set_stdin(Box::<virtual_fs::null_file::NullFile>::default());
 -        builder.set_stdout(Box::<virtual_fs::null_file::NullFile>::default());
@@ -17,18 +51,91 @@
          builder.set_stderr(stderr);
  
          Ok(())
-@@ -237,10 +239,7 @@
-         Ok((stdin, stdout, stderr))
+@@ -213,33 +217,60 @@ impl RunOptions {
+         ),
+         Error,
+     > {
+-        self.configure_common_builder(builder)?;
++        self.configure_common_builder(builder, None)?;
++        Ok(self.configure_stdio(builder))
++    }
++
++    pub(crate) fn configure_tool_direct_builder(
++        &self,
++        builder: &mut WasiEnvBuilder,
++        protocol: Box<dyn virtual_fs::VirtualFile + Send + Sync + 'static>,
++        stdout: Box<dyn virtual_fs::VirtualFile + Send + Sync + 'static>,
++        stderr: Box<dyn virtual_fs::VirtualFile + Send + Sync + 'static>,
++    ) -> Result<(), Error> {
++        self.configure_common_builder(builder, Some(protocol))?;
++        builder.add_env("OLIPHAUNT_WASIX_SINGLE_BACKEND", "1");
++        builder.add_env("OLIPHAUNT_DIRECT_PGWIRE", OLIPHAUNT_PROTOCOL_DEVICE);
++        match self.read_stdin() {
++            Some(input) => builder.set_stdin(Box::new(virtual_fs::StaticFile::new(input))),
++            None => builder.set_stdin(Box::<virtual_fs::null_file::NullFile>::default()),
++        };
++        builder.set_stdout(stdout);
++        builder.set_stderr(stderr);
+ 
++        Ok(())
++    }
++
++    fn configure_stdio(
++        &self,
++        builder: &mut WasiEnvBuilder,
++    ) -> (
++        Option<web_sys::WritableStream>,
++        web_sys::ReadableStream,
++        web_sys::ReadableStream,
++    ) {
+         let stdin = match self.read_stdin() {
+             Some(stdin) => {
+-                let f = virtual_fs::StaticFile::new(stdin);
+-                builder.set_stdin(Box::new(f));
++                builder.set_stdin(Box::new(virtual_fs::StaticFile::new(stdin)));
+                 None
+             }
+             None => {
+-                let (f, stdin) = crate::streams::input_pipe();
+-                builder.set_stdin(Box::new(f));
+-                Some(stdin)
++                let (file, stream) = crate::streams::input_pipe();
++                builder.set_stdin(Box::new(file));
++                Some(stream)
+             }
+         };
+-
+         let (stdout_file, stdout) = crate::streams::output_pipe();
+         builder.set_stdout(Box::new(stdout_file));
+-
+         let (stderr_file, stderr) = crate::streams::output_pipe();
+         builder.set_stderr(Box::new(stderr_file));
+-
+-        Ok((stdin, stdout, stderr))
++        (stdin, stdout, stderr)
      }
  
--    fn configure_common_builder(
--        &self,
--        builder: &mut WasiEnvBuilder,
--    ) -> Result<(), Error> {
-+    fn configure_common_builder(&self, builder: &mut WasiEnvBuilder) -> Result<(), Error> {
+     fn configure_common_builder(
+         &self,
+         builder: &mut WasiEnvBuilder,
++        protocol_file: Option<Box<dyn virtual_fs::VirtualFile + Send + Sync + 'static>>,
+     ) -> Result<(), Error> {
          for arg in self.parse_args()? {
              builder.add_arg(arg);
+@@ -253,6 +284,11 @@ impl RunOptions {
+             builder.set_current_dir(cwd);
          }
+         let fs = self.filesystem()?;
++        if let Some(protocol_file) = protocol_file {
++            fs.new_open_options_ext()
++                .insert_device_file(PathBuf::from(OLIPHAUNT_PROTOCOL_DEVICE), protocol_file)
++                .with_context(|| format!("Unable to create {OLIPHAUNT_PROTOCOL_DEVICE}"))?;
++        }
+         builder.set_fs(Box::new(fs));
+         builder.add_preopen_dir("/")?;
+ 
+diff --git a/src/postgres_direct.rs b/src/postgres_direct.rs
+index 17f74b6..b78334d 100644
 --- a/src/postgres_direct.rs
 +++ b/src/postgres_direct.rs
 @@ -1,4 +1,5 @@
@@ -37,16 +144,13 @@
      collections::VecDeque,
      io::{self, SeekFrom},
      pin::Pin,
-@@ -7,7 +8,7 @@
- };
- 
- use anyhow::{ensure, Context};
+@@ -10 +11 @@ use anyhow::{ensure, Context};
 -use js_sys::{Uint8Array, WebAssembly};
 +use js_sys::{Function, Uint8Array, WebAssembly};
- use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
- use virtual_fs::VirtualFile;
- use wasm_bindgen::{prelude::wasm_bindgen, JsValue};
-@@ -21,6 +22,266 @@
+@@ -13 +14 @@ use virtual_fs::VirtualFile;
+-use wasm_bindgen::{prelude::wasm_bindgen, JsValue};
++use wasm_bindgen::{prelude::wasm_bindgen, JsCast, JsValue};
+@@ -21,6 +22,276 @@ use crate::{runtime::Runtime, tasks::CallerRealmTaskManager, utils::Error, RunOp
  const DEFAULT_PROGRAM_NAME: &str = "/bin/postgres";
  const OLIPHAUNT_EXIT_ALIVE: i32 = 99;
  const STDERR_LIMIT_BYTES: usize = 16 * 1024;
@@ -96,6 +200,9 @@
 +            }
 +        };
 +        let requested = buffer.remaining().min(PROTOCOL_CHUNK_BYTES);
++        if requested == 0 {
++            return Poll::Ready(Ok(()));
++        }
 +        let value = match callback.call1(&JsValue::UNDEFINED, &JsValue::from(requested as u32)) {
 +            Ok(value) => value,
 +            Err(error) => {
@@ -104,7 +211,15 @@
 +                ))))
 +            }
 +        };
-+        let input = Uint8Array::new(&value);
++        let input = match value.dyn_into::<Uint8Array>() {
++            Ok(input) => input,
++            Err(_) => {
++                return Poll::Ready(Err(io::Error::new(
++                    io::ErrorKind::InvalidData,
++                    "protocol input callback must return a Uint8Array",
++                )))
++            }
++        };
 +        let length = input.length() as usize;
 +        if length > requested {
 +            return Poll::Ready(Err(io::Error::new(
@@ -113,9 +228,8 @@
 +            )));
 +        }
 +        if length > 0 {
-+            let mut bytes = vec![0u8; length];
-+            input.copy_to(&mut bytes);
-+            buffer.put_slice(&bytes);
++            input.copy_to(buffer.initialize_unfilled_to(length));
++            buffer.advance(length);
 +        }
 +        Poll::Ready(Ok(()))
 +    }
@@ -313,7 +427,7 @@
  
  #[derive(Clone, Debug, Default)]
  struct BoundedStderr {
-@@ -186,9 +447,18 @@
+@@ -186,9 +457,18 @@ pub async fn instantiate_oliphaunt_direct(
      options: RunOptions,
  ) -> Result<OliphauntDirectInstance, Error> {
      let stderr = BoundedStderr::default();
@@ -335,7 +449,7 @@
  }
  
  #[wasm_bindgen]
-@@ -198,6 +468,8 @@
+@@ -198,6 +478,8 @@ pub struct OliphauntDirectInstance {
      store: Store,
      _instance: WasmerInstance,
      _env: WasiFunctionEnv,
@@ -344,7 +458,7 @@
      stderr: BoundedStderr,
      guest_memory: JsValue,
      input_reset: TypedFunction<(), i32>,
-@@ -208,6 +480,7 @@
+@@ -208,6 +490,7 @@ pub struct OliphauntDirectInstance {
      output_len: TypedFunction<(), i32>,
      output_data: TypedFunction<(), i32>,
      output_contains_error: TypedFunction<(), i32>,
@@ -352,7 +466,7 @@
      set_force_host_error_recovery: Option<TypedFunction<i32, i32>>,
      set_active: TypedFunction<i32, i32>,
      wasi_start: TypedFunction<(), ()>,
-@@ -240,12 +513,45 @@
+@@ -240,12 +523,45 @@ impl OliphauntDirectInstance {
      /// Execute raw PostgreSQL frontend-protocol bytes synchronously.
      #[wasm_bindgen(js_name = execProtocolRaw)]
      pub fn exec_protocol_raw(&mut self, input: Uint8Array) -> Result<Uint8Array, Error> {
@@ -398,7 +512,7 @@
      /// Shut down the embedded lifecycle. This does not consume the JS object.
      pub fn close(&mut self) -> Result<(), Error> {
          match self.close_inner() {
-@@ -256,6 +562,56 @@
+@@ -256,6 +572,56 @@ impl OliphauntDirectInstance {
  }
  
  impl OliphauntDirectInstance {
@@ -455,7 +569,7 @@
      fn startup_inner(&mut self, packet: &Uint8Array) -> anyhow::Result<Uint8Array> {
          self.ensure_open()?;
          ensure!(
-@@ -357,6 +713,8 @@
+@@ -357,6 +723,8 @@ impl OliphauntDirectInstance {
          module: WebAssembly::Module,
          module_bytes: Uint8Array,
          options: RunOptions,
@@ -464,7 +578,7 @@
          stderr: BoundedStderr,
      ) -> Result<Self, Error> {
          // Direct execution intentionally has no configurable networking or
-@@ -368,7 +726,12 @@
+@@ -368,7 +736,12 @@ impl OliphauntDirectInstance {
              .as_string()
              .unwrap_or_else(|| DEFAULT_PROGRAM_NAME.to_owned());
          let mut builder = WasiEnvBuilder::new(program_name).runtime(runtime.clone());
@@ -478,7 +592,7 @@
  
          let module = wasmer::Module::from((module, module_bytes.to_vec()));
          let mut store = Store::new(runtime.engine());
-@@ -399,6 +762,11 @@
+@@ -399,6 +772,11 @@ impl OliphauntDirectInstance {
              &instance,
              "oliphaunt_wasix_output_contains_error",
          )?;
@@ -490,7 +604,7 @@
          let set_force_host_error_recovery = optional_typed_export(
              &mut store,
              &instance,
-@@ -428,6 +796,8 @@
+@@ -428,6 +806,8 @@ impl OliphauntDirectInstance {
              store,
              _instance: instance,
              _env: env,
@@ -499,7 +613,7 @@
              stderr,
              guest_memory,
              input_reset,
-@@ -438,6 +808,7 @@
+@@ -438,6 +818,7 @@ impl OliphauntDirectInstance {
              output_len,
              output_data,
              output_contains_error,
@@ -507,333 +621,441 @@
              set_force_host_error_recovery,
              set_active,
              wasi_start,
- 
-diff --git a/src/instance.rs b/src/instance.rs
-index 18b18d1..4e8e0ae 100644
---- a/src/instance.rs
-+++ b/src/instance.rs
-@@ -34,7 +34,7 @@ impl Instance {
- 
- impl Instance {
-     #[tracing::instrument(skip_all)]
--    async fn wait(self) -> Result<Output, Error> {
-+    pub(crate) async fn wait(self) -> Result<Output, Error> {
-         let Instance {
-             stdin,
-             stdout,
-@@ -85,6 +85,38 @@ impl Instance {
-     }
- }
- 
-+/// A WASIX frontend tool with standard stdio and a private pgwire transport.
-+#[wasm_bindgen]
-+pub struct OliphauntToolInstance {
-+    instance: Instance,
-+    #[wasm_bindgen(getter_with_clone, readonly, js_name = protocolInput)]
-+    pub protocol_input: web_sys::WritableStream,
-+    #[wasm_bindgen(getter_with_clone, readonly, js_name = protocolOutput)]
-+    pub protocol_output: web_sys::ReadableStream,
-+}
+diff --git a/src/tool_direct.rs b/src/tool_direct.rs
+new file mode 100644
+index 0000000..74719c7
+--- /dev/null
++++ b/src/tool_direct.rs
+@@ -0,0 +1,432 @@
++use std::{
++    cell::RefCell,
++    io::{self, SeekFrom},
++    pin::Pin,
++    sync::{Arc, Mutex},
++    task::{Context as TaskContext, Poll},
++};
 +
-+impl OliphauntToolInstance {
-+    pub(crate) fn new(
-+        instance: Instance,
-+        protocol_input: web_sys::WritableStream,
-+        protocol_output: web_sys::ReadableStream,
-+    ) -> Self {
-+        Self {
-+            instance,
-+            protocol_input,
-+            protocol_output,
-+        }
-+    }
-+}
++use anyhow::{ensure, Context};
++use js_sys::{Function, Uint8Array, WebAssembly};
++use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
++use virtual_fs::VirtualFile;
++use wasm_bindgen::{prelude::wasm_bindgen, JsCast, JsValue};
++use wasmer::{Store, TypedFunction};
++use wasmer_types::ModuleHash;
++use wasmer_wasix::{os::TtyBridge, Runtime as _, WasiEnvBuilder, WasiError};
++
++use crate::{
++    runtime::Runtime,
++    tasks::CallerRealmTaskManager,
++    utils::{js_error, Error},
++    RunOptions,
++};
++
++const DEFAULT_PROGRAM_NAME: &str = "wasm";
++const PROTOCOL_CHUNK_BYTES: usize = 64 * 1024;
 +
 +#[wasm_bindgen]
-+impl OliphauntToolInstance {
-+    #[wasm_bindgen(js_name = "wait")]
-+    pub async fn js_wait(self) -> Result<JsOutput, Error> {
-+        Ok(self.instance.wait().await?.into())
++extern "C" {
++    #[wasm_bindgen(typescript_type = "OliphauntToolOutput")]
++    pub type JsToolOutput;
++}
++
++#[wasm_bindgen(typescript_custom_section)]
++const TOOL_OUTPUT_TYPE_DEFINITION: &'static str = r#"
++export type OliphauntToolOutput = {
++    code: number;
++    stdoutBytes: Uint8Array;
++    stderrBytes: Uint8Array;
++}
++"#;
++
++fn tool_output(code: i32, stdout: Vec<u8>, stderr: Vec<u8>) -> JsToolOutput {
++    let output = js_sys::Object::new();
++    let _ = js_sys::Reflect::set(&output, &JsValue::from_str("code"), &JsValue::from(code));
++    let _ = js_sys::Reflect::set(
++        &output,
++        &JsValue::from_str("stdoutBytes"),
++        &Uint8Array::from(stdout.as_slice()),
++    );
++    let _ = js_sys::Reflect::set(
++        &output,
++        &JsValue::from_str("stderrBytes"),
++        &Uint8Array::from(stderr.as_slice()),
++    );
++    output.unchecked_into()
++}
++
++/// Immutable frontend-program state shared by repeated invocations in one
++/// JavaScript realm. Every invocation still creates fresh WASI process state.
++#[wasm_bindgen]
++pub struct OliphauntPreparedTool {
++    runtime: Arc<Runtime>,
++    module: wasmer::Module,
++    module_hash: ModuleHash,
++}
++
++#[wasm_bindgen(js_name = prepareOliphauntTool)]
++pub fn prepare_oliphaunt_tool(
++    module: WebAssembly::Module,
++    module_bytes: Uint8Array,
++) -> Result<OliphauntPreparedTool, Error> {
++    let module_bytes = module_bytes.to_vec();
++    let module_hash = ModuleHash::xxhash(&module_bytes);
++    let module = wasmer::Module::from((module, module_bytes));
++    let runtime =
++        Arc::new(Runtime::with_defaults()?.with_task_manager(Arc::new(CallerRealmTaskManager)));
++    Ok(OliphauntPreparedTool {
++        runtime,
++        module,
++        module_hash,
++    })
++}
++
++#[derive(Clone)]
++struct ProtocolCallbacks {
++    read: Function,
++    write: Function,
++}
++
++thread_local! {
++    static PROTOCOL_CALLBACKS: RefCell<Option<ProtocolCallbacks>> = const { RefCell::new(None) };
++}
++
++/// Keeps the caller-realm callbacks active only while the guest is executing.
++struct ActiveProtocolCallbacks;
++
++impl ActiveProtocolCallbacks {
++    fn begin(read: Function, write: Function) -> anyhow::Result<Self> {
++        PROTOCOL_CALLBACKS.with(|active| {
++            let mut active = active.borrow_mut();
++            ensure!(
++                active.is_none(),
++                "an Oliphaunt tool protocol session is already active"
++            );
++            *active = Some(ProtocolCallbacks { read, write });
++            Ok(Self)
++        })
 +    }
 +}
 +
- async fn copy_to_buffer(
-     stream: impl Stream<Item = Result<Vec<u8>, Error>>,
-     buffer: &mut Vec<u8>,
-diff --git a/src/lib.rs b/src/lib.rs
-index 6803f8e..e669326 100644
---- a/src/lib.rs
-+++ b/src/lib.rs
-@@ -26,13 +26,13 @@ use std::sync::Mutex;
- 
- pub use crate::{
-     fs::{Directory, DirectoryInit},
--    instance::{Instance, JsOutput},
-+    instance::{Instance, JsOutput, OliphauntToolInstance},
-     js_runtime::{JsRuntime, RuntimeOptions},
-     logging::initialize_logger,
-     options::{RunOptions, SpawnOptions},
-     postgres_direct::{instantiate_oliphaunt_direct, OliphauntDirectInstance},
-     registry::RegistryConfig,
--    run::run_wasix,
-+    run::{run_oliphaunt_tool, run_wasix},
-     utils::StringOrBytes,
-     wasmer::Wasmer,
- };
-diff --git a/src/options.rs b/src/options.rs
-index 224976f..98d0e04 100644
---- a/src/options.rs
-+++ b/src/options.rs
-@@ -193,7 +193,7 @@ impl RunOptions {
-         stdout: Box<dyn virtual_fs::VirtualFile + Send + Sync + 'static>,
-         stderr: Box<dyn virtual_fs::VirtualFile + Send + Sync + 'static>,
-     ) -> Result<(), Error> {
--        self.configure_common_builder(builder)?;
-+        self.configure_common_builder(builder, None)?;
- 
-         builder.set_stdin(stdin);
-         builder.set_stdout(stdout);
-@@ -215,31 +215,61 @@ impl RunOptions {
-         ),
-         Error,
-     > {
--        self.configure_common_builder(builder)?;
-+        self.configure_common_builder(builder, None)?;
-+        Ok(self.configure_stdio(builder))
++impl Drop for ActiveProtocolCallbacks {
++    fn drop(&mut self) {
++        PROTOCOL_CALLBACKS.with(|active| *active.borrow_mut() = None);
 +    }
++}
 +
-+    pub(crate) fn configure_tool_builder(
-+        &self,
-+        builder: &mut WasiEnvBuilder,
-+    ) -> Result<
-+        (
-+            Option<web_sys::WritableStream>,
-+            web_sys::ReadableStream,
-+            web_sys::ReadableStream,
-+            web_sys::WritableStream,
-+            web_sys::ReadableStream,
-+        ),
-+        Error,
-+    > {
-+        let (protocol_file, protocol_input, protocol_output) = crate::streams::duplex_pipe();
-+        self.configure_common_builder(builder, Some(protocol_file))?;
-+        let (stdin, stdout, stderr) = self.configure_stdio(builder);
++#[derive(Clone, Debug, Default)]
++struct ToolProtocolFile;
 +
-+        Ok((stdin, stdout, stderr, protocol_input, protocol_output))
-+    }
- 
-+    fn configure_stdio(
-+        &self,
-+        builder: &mut WasiEnvBuilder,
-+    ) -> (
-+        Option<web_sys::WritableStream>,
-+        web_sys::ReadableStream,
-+        web_sys::ReadableStream,
-+    ) {
-         let stdin = match self.read_stdin() {
-             Some(stdin) => {
--                let f = virtual_fs::StaticFile::new(stdin);
--                builder.set_stdin(Box::new(f));
-+                builder.set_stdin(Box::new(virtual_fs::StaticFile::new(stdin)));
-                 None
-             }
-             None => {
--                let (f, stdin) = crate::streams::input_pipe();
--                builder.set_stdin(Box::new(f));
--                Some(stdin)
-+                let (file, stream) = crate::streams::input_pipe();
-+                builder.set_stdin(Box::new(file));
-+                Some(stream)
-             }
-         };
--
-         let (stdout_file, stdout) = crate::streams::output_pipe();
-         builder.set_stdout(Box::new(stdout_file));
--
-         let (stderr_file, stderr) = crate::streams::output_pipe();
-         builder.set_stderr(Box::new(stderr_file));
--
--        Ok((stdin, stdout, stderr))
-+        (stdin, stdout, stderr)
-     }
- 
--    fn configure_common_builder(&self, builder: &mut WasiEnvBuilder) -> Result<(), Error> {
-+    fn configure_common_builder(
-+        &self,
-+        builder: &mut WasiEnvBuilder,
-+        protocol_file: Option<virtual_fs::Pipe>,
-+    ) -> Result<(), Error> {
-         for arg in self.parse_args()? {
-             builder.add_arg(arg);
-         }
-@@ -252,6 +282,14 @@ impl RunOptions {
-             builder.set_current_dir(cwd);
-         }
-         let fs = self.filesystem()?;
-+        if let Some(protocol_file) = protocol_file {
-+            fs.new_open_options_ext()
-+                .insert_device_file(
-+                    PathBuf::from("/dev/oliphaunt-pgwire"),
-+                    Box::new(protocol_file),
++impl ToolProtocolFile {
++    fn callbacks() -> io::Result<ProtocolCallbacks> {
++        PROTOCOL_CALLBACKS
++            .with(|active| active.borrow().clone())
++            .ok_or_else(|| {
++                io::Error::new(
++                    io::ErrorKind::BrokenPipe,
++                    "Oliphaunt tool protocol callbacks are inactive",
 +                )
-+                .context("Unable to create /dev/oliphaunt-pgwire")?;
++            })
++    }
++}
++
++impl AsyncRead for ToolProtocolFile {
++    fn poll_read(
++        self: Pin<&mut Self>,
++        _cx: &mut TaskContext<'_>,
++        buffer: &mut ReadBuf<'_>,
++    ) -> Poll<io::Result<()>> {
++        let requested = buffer.remaining().min(PROTOCOL_CHUNK_BYTES);
++        if requested == 0 {
++            return Poll::Ready(Ok(()));
 +        }
-         builder.set_fs(Box::new(fs));
-         builder.add_preopen_dir("/")?;
- 
-diff --git a/src/run.rs b/src/run.rs
-index 9fd9b6b..c8210c4 100644
---- a/src/run.rs
-+++ b/src/run.rs
-@@ -7,7 +7,7 @@ use wasmer_wasix::Runtime as _;
- use wasmer_wasix::{WasiEnvBuilder, WasiError, WasiRuntimeError};
- 
- use crate::{
--    instance::ExitCondition,
-+    instance::{ExitCondition, OliphauntToolInstance},
-     tasks::{ThreadPool, WorkerMessage},
-     utils::Error,
-     Instance, RunOptions,
-@@ -59,11 +59,37 @@ fn task_exit_condition(result: Result<ExitCode, Arc<WasiRuntimeError>>) -> ExitC
- /// [preview-1]: https://github.com/WebAssembly/WASI/blob/main/legacy/README.md
- #[wasm_bindgen(js_name = "runWasix")]
- pub async fn run_wasix(wasm_module: WasmModule, config: RunOptions) -> Result<Instance, Error> {
--    run_wasix_inner(wasm_module, config).await
-+    Ok(run_wasix_inner(wasm_module, config, false).await?.instance)
++
++        let callbacks = match Self::callbacks() {
++            Ok(callbacks) => callbacks,
++            Err(error) => return Poll::Ready(Err(error)),
++        };
++        let value = match callbacks
++            .read
++            .call1(&JsValue::UNDEFINED, &JsValue::from(requested as u32))
++        {
++            Ok(value) => value,
++            Err(error) => {
++                return Poll::Ready(Err(io::Error::other(format!(
++                    "Oliphaunt tool protocol read failed: {}",
++                    js_error(error)
++                ))))
++            }
++        };
++        let input = match value.dyn_into::<Uint8Array>() {
++            Ok(input) => input,
++            Err(_) => {
++                return Poll::Ready(Err(io::Error::new(
++                    io::ErrorKind::InvalidData,
++                    "Oliphaunt tool protocol read must return a Uint8Array",
++                )))
++            }
++        };
++        let length = input.length() as usize;
++        if length > requested {
++            return Poll::Ready(Err(io::Error::new(
++                io::ErrorKind::InvalidData,
++                "Oliphaunt tool protocol read exceeded the requested byte count",
++            )));
++        }
++        if length > 0 {
++            input.copy_to(buffer.initialize_unfilled_to(length));
++            buffer.advance(length);
++        }
++        Poll::Ready(Ok(()))
++    }
 +}
 +
-+/// Run a PostgreSQL frontend tool with standard stdio and private pgwire streams.
-+#[wasm_bindgen(js_name = "runOliphauntTool")]
-+pub async fn run_oliphaunt_tool(
-+    wasm_module: WasmModule,
-+    config: RunOptions,
-+) -> Result<OliphauntToolInstance, Error> {
-+    let started = run_wasix_inner(wasm_module, config, true).await?;
-+    let (protocol_input, protocol_output) = started
-+        .protocol
-+        .expect("tool execution always configures protocol streams");
-+    Ok(OliphauntToolInstance::new(
-+        started.instance,
-+        protocol_input,
-+        protocol_output,
-+    ))
++impl AsyncWrite for ToolProtocolFile {
++    fn poll_write(
++        self: Pin<&mut Self>,
++        _cx: &mut TaskContext<'_>,
++        input: &[u8],
++    ) -> Poll<io::Result<usize>> {
++        if input.is_empty() {
++            return Poll::Ready(Ok(0));
++        }
++
++        let callbacks = match Self::callbacks() {
++            Ok(callbacks) => callbacks,
++            Err(error) => return Poll::Ready(Err(error)),
++        };
++        let length = input.len().min(PROTOCOL_CHUNK_BYTES);
++        // SAFETY: this hidden host ABI accepts only Oliphaunt's internal
++        // callbacks. They synchronously copy, never mutate, and never retain
++        // the view beyond this call, before Rust can reuse the input slice.
++        let chunk = unsafe { Uint8Array::view(&input[..length]) };
++        match callbacks.write.call1(&JsValue::UNDEFINED, &chunk) {
++            Ok(_) => Poll::Ready(Ok(length)),
++            Err(error) => Poll::Ready(Err(io::Error::other(format!(
++                "Oliphaunt tool protocol write failed: {}",
++                js_error(error)
++            )))),
++        }
++    }
++
++    fn poll_flush(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
++        Poll::Ready(Ok(()))
++    }
++
++    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
++        Poll::Ready(Ok(()))
++    }
 +}
 +
-+struct StartedInstance {
-+    instance: Instance,
-+    protocol: Option<(web_sys::WritableStream, web_sys::ReadableStream)>,
- }
- 
- #[tracing::instrument(level = "debug", skip_all)]
--async fn run_wasix_inner(wasm_module: WasmModule, config: RunOptions) -> Result<Instance, Error> {
-+async fn run_wasix_inner(
-+    wasm_module: WasmModule,
-+    config: RunOptions,
-+    tool: bool,
-+) -> Result<StartedInstance, Error> {
-     let mut runtime = config.runtime().resolve()?.into_inner();
-     // A process owns its scheduler and blocking workers. Isolating each run
-     // prevents completed workers and pending callbacks from leaking into the
-@@ -77,7 +103,19 @@ async fn run_wasix_inner(wasm_module: WasmModule, config: RunOptions) -> Result<
-         .unwrap_or_else(|| DEFAULT_PROGRAM_NAME.to_string());
- 
-     let mut builder = WasiEnvBuilder::new(program_name.clone()).runtime(runtime.clone());
--    let (stdin, stdout, stderr) = config.configure_builder(&mut builder)?;
-+    let (stdin, stdout, stderr, protocol) = if tool {
-+        let (stdin, stdout, stderr, protocol_input, protocol_output) =
-+            config.configure_tool_builder(&mut builder)?;
-+        (
-+            stdin,
-+            stdout,
-+            stderr,
-+            Some((protocol_input, protocol_output)),
-+        )
-+    } else {
-+        let (stdin, stdout, stderr) = config.configure_builder(&mut builder)?;
-+        (stdin, stdout, stderr, None)
++impl AsyncSeek for ToolProtocolFile {
++    fn start_seek(self: Pin<&mut Self>, _position: SeekFrom) -> io::Result<()> {
++        Ok(())
++    }
++
++    fn poll_complete(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<io::Result<u64>> {
++        Poll::Ready(Ok(0))
++    }
++}
++
++impl VirtualFile for ToolProtocolFile {
++    fn last_accessed(&self) -> u64 {
++        0
++    }
++
++    fn last_modified(&self) -> u64 {
++        0
++    }
++
++    fn created_time(&self) -> u64 {
++        0
++    }
++
++    fn size(&self) -> u64 {
++        0
++    }
++
++    fn set_len(&mut self, _new_size: u64) -> virtual_fs::Result<()> {
++        Ok(())
++    }
++
++    fn unlink(&mut self) -> virtual_fs::Result<()> {
++        Ok(())
++    }
++
++    fn poll_read_ready(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<io::Result<usize>> {
++        Poll::Ready(Ok(PROTOCOL_CHUNK_BYTES))
++    }
++
++    fn poll_write_ready(
++        self: Pin<&mut Self>,
++        _cx: &mut TaskContext<'_>,
++    ) -> Poll<io::Result<usize>> {
++        Poll::Ready(Ok(PROTOCOL_CHUNK_BYTES))
++    }
++}
++
++/// Fresh append-only process output. Clones share the allocation so the host
++/// can take ownership of the bytes after `_start` without a second full copy.
++#[derive(Clone, Debug, Default)]
++struct CaptureFile {
++    bytes: Arc<Mutex<Vec<u8>>>,
++}
++
++impl CaptureFile {
++    fn take(&self) -> Vec<u8> {
++        std::mem::take(&mut *self.bytes.lock().unwrap_or_else(|error| error.into_inner()))
++    }
++}
++
++impl AsyncRead for CaptureFile {
++    fn poll_read(
++        self: Pin<&mut Self>,
++        _cx: &mut TaskContext<'_>,
++        _buffer: &mut ReadBuf<'_>,
++    ) -> Poll<io::Result<()>> {
++        Poll::Ready(Ok(()))
++    }
++}
++
++impl AsyncWrite for CaptureFile {
++    fn poll_write(
++        self: Pin<&mut Self>,
++        _cx: &mut TaskContext<'_>,
++        input: &[u8],
++    ) -> Poll<io::Result<usize>> {
++        self.bytes
++            .lock()
++            .unwrap_or_else(|error| error.into_inner())
++            .extend_from_slice(input);
++        Poll::Ready(Ok(input.len()))
++    }
++
++    fn poll_flush(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
++        Poll::Ready(Ok(()))
++    }
++
++    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
++        Poll::Ready(Ok(()))
++    }
++}
++
++impl AsyncSeek for CaptureFile {
++    fn start_seek(self: Pin<&mut Self>, _position: SeekFrom) -> io::Result<()> {
++        Ok(())
++    }
++
++    fn poll_complete(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<io::Result<u64>> {
++        Poll::Ready(Ok(self
++            .bytes
++            .lock()
++            .unwrap_or_else(|error| error.into_inner())
++            .len() as u64))
++    }
++}
++
++impl VirtualFile for CaptureFile {
++    fn last_accessed(&self) -> u64 {
++        0
++    }
++
++    fn last_modified(&self) -> u64 {
++        0
++    }
++
++    fn created_time(&self) -> u64 {
++        0
++    }
++
++    fn size(&self) -> u64 {
++        self.bytes
++            .lock()
++            .unwrap_or_else(|error| error.into_inner())
++            .len() as u64
++    }
++
++    fn set_len(&mut self, new_size: u64) -> virtual_fs::Result<()> {
++        let new_size = usize::try_from(new_size).map_err(|_| virtual_fs::FsError::UnknownError)?;
++        self.bytes
++            .lock()
++            .unwrap_or_else(|error| error.into_inner())
++            .resize(new_size, 0);
++        Ok(())
++    }
++
++    fn unlink(&mut self) -> virtual_fs::Result<()> {
++        Ok(())
++    }
++
++    fn poll_read_ready(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<io::Result<usize>> {
++        Poll::Ready(Ok(0))
++    }
++
++    fn poll_write_ready(
++        self: Pin<&mut Self>,
++        _cx: &mut TaskContext<'_>,
++    ) -> Poll<io::Result<usize>> {
++        Poll::Ready(Ok(PROTOCOL_CHUNK_BYTES))
++    }
++}
++
++/// Run an Oliphaunt frontend tool synchronously in the caller's JavaScript
++/// realm, while routing its private PGWire device through blocking callbacks.
++#[wasm_bindgen(js_name = runOliphauntToolDirect)]
++pub async fn run_oliphaunt_tool_direct(
++    prepared: &OliphauntPreparedTool,
++    options: RunOptions,
++    protocol_read: Function,
++    protocol_write: Function,
++) -> Result<JsToolOutput, Error> {
++    prepared.runtime.reset();
++    let program_name = options
++        .program()
++        .as_string()
++        .unwrap_or_else(|| DEFAULT_PROGRAM_NAME.to_owned());
++    let stdout = CaptureFile::default();
++    let stderr = CaptureFile::default();
++    let mut builder = WasiEnvBuilder::new(program_name).runtime(prepared.runtime.clone());
++    options.configure_tool_direct_builder(
++        &mut builder,
++        Box::new(ToolProtocolFile),
++        Box::new(stdout.clone()),
++        Box::new(stderr.clone()),
++    )?;
++
++    let mut store = Store::new(prepared.runtime.engine());
++    let (instance, _env) = builder
++        .instantiate_ext_async(prepared.module.clone(), prepared.module_hash, &mut store)
++        .await
++        .context("instantiate Oliphaunt WASIX tool")?;
++    let start: TypedFunction<(), ()> = instance
++        .exports
++        .get_typed_function(&store, "_start")
++        .context("get Oliphaunt WASIX tool _start export")?;
++
++    let code = {
++        let _callbacks = ActiveProtocolCallbacks::begin(protocol_read, protocol_write)?;
++        match start.call(&mut store) {
++            Ok(()) => 0,
++            Err(error) => match runtime_exit_code(&error) {
++                Some(code) => code,
++                None => {
++                    return Err(Error::from(
++                        anyhow::Error::from(error).context("run Oliphaunt WASIX tool"),
++                    ))
++                }
++            },
++        }
 +    };
- 
-     let (exit_code_tx, exit_code_rx) = oneshot::channel();
-     let exit_code_tx = Arc::new(Mutex::new(Some(exit_code_tx)));
-@@ -136,11 +174,14 @@ async fn run_wasix_inner(wasm_module: WasmModule, config: RunOptions) -> Result<
-         }),
-     )?;
- 
--    Ok(Instance {
--        stdin,
--        stdout,
--        stderr,
--        exit: exit_code_rx,
-+    Ok(StartedInstance {
-+        instance: Instance {
-+            stdin,
-+            stdout,
-+            stderr,
-+            exit: exit_code_rx,
-+        },
-+        protocol,
-     })
- }
- 
-diff --git a/src/streams.rs b/src/streams.rs
-index 125533f..27d8e34 100644
---- a/src/streams.rs
-+++ b/src/streams.rs
-@@ -33,6 +33,29 @@ pub(crate) fn input_pipe() -> (Pipe, WritableStream) {
-     (left, stream)
- }
- 
-+/// Set up one full-duplex pipe between a WASIX process and JavaScript.
-+pub(crate) fn duplex_pipe() -> (Pipe, WritableStream, ReadableStream) {
-+    let (guest, host) = Pipe::channel();
-+    let input = writable_stream(host.clone());
-+    let output = readable_stream(host);
-+    (guest, input, output)
++
++    Ok(tool_output(code, stdout.take(), stderr.take()))
 +}
 +
-+fn writable_stream(pipe: Pipe) -> WritableStream {
-+    let sink = JsValue::from(WritableStreamSink { pipe });
-+
-+    let callback: wasm_bindgen::prelude::Closure<dyn Fn(Uint8Array) -> f64> =
-+        wasm_bindgen::closure::Closure::new(|chunk: Uint8Array| chunk.byte_length() as f64);
-+
-+    WritableStream::new_with_underlying_sink_and_strategy(
-+        sink.unchecked_ref(),
-+        web_sys::QueuingStrategy::new()
-+            .high_water_mark(256.0)
-+            .size(callback.into_js_value().unchecked_ref()),
-+    )
-+    .unwrap()
++fn runtime_exit_code(error: &wasmer::RuntimeError) -> Option<i32> {
++    error
++        .downcast_ref::<WasiError>()
++        .and_then(|error| match error {
++            WasiError::Exit(code) => Some(code.raw()),
++            _ => None,
++        })
 +}
-+
- #[derive(Debug)]
- #[wasm_bindgen(skip_typescript)]
- struct WritableStreamSink {
-@@ -113,20 +136,22 @@ impl WritableStreamSink {
- pub(crate) fn output_pipe() -> (Pipe, ReadableStream) {
-     let (left, right) = Pipe::channel();
- 
--    let source = JsValue::from(ReadableStreamSource { pipe: right });
-+    (left, readable_stream(right))
-+}
-+
-+fn readable_stream(pipe: Pipe) -> ReadableStream {
-+    let source = JsValue::from(ReadableStreamSource { pipe });
- 
-     let callback: wasm_bindgen::prelude::Closure<dyn Fn(Uint8Array) -> f64> =
-         wasm_bindgen::closure::Closure::new(|chunk: Uint8Array| chunk.byte_length() as f64);
- 
--    let stream = ReadableStream::new_with_underlying_source_and_strategy(
-+    ReadableStream::new_with_underlying_source_and_strategy(
-         source.unchecked_ref(),
-         web_sys::QueuingStrategy::new()
-             .high_water_mark(256.0)
-             .size(callback.into_js_value().unchecked_ref()),
-     )
--    .unwrap();
--
--    (left, stream)
-+    .unwrap()
- }
- 
- #[derive(Debug)]

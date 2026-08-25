@@ -362,14 +362,6 @@ pub(crate) fn verify_asset_manifest_hashes() -> Result<()> {
 
     if is_release_staged_workspace() {
         verify_root_asset_metadata(&manifest, &manifest.runtime.module_sha256)?;
-        verify_file_sha256(
-            &pgdata_archive,
-            &cargo_metadata_value(
-                "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml",
-                "pgdata-template-archive-sha256",
-            )?,
-            "PGDATA template archive metadata",
-        )?;
     }
 
     println!("generated asset hashes match manifests");
@@ -431,6 +423,15 @@ fn verify_root_asset_metadata(
         &pg18.patches.series.len().to_string(),
         "PostgreSQL patch count metadata",
     )?;
+    let pgdata_template = manifest
+        .pgdata_template
+        .as_ref()
+        .context("generated asset manifest is missing the PGDATA template")?;
+    verify_root_metadata_value(
+        "pgdata-template-archive-sha256",
+        &pgdata_template.sha256,
+        "PGDATA template archive metadata",
+    )?;
     if let Some(pg_dump) = &manifest.pg_dump {
         verify_tools_metadata_value("pg-dump-wasix-sha256", &pg_dump.sha256, "pg_dump metadata")?;
     }
@@ -440,7 +441,19 @@ fn verify_root_asset_metadata(
     if let Some(initdb) = &manifest.initdb {
         verify_root_metadata_value("initdb-wasix-sha256", &initdb.sha256, "initdb metadata")?;
     }
+    verify_wasix_tools_npm_descriptor(manifest)?;
     Ok(())
+}
+
+fn verify_wasix_tools_npm_descriptor(manifest: &AssetManifestOut) -> Result<()> {
+    let actual = fs::read_to_string(WASIX_TOOLS_NPM_DESCRIPTOR_PATH)
+        .with_context(|| format!("read {WASIX_TOOLS_NPM_DESCRIPTOR_PATH}"))?;
+    let expected = update_wasix_tools_npm_descriptor(&actual, manifest)?;
+    ensure_eq(
+        &actual,
+        &expected,
+        "WASIX tools npm workspace descriptor metadata",
+    )
 }
 
 fn verify_root_metadata_value(key: &str, expected: &str, field: &str) -> Result<()> {

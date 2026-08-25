@@ -18,18 +18,20 @@ pnpm add @oliphaunt/wasix-ts @oliphaunt/wasix-tools
 import Oliphaunt from '@oliphaunt/wasix-ts';
 import { pgDump, psql } from '@oliphaunt/wasix-tools';
 
-await using database = await Oliphaunt.open();
-const sql = await pgDump(database, { args: ['--schema-only'] });
-await psql(database, { script: sql });
+await using source = await Oliphaunt.open();
+const sql = await pgDump(source, { args: ['--schema-only'] });
+await using target = await Oliphaunt.open();
+await psql(target, { script: sql });
 ```
 
-The database must use worker placement. Ordinary PostgreSQL arguments are
-passed through, except connection, input/output, encoding, dump format,
-compression, and parallel-job arguments owned by the runner. `pgDump()` always
-uses plain UTF-8 output and rejects custom formats; it does not force
-`--inserts` or rewrite valid dump SQL. `psql()` accepts `command` or `script`,
-uses no user psqlrc, and stops on the first SQL error. Interactive input and
-`pg_restore` are not part of this package.
+`pgDump()` supports direct and worker database placement. `psql()` requires
+worker placement because COPY restore is full duplex. Ordinary PostgreSQL
+arguments are passed through, except connection, input/output, encoding, dump
+format, compression, and parallel-job arguments owned by the runner.
+`pgDump()` always uses plain UTF-8 output and rejects custom formats; it does
+not force `--inserts` or rewrite valid dump SQL. `psql()` accepts `command` or
+`script`, uses no user psqlrc, and stops on the first SQL error. Interactive
+input and `pg_restore` are not part of this package.
 
 Tool failures throw `PostgresToolError` with `tool`, `exitCode`, `stdout`, and
 `stderr` fields.

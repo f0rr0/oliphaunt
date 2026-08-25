@@ -2418,6 +2418,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "oliphaunt-native-tools-proof"
+version = "0.0.0"
+dependencies = [
+ "oliphaunt",
+ "oliphaunt-tools",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "oliphaunt-perf"
 version = "0.0.0"
 dependencies = [

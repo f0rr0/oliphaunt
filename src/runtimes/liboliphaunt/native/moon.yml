@@ -46,6 +46,7 @@ tasks:
       - "liboliphaunt-native:postgis-reproducible-time-test"
       - "liboliphaunt-native:static-extension-registry-test"
       - "liboliphaunt-native:symbol-scope-test"
+      - "liboliphaunt-native:tools-test"
     inputs:
       - "/src/runtimes/liboliphaunt/native/**/*"
       - "/src/postgres/versions/18/**/*"
@@ -57,6 +58,19 @@ tasks:
       - "/.release-please-manifest.json"
       - "/src/**/release.toml"
       - "/src/**/targets/**/*.toml"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  tools-test:
+    tags: ["quality", "unit", "ci-rust"]
+    command: "cargo test -p oliphaunt-tools --locked"
+    env:
+      CARGO_TARGET_DIR: "target/moon/liboliphaunt-native/tools-test"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/runtimes/liboliphaunt/native/crates/tools/**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true

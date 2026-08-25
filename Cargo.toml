@@ -19,6 +19,7 @@ members = [
   "tools/perf/runner",
   "tools/native-extension-proof",
   "tools/native-packaging",
+  "tools/native-tools-proof",
   "tools/xtask",
 ]
 resolver = "3"

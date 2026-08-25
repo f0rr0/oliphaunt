@@ -43,8 +43,7 @@ src/sdks/kotlin                  Kotlin/Android SDK
 src/sdks/react-native            React Native SDK
 src/sdks/js                      TypeScript SDK
 src/bindings/wasix-rust          Rust binding for the WASIX runtime
-src/bindings/wasix-ts            TypeScript browser/Node/Bun/Deno binding for the WASIX runtime
-src/bindings/wasix-tools         Optional TypeScript pg_dump/psql facade for WASIX database handles
+src/bindings/wasix-ts            TypeScript browser/Node/Bun/Deno binding and optional tools package for WASIX
 src/shared/contracts             cross-language protocol and API contracts
 src/shared/extension-runtime-contract extension/runtime ABI contract
 src/shared/fixtures              shared semantic test fixtures
@@ -78,9 +77,8 @@ Examples:
   `liboliphaunt-wasix -> oliphaunt-wasix-ts` are separate WASIX binding edges.
   The WASIX TypeScript binding has no edge to the TypeScript SDK's native runtime or native
   runtime products.
-- `liboliphaunt-wasix -> oliphaunt-wasix-ts -> oliphaunt-wasix-tools-ts`
-  represents the optional tool carrier/facade contract; it does not add tools
-  to the core database package.
+- `liboliphaunt-wasix -> oliphaunt-wasix-ts` also carries the optional tools
+  package contract; it does not add tools to the core database package.
 - `extensions -> SDKs` is a build edge. SDK tests and generated metadata react
   to extension catalog changes, but exact extension source releases do not
   automatically release SDK packages.

@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use std::thread;
 
 use anyhow::{bail, Context, Result};
-use oliphaunt_wasix::{extensions, tools, DatabaseStorage, Oliphaunt, OliphauntServer};
+use oliphaunt_wasix::{DatabaseStorage, OliphauntServer, extensions};
+#[cfg(test)]
+use oliphaunt_wasix::{Oliphaunt, tools};
 use serde_json::json;
 
 fn main() -> Result<()> {
@@ -24,7 +26,6 @@ fn main() -> Result<()> {
 }
 
 fn start_server(directory: PathBuf) -> Result<OliphauntServer> {
-    validate_wasix_tools()?;
     let server = OliphauntServer::builder()
         .storage(DatabaseStorage::Directory(directory))
         .extensions([
@@ -37,6 +38,7 @@ fn start_server(directory: PathBuf) -> Result<OliphauntServer> {
     Ok(server)
 }
 
+#[cfg(test)]
 fn validate_wasix_tools() -> Result<()> {
     let mut database = Oliphaunt::open()?;
     let dump = tools::pg_dump(
@@ -86,8 +88,9 @@ mod tests {
             .build()
             .expect("build WASIX sidecar smoke runtime");
         let _runtime_context = runtime.enter();
+        validate_wasix_tools().expect("run explicit split WASIX tools smoke");
         let server = start_server(directory.clone())
-            .expect("start sidecar server and run split WASIX pg_dump tool");
+            .expect("start sidecar server after split WASIX tools smoke");
         drop(server);
         let _ = std::fs::remove_dir_all(directory);
     }

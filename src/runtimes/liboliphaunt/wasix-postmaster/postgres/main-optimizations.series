@@ -1,7 +1,7 @@
 # Compatible PostgreSQL optimizations owned by the main WASIX runtime.
 #
 # Deliberately excluded from this multi-backend lane:
-# - 0040 and 0041 specialize spinlocks and atomics for the canonical guest
+# - 0035 and 0036 specialize spinlocks and atomics for the canonical guest
 #   shared by Rust and TypeScript bindings, whose hosts enforce one PostgreSQL
 #   backend execution context per isolated instance.
 # The postmaster and its backends coordinate concurrently through shared

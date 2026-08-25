@@ -6,6 +6,11 @@ export type WasixToolProcessResult = Readonly<{
   stderr: Uint8Array;
 }>;
 
+export function getWasixDatabaseIdentity(database: OliphauntDatabase): Readonly<{
+  username: string;
+  database: string;
+}>;
+
 export function runWasixToolProcess(
   database: OliphauntDatabase,
   options: Readonly<{

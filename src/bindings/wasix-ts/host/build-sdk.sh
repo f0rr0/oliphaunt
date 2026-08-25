@@ -52,6 +52,15 @@ fi
 mapfile -t patch_series < <(node "$provenance_script" --patch-series)
 input_hash="$(node "$provenance_script" --inputs-sha256)"
 
+patch_command="patch"
+sha256sum_command="sha256sum"
+if command -v gpatch >/dev/null 2>&1; then
+  patch_command="gpatch"
+fi
+if command -v gsha256sum >/dev/null 2>&1; then
+  sha256sum_command="gsha256sum"
+fi
+
 if [[ -f "$target_dir/.oliphaunt-input-sha256" ]] \
     && [[ "$(<"$target_dir/.oliphaunt-input-sha256")" == "$input_hash" ]] \
     && [[ -f "$target_dir/dist/index.mjs" ]] \
@@ -63,7 +72,7 @@ fi
 
 mkdir -p "$target_parent"
 
-for command_name in awk curl git node npm patch sha256sum tar wasm-pack; do
+for command_name in awk curl git node npm "$patch_command" "$sha256sum_command" tar wasm-pack; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "wasix-ts host build: required command not found: $command_name" >&2
     exit 1
@@ -99,13 +108,13 @@ fi
 curl --fail --location --silent --show-error \
   --user-agent "oliphaunt-wasix-ts-source-build/0.0.0" \
   "$wasmer_wasix_url" --output "$wasmer_wasix_archive"
-echo "$wasmer_wasix_sha256  $wasmer_wasix_archive" | sha256sum --check --status
+echo "$wasmer_wasix_sha256  $wasmer_wasix_archive" | "$sha256sum_command" --check --status
 tar -xzf "$wasmer_wasix_archive" -C "$build_root"
 
 curl --fail --location --silent --show-error \
   --user-agent "oliphaunt-wasix-ts-source-build/0.0.0" \
   "$wasmer_url" --output "$wasmer_archive"
-echo "$wasmer_sha256  $wasmer_archive" | sha256sum --check --status
+echo "$wasmer_sha256  $wasmer_archive" | "$sha256sum_command" --check --status
 tar -xzf "$wasmer_archive" -C "$build_root"
 
 for patch_name in "${patch_series[@]}"; do
@@ -125,7 +134,7 @@ for patch_name in "${patch_series[@]}"; do
       exit 1
       ;;
   esac
-  patch --batch --forward -d "$patch_dir" -p1 < "$patch_file"
+  "$patch_command" --batch --forward -d "$patch_dir" -p1 < "$patch_file"
 done
 
 # The browser host runs every WASIX syscall and virtual-filesystem operation.
@@ -220,13 +229,50 @@ grep -Fq 'builder.set_stderr(stderr)' "$wasmer_js_dir/src/options.rs"
 grep -Fq 'js_name = execProtocolStream' "$wasmer_js_dir/src/postgres_direct.rs"
 grep -Fq 'js_name = execProtocolDuplex' "$wasmer_js_dir/src/postgres_direct.rs"
 grep -Fq 'const PROTOCOL_CHUNK_BYTES: usize = 64 * 1024' "$wasmer_js_dir/src/postgres_direct.rs"
-grep -Fq 'const TOOL_PROTOCOL_CAPACITY_BYTES: usize = 256 * 1024' \
-  "$wasmer_js_dir/src/streams.rs"
-grep -Fq 'const TOOL_PROTOCOL_CHUNK_BYTES: usize = 64 * 1024' \
-  "$wasmer_js_dir/src/streams.rs"
-grep -Fq 'bounded_duplex_pipe' "$wasmer_js_dir/src/options.rs"
-grep -Fq 'builder.set_stdout(stdout)' "$wasmer_js_dir/src/options.rs"
-grep -Fq 'builder.set_stdin(stdin)' "$wasmer_js_dir/src/options.rs"
+grep -Fq 'input.copy_to(buffer.initialize_unfilled_to(length))' \
+  "$wasmer_js_dir/src/postgres_direct.rs"
+grep -Fq 'buffer.advance(length)' "$wasmer_js_dir/src/postgres_direct.rs"
+grep -Fq 'let input = match value.dyn_into::<Uint8Array>()' \
+  "$wasmer_js_dir/src/postgres_direct.rs"
+grep -Fq 'if requested == 0 {' "$wasmer_js_dir/src/postgres_direct.rs"
+grep -Fq 'js_name = prepareOliphauntTool' "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'struct OliphauntPreparedTool' "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'ModuleHash::xxhash(&module_bytes)' "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'js_name = runOliphauntToolDirect' "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'Ok((module.clone().into(), bytes))' \
+  "$wasmer_js_dir/src/run.rs"
+grep -Fq 'CallerRealmTaskManager' "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'prepared.runtime.reset()' "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq '.instantiate_ext_async(prepared.module.clone(), prepared.module_hash, &mut store)' \
+  "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'const PROTOCOL_CHUNK_BYTES: usize = 64 * 1024' \
+  "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'ActiveProtocolCallbacks::begin' "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'input.copy_to(buffer.initialize_unfilled_to(length))' \
+  "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'buffer.advance(length)' "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'never mutate, and never retain' "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'unsafe { Uint8Array::view(&input[..length]) }' \
+  "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'struct CaptureFile' "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'typescript_type = "OliphauntToolOutput"' "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'Ok(tool_output(code, stdout.take(), stderr.take()))' \
+  "$wasmer_js_dir/src/tool_direct.rs"
+grep -Fq 'configure_tool_direct_builder' "$wasmer_js_dir/src/options.rs"
+grep -Fq 'OLIPHAUNT_WASIX_SINGLE_BACKEND' "$wasmer_js_dir/src/options.rs"
+grep -Fq 'OLIPHAUNT_DIRECT_PGWIRE' "$wasmer_js_dir/src/options.rs"
+grep -Fq '/dev/oliphaunt-pgwire' "$wasmer_js_dir/src/options.rs"
+grep -Fq 'StaticFile::new(input)' "$wasmer_js_dir/src/options.rs"
+if grep -Eq 'ThreadPool|ReadableStream|WritableStream|bounded_duplex_pipe|TOOL_PROTOCOL_CAPACITY_BYTES|ArcFile|BufferFile|read_capture|\.to_module\(|JsOutput|lazily_decoded' \
+  "$wasmer_js_dir/src/tool_direct.rs"; then
+  echo "wasix-ts host build: direct tool runner regained per-run preparation or output copying" >&2
+  exit 1
+fi
+if grep -R -Eq 'OliphauntToolInstance|bounded_duplex_pipe|TOOL_PROTOCOL_CAPACITY_BYTES' \
+  "$wasmer_js_dir/src"; then
+  echo "wasix-ts host build: retired tool WebStream transport returned" >&2
+  exit 1
+fi
 grep -Fq 'wasmparser::RefType::EXNREF' "$wasmer_dir/src/utils/polyfill.rs"
 grep -Fq 'wasmparser::RefType::NULLEXNREF' "$wasmer_dir/src/utils/polyfill.rs"
 grep -Fq 'Ok(Type::ExceptionRef)' "$wasmer_dir/src/utils/polyfill.rs"

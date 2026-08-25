@@ -2,9 +2,13 @@ const READ_OFFSET = 0;
 const WRITE_OFFSET = 1;
 const CLOSED = 2;
 const FAILED = 3;
-const CONTROL_WORDS = 4;
+const PROTOCOL_STATE = 4;
+const CONTROL_WORDS = 5;
+const PROTOCOL_IDLE = 0;
+const PROTOCOL_ACTIVE = 1;
+const PROTOCOL_COMPLETE = 2;
 
-export const WASIX_STREAM_CHUNK_BYTES = 64 * 1024;
+const WASIX_BYTE_CHANNEL_CHUNK_BYTES = 64 * 1024;
 const WASIX_CHANNEL_BYTES = 256 * 1024 + 1;
 
 /** @internal One bounded single-producer/single-consumer byte channel. */
@@ -38,10 +42,35 @@ export function failWasixByteChannel(channel: WasixByteChannel): void {
   Atomics.notify(control, WRITE_OFFSET);
 }
 
+/** @internal Record that a tool has entered its PostgreSQL protocol callback. */
+export function markWasixByteChannelProtocolStarted(channel: WasixByteChannel): void {
+  Atomics.store(channelControl(channel), PROTOCOL_STATE, PROTOCOL_ACTIVE);
+}
+
+/** @internal Record successful process completion before exposing orderly EOF. */
+export function markWasixByteChannelProtocolComplete(channel: WasixByteChannel): void {
+  Atomics.compareExchange(
+    channelControl(channel),
+    PROTOCOL_STATE,
+    PROTOCOL_ACTIVE,
+    PROTOCOL_COMPLETE,
+  );
+}
+
+/** @internal Observe protocol activity across the tool/database worker boundary. */
+export function wasixByteChannelProtocolStarted(channel: WasixByteChannel): boolean {
+  return Atomics.load(channelControl(channel), PROTOCOL_STATE) !== PROTOCOL_IDLE;
+}
+
+/** @internal Whether a failed tool may have left an unobserved PostgreSQL outcome. */
+export function wasixByteChannelProtocolOutcomeUnknown(channel: WasixByteChannel): boolean {
+  return Atomics.load(channelControl(channel), PROTOCOL_STATE) === PROTOCOL_ACTIVE;
+}
+
 /** @internal Blocking read for a dedicated worker realm. Empty bytes mean EOF. */
 export function readWasixByteChannelSync(
   channel: WasixByteChannel,
-  maximumBytes = WASIX_STREAM_CHUNK_BYTES,
+  maximumBytes = WASIX_BYTE_CHANNEL_CHUNK_BYTES,
 ): Uint8Array {
   const control = channelControl(channel);
   const data = new Uint8Array(channel.data);
@@ -77,7 +106,7 @@ export function writeWasixByteChannelSync(channel: WasixByteChannel, input: Uint
 /** @internal Non-blocking-realm read. Empty bytes mean EOF. */
 export async function readWasixByteChannel(
   channel: WasixByteChannel,
-  maximumBytes = WASIX_STREAM_CHUNK_BYTES,
+  maximumBytes = WASIX_BYTE_CHANNEL_CHUNK_BYTES,
 ): Promise<Uint8Array> {
   const control = channelControl(channel);
   const data = new Uint8Array(channel.data);
@@ -156,7 +185,7 @@ function produce(
   input: Uint8Array,
   writable: number,
 ): number {
-  const count = Math.min(writable, input.length, WASIX_STREAM_CHUNK_BYTES);
+  const count = Math.min(writable, input.length, WASIX_BYTE_CHANNEL_CHUNK_BYTES);
   data.set(input.subarray(0, count), write);
   Atomics.store(control, WRITE_OFFSET, (write + count) % data.length);
   Atomics.notify(control, WRITE_OFFSET);

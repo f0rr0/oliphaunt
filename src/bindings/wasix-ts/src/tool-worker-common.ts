@@ -1,22 +1,41 @@
 import {
   closeWasixByteChannel,
   failWasixByteChannel,
-  readWasixByteChannel,
+  markWasixByteChannelProtocolComplete,
+  markWasixByteChannelProtocolStarted,
+  readWasixByteChannelSync,
   type WasixByteChannel,
-  writeWasixByteChannel,
+  wasixByteChannelProtocolOutcomeUnknown,
+  writeWasixByteChannelSync,
 } from './byte-channel.js';
-import type { Directory, WasixOutput } from './host/index.mjs';
-import type { SerializedRuntimeDescriptor } from './rpc.js';
+import type {
+  Directory,
+  OliphauntPreparedTool,
+  OliphauntToolOutput,
+  RunWasixOptions,
+} from './host/index.mjs';
 import {
-  prepareWasixToolMounts,
-  type WasixToolAsset,
-  verifyWasixToolAsset,
+  materializeWasixToolMounts,
+  prepareWasixToolAsset,
+  releaseWasixToolMounts,
+  type PreparedWasixToolAsset,
+  type WasixToolDescriptor,
+  wasixToolAssetIdentity,
+  wasixToolRunOptions,
 } from './tool-runtime.js';
 
-export type WasixToolWorkerRequest = Readonly<{
+export type WasixToolWorkerRequest = WasixToolPrepareRequest | WasixToolRunRequest;
+
+export type WasixToolPrepareRequest = Readonly<{
   id: number;
-  runtime: SerializedRuntimeDescriptor;
-  tool: WasixToolAsset;
+  kind: 'prepare';
+  tool: WasixToolDescriptor & Readonly<{ name: 'psql' }>;
+}>;
+
+export type WasixToolRunRequest = Readonly<{
+  id: number;
+  kind: 'run';
+  tool: 'psql';
   args: string[];
   stdin?: Uint8Array;
   frontend: WasixByteChannel;
@@ -24,9 +43,11 @@ export type WasixToolWorkerRequest = Readonly<{
 }>;
 
 export type WasixToolWorkerResponse =
+  | Readonly<{ id: number; ok: true; kind: 'prepared' }>
   | Readonly<{
       id: number;
       ok: true;
+      kind: 'completed';
       exitCode: number;
       stdout: Uint8Array;
       stderr: Uint8Array;
@@ -36,86 +57,63 @@ export type WasixToolWorkerResponse =
 export type WasixToolHost = Readonly<{
   Directory: typeof Directory;
   init(): Promise<unknown>;
-  runOliphauntTool(
-    module: Uint8Array | WebAssembly.Module,
-    options: {
-      program?: string;
-      moduleBytes?: Uint8Array;
-      args?: string[];
-      cwd?: string;
-      env?: Record<string, string>;
-      mount?: Record<string, Directory>;
-      stdin?: Uint8Array;
-    },
-  ): Promise<{
-    protocolInput: WritableStream<Uint8Array>;
-    protocolOutput: ReadableStream<Uint8Array>;
-    wait(): Promise<WasixOutput>;
-  }>;
+  prepareOliphauntTool(module: WebAssembly.Module, moduleBytes: Uint8Array): OliphauntPreparedTool;
+  runOliphauntToolDirect(
+    prepared: OliphauntPreparedTool,
+    options: RunWasixOptions,
+    protocolRead: (maximumBytes: number) => Uint8Array,
+    /** Borrowed bytes: synchronously copy; never mutate or retain this view. */
+    protocolWrite: (chunk: Uint8Array) => void,
+  ): Promise<OliphauntToolOutput>;
 }>;
 
-export async function runWasixToolWorker(
-  request: WasixToolWorkerRequest,
+type CachedTool = Readonly<{
+  identity: string;
+  asset: PreparedWasixToolAsset;
+  prepared: OliphauntPreparedTool;
+}>;
+
+/** @internal Stateful dispatcher owned by one persistent outer tool worker. */
+export function createWasixToolWorkerDispatcher(
   host: WasixToolHost,
-): Promise<WasixToolWorkerResponse> {
-  try {
-    await host.init();
-    await verifyWasixToolAsset(request.tool);
-    const mounts = await prepareWasixToolMounts(host.Directory, request.runtime);
-    const bin = mounts['/bin'];
-    if (bin === undefined) throw new Error('WASIX tool runtime has no /bin mount');
-    // PostgreSQL frontend startup validates argv[0] to derive its installation
-    // paths. Keep that standard lookup honest while the module itself is
-    // instantiated directly by the host.
-    await bin.writeFile(request.tool.name, request.tool.module);
-    const instance = await host.runOliphauntTool(request.tool.module, {
-      program: `/bin/${request.tool.name}`,
-      moduleBytes: request.tool.module,
-      args: request.args,
-      cwd: '/',
-      env: {
-        PGUSER: 'postgres',
-        PGPASSWORD: 'password',
-        PGSSLMODE: 'disable',
-        PGCLIENTENCODING: 'UTF8',
-        ICU_DATA: '/share/icu',
-        HOME: '/home/postgres',
-        PATH: '/bin',
-        LC_CTYPE: 'C.UTF-8',
-        TZ: 'UTC',
-        // Rust omits this internal path and uses the same module through
-        // Wasmer's virtual network, so the portable artifact stays host-neutral.
-        OLIPHAUNT_DIRECT_PGWIRE: '/dev/oliphaunt-pgwire',
-      },
-      mount: mounts,
-      stdin: request.stdin,
-    });
-    const protocolInput = instance.protocolInput.getWriter();
-    const protocolOutput = instance.protocolOutput.getReader();
-    const frontendPump = pumpToolFrontend(protocolOutput, request.frontend);
-    const backendPump = pumpToolBackend(request.backend, protocolInput);
-    const [output] = await Promise.all([instance.wait(), frontendPump, backendPump]);
-    return {
-      id: request.id,
-      ok: true,
-      exitCode: output.code,
-      stdout: output.stdoutBytes,
-      stderr: output.stderrBytes,
-    };
-  } catch (error) {
-    failWasixByteChannel(request.frontend);
-    failWasixByteChannel(request.backend);
-    return {
-      id: request.id,
-      ok: false,
-      message: describeWorkerError(error),
-    };
-  }
+): (request: WasixToolWorkerRequest) => Promise<WasixToolWorkerResponse> {
+  let hostInitialization: Promise<unknown> | undefined;
+  let tool: CachedTool | undefined;
+
+  const dispatch = async (request: WasixToolWorkerRequest): Promise<WasixToolWorkerResponse> => {
+    try {
+      hostInitialization ??= host.init();
+      await hostInitialization;
+      if (request.kind === 'prepare') {
+        const toolIdentity = wasixToolAssetIdentity(request.tool);
+        if (tool === undefined) {
+          const asset = await prepareWasixToolAsset(request.tool);
+          tool = {
+            identity: toolIdentity,
+            asset,
+            prepared: host.prepareOliphauntTool(asset.module, asset.bytes),
+          };
+        } else if (tool.identity !== toolIdentity) {
+          throw new Error('Oliphaunt WASIX tool worker cannot replace psql');
+        }
+        return { id: request.id, ok: true, kind: 'prepared' };
+      }
+
+      if (tool === undefined) throw new Error(`WASIX ${request.tool} module is not prepared`);
+      return await runPreparedTool(request, host, tool);
+    } catch (error) {
+      if (request.kind === 'run') {
+        finishFailedToolChannels(request);
+      }
+      return { id: request.id, ok: false, message: describeWorkerError(error) };
+    }
+  };
+  return dispatch;
 }
 
 /** @internal Transfer owned tool outputs without another table-sized structured clone. */
 export function toolWorkerResponseTransfers(response: WasixToolWorkerResponse): ArrayBuffer[] {
-  if (!response.ok) return [];
+  if (!response.ok || response.kind !== 'completed') return [];
   const buffers = new Set<ArrayBuffer>();
   for (const bytes of [response.stdout, response.stderr]) {
     if (bytes.buffer instanceof ArrayBuffer) buffers.add(bytes.buffer);
@@ -123,40 +121,58 @@ export function toolWorkerResponseTransfers(response: WasixToolWorkerResponse): 
   return [...buffers];
 }
 
+async function runPreparedTool(
+  request: WasixToolRunRequest,
+  host: WasixToolHost,
+  tool: CachedTool,
+): Promise<WasixToolWorkerResponse> {
+  const mounts = await materializeWasixToolMounts(host.Directory, tool.asset);
+  let response: WasixToolWorkerResponse | undefined;
+  let failure: Readonly<{ primary: unknown }> | undefined;
+  try {
+    const output = await host.runOliphauntToolDirect(
+      tool.prepared,
+      wasixToolRunOptions(tool.asset, request.args, mounts, request.stdin),
+      (maximumBytes) => {
+        markWasixByteChannelProtocolStarted(request.frontend);
+        return readWasixByteChannelSync(request.backend, maximumBytes);
+      },
+      (chunk) => {
+        markWasixByteChannelProtocolStarted(request.frontend);
+        writeWasixByteChannelSync(request.frontend, chunk);
+      },
+    );
+    markWasixByteChannelProtocolComplete(request.frontend);
+    closeWasixByteChannel(request.frontend);
+    response = {
+      id: request.id,
+      ok: true,
+      kind: 'completed',
+      exitCode: output.code,
+      stdout: output.stdoutBytes,
+      stderr: output.stderrBytes,
+    };
+  } catch (error) {
+    failure = { primary: error };
+  }
+  if (failure !== undefined) releaseWasixToolMounts(mounts, failure);
+  releaseWasixToolMounts(mounts);
+  if (response === undefined) throw new Error('WASIX psql completed without a response');
+  return response;
+}
+
+function finishFailedToolChannels(request: WasixToolRunRequest): void {
+  if (wasixByteChannelProtocolOutcomeUnknown(request.frontend)) {
+    // Mark uncertainty before EOF so the database cannot observe a clean
+    // connection close and reset while a later public tool failure escapes.
+    failWasixByteChannel(request.frontend);
+    failWasixByteChannel(request.backend);
+  }
+  closeWasixByteChannel(request.frontend);
+}
+
 function describeWorkerError(error: unknown): string {
   if (!(error instanceof Error)) return String(error);
   const cause = 'cause' in error ? error.cause : undefined;
   return cause === undefined ? error.message : `${error.message}: ${describeWorkerError(cause)}`;
-}
-
-async function pumpToolFrontend(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  frontend: WasixByteChannel,
-): Promise<void> {
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) return;
-      await writeWasixByteChannel(frontend, value);
-    }
-  } finally {
-    closeWasixByteChannel(frontend);
-    reader.releaseLock();
-  }
-}
-
-async function pumpToolBackend(
-  backend: WasixByteChannel,
-  writer: WritableStreamDefaultWriter<Uint8Array>,
-): Promise<void> {
-  try {
-    for (;;) {
-      const chunk = await readWasixByteChannel(backend);
-      if (chunk.length === 0) break;
-      await writer.write(chunk);
-    }
-    await writer.close();
-  } finally {
-    writer.releaseLock();
-  }
 }

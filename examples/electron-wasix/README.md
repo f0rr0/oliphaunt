@@ -3,7 +3,9 @@
 Electron keeps WASIX in a Rust sidecar. The sidecar starts
 `OliphauntServer`, prints a local PostgreSQL URL, and stays alive until
 Electron exits. The Electron main process uses `pg` with a single connection
-and exposes the same preload API as the native Electron example.
+and exposes the same preload API as the native Electron example. Its explicit
+Rust smoke test covers `pg_dump` and `psql`; normal sidecar startup does not run
+either tool.
 
 ```sh
 pnpm --dir examples/electron-wasix install

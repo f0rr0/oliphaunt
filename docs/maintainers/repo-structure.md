@@ -38,9 +38,9 @@ source lives under `src/<product>/`.
   runtime SDKs.
 - `src/bindings/wasix-rust/` owns the released Rust WASIX binding.
 - `src/bindings/wasix-ts/` owns the public browser, Node, Bun, and Deno WASIX TypeScript
-  binding. It is a peer binding, not part of the native TypeScript SDK.
-- `src/bindings/wasix-tools/` owns the optional TypeScript `pg_dump`/`psql`
-  facade; portable program bytes remain owned by `liboliphaunt-wasix`.
+  binding and its optional `tools-package/` `pg_dump`/`psql` facade. It is a
+  peer binding, not part of the native TypeScript SDK; portable program bytes
+  remain owned by `liboliphaunt-wasix`.
 - `src/runtimes/liboliphaunt/wasix-postmaster/` owns the released concurrent
   PostgreSQL postmaster runtime and its sealed WASIX backend carrier. It reuses
   canonical source and toolchain inputs where semantics agree, while owning
@@ -80,7 +80,7 @@ synthetic root:
   `src/sdks/js/src/__tests__/`, and
   `src/bindings/wasix-rust/crates/oliphaunt-wasix/tests/`, plus
   `src/bindings/wasix-ts/src/__tests__/` for the WASIX TypeScript binding, and
-  `src/bindings/wasix-tools/src/__tests__/` for its optional tools facade.
+  `src/bindings/wasix-ts/tools-package/src/__tests__/` for its optional tools facade.
 - Rust SDK tests are split by contract: deliberate public vocabulary stays in
   `src/sdks/rust/tests/public_api.rs`, native-environment smokes stay in
   `src/sdks/rust/tests/native_smoke.rs`, and extension coverage stays in

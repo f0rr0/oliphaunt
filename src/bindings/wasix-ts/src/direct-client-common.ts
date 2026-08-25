@@ -1,6 +1,8 @@
 import type { WasixDirectoryMount } from './archive.js';
 import {
   WasixDatabaseImpl,
+  normalizeWasixDatabaseIdentity,
+  type WasixDatabaseIdentity,
   type WasixDatabaseSession,
   type WasixPersistenceMode,
   type WasixProtocolConnectionMode,
@@ -10,6 +12,8 @@ import { type PreparedWasixRuntime, prepareWasixRuntime } from './extensions.js'
 import type {
   Directory,
   OliphauntDirectInstance,
+  OliphauntPreparedTool,
+  OliphauntToolOutput,
   RunWasixOptions,
   WasmerInitOptions,
 } from './host/index.mjs';
@@ -25,7 +29,22 @@ import {
   type WasixStorageSyncBoundary,
 } from './storage-provider.js';
 import type { OliphauntDatabase } from './types.js';
-import { serveWasixProtocolConnection, type WasixProtocolConnection } from './pgwire-connection.js';
+import {
+  serveWasixProtocolConnection,
+  SynchronousPgDumpConnection,
+  type WasixProtocolConnection,
+} from './pgwire-connection.js';
+import {
+  materializeWasixToolMounts,
+  prepareWasixToolAsset,
+  releaseWasixToolMounts,
+  type PreparedWasixToolAsset,
+  type WasixPgDumpProcessOptions,
+  type WasixToolProcessResult,
+  validateWasixToolDescriptor,
+  wasixToolAssetIdentity,
+  wasixToolRunOptions,
+} from './tool-runtime.js';
 import {
   compileWasixModule,
   composeLifecycleFailure,
@@ -46,6 +65,14 @@ export type DirectWasixHost = Readonly<{
     moduleBytes: Uint8Array,
     options: RunWasixOptions,
   ): Promise<OliphauntDirectInstance>;
+  prepareOliphauntTool?(module: WebAssembly.Module, moduleBytes: Uint8Array): OliphauntPreparedTool;
+  runOliphauntToolDirect?(
+    prepared: OliphauntPreparedTool,
+    options: RunWasixOptions,
+    protocolRead: (maximumBytes: number) => Uint8Array,
+    /** Borrowed bytes: synchronously copy; never mutate or retain this view. */
+    protocolWrite: (chunk: Uint8Array) => void,
+  ): Promise<OliphauntToolOutput>;
 }>;
 
 /** @internal Dependency seam for deterministic direct-lifecycle qualification. */
@@ -66,6 +93,11 @@ type DirectInstanceInitializer = (
   instance: OliphauntDirectInstance,
   storageState: WasixStorageLease['state'],
 ) => Promise<Uint8Array<ArrayBuffer>>;
+type CachedPgDump = Readonly<{
+  identity: string;
+  asset: PreparedWasixToolAsset;
+  prepared: OliphauntPreparedTool;
+}>;
 
 const preparedRuntimes = new Map<string, Promise<PreparedWasixRuntime>>();
 const MAX_PREPARED_RUNTIMES = 1;
@@ -99,12 +131,16 @@ export function openBrowserWorkerSession(
 /** Owns the caller-realm guest, its mounted PGDATA, and their joint lifecycle. */
 /** @internal */
 export class DirectWasixSession implements WasixDatabaseSession {
+  readonly identity: WasixDatabaseIdentity;
   #instance: OliphauntDirectInstance | undefined;
   readonly #storage: WasixStorageLease;
   readonly #baseDirectory: Directory;
   readonly #instantiate: DirectInstanceFactory;
   readonly #initialize: DirectInstanceInitializer;
   readonly #username: string;
+  readonly #host: DirectWasixHost;
+  #pgDump: Promise<CachedPgDump> | undefined;
+  #pgDumpIdentity: string | undefined;
   #closed = false;
   #failed = false;
   #closeAttempt: Promise<void> | undefined;
@@ -117,6 +153,8 @@ export class DirectWasixSession implements WasixDatabaseSession {
     instantiate: DirectInstanceFactory,
     initialize: DirectInstanceInitializer,
     username: string,
+    database: string,
+    host: DirectWasixHost,
   ) {
     this.#instance = instance;
     this.#storage = storage;
@@ -124,6 +162,8 @@ export class DirectWasixSession implements WasixDatabaseSession {
     this.#instantiate = instantiate;
     this.#initialize = initialize;
     this.#username = username;
+    this.#host = host;
+    this.identity = normalizeWasixDatabaseIdentity(username, database);
   }
 
   static async open(
@@ -187,6 +227,8 @@ export class DirectWasixSession implements WasixDatabaseSession {
         instantiate,
         initialize,
         options.username,
+        options.database,
+        host,
       );
       opened = session;
       session.#startupResponse = await initialize(instance, storage.state);
@@ -271,17 +313,79 @@ export class DirectWasixSession implements WasixDatabaseSession {
     }
   }
 
+  async runPgDump(options: WasixPgDumpProcessOptions): Promise<WasixToolProcessResult> {
+    this.#assertHealthy();
+    if (options.tool.name !== 'pg_dump') {
+      throw new TypeError('the same-realm tool path supports only pg_dump');
+    }
+    const cached = await this.#preparePgDump(options.tool);
+    const runTool = this.#host.runOliphauntToolDirect;
+    if (runTool === undefined) {
+      throw new Error('this WASIX host does not support same-realm pg_dump');
+    }
+    const mounts = await materializeWasixToolMounts(this.#host.Directory, cached.asset);
+    let result: WasixToolProcessResult | undefined;
+    let failure: Readonly<{ primary: unknown }> | undefined;
+    let connection: SynchronousPgDumpConnection | undefined;
+    try {
+      result = await this.#runToolSession(
+        async () => {
+          const activeConnection = new SynchronousPgDumpConnection({
+            startupResponse: this.#startupResponse,
+            startupIdentity: this.identity,
+            exec: (input, onChunk) => {
+              this.#currentInstance().execProtocolStream(input, onChunk);
+            },
+          });
+          connection = activeConnection;
+          const output = await runTool(
+            cached.prepared,
+            wasixToolRunOptions(cached.asset, options.args, mounts),
+            (maximumBytes) => activeConnection.read(maximumBytes),
+            (chunk) => activeConnection.write(chunk),
+          );
+          activeConnection.finish();
+          return {
+            exitCode: output.code,
+            stdout: output.stdoutBytes,
+            stderr: output.stderrBytes,
+          };
+        },
+        () => connection?.protocolStarted === true,
+      );
+    } catch (error) {
+      failure = { primary: error };
+    }
+    if (failure !== undefined) releaseWasixToolMounts(mounts, failure);
+    releaseWasixToolMounts(mounts);
+    if (result === undefined) throw new Error('pg_dump completed without a process result');
+    return result;
+  }
+
   async serve(
     connection: WasixProtocolConnection,
     mode: WasixProtocolConnectionMode,
   ): Promise<void> {
     this.#assertHealthy();
+    if (mode === 'tool') {
+      await this.#runToolSession(() =>
+        serveWasixProtocolConnection(connection, {
+          startupResponse: this.#startupResponse,
+          startupIdentity: this.identity,
+          execDuplex: (input, onRead, onWrite) => {
+            this.#currentInstance().execProtocolDuplex(input, onRead, onWrite);
+          },
+          publishIdle: async () => undefined,
+          rollback: async () => {
+            const response = this.#currentInstance().execProtocolRaw(simpleQuery('ROLLBACK'));
+            assertSuccessfulQueryResponse(response);
+          },
+        }),
+      );
+      return;
+    }
     try {
-      if (mode === 'server') {
-        await this.#restartProtocolBackend();
-      } else {
-        await this.#resetProtocolSession();
-      }
+      await this.#restartProtocolBackend();
     } catch (error) {
       this.#failed = true;
       throw error;
@@ -290,6 +394,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
     try {
       await serveWasixProtocolConnection(connection, {
         startupResponse: this.#startupResponse,
+        startupIdentity: this.identity,
         execDuplex: (input, onRead, onWrite) => {
           this.#currentInstance().execProtocolDuplex(input, onRead, onWrite);
         },
@@ -311,17 +416,85 @@ export class DirectWasixSession implements WasixDatabaseSession {
       if (primaryFailure === undefined) throw cleanupError;
       throw composeLifecycleFailure(
         primaryFailure instanceof Error ? primaryFailure : new Error(describeError(primaryFailure)),
-        `WASIX ${mode} session cleanup also failed`,
+        'WASIX server session cleanup also failed',
         cleanupError,
       );
     }
     if (primaryFailure !== undefined) {
-      // A tool-side transport failure can happen after PostgreSQL accepted
-      // work but before the frontend observed its result. Resetting and
-      // publishing makes storage safe; it cannot make that outcome known.
-      if (mode === 'tool') this.#failed = true;
       throw primaryFailure;
     }
+  }
+
+  async #runToolSession<T>(
+    operation: () => Promise<T>,
+    outcomeUnknown: () => boolean = () => true,
+  ): Promise<T> {
+    try {
+      await this.#resetProtocolSession();
+    } catch (error) {
+      this.#failed = true;
+      throw error;
+    }
+
+    let result: T | undefined;
+    let primaryFailure: unknown;
+    try {
+      result = await operation();
+    } catch (error) {
+      primaryFailure = error;
+    }
+    try {
+      await this.#resetProtocolSession();
+      await this.#storage.sync(this.#baseDirectory, 'operation');
+    } catch (cleanupError) {
+      this.#failed = true;
+      if (primaryFailure === undefined) throw cleanupError;
+      throw composeLifecycleFailure(
+        asError(primaryFailure),
+        'WASIX tool session cleanup also failed',
+        cleanupError,
+      );
+    }
+    if (primaryFailure !== undefined) {
+      // A failure before either tool protocol callback is a known host/process
+      // failure. Once protocol activity begins, the database outcome may have
+      // escaped observation even though reset/publication itself succeeded.
+      if (outcomeUnknown()) this.#failed = true;
+      throw primaryFailure;
+    }
+    return result as T;
+  }
+
+  #preparePgDump(descriptor: WasixPgDumpProcessOptions['tool']): Promise<CachedPgDump> {
+    validateWasixToolDescriptor(descriptor);
+    if (descriptor.name !== 'pg_dump') {
+      return Promise.reject(new TypeError('the same-realm tool path supports only pg_dump'));
+    }
+    const identity = wasixToolAssetIdentity(descriptor);
+    if (this.#pgDump !== undefined) {
+      if (this.#pgDumpIdentity !== identity) {
+        return Promise.reject(new Error('this database cannot replace its prepared pg_dump'));
+      }
+      return this.#pgDump;
+    }
+    const prepare = this.#host.prepareOliphauntTool;
+    if (prepare === undefined) {
+      return Promise.reject(new Error('this WASIX host does not support same-realm pg_dump'));
+    }
+    const pending = prepareWasixToolAsset(descriptor).then((asset) => ({
+      identity,
+      asset,
+      prepared: prepare(asset.module, asset.bytes),
+    }));
+    this.#pgDumpIdentity = identity;
+    this.#pgDump = pending;
+    void pending.catch(() => {
+      if (this.#pgDump === pending) {
+        this.#pgDump = undefined;
+        this.#pgDumpIdentity = undefined;
+      }
+    });
+    return pending;
   }
 
   async #resetProtocolSession(): Promise<void> {
@@ -436,6 +609,9 @@ export class DirectWasixSession implements WasixDatabaseSession {
       return;
     }
     this.#closed = true;
+    const pendingPgDump = this.#pgDump;
+    this.#pgDump = undefined;
+    this.#pgDumpIdentity = undefined;
 
     let failure: Error | undefined;
     const instance = this.#instance;
@@ -476,6 +652,20 @@ export class DirectWasixSession implements WasixDatabaseSession {
                 'direct WASIX allocation release also failed',
                 error,
               );
+      }
+    }
+
+    const pgDump = await pendingPgDump?.catch(() => undefined);
+    if (pgDump !== undefined) {
+      try {
+        pgDump.prepared.free();
+      } catch (error) {
+        failure =
+          failure === undefined
+            ? new Error(`prepared pg_dump release failed: ${describeError(error)}`, {
+                cause: error,
+              })
+            : composeLifecycleFailure(failure, 'prepared pg_dump release also failed', error);
       }
     }
     if (failure !== undefined) {
@@ -597,6 +787,10 @@ function storageCloseFailure(error: unknown): Error {
     commitState: 'unknown',
     cause: error,
   });
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(describeError(error));
 }
 
 /** @internal Cache verified runtime materialization without caching transient failures. */

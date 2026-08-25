@@ -178,7 +178,7 @@ Useful findings from that branch:
   backend was made to look postmaster-owned.  The active PG18 lane now does the
   same under `OLIPHAUNT_WASM_SINGLE_USER`.
 - It shortens `PGSemaphoreReset()` to one `sem_trywait()` under Oliphaunt.  The
-  active PG18 lane ports this as part of the current 37-patch stack.  It is a
+  active PG18 lane ports this as part of the current canonical patch stack.  It is a
   lifecycle/runtime cleanup optimization, not an explanation for the earlier
   isolated Test 11 COMMIT gap.
 - It changes `pg_flush_data()` to call `fsync()` under oliphaunt.  That is a
@@ -339,8 +339,8 @@ The source-spine guard also requires that file to match the duplicate
 and the applied patch order cannot drift silently.  It also rejects orphan
 `.patch` files that are not listed in the series; source fingerprints and
 applied patch contents must describe the same stack.  The guard also checks
-that the stack remains reviewable: currently exactly 31 sequentially numbered
-`oliphaunt-wasix` patches, each with a matching subject/filename slug, an
+that the stack remains reviewable: sequentially numbered `oliphaunt-wasix`
+patches, each with a matching subject/filename slug, an
 Oliphaunt maintainer header, and a short rationale before the diff.  When a
 prepared PG18 source tree exists, xtask recomputes the source fingerprint from
 the PostgreSQL tarball metadata, patch series file, and patch file hashes, then
@@ -640,7 +640,7 @@ Verified locally:
 - `assets source-spine --check-patch-applies`
   passes against the prepared PostgreSQL 18.4 source tree in source-only mode.
 - `assets source-spine` passes after the
-  37-patch stack, including the PG18 source-spine guard and source fingerprint
+  canonical patch stack, including the PG18 source-spine guard and source fingerprint
   isolation guard.
 - `assets release-build --skip-build --skip-aot
   --skip-package-size` regenerates the PG18 asset manifest, and the regenerated

@@ -30,6 +30,7 @@ describe('WASIX worker response transfer', () => {
       toolWorkerResponseTransfers({
         id: 1,
         ok: true,
+        kind: 'completed',
         exitCode: 0,
         stdout: diagnostics,
         stderr: diagnostics.subarray(1),

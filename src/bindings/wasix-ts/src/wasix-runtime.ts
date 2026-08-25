@@ -53,14 +53,14 @@ export async function materializeWasixMounts(
 /** @internal Materialize runtime support mounts for frontend tools. */
 export function materializeWasixSupportMounts(
   DirectoryConstructor: typeof Directory,
-  layout: WasixRuntimeLayout,
+  layout: Pick<WasixRuntimeLayout, 'mounts'>,
 ): Promise<Record<string, Directory>> {
   return materializeMountMap(DirectoryConstructor, layout);
 }
 
 async function materializeMountMap(
   DirectoryConstructor: typeof Directory,
-  layout: WasixRuntimeLayout,
+  layout: Pick<WasixRuntimeLayout, 'mounts'>,
   pgdata?: WasixDirectoryMount,
   createPgdataDirectory?: (DirectoryConstructor: typeof Directory) => Promise<Directory>,
 ): Promise<Record<string, Directory>> {

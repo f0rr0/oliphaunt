@@ -61,6 +61,13 @@ mkdir -p "$TMPDIR"
 cp "$stage_root/inputs.json" "$evidence_root/inputs-shard-$shard_index.json"
 "$runner" --shard-index "$shard_index" --shard-count "$shard_count" 2>&1 \
   | tee "$evidence_root/proof-shard-$shard_index.log"
+if [ "$shard_index" = "0" ]; then
+  "$runner" --native-tools-npm-smoke -- \
+    "$root/tools/dev/bun.sh" \
+    "$root/src/runtimes/liboliphaunt/native/tools/smoke-packed-tools-npm.mjs" \
+    --asset-dir "$input_root/runtime" 2>&1 \
+    | tee "$evidence_root/native-tools-npm-shard-$shard_index.log"
+fi
 "$root/tools/dev/bun.sh" "$root/tools/release/write-native-extension-lifecycle-receipt.mjs" \
   --inputs "$stage_root/inputs.json" \
   --log "$evidence_root/proof-shard-$shard_index.log" \

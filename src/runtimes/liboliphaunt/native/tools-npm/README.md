@@ -11,8 +11,8 @@ const sql = await pgDump(server.connectionString, { args: ['--schema-only'] });
 await psql(server.connectionString, { script: sql });
 ```
 
-`pgDump` returns PostgreSQL's default plain SQL. Connection, output, format,
-encoding, compression, and parallel-job flags are managed. `psql` is
+`pgDump` returns PostgreSQL's default plain SQL. Connection, file input/output,
+format, encoding, compression, and parallel-job flags are managed. `psql` is
 non-interactive and accepts `command`, `script`, or ordinary passthrough
 arguments.
 Failures reject with `PostgresToolError`, including the exit code or signal and

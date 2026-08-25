@@ -177,20 +177,24 @@ pnpm add @oliphaunt/wasix-tools
 ```
 
 ```ts
+import Oliphaunt from '@oliphaunt/wasix-ts';
 import { pgDump, psql } from '@oliphaunt/wasix-tools';
 
-const sql = await pgDump(database, { args: ['--schema-only'] });
-await psql(database, { script: sql });
+await using source = await Oliphaunt.open();
+const sql = await pgDump(source, { args: ['--schema-only'] });
+await using target = await Oliphaunt.open();
+await psql(target, { script: sql });
 ```
 
-Tools work in browsers, Node.js, Bun, and Deno against a worker-backed database.
-`pgDump()` returns PostgreSQL's ordinary plain UTF-8 dump, including its normal
-COPY statements. It does not force inserts or rewrite valid SQL. `psql()` is
+Tools work in browsers, Node.js, Bun, and Deno. `pgDump()` supports direct or
+worker placement and returns PostgreSQL's ordinary plain UTF-8 dump, including
+its normal COPY statements. It does not force inserts or rewrite valid SQL.
+`psql()` requires worker placement because COPY restore is full duplex; it is
 included so the same standard output can be applied without inventing a second
 logical restore API. Interactive psql, custom archives, parallel jobs, and
 `pg_restore` are outside this minimal tools product.
 
-Direct tools exclusively own and reset the embedded PostgreSQL session. Do not
+Tool runs exclusively own and reset the embedded PostgreSQL session. Do not
 expect raw-protocol prepared statements or session settings to survive a tool
 run.
 

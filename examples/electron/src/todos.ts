@@ -82,7 +82,9 @@ async function openDatabase(userData: string): Promise<Store> {
   for (const statement of schemaStatements) {
     await sql.raw(statement).execute(db);
   }
-  await validatePostgresTools(connectionString);
+  if (process.env.OLIPHAUNT_ELECTRON_E2E_DRIVER) {
+    await validatePostgresTools(connectionString);
+  }
   return { native, db };
 }
 

@@ -3,8 +3,12 @@ import {
   closeWasixByteChannel,
   createWasixByteChannel,
   failWasixByteChannel,
+  markWasixByteChannelProtocolComplete,
+  markWasixByteChannelProtocolStarted,
   readWasixByteChannel,
   readWasixByteChannelSync,
+  wasixByteChannelProtocolOutcomeUnknown,
+  wasixByteChannelProtocolStarted,
   writeWasixByteChannel,
   writeWasixByteChannelSync,
 } from '../byte-channel.js';
@@ -33,5 +37,17 @@ describe('bounded WASIX byte channel', () => {
     await expect(writeWasixByteChannel(channel, Uint8Array.of(1))).rejects.toThrow(
       /channel failed/,
     );
+  });
+
+  it('shares tool protocol activity without changing channel flow', () => {
+    const channel = createWasixByteChannel();
+    expect(wasixByteChannelProtocolStarted(channel)).toBe(false);
+    expect(wasixByteChannelProtocolOutcomeUnknown(channel)).toBe(false);
+    markWasixByteChannelProtocolStarted(channel);
+    expect(wasixByteChannelProtocolStarted(channel)).toBe(true);
+    expect(wasixByteChannelProtocolOutcomeUnknown(channel)).toBe(true);
+    markWasixByteChannelProtocolComplete(channel);
+    expect(wasixByteChannelProtocolStarted(channel)).toBe(true);
+    expect(wasixByteChannelProtocolOutcomeUnknown(channel)).toBe(false);
   });
 });

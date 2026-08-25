@@ -42,9 +42,10 @@ mode.
 The core package provides queries, commands, callback transactions, buffered
 and callback-streamed raw PostgreSQL protocol bytes, checkpoint, one physical
 backup, restore into persistent storage, and close. Optional
-`@oliphaunt/wasix-tools` adds direct `pg_dump` and non-interactive `psql` on
-every host. Explicit server subpaths add a local endpoint on Node, Bun, and
-Deno. Cancellation and a dedicated typed COPY API remain absent.
+`@oliphaunt/wasix-tools` adds `pgDump` in direct or worker placement and
+non-interactive `psql` in worker placement on every host. Explicit server
+subpaths add a local endpoint on Node, Bun, and Deno. Cancellation and a
+dedicated typed COPY API remain absent.
 
 ## App Responsibilities
 
@@ -55,8 +56,9 @@ Deno. Cancellation and a dedicated typed COPY API remain absent.
   needs an explicit PostgreSQL checkpoint and publication boundary.
 - Treat physical archives as same-format recovery artifacts. Use logical SQL
   dumps for version upgrades or transfers outside the WASIX physical format.
-- Keep tools on worker-backed databases. Use the lightweight local endpoint for
-  one compatibility client, or the separate postmaster product for concurrency.
+- Use direct or worker placement for `pgDump`; use worker placement for `psql`.
+  Use the lightweight local endpoint for one compatibility client, or the
+  separate postmaster product for concurrency.
 
 ## First Query
 

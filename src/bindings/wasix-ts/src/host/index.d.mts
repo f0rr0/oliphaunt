@@ -7,6 +7,12 @@ export type WasixOutput = Readonly<{
   stderr: string;
 }>;
 
+export type OliphauntToolOutput = Readonly<{
+  code: number;
+  stdoutBytes: Uint8Array;
+  stderrBytes: Uint8Array;
+}>;
+
 export type DirectoryEntry = Readonly<{
   type: "dir" | "file" | "unknown";
   name: string;
@@ -44,15 +50,6 @@ export class Instance {
   wait(): Promise<WasixOutput>;
 }
 
-/** Internal PostgreSQL frontend tool process with a private pgwire transport. */
-export class OliphauntToolInstance {
-  private constructor();
-  readonly protocolInput: WritableStream<Uint8Array>;
-  readonly protocolOutput: ReadableStream<Uint8Array>;
-  free(): void;
-  wait(): Promise<WasixOutput>;
-}
-
 /** Caller-realm Oliphaunt driver. Methods run synchronously and never create a Worker. */
 export class OliphauntDirectInstance {
   private constructor();
@@ -65,6 +62,12 @@ export class OliphauntDirectInstance {
     onChunk: (chunk: Uint8Array) => void,
   ): void;
   close(): void;
+  free(): void;
+}
+
+/** Immutable caller-realm state reused across fresh frontend-tool processes. */
+export class OliphauntPreparedTool {
+  private constructor();
   free(): void;
 }
 
@@ -99,10 +102,19 @@ export function runWasix(
   module: Uint8Array | WebAssembly.Module,
   options: RunWasixOptions,
 ): Promise<Instance>;
-export function runOliphauntTool(
-  module: Uint8Array | WebAssembly.Module,
+/** Internal preparation for repeated caller-realm frontend-tool invocations. */
+export function prepareOliphauntTool(
+  module: WebAssembly.Module,
+  moduleBytes: Uint8Array,
+): OliphauntPreparedTool;
+/** Internal caller-realm runner for a single PostgreSQL frontend tool invocation. */
+export function runOliphauntToolDirect(
+  prepared: OliphauntPreparedTool,
   options: RunWasixOptions,
-): Promise<OliphauntToolInstance>;
+  protocolRead: (maximumBytes: number) => Uint8Array,
+  /** Borrowed bytes: synchronously copy; never mutate or retain this view. */
+  protocolWrite: (chunk: Uint8Array) => void,
+): Promise<OliphauntToolOutput>;
 export function instantiateOliphauntDirect(
   module: WebAssembly.Module,
   moduleBytes: Uint8Array,

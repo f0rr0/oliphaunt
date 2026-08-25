@@ -19,7 +19,7 @@ Use the generated TypeDoc reference for exact declarations.
 | Query values | `QueryParam`, `QueryResult`, `QueryRow`, `CommandResult` | Use PostgreSQL parameter and result values |
 | Errors | `PostgresError`, `WasixStorageError` | Distinguish PostgreSQL failures from host persistence failures |
 | Extensions | `WasixExtensionDescriptor` | Select an exact independently packaged WASIX extension |
-| Optional tools | `pgDump`, `psql`, `PostgresToolError` from `@oliphaunt/wasix-tools` | Run standard plain logical dump or non-interactive psql directly against a worker-backed database |
+| Optional tools | `pgDump`, `psql`, `PostgresToolError` from `@oliphaunt/wasix-tools` | Run a standard plain logical dump against direct or worker placement, or non-interactive psql against worker placement |
 | Optional local server | `openServer`, `ServerListen`, `OliphauntServer` from `@oliphaunt/wasix-ts/server/node`, `/bun`, or `/deno` | Publish one loopback TCP or PostgreSQL-named Unix endpoint on a socket-capable host |
 
 The public API has no backup-format enum, capability object, initialization
