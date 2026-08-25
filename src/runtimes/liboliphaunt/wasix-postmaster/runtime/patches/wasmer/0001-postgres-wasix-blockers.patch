@@ -9356,7 +9356,7 @@ index 0000000..267665b
 +}
 diff --git a/lib/oliphaunt-wasix-postmaster-executor/src/sealed.rs b/lib/oliphaunt-wasix-postmaster-executor/src/sealed.rs
 new file mode 100644
-index 0000000..36680f7
+index 0000000..d92c985
 --- /dev/null
 +++ b/lib/oliphaunt-wasix-postmaster-executor/src/sealed.rs
 @@ -0,0 +1,3382 @@
@@ -19928,7 +19928,7 @@ index 61ec5f6..9130b6b 100644
          for in_event in iterate_poll_events(self.peb) {
              match in_event {
 diff --git a/lib/wasix/src/fs/mod.rs b/lib/wasix/src/fs/mod.rs
-index 508dbef..abc23b6 100644
+index 508dbef..35ad3b6 100644
 --- a/lib/wasix/src/fs/mod.rs
 +++ b/lib/wasix/src/fs/mod.rs
 @@ -46,6 +46,7 @@ use wasmer_wasix_types::{
@@ -19939,7 +19939,44 @@ index 508dbef..abc23b6 100644
  pub use self::fd::{Fd, FdInner, InodeVal, Kind};
  pub(crate) use self::inode_guard::{
      InodeValFilePollGuard, InodeValFilePollGuardJoin, InodeValFilePollGuardMode,
-@@ -516,6 +517,13 @@ impl FileSystem for WasiFsRoot {
+@@ -134,6 +135,18 @@ pub struct InodeGuard {
+     // in the backing file (which may be a host file) getting closed.
+     open_handles: Arc<AtomicI32>,
+ }
++
++#[derive(Debug)]
++pub(crate) struct InodeHandleReservation {
++    inode: InodeGuard,
++}
++
++impl Drop for InodeHandleReservation {
++    fn drop(&mut self) {
++        self.inode.drop_one_handle();
++    }
++}
++
+ impl InodeGuard {
+     pub fn ino(&self) -> Inode {
+         self.ino
+@@ -160,6 +173,17 @@ impl InodeGuard {
+         trace!(ino = %self.ino.0, new_count = %(prev_handles + 1), "acquiring handle for InodeGuard");
+     }
+ 
++    /// Keeps an inode's backing handle alive while a new descriptor is being
++    /// published. Call this while holding the inode lock that observed or
++    /// installed the handle so a concurrent final close cannot clear it in the
++    /// gap before `FdList` acquires the descriptor's permanent reference.
++    pub(crate) fn reserve_handle(&self) -> InodeHandleReservation {
++        self.acquire_handle();
++        InodeHandleReservation {
++            inode: self.clone(),
++        }
++    }
++
+     pub fn drop_one_handle(&self) {
+         let prev_handles = self.open_handles.fetch_sub(1, Ordering::SeqCst);
+ 
+@@ -516,6 +540,13 @@ impl FileSystem for WasiFsRoot {
          self.root.remove_file(path)
      }
  
@@ -19953,7 +19990,7 @@ index 508dbef..abc23b6 100644
      fn new_open_options(&self) -> OpenOptions<'_> {
          self.root.new_open_options()
      }
-@@ -547,6 +555,12 @@ pub struct WasiFs {
+@@ -547,6 +578,12 @@ pub struct WasiFs {
      pub(crate) init_vfs_preopens: Vec<String>,
  }
  
@@ -19966,7 +20003,7 @@ index 508dbef..abc23b6 100644
  impl WasiFs {
      fn writable_package_mount(
          fs: Arc<dyn FileSystem + Send + Sync>,
-@@ -674,10 +688,16 @@ impl WasiFs {
+@@ -674,10 +711,16 @@ impl WasiFs {
              }
          });
  
@@ -19987,7 +20024,7 @@ index 508dbef..abc23b6 100644
          }
      }
  
-@@ -700,8 +720,13 @@ impl WasiFs {
+@@ -700,8 +743,13 @@ impl WasiFs {
              }
          });
  
@@ -20003,7 +20040,7 @@ index 508dbef..abc23b6 100644
          }
      }
  
-@@ -1134,6 +1159,69 @@ impl WasiFs {
+@@ -1134,6 +1182,69 @@ impl WasiFs {
              // loading inodes as necessary
              'symlink_resolution: while symlink_count < MAX_SYMLINKS {
                  let processing_cur_inode = cur_inode.clone();
@@ -20073,7 +20110,7 @@ index 508dbef..abc23b6 100644
                  let mut guard = processing_cur_inode.write();
                  match guard.deref_mut() {
                      Kind::Buffer { .. } => unimplemented!("state::get_inode_at_path for buffers"),
-@@ -1170,6 +1258,7 @@ impl WasiFs {
+@@ -1170,6 +1281,7 @@ impl WasiFs {
                              // we want to insert newly opened dirs and files, but not transient symlinks
                              // TODO: explain why (think about this deeply when well rested)
                              let should_insert;
@@ -20081,7 +20118,7 @@ index 508dbef..abc23b6 100644
  
                              let kind = if let Some((base_po_dir, path_to_symlink, relative_path)) =
                                  self.ephemeral_symlink_at(&file)
-@@ -1179,6 +1268,7 @@ impl WasiFs {
+@@ -1179,6 +1291,7 @@ impl WasiFs {
                                  should_insert = false;
                                  loop_for_symlink = true;
                                  symlink_count += 1;
@@ -20089,7 +20126,7 @@ index 508dbef..abc23b6 100644
                                  Kind::Symlink {
                                      base_po_dir,
                                      path_to_symlink,
-@@ -1191,6 +1281,16 @@ impl WasiFs {
+@@ -1191,6 +1304,16 @@ impl WasiFs {
                                      .ok()
                                      .ok_or(Errno::Noent)?;
                                  let file_type = metadata.file_type();
@@ -20106,7 +20143,7 @@ index 508dbef..abc23b6 100644
                                  if file_type.is_dir() {
                                      should_insert = true;
                                      // load DIR
-@@ -1286,12 +1386,13 @@ impl WasiFs {
+@@ -1286,12 +1409,13 @@ impl WasiFs {
                              };
                              drop(guard);
  
@@ -20123,7 +20160,7 @@ index 508dbef..abc23b6 100644
                              if should_insert {
                                  let mut guard = processing_cur_inode.write();
                                  if let Kind::Dir { entries, .. } = guard.deref_mut() {
-@@ -1532,6 +1633,8 @@ impl WasiFs {
+@@ -1532,6 +1656,8 @@ impl WasiFs {
                      rights_inheriting: ALL_RIGHTS,
                      flags: Fdflags::empty(),
                      offset: Arc::new(AtomicU64::new(0)),
@@ -20132,7 +20169,7 @@ index 508dbef..abc23b6 100644
                      fd_flags: Fdflagsext::empty(),
                  },
                  open_flags: 0,
-@@ -1556,9 +1659,32 @@ impl WasiFs {
+@@ -1556,9 +1682,32 @@ impl WasiFs {
              .map(|a| a.inode.clone())
      }
  
@@ -20167,7 +20204,7 @@ index 508dbef..abc23b6 100644
          Ok(*guard.deref())
      }
  
-@@ -1650,6 +1776,24 @@ impl WasiFs {
+@@ -1650,6 +1799,24 @@ impl WasiFs {
          }
      }
  
@@ -20192,7 +20229,7 @@ index 508dbef..abc23b6 100644
      #[allow(clippy::await_holding_lock)]
      pub async fn flush(&self, fd: WasiFd) -> Result<(), Errno> {
          match fd {
-@@ -1702,6 +1846,108 @@ impl WasiFs {
+@@ -1702,6 +1869,108 @@ impl WasiFs {
          Ok(())
      }
  
@@ -20301,7 +20338,7 @@ index 508dbef..abc23b6 100644
      /// Creates an inode and inserts it given a Kind and some extra data
      pub(crate) fn create_inode(
          &self,
-@@ -1841,6 +2087,21 @@ impl WasiFs {
+@@ -1841,6 +2110,21 @@ impl WasiFs {
          idx: Option<WasiFd>,
          exclusive: bool,
      ) -> Result<WasiFd, Errno> {
@@ -20323,7 +20360,7 @@ index 508dbef..abc23b6 100644
          let is_stdio = matches!(
              idx,
              Some(__WASI_STDIN_FILENO) | Some(__WASI_STDOUT_FILENO) | Some(__WASI_STDERR_FILENO)
-@@ -1851,6 +2112,8 @@ impl WasiFs {
+@@ -1851,6 +2135,8 @@ impl WasiFs {
                  rights_inheriting,
                  flags: fs_flags,
                  offset: Arc::new(AtomicU64::new(0)),
@@ -20332,7 +20369,7 @@ index 508dbef..abc23b6 100644
                  fd_flags,
              },
              open_flags,
-@@ -1858,17 +2121,20 @@ impl WasiFs {
+@@ -1858,17 +2144,20 @@ impl WasiFs {
              is_stdio,
          };
  
@@ -20360,7 +20397,7 @@ index 508dbef..abc23b6 100644
          }
      }
  
-@@ -1890,6 +2156,8 @@ impl WasiFs {
+@@ -1890,6 +2179,8 @@ impl WasiFs {
                      rights_inheriting: fd.inner.rights_inheriting,
                      flags: fd.inner.flags,
                      offset: fd.inner.offset.clone(),
@@ -20369,7 +20406,7 @@ index 508dbef..abc23b6 100644
                      fd_flags: match cloexec {
                          None => fd.inner.fd_flags,
                          Some(cloexec) => {
-@@ -2201,23 +2469,30 @@ impl WasiFs {
+@@ -2201,23 +2492,30 @@ impl WasiFs {
                  kind: RwLock::new(kind),
              })
          };
@@ -20416,7 +20453,7 @@ index 508dbef..abc23b6 100644
      }
  
      pub fn get_stat_for_kind(&self, kind: &Kind) -> Result<Filestat, Errno> {
-@@ -2291,23 +2566,22 @@ impl WasiFs {
+@@ -2291,23 +2589,22 @@ impl WasiFs {
  
      /// Closes an open FD, handling all details such as FD being preopen
      pub(crate) fn close_fd(&self, fd: WasiFd) -> Result<(), Errno> {
@@ -20455,7 +20492,7 @@ index 508dbef..abc23b6 100644
          Ok(())
      }
  }
-@@ -2461,6 +2735,7 @@ pub fn fs_error_into_wasi_err(fs_error: FsError) -> Errno {
+@@ -2461,6 +2758,7 @@ pub fn fs_error_into_wasi_err(fs_error: FsError) -> Errno {
  mod tests {
      use super::*;
      use once_cell::sync::OnceCell;
@@ -20463,7 +20500,7 @@ index 508dbef..abc23b6 100644
      use tempfile::tempdir;
      use virtual_fs::{RootFileSystemBuilder, TmpFileSystem};
      use wasmer::Engine;
-@@ -2556,6 +2831,149 @@ mod tests {
+@@ -2556,6 +2854,243 @@ mod tests {
          );
      }
  
@@ -20573,6 +20610,100 @@ index 508dbef..abc23b6 100644
 +        assert_eq!(fd_entry.inode.stat.read().unwrap().st_size, 3);
 +        assert_eq!(WasiFs::authoritative_fd_size(&fd_entry), 8192);
 +        assert_eq!(wasi_fs.filestat_fd(fd).unwrap().st_size, 8192);
++    }
++
++    #[cfg(feature = "host-fs")]
++    #[tokio::test]
++    async fn open_handle_reservation_bridges_final_close_to_fd_publication() {
++        let root_dir = tempdir().unwrap();
++        std::fs::write(root_dir.path().join("relation"), b"data").unwrap();
++
++        let host_fs = virtual_fs::host_fs::FileSystem::new(
++            tokio::runtime::Handle::current(),
++            root_dir.path(),
++        )
++        .unwrap();
++        let inodes = WasiInodes::new();
++        let fs_backing = WasiFsRoot::from_filesystem(Arc::new(host_fs));
++        let wasi_fs = WasiFs::new_init(fs_backing, &inodes, FS_ROOT_INO).unwrap();
++        let handle = wasi_fs
++            .root_fs
++            .new_open_options()
++            .read(true)
++            .write(true)
++            .open(Path::new("/relation"))
++            .unwrap();
++        let inode = wasi_fs
++            .create_inode(
++                &inodes,
++                Kind::File {
++                    handle: Some(Arc::new(RwLock::new(handle))),
++                    path: PathBuf::from("/relation"),
++                    fd: None,
++                },
++                false,
++                "relation".to_string(),
++            )
++            .unwrap();
++        let rights = Rights::FD_READ | Rights::FD_WRITE;
++        let first = wasi_fs
++            .create_fd(
++                rights,
++                Rights::empty(),
++                Fdflags::empty(),
++                Fdflagsext::empty(),
++                0,
++                inode.clone(),
++            )
++            .unwrap();
++
++        let reservation = {
++            let guard = inode.read();
++            assert!(matches!(
++                guard.deref(),
++                Kind::File {
++                    handle: Some(_),
++                    ..
++                }
++            ));
++            inode.reserve_handle()
++        };
++        wasi_fs.close_fd(first).unwrap();
++        assert_eq!(inode.handle_count(), 1);
++        assert!(matches!(
++            inode.read().deref(),
++            Kind::File {
++                handle: Some(_),
++                ..
++            }
++        ));
++
++        let second = wasi_fs
++            .create_fd(
++                rights,
++                Rights::empty(),
++                Fdflags::empty(),
++                Fdflagsext::empty(),
++                0,
++                inode.clone(),
++            )
++            .unwrap();
++        drop(reservation);
++        assert_eq!(inode.handle_count(), 1);
++        assert!(matches!(
++            inode.read().deref(),
++            Kind::File {
++                handle: Some(_),
++                ..
++            }
++        ));
++
++        wasi_fs.close_fd(second).unwrap();
++        assert_eq!(inode.handle_count(), 0);
++        assert!(matches!(
++            inode.read().deref(),
++            Kind::File { handle: None, .. }
++        ));
 +    }
 +
 +    #[tokio::test]
@@ -41486,7 +41617,7 @@ index bc2bf06..19bc10f 100644
  pub use proc_signals_get::*;
  pub use proc_signals_sizes_get::*;
 diff --git a/lib/wasix/src/syscalls/wasix/path_open2.rs b/lib/wasix/src/syscalls/wasix/path_open2.rs
-index 83db5f2..53530c1 100644
+index 83db5f2..eaa083d 100644
 --- a/lib/wasix/src/syscalls/wasix/path_open2.rs
 +++ b/lib/wasix/src/syscalls/wasix/path_open2.rs
 @@ -46,8 +46,7 @@ pub fn path_open2<M: MemorySize>(
@@ -41568,7 +41699,7 @@ index 83db5f2..53530c1 100644
          },
      };
  
-@@ -201,133 +204,246 @@ pub(crate) fn path_open_internal(
+@@ -201,133 +204,249 @@ pub(crate) fn path_open_internal(
          create: true,
          append: true,
          truncate: true,
@@ -41610,6 +41741,7 @@ index 83db5f2..53530c1 100644
 +        }
 +    };
  
++    let mut handle_reservation = None;
      let inode = if let Ok(inode) = maybe_inode {
          // Happy path, we found the file we're trying to open
          let processing_inode = inode.clone();
@@ -41702,6 +41834,7 @@ index 83db5f2..53530c1 100644
 +                    handle_satisfies_open(handle.as_ref(), &existing_file_requested_config).then(
 +                        || {
 +                            record_file_open_flags(&mut open_flags);
++                            handle_reservation = Some(processing_inode.reserve_handle());
 +                            processing_inode.clone()
 +                        },
 +                    )
@@ -41820,6 +41953,7 @@ index 83db5f2..53530c1 100644
 +                            return Ok(Ok(dup_fd));
 +                        }
 +                    }
++                    handle_reservation = Some(processing_inode.reserve_handle());
                  }
 -            }
 -            Kind::Dir { .. } => {
@@ -41911,7 +42045,22 @@ index 83db5f2..53530c1 100644
      } else {
          // less-happy path, we have to try to create the file
          if o_flags.contains(Oflags::CREATE) {
-@@ -437,7 +553,7 @@ pub(crate) fn path_open_internal(
+@@ -417,6 +536,8 @@ pub(crate) fn path_open_internal(
+                 )
+             };
+ 
++            handle_reservation = Some(new_inode.reserve_handle());
++
+             {
+                 let mut guard = parent_inode.write();
+                 if let Kind::Dir { entries, .. } = guard.deref_mut() {
+@@ -432,12 +553,12 @@ pub(crate) fn path_open_internal(
+ 
+     // TODO: check and reduce these
+     // TODO: ensure a mutable fd to root can never be opened
+-    let out_fd = wasi_try_ok_ok!(if let Some(fd) = with_fd {
++    let out_fd = if let Some(fd) = with_fd {
+         state
              .fs
              .with_fd(
                  adjusted_rights,
@@ -41920,7 +42069,7 @@ index 83db5f2..53530c1 100644
                  fs_flags,
                  fd_flags,
                  open_flags,
-@@ -448,7 +564,7 @@ pub(crate) fn path_open_internal(
+@@ -448,13 +569,53 @@ pub(crate) fn path_open_internal(
      } else {
          state.fs.create_fd(
              adjusted_rights,
@@ -41929,7 +42078,12 @@ index 83db5f2..53530c1 100644
              fs_flags,
              fd_flags,
              open_flags,
-@@ -458,3 +574,41 @@ pub(crate) fn path_open_internal(
+             inode,
+         )
+-    });
++    };
++    drop(handle_reservation);
++    let out_fd = wasi_try_ok_ok!(out_fd);
  
      Ok(Ok(out_fd))
  }
