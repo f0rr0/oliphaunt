@@ -300,6 +300,24 @@ async function maliciousZip(archive, entry, kind) {
   run("python3", ["-c", script, archive, entry, kind]);
 }
 
+async function appendZipFiles(archive, prefix, count) {
+  const script = [
+    "import stat, sys, zipfile",
+    "archive, prefix, count = sys.argv[1], sys.argv[2], int(sys.argv[3])",
+    "with zipfile.ZipFile(archive, 'a') as output:",
+    "  directory = zipfile.ZipInfo(prefix + '/')",
+    "  directory.create_system = 3",
+    "  directory.external_attr = ((stat.S_IFDIR | 0o755) << 16) | 0x10",
+    "  output.writestr(directory, b'')",
+    "  for index in range(count):",
+    "    info = zipfile.ZipInfo(f'{prefix}/file-{index:04d}')",
+    "    info.create_system = 3",
+    "    info.external_attr = ((stat.S_IFREG | 0o644) << 16) | 0x20",
+    "    output.writestr(info, b'')",
+  ].join("\n");
+  run("python3", ["-c", script, archive, prefix, String(count)]);
+}
+
 async function metadataZip(archive, creator, legalRoot = "") {
   await fs.mkdir(path.dirname(archive), { recursive: true });
   const script = [
@@ -2087,6 +2105,51 @@ async function main() {
       [],
       /exceeds the maximum supported 4096 archive entries/u,
     );
+
+    const highCardinalityFrameworkArchive = path.join(
+      root,
+      "archives",
+      "liboliphaunt-1.0.0-high-cardinality.xcframework.zip",
+    );
+    const baseFrameworkAsset = carrier.base.assets.find(({ role }) => role === "base-xcframework");
+    await fs.copyFile(fileURLToPath(baseFrameworkAsset.url), highCardinalityFrameworkArchive);
+    await appendZipFiles(
+      highCardinalityFrameworkArchive,
+      "liboliphaunt.xcframework/ios-arm64/liboliphaunt.framework/Resources/oliphaunt/high-cardinality",
+      8192,
+    );
+    const highCardinalityFramework = structuredClone(carrier);
+    highCardinalityFramework.base.assets = await Promise.all(
+      highCardinalityFramework.base.assets.map(async (row) => row.role === "base-xcframework"
+        ? asset(
+            "base-xcframework",
+            highCardinalityFrameworkArchive,
+            "zip",
+            "liboliphaunt.xcframework",
+          )
+        : row),
+    );
+    const highCardinalityFrameworkCarrierFile = path.join(root, "high-cardinality-framework.json");
+    await write(
+      highCardinalityFrameworkCarrierFile,
+      `${JSON.stringify(highCardinalityFramework, null, 2)}\n`,
+    );
+    const highCardinalityFrameworkOutput = path.join(root, "high-cardinality-framework-output");
+    await stageIosApp({
+      allowFileUrls: true,
+      cacheDir: path.join(root, "high-cardinality-framework-cache"),
+      carriers: [highCardinalityFrameworkCarrierFile],
+      extensions: [],
+      icu: false,
+      outputDir: highCardinalityFrameworkOutput,
+    });
+    await fs.access(path.join(
+      highCardinalityFrameworkOutput,
+      "frameworks",
+      "base",
+      "liboliphaunt.xcframework",
+      "Info.plist",
+    ));
 
     const traversalArchive = path.join(root, "archives", "malicious-traversal.zip");
     await maliciousZip(traversalArchive, "../escaped-from-rn.txt", "file");

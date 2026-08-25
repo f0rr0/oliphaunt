@@ -136,6 +136,7 @@ if (target === "android-arm64-v8a") {
   );
   stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-pg18-android-x86_64/out"));
   stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-pg18-linux-x64-gnu/install"));
+  stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-pg18-linux-x64-gnu/out/modules"));
   stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-pg18-linux-x64-gnu/icu/share/icu"));
 } else if (target === "ios-xcframework") {
   run("src/runtimes/liboliphaunt/native/bin/build-ios-xcframework.sh");

@@ -900,6 +900,11 @@ pub(super) fn ensure_aot_manifest_matches_source_lane(
         .with_context(|| format!("read {}", manifest_path.display()))?;
     let manifest: AotManifest = serde_json::from_str(&text)
         .with_context(|| format!("parse {}", manifest_path.display()))?;
+    ensure!(
+        manifest.format_version == AOT_MANIFEST_FORMAT_VERSION,
+        "AOT manifest format-version must be {AOT_MANIFEST_FORMAT_VERSION}, got {}",
+        manifest.format_version
+    );
     let actual = manifest.source_lane.as_deref().unwrap_or("<missing>");
     ensure_eq(actual, expected, "AOT manifest source-lane")?;
     ensure_eq(

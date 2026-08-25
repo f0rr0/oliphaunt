@@ -36,11 +36,11 @@ const EXTRACTED_CACHE_SCHEMA = "oliphaunt-extracted-carrier-tree-v1";
 const MAX_CARRIER_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_ZIP_CARRIER_BYTES = 512 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES = 4096;
-// The canonical ICU data payload contains one file per locale/resource and is
-// legitimately larger than the general carrier ceiling. Keep that exception
-// tied to the validated base-carrier role instead of weakening extension and
-// framework archive protection globally.
-const MAX_ICU_ARCHIVE_ENTRIES = 8192;
+// The canonical ICU data payload and base XCFramework contain the complete
+// bundled runtime resource trees and legitimately exceed the general carrier
+// ceiling. Keep that exception tied to those validated base-carrier roles
+// instead of weakening extension and runtime archive protection globally.
+const MAX_BUNDLED_RESOURCE_ARCHIVE_ENTRIES = 16384;
 const MAX_ARCHIVE_MEMBER_BYTES = 1024 * 1024 * 1024;
 const MAX_ARCHIVE_EXPANDED_BYTES = 4 * 1024 * 1024 * 1024;
 const MAX_LEGAL_FILE_BYTES = 16 * 1024 * 1024;
@@ -395,7 +395,9 @@ function boundedBytes(value, label, maximum = MAX_CARRIER_BYTES) {
 }
 
 function archiveEntryLimit(asset) {
-  return asset.role === "icu-data" ? MAX_ICU_ARCHIVE_ENTRIES : MAX_ARCHIVE_ENTRIES;
+  return asset.role === "icu-data" || asset.role === "base-xcframework"
+    ? MAX_BUNDLED_RESOURCE_ARCHIVE_ENTRIES
+    : MAX_ARCHIVE_ENTRIES;
 }
 
 function archiveStreamLimit(maxEntries) {

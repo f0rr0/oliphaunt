@@ -2419,7 +2419,7 @@ fn package_aot_artifacts(
     );
 
     let manifest = AotManifest {
-        format_version: 2,
+        format_version: AOT_MANIFEST_FORMAT_VERSION,
         source_lane: Some(outputs.source_lane.clone()),
         source_fingerprint: outputs.source_fingerprint.clone(),
         postgres_version: Some(outputs.postgres_version.clone()),
@@ -2512,7 +2512,7 @@ pub(crate) fn package_extension_aot_artifacts(
     for (sql_name, mut artifacts) in grouped {
         artifacts.sort_by(|left, right| left.name.cmp(&right.name));
         let manifest = AotManifest {
-            format_version: 1,
+            format_version: AOT_MANIFEST_FORMAT_VERSION,
             source_lane: Some(outputs.source_lane.clone()),
             source_fingerprint: outputs.source_fingerprint.clone(),
             postgres_version: Some(outputs.postgres_version.clone()),
@@ -2541,6 +2541,11 @@ pub(crate) fn check_aot_package_manifest(target: &str, source_lane: &str) -> Res
         .with_context(|| format!("read {}", manifest_path.display()))?;
     let manifest: AotManifest = serde_json::from_str(&text)
         .with_context(|| format!("parse {}", manifest_path.display()))?;
+    ensure!(
+        manifest.format_version == AOT_MANIFEST_FORMAT_VERSION,
+        "AOT manifest format-version must be {AOT_MANIFEST_FORMAT_VERSION}, got {}",
+        manifest.format_version
+    );
     let actual_lane = manifest.source_lane.as_deref().unwrap_or("<missing>");
     ensure_eq(
         actual_lane,
@@ -3226,7 +3231,7 @@ mod tests {
         postgres_version: Option<&str>,
     ) {
         let manifest = AotManifest {
-            format_version: 1,
+            format_version: AOT_MANIFEST_FORMAT_VERSION,
             source_lane: source_lane.map(str::to_owned),
             source_fingerprint: source_fingerprint.map(str::to_owned),
             postgres_version: postgres_version.map(str::to_owned),
@@ -3284,6 +3289,40 @@ mod tests {
             error
                 .to_string()
                 .contains("PG18 AOT manifest source-fingerprint")
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn downloaded_stable_aot_manifest_rejects_noncanonical_format_version() {
+        let path = temp_aot_manifest_path("wrong-format-version");
+        let fingerprint = expected_postgres_source_fingerprint().expect("PG18 fingerprint");
+        write_downloaded_aot_manifest(
+            &path,
+            Some("stable"),
+            Some(&fingerprint),
+            Some("18.4-wasix-oliphaunt"),
+        );
+        let mut manifest: AotManifest =
+            serde_json::from_str(&fs::read_to_string(&path).expect("read AOT manifest"))
+                .expect("parse AOT manifest");
+        manifest.format_version = AOT_MANIFEST_FORMAT_VERSION + 1;
+        fs::write(
+            &path,
+            serde_json::to_string(&manifest).expect("serialize AOT manifest"),
+        )
+        .expect("write AOT manifest");
+
+        let error = ensure_aot_manifest_matches_source_lane(
+            &path,
+            "aarch64-apple-darwin",
+            DEFAULT_SOURCE_LANE,
+        )
+        .expect_err("downloaded AOT manifest with a noncanonical format version should fail");
+
+        assert!(
+            error.to_string().contains("AOT manifest format-version"),
+            "unexpected validation error: {error:#}"
         );
         let _ = fs::remove_file(path);
     }

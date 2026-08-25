@@ -354,31 +354,6 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  package-smoke-browser:
-    tags: ["quality", "smoke", "package", "browser"]
-    command: "node src/bindings/wasix-ts/tools/smoke-browser.mjs --package-only"
-    deps:
-      - "oliphaunt-wasix-ts:package"
-      - "liboliphaunt-wasix:runtime-portable"
-    inputs:
-      - "/.release-please-manifest.json"
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/examples/browser-wasix/**/*"
-      - "/src/bindings/wasix-ts/**/*"
-      - "/src/runtimes/liboliphaunt/wasix/**/*"
-      - "/tools/perf/wasix-browser/plan.mjs"
-      - "/tools/perf/wasix-node/installed-closure.mjs"
-      - "/tools/perf/wasix-node/plan.mjs"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/wasix-typescript-package.mjs"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
   bench:
     tags: ["bench", "plan"]
     script: |
@@ -468,20 +443,32 @@ tasks:
       runInCI: false
   package-artifacts:
     tags: ["release", "artifact-package", "ci-wasix-ts-sdk-package"]
-    command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-wasix-ts"
+    script: |
+      tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-wasix-ts
+      node src/bindings/wasix-ts/tools/smoke-browser.mjs --package-only
     deps:
-      - "oliphaunt-wasix-ts:package-smoke-browser"
+      - "liboliphaunt-wasix:runtime-portable"
       - "oliphaunt-wasix-ts:package-smoke-bun"
       - "oliphaunt-wasix-ts:package-smoke-deno"
       - "oliphaunt-wasix-ts:package-smoke-node"
     inputs:
+      - "/.release-please-manifest.json"
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
       - "/package.json"
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
+      - "/examples/browser-wasix/**/*"
       - "/src/bindings/wasix-ts/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "/src/shared/fixtures/postgres/logical-tools.json"
+      - "/src/shared/fixtures/postgres/logical-tools-seed.sql"
+      - "/src/shared/fixtures/postgres/logical-tools-verify.sql"
+      - "/src/shared/fixtures/storage/database-root.json"
       - "/tools/dev/capture-command-output.mjs"
+      - "/tools/perf/wasix-browser/plan.mjs"
+      - "/tools/perf/wasix-node/installed-closure.mjs"
+      - "/tools/perf/wasix-node/plan.mjs"
       - "/tools/release/build-sdk-ci-artifacts.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
       - "/tools/release/portable-archive.mjs"
@@ -491,6 +478,7 @@ tasks:
       - "/tools/release/sdk-artifacts/wasix-ts.mjs"
       - "/tools/release/sdk-artifacts/wasix-tools-ts.mjs"
       - "/tools/release/wasix-tools-typescript-package.mjs"
+      - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
     outputs:
       - "/target/sdk-artifacts/oliphaunt-wasix-ts/**/*"

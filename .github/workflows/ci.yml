@@ -1631,7 +1631,6 @@ jobs:
           node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime bun
           node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime deno
           node src/bindings/wasix-ts/tools/smoke-browser.mjs --postgis-worker
-          node src/bindings/wasix-ts/tools/smoke-browser.mjs --package-only
           node src/bindings/wasix-ts/tools-package/tools/smoke-host.mjs --runtime node
           tools/dev/bun.sh src/bindings/wasix-ts/tools-package/tools/smoke-host.mjs --runtime bun
           tools/dev/deno.sh run --allow-all src/bindings/wasix-ts/tools-package/tools/smoke-host.mjs --runtime deno

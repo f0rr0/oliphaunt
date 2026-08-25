@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use wasmparser::{Dylink0Subsection, ExternalKind, KnownCustom, Parser, Payload, TypeRef};
 
 pub(super) const ASSET_MANIFEST_FORMAT_VERSION: u32 = 2;
+pub(super) const AOT_MANIFEST_FORMAT_VERSION: u32 = 1;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct SourcesManifest {
