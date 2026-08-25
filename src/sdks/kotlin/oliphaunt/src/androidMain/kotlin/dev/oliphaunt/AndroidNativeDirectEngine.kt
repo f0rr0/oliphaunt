@@ -35,16 +35,17 @@ internal class AndroidNativeDirectEngine(
             OliphauntAndroidRuntimeAssets.resolve(
                 context = appContext,
                 explicitRuntimeDirectory =
-                runtimeDirectory
-                    ?: env("OLIPHAUNT_INSTALL_DIR")
-                    ?: env("OLIPHAUNT_RUNTIME_DIR"),
+                    runtimeDirectory
+                        ?: env("OLIPHAUNT_INSTALL_DIR")
+                        ?: env("OLIPHAUNT_RUNTIME_DIR"),
                 requestedExtensions = config.extensions,
                 resourceRoot = resourceRoot,
             )
-        val storageDirectory = when (val storage = config.storage) {
-            EngineStorage.TemporaryDirectory -> AndroidDirectTemporaryStorage.resolve(appContext)
-            is EngineStorage.Directory -> File(storage.path)
-        }
+        val storageDirectory =
+            when (val storage = config.storage) {
+                EngineStorage.TemporaryDirectory -> AndroidDirectTemporaryStorage.resolve(appContext)
+                is EngineStorage.Directory -> File(storage.path)
+            }
         if (isAndroidSymbolicLink(storageDirectory)) {
             throw OliphauntException("database storage directory must be a real directory: ${storageDirectory.absolutePath}")
         }
@@ -65,7 +66,9 @@ internal class AndroidNativeDirectEngine(
         var nativeOpenAttempted = false
         try {
             when (rootState) {
-                AndroidManagedRootState.Managed -> validateCompleteAndroidPgdata(pgdata)
+                AndroidManagedRootState.Managed -> {
+                    validateCompleteAndroidPgdata(pgdata)
+                }
 
                 AndroidManagedRootState.Empty -> {
                     requireAndroidFreshRootRole(effectiveUsername)
@@ -140,18 +143,21 @@ internal class AndroidNativeDirectEngine(
         }
     }
 
-    override suspend fun restore(destination: String, bytes: ByteArray) {
+    override suspend fun restore(
+        destination: String,
+        bytes: ByteArray,
+    ) {
         validateDirectoryPath(destination, "restore destination")
         OliphauntAndroidNativeBridge.restoreNative(
             destination = destination,
             bytes = bytes,
             libraryPath =
-            resolveAndroidLiboliphauntLibraryPath(
-                explicitLibraryPath = libraryPath,
-                nativeLibraryDirectory = appContext.applicationInfo.nativeLibraryDir,
-                sourceArchivePaths = appContext.applicationInfo.liboliphauntSourceArchivePaths(),
-                supportedAbis = Build.SUPPORTED_ABIS.asList(),
-            ),
+                resolveAndroidLiboliphauntLibraryPath(
+                    explicitLibraryPath = libraryPath,
+                    nativeLibraryDirectory = appContext.applicationInfo.nativeLibraryDir,
+                    sourceArchivePaths = appContext.applicationInfo.liboliphauntSourceArchivePaths(),
+                    supportedAbis = Build.SUPPORTED_ABIS.asList(),
+                ),
         )
     }
 }
@@ -165,15 +171,16 @@ internal fun requireAndroidFreshRootRole(username: String) {
     }
 }
 
-internal fun isAndroidSymbolicLink(file: File): Boolean = try {
-    OsConstants.S_ISLNK(Os.lstat(file.absolutePath).st_mode)
-} catch (error: ErrnoException) {
-    if (error.errno == OsConstants.ENOENT) {
-        false
-    } else {
-        throw OliphauntException("failed to inspect database storage path ${file.absolutePath}: ${error.message}")
+internal fun isAndroidSymbolicLink(file: File): Boolean =
+    try {
+        OsConstants.S_ISLNK(Os.lstat(file.absolutePath).st_mode)
+    } catch (error: ErrnoException) {
+        if (error.errno == OsConstants.ENOENT) {
+            false
+        } else {
+            throw OliphauntException("failed to inspect database storage path ${file.absolutePath}: ${error.message}")
+        }
     }
-}
 
 internal enum class AndroidManagedRootState {
     Empty,
@@ -184,8 +191,9 @@ internal fun classifyAndroidManagedRoot(directory: File): AndroidManagedRootStat
     val descriptor = File(directory, ".oliphaunt.json")
     if (descriptor.exists()) {
         validateAndroidManagedRootDescriptor(descriptor)
-        val entries = directory.list()?.toList()
-            ?: throw OliphauntException("could not inspect database storage directory: ${directory.absolutePath}")
+        val entries =
+            directory.list()?.toList()
+                ?: throw OliphauntException("could not inspect database storage directory: ${directory.absolutePath}")
         if (entries.size != 2 || entries.toSet() != setOf(".oliphaunt.json", "pgdata")) {
             throw OliphauntException(
                 "managed database storage directory must contain exactly .oliphaunt.json and pgdata: ${directory.absolutePath}",
@@ -204,17 +212,18 @@ internal fun classifyAndroidManagedRoot(directory: File): AndroidManagedRootStat
 internal fun writeAndroidManagedRootDescriptor(directory: File) {
     val descriptor = File(directory, ".oliphaunt.json")
     val temporary = File(directory, ".oliphaunt.json.tmp-${UUID.randomUUID()}")
-    val result = runCatching {
-        FileOutputStream(temporary).use { output ->
-            output.write(NATIVE_ROOT_DESCRIPTOR.encodeToByteArray())
-            Os.fchmod(output.fd, OWNER_READ_WRITE_MODE)
-            output.fd.sync()
+    val result =
+        runCatching {
+            FileOutputStream(temporary).use { output ->
+                output.write(NATIVE_ROOT_DESCRIPTOR.encodeToByteArray())
+                Os.fchmod(output.fd, OWNER_READ_WRITE_MODE)
+                output.fd.sync()
+            }
+            if (!temporary.renameTo(descriptor)) {
+                validateAndroidManagedRootDescriptor(descriptor)
+            }
+            OliphauntAndroidRuntimeAssets.syncAndroidDirectory(directory)
         }
-        if (!temporary.renameTo(descriptor)) {
-            validateAndroidManagedRootDescriptor(descriptor)
-        }
-        OliphauntAndroidRuntimeAssets.syncAndroidDirectory(directory)
-    }
     finishAndroidStaging(result, operation = "database root descriptor publication") {
         removeAndroidStagingIfPresent(temporary)
     }
@@ -282,14 +291,16 @@ internal fun validateCompleteAndroidPgdata(pgdata: File) {
 }
 
 private fun validateAndroidManagedRootDescriptor(descriptor: File) {
-    val parent = descriptor.parentFile
-        ?: throw OliphauntException("database root descriptor has no parent: ${descriptor.absolutePath}")
+    val parent =
+        descriptor.parentFile
+            ?: throw OliphauntException("database root descriptor has no parent: ${descriptor.absolutePath}")
     val realLocation = File(parent.canonicalFile, descriptor.name)
     if (!descriptor.isFile || descriptor.length() == 0L || descriptor.canonicalFile != realLocation) {
         throw OliphauntException("database root descriptor must be a nonempty real file: ${descriptor.absolutePath}")
     }
-    val value = runCatching { AndroidFlatJsonParser(descriptor.readText()).parse() }
-        .getOrElse { throw OliphauntException("invalid database root descriptor: ${descriptor.absolutePath}") }
+    val value =
+        runCatching { AndroidFlatJsonParser(descriptor.readText()).parse() }
+            .getOrElse { throw OliphauntException("invalid database root descriptor: ${descriptor.absolutePath}") }
     val family = (value["engineFamily"] as? AndroidJsonValue.StringValue)?.value
     val format = (value["physicalFormat"] as? AndroidJsonValue.StringValue)?.value
     val expectedFormat = mapOf("native" to "native-pg18-v1", "wasix" to "wasix-pg18-v1")[family]
@@ -306,12 +317,18 @@ private fun validateAndroidManagedRootDescriptor(descriptor: File) {
 }
 
 private sealed interface AndroidJsonValue {
-    data class StringValue(val value: String) : AndroidJsonValue
+    data class StringValue(
+        val value: String,
+    ) : AndroidJsonValue
 
-    data class IntegerValue(val value: Long) : AndroidJsonValue
+    data class IntegerValue(
+        val value: Long,
+    ) : AndroidJsonValue
 }
 
-private class AndroidFlatJsonParser(private val source: String) {
+private class AndroidFlatJsonParser(
+    private val source: String,
+) {
     private var offset = 0
 
     fun parse(): Map<String, AndroidJsonValue> {
@@ -329,11 +346,12 @@ private class AndroidFlatJsonParser(private val source: String) {
             skipWhitespace()
             expect(':')
             skipWhitespace()
-            values[key] = if (peek() == '"') {
-                AndroidJsonValue.StringValue(parseString())
-            } else {
-                AndroidJsonValue.IntegerValue(parseInteger())
-            }
+            values[key] =
+                if (peek() == '"') {
+                    AndroidJsonValue.StringValue(parseString())
+                } else {
+                    AndroidJsonValue.IntegerValue(parseInteger())
+                }
             skipWhitespace()
             if (consume('}')) break
             expect(',')
@@ -349,36 +367,61 @@ private class AndroidFlatJsonParser(private val source: String) {
         while (offset < source.length) {
             val character = source[offset++]
             when {
-                character == '"' -> return result.toString()
+                character == '"' -> {
+                    return result.toString()
+                }
 
-                character.code < 0x20 -> throw IllegalArgumentException("unescaped control character")
+                character.code < 0x20 -> {
+                    throw IllegalArgumentException("unescaped control character")
+                }
 
-                character != '\\' -> result.append(character)
+                character != '\\' -> {
+                    result.append(character)
+                }
 
-                offset >= source.length -> throw IllegalArgumentException("incomplete escape")
+                offset >= source.length -> {
+                    throw IllegalArgumentException("incomplete escape")
+                }
 
-                else -> when (val escaped = source[offset++]) {
-                    '"', '\\', '/' -> result.append(escaped)
+                else -> {
+                    when (val escaped = source[offset++]) {
+                        '"', '\\', '/' -> {
+                            result.append(escaped)
+                        }
 
-                    'b' -> result.append('\b')
+                        'b' -> {
+                            result.append('\b')
+                        }
 
-                    'f' -> result.append('\u000c')
+                        'f' -> {
+                            result.append('\u000c')
+                        }
 
-                    'n' -> result.append('\n')
+                        'n' -> {
+                            result.append('\n')
+                        }
 
-                    'r' -> result.append('\r')
+                        'r' -> {
+                            result.append('\r')
+                        }
 
-                    't' -> result.append('\t')
+                        't' -> {
+                            result.append('\t')
+                        }
 
-                    'u' -> {
-                        if (offset + 4 > source.length) throw IllegalArgumentException("incomplete unicode escape")
-                        val code = source.substring(offset, offset + 4).toIntOrNull(16)
-                            ?: throw IllegalArgumentException("invalid unicode escape")
-                        result.append(code.toChar())
-                        offset += 4
+                        'u' -> {
+                            if (offset + 4 > source.length) throw IllegalArgumentException("incomplete unicode escape")
+                            val code =
+                                source.substring(offset, offset + 4).toIntOrNull(16)
+                                    ?: throw IllegalArgumentException("invalid unicode escape")
+                            result.append(code.toChar())
+                            offset += 4
+                        }
+
+                        else -> {
+                            throw IllegalArgumentException("invalid escape")
+                        }
                     }
-
-                    else -> throw IllegalArgumentException("invalid escape")
                 }
             }
         }
@@ -394,9 +437,13 @@ private class AndroidFlatJsonParser(private val source: String) {
                 if (peek()?.isDigit() == true) throw IllegalArgumentException("leading zero")
             }
 
-            in '1'..'9' -> while (peek()?.isDigit() == true) offset += 1
+            in '1'..'9' -> {
+                while (peek()?.isDigit() == true) offset += 1
+            }
 
-            else -> throw IllegalArgumentException("expected integer")
+            else -> {
+                throw IllegalArgumentException("expected integer")
+            }
         }
         return source.substring(start, offset).toLongOrNull()
             ?: throw IllegalArgumentException("invalid integer")
@@ -418,19 +465,23 @@ private class AndroidFlatJsonParser(private val source: String) {
 
     private fun peek(): Char? = source.getOrNull(offset)
 
-    private fun consume(expected: Char): Boolean = if (peek() == expected) {
-        offset += 1
-        true
-    } else {
-        false
-    }
+    private fun consume(expected: Char): Boolean =
+        if (peek() == expected) {
+            offset += 1
+            true
+        } else {
+            false
+        }
 
     private fun expect(expected: Char) {
         if (!consume(expected)) throw IllegalArgumentException("expected $expected")
     }
 }
 
-private fun requireRealAndroidDirectory(file: File, label: String) {
+private fun requireRealAndroidDirectory(
+    file: File,
+    label: String,
+) {
     val parent = file.parentFile
     val realLocation = parent?.let { File(it.canonicalFile, file.name) }
     if (!file.isDirectory || realLocation == null || file.canonicalFile != realLocation) {
@@ -438,7 +489,10 @@ private fun requireRealAndroidDirectory(file: File, label: String) {
     }
 }
 
-private fun requireRealAndroidFile(file: File, label: String) {
+private fun requireRealAndroidFile(
+    file: File,
+    label: String,
+) {
     val parent = file.parentFile
     val realLocation = parent?.let { File(it.canonicalFile, file.name) }
     if (!file.isFile || file.length() == 0L || realLocation == null || file.canonicalFile != realLocation) {
@@ -453,12 +507,13 @@ private object AndroidDirectTemporaryStorage {
     @Volatile
     private var root: File? = null
 
-    fun resolve(context: Context): File = synchronized(this) {
-        root ?: File(
-            context.cacheDir,
-            "oliphaunt-direct-${Process.myPid()}-${UUID.randomUUID()}",
-        ).also { root = it }
-    }
+    fun resolve(context: Context): File =
+        synchronized(this) {
+            root ?: File(
+                context.cacheDir,
+                "oliphaunt-direct-${Process.myPid()}-${UUID.randomUUID()}",
+            ).also { root = it }
+        }
 }
 
 private class AndroidNativeDirectSession(
@@ -472,14 +527,15 @@ private class AndroidNativeDirectSession(
     private var closed = false
     private var activeCalls = 0
 
-    override suspend fun execProtocolRaw(request: ByteArray): ByteArray = withContext(executionDispatcher) {
-        val current = beginCall()
-        try {
-            OliphauntAndroidNativeBridge.execProtocolRawNative(current, request)
-        } finally {
-            endCall()
+    override suspend fun execProtocolRaw(request: ByteArray): ByteArray =
+        withContext(executionDispatcher) {
+            val current = beginCall()
+            try {
+                OliphauntAndroidNativeBridge.execProtocolRawNative(current, request)
+            } finally {
+                endCall()
+            }
         }
-    }
 
     override suspend fun execProtocolStream(
         request: ByteArray,
@@ -502,14 +558,15 @@ private class AndroidNativeDirectSession(
         }
     }
 
-    override suspend fun backup(): ByteArray = withContext(executionDispatcher) {
-        val current = beginCall()
-        try {
-            OliphauntAndroidNativeBridge.backupNative(current)
-        } finally {
-            endCall()
+    override suspend fun backup(): ByteArray =
+        withContext(executionDispatcher) {
+            val current = beginCall()
+            try {
+                OliphauntAndroidNativeBridge.backupNative(current)
+            } finally {
+                endCall()
+            }
         }
-    }
 
     override suspend fun cancel() {
         val current = beginCall()
@@ -609,24 +666,27 @@ internal fun resolveAndroidLiboliphauntLibraryPath(
     sourceArchivePaths: List<String> = emptyList(),
     supportedAbis: List<String> = emptyList(),
     envProvider: (String) -> String? = ::env,
-): String? = explicitLibraryPath?.takeIf(String::isNotBlank)
-    ?: envProvider("OLIPHAUNT_KOTLIN_ANDROID_LIBRARY")?.takeIf(String::isNotBlank)
-    ?: envProvider("LIBOLIPHAUNT_PATH")?.takeIf(String::isNotBlank)
-    ?: envProvider("OLIPHAUNT_LIBRARY")?.takeIf(String::isNotBlank)
-    ?: packagedAndroidLiboliphauntPath(nativeLibraryDirectory)
-    ?: packagedAndroidLiboliphauntZipPath(sourceArchivePaths, supportedAbis)
+): String? =
+    explicitLibraryPath?.takeIf(String::isNotBlank)
+        ?: envProvider("OLIPHAUNT_KOTLIN_ANDROID_LIBRARY")?.takeIf(String::isNotBlank)
+        ?: envProvider("LIBOLIPHAUNT_PATH")?.takeIf(String::isNotBlank)
+        ?: envProvider("OLIPHAUNT_LIBRARY")?.takeIf(String::isNotBlank)
+        ?: packagedAndroidLiboliphauntPath(nativeLibraryDirectory)
+        ?: packagedAndroidLiboliphauntZipPath(sourceArchivePaths, supportedAbis)
 
-private fun packagedAndroidLiboliphauntPath(nativeLibraryDirectory: String?): String? = nativeLibraryDirectory
-    ?.takeIf(String::isNotBlank)
-    ?.let { File(it, "liboliphaunt.so") }
-    ?.takeIf(File::isFile)
-    ?.absolutePath
+private fun packagedAndroidLiboliphauntPath(nativeLibraryDirectory: String?): String? =
+    nativeLibraryDirectory
+        ?.takeIf(String::isNotBlank)
+        ?.let { File(it, "liboliphaunt.so") }
+        ?.takeIf(File::isFile)
+        ?.absolutePath
 
-private fun android.content.pm.ApplicationInfo.liboliphauntSourceArchivePaths(): List<String> = buildList {
-    add(sourceDir)
-    add(publicSourceDir)
-    splitSourceDirs?.forEach(::add)
-}.filter { path -> path.isNotBlank() }.distinct()
+private fun android.content.pm.ApplicationInfo.liboliphauntSourceArchivePaths(): List<String> =
+    buildList {
+        add(sourceDir)
+        add(publicSourceDir)
+        splitSourceDirs?.forEach(::add)
+    }.filter { path -> path.isNotBlank() }.distinct()
 
 private fun packagedAndroidLiboliphauntZipPath(
     sourceArchivePaths: List<String>,

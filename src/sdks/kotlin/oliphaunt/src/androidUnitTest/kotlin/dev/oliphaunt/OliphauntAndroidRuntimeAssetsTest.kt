@@ -13,12 +13,13 @@ import kotlin.test.assertTrue
 class OliphauntAndroidRuntimeAssetsTest {
     @Test
     fun rejectsDuplicateManifestProperties() {
-        val error = assertFailsWith<OliphauntException> {
-            OliphauntAndroidRuntimeAssets.parseManifestText(
-                "schema=oliphaunt-runtime-resources-v1\nschema=other\n",
-                "duplicate.properties",
-            )
-        }
+        val error =
+            assertFailsWith<OliphauntException> {
+                OliphauntAndroidRuntimeAssets.parseManifestText(
+                    "schema=oliphaunt-runtime-resources-v1\nschema=other\n",
+                    "duplicate.properties",
+                )
+            }
         assertTrue(error.message.orEmpty().contains("duplicate"))
     }
 
@@ -604,14 +605,15 @@ class OliphauntAndroidRuntimeAssetsTest {
         val fixture = databaseRootFixture()
         val invalid = fixture.getJSONArray("invalidDescriptors")
         val malformed = fixture.getJSONArray("malformedJson")
-        val descriptors = buildList {
-            for (index in 0 until invalid.length()) {
-                add(invalid.getJSONObject(index).getJSONObject("value").toString())
+        val descriptors =
+            buildList {
+                for (index in 0 until invalid.length()) {
+                    add(invalid.getJSONObject(index).getJSONObject("value").toString())
+                }
+                for (index in 0 until malformed.length()) {
+                    add(malformed.getJSONObject(index).getString("value"))
+                }
             }
-            for (index in 0 until malformed.length()) {
-                add(malformed.getJSONObject(index).getString("value"))
-            }
-        }
 
         for (descriptor in descriptors) {
             val root = Files.createTempDirectory("liboliphaunt-android-invalid-descriptor").toFile()
@@ -1152,44 +1154,45 @@ private fun databaseRootFixture(): JSONObject {
     return JSONObject(fixture.toFile().readText())
 }
 
-private fun manifestProperties(vararg entries: Pair<String, String>): Properties = Properties().apply {
-    mapOf(
-        "schema" to "oliphaunt-runtime-resources-v1",
-        "layout" to "postgres-runtime-files-v1",
-        "artifactRole" to "runtime",
-        "catalogProfile" to "",
-        "clusterSeedTarget" to "android-datum64",
-        "icuDataTreeSha256" to "",
-        "mode" to "native-direct",
-        "cacheKey" to "runtime-smoke",
-        "selectedExtensions" to "",
-        "extensions" to "",
-        "runtimeFeatures" to "",
-        "sharedPreloadLibraries" to "",
-        "mobileStaticRegistryState" to "not-required",
-        "mobileStaticRegistryRegistered" to "",
-        "mobileStaticRegistryPending" to "",
-        "nativeModuleStems" to "",
-    ).forEach { (key, value) -> setProperty(key, value) }
-    for ((key, value) in entries) {
-        setProperty(key, value)
+private fun manifestProperties(vararg entries: Pair<String, String>): Properties =
+    Properties().apply {
+        mapOf(
+            "schema" to "oliphaunt-runtime-resources-v1",
+            "layout" to "postgres-runtime-files-v1",
+            "artifactRole" to "runtime",
+            "catalogProfile" to "",
+            "clusterSeedTarget" to "android-datum64",
+            "icuDataTreeSha256" to "",
+            "mode" to "native-direct",
+            "cacheKey" to "runtime-smoke",
+            "selectedExtensions" to "",
+            "extensions" to "",
+            "runtimeFeatures" to "",
+            "sharedPreloadLibraries" to "",
+            "mobileStaticRegistryState" to "not-required",
+            "mobileStaticRegistryRegistered" to "",
+            "mobileStaticRegistryPending" to "",
+            "nativeModuleStems" to "",
+        ).forEach { (key, value) -> setProperty(key, value) }
+        for ((key, value) in entries) {
+            setProperty(key, value)
+        }
+        if (getProperty("artifactRole") == "runtime") {
+            putIfAbsent("clusterSeedTarget", "android-datum64")
+            putIfAbsent(
+                "mobileStaticRegistrySource",
+                if (getProperty("mobileStaticRegistryState") == "complete") {
+                    "static-registry/oliphaunt_static_registry.c"
+                } else {
+                    ""
+                },
+            )
+            putIfAbsent(
+                "icuDataTreeSha256",
+                if (getProperty("runtimeFeatures").orEmpty().split(',').contains("icu")) "a".repeat(64) else "",
+            )
+        }
     }
-    if (getProperty("artifactRole") == "runtime") {
-        putIfAbsent("clusterSeedTarget", "android-datum64")
-        putIfAbsent(
-            "mobileStaticRegistrySource",
-            if (getProperty("mobileStaticRegistryState") == "complete") {
-                "static-registry/oliphaunt_static_registry.c"
-            } else {
-                ""
-            },
-        )
-        putIfAbsent(
-            "icuDataTreeSha256",
-            if (getProperty("runtimeFeatures").orEmpty().split(',').contains("icu")) "a".repeat(64) else "",
-        )
-    }
-}
 
 private fun standardClusterSeedManifestProperties(vararg entries: Pair<String, String>): Properties =
     Properties().apply {
@@ -1278,7 +1281,11 @@ private fun writeReleaseShapedRuntime(
     return runtimeRoot.resolve("files")
 }
 
-private fun writeTestClusterSeed(root: java.io.File, profile: String, digest: String) {
+private fun writeTestClusterSeed(
+    root: java.io.File,
+    profile: String,
+    digest: String,
+) {
     root.resolve("files/global").mkdirs()
     root.resolve("files/PG_VERSION").writeText("18\n")
     root.resolve("files/global/pg_control").writeText("control")
@@ -1304,7 +1311,8 @@ private fun retargetNativeClusterSeedFixture(
     icuDataTreeSha256: String? = null,
 ): String {
     val fixtureRoot =
-        System.getProperty("oliphaunt.clusterSeedFixturesDir")
+        System
+            .getProperty("oliphaunt.clusterSeedFixturesDir")
             ?.takeIf(String::isNotBlank)
             ?.let(Path::of)
             ?: error("oliphaunt.clusterSeedFixturesDir is not configured")
@@ -1314,7 +1322,10 @@ private fun retargetNativeClusterSeedFixture(
             put("compatibilityKey", "native-pg18-$target-v1")
             if (icuDataTreeSha256 != null) put("icuDataTreeSha256", icuDataTreeSha256)
         }
-    return fixtureRoot.resolve(name).toFile().readText()
+    return fixtureRoot
+        .resolve(name)
+        .toFile()
+        .readText()
         .lineSequence()
         .map { line ->
             val key = line.substringBefore('=', line)
