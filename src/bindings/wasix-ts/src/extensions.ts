@@ -375,7 +375,7 @@ export function assertExactCarrierClosure(
 export function parseWasixAssetManifest(bytes: Uint8Array): WasixAssetManifest {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(decoder.decode(bytes));
+    parsed = JSON.parse(decodeUtf8(bytes));
   } catch (error) {
     throw new Error(`WASIX asset manifest is not valid UTF-8 JSON: ${describeError(error)}`);
   }
@@ -708,7 +708,7 @@ function parseClusterSeedManifest(
 ): ClusterSeedManifest {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(decoder.decode(bytes));
+    parsed = JSON.parse(decodeUtf8(bytes));
   } catch (error) {
     throw new Error(
       `WASIX ${expectedProfile} cluster seed manifest is not valid UTF-8 JSON: ${describeError(error)}`,
@@ -1030,7 +1030,7 @@ function verifyPostgresIdentity(
   if (pgVersionBytes === undefined) {
     throw new Error('WASIX cluster seed is missing PG_VERSION');
   }
-  const pgVersion = decoder.decode(pgVersionBytes).trim();
+  const pgVersion = decodeUtf8(pgVersionBytes).trim();
   const runtimeMajor = manifest.runtime['postgres-version'].split('.')[0];
   const seedMajor = seed['postgres-version'].split('.')[0];
   if (pgVersion !== runtimeMajor || pgVersion !== seedMajor) {
@@ -1038,6 +1038,14 @@ function verifyPostgresIdentity(
       `WASIX runtime/cluster seed PostgreSQL major mismatch: runtime ${runtimeMajor}, seed ${seedMajor}, PG_VERSION ${pgVersion}`,
     );
   }
+}
+
+function decodeUtf8(bytes: Uint8Array): string {
+  const input =
+    typeof SharedArrayBuffer !== 'undefined' && bytes.buffer instanceof SharedArrayBuffer
+      ? Uint8Array.from(bytes)
+      : bytes;
+  return decoder.decode(input);
 }
 
 /** @internal Shared verification for separately carried WASIX tool modules. */

@@ -160,11 +160,14 @@ pub(crate) fn check_postgres_source_spine() -> Result<()> {
     ensure_file_contains_all(
         &Path::new(POSTGRES_PATCH_DIR).join("0037-oliphaunt-wasix-buffer-strong-random.patch"),
         &[
-            "defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER)",
+            "#elif defined(__wasi__)",
             "#include <sys/random.h>",
+            "wasix_strong_random_fill(void *buf, size_t len)",
+            "#if defined(OLIPHAUNT_WASM_SINGLE_USER)",
             "WASIX_STRONG_RANDOM_POOL_SIZE 4096",
-            "getrandom(wasix_strong_random_pool + filled",
+            "wasix_strong_random_fill(wasix_strong_random_pool",
             "if (errno == EINTR)",
+            "No guest-side state in a process that may fork.",
             "return false;",
         ],
     )?;

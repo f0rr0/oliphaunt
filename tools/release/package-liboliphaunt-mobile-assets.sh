@@ -219,6 +219,7 @@ package_ios() {
     "$ios_runtime_stage" \
     --profile native-runtime-resources
   archive_staged_dir "$ios_runtime_stage" native-runtime-resources
+  tools/release/package-liboliphaunt-icu-data.sh "$icu_source" "$out_dir"
 }
 
 case "$target_id" in

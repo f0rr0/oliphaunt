@@ -6,6 +6,8 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use wasmparser::{Dylink0Subsection, ExternalKind, KnownCustom, Parser, Payload, TypeRef};
 
+pub(super) const ASSET_MANIFEST_FORMAT_VERSION: u32 = 2;
+
 #[derive(Debug, Deserialize)]
 pub(super) struct SourcesManifest {
     pub(super) toolchain: Toolchain,

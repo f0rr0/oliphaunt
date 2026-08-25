@@ -728,7 +728,7 @@ pub(super) fn manifest_text(manifest: &RuntimeResourceManifest<'_>) -> String {
     )
 }
 
-fn logical_tree_sha256(root: &Path) -> Result<String> {
+pub(super) fn logical_tree_sha256(root: &Path) -> Result<String> {
     fn visit(root: &Path, current: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
         let entries = fs::read_dir(current)
             .map_err(|err| Error::Engine(format!("read {}: {err}", current.display())))?;
@@ -757,25 +757,30 @@ fn logical_tree_sha256(root: &Path) -> Result<String> {
 
     let mut files = Vec::new();
     visit(root, root, &mut files)?;
-    files.sort_by(|left, right| {
-        left.strip_prefix(root)
-            .unwrap_or(left)
-            .as_os_str()
-            .cmp(right.strip_prefix(root).unwrap_or(right).as_os_str())
-    });
+    let files = files
+        .into_iter()
+        .map(|file| {
+            let relative = file
+                .strip_prefix(root)
+                .map_err(|err| Error::Engine(format!("strip {}: {err}", file.display())))?
+                .to_str()
+                .ok_or_else(|| {
+                    Error::Engine(format!(
+                        "logical tree path is not UTF-8: {}",
+                        file.display()
+                    ))
+                })?
+                .replace('\\', "/");
+            Ok((relative, file))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    logical_tree_sha256_files(files)
+}
+
+pub(super) fn logical_tree_sha256_files(mut files: Vec<(String, PathBuf)>) -> Result<String> {
+    files.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
     let mut digest = Sha256::new();
-    for file in files {
-        let relative = file
-            .strip_prefix(root)
-            .map_err(|err| Error::Engine(format!("strip {}: {err}", file.display())))?
-            .to_str()
-            .ok_or_else(|| {
-                Error::Engine(format!(
-                    "logical tree path is not UTF-8: {}",
-                    file.display()
-                ))
-            })?
-            .replace('\\', "/");
+    for (relative, file) in files {
         let bytes = fs::read(&file)
             .map_err(|err| Error::Engine(format!("read {}: {err}", file.display())))?;
         digest.update(relative.as_bytes());

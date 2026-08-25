@@ -260,8 +260,20 @@ fn emit_artifact_manifest(out_dir: &Path, icu_root: &Path, data_tree_sha256: &st
 fn collect_files(root: &Path) -> io::Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     collect_files_inner(root, &mut files)?;
-    files.sort();
-    Ok(files)
+    let mut files = files
+        .into_iter()
+        .map(|file| {
+            let relative = file
+                .strip_prefix(root)
+                .expect("ICU file stays under ICU root")
+                .to_str()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "ICU path is not UTF-8"))?
+                .replace('\\', "/");
+            Ok((relative, file))
+        })
+        .collect::<io::Result<Vec<_>>>()?;
+    files.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
+    Ok(files.into_iter().map(|(_, file)| file).collect())
 }
 
 fn collect_files_inner(path: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {

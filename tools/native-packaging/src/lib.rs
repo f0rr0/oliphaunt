@@ -1908,6 +1908,25 @@ mod tests {
     use tar::EntryType;
 
     #[test]
+    fn logical_tree_digest_uses_portable_path_order() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("a")).unwrap();
+        write_file(&root.path().join("a/b"), b"nested");
+        write_file(&root.path().join("a0"), b"flat");
+
+        let windows_native_order = vec![
+            ("a0".to_string(), root.path().join("a0")),
+            ("a/b".to_string(), root.path().join("a/b")),
+        ];
+        let expected = "33fcdf990b4a606acc4d5cdda3ab275513c3a2fa87ae72bafc5f4e1278a2faa3";
+        assert_eq!(
+            logical_tree_sha256_files(windows_native_order).unwrap(),
+            expected
+        );
+        assert_eq!(logical_tree_sha256(root.path()).unwrap(), expected);
+    }
+
+    #[test]
     fn mobile_static_registry_metadata_marks_sql_only_packages_not_required() {
         let extensions = runtime_resource_extensions(&[Extension::Pgtap]);
         let metadata = mobile_static_registry_metadata(&extensions, &[]).unwrap();

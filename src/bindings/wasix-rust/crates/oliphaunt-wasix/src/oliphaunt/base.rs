@@ -827,9 +827,7 @@ fn sync_publication_tree(path: &Path) -> Result<()> {
         path.display()
     );
     if metadata.is_file() {
-        fs::File::open(path)
-            .with_context(|| format!("open publication file {}", path.display()))?
-            .sync_all()
+        sync_publication_file(path)
             .with_context(|| format!("sync publication file {}", path.display()))?;
         return Ok(());
     }
@@ -846,6 +844,20 @@ fn sync_publication_tree(path: &Path) -> Result<()> {
         sync_publication_tree(&entry.path())?;
     }
     sync_directory(path).with_context(|| format!("sync publication directory {}", path.display()))
+}
+
+#[cfg(windows)]
+fn sync_publication_file(path: &Path) -> std::io::Result<()> {
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?
+        .sync_all()
+}
+
+#[cfg(not(windows))]
+fn sync_publication_file(path: &Path) -> std::io::Result<()> {
+    fs::File::open(path)?.sync_all()
 }
 
 fn promote_synced_directory(
@@ -2256,6 +2268,16 @@ mod tests {
         assert!(pgdata.join("global/pg_control").is_file());
         assert!(!pgdata.join("postmaster.pid").exists());
         assert!(!staging.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn publication_tree_syncs_regular_files_on_this_host() -> Result<()> {
+        let root = TempDir::new()?;
+        fs::create_dir(root.path().join("nested"))?;
+        fs::write(root.path().join("nested/marker"), b"complete\n")?;
+
+        sync_publication_tree(root.path())?;
         Ok(())
     }
 

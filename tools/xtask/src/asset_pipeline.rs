@@ -1070,7 +1070,15 @@ pub(crate) fn read_asset_manifest_for_source_lane(source_lane: &str) -> Result<A
 pub(crate) fn read_asset_manifest_from(asset_dir: &Path) -> Result<AssetManifestOut> {
     let path = asset_dir.join("manifest.json");
     let text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-    serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))
+    let manifest: AssetManifestOut =
+        serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
+    ensure!(
+        manifest.format_version == ASSET_MANIFEST_FORMAT_VERSION,
+        "{} must use WASIX asset manifest format {}",
+        path.display(),
+        ASSET_MANIFEST_FORMAT_VERSION,
+    );
+    Ok(manifest)
 }
 
 fn build_output_modules_from_asset_manifest(
@@ -2730,7 +2738,7 @@ fn write_asset_manifest(
     let extension_metadata = extension_catalog::manifest_metadata_by_sql_name()?;
     let effective_sources = effective_source_pins(sources, outputs)?;
     let manifest = AssetManifestOut {
-        format_version: 1,
+        format_version: ASSET_MANIFEST_FORMAT_VERSION,
         source_lane: Some(outputs.source_lane.clone()),
         source_fingerprint: outputs.source_fingerprint.clone(),
         runtime: RuntimeAssetOut {
