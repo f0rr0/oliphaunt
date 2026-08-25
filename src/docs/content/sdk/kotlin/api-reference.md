@@ -13,7 +13,7 @@ surface by task.
 | Opening | `Oliphaunt.open`, `OliphauntConfig`, `DatabaseStorage` | Use temporary storage by default or an explicit persistent directory |
 | Android facade | `Oliphaunt` | Resolve Android resources, ABI assets, and app-context defaults |
 | SQL | `query`, `execute`, `QueryResult` | Run SQL and read typed values from coroutine code |
-| Raw protocol | `execProtocolRaw` | Send PostgreSQL protocol bytes through the serialized session |
+| Raw protocol | `execProtocolRaw`, `execProtocolStream` | Send PostgreSQL protocol bytes as one result or callback chunks through the serialized session |
 | Transactions | `transaction`, `OliphauntTransaction` | Keep transaction work inside the pinned session boundary |
 | Lifecycle | `checkpoint`, `cancel`, `close` | Coordinate active work and close cleanly |
 | Data movement | `backup`, static `restore` | Move app data through the native physical archive |

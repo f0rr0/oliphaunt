@@ -241,7 +241,7 @@ async function pumpSocketInput(socket: Socket, frontend: WasixByteChannel): Prom
       const chunk = await next;
       if (chunk.done) break;
       next = input.next();
-      await writeWasixByteChannel(frontend, new Uint8Array(chunk.value));
+      await writeWasixByteChannel(frontend, chunk.value as Uint8Array);
     }
   } catch (error) {
     if (!isSocketDisconnect(error, socket)) throw error;
@@ -266,7 +266,11 @@ async function pumpSocketOutput(backend: WasixByteChannel, socket: Socket): Prom
       disconnected = true;
     }
   }
-  if (!socket.destroyed) socket.end();
+  try {
+    await finishSocketOutput(socket);
+  } catch (error) {
+    if (!isSocketDisconnect(error, socket)) throw error;
+  }
 }
 
 function isSocketDisconnect(error: unknown, socket: Socket): boolean {
@@ -279,16 +283,69 @@ function isSocketDisconnect(error: unknown, socket: Socket): boolean {
 
 function waitForDrain(socket: Socket): Promise<void> {
   return new Promise((resolve, reject) => {
-    const onDrain = () => {
+    const cleanup = () => {
+      socket.off('drain', onDrain);
       socket.off('error', onError);
+      socket.off('close', onClose);
+    };
+    const onDrain = () => {
+      cleanup();
       resolve();
     };
     const onError = (error: Error) => {
-      socket.off('drain', onDrain);
+      cleanup();
       reject(error);
+    };
+    const onClose = () => {
+      cleanup();
+      resolve();
     };
     socket.once('drain', onDrain);
     socket.once('error', onError);
+    socket.once('close', onClose);
+    if (socket.destroyed) onClose();
+  });
+}
+
+function finishSocketOutput(socket: Socket): Promise<void> {
+  if (socket.destroyed || socket.writableFinished) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      socket.off('finish', onFinish);
+      socket.off('error', onError);
+      socket.off('close', onClose);
+    };
+    const onFinish = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const onClose = () => {
+      cleanup();
+      resolve();
+    };
+    socket.once('finish', onFinish);
+    socket.once('error', onError);
+    socket.once('close', onClose);
+    if (socket.destroyed) {
+      onClose();
+      return;
+    }
+    if (socket.writableFinished) {
+      onFinish();
+      return;
+    }
+    if (!socket.writableEnded) {
+      try {
+        socket.end();
+      } catch (error) {
+        cleanup();
+        reject(error);
+      }
+    }
   });
 }
 

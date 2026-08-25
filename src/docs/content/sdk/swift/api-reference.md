@@ -12,7 +12,7 @@ SDK surface by task.
 | --- | --- | --- |
 | Opening | `OliphauntDatabase.open`, `OliphauntConfiguration`, `OliphauntDatabaseStorage` | Use temporary storage by default or an explicit persistent file URL |
 | SQL | `query`, `execute`, `OliphauntQueryResult` | Run SQL and read typed values by row and column |
-| Raw protocol | `execProtocolRaw` | Send PostgreSQL protocol bytes without blocking the main actor |
+| Raw protocol | `execProtocolRaw`, `execProtocolStream` | Send PostgreSQL protocol bytes as one result or callback chunks without blocking the main actor |
 | Transactions | `transaction`, `OliphauntTransaction` | Keep transaction work on the actor-owned session |
 | Lifecycle | `checkpoint`, `cancel`, `close` | Coordinate active work and close cleanly |
 | Data movement | `backup`, static `restore(destination:bytes:)` | Move user data through the native physical archive |

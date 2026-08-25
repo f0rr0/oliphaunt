@@ -19,5 +19,5 @@ parser = "json:oliphaunt.runtimeVersion"
 
 [compatibility_versions.oliphaunt-wasix-tools-runtime]
 source_product = "liboliphaunt-wasix"
-path = "src/bindings/wasix-tools/package.json"
+path = "src/bindings/wasix-ts/tools-package/package.json"
 parser = "json:oliphaunt.runtimeVersion"

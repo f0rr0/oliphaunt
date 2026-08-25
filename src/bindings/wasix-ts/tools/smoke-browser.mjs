@@ -314,6 +314,7 @@ async function stagePackedBrowserConsumer(scratch) {
   for (const [source, destination] of [
     ['examples/browser-wasix/index.html', 'index.html'],
     ['examples/browser-wasix/package-smoke.ts', 'main.ts'],
+    ['examples/browser-wasix/direct-pg-dump-smoke.ts', 'direct-pg-dump-smoke.ts'],
     ['src/shared/fixtures/postgres/logical-tools.json', 'logical-tools.json'],
     ['src/shared/fixtures/postgres/logical-tools-seed.sql', 'logical-tools-seed.sql'],
     ['src/shared/fixtures/postgres/logical-tools-verify.sql', 'logical-tools-verify.sql'],

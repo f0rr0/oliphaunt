@@ -2912,6 +2912,79 @@ fn extension_control_files_for_asset_manifest(
 mod tests {
     use super::*;
 
+    fn test_binary_asset(name: &str, path: &str, sha256: &str, size: u64) -> BinaryAssetOut {
+        BinaryAssetOut {
+            name: name.to_owned(),
+            path: path.to_owned(),
+            sha256: sha256.to_owned(),
+            module_sha256: sha256.to_owned(),
+            size,
+            link: WasmLinkMetadataOut {
+                has_dylink0: false,
+                dylink_needed: Vec::new(),
+                dylink_runtime_paths: Vec::new(),
+                dylink_memory: None,
+                dylink_imports: Vec::new(),
+                dylink_exports: Vec::new(),
+                imports: Vec::new(),
+                exports: Vec::new(),
+                memories: Vec::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn wasix_tools_npm_descriptor_metadata_is_updated_together() {
+        let pg_dump = test_binary_asset(
+            "pg_dump",
+            "bin/pg_dump.wasix.wasm",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            1_234,
+        );
+        let psql = test_binary_asset(
+            "psql",
+            "bin/psql.wasix.wasm",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            5_678,
+        );
+        let original = concat!(
+            "// Preserve the workspace descriptor around its generated rows.\n",
+            "export default Object.freeze({\n",
+            "  pgDump: Object.freeze({\n",
+            "    name: 'pg_dump',\n",
+            "    sha256: 'old-pg-dump',\n",
+            "    size: 12,\n",
+            "    source: new URL('pg_dump.wasix.wasm', import.meta.url).href,\n",
+            "  }),\n",
+            "  psql: Object.freeze({\n",
+            "    name: 'psql',\n",
+            "    sha256: 'old-psql',\n",
+            "    size: 34,\n",
+            "    source: new URL('psql.wasix.wasm', import.meta.url).href,\n",
+            "  }),\n",
+            "});\n",
+        );
+
+        let updated = update_wasix_tools_npm_descriptor_rows(original, &pg_dump, &psql)
+            .expect("update descriptor metadata");
+
+        assert!(updated.starts_with("// Preserve the workspace descriptor"));
+        assert!(updated.contains(
+            "sha256: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',\n    size: 1234,\n    source: new URL('pg_dump.wasix.wasm'"
+        ));
+        assert!(updated.contains(
+            "sha256: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',\n    size: 5678,\n    source: new URL('psql.wasix.wasm'"
+        ));
+        assert_eq!(updated.matches("sha256:").count(), 2);
+        assert_eq!(updated.matches("size:").count(), 2);
+        assert!(updated.ends_with("});\n"));
+        assert_eq!(
+            update_wasix_tools_npm_descriptor_rows(&updated, &pg_dump, &psql)
+                .expect("update already-current descriptor"),
+            updated
+        );
+    }
+
     fn manifest_extension_metadata(
         create_extension: bool,
         control_files: Vec<&str>,
@@ -3474,25 +3547,22 @@ pub(crate) fn update_staged_root_asset_metadata(workspace: &Path) -> Result<()> 
     let manifest = read_asset_manifest_from(&asset_dir)?;
     let runtime_archive = asset_dir.join(&manifest.runtime.archive);
     let runtime_module = archive_entry_bytes(&runtime_archive, RUNTIME_MODULE_ARCHIVE_MEMBER)?;
-    update_root_asset_metadata_in(
-        workspace,
-        &asset_dir,
-        &manifest,
-        &sha256_bytes(&runtime_module),
-    )
+    update_root_asset_metadata_in(workspace, &manifest, &sha256_bytes(&runtime_module))
 }
 
 fn update_root_asset_metadata_in(
     workspace: &Path,
-    asset_dir: &Path,
     manifest: &AssetManifestOut,
     runtime_module_sha256: &str,
 ) -> Result<()> {
     let path = workspace.join("src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml");
     let tools_path = workspace.join("src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml");
+    let tools_npm_path = workspace.join(WASIX_TOOLS_NPM_DESCRIPTOR_PATH);
     let mut text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
     let mut tools_text = fs::read_to_string(&tools_path)
         .with_context(|| format!("read {}", tools_path.display()))?;
+    let tools_npm_text = fs::read_to_string(&tools_npm_path)
+        .with_context(|| format!("read {}", tools_npm_path.display()))?;
     let pg18 = load_postgres_source_manifest()?;
     text = replace_metadata_value(text, "postgres-version", &manifest.runtime.postgres_version);
     text = replace_metadata_value(text, "postgres-source-url", &pg18.postgresql.url);
@@ -3504,25 +3574,128 @@ fn update_root_asset_metadata_in(
     );
     text = replace_metadata_value(text, "runtime-archive-sha256", &manifest.runtime.sha256);
     text = replace_metadata_value(text, "oliphaunt-wasix-sha256", runtime_module_sha256);
-    let pgdata_template = asset_dir.join("prepopulated/pgdata-template.tar.zst");
-    if pgdata_template.exists() {
-        text = replace_metadata_value(
-            text,
-            "pgdata-template-archive-sha256",
-            &sha256_file(&pgdata_template)?,
-        );
-    }
-    if let Some(pg_dump) = &manifest.pg_dump {
-        tools_text = replace_metadata_value(tools_text, "pg-dump-wasix-sha256", &pg_dump.sha256);
-    }
-    if let Some(psql) = &manifest.psql {
-        tools_text = replace_metadata_value(tools_text, "psql-wasix-sha256", &psql.sha256);
-    }
+    let pgdata_template = manifest
+        .pgdata_template
+        .as_ref()
+        .context("generated asset manifest is missing the PGDATA template")?;
+    text = replace_metadata_value(
+        text,
+        "pgdata-template-archive-sha256",
+        &pgdata_template.sha256,
+    );
+    let (pg_dump, psql) = required_wasix_tool_assets(manifest)?;
+    let tools_npm_text = update_wasix_tools_npm_descriptor_rows(&tools_npm_text, pg_dump, psql)?;
+    tools_text = replace_metadata_value(tools_text, "pg-dump-wasix-sha256", &pg_dump.sha256);
+    tools_text = replace_metadata_value(tools_text, "psql-wasix-sha256", &psql.sha256);
     if let Some(initdb) = &manifest.initdb {
         text = replace_metadata_value(text, "initdb-wasix-sha256", &initdb.sha256);
     }
     fs::write(&path, text).with_context(|| format!("write {}", path.display()))?;
-    fs::write(&tools_path, tools_text).with_context(|| format!("write {}", tools_path.display()))
+    fs::write(&tools_path, tools_text)
+        .with_context(|| format!("write {}", tools_path.display()))?;
+    fs::write(&tools_npm_path, tools_npm_text)
+        .with_context(|| format!("write {}", tools_npm_path.display()))
+}
+
+pub(crate) const WASIX_TOOLS_NPM_DESCRIPTOR_PATH: &str =
+    "src/runtimes/liboliphaunt/wasix/tools-npm/index.js";
+
+fn required_wasix_tool_asset<'a>(
+    asset: Option<&'a BinaryAssetOut>,
+    expected_name: &str,
+    expected_path: &str,
+) -> Result<&'a BinaryAssetOut> {
+    let asset = asset
+        .with_context(|| format!("generated asset manifest is missing the {expected_name} tool"))?;
+    ensure_eq(
+        &asset.name,
+        expected_name,
+        &format!("{expected_name} tool name"),
+    )?;
+    ensure_eq(
+        &asset.path,
+        expected_path,
+        &format!("{expected_name} tool path"),
+    )?;
+    Ok(asset)
+}
+
+pub(crate) fn update_wasix_tools_npm_descriptor(
+    text: &str,
+    manifest: &AssetManifestOut,
+) -> Result<String> {
+    let (pg_dump, psql) = required_wasix_tool_assets(manifest)?;
+    update_wasix_tools_npm_descriptor_rows(text, pg_dump, psql)
+}
+
+fn required_wasix_tool_assets(
+    manifest: &AssetManifestOut,
+) -> Result<(&BinaryAssetOut, &BinaryAssetOut)> {
+    Ok((
+        required_wasix_tool_asset(
+            manifest.pg_dump.as_ref(),
+            "pg_dump",
+            "bin/pg_dump.wasix.wasm",
+        )?,
+        required_wasix_tool_asset(manifest.psql.as_ref(), "psql", "bin/psql.wasix.wasm")?,
+    ))
+}
+
+fn update_wasix_tools_npm_descriptor_rows(
+    text: &str,
+    pg_dump: &BinaryAssetOut,
+    psql: &BinaryAssetOut,
+) -> Result<String> {
+    let mut updated = text.to_owned();
+    for asset in [pg_dump, psql] {
+        let marker = format!("    name: '{}',", asset.name);
+        let marker_count = updated.matches(&marker).count();
+        ensure!(
+            marker_count == 1,
+            "WASIX tools npm workspace descriptor must contain exactly one {marker:?} row, found {marker_count}"
+        );
+        let block_start = updated
+            .find(&marker)
+            .expect("validated descriptor marker must exist");
+        let block_end = updated[block_start..]
+            .find("  }),")
+            .map(|offset| block_start + offset)
+            .context("WASIX tools npm workspace descriptor has an unterminated tool row")?;
+        let block = &updated[block_start..block_end];
+        let block = replace_wasix_tools_npm_field(
+            block,
+            "sha256",
+            &format!("'{}'", asset.sha256),
+            &asset.name,
+        )?;
+        let block =
+            replace_wasix_tools_npm_field(&block, "size", &asset.size.to_string(), &asset.name)?;
+        updated.replace_range(block_start..block_end, &block);
+    }
+    Ok(updated)
+}
+
+fn replace_wasix_tools_npm_field(
+    block: &str,
+    field: &str,
+    value: &str,
+    tool: &str,
+) -> Result<String> {
+    let prefix = format!("    {field}: ");
+    let matches = block.match_indices(&prefix).collect::<Vec<_>>();
+    ensure!(
+        matches.len() == 1,
+        "WASIX tools npm workspace descriptor {tool} row must contain exactly one {field} field, found {}",
+        matches.len()
+    );
+    let start = matches[0].0;
+    let end = block[start..]
+        .find('\n')
+        .map(|offset| start + offset)
+        .unwrap_or(block.len());
+    let mut updated = block.to_owned();
+    updated.replace_range(start..end, &format!("{prefix}{value},"));
+    Ok(updated)
 }
 
 fn replace_metadata_value(mut text: String, key: &str, value: &str) -> String {

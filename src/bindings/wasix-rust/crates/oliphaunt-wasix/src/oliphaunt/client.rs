@@ -23,7 +23,7 @@ use crate::oliphaunt::data_dir::{
 };
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::extensions::Extension;
-use crate::oliphaunt::postgres_mod::{PROTOCOL_CHUNK_BYTES, ProtocolPumpOutcome, ProtocolStream};
+use crate::oliphaunt::postgres_mod::{ProtocolPumpOutcome, ProtocolStream};
 use crate::oliphaunt::query::{
     CommandResult, QueryParam, QueryResult, extended_query, parse_command_response,
     parse_query_response,
@@ -33,11 +33,15 @@ use crate::oliphaunt::storage::PgDataStorage;
 use crate::oliphaunt::storage::StorageRoot;
 #[cfg(feature = "tools")]
 use crate::oliphaunt::tools::{
-    DirectToolOutcomeUnknown, DirectToolSocket, PgDumpOptions, PsqlOptions, run_direct_pg_dump,
-    run_direct_psql,
+    DirectToolSocket, PgDumpOptions, PsqlOptions, is_direct_tool_outcome_unknown,
+    run_direct_pg_dump, run_direct_psql,
 };
 #[cfg(feature = "tools")]
 use crate::oliphaunt::wire::{FrontendFrameKind, FrontendFrameReader, classify_frontend_message};
+
+const PROTOCOL_CALLBACK_CHUNK_BYTES: usize = 64 * 1024;
+#[cfg(feature = "tools")]
+const DIRECT_TOOL_READ_BUFFER_BYTES: usize = 64 * 1024;
 
 /// Direct, single-session Oliphaunt WASIX database.
 pub struct Oliphaunt {
@@ -100,7 +104,7 @@ impl Write for CallbackProtocolStream {
                 "WASIX protocol callback is not active",
             )
         })?;
-        for chunk in buffer.chunks(PROTOCOL_CHUNK_BYTES) {
+        for chunk in buffer.chunks(PROTOCOL_CALLBACK_CHUNK_BYTES) {
             if let Err(error) = callback(chunk) {
                 state.error = Some(error);
                 return Err(io::Error::other("WASIX protocol callback failed"));
@@ -331,7 +335,7 @@ impl Oliphaunt {
             state.callback = Some(Box::new(on_chunk));
             state.error = None;
         }
-        let outcome = self.backend.send_with_protocol_pump(request, Vec::new);
+        let outcome = self.backend.send_with_protocol_pump(request);
         let (callback_error, callback) = {
             let mut state = self
                 .protocol_stream
@@ -345,7 +349,7 @@ impl Oliphaunt {
         let mut callback = callback.context("WASIX protocol callback disappeared")?;
         match outcome? {
             ProtocolPumpOutcome::Buffered(response) => {
-                for chunk in response.chunks(PROTOCOL_CHUNK_BYTES) {
+                for chunk in response.chunks(PROTOCOL_CALLBACK_CHUNK_BYTES) {
                     callback(chunk).map_err(anyhow::Error::new)?;
                 }
             }
@@ -403,7 +407,7 @@ impl Oliphaunt {
         let outcome_unknown = result
             .as_ref()
             .err()
-            .is_some_and(|error| error.downcast_ref::<DirectToolOutcomeUnknown>().is_some());
+            .is_some_and(is_direct_tool_outcome_unknown);
         let cleanup = self.reset_tool_session();
         match (result, cleanup) {
             (Ok(output), Ok(())) => Ok(output),
@@ -426,14 +430,17 @@ impl Oliphaunt {
 
     #[cfg(feature = "tools")]
     fn reset_tool_session(&mut self) -> Result<()> {
-        self.execute_inner("ROLLBACK")?;
-        self.execute_inner("DISCARD ALL")?;
+        self.execute_inner("ROLLBACK")
+            .context("roll back embedded session")?;
+        self.execute_inner("DISCARD ALL")
+            .context("discard embedded session state")?;
         let username = self.backend.startup_config().username.clone();
         if username != "postgres" {
             self.execute_inner(&format!(
                 "SET ROLE {}",
                 crate::oliphaunt::sql::quote_identifier(&username)
-            ))?;
+            ))
+            .context("restore embedded session role")?;
         }
         Ok(())
     }
@@ -470,11 +477,11 @@ impl Oliphaunt {
     #[cfg(feature = "tools")]
     fn serve_direct_tool_protocol_inner(&mut self) -> Result<()> {
         let mut reader = FrontendFrameReader::default();
-        let mut buffer = [0u8; PROTOCOL_CHUNK_BYTES];
+        let mut buffer = [0u8; DIRECT_TOOL_READ_BUFFER_BYTES];
         loop {
             let read = self.with_direct_tool_io(|tool_io| tool_io.read(&mut buffer))?;
             if read == 0 {
-                return Ok(());
+                return finish_direct_tool_frontend(&reader);
             }
             reader.append(&buffer[..read]);
             while let Some(message) = reader.next_frame()? {
@@ -495,10 +502,7 @@ impl Oliphaunt {
                         self.write_direct_tool_protocol(&response)?;
                     }
                     FrontendFrameKind::Protocol => {
-                        match self
-                            .backend
-                            .send_with_protocol_pump(&message, || reader.take_pending())?
-                        {
+                        match self.backend.send_with_protocol_pump(&message)? {
                             ProtocolPumpOutcome::Buffered(response) => {
                                 self.write_direct_tool_protocol(&response)?;
                             }
@@ -720,6 +724,15 @@ impl Oliphaunt {
         }
         Ok(())
     }
+}
+
+#[cfg(feature = "tools")]
+fn finish_direct_tool_frontend(reader: &FrontendFrameReader) -> Result<()> {
+    ensure!(
+        reader.pending().is_empty(),
+        "direct WASIX tool protocol connection ended inside a frontend message"
+    );
+    Ok(())
 }
 
 enum StartBackupAttempt {
@@ -1067,6 +1080,26 @@ fn materialize_storage(storage: &PgDataStorage) -> Result<tempfile::TempDir> {
     match storage {
         PgDataStorage::HostDirectory(pgdata) => materialize_pgdata(pgdata),
         PgDataStorage::Memory(filesystem) => materialize_virtual_pgdata_view(filesystem.as_ref()),
+    }
+}
+
+#[cfg(all(test, feature = "tools"))]
+mod direct_tool_protocol_tests {
+    use super::*;
+
+    #[test]
+    fn eof_rejects_incomplete_frontend_message() {
+        let mut reader = FrontendFrameReader::default();
+        assert!(finish_direct_tool_frontend(&reader).is_ok());
+
+        reader.append(b"Q\0\0");
+        let error = finish_direct_tool_frontend(&reader)
+            .expect_err("EOF inside a frontend message must fail the protocol connection");
+        assert!(
+            error
+                .to_string()
+                .contains("ended inside a frontend message")
+        );
     }
 }
 

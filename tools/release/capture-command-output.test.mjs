@@ -193,6 +193,33 @@ test("external stdout redirection preserves large bytes and leaves its descripto
   }
 });
 
+test("external stdout redirection retains complete failure diagnostics", () => {
+  const { root, script } = fixtureScript([
+    "process.stdout.write('partial payload');",
+    "process.stderr.write('first failure line\\n');",
+    "setImmediate(() => { process.stderr.write('last failure line\\n'); process.exitCode = 31; });",
+    "",
+  ].join("\n"));
+  const destination = path.join(root, "redirected.bin");
+  const descriptor = openSync(destination, "wx", 0o600);
+  try {
+    const result = captureCommandOutput(process.execPath, [script], {
+      label: "failed redirected child",
+      stdoutDescriptor: descriptor,
+    });
+    assert.equal(result.status, 31);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "first failure line\nlast failure line\n");
+  } finally {
+    closeSync(descriptor);
+  }
+  try {
+    assert.equal(readFileSync(destination, "utf8"), "partial payload");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("external stdout redirection rejects record framing", () => {
   const { root, script } = fixtureScript("");
   const destination = path.join(root, "redirected.bin");

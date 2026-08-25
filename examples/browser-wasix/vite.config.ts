@@ -26,7 +26,10 @@ export default defineConfig({
           alias: [
             {
               find: /^@oliphaunt\/wasix-tools$/,
-              replacement: resolve(repositoryRoot, 'src/bindings/wasix-tools/src/index.ts'),
+              replacement: resolve(
+                repositoryRoot,
+                'src/bindings/wasix-ts/tools-package/src/index.ts',
+              ),
             },
             {
               find: /^@oliphaunt\/wasix-ts\/internal\/tools$/,

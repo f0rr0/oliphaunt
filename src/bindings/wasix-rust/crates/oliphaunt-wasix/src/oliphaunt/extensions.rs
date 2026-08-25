@@ -382,6 +382,72 @@ mod extension_tests {
         run_lifecycle_materialization_set(generated::ALL)
     }
 
+    #[test]
+    fn uuid_ossp_aot_direct_and_restart_smoke() -> Result<()> {
+        run_direct_and_restart_smoke_set(&[generated::UUID_OSSP])
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn uuid_ossp_aot_server_smoke() -> Result<()> {
+        run_server_smoke_set(&[generated::UUID_OSSP]).await
+    }
+
+    #[test]
+    fn uuid_ossp_aot_materialization_smoke() -> Result<()> {
+        run_lifecycle_materialization_set(&[generated::UUID_OSSP])
+    }
+
+    #[cfg(feature = "tools")]
+    #[test]
+    fn uuid_ossp_aot_dump_restore_smoke() -> Result<()> {
+        use crate::tools::{PgDumpOptions, PsqlOptions, pg_dump, psql};
+
+        let mut source = Oliphaunt::builder()
+            .extension(generated::UUID_OSSP)
+            .open()
+            .context("open UUID-OSSP AOT dump source")?;
+        psql(
+            &mut source,
+            PsqlOptions::new().script(
+                "CREATE TABLE uuid_ossp_aot_items(\
+                   id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),\
+                   label text NOT NULL\
+                 );\
+                INSERT INTO uuid_ossp_aot_items(label) VALUES ('first'), ('second');",
+            ),
+        )
+        .context("seed UUID-OSSP AOT dump source through psql")?;
+        let dump = pg_dump(&mut source, PgDumpOptions::new())
+            .context("dump UUID-OSSP AOT source through pg_dump")?;
+        ensure!(
+            dump.contains("COPY public.uuid_ossp_aot_items"),
+            "UUID-OSSP AOT dump should retain PostgreSQL COPY output"
+        );
+        source.close().context("close UUID-OSSP AOT dump source")?;
+
+        let mut restored = Oliphaunt::builder()
+            .extension(generated::UUID_OSSP)
+            .open()
+            .context("open UUID-OSSP AOT restore target")?;
+        psql(&mut restored, PsqlOptions::new().script(dump))
+            .context("restore UUID-OSSP AOT dump through psql")?;
+        let result = restored.query(
+            "SELECT count(*)::int4 AS rows,\
+                    count(DISTINCT id)::int4 AS ids,\
+                    bool_and(length(id::text) = 36) AS valid_ids,\
+                    length(uuid_generate_v4()::text)::int4 AS generated_length \
+             FROM uuid_ossp_aot_items",
+        )?;
+        ensure!(result.get_text(0, "rows")? == Some("2"));
+        ensure!(result.get_text(0, "ids")? == Some("2"));
+        ensure!(result.get_text(0, "valid_ids")? == Some("t"));
+        ensure!(result.get_text(0, "generated_length")? == Some("36"));
+        restored
+            .close()
+            .context("close UUID-OSSP AOT restore target")?;
+        Ok(())
+    }
+
     fn embedded_extension_archives(extensions: &[Extension]) -> Result<Vec<Extension>> {
         let embedded: Vec<_> = extensions
             .iter()

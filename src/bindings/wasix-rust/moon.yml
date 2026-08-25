@@ -55,6 +55,7 @@ tasks:
       - "/src/shared/fixtures/**/*"
       - "/src/bindings/wasix-rust/**/*"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
+      - "/tools/test/cargo-test-filter.sh"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -167,6 +168,7 @@ tasks:
       - "/src/sources/toolchains/wasix.toml"
       - "/src/bindings/wasix-rust/tools/check-package.sh"
       - "/src/bindings/wasix-rust/tools/check-release.sh"
+      - "/tools/test/cargo-test-filter.sh"
       - "/target/oliphaunt-wasix/assets/**/*"
       - "/target/oliphaunt-wasix/aot/**/*"
     options:

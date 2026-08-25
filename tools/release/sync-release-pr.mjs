@@ -51,7 +51,7 @@ const NATIVE_TOOLS_FACADE_PACKAGE = path.join(
 );
 const WASIX_TOOLS_FACADE_PACKAGE = path.join(
   ROOT,
-  "src/bindings/wasix-tools/package.json",
+  "src/bindings/wasix-ts/tools-package/package.json",
 );
 const WASIX_TOOLS_CARRIER_PACKAGE = "@oliphaunt/liboliphaunt-wasix-tools";
 const WASIX_TYPESCRIPT_BINDING_PACKAGE = "@oliphaunt/wasix-ts";
@@ -746,16 +746,39 @@ function valueAt(root, parts) {
   return current;
 }
 
-function tomlAssignmentMatches(text, key) {
-  const escaped = escapeRegExp(key);
-  const pattern = new RegExp(
-    `^(\\s*(?:${escaped}|"${escaped}"|'${escaped}')\\s*=\\s*)`,
-    "gmu",
+function tomlAssignmentMatchesAtPath(text, entryParts) {
+  const tableParts = entryParts.slice(0, -1);
+  const key = entryParts.at(-1);
+  const marker = "__oliphaunt_release_sync_table__";
+  const keyPattern = new RegExp(
+    `^(\\s*(?:${escapeRegExp(key)}|"${escapeRegExp(key)}"|'${escapeRegExp(key)}')\\s*=\\s*)`,
+    "u",
   );
-  return [...text.matchAll(pattern)].map((match) => ({
-    assignmentStart: match.index,
-    valueStart: match.index + match[0].length,
-  }));
+  const matches = [];
+  let offset = 0;
+  let inTable = false;
+
+  for (const line of text.split(/(?<=\n)/u)) {
+    const [body] = stripNewline(line);
+    const tableMatch = /^\s*\[([^\[\]]+)\]\s*(?:#.*)?$/u.exec(body);
+    if (tableMatch !== null) {
+      const parsed = Bun.TOML.parse(`[${tableMatch[1]}]\n${marker} = true\n`);
+      inTable = valueAt(parsed, [...tableParts, marker]) === true;
+      offset += line.length;
+      continue;
+    }
+    if (inTable) {
+      const assignment = keyPattern.exec(body);
+      if (assignment !== null) {
+        matches.push({
+          assignmentStart: offset + assignment.index,
+          valueStart: offset + assignment.index + assignment[0].length,
+        });
+      }
+    }
+    offset += line.length;
+  }
+  return matches;
 }
 
 function quotedTomlStringEnd(text, start) {
@@ -801,10 +824,10 @@ function inlineTomlTableEnd(text, start) {
 }
 
 function replaceUniqueDependencyVersion(text, binding, label) {
-  const matches = tomlAssignmentMatches(text, binding.name);
+  const matches = tomlAssignmentMatchesAtPath(text, binding.entryParts);
   if (matches.length !== 1) {
     throw new Error(
-      `${label} must declare ${binding.name} exactly once as a direct TOML assignment, found ${matches.length}`,
+      `${label} must declare ${binding.entryParts.join(".")} exactly once as a direct TOML assignment, found ${matches.length}`,
     );
   }
   const { valueStart } = matches[0];
@@ -846,9 +869,9 @@ function replaceUniqueDependencyVersion(text, binding, label) {
 }
 
 function replaceUniqueStringAssignment(text, binding, label) {
-  const matches = tomlAssignmentMatches(text, binding.name);
+  const matches = tomlAssignmentMatchesAtPath(text, binding.entryParts);
   if (matches.length !== 1) {
-    throw new Error(`${label} must declare ${binding.name} exactly once, found ${matches.length}`);
+    throw new Error(`${label} must declare ${binding.entryParts.join(".")} exactly once, found ${matches.length}`);
   }
   const { valueStart } = matches[0];
   const quote = text[valueStart];

@@ -39,7 +39,7 @@ query after open.
 | Exact extension selection | SQL names | Typed Cargo selections | Selectively imported WASIX descriptors |
 | Physical backup/restore | Backup in direct/broker and mobile direct; static restore to new/empty storage | Yes | Backup from memory or persistent open sessions; static restore to a new or empty persistent provider |
 | Listening server | Rust and desktop TypeScript | Yes | Node, Bun, and Deno explicit server subpaths; no browser sockets |
-| `pg_dump` / `psql` | Optional endpoint-oriented `oliphaunt-tools` / `@oliphaunt/tools` products on Rust and desktop TypeScript | Optional direct-handle `tools` feature | Optional direct-handle `@oliphaunt/wasix-tools` package on every host |
+| `pg_dump` / `psql` | Optional endpoint-oriented `oliphaunt-tools` / `@oliphaunt/tools` products on Rust and desktop TypeScript | Optional open-database `tools` feature | Optional `@oliphaunt/wasix-tools` package on every host; `pgDump` supports direct or worker placement, while `psql` requires worker placement |
 | Independent client sessions | Native server only | No; the local endpoint accepts one connected client at a time | No |
 
 The native SDKs and both WASIX bindings expose callback raw-protocol response

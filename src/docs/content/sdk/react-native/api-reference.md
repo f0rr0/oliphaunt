@@ -14,7 +14,7 @@ SDK by task.
 | Config plugin | Expo plugin options | Include the selected native runtime and exact extension artifacts in iOS and Android builds |
 | Database handle | `OliphauntDatabase` | Keep the opened database in app state and route calls through one native handle |
 | SQL | `query`, `execute`, `QueryResult` | Run SQL and read typed values from JavaScript |
-| Raw protocol | `execProtocolRaw` | Send PostgreSQL protocol bytes through JSI `ArrayBuffer` transport |
+| Raw protocol | `execProtocolRaw`, `execProtocolStream` | Send PostgreSQL protocol bytes as one result or callback chunks through JSI `ArrayBuffer` transport |
 | Lifecycle | `checkpoint`, `cancel`, `close`, `Symbol.asyncDispose` | Coordinate active work and close cleanly |
 | Data movement | `backup`, `restore` | Delegate archive validation and destination materialization to Swift or Kotlin |
 | Errors | standard `Error`, `PostgresError` | Handle SDK errors and PostgreSQL SQLSTATE data in TypeScript |

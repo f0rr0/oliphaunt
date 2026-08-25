@@ -16,8 +16,8 @@ export default Object.freeze({
   }),
   psql: Object.freeze({
     name: 'psql',
-    sha256: '2358c165606d6b5895ec89fffa0622e011d94448747ddd7c52223880752fc073',
-    size: 1419091,
+    sha256: '894aeb0d846c249e4697a4795184b2e6a470ca53daa4819f61c204f05baf9c8d',
+    size: 1419164,
     source: new URL('../../../../../target/oliphaunt-wasix/assets/bin/psql.wasix.wasm', import.meta.url).href,
   }),
 });

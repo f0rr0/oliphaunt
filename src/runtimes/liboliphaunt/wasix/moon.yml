@@ -196,6 +196,7 @@ tasks:
       - "/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu/**/*"
       - "/target/oliphaunt-wasix/assets/**/*"
       - "/target/oliphaunt-wasix/aot/**/*"
+      - "/tools/test/cargo-test-filter.sh"
     outputs:
       - "/target/oliphaunt-wasix/release-assets/**/*"
     options:
@@ -222,6 +223,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix/**/*"
       - "/src/bindings/wasix-rust/**/*"
       - "/tools/runtime/**/*"
+      - "/tools/test/cargo-test-filter.sh"
       - "/tools/xtask/**/*"
       - "/tools/policy/verify-source-tree.py"
     options:
@@ -256,6 +258,7 @@ tasks:
       - "/src/bindings/wasix-ts/**/*"
       - "/src/shared/js-core/**/*"
       - "/tools/runtime/**/*"
+      - "/tools/test/cargo-test-filter.sh"
       - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-tools-npm-carrier.mjs"
       - "/tools/release/wasix-typescript-package.mjs"

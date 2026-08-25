@@ -15,6 +15,10 @@ import {
   syncLockfile,
   syncTypescriptOptionalRuntimeDependencies,
 } from "./sync-release-pr.mjs";
+import {
+  EXAMPLE_CARGO_POLICIES,
+  exampleCargoReleaseVersionBindings,
+} from "./example-cargo-policy.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const SUMMARY_PATH = "src/extensions/generated/docs/extension-evidence.json";
@@ -164,7 +168,7 @@ test("release sync closes registry example pins and runtime metadata across Carg
   const bindings = [
     dependency("oliphaunt-build", ["build-dependencies", "oliphaunt-build"]),
     dependency("oliphaunt", ["dependencies", "oliphaunt"]),
-    dependency("oliphaunt-dev", ["dev-dependencies", "oliphaunt-dev"]),
+    dependency("oliphaunt", ["dev-dependencies", "oliphaunt"]),
     dependency("oliphaunt-target", ["target", target, "dependencies", "oliphaunt-target"]),
     {
       kind: "runtime",
@@ -188,7 +192,7 @@ oliphaunt-build = { version = "=0.1.0" }
 oliphaunt = "=0.1.0"
 
 [dev-dependencies]
-'oliphaunt-dev' = { version = '=0.1.0', optional = false }
+'oliphaunt' = { version = '=0.1.0', optional = false }
 
 [target.'${target}'.dependencies]
 oliphaunt-target = { version = "=0.1.0", features = [
@@ -207,16 +211,28 @@ oliphaunt-target = { version = "=0.1.0", features = [
   assert.equal(second.text, first.text);
   assert.deepEqual(second.details, []);
 
-  const duplicate = initial.replace("[dev-dependencies]\n", "[dev-dependencies]\noliphaunt = \"=0.1.0\"\n");
-  assert.throws(
-    () => syncExampleCargoManifestText(duplicate, { policy, bindings, label: "fixture/Cargo.toml" }),
-    /must declare oliphaunt exactly once.*found 2/u,
-  );
   const unsupported = initial.replace('oliphaunt = "=0.1.0"', "oliphaunt = true");
   assert.throws(
     () => syncExampleCargoManifestText(unsupported, { policy, bindings, label: "fixture/Cargo.toml" }),
     /must use a string or inline-table dependency specification/u,
   );
+});
+
+test("release sync targets both WASIX example dependency scopes independently", () => {
+  const bindings = exampleCargoReleaseVersionBindings();
+  for (const policyId of ["wasix-tauri", "wasix-electron-sidecar"]) {
+    const policy = EXAMPLE_CARGO_POLICIES.find(({ id }) => id === policyId);
+    assert.notEqual(policy, undefined);
+    const manifestPath = path.join(ROOT, policy.crateDir, "Cargo.toml");
+    const initial = readFileSync(manifestPath, "utf8");
+    const result = syncExampleCargoManifestText(initial, {
+      policy,
+      bindings: bindings.filter(({ policyId: candidate }) => candidate === policyId),
+      label: `${policy.crateDir}/Cargo.toml`,
+    });
+    assert.equal(result.text, initial);
+    assert.deepEqual(result.details, []);
+  }
 });
 
 test("a JavaScript release transition synchronizes its optional runtime versions", async (t) => {

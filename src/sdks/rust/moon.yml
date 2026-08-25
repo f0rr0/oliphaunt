@@ -82,6 +82,7 @@ tasks:
       - "/src/shared/fixtures/storage/database-root.json"
       - "/src/sdks/rust/**/*"
       - "/tools/runtime/**/*"
+      - "/tools/native-tools-proof/**/*"
       - "/tools/xtask/**/*"
       - "/Cargo.lock"
       - "/Cargo.toml"
@@ -273,6 +274,7 @@ tasks:
       - "/src/shared/fixtures/storage/database-root.json"
       - "/rust-toolchain.toml"
       - "/src/sdks/rust/**/*"
+      - "/tools/native-tools-proof/**/*"
       - "/tools/runtime/**/*"
     options:
       cache: local

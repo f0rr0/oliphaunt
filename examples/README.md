@@ -30,8 +30,9 @@ tools/dev/bun.sh tools/release/example-cargo-policy.mjs --check
 ```
 The native examples exercise their configured database path during startup;
 native tool compatibility is qualified separately against the local server.
-The WASIX examples use the optional `tools` namespace to run a schema-only
-`pg_dump` and a non-interactive `psql` `SELECT 1` smoke during startup.
+The WASIX examples exercise the optional `tools` namespace only in their
+explicit Rust smoke tests; ordinary application startup does not run or load
+`pg_dump` or `psql`.
 
 Run Tauri GUI smoke tests through WebDriver on Linux:
 

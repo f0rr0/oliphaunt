@@ -1,15 +1,28 @@
 import { readFileSync } from 'node:fs';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { createConnection, Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const closeDatabase = vi.fn(async () => undefined);
+import type { OliphauntDatabase } from '../types.js';
+
+const serverMocks = vi.hoisted(() => ({
+  closeDatabase: vi.fn(async () => undefined),
+  openWasix: vi.fn<() => Promise<OliphauntDatabase>>(),
+}));
+const { closeDatabase, openWasix } = serverMocks;
 
 vi.mock('../node-client.js', () => ({
-  openWasix: vi.fn(async () => ({ close: closeDatabase })),
+  openWasix: serverMocks.openWasix,
 }));
 
+import {
+  closeWasixByteChannel,
+  readWasixByteChannel,
+  writeWasixByteChannel,
+} from '../byte-channel.js';
+import { WasixDatabaseImpl } from '../database.js';
 import { openServer } from '../server.node.js';
 
 type ServerListenFixture = Readonly<{
@@ -25,8 +38,13 @@ const fixture = JSON.parse(
 ) as ServerListenFixture;
 const temporaryDirectories: string[] = [];
 
-afterEach(async () => {
+beforeEach(() => {
   closeDatabase.mockClear();
+  openWasix.mockReset();
+  openWasix.mockResolvedValue({ close: closeDatabase } as unknown as OliphauntDatabase);
+});
+
+afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true })));
 });
 
@@ -47,6 +65,106 @@ describe('WASIX local server surface', () => {
       await expect(openServer({ listen: { transport: 'tcp', port } })).rejects.toThrow(
         /range 1\.\.65535/,
       );
+    }
+  });
+
+  it('settles close when a backpressured socket is destroyed', async () => {
+    let markServing: (() => void) | undefined;
+    const serving = new Promise<void>((resolve) => {
+      markServing = resolve;
+    });
+    const database = new WasixDatabaseImpl({
+      isolated: true,
+      async exec() {
+        return new Uint8Array();
+      },
+      async sync() {},
+      async serve(connection) {
+        markServing?.();
+        await writeWasixByteChannel(connection.backend, Uint8Array.of(1));
+        try {
+          while ((await readWasixByteChannel(connection.frontend)).length !== 0) {
+            // The regression client sends no input; keep the fake session
+            // honest if that changes.
+          }
+        } finally {
+          closeWasixByteChannel(connection.backend);
+        }
+      },
+      async close() {},
+    });
+    openWasix.mockResolvedValueOnce(database);
+
+    let markBackpressured: (() => void) | undefined;
+    const backpressured = new Promise<void>((resolve) => {
+      markBackpressured = resolve;
+    });
+    const write = vi.spyOn(Socket.prototype, 'write').mockImplementation(function () {
+      markBackpressured?.();
+      return false;
+    });
+    const server = await openServer();
+    const endpoint = new URL(server.connectionString);
+    const client = createConnection({ host: endpoint.hostname, port: Number(endpoint.port) });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        client.once('connect', resolve);
+        client.once('error', reject);
+      });
+      await Promise.all([serving, backpressured]);
+      await expect(server.close()).resolves.toBeUndefined();
+    } finally {
+      client.destroy();
+      write.mockRestore();
+      await server.close().catch(() => undefined);
+    }
+  });
+
+  it('waits for the final socket bytes to flush before destroying the connection', async () => {
+    const database = new WasixDatabaseImpl({
+      isolated: true,
+      async exec() {
+        return new Uint8Array();
+      },
+      async sync() {},
+      async serve(connection) {
+        await writeWasixByteChannel(connection.backend, Uint8Array.of(1, 2, 3));
+        closeWasixByteChannel(connection.backend);
+      },
+      async close() {},
+    });
+    openWasix.mockResolvedValueOnce(database);
+
+    let endingSocket: Socket | undefined;
+    let markEnding: (() => void) | undefined;
+    const ending = new Promise<void>((resolve) => {
+      markEnding = resolve;
+    });
+    const end = vi.spyOn(Socket.prototype, 'end').mockImplementation(function (this: Socket) {
+      endingSocket = this;
+      markEnding?.();
+      return this;
+    });
+    const server = await openServer();
+    const endpoint = new URL(server.connectionString);
+    const client = createConnection({ host: endpoint.hostname, port: Number(endpoint.port) });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        client.once('connect', resolve);
+        client.once('error', reject);
+      });
+      await ending;
+      if (endingSocket === undefined) throw new Error('server socket did not finish its output');
+      const socket = endingSocket;
+      expect(socket.destroyed).toBe(false);
+
+      const destroyed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
+      socket.emit('finish');
+      await destroyed;
+    } finally {
+      client.destroy();
+      end.mockRestore();
+      await server.close().catch(() => undefined);
     }
   });
 

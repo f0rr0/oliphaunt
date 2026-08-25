@@ -27,6 +27,7 @@ tasks:
       - "repo:release-metadata"
       - "repo:prek"
       - "release-tools:broker-dependency-license-audit"
+      - "native-tools-proof:check"
     options:
       cache: true
       runFromWorkspaceRoot: true

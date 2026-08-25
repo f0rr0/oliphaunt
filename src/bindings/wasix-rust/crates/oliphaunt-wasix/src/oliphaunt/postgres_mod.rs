@@ -42,7 +42,6 @@ use task_policy::{GuestWasmTasks, constrain_single_backend_tasks};
 use wasix_fs::{host_filesystem, wasi_root_with_devices};
 
 const POSTGRES_EXE_PATH: &str = "/bin/postgres";
-pub(crate) const PROTOCOL_CHUNK_BYTES: usize = 64 * 1024;
 const PGDATA_DIR: &str = "/base";
 const ICU_DATA_DIR: &str = "/share/icu";
 const WASM_PREFIX: &str = "/";
@@ -507,8 +506,16 @@ impl PostgresMod {
         let result = self.send_protocol_inner(payload);
         let active = self.protocol_stream_active().unwrap_or(false);
         if active {
-            self.set_protocol_stream_prefix(continuation_prefix())?;
-            let stream_result = result.and_then(|_| self.serve_protocol_stream_inner(scope));
+            let stream_result = match scope {
+                // The triggering PostgresMainLoopOnce call synchronously completes
+                // COPY. Starting another iteration would consume the next frontend
+                // frame (normally Terminate) as part of the borrowed session.
+                ProtocolPumpScope::Copy => result.map(|_| ()),
+                ProtocolPumpScope::Connection => result.and_then(|_| {
+                    self.set_protocol_stream_prefix(continuation_prefix())?;
+                    self.serve_protocol_stream_inner()
+                }),
+            };
             let restore_result = self.restore_protocol_transport(previous_mode);
             let clear_result = self.clear_protocol_stream_prefix();
             stream_result.and(restore_result).and(clear_result)?;
@@ -590,7 +597,7 @@ impl PostgresMod {
         self.protocol_stdio.is_some()
     }
 
-    fn serve_protocol_stream_inner(&mut self, scope: ProtocolPumpScope) -> Result<()> {
+    fn serve_protocol_stream_inner(&mut self) -> Result<()> {
         loop {
             if let Err(err) = self.protocol.main_loop.call(&mut self.store) {
                 if runtime_error_exit_code(&err) == Some(OLIPHAUNT_EXIT_ALIVE) {
@@ -622,9 +629,6 @@ impl PostgresMod {
                 .pq_flush
                 .call(&mut self.store)
                 .context("oliphaunt_wasix_pq_flush streaming protocol")?;
-            if scope == ProtocolPumpScope::Copy {
-                break;
-            }
         }
         Ok(())
     }

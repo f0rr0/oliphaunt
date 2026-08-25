@@ -1,38 +1,22 @@
-import type { WasixPersistenceMode, WasixProtocolConnectionMode } from './database.js';
-import { WASIX_STREAM_CHUNK_BYTES } from './byte-channel.js';
+import { WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES, type WasixDatabaseSession } from './database.js';
 import {
   type SerializedOpenOptions,
   serializeWorkerError,
   type WorkerRequest,
   type WorkerResponse,
 } from './rpc.js';
-import type { WasixStorageSyncBoundary } from './storage-provider.js';
-import type { WasixProtocolConnection } from './pgwire-connection.js';
 import { prepareTransferableBytes } from './worker-transfer.js';
 
 export type WorkerResponder = (response: WorkerResponse, transfer?: readonly ArrayBuffer[]) => void;
 
-type WorkerSession = Readonly<{
-  exec(input: Uint8Array, persistence?: WasixPersistenceMode): Promise<Uint8Array>;
-  execStream?(
-    input: Uint8Array,
-    onChunk: (chunk: Uint8Array) => void,
-    persistence?: WasixPersistenceMode,
-  ): Promise<void>;
-  sync(boundary: WasixStorageSyncBoundary): Promise<void>;
-  backup?(): Promise<Uint8Array>;
-  serve?(connection: WasixProtocolConnection, mode: WasixProtocolConnectionMode): Promise<void>;
-  close(): Promise<void>;
-}>;
-
-export type WorkerSessionOpener = (options: SerializedOpenOptions) => Promise<WorkerSession>;
+export type WorkerSessionOpener = (options: SerializedOpenOptions) => Promise<WasixDatabaseSession>;
 
 /** @internal One request state machine shared by browser and server worker realms. */
 export function createWorkerSessionDispatcher(
   openSession: WorkerSessionOpener,
   respond: WorkerResponder,
 ) {
-  let process: WorkerSession | undefined;
+  let process: WasixDatabaseSession | undefined;
 
   return async (request: WorkerRequest): Promise<void> => {
     try {
@@ -76,8 +60,12 @@ export function createWorkerSessionDispatcher(
           };
           if (session.execStream === undefined) {
             const response = await session.exec(request.input, request.persistence);
-            for (let offset = 0; offset < response.length; offset += WASIX_STREAM_CHUNK_BYTES) {
-              onChunk(response.slice(offset, offset + WASIX_STREAM_CHUNK_BYTES));
+            for (
+              let offset = 0;
+              offset < response.length;
+              offset += WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES
+            ) {
+              onChunk(response.slice(offset, offset + WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES));
             }
           } else {
             await session.execStream(request.input, onChunk, request.persistence);
@@ -96,6 +84,28 @@ export function createWorkerSessionDispatcher(
           }
           const archive = prepareTransferableBytes(await session.backup());
           respond({ id: request.id, ok: true, value: archive.value }, archive.transfer);
+          return;
+        }
+        case 'runPgDump': {
+          const session = requireProcess(process);
+          if (session.runPgDump === undefined) {
+            throw new Error('this WASIX worker session does not support pg_dump');
+          }
+          const result = await session.runPgDump({ tool: request.tool, args: request.args });
+          const stdout = prepareTransferableBytes(result.stdout);
+          const stderr = prepareTransferableBytes(result.stderr);
+          respond(
+            {
+              id: request.id,
+              ok: true,
+              value: {
+                exitCode: result.exitCode,
+                stdout: stdout.value,
+                stderr: stderr.value,
+              },
+            },
+            [...new Set([...stdout.transfer, ...stderr.transfer])],
+          );
           return;
         }
         case 'serve': {
@@ -123,7 +133,7 @@ export function createWorkerSessionDispatcher(
   };
 }
 
-function requireProcess(process: WorkerSession | undefined): WorkerSession {
+function requireProcess(process: WasixDatabaseSession | undefined): WasixDatabaseSession {
   if (process === undefined) {
     throw new Error('Oliphaunt WASIX process is not open');
   }

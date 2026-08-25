@@ -609,7 +609,7 @@ function downloadArchiveOnce(repo, identity, archive, attemptTimeoutMs) {
     reserveGitHubCoreRequestSync({
       label: `download Actions artifact ${identity.id}`,
     });
-    const result = spawnSync(
+    const result = captureCommandOutput(
       "gh",
       [
         "api",
@@ -620,10 +620,10 @@ function downloadArchiveOnce(repo, identity, archive, attemptTimeoutMs) {
         `repos/${repo}/actions/artifacts/${identity.id}/zip`,
       ],
       {
-        encoding: "utf8",
         env: process.env,
-        maxBuffer: 4 * 1024 * 1024,
-        stdio: ["ignore", descriptor, "pipe"],
+        label: `download Actions artifact ${identity.id}`,
+        maxOutputBytes: 4 * 1024 * 1024,
+        stdoutDescriptor: descriptor,
         timeout: attemptTimeoutMs,
         windowsHide: true,
       },

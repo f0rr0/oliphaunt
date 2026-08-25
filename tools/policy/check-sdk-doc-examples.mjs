@@ -44,7 +44,7 @@ const coverageRoots = [
   'src/sdks/kotlin/oliphaunt/src',
   'src/sdks/react-native/src/__tests__',
   'src/bindings/wasix-ts/src/__tests__',
-  'src/bindings/wasix-tools/src/__tests__',
+  'src/bindings/wasix-ts/tools-package/src/__tests__',
 ];
 
 const markerPattern = /liboliphaunt-doc-example:([a-z0-9][a-z0-9_.-]*)/g;

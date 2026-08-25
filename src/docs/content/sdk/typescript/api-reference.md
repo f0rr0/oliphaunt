@@ -14,8 +14,9 @@ Use the TypeDoc reference for exact declarations. This page maps native
 | Execution | `execution` | Use direct execution (the default) or select broker execution |
 | Server | `Oliphaunt.openServer` | Start PostgreSQL as a server for tools and independent clients |
 | SQL | `query`, `execute`, typed result helpers | Run SQL and read typed values from JavaScript |
-| Raw protocol | `execProtocolRaw` | Send PostgreSQL protocol bytes through the selected native path |
+| Raw protocol | `execProtocolRaw`, `execProtocolStream` | Send PostgreSQL protocol bytes as one owned response or callback chunks through the selected native path |
 | Data movement | `backup`, `restore` | Move the native physical archive to a new or empty destination |
+| Optional tools | `pgDump`, `psql`, `PostgresToolError` from `@oliphaunt/tools` | Run standard logical tools against a native server connection string without adding tools to the core SDK |
 | Errors | `PostgresError` | Handle SQLSTATE-bearing PostgreSQL failures |
 
 The root package is the only native runtime entrypoint. It detects Node.js,

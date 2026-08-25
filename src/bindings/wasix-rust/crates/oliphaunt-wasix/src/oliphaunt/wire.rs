@@ -25,11 +25,6 @@ impl FrontendFrameReader {
         Ok(Some(self.buffer.drain(..message_len).collect()))
     }
 
-    #[cfg(feature = "tools")]
-    pub(crate) fn take_pending(&mut self) -> Vec<u8> {
-        std::mem::take(&mut self.buffer)
-    }
-
     pub(crate) fn push(&mut self, input: &[u8]) -> Result<Vec<Vec<u8>>> {
         self.append(input);
         let mut messages = Vec::new();

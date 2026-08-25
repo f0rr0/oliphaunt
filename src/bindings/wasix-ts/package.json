@@ -100,6 +100,7 @@
     "dev": "pnpm run package:build && vite --config ../../../examples/browser-wasix/vite.config.ts",
     "host:build": "bash host/build-sdk.sh",
     "package:build": "pnpm run host:build && pnpm run build && node tools/stage-host.mjs",
+    "package:build:closure": "pnpm run package:build && pnpm --dir tools-package build",
     "package:check": "node tools/check-package.mjs",
     "bench:browser": "pnpm run package:build && node tools/smoke-browser.mjs --benchmark",
     "docs:api": "typedoc --options typedoc.json",

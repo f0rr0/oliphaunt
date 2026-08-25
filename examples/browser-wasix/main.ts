@@ -14,6 +14,7 @@ import { pgDump, psql } from '@oliphaunt/wasix-tools';
 import logicalToolsFixtureJson from '../../src/shared/fixtures/postgres/logical-tools.json?raw';
 import logicalToolsSeed from '../../src/shared/fixtures/postgres/logical-tools-seed.sql?raw';
 import logicalToolsVerify from '../../src/shared/fixtures/postgres/logical-tools-verify.sql?raw';
+import { expectDirectPgDump } from './direct-pg-dump-smoke.js';
 
 const logicalToolsFixture = JSON.parse(logicalToolsFixtureJson) as {
   expected: {
@@ -78,6 +79,7 @@ try {
     if (pgUuidv7Canary) {
       await readPgUuidv7(database);
     }
+    await expectDirectPgDump(database);
     await database.close();
 
     directWorkerAudit?.assertNoneAndRestore();
@@ -116,6 +118,7 @@ try {
       pgtap: pgtapVersion,
       startupSqlstate: '3D000',
       directWorkers: 0,
+      directPgDump: true,
       opfsTransport: 'direct',
       opfsCrashAnswer: opfsCrash.answer,
       opfsCrashRelations: opfsCrash.relations,

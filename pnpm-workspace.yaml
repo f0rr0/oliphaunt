@@ -12,7 +12,7 @@ packages:
   - "examples/browser-wasix"
   - "examples/react-native-expo"
   - "src/bindings/wasix-ts"
-  - "src/bindings/wasix-tools"
+  - "src/bindings/wasix-ts/tools-package"
   - "src/runtimes/liboliphaunt/wasix/tools-npm"
   - "tools/perf/wasix-node"
 

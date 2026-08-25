@@ -32,7 +32,7 @@ and lifecycle; typed queries and callback transactions belong in language SDKs.
 | Physical backup | direct and broker; mobile direct | yes | yes |
 | Physical restore | new or empty destination | static restore into a new or empty directory | static restore into new or empty persistent storage |
 | Listening server | Rust and desktop TypeScript | yes | Node, Bun, and Deno through explicit server subpaths; no browser socket API |
-| PostgreSQL tools | optional endpoint-oriented Rust and desktop TypeScript products; no core SDK dependency | `tools` feature: direct `pg_dump` and non-interactive `psql` | optional `@oliphaunt/wasix-tools`: direct `pg_dump` and non-interactive `psql` |
+| PostgreSQL tools | optional endpoint-oriented Rust and desktop TypeScript products; no core SDK dependency | `tools` feature: open-database `pg_dump` and non-interactive `psql` | optional `@oliphaunt/wasix-tools`: `pgDump` in direct or worker placement; non-interactive `psql` in worker placement |
 | Cancellation | native C and language SDKs | no public direct cancellation contract | no |
 | Protocol/COPY response streaming | callback raw-protocol streaming in every native SDK, backed by the native C callback ABI | callback raw-protocol streaming; COPY uses the guest stream pump | buffered and callback raw-protocol streaming with bounded backpressure |
 
@@ -48,10 +48,11 @@ These are language-native deltas, not parity failures:
 - Rust WASIX and WASIX TypeScript expose the same lightweight single-backend
   endpoint where the host has local sockets. TypeScript keeps the server absent
   in browsers and exports it only from the Node, Bun, and Deno server subpaths.
-- WASIX tools run directly against the embedded database in both bindings.
-  Their optional carriers stay outside the core SDK packages; the TypeScript
-  tools work in browsers because they use an internal bounded pgwire transport,
-  not a browser socket.
+- WASIX tools run against an open embedded database in both bindings. Their
+  optional carriers stay outside the core SDK packages. TypeScript `pgDump`
+  supports direct and worker database placement; TypeScript `psql` requires
+  worker placement and uses a bounded internal pgwire bridge between workers.
+  Neither needs a browser socket.
 - Native tools are endpoint-oriented optional products. `oliphaunt-tools` and
   `@oliphaunt/tools` accept a PostgreSQL connection string and do not become
   dependencies or methods of the embedded database SDKs.

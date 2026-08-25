@@ -17,14 +17,15 @@ use crate::oliphaunt::config::{PostgresConfig, StartupConfig};
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::extensions::Extension;
 use crate::oliphaunt::postgres_mod::{
-    PROTOCOL_CHUNK_BYTES, ProtocolPumpOutcome, ProtocolStream, StartupProtocolResponse,
-    startup_error_response_output,
+    ProtocolPumpOutcome, ProtocolStream, StartupProtocolResponse, startup_error_response_output,
 };
 use crate::oliphaunt::query::simple_query;
 use crate::oliphaunt::wire::{
     FrontendFrameKind, FrontendFrameReader, classify_frontend_message, error_response,
     response_contains_error, startup_config_for_message, startup_parameter,
 };
+
+const PROXY_READ_BUFFER_BYTES: usize = 64 * 1024;
 
 /// Blocking PostgreSQL socket proxy for the embedded Oliphaunt runtime.
 ///
@@ -221,7 +222,7 @@ impl OliphauntProxy {
     {
         let mut backend = None::<WireBackend>;
         let mut reader = FrontendFrameReader::default();
-        let mut buffer = [0u8; PROTOCOL_CHUNK_BYTES];
+        let mut buffer = [0u8; PROXY_READ_BUFFER_BYTES];
         let mut protocol_batch = Vec::new();
 
         loop {

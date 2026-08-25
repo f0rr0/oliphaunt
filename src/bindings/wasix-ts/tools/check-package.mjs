@@ -1,5 +1,5 @@
-import { execFile } from 'node:child_process';
-import { cp, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { execFile, spawn } from 'node:child_process';
+import { cp, mkdir, mkdtemp, open, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,12 +34,9 @@ try {
     await cp(resolve(packageDir, name), resolve(staging, name), { recursive: true });
   }
   const stagedPackageJson = prepareWasixTypescriptPackage(staging);
-  const { stdout } = await execFileAsync('pnpm', ['pack', '--dry-run', '--json'], {
-    cwd: staging,
-    env: { ...process.env, PNPM_CONFIG_IGNORE_SCRIPTS: 'true' },
-    maxBuffer: 16 * 1024 * 1024,
-  });
-  const result = JSON.parse(stdout);
+  const packOutput = resolve(scratch, 'pack.json');
+  await writePnpmPackInventory(staging, packOutput);
+  const result = JSON.parse(await readFile(packOutput, 'utf8'));
   const packed = Array.isArray(result) ? result[0] : result;
   const paths = new Set(packed.files?.map((entry) => entry.path));
   // Release Please owns the first changelog entry, so an unreleased 0.0.0
@@ -220,4 +217,35 @@ try {
   console.log(`wasix-ts package-shape: PASS ${packed.filename}`);
 } finally {
   await rm(scratch, { force: true, recursive: true });
+}
+
+async function writePnpmPackInventory(cwd, outputPath) {
+  // pnpm 11 emits no dry-run JSON when stdout is a pipe. Give it a regular
+  // scratch file, then parse that exact output above.
+  const output = await open(outputPath, 'wx');
+  try {
+    await new Promise((resolveRun, rejectRun) => {
+      const child = spawn('pnpm', ['pack', '--dry-run', '--json'], {
+        cwd,
+        env: { ...process.env, PNPM_CONFIG_IGNORE_SCRIPTS: 'true' },
+        stdio: ['ignore', output.fd, 'inherit'],
+      });
+      child.once('error', rejectRun);
+      child.once('close', (code, signal) => {
+        if (code === 0) {
+          resolveRun();
+          return;
+        }
+        rejectRun(
+          new Error(
+            signal === null
+              ? `pnpm pack --dry-run exited with status ${code}`
+              : `pnpm pack --dry-run ended with signal ${signal}`,
+          ),
+        );
+      });
+    });
+  } finally {
+    await output.close();
+  }
 }

@@ -1,0 +1,40 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 24 Aug 2026 00:00:00 +0000
+Subject: [PATCH] oliphaunt-wasix: honor noninteractive psql invocations
+
+Wasmer reports captured standard streams as character devices, so psql treats
+script input as an interactive terminal and writes prompts into captured output.
+The Oliphaunt tool facades are deliberately noninteractive and need ordinary
+psql file-input semantics regardless of the virtual descriptor type.
+
+Honor one private environment marker with the exact value `1`.  Ordinary WASIX
+psql invocations retain PostgreSQL's normal isatty-based behavior.
+---
+ src/bin/psql/startup.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/bin/psql/startup.c b/src/bin/psql/startup.c
+index b0c07fb..49f7b99 100644
+--- a/src/bin/psql/startup.c
++++ b/src/bin/psql/startup.c
+@@ -128,6 +128,7 @@ main(int argc, char *argv[])
+ 	int			successResult;
+ 	char	   *password = NULL;
+ 	bool		new_pass;
++	const char *oliphaunt_noninteractive;
+ 
+ 	pg_logging_init(argv[0]);
+ 	pg_logging_set_pre_callback(log_pre_callback);
+@@ -184,7 +185,9 @@ main(int argc, char *argv[])
+ 	/* We must get COLUMNS here before readline() sets it */
+ 	pset.popt.topt.env_columns = getenv("COLUMNS") ? atoi(getenv("COLUMNS")) : 0;
+ 
+-	pset.notty = (!isatty(fileno(stdin)) || !isatty(fileno(stdout)));
++	oliphaunt_noninteractive = getenv("OLIPHAUNT_PSQL_NONINTERACTIVE");
++	pset.notty = ((oliphaunt_noninteractive != NULL && strcmp(oliphaunt_noninteractive, "1") == 0) ||
++				  !isatty(fileno(stdin)) || !isatty(fileno(stdout)));
+ 
+ 	pset.getPassword = TRI_DEFAULT;
+ 
+-- 
+2.51.0

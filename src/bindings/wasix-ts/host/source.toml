@@ -43,5 +43,4 @@ series = [
   "0019-wasmer-parse-exception-reference-types.patch",
   "0020-wasmer-wasix-preserve-posix-close-durability.patch",
   "0021-wasmer-js-stream-direct-pgwire.patch",
-  "0022-wasmer-js-bound-tool-pgwire.patch",
 ]

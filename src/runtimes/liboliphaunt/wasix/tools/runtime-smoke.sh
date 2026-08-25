@@ -13,6 +13,7 @@ root="$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)" || {
 cd "$root"
 
 . "$root/tools/runtime/preflight.sh"
+. "$root/tools/test/cargo-test-filter.sh"
 
 mode="${1:-smoke}"
 case "$mode" in
@@ -44,14 +45,21 @@ fi
 
 oliphaunt_wasix_cargo_test() {
   if [ "$asset_mode" = "full" ]; then
-    # The extension evidence contract includes pg_dump/restore. Keep the tools
-    # feature and every catalogued extension feature enabled whenever the
-    # full extension asset set is under test.
+    # Full evidence enables every catalogued extension plus the tool features
+    # needed by the separate extension and logical dump/restore proofs below.
     cargo test -p oliphaunt-wasix --locked --no-default-features \
       --features "$full_evidence_features" "$@"
   else
     cargo test -p oliphaunt-wasix --locked --no-default-features "$@"
   fi
+}
+
+oliphaunt_wasix_counted_library_tests() {
+  local expected="$1"
+  local filter="$2"
+  local command=(oliphaunt_wasix_cargo_test --lib "$filter")
+  oliphaunt_assert_cargo_test_filter_count "$expected" "$filter" "${command[@]}"
+  "${command[@]}" -- --nocapture --test-threads=1
 }
 
 cargo run -p xtask -- assets install-local --target-triple "$host"
@@ -73,17 +81,17 @@ oliphaunt_wasix_cargo_test \
   --test postgres_regression \
   -- --nocapture --test-threads=1
 if [ "$asset_mode" = "full" ]; then
-  # Together these library tests cover every catalogued extension through
-  # direct, server, restart, materialization, and dump/restore paths. Do not
-  # replace them with a representative subset: the evidence matrix makes
-  # product-by-product claims.
-  oliphaunt_wasix_cargo_test \
-    --lib candidate_tests::public_extensions \
-    -- --nocapture --test-threads=1
+  # The three exhaustive tests cover every catalogued extension through direct,
+  # restart, server, and materialization paths. Logical dump/restore is a
+  # separate shared-fixture proof below; it does not claim every extension.
+  oliphaunt_wasix_counted_library_tests 3 extension_tests::public_extensions
   if [ "$mode" = "regression" ]; then
     oliphaunt_wasix_cargo_test --test client_compat -- --nocapture --test-threads=1
   fi
-  oliphaunt_wasix_cargo_test --lib pg_dump -- --nocapture
+  tools_filter="oliphaunt::tools::tests::public_tools_round_trip_shared_logical_fixture"
+  tools_command=(oliphaunt_wasix_cargo_test --lib "$tools_filter")
+  oliphaunt_assert_cargo_test_filter_count 1 "$tools_filter" "${tools_command[@]}"
+  "${tools_command[@]}" -- --exact --nocapture --test-threads=1
 else
   echo "core-only WASIX assets detected; skipping extension and frontend-tool smoke tests"
 fi

@@ -30,7 +30,48 @@ fn main() {
         std::env::set_var(RELEASE_PROOF_RUNNER_ENV, "1");
     }
     let arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    if arguments.first().map(String::as_str) == Some("--native-tools-npm-smoke") {
+        let command = arguments
+            .get(1..)
+            .filter(|arguments| arguments.first().map(String::as_str) == Some("--"))
+            .and_then(|arguments| arguments.get(1..))
+            .filter(|command| !command.is_empty())
+            .expect("usage: oliphaunt-native-extension-proof --native-tools-npm-smoke -- COMMAND [ARG ...]");
+        run_native_tools_npm_smoke(command).expect("packed native npm tools smoke failed");
+        return;
+    }
     let shard_index = parse_usize_flag(&arguments, "shard-index", 0);
     let shard_count = parse_usize_flag(&arguments, "shard-count", 1);
     run_native_extension_release_proof(shard_index, shard_count);
+}
+
+fn run_native_tools_npm_smoke(
+    command: &[String],
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_root("native-tools-npm-smoke");
+    let server = block_on(
+        Oliphaunt::builder()
+            .directory(&root)
+            .extension(Extension::Pgtap)
+            .open_server(),
+    )?;
+    let child = Command::new(&command[0])
+        .args(&command[1..])
+        .env(
+            "OLIPHAUNT_NATIVE_TOOLS_CONNECTION_STRING",
+            server.connection_string(),
+        )
+        .status();
+    let close = block_on(server.close());
+    let _ = fs::remove_dir_all(&root);
+    let status = child?;
+    close?;
+    if !status.success() {
+        return Err(std::io::Error::other(format!(
+            "packed native npm tools smoke command exited with {status}"
+        ))
+        .into());
+    }
+    println!("OLIPHAUNT_NATIVE_TOOLS_NPM_SMOKE_PASS engines=node,bun,deno");
+    Ok(())
 }

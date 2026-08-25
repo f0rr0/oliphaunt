@@ -5,7 +5,8 @@ import { installNodeWebWorker } from './node-web-worker.js';
 
 export const Directory = host.Directory;
 export const instantiateOliphauntDirect = host.instantiateOliphauntDirect;
-export const runOliphauntTool = host.runOliphauntTool;
+export const prepareOliphauntTool = host.prepareOliphauntTool;
+export const runOliphauntToolDirect = host.runOliphauntToolDirect;
 
 export async function init(options: Record<string, unknown> = {}): Promise<unknown> {
   installNodeWebWorker();
