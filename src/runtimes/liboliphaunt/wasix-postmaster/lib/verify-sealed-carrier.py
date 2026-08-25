@@ -759,14 +759,15 @@ def parse_guest_build_receipt(
         "atomic_fence_reset_latch": "1",
         "atomic_fence_wait_event_set_wait": "1",
     }
-    expected_fences["atomic_fence_total"] = {
-        "release-o3": "995",
-    }[receipt["core_profile"]]
     for key, expected in expected_fences.items():
         require(
             receipt[key] == expected,
             f"guest build receipt concurrency fence contract mismatch: {key}",
         )
+    require(
+        re.fullmatch(r"[1-9][0-9]*", receipt["atomic_fence_total"]) is not None,
+        "guest build receipt atomic fence total is not canonical",
+    )
     require(
         receipt["latch_state_contract"] == "packed-atomic-v1",
         "guest build receipt latch-state contract mismatch",
@@ -864,7 +865,7 @@ def parse_final_concurrency_receipt(
         integers[key] = int(value)
     require(
         integers["atomic_fence_total"]
-        == {"release-o3": 995}[guest_build_receipt["core_profile"]],
+        == int(guest_build_receipt["atomic_fence_total"]),
         "final Wasm concurrency receipt fence total mismatch",
     )
     expected_exact = {

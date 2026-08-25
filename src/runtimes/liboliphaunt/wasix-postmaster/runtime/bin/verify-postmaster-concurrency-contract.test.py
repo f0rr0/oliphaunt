@@ -6,9 +6,11 @@ from __future__ import annotations
 
 import importlib.util
 import hashlib
+import io
 import pathlib
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 
 
 SCRIPT = pathlib.Path(__file__).with_name("verify-postmaster-concurrency-contract.py")
@@ -45,7 +47,7 @@ def section(section_id: int, payload: bytes) -> bytes:
 
 def module_bytes(
     *, shared: bool = True, function_fences: dict[str, int] | None = None,
-    extra_fences: int = 271,
+    extra_fences: int = 271, immediate_fence_lookalike: bool = False,
 ) -> bytes:
     counts = dict(MODULE.EXPECTED_FUNCTION_FENCES)
     if function_fences is not None:
@@ -67,7 +69,11 @@ def module_bytes(
     bodies = []
     for function_name in function_names:
         fence_count = extra_fences if function_name == "other" else counts[function_name]
-        instructions = MODULE.ATOMIC_FENCE_ENCODING * fence_count + b"\x0b"
+        instructions = MODULE.ATOMIC_FENCE_ENCODING * fence_count
+        if function_name == "other" and immediate_fence_lookalike:
+            # i32.const 510 followed by unreachable contains fe 03 00, but no fence.
+            instructions += b"\x41\xfe\x03\x00"
+        instructions += b"\x0b"
         body = b"\x00" + instructions  # zero local declaration groups
         bodies.append(uleb(len(body)) + body)
     code_section = section(10, uleb(len(bodies)) + b"".join(bodies))
@@ -142,7 +148,42 @@ class ConcurrencyContractTests(unittest.TestCase):
         totals, functions = MODULE.parse_wat_instruction_inventory(packed_wat())
         self.assertEqual(totals["atomic.fence"], 4)
         self.assertEqual(totals["i32.atomic.load"], 1)
-        MODULE.verify_packed_atomic_contract(4, totals, functions)
+        MODULE.verify_packed_atomic_contract(totals, functions)
+
+    def test_packed_contract_ignores_fence_encoding_inside_immediate(self) -> None:
+        contents = module_bytes(extra_fences=0, immediate_fence_lookalike=True)
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            postgres = root / "postgres.wasm"
+            wasm_dis = root / "wasm-dis"
+            postgres.write_bytes(contents)
+            wasm_dis.write_text(
+                "#!/usr/bin/env python3\n"
+                "import sys\n"
+                "if '--version' in sys.argv:\n"
+                "    print('wasm-dis version 130')\n"
+                "else:\n"
+                f"    print({''.join(packed_wat())!r}, end='')\n",
+                encoding="utf-8",
+            )
+            wasm_dis.chmod(0o755)
+
+            # The legacy byte substring inventory sees a false fifth fence.
+            self.assertEqual(MODULE.verify(postgres)[0], 5)
+            with redirect_stdout(io.StringIO()):
+                status = MODULE.main(
+                    [
+                        str(SCRIPT),
+                        "--expected-total",
+                        "4",
+                        "--latch-state-contract",
+                        MODULE.PACKED_LATCH_CONTRACT,
+                        "--wasm-dis",
+                        str(wasm_dis),
+                        str(postgres),
+                    ]
+                )
+            self.assertEqual(status, 0)
 
     def test_packed_wat_missing_waiter_retraction_fails(self) -> None:
         totals, functions = MODULE.parse_wat_instruction_inventory(
@@ -152,14 +193,14 @@ class ConcurrencyContractTests(unittest.TestCase):
             MODULE.DecodeError,
             "WaitEventSetWait contains 1 i32.atomic.rmw.and",
         ):
-            MODULE.verify_packed_atomic_contract(4, totals, functions)
+            MODULE.verify_packed_atomic_contract(totals, functions)
 
     def test_packed_wat_missing_atomic_load_fails(self) -> None:
         totals, functions = MODULE.parse_wat_instruction_inventory(
             packed_wat(wait_loads=0)
         )
         with self.assertRaisesRegex(MODULE.DecodeError, "expected at least 1"):
-            MODULE.verify_packed_atomic_contract(4, totals, functions)
+            MODULE.verify_packed_atomic_contract(totals, functions)
 
     def test_packed_wat_duplicate_critical_alias_fails(self) -> None:
         lines = packed_wat()

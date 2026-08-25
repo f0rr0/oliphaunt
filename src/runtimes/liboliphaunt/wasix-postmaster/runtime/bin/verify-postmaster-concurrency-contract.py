@@ -200,14 +200,15 @@ def inspect_with_wasm_dis(
                 errors="strict",
             )
             assert process.stdout is not None
-            try:
-                total_counts, function_counts = parse_wat_instruction_inventory(
-                    process.stdout
-                )
-            except BaseException:
-                process.kill()
-                process.wait()
-                raise
+            with process.stdout:
+                try:
+                    total_counts, function_counts = parse_wat_instruction_inventory(
+                        process.stdout
+                    )
+                except BaseException:
+                    process.kill()
+                    process.wait()
+                    raise
             returncode = process.wait()
             if returncode != 0:
                 error_file.seek(0)
@@ -222,15 +223,9 @@ def inspect_with_wasm_dis(
 
 
 def verify_packed_atomic_contract(
-    binary_fence_total: int,
     total_counts: dict[str, int],
     function_counts: dict[str, dict[str, int]],
 ) -> None:
-    if total_counts["atomic.fence"] != binary_fence_total:
-        raise DecodeError(
-            "binary and wasm-dis fence inventories differ: "
-            f"{binary_fence_total} != {total_counts['atomic.fence']}"
-        )
     for name, expected_counts in PACKED_FUNCTION_ATOMICS.items():
         for opcode, expected in expected_counts.items():
             actual = function_counts[name][opcode]
@@ -333,7 +328,7 @@ def exact_receipt_integer(values: dict[str, str], key: str) -> int:
 def verify_receipt(
     receipt_path: pathlib.Path,
     postgres_path: pathlib.Path,
-    binary_fence_total: int,
+    expected_fence_total: int,
 ) -> dict[str, str]:
     values = read_receipt(receipt_path)
     if values["schema"] != FINAL_CONTRACT_SCHEMA:
@@ -354,8 +349,8 @@ def verify_receipt(
         for key in FINAL_CONTRACT_KEYS
         if key.startswith("atomic_") or key.startswith("i32_atomic_")
     }
-    if integers["atomic_fence_total"] != binary_fence_total:
-        raise DecodeError("final concurrency receipt fence total differs from module")
+    if integers["atomic_fence_total"] != expected_fence_total:
+        raise DecodeError("final concurrency receipt fence total differs from contract")
     expected_exact = {
         "atomic_fence_set_latch": 2,
         "atomic_fence_reset_latch": 1,
@@ -546,9 +541,9 @@ def read_code_bodies(payload: bytes) -> tuple[bytes, ...]:
     return bodies
 
 
-def verify(
-    path: pathlib.Path, *, expected_total: int | None = None
-) -> tuple[int, dict[str, int]]:
+def verify_module_structure(
+    path: pathlib.Path,
+) -> tuple[int, dict[str, int], tuple[bytes, ...]]:
     sections = read_sections(path.read_bytes())
     for section_id, name in ((2, "import"), (3, "function"), (7, "export"), (10, "code")):
         if section_id not in sections:
@@ -567,13 +562,23 @@ def verify(
             f"{len(bodies)} bodies"
         )
 
-    function_counts = {}
-    for name, expected in EXPECTED_FUNCTION_FENCES.items():
+    for name in EXPECTED_FUNCTION_FENCES:
         if name not in exports:
             raise DecodeError(f"missing required function export {name}")
         defined_index = exports[name] - imported_functions
         if defined_index < 0 or defined_index >= len(bodies):
             raise DecodeError(f"{name} does not refer to a defined function")
+    return imported_functions, exports, bodies
+
+
+def verify(
+    path: pathlib.Path, *, expected_total: int | None = None
+) -> tuple[int, dict[str, int]]:
+    imported_functions, exports, bodies = verify_module_structure(path)
+
+    function_counts = {}
+    for name, expected in EXPECTED_FUNCTION_FENCES.items():
+        defined_index = exports[name] - imported_functions
         actual = bodies[defined_index].count(ATOMIC_FENCE_ENCODING)
         function_counts[name] = actual
         if actual != expected:
@@ -673,56 +678,81 @@ def main(argv: list[str]) -> int:
                 f"and={receipt_values['i32_atomic_rmw_and_wait_event_set_wait']},"
                 f"or={receipt_values['i32_atomic_rmw_or_wait_event_set_wait']}"
             )
+        elif options.wasm_dis is not None:
+            verify_module_structure(options.postgres_wasm)
+            (
+                total_opcodes,
+                function_opcodes,
+                wasm_dis_sha256,
+                wasm_dis_version,
+            ) = inspect_with_wasm_dis(options.postgres_wasm, options.wasm_dis)
+            total = total_opcodes["atomic.fence"]
+            counts = {
+                name: function_opcodes[name]["atomic.fence"]
+                for name in EXPECTED_FUNCTION_FENCES
+            }
+            if options.expected_total is not None and total != options.expected_total:
+                raise DecodeError(
+                    f"module contains {total} atomic.fence instructions, "
+                    f"expected {options.expected_total}"
+                )
+            if options.latch_state_contract == PACKED_LATCH_CONTRACT:
+                verify_packed_atomic_contract(total_opcodes, function_opcodes)
+                atomic_summary = (
+                    " atomics="
+                    f"SetLatch:or={function_opcodes['SetLatch']['i32.atomic.rmw.or']} "
+                    f"ResetLatch:and={function_opcodes['ResetLatch']['i32.atomic.rmw.and']} "
+                    "WaitEventSetWait:"
+                    f"load={function_opcodes['WaitEventSetWait']['i32.atomic.load']},"
+                    f"and={function_opcodes['WaitEventSetWait']['i32.atomic.rmw.and']},"
+                    f"or={function_opcodes['WaitEventSetWait']['i32.atomic.rmw.or']}"
+                )
+                if options.receipt is not None:
+                    postgres_sha256 = hashlib.sha256(
+                        options.postgres_wasm.read_bytes()
+                    ).hexdigest()
+                    receipt = canonical_receipt(
+                        postgres_sha256,
+                        total,
+                        total_opcodes,
+                        function_opcodes,
+                        wasm_dis_sha256,
+                        wasm_dis_version,
+                    )
+                    write_receipt(options.receipt, receipt)
+        elif options.verified_receipt is not None:
+            verify_module_structure(options.postgres_wasm)
+            receipt_values = read_receipt(options.verified_receipt)
+            receipt_total = exact_receipt_integer(
+                receipt_values, "atomic_fence_total"
+            )
+            total = options.expected_total or receipt_total
+            receipt_values = verify_receipt(
+                options.verified_receipt,
+                options.postgres_wasm,
+                total,
+            )
+            counts = {
+                name: int(receipt_values[f"atomic_fence_{key}"])
+                for name, key in (
+                    ("SetLatch", "set_latch"),
+                    ("ResetLatch", "reset_latch"),
+                    ("WaitEventSetWait", "wait_event_set_wait"),
+                )
+            }
+            atomic_summary = (
+                " atomics="
+                f"SetLatch:or={receipt_values['i32_atomic_rmw_or_set_latch']} "
+                f"ResetLatch:and={receipt_values['i32_atomic_rmw_and_reset_latch']} "
+                "WaitEventSetWait:"
+                f"load={receipt_values['i32_atomic_load_wait_event_set_wait']},"
+                f"and={receipt_values['i32_atomic_rmw_and_wait_event_set_wait']},"
+                f"or={receipt_values['i32_atomic_rmw_or_wait_event_set_wait']}"
+            )
         else:
             total, counts = verify(
                 options.postgres_wasm, expected_total=options.expected_total
             )
-            if options.wasm_dis is not None:
-                (
-                    total_opcodes,
-                    function_opcodes,
-                    wasm_dis_sha256,
-                    wasm_dis_version,
-                ) = inspect_with_wasm_dis(options.postgres_wasm, options.wasm_dis)
-                if options.latch_state_contract == PACKED_LATCH_CONTRACT:
-                    verify_packed_atomic_contract(total, total_opcodes, function_opcodes)
-                    atomic_summary = (
-                        " atomics="
-                        f"SetLatch:or={function_opcodes['SetLatch']['i32.atomic.rmw.or']} "
-                        f"ResetLatch:and={function_opcodes['ResetLatch']['i32.atomic.rmw.and']} "
-                        "WaitEventSetWait:"
-                        f"load={function_opcodes['WaitEventSetWait']['i32.atomic.load']},"
-                        f"and={function_opcodes['WaitEventSetWait']['i32.atomic.rmw.and']},"
-                        f"or={function_opcodes['WaitEventSetWait']['i32.atomic.rmw.or']}"
-                    )
-                    if options.receipt is not None:
-                        postgres_sha256 = hashlib.sha256(
-                            options.postgres_wasm.read_bytes()
-                        ).hexdigest()
-                        receipt = canonical_receipt(
-                            postgres_sha256,
-                            total,
-                            total_opcodes,
-                            function_opcodes,
-                            wasm_dis_sha256,
-                            wasm_dis_version,
-                        )
-                        write_receipt(options.receipt, receipt)
-            elif options.verified_receipt is not None:
-                receipt_values = verify_receipt(
-                    options.verified_receipt,
-                    options.postgres_wasm,
-                    total,
-                )
-                atomic_summary = (
-                    " atomics="
-                    f"SetLatch:or={receipt_values['i32_atomic_rmw_or_set_latch']} "
-                    f"ResetLatch:and={receipt_values['i32_atomic_rmw_and_reset_latch']} "
-                    "WaitEventSetWait:"
-                    f"load={receipt_values['i32_atomic_load_wait_event_set_wait']},"
-                    f"and={receipt_values['i32_atomic_rmw_and_wait_event_set_wait']},"
-                    f"or={receipt_values['i32_atomic_rmw_or_wait_event_set_wait']}"
-                )
     except (DecodeError, OSError, UnicodeError) as error:
         print(f"verify-postmaster-concurrency-contract: {error}", file=sys.stderr)
         return 1
