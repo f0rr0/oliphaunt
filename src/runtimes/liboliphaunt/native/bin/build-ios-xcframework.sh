@@ -170,6 +170,9 @@ xcframework_ready() {
   assert_library_slice "$macos_library" MACOS || return 1
   assert_library_slice "$ios_library" IOS || return 1
   assert_library_slice "$simulator_library" IOSSIMULATOR || return 1
+  assert_framework_info_platform "$(dirname "$macos_library")/Info.plist" macosx || return 1
+  assert_framework_info_platform "$(dirname "$ios_library")/Info.plist" iphoneos || return 1
+  assert_framework_info_platform "$(dirname "$simulator_library")/Info.plist" iphonesimulator || return 1
 }
 
 assert_framework_info_version() {
@@ -182,10 +185,32 @@ assert_framework_info_version() {
   }
 }
 
+assert_framework_info_platform() {
+  local plist="$1"
+  local expected="$2"
+  local observed
+  observed="$(plutil -extract DTPlatformName raw "$plist")"
+  [ "$observed" = "$expected" ] || {
+    echo "framework platform $observed does not match $expected: $plist" >&2
+    return 1
+  }
+}
+
+framework_info_platform() {
+  case "$1" in
+    MacOSX) printf 'macosx\n' ;;
+    iPhoneOS) printf 'iphoneos\n' ;;
+    iPhoneSimulator) printf 'iphonesimulator\n' ;;
+    *) echo "unsupported framework platform $1" >&2; return 1 ;;
+  esac
+}
+
 write_framework_info_plist() {
   local plist="$1"
   local platform="$2"
   local platform_family="$3"
+  local info_platform
+  info_platform="$(framework_info_platform "$platform")"
   if [ "$platform" = "MacOSX" ]; then
     cat >"$plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -212,12 +237,15 @@ write_framework_info_plist() {
   </array>
   <key>CFBundleVersion</key>
   <string>1</string>
+  <key>DTPlatformName</key>
+  <string>${info_platform}</string>
   <key>MinimumOSVersion</key>
   <string>14.0</string>
 </dict>
 </plist>
 PLIST
     assert_framework_info_version "$plist"
+    assert_framework_info_platform "$plist" "$info_platform"
     return
   fi
   cat >"$plist" <<PLIST
@@ -245,6 +273,8 @@ PLIST
   </array>
   <key>CFBundleVersion</key>
   <string>1</string>
+  <key>DTPlatformName</key>
+  <string>${info_platform}</string>
   <key>MinimumOSVersion</key>
   <string>17.0</string>
   <key>UIDeviceFamily</key>
@@ -255,6 +285,7 @@ PLIST
 </plist>
 PLIST
   assert_framework_info_version "$plist"
+  assert_framework_info_platform "$plist" "$info_platform"
 }
 
 expected_library_platform_for_framework_platform() {
