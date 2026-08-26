@@ -1,5 +1,5 @@
 import Foundation
-@testable import Oliphaunt
+@testable @_spi(ExtensionSupport) import Oliphaunt
 import Testing
 
 #if canImport(Darwin)
@@ -34,6 +34,13 @@ func discoversCocoaPodsRuntimeResourceBundlesBeforeTheyAreLoaded() throws {
     #expect(urls.map(\.standardizedFileURL).contains(bundleRoot.standardizedFileURL))
 }
 #endif
+
+@Test
+func runtimeCacheUsesApplicationDataNamespaceCasing() {
+    let cacheRoot = OliphauntRuntimeResources.defaultCacheRoot()
+    #expect(cacheRoot.lastPathComponent == "runtime-cache")
+    #expect(cacheRoot.deletingLastPathComponent().lastPathComponent == "Oliphaunt")
+}
 
 // OLIPHAUNT_DOCS_SNIPPET swift-quickstart
 // liboliphaunt-doc-example:swift-open-exec-close

@@ -1769,6 +1769,7 @@ async function stripEmbeddedRuntimeClosures(frameworkRoot) {
           fail(`base framework contains an invalid embedded runtime closure: ${file}`);
         }
         await fs.rm(file, { recursive: true });
+        if ((await fs.readdir(directory)).length === 0) await fs.rmdir(directory);
         removed += 1;
       } else {
         await visit(file);

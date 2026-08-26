@@ -1135,6 +1135,17 @@ async function main() {
         "oliphaunt",
       )),
     );
+    await assert.rejects(
+      fs.access(path.join(
+        output,
+        "frameworks",
+        "base",
+        "liboliphaunt.xcframework",
+        "ios-arm64",
+        "liboliphaunt.framework",
+        "Resources",
+      )),
+    );
 
     const frameworkNames = (await fs.readdir(path.join(output, "frameworks", "extensions"))).sort();
     assert.deepEqual(frameworkNames, [

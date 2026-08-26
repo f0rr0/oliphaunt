@@ -162,7 +162,9 @@ struct OliphauntExtensionSizeReport: Equatable, Sendable {
             for: .applicationSupportDirectory,
             in: .userDomainMask
         ).first ?? FileManager.default.temporaryDirectory
-        return base.appendingPathComponent("oliphaunt/runtime-cache", isDirectory: true)
+        return base
+            .appendingPathComponent("Oliphaunt", isDirectory: true)
+            .appendingPathComponent("runtime-cache", isDirectory: true)
     }
 
     func packageSizeReport() throws -> OliphauntRuntimeResourceSizeReport? {
