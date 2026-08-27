@@ -40,31 +40,43 @@ install_macos_tools() {
 
 install_linux_tools() {
   .github/scripts/prepare-linux-apt.sh
-  sudo apt-get \
-    -o Acquire::Retries=5 \
-    -o Acquire::http::Timeout=30 \
-    -o Acquire::https::Timeout=30 \
-    update
-  sudo apt-get \
-    -o Acquire::Retries=5 \
-    -o Acquire::http::Timeout=30 \
-    -o Acquire::https::Timeout=30 \
-    install -y --no-install-recommends \
-    build-essential \
-    ca-certificates \
-    ccache \
-    cmake \
-    curl \
-    g++-12 \
-    gcc-12 \
-    git \
-    make \
-    perl \
-    pkg-config \
-    ripgrep \
-    rsync \
-    sqlite3 \
+  local apt_options=(
+    -o Acquire::Retries=5
+    -o Acquire::http::Timeout=30
+    -o Acquire::https::Timeout=30
+  )
+  local packages=(
+    build-essential
+    ca-certificates
+    ccache
+    cmake
+    curl
+    g++-12
+    gcc-12
+    git
+    make
+    perl
+    pkg-config
+    ripgrep
+    rsync
+    sqlite3
     xz-utils
+  )
+
+  local attempt
+  for attempt in 1 2 3; do
+    if sudo apt-get "${apt_options[@]}" update &&
+      sudo apt-get "${apt_options[@]}" install \
+        -y --no-install-recommends --no-upgrade "${packages[@]}"; then
+      break
+    fi
+    if [ "$attempt" -eq 3 ]; then
+      echo "setup-native-build-tools.sh: apt tool installation failed after 3 attempts" >&2
+      return 1
+    fi
+    echo "setup-native-build-tools.sh: retrying apt tool installation after attempt $attempt/3" >&2
+    sleep $((attempt * 15))
+  done
 
   local linux_cc linux_cxx cc_major cxx_major
   linux_cc="$(readlink -f "$(command -v gcc-12)")"

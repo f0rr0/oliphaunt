@@ -17,6 +17,7 @@ const INSTALLER_FAULT_SUITES = [
   {script: '.github/actions/setup-moon/install-pinned-toolchain.test.sh', timeoutMs: LOCAL_SCRIPT_TIMEOUT_MS},
   {script: '.github/actions/setup-node-pnpm/install-pinned-pnpm.test.sh', timeoutMs: LOCAL_SCRIPT_TIMEOUT_MS},
   {script: '.github/actions/setup-npm-publisher/install.test.sh', timeoutMs: LOCAL_SCRIPT_TIMEOUT_MS},
+  {script: '.github/scripts/setup-native-build-tools.test.sh', timeoutMs: LOCAL_SCRIPT_TIMEOUT_MS},
 ];
 
 function appendBounded(chunks, state, chunk, label) {
