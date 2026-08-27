@@ -17,6 +17,57 @@ const scriptPath = fileURLToPath(import.meta.url);
 const workspaceRoot = path.resolve(path.dirname(scriptPath), "../../../..");
 const require = createRequire(import.meta.url);
 
+async function bundleSdkCleanupRuntime(outputDirectory) {
+  const clientSource = path.join(workspaceRoot, "src/sdks/js/src/client.ts");
+  const nodeBindingSource = path.join(workspaceRoot, "src/sdks/js/src/native/node.ts");
+  const sdkPackageJson = path.join(workspaceRoot, "src/sdks/js/package.json");
+  const result = spawnSync(
+    "bun",
+    [
+      "build",
+      clientSource,
+      nodeBindingSource,
+      "--target=node",
+      "--format=esm",
+      "--entry-naming=[dir]/[name].mjs",
+      `--outdir=${outputDirectory}`,
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(
+    result.error,
+    undefined,
+    `could not bundle the SDK cleanup fixture: ${result.error?.message ?? "unknown error"}`,
+  );
+  assert.equal(
+    result.signal,
+    null,
+    `SDK cleanup fixture bundler terminated by ${result.signal}\n${result.stderr}`,
+  );
+  assert.equal(
+    result.status,
+    0,
+    `SDK cleanup fixture bundling failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  );
+
+  const clientBundle = path.join(outputDirectory, "client.mjs");
+  const nodeBindingBundle = path.join(outputDirectory, "native", "node.mjs");
+  assert.ok(existsSync(clientBundle), `SDK cleanup client bundle is missing: ${clientBundle}`);
+  assert.ok(
+    existsSync(nodeBindingBundle),
+    `SDK cleanup Node binding bundle is missing: ${nodeBindingBundle}`,
+  );
+  const bundledPackageRoot = path.join(
+    outputDirectory,
+    "node_modules",
+    "@oliphaunt",
+    "ts",
+  );
+  await mkdir(bundledPackageRoot, { recursive: true });
+  await copyFile(sdkPackageJson, path.join(bundledPackageRoot, "package.json"));
+  return { clientBundle, nodeBindingBundle };
+}
+
 function parseArgs(argv) {
   const parsed = {};
   for (let index = 0; index < argv.length; index += 2) {
@@ -297,8 +348,8 @@ async function runChild(options) {
     }
     case "sdk-gc-owner-recovery": {
       const [{ createOliphauntClient }, { createNodeNativeBinding }] = await Promise.all([
-        import(pathToFileURL(path.join(workspaceRoot, "src/sdks/js/src/client.ts"))),
-        import(pathToFileURL(path.join(workspaceRoot, "src/sdks/js/src/native/node.ts"))),
+        import(pathToFileURL(options.sdkClientBundle)),
+        import(pathToFileURL(options.sdkNodeBindingBundle)),
       ]);
       const databaseRoot = path.join(options.root, "database");
       const runtimeDirectory = path.join(options.root, "runtime");
@@ -689,6 +740,10 @@ async function runParent(options) {
   let copiedImageCases = 0;
   let staleAcquisitionCases = 0;
   try {
+    const sdkBundleDirectory = path.join(temporaryRoot, "sdk-bundle");
+    const { clientBundle, nodeBindingBundle } = await bundleSdkCleanupRuntime(
+      sdkBundleDirectory,
+    );
     const copiedAddonA = path.join(temporaryRoot, "oliphaunt-node-copy-a.node");
     const copiedAddonB = path.join(temporaryRoot, "oliphaunt-node-copy-b.node");
     const unicodeLibraryDirectory = path.join(temporaryRoot, "unicode-λ-路径");
@@ -741,7 +796,6 @@ async function runParent(options) {
         name: "sdk-gc-owner-recovery",
         expectedBeforeClose: ["init", "detach", "init", "detach", "init", "detach"],
         exposeGc: true,
-        typescript: true,
       },
       {
         name: "forgotten-token-generation-guard",
@@ -853,14 +907,6 @@ async function runParent(options) {
         const logPath = path.join(temporaryRoot, `${executionName}.log`);
         const childArgs = [
           ...(scenario.exposeGc ? ["--expose-gc"] : []),
-          ...(scenario.typescript
-            ? [
-                "--import",
-                require.resolve("tsx", {
-                  paths: [path.join(workspaceRoot, "src/sdks/js")],
-                }),
-              ]
-            : []),
           scriptPath,
           "--scenario",
           scenario.name,
@@ -876,6 +922,10 @@ async function runParent(options) {
           scenarioRoot,
           "--log",
           logPath,
+          "--sdk-client-bundle",
+          clientBundle,
+          "--sdk-node-binding-bundle",
+          nodeBindingBundle,
         ];
         const child = spawnSync(process.execPath, childArgs, {
           encoding: "utf8",

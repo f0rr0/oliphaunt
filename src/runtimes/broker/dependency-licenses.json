@@ -2,7 +2,7 @@
   "schema": "oliphaunt-broker-dependency-license-contract-v1",
   "product": "oliphaunt-broker",
   "cargoSource": "registry+https://github.com/rust-lang/crates.io-index",
-  "payloadLicense": "MIT AND CC-BY-3.0 AND ISC AND Unicode-3.0",
+  "payloadLicense": "MIT AND ISC AND Unicode-3.0",
   "targets": {
     "linux-x64-gnu": {
       "cargoTarget": "x86_64-unknown-linux-gnu",
@@ -10,8 +10,6 @@
         "block-buffer@0.10.4",
         "cfg-if@1.0.4",
         "cpufeatures@0.2.17",
-        "crossbeam-channel@0.5.15",
-        "crossbeam-utils@0.8.21",
         "crypto-common@0.1.7",
         "digest@0.10.7",
         "fs2@0.4.3",
@@ -40,8 +38,6 @@
         "block-buffer@0.10.4",
         "cfg-if@1.0.4",
         "cpufeatures@0.2.17",
-        "crossbeam-channel@0.5.15",
-        "crossbeam-utils@0.8.21",
         "crypto-common@0.1.7",
         "digest@0.10.7",
         "fs2@0.4.3",
@@ -70,8 +66,6 @@
         "block-buffer@0.10.4",
         "cfg-if@1.0.4",
         "cpufeatures@0.2.17",
-        "crossbeam-channel@0.5.15",
-        "crossbeam-utils@0.8.21",
         "crypto-common@0.1.7",
         "digest@0.10.7",
         "fs2@0.4.3",
@@ -100,8 +94,6 @@
         "block-buffer@0.10.4",
         "cfg-if@1.0.4",
         "cpufeatures@0.2.17",
-        "crossbeam-channel@0.5.15",
-        "crossbeam-utils@0.8.21",
         "crypto-common@0.1.7",
         "digest@0.10.7",
         "fs2@0.4.3",
@@ -199,61 +191,6 @@
           "name": "LICENSE-MIT",
           "sha256": "ae9baa7beea910273c2f384c2a6b721fb7bd02bda3436074a1072e4ee689f985",
           "bytes": 1082
-        }
-      ]
-    },
-    {
-      "name": "crossbeam-channel",
-      "version": "0.5.15",
-      "checksum": "82b8f8f868b36967f9606790d1903570de9ceaf870a7bf9fbbd3016d636a2cb2",
-      "declaredLicense": "MIT OR Apache-2.0",
-      "selectedLicense": "MIT AND CC-BY-3.0",
-      "targets": [
-        "linux-arm64-gnu",
-        "linux-x64-gnu",
-        "macos-arm64",
-        "windows-x64-msvc"
-      ],
-      "licenseFiles": [
-        {
-          "name": "LICENSE-APACHE",
-          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-          "bytes": 10847
-        },
-        {
-          "name": "LICENSE-MIT",
-          "sha256": "5734ed989dfca1f625b40281ee9f4530f91b2411ec01cb748223e7eb87e201ab",
-          "bytes": 1099
-        },
-        {
-          "name": "LICENSE-THIRD-PARTY",
-          "sha256": "b16db96b93b1d7cf7bea533f572091ec6bca3234fbe0a83038be772ff391a44c",
-          "bytes": 33447
-        }
-      ]
-    },
-    {
-      "name": "crossbeam-utils",
-      "version": "0.8.21",
-      "checksum": "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28",
-      "declaredLicense": "MIT OR Apache-2.0",
-      "selectedLicense": "MIT",
-      "targets": [
-        "linux-arm64-gnu",
-        "linux-x64-gnu",
-        "macos-arm64",
-        "windows-x64-msvc"
-      ],
-      "licenseFiles": [
-        {
-          "name": "LICENSE-APACHE",
-          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-          "bytes": 10847
-        },
-        {
-          "name": "LICENSE-MIT",
-          "sha256": "5734ed989dfca1f625b40281ee9f4530f91b2411ec01cb748223e7eb87e201ab",
-          "bytes": 1099
         }
       ]
     },

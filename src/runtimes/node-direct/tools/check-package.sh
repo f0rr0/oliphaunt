@@ -171,6 +171,12 @@ try {
     "sdk-gc-owner-recovery" \
     "Node direct cleanup proof must cover the high-level SDK ownership gate under forced GC"
   require_text "$package_dir/tools/node-addon-cleanup-lifecycle.test.mjs" \
+    "bundleSdkCleanupRuntime" \
+    "Node direct cleanup proof must build its SDK fixture inside the artifact job"
+  reject_text "$package_dir/tools/node-addon-cleanup-lifecycle.test.mjs" \
+    "tsx" \
+    "Node direct artifact tests must not depend on an installed TypeScript workspace"
+  require_text "$package_dir/tools/node-addon-cleanup-lifecycle.test.mjs" \
     "async-archive-timers" \
     "Node direct backup and restore must prove that timers remain live"
   require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \

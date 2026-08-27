@@ -1720,6 +1720,61 @@ mod close_tests {
         }
     }
 
+    #[test]
+    fn database_close_cutoff_preserves_admission_order() {
+        let (queue, receiver) = mpsc::channel::<OwnerMessage>();
+        let owner_thread = thread::spawn(|| thread::current().id())
+            .join()
+            .expect("capture a distinct fake owner thread id");
+        let owner = DatabaseOwner {
+            inner: Arc::new(DatabaseOwnerInner {
+                queue,
+                admission: Arc::new(Mutex::new(())),
+                queued_ordinary: Arc::new(AtomicUsize::new(0)),
+                state: Arc::new(AtomicU8::new(OWNER_OPEN)),
+                close_attempt: Arc::new(Mutex::new(None)),
+                owner_thread,
+                next_transaction: AtomicU64::new(1),
+            }),
+        };
+
+        let mut admitted = Box::pin(owner.call(None, |_| Ok(())));
+        assert!(poll_once(admitted.as_mut()).is_pending());
+
+        let mut close = Box::pin(owner.close());
+        assert!(poll_once(close.as_mut()).is_pending());
+
+        let mut rejected = Box::pin(owner.call(None, |_| Ok(())));
+        let Poll::Ready(rejected) = poll_once(rejected.as_mut()) else {
+            panic!("work polled after the close cutoff must be rejected at admission");
+        };
+        assert_eq!(
+            rejected
+                .expect_err("post-cutoff work must fail")
+                .to_string(),
+            "Oliphaunt is closing"
+        );
+
+        assert!(matches!(
+            receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("receive work admitted before close")
+                .operation,
+            OwnerOperation::Command(_)
+        ));
+        assert!(matches!(
+            receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("receive close after admitted work")
+                .operation,
+            OwnerOperation::Control(OwnerControl::Close { .. })
+        ));
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+    }
+
     #[tokio::test]
     async fn database_close_validation_failure_is_retryable() {
         let harness = database_close_harness();

@@ -2,7 +2,7 @@
   "name": "@oliphaunt/broker-win32-x64-msvc",
   "version": "0.1.1",
   "description": "Windows x64 MSVC oliphaunt-broker helper binary.",
-  "license": "MIT AND CC-BY-3.0 AND ISC AND Unicode-3.0",
+  "license": "MIT AND ISC AND Unicode-3.0",
   "type": "module",
   "repository": {
     "type": "git",

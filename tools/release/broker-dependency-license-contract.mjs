@@ -30,7 +30,7 @@ const INDEX_SCHEMA = "oliphaunt-broker-target-dependency-license-index-v1";
 
 export const BROKER_DEPENDENCY_LICENSE_ROOT = "THIRD_PARTY_LICENSES/rust";
 export const BROKER_PAYLOAD_LICENSE =
-  "MIT AND CC-BY-3.0 AND ISC AND Unicode-3.0";
+  "MIT AND ISC AND Unicode-3.0";
 // Cargo fetches every target's locked dependency closure when --target is
 // omitted. Keep this exact command centralized: using the host target here
 // would leave the Windows/macOS/Linux conditional graph only partly cached.
@@ -46,7 +46,6 @@ const TARGET_IDS = Object.freeze(TARGET_ROWS.map(({ id }) => id));
 const TARGET_BY_ID = new Map(TARGET_ROWS.map((row) => [row.id, row]));
 const PAYLOAD_LICENSE_ATOMS = Object.freeze([
   "MIT",
-  "CC-BY-3.0",
   "ISC",
   "Unicode-3.0",
 ]);

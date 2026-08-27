@@ -169,8 +169,6 @@ require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/async_api
   "WASIX root database must use one ordered owner queue"
 require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/async_api.rs "queued_ordinary.load(Ordering::SeqCst) >= OWNER_QUEUE_CAPACITY" \
   "WASIX root database must retain bounded ordinary-work admission"
-require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/async_api.rs "admission: Mutex<()>" \
-  "WASIX root database close cutoff must share ordinary-work admission ordering"
 require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/tools.rs "pub fn script(mut self, sql: impl Into<String>)" \
   "WASIX PsqlOptions must expose standard script input"
 

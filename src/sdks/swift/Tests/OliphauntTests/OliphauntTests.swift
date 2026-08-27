@@ -1362,6 +1362,7 @@ private actor TestSession: OliphauntSession {
     private let omitBeginReady: Bool
     private let blockClose: Bool
     private var capturedRequests: [Data] = []
+    private var cancels = 0
     private var closes = 0
     private var inTransaction = false
     private var closeStarted = false
@@ -1438,7 +1439,7 @@ private actor TestSession: OliphauntSession {
     }
 
     func backup() async throws -> Data { backupBytes }
-    func cancel() async throws {}
+    func cancel() async throws { cancels += 1 }
     func close() async throws {
         if blockClose {
             closeStarted = true
@@ -1451,6 +1452,7 @@ private actor TestSession: OliphauntSession {
         closes += 1
     }
     func requests() -> [Data] { capturedRequests }
+    func cancelCount() -> Int { cancels }
     func closeCount() -> Int { closes }
 
     func awaitClose() async {

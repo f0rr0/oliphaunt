@@ -99,6 +99,8 @@ tasks:
     inputs:
       - "/src/runtimes/node-direct/**/*"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
+      - "/src/sdks/js/package.json"
+      - "/src/sdks/js/src/**/*"
       - "/src/sources/toolchains/node.toml"
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"

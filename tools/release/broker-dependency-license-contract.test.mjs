@@ -109,11 +109,11 @@ function spawnResult(command, args, logRoot) {
 
 test("broker contract pins the complete package-specific legal inventory", { timeout: TIMEOUT }, () => {
   const { contract } = loadBrokerDependencyLicenseContract();
-  assert.equal(contract.packages.length, 27);
+  assert.equal(contract.packages.length, 25);
   assert.equal(contract.payloadLicense, BROKER_PAYLOAD_LICENSE);
   const legalFiles = contract.packages.flatMap((row) => row.licenseFiles);
-  assert.equal(legalFiles.length, 55);
-  assert.equal(new Set(legalFiles.map(({ sha256 }) => sha256)).size, 29);
+  assert.equal(legalFiles.length, 50);
+  assert.equal(new Set(legalFiles.map(({ sha256 }) => sha256)).size, 27);
   assert.ok(contract.packages.every((row) => row.licenseFiles.length > 0));
   assert.ok(contract.packages.some((row) =>
     row.name === "memchr"
@@ -122,10 +122,6 @@ test("broker contract pins the complete package-specific legal inventory", { tim
   assert.ok(contract.packages.some((row) => row.name === "libloading" && row.selectedLicense === "ISC"));
   assert.ok(contract.packages.some((row) => row.name === "serde_json" && row.version === "1.0.150"));
   assert.ok(contract.packages.some((row) => row.name === "unicode-ident" && row.selectedLicense === "MIT AND Unicode-3.0"));
-  assert.ok(contract.packages.some((row) =>
-    row.name === "crossbeam-channel"
-    && row.selectedLicense === "MIT AND CC-BY-3.0"
-    && row.licenseFiles.some(({ name }) => name === "LICENSE-THIRD-PARTY")));
   assert.ok(contract.packages.some((row) =>
     row.name === "zmij"
     && row.selectedLicense === "MIT"
@@ -447,18 +443,7 @@ test("staging rejects a symlinked legal namespace ancestor without touching its 
   assert.equal(readFileSync(sentinel, "utf8"), "must survive\n");
 });
 
-test("contract mutations cannot omit attribution, change lock identity, lie about a selected branch, or skew target claims", { timeout: TIMEOUT }, (t) => {
-  {
-    const file = writeMutatedContract(t, (contract) => {
-      const crossbeam = contract.packages.find(({ name }) => name === "crossbeam-channel");
-      crossbeam.licenseFiles = crossbeam.licenseFiles.filter(({ name }) => name !== "LICENSE-THIRD-PARTY");
-    });
-    assert.throws(
-      () => loadBrokerDependencyLicenseContract({ contractPath: file }),
-      /CC-BY-3.0|license blobs differ/u,
-    );
-  }
-
+test("contract mutations cannot omit legal files, change lock identity, lie about a selected branch, or skew target claims", { timeout: TIMEOUT }, (t) => {
   {
     const file = writeMutatedContract(t, (contract) => {
       const memchr = contract.packages.find(({ name }) => name === "memchr");
