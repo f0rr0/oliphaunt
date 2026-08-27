@@ -26,10 +26,12 @@ let database = Oliphaunt::builder()
     .open().await?;
 
 database.execute("CREATE TABLE items(id integer PRIMARY KEY, value text NOT NULL)").await?;
-database.execute_with_params(
-    "INSERT INTO items VALUES ($1, $2)",
-    ["1", "hello"],
-).await?;
+database
+    .sql("INSERT INTO items VALUES ($1, $2)")
+    .bind(1_i32)
+    .bind("hello")
+    .execute()
+    .await?;
 let result = database.query_with_params(
     "SELECT value FROM items WHERE id = $1",
     [1_i32],

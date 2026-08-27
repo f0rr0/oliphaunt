@@ -43,12 +43,19 @@ fn direct_api_query_transaction_persistence_and_backup() -> Result<()> {
         Some("true")
     );
     database.transaction(|transaction| {
-        transaction.execute_with_params("INSERT INTO items VALUES ($1, $2)", ["1", "committed"])?;
+        transaction
+            .sql("INSERT INTO items VALUES ($1, $2)")
+            .bind(1_i32)
+            .bind("committed")
+            .execute()?;
         Ok(())
     })?;
     let rollback: oliphaunt_wasix::Result<()> = database.transaction(|transaction| {
         transaction
-            .execute_with_params("INSERT INTO items VALUES ($1, $2)", ["2", "rolled back"])?;
+            .sql("INSERT INTO items VALUES ($1, $2)")
+            .bind(2_i32)
+            .bind("rolled back")
+            .execute()?;
         transaction.execute("SELECT 1 / 0").map(|_| ())
     });
     assert!(rollback.is_err());
@@ -148,8 +155,16 @@ async fn async_root_owns_the_runtime_and_serializes_clones() -> Result<()> {
         .execute("CREATE TABLE owner_items(id int PRIMARY KEY, value text NOT NULL)")
         .await?;
     let (first, second) = tokio::join!(
-        database.execute_with_params("INSERT INTO owner_items VALUES ($1, $2)", ["1", "first"],),
-        clone.execute_with_params("INSERT INTO owner_items VALUES ($1, $2)", ["2", "second"],),
+        database
+            .sql("INSERT INTO owner_items VALUES ($1, $2)")
+            .bind(1_i32)
+            .bind("first")
+            .execute(),
+        clone
+            .sql("INSERT INTO owner_items VALUES ($1, $2)")
+            .bind(2_i32)
+            .bind("second")
+            .execute(),
     );
     first?;
     second?;
@@ -205,10 +220,10 @@ async fn async_root_owns_the_runtime_and_serializes_clones() -> Result<()> {
                     .contains("transaction is active")
             );
             transaction
-                .execute_with_params(
-                    "INSERT INTO owner_items VALUES ($1, $2)",
-                    ["3", "transaction"],
-                )
+                .sql("INSERT INTO owner_items VALUES ($1, $2)")
+                .bind(3_i32)
+                .bind("transaction")
+                .execute()
                 .await?;
             Ok(())
         })
