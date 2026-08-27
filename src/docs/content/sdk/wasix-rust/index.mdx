@@ -9,6 +9,13 @@ description: Host the portable Oliphaunt WASIX runtime from Rust with memory by 
 its package, runtime assets, extensions, storage, and behavior separate from
 the native SDK products.
 
+The crate root is the default asynchronous API. `Oliphaunt` is
+`Clone + Send + Sync`; it constructs and retains the Wasmer store and PostgreSQL
+session on one SDK-owned thread, so database work does not block the caller's
+async executor thread. Applications that deliberately want PostgreSQL to run
+on the calling thread can import the separate `oliphaunt_wasix::blocking`
+surface. That choice is explicit and does not change storage or SQL semantics.
+
 Use this SDK when Rust owns the WASIX host. Native desktop and mobile apps use
 native SDKs when they select `liboliphaunt`. Browser, Node, Bun, and Deno TypeScript apps can use the
 separate [`@oliphaunt/wasix-ts` TypeScript binding](/docs/sdk/wasix-typescript);
@@ -27,24 +34,40 @@ cargo add oliphaunt-wasix
 
 ## Open And Query
 
-Open the direct Rust API for ordinary embedded use. Storage defaults to a true
-in-memory WASIX filesystem:
+Open the asynchronous Rust API for ordinary embedded use. Storage defaults to
+a true in-memory WASIX filesystem. Use the handle through `&self`; cloning it
+shares the same database session rather than opening another one:
 
 ```rust
 use oliphaunt_wasix::{DatabaseStorage, Oliphaunt};
 
-fn main() -> anyhow::Result<()> {
-    let mut database = Oliphaunt::open()?;
-    let rows = database.query("select 1::text as value")?;
+async fn run() -> oliphaunt_wasix::Result<()> {
+    let database = Oliphaunt::open().await?;
+    let rows = database.query("select 1::text as value").await?;
 
     // For persistence, select a caller-owned host directory instead:
-    // let mut database = Oliphaunt::builder()
+    // let database = Oliphaunt::builder()
     //     .storage(DatabaseStorage::Directory("./app-data/main.oliphaunt".into()))
-    //     .open()?;
+    //     .open().await?;
 
-    assert_eq!(rows.get_text(0, "value")?, Some("1"));
-    database.close()?;
+    let value: &str = rows.rows()[0].try_get("value")?;
+    assert_eq!(value, "1");
+    database.close().await?;
     Ok(())
+}
+```
+
+For an intentional no-hop call path, import the blocking type explicitly:
+
+```rust
+use oliphaunt_wasix::blocking::Oliphaunt;
+
+fn run_blocking() -> oliphaunt_wasix::Result<()> {
+    let mut database = Oliphaunt::open()?;
+    let rows = database.query("select 1::text as value")?;
+    let value: &str = rows.rows()[0].try_get("value")?;
+    assert_eq!(value, "1");
+    database.close()
 }
 ```
 
@@ -54,11 +77,12 @@ Rust WASIX is separate from native direct, native broker, and native server. It
 has its own filesystem, startup, server/proxy, dump/restore, and extension
 behavior.
 
-The Rust binding exposes direct APIs, optional direct `pg_dump`/`psql`, and a
-local PostgreSQL-compatible URL. WASIX TypeScript provides the same concepts
-where its host supports them, through its optional tools package and explicit
-Node, Bun, and Deno server subpaths; language-specific signatures remain
-documented on each binding's page.
+The Rust binding exposes the default asynchronous owner-thread API, the
+explicit blocking API, optional `pg_dump`/`psql`, and a local
+PostgreSQL-compatible URL. WASIX TypeScript makes the same calling choice at
+the package boundary: its root entry point owns a Worker, while
+`@oliphaunt/wasix-ts/blocking` is the explicit caller-realm surface. Optional
+tools and Node, Bun, and Deno server subpaths remain language-specific.
 
 Applications that need a real concurrent PostgreSQL listener on Linux x64 GNU or macOS arm64
 can instead deploy the separate [WASIX postmaster](/docs/sdk/wasix-rust/runtime#wasix-postmaster)

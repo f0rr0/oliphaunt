@@ -267,7 +267,7 @@ static bool static_registry_matches(const OliphauntStaticExtension *extensions, 
     return true;
 }
 
-int32_t oliphaunt_register_static_extensions(const OliphauntStaticExtension *extensions, size_t count) {
+static int32_t oliphaunt_register_static_extensions_impl(const OliphauntStaticExtension *extensions, size_t count) {
     if (validate_static_extensions(extensions, count) != 0) {
         return -1;
     }
@@ -298,6 +298,14 @@ int32_t oliphaunt_register_static_extensions(const OliphauntStaticExtension *ext
 
     free_static_registry_entries(old_entries, old_count);
     return 0;
+}
+
+int32_t oliphaunt_register_static_extensions(const OliphauntStaticExtension *extensions, size_t count) {
+    OliphauntErrorScope error_scope;
+    oliphaunt_error_scope_begin(&error_scope, NULL, "oliphaunt_register_static_extensions");
+    int32_t rc = oliphaunt_register_static_extensions_impl(extensions, count);
+    oliphaunt_error_scope_end(&error_scope, rc != 0);
+    return rc;
 }
 
 const OliphauntStaticExtension *oliphaunt_static_extension_lookup(const char *filename) {

@@ -1,4 +1,5 @@
 use crate::error::{Error, Result};
+use crate::query_core;
 
 /// Raw PostgreSQL frontend protocol bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,22 +17,14 @@ impl ProtocolRequest {
 
     /// Create a PostgreSQL simple-query protocol request.
     pub fn simple_query(sql: &str) -> Result<Self> {
-        if sql.as_bytes().contains(&0) {
-            return Err(Error::Engine(
-                "simple query SQL must not contain NUL bytes".to_owned(),
-            ));
-        }
-        let mut body = Vec::new();
-        body.extend_from_slice(sql.as_bytes());
-        body.push(0);
-
-        let len = i32::try_from(body.len() + 4)
-            .map_err(|_| Error::Engine("simple query protocol message is too large".to_owned()))?;
-        let mut packet = Vec::with_capacity(body.len() + 5);
-        packet.push(b'Q');
-        packet.extend_from_slice(&len.to_be_bytes());
-        packet.extend_from_slice(&body);
-        Ok(Self { bytes: packet })
+        query_core::simple_query(sql)
+            .map(Self::new)
+            .map_err(|error| match error {
+                query_core::Error::Protocol(message) => Error::Engine(message),
+                query_core::Error::Postgres { .. } => {
+                    unreachable!("frontend encoding cannot produce a backend diagnostic")
+                }
+            })
     }
 
     /// Borrow the raw bytes.

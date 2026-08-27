@@ -5,7 +5,7 @@
 # `sdk-contracts:check` parses this schema and cross-checks release identities;
 # product tasks own behavior and package proof.
 
-schema_version = 4
+schema_version = 5
 
 [sdks.rust]
 package_identity = "cargo:oliphaunt"
@@ -14,7 +14,14 @@ documentation_path = "src/docs/content/sdk/rust"
 consumer_targets = ["tauri", "rust-desktop"]
 runtime_owner = true
 runtime_boundary = "oliphaunt"
-execution_modes = ["native-direct", "native-broker", "native-server"]
+
+[[sdks.rust.surfaces]]
+id = "default"
+entrypoint = "oliphaunt"
+calling_contract = "async"
+execution_owner = "sdk-thread"
+main_safe = true
+topologies = ["native-direct", "native-broker", "native-server"]
 
 [sdks.wasix-rust]
 package_identity = "cargo:oliphaunt-wasix"
@@ -23,7 +30,22 @@ documentation_path = "src/docs/content/sdk/wasix-rust"
 consumer_targets = ["tauri", "rust-desktop"]
 runtime_owner = true
 runtime_boundary = "oliphaunt-wasix"
-execution_modes = ["wasix-direct", "wasix-server"]
+
+[[sdks.wasix-rust.surfaces]]
+id = "default"
+entrypoint = "oliphaunt_wasix"
+calling_contract = "async"
+execution_owner = "sdk-thread"
+main_safe = true
+topologies = ["wasix-direct", "wasix-server"]
+
+[[sdks.wasix-rust.surfaces]]
+id = "blocking"
+entrypoint = "oliphaunt_wasix::blocking"
+calling_contract = "blocking"
+execution_owner = "caller"
+main_safe = false
+topologies = ["wasix-direct", "wasix-server"]
 
 [sdks.wasix-typescript]
 package_identity = "npm:@oliphaunt/wasix-ts"
@@ -32,7 +54,46 @@ documentation_path = "src/docs/content/sdk/wasix-typescript"
 consumer_targets = ["browser", "node", "bun", "deno"]
 runtime_owner = true
 runtime_boundary = "@oliphaunt/wasix-ts"
-execution_modes = ["wasix-direct", "wasix-worker", "wasix-server"]
+
+[[sdks.wasix-typescript.surfaces]]
+id = "default"
+entrypoint = "@oliphaunt/wasix-ts"
+calling_contract = "async"
+execution_owner = "sdk-worker"
+main_safe = true
+topologies = ["wasix-direct"]
+
+[[sdks.wasix-typescript.surfaces]]
+id = "blocking"
+entrypoint = "@oliphaunt/wasix-ts/blocking"
+calling_contract = "blocking"
+execution_owner = "caller"
+main_safe = false
+topologies = ["wasix-direct"]
+
+[[sdks.wasix-typescript.surfaces]]
+id = "server-node"
+entrypoint = "@oliphaunt/wasix-ts/server/node"
+calling_contract = "async"
+execution_owner = "sdk-worker"
+main_safe = true
+topologies = ["wasix-server"]
+
+[[sdks.wasix-typescript.surfaces]]
+id = "server-bun"
+entrypoint = "@oliphaunt/wasix-ts/server/bun"
+calling_contract = "async"
+execution_owner = "sdk-worker"
+main_safe = true
+topologies = ["wasix-server"]
+
+[[sdks.wasix-typescript.surfaces]]
+id = "server-deno"
+entrypoint = "@oliphaunt/wasix-ts/server/deno"
+calling_contract = "async"
+execution_owner = "sdk-worker"
+main_safe = true
+topologies = ["wasix-server"]
 
 [sdks.swift]
 package_identity = "swiftpm:Oliphaunt"
@@ -41,7 +102,14 @@ documentation_path = "src/docs/content/sdk/swift"
 consumer_targets = ["ios", "macos"]
 runtime_owner = true
 runtime_boundary = "Oliphaunt"
-execution_modes = ["native-direct"]
+
+[[sdks.swift.surfaces]]
+id = "default"
+entrypoint = "Oliphaunt"
+calling_contract = "async"
+execution_owner = "sdk-thread"
+main_safe = true
+topologies = ["native-direct"]
 
 [sdks.kotlin]
 package_identity = "maven:dev.oliphaunt:oliphaunt-android"
@@ -50,7 +118,14 @@ documentation_path = "src/docs/content/sdk/kotlin"
 consumer_targets = ["android"]
 runtime_owner = true
 runtime_boundary = "Oliphaunt"
-execution_modes = ["native-direct"]
+
+[[sdks.kotlin.surfaces]]
+id = "default"
+entrypoint = "Oliphaunt"
+calling_contract = "async"
+execution_owner = "sdk-thread"
+main_safe = true
+topologies = ["native-direct"]
 
 [sdks.react-native]
 package_identity = "npm:@oliphaunt/react-native"
@@ -61,7 +136,14 @@ runtime_owner = false
 runtime_boundary = "TurboModule adapter"
 delegates_apple_to = "swift"
 delegates_android_to = "kotlin"
-execution_modes = ["native-direct"]
+
+[[sdks.react-native.surfaces]]
+id = "default"
+entrypoint = "@oliphaunt/react-native"
+calling_contract = "async"
+execution_owner = "platform-sdk"
+main_safe = true
+topologies = ["native-direct"]
 
 [sdks.typescript]
 package_identity = "npm:@oliphaunt/ts"
@@ -70,4 +152,11 @@ documentation_path = "src/docs/content/sdk/typescript"
 consumer_targets = ["node", "bun", "deno"]
 runtime_owner = true
 runtime_boundary = "@oliphaunt/ts"
-execution_modes = ["native-direct", "native-broker", "native-server"]
+
+[[sdks.typescript.surfaces]]
+id = "default"
+entrypoint = "@oliphaunt/ts"
+calling_contract = "async"
+execution_owner = "sdk-runtime"
+main_safe = true
+topologies = ["native-direct", "native-broker", "native-server"]

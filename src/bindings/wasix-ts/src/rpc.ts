@@ -107,7 +107,7 @@ export type SerializedIcuDescriptor = {
   };
 };
 
-/** Host-ready open options shared by direct and worker execution. */
+/** Host-ready open options shared by both public calling contracts. */
 export type SerializedOpenOptions = {
   runtime: SerializedRuntimeDescriptor;
   icu?: SerializedIcuDescriptor;
@@ -125,6 +125,12 @@ export type WorkerOpenOptions = SerializedOpenOptions;
 
 export type WorkerRequest =
   | { id: number; method: 'open'; options: SerializedOpenOptions }
+  | {
+      id: number;
+      method: 'restore';
+      storage: SerializedWasixStorage;
+      bytes: Uint8Array;
+    }
   | {
       id: number;
       method: 'exec';
@@ -162,7 +168,7 @@ export type SerializedWorkerError =
       commitState: WasixStorageError['commitState'];
     }
   | { name: 'PostgresError'; message: string; fields: PostgresErrorField[] }
-  | { name: 'Error'; message: string };
+  | { name: 'Error'; message: string; errorName?: string; stack?: string };
 
 export type WorkerResponse =
   | { id: number; kind: 'chunk'; sequence: number; value: Uint8Array }
@@ -185,10 +191,13 @@ export function serializeWorkerError(error: unknown): SerializedWorkerError {
       fields: error.fields.map((field) => ({ ...field })),
     };
   }
-  return {
+  const generic = {
     name: 'Error',
     message: error instanceof Error ? error.message : String(error),
-  };
+    ...(error instanceof Error && error.name !== 'Error' ? { errorName: error.name } : {}),
+    ...(error instanceof Error && error.stack !== undefined ? { stack: error.stack } : {}),
+  } as const;
+  return generic;
 }
 
 export function deserializeWorkerError(error: SerializedWorkerError): Error {
@@ -203,5 +212,8 @@ export function deserializeWorkerError(error: SerializedWorkerError): Error {
     restored.message = error.message;
     return restored;
   }
-  return new Error(error.message);
+  const restored = new Error(error.message);
+  restored.name = error.errorName ?? 'Error';
+  if (error.stack !== undefined) restored.stack = error.stack;
+  return restored;
 }

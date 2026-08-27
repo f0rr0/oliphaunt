@@ -20,9 +20,11 @@ import type {
   RunWasixOptions,
 } from '../host/index.mjs';
 import { PostgresError } from '../query.js';
-import type { SerializedOpenOptions } from '../rpc.js';
+import type { SerializedOpenOptions, WorkerRequest, WorkerResponse } from '../rpc.js';
 import { WASIX_PHYSICAL_IDENTITY, type WasixStorageLease } from '../storage-provider.js';
 import { wasixPostgresArgs } from '../wasix-runtime.js';
+import { createWorkerSessionDispatcher } from '../worker-dispatch.js';
+import { openWorkerDatabase, type WasixWorkerPort } from '../worker-rpc.js';
 
 const EMPTY_WASM = Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0);
 const EMPTY_WASM_SHA256 = '93a44bbb96c751218e4c00d479e4c14358122a389acca16205b1e4d0dc5f9476';
@@ -86,9 +88,9 @@ describe('direct WASIX session lifecycle', () => {
       sqlstate: '3D000',
       postgresMessage: 'database does not exist',
     });
-    expect(failure.message).toContain('direct WASIX instance cleanup also failed');
+    expect(failure.message).toContain('WASIX instance cleanup also failed');
     expect(failure.message).toContain('storage release also failed');
-    expect(failure.message).toContain('direct WASIX allocation release also failed');
+    expect(failure.message).toContain('WASIX allocation release also failed');
     expect(failure.cause).toBeInstanceOf(AggregateError);
     expect(events).toEqual(['startup', 'close', 'storage:failed', 'free']);
   });
@@ -125,7 +127,7 @@ describe('direct WASIX session lifecycle', () => {
     expect(events).toEqual(['startup', 'exec', 'exec', 'close', 'storage:failed', 'free']);
   });
 
-  it('publishes successful first-open setup once at its final checkpoint boundary', async () => {
+  it('publishes successful first-open setup once at its final full boundary', async () => {
     const events: string[] = [];
     const storage = fakeLease(async (_directory, outcome) => {
       events.push(`storage:${outcome}`);
@@ -145,7 +147,7 @@ describe('direct WASIX session lifecycle', () => {
       'startup',
       'exec',
       'exec',
-      'sync:checkpoint',
+      'sync:full',
       'close',
       'storage:clean',
       'free',
@@ -163,10 +165,75 @@ describe('direct WASIX session lifecycle', () => {
       fakeDependencies(storage),
     );
 
-    await session.close();
-    await session.close();
+    const closing = session.close();
+    expect(session.close()).toBe(closing);
+    await closing;
 
     expect(events).toEqual(['startup', 'close', 'storage:clean', 'free']);
+  });
+
+  it('keeps a production worker-to-direct close failure terminal while releasing its lease', async () => {
+    const events: string[] = [];
+    let leaseReleased = false;
+    const storage = fakeLease(async (_directory, outcome) => {
+      events.push(`storage:${outcome}`);
+      leaseReleased = true;
+    });
+    const host = fakeHost({
+      events,
+      close() {
+        events.push('close');
+        throw new Error('guest close failed');
+      },
+    });
+    const postedMethods: string[] = [];
+    let terminations = 0;
+    let messageListener: ((message: WorkerResponse) => void) | undefined;
+    let dispatchRequest!: (request: WorkerRequest) => Promise<void>;
+    const port: WasixWorkerPort = {
+      postMessage(message) {
+        postedMethods.push(message.method);
+        void dispatchRequest(message);
+      },
+      terminate() {
+        terminations += 1;
+      },
+      onMessage(listener) {
+        messageListener = listener;
+      },
+      onFatal() {},
+    };
+    dispatchRequest = createWorkerSessionDispatcher(
+      (options) =>
+        DirectWasixSession.open(
+          options,
+          host,
+          fakeDependencies(storage),
+          'browser-worker',
+        ),
+      (response) => messageListener?.(response),
+    );
+
+    const database = await openWorkerDatabase(port, openOptions());
+    const first = database.close();
+    const second = database.close();
+    expect(second).toBe(first);
+    await expect(first).rejects.toThrow(
+      'WASIX PostgreSQL direct close failed: guest close failed',
+    );
+    await expect(second).rejects.toThrow(
+      'WASIX PostgreSQL direct close failed: guest close failed',
+    );
+
+    expect(database.closed).toBe(true);
+    expect(database.close()).toBe(first);
+    expect(leaseReleased).toBe(true);
+    expect(events).toEqual(['startup', 'close', 'storage:failed', 'free']);
+    expect(terminations).toBe(1);
+    await expect(database.execProtocolRaw(Uint8Array.of(1))).rejects.toThrow(
+      'Oliphaunt WASIX database is closed',
+    );
+    expect(postedMethods).toEqual(['open', 'close']);
   });
 
   it('starts a fresh backend for each server client but reuses one backend for tools', async () => {
@@ -488,7 +555,7 @@ describe('direct WASIX session lifecycle', () => {
       session.serve({ frontend, backend: createWasixByteChannel() }, 'tool'),
     ).rejects.toThrow('byte channel failed');
     await expect(session.exec(Uint8Array.of(1))).rejects.toThrow(
-      'Oliphaunt WASIX direct database failed',
+      'Oliphaunt WASIX database failed',
     );
     await session.close();
   });
@@ -513,7 +580,7 @@ describe('direct WASIX session lifecycle', () => {
       'protocol pump trapped; this database can no longer be used',
     );
     await expect(session.exec(Uint8Array.of(2))).rejects.toThrow(
-      'Oliphaunt WASIX direct database failed',
+      'Oliphaunt WASIX database failed',
     );
     await session.close();
 
@@ -608,7 +675,7 @@ describe('direct WASIX session lifecycle', () => {
 
     await expect(session.backup()).rejects.toThrow('could not confirm leaving backup mode');
     await expect(session.exec(Uint8Array.of(1))).rejects.toThrow(
-      'Oliphaunt WASIX direct database failed',
+      'Oliphaunt WASIX database failed',
     );
     await session.close();
   });
@@ -629,7 +696,7 @@ describe('direct WASIX session lifecycle', () => {
 
     await session.exec(Uint8Array.of(1), 'defer');
     await session.exec(Uint8Array.of(2), 'sync');
-    await session.sync('checkpoint');
+    await session.sync('full');
     await session.close();
 
     expect(events).toEqual([
@@ -637,15 +704,15 @@ describe('direct WASIX session lifecycle', () => {
       'exec',
       'exec',
       'sync:operation',
-      'sync:checkpoint',
+      'sync:full',
       'close',
       'storage:clean',
       'free',
     ]);
   });
 
-  it('preserves typed checkpoint and close storage errors', async () => {
-    const checkpointFailure = new WasixStorageError('checkpoint generation failed', {
+  it('preserves typed full-publication and close storage errors', async () => {
+    const fullPublicationFailure = new WasixStorageError('full publication failed', {
       code: 'publication-failed',
       commitState: 'unknown',
     });
@@ -658,7 +725,7 @@ describe('direct WASIX session lifecycle', () => {
       state: 'existing',
       mount: pgdataMount(),
       async sync() {
-        throw checkpointFailure;
+        throw fullPublicationFailure;
       },
       async close(_directory, outcome) {
         events.push(`storage:${outcome}`);
@@ -671,14 +738,20 @@ describe('direct WASIX session lifecycle', () => {
       fakeDependencies(storage),
     );
 
-    await expect(session.sync('checkpoint')).rejects.toBe(checkpointFailure);
-    const failure = await rejection(session.close());
+    await expect(session.sync('full')).rejects.toBe(fullPublicationFailure);
+    const closing = session.close();
+    expect(session.close()).toBe(closing);
+    const failure = await rejection(closing);
 
     expect(failure).toBe(closeFailure);
     expect(failure).toMatchObject({
       code: 'corrupt',
       commitState: 'unchanged',
     });
+    expect(session.close()).toBe(closing);
+    await expect(session.exec(Uint8Array.of(1))).rejects.toThrow(
+      'Oliphaunt WASIX database is closed',
+    );
     expect(events).toEqual(['startup', 'close', 'storage:failed', 'free']);
   });
 
@@ -717,7 +790,9 @@ describe('direct WASIX session lifecycle', () => {
         }),
         fakeDependencies(storage),
       );
-      const timedOut = expect(opening).rejects.toThrow('direct startup exceeded 120000ms');
+      const timedOut = expect(opening).rejects.toThrow(
+        'Oliphaunt WASIX startup exceeded 120000ms',
+      );
       await vi.advanceTimersByTimeAsync(120_000);
 
       await timedOut;
@@ -803,7 +878,7 @@ describe('direct WASIX session lifecycle', () => {
 
     await expect(
       DirectWasixSession.open(options, fakeHost({}), guardedDependencies),
-    ).rejects.toThrow(/use execution: "worker" for postgis/);
+    ).rejects.toThrow(/use the @oliphaunt\/wasix-ts root entrypoint for postgis/);
     expect(prepared).toBe(false);
 
     const workerSession = await DirectWasixSession.open(

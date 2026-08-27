@@ -39,6 +39,7 @@ macos_module_nm_audit="$repo_root/src/runtimes/liboliphaunt/native/tools/audit-m
 macos_provider_collision_audit="$repo_root/src/runtimes/liboliphaunt/native/tools/audit-macos-provider-collisions.awk"
 liboliphaunt_sources=(
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_native.c"
+  "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_error.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_runtime.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_protocol.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_config.c"
@@ -659,7 +660,7 @@ liboliphaunt_artifact_ready() {
     _oliphaunt_init \
     _oliphaunt_exec_protocol \
     _oliphaunt_exec_simple_query \
-    _oliphaunt_exec_protocol_stream \
+    _oliphaunt_exec_protocol_raw_stream \
     _oliphaunt_backup \
     _oliphaunt_restore \
     _oliphaunt_cancel \

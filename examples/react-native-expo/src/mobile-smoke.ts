@@ -64,7 +64,7 @@ export async function runMobileBindingProof(
         let chunkCount = 0;
         let callbackActive = false;
         const chunks: Uint8Array[] = [];
-        await db.execProtocolStream(
+        await db.execProtocolRawStream(
           request,
           chunk => {
             if (callbackActive) {
@@ -89,7 +89,7 @@ export async function runMobileBindingProof(
         const failure = new Error('mobile stream callback failure');
         let failureCallbackCount = 0;
         try {
-          await db.execProtocolStream(
+          await db.execProtocolRawStream(
             simpleQuery("SELECT repeat('failure', 4096) FROM generate_series(1, 128)"),
             () => {
               failureCallbackCount += 1;
@@ -149,7 +149,7 @@ export async function runMobileBindingProof(
     checks,
     'checkpoint and physical backup',
     async () => {
-      await db.checkpoint();
+      await db.execute('CHECKPOINT');
       const backup = await db.backup();
       assertPositiveInteger(backup.byteLength, 'physical backup bytes');
       return `${backup.byteLength} backup bytes`;
@@ -391,14 +391,14 @@ async function expectPostgresError(
 }
 
 function requiredText(result: QueryResult, row: number, column: string): string {
-  const value = result.getText(row, column);
-  if (value == null) {
+  const value = result.rows[row]?.[column];
+  if (typeof value !== 'string') {
     throw new Error(`query result missing ${column} at row ${row}`);
   }
   return value;
 }
 
-function assertEqual(actual: string, expected: string, label: string): void {
+function assertEqual<T extends string | number>(actual: T, expected: T, label: string): void {
   if (actual !== expected) {
     throw new Error(`${label}: expected ${expected}, got ${actual}`);
   }

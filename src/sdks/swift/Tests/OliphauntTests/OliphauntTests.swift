@@ -78,6 +78,137 @@ func executeRejectsRows() throws {
 }
 
 @Test
+func singleStatementParsersRequireSemanticCompletion() throws {
+    let readyOnly = readyResponse()
+    let controlsOnly = backendMessage(Character("1").asciiValue!, Data()) +
+        backendMessage(Character("2").asciiValue!, Data()) +
+        backendMessage(Character("n").asciiValue!, Data()) +
+        readyResponse()
+
+    for response in [readyOnly, controlsOnly] {
+        #expect(throws: OliphauntError.self) {
+            _ = try parseOliphauntCommandResponse(response)
+        }
+        #expect(throws: OliphauntError.self) {
+            _ = try parseOliphauntQueryResponse(response)
+        }
+    }
+
+    let exactEmpty = combineMessages(
+        backendMessage(Character("1").asciiValue!, Data()),
+        backendMessage(Character("2").asciiValue!, Data()),
+        backendMessage(Character("n").asciiValue!, Data()),
+        emptyQueryResponse(),
+        readyResponse()
+    )
+    _ = try parseOliphauntCommandResponse(exactEmpty)
+    _ = try parseOliphauntQueryResponse(exactEmpty)
+}
+
+@Test
+func queryParserRejectsRowsAfterCompletion() {
+    let response = combineMessages(
+        backendMessage(Character("1").asciiValue!, Data()),
+        backendMessage(Character("2").asciiValue!, Data()),
+        rowDescription(),
+        commandComplete("SELECT 0"),
+        dataRow(valueBytes: Data("late".utf8)),
+        readyResponse()
+    )
+    #expect(throws: OliphauntError.self) {
+        _ = try parseOliphauntQueryResponse(response)
+    }
+}
+
+@Test
+func structuredParsersRejectInvalidExtendedOrdering() {
+    let parse = backendMessage(Character("1").asciiValue!, Data())
+    let bind = backendMessage(Character("2").asciiValue!, Data())
+    let noData = backendMessage(Character("n").asciiValue!, Data())
+    let close = backendMessage(Character("3").asciiValue!, Data())
+    let command = commandComplete("SELECT 0")
+    let completeCommand = combineMessages(parse, bind, noData, command)
+
+    let commonCases = [
+        combineMessages(bind, parse, noData, command, readyResponse()),
+        combineMessages(parse, parse, bind, noData, command, readyResponse()),
+        combineMessages(parse, bind, bind, noData, command, readyResponse()),
+        combineMessages(parse, bind, command, readyResponse()),
+        combineMessages(parse, bind, emptyQueryResponse(), readyResponse()),
+        combineMessages(parse, bind, noData, close, command, readyResponse()),
+        combineMessages(completeCommand, parse, readyResponse()),
+        combineMessages(
+            completeCommand,
+            errorResponse(sqlstate: "22000", message: "late"),
+            readyResponse()
+        ),
+    ]
+    for response in commonCases {
+        #expect(throws: OliphauntError.self) {
+            _ = try parseOliphauntCommandResponse(response)
+        }
+        #expect(throws: OliphauntError.self) {
+            _ = try parseOliphauntQueryResponse(response)
+        }
+    }
+
+    let queryOnlyCases = [
+        combineMessages(parse, bind, noData, rowDescription(), command, readyResponse()),
+        combineMessages(parse, bind, rowDescription(), noData, command, readyResponse()),
+    ]
+    for response in queryOnlyCases {
+        #expect(throws: OliphauntError.self) {
+            _ = try parseOliphauntQueryResponse(response)
+        }
+    }
+}
+
+@Test
+func describeParserRequiresOrderedParseMetadata() {
+    let missingParse = parameterDescription([]) +
+        backendMessage(Character("n").asciiValue!, Data()) +
+        readyResponse()
+    #expect(throws: OliphauntError.self) {
+        _ = try parseOliphauntDescribeResponse(missingParse)
+    }
+
+    let parameterDescriptionAfterNoData =
+        backendMessage(Character("1").asciiValue!, Data()) +
+        backendMessage(Character("n").asciiValue!, Data()) +
+        parameterDescription([]) +
+        readyResponse()
+    #expect(throws: OliphauntError.self) {
+        _ = try parseOliphauntDescribeResponse(parameterDescriptionAfterNoData)
+    }
+
+    let completeDescription = combineMessages(
+        backendMessage(Character("1").asciiValue!, Data()),
+        parameterDescription([]),
+        backendMessage(Character("n").asciiValue!, Data())
+    )
+    #expect(throws: OliphauntError.self) {
+        _ = try parseOliphauntDescribeResponse(
+            combineMessages(
+                completeDescription,
+                errorResponse(sqlstate: "22000", message: "late"),
+                readyResponse()
+            )
+        )
+    }
+    #expect(throws: OliphauntError.self) {
+        _ = try parseOliphauntDescribeResponse(
+            combineMessages(
+                backendMessage(Character("1").asciiValue!, Data()),
+                parameterDescription([]),
+                backendMessage(Character("3").asciiValue!, Data()),
+                backendMessage(Character("n").asciiValue!, Data()),
+                readyResponse()
+            )
+        )
+    }
+}
+
+@Test
 func queryUsesCommandTagRowCount() throws {
     let result = try parseOliphauntQueryResponse(rowResponse(value: "1", commandTag: "SELECT 7"))
     #expect(result.rows.count == 1)
@@ -86,13 +217,338 @@ func queryUsesCommandTagRowCount() throws {
 }
 
 @Test
-func postgresErrorPrefersNonlocalizedSeverity() {
+func queryParametersCarryExplicitPostgresTypeOids() throws {
+    let request = try OliphauntProtocol.extendedQuery(
+        "SELECT $1, $2, $3",
+        parameters: [.int32(42), .typedNull(.uuid), .bytes(Data([0, 255]))]
+    )
+    #expect(try parseParameterTypeOids(request) == [.int4, .uuid, .bytea])
+    #expect(OliphauntQueryParam.int32(42).bytes == Data("42".utf8))
+    #expect(OliphauntQueryParam.typedNull(.uuid).bytes == nil)
+    #expect(
+        OliphauntQueryParam(typeOID: .uuid, format: .binary, bytes: nil).format == .text
+    )
+    #expect(OliphauntQueryParam.bytes(Data([1])).format == .binary)
+    #expect(OliphauntPostgresOID.timetz.rawValue == 1_266)
+    #expect(OliphauntPostgresOID.timetzArray.rawValue == 1_270)
+}
+
+@Test
+func queryRowsOfferRawBuiltInAndCustomOidAwareDecoding() throws {
+    let result = try parseOliphauntQueryResponse(rowResponse(
+        value: "-2147483648",
+        commandTag: "SELECT 1",
+        typeOID: .int4
+    ))
+    let row = try #require(result.rows.first)
+    #expect(try row.raw(0) == Data("-2147483648".utf8))
+    let value: Int32? = try row.value(at: 0)
+    #expect(value == Int32.min)
+    let stringValue: String? = try row.value(at: 0)
+    #expect(stringValue == "-2147483648")
+
+    let textResult = try parseOliphauntQueryResponse(rowResponse(
+        value: "hello",
+        commandTag: "SELECT 1",
+        typeOID: .text
+    ))
+    let decoded: UppercaseText? = try textResult.rows[0].value(named: "value")
+    #expect(decoded == UppercaseText(value: "HELLO"))
+}
+
+@Test
+func byteaDecoderPreservesTextAndBinaryBytes() throws {
+    let textResult = try parseOliphauntQueryResponse(rowResponse(
+        value: "\\x00ff5c",
+        commandTag: "SELECT 1",
+        typeOID: .bytea
+    ))
+    let textBytes: Data? = try textResult.rows[0].value(at: 0)
+    #expect(textBytes == Data([0, 255, 92]))
+
+    let binaryResult = try parseOliphauntQueryResponse(rowResponse(
+        valueBytes: Data([0, 255, 92]),
+        commandTag: "SELECT 1",
+        typeOID: .bytea,
+        format: 1
+    ))
+    let binaryBytes: Data? = try binaryResult.rows[0].value(at: 0)
+    #expect(binaryBytes == Data([0, 255, 92]))
+}
+
+@Test
+func queryPreservesStructuredNotices() throws {
+    let response = noticeResponse(severity: "NOTICE", message: "using fallback") +
+        commandResponse("UPDATE 0")
+    let result = try parseOliphauntCommandResponse(response)
+    #expect(result.notices.count == 1)
+    #expect(result.notices[0].severity == "NOTICE")
+    #expect(result.notices[0].message == "using fallback")
+}
+
+@Test
+func execReturnsOrderedStatementsAndOperationNotices() async throws {
+    let response = commandComplete("CREATE TABLE") +
+        noticeResponse(severity: "NOTICE", message: "created") +
+        rowResultMessages(valueBytes: Data("1".utf8), typeOID: .text) +
+        commandComplete("SELECT 1") +
+        emptyQueryResponse() +
+        emptyQueryResponse() +
+        readyResponse()
+    let database = try await OliphauntDatabase.open(
+        engine: TestEngine(session: TestSession(response: response))
+    )
+    let result = try await database.exec("CREATE TABLE t(); SELECT '1';;")
+    let command = try requireCommandStatement(result.statements[0])
+    let rows = try requireRowsStatement(result.statements[1])
+    #expect(command.commandTag == "CREATE TABLE")
+    #expect(rows.commandTag == "SELECT 1")
+    #expect(try rows.rows[0].text(0) == "1")
+    #expect(result.notices.map(\.message) == ["created"])
+
+    for tag in ["1", "2", "3", "n"] {
+        let controlOnly = backendMessage(Character(tag).asciiValue!, Data()) + readyResponse()
+        #expect(throws: OliphauntError.self) {
+            _ = try parseOliphauntExecResponse(controlOnly)
+        }
+    }
+    #expect(throws: OliphauntError.self) {
+        _ = try parseOliphauntExecResponse(readyResponse())
+    }
+    #expect(throws: OliphauntError.self) {
+        _ = try parseOliphauntExecResponse(
+            combineMessages(
+                rowDescription(),
+                dataRow(valueBytes: Data("pending".utf8)),
+                emptyQueryResponse(),
+                commandComplete("SELECT 1"),
+                readyResponse()
+            )
+        )
+    }
+}
+
+@Test
+func describeReturnsParameterAndOptionalRowMetadata() async throws {
+    let response = backendMessage(Character("1").asciiValue!, Data()) +
+        parameterDescription([.int4]) +
+        rowDescription(name: "value", typeOID: .text) +
+        readyResponse()
+    let database = try await OliphauntDatabase.open(
+        engine: TestEngine(session: TestSession(response: response))
+    )
+    let description = try await database.describe("SELECT $1::int4::text")
+    #expect(description.parameterTypes == [.int4])
+    #expect(description.fields?.map(\.name) == ["value"])
+
+    let noData = try parseOliphauntDescribeResponse(
+        backendMessage(Character("1").asciiValue!, Data()) +
+            parameterDescription([]) +
+            backendMessage(Character("n").asciiValue!, Data()) +
+            readyResponse()
+    )
+    #expect(noData.fields == nil)
+}
+
+@Test
+func typedDatabaseOperationRecoversAnEscapedTransactionBeforeReturning() async throws {
+    let session = TestSession(response: commandResponse("BEGIN", status: "T"))
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+    await #expect(throws: OliphauntError.self) {
+        _ = try await database.execute("BEGIN")
+    }
+    #expect(await session.simpleQueries() == ["ROLLBACK"])
+}
+
+@Test
+func structuredCopyIsRejectedBeforeSessionDispatch() async throws {
+    let session = TestSession(response: commandResponse("OK"))
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+    await #expect(throws: OliphauntError.self) {
+        _ = try await database.exec("SELECT 1; COPY items TO STDOUT")
+    }
+    await #expect(throws: OliphauntError.self) {
+        _ = try await database.execute("/* outer /* nested */ */ COPY items FROM STDIN")
+    }
+    #expect(await session.requests().isEmpty)
+}
+
+@Test
+func noticesAttachToPostgresErrors() throws {
+    let response = noticeResponse(severity: "NOTICE", message: "before failure") +
+        errorResponse(sqlstate: "22000", message: "bad query") + readyResponse()
+    do {
+        _ = try parseOliphauntCommandResponse(response)
+        Issue.record("expected a PostgreSQL error")
+    } catch OliphauntError.postgres(let error) {
+        #expect(error.sqlstate == "22000")
+        #expect(error.notices.map(\.message) == ["before failure"])
+    }
+}
+
+@Test
+func typedTransportFailurePoisonsDatabaseAndExpiresTransaction() async throws {
+    let session = TestSession(response: commandResponse("OK"), failTyped: true)
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+    do {
+        _ = try await database.execute("SELECT 1")
+        Issue.record("typed transport should fail")
+    } catch OliphauntError.engine(let message) {
+        #expect(message.contains("typed transport failed"))
+    }
+    do {
+        _ = try await database.execute("SELECT 2")
+        Issue.record("database should be poisoned")
+    } catch OliphauntError.engine(let message) {
+        #expect(message.contains("outcome is unknown"))
+    }
+
+    let transactionSession = TestSession(response: commandResponse("OK"), failTyped: true)
+    let transactionDatabase = try await OliphauntDatabase.open(
+        engine: TestEngine(session: transactionSession)
+    )
+    await #expect(throws: OliphauntError.self) {
+        _ = try await transactionDatabase.transaction { transaction in
+            do {
+                _ = try await transaction.execute("SELECT 1")
+            } catch {
+                // Returning must not COMMIT an operation with an unknown boundary.
+            }
+            return 1
+        }
+    }
+    #expect(await transactionSession.simpleQueries() == ["BEGIN"])
+}
+
+@Test
+func missingTerminalReadyPoisonsTypedDatabase() async throws {
+    let database = try await OliphauntDatabase.open(
+        engine: TestEngine(session: TestSession(response: commandComplete("SELECT 1")))
+    )
+    await #expect(throws: OliphauntError.self) {
+        _ = try await database.execute("SELECT 1")
+    }
+    do {
+        _ = try await database.execute("SELECT 2")
+        Issue.record("database should be poisoned after a missing ReadyForQuery")
+    } catch OliphauntError.engine(let message) {
+        #expect(message.contains("outcome is unknown"))
+    }
+}
+
+@Test
+func rollbackPublishesFinishingStateBeforeWaitingForProtocol() async throws {
+    let session = SettlementBlockingSession(blockedControl: "ROLLBACK")
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+    _ = try await database.transaction { transaction in
+        let rollback = Task { try await transaction.rollback() }
+        await session.waitUntilBlockedControlStarted()
+        await #expect(throws: OliphauntError.self) {
+            _ = try await transaction.execute("SELECT 1")
+        }
+        await session.releaseBlockedControl()
+        try await rollback.value
+        return 1
+    }
+    #expect(await session.simpleQueries() == ["BEGIN", "ROLLBACK"])
+}
+
+@Test
+func commitPublishesFinishingStateBeforeWaitingForProtocol() async throws {
+    let session = SettlementBlockingSession(blockedControl: "COMMIT")
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+    let box = TransactionBox()
+    let outer = Task {
+        try await database.transaction { transaction in
+            await box.store(transaction)
+            return 1
+        }
+    }
+    await session.waitUntilBlockedControlStarted()
+    let transaction = try #require(await box.value())
+    await #expect(throws: OliphauntError.self) {
+        _ = try await transaction.execute("SELECT 1")
+    }
+    await session.releaseBlockedControl()
+    #expect(try await outer.value == 1)
+    #expect(await session.simpleQueries() == ["BEGIN", "COMMIT"])
+}
+
+@Test
+func rollbackCutoffDrainsEarlierTransactionAdmissions() async throws {
+    let session = AdmissionOrderSession()
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+
+    let value = try await database.transaction { transaction in
+        let first = Task { try await transaction.execProtocolRaw(Data([1])) }
+        await session.waitUntilFirstRawStarted()
+        let second = Task { try await transaction.execProtocolRaw(Data([2])) }
+        await database.waitUntilQueuedOperationCount(atLeast: 1)
+        let rollback = Task { try await transaction.rollback() }
+        await database.waitUntilQueuedOperationCount(atLeast: 2)
+
+        await #expect(throws: OliphauntError.self) {
+            _ = try await transaction.execProtocolRaw(Data([3]))
+        }
+        await session.releaseFirstRaw()
+        #expect(try await first.value == Data([1]))
+        #expect(try await second.value == Data([2]))
+        try await rollback.value
+        return 7
+    }
+
+    #expect(value == 7)
+    #expect(await session.events() == ["BEGIN", "raw:1", "raw:2", "ROLLBACK"])
+}
+
+@Test
+func commitCutoffDrainsEarlierTransactionAdmissions() async throws {
+    let session = AdmissionOrderSession()
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+    let box = TransactionBox()
+
+    let outer = Task {
+        try await database.transaction { transaction in
+            Task { _ = try await transaction.execProtocolRaw(Data([1])) }
+            await session.waitUntilFirstRawStarted()
+            Task { _ = try await transaction.execProtocolRaw(Data([2])) }
+            await database.waitUntilQueuedOperationCount(atLeast: 1)
+            await box.store(transaction)
+            return 7
+        }
+    }
+
+    await database.waitUntilQueuedOperationCount(atLeast: 2)
+    let transaction = try #require(await box.value())
+    #expect(await transaction.isClosed)
+    await #expect(throws: OliphauntError.self) {
+        _ = try await transaction.execProtocolRaw(Data([3]))
+    }
+    await session.releaseFirstRaw()
+    #expect(try await outer.value == 7)
+    #expect(await session.events() == ["BEGIN", "raw:1", "raw:2", "COMMIT"])
+}
+
+@Test
+func postgresErrorUsesProtocolSeverityAndRetainsNonlocalizedSeverity() {
     let error = OliphauntPostgresError(fields: [
         .init(code: Character("S").asciiValue!, value: "ERROR"),
         .init(code: Character("V").asciiValue!, value: "ERREUR"),
+        .init(code: Character("p").asciiValue!, value: "12"),
+        .init(code: Character("q").asciiValue!, value: "SELECT bad"),
+        .init(code: Character("F").asciiValue!, value: "parse.c"),
+        .init(code: Character("L").asciiValue!, value: "42"),
+        .init(code: Character("R").asciiValue!, value: "parse_query"),
         .init(code: Character("M").asciiValue!, value: "bad query"),
     ])
-    #expect(error.severity == "ERREUR")
+    #expect(error.severity == "ERROR")
+    #expect(error.localizedSeverity == "ERROR")
+    #expect(error.nonlocalizedSeverity == "ERREUR")
+    #expect(error.internalPosition == "12")
+    #expect(error.internalQuery == "SELECT bad")
+    #expect(error.file == "parse.c")
+    #expect(error.line == "42")
+    #expect(error.routine == "parse_query")
 }
 
 @Test
@@ -119,7 +575,7 @@ func rawProtocolStreamingForwardsOwnedChunks() async throws {
     let session = TestSession(response: response)
     let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
     let chunks = ChunkBox()
-    try await database.execProtocolStream(Data([Character("Q").asciiValue!, 0, 0, 0, 5, 0])) {
+    try await database.execProtocolRawStream(Data([Character("Q").asciiValue!, 0, 0, 0, 5, 0])) {
         chunks.append($0)
     }
     #expect(chunks.snapshot() == [response])
@@ -153,6 +609,23 @@ func transactionRollsBackOriginalFailure() async throws {
 }
 
 @Test
+func explicitRollbackRunsOnceExpiresTransactionAndSkipsCommit() async throws {
+    let session = TestSession(response: commandResponse("UPDATE 1"))
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+    let value = try await database.transaction { transaction in
+        #expect(!(await transaction.isClosed))
+        try await transaction.rollback()
+        #expect(await transaction.isClosed)
+        await #expect(throws: OliphauntError.self) {
+            try await transaction.rollback()
+        }
+        return 42
+    }
+    #expect(value == 42)
+    #expect(await session.simpleQueries() == ["BEGIN", "ROLLBACK"])
+}
+
+@Test
 func commitRequiresExactCommitTag() async throws {
     let session = TestSession(response: commandResponse("UPDATE 1"), commitTag: "ROLLBACK")
     let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
@@ -181,13 +654,53 @@ func commitTransportFailureDoesNotRollbackAndPoisonsFacade() async throws {
 }
 
 @Test
+func beginTransportFailureDoesNotAttemptBlindRollback() async throws {
+    let session = TestSession(response: commandResponse("UPDATE 1"), failBegin: true)
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+    await #expect(throws: OliphauntError.self) {
+        _ = try await database.transaction { _ in 1 }
+    }
+    #expect(await session.simpleQueries() == ["BEGIN"])
+    await #expect(throws: OliphauntError.self) {
+        _ = try await database.execute("SELECT 1")
+    }
+    try await database.close()
+}
+
+@Test
+func beginWithoutTerminalReadyDoesNotAttemptBlindRollback() async throws {
+    let session = TestSession(response: commandResponse("UPDATE 1"), omitBeginReady: true)
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+    await #expect(throws: OliphauntError.self) {
+        _ = try await database.transaction { _ in 1 }
+    }
+    #expect(await session.simpleQueries() == ["BEGIN"])
+    await #expect(throws: OliphauntError.self) {
+        _ = try await database.execute("SELECT 1")
+    }
+    try await database.close()
+}
+
+@Test
 func rollbackFailurePoisonsFacadeUntilClose() async throws {
     struct Expected: Error {}
     let session = TestSession(response: commandResponse("UPDATE 1"), failRollback: true)
     let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
-    await #expect(throws: Expected.self) {
+    do {
         _ = try await database.transaction { _ -> Int in throw Expected() }
+        Issue.record("transaction should report callback and rollback failures")
+    } catch let failure as OliphauntTransactionRollbackError {
+        #expect(failure.callbackError is Expected)
+        if case OliphauntError.engine(let message) = failure.rollbackError {
+            #expect(message == "rollback transport failed")
+        } else {
+            Issue.record("transaction should retain the rollback transport error")
+        }
+        #expect(failure.description.contains("automatic ROLLBACK did not complete"))
+    } catch {
+        Issue.record("unexpected transaction failure: \(error)")
     }
+    #expect(await session.simpleQueries() == ["BEGIN", "ROLLBACK"])
     await #expect(throws: OliphauntError.self) {
         _ = try await database.execute("SELECT 1")
     }
@@ -198,12 +711,229 @@ func rollbackFailurePoisonsFacadeUntilClose() async throws {
 func closeIsIdempotentAndRejectsFurtherWork() async throws {
     let session = TestSession(response: commandResponse("OK"))
     let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+    #expect(!(await database.isClosed))
     try await database.close()
+    #expect(await database.isClosed)
     try await database.close()
     #expect(await session.closeCount() == 1)
     await #expect(throws: OliphauntError.self) {
         _ = try await database.execute("SELECT 1")
     }
+}
+
+@Test
+func closeCutsOffLaterCallsButDrainsEveryEarlierAdmission() async throws {
+    let session = AdmissionOrderSession()
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+
+    let first = Task { try await database.execProtocolRaw(Data([1])) }
+    await session.waitUntilFirstRawStarted()
+    let second = Task { try await database.execProtocolRaw(Data([2])) }
+    await database.waitUntilQueuedOperationCount(atLeast: 1)
+    let closing = Task { try await database.close() }
+    await database.waitUntilQueuedOperationCount(atLeast: 2)
+
+    await #expect(throws: OliphauntError.self) {
+        _ = try await database.execProtocolRaw(Data([3]))
+    }
+
+    await session.releaseFirstRaw()
+    #expect(try await first.value == Data([1]))
+    #expect(try await second.value == Data([2]))
+    try await closing.value
+    #expect(await session.events() == ["raw:1", "raw:2", "close"])
+}
+
+@Test
+func transactionPinningDoesNotRevokeEarlierAdmissions() async throws {
+    let session = AdmissionOrderSession()
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+
+    let first = Task { try await database.execProtocolRaw(Data([1])) }
+    await session.waitUntilFirstRawStarted()
+    let second = Task { try await database.execProtocolRaw(Data([2])) }
+    await database.waitUntilQueuedOperationCount(atLeast: 1)
+    let transaction = Task {
+        try await database.transaction { _ in 7 }
+    }
+    await database.waitUntilQueuedOperationCount(atLeast: 2)
+
+    await #expect(throws: OliphauntError.self) {
+        _ = try await database.execProtocolRaw(Data([3]))
+    }
+
+    await session.releaseFirstRaw()
+    #expect(try await first.value == Data([1]))
+    #expect(try await second.value == Data([2]))
+    #expect(try await transaction.value == 7)
+    #expect(await session.events() == ["raw:1", "raw:2", "BEGIN", "COMMIT"])
+}
+
+@Test
+func cancellationCannotStrandCloseOwnership() async throws {
+    let session = TestSession(response: commandResponse("OK"), blockClose: true)
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+    let closing = Task { try await database.close() }
+
+    await session.awaitClose()
+    closing.cancel()
+    await session.releaseClose()
+    try await closing.value
+
+    #expect(await session.closeCount() == 1)
+    #expect(await database.isClosed)
+}
+
+@Test
+@MainActor
+func nativeOwnerRunsAwayFromTheMainThread() async throws {
+    let owner = OliphauntNativeOwner(label: "dev.oliphaunt.swift.tests.owner")
+    let ranOnMainThread = try await owner.run { Thread.isMainThread }
+    #expect(!ranOnMainThread)
+}
+
+@Test
+func rawStreamCallbackFailureRejectsAndReleasesTheSession() async throws {
+    struct Expected: Error {}
+    let session = TestSession(response: commandResponse("OK"))
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+
+    await #expect(throws: Expected.self) {
+        try await database.execProtocolRawStream(Data([1])) { _ in throw Expected() }
+    }
+    _ = try await database.execProtocolRaw(Data([2]))
+
+    #expect(await session.requests().count == 2)
+}
+
+@Test
+func rawStreamCallbackRejectsSameHandleReentryButAllowsCancellation() async throws {
+    let session = TestSession(response: commandResponse("OK"))
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+    let outcomes = (0..<6).map { _ in AsyncStringSignal() }
+    let cancellation = AsyncStringSignal()
+
+    try await database.execProtocolRawStream(Data([1])) { _ in
+        let forbidden: [@Sendable () async throws -> Void] = [
+            { _ = try await database.execProtocolRaw(Data([2])) },
+            { try await database.execProtocolRawStream(Data([3])) { _ in } },
+            { _ = try await database.query("SELECT 1") },
+            { _ = try await database.backup() },
+            { _ = try await database.transaction { _ in () } },
+            { try await database.close() },
+        ]
+        for (operation, outcome) in zip(forbidden, outcomes) {
+            Task {
+                do {
+                    try await operation()
+                    await outcome.complete("unexpected success")
+                } catch {
+                    await outcome.complete(String(describing: error))
+                }
+            }
+        }
+        Task {
+            do {
+                try await database.cancel()
+                await cancellation.complete("success")
+            } catch {
+                await cancellation.complete(String(describing: error))
+            }
+        }
+    }
+
+    for outcome in outcomes {
+        #expect(
+            await outcome.wait().contains(
+                "must not reenter the same Oliphaunt database or transaction"
+            )
+        )
+    }
+    #expect(await cancellation.wait() == "success")
+    #expect(await session.cancelCount() == 1)
+    #expect(await session.requests().count == 1)
+    try await database.close()
+}
+
+@Test
+func transactionRawStreamCallbackRejectsTransactionReentry() async throws {
+    let session = TestSession(response: commandResponse("OK"))
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+
+    try await database.transaction { transaction in
+        let outcomes = (0..<4).map { _ in AsyncStringSignal() }
+        try await transaction.execProtocolRawStream(Data([1])) { _ in
+            let forbidden: [@Sendable () async throws -> Void] = [
+                { _ = try await transaction.execProtocolRaw(Data([2])) },
+                { try await transaction.execProtocolRawStream(Data([3])) { _ in } },
+                { _ = try await transaction.query("SELECT 1") },
+                { try await transaction.rollback() },
+            ]
+            for (operation, outcome) in zip(forbidden, outcomes) {
+                Task {
+                    do {
+                        try await operation()
+                        await outcome.complete("unexpected success")
+                    } catch {
+                        await outcome.complete(String(describing: error))
+                    }
+                }
+            }
+        }
+        for outcome in outcomes {
+            #expect(
+                await outcome.wait().contains(
+                    "must not reenter the same Oliphaunt database or transaction"
+                )
+            )
+        }
+    }
+
+    #expect(await session.simpleQueries() == ["BEGIN", "COMMIT"])
+    try await database.close()
+}
+
+@Test
+func cancellationRemainsAvailableUntilCloseStartsNativeTeardown() async throws {
+    let session = AdmissionOrderSession(blockClose: true)
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+    let first = Task { try await database.execProtocolRaw(Data([1])) }
+    await session.waitUntilFirstRawStarted()
+    let closing = Task { try await database.close() }
+
+    try await database.cancel()
+    #expect(await session.cancelCount() == 1)
+    await session.releaseFirstRaw()
+    _ = try await first.value
+    await session.waitUntilCloseStarted()
+    await #expect(throws: OliphauntError.self) {
+        try await database.cancel()
+    }
+
+    await session.releaseClose()
+    try await closing.value
+    #expect(await session.events() == ["raw:1", "cancel", "close"])
+}
+
+@Test
+func closeDrainsCancellationAdmittedBeforeNativeTeardown() async throws {
+    let session = AdmissionOrderSession(blockCancel: true)
+    let database = try await OliphauntDatabase.open(engine: TestEngine(session: session))
+    let first = Task { try await database.execProtocolRaw(Data([1])) }
+    await session.waitUntilFirstRawStarted()
+    let closing = Task { try await database.close() }
+    let cancellation = Task { try await database.cancel() }
+    await session.waitUntilCancelStarted()
+
+    await session.releaseFirstRaw()
+    _ = try await first.value
+    await database.waitUntilCloseTeardownStarted()
+    #expect(!(await session.hasCloseStarted()))
+
+    await session.releaseCancel()
+    try await cancellation.value
+    try await closing.value
+    #expect(await session.events() == ["raw:1", "cancel:start", "cancel:end", "close"])
 }
 
 @Test
@@ -565,47 +1295,142 @@ private final class ChunkBox: @unchecked Sendable {
     }
 }
 
+private actor AsyncStringSignal {
+    private var result: String?
+    private var waiters: [CheckedContinuation<String, Never>] = []
+
+    func complete(_ value: String) {
+        guard result == nil else { return }
+        result = value
+        let current = waiters
+        waiters.removeAll()
+        current.forEach { $0.resume(returning: value) }
+    }
+
+    func wait() async -> String {
+        if let result { return result }
+        return await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+}
+
+private struct UppercaseText: Equatable, Sendable, OliphauntPostgresDecodable {
+    let value: String
+
+    static func decodePostgres(
+        _ bytes: Data?,
+        field: OliphauntQueryField
+    ) throws -> UppercaseText? {
+        guard field.typeOID == .text else {
+            throw OliphauntError.engine("UppercaseText requires PostgreSQL text")
+        }
+        guard let bytes else { return nil }
+        guard let value = String(data: bytes, encoding: .utf8) else {
+            throw OliphauntError.engine("UppercaseText requires UTF-8")
+        }
+        return UppercaseText(value: value.uppercased())
+    }
+}
+
+private func requireCommandStatement(
+    _ statement: OliphauntStatementResult
+) throws -> OliphauntCommandResult {
+    guard case .command(let result) = statement else {
+        throw OliphauntError.engine("test expected a command statement")
+    }
+    return result
+}
+
+private func requireRowsStatement(
+    _ statement: OliphauntStatementResult
+) throws -> OliphauntQueryResult {
+    guard case .rows(let result) = statement else {
+        throw OliphauntError.engine("test expected a row statement")
+    }
+    return result
+}
+
 private actor TestSession: OliphauntSession {
     private let response: Data
     private let backupBytes: Data
     private let commitTag: String
+    private let failBegin: Bool
     private let failCommit: Bool
     private let failRollback: Bool
+    private let failTyped: Bool
+    private let omitBeginReady: Bool
+    private let blockClose: Bool
     private var capturedRequests: [Data] = []
     private var closes = 0
+    private var inTransaction = false
+    private var closeStarted = false
+    private var closeStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var closeRelease: CheckedContinuation<Void, Never>?
 
     init(
         response: Data,
         backupBytes: Data = Data(),
         commitTag: String = "COMMIT",
+        failBegin: Bool = false,
         failCommit: Bool = false,
-        failRollback: Bool = false
+        failRollback: Bool = false,
+        failTyped: Bool = false,
+        omitBeginReady: Bool = false,
+        blockClose: Bool = false
     ) {
         self.response = response
         self.backupBytes = backupBytes
         self.commitTag = commitTag
+        self.failBegin = failBegin
         self.failCommit = failCommit
         self.failRollback = failRollback
+        self.failTyped = failTyped
+        self.omitBeginReady = omitBeginReady
+        self.blockClose = blockClose
     }
 
     func execProtocolRaw(_ bytes: Data) async throws -> Data {
         capturedRequests.append(bytes)
+        if bytes.first != Character("Q").asciiValue, failTyped {
+            throw OliphauntError.engine("typed transport failed")
+        }
         if bytes.first == Character("Q").asciiValue,
            let sql = String(data: bytes.dropFirst(5).dropLast(), encoding: .utf8),
            ["BEGIN", "COMMIT", "ROLLBACK"].contains(sql)
         {
+            if sql == "BEGIN", failBegin {
+                throw OliphauntError.engine("begin transport failed")
+            }
             if sql == "COMMIT", failCommit {
                 throw OliphauntError.engine("commit transport failed")
             }
             if sql == "ROLLBACK", failRollback {
                 throw OliphauntError.engine("rollback transport failed")
             }
-            return commandResponse(sql == "COMMIT" ? commitTag : sql)
+            if sql == "BEGIN" {
+                inTransaction = true
+                if omitBeginReady {
+                    return commandComplete("BEGIN")
+                }
+            } else {
+                inTransaction = false
+            }
+            return simpleCommandResponse(
+                sql == "COMMIT" ? commitTag : sql,
+                status: inTransaction ? "T" : "I"
+            )
         }
-        return response
+        guard inTransaction, response.last == Character("I").asciiValue else {
+            return response
+        }
+        var transactionResponse = response
+        transactionResponse[transactionResponse.index(before: transactionResponse.endIndex)] =
+            Character("T").asciiValue!
+        return transactionResponse
     }
 
-    func execProtocolStream(
+    func execProtocolRawStream(
         _ bytes: Data,
         onChunk: @escaping @Sendable (Data) throws -> Void
     ) async throws {
@@ -614,9 +1439,33 @@ private actor TestSession: OliphauntSession {
 
     func backup() async throws -> Data { backupBytes }
     func cancel() async throws {}
-    func close() async throws { closes += 1 }
+    func close() async throws {
+        if blockClose {
+            closeStarted = true
+            closeStartWaiters.forEach { $0.resume() }
+            closeStartWaiters.removeAll()
+            await withCheckedContinuation { continuation in
+                closeRelease = continuation
+            }
+        }
+        closes += 1
+    }
     func requests() -> [Data] { capturedRequests }
     func closeCount() -> Int { closes }
+
+    func awaitClose() async {
+        if closeStarted {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            closeStartWaiters.append(continuation)
+        }
+    }
+
+    func releaseClose() {
+        closeRelease?.resume()
+        closeRelease = nil
+    }
 
     func simpleQueries() -> [String] {
         capturedRequests.compactMap { request in
@@ -624,6 +1473,197 @@ private actor TestSession: OliphauntSession {
             return String(data: request.dropFirst(5).dropLast(), encoding: .utf8)
         }
     }
+}
+
+private actor AdmissionOrderSession: OliphauntSession {
+    private let blockClose: Bool
+    private let blockCancel: Bool
+    private var capturedEvents: [String] = []
+    private var firstRawStarted = false
+    private var firstRawStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var firstRawRelease: CheckedContinuation<Void, Never>?
+    private var closeStarted = false
+    private var closeStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var closeRelease: CheckedContinuation<Void, Never>?
+    private var cancelStarted = false
+    private var cancelStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var cancelRelease: CheckedContinuation<Void, Never>?
+    private var cancels = 0
+
+    init(blockClose: Bool = false, blockCancel: Bool = false) {
+        self.blockClose = blockClose
+        self.blockCancel = blockCancel
+    }
+
+    func execProtocolRaw(_ bytes: Data) async throws -> Data {
+        if bytes.first == Character("Q").asciiValue,
+           let sql = String(data: bytes.dropFirst(5).dropLast(), encoding: .utf8),
+           ["BEGIN", "COMMIT", "ROLLBACK"].contains(sql)
+        {
+            capturedEvents.append(sql)
+            return simpleCommandResponse(sql, status: sql == "BEGIN" ? "T" : "I")
+        }
+
+        let marker = bytes.first.map(String.init) ?? "empty"
+        capturedEvents.append("raw:\(marker)")
+        if bytes == Data([1]) {
+            firstRawStarted = true
+            firstRawStartWaiters.forEach { $0.resume() }
+            firstRawStartWaiters.removeAll()
+            await withCheckedContinuation { continuation in
+                firstRawRelease = continuation
+            }
+        }
+        return bytes
+    }
+
+    func execProtocolRawStream(
+        _ bytes: Data,
+        onChunk: @escaping @Sendable (Data) throws -> Void
+    ) async throws {
+        try onChunk(try await execProtocolRaw(bytes))
+    }
+
+    func backup() async throws -> Data { Data() }
+    func cancel() async throws {
+        cancels += 1
+        if blockCancel {
+            capturedEvents.append("cancel:start")
+            cancelStarted = true
+            cancelStartWaiters.forEach { $0.resume() }
+            cancelStartWaiters.removeAll()
+            await withCheckedContinuation { continuation in
+                cancelRelease = continuation
+            }
+            capturedEvents.append("cancel:end")
+        } else {
+            capturedEvents.append("cancel")
+        }
+    }
+
+    func close() async throws {
+        capturedEvents.append("close")
+        if blockClose {
+            closeStarted = true
+            closeStartWaiters.forEach { $0.resume() }
+            closeStartWaiters.removeAll()
+            await withCheckedContinuation { continuation in
+                closeRelease = continuation
+            }
+        }
+    }
+
+    func waitUntilFirstRawStarted() async {
+        guard !firstRawStarted else { return }
+        await withCheckedContinuation { continuation in
+            firstRawStartWaiters.append(continuation)
+        }
+    }
+
+    func releaseFirstRaw() {
+        firstRawRelease?.resume()
+        firstRawRelease = nil
+    }
+
+    func waitUntilCloseStarted() async {
+        if closeStarted { return }
+        await withCheckedContinuation { continuation in
+            closeStartWaiters.append(continuation)
+        }
+    }
+
+    func hasCloseStarted() -> Bool { closeStarted }
+
+    func releaseClose() {
+        closeRelease?.resume()
+        closeRelease = nil
+    }
+
+    func waitUntilCancelStarted() async {
+        if cancelStarted { return }
+        await withCheckedContinuation { continuation in
+            cancelStartWaiters.append(continuation)
+        }
+    }
+
+    func releaseCancel() {
+        cancelRelease?.resume()
+        cancelRelease = nil
+    }
+
+    func cancelCount() -> Int { cancels }
+
+    func events() -> [String] { capturedEvents }
+}
+
+private actor SettlementBlockingSession: OliphauntSession {
+    private let blockedControl: String
+    private var capturedQueries: [String] = []
+    private var blockedControlStarted = false
+    private var released = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+
+    init(blockedControl: String) {
+        self.blockedControl = blockedControl
+    }
+
+    func execProtocolRaw(_ bytes: Data) async throws -> Data {
+        guard bytes.first == Character("Q").asciiValue,
+              let sql = String(data: bytes.dropFirst(5).dropLast(), encoding: .utf8)
+        else {
+            return commandResponse("OK", status: "T")
+        }
+        capturedQueries.append(sql)
+        if sql == blockedControl {
+            blockedControlStarted = true
+            let waiters = startWaiters
+            startWaiters.removeAll()
+            waiters.forEach { $0.resume() }
+            if !released {
+                await withCheckedContinuation { continuation in
+                    releaseWaiter = continuation
+                }
+            }
+        }
+        return simpleCommandResponse(sql, status: sql == "BEGIN" ? "T" : "I")
+    }
+
+    func execProtocolRawStream(
+        _ bytes: Data,
+        onChunk: @escaping @Sendable (Data) throws -> Void
+    ) async throws {
+        try onChunk(try await execProtocolRaw(bytes))
+    }
+
+    func backup() async throws -> Data { Data() }
+    func cancel() async throws {}
+    func close() async throws {}
+
+    func waitUntilBlockedControlStarted() async {
+        if blockedControlStarted { return }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+        }
+    }
+
+    func releaseBlockedControl() {
+        released = true
+        releaseWaiter?.resume()
+        releaseWaiter = nil
+    }
+
+    func simpleQueries() -> [String] { capturedQueries }
+}
+
+private actor TransactionBox {
+    private var transaction: OliphauntTransaction?
+
+    func store(_ transaction: OliphauntTransaction) {
+        self.transaction = transaction
+    }
+
+    func value() -> OliphauntTransaction? { transaction }
 }
 
 private func backendMessage(_ tag: UInt8, _ body: Data) -> Data {
@@ -637,22 +1677,172 @@ private func backendMessage(_ tag: UInt8, _ body: Data) -> Data {
     ]) + body
 }
 
-private func commandResponse(_ tag: String) -> Data {
-    backendMessage(Character("C").asciiValue!, Data(tag.utf8) + Data([0])) +
-        backendMessage(Character("Z").asciiValue!, Data([Character("I").asciiValue!]))
+private func combineMessages(_ messages: Data...) -> Data {
+    messages.reduce(into: Data()) { response, message in
+        response.append(message)
+    }
 }
 
-private func rowResponse(value: String, commandTag: String) -> Data {
+private func commandComplete(_ tag: String) -> Data {
+    backendMessage(Character("C").asciiValue!, Data(tag.utf8) + Data([0]))
+}
+
+private func readyResponse(status: Character = "I") -> Data {
+    backendMessage(Character("Z").asciiValue!, Data([status.asciiValue!]))
+}
+
+private func commandResponse(_ tag: String, status: Character = "I") -> Data {
+    backendMessage(Character("1").asciiValue!, Data()) +
+        backendMessage(Character("2").asciiValue!, Data()) +
+        backendMessage(Character("n").asciiValue!, Data()) +
+        simpleCommandResponse(tag, status: status)
+}
+
+private func simpleCommandResponse(_ tag: String, status: Character = "I") -> Data {
+    commandComplete(tag) + readyResponse(status: status)
+}
+
+private func emptyQueryResponse() -> Data {
+    backendMessage(Character("I").asciiValue!, Data())
+}
+
+private func rowDescription(
+    name: String = "value",
+    typeOID: OliphauntPostgresOID = .text,
+    format: Int16 = 0
+) -> Data {
     var rowDescription = Data([0, 1])
-    rowDescription += Data("value".utf8) + Data([0])
+    rowDescription += Data(name.utf8) + Data([0])
     rowDescription += Data(repeating: 0, count: 6)
-    rowDescription += Data([0, 0, 0, 25, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0, 0])
-    let valueBytes = Data(value.utf8)
-    let length = UInt32(valueBytes.count)
-    let dataRow = Data([0, 1, UInt8(length >> 24), UInt8(length >> 16), UInt8(length >> 8), UInt8(length)]) + valueBytes
-    return backendMessage(Character("T").asciiValue!, rowDescription) +
-        backendMessage(Character("D").asciiValue!, dataRow) +
-        commandResponse(commandTag)
+    appendUInt32(typeOID.rawValue, to: &rowDescription)
+    rowDescription += Data([0xff, 0xff, 0xff, 0xff, 0xff, 0xff])
+    appendInt16(format, to: &rowDescription)
+    return backendMessage(Character("T").asciiValue!, rowDescription)
+}
+
+private func rowResultMessages(
+    valueBytes: Data?,
+    name: String = "value",
+    typeOID: OliphauntPostgresOID = .text,
+    format: Int16 = 0
+) -> Data {
+    rowDescription(name: name, typeOID: typeOID, format: format) +
+        dataRow(valueBytes: valueBytes)
+}
+
+private func dataRow(valueBytes: Data?) -> Data {
+    var dataRow = Data([0, 1])
+    if let valueBytes {
+        appendUInt32(UInt32(valueBytes.count), to: &dataRow)
+        dataRow += valueBytes
+    } else {
+        dataRow += Data([0xff, 0xff, 0xff, 0xff])
+    }
+    return backendMessage(Character("D").asciiValue!, dataRow)
+}
+
+private func rowResponse(
+    value: String,
+    commandTag: String,
+    typeOID: OliphauntPostgresOID = .text,
+    format: Int16 = 0,
+    status: Character = "I"
+) -> Data {
+    rowResponse(
+        valueBytes: Data(value.utf8),
+        commandTag: commandTag,
+        typeOID: typeOID,
+        format: format,
+        status: status
+    )
+}
+
+private func rowResponse(
+    valueBytes: Data?,
+    commandTag: String,
+    typeOID: OliphauntPostgresOID = .text,
+    format: Int16 = 0,
+    status: Character = "I"
+) -> Data {
+    backendMessage(Character("1").asciiValue!, Data()) +
+        backendMessage(Character("2").asciiValue!, Data()) +
+        rowResultMessages(valueBytes: valueBytes, typeOID: typeOID, format: format) +
+        commandComplete(commandTag) +
+        readyResponse(status: status)
+}
+
+private func noticeResponse(severity: String, message: String) -> Data {
+    let body = Data([Character("S").asciiValue!]) + Data(severity.utf8) + Data([0]) +
+        Data([Character("M").asciiValue!]) + Data(message.utf8) + Data([0, 0])
+    return backendMessage(Character("N").asciiValue!, body)
+}
+
+private func errorResponse(sqlstate: String, message: String) -> Data {
+    var body = Data([Character("S").asciiValue!])
+    body.append(Data("ERROR".utf8))
+    body.append(0)
+    body.append(Character("C").asciiValue!)
+    body.append(Data(sqlstate.utf8))
+    body.append(0)
+    body.append(Character("M").asciiValue!)
+    body.append(Data(message.utf8))
+    body.append(contentsOf: [0, 0])
+    return backendMessage(Character("E").asciiValue!, body)
+}
+
+private func parameterDescription(_ types: [OliphauntPostgresOID]) -> Data {
+    var body = Data()
+    appendInt16(Int16(types.count), to: &body)
+    for type in types {
+        appendUInt32(type.rawValue, to: &body)
+    }
+    return backendMessage(Character("t").asciiValue!, body)
+}
+
+private func appendUInt32(_ value: UInt32, to data: inout Data) {
+    data += Data([
+        UInt8((value >> 24) & 0xff),
+        UInt8((value >> 16) & 0xff),
+        UInt8((value >> 8) & 0xff),
+        UInt8(value & 0xff),
+    ])
+}
+
+private func appendInt16(_ value: Int16, to data: inout Data) {
+    let bits = UInt16(bitPattern: value)
+    data += Data([UInt8((bits >> 8) & 0xff), UInt8(bits & 0xff)])
+}
+
+private func parseParameterTypeOids(_ request: Data) throws -> [OliphauntPostgresOID] {
+    let bytes = [UInt8](request)
+    guard bytes.first == Character("P").asciiValue, bytes.count >= 7 else {
+        throw OliphauntError.engine("test request is not a Parse message")
+    }
+    var offset = 5
+    for label in ["statement name", "SQL"] {
+        guard let terminator = bytes[offset...].firstIndex(of: 0) else {
+            throw OliphauntError.engine("test Parse \(label) is unterminated")
+        }
+        offset = terminator + 1
+    }
+    guard offset + 2 <= bytes.count else {
+        throw OliphauntError.engine("test Parse parameter count is truncated")
+    }
+    let count = Int(UInt16(bytes[offset]) << 8 | UInt16(bytes[offset + 1]))
+    offset += 2
+    var result: [OliphauntPostgresOID] = []
+    for _ in 0..<count {
+        guard offset + 4 <= bytes.count else {
+            throw OliphauntError.engine("test Parse parameter OID is truncated")
+        }
+        let value = UInt32(bytes[offset]) << 24 |
+            UInt32(bytes[offset + 1]) << 16 |
+            UInt32(bytes[offset + 2]) << 8 |
+            UInt32(bytes[offset + 3])
+        result.append(OliphauntPostgresOID(value))
+        offset += 4
+    }
+    return result
 }
 
 private let nativeRootDescriptor =

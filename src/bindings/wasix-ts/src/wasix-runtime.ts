@@ -30,7 +30,7 @@ export function compileWasixModule(
   return compiledModuleCache.module;
 }
 
-/** @internal Materialize the exact runtime mounts shared by both execution placements. */
+/** @internal Materialize the exact runtime mounts shared by both calling contracts. */
 export async function materializeWasixMounts(
   DirectoryConstructor: typeof Directory,
   layout: WasixRuntimeLayout,
@@ -102,7 +102,7 @@ function compareDirectoryDepth(left: string, right: string): number {
   return left.split('/').length - right.split('/').length || left.localeCompare(right);
 }
 
-/** @internal PostgreSQL argv shared by both execution placements. */
+/** @internal PostgreSQL argv shared by both calling contracts. */
 export function wasixPostgresArgs(options: SerializedOpenOptions): string[] {
   const args = ['--single'];
   if (options.storage.kind === 'memory') args.push('-F');
@@ -154,7 +154,7 @@ const SINGLE_BACKEND_GUCS = {
   wal_sync_method: 'fdatasync',
 } as const;
 
-/** @internal PostgreSQL environment shared by both execution placements. */
+/** @internal PostgreSQL environment shared by both calling contracts. */
 export function wasixPostgresEnvironment(
   options: SerializedOpenOptions,
   icuEnabled = false,

@@ -29,6 +29,21 @@ export async function createNodeNativeBinding(
   applyNativeIcuDataEnvironment(install.icuDataDirectory);
   applyNativeRuntimeLibraryEnvironment(install.runtimeDirectory);
   const addon = await loadNodeDirectAddon(options.nodeAddonPath);
+  const forgottenHandles = new FinalizationRegistry<{
+    readonly recoveryToken: unknown;
+    readonly releaseOwnership: () => void;
+  }>(({ recoveryToken, releaseOwnership }) => {
+    try {
+      // The addon only marks this exact logical generation for recovery. The
+      // actual PostgreSQL detach remains on the next open's async worker.
+      if (addon.queueForgottenHandleRecovery(recoveryToken)) {
+        releaseOwnership();
+      }
+    } catch {
+      // Finalizer failures are unobservable. Keep the JavaScript admission
+      // lease closed if native recovery could not be queued safely.
+    }
+  });
 
   return {
     async open(config: NativeOpenConfig): Promise<NativeHandle> {
@@ -63,7 +78,7 @@ export async function createNodeNativeBinding(
         extensionInstall.icuDataDirectory,
         extensionInstall.catalogProfile,
       );
-      return addon.open({
+      return await addon.open({
         ...config,
         libraryPath: extensionInstall.libraryPath,
         runtimeDirectory: extensionInstall.runtimeDirectory,
@@ -73,12 +88,12 @@ export async function createNodeNativeBinding(
     async execProtocolRaw(handle: NativeHandle, request: Uint8Array): Promise<Uint8Array> {
       return toUint8Array(await addon.execProtocolRaw(handle, request));
     },
-    execProtocolStream(
+    async execProtocolStream(
       handle: NativeHandle,
       request: Uint8Array,
       onChunk: (chunk: Uint8Array) => void,
-    ): void {
-      addon.execProtocolStream(handle, request, onChunk);
+    ): Promise<void> {
+      await addon.execProtocolRawStream(handle, request, onChunk);
     },
     async execSimpleQuery(handle: NativeHandle, sql: string): Promise<Uint8Array> {
       return toUint8Array(await addon.execSimpleQuery(handle, sql));
@@ -93,11 +108,28 @@ export async function createNodeNativeBinding(
         bytes: options.bytes,
       });
     },
-    cancel(handle: NativeHandle): void {
+    async cancel(handle: NativeHandle): Promise<void> {
       addon.cancel(handle);
     },
-    detach(handle: NativeHandle): void {
-      addon.detach(handle);
+    async detach(handle: NativeHandle): Promise<void> {
+      await addon.detach(handle);
+    },
+    registerForgottenHandleCleanup(
+      owner: object,
+      handle: NativeHandle,
+      releaseOwnership: () => void,
+    ): void {
+      forgottenHandles.register(
+        owner,
+        Object.freeze({
+          recoveryToken: addon.createForgottenHandleRecoveryToken(handle),
+          releaseOwnership,
+        }),
+        owner,
+      );
+    },
+    unregisterForgottenHandleCleanup(owner: object): void {
+      forgottenHandles.unregister(owner);
     },
   };
 }

@@ -7,6 +7,11 @@ export type JsiProtocolChunkResult =
 
 export type JsiRawProtocolTransport = {
   readonly version: 1;
+  /**
+   * Schedules best-effort cleanup for this exact process-unique session
+   * generation. A stale or already-closed generation is a successful no-op.
+   */
+  readonly closeIfGeneration: (generation: number) => void;
   readonly execProtocolRaw: (
     handle: number,
     request: Uint8Array,
@@ -35,6 +40,7 @@ export function resolveJsiRawProtocolTransport(): JsiRawProtocolTransport | null
   const candidate = (globalThis as GlobalWithOliphauntJsi).__oliphauntReactNativeJsi;
   if (
     candidate?.version === 1 &&
+    typeof candidate.closeIfGeneration === 'function' &&
     typeof candidate.execProtocolRaw === 'function' &&
     typeof candidate.execProtocolStream === 'function' &&
     typeof candidate.backup === 'function' &&

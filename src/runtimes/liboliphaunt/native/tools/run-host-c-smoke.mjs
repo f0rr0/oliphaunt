@@ -539,6 +539,7 @@ function checkIosCSourceSyntax(paths) {
 
   const sources = [
     'liboliphaunt_native.c',
+    'liboliphaunt_error.c',
     'liboliphaunt_runtime.c',
     'liboliphaunt_protocol.c',
     'liboliphaunt_config.c',

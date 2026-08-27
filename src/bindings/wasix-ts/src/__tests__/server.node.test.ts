@@ -52,12 +52,34 @@ afterEach(async () => {
 describe('WASIX local server surface', () => {
   it('opens loopback TCP with an automatic port and closes idempotently', async () => {
     const server = await openServer();
+    expect(server.closed).toBe(false);
     expect(server.connectionString).toMatch(
       /^postgresql:\/\/postgres@127\.0\.0\.1:\d+\/postgres\?sslmode=disable$/,
     );
-    await server.close();
-    await server.close();
+    const first = server.close();
+    const second = server.close();
+    expect(second).toBe(first);
+    expect(server.closed).toBe(false);
+    await first;
+    expect(server.closed).toBe(true);
+    await second;
     expect(closeDatabase).toHaveBeenCalledTimes(1);
+  });
+
+  it('becomes closed after a failed terminal close and replays that outcome', async () => {
+    const databaseFailure = new Error('database close failed');
+    closeDatabase.mockRejectedValueOnce(databaseFailure);
+    const server = await openServer();
+
+    const first = server.close();
+    expect(server.closed).toBe(false);
+    const failure = await first.catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(AggregateError);
+    if (!(failure instanceof AggregateError)) throw new Error('expected aggregate failure');
+    expect(failure.errors).toContain(databaseFailure);
+    expect(server.closed).toBe(true);
+    expect(server.close()).toBe(first);
+    await expect(server.close()).rejects.toBe(failure);
   });
 
   it('rejects every invalid port in the shared listener contract', async () => {
@@ -74,7 +96,7 @@ describe('WASIX local server surface', () => {
       markServing = resolve;
     });
     const database = new WasixDatabaseImpl({
-      isolated: true,
+      supportsProtocolConnections: true,
       async exec() {
         return new Uint8Array();
       },
@@ -122,7 +144,7 @@ describe('WASIX local server surface', () => {
 
   it('waits for the final socket bytes to flush before destroying the connection', async () => {
     const database = new WasixDatabaseImpl({
-      isolated: true,
+      supportsProtocolConnections: true,
       async exec() {
         return new Uint8Array();
       },

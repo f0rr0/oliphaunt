@@ -71,7 +71,7 @@ needs the handle.
 <!-- oliphaunt-snippet: oliphaunt-react-native -->
 
 ```ts
-import { Oliphaunt } from '@oliphaunt/react-native';
+import Oliphaunt from '@oliphaunt/react-native';
 
 const db = await Oliphaunt.open({
   storage: { kind: 'applicationData', name: 'main' },
@@ -79,7 +79,7 @@ const db = await Oliphaunt.open({
 });
 
 const rows = await db.query('SELECT 1::text AS value');
-const value = rows.getText(0, 'value');
+const value = rows.rows[0]?.value;
 
 await db.close();
 ```
@@ -115,7 +115,7 @@ await db.query(
 const notes = await db.query(
   'SELECT id, title FROM notes ORDER BY id DESC LIMIT 20',
 );
-const firstTitle = notes.getText(0, 'title');
+const firstTitle = notes.rows[0]?.title;
 ```
 
 Reach for the buffered raw protocol API only when building adapters that need
@@ -163,9 +163,11 @@ buffers.
 
 ### Handle lifecycle
 
-Use `checkpoint()`, `cancel()`, and `close()` explicitly from app lifecycle
-policy. Direct mobile mode can logically reopen the same instance inside one
-resident app process.
+Use `cancel()` and `close()` explicitly from app lifecycle policy. `cancel()`
+remains available while a close cutoff drains earlier admitted work and stops
+when native teardown begins. Forgotten JavaScript handles schedule
+generation-bound best-effort cleanup, but explicit close remains deterministic.
+Direct mobile mode can logically reopen inside one resident app process.
 
 </Step>
 <Step>

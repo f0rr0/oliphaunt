@@ -32,3 +32,12 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
+  test:
+    tags: ["quality", "unit"]
+    command: "tools/dev/bun.sh x vitest run src/shared/js-core/test/query.test.ts"
+    inputs:
+      - "/src/shared/js-core/**/*"
+      - "/src/shared/fixtures/protocol/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

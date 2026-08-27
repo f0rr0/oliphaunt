@@ -277,6 +277,21 @@ int main(void) {
     CHECK(oliphaunt_logical_generation(&handle) == 2,
           "stale close must leave the reopened generation published");
 
+    handle.streaming = true;
+    CHECK(oliphaunt_claim_global_instance_for_close(
+              NULL,
+              2,
+              true,
+              &claimed) == -1,
+          "raw stream callback reentry must not claim terminal close");
+    CHECK(claimed == NULL,
+          "raw stream callback reentry unexpectedly returned a claimed handle");
+    CHECK(strstr(handle.last_error, "busy delivering a raw protocol stream") != NULL,
+          "raw stream callback reentry must report the active stream owner");
+    CHECK(oliphaunt_logical_generation(&handle) == 2,
+          "rejected callback close must leave the current generation published");
+    handle.streaming = false;
+
     CHECK(oliphaunt_claim_global_instance_for_close(
               NULL,
               2,

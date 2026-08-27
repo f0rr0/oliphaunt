@@ -8,6 +8,7 @@ import test from 'node:test';
 import { installedPackageClosure } from './installed-closure.mjs';
 import { dispatchPgliteRequest } from './pglite-node-worker.mjs';
 import {
+  assertCurrentPlan,
   assertExpectedRawProtocolResponse,
   assertRuntimeBuildConfiguration,
   assertSuccessfulRawProtocolResponse,
@@ -25,19 +26,25 @@ import {
   pairedRatioSummary,
   planSummary,
   postgresSettingsParity,
+  repositoryRoot,
   simpleQueryMessage,
   validatePlan,
 } from './plan.mjs';
+
+const legacyPlanFile = resolve(repositoryRoot, 'benchmarks/wasix/node-pglite-memory-v1.json');
 
 test('the checked-in plan pins identities, generated SQL, and the comfortable-win gate', async () => {
   const source = await loadPlan(defaultPlanFile);
   const summary = planSummary(source.plan, source);
 
+  assert.equal(summary.schema, 'oliphaunt-wasix-node-benchmark-plan-v2');
+  assert.equal(summary.id, 'node-pglite-memory-v2');
+  assert.doesNotThrow(() => assertCurrentPlan(source.plan));
   assert.equal(summary.engines.candidate.package, '@oliphaunt/wasix-ts');
   assert.deepEqual(summary.engines.candidate.hostBuild, {
     wasmerJsCommit: '93b8b738ebd3ee57e118da0f0eb795b97d5b999e',
     wasmerWasixVersion: '0.601.0',
-    inputsSha256: '722f44d6a53742aef649e0d9cf6ead004482f36344e6cf95c6a0b701bdb4f533',
+    inputsSha256: '11224f5232a88b5b5612b389bc3cb24edc5134108e5aa72b47ef7189033c80d0',
     guestConcurrency: 'denied-for-oliphaunt-single-backend',
     optimization: {
       cargoProfile: 'release',
@@ -59,10 +66,24 @@ test('the checked-in plan pins identities, generated SQL, and the comfortable-wi
     linkerFlags: '',
     backendTiming: '0',
   });
-  assert.equal(summary.engines.candidate.executionBoundary, 'node-worker-thread');
-  assert.equal(summary.engines.candidate.directExecutionBoundary, 'node-main-thread');
-  assert.equal(summary.engines.candidate.directIsolationImplementation, 'none-main-thread');
-  assert.equal(summary.engines.candidate.directTimingBoundary, 'caller-around-public-api');
+  assert.deepEqual(summary.engines.candidate.surfaces.default, {
+    engine: 'candidate',
+    entrypoint: '@oliphaunt/wasix-ts',
+    callingContract: 'async',
+    executionOwner: 'package-worker',
+    executionBoundary: 'node-worker-thread',
+    isolationImplementation: 'package-owned-worker-threads-rpc',
+    timingBoundary: 'host-end-to-end-around-one-worker-rpc',
+  });
+  assert.deepEqual(summary.engines.candidate.surfaces.blocking, {
+    engine: 'candidate-blocking',
+    entrypoint: '@oliphaunt/wasix-ts/blocking',
+    callingContract: 'blocking',
+    executionOwner: 'caller',
+    executionBoundary: 'node-caller-realm',
+    isolationImplementation: 'none-caller-realm',
+    timingBoundary: 'caller-around-public-api',
+  });
   assert.equal(summary.engines.comparison.package, '@electric-sql/pglite');
   assert.equal(summary.engines.comparison.version, '0.5.4');
   assert.equal(summary.engines.comparison.homepage, 'https://pglite.dev');
@@ -71,18 +92,26 @@ test('the checked-in plan pins identities, generated SQL, and the comfortable-wi
     'https://github.com/electric-sql/pglite',
   );
   assert.equal(summary.gate.maxGeomeanRatio, 0.8);
-  assert.deepEqual(summary.gate.placements, ['worker', 'direct']);
-  assert.equal(summary.engines.comparison.executionBoundary, 'node-worker-thread');
-  assert.equal(summary.engines.comparison.directExecutionBoundary, 'node-main-thread');
-  assert.equal(summary.engines.comparison.directIsolationImplementation, 'none-main-thread');
-  assert.equal(summary.engines.comparison.directTimingBoundary, 'caller-around-public-api');
-  assert.equal(summary.engines.candidate.timingBoundary, summary.engines.comparison.timingBoundary);
+  assert.deepEqual(summary.gate.comparisons, ['worker', 'blocking']);
+  assert.deepEqual(summary.engines.comparison.surfaces.callerRealm, {
+    engine: 'comparison-caller-realm',
+    entrypoint: '@electric-sql/pglite',
+    callingContract: 'async',
+    executionOwner: 'caller',
+    executionBoundary: 'node-main-thread',
+    isolationImplementation: 'none-caller-realm',
+    timingBoundary: 'caller-around-public-api',
+  });
   assert.equal(
-    summary.engines.comparison.benchmarkMethodology,
+    summary.engines.candidate.surfaces.default.timingBoundary,
+    summary.engines.comparison.surfaces.worker.timingBoundary,
+  );
+  assert.equal(
+    summary.engines.comparison.surfaces.worker.benchmarkMethodology,
     'official-browser-worker-timer-reference-only-not-collected',
   );
   assert.equal(
-    summary.engines.comparison.gatedResponsePayload,
+    summary.engines.comparison.surfaces.worker.gatedResponsePayload,
     'public-result-only-no-comparator-telemetry',
   );
   assert.equal(summary.measurement.pairedRepeats, 10);
@@ -118,6 +147,17 @@ test('the checked-in plan pins identities, generated SQL, and the comfortable-wi
   assert.ok(source.plan.bulk.every((entry) => Buffer.byteLength(bulkSql(entry)) < 512));
 });
 
+test('the v1 Node plan stays readable, byte-pinned, and ineligible for new runs', async () => {
+  const source = await loadPlan(legacyPlanFile);
+
+  assert.equal(source.plan.schema, 'oliphaunt-wasix-node-benchmark-plan-v1');
+  assert.equal(source.plan.id, 'node-pglite-memory-v1');
+  assert.equal(source.sha256, '3aad018196546078820dc5670d424efec37d01ffc3c80229ded5edff786b51f7');
+  assert.throws(
+    () => assertCurrentPlan(source.plan),
+    /historical input and cannot drive a new benchmark/u,
+  );
+});
 test('the gated comparator worker returns public results without private timing telemetry', async () => {
   const rawResponse = Uint8Array.of(1, 2, 3);
   const calls = [];
@@ -299,9 +339,21 @@ test('plan validation rejects comparator drift and a weaker performance claim', 
   assert.throws(() => validatePlan(tooFewPairs), /integer of at least 9/u);
 
   const comparatorTelemetry = structuredClone(plan);
-  comparatorTelemetry.engines.comparison.gatedResponsePayload =
+  comparatorTelemetry.engines.comparison.surfaces.worker.gatedResponsePayload =
     'public-result-plus-internal-timing';
   assert.throws(() => validatePlan(comparatorTelemetry), /gatedResponsePayload/u);
+
+  const blockingEntrypointDrift = structuredClone(plan);
+  blockingEntrypointDrift.engines.candidate.surfaces.blocking.entrypoint = '@oliphaunt/wasix-ts';
+  assert.throws(() => validatePlan(blockingEntrypointDrift), /surfaces\.blocking\.entrypoint/u);
+
+  const defaultOwnerDrift = structuredClone(plan);
+  defaultOwnerDrift.engines.candidate.surfaces.default.executionOwner = 'caller';
+  assert.throws(() => validatePlan(defaultOwnerDrift), /surfaces\.default\.executionOwner/u);
+
+  const legacyGateLabel = structuredClone(plan);
+  legacyGateLabel.gate.comparisons[1] = 'direct';
+  assert.throws(() => validatePlan(legacyGateLabel), /gate\.comparisons/u);
 
   const unbalancedPairs = structuredClone(plan);
   unbalancedPairs.measurement.pairedRepeats = 9;

@@ -1,6 +1,13 @@
 {
   "schemaVersion": 1,
   "kind": "postgres-backend-query-response",
+  "typeOids": {
+    "xmlArray": 143,
+    "charArray": 1002,
+    "nameArray": 1003,
+    "timetz": 1266,
+    "timetzArray": 1270
+  },
   "cases": [
     {
       "name": "select_value_and_null",
@@ -59,6 +66,78 @@
           "commandComplete",
           "readyForQuery"
         ]
+      },
+      "protocolModeExpectation": {
+        "simpleCommand": {
+          "outcome": "engineError",
+          "contains": "simple-query response received extended-protocol"
+        },
+        "extendedCommand": {
+          "outcome": "ok",
+          "commandTag": "INSERT 0 0"
+        },
+        "extendedQuery": {
+          "outcome": "ok",
+          "commandTag": "INSERT 0 0"
+        }
+      }
+    },
+    {
+      "name": "bare_empty_without_extended_controls",
+      "description": "EmptyQueryResponse is valid for simple query but cannot satisfy an extended-query call path without ParseComplete and BindComplete.",
+      "responseHex": "49000000045a0000000549",
+      "protocolModeExpectation": {
+        "simpleCommand": {
+          "outcome": "ok",
+          "commandTag": null
+        },
+        "extendedCommand": {
+          "outcome": "engineError",
+          "contains": "omitted ParseComplete or BindComplete"
+        },
+        "extendedQuery": {
+          "outcome": "engineError",
+          "contains": "omitted ParseComplete or BindComplete"
+        }
+      },
+      "wireExpectation": {
+        "messageNames": [
+          "emptyQueryResponse",
+          "readyForQuery"
+        ]
+      }
+    },
+    {
+      "name": "notice_with_finite_standard_diagnostics",
+      "description": "Structured notices retain localized and nonlocalized severities, internal query location, and PostgreSQL source location.",
+      "responseHex": "4e0000005f534156455254495353454d454e5400565741524e494e47004d636865636b2076616c756500703132007153454c4543542062726f6b656e004670617273655f657870722e63004c31323300527472616e73666f726d457870720000430000000d53454c4543542030005a0000000549",
+      "queryExpectation": {
+        "ok": {
+          "fields": [],
+          "rows": [],
+          "commandTag": "SELECT 0",
+          "rowCount": 0,
+          "notices": [
+            {
+              "severity": "AVERTISSEMENT",
+              "localizedSeverity": "AVERTISSEMENT",
+              "nonlocalizedSeverity": "WARNING",
+              "message": "check value",
+              "internalPosition": "12",
+              "internalQuery": "SELECT broken",
+              "file": "parse_expr.c",
+              "line": "123",
+              "routine": "transformExpr"
+            }
+          ]
+        }
+      },
+      "wireExpectation": {
+        "messageNames": [
+          "notice",
+          "commandComplete",
+          "readyForQuery"
+        ]
       }
     },
     {
@@ -81,6 +160,20 @@
           "commandComplete",
           "readyForQuery"
         ]
+      },
+      "protocolModeExpectation": {
+        "simpleCommand": {
+          "outcome": "ok",
+          "commandTag": "SELECT 0"
+        },
+        "extendedCommand": {
+          "outcome": "engineError",
+          "contains": "omitted ParseComplete or BindComplete"
+        },
+        "extendedQuery": {
+          "outcome": "engineError",
+          "contains": "omitted ParseComplete or BindComplete"
+        }
       }
     },
     {
@@ -90,6 +183,7 @@
       "queryExpectation": {
         "postgresError": {
           "severity": "ERROR",
+          "localizedSeverity": "ERROR",
           "sqlstate": "42P01",
           "message": "relation does not exist"
         }
@@ -102,14 +196,21 @@
       }
     },
     {
-      "name": "postgres_error_nonlocalized_severity_wins",
-      "description": "Structured PostgreSQL errors prefer nonlocalized V severity over localized S severity.",
-      "responseHex": "450000002b5345525245555200564552524f5200433232303030004d737461626c65206d65737361676500005a0000000549",
+      "name": "postgres_error_localized_severity_is_primary",
+      "description": "Structured PostgreSQL errors expose both severities and use PostgreSQL's S Severity field as the primary compatibility value.",
+      "responseHex": "45000000605345525245555200564552524f5200433232303030004d737461626c65206d65737361676500703132007153454c4543542062726f6b656e004670617273655f657870722e63004c31323300527472616e73666f726d4578707200005a0000000549",
       "queryExpectation": {
         "postgresError": {
-          "severity": "ERROR",
+          "severity": "ERREUR",
+          "localizedSeverity": "ERREUR",
+          "nonlocalizedSeverity": "ERROR",
           "sqlstate": "22000",
-          "message": "stable message"
+          "message": "stable message",
+          "internalPosition": "12",
+          "internalQuery": "SELECT broken",
+          "file": "parse_expr.c",
+          "line": "123",
+          "routine": "transformExpr"
         }
       },
       "wireExpectation": {

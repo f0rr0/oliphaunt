@@ -21,10 +21,12 @@ export type ServerListen =
   | Readonly<{ transport: 'tcp'; port?: number }>
   | Readonly<{ transport: 'unix'; directory: string; port?: number }>;
 
-export type ServerOpenConfig = Omit<OpenConfig, 'execution'> & Readonly<{ listen?: ServerListen }>;
+export type ServerOpenConfig = OpenConfig & Readonly<{ listen?: ServerListen }>;
 
 export type OliphauntServer = Readonly<{
   connectionString: string;
+  /** True after the one terminal close attempt settles, including on failure. */
+  readonly closed: boolean;
   close(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
 }>;
@@ -33,7 +35,7 @@ export type OliphauntServer = Readonly<{
 export async function openServer(config: ServerOpenConfig = {}): Promise<OliphauntServer> {
   const listen = await prepareListen(config.listen ?? { transport: 'tcp' });
   const { listen: _listen, ...databaseConfig } = config;
-  const database = await openWasix({ ...databaseConfig, execution: 'worker' });
+  const database = await openWasix(databaseConfig);
   let state: ServerState | undefined;
   try {
     state = await ServerState.open(
@@ -68,6 +70,7 @@ class ServerState {
   readonly #server: Server;
   readonly #connectionString: string;
   #active: ActiveConnection | undefined;
+  #closing = false;
   #closed = false;
   #closeAttempt: Promise<void> | undefined;
   #listenerFailure: unknown;
@@ -109,15 +112,23 @@ class ServerState {
   }
 
   publicHandle(): OliphauntServer {
+    const state = this;
     return Object.freeze({
       connectionString: this.#connectionString,
+      get closed() {
+        return state.closed;
+      },
       close: () => this.close(),
       [Symbol.asyncDispose]: () => this.close(),
     });
   }
 
+  get closed(): boolean {
+    return this.#closed;
+  }
+
   accept(socket: Socket): void {
-    if (this.#closed) {
+    if (this.#closing || this.#closed) {
       socket.destroy();
       return;
     }
@@ -154,24 +165,29 @@ class ServerState {
 
   async #closeInner(): Promise<void> {
     if (this.#closed) return;
-    this.#closed = true;
-    const active = this.#active;
-    active?.stop();
-    // Close the database concurrently with the active stream. Its bounded
-    // worker shutdown is what prevents a long-running guest query from making
-    // server.close() wait forever.
-    const shutdown = await Promise.allSettled([
-      closeNodeServer(this.#server),
-      active?.finished ?? Promise.resolve(),
-      this.#database.close(),
-    ]);
-    const results = [...shutdown, await settled(this.#listen.cleanup())];
-    const failures = results
-      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-      .map((result) => result.reason);
-    if (this.#listenerFailure !== undefined) failures.push(this.#listenerFailure);
-    if (failures.length > 0) {
-      throw new AggregateError(failures, 'could not close Oliphaunt WASIX server cleanly');
+    this.#closing = true;
+    try {
+      const active = this.#active;
+      active?.stop();
+      // Close the database concurrently with the active stream. After its
+      // orderly-drain deadline the database force-terminates the Worker, but it
+      // still awaits confirmed termination before server resource cleanup.
+      const shutdown = await Promise.allSettled([
+        closeNodeServer(this.#server),
+        active?.finished ?? Promise.resolve(),
+        this.#database.close(),
+      ]);
+      const results = [...shutdown, await settled(this.#listen.cleanup())];
+      const failures = results
+        .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+        .map((result) => result.reason);
+      if (this.#listenerFailure !== undefined) failures.push(this.#listenerFailure);
+      if (failures.length > 0) {
+        throw new AggregateError(failures, 'could not close Oliphaunt WASIX server cleanly');
+      }
+    } finally {
+      this.#closed = true;
+      this.#closing = false;
     }
   }
 }

@@ -358,7 +358,11 @@ fn direct_query_transaction_backup_restore_and_process_ownership_when_available(
     let backup = unique_root("native-smoke-backup.tar");
     let result = std::panic::catch_unwind(|| {
         run_direct_child("seed", &root, Some(&backup));
-        Oliphaunt::restore(&restored, std::fs::read(&backup).unwrap()).unwrap();
+        block_on(Oliphaunt::restore(
+            &restored,
+            std::fs::read(&backup).unwrap(),
+        ))
+        .unwrap();
         run_direct_child("verify", &restored, None);
     });
     let _ = std::fs::remove_dir_all(root);

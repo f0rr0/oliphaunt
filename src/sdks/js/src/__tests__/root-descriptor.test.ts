@@ -69,7 +69,7 @@ test('native server preflight failure removes temporary storage', async () => {
       async () =>
         await runtime.open(
           normalizeOpenConfig(
-            { execution: 'server' },
+            { topology: 'server' },
             { instanceDirectory: temporary, temporaryDirectory: true },
           ),
         ),

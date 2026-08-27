@@ -1,6 +1,6 @@
 type ProbeRequest = Readonly<{ name: string }>;
 type ProbeResponse =
-  | Readonly<{ ok: true; transport: 'direct' | 'portable' }>
+  | Readonly<{ ok: true; transport: 'synchronous-access' | 'portable' }>
   | Readonly<{ ok: false; error: string }>;
 
 const scope = globalThis as unknown as DedicatedWorkerGlobalScope;
@@ -11,7 +11,7 @@ scope.addEventListener('message', (event: MessageEvent<ProbeRequest>) => {
     .catch((error) => respond({ ok: false, error: describeError(error) }));
 });
 
-async function probe(name: string): Promise<'direct' | 'portable'> {
+async function probe(name: string): Promise<'synchronous-access' | 'portable'> {
   const origin = await navigator.storage.getDirectory();
   const root = await origin.getDirectoryHandle('.oliphaunt-wasix-pool-v1');
   const database = await root.getDirectoryHandle(name);
@@ -36,7 +36,7 @@ async function probe(name: string): Promise<'direct' | 'portable'> {
     access.close();
     return 'portable';
   } catch (error) {
-    if (errorName(error) === 'NoModificationAllowedError') return 'direct';
+    if (errorName(error) === 'NoModificationAllowedError') return 'synchronous-access';
     throw error;
   }
 }

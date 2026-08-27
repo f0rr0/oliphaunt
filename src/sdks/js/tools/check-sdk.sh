@@ -335,7 +335,7 @@ const expectedOptional = [
   '@oliphaunt/node-direct-win32-x64-msvc',
 ];
 const optional = Object.keys(pkg.optionalDependencies || {}).sort();
-const expectedExports = ['.', './package.json', './protocol', './query'];
+const expectedExports = ['.', './package.json'];
 const actualExports = Object.keys(pkg.exports || {}).sort();
 if (
   JSON.stringify(pkg.dependencies || {}) !== JSON.stringify(expectedDependencies) ||
@@ -345,16 +345,6 @@ if (
 }
 if (JSON.stringify(actualExports) !== JSON.stringify(expectedExports.sort())) {
   throw new Error('TypeScript SDK exports do not match its deliberate public surface');
-}
-for (const name of ['protocol', 'query']) {
-  const entry = pkg.exports['./' + name];
-  if (
-    JSON.stringify(Object.keys(entry || {})) !== JSON.stringify(['types', 'default']) ||
-    entry.types !== './lib/' + name + '.d.ts' ||
-    entry.default !== './lib/' + name + '.js'
-  ) {
-    throw new Error('TypeScript SDK ' + name + ' subpath does not match its compiled entrypoint');
-  }
 }
 " "$package_dir/package.json"
 for internal_export in \
@@ -378,12 +368,26 @@ do
 done
 require_source_text "$package_dir/lib/index.d.ts" "OliphauntDatabase" \
   "TypeScript SDK root declarations must expose the structural database type"
+require_source_text "$package_dir/lib/index.d.ts" "ProtocolChunkCallback" \
+  "TypeScript SDK root declarations must expose the raw stream callback type"
+require_source_text "$package_dir/lib/index.d.ts" "RestoreOptions" \
+  "TypeScript SDK root declarations must expose restore options"
 require_source_text "$package_dir/src/native/node.ts" "loadNodeDirectAddon" \
   "TypeScript Node native-direct binding must load the Oliphaunt-owned prebuilt Node-API adapter"
-require_source_text "$package_dir/src/config.ts" "const execution = config.execution ?? 'direct';" \
-  "TypeScript SDK config normalization must default to direct execution"
-require_source_text "$package_dir/src/__tests__/config.test.ts" "assert.equal(direct.execution, 'direct');" \
-  "TypeScript SDK tests must prove the direct execution default"
+require_source_text "$package_dir/src/config.ts" "const topology = config.topology ?? 'direct';" \
+  "TypeScript SDK config normalization must default to the direct topology"
+require_source_text "$package_dir/src/__tests__/config.test.ts" "assert.equal(direct.topology, 'direct');" \
+  "TypeScript SDK tests must prove the direct topology default"
+require_source_text "$package_dir/src/types.ts" "topology?: 'direct' | 'broker';" \
+  "TypeScript SDK must name runtime placement as topology"
+reject_source_text "$package_dir/src/types.ts" "execution?: 'direct' | 'broker';" \
+  "TypeScript SDK must not retain the misleading execution selector"
+require_source_text "$package_dir/src/runtime/types.ts" "export type RuntimeCloseOutcome" \
+  "TypeScript runtime close must classify terminal and retryable outcomes"
+require_source_text "$package_dir/src/__tests__/client.test.ts" "terminal broker and server close failures" \
+  "TypeScript SDK tests must prove terminal teardown failure semantics"
+require_source_text "$package_dir/src/__tests__/client.test.ts" "cannot queue same-handle work" \
+  "TypeScript SDK tests must prove raw stream callback non-reentrancy"
 reject_source_text "$package_dir/src/client.ts" "restorePhysicalArchiveWithBroker" \
   "TypeScript SDK public restore must not expose a broker-specific path"
 require_source_text "$package_dir/src/client.ts" "await binding.restore({" \
@@ -400,6 +404,12 @@ require_source_text "$package_dir/src/native/assets-node.ts" ".build-" \
   "TypeScript Node/Bun native binding must build package-managed runtime caches outside the live root"
 require_source_text "$package_dir/src/native/node-addon.ts" "oliphaunt-node-direct" \
   "TypeScript Node native-direct binding must resolve the installed prebuilt Node-API adapter package"
+require_source_text "$package_dir/src/native/node.ts" "new FinalizationRegistry" \
+  "TypeScript Node/Bun direct execution must release forgotten JavaScript admission leases"
+require_source_text "$package_dir/src/native/node.ts" "queueForgottenHandleRecovery" \
+  "TypeScript Node/Bun forgotten-handle recovery must be exact-generation addon work"
+require_source_text "$package_dir/src/native/node-addon.ts" "execProtocolRawStream" \
+  "TypeScript Node direct adapter must use the canonical raw stream addon export"
 require_source_text "$root/src/runtimes/node-direct/tools/build-node-addon.sh" "oliphaunt-node-direct-\$version-\$target.tar.gz" \
   "Node direct runtime must package the prebuilt Node.js native-direct adapter as a release asset"
 require_source_text "$package_dir/src/native/assets-deno.ts" "runtimeRelativePath" \
@@ -410,6 +420,22 @@ reject_source_text "$package_dir/src/native/assets-node.ts" "@oliphaunt/tools-" 
   "TypeScript Node/Bun native binding must not depend on split native client-tool packages"
 require_source_text "$package_dir/src/native/deno.ts" "install.packageManaged" \
   "TypeScript Deno direct execution must reject registry-managed extension materialization until it has a dedicated resolver"
+require_source_text "$package_dir/src/native/deno.ts" "new FinalizationRegistry" \
+  "TypeScript Deno direct execution must provide a nonblocking forgotten-handle cleanup fallback"
+require_source_text "$package_dir/src/native/deno.ts" "oliphaunt_close_if_generation" \
+  "TypeScript Deno forgotten-handle cleanup must be guarded by the native logical generation"
+require_source_text "$package_dir/src/client.ts" "registerForgottenHandleCleanup" \
+  "TypeScript direct databases must bind native forgotten-handle cleanup to public ownership"
+require_source_text "$package_dir/src/client.ts" "discardUnpublishedOwner" \
+  "TypeScript open must retire a runtime owner when cleanup registration prevents facade publication"
+require_source_text "$package_dir/src/runtime/broker.ts" "createForgottenRuntimeHandleCleanup" \
+  "TypeScript broker owners must have exact-handle best-effort forgotten-owner cleanup"
+require_source_text "$package_dir/src/runtime/server.ts" "createForgottenRuntimeHandleCleanup" \
+  "TypeScript server owners must have exact-handle best-effort forgotten-owner cleanup"
+require_source_text "$package_dir/src/__tests__/client.test.ts" "query->immediate" \
+  "TypeScript lifecycle tests must prove query-close-cancel admission ordering"
+require_source_text "$package_dir/src/__tests__/native-bindings.test.ts" "close-generation:23" \
+  "TypeScript Deno tests must prove generation-guarded finalizer cleanup"
 require_source_text "$package_dir/src/native/extension-runtime.ts" "validatePreparedRuntimeExtensions" \
   "TypeScript native bindings must share prepared runtimeDirectory extension validation"
 require_source_text "$package_dir/src/native/assets-deno.ts" "validatePreparedDenoRuntimeExtensions" \
@@ -430,8 +456,10 @@ reject_source_text "$package_dir/src/client.ts" "supportedModes" \
   "TypeScript SDK must not expose speculative mode support discovery"
 require_source_text "$package_dir/src/client.ts" "async transaction<T>" \
   "TypeScript SDK must expose the transaction helper"
-require_source_text "$package_dir/src/client.ts" "async checkpoint(): Promise<void>" \
-  "TypeScript SDK must expose checkpoint"
+reject_source_text "$package_dir/src/types.ts" "checkpoint(): Promise<void>" \
+  "TypeScript SDK must not expose a CHECKPOINT convenience method"
+require_source_text "$package_dir/src/types.ts" "execProtocolRawStream(input: BinaryInput" \
+  "TypeScript SDK must expose raw protocol streaming with the canonical name"
 require_source_text "$package_dir/src/types.ts" "storage?: DatabaseStorage" \
   "TypeScript SDK open config must expose the structured native storage model"
 require_source_text "$package_dir/src/types.ts" "kind: 'temporaryDirectory'" \
@@ -468,7 +496,7 @@ require_source_text "$package_dir/src/__tests__/asset-resolver.test.ts" "nodeRes
   "TypeScript SDK tests must cover package-local liboliphaunt resolution"
 require_source_text "$package_dir/src/__tests__/asset-resolver.test.ts" "typeScriptPackageMetadataMatchesRuntimePackages" \
   "TypeScript SDK tests must cover runtime package metadata"
-require_source_text "$package_dir/src/__tests__/native-smoke.ts" "execution: 'broker'" \
+require_source_text "$package_dir/src/__tests__/native-smoke.ts" "topology: 'broker'" \
   "TypeScript SDK smoke must execute broker placement when OLIPHAUNT_BROKER is set"
 require_source_text "$package_dir/src/__tests__/native-smoke.ts" "Oliphaunt.openServer" \
   "TypeScript SDK smoke must execute native server mode when OLIPHAUNT_POSTGRES is set"

@@ -42,34 +42,16 @@ require_source_text() {
   fi
 }
 
-require_cfg_tools_line() {
-  local file="$1"
-  local line="$2"
-  local message="$3"
-  if ! awk -v expected="$line" '
-    previous == "#[cfg(feature = \"tools\")]" && $0 == expected {
-      found = 1
-    }
-    {
-      previous = $0
-    }
-    END {
-      exit found ? 0 : 1
-    }
-  ' "$file"; then
-    echo "$message" >&2
-    exit 1
-  fi
-}
-
 require_entry "Cargo.toml"
 require_entry "README.md"
 require_entry "src/error.rs"
 require_entry "src/lib.rs"
+require_entry "src/async_api.rs"
 require_entry "src/bin/oliphaunt_wasix_dump.rs"
 require_entry "src/bin/oliphaunt_wasix_proxy.rs"
 require_entry "src/oliphaunt/aot.rs"
 require_entry "src/oliphaunt/assets.rs"
+require_entry "src/oliphaunt/query_core.rs"
 require_entry "src/testdata/database-root.json"
 require_entry "src/testdata/physical-archive-wasix-v1.properties"
 require_entry "src/testdata/physical-backup-wal-range-v1.properties"
@@ -79,8 +61,22 @@ require_entry "src/testdata/postgres-logical-tools-seed.sql"
 require_entry "src/testdata/postgres-logical-tools-verify.sql"
 require_entry "src/testdata/postgres-server-listen.json"
 require_entry "src/testdata/protocol-query-response-cases.json"
+require_entry "src/testdata/protocol-structured-sql-cases.json"
 require_entry "src/testdata/wasix-toolchain.toml"
 require_entry "tests/public_api.rs"
+require_entry "tests/runtime_smoke.rs"
+
+query_core_member="$(tar -tzf "$crate_path" | grep -E '^[^/]+/src/oliphaunt/query_core[.]rs$')"
+if [ "$(printf '%s\n' "$query_core_member" | grep -c .)" -ne 1 ]; then
+  echo "oliphaunt-wasix package must contain exactly one staged Rust query core" >&2
+  exit 1
+fi
+if ! cmp -s \
+  <(tar -xOzf "$crate_path" "$query_core_member") \
+  src/shared/rust-query-core/query_core.rs; then
+  echo "oliphaunt-wasix packaged query core must exactly match src/shared/rust-query-core/query_core.rs" >&2
+  exit 1
+fi
 
 canonical_extension_smoke_count=0
 for recipe in src/shared/fixtures/extensions/*.sql; do
@@ -161,12 +157,20 @@ require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml '"
   "oliphaunt-wasix tools feature must select the Windows x64 tools-AOT crate"
 require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/mod.rs 'pub mod tools;' \
   "WASIX tools must use the optional public tools namespace"
-require_cfg_tools_line src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs "pub use oliphaunt::tools;" \
-  "WASIX tools namespace must stay behind cfg(feature = \"tools\")"
-require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/tools.rs "pub fn pg_dump(database: &mut crate::Oliphaunt, options: PgDumpOptions)" \
-  "WASIX tools namespace must expose direct pg_dump"
-require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/tools.rs "pub fn psql(database: &mut crate::Oliphaunt, options: PsqlOptions)" \
-  "WASIX tools namespace must expose direct psql"
+require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs "pub mod blocking" \
+  "WASIX crate must expose the explicit synchronous blocking module"
+require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs "pub async fn pg_dump(" \
+  "WASIX root tools namespace must expose asynchronous pg_dump"
+require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs "pub async fn psql(" \
+  "WASIX root tools namespace must expose asynchronous psql"
+require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/async_api.rs 'name("oliphaunt-wasix-owner"' \
+  "WASIX root database must construct its runtime on a named owner thread"
+require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/async_api.rs "queue: mpsc::Sender<OwnerMessage>" \
+  "WASIX root database must use one ordered owner queue"
+require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/async_api.rs "queued_ordinary.load(Ordering::SeqCst) >= OWNER_QUEUE_CAPACITY" \
+  "WASIX root database must retain bounded ordinary-work admission"
+require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/async_api.rs "admission: Mutex<()>" \
+  "WASIX root database close cutoff must share ordinary-work admission ordering"
 require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/tools.rs "pub fn script(mut self, sql: impl Into<String>)" \
   "WASIX PsqlOptions must expose standard script input"
 

@@ -7,6 +7,7 @@ stack: "systems"
 tags: ["binding", "wasix", "rust", "postgres", "sdk", "release-product"]
 dependsOn:
   - "liboliphaunt-wasix"
+  - "shared-rust-query-core"
 
 project:
   title: "Oliphaunt Rust WASIX"
@@ -29,12 +30,14 @@ tasks:
     command: "cargo check -p oliphaunt-wasix --locked"
     deps:
       - "liboliphaunt-wasix:check"
+      - "shared-rust-query-core:check"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/check"
     inputs:
       - "/Cargo.lock"
       - "/Cargo.toml"
       - "/rust-toolchain.toml"
+      - "/src/shared/rust-query-core/**/*"
       - "/src/bindings/wasix-rust/**/*"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
     options:
@@ -46,6 +49,7 @@ tasks:
     command: "bash src/bindings/wasix-rust/tools/check-unit.sh"
     deps:
       - "liboliphaunt-wasix:check"
+      - "shared-rust-query-core:check"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/test"
     inputs:
@@ -53,6 +57,7 @@ tasks:
       - "/Cargo.toml"
       - "/rust-toolchain.toml"
       - "/src/shared/fixtures/**/*"
+      - "/src/shared/rust-query-core/**/*"
       - "/src/bindings/wasix-rust/**/*"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
       - "/tools/test/cargo-test-filter.sh"
@@ -76,9 +81,11 @@ tasks:
       - "/src/shared/fixtures/extensions/**/*"
       - "/src/shared/fixtures/postgres/**/*"
       - "/src/shared/fixtures/protocol/query-response-cases.json"
+      - "/src/shared/fixtures/protocol/structured-sql-cases.json"
       - "/src/shared/fixtures/storage/database-root.json"
       - "/src/shared/fixtures/storage/physical-archive-wasix-v1.properties"
       - "/src/shared/fixtures/storage/physical-backup-wal-range-v1.properties"
+      - "/src/shared/rust-query-core/**/*"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
       - "/src/sources/toolchains/wasix.toml"
       - "/src/bindings/wasix-rust/tools/check-package.sh"
@@ -105,9 +112,11 @@ tasks:
       - "/src/shared/fixtures/extensions/**/*"
       - "/src/shared/fixtures/postgres/**/*"
       - "/src/shared/fixtures/protocol/query-response-cases.json"
+      - "/src/shared/fixtures/protocol/structured-sql-cases.json"
       - "/src/shared/fixtures/storage/database-root.json"
       - "/src/shared/fixtures/storage/physical-archive-wasix-v1.properties"
       - "/src/shared/fixtures/storage/physical-backup-wal-range-v1.properties"
+      - "/src/shared/rust-query-core/**/*"
       - "/src/runtimes/liboliphaunt/icu/**/*"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
       - "/src/sources/toolchains/wasix.toml"
@@ -151,6 +160,7 @@ tasks:
     command: "bash src/bindings/wasix-rust/tools/check-release.sh"
     deps:
       - "liboliphaunt-wasix:runtime-aot"
+      - "shared-rust-query-core:check"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/release-check"
     inputs:
@@ -161,9 +171,11 @@ tasks:
       - "/src/shared/fixtures/extensions/**/*"
       - "/src/shared/fixtures/postgres/**/*"
       - "/src/shared/fixtures/protocol/query-response-cases.json"
+      - "/src/shared/fixtures/protocol/structured-sql-cases.json"
       - "/src/shared/fixtures/storage/database-root.json"
       - "/src/shared/fixtures/storage/physical-archive-wasix-v1.properties"
       - "/src/shared/fixtures/storage/physical-backup-wal-range-v1.properties"
+      - "/src/shared/rust-query-core/**/*"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
       - "/src/sources/toolchains/wasix.toml"
       - "/src/bindings/wasix-rust/tools/check-package.sh"
@@ -188,6 +200,7 @@ tasks:
       - "/Cargo.toml"
       - "/coverage/baseline.toml"
       - "/src/shared/fixtures/**/*"
+      - "/src/shared/rust-query-core/**/*"
       - "/rust-toolchain.toml"
       - "/src/bindings/wasix-rust/**/*"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"

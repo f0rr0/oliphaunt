@@ -1,0 +1,328 @@
+{
+  "schema": "oliphaunt-wasix-node-benchmark-plan-v2",
+  "id": "node-pglite-memory-v2",
+  "description": "Compares Oliphaunt's asynchronous package-owned Worker default with a harness-owned PGlite Worker, and Oliphaunt's explicit caller-owned /blocking entrypoint with PGlite's caller-realm API, using memory storage.",
+  "engines": {
+    "candidate": {
+      "package": "@oliphaunt/wasix-ts",
+      "storage": "memory",
+      "hostBuild": {
+        "wasmerJsCommit": "93b8b738ebd3ee57e118da0f0eb795b97d5b999e",
+        "wasmerWasixVersion": "0.601.0",
+        "inputsSha256": "11224f5232a88b5b5612b389bc3cb24edc5134108e5aa72b47ef7189033c80d0",
+        "guestConcurrency": "denied-for-oliphaunt-single-backend",
+        "optimization": {
+          "cargoProfile": "release",
+          "rustOptLevel": 3,
+          "lto": true,
+          "wasmOpt": [
+            "--enable-threads",
+            "--enable-bulk-memory",
+            "-O3"
+          ]
+        }
+      },
+      "runtimeBuild": {
+        "profile": "release",
+        "cflags": "-O2 -g0 -flto=thin",
+        "ldflags": "-flto=thin",
+        "configureWasmOpt": "no",
+        "buildWasmOpt": "yes",
+        "wasmOptFlags": "--converge:--strip-debug:--strip-producers",
+        "wasmOptSuppressDefault": "",
+        "wasmOptPreserveUnoptimized": "",
+        "compilerFlags": "",
+        "linkerFlags": "",
+        "backendTiming": "0"
+      },
+      "surfaces": {
+        "default": {
+          "engine": "candidate",
+          "entrypoint": "@oliphaunt/wasix-ts",
+          "callingContract": "async",
+          "executionOwner": "package-worker",
+          "executionBoundary": "node-worker-thread",
+          "isolationImplementation": "package-owned-worker-threads-rpc",
+          "timingBoundary": "host-end-to-end-around-one-worker-rpc"
+        },
+        "blocking": {
+          "engine": "candidate-blocking",
+          "entrypoint": "@oliphaunt/wasix-ts/blocking",
+          "callingContract": "blocking",
+          "executionOwner": "caller",
+          "executionBoundary": "node-caller-realm",
+          "isolationImplementation": "none-caller-realm",
+          "timingBoundary": "caller-around-public-api"
+        }
+      }
+    },
+    "comparison": {
+      "package": "@electric-sql/pglite",
+      "version": "0.5.4",
+      "integrity": "sha512-yYZUyyXrHU7tPlCjwZQJ6hIG9DscdCCn7Uk0mYKwC1FeHX286AbcmFveMiRBEak8e9iPupjsoVImN3yJZVed2g==",
+      "homepage": "https://pglite.dev",
+      "sourceRepository": "https://github.com/electric-sql/pglite",
+      "sourceCommit": "25d0a55e1f1e4c59f26d9e125150dda88a33fd00",
+      "storage": "memory",
+      "installedTreeHashSchema": "oliphaunt-path-size-content-sha256-v1",
+      "installedTreeSha256": "b3925de04c386f51859c1bf18c143b225e3850616718140dd32e8eb48e9a2c84",
+      "surfaces": {
+        "worker": {
+          "engine": "comparison",
+          "entrypoint": "tools/perf/wasix-node/pglite-node-worker.mjs",
+          "callingContract": "async",
+          "executionOwner": "harness-worker",
+          "executionBoundary": "node-worker-thread",
+          "isolationImplementation": "harness-owned-worker-threads-rpc",
+          "timingBoundary": "host-end-to-end-around-one-worker-rpc",
+          "officialWorkerModule": "browser-worker-only",
+          "gatedResponsePayload": "public-result-only-no-comparator-telemetry",
+          "benchmarkMethodology": "official-browser-worker-timer-reference-only-not-collected",
+          "benchmarkMethodologySource": "packages/benchmark/src/benchmarks-worker.js"
+        },
+        "callerRealm": {
+          "engine": "comparison-caller-realm",
+          "entrypoint": "@electric-sql/pglite",
+          "callingContract": "async",
+          "executionOwner": "caller",
+          "executionBoundary": "node-main-thread",
+          "isolationImplementation": "none-caller-realm",
+          "timingBoundary": "caller-around-public-api"
+        }
+      }
+    }
+  },
+  "measurement": {
+    "pairedRepeats": 10,
+    "warmupIterations": 10,
+    "sampleIterations": 100,
+    "trimFraction": 0.1,
+    "processOrder": "alternating-worker-pairs-then-alternating-blocking-pairs-fresh-processes",
+    "pairing": "same-repeat-candidate-over-comparison",
+    "percentileMethod": "nearest-rank",
+    "startupMetric": "cold-to-first-result",
+    "startupMetricIncludes": [
+      "public-open",
+      "immediate-first-query"
+    ]
+  },
+  "gate": {
+    "maxGeomeanRatio": 0.8,
+    "requiresCorrectness": true,
+    "comparisons": [
+      "worker",
+      "blocking"
+    ],
+    "metric": "geometric-mean-of-median-paired-candidate-over-comparison-ratios-lower-is-better",
+    "includes": [
+      "cold-to-first-result",
+      "warm-rtt-p50",
+      "bulk-elapsed"
+    ]
+  },
+  "bulkTransport": {
+    "publicApi": "execProtocolRaw",
+    "request": "postgres-simple-query-message",
+    "response": "raw-postgres-protocol-bytes",
+    "pgliteSyncToFs": false,
+    "validation": "timed-response-semantics-and-canonical-state-validation"
+  },
+  "postgres": {
+    "major": 18,
+    "settings": [
+      "shared_buffers",
+      "wal_buffers",
+      "synchronous_commit",
+      "fsync",
+      "full_page_writes",
+      "max_connections",
+      "max_parallel_maintenance_workers"
+    ],
+    "expectedSettings": {
+      "shared_buffers": "128MB",
+      "wal_buffers": "4MB",
+      "synchronous_commit": "on",
+      "fsync": "off",
+      "full_page_writes": "on",
+      "max_connections": "100",
+      "max_parallel_maintenance_workers": "0"
+    }
+  },
+  "firstQuery": {
+    "sql": "SELECT 42::int4 AS answer",
+    "expectedResult": {
+      "fields": [
+        "answer"
+      ],
+      "rows": [
+        [
+          "42"
+        ]
+      ]
+    }
+  },
+  "warmSetupSql": "CREATE TABLE bench_rtt (id integer PRIMARY KEY, payload text NOT NULL); INSERT INTO bench_rtt SELECT i, 'row-' || lpad(i::text, 6, '0') FROM generate_series(1, 1024) AS i; CREATE TABLE bench_counter (value integer NOT NULL); INSERT INTO bench_counter VALUES (0);",
+  "warmRtt": [
+    {
+      "id": "parameter-scalar",
+      "sql": "SELECT $1::int4 + 1 AS answer",
+      "parameters": [
+        41
+      ],
+      "expectation": {
+        "kind": "exact",
+        "result": {
+          "fields": [
+            "answer"
+          ],
+          "rows": [
+            [
+              "42"
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "id": "indexed-lookup",
+      "sql": "SELECT payload FROM bench_rtt WHERE id = $1::int4",
+      "parameters": [
+        513
+      ],
+      "expectation": {
+        "kind": "exact",
+        "result": {
+          "fields": [
+            "payload"
+          ],
+          "rows": [
+            [
+              "row-000513"
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "id": "counter-update",
+      "sql": "UPDATE bench_counter SET value = value + 1 RETURNING value",
+      "parameters": [],
+      "expectation": {
+        "kind": "one-based-counter",
+        "field": "value"
+      }
+    }
+  ],
+  "warmValidation": {
+    "sql": "SELECT count(*)::bigint AS fixture_rows, min(id)::bigint AS min_id, max(id)::bigint AS max_id, (SELECT value::bigint FROM bench_counter) AS counter FROM bench_rtt",
+    "expectedResult": {
+      "fields": [
+        "fixture_rows",
+        "min_id",
+        "max_id",
+        "counter"
+      ],
+      "rows": [
+        [
+          "1024",
+          "1",
+          "1024",
+          "$totalIterations"
+        ]
+      ]
+    }
+  },
+  "bulk": [
+    {
+      "id": "insert-series",
+      "operation": {
+        "kind": "create-and-insert-series",
+        "rows": 25000
+      },
+      "validationSql": "SELECT count(*)::bigint AS rows, min(id)::bigint AS min_id, max(id)::bigint AS max_id, sum(id)::bigint AS sum_id, sum(octet_length(payload))::bigint AS total_bytes FROM bench_bulk",
+      "expectedResult": {
+        "fields": [
+          "rows",
+          "min_id",
+          "max_id",
+          "sum_id",
+          "total_bytes"
+        ],
+        "rows": [
+          [
+            "25000",
+            "1",
+            "25000",
+            "312512500",
+            "800000"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "create-index",
+      "operation": {
+        "kind": "create-payload-index"
+      },
+      "validationSql": "SELECT count(*)::bigint AS rows, sum(octet_length(payload))::bigint AS total_bytes, to_regclass('bench_bulk_payload_idx')::text AS index_name, (SELECT indisvalid::text FROM pg_index WHERE indexrelid = to_regclass('bench_bulk_payload_idx')) AS index_valid FROM bench_bulk",
+      "expectedResult": {
+        "fields": [
+          "rows",
+          "total_bytes",
+          "index_name",
+          "index_valid"
+        ],
+        "rows": [
+          [
+            "25000",
+            "800000",
+            "bench_bulk_payload_idx",
+            "true"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "indexed-update",
+      "operation": {
+        "kind": "reverse-indexed-prefix",
+        "rows": 12500
+      },
+      "validationSql": "SELECT count(*)::bigint AS rows, count(*) FILTER (WHERE id <= 12500 AND payload = reverse(md5(id::text)))::bigint AS reversed, sum(octet_length(payload))::bigint AS total_bytes FROM bench_bulk",
+      "expectedResult": {
+        "fields": [
+          "rows",
+          "reversed",
+          "total_bytes"
+        ],
+        "rows": [
+          [
+            "25000",
+            "12500",
+            "800000"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "aggregate",
+      "operation": {
+        "kind": "aggregate-query"
+      },
+      "expectedResult": {
+        "fields": [
+          "rows",
+          "sum_id",
+          "total_bytes"
+        ],
+        "rows": [
+          [
+            "25000",
+            "312512500",
+            "800000"
+          ]
+        ]
+      }
+    }
+  ]
+}

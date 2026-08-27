@@ -3,6 +3,25 @@ import Foundation
 import Testing
 
 @Test
+func structuredSQLScannerMatchesSharedProtocolFixtures() throws {
+    let fixtureURL = sharedStructuredSQLFixtureURL()
+    guard FileManager.default.fileExists(atPath: fixtureURL.path) else { return }
+    let corpus = try JSONDecoder().decode(
+        SharedStructuredSQLFixtureCorpus.self,
+        from: Data(contentsOf: fixtureURL)
+    )
+    #expect(corpus.schemaVersion == 1)
+    #expect(corpus.kind == "postgres-structured-sql-preflight")
+    var names = Set<String>()
+    for fixture in corpus.cases {
+        #expect(names.insert(fixture.name).inserted)
+        if containsOliphauntTopLevelCopy(fixture.sql) != fixture.containsTopLevelCopy {
+            Issue.record("structured SQL fixture \(fixture.name) did not match")
+        }
+    }
+}
+
+@Test
 func queryParserMatchesSharedProtocolFixtures() throws {
     let fixtureURL = sharedProtocolFixtureURL()
     guard FileManager.default.fileExists(atPath: fixtureURL.path) else {
@@ -41,7 +60,7 @@ private func expectSharedProtocolOkFixture(
     expected: SharedProtocolOkExpectation,
     bytes: Data
 ) throws {
-    let result = try parseOliphauntQueryResponse(bytes)
+    let result = try parseOliphauntQueryResponse(bytes, expectedProtocol: .either)
     #expect(result.rowCount == expected.rowCount)
     #expect(result.commandTag == expected.commandTag)
     #expect(result.fields.count == expected.fields.count)
@@ -54,7 +73,7 @@ private func expectSharedProtocolOkFixture(
         }
         let actual = result.fields[index]
         #expect(actual.name == expectedField.name)
-        #expect(actual.typeOID == expectedField.typeOid)
+        #expect(actual.typeOID.rawValue == expectedField.typeOid)
         if expectedField.format == "text" {
             #expect(actual.format == .text)
         }
@@ -79,7 +98,7 @@ private func expectSharedProtocolPostgresErrorFixture(
     bytes: Data
 ) {
     do {
-        _ = try parseOliphauntQueryResponse(bytes)
+        _ = try parseOliphauntQueryResponse(bytes, expectedProtocol: .either)
         Issue.record("shared protocol fixture \(fixture.name) should have produced a PostgreSQL error")
     } catch OliphauntError.postgres(let error) {
         #expect(error.severity == expected.severity)
@@ -96,7 +115,7 @@ private func expectSharedProtocolEngineErrorFixture(
     bytes: Data
 ) {
     do {
-        _ = try parseOliphauntQueryResponse(bytes)
+        _ = try parseOliphauntQueryResponse(bytes, expectedProtocol: .either)
         Issue.record("shared protocol fixture \(fixture.name) should have produced an engine error")
     } catch OliphauntError.engine(let message) {
         #expect(message.contains(expected))
@@ -122,6 +141,23 @@ private func sharedProtocolFixtureURL() -> URL {
         .appendingPathComponent("fixtures")
         .appendingPathComponent("protocol")
         .appendingPathComponent("query-response-cases.json")
+}
+
+private func sharedStructuredSQLFixtureURL() -> URL {
+    if let fixtureRoot = ProcessInfo.processInfo.environment["OLIPHAUNT_SHARED_FIXTURES"] {
+        return URL(fileURLWithPath: fixtureRoot, isDirectory: true)
+            .appendingPathComponent("protocol")
+            .appendingPathComponent("structured-sql-cases.json")
+    }
+
+    var root = URL(fileURLWithPath: #filePath)
+    for _ in 0..<5 { root.deleteLastPathComponent() }
+    return root
+        .appendingPathComponent("src")
+        .appendingPathComponent("shared")
+        .appendingPathComponent("fixtures")
+        .appendingPathComponent("protocol")
+        .appendingPathComponent("structured-sql-cases.json")
 }
 
 private func sharedProtocolBytes(_ hex: String) throws -> Data {
@@ -182,4 +218,16 @@ private struct SharedProtocolPostgresErrorExpectation: Decodable {
     var severity: String
     var sqlstate: String
     var message: String
+}
+
+private struct SharedStructuredSQLFixtureCorpus: Decodable {
+    var schemaVersion: Int
+    var kind: String
+    var cases: [SharedStructuredSQLFixture]
+}
+
+private struct SharedStructuredSQLFixture: Decodable {
+    var name: String
+    var sql: String
+    var containsTopLevelCopy: Bool
 }

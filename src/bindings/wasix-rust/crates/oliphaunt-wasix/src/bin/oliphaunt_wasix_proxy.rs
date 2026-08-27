@@ -1,7 +1,7 @@
 use anyhow::{Result, bail};
 #[cfg(feature = "extensions")]
 use oliphaunt_wasix::extensions;
-use oliphaunt_wasix::{DatabaseStorage, OliphauntServer, ServerListen};
+use oliphaunt_wasix::{DatabaseStorage, ServerListen, blocking::OliphauntServer};
 use std::env;
 use std::path::PathBuf;
 

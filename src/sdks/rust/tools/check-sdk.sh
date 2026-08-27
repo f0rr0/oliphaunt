@@ -413,6 +413,11 @@ package_listing="$root/target/liboliphaunt-sdk-check/rust-cargo-package-list.txt
 mkdir -p "$(dirname "$package_listing")"
 run tools/dev/bun.sh tools/release/prepare-rust-release-source.mjs
 release_manifest="$root/target/release/cargo-package-sources/oliphaunt/Cargo.toml"
+release_query_core="$root/target/release/cargo-package-sources/oliphaunt/src/query_core.rs"
+if ! cmp -s src/shared/rust-query-core/query_core.rs "$release_query_core"; then
+  echo "Rust SDK staged query core must exactly match src/shared/rust-query-core/query_core.rs" >&2
+  exit 1
+fi
 printf '\n==> cargo package --manifest-path %s --allow-dirty --list\n' "$release_manifest"
 cargo package --manifest-path "$release_manifest" --allow-dirty --list >"$package_listing"
 cat "$package_listing"
@@ -423,6 +428,7 @@ for required in \
   ARCHITECTURE.md \
   src/lib.rs \
   src/database.rs \
+  src/query_core.rs \
   src/query.rs \
   tests/public_api.rs \
   tests/sdk_extensions.rs \
@@ -430,6 +436,7 @@ for required in \
   tests/native_sql_regression.rs \
   tests/native_extensions.rs \
   testdata/query-response-cases.json \
+  testdata/structured-sql-cases.json \
   testdata/database-root.json \
   testdata/behavior-contract.json
 do

@@ -17,7 +17,6 @@ import dev.oliphaunt.PostgresStartupGuc
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
@@ -26,7 +25,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -58,7 +56,6 @@ class OliphauntModule(
   private val reactContext: ReactApplicationContext,
 ) : NativeOliphauntSpec(reactContext), TurboModuleWithJSIBindings {
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-  private val nextHandle = AtomicLong(1)
   private val sessions = ConcurrentHashMap<Long, OliphauntDatabase>()
   private val sessionMutex = Mutex()
   private val invalidated = AtomicBoolean(false)
@@ -85,8 +82,16 @@ class OliphauntModule(
               "React Native nativeDirect already has an active instance",
             )
           }
-          val handle = requireReactNativeHandle(nextHandle.getAndIncrement())
           val claim = nativeDirectProcessOwner.acquire { retained -> retained.close() }
+          val handle = try {
+            // The opaque JS handle is the process-wide ownership generation,
+            // so a finalizer from an older module instance can never name a
+            // newer session.
+            requireReactNativeHandle(claim.generation)
+          } catch (error: Throwable) {
+            nativeDirectProcessOwner.release(claim)
+            throw error
+          }
           val session = try {
             Oliphaunt.open(
               context = reactContext,
@@ -188,7 +193,7 @@ class OliphauntModule(
     }
     scope.launch {
       runCatching {
-        session.execProtocolStream(request) { chunk ->
+        session.execProtocolRawStream(request) { chunk ->
           callback.emitChunk(chunk)
         }
       }.fold(
@@ -224,6 +229,35 @@ class OliphauntModule(
     }
   }
 
+  /** Best-effort cleanup for an exact forgotten JavaScript owner generation. */
+  @DoNotStrip
+  fun closeIfGeneration(generation: Long) {
+    val key = try {
+      requireReactNativeHandle(generation)
+    } catch (_: IllegalArgumentException) {
+      return
+    }
+    scope.launch {
+      sessionMutex.withLock {
+        val session = sessions[key] ?: return@withLock
+        val claim = nativeDirectClaim
+        if (claim == null || claim.generation != key) return@withLock
+
+        // Remove only this exact generation before awaiting close. Operations
+        // that already captured the session retain their FIFO admission; no
+        // new work can discover the forgotten generation in the platform map.
+        if (!sessions.remove(key, session)) return@withLock
+        try {
+          session.close()
+          nativeDirectProcessOwner.release(claim)
+        } catch (_: Throwable) {
+          nativeDirectProcessOwner.retain(claim, session)
+        }
+        if (nativeDirectClaim == claim) nativeDirectClaim = null
+      }
+    }
+  }
+
   override fun close(handle: Double, promise: Promise) {
     val key = try {
       requireReactNativeHandle(handle)
@@ -256,7 +290,7 @@ class OliphauntModule(
       invalidateJsiBindings()
       pendingOpen.get()
     }
-    runBlocking(Dispatchers.IO) {
+    scope.launch {
       openToJoin?.join()
       val sessionsToClose = sessionMutex.withLock { sessions.entries.map { it.key to it.value } }
       sessionsToClose.forEach { (key, session) ->
@@ -277,8 +311,8 @@ class OliphauntModule(
           nativeDirectClaim = null
         }
       }
+      scope.cancel()
     }
-    scope.cancel()
     super.invalidate()
   }
 

@@ -1,7 +1,11 @@
 package dev.oliphaunt
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 public data class PostgresStartupGuc(
     val name: String,
@@ -11,7 +15,9 @@ public data class PostgresStartupGuc(
 internal sealed interface EngineStorage {
     data object TemporaryDirectory : EngineStorage
 
-    data class Directory(val path: String) : EngineStorage
+    data class Directory(
+        val path: String,
+    ) : EngineStorage
 }
 
 internal data class EngineConfig(
@@ -22,7 +28,10 @@ internal data class EngineConfig(
     val extensions: List<String> = emptyList(),
 )
 
-internal fun validateStartupIdentity(value: String?, label: String) {
+internal fun validateStartupIdentity(
+    value: String?,
+    label: String,
+) {
     if (value == null) return
     if (value.isBlank()) throw OliphauntException("$label must not be empty")
     if (value.any { it.code == 0 }) throw OliphauntException("$label must not contain NUL bytes")
@@ -51,7 +60,8 @@ private val portableExtensionId = Regex("[A-Za-z0-9._-]{1,128}")
 internal fun validateGeneratedExtensionIds(
     extensions: Collection<String>,
     label: String = "Kotlin Oliphaunt extension id",
-): List<String> = extensions.map(String::trim)
+): List<String> = extensions
+    .map(String::trim)
     .filter(String::isNotEmpty)
     .onEach { extension ->
         if (!portableExtensionId.matches(extension)) {
@@ -59,58 +69,84 @@ internal fun validateGeneratedExtensionIds(
                 "$label '$extension' must contain 1 to 128 ASCII letters, digits, '.', '_' or '-'",
             )
         }
-        if (!generatedExtensionSqlNameExists(extension)) {
-            throw OliphauntException("unknown $label '$extension'")
-        }
+        if (!generatedExtensionSqlNameExists(extension)) throw OliphauntException("unknown $label '$extension'")
     }
 
-internal fun EngineConfig.postgresStartupArgs(
-    sharedPreloadLibraries: Collection<String> = emptyList(),
-): List<String> = startupGucs.flatMap { guc -> listOf("-c", "${guc.name.trim()}=${guc.value}") } +
-    sharedPreloadLibraries.distinct().sorted().takeIf(List<String>::isNotEmpty)
+internal fun EngineConfig.postgresStartupArgs(sharedPreloadLibraries: Collection<String> = emptyList()): List<String> = startupGucs.flatMap { guc -> listOf("-c", "${guc.name.trim()}=${guc.value}") } +
+    sharedPreloadLibraries
+        .distinct()
+        .sorted()
+        .takeIf(List<String>::isNotEmpty)
         ?.let { libraries -> listOf("-c", "shared_preload_libraries=${libraries.joinToString(",")}") }
         .orEmpty()
 
 internal fun validateDatabaseStorage(storage: EngineStorage) {
-    if (storage is EngineStorage.Directory) {
-        validateDirectoryPath(storage.path, "database storage directory")
-    }
+    if (storage is EngineStorage.Directory) validateDirectoryPath(storage.path, "database storage directory")
 }
 
-internal fun validateDirectoryPath(path: String, label: String) {
+internal fun validateDirectoryPath(
+    path: String,
+    label: String,
+) {
     if (path.isBlank()) throw OliphauntException("$label must not be empty")
     if (path.any { it.code == 0 }) throw OliphauntException("$label must not contain NUL bytes")
 }
 
 internal fun simpleQueryProtocol(sql: String): ByteArray {
-    if (sql.any { it.code == 0 }) {
-        throw OliphauntException("simple query SQL must not contain NUL bytes")
-    }
+    if (sql.any { it.code == 0 }) throw OliphauntException("simple query SQL must not contain NUL bytes")
     val body = sql.encodeToByteArray() + byteArrayOf(0)
-    val len = body.size + 4
+    val length = body.size + 4
     return byteArrayOf(
         'Q'.code.toByte(),
-        ((len ushr 24) and 0xff).toByte(),
-        ((len ushr 16) and 0xff).toByte(),
-        ((len ushr 8) and 0xff).toByte(),
-        (len and 0xff).toByte(),
+        ((length ushr 24) and 0xff).toByte(),
+        ((length ushr 16) and 0xff).toByte(),
+        ((length ushr 8) and 0xff).toByte(),
+        (length and 0xff).toByte(),
     ) + body
 }
 
 internal interface OliphauntEngine {
     suspend fun open(config: EngineConfig): OliphauntSession
-    suspend fun restore(destination: String, bytes: ByteArray)
+
+    suspend fun restore(
+        destination: String,
+        bytes: ByteArray,
+    )
 }
 
 internal interface OliphauntSession {
     suspend fun execProtocolRaw(request: ByteArray): ByteArray
-    suspend fun execProtocolStream(request: ByteArray, onChunk: (ByteArray) -> Unit)
+
+    suspend fun execProtocolRawStream(
+        request: ByteArray,
+        onChunk: (ByteArray) -> Unit,
+    )
+
     suspend fun backup(): ByteArray
+
     suspend fun cancel()
+
     suspend fun close()
 }
 
-public open class OliphauntException(message: String) : RuntimeException(message)
+public open class OliphauntException : RuntimeException {
+    public constructor(message: String) : super(message)
+
+    internal constructor(message: String, cause: Throwable) : super(message, cause)
+}
+
+public class OliphauntTransactionRollbackException internal constructor(
+    public val callbackError: Throwable,
+    public val rollbackError: Throwable,
+) : OliphauntException(
+    "transaction callback failed and automatic ROLLBACK did not complete; " +
+        "close and reopen the database; callback: $callbackError; rollback: $rollbackError",
+    callbackError,
+) {
+    init {
+        addSuppressed(rollbackError)
+    }
+}
 
 public class PostgresException(
     public val postgresError: PostgresError,
@@ -119,173 +155,574 @@ public class PostgresException(
 public class OliphauntDatabase private constructor(
     private val session: OliphauntSession,
 ) {
-    private val executionMutex = Mutex()
+    private sealed interface TransactionCompletion {
+        data object Active : TransactionCompletion
+
+        data object RollingBack : TransactionCompletion
+
+        data object Committing : TransactionCompletion
+
+        data object RolledBack : TransactionCompletion
+
+        data object Committed : TransactionCompletion
+
+        data class Failed(
+            val message: String,
+        ) : TransactionCompletion
+    }
+
+    private data class ActiveTransaction(
+        val token: Long,
+        var completion: TransactionCompletion = TransactionCompletion.Active,
+    )
+
+    private data class Admission(
+        val predecessor: Deferred<Unit>,
+        val completion: CompletableDeferred<Unit>,
+    )
+
+    private data class BeginAdmission(
+        val token: Long,
+        val operation: Admission,
+    )
+
+    private data class TransactionSeal(
+        val completion: TransactionCompletion,
+        val commitAdmission: Admission? = null,
+    )
+
     private val stateMutex = Mutex()
+    private var admissionTail: Deferred<Unit> = CompletableDeferred(Unit)
     private var closing = false
+    private var closeTeardownStarted = false
+    private var activeCancellationCount = 0
+    private var cancellationDrainWaiter: CompletableDeferred<Unit>? = null
+
+    @Volatile
     private var closed = false
+
     private var poisonedMessage: String? = null
-    private var activeTransactionToken: Long? = null
+    private var activeTransaction: ActiveTransaction? = null
     private var nextTransactionToken = 1L
 
-    public suspend fun execProtocolRaw(request: ByteArray): ByteArray = executionMutex.withLock {
-        ensureOpen()
-        ensureTransactionAccess(null)
-        session.execProtocolRaw(request)
-    }
+    public val isClosed: Boolean get() = closed
 
-    public suspend fun execProtocolStream(
+    public suspend fun execProtocolRaw(request: ByteArray): ByteArray = execProtocolRawOwned(request.copyOf(), transactionToken = null)
+
+    public suspend fun execProtocolRawStream(
         request: ByteArray,
         onChunk: (ByteArray) -> Unit,
-    ) {
-        executionMutex.withLock {
-            ensureOpen()
-            ensureTransactionAccess(null)
-            session.execProtocolStream(request, onChunk)
-        }
-    }
+    ): Unit = execProtocolRawStreamOwned(request.copyOf(), transactionToken = null, onChunk)
 
-    public suspend fun backup(): ByteArray = executionMutex.withLock {
-        ensureOpen()
-        ensureTransactionAccess(null)
-        session.backup()
-    }
-
-    public suspend fun checkpoint() {
-        execute("CHECKPOINT")
+    public suspend fun backup(): ByteArray = runAdmitted(admitOperation(transactionToken = null)) {
+        session.backup().copyOf()
     }
 
     public suspend fun <T> transaction(block: suspend (OliphauntTransaction) -> T): T {
-        val token = stateMutex.withLock {
-            ensureOpenLocked()
-            if (activeTransactionToken != null) throw OliphauntException(sessionPinnedMessage)
-            val allocated = nextTransactionToken
-            nextTransactionToken = if (nextTransactionToken == Long.MAX_VALUE) 1L else nextTransactionToken + 1
-            activeTransactionToken = allocated
-            allocated
-        }
-        val transaction = OliphauntTransaction(this, token)
-        try {
-            val result =
-                try {
-                    val begin = executeTransactionControl(transaction, "BEGIN")
-                    if (begin.commandTag != "BEGIN") {
-                        throw OliphauntException("BEGIN returned unexpected command tag ${begin.commandTag ?: "<none>"}")
-                    }
-                    block(transaction)
-                } catch (error: Throwable) {
-                    try {
-                        val rollback = executeTransactionControl(transaction, "ROLLBACK")
-                        if (rollback.commandTag != "ROLLBACK") {
-                            throw OliphauntException(
-                                "ROLLBACK returned unexpected command tag ${rollback.commandTag ?: "<none>"}",
-                            )
-                        }
-                    } catch (rollbackError: Throwable) {
-                        stateMutex.withLock {
-                            poisonedMessage = "transaction rollback failed; close and reopen the database: $rollbackError"
-                        }
-                    }
-                    throw error
-                }
-            val commit =
-                try {
-                    executeTransactionControl(transaction, "COMMIT")
-                } catch (error: Throwable) {
-                    stateMutex.withLock {
-                        poisonedMessage = "transaction COMMIT outcome is unknown; close and reopen the database: $error"
-                    }
-                    throw error
-                }
-            if (commit.commandTag != "COMMIT") {
-                if (commit.commandTag != "ROLLBACK") {
-                    stateMutex.withLock {
-                        poisonedMessage =
-                            "transaction COMMIT outcome is unknown after command tag ${commit.commandTag ?: "<none>"}; close and reopen the database"
-                    }
-                }
-                throw OliphauntException("COMMIT returned unexpected command tag ${commit.commandTag ?: "<none>"}")
-            }
-            return result
-        } finally {
+        val beginAdmission =
             stateMutex.withLock {
-                if (activeTransactionToken == token) activeTransactionToken = null
+                ensureNoProtocolStreamCallbackReentry()
+                ensureOpenLocked()
+                if (activeTransaction != null) throw OliphauntException(sessionPinnedMessage)
+                val allocated = nextTransactionToken
+                nextTransactionToken = if (nextTransactionToken == Long.MAX_VALUE) 1L else nextTransactionToken + 1
+                activeTransaction = ActiveTransaction(allocated)
+                BeginAdmission(allocated, enqueueOperationLocked())
+            }
+        val token = beginAdmission.token
+        val transaction = OliphauntTransaction(this, token)
+
+        val result: T
+        var began = false
+        try {
+            val begin = executeBegin(token, beginAdmission.operation)
+            if (begin.commandTag != "BEGIN") {
+                throw OliphauntException("BEGIN returned unexpected command tag ${begin.commandTag ?: "<none>"}")
+            }
+            began = true
+            result = block(transaction)
+        } catch (callbackError: Throwable) {
+            transaction.expire()
+            var rollbackError: Throwable? = null
+            if (began && transactionIsActive(token)) {
+                try {
+                    withContext(NonCancellable) { rollbackTransaction(token) }
+                } catch (error: Throwable) {
+                    rollbackError = error
+                }
+            }
+            clearTransaction(token)
+            if (rollbackError != null) {
+                throw OliphauntTransactionRollbackException(callbackError, rollbackError)
+            }
+            throw callbackError
+        }
+
+        transaction.expire()
+        val seal = sealTransactionCallback(token)
+        when (val completion = seal.completion) {
+            TransactionCompletion.RolledBack -> {
+                clearTransaction(token)
+                return result
+            }
+
+            is TransactionCompletion.Failed -> {
+                clearTransaction(token)
+                throw OliphauntException(completion.message)
+            }
+
+            TransactionCompletion.Committing -> {
+                Unit
+            }
+
+            TransactionCompletion.Active, TransactionCompletion.RollingBack, TransactionCompletion.Committed -> {
+                val message = "transaction settlement state is inconsistent; close and reopen the database"
+                poisonTransaction(token, message)
+                clearTransaction(token)
+                throw OliphauntException(message)
             }
         }
+
+        val commit =
+            try {
+                commitTransaction(token, requireNotNull(seal.commitAdmission))
+            } catch (error: Throwable) {
+                clearTransaction(token)
+                throw error
+            }
+        clearTransaction(token)
+        if (commit.commandTag != "COMMIT") {
+            if (commit.commandTag != "ROLLBACK") {
+                val message =
+                    "transaction COMMIT outcome is unknown after command tag ${commit.commandTag ?: "<none>"}; close and reopen the database"
+                poisonTransaction(token, message)
+            }
+            throw OliphauntException("COMMIT returned unexpected command tag ${commit.commandTag ?: "<none>"}")
+        }
+        return result
     }
 
     public suspend fun cancel() {
-        stateMutex.withLock { ensureOpenLocked() }
-        session.cancel()
+        stateMutex.withLock {
+            if (closed || closeTeardownStarted) throw OliphauntException("database is closed")
+            activeCancellationCount += 1
+        }
+        // Cancellation is out of band: it remains available while close is
+        // only draining work admitted before its cutoff, and is the sole
+        // same-handle action permitted from a raw-stream callback.
+        try {
+            session.cancel()
+        } finally {
+            finishCancellationAdmission()
+        }
     }
 
     public suspend fun close() {
-        val shouldClose = stateMutex.withLock {
-            if (closed) {
-                false
-            } else {
-                if (closing) throw OliphauntException("database is closed")
-                if (activeTransactionToken != null) throw OliphauntException(sessionPinnedMessage)
-                closing = true
-                true
+        val admission =
+            stateMutex.withLock {
+                ensureNoProtocolStreamCallbackReentry()
+                when {
+                    closed -> {
+                        null
+                    }
+
+                    closing -> {
+                        throw OliphauntException("database close is already in progress")
+                    }
+
+                    activeTransaction != null -> {
+                        throw OliphauntException(sessionPinnedMessage)
+                    }
+
+                    else -> {
+                        closing = true
+                        enqueueOperationLocked()
+                    }
+                }
+            }
+        if (admission == null) return
+        runAdmitted(admission) {
+            val cancellationDrain =
+                stateMutex.withLock {
+                    closeTeardownStarted = true
+                    if (activeCancellationCount == 0) {
+                        null
+                    } else {
+                        CompletableDeferred<Unit>().also { cancellationDrainWaiter = it }
+                    }
+                }
+            cancellationDrain?.await()
+            try {
+                session.close()
+                stateMutex.withLock {
+                    closing = false
+                    closed = true
+                }
+            } catch (error: Throwable) {
+                stateMutex.withLock {
+                    closeTeardownStarted = false
+                    closing = false
+                }
+                throw error
             }
         }
-        if (!shouldClose) return
-        try {
-            executionMutex.withLock { session.close() }
-            stateMutex.withLock {
-                closing = false
-                closed = true
+    }
+
+    private fun ensureOpenLocked() {
+        if (closed || closing || closeTeardownStarted) throw OliphauntException("database is closed")
+        poisonedMessage?.let { throw OliphauntException(it) }
+    }
+
+    private suspend fun executeBegin(
+        token: Long,
+        admission: Admission,
+    ): CommandResult = runAdmitted(admission) {
+        ensureAdmittedOperationUsable()
+        val response =
+            try {
+                session.execProtocolRaw(simpleQueryProtocol("BEGIN"))
+            } catch (error: Throwable) {
+                poisonUnknownOperation(token, error)
+                throw error
             }
+        val terminalStatus =
+            try {
+                inspectTerminalReadyStatus(response)
+            } catch (error: Throwable) {
+                poisonUnknownOperation(token, error)
+                throw error
+            }
+        val result = parseCommandResponse(response, ExpectedProtocol.Simple)
+        if (terminalStatus != ReadyStatus.Transaction || result.readyStatus != terminalStatus) {
+            throw OliphauntException("BEGIN returned unexpected ReadyForQuery status $terminalStatus")
+        }
+        result
+    }
+
+    internal suspend fun rollbackTransaction(token: Long) {
+        val admission = admitSettlement(token, TransactionCompletion.RollingBack)
+        runAdmitted(admission) {
+            try {
+                ensureAdmittedOperationUsable()
+                ensureSettlement(token, TransactionCompletion.RollingBack)
+                val response = session.execProtocolRaw(simpleQueryProtocol("ROLLBACK"))
+                val terminalStatus = inspectTerminalReadyStatus(response)
+                val result = parseCommandResponse(response, ExpectedProtocol.Simple)
+                if (terminalStatus != ReadyStatus.Idle || result.readyStatus != terminalStatus || result.commandTag != "ROLLBACK") {
+                    throw OliphauntException("ROLLBACK returned unexpected command tag or ReadyForQuery status")
+                }
+                finishSettlement(token, TransactionCompletion.RollingBack, TransactionCompletion.RolledBack)
+            } catch (error: Throwable) {
+                val message = "transaction rollback failed; close and reopen the database: $error"
+                poisonTransaction(token, message)
+                throw error
+            }
+        }
+    }
+
+    private suspend fun commitTransaction(
+        token: Long,
+        admission: Admission,
+    ): CommandResult = runAdmitted(admission) {
+        try {
+            ensureAdmittedOperationUsable()
+            ensureSettlement(token, TransactionCompletion.Committing)
+            val response = session.execProtocolRaw(simpleQueryProtocol("COMMIT"))
+            val terminalStatus = inspectTerminalReadyStatus(response)
+            val result = parseCommandResponse(response, ExpectedProtocol.Simple)
+            if (terminalStatus != ReadyStatus.Idle || result.readyStatus != terminalStatus) {
+                throw OliphauntException("COMMIT returned unexpected ReadyForQuery status $terminalStatus")
+            }
+            val completion =
+                when (result.commandTag) {
+                    "COMMIT" -> TransactionCompletion.Committed
+
+                    "ROLLBACK" -> TransactionCompletion.RolledBack
+
+                    else -> throw OliphauntException(
+                        "COMMIT returned unexpected command tag ${result.commandTag ?: "<none>"}",
+                    )
+                }
+            finishSettlement(token, TransactionCompletion.Committing, completion)
+            result
         } catch (error: Throwable) {
-            stateMutex.withLock { closing = false }
+            val message = "transaction COMMIT outcome is unknown; close and reopen the database: $error"
+            poisonTransaction(token, message)
             throw error
         }
     }
 
-    private suspend fun ensureOpen() {
-        stateMutex.withLock { ensureOpenLocked() }
-    }
-
-    private fun ensureOpenLocked() {
-        if (closed || closing) throw OliphauntException("database is closed")
-        poisonedMessage?.let { throw OliphauntException(it) }
-    }
-
-    private suspend fun executeTransactionControl(
-        transaction: OliphauntTransaction,
-        sql: String,
-    ): CommandResult = parseCommandResponse(
-        transaction.execProtocolRaw(simpleQueryProtocol(sql)),
-    )
-
-    private suspend fun ensureTransactionAccess(token: Long?) {
+    private suspend fun finishSettlement(
+        token: Long,
+        expected: TransactionCompletion,
+        completion: TransactionCompletion,
+    ) {
         stateMutex.withLock {
-            if (token != null) {
-                if (activeTransactionToken != token) throw OliphauntException("transaction is no longer active")
-            } else if (activeTransactionToken != null) {
-                throw OliphauntException(sessionPinnedMessage)
+            val active = activeTransaction
+            if (active?.token != token || active.completion != expected) {
+                throw OliphauntException("transaction settlement is no longer active")
+            }
+            active.completion = completion
+        }
+    }
+
+    private suspend fun admitSettlement(
+        token: Long,
+        completion: TransactionCompletion,
+    ): Admission = stateMutex.withLock {
+        ensureNoProtocolStreamCallbackReentry()
+        ensureOpenLocked()
+        val active = activeTransaction
+        if (active?.token != token || active.completion != TransactionCompletion.Active) {
+            throw OliphauntException("transaction is no longer active")
+        }
+        active.completion = completion
+        enqueueOperationLocked()
+    }
+
+    private suspend fun ensureSettlement(
+        token: Long,
+        completion: TransactionCompletion,
+    ) {
+        stateMutex.withLock {
+            val active = activeTransaction
+            if (active?.token != token || active.completion != completion) {
+                throw OliphauntException("transaction settlement is no longer active")
             }
         }
+    }
+
+    internal suspend fun <T> runTypedOperation(
+        request: ByteArray,
+        transactionToken: Long?,
+        parser: (ByteArray) -> Pair<T, ReadyStatus>,
+    ): T = runAdmitted(admitOperation(transactionToken)) {
+        ensureAdmittedOperationUsable()
+        val response =
+            try {
+                session.execProtocolRaw(request)
+            } catch (error: Throwable) {
+                poisonUnknownOperation(transactionToken, error)
+                throw error
+            }
+        val terminalStatus =
+            try {
+                inspectTerminalReadyStatus(response)
+            } catch (error: Throwable) {
+                poisonUnknownOperation(transactionToken, error)
+                throw error
+            }
+        val parsed =
+            try {
+                parser(response)
+            } catch (error: Throwable) {
+                validateTypedFailureStatus(terminalStatus, transactionToken)
+                throw error
+            }
+        if (parsed.second != terminalStatus) {
+            validateTypedFailureStatus(terminalStatus, transactionToken)
+            throw OliphauntException("typed response parser disagreed with terminal ReadyForQuery status")
+        }
+        validateTypedSuccessStatus(terminalStatus, transactionToken)
+        parsed.first
+    }
+
+    private suspend fun validateTypedSuccessStatus(
+        status: ReadyStatus,
+        transactionToken: Long?,
+    ) {
+        if (transactionToken != null) {
+            when (status) {
+                ReadyStatus.Transaction -> return
+
+                ReadyStatus.FailedTransaction -> throw OliphauntException(
+                    "transaction operation left PostgreSQL in a failed transaction; the callback will roll back",
+                )
+
+                ReadyStatus.Idle -> throw poisonEscapedTransaction(transactionToken)
+            }
+        }
+        if (status == ReadyStatus.Idle) return
+        val label = status.statusLabel()
+        recoverUnexpectedDatabaseTransaction(status)
+        throw OliphauntException(
+            "typed operation left PostgreSQL in $label; Oliphaunt rolled it back to preserve callback ownership",
+        )
+    }
+
+    private suspend fun validateTypedFailureStatus(
+        status: ReadyStatus,
+        transactionToken: Long?,
+    ) {
+        if (transactionToken != null) {
+            if (status == ReadyStatus.Idle) throw poisonEscapedTransaction(transactionToken)
+            return
+        }
+        if (status != ReadyStatus.Idle) recoverUnexpectedDatabaseTransaction(status)
+    }
+
+    private suspend fun recoverUnexpectedDatabaseTransaction(status: ReadyStatus) {
+        try {
+            val response = session.execProtocolRaw(simpleQueryProtocol("ROLLBACK"))
+            val terminalStatus = inspectTerminalReadyStatus(response)
+            val rollback = parseCommandResponse(response, ExpectedProtocol.Simple)
+            if (terminalStatus != ReadyStatus.Idle || rollback.readyStatus != terminalStatus || rollback.commandTag != "ROLLBACK") {
+                throw OliphauntException("automatic ROLLBACK returned unexpected command tag or transaction status")
+            }
+        } catch (error: Throwable) {
+            val message =
+                "typed operation left PostgreSQL in ${status.statusLabel()}, and automatic ROLLBACK failed; " +
+                    "close and reopen the database: $error"
+            stateMutex.withLock { poisonedMessage = message }
+            throw OliphauntException(message)
+        }
+    }
+
+    private suspend fun poisonUnknownOperation(
+        transactionToken: Long?,
+        error: Throwable,
+    ) {
+        val message =
+            "typed operation outcome is unknown before a complete ReadyForQuery boundary; close and reopen the database: $error"
+        stateMutex.withLock {
+            poisonedMessage = message
+            val active = activeTransaction
+            if (transactionToken != null && active?.token == transactionToken) {
+                active.completion = TransactionCompletion.Failed(message)
+            }
+        }
+    }
+
+    private suspend fun poisonEscapedTransaction(token: Long): OliphauntException {
+        val message = "transaction operation escaped callback ownership and left PostgreSQL idle; close and reopen the database"
+        poisonTransaction(token, message)
+        return OliphauntException(message)
+    }
+
+    private suspend fun poisonTransaction(
+        token: Long,
+        message: String,
+    ) {
+        stateMutex.withLock {
+            poisonedMessage = message
+            activeTransaction?.takeIf { it.token == token }?.completion = TransactionCompletion.Failed(message)
+        }
+    }
+
+    private suspend fun sealTransactionCallback(token: Long): TransactionSeal = stateMutex.withLock {
+        val active =
+            activeTransaction?.takeIf { it.token == token }
+                ?: return@withLock TransactionSeal(
+                    TransactionCompletion.Failed("transaction state was lost; close and reopen the database"),
+                )
+        if (active.completion == TransactionCompletion.Active) {
+            active.completion = TransactionCompletion.Committing
+            return@withLock TransactionSeal(active.completion, enqueueOperationLocked())
+        }
+        TransactionSeal(active.completion)
+    }
+
+    private suspend fun transactionIsActive(token: Long): Boolean = stateMutex.withLock {
+        activeTransaction?.let { it.token == token && it.completion == TransactionCompletion.Active } == true
+    }
+
+    private suspend fun clearTransaction(token: Long) {
+        stateMutex.withLock { if (activeTransaction?.token == token) activeTransaction = null }
     }
 
     internal suspend fun execProtocolRaw(
         request: ByteArray,
         transactionToken: Long,
-    ): ByteArray = executionMutex.withLock {
-        ensureOpen()
-        ensureTransactionAccess(transactionToken)
-        session.execProtocolRaw(request)
-    }
+    ): ByteArray = execProtocolRawOwned(request.copyOf(), transactionToken)
 
-    internal suspend fun execProtocolStream(
+    internal suspend fun execProtocolRawStream(
         request: ByteArray,
         transactionToken: Long,
         onChunk: (ByteArray) -> Unit,
+    ): Unit = execProtocolRawStreamOwned(request.copyOf(), transactionToken, onChunk)
+
+    private suspend fun execProtocolRawOwned(
+        ownedRequest: ByteArray,
+        transactionToken: Long?,
+    ): ByteArray = runAdmitted(admitOperation(transactionToken)) {
+        ensureAdmittedOperationUsable()
+        session.execProtocolRaw(ownedRequest).copyOf()
+    }
+
+    private suspend fun execProtocolRawStreamOwned(
+        ownedRequest: ByteArray,
+        transactionToken: Long?,
+        onChunk: (ByteArray) -> Unit,
     ) {
-        executionMutex.withLock {
-            ensureOpen()
-            ensureTransactionAccess(transactionToken)
-            session.execProtocolStream(request, onChunk)
+        runAdmitted(admitOperation(transactionToken)) {
+            ensureAdmittedOperationUsable()
+            session.execProtocolRawStream(ownedRequest) { chunk ->
+                withProtocolStreamCallbackContext(this) {
+                    onChunk(chunk.copyOf())
+                }
+            }
+        }
+    }
+
+    private suspend fun admitOperation(transactionToken: Long?): Admission = stateMutex.withLock {
+        ensureNoProtocolStreamCallbackReentry()
+        ensureOpenLocked()
+        ensureTransactionAccessLocked(transactionToken)
+        enqueueOperationLocked()
+    }
+
+    private fun enqueueOperationLocked(): Admission {
+        val completion = CompletableDeferred<Unit>()
+        return Admission(admissionTail, completion).also { admissionTail = completion }
+    }
+
+    private suspend fun ensureAdmittedOperationUsable() {
+        stateMutex.withLock {
+            if (closed) throw OliphauntException("database is closed")
+            poisonedMessage?.let { throw OliphauntException(it) }
+        }
+    }
+
+    private fun ensureTransactionAccessLocked(token: Long?) {
+        if (token != null) {
+            val active = activeTransaction
+            if (active?.token != token || active.completion != TransactionCompletion.Active) {
+                throw OliphauntException("transaction is no longer active")
+            }
+        } else if (activeTransaction != null) {
+            throw OliphauntException(sessionPinnedMessage)
+        }
+    }
+
+    private fun ensureNoProtocolStreamCallbackReentry() {
+        if (currentProtocolStreamCallbackOwner() === this) {
+            throw OliphauntException(protocolStreamCallbackReentryMessage)
+        }
+    }
+
+    private suspend fun finishCancellationAdmission() {
+        val drainWaiter =
+            stateMutex.withLock {
+                check(activeCancellationCount > 0)
+                activeCancellationCount -= 1
+                if (activeCancellationCount == 0) {
+                    cancellationDrainWaiter.also { cancellationDrainWaiter = null }
+                } else {
+                    null
+                }
+            }
+        drainWaiter?.complete(Unit)
+    }
+
+    private suspend fun <T> runAdmitted(
+        admission: Admission,
+        operation: suspend () -> T,
+    ): T = withContext(NonCancellable) {
+        admission.predecessor.await()
+        try {
+            operation()
+        } finally {
+            admission.completion.complete(Unit)
         }
     }
 
@@ -308,11 +745,14 @@ public class OliphauntDatabase private constructor(
             engine: OliphauntEngine,
         ) {
             validateDirectoryPath(destination, "restore destination")
-            engine.restore(destination, bytes)
+            engine.restore(destination, bytes.copyOf())
         }
 
         private const val sessionPinnedMessage: String =
             "physical session is pinned; use the active OliphauntTransaction"
+
+        private const val protocolStreamCallbackReentryMessage: String =
+            "raw protocol stream callback must not reenter the same Oliphaunt database or transaction"
     }
 }
 
@@ -320,12 +760,49 @@ public class OliphauntTransaction internal constructor(
     private val database: OliphauntDatabase,
     private val token: Long,
 ) {
-    public suspend fun execProtocolRaw(request: ByteArray): ByteArray = database.execProtocolRaw(request, transactionToken = token)
+    @Volatile
+    private var expired = false
 
-    public suspend fun execProtocolStream(
+    public val isClosed: Boolean get() = expired
+
+    public suspend fun execProtocolRaw(request: ByteArray): ByteArray {
+        ensureActiveHandle()
+        return database.execProtocolRaw(request, transactionToken = token)
+    }
+
+    public suspend fun execProtocolRawStream(
         request: ByteArray,
         onChunk: (ByteArray) -> Unit,
     ) {
-        database.execProtocolStream(request, transactionToken = token, onChunk = onChunk)
+        ensureActiveHandle()
+        database.execProtocolRawStream(request, transactionToken = token, onChunk = onChunk)
     }
+
+    public suspend fun rollback() {
+        ensureActiveHandle()
+        expire()
+        database.rollbackTransaction(token)
+    }
+
+    internal suspend fun <T> runTypedOperation(
+        request: ByteArray,
+        parser: (ByteArray) -> Pair<T, ReadyStatus>,
+    ): T {
+        ensureActiveHandle()
+        return database.runTypedOperation(request, token, parser)
+    }
+
+    private fun ensureActiveHandle() {
+        if (expired) throw OliphauntException("transaction is no longer active")
+    }
+
+    internal fun expire() {
+        expired = true
+    }
+}
+
+private fun ReadyStatus.statusLabel(): String = when (this) {
+    ReadyStatus.Transaction -> "an open transaction"
+    ReadyStatus.FailedTransaction -> "a failed transaction"
+    ReadyStatus.Idle -> "an idle transaction"
 }

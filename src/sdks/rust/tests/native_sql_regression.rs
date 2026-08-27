@@ -60,6 +60,7 @@ fn native_postgres_types_errors_and_transaction_recovery_when_available() {
     }
 
     let server_root = unique_root("server-sql-regression");
+    // liboliphaunt-doc-example:rust-open-server
     let server_result = (|| -> Result<()> {
         let server = block_on(Oliphaunt::builder().directory(&server_root).open_server())?;
         assert!(!server.connection_string().is_empty());
@@ -72,7 +73,7 @@ fn native_postgres_types_errors_and_transaction_recovery_when_available() {
         );
         let chunks = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
         let captured = Arc::clone(&chunks);
-        block_on(server.exec_protocol_stream(
+        block_on(server.exec_protocol_raw_stream(
             simple_query_request("COPY (SELECT 'server-stream') TO STDOUT"),
             move |chunk| {
                 captured.lock().unwrap().push(chunk.to_vec());
@@ -150,7 +151,7 @@ fn run_embedded(builder: OliphauntBuilder) -> Result<()> {
         let chunks = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
         let captured = Arc::clone(&chunks);
         transaction
-            .exec_protocol_stream(simple_query_request("SELECT 'transaction-stream'"), move |chunk| {
+            .exec_protocol_raw_stream(simple_query_request("SELECT 'transaction-stream'"), move |chunk| {
                 captured.lock().unwrap().push(chunk.to_vec());
                 Ok(())
             })
@@ -190,7 +191,7 @@ fn run_embedded(builder: OliphauntBuilder) -> Result<()> {
     assert_eq!(copied.get_text(0, "values")?, Some("one,two"));
     let chunks = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
     let captured = Arc::clone(&chunks);
-    block_on(db.exec_protocol_stream(
+    block_on(db.exec_protocol_raw_stream(
         simple_query_request("COPY (SELECT value FROM copy_probe ORDER BY id) TO STDOUT"),
         move |chunk| {
             captured.lock().unwrap().push(chunk.to_vec());

@@ -7,8 +7,8 @@ use tokio_postgres::NoTls;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tokio_postgres_parameters_and_error_recovery_work() -> Result<()> {
-    let server = OliphauntServer::builder().start()?;
-    let (client, connection) = tokio_postgres::connect(&server.connection_string(), NoTls)
+    let server = OliphauntServer::builder().start().await?;
+    let (client, connection) = tokio_postgres::connect(server.connection_string(), NoTls)
         .await
         .context("connect with tokio-postgres")?;
     let connection = tokio::spawn(connection);
@@ -32,18 +32,23 @@ async fn tokio_postgres_parameters_and_error_recovery_work() -> Result<()> {
 
     drop(client);
     connection.await??;
-    server.close()?;
+    let server_clone = server.clone();
+    let (first_close, second_close) = tokio::join!(server.close(), server_clone.close());
+    first_close?;
+    second_close?;
     Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sqlx_uses_the_standard_postgres_connection_string() -> Result<()> {
+    // liboliphaunt-doc-example:wasix-rust-sqlx-server
     let server = OliphauntServer::builder()
         .username("postgres")
         .database("postgres")
         .startup_guc("work_mem", "8MB")
-        .start()?;
-    let mut connection = sqlx::PgConnection::connect(&server.connection_string()).await?;
+        .start()
+        .await?;
+    let mut connection = sqlx::PgConnection::connect(server.connection_string()).await?;
     let row = sqlx::query("SELECT current_setting('work_mem') AS work_mem, $1::text AS value")
         .bind("ok")
         .fetch_one(&mut connection)
@@ -51,6 +56,6 @@ async fn sqlx_uses_the_standard_postgres_connection_string() -> Result<()> {
     assert_eq!(row.try_get::<&str, _>("work_mem")?, "8MB");
     assert_eq!(row.try_get::<&str, _>("value")?, "ok");
     connection.close().await?;
-    server.close()?;
+    server.close().await?;
     Ok(())
 }

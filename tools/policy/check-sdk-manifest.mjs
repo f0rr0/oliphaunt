@@ -23,7 +23,7 @@ const requiredFields = new Set([
   'consumer_targets',
   'runtime_owner',
   'runtime_boundary',
-  'execution_modes',
+  'surfaces',
 ]);
 const optionalFields = new Set(['delegates_apple_to', 'delegates_android_to']);
 const stringFields = new Set([
@@ -32,14 +32,29 @@ const stringFields = new Set([
   'documentation_path',
   'runtime_boundary',
 ]);
-const listFields = new Set(['consumer_targets', 'execution_modes']);
-const knownModes = new Set([
+const listFields = new Set(['consumer_targets']);
+const requiredSurfaceFields = new Set([
+  'id',
+  'entrypoint',
+  'calling_contract',
+  'execution_owner',
+  'main_safe',
+  'topologies',
+]);
+const knownTopologies = new Set([
   'native-direct',
   'native-broker',
   'native-server',
   'wasix-direct',
-  'wasix-worker',
   'wasix-server',
+]);
+const knownCallingContracts = new Set(['async', 'blocking']);
+const knownExecutionOwners = new Set([
+  'caller',
+  'platform-sdk',
+  'sdk-runtime',
+  'sdk-thread',
+  'sdk-worker',
 ]);
 const errors = [];
 
@@ -95,8 +110,8 @@ if (
     `${parityPolicyPath} must contain each canonical deferred ID exactly once; found ${formatValue(actualDeferredIds)}`,
   );
 }
-if (manifest.schema_version !== 4) {
-  errors.push(`schema_version is ${formatValue(manifest.schema_version)}; expected 4`);
+if (manifest.schema_version !== 5) {
+  errors.push(`schema_version is ${formatValue(manifest.schema_version)}; expected 5`);
 }
 if (!isPlainObject(manifest.sdks)) errors.push('manifest must contain an [sdks] table');
 
@@ -133,11 +148,70 @@ for (const sdkId of sdkIds) {
       errors.push(`[sdks.${sdkId}].${field} must not contain duplicates`);
     }
   }
-  if (Array.isArray(sdk.execution_modes)) {
-    for (const executionMode of sdk.execution_modes) {
-      if (!knownModes.has(executionMode)) {
-        errors.push(`[sdks.${sdkId}].execution_modes contains unknown mode ${formatValue(executionMode)}`);
+  if (!Array.isArray(sdk.surfaces) || sdk.surfaces.length === 0) {
+    errors.push(`[sdks.${sdkId}].surfaces must be a non-empty array of surface tables`);
+  } else {
+    const seenSurfaceIds = new Set();
+    for (const [surfaceIndex, surface] of sdk.surfaces.entries()) {
+      const location = `[sdks.${sdkId}].surfaces[${surfaceIndex}]`;
+      if (!isPlainObject(surface)) {
+        errors.push(`${location} must be a table`);
+        continue;
       }
+      for (const field of requiredSurfaceFields) {
+        if (!(field in surface)) errors.push(`${location} is missing required field ${field}`);
+      }
+      for (const field of Object.keys(surface)) {
+        if (!requiredSurfaceFields.has(field)) errors.push(`${location} has unknown field ${field}`);
+      }
+      for (const field of ['id', 'entrypoint', 'calling_contract', 'execution_owner']) {
+        if (typeof surface[field] !== 'string' || surface[field].length === 0) {
+          errors.push(`${location}.${field} must be a non-empty string`);
+        }
+      }
+      if (typeof surface.id === 'string') {
+        if (seenSurfaceIds.has(surface.id)) {
+          errors.push(`${location}.id duplicates surface ${formatValue(surface.id)}`);
+        }
+        seenSurfaceIds.add(surface.id);
+      }
+      if (!knownCallingContracts.has(surface.calling_contract)) {
+        errors.push(`${location}.calling_contract contains unknown contract ${formatValue(surface.calling_contract)}`);
+      }
+      if (!knownExecutionOwners.has(surface.execution_owner)) {
+        errors.push(`${location}.execution_owner contains unknown owner ${formatValue(surface.execution_owner)}`);
+      }
+      if (typeof surface.main_safe !== 'boolean') {
+        errors.push(`${location}.main_safe must be a boolean`);
+      }
+      if (surface.calling_contract === 'blocking' && surface.main_safe !== false) {
+        errors.push(`${location} blocking surfaces must declare main_safe = false`);
+      }
+      if (surface.execution_owner === 'caller' && surface.calling_contract !== 'blocking') {
+        errors.push(`${location} caller-owned surfaces must use the blocking calling contract`);
+      }
+      if (surface.calling_contract === 'blocking' && surface.execution_owner !== 'caller') {
+        errors.push(`${location} blocking surfaces must be caller-owned`);
+      }
+      if (
+        !Array.isArray(surface.topologies)
+        || surface.topologies.length === 0
+        || !surface.topologies.every((topology) => typeof topology === 'string' && topology.length > 0)
+      ) {
+        errors.push(`${location}.topologies must be a non-empty list of non-empty strings`);
+      } else {
+        if (new Set(surface.topologies).size !== surface.topologies.length) {
+          errors.push(`${location}.topologies must not contain duplicates`);
+        }
+        for (const topology of surface.topologies) {
+          if (!knownTopologies.has(topology)) {
+            errors.push(`${location}.topologies contains unknown topology ${formatValue(topology)}`);
+          }
+        }
+      }
+    }
+    if (!seenSurfaceIds.has('default')) {
+      errors.push(`[sdks.${sdkId}].surfaces must contain a default surface`);
     }
   }
   if (typeof sdk.runtime_owner !== 'boolean') {
@@ -161,6 +235,36 @@ for (const sdkId of sdkIds) {
     }
     seenImplementationPaths.set(sdk.implementation_path, sdkId);
     requireDirectory(sdk.implementation_path, sdkId, 'implementation_path');
+    if (
+      typeof sdk.package_identity === 'string'
+      && sdk.package_identity.startsWith('npm:')
+      && Array.isArray(sdk.surfaces)
+    ) {
+      const packageFile = `${sdk.implementation_path}/package.json`;
+      if (!existsSync(packageFile)) {
+        errors.push(`[sdks.${sdkId}] npm implementation has no package.json`);
+      } else {
+        const packageManifest = JSON.parse(readFileSync(packageFile, 'utf8'));
+        const packageName = sdk.package_identity.slice('npm:'.length);
+        for (const surface of sdk.surfaces) {
+          if (!isPlainObject(surface) || typeof surface.entrypoint !== 'string') continue;
+          const exportKey = surface.entrypoint === packageName
+            ? '.'
+            : surface.entrypoint.startsWith(`${packageName}/`)
+              ? `./${surface.entrypoint.slice(packageName.length + 1)}`
+              : undefined;
+          if (exportKey === undefined) {
+            errors.push(
+              `[sdks.${sdkId}] surface ${formatValue(surface.id)} entrypoint ${formatValue(surface.entrypoint)} is outside package ${formatValue(packageName)}`,
+            );
+          } else if (!isPlainObject(packageManifest.exports) || !(exportKey in packageManifest.exports)) {
+            errors.push(
+              `[sdks.${sdkId}] surface ${formatValue(surface.id)} entrypoint ${formatValue(surface.entrypoint)} is missing package export ${formatValue(exportKey)}`,
+            );
+          }
+        }
+      }
+    }
   }
   if (typeof sdk.documentation_path === 'string') {
     requireDirectory(sdk.documentation_path, sdkId, 'documentation_path');
@@ -226,14 +330,24 @@ if (mode === '--json') {
     sdks: Object.fromEntries(sdkIds.map((sdkId) => [sdkId, {
       packageIdentity: sdks[sdkId].package_identity,
       runtimeOwner: sdks[sdkId].runtime_owner,
-      executionModes: sdks[sdkId].execution_modes,
+      surfaces: sdks[sdkId].surfaces.map((surface) => ({
+        id: surface.id,
+        entrypoint: surface.entrypoint,
+        callingContract: surface.calling_contract,
+        executionOwner: surface.execution_owner,
+        mainSafe: surface.main_safe,
+        topologies: surface.topologies,
+      })),
       consumerTargets: sdks[sdkId].consumer_targets,
     }])),
   }, null, 2));
 } else if (mode === '--list') {
   for (const sdkId of sdkIds) {
     const sdk = sdks[sdkId];
-    console.log(`${sdkId}: modes=${sdk.execution_modes.join(',')} targets=${sdk.consumer_targets.join(',')}`);
+    const surfaces = sdk.surfaces
+      .map((surface) => `${surface.id}:${surface.calling_contract}/${surface.execution_owner}[${surface.topologies.join(',')}]`)
+      .join(' ');
+    console.log(`${sdkId}: surfaces=${surfaces} targets=${sdk.consumer_targets.join(',')}`);
   }
 } else {
   console.log(`SDK manifest contract verified (${sdkIds.length} SDKs).`);

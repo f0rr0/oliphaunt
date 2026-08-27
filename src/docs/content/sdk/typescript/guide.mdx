@@ -20,6 +20,13 @@ package does not fall back to WASIX, and the WASIX package does not fall back to
 native execution.
 </Callout>
 
+Database methods are promise-based on all three runtimes. PostgreSQL open,
+query, backup, restore, and close work uses addon jobs on Node/Bun or Deno
+nonblocking FFI, so it does not execute on the JavaScript event loop. Native
+module loading itself remains a synchronous one-time platform step
+(`require()` on Node/Bun and `dlopen()` on Deno); it is not a separate blocking
+database API.
+
 <SdkGuideSummary id="typescript" />
 
 <Steps>
@@ -53,7 +60,7 @@ const db = await Oliphaunt.open({
 });
 
 const rows = await db.query('SELECT 1::text AS value');
-const value = rows.getText(0, 'value');
+const value = rows.rows[0]?.value;
 
 await db.close();
 ```
@@ -87,7 +94,7 @@ await db.query(
 const notes = await db.query(
   'SELECT id, title FROM notes ORDER BY id DESC LIMIT 20',
 );
-const firstTitle = notes.getText(0, 'title');
+const firstTitle = notes.rows[0]?.title;
 ```
 
 Tauri apps keep the database in Rust state and expose narrow app-owned commands
@@ -109,7 +116,7 @@ Omit `storage` for an SDK-owned temporary directory; pass
 
 ### Choose a mode
 
-Omit `execution` for direct execution. Select `execution: 'broker'` when process
+Omit `topology` for the direct topology. Select `topology: 'broker'` when process
 isolation and crash recovery matter. Use `Oliphaunt.openServer()` when
 PostgreSQL-compatible tools and independent clients are required.
 
@@ -118,8 +125,36 @@ PostgreSQL-compatible tools and independent clients are required.
 
 ### Handle lifecycle
 
-The client queues work through the selected runtime boundary. Close rejects
-queued work and waits for active work. Use explicit cancellation for long SQL.
+The client queues work through the selected runtime boundary. Close waits for
+work admitted before the close call and rejects later ordinary submissions.
+`cancel()` remains out of band while that work drains, including after the
+close admission cutoff; teardown starts only after admitted cancellation calls
+settle. Use explicit cancellation for long SQL. Call `await db.close()` or use
+`await using`; explicit close is the only deterministic way to finish session
+reset, release persistent storage ownership, and observe cleanup errors.
+
+If direct logical detachment fails before deactivation, `closed` stays false and
+the same handle may retry `close()`. Broker/server cleanup failures after their
+destructive cutoff retire the handle: `closed` becomes true, later work fails,
+and repeated `close()` calls replay the original result. A raw-protocol stream
+callback cannot reenter database/transaction work, backup, close, or another
+stream on the same handle; `cancel()` is the out-of-band exception.
+
+Garbage-collection cleanup is a last-resort leak guard, not a lifecycle API.
+On Node/Bun, `FinalizationRegistry` passes an opaque exact-generation token to
+the addon; it releases only the matching JavaScript admission lease after the
+addon marks that generation for recovery on the next asynchronous open. Deno
+uses `FinalizationRegistry` only to enqueue nonblocking FFI
+cleanup. The Deno cleanup carries the logical generation acquired at open, so a
+late finalizer becomes a no-op instead of closing a newer lease. It performs a
+terminal native close for that process lifetime; finalizer timing is
+nondeterministic and failures cannot be reported to application code. Broker
+and server leak guards retain only the exact private runtime handle and an
+private lease generation, never the public facade. They schedule asynchronous
+teardown; an explicitly unregistered or superseded generation is a no-op. If
+leak-guard registration itself prevents facade publication, `open()` cleans up
+the opened runtime owner and releases its exact JavaScript lease before
+rejecting.
 
 </Step>
 <Step>

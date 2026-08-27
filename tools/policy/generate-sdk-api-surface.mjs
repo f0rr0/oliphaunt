@@ -51,18 +51,23 @@ function extractRustSurface(
   indexFile = 'src/sdks/rust/src/lib.rs',
   sourceDir = 'src/sdks/rust/src',
   crateName = 'oliphaunt',
+  extraSourceFiles = [],
 ) {
   const lines = readRelative(indexFile).split('\n');
   const symbols = [];
   let skipDocHidden = false;
 
   for (let index = 0; index < lines.length; index += 1) {
-    const trimmed = lines[index].trim();
+    const sourceLine = lines[index];
+    const trimmed = sourceLine.trim();
     if (trimmed === '#[doc(hidden)]') {
       skipDocHidden = true;
       continue;
     }
-    if (!trimmed.startsWith('pub use ')) {
+    // This extractor describes the crate root. Indented `pub use` statements
+    // belong to nested inline modules and must be inventoried by their module
+    // extractor instead of being flattened into nonexistent root symbols.
+    if (!sourceLine.startsWith('pub use ')) {
       if (trimmed.length > 0 && !trimmed.startsWith('#[')) {
         skipDocHidden = false;
       }
@@ -98,7 +103,8 @@ function extractRustSurface(
     skipDocHidden = false;
   }
 
-  for (const file of listFiles(sourceDir, '.rs')) {
+  const sourceFiles = sorted([...listFiles(sourceDir, '.rs'), ...extraSourceFiles]);
+  for (const file of sourceFiles) {
     const source = readRelative(file);
     const macroPattern =
       /#\[\s*macro_export\s*\]\s*(?:#\[[^\]]+\]\s*)*macro_rules!\s+([A-Za-z_][A-Za-z0-9_]*)/gu;
@@ -113,7 +119,7 @@ function extractRustSurface(
       .filter(name => /^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)),
   );
   const exportedTypes = new Set();
-  for (const file of listFiles(sourceDir, '.rs')) {
+  for (const file of sourceFiles) {
     const source = readRelative(file);
     for (const match of source.matchAll(
       /^\s*pub\s+(?:struct|enum|union|trait|type)\s+([A-Za-z_][A-Za-z0-9_]*)/gmu,
@@ -123,7 +129,9 @@ function extractRustSurface(
       }
     }
   }
-  symbols.push(...extractRustInherentMethods(sourceDir, crateName, exportedTypes));
+  symbols.push(
+    ...extractRustInherentMethods(sourceDir, crateName, exportedTypes, extraSourceFiles),
+  );
 
   return sorted(symbols);
 }
@@ -147,6 +155,26 @@ function extractRustModuleSurface(files, sourceDir, crateName) {
   return sorted(symbols);
 }
 
+function extractWasixRustBlockingSurface() {
+  const crateName = 'oliphaunt_wasix::blocking';
+  const exportedTypes = new Set([
+    'Oliphaunt',
+    'OliphauntBuilder',
+    'OliphauntServer',
+    'OliphauntServerBuilder',
+    'Sql',
+    'Transaction',
+  ]);
+  return sorted([
+    ...Array.from(exportedTypes, (name) => `${crateName}::${name}`),
+    ...extractRustInherentMethods(
+      'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt',
+      crateName,
+      exportedTypes,
+    ),
+  ]);
+}
+
 function rustInherentImplType(header) {
   const beforeBody = header.slice(0, header.indexOf('{')).trim();
   if (!beforeBody.startsWith('impl') || /\bfor\b/u.test(beforeBody)) {
@@ -167,9 +195,14 @@ function rustInherentImplType(header) {
   return beforeBody.slice(cursor).match(/^([A-Za-z_][A-Za-z0-9_]*)/u)?.[1] ?? null;
 }
 
-function extractRustInherentMethods(sourceDir, crateName, exportedTypes) {
+function extractRustInherentMethods(
+  sourceDir,
+  crateName,
+  exportedTypes,
+  extraSourceFiles = [],
+) {
   const methods = [];
-  for (const file of listFiles(sourceDir, '.rs')) {
+  for (const file of sorted([...listFiles(sourceDir, '.rs'), ...extraSourceFiles])) {
     let depth = 0;
     let pendingImpl = null;
     let activeImpl = null;
@@ -391,7 +424,7 @@ function extractKotlinSurface() {
         const active = stack[stack.length - 1] ?? awaitingContext;
         let pendingContext = null;
         const typeMatch = trimmed.match(
-          /^public\s+(?:(?:data|sealed|open)\s+)*(enum\s+class|data\s+class|sealed\s+class|open\s+class|class|object|interface)\s+([A-Za-z_][A-Za-z0-9_]*)/u,
+          /^public\s+(?:(?:data|sealed|open)\s+)*(enum\s+class|data\s+class|sealed\s+class|open\s+class|value\s+class|fun\s+interface|class|object|interface)\s+([A-Za-z_][A-Za-z0-9_]*)/u,
         );
 
         if (typeMatch) {
@@ -544,6 +577,17 @@ function extractOliphauntWasixTsSurface() {
   ]);
 }
 
+function extractOliphauntWasixBlockingTsSurface() {
+  return extractTypeScriptSurface([
+    'src/bindings/wasix-ts/src/blocking.ts',
+    'src/bindings/wasix-ts/src/public.ts',
+  ], [
+    'src/bindings/wasix-ts/src/blocking-client.ts',
+    'src/bindings/wasix-ts/src/blocking-node-client.ts',
+    'src/bindings/wasix-ts/src/types.ts',
+  ]);
+}
+
 function extractPackageExports(manifestFile) {
   const manifest = JSON.parse(readRelative(manifestFile));
   return Object.entries(manifest.exports ?? {}).map(([subpath, entry]) =>
@@ -659,6 +703,35 @@ function markdownList(items) {
   return `${items.map(item => `- \`${item}\``).join('\n')}\n`;
 }
 
+function requireRustQueryCoreSurface(symbols, crateName) {
+  for (const member of [
+    'CommandResult.row_count()',
+    'ExecResult.statements()',
+    'Parameter.typed_text()',
+    'QueryField.type_oid_value()',
+    'QueryParam.binary()',
+    'QueryResult.rows()',
+    'QueryRow.try_get()',
+    'StatementDescription.parameter_types()',
+    'TypeOid.get()',
+    'ValueRef.as_bytes()',
+  ]) {
+    const symbol = `${crateName}::${member}`;
+    if (!symbols.includes(symbol)) {
+      throw new Error(`Rust API inventory did not follow shared query core for ${symbol}`);
+    }
+  }
+}
+
+function rejectRustRootSymbols(symbols, crateName, names) {
+  for (const name of names) {
+    const symbol = `${crateName}::${name}`;
+    if (symbols.includes(symbol)) {
+      throw new Error(`Rust API inventory flattened a nested module symbol into ${symbol}`);
+    }
+  }
+}
+
 function render() {
   const nativeC = extractNativeCSurface();
   const kotlin = extractKotlinSurface();
@@ -666,6 +739,7 @@ function render() {
   const rn = extractReactNativeSurface();
   const ts = extractOliphauntTsSurface();
   const wasixTs = extractOliphauntWasixTsSurface();
+  const wasixBlockingTs = extractOliphauntWasixBlockingTsSurface();
   const wasixIndexedDb = extractTypeScriptSurface(
     'src/bindings/wasix-ts/src/storage/indexed-db.ts',
     ['src/bindings/wasix-ts/src/storage/indexed-db.ts'],
@@ -698,15 +772,91 @@ function render() {
     'src/bindings/wasix-ts/tools-package/src/index.ts',
     ['src/bindings/wasix-ts/tools-package/src/index.ts'],
   );
+  const sharedRustQueryCore = ['src/shared/rust-query-core/query_core.rs'];
+  const nativeRust = extractRustSurface(
+    'src/sdks/rust/src/lib.rs',
+    'src/sdks/rust/src',
+    'oliphaunt',
+    sharedRustQueryCore,
+  );
+  const nativeRustBrokerSeam = extractRustModuleSurface(
+    [
+      'src/sdks/rust/src/broker_support.rs',
+      'src/sdks/rust/src/ipc.rs',
+    ],
+    'src/sdks/rust/src',
+    'oliphaunt::__private',
+  );
+  const nativeRustPackagingNames = new Set([
+    'NativePackagingCatalogProfile',
+    'NativePackagingResources',
+    'NativePackagingRuntime',
+    'materialize_native_packaging_resources()',
+  ]);
+  const nativeRustPackagingSeam = extractRustModuleSurface(
+    ['src/sdks/rust/src/liboliphaunt/mod.rs'],
+    'src/sdks/rust/src/liboliphaunt',
+    'oliphaunt::__private::packaging',
+  ).filter(symbol =>
+    nativeRustPackagingNames.has(
+      symbol.slice('oliphaunt::__private::packaging::'.length),
+    ),
+  );
+  const wasixRust = extractRustSurface(
+    'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs',
+    'src/bindings/wasix-rust/crates/oliphaunt-wasix/src',
+    'oliphaunt_wasix',
+    sharedRustQueryCore,
+  );
+  requireRustQueryCoreSurface(nativeRust, 'oliphaunt');
+  requireRustQueryCoreSurface(wasixRust, 'oliphaunt_wasix');
+  rejectRustRootSymbols(nativeRust, 'oliphaunt', [
+    'BrokerIpcRequest',
+    'NativePackagingCatalogProfile',
+    'NativePackagingResources',
+    'NativePackagingRuntime',
+    'broker_ipc_read_request',
+    'materialize_native_packaging_resources',
+  ]);
+  for (const required of [
+    'oliphaunt::__private::open()',
+    'oliphaunt::__private::BrokerSession.exec_protocol_raw_stream()',
+    'oliphaunt::__private::broker_ipc_read_request()',
+  ]) {
+    if (!nativeRustBrokerSeam.includes(required)) {
+      throw new Error(`Rust broker seam inventory is missing ${required}`);
+    }
+  }
+  for (const required of [
+    'oliphaunt::__private::packaging::NativePackagingResources',
+    'oliphaunt::__private::packaging::materialize_native_packaging_resources()',
+  ]) {
+    if (!nativeRustPackagingSeam.includes(required)) {
+      throw new Error(`Rust packaging seam inventory is missing ${required}`);
+    }
+  }
+  rejectRustRootSymbols(wasixRust, 'oliphaunt_wasix', [
+    'PgDumpOptions',
+    'PostgresToolError',
+    'PsqlOptions',
+    'pg_dump',
+    'psql',
+  ]);
   let output = `<!-- Generated by tools/policy/generate-sdk-api-surface.mjs; do not edit by hand. -->\n`;
   output += `# SDK API Surface Inventory\n\n`;
-  output += `This no-build inventory makes public SDK drift visible in review. It is a symbol-level guard, not a replacement for full language reference documentation.\n\n`;
+  output += `This no-build public type-and-method-name inventory makes obvious SDK drift visible in review. It intentionally does not model signatures, fields, enum variants, or JavaScript default exports; compile-time public-API tests and package-shape checks own those contracts. It is not a replacement for full language reference documentation.\n\n`;
   output += `Regenerate with:\n\n`;
   output += `\`\`\`sh\n`;
   output += `node tools/policy/generate-sdk-api-surface.mjs --write\n`;
   output += `\`\`\`\n\n`;
   output += `## Rust: oliphaunt\n\n`;
-  output += markdownList(extractRustSurface());
+  output += markdownList(nativeRust);
+  output += `\n### Version-locked broker seam (not application API)\n\n`;
+  output += `The separately built \`oliphaunt-broker\` executable enables \`__internal-broker-helper\` and consumes this exact-version seam. It is absent from default builds and may change only in lockstep with that executable.\n\n`;
+  output += markdownList(nativeRustBrokerSeam);
+  output += `\n### Version-locked native packaging seam (not application API)\n\n`;
+  output += `The unpublished workspace packaging tool enables \`internal-native-packaging\` and consumes \`oliphaunt::__private::packaging\`. It is absent from default builds and may change only in lockstep with that tool.\n\n`;
+  output += markdownList(nativeRustPackagingSeam);
   output += `\n## Rust build integration: oliphaunt-build\n\n`;
   output += markdownList(
     extractRustModuleSurface(
@@ -726,11 +876,7 @@ function render() {
   output += `\n## Rust WASIX: oliphaunt-wasix\n\n`;
   output += markdownList(
     sorted([
-      ...extractRustSurface(
-        'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs',
-        'src/bindings/wasix-rust/crates/oliphaunt-wasix/src',
-        'oliphaunt_wasix',
-      ),
+      ...wasixRust,
       ...extractRustModuleSurface(
         [
           'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/extensions.rs',
@@ -745,6 +891,16 @@ function render() {
         'oliphaunt_wasix::tools',
       ),
     ]),
+  );
+  output += `\n### Explicit blocking module: oliphaunt_wasix::blocking\n\n`;
+  output += markdownList(extractWasixRustBlockingSurface());
+  output += `\n### Explicit blocking tools: oliphaunt_wasix::blocking::tools\n\n`;
+  output += markdownList(
+    extractRustModuleSurface(
+      ['src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/tools.rs'],
+      'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt',
+      'oliphaunt_wasix::blocking::tools',
+    ),
   );
   output += `\n## Native C ABI: liboliphaunt\n\n`;
   output += `### Types\n\n`;
@@ -807,6 +963,13 @@ function render() {
   output += markdownList(wasixTs.values);
   output += `\n### Members\n\n`;
   output += markdownList(wasixTs.members);
+  output += `\n### Blocking subpath: @oliphaunt/wasix-ts/blocking\n\n`;
+  output += `#### Types\n\n`;
+  output += markdownList(wasixBlockingTs.types);
+  output += `\n#### Values\n\n`;
+  output += markdownList(wasixBlockingTs.values);
+  output += `\n#### Members\n\n`;
+  output += markdownList(wasixBlockingTs.members);
   output += `\n### Storage subpath: @oliphaunt/wasix-ts/storage/indexed-db\n\n`;
   output += markdownList([...wasixIndexedDb.types, ...wasixIndexedDb.values]);
   output += `\n### Storage subpath: @oliphaunt/wasix-ts/storage/opfs\n\n`;

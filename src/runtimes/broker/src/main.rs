@@ -6,7 +6,7 @@ use std::os::unix::net::UnixListener;
 use std::process;
 use std::thread;
 
-use oliphaunt::{Extension, broker_support};
+use oliphaunt::{__private as broker_support, Extension};
 
 const ENV_BROKER_AUTH_TOKEN: &str = "OLIPHAUNT_BROKER_AUTH_TOKEN";
 const DEFAULT_USERNAME: &str = "postgres";
@@ -46,39 +46,36 @@ fn run() -> oliphaunt::Result<()> {
     let mut stream = listener.accept()?;
     authenticate_client(&mut stream, &args.auth_token)?;
     loop {
-        let request = oliphaunt::broker_ipc_read_request(&mut stream)?;
+        let request = broker_support::broker_ipc_read_request(&mut stream)?;
         match request {
-            oliphaunt::BrokerIpcRequest::Authenticate(_) => {
-                oliphaunt::broker_ipc_write_error(
+            broker_support::BrokerIpcRequest::Authenticate(_) => {
+                broker_support::broker_ipc_write_error(
                     &mut stream,
                     "broker client is already authenticated".to_owned(),
                 )?;
                 break;
             }
-            oliphaunt::BrokerIpcRequest::ExecProtocol(bytes) => {
-                write_broker_response(&mut stream, session.exec_protocol(bytes))?;
+            broker_support::BrokerIpcRequest::ExecProtocol(bytes) => {
+                write_broker_response(&mut stream, session.exec_protocol_raw(bytes))?;
             }
-            oliphaunt::BrokerIpcRequest::ExecProtocolStream(bytes) => {
-                let result = session.exec_protocol_stream(bytes, &mut |chunk| {
-                    oliphaunt::broker_ipc_write_chunk(&mut stream, chunk)
+            broker_support::BrokerIpcRequest::ExecProtocolStream(bytes) => {
+                let result = session.exec_protocol_raw_stream(bytes, &mut |chunk| {
+                    broker_support::broker_ipc_write_chunk(&mut stream, chunk)
                 });
                 match result {
-                    Ok(()) => oliphaunt::broker_ipc_write_ok(&mut stream, Vec::new())?,
+                    Ok(()) => broker_support::broker_ipc_write_ok(&mut stream, Vec::new())?,
                     Err(error) => {
-                        oliphaunt::broker_ipc_write_error(&mut stream, error.to_string())?
+                        broker_support::broker_ipc_write_error(&mut stream, error.to_string())?
                     }
                 }
             }
-            oliphaunt::BrokerIpcRequest::ExecSimpleQuery(sql) => {
+            broker_support::BrokerIpcRequest::ExecSimpleQuery(sql) => {
                 write_broker_response(&mut stream, session.execute(&sql))?;
             }
-            oliphaunt::BrokerIpcRequest::Checkpoint => {
-                write_broker_response(&mut stream, session.checkpoint().map(|()| Vec::new()))?;
-            }
-            oliphaunt::BrokerIpcRequest::Backup => {
+            broker_support::BrokerIpcRequest::Backup => {
                 write_broker_response(&mut stream, session.backup())?;
             }
-            oliphaunt::BrokerIpcRequest::Cancel => {
+            broker_support::BrokerIpcRequest::Cancel => {
                 write_broker_response(
                     &mut stream,
                     Err(oliphaunt::Error::Engine(
@@ -86,7 +83,7 @@ fn run() -> oliphaunt::Result<()> {
                     )),
                 )?;
             }
-            oliphaunt::BrokerIpcRequest::Close => {
+            broker_support::BrokerIpcRequest::Close => {
                 let result = session.close().map(|()| Vec::new());
                 write_broker_response(&mut stream, result)?;
                 break;
@@ -129,15 +126,17 @@ fn handle_cancel_client(
     expected_token: &str,
 ) -> oliphaunt::Result<()> {
     authenticate_client(stream, expected_token)?;
-    match oliphaunt::broker_ipc_read_request(stream)? {
-        oliphaunt::BrokerIpcRequest::Cancel => {
+    match broker_support::broker_ipc_read_request(stream)? {
+        broker_support::BrokerIpcRequest::Cancel => {
             write_broker_response(stream, cancel.cancel().map(|()| Vec::new()))
         }
-        oliphaunt::BrokerIpcRequest::Authenticate(_) => oliphaunt::broker_ipc_write_error(
-            stream,
-            "broker cancel client is already authenticated".to_owned(),
-        ),
-        _ => oliphaunt::broker_ipc_write_error(
+        broker_support::BrokerIpcRequest::Authenticate(_) => {
+            broker_support::broker_ipc_write_error(
+                stream,
+                "broker cancel client is already authenticated".to_owned(),
+            )
+        }
+        _ => broker_support::broker_ipc_write_error(
             stream,
             "broker cancel endpoint only accepts cancellation requests".to_owned(),
         ),
@@ -148,12 +147,12 @@ fn authenticate_client(
     stream: &mut Box<dyn BrokerTransport>,
     expected_token: &str,
 ) -> oliphaunt::Result<()> {
-    match oliphaunt::broker_ipc_read_request(stream)? {
-        oliphaunt::BrokerIpcRequest::Authenticate(token) if token == expected_token => {
-            oliphaunt::broker_ipc_write_ok(stream, Vec::new())
+    match broker_support::broker_ipc_read_request(stream)? {
+        broker_support::BrokerIpcRequest::Authenticate(token) if token == expected_token => {
+            broker_support::broker_ipc_write_ok(stream, Vec::new())
         }
-        oliphaunt::BrokerIpcRequest::Authenticate(_) => {
-            oliphaunt::broker_ipc_write_error(
+        broker_support::BrokerIpcRequest::Authenticate(_) => {
+            broker_support::broker_ipc_write_error(
                 stream,
                 "invalid broker authentication token".to_owned(),
             )?;
@@ -162,7 +161,7 @@ fn authenticate_client(
             ))
         }
         _ => {
-            oliphaunt::broker_ipc_write_error(
+            broker_support::broker_ipc_write_error(
                 stream,
                 "broker client must authenticate before sending requests".to_owned(),
             )?;
@@ -178,8 +177,8 @@ fn write_broker_response(
     result: oliphaunt::Result<Vec<u8>>,
 ) -> oliphaunt::Result<()> {
     match result {
-        Ok(bytes) => oliphaunt::broker_ipc_write_ok(stream, bytes),
-        Err(error) => oliphaunt::broker_ipc_write_error(stream, error.to_string()),
+        Ok(bytes) => broker_support::broker_ipc_write_ok(stream, bytes),
+        Err(error) => broker_support::broker_ipc_write_error(stream, error.to_string()),
     }
 }
 

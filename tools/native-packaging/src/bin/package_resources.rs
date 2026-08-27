@@ -1156,18 +1156,15 @@ fn print_extension_catalog(args: &PackageArgs) -> oliphaunt::Result<()> {
         let dependencies = entry.dependencies.join(",");
         let shared_preload = entry.shared_preload_libraries.join(",");
         println!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t-\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\tyes\tyes\t{}\t-\t{}\tfirst-party",
             entry.sql_name,
             entry.postgres_major,
             yes_no(entry.creates_extension),
             entry.native_module_stem.as_deref().unwrap_or("-"),
             empty_as_dash(&dependencies),
             empty_as_dash(&shared_preload),
-            "yes",
-            "yes",
             yes_no(entry.native_module_stem.is_some()),
             empty_as_dash(&entry.data_files.join(",")),
-            "first-party",
         );
     }
     if !args.extension_indexes.is_empty() {

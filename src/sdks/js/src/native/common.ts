@@ -1,4 +1,4 @@
-export const ABI_VERSION = 8;
+export const ABI_VERSION = 9;
 export const LIBOLIPHAUNT_RUNTIME_DIR_ENV = 'OLIPHAUNT_RUNTIME_DIR';
 export const OLIPHAUNT_ICU_DATA_DIR_ENV = 'OLIPHAUNT_ICU_DATA_DIR';
 export const ICU_DATA_ENV = 'ICU_DATA';

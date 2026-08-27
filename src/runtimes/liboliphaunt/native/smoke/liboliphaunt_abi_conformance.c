@@ -4,6 +4,9 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#ifndef _WIN32
+#include <pthread.h>
+#endif
 
 #define CHECK(condition, message) \
     do { \
@@ -13,7 +16,7 @@
         } \
     } while (0)
 
-_Static_assert(OLIPHAUNT_ABI_VERSION == 8u, "unexpected liboliphaunt ABI version");
+_Static_assert(OLIPHAUNT_ABI_VERSION == 9u, "unexpected liboliphaunt ABI version");
 _Static_assert(OLIPHAUNT_STATIC_EXTENSION_ABI_VERSION == 1u, "unexpected static extension ABI version");
 _Static_assert(OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK == 1ull, "unexpected external root lock flag");
 _Static_assert(offsetof(OliphauntConfig, abi_version) == 0, "OliphauntConfig must start with abi_version");
@@ -43,18 +46,65 @@ static int32_t stream_callback(void *context, const uint8_t *data, size_t len) {
 
 static uint8_t static_extension_symbol_storage;
 
+#ifndef _WIN32
+typedef struct ErrorRaceGate {
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    unsigned int arrived;
+    int released;
+} ErrorRaceGate;
+
+typedef struct ErrorRaceWorker {
+    ErrorRaceGate *gate;
+    int operation;
+    int operation_failed;
+    size_t required;
+    size_t copied_length;
+    size_t truncated_length;
+    char copied[128];
+    char truncated[4];
+} ErrorRaceWorker;
+
+static void *run_error_race_worker(void *opaque) {
+    ErrorRaceWorker *worker = (ErrorRaceWorker *)opaque;
+    int32_t rc = worker->operation == 0
+        ? oliphaunt_cancel(NULL)
+        : oliphaunt_restore(NULL);
+    worker->operation_failed = rc != 0;
+    worker->required = oliphaunt_copy_last_error(NULL, NULL, 0);
+
+    pthread_mutex_lock(&worker->gate->mutex);
+    worker->gate->arrived++;
+    pthread_cond_broadcast(&worker->gate->condition);
+    while (!worker->gate->released) {
+        pthread_cond_wait(&worker->gate->condition, &worker->gate->mutex);
+    }
+    pthread_mutex_unlock(&worker->gate->mutex);
+
+    worker->copied_length = oliphaunt_copy_last_error(
+        NULL,
+        worker->copied,
+        sizeof(worker->copied));
+    worker->truncated_length = oliphaunt_copy_last_error(
+        NULL,
+        worker->truncated,
+        sizeof(worker->truncated));
+    return NULL;
+}
+#endif
+
 int main(void) {
     int32_t (*init_fn)(const OliphauntConfig *, OliphauntHandle **) = oliphaunt_init;
     int32_t (*exec_protocol_fn)(OliphauntHandle *, const uint8_t *, size_t, OliphauntResponse *) =
         oliphaunt_exec_protocol;
     int32_t (*exec_simple_query_fn)(OliphauntHandle *, const char *, size_t, OliphauntResponse *) =
         oliphaunt_exec_simple_query;
-    int32_t (*exec_protocol_stream_fn)(
+    int32_t (*exec_protocol_raw_stream_fn)(
         OliphauntHandle *,
         const uint8_t *,
         size_t,
         OliphauntStreamCallback,
-        void *) = oliphaunt_exec_protocol_stream;
+        void *) = oliphaunt_exec_protocol_raw_stream;
     int32_t (*backup_fn)(OliphauntHandle *, OliphauntResponse *) =
         oliphaunt_backup;
     int32_t (*restore_fn)(const OliphauntRestoreOptions *) = oliphaunt_restore;
@@ -66,6 +116,8 @@ int main(void) {
     int32_t (*close_fn)(OliphauntHandle *) = oliphaunt_close;
     int32_t (*register_static_extensions_fn)(const OliphauntStaticExtension *, size_t) =
         oliphaunt_register_static_extensions;
+    size_t (*copy_last_error_fn)(OliphauntHandle *, char *, size_t) =
+        oliphaunt_copy_last_error;
     const char *(*last_error_fn)(OliphauntHandle *) = oliphaunt_last_error;
     const char *(*version_fn)(void) = oliphaunt_version;
     void (*free_response_fn)(OliphauntResponse *) = oliphaunt_free_response;
@@ -74,7 +126,7 @@ int main(void) {
     CHECK(init_fn != NULL, "oliphaunt_init must link");
     CHECK(exec_protocol_fn != NULL, "oliphaunt_exec_protocol must link");
     CHECK(exec_simple_query_fn != NULL, "oliphaunt_exec_simple_query must link");
-    CHECK(exec_protocol_stream_fn != NULL, "oliphaunt_exec_protocol_stream must link");
+    CHECK(exec_protocol_raw_stream_fn != NULL, "oliphaunt_exec_protocol_raw_stream must link");
     CHECK(backup_fn != NULL, "oliphaunt_backup must link");
     CHECK(restore_fn != NULL, "oliphaunt_restore must link");
     CHECK(cancel_fn != NULL, "oliphaunt_cancel must link");
@@ -83,6 +135,7 @@ int main(void) {
     CHECK(close_if_generation_fn != NULL, "oliphaunt_close_if_generation must link");
     CHECK(close_fn != NULL, "oliphaunt_close must link");
     CHECK(register_static_extensions_fn != NULL, "oliphaunt_register_static_extensions must link");
+    CHECK(copy_last_error_fn != NULL, "oliphaunt_copy_last_error must link");
     CHECK(last_error_fn != NULL, "oliphaunt_last_error must link");
     CHECK(version_fn != NULL, "oliphaunt_version must link");
     CHECK(free_response_fn != NULL, "oliphaunt_free_response must link");
@@ -141,14 +194,86 @@ int main(void) {
     CHECK(close_if_generation_fn(0) == -1,
           "oliphaunt_close_if_generation(0) must reject generation zero");
     CHECK(cancel_fn(NULL) != 0, "oliphaunt_cancel(NULL) must fail");
+    char copied_error[256] = {0};
+    size_t copied_error_len = copy_last_error_fn(NULL, copied_error, sizeof(copied_error));
+    CHECK(copied_error_len == strlen(copied_error),
+          "oliphaunt_copy_last_error must return the full error length");
+    CHECK(strstr(copied_error, "invalid oliphaunt_cancel arguments") != NULL,
+          "oliphaunt_copy_last_error must copy the global error");
+    char truncated_error[4] = {'x', 'x', 'x', 'x'};
+    CHECK(copy_last_error_fn(NULL, truncated_error, sizeof(truncated_error)) == copied_error_len,
+          "oliphaunt_copy_last_error must report the untruncated length");
+    CHECK(truncated_error[sizeof(truncated_error) - 1] == '\0',
+          "oliphaunt_copy_last_error must terminate truncated output");
     const char *error = last_error_fn(NULL);
     CHECK(error != NULL && strstr(error, "invalid oliphaunt_cancel arguments") != NULL,
           "oliphaunt_cancel(NULL) must set a global error");
 
+#ifndef _WIN32
+    ErrorRaceGate error_gate;
+    CHECK(pthread_mutex_init(&error_gate.mutex, NULL) == 0,
+          "error-attribution race mutex must initialize");
+    CHECK(pthread_cond_init(&error_gate.condition, NULL) == 0,
+          "error-attribution race condition must initialize");
+    error_gate.arrived = 0;
+    error_gate.released = 0;
+    ErrorRaceWorker error_workers[2] = {
+        {.gate = &error_gate, .operation = 0},
+        {.gate = &error_gate, .operation = 1},
+    };
+    pthread_t error_threads[2];
+    CHECK(pthread_create(&error_threads[0], NULL, run_error_race_worker, &error_workers[0]) == 0,
+          "first error-attribution worker must start");
+    CHECK(pthread_create(&error_threads[1], NULL, run_error_race_worker, &error_workers[1]) == 0,
+          "second error-attribution worker must start");
+
+    pthread_mutex_lock(&error_gate.mutex);
+    while (error_gate.arrived != 2) {
+        pthread_cond_wait(&error_gate.condition, &error_gate.mutex);
+    }
+    pthread_mutex_unlock(&error_gate.mutex);
+
+    /* Deterministically replace the shared global error after both worker
+     * operations failed and completed their size probes. Their later copies
+     * must still observe their own operation-local snapshots. */
+    CHECK(close_if_generation_fn(0) == -1,
+          "global error overwrite must reject generation zero");
+
+    pthread_mutex_lock(&error_gate.mutex);
+    error_gate.released = 1;
+    pthread_cond_broadcast(&error_gate.condition);
+    pthread_mutex_unlock(&error_gate.mutex);
+    CHECK(pthread_join(error_threads[0], NULL) == 0,
+          "first error-attribution worker must join");
+    CHECK(pthread_join(error_threads[1], NULL) == 0,
+          "second error-attribution worker must join");
+    pthread_cond_destroy(&error_gate.condition);
+    pthread_mutex_destroy(&error_gate.mutex);
+
+    static const char *expected_worker_errors[2] = {
+        "invalid oliphaunt_cancel arguments",
+        "invalid oliphaunt_restore options",
+    };
+    for (size_t i = 0; i < 2; i++) {
+        CHECK(error_workers[i].operation_failed,
+              "concurrent error-attribution operation must fail");
+        CHECK(error_workers[i].required == strlen(expected_worker_errors[i]),
+              "size probe must report the operation-local error length");
+        CHECK(error_workers[i].copied_length == error_workers[i].required,
+              "copy after a global overwrite must preserve the probed length");
+        CHECK(strcmp(error_workers[i].copied, expected_worker_errors[i]) == 0,
+              "copy after a global overwrite must preserve the operation-local error");
+        CHECK(error_workers[i].truncated_length == error_workers[i].required,
+              "repeated truncated copy must preserve the operation-local length");
+        CHECK(error_workers[i].truncated[sizeof(error_workers[i].truncated) - 1] == '\0',
+              "repeated truncated copy must remain NUL-terminated");
+    }
+#endif
+
     (void)init_fn;
     (void)exec_protocol_fn;
     (void)exec_simple_query_fn;
-    (void)exec_protocol_stream_fn;
+    (void)exec_protocol_raw_stream_fn;
     (void)backup_fn;
     (void)restore_fn;
     (void)register_static_extensions_fn;

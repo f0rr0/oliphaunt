@@ -46,6 +46,11 @@ try {
     pathToFileURL(resolve(packageRoot(packed.packages.binding.name), `lib/index.${runtimeName}.js`))
       .href
   );
+  const { default: BlockingOliphaunt } = await import(
+    pathToFileURL(
+      resolve(packageRoot(packed.packages.binding.name), `lib/blocking.${runtimeName}.js`),
+    ).href
+  );
   const { PostgresToolError, pgDump, psql } = await import(
     pathToFileURL(resolve(packageRoot(packed.packages.toolsFacade.name), 'lib/index.js')).href
   );
@@ -57,7 +62,14 @@ try {
   );
 
   console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: logical tools`);
-  await verifyLogicalTools({ Oliphaunt, PostgresToolError, pgDump, psql, extension });
+  await verifyLogicalTools({
+    Oliphaunt,
+    BlockingOliphaunt,
+    PostgresToolError,
+    pgDump,
+    psql,
+    extension,
+  });
   console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: TCP server`);
   await verifyServer(openServer, { transport: 'tcp' });
   if (process.platform !== 'win32') {
@@ -75,8 +87,15 @@ try {
 
 console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: PASS`);
 
-async function verifyLogicalTools({ Oliphaunt, PostgresToolError, pgDump, psql, extension }) {
-  const source = await Oliphaunt.open({ execution: 'worker', extensions: [extension] });
+async function verifyLogicalTools({
+  Oliphaunt,
+  BlockingOliphaunt,
+  PostgresToolError,
+  pgDump,
+  psql,
+  extension,
+}) {
+  const source = await Oliphaunt.open({ extensions: [extension] });
   let sql;
   try {
     console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: psql seed`);
@@ -105,14 +124,14 @@ async function verifyLogicalTools({ Oliphaunt, PostgresToolError, pgDump, psql, 
   }
 
   if (runtimeName === 'node') {
-    await verifyDirectPgDump(Oliphaunt, pgDump);
+    await verifyBlockingPgDump(BlockingOliphaunt, pgDump);
   }
 
-  const target = await Oliphaunt.open({ execution: 'worker', extensions: [extension] });
+  const target = await Oliphaunt.open({ extensions: [extension] });
   try {
     console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: psql restore`);
     await psql(target, { script: sql });
-    const result = await target.query(verify);
+    const result = await target.queryRaw(verify);
     const expected = fixture.expected;
     const actual = {
       rows: Number(result.getText(0, 'rows')),
@@ -132,21 +151,23 @@ async function verifyLogicalTools({ Oliphaunt, PostgresToolError, pgDump, psql, 
   }
 }
 
-async function verifyDirectPgDump(Oliphaunt, pgDump) {
-  console.log('WASIX TypeScript node tools/server smoke: direct pg_dump');
-  const database = await Oliphaunt.open({ execution: 'direct' });
+async function verifyBlockingPgDump(BlockingOliphaunt, pgDump) {
+  console.log('WASIX TypeScript node tools/server smoke: blocking pg_dump');
+  const database = await BlockingOliphaunt.open();
   try {
     await database.execute(
-      'CREATE TABLE direct_dump_probe (id integer PRIMARY KEY, value text NOT NULL)',
+      'CREATE TABLE blocking_dump_probe (id integer PRIMARY KEY, value text NOT NULL)',
     );
-    await database.execute("INSERT INTO direct_dump_probe VALUES (1, 'same-realm')");
+    await database.execute("INSERT INTO blocking_dump_probe VALUES (1, 'same-realm')");
     const sql = await pgDump(database);
-    if (!sql.includes('COPY public.direct_dump_probe') || !sql.includes('same-realm')) {
-      throw new Error('direct pg_dump did not preserve standard plain COPY output');
+    if (!sql.includes('COPY public.blocking_dump_probe') || !sql.includes('same-realm')) {
+      throw new Error('blocking pg_dump did not preserve standard plain COPY output');
     }
-    const result = await database.query('SELECT count(*)::int AS rows FROM direct_dump_probe');
+    const result = await database.queryRaw(
+      'SELECT count(*)::int AS rows FROM blocking_dump_probe',
+    );
     if (result.getText(0, 'rows') !== '1') {
-      throw new Error('direct database was not usable after pg_dump');
+      throw new Error('blocking database was not usable after pg_dump');
     }
   } finally {
     await database.close();

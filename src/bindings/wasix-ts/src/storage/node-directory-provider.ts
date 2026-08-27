@@ -90,9 +90,10 @@ export async function restoreNodeDirectoryStorage(
   path: string,
   snapshot: StoredSnapshot,
   identity: WasixPhysicalIdentity,
+  ownerToken = randomBytes(16).toString('hex'),
 ): Promise<void> {
   const requested = path.startsWith('file:') ? fileURLToPath(path) : path;
-  const lock = await acquireNodeDirectoryLock(requested, randomBytes(16).toString('hex'));
+  const lock = await acquireNodeDirectoryLock(requested, ownerToken);
   const target = lock.root;
   const parent = dirname(target);
   const staging = `${target}.oliphaunt-restore-${randomBytes(8).toString('hex')}`;

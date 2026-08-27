@@ -10,14 +10,14 @@ async function main(): Promise<void> {
   const libraryPath = requiredEnv('LIBOLIPHAUNT_PATH');
   await assertNativeDatabaseContract(
     Oliphaunt,
-    { execution: 'direct', libraryPath },
+    { topology: 'direct', libraryPath },
     'node-direct',
   );
   const brokerExecutable = process.env.OLIPHAUNT_BROKER;
   if (brokerExecutable) {
     await assertNativeDatabaseContract(
       Oliphaunt,
-      { execution: 'broker', libraryPath, brokerExecutable },
+      { topology: 'broker', libraryPath, brokerExecutable },
       'broker',
     );
   }
@@ -38,16 +38,19 @@ async function main(): Promise<void> {
         try {
           assert.match(server.connectionString, /^postgresql:\/\//u);
           if (index === 0) {
-            assert.equal((await server.query('SELECT 1 AS value')).getText(0, 'value'), '1');
+            assert.equal(
+              (await server.query<{ value: number }>('SELECT 1 AS value')).rows[0]?.value,
+              1,
+            );
             assert.equal('backup' in server, false);
           }
           const identifier = (
-            await server.query(
+            await server.query<{ system_identifier: string }>(
               'SELECT system_identifier::text AS system_identifier FROM pg_control_system()',
             )
-          ).getText(0, 'system_identifier');
+          ).rows[0]?.system_identifier;
           assert.match(identifier ?? '', /^\d+$/u);
-          assert.ok(identifier !== null);
+          assert.ok(identifier !== undefined);
           systemIdentifiers.push(identifier);
         } finally {
           await server.close();

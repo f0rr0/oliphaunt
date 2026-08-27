@@ -1,5 +1,6 @@
 import {
   WasixDatabaseImpl,
+  createWasixDeferred,
   normalizeWasixDatabaseIdentity,
   type WasixDatabaseIdentity,
   type WasixDatabaseSession,
@@ -38,10 +39,10 @@ export class WorkerRpc {
     number,
     {
       resolve: (value: WorkerResponseValue) => void;
-      reject: (error: Error) => void;
+      reject: (error: unknown) => void;
       onChunk?: (chunk: Uint8Array) => void;
       control?: Int32Array;
-      callbackFailure?: Error;
+      callbackFailure?: { error: unknown };
     }
   >();
   #nextId = 1;
@@ -59,7 +60,7 @@ export class WorkerRpc {
         try {
           pending.onChunk?.(message.value);
         } catch (error) {
-          pending.callbackFailure = error instanceof Error ? error : new Error(String(error));
+          pending.callbackFailure ??= { error };
           if (pending.control !== undefined) {
             Atomics.store(pending.control, STREAM_FAILED, 1);
           }
@@ -73,7 +74,7 @@ export class WorkerRpc {
       }
       this.#pending.delete(message.id);
       if (pending.callbackFailure !== undefined) {
-        pending.reject(pending.callbackFailure);
+        pending.reject(pending.callbackFailure.error);
         return;
       }
       if (message.ok) {
@@ -187,9 +188,11 @@ export async function openWorkerDatabase(
 }
 
 class WorkerDatabaseSession implements WasixDatabaseSession {
-  readonly isolated = true;
+  readonly supportsProtocolConnections = true;
   readonly identity: WasixDatabaseIdentity;
   readonly #rpc: WorkerRpc;
+  #closed = false;
+  #closeAttempt: Promise<void> | undefined;
 
   constructor(rpc: WorkerRpc, options: SerializedOpenOptions) {
     this.#rpc = rpc;
@@ -197,6 +200,7 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
   }
 
   async exec(input: Uint8Array, persistence: WasixPersistenceMode = 'sync'): Promise<Uint8Array> {
+    this.#assertOpen();
     const response = await this.#rpc.request({ method: 'exec', input, persistence }, [
       input.buffer,
     ]);
@@ -211,14 +215,17 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
     onChunk: (chunk: Uint8Array) => void,
     persistence: WasixPersistenceMode = 'sync',
   ): Promise<void> {
+    this.#assertOpen();
     return this.#rpc.stream(input, persistence, onChunk);
   }
 
   async sync(boundary: WasixStorageSyncBoundary): Promise<void> {
+    this.#assertOpen();
     await this.#rpc.request({ method: 'sync', boundary });
   }
 
   async backup(): Promise<Uint8Array> {
+    this.#assertOpen();
     const response = await this.#rpc.request({ method: 'backup' });
     if (!(response instanceof Uint8Array)) {
       throw new Error('Oliphaunt WASIX worker returned an invalid physical archive');
@@ -227,6 +234,7 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
   }
 
   async runPgDump(options: WasixPgDumpProcessOptions): Promise<WasixToolProcessResult> {
+    this.#assertOpen();
     const response = await this.#rpc.request({
       method: 'runPgDump',
       tool: options.tool,
@@ -242,33 +250,63 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
     connection: WasixProtocolConnection,
     mode: WasixProtocolConnectionMode,
   ): Promise<void> {
+    this.#assertOpen();
     await this.#rpc.request({ method: 'serve', connection, mode });
   }
 
   close(): Promise<void> {
-    return this.#closeOrderly();
+    if (this.#closeAttempt !== undefined) return this.#closeAttempt;
+    this.#closed = true;
+    const attempt = createWasixDeferred<void>();
+    this.#closeAttempt = attempt.promise;
+    void this.#closeOrderly().then(attempt.resolve, attempt.reject);
+    return attempt.promise;
   }
 
   abort(): Promise<void> {
-    return this.#rpc.terminate();
+    this.#closed = true;
+    const termination = this.#rpc.terminate();
+    // A deadline can abort the transport before queued orderly close reaches
+    // this session. In that case close must observe the same terminal outcome
+    // instead of posting a futile request to the destroyed Worker.
+    this.#closeAttempt ??= termination;
+    return termination;
   }
 
   async #closeOrderly(): Promise<void> {
+    let requestFailed = false;
     let requestFailure: unknown;
     try {
       await this.#rpc.request({ method: 'close' });
     } catch (error) {
+      requestFailed = true;
       requestFailure = error;
     }
+    let terminationFailed = false;
+    let terminationFailure: unknown;
     try {
       await this.#rpc.terminate();
-    } catch (terminationFailure) {
-      if (requestFailure === undefined) {
-        throw terminationFailure;
-      }
+    } catch (error) {
+      terminationFailed = true;
+      terminationFailure = error;
     }
-    if (requestFailure !== undefined) {
+    if (requestFailed && terminationFailed) {
+      throw new AggregateError(
+        [requestFailure, terminationFailure],
+        'Oliphaunt WASIX worker close and termination both failed',
+      );
+    }
+    if (requestFailed) {
       throw requestFailure;
+    }
+    if (terminationFailed) {
+      throw terminationFailure;
+    }
+  }
+
+  #assertOpen(): void {
+    if (this.#closed) {
+      throw new Error('Oliphaunt WASIX worker session is closed');
     }
   }
 }

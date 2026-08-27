@@ -45,14 +45,6 @@
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
-    "./protocol": {
-      "types": "./lib/protocol.d.ts",
-      "default": "./lib/protocol.js"
-    },
-    "./query": {
-      "types": "./lib/query.d.ts",
-      "default": "./lib/query.js"
-    },
     "./package.json": {
       "default": "./package.json"
     }

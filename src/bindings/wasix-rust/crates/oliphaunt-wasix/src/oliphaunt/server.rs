@@ -22,6 +22,7 @@ use crate::oliphaunt::config::{PostgresConfig, StartupConfig};
 use crate::oliphaunt::extensions::{
     Extension, postgres_config_with_extension_startup, resolve_extension_set,
 };
+use crate::oliphaunt::lifecycle::{TerminalCloseResult, terminal_close};
 use crate::oliphaunt::proxy::{ActiveConnection, OliphauntProxy};
 use crate::oliphaunt::storage::DatabaseStorage;
 
@@ -40,6 +41,7 @@ pub struct OliphauntServer {
     shutdown: Arc<AtomicBool>,
     active_connection: Arc<ActiveConnection>,
     handle: Option<JoinHandle<Result<()>>>,
+    close_result: Option<TerminalCloseResult>,
     #[cfg(unix)]
     owned_unix_socket: Option<OwnedUnixSocket>,
 }
@@ -101,12 +103,34 @@ impl OliphauntServer {
         }
     }
 
+    /// Whether this blocking server is permanently retired.
+    ///
+    /// The value becomes true when shutdown begins, including when terminal
+    /// cleanup later reports an error. Repeated [`Self::close`] calls replay
+    /// that first terminal result.
+    pub fn is_closed(&self) -> bool {
+        self.shutdown.load(Ordering::SeqCst) || self.close_result.is_some()
+    }
+
     /// Request shutdown and wait for the listener thread to exit.
     ///
     /// Any active client connection is closed before the listener thread is
-    /// joined.
-    pub fn close(mut self) -> crate::Result<()> {
-        crate::error::public_result(self.stop())
+    /// joined. Once stop begins, the server is terminal even when cleanup
+    /// reports an error.
+    pub fn close(&mut self) -> crate::Result<()> {
+        self.owner_close()
+    }
+
+    /// Terminal close boundary used by the asynchronous owner thread.
+    ///
+    /// Once stop begins, later calls replay its exact success or failure.
+    pub(crate) fn owner_close(&mut self) -> crate::Result<()> {
+        if let Some(result) = &self.close_result {
+            return result.clone().map_err(crate::Error::message);
+        }
+        let stopped = self.stop();
+        let result = terminal_close(&mut self.close_result, || stopped);
+        result.map_err(crate::Error::message)
     }
 
     fn stop(&mut self) -> Result<()> {
@@ -144,7 +168,9 @@ impl OliphauntServer {
 
 impl Drop for OliphauntServer {
     fn drop(&mut self) {
-        if let Err(err) = self.stop() {
+        if self.close_result.is_none()
+            && let Err(err) = self.owner_close()
+        {
             tracing::warn!("oliphaunt server shutdown during drop failed: {err:#}");
         }
     }
@@ -303,10 +329,7 @@ impl OliphauntServerBuilder {
 
         let prepared_database = {
             let plan = DatabasePlan::new(self.storage.clone());
-            let initial_username = startup_config.username.clone();
-            run_blocking("oliphaunt-storage-prepare", move || {
-                prepare_database(plan, &initial_username)
-            })?
+            prepare_database(plan, &startup_config.username)?
         };
         let PreparedDatabase {
             workspace,
@@ -357,6 +380,7 @@ impl OliphauntServerBuilder {
             shutdown,
             active_connection,
             handle: Some(handle),
+            close_result: None,
             #[cfg(unix)]
             owned_unix_socket,
         })
@@ -431,19 +455,6 @@ fn unix_connection_string(endpoint: &UnixSocketEndpoint, startup: &StartupConfig
         port = endpoint.port,
         user = percent_encode_uri_component(&startup.username),
     )
-}
-
-fn run_blocking<T, F>(name: &'static str, f: F) -> Result<T>
-where
-    T: Send + 'static,
-    F: FnOnce() -> Result<T> + Send + 'static,
-{
-    thread::Builder::new()
-        .name(name.to_string())
-        .spawn(f)
-        .with_context(|| format!("spawn {name} worker"))?
-        .join()
-        .map_err(|_| anyhow!("{name} worker panicked"))?
 }
 
 #[cfg(unix)]
@@ -813,6 +824,34 @@ mod tests {
     fn default_server_builder_selects_memory() {
         let builder = OliphauntServerBuilder::default();
         assert_eq!(builder.storage, DatabaseStorage::Memory);
+    }
+
+    fn server_with_worker_result(result: Result<()>) -> OliphauntServer {
+        OliphauntServer {
+            _workspace: None,
+            _directory_lock: None,
+            endpoint: ServerEndpoint::Tcp(SocketAddr::from(([127, 0, 0, 1], 0))),
+            startup_config: StartupConfig::default(),
+            shutdown: Arc::new(AtomicBool::new(false)),
+            active_connection: Arc::new(ActiveConnection::default()),
+            handle: Some(thread::spawn(move || result)),
+            close_result: None,
+            #[cfg(unix)]
+            owned_unix_socket: None,
+        }
+    }
+
+    #[test]
+    fn blocking_server_close_keeps_observable_terminal_state_and_replays_failure() {
+        let mut server = server_with_worker_result(Err(anyhow!("injected server stop failure")));
+        assert!(!server.is_closed());
+
+        let first = server.close().unwrap_err().to_string();
+        assert!(server.is_closed());
+        let second = server.close().unwrap_err().to_string();
+
+        assert_eq!(first, second);
+        assert!(first.contains("injected server stop failure"));
     }
 
     #[test]

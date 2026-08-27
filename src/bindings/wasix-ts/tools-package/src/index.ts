@@ -102,7 +102,7 @@ export async function pgDump(
   ]);
 }
 
-/** Run standard non-interactive psql against a worker-backed WASIX database. */
+/** Run standard non-interactive psql against a root-entrypoint WASIX database. */
 export async function psql(
   database: OliphauntDatabase,
   options: PsqlOptions = {},

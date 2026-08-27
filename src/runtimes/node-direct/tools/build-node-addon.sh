@@ -208,11 +208,13 @@ const expected = [
   'open',
   'execProtocolRaw',
   'execSimpleQuery',
-  'execProtocolStream',
+  'execProtocolRawStream',
   'backup',
   'restore',
   'cancel',
   'detach',
+  'createForgottenHandleRecoveryToken',
+  'queueForgottenHandleRecovery',
 ];
 for (const name of expected) {
   if (typeof addon[name] !== 'function') {

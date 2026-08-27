@@ -1,6 +1,7 @@
 #include "COliphaunt.h"
 
 #include <dlfcn.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,7 +13,7 @@ typedef int32_t (*OliphauntExecProtocolFn)(
     const uint8_t *request,
     size_t request_len,
     OliphauntResponse *out);
-typedef int32_t (*OliphauntExecProtocolStreamFn)(
+typedef int32_t (*OliphauntExecProtocolRawStreamFn)(
     OliphauntHandle *handle,
     const uint8_t *request,
     size_t request_len,
@@ -23,7 +24,10 @@ typedef int32_t (*OliphauntDetachFn)(OliphauntHandle *handle);
 typedef int32_t (*OliphauntCloseFn)(OliphauntHandle *handle);
 typedef int32_t (*OliphauntRegisterStaticExtensionsFn)(const OliphauntStaticExtension *extensions, size_t count);
 typedef const OliphauntStaticExtension *(*OliphauntSelectedStaticExtensionsFn)(size_t *count);
-typedef const char *(*OliphauntLastErrorFn)(OliphauntHandle *handle);
+typedef size_t (*OliphauntCopyLastErrorFn)(
+    OliphauntHandle *handle,
+    char *out,
+    size_t capacity);
 typedef const char *(*OliphauntVersionFn)(void);
 typedef void (*OliphauntFreeResponseFn)(OliphauntResponse *response);
 typedef int32_t (*OliphauntBackupFn)(
@@ -36,12 +40,12 @@ typedef struct OliphauntSymbols {
     bool owns_library;
     OliphauntInitFn init;
     OliphauntExecProtocolFn exec_protocol;
-    OliphauntExecProtocolStreamFn exec_protocol_stream;
+    OliphauntExecProtocolRawStreamFn exec_protocol_raw_stream;
     OliphauntCancelFn cancel;
     OliphauntDetachFn detach;
     OliphauntCloseFn close;
     OliphauntRegisterStaticExtensionsFn register_static_extensions;
-    OliphauntLastErrorFn last_error;
+    OliphauntCopyLastErrorFn copy_last_error;
     OliphauntVersionFn version;
     OliphauntFreeResponseFn free_response;
     OliphauntBackupFn backup;
@@ -51,13 +55,22 @@ typedef struct OliphauntSymbols {
 struct OliphauntSession {
     OliphauntSymbols symbols;
     OliphauntHandle *handle;
-    char last_error[1024];
+    pthread_mutex_t error_lock;
+    char *last_error;
 };
 
-static char global_last_error[1024];
+static char *global_last_error;
+static pthread_mutex_t global_error_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void set_global_error(const char *message) {
-    snprintf(global_last_error, sizeof(global_last_error), "%s", message ? message : "unknown liboliphaunt Swift bridge error");
+    const char *resolved = message ? message : "unknown liboliphaunt Swift bridge error";
+    char *owned = strdup(resolved);
+    pthread_mutex_lock(&global_error_lock);
+    if (owned != NULL) {
+        free(global_last_error);
+        global_last_error = owned;
+    }
+    pthread_mutex_unlock(&global_error_lock);
 }
 
 static void set_session_error(OliphauntSession *session, const char *message) {
@@ -65,7 +78,71 @@ static void set_session_error(OliphauntSession *session, const char *message) {
         set_global_error(message);
         return;
     }
-    snprintf(session->last_error, sizeof(session->last_error), "%s", message ? message : "unknown liboliphaunt Swift bridge error");
+    const char *resolved = message ? message : "unknown liboliphaunt Swift bridge error";
+    char *owned = strdup(resolved);
+    pthread_mutex_lock(&session->error_lock);
+    if (owned != NULL) {
+        free(session->last_error);
+        session->last_error = owned;
+    }
+    pthread_mutex_unlock(&session->error_lock);
+}
+
+static char *copy_native_error(
+    OliphauntSymbols *symbols,
+    OliphauntHandle *handle,
+    const char *fallback) {
+    if (symbols == NULL || symbols->copy_last_error == NULL) {
+        return strdup(fallback);
+    }
+    size_t required = symbols->copy_last_error(handle, NULL, 0);
+    for (int attempt = 0; attempt < 3 && required < SIZE_MAX; attempt += 1) {
+        char *message = (char *)calloc(required + 1, 1);
+        if (message == NULL) {
+            break;
+        }
+        size_t current_required = symbols->copy_last_error(
+            handle,
+            message,
+            required + 1);
+        if (current_required <= required) {
+            if (message[0] != '\0') {
+                return message;
+            }
+            free(message);
+            break;
+        }
+        free(message);
+        required = current_required;
+    }
+    return strdup(fallback);
+}
+
+static void set_global_native_error(
+    OliphauntSymbols *symbols,
+    OliphauntHandle *handle,
+    const char *fallback) {
+    char *message = copy_native_error(
+        symbols,
+        handle,
+        fallback);
+    set_global_error(message);
+    free(message);
+}
+
+static void set_session_native_error(
+    OliphauntSession *session,
+    const char *fallback) {
+    if (session == NULL) {
+        set_global_error(fallback);
+        return;
+    }
+    char *message = copy_native_error(
+        &session->symbols,
+        session->handle,
+        fallback);
+    set_session_error(session, message);
+    free(message);
 }
 
 static const char *env_library_path(void) {
@@ -126,12 +203,12 @@ static int load_symbols(const char *library_path, OliphauntSymbols *symbols) {
 
     if (load_symbol(symbols, "oliphaunt_init", (void **)&symbols->init) != 0 ||
         load_symbol(symbols, "oliphaunt_exec_protocol", (void **)&symbols->exec_protocol) != 0 ||
-        load_symbol(symbols, "oliphaunt_exec_protocol_stream", (void **)&symbols->exec_protocol_stream) != 0 ||
+        load_symbol(symbols, "oliphaunt_exec_protocol_raw_stream", (void **)&symbols->exec_protocol_raw_stream) != 0 ||
         load_symbol(symbols, "oliphaunt_cancel", (void **)&symbols->cancel) != 0 ||
         load_symbol(symbols, "oliphaunt_detach", (void **)&symbols->detach) != 0 ||
         load_symbol(symbols, "oliphaunt_close", (void **)&symbols->close) != 0 ||
         load_symbol(symbols, "oliphaunt_register_static_extensions", (void **)&symbols->register_static_extensions) != 0 ||
-        load_symbol(symbols, "oliphaunt_last_error", (void **)&symbols->last_error) != 0 ||
+        load_symbol(symbols, "oliphaunt_copy_last_error", (void **)&symbols->copy_last_error) != 0 ||
         load_symbol(symbols, "oliphaunt_version", (void **)&symbols->version) != 0 ||
         load_symbol(symbols, "oliphaunt_free_response", (void **)&symbols->free_response) != 0 ||
         load_symbol(symbols, "oliphaunt_backup", (void **)&symbols->backup) != 0 ||
@@ -175,8 +252,10 @@ static int register_selected_static_extensions(OliphauntSymbols *symbols) {
         return -1;
     }
     if (symbols->register_static_extensions(extensions, count) != 0) {
-        const char *message = symbols->last_error != NULL ? symbols->last_error(NULL) : NULL;
-        set_global_error(message ? message : "liboliphaunt static extension registration failed");
+        set_global_native_error(
+            symbols,
+            NULL,
+            "liboliphaunt static extension registration failed");
         return -1;
     }
     return 0;
@@ -201,21 +280,28 @@ int32_t oliphaunt_swift_open(
         set_global_error("out of memory allocating OliphauntSession");
         return -1;
     }
+    pthread_mutex_init(&session->error_lock, NULL);
     if (load_symbols(library_path, &session->symbols) != 0) {
+        pthread_mutex_destroy(&session->error_lock);
+        free(session->last_error);
         free(session);
         return -1;
     }
     if (register_selected_static_extensions(&session->symbols) != 0) {
         unload_symbols(&session->symbols);
+        pthread_mutex_destroy(&session->error_lock);
+        free(session->last_error);
         free(session);
         return -1;
     }
     if (session->symbols.init(config, &session->handle) != 0) {
-        const char *error = session->symbols.last_error != NULL
-            ? session->symbols.last_error(session->handle)
-            : NULL;
-        set_global_error(error);
+        set_global_native_error(
+            &session->symbols,
+            session->handle,
+            "unknown liboliphaunt Swift runtime error");
         unload_symbols(&session->symbols);
+        pthread_mutex_destroy(&session->error_lock);
+        free(session->last_error);
         free(session);
         return -1;
     }
@@ -234,30 +320,30 @@ int32_t oliphaunt_swift_exec_protocol(
         return -1;
     }
     int32_t rc = session->symbols.exec_protocol(session->handle, request, request_len, out);
-    if (rc != 0 && session->symbols.last_error != NULL) {
-        set_session_error(session, session->symbols.last_error(session->handle));
+    if (rc != 0) {
+        set_session_native_error(session, "unknown liboliphaunt Swift runtime error");
     }
     return rc;
 }
 
-int32_t oliphaunt_swift_exec_protocol_stream(
+int32_t oliphaunt_swift_exec_protocol_raw_stream(
     OliphauntSession *session,
     const uint8_t *request,
     size_t request_len,
     OliphauntStreamCallback callback,
     void *callback_context) {
     if (session == NULL || callback == NULL) {
-        set_session_error(session, "invalid oliphaunt_swift_exec_protocol_stream arguments");
+        set_session_error(session, "invalid oliphaunt_swift_exec_protocol_raw_stream arguments");
         return -1;
     }
-    int32_t rc = session->symbols.exec_protocol_stream(
+    int32_t rc = session->symbols.exec_protocol_raw_stream(
         session->handle,
         request,
         request_len,
         callback,
         callback_context);
-    if (rc != 0 && session->symbols.last_error != NULL) {
-        set_session_error(session, session->symbols.last_error(session->handle));
+    if (rc != 0) {
+        set_session_native_error(session, "unknown liboliphaunt Swift runtime error");
     }
     return rc;
 }
@@ -268,8 +354,8 @@ int32_t oliphaunt_swift_backup(OliphauntSession *session, OliphauntResponse *out
         return -1;
     }
     int32_t rc = session->symbols.backup(session->handle, out);
-    if (rc != 0 && session->symbols.last_error != NULL) {
-        set_session_error(session, session->symbols.last_error(session->handle));
+    if (rc != 0) {
+        set_session_native_error(session, "unknown liboliphaunt Swift runtime error");
     }
     return rc;
 }
@@ -280,8 +366,11 @@ int32_t oliphaunt_swift_restore(const char *library_path, const OliphauntRestore
         return -1;
     }
     int32_t rc = symbols.restore(options);
-    if (rc != 0 && symbols.last_error != NULL) {
-        set_global_error(symbols.last_error(NULL));
+    if (rc != 0) {
+        set_global_native_error(
+            &symbols,
+            NULL,
+            "unknown liboliphaunt Swift restore error");
     }
     unload_symbols(&symbols);
     return rc;
@@ -293,8 +382,8 @@ int32_t oliphaunt_swift_cancel(OliphauntSession *session) {
         return -1;
     }
     int32_t rc = session->symbols.cancel(session->handle);
-    if (rc != 0 && session->symbols.last_error != NULL) {
-        set_session_error(session, session->symbols.last_error(session->handle));
+    if (rc != 0) {
+        set_session_native_error(session, "unknown liboliphaunt Swift runtime error");
     }
     return rc;
 }
@@ -306,10 +395,11 @@ int32_t oliphaunt_swift_close(OliphauntSession *session) {
     int32_t rc = 0;
     if (session->symbols.detach != NULL && session->handle != NULL) {
         rc = session->symbols.detach(session->handle);
-        if (rc != 0 && session->symbols.last_error != NULL) {
-            const char *message = session->symbols.last_error(session->handle);
-            set_session_error(session, message);
-            set_global_error(message);
+        if (rc != 0) {
+            set_session_native_error(session, "unknown liboliphaunt Swift close error");
+            pthread_mutex_lock(&session->error_lock);
+            set_global_error(session->last_error);
+            pthread_mutex_unlock(&session->error_lock);
         }
         if (rc != 0) {
             return rc;
@@ -317,12 +407,30 @@ int32_t oliphaunt_swift_close(OliphauntSession *session) {
         session->handle = NULL;
     }
     unload_symbols(&session->symbols);
+    free(session->last_error);
+    pthread_mutex_destroy(&session->error_lock);
     free(session);
     return rc;
 }
 
-const char *oliphaunt_swift_last_error(OliphauntSession *session) {
-    return session != NULL ? session->last_error : global_last_error;
+size_t oliphaunt_swift_copy_last_error(
+    OliphauntSession *session,
+    char *out,
+    size_t capacity) {
+    pthread_mutex_t *lock = session != NULL ? &session->error_lock : &global_error_lock;
+    pthread_mutex_lock(lock);
+    const char *message = session != NULL ? session->last_error : global_last_error;
+    if (message == NULL) {
+        message = "unknown liboliphaunt Swift bridge error";
+    }
+    size_t length = strlen(message);
+    if (capacity > 0 && out != NULL) {
+        size_t copied = length < capacity - 1 ? length : capacity - 1;
+        memcpy(out, message, copied);
+        out[copied] = '\0';
+    }
+    pthread_mutex_unlock(lock);
+    return length;
 }
 
 const char *oliphaunt_swift_version(OliphauntSession *session) {

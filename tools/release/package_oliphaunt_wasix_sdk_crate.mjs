@@ -66,6 +66,16 @@ const PACKAGE_FIXTURES = Object.freeze([
     'src/testdata/protocol-query-response-cases.json',
     'src/shared/fixtures/protocol/query-response-cases.json',
   ],
+  [
+    'src/testdata/protocol-structured-sql-cases.json',
+    'src/shared/fixtures/protocol/structured-sql-cases.json',
+  ],
+]);
+const PACKAGE_CANONICAL_SOURCES = Object.freeze([
+  [
+    'src/oliphaunt/query_core.rs',
+    'src/shared/rust-query-core/query_core.rs',
+  ],
 ]);
 
 function fail(message) {
@@ -196,7 +206,10 @@ async function copySourceTree(source, destination, ignoredNames) {
 }
 
 async function validatePackageFixtures(sourceDir) {
-  for (const [packageFixture, canonicalFixture] of PACKAGE_FIXTURES) {
+  for (const [packageFixture, canonicalFixture] of [
+    ...PACKAGE_FIXTURES,
+    ...PACKAGE_CANONICAL_SOURCES,
+  ]) {
     const [packaged, canonical] = await Promise.all([
       fs.readFile(path.join(sourceDir, packageFixture)),
       fs.readFile(path.join(root, canonicalFixture)),
@@ -208,7 +221,10 @@ async function validatePackageFixtures(sourceDir) {
 }
 
 async function stagePackageFixtures(stageDir) {
-  for (const [packageFixture, canonicalFixture] of PACKAGE_FIXTURES) {
+  for (const [packageFixture, canonicalFixture] of [
+    ...PACKAGE_FIXTURES,
+    ...PACKAGE_CANONICAL_SOURCES,
+  ]) {
     const destination = path.join(stageDir, packageFixture);
     await fs.mkdir(path.dirname(destination), { recursive: true });
     await fs.copyFile(path.join(root, canonicalFixture), destination);

@@ -13,11 +13,12 @@ lifecycle, archive parser, or root validation.
 
 ## Public C boundary
 
-ABI version 8 exports one fixed surface from
+ABI version 9 exports one fixed surface from
 `src/runtimes/liboliphaunt/native/include/oliphaunt.h`:
 
 - `oliphaunt_init`, `oliphaunt_detach`, `oliphaunt_close`, generation-guarded
-  close, and version/error access;
+  close, version access, atomic caller-owned error copies, and a thread-local
+  compatibility error accessor;
 - simple query, owned raw protocol response, and callback protocol streaming;
 - `oliphaunt_cancel`;
 - one physical `oliphaunt_backup` and one static `oliphaunt_restore`;

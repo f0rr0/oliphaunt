@@ -60,6 +60,7 @@ report_failure() {
 
 liboliphaunt_sources=(
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_native.c"
+  "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_error.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_runtime.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_protocol.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_config.c"
@@ -298,7 +299,7 @@ artifact_ready() {
   for symbol in \
     _oliphaunt_init \
     _oliphaunt_exec_protocol \
-    _oliphaunt_exec_protocol_stream \
+    _oliphaunt_exec_protocol_raw_stream \
     _oliphaunt_backup \
     _oliphaunt_restore \
     _oliphaunt_cancel \

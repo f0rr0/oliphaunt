@@ -6,4 +6,4 @@ if (!libraryPath) {
   throw new Error('LIBOLIPHAUNT_PATH is required for the TypeScript SDK Deno smoke check');
 }
 
-await assertNativeDatabaseContract(Oliphaunt, { execution: 'direct', libraryPath }, 'deno-direct');
+await assertNativeDatabaseContract(Oliphaunt, { topology: 'direct', libraryPath }, 'deno-direct');

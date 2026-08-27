@@ -4,16 +4,23 @@ import { test } from 'vitest';
 import {
   PostgresError,
   assertSuccessfulQueryResponse,
+  binary,
   extendedQuery,
+  parseDescribeResponse,
+  parseExecResponse,
+  parseQueryRawResponse,
   parseQueryResponse,
+  postgresOids,
+  text,
   toUint8Array,
+  typedNull,
 } from '../query.js';
 
 test('extendedQuery serializes text, binary, and null parameters', () => {
   const bytes = extendedQuery('SELECT $1, $2, $3', [
-    'text',
-    null,
-    { format: 'binary', value: new Uint8Array([1, 2, 3]) },
+    text('text', postgresOids.text),
+    typedNull(postgresOids.text),
+    binary(new Uint8Array([1, 2, 3]), postgresOids.bytea),
   ]);
   const messages = splitFrontendMessages(bytes);
 
@@ -103,7 +110,7 @@ test('parseQueryResponse surfaces PostgreSQL errors and malformed backend traffi
           ...backend(0x5a, [0x49]),
         ]),
       ),
-    /multiple result sets/,
+    /two RowDescriptions/,
   );
   assert.throws(() => parseQueryResponse(Uint8Array.from([...backend(0x47, [])])), /COPY/);
   assert.throws(() => parseQueryResponse(Uint8Array.from([...backend(0x99, [])])), /0x99/);
@@ -146,6 +153,71 @@ test('assertSuccessfulQueryResponse and row decoding reject invalid payloads', (
     ]),
   );
   assert.throws(() => result.getText(0, 'bad'), /not valid UTF-8/);
+});
+
+test('rejects incomplete and out-of-order structured completions', () => {
+  assert.throws(
+    () => parseQueryResponse(Uint8Array.from(backend(0x5a, [0x49]))),
+    /omitted CommandComplete or EmptyQueryResponse/,
+  );
+  assert.throws(
+    () =>
+      parseQueryResponse(
+        Uint8Array.from([
+          ...backend(0x43, cstring('SELECT 1')),
+          ...backend(0x44, dataRow(['late'])),
+          ...backend(0x5a, [0x49]),
+        ]),
+      ),
+    /DataRow arrived after statement completion/,
+  );
+  assert.throws(
+    () =>
+      parseDescribeResponse(
+        Uint8Array.from([...backend(0x74, i16(0)), ...backend(0x6e, []), ...backend(0x5a, [0x49])]),
+      ),
+    /before ParseComplete|omitted ParseComplete/,
+  );
+  assert.equal(
+    parseExecResponse(
+      Uint8Array.from([
+        ...backend(0x43, cstring('UPDATE 1')),
+        ...backend(0x49, []),
+        ...backend(0x43, cstring('DELETE 2')),
+        ...backend(0x5a, [0x49]),
+      ]),
+    ).statements.length,
+    2,
+  );
+  for (const completion of [backend(0x43, cstring('UPDATE 1')), backend(0x49, [])]) {
+    assert.throws(
+      () => parseQueryRawResponse(Uint8Array.from([...completion, ...backend(0x5a, [0x49])])),
+      /before the extended-query result description/,
+    );
+  }
+  assert.throws(
+    () =>
+      parseQueryRawResponse(
+        Uint8Array.from([
+          ...backend(0x32, []),
+          ...backend(0x6e, []),
+          ...backend(0x43, cstring('UPDATE 1')),
+          ...backend(0x5a, [0x49]),
+        ]),
+      ),
+    /BindComplete arrived before ParseComplete/,
+  );
+  assert.throws(
+    () =>
+      parseExecResponse(
+        Uint8Array.from([
+          ...backend(0x31, []),
+          ...backend(0x43, cstring('UPDATE 1')),
+          ...backend(0x5a, [0x49]),
+        ]),
+      ),
+    /simple-query response contained ParseComplete/,
+  );
 });
 
 type FrontendMessage = {

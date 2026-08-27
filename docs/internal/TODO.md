@@ -91,8 +91,9 @@ Remaining work:
 
 Acceptance:
 
-- Rust direct, broker, and server tests cover close, cancel, checkpoint,
-  transaction pinning, backup, restore, reopen, and external client recovery.
+- Rust direct, broker, and server tests cover close, cancel, explicit
+  `execute("CHECKPOINT")`, transaction pinning, backup, restore, reopen, and
+  external client recovery.
 - No direct-mode API advertises independent concurrent sessions.
 
 ### P0-03: Complete SDK Parity For The Public Contract

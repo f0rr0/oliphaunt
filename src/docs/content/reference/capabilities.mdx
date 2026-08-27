@@ -22,7 +22,7 @@ query after open.
 | React Native | `@oliphaunt/react-native` | Swift/Kotlin direct adapters |
 | TypeScript | `@oliphaunt/ts` | Native direct, broker, server on supported desktop runtimes |
 | Rust WASIX | `oliphaunt-wasix` | WASIX direct and local server |
-| WASIX TypeScript | `@oliphaunt/wasix-ts` | Browser, Node, Bun, and Deno direct or Worker execution |
+| WASIX TypeScript | `@oliphaunt/wasix-ts` | Package-owned Worker by default; explicit `/blocking` entry point on browser, Node, Bun, and Deno |
 
 ## Feature support
 
@@ -33,13 +33,13 @@ query after open.
 | Typed query and command helpers | Yes | Yes | Yes |
 | Raw PostgreSQL protocol | Buffered and callback-streamed | Buffered and callback-streamed; COPY uses the guest stream pump | Buffered and callback-streamed with bounded backpressure |
 | Callback transactions | Yes | Yes | Yes |
-| Checkpoint | Yes | Yes | Yes, followed by provider publication |
+| PostgreSQL `CHECKPOINT` SQL | Ordinary `execute` SQL; no SDK convenience method | Ordinary `execute` SQL; no SDK convenience method | Ordinary `execute` SQL followed by provider publication; no SDK convenience method |
 | Cancellation | Yes | No public direct-query cancellation | No public direct-query cancellation |
 | Dedicated COPY streaming | No | No | No |
 | Exact extension selection | SQL names | Typed Cargo selections | Selectively imported WASIX descriptors |
 | Physical backup/restore | Backup in direct/broker and mobile direct; static restore to new/empty storage | Yes | Backup from memory or persistent open sessions; static restore to a new or empty persistent provider |
 | Listening server | Rust and desktop TypeScript | Yes | Node, Bun, and Deno explicit server subpaths; no browser sockets |
-| `pg_dump` / `psql` | Optional endpoint-oriented `oliphaunt-tools` / `@oliphaunt/tools` products on Rust and desktop TypeScript | Optional open-database `tools` feature | Optional `@oliphaunt/wasix-tools` package on every host; `pgDump` supports direct or worker placement, while `psql` requires worker placement |
+| `pg_dump` / `psql` | Optional endpoint-oriented `oliphaunt-tools` / `@oliphaunt/tools` products on Rust and desktop TypeScript | Optional open-database `tools` feature | Optional `@oliphaunt/wasix-tools` package on every host; `pgDump` supports default Worker or blocking handles, while `psql` requires the default Worker handle |
 | Independent client sessions | Native server only | No; the local endpoint accepts one connected client at a time | No |
 
 The native SDKs and both WASIX bindings expose callback raw-protocol response

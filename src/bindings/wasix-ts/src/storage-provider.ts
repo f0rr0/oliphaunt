@@ -36,7 +36,8 @@ export type StorageDirectory = {
   entryType?(path: string): string | Promise<string>;
 };
 
-export type WasixStorageSyncBoundary = 'operation' | 'checkpoint' | 'close';
+/** Internal publication strength; `full` is used for initialization, not SQL dispatch. */
+export type WasixStorageSyncBoundary = 'operation' | 'full' | 'close';
 
 /** Load the package-owned seed only after exclusive storage inspection finds a new root. */
 export type WasixClusterSeedLoader = () => Promise<WasixDirectoryMount>;
@@ -64,6 +65,7 @@ export type NodeDirectoryStorageRestorer = (
   path: string,
   snapshot: StoredSnapshot,
   identity: WasixPhysicalIdentity,
+  ownerToken?: string,
 ) => Promise<void>;
 
 let acquireNodeDirectory: NodeDirectoryStorageAcquirer | undefined;
@@ -108,7 +110,7 @@ export async function restoreWasixStorage(
           { code: 'unavailable', commitState: 'unchanged' },
         );
       }
-      return restoreNodeDirectory(storage.path, snapshot, identity);
+      return restoreNodeDirectory(storage.path, snapshot, identity, storage.ownerToken);
   }
 }
 

@@ -1,6 +1,7 @@
 #include <node_api.h>
 #include "oliphaunt.h"
 
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -26,14 +27,14 @@ namespace {
 using InitFn = int32_t (*)(const OliphauntConfig *, OliphauntHandle **);
 using ExecProtocolFn = int32_t (*)(OliphauntHandle *, const uint8_t *, size_t, OliphauntResponse *);
 using ExecSimpleQueryFn = int32_t (*)(OliphauntHandle *, const char *, size_t, OliphauntResponse *);
-using ExecProtocolStreamFn = int32_t (*)(
-    OliphauntHandle *, const uint8_t *, size_t, OliphauntStreamCallback, void *);
+using ExecProtocolRawStreamFn = decltype(&oliphaunt_exec_protocol_raw_stream);
 using BackupFn = decltype(&oliphaunt_backup);
 using RestoreFn = int32_t (*)(const OliphauntRestoreOptions *);
 using CancelFn = int32_t (*)(OliphauntHandle *);
 using DetachFn = int32_t (*)(OliphauntHandle *);
 using LogicalGenerationFn = uint64_t (*)(OliphauntHandle *);
 using CloseIfGenerationFn = int32_t (*)(uint64_t);
+using CopyLastErrorFn = size_t (*)(OliphauntHandle *, char *, size_t);
 using LastErrorFn = const char *(*)(OliphauntHandle *);
 using VersionFn = const char *(*)();
 using FreeResponseFn = void (*)(OliphauntResponse *);
@@ -51,13 +52,14 @@ struct NativeLibrary {
   InitFn init = nullptr;
   ExecProtocolFn exec_protocol = nullptr;
   ExecSimpleQueryFn exec_simple_query = nullptr;
-  ExecProtocolStreamFn exec_protocol_stream = nullptr;
+  ExecProtocolRawStreamFn exec_protocol_raw_stream = nullptr;
   BackupFn backup = nullptr;
   RestoreFn restore = nullptr;
   CancelFn cancel = nullptr;
   DetachFn detach = nullptr;
   LogicalGenerationFn logical_generation = nullptr;
   CloseIfGenerationFn close_if_generation = nullptr;
+  CopyLastErrorFn copy_last_error = nullptr;
   LastErrorFn last_error = nullptr;
   VersionFn version = nullptr;
   FreeResponseFn free_response = nullptr;
@@ -79,6 +81,15 @@ struct NativeHandleBox {
   bool detached = false;
 };
 
+constexpr uint64_t kForgottenHandleRecoveryTokenMagic =
+    UINT64_C(0x4f4c495048524543);
+
+struct ForgottenHandleRecoveryToken {
+  uint64_t magic = kForgottenHandleRecoveryTokenMagic;
+  std::shared_ptr<NativeLibrary> library;
+  uint64_t generation = 0;
+};
+
 std::mutex g_libraries_mutex;
 std::map<std::string, std::shared_ptr<NativeLibrary>> g_libraries;
 
@@ -89,9 +100,12 @@ struct AddonEnvironment {
 void Throw(napi_env env, const std::string &message) { napi_throw_error(env, nullptr, message.c_str()); }
 
 #if defined(_WIN32)
-bool Utf8ToWidePath(napi_env env, const std::string &path, std::wstring *wide_path) {
+bool Utf8ToWidePath(
+    const std::string &path,
+    std::wstring *wide_path,
+    std::string *error) {
   if (path.size() > static_cast<size_t>(std::numeric_limits<int>::max())) {
-    Throw(env, "liboliphaunt path is too long to load on Windows");
+    *error = "liboliphaunt path is too long to load on Windows";
     return false;
   }
 
@@ -99,7 +113,7 @@ bool Utf8ToWidePath(napi_env env, const std::string &path, std::wstring *wide_pa
   const int required_length =
       MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path.data(), source_length, nullptr, 0);
   if (required_length <= 0) {
-    Throw(env, "liboliphaunt path is not valid UTF-8");
+    *error = "liboliphaunt path is not valid UTF-8";
     return false;
   }
 
@@ -108,7 +122,7 @@ bool Utf8ToWidePath(napi_env env, const std::string &path, std::wstring *wide_pa
       CP_UTF8, MB_ERR_INVALID_CHARS, path.data(), source_length, wide_path->data(), required_length);
   if (converted_length != required_length) {
     wide_path->clear();
-    Throw(env, "liboliphaunt path could not be converted for the Windows loader");
+    *error = "liboliphaunt path could not be converted for the Windows loader";
     return false;
   }
   return true;
@@ -129,21 +143,36 @@ bool ExceptionPending(napi_env env) {
 }
 
 std::string LastError(NativeLibrary *library, OliphauntHandle *handle) {
-  if (library == nullptr || library->last_error == nullptr) {
+  if (library == nullptr || library->copy_last_error == nullptr) {
     return "unknown error";
   }
-  const char *message = library->last_error(handle);
-  return message == nullptr || message[0] == '\0' ? "unknown error" : message;
+  std::vector<char> message(1024, '\0');
+  for (;;) {
+    const size_t length =
+        library->copy_last_error(handle, message.data(), message.size());
+    if (length == 0 || message[0] == '\0') {
+      return "unknown error";
+    }
+    if (length < message.size()) {
+      return std::string(message.data(), length);
+    }
+    if (length == std::numeric_limits<size_t>::max()) {
+      return "native liboliphaunt returned an invalid error length";
+    }
+    message.assign(length + 1, '\0');
+  }
 }
 
-void *LoadSymbol(napi_env env, DynamicLibrary library, const char *name) {
+void *LoadSymbol(DynamicLibrary library, const char *name, std::string *error) {
 #if defined(_WIN32)
   void *symbol = reinterpret_cast<void *>(GetProcAddress(library.handle, name));
 #else
   void *symbol = dlsym(library.handle, name);
 #endif
   if (symbol == nullptr) {
-    Throw(env, std::string("liboliphaunt is missing required symbol ") + name);
+    if (error->empty()) {
+      *error = std::string("liboliphaunt is missing required symbol ") + name;
+    }
   }
   return symbol;
 }
@@ -163,13 +192,15 @@ void ReleaseDynamicLibraryReference(DynamicLibrary library) {
 #endif
 }
 
-std::shared_ptr<NativeLibrary> LoadNativeLibrary(napi_env env, const std::string &path) {
+std::shared_ptr<NativeLibrary> LoadNativeLibrary(
+    const std::string &path,
+    std::string *error) {
   if (path.empty()) {
-    Throw(env, "liboliphaunt path must not be empty");
+    *error = "liboliphaunt path must not be empty";
     return nullptr;
   }
   if (path.find('\0') != std::string::npos) {
-    Throw(env, "liboliphaunt path must not contain a null byte");
+    *error = "liboliphaunt path must not contain a null byte";
     return nullptr;
   }
 
@@ -182,7 +213,7 @@ std::shared_ptr<NativeLibrary> LoadNativeLibrary(napi_env env, const std::string
   DynamicLibrary dynamic;
 #if defined(_WIN32)
   std::wstring wide_path;
-  if (!Utf8ToWidePath(env, path, &wide_path)) {
+  if (!Utf8ToWidePath(path, &wide_path, error)) {
     return nullptr;
   }
   dynamic.handle = LoadLibraryW(wide_path.c_str());
@@ -196,10 +227,11 @@ std::shared_ptr<NativeLibrary> LoadNativeLibrary(napi_env env, const std::string
 #endif
   if (dynamic.handle == nullptr) {
 #if defined(_WIN32)
-    Throw(env, "load liboliphaunt failed");
+    *error = "load liboliphaunt failed";
 #else
     const char *message = dlerror();
-    Throw(env, std::string("load liboliphaunt failed: ") + (message == nullptr ? path : message));
+    *error =
+        std::string("load liboliphaunt failed: ") + (message == nullptr ? path : message);
 #endif
     return nullptr;
   }
@@ -217,31 +249,43 @@ std::shared_ptr<NativeLibrary> LoadNativeLibrary(napi_env env, const std::string
 
   auto library = std::make_shared<NativeLibrary>();
   library->library = dynamic;
-  library->init = reinterpret_cast<InitFn>(LoadSymbol(env, dynamic, "oliphaunt_init"));
+  library->init = reinterpret_cast<InitFn>(LoadSymbol(dynamic, "oliphaunt_init", error));
   library->exec_protocol =
-      reinterpret_cast<ExecProtocolFn>(LoadSymbol(env, dynamic, "oliphaunt_exec_protocol"));
+      reinterpret_cast<ExecProtocolFn>(LoadSymbol(dynamic, "oliphaunt_exec_protocol", error));
   library->exec_simple_query =
-      reinterpret_cast<ExecSimpleQueryFn>(LoadSymbol(env, dynamic, "oliphaunt_exec_simple_query"));
-  library->exec_protocol_stream = reinterpret_cast<ExecProtocolStreamFn>(
-      LoadSymbol(env, dynamic, "oliphaunt_exec_protocol_stream"));
-  library->backup = reinterpret_cast<BackupFn>(LoadSymbol(env, dynamic, "oliphaunt_backup"));
-  library->restore = reinterpret_cast<RestoreFn>(LoadSymbol(env, dynamic, "oliphaunt_restore"));
-  library->cancel = reinterpret_cast<CancelFn>(LoadSymbol(env, dynamic, "oliphaunt_cancel"));
-  library->detach = reinterpret_cast<DetachFn>(LoadSymbol(env, dynamic, "oliphaunt_detach"));
+      reinterpret_cast<ExecSimpleQueryFn>(
+          LoadSymbol(dynamic, "oliphaunt_exec_simple_query", error));
+  library->exec_protocol_raw_stream = reinterpret_cast<ExecProtocolRawStreamFn>(
+      LoadSymbol(dynamic, "oliphaunt_exec_protocol_raw_stream", error));
+  library->backup =
+      reinterpret_cast<BackupFn>(LoadSymbol(dynamic, "oliphaunt_backup", error));
+  library->restore =
+      reinterpret_cast<RestoreFn>(LoadSymbol(dynamic, "oliphaunt_restore", error));
+  library->cancel =
+      reinterpret_cast<CancelFn>(LoadSymbol(dynamic, "oliphaunt_cancel", error));
+  library->detach =
+      reinterpret_cast<DetachFn>(LoadSymbol(dynamic, "oliphaunt_detach", error));
   // Validate the mandatory terminal-close ABI even though Node cleanup uses
   // only the generation-guarded entry point and never invokes this pointer API.
-  (void)LoadSymbol(env, dynamic, "oliphaunt_close");
+  (void)LoadSymbol(dynamic, "oliphaunt_close", error);
   library->logical_generation = reinterpret_cast<LogicalGenerationFn>(
-      LoadSymbol(env, dynamic, "oliphaunt_logical_generation"));
+      LoadSymbol(dynamic, "oliphaunt_logical_generation", error));
   library->close_if_generation = reinterpret_cast<CloseIfGenerationFn>(
-      LoadSymbol(env, dynamic, "oliphaunt_close_if_generation"));
+      LoadSymbol(dynamic, "oliphaunt_close_if_generation", error));
+  library->copy_last_error = reinterpret_cast<CopyLastErrorFn>(
+      LoadSymbol(dynamic, "oliphaunt_copy_last_error", error));
+  // ABI 9 keeps this accessor only for source compatibility. Loading it here
+  // catches malformed runtime images, while all bridge-owned errors use the
+  // atomic copy function above.
   library->last_error =
-      reinterpret_cast<LastErrorFn>(LoadSymbol(env, dynamic, "oliphaunt_last_error"));
-  library->version = reinterpret_cast<VersionFn>(LoadSymbol(env, dynamic, "oliphaunt_version"));
+      reinterpret_cast<LastErrorFn>(LoadSymbol(dynamic, "oliphaunt_last_error", error));
+  library->version =
+      reinterpret_cast<VersionFn>(LoadSymbol(dynamic, "oliphaunt_version", error));
   library->free_response =
-      reinterpret_cast<FreeResponseFn>(LoadSymbol(env, dynamic, "oliphaunt_free_response"));
+      reinterpret_cast<FreeResponseFn>(LoadSymbol(dynamic, "oliphaunt_free_response", error));
 
-  if (ExceptionPending(env)) {
+  if (!error->empty()) {
+    ReleaseDynamicLibraryReference(dynamic);
     return nullptr;
   }
   g_libraries[path] = library;
@@ -480,14 +524,19 @@ void FinalizeHandle(napi_env, void *data, void *) {
       std::lock_guard<std::mutex> guard(box->library->lifecycle_mutex);
       if (!box->library->terminally_closed && !box->detached && box->handle != nullptr &&
           box->library->resident_handle == box->handle &&
-          box->library->resident_generation == box->generation &&
-          box->library->detach != nullptr) {
-        const int32_t rc = box->library->detach(box->handle);
-        box->library->detach_pending = rc != 0;
+          box->library->resident_generation == box->generation) {
+        // A finalizer must never run DISCARD ALL or ROLLBACK on the JavaScript
+        // thread. Preserve the resident owner for the next async open to
+        // detach, or for environment cleanup to close terminally.
+        box->library->detach_pending = true;
       }
     }
     delete box;
   }
+}
+
+void FinalizeForgottenHandleRecoveryToken(napi_env, void *data, void *) {
+  delete static_cast<ForgottenHandleRecoveryToken *>(data);
 }
 
 std::vector<napi_value> Args(napi_env env, napi_callback_info info, size_t expected) {
@@ -503,12 +552,81 @@ std::vector<napi_value> Args(napi_env env, napi_callback_info info, size_t expec
   return args;
 }
 
+napi_value CreateForgottenHandleRecoveryToken(
+    napi_env env,
+    napi_callback_info info) {
+  auto args = Args(env, info, 1);
+  if (args.empty()) return nullptr;
+  NativeHandleBox *box = GetHandleBox(env, args[0]);
+  if (box == nullptr) return nullptr;
+
+  auto token = std::make_unique<ForgottenHandleRecoveryToken>();
+  token->library = box->library;
+  token->generation = box->generation;
+  napi_value external = nullptr;
+  if (!Check(
+          env,
+          napi_create_external(
+              env,
+              token.get(),
+              FinalizeForgottenHandleRecoveryToken,
+              nullptr,
+              &external),
+          "create forgotten-handle recovery token")) {
+    return nullptr;
+  }
+  (void)token.release();
+  return external;
+}
+
+napi_value QueueForgottenHandleRecovery(napi_env env, napi_callback_info info) {
+  auto args = Args(env, info, 1);
+  if (args.empty()) return nullptr;
+  void *data = nullptr;
+  if (!Check(
+          env,
+          napi_get_value_external(env, args[0], &data),
+          "read forgotten-handle recovery token")) {
+    return nullptr;
+  }
+  auto *token = static_cast<ForgottenHandleRecoveryToken *>(data);
+  if (token == nullptr || token->magic != kForgottenHandleRecoveryTokenMagic ||
+      token->library == nullptr || token->generation == 0) {
+    Throw(env, "Oliphaunt forgotten-handle recovery token is invalid");
+    return nullptr;
+  }
+
+  bool queued = false;
+  {
+    std::lock_guard<std::mutex> guard(token->library->lifecycle_mutex);
+    if (!token->library->terminally_closed &&
+        token->library->resident_handle != nullptr &&
+        token->library->resident_generation == token->generation) {
+      // This only records native work for the next asynchronous open. It does
+      // not run PostgreSQL teardown on the JavaScript finalizer thread.
+      token->library->detach_pending = true;
+      queued = true;
+    }
+  }
+
+  napi_value result = nullptr;
+  if (!Check(env, napi_get_boolean(env, queued, &result),
+             "create forgotten-handle recovery result")) {
+    return nullptr;
+  }
+  return result;
+}
+
 napi_value Version(napi_env env, napi_callback_info info) {
   auto args = Args(env, info, 1);
   if (args.empty()) return nullptr;
   std::string library_path = ValueToString(env, args[0], "read library path");
-  auto library = LoadNativeLibrary(env, library_path);
-  if (library == nullptr) return nullptr;
+  std::string error;
+  auto library = LoadNativeLibrary(library_path, &error);
+  if (library == nullptr) {
+    Throw(env, error);
+    return nullptr;
+  }
   const char *version = library->version();
   napi_value out = nullptr;
   Check(env, napi_create_string_utf8(env, version == nullptr ? "unknown" : version, NAPI_AUTO_LENGTH, &out),
@@ -516,105 +634,178 @@ napi_value Version(napi_env env, napi_callback_info info) {
   return out;
 }
 
-napi_value Open(napi_env env, napi_callback_info info) {
-  auto args = Args(env, info, 1);
-  if (args.empty()) return nullptr;
-  napi_value config = args[0];
-  std::string library_path = GetString(env, config, "libraryPath");
-  std::string pgdata = GetString(env, config, "pgdata");
-  std::string runtime_dir = GetString(env, config, "runtimeDirectory", false);
-  std::string module_dir = GetString(env, config, "moduleDirectory", false);
-  std::string username = GetString(env, config, "username");
-  std::string database = GetString(env, config, "database");
-  std::vector<std::string> startup_args = GetStringArray(env, config, "startupArgs");
-  if (ExceptionPending(env)) return nullptr;
-  auto library = LoadNativeLibrary(env, library_path);
-  if (library == nullptr) return nullptr;
+struct AsyncOpenContext {
+  napi_async_work work = nullptr;
+  napi_deferred deferred = nullptr;
+  napi_ref handle_ref = nullptr;
+  NativeHandleBox *box = nullptr;
+  std::shared_ptr<NativeLibrary> library;
+  napi_env owner_env = nullptr;
+  std::string library_path;
+  std::string pgdata;
+  std::string runtime_dir;
+  std::string module_dir;
+  std::string username;
+  std::string database;
+  std::vector<std::string> startup_args;
+  OliphauntHandle *handle = nullptr;
+  uint64_t generation = 0;
+  std::string error;
+  bool succeeded = false;
+};
 
+void ExecuteAsyncOpen(napi_env, void *data) {
+  auto *context = static_cast<AsyncOpenContext *>(data);
+  context->library = LoadNativeLibrary(context->library_path, &context->error);
+  if (context->library == nullptr) {
+    return;
+  }
   std::vector<const char *> startup_ptrs;
-  startup_ptrs.reserve(startup_args.size());
-  for (const auto &arg : startup_args) {
+  startup_ptrs.reserve(context->startup_args.size());
+  for (const auto &arg : context->startup_args) {
     startup_ptrs.push_back(arg.c_str());
   }
 
   OliphauntConfig native_config = {};
   native_config.abi_version = OLIPHAUNT_ABI_VERSION;
-  native_config.pgdata = pgdata.c_str();
-  native_config.runtime_dir = runtime_dir.empty() ? nullptr : runtime_dir.c_str();
-  native_config.module_dir = module_dir.empty() ? nullptr : module_dir.c_str();
-  native_config.username = username.c_str();
-  native_config.database = database.c_str();
+  native_config.pgdata = context->pgdata.c_str();
+  native_config.runtime_dir = context->runtime_dir.empty() ? nullptr : context->runtime_dir.c_str();
+  native_config.module_dir = context->module_dir.empty() ? nullptr : context->module_dir.c_str();
+  native_config.username = context->username.c_str();
+  native_config.database = context->database.c_str();
   native_config.reserved_flags = 0;
   native_config.startup_args = startup_ptrs.empty() ? nullptr : startup_ptrs.data();
   native_config.startup_arg_count = startup_ptrs.size();
 
-  OliphauntHandle *handle = nullptr;
-  uint64_t generation = 0;
-  {
-    std::lock_guard<std::mutex> guard(library->lifecycle_mutex);
-    if (library->terminally_closed) {
-      Throw(env, "native liboliphaunt environment has already shut down");
-      return nullptr;
-    }
-    if (library->detach_pending) {
-      if (library->resident_handle == nullptr || library->resident_generation == 0 ||
-          library->detach == nullptr) {
-        Throw(env, "native liboliphaunt has an invalid pending detach owner");
-        return nullptr;
-      }
-      int32_t detach_rc = library->detach(library->resident_handle);
-      if (detach_rc != 0) {
-        Throw(env, "native liboliphaunt could not recover the previous logical handle: " +
-                       LastError(library.get(), library->resident_handle));
-        return nullptr;
-      }
-      library->detach_pending = false;
-    }
-    int32_t rc = library->init(&native_config, &handle);
-    if (rc != 0) {
-      Throw(env, "native liboliphaunt init failed: " + LastError(library.get(), nullptr));
-      return nullptr;
-    }
-    if (handle == nullptr) {
-      Throw(env, "native liboliphaunt init returned a null handle");
-      return nullptr;
-    }
-    generation = library->logical_generation(handle);
-    if (generation == 0) {
-      // Another cleanup owner can terminally close and free the resident
-      // handle between init and generation acquisition. A zero generation
-      // therefore makes handle opaque and potentially stale: fail closed
-      // without passing it to detach, close, last_error, or any other ABI.
-      library->terminally_closed = true;
-      library->resident_handle = nullptr;
-      library->resident_generation = 0;
-      library->owner_env = nullptr;
-      Throw(env, "native liboliphaunt init returned an invalid logical generation");
-      return nullptr;
-    }
-    library->resident_handle = handle;
-    library->resident_generation = generation;
-    library->owner_env = env;
-    library->detach_pending = false;
+  std::lock_guard<std::mutex> guard(context->library->lifecycle_mutex);
+  if (context->library->terminally_closed) {
+    context->error = "native liboliphaunt environment has already shut down";
+    return;
   }
-  auto *box = new NativeHandleBox();
-  box->library = library;
-  box->handle = handle;
-  box->generation = generation;
-  napi_value external = nullptr;
-  if (!Check(env, napi_create_external(env, box, FinalizeHandle, nullptr, &external),
-             "create native handle")) {
-    std::lock_guard<std::mutex> guard(library->lifecycle_mutex);
-    if (!library->terminally_closed && library->resident_handle == handle &&
-        library->resident_generation == generation &&
-        library->detach != nullptr) {
-      const int32_t detach_rc = library->detach(handle);
-      library->detach_pending = detach_rc != 0;
+  if (context->library->detach_pending) {
+    if (context->library->resident_handle == nullptr ||
+        context->library->resident_generation == 0 || context->library->detach == nullptr) {
+      context->error = "native liboliphaunt has an invalid pending detach owner";
+      return;
     }
-    delete box;
+    const int32_t detach_rc = context->library->detach(context->library->resident_handle);
+    if (detach_rc != 0) {
+      context->error =
+          "native liboliphaunt could not recover the previous logical handle: " +
+          LastError(context->library.get(), context->library->resident_handle);
+      return;
+    }
+    context->library->detach_pending = false;
+  }
+
+  const int32_t rc = context->library->init(&native_config, &context->handle);
+  if (rc != 0) {
+    context->error =
+        "native liboliphaunt init failed: " + LastError(context->library.get(), nullptr);
+    return;
+  }
+  if (context->handle == nullptr) {
+    context->error = "native liboliphaunt init returned a null handle";
+    return;
+  }
+  context->generation = context->library->logical_generation(context->handle);
+  if (context->generation == 0) {
+    // A zero generation means another cleanup owner invalidated the opaque
+    // pointer. Do not pass that potentially stale pointer to any other ABI.
+    context->library->terminally_closed = true;
+    context->library->resident_handle = nullptr;
+    context->library->resident_generation = 0;
+    context->library->owner_env = nullptr;
+    context->handle = nullptr;
+    context->error = "native liboliphaunt init returned an invalid logical generation";
+    return;
+  }
+  context->library->resident_handle = context->handle;
+  context->library->resident_generation = context->generation;
+  context->library->owner_env = context->owner_env;
+  context->library->detach_pending = false;
+  context->succeeded = true;
+}
+
+void CompleteAsyncOpen(napi_env env, napi_status status, void *data) {
+  std::unique_ptr<AsyncOpenContext> context(static_cast<AsyncOpenContext *>(data));
+  if (status != napi_ok || !context->succeeded) {
+    RejectDeferred(
+        env,
+        context->deferred,
+        status == napi_ok ? context->error : "native liboliphaunt open async work failed");
+  } else {
+    context->box->library = context->library;
+    context->box->handle = context->handle;
+    context->box->generation = context->generation;
+    napi_value external = nullptr;
+    if (napi_get_reference_value(env, context->handle_ref, &external) == napi_ok &&
+        external != nullptr) {
+      (void)napi_resolve_deferred(env, context->deferred, external);
+    } else {
+      RejectDeferred(env, context->deferred, "native liboliphaunt could not publish its handle");
+    }
+  }
+  if (context->handle_ref != nullptr) {
+    (void)napi_delete_reference(env, context->handle_ref);
+  }
+  if (context->work != nullptr) {
+    (void)napi_delete_async_work(env, context->work);
+  }
+}
+
+napi_value Open(napi_env env, napi_callback_info info) {
+  auto args = Args(env, info, 1);
+  if (args.empty()) return nullptr;
+  napi_value config = args[0];
+  auto context = std::make_unique<AsyncOpenContext>();
+  context->library_path = GetString(env, config, "libraryPath");
+  context->pgdata = GetString(env, config, "pgdata");
+  context->runtime_dir = GetString(env, config, "runtimeDirectory", false);
+  context->module_dir = GetString(env, config, "moduleDirectory", false);
+  context->username = GetString(env, config, "username");
+  context->database = GetString(env, config, "database");
+  context->startup_args = GetStringArray(env, config, "startupArgs");
+  if (ExceptionPending(env)) return nullptr;
+  context->owner_env = env;
+  context->box = new NativeHandleBox();
+
+  napi_value promise = nullptr;
+  napi_value external = nullptr;
+  napi_value resource_name = nullptr;
+  if (!Check(env, napi_create_promise(env, &context->deferred, &promise), "create open promise") ||
+      !Check(env,
+             napi_create_external(env, context->box, FinalizeHandle, nullptr, &external),
+             "create native handle") ||
+      !Check(env, napi_create_reference(env, external, 1, &context->handle_ref),
+             "retain native handle during open") ||
+      !Check(env,
+             napi_create_string_utf8(
+                 env, "oliphaunt.open", NAPI_AUTO_LENGTH, &resource_name),
+             "create open resource name") ||
+      !Check(env,
+             napi_create_async_work(
+                 env,
+                 nullptr,
+                 resource_name,
+                 ExecuteAsyncOpen,
+                 CompleteAsyncOpen,
+                 context.get(),
+                 &context->work),
+             "create native open work") ||
+      !Check(env, napi_queue_async_work(env, context->work), "queue native open work")) {
+    if (context->work != nullptr) {
+      (void)napi_delete_async_work(env, context->work);
+    }
+    if (context->handle_ref != nullptr) {
+      (void)napi_delete_reference(env, context->handle_ref);
+    } else if (external == nullptr) {
+      delete context->box;
+    }
     return nullptr;
   }
-  return external;
+  (void)context.release();
+  return promise;
 }
 
 enum class AsyncQueryKind { Protocol, Simple };
@@ -751,61 +942,281 @@ napi_value ExecSimpleQuery(napi_env env, napi_callback_info info) {
       env, args[0], box, AsyncQueryKind::Simple, std::vector<uint8_t>(), std::move(sql));
 }
 
-struct StreamContext {
-  napi_env env;
-  napi_ref callback;
+struct AsyncStreamContext {
+  napi_async_work work = nullptr;
+  napi_threadsafe_function threadsafe_callback = nullptr;
+  napi_deferred deferred = nullptr;
+  napi_ref handle_ref = nullptr;
+  napi_ref callback_exception = nullptr;
+  std::shared_ptr<NativeLibrary> library;
+  OliphauntHandle *handle = nullptr;
+  std::vector<uint8_t> request;
+  int32_t result = -1;
+  napi_status work_status = napi_ok;
+  std::atomic<bool> callback_failed = false;
+  std::atomic<bool> threadsafe_callback_released = false;
+  std::mutex error_mutex;
   std::string error;
+  bool work_complete = false;
+  bool callback_complete = false;
 };
 
-int32_t StreamChunk(void *data, const uint8_t *bytes, size_t length) {
-  auto *context = static_cast<StreamContext *>(data);
-  napi_handle_scope scope = nullptr;
-  if (napi_open_handle_scope(context->env, &scope) != napi_ok) {
-    context->error = "open stream callback scope failed";
-    return 1;
+void RecordStreamError(AsyncStreamContext *context, std::string error) {
+  std::lock_guard<std::mutex> guard(context->error_mutex);
+  if (context->error.empty()) {
+    context->error = std::move(error);
   }
-  napi_value callback = nullptr;
-  napi_get_reference_value(context->env, context->callback, &callback);
-  napi_value global = nullptr;
-  napi_get_global(context->env, &global);
-  napi_value chunk = MakeBytes(context->env, bytes, length);
-  napi_value result = nullptr;
-  napi_status status = napi_call_function(context->env, global, callback, 1, &chunk, &result);
-  napi_close_handle_scope(context->env, scope);
-  if (status != napi_ok) {
-    context->error = "stream callback failed";
-    return 1;
-  }
-  return 0;
+  context->callback_failed.store(true);
 }
 
-napi_value ExecProtocolStream(napi_env env, napi_callback_info info) {
+void RecordStreamException(
+    napi_env env,
+    AsyncStreamContext *context,
+    napi_value exception,
+    const char *fallback) {
+  if (context->callback_exception == nullptr && exception != nullptr &&
+      napi_create_reference(env, exception, 1, &context->callback_exception) == napi_ok) {
+    context->callback_failed.store(true);
+    return;
+  }
+  RecordStreamError(context, fallback);
+}
+
+void RecordPendingStreamException(
+    napi_env env,
+    AsyncStreamContext *context,
+    const char *fallback) {
+  napi_value exception = nullptr;
+  if (ExceptionPending(env) && napi_get_and_clear_last_exception(env, &exception) == napi_ok) {
+    RecordStreamException(env, context, exception, fallback);
+  } else {
+    RecordStreamError(context, fallback);
+  }
+}
+
+void CallStreamChunk(napi_env env, napi_value callback, void *data, void *chunk_data) {
+  std::unique_ptr<std::vector<uint8_t>> bytes(
+      static_cast<std::vector<uint8_t> *>(chunk_data));
+  auto *context = static_cast<AsyncStreamContext *>(data);
+  if (env == nullptr || callback == nullptr || context->callback_failed.load()) {
+    return;
+  }
+  napi_handle_scope scope = nullptr;
+  if (napi_open_handle_scope(env, &scope) != napi_ok) {
+    RecordPendingStreamException(env, context, "open stream callback scope failed");
+    return;
+  }
+  napi_value global = nullptr;
+  napi_value chunk = nullptr;
+  napi_value result = nullptr;
+  napi_status status = napi_get_global(env, &global);
+  if (status == napi_ok) {
+    chunk = MakeBytes(env, bytes->data(), bytes->size());
+    status = chunk == nullptr ? napi_generic_failure : napi_ok;
+  }
+  if (status == napi_ok) {
+    status = napi_call_function(env, global, callback, 1, &chunk, &result);
+  }
+  if (status != napi_ok) {
+    RecordPendingStreamException(env, context, "stream callback failed");
+    (void)napi_close_handle_scope(env, scope);
+    return;
+  }
+
+  napi_valuetype result_type = napi_undefined;
+  if (napi_typeof(env, result, &result_type) != napi_ok) {
+    RecordPendingStreamException(env, context, "inspect stream callback result failed");
+  } else if (result_type == napi_object || result_type == napi_function) {
+    bool has_then = false;
+    napi_value then_value = nullptr;
+    napi_valuetype then_type = napi_undefined;
+    if (napi_has_named_property(env, result, "then", &has_then) != napi_ok ||
+        (has_then && napi_get_named_property(env, result, "then", &then_value) != napi_ok) ||
+        (has_then && napi_typeof(env, then_value, &then_type) != napi_ok)) {
+      RecordPendingStreamException(env, context, "inspect stream callback thenable failed");
+    } else if (has_then && then_type == napi_function) {
+      constexpr const char *message =
+          "raw protocol stream callback must complete synchronously and must not return a "
+          "Promise or thenable";
+      napi_value message_value = nullptr;
+      napi_value exception = nullptr;
+      if (napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &message_value) == napi_ok &&
+          napi_create_type_error(env, nullptr, message_value, &exception) == napi_ok) {
+        RecordStreamException(env, context, exception, message);
+      } else {
+        RecordPendingStreamException(env, context, message);
+      }
+    }
+  }
+  (void)napi_close_handle_scope(env, scope);
+}
+
+int32_t StreamChunk(void *data, const uint8_t *bytes, size_t length) {
+  auto *context = static_cast<AsyncStreamContext *>(data);
+  if (context->callback_failed.load()) {
+    return 1;
+  }
+  if (bytes == nullptr && length != 0) {
+    RecordStreamError(context, "native liboliphaunt stream returned null bytes");
+    return 1;
+  }
+  auto chunk = std::make_unique<std::vector<uint8_t>>();
+  if (length != 0) {
+    chunk->assign(bytes, bytes + length);
+  }
+  const napi_status status = napi_call_threadsafe_function(
+      context->threadsafe_callback, chunk.get(), napi_tsfn_blocking);
+  if (status != napi_ok) {
+    RecordStreamError(context, "queue stream callback failed");
+    return 1;
+  }
+  (void)chunk.release();
+  return context->callback_failed.load() ? 1 : 0;
+}
+
+void FinishAsyncStreamIfReady(napi_env env, AsyncStreamContext *context) {
+  if (!context->work_complete || !context->callback_complete) {
+    return;
+  }
+  if (context->callback_exception != nullptr) {
+    napi_value exception = nullptr;
+    if (napi_get_reference_value(env, context->callback_exception, &exception) == napi_ok &&
+        exception != nullptr) {
+      (void)napi_reject_deferred(env, context->deferred, exception);
+    } else {
+      RejectDeferred(env, context->deferred, "stream callback failed");
+    }
+    (void)napi_delete_reference(env, context->callback_exception);
+  } else if (context->callback_failed.load()) {
+    std::lock_guard<std::mutex> guard(context->error_mutex);
+    RejectDeferred(
+        env,
+        context->deferred,
+        context->error.empty() ? "stream callback failed" : context->error);
+  } else if (context->work_status != napi_ok || context->result != 0) {
+    const std::string detail = context->work_status == napi_ok
+        ? context->error
+        : "Node async work failed";
+    RejectDeferred(
+        env,
+        context->deferred,
+        "native liboliphaunt protocol streaming failed: " + detail);
+  } else {
+    napi_value out = nullptr;
+    if (napi_get_undefined(env, &out) == napi_ok) {
+      (void)napi_resolve_deferred(env, context->deferred, out);
+    } else {
+      RejectDeferred(env, context->deferred, "native liboliphaunt could not complete streaming");
+    }
+  }
+  if (context->handle_ref != nullptr) {
+    (void)napi_delete_reference(env, context->handle_ref);
+  }
+  if (context->work != nullptr) {
+    (void)napi_delete_async_work(env, context->work);
+  }
+  delete context;
+}
+
+void FinalizeStreamCallback(napi_env env, void *data, void *) {
+  auto *context = static_cast<AsyncStreamContext *>(data);
+  context->callback_complete = true;
+  FinishAsyncStreamIfReady(env, context);
+}
+
+void ExecuteAsyncStream(napi_env, void *data) {
+  auto *context = static_cast<AsyncStreamContext *>(data);
+  context->result = context->library->exec_protocol_raw_stream(
+      context->handle,
+      context->request.empty() ? nullptr : context->request.data(),
+      context->request.size(),
+      StreamChunk,
+      context);
+  if (context->result != 0 && !context->callback_failed.load()) {
+    std::lock_guard<std::mutex> guard(context->error_mutex);
+    context->error = LastError(context->library.get(), context->handle);
+  }
+  context->threadsafe_callback_released.store(true);
+  (void)napi_release_threadsafe_function(context->threadsafe_callback, napi_tsfn_release);
+}
+
+void CompleteAsyncStream(napi_env env, napi_status status, void *data) {
+  auto *context = static_cast<AsyncStreamContext *>(data);
+  context->work_status = status;
+  context->work_complete = true;
+  if (!context->threadsafe_callback_released.exchange(true)) {
+    (void)napi_release_threadsafe_function(context->threadsafe_callback, napi_tsfn_abort);
+  }
+  FinishAsyncStreamIfReady(env, context);
+}
+
+napi_value ExecProtocolRawStream(napi_env env, napi_callback_info info) {
   auto args = Args(env, info, 3);
   if (args.empty()) return nullptr;
   NativeHandleBox *box = GetHandleBox(env, args[0]);
   if (box == nullptr) return nullptr;
-  std::vector<uint8_t> request = GetBytes(env, args[1]);
+  auto context = std::make_unique<AsyncStreamContext>();
+  context->library = box->library;
+  context->handle = box->handle;
+  context->request = GetBytes(env, args[1]);
   if (ExceptionPending(env)) return nullptr;
-  StreamContext context = {env, nullptr, {}};
-  if (!Check(env, napi_create_reference(env, args[2], 1, &context.callback),
-             "create stream callback reference")) {
+
+  napi_value promise = nullptr;
+  napi_value resource_name = nullptr;
+  bool setup_ok =
+      Check(env, napi_create_promise(env, &context->deferred, &promise), "create stream promise") &&
+      Check(env, napi_create_reference(env, args[0], 1, &context->handle_ref),
+            "retain native handle for stream") &&
+      Check(env,
+            napi_create_string_utf8(
+                env, "oliphaunt.execProtocolRawStream", NAPI_AUTO_LENGTH, &resource_name),
+            "create stream resource name") &&
+      Check(env,
+            napi_create_threadsafe_function(
+                env,
+                args[2],
+                nullptr,
+                resource_name,
+                1,
+                1,
+                context.get(),
+                FinalizeStreamCallback,
+                context.get(),
+                CallStreamChunk,
+                &context->threadsafe_callback),
+            "create stream callback bridge") &&
+      Check(env,
+            napi_create_async_work(
+                env,
+                nullptr,
+                resource_name,
+                ExecuteAsyncStream,
+                CompleteAsyncStream,
+                context.get(),
+                &context->work),
+            "create native stream work") &&
+      Check(env, napi_queue_async_work(env, context->work), "queue native stream work");
+  if (!setup_ok) {
+    if (context->threadsafe_callback != nullptr) {
+      context->work_complete = true;
+      context->work_status = napi_generic_failure;
+      context->threadsafe_callback_released.store(true);
+      (void)RejectPendingException(env, context->deferred);
+      (void)napi_release_threadsafe_function(
+          context->threadsafe_callback, napi_tsfn_abort);
+      (void)context.release();
+      return promise;
+    }
+    if (context->work != nullptr) {
+      (void)napi_delete_async_work(env, context->work);
+    }
+    if (context->handle_ref != nullptr) {
+      (void)napi_delete_reference(env, context->handle_ref);
+    }
     return nullptr;
   }
-  int32_t rc = box->library->exec_protocol_stream(
-      box->handle, request.data(), request.size(), StreamChunk, &context);
-  napi_delete_reference(env, context.callback);
-  if (!context.error.empty()) {
-    Throw(env, context.error);
-    return nullptr;
-  }
-  if (rc != 0) {
-    Throw(env, "native liboliphaunt protocol streaming failed: " +
-                   LastError(box->library.get(), box->handle));
-    return nullptr;
-  }
-  napi_value out = nullptr;
-  Check(env, napi_get_undefined(env, &out), "create undefined");
-  return out;
+  (void)context.release();
+  return promise;
 }
 
 enum class AsyncArchiveKind { Backup, Restore };
@@ -815,6 +1226,7 @@ struct AsyncArchiveContext {
   napi_deferred deferred = nullptr;
   napi_ref handle_ref = nullptr;
   std::shared_ptr<NativeLibrary> library;
+  std::string library_path;
   OliphauntHandle *handle = nullptr;
   AsyncArchiveKind kind = AsyncArchiveKind::Backup;
   std::string destination;
@@ -826,6 +1238,12 @@ struct AsyncArchiveContext {
 
 void ExecuteAsyncArchive(napi_env, void *data) {
   auto *context = static_cast<AsyncArchiveContext *>(data);
+  if (context->library == nullptr) {
+    context->library = LoadNativeLibrary(context->library_path, &context->error);
+    if (context->library == nullptr) {
+      return;
+    }
+  }
   if (context->kind == AsyncArchiveKind::Backup) {
     context->result = context->library->backup(context->handle, &context->response);
   } else {
@@ -883,12 +1301,14 @@ napi_value QueueAsyncArchive(
     napi_env env,
     AsyncArchiveKind kind,
     std::shared_ptr<NativeLibrary> library,
+    std::string library_path,
     OliphauntHandle *handle,
     napi_value handle_value,
     std::string destination,
     std::vector<uint8_t> bytes) {
   auto context = std::make_unique<AsyncArchiveContext>();
   context->library = std::move(library);
+  context->library_path = std::move(library_path);
   context->handle = handle;
   context->kind = kind;
   context->destination = std::move(destination);
@@ -941,6 +1361,7 @@ napi_value Backup(napi_env env, napi_callback_info info) {
       env,
       AsyncArchiveKind::Backup,
       box->library,
+      std::string(),
       box->handle,
       args[0],
       std::string(),
@@ -952,15 +1373,14 @@ napi_value Restore(napi_env env, napi_callback_info info) {
   if (args.empty()) return nullptr;
   napi_value options = args[0];
   std::string library_path = GetString(env, options, "libraryPath");
-  auto library = LoadNativeLibrary(env, library_path);
-  if (library == nullptr) return nullptr;
   std::string destination = GetString(env, options, "destination");
   std::vector<uint8_t> bytes = GetBytes(env, GetNamed(env, options, "bytes"));
   if (ExceptionPending(env)) return nullptr;
   return QueueAsyncArchive(
       env,
       AsyncArchiveKind::Restore,
-      std::move(library),
+      nullptr,
+      std::move(library_path),
       nullptr,
       nullptr,
       std::move(destination),
@@ -982,31 +1402,113 @@ napi_value Cancel(napi_env env, napi_callback_info info) {
   return out;
 }
 
+struct AsyncDetachContext {
+  napi_async_work work = nullptr;
+  napi_deferred deferred = nullptr;
+  napi_ref handle_ref = nullptr;
+  NativeHandleBox *box = nullptr;
+  std::shared_ptr<NativeLibrary> library;
+  OliphauntHandle *handle = nullptr;
+  uint64_t generation = 0;
+  int32_t result = -1;
+  bool stale = false;
+  std::string error;
+};
+
+void ExecuteAsyncDetach(napi_env, void *data) {
+  auto *context = static_cast<AsyncDetachContext *>(data);
+  std::lock_guard<std::mutex> guard(context->library->lifecycle_mutex);
+  if (context->library->terminally_closed ||
+      context->library->resident_handle != context->handle ||
+      context->library->resident_generation != context->generation) {
+    context->stale = true;
+    context->error = "native liboliphaunt environment has already shut down";
+    return;
+  }
+  context->result = context->library->detach(context->handle);
+  if (context->result != 0) {
+    context->library->detach_pending = true;
+    context->error =
+        "native liboliphaunt detach failed: " +
+        LastError(context->library.get(), context->handle);
+    return;
+  }
+  context->library->detach_pending = false;
+}
+
+void CompleteAsyncDetach(napi_env env, napi_status status, void *data) {
+  std::unique_ptr<AsyncDetachContext> context(static_cast<AsyncDetachContext *>(data));
+  if (status == napi_ok && (context->result == 0 || context->stale)) {
+    // From the logical owner's perspective an exact-generation handle that is
+    // already terminally unavailable is closed, not retryable. NativeBinding
+    // reserves detach rejection for failures that leave this handle active.
+    context->box->handle = nullptr;
+    napi_value out = nullptr;
+    if (napi_get_undefined(env, &out) == napi_ok) {
+      (void)napi_resolve_deferred(env, context->deferred, out);
+    } else {
+      RejectDeferred(env, context->deferred, "native liboliphaunt could not complete detach");
+    }
+  } else {
+    // A failed logical detach remains retryable through Database.close().
+    context->box->detached = false;
+    RejectDeferred(
+        env,
+        context->deferred,
+        status == napi_ok ? context->error : "native liboliphaunt detach async work failed");
+  }
+  if (context->handle_ref != nullptr) {
+    (void)napi_delete_reference(env, context->handle_ref);
+  }
+  if (context->work != nullptr) {
+    (void)napi_delete_async_work(env, context->work);
+  }
+}
+
 napi_value Detach(napi_env env, napi_callback_info info) {
   auto args = Args(env, info, 1);
   if (args.empty()) return nullptr;
   NativeHandleBox *box = GetHandleBox(env, args[0]);
   if (box == nullptr) return nullptr;
-  std::lock_guard<std::mutex> guard(box->library->lifecycle_mutex);
-  if (box->library->terminally_closed || box->library->resident_handle != box->handle ||
-      box->library->resident_generation != box->generation) {
-    box->detached = true;
-    box->handle = nullptr;
-    Throw(env, "native liboliphaunt environment has already shut down");
+  auto context = std::make_unique<AsyncDetachContext>();
+  context->box = box;
+  context->library = box->library;
+  context->handle = box->handle;
+  context->generation = box->generation;
+
+  napi_value promise = nullptr;
+  napi_value resource_name = nullptr;
+  if (!Check(env, napi_create_promise(env, &context->deferred, &promise), "create detach promise") ||
+      !Check(env, napi_create_reference(env, args[0], 1, &context->handle_ref),
+             "retain native handle during detach") ||
+      !Check(env,
+             napi_create_string_utf8(
+                 env, "oliphaunt.detach", NAPI_AUTO_LENGTH, &resource_name),
+             "create detach resource name") ||
+      !Check(env,
+             napi_create_async_work(
+                 env,
+                 nullptr,
+                 resource_name,
+                 ExecuteAsyncDetach,
+                 CompleteAsyncDetach,
+                 context.get(),
+                 &context->work),
+             "create native detach work") ||
+      !Check(env, napi_queue_async_work(env, context->work), "queue native detach work")) {
+    if (context->work != nullptr) {
+      (void)napi_delete_async_work(env, context->work);
+    }
+    if (context->handle_ref != nullptr) {
+      (void)napi_delete_reference(env, context->handle_ref);
+    }
     return nullptr;
   }
-  int32_t rc = box->library->detach(box->handle);
-  if (rc != 0) {
-    box->library->detach_pending = true;
-    Throw(env, "native liboliphaunt detach failed: " + LastError(box->library.get(), box->handle));
-    return nullptr;
-  }
-  box->library->detach_pending = false;
+  // Reject new work immediately while the native detach runs. On failure the
+  // completion callback restores the retryable logical handle.
   box->detached = true;
-  box->handle = nullptr;
-  napi_value out = nullptr;
-  Check(env, napi_get_undefined(env, &out), "create undefined");
-  return out;
+  (void)context.release();
+  return promise;
 }
 
 napi_value Init(napi_env env, napi_value exports) {
@@ -1021,11 +1523,16 @@ napi_value Init(napi_env env, napi_value exports) {
       {"open", nullptr, Open, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"execProtocolRaw", nullptr, ExecProtocolRaw, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"execSimpleQuery", nullptr, ExecSimpleQuery, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"execProtocolStream", nullptr, ExecProtocolStream, nullptr, nullptr, nullptr, napi_default, nullptr},
+      {"execProtocolRawStream", nullptr, ExecProtocolRawStream, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"backup", nullptr, Backup, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"restore", nullptr, Restore, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"cancel", nullptr, Cancel, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"detach", nullptr, Detach, nullptr, nullptr, nullptr, napi_default, nullptr},
+      {"createForgottenHandleRecoveryToken", nullptr,
+       CreateForgottenHandleRecoveryToken, nullptr, nullptr, nullptr,
+       napi_default, nullptr},
+      {"queueForgottenHandleRecovery", nullptr, QueueForgottenHandleRecovery,
+       nullptr, nullptr, nullptr, napi_default, nullptr},
   };
   Check(env, napi_define_properties(env, exports, sizeof(descriptors) / sizeof(descriptors[0]), descriptors),
         "define exports");

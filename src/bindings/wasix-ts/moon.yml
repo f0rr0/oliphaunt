@@ -11,7 +11,7 @@ dependsOn:
 
 project:
   title: "Oliphaunt WASIX TypeScript binding"
-  description: "Portable WASIX TypeScript binding for browser, Node, Bun, and Deno direct, Worker, and local-server placement."
+  description: "Portable WASIX TypeScript binding with Worker-owned async and explicit caller-realm blocking entrypoints for browsers, Node, Bun, and Deno."
   owner: "oliphaunt"
   release:
     component: "oliphaunt-wasix-ts"
@@ -374,7 +374,9 @@ tasks:
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
       - "/benchmarks/wasix/node-pglite-memory-v1.json"
+      - "/benchmarks/wasix/node-pglite-memory-v2.json"
       - "/benchmarks/wasix/browser-pglite-memory-v1.json"
+      - "/benchmarks/wasix/browser-pglite-memory-v2.json"
       - "/src/bindings/wasix-ts/host/**/*"
       - "/src/bindings/wasix-ts/package.json"
       - "/src/bindings/wasix-ts/tools/packed-node-fixture.mjs"
@@ -403,6 +405,7 @@ tasks:
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
       - "/benchmarks/wasix/node-pglite-memory-v1.json"
+      - "/benchmarks/wasix/node-pglite-memory-v2.json"
       - "/src/bindings/wasix-ts/**/*"
       - "/tools/dev/clean-package-lib.mjs"
       - "/src/runtimes/liboliphaunt/wasix/**/*"
@@ -431,6 +434,7 @@ tasks:
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
       - "/benchmarks/wasix/browser-pglite-memory-v1.json"
+      - "/benchmarks/wasix/browser-pglite-memory-v2.json"
       - "/src/bindings/wasix-ts/**/*"
       - "/tools/dev/clean-package-lib.mjs"
       - "/src/runtimes/liboliphaunt/wasix/**/*"

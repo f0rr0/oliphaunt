@@ -32,6 +32,8 @@ import {
   type ManagedChild,
 } from './node-adapter.js';
 import type { RuntimeBinding, RuntimeHandle } from './types.js';
+import { throwCollectedCloseFailures } from './close.js';
+import { createForgottenRuntimeHandleCleanup } from './forgotten-handle.js';
 import { resolveExactNativeRuntimeProfile } from '../native/runtime-profile.js';
 
 const READY_PREFIX = 'OLIPHAUNT_BROKER_READY ';
@@ -51,6 +53,9 @@ export type BrokerRuntimeBindingOptions = {
 export function createBrokerRuntimeBinding(
   options: BrokerRuntimeBindingOptions = {},
 ): RuntimeBinding {
+  const forgottenHandles = createForgottenRuntimeHandleCleanup<BrokerHandle>(
+    (handle) => handle.detach(),
+  );
   return {
     async open(config: NormalizedOpenConfig): Promise<BrokerHandle> {
       const executable = await resolveBrokerExecutable(
@@ -82,8 +87,26 @@ export function createBrokerRuntimeBinding(
     cancel(handle: RuntimeHandle): Promise<void> {
       return asBrokerHandle(handle).cancel();
     },
-    detach(handle: RuntimeHandle): Promise<void> {
-      return asBrokerHandle(handle).detach();
+    async close(handle: RuntimeHandle) {
+      try {
+        await asBrokerHandle(handle).detach();
+        return { state: 'closed' };
+      } catch (error) {
+        // BrokerHandle.detach() crosses its destructive cutoff before any
+        // fallible teardown. The public owner must be retired even when later
+        // process or filesystem cleanup reports an error.
+        return { state: 'terminal', error };
+      }
+    },
+    registerForgottenHandleCleanup(
+      owner: object,
+      handle: RuntimeHandle,
+      _releaseOwnership: () => void,
+    ): void {
+      forgottenHandles.register(owner, asBrokerHandle(handle));
+    },
+    unregisterForgottenHandleCleanup(owner: object): void {
+      forgottenHandles.unregister(owner);
     },
   };
 }
@@ -199,29 +222,58 @@ class BrokerHandle {
       return;
     }
     this.#closed = true;
+    const failures: unknown[] = [];
     const stream = this.#stream;
+    this.#stream = undefined;
     if (stream !== undefined) {
       try {
         await writeBrokerRequest(stream, { kind: 'close' });
-        await readBrokerResponse(stream);
-      } catch {}
-      await stream.close();
+        const response = await readBrokerResponse(stream);
+        if (response.kind === 'error') {
+          throw new Error(`native broker close failed: ${response.message}`);
+        }
+        if (response.kind === 'chunk') {
+          throw new Error('native broker close returned a stream chunk');
+        }
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
+        await stream.close();
+      } catch (error) {
+        failures.push(error);
+      }
     }
-    this.#stream = undefined;
     const child = this.#child;
     this.#child = undefined;
     if (child !== undefined) {
-      const exited = await waitForChild(child, SHUTDOWN_TIMEOUT_MS);
-      if (!exited) {
-        child.kill('SIGKILL');
-        await child.wait();
+      try {
+        const exited = await waitForChild(child, SHUTDOWN_TIMEOUT_MS);
+        if (!exited) {
+          failures.push(
+            new Error(`native broker did not stop within ${SHUTDOWN_TIMEOUT_MS}ms`),
+          );
+          child.kill('SIGKILL');
+          await child.wait();
+        }
+      } catch (error) {
+        failures.push(error);
       }
     }
-    await removeTree(this.#ipcDir);
+    try {
+      await removeTree(this.#ipcDir);
+    } catch (error) {
+      failures.push(error);
+    }
     this.#ipcDir = undefined;
     if (this.config.temporaryDirectory) {
-      await removeTree(this.config.instanceDirectory);
+      try {
+        await removeTree(this.config.instanceDirectory);
+      } catch (error) {
+        failures.push(error);
+      }
     }
+    throwCollectedCloseFailures(failures, 'native broker teardown failed');
   }
 
   async request(frame: Parameters<typeof writeBrokerRequest>[1]): Promise<BrokerResponseFrame> {

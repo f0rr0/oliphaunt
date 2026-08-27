@@ -40,6 +40,7 @@ tasks:
     command: "node src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs"
     deps:
       - "liboliphaunt-native:external-source-fetch-test"
+      - "liboliphaunt-native:error-attribution-test"
       - "liboliphaunt-native:generation-lifecycle-test"
       - "liboliphaunt-native:ios-extension-packager-test"
       - "liboliphaunt-native:module-dir-resolver-test"
@@ -80,6 +81,19 @@ tasks:
     inputs:
       - "/src/runtimes/liboliphaunt/native/bin/fetch-pinned-git-checkout.sh"
       - "/src/runtimes/liboliphaunt/native/bin/fetch-pinned-git-checkout.test.sh"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  error-attribution-test:
+    tags: ["quality", "unit"]
+    command: "bash src/runtimes/liboliphaunt/native/tools/test-error-attribution.sh"
+    inputs:
+      - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
+      - "/src/runtimes/liboliphaunt/native/src/liboliphaunt_error.c"
+      - "/src/runtimes/liboliphaunt/native/src/liboliphaunt_internal.h"
+      - "/src/runtimes/liboliphaunt/native/src/liboliphaunt_platform.h"
+      - "/src/runtimes/liboliphaunt/native/smoke/liboliphaunt_error_attribution.c"
+      - "/src/runtimes/liboliphaunt/native/tools/test-error-attribution.sh"
     options:
       cache: true
       runFromWorkspaceRoot: true

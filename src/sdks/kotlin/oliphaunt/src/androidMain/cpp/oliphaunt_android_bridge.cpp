@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -17,7 +18,7 @@ using OliphauntExecProtocolFn = int32_t (*)(
     const uint8_t *,
     size_t,
     OliphauntResponse *);
-using OliphauntExecProtocolStreamFn = int32_t (*)(
+using OliphauntExecProtocolRawStreamFn = int32_t (*)(
     OliphauntHandle *,
     const uint8_t *,
     size_t,
@@ -28,7 +29,7 @@ using OliphauntDetachFn = int32_t (*)(OliphauntHandle *);
 using OliphauntCloseFn = int32_t (*)(OliphauntHandle *);
 using OliphauntRegisterStaticExtensionsFn = int32_t (*)(const OliphauntStaticExtension *, size_t);
 using OliphauntSelectedStaticExtensionsFn = const OliphauntStaticExtension *(*)(size_t *);
-using OliphauntLastErrorFn = const char *(*)(OliphauntHandle *);
+using OliphauntCopyLastErrorFn = size_t (*)(OliphauntHandle *, char *, size_t);
 using OliphauntFreeResponseFn = void (*)(OliphauntResponse *);
 using OliphauntBackupFn = int32_t (*)(OliphauntHandle *, OliphauntResponse *);
 using OliphauntRestoreFn = int32_t (*)(const OliphauntRestoreOptions *);
@@ -38,12 +39,12 @@ struct Symbols {
   bool ownsLibrary = false;
   OliphauntInitFn init = nullptr;
   OliphauntExecProtocolFn execProtocol = nullptr;
-  OliphauntExecProtocolStreamFn execProtocolStream = nullptr;
+  OliphauntExecProtocolRawStreamFn execProtocolRawStream = nullptr;
   OliphauntCancelFn cancel = nullptr;
   OliphauntDetachFn detach = nullptr;
   OliphauntCloseFn close = nullptr;
   OliphauntRegisterStaticExtensionsFn registerStaticExtensions = nullptr;
-  OliphauntLastErrorFn lastError = nullptr;
+  OliphauntCopyLastErrorFn copyLastError = nullptr;
   OliphauntFreeResponseFn freeResponse = nullptr;
   OliphauntBackupFn backup = nullptr;
   OliphauntRestoreFn restore = nullptr;
@@ -52,7 +53,6 @@ struct Symbols {
 struct Session {
   Symbols symbols;
   OliphauntHandle *handle = nullptr;
-  char lastError[1024] = {0};
 };
 
 struct StreamContext {
@@ -171,12 +171,12 @@ bool loadSymbols(const std::string &configuredLibraryPath, Symbols *symbols, std
 
   if (!loadSymbol(symbols, "oliphaunt_init", reinterpret_cast<void **>(&symbols->init), error) ||
       !loadSymbol(symbols, "oliphaunt_exec_protocol", reinterpret_cast<void **>(&symbols->execProtocol), error) ||
-      !loadSymbol(symbols, "oliphaunt_exec_protocol_stream", reinterpret_cast<void **>(&symbols->execProtocolStream), error) ||
+      !loadSymbol(symbols, "oliphaunt_exec_protocol_raw_stream", reinterpret_cast<void **>(&symbols->execProtocolRawStream), error) ||
       !loadSymbol(symbols, "oliphaunt_cancel", reinterpret_cast<void **>(&symbols->cancel), error) ||
       !loadSymbol(symbols, "oliphaunt_detach", reinterpret_cast<void **>(&symbols->detach), error) ||
       !loadSymbol(symbols, "oliphaunt_close", reinterpret_cast<void **>(&symbols->close), error) ||
       !loadSymbol(symbols, "oliphaunt_register_static_extensions", reinterpret_cast<void **>(&symbols->registerStaticExtensions), error) ||
-      !loadSymbol(symbols, "oliphaunt_last_error", reinterpret_cast<void **>(&symbols->lastError), error) ||
+      !loadSymbol(symbols, "oliphaunt_copy_last_error", reinterpret_cast<void **>(&symbols->copyLastError), error) ||
       !loadSymbol(symbols, "oliphaunt_free_response", reinterpret_cast<void **>(&symbols->freeResponse), error) ||
       !loadSymbol(symbols, "oliphaunt_backup", reinterpret_cast<void **>(&symbols->backup), error) ||
       !loadSymbol(symbols, "oliphaunt_restore", reinterpret_cast<void **>(&symbols->restore), error)) {
@@ -233,8 +233,19 @@ bool registerSelectedStaticExtensions(Symbols *symbols, std::string *error) {
     return false;
   }
   if (symbols->registerStaticExtensions(extensions, count) != 0) {
-    const char *message = symbols->lastError != nullptr ? symbols->lastError(nullptr) : nullptr;
-    *error = message != nullptr ? message : "liboliphaunt static extension registration failed";
+    const char *fallback = "liboliphaunt static extension registration failed";
+    size_t required = symbols->copyLastError(nullptr, nullptr, 0);
+    if (required == 0 || required == std::numeric_limits<size_t>::max()) {
+      *error = fallback;
+    } else {
+      std::vector<char> message(required + 1, '\0');
+      size_t currentRequired = symbols->copyLastError(nullptr, message.data(), message.size());
+      if (currentRequired >= message.size() && currentRequired != std::numeric_limits<size_t>::max()) {
+        message.assign(currentRequired + 1, '\0');
+        symbols->copyLastError(nullptr, message.data(), message.size());
+      }
+      *error = message[0] != '\0' ? std::string(message.data()) : fallback;
+    }
     return false;
   }
   return true;
@@ -285,15 +296,24 @@ std::string lastError(Session *session) {
   if (session == nullptr) {
     return "invalid liboliphaunt Android session";
   }
-  const char *message = session->symbols.lastError != nullptr
-      ? session->symbols.lastError(session->handle)
-      : nullptr;
-  std::snprintf(
-      session->lastError,
-      sizeof(session->lastError),
-      "%s",
-      message != nullptr ? message : "unknown liboliphaunt Android runtime error");
-  return session->lastError;
+  const char *fallback = "unknown liboliphaunt Android runtime error";
+  if (session->symbols.copyLastError == nullptr) {
+    return fallback;
+  }
+  size_t required = session->symbols.copyLastError(session->handle, nullptr, 0);
+  if (required == 0 || required == std::numeric_limits<size_t>::max()) {
+    return fallback;
+  }
+  std::vector<char> message(required + 1, '\0');
+  size_t currentRequired = session->symbols.copyLastError(
+      session->handle,
+      message.data(),
+      message.size());
+  if (currentRequired >= message.size() && currentRequired != std::numeric_limits<size_t>::max()) {
+    message.assign(currentRequired + 1, '\0');
+    session->symbols.copyLastError(session->handle, message.data(), message.size());
+  }
+  return message[0] != '\0' ? std::string(message.data()) : fallback;
 }
 
 }  // namespace
@@ -414,7 +434,7 @@ Java_dev_oliphaunt_OliphauntAndroidNativeBridge_execProtocolRawNative(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_dev_oliphaunt_OliphauntAndroidNativeBridge_execProtocolStreamNative(
+Java_dev_oliphaunt_OliphauntAndroidNativeBridge_execProtocolRawStreamNative(
     JNIEnv *env,
     jobject,
     jlong handle,
@@ -462,7 +482,7 @@ Java_dev_oliphaunt_OliphauntAndroidNativeBridge_execProtocolStreamNative(
   stream.env = env;
   stream.sink = sink;
   stream.onChunk = onChunk;
-  int32_t rc = session->symbols.execProtocolStream(
+  int32_t rc = session->symbols.execProtocolRawStream(
       session->handle,
       requestBytes.empty() ? nullptr : requestBytes.data(),
       requestBytes.size(),
@@ -551,8 +571,19 @@ Java_dev_oliphaunt_OliphauntAndroidNativeBridge_restoreNative(
   };
   int32_t rc = symbols.restore(&options);
   if (rc != 0) {
-    const char *message = symbols.lastError != nullptr ? symbols.lastError(nullptr) : nullptr;
-    error = message != nullptr ? message : "liboliphaunt restore failed";
+    const char *fallback = "liboliphaunt restore failed";
+    size_t required = symbols.copyLastError(nullptr, nullptr, 0);
+    if (required == 0 || required == std::numeric_limits<size_t>::max()) {
+      error = fallback;
+    } else {
+      std::vector<char> message(required + 1, '\0');
+      size_t currentRequired = symbols.copyLastError(nullptr, message.data(), message.size());
+      if (currentRequired >= message.size() && currentRequired != std::numeric_limits<size_t>::max()) {
+        message.assign(currentRequired + 1, '\0');
+        symbols.copyLastError(nullptr, message.data(), message.size());
+      }
+      error = message[0] != '\0' ? std::string(message.data()) : fallback;
+    }
     unloadSymbols(&symbols);
     throwRuntime(env, error);
     return;

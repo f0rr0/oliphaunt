@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import {
   Worker,
@@ -14,6 +14,7 @@ import {
 } from "node:worker_threads";
 
 const scriptPath = fileURLToPath(import.meta.url);
+const workspaceRoot = path.resolve(path.dirname(scriptPath), "../../../..");
 const require = createRequire(import.meta.url);
 
 function parseArgs(argv) {
@@ -36,7 +37,7 @@ function loadAddon(addonPath) {
   return require(addonPath);
 }
 
-function openFake(addon, libraryPath, root) {
+async function openFake(addon, libraryPath, root) {
   return addon.open({
     libraryPath,
     pgdata: path.join(root, "pgdata"),
@@ -130,8 +131,8 @@ async function runWorker() {
     return;
   }
   if (role === "open-and-detach") {
-    const handle = openFake(addon, libraryPath, root);
-    addon.detach(handle);
+    const handle = await openFake(addon, libraryPath, root);
+    await addon.detach(handle);
     parentPort.postMessage("detached");
     await new Promise((resolve) => {
       parentPort.once("message", (message) => {
@@ -143,7 +144,7 @@ async function runWorker() {
     return;
   }
   if (role === "open-and-wait") {
-    globalThis.__oliphauntCleanupLifecycleWorkerHandle = openFake(
+    globalThis.__oliphauntCleanupLifecycleWorkerHandle = await openFake(
       addon,
       libraryPath,
       root,
@@ -157,16 +158,62 @@ async function runWorker() {
   throw new Error(`unknown cleanup lifecycle worker role: ${role}`);
 }
 
-async function collectGarbageUntilFinalized(logPath, expectedEvent = "detach") {
+async function collectGarbageUntilCollected(signal) {
   assert.equal(typeof globalThis.gc, "function", "GC lifecycle child must run with --expose-gc");
   for (let attempt = 0; attempt < 200; attempt += 1) {
     globalThis.gc();
     await new Promise((resolve) => setImmediate(resolve));
-    if (eventsFrom(logPath).includes(expectedEvent)) {
+    if (signal.collected) {
       return;
     }
   }
-  throw new Error("Node did not finalize the unreachable native handle after 200 forced GC cycles");
+  throw new Error("Node did not collect the unreachable native handle after 200 forced GC cycles");
+}
+
+async function openAfterForgottenOwnerRecovery(client, config) {
+  assert.equal(typeof globalThis.gc, "function", "GC lifecycle child must run with --expose-gc");
+  let lastAdmissionError;
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    globalThis.gc();
+    await new Promise((resolve) => setImmediate(resolve));
+    try {
+      return await client.open(config);
+    } catch (error) {
+      if (!/native direct already has an active process-wide instance/u.test(String(error))) {
+        throw error;
+      }
+      lastAdmissionError = error;
+    }
+  }
+  throw new Error("forgotten native owner did not release its exact JavaScript admission lease", {
+    cause: lastAdmissionError,
+  });
+}
+
+async function prepareManagedDatabaseRoot(root) {
+  await mkdir(path.join(root, "pgdata", "global"), { recursive: true });
+  await mkdir(path.join(root, "pgdata", "pg_wal"), { recursive: true });
+  await writeFile(path.join(root, "pgdata", "PG_VERSION"), "18\n");
+  await writeFile(path.join(root, "pgdata", "global", "pg_control"), "control");
+  await writeFile(
+    path.join(root, ".oliphaunt.json"),
+    `${JSON.stringify({
+      schema: "oliphaunt-database-root-v1",
+      engineFamily: "native",
+      pgdata: "pgdata",
+      postgresMajor: 18,
+      physicalFormat: "native-pg18-v1",
+    })}\n`,
+  );
+}
+
+function observeCollection(value) {
+  const signal = { collected: false, registry: undefined };
+  signal.registry = new FinalizationRegistry(() => {
+    signal.collected = true;
+  });
+  signal.registry.register(value, undefined);
+  return signal;
 }
 
 async function waitForEvent(logPath, expectedEvent) {
@@ -196,12 +243,12 @@ async function runChild(options) {
     }
     case "explicit-detach":
     case "unicode-library-path": {
-      const handle = openFake(addon, options.library, options.root);
-      addon.detach(handle);
+      const handle = await openFake(addon, options.library, options.root);
+      await addon.detach(handle);
       return;
     }
     case "active-exit": {
-      globalThis.__oliphauntCleanupLifecycleHandle = openFake(
+      globalThis.__oliphauntCleanupLifecycleHandle = await openFake(
         addon,
         options.library,
         options.root,
@@ -209,7 +256,7 @@ async function runChild(options) {
       return;
     }
     case "forced-process-exit-active": {
-      globalThis.__oliphauntCleanupLifecycleHandle = openFake(
+      globalThis.__oliphauntCleanupLifecycleHandle = await openFake(
         addon,
         options.library,
         options.root,
@@ -220,19 +267,27 @@ async function runChild(options) {
       process.exit(0);
     }
     case "gc-finalizer": {
-      let handle = openFake(addon, options.library, options.root);
+      let handle = await openFake(addon, options.library, options.root);
+      const collection = observeCollection(handle);
       handle = undefined;
       assert.equal(handle, undefined);
-      await collectGarbageUntilFinalized(options.log);
+      await collectGarbageUntilCollected(collection);
+      const reopened = await openFake(addon, options.library, options.root);
+      await addon.detach(reopened);
       return;
     }
     case "gc-detach-recovery": {
-      let handle = openFake(addon, options.library, options.root);
+      let handle = await openFake(addon, options.library, options.root);
+      const collection = observeCollection(handle);
       handle = undefined;
       assert.equal(handle, undefined);
-      await collectGarbageUntilFinalized(options.log, "detach-failed");
-      const recovered = openFake(addon, options.library, options.root);
-      addon.detach(recovered);
+      await collectGarbageUntilCollected(collection);
+      await assert.rejects(
+        openFake(addon, options.library, options.root),
+        /could not recover the previous logical handle/u,
+      );
+      const recovered = await openFake(addon, options.library, options.root);
+      await addon.detach(recovered);
       assert.equal(
         eventsFrom(options.log).includes("init-while-active"),
         false,
@@ -240,18 +295,88 @@ async function runChild(options) {
       );
       return;
     }
+    case "sdk-gc-owner-recovery": {
+      const [{ createOliphauntClient }, { createNodeNativeBinding }] = await Promise.all([
+        import(pathToFileURL(path.join(workspaceRoot, "src/sdks/js/src/client.ts"))),
+        import(pathToFileURL(path.join(workspaceRoot, "src/sdks/js/src/native/node.ts"))),
+      ]);
+      const databaseRoot = path.join(options.root, "database");
+      const runtimeDirectory = path.join(options.root, "runtime");
+      await Promise.all([
+        prepareManagedDatabaseRoot(databaseRoot),
+        mkdir(runtimeDirectory, { recursive: true }),
+      ]);
+      const client = createOliphauntClient((bindingOptions) =>
+        createNodeNativeBinding({
+          ...bindingOptions,
+          nodeAddonPath: options.addon,
+        }),
+      );
+      const config = {
+        storage: { kind: "directory", path: databaseRoot },
+        libraryPath: options.library,
+        runtimeDirectory,
+      };
+
+      let forgotten = await client.open(config);
+      const forgottenCollection = observeCollection(forgotten);
+      forgotten = undefined;
+      let reopened = await openAfterForgottenOwnerRecovery(client, config);
+      assert.equal(
+        forgottenCollection.collected,
+        true,
+        "the next open must follow collection of the forgotten public database",
+      );
+
+      let retired = reopened;
+      reopened = undefined;
+      await retired.close();
+      const current = await client.open(config);
+      const retiredCollection = observeCollection(retired);
+      retired = undefined;
+      await collectGarbageUntilCollected(retiredCollection);
+      await assert.rejects(
+        client.open(config),
+        /native direct already has an active process-wide instance/u,
+        "collection of an older explicitly closed owner must not release the current lease",
+      );
+      await current.close();
+      return;
+    }
+    case "forgotten-token-generation-guard": {
+      const staleHandle = await openFake(addon, options.library, options.root);
+      const staleToken = addon.createForgottenHandleRecoveryToken(staleHandle);
+      await addon.detach(staleHandle);
+
+      let currentHandle = await openFake(addon, options.library, options.root);
+      const currentToken = addon.createForgottenHandleRecoveryToken(currentHandle);
+      assert.equal(
+        addon.queueForgottenHandleRecovery(staleToken),
+        false,
+        "a recovery token from an older logical generation must not mark the current owner",
+      );
+      assert.equal(
+        addon.queueForgottenHandleRecovery(currentToken),
+        true,
+        "the current logical generation must be marked for next-open recovery",
+      );
+      currentHandle = undefined;
+      const recovered = await openFake(addon, options.library, options.root);
+      await addon.detach(recovered);
+      return;
+    }
     case "async-query-cancel": {
-      const handle = openFake(addon, options.library, options.root);
+      const handle = await openFake(addon, options.library, options.root);
       const query = addon.execProtocolRaw(handle, new Uint8Array([1]));
       assert.equal(query instanceof Promise, true, "native query must return a Promise");
       await waitForEvent(options.log, "query-started");
       addon.cancel(handle);
       await assert.rejects(query, /fake query was cancelled/u);
-      addon.detach(handle);
+      await addon.detach(handle);
       return;
     }
     case "async-archive-timers": {
-      const handle = openFake(addon, options.library, options.root);
+      const handle = await openFake(addon, options.library, options.root);
       let backupSettled = false;
       const backup = addon.backup(handle).finally(() => {
         backupSettled = true;
@@ -271,11 +396,61 @@ async function runChild(options) {
       await new Promise((resolve) => setTimeout(resolve, 0));
       assert.equal(restoreSettled, false, "restore must not block the Node.js event loop");
       await restore;
-      addon.detach(handle);
+      await addon.detach(handle);
+      return;
+    }
+    case "async-open-stream-detach-timers": {
+      let openSettled = false;
+      const opening = openFake(addon, options.library, options.root).finally(() => {
+        openSettled = true;
+      });
+      assert.equal(opening instanceof Promise, true, "native open must return a Promise");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(openSettled, false, "open must not block the Node.js event loop");
+      const handle = await opening;
+
+      const chunks = [];
+      let streamSettled = false;
+      const streaming = addon
+        .execProtocolRawStream(handle, new Uint8Array([1]), (chunk) => {
+          chunks.push([...chunk]);
+        })
+        .finally(() => {
+          streamSettled = true;
+        });
+      assert.equal(streaming instanceof Promise, true, "native stream must return a Promise");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(streamSettled, false, "streaming must not block the Node.js event loop");
+      await streaming;
+      assert.deepEqual(chunks, [[1, 2], [3, 4], [5, 6]]);
+
+      let detachSettled = false;
+      const detaching = addon.detach(handle).finally(() => {
+        detachSettled = true;
+      });
+      assert.equal(detaching instanceof Promise, true, "native detach must return a Promise");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(detachSettled, false, "detach must not block the Node.js event loop");
+      await detaching;
+      return;
+    }
+    case "async-stream-callback-contract": {
+      const handle = await openFake(addon, options.library, options.root);
+      await assert.rejects(
+        addon.execProtocolRawStream(handle, new Uint8Array([1]), () => Promise.resolve()),
+        /must complete synchronously.*Promise or thenable/u,
+      );
+      await assert.rejects(
+        addon.execProtocolRawStream(handle, new Uint8Array([1]), () => {
+          throw new Error("stream consumer failed");
+        }),
+        /stream consumer failed/u,
+      );
+      await addon.detach(handle);
       return;
     }
     case "generation-acquisition-race": {
-      assert.throws(
+      await assert.rejects(
         () => openFake(addon, options.library, options.root),
         /native liboliphaunt init returned an invalid logical generation/u,
         "open must fail closed when the resident handle closes before generation acquisition",
@@ -283,16 +458,16 @@ async function runChild(options) {
       return;
     }
     case "alias-path": {
-      const first = openFake(addon, options.library, options.root);
-      addon.detach(first);
+      const first = await openFake(addon, options.library, options.root);
+      await addon.detach(first);
       const aliasPath = `${path.dirname(options.library)}${path.sep}.${path.sep}${path.basename(options.library)}`;
       assert.notEqual(aliasPath, options.library);
-      const second = openFake(addon, aliasPath, options.root);
-      addon.detach(second);
+      const second = await openFake(addon, aliasPath, options.root);
+      await addon.detach(second);
       return;
     }
     case "load-only-worker": {
-      const handle = openFake(addon, options.library, options.root);
+      const handle = await openFake(addon, options.library, options.root);
       const worker = new Worker(scriptPath, {
         workerData: {
           role: "load-only",
@@ -309,7 +484,7 @@ async function runChild(options) {
         ["init"],
         "an environment that only loads the addon must not close another environment's runtime",
       );
-      addon.detach(handle);
+      await addon.detach(handle);
       return;
     }
     case "ownership-transfer": {
@@ -323,7 +498,7 @@ async function runChild(options) {
       });
       const workerExit = observeWorkerExit(worker);
       await waitForWorkerMessage(worker, "detached");
-      const handle = openFake(addon, options.library, options.root);
+      const handle = await openFake(addon, options.library, options.root);
       worker.postMessage("finish");
       await requireWorkerExit(workerExit, 0);
       assert.deepEqual(
@@ -331,7 +506,7 @@ async function runChild(options) {
         ["init", "detach", "init"],
         "the previous owner environment must not close a runtime after ownership transfers",
       );
-      addon.detach(handle);
+      await addon.detach(handle);
       return;
     }
     case "worker-terminate-active": {
@@ -358,19 +533,19 @@ async function runChild(options) {
     case "copied-image-same-env-detached": {
       const firstAddon = loadAddon(options.addonCopyA);
       const secondAddon = loadAddon(options.addonCopyB);
-      const firstHandle = openFake(
+      const firstHandle = await openFake(
         firstAddon,
         options.library,
         path.join(options.root, "first"),
       );
-      firstAddon.detach(firstHandle);
-      const secondHandle = openFake(
+      await firstAddon.detach(firstHandle);
+      const secondHandle = await openFake(
         secondAddon,
         options.library,
         path.join(options.root, "second"),
       );
       if (options.scenario.endsWith("-detached")) {
-        secondAddon.detach(secondHandle);
+        await secondAddon.detach(secondHandle);
       } else {
         globalThis.__oliphauntCopiedImageCurrentHandle = secondHandle;
       }
@@ -389,14 +564,14 @@ async function runChild(options) {
       const workerExit = observeWorkerExit(worker);
       await waitForWorkerMessage(worker, "detached");
       const mainAddon = loadAddon(options.addonCopyB);
-      const mainHandle = openFake(
+      const mainHandle = await openFake(
         mainAddon,
         options.library,
         path.join(options.root, "main"),
       );
       const currentOwnerDetached = options.scenario.endsWith("-detached");
       if (currentOwnerDetached) {
-        mainAddon.detach(mainHandle);
+        await mainAddon.detach(mainHandle);
       } else {
         globalThis.__oliphauntCopiedImageCurrentHandle = mainHandle;
       }
@@ -427,7 +602,7 @@ async function runChild(options) {
       const workerExit = observeWorkerExit(worker);
       await waitForWorkerMessage(worker, "detached");
       const mainAddon = loadAddon(options.addonCopyB);
-      globalThis.__oliphauntCopiedImageCurrentHandle = openFake(
+      globalThis.__oliphauntCopiedImageCurrentHandle = await openFake(
         mainAddon,
         options.library,
         path.join(options.root, "main"),
@@ -510,6 +685,9 @@ async function runParent(options) {
   }
 
   const temporaryRoot = await mkdtemp(path.join(tmpdir(), "oliphaunt-node-cleanup-"));
+  let singleImageCases = 0;
+  let copiedImageCases = 0;
+  let staleAcquisitionCases = 0;
   try {
     const copiedAddonA = path.join(temporaryRoot, "oliphaunt-node-copy-a.node");
     const copiedAddonB = path.join(temporaryRoot, "oliphaunt-node-copy-b.node");
@@ -550,7 +728,7 @@ async function runParent(options) {
       },
       {
         name: "gc-finalizer",
-        expectedBeforeClose: ["init", "detach"],
+        expectedBeforeClose: ["init", "detach", "init", "detach"],
         exposeGc: true,
       },
       {
@@ -558,6 +736,16 @@ async function runParent(options) {
         expectedBeforeClose: ["init", "detach-failed", "detach", "init", "detach"],
         exposeGc: true,
         failDetachOnce: true,
+      },
+      {
+        name: "sdk-gc-owner-recovery",
+        expectedBeforeClose: ["init", "detach", "init", "detach", "init", "detach"],
+        exposeGc: true,
+        typescript: true,
+      },
+      {
+        name: "forgotten-token-generation-guard",
+        expectedBeforeClose: ["init", "detach", "init", "detach", "init", "detach"],
       },
       {
         name: "async-query-cancel",
@@ -575,6 +763,34 @@ async function runParent(options) {
           "detach",
         ],
         blockArchive: true,
+      },
+      {
+        name: "async-open-stream-detach-timers",
+        expectedBeforeClose: [
+          "open-started",
+          "open-finished",
+          "init",
+          "stream-started",
+          "stream-finished",
+          "detach-started",
+          "detach-finished",
+          "detach",
+        ],
+        blockOpen: true,
+        blockStream: true,
+        blockDetach: true,
+      },
+      {
+        name: "async-stream-callback-contract",
+        expectedBeforeClose: [
+          "init",
+          "stream-started",
+          "stream-aborted",
+          "stream-started",
+          "stream-aborted",
+          "detach",
+        ],
+        blockStream: true,
       },
       {
         name: "generation-acquisition-race",
@@ -623,6 +839,13 @@ async function runParent(options) {
     for (const scenario of scenarios) {
       const iterations = scenario.iterations ?? 1;
       for (let iteration = 1; iteration <= iterations; iteration += 1) {
+        if (scenario.generationAcquisitionRace) {
+          staleAcquisitionCases += 1;
+        } else if (scenario.name.startsWith("copied-image-")) {
+          copiedImageCases += 1;
+        } else {
+          singleImageCases += 1;
+        }
         const executionName = iterations === 1
           ? scenario.name
           : `${scenario.name}-${iteration}-of-${iterations}`;
@@ -630,6 +853,14 @@ async function runParent(options) {
         const logPath = path.join(temporaryRoot, `${executionName}.log`);
         const childArgs = [
           ...(scenario.exposeGc ? ["--expose-gc"] : []),
+          ...(scenario.typescript
+            ? [
+                "--import",
+                require.resolve("tsx", {
+                  paths: [path.join(workspaceRoot, "src/sdks/js")],
+                }),
+              ]
+            : []),
           scriptPath,
           "--scenario",
           scenario.name,
@@ -662,6 +893,15 @@ async function runParent(options) {
               : {}),
             ...(scenario.blockArchive
               ? { OLIPHAUNT_NODE_CLEANUP_TEST_BLOCK_ARCHIVE: "1" }
+              : {}),
+            ...(scenario.blockOpen
+              ? { OLIPHAUNT_NODE_CLEANUP_TEST_BLOCK_OPEN: "1" }
+              : {}),
+            ...(scenario.blockStream
+              ? { OLIPHAUNT_NODE_CLEANUP_TEST_BLOCK_STREAM: "1" }
+              : {}),
+            ...(scenario.blockDetach
+              ? { OLIPHAUNT_NODE_CLEANUP_TEST_BLOCK_DETACH: "1" }
               : {}),
           },
           timeout: 30_000,
@@ -709,7 +949,7 @@ async function runParent(options) {
   }
 
   console.log(
-    "Node direct environment cleanup lifecycle passed (35 single-image + 5 copied-image + 1 stale-acquisition cases)",
+    `Node direct environment cleanup lifecycle passed (${singleImageCases} single-image + ${copiedImageCases} copied-image + ${staleAcquisitionCases} stale-acquisition cases)`,
   );
 }
 

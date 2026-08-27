@@ -23,6 +23,8 @@ import {
   nativePostgresChildEnvironment,
 } from '../native/initialize.js';
 import type { RuntimeBinding, RuntimeHandle } from './types.js';
+import { throwCollectedCloseFailures } from './close.js';
+import { createForgottenRuntimeHandleCleanup } from './forgotten-handle.js';
 import {
   materializeNodeExtensionInstall,
   resolveNodeNativeInstall,
@@ -44,6 +46,9 @@ type ServerTools = {
 };
 
 export function createServerRuntimeBinding(): RuntimeBinding {
+  const forgottenHandles = createForgottenRuntimeHandleCleanup<ServerHandle>(
+    (handle) => handle.detach(),
+  );
   return {
     connectionString(handle: RuntimeHandle): string {
       return asServerHandle(handle).connectionString;
@@ -67,8 +72,25 @@ export function createServerRuntimeBinding(): RuntimeBinding {
     cancel(handle: RuntimeHandle): Promise<void> {
       return asServerHandle(handle).cancel();
     },
-    detach(handle: RuntimeHandle): Promise<void> {
-      return asServerHandle(handle).detach();
+    async close(handle: RuntimeHandle) {
+      try {
+        await asServerHandle(handle).detach();
+        return { state: 'closed' };
+      } catch (error) {
+        // ServerHandle.detach() marks the session closed before terminating
+        // the client/process. Any subsequent failure is terminal.
+        return { state: 'terminal', error };
+      }
+    },
+    registerForgottenHandleCleanup(
+      owner: object,
+      handle: RuntimeHandle,
+      _releaseOwnership: () => void,
+    ): void {
+      forgottenHandles.register(owner, asServerHandle(handle));
+    },
+    unregisterForgottenHandleCleanup(owner: object): void {
+      forgottenHandles.unregister(owner);
     },
   };
 }
@@ -112,7 +134,7 @@ class ServerHandle {
     }
     this.#closed = true;
     await this.client.terminate().catch(() => {});
-    let failure: unknown;
+    const failures: unknown[] = [];
     try {
       await runCommand(
         this.pgCtl,
@@ -121,29 +143,33 @@ class ServerHandle {
         STOP_TIMEOUT_MS,
       );
     } catch (error) {
-      failure = error;
+      failures.push(error);
     }
-    const exited = await waitForChild(this.child, STOP_TIMEOUT_MS);
-    if (!exited) {
-      this.child.kill('SIGKILL');
-      await this.child.wait();
-      failure ??= new Error(`native server did not stop within ${STOP_TIMEOUT_MS}ms`);
+    try {
+      const exited = await waitForChild(this.child, STOP_TIMEOUT_MS);
+      if (!exited) {
+        failures.push(
+          new Error(`native server did not stop within ${STOP_TIMEOUT_MS}ms`),
+        );
+        this.child.kill('SIGKILL');
+        await this.child.wait();
+      }
+    } catch (error) {
+      failures.push(error);
     }
     try {
       await removeTree(this.ownedSocketDir);
     } catch (error) {
-      failure ??= error;
+      failures.push(error);
     }
     if (this.temporaryDirectory) {
       try {
         await removeTree(this.instanceDirectory);
       } catch (error) {
-        failure ??= error;
+        failures.push(error);
       }
     }
-    if (failure !== undefined) {
-      throw failure;
-    }
+    throwCollectedCloseFailures(failures, 'native server teardown failed');
   }
 
   assertOpen(): void {

@@ -10,8 +10,10 @@ from every native SDK and from the WASIX TypeScript binding.
 
 <Callout type="info" title="This is the Rust binding">
 Browser, Node, Bun, and Deno TypeScript applications use [`@oliphaunt/wasix-ts`](/docs/sdk/wasix-typescript). The Rust
-and TypeScript bindings consume the portable WASIX runtime family, but they do not
-promise the same public API.
+and TypeScript bindings consume the portable WASIX runtime family. Their APIs
+follow the same conceptual rule: the root is main-safe and asynchronous; an
+explicit blocking entry point opts into caller-thread execution. Signatures
+remain idiomatic to each language.
 </Callout>
 
 <SdkGuideSummary id="wasix-rust" />
@@ -34,19 +36,21 @@ cargo add oliphaunt-wasix
 ### Open and query
 
 Omitting storage opens a fresh in-memory database initialized from the packaged
-cluster seed.
+cluster seed. The crate root returns a shared asynchronous handle; every
+fallible database operation is awaited and takes `&self`.
 
 <!-- oliphaunt-snippet: oliphaunt-wasix-rust -->
 
 ```rust
 use oliphaunt_wasix::Oliphaunt;
 
-fn main() -> anyhow::Result<()> {
-    let mut database = Oliphaunt::open()?;
-    let result = database.query("SELECT 1::text AS value")?;
+async fn run() -> oliphaunt_wasix::Result<()> {
+    let database = Oliphaunt::open().await?;
+    let result = database.query("SELECT 1::text AS value").await?;
 
-    assert_eq!(result.get_text(0, "value")?, Some("1"));
-    database.close()?;
+    let value: &str = result.rows()[0].try_get("value")?;
+    assert_eq!(value, "1");
+    database.close().await?;
     Ok(())
 }
 ```
@@ -61,16 +65,17 @@ Use ordinary PostgreSQL SQL and positional parameters:
 ```rust
 database.execute(
     "CREATE TABLE IF NOT EXISTS notes (id bigserial PRIMARY KEY, title text NOT NULL)",
-)?;
+).await?;
 database.execute_with_params(
     "INSERT INTO notes (title) VALUES ($1)",
     ["First note"],
-)?;
+).await?;
 
 let notes = database.query_with_params(
     "SELECT id, title FROM notes ORDER BY id DESC LIMIT $1",
     [20_i32],
-)?;
+).await?;
+let first_title: String = notes.rows()[0].try_get("title")?;
 ```
 
 </Step>
@@ -85,7 +90,7 @@ use oliphaunt_wasix::{DatabaseStorage, Oliphaunt};
 
 let database = Oliphaunt::builder()
     .storage(DatabaseStorage::Directory("./app-data/main".into()))
-    .open()?;
+    .open().await?;
 ```
 
 `DatabaseStorage::Memory` is the default. `Directory` uses a caller-owned host
@@ -95,20 +100,56 @@ their preferred host library. New stores use the packaged cluster seed.
 </Step>
 <Step>
 
-### Choose a mode
+### Choose a calling contract
 
-Use `Oliphaunt` for direct Rust calls. Use `OliphauntServer` only when an
-existing PostgreSQL client library needs a local connection URL. These are Rust
-WASIX APIs, not aliases for native direct, broker, or server modes.
+Use the root `Oliphaunt` for the normal async contract. Its clones share one
+serialized PostgreSQL session owned by an SDK thread. Use
+`oliphaunt_wasix::blocking::Oliphaunt` only when blocking the current thread is
+intentional and avoiding the owner-thread hop matters:
+
+```rust
+use oliphaunt_wasix::blocking::Oliphaunt;
+
+fn run_blocking() -> oliphaunt_wasix::Result<()> {
+    let mut database = Oliphaunt::open()?;
+    database.execute("CREATE TABLE notes (title text NOT NULL)")?;
+    database.close()
+}
+```
+
+The blocking handle is deliberately exclusive: database and transaction
+methods take `&mut self`, and PostgreSQL runs on the caller's thread. Keep it on
+a dedicated application thread when blocking that caller would otherwise hurt
+responsiveness.
+
+Use the root `OliphauntServer` only when an existing PostgreSQL client library
+needs a local connection URL. Its `start().await` and `close().await` lifecycle
+is asynchronous, but its listener owns a single-backend wire server rather than
+the direct database handle's command queue. These Rust WASIX surfaces are not
+aliases for native direct, broker, or server topology.
 
 </Step>
 <Step>
 
 ### Handle lifecycle
 
-Close the database explicitly. Persistent directories have exclusive ownership:
-a second direct or server open against the same directory returns a lock error
-instead of starting another backend.
+Close the database explicitly with `close().await`. Closing any clone closes
+the shared session. Concurrent close calls receive the exact same attempt
+result, including failure. Validation before shutdown, such as an active
+transaction, leaves the database open and can be retried after that result is
+published. Once database shutdown or server stop begins, the handle is
+permanently retired: `is_closed()` is true, later work is rejected, and later
+close calls replay that attempt's exact result. The blocking database uses the
+same phase boundary synchronously. Its callback transactions roll back before
+resuming a callback panic and poison the database if rollback is uncertain. The
+blocking server keeps its handle across `close(&mut self)`, exposes
+`is_closed()`, and replays the first terminal close result. Dropping the last
+clone starts best-effort cleanup but does not wait for it, so an explicit close
+is the durable lifecycle boundary.
+
+Persistent directories have exclusive ownership: a second database or server
+open against the same directory returns a lock error instead of starting
+another backend.
 
 </Step>
 <Step>
@@ -127,7 +168,7 @@ oliphaunt-wasix = { version = "0.1", features = ["extension-pgtap"] }
 ```rust
 use oliphaunt_wasix::{extensions::PGTAP, Oliphaunt};
 
-let database = Oliphaunt::builder().extension(PGTAP).open()?;
+let database = Oliphaunt::builder().extension(PGTAP).open().await?;
 ```
 
 </Step>
@@ -140,6 +181,44 @@ same-version WASIX physical archive. Enable the crate's `tools` feature for
 `pg_dump` and `psql` when portable logical SQL or version upgrades are needed.
 Do not copy a live PostgreSQL directory.
 
+```rust
+let archive = database.backup().await?;
+database.close().await?;
+Oliphaunt::restore("./app-data/restored", archive).await?;
+```
+
+</Step>
+<Step>
+
+### Use transactions
+
+The callback is asynchronous and receives a shared `&Transaction`. Success
+commits, callback failure rolls back, and `rollback().await` explicitly rolls
+back without a later commit:
+
+```rust
+database.transaction(async |transaction| {
+    transaction.execute_with_params(
+        "INSERT INTO notes (title) VALUES ($1)",
+        ["Transactional note"],
+    ).await?;
+
+    let count = transaction.query("SELECT count(*)::int8 AS count FROM notes").await?;
+    let count: i64 = count.rows()[0].try_get("count")?;
+    assert!(count > 0);
+    Ok(())
+}).await?;
+```
+
+The transaction pins the physical session. Work through the transaction handle
+is accepted; unpinned work through another database clone is rejected until the
+callback settles. Direct work, transaction boundaries, and close enter one
+owner queue in admission order. Lifecycle controls retain reserved admission
+capacity but cannot overtake earlier work; beginning close drains work admitted
+before its atomic cutoff and rejects later ordinary admissions. Dropping work
+before it starts skips that operation without changing the queue order, while
+dropping an active transaction queues best-effort rollback.
+
 </Step>
 </Steps>
 
@@ -150,6 +229,6 @@ Do not copy a live PostgreSQL directory.
 Check whether the selected managed root is new or complete, the packaged
 cluster seed and exact runtime/AOT asset pair, enabled extension features,
 directory ownership, and SQLSTATE-bearing
-PostgreSQL errors. Browser, Node, Bun, and Deno direct/Worker placement, IndexedDB, and
-recovery behavior are documented on the
+PostgreSQL errors. Browser, Node, Bun, and Deno root-Worker behavior, the
+explicit `/blocking` entry point, IndexedDB, and recovery behavior are documented on the
 [WASIX TypeScript guide](/docs/sdk/wasix-typescript/guide).

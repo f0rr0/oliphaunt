@@ -10,8 +10,9 @@ JavaScript SDK for the native runtime, native helpers, broker/server flows, and
 runtime asset resolution.
 
 It is separate from [`@oliphaunt/wasix-ts`](/docs/sdk/wasix-typescript),
-which hosts the portable runtime directly or in a Worker in browsers and
-Node.js. Neither package selects or falls back to the other.
+whose root owns a Worker and whose explicit `/blocking` entrypoint runs portable
+guest work in the importing realm. Neither package selects or falls back to the
+other.
 
 Use this SDK for supported desktop JavaScript runtimes. Tauri apps currently
 keep the database in Rust state and expose narrow app-owned commands to the
@@ -68,6 +69,10 @@ semantics.
   independent sessions.
 - Use SDK backup and restore APIs for export/import flows.
 - Choose direct, broker, or server from the documented runtime support matrix.
+- Await `close()` (or use `await using`) instead of relying on nondeterministic
+  garbage-collection cleanup. Direct, broker, and server finalizers are
+  generation/exact-handle leak guards only; their asynchronous outcome is not
+  observable.
 
 ## First Query
 

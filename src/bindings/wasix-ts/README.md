@@ -2,8 +2,10 @@
 
 Portable PostgreSQL 18 for TypeScript, backed by the canonical
 `liboliphaunt-wasix` guest. The same API runs in browsers, Node.js, Bun, and
-Deno. Worker execution is the default; direct execution is available when
-blocking the caller's JavaScript realm is acceptable.
+Deno. The root entrypoint always owns PostgreSQL in one package Worker so its
+database calls do not block the importing JavaScript realm. The explicit
+`@oliphaunt/wasix-ts/blocking` entrypoint runs PostgreSQL in the importing
+realm when avoiding the Worker boundary is worth accepting blocking calls.
 
 ## Install
 
@@ -40,19 +42,31 @@ const result = await database.query(
   'select title from todo where title = $1',
   ['ship it'],
 );
-console.log(result.getText(0, 'title'));
+console.log(result.rows[0]?.title);
 ```
 
-`execute` accepts commands that do not return rows and produces a
-`CommandResult`. `query` accepts one row-producing statement and produces a
-typed `QueryResult`. Both support PostgreSQL positional parameters. Binary
-values remain `Uint8Array`; text decoding is explicit through `row.text()` or
-`result.getText()`.
+`execute` asserts one command with no rows. `query` accepts command-only or
+row-producing SQL and defaults to decoded object rows; array rows, text value
+mode, and immutable per-query OID codecs are available. `queryRaw` retains
+ordered nullable bytes and complete field metadata. `exec` returns ordered
+simple-query results, while `describe` resolves parameter OIDs and optional
+result fields without executing. Structured operations preserve command
+metadata and ordered notices.
+
+Safe scalar parameters are resolved and encoded inside one owned operation.
+Use `text`, `binary`, `typedNull`, `json`, or `array` with `postgresOids` for a
+deterministic type, or an immutable per-query encoder for an extension OID.
+Unsupported and mismatched values fail rather than being guessed.
 
 `execProtocolRaw` is the buffered PostgreSQL frontend-protocol escape hatch.
-`execProtocolStream` delivers the same response through a synchronous callback
+`execProtocolRawStream` delivers the same response through a synchronous callback
 with bounded backpressure, so COPY-sized responses need not be retained as one
-JavaScript value. Neither method interprets responses for the caller.
+JavaScript value. The callback is invoked serially and must return before the
+next chunk can be produced. Returning a Promise or thenable rejects the stream
+and poisons the session; an asynchronous callback cannot provide this
+backpressure contract. The callback also cannot reenter the same database or
+transaction; fire-and-forget calls are rejected instead of being queued behind
+the stream. Neither method interprets responses for the caller.
 
 PostgreSQL `ErrorResponse` values reject with `PostgresError`, including the
 SQLSTATE and structured diagnostic fields.
@@ -68,8 +82,9 @@ await database.transaction(async (transaction) => {
 ```
 
 The callback exclusively owns the session from `BEGIN` through its final
-boundary. Use the callback handle inside it; database-level operations reject
-while the transaction is active.
+boundary. It mirrors query/raw query, execute, exec, and describe; database-level
+operations reject while it is active. One-shot `rollback()` closes the
+transaction and lets the callback return without a later commit.
 
 Callback failures trigger a best-effort `ROLLBACK`. Once `COMMIT` has been
 sent, the binding never sends a second rollback. PostgreSQL's clean `ROLLBACK`
@@ -118,11 +133,30 @@ or qualified workflow.
 
 Node publication writes WAL before ordinary files and `global/pg_control`,
 then fsyncs changed files and parent directories. IndexedDB publishes a delta
-in one transaction. OPFS uses direct synchronous backing files in worker
-execution and the same opaque format through a copy-on-write portable path
-elsewhere. Both OPFS paths flush or publish in PostgreSQL-safe order. A
+in one transaction. OPFS uses synchronous backing files when PostgreSQL owns a
+Worker realm, including the root entrypoint and `/blocking` imported from a
+Dedicated Worker. `/blocking` imported in a browser Window uses the same opaque
+format through a copy-on-write portable path. Both OPFS paths flush or publish
+in PostgreSQL-safe order. A
 publication failure rejects with `WasixStorageError`; an uncertain state
 poisons the live database handle.
+
+`close()` is one terminal, idempotent teardown attempt. It stops admitting new
+work and lets work already accepted by the database FIFO finish up to the
+bounded orderly-shutdown deadline. If that deadline expires, close requests
+forced Worker termination and waits for it to settle before releasing other
+owned resources; the deadline is not a claim that total teardown has already
+finished. Concurrent and later calls return the same promise. Timeout,
+termination, provider, and host cleanup failures are preserved together. If
+teardown rejects, `closed` still becomes `true`: cleanup was attempted and a
+destroyed Worker or guest is never treated as a retryable live session.
+
+Forgetting a database handle schedules generation-guarded best-effort cleanup.
+The root entrypoint force-terminates only that handle's Worker generation; the
+explicit `/blocking` entrypoint closes only that caller-realm guest and its
+storage lease. A stale finalizer cannot affect a later open. Finalizers are not
+prompt or observable, so applications must still use `close()` or `await using`
+when ownership release matters.
 
 ## Backup and restore
 
@@ -139,7 +173,8 @@ session. The archive is the shared strict ustar format containing
 `pgdata/**` and `.oliphaunt/backup-manifest.properties`. `restore` accepts only
 an absent or empty persistent destination, validates the complete archive
 before publication, and creates the receiving storage provider's outer
-identity.
+identity. The root entrypoint performs restore in a temporary package Worker;
+the `/blocking` entrypoint performs it in the importing realm.
 
 ## Extensions
 
@@ -159,17 +194,39 @@ artifacts before startup, applies required startup settings, and runs declared
 setup SQL. It does not infer extension upgrades or migrations for an existing
 database.
 
-## Execution placement
+## Calling contract
 
-<!-- liboliphaunt-doc-example:wasix-typescript-direct-placement -->
+The normal import always creates one package-owned Worker:
+
+<!-- liboliphaunt-doc-example:wasix-typescript-worker-entrypoint -->
 ```ts
-const direct = await Oliphaunt.open({ execution: 'direct' });
+import Oliphaunt from '@oliphaunt/wasix-ts';
+
+await using database = await Oliphaunt.open();
 ```
 
-`worker` and `direct` return the same public database interface. Direct mode
-blocks its JavaScript realm during PostgreSQL work. Browser direct mode also
-requires cross-origin isolation; large synchronous side-module compilation may
-require worker placement.
+Use the separate blocking import only when the importing realm may be
+monopolized by PostgreSQL work:
+
+<!-- liboliphaunt-doc-example:wasix-typescript-blocking-entrypoint -->
+```ts
+import BlockingOliphaunt from '@oliphaunt/wasix-ts/blocking';
+
+await using database = await BlockingOliphaunt.open();
+```
+
+Both imports expose the same PostgreSQL interface and return Promises because
+asset loading and persistence are asynchronous. On `/blocking`, the guest
+portion of each operation nevertheless runs on the calling stack and blocks
+that JavaScript agent. Importing it from an application Worker blocks only that
+Worker; importing it in a Window blocks the page. Browser use requires
+cross-origin isolation. Chromium Window compilation of native side modules
+larger than 8 MiB requires the root entrypoint.
+
+The removed `execution` option is rejected at runtime as well as by TypeScript.
+Migrate `execution: 'worker'` by deleting the option. Migrate
+`execution: 'direct'` by importing `/blocking`; Oliphaunt never silently falls
+back from one calling contract to the other.
 
 ## Optional PostgreSQL tools
 
@@ -187,9 +244,9 @@ await using target = await Oliphaunt.open();
 await psql(target, { script: sql });
 ```
 
-`pgDump()` runs in the database's existing realm, so it supports both direct
-and worker placement, including browsers. `psql()` requires worker placement
-because restoring COPY input is full duplex. The package preserves
+`pgDump()` runs in the database's existing realm, so it supports the root and
+blocking entrypoints, including browsers. `psql()` requires a database opened
+through the root entrypoint because restoring COPY input is full duplex. The package preserves
 PostgreSQL's normal plain SQL and COPY output. It does not support interactive
 psql, custom dump archives, parallel jobs, or pg_restore.
 
@@ -214,14 +271,17 @@ port when `port` is omitted. Unix hosts may instead pass
 embedded backend at a time; concurrent connections are rejected. The listener
 and storage lease persist, while each admitted client receives a fresh backend.
 Use the separate WASIX postmaster product for concurrent PostgreSQL sessions.
+The server's read-only `closed` property remains `false` while terminal teardown
+is running and becomes `true` when that memoized attempt settles, including when
+cleanup rejects.
 
 ## Scope
 
-The core database surface remains limited to open, execute/query, buffered and
-callback-streamed raw protocol, checkpoint, callback transaction, physical
-backup/restore, and close. Tools and local sockets stay in optional packages or
-host-only subpaths. Cancellation and a dedicated typed COPY reader/writer are
-not exposed today.
+The core database surface remains limited to open, execute/query/queryRaw,
+exec/describe, buffered and callback-streamed raw protocol, callback
+transaction, physical backup/restore, read-only `closed`, and close.
+Tools and local sockets stay in optional packages or host-only subpaths.
+Cancellation and a dedicated typed COPY reader/writer are not exposed today.
 
 ## Qualification
 

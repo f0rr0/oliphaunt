@@ -17,7 +17,7 @@ same product concepts where the target platform can do so honestly:
 - TypeScript is the SDK for Node.js, Bun, and Deno. Tauri apps use the Rust SDK
   behind narrow app-owned commands.
 - WASIX TypeScript is the SDK for browser, Node.js, Bun, and Deno applications
-  that embed the WASIX runtime directly or in a Worker.
+  using its package-Worker default or explicit caller-blocking entrypoint.
 
 `tools/policy/sdk-manifest.toml` is the repo-level SDK registry. The canonical
 product graph lives in `src/*/moon.yml`; `sdk-contracts:check` parses both and
@@ -28,10 +28,11 @@ not source-text assertions, prove runtime delegation and consumer behavior.
 - `src/bindings/wasix-rust/crates/oliphaunt-wasix/`: Rust SDK over the portable
   and host-AOT `liboliphaunt-wasix` runtime products.
 - `src/bindings/wasix-ts/`: TypeScript SDK over the portable WASIX carrier for
-  browser, Node.js, Bun, and Deno direct or Worker placement. Its
-  `tools-package/` owns the optional TypeScript facade for `pg_dump` against
-  direct or worker database handles and non-interactive `psql` against worker
-  handles; the executable modules are a separate `liboliphaunt-wasix` carrier.
+  browser, Node.js, Bun, and Deno. Its root owns a Worker; its explicit
+  `/blocking` entry point owns caller-realm execution. `tools-package/` owns the
+  optional TypeScript facade for `pg_dump` against either handle and
+  non-interactive `psql` against default Worker handles; the executable modules
+  are a separate `liboliphaunt-wasix` carrier.
 - `src/sdks/swift/`: Swift package with an actor-first `Oliphaunt` API and a
   native-direct C ABI product boundary over `liboliphaunt`; it can materialize
   packaged runtime/cluster-seed resources for iOS and macOS apps.
@@ -42,7 +43,7 @@ not source-text assertions, prove runtime delegation and consumer behavior.
   is a typed TypeScript/TurboModule layer over the Swift and Kotlin SDKs, with
   no independent database semantics.
 - `src/sdks/js/`: desktop JavaScript SDK for Node.js, Bun, and Deno.
-  Tauri apps expose narrow app-owned commands from the Rust SDK. Direct execution
+  Tauri apps expose narrow app-owned commands from the Rust SDK. Direct topology
   is the default across supported JavaScript
   runtimes; Node.js and Bun use the package-owned prebuilt Node direct adapter,
   while Deno uses nonblocking runtime FFI. TypeScript broker mode consumes the
@@ -54,9 +55,10 @@ not source-text assertions, prove runtime delegation and consumer behavior.
 The native Rust SDK is canonical for native mode and resource terminology;
 Swift, Kotlin, React Native, and native TypeScript mirror it unless a platform
 restriction is documented. Rust WASIX and WASIX TypeScript use the same raw
-protocol, typed query, transaction, checkpoint, structured PostgreSQL error,
-backup, restore, and exact-extension vocabulary where their runtime supports
-the behavior honestly. Native-only process modes are not WASIX requirements.
+protocol, typed query, transaction, structured PostgreSQL error, backup,
+restore, and exact-extension vocabulary where their runtime supports the
+behavior honestly. PostgreSQL `CHECKPOINT` is explicit SQL through `execute`,
+not a separate SDK method. Native-only process modes are not WASIX requirements.
 React Native must not duplicate database runtime behavior: iOS calls flow
 through `Oliphaunt`, and Android calls flow through the `oliphaunt`
 `Oliphaunt` facade.

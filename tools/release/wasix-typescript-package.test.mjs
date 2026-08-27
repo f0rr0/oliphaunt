@@ -22,13 +22,13 @@ function manifest() {
         browser: './lib/index.js',
         default: './lib/index.js',
       },
-      './protocol': {
-        types: './lib/protocol.d.ts',
-        default: './lib/protocol.js',
-      },
-      './query': {
-        types: './lib/query.d.ts',
-        default: './lib/query.js',
+      './blocking': {
+        types: './lib/blocking.d.ts',
+        deno: './lib/blocking.deno.js',
+        bun: './lib/blocking.bun.js',
+        node: './lib/blocking.node.js',
+        browser: './lib/blocking.js',
+        default: './lib/blocking.js',
       },
       './internal/tools': {
         types: './lib/internal.d.ts',
@@ -106,6 +106,21 @@ describe('WASIX TypeScript release dependency closure', () => {
     );
   });
 
+  test('rejects a blocking condition order that lets Node shadow Deno or Bun', () => {
+    const candidate = manifest();
+    candidate.exports['./blocking'] = {
+      types: './lib/blocking.d.ts',
+      node: './lib/blocking.node.js',
+      deno: './lib/blocking.deno.js',
+      bun: './lib/blocking.bun.js',
+      browser: './lib/blocking.js',
+      default: './lib/blocking.js',
+    };
+    expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
+      'must expose the exact browser, Node, Bun, and Deno blocking entrypoint',
+    );
+  });
+
   test('rejects a cross-runtime directory storage fallback', () => {
     const candidate = manifest();
     candidate.exports['./storage/deno'].default = './lib/storage/deno.js';
@@ -114,11 +129,14 @@ describe('WASIX TypeScript release dependency closure', () => {
     );
   });
 
-  test('rejects an incomplete query entrypoint', () => {
+  test('rejects an accidental low-level query entrypoint', () => {
     const candidate = manifest();
-    delete candidate.exports['./query'].types;
+    candidate.exports['./query'] = {
+      types: './lib/query.d.ts',
+      default: './lib/query.js',
+    };
     expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
-      'must expose the exact query entrypoint',
+      'exports do not match the deliberate public package surface',
     );
   });
 

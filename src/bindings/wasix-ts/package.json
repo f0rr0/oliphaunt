@@ -32,13 +32,13 @@
       "browser": "./lib/index.js",
       "default": "./lib/index.js"
     },
-    "./protocol": {
-      "types": "./lib/protocol.d.ts",
-      "default": "./lib/protocol.js"
-    },
-    "./query": {
-      "types": "./lib/query.d.ts",
-      "default": "./lib/query.js"
+    "./blocking": {
+      "types": "./lib/blocking.d.ts",
+      "deno": "./lib/blocking.deno.js",
+      "bun": "./lib/blocking.bun.js",
+      "node": "./lib/blocking.node.js",
+      "browser": "./lib/blocking.js",
+      "default": "./lib/blocking.js"
     },
     "./internal/tools": {
       "types": "./lib/internal.d.ts",

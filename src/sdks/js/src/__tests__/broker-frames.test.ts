@@ -37,9 +37,6 @@ async function requestFramesRoundTrip(): Promise<void> {
     kind: 'execSimpleQuery',
     sql: 'SELECT 1',
   });
-  assert.deepEqual(decodeBrokerRequest(2, new Uint8Array()), {
-    kind: 'checkpoint',
-  });
   assert.deepEqual(decodeBrokerRequest(3, new Uint8Array()), { kind: 'close' });
   assert.deepEqual(decodeBrokerRequest(5, new Uint8Array()), {
     kind: 'backup',
@@ -73,7 +70,6 @@ function rejectsMalformedFrames(): void {
   assert.throws(() => decodeBrokerRequest(999, new Uint8Array()), /unknown broker request/);
   assert.throws(() => decodeBrokerResponse(999, new Uint8Array()), /unknown broker response/);
   assert.throws(() => decodeBrokerRequest(5, new Uint8Array([99])), /unexpectedly had a payload/);
-  assert.throws(() => decodeBrokerRequest(2, new Uint8Array([1])), /unexpectedly had a payload/);
 }
 
 async function streamHelpersUseBinaryFrames(): Promise<void> {

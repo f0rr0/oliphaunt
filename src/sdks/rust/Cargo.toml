@@ -24,7 +24,7 @@ path = "src/lib.rs"
 
 [features]
 default = []
-broker-helper = []
+__internal-broker-helper = []
 internal-native-packaging = []
 
 [package.metadata.oliphaunt]
@@ -32,7 +32,6 @@ broker-helper = "oliphaunt-broker"
 broker-version = "0.1.1"
 
 [dependencies]
-crossbeam-channel = "0.5"
 fs2 = "0.4"
 getrandom = "0.3"
 libloading = "0.8"

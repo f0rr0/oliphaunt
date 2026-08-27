@@ -146,7 +146,7 @@ impl EngineSession for NativeBrokerSession {
         }
     }
 
-    fn exec_protocol_stream(
+    fn exec_protocol_raw_stream(
         &mut self,
         request: ProtocolRequest,
         on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
@@ -184,7 +184,7 @@ impl EngineSession for NativeBrokerSession {
         }
     }
 
-    #[cfg(feature = "broker-helper")]
+    #[cfg(feature = "__internal-broker-helper")]
     fn exec_simple_query(&mut self, sql: &str) -> Result<ProtocolResponse> {
         let response = {
             let transport = self.ensure_transport()?;

@@ -134,6 +134,23 @@ public enum OliphauntError: Error, Equatable, Sendable, CustomStringConvertible 
     }
 }
 
+/// Reports both failures when a transaction callback throws and its automatic
+/// rollback cannot be confirmed. The database is poisoned and must be closed.
+public struct OliphauntTransactionRollbackError: Error, Sendable, CustomStringConvertible {
+    public let callbackError: any Error
+    public let rollbackError: any Error
+
+    public var description: String {
+        "transaction callback failed and automatic ROLLBACK did not complete; " +
+            "close and reopen the database; callback: \(callbackError); rollback: \(rollbackError)"
+    }
+
+    init(callbackError: any Error, rollbackError: any Error) {
+        self.callbackError = callbackError
+        self.rollbackError = rollbackError
+    }
+}
+
 // The engine boundary is deliberately internal. Applications use
 // OliphauntDatabase; the protocol exists only to keep the facade testable and
 // to isolate the native C bridge.
@@ -144,7 +161,7 @@ protocol OliphauntEngine: Sendable {
 
 protocol OliphauntSession: Sendable {
     func execProtocolRaw(_ bytes: Data) async throws -> Data
-    func execProtocolStream(
+    func execProtocolRawStream(
         _ bytes: Data,
         onChunk: @escaping @Sendable (Data) throws -> Void
     ) async throws
@@ -166,6 +183,7 @@ struct OliphauntDefaultEngine: OliphauntEngine {
 private actor OliphauntAsyncSerialGate {
     private var locked = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var waiterCountObservers: [(Int, CheckedContinuation<Void, Never>)] = []
 
     func acquire() async {
         if !locked {
@@ -174,6 +192,7 @@ private actor OliphauntAsyncSerialGate {
         }
         await withCheckedContinuation { continuation in
             waiters.append(continuation)
+            resumeSatisfiedWaiterCountObservers()
         }
     }
 
@@ -184,18 +203,98 @@ private actor OliphauntAsyncSerialGate {
             waiters.removeFirst().resume()
         }
     }
+
+    func waitUntilWaiterCount(atLeast expected: Int) async {
+        guard waiters.count < expected else { return }
+        await withCheckedContinuation { continuation in
+            waiterCountObservers.append((expected, continuation))
+        }
+    }
+
+    private func resumeSatisfiedWaiterCountObservers() {
+        var pending: [(Int, CheckedContinuation<Void, Never>)] = []
+        for observer in waiterCountObservers {
+            if waiters.count >= observer.0 {
+                observer.1.resume()
+            } else {
+                pending.append(observer)
+            }
+        }
+        waiterCountObservers = pending
+    }
+}
+
+private enum OliphauntProtocolStreamTaskContext {
+    @TaskLocal static var databaseID: UUID?
+}
+
+private final class OliphauntProtocolStreamCallbackGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var active = false
+
+    func withCallback(
+        databaseID: UUID,
+        _ body: () throws -> Void
+    ) throws {
+        lock.lock()
+        guard !active else {
+            lock.unlock()
+            throw OliphauntError.engine(Self.reentryMessage)
+        }
+        active = true
+        lock.unlock()
+        defer {
+            lock.lock()
+            active = false
+            lock.unlock()
+        }
+        try OliphauntProtocolStreamTaskContext.$databaseID.withValue(databaseID) {
+            try body()
+        }
+    }
+
+    func isReentry(databaseID: UUID) -> Bool {
+        OliphauntProtocolStreamTaskContext.databaseID == databaseID
+    }
+
+    static let reentryMessage =
+        "raw protocol stream callback must not reenter the same Oliphaunt database or transaction"
 }
 
 public actor OliphauntDatabase {
+    private enum TransactionCompletion {
+        case active
+        case rollingBack
+        case committing
+        case rolledBack
+        case committed
+        case failed(String)
+    }
+
+    private struct ActiveTransaction {
+        let token: UInt64
+        var completion: TransactionCompletion = .active
+    }
+
     private var session: (any OliphauntSession)?
     private var closing = false
+    private var closeTeardownStarted = false
+    private var closeTeardownStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var activeCancellationCount = 0
+    private var cancellationDrainWaiters: [CheckedContinuation<Void, Never>] = []
     private var poisonedMessage: String?
-    private var activeTransactionToken: UInt64?
+    private var activeTransaction: ActiveTransaction?
     private var nextTransactionToken: UInt64 = 1
     private let operationGate = OliphauntAsyncSerialGate()
+    private let protocolStreamDatabaseID = UUID()
+    private let protocolStreamCallbackGate = OliphauntProtocolStreamCallbackGate()
 
     private init(session: any OliphauntSession) {
         self.session = session
+    }
+
+    public var isClosed: Bool {
+        session == nil
     }
 
     public static func open(
@@ -240,88 +339,125 @@ public actor OliphauntDatabase {
         try await execProtocolRaw(bytes, transactionToken: nil)
     }
 
-    public func execProtocolStream(
+    public func execProtocolRawStream(
         _ bytes: Data,
         onChunk: @escaping @Sendable (Data) throws -> Void
     ) async throws {
-        try await execProtocolStream(bytes, transactionToken: nil, onChunk: onChunk)
+        try await execProtocolRawStream(bytes, transactionToken: nil, onChunk: onChunk)
     }
 
     public func backup() async throws -> sending Data {
-        try validateTransactionAccess(token: nil)
         return try await runSessionOperation { session in
             try await session.backup()
         }
     }
 
-    public func checkpoint() async throws {
-        _ = try await execute("CHECKPOINT")
-    }
-
     public func transaction<T: Sendable>(
         _ body: @Sendable (OliphauntTransaction) async throws -> T
     ) async throws -> T {
-        guard activeTransactionToken == nil else {
+        _ = try liveSession()
+        guard activeTransaction == nil else {
             throw OliphauntError.engine(Self.sessionPinnedMessage)
         }
         let token = nextTransactionToken
         nextTransactionToken = nextTransactionToken == UInt64.max ? 1 : nextTransactionToken + 1
-        activeTransactionToken = token
+        activeTransaction = ActiveTransaction(token: token)
         let transaction = OliphauntTransaction(database: self, token: token)
 
         let result: T
+        var began = false
         do {
             let begin = try await executeTransactionControl("BEGIN", token: token)
             guard begin.commandTag == "BEGIN" else {
                 throw OliphauntError.engine("BEGIN returned unexpected command tag \(begin.commandTag ?? "<none>")")
             }
+            began = true
             result = try await body(transaction)
-        } catch {
-            do {
-                let rollback = try await executeTransactionControl("ROLLBACK", token: token)
-                guard rollback.commandTag == "ROLLBACK" else {
-                    throw OliphauntError.engine(
-                        "ROLLBACK returned unexpected command tag \(rollback.commandTag ?? "<none>")"
-                    )
+        } catch let callbackError {
+            var rollbackError: (any Error)?
+            if began, transactionIsActive(token: token) {
+                do {
+                    try await rollbackTransaction(token: token)
+                } catch let error {
+                    rollbackError = error
                 }
-            } catch let rollbackError {
-                poisonedMessage = "transaction rollback failed; close and reopen the database: \(rollbackError)"
             }
-            activeTransactionToken = nil
-            throw error
+            clearTransaction(token: token)
+            if let rollbackError {
+                throw OliphauntTransactionRollbackError(
+                    callbackError: callbackError,
+                    rollbackError: rollbackError
+                )
+            }
+            throw callbackError
+        }
+
+        guard let activeTransaction, activeTransaction.token == token else {
+            let message = "transaction state was lost; close and reopen the database"
+            poisonedMessage = message
+            throw OliphauntError.engine(message)
+        }
+        switch activeTransaction.completion {
+        case .rolledBack:
+            clearTransaction(token: token)
+            return result
+        case .failed(let message):
+            clearTransaction(token: token)
+            throw OliphauntError.engine(message)
+        case .active:
+            break
+        case .rollingBack, .committing, .committed:
+            let message = "transaction settlement state is inconsistent; close and reopen the database"
+            poisonTransaction(token: token, message: message)
+            clearTransaction(token: token)
+            throw OliphauntError.engine(message)
         }
 
         let commit: OliphauntCommandResult
         do {
-            commit = try await executeTransactionControl("COMMIT", token: token)
+            try beginTransactionSettlement(token: token, completion: .committing)
+            commit = try await executeTransactionControl(
+                "COMMIT",
+                token: token,
+                settlement: .committing
+            )
         } catch {
-            poisonedMessage = "transaction COMMIT outcome is unknown; close and reopen the database: \(error)"
-            activeTransactionToken = nil
+            clearTransaction(token: token)
             throw error
         }
         guard commit.commandTag == "COMMIT" else {
-            if commit.commandTag != "ROLLBACK" {
-                poisonedMessage =
-                    "transaction COMMIT outcome is unknown after command tag \(commit.commandTag ?? "<none>"); close and reopen the database"
-            }
-            activeTransactionToken = nil
+            clearTransaction(token: token)
             throw OliphauntError.engine(
                 "COMMIT returned unexpected command tag \(commit.commandTag ?? "<none>")"
             )
         }
-        activeTransactionToken = nil
+        clearTransaction(token: token)
         return result
     }
 
     public func cancel() async throws {
-        try await liveSession().cancel()
+        guard let session, !closeTeardownStarted else {
+            throw OliphauntError.databaseClosed
+        }
+        activeCancellationCount += 1
+        // Cancellation is deliberately out of band. It remains available
+        // while close is only waiting for already-admitted FIFO work, and it
+        // is the sole same-handle action permitted from a stream callback.
+        do {
+            try await session.cancel()
+            finishCancellationAdmission()
+        } catch {
+            finishCancellationAdmission()
+            throw error
+        }
     }
 
     public func close() async throws {
+        try ensureNoProtocolStreamCallbackReentry()
         guard let closingSession = session else {
             return
         }
-        guard activeTransactionToken == nil else {
+        guard activeTransaction == nil else {
             throw OliphauntError.engine(Self.sessionPinnedMessage)
         }
         guard !closing else {
@@ -329,12 +465,18 @@ public actor OliphauntDatabase {
         }
         closing = true
         await operationGate.acquire()
+        closeTeardownStarted = true
+        let teardownWaiters = closeTeardownStartWaiters
+        closeTeardownStartWaiters.removeAll()
+        teardownWaiters.forEach { $0.resume() }
+        await waitForCancellationDrain()
         do {
             try await closingSession.close()
             session = nil
             closing = false
             await operationGate.release()
         } catch {
+            closeTeardownStarted = false
             closing = false
             await operationGate.release()
             throw error
@@ -342,13 +484,30 @@ public actor OliphauntDatabase {
     }
 
     private func liveSession() throws -> any OliphauntSession {
-        guard let session, !closing else {
+        try ensureNoProtocolStreamCallbackReentry()
+        guard let session, !closing, !closeTeardownStarted else {
             throw OliphauntError.databaseClosed
         }
         if let poisonedMessage {
             throw OliphauntError.engine(poisonedMessage)
         }
         return session
+    }
+
+    /// Returns the session captured by an operation that passed lifecycle and
+    /// transaction validation at admission. A later close or transaction
+    /// cutoff must not revoke that permit, but an outcome from earlier queued
+    /// work may still poison the session before this operation reaches it.
+    private func sessionForAdmittedOperation(
+        _ admittedSession: any OliphauntSession
+    ) throws -> any OliphauntSession {
+        guard session != nil else {
+            throw OliphauntError.databaseClosed
+        }
+        if let poisonedMessage {
+            throw OliphauntError.engine(poisonedMessage)
+        }
+        return admittedSession
     }
 
     fileprivate func execProtocolRaw(_ bytes: Data, transactionToken: UInt64?) async throws -> Data {
@@ -358,25 +517,296 @@ public actor OliphauntDatabase {
         }
     }
 
-    fileprivate func execProtocolStream(
+    fileprivate func execProtocolRawStream(
         _ bytes: Data,
         transactionToken: UInt64?,
         onChunk: @escaping @Sendable (Data) throws -> Void
     ) async throws {
         try validateTransactionAccess(token: transactionToken)
+        let callbackGate = protocolStreamCallbackGate
+        let databaseID = protocolStreamDatabaseID
         try await runSessionOperation(transactionToken: transactionToken) {
-            try await $0.execProtocolStream(bytes, onChunk: onChunk)
+            try await $0.execProtocolRawStream(bytes) { chunk in
+                try callbackGate.withCallback(databaseID: databaseID) {
+                    try onChunk(chunk)
+                }
+            }
         }
     }
 
     private func executeTransactionControl(
         _ sql: String,
-        token: UInt64
+        token: UInt64,
+        settlement: TransactionCompletion? = nil
     ) async throws -> OliphauntCommandResult {
         let request = try OliphauntProtocol.simpleQuery(sql)
-        return try await parseOliphauntCommandResponse(
-            execProtocolRaw(request, transactionToken: token)
+        let expectedStatus: OliphauntReadyStatus = sql == "BEGIN" ? .transaction : .idle
+        if let settlement {
+            try validateTransactionSettlement(token: token, expected: settlement)
+        } else {
+            try validateTransactionAccess(token: token)
+        }
+        let admittedSession = try liveSession()
+        await operationGate.acquire()
+        do {
+            let session = try sessionForAdmittedOperation(admittedSession)
+            if let settlement {
+                // Earlier queued work may have poisoned the transaction. That
+                // earlier result is allowed to reject this later settlement.
+                try validateTransactionSettlement(token: token, expected: settlement)
+            }
+            let response: Data
+            do {
+                response = try await session.execProtocolRaw(request)
+            } catch {
+                if settlement == nil {
+                    poisonUnknownTypedOperation(transactionToken: token, error: error)
+                }
+                throw error
+            }
+            let terminalStatus: OliphauntReadyStatus
+            do {
+                terminalStatus = try inspectOliphauntTerminalReadyStatus(response)
+            } catch {
+                if settlement == nil {
+                    poisonUnknownTypedOperation(transactionToken: token, error: error)
+                }
+                throw error
+            }
+            let result = try parseOliphauntCommandResponse(response, expectedProtocol: .simple)
+            guard terminalStatus == expectedStatus, result.readyStatus == terminalStatus else {
+                throw OliphauntError.engine(
+                    "\(sql) returned unexpected ReadyForQuery status \(terminalStatus)"
+                )
+            }
+            if let settlement {
+                let completion: TransactionCompletion
+                switch (settlement, result.commandTag) {
+                case (.rollingBack, "ROLLBACK"), (.committing, "ROLLBACK"):
+                    completion = .rolledBack
+                case (.committing, "COMMIT"):
+                    completion = .committed
+                case (.rollingBack, _):
+                    throw OliphauntError.engine(
+                        "ROLLBACK returned unexpected command tag \(result.commandTag ?? "<none>")"
+                    )
+                case (.committing, _):
+                    throw OliphauntError.engine(
+                        "COMMIT returned unexpected command tag \(result.commandTag ?? "<none>")"
+                    )
+                default:
+                    throw OliphauntError.engine("invalid transaction settlement state")
+                }
+                try finishTransactionSettlement(
+                    token: token,
+                    expected: settlement,
+                    completion: completion
+                )
+            }
+            await operationGate.release()
+            return result
+        } catch {
+            if settlement != nil {
+                let label = sql == "COMMIT" ? "transaction COMMIT outcome is unknown" : "transaction rollback failed"
+                poisonTransaction(
+                    token: token,
+                    message: "\(label); close and reopen the database: \(error)"
+                )
+            }
+            await operationGate.release()
+            throw error
+        }
+    }
+
+    private func beginTransactionSettlement(
+        token: UInt64,
+        completion: TransactionCompletion
+    ) throws {
+        try validateTransactionAccess(token: token)
+        guard var transaction = activeTransaction, transaction.token == token else {
+            throw OliphauntError.engine("transaction is no longer active")
+        }
+        transaction.completion = completion
+        activeTransaction = transaction
+    }
+
+    private func validateTransactionSettlement(
+        token: UInt64,
+        expected: TransactionCompletion
+    ) throws {
+        guard let transaction = activeTransaction, transaction.token == token else {
+            throw OliphauntError.engine("transaction settlement is no longer active")
+        }
+        let matches: Bool
+        switch (transaction.completion, expected) {
+        case (.rollingBack, .rollingBack), (.committing, .committing):
+            matches = true
+        default:
+            matches = false
+        }
+        guard matches else {
+            throw OliphauntError.engine("transaction settlement is no longer active")
+        }
+    }
+
+    private func finishTransactionSettlement(
+        token: UInt64,
+        expected: TransactionCompletion,
+        completion: TransactionCompletion
+    ) throws {
+        try validateTransactionSettlement(token: token, expected: expected)
+        guard var transaction = activeTransaction, transaction.token == token else {
+            throw OliphauntError.engine("transaction settlement is no longer active")
+        }
+        transaction.completion = completion
+        activeTransaction = transaction
+    }
+
+    func runTypedOperation<T: Sendable>(
+        _ request: Data,
+        transactionToken: UInt64?,
+        parser: @Sendable (Data) throws -> (T, OliphauntReadyStatus)
+    ) async throws -> T {
+        try validateTransactionAccess(token: transactionToken)
+        let admittedSession = try liveSession()
+        await operationGate.acquire()
+        do {
+            let session = try sessionForAdmittedOperation(admittedSession)
+            let response: Data
+            do {
+                response = try await session.execProtocolRaw(request)
+            } catch {
+                poisonUnknownTypedOperation(transactionToken: transactionToken, error: error)
+                throw error
+            }
+            let terminalStatus: OliphauntReadyStatus
+            do {
+                terminalStatus = try inspectOliphauntTerminalReadyStatus(response)
+            } catch {
+                poisonUnknownTypedOperation(transactionToken: transactionToken, error: error)
+                throw error
+            }
+            let parsed: (T, OliphauntReadyStatus)
+            do {
+                parsed = try parser(response)
+            } catch {
+                try await validateTypedOperationFailureStatus(
+                    terminalStatus,
+                    transactionToken: transactionToken,
+                    session: session
+                )
+                throw error
+            }
+            let (result, parsedStatus) = parsed
+            guard parsedStatus == terminalStatus else {
+                try await validateTypedOperationFailureStatus(
+                    terminalStatus,
+                    transactionToken: transactionToken,
+                    session: session
+                )
+                throw OliphauntError.engine(
+                    "typed response parser disagreed with terminal ReadyForQuery status"
+                )
+            }
+            try await validateTypedOperationStatus(
+                terminalStatus,
+                transactionToken: transactionToken,
+                session: session
+            )
+            await operationGate.release()
+            return result
+        } catch {
+            await operationGate.release()
+            throw error
+        }
+    }
+
+    private func validateTypedOperationStatus(
+        _ status: OliphauntReadyStatus,
+        transactionToken: UInt64?,
+        session: any OliphauntSession
+    ) async throws {
+        if let transactionToken {
+            switch status {
+            case .transaction:
+                return
+            case .failedTransaction:
+                throw OliphauntError.engine(
+                    "transaction operation left PostgreSQL in a failed transaction; the callback will roll back"
+                )
+            case .idle:
+                throw escapedTransactionOwnershipError(token: transactionToken)
+            }
+        }
+
+        guard status != .idle else { return }
+        let statusLabel = status == .transaction ? "an open transaction" : "a failed transaction"
+        try await recoverUnexpectedDatabaseTransaction(status, session: session)
+        throw OliphauntError.engine(
+            "typed operation left PostgreSQL in \(statusLabel); Oliphaunt rolled it back to preserve callback ownership"
         )
+    }
+
+    private func validateTypedOperationFailureStatus(
+        _ status: OliphauntReadyStatus,
+        transactionToken: UInt64?,
+        session: any OliphauntSession
+    ) async throws {
+        if let transactionToken {
+            guard status == .idle else { return }
+            throw escapedTransactionOwnershipError(token: transactionToken)
+        }
+
+        guard status != .idle else { return }
+        try await recoverUnexpectedDatabaseTransaction(status, session: session)
+    }
+
+    private func recoverUnexpectedDatabaseTransaction(
+        _ status: OliphauntReadyStatus,
+        session: any OliphauntSession
+    ) async throws {
+        let statusLabel = status == .transaction ? "an open transaction" : "a failed transaction"
+        do {
+            let request = try OliphauntProtocol.simpleQuery("ROLLBACK")
+            let rollback = try parseOliphauntCommandResponse(
+                try await session.execProtocolRaw(request),
+                expectedProtocol: .simple
+            )
+            guard rollback.commandTag == "ROLLBACK", rollback.readyStatus == .idle else {
+                throw OliphauntError.engine(
+                    "automatic ROLLBACK returned unexpected command tag or transaction status"
+                )
+            }
+        } catch {
+            let message =
+                "typed operation left PostgreSQL in \(statusLabel), and automatic ROLLBACK failed; " +
+                "close and reopen the database: \(error)"
+            poisonedMessage = message
+            throw OliphauntError.engine(message)
+        }
+    }
+
+    private func escapedTransactionOwnershipError(token: UInt64) -> OliphauntError {
+        let message =
+            "transaction operation escaped callback ownership and left PostgreSQL idle; close and reopen the database"
+        poisonTransaction(token: token, message: message)
+        return OliphauntError.engine(message)
+    }
+
+    private func poisonUnknownTypedOperation(
+        transactionToken: UInt64?,
+        error: any Error
+    ) {
+        let message =
+            "typed operation outcome is unknown before a complete ReadyForQuery boundary; " +
+            "close and reopen the database: \(error)"
+        poisonedMessage = message
+        if let transactionToken,
+           var transaction = activeTransaction,
+           transaction.token == transactionToken {
+            transaction.completion = .failed(message)
+            activeTransaction = transaction
+        }
     }
 
     private func runSessionOperation<T: Sendable>(
@@ -384,10 +814,10 @@ public actor OliphauntDatabase {
         _ body: (any OliphauntSession) async throws -> T
     ) async throws -> T {
         try validateTransactionAccess(token: transactionToken)
+        let admittedSession = try liveSession()
         await operationGate.acquire()
         do {
-            let session = try liveSession()
-            try validateTransactionAccess(token: transactionToken)
+            let session = try sessionForAdmittedOperation(admittedSession)
             let result = try await body(session)
             await operationGate.release()
             return result
@@ -398,34 +828,135 @@ public actor OliphauntDatabase {
     }
 
     private func validateTransactionAccess(token: UInt64?) throws {
+        try ensureNoProtocolStreamCallbackReentry()
         if let token {
-            guard activeTransactionToken == token else {
+            guard let activeTransaction,
+                  activeTransaction.token == token,
+                  case .active = activeTransaction.completion
+            else {
                 throw OliphauntError.engine("transaction is no longer active")
             }
             return
         }
-        if activeTransactionToken != nil {
+        if activeTransaction != nil {
             throw OliphauntError.engine(Self.sessionPinnedMessage)
+        }
+    }
+
+    private func ensureNoProtocolStreamCallbackReentry() throws {
+        if protocolStreamCallbackGate.isReentry(databaseID: protocolStreamDatabaseID) {
+            throw OliphauntError.engine(OliphauntProtocolStreamCallbackGate.reentryMessage)
+        }
+    }
+
+    private func finishCancellationAdmission() {
+        precondition(activeCancellationCount > 0)
+        activeCancellationCount -= 1
+        guard activeCancellationCount == 0 else { return }
+        let waiters = cancellationDrainWaiters
+        cancellationDrainWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    private func waitForCancellationDrain() async {
+        guard activeCancellationCount > 0 else { return }
+        await withCheckedContinuation { continuation in
+            cancellationDrainWaiters.append(continuation)
+        }
+    }
+
+    fileprivate func transactionIsClosed(token: UInt64) -> Bool {
+        guard let activeTransaction, activeTransaction.token == token else {
+            return true
+        }
+        guard case .active = activeTransaction.completion else {
+            return true
+        }
+        return false
+    }
+
+    fileprivate func rollbackTransaction(token: UInt64) async throws {
+        try beginTransactionSettlement(token: token, completion: .rollingBack)
+        _ = try await executeTransactionControl(
+            "ROLLBACK",
+            token: token,
+            settlement: .rollingBack
+        )
+    }
+
+    private func transactionIsActive(token: UInt64) -> Bool {
+        guard let activeTransaction, activeTransaction.token == token else {
+            return false
+        }
+        guard case .active = activeTransaction.completion else {
+            return false
+        }
+        return true
+    }
+
+    private func clearTransaction(token: UInt64) {
+        if activeTransaction?.token == token {
+            activeTransaction = nil
+        }
+    }
+
+    private func poisonTransaction(token: UInt64, message: String) {
+        poisonedMessage = message
+        if var transaction = activeTransaction, transaction.token == token {
+            transaction.completion = .failed(message)
+            activeTransaction = transaction
         }
     }
 
     private static let sessionPinnedMessage =
         "physical session is pinned; use the active OliphauntTransaction"
+
+    func waitUntilQueuedOperationCount(atLeast expected: Int) async {
+        await operationGate.waitUntilWaiterCount(atLeast: expected)
+    }
+
+    func waitUntilCloseTeardownStarted() async {
+        guard !closeTeardownStarted else { return }
+        await withCheckedContinuation { continuation in
+            closeTeardownStartWaiters.append(continuation)
+        }
+    }
 }
 
 public struct OliphauntTransaction: Sendable {
     fileprivate let database: OliphauntDatabase
     fileprivate let token: UInt64
 
+    public var isClosed: Bool {
+        get async {
+            await database.transactionIsClosed(token: token)
+        }
+    }
+
     public func execProtocolRaw(_ bytes: Data) async throws -> Data {
         try await database.execProtocolRaw(bytes, transactionToken: token)
     }
 
-    public func execProtocolStream(
+    public func execProtocolRawStream(
         _ bytes: Data,
         onChunk: @escaping @Sendable (Data) throws -> Void
     ) async throws {
-        try await database.execProtocolStream(bytes, transactionToken: token, onChunk: onChunk)
+        try await database.execProtocolRawStream(bytes, transactionToken: token, onChunk: onChunk)
+    }
+
+    public func rollback() async throws {
+        try await database.rollbackTransaction(token: token)
+    }
+
+    func runTypedOperation<T: Sendable>(
+        _ request: Data,
+        parser: @Sendable (Data) throws -> (T, OliphauntReadyStatus)
+    ) async throws -> T {
+        try await database.runTypedOperation(
+            request,
+            transactionToken: token,
+            parser: parser
+        )
     }
 
 }

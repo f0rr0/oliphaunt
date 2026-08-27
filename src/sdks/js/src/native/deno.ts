@@ -30,16 +30,24 @@ import { resolveExactNativeRuntimeProfile } from './runtime-profile.js';
 
 type DenoPointer = object | null;
 type DenoSymbols = {
-  oliphaunt_init: (config: Uint8Array, out: Uint8Array) => number;
+  oliphaunt_init: (config: Uint8Array, out: Uint8Array) => Promise<number>;
   oliphaunt_exec_protocol: (...args: unknown[]) => Promise<number>;
-  oliphaunt_exec_protocol_stream: (...args: unknown[]) => number;
+  oliphaunt_exec_protocol_raw_stream: (...args: unknown[]) => Promise<number>;
   oliphaunt_exec_simple_query: (...args: unknown[]) => Promise<number>;
   oliphaunt_backup: (...args: unknown[]) => Promise<number>;
   oliphaunt_restore: (...args: unknown[]) => Promise<number>;
   oliphaunt_cancel: (...args: unknown[]) => unknown;
-  oliphaunt_detach: (...args: unknown[]) => unknown;
+  oliphaunt_detach: (...args: unknown[]) => Promise<number>;
+  oliphaunt_logical_generation: (...args: unknown[]) => Promise<bigint>;
+  oliphaunt_close_if_generation: (...args: unknown[]) => Promise<number>;
+  oliphaunt_copy_last_error: (...args: unknown[]) => unknown;
   oliphaunt_last_error: (...args: unknown[]) => unknown;
   oliphaunt_free_response: (...args: unknown[]) => unknown;
+};
+
+type DenoForgottenHandle = {
+  readonly generation: bigint;
+  readonly releaseOwnership: () => void;
 };
 
 export async function createDenoNativeBinding(
@@ -50,15 +58,20 @@ export async function createDenoNativeBinding(
   applyNativeIcuDataEnvironment(install.icuDataDirectory);
   applyNativeRuntimeLibraryEnvironment(install.runtimeDirectory);
   const dylib = deno.dlopen(install.libraryPath, {
-    oliphaunt_init: { parameters: ['buffer', 'buffer'], result: 'i32' },
+    oliphaunt_init: {
+      parameters: ['buffer', 'buffer'],
+      result: 'i32',
+      nonblocking: true,
+    },
     oliphaunt_exec_protocol: {
       parameters: ['pointer', 'buffer', 'usize', 'buffer'],
       result: 'i32',
       nonblocking: true,
     },
-    oliphaunt_exec_protocol_stream: {
+    oliphaunt_exec_protocol_raw_stream: {
       parameters: ['pointer', 'buffer', 'usize', 'function', 'pointer'],
       result: 'i32',
+      nonblocking: true,
     },
     oliphaunt_exec_simple_query: {
       parameters: ['pointer', 'buffer', 'usize', 'buffer'],
@@ -72,11 +85,46 @@ export async function createDenoNativeBinding(
     },
     oliphaunt_restore: { parameters: ['buffer'], result: 'i32', nonblocking: true },
     oliphaunt_cancel: { parameters: ['pointer'], result: 'i32' },
-    oliphaunt_detach: { parameters: ['pointer'], result: 'i32' },
+    oliphaunt_detach: { parameters: ['pointer'], result: 'i32', nonblocking: true },
+    oliphaunt_logical_generation: {
+      parameters: ['pointer'],
+      result: 'u64',
+      nonblocking: true,
+    },
+    oliphaunt_close_if_generation: {
+      parameters: ['u64'],
+      result: 'i32',
+      nonblocking: true,
+    },
+    oliphaunt_copy_last_error: {
+      parameters: ['pointer', 'buffer', 'usize'],
+      result: 'usize',
+    },
+    // Retained as an ABI compatibility check. Error strings crossing the FFI
+    // boundary are copied into Deno-owned storage above.
     oliphaunt_last_error: { parameters: ['pointer'], result: 'pointer' },
     oliphaunt_free_response: { parameters: ['buffer'], result: 'void' },
   });
   const symbols = dylib.symbols as DenoSymbols;
+  const generations = new WeakMap<object, bigint>();
+  const forgottenHandles = new FinalizationRegistry<DenoForgottenHandle>(
+    ({ generation, releaseOwnership }) => {
+      // A finalizer may only enqueue nonblocking FFI. Generation-guarded close
+      // atomically becomes a no-op when this cleanup record no longer owns the
+      // resident logical lease, so it can never dereference a stale pointer or
+      // terminate a newer Deno handle.
+      void closeDenoGeneration(symbols, generation)
+        .catch(() => undefined)
+        .then(() => {
+          try {
+            releaseOwnership();
+          } catch {
+            // Finalization is unobservable best effort. Never turn an owner
+            // bookkeeping failure into an unhandled rejection.
+          }
+        });
+    },
+  );
 
   return {
     async open(config: NativeOpenConfig): Promise<NativeHandle> {
@@ -136,7 +184,7 @@ export async function createDenoNativeBinding(
         pointerOf(deno, value),
       );
       const out = new Uint8Array(8);
-      const rc = symbols.oliphaunt_init(packed.config, out);
+      const rc = await symbols.oliphaunt_init(packed.config, out);
       keepAlive(packed.keepAlive);
       if (rc !== 0) {
         throw errorMessage('native liboliphaunt init failed', rc, lastError(deno, symbols, null));
@@ -145,6 +193,11 @@ export async function createDenoNativeBinding(
       if (handle === null) {
         throw new Error('native liboliphaunt init returned a null handle');
       }
+      const generation = await symbols.oliphaunt_logical_generation(handle);
+      if (generation === 0n) {
+        throw new Error('native liboliphaunt init returned an invalid logical generation');
+      }
+      generations.set(handle, generation);
       return handle;
     },
     async execProtocolRaw(handle: NativeHandle, request: Uint8Array): Promise<Uint8Array> {
@@ -165,13 +218,13 @@ export async function createDenoNativeBinding(
       }
       return copyResponse(deno, symbols, response);
     },
-    execProtocolStream(
+    async execProtocolStream(
       handle: NativeHandle,
       request: Uint8Array,
       onChunk: (chunk: Uint8Array) => void,
-    ): void {
+    ): Promise<void> {
       let callbackError: unknown;
-      const callback = new deno.UnsafeCallback(
+      const callback = deno.UnsafeCallback.threadSafe(
         { parameters: ['pointer', 'pointer', 'usize'], result: 'i32' },
         (_data: DenoPointer, bytes: DenoPointer, length: bigint) => {
           try {
@@ -194,7 +247,7 @@ export async function createDenoNativeBinding(
       );
       let rc: number;
       try {
-        rc = symbols.oliphaunt_exec_protocol_stream(
+        rc = await symbols.oliphaunt_exec_protocol_raw_stream(
           handle,
           request,
           BigInt(request.byteLength),
@@ -262,7 +315,7 @@ export async function createDenoNativeBinding(
         );
       }
     },
-    cancel(handle: NativeHandle): void {
+    async cancel(handle: NativeHandle): Promise<void> {
       const rc = symbols.oliphaunt_cancel(handle) as number;
       if (rc !== 0) {
         throw errorMessage(
@@ -272,8 +325,8 @@ export async function createDenoNativeBinding(
         );
       }
     },
-    detach(handle: NativeHandle): void {
-      const rc = symbols.oliphaunt_detach(handle) as number;
+    async detach(handle: NativeHandle): Promise<void> {
+      const rc = await symbols.oliphaunt_detach(handle);
       if (rc !== 0) {
         throw errorMessage(
           'native liboliphaunt detach failed',
@@ -281,8 +334,42 @@ export async function createDenoNativeBinding(
           lastError(deno, symbols, handle),
         );
       }
+      if (typeof handle === 'object' && handle !== null) {
+        generations.delete(handle);
+      }
+    },
+    registerForgottenHandleCleanup(
+      owner: object,
+      handle: NativeHandle,
+      releaseOwnership: () => void,
+    ): void {
+      if (typeof handle !== 'object' || handle === null) {
+        throw new Error('Deno native cleanup received an invalid handle');
+      }
+      const generation = generations.get(handle);
+      if (generation === undefined || generation === 0n) {
+        throw new Error('Deno native cleanup received a stale logical handle');
+      }
+      forgottenHandles.register(
+        owner,
+        Object.freeze({ generation, releaseOwnership }),
+        owner,
+      );
+    },
+    unregisterForgottenHandleCleanup(owner: object): void {
+      forgottenHandles.unregister(owner);
     },
   };
+}
+
+async function closeDenoGeneration(
+  symbols: DenoSymbols,
+  generation: bigint,
+): Promise<void> {
+  const rc = await symbols.oliphaunt_close_if_generation(generation);
+  if (rc !== 0 && rc !== 1) {
+    throw new Error(`native liboliphaunt generation cleanup failed with status ${rc}`);
+  }
 }
 
 async function prepareDenoPgdata(
@@ -372,14 +459,21 @@ function copyResponse(deno: any, symbols: DenoSymbols, response: Uint8Array): Ui
 }
 
 function lastError(deno: any, symbols: DenoSymbols, handle: NativeHandle | null): string | null {
-  return cString(deno, symbols.oliphaunt_last_error(handle) as DenoPointer);
-}
-
-function cString(deno: any, pointer: DenoPointer): string | null {
-  if (pointer === null) {
+  let output = new Uint8Array(1024);
+  const reported = Number(
+    symbols.oliphaunt_copy_last_error(handle, output, BigInt(output.byteLength)),
+  );
+  if (!Number.isSafeInteger(reported) || reported < 0) {
+    return 'native liboliphaunt returned an invalid error length';
+  }
+  if (reported >= output.byteLength) {
+    output = new Uint8Array(reported + 1);
+    symbols.oliphaunt_copy_last_error(handle, output, BigInt(output.byteLength));
+  }
+  if (reported === 0) {
     return null;
   }
-  return new deno.UnsafePointerView(pointer).getCString();
+  return new TextDecoder().decode(output.subarray(0, reported));
 }
 
 function keepAlive(_values: ReadonlyArray<Uint8Array>): void {

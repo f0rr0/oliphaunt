@@ -1,4 +1,4 @@
-use std::ffi::{CStr, CString, c_char, c_int, c_uchar, c_void};
+use std::ffi::{CString, c_char, c_int, c_uchar, c_void};
 use std::mem::ManuallyDrop;
 use std::path::{Path, PathBuf};
 
@@ -6,7 +6,7 @@ use libloading::Library;
 
 use crate::error::{Error, Result};
 
-pub(super) const ABI_VERSION: u32 = 8;
+pub(super) const ABI_VERSION: u32 = 9;
 pub(super) const CONFIG_EXTERNAL_ROOT_LOCK: u64 = 1 << 0;
 
 pub(super) const ENV_OLIPHAUNT: &str = "LIBOLIPHAUNT_PATH";
@@ -48,20 +48,20 @@ type ExecProtocolFn =
     unsafe extern "C" fn(*mut NativeHandle, *const c_uchar, usize, *mut NativeResponse) -> c_int;
 pub(super) type StreamCallbackFn =
     unsafe extern "C" fn(*mut c_void, *const c_uchar, usize) -> c_int;
-type ExecProtocolStreamFn = unsafe extern "C" fn(
+type ExecProtocolRawStreamFn = unsafe extern "C" fn(
     *mut NativeHandle,
     *const c_uchar,
     usize,
     StreamCallbackFn,
     *mut c_void,
 ) -> c_int;
-#[cfg(feature = "broker-helper")]
+#[cfg(feature = "__internal-broker-helper")]
 type ExecSimpleQueryFn =
     unsafe extern "C" fn(*mut NativeHandle, *const c_char, usize, *mut NativeResponse) -> c_int;
 type CloseFn = unsafe extern "C" fn(*mut NativeHandle) -> c_int;
 type DetachFn = unsafe extern "C" fn(*mut NativeHandle) -> c_int;
 type CancelFn = unsafe extern "C" fn(*mut NativeHandle) -> c_int;
-type LastErrorFn = unsafe extern "C" fn(*mut NativeHandle) -> *const c_char;
+type CopyLastErrorFn = unsafe extern "C" fn(*mut NativeHandle, *mut c_char, usize) -> usize;
 type VersionFn = unsafe extern "C" fn() -> *const c_char;
 type FreeResponseFn = unsafe extern "C" fn(*mut NativeResponse);
 type BackupFn = unsafe extern "C" fn(*mut NativeHandle, *mut NativeResponse) -> c_int;
@@ -71,13 +71,13 @@ pub(super) struct NativeSymbols {
     _library: ManuallyDrop<Library>,
     pub(super) init: InitFn,
     pub(super) exec_protocol: ExecProtocolFn,
-    pub(super) exec_protocol_stream: ExecProtocolStreamFn,
-    #[cfg(feature = "broker-helper")]
+    pub(super) exec_protocol_raw_stream: ExecProtocolRawStreamFn,
+    #[cfg(feature = "__internal-broker-helper")]
     pub(super) exec_simple_query: Option<ExecSimpleQueryFn>,
     pub(super) cancel: CancelFn,
     pub(super) detach: DetachFn,
     _close: CloseFn,
-    pub(super) last_error: LastErrorFn,
+    pub(super) copy_last_error: CopyLastErrorFn,
     _version: VersionFn,
     pub(super) free_response: FreeResponseFn,
     pub(super) backup: BackupFn,
@@ -100,13 +100,14 @@ impl NativeSymbols {
         let library = load_native_library(&path)?;
         let init = load_symbol(&library, b"oliphaunt_init\0")?;
         let exec_protocol = load_symbol(&library, b"oliphaunt_exec_protocol\0")?;
-        let exec_protocol_stream = load_symbol(&library, b"oliphaunt_exec_protocol_stream\0")?;
-        #[cfg(feature = "broker-helper")]
+        let exec_protocol_raw_stream =
+            load_symbol(&library, b"oliphaunt_exec_protocol_raw_stream\0")?;
+        #[cfg(feature = "__internal-broker-helper")]
         let exec_simple_query = load_optional_symbol(&library, b"oliphaunt_exec_simple_query\0");
         let cancel = load_symbol(&library, b"oliphaunt_cancel\0")?;
         let detach = load_symbol(&library, b"oliphaunt_detach\0")?;
         let close = load_symbol(&library, b"oliphaunt_close\0")?;
-        let last_error = load_symbol(&library, b"oliphaunt_last_error\0")?;
+        let copy_last_error = load_symbol(&library, b"oliphaunt_copy_last_error\0")?;
         let version = load_symbol(&library, b"oliphaunt_version\0")?;
         let free_response = load_symbol(&library, b"oliphaunt_free_response\0")?;
         let backup = load_symbol(&library, b"oliphaunt_backup\0")?;
@@ -121,13 +122,13 @@ impl NativeSymbols {
             _library: ManuallyDrop::new(library),
             init,
             exec_protocol,
-            exec_protocol_stream,
-            #[cfg(feature = "broker-helper")]
+            exec_protocol_raw_stream,
+            #[cfg(feature = "__internal-broker-helper")]
             exec_simple_query,
             cancel,
             detach,
             _close: close,
-            last_error,
+            copy_last_error,
             _version: version,
             free_response,
             backup,
@@ -136,8 +137,27 @@ impl NativeSymbols {
     }
 
     pub(super) fn last_error_text(&self, handle: *mut NativeHandle) -> Option<String> {
-        let ptr = unsafe { (self.last_error)(handle) };
-        c_string_lossy(ptr)
+        let mut capacity =
+            unsafe { (self.copy_last_error)(handle, std::ptr::null_mut(), 0) }.checked_add(1)?;
+        if capacity == 1 {
+            return None;
+        }
+
+        // The error may change between the sizing and copy calls because
+        // cancellation is out of band. Each C call is atomic; retry if the
+        // copied snapshot reports that its caller-owned buffer was too small.
+        for _ in 0..4 {
+            let mut bytes = vec![0_u8; capacity];
+            let length = unsafe {
+                (self.copy_last_error)(handle, bytes.as_mut_ptr().cast::<c_char>(), bytes.len())
+            };
+            if length < bytes.len() {
+                bytes.truncate(length);
+                return Some(String::from_utf8_lossy(&bytes).into_owned());
+            }
+            capacity = length.checked_add(1)?;
+        }
+        None
     }
 }
 
@@ -200,7 +220,7 @@ fn load_symbol<T: Copy>(library: &Library, name: &[u8]) -> Result<T> {
     Ok(*symbol)
 }
 
-#[cfg(feature = "broker-helper")]
+#[cfg(feature = "__internal-broker-helper")]
 fn load_optional_symbol<T: Copy>(library: &Library, name: &[u8]) -> Option<T> {
     unsafe { library.get::<T>(name) }.ok().map(|symbol| *symbol)
 }
@@ -221,15 +241,4 @@ pub(super) fn path_to_cstring(path: &Path, label: &str) -> Result<CString> {
         CString::new(text)
             .map_err(|_| Error::InvalidConfig(format!("{label} contains an interior NUL")))
     }
-}
-
-fn c_string_lossy(ptr: *const c_char) -> Option<String> {
-    if ptr.is_null() {
-        return None;
-    }
-    Some(
-        unsafe { CStr::from_ptr(ptr) }
-            .to_string_lossy()
-            .into_owned(),
-    )
 }

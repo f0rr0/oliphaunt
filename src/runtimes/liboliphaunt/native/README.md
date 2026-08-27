@@ -13,6 +13,8 @@ PostgreSQL internals.
 - `include/oliphaunt.h`: public C ABI.
 - `src/liboliphaunt_native.c`: direct-mode lifecycle, backend thread ownership,
   and non-query public ABI entrypoints.
+- `src/liboliphaunt_error.c`: synchronized shared errors plus nested,
+  operation-local error attribution for binding-safe copies.
 - `src/liboliphaunt_runtime.c`: embedded backend argv/default-GUC construction
   and backend thread stack sizing policy.
 - `src/liboliphaunt_protocol.c`: raw protocol execution, streaming backpressure,
@@ -114,6 +116,14 @@ Normal `oliphaunt_exec_protocol`, `oliphaunt_exec_simple_query`, and streaming
 execution do not impose a synthetic query timeout; callers should use
 `oliphaunt_cancel` to interrupt long-running SQL. Ordinary SDK close is a
 lifecycle detach/wait boundary, not an implicit query cancellation primitive.
+
+Hosts serialize ordinary non-cancel calls on one logical C handle;
+`oliphaunt_cancel` is the cross-thread exception. Streaming callbacks borrow
+each byte chunk only for the callback invocation. They may copy it, inspect an
+error, or cancel, but same-handle query, backup, detach, close, and nested stream
+calls fail busy until streaming drains to `ReadyForQuery`. This guard applies
+while the callback lock is released as well, preventing callback reentrancy or a
+concurrent close from corrupting protocol state or freeing the active handle.
 
 The C runtime keeps throughput-oriented PostgreSQL defaults for direct callers:
 `shared_buffers=128MB`, `wal_buffers=4MB`, and `min_wal_size=80MB`. SDKs that

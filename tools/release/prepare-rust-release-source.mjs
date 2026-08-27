@@ -34,6 +34,10 @@ const RUST_PRODUCT = "oliphaunt-rust";
 const DEFAULT_STAGE_DIR = path.join(ROOT, "target/release/cargo-package-sources/oliphaunt");
 const DEFAULT_BUILD_STAGE_DIR = path.join(ROOT, "target/release/cargo-package-sources/oliphaunt-build");
 const SOURCE_NOTICE_OPTIONS = Object.freeze({ profile: "source-sdk" });
+const CANONICAL_QUERY_CORE = path.join(
+  ROOT,
+  "src/shared/rust-query-core/query_core.rs",
+);
 const EXTENSION_SMOKE_TESTDATA = readdirSync(path.join(ROOT, "src/shared/fixtures/extensions"), {
   withFileTypes: true,
 })
@@ -45,6 +49,7 @@ const EXTENSION_SMOKE_TESTDATA = readdirSync(path.join(ROOT, "src/shared/fixture
   .sort((left, right) => left[0].localeCompare(right[0]));
 const RUST_SDK_TESTDATA = Object.freeze([
   ["testdata/query-response-cases.json", "src/shared/fixtures/protocol/query-response-cases.json"],
+  ["testdata/structured-sql-cases.json", "src/shared/fixtures/protocol/structured-sql-cases.json"],
   ["testdata/database-root.json", "src/shared/fixtures/storage/database-root.json"],
   ["testdata/behavior-contract.json", "src/shared/fixtures/postgres/behavior-contract.json"],
   ["testdata/server-listen.json", "src/shared/fixtures/postgres/server-listen.json"],
@@ -192,6 +197,14 @@ function stageRustSdkTestdata(outputDir) {
   }
 }
 
+function stageRustQueryCore(outputDir) {
+  const destination = path.join(outputDir, "src/query_core.rs");
+  copyFileSync(CANONICAL_QUERY_CORE, destination);
+  if (!readFileSync(destination).equals(readFileSync(CANONICAL_QUERY_CORE))) {
+    fail(`${rel(destination)} must exactly match ${rel(CANONICAL_QUERY_CORE)}`);
+  }
+}
+
 export function prepareRustReleaseSource({ stageDir = DEFAULT_STAGE_DIR, log = true } = {}) {
   const version = currentProductVersionSync(RUST_PRODUCT, TOOL);
   const nativeVersion = currentProductVersionSync(LIBOLIPHAUNT_NATIVE_PRODUCT, TOOL);
@@ -204,6 +217,7 @@ export function prepareRustReleaseSource({ stageDir = DEFAULT_STAGE_DIR, log = t
     recursive: true,
     filter: (source) => path.basename(source) !== "target",
   });
+  stageRustQueryCore(outputDir);
   stageRustSdkTestdata(outputDir);
   rmSync(path.join(outputDir, "crates/oliphaunt-build"), { recursive: true, force: true });
 

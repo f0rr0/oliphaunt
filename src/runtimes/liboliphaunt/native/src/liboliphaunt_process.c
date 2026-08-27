@@ -220,6 +220,11 @@ int oliphaunt_claim_global_instance_for_close(
         pthread_mutex_unlock(&global_instance_mutex);
         return 1;
     }
+    if (oliphaunt_reject_if_streaming_locked(current) != 0) {
+        pthread_mutex_unlock(&current->mutex);
+        pthread_mutex_unlock(&global_instance_mutex);
+        return -1;
+    }
 
     global_instance = NULL;
     global_instance_state = OLIPHAUNT_GLOBAL_SPENT;

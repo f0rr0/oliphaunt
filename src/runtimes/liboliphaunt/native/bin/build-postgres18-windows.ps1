@@ -104,6 +104,7 @@ $ExactExtensionCatalogRows = $null
 
 $LiboliphauntSources = @(
     "src/runtimes/liboliphaunt/native/src/liboliphaunt_native.c",
+    "src/runtimes/liboliphaunt/native/src/liboliphaunt_error.c",
     "src/runtimes/liboliphaunt/native/src/liboliphaunt_runtime.c",
     "src/runtimes/liboliphaunt/native/src/liboliphaunt_protocol.c",
     "src/runtimes/liboliphaunt/native/src/liboliphaunt_config.c",
@@ -2992,7 +2993,7 @@ function Link-LiboliphauntDll([System.Collections.Generic.List[string]]$Objects)
         "oliphaunt_init",
         "oliphaunt_exec_protocol",
         "oliphaunt_exec_simple_query",
-        "oliphaunt_exec_protocol_stream",
+        "oliphaunt_exec_protocol_raw_stream",
         "oliphaunt_backup",
         "oliphaunt_restore",
         "oliphaunt_cancel",
@@ -3244,7 +3245,7 @@ function Artifact-Ready {
     foreach ($symbol in @(
         "oliphaunt_init",
         "oliphaunt_exec_protocol",
-        "oliphaunt_exec_protocol_stream",
+        "oliphaunt_exec_protocol_raw_stream",
         "oliphaunt_backup",
         "oliphaunt_restore",
         "oliphaunt_logical_generation",

@@ -45,7 +45,7 @@ describe('WASIX pooled OPFS storage', () => {
     const descriptor = open(pool, 'base/1/value', FLAG_WRITE | FLAG_CREATE);
     write(pool, descriptor, encoder.encode('persisted'));
     requestOk(pool, OP.close, '', new Uint8Array(), descriptor);
-    await pool.sync('checkpoint');
+    await pool.sync('full');
     await pool.close(true);
 
     const database = await databaseDirectory(root, 'todos');
@@ -94,7 +94,7 @@ describe('WASIX pooled OPFS storage', () => {
     requestOk(pool, OP.rename, 'base/source', encoder.encode('base/destination'));
     write(pool, descriptor, encoder.encode('-after'), 'before'.length);
     requestOk(pool, OP.close, '', new Uint8Array(), descriptor);
-    await pool.sync('checkpoint');
+    await pool.sync('full');
     await pool.close(true);
 
     const reopened = await DirectOpfsPool.open('rename-open', clusterSeed(), compatible());
@@ -115,7 +115,7 @@ describe('WASIX pooled OPFS storage', () => {
       write(pool, descriptor, Uint8Array.of(1));
       requestOk(pool, OP.close, '', new Uint8Array(), descriptor);
     }
-    await pool.sync('checkpoint');
+    await pool.sync('full');
     flushes.length = 0;
 
     const state = JSON.parse(
@@ -140,7 +140,7 @@ describe('WASIX pooled OPFS storage', () => {
     flushes.length = 0;
     await pool.sync('operation');
     expect(flushes.map(lastPathSegment)).toEqual([backing('pg_wal/0001')]);
-    await pool.sync('checkpoint');
+    await pool.sync('full');
     expect(flushes.map(lastPathSegment)).toEqual([
       backing('pg_wal/0001'),
       backing('base/other'),
@@ -189,7 +189,7 @@ describe('WASIX pooled OPFS storage', () => {
     requestOk(pool, OP.truncate, '', new Uint8Array(), large, 256);
     expect(read(pool, large, 256).slice(128)).toEqual(new Uint8Array(128));
     requestOk(pool, OP.close, '', new Uint8Array(), large);
-    await pool.sync('checkpoint');
+    await pool.sync('full');
     await pool.close(true);
 
     const reopened = await DirectOpfsPool.open('burst', clusterSeed(), compatible());
@@ -208,7 +208,7 @@ describe('WASIX pooled OPFS storage', () => {
     const io: FakeIo = {};
     installOpfs(io);
     const pool = await DirectOpfsPool.open('staged-failure', clusterSeed(), compatible());
-    await pool.sync('checkpoint');
+    await pool.sync('full');
     for (let index = 0; index < 40; index += 1) {
       const descriptor = open(pool, `base/staged-${index}`, FLAG_WRITE | FLAG_CREATE);
       write(pool, descriptor, Uint8Array.of(index));
@@ -235,7 +235,7 @@ describe('WASIX pooled OPFS storage', () => {
     requestOk(pool, OP.close, '', new Uint8Array(), descriptor);
 
     io.syncAccessErrorName = 'QuotaExceededError';
-    await expect(pool.sync('checkpoint')).resolves.toBeUndefined();
+    await expect(pool.sync('full')).resolves.toBeUndefined();
     io.syncAccessErrorName = undefined;
     await pool.close(false);
 
@@ -319,7 +319,7 @@ describe('WASIX pooled OPFS storage', () => {
     io.syncAccessErrorName = undefined;
     const direct = await DirectOpfsPool.open('first-fallback', clusterSeed(), compatible());
     expect(direct.state).toBe('new');
-    await direct.sync('checkpoint');
+    await direct.sync('full');
     await direct.close(true);
 
     const reopened = await DirectOpfsPool.open('first-fallback', clusterSeed(), compatible());
@@ -341,7 +341,7 @@ describe('WASIX pooled OPFS storage', () => {
         entryType: async () => 'missing',
         clearChanges,
       },
-      'checkpoint',
+      'full',
     );
     await lease.close(undefined, 'failed');
 
@@ -403,7 +403,7 @@ describe('WASIX pooled OPFS storage', () => {
     const directory = await lease.createPgdataDirectory({
       createSync: () => directDirectory({ readTextFile: async () => '18\n', free }),
     } as unknown as typeof Directory);
-    await lease.sync(directory, 'checkpoint');
+    await lease.sync(directory, 'full');
 
     io.failNextAccessClose = true;
     await expect(lease.close(directory, 'clean')).rejects.toMatchObject({
@@ -422,7 +422,7 @@ describe('WASIX pooled OPFS storage', () => {
     write(pool, control, Uint8Array.of(9));
     requestOk(pool, OP.close, '', new Uint8Array(), control);
     io.failNextStateCommit = true;
-    await expect(pool.sync('checkpoint')).rejects.toThrow('injected state commit failure');
+    await expect(pool.sync('full')).rejects.toThrow('injected state commit failure');
     await pool.close(false);
 
     const reopened = await DirectOpfsPool.open(
@@ -447,7 +447,7 @@ describe('WASIX pooled OPFS storage', () => {
 
     io.syncAccessErrorName = undefined;
     const pool = await DirectOpfsPool.open('missing-backing', clusterSeed(), compatible());
-    await pool.sync('checkpoint');
+    await pool.sync('full');
     await pool.close(true);
     const database = await databaseDirectory(root, 'missing-backing');
     const state = JSON.parse(await database.file('state.json').text()) as {
@@ -522,7 +522,7 @@ describe('WASIX pooled OPFS storage', () => {
   it('rejects malformed, duplicate, and extended state metadata', async () => {
     const root = installOpfs();
     const pool = await DirectOpfsPool.open('malformed-state', clusterSeed(), compatible());
-    await pool.sync('checkpoint');
+    await pool.sync('full');
     await pool.close(true);
     const database = await databaseDirectory(root, 'malformed-state');
     const state = JSON.parse(await database.file('state.json').text()) as Record<string, unknown>;
@@ -557,7 +557,7 @@ describe('WASIX pooled OPFS storage', () => {
     write(pool, descriptor, Uint8Array.of(7));
     requestOk(pool, OP.close, '', new Uint8Array(), descriptor);
     io.failNextStateCommit = true;
-    await expect(pool.sync('checkpoint')).rejects.toThrow('injected state commit failure');
+    await expect(pool.sync('full')).rejects.toThrow('injected state commit failure');
     await pool.close(false);
 
     const reopened = await DirectOpfsPool.open('atomic', clusterSeed(), compatible());
@@ -647,7 +647,7 @@ describe('WASIX pooled OPFS storage', () => {
   it('rejects restoring over a published database', async () => {
     installOpfs();
     const pool = await DirectOpfsPool.open('restore-published', clusterSeed(), compatible());
-    await pool.sync('checkpoint');
+    await pool.sync('full');
     await pool.close(true);
 
     await expect(

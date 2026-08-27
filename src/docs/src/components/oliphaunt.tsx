@@ -262,7 +262,7 @@ const embeddedModelRows = [
   {
     title: 'App-owned lifecycle',
     description:
-      'Apps decide when to checkpoint, close, and use cancellation or data movement where exposed.',
+      'Apps decide when to close and use cancellation or data movement where exposed.',
     icon: Route,
   },
   {
@@ -329,7 +329,8 @@ const mobileContractRows = [
   },
   {
     title: 'Serialized work',
-    description: 'Concurrent app tasks share one physical session through the platform SDK.',
+    description:
+      'Concurrent app tasks share one physical session on a native owner, away from UI and JavaScript threads.',
   },
   {
     title: 'WAL recovery',
@@ -337,7 +338,8 @@ const mobileContractRows = [
   },
   {
     title: 'Platform lifecycle',
-    description: 'Apps apply checkpoint, cancellation, and close where their platform lifecycle requires them.',
+    description:
+      'Apps use explicit cancellation and async close where their platform lifecycle requires them.',
   },
 ];
 
@@ -1193,7 +1195,7 @@ const guideProofs: Record<string, Array<{ title: string; description: string }>>
     },
     {
       title: 'Lifecycle',
-      description: 'The app decides when platform state requires checkpoint, cancellation, or close.',
+      description: 'The app decides when platform state requires cancellation or close.',
     },
     {
       title: 'Resources',
@@ -1215,7 +1217,7 @@ const guideProofs: Record<string, Array<{ title: string; description: string }>>
     },
     {
       title: 'Lifecycle',
-      description: 'The app calls checkpoint, cancellation, and close when Android lifecycle state requires them.',
+      description: 'The app calls cancellation and close when Android lifecycle state requires them.',
     },
     {
       title: 'App artifact',
@@ -1279,11 +1281,11 @@ const guideProofs: Record<string, Array<{ title: string; description: string }>>
   'wasix-typescript': [
     {
       title: 'First query',
-      description: 'The selected host opens memory by default and runs SQL through the portable runtime.',
+      description: 'The selected entrypoint opens memory by default and runs SQL through the portable runtime.',
     },
     {
-      title: 'Host placement',
-      description: 'Worker and direct placement expose the same database API without native fallback.',
+      title: 'Calling contract',
+      description: 'The root package owns a Worker; an explicit blocking entry point keeps the same database contract without native fallback.',
     },
     {
       title: 'Persistence',
@@ -1746,7 +1748,7 @@ export function ShipChecklist() {
     {
       title: 'Lifecycle',
       description:
-        'Apply checkpoint and close according to the app lifecycle, with cancellation where exposed.',
+        'Close according to the app lifecycle, with cancellation where exposed. Issue PostgreSQL maintenance statements through execute only when required.',
     },
     {
       title: 'Extensions',

@@ -125,6 +125,9 @@ destination and does not replace nonempty data.
 
 ## Troubleshooting
 
-Inspect return codes and `oliphaunt_last_error`, then check missing runtime
-resources, PGDATA locks, and PostgreSQL errors. Language bindings may parse
-protocol errors into richer ecosystem-native types.
+Inspect return codes and call `oliphaunt_copy_last_error` on that same thread
+immediately after a failure. Its operation-local snapshot is stable across the
+usual size-probe and copy calls even when another thread is cancelling or
+running work on the handle. Then check missing runtime resources, PGDATA locks,
+and PostgreSQL errors. Language bindings may parse protocol errors into richer
+ecosystem-native types.

@@ -12,11 +12,15 @@ import {
 export const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 export const defaultBrowserPlanFile = resolve(
   repositoryRoot,
-  'benchmarks/wasix/browser-pglite-memory-v1.json',
+  'benchmarks/wasix/browser-pglite-memory-v2.json',
 );
 
-const PLAN_SCHEMA = 'oliphaunt-wasix-browser-benchmark-plan-v1';
-const RESULT_SCHEMA = 'oliphaunt-wasix-browser-engine-result-v1';
+const LEGACY_PLAN_SCHEMA = 'oliphaunt-wasix-browser-benchmark-plan-v1';
+const PLAN_SCHEMA = 'oliphaunt-wasix-browser-benchmark-plan-v2';
+const LEGACY_RESULT_SCHEMA = 'oliphaunt-wasix-browser-engine-result-v1';
+const RESULT_SCHEMA = 'oliphaunt-wasix-browser-engine-result-v2';
+const LEGACY_PLAN_ID = 'browser-pglite-memory-v1';
+const PLAN_ID = 'browser-pglite-memory-v2';
 const CANDIDATE_PACKAGE = '@oliphaunt/wasix-ts';
 const COMPARISON_PACKAGE = '@electric-sql/pglite';
 const COMPARISON_VERSION = '0.5.4';
@@ -25,7 +29,8 @@ const COMPARISON_INTEGRITY =
 const COMPARISON_COMMIT = '25d0a55e1f1e4c59f26d9e125150dda88a33fd00';
 const COMPARISON_TREE_SHA256 =
   'b3925de04c386f51859c1bf18c143b225e3850616718140dd32e8eb48e9a2c84';
-const ENGINE_NAMES = ['wasixDirect', 'wasixWorker', 'pgliteDirect', 'pgliteWorker'];
+const ENGINE_NAMES = ['wasixBlocking', 'wasixWorker', 'pgliteDirect', 'pgliteWorker'];
+const LEGACY_ENGINE_NAMES = ['wasixDirect', 'wasixWorker', 'pgliteDirect', 'pgliteWorker'];
 const PROFILE_FIELDS = [
   'startupRuns',
   'workloadRuns',
@@ -109,8 +114,8 @@ const RUNTIME_BUILD = {
   linkerFlags: '',
   backendTiming: '0',
 };
-const TOPOLOGIES = {
-  direct: ['wasixDirect', 'pgliteDirect'],
+const CALLING_CONTRACTS = {
+  blocking: ['wasixBlocking', 'pgliteDirect'],
   worker: ['wasixWorker', 'pgliteWorker'],
 };
 
@@ -128,14 +133,129 @@ export async function loadBrowserPlan(file = defaultBrowserPlanFile) {
 
 export function validateBrowserPlan(plan) {
   requireRecord(plan, 'plan');
-  requireExactKeys(
-    plan,
-    ['schema', 'id', 'description', 'engines', 'profiles', 'measurement', 'gate', 'postgres'],
-    'plan',
-  );
+  if (plan.schema === LEGACY_PLAN_SCHEMA) {
+    validateLegacyBrowserPlan(plan);
+    return;
+  }
   requireEqual(plan.schema, PLAN_SCHEMA, 'plan.schema');
-  requireEqual(plan.id, 'browser-pglite-memory-v1', 'plan.id');
-  requireNonEmptyString(plan.description, 'plan.description');
+  validatePlanEnvelope(plan, PLAN_ID);
+
+  const engines = requireRecord(plan.engines, 'plan.engines');
+  requireExactKeys(engines, ['candidate', 'comparison'], 'plan.engines');
+  const candidate = requireRecord(engines.candidate, 'plan.engines.candidate');
+  const comparison = requireRecord(engines.comparison, 'plan.engines.comparison');
+  requireExactKeys(
+    candidate,
+    ['package', 'storage', 'surfaces', 'dependencies', 'runtimeBuild'],
+    'plan.engines.candidate',
+  );
+  requireEqual(candidate.package, CANDIDATE_PACKAGE, 'plan.engines.candidate.package');
+  requireEqual(candidate.storage, 'memory', 'plan.engines.candidate.storage');
+  requireExactRecord(
+    requireRecord(candidate.surfaces, 'plan.engines.candidate.surfaces').blocking,
+    {
+      engine: 'wasixBlocking',
+      entrypoint: '@oliphaunt/wasix-ts/blocking',
+      callingContract: 'blocking',
+      executionOwner: 'caller',
+    },
+    'plan.engines.candidate.surfaces.blocking',
+  );
+  requireExactRecord(
+    candidate.surfaces.default,
+    {
+      engine: 'wasixWorker',
+      entrypoint: '@oliphaunt/wasix-ts',
+      callingContract: 'async',
+      executionOwner: 'package-worker',
+    },
+    'plan.engines.candidate.surfaces.default',
+  );
+  requireExactKeys(candidate.surfaces, ['blocking', 'default'], 'plan.engines.candidate.surfaces');
+  requireExactRecord(
+    candidate.dependencies,
+    { fzstd: '0.1.1' },
+    'plan.engines.candidate.dependencies',
+  );
+  requireExactRecord(
+    candidate.runtimeBuild,
+    RUNTIME_BUILD,
+    'plan.engines.candidate.runtimeBuild',
+  );
+
+  requireExactKeys(
+    comparison,
+    [
+      'package',
+      'version',
+      'integrity',
+      'homepage',
+      'sourceRepository',
+      'sourceCommit',
+      'installedTreeHashSchema',
+      'installedTreeSha256',
+      'storage',
+      'surfaces',
+    ],
+    'plan.engines.comparison',
+  );
+  for (const [field, expected] of Object.entries({
+    package: COMPARISON_PACKAGE,
+    version: COMPARISON_VERSION,
+    integrity: COMPARISON_INTEGRITY,
+    homepage: 'https://pglite.dev',
+    sourceRepository: 'https://github.com/electric-sql/pglite',
+    sourceCommit: COMPARISON_COMMIT,
+    installedTreeHashSchema: 'oliphaunt-path-size-content-sha256-v1',
+    installedTreeSha256: COMPARISON_TREE_SHA256,
+    storage: 'memory',
+  })) {
+    requireEqual(comparison[field], expected, `plan.engines.comparison.${field}`);
+  }
+  const comparisonSurfaces = requireRecord(
+    comparison.surfaces,
+    'plan.engines.comparison.surfaces',
+  );
+  requireExactKeys(
+    comparisonSurfaces,
+    ['callerRealm', 'worker'],
+    'plan.engines.comparison.surfaces',
+  );
+  requireExactRecord(
+    comparisonSurfaces.callerRealm,
+    {
+      engine: 'pgliteDirect',
+      entrypoint: '@electric-sql/pglite',
+      callingContract: 'async',
+      executionOwner: 'caller',
+    },
+    'plan.engines.comparison.surfaces.callerRealm',
+  );
+  requireExactRecord(
+    comparisonSurfaces.worker,
+    {
+      engine: 'pgliteWorker',
+      entrypoint: '@electric-sql/pglite/worker',
+      callingContract: 'async',
+      executionOwner: 'caller-provided-worker',
+    },
+    'plan.engines.comparison.surfaces.worker',
+  );
+
+  validateCommonPlan(plan, 'requiresBothCallingContracts');
+}
+
+export function assertCurrentBrowserPlan(plan) {
+  validateBrowserPlan(plan);
+  if (plan.schema !== PLAN_SCHEMA) {
+    throw new Error(
+      `${LEGACY_PLAN_ID} is historical input and cannot drive a new benchmark; use ${PLAN_ID}`,
+    );
+  }
+}
+
+function validateLegacyBrowserPlan(plan) {
+  validatePlanEnvelope(plan, LEGACY_PLAN_ID);
   const engines = requireRecord(plan.engines, 'plan.engines');
   requireExactKeys(engines, ['candidate', 'comparison'], 'plan.engines');
   const candidate = requireRecord(engines.candidate, 'plan.engines.candidate');
@@ -184,7 +304,20 @@ export function validateBrowserPlan(plan) {
     },
     'plan.engines.comparison',
   );
+  validateCommonPlan(plan, 'requiresBothTopologies');
+}
 
+function validatePlanEnvelope(plan, id) {
+  requireExactKeys(
+    plan,
+    ['schema', 'id', 'description', 'engines', 'profiles', 'measurement', 'gate', 'postgres'],
+    'plan',
+  );
+  requireEqual(plan.id, id, 'plan.id');
+  requireNonEmptyString(plan.description, 'plan.description');
+}
+
+function validateCommonPlan(plan, bothContractsField) {
   const profiles = requireRecord(plan.profiles, 'plan.profiles');
   requireExactKeys(profiles, ['quick', 'full'], 'plan.profiles');
   requireExactRecord(profiles.quick, QUICK_PROFILE, 'plan.profiles.quick');
@@ -205,7 +338,7 @@ export function validateBrowserPlan(plan) {
     [
       'maxGeomeanRatio',
       'requiresCorrectness',
-      'requiresBothTopologies',
+      bothContractsField,
       'metric',
       'metrics',
       'excluded',
@@ -214,7 +347,7 @@ export function validateBrowserPlan(plan) {
   );
   requireEqual(gate.maxGeomeanRatio, 0.8, 'plan.gate.maxGeomeanRatio');
   requireEqual(gate.requiresCorrectness, true, 'plan.gate.requiresCorrectness');
-  requireEqual(gate.requiresBothTopologies, true, 'plan.gate.requiresBothTopologies');
+  requireEqual(gate[bothContractsField], true, `plan.gate.${bothContractsField}`);
   requireEqual(
     gate.metric,
     'geometric-mean-of-median-paired-oliphaunt-over-pglite-ratios-lower-is-better',
@@ -258,12 +391,13 @@ export function qualifyingGitProvenance({ commit, tree, status }) {
 export function summarizeBrowserResult(planSource, result) {
   const plan = planSource.plan;
   validateBrowserResult(plan, result);
-  const correctness = summarizeCorrectness(plan, result);
-  const topologies = Object.fromEntries(
-    Object.entries(TOPOLOGIES).map(([topology, [candidate, comparison]]) => {
+  const normalizedResult = normalizeBrowserResult(result);
+  const correctness = summarizeCorrectness(plan, normalizedResult);
+  const callingContracts = Object.fromEntries(
+    Object.entries(CALLING_CONTRACTS).map(([contract, [candidate, comparison]]) => {
       const metrics = plan.gate.metrics.map((id) => {
-        const candidateSamplesMs = metricSamples(result, candidate, id);
-        const comparisonSamplesMs = metricSamples(result, comparison, id);
+        const candidateSamplesMs = metricSamples(normalizedResult, candidate, id);
+        const comparisonSamplesMs = metricSamples(normalizedResult, comparison, id);
         const paired = pairedRatioSummary(candidateSamplesMs, comparisonSamplesMs);
         return {
           id,
@@ -285,19 +419,21 @@ export function summarizeBrowserResult(planSource, result) {
         plan.gate.maxGeomeanRatio,
         correctness.passed,
       );
-      return [topology, { metrics, ...aggregate }];
+      return [contract, { metrics, ...aggregate }];
     }),
   );
   const qualificationEligible = plan.profiles[result.mode].qualificationEligible;
-  const performancePassed = Object.values(topologies).every((topology) => topology.gate.passed);
+  const performancePassed = Object.values(callingContracts).every(
+    (contract) => contract.gate.passed,
+  );
   return {
     correctness,
-    topologies,
+    callingContracts,
     gate: {
       required: qualificationEligible,
       passed: qualificationEligible ? performancePassed && correctness.passed : null,
       maxGeomeanRatio: plan.gate.maxGeomeanRatio,
-      requiresBothTopologies: true,
+      requiresBothCallingContracts: true,
       metric: plan.gate.metric,
       excluded: plan.gate.excluded,
     },
@@ -320,9 +456,9 @@ export function browserPlanSummary(source) {
 }
 
 export function browserMarkdownReport(report) {
-  const topologySections = Object.entries(report.summary.topologies)
-    .map(([name, topology]) => {
-      const rows = topology.metrics
+  const contractSections = Object.entries(report.summary.callingContracts)
+    .map(([name, contract]) => {
+      const rows = contract.metrics
         .map(
           (metric) =>
             `| \`${metric.id}\` | ${metric.candidateMedianMs.toFixed(3)} | ` +
@@ -330,13 +466,13 @@ export function browserMarkdownReport(report) {
         )
         .join('\n');
       const gateLabel = report.summary.gate.required
-        ? `Comfortable-win gate: **${topology.gate.passed ? 'PASS' : 'FAIL'}**`
-        : `Comfortable-win statistic: **${topology.gate.passed ? 'would pass' : 'would fail'} (advisory quick profile)**`;
-      return `## ${name[0].toUpperCase()}${name.slice(1)} topology
+        ? `Comfortable-win gate: **${contract.gate.passed ? 'PASS' : 'FAIL'}**`
+        : `Comfortable-win statistic: **${contract.gate.passed ? 'would pass' : 'would fail'} (advisory quick profile)**`;
+      return `## ${name[0].toUpperCase()}${name.slice(1)} calling contract
 
 - ${gateLabel}
-- Geometric-mean ratio: **${topology.geomeanRatio.toFixed(4)}** (required <= ${topology.gate.maxGeomeanRatio.toFixed(2)})
-- Observed aggregate win: **${topology.gate.observedWinPercent.toFixed(2)}%**
+- Geometric-mean ratio: **${contract.geomeanRatio.toFixed(4)}** (required <= ${contract.gate.maxGeomeanRatio.toFixed(2)})
+- Observed aggregate win: **${contract.gate.observedWinPercent.toFixed(2)}%**
 
 | Metric (lower is better) | Oliphaunt median ms | PGlite median ms | Median paired ratio |
 | --- | ---: | ---: | ---: |
@@ -355,15 +491,16 @@ ${rows}`;
 - Indexed-insert WAL parity: **${report.summary.correctness.indexedInsertWal.passed ? 'PASS' : 'FAIL'}**
 - Overall qualification: **${report.summary.gate.required ? (report.summary.gate.passed ? 'PASS' : 'FAIL') : 'NOT GATED (quick profile)'}**
 
-${topologySections}
+${contractSections}
 
-First cold open, duplicated workload-open time, close, and insert decomposition remain in the JSON report but are not speed-gated. Close is descriptive because the public APIs make different worker-reclamation guarantees. The gate requires the geometric mean of median same-run Oliphaunt/PGlite ratios to be at most 0.80 independently in both matched topologies, after workload assertions and PostgreSQL durability/WAL parity pass.
+First cold open, duplicated workload-open time, close, and insert decomposition remain in the JSON report but are not speed-gated. Close is descriptive because the public APIs make different worker-reclamation guarantees. The gate requires the geometric mean of median same-run Oliphaunt/PGlite ratios to be at most 0.80 independently for the explicit caller-owned blocking and package-owned Worker contracts, after workload assertions and PostgreSQL durability/WAL parity pass.
 `;
 }
 
 function validateBrowserResult(plan, result) {
   requireRecord(result, 'browser result');
-  requireEqual(result.schema, RESULT_SCHEMA, 'result.schema');
+  const legacy = plan.schema === LEGACY_PLAN_SCHEMA;
+  requireEqual(result.schema, legacy ? LEGACY_RESULT_SCHEMA : RESULT_SCHEMA, 'result.schema');
   requireEqual(result.plan, plan.id, 'result.plan');
   if (!['quick', 'full'].includes(result.mode)) throw new Error('result.mode is invalid');
   const expected = plan.profiles[result.mode];
@@ -381,10 +518,17 @@ function validateBrowserResult(plan, result) {
   }
   requireEqual(configuration.rows, plan.measurement.rows, 'result.configuration.rows');
   requireEqual(configuration.storage, plan.measurement.storage, 'result.configuration.storage');
+  if (!legacy) {
+    requireExactStringList(
+      configuration.callingContracts,
+      ['caller-owned-blocking', 'package-worker-async'],
+      'result.configuration.callingContracts',
+    );
+  }
   requireEqual(result.correctness?.assertionsPassed, true, 'result correctness');
   requireEqual(result.environment?.crossOriginIsolated, true, 'cross-origin isolation');
 
-  for (const engine of ENGINE_NAMES) {
+  for (const engine of legacy ? LEGACY_ENGINE_NAMES : ENGINE_NAMES) {
     requireArrayLength(result.samples?.startup?.[engine], expected.startupRuns, `${engine} startup`);
     requireArrayLength(
       result.samples?.workload?.[engine],
@@ -399,10 +543,43 @@ function validateBrowserResult(plan, result) {
   }
 }
 
+function normalizeBrowserResult(result) {
+  if (result.schema === RESULT_SCHEMA) return result;
+  return {
+    ...result,
+    schema: RESULT_SCHEMA,
+    postgresProfiles: renameLegacyEngineRecord(result.postgresProfiles),
+    samples: {
+      ...result.samples,
+      startup: renameLegacyEngineRecord(result.samples.startup),
+      workload: renameLegacyEngineRecord(result.samples.workload),
+    },
+    insertDiagnostic: {
+      ...result.insertDiagnostic,
+      summary: {
+        ...result.insertDiagnostic.summary,
+        indexedInsertWalBytes: renameLegacyEngineRecord(
+          result.insertDiagnostic.summary.indexedInsertWalBytes,
+        ),
+      },
+      samples: renameLegacyEngineRecord(result.insertDiagnostic.samples),
+    },
+  };
+}
+
+function renameLegacyEngineRecord(record) {
+  return {
+    wasixBlocking: record.wasixDirect,
+    wasixWorker: record.wasixWorker,
+    pgliteDirect: record.pgliteDirect,
+    pgliteWorker: record.pgliteWorker,
+  };
+}
+
 function summarizeCorrectness(plan, result) {
   const settings = plan.postgres.settings;
   const durability = Object.fromEntries(
-    Object.entries(TOPOLOGIES).map(([topology, [candidate, comparison]]) => {
+    Object.entries(CALLING_CONTRACTS).map(([contract, [candidate, comparison]]) => {
       const candidateProfile = result.postgresProfiles[candidate];
       const comparisonProfile = result.postgresProfiles[comparison];
       const candidateValid = profileMatches(candidateProfile, settings, plan.postgres.major);
@@ -411,21 +588,21 @@ function summarizeCorrectness(plan, result) {
         (setting) => candidateProfile?.[setting] === comparisonProfile?.[setting],
       );
       return [
-        topology,
+        contract,
         { passed: candidateValid && comparisonValid && parity, candidateProfile, comparisonProfile },
       ];
     }),
   );
-  durability.passed = durability.direct.passed && durability.worker.passed;
+  durability.passed = durability.blocking.passed && durability.worker.passed;
 
   const wal = result.insertDiagnostic.summary.indexedInsertWalBytes;
   const indexedInsertWal = Object.fromEntries(
-    Object.entries(TOPOLOGIES).map(([topology, [candidate, comparison]]) => {
+    Object.entries(CALLING_CONTRACTS).map(([contract, [candidate, comparison]]) => {
       const candidateBytes = positiveNumber(wal[candidate], `${candidate} WAL bytes`);
       const comparisonBytes = positiveNumber(wal[comparison], `${comparison} WAL bytes`);
       const deltaPercent = (Math.abs(candidateBytes - comparisonBytes) / comparisonBytes) * 100;
       return [
-        topology,
+        contract,
         {
           passed: deltaPercent <= plan.postgres.indexedInsertWalTolerancePercent,
           candidateBytes,
@@ -437,7 +614,8 @@ function summarizeCorrectness(plan, result) {
       ];
     }),
   );
-  indexedInsertWal.passed = indexedInsertWal.direct.passed && indexedInsertWal.worker.passed;
+  indexedInsertWal.passed =
+    indexedInsertWal.blocking.passed && indexedInsertWal.worker.passed;
   const workloadAssertionsPassed = result.correctness.assertionsPassed === true;
   return {
     passed: workloadAssertionsPassed && durability.passed && indexedInsertWal.passed,

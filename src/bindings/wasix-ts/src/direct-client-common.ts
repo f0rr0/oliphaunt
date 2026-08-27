@@ -1,5 +1,6 @@
 import {
   WasixDatabaseImpl,
+  createWasixDeferred,
   normalizeWasixDatabaseIdentity,
   type WasixDatabaseIdentity,
   type WasixDatabaseSession,
@@ -115,8 +116,9 @@ const defaultDependencies: DirectWasixDependencies = {
 export async function openWasixDirect(
   options: SerializedOpenOptions,
   host: DirectWasixHost,
+  environment: DirectWasixEnvironment = 'browser-main',
 ): Promise<OliphauntDatabase> {
-  const session = await DirectWasixSession.open(options, host, defaultDependencies, 'browser-main');
+  const session = await DirectWasixSession.open(options, host, defaultDependencies, environment);
   return new WasixDatabaseImpl(session);
 }
 
@@ -128,7 +130,11 @@ export function openBrowserWorkerSession(
   return DirectWasixSession.open(options, host, defaultDependencies, 'browser-worker');
 }
 
-/** Owns the caller-realm guest, its mounted PGDATA, and their joint lifecycle. */
+/**
+ * Owns the caller-realm guest, its mounted PGDATA, and one terminal teardown.
+ * A rejected close still retires the session after attempting provider and
+ * allocation release; destroyed guest state is never advertised as reusable.
+ */
 /** @internal */
 export class DirectWasixSession implements WasixDatabaseSession {
   readonly identity: WasixDatabaseIdentity;
@@ -241,7 +247,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
       opened = session;
       session.#startupResponse = await initialize(instance, storage.state);
       if (storage.state === 'new') {
-        await storage.sync(baseDirectory, 'checkpoint');
+        await storage.sync(baseDirectory, 'full');
       }
       return session;
     } catch (error) {
@@ -255,7 +261,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
         } catch (closeError) {
           failure = composeLifecycleFailure(
             failure,
-            'direct WASIX instance cleanup also failed',
+            'WASIX instance cleanup also failed',
             closeError,
           );
         }
@@ -271,7 +277,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
         } catch (freeError) {
           failure = composeLifecycleFailure(
             failure,
-            'direct WASIX allocation release also failed',
+            'WASIX allocation release also failed',
             freeError,
           );
         }
@@ -608,15 +614,17 @@ export class DirectWasixSession implements WasixDatabaseSession {
   }
 
   close(): Promise<void> {
-    this.#closeAttempt ??= this.#closeInner();
-    return this.#closeAttempt;
+    if (this.#closeAttempt !== undefined) return this.#closeAttempt;
+    // Establish the admission cutoff before any guest/provider teardown can
+    // invoke userland code or yield.
+    this.#closed = true;
+    const attempt = createWasixDeferred<void>();
+    this.#closeAttempt = attempt.promise;
+    void this.#closeInner().then(attempt.resolve, attempt.reject);
+    return attempt.promise;
   }
 
   async #closeInner(): Promise<void> {
-    if (this.#closed) {
-      return;
-    }
-    this.#closed = true;
     const pendingPgDump = this.#pgDump;
     this.#pgDump = undefined;
     this.#pgDumpIdentity = undefined;
@@ -652,12 +660,12 @@ export class DirectWasixSession implements WasixDatabaseSession {
       } catch (error) {
         failure =
           failure === undefined
-            ? new Error(`direct WASIX allocation release failed: ${describeError(error)}`, {
+            ? new Error(`WASIX allocation release failed: ${describeError(error)}`, {
                 cause: error,
               })
             : composeLifecycleFailure(
                 failure,
-                'direct WASIX allocation release also failed',
+                'WASIX allocation release also failed',
                 error,
               );
       }
@@ -683,17 +691,17 @@ export class DirectWasixSession implements WasixDatabaseSession {
 
   #assertHealthy(): void {
     if (this.#closed) {
-      throw new Error('Oliphaunt WASIX direct database is closed');
+      throw new Error('Oliphaunt WASIX database is closed');
     }
     if (this.#failed) {
-      throw new Error('Oliphaunt WASIX direct database failed; close it and open a new one');
+      throw new Error('Oliphaunt WASIX database failed; close it and open a new one');
     }
   }
 
   #currentInstance(): OliphauntDirectInstance {
     const instance = this.#instance;
     if (instance === undefined) {
-      throw new Error('Oliphaunt WASIX direct database has no live PostgreSQL backend');
+      throw new Error('Oliphaunt WASIX database has no live PostgreSQL backend');
     }
     return instance;
   }
@@ -709,7 +717,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
       } catch (closeError) {
         failure = composeLifecycleFailure(
           failure,
-          'direct WASIX instance cleanup also failed',
+          'WASIX instance cleanup also failed',
           closeError,
         );
       }
@@ -725,7 +733,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
       } catch (freeError) {
         failure = composeLifecycleFailure(
           failure,
-          'direct WASIX allocation release also failed',
+          'WASIX allocation release also failed',
           freeError,
         );
       }
@@ -755,7 +763,7 @@ function assertDirectExtensionCompatibility(options: SerializedOpenOptions): voi
     )
     .join(', ');
   throw new TypeError(
-    `@oliphaunt/wasix-ts direct execution cannot load native extension modules larger than 8 MiB in Chromium; use execution: "worker" for ${detail}`,
+    `@oliphaunt/wasix-ts/blocking cannot load native extension modules larger than 8 MiB in a Chromium Window; use the @oliphaunt/wasix-ts root entrypoint for ${detail}`,
   );
 }
 
@@ -855,7 +863,7 @@ function instantiateDirectWithDeadline(
     let expired = false;
     const timer = setTimeout(() => {
       expired = true;
-      reject(new Error(`Oliphaunt WASIX direct startup exceeded ${DIRECT_INSTANCE_DEADLINE_MS}ms`));
+      reject(new Error(`Oliphaunt WASIX startup exceeded ${DIRECT_INSTANCE_DEADLINE_MS}ms`));
     }, DIRECT_INSTANCE_DEADLINE_MS);
     void operation.then(
       (instance) => {

@@ -156,7 +156,7 @@ describe('persistent WASIX tool worker lifecycle', () => {
     });
 
     expect(() => run(database, createWorker)).toThrow(
-      'WASIX psql and local servers require worker execution',
+      'WASIX psql and local servers require the @oliphaunt/wasix-ts root entrypoint',
     );
     expect(createWorker).not.toHaveBeenCalled();
     await database.close();
@@ -200,7 +200,7 @@ describe('persistent WASIX tool worker lifecycle', () => {
     const secondServe = deferred();
     let serveCount = 0;
     const database = new WasixDatabaseImpl({
-      isolated: true,
+      supportsProtocolConnections: true,
       identity: { username: 'application', database: 'application' },
       async exec() {
         events.push('query');
@@ -300,7 +300,7 @@ describe('persistent WASIX tool worker lifecycle', () => {
         serveStarted = resolve;
       });
       const database = new WasixDatabaseImpl({
-        isolated: true,
+        supportsProtocolConnections: true,
         identity: { username: 'application', database: 'application' },
         async exec() {
           return new Uint8Array();
@@ -504,7 +504,7 @@ function workerDatabase(
   serve: () => Promise<void> = async () => undefined,
 ): WasixDatabaseImpl {
   const session: WasixDatabaseSession = {
-    isolated: true,
+    supportsProtocolConnections: true,
     identity: { username: 'application', database: 'application' },
     async exec() {
       return new Uint8Array();
@@ -521,7 +521,7 @@ function workerDatabase(
 function protocolLifecycleDatabase(): WasixDatabaseImpl {
   let failed = false;
   return new WasixDatabaseImpl({
-    isolated: true,
+    supportsProtocolConnections: true,
     identity: { username: 'application', database: 'application' },
     async exec() {
       if (failed) throw new Error('database protocol outcome is unknown');

@@ -14,7 +14,11 @@ import type {
   OpenConfig,
   WasixRuntimeDescriptor,
 } from './types.js';
-import { openWorkerDatabase, type WasixWorkerPort } from './worker-rpc.js';
+import {
+  openWorkerDatabase,
+  WorkerRpc,
+  type WasixWorkerPort,
+} from './worker-rpc.js';
 
 export type { WasixWorkerPort } from './worker-rpc.js';
 
@@ -22,6 +26,7 @@ export function serializeOpenConfig(
   config: OpenConfig = {},
   runtimeDescriptor: WasixRuntimeDescriptor = defaultWasixRuntime,
 ): SerializedOpenOptions {
+  rejectLegacyExecutionOption(config);
   const extensions = serializeWasixExtensionDescriptors(config.extensions ?? []);
   const runtime = serializeWasixRuntimeDescriptor(runtimeDescriptor);
   const storage = serializeWasixStorage(config.storage);
@@ -35,6 +40,15 @@ export function serializeOpenConfig(
     startupGUCs: { ...(config.startupGUCs ?? {}) },
     storage,
   };
+}
+
+/** @internal Prevent untyped JavaScript from silently changing calling semantics. */
+export function rejectLegacyExecutionOption(config: OpenConfig): void {
+  if (Object.prototype.hasOwnProperty.call(config, 'execution')) {
+    throw new TypeError(
+      '@oliphaunt/wasix-ts no longer accepts the "execution" option; use the root entrypoint for package-owned Worker execution or import @oliphaunt/wasix-ts/blocking for caller-realm execution',
+    );
+  }
 }
 
 export async function openWasixWithWorker(
@@ -54,8 +68,44 @@ export async function restoreWasix(
   if (storage === undefined) throw new TypeError('WASIX restore requires persistent storage');
   const openOptions = serializeOpenConfig({ storage });
   validate?.(openOptions);
-  const snapshot = decodePhysicalArchive(toUint8Array(bytes).slice());
-  await restoreWasixStorage(openOptions.storage, snapshot, WASIX_PHYSICAL_IDENTITY);
+  await restoreWasixSerialized(openOptions.storage, toUint8Array(bytes).slice());
+}
+
+/** @internal Restore through a temporary package-owned Worker. */
+export async function restoreWasixWithWorker(
+  createWorker: (options: SerializedOpenOptions) => WasixWorkerPort,
+  storage: OpenConfig['storage'],
+  bytes: BinaryInput,
+  validate?: (options: SerializedOpenOptions) => void,
+): Promise<void> {
+  if (storage === undefined) throw new TypeError('WASIX restore requires persistent storage');
+  const openOptions = serializeOpenConfig({ storage });
+  validate?.(openOptions);
+  const input = toUint8Array(bytes).slice();
+  const rpc = new WorkerRpc(createWorker(openOptions));
+  let primaryFailure: unknown;
+  try {
+    await rpc.request({ method: 'restore', storage: openOptions.storage, bytes: input }, [
+      input.buffer,
+    ]);
+  } catch (error) {
+    primaryFailure = error;
+  }
+  try {
+    await rpc.terminate();
+  } catch (terminationFailure) {
+    if (primaryFailure === undefined) throw terminationFailure;
+  }
+  if (primaryFailure !== undefined) throw primaryFailure;
+}
+
+/** @internal Restore already-owned archive bytes inside the selected realm. */
+export async function restoreWasixSerialized(
+  storage: SerializedOpenOptions['storage'],
+  bytes: Uint8Array,
+): Promise<void> {
+  const snapshot = decodePhysicalArchive(bytes);
+  await restoreWasixStorage(storage, snapshot, WASIX_PHYSICAL_IDENTITY);
 }
 
 function assetTransfers(options: SerializedOpenOptions): Transferable[] {

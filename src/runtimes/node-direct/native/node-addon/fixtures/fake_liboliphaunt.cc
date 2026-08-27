@@ -48,6 +48,12 @@ int32_t OpenFake(OliphauntHandle **out) {
     return -1;
   }
   *out = nullptr;
+  const char *block_open = std::getenv("OLIPHAUNT_NODE_CLEANUP_TEST_BLOCK_OPEN");
+  if (block_open != nullptr && std::strcmp(block_open, "1") == 0) {
+    RecordEvent("open-started");
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    RecordEvent("open-finished");
+  }
   std::lock_guard<std::mutex> guard(g_mutex);
   if (g_handle.terminally_closed) {
     RecordEvent("init-after-close");
@@ -124,12 +130,27 @@ OLIPHAUNT_API int32_t oliphaunt_exec_simple_query(
   return UnsupportedResponse(out);
 }
 
-OLIPHAUNT_API int32_t oliphaunt_exec_protocol_stream(
+OLIPHAUNT_API int32_t oliphaunt_exec_protocol_raw_stream(
     OliphauntHandle *,
     const uint8_t *,
     size_t,
-    OliphauntStreamCallback,
-    void *) {
+    OliphauntStreamCallback callback,
+    void *context) {
+  const char *block_stream = std::getenv("OLIPHAUNT_NODE_CLEANUP_TEST_BLOCK_STREAM");
+  if (block_stream != nullptr && std::strcmp(block_stream, "1") == 0) {
+    RecordEvent("stream-started");
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    const uint8_t chunks[][2] = {{1, 2}, {3, 4}, {5, 6}};
+    for (const auto &chunk : chunks) {
+      if (callback == nullptr || callback(context, chunk, sizeof(chunk)) != 0) {
+        RecordEvent("stream-aborted");
+        SetError("fake stream callback aborted execution");
+        return -1;
+      }
+    }
+    RecordEvent("stream-finished");
+    return 0;
+  }
   SetError("fake cleanup fixture does not implement protocol streaming");
   return -1;
 }
@@ -197,6 +218,12 @@ OLIPHAUNT_API int32_t oliphaunt_detach(OliphauntHandle *handle) {
     RecordEvent("detach-failed");
     SetError("injected fake detach failure");
     return -1;
+  }
+  const char *block_detach = std::getenv("OLIPHAUNT_NODE_CLEANUP_TEST_BLOCK_DETACH");
+  if (block_detach != nullptr && std::strcmp(block_detach, "1") == 0) {
+    RecordEvent("detach-started");
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    RecordEvent("detach-finished");
   }
   RecordEvent("detach");
   g_handle.logical_active = false;
@@ -266,6 +293,20 @@ OLIPHAUNT_API int32_t oliphaunt_register_static_extensions(
 
 OLIPHAUNT_API const char *oliphaunt_last_error(OliphauntHandle *) {
   return g_last_error;
+}
+
+OLIPHAUNT_API size_t oliphaunt_copy_last_error(
+    OliphauntHandle *,
+    char *out,
+    size_t capacity) {
+  std::lock_guard<std::mutex> guard(g_mutex);
+  const size_t length = std::strlen(g_last_error);
+  if (capacity != 0 && out != nullptr) {
+    const size_t copied = length < capacity - 1 ? length : capacity - 1;
+    std::memcpy(out, g_last_error, copied);
+    out[copied] = '\0';
+  }
+  return length;
 }
 
 OLIPHAUNT_API const char *oliphaunt_version(void) {

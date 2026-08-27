@@ -176,7 +176,7 @@ android_liboliphaunt_has_current_abi() {
   for symbol in \
     oliphaunt_init \
     oliphaunt_exec_protocol \
-    oliphaunt_exec_protocol_stream \
+    oliphaunt_exec_protocol_raw_stream \
     oliphaunt_backup \
     oliphaunt_restore \
     oliphaunt_cancel \
@@ -184,7 +184,7 @@ android_liboliphaunt_has_current_abi() {
     oliphaunt_logical_generation \
     oliphaunt_close_if_generation \
     oliphaunt_close \
-    oliphaunt_last_error \
+    oliphaunt_copy_last_error \
     oliphaunt_version \
     oliphaunt_free_response
   do

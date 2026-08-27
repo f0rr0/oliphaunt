@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define OLIPHAUNT_ABI_VERSION 8u
+#define OLIPHAUNT_ABI_VERSION 9u
 #define OLIPHAUNT_STATIC_EXTENSION_ABI_VERSION 1u
 /* The caller already owns liboliphaunt's stable sibling root lease. */
 #define OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK (1ull << 0)
@@ -91,6 +91,24 @@ typedef struct OliphauntRestoreOptions {
     size_t len;
 } OliphauntRestoreOptions;
 
+/*
+ * Same-handle ownership and streaming contract:
+ *
+ * Hosts serialize ordinary non-cancel operations on one logical handle.
+ * oliphaunt_cancel is the deliberate cross-thread exception and may interrupt
+ * the active PostgreSQL operation. A successful detach ends that logical
+ * lease; a successful close terminally invalidates the opaque handle, which
+ * must never be dereferenced again.
+ *
+ * A raw-stream callback borrows data only for that callback invocation. It may
+ * copy the bytes, inspect errors, or call oliphaunt_cancel. It must not call
+ * query, backup, detach, close, or another raw-stream operation on the same
+ * handle. Those calls fail with a busy error while streaming is active,
+ * including from another thread, so the callback cannot corrupt protocol
+ * ordering or free its own handle. A non-zero callback result stops later
+ * callback delivery, drains the backend to ReadyForQuery, and makes the stream
+ * operation fail.
+ */
 typedef int32_t (*OliphauntStreamCallback)(void *context, const uint8_t *data, size_t len);
 
 OLIPHAUNT_API int32_t oliphaunt_init(const OliphauntConfig *config, OliphauntHandle **out);
@@ -104,7 +122,7 @@ OLIPHAUNT_API int32_t oliphaunt_exec_simple_query(
     const char *sql,
     size_t sql_len,
     OliphauntResponse *out);
-OLIPHAUNT_API int32_t oliphaunt_exec_protocol_stream(
+OLIPHAUNT_API int32_t oliphaunt_exec_protocol_raw_stream(
     OliphauntHandle *handle,
     const uint8_t *request,
     size_t request_len,
@@ -153,6 +171,25 @@ OLIPHAUNT_API int32_t oliphaunt_close(OliphauntHandle *handle);
  * symbols PostgreSQL would otherwise resolve with dlsym().
  */
 OLIPHAUNT_API int32_t oliphaunt_register_static_extensions(const OliphauntStaticExtension *extensions, size_t count);
+/*
+ * Copies an error into caller-owned storage. Immediately after a fallible C
+ * operation returns failure, calls on that same thread read the operation's
+ * owned snapshot. It takes precedence over the shared handle/global error and
+ * remains stable across a size probe and repeated copies until the thread
+ * begins another fallible C operation, even if another thread updates the
+ * shared error. With no operation snapshot, this atomically reads the latest
+ * handle error, or the process-global error when handle is NULL.
+ *
+ * The return value is the full UTF-8 byte length excluding the trailing NUL.
+ * When capacity is non-zero, out must be non-NULL and is always
+ * NUL-terminated; content is truncated when capacity is smaller than length +
+ * 1.
+ */
+OLIPHAUNT_API size_t oliphaunt_copy_last_error(
+    OliphauntHandle *handle,
+    char *out,
+    size_t capacity);
+/* Compatibility accessor backed by a thread-local snapshot. */
 OLIPHAUNT_API const char *oliphaunt_last_error(OliphauntHandle *handle);
 OLIPHAUNT_API const char *oliphaunt_version(void);
 OLIPHAUNT_API void oliphaunt_free_response(OliphauntResponse *response);

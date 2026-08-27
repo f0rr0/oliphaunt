@@ -1,4 +1,6 @@
+use std::borrow::Cow;
 use std::io::{self, Read, Write};
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -23,10 +25,13 @@ use crate::oliphaunt::data_dir::{
 };
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::extensions::Extension;
+use crate::oliphaunt::lifecycle::{TerminalCloseResult, terminal_close};
 use crate::oliphaunt::postgres_mod::{ProtocolPumpOutcome, ProtocolStream};
 use crate::oliphaunt::query::{
-    CommandResult, QueryParam, QueryResult, extended_query, parse_command_response,
-    parse_query_response,
+    CommandResult, ExecResult, IntoParameter, Parameter, QueryParam, QueryResult, ReadyStatus,
+    StatementDescription, ValueFormat, describe_statement, extended_statement, parse_exec_response,
+    parse_extended_command_response, parse_extended_query_response, parse_simple_command_response,
+    parse_statement_description, reject_copy_statements, response_ready_status, simple_query,
 };
 use crate::oliphaunt::storage::PgDataStorage;
 #[cfg(all(feature = "extensions", test))]
@@ -53,8 +58,217 @@ pub struct Oliphaunt {
     backup_mode_exit_unconfirmed: bool,
     closing: bool,
     closed: bool,
+    close_result: Option<TerminalCloseResult>,
     protocol_stream: Arc<Mutex<CallbackProtocolState>>,
     protocol_stream_attached: bool,
+}
+
+#[derive(Clone, Copy)]
+enum StructuredOwner {
+    Database,
+    Transaction,
+}
+
+enum TransactionState {
+    Active,
+    RolledBack,
+    Finishing,
+    Committed,
+    Failed(Box<TransactionFailure>),
+}
+
+impl TransactionState {
+    fn is_active(&self) -> bool {
+        matches!(self, Self::Active)
+    }
+}
+
+#[derive(Clone)]
+struct TransactionFailure {
+    report: String,
+    postgres: Option<crate::PostgresError>,
+}
+
+impl TransactionFailure {
+    fn capture(error: &crate::Error) -> Self {
+        Self {
+            report: format!("{error:#}"),
+            postgres: error.postgres_error().cloned(),
+        }
+    }
+
+    fn to_error(&self) -> crate::Error {
+        match &self.postgres {
+            Some(postgres) if self.report == postgres.to_string() => {
+                crate::Error::from_anyhow(anyhow::Error::new(postgres.clone()))
+            }
+            Some(postgres) => crate::Error::from_anyhow(
+                anyhow::Error::new(postgres.clone()).context(self.report.clone()),
+            ),
+            None => crate::Error::message(self.report.clone()),
+        }
+    }
+}
+
+fn resolve_inactive_transaction_callback<T>(
+    state: &TransactionState,
+    callback_result: crate::Result<T>,
+) -> crate::Result<T> {
+    match state {
+        TransactionState::RolledBack => callback_result,
+        TransactionState::Failed(failure) => match callback_result {
+            Ok(_) => Err(failure.to_error()),
+            Err(error) => Err(crate::Error::transaction_rollback(
+                error,
+                failure.to_error(),
+            )),
+        },
+        TransactionState::Finishing => Err(crate::Error::message(
+            "transaction settlement did not reach a terminal state",
+        )),
+        TransactionState::Committed => Err(crate::Error::message(
+            "transaction was committed before callback settlement",
+        )),
+        TransactionState::Active => Err(crate::Error::message(
+            "internal transaction state error while settling callback",
+        )),
+    }
+}
+
+/// Fluent PostgreSQL statement bound to a WASIX database or callback transaction.
+#[must_use = "a SQL statement does nothing until execute(), query(), or describe() is called"]
+pub struct Sql<'db, 'q> {
+    client: &'db mut Oliphaunt,
+    owner: StructuredOwner,
+    transaction_open: bool,
+    sql: Cow<'q, str>,
+    params: Vec<Parameter>,
+    result_format: ValueFormat,
+}
+
+impl<'db, 'q> Sql<'db, 'q> {
+    fn database(client: &'db mut Oliphaunt, sql: impl Into<Cow<'q, str>>) -> Self {
+        Self {
+            client,
+            owner: StructuredOwner::Database,
+            transaction_open: true,
+            sql: sql.into(),
+            params: Vec::new(),
+            result_format: ValueFormat::Text,
+        }
+    }
+
+    fn transaction(
+        client: &'db mut Oliphaunt,
+        transaction_open: bool,
+        sql: impl Into<Cow<'q, str>>,
+    ) -> Self {
+        Self {
+            client,
+            owner: StructuredOwner::Transaction,
+            transaction_open,
+            sql: sql.into(),
+            params: Vec::new(),
+            result_format: ValueFormat::Text,
+        }
+    }
+
+    pub fn bind(mut self, value: impl IntoParameter) -> Self {
+        self.params.push(value.into_parameter());
+        self
+    }
+
+    pub fn bind_parameter(mut self, value: Parameter) -> Self {
+        self.params.push(value);
+        self
+    }
+
+    pub fn result_format(mut self, format: ValueFormat) -> Self {
+        self.result_format = format;
+        self
+    }
+
+    fn with_parameters(mut self, params: Vec<Parameter>, result_format: ValueFormat) -> Self {
+        self.params = params;
+        self.result_format = result_format;
+        self
+    }
+
+    pub fn execute(self) -> crate::Result<CommandResult> {
+        crate::error::public_result(self.execute_inner())
+    }
+
+    fn execute_inner(self) -> Result<CommandResult> {
+        self.ensure_transaction_open()?;
+        let request = extended_statement(&self.sql, &self.params, self.result_format)?;
+        let response = self
+            .client
+            .run_structured_request(&request, self.owner, "execute()")?;
+        let result = parse_extended_command_response(&response)?;
+        validate_structured_result(self.owner, result.ready_status(), "execute()")?;
+        Ok(result)
+    }
+
+    /// Execute this statement and return its row-shaped result.
+    ///
+    /// Command-only SQL is accepted as an empty row set with its command tag
+    /// and affected-row count retained.
+    pub fn query(self) -> crate::Result<QueryResult> {
+        crate::error::public_result(self.query_inner())
+    }
+
+    fn query_inner(self) -> Result<QueryResult> {
+        self.ensure_transaction_open()?;
+        let request = extended_statement(&self.sql, &self.params, self.result_format)?;
+        let response = self
+            .client
+            .run_structured_request(&request, self.owner, "query()")?;
+        let result = parse_extended_query_response(&response)?;
+        validate_structured_result(self.owner, result.ready_status(), "query()")?;
+        Ok(result)
+    }
+
+    pub fn describe(self) -> crate::Result<StatementDescription> {
+        crate::error::public_result(self.describe_inner())
+    }
+
+    fn describe_inner(self) -> Result<StatementDescription> {
+        self.ensure_transaction_open()?;
+        let request = describe_statement(&self.sql, &self.params)?;
+        let response = self
+            .client
+            .run_structured_request(&request, self.owner, "describe()")?;
+        let result = parse_statement_description(&response)?;
+        validate_structured_result(self.owner, result.ready_status(), "describe()")?;
+        Ok(result)
+    }
+
+    fn ensure_transaction_open(&self) -> Result<()> {
+        if matches!(self.owner, StructuredOwner::Transaction) {
+            ensure!(self.transaction_open, "transaction is no longer active");
+        }
+        Ok(())
+    }
+}
+
+fn validate_structured_result(
+    owner: StructuredOwner,
+    ready: ReadyStatus,
+    operation: &str,
+) -> Result<()> {
+    match (owner, ready) {
+        (StructuredOwner::Database, ReadyStatus::Idle)
+        | (
+            StructuredOwner::Transaction,
+            ReadyStatus::InTransaction | ReadyStatus::FailedTransaction,
+        ) => Ok(()),
+        (StructuredOwner::Database, _) => {
+            bail!("{operation} returned non-idle readiness after structured recovery")
+        }
+        (StructuredOwner::Transaction, ReadyStatus::Idle) => {
+            bail!("{operation} ended the callback transaction outside Transaction::rollback()")
+        }
+    }
 }
 
 type ProtocolCallback = Box<dyn FnMut(&[u8]) -> crate::Result<()> + Send>;
@@ -205,6 +419,7 @@ impl Oliphaunt {
             backup_mode_exit_unconfirmed: false,
             closing: false,
             closed: false,
+            close_result: None,
             protocol_stream: Arc::new(Mutex::new(CallbackProtocolState::default())),
             protocol_stream_attached: false,
         };
@@ -226,13 +441,25 @@ impl Oliphaunt {
         ))
     }
 
+    pub fn sql<'db, 'q>(&'db mut self, sql: impl Into<Cow<'q, str>>) -> Sql<'db, 'q> {
+        Sql::database(self, sql)
+    }
+
+    /// Whether this database is permanently retired after a close attempt.
+    ///
+    /// This becomes `true` when shutdown begins, even when cleanup reports an
+    /// error.
+    pub fn is_closed(&self) -> bool {
+        self.closed
+    }
+
     /// Execute a PostgreSQL command. Row-producing SQL must use [`Self::query`].
     pub fn execute(&mut self, sql: &str) -> crate::Result<CommandResult> {
         crate::error::public_result(self.execute_inner(sql))
     }
 
     fn execute_inner(&mut self, sql: &str) -> Result<CommandResult> {
-        self.execute_with_params_inner(sql, std::iter::empty::<QueryParam>())
+        self.sql(sql).execute_inner()
     }
 
     /// Execute a PostgreSQL command with positional parameters.
@@ -243,7 +470,7 @@ impl Oliphaunt {
     ) -> crate::Result<CommandResult>
     where
         I: IntoIterator<Item = P>,
-        P: Into<QueryParam>,
+        P: IntoParameter,
     {
         crate::error::public_result(self.execute_with_params_inner(sql, params))
     }
@@ -251,26 +478,33 @@ impl Oliphaunt {
     fn execute_with_params_inner<I, P>(&mut self, sql: &str, params: I) -> Result<CommandResult>
     where
         I: IntoIterator<Item = P>,
-        P: Into<QueryParam>,
+        P: IntoParameter,
     {
-        let response = self.run_query(sql, params)?;
-        parse_command_response(&response)
+        params
+            .into_iter()
+            .fold(self.sql(sql), |statement, value| statement.bind(value))
+            .execute_inner()
     }
 
-    /// Execute SQL and parse its single row-producing result set.
+    /// Execute one statement and return its row-shaped result.
+    ///
+    /// A command-only statement is accepted and returns empty fields and rows
+    /// while retaining its command tag and affected-row count.
     pub fn query(&mut self, sql: &str) -> crate::Result<QueryResult> {
         crate::error::public_result(self.query_inner(sql))
     }
 
     fn query_inner(&mut self, sql: &str) -> Result<QueryResult> {
-        self.query_with_params_inner(sql, std::iter::empty::<QueryParam>())
+        self.sql(sql).query_inner()
     }
 
-    /// Execute row-producing SQL with positional parameters.
+    /// Execute one parameterized statement and return its row-shaped result.
+    ///
+    /// Command-only SQL is accepted as an empty row set.
     pub fn query_with_params<I, P>(&mut self, sql: &str, params: I) -> crate::Result<QueryResult>
     where
         I: IntoIterator<Item = P>,
-        P: Into<QueryParam>,
+        P: IntoParameter,
     {
         crate::error::public_result(self.query_with_params_inner(sql, params))
     }
@@ -278,21 +512,180 @@ impl Oliphaunt {
     fn query_with_params_inner<I, P>(&mut self, sql: &str, params: I) -> Result<QueryResult>
     where
         I: IntoIterator<Item = P>,
-        P: Into<QueryParam>,
+        P: IntoParameter,
     {
-        let response = self.run_query(sql, params)?;
-        parse_query_response(&response)
+        params
+            .into_iter()
+            .fold(self.sql(sql), |statement, value| statement.bind(value))
+            .query_inner()
     }
 
     fn run_query<I, P>(&mut self, sql: &str, params: I) -> Result<Vec<u8>>
     where
         I: IntoIterator<Item = P>,
-        P: Into<QueryParam>,
+        P: IntoParameter,
     {
+        let params = params
+            .into_iter()
+            .map(IntoParameter::into_parameter)
+            .collect::<Vec<_>>();
+        let request = extended_statement(sql, &params, ValueFormat::Text)?;
+        self.run_structured_request(&request, StructuredOwner::Database, "query()")
+    }
+
+    pub(crate) fn owner_execute(
+        &mut self,
+        sql: &str,
+        params: Vec<Parameter>,
+        result_format: ValueFormat,
+    ) -> crate::Result<CommandResult> {
+        Sql::database(self, sql)
+            .with_parameters(params, result_format)
+            .execute()
+    }
+
+    pub(crate) fn owner_query(
+        &mut self,
+        sql: &str,
+        params: Vec<Parameter>,
+        result_format: ValueFormat,
+    ) -> crate::Result<QueryResult> {
+        Sql::database(self, sql)
+            .with_parameters(params, result_format)
+            .query()
+    }
+
+    pub(crate) fn owner_describe(
+        &mut self,
+        sql: &str,
+        params: Vec<Parameter>,
+    ) -> crate::Result<StatementDescription> {
+        Sql::database(self, sql)
+            .with_parameters(params, ValueFormat::Text)
+            .describe()
+    }
+
+    pub(crate) fn owner_transaction_execute(
+        &mut self,
+        sql: &str,
+        params: Vec<Parameter>,
+        result_format: ValueFormat,
+    ) -> crate::Result<CommandResult> {
+        Sql::transaction(self, true, sql)
+            .with_parameters(params, result_format)
+            .execute()
+    }
+
+    pub(crate) fn owner_transaction_query(
+        &mut self,
+        sql: &str,
+        params: Vec<Parameter>,
+        result_format: ValueFormat,
+    ) -> crate::Result<QueryResult> {
+        Sql::transaction(self, true, sql)
+            .with_parameters(params, result_format)
+            .query()
+    }
+
+    pub(crate) fn owner_transaction_describe(
+        &mut self,
+        sql: &str,
+        params: Vec<Parameter>,
+    ) -> crate::Result<StatementDescription> {
+        Sql::transaction(self, true, sql)
+            .with_parameters(params, ValueFormat::Text)
+            .describe()
+    }
+
+    pub(crate) fn owner_transaction_exec(&mut self, sql: &str) -> crate::Result<ExecResult> {
+        crate::error::public_result(self.exec_inner(sql, StructuredOwner::Transaction))
+    }
+
+    /// Execute possibly multi-statement SQL through PostgreSQL's simple-query protocol.
+    pub fn exec(&mut self, sql: &str) -> crate::Result<ExecResult> {
+        crate::error::public_result(self.exec_inner(sql, StructuredOwner::Database))
+    }
+
+    fn exec_inner(&mut self, sql: &str, owner: StructuredOwner) -> Result<ExecResult> {
+        reject_copy_statements(sql)?;
+        let request = simple_query(sql)?;
+        let response = self.run_structured_request(&request, owner, "exec()")?;
+        let result = parse_exec_response(&response)?;
+        validate_structured_result(owner, result.ready_status(), "exec()")?;
+        Ok(result)
+    }
+
+    /// Parse and describe a statement without executing it.
+    pub fn describe(&mut self, sql: &str) -> crate::Result<StatementDescription> {
+        self.sql(sql).describe()
+    }
+
+    fn run_structured_request(
+        &mut self,
+        request: &[u8],
+        owner: StructuredOwner,
+        operation: &str,
+    ) -> Result<Vec<u8>> {
         self.check_ready()?;
-        let params = params.into_iter().map(Into::into).collect::<Vec<_>>();
-        let request = extended_query(sql, &params)?;
-        self.backend.send_buffered(&request)
+        match owner {
+            StructuredOwner::Database => ensure!(
+                !self.in_transaction,
+                "a callback transaction is active; use its transaction handle"
+            ),
+            StructuredOwner::Transaction => {
+                ensure!(self.in_transaction, "transaction is no longer active")
+            }
+        }
+        let response = match self.backend.send_buffered(request) {
+            Ok(response) => response,
+            Err(error) => {
+                self.transaction_outcome_unknown = true;
+                return Err(error);
+            }
+        };
+        let ready = match response_ready_status(&response) {
+            Ok(ready) => ready,
+            Err(error) => {
+                self.transaction_outcome_unknown = true;
+                return Err(error.context(format!(
+                    "{operation} returned an invalid readiness boundary; the session is now unusable"
+                )));
+            }
+        };
+        match (owner, ready) {
+            (StructuredOwner::Database, ReadyStatus::Idle)
+            | (
+                StructuredOwner::Transaction,
+                ReadyStatus::InTransaction | ReadyStatus::FailedTransaction,
+            ) => Ok(response),
+            (StructuredOwner::Database, _) => {
+                let recovery = simple_query("ROLLBACK")
+                    .and_then(|rollback| self.backend.send_buffered(&rollback))
+                    .and_then(|response| parse_simple_command_response(&response));
+                let recovered = recovery.as_ref().is_ok_and(|result| {
+                    result.command_tag() == Some("ROLLBACK")
+                        && result.ready_status() == ReadyStatus::Idle
+                });
+                if recovered {
+                    Ok(response)
+                } else {
+                    self.transaction_outcome_unknown = true;
+                    bail!(
+                        "{operation} left the embedded session in a transaction and rollback recovery failed: {}",
+                        recovery
+                            .err()
+                            .map(|error| error.to_string())
+                            .unwrap_or_else(|| "unexpected ROLLBACK response".to_owned())
+                    )
+                }
+            }
+            (StructuredOwner::Transaction, ReadyStatus::Idle) => {
+                self.transaction_outcome_unknown = true;
+                bail!(
+                    "{operation} ended the callback transaction outside Transaction::rollback(); close and reopen the database"
+                )
+            }
+        }
     }
 
     /// Execute raw PostgreSQL frontend-protocol bytes.
@@ -306,7 +699,7 @@ impl Oliphaunt {
     }
 
     /// Execute raw PostgreSQL protocol bytes and deliver response chunks as they arrive.
-    pub fn exec_protocol_stream<F>(
+    pub fn exec_protocol_raw_stream<F>(
         &mut self,
         request: impl AsRef<[u8]>,
         on_chunk: F,
@@ -538,11 +931,6 @@ impl Oliphaunt {
         .context("access direct WASIX tool protocol socket")
     }
 
-    /// Force a PostgreSQL checkpoint.
-    pub fn checkpoint(&mut self) -> crate::Result<()> {
-        crate::error::public_result(self.execute_inner("CHECKPOINT").map(|_| ()))
-    }
-
     /// Create a session-preserving PostgreSQL online physical backup.
     pub fn backup(&mut self) -> crate::Result<Vec<u8>> {
         crate::error::public_result(self.backup_inner())
@@ -619,11 +1007,42 @@ impl Oliphaunt {
     where
         F: FnOnce(&mut Transaction<'_>) -> crate::Result<T>,
     {
+        self.owner_begin_transaction()?;
+        let mut transaction = Transaction {
+            client: self,
+            state: TransactionState::Active,
+        };
+        let callback_result = catch_unwind(AssertUnwindSafe(|| callback(&mut transaction)));
+        let result = match callback_result {
+            Ok(callback_result) if transaction.state.is_active() => match callback_result {
+                Ok(value) => transaction.commit_internal().map(|()| value),
+                Err(error) => match transaction.rollback_internal() {
+                    Ok(()) => Err(error),
+                    Err(rollback_error) => {
+                        Err(crate::Error::transaction_rollback(error, rollback_error))
+                    }
+                },
+            },
+            Ok(callback_result) => {
+                resolve_inactive_transaction_callback(&transaction.state, callback_result)
+            }
+            Err(panic) => {
+                transaction.recover_after_callback_panic();
+                transaction.client.in_transaction = false;
+                drop(transaction);
+                resume_unwind(panic);
+            }
+        };
+        self.in_transaction = false;
+        result
+    }
+
+    pub(crate) fn owner_begin_transaction(&mut self) -> crate::Result<()> {
         crate::error::public_result(self.check_ready())?;
         if self.in_transaction {
             return Err(crate::Error::message("a transaction is already active"));
         }
-        let begin = match self.execute("BEGIN") {
+        let begin = match crate::error::public_result(self.transaction_command_inner("BEGIN")) {
             Ok(begin) => begin,
             Err(error) => {
                 if error.postgres_error().is_none() {
@@ -633,45 +1052,102 @@ impl Oliphaunt {
             }
         };
         match begin.command_tag() {
-            Some("BEGIN") => {}
-            Some("ROLLBACK") => {
-                return Err(crate::Error::message(
-                    "PostgreSQL rolled back instead of beginning the transaction",
-                ));
+            Some("BEGIN") if begin.ready_status() == ReadyStatus::InTransaction => {
+                self.in_transaction = true;
+                Ok(())
             }
+            Some("ROLLBACK") => Err(crate::Error::message(
+                "PostgreSQL rolled back instead of beginning the transaction",
+            )),
             command_tag => {
-                self.transaction_outcome_unknown = true;
-                return Err(crate::Error::message(format!(
-                    "transaction begin returned PostgreSQL command tag {command_tag:?}"
-                )));
+                self.transaction_outcome_unknown = begin.ready_status() != ReadyStatus::Idle;
+                Err(crate::Error::message(format!(
+                    "transaction begin returned PostgreSQL command tag {command_tag:?} with readiness {:?}",
+                    begin.ready_status()
+                )))
             }
         }
-        self.in_transaction = true;
-        let mut transaction = Transaction {
-            client: self,
-            closed: false,
-        };
-        let result = callback(&mut transaction)
-            .and_then(|value| transaction.commit_internal().map(|()| value));
-        let result = match result {
-            Ok(value) => Ok(value),
-            Err(error) if transaction.closed => Err(error),
-            Err(error) => match transaction.rollback_internal() {
-                Ok(()) => Err(error),
-                Err(rollback_error) => Err(error.context(format!(
-                    "transaction rollback also failed: {rollback_error:#}"
-                ))),
-            },
-        };
+    }
+
+    pub(crate) fn owner_commit_transaction(&mut self) -> crate::Result<()> {
+        self.owner_finish_transaction("COMMIT")
+    }
+
+    pub(crate) fn owner_rollback_transaction(&mut self) -> crate::Result<()> {
+        self.owner_finish_transaction("ROLLBACK")
+    }
+
+    fn owner_finish_transaction(&mut self, command: &str) -> crate::Result<()> {
+        if !self.in_transaction {
+            return Err(crate::Error::message("transaction is no longer active"));
+        }
+        let result = crate::error::public_result(self.transaction_command_inner(command));
         self.in_transaction = false;
+        let result = result?;
+        let expected = command;
+        let known_rollback = command == "COMMIT" && result.command_tag() == Some("ROLLBACK");
+        if (result.command_tag() == Some(expected) || known_rollback)
+            && result.ready_status() == ReadyStatus::Idle
+        {
+            if known_rollback {
+                return Err(crate::Error::message(
+                    "PostgreSQL rolled back the transaction instead of committing",
+                ));
+            }
+            return Ok(());
+        }
+        self.transaction_outcome_unknown = result.ready_status() != ReadyStatus::Idle;
+        Err(crate::Error::message(format!(
+            "transaction {command} returned PostgreSQL command tag {:?} with readiness {:?}",
+            result.command_tag(),
+            result.ready_status()
+        )))
+    }
+
+    fn transaction_command_inner(&mut self, sql: &str) -> Result<CommandResult> {
+        self.check_ready()?;
+        let request = simple_query(sql)?;
+        let response = match self.backend.send_buffered(&request) {
+            Ok(response) => response,
+            Err(error) => {
+                self.transaction_outcome_unknown = true;
+                return Err(error);
+            }
+        };
+        let ready = match response_ready_status(&response) {
+            Ok(ready) => ready,
+            Err(error) => {
+                self.transaction_outcome_unknown = true;
+                return Err(error.context(format!("{sql} returned an invalid readiness boundary")));
+            }
+        };
+        let result = parse_simple_command_response(&response);
+        if result.is_err()
+            && match sql {
+                "BEGIN" => ready != ReadyStatus::Idle,
+                "COMMIT" | "ROLLBACK" => ready != ReadyStatus::Idle,
+                _ => true,
+            }
+        {
+            self.transaction_outcome_unknown = true;
+        }
         result
     }
 
+    /// Close the database on the calling thread.
+    ///
+    /// Validation before shutdown, such as an active callback transaction,
+    /// leaves the database open and may be retried. Once shutdown begins, the
+    /// database is permanently retired; repeated calls replay the same success
+    /// or failure.
     pub fn close(&mut self) -> crate::Result<()> {
         crate::error::public_result(self.close_inner())
     }
 
     fn close_inner(&mut self) -> Result<()> {
+        if let Some(result) = &self.close_result {
+            return result.clone().map_err(anyhow::Error::msg);
+        }
         if self.closed {
             return Ok(());
         }
@@ -681,14 +1157,14 @@ impl Oliphaunt {
             "cannot close while a transaction is active"
         );
         self.closing = true;
-        let result = self.backend.shutdown();
+        let result = terminal_close(&mut self.close_result, || self.backend.shutdown());
         self.closing = false;
+        self.closed = true;
         if result.is_ok() {
-            self.closed = true;
             self._directory_lock = None;
             self._workspace = None;
         }
-        result
+        result.map_err(anyhow::Error::msg)
     }
 
     pub(crate) fn attach_workspace(&mut self, workspace: TempDir) {
@@ -764,10 +1240,16 @@ fn resolve_start_backup_attempt(
 }
 
 fn parse_start_backup_response(response: &[u8]) -> StartBackupAttempt {
-    let result = match parse_query_response(response) {
+    let command_completed = response_confirms_command_completion(response);
+    let result = match parse_extended_query_response(response) {
         Ok(result) => result,
         Err(error) if error.downcast_ref::<crate::PostgresError>().is_some() => {
             return StartBackupAttempt::NotEntered(error);
+        }
+        Err(error) if !command_completed => {
+            return StartBackupAttempt::Entered(Err(
+                error.context("pg_backup_start did not return a successful PostgreSQL command tag")
+            ));
         }
         Err(error) => return StartBackupAttempt::Entered(Err(error)),
     };
@@ -797,12 +1279,16 @@ fn parse_start_backup_result(result: &QueryResult) -> Result<(String, u64)> {
 
 fn parse_stop_backup_response(response: &[u8]) -> StopBackupAttempt {
     let exit_confirmed = response_confirms_command_completion(response);
-    let result = match parse_query_response(response) {
+    let result = match parse_extended_query_response(response) {
         Ok(result) => result,
         Err(error) if exit_confirmed && error.downcast_ref::<crate::PostgresError>().is_none() => {
             return StopBackupAttempt::Exited(Err(error));
         }
-        Err(error) => return StopBackupAttempt::ExitUnconfirmed(error),
+        Err(error) => {
+            return StopBackupAttempt::ExitUnconfirmed(error.context(
+                "pg_backup_stop did not return a successful PostgreSQL command completion",
+            ));
+        }
     };
     if !exit_confirmed {
         return StopBackupAttempt::ExitUnconfirmed(anyhow::anyhow!(
@@ -969,13 +1455,37 @@ impl Drop for Oliphaunt {
 /// Callback-scoped transaction on the direct PostgreSQL session.
 pub struct Transaction<'a> {
     client: &'a mut Oliphaunt,
-    closed: bool,
+    state: TransactionState,
 }
 
 impl Transaction<'_> {
+    fn recover_after_callback_panic(&mut self) {
+        if self.state.is_active() {
+            // Preserve the callback's panic even if rollback itself panics.
+            // Any rollback error or unwind leaves the database poisoned
+            // because PostgreSQL's transaction state is then not known idle.
+            let rollback = catch_unwind(AssertUnwindSafe(|| self.rollback_internal()));
+            if !matches!(rollback, Ok(Ok(()))) {
+                self.client.transaction_outcome_unknown = true;
+            }
+            return;
+        }
+        if !matches!(&self.state, TransactionState::RolledBack) {
+            self.client.transaction_outcome_unknown = true;
+        }
+    }
+
+    pub fn sql<'db, 'q>(&'db mut self, sql: impl Into<Cow<'q, str>>) -> Sql<'db, 'q> {
+        Sql::transaction(&mut *self.client, self.state.is_active(), sql)
+    }
+
+    pub fn is_closed(&self) -> bool {
+        !self.state.is_active()
+    }
+
     pub fn execute(&mut self, sql: &str) -> crate::Result<CommandResult> {
         crate::error::public_result(self.ensure_open())?;
-        self.client.execute(sql)
+        self.sql(sql).execute()
     }
 
     pub fn execute_with_params<I, P>(
@@ -985,24 +1495,46 @@ impl Transaction<'_> {
     ) -> crate::Result<CommandResult>
     where
         I: IntoIterator<Item = P>,
-        P: Into<QueryParam>,
+        P: IntoParameter,
     {
         crate::error::public_result(self.ensure_open())?;
-        self.client.execute_with_params(sql, params)
+        params
+            .into_iter()
+            .fold(self.sql(sql), |statement, value| statement.bind(value))
+            .execute()
     }
 
+    /// Execute one statement inside this transaction and return its row-shaped result.
+    ///
+    /// Command-only SQL is accepted as an empty row set.
     pub fn query(&mut self, sql: &str) -> crate::Result<QueryResult> {
         crate::error::public_result(self.ensure_open())?;
-        self.client.query(sql)
+        self.sql(sql).query()
     }
 
+    /// Execute one parameterized statement inside this transaction.
+    ///
+    /// Command-only SQL is accepted as an empty row set.
     pub fn query_with_params<I, P>(&mut self, sql: &str, params: I) -> crate::Result<QueryResult>
     where
         I: IntoIterator<Item = P>,
-        P: Into<QueryParam>,
+        P: IntoParameter,
     {
         crate::error::public_result(self.ensure_open())?;
-        self.client.query_with_params(sql, params)
+        params
+            .into_iter()
+            .fold(self.sql(sql), |statement, value| statement.bind(value))
+            .query()
+    }
+
+    pub fn exec(&mut self, sql: &str) -> crate::Result<ExecResult> {
+        crate::error::public_result(self.ensure_open())?;
+        crate::error::public_result(self.client.exec_inner(sql, StructuredOwner::Transaction))
+    }
+
+    pub fn describe(&mut self, sql: &str) -> crate::Result<StatementDescription> {
+        crate::error::public_result(self.ensure_open())?;
+        self.sql(sql).describe()
     }
 
     pub fn exec_protocol_raw(&mut self, request: impl AsRef<[u8]>) -> crate::Result<Vec<u8>> {
@@ -1010,7 +1542,7 @@ impl Transaction<'_> {
         self.client.exec_protocol_raw(request)
     }
 
-    pub fn exec_protocol_stream<F>(
+    pub fn exec_protocol_raw_stream<F>(
         &mut self,
         request: impl AsRef<[u8]>,
         on_chunk: F,
@@ -1019,60 +1551,163 @@ impl Transaction<'_> {
         F: FnMut(&[u8]) -> crate::Result<()> + Send + 'static,
     {
         crate::error::public_result(self.ensure_open())?;
-        self.client.exec_protocol_stream(request, on_chunk)
+        self.client.exec_protocol_raw_stream(request, on_chunk)
     }
 
     fn commit_internal(&mut self) -> crate::Result<()> {
         crate::error::public_result(self.ensure_open())?;
         // Once COMMIT is sent, retrying with ROLLBACK can neither undo a
         // completed commit nor clarify a lost response. Seal the handle first.
-        self.closed = true;
-        let result = match self.client.execute("COMMIT") {
-            Ok(result) => result,
-            Err(error) => {
-                if error.postgres_error().is_none() {
-                    self.client.transaction_outcome_unknown = true;
+        self.state = TransactionState::Finishing;
+        let result =
+            match crate::error::public_result(self.client.transaction_command_inner("COMMIT")) {
+                Ok(result) => result,
+                Err(error) => {
+                    if error.postgres_error().is_none() {
+                        self.client.transaction_outcome_unknown = true;
+                    }
+                    self.state =
+                        TransactionState::Failed(Box::new(TransactionFailure::capture(&error)));
+                    return Err(error);
                 }
-                return Err(error);
+            };
+        match (result.command_tag(), result.ready_status()) {
+            (Some("COMMIT"), ReadyStatus::Idle) => {
+                self.state = TransactionState::Committed;
+                Ok(())
             }
-        };
-        match result.command_tag() {
-            Some("COMMIT") => Ok(()),
-            Some("ROLLBACK") => Err(crate::Error::message(
-                "PostgreSQL rolled back the transaction instead of committing",
-            )),
-            command_tag => {
+            (Some("ROLLBACK"), ReadyStatus::Idle) => {
+                let error = crate::Error::message(
+                    "PostgreSQL rolled back the transaction instead of committing",
+                );
+                self.state =
+                    TransactionState::Failed(Box::new(TransactionFailure::capture(&error)));
+                Err(error)
+            }
+            (command_tag, ready_status) => {
                 self.client.transaction_outcome_unknown = true;
-                Err(crate::Error::message(format!(
-                    "transaction commit returned PostgreSQL command tag {command_tag:?}"
-                )))
+                let error = crate::Error::message(format!(
+                    "transaction commit returned PostgreSQL command tag {command_tag:?} with readiness {ready_status:?}"
+                ));
+                self.state =
+                    TransactionState::Failed(Box::new(TransactionFailure::capture(&error)));
+                Err(error)
             }
         }
+    }
+
+    /// Roll back immediately, expire this handle, and make the outer callback skip COMMIT.
+    pub fn rollback(&mut self) -> crate::Result<()> {
+        self.rollback_internal()
     }
 
     fn rollback_internal(&mut self) -> crate::Result<()> {
         crate::error::public_result(self.ensure_open())?;
-        let result = match self.client.execute("ROLLBACK") {
-            Ok(result) => result,
-            Err(error) => {
-                self.client.transaction_outcome_unknown = true;
-                return Err(error);
-            }
-        };
-        if result.command_tag() != Some("ROLLBACK") {
+        self.state = TransactionState::Finishing;
+        let result =
+            match crate::error::public_result(self.client.transaction_command_inner("ROLLBACK")) {
+                Ok(result) => result,
+                Err(error) => {
+                    self.client.transaction_outcome_unknown = true;
+                    self.state =
+                        TransactionState::Failed(Box::new(TransactionFailure::capture(&error)));
+                    return Err(error);
+                }
+            };
+        if result.command_tag() != Some("ROLLBACK") || result.ready_status() != ReadyStatus::Idle {
             self.client.transaction_outcome_unknown = true;
-            return Err(crate::Error::message(format!(
-                "transaction rollback returned PostgreSQL command tag {:?}",
-                result.command_tag()
-            )));
+            let error = crate::Error::message(format!(
+                "transaction rollback returned PostgreSQL command tag {:?} with readiness {:?}",
+                result.command_tag(),
+                result.ready_status()
+            ));
+            self.state = TransactionState::Failed(Box::new(TransactionFailure::capture(&error)));
+            return Err(error);
         }
-        self.closed = true;
+        self.state = TransactionState::RolledBack;
         Ok(())
     }
 
     fn ensure_open(&self) -> Result<()> {
-        ensure!(!self.closed, "transaction is no longer active");
+        ensure!(self.state.is_active(), "transaction is no longer active");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod transaction_state_tests {
+    use super::*;
+
+    fn postgres_error(sqlstate: &str, message: &str) -> crate::Error {
+        crate::Error::from_anyhow(anyhow::Error::new(crate::PostgresError {
+            severity: Some("ERROR".to_owned()),
+            localized_severity: None,
+            nonlocalized_severity: Some("ERROR".to_owned()),
+            sqlstate: Some(sqlstate.to_owned()),
+            message: message.to_owned(),
+            detail: None,
+            hint: None,
+            position: None,
+            internal_position: None,
+            internal_query: None,
+            where_: None,
+            schema_name: None,
+            table_name: None,
+            column_name: None,
+            data_type_name: None,
+            constraint_name: None,
+            file: None,
+            line: None,
+            routine: None,
+            fields: Vec::new(),
+            notices: Vec::new(),
+        }))
+    }
+
+    #[test]
+    fn caught_rollback_failure_cannot_turn_into_callback_success() {
+        let rollback_error = crate::Error::message("rollback transport failed");
+        let state =
+            TransactionState::Failed(Box::new(TransactionFailure::capture(&rollback_error)));
+
+        let error = resolve_inactive_transaction_callback(&state, Ok(42_u8))
+            .expect_err("a retained rollback failure must override callback success");
+
+        assert!(error.to_string().contains("rollback transport failed"));
+    }
+
+    #[test]
+    fn callback_failure_reports_a_retained_rollback_failure() {
+        let rollback_error = postgres_error("40001", "rollback failed");
+        let state =
+            TransactionState::Failed(Box::new(TransactionFailure::capture(&rollback_error)));
+
+        let error = resolve_inactive_transaction_callback::<()>(
+            &state,
+            Err(postgres_error("23505", "callback failed")),
+        )
+        .expect_err("both callback and rollback failures must be reported");
+        assert_eq!(
+            error.to_string(),
+            "transaction callback failed: ERROR [23505]: callback failed; rollback also failed: ERROR [40001]: rollback failed"
+        );
+        let composite = error
+            .transaction_rollback_error()
+            .expect("both failures must remain structured");
+        assert_eq!(
+            composite
+                .callback
+                .postgres_error()
+                .and_then(|error| error.sqlstate.as_deref()),
+            Some("23505")
+        );
+        assert_eq!(
+            composite
+                .rollback
+                .postgres_error()
+                .and_then(|error| error.sqlstate.as_deref()),
+            Some("40001")
+        );
     }
 }
 
@@ -1292,7 +1927,7 @@ mod backup_state_tests {
 
     #[test]
     fn combined_cleanup_failure_preserves_primary_postgres_identity() {
-        let primary = parse_query_response(&query_error("55000", "first stop failed"))
+        let primary = parse_extended_query_response(&query_error("55000", "first stop failed"))
             .expect_err("PostgreSQL error response");
         let (error, _) = resolve_backup_cleanup(
             primary,
@@ -1336,7 +1971,9 @@ mod backup_state_tests {
             }
         }
 
-        let mut response = backend_message(b'T', &description);
+        let mut response = backend_message(b'1', b"");
+        response.extend(backend_message(b'2', b""));
+        response.extend(backend_message(b'T', &description));
         response.extend(backend_message(b'D', &row));
         let mut command = command_tag.as_bytes().to_vec();
         command.push(0);

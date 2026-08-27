@@ -1,6 +1,6 @@
 import { parentPort } from 'node:worker_threads';
 import * as host from './node-host.js';
-import { installNodeEnvironment } from './node-direct.js';
+import { installNodeEnvironment } from './node-environment.js';
 import {
   createWasixToolWorkerDispatcher,
   toolWorkerResponseTransfers,

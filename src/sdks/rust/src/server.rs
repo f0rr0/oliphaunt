@@ -149,7 +149,7 @@ impl EngineSession for NativeServerSession {
             .exec_protocol_raw(request)
     }
 
-    fn exec_protocol_stream(
+    fn exec_protocol_raw_stream(
         &mut self,
         request: ProtocolRequest,
         on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
@@ -157,7 +157,7 @@ impl EngineSession for NativeServerSession {
         self.connection
             .as_mut()
             .ok_or(Error::EngineStopped)?
-            .exec_protocol_stream(request, on_chunk)
+            .exec_protocol_raw_stream(request, on_chunk)
     }
 
     fn close(&mut self) -> Result<()> {

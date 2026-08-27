@@ -6,7 +6,7 @@ import {
 import { extractTar } from './archive.js';
 import { WasixStorageError } from './errors.js';
 import { simpleQuery } from './protocol.js';
-import { PostgresError, parseQueryResponse, type QueryResult } from './query.js';
+import { PostgresError, parseQueryResponse, type RawQueryResult } from './query.js';
 import type { StorageDirectory } from './storage-provider.js';
 import {
   type StoredSnapshot,
@@ -64,13 +64,18 @@ export async function createPhysicalArchive(
       state = 'exit-unconfirmed';
       throw error;
     }
-    let start: QueryResult;
+    let start: RawQueryResult;
     try {
       start = parseQueryResponse(startResponse);
       state = 'exit-required';
     } catch (error) {
       if (error instanceof PostgresError) throw error;
       state = 'exit-required';
+      if (!responseConfirmsCommandCompletion(startResponse)) {
+        throw new Error('pg_backup_start did not return a successful PostgreSQL command tag', {
+          cause: error,
+        });
+      }
       throw error;
     }
     if (start.commandTag !== 'SELECT 1') {
@@ -138,12 +143,21 @@ async function stopPhysicalBackup(exec: ExecProtocol): Promise<StopBackupAttempt
   }
 
   const exitConfirmed = responseConfirmsCommandCompletion(response);
-  let result: QueryResult;
+  let result: RawQueryResult;
   try {
     result = parseQueryResponse(response);
   } catch (error) {
     if (exitConfirmed && !(error instanceof PostgresError)) {
       return { state: 'exited', validationError: error };
+    }
+    if (!exitConfirmed && !(error instanceof PostgresError)) {
+      return {
+        state: 'exit-unconfirmed',
+        error: new Error(
+          'pg_backup_stop did not return a successful PostgreSQL command completion',
+          { cause: error },
+        ),
+      };
     }
     return { state: 'exit-unconfirmed', error };
   }

@@ -1,14 +1,28 @@
 import { composeWasixStorageFailure, WasixStorageError } from './errors.js';
-import { simpleQuery } from './protocol.js';
 import {
-  assertSuccessfulQueryResponse,
+  decodeQueryResult,
+  describeQuery,
+  errorWithNotices,
   extendedQuery,
+  inspectReadyForQuery,
   parseCommandResponse,
-  parseQueryResponse,
+  parseDescribeResponse,
+  parseExecResponse,
+  parseQueryRawResponse,
+  planQuery,
+  structuredSimpleQuery,
   type CommandResult,
-  PostgresError,
+  type DescribeResult,
+  type ExecResult,
+  type ParameterOptions,
+  type PostgresNotice,
   type QueryParam,
+  type QueryObjectRow,
+  type QueryOptions,
+  type QueryPlan,
   type QueryResult,
+  type RawQueryResult,
+  type TransactionStatus,
   toUint8Array,
 } from './query.js';
 import type { WasixStorageSyncBoundary } from './storage-provider.js';
@@ -33,6 +47,21 @@ export const WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES = 64 * 1024;
 const pgDumpTargets = new WeakSet<OliphauntDatabase>();
 const protocolConnectionTargets = new WeakSet<OliphauntDatabase>();
 const transactionPinnedTargets = new WeakSet<OliphauntDatabase>();
+
+/** @internal Publish a promise before starting reentrant ownership teardown. */
+export function createWasixDeferred<T>(): Readonly<{
+  promise: Promise<T>;
+  resolve(value: T | PromiseLike<T>): void;
+  reject(error: unknown): void;
+}> {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((accept, decline) => {
+    resolve = accept;
+    reject = decline;
+  });
+  return { promise, resolve, reject };
+}
 
 export type WasixDatabaseIdentity = Readonly<{
   username: string;
@@ -65,11 +94,15 @@ type PendingProtocolConnectionReservation = Readonly<{
   cancel(error: Error): void;
 }>;
 
-/** @internal Execution seam shared by direct and worker-backed database handles. */
+/** @internal Execution seam shared by caller- and package-owned database handles. */
 export type WasixDatabaseSession = {
-  readonly isolated?: boolean;
+  /** The session can safely block away from its public caller while serving a connection. */
+  readonly supportsProtocolConnections?: boolean;
   readonly identity?: WasixDatabaseIdentity;
-  exec(input: Uint8Array, persistence?: WasixPersistenceMode): Promise<Uint8Array>;
+  exec(
+    input: Uint8Array,
+    persistence?: WasixPersistenceMode,
+  ): Promise<Uint8Array>;
   execStream?(
     input: Uint8Array,
     onChunk: ProtocolChunkCallback,
@@ -78,52 +111,231 @@ export type WasixDatabaseSession = {
   sync(boundary: WasixStorageSyncBoundary): Promise<void>;
   /** Internal test seams may omit backup; production sessions always provide it. */
   backup?(): Promise<Uint8Array>;
-  runPgDump?(options: WasixPgDumpProcessOptions): Promise<WasixToolProcessResult>;
-  serve?(connection: WasixProtocolConnection, mode: WasixProtocolConnectionMode): Promise<void>;
+  runPgDump?(
+    options: WasixPgDumpProcessOptions,
+  ): Promise<WasixToolProcessResult>;
+  serve?(
+    connection: WasixProtocolConnection,
+    mode: WasixProtocolConnectionMode,
+  ): Promise<void>;
+  /**
+   * Begin the session's one terminal teardown attempt.
+   *
+   * Implementations must stop admitting work immediately, return the same
+   * promise to every later caller, and remain terminal even when teardown
+   * rejects after owned transport or host resources have been destroyed.
+   */
   close(): Promise<void>;
-  /** Force-stop an isolated execution placement when orderly shutdown stalls. */
+  /** Force-stop an SDK-owned execution lane when orderly shutdown stalls. */
   abort?(): void | Promise<void>;
 };
+
+type ForgottenDatabaseGeneration = Readonly<Record<never, never>>;
+
+type FinalizationRegistryLike = Readonly<{
+  register(
+    target: object,
+    heldValue: ForgottenDatabaseGeneration,
+    unregisterToken: object,
+  ): void;
+  unregister(unregisterToken: object): boolean;
+}>;
+
+type FinalizationRegistryFactory = (
+  cleanup: (generation: ForgottenDatabaseGeneration) => void,
+) => FinalizationRegistryLike;
+
+export type WasixForgottenDatabaseRegistration = Readonly<{
+  generation: ForgottenDatabaseGeneration;
+}>;
+
+/**
+ * Tracks only session owners, never their public database handles.
+ *
+ * The finalizer's held value is an opaque generation token. The session lives
+ * in a separately keyed table, so an already queued finalizer can atomically
+ * prove that it still owns the exact registration before scheduling cleanup.
+ *
+ * @internal
+ */
+export class WasixForgottenDatabaseRegistry {
+  readonly #active = new Map<ForgottenDatabaseGeneration, WasixDatabaseSession>();
+  readonly #finalizer: FinalizationRegistryLike;
+  readonly #schedule: (work: () => void) => void;
+
+  constructor(
+    createRegistry: FinalizationRegistryFactory = (cleanup) =>
+      new FinalizationRegistry(cleanup),
+    schedule: (work: () => void) => void = queueMicrotask,
+  ) {
+    this.#schedule = schedule;
+    this.#finalizer = createRegistry((generation) => this.#finalize(generation));
+  }
+
+  register(
+    owner: object,
+    session: WasixDatabaseSession,
+  ): WasixForgottenDatabaseRegistration {
+    // Object identity is the generation. It cannot wrap, be forged by a stale
+    // callback, or retain the public owner through the held value.
+    const generation: ForgottenDatabaseGeneration = Object.freeze({});
+    this.#finalizer.register(owner, generation, generation);
+    this.#active.set(generation, session);
+    return Object.freeze({ generation });
+  }
+
+  unregister(registration: WasixForgottenDatabaseRegistration): void {
+    // Remove the cleanup authority first. A finalizer callback that was already
+    // queued then observes a stale generation and is a harmless no-op.
+    this.#active.delete(registration.generation);
+    this.#finalizer.unregister(registration.generation);
+  }
+
+  #finalize(generation: ForgottenDatabaseGeneration): void {
+    const session = this.#active.get(generation);
+    if (session === undefined) return;
+    this.#active.delete(generation);
+
+    // Finalization callbacks must stay nonblocking. Caller-realm teardown may
+    // execute synchronous guest code, so even invoking close is deferred until
+    // after the callback returns. Cleanup is intentionally unobservable best
+    // effort; explicit close remains the only way to observe its outcome.
+    this.#schedule(() => {
+      void closeForgottenSession(session).catch(() => undefined);
+    });
+  }
+}
+
+async function closeForgottenSession(session: WasixDatabaseSession): Promise<void> {
+  if (session.abort !== undefined) {
+    await session.abort();
+    return;
+  }
+  await session.close();
+}
+
+const forgottenDatabaseRegistry =
+  typeof FinalizationRegistry === 'undefined'
+    ? undefined
+    : new WasixForgottenDatabaseRegistry();
 
 /** @internal Public database state machine; construction stays behind Oliphaunt.open(). */
 export class WasixDatabaseImpl implements OliphauntDatabase {
   readonly #session: WasixDatabaseSession;
   readonly #identity: WasixDatabaseIdentity;
+  readonly #forgottenRegistry: WasixForgottenDatabaseRegistry | undefined;
+  readonly #forgottenRegistration: WasixForgottenDatabaseRegistration | undefined;
   readonly #resources = new Set<WasixDatabaseResource>();
-  readonly #pendingProtocolConnections = new Set<PendingProtocolConnectionReservation>();
+  readonly #pendingProtocolConnections =
+    new Set<PendingProtocolConnectionReservation>();
   #tail = Promise.resolve();
   #closed = false;
+  #closing = false;
   #closeAttempt: Promise<void> | undefined;
   #persistenceFailure: WasixStorageError | undefined;
   #transactionFailure: Error | undefined;
   #activeTransaction = false;
   #transactionRunning = false;
+  #streamCallbackActive = false;
 
-  constructor(session: WasixDatabaseSession) {
+  constructor(
+    session: WasixDatabaseSession,
+    forgottenRegistry: WasixForgottenDatabaseRegistry | undefined =
+      forgottenDatabaseRegistry,
+  ) {
     this.#session = session;
-    this.#identity = session.identity ?? { username: 'postgres', database: 'postgres' };
+    this.#forgottenRegistry = forgottenRegistry;
+    this.#forgottenRegistration = forgottenRegistry?.register(this, session);
+    this.#identity = session.identity ?? {
+      username: 'postgres',
+      database: 'postgres',
+    };
     if (session.runPgDump !== undefined) pgDumpTargets.add(this);
-    if (session.isolated === true && session.serve !== undefined) {
+    if (session.supportsProtocolConnections === true && session.serve !== undefined) {
       protocolConnectionTargets.add(this);
     }
   }
 
-  async execute(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<CommandResult> {
-    return parseCommandResponse(await this.#execOwned(extendedQuery(sql, parameters)));
+  get closed(): boolean {
+    return this.#closed;
   }
 
-  async query(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<QueryResult> {
-    return parseQueryResponse(await this.#execOwned(extendedQuery(sql, parameters)));
+  async execute(
+    sql: string,
+    parameters: ReadonlyArray<QueryParam> = [],
+    options: ParameterOptions = {},
+  ): Promise<CommandResult> {
+    this.#assertAvailable();
+    const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
+    return this.#serialize(() =>
+      this.#runDatabasePlanUnlocked(plan, parseCommandResponse),
+    );
+  }
+
+  async query<Row = QueryObjectRow>(
+    sql: string,
+    parameters: ReadonlyArray<QueryParam> = [],
+    options: QueryOptions = {},
+  ): Promise<QueryResult<Row>> {
+    this.#assertAvailable();
+    const stableOptions = snapshotQueryOptions(options);
+    const plan = planQuery(sql, parameters, stableOptions);
+    return this.#serialize(() =>
+      this.#runDatabasePlanUnlocked(plan, (response) =>
+        decodeQueryResult<Row>(parseQueryRawResponse(response), stableOptions),
+      ),
+    );
+  }
+
+  async queryRaw(
+    sql: string,
+    parameters: ReadonlyArray<QueryParam> = [],
+    options: ParameterOptions = {},
+  ): Promise<RawQueryResult> {
+    this.#assertAvailable();
+    const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
+    return this.#serialize(() =>
+      this.#runDatabasePlanUnlocked(plan, parseQueryRawResponse),
+    );
+  }
+
+  async exec<Row = QueryObjectRow>(
+    sql: string,
+    options: Omit<QueryOptions, 'encoders'> = {},
+  ): Promise<ExecResult<Row>> {
+    this.#assertAvailable();
+    const input = structuredSimpleQuery(sql);
+    const stableOptions = snapshotReadOptions(options);
+    return this.#serialize(() =>
+      this.#runDatabaseStructuredUnlocked(input, (response) =>
+        parseExecResponse<Row>(response, stableOptions),
+      ),
+    );
+  }
+
+  async describe(
+    sql: string,
+    parameterTypeOids: ReadonlyArray<number> = [],
+  ): Promise<DescribeResult> {
+    this.#assertAvailable();
+    const input = describeQuery(sql, [...parameterTypeOids]);
+    return this.#serialize(() =>
+      this.#runDatabaseStructuredUnlocked(input, parseDescribeResponse),
+    );
   }
 
   async execProtocolRaw(input: BinaryInput): Promise<Uint8Array> {
     return this.#execOwned(toUint8Array(input).slice());
   }
 
-  async execProtocolStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void> {
+  async execProtocolRawStream(
+    input: BinaryInput,
+    onChunk: ProtocolChunkCallback,
+  ): Promise<void> {
     if (typeof onChunk !== 'function') {
-      throw new TypeError('protocol stream callback must be a function');
+      throw new TypeError('raw protocol stream callback must be a function');
     }
+    const consumer = this.#protocolChunkConsumer(onChunk);
     this.#assertAvailable();
     const bytes = toUint8Array(input).slice();
     await this.#serialize(async () => {
@@ -136,13 +348,20 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
             offset < response.length;
             offset += WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES
           ) {
-            onChunk(response.slice(offset, offset + WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES));
+            consumer.callback(
+              response.slice(
+                offset,
+                offset + WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES,
+              ),
+            );
           }
           return;
         }
-        await this.#session.execStream(bytes, onChunk, 'sync');
+        await this.#session.execStream(bytes, consumer.callback, 'sync');
       } catch (error) {
-        if (error instanceof WasixStorageError) this.#persistenceFailure = error;
+        if (error instanceof WasixStorageError)
+          this.#persistenceFailure = error;
+        if (consumer.failure !== undefined) throw consumer.failure.error;
         throw error;
       }
     });
@@ -153,7 +372,9 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     return this.#serialize(async () => {
       this.#assertHealthy();
       if (this.#session.backup === undefined) {
-        throw new Error('this WASIX execution session does not support physical backup');
+        throw new Error(
+          'this WASIX execution session does not support physical backup',
+        );
       }
       const bytes = await this.#session.backup();
       await this.#syncPersistence('operation');
@@ -167,7 +388,9 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     return this.#serialize(async () => {
       this.#assertHealthy();
       if (this.#session.runPgDump === undefined) {
-        throw new Error('this WASIX execution placement does not support pg_dump');
+        throw new Error(
+          'this WASIX database entrypoint does not support pg_dump',
+        );
       }
       return this.#session.runPgDump(options);
     });
@@ -208,22 +431,30 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
       if (!start) return;
       this.#assertHealthy();
       if (this.#session.serve === undefined) {
-        throw new Error('this WASIX execution placement does not support protocol connections');
+        throw new Error(
+          'this WASIX database entrypoint does not support protocol connections',
+        );
       }
-      if (!this.#session.isolated) {
-        throw new Error('WASIX psql and local servers require worker execution');
+      if (!this.#session.supportsProtocolConnections) {
+        throw new Error(
+          'WASIX psql and local servers require the @oliphaunt/wasix-ts root entrypoint',
+        );
       }
       try {
         await this.#session.serve(connection, mode);
       } catch (error) {
-        if (error instanceof WasixStorageError) this.#persistenceFailure = error;
+        if (error instanceof WasixStorageError)
+          this.#persistenceFailure = error;
         throw error;
       }
     });
     return {
       start() {
         if (state === 'canceled') {
-          throw cancellation ?? new Error('Oliphaunt WASIX protocol connection was canceled');
+          throw (
+            cancellation ??
+            new Error('Oliphaunt WASIX protocol connection was canceled')
+          );
         }
         if (state === 'pending') {
           state = 'started';
@@ -232,7 +463,11 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
         return serving;
       },
       cancel() {
-        pending.cancel(new Error('Oliphaunt WASIX protocol connection was canceled before start'));
+        pending.cancel(
+          new Error(
+            'Oliphaunt WASIX protocol connection was canceled before start',
+          ),
+        );
       },
     };
   }
@@ -247,28 +482,315 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
       try {
         return await this.#session.exec(bytes, 'sync');
       } catch (error) {
-        if (error instanceof WasixStorageError) this.#persistenceFailure = error;
+        if (error instanceof WasixStorageError)
+          this.#persistenceFailure = error;
         throw error;
       }
     });
   }
 
-  async checkpoint(): Promise<void> {
-    this.#assertAvailable();
-    await this.#serialize(async () => {
-      this.#assertHealthy();
-      // Preserve PostgreSQL error identity: first complete the ordinary pgwire
-      // exchange and parse any ErrorResponse on the main thread.
-      const response = await this.#session.exec(simpleQuery('CHECKPOINT'), 'defer');
-      assertSuccessfulQueryResponse(response);
-      await this.#syncPersistence('checkpoint');
-    });
+  async #runDatabasePlanUnlocked<Result extends NoticeCarrier>(
+    plan: QueryPlan,
+    decode: (response: Uint8Array) => Result,
+  ): Promise<Result> {
+    if (plan.kind === 'complete') {
+      return this.#runDatabaseStructuredUnlocked(plan.input, decode);
+    }
+
+    const describedExchange = await this.#exchangeKnownUnlocked(
+      plan.input,
+      'database',
+    );
+    if (describedExchange.status !== 'idle') {
+      return this.#finishDatabaseExchangeUnlocked(
+        describedExchange,
+        parseDescribeResponse as unknown as (response: Uint8Array) => Result,
+        'operation',
+      );
+    }
+
+    let description: DescribeResult;
+    try {
+      description = parseDescribeResponse(describedExchange.response);
+    } catch (error) {
+      return this.#publishLogicalFailureUnlocked(error, 'operation');
+    }
+
+    let input: Uint8Array;
+    try {
+      input = plan.bind(description.parameterTypeOids);
+    } catch (error) {
+      return this.#publishLogicalFailureUnlocked(
+        errorWithNotices(error, description.notices),
+        'operation',
+      );
+    }
+
+    const finalExchange = await this.#exchangeKnownUnlocked(input, 'database');
+    return this.#finishDatabaseExchangeUnlocked(
+      finalExchange,
+      (response) => {
+        try {
+          return prependNotices(decode(response), description.notices);
+        } catch (error) {
+          throw errorWithNotices(error, description.notices);
+        }
+      },
+      'operation',
+    );
   }
 
-  async transaction<T>(body: (transaction: OliphauntTransaction) => Promise<T> | T): Promise<T> {
+  async #runDatabaseStructuredUnlocked<Result>(
+    input: Uint8Array,
+    decode: (response: Uint8Array) => Result,
+    boundary: WasixStorageSyncBoundary = 'operation',
+  ): Promise<Result> {
+    const exchange = await this.#exchangeKnownUnlocked(input, 'database');
+    return this.#finishDatabaseExchangeUnlocked(exchange, decode, boundary);
+  }
+
+  async #finishDatabaseExchangeUnlocked<Result>(
+    exchange: KnownExchange,
+    decode: (response: Uint8Array) => Result,
+    boundary: WasixStorageSyncBoundary,
+  ): Promise<Result> {
+    if (exchange.status !== 'idle') {
+      await this.#executeTransactionControlUnlocked('ROLLBACK');
+    }
+
+    let result: Result | undefined;
+    let failure: unknown;
+    try {
+      result = decode(exchange.response);
+      if (exchange.status !== 'idle') {
+        failure = new Error(
+          `structured database operation ended with PostgreSQL transaction status ${exchange.status}; Oliphaunt rolled it back`,
+        );
+        if (isNoticeCarrier(result)) {
+          failure = errorWithNotices(failure, result.notices);
+        }
+      }
+    } catch (error) {
+      failure = error;
+    }
+
+    try {
+      await this.#syncPersistence(boundary);
+    } catch (persistenceError) {
+      if (failure !== undefined) {
+        throw composeWasixStorageFailure(
+          persistenceError as WasixStorageError,
+          'operation also failed',
+          failure,
+        );
+      }
+      throw persistenceError;
+    }
+    if (failure !== undefined) throw failure;
+    return result as Result;
+  }
+
+  async #publishLogicalFailureUnlocked(
+    failure: unknown,
+    boundary: WasixStorageSyncBoundary,
+  ): Promise<never> {
+    try {
+      await this.#syncPersistence(boundary);
+    } catch (persistenceError) {
+      throw composeWasixStorageFailure(
+        persistenceError as WasixStorageError,
+        'operation also failed',
+        failure,
+      );
+    }
+    throw failure;
+  }
+
+  async #runTransactionPlanUnlocked<Result extends NoticeCarrier>(
+    plan: QueryPlan,
+    decode: (response: Uint8Array) => Result,
+  ): Promise<Result> {
+    if (plan.kind === 'complete') {
+      return this.#runTransactionStructuredUnlocked(plan.input, decode);
+    }
+    const described = await this.#runTransactionStructuredUnlocked(
+      plan.input,
+      parseDescribeResponse,
+    );
+    let input: Uint8Array;
+    try {
+      input = plan.bind(described.parameterTypeOids);
+    } catch (error) {
+      throw errorWithNotices(error, described.notices);
+    }
+    try {
+      return prependNotices(
+        await this.#runTransactionStructuredUnlocked(input, decode),
+        described.notices,
+      );
+    } catch (error) {
+      throw errorWithNotices(error, described.notices);
+    }
+  }
+
+  async #runTransactionStructuredUnlocked<Result>(
+    input: Uint8Array,
+    decode: (response: Uint8Array) => Result,
+  ): Promise<Result> {
+    const exchange = await this.#exchangeKnownUnlocked(input, 'transaction');
+    return decode(exchange.response);
+  }
+
+  async #runTransactionRawUnlocked(input: Uint8Array): Promise<Uint8Array> {
+    this.#assertHealthy();
+    try {
+      return await this.#session.exec(input, 'defer');
+    } catch (error) {
+      this.#recordUnknownExchange(
+        error,
+        'raw PostgreSQL transport outcome is unknown',
+      );
+      throw error;
+    }
+  }
+
+  async #runTransactionStreamUnlocked(
+    input: Uint8Array,
+    onChunk: ProtocolChunkCallback,
+  ): Promise<void> {
+    this.#assertHealthy();
+    try {
+      if (this.#session.execStream === undefined) {
+        const response = await this.#session.exec(input, 'defer');
+        for (
+          let offset = 0;
+          offset < response.length;
+          offset += WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES
+        ) {
+          onChunk(
+            response.slice(
+              offset,
+              offset + WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES,
+            ),
+          );
+        }
+        return;
+      }
+      await this.#session.execStream(input, onChunk, 'defer');
+    } catch (error) {
+      this.#recordUnknownExchange(
+        error,
+        'streaming PostgreSQL transport outcome is unknown',
+      );
+      throw error;
+    }
+  }
+
+  async #exchangeKnownUnlocked(
+    input: Uint8Array,
+    scope: StructuredScope,
+  ): Promise<KnownExchange> {
+    this.#assertHealthy();
+    let response: Uint8Array;
+    try {
+      response = await this.#session.exec(input, 'defer');
+    } catch (error) {
+      this.#recordUnknownExchange(
+        error,
+        'structured PostgreSQL transport outcome is unknown',
+      );
+      throw error;
+    }
+
+    let status: TransactionStatus;
+    try {
+      status = inspectReadyForQuery(response);
+    } catch (error) {
+      this.#recordUnknownExchange(
+        error,
+        'structured PostgreSQL response has no valid readiness boundary',
+      );
+      throw error;
+    }
+    if (scope === 'transaction' && status === 'idle') {
+      const error = new Error(
+        'PostgreSQL transaction ownership ended inside a structured transaction operation',
+      );
+      this.#transactionFailure = error;
+      throw error;
+    }
+    return { response, status };
+  }
+
+  async #executeTransactionControlUnlocked(
+    sql: 'BEGIN' | 'COMMIT' | 'ROLLBACK',
+  ): Promise<'committed' | 'rolledBack' | undefined> {
+    const exchange = await this.#exchangeKnownUnlocked(
+      extendedQuery(sql, []),
+      'control',
+    );
+    let result: CommandResult;
+    try {
+      result = parseCommandResponse(exchange.response);
+    } catch (error) {
+      if (sql === 'BEGIN' && exchange.status !== 'idle') {
+        await this.#executeTransactionControlUnlocked('ROLLBACK').catch(
+          () => undefined,
+        );
+      } else if (sql !== 'BEGIN') {
+        this.#transactionFailure = asError(error, `${sql} outcome is unknown`);
+      }
+      throw error;
+    }
+
+    if (sql === 'BEGIN') {
+      if (result.commandTag === 'BEGIN' && exchange.status === 'transaction')
+        return undefined;
+      const error = transactionBoundaryError(
+        sql,
+        result.commandTag,
+        exchange.status,
+      );
+      if (exchange.status !== 'idle') {
+        await this.#executeTransactionControlUnlocked('ROLLBACK');
+      }
+      throw error;
+    }
+
+    if (sql === 'COMMIT') {
+      if (result.commandTag === 'COMMIT' && exchange.status === 'idle')
+        return 'committed';
+      if (result.commandTag === 'ROLLBACK' && exchange.status === 'idle')
+        return 'rolledBack';
+    } else if (result.commandTag === 'ROLLBACK' && exchange.status === 'idle') {
+      return undefined;
+    }
+
+    const error = transactionBoundaryError(
+      sql,
+      result.commandTag,
+      exchange.status,
+    );
+    this.#transactionFailure = error;
+    throw error;
+  }
+
+  #recordUnknownExchange(error: unknown, message: string): void {
+    if (error instanceof WasixStorageError) {
+      this.#persistenceFailure = error;
+    } else {
+      this.#transactionFailure ??= asError(error, message);
+    }
+  }
+
+  async transaction<T>(
+    body: (transaction: OliphauntTransaction) => Promise<T> | T,
+  ): Promise<T> {
     this.#assertAvailable();
     if (typeof body !== 'function') {
-      throw new TypeError('Oliphaunt WASIX transaction body must be a function');
+      throw new TypeError(
+        'Oliphaunt WASIX transaction body must be a function',
+      );
     }
     this.#activeTransaction = true;
     transactionPinnedTargets.add(this);
@@ -279,87 +801,113 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
       this.#assertOpen();
       this.#transactionRunning = true;
       const transaction = new WasixTransactionImpl(
-        (input) => this.#session.exec(input, 'defer'),
-        (input, onChunk) => {
-          if (this.#session.execStream === undefined) {
-            return this.#session.exec(input, 'defer').then((response) => {
-              for (
-                let offset = 0;
-                offset < response.length;
-                offset += WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES
-              ) {
-                onChunk(response.slice(offset, offset + WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES));
-              }
-            });
-          }
-          return this.#session.execStream(input, onChunk, 'defer');
-        },
+        (plan, decode) => this.#runTransactionPlanUnlocked(plan, decode),
+        (input, decode) =>
+          this.#runTransactionStructuredUnlocked(input, decode),
+        (input) => this.#runTransactionRawUnlocked(input),
+        (input, onChunk) => this.#runTransactionStreamUnlocked(input, onChunk),
+        () =>
+          this.#executeTransactionControlUnlocked('ROLLBACK').then(
+            () => undefined,
+          ),
+        (callback) => this.#protocolChunkConsumer(callback),
+        () => this.#assertNotInProtocolStreamCallback(),
       );
-      let commitAttempted = false;
-      let commitConfirmed = false;
       try {
-        await transaction.execute('BEGIN');
-        const result = await body(transaction);
-        transaction.seal();
-        commitAttempted = true;
-        await transaction.finish('COMMIT');
-        commitConfirmed = true;
-        await this.#syncPersistence('operation');
-        return result;
-      } catch (error) {
-        transaction.seal();
-        // Once COMMIT is on the wire, a later ROLLBACK cannot undo it. A clean
-        // PostgreSQL response is safe to publish and report; transport or
-        // malformed-protocol failures leave the outcome unknown and poison
-        // this handle until it is closed.
-        if (commitAttempted) {
+        try {
+          await this.#executeTransactionControlUnlocked('BEGIN');
+        } catch (error) {
           if (
-            !commitConfirmed &&
-            !(error instanceof CommitRolledBackError) &&
-            !(error instanceof PostgresError)
+            this.#transactionFailure === undefined &&
+            this.#persistenceFailure === undefined
           ) {
-            this.#transactionFailure = asError(error, 'COMMIT outcome is unknown');
-            throw error;
-          }
-          if (!commitConfirmed) {
-            const primary = error instanceof CommitRolledBackError ? error.primary : error;
             try {
               await this.#syncPersistence('operation');
             } catch (persistenceError) {
               throw composeWasixStorageFailure(
                 persistenceError as WasixStorageError,
                 'transaction also failed',
-                primary,
+                error,
               );
             }
-            throw primary;
           }
           throw error;
         }
-        let rolledBack = false;
+
+        let result: T;
         try {
-          await transaction.finish('ROLLBACK');
-          rolledBack = true;
-        } catch (rollbackError) {
-          this.#transactionFailure = asError(rollbackError, 'ROLLBACK outcome is unknown');
-          // Preserve the callback/BEGIN/COMMIT error as the primary failure,
-          // while preventing later work on a session that did not prove its
-          // final transaction boundary.
-        }
-        if (rolledBack) {
-          try {
-            await this.#syncPersistence('operation');
-          } catch (persistenceError) {
-            throw composeWasixStorageFailure(
-              persistenceError as WasixStorageError,
-              'transaction also failed',
-              error,
+          result = await body(transaction);
+          await transaction.sealAndDrain();
+        } catch (error) {
+          transaction.seal();
+          await transaction.drain();
+          let rolledBack = transaction.rolledBack;
+          let rollbackFailure: unknown;
+          if (transaction.rollbackStarted) {
+            try {
+              await transaction.waitForRollback();
+              rolledBack = transaction.rolledBack;
+            } catch (rollbackError) {
+              rollbackFailure = rollbackError;
+            }
+          } else if (
+            this.#transactionFailure === undefined &&
+            this.#persistenceFailure === undefined
+          ) {
+            try {
+              await this.#executeTransactionControlUnlocked('ROLLBACK');
+              rolledBack = true;
+            } catch (rollbackError) {
+              rollbackFailure = rollbackError;
+            }
+          }
+          if (rollbackFailure !== undefined && rollbackFailure !== error) {
+            throw new AggregateError(
+              [error, rollbackFailure],
+              'transaction callback and rollback both failed',
             );
           }
+          if (rolledBack) {
+            try {
+              await this.#syncPersistence('operation');
+            } catch (persistenceError) {
+              throw composeWasixStorageFailure(
+                persistenceError as WasixStorageError,
+                'transaction also failed',
+                error,
+              );
+            }
+          }
+          throw error;
         }
-        throw error;
+
+        if (transaction.rolledBack) {
+          await this.#syncPersistence('operation');
+          return result;
+        }
+
+        const outcome = await this.#executeTransactionControlUnlocked('COMMIT');
+        if (outcome === 'committed') {
+          await this.#syncPersistence('operation');
+          return result;
+        }
+        const primary =
+          transaction.firstFailure ??
+          new Error(
+            'PostgreSQL rolled back the transaction instead of committing',
+          );
+        try {
+          await this.#syncPersistence('operation');
+        } catch (persistenceError) {
+          throw composeWasixStorageFailure(
+            persistenceError as WasixStorageError,
+            'transaction also failed',
+            primary,
+          );
+        }
+        throw primary;
       } finally {
-        transaction.seal();
+        transaction.deactivate();
         this.#transactionRunning = false;
       }
     });
@@ -370,6 +918,11 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
   }
 
   close(): Promise<void> {
+    try {
+      this.#assertNotInProtocolStreamCallback();
+    } catch (error) {
+      return Promise.reject(error);
+    }
     if (this.#closeAttempt !== undefined) {
       return this.#closeAttempt;
     }
@@ -378,29 +931,57 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
         new Error('cannot close Oliphaunt WASIX while a transaction is active'),
       );
     }
-    this.#closed = true;
+    if (this.#forgottenRegistration !== undefined) {
+      this.#forgottenRegistry?.unregister(this.#forgottenRegistration);
+    }
+    this.#closing = true;
     const closing = new Error('Oliphaunt WASIX database is closing');
-    for (const connection of this.#pendingProtocolConnections) connection.cancel(closing);
+    for (const connection of this.#pendingProtocolConnections)
+      connection.cancel(closing);
     const orderlyClose = this.#serialize(() => this.#session.close());
     const sessionClose =
       this.#session.abort === undefined
         ? orderlyClose
-        : withDeadline(orderlyClose, CLOSE_DEADLINE_MS, () => this.#session.abort?.());
-    this.#closeAttempt = sessionClose.then(
-      () => this.#closeResources(),
-      async (error: unknown) => {
-        try {
-          await this.#closeResources();
-        } catch (cleanupError) {
-          throw new AggregateError(
-            [error, cleanupError],
-            'Oliphaunt WASIX database and resource cleanup both failed',
+        : withDeadline(orderlyClose, CLOSE_DEADLINE_MS, () =>
+            this.#session.abort?.(),
           );
-        }
-        throw error;
-      },
-    );
-    return this.#closeAttempt;
+    const attempt = (async () => {
+      let sessionFailed = false;
+      let sessionFailure: unknown;
+      try {
+        await sessionClose;
+      } catch (error) {
+        sessionFailed = true;
+        sessionFailure = error;
+      }
+
+      let cleanupFailed = false;
+      let cleanupFailure: unknown;
+      try {
+        await this.#closeResources();
+      } catch (error) {
+        cleanupFailed = true;
+        cleanupFailure = error;
+      } finally {
+        // Session close is a terminal ownership transfer, not a retryable
+        // operation. Worker close always destroys its transport, while direct
+        // close always attempts provider and allocation release. Advertising a
+        // reusable handle after either path rejects would be false.
+        this.#closed = true;
+        this.#closing = false;
+      }
+
+      if (sessionFailed && cleanupFailed) {
+        throw new AggregateError(
+          [sessionFailure, cleanupFailure],
+          'Oliphaunt WASIX database and resource cleanup both failed',
+        );
+      }
+      if (sessionFailed) throw sessionFailure;
+      if (cleanupFailed) throw cleanupFailure;
+    })();
+    this.#closeAttempt = attempt;
+    return attempt;
   }
 
   /** @internal Register package-owned state that must not outlive this database. */
@@ -419,8 +1000,12 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
   }
 
   #assertOpen(): void {
+    this.#assertNotInProtocolStreamCallback();
     if (this.#closed) {
       throw new Error('Oliphaunt WASIX database is closed');
+    }
+    if (this.#closing) {
+      throw new Error('Oliphaunt WASIX database is closing');
     }
     this.#assertHealthy();
   }
@@ -449,6 +1034,29 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
         },
       );
     }
+  }
+
+  #assertNotInProtocolStreamCallback(): void {
+    if (this.#streamCallbackActive) {
+      throw new Error(
+        'raw protocol stream callback must not reenter the same Oliphaunt database or transaction',
+      );
+    }
+  }
+
+  #protocolChunkConsumer(
+    callback: ProtocolChunkCallback,
+  ): ReturnType<typeof synchronousProtocolChunkConsumer> {
+    return synchronousProtocolChunkConsumer(
+      callback,
+      () => {
+        this.#assertNotInProtocolStreamCallback();
+        this.#streamCallbackActive = true;
+      },
+      () => {
+        this.#streamCallbackActive = false;
+      },
+    );
   }
 
   async #syncPersistence(boundary: WasixStorageSyncBoundary): Promise<void> {
@@ -481,13 +1089,25 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
 
   async #closeResources(): Promise<void> {
     const resources = [...this.#resources];
+    // Every registered owner gets exactly one teardown attempt. Drop the
+    // ownership graph before awaiting userland cleanup so a failed terminal
+    // close cannot retain otherwise collectible resources indefinitely.
     this.#resources.clear();
-    const results = await Promise.allSettled(resources.map(async (resource) => resource.close()));
-    const failures = results
-      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-      .map((result) => result.reason);
+    const results = await Promise.allSettled(
+      resources.map(async (resource) => resource.close()),
+    );
+    const failures: unknown[] = [];
+    for (let index = 0; index < results.length; index += 1) {
+      const result = results[index]!;
+      if (result.status === 'rejected') {
+        failures.push(result.reason);
+      }
+    }
     if (failures.length > 0) {
-      throw new AggregateError(failures, 'Oliphaunt WASIX database resource cleanup failed');
+      throw new AggregateError(
+        failures,
+        'Oliphaunt WASIX database resource cleanup failed',
+      );
     }
   }
 }
@@ -502,7 +1122,7 @@ export function runWasixProtocolConnection(
   return database.runProtocolConnection(connection, mode);
 }
 
-/** @internal Execute pg_dump in the direct or worker realm that owns this database. */
+/** @internal Execute pg_dump in the realm that owns this database. */
 export function runWasixPgDumpProcess(
   database: OliphauntDatabase,
   options: WasixToolProcessOptions,
@@ -527,17 +1147,19 @@ export function assertWasixProtocolConnectionTarget(
 ): asserts database is WasixDatabaseImpl {
   assertWasixDatabaseTarget(database);
   if (!protocolConnectionTargets.has(database)) {
-    throw new Error('WASIX psql and local servers require worker execution');
+    throw new Error(
+      'WASIX psql and local servers require the @oliphaunt/wasix-ts root entrypoint',
+    );
   }
 }
 
-/** @internal Accept both direct and worker placements that own the co-located runner. */
+/** @internal Accept both public entrypoints that own the co-located runner. */
 function assertWasixPgDumpTarget(
   database: OliphauntDatabase,
 ): asserts database is WasixDatabaseImpl {
   assertWasixDatabaseTarget(database);
   if (!pgDumpTargets.has(database)) {
-    throw new Error('this WASIX execution placement does not support pg_dump');
+    throw new Error('this WASIX database entrypoint does not support pg_dump');
   }
 }
 
@@ -561,8 +1183,10 @@ export function registerWasixDatabaseResource(
   database.registerResource(resource);
 }
 
-/** @internal Return the exact startup identity owned by a worker database handle. */
-export function getWasixDatabaseIdentity(database: OliphauntDatabase): WasixDatabaseIdentity {
+/** @internal Return the exact startup identity owned by a WASIX database handle. */
+export function getWasixDatabaseIdentity(
+  database: OliphauntDatabase,
+): WasixDatabaseIdentity {
   assertWasixDatabaseTarget(database);
   return database.identity;
 }
@@ -573,22 +1197,31 @@ function withDeadline<T>(
   expire: () => void | Promise<void>,
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
+    let expired = false;
     const timer = setTimeout(() => {
+      expired = true;
+      const timeout = new WasixCloseTimeoutError(milliseconds);
       void Promise.resolve()
         .then(expire)
-        .catch(() => undefined);
-      reject(
-        new Error(
-          `Oliphaunt WASIX close exceeded ${milliseconds}ms; worker termination was requested`,
-        ),
-      );
+        .then(
+          () => reject(timeout),
+          (abortFailure) =>
+            reject(
+              new AggregateError(
+                [timeout, abortFailure],
+                'Oliphaunt WASIX orderly close timed out and forced termination failed',
+              ),
+            ),
+        );
     }, milliseconds);
     void operation.then(
       (value) => {
+        if (expired) return;
         clearTimeout(timer);
         resolve(value);
       },
       (error) => {
+        if (expired) return;
         clearTimeout(timer);
         reject(error);
       },
@@ -596,89 +1229,249 @@ function withDeadline<T>(
   });
 }
 
+class WasixCloseTimeoutError extends Error {
+  constructor(milliseconds: number) {
+    super(
+      `Oliphaunt WASIX close exceeded ${milliseconds}ms; worker termination was requested`,
+    );
+    this.name = 'WasixCloseTimeoutError';
+  }
+}
+
 class WasixTransactionImpl implements OliphauntTransaction {
-  readonly #exec: (input: Uint8Array) => Promise<Uint8Array>;
-  readonly #execStream: (input: Uint8Array, onChunk: ProtocolChunkCallback) => Promise<void>;
+  readonly #runPlan: <Result extends NoticeCarrier>(
+    plan: QueryPlan,
+    decode: (response: Uint8Array) => Result,
+  ) => Promise<Result>;
+  readonly #runStructured: <Result>(
+    input: Uint8Array,
+    decode: (response: Uint8Array) => Result,
+  ) => Promise<Result>;
+  readonly #execRaw: (input: Uint8Array) => Promise<Uint8Array>;
+  readonly #execStream: (
+    input: Uint8Array,
+    onChunk: ProtocolChunkCallback,
+  ) => Promise<void>;
+  readonly #rollbackControl: () => Promise<void>;
+  readonly #wrapProtocolChunkConsumer: (
+    callback: ProtocolChunkCallback,
+  ) => ReturnType<typeof synchronousProtocolChunkConsumer>;
+  readonly #assertNotInProtocolStreamCallback: () => void;
   #tail = Promise.resolve();
-  #active = true;
+  #state: 'active' | 'finishing' | 'closed' = 'active';
   #failed = false;
   #firstFailure: unknown;
+  #rollbackAttempt: Promise<void> | undefined;
+  #rolledBack = false;
 
   constructor(
-    exec: (input: Uint8Array) => Promise<Uint8Array>,
-    execStream: (input: Uint8Array, onChunk: ProtocolChunkCallback) => Promise<void>,
+    runPlan: <Result extends NoticeCarrier>(
+      plan: QueryPlan,
+      decode: (response: Uint8Array) => Result,
+    ) => Promise<Result>,
+    runStructured: <Result>(
+      input: Uint8Array,
+      decode: (response: Uint8Array) => Result,
+    ) => Promise<Result>,
+    execRaw: (input: Uint8Array) => Promise<Uint8Array>,
+    execStream: (
+      input: Uint8Array,
+      onChunk: ProtocolChunkCallback,
+    ) => Promise<void>,
+    rollbackControl: () => Promise<void>,
+    wrapProtocolChunkConsumer: (
+      callback: ProtocolChunkCallback,
+    ) => ReturnType<typeof synchronousProtocolChunkConsumer>,
+    assertNotInProtocolStreamCallback: () => void,
   ) {
-    this.#exec = exec;
+    this.#runPlan = runPlan;
+    this.#runStructured = runStructured;
+    this.#execRaw = execRaw;
     this.#execStream = execStream;
+    this.#rollbackControl = rollbackControl;
+    this.#wrapProtocolChunkConsumer = wrapProtocolChunkConsumer;
+    this.#assertNotInProtocolStreamCallback = assertNotInProtocolStreamCallback;
   }
 
-  execute(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<CommandResult> {
-    return this.#execOwned(extendedQuery(sql, parameters), parseCommandResponse);
+  get closed(): boolean {
+    return this.#state === 'closed';
   }
 
-  query(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<QueryResult> {
-    return this.#execOwned(extendedQuery(sql, parameters), parseQueryResponse);
+  get rollbackStarted(): boolean {
+    return this.#rollbackAttempt !== undefined;
   }
 
-  execProtocolRaw(input: BinaryInput): Promise<Uint8Array> {
-    return this.#execOwned(toUint8Array(input).slice(), (response) => response);
+  get rolledBack(): boolean {
+    return this.#rolledBack;
   }
 
-  execProtocolStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void> {
-    if (typeof onChunk !== 'function') {
-      return Promise.reject(new TypeError('protocol stream callback must be a function'));
-    }
-    if (!this.#active) {
-      return Promise.reject(new Error('Oliphaunt WASIX transaction is no longer active'));
-    }
-    return this.#enqueue(() => this.#execStream(toUint8Array(input).slice(), onChunk));
+  get firstFailure(): unknown {
+    return this.#firstFailure;
   }
 
-  seal(): void {
-    this.#active = false;
-  }
-
-  finish(sql: 'COMMIT' | 'ROLLBACK'): Promise<void> {
-    return this.#enqueue(async () => {
-      const response = await this.#exec(simpleQuery(sql));
-      const result = parseCommandResponse(response);
-      // PostgreSQL spells COMMIT in an aborted transaction as a successful
-      // `ROLLBACK` CommandComplete. Sending the command is important: a caught
-      // error may have been recovered with ROLLBACK TO SAVEPOINT and should be
-      // allowed to commit. Only propagate the first queued failure when the
-      // server confirms that COMMIT actually rolled the transaction back.
-      if (sql === 'COMMIT') {
-        if (result.commandTag === 'ROLLBACK') {
-          // Raw protocol callers own response decoding, so an ErrorResponse
-          // can abort the server transaction without rejecting its JS promise.
-          // Never report success when PostgreSQL answers COMMIT with ROLLBACK.
-          throw new CommitRolledBackError(
-            this.#failed
-              ? this.#firstFailure
-              : new Error('PostgreSQL rolled back the transaction instead of committing'),
-          );
-        }
-        if (result.commandTag !== 'COMMIT') {
-          throw new Error(
-            `PostgreSQL returned ${result.commandTag ?? 'no command tag'} for COMMIT`,
-          );
-        }
-      } else if (result.commandTag !== 'ROLLBACK') {
-        throw new Error(
-          `PostgreSQL returned ${result.commandTag ?? 'no command tag'} for ROLLBACK`,
-        );
-      }
+  execute(
+    sql: string,
+    parameters: ReadonlyArray<QueryParam> = [],
+    options: ParameterOptions = {},
+  ): Promise<CommandResult> {
+    return this.#publicPromise(() => {
+      const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
+      return this.#enqueue(() => this.#runPlan(plan, parseCommandResponse));
     });
   }
 
-  #execOwned<Result>(input: Uint8Array, decode: (response: Uint8Array) => Result): Promise<Result> {
-    if (!this.#active) {
-      return Promise.reject(new Error('Oliphaunt WASIX transaction is no longer active'));
+  query<Row = QueryObjectRow>(
+    sql: string,
+    parameters: ReadonlyArray<QueryParam> = [],
+    options: QueryOptions = {},
+  ): Promise<QueryResult<Row>> {
+    return this.#publicPromise(() => {
+      const stableOptions = snapshotQueryOptions(options);
+      const plan = planQuery(sql, parameters, stableOptions);
+      return this.#enqueue(async () =>
+        decodeQueryResult<Row>(
+          await this.#runPlan(plan, parseQueryRawResponse),
+          stableOptions,
+        ),
+      );
+    });
+  }
+
+  queryRaw(
+    sql: string,
+    parameters: ReadonlyArray<QueryParam> = [],
+    options: ParameterOptions = {},
+  ): Promise<RawQueryResult> {
+    return this.#publicPromise(() => {
+      const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
+      return this.#enqueue(() => this.#runPlan(plan, parseQueryRawResponse));
+    });
+  }
+
+  exec<Row = QueryObjectRow>(
+    sql: string,
+    options: Omit<QueryOptions, 'encoders'> = {},
+  ): Promise<ExecResult<Row>> {
+    return this.#publicPromise(() => {
+      const input = structuredSimpleQuery(sql);
+      const stableOptions = snapshotReadOptions(options);
+      return this.#enqueue(() =>
+        this.#runStructured(input, (response) =>
+          parseExecResponse<Row>(response, stableOptions),
+        ),
+      );
+    });
+  }
+
+  describe(
+    sql: string,
+    parameterTypeOids: ReadonlyArray<number> = [],
+  ): Promise<DescribeResult> {
+    return this.#publicPromise(() => {
+      const input = describeQuery(sql, [...parameterTypeOids]);
+      return this.#enqueue(() =>
+        this.#runStructured(input, parseDescribeResponse),
+      );
+    });
+  }
+
+  execProtocolRaw(input: BinaryInput): Promise<Uint8Array> {
+    return this.#publicPromise(() => {
+      const bytes = toUint8Array(input).slice();
+      return this.#enqueue(() => this.#execRaw(bytes));
+    });
+  }
+
+  execProtocolRawStream(
+    input: BinaryInput,
+    onChunk: ProtocolChunkCallback,
+  ): Promise<void> {
+    return this.#publicPromise(() => {
+      if (typeof onChunk !== 'function') {
+        throw new TypeError('raw protocol stream callback must be a function');
+      }
+      const consumer = this.#wrapProtocolChunkConsumer(onChunk);
+      const bytes = toUint8Array(input).slice();
+      return this.#enqueue(() => this.#execStream(bytes, consumer.callback)).catch(
+        (error) => {
+          if (consumer.failure !== undefined) throw consumer.failure.error;
+          throw error;
+        },
+      );
+    });
+  }
+
+  rollback(): Promise<void> {
+    try {
+      this.#assertNotInProtocolStreamCallback();
+      this.#assertActive();
+    } catch (error) {
+      return Promise.reject(error);
     }
-    return this.#enqueue(async () => decode(await this.#exec(input)));
+    this.#state = 'finishing';
+    const operation = this.#enqueueFinishing(this.#rollbackControl);
+    const attempt = operation.then(
+      () => {
+        this.#rolledBack = true;
+        this.#state = 'closed';
+      },
+      (error: unknown) => {
+        this.#state = 'closed';
+        throw error;
+      },
+    );
+    this.#rollbackAttempt = attempt;
+    return attempt;
+  }
+
+  deactivate(): void {
+    this.#state = 'closed';
+  }
+
+  seal(): void {
+    if (this.#state === 'active') this.#state = 'finishing';
+  }
+
+  async drain(): Promise<void> {
+    await this.#tail;
+  }
+
+  async sealAndDrain(): Promise<void> {
+    this.seal();
+    await this.#tail;
+    await this.#rollbackAttempt;
+  }
+
+  async waitForRollback(): Promise<void> {
+    await this.#rollbackAttempt;
+  }
+
+  #assertActive(): void {
+    if (this.#state === 'finishing')
+      throw new Error('transaction is finishing');
+    if (this.#state === 'closed')
+      throw new Error('transaction is no longer active');
+  }
+
+  #publicPromise<Result>(operation: () => Promise<Result>): Promise<Result> {
+    try {
+      return operation();
+    } catch (error) {
+      return Promise.reject(error);
+    }
   }
 
   #enqueue<Result>(operation: () => Promise<Result>): Promise<Result> {
+    try {
+      this.#assertNotInProtocolStreamCallback();
+      this.#assertActive();
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return this.#enqueueFinishing(operation);
+  }
+
+  #enqueueFinishing<Result>(operation: () => Promise<Result>): Promise<Result> {
     const result = this.#tail.then(operation);
     this.#tail = result.then(
       () => undefined,
@@ -693,11 +1486,105 @@ class WasixTransactionImpl implements OliphauntTransaction {
   }
 }
 
-class CommitRolledBackError extends Error {
-  constructor(readonly primary: unknown) {
-    super('PostgreSQL returned ROLLBACK for COMMIT');
-    this.name = 'CommitRolledBackError';
-  }
+type StructuredScope = 'database' | 'transaction' | 'control';
+type NoticeCarrier = { notices: PostgresNotice[] };
+type KnownExchange = Readonly<{
+  response: Uint8Array;
+  status: TransactionStatus;
+}>;
+
+function snapshotParameterOptions(options: ParameterOptions): ParameterOptions {
+  return Object.freeze({
+    ...(options.encoders === undefined
+      ? {}
+      : { encoders: Object.freeze({ ...options.encoders }) }),
+  });
+}
+
+function snapshotReadOptions(
+  options: Omit<QueryOptions, 'encoders'>,
+): Omit<QueryOptions, 'encoders'> {
+  return Object.freeze({
+    rowMode: options.rowMode,
+    valueMode: options.valueMode,
+    ...(options.decoders === undefined
+      ? {}
+      : { decoders: Object.freeze({ ...options.decoders }) }),
+  });
+}
+
+function snapshotQueryOptions(options: QueryOptions): QueryOptions {
+  return Object.freeze({
+    ...snapshotReadOptions(options),
+    ...snapshotParameterOptions(options),
+  });
+}
+
+function prependNotices<Result extends NoticeCarrier>(
+  result: Result,
+  notices: ReadonlyArray<PostgresNotice>,
+): Result {
+  if (notices.length > 0) result.notices.unshift(...notices);
+  return result;
+}
+
+function isNoticeCarrier(value: unknown): value is NoticeCarrier {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    Array.isArray((value as { notices?: unknown }).notices)
+  );
+}
+
+function transactionBoundaryError(
+  expected: 'BEGIN' | 'COMMIT' | 'ROLLBACK',
+  actual: string | undefined,
+  status: TransactionStatus,
+): Error {
+  return new Error(
+    `PostgreSQL transaction command expected ${expected} with its matching readiness status, got ${actual ?? 'no command tag'} with ${status}`,
+  );
+}
+
+function synchronousProtocolChunkConsumer(
+  callback: ProtocolChunkCallback,
+  enter: () => void = () => undefined,
+  leave: () => void = () => undefined,
+): {
+  callback: ProtocolChunkCallback;
+  failure?: { error: unknown };
+} {
+  const consumer: {
+    callback: ProtocolChunkCallback;
+    failure?: { error: unknown };
+  } = {
+    callback(chunk) {
+      enter();
+      try {
+        const result = (callback as (chunk: Uint8Array) => unknown)(chunk);
+        if (!isThenable(result)) return;
+        // The returned task cannot participate in synchronous backpressure.
+        // Mark its rejection handled before failing deterministically.
+        void Promise.resolve(result).catch(() => undefined);
+        throw new TypeError(
+          'raw protocol stream callback must complete synchronously and must not return a Promise or thenable',
+        );
+      } catch (error) {
+        consumer.failure ??= { error };
+        throw error;
+      } finally {
+        leave();
+      }
+    },
+  };
+  return consumer;
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    ((typeof value === 'object' && value !== null) || typeof value === 'function') &&
+    typeof (value as { then?: unknown }).then === 'function'
+  );
 }
 
 function asError(value: unknown, fallback: string): Error {

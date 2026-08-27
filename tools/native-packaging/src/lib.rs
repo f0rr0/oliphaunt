@@ -7,11 +7,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use oliphaunt::{
-    Error, Extension, NativePackagingCatalogProfile,
-    NativePackagingResources as MaterializedNativeResources, NativePackagingRuntime, Result,
-    materialize_native_packaging_resources,
+use oliphaunt::__private::packaging::{
+    NativePackagingCatalogProfile, NativePackagingResources as MaterializedNativeResources,
+    NativePackagingRuntime, materialize_native_packaging_resources,
 };
+use oliphaunt::{Error, Extension, Result};
 
 /// Native product whose resources are being assembled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

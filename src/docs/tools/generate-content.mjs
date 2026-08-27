@@ -392,21 +392,25 @@ function sdkRows(sdkManifest) {
 }
 
 function generateSdkMatrix(sdkManifest) {
-  const rows = sdkRows(sdkManifest).map(([id, sdk]) => {
-    const modes = (sdk.execution_modes ?? []).join(', ');
-    return `| ${escapeMarkdown(id)} | ${escapeMarkdown(sdk.package_identity)} | ${escapeMarkdown((sdk.consumer_targets ?? []).join(', '))} | ${escapeMarkdown(sdk.runtime_boundary)} | ${escapeMarkdown(modes)} |`;
-  });
+  const rows = sdkRows(sdkManifest).flatMap(([id, sdk]) =>
+    (sdk.surfaces ?? []).map(
+      (surface) =>
+        `| ${escapeMarkdown(id)} | ${escapeMarkdown(sdk.package_identity)} | ${escapeMarkdown(surface.entrypoint)} | ${escapeMarkdown(surface.calling_contract)} | ${escapeMarkdown(surface.execution_owner)} | ${surface.main_safe ? 'yes' : 'no'} | ${escapeMarkdown((surface.topologies ?? []).join(', '))} | ${escapeMarkdown((sdk.consumer_targets ?? []).join(', '))} | ${escapeMarkdown(sdk.runtime_boundary)} |`,
+    ),
+  );
   return `---
 title: SDK Matrix
 ---
 
 # SDK Matrix
 
-Use this matrix to compare registry-qualified package identities, supported
-consumer targets, runtime boundaries, and advertised modes.
+Use this matrix to compare registry-qualified package identities, public
+entrypoints, calling contracts, execution ownership, supported topologies,
+consumer targets, and runtime boundaries. A topology such as direct or broker
+does not imply caller-thread execution.
 
-| SDK | Package identity | Supported targets | Runtime boundary | Advertised modes |
-| --- | --- | --- | --- | --- |
+| SDK | Package identity | Entrypoint | Calling contract | Execution owner | Main-safe | Topologies | Supported targets | Runtime boundary |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 ${rows.join('\n')}
 `;
 }
@@ -659,8 +663,9 @@ where exposed, and error handling. Shared concepts do not imply API parity.
 | Open a database | builder or open configuration, storage, runtime host or mode, durability |
 | Run SQL | query, execute, parameters, row access, result typing |
 | Use raw protocol | owned buffered bytes and response ownership |
-| Manage lifecycle | close, checkpoint, and cancellation where exposed |
-| Move data | backup, restore, dump, checkpoint, or archive APIs where exposed |
+| Manage lifecycle | closed state, close, and cancellation where exposed |
+| Run maintenance SQL | issue PostgreSQL statements such as \`CHECKPOINT\` through execute when required |
+| Move data | backup, restore, dump, or archive APIs where exposed |
 | Ship extensions | exact ecosystem-native selectors, dependency files, artifact reports |
 | Handle errors | SDK errors, PostgreSQL SQLSTATE data, and runtime errors |
 

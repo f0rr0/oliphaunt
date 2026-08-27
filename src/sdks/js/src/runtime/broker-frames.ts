@@ -9,7 +9,6 @@ export type BrokerRequestFrame =
   | { kind: 'execProtocol'; bytes: Uint8Array }
   | { kind: 'execProtocolStream'; bytes: Uint8Array }
   | { kind: 'execSimpleQuery'; sql: string }
-  | { kind: 'checkpoint' }
   | { kind: 'close' }
   | { kind: 'backup' }
   | { kind: 'cancel' };
@@ -53,8 +52,6 @@ export function encodeBrokerRequest(frame: BrokerRequestFrame): Uint8Array {
       return encodeFrame(4, frame.bytes);
     case 'execSimpleQuery':
       return encodeFrame(8, encodeUtf8(frame.sql));
-    case 'checkpoint':
-      return encodeFrame(2, emptyPayload);
     case 'close':
       return encodeFrame(3, emptyPayload);
     case 'backup':
@@ -91,9 +88,6 @@ export function decodeBrokerRequest(kind: number, payload: Uint8Array): BrokerRe
         kind: 'execSimpleQuery',
         sql: decodeUtf8(payload, 'broker simple-query frame'),
       };
-    case 2:
-      assertEmptyPayload(payload);
-      return { kind: 'checkpoint' };
     case 3:
       assertEmptyPayload(payload);
       return { kind: 'close' };

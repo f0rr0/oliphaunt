@@ -14,15 +14,40 @@ filesystem, server, tool, and error APIs.
 
 ## Direct and server hosts
 
-Use `Oliphaunt` when Rust code calls the database directly. Use
-`OliphauntServer` when an existing PostgreSQL client library needs a local TCP
-or Unix endpoint. Both own one embedded WASIX backend; the listener does not
-turn it into a multi-backend postmaster.
+Use the root `Oliphaunt` when Rust code calls the database directly. It is an
+asynchronous `Clone + Send + Sync` handle: open constructs the Wasmer store and
+PostgreSQL session on an SDK-owned thread, and every clone submits work to that
+same owner through `&self`. Awaiting a database operation does not run the
+engine on the caller's executor thread.
+
+Use the root `OliphauntServer` when an existing PostgreSQL client library needs
+a local TCP or Unix endpoint. `start().await` and `close().await` keep lifecycle
+work off the caller's executor thread. The server owns its listener and one
+embedded WASIX backend; it accepts one connected client at a time and does not
+turn the runtime into a multi-backend postmaster. It is not a network view over
+an existing direct `Oliphaunt` handle and does not participate in that handle's
+work queue.
 
 The embedded proxy uses PostgreSQL trust authentication, so TCP endpoints are
 fixed to IPv4 loopback. The default assigns a port automatically; use
 `ServerListen::tcp_port` for a fixed port or `ServerListen::unix` for a
 PostgreSQL-style Unix socket directory.
+
+## Explicit blocking surface
+
+Import `oliphaunt_wasix::blocking` when the application deliberately wants the
+no-hop caller-thread contract. Its direct database handle is exclusive, its
+operations take `&mut self`, and PostgreSQL work blocks the calling thread. The
+blocking local server has synchronous start and close methods, but its listener
+thread still owns the wire backend. Server close takes `&mut self`, so callers
+can inspect `is_closed()` and repeated close calls replay the same terminal
+result. A panic from a blocking transaction callback is rolled back when
+possible and then rethrown; an unconfirmed rollback poisons the database.
+
+The async and blocking surfaces use the same PostgreSQL behavior, storage
+formats, result types, extensions, raw protocol, and data-movement formats.
+They differ in ownership and calling semantics. Do not mix their handles or
+infer that `DatabaseStorage::Memory` or `Directory` chooses a scheduler.
 
 ## Storage
 
@@ -32,9 +57,13 @@ is hydrated from the packaged cluster seed; reopening validates the descriptor a
 minimal PostgreSQL markers. Incomplete or descriptorless nonempty roots fail
 without mutation.
 
-Physical restore is the static `Oliphaunt::restore(destination, bytes)`
-operation. It accepts a new or empty destination. Tests that specifically need
-`initdb` invoke the packaged tool instead of selecting an initialization mode.
+Physical restore on the root surface is the static async
+`Oliphaunt::restore(destination, bytes).await` operation. It runs on a temporary
+SDK-owned thread and accepts a new or empty destination. Once publication work
+has started, dropping the future does not promise cancellation. The explicit
+blocking surface performs the same restore synchronously. Tests that
+specifically need `initdb` invoke the packaged tool instead of selecting an
+initialization mode.
 
 ## Startup and extensions
 
@@ -44,19 +73,49 @@ the receiving host to select the installed extension code again.
 
 ## Data movement and tools
 
-`backup()` produces the one WASIX PostgreSQL 18 physical archive. Each binding
-qualifies restore through its own storage provider; cross-binding root/archive
-transfer is not a supported workflow. Enable the Rust crate's `tools` feature
-for direct `pg_dump` and non-interactive `psql`; logical SQL is the portable
-upgrade and native/WASIX transfer path.
+`backup().await` produces the one WASIX PostgreSQL 18 physical archive. Each
+binding qualifies restore through its own storage provider; cross-binding
+root/archive transfer is not a supported workflow. Enable the Rust crate's
+`tools` feature for async `tools::pg_dump(&database, ...).await` and
+`tools::psql(&database, ...).await`. Both run as exclusive owner operations but
+do not require `&mut Oliphaunt`. Synchronous equivalents live under
+`blocking::tools`. Logical SQL is the portable upgrade and native/WASIX
+transfer path.
 
 ## Lifecycle
 
-Persistent directories have one Rust host owner while open. Close a direct
-database explicitly. Close connected clients before shutting down
-`OliphauntServer`. The raw stream callback delivers bounded chunks and the
-guest protocol pump streams COPY output. Typed COPY helpers and cancellation
-remain deferred in the shared SDK parity policy.
+Persistent directories have one Rust host owner while open. Close a root
+database explicitly with `close().await`; closing any clone closes the shared
+session. Concurrent callers await one immutable close attempt and receive its
+same success or failure. Pre-shutdown validation, such as an active callback
+transaction, leaves the database open and may be retried after its result is
+published. Once database shutdown or server stop begins, the handle is
+permanently retired: `is_closed()` is true, later work is rejected, and every
+later close replays the terminal attempt's exact success or failure. The
+blocking database follows the same phase boundary synchronously. Dropping the
+last clone initiates best-effort cleanup without waiting for the owner thread,
+so it is not a replacement for explicit close. Close connected clients before
+awaiting `OliphauntServer::close()`.
+
+Direct database operations, transaction boundaries, and close enter one owner
+queue in admission order. Ordinary work and transaction begin share a bounded
+64-entry admission budget. Lifecycle controls have reserved admission capacity,
+but remain in that same order and cannot overtake earlier work. Starting close
+establishes an atomic cutoff: work admitted earlier drains before close, while
+later ordinary work is rejected. Work dropped before owner execution is skipped
+without disturbing the order; once execution starts, PostgreSQL runs to a
+readiness boundary. Dropping an active transaction queues best-effort rollback.
+Callback transactions pin the physical session, and unpinned work is rejected
+until the transaction settles. Server clients use their own socket sessions and
+are not part of this direct-database queue.
+
+The raw stream callback delivers bounded chunks synchronously on the owner
+thread, providing backpressure while the guest protocol pump streams COPY
+output. The callback must not await reentrant work on the same database.
+Owner-thread reentrancy is rejected rather than deadlocking. WASIX query
+cancellation remains unavailable until the guest can interrupt execution and
+prove protocol recovery; typed COPY helpers remain deferred in the shared SDK
+parity policy.
 
 ## Errors
 

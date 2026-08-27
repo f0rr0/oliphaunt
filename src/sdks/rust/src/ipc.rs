@@ -11,8 +11,8 @@ pub(crate) enum RequestFrame {
     Authenticate(String),
     ExecProtocol(Vec<u8>),
     ExecProtocolStream(Vec<u8>),
+    #[cfg(any(feature = "__internal-broker-helper", test))]
     ExecSimpleQuery(String),
-    Checkpoint,
     Close,
     Backup,
     Cancel,
@@ -26,6 +26,7 @@ pub(crate) enum ResponseFrame {
 }
 
 /// Internal broker IPC request used by the packaged broker helper.
+#[cfg(any(feature = "__internal-broker-helper", test))]
 #[doc(hidden)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrokerIpcRequest {
@@ -37,8 +38,6 @@ pub enum BrokerIpcRequest {
     ExecProtocolStream(Vec<u8>),
     /// Execute SQL through PostgreSQL's simple-query protocol.
     ExecSimpleQuery(String),
-    /// Force a checkpoint.
-    Checkpoint,
     /// Create a backup artifact.
     Backup,
     /// Cancel the active backend query.
@@ -48,6 +47,7 @@ pub enum BrokerIpcRequest {
 }
 
 /// Read one broker IPC request from a stream.
+#[cfg(any(feature = "__internal-broker-helper", test))]
 #[doc(hidden)]
 pub fn broker_ipc_read_request(reader: &mut impl Read) -> Result<BrokerIpcRequest> {
     match read_request(reader)? {
@@ -55,7 +55,6 @@ pub fn broker_ipc_read_request(reader: &mut impl Read) -> Result<BrokerIpcReques
         RequestFrame::ExecProtocol(bytes) => Ok(BrokerIpcRequest::ExecProtocol(bytes)),
         RequestFrame::ExecProtocolStream(bytes) => Ok(BrokerIpcRequest::ExecProtocolStream(bytes)),
         RequestFrame::ExecSimpleQuery(sql) => Ok(BrokerIpcRequest::ExecSimpleQuery(sql)),
-        RequestFrame::Checkpoint => Ok(BrokerIpcRequest::Checkpoint),
         RequestFrame::Backup => Ok(BrokerIpcRequest::Backup),
         RequestFrame::Cancel => Ok(BrokerIpcRequest::Cancel),
         RequestFrame::Close => Ok(BrokerIpcRequest::Close),
@@ -63,18 +62,21 @@ pub fn broker_ipc_read_request(reader: &mut impl Read) -> Result<BrokerIpcReques
 }
 
 /// Write a successful broker IPC response.
+#[cfg(any(feature = "__internal-broker-helper", test))]
 #[doc(hidden)]
 pub fn broker_ipc_write_ok(writer: &mut impl Write, bytes: Vec<u8>) -> Result<()> {
     write_response(writer, ResponseFrame::Ok(bytes))
 }
 
 /// Write one successful broker IPC stream chunk.
+#[cfg(any(feature = "__internal-broker-helper", test))]
 #[doc(hidden)]
 pub fn broker_ipc_write_chunk(writer: &mut impl Write, bytes: &[u8]) -> Result<()> {
     write_response(writer, ResponseFrame::Chunk(bytes.to_vec()))
 }
 
 /// Write a failed broker IPC response.
+#[cfg(any(feature = "__internal-broker-helper", test))]
 #[doc(hidden)]
 pub fn broker_ipc_write_error(writer: &mut impl Write, message: String) -> Result<()> {
     write_response(writer, ResponseFrame::Error(message))
@@ -85,14 +87,15 @@ pub(crate) fn write_request(writer: &mut impl Write, frame: RequestFrame) -> Res
         RequestFrame::Authenticate(token) => write_frame(writer, 6, token.as_bytes()),
         RequestFrame::ExecProtocol(bytes) => write_frame(writer, 1, &bytes),
         RequestFrame::ExecProtocolStream(bytes) => write_frame(writer, 4, &bytes),
+        #[cfg(any(feature = "__internal-broker-helper", test))]
         RequestFrame::ExecSimpleQuery(sql) => write_frame(writer, 8, sql.as_bytes()),
-        RequestFrame::Checkpoint => write_frame(writer, 2, &[]),
         RequestFrame::Close => write_frame(writer, 3, &[]),
         RequestFrame::Backup => write_frame(writer, 5, &[]),
         RequestFrame::Cancel => write_frame(writer, 7, &[]),
     }
 }
 
+#[cfg(any(feature = "__internal-broker-helper", test))]
 pub(crate) fn read_request(reader: &mut impl Read) -> Result<RequestFrame> {
     let (kind, payload) = read_frame(reader)?;
     match kind {
@@ -104,7 +107,6 @@ pub(crate) fn read_request(reader: &mut impl Read) -> Result<RequestFrame> {
         8 => String::from_utf8(payload)
             .map(RequestFrame::ExecSimpleQuery)
             .map_err(|err| Error::Engine(format!("broker simple-query frame is not UTF-8: {err}"))),
-        2 => empty_payload(payload, RequestFrame::Checkpoint),
         3 => empty_payload(payload, RequestFrame::Close),
         5 => empty_payload(payload, RequestFrame::Backup),
         7 => empty_payload(payload, RequestFrame::Cancel),
@@ -114,6 +116,7 @@ pub(crate) fn read_request(reader: &mut impl Read) -> Result<RequestFrame> {
     }
 }
 
+#[cfg(any(feature = "__internal-broker-helper", test))]
 pub(crate) fn write_response(writer: &mut impl Write, frame: ResponseFrame) -> Result<()> {
     match frame {
         ResponseFrame::Ok(bytes) => write_frame(writer, 101, &bytes),
@@ -136,6 +139,7 @@ pub(crate) fn read_response(reader: &mut impl Read) -> Result<ResponseFrame> {
     }
 }
 
+#[cfg(any(feature = "__internal-broker-helper", test))]
 fn empty_payload(payload: Vec<u8>, frame: RequestFrame) -> Result<RequestFrame> {
     if payload.is_empty() {
         Ok(frame)

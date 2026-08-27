@@ -19,6 +19,26 @@ import kotlin.test.assertTrue
 
 class SharedProtocolFixtureTest {
     @Test
+    fun structuredSqlScannerMatchesSharedFixtures() {
+        val path = sharedStructuredSqlFixturePath() ?: return
+        val corpus = Json.parseToJsonElement(Files.readString(path)).jsonObject
+        assertEquals(1, corpus.requiredInt("schemaVersion"))
+        assertEquals("postgres-structured-sql-preflight", corpus.requiredString("kind"))
+
+        val names = mutableSetOf<String>()
+        corpus.requiredArray("cases").forEach { element ->
+            val fixture = element.jsonObject
+            val name = fixture.requiredString("name")
+            assertTrue(names.add(name), "duplicate shared structured SQL fixture $name")
+            assertEquals(
+                fixture.requiredBoolean("containsTopLevelCopy"),
+                containsTopLevelCopy(fixture.requiredString("sql")),
+                name,
+            )
+        }
+    }
+
+    @Test
     fun queryParserMatchesSharedProtocolFixtures() {
         val path = sharedProtocolFixturePath() ?: return
         val corpus = Json.parseToJsonElement(Files.readString(path)).jsonObject
@@ -63,7 +83,7 @@ class SharedProtocolFixtureTest {
         expected: SharedProtocolOkExpectation,
         bytes: ByteArray,
     ) {
-        val result = parseQueryResponse(bytes)
+        val result = parseQueryResponse(bytes, ExpectedProtocol.Either)
         assertEquals(expected.rowCount, result.rowCount, "${fixture.name} row count")
         assertEquals(expected.commandTag, result.commandTag, "${fixture.name} command tag")
         assertEquals(expected.fields.size, result.fields.size, "${fixture.name} field count")
@@ -72,7 +92,7 @@ class SharedProtocolFixtureTest {
         expected.fields.forEachIndexed { index, expectedField ->
             val actual = result.fields[index]
             assertEquals(expectedField.name, actual.name, "${fixture.name} field name")
-            assertEquals(expectedField.typeOid, actual.typeOid, "${fixture.name} type OID")
+            assertEquals(expectedField.typeOid, actual.typeOid.value, "${fixture.name} type OID")
             if (expectedField.format == "text") {
                 assertEquals(QueryFormat.Text, actual.format, "${fixture.name} field format")
             }
@@ -98,7 +118,7 @@ class SharedProtocolFixtureTest {
     ) {
         val error =
             assertFailsWith<PostgresException>("${fixture.name} should fail") {
-                parseQueryResponse(bytes)
+                parseQueryResponse(bytes, ExpectedProtocol.Either)
             }.postgresError
         assertEquals(expected.severity, error.severity, "${fixture.name} severity")
         assertEquals(expected.sqlstate, error.sqlstate, "${fixture.name} SQLSTATE")
@@ -112,7 +132,7 @@ class SharedProtocolFixtureTest {
     ) {
         val error =
             assertFailsWith<OliphauntException>("${fixture.name} should fail") {
-                parseQueryResponse(bytes)
+                parseQueryResponse(bytes, ExpectedProtocol.Either)
             }
         assertTrue(
             error.message.orEmpty().contains(expected),
@@ -132,6 +152,21 @@ private fun sharedProtocolFixturePath(): Path? {
             .of("")
             .toAbsolutePath()
             .resolve("../../shared/fixtures/protocol/query-response-cases.json")
+            .normalize()
+    return listOfNotNull(configured, cwdCandidate).firstOrNull(Files::isRegularFile)
+}
+
+private fun sharedStructuredSqlFixturePath(): Path? {
+    val configured =
+        System
+            .getProperty("oliphaunt.sharedFixturesDir")
+            ?.takeIf(String::isNotBlank)
+            ?.let { Path.of(it, "protocol", "structured-sql-cases.json") }
+    val cwdCandidate =
+        Path
+            .of("")
+            .toAbsolutePath()
+            .resolve("../../shared/fixtures/protocol/structured-sql-cases.json")
             .normalize()
     return listOfNotNull(configured, cwdCandidate).firstOrNull(Files::isRegularFile)
 }
@@ -180,6 +215,9 @@ private fun parsePostgresErrorExpectation(obj: JsonObject): SharedProtocolPostgr
 private fun JsonObject.requiredArray(name: String): JsonArray = this[name]?.jsonArray ?: error("missing shared protocol fixture array $name")
 
 private fun JsonObject.requiredInt(name: String): Int = this[name]?.jsonPrimitive?.int ?: error("missing shared protocol fixture integer $name")
+
+private fun JsonObject.requiredBoolean(name: String): Boolean = this[name]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
+    ?: error("missing shared protocol fixture boolean $name")
 
 private fun JsonObject.requiredLong(name: String): Long = this[name]?.jsonPrimitive?.long ?: error("missing shared protocol fixture integer $name")
 

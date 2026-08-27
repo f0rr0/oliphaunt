@@ -55,7 +55,7 @@ oliphaunt-wasix = { version = "0.1", features = ["extension-pgtap"] }
 ```rust
 use oliphaunt_wasix::{extensions::PGTAP, Oliphaunt};
 
-let database = Oliphaunt::builder().extension(PGTAP).open()?;
+let database = Oliphaunt::builder().extension(PGTAP).open().await?;
 ```
 
 ## Browser WASIX selection

@@ -6,15 +6,15 @@ import {
 } from './generated/extensions.js';
 import type { OpenConfig, ServerListen, ServerOpenConfig } from './types.js';
 
-type Execution = 'direct' | 'broker' | 'server';
+type RuntimeTopology = 'direct' | 'broker' | 'server';
 
-type AnyOpenConfig = OpenConfig | (ServerOpenConfig & { execution: 'server' });
+type AnyOpenConfig = OpenConfig | (ServerOpenConfig & { topology: 'server' });
 
 export const DEFAULT_USERNAME = 'postgres';
 export const DEFAULT_DATABASE = 'postgres';
 
 export type NormalizedOpenConfig = {
-  execution: Execution;
+  topology: RuntimeTopology;
   instanceDirectory: string;
   pgdata: string;
   temporaryDirectory: boolean;
@@ -60,11 +60,11 @@ export function normalizeOpenConfig(
     'serverExecutable' in config ? config.serverExecutable : undefined,
     'serverExecutable',
   );
-  const execution = config.execution ?? 'direct';
+  const topology = config.topology ?? 'direct';
   const serverListen = 'listen' in config ? validateServerListen(config.listen) : undefined;
 
   return {
-    execution,
+    topology,
     instanceDirectory: resolvedStorage.instanceDirectory,
     pgdata: join(resolvedStorage.instanceDirectory, 'pgdata'),
     temporaryDirectory: resolvedStorage.temporaryDirectory,

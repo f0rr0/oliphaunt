@@ -3,7 +3,7 @@ name = "oliphaunt-wasix"
 version = "0.1.1"
 edition = "2024"
 rust-version = "1.93"
-description = "Embedded Postgres for Rust tests and local apps. No Docker, works with SQLx and any Postgres client."
+description = "Embedded PostgreSQL 18 for Rust with async owner-backed and explicit blocking APIs."
 readme = "README.md"
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"
@@ -100,7 +100,7 @@ filetime = "0.2"
 liboliphaunt-wasix-portable = { version = "=0.1.1", path = "../../../../runtimes/liboliphaunt/wasix/crates/assets" }
 oliphaunt-wasix-tools = { version = "=0.1.1", path = "../../../../runtimes/liboliphaunt/wasix/crates/tools", optional = true }
 oliphaunt-icu = { version = "=0.1.1", path = "../../../../runtimes/liboliphaunt/icu", optional = true }
-tokio = { version = "1", features = ["io-util", "rt-multi-thread"] }
+tokio = { version = "1", features = ["io-util", "rt-multi-thread", "sync"] }
 wasmer = { version = "=7.2.1", default-features = false, features = [
   "sys",
   "headless",

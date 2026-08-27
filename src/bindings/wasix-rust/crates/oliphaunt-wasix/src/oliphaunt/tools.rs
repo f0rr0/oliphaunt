@@ -628,12 +628,18 @@ fn decode_tool_output(tool: &'static str, output: ToolOutput) -> Result<String> 
 }
 
 /// Run bundled `pg_dump` directly against an open WASIX database.
-pub fn pg_dump(database: &mut crate::Oliphaunt, options: PgDumpOptions) -> crate::Result<String> {
+pub fn pg_dump(
+    database: &mut crate::oliphaunt::client::Oliphaunt,
+    options: PgDumpOptions,
+) -> crate::Result<String> {
     crate::error::public_result(database.run_pg_dump_tool(options))
 }
 
 /// Run bundled non-interactive `psql` directly against an open WASIX database.
-pub fn psql(database: &mut crate::Oliphaunt, options: PsqlOptions) -> crate::Result<String> {
+pub fn psql(
+    database: &mut crate::oliphaunt::client::Oliphaunt,
+    options: PsqlOptions,
+) -> crate::Result<String> {
     crate::error::public_result(database.run_psql_tool(options))
 }
 
@@ -1253,7 +1259,7 @@ mod tests {
             ))
             .expect("logical tool contract must be valid JSON");
 
-        let mut source = crate::Oliphaunt::builder()
+        let mut source = crate::oliphaunt::client::Oliphaunt::builder()
             .extension(crate::extensions::PGTAP)
             .open()?;
         psql(&mut source, PsqlOptions::new().script(seed))?;
@@ -1264,7 +1270,7 @@ mod tests {
         assert!(dump.contains("COPY public.logical_items"));
         source.close()?;
 
-        let mut restored = crate::Oliphaunt::builder()
+        let mut restored = crate::oliphaunt::client::Oliphaunt::builder()
             .extension(crate::extensions::PGTAP)
             .open()?;
         psql(&mut restored, PsqlOptions::new().script(dump))?;

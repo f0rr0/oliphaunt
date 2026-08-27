@@ -14,7 +14,7 @@ int32_t oliphaunt_swift_exec_protocol(
     const uint8_t *request,
     size_t request_len,
     OliphauntResponse *out);
-int32_t oliphaunt_swift_exec_protocol_stream(
+int32_t oliphaunt_swift_exec_protocol_raw_stream(
     OliphauntSession *session,
     const uint8_t *request,
     size_t request_len,
@@ -24,7 +24,10 @@ int32_t oliphaunt_swift_backup(OliphauntSession *session, OliphauntResponse *out
 int32_t oliphaunt_swift_restore(const char *library_path, const OliphauntRestoreOptions *options);
 int32_t oliphaunt_swift_cancel(OliphauntSession *session);
 int32_t oliphaunt_swift_close(OliphauntSession *session);
-const char *oliphaunt_swift_last_error(OliphauntSession *session);
+size_t oliphaunt_swift_copy_last_error(
+    OliphauntSession *session,
+    char *out,
+    size_t capacity);
 const char *oliphaunt_swift_version(OliphauntSession *session);
 void oliphaunt_swift_free_response(OliphauntSession *session, OliphauntResponse *response);
 

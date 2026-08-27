@@ -32,6 +32,18 @@ export const WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES = Object.freeze([
   'lib/asset-source.js',
   'lib/byte-channel.d.ts',
   'lib/byte-channel.js',
+  'lib/blocking.bun.d.ts',
+  'lib/blocking.bun.js',
+  'lib/blocking-client.d.ts',
+  'lib/blocking-client.js',
+  'lib/blocking.deno.d.ts',
+  'lib/blocking.deno.js',
+  'lib/blocking.d.ts',
+  'lib/blocking.js',
+  'lib/blocking.node.d.ts',
+  'lib/blocking.node.js',
+  'lib/blocking-node-client.d.ts',
+  'lib/blocking-node-client.js',
   'lib/client-common.d.ts',
   'lib/client-common.js',
   'lib/client.d.ts',
@@ -76,10 +88,14 @@ export const WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES = Object.freeze([
   'lib/internal.node.js',
   'lib/node-client.d.ts',
   'lib/node-client.js',
+  'lib/node-client-common.d.ts',
+  'lib/node-client-common.js',
   'lib/node-direct.d.ts',
   'lib/node-direct.js',
   'lib/node-directory-lock.d.ts',
   'lib/node-directory-lock.js',
+  'lib/node-environment.d.ts',
+  'lib/node-environment.js',
   'lib/node-fs-commit-state.d.ts',
   'lib/node-fs-commit-state.js',
   'lib/node-host.d.ts',
@@ -98,8 +114,6 @@ export const WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES = Object.freeze([
   'lib/node-worker.js',
   'lib/node-zstd.d.ts',
   'lib/node-zstd.js',
-  'lib/open-options.d.ts',
-  'lib/open-options.js',
   'lib/pgwire.d.ts',
   'lib/pgwire.js',
   'lib/pgwire-connection.d.ts',
@@ -222,10 +236,9 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
   const root = manifest.exports?.['.'];
   const expectedExports = [
     '.',
+    './blocking',
     './package.json',
     './internal/tools',
-    './protocol',
-    './query',
     './server/bun',
     './server/deno',
     './server/node',
@@ -250,15 +263,18 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
   ) {
     fail(`${label} must expose exact browser, Node, Bun, and Deno conditional entrypoints`);
   }
-  for (const name of ['protocol', 'query']) {
-    const entry = manifest.exports?.[`./${name}`];
-    if (
-      JSON.stringify(Object.keys(entry ?? {})) !== JSON.stringify(['types', 'default'])
-      || entry?.types !== `./lib/${name}.d.ts`
-      || entry?.default !== `./lib/${name}.js`
-    ) {
-      fail(`${label} must expose the exact ${name} entrypoint`);
-    }
+  const blocking = manifest.exports?.['./blocking'];
+  if (
+    JSON.stringify(Object.keys(blocking ?? {}))
+      !== JSON.stringify(['types', 'deno', 'bun', 'node', 'browser', 'default'])
+    || blocking?.types !== './lib/blocking.d.ts'
+    || blocking?.deno !== './lib/blocking.deno.js'
+    || blocking?.bun !== './lib/blocking.bun.js'
+    || blocking?.node !== './lib/blocking.node.js'
+    || blocking?.browser !== './lib/blocking.js'
+    || blocking?.default !== './lib/blocking.js'
+  ) {
+    fail(`${label} must expose the exact browser, Node, Bun, and Deno blocking entrypoint`);
   }
   const internalTools = manifest.exports?.['./internal/tools'];
   if (

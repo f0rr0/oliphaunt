@@ -1,7 +1,7 @@
 #![cfg(feature = "extensions")]
 
 use anyhow::{Context, Result, bail, ensure};
-use oliphaunt_wasix::{OliphauntServer, ServerListen};
+use oliphaunt_wasix::{ServerListen, blocking::OliphauntServer};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 #[cfg(unix)]
@@ -18,7 +18,8 @@ const PROTOCOL_3: i32 = 196_608;
 
 #[test]
 fn tcp_proxy_handles_psql_style_and_fragmented_connections() -> Result<()> {
-    let server = OliphauntServer::builder().start()?;
+    let mut server = OliphauntServer::builder().start()?;
+    assert!(!server.is_closed());
     let addr = server.tcp_addr().context("TCP server address")?;
 
     let first = query_proxy(addr, false, "SELECT 1 AS one")?;
@@ -31,12 +32,14 @@ fn tcp_proxy_handles_psql_style_and_fragmented_connections() -> Result<()> {
     assert_eq!(fragmented, vec!["3"]);
 
     server.close()?;
+    assert!(server.is_closed());
+    server.close()?;
     Ok(())
 }
 
 #[test]
 fn tcp_proxy_survives_a_malformed_client() -> Result<()> {
-    let server = OliphauntServer::builder().start()?;
+    let mut server = OliphauntServer::builder().start()?;
     let addr = server.tcp_addr().context("TCP server address")?;
 
     let mut malformed = TcpStream::connect(addr)?;
@@ -65,7 +68,7 @@ fn tcp_proxy_survives_a_malformed_client() -> Result<()> {
 
 #[test]
 fn tcp_proxy_contains_each_startup_and_control_failure() -> Result<()> {
-    let server = OliphauntServer::builder().start()?;
+    let mut server = OliphauntServer::builder().start()?;
     let addr = server.tcp_addr().context("TCP server address")?;
 
     malformed_then_recover(addr, "malformed startup", |stream| {
@@ -111,7 +114,7 @@ fn tcp_proxy_contains_each_startup_and_control_failure() -> Result<()> {
 
 #[test]
 fn tcp_proxy_accepts_a_fragmented_message_larger_than_64_kib() -> Result<()> {
-    let server = OliphauntServer::builder().start()?;
+    let mut server = OliphauntServer::builder().start()?;
     let addr = server.tcp_addr().context("TCP server address")?;
     let mut stream = TcpStream::connect(addr)?;
     stream.set_read_timeout(Some(Duration::from_secs(30)))?;
@@ -128,7 +131,7 @@ fn tcp_proxy_accepts_a_fragmented_message_larger_than_64_kib() -> Result<()> {
 
 #[test]
 fn tcp_server_close_interrupts_an_active_client() -> Result<()> {
-    let server = OliphauntServer::builder().start()?;
+    let mut server = OliphauntServer::builder().start()?;
     let addr = server.tcp_addr().context("TCP server address")?;
     let mut client = TcpStream::connect(addr)?;
     client.set_read_timeout(Some(Duration::from_secs(30)))?;
@@ -150,7 +153,7 @@ fn tcp_server_close_interrupts_an_active_client() -> Result<()> {
 fn unix_proxy_survives_a_malformed_client() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let socket = directory.path().join(".s.PGSQL.5432");
-    let server = OliphauntServer::builder()
+    let mut server = OliphauntServer::builder()
         .listen(ServerListen::unix(directory.path()))
         .start()?;
 

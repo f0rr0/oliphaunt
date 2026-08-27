@@ -16,6 +16,11 @@ const readmes = [
     languages: new Set(['rust']),
   },
   {
+    sdk: 'wasix-rust',
+    path: 'src/bindings/wasix-rust/crates/oliphaunt-wasix/README.md',
+    languages: new Set(['rust']),
+  },
+  {
     sdk: 'swift',
     path: 'src/sdks/swift/README.md',
     languages: new Set(['swift']),
@@ -40,6 +45,8 @@ const readmes = [
 const coverageRoots = [
   'src/sdks/js/src/__tests__',
   'src/sdks/rust/tests',
+  'src/bindings/wasix-rust/crates/oliphaunt-wasix/tests',
+  'src/runtimes/liboliphaunt/native/crates/tools/src',
   'src/sdks/swift/Tests',
   'src/sdks/kotlin/oliphaunt/src',
   'src/sdks/react-native/src/__tests__',
@@ -74,7 +81,7 @@ function collectReadmeExamples(spec) {
 
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
-    const fence = line.match(/^```([A-Za-z0-9_-]*)\s*$/);
+    const fence = line.match(/^```([A-Za-z0-9_-]*)(?:,[A-Za-z0-9_-]+)*\s*$/);
     if (!fence) {
       continue;
     }

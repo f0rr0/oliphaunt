@@ -319,7 +319,7 @@ Implemented:
   this is a same-runtime/same-version physical import/export path, not a
   cross-version backup protocol;
 - `Oliphaunt::exec_protocol_raw`;
-- `Oliphaunt::exec_protocol_stream`;
+- `Oliphaunt::exec_protocol_raw_stream`;
 - `tools::pg_dump`;
 - `tools::psql`;
 - `tools::PgDumpOptions`;
@@ -1733,14 +1733,14 @@ PostgreSQL artifact lane exists:
 React Native no longer advertises streaming based on the raw owned-response
 transport alone:
 
-- the TypeScript transport reports `protocolStream=true` only when the installed
-  versioned JSI transport exposes `execProtocolStream`;
-- iOS installs an `execProtocolStream` host function that delegates to
-  `OliphauntCore.execProtocolStream` and calls the JS chunk callback for each
+- the TypeScript database exposes `execProtocolRawStream` only when the
+  installed versioned JSI transport reports callback-stream capability;
+- iOS delegates that raw-stream host operation to
+  `OliphauntCore.execProtocolRawStream` and calls the JS chunk callback for each
   native chunk;
-- Android installs the same host function through JNI, delegates to
-  `OliphauntDatabase.execProtocolStream`, and keeps stream completion separate from
-  chunk emission;
+- Android installs the equivalent host operation through JNI, delegates to
+  `OliphauntDatabase.execProtocolRawStream`, and keeps stream completion
+  separate from chunk emission;
 - package tests cover native chunk use, malformed chunks, and JS chunk callback
   failures, while Android boundary tests keep the Kotlin and C++ JSI stream
   hooks present.

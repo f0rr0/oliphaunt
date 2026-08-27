@@ -26,7 +26,7 @@ import Oliphaunt from '@oliphaunt/wasix-ts';
 
 await using database = await Oliphaunt.open();
 const result = await database.query('select $1::int + 1 as answer', [41]);
-console.log(result.getText(0, 'answer'));
+console.log(result.rows[0]?.answer);
 ```
 
 Omitted storage creates a fresh in-memory database. Browser pages must be
@@ -34,16 +34,18 @@ cross-origin isolated with COOP `same-origin` and COEP `require-corp`.
 
 ## Runtime Shape
 
-Worker execution is the default. `execution: 'direct'` runs the same database
-API in the caller's JavaScript realm and blocks that realm while PostgreSQL is
-working. This is host placement, not a second database engine or compatibility
-mode.
+The root entry point always owns a Worker or worker thread. It is the default,
+main-safe API. The explicit `@oliphaunt/wasix-ts/blocking` entry point runs the
+same database contract in the importing JavaScript realm and blocks that realm
+during synchronous PostgreSQL work. It retains promises for asset loading and
+persistent publication; those promises do not move guest CPU work elsewhere.
+There is no `execution` option or silent calling-contract fallback.
 
 The core package provides queries, commands, callback transactions, buffered
-and callback-streamed raw PostgreSQL protocol bytes, checkpoint, one physical
-backup, restore into persistent storage, and close. Optional
-`@oliphaunt/wasix-tools` adds `pgDump` in direct or worker placement and
-non-interactive `psql` in worker placement on every host. Explicit server
+and callback-streamed raw PostgreSQL protocol bytes, one physical backup,
+restore into persistent storage, and close. Optional
+`@oliphaunt/wasix-tools` adds `pgDump` for default Worker or blocking handles
+and non-interactive `psql` for default Worker handles on every host. Explicit server
 subpaths add a local endpoint on Node, Bun, and Deno. Cancellation and a
 dedicated typed COPY API remain absent.
 
@@ -52,11 +54,12 @@ dedicated typed COPY API remain absent.
 - Import only the persistent-storage adapter and exact WASIX extension packages
   the application uses.
 - Keep the same extension selection when reopening a persistent database.
-- Call `close()` or use `await using`; call `checkpoint()` when the application
-  needs an explicit PostgreSQL checkpoint and publication boundary.
+- Call `close()` or use `await using`. If an operational workflow explicitly
+  requires PostgreSQL `CHECKPOINT`, issue it through `execute('CHECKPOINT')`.
 - Treat physical archives as same-format recovery artifacts. Use logical SQL
   dumps for version upgrades or transfers outside the WASIX physical format.
-- Use direct or worker placement for `pgDump`; use worker placement for `psql`.
+- Use a default Worker or blocking handle for `pgDump`; use a default Worker
+  handle for `psql`.
   Use the lightweight local endpoint for one compatibility client, or the
   separate postmaster product for concurrency.
 

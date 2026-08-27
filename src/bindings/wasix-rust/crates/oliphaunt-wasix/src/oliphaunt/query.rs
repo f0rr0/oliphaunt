@@ -1,229 +1,26 @@
-use std::{fmt, str};
+use std::str;
+#[cfg(test)]
+use std::sync::Arc;
 
-use anyhow::{Context, Result, anyhow, bail, ensure};
+use anyhow::{Result, anyhow};
 
-/// Structured PostgreSQL `ErrorResponse` decoded from backend protocol bytes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PostgresError {
-    /// Backend severity, such as `ERROR` or `FATAL`.
-    pub severity: Option<String>,
-    /// SQLSTATE code, such as `23505` for unique violations.
-    pub sqlstate: Option<String>,
-    /// Primary human-readable PostgreSQL error message.
-    pub message: String,
-    /// Optional detailed explanation from PostgreSQL.
-    pub detail: Option<String>,
-    /// Optional hint from PostgreSQL.
-    pub hint: Option<String>,
-    /// Optional source statement position.
-    pub position: Option<String>,
-    /// Optional context stack, exposed as `where` by PostgreSQL.
-    pub where_: Option<String>,
-    /// Optional schema name reported by PostgreSQL.
-    pub schema_name: Option<String>,
-    /// Optional table name reported by PostgreSQL.
-    pub table_name: Option<String>,
-    /// Optional column name reported by PostgreSQL.
-    pub column_name: Option<String>,
-    /// Optional data type name reported by PostgreSQL.
-    pub data_type_name: Option<String>,
-    /// Optional constraint name reported by PostgreSQL.
-    pub constraint_name: Option<String>,
-    /// Raw ErrorResponse fields in backend order.
-    pub fields: Vec<PostgresErrorField>,
-}
+#[cfg(test)]
+use anyhow::{Context, ensure};
 
-impl PostgresError {
-    fn from_fields(fields: Vec<PostgresErrorField>) -> Self {
-        Self {
-            severity: error_field_value(&fields, b'V').or_else(|| error_field_value(&fields, b'S')),
-            sqlstate: error_field_value(&fields, b'C'),
-            message: error_field_value(&fields, b'M')
-                .unwrap_or_else(|| "PostgreSQL ErrorResponse".to_owned()),
-            detail: error_field_value(&fields, b'D'),
-            hint: error_field_value(&fields, b'H'),
-            position: error_field_value(&fields, b'P'),
-            where_: error_field_value(&fields, b'W'),
-            schema_name: error_field_value(&fields, b's'),
-            table_name: error_field_value(&fields, b't'),
-            column_name: error_field_value(&fields, b'c'),
-            data_type_name: error_field_value(&fields, b'd'),
-            constraint_name: error_field_value(&fields, b'n'),
-            fields,
-        }
-    }
-}
+use crate::oliphaunt::query_core;
 
-impl fmt::Display for PostgresError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match (&self.severity, &self.sqlstate) {
-            (Some(severity), Some(sqlstate)) => {
-                write!(f, "{severity} [{sqlstate}]: {}", self.message)
-            }
-            (Some(severity), None) => write!(f, "{severity}: {}", self.message),
-            (None, Some(sqlstate)) => write!(f, "[{sqlstate}]: {}", self.message),
-            (None, None) => f.write_str(&self.message),
-        }
-    }
-}
-
-impl std::error::Error for PostgresError {}
-
-/// One raw field from a PostgreSQL `ErrorResponse`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PostgresErrorField {
-    /// Single-byte PostgreSQL field code.
-    pub code: u8,
-    /// Field value decoded as UTF-8.
-    pub value: String,
-}
-
-fn error_field_value(fields: &[PostgresErrorField], code: u8) -> Option<String> {
-    fields
-        .iter()
-        .find(|field| field.code == code)
-        .map(|field| field.value.clone())
-}
+pub(crate) use crate::oliphaunt::query_core::ReadyStatus;
+pub use crate::oliphaunt::query_core::{
+    CommandResult, DecodeError, ExecResult, FromSql, IntoParameter, Parameter, PostgresError,
+    PostgresErrorField, PostgresNotice, QueryField, QueryFormat, QueryParam, QueryResult, QueryRow,
+    RowIndex, StatementDescription, StatementResult, TypeOid, ValueFormat, ValueRef,
+};
 
 pub(crate) fn simple_query(sql: &str) -> Result<Vec<u8>> {
-    ensure!(
-        !sql.as_bytes().contains(&0),
-        "simple query SQL must not contain NUL bytes"
-    );
-    let length = i32::try_from(
-        sql.len()
-            .checked_add(5)
-            .context("protocol message length overflow")?,
-    )
-    .map_err(|_| anyhow!("protocol message too large"))?;
-    let mut message = Vec::with_capacity(length as usize + 1);
-    message.push(b'Q');
-    message.extend_from_slice(&length.to_be_bytes());
-    message.extend_from_slice(sql.as_bytes());
-    message.push(0);
-    Ok(message)
-}
-
-/// Parameter value for PostgreSQL extended-query execution.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum QueryParam {
-    Null,
-    Text(String),
-    Binary(Vec<u8>),
-}
-
-impl QueryParam {
-    pub fn text(value: impl Into<String>) -> Self {
-        Self::Text(value.into())
-    }
-
-    pub fn binary(value: impl Into<Vec<u8>>) -> Self {
-        Self::Binary(value.into())
-    }
-}
-
-impl From<&str> for QueryParam {
-    fn from(value: &str) -> Self {
-        Self::Text(value.to_owned())
-    }
-}
-
-impl From<String> for QueryParam {
-    fn from(value: String) -> Self {
-        Self::Text(value)
-    }
-}
-
-impl From<&String> for QueryParam {
-    fn from(value: &String) -> Self {
-        Self::Text(value.clone())
-    }
-}
-
-macro_rules! text_param {
-    ($($type:ty),* $(,)?) => {$(
-        impl From<$type> for QueryParam {
-            fn from(value: $type) -> Self {
-                Self::Text(value.to_string())
-            }
-        }
-    )*};
-}
-
-text_param!(i16, i32, i64, f32, f64);
-
-impl From<bool> for QueryParam {
-    fn from(value: bool) -> Self {
-        Self::Text(if value { "true" } else { "false" }.to_owned())
-    }
-}
-
-impl From<&[u8]> for QueryParam {
-    fn from(value: &[u8]) -> Self {
-        Self::Binary(value.to_vec())
-    }
-}
-
-impl From<Vec<u8>> for QueryParam {
-    fn from(value: Vec<u8>) -> Self {
-        Self::Binary(value)
-    }
-}
-
-impl<T> From<Option<T>> for QueryParam
-where
-    T: Into<QueryParam>,
-{
-    fn from(value: Option<T>) -> Self {
-        value.map(Into::into).unwrap_or(Self::Null)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommandResult {
-    command_tag: Option<String>,
-    row_count: Option<u64>,
-}
-
-impl CommandResult {
-    pub fn command_tag(&self) -> Option<&str> {
-        self.command_tag.as_deref()
-    }
-
-    pub fn row_count(&self) -> Option<u64> {
-        self.row_count
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QueryResult {
-    fields: Vec<QueryField>,
-    rows: Vec<QueryRow>,
-    command_tag: Option<String>,
-    row_count: Option<u64>,
+    query_core_result(query_core::simple_query(sql))
 }
 
 impl QueryResult {
-    pub fn fields(&self) -> &[QueryField] {
-        &self.fields
-    }
-
-    pub fn rows(&self) -> &[QueryRow] {
-        &self.rows
-    }
-
-    pub fn command_tag(&self) -> Option<&str> {
-        self.command_tag.as_deref()
-    }
-
-    pub fn row_count(&self) -> Option<u64> {
-        self.row_count
-    }
-
-    pub fn field_index(&self, name: &str) -> Option<usize> {
-        self.fields.iter().position(|field| field.name == name)
-    }
-
     pub fn get_text(&self, row: usize, column: &str) -> crate::Result<Option<&str>> {
         crate::error::public_result(self.get_text_inner(row, column))
     }
@@ -233,59 +30,20 @@ impl QueryResult {
             .field_index(column)
             .ok_or_else(|| anyhow!("query result has no column named {column:?}"))?;
         let row = self
-            .rows
-            .get(row)
+            .row(row)
             .ok_or_else(|| anyhow!("query result has no row at index {row}"))?;
         row.text_inner(column)
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QueryField {
-    pub name: String,
-    pub table_oid: u32,
-    pub table_attribute: i16,
-    pub type_oid: u32,
-    pub type_size: i16,
-    pub type_modifier: i32,
-    pub format: QueryFormat,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QueryFormat {
-    Text,
-    Binary,
-    Other(i16),
-}
-
-impl From<i16> for QueryFormat {
-    fn from(value: i16) -> Self {
-        match value {
-            0 => Self::Text,
-            1 => Self::Binary,
-            other => Self::Other(other),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QueryRow {
-    values: Vec<Option<Vec<u8>>>,
-}
-
 impl QueryRow {
-    pub fn values(&self) -> &[Option<Vec<u8>>] {
-        &self.values
-    }
-
     pub fn text(&self, column: usize) -> crate::Result<Option<&str>> {
         crate::error::public_result(self.text_inner(column))
     }
 
     pub(crate) fn text_inner(&self, column: usize) -> Result<Option<&str>> {
         let value = self
-            .values
-            .get(column)
+            .value(column)
             .ok_or_else(|| anyhow!("query row has no column at index {column}"))?;
         value
             .as_deref()
@@ -293,350 +51,143 @@ impl QueryRow {
             .transpose()
     }
 }
+fn query_core_result<T>(result: query_core::Result<T>) -> Result<T> {
+    result.map_err(query_core_error)
+}
 
-pub fn parse_command_response(bytes: &[u8]) -> Result<CommandResult> {
-    let mut input = bytes;
-    let mut command_tag = None;
-    let mut saw_ready = false;
-    while !input.is_empty() {
-        let (tag, body, rest) = read_backend_message(input)?;
-        input = rest;
-        match tag {
-            b'E' => return Err(parse_postgres_error(body)?.into()),
-            b'C' => command_tag = Some(parse_command_complete(body)?),
-            b'Z' => {
-                validate_ready_for_query(body)?;
-                saw_ready = true;
-                ensure!(
-                    input.is_empty(),
-                    "backend returned bytes after ReadyForQuery"
-                );
-            }
-            b'1' => require_empty(body, "ParseComplete")?,
-            b'2' => require_empty(body, "BindComplete")?,
-            b'3' => require_empty(body, "CloseComplete")?,
-            b'I' => require_empty(body, "EmptyQueryResponse")?,
-            b'n' => require_empty(body, "NoData")?,
-            b'S' => validate_parameter_status(body)?,
-            b'N' => validate_field_response(body, "NoticeResponse")?,
-            b'A' => validate_notification_response(body)?,
-            b'T' | b'D' => bail!("execute() received rows; use query() for row results"),
-            b'G' | b'H' | b'W' | b'd' | b'c' => {
-                bail!(
-                    "execute() does not support COPY protocol responses; use exec_protocol_raw for COPY traffic"
-                )
-            }
-            _ => bail!("execute() received unexpected backend message tag 0x{tag:02x}"),
+fn query_core_error(error: query_core::Error) -> anyhow::Error {
+    match error {
+        query_core::Error::Protocol(message) => anyhow!(message),
+        query_core::Error::Postgres {
+            diagnostic,
+            notices,
+        } => {
+            let mut error = PostgresError::from_core(*diagnostic);
+            error.notices = notices.into_iter().map(PostgresNotice::from_core).collect();
+            anyhow::Error::new(error)
         }
     }
-    ensure!(saw_ready, "query response ended before ReadyForQuery");
-    let row_count = command_tag.as_deref().and_then(command_tag_row_count);
-    Ok(CommandResult {
-        command_tag,
-        row_count,
-    })
 }
 
-pub fn parse_query_response(bytes: &[u8]) -> Result<QueryResult> {
-    let mut input = bytes;
-    let mut fields: Option<Vec<QueryField>> = None;
-    let mut rows = Vec::new();
-    let mut command_tag = None;
-    let mut saw_ready = false;
-    while !input.is_empty() {
-        let (tag, body, rest) = read_backend_message(input)?;
-        input = rest;
-        match tag {
-            b'T' => {
-                ensure!(
-                    fields.is_none(),
-                    "query() received multiple result sets; use exec_protocol_raw"
-                );
-                fields = Some(parse_row_description(body)?);
-            }
-            b'D' => {
-                let count = fields
-                    .as_ref()
-                    .context("DataRow arrived before RowDescription")?
-                    .len();
-                rows.push(parse_data_row(body, count)?);
-            }
-            b'C' => command_tag = Some(parse_command_complete(body)?),
-            b'E' => return Err(parse_postgres_error(body)?.into()),
-            b'Z' => {
-                validate_ready_for_query(body)?;
-                saw_ready = true;
-                ensure!(
-                    input.is_empty(),
-                    "backend returned bytes after ReadyForQuery"
-                );
-            }
-            b'1' => require_empty(body, "ParseComplete")?,
-            b'2' => require_empty(body, "BindComplete")?,
-            b'3' => require_empty(body, "CloseComplete")?,
-            b'I' => require_empty(body, "EmptyQueryResponse")?,
-            b'n' => require_empty(body, "NoData")?,
-            b'S' => validate_parameter_status(body)?,
-            b'N' => validate_field_response(body, "NoticeResponse")?,
-            b'A' => validate_notification_response(body)?,
-            b'G' | b'H' | b'W' | b'd' | b'c' => {
-                bail!(
-                    "query() does not support COPY protocol responses; use exec_protocol_raw for COPY traffic"
-                )
-            }
-            _ => bail!("query() received unexpected backend message tag 0x{tag:02x}"),
-        }
-    }
-    ensure!(saw_ready, "query response ended before ReadyForQuery");
-    let row_count = command_tag.as_deref().and_then(command_tag_row_count);
-    Ok(QueryResult {
-        fields: fields.unwrap_or_default(),
-        rows,
-        command_tag,
-        row_count,
-    })
+#[cfg(test)]
+pub(crate) fn parse_command_response(bytes: &[u8]) -> Result<CommandResult> {
+    query_core_result(query_core::parse_command_response(
+        bytes,
+        query_core::ExpectedProtocol::Either,
+    ))
 }
 
-pub(crate) fn extended_query(sql: &str, params: &[QueryParam]) -> Result<Vec<u8>> {
-    ensure!(
-        !sql.as_bytes().contains(&0),
-        "extended query SQL must not contain NUL bytes"
-    );
-    ensure!(
-        params.len() <= i16::MAX as usize,
-        "extended query supports at most {} parameters",
-        i16::MAX
-    );
-    let mut packet = Vec::new();
-    push_parse(&mut packet, sql)?;
-    push_bind(&mut packet, params)?;
-    push_describe_portal(&mut packet)?;
-    push_execute(&mut packet)?;
-    push_frontend_message(&mut packet, b'S', &[])?;
-    Ok(packet)
+pub(crate) fn parse_extended_command_response(bytes: &[u8]) -> Result<CommandResult> {
+    query_core_result(query_core::parse_command_response(
+        bytes,
+        query_core::ExpectedProtocol::Extended,
+    ))
 }
 
-fn command_tag_row_count(tag: &str) -> Option<u64> {
-    let mut parts = tag.split_ascii_whitespace();
-    let command = parts.next()?;
-    if !matches!(
-        command,
-        "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "MERGE" | "MOVE" | "FETCH" | "COPY"
-    ) {
-        return None;
-    }
-    parts.last()?.parse().ok()
+pub(crate) fn parse_simple_command_response(bytes: &[u8]) -> Result<CommandResult> {
+    query_core_result(query_core::parse_command_response(
+        bytes,
+        query_core::ExpectedProtocol::Simple,
+    ))
 }
 
-fn push_parse(out: &mut Vec<u8>, sql: &str) -> Result<()> {
-    let mut body = Vec::new();
-    push_cstring(&mut body, "")?;
-    push_cstring(&mut body, sql)?;
-    body.extend_from_slice(&0_i16.to_be_bytes());
-    push_frontend_message(out, b'P', &body)
+#[cfg(test)]
+pub(crate) fn parse_query_response(bytes: &[u8]) -> Result<QueryResult> {
+    query_core_result(query_core::parse_query_response(
+        bytes,
+        query_core::ExpectedProtocol::Either,
+    ))
 }
 
-fn push_bind(out: &mut Vec<u8>, params: &[QueryParam]) -> Result<()> {
-    let mut body = vec![0, 0];
-    body.extend_from_slice(&(params.len() as i16).to_be_bytes());
-    for param in params {
-        body.extend_from_slice(
-            &(if matches!(param, QueryParam::Binary(_)) {
-                1_i16
-            } else {
-                0_i16
-            })
-            .to_be_bytes(),
-        );
-    }
-    body.extend_from_slice(&(params.len() as i16).to_be_bytes());
-    for param in params {
-        match param {
-            QueryParam::Null => body.extend_from_slice(&(-1_i32).to_be_bytes()),
-            QueryParam::Text(value) => push_sized(&mut body, value.as_bytes())?,
-            QueryParam::Binary(value) => push_sized(&mut body, value)?,
-        }
-    }
-    body.extend_from_slice(&1_i16.to_be_bytes());
-    body.extend_from_slice(&0_i16.to_be_bytes());
-    push_frontend_message(out, b'B', &body)
+pub(crate) fn parse_extended_query_response(bytes: &[u8]) -> Result<QueryResult> {
+    query_core_result(query_core::parse_query_response(
+        bytes,
+        query_core::ExpectedProtocol::Extended,
+    ))
 }
 
-fn push_describe_portal(out: &mut Vec<u8>) -> Result<()> {
-    push_frontend_message(out, b'D', &[b'P', 0])
+pub(crate) fn parse_exec_response(bytes: &[u8]) -> Result<ExecResult> {
+    query_core_result(query_core::parse_exec_response(bytes))
 }
 
-fn push_execute(out: &mut Vec<u8>) -> Result<()> {
-    push_frontend_message(out, b'E', &[0, 0, 0, 0, 0])
+pub(crate) fn parse_statement_description(bytes: &[u8]) -> Result<StatementDescription> {
+    query_core_result(query_core::parse_statement_description(bytes))
 }
 
-fn push_frontend_message(out: &mut Vec<u8>, tag: u8, body: &[u8]) -> Result<()> {
-    let length =
-        i32::try_from(body.len() + 4).map_err(|_| anyhow!("protocol message too large"))?;
-    out.push(tag);
-    out.extend_from_slice(&length.to_be_bytes());
-    out.extend_from_slice(body);
-    Ok(())
+#[cfg(test)]
+fn extended_query(sql: &str, params: &[QueryParam]) -> Result<Vec<u8>> {
+    let params = params
+        .iter()
+        .cloned()
+        .map(IntoParameter::into_parameter)
+        .collect::<Vec<_>>();
+    extended_statement(sql, &params, ValueFormat::Text)
 }
 
-fn push_cstring(out: &mut Vec<u8>, value: &str) -> Result<()> {
-    ensure!(
-        !value.as_bytes().contains(&0),
-        "protocol string contains NUL"
-    );
-    out.extend_from_slice(value.as_bytes());
-    out.push(0);
-    Ok(())
+pub(crate) fn extended_statement(
+    sql: &str,
+    params: &[Parameter],
+    result_format: ValueFormat,
+) -> Result<Vec<u8>> {
+    query_core_result(query_core::extended_statement(
+        sql,
+        params,
+        result_format.code(),
+    ))
 }
 
-fn push_sized(out: &mut Vec<u8>, value: &[u8]) -> Result<()> {
-    let length = i32::try_from(value.len()).map_err(|_| anyhow!("query parameter too large"))?;
-    out.extend_from_slice(&length.to_be_bytes());
-    out.extend_from_slice(value);
-    Ok(())
+pub(crate) fn describe_statement(sql: &str, params: &[Parameter]) -> Result<Vec<u8>> {
+    query_core_result(query_core::describe_statement(sql, params))
 }
 
-fn read_backend_message(bytes: &[u8]) -> Result<(u8, &[u8], &[u8])> {
-    ensure!(bytes.len() >= 5, "truncated backend message header");
-    let length = i32::from_be_bytes(bytes[1..5].try_into().expect("four bytes"));
-    ensure!(length >= 4, "invalid backend message length {length}");
-    let total = 1usize
-        .checked_add(length as usize)
-        .context("backend message length overflow")?;
-    ensure!(bytes.len() >= total, "truncated backend message body");
-    Ok((bytes[0], &bytes[5..total], &bytes[total..]))
+pub(crate) fn reject_copy_statements(sql: &str) -> Result<()> {
+    query_core_result(query_core::reject_copy_statements(sql))
 }
 
-fn parse_row_description(mut body: &[u8]) -> Result<Vec<QueryField>> {
-    let count = read_i16(&mut body, "RowDescription field count")?;
-    ensure!(count >= 0, "invalid RowDescription field count {count}");
-    let mut fields = Vec::with_capacity(count as usize);
-    for _ in 0..count {
-        fields.push(QueryField {
-            name: read_cstring(&mut body, "field name")?.to_owned(),
-            table_oid: read_u32(&mut body, "field table oid")?,
-            table_attribute: read_i16(&mut body, "field table attribute")?,
-            type_oid: read_u32(&mut body, "field type oid")?,
-            type_size: read_i16(&mut body, "field type size")?,
-            type_modifier: read_i32(&mut body, "field type modifier")?,
-            format: read_i16(&mut body, "field format")?.into(),
-        });
-    }
-    ensure!(body.is_empty(), "RowDescription contained trailing bytes");
-    Ok(fields)
+pub(crate) fn response_ready_status(bytes: &[u8]) -> Result<ReadyStatus> {
+    query_core_result(query_core::response_ready_status(bytes))
 }
 
-fn parse_data_row(mut body: &[u8], expected: usize) -> Result<QueryRow> {
-    let count = read_i16(&mut body, "DataRow column count")?;
-    ensure!(count >= 0, "invalid DataRow column count {count}");
-    ensure!(
-        count as usize == expected,
-        "DataRow column count does not match RowDescription"
-    );
-    let mut values = Vec::with_capacity(expected);
-    for _ in 0..count {
-        let length = read_i32(&mut body, "DataRow value length")?;
-        if length == -1 {
-            values.push(None);
-        } else {
-            ensure!(length >= 0, "invalid DataRow value length {length}");
-            values.push(Some(
-                take(&mut body, length as usize, "DataRow value")?.to_vec(),
-            ));
-        }
-    }
-    ensure!(body.is_empty(), "DataRow contained trailing bytes");
-    Ok(QueryRow { values })
+#[cfg(test)]
+fn parse_postgres_error(body: &[u8]) -> Result<PostgresError> {
+    let fields = query_core_result(query_core::parse_diagnostic_fields(body, "ErrorResponse"))?;
+    Ok(PostgresError::from_core(query_core::diagnostic(
+        fields,
+        "PostgreSQL ErrorResponse",
+    )))
 }
 
-fn parse_command_complete(mut body: &[u8]) -> Result<String> {
-    let command = read_cstring(&mut body, "CommandComplete tag")?.to_owned();
-    ensure!(body.is_empty(), "CommandComplete contained trailing bytes");
-    Ok(command)
+#[cfg(test)]
+fn parse_notice_response(body: &[u8]) -> Result<PostgresNotice> {
+    let fields = query_core_result(query_core::parse_diagnostic_fields(body, "NoticeResponse"))?;
+    Ok(PostgresNotice::from_core(query_core::diagnostic(
+        fields,
+        "PostgreSQL NoticeResponse",
+    )))
 }
 
-fn parse_postgres_error(mut body: &[u8]) -> Result<PostgresError> {
-    let mut fields = Vec::new();
-    loop {
-        let (&code, rest) = body
-            .split_first()
-            .context("ErrorResponse is missing terminator")?;
-        body = rest;
-        if code == 0 {
-            ensure!(body.is_empty(), "ErrorResponse contained trailing bytes");
-            break;
-        }
-        fields.push(PostgresErrorField {
-            code,
-            value: read_cstring(&mut body, "ErrorResponse field")?.to_owned(),
-        });
-    }
-    Ok(PostgresError::from_fields(fields))
-}
-
-fn validate_ready_for_query(body: &[u8]) -> Result<()> {
-    ensure!(
-        matches!(body, [b'I' | b'T' | b'E']),
-        "invalid ReadyForQuery"
-    );
-    Ok(())
-}
-
-fn require_empty(body: &[u8], label: &str) -> Result<()> {
-    ensure!(body.is_empty(), "{label} contained trailing bytes");
-    Ok(())
-}
-
-fn validate_parameter_status(mut body: &[u8]) -> Result<()> {
-    read_cstring(&mut body, "ParameterStatus name")?;
-    read_cstring(&mut body, "ParameterStatus value")?;
-    ensure!(body.is_empty(), "ParameterStatus contained trailing bytes");
-    Ok(())
-}
-
-fn validate_notification_response(mut body: &[u8]) -> Result<()> {
-    read_i32(&mut body, "NotificationResponse process id")?;
-    read_cstring(&mut body, "NotificationResponse channel")?;
-    read_cstring(&mut body, "NotificationResponse payload")?;
-    ensure!(
-        body.is_empty(),
-        "NotificationResponse contained trailing bytes"
-    );
-    Ok(())
-}
-
-fn validate_field_response(mut body: &[u8], label: &str) -> Result<()> {
-    loop {
-        let (&code, rest) = body
-            .split_first()
-            .with_context(|| format!("{label} is missing terminator"))?;
-        body = rest;
-        if code == 0 {
-            ensure!(body.is_empty(), "{label} contained trailing bytes");
-            return Ok(());
-        }
-        read_cstring(&mut body, &format!("{label} field"))?;
-    }
-}
-
+#[cfg(test)]
 fn read_u32(input: &mut &[u8], label: &str) -> Result<u32> {
     Ok(u32::from_be_bytes(
         take(input, 4, label)?.try_into().expect("four bytes"),
     ))
 }
 
+#[cfg(test)]
 fn read_i32(input: &mut &[u8], label: &str) -> Result<i32> {
     Ok(i32::from_be_bytes(
         take(input, 4, label)?.try_into().expect("four bytes"),
     ))
 }
 
+#[cfg(test)]
 fn read_i16(input: &mut &[u8], label: &str) -> Result<i16> {
     Ok(i16::from_be_bytes(
         take(input, 2, label)?.try_into().expect("two bytes"),
     ))
 }
 
+#[cfg(test)]
 fn read_cstring<'a>(input: &mut &'a [u8], label: &str) -> Result<&'a str> {
     let nul = input
         .iter()
@@ -647,6 +198,7 @@ fn read_cstring<'a>(input: &mut &'a [u8], label: &str) -> Result<&'a str> {
     Ok(value)
 }
 
+#[cfg(test)]
 fn take<'a>(input: &mut &'a [u8], length: usize, label: &str) -> Result<&'a [u8]> {
     ensure!(input.len() >= length, "truncated {label}");
     let (head, tail) = input.split_at(length);
@@ -679,42 +231,84 @@ mod tests {
     #[test]
     fn postgres_error_preserves_ordered_fields() {
         let error = parse_postgres_error(
-            b"SERREUR\0VERROR\0C23505\0Mduplicate key\0DKey already exists\0titems\0\0",
+            b"SERREUR\0VERROR\0C23505\0Mduplicate key\0DKey already exists\0titems\0p12\0qSELECT broken\0Fparse_expr.c\0L123\0RtransformExpr\0\0",
         )
         .expect("valid ErrorResponse");
 
-        assert_eq!(error.severity.as_deref(), Some("ERROR"));
+        assert_eq!(error.severity.as_deref(), Some("ERREUR"));
+        assert_eq!(error.localized_severity.as_deref(), Some("ERREUR"));
+        assert_eq!(error.nonlocalized_severity.as_deref(), Some("ERROR"));
         assert_eq!(error.sqlstate.as_deref(), Some("23505"));
         assert_eq!(error.message, "duplicate key");
         assert_eq!(error.detail.as_deref(), Some("Key already exists"));
         assert_eq!(error.table_name.as_deref(), Some("items"));
+        assert_eq!(error.internal_position.as_deref(), Some("12"));
+        assert_eq!(error.internal_query.as_deref(), Some("SELECT broken"));
+        assert_eq!(error.file.as_deref(), Some("parse_expr.c"));
+        assert_eq!(error.line.as_deref(), Some("123"));
+        assert_eq!(error.routine.as_deref(), Some("transformExpr"));
         assert_eq!(
             error
                 .fields
                 .iter()
                 .map(|field| field.code)
                 .collect::<Vec<_>>(),
-            [b'S', b'V', b'C', b'M', b'D', b't']
+            [
+                b'S', b'V', b'C', b'M', b'D', b't', b'p', b'q', b'F', b'L', b'R'
+            ]
         );
-        assert_eq!(error.to_string(), "ERROR [23505]: duplicate key");
+        assert_eq!(error.to_string(), "ERREUR [23505]: duplicate key");
+    }
+
+    #[test]
+    fn postgres_notice_exposes_finite_standard_diagnostic_fields() {
+        let notice = parse_notice_response(
+            b"SAVERTISSEMENT\0VWARNING\0Mcheck value\0p12\0qSELECT broken\0Fparse_expr.c\0L123\0RtransformExpr\0\0",
+        )
+        .expect("valid NoticeResponse");
+
+        assert_eq!(notice.severity.as_deref(), Some("AVERTISSEMENT"));
+        assert_eq!(notice.localized_severity.as_deref(), Some("AVERTISSEMENT"));
+        assert_eq!(notice.nonlocalized_severity.as_deref(), Some("WARNING"));
+        assert_eq!(notice.internal_position.as_deref(), Some("12"));
+        assert_eq!(notice.internal_query.as_deref(), Some("SELECT broken"));
+        assert_eq!(notice.file.as_deref(), Some("parse_expr.c"));
+        assert_eq!(notice.line.as_deref(), Some("123"));
+        assert_eq!(notice.routine.as_deref(), Some("transformExpr"));
+        assert_eq!(
+            notice
+                .fields
+                .iter()
+                .map(|field| field.code)
+                .collect::<Vec<_>>(),
+            [b'S', b'V', b'M', b'p', b'q', b'F', b'L', b'R']
+        );
     }
 
     #[test]
     fn postgres_error_display_handles_partial_identity() {
         let error = |severity: Option<&str>, sqlstate: Option<&str>| PostgresError {
             severity: severity.map(str::to_owned),
+            localized_severity: severity.map(str::to_owned),
+            nonlocalized_severity: None,
             sqlstate: sqlstate.map(str::to_owned),
             message: "failed".to_owned(),
             detail: None,
             hint: None,
             position: None,
+            internal_position: None,
+            internal_query: None,
             where_: None,
             schema_name: None,
             table_name: None,
             column_name: None,
             data_type_name: None,
             constraint_name: None,
+            file: None,
+            line: None,
+            routine: None,
             fields: Vec::new(),
+            notices: Vec::new(),
         };
 
         assert_eq!(error(Some("ERROR"), None).to_string(), "ERROR: failed");
@@ -753,22 +347,72 @@ mod tests {
     }
 
     #[test]
+    fn typed_parameters_encode_oids_formats_nulls_and_result_format() {
+        let params = [
+            Parameter::typed_null(TypeOid::INT4),
+            7_i32.into_parameter(),
+            Parameter::text("hello"),
+        ];
+        let packet = extended_statement("SELECT $1, $2, $3", &params, ValueFormat::Binary)
+            .expect("valid typed statement");
+        let messages = frontend_messages(&packet);
+        assert_eq!(
+            messages.iter().map(|(tag, _)| *tag).collect::<Vec<_>>(),
+            [b'P', b'B', b'D', b'E', b'S']
+        );
+
+        let mut parse = messages[0].1;
+        assert_eq!(read_cstring(&mut parse, "statement").unwrap(), "");
+        assert_eq!(
+            read_cstring(&mut parse, "SQL").unwrap(),
+            "SELECT $1, $2, $3"
+        );
+        assert_eq!(read_i16(&mut parse, "OID count").unwrap(), 3);
+        assert_eq!(read_u32(&mut parse, "OID").unwrap(), TypeOid::INT4.get());
+        assert_eq!(read_u32(&mut parse, "OID").unwrap(), TypeOid::INT4.get());
+        assert_eq!(read_u32(&mut parse, "OID").unwrap(), 0);
+        assert!(parse.is_empty());
+
+        let mut bind = messages[1].1;
+        assert_eq!(read_cstring(&mut bind, "portal").unwrap(), "");
+        assert_eq!(read_cstring(&mut bind, "statement").unwrap(), "");
+        assert_eq!(read_i16(&mut bind, "format count").unwrap(), 3);
+        assert_eq!(read_i16(&mut bind, "format").unwrap(), 0);
+        assert_eq!(read_i16(&mut bind, "format").unwrap(), 1);
+        assert_eq!(read_i16(&mut bind, "format").unwrap(), 0);
+        assert_eq!(read_i16(&mut bind, "value count").unwrap(), 3);
+        assert_eq!(read_i32(&mut bind, "null length").unwrap(), -1);
+        assert_eq!(read_i32(&mut bind, "int length").unwrap(), 4);
+        assert_eq!(take(&mut bind, 4, "int").unwrap(), &7_i32.to_be_bytes());
+        assert_eq!(read_i32(&mut bind, "text length").unwrap(), 5);
+        assert_eq!(take(&mut bind, 5, "text").unwrap(), b"hello");
+        assert_eq!(read_i16(&mut bind, "result format count").unwrap(), 1);
+        assert_eq!(read_i16(&mut bind, "result format").unwrap(), 1);
+        assert!(bind.is_empty());
+    }
+
+    #[test]
     fn query_result_accessors_report_postgres_shapes() {
+        let fields: Arc<[QueryField]> = vec![QueryField {
+            name: "value".to_owned(),
+            table_oid: 0,
+            table_attribute: 0,
+            type_oid: 25,
+            type_size: -1,
+            type_modifier: -1,
+            format: QueryFormat::Text,
+        }]
+        .into();
         let result = QueryResult {
-            fields: vec![QueryField {
-                name: "value".to_owned(),
-                table_oid: 0,
-                table_attribute: 0,
-                type_oid: 25,
-                type_size: -1,
-                type_modifier: -1,
-                format: QueryFormat::Text,
-            }],
+            fields: Arc::clone(&fields),
             rows: vec![QueryRow {
+                fields,
                 values: vec![Some(b"ok".to_vec())],
             }],
             command_tag: Some("SELECT 1".to_owned()),
             row_count: Some(1),
+            notices: Vec::new(),
+            ready_status: ReadyStatus::Idle,
         };
 
         assert_eq!(result.field_index("value"), Some(0));
@@ -780,6 +424,7 @@ mod tests {
         assert!(result.rows()[0].text(1).is_err());
         assert!(
             QueryRow {
+                fields: Arc::from([]),
                 values: vec![Some(vec![0xff])],
             }
             .text(0)
@@ -788,6 +433,461 @@ mod tests {
         assert_eq!(QueryFormat::from(0), QueryFormat::Text);
         assert_eq!(QueryFormat::from(1), QueryFormat::Binary);
         assert_eq!(QueryFormat::from(7), QueryFormat::Other(7));
+    }
+
+    #[test]
+    fn typed_rows_validate_oids_nulls_and_duplicate_names() {
+        let fields: Arc<[QueryField]> = vec![
+            test_field("same", TypeOid::INT4, QueryFormat::Text),
+            test_field("same", TypeOid::TEXT, QueryFormat::Text),
+            test_field("bytes", TypeOid::BYTEA, QueryFormat::Binary),
+            test_field("nullable", TypeOid::INT4, QueryFormat::Text),
+        ]
+        .into();
+        let row = QueryRow {
+            fields,
+            values: vec![
+                Some(b"42".to_vec()),
+                Some(b"label".to_vec()),
+                Some(vec![0, 255]),
+                None,
+            ],
+        };
+        assert_eq!(row.try_get::<i32, _>(0).unwrap(), 42);
+        assert_eq!(row.try_get::<String, _>(1).unwrap(), "label");
+        assert_eq!(row.try_get::<&[u8], _>("bytes").unwrap(), &[0, 255]);
+        assert_eq!(row.try_get::<Option<i32>, _>("nullable").unwrap(), None);
+        assert!(matches!(
+            row.try_get::<Option<String>, _>("nullable"),
+            Err(DecodeError::TypeMismatch { type_oid, .. }) if type_oid == TypeOid::INT4
+        ));
+        assert!(matches!(
+            row.try_get::<String, _>("same"),
+            Err(DecodeError::AmbiguousColumn(name)) if name == "same"
+        ));
+    }
+
+    #[test]
+    fn error_parser_drains_ready_and_attaches_notices() {
+        let mut response = backend_message(b'N', b"SNOTICE\0Mbefore failure\0\0");
+        response.extend(backend_message(b'E', b"SERROR\0C23505\0Mduplicate\0\0"));
+        response.extend(backend_message(b'Z', b"I"));
+        let error = parse_command_response(&response).unwrap_err();
+        let postgres = error
+            .downcast_ref::<PostgresError>()
+            .expect("PostgreSQL error");
+        assert_eq!(postgres.sqlstate.as_deref(), Some("23505"));
+        assert_eq!(postgres.notices[0].message, "before failure");
+
+        let missing_ready = backend_message(b'E', b"SERROR\0C42601\0Msyntax\0\0");
+        assert!(
+            parse_command_response(&missing_ready)
+                .unwrap_err()
+                .to_string()
+                .contains("before ReadyForQuery")
+        );
+    }
+
+    #[test]
+    fn exec_preserves_ordered_command_and_row_results() {
+        let mut response = backend_message(b'C', b"INSERT 0 1\0");
+        response.extend(backend_message(
+            b'T',
+            &row_description_body(&[("answer", TypeOid::INT4)]),
+        ));
+        let mut row = 1_i16.to_be_bytes().to_vec();
+        row.extend_from_slice(&2_i32.to_be_bytes());
+        row.extend_from_slice(b"42");
+        response.extend(backend_message(b'D', &row));
+        response.extend(backend_message(b'C', b"SELECT 1\0"));
+        response.extend(backend_message(b'N', b"SNOTICE\0Mfinished\0\0"));
+        response.extend(backend_message(b'Z', b"I"));
+
+        let result = parse_exec_response(&response).expect("valid multi-statement response");
+        assert_eq!(result.statements().len(), 2);
+        assert!(matches!(
+            &result.statements()[0],
+            StatementResult::Command(command)
+                if command.command_tag() == Some("INSERT 0 1") && command.row_count() == Some(1)
+        ));
+        match &result.statements()[1] {
+            StatementResult::Rows(query) => {
+                assert_eq!(query.command_tag(), Some("SELECT 1"));
+                assert_eq!(query.rows()[0].try_get::<i32, _>("answer").unwrap(), 42);
+            }
+            StatementResult::Command(_) => panic!("SELECT result must retain its rows"),
+        }
+        assert_eq!(result.notices()[0].message, "finished");
+    }
+
+    #[test]
+    fn extended_query_accepts_command_only_statement_as_empty_rows() {
+        let mut response = backend_message(b'1', b"");
+        response.extend(backend_message(b'2', b""));
+        response.extend(backend_message(b'n', b""));
+        response.extend(backend_message(b'C', b"UPDATE 2\0"));
+        response.extend(backend_message(b'Z', b"I"));
+
+        let result =
+            parse_extended_query_response(&response).expect("command is a valid query result");
+        assert!(result.fields().is_empty());
+        assert!(result.rows().is_empty());
+        assert_eq!(result.command_tag(), Some("UPDATE 2"));
+        assert_eq!(result.row_count(), Some(2));
+    }
+
+    #[test]
+    fn describe_returns_parameter_oids_fields_and_notices() {
+        let mut parameters = 2_i16.to_be_bytes().to_vec();
+        parameters.extend_from_slice(&TypeOid::INT4.get().to_be_bytes());
+        parameters.extend_from_slice(&TypeOid::TEXT.get().to_be_bytes());
+        let mut response = backend_message(b'1', b"");
+        response.extend(backend_message(b't', &parameters));
+        response.extend(backend_message(
+            b'T',
+            &row_description_body(&[("answer", TypeOid::INT8)]),
+        ));
+        response.extend(backend_message(b'N', b"SNOTICE\0Mdescribed\0\0"));
+        response.extend(backend_message(b'Z', b"I"));
+
+        let description =
+            parse_statement_description(&response).expect("valid statement description");
+        assert_eq!(
+            description.parameter_types(),
+            &[TypeOid::INT4, TypeOid::TEXT]
+        );
+        assert_eq!(
+            description.fields().expect("row description")[0].type_oid_value(),
+            TypeOid::INT8
+        );
+        assert_eq!(description.notices()[0].message, "described");
+    }
+
+    #[test]
+    fn single_statement_parsers_reject_duplicate_or_incomplete_completion() {
+        let mut duplicate = backend_message(b'C', b"UPDATE 1\0");
+        duplicate.extend(backend_message(b'C', b"UPDATE 1\0"));
+        duplicate.extend(backend_message(b'Z', b"I"));
+        assert!(
+            parse_command_response(&duplicate)
+                .unwrap_err()
+                .to_string()
+                .contains("multiple CommandComplete")
+        );
+
+        let mut incomplete = Vec::new();
+        let mut description = Vec::new();
+        description.extend_from_slice(&1_i16.to_be_bytes());
+        description.extend_from_slice(b"value\0");
+        description.extend_from_slice(&0_u32.to_be_bytes());
+        description.extend_from_slice(&0_i16.to_be_bytes());
+        description.extend_from_slice(&TypeOid::INT4.get().to_be_bytes());
+        description.extend_from_slice(&(-1_i16).to_be_bytes());
+        description.extend_from_slice(&(-1_i32).to_be_bytes());
+        description.extend_from_slice(&0_i16.to_be_bytes());
+        incomplete.extend(backend_message(b'T', &description));
+        incomplete.extend(backend_message(b'Z', b"I"));
+        assert!(
+            parse_query_response(&incomplete)
+                .unwrap_err()
+                .to_string()
+                .contains("before CommandComplete")
+        );
+    }
+
+    #[test]
+    fn single_statement_parsers_require_exactly_one_completion_mode() {
+        let ready_only = backend_message(b'Z', b"I");
+        assert!(
+            parse_command_response(&ready_only)
+                .unwrap_err()
+                .to_string()
+                .contains("before CommandComplete or EmptyQueryResponse")
+        );
+        assert!(
+            parse_query_response(&ready_only)
+                .unwrap_err()
+                .to_string()
+                .contains("before CommandComplete or EmptyQueryResponse")
+        );
+
+        let mut empty = backend_message(b'I', b"");
+        empty.extend(backend_message(b'Z', b"I"));
+        assert_eq!(parse_command_response(&empty).unwrap().command_tag(), None);
+        let query = parse_query_response(&empty).unwrap();
+        assert_eq!(query.command_tag(), None);
+        assert!(query.fields().is_empty());
+        assert!(query.rows().is_empty());
+
+        let mut command_then_empty = backend_message(b'C', b"UPDATE 1\0");
+        command_then_empty.extend(backend_message(b'I', b""));
+        command_then_empty.extend(backend_message(b'Z', b"I"));
+        assert!(
+            parse_query_response(&command_then_empty)
+                .unwrap_err()
+                .to_string()
+                .contains("EmptyQueryResponse after CommandComplete")
+        );
+
+        let mut empty_then_command = backend_message(b'I', b"");
+        empty_then_command.extend(backend_message(b'C', b"UPDATE 1\0"));
+        empty_then_command.extend(backend_message(b'Z', b"I"));
+        assert!(
+            parse_command_response(&empty_then_command)
+                .unwrap_err()
+                .to_string()
+                .contains("CommandComplete after EmptyQueryResponse")
+        );
+
+        let mut duplicate_empty = backend_message(b'I', b"");
+        duplicate_empty.extend(backend_message(b'I', b""));
+        duplicate_empty.extend(backend_message(b'Z', b"I"));
+        assert!(
+            parse_query_response(&duplicate_empty)
+                .unwrap_err()
+                .to_string()
+                .contains("multiple EmptyQueryResponse")
+        );
+    }
+
+    #[test]
+    fn query_rejects_messages_after_completion_and_invalid_extended_order() {
+        let mut response =
+            backend_message(b'T', &row_description_body(&[("answer", TypeOid::INT4)]));
+        response.extend(backend_message(b'C', b"SELECT 0\0"));
+        let mut row = 1_i16.to_be_bytes().to_vec();
+        row.extend_from_slice(&2_i32.to_be_bytes());
+        row.extend_from_slice(b"42");
+        response.extend(backend_message(b'D', &row));
+        response.extend(backend_message(b'Z', b"I"));
+        assert!(
+            parse_query_response(&response)
+                .unwrap_err()
+                .to_string()
+                .contains("DataRow after statement completion")
+        );
+
+        let mut parse_after_completion = backend_message(b'C', b"UPDATE 1\0");
+        parse_after_completion.extend(backend_message(b'1', b""));
+        parse_after_completion.extend(backend_message(b'Z', b"I"));
+        assert!(
+            parse_query_response(&parse_after_completion)
+                .unwrap_err()
+                .to_string()
+                .contains("ParseComplete out of order")
+        );
+
+        let mut bind_before_parse = backend_message(b'2', b"");
+        bind_before_parse.extend(backend_message(b'n', b""));
+        bind_before_parse.extend(backend_message(b'C', b"UPDATE 1\0"));
+        bind_before_parse.extend(backend_message(b'Z', b"I"));
+        assert!(
+            parse_query_response(&bind_before_parse)
+                .unwrap_err()
+                .to_string()
+                .contains("BindComplete out of order")
+        );
+
+        let mut error_after_command = backend_message(b'C', b"UPDATE 1\0");
+        error_after_command.extend(backend_message(b'E', b"SERROR\0CXX000\0Mtoo late\0\0"));
+        error_after_command.extend(backend_message(b'Z', b"I"));
+        assert!(
+            parse_query_response(&error_after_command)
+                .unwrap_err()
+                .to_string()
+                .contains("ErrorResponse after statement completion")
+        );
+
+        let mut error_after_empty = backend_message(b'I', b"");
+        error_after_empty.extend(backend_message(b'E', b"SERROR\0CXX000\0Mtoo late\0\0"));
+        error_after_empty.extend(backend_message(b'Z', b"I"));
+        assert!(
+            parse_command_response(&error_after_empty)
+                .unwrap_err()
+                .to_string()
+                .contains("ErrorResponse after statement completion")
+        );
+
+        let mut close_complete = backend_message(b'3', b"");
+        close_complete.extend(backend_message(b'C', b"UPDATE 1\0"));
+        close_complete.extend(backend_message(b'Z', b"I"));
+        assert!(
+            parse_query_response(&close_complete)
+                .unwrap_err()
+                .to_string()
+                .contains("unexpected backend message tag 0x33")
+        );
+        assert!(
+            parse_command_response(&close_complete)
+                .unwrap_err()
+                .to_string()
+                .contains("unexpected backend message tag 0x33")
+        );
+    }
+
+    #[test]
+    fn exec_accepts_but_omits_empty_statements_and_requires_a_completion() {
+        let mut response = backend_message(b'I', b"");
+        response.extend(backend_message(b'C', b"UPDATE 1\0"));
+        response.extend(backend_message(b'I', b""));
+        response.extend(backend_message(b'Z', b"I"));
+
+        let result = parse_exec_response(&response).unwrap();
+        assert_eq!(result.statements().len(), 1);
+        assert!(matches!(
+            &result.statements()[0],
+            StatementResult::Command(command) if command.command_tag() == Some("UPDATE 1")
+        ));
+
+        let mut empty = backend_message(b'I', b"");
+        empty.extend(backend_message(b'Z', b"I"));
+        assert!(parse_exec_response(&empty).unwrap().statements().is_empty());
+
+        assert!(
+            parse_exec_response(&backend_message(b'Z', b"I"))
+                .unwrap_err()
+                .to_string()
+                .contains("before CommandComplete or EmptyQueryResponse")
+        );
+
+        for tag in [b'1', b'2', b'3', b't', b'n'] {
+            let mut extended_control = backend_message(tag, b"");
+            extended_control.extend(backend_message(b'C', b"UPDATE 1\0"));
+            extended_control.extend(backend_message(b'Z', b"I"));
+            assert!(
+                parse_exec_response(&extended_control)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("unexpected backend message tag")
+            );
+        }
+    }
+
+    #[test]
+    fn describe_requires_parse_complete_and_protocol_order() {
+        assert!(
+            parse_statement_description(&backend_message(b'Z', b"I"))
+                .unwrap_err()
+                .to_string()
+                .contains("omitted ParseComplete")
+        );
+
+        let parameters = 0_i16.to_be_bytes();
+        let mut parameter_before_parse = backend_message(b't', &parameters);
+        parameter_before_parse.extend(backend_message(b'1', b""));
+        parameter_before_parse.extend(backend_message(b'n', b""));
+        parameter_before_parse.extend(backend_message(b'Z', b"I"));
+        assert!(
+            parse_statement_description(&parameter_before_parse)
+                .unwrap_err()
+                .to_string()
+                .contains("ParameterDescription out of order")
+        );
+
+        let mut duplicate_parse = backend_message(b'1', b"");
+        duplicate_parse.extend(backend_message(b'1', b""));
+        duplicate_parse.extend(backend_message(b't', &parameters));
+        duplicate_parse.extend(backend_message(b'n', b""));
+        duplicate_parse.extend(backend_message(b'Z', b"I"));
+        assert!(
+            parse_statement_description(&duplicate_parse)
+                .unwrap_err()
+                .to_string()
+                .contains("ParseComplete out of order")
+        );
+
+        let mut result_before_parameters = backend_message(b'1', b"");
+        result_before_parameters.extend(backend_message(
+            b'T',
+            &row_description_body(&[("answer", TypeOid::INT4)]),
+        ));
+        result_before_parameters.extend(backend_message(b't', &parameters));
+        result_before_parameters.extend(backend_message(b'Z', b"I"));
+        assert!(
+            parse_statement_description(&result_before_parameters)
+                .unwrap_err()
+                .to_string()
+                .contains("RowDescription out of order")
+        );
+
+        let mut error_after_result = backend_message(b'1', b"");
+        error_after_result.extend(backend_message(b't', &parameters));
+        error_after_result.extend(backend_message(b'n', b""));
+        error_after_result.extend(backend_message(b'E', b"SERROR\0CXX000\0Mtoo late\0\0"));
+        error_after_result.extend(backend_message(b'Z', b"I"));
+        assert!(
+            parse_statement_description(&error_after_result)
+                .unwrap_err()
+                .to_string()
+                .contains("ErrorResponse after result description")
+        );
+    }
+
+    #[test]
+    fn structured_sql_copy_preflight_matches_shared_corpus() {
+        let source = crate::oliphaunt::test_fixtures::text(
+            "protocol/structured-sql-cases.json",
+            "protocol-structured-sql-cases.json",
+        );
+        let fixture: serde_json::Value = serde_json::from_str(&source).unwrap();
+        for case in fixture["cases"].as_array().unwrap() {
+            let name = case["name"].as_str().unwrap();
+            let sql = case["sql"].as_str().unwrap();
+            let expected = case["containsTopLevelCopy"].as_bool().unwrap();
+            assert_eq!(reject_copy_statements(sql).is_err(), expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn describe_allows_copy_because_it_does_not_execute() {
+        describe_statement("COPY public.items TO STDOUT", &[])
+            .expect("Parse + Describe + Sync cannot enter COPY mode");
+    }
+
+    fn test_field(name: &str, type_oid: TypeOid, format: QueryFormat) -> QueryField {
+        QueryField {
+            name: name.to_owned(),
+            table_oid: 0,
+            table_attribute: 0,
+            type_oid: type_oid.get(),
+            type_size: -1,
+            type_modifier: -1,
+            format,
+        }
+    }
+
+    fn row_description_body(fields: &[(&str, TypeOid)]) -> Vec<u8> {
+        let mut body = (fields.len() as i16).to_be_bytes().to_vec();
+        for (name, type_oid) in fields {
+            body.extend_from_slice(name.as_bytes());
+            body.push(0);
+            body.extend_from_slice(&0_u32.to_be_bytes());
+            body.extend_from_slice(&0_i16.to_be_bytes());
+            body.extend_from_slice(&type_oid.get().to_be_bytes());
+            body.extend_from_slice(&(-1_i16).to_be_bytes());
+            body.extend_from_slice(&(-1_i32).to_be_bytes());
+            body.extend_from_slice(&0_i16.to_be_bytes());
+        }
+        body
+    }
+
+    fn frontend_messages(mut packet: &[u8]) -> Vec<(u8, &[u8])> {
+        let mut messages = Vec::new();
+        while !packet.is_empty() {
+            let tag = packet[0];
+            let length = i32::from_be_bytes(packet[1..5].try_into().unwrap()) as usize;
+            messages.push((tag, &packet[5..length + 1]));
+            packet = &packet[length + 1..];
+        }
+        messages
+    }
+
+    fn backend_message(tag: u8, body: &[u8]) -> Vec<u8> {
+        let mut message = Vec::new();
+        message.push(tag);
+        message.extend_from_slice(&((body.len() + 4) as i32).to_be_bytes());
+        message.extend_from_slice(body);
+        message
     }
 }
 

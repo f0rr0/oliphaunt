@@ -15,18 +15,20 @@ Neither binding imports, selects, or falls back to a native SDK.
 oliphaunt-wasix = "0.1"
 ```
 
-`Oliphaunt::open()` uses a true Wasmer memory filesystem. Persistence is an
-explicit managed root:
+The root `Oliphaunt::open().await` API retains Wasmer and PostgreSQL on a
+dedicated owner thread and uses a true Wasmer memory filesystem. Persistence is
+an explicit managed root:
 
 ```rust,no_run
 use oliphaunt_wasix::{DatabaseStorage, Oliphaunt};
 
-fn main() -> anyhow::Result<()> {
-    let mut database = Oliphaunt::builder()
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let database = Oliphaunt::builder()
         .storage(DatabaseStorage::Directory("./data/main".into()))
-        .open()?;
-    assert_eq!(database.query("select 1::text as value")?.get_text(0, "value")?, Some("1"));
-    database.close()?;
+        .open().await?;
+    assert_eq!(database.query("select 1::text as value").await?.get_text(0, "value")?, Some("1"));
+    database.close().await?;
     Ok(())
 }
 ```
@@ -42,8 +44,10 @@ PGDATA-only restore path; nonempty descriptorless roots and incomplete stores
 fail without mutation.
 
 `OliphauntServer` supplies a local PostgreSQL endpoint when an existing Rust
-client needs one. The optional `tools` feature supplies direct `pg_dump` and
-non-interactive `psql`.
+client needs one. The optional `tools` feature supplies `pg_dump` and
+non-interactive `psql`. Applications that intentionally want caller-thread
+execution import the separate `oliphaunt_wasix::blocking` module; that direct
+database is exclusive and synchronous rather than a misleading async wrapper.
 
 Extensions are exact Cargo feature/package selections. Reopening a database
 whose catalog uses an extension requires the receiving host to provide that
@@ -58,10 +62,11 @@ await using database = await Oliphaunt.open();
 const result = await database.query('select $1::int + 1 as answer', [41]);
 ```
 
-The package runs in a browser, Node.js, Bun, or Deno. Worker placement is the
-default; `execution: 'direct'` uses the same API in the caller realm and blocks
-that realm during PostgreSQL work. Browser execution requires cross-origin
-isolation.
+The package runs in a browser, Node.js, Bun, or Deno. Its root entry point owns
+a Worker or worker thread and is the default, main-safe surface. Applications
+that deliberately accept caller-realm blocking import
+`@oliphaunt/wasix-ts/blocking`; there is no `execution` option and no silent
+calling-contract fallback. Browser execution requires cross-origin isolation.
 
 Memory is the default. Persistent providers are selective imports:
 
@@ -69,15 +74,19 @@ Memory is the default. Persistent providers are selective imports:
 - `storage/node`, `storage/bun`, and `storage/deno` on those runtimes.
 
 IndexedDB hydrates a Wasmer memory directory and publishes journaled changes.
-OPFS worker execution uses direct synchronous access to an opaque backing-file
-pool; other browser placements publish the same journal to that same format.
+OPFS Worker execution uses synchronous access handles for exact-range I/O to an
+opaque backing-file pool; the blocking entry point and browsers without that
+facility publish the same journal to that same format.
 Node, Bun, and Deno directory providers publish below the managed root's
 `pgdata` child. Ordinary operations complete a provider boundary after
 `ReadyForQuery`; callback transactions do so once after confirmed `COMMIT` or
-`ROLLBACK`; explicit `checkpoint()` sends PostgreSQL `CHECKPOINT` and then
-publishes.
+`ROLLBACK`. A new persistent direct-OPFS database uses one separate internal
+full-publication boundary after initialization. That boundary is not a public
+operation or option. Applications that need a PostgreSQL checkpoint issue
+`execute("CHECKPOINT")`; it completes the same ordinary provider boundary as
+another successful statement.
 
-IndexedDB publication is one transaction. Direct OPFS honors guest file flushes,
+IndexedDB publication is one transaction. OPFS honors guest file flushes,
 drains WAL at operation boundaries, and flushes all dirty files in PostgreSQL
 order for checkpoint, close, or namespace publication. Its portable path uses
 copy-on-write file backings and publishes namespace state last. A publication
@@ -85,7 +94,7 @@ failure poisons the handle because the live guest may be ahead of durable
 storage. PostgreSQL statement errors that recover through `ReadyForQuery` do
 not poison storage.
 
-The direct path reserves a bounded set of preopened backing files for the
+The synchronous OPFS path reserves a bounded set of preopened backing files for the
 synchronous hot path. A larger creation burst is staged only until the mandatory
 host boundary. That boundary allocates, writes, and flushes every staged file
 before publishing namespace state; failure poisons the live handle and leaves
@@ -98,10 +107,10 @@ is an internal performance detail, not a database-capacity setting.
 accepts that archive and new or empty persistent storage. Restore rejects
 memory and nonempty destinations. The destination creates its own descriptor.
 
-`execProtocolStream()` is the bounded callback form of the raw protocol escape
-hatch. The optional `@oliphaunt/wasix-tools` package runs standard plain
-`pg_dump` against direct or worker placement and non-interactive `psql` against
-worker placement, including in browsers. It preserves PostgreSQL's normal
+`execProtocolRawStream()` is the bounded callback form of the raw protocol
+escape hatch. The optional `@oliphaunt/wasix-tools` package runs standard plain
+`pg_dump` against blocking or default Worker handles and non-interactive `psql`
+against the default Worker handle, including in browsers. It preserves PostgreSQL's normal
 COPY-based plain dump rather than rewriting it.
 
 Node, Bun, and Deno applications may import `openServer` from the matching

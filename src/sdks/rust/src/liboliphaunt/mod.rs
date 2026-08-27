@@ -1,6 +1,7 @@
 use std::ffi::CString;
-#[cfg(feature = "broker-helper")]
+#[cfg(feature = "__internal-broker-helper")]
 use std::ffi::c_char;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -550,7 +551,7 @@ impl EngineSession for OliphauntSession {
         Ok(self.protocol_response_from_native(response))
     }
 
-    fn exec_protocol_stream(
+    fn exec_protocol_raw_stream(
         &mut self,
         request: ProtocolRequest,
         on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
@@ -586,10 +587,19 @@ impl EngineSession for OliphauntSession {
             } else {
                 unsafe { std::slice::from_raw_parts(data, len) }
             };
-            match (context.on_chunk)(bytes) {
-                Ok(()) => 0,
-                Err(error) => {
+            match catch_unwind(AssertUnwindSafe(|| (context.on_chunk)(bytes))) {
+                Ok(Ok(())) => 0,
+                Ok(Err(error)) => {
                     context.error = Some(error);
+                    -1
+                }
+                Err(_) => {
+                    // A Rust unwind across this C ABI callback is undefined
+                    // behavior. Retain a stable SDK error while liboliphaunt
+                    // drains through ReadyForQuery and returns normally.
+                    context.error = Some(Error::Engine(
+                        "raw protocol stream callback panicked".to_owned(),
+                    ));
                     -1
                 }
             }
@@ -601,7 +611,7 @@ impl EngineSession for OliphauntSession {
             error: None,
         };
         let rc = unsafe {
-            (self.symbols.exec_protocol_stream)(
+            (self.symbols.exec_protocol_raw_stream)(
                 handle,
                 bytes.as_ptr(),
                 bytes.len(),
@@ -614,7 +624,7 @@ impl EngineSession for OliphauntSession {
                 return Err(error);
             }
             let message = self.symbols.last_error_text(handle).unwrap_or_else(|| {
-                format!("oliphaunt_exec_protocol_stream failed with status {rc}")
+                format!("oliphaunt_exec_protocol_raw_stream failed with status {rc}")
             });
             return Err(Error::Engine(format!(
                 "native liboliphaunt protocol stream failed: {message}"
@@ -623,7 +633,7 @@ impl EngineSession for OliphauntSession {
         Ok(())
     }
 
-    #[cfg(feature = "broker-helper")]
+    #[cfg(feature = "__internal-broker-helper")]
     fn exec_simple_query(&mut self, sql: &str) -> Result<ProtocolResponse> {
         let Some(exec_simple_query) = self.symbols.exec_simple_query else {
             return self.exec_protocol_raw(ProtocolRequest::simple_query(sql)?);

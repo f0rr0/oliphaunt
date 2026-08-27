@@ -9,13 +9,17 @@ The public database boundary is:
 
 - `Oliphaunt::builder()` for direct and broker databases.
 - `OliphauntBuilder::open_server()` for the distinct local-server handle.
-- PostgreSQL-shaped execute, query, parameter, result, transaction, checkpoint,
+- PostgreSQL-shaped execute, query, parameter, result, transaction,
   cancellation, raw protocol, and close methods.
 - One byte physical-backup method on direct and broker databases.
 - One static restore operation into an absent or empty destination.
 
 Internal engine modes, runtime profiles, lifecycle requests, backup envelopes,
 resource manifests, package reports, and protocol parsers are not public API.
+The shared builder validates its terminal: direct/broker selectors and broker
+executable options belong to `open()`, while listener and server executable
+options belong to `open_server()`. Cross-topology configuration is rejected,
+never ignored.
 
 ## Runtime ownership
 
@@ -38,8 +42,25 @@ tools.
 
 ## Execution and transactions
 
-An owner thread is the single place that calls a runtime session. Cloneable SDK
-handles share it; cloning does not create a PostgreSQL connection.
+An owner thread is the single place that constructs and calls a runtime
+session. A session is never opened on a temporary thread and then transferred.
+Cloneable SDK handles share the owner; cloning does not create a PostgreSQL
+connection. This is scheduling ownership, not another public topology.
+
+Ordinary application work enters one bounded FIFO. Transaction control,
+rollback cleanup, and close enter the same FIFO through reserved admission, so
+queue pressure cannot strand lifecycle work and cannot reorder cleanup ahead of
+an already-admitted COMMIT. Close and command admission share one lock: work
+admitted before the close cutoff remains ahead of Close and drains, while later
+application work is rejected. The closing state is never used to invalidate a
+command that is already in the FIFO. If a queued `BEGIN` succeeds before Close,
+the owner rejects that close attempt with `TransactionActive`, restores open
+admission, and retains the session for retry. If an operation future is dropped
+before the owner starts it, the command is skipped. Once PostgreSQL execution
+starts, dropping the future is not cancellation and the owner completes through
+its readiness boundary. Required `COMMIT` and `ROLLBACK` settlement for a pin
+created by a pre-cutoff `BEGIN` remains admissible after the cutoff through a
+reserved, reentrancy-checked path and retains FIFO order with Close.
 
 A transaction pin rejects unrelated work while its callback is active. Body
 failure rolls back. A failed rollback poisons the session. COMMIT uncertainty
@@ -48,9 +69,25 @@ the session is poisoned unless PostgreSQL explicitly returns the known idle
 `ROLLBACK` command tag. Pin cleanup remains admissible after poisoning so close
 cannot strand the owner thread.
 
-Cancellation is out of band: the C cancellation hook in direct mode, a separate
-authenticated endpoint in broker mode, and PostgreSQL CancelRequest in server
-mode. Close is a queue boundary and does not implicitly cancel active work.
+Cancellation is asynchronous and out of band: the C cancellation hook in direct
+mode, a separate authenticated endpoint in broker mode, and PostgreSQL
+CancelRequest in server mode. The ordinary-work close cutoff does not disable
+cancellation while earlier admitted work drains; cancellation admission closes
+atomically only when destructive teardown begins. Close does not implicitly
+cancel active work. Concurrent close callers share one attempt. Explicit close
+resolves only after session destruction or a terminal teardown failure.
+`TransactionActive` and other validation failures before destruction leave the
+session retryable. Once direct detach, broker shutdown, or server shutdown
+begins, the handle is terminal: success or failure sets `is_closed()`, rejects
+later work, and stores one exact close result for concurrent and repeated
+callers. Final `Drop` requests cleanup without joining the owner thread.
+
+Every reply channel turns sender disappearance into `EngineStopped`; an owner
+panic therefore cannot strand callers. Runtime panics stop the owner and reject
+pending work. Raw-stream callback panics are contained before any C boundary,
+returned as SDK errors, and adapters drain to `ReadyForQuery`. Callbacks are
+synchronous owner-thread code, so reentrant work on the same handle is rejected
+rather than deadlocking.
 
 ## Storage and identity
 

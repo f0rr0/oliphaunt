@@ -69,9 +69,7 @@ public enum OliphauntExtensionSupport {
                 oliphaunt_register_static_extensions(buffer.baseAddress, buffer.count)
             }
             guard status == 0 else {
-                let nativeMessage = oliphaunt_last_error(nil).map { String(cString: $0) }
-                    .flatMap { $0.isEmpty ? nil : $0 }
-                    ?? "unknown liboliphaunt static-extension registration error"
+                let nativeMessage = copyNativeLastError()
                 throw OliphauntError.engine(
                     "could not register selected static extensions while adding \(sqlName) " +
                         "before backend startup: \(nativeMessage)"
@@ -91,5 +89,27 @@ public enum OliphauntExtensionSupport {
             }
             throw error
         }
+    }
+
+    private static func copyNativeLastError() -> String {
+        let fallback = "unknown liboliphaunt static-extension registration error"
+        let required = oliphaunt_copy_last_error(nil, nil, 0)
+        guard required > 0, required < Int.max else {
+            return fallback
+        }
+        var bytes = [CChar](repeating: 0, count: required + 1)
+        let currentRequired = bytes.withUnsafeMutableBufferPointer { buffer in
+            oliphaunt_copy_last_error(nil, buffer.baseAddress, buffer.count)
+        }
+        if currentRequired >= bytes.count {
+            bytes = [CChar](repeating: 0, count: currentRequired + 1)
+            bytes.withUnsafeMutableBufferPointer { buffer in
+                _ = oliphaunt_copy_last_error(nil, buffer.baseAddress, buffer.count)
+            }
+        }
+        let message = bytes.withUnsafeBufferPointer { buffer in
+            String(cString: buffer.baseAddress!)
+        }
+        return message.isEmpty ? fallback : message
     }
 }

@@ -33,7 +33,13 @@ vi.mock('@oliphaunt/liboliphaunt-wasix', () => ({
   },
 }));
 
-import { openWasixWithWorker, restoreWasix, serializeOpenConfig } from '../client-common.js';
+import {
+  openWasixWithWorker,
+  restoreWasix,
+  restoreWasixWithWorker,
+  serializeOpenConfig,
+} from '../client-common.js';
+import { indexedDB } from '../storage/indexed-db.js';
 import type { WasixIcuDescriptor, WasixRuntimeDescriptor } from '../types.js';
 import { FakeWorkerPort, workerOpenOptions } from './worker-helpers.js';
 
@@ -77,6 +83,16 @@ describe('WASIX shared client orchestration', () => {
     expect(options.runtime.runtimeArchive.source).toEqual(Uint8Array.of(1, 1, 1, 1));
   });
 
+  it('rejects the removed execution option instead of silently changing placement', () => {
+    for (const execution of ['direct', 'worker', undefined]) {
+      expect(() =>
+        serializeOpenConfig({ execution } as unknown as Parameters<typeof serializeOpenConfig>[0]),
+      ).toThrow(
+        /no longer accepts the "execution" option.*@oliphaunt\/wasix-ts\/blocking/,
+      );
+    }
+  });
+
   it('validates before opening and transfers each distinct runtime buffer once', async () => {
     const port = new FakeWorkerPort();
     const options = workerOpenOptions();
@@ -115,6 +131,23 @@ describe('WASIX shared client orchestration', () => {
     await expect(restoreWasix(undefined, Uint8Array.of())).rejects.toThrow(
       'WASIX restore requires persistent storage',
     );
+  });
+
+  it('runs root restore in a temporary owner Worker without detaching caller bytes', async () => {
+    const port = new FakeWorkerPort();
+    const bytes = Uint8Array.of(1, 2, 3);
+    const restoring = restoreWasixWithWorker(() => port, indexedDB('restore-target'), bytes);
+    const request = port.requests[0];
+    expect(request?.message).toMatchObject({ method: 'restore' });
+    if (request?.message.method !== 'restore') throw new Error('restore request was not posted');
+    expect(request.message.bytes).toEqual(bytes);
+    expect(request.message.bytes).not.toBe(bytes);
+    expect(request.transfer).toEqual([request.message.bytes.buffer]);
+    expect(bytes).toEqual(Uint8Array.of(1, 2, 3));
+    port.respond({ id: request.message.id, ok: true });
+
+    await expect(restoring).resolves.toBeUndefined();
+    expect(port.terminations).toBe(1);
   });
 });
 

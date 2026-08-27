@@ -107,8 +107,13 @@ journal lets portable adapters publish only changed PGDATA paths. OPFS worker
 execution bypasses that copy through a same-realm synchronous filesystem
 bridge. Ordinary protocol operations complete their provider boundary after
 `ReadyForQuery`; callback transactions do so once after confirmed `COMMIT` or
-`ROLLBACK`. Explicit `checkpoint()` runs PostgreSQL `CHECKPOINT` and then one
-provider boundary.
+`ROLLBACK`. A new persistent direct-OPFS database has one separate internal
+full-publication boundary after initialization so an incomplete initial
+namespace never becomes ready. The initializing/ready phase and full-flush
+selector are provider details, not public operations or configuration.
+Applications that need a PostgreSQL checkpoint call `execute("CHECKPOINT")`;
+that statement completes the same ordinary provider boundary as another
+successful operation.
 
 Each logical IndexedDB name owns an independent physical IndexedDB database.
 Compatibility metadata and path rows change in one atomic read-write

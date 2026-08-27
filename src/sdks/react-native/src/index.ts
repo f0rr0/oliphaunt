@@ -9,15 +9,44 @@ export type {
   OliphauntDatabase,
   OliphauntClient,
   OliphauntTransaction,
+  ProtocolChunkCallback,
 } from './client';
 export type {
+  BinaryQueryParameter,
   CommandResult,
+  DescribeResult,
+  EncodedQueryParameter,
+  ExecResult,
+  NullQueryParameter,
+  ParameterOptions,
+  PostgresErrorField,
+  PostgresNotice,
+  QueryArrayRow,
+  QueryBinaryInput,
   QueryField,
   QueryFormat,
+  QueryObjectRow,
+  QueryOptions,
   QueryParam,
+  QueryParameterEncoder,
   QueryResult,
-  QueryRow,
-  PostgresErrorField,
+  QueryValue,
+  QueryValueDecoder,
+  RawQueryResult,
+  RawQueryRow,
+  TextQueryParameter,
+  TransactionStatus,
 } from './query';
-export { PostgresError } from './query';
-export const Oliphaunt: import('./client').OliphauntClient = createOliphauntClient(NativeOliphaunt);
+export {
+  PostgresError,
+  array,
+  binary,
+  json,
+  postgresOids,
+  text,
+  typedNull,
+} from './query';
+export const Oliphaunt: import('./client').OliphauntClient =
+  createOliphauntClient(NativeOliphaunt);
+
+export default Oliphaunt;

@@ -1,4 +1,5 @@
 import { WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES, type WasixDatabaseSession } from './database.js';
+import { restoreWasixSerialized } from './client-common.js';
 import {
   type SerializedOpenOptions,
   serializeWorkerError,
@@ -17,15 +18,26 @@ export function createWorkerSessionDispatcher(
   respond: WorkerResponder,
 ) {
   let process: WasixDatabaseSession | undefined;
+  let terminal = false;
 
   return async (request: WorkerRequest): Promise<void> => {
     try {
+      if (terminal) {
+        throw new Error('Oliphaunt WASIX worker session is closed');
+      }
       switch (request.method) {
         case 'open':
           if (process !== undefined) {
             throw new Error('this worker already owns an Oliphaunt WASIX process');
           }
           process = await openSession(request.options);
+          respond({ id: request.id, ok: true });
+          return;
+        case 'restore':
+          if (process !== undefined) {
+            throw new Error('this worker already owns an Oliphaunt WASIX process');
+          }
+          await restoreWasixSerialized(request.storage, request.bytes);
           respond({ id: request.id, ok: true });
           return;
         case 'exec': {
@@ -117,11 +129,17 @@ export function createWorkerSessionDispatcher(
           respond({ id: request.id, ok: true });
           return;
         }
-        case 'close':
-          await requireProcess(process).close();
+        case 'close': {
+          const closing = requireProcess(process);
+          // Retire the dispatcher before awaiting guest/provider teardown. A
+          // rejected close cannot make a Worker whose transport will be
+          // destroyed by its owner safe to reopen or use again.
           process = undefined;
+          terminal = true;
+          await closing.close();
           respond({ id: request.id, ok: true });
           return;
+        }
       }
     } catch (error) {
       respond({

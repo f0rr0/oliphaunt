@@ -61,7 +61,7 @@ This track pass addressed concrete gaps:
   stdout, reports exec/status/signal failures, and avoids command-injection
   classes of bugs.
 - Direct native streaming now exists at the C ABI through
-  `oliphaunt_exec_protocol_stream`. It drains backend writes into a bounded chunk
+  `oliphaunt_exec_protocol_raw_stream`. It drains backend writes into a bounded chunk
   queue with producer backpressure, scans protocol frames incrementally for
   `ReadyForQuery`, and invokes the sink from the caller thread instead of the
   backend thread.
@@ -405,7 +405,7 @@ The current C ABI is deliberately small:
 - `oliphaunt_init`
 - `oliphaunt_exec_protocol`
 - `oliphaunt_exec_simple_query`
-- `oliphaunt_exec_protocol_stream`
+- `oliphaunt_exec_protocol_raw_stream`
 - `oliphaunt_cancel`
 - `oliphaunt_close`
 - `oliphaunt_last_error`

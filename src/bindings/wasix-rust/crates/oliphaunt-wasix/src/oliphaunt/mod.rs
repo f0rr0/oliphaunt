@@ -9,9 +9,13 @@ pub(crate) mod data_dir;
 pub(crate) mod database_root_descriptor;
 #[cfg(feature = "extensions")]
 pub mod extensions;
+pub(crate) mod lifecycle;
 pub(crate) mod postgres_mod;
 pub(crate) mod proxy;
 pub(crate) mod query;
+pub(crate) mod query_core {
+    include!(env!("OLIPHAUNT_QUERY_CORE_RS"));
+}
 pub(crate) mod server;
 pub(crate) mod sql;
 pub(crate) mod storage;
@@ -24,10 +28,11 @@ pub(crate) mod transport;
 pub(crate) mod wire;
 
 pub use builder::OliphauntBuilder;
-pub use client::{Oliphaunt, Transaction};
+pub use client::{Oliphaunt, Sql, Transaction};
 pub use query::{
-    CommandResult, PostgresError, PostgresErrorField, QueryField, QueryFormat, QueryParam,
-    QueryResult, QueryRow,
+    CommandResult, DecodeError, ExecResult, FromSql, IntoParameter, Parameter, PostgresError,
+    PostgresErrorField, PostgresNotice, QueryField, QueryFormat, QueryParam, QueryResult, QueryRow,
+    RowIndex, StatementDescription, StatementResult, TypeOid, ValueFormat, ValueRef,
 };
 pub use server::{OliphauntServer, OliphauntServerBuilder, ServerListen};
 pub use storage::DatabaseStorage;

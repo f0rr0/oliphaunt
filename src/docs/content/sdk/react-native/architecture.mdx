@@ -26,7 +26,7 @@ same direct-mode semantics on each mobile OS.
 ## JavaScript surface
 
 ```ts
-import { Oliphaunt } from '@oliphaunt/react-native';
+import Oliphaunt from '@oliphaunt/react-native';
 
 await using database = await Oliphaunt.open({
   storage: { kind: 'applicationData', name: 'main' },
@@ -37,8 +37,20 @@ const result = await database.query('SELECT 1::text AS value');
 ```
 
 The public surface is open, typed query/execute, buffered and callback-streamed
-raw protocol, transaction, checkpoint, cancellation, physical backup, static
+raw protocol, transaction, cancellation, physical backup, static
 restore, and close. There is no app-background mode.
+
+Every operation returns a JavaScript promise. JSI performs the required binary
+copy and callback registration, then delegates PostgreSQL and filesystem work
+to the Swift or Kotlin SDK's serial native owner. Module invalidation stops
+callback delivery to the retiring JSI runtime and schedules native close
+asynchronously; it never waits on the JavaScript, iOS main, or Android UI
+thread. A thrown raw-stream callback rejects the operation before the owner
+admits subsequent work. Chunk delivery is a synchronous backpressure boundary:
+returning a Promise or thenable, or reentering the same database or transaction
+from the callback, rejects the stream. `cancel()` remains independently
+admitted so it can interrupt active native work. It remains callable after
+close admission while earlier FIFO work drains and stops at native teardown.
 
 ## Binary transport
 
@@ -54,9 +66,11 @@ lets native platform code resolve an app-private path; `directory(path)` is for
 applications that already own one. Each path names a managed root, not PGDATA.
 
 The bridge owns one mobile direct database at a time. It rejects another open
-while one is pending, active, or closing. App lifecycle policy calls
-`checkpoint()`, `cancel()`, or `close()` explicitly. Restore accepts a new or
-existing-empty destination and does not replace data.
+while one is pending, active, or closing. App lifecycle policy calls `cancel()`
+or `close()` explicitly. A JavaScript finalizer can only request cleanup of the
+exact process-unique generation it owned, so stale cleanup cannot affect a
+newer native session; module invalidation remains the fallback. Restore accepts
+a new or existing-empty destination and does not replace data.
 
 ## Extensions and packaging
 

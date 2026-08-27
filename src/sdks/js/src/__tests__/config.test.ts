@@ -18,11 +18,11 @@ test('normalizes only the public database and server configuration', () => {
     {},
     { instanceDirectory: '/temporary/root', temporaryDirectory: true },
   );
-  assert.equal(direct.execution, 'direct');
+  assert.equal(direct.topology, 'direct');
 
   const broker = normalizeOpenConfig(
     {
-      execution: 'broker',
+      topology: 'broker',
       storage: { kind: 'directory', path: '/app/root' },
       brokerExecutable: '/opt/oliphaunt-broker',
       startupGUCs: { work_mem: '16MB' },
@@ -32,7 +32,7 @@ test('normalizes only the public database and server configuration', () => {
     },
     { instanceDirectory: '/app/root', temporaryDirectory: false },
   );
-  assert.equal(broker.execution, 'broker');
+  assert.equal(broker.topology, 'broker');
   assert.equal(broker.pgdata, '/app/root/pgdata');
   assert.equal(broker.brokerExecutable, '/opt/oliphaunt-broker');
   assert.deepEqual(broker.extensions, ['vector', 'hstore']);
@@ -40,19 +40,19 @@ test('normalizes only the public database and server configuration', () => {
 
   const server = normalizeOpenConfig(
     {
-      execution: 'server',
+      topology: 'server',
       serverExecutable: '/opt/postgres',
       listen: { transport: 'tcp', port: 15432 },
     },
     { instanceDirectory: '/server/root', temporaryDirectory: true },
   );
-  assert.equal(server.execution, 'server');
+  assert.equal(server.topology, 'server');
   assert.equal(server.serverExecutable, '/opt/postgres');
   assert.deepEqual(server.serverListen, { transport: 'tcp', port: 15432 });
 
   const unixServer = normalizeOpenConfig(
     {
-      execution: 'server',
+      topology: 'server',
       listen: { transport: 'unix', directory: '/tmp/oliphaunt sockets' },
     },
     { instanceDirectory: '/server/root', temporaryDirectory: true },

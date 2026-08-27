@@ -17,6 +17,14 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
     }
 
     func open(configuration: OliphauntConfiguration) async throws -> any OliphauntSession {
+        let owner = OliphauntNativeOwner(label: "dev.oliphaunt.swift.native-direct")
+        let box = try await owner.run { [self] in
+            try openOnOwner(configuration: configuration)
+        }
+        return NativeDirectSession(box: box, owner: owner)
+    }
+
+    private func openOnOwner(configuration: OliphauntConfiguration) throws -> NativeSessionBox {
         try validateOliphauntStorage(configuration.storage)
         try validateOliphauntStartupIdentity(configuration.username, label: "username")
         try validateOliphauntStartupIdentity(configuration.database, label: "database")
@@ -129,10 +137,17 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
             // process, never on a failed native open.
             throw OliphauntError.engine(Self.lastError(nil))
         }
-        return NativeDirectSession(session: session)
+        return NativeSessionBox(pointer: session)
     }
 
     func restore(destination: URL, bytes: Data) async throws {
+        let owner = OliphauntNativeOwner(label: "dev.oliphaunt.swift.native-direct.restore")
+        try await owner.run { [self] in
+            try restoreOnOwner(destination: destination, bytes: bytes)
+        }
+    }
+
+    private func restoreOnOwner(destination: URL, bytes: Data) throws {
         try validateOliphauntDirectory(destination, label: "restore destination")
         let libraryPath = libraryURL?.path
         let rc = destination.path.withCString { destinationCString in
@@ -462,10 +477,23 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
     }()
 
     fileprivate static func lastError(_ session: OpaquePointer?) -> String {
-        guard let pointer = oliphaunt_swift_last_error(session) else {
+        let required = oliphaunt_swift_copy_last_error(session, nil, 0)
+        guard required > 0, required < Int.max else {
             return "unknown liboliphaunt Swift runtime error"
         }
-        let message = String(cString: pointer)
+        var bytes = [CChar](repeating: 0, count: required + 1)
+        let currentRequired = bytes.withUnsafeMutableBufferPointer { buffer in
+            oliphaunt_swift_copy_last_error(session, buffer.baseAddress, buffer.count)
+        }
+        if currentRequired >= bytes.count {
+            bytes = [CChar](repeating: 0, count: currentRequired + 1)
+            bytes.withUnsafeMutableBufferPointer { buffer in
+                _ = oliphaunt_swift_copy_last_error(session, buffer.baseAddress, buffer.count)
+            }
+        }
+        let message = bytes.withUnsafeBufferPointer { buffer in
+            String(cString: buffer.baseAddress!)
+        }
         return message.isEmpty ? "unknown liboliphaunt Swift runtime error" : message
     }
 
@@ -603,38 +631,78 @@ private struct OliphauntFlatJSONParser {
     }
 }
 
-private actor NativeDirectSession: OliphauntSession {
+private final class NativeDirectSession: OliphauntSession, @unchecked Sendable {
     private let box: NativeSessionBox
+    private let owner: OliphauntNativeOwner
+    private let cancellationOwner = OliphauntNativeOwner(
+        label: "dev.oliphaunt.swift.native-direct.cancel"
+    )
 
-    init(session: OpaquePointer) {
-        self.box = NativeSessionBox(pointer: session)
+    init(box: NativeSessionBox, owner: OliphauntNativeOwner) {
+        self.box = box
+        self.owner = owner
     }
 
     deinit {
-        box.closeBestEffort()
+        let box = box
+        owner.enqueue {
+            box.closeBestEffort()
+        }
     }
 
     func execProtocolRaw(_ bytes: Data) async throws -> Data {
-        try box.execProtocolRaw(bytes)
+        try await owner.run { [box] in
+            try box.execProtocolRaw(bytes)
+        }
     }
 
-    func execProtocolStream(
+    func execProtocolRawStream(
         _ bytes: Data,
         onChunk: @escaping @Sendable (Data) throws -> Void
     ) async throws {
-        try box.execProtocolStream(bytes, onChunk: onChunk)
+        try await owner.run { [box] in
+            try box.execProtocolRawStream(bytes, onChunk: onChunk)
+        }
     }
 
     func backup() async throws -> Data {
-        try box.backup()
+        try await owner.run { [box] in
+            try box.backup()
+        }
     }
 
-    nonisolated func cancel() async throws {
-        try box.cancel()
+    func cancel() async throws {
+        try await cancellationOwner.run { [box] in
+            try box.cancel()
+        }
     }
 
-    nonisolated func close() async throws {
-        try box.close()
+    func close() async throws {
+        try await owner.run { [box] in
+            try box.close()
+        }
+    }
+}
+
+final class OliphauntNativeOwner: @unchecked Sendable {
+    private let queue: DispatchQueue
+
+    init(label: String) {
+        queue = DispatchQueue(label: label, qos: .userInitiated)
+    }
+
+    func run<Value: Sendable>(
+        _ operation: @escaping @Sendable () throws -> Value
+    ) async throws -> Value {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                continuation.resume(with: Result(catching: operation))
+            }
+        }
+    }
+
+    func enqueue(_ operation: @escaping @Sendable () -> Void) {
+        queue.async(execute: operation)
     }
 }
 
@@ -676,7 +744,7 @@ private final class NativeSessionBox: @unchecked Sendable {
         return Data(bytes: data, count: response.len)
     }
 
-    func execProtocolStream(
+    func execProtocolRawStream(
         _ bytes: Data,
         onChunk: @escaping @Sendable (Data) throws -> Void
     ) throws {
@@ -689,7 +757,7 @@ private final class NativeSessionBox: @unchecked Sendable {
         let context = Unmanaged.passUnretained(callbackBox).toOpaque()
         let rc = bytes.withUnsafeBytes { rawBuffer in
             let base = rawBuffer.bindMemory(to: UInt8.self).baseAddress
-            return oliphaunt_swift_exec_protocol_stream(
+            return oliphaunt_swift_exec_protocol_raw_stream(
                 pointer,
                 base,
                 bytes.count,

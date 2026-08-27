@@ -130,6 +130,7 @@ impl StdError for PostgresToolError {
 }
 
 /// Run packaged `pg_dump` against a PostgreSQL connection string.
+// liboliphaunt-doc-example:rust-native-pg-dump
 pub fn pg_dump(
     connection_string: &str,
     options: PgDumpOptions,

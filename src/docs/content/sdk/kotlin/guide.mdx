@@ -66,7 +66,7 @@ val database =
     )
 
 val rows = database.query("SELECT 1::text AS value")
-val value = rows.getText(row = 0, column = "value")
+val value = rows.rows.first().value("value", PostgresDecoders.string)
 
 database.close()
 ```
@@ -97,13 +97,14 @@ database.execute(
 database.query(
     "INSERT INTO notes (title, body) VALUES ($1, $2) RETURNING id::text AS id",
     listOf(
-        QueryParam.text("First note"),
-        QueryParam.text("Stored by embedded PostgreSQL"),
+        QueryParam.string("First note"),
+        QueryParam.string("Stored by embedded PostgreSQL"),
     ),
 )
 
 val notes =
     database.query("SELECT id, title FROM notes ORDER BY id DESC LIMIT 20")
+val firstTitle = notes.rows.first().value("title", PostgresDecoders.string)
 ```
 
 Expose app-specific suspend functions to UI code. The SDK owns the serialized
@@ -131,8 +132,21 @@ session.
 
 ### Handle lifecycle
 
-Database calls run through coroutine serialization. Use `checkpoint()`,
-`cancel()`, and `close()` explicitly according to the app's lifecycle policy.
+Database calls are suspending at the public boundary. A single-thread owner
+dispatcher runs storage preparation, JNI open, SQL/protocol work, backup, and
+close away from the Android UI thread. Ordinary work, transaction controls, and
+close share FIFO admission. A transaction or close is an atomic cutoff: calls
+admitted earlier drain before it, and incompatible later calls fail. `cancel()`
+uses a separate control dispatcher, and close completes its ownership transition
+even when its calling coroutine is cancelled. Cancellation remains available
+while close drains earlier admissions and stops when native teardown starts.
+Raw-stream callbacks are synchronous backpressure boundaries: same-handle
+database and transaction work is rejected from their scope, except for
+out-of-band `cancel()`. Use `cancel()` and `close()`
+explicitly according to the app's lifecycle policy. A phantom-reference cleaner
+only schedules best-effort forgotten-handle cleanup on the owner; it does not
+replace explicit close or block the garbage collector thread. Run
+`execute("CHECKPOINT")` only when an explicit PostgreSQL checkpoint is needed.
 
 </Step>
 <Step>

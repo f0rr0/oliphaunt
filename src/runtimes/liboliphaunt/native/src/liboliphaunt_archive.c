@@ -419,7 +419,9 @@ static int emergency_stop_backup(
     OliphauntHandle *handle = (OliphauntHandle *)context;
     OliphauntBackupStopFiles ignored = {0};
     int rc = stop_physical_backup(handle, &ignored, state);
-    snprintf(error, error_capacity, "%s", handle->last_error);
+    char snapshot[OLIPHAUNT_ERROR_CAPACITY];
+    (void)oliphaunt_copy_last_error(handle, snapshot, sizeof(snapshot));
+    snprintf(error, error_capacity, "%s", snapshot);
     free_backup_stop_files(&ignored);
     return rc;
 }
@@ -427,8 +429,8 @@ static int emergency_stop_backup(
 static void cleanup_failed_backup(
     OliphauntHandle *handle,
     OliphauntBackupModeState *state) {
-    char primary_error[sizeof(handle->last_error)];
-    snprintf(primary_error, sizeof(primary_error), "%s", handle->last_error);
+    char primary_error[OLIPHAUNT_ERROR_CAPACITY];
+    (void)oliphaunt_copy_last_error(handle, primary_error, sizeof(primary_error));
     OliphauntBackupCleanupResult result;
     oliphaunt_run_failed_backup_cleanup(
         *state,
@@ -482,7 +484,14 @@ static int32_t oliphaunt_backup_impl(
     }
     out->data = NULL;
     out->len = 0;
-    if (handle->backup_mode_exit_unconfirmed) {
+    pthread_mutex_lock(&handle->mutex);
+    if (oliphaunt_reject_if_streaming_locked(handle) != 0) {
+        pthread_mutex_unlock(&handle->mutex);
+        return -1;
+    }
+    bool backup_mode_exit_unconfirmed = handle->backup_mode_exit_unconfirmed;
+    pthread_mutex_unlock(&handle->mutex);
+    if (backup_mode_exit_unconfirmed) {
         set_error(handle, "native liboliphaunt backup-mode exit is unconfirmed; close the database and restart the process before reopening it");
         return -1;
     }
@@ -562,7 +571,11 @@ static int32_t oliphaunt_backup_impl(
 int32_t oliphaunt_backup(
     OliphauntHandle *handle,
     OliphauntResponse *out) {
-    return oliphaunt_backup_impl(handle, out);
+    OliphauntErrorScope error_scope;
+    oliphaunt_error_scope_begin(&error_scope, handle, "oliphaunt_backup");
+    int32_t rc = oliphaunt_backup_impl(handle, out);
+    oliphaunt_error_scope_end(&error_scope, rc != 0);
+    return rc;
 }
 
 static int validate_restored_backup_manifest(OliphauntHandle *handle, const char *staging_root) {
@@ -799,7 +812,7 @@ static int publish_restore_without_replacement(OliphauntHandle *handle, const ch
     return 0;
 }
 
-int32_t oliphaunt_restore(const OliphauntRestoreOptions *options) {
+static int32_t oliphaunt_restore_impl(const OliphauntRestoreOptions *options) {
     if (options == NULL ||
         options->abi_version != OLIPHAUNT_ABI_VERSION ||
         options->destination == NULL ||
@@ -870,5 +883,13 @@ int32_t oliphaunt_restore(const OliphauntRestoreOptions *options) {
     }
     oliphaunt_release_file_lock(&stable_lock_fd, &stable_lock_path);
     free(staging_root);
+    return rc;
+}
+
+int32_t oliphaunt_restore(const OliphauntRestoreOptions *options) {
+    OliphauntErrorScope error_scope;
+    oliphaunt_error_scope_begin(&error_scope, NULL, "oliphaunt_restore");
+    int32_t rc = oliphaunt_restore_impl(options);
+    oliphaunt_error_scope_end(&error_scope, rc != 0);
     return rc;
 }

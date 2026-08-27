@@ -83,7 +83,7 @@ generated startup configuration, including `shared_preload_libraries`, before
 PostgreSQL starts:
 
 ```rust,no_run
-use oliphaunt_wasix::{extensions, Oliphaunt};
+use oliphaunt_wasix::{blocking::Oliphaunt, extensions};
 
 let mut db = Oliphaunt::builder()
     .extensions([extensions::VECTOR, extensions::PG_TRGM])

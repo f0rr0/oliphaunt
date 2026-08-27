@@ -138,4 +138,18 @@ describe('WASIX storage descriptors', () => {
       fields: original.fields,
     });
   });
+
+  it('preserves generic error identity and owner-side diagnostics across the worker boundary', () => {
+    const original = new TypeError('invalid owner request');
+    original.stack = 'TypeError: invalid owner request\n    at owner-worker.js:1:1';
+
+    const roundTrip = deserializeWorkerError(serializeWorkerError(original));
+
+    expect(roundTrip).toBeInstanceOf(Error);
+    expect(roundTrip).toMatchObject({
+      name: 'TypeError',
+      message: 'invalid owner request',
+      stack: original.stack,
+    });
+  });
 });

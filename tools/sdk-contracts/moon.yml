@@ -27,6 +27,7 @@ tasks:
       - "sdk-contracts:headers"
       - "sdk-contracts:manifest"
       - "sdk-contracts:native-boundaries"
+      - "shared-rust-query-core:check"
     inputs:
       - "/docs/maintainers/sdk-api-surface.md"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
@@ -38,6 +39,7 @@ tasks:
       - "/src/sdks/react-native/src/**/*.ts"
       - "/src/sdks/react-native/package.json"
       - "/src/sdks/rust/src/**/*.rs"
+      - "/src/shared/rust-query-core/**/*"
       - "/src/sdks/rust/crates/oliphaunt-build/src/**/*.rs"
       - "/src/sdks/swift/Sources/Oliphaunt/**/*.swift"
       - "/src/sdks/swift/Sources/OliphauntExtensionSupport/**/*.swift"
@@ -79,6 +81,9 @@ tasks:
       - "/src/sdks/kotlin/oliphaunt/src/**/*"
       - "/src/sdks/react-native/src/__tests__/**/*"
       - "/src/sdks/rust/tests/**/*"
+      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/README.md"
+      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/tests/**/*"
+      - "/src/runtimes/liboliphaunt/native/crates/tools/src/**/*"
       - "/src/sdks/swift/Tests/**/*"
       - "/tools/policy/check-sdk-doc-examples.mjs"
     options:

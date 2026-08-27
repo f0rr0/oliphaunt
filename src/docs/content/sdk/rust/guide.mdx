@@ -52,7 +52,8 @@ async fn open_database() -> oliphaunt::Result<()> {
         .await?;
 
     let rows = db.query("SELECT 1::text AS value").await?;
-    assert_eq!(rows.get_text(0, "value")?, Some("1"));
+    let value: &str = rows.rows()[0].try_get("value")?;
+    assert_eq!(value, "1");
 
     db.close().await?;
     Ok(())
@@ -93,6 +94,7 @@ db.query_with_params(
 let notes = db
     .query("SELECT id, title FROM notes ORDER BY id DESC LIMIT 20")
     .await?;
+let first_title: String = notes.rows()[0].try_get("title")?;
 ```
 
 Expose app-specific commands to a Tauri webview instead of exposing raw database
@@ -108,6 +110,11 @@ selected extensions, broker executable, and server executable through the
 builder. `Oliphaunt::builder()` defaults to an SDK-owned temporary directory
 initialized from the packaged cluster seed; call `.directory(path)` when data must
 persist.
+
+The terminal validates topology-specific choices. Use `broker_executable` only
+with `broker().open()`, and use `listen` or `server_executable` only with
+`open_server()`. Do not add `.direct()` or `.broker()` before `open_server()`;
+mismatches return `InvalidConfig` rather than being ignored.
 
 </Step>
 <Step>
@@ -129,10 +136,18 @@ independent client sessions matter.
 
 ### Handle lifecycle
 
-Direct-mode work queues fairly on one owner executor. Transactions pin the
-physical session until commit or rollback. `close()` rejects queued work, waits
-for active work, then closes or detaches from the selected runtime. Use explicit
-cancellation for long-running SQL.
+SDK-session work queues fairly on one owner executor in every native mode.
+Transactions pin the physical session until commit or rollback. `close()` establishes an ordered
+cutoff: work already admitted drains, later application work is rejected, and
+then the selected runtime closes or detaches. If pre-cutoff work leaves a
+transaction active, close returns `TransactionActive`; finish that transaction
+and retry. A required `COMMIT` or `ROLLBACK` remains admissible for a transaction
+whose `BEGIN` crossed the cutoff first. Once runtime teardown starts, the handle
+is terminal even when teardown fails: `is_closed()` is true, later work is
+rejected, and repeated close calls return the same result. Use explicit
+cancellation for long-running SQL. Cancellation remains out of band and
+admissible while pre-cutoff work drains; it is rejected when destructive
+teardown begins.
 
 </Step>
 <Step>

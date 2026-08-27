@@ -46,6 +46,11 @@ test("freezes the generated target-wired Rust SDK source instead of the workspac
     });
     const manifest = readFileSync(manifestPath, "utf8");
     const source = readFileSync(path.join(root, "source/src/lib.rs"), "utf8");
+    const queryCore = readFileSync(path.join(root, "source/src/query_core.rs"), "utf8");
+    const canonicalQueryCore = readFileSync(
+      path.join(ROOT, "src/shared/rust-query-core/query_core.rs"),
+      "utf8",
+    );
     const workspaceSource = readFileSync(path.join(ROOT, "src/sdks/rust/src/lib.rs"), "utf8");
     const nativeVersion = currentProductVersionSync("liboliphaunt-native", "prepare-rust-release-source.test.mjs");
     const brokerVersion = currentProductVersionSync("oliphaunt-broker", "prepare-rust-release-source.test.mjs");
@@ -71,6 +76,7 @@ test("freezes the generated target-wired Rust SDK source instead of the workspac
     assert.match(source, /compile_error!/u);
     assert.match(source, /separately versioned oliphaunt-wasix crate/u);
     assert.doesNotMatch(workspaceSource, /Generated release-only native target guard|compile_error!/u);
+    assert.equal(queryCore, canonicalQueryCore);
 
     const cratePath = manualCargoPackageSource(
       manifestPath,
@@ -85,9 +91,14 @@ test("freezes the generated target-wired Rust SDK source instead of the workspac
     });
     const packedManifest = commandOutput("tar", ["-xOzf", cratePath, `${packageRoot}/Cargo.toml`]);
     const packedSource = commandOutput("tar", ["-xOzf", cratePath, `${packageRoot}/src/lib.rs`]);
+    const packedQueryCore = commandOutput(
+      "tar",
+      ["-xOzf", cratePath, `${packageRoot}/src/query_core.rs`],
+    );
     const packedNames = commandOutput("tar", ["-tzf", cratePath]);
     assert.equal(packedManifest, manifest);
     assert.equal(packedSource, source);
+    assert.equal(packedQueryCore, canonicalQueryCore);
     assert.doesNotMatch(packedManifest, /=\s*\{[^}\n]*\bpath\s*=/u);
     assert.doesNotMatch(packedNames, /crates\/oliphaunt-build/u);
     const [packagedCarrier] = discoverPublicationArtifacts([cratePath]);

@@ -653,6 +653,19 @@ async function validateRustSdkCrate(crate) {
   if (packageConfig.license !== "MIT") {
     fail(`${rel(crate)} source-only package ${packageName} must declare license MIT`);
   }
+  if (packageName === "oliphaunt") {
+    const packagedQueryCore = tarReadText(
+      crate,
+      `${packageName}-${sdkVersion}/src/query_core.rs`,
+    );
+    const canonicalQueryCore = readFileSync(
+      path.join(ROOT, "src/shared/rust-query-core/query_core.rs"),
+      "utf8",
+    );
+    if (packagedQueryCore !== canonicalQueryCore) {
+      fail(`${rel(crate)} Rust query core is stale relative to src/shared/rust-query-core/query_core.rs`);
+    }
+  }
   try {
     assertReleaseNoticesInArchive(crate, {
       profile: "source-sdk",
@@ -734,6 +747,21 @@ async function validateWasixSdkCrate(crate) {
   const packageConfig = manifest.package;
   if (packageConfig === null || Array.isArray(packageConfig) || typeof packageConfig !== "object" || packageConfig.name !== "oliphaunt-wasix") {
     fail(`${rel(crate)} must package the oliphaunt-wasix crate`);
+  }
+  const sdkVersion = await currentProductVersion("oliphaunt-wasix-rust", PREFIX);
+  if (packageConfig.version !== sdkVersion) {
+    fail(`${rel(crate)} package oliphaunt-wasix must use version ${sdkVersion}`);
+  }
+  const packagedQueryCore = tarReadText(
+    crate,
+    `oliphaunt-wasix-${sdkVersion}/src/oliphaunt/query_core.rs`,
+  );
+  const canonicalQueryCore = readFileSync(
+    path.join(ROOT, "src/shared/rust-query-core/query_core.rs"),
+    "utf8",
+  );
+  if (packagedQueryCore !== canonicalQueryCore) {
+    fail(`${rel(crate)} Rust query core is stale relative to src/shared/rust-query-core/query_core.rs`);
   }
   const runtimeVersion = await currentProductVersion("liboliphaunt-wasix", PREFIX);
   const dependencies = manifest.dependencies;
@@ -1286,6 +1314,7 @@ async function checkSdkProduct(product, { require }) {
       "src/bin/oliphaunt_wasix_dump.rs",
       "src/bin/oliphaunt_wasix_proxy.rs",
       "src/oliphaunt/assets.rs",
+      "src/oliphaunt/query_core.rs",
     ]) {
       if (!entries.has(requiredEntry)) {
         fail(`${product} package file list is missing ${requiredEntry}`);

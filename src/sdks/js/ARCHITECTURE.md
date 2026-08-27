@@ -11,11 +11,11 @@ The default `Oliphaunt` client exposes `open`, `openServer`, and static
 returns a distinct handle with a required connection string and no backup
 method.
 
-Typed execute/query results, callback transactions, checkpoint, cancellation,
-buffered raw protocol, and close are common where meaningful. Backup is one byte
-format and only belongs to direct/broker databases. Runtime modes, capability
-objects, archive formats, parsers, stream primitives, packaging reports, and
-resource profiles are internal or absent.
+Typed execute/query results, callback transactions, cancellation, buffered and
+callback-streamed raw protocol, and close are common where meaningful. Backup
+is one byte format and only belongs to direct/broker databases. Runtime modes,
+capability objects, archive formats, parsers, stream primitives, packaging
+reports, and resource profiles are internal or absent.
 
 ## Adapter boundaries
 
@@ -29,6 +29,19 @@ All three adapters implement the internal buffered runtime binding. The binding
 contains only operations required by the public handle. The Node addon and C ABI
 may have lower-level symbols for other consumers; the SDK does not mirror unused
 symbols into its own interface.
+
+The private close boundary returns a discriminated `closed`, `retryable`, or
+`terminal` outcome. Direct adapters may report retryable only when logical
+deactivation did not occur. Broker and server adapters cross a destructive
+cutoff before fallible process/filesystem cleanup and therefore classify those
+failures as terminal without inspecting error text.
+
+The public database contract is promise-based in every JavaScript runtime, and
+PostgreSQL open, query, backup, restore, and detach work runs through async native
+work (Node/Bun addon jobs or Deno `nonblocking` FFI). Loading the native module is
+the narrow exception: Node/Bun `require()` and Deno `dlopen()` are synchronous
+platform operations during first adapter resolution. They do not run a database
+operation or create an alternate synchronous database surface.
 
 Direct and broker databases have the same public methods. Server differs
 structurally instead of returning runtime-dependent failures: it exposes
@@ -47,7 +60,37 @@ The database handle tracks close and active transaction state. A transaction
 pins the one SDK connection. Body failure rolls back; failed rollback poisons.
 COMMIT transport/protocol uncertainty poisons without a later ROLLBACK. An
 explicit PostgreSQL `ROLLBACK` command tag returned for COMMIT is the known-idle
-exception. Close waits for admitted operations and is idempotent after success.
+exception. Close waits for admitted operations. A pre-teardown direct failure
+may be retried; after success or a destructive broker/server failure, the one
+terminal close attempt is retained and later calls replay its exact outcome.
+The read-only `closed` state becomes true for either terminal result.
+Closing stops ordinary session admission immediately, but keeps out-of-band
+cancel admission open while already-admitted work drains. Runtime teardown
+closes that cancel gate only after every admitted cancellation request settles.
+
+Raw-stream callbacks provide synchronous backpressure. While a callback runs,
+same-handle database work, transaction work, backup, close, and nested streams
+are rejected at admission rather than silently queued. Out-of-band `cancel()`
+remains available.
+
+Explicit close unregisters forgotten-handle cleanup before releasing the
+JavaScript direct owner. Node/Bun register the public object with a
+`FinalizationRegistry` whose held record contains an opaque, exact-generation
+addon token. The registry only releases the matching JavaScript admission lease
+if the addon safely marks that generation for recovery by the next asynchronous
+open. Deno registers the public database object with a `FinalizationRegistry`
+whose held record contains only the logical generation and an idempotent ownership-release
+callback, never the object or opaque pointer. The finalizer only starts a
+`nonblocking` generation-guarded terminal FFI close and swallows its unobservable
+outcome. This makes stale cleanup harmless without running PostgreSQL teardown
+on the JavaScript finalizer job. Broker and server registries likewise hold only
+an exact private runtime handle and private lease generation, never the public
+facade or its release callback. Their finalizers schedule asynchronous teardown;
+explicitly unregistered and superseded generations are no-ops. Registration is
+the last step of facade publication: if it throws, the opened handle is retired,
+any partial registration is unregistered, and the exact JavaScript ownership
+lease is released before `open()` rejects. None of these guards make garbage
+collection a supported replacement for explicit close.
 
 ## Storage
 

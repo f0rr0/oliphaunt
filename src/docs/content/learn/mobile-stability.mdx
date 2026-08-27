@@ -1,6 +1,6 @@
 ---
 title: Mobile Stability
-description: Understand native direct mode, relaunch, checkpoint, and crash consistency on iOS, Android, and React Native.
+description: Understand native direct mode, relaunch, persistence, and crash consistency on iOS, Android, and React Native.
 ---
 
 # Mobile Stability
@@ -35,12 +35,18 @@ is appropriate for tests and short-lived work.
 ## Background and foreground
 
 The SDK exposes normal database operations, not an app-background mode. The app
-decides whether a platform lifecycle event calls `checkpoint()`, cancels
-bounded work, or close the database. A checkpoint is a PostgreSQL durability
-operation; it does not make the in-process runtime crash-isolated.
+decides whether a platform lifecycle event cancels bounded work or closes the
+database. Committed work relies on PostgreSQL WAL and crash recovery; routine
+app lifecycle handling does not require an SDK checkpoint method. A maintenance
+workflow that explicitly needs `CHECKPOINT` can issue that PostgreSQL statement
+through the ordinary execution API, but it does not make the in-process runtime
+crash-isolated.
 
 React Native uses TurboModule calls for lifecycle and configuration and JSI
-`ArrayBuffer` transport for buffered raw protocol bytes.
+`ArrayBuffer` transport for buffered raw protocol bytes. Its host functions
+return promises and delegate runtime work to the same native owner used by the
+Swift or Kotlin SDK. Invalidation schedules close asynchronously instead of
+blocking the JavaScript, iOS main, or Android UI thread.
 
 ## Choosing the mode
 

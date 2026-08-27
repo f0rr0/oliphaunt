@@ -58,6 +58,7 @@ icu_libs="$icu_static_libs $icu_cpp_libs"
 
 liboliphaunt_sources=(
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_native.c"
+  "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_error.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_runtime.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_protocol.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_config.c"
@@ -1683,7 +1684,7 @@ artifact_ready() {
     oliphaunt_init \
     oliphaunt_exec_protocol \
     oliphaunt_exec_simple_query \
-    oliphaunt_exec_protocol_stream \
+    oliphaunt_exec_protocol_raw_stream \
     oliphaunt_backup \
     oliphaunt_restore \
     oliphaunt_cancel \

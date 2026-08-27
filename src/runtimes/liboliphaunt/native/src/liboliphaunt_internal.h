@@ -13,6 +13,26 @@
 #define OLIPHAUNT_EMBEDDED_MODULE_DIR_ENV "OLIPHAUNT_EMBEDDED_MODULE_DIR"
 #define OLIPHAUNT_ERROR_CAPACITY 1024
 
+/*
+ * Every fallible public C operation installs one of these stack-owned scopes.
+ * set_error records into the innermost scope as well as the shared handle (or
+ * global) slot. A failed nested operation is propagated to its parent when it
+ * returns; a successful nested operation cannot erase an outer error.
+ */
+typedef struct OliphauntErrorScope {
+    struct OliphauntErrorScope *parent;
+    OliphauntHandle *fallback_handle;
+    const char *operation;
+    char error[OLIPHAUNT_ERROR_CAPACITY];
+    bool has_error;
+} OliphauntErrorScope;
+
+void oliphaunt_error_scope_begin(
+    OliphauntErrorScope *scope,
+    OliphauntHandle *fallback_handle,
+    const char *operation);
+void oliphaunt_error_scope_end(OliphauntErrorScope *scope, bool failed);
+
 typedef struct OliphauntEmbeddedIO {
     void *context;
     ssize_t (*read)(void *context, void *ptr, size_t len);
@@ -134,9 +154,11 @@ struct OliphauntHandle {
     int backend_status;
 
     pthread_mutex_t mutex;
+    pthread_mutex_t error_mutex;
     pthread_cond_t input_cond;
     pthread_cond_t output_cond;
     bool sync_initialized;
+    bool error_mutex_initialized;
     bool closing;
     bool logical_active;
     uint64_t logical_generation;
@@ -250,6 +272,17 @@ int oliphaunt_set_input_locked(OliphauntHandle *handle, const void *buf, size_t 
 int oliphaunt_startup_timeout_ms(void);
 int oliphaunt_wait_for_ready_locked(OliphauntHandle *handle, int timeout_ms);
 void oliphaunt_clear_stream_chunks_locked(OliphauntHandle *handle);
+/* Returns -1 and sets the operation error when a raw stream owns the handle.
+ * The caller must hold handle->mutex. */
+static inline int oliphaunt_reject_if_streaming_locked(OliphauntHandle *handle) {
+    if (handle == NULL || !handle->streaming) {
+        return 0;
+    }
+    oliphaunt_set_error(
+        handle,
+        "native liboliphaunt handle is busy delivering a raw protocol stream");
+    return -1;
+}
 
 int oliphaunt_path_exists(const char *path);
 int oliphaunt_path_is_directory(const char *path);

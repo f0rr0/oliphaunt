@@ -13,11 +13,11 @@ task.
 | Initialization | `oliphaunt_init`, `OliphauntConfig` | Open a native direct backend for the prepared `pgdata` child of a managed root; initialization does not create it |
 | Versioning | `oliphaunt_version` | Report the runtime and PostgreSQL build identity |
 | Raw protocol | `oliphaunt_exec_protocol` | Send PostgreSQL frontend protocol bytes and receive backend messages |
-| Streaming | `oliphaunt_exec_protocol_stream`, response sink callbacks | Handle large protocol responses without forcing one contiguous response buffer |
+| Streaming | `oliphaunt_exec_protocol_raw_stream`, response sink callbacks | Handle large raw protocol responses without forcing one contiguous response buffer |
 | Simple SQL | `oliphaunt_exec_simple_query` | Execute one SQL string without constructing a frontend protocol frame |
 | Cancellation | `oliphaunt_cancel` | Request cancellation of the active PostgreSQL operation on a handle |
 | Response ownership | `OliphauntResponse`, `oliphaunt_free_response` | Free ABI-owned buffers exactly once |
-| Errors | `oliphaunt_last_error` | Read the last error string for a handle, or the global error string with `NULL` |
+| Errors | `oliphaunt_copy_last_error`, compatibility `oliphaunt_last_error` | Copy the calling thread's failed-operation error, or fall back to the handle/global (`NULL`) error, into caller-owned storage; use the pointer accessor only for source compatibility |
 | Data movement | `oliphaunt_backup`, `oliphaunt_restore`, `OliphauntRestoreOptions` | Back up PostgreSQL data from an open managed root and restore it into a new or existing-empty receiving root |
 | Static extensions | `oliphaunt_register_static_extensions`, `OliphauntStaticExtension`, `OliphauntStaticExtensionSymbol` | Register process-wide statically linked extension modules before backend startup |
 | Lifecycle | `oliphaunt_detach`, `oliphaunt_logical_generation`, `oliphaunt_close_if_generation`, `oliphaunt_close` | Detach a logical lease, guard host cleanup against stale leases, or terminate the resident backend |
@@ -26,11 +26,24 @@ Most app developers use a language SDK instead of calling the C ABI directly.
 The C ABI is primarily for binding authors and applications that need the native
 runtime boundary itself.
 
-ABI v8 places the optional embedded module directory at
+ABI v9 places the optional embedded module directory at
 `OliphauntConfig.module_dir`. A non-empty path is copied into the handle and is
 authoritative over process environment and release-layout discovery. Set it to
 `NULL` for the sensible default: a valid `OLIPHAUNT_EMBEDDED_MODULE_DIR`, then
 packaged release-layout discovery.
+
+Bindings call `oliphaunt_copy_last_error` on the same thread immediately after
+a failed operation. The runtime keeps that operation's error in owned
+thread-local storage, so another thread's failed cancellation or database call
+cannot change the error between a size probe and the subsequent copy. Repeated
+copies remain stable until that thread begins another fallible C operation. If
+there is no operation-local snapshot, the function atomically reads the latest
+handle error, or the process-global error when passed `NULL`.
+
+The return value is the full UTF-8 byte length even when the supplied buffer is
+smaller, and nonempty output capacity is always NUL-terminated.
+`oliphaunt_last_error` returns a separate thread-local compatibility snapshot;
+new bindings must not retain or share that pointer.
 
 Direct-mode `oliphaunt_detach` leaves the same-PGDATA backend resident so a later
 init can acquire a new logical lease. Binding authors capture the nonzero

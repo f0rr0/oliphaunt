@@ -1,6 +1,6 @@
 import { Worker } from 'node:worker_threads';
 import type { OliphauntDatabase } from './types.js';
-import { installNodeEnvironment } from './node-direct.js';
+import { installNodeEnvironment } from './node-environment.js';
 import { nodeWorkerExecArgv } from './node-worker-options.js';
 import {
   runWasixToolProcess as runTool,

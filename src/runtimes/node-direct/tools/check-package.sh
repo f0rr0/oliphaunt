@@ -129,26 +129,47 @@ try {
     "dlopen(path.c_str(), RTLD_NOW | RTLD_GLOBAL)" \
     "Node direct must expose embedded PostgreSQL symbols to extension DSOs"
   require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    'LoadSymbol(env, dynamic, "oliphaunt_init")' \
+    'LoadSymbol(dynamic, "oliphaunt_init", error)' \
     "Node direct must resolve the canonical initialization ABI"
   require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    'LoadSymbol(env, dynamic, "oliphaunt_close")' \
+    'LoadSymbol(dynamic, "oliphaunt_close", error)' \
     "Node direct must reject native libraries missing the mandatory terminal-close ABI"
   require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    'LoadSymbol(env, dynamic, "oliphaunt_logical_generation")' \
+    'LoadSymbol(dynamic, "oliphaunt_logical_generation", error)' \
     "Node direct must resolve the resident logical generation"
   require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    'LoadSymbol(env, dynamic, "oliphaunt_close_if_generation")' \
+    'LoadSymbol(dynamic, "oliphaunt_close_if_generation", error)' \
     "Node direct must resolve generation-guarded environment cleanup"
+  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
+    'LoadSymbol(dynamic, "oliphaunt_copy_last_error", error)' \
+    "Node direct must copy race-safe error snapshots through the canonical ABI"
+  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
+    "ExecuteAsyncOpen" \
+    "Node direct open must move native loading and initialization off the JavaScript thread"
+  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
+    "napi_create_threadsafe_function" \
+    "Node direct raw streaming must use a bounded thread-safe callback bridge"
+  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
+    "ExecuteAsyncDetach" \
+    "Node direct detach must move PostgreSQL cleanup off the JavaScript thread"
   require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
     "napi_add_env_cleanup_hook" \
     "Node direct must close its resident backend before Node finalizers and process teardown"
+  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
+    "createForgottenHandleRecoveryToken" \
+    "Node direct must issue opaque generation-bound forgotten-handle recovery tokens"
+  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
+    "queueForgottenHandleRecovery" \
+    "Node direct must queue forgotten-handle recovery before releasing JavaScript ownership"
   require_text "$package_dir/native/node-addon/fixtures/fake_liboliphaunt.cc" \
     "oliphaunt_close_if_generation" \
     "Node direct cleanup proof must implement the generation-guarded fake ABI"
   require_text "$package_dir/tools/node-addon-cleanup-lifecycle.test.mjs" \
     "generation-acquisition-race" \
     "Node direct cleanup proof must reject stale handles between init and generation acquisition"
+  require_text "$package_dir/tools/node-addon-cleanup-lifecycle.test.mjs" \
+    "sdk-gc-owner-recovery" \
+    "Node direct cleanup proof must cover the high-level SDK ownership gate under forced GC"
   require_text "$package_dir/tools/node-addon-cleanup-lifecycle.test.mjs" \
     "async-archive-timers" \
     "Node direct backup and restore must prove that timers remain live"

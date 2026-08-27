@@ -24,8 +24,9 @@ await using target = await Oliphaunt.open();
 await psql(target, { script: sql });
 ```
 
-`pgDump()` supports direct and worker database placement. `psql()` requires
-worker placement because COPY restore is full duplex. Ordinary PostgreSQL
+`pgDump()` supports databases from the root and `/blocking` entrypoints.
+`psql()` requires the root entrypoint because COPY restore is full duplex.
+Ordinary PostgreSQL
 arguments are passed through, except connection, input/output, encoding, dump
 format, compression, and parallel-job arguments owned by the runner.
 `pgDump()` always uses plain UTF-8 output and rejects custom formats; it does

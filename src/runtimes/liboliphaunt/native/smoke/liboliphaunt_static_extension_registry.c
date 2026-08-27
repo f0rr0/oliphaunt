@@ -16,6 +16,20 @@ void oliphaunt_set_error(OliphauntHandle *handle, const char *message) {
     snprintf(test_error, sizeof(test_error), "%s", message != NULL ? message : "");
 }
 
+void oliphaunt_error_scope_begin(
+    OliphauntErrorScope *scope,
+    OliphauntHandle *fallback_handle,
+    const char *operation) {
+    (void)scope;
+    (void)fallback_handle;
+    (void)operation;
+}
+
+void oliphaunt_error_scope_end(OliphauntErrorScope *scope, bool failed) {
+    (void)scope;
+    (void)failed;
+}
+
 const OliphauntStaticExtension *liboliphaunt_builtin_static_extensions(size_t *count) {
     if (count != NULL) {
         *count = 0;

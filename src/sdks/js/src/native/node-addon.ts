@@ -8,18 +8,20 @@ import type { NativeHandle, NativeOpenConfig } from './types.js';
 import { envVar } from './common.js';
 
 export type NodeDirectAddon = {
-  open(config: NodeDirectOpenConfig): NativeHandle;
+  open(config: NodeDirectOpenConfig): Promise<NativeHandle>;
   execProtocolRaw(handle: NativeHandle, request: Uint8Array): Promise<Uint8Array | ArrayBuffer>;
-  execProtocolStream(
+  execProtocolRawStream(
     handle: NativeHandle,
     request: Uint8Array,
     onChunk: (chunk: Uint8Array) => void,
-  ): void;
+  ): Promise<void>;
   execSimpleQuery(handle: NativeHandle, sql: string): Promise<Uint8Array | ArrayBuffer>;
   backup(handle: NativeHandle): Promise<Uint8Array | ArrayBuffer>;
   restore(options: NodeDirectRestoreOptions): Promise<void>;
   cancel(handle: NativeHandle): void;
-  detach(handle: NativeHandle): void;
+  detach(handle: NativeHandle): Promise<void>;
+  createForgottenHandleRecoveryToken(handle: NativeHandle): unknown;
+  queueForgottenHandleRecovery(token: unknown): boolean;
 };
 
 export type NodeDirectOpenConfig = NativeOpenConfig & {
@@ -205,12 +207,14 @@ function validateAddon(addon: NodeDirectAddon, addonPath: string): void {
   for (const name of [
     'open',
     'execProtocolRaw',
-    'execProtocolStream',
+    'execProtocolRawStream',
     'execSimpleQuery',
     'backup',
     'restore',
     'cancel',
     'detach',
+    'createForgottenHandleRecoveryToken',
+    'queueForgottenHandleRecovery',
   ] as const) {
     if (typeof addon[name] !== 'function') {
       throw new Error(`Oliphaunt Node.js native-direct adapter ${addonPath} is missing ${name}()`);

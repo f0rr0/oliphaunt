@@ -159,11 +159,17 @@ impl OpenConfig {
         let _ = self.resolved_extensions()?;
         match self.mode {
             EngineMode::Broker => {
+                reject_server_options(self.mode, &self.server)?;
                 if let Some(executable) = &self.broker.executable {
                     validate_config_path("native broker executable path", executable)?;
                 }
             }
             EngineMode::Server => {
+                if self.broker.executable.is_some() {
+                    return Err(Error::InvalidConfig(
+                        "native server configuration cannot include a broker executable".to_owned(),
+                    ));
+                }
                 match &self.server.listen {
                     ServerListen::Tcp { port: Some(0) } => {
                         return Err(Error::InvalidConfig(
@@ -192,7 +198,14 @@ impl OpenConfig {
                     validate_config_path("native server executable path", executable)?;
                 }
             }
-            EngineMode::Direct => {}
+            EngineMode::Direct => {
+                if self.broker.executable.is_some() {
+                    return Err(Error::InvalidConfig(
+                        "native direct configuration cannot include a broker executable".to_owned(),
+                    ));
+                }
+                reject_server_options(self.mode, &self.server)?;
+            }
         }
         Ok(())
     }
@@ -207,6 +220,15 @@ impl OpenConfig {
             .map(PostgresStartupGuc::startup_assignment)
             .collect()
     }
+}
+
+fn reject_server_options(mode: EngineMode, server: &NativeServerConfig) -> Result<()> {
+    if server.executable.is_some() || server.listen != ServerListen::default() {
+        return Err(Error::InvalidConfig(format!(
+            "native {mode} configuration cannot include server executable or listener options"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_config_path(label: &str, path: &Path) -> Result<()> {
@@ -262,6 +284,8 @@ fn validate_postgres_startup_guc(guc: &PostgresStartupGuc) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::{EngineMode, OpenConfig, PostgresStartupGuc, ServerListen};
 
     #[test]
@@ -307,5 +331,47 @@ mod tests {
         }
         config.server.listen = ServerListen::tcp_port(0);
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn config_validation_rejects_options_for_another_topology() {
+        let mut config = OpenConfig::direct("target/test-roots/native-topology-options");
+        config.broker.executable = Some(PathBuf::from("oliphaunt-broker"));
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("direct configuration cannot include a broker executable")
+        );
+
+        config.broker.executable = None;
+        config.server.listen = ServerListen::tcp_port(15432);
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("direct configuration cannot include server executable or listener")
+        );
+
+        config.mode = EngineMode::Broker;
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("broker configuration cannot include server executable or listener")
+        );
+
+        config.mode = EngineMode::Server;
+        config.broker.executable = Some(PathBuf::from("oliphaunt-broker"));
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("server configuration cannot include a broker executable")
+        );
     }
 }

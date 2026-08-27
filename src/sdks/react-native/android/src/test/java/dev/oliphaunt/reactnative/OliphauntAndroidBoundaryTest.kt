@@ -74,6 +74,41 @@ class OliphauntAndroidBoundaryTest {
   }
 
   @Test
+  fun forgottenJavaScriptCleanupIsBoundToAnExactProcessGeneration() {
+    val iosSource = File(System.getProperty("user.dir"), "../ios/Oliphaunt.mm").readText()
+    val androidSource = File(
+      System.getProperty("user.dir"),
+      "src/main/java/dev/oliphaunt/reactnative/OliphauntModule.kt",
+    ).readText()
+    val androidJsi = File(
+      System.getProperty("user.dir"),
+      "src/main/cpp/OliphauntJsiBindings.cpp",
+    ).readText()
+
+    assertTrue(
+      "Android must expose the process-owner generation as the opaque JS handle",
+      androidSource.contains("requireReactNativeHandle(claim.generation)"),
+    )
+    assertTrue(
+      "Android forgotten cleanup must compare and remove only the exact generation",
+      androidSource.contains("fun closeIfGeneration(generation: Long)") &&
+        androidSource.contains("claim.generation != key") &&
+        androidSource.contains("sessions.remove(key, session)"),
+    )
+    assertTrue(
+      "Android JSI must route forgotten cleanup to the exact-generation platform map",
+      androidJsi.contains("\"closeIfGeneration\"") &&
+        androidJsi.contains("getMethod<void(jlong)>(\"closeIfGeneration\")"),
+    )
+    assertTrue(
+      "iOS must use its process-owner claim as the opaque JS generation",
+      iosSource.contains("NSNumber *handle = @(claim);") &&
+        iosSource.contains("- (void)closeIfGeneration:(double)generation") &&
+        iosSource.contains("claim != key.unsignedLongLongValue"),
+    )
+  }
+
+  @Test
   fun iosProtocolStreamAcknowledgesEachCallback() {
     val iosSource = File(System.getProperty("user.dir"), "../ios/Oliphaunt.mm").readText()
     val adapterSource = File(
@@ -88,6 +123,10 @@ class OliphauntAndroidBoundaryTest {
         iosSource.contains("OliphauntProtocolStreamCallbackError") &&
         adapterSource.contains("if let error = chunkBox.value") &&
         adapterSource.contains("throw error"),
+    )
+    assertFalse(
+      "React Native iOS must delegate async work to the Swift SDK owner instead of detached blocking tasks",
+      adapterSource.contains("Task.detached"),
     )
   }
 
@@ -155,7 +194,7 @@ class OliphauntAndroidBoundaryTest {
     assertTrue(
       "React Native Android must stream through the Kotlin SDK and propagate acknowledged callback failures",
       moduleSource.contains("fun execProtocolStreamBytes") &&
-        moduleSource.contains("session.execProtocolStream(request)") &&
+        moduleSource.contains("session.execProtocolRawStream(request)") &&
         moduleSource.contains("callback.emitChunk(chunk)"),
     )
     assertTrue(
@@ -172,6 +211,18 @@ class OliphauntAndroidBoundaryTest {
     assertFalse(
       "React Native Android must use the Kotlin SDK facade instead of constructing AndroidNativeDirectEngine",
       moduleSource.contains("AndroidNativeDirectEngine"),
+    )
+    val invalidateSource = moduleSource
+      .substringAfter("override fun invalidate")
+      .substringBefore("fun restoreBytes")
+    assertTrue(
+      "React Native Android invalidation must schedule native SDK cleanup asynchronously",
+      invalidateSource.contains("scope.launch") &&
+        invalidateSource.contains("session.close()"),
+    )
+    assertFalse(
+      "React Native Android invalidation must never block the main or UI thread",
+      invalidateSource.contains("runBlocking"),
     )
 
     val jsiSource = File(nativeSourceDir, "OliphauntJsiBindings.cpp").readText()
@@ -192,6 +243,11 @@ class OliphauntAndroidBoundaryTest {
       jsiSource.contains("class ChunkAcknowledgement") &&
         jsiSource.contains("acknowledgement->wait()") &&
         jsiSource.contains("protocol stream callback failed"),
+    )
+    assertTrue(
+      "React Native JSI operations must return promises and delegate execution to Kotlin callbacks",
+      jsiSource.contains("getPropertyAsFunction(runtime, \"Promise\")") &&
+        jsiSource.contains("execProtocolRawBytes"),
     )
     val callbackSource = File(
       System.getProperty("user.dir"),

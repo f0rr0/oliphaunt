@@ -56,7 +56,7 @@ let database = try await OliphauntDatabase.open(
 )
 
 let rows = try await database.query("SELECT 1::text AS value")
-let value = try rows.getText(row: 0, column: "value")
+let value: String? = try rows.rows[0].value(named: "value")
 
 try await database.close()
 ```
@@ -85,14 +85,15 @@ CREATE TABLE IF NOT EXISTS notes (
 try await database.query(
     "INSERT INTO notes (title, body) VALUES ($1, $2) RETURNING id::text AS id",
     parameters: [
-        .text("First note"),
-        .text("Stored by embedded PostgreSQL")
+        .string("First note"),
+        .string("Stored by embedded PostgreSQL")
     ]
 )
 
 let notes = try await database.query(
     "SELECT id, title FROM notes ORDER BY id DESC LIMIT 20"
 )
+let firstTitle: String? = try notes.rows[0].value(named: "title")
 ```
 
 Keep UI updates on the main actor, but keep database work behind the SDK's async
@@ -121,9 +122,19 @@ and one physical session.
 
 ### Handle lifecycle
 
-Swift exposes lifecycle as async API over a serial execution model. Use
-`checkpoint()`, `cancel()`, and `close()` explicitly when app lifecycle policy
-requires them.
+Swift exposes lifecycle as `async throws`. A dedicated serial owner queue runs
+storage preparation, open, SQL/protocol work, backup, and close away from the
+main actor. Ordinary work, transaction controls, and close share FIFO admission.
+A transaction or close is an atomic cutoff: calls admitted earlier drain before
+it, and incompatible later calls fail. `cancel()` uses a separate control queue
+so it can interrupt the active owner call. It remains available while close
+drains earlier admissions and stops when native teardown starts. Raw-stream
+callbacks are synchronous backpressure boundaries: same-handle database and
+transaction work is rejected from their scope, except for out-of-band
+`cancel()`. Task cancellation alone does not
+interrupt PostgreSQL; use `cancel()` and `close()` explicitly when app lifecycle
+policy requires them. Run `execute("CHECKPOINT")` only when an explicit
+PostgreSQL checkpoint is needed.
 
 </Step>
 <Step>

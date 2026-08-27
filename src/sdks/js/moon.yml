@@ -14,7 +14,7 @@ dependsOn:
 
 project:
   title: "Oliphaunt TypeScript SDK"
-  description: "TypeScript SDK with direct execution defaults for Node.js, Bun, and Deno."
+  description: "TypeScript SDK with native direct topology defaults for Node.js, Bun, and Deno."
   owner: "oliphaunt"
   release:
     component: "oliphaunt-js"

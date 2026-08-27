@@ -19,7 +19,7 @@ The product line has distinct native and WASIX hosts.
 | --- | --- |
 | Native `liboliphaunt` SDKs | Rust, Swift, Kotlin, React Native, TypeScript, and C ABI consumers |
 | Rust WASIX `oliphaunt-wasix` | Rust applications hosting the portable runtime |
-| WASIX TypeScript `@oliphaunt/wasix-ts` | Browser, Node, Bun, or Deno direct/Worker placement with memory; browsers may opt into IndexedDB or OPFS persistence and Node, Bun, and Deno hosts may opt into directory persistence |
+| WASIX TypeScript `@oliphaunt/wasix-ts` | Package-owned Worker by default or explicit `/blocking` entry point on browser, Node, Bun, or Deno; browsers may opt into IndexedDB or OPFS persistence and Node, Bun, and Deno hosts may opt into directory persistence |
 
 The products share storage, exact extension selection, structured errors, and
 lifecycle concepts. Backup/restore, server access, and persistence mechanisms
@@ -47,11 +47,11 @@ lifecycle phases are present only where the host supports them:
 | --- | --- |
 | Open | Create or attach to storage, validate ownership, and materialize selected runtime resources |
 | Query | Route work through the selected engine and preserve mode-specific concurrency rules |
-| Checkpoint | Request a PostgreSQL checkpoint; WASIX TypeScript then publishes the durable PGDATA delta through its selected provider |
+| SQL maintenance | Applications may issue PostgreSQL `CHECKPOINT` through ordinary `execute`; WASIX TypeScript then publishes through its selected provider. There is no SDK checkpoint method |
 | Close | Reject new work, wait for active work, and detach cleanly from the selected runtime |
 | Backup/restore | Use each binding's physical data-movement API where exposed |
 
-Applications decide when platform lifecycle events trigger checkpoint,
+Applications decide when platform lifecycle events require SQL maintenance,
 cancellation, or close. Desktop SDKs add broker and server modes where a helper
 process or local server is the better runtime shape.
 

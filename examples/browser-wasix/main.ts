@@ -7,6 +7,7 @@ import Oliphaunt, {
   type WasixStorage,
   WasixStorageError,
 } from '@oliphaunt/wasix-ts';
+import BlockingOliphaunt from '@oliphaunt/wasix-ts/blocking';
 import { indexedDB } from '@oliphaunt/wasix-ts/storage/indexed-db';
 import { opfs } from '@oliphaunt/wasix-ts/storage/opfs';
 import { pgDump, psql } from '@oliphaunt/wasix-tools';
@@ -14,7 +15,8 @@ import { pgDump, psql } from '@oliphaunt/wasix-tools';
 import logicalToolsFixtureJson from '../../src/shared/fixtures/postgres/logical-tools.json?raw';
 import logicalToolsSeed from '../../src/shared/fixtures/postgres/logical-tools-seed.sql?raw';
 import logicalToolsVerify from '../../src/shared/fixtures/postgres/logical-tools-verify.sql?raw';
-import { expectDirectPgDump } from './direct-pg-dump-smoke.js';
+import { expectBlockingPgDump } from './blocking-pg-dump-smoke.js';
+import { expectStructuredApi } from './structured-api-smoke.js';
 
 const logicalToolsFixture = JSON.parse(logicalToolsFixtureJson) as {
   expected: {
@@ -35,7 +37,7 @@ const searchParams = new URL(globalThis.location.href).searchParams;
 const smoke = searchParams.has('smoke');
 const pgUuidv7Canary = searchParams.has('pg_uuidv7');
 const postgisWorkerCanary = searchParams.has('postgis_worker');
-const directWorkerAudit = smoke ? auditDirectWorkerConstruction() : undefined;
+const blockingWorkerAudit = smoke ? auditBlockingWorkerConstruction() : undefined;
 
 try {
   const extensions: WasixExtensionDescriptor[] = [pgtap];
@@ -45,27 +47,27 @@ try {
   }
   if (smoke) {
     expectOwnedMemoryCopyAcrossGrowth();
-    await expectFailedDirectOpenRecovery();
+    await expectFailedBlockingOpenRecovery();
   }
   const storage = indexedDB('browser-smoke');
-  let database = await Oliphaunt.open({
-    execution: smoke ? 'direct' : 'worker',
+  let database = await (smoke ? BlockingOliphaunt : Oliphaunt).open({
     extensions,
     ...(smoke ? { storage } : {}),
   });
-  status.textContent = `PostgreSQL 18 is running with ${smoke ? 'direct' : 'worker'} execution.`;
+  status.textContent = `PostgreSQL 18 is running through the ${smoke ? 'blocking' : 'Worker-owned'} entrypoint.`;
   if (smoke) {
-    await expectConcurrentDirectExecution(database);
+    await expectStructuredApi(database, 'browser blocking');
+    await expectConcurrentBlockingExecution(database);
     await expectExclusiveOwnership(storage, extensions, 'IndexedDB');
     const pgtapVersion = await exercisePgtap(database);
     const firstUuid = pgUuidv7Canary ? await readPgUuidv7(database) : undefined;
-    await database.query('CREATE TABLE browser_reopen_probe (answer integer NOT NULL)');
-    await database.query('INSERT INTO browser_reopen_probe VALUES (42)');
-    await database.checkpoint();
+    await database.queryRaw('CREATE TABLE browser_reopen_probe (answer integer NOT NULL)');
+    await database.queryRaw('INSERT INTO browser_reopen_probe VALUES (42)');
+    await database.execute('CHECKPOINT');
     // This row is intentionally newer than the explicit checkpoint. Its query
     // Promise includes an operation storage boundary; clean close also drains
     // the journal before releasing ownership.
-    await database.query('INSERT INTO browser_reopen_probe VALUES (43)');
+    await database.queryRaw('INSERT INTO browser_reopen_probe VALUES (43)');
     await expectSqlstate(database, 'SELEC 1', '42601');
     await expectAnswer(database);
     await expectSqlstate(database, 'SELECT 1 / $1::int', '22012', [0]);
@@ -79,21 +81,22 @@ try {
     if (pgUuidv7Canary) {
       await readPgUuidv7(database);
     }
-    await expectDirectPgDump(database);
+    await expectBlockingPgDump(database);
     await database.close();
 
-    directWorkerAudit?.assertNoneAndRestore();
-    await expectDirectWithoutWorker();
+    blockingWorkerAudit?.assertNoneAndRestore();
+    await expectBlockingWithoutWorker();
     await expectFailedWorkerOpenRecovery();
 
-    database = await Oliphaunt.open({ execution: 'worker', storage, extensions });
+    database = await Oliphaunt.open({ storage, extensions });
+    await expectStructuredApi(database, 'browser Worker');
     await expectSqlstate(database, 'SELEC 1', '42601');
     await expectAnswer(database);
     await expectSqlstate(database, 'SELECT 1 / $1::int', '22012', [0]);
     await expectAnswer(database);
-    await expectDirectMemoryProtocol(database);
+    await expectOwnedRawProtocolResponse(database);
     await expectClockConsistency(database);
-    const reopened = await database.query(
+    const reopened = await database.queryRaw(
       'SELECT string_agg(answer::text, $1 ORDER BY answer) AS answers FROM browser_reopen_probe',
       [','],
     );
@@ -117,9 +120,9 @@ try {
       opfsAnswers,
       pgtap: pgtapVersion,
       startupSqlstate: '3D000',
-      directWorkers: 0,
-      directPgDump: true,
-      opfsTransport: 'direct',
+      blockingWorkers: 0,
+      blockingPgDump: true,
+      opfsTransport: 'synchronous-access',
       opfsCrashAnswer: opfsCrash.answer,
       opfsCrashRelations: opfsCrash.relations,
       logicalTools,
@@ -133,7 +136,7 @@ try {
       run.disabled = true;
       output.textContent = '';
       try {
-        const result = await database.query(sql.value);
+        const result = await database.queryRaw(sql.value);
         output.textContent = JSON.stringify(
           result.rows.map((row) =>
             Object.fromEntries(result.fields.map((field, index) => [field.name, row.text(index)])),
@@ -153,7 +156,7 @@ try {
   output.textContent = describeError(error);
   document.documentElement.dataset.oliphauntSmoke = 'failed';
 } finally {
-  directWorkerAudit?.restore();
+  blockingWorkerAudit?.restore();
 }
 
 function simpleQuery(sql: string): Uint8Array {
@@ -175,11 +178,11 @@ async function expectLargePostgisWorkerModule(): Promise<string> {
     throw new Error('browser worker canary requires a PostGIS side module larger than 8 MiB');
   }
 
-  const database = await Oliphaunt.open({ execution: 'worker', extensions: [postgis] });
+  const database = await Oliphaunt.open({ extensions: [postgis] });
   try {
     const version = await readPostgisVersion(database);
-    await database.query('CREATE TEMP TABLE postgis_nested_error_catch(value integer)');
-    await database.query(
+    await database.queryRaw('CREATE TEMP TABLE postgis_nested_error_catch(value integer)');
+    await database.queryRaw(
       `DO $$ BEGIN
          BEGIN
            PERFORM ST_GeomFromText('POINT(');
@@ -188,14 +191,14 @@ async function expectLargePostgisWorkerModule(): Promise<string> {
          END;
        END $$`,
     );
-    const caught = await database.query(
+    const caught = await database.queryRaw(
       'SELECT count(*)::int AS count FROM postgis_nested_error_catch',
     );
     if (caught.getText(0, 'count') !== '1') {
       throw new Error('browser worker did not catch an error crossing PostGIS side modules');
     }
     try {
-      await database.query("SELECT ST_GeomFromText('POINT(')");
+      await database.queryRaw("SELECT ST_GeomFromText('POINT(')");
       throw new Error('browser worker expected malformed PostGIS geometry to fail');
     } catch (error) {
       if (!(error instanceof PostgresError)) {
@@ -212,7 +215,7 @@ async function expectLargePostgisWorkerModule(): Promise<string> {
 }
 
 async function readPostgisVersion(database: OliphauntDatabase): Promise<string> {
-  const result = await database.query('SELECT postgis_full_version()::text AS version');
+  const result = await database.queryRaw('SELECT postgis_full_version()::text AS version');
   const version = result.getText(0, 'version');
   if (version === null || !version.includes('POSTGIS=')) {
     throw new Error(
@@ -238,10 +241,10 @@ function expectOwnedMemoryCopyAcrossGrowth(): void {
   }
 }
 
-async function expectConcurrentDirectExecution(first: OliphauntDatabase): Promise<void> {
+async function expectConcurrentBlockingExecution(first: OliphauntDatabase): Promise<void> {
   const attempts = await Promise.allSettled([
-    Oliphaunt.open({ execution: 'direct' }),
-    Oliphaunt.open({ execution: 'direct' }),
+    BlockingOliphaunt.open(),
+    BlockingOliphaunt.open(),
   ]);
   const opened = attempts.flatMap((attempt) =>
     attempt.status === 'fulfilled' ? [attempt.value] : [],
@@ -255,7 +258,7 @@ async function expectConcurrentDirectExecution(first: OliphauntDatabase): Promis
   }
   const [second, third] = opened;
   if (second === undefined || third === undefined) {
-    throw new Error('direct concurrent-open smoke produced an incomplete result');
+    throw new Error('blocking concurrent-open smoke produced an incomplete result');
   }
   try {
     await expectAnswer(first);
@@ -266,7 +269,7 @@ async function expectConcurrentDirectExecution(first: OliphauntDatabase): Promis
   }
 }
 
-async function expectDirectWithoutWorker(): Promise<void> {
+async function expectBlockingWithoutWorker(): Promise<void> {
   const workerDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'Worker');
   Object.defineProperty(globalThis, 'Worker', {
     configurable: true,
@@ -274,10 +277,10 @@ async function expectDirectWithoutWorker(): Promise<void> {
     value: undefined,
   });
   try {
-    const database = await Oliphaunt.open({ execution: 'direct' });
+    const database = await BlockingOliphaunt.open();
     try {
       await expectAnswer(database);
-      await expectDirectMemoryProtocol(database);
+      await expectOwnedRawProtocolResponse(database);
     } finally {
       await database.close();
     }
@@ -292,7 +295,7 @@ async function expectDirectWithoutWorker(): Promise<void> {
 
 async function expectTransaction(database: OliphauntDatabase): Promise<void> {
   const answer = await database.transaction(async (transaction) => {
-    const result = await transaction.query('SELECT $1::int + 1 AS answer', [41]);
+    const result = await transaction.queryRaw('SELECT $1::int + 1 AS answer', [41]);
     return result.getText(0, 'answer');
   });
   if (answer !== '42') {
@@ -300,7 +303,7 @@ async function expectTransaction(database: OliphauntDatabase): Promise<void> {
   }
 }
 
-async function expectDirectMemoryProtocol(database: OliphauntDatabase): Promise<void> {
+async function expectOwnedRawProtocolResponse(database: OliphauntDatabase): Promise<void> {
   const retained = await database.execProtocolRaw(
     simpleQuery("SELECT repeat('a', 10240) AS retained_payload"),
   );
@@ -322,7 +325,7 @@ async function expectDirectMemoryProtocol(database: OliphauntDatabase): Promise<
 }
 
 async function expectLogicalTools(): Promise<string> {
-  const source = await Oliphaunt.open({ execution: 'worker', extensions: [pgtap] });
+  const source = await Oliphaunt.open({ extensions: [pgtap] });
   let sql: string;
   try {
     await psql(source, { script: logicalToolsSeed });
@@ -334,10 +337,10 @@ async function expectLogicalTools(): Promise<string> {
     await source.close();
   }
 
-  const target = await Oliphaunt.open({ execution: 'worker', extensions: [pgtap] });
+  const target = await Oliphaunt.open({ extensions: [pgtap] });
   try {
     await psql(target, { script: sql });
-    const result = await target.query(logicalToolsVerify);
+    const result = await target.queryRaw(logicalToolsVerify);
     const actual = {
       rows: Number(result.getText(0, 'rows')),
       sum: Number(result.getText(0, 'sum')),
@@ -358,14 +361,14 @@ async function expectLogicalTools(): Promise<string> {
 }
 
 async function expectClockConsistency(database: OliphauntDatabase): Promise<void> {
-  const wallClock = await database.query(
+  const wallClock = await database.queryRaw(
     'SELECT (extract(epoch FROM clock_timestamp()) * 1000)::bigint AS millis',
   );
   const wallClockMillis = Number(wallClock.getText(0, 'millis'));
   if (!Number.isFinite(wallClockMillis) || Math.abs(Date.now() - wallClockMillis) > 5_000) {
     throw new Error(`browser WASI realtime clock drifted: ${wallClockMillis}`);
   }
-  const plan = await database.query('EXPLAIN (ANALYZE, FORMAT JSON) SELECT pg_sleep(0.05)');
+  const plan = await database.queryRaw('EXPLAIN (ANALYZE, FORMAT JSON) SELECT pg_sleep(0.05)');
   const explain = JSON.parse(plan.getText(0, 'QUERY PLAN') ?? 'null');
   const elapsed = explain?.[0]?.['Execution Time'];
   if (!Number.isFinite(elapsed) || elapsed < 25 || elapsed > 5_000) {
@@ -376,10 +379,10 @@ async function expectClockConsistency(database: OliphauntDatabase): Promise<void
 async function expectStartupSqlstate(
   database: string,
   sqlstate: string,
-  execution: 'direct' | 'worker',
+  client: typeof Oliphaunt,
 ): Promise<void> {
   try {
-    const unexpected = await Oliphaunt.open({ database, execution });
+    const unexpected = await client.open({ database });
     await unexpected.close();
     throw new Error(
       `browser smoke unexpectedly opened missing database ${JSON.stringify(database)}`,
@@ -395,9 +398,13 @@ async function expectStartupSqlstate(
   }
 }
 
-async function expectFailedDirectOpenRecovery(): Promise<void> {
-  await expectStartupSqlstate('oliphaunt_browser_smoke_missing_database', '3D000', 'direct');
-  const reopened = await Oliphaunt.open({ execution: 'direct' });
+async function expectFailedBlockingOpenRecovery(): Promise<void> {
+  await expectStartupSqlstate(
+    'oliphaunt_browser_smoke_missing_database',
+    '3D000',
+    BlockingOliphaunt,
+  );
+  const reopened = await BlockingOliphaunt.open();
   try {
     await expectAnswer(reopened);
   } finally {
@@ -406,8 +413,8 @@ async function expectFailedDirectOpenRecovery(): Promise<void> {
 }
 
 async function expectFailedWorkerOpenRecovery(): Promise<void> {
-  await expectStartupSqlstate('oliphaunt_browser_worker_missing_database', '3D000', 'worker');
-  const reopened = await Oliphaunt.open({ execution: 'worker' });
+  await expectStartupSqlstate('oliphaunt_browser_worker_missing_database', '3D000', Oliphaunt);
+  const reopened = await Oliphaunt.open();
   try {
     await expectAnswer(reopened);
   } finally {
@@ -421,7 +428,7 @@ async function expectExclusiveOwnership(
   provider: string,
 ): Promise<void> {
   try {
-    const duplicate = await Oliphaunt.open({ execution: 'direct', storage, extensions });
+    const duplicate = await BlockingOliphaunt.open({ storage, extensions });
     await duplicate.close();
     throw new Error(`browser smoke opened one ${provider} database twice`);
   } catch (error) {
@@ -435,19 +442,19 @@ async function expectOpfsPersistence(
   extensions: readonly WasixExtensionDescriptor[],
 ): Promise<string> {
   const storage = opfs('browser-smoke');
-  let database = await Oliphaunt.open({ execution: 'direct', storage, extensions });
+  let database = await BlockingOliphaunt.open({ storage, extensions });
   await expectExclusiveOwnership(storage, extensions, 'OPFS');
-  await database.query('CREATE TABLE opfs_reopen_probe (answer integer NOT NULL)');
-  await database.query('INSERT INTO opfs_reopen_probe VALUES (1)');
+  await database.queryRaw('CREATE TABLE opfs_reopen_probe (answer integer NOT NULL)');
+  await database.queryRaw('INSERT INTO opfs_reopen_probe VALUES (1)');
   // PostgreSQL normally retains the relation and WAL descriptors. This second
   // operation proves that the host journal observes writes after initial open.
-  await database.query('INSERT INTO opfs_reopen_probe VALUES (2)');
+  await database.queryRaw('INSERT INTO opfs_reopen_probe VALUES (2)');
   await database.close();
 
-  database = await Oliphaunt.open({ execution: 'worker', storage, extensions });
+  database = await Oliphaunt.open({ storage, extensions });
   try {
-    await expectDirectOpfsTransport('browser-smoke');
-    const reopened = await database.query(
+    await expectSynchronousOpfsTransport('browser-smoke');
+    const reopened = await database.queryRaw(
       'SELECT string_agg(answer::text, $1 ORDER BY answer) AS answers FROM opfs_reopen_probe',
       [','],
     );
@@ -455,27 +462,27 @@ async function expectOpfsPersistence(
     if (answers !== '1,2') {
       throw new Error(`browser smoke did not reopen OPFS state: ${answers}`);
     }
-    await database.query('INSERT INTO opfs_reopen_probe VALUES (3)');
-    await database.query('CREATE TABLE opfs_direct_create_probe (answer integer NOT NULL)');
-    await database.query('INSERT INTO opfs_direct_create_probe VALUES (99)');
-    await database.checkpoint();
+    await database.queryRaw('INSERT INTO opfs_reopen_probe VALUES (3)');
+    await database.queryRaw('CREATE TABLE opfs_sync_create_probe (answer integer NOT NULL)');
+    await database.queryRaw('INSERT INTO opfs_sync_create_probe VALUES (99)');
+    await database.execute('CHECKPOINT');
   } finally {
     await database.close();
   }
 
-  database = await Oliphaunt.open({ execution: 'direct', storage, extensions });
+  database = await BlockingOliphaunt.open({ storage, extensions });
   try {
-    const reopened = await database.query(
+    const reopened = await database.queryRaw(
       'SELECT string_agg(answer::text, $1 ORDER BY answer) AS answers FROM opfs_reopen_probe',
       [','],
     );
     const answers = reopened.getText(0, 'answers');
     if (answers !== '1,2,3') {
-      throw new Error(`browser smoke did not reopen direct OPFS writes: ${answers}`);
+      throw new Error(`browser smoke did not reopen synchronous OPFS writes: ${answers}`);
     }
-    const created = await database.query('SELECT answer FROM opfs_direct_create_probe');
+    const created = await database.queryRaw('SELECT answer FROM opfs_sync_create_probe');
     if (created.getText(0, 'answer') !== '99') {
-      throw new Error('browser smoke did not reopen a relation created through direct OPFS');
+      throw new Error('browser smoke did not reopen a relation created through synchronous OPFS');
     }
     return answers;
   } finally {
@@ -483,13 +490,13 @@ async function expectOpfsPersistence(
   }
 }
 
-async function expectDirectOpfsTransport(name: string): Promise<void> {
+async function expectSynchronousOpfsTransport(name: string): Promise<void> {
   const worker = new Worker(new URL('./opfs-transport-probe-worker.ts', import.meta.url), {
     type: 'module',
   });
   try {
     const response = await new Promise<
-      { ok: true; transport: 'direct' | 'portable' } | { ok: false; error: string }
+      { ok: true; transport: 'synchronous-access' | 'portable' } | { ok: false; error: string }
     >((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('OPFS transport probe timed out')), 10_000);
       worker.addEventListener(
@@ -506,7 +513,7 @@ async function expectDirectOpfsTransport(name: string): Promise<void> {
           clearTimeout(timeout);
           resolve(
             event.data as
-              | { ok: true; transport: 'direct' | 'portable' }
+              | { ok: true; transport: 'synchronous-access' | 'portable' }
               | { ok: false; error: string },
           );
         },
@@ -515,8 +522,10 @@ async function expectDirectOpfsTransport(name: string): Promise<void> {
       worker.postMessage({ name });
     });
     if (!response.ok) throw new Error(`OPFS transport probe failed: ${response.error}`);
-    if (response.transport !== 'direct') {
-      throw new Error('browser smoke selected portable OPFS instead of the direct worker path');
+    if (response.transport !== 'synchronous-access') {
+      throw new Error(
+        'browser smoke selected portable OPFS instead of the synchronous-access Worker path',
+      );
     }
   } finally {
     worker.terminate();
@@ -559,14 +568,14 @@ async function expectOpfsCrashRecovery(): Promise<Readonly<{ answer: string; rel
     worker.terminate();
   }
 
-  const database = await Oliphaunt.open({ execution: 'worker', storage: opfs(name) });
+  const database = await Oliphaunt.open({ storage: opfs(name) });
   try {
-    const result = await database.query('SELECT answer FROM opfs_crash_probe');
+    const result = await database.queryRaw('SELECT answer FROM opfs_crash_probe');
     const answer = result.getText(0, 'answer');
     if (answer !== '73') {
       throw new Error(`OPFS crash recovery returned an unexpected answer: ${answer}`);
     }
-    const relationResult = await database.query(`
+    const relationResult = await database.queryRaw(`
       SELECT count(*)::text AS count
       FROM pg_class
       WHERE relname LIKE 'opfs_crash_burst_%'
@@ -583,20 +592,20 @@ async function expectOpfsCrashRecovery(): Promise<Readonly<{ answer: string; rel
 
 async function exercisePgtap(database: OliphauntDatabase): Promise<string> {
   const version = await readPgtapVersion(database);
-  const plan = await database.query('SELECT plan(1)::text AS tap');
+  const plan = await database.queryRaw('SELECT plan(1)::text AS tap');
   if (plan.getText(0, 'tap') !== '1..1') {
     throw new Error('browser smoke expected pgtap plan(1) to return 1..1');
   }
-  const assertion = await database.query("SELECT ok(true, 'browser pgtap')::text AS tap");
+  const assertion = await database.queryRaw("SELECT ok(true, 'browser pgtap')::text AS tap");
   if (assertion.getText(0, 'tap') !== 'ok 1 - browser pgtap') {
     throw new Error('browser smoke expected pgtap ok() to report a passing assertion');
   }
-  await database.query('SELECT * FROM finish()');
+  await database.queryRaw('SELECT * FROM finish()');
   return version;
 }
 
 async function readPgtapVersion(database: OliphauntDatabase): Promise<string> {
-  const pgtap = await database.query('SELECT pgtap_version()::text AS version');
+  const pgtap = await database.queryRaw('SELECT pgtap_version()::text AS version');
   const version = pgtap.getText(0, 'version');
   if (version === null || version.length === 0) {
     throw new Error('browser smoke expected pgtap_version() to return a version');
@@ -605,7 +614,7 @@ async function readPgtapVersion(database: OliphauntDatabase): Promise<string> {
 }
 
 async function readPgUuidv7(database: OliphauntDatabase): Promise<string> {
-  const result = await database.query('SELECT uuid_generate_v7()::text AS uuid');
+  const result = await database.queryRaw('SELECT uuid_generate_v7()::text AS uuid');
   const uuid = result.getText(0, 'uuid');
   if (
     uuid === null ||
@@ -623,7 +632,7 @@ async function expectSqlstate(
   parameters: ReadonlyArray<QueryParam> = [],
 ): Promise<void> {
   try {
-    await database.query(query, parameters);
+    await database.queryRaw(query, parameters);
     throw new Error(`browser smoke expected SQLSTATE ${sqlstate}`);
   } catch (error) {
     if (!(error instanceof PostgresError) || error.sqlstate !== sqlstate) {
@@ -633,7 +642,7 @@ async function expectSqlstate(
 }
 
 async function expectAnswer(database: OliphauntDatabase): Promise<void> {
-  const result = await database.query('SELECT 40 + 2 AS answer');
+  const result = await database.queryRaw('SELECT 40 + 2 AS answer');
   const answer = result.getText(0, 'answer');
   if (answer !== '42') {
     throw new Error(`browser smoke expected 42, received ${JSON.stringify(answer)}`);
@@ -652,7 +661,7 @@ function describeError(error: unknown): string {
   return error instanceof Error ? (error.stack ?? error.message) : String(error);
 }
 
-function auditDirectWorkerConstruction(): {
+function auditBlockingWorkerConstruction(): {
   assertNoneAndRestore(): void;
   restore(): void;
 } {
@@ -676,7 +685,7 @@ function auditDirectWorkerConstruction(): {
     assertNoneAndRestore() {
       restore();
       if (constructed !== 0) {
-        throw new Error(`direct execution constructed ${constructed} Web Worker(s)`);
+        throw new Error(`blocking entrypoint constructed ${constructed} Web Worker(s)`);
       }
     },
     restore,

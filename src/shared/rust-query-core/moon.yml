@@ -1,0 +1,35 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "shared-rust-query-core"
+language: "javascript"
+layer: "library"
+stack: "systems"
+tags: ["shared", "rust", "sdk"]
+
+project:
+  title: "Shared Rust Query Core"
+  description: "Canonical dependency-free PostgreSQL query protocol core included by both Rust SDKs."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "query_core.rs": ["@oliphaunt/sdk-rust", "@oliphaunt/wasix-rust"]
+    "tools/**": ["@oliphaunt/core"]
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "node src/shared/rust-query-core/tools/check-rust-query-core.mjs"
+    inputs:
+      - "/src/shared/rust-query-core/**/*"
+      - "/src/sdks/rust/build.rs"
+      - "/src/sdks/rust/tools/check-sdk.sh"
+      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/build.rs"
+      - "/src/bindings/wasix-rust/tools/check-package.sh"
+      - "/tools/release/prepare-rust-release-source.mjs"
+      - "/tools/release/package_oliphaunt_wasix_sdk_crate.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

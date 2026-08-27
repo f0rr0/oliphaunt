@@ -256,17 +256,17 @@ Rust API:
 ```rust,no_run
 use oliphaunt_wasix::Oliphaunt;
 
-#[test]
-fn stores_rows() -> Result<(), Box<dyn std::error::Error>> {
-    let mut db = Oliphaunt::open()?;
+#[tokio::test]
+async fn stores_rows() -> Result<(), Box<dyn std::error::Error>> {
+    let db = Oliphaunt::open().await?;
 
-    db.execute("CREATE TABLE items (id int primary key, name text)")?;
-    db.execute("INSERT INTO items VALUES (1, 'alpha')")?;
+    db.execute("CREATE TABLE items (id int primary key, name text)").await?;
+    db.execute("INSERT INTO items VALUES (1, 'alpha')").await?;
 
-    let rows = db.query("SELECT name FROM items WHERE id = 1")?;
+    let rows = db.query("SELECT name FROM items WHERE id = 1").await?;
     assert_eq!(rows.get_text(0, "name")?, Some("alpha"));
 
-    db.close()?;
+    db.close().await?;
     Ok(())
 }
 ```
@@ -286,7 +286,7 @@ use sqlx::{Connection, Row};
 
 #[tokio::test]
 async fn sqlx_query() -> Result<(), Box<dyn std::error::Error>> {
-    let server = OliphauntServer::builder().start()?;
+    let server = OliphauntServer::builder().start().await?;
     let mut conn = sqlx::PgConnection::connect(&server.connection_string()).await?;
 
     let row = sqlx::query("SELECT $1::int4 + 1 AS n")
@@ -296,7 +296,7 @@ async fn sqlx_query() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(row.try_get::<i32, _>("n")?, 42);
 
     conn.close().await?;
-    server.close()?;
+    server.close().await?;
     Ok(())
 }
 ```
@@ -308,7 +308,7 @@ Keep client pools at one connection.
 Enable bundled extensions through the builder:
 
 ```rust,no_run
-use oliphaunt_wasix::{Oliphaunt, extensions};
+use oliphaunt_wasix::{blocking::Oliphaunt, extensions};
 
 #[test]
 fn vector_query() -> Result<(), Box<dyn std::error::Error>> {
@@ -336,7 +336,7 @@ Use `backup()` and static `restore()` when a test suite needs a pre-populated
 same-version independent root:
 
 ```rust,no_run
-use oliphaunt_wasix::{DatabaseStorage, Oliphaunt};
+use oliphaunt_wasix::{blocking::Oliphaunt, DatabaseStorage};
 
 #[test]
 fn clone_fixture() -> Result<(), Box<dyn std::error::Error>> {

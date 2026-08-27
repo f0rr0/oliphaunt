@@ -17,7 +17,11 @@ import { test } from 'vitest';
 import * as publicEntrypoint from '../index.js';
 import Oliphaunt, { type OliphauntClient } from '../index.js';
 import { resolveDenoNativeInstall } from '../native/assets-deno.js';
-import { liboliphauntPackageTarget, nativeRuntimeLibraryEnvironment } from '../native/common.js';
+import {
+  ABI_VERSION,
+  liboliphauntPackageTarget,
+  nativeRuntimeLibraryEnvironment,
+} from '../native/common.js';
 import { createDenoNativeBinding } from '../native/deno.js';
 import { nativeModuleSuffixForTarget } from '../native/extension-runtime.js';
 import {
@@ -138,7 +142,7 @@ function testFfiLayoutPackingAndBounds(): void {
   assert.ok(seenStrings.includes('work_mem=8MB'));
   assert.equal(packed.keepAlive.length, 8);
   const configView = new DataView(packed.config.buffer);
-  assert.equal(configView.getUint32(0, true), 8);
+  assert.equal(configView.getUint32(0, true), ABI_VERSION);
   assert.notEqual(configView.getBigUint64(24, true), 0n);
 
   const restore = packRestoreOptionsPointers(
@@ -163,6 +167,7 @@ function testFfiLayoutPackingAndBounds(): void {
 }
 
 async function testNodeNativeBindingUsesExplicitAssetsAndAddon(): Promise<void> {
+  const previousFinalizationRegistry = globalThis.FinalizationRegistry;
   const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-node-binding-'));
   const addonPath = join(root, 'mock-addon.cjs');
   const databaseRoot = join(root, 'database');
@@ -197,7 +202,7 @@ async function testNodeNativeBindingUsesExplicitAssetsAndAddon(): Promise<void> 
 let nextHandle = 40n;
 module.exports = {
   default: {
-    open(config) {
+    async open(config) {
       globalThis.__oliphauntNodeAddonCalls.push(['open', config]);
       nextHandle += 1n;
       return nextHandle;
@@ -206,8 +211,8 @@ module.exports = {
       globalThis.__oliphauntNodeAddonCalls.push(['execProtocolRaw', handle, Array.from(request)]);
       return request.buffer.slice(request.byteOffset, request.byteOffset + request.byteLength);
     },
-    execProtocolStream(handle, request, onChunk) {
-      globalThis.__oliphauntNodeAddonCalls.push(['execProtocolStream', handle, Array.from(request)]);
+    async execProtocolRawStream(handle, request, onChunk) {
+      globalThis.__oliphauntNodeAddonCalls.push(['execProtocolRawStream', handle, Array.from(request)]);
       onChunk(request.slice());
     },
     execSimpleQuery(handle, sql) {
@@ -224,8 +229,17 @@ module.exports = {
     cancel(handle) {
       globalThis.__oliphauntNodeAddonCalls.push(['cancel', handle]);
     },
-    detach(handle) {
+    async detach(handle) {
       globalThis.__oliphauntNodeAddonCalls.push(['detach', handle]);
+    },
+    createForgottenHandleRecoveryToken(handle) {
+      const token = 'recovery-token:' + handle;
+      globalThis.__oliphauntNodeAddonCalls.push(['createForgottenHandleRecoveryToken', handle, token]);
+      return token;
+    },
+    queueForgottenHandleRecovery(token) {
+      globalThis.__oliphauntNodeAddonCalls.push(['queueForgottenHandleRecovery', token]);
+      return token !== 'stale-recovery-token';
     },
   },
 };
@@ -237,9 +251,32 @@ module.exports = {
   const previousRuntime = process.env.OLIPHAUNT_RUNTIME_DIR;
   const previousModuleDirectory = process.env.OLIPHAUNT_EMBEDDED_MODULE_DIR;
   const callerModuleDirectory = join(root, 'caller-owned-modules');
+  type NodeForgottenHandle = {
+    readonly recoveryToken: unknown;
+    readonly releaseOwnership: () => void;
+  };
+  let finalizer: ((held: NodeForgottenHandle) => void) | undefined;
+  let registered:
+    | { target: object; held: NodeForgottenHandle; token?: object }
+    | undefined;
+  const unregistered: object[] = [];
   process.env.OLIPHAUNT_RUNTIME_DIR = runtimeDirectory;
   process.env.OLIPHAUNT_EMBEDDED_MODULE_DIR = callerModuleDirectory;
   try {
+    (globalThis as { FinalizationRegistry: unknown }).FinalizationRegistry = class {
+      constructor(callback: (held: NodeForgottenHandle) => void) {
+        finalizer = callback;
+      }
+
+      register(target: object, held: NodeForgottenHandle, token?: object): void {
+        registered = { target, held, token };
+      }
+
+      unregister(token: object): boolean {
+        unregistered.push(token);
+        return true;
+      }
+    };
     const binding = await createNodeNativeBinding({
       libraryPath: join(root, 'liboliphaunt.dylib'),
       nodeAddonPath: addonPath,
@@ -275,18 +312,46 @@ module.exports = {
       destination: join(root, 'restore'),
       bytes: new Uint8Array([1]),
     });
-    binding.cancel(handle);
-    binding.detach(handle);
+    await binding.cancel(handle);
+
+    const forgottenOwner = {};
+    let released = 0;
+    binding.registerForgottenHandleCleanup?.(forgottenOwner, handle, () => {
+      released += 1;
+    });
+    assert.equal(registered?.target, forgottenOwner);
+    assert.equal(registered?.token, forgottenOwner);
+    assert.equal(registered?.held.recoveryToken, 'recovery-token:41');
+    finalizer?.(registered!.held);
+    assert.equal(released, 1);
+    let unsafeRelease = 0;
+    finalizer?.({
+      recoveryToken: 'stale-recovery-token',
+      releaseOwnership: () => {
+        unsafeRelease += 1;
+      },
+    });
+    assert.equal(unsafeRelease, 0, 'native recovery rejection must keep admission closed');
+
+    const explicitlyClosedOwner = {};
+    binding.registerForgottenHandleCleanup?.(explicitlyClosedOwner, handle, () => {});
+    await binding.detach(handle);
+    binding.unregisterForgottenHandleCleanup?.(explicitlyClosedOwner);
+    assert.deepEqual(unregistered, [explicitlyClosedOwner]);
     assert.deepEqual(
       calls.map((entry) => entry[0]),
       [
         'open',
         'execProtocolRaw',
-        'execProtocolStream',
+        'execProtocolRawStream',
         'execSimpleQuery',
         'backup',
         'restore',
         'cancel',
+        'createForgottenHandleRecoveryToken',
+        'queueForgottenHandleRecovery',
+        'queueForgottenHandleRecovery',
+        'createForgottenHandleRecoveryToken',
         'detach',
       ],
     );
@@ -296,6 +361,8 @@ module.exports = {
     } else {
       process.env.OLIPHAUNT_RUNTIME_DIR = previousRuntime;
     }
+    (globalThis as { FinalizationRegistry: unknown }).FinalizationRegistry =
+      previousFinalizationRegistry;
     restoreEnv('OLIPHAUNT_EMBEDDED_MODULE_DIR', previousModuleDirectory);
     delete (globalThis as { __oliphauntNodeAddonCalls?: unknown[][] }).__oliphauntNodeAddonCalls;
     await rm(root, { recursive: true, force: true });
@@ -375,6 +442,31 @@ async function testDenoNativeBindingRejectsPackageManagedExtensions(): Promise<v
         assert.deepEqual(definitions.oliphaunt_init, {
           parameters: ['buffer', 'buffer'],
           result: 'i32',
+          nonblocking: true,
+        });
+        assert.deepEqual(definitions.oliphaunt_exec_protocol_raw_stream, {
+          parameters: ['pointer', 'buffer', 'usize', 'function', 'pointer'],
+          result: 'i32',
+          nonblocking: true,
+        });
+        assert.deepEqual(definitions.oliphaunt_detach, {
+          parameters: ['pointer'],
+          result: 'i32',
+          nonblocking: true,
+        });
+        assert.deepEqual(definitions.oliphaunt_logical_generation, {
+          parameters: ['pointer'],
+          result: 'u64',
+          nonblocking: true,
+        });
+        assert.deepEqual(definitions.oliphaunt_close_if_generation, {
+          parameters: ['u64'],
+          result: 'i32',
+          nonblocking: true,
+        });
+        assert.deepEqual(definitions.oliphaunt_copy_last_error, {
+          parameters: ['pointer', 'buffer', 'usize'],
+          result: 'usize',
         });
         assert.deepEqual(definitions.oliphaunt_backup, {
           parameters: ['pointer', 'buffer'],
@@ -409,6 +501,16 @@ async function testDenoNativeBindingRejectsPackageManagedExtensions(): Promise<v
             },
             oliphaunt_detach() {
               return 0;
+            },
+            oliphaunt_logical_generation() {
+              return 1n;
+            },
+            oliphaunt_close_if_generation() {
+              return 1;
+            },
+            oliphaunt_copy_last_error(_handle: unknown, output: Uint8Array) {
+              output.fill(0);
+              return 0n;
             },
             oliphaunt_last_error() {
               return null;
@@ -482,6 +584,7 @@ async function testDenoNativeBindingRejectsPackageManagedExtensions(): Promise<v
 
 async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMutation(): Promise<void> {
   const previousDeno = (globalThis as { Deno?: unknown }).Deno;
+  const previousFinalizationRegistry = globalThis.FinalizationRegistry;
   const previousModuleDirectory = process.env.OLIPHAUNT_EMBEDDED_MODULE_DIR;
   const previousRuntime = process.env.OLIPHAUNT_RUNTIME_DIR;
   const previousLibraryPath = process.env.LIBOLIPHAUNT_PATH;
@@ -493,7 +596,38 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
   const pointerStrings = new Map<bigint, string>();
   let nextPointer = 0x1000n;
   const calls: string[] = [];
+  let finalizer:
+    | ((held: { generation: bigint; releaseOwnership: () => void }) => void)
+    | undefined;
+  let registered:
+    | {
+        target: object;
+        held: { generation: bigint; releaseOwnership: () => void };
+        token?: object;
+      }
+    | undefined;
+  const unregistered: object[] = [];
   try {
+    (globalThis as { FinalizationRegistry: unknown }).FinalizationRegistry = class {
+      constructor(
+        callback: (held: { generation: bigint; releaseOwnership: () => void }) => void,
+      ) {
+        finalizer = callback;
+      }
+
+      register(
+        target: object,
+        held: { generation: bigint; releaseOwnership: () => void },
+        token?: object,
+      ): void {
+        registered = { target, held, token };
+      }
+
+      unregister(token: object): boolean {
+        unregistered.push(token);
+        return true;
+      }
+    };
     delete process.env.OLIPHAUNT_EMBEDDED_MODULE_DIR;
     delete process.env.OLIPHAUNT_RUNTIME_DIR;
     delete process.env.LIBOLIPHAUNT_PATH;
@@ -523,6 +657,31 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
         assert.deepEqual(definitions.oliphaunt_init, {
           parameters: ['buffer', 'buffer'],
           result: 'i32',
+          nonblocking: true,
+        });
+        assert.deepEqual(definitions.oliphaunt_exec_protocol_raw_stream, {
+          parameters: ['pointer', 'buffer', 'usize', 'function', 'pointer'],
+          result: 'i32',
+          nonblocking: true,
+        });
+        assert.deepEqual(definitions.oliphaunt_detach, {
+          parameters: ['pointer'],
+          result: 'i32',
+          nonblocking: true,
+        });
+        assert.deepEqual(definitions.oliphaunt_logical_generation, {
+          parameters: ['pointer'],
+          result: 'u64',
+          nonblocking: true,
+        });
+        assert.deepEqual(definitions.oliphaunt_close_if_generation, {
+          parameters: ['u64'],
+          result: 'i32',
+          nonblocking: true,
+        });
+        assert.deepEqual(definitions.oliphaunt_copy_last_error, {
+          parameters: ['pointer', 'buffer', 'usize'],
+          result: 'usize',
         });
         assert.deepEqual(definitions.oliphaunt_backup, {
           parameters: ['pointer', 'buffer'],
@@ -540,7 +699,7 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
               calls.push('init');
               assert.equal(process.env.OLIPHAUNT_EMBEDDED_MODULE_DIR, undefined);
               const view = new DataView(config.buffer, config.byteOffset, config.byteLength);
-              assert.equal(view.getUint32(0, true), 8);
+              assert.equal(view.getUint32(0, true), ABI_VERSION);
               assert.equal(pointerStrings.get(view.getBigUint64(24, true)), embeddedModules);
               new DataView(out.buffer, out.byteOffset, out.byteLength).setBigUint64(0, 0x99n, true);
               return 0;
@@ -561,7 +720,21 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
               return 0;
             },
             oliphaunt_detach() {
+              calls.push('detach');
               return 0;
+            },
+            oliphaunt_logical_generation() {
+              calls.push('logical-generation');
+              return 23n;
+            },
+            oliphaunt_close_if_generation(generation: bigint) {
+              calls.push(`close-generation:${generation}`);
+              // A stale generation is an ownership-safe successful no-op.
+              return 1;
+            },
+            oliphaunt_copy_last_error(_handle: unknown, output: Uint8Array) {
+              output.fill(0);
+              return 0n;
             },
             oliphaunt_last_error() {
               return null;
@@ -601,13 +774,36 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
       startupArgs: [],
     });
     assert.deepEqual(handle, { address: 0x99n });
-    assert.deepEqual(calls, ['init']);
+    assert.deepEqual(calls, ['init', 'logical-generation']);
+
+    const forgottenOwner = {};
+    let released = 0;
+    binding.registerForgottenHandleCleanup?.(forgottenOwner, handle, () => {
+      released += 1;
+    });
+    assert.equal(registered?.target, forgottenOwner);
+    assert.equal(registered?.token, forgottenOwner);
+    assert.equal(registered?.held.generation, 23n);
+    finalizer?.(registered!.held);
+    assert.equal(released, 0, 'the finalizer must return before native cleanup settles');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(released, 1);
+    assert.deepEqual(calls, ['init', 'logical-generation', 'close-generation:23']);
+
+    const explicitlyClosedOwner = {};
+    binding.registerForgottenHandleCleanup?.(explicitlyClosedOwner, handle, () => {});
+    await binding.detach(handle);
+    binding.unregisterForgottenHandleCleanup?.(explicitlyClosedOwner);
+    assert.deepEqual(unregistered, [explicitlyClosedOwner]);
+    assert.equal(calls.at(-1), 'detach');
   } finally {
     if (previousDeno === undefined) {
       delete (globalThis as { Deno?: unknown }).Deno;
     } else {
       (globalThis as { Deno?: unknown }).Deno = previousDeno;
     }
+    (globalThis as { FinalizationRegistry: unknown }).FinalizationRegistry =
+      previousFinalizationRegistry;
     restoreEnv('OLIPHAUNT_EMBEDDED_MODULE_DIR', previousModuleDirectory);
     restoreEnv('OLIPHAUNT_RUNTIME_DIR', previousRuntime);
     restoreEnv('LIBOLIPHAUNT_PATH', previousLibraryPath);

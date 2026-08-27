@@ -583,6 +583,33 @@ class OliphauntModuleJSIBindings
           transport.setProperty(runtime, "version", 1);
           transport.setProperty(
               runtime,
+              "closeIfGeneration",
+              jsi::Function::createFromHostFunction(
+                  runtime,
+                  jsi::PropNameID::forAscii(runtime, "liboliphauntCloseIfGeneration"),
+                  1,
+                  [moduleGlobal](
+                      jsi::Runtime &runtime,
+                      const jsi::Value &,
+                      const jsi::Value *args,
+                      size_t count) -> jsi::Value {
+                    if (count != 1) {
+                      throw jsi::JSError(
+                          runtime,
+                          "liboliphaunt JSI closeIfGeneration expects a generation");
+                    }
+                    int64_t generation = copyHandleArgument(runtime, args[0]);
+                    if (gBindingsInvalidated.load()) {
+                      return jsi::Value::undefined();
+                    }
+                    static const auto closeIfGeneration =
+                        OliphauntModuleJSIBindings::javaClassStatic()
+                            ->getMethod<void(jlong)>("closeIfGeneration");
+                    closeIfGeneration(moduleGlobal, static_cast<jlong>(generation));
+                    return jsi::Value::undefined();
+                  }));
+          transport.setProperty(
+              runtime,
               "execProtocolRaw",
               jsi::Function::createFromHostFunction(
                   runtime,

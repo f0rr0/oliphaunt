@@ -24,16 +24,16 @@ describe('WASIX database recovery state', () => {
     });
   });
 
-  it('identifies worker protocol targets without exposing a public capability flag', () => {
-    const direct = new WasixDatabaseImpl({
+  it('identifies protocol-capable targets without exposing a public capability flag', () => {
+    const blocking = new WasixDatabaseImpl({
       async exec() {
         return ready();
       },
       async sync() {},
       async close() {},
     });
-    const worker = new WasixDatabaseImpl({
-      isolated: true,
+    const root = new WasixDatabaseImpl({
+      supportsProtocolConnections: true,
       async exec() {
         return ready();
       },
@@ -42,14 +42,14 @@ describe('WASIX database recovery state', () => {
       async close() {},
     });
 
-    expect(() => assertWasixProtocolConnectionTarget(direct)).toThrow(/worker execution/);
-    expect(() => assertWasixProtocolConnectionTarget(worker)).not.toThrow();
+    expect(() => assertWasixProtocolConnectionTarget(blocking)).toThrow(/root entrypoint/);
+    expect(() => assertWasixProtocolConnectionTarget(root)).not.toThrow();
   });
 
   it('reserves protocol FIFO order without entering a canceled guest connection', async () => {
     const events: string[] = [];
     const database = new WasixDatabaseImpl({
-      isolated: true,
+      supportsProtocolConnections: true,
       async exec() {
         events.push('query');
         return ready();
@@ -79,7 +79,7 @@ describe('WASIX database recovery state', () => {
   it('cancels a queued transaction while closing an unstarted protocol reservation', async () => {
     const events: string[] = [];
     const database = new WasixDatabaseImpl({
-      isolated: true,
+      supportsProtocolConnections: true,
       async exec() {
         events.push('exec');
         return ready();
@@ -100,7 +100,7 @@ describe('WASIX database recovery state', () => {
     const transaction = database.transaction(() => {
       bodyEntered = true;
     });
-    const transactionFailure = expect(transaction).rejects.toThrow(/database is closed/);
+    const transactionFailure = expect(transaction).rejects.toThrow(/database is closing/);
 
     await database.close();
     await transactionFailure;
@@ -120,11 +120,10 @@ describe('WASIX database recovery state', () => {
       release = resolve;
     });
     const database = new WasixDatabaseImpl({
-      isolated: true,
+      supportsProtocolConnections: true,
       async exec(input) {
-        return querySql(input) === 'COMMIT'
-          ? concatenate(commandComplete('COMMIT'), ready())
-          : ready();
+        const statement = querySql(input);
+        return statement === 'BEGIN' ? completed('BEGIN', 'T') : completed('COMMIT', 'I');
       },
       async sync() {},
       async serve() {},
@@ -150,7 +149,9 @@ describe('WASIX database recovery state', () => {
         const statement = querySql(input);
         statements.push(statement);
         persistenceModes.push(persistence);
-        return statement === 'COMMIT' ? concatenate(commandComplete('COMMIT'), ready()) : ready();
+        if (statement === 'BEGIN') return completed('BEGIN', 'T');
+        if (statement === 'COMMIT') return completed('COMMIT', 'I');
+        return completed('SELECT 0', 'T');
       },
       async sync(boundary) {
         syncBoundaries.push(boundary);
@@ -165,6 +166,7 @@ describe('WASIX database recovery state', () => {
       await transaction.execute('SELECT inside');
       await expect(database.query('SELECT outside')).rejects.toThrow(/pinned/);
       await expect(database.close()).rejects.toThrow(/transaction is active/);
+      expect(database.closed).toBe(false);
       return 42;
     });
 
@@ -177,6 +179,90 @@ describe('WASIX database recovery state', () => {
     await database.close();
   });
 
+  it('returns rejected Promises for transaction argument, planning, and state failures', async () => {
+    const statements: string[] = [];
+    const database = new WasixDatabaseImpl({
+      async exec(input) {
+        const statement = querySql(input);
+        statements.push(statement);
+        return statement === 'BEGIN' ? completed('BEGIN', 'T') : completed('COMMIT', 'I');
+      },
+      async sync() {},
+      async close() {},
+    });
+    const rawInputFailure = new Error('raw input iteration failed');
+    const invalidRawInput = {
+      get [Symbol.iterator](): never {
+        throw rawInputFailure;
+      },
+    } as never;
+    let expired: OliphauntTransaction | undefined;
+
+    await database.transaction(async (transaction) => {
+      expired = transaction;
+      const invalidCalls: ReadonlyArray<readonly [string, () => Promise<unknown>]> = [
+        ['execute', () => transaction.execute(undefined as never)],
+        ['query', () => transaction.query(undefined as never)],
+        ['queryRaw', () => transaction.queryRaw(undefined as never)],
+        ['exec', () => transaction.exec(undefined as never)],
+        ['describe', () => transaction.describe('SELECT $1', [Number.NaN])],
+        ['execProtocolRaw', () => transaction.execProtocolRaw(invalidRawInput)],
+        [
+          'execProtocolRawStream input',
+          () => transaction.execProtocolRawStream(invalidRawInput, () => undefined),
+        ],
+        [
+          'execProtocolRawStream callback',
+          () => transaction.execProtocolRawStream(Uint8Array.of(1), undefined as never),
+        ],
+      ];
+
+      for (const [name, invoke] of invalidCalls) {
+        let caught: Promise<unknown> | undefined;
+        expect(
+          () => {
+            caught = invoke().catch((error: unknown) => error);
+          },
+          `${name} threw before returning its Promise`,
+        ).not.toThrow();
+        await expect(caught, `${name} did not reject`).resolves.toBeInstanceOf(Error);
+      }
+    });
+
+    expect(statements).toEqual(['BEGIN', 'COMMIT']);
+    const closedTransaction = expired;
+    if (closedTransaction === undefined) {
+      throw new Error('transaction test handle was not captured');
+    }
+    const closedCalls: ReadonlyArray<readonly [string, () => Promise<unknown>]> = [
+      ['execute', () => closedTransaction.execute('SELECT 1')],
+      ['query', () => closedTransaction.query('SELECT 1')],
+      ['queryRaw', () => closedTransaction.queryRaw('SELECT 1')],
+      ['exec', () => closedTransaction.exec('SELECT 1')],
+      ['describe', () => closedTransaction.describe('SELECT 1')],
+      ['execProtocolRaw', () => closedTransaction.execProtocolRaw(Uint8Array.of(1))],
+      [
+        'execProtocolRawStream',
+        () => closedTransaction.execProtocolRawStream(Uint8Array.of(1), () => undefined),
+      ],
+      ['rollback', () => closedTransaction.rollback()],
+    ];
+    for (const [name, invoke] of closedCalls) {
+      let caught: Promise<unknown> | undefined;
+      expect(
+        () => {
+          caught = invoke().catch((error: unknown) => error);
+        },
+        `${name} threw for a closed transaction`,
+      ).not.toThrow();
+      await expect(caught, `${name} did not reject for a closed transaction`).resolves.toMatchObject(
+        { message: expect.stringContaining('no longer active') },
+      );
+    }
+    expect(statements).toEqual(['BEGIN', 'COMMIT']);
+    await database.close();
+  });
+
   it('rolls back callback failures and leaves the database usable', async () => {
     const statements: string[] = [];
     const persistenceModes: Array<string | undefined> = [];
@@ -186,9 +272,9 @@ describe('WASIX database recovery state', () => {
         const statement = querySql(input);
         statements.push(statement);
         persistenceModes.push(persistence);
-        return statement === 'ROLLBACK'
-          ? concatenate(commandComplete('ROLLBACK'), ready())
-          : ready();
+        if (statement === 'BEGIN') return completed('BEGIN', 'T');
+        if (statement === 'ROLLBACK') return completed('ROLLBACK', 'I');
+        return statement === 'SELECT recovered' ? emptyComplete('I') : completed('SELECT 0', 'T');
       },
       async sync(boundary) {
         syncBoundaries.push(boundary);
@@ -207,8 +293,8 @@ describe('WASIX database recovery state', () => {
     await database.query('SELECT recovered');
 
     expect(statements).toEqual(['BEGIN', 'SELECT before_failure', 'ROLLBACK', 'SELECT recovered']);
-    expect(persistenceModes).toEqual(['defer', 'defer', 'defer', 'sync']);
-    expect(syncBoundaries).toEqual(['operation']);
+    expect(persistenceModes).toEqual(['defer', 'defer', 'defer', 'defer']);
+    expect(syncBoundaries).toEqual(['operation', 'operation']);
     await database.close();
   });
 
@@ -222,7 +308,7 @@ describe('WASIX database recovery state', () => {
       async exec(input, persistence) {
         const statement = querySql(input);
         statements.push(`${statement}:${persistence}`);
-        return statement === 'COMMIT' ? concatenate(commandComplete('COMMIT'), ready()) : ready();
+        return statement === 'BEGIN' ? completed('BEGIN', 'T') : completed('COMMIT', 'I');
       },
       async sync() {
         throw storageFailure;
@@ -252,9 +338,7 @@ describe('WASIX database recovery state', () => {
       async exec(input) {
         const statement = querySql(input);
         statements.push(statement);
-        return statement === 'ROLLBACK'
-          ? concatenate(commandComplete('ROLLBACK'), ready())
-          : ready();
+        return statement === 'BEGIN' ? completed('BEGIN', 'T') : completed('ROLLBACK', 'I');
       },
       async sync() {
         throw storageFailure;
@@ -285,12 +369,14 @@ describe('WASIX database recovery state', () => {
         statements.push(statement);
         if (statement === 'SELECT rejected') {
           transactionAborted = true;
-          return concatenate(backendError('XX000', 'queued operation failed'), ready());
+          return concatenate(backendError('XX000', 'queued operation failed'), ready('E'));
         }
         if (statement === 'COMMIT' && transactionAborted) {
-          return concatenate(commandComplete('ROLLBACK'), ready());
+          return completed('ROLLBACK', 'I');
         }
-        return statement === 'COMMIT' ? concatenate(commandComplete('COMMIT'), ready()) : ready();
+        if (statement === 'BEGIN') return completed('BEGIN', 'T');
+        if (statement === 'COMMIT') return completed('COMMIT', 'I');
+        return emptyComplete('I');
       },
       async sync() {},
       async close() {},
@@ -320,12 +406,13 @@ describe('WASIX database recovery state', () => {
         const statement = querySql(input);
         statements.push(statement);
         if (statement === 'SELECT rejected') {
-          return concatenate(backendError('XX000', 'savepoint operation failed'), ready());
+          return concatenate(backendError('XX000', 'savepoint operation failed'), ready('E'));
         }
         if (statement === 'COMMIT') {
-          return concatenate(commandComplete('COMMIT'), ready());
+          return completed('COMMIT', 'I');
         }
-        return ready();
+        if (statement === 'BEGIN') return completed('BEGIN', 'T');
+        return completed(statement, 'T');
       },
       async sync() {},
       async close() {},
@@ -363,14 +450,15 @@ describe('WASIX database recovery state', () => {
         if (input.length === 1) {
           statements.push('RAW');
           transactionAborted = true;
-          return concatenate(backendError('XX000', 'raw operation failed'), ready());
+          return concatenate(backendError('XX000', 'raw operation failed'), ready('E'));
         }
         const statement = querySql(input);
         statements.push(statement);
         if (statement === 'COMMIT' && transactionAborted) {
-          return concatenate(commandComplete('ROLLBACK'), ready());
+          return completed('ROLLBACK', 'I');
         }
-        return ready();
+        if (statement === 'BEGIN') return completed('BEGIN', 'T');
+        return emptyComplete('I');
       },
       async sync() {},
       async close() {},
@@ -396,14 +484,14 @@ describe('WASIX database recovery state', () => {
       async exec(input) {
         const statement = querySql(input);
         statements.push(statement);
-        return ready();
+        return statement === 'BEGIN' ? completed('BEGIN', 'T') : ready('I');
       },
       async sync() {},
       async close() {},
     });
 
     await expect(database.transaction(async () => 42)).rejects.toThrow(
-      'PostgreSQL returned no command tag for COMMIT',
+      'query response omitted CommandComplete or EmptyQueryResponse',
     );
     await expect(database.query('SELECT never_runs')).rejects.toThrow(
       'transaction outcome became unknown',
@@ -429,7 +517,7 @@ describe('WASIX database recovery state', () => {
             releaseCommit = resolve;
           });
         }
-        return statement === 'COMMIT' ? concatenate(commandComplete('COMMIT'), ready()) : ready();
+        return statement === 'BEGIN' ? completed('BEGIN', 'T') : completed('COMMIT', 'I');
       },
       async sync() {},
       async close() {},
@@ -443,7 +531,7 @@ describe('WASIX database recovery state', () => {
     await started;
     if (transactionHandle === undefined)
       throw new Error('transaction test handle was not captured');
-    await expect(transactionHandle.query('SELECT after_body')).rejects.toThrow(/no longer active/);
+    await expect(transactionHandle.query('SELECT after_body')).rejects.toThrow(/finishing/);
     releaseCommit?.();
     await transaction;
 
@@ -451,20 +539,17 @@ describe('WASIX database recovery state', () => {
     await database.close();
   });
 
-  it.each([
-    'BEGIN',
-    'COMMIT',
-  ] as const)('releases transaction ownership when %s fails', async (failedStatement) => {
+  it('recovers a failed BEGIN boundary and releases transaction ownership', async () => {
     const statements: string[] = [];
     const session: WasixDatabaseSession = {
       async exec(input) {
         const statement = querySql(input);
         statements.push(statement);
-        return statement === failedStatement
-          ? concatenate(backendError('XX000', `${failedStatement} failed`), ready())
-          : statement === 'ROLLBACK'
-            ? concatenate(commandComplete('ROLLBACK'), ready())
-            : ready();
+        if (statement === 'BEGIN') {
+          return concatenate(backendError('XX000', 'BEGIN failed'), ready('E'));
+        }
+        if (statement === 'ROLLBACK') return completed('ROLLBACK', 'I');
+        return emptyComplete('I');
       },
       async sync() {},
       async close() {},
@@ -480,11 +565,35 @@ describe('WASIX database recovery state', () => {
       rowCount: null,
     });
 
-    expect(statements).toEqual(
-      failedStatement === 'BEGIN'
-        ? ['BEGIN', 'ROLLBACK', 'SELECT recovered']
-        : ['BEGIN', 'SELECT inside', 'COMMIT', 'SELECT recovered'],
+    expect(statements).toEqual(['BEGIN', 'ROLLBACK', 'SELECT recovered']);
+    await database.close();
+  });
+
+  it('poisons the database after a failed COMMIT response without sending rollback', async () => {
+    const statements: string[] = [];
+    const database = new WasixDatabaseImpl({
+      async exec(input) {
+        const statement = querySql(input);
+        statements.push(statement);
+        if (statement === 'BEGIN') return completed('BEGIN', 'T');
+        if (statement === 'COMMIT') {
+          return concatenate(backendError('XX000', 'COMMIT failed'), ready('I'));
+        }
+        return completed('SELECT 0', 'T');
+      },
+      async sync() {},
+      async close() {},
+    });
+
+    await expect(
+      database.transaction(async (transaction) => {
+        await transaction.execute('SELECT inside');
+      }),
+    ).rejects.toMatchObject({ sqlstate: 'XX000' });
+    await expect(database.query('SELECT never_runs')).rejects.toThrow(
+      'transaction outcome became unknown',
     );
+    expect(statements).toEqual(['BEGIN', 'SELECT inside', 'COMMIT']);
     await database.close();
   });
 
@@ -494,9 +603,8 @@ describe('WASIX database recovery state', () => {
       async exec(input) {
         const statement = querySql(input);
         statements.push(statement);
-        return statement === 'ROLLBACK'
-          ? concatenate(backendError('XX000', 'rollback failed'), ready())
-          : ready();
+        if (statement === 'BEGIN') return completed('BEGIN', 'T');
+        return concatenate(backendError('XX000', 'rollback failed'), ready('E'));
       },
       async sync() {},
       async close() {},
@@ -504,11 +612,14 @@ describe('WASIX database recovery state', () => {
     const database = new WasixDatabaseImpl(session);
     const callbackError = new Error('keep me primary');
 
-    await expect(
-      database.transaction(async () => {
+    const failure = await database
+      .transaction(async () => {
         throw callbackError;
-      }),
-    ).rejects.toBe(callbackError);
+      })
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors[0]).toBe(callbackError);
+    expect((failure as AggregateError).errors[1]).toBeInstanceOf(PostgresError);
     await expect(database.query('SELECT never_runs')).rejects.toThrow(
       'transaction outcome became unknown',
     );
@@ -520,19 +631,25 @@ describe('WASIX database recovery state', () => {
     const statements: string[] = [];
     const database = new WasixDatabaseImpl({
       async exec(input) {
-        statements.push(querySql(input));
-        return ready();
+        const statement = querySql(input);
+        statements.push(statement);
+        return statement === 'BEGIN' ? completed('BEGIN', 'T') : ready('I');
       },
       async sync() {},
       async close() {},
     });
     const callbackError = new Error('keep malformed rollback secondary');
 
-    await expect(
-      database.transaction(async () => {
+    const failure = await database
+      .transaction(async () => {
         throw callbackError;
-      }),
-    ).rejects.toBe(callbackError);
+      })
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors[0]).toBe(callbackError);
+    expect((failure as AggregateError).errors[1]).toMatchObject({
+      message: expect.stringContaining('omitted CommandComplete'),
+    });
     expect(statements).toEqual(['BEGIN', 'ROLLBACK']);
     await expect(database.query('SELECT never_runs')).rejects.toThrow(
       'transaction outcome became unknown',
@@ -557,12 +674,12 @@ describe('WASIX database recovery state', () => {
     await database.close();
   });
 
-  it('preserves public raw input ownership for every execution placement', async () => {
+  it('preserves public raw input ownership for both calling contracts', async () => {
     const executions: Uint8Array[] = [];
     const session: WasixDatabaseSession = {
       async exec(input) {
         executions.push(input);
-        return ready();
+        return executions.length === 1 ? completed('SELECT 0', 'I') : ready();
       },
       async sync() {},
       async close() {},
@@ -600,7 +717,7 @@ describe('WASIX database recovery state', () => {
     const input = Uint8Array.of(9, 8, 7);
     const received: Uint8Array[] = [];
 
-    await database.execProtocolStream(input, (chunk) => received.push(chunk));
+    await database.execProtocolRawStream(input, (chunk) => received.push(chunk));
 
     expect(inputs).toHaveLength(1);
     expect(inputs[0]).not.toBe(input);
@@ -619,7 +736,7 @@ describe('WASIX database recovery state', () => {
       async exec(input, persistence) {
         persistenceModes.push(persistence);
         const statement = querySql(input);
-        return statement === 'COMMIT' ? concatenate(commandComplete('COMMIT'), ready()) : ready();
+        return statement === 'BEGIN' ? completed('BEGIN', 'T') : completed('COMMIT', 'I');
       },
       async execStream(_input, onChunk, persistence) {
         persistenceModes.push(persistence);
@@ -631,7 +748,7 @@ describe('WASIX database recovery state', () => {
 
     await database.transaction(async (transaction) => {
       expired = transaction;
-      await transaction.execProtocolStream(Uint8Array.of(1), (chunk) => {
+      await transaction.execProtocolRawStream(Uint8Array.of(1), (chunk) => {
         streamed.push(...chunk);
       });
     });
@@ -639,7 +756,7 @@ describe('WASIX database recovery state', () => {
     expect(streamed).toEqual([4, 5]);
     expect(persistenceModes).toEqual(['defer', 'defer', 'defer']);
     if (expired === undefined) throw new Error('transaction handle was not captured');
-    await expect(expired.execProtocolStream(Uint8Array.of(1), () => undefined)).rejects.toThrow(
+    await expect(expired.execProtocolRawStream(Uint8Array.of(1), () => undefined)).rejects.toThrow(
       /no longer active/,
     );
     await database.close();
@@ -656,14 +773,92 @@ describe('WASIX database recovery state', () => {
       async close() {},
     });
 
-    await expect(database.execProtocolStream(Uint8Array.of(1), undefined as never)).rejects.toThrow(
+    await expect(database.execProtocolRawStream(Uint8Array.of(1), undefined as never)).rejects.toThrow(
       TypeError,
     );
     expect(executions).toBe(0);
     await database.close();
   });
 
-  it('shares one close attempt, including its failure, with every caller', async () => {
+  it('rejects thenable stream callbacks and preserves the caller failure', async () => {
+    const database = new WasixDatabaseImpl({
+      async exec() {
+        return ready();
+      },
+      async execStream(_input, onChunk) {
+        onChunk(Uint8Array.of(1));
+      },
+      async sync() {},
+      async close() {},
+    });
+
+    await expect(
+      database.execProtocolRawStream(Uint8Array.of(1), async () => undefined),
+    ).rejects.toThrow(/must complete synchronously.*Promise or thenable/);
+    await expect(
+      database.execProtocolRawStream(Uint8Array.of(1), () => ({
+        then: () => undefined,
+      })),
+    ).rejects.toThrow(/must complete synchronously.*Promise or thenable/);
+    await database.close();
+  });
+
+  it('rejects same-handle stream callback reentry without queueing side effects', async () => {
+    const executedSql: string[] = [];
+    const database = new WasixDatabaseImpl({
+      async exec(input) {
+        const sql = querySql(input);
+        executedSql.push(sql);
+        if (sql === 'BEGIN') return completed('BEGIN', 'T');
+        return completed(sql === 'ROLLBACK' ? 'ROLLBACK' : 'COMMIT', 'I');
+      },
+      async execStream(_input, onChunk) {
+        onChunk(Uint8Array.of(1));
+      },
+      async sync() {},
+      async close() {},
+    });
+
+    let databaseReentry: Promise<unknown> | undefined;
+    await database.execProtocolRawStream(Uint8Array.of(1), () => {
+      databaseReentry = database.query(
+        "SELECT 'forbidden database callback reentry'",
+      );
+    });
+    await expect(databaseReentry).rejects.toThrow(
+      /must not reenter the same Oliphaunt database or transaction/,
+    );
+    expect(executedSql).not.toContain(
+      "SELECT 'forbidden database callback reentry'",
+    );
+
+    let closeReentry: Promise<unknown> | undefined;
+    await database.execProtocolRawStream(Uint8Array.of(2), () => {
+      closeReentry = database.close();
+    });
+    await expect(closeReentry).rejects.toThrow(
+      /must not reenter the same Oliphaunt database or transaction/,
+    );
+    expect(database.closed).toBe(false);
+
+    let transactionReentry: Promise<unknown> | undefined;
+    await database.transaction(async (transaction) => {
+      await transaction.execProtocolRawStream(Uint8Array.of(3), () => {
+        transactionReentry = transaction.query(
+          "SELECT 'forbidden transaction callback reentry'",
+        );
+      });
+      await expect(transactionReentry).rejects.toThrow(
+        /must not reenter the same Oliphaunt database or transaction/,
+      );
+    });
+    expect(executedSql).not.toContain(
+      "SELECT 'forbidden transaction callback reentry'",
+    );
+    await database.close();
+  });
+
+  it('shares one terminal close attempt after session teardown fails', async () => {
     let rejectClose: ((error: Error) => void) | undefined;
     let closeStarted: (() => void) | undefined;
     const started = new Promise<void>((resolve) => {
@@ -705,8 +900,49 @@ describe('WASIX database recovery state', () => {
     rejectClose?.(failure);
     await expect(first).rejects.toBe(failure);
     await expect(second).rejects.toBe(failure);
+    expect(database.closed).toBe(true);
+    expect(database.close()).toBe(first);
     await expect(database.close()).rejects.toBe(failure);
+    await expect(database.query('SELECT never_runs')).rejects.toThrow(
+      'Oliphaunt WASIX database is closed',
+    );
     expect(closes).toBe(1);
+  });
+
+  it('stays definitively closed when resource cleanup fails after session close', async () => {
+    const cleanupFailure = new Error('resource cleanup failed');
+    let sessionCloses = 0;
+    let resourceCloses = 0;
+    const database = new WasixDatabaseImpl({
+      async exec() {
+        return ready();
+      },
+      async sync() {},
+      async close() {
+        sessionCloses += 1;
+      },
+    });
+    database.registerResource({
+      close() {
+        resourceCloses += 1;
+        if (resourceCloses === 1) throw cleanupFailure;
+      },
+    });
+
+    const first = database.close();
+    await expect(first).rejects.toMatchObject({
+      name: 'AggregateError',
+      errors: [cleanupFailure],
+    });
+    expect(database.closed).toBe(true);
+    const retry = database.close();
+    expect(retry).toBe(first);
+    await expect(retry).rejects.toMatchObject({
+      name: 'AggregateError',
+      errors: [cleanupFailure],
+    });
+    expect(sessionCloses).toBe(1);
+    expect(resourceCloses).toBe(1);
   });
 
   it('preserves session and every registered resource cleanup failure', async () => {
@@ -733,7 +969,8 @@ describe('WASIX database recovery state', () => {
       },
     });
 
-    const failure = await database.close().catch((error: unknown) => error);
+    const closing = database.close();
+    const failure = await closing.catch((error: unknown) => error);
 
     expect(failure).toBeInstanceOf(AggregateError);
     if (!(failure instanceof AggregateError)) throw new Error('expected aggregate close failure');
@@ -744,9 +981,11 @@ describe('WASIX database recovery state', () => {
       throw new Error('expected aggregate resource failure');
     }
     expect(resourceFailure.errors).toEqual([firstResourceFailure, secondResourceFailure]);
+    expect(database.closed).toBe(true);
+    expect(database.close()).toBe(closing);
   });
 
-  it('aborts isolated execution when queued work prevents bounded shutdown', async () => {
+  it('aborts SDK-owned execution when queued work prevents bounded shutdown', async () => {
     vi.useFakeTimers();
     try {
       let aborts = 0;
@@ -763,21 +1002,31 @@ describe('WASIX database recovery state', () => {
       void database.execProtocolRaw(Uint8Array.of(1));
       await Promise.resolve();
 
-      const close = expect(database.close()).rejects.toThrow(
+      const closeAttempt = database.close();
+      const close = expect(closeAttempt).rejects.toThrow(
         'close exceeded 120000ms; worker termination was requested',
       );
       await vi.advanceTimersByTimeAsync(120_000);
       await close;
       expect(aborts).toBe(1);
+      expect(database.closed).toBe(true);
+      await expect(database.query('SELECT never_runs')).rejects.toThrow(
+        'Oliphaunt WASIX database is closed',
+      );
+      expect(database.close()).toBe(closeAttempt);
+      await expect(database.close()).rejects.toThrow(
+        'close exceeded 120000ms; worker termination was requested',
+      );
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('keeps the close deadline bounded when forced termination stalls', async () => {
+  it('waits for forced termination before releasing database resources', async () => {
     vi.useFakeTimers();
     try {
-      let aborts = 0;
+      const events: string[] = [];
+      let finishTermination: (() => void) | undefined;
       const database = new WasixDatabaseImpl({
         exec() {
           return new Promise(() => undefined);
@@ -785,19 +1034,91 @@ describe('WASIX database recovery state', () => {
         async sync() {},
         async close() {},
         abort() {
-          aborts += 1;
-          return new Promise(() => undefined);
+          events.push('abort');
+          return new Promise<void>((resolve) => {
+            finishTermination = () => {
+              events.push('terminated');
+              resolve();
+            };
+          });
+        },
+      });
+      database.registerResource({
+        close() {
+          events.push('resource');
         },
       });
       void database.execProtocolRaw(Uint8Array.of(1));
       await Promise.resolve();
 
-      const close = expect(database.close()).rejects.toThrow(
+      const closeAttempt = database.close();
+      let settled = false;
+      void closeAttempt.catch(() => {
+        settled = true;
+      });
+      const close = expect(closeAttempt).rejects.toThrow(
         'close exceeded 120000ms; worker termination was requested',
       );
       await vi.advanceTimersByTimeAsync(120_000);
+      expect(events).toEqual(['abort']);
+      expect(settled).toBe(false);
+      expect(database.closed).toBe(false);
+
+      finishTermination?.();
       await close;
-      expect(aborts).toBe(1);
+      expect(events).toEqual(['abort', 'terminated', 'resource']);
+      expect(database.closed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('preserves timeout, forced-termination, and resource cleanup failures', async () => {
+    vi.useFakeTimers();
+    try {
+      const abortFailure = new Error('worker termination failed');
+      const cleanupFailure = new Error('resource release failed');
+      const database = new WasixDatabaseImpl({
+        exec() {
+          return new Promise(() => undefined);
+        },
+        async sync() {},
+        async close() {},
+        async abort() {
+          throw abortFailure;
+        },
+      });
+      database.registerResource({
+        async close() {
+          throw cleanupFailure;
+        },
+      });
+      void database.execProtocolRaw(Uint8Array.of(1));
+      await Promise.resolve();
+
+      const closing = database.close();
+      const observedFailure = closing.catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(120_000);
+      const failure = await observedFailure;
+
+      expect(failure).toBeInstanceOf(AggregateError);
+      if (!(failure instanceof AggregateError)) throw new Error('expected aggregate failure');
+      const sessionFailure = failure.errors[0];
+      expect(sessionFailure).toBeInstanceOf(AggregateError);
+      if (!(sessionFailure instanceof AggregateError)) {
+        throw new Error('expected timeout and termination aggregate');
+      }
+      expect(sessionFailure.errors).toEqual([
+        expect.objectContaining({ name: 'WasixCloseTimeoutError' }),
+        abortFailure,
+      ]);
+      const resourceFailure = failure.errors[1];
+      expect(resourceFailure).toBeInstanceOf(AggregateError);
+      if (!(resourceFailure instanceof AggregateError)) {
+        throw new Error('expected resource aggregate');
+      }
+      expect(resourceFailure.errors).toEqual([cleanupFailure]);
+      expect(database.closed).toBe(true);
     } finally {
       vi.useRealTimers();
     }
@@ -810,13 +1131,15 @@ describe('WASIX database recovery state', () => {
       publicationStarted = resolve;
     });
     const requests: string[] = [];
+    const syncBoundaries: string[] = [];
     const session: WasixDatabaseSession = {
       async exec() {
         requests.push('exec');
-        return ready();
+        return completed('CHECKPOINT', 'I');
       },
-      sync() {
+      sync(boundary) {
         requests.push('sync');
+        syncBoundaries.push(boundary);
         publicationStarted?.();
         return new Promise((_, reject) => {
           rejectPublication = reject;
@@ -832,7 +1155,9 @@ describe('WASIX database recovery state', () => {
       commitState: 'not-persisted',
     });
 
-    const checkpoint = expect(database.checkpoint()).rejects.toBe(storageFailure);
+    const checkpointExecution = expect(database.execute('CHECKPOINT')).rejects.toBe(
+      storageFailure,
+    );
     await started;
     const queuedQuery = expect(database.query('select 42')).rejects.toMatchObject({
       name: 'WasixStorageError',
@@ -842,7 +1167,7 @@ describe('WASIX database recovery state', () => {
     });
     rejectPublication?.(storageFailure);
 
-    await checkpoint;
+    await checkpointExecution;
     await queuedQuery;
     await expect(database.query('select 43')).rejects.toMatchObject({
       name: 'WasixStorageError',
@@ -851,6 +1176,7 @@ describe('WASIX database recovery state', () => {
       message: expect.stringContaining('cannot be used after a persistence boundary failed'),
     });
     expect(requests).toEqual(['exec', 'sync']);
+    expect(syncBoundaries).toEqual(['operation']);
 
     await database.close();
     expect(requests).toEqual(['exec', 'sync', 'close']);
@@ -890,7 +1216,7 @@ describe('WASIX database recovery state', () => {
           firstExec = false;
           return concatenate(backendError('42501', 'permission denied'), ready());
         }
-        return ready();
+        return emptyComplete('I');
       },
       async sync() {
         requests.push('sync');
@@ -899,18 +1225,42 @@ describe('WASIX database recovery state', () => {
     };
     const database = new WasixDatabaseImpl(session);
 
-    await expect(database.checkpoint()).rejects.toBeInstanceOf(PostgresError);
+    await expect(database.execute('CHECKPOINT')).rejects.toBeInstanceOf(PostgresError);
     await expect(database.query('select 42')).resolves.toMatchObject({
       rows: [],
       rowCount: null,
     });
-    expect(requests).toEqual(['exec', 'exec']);
+    expect(requests).toEqual(['exec', 'sync', 'exec', 'sync']);
     await database.close();
   });
 });
 
-function ready(): Uint8Array {
-  return Uint8Array.of('Z'.charCodeAt(0), 0, 0, 0, 5, 'I'.charCodeAt(0));
+function ready(status: 'I' | 'T' | 'E' = 'I'): Uint8Array {
+  return Uint8Array.of('Z'.charCodeAt(0), 0, 0, 0, 5, status.charCodeAt(0));
+}
+
+function completed(tag: string, status: 'I' | 'T' | 'E'): Uint8Array {
+  return concatenateMessages(
+    emptyBackendMessage('1'),
+    emptyBackendMessage('2'),
+    emptyBackendMessage('n'),
+    commandComplete(tag),
+    ready(status),
+  );
+}
+
+function emptyComplete(status: 'I' | 'T' | 'E'): Uint8Array {
+  return concatenateMessages(
+    emptyBackendMessage('1'),
+    emptyBackendMessage('2'),
+    emptyBackendMessage('n'),
+    emptyBackendMessage('I'),
+    ready(status),
+  );
+}
+
+function emptyBackendMessage(tag: string): Uint8Array {
+  return Uint8Array.of(tag.charCodeAt(0), 0, 0, 0, 4);
 }
 
 function backendError(sqlstate: string, message: string): Uint8Array {
@@ -947,6 +1297,10 @@ function concatenate(left: Uint8Array, right: Uint8Array): Uint8Array {
   result.set(left);
   result.set(right, left.length);
   return result;
+}
+
+function concatenateMessages(...messages: Uint8Array[]): Uint8Array {
+  return messages.reduce(concatenate);
 }
 
 function querySql(input: Uint8Array): string {

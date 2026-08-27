@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use std::thread;
 
 use anyhow::{bail, Context, Result};
-use oliphaunt_wasix::{DatabaseStorage, OliphauntServer, extensions};
 #[cfg(test)]
-use oliphaunt_wasix::{Oliphaunt, tools};
+use oliphaunt_wasix::blocking::{tools, Oliphaunt};
+use oliphaunt_wasix::{extensions, DatabaseStorage, OliphauntServer};
 use serde_json::json;
 
 fn main() -> Result<()> {
@@ -15,8 +15,7 @@ fn main() -> Result<()> {
         .enable_all()
         .build()
         .context("build WASIX sidecar Tokio runtime")?;
-    let _runtime_context = runtime.enter();
-    let server = start_server(directory)?;
+    let server = runtime.block_on(start_server(directory))?;
     println!("{}", json!({ "databaseUrl": server.connection_string() }));
     io::stdout().flush()?;
     let _server = server;
@@ -25,7 +24,7 @@ fn main() -> Result<()> {
     }
 }
 
-fn start_server(directory: PathBuf) -> Result<OliphauntServer> {
+async fn start_server(directory: PathBuf) -> Result<OliphauntServer> {
     let server = OliphauntServer::builder()
         .storage(DatabaseStorage::Directory(directory))
         .extensions([
@@ -34,6 +33,7 @@ fn start_server(directory: PathBuf) -> Result<OliphauntServer> {
             extensions::UNACCENT,
         ])
         .start()
+        .await
         .context("start oliphaunt-wasix server")?;
     Ok(server)
 }
@@ -87,9 +87,9 @@ mod tests {
             .enable_all()
             .build()
             .expect("build WASIX sidecar smoke runtime");
-        let _runtime_context = runtime.enter();
         validate_wasix_tools().expect("run explicit split WASIX tools smoke");
-        let server = start_server(directory.clone())
+        let server = runtime
+            .block_on(start_server(directory.clone()))
             .expect("start sidecar server after split WASIX tools smoke");
         drop(server);
         let _ = std::fs::remove_dir_all(directory);

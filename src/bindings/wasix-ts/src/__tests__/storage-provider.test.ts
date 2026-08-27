@@ -474,8 +474,8 @@ describe('WASIX incremental PGDATA storage', () => {
         async close() {},
       };
     });
-    installNodeDirectoryStorageRestorer(async (path, snapshot) => {
-      calls.push(`restore:${path}:${snapshot.files.length}`);
+    installNodeDirectoryStorageRestorer(async (path, snapshot, _identity, ownerToken) => {
+      calls.push(`restore:${path}:${snapshot.files.length}:${ownerToken}`);
     });
     const directory = await acquireWasixStorage(
       {
@@ -493,11 +493,15 @@ describe('WASIX incremental PGDATA storage', () => {
         schema: 'oliphaunt-wasix-storage-v1',
         kind: 'directory',
         path: '/tmp/restored',
+        ownerToken: 'fedcba9876543210',
       },
       completeSnapshot(),
       compatible(),
     );
-    expect(calls).toEqual(['open:/tmp/todos:0123456789abcdef', 'restore:/tmp/restored:2']);
+    expect(calls).toEqual([
+      'open:/tmp/todos:0123456789abcdef',
+      'restore:/tmp/restored:2:fedcba9876543210',
+    ]);
 
     await expect(
       restoreWasixStorage(

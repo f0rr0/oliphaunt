@@ -175,13 +175,13 @@ let db = try await OliphauntDatabase.open(
 )
 let rows = try await db.query(
     "SELECT name FROM widgets WHERE id = $1",
-    parameters: [.text("42")]
+    parameters: [.int64(42)]
 )
-let name = try rows.getText(row: 0, column: "name")
+let name: String? = try rows.rows[0].value(named: "name")
 
 let command = try await db.execute(
     "UPDATE widgets SET active = $1 WHERE id = $2",
-    parameters: [.text("true"), .text("42")]
+    parameters: [.bool(true), .int64(42)]
 )
 print(command.commandTag ?? "")
 print(command.rowCount as Any)
@@ -194,19 +194,52 @@ reopening the root with a different username.
 
 Swift package for iOS and macOS apps on the native `liboliphaunt` product line.
 
-The public API is actor-based and deliberately small: `query`, `execute`,
-callback-scoped transactions, `checkpoint`, `cancel`, physical `backup` and
-`restore`, raw PostgreSQL protocol execution, and `close`. `query` and `execute`
-preserve PostgreSQL command tags; their nullable `rowCount` is derived from the
-`CommandComplete` tag. SQL errors preserve SQLSTATE and PostgreSQL error fields.
+The public API is actor-based and deliberately small. `query` executes one
+statement and returns ordered raw cells plus field metadata, command metadata,
+and typed row access through `OliphauntPostgresDecodable`. `execute` is the
+stricter one-statement, no-rows assertion. `exec` uses the simple-query protocol
+for ordered multi-statement command-or-rows results, while `describe` resolves
+parameter OIDs and optional result fields without executing. Results preserve
+ordered notices; SQL errors preserve the same PostgreSQL diagnostic fields and
+notices.
+
+Parameters carry an optional `OliphauntPostgresOID`, text or binary format, and
+nullable owned bytes. Common factories such as `.bool`, `.int32`, `.int64`,
+`.string`, `.bytes`, and `.uuid` publish the correct OID; use `.typedNull(.uuid)`
+for an ambiguous null, or explicit `.text`/`.binary` with a custom OID for an
+extension type. Typed getters validate the field OID and format before decoding;
+`row.raw(_:)` remains the lossless fallback.
+
+The database also provides callback-scoped transactions, `cancel`, physical
+`backup` and `restore`, raw PostgreSQL protocol execution,
+and idempotent `close`. `isClosed` becomes true only after a successful close.
 Raw protocol execution remains available for PostgreSQL features without a
 typed API. `execProtocolRaw` returns one owned response, while
-`execProtocolStream` delivers raw backend protocol chunks to a callback without
-buffering the complete response. Neither API adds a second protocol parser.
+`execProtocolRawStream` delivers raw backend protocol chunks to a callback without
+buffering the complete response. The callback is a synchronous backpressure
+boundary: same-database and transaction work is rejected from its scope, with
+`cancel()` as the sole out-of-band exception. Neither API adds a second protocol
+parser.
 
-Transactions use one physical session and require PostgreSQL's exact `BEGIN`,
-`COMMIT`, and `ROLLBACK` completion tags. A failed rollback poisons the facade:
-close it and reopen the database before issuing more work.
+These APIs are genuinely asynchronous for the caller even though embedded
+PostgreSQL is blocking internally. A dedicated serial owner queue performs root
+preparation, open, protocol calls, backup, and close; those operations never run
+on the main actor. Ordinary work, `BEGIN`, transaction settlement, and close
+share FIFO admission. A transaction or close establishes an atomic cutoff:
+operations admitted before it drain first, while later incompatible calls are
+rejected. `cancel()` uses a separate control queue so it can interrupt the active
+call instead of waiting behind it. It remains available while an admitted close
+is draining earlier FIFO work and becomes unavailable when native teardown
+starts. Cancelling a Swift task does not implicitly
+cancel PostgreSQL; call `cancel()` when an interrupt is intended.
+
+Transactions use one physical session and mirror `query`, `execute`, `exec`,
+`describe`, and raw protocol operations. `rollback()` is one-shot: it closes the
+transaction, lets the callback return a value, and suppresses `COMMIT`. A failed
+rollback or uncertain commit poisons the database; close it before reopening.
+When callback and automatic rollback both fail,
+`OliphauntTransactionRollbackError` retains them as `callbackError` and
+`rollbackError` instead of hiding either outcome.
 
 `startupGUCs` are passed directly as PostgreSQL `-c name=value` arguments.
 There are no SDK-specific durability, memory, or runtime profiles.
@@ -222,14 +255,14 @@ directory supplied by the application.
 Use `transaction {}` for multi-step work that must stay on the same physical
 session. Database calls outside the active `OliphauntTransaction` are rejected
 until the transaction commits or rolls back.
-Use `checkpoint()` to request a PostgreSQL checkpoint through the same actor
-session; it is rejected while a transaction is active.
+Use `execute("CHECKPOINT")` when an explicit PostgreSQL checkpoint is required;
+like other database operations, it is rejected while a transaction is active.
 
 <!-- liboliphaunt-doc-example:swift-parameterized-query -->
 ```swift
 let result = try await db.query(
-    "SELECT $1::text AS value",
-    parameters: [.text("hello")]
+    "SELECT $1::text AS value, $2::uuid AS optional_id",
+    parameters: [.string("hello"), .typedNull(.uuid)]
 )
 ```
 

@@ -1,4 +1,6 @@
-import Oliphaunt, { type OliphauntDatabase } from '@oliphaunt/wasix-ts';
+import BlockingOliphaunt, {
+  type OliphauntDatabase,
+} from '@oliphaunt/wasix-ts/blocking';
 import { opfs } from '@oliphaunt/wasix-ts/storage/opfs';
 
 type ProbeRequest = Readonly<{ name: string }>;
@@ -14,10 +16,10 @@ scope.addEventListener('message', (event: MessageEvent<ProbeRequest>) => {
 });
 
 async function prepareDurableState(name: string): Promise<void> {
-  database = await Oliphaunt.open({ execution: 'direct', storage: opfs(name) });
-  await database.query('CREATE TABLE opfs_crash_probe (answer integer NOT NULL)');
-  await database.query('INSERT INTO opfs_crash_probe VALUES (73)');
-  await database.query(`
+  database = await BlockingOliphaunt.open({ storage: opfs(name) });
+  await database.queryRaw('CREATE TABLE opfs_crash_probe (answer integer NOT NULL)');
+  await database.queryRaw('INSERT INTO opfs_crash_probe VALUES (73)');
+  await database.queryRaw(`
     DO $oliphaunt$
     BEGIN
       FOR relation IN 1..48 LOOP
@@ -26,9 +28,9 @@ async function prepareDurableState(name: string): Promise<void> {
     END
     $oliphaunt$
   `);
-  await database.checkpoint();
+  await database.execute('CHECKPOINT');
   // Deliberately remain open. The parent terminates this Worker to prove that
-  // flushed direct OPFS state does not depend on the clean-close path.
+  // flushed caller-owned OPFS state does not depend on the clean-close path.
 }
 
 function respond(response: ProbeResponse): void {

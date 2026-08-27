@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 1,
+  "kind": "postgres-structured-sql-preflight",
+  "cases": [
+    {
+      "name": "empty_query",
+      "sql": "  ; -- nothing here\n /* still empty */ ; ",
+      "containsTopLevelCopy": false
+    },
+    {
+      "name": "ordinary_select",
+      "sql": "SELECT 1",
+      "containsTopLevelCopy": false
+    },
+    {
+      "name": "copy_to_stdout",
+      "sql": "COPY public.items TO STDOUT",
+      "containsTopLevelCopy": true
+    },
+    {
+      "name": "copy_from_stdin_case_insensitive",
+      "sql": "\n\tcopy public.items FROM STDIN",
+      "containsTopLevelCopy": true
+    },
+    {
+      "name": "copy_after_comments",
+      "sql": "-- explain the operation\n/* outer /* nested */ comment */ COPY items TO STDOUT",
+      "containsTopLevelCopy": true
+    },
+    {
+      "name": "copy_after_carriage_return_line_comment",
+      "sql": "-- old-style line ending\rCOPY items TO STDOUT",
+      "containsTopLevelCopy": true
+    },
+    {
+      "name": "copy_second_statement",
+      "sql": "SELECT 1; /* boundary ; */ COPY items FROM STDIN; SELECT 2",
+      "containsTopLevelCopy": true
+    },
+    {
+      "name": "copy_after_empty_statements",
+      "sql": "; ;\n-- boundary\n;COPY (SELECT ';') TO STDOUT",
+      "containsTopLevelCopy": true
+    },
+    {
+      "name": "copy_prefix_is_not_keyword",
+      "sql": "COPYRIGHT notice_text",
+      "containsTopLevelCopy": false
+    },
+    {
+      "name": "copy_column_is_not_statement",
+      "sql": "SELECT copy, copy_text FROM records",
+      "containsTopLevelCopy": false
+    },
+    {
+      "name": "copy_in_single_quoted_text",
+      "sql": "SELECT 'before; COPY items TO STDOUT; after'",
+      "containsTopLevelCopy": false
+    },
+    {
+      "name": "copy_in_escape_string",
+      "sql": "SELECT E'escaped \\' quote; COPY items TO STDOUT'",
+      "containsTopLevelCopy": false
+    },
+    {
+      "name": "ordinary_string_backslash_is_not_an_escape_by_default",
+      "sql": "SELECT '\\'; COPY items TO STDOUT",
+      "containsTopLevelCopy": true
+    },
+    {
+      "name": "ordinary_string_backslash_may_escape_when_guc_is_off",
+      "sql": "SELECT 'a\\'b'; COPY items TO STDOUT",
+      "containsTopLevelCopy": true
+    },
+    {
+      "name": "copy_in_quoted_identifier",
+      "sql": "SELECT \"semi;COPY\" FROM \"COPY\"",
+      "containsTopLevelCopy": false
+    },
+    {
+      "name": "copy_in_dollar_quote",
+      "sql": "DO $body$ BEGIN PERFORM '; COPY items TO STDOUT'; END $body$",
+      "containsTopLevelCopy": false
+    },
+    {
+      "name": "copy_in_empty_tag_dollar_quote",
+      "sql": "SELECT $$ ; COPY items FROM STDIN; $$",
+      "containsTopLevelCopy": false
+    },
+    {
+      "name": "copy_in_line_comment",
+      "sql": "SELECT 1 -- ; COPY items TO STDOUT\n; SELECT 2",
+      "containsTopLevelCopy": false
+    },
+    {
+      "name": "copy_in_nested_block_comment",
+      "sql": "SELECT 1 /* ; COPY outer /* COPY nested */ TO STDOUT */; SELECT 2",
+      "containsTopLevelCopy": false
+    },
+    {
+      "name": "copy_inside_parenthesized_expression",
+      "sql": "SELECT ('COPY items TO STDOUT;')",
+      "containsTopLevelCopy": false
+    },
+    {
+      "name": "quoted_copy_at_statement_start",
+      "sql": "\"COPY\" value",
+      "containsTopLevelCopy": false
+    },
+    {
+      "name": "copy_after_dollar_quoted_semicolon",
+      "sql": "SELECT $tag$not a boundary; COPY x TO STDOUT$tag$; COPY real_table TO STDOUT",
+      "containsTopLevelCopy": true
+    },
+    {
+      "name": "malformed_copy_still_rejected_before_wire",
+      "sql": "COPY 'unterminated",
+      "containsTopLevelCopy": true
+    },
+    {
+      "name": "unterminated_literal_is_server_error",
+      "sql": "SELECT 'unterminated; COPY items TO STDOUT",
+      "containsTopLevelCopy": false
+    },
+    {
+      "name": "unterminated_comment_is_server_error",
+      "sql": "SELECT 1; /* COPY items TO STDOUT",
+      "containsTopLevelCopy": false
+    }
+  ]
+}

@@ -1,7 +1,23 @@
-import type { CommandResult, QueryParam, QueryResult } from './query.js';
+import type {
+  CommandResult,
+  DescribeResult,
+  ExecResult,
+  ParameterOptions,
+  QueryObjectRow,
+  QueryOptions,
+  QueryParam,
+  QueryResult,
+  RawQueryResult,
+} from './query.js';
 import type { PersistentWasixStorage, WasixStorage } from './storage.js';
 
 export type BinaryInput = ArrayBuffer | ArrayBufferView | Uint8Array | ReadonlyArray<number>;
+/**
+ * Synchronous, serial protocol consumer. The callback must not return a
+ * Promise or thenable; returning one rejects the stream and poisons the
+ * underlying PostgreSQL session because callback completion is the
+ * backpressure acknowledgement.
+ */
 export type ProtocolChunkCallback = (chunk: Uint8Array) => void;
 
 /** A host-neutral asset reference accepted by the portable WASIX carrier contract. */
@@ -188,12 +204,7 @@ export type WasixAssetManifest = {
   extensions: readonly [];
 };
 
-/** Where package-owned WASIX lifecycle work runs. */
-export type ExecutionMode = 'direct' | 'worker';
-
 export type OpenConfig = {
-  /** Worker-isolated by default; direct opens in and then blocks the caller's realm. */
-  execution?: ExecutionMode;
   /** Existing PostgreSQL role selected after the fixed superuser bootstrap. */
   username?: string;
   database?: string;
@@ -208,25 +219,70 @@ export type OpenConfig = {
 };
 
 export type OliphauntDatabase = {
-  execute(sql: string, parameters?: ReadonlyArray<QueryParam>): Promise<CommandResult>;
-  query(sql: string, parameters?: ReadonlyArray<QueryParam>): Promise<QueryResult>;
+  /** True after the terminal close attempt settles, including when teardown rejects. */
+  readonly closed: boolean;
+  execute(
+    sql: string,
+    parameters?: ReadonlyArray<QueryParam>,
+    options?: ParameterOptions,
+  ): Promise<CommandResult>;
+  query<Row = QueryObjectRow>(
+    sql: string,
+    parameters?: ReadonlyArray<QueryParam>,
+    options?: QueryOptions,
+  ): Promise<QueryResult<Row>>;
+  queryRaw(
+    sql: string,
+    parameters?: ReadonlyArray<QueryParam>,
+    options?: ParameterOptions,
+  ): Promise<RawQueryResult>;
+  exec<Row = QueryObjectRow>(
+    sql: string,
+    options?: Omit<QueryOptions, 'encoders'>,
+  ): Promise<ExecResult<Row>>;
+  describe(sql: string, parameterTypeOids?: ReadonlyArray<number>): Promise<DescribeResult>;
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
-  execProtocolStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
+  execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
   /** Create a session-preserving PostgreSQL online physical backup. */
   backup(): Promise<Uint8Array>;
-  /** CHECKPOINT PostgreSQL, then publish the resulting journaled PGDATA delta. */
-  checkpoint(): Promise<void>;
   transaction<T>(body: (transaction: OliphauntTransaction) => Promise<T> | T): Promise<T>;
+  /**
+   * Stop admitting work and perform one terminal teardown attempt.
+   * Concurrent and later calls return the same promise. A rejection reports
+   * cleanup failure; it does not make the handle reusable. Calling from an
+   * active transaction callback rejects before teardown begins; close the
+   * database after that callback settles.
+   */
   close(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
 };
 
 /** A database session pinned to one callback-scoped PostgreSQL transaction. */
 export type OliphauntTransaction = {
-  execute(sql: string, parameters?: ReadonlyArray<QueryParam>): Promise<CommandResult>;
-  query(sql: string, parameters?: ReadonlyArray<QueryParam>): Promise<QueryResult>;
+  readonly closed: boolean;
+  execute(
+    sql: string,
+    parameters?: ReadonlyArray<QueryParam>,
+    options?: ParameterOptions,
+  ): Promise<CommandResult>;
+  query<Row = QueryObjectRow>(
+    sql: string,
+    parameters?: ReadonlyArray<QueryParam>,
+    options?: QueryOptions,
+  ): Promise<QueryResult<Row>>;
+  queryRaw(
+    sql: string,
+    parameters?: ReadonlyArray<QueryParam>,
+    options?: ParameterOptions,
+  ): Promise<RawQueryResult>;
+  exec<Row = QueryObjectRow>(
+    sql: string,
+    options?: Omit<QueryOptions, 'encoders'>,
+  ): Promise<ExecResult<Row>>;
+  describe(sql: string, parameterTypeOids?: ReadonlyArray<number>): Promise<DescribeResult>;
+  rollback(): Promise<void>;
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
-  execProtocolStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
+  execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
 };
 
 export type OliphauntClient = {

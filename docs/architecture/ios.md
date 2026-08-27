@@ -24,9 +24,10 @@ Opening prepares or validates the managed root before starting the C runtime.
 reopened while the process remains resident. A different root requires a fresh
 process because native direct mode owns process-global PostgreSQL state.
 
-Applications call `checkpoint()`, `cancel()`, and `close()` when appropriate for
-their own UIKit or SwiftUI lifecycle policy. There is no SDK background or
-foreground mode.
+Applications call `cancel()` and `close()` when appropriate for their own
+UIKit or SwiftUI lifecycle policy. PostgreSQL `CHECKPOINT` remains available as
+ordinary SQL through `execute`; there is no public checkpoint convenience or
+SDK background/foreground mode.
 
 ## Data movement
 

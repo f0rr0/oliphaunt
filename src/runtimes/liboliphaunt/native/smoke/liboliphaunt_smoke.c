@@ -637,6 +637,14 @@ typedef struct StreamAccumulator {
     size_t chunks;
 } StreamAccumulator;
 
+typedef struct StreamReentrancyProbe {
+    OliphauntHandle *db;
+    uint64_t generation;
+    StreamAccumulator response;
+    int checked;
+    int failed;
+} StreamReentrancyProbe;
+
 typedef struct CancelQueryThread {
     OliphauntHandle *db;
     int status;
@@ -775,18 +783,18 @@ static int exec_invalid_argument_checks(OliphauntHandle *db) {
     if (expect_error_contains(db, "oliphaunt_exec_protocol null out", "invalid oliphaunt_exec_protocol arguments") != 0) {
         return 1;
     }
-    if (oliphaunt_exec_protocol_stream(db, &byte, sizeof(byte), NULL, NULL) == 0) {
-        fprintf(stderr, "oliphaunt_exec_protocol_stream accepted null callback\n");
+    if (oliphaunt_exec_protocol_raw_stream(db, &byte, sizeof(byte), NULL, NULL) == 0) {
+        fprintf(stderr, "oliphaunt_exec_protocol_raw_stream accepted null callback\n");
         return 1;
     }
-    if (expect_error_contains(db, "oliphaunt_exec_protocol_stream null callback", "invalid oliphaunt_exec_protocol_stream arguments") != 0) {
+    if (expect_error_contains(db, "oliphaunt_exec_protocol_raw_stream null callback", "invalid oliphaunt_exec_protocol_raw_stream arguments") != 0) {
         return 1;
     }
-    if (oliphaunt_exec_protocol_stream(db, NULL, 1, append_stream_chunk, NULL) == 0) {
-        fprintf(stderr, "oliphaunt_exec_protocol_stream accepted null request with non-zero length\n");
+    if (oliphaunt_exec_protocol_raw_stream(db, NULL, 1, append_stream_chunk, NULL) == 0) {
+        fprintf(stderr, "oliphaunt_exec_protocol_raw_stream accepted null request with non-zero length\n");
         return 1;
     }
-    if (expect_error_contains(db, "oliphaunt_exec_protocol_stream null request", "invalid oliphaunt_exec_protocol_stream arguments") != 0) {
+    if (expect_error_contains(db, "oliphaunt_exec_protocol_raw_stream null request", "invalid oliphaunt_exec_protocol_raw_stream arguments") != 0) {
         return 1;
     }
     if (oliphaunt_exec_simple_query(db, NULL, 0, &response) == 0) {
@@ -843,7 +851,7 @@ static int expect_malformed_stream_rejected(
     size_t request_len,
     const char *needle) {
     StreamAccumulator acc = {0};
-    if (oliphaunt_exec_protocol_stream(db, request, request_len, append_stream_chunk, &acc) == 0) {
+    if (oliphaunt_exec_protocol_raw_stream(db, request, request_len, append_stream_chunk, &acc) == 0) {
         fprintf(stderr, "%s was accepted as a streaming raw protocol request\n", context);
         free(acc.data);
         return 1;
@@ -922,6 +930,59 @@ static int32_t append_stream_chunk(void *context, const uint8_t *data, size_t le
     return 0;
 }
 
+static void record_stream_reentrancy_result(
+    StreamReentrancyProbe *probe,
+    const char *operation,
+    int32_t rc) {
+    const char *error = oliphaunt_last_error(probe->db);
+    if (rc == 0 || error == NULL ||
+        strstr(error, "busy delivering a raw protocol stream") == NULL) {
+        fprintf(
+            stderr,
+            "%s was not rejected as stream reentrancy: rc=%d error=%s\n",
+            operation,
+            (int)rc,
+            error != NULL ? error : "(null)");
+        probe->failed = 1;
+    }
+}
+
+static int32_t probe_stream_reentrancy(void *context, const uint8_t *data, size_t len) {
+    StreamReentrancyProbe *probe = (StreamReentrancyProbe *)context;
+    if (!probe->checked) {
+        probe->checked = 1;
+
+        OliphauntResponse response = {0};
+        static const char sql[] = "SELECT 0";
+        record_stream_reentrancy_result(
+            probe,
+            "oliphaunt_exec_simple_query from a stream callback",
+            oliphaunt_exec_simple_query(probe->db, sql, sizeof(sql) - 1, &response));
+        oliphaunt_free_response(&response);
+
+        response = (OliphauntResponse){0};
+        record_stream_reentrancy_result(
+            probe,
+            "oliphaunt_backup from a stream callback",
+            oliphaunt_backup(probe->db, &response));
+        oliphaunt_free_response(&response);
+
+        record_stream_reentrancy_result(
+            probe,
+            "oliphaunt_detach from a stream callback",
+            oliphaunt_detach(probe->db));
+        record_stream_reentrancy_result(
+            probe,
+            "oliphaunt_close_if_generation from a stream callback",
+            oliphaunt_close_if_generation(probe->generation));
+        record_stream_reentrancy_result(
+            probe,
+            "oliphaunt_close from a stream callback",
+            oliphaunt_close(probe->db));
+    }
+    return append_stream_chunk(&probe->response, data, len);
+}
+
 static int32_t fail_stream_chunk(void *context, const uint8_t *data, size_t len) {
     (void)data;
     (void)len;
@@ -941,10 +1002,10 @@ static int exec_stream_expect_tags(
 
     StreamAccumulator acc = {0};
     fprintf(stderr, "streaming raw protocol: %s\n", sql);
-    int rc = oliphaunt_exec_protocol_stream(db, query, query_len, append_stream_chunk, &acc);
+    int rc = oliphaunt_exec_protocol_raw_stream(db, query, query_len, append_stream_chunk, &acc);
     free(query);
     if (rc != 0) {
-        fprintf(stderr, "oliphaunt_exec_protocol_stream failed: %s\n", oliphaunt_last_error(db));
+        fprintf(stderr, "oliphaunt_exec_protocol_raw_stream failed: %s\n", oliphaunt_last_error(db));
         free(acc.data);
         return 1;
     }
@@ -975,11 +1036,11 @@ static int exec_stream_callback_failure_recovers(OliphauntHandle *db) {
 
     StreamAccumulator acc = {0};
     fprintf(stderr, "streaming raw protocol with failing callback\n");
-    int rc = oliphaunt_exec_protocol_stream(db, query, query_len, fail_stream_chunk, &acc);
+    int rc = oliphaunt_exec_protocol_raw_stream(db, query, query_len, fail_stream_chunk, &acc);
     free(query);
     free(acc.data);
     if (rc == 0) {
-        fprintf(stderr, "oliphaunt_exec_protocol_stream succeeded despite callback failure\n");
+        fprintf(stderr, "oliphaunt_exec_protocol_raw_stream succeeded despite callback failure\n");
         return 1;
     }
     if (acc.chunks == 0) {
@@ -991,6 +1052,50 @@ static int exec_stream_callback_failure_recovers(OliphauntHandle *db) {
     }
     const unsigned char select_tags[] = {'T', 'D', 'C', 'Z'};
     return exec_query_expect_tags(db, "SELECT 4 AS recovered_after_callback_failure", select_tags, sizeof(select_tags));
+}
+
+static int exec_stream_reentrancy_is_rejected(OliphauntHandle *db) {
+    unsigned char *query = NULL;
+    size_t query_len = 0;
+    push_query(&query, &query_len, "SELECT repeat('r', 4096) AS reentrancy_guard");
+
+    StreamReentrancyProbe probe = {
+        .db = db,
+        .generation = oliphaunt_logical_generation(db),
+    };
+    fprintf(stderr, "streaming raw protocol with reentrancy probes\n");
+    int rc = oliphaunt_exec_protocol_raw_stream(
+        db,
+        query,
+        query_len,
+        probe_stream_reentrancy,
+        &probe);
+    free(query);
+    if (rc != 0 || !probe.checked || probe.failed) {
+        fprintf(
+            stderr,
+            "raw stream reentrancy guard failed: rc=%d checked=%d failed=%d error=%s\n",
+            rc,
+            probe.checked,
+            probe.failed,
+            oliphaunt_last_error(db));
+        free(probe.response.data);
+        return 1;
+    }
+    OliphauntResponse response = {
+        .data = probe.response.data,
+        .len = probe.response.len,
+    };
+    const unsigned char tags[] = {'T', 'D', 'C', 'Z'};
+    for (size_t i = 0; i < sizeof(tags); i++) {
+        if (!contains_tag(&response, tags[i])) {
+            fprintf(stderr, "reentrancy-probe stream response omitted tag %c\n", tags[i]);
+            free(probe.response.data);
+            return 1;
+        }
+    }
+    free(probe.response.data);
+    return 0;
 }
 
 static void *cancel_query_thread_main(void *context) {
@@ -2505,6 +2610,11 @@ static int run_cycle(const char *pgdata, const char *runtime_dir) {
     }
 
     if (exec_stream_callback_failure_recovers(db) != 0) {
+        oliphaunt_close(db);
+        return 1;
+    }
+
+    if (exec_stream_reentrancy_is_rejected(db) != 0) {
         oliphaunt_close(db);
         return 1;
     }

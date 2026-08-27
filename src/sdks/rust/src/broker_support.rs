@@ -71,19 +71,20 @@ impl BrokerSession {
     }
 
     /// Execute raw PostgreSQL protocol bytes.
-    pub fn exec_protocol(&mut self, bytes: Vec<u8>) -> Result<Vec<u8>> {
+    pub fn exec_protocol_raw(&mut self, bytes: Vec<u8>) -> Result<Vec<u8>> {
         self.session
             .exec_protocol_raw(bytes.into())
             .map(|response| response.into_bytes())
     }
 
     /// Execute raw PostgreSQL protocol bytes and forward native response chunks.
-    pub fn exec_protocol_stream(
+    pub fn exec_protocol_raw_stream(
         &mut self,
         bytes: Vec<u8>,
         on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
     ) -> Result<()> {
-        self.session.exec_protocol_stream(bytes.into(), on_chunk)
+        self.session
+            .exec_protocol_raw_stream(bytes.into(), on_chunk)
     }
 
     /// Execute a PostgreSQL simple query.
@@ -96,11 +97,6 @@ impl BrokerSession {
     /// Create a physical backup.
     pub fn backup(&mut self) -> Result<Vec<u8>> {
         self.session.backup()
-    }
-
-    /// Force a PostgreSQL checkpoint.
-    pub fn checkpoint(&mut self) -> Result<()> {
-        self.session.exec_simple_query("CHECKPOINT").map(|_| ())
     }
 
     /// Close the broker-owned session.

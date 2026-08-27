@@ -18,36 +18,76 @@ const db = await Oliphaunt.open({
 await db.execute('CREATE TABLE events(value text)');
 await db.execute('INSERT INTO events(value) VALUES ($1)', ['ready']);
 const result = await db.query('SELECT value FROM events');
-console.log(result.rows[0]?.text(0));
+console.log(result.rows[0]?.value);
 await db.close();
 ```
 
-Direct execution is the default. Set `execution: 'broker'` to place the embedded
+Direct topology is the default. Set `topology: 'broker'` to place the embedded
 backend in a helper process while keeping the same database API.
+
+The database API is promise-based on Node.js, Bun, and Deno. Native PostgreSQL
+work runs in addon jobs or Deno nonblocking FFI rather than on the JavaScript
+event loop. First adapter resolution still performs the platform's synchronous
+native-module load (`require()` on Node/Bun or `dlopen()` on Deno); that narrow
+startup step is not a synchronous database execution mode.
 
 The deliberate public vocabulary is:
 
 - `Oliphaunt.open(config)` for direct or broker databases.
-- `execute`, `query`, callback `transaction`, `checkpoint`, `cancel`, and
-  `close`.
+- `execute`, decoded `query`, byte-preserving `queryRaw`, ordered `exec`,
+  non-executing `describe`, callback `transaction`, `cancel`, and `close`.
 - `execProtocolRaw` as the buffered escape hatch for protocol flows the typed
   helpers cannot represent.
-- `execProtocolStream` for callback delivery of raw backend protocol chunks,
+- `execProtocolRawStream` for callback delivery of raw backend protocol chunks,
   including COPY responses, without buffering the complete response.
 - `backup()` returning the one physical backup format as `Uint8Array`.
 - `Oliphaunt.restore(destination, bytes)` for an absent or empty destination.
 - `Oliphaunt.openServer(config)` for the distinct local-server handle.
 
-`execute` returns a `CommandResult`; `query` returns fields and rows in a
-`QueryResult`. Both expose the PostgreSQL command tag and row count reported by
-PostgreSQL. Parameter values may be text, binary bytes, `null`, numbers, or
-booleans. PostgreSQL ErrorResponse fields are exposed through `PostgresError`.
+`execute` asserts one command with no rows. `query` accepts command-only or
+row-producing SQL and defaults to decoded object rows; use `rowMode: 'array'`
+for positional rows, `valueMode: 'text'` for text-format strings, or per-query
+OID decoders. `queryRaw` retains ordered nullable bytes and complete field
+metadata. `exec` returns each simple-query statement in wire order, and
+`describe` returns resolved parameter OIDs and optional result fields without
+executing. All structured results preserve notices and command metadata.
 
-Transactions pin the one SDK-owned session. Callback failure rolls back. A
-failed rollback poisons the handle. A transport failure at COMMIT is uncertain,
-so the SDK never follows it with a misleading ROLLBACK and requires close.
-PostgreSQL's explicit `COMMIT` → `ROLLBACK` command tag is the known idle-session
-exception.
+Safe scalar parameters are inferred inside one owned Parse/Describe/Bind
+operation. Use the exported `text`, `binary`, `typedNull`, `json`, and `array`
+helpers with `postgresOids` when the type must be deterministic, and immutable
+per-query encoders for extension OIDs. Unsupported or mismatched values fail
+instead of being guessed or stringified; `undefined` is never a SQL null.
+PostgreSQL errors are structured `PostgresError` instances with query notices.
+
+The read-only `closed` property becomes true whenever the owner is terminally
+retired, including after a broker/server teardown error that occurs past its
+destructive cutoff. Transactions pin the session and mirror query/raw query, execute, exec,
+and describe. One-shot `rollback()` closes the transaction and lets the callback
+return without committing. Failed rollback or COMMIT uncertainty poisons the
+database and never triggers a misleading second control command.
+
+Always `await db.close()` or use `await using` for deterministic lifecycle.
+Garbage collection is only a best-effort leak guard: on Node/Bun a
+`FinalizationRegistry` gives the addon an opaque exact-generation token and only
+releases JavaScript admission after the addon queues recovery for the next
+asynchronous open. Deno's registry enqueues nonblocking generation-guarded
+terminal cleanup. Broker and server registries retain only their exact private
+runtime handle plus a private lease generation; finalizers schedule
+asynchronous teardown and an unregistered or superseded generation is a no-op.
+A stale cleanup
+cannot close a newer logical lease, but finalizer timing and errors are not
+observable and an executed fallback spends the native database process
+lifetime. Explicit close remains the path that resets the logical session for
+reuse and reports failures.
+
+A direct logical-detach failure is retryable only while the native owner proves
+it remains active. Broker/server teardown failures are terminal: later work is
+rejected and every repeated `close()` observes the same original outcome.
+Raw-stream callbacks are synchronous, cannot reenter database or transaction
+work on the same handle, and may only use `cancel()` out of band. Once `close()`
+stops ordinary admission, `cancel()` remains available while previously
+admitted work drains; runtime teardown begins only after admitted cancellation
+requests settle.
 
 ## Backup and restore
 
@@ -79,8 +119,8 @@ console.log(server.connectionString);
 await server.close();
 ```
 
-The server handle has the same execute, query, transaction, raw protocol,
-checkpoint, cancellation, and close methods, but no SDK backup method. TCP is
+The server handle has the same structured query, transaction, raw protocol,
+cancellation, and close methods, but no SDK backup method. TCP is
 fixed to IPv4 loopback; omit `port` for automatic assignment. Unix hosts may
 instead pass `{ transport: 'unix', directory, port? }`, which uses
 `.s.PGSQL.<port>` and never removes the caller's directory.

@@ -238,7 +238,7 @@ fn run_direct_extension_smoke(extension: Extension) {
         );
 
         let backup = fs::read(&backup_path).expect("direct extension child did not write backup");
-        Oliphaunt::restore(&restored_root, backup).unwrap();
+        block_on(Oliphaunt::restore(&restored_root, backup)).unwrap();
 
         run_direct_extension_child(
             DirectExtensionChildAction::AssertExisting,
@@ -423,7 +423,7 @@ fn run_extension_recovery_smoke(
     let Some(archive) = archive else {
         return Ok(());
     };
-    Oliphaunt::restore(restored_root, archive)?;
+    block_on(Oliphaunt::restore(restored_root, archive))?;
     let restored = block_on(open_extension_database(
         mode,
         broker,
@@ -486,10 +486,13 @@ fn extension_builder(
 ) -> oliphaunt::OliphauntBuilder {
     let builder = Oliphaunt::builder().directory(root).extension(extension);
     let mut builder = match mode {
-        TestMode::Direct | TestMode::Server => builder.direct(),
+        TestMode::Direct => builder.direct(),
         TestMode::Broker => builder.broker(),
+        TestMode::Server => builder,
     };
-    if let Some(broker) = broker {
+    if mode == TestMode::Broker
+        && let Some(broker) = broker
+    {
         builder = builder.broker_executable(broker);
     }
     builder

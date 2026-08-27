@@ -187,7 +187,7 @@ class DirectOpfsLease implements WasixStorageLease {
     } catch (error) {
       if (error instanceof WasixStorageError) throw error;
       throw new WasixStorageError(
-        `could not persist direct OPFS storage ${JSON.stringify(this.#name)}: ${describeError(error)}`,
+        `could not persist OPFS storage ${JSON.stringify(this.#name)}: ${describeError(error)}`,
         { code: 'publication-failed', commitState: 'unknown', cause: error },
       );
     }
@@ -210,7 +210,7 @@ class DirectOpfsLease implements WasixStorageLease {
           error instanceof WasixStorageError
             ? error
             : new WasixStorageError(
-                `direct OPFS storage ${JSON.stringify(this.#name)} could not persist on close`,
+                `OPFS storage ${JSON.stringify(this.#name)} could not persist on close`,
                 { code: 'publication-failed', commitState: 'unknown', cause: error },
               );
       }
@@ -264,7 +264,7 @@ class DirectOpfsLease implements WasixStorageLease {
     commitState: 'persisted' | 'unchanged' | 'unknown',
     cause?: unknown,
   ): WasixStorageError {
-    return new WasixStorageError(`direct OPFS storage ${JSON.stringify(this.#name)} ${detail}`, {
+    return new WasixStorageError(`OPFS storage ${JSON.stringify(this.#name)} ${detail}`, {
       code: 'unavailable',
       commitState,
       ...(cause === undefined ? {} : { cause }),

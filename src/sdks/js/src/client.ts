@@ -5,14 +5,30 @@ import { join } from 'node:path';
 import { normalizeOpenConfig, validateDirectoryPath } from './config.js';
 import { createDefaultNativeBinding } from './native/default.js';
 import type { NativeBinding, NativeBindingOptions } from './native/types.js';
-import { simpleQuery } from './protocol.js';
 import {
+  decodeQueryResult,
+  describeQuery,
+  errorWithNotices,
   extendedQuery,
+  inspectReadyForQuery,
   parseCommandResponse,
-  parseQueryResponse,
+  parseDescribeResponse,
+  parseExecResponse,
+  parseQueryRawResponse,
+  planQuery,
+  structuredSimpleQuery,
   type CommandResult,
+  type DescribeResult,
+  type ExecResult,
+  type ParameterOptions,
+  type PostgresNotice,
   type QueryParam,
+  type QueryObjectRow,
+  type QueryOptions,
+  type QueryPlan,
   type QueryResult,
+  type RawQueryResult,
+  type TransactionStatus,
   toUint8Array,
 } from './query.js';
 import { createBrokerRuntimeBinding } from './runtime/broker.js';
@@ -49,154 +65,328 @@ class OliphauntDatabaseBase {
   #closing = false;
   #closeAttempt?: Promise<void>;
   #operationTail = Promise.resolve();
-  #sessionOperationRunning = false;
+  readonly #cancellationOperations = new Set<Promise<void>>();
+  #runtimeCloseActive = false;
   #activeTransaction = false;
-  #transactionPoisoned = false;
+  #streamCallbackActive = false;
+  #sessionFailure?: Error;
 
-  constructor(binding: RuntimeBinding, handle: RuntimeHandle, releaseOwnership?: () => void) {
+  static async publish<Database extends OliphauntDatabaseBase>(
+    database: Database,
+  ): Promise<Database> {
+    try {
+      database.#initializeForgottenHandleCleanup();
+      return database;
+    } catch (publicationError) {
+      const cleanupFailure = await database.#discardUnpublishedOwner();
+      if (cleanupFailure === undefined) throw publicationError;
+      throw new AggregateError(
+        [publicationError, cleanupFailure],
+        'Oliphaunt opened a runtime owner but could not publish its JavaScript facade',
+      );
+    }
+  }
+
+  constructor(
+    binding: RuntimeBinding,
+    handle: RuntimeHandle,
+    releaseOwnership?: () => void,
+  ) {
     this.binding = binding;
     this.handle = handle;
-    this.#releaseOwnership = releaseOwnership;
+    if (releaseOwnership !== undefined) {
+      let released = false;
+      this.#releaseOwnership = () => {
+        if (released) return;
+        released = true;
+        releaseOwnership();
+      };
+    }
   }
 
-  async execute(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<CommandResult> {
-    this.assertNoActiveTransaction();
-    return this.withSessionOperation(async () => {
-      const response = await this.#execProtocolRawUnlocked(extendedQuery(sql, parameters));
-      return parseCommandResponse(response);
-    });
+  /** Complete owner publication after the facade itself is reachable locally. */
+  #initializeForgottenHandleCleanup(): void {
+    this.binding.registerForgottenHandleCleanup?.(
+      this,
+      this.handle,
+      this.#releaseOwnership ?? noop,
+    );
   }
 
-  async query(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<QueryResult> {
+  /**
+   * Retire an opened handle whose public facade could not be published.
+   * Registration is unregistered even when the registry threw after partially
+   * accepting it, and the exact JavaScript ownership lease is always released.
+   */
+  async #discardUnpublishedOwner(): Promise<unknown | undefined> {
+    const failures: unknown[] = [];
+    try {
+      const outcome = await this.binding.close(this.handle);
+      if (outcome.state !== 'closed') failures.push(outcome.error);
+    } catch (error) {
+      failures.push(error);
+    }
+    const retirementFailure = this.#retire();
+    if (retirementFailure !== undefined) failures.push(retirementFailure);
+    return collapseFailures(
+      failures,
+      'unpublished Oliphaunt owner cleanup failed',
+    );
+  }
+
+  get closed(): boolean {
+    return this.#closed;
+  }
+
+  async execute(
+    sql: string,
+    parameters: ReadonlyArray<QueryParam> = [],
+    options: ParameterOptions = {},
+  ): Promise<CommandResult> {
     this.assertNoActiveTransaction();
-    return this.withSessionOperation(async () => {
-      return parseQueryResponse(
-        await this.#execProtocolRawUnlocked(extendedQuery(sql, parameters)),
-      );
-    });
+    const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
+    return this.withSessionOperation(() =>
+      this.#runPlannedUnlocked(plan, 'database', parseCommandResponse),
+    );
+  }
+
+  async query<Row = QueryObjectRow>(
+    sql: string,
+    parameters: ReadonlyArray<QueryParam> = [],
+    options: QueryOptions = {},
+  ): Promise<QueryResult<Row>> {
+    this.assertNoActiveTransaction();
+    const stableOptions = snapshotQueryOptions(options);
+    const plan = planQuery(sql, parameters, stableOptions);
+    return this.withSessionOperation(async () =>
+      decodeQueryResult<Row>(
+        await this.#runPlannedUnlocked(plan, 'database', parseQueryRawResponse),
+        stableOptions,
+      ),
+    );
+  }
+
+  async queryRaw(
+    sql: string,
+    parameters: ReadonlyArray<QueryParam> = [],
+    options: ParameterOptions = {},
+  ): Promise<RawQueryResult> {
+    this.assertNoActiveTransaction();
+    const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
+    return this.withSessionOperation(() =>
+      this.#runPlannedUnlocked(plan, 'database', parseQueryRawResponse),
+    );
+  }
+
+  async exec<Row = QueryObjectRow>(
+    sql: string,
+    options: Omit<QueryOptions, 'encoders'> = {},
+  ): Promise<ExecResult<Row>> {
+    this.assertNoActiveTransaction();
+    const input = structuredSimpleQuery(sql);
+    const stableOptions = snapshotReadOptions(options);
+    return this.withSessionOperation(() =>
+      this.#runStructuredUnlocked(input, 'database', (response) =>
+        parseExecResponse<Row>(response, stableOptions),
+      ),
+    );
+  }
+
+  async describe(
+    sql: string,
+    parameterTypeOids: ReadonlyArray<number> = [],
+  ): Promise<DescribeResult> {
+    this.assertNoActiveTransaction();
+    const input = describeQuery(sql, [...parameterTypeOids]);
+    return this.withSessionOperation(() =>
+      this.#runStructuredUnlocked(input, 'database', parseDescribeResponse),
+    );
   }
 
   async execProtocolRaw(input: BinaryInput): Promise<Uint8Array> {
     this.assertNoActiveTransaction();
-    return this.withSessionOperation(() => {
-      return this.#execProtocolRawUnlocked(input);
-    });
+    const bytes = toUint8Array(input).slice();
+    return this.withSessionOperation(() =>
+      this.#execProtocolRawUnlocked(bytes),
+    );
   }
 
-  async execProtocolStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void> {
+  async execProtocolRawStream(
+    input: BinaryInput,
+    onChunk: ProtocolChunkCallback,
+  ): Promise<void> {
     this.assertNoActiveTransaction();
-    await this.withSessionOperation(async () => {
-      await this.#execProtocolStreamUnlocked(input, onChunk);
-    });
-  }
-
-  async checkpoint(): Promise<void> {
-    this.assertNoActiveTransaction();
-    await this.withSessionOperation(async () => {
-      parseCommandResponse(await this.#executeSimpleUnlocked('CHECKPOINT'));
-    });
-  }
-
-  async cancel(): Promise<void> {
-    if (this.#closed) {
-      throw new Error('Oliphaunt database is closed');
+    if (typeof onChunk !== 'function') {
+      return Promise.reject(
+        new TypeError('protocol stream callback must be a function'),
+      );
     }
-    if (this.#closing && !this.#sessionOperationRunning) {
-      throw new Error('Oliphaunt database is closing');
+    const bytes = toUint8Array(input).slice();
+    return this.withSessionOperation(() =>
+      this.#execProtocolStreamUnlocked(bytes, onChunk),
+    );
+  }
+
+  cancel(): Promise<void> {
+    if (this.#closed) {
+      return Promise.reject(new Error('Oliphaunt database is closed'));
+    }
+    if (this.#runtimeCloseActive) {
+      return Promise.reject(new Error('Oliphaunt database is closing'));
     }
     // Cancellation must remain independent of the physical-session queue so
-    // it can interrupt the operation currently holding that queue.
-    await this.#runNativeVoidOperation(() => this.binding.cancel(this.handle));
+    // it can interrupt an admitted operation even after close() has stopped
+    // ordinary admission. Runtime teardown waits for every admitted cancel.
+    const operation = this.#runNativeVoidOperation(() =>
+      this.binding.cancel(this.handle),
+    );
+    this.#cancellationOperations.add(operation);
+    void operation.then(
+      () => this.#cancellationOperations.delete(operation),
+      () => this.#cancellationOperations.delete(operation),
+    );
+    return operation;
   }
 
-  async transaction<T>(body: (transaction: OliphauntTransaction) => Promise<T> | T): Promise<T> {
+  async transaction<T>(
+    body: (transaction: OliphauntTransaction) => Promise<T> | T,
+  ): Promise<T> {
     this.assertNoActiveTransaction();
-    return this.withSessionOperation(async () => {
-      this.#activeTransaction = true;
-      const transaction = new OliphauntTransactionHandle(
-        (input) => this.#execProtocolRawUnlocked(input),
-        (input, onChunk) => this.#execProtocolStreamUnlocked(input, onChunk),
+    if (typeof body !== 'function') {
+      return Promise.reject(
+        new TypeError('Oliphaunt transaction body must be a function'),
       );
-      try {
+    }
+    // Pin immediately at admission. Calls made after transaction() returns may
+    // not slip into the physical-session queue before BEGIN starts.
+    this.#activeTransaction = true;
+    let attempt: Promise<T>;
+    try {
+      attempt = this.withSessionOperation(async () => {
+        const transaction = new OliphauntTransactionHandle(
+          (plan, decode) =>
+            this.#runPlannedUnlocked(plan, 'transaction', decode),
+          (input, decode) =>
+            this.#runStructuredUnlocked(input, 'transaction', decode),
+          (input) => this.#execProtocolRawUnlocked(input),
+          (input, onChunk) => this.#execProtocolStreamUnlocked(input, onChunk),
+          () => this.#assertNoStreamCallbackReentry(),
+          () =>
+            this.#executeTransactionControlUnlocked('ROLLBACK').then(
+              () => undefined,
+            ),
+        );
         try {
-          requireTransactionTag(await this.#executeTransactionControlUnlocked('BEGIN'), 'BEGIN');
-        } catch (error) {
-          try {
-            requireTransactionTag(
-              await this.#executeTransactionControlUnlocked('ROLLBACK'),
-              'ROLLBACK',
-            );
-          } catch {
-            this.#transactionPoisoned = true;
-          }
-          throw error;
-        }
+          await this.#executeTransactionControlUnlocked('BEGIN');
 
-        let result: T;
-        try {
-          result = await body(transaction);
-          await transaction.deactivateAndDrain();
-        } catch (error) {
-          await transaction.deactivateAndDrain();
+          let result: T;
           try {
-            requireTransactionTag(
-              await this.#executeTransactionControlUnlocked('ROLLBACK'),
-              'ROLLBACK',
-            );
-          } catch {
-            this.#transactionPoisoned = true;
+            result = await body(transaction);
+            await transaction.sealAndDrain();
+          } catch (error) {
+            transaction.seal();
+            await transaction.drain().catch(() => undefined);
+            let rollbackFailure: unknown;
+            if (transaction.rollbackStarted) {
+              try {
+                await transaction.waitForRollback();
+              } catch (rollbackError) {
+                rollbackFailure = rollbackError;
+              }
+            } else if (this.#sessionFailure === undefined) {
+              try {
+                await this.#executeTransactionControlUnlocked('ROLLBACK');
+              } catch (rollbackError) {
+                rollbackFailure = rollbackError;
+              }
+            }
+            if (rollbackFailure !== undefined && rollbackFailure !== error) {
+              throw new AggregateError(
+                [error, rollbackFailure],
+                'transaction callback and rollback both failed',
+              );
+            }
+            throw error;
           }
-          throw error;
-        }
 
-        let commit: CommandResult;
-        try {
-          commit = await this.#executeTransactionControlUnlocked('COMMIT');
-        } catch (error) {
-          // PostgreSQL may already have committed. A follow-up ROLLBACK cannot
-          // undo that boundary and would misrepresent the outcome.
-          this.#transactionPoisoned = true;
-          throw error;
-        }
-        if (commit.commandTag !== 'COMMIT') {
-          if (commit.commandTag !== 'ROLLBACK') {
-            this.#transactionPoisoned = true;
+          if (transaction.rolledBack) {
+            return result;
           }
-          throw transactionTagError('COMMIT', commit.commandTag);
+          const outcome =
+            await this.#executeTransactionControlUnlocked('COMMIT');
+          if (outcome === 'rolledBack') {
+            throw (
+              transaction.firstFailure ??
+              transactionTagError('COMMIT', 'ROLLBACK')
+            );
+          }
+          return result;
+        } finally {
+          transaction.deactivate();
         }
-        return result;
-      } finally {
-        transaction.deactivate();
-        this.#activeTransaction = false;
-      }
+      });
+    } catch (error) {
+      this.#activeTransaction = false;
+      throw error;
+    }
+    return attempt.finally(() => {
+      this.#activeTransaction = false;
     });
   }
 
   close(): Promise<void> {
-    if (this.#closed) {
-      return Promise.resolve();
+    if (this.#streamCallbackActive) {
+      return Promise.reject(streamCallbackReentryError());
     }
     if (this.#closeAttempt !== undefined) {
       return this.#closeAttempt;
     }
+    if (this.#closed) {
+      return Promise.resolve();
+    }
     if (this.#activeTransaction) {
-      return Promise.reject(new Error('cannot close Oliphaunt while a transaction is active'));
+      return Promise.reject(
+        new Error('cannot close Oliphaunt while a transaction is active'),
+      );
     }
 
     this.#closing = true;
+    let terminal = false;
     const attempt = this.#operationTail
-      .then(() => this.binding.detach(this.handle))
-      .then(() => {
-        this.#closing = false;
-        this.#closed = true;
-        this.#releaseOwnership?.();
-      })
-      .catch((error: unknown) => {
-        this.#closing = false;
-        throw error;
+      .then(async () => {
+        // Cancellation remains out-of-band while admitted session work drains.
+        // Close the cancellation admission gate only in the same job that
+        // starts runtime teardown, after every already-admitted cancel settles.
+        while (this.#cancellationOperations.size > 0) {
+          await Promise.allSettled([...this.#cancellationOperations]);
+        }
+        this.#runtimeCloseActive = true;
+        let outcome;
+        try {
+          outcome = await this.binding.close(this.handle);
+        } catch (error) {
+          // A runtime adapter violated the private no-rejection contract. Its
+          // teardown state is unknowable, so retiring the public owner is the
+          // only safe result.
+          outcome = { state: 'terminal' as const, error };
+        }
+        if (outcome.state === 'retryable') {
+          throw outcome.error;
+        }
+
+        terminal = true;
+        const cleanupFailure = this.#retire();
+        if (outcome.state === 'terminal') {
+          throw outcome.error;
+        }
+        if (cleanupFailure !== undefined) {
+          throw cleanupFailure;
+        }
       })
       .finally(() => {
-        if (this.#closeAttempt === attempt) {
+        this.#closing = false;
+        if (!terminal && this.#closeAttempt === attempt) {
+          this.#runtimeCloseActive = false;
           this.#closeAttempt = undefined;
         }
       });
@@ -208,22 +398,170 @@ class OliphauntDatabaseBase {
     await this.close();
   }
 
-  async #executeSimpleUnlocked(sql: string): Promise<Uint8Array> {
-    if (this.binding.execSimpleQuery !== undefined) {
-      return this.runNativeOperation(() => this.binding.execSimpleQuery?.(this.handle, sql));
-    }
-    return this.#execProtocolRawUnlocked(simpleQuery(sql));
-  }
-
   async #executeTransactionControlUnlocked(
     sql: 'BEGIN' | 'COMMIT' | 'ROLLBACK',
-  ): Promise<CommandResult> {
-    return parseCommandResponse(await this.#execProtocolRawUnlocked(extendedQuery(sql, [])));
+  ): Promise<'committed' | 'rolledBack' | undefined> {
+    this.#assertHealthy();
+    let response: Uint8Array;
+    try {
+      response = await this.#execProtocolRawUnlocked(extendedQuery(sql, []));
+    } catch (error) {
+      this.#poison(error, `${sql} transport outcome is unknown`);
+      throw error;
+    }
+
+    let status: TransactionStatus;
+    try {
+      status = inspectReadyForQuery(response);
+    } catch (error) {
+      this.#poison(
+        error,
+        `${sql} did not reach a valid ReadyForQuery boundary`,
+      );
+      throw error;
+    }
+
+    let result: CommandResult;
+    try {
+      result = parseCommandResponse(response);
+    } catch (error) {
+      if (sql === 'BEGIN' && status !== 'idle') {
+        await this.#recoverDatabaseBoundaryUnlocked().catch(() => undefined);
+      } else if (sql === 'ROLLBACK') {
+        this.#poison(
+          error,
+          'ROLLBACK did not return its exact command boundary',
+        );
+      } else if (sql === 'COMMIT') {
+        this.#poison(error, 'COMMIT did not return its exact command boundary');
+      }
+      throw error;
+    }
+
+    if (sql === 'BEGIN') {
+      if (result.commandTag === 'BEGIN' && status === 'transaction')
+        return undefined;
+      const error = transactionBoundaryError(sql, result.commandTag, status);
+      if (status !== 'idle') {
+        await this.#recoverDatabaseBoundaryUnlocked();
+      }
+      throw error;
+    }
+
+    if (
+      sql === 'COMMIT' &&
+      result.commandTag === 'ROLLBACK' &&
+      status === 'idle'
+    ) {
+      return 'rolledBack';
+    }
+    if (result.commandTag === sql && status === 'idle') {
+      return sql === 'COMMIT' ? 'committed' : undefined;
+    }
+
+    const error = transactionBoundaryError(sql, result.commandTag, status);
+    this.#poison(error, `${sql} returned an unrecognized transaction boundary`);
+    throw error;
+  }
+
+  async #runPlannedUnlocked<Result extends NoticeCarrier>(
+    plan: QueryPlan,
+    scope: StructuredScope,
+    decode: (response: Uint8Array) => Result,
+  ): Promise<Result> {
+    if (plan.kind === 'complete') {
+      return this.#runStructuredUnlocked(plan.input, scope, decode);
+    }
+    const description = await this.#runStructuredUnlocked(
+      plan.input,
+      scope,
+      parseDescribeResponse,
+    );
+    // plan.bind() may invoke a caller codec. It runs only after a proven Ready
+    // boundary and therefore cannot poison the wire session if it throws.
+    let input: Uint8Array;
+    try {
+      input = plan.bind(description.parameterTypeOids);
+    } catch (error) {
+      throw errorWithNotices(error, description.notices);
+    }
+    try {
+      return prependNotices(
+        await this.#runStructuredUnlocked(input, scope, decode),
+        description.notices,
+      );
+    } catch (error) {
+      throw errorWithNotices(error, description.notices);
+    }
+  }
+
+  async #runStructuredUnlocked<Result>(
+    input: Uint8Array,
+    scope: StructuredScope,
+    decode: (response: Uint8Array) => Result,
+  ): Promise<Result> {
+    let response: Uint8Array;
+    try {
+      response = await this.#execProtocolRawUnlocked(input);
+    } catch (error) {
+      this.#poison(error, 'structured PostgreSQL transport outcome is unknown');
+      throw error;
+    }
+
+    let status: TransactionStatus;
+    try {
+      status = inspectReadyForQuery(response);
+    } catch (error) {
+      this.#poison(
+        error,
+        'structured PostgreSQL response has no valid readiness boundary',
+      );
+      throw error;
+    }
+
+    if (scope === 'database' && status !== 'idle') {
+      await this.#recoverDatabaseBoundaryUnlocked();
+      // Preserve a PostgreSQL/parser error after proven recovery, but never
+      // report a successful structured call whose transaction was discarded.
+      const result = decode(response);
+      const error = new Error(
+        `structured database operation ended with PostgreSQL transaction status ${status}; Oliphaunt rolled it back`,
+      );
+      throw isNoticeCarrier(result)
+        ? errorWithNotices(error, result.notices)
+        : error;
+    } else if (scope === 'transaction' && status === 'idle') {
+      const error = new Error(
+        'PostgreSQL transaction ownership ended inside a structured transaction operation',
+      );
+      this.#poison(error, 'callback transaction ownership escaped');
+      throw error;
+    }
+    return decode(response);
+  }
+
+  async #recoverDatabaseBoundaryUnlocked(): Promise<void> {
+    try {
+      await this.#executeTransactionControlUnlocked('ROLLBACK');
+    } catch (error) {
+      this.#poison(
+        error,
+        'PostgreSQL automatic rollback did not prove recovery',
+      );
+      throw new Error(
+        'PostgreSQL session could not be recovered to idle; close the database',
+        {
+          cause: error,
+        },
+      );
+    }
   }
 
   async #execProtocolRawUnlocked(input: BinaryInput): Promise<Uint8Array> {
     const requestBytes = toUint8Array(input);
-    return this.runNativeOperation(() => this.binding.execProtocolRaw(this.handle, requestBytes));
+    return this.runNativeOperation(() =>
+      this.binding.execProtocolRaw(this.handle, requestBytes),
+    );
   }
 
   async #execProtocolStreamUnlocked(
@@ -234,39 +572,82 @@ class OliphauntDatabaseBase {
       throw new TypeError('protocol stream callback must be a function');
     }
     const requestBytes = toUint8Array(input);
-    await this.binding.execProtocolStream(this.handle, requestBytes, onChunk);
+    const consumer = synchronousProtocolChunkConsumer((chunk) => {
+      this.#streamCallbackActive = true;
+      try {
+        return (onChunk as (chunk: Uint8Array) => unknown)(chunk);
+      } finally {
+        this.#streamCallbackActive = false;
+      }
+    });
+    try {
+      await this.binding.execProtocolStream(this.handle, requestBytes, consumer.callback);
+    } catch (error) {
+      throw consumer.failure?.error ?? error;
+    }
+    if (consumer.failure !== undefined) {
+      throw consumer.failure.error;
+    }
   }
 
   #assertOpen(): void {
+    this.#assertNoStreamCallbackReentry();
     if (this.#closed) {
       throw new Error('Oliphaunt database is closed');
     }
     if (this.#closing) {
       throw new Error('Oliphaunt database is closing');
     }
-    if (this.#transactionPoisoned) {
-      throw new Error('Oliphaunt transaction state is unknown; close the database');
+    this.#assertHealthy();
+  }
+
+  #assertHealthy(): void {
+    if (this.#sessionFailure !== undefined) {
+      throw new Error(
+        'Oliphaunt session state is unknown; close the database',
+        {
+          cause: this.#sessionFailure,
+        },
+      );
     }
   }
 
   protected assertNoActiveTransaction(): void {
+    this.#assertNoStreamCallbackReentry();
     if (this.#activeTransaction) {
       throw new Error(transactionPinnedMessage);
     }
   }
 
+  #assertNoStreamCallbackReentry(): void {
+    if (this.#streamCallbackActive) {
+      throw streamCallbackReentryError();
+    }
+  }
+
+  #retire(): unknown | undefined {
+    this.#closed = true;
+    const failures: unknown[] = [];
+    try {
+      this.binding.unregisterForgottenHandleCleanup?.(this);
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      this.#releaseOwnership?.();
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length === 0) return undefined;
+    if (failures.length === 1) return failures[0];
+    return new AggregateError(failures, 'Oliphaunt owner retirement failed');
+  }
+
   protected withSessionOperation<T>(body: () => T | Promise<T>): Promise<T> {
     this.#assertOpen();
     const operation = this.#operationTail.then(async () => {
-      if (this.#transactionPoisoned) {
-        throw new Error('Oliphaunt transaction state is unknown; close the database');
-      }
-      this.#sessionOperationRunning = true;
-      try {
-        return await body();
-      } finally {
-        this.#sessionOperationRunning = false;
-      }
+      this.#assertHealthy();
+      return await body();
     });
     this.#operationTail = operation.then(
       () => undefined,
@@ -285,12 +666,21 @@ class OliphauntDatabaseBase {
     return result;
   }
 
-  async #runNativeVoidOperation(body: () => void | Promise<void>): Promise<void> {
+  async #runNativeVoidOperation(
+    body: () => void | Promise<void>,
+  ): Promise<void> {
     await body();
+  }
+
+  #poison(error: unknown, message: string): void {
+    this.#sessionFailure ??= new Error(message, { cause: error });
   }
 }
 
-class OliphauntDatabaseImpl extends OliphauntDatabaseBase implements OliphauntDatabase {
+class OliphauntDatabaseImpl
+  extends OliphauntDatabaseBase
+  implements OliphauntDatabase
+{
   async backup(): Promise<Uint8Array> {
     this.assertNoActiveTransaction();
     return this.withSessionOperation(async () => {
@@ -303,7 +693,10 @@ class OliphauntDatabaseImpl extends OliphauntDatabaseBase implements OliphauntDa
   }
 }
 
-class OliphauntServerImpl extends OliphauntDatabaseBase implements OliphauntServer {
+class OliphauntServerImpl
+  extends OliphauntDatabaseBase
+  implements OliphauntServer
+{
   constructor(
     binding: RuntimeBinding,
     handle: RuntimeHandle,
@@ -314,76 +707,321 @@ class OliphauntServerImpl extends OliphauntDatabaseBase implements OliphauntServ
 }
 
 class OliphauntTransactionHandle implements OliphauntTransaction {
+  readonly #runPlan: <Result extends NoticeCarrier>(
+    plan: QueryPlan,
+    decode: (response: Uint8Array) => Result,
+  ) => Promise<Result>;
+  readonly #runStructured: <Result>(
+    input: Uint8Array,
+    decode: (response: Uint8Array) => Result,
+  ) => Promise<Result>;
   readonly #execRaw: (input: BinaryInput) => Promise<Uint8Array>;
-  readonly #execStream: (input: BinaryInput, onChunk: ProtocolChunkCallback) => Promise<void>;
-  #active = true;
+  readonly #execStream: (
+    input: BinaryInput,
+    onChunk: ProtocolChunkCallback,
+  ) => Promise<void>;
+  readonly #rollbackControl: () => Promise<void>;
+  readonly #assertAdmission: () => void;
+  #state: 'active' | 'finishing' | 'closed' = 'active';
   #tail = Promise.resolve();
+  #rollbackAttempt?: Promise<void>;
+  #rolledBack = false;
+  #firstFailure: unknown;
 
   constructor(
+    runPlan: <Result extends NoticeCarrier>(
+      plan: QueryPlan,
+      decode: (response: Uint8Array) => Result,
+    ) => Promise<Result>,
+    runStructured: <Result>(
+      input: Uint8Array,
+      decode: (response: Uint8Array) => Result,
+    ) => Promise<Result>,
     execRaw: (input: BinaryInput) => Promise<Uint8Array>,
-    execStream: (input: BinaryInput, onChunk: ProtocolChunkCallback) => Promise<void>,
+    execStream: (
+      input: BinaryInput,
+      onChunk: ProtocolChunkCallback,
+    ) => Promise<void>,
+    assertAdmission: () => void,
+    rollbackControl: () => Promise<void>,
   ) {
+    this.#runPlan = runPlan;
+    this.#runStructured = runStructured;
     this.#execRaw = execRaw;
     this.#execStream = execStream;
+    this.#assertAdmission = assertAdmission;
+    this.#rollbackControl = rollbackControl;
   }
 
-  async execute(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<CommandResult> {
-    const response = await this.execProtocolRaw(extendedQuery(sql, parameters));
-    return parseCommandResponse(response);
+  get closed(): boolean {
+    return this.#state === 'closed';
   }
 
-  async query(sql: string, parameters: ReadonlyArray<QueryParam> = []): Promise<QueryResult> {
-    return parseQueryResponse(await this.execProtocolRaw(extendedQuery(sql, parameters)));
+  get rollbackStarted(): boolean {
+    return this.#rollbackAttempt !== undefined;
   }
 
-  async execProtocolRaw(input: BinaryInput): Promise<Uint8Array> {
-    this.#assertActive();
-    return this.#enqueue(() => this.#execRaw(input));
+  get rolledBack(): boolean {
+    return this.#rolledBack;
   }
 
-  async execProtocolStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void> {
-    this.#assertActive();
-    await this.#enqueue(() => this.#execStream(input, onChunk));
+  get firstFailure(): unknown {
+    return this.#firstFailure;
+  }
+
+  execute(
+    sql: string,
+    parameters: ReadonlyArray<QueryParam> = [],
+    options: ParameterOptions = {},
+  ): Promise<CommandResult> {
+    return promiseFromSynchronousCall(() => {
+      const plan = planQuery(
+        sql,
+        parameters,
+        snapshotParameterOptions(options),
+      );
+      return this.#enqueue(() => this.#runPlan(plan, parseCommandResponse));
+    });
+  }
+
+  query<Row = QueryObjectRow>(
+    sql: string,
+    parameters: ReadonlyArray<QueryParam> = [],
+    options: QueryOptions = {},
+  ): Promise<QueryResult<Row>> {
+    return promiseFromSynchronousCall(() => {
+      const stableOptions = snapshotQueryOptions(options);
+      const plan = planQuery(sql, parameters, stableOptions);
+      return this.#enqueue(async () =>
+        decodeQueryResult<Row>(
+          await this.#runPlan(plan, parseQueryRawResponse),
+          stableOptions,
+        ),
+      );
+    });
+  }
+
+  queryRaw(
+    sql: string,
+    parameters: ReadonlyArray<QueryParam> = [],
+    options: ParameterOptions = {},
+  ): Promise<RawQueryResult> {
+    return promiseFromSynchronousCall(() => {
+      const plan = planQuery(
+        sql,
+        parameters,
+        snapshotParameterOptions(options),
+      );
+      return this.#enqueue(() => this.#runPlan(plan, parseQueryRawResponse));
+    });
+  }
+
+  exec<Row = QueryObjectRow>(
+    sql: string,
+    options: Omit<QueryOptions, 'encoders'> = {},
+  ): Promise<ExecResult<Row>> {
+    return promiseFromSynchronousCall(() => {
+      const input = structuredSimpleQuery(sql);
+      const stableOptions = snapshotReadOptions(options);
+      return this.#enqueue(() =>
+        this.#runStructured(input, (response) =>
+          parseExecResponse<Row>(response, stableOptions),
+        ),
+      );
+    });
+  }
+
+  describe(
+    sql: string,
+    parameterTypeOids: ReadonlyArray<number> = [],
+  ): Promise<DescribeResult> {
+    return promiseFromSynchronousCall(() => {
+      const input = describeQuery(sql, [...parameterTypeOids]);
+      return this.#enqueue(() =>
+        this.#runStructured(input, parseDescribeResponse),
+      );
+    });
+  }
+
+  execProtocolRaw(input: BinaryInput): Promise<Uint8Array> {
+    return promiseFromSynchronousCall(() => {
+      const bytes = toUint8Array(input).slice();
+      return this.#enqueue(() => this.#execRaw(bytes));
+    });
+  }
+
+  execProtocolRawStream(
+    input: BinaryInput,
+    onChunk: ProtocolChunkCallback,
+  ): Promise<void> {
+    return promiseFromSynchronousCall(() => {
+      if (typeof onChunk !== 'function') {
+        return Promise.reject(
+          new TypeError('protocol stream callback must be a function'),
+        );
+      }
+      const bytes = toUint8Array(input).slice();
+      return this.#enqueue(() => this.#execStream(bytes, onChunk));
+    });
+  }
+
+  rollback(): Promise<void> {
+    return promiseFromSynchronousCall(() => {
+      this.#assertActive();
+      this.#state = 'finishing';
+      const operation = this.#enqueueFinishing(this.#rollbackControl);
+      const attempt = operation.then(
+        () => {
+          this.#rolledBack = true;
+          this.#state = 'closed';
+        },
+        (error: unknown) => {
+          this.#state = 'closed';
+          throw error;
+        },
+      );
+      this.#rollbackAttempt = attempt;
+      return attempt;
+    });
   }
 
   deactivate(): void {
-    this.#active = false;
+    this.#state = 'closed';
   }
 
-  async deactivateAndDrain(): Promise<void> {
-    this.#active = false;
+  seal(): void {
+    if (this.#state === 'active') this.#state = 'finishing';
+  }
+
+  async drain(): Promise<void> {
     await this.#tail;
   }
 
+  async sealAndDrain(): Promise<void> {
+    this.seal();
+    await this.#tail;
+    await this.#rollbackAttempt;
+  }
+
+  async waitForRollback(): Promise<void> {
+    await this.#rollbackAttempt;
+  }
+
   #assertActive(): void {
-    if (!this.#active) {
+    this.#assertAdmission();
+    if (this.#state === 'finishing')
+      throw new Error('transaction is finishing');
+    if (this.#state === 'closed')
       throw new Error('transaction is no longer active');
-    }
   }
 
   #enqueue<T>(body: () => Promise<T>): Promise<T> {
+    try {
+      this.#assertActive();
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return this.#enqueueFinishing(body);
+  }
+
+  #enqueueFinishing<T>(body: () => Promise<T>): Promise<T> {
     const operation = this.#tail.then(body);
     this.#tail = operation.then(
       () => undefined,
-      () => undefined,
+      (error: unknown) => {
+        this.#firstFailure ??= error;
+      },
     );
     return operation;
   }
 }
 
-const transactionPinnedMessage = 'physical session is pinned; use the active OliphauntTransaction';
+const transactionPinnedMessage =
+  'physical session is pinned; use the active OliphauntTransaction';
 
-function requireTransactionTag(result: CommandResult, expected: string): void {
-  if (result.commandTag !== expected) {
-    throw transactionTagError(expected, result.commandTag);
+type StructuredScope = 'database' | 'transaction';
+type NoticeCarrier = { notices: PostgresNotice[] };
+
+function promiseFromSynchronousCall<T>(body: () => Promise<T>): Promise<T> {
+  try {
+    return body();
+  } catch (error) {
+    return Promise.reject(error);
   }
 }
 
-function transactionTagError(expected: string, actual: string | undefined): Error {
+function snapshotParameterOptions(options: ParameterOptions): ParameterOptions {
+  return Object.freeze({
+    ...(options.encoders === undefined
+      ? {}
+      : { encoders: Object.freeze({ ...options.encoders }) }),
+  });
+}
+
+function snapshotReadOptions(
+  options: Omit<QueryOptions, 'encoders'>,
+): Omit<QueryOptions, 'encoders'> {
+  return Object.freeze({
+    rowMode: options.rowMode,
+    valueMode: options.valueMode,
+    ...(options.decoders === undefined
+      ? {}
+      : { decoders: Object.freeze({ ...options.decoders }) }),
+  });
+}
+
+function snapshotQueryOptions(options: QueryOptions): QueryOptions {
+  return Object.freeze({
+    ...snapshotReadOptions(options),
+    ...snapshotParameterOptions(options),
+  });
+}
+
+function prependNotices<Result extends NoticeCarrier>(
+  result: Result,
+  notices: ReadonlyArray<PostgresNotice>,
+): Result {
+  if (notices.length > 0) result.notices.unshift(...notices);
+  return result;
+}
+
+function isNoticeCarrier(value: unknown): value is NoticeCarrier {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    Array.isArray((value as { notices?: unknown }).notices)
+  );
+}
+
+function transactionTagError(
+  expected: string,
+  actual: string | undefined,
+): Error {
   return new Error(
     `PostgreSQL transaction command expected ${expected}, got ${actual ?? 'no command tag'}`,
   );
 }
+
+function transactionBoundaryError(
+  expected: 'BEGIN' | 'COMMIT' | 'ROLLBACK',
+  actual: string | undefined,
+  status: TransactionStatus,
+): Error {
+  return new Error(
+    `PostgreSQL transaction command expected ${expected} with its matching readiness status, got ${actual ?? 'no command tag'} with ${status}`,
+  );
+}
+
+function collapseFailures(
+  failures: readonly unknown[],
+  message: string,
+): unknown | undefined {
+  if (failures.length === 0) return undefined;
+  if (failures.length === 1) return failures[0];
+  return new AggregateError(failures, message);
+}
+
+function noop(): void {}
 
 export function createOliphauntClient(
   bindingFactory: NativeBindingFactory = createDefaultNativeBinding,
@@ -398,7 +1036,9 @@ export function createOliphauntClient(
     openQueue: Promise.resolve() as Promise<void>,
   };
 
-  function bindingFor(options: NativeBindingOptions = {}): Promise<NativeBinding> {
+  function bindingFor(
+    options: NativeBindingOptions = {},
+  ): Promise<NativeBinding> {
     const key = options.libraryPath ?? '';
     const cached = bindings.get(key);
     if (cached !== undefined) {
@@ -414,7 +1054,9 @@ export function createOliphauntClient(
     return created;
   }
 
-  function brokerBindingFor(config: { brokerExecutable?: string }): RuntimeBinding {
+  function brokerBindingFor(config: {
+    brokerExecutable?: string;
+  }): RuntimeBinding {
     if (runtimeOverrides.broker !== undefined) {
       return runtimeOverrides.broker;
     }
@@ -440,14 +1082,18 @@ export function createOliphauntClient(
   }
 
   async function openDatabase(
-    effectiveConfig: OpenConfig | (ServerOpenConfig & { execution: 'server' }),
+    effectiveConfig: OpenConfig | (ServerOpenConfig & { topology: 'server' }),
   ): Promise<OliphauntDatabaseImpl | OliphauntServerImpl> {
-    const direct = effectiveConfig.execution === 'direct';
+    const direct = effectiveConfig.topology === 'direct';
     if (direct && directResident.activeOwner !== undefined) {
-      throw new Error('native direct already has an active process-wide instance');
+      throw new Error(
+        'native direct already has an active process-wide instance',
+      );
     }
 
-    const reusableTemporaryDirectory = direct ? directResident.temporaryDirectory : undefined;
+    const reusableTemporaryDirectory = direct
+      ? directResident.temporaryDirectory
+      : undefined;
     const resolvedStorage = await materializeStorage(
       effectiveConfig.storage,
       reusableTemporaryDirectory,
@@ -456,9 +1102,11 @@ export function createOliphauntClient(
     try {
       const normalized = normalizeOpenConfig(effectiveConfig, resolvedStorage);
       let binding: RuntimeBinding;
-      if (normalized.execution === 'direct') {
-        binding = directRuntimeBinding(await bindingFor({ libraryPath: normalized.libraryPath }));
-      } else if (normalized.execution === 'broker') {
+      if (normalized.topology === 'direct') {
+        binding = directRuntimeBinding(
+          await bindingFor({ libraryPath: normalized.libraryPath }),
+        );
+      } else if (normalized.topology === 'broker') {
         binding = brokerBindingFor({
           brokerExecutable: normalized.brokerExecutable,
         });
@@ -468,16 +1116,20 @@ export function createOliphauntClient(
 
       runtimeOpenAttempted = true;
       const handle = await binding.open(normalized);
-      if (normalized.execution === 'server') {
+      if (normalized.topology === 'server') {
         const connectionString = binding.connectionString?.(handle);
         if (connectionString === undefined) {
-          await Promise.resolve(binding.detach(handle)).catch(() => {});
+          await binding.close(handle).catch(() => undefined);
           throw new Error('native server did not expose its connection string');
         }
-        return new OliphauntServerImpl(binding, handle, connectionString);
+        return await OliphauntDatabaseBase.publish(
+          new OliphauntServerImpl(binding, handle, connectionString),
+        );
       }
       if (!direct) {
-        return new OliphauntDatabaseImpl(binding, handle);
+        return await OliphauntDatabaseBase.publish(
+          new OliphauntDatabaseImpl(binding, handle),
+        );
       }
 
       if (resolvedStorage.temporaryDirectory) {
@@ -485,18 +1137,21 @@ export function createOliphauntClient(
       }
       const owner = Symbol('native-direct-owner');
       directResident.activeOwner = owner;
-      return new OliphauntDatabaseImpl(binding, handle, () => {
-        if (directResident.activeOwner === owner) {
-          directResident.activeOwner = undefined;
-        }
-      });
+      return await OliphauntDatabaseBase.publish(
+        new OliphauntDatabaseImpl(binding, handle, () => {
+          if (directResident.activeOwner === owner) {
+            directResident.activeOwner = undefined;
+          }
+        }),
+      );
     } catch (error) {
       if (resolvedStorage.createdTemporaryDirectory) {
         if (direct && runtimeOpenAttempted) {
           // A native adapter can surface an error after liboliphaunt has claimed
           // its process-resident PGDATA. Retain the candidate for a coherent
           // retry, but do not publish it before the native open is entered.
-          directResident.temporaryDirectory ??= resolvedStorage.instanceDirectory;
+          directResident.temporaryDirectory ??=
+            resolvedStorage.instanceDirectory;
         } else if (!runtimeOpenAttempted) {
           await removeDirectory(resolvedStorage.instanceDirectory);
         }
@@ -508,8 +1163,10 @@ export function createOliphauntClient(
   return {
     async open(config: OpenConfig = {}): Promise<OliphauntDatabase> {
       const effectiveConfig: OpenConfig =
-        config.execution === undefined ? { ...config, execution: 'direct' } : config;
-      const database = await (effectiveConfig.execution === 'direct'
+        config.topology === undefined
+          ? { ...config, topology: 'direct' }
+          : config;
+      const database = await (effectiveConfig.topology === 'direct'
         ? serializeDirectOpen(() => openDatabase(effectiveConfig))
         : openDatabase(effectiveConfig));
       if (database instanceof OliphauntServerImpl) {
@@ -519,7 +1176,7 @@ export function createOliphauntClient(
     },
 
     async openServer(config: ServerOpenConfig = {}): Promise<OliphauntServer> {
-      const database = await openDatabase({ ...config, execution: 'server' });
+      const database = await openDatabase({ ...config, topology: 'server' });
       if (!(database instanceof OliphauntServerImpl)) {
         throw new Error('native server opener returned a non-server database');
       }
@@ -578,4 +1235,46 @@ async function materializeStorage(
 
 async function removeDirectory(path: string): Promise<void> {
   await rm(path, { recursive: true, force: true }).catch(() => {});
+}
+
+function synchronousProtocolChunkConsumer(
+  callback: (chunk: Uint8Array) => unknown,
+): {
+  callback: ProtocolChunkCallback;
+  failure?: { error: unknown };
+} {
+  const consumer: {
+    callback: ProtocolChunkCallback;
+    failure?: { error: unknown };
+  } = {
+    callback(chunk) {
+      try {
+        const result = (callback as (chunk: Uint8Array) => unknown)(chunk);
+        if (!isThenable(result)) return;
+        // A synchronous chunk boundary cannot await caller work. Observe any
+        // eventual rejection before reporting the contract violation.
+        void Promise.resolve(result).catch(() => undefined);
+        throw new TypeError(
+          'raw protocol stream callback must complete synchronously and must not return a Promise or thenable',
+        );
+      } catch (error) {
+        consumer.failure ??= { error };
+        throw error;
+      }
+    },
+  };
+  return consumer;
+}
+
+function streamCallbackReentryError(): Error {
+  return new Error(
+    'raw protocol stream callback must not re-enter the same Oliphaunt handle; cancel remains available',
+  );
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    ((typeof value === 'object' && value !== null) || typeof value === 'function') &&
+    typeof (value as { then?: unknown }).then === 'function'
+  );
 }

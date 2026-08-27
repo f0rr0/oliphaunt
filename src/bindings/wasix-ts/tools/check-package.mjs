@@ -85,10 +85,9 @@ try {
   const exports = packageJson.exports ?? {};
   const expectedExports = [
     '.',
+    './blocking',
     './package.json',
     './internal/tools',
-    './protocol',
-    './query',
     './server/bun',
     './server/deno',
     './server/node',
@@ -103,16 +102,6 @@ try {
   }
   if (exports['./storage/indexed-db'] === undefined) {
     throw new Error('WASIX TypeScript package omitted the selective IndexedDB entrypoint');
-  }
-  for (const name of ['protocol', 'query']) {
-    const entry = exports[`./${name}`];
-    if (
-      JSON.stringify(Object.keys(entry ?? {})) !== JSON.stringify(['types', 'default']) ||
-      entry?.types !== `./lib/${name}.d.ts` ||
-      entry?.default !== `./lib/${name}.js`
-    ) {
-      throw new Error(`WASIX TypeScript package ${name} subpath is not exact`);
-    }
   }
   const internalTools = exports['./internal/tools'];
   if (
@@ -183,6 +172,21 @@ try {
   ) {
     throw new Error(
       'WASIX TypeScript package omitted its exact browser/Node/Bun/Deno conditional facade',
+    );
+  }
+  const blockingExport = exports['./blocking'];
+  if (
+    JSON.stringify(Object.keys(blockingExport ?? {})) !==
+      JSON.stringify(['types', 'deno', 'bun', 'node', 'browser', 'default']) ||
+    blockingExport?.types !== './lib/blocking.d.ts' ||
+    blockingExport?.deno !== './lib/blocking.deno.js' ||
+    blockingExport?.bun !== './lib/blocking.bun.js' ||
+    blockingExport?.browser !== './lib/blocking.js' ||
+    blockingExport?.node !== './lib/blocking.node.js' ||
+    blockingExport?.default !== './lib/blocking.js'
+  ) {
+    throw new Error(
+      'WASIX TypeScript package omitted its exact browser/Node/Bun/Deno blocking facade',
     );
   }
 

@@ -18,19 +18,34 @@ export type NativeRestoreOptions = {
 };
 
 export type NativeHandle = unknown;
-export type MaybePromise<T> = T | Promise<T>;
 
 export type NativeBinding = {
-  open(config: NativeOpenConfig): MaybePromise<NativeHandle>;
-  execProtocolRaw(handle: NativeHandle, request: Uint8Array): MaybePromise<Uint8Array>;
+  open(config: NativeOpenConfig): Promise<NativeHandle>;
+  execProtocolRaw(handle: NativeHandle, request: Uint8Array): Promise<Uint8Array>;
   execProtocolStream(
     handle: NativeHandle,
     request: Uint8Array,
     onChunk: (chunk: Uint8Array) => void,
-  ): MaybePromise<void>;
-  execSimpleQuery?(handle: NativeHandle, sql: string): MaybePromise<Uint8Array>;
-  backup(handle: NativeHandle): MaybePromise<Uint8Array>;
-  restore(options: NativeRestoreOptions): MaybePromise<void>;
-  cancel(handle: NativeHandle): MaybePromise<void>;
-  detach(handle: NativeHandle): MaybePromise<void>;
+  ): Promise<void>;
+  execSimpleQuery?(handle: NativeHandle, sql: string): Promise<Uint8Array>;
+  backup(handle: NativeHandle): Promise<Uint8Array>;
+  restore(options: NativeRestoreOptions): Promise<void>;
+  cancel(handle: NativeHandle): Promise<void>;
+  /**
+   * Deactivate the logical handle. A rejection guarantees that deactivation
+   * did not occur and the same handle remains valid for a later retry. A
+   * handle that is already terminally unavailable is a successful detach.
+   */
+  detach(handle: NativeHandle): Promise<void>;
+  /**
+   * Register a public owner for best-effort cleanup when that owner becomes
+   * unreachable. Native adapters omit this unless they can make stale cleanup
+   * ownership-safe and keep native teardown off the JavaScript thread.
+   */
+  registerForgottenHandleCleanup?(
+    owner: object,
+    handle: NativeHandle,
+    releaseOwnership: () => void,
+  ): void;
+  unregisterForgottenHandleCleanup?(owner: object): void;
 };
