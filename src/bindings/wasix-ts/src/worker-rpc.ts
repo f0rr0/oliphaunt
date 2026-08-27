@@ -7,10 +7,17 @@ import {
   type WasixPersistenceMode,
   type WasixProtocolConnectionMode,
 } from './database.js';
-import type { SerializedOpenOptions, WorkerRequest, WorkerResponse } from './rpc.js';
+import { serializeOpenConfig } from './client-common.js';
+import { toUint8Array } from './query.js';
+import type {
+  SerializedAssetSource,
+  SerializedOpenOptions,
+  WorkerRequest,
+  WorkerResponse,
+} from './rpc.js';
 import { deserializeWorkerError } from './rpc.js';
 import type { WasixStorageSyncBoundary } from './storage-provider.js';
-import type { OliphauntDatabase } from './types.js';
+import type { BinaryInput, OliphauntDatabase, OpenConfig } from './types.js';
 import type { WasixProtocolConnection } from './pgwire-connection.js';
 import type { WasixPgDumpProcessOptions, WasixToolProcessResult } from './tool-runtime.js';
 
@@ -31,6 +38,44 @@ export type WasixWorkerPort = {
   onMessage(listener: (message: WorkerResponse) => void): void;
   onFatal(listener: (error: Error) => void): void;
 };
+
+/** @internal Open through a package-owned Worker without burdening the direct root graph. */
+export async function openWasixWithWorker(
+  createWorker: (options: SerializedOpenOptions) => WasixWorkerPort,
+  openOptions: SerializedOpenOptions,
+  validate?: (options: SerializedOpenOptions) => void,
+): Promise<OliphauntDatabase> {
+  validate?.(openOptions);
+  return openWorkerDatabase(createWorker(openOptions), openOptions, assetTransfers(openOptions));
+}
+
+/** @internal Restore through a temporary package-owned Worker. */
+export async function restoreWasixWithWorker(
+  createWorker: (options: SerializedOpenOptions) => WasixWorkerPort,
+  storage: OpenConfig['storage'],
+  bytes: BinaryInput,
+  validate?: (options: SerializedOpenOptions) => void,
+): Promise<void> {
+  if (storage === undefined) throw new TypeError('WASIX restore requires persistent storage');
+  const openOptions = serializeOpenConfig({ storage });
+  validate?.(openOptions);
+  const input = toUint8Array(bytes).slice();
+  const rpc = new WorkerRpc(createWorker(openOptions));
+  let primaryFailure: unknown;
+  try {
+    await rpc.request({ method: 'restore', storage: openOptions.storage, bytes: input }, [
+      input.buffer,
+    ]);
+  } catch (error) {
+    primaryFailure = error;
+  }
+  try {
+    await rpc.terminate();
+  } catch (terminationFailure) {
+    if (primaryFailure === undefined) throw terminationFailure;
+  }
+  if (primaryFailure !== undefined) throw primaryFailure;
+}
 
 /** @internal Correlates worker requests and fails them as one unit if the worker exits. */
 export class WorkerRpc {
@@ -184,6 +229,39 @@ export async function openWorkerDatabase(
   } catch (error) {
     await rpc.terminate().catch(() => undefined);
     throw error;
+  }
+}
+
+function assetTransfers(options: SerializedOpenOptions): Transferable[] {
+  const transfer: Transferable[] = [];
+  const seen = new Set<ArrayBuffer>();
+  appendAssetTransfer(options.runtime.runtimeArchive.source, transfer, seen);
+  appendAssetTransfer(options.runtime.manifest.source, transfer, seen);
+  if (options.icu !== undefined) {
+    appendAssetTransfer(options.icu.dataArchive.source, transfer, seen);
+    appendAssetTransfer(options.icu.clusterSeedArchive.source, transfer, seen);
+    appendAssetTransfer(options.icu.clusterSeedManifest.source, transfer, seen);
+  } else {
+    appendAssetTransfer(options.runtime.standardSeedArchive.source, transfer, seen);
+    appendAssetTransfer(options.runtime.standardSeedManifest.source, transfer, seen);
+  }
+  for (const carrier of Object.values(options.extensionCarriers)) {
+    appendAssetTransfer(carrier.source, transfer, seen);
+  }
+  return transfer;
+}
+
+function appendAssetTransfer(
+  source: SerializedAssetSource | undefined,
+  transfer: Transferable[],
+  seen: Set<ArrayBuffer>,
+): void {
+  if (!(source instanceof Uint8Array) || !(source.buffer instanceof ArrayBuffer)) {
+    return;
+  }
+  if (!seen.has(source.buffer)) {
+    seen.add(source.buffer);
+    transfer.push(source.buffer);
   }
 }
 

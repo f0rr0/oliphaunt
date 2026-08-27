@@ -1,10 +1,10 @@
 # Rust SDK policy
 
 The published `oliphaunt` crate is the idiomatic native Rust SDK. It owns app
-configuration, typed queries, transactions, async execution, direct/broker/
-server orchestration, exact extension selection, cluster-seed hydration, and
-language-native errors. `liboliphaunt` remains the compiled direct/broker
-boundary.
+configuration, typed queries, transactions, synchronous caller-thread and
+explicit asynchronous worker execution, direct/broker/server orchestration,
+exact extension selection, cluster-seed hydration, and language-native errors.
+`liboliphaunt` remains the compiled direct/broker boundary.
 
 The public crate stays application focused. Native resource construction,
 extension artifact/index creation and signing, package size reporting, and
@@ -32,14 +32,16 @@ Current public concepts are:
 - startup `username`, `database`, and validated PostgreSQL GUCs;
 - exact typed `Extension` selections;
 - a fluent `Sql` statement builder, typed query/command results, raw protocol,
-  transactions, cancel, and close;
+  transactions, root `CancelHandle` or worker cancellation, and close;
 - one physical backup for direct and broker, plus static restore into a new or
   empty destination; and
 - a connection string only in server mode.
 
-Builder `open().await` constructs direct, broker, and server state on a
-permanent owner thread, which also serializes later blocking runtime work.
-All owner commands and `close()` share one admission order. Close drains work
+The root builder constructs direct, broker, and server state synchronously on
+the calling thread. `oliphaunt::worker::OliphauntBuilder::open().await`
+constructs the same selected topology on a permanent owner thread, which also
+serializes later runtime work. All worker commands and `close()` share one
+admission order. Close drains work
 admitted before its cutoff and rejects later application work; it must never use
 a global closing flag to invalidate commands already ahead of the close command.
 A pre-cutoff `BEGIN` is therefore authoritative: if it succeeds, close reports

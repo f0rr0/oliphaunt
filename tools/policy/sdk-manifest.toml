@@ -4,8 +4,14 @@
 # repo-level registry for SDK ownership, target platforms, and delegation rules.
 # `sdk-contracts:check` parses this schema and cross-checks release identities;
 # product tasks own behavior and package proof.
+# `calling_contract` records synchronous versus language-level asynchronous
+# completion. `execution_owner` independently records where an admitted public
+# SDK operation executes until it completes; it does not describe internal
+# PostgreSQL child processes or server listener loops. `main_safe` states
+# whether the surface may monopolize a main/UI/event-loop thread. A
+# Promise-shaped caller-owned surface is therefore representable.
 
-schema_version = 5
+schema_version = 6
 
 [sdks.rust]
 package_identity = "cargo:oliphaunt"
@@ -18,6 +24,14 @@ runtime_boundary = "oliphaunt"
 [[sdks.rust.surfaces]]
 id = "default"
 entrypoint = "oliphaunt"
+calling_contract = "sync"
+execution_owner = "caller"
+main_safe = false
+topologies = ["native-direct", "native-broker", "native-server"]
+
+[[sdks.rust.surfaces]]
+id = "worker"
+entrypoint = "oliphaunt::worker"
 calling_contract = "async"
 execution_owner = "sdk-thread"
 main_safe = true
@@ -34,17 +48,17 @@ runtime_boundary = "oliphaunt-wasix"
 [[sdks.wasix-rust.surfaces]]
 id = "default"
 entrypoint = "oliphaunt_wasix"
-calling_contract = "async"
-execution_owner = "sdk-thread"
-main_safe = true
+calling_contract = "sync"
+execution_owner = "caller"
+main_safe = false
 topologies = ["wasix-direct", "wasix-server"]
 
 [[sdks.wasix-rust.surfaces]]
-id = "blocking"
-entrypoint = "oliphaunt_wasix::blocking"
-calling_contract = "blocking"
-execution_owner = "caller"
-main_safe = false
+id = "worker"
+entrypoint = "oliphaunt_wasix::worker"
+calling_contract = "async"
+execution_owner = "sdk-thread"
+main_safe = true
 topologies = ["wasix-direct", "wasix-server"]
 
 [sdks.wasix-typescript]
@@ -59,16 +73,16 @@ runtime_boundary = "@oliphaunt/wasix-ts"
 id = "default"
 entrypoint = "@oliphaunt/wasix-ts"
 calling_contract = "async"
-execution_owner = "sdk-worker"
-main_safe = true
+execution_owner = "caller"
+main_safe = false
 topologies = ["wasix-direct"]
 
 [[sdks.wasix-typescript.surfaces]]
-id = "blocking"
-entrypoint = "@oliphaunt/wasix-ts/blocking"
-calling_contract = "blocking"
-execution_owner = "caller"
-main_safe = false
+id = "worker"
+entrypoint = "@oliphaunt/wasix-ts/worker"
+calling_contract = "async"
+execution_owner = "sdk-worker"
+main_safe = true
 topologies = ["wasix-direct"]
 
 [[sdks.wasix-typescript.surfaces]]

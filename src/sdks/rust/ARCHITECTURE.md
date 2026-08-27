@@ -7,8 +7,12 @@ WASIX binding and has no runtime fallback matrix.
 
 The public database boundary is:
 
-- `Oliphaunt::builder()` for direct and broker databases.
-- `OliphauntBuilder::open_server()` for the distinct local-server handle.
+- Root `Oliphaunt::builder()` for synchronous caller-thread direct and broker
+  databases.
+- `oliphaunt::worker` for the same topology vocabulary on a dedicated owner
+  thread with cloneable asynchronous handles.
+- Each execution placement has `OliphauntBuilder::open_server()` for the
+  distinct local-server handle.
 - PostgreSQL-shaped execute, query, parameter, result, transaction,
   cancellation, raw protocol, and close methods.
 - One byte physical-backup method on direct and broker databases.
@@ -24,9 +28,10 @@ never ignored.
 ## Runtime ownership
 
 Direct mode owns one embedded PostgreSQL backend in the application process.
-Broker mode owns the same backend in one authenticated helper process. Both
-present the same `Oliphaunt` API and serialize commands through one owner
-executor.
+Broker mode owns the same backend in one authenticated helper process. These
+are database topologies, not scheduling modes. Root handles call either session
+synchronously; `oliphaunt::worker` serializes either session on one owner
+thread.
 
 Server mode starts a normal local PostgreSQL server, opens one SDK connection,
 and returns `OliphauntServer` with a nonoptional libpq connection string. It is
@@ -42,12 +47,19 @@ tools.
 
 ## Execution and transactions
 
-An owner thread is the single place that constructs and calls a runtime
-session. A session is never opened on a temporary thread and then transferred.
-Cloneable SDK handles share the owner; cloning does not create a PostgreSQL
-connection. This is scheduling ownership, not another public topology.
+The root API constructs and calls its runtime session on the calling thread.
+Its handle is deliberately `!Send + !Sync`, operations take `&mut self`, and a
+callback transaction exclusively borrows the database. This provides an exact
+no-hop contract without a mutex pretending that one session is concurrent.
+Inline raw-stream callbacks may borrow caller state and cannot reenter the
+database through safe Rust while its mutable borrow is active.
 
-Ordinary application work enters one bounded FIFO. Transaction control,
+The `worker` API constructs and calls its session on one permanent owner
+thread. A session is never opened on a temporary thread and then transferred.
+Cloneable `Send + Sync` handles share that owner; cloning does not create a
+PostgreSQL connection.
+
+Worker application work enters one bounded FIFO. Transaction control,
 rollback cleanup, and close enter the same FIFO through reserved admission, so
 queue pressure cannot strand lifecycle work and cannot reorder cleanup ahead of
 an already-admitted COMMIT. Close and command admission share one lock: work
@@ -69,25 +81,24 @@ the session is poisoned unless PostgreSQL explicitly returns the known idle
 `ROLLBACK` command tag. Pin cleanup remains admissible after poisoning so close
 cannot strand the owner thread.
 
-Cancellation is asynchronous and out of band: the C cancellation hook in direct
-mode, a separate authenticated endpoint in broker mode, and PostgreSQL
-CancelRequest in server mode. The ordinary-work close cutoff does not disable
-cancellation while earlier admitted work drains; cancellation admission closes
-atomically only when destructive teardown begins. Close does not implicitly
-cancel active work. Concurrent close callers share one attempt. Explicit close
-resolves only after session destruction or a terminal teardown failure.
-`TransactionActive` and other validation failures before destruction leave the
-session retryable. Once direct detach, broker shutdown, or server shutdown
-begins, the handle is terminal: success or failure sets `is_closed()`, rejects
-later work, and stores one exact close result for concurrent and repeated
-callers. Final `Drop` requests cleanup without joining the owner thread.
+Cancellation is out of band: the C cancellation hook in direct mode, a separate
+authenticated endpoint in broker mode, and PostgreSQL CancelRequest in server
+mode. Root callers obtain a separate `CancelHandle` before blocking when
+another thread must interrupt the operation. Worker cancellation is
+asynchronous and does not wait in the ordinary FIFO. Close does not implicitly
+cancel active work. Root close is synchronous; worker close is an ordered queue
+boundary with shared concurrent waiters. Once direct detach, broker shutdown,
+or server shutdown begins, either handle is terminal and retains one exact
+close result. A failed teardown is never followed by a second implicit teardown.
+Final worker `Drop` requests cleanup without joining the owner thread.
 
-Every reply channel turns sender disappearance into `EngineStopped`; an owner
+Every worker reply channel turns sender disappearance into `EngineStopped`; an owner
 panic therefore cannot strand callers. Runtime panics stop the owner and reject
 pending work. Raw-stream callback panics are contained before any C boundary,
 returned as SDK errors, and adapters drain to `ReadyForQuery`. Callbacks are
-synchronous owner-thread code, so reentrant work on the same handle is rejected
-rather than deadlocking.
+synchronous owner-thread code, so reentrant work on the same worker handle is
+rejected rather than deadlocking. Root callbacks run inline and rely on the
+exclusive borrow instead of runtime reentrancy detection.
 
 ## Storage and identity
 

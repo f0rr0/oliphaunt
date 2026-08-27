@@ -428,8 +428,11 @@ for required in \
   ARCHITECTURE.md \
   src/lib.rs \
   src/database.rs \
+  src/direct.rs \
+  src/session.rs \
   src/query_core.rs \
   src/query.rs \
+  src/worker.rs \
   tests/public_api.rs \
   tests/sdk_extensions.rs \
   tests/native_smoke.rs \

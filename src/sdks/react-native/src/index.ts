@@ -46,7 +46,6 @@ export {
   text,
   typedNull,
 } from './query';
-export const Oliphaunt: import('./client').OliphauntClient =
-  createOliphauntClient(NativeOliphaunt);
+export const Oliphaunt: import('./client').OliphauntClient = createOliphauntClient(NativeOliphaunt);
 
 export default Oliphaunt;

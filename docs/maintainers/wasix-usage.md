@@ -15,20 +15,19 @@ Neither binding imports, selects, or falls back to a native SDK.
 oliphaunt-wasix = "0.1"
 ```
 
-The root `Oliphaunt::open().await` API retains Wasmer and PostgreSQL on a
-dedicated owner thread and uses a true Wasmer memory filesystem. Persistence is
-an explicit managed root:
+The root `Oliphaunt::open()` API retains Wasmer and PostgreSQL on the calling
+thread and uses a true Wasmer memory filesystem. Persistence is an explicit
+managed root:
 
 ```rust,no_run
 use oliphaunt_wasix::{DatabaseStorage, Oliphaunt};
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let database = Oliphaunt::builder()
+fn main() -> anyhow::Result<()> {
+    let mut database = Oliphaunt::builder()
         .storage(DatabaseStorage::Directory("./data/main".into()))
-        .open().await?;
-    assert_eq!(database.query("select 1::text as value").await?.get_text(0, "value")?, Some("1"));
-    database.close().await?;
+        .open()?;
+    assert_eq!(database.query("select 1::text as value")?.get_text(0, "value")?, Some("1"));
+    database.close()?;
     Ok(())
 }
 ```
@@ -45,9 +44,10 @@ fail without mutation.
 
 `OliphauntServer` supplies a local PostgreSQL endpoint when an existing Rust
 client needs one. The optional `tools` feature supplies `pg_dump` and
-non-interactive `psql`. Applications that intentionally want caller-thread
-execution import the separate `oliphaunt_wasix::blocking` module; that direct
-database is exclusive and synchronous rather than a misleading async wrapper.
+non-interactive `psql`. Applications that must keep an async executor responsive
+import `oliphaunt_wasix::worker`; that module owns a dedicated database thread,
+returns futures, and exposes a cloneable handle. The root stays the no-hop,
+exclusive caller-thread surface.
 
 Extensions are exact Cargo feature/package selections. Reopening a database
 whose catalog uses an extension requires the receiving host to provide that
@@ -63,10 +63,12 @@ const result = await database.query('select $1::int + 1 as answer', [41]);
 ```
 
 The package runs in a browser, Node.js, Bun, or Deno. Its root entry point owns
-a Worker or worker thread and is the default, main-safe surface. Applications
-that deliberately accept caller-realm blocking import
-`@oliphaunt/wasix-ts/blocking`; there is no `execution` option and no silent
-calling-contract fallback. Browser execution requires cross-origin isolation.
+execution in the importing JavaScript realm. Its methods return promises, but
+synchronous PostgreSQL guest work can block that realm. Applications that need
+the caller's event loop to remain responsive import
+`@oliphaunt/wasix-ts/worker`; it owns a Web Worker or Node-compatible worker
+thread. There is no execution option and no silent placement fallback. Browser
+execution requires cross-origin isolation.
 
 Memory is the default. Persistent providers are selective imports:
 
@@ -75,7 +77,7 @@ Memory is the default. Persistent providers are selective imports:
 
 IndexedDB hydrates a Wasmer memory directory and publishes journaled changes.
 OPFS Worker execution uses synchronous access handles for exact-range I/O to an
-opaque backing-file pool; the blocking entry point and browsers without that
+opaque backing-file pool; the root direct entry point and browsers without that
 facility publish the same journal to that same format.
 Node, Bun, and Deno directory providers publish below the managed root's
 `pgdata` child. Ordinary operations complete a provider boundary after
@@ -109,8 +111,8 @@ memory and nonempty destinations. The destination creates its own descriptor.
 
 `execProtocolRawStream()` is the bounded callback form of the raw protocol
 escape hatch. The optional `@oliphaunt/wasix-tools` package runs standard plain
-`pg_dump` against blocking or default Worker handles and non-interactive `psql`
-against the default Worker handle, including in browsers. It preserves PostgreSQL's normal
+`pg_dump` against direct or Worker handles and non-interactive `psql` against a
+Worker handle, including in browsers. It preserves PostgreSQL's normal
 COPY-based plain dump rather than rewriting it.
 
 Node, Bun, and Deno applications may import `openServer` from the matching

@@ -48,7 +48,7 @@ const knownTopologies = new Set([
   'wasix-direct',
   'wasix-server',
 ]);
-const knownCallingContracts = new Set(['async', 'blocking']);
+const knownCallingContracts = new Set(['async', 'sync']);
 const knownExecutionOwners = new Set([
   'caller',
   'platform-sdk',
@@ -110,8 +110,8 @@ if (
     `${parityPolicyPath} must contain each canonical deferred ID exactly once; found ${formatValue(actualDeferredIds)}`,
   );
 }
-if (manifest.schema_version !== 5) {
-  errors.push(`schema_version is ${formatValue(manifest.schema_version)}; expected 5`);
+if (manifest.schema_version !== 6) {
+  errors.push(`schema_version is ${formatValue(manifest.schema_version)}; expected 6`);
 }
 if (!isPlainObject(manifest.sdks)) errors.push('manifest must contain an [sdks] table');
 
@@ -184,14 +184,8 @@ for (const sdkId of sdkIds) {
       if (typeof surface.main_safe !== 'boolean') {
         errors.push(`${location}.main_safe must be a boolean`);
       }
-      if (surface.calling_contract === 'blocking' && surface.main_safe !== false) {
-        errors.push(`${location} blocking surfaces must declare main_safe = false`);
-      }
-      if (surface.execution_owner === 'caller' && surface.calling_contract !== 'blocking') {
-        errors.push(`${location} caller-owned surfaces must use the blocking calling contract`);
-      }
-      if (surface.calling_contract === 'blocking' && surface.execution_owner !== 'caller') {
-        errors.push(`${location} blocking surfaces must be caller-owned`);
+      if (surface.calling_contract === 'sync' && surface.main_safe !== false) {
+        errors.push(`${location} synchronous database surfaces must declare main_safe = false`);
       }
       if (
         !Array.isArray(surface.topologies)

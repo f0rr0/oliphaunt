@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use std::thread;
 
 use anyhow::{bail, Context, Result};
+use oliphaunt_wasix::{extensions, worker::OliphauntServer, DatabaseStorage};
 #[cfg(test)]
-use oliphaunt_wasix::blocking::{tools, Oliphaunt};
-use oliphaunt_wasix::{extensions, DatabaseStorage, OliphauntServer};
+use oliphaunt_wasix::{tools, Oliphaunt};
 use serde_json::json;
 
 fn main() -> Result<()> {

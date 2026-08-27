@@ -4,10 +4,7 @@ use std::sync::atomic::Ordering;
 
 use crate::builder::OliphauntBuilder;
 use crate::error::{Error, Result};
-use crate::executor::{
-    EngineExecutor, TRANSACTION_ACTIVE, TRANSACTION_FAILED, TRANSACTION_FINISHING,
-    TRANSACTION_RELEASED, TRANSACTION_ROLLED_BACK, TransactionGuard, run_off_thread,
-};
+use crate::executor::{EngineExecutor, run_off_thread};
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
 use crate::query::{
     CommandResult, ExecResult, IntoParameter, Parameter, QueryResult, ReadyStatus,
@@ -15,14 +12,18 @@ use crate::query::{
     parse_exec_response, parse_extended_command_response, parse_extended_query_response,
     parse_simple_command_response, parse_statement_description, reject_copy_statements,
 };
+use crate::session::{
+    TRANSACTION_ACTIVE, TRANSACTION_FAILED, TRANSACTION_FINISHING, TRANSACTION_RELEASED,
+    TRANSACTION_ROLLED_BACK, TransactionGuard,
+};
 
-/// Open native Oliphaunt database handle.
+/// Cloneable asynchronous native database backed by one dedicated owner thread.
 #[derive(Clone)]
 pub struct Oliphaunt {
     executor: Arc<EngineExecutor>,
 }
 
-/// Local PostgreSQL server owned by Oliphaunt.
+/// Local PostgreSQL server with an SDK session owned by a dedicated thread.
 ///
 /// Use [`OliphauntServer::connection_string`] with ordinary PostgreSQL clients.
 /// Physical server backups use the packaged `pg_basebackup` tool rather than
@@ -141,7 +142,7 @@ impl<'db, 'q> Sql<'db, 'q> {
 }
 
 impl Oliphaunt {
-    /// Create a native Oliphaunt builder.
+    /// Create a dedicated owner-thread native builder.
     pub fn builder() -> OliphauntBuilder {
         OliphauntBuilder::new()
     }

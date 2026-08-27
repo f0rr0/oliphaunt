@@ -1,15 +1,20 @@
 use std::any::Any;
 use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread;
 
-use crate::engine::{EngineCancel, EngineSession};
+use crate::cancellation::CancellationGate;
+use crate::engine::EngineSession;
 use crate::error::{Error, Result};
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
-use crate::query::{ReadyStatus, parse_simple_command_response, response_ready_status};
+use crate::query::{ReadyStatus, parse_simple_command_response};
 use crate::reply;
+use crate::session::{
+    TRANSACTION_ACTIVE, TransactionGuard, begin_transaction, execute_structured_operation,
+    execute_transaction_structured_operation, inactive_transaction_error,
+};
 
 type ProtocolChunkCallback = Box<dyn FnMut(&[u8]) -> Result<()> + Send>;
 
@@ -18,46 +23,16 @@ type ProtocolChunkCallback = Box<dyn FnMut(&[u8]) -> Result<()> + Send>;
 /// can always be admitted without inventing a public queue-tuning surface.
 const ORDINARY_QUEUE_CAPACITY: usize = 256;
 
-pub(crate) const TRANSACTION_ACTIVE: u8 = 0;
-pub(crate) const TRANSACTION_FINISHING: u8 = 1;
-pub(crate) const TRANSACTION_ROLLED_BACK: u8 = 2;
-pub(crate) const TRANSACTION_FAILED: u8 = 3;
-pub(crate) const TRANSACTION_RELEASED: u8 = 4;
-
-pub(crate) struct TransactionGuard {
-    pub(crate) state: AtomicU8,
-    pub(crate) terminal_error: Mutex<Option<Error>>,
-}
-
-impl TransactionGuard {
-    pub(crate) fn active() -> Arc<Self> {
-        Arc::new(Self {
-            state: AtomicU8::new(TRANSACTION_ACTIVE),
-            terminal_error: Mutex::new(None),
-        })
-    }
-
-    fn fail(&self, error: Error) {
-        self.state.store(TRANSACTION_FAILED, Ordering::SeqCst);
-        if let Ok(mut terminal_error) = self.terminal_error.lock()
-            && terminal_error.is_none()
-        {
-            *terminal_error = Some(error);
-        }
-    }
-}
-
 pub(crate) struct EngineExecutor {
     shared: Arc<ExecutorShared>,
 }
 
 struct ExecutorShared {
     queue: CommandQueue,
-    // SQL/close/cancel admission and the owner-side transition into teardown
-    // share this lock. That makes "cancel is accepted until teardown starts"
-    // an exact boundary instead of an atomic-check race.
+    // SQL admission and the owner-side transition into teardown share this
+    // lock. Out-of-band cancellation has its own counted lifecycle gate.
     admission: Mutex<()>,
-    cancel: Mutex<Option<Arc<dyn EngineCancel>>>,
+    cancellation: Arc<CancellationGate>,
     active_work: AtomicBool,
     session_pinned: AtomicBool,
     transaction_poisoned: AtomicBool,
@@ -76,7 +51,7 @@ impl ExecutorShared {
         Self {
             queue: CommandQueue::new(),
             admission: Mutex::new(()),
-            cancel: Mutex::new(None),
+            cancellation: CancellationGate::pending(),
             active_work: AtomicBool::new(false),
             session_pinned: AtomicBool::new(false),
             transaction_poisoned: AtomicBool::new(false),
@@ -235,30 +210,12 @@ impl EngineExecutor {
     }
 
     pub(crate) async fn cancel(&self) -> Result<()> {
-        let admission = self.shared.admission.lock().map_err(|_| {
-            Error::Engine("database command admission lock was poisoned".to_owned())
-        })?;
         // `closing` is only an ordinary-work cutoff. Cancellation is
         // out-of-band and remains useful while already-admitted SQL drains.
-        // The owner takes this same lock before beginning destructive
-        // teardown, so cancellation admission is ordered exactly before or
-        // after that transition.
-        if self.shared.closed.load(Ordering::SeqCst)
-            || self.shared.teardown_started.load(Ordering::SeqCst)
-        {
-            return Err(Error::EngineStopped);
-        }
-        let cancel = self
-            .shared
-            .cancel
-            .lock()
-            .map_err(|_| Error::Engine("database cancellation lock was poisoned".to_owned()))?
-            .clone()
-            .ok_or_else(|| {
-                Error::Engine("query cancellation is not supported by this engine".to_owned())
-            })?;
-        drop(admission);
-        run_off_thread("oliphaunt-cancel", move || cancel.cancel()).await
+        // The counted cancellation gate orders this request exactly before or
+        // after destructive teardown and lets close wait for admitted calls.
+        let cancellation = self.shared.cancellation.admit()?;
+        run_off_thread("oliphaunt-cancel", move || cancellation.cancel()).await
     }
 
     pub(crate) async fn exec_protocol_raw(
@@ -666,10 +623,12 @@ fn owner_thread<M, F>(
             return;
         }
     };
-    *shared
-        .cancel
-        .lock()
-        .unwrap_or_else(|error| error.into_inner()) = cancel;
+    if let Err(error) = shared.cancellation.install_target(cancel) {
+        opened.send(Err(error));
+        dispose_session_after_owner_failure(session);
+        stop_owner(&shared);
+        return;
+    }
     let mut session = Some(session);
     if !opened.send(Ok(metadata)) {
         dispose_session_after_owner_failure(session.take().expect("opened session"));
@@ -705,10 +664,6 @@ fn owner_thread<M, F>(
             }
             Ok(OwnerAction::TerminalClose(result)) => {
                 shared.session_pinned.store(false, Ordering::SeqCst);
-                *shared
-                    .cancel
-                    .lock()
-                    .unwrap_or_else(|error| error.into_inner()) = None;
                 let result = match result {
                     Ok(()) => {
                         // Drop the session and its root lock before resolving
@@ -737,6 +692,7 @@ fn owner_thread<M, F>(
                 return;
             }
             Err(_) => {
+                shared.cancellation.stop_and_wait();
                 dispose_session_after_owner_failure(session.take().expect("owner session exists"));
                 stop_owner(&shared);
                 return;
@@ -744,6 +700,7 @@ fn owner_thread<M, F>(
         }
     }
     if let Some(session) = session.take() {
+        shared.cancellation.stop_and_wait();
         dispose_session_after_owner_failure(session);
     }
     stop_owner(&shared);
@@ -810,7 +767,7 @@ fn execute_command(
         } => {
             let result = if owner.active_pin == Some(token) {
                 run_active_work(&shared.active_work, || {
-                    execute_pinned_structured_operation(
+                    execute_transaction_structured_operation(
                         session,
                         &shared.transaction_poisoned,
                         &guard,
@@ -909,20 +866,23 @@ fn execute_command(
                     return OwnerAction::RetryableClose(Error::TransactionActive);
                 }
             }
-            // Cancellation is out of band, so the close command must establish
-            // its destructive boundary under the same admission lock used by
-            // cancel(). Before this point `closing` rejects only new ordinary
-            // work; after it, both cancellation and ordinary work are terminal.
-            {
-                let _admission = match shared.admission.lock() {
-                    Ok(admission) => admission,
-                    Err(_) => {
-                        return OwnerAction::TerminalClose(Err(Error::Engine(
-                            "database command admission lock was poisoned".to_owned(),
-                        )));
-                    }
-                };
-                shared.teardown_started.store(true, Ordering::SeqCst);
+            // `closing` has so far rejected only new ordinary work. Establish
+            // the destructive boundary while SQL admission is excluded, then
+            // release every lock and wait for out-of-band cancellations which
+            // crossed their own gate first.
+            let (admission, admission_poisoned) = match shared.admission.lock() {
+                Ok(admission) => (admission, false),
+                Err(error) => (error.into_inner(), true),
+            };
+            let cancellation_target = shared.cancellation.stop_accepting();
+            shared.teardown_started.store(true, Ordering::SeqCst);
+            drop(admission);
+            drop(cancellation_target);
+            shared.cancellation.wait_for_idle();
+            if admission_poisoned {
+                return OwnerAction::TerminalClose(Err(Error::Engine(
+                    "database command admission lock was poisoned".to_owned(),
+                )));
             }
             let result = run_active_work(&shared.active_work, || {
                 catch_unwind(AssertUnwindSafe(|| session.close())).unwrap_or_else(|panic| {
@@ -945,41 +905,6 @@ fn allocate_pin(owner: &mut OwnerState) -> Result<u64> {
         .checked_add(1)
         .ok_or_else(|| Error::Engine("native transaction token space is exhausted".to_owned()))?;
     Ok(token)
-}
-
-fn begin_transaction(
-    session: &mut dyn EngineSession,
-    transaction_poisoned: &AtomicBool,
-) -> Result<()> {
-    let result = ProtocolRequest::simple_query("BEGIN")
-        .and_then(|request| session.exec_protocol_raw(request))
-        .and_then(|response| parse_simple_command_response(&response))
-        .and_then(|result| {
-            if result.command_tag() == Some("BEGIN")
-                && result.ready_status() == ReadyStatus::InTransaction
-            {
-                Ok(())
-            } else {
-                Err(Error::Engine(format!(
-                    "PostgreSQL transaction command expected BEGIN with InTransaction readiness, got {} with {:?}",
-                    result.command_tag().unwrap_or("no command tag"),
-                    result.ready_status()
-                )))
-            }
-        });
-    if result.is_ok() {
-        return result;
-    }
-    let recovery = ProtocolRequest::simple_query("ROLLBACK")
-        .and_then(|request| session.exec_protocol_raw(request))
-        .and_then(|response| parse_simple_command_response(&response));
-    let recovered = recovery.is_ok_and(|result| {
-        result.command_tag() == Some("ROLLBACK") && result.ready_status() == ReadyStatus::Idle
-    });
-    if !recovered {
-        transaction_poisoned.store(true, Ordering::SeqCst);
-    }
-    result
 }
 
 fn rollback_active_pin(
@@ -1081,12 +1006,9 @@ fn schedule_terminal_drop_close(shared: &ExecutorShared) {
 
 fn stop_owner(shared: &ExecutorShared) {
     shared.active_work.store(false, Ordering::SeqCst);
+    shared.cancellation.stop_and_wait();
     shared.teardown_started.store(true, Ordering::SeqCst);
     shared.session_pinned.store(false, Ordering::SeqCst);
-    *shared
-        .cancel
-        .lock()
-        .unwrap_or_else(|error| error.into_inner()) = None;
     let pending = shared.queue.stop();
     drop(pending);
     complete_terminal_close(shared, Err(Error::EngineStopped));
@@ -1133,108 +1055,9 @@ fn panic_message(panic: &(dyn Any + Send)) -> String {
     }
 }
 
-fn execute_structured_operation(
-    session: &mut dyn EngineSession,
-    transaction_poisoned: &AtomicBool,
-    request: ProtocolRequest,
-    operation: &str,
-) -> Result<ProtocolResponse> {
-    let response = match session.exec_protocol_raw(request) {
-        Ok(response) => response,
-        Err(error) => {
-            transaction_poisoned.store(true, Ordering::SeqCst);
-            return Err(error);
-        }
-    };
-    let status = match response_ready_status(&response) {
-        Ok(status) => status,
-        Err(error) => {
-            transaction_poisoned.store(true, Ordering::SeqCst);
-            return Err(Error::Engine(format!(
-                "{operation} returned an invalid readiness boundary and the embedded session is now unusable: {error}"
-            )));
-        }
-    };
-    if status == ReadyStatus::Idle {
-        return Ok(response);
-    }
-
-    let recovery = ProtocolRequest::simple_query("ROLLBACK")
-        .and_then(|rollback| session.exec_protocol_raw(rollback))
-        .and_then(|response| parse_simple_command_response(&response));
-    let recovered = recovery.as_ref().is_ok_and(|result| {
-        result.command_tag() == Some("ROLLBACK") && result.ready_status() == ReadyStatus::Idle
-    });
-    if recovered {
-        Ok(response)
-    } else {
-        transaction_poisoned.store(true, Ordering::SeqCst);
-        Err(Error::Engine(format!(
-            "{operation} left the embedded session in a transaction and rollback recovery failed: {}",
-            recovery
-                .err()
-                .map(|error| error.to_string())
-                .unwrap_or_else(|| "unexpected ROLLBACK response".to_owned())
-        )))
-    }
-}
-
-fn execute_pinned_structured_operation(
-    session: &mut dyn EngineSession,
-    transaction_poisoned: &AtomicBool,
-    guard: &TransactionGuard,
-    request: ProtocolRequest,
-    operation: &str,
-) -> Result<ProtocolResponse> {
-    if guard.state.load(Ordering::SeqCst) != TRANSACTION_ACTIVE {
-        return Err(inactive_transaction_error());
-    }
-
-    let response = match session.exec_protocol_raw(request) {
-        Ok(response) => response,
-        Err(error) => {
-            fail_transaction_guard(guard, transaction_poisoned, error.clone());
-            return Err(error);
-        }
-    };
-    let status = match response_ready_status(&response) {
-        Ok(status) => status,
-        Err(error) => {
-            let terminal = Error::Engine(format!(
-                "{operation} returned an invalid readiness boundary and the transaction state is now unknown: {error}"
-            ));
-            fail_transaction_guard(guard, transaction_poisoned, terminal.clone());
-            return Err(terminal);
-        }
-    };
-    match status {
-        ReadyStatus::InTransaction | ReadyStatus::FailedTransaction => Ok(response),
-        ReadyStatus::Idle => {
-            let terminal = Error::Engine(format!(
-                "{operation} ended the callback transaction outside Transaction::rollback(); the session is now unusable"
-            ));
-            fail_transaction_guard(guard, transaction_poisoned, terminal.clone());
-            Err(terminal)
-        }
-    }
-}
-
-fn fail_transaction_guard(
-    guard: &TransactionGuard,
-    transaction_poisoned: &AtomicBool,
-    error: Error,
-) {
-    guard.fail(error);
-    transaction_poisoned.store(true, Ordering::SeqCst);
-}
-
 fn run_active_work<T>(active_work: &AtomicBool, work: impl FnOnce() -> T) -> T {
     let _guard = ActiveWorkGuard::new(active_work);
     work()
-}
-
-fn inactive_transaction_error() -> Error {
-    Error::Engine("transaction is no longer active".to_owned())
 }
 
 struct ActiveWorkGuard<'a> {
@@ -1263,6 +1086,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::*;
+    use crate::engine::EngineCancel;
 
     struct ThreadWake(thread::Thread);
 
@@ -2114,6 +1938,43 @@ mod tests {
         release.send(()).expect("finish cancellation");
         block_on(cancel).expect("cancellation completes");
         block_on(executor.close()).expect("close cancellable session");
+    }
+
+    #[test]
+    fn close_waits_for_admitted_cancellation_and_rejects_later_calls() {
+        let (started, started_rx) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel();
+        let executor = EngineExecutor::spawn(Box::new(CancellableSession {
+            cancel: Arc::new(BlockingCancel {
+                started: Mutex::new(Some(started)),
+                release: Mutex::new(release_rx),
+            }),
+        }));
+
+        let mut cancel = Box::pin(executor.cancel());
+        assert!(poll_once(cancel.as_mut()).is_pending());
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("cancellation reaches its engine target");
+
+        let mut close = Box::pin(executor.close());
+        assert!(poll_once(close.as_mut()).is_pending());
+        assert!(
+            executor
+                .shared
+                .cancellation
+                .wait_for_cutoff(Duration::from_secs(2)),
+            "close establishes its destructive cancellation cutoff"
+        );
+        assert_eq!(executor.shared.cancellation.active_cancellations(), 1);
+        assert_eq!(block_on(executor.cancel()), Err(Error::EngineStopped));
+        assert!(poll_once(close.as_mut()).is_pending());
+
+        release.send(()).expect("finish admitted cancellation");
+        block_on(cancel).expect("admitted cancellation settles");
+        block_on(close).expect("close proceeds after cancellation settles");
+        assert_eq!(executor.shared.cancellation.active_cancellations(), 0);
+        assert!(executor.is_closed());
     }
 
     struct CountingCancel {

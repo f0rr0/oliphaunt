@@ -1,23 +1,23 @@
 {
   "schema": "oliphaunt-wasix-browser-benchmark-plan-v2",
   "id": "browser-pglite-memory-v2",
-  "description": "Compares Oliphaunt's explicit caller-owned blocking entrypoint with PGlite's caller-realm API, and Oliphaunt's package-owned Worker default with PGlite's official Worker API, using ephemeral memory storage.",
+  "description": "Compares Oliphaunt's caller-owned root Promise API with PGlite's caller-realm API, and Oliphaunt's explicit /worker entrypoint with PGlite's official Worker API, using ephemeral memory storage.",
   "engines": {
     "candidate": {
       "package": "@oliphaunt/wasix-ts",
       "storage": "memory",
       "surfaces": {
-        "blocking": {
-          "engine": "wasixBlocking",
-          "entrypoint": "@oliphaunt/wasix-ts/blocking",
-          "callingContract": "blocking",
-          "executionOwner": "caller"
-        },
-        "default": {
-          "engine": "wasixWorker",
+        "direct": {
+          "engine": "wasixDirect",
           "entrypoint": "@oliphaunt/wasix-ts",
           "callingContract": "async",
-          "executionOwner": "package-worker"
+          "executionOwner": "caller"
+        },
+        "worker": {
+          "engine": "wasixWorker",
+          "entrypoint": "@oliphaunt/wasix-ts/worker",
+          "callingContract": "async",
+          "executionOwner": "sdk-worker"
         }
       },
       "dependencies": {
@@ -97,7 +97,7 @@
   "gate": {
     "maxGeomeanRatio": 0.8,
     "requiresCorrectness": true,
-    "requiresBothCallingContracts": true,
+    "requiresBothExecutionSurfaces": true,
     "metric": "geometric-mean-of-median-paired-oliphaunt-over-pglite-ratios-lower-is-better",
     "metrics": [
       "startup.warmReadyMs",

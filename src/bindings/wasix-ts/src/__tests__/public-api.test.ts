@@ -23,25 +23,21 @@ import {
   type RawQueryResult,
   type TextQueryParameter,
 } from '../index.js';
-import BlockingOliphaunt, {
-  Oliphaunt as NamedBlockingOliphaunt,
-} from '../blocking.js';
+import WorkerOliphaunt, { Oliphaunt as NamedWorkerOliphaunt } from '../worker-entry.js';
 
 describe('WASIX public ORM surface', () => {
+  // liboliphaunt-doc-example:wasix-typescript-direct-entrypoint
   // liboliphaunt-doc-example:wasix-typescript-worker-entrypoint
-  // liboliphaunt-doc-example:wasix-typescript-blocking-entrypoint
   it('publishes codecs and PostgreSQL metadata from the root entrypoint', () => {
     expect(typeof Oliphaunt.open).toBe('function');
-    expect(BlockingOliphaunt).toBe(NamedBlockingOliphaunt);
-    expect(typeof BlockingOliphaunt.open).toBe('function');
+    expect(WorkerOliphaunt).toBe(NamedWorkerOliphaunt);
+    expect(typeof WorkerOliphaunt.open).toBe('function');
     expect(typeof PostgresError).toBe('function');
     expect(postgresOids.jsonb).toBe(3802);
     expect(text('value', postgresOids.text).format).toBe('text');
     expect(binary(Uint8Array.of(1), postgresOids.bytea).format).toBe('binary');
     expect(json({ ok: true }).typeOid).toBe(postgresOids.jsonb);
-    expect(array([1, 2], postgresOids.int4Array).typeOid).toBe(
-      postgresOids.int4Array,
-    );
+    expect(array([1, 2], postgresOids.int4Array).typeOid).toBe(postgresOids.int4Array);
     expect(typedNull(postgresOids.uuid).format).toBe('null');
   });
 });
@@ -56,41 +52,28 @@ function assertPublicDatabaseTypes(
   const raw: Promise<RawQueryResult> = database.queryRaw('SELECT $1::bytea', [
     binary(Uint8Array.of(1), postgresOids.bytea),
   ]);
-  const execResults: Promise<ExecResult<readonly unknown[]>> = database.exec<
-    readonly unknown[]
-  >('SELECT 1', { rowMode: 'array' });
-  const description: Promise<DescribeResult> = database.describe('SELECT $1', [
-    postgresOids.int4,
-  ]);
-  const streamed: Promise<void> = database.execProtocolRawStream(
-    Uint8Array.of(1),
-    () => undefined,
+  const execResults: Promise<ExecResult<readonly unknown[]>> = database.exec<readonly unknown[]>(
+    'SELECT 1',
+    { rowMode: 'array' },
   );
+  const description: Promise<DescribeResult> = database.describe('SELECT $1', [postgresOids.int4]);
+  const streamed: Promise<void> = database.execProtocolRawStream(Uint8Array.of(1), () => undefined);
   const transactionStreamed: Promise<void> = transaction.execProtocolRawStream(
     Uint8Array.of(1),
     () => undefined,
   );
   const rollback: Promise<void> = transaction.rollback();
   const closed: boolean = database.closed || transaction.closed;
-  void [
-    decoded,
-    raw,
-    execResults,
-    description,
-    streamed,
-    transactionStreamed,
-    rollback,
-    closed,
-  ];
+  void [decoded, raw, execResults, description, streamed, transactionStreamed, rollback, closed];
 }
 
 void assertPublicDatabaseTypes;
 
-const publicHelperTypes: [
-  TextQueryParameter,
-  BinaryQueryParameter,
-  NullQueryParameter,
-] = [text('value'), binary(Uint8Array.of(1)), typedNull(postgresOids.text)];
+const publicHelperTypes: [TextQueryParameter, BinaryQueryParameter, NullQueryParameter] = [
+  text('value'),
+  binary(Uint8Array.of(1)),
+  typedNull(postgresOids.text),
+];
 void publicHelperTypes;
 
 const plainJsonParameter: QueryParam = {

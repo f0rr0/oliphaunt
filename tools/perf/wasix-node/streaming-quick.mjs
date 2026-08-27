@@ -39,11 +39,11 @@ try {
   const packageRoot = (name) => resolve(fixture.consumer, 'node_modules', ...name.split('/'));
   const bindingRoot = packageRoot(fixture.packages.binding.name);
   const toolsRoot = packageRoot(fixture.packages.toolsFacade.name);
-  const { default: Oliphaunt } = await import(
+  const { default: DirectOliphaunt } = await import(
     pathToFileURL(resolve(bindingRoot, 'lib/index.node.js')).href
   );
-  const { default: BlockingOliphaunt } = await import(
-    pathToFileURL(resolve(bindingRoot, 'lib/blocking.node.js')).href
+  const { default: WorkerOliphaunt } = await import(
+    pathToFileURL(resolve(bindingRoot, 'lib/worker-entry.node.js')).href
   );
   const { openServer } = await import(
     pathToFileURL(resolve(bindingRoot, 'lib/server.node.js')).href
@@ -51,11 +51,11 @@ try {
   const { pgDump, psql } = await import(pathToFileURL(resolve(toolsRoot, 'lib/index.js')).href);
 
   const surfaces = {
-    blocking: await benchmarkSurface(BlockingOliphaunt, 'blocking'),
-    worker: await benchmarkSurface(Oliphaunt, 'worker'),
+    direct: await benchmarkSurface(DirectOliphaunt, 'direct'),
+    worker: await benchmarkSurface(WorkerOliphaunt, 'worker'),
   };
   const server = await benchmarkServer(openServer);
-  const tools = await benchmarkTools(Oliphaunt, pgDump, psql);
+  const tools = await benchmarkTools(WorkerOliphaunt, pgDump, psql);
   const report = {
     schema: 'oliphaunt-wasix-streaming-quick-v2',
     measuredAt: new Date().toISOString(),
@@ -73,7 +73,18 @@ try {
       slowConsumerDelayMs,
       toolRows,
       storage: 'memory',
-      callingContracts: ['caller-owned-blocking', 'package-worker-async'],
+      executionSurfaces: {
+        direct: {
+          entrypoint: '@oliphaunt/wasix-ts',
+          callingContract: 'async',
+          executionOwner: 'caller',
+        },
+        worker: {
+          entrypoint: '@oliphaunt/wasix-ts/worker',
+          callingContract: 'async',
+          executionOwner: 'sdk-worker',
+        },
+      },
       resourceSamples: 'representative 4 MiB streams, data dump, and restore',
       resourceNote:
         'RSS is process-wide growth from each scenario start; retained allocations can reduce later deltas',
@@ -99,8 +110,7 @@ async function benchmarkSurface(Oliphaunt, surface) {
   try {
     const query = await samples(async () => {
       const result = await database.query('SELECT 1::int AS value');
-      if (result.rows[0]?.value !== 1)
-        throw new Error('query benchmark returned wrong value');
+      if (result.rows[0]?.value !== 1) throw new Error('query benchmark returned wrong value');
     });
     const request = simpleQuery('SELECT 1');
     const expected = await database.execProtocolRaw(request);
@@ -371,14 +381,14 @@ function textResult(value, milliseconds) {
 }
 
 function compareSurfaces(surfaces) {
-  const blocking = surfaces.blocking.smallRoundTripMs;
+  const direct = surfaces.direct.smallRoundTripMs;
   const worker = surfaces.worker.smallRoundTripMs;
   return Object.fromEntries(
     ['query', 'rawBuffered', 'rawStreamed'].map((name) => [
       name,
       {
-        workerMinusBlockingMedianMs: rounded(worker[name].median - blocking[name].median),
-        workerToBlockingMedianRatio: rounded(worker[name].median / blocking[name].median),
+        workerMinusDirectMedianMs: rounded(worker[name].median - direct[name].median),
+        workerToDirectMedianRatio: rounded(worker[name].median / direct[name].median),
       },
     ]),
   );
@@ -397,21 +407,21 @@ function printReport(report) {
   console.log(`WASIX streaming quick benchmark (${(report.durationMs / 1000).toFixed(1)}s)`);
   console.log(`Node ${report.environment.node} · ${report.environment.cpu}`);
   console.log('\nSmall round-trip latency (median / p95 ms)');
-  console.log('scenario             blocking         worker           worker added');
+  console.log('scenario             direct           worker           worker added');
   for (const [label, name] of [
     ['query()', 'query'],
     ['raw buffered', 'rawBuffered'],
     ['raw streamed', 'rawStreamed'],
   ]) {
-    const blocking = report.surfaces.blocking.smallRoundTripMs[name];
+    const direct = report.surfaces.direct.smallRoundTripMs[name];
     const worker = report.surfaces.worker.smallRoundTripMs[name];
-    const added = report.comparison[name].workerMinusBlockingMedianMs;
+    const added = report.comparison[name].workerMinusDirectMedianMs;
     console.log(
-      `${label.padEnd(20)} ${formatPair(blocking).padEnd(16)} ${formatPair(worker).padEnd(16)} ${formatMs(added)}`,
+      `${label.padEnd(20)} ${formatPair(direct).padEnd(16)} ${formatPair(worker).padEnd(16)} ${formatMs(added)}`,
     );
   }
   console.log('\nBulk protocol transfer (MiB/s; elapsed ms)');
-  for (const surface of ['blocking', 'worker']) {
+  for (const surface of ['direct', 'worker']) {
     for (const row of report.surfaces[surface].bulk) {
       console.log(
         `${surface.padEnd(8)} ${String(row.sizeMiB).padStart(2)} MiB  buffered ${formatTransfer(row.buffered)}  streamed ${formatTransfer(row.streamed)} (${row.streamed.chunks} chunks)`,
@@ -438,7 +448,7 @@ function printReport(report) {
   );
   console.log('\nRepresentative event-loop delay / process RSS growth');
   for (const [label, resources] of [
-    ['blocking 4 MiB stream', report.surfaces.blocking.bulk.at(-1).streamed.resources],
+    ['direct 4 MiB stream', report.surfaces.direct.bulk.at(-1).streamed.resources],
     ['worker 4 MiB stream', report.surfaces.worker.bulk.at(-1).streamed.resources],
     ['server 4 MiB COPY', report.server.bulk.at(-1).resources],
     ['pg_dump data', report.tools.dataDump.resources],
@@ -478,7 +488,7 @@ function parseArguments(args) {
 async function requireInputs() {
   const required = [
     'src/bindings/wasix-ts/lib/index.node.js',
-    'src/bindings/wasix-ts/lib/blocking.node.js',
+    'src/bindings/wasix-ts/lib/worker-entry.node.js',
     'src/bindings/wasix-ts/lib/host/index.mjs',
     'src/bindings/wasix-ts/tools-package/lib/index.js',
     'target/oliphaunt-wasix/assets/manifest.json',

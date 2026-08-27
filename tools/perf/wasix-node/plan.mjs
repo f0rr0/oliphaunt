@@ -91,32 +91,32 @@ function validateCurrentEngines(plan) {
   );
   validateCandidateIdentity(candidate);
   const candidateSurfaces = object(candidate.surfaces, 'plan.engines.candidate.surfaces');
-  exactKeys(candidateSurfaces, ['blocking', 'default'], 'plan.engines.candidate.surfaces');
+  exactKeys(candidateSurfaces, ['direct', 'worker'], 'plan.engines.candidate.surfaces');
   exactRecord(
-    candidateSurfaces.default,
+    candidateSurfaces.worker,
     {
       callingContract: 'async',
-      engine: 'candidate',
-      entrypoint: '@oliphaunt/wasix-ts',
+      engine: 'candidate-worker',
+      entrypoint: '@oliphaunt/wasix-ts/worker',
       executionBoundary: 'node-worker-thread',
-      executionOwner: 'package-worker',
+      executionOwner: 'sdk-worker',
       isolationImplementation: 'package-owned-worker-threads-rpc',
       timingBoundary: GATED_TIMING_BOUNDARY,
     },
-    'plan.engines.candidate.surfaces.default',
+    'plan.engines.candidate.surfaces.worker',
   );
   exactRecord(
-    candidateSurfaces.blocking,
+    candidateSurfaces.direct,
     {
-      callingContract: 'blocking',
-      engine: 'candidate-blocking',
-      entrypoint: '@oliphaunt/wasix-ts/blocking',
+      callingContract: 'async',
+      engine: 'candidate-direct',
+      entrypoint: '@oliphaunt/wasix-ts',
       executionBoundary: 'node-caller-realm',
       executionOwner: 'caller',
       isolationImplementation: 'none-caller-realm',
       timingBoundary: 'caller-around-public-api',
     },
-    'plan.engines.candidate.surfaces.blocking',
+    'plan.engines.candidate.surfaces.direct',
   );
 
   const comparison = object(engines.comparison, 'plan.engines.comparison');
@@ -145,7 +145,7 @@ function validateCurrentEngines(plan) {
       benchmarkMethodology: 'official-browser-worker-timer-reference-only-not-collected',
       benchmarkMethodologySource: 'packages/benchmark/src/benchmarks-worker.js',
       callingContract: 'async',
-      engine: 'comparison',
+      engine: 'comparison-worker',
       entrypoint: 'tools/perf/wasix-node/pglite-node-worker.mjs',
       executionBoundary: 'node-worker-thread',
       executionOwner: 'harness-worker',
@@ -160,7 +160,7 @@ function validateCurrentEngines(plan) {
     comparisonSurfaces.callerRealm,
     {
       callingContract: 'async',
-      engine: 'comparison-caller-realm',
+      engine: 'comparison-direct',
       entrypoint: '@electric-sql/pglite',
       executionBoundary: 'node-main-thread',
       executionOwner: 'caller',
@@ -382,9 +382,7 @@ export function validatePlan(plan) {
   }
   equal(
     measurement.processOrder,
-    plan.schema === LEGACY_PLAN_SCHEMA
-      ? 'alternating-worker-pairs-then-alternating-direct-pairs-fresh-processes'
-      : 'alternating-worker-pairs-then-alternating-blocking-pairs-fresh-processes',
+    'alternating-worker-pairs-then-alternating-direct-pairs-fresh-processes',
     'plan.measurement.processOrder',
   );
   equal(measurement.pairing, 'same-repeat-candidate-over-comparison', 'plan.measurement.pairing');
@@ -411,11 +409,7 @@ export function validatePlan(plan) {
     fail('plan.gate.maxGeomeanRatio must be positive and no greater than 0.80');
   }
   equal(gate.requiresCorrectness, true, 'plan.gate.requiresCorrectness');
-  exactStringList(
-    gate[gateGrouping],
-    plan.schema === LEGACY_PLAN_SCHEMA ? ['worker', 'direct'] : ['worker', 'blocking'],
-    `plan.gate.${gateGrouping}`,
-  );
+  exactStringList(gate[gateGrouping], ['worker', 'direct'], `plan.gate.${gateGrouping}`);
   equal(
     gate.metric,
     'geometric-mean-of-median-paired-candidate-over-comparison-ratios-lower-is-better',
@@ -478,9 +472,9 @@ export async function validateRepositoryBindings(plan) {
     `${relative(candidateFile)}.exports["."].node`,
   );
   equal(
-    candidate.exports?.['./blocking']?.node,
-    './lib/blocking.node.js',
-    `${relative(candidateFile)}.exports["./blocking"].node`,
+    candidate.exports?.['./worker']?.node,
+    './lib/worker-entry.node.js',
+    `${relative(candidateFile)}.exports["./worker"].node`,
   );
   equal(
     candidate.dependencies?.fzstd,

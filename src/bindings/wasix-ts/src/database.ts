@@ -99,10 +99,7 @@ export type WasixDatabaseSession = {
   /** The session can safely block away from its public caller while serving a connection. */
   readonly supportsProtocolConnections?: boolean;
   readonly identity?: WasixDatabaseIdentity;
-  exec(
-    input: Uint8Array,
-    persistence?: WasixPersistenceMode,
-  ): Promise<Uint8Array>;
+  exec(input: Uint8Array, persistence?: WasixPersistenceMode): Promise<Uint8Array>;
   execStream?(
     input: Uint8Array,
     onChunk: ProtocolChunkCallback,
@@ -111,13 +108,8 @@ export type WasixDatabaseSession = {
   sync(boundary: WasixStorageSyncBoundary): Promise<void>;
   /** Internal test seams may omit backup; production sessions always provide it. */
   backup?(): Promise<Uint8Array>;
-  runPgDump?(
-    options: WasixPgDumpProcessOptions,
-  ): Promise<WasixToolProcessResult>;
-  serve?(
-    connection: WasixProtocolConnection,
-    mode: WasixProtocolConnectionMode,
-  ): Promise<void>;
+  runPgDump?(options: WasixPgDumpProcessOptions): Promise<WasixToolProcessResult>;
+  serve?(connection: WasixProtocolConnection, mode: WasixProtocolConnectionMode): Promise<void>;
   /**
    * Begin the session's one terminal teardown attempt.
    *
@@ -133,11 +125,7 @@ export type WasixDatabaseSession = {
 type ForgottenDatabaseGeneration = Readonly<Record<never, never>>;
 
 type FinalizationRegistryLike = Readonly<{
-  register(
-    target: object,
-    heldValue: ForgottenDatabaseGeneration,
-    unregisterToken: object,
-  ): void;
+  register(target: object, heldValue: ForgottenDatabaseGeneration, unregisterToken: object): void;
   unregister(unregisterToken: object): boolean;
 }>;
 
@@ -164,18 +152,14 @@ export class WasixForgottenDatabaseRegistry {
   readonly #schedule: (work: () => void) => void;
 
   constructor(
-    createRegistry: FinalizationRegistryFactory = (cleanup) =>
-      new FinalizationRegistry(cleanup),
+    createRegistry: FinalizationRegistryFactory = (cleanup) => new FinalizationRegistry(cleanup),
     schedule: (work: () => void) => void = queueMicrotask,
   ) {
     this.#schedule = schedule;
     this.#finalizer = createRegistry((generation) => this.#finalize(generation));
   }
 
-  register(
-    owner: object,
-    session: WasixDatabaseSession,
-  ): WasixForgottenDatabaseRegistration {
+  register(owner: object, session: WasixDatabaseSession): WasixForgottenDatabaseRegistration {
     // Object identity is the generation. It cannot wrap, be forged by a stale
     // callback, or retain the public owner through the held value.
     const generation: ForgottenDatabaseGeneration = Object.freeze({});
@@ -215,9 +199,7 @@ async function closeForgottenSession(session: WasixDatabaseSession): Promise<voi
 }
 
 const forgottenDatabaseRegistry =
-  typeof FinalizationRegistry === 'undefined'
-    ? undefined
-    : new WasixForgottenDatabaseRegistry();
+  typeof FinalizationRegistry === 'undefined' ? undefined : new WasixForgottenDatabaseRegistry();
 
 /** @internal Public database state machine; construction stays behind Oliphaunt.open(). */
 export class WasixDatabaseImpl implements OliphauntDatabase {
@@ -226,8 +208,7 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
   readonly #forgottenRegistry: WasixForgottenDatabaseRegistry | undefined;
   readonly #forgottenRegistration: WasixForgottenDatabaseRegistration | undefined;
   readonly #resources = new Set<WasixDatabaseResource>();
-  readonly #pendingProtocolConnections =
-    new Set<PendingProtocolConnectionReservation>();
+  readonly #pendingProtocolConnections = new Set<PendingProtocolConnectionReservation>();
   #tail = Promise.resolve();
   #closed = false;
   #closing = false;
@@ -240,8 +221,7 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
 
   constructor(
     session: WasixDatabaseSession,
-    forgottenRegistry: WasixForgottenDatabaseRegistry | undefined =
-      forgottenDatabaseRegistry,
+    forgottenRegistry: WasixForgottenDatabaseRegistry | undefined = forgottenDatabaseRegistry,
   ) {
     this.#session = session;
     this.#forgottenRegistry = forgottenRegistry;
@@ -267,9 +247,7 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
   ): Promise<CommandResult> {
     this.#assertAvailable();
     const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
-    return this.#serialize(() =>
-      this.#runDatabasePlanUnlocked(plan, parseCommandResponse),
-    );
+    return this.#serialize(() => this.#runDatabasePlanUnlocked(plan, parseCommandResponse));
   }
 
   async query<Row = QueryObjectRow>(
@@ -294,9 +272,7 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
   ): Promise<RawQueryResult> {
     this.#assertAvailable();
     const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
-    return this.#serialize(() =>
-      this.#runDatabasePlanUnlocked(plan, parseQueryRawResponse),
-    );
+    return this.#serialize(() => this.#runDatabasePlanUnlocked(plan, parseQueryRawResponse));
   }
 
   async exec<Row = QueryObjectRow>(
@@ -319,19 +295,14 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
   ): Promise<DescribeResult> {
     this.#assertAvailable();
     const input = describeQuery(sql, [...parameterTypeOids]);
-    return this.#serialize(() =>
-      this.#runDatabaseStructuredUnlocked(input, parseDescribeResponse),
-    );
+    return this.#serialize(() => this.#runDatabaseStructuredUnlocked(input, parseDescribeResponse));
   }
 
   async execProtocolRaw(input: BinaryInput): Promise<Uint8Array> {
     return this.#execOwned(toUint8Array(input).slice());
   }
 
-  async execProtocolRawStream(
-    input: BinaryInput,
-    onChunk: ProtocolChunkCallback,
-  ): Promise<void> {
+  async execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void> {
     if (typeof onChunk !== 'function') {
       throw new TypeError('raw protocol stream callback must be a function');
     }
@@ -348,19 +319,13 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
             offset < response.length;
             offset += WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES
           ) {
-            consumer.callback(
-              response.slice(
-                offset,
-                offset + WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES,
-              ),
-            );
+            consumer.callback(response.slice(offset, offset + WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES));
           }
           return;
         }
         await this.#session.execStream(bytes, consumer.callback, 'sync');
       } catch (error) {
-        if (error instanceof WasixStorageError)
-          this.#persistenceFailure = error;
+        if (error instanceof WasixStorageError) this.#persistenceFailure = error;
         if (consumer.failure !== undefined) throw consumer.failure.error;
         throw error;
       }
@@ -372,9 +337,7 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     return this.#serialize(async () => {
       this.#assertHealthy();
       if (this.#session.backup === undefined) {
-        throw new Error(
-          'this WASIX execution session does not support physical backup',
-        );
+        throw new Error('this WASIX execution session does not support physical backup');
       }
       const bytes = await this.#session.backup();
       await this.#syncPersistence('operation');
@@ -388,9 +351,7 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     return this.#serialize(async () => {
       this.#assertHealthy();
       if (this.#session.runPgDump === undefined) {
-        throw new Error(
-          'this WASIX database entrypoint does not support pg_dump',
-        );
+        throw new Error('this WASIX database entrypoint does not support pg_dump');
       }
       return this.#session.runPgDump(options);
     });
@@ -431,30 +392,22 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
       if (!start) return;
       this.#assertHealthy();
       if (this.#session.serve === undefined) {
-        throw new Error(
-          'this WASIX database entrypoint does not support protocol connections',
-        );
+        throw new Error('this WASIX database entrypoint does not support protocol connections');
       }
       if (!this.#session.supportsProtocolConnections) {
-        throw new Error(
-          'WASIX psql and local servers require the @oliphaunt/wasix-ts root entrypoint',
-        );
+        throw new Error('WASIX psql and local servers require @oliphaunt/wasix-ts/worker');
       }
       try {
         await this.#session.serve(connection, mode);
       } catch (error) {
-        if (error instanceof WasixStorageError)
-          this.#persistenceFailure = error;
+        if (error instanceof WasixStorageError) this.#persistenceFailure = error;
         throw error;
       }
     });
     return {
       start() {
         if (state === 'canceled') {
-          throw (
-            cancellation ??
-            new Error('Oliphaunt WASIX protocol connection was canceled')
-          );
+          throw cancellation ?? new Error('Oliphaunt WASIX protocol connection was canceled');
         }
         if (state === 'pending') {
           state = 'started';
@@ -463,11 +416,7 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
         return serving;
       },
       cancel() {
-        pending.cancel(
-          new Error(
-            'Oliphaunt WASIX protocol connection was canceled before start',
-          ),
-        );
+        pending.cancel(new Error('Oliphaunt WASIX protocol connection was canceled before start'));
       },
     };
   }
@@ -482,8 +431,7 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
       try {
         return await this.#session.exec(bytes, 'sync');
       } catch (error) {
-        if (error instanceof WasixStorageError)
-          this.#persistenceFailure = error;
+        if (error instanceof WasixStorageError) this.#persistenceFailure = error;
         throw error;
       }
     });
@@ -497,10 +445,7 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
       return this.#runDatabaseStructuredUnlocked(plan.input, decode);
     }
 
-    const describedExchange = await this.#exchangeKnownUnlocked(
-      plan.input,
-      'database',
-    );
+    const describedExchange = await this.#exchangeKnownUnlocked(plan.input, 'database');
     if (describedExchange.status !== 'idle') {
       return this.#finishDatabaseExchangeUnlocked(
         describedExchange,
@@ -646,10 +591,7 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     try {
       return await this.#session.exec(input, 'defer');
     } catch (error) {
-      this.#recordUnknownExchange(
-        error,
-        'raw PostgreSQL transport outcome is unknown',
-      );
+      this.#recordUnknownExchange(error, 'raw PostgreSQL transport outcome is unknown');
       throw error;
     }
   }
@@ -667,38 +609,24 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
           offset < response.length;
           offset += WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES
         ) {
-          onChunk(
-            response.slice(
-              offset,
-              offset + WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES,
-            ),
-          );
+          onChunk(response.slice(offset, offset + WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES));
         }
         return;
       }
       await this.#session.execStream(input, onChunk, 'defer');
     } catch (error) {
-      this.#recordUnknownExchange(
-        error,
-        'streaming PostgreSQL transport outcome is unknown',
-      );
+      this.#recordUnknownExchange(error, 'streaming PostgreSQL transport outcome is unknown');
       throw error;
     }
   }
 
-  async #exchangeKnownUnlocked(
-    input: Uint8Array,
-    scope: StructuredScope,
-  ): Promise<KnownExchange> {
+  async #exchangeKnownUnlocked(input: Uint8Array, scope: StructuredScope): Promise<KnownExchange> {
     this.#assertHealthy();
     let response: Uint8Array;
     try {
       response = await this.#session.exec(input, 'defer');
     } catch (error) {
-      this.#recordUnknownExchange(
-        error,
-        'structured PostgreSQL transport outcome is unknown',
-      );
+      this.#recordUnknownExchange(error, 'structured PostgreSQL transport outcome is unknown');
       throw error;
     }
 
@@ -725,18 +653,13 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
   async #executeTransactionControlUnlocked(
     sql: 'BEGIN' | 'COMMIT' | 'ROLLBACK',
   ): Promise<'committed' | 'rolledBack' | undefined> {
-    const exchange = await this.#exchangeKnownUnlocked(
-      extendedQuery(sql, []),
-      'control',
-    );
+    const exchange = await this.#exchangeKnownUnlocked(extendedQuery(sql, []), 'control');
     let result: CommandResult;
     try {
       result = parseCommandResponse(exchange.response);
     } catch (error) {
       if (sql === 'BEGIN' && exchange.status !== 'idle') {
-        await this.#executeTransactionControlUnlocked('ROLLBACK').catch(
-          () => undefined,
-        );
+        await this.#executeTransactionControlUnlocked('ROLLBACK').catch(() => undefined);
       } else if (sql !== 'BEGIN') {
         this.#transactionFailure = asError(error, `${sql} outcome is unknown`);
       }
@@ -744,13 +667,8 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     }
 
     if (sql === 'BEGIN') {
-      if (result.commandTag === 'BEGIN' && exchange.status === 'transaction')
-        return undefined;
-      const error = transactionBoundaryError(
-        sql,
-        result.commandTag,
-        exchange.status,
-      );
+      if (result.commandTag === 'BEGIN' && exchange.status === 'transaction') return undefined;
+      const error = transactionBoundaryError(sql, result.commandTag, exchange.status);
       if (exchange.status !== 'idle') {
         await this.#executeTransactionControlUnlocked('ROLLBACK');
       }
@@ -758,19 +676,13 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     }
 
     if (sql === 'COMMIT') {
-      if (result.commandTag === 'COMMIT' && exchange.status === 'idle')
-        return 'committed';
-      if (result.commandTag === 'ROLLBACK' && exchange.status === 'idle')
-        return 'rolledBack';
+      if (result.commandTag === 'COMMIT' && exchange.status === 'idle') return 'committed';
+      if (result.commandTag === 'ROLLBACK' && exchange.status === 'idle') return 'rolledBack';
     } else if (result.commandTag === 'ROLLBACK' && exchange.status === 'idle') {
       return undefined;
     }
 
-    const error = transactionBoundaryError(
-      sql,
-      result.commandTag,
-      exchange.status,
-    );
+    const error = transactionBoundaryError(sql, result.commandTag, exchange.status);
     this.#transactionFailure = error;
     throw error;
   }
@@ -783,14 +695,10 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     }
   }
 
-  async transaction<T>(
-    body: (transaction: OliphauntTransaction) => Promise<T> | T,
-  ): Promise<T> {
+  async transaction<T>(body: (transaction: OliphauntTransaction) => Promise<T> | T): Promise<T> {
     this.#assertAvailable();
     if (typeof body !== 'function') {
-      throw new TypeError(
-        'Oliphaunt WASIX transaction body must be a function',
-      );
+      throw new TypeError('Oliphaunt WASIX transaction body must be a function');
     }
     this.#activeTransaction = true;
     transactionPinnedTargets.add(this);
@@ -802,14 +710,10 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
       this.#transactionRunning = true;
       const transaction = new WasixTransactionImpl(
         (plan, decode) => this.#runTransactionPlanUnlocked(plan, decode),
-        (input, decode) =>
-          this.#runTransactionStructuredUnlocked(input, decode),
+        (input, decode) => this.#runTransactionStructuredUnlocked(input, decode),
         (input) => this.#runTransactionRawUnlocked(input),
         (input, onChunk) => this.#runTransactionStreamUnlocked(input, onChunk),
-        () =>
-          this.#executeTransactionControlUnlocked('ROLLBACK').then(
-            () => undefined,
-          ),
+        () => this.#executeTransactionControlUnlocked('ROLLBACK').then(() => undefined),
         (callback) => this.#protocolChunkConsumer(callback),
         () => this.#assertNotInProtocolStreamCallback(),
       );
@@ -817,10 +721,7 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
         try {
           await this.#executeTransactionControlUnlocked('BEGIN');
         } catch (error) {
-          if (
-            this.#transactionFailure === undefined &&
-            this.#persistenceFailure === undefined
-          ) {
+          if (this.#transactionFailure === undefined && this.#persistenceFailure === undefined) {
             try {
               await this.#syncPersistence('operation');
             } catch (persistenceError) {
@@ -893,9 +794,7 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
         }
         const primary =
           transaction.firstFailure ??
-          new Error(
-            'PostgreSQL rolled back the transaction instead of committing',
-          );
+          new Error('PostgreSQL rolled back the transaction instead of committing');
         try {
           await this.#syncPersistence('operation');
         } catch (persistenceError) {
@@ -936,15 +835,12 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     }
     this.#closing = true;
     const closing = new Error('Oliphaunt WASIX database is closing');
-    for (const connection of this.#pendingProtocolConnections)
-      connection.cancel(closing);
+    for (const connection of this.#pendingProtocolConnections) connection.cancel(closing);
     const orderlyClose = this.#serialize(() => this.#session.close());
     const sessionClose =
       this.#session.abort === undefined
         ? orderlyClose
-        : withDeadline(orderlyClose, CLOSE_DEADLINE_MS, () =>
-            this.#session.abort?.(),
-          );
+        : withDeadline(orderlyClose, CLOSE_DEADLINE_MS, () => this.#session.abort?.());
     const attempt = (async () => {
       let sessionFailed = false;
       let sessionFailure: unknown;
@@ -1093,9 +989,7 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     // ownership graph before awaiting userland cleanup so a failed terminal
     // close cannot retain otherwise collectible resources indefinitely.
     this.#resources.clear();
-    const results = await Promise.allSettled(
-      resources.map(async (resource) => resource.close()),
-    );
+    const results = await Promise.allSettled(resources.map(async (resource) => resource.close()));
     const failures: unknown[] = [];
     for (let index = 0; index < results.length; index += 1) {
       const result = results[index]!;
@@ -1104,10 +998,7 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
       }
     }
     if (failures.length > 0) {
-      throw new AggregateError(
-        failures,
-        'Oliphaunt WASIX database resource cleanup failed',
-      );
+      throw new AggregateError(failures, 'Oliphaunt WASIX database resource cleanup failed');
     }
   }
 }
@@ -1131,7 +1022,7 @@ export function runWasixPgDumpProcess(
   return database.runPgDump(options);
 }
 
-/** @internal Reserve a package-owned connection in the database FIFO. */
+/** @internal Reserve a Worker-owned connection in the database FIFO. */
 export function reserveWasixProtocolConnection(
   database: OliphauntDatabase,
   connection: WasixProtocolConnection,
@@ -1147,9 +1038,7 @@ export function assertWasixProtocolConnectionTarget(
 ): asserts database is WasixDatabaseImpl {
   assertWasixDatabaseTarget(database);
   if (!protocolConnectionTargets.has(database)) {
-    throw new Error(
-      'WASIX psql and local servers require the @oliphaunt/wasix-ts root entrypoint',
-    );
+    throw new Error('WASIX psql and local servers require @oliphaunt/wasix-ts/worker');
   }
 }
 
@@ -1184,9 +1073,7 @@ export function registerWasixDatabaseResource(
 }
 
 /** @internal Return the exact startup identity owned by a WASIX database handle. */
-export function getWasixDatabaseIdentity(
-  database: OliphauntDatabase,
-): WasixDatabaseIdentity {
+export function getWasixDatabaseIdentity(database: OliphauntDatabase): WasixDatabaseIdentity {
   assertWasixDatabaseTarget(database);
   return database.identity;
 }
@@ -1231,9 +1118,7 @@ function withDeadline<T>(
 
 class WasixCloseTimeoutError extends Error {
   constructor(milliseconds: number) {
-    super(
-      `Oliphaunt WASIX close exceeded ${milliseconds}ms; worker termination was requested`,
-    );
+    super(`Oliphaunt WASIX close exceeded ${milliseconds}ms; worker termination was requested`);
     this.name = 'WasixCloseTimeoutError';
   }
 }
@@ -1248,10 +1133,7 @@ class WasixTransactionImpl implements OliphauntTransaction {
     decode: (response: Uint8Array) => Result,
   ) => Promise<Result>;
   readonly #execRaw: (input: Uint8Array) => Promise<Uint8Array>;
-  readonly #execStream: (
-    input: Uint8Array,
-    onChunk: ProtocolChunkCallback,
-  ) => Promise<void>;
+  readonly #execStream: (input: Uint8Array, onChunk: ProtocolChunkCallback) => Promise<void>;
   readonly #rollbackControl: () => Promise<void>;
   readonly #wrapProtocolChunkConsumer: (
     callback: ProtocolChunkCallback,
@@ -1274,10 +1156,7 @@ class WasixTransactionImpl implements OliphauntTransaction {
       decode: (response: Uint8Array) => Result,
     ) => Promise<Result>,
     execRaw: (input: Uint8Array) => Promise<Uint8Array>,
-    execStream: (
-      input: Uint8Array,
-      onChunk: ProtocolChunkCallback,
-    ) => Promise<void>,
+    execStream: (input: Uint8Array, onChunk: ProtocolChunkCallback) => Promise<void>,
     rollbackControl: () => Promise<void>,
     wrapProtocolChunkConsumer: (
       callback: ProtocolChunkCallback,
@@ -1329,10 +1208,7 @@ class WasixTransactionImpl implements OliphauntTransaction {
       const stableOptions = snapshotQueryOptions(options);
       const plan = planQuery(sql, parameters, stableOptions);
       return this.#enqueue(async () =>
-        decodeQueryResult<Row>(
-          await this.#runPlan(plan, parseQueryRawResponse),
-          stableOptions,
-        ),
+        decodeQueryResult<Row>(await this.#runPlan(plan, parseQueryRawResponse), stableOptions),
       );
     });
   }
@@ -1356,22 +1232,15 @@ class WasixTransactionImpl implements OliphauntTransaction {
       const input = structuredSimpleQuery(sql);
       const stableOptions = snapshotReadOptions(options);
       return this.#enqueue(() =>
-        this.#runStructured(input, (response) =>
-          parseExecResponse<Row>(response, stableOptions),
-        ),
+        this.#runStructured(input, (response) => parseExecResponse<Row>(response, stableOptions)),
       );
     });
   }
 
-  describe(
-    sql: string,
-    parameterTypeOids: ReadonlyArray<number> = [],
-  ): Promise<DescribeResult> {
+  describe(sql: string, parameterTypeOids: ReadonlyArray<number> = []): Promise<DescribeResult> {
     return this.#publicPromise(() => {
       const input = describeQuery(sql, [...parameterTypeOids]);
-      return this.#enqueue(() =>
-        this.#runStructured(input, parseDescribeResponse),
-      );
+      return this.#enqueue(() => this.#runStructured(input, parseDescribeResponse));
     });
   }
 
@@ -1382,22 +1251,17 @@ class WasixTransactionImpl implements OliphauntTransaction {
     });
   }
 
-  execProtocolRawStream(
-    input: BinaryInput,
-    onChunk: ProtocolChunkCallback,
-  ): Promise<void> {
+  execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void> {
     return this.#publicPromise(() => {
       if (typeof onChunk !== 'function') {
         throw new TypeError('raw protocol stream callback must be a function');
       }
       const consumer = this.#wrapProtocolChunkConsumer(onChunk);
       const bytes = toUint8Array(input).slice();
-      return this.#enqueue(() => this.#execStream(bytes, consumer.callback)).catch(
-        (error) => {
-          if (consumer.failure !== undefined) throw consumer.failure.error;
-          throw error;
-        },
-      );
+      return this.#enqueue(() => this.#execStream(bytes, consumer.callback)).catch((error) => {
+        if (consumer.failure !== undefined) throw consumer.failure.error;
+        throw error;
+      });
     });
   }
 
@@ -1447,10 +1311,8 @@ class WasixTransactionImpl implements OliphauntTransaction {
   }
 
   #assertActive(): void {
-    if (this.#state === 'finishing')
-      throw new Error('transaction is finishing');
-    if (this.#state === 'closed')
-      throw new Error('transaction is no longer active');
+    if (this.#state === 'finishing') throw new Error('transaction is finishing');
+    if (this.#state === 'closed') throw new Error('transaction is no longer active');
   }
 
   #publicPromise<Result>(operation: () => Promise<Result>): Promise<Result> {
@@ -1495,9 +1357,7 @@ type KnownExchange = Readonly<{
 
 function snapshotParameterOptions(options: ParameterOptions): ParameterOptions {
   return Object.freeze({
-    ...(options.encoders === undefined
-      ? {}
-      : { encoders: Object.freeze({ ...options.encoders }) }),
+    ...(options.encoders === undefined ? {} : { encoders: Object.freeze({ ...options.encoders }) }),
   });
 }
 
@@ -1507,9 +1367,7 @@ function snapshotReadOptions(
   return Object.freeze({
     rowMode: options.rowMode,
     valueMode: options.valueMode,
-    ...(options.decoders === undefined
-      ? {}
-      : { decoders: Object.freeze({ ...options.decoders }) }),
+    ...(options.decoders === undefined ? {} : { decoders: Object.freeze({ ...options.decoders }) }),
   });
 }
 

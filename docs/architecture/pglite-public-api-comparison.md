@@ -33,9 +33,8 @@ option-object shapes, lifecycle compatibility fields, and ownership policy.
 
 Server mode remains the zero-special-case path: ordinary PostgreSQL drivers and
 ORMs use `connectionString`. This comparison matters most for native direct and
-broker execution, WASIX package-Worker and explicit blocking execution,
-browsers, mobile, and the
-two embedded Rust products.
+broker execution, WASIX caller-realm and explicit Worker execution, browsers,
+mobile, and the two embedded Rust products.
 
 ## Core method contrast
 
@@ -70,29 +69,25 @@ not expose its runtime module, filesystem, mutex, or process internals.
 ## Construction and readiness
 
 PGlite supports a synchronous constructor that begins initialization and an
-async factory that waits for readiness. Oliphaunt exposes only a ready handle:
+async factory that waits for readiness. Oliphaunt exposes only a ready handle,
+with execution placement kept separate from database topology:
 
-- native TypeScript, WASIX TypeScript, and React Native return promises and
-  retain their runtime work behind an SDK-owned asynchronous boundary;
-- native Rust builder `open().await` constructs the runtime on its permanent
-  owner thread, which also serializes later database work away from the async
-  executor thread polling each future;
-- Swift uses an async throwing factory and Kotlin uses a suspending factory;
-  and the platform implementations use dedicated serial owners; and
-- WASIX Rust's root API is async and owner-thread backed. Its explicit
-  `oliphaunt_wasix::blocking` module retains the caller-thread, exclusively
-  borrowed `&mut` API for applications that deliberately want no scheduling
-  hop.
+- native Rust and WASIX Rust roots open and execute synchronously on the
+  calling thread through exclusive handles; `oliphaunt::worker` and
+  `oliphaunt_wasix::worker` provide the cloneable asynchronous owner-thread
+  alternatives;
+- native TypeScript and React Native return promises and retain runtime work
+  behind their SDK/platform asynchronous boundaries; and
+- Swift uses an async throwing factory and Kotlin uses a suspending factory,
+  with dedicated serial owners appropriate to those platforms.
 
-The same choice is explicit in WASIX TypeScript. The root entry point owns a
-Worker or worker thread and is safe to call from a UI/event-loop realm. The
-`/blocking` entry point runs synchronous guest work in the importing realm.
-Its operations retain promise-shaped results because asset loading and durable
-provider publication are asynchronous; that promise does not make the guest
-CPU work non-blocking. This is a genuine calling-semantics difference, not a
-different database topology. PGlite's ordinary JavaScript API, by contrast,
-runs in its importing realm unless the application uses PGlite's Worker-facing
-integration.
+WASIX TypeScript follows PGlite's placement philosophy directly. The root
+entry point runs PostgreSQL in the importing realm, while `/worker` opts into a
+package-owned Web Worker or Node-compatible worker thread. Both surfaces remain
+Promise-shaped because loading and durable provider publication are
+asynchronous. On the root surface, that Promise does not move synchronous guest
+CPU work off the caller's event loop. The Worker surface changes execution
+placement, not database topology or query semantics.
 
 Every SDK publishes closed state. Readiness properties remain unnecessary for
 Oliphaunt-native code because a successful `open` is the readiness boundary. A
@@ -197,16 +192,15 @@ Both Rust products expose the same fluent statement concept:
 let rows = database
     .sql("select $1::int4 as value")
     .bind(41_i32)
-    .query()
-    .await?; // Both root APIs; oliphaunt_wasix::blocking omits await.
+    .query()?;
 ```
 
 The builder is available on native Rust and WASIX Rust databases and callback
 transactions. It accumulates typed parameters and result format, then ends in
-`query`, `execute`, or `describe`. Both root Rust APIs return futures and run
-their terminal work on retained owners. The explicit
-`oliphaunt_wasix::blocking` builder runs terminals synchronously with exclusive
-mutable borrowing.
+`query`, `execute`, or `describe`. Both root Rust APIs run terminals
+synchronously with exclusive mutable borrowing. Their explicit `worker`
+modules expose the same fluent terminals as futures executed by retained owner
+threads.
 
 PGlite's tagged template instead interprets JavaScript template substitutions
 and supplies helpers such as raw SQL and quoted identifiers. The two APIs solve
@@ -286,11 +280,11 @@ method name therefore improves migration clarity but does not make the
 signature structurally identical.
 
 PGlite's concrete class also has `execProtocolRawSync`. Oliphaunt deliberately
-does not promise a synchronous-return JavaScript result. The WASIX `/blocking`
-entry point means guest computation runs in the caller realm; loading,
-persistence publication, and the public result remain promise-shaped. This
-keeps the calling contract and execution owner explicit without pretending
-durable I/O is synchronous.
+does not promise a synchronous-return JavaScript result. The WASIX root means
+guest computation runs in the caller realm; loading, persistence publication,
+and the public result remain promise-shaped. This keeps the calling shape and
+execution owner independently explicit without pretending durable I/O is
+synchronous.
 
 PGlite additionally exposes structured `execProtocol`, which parses supported
 backend messages while retaining the raw data. Oliphaunt intentionally has no
@@ -359,10 +353,10 @@ Oliphaunt's public product family goes beyond PGlite core with:
 | Surface | Public database shape | Deliberate difference |
 | --- | --- | --- |
 | Native TypeScript | Promise API; decoded `query`, `queryRaw`, `execute`, `exec`, `describe`, transactions, raw protocol, cancellation, backup/restore; direct/broker/server | Server adds `connectionString`; direct and broker keep one session |
-| WASIX TypeScript | Same JavaScript SQL shape through the default package Worker or explicit `/blocking` entry point; memory, IndexedDB, OPFS, and managed directories | Blocking still has promise-shaped loading/publication but runs guest CPU work in the caller realm; no cancellation; browser has no server sockets |
+| WASIX TypeScript | Same JavaScript SQL shape through the caller-realm root or explicit `/worker` entry point; memory, IndexedDB, OPFS, and managed directories | Both surfaces are Promise-shaped; root guest CPU work runs in the caller realm while `/worker` adds RPC isolation; no cancellation; browser has no server sockets |
 | React Native | Same JavaScript SQL and codec shape over Swift/Kotlin | Direct mobile only; JSI carries binary batches and raw chunks |
-| Native Rust | Async database/server; fluent `Sql`; typed ordered rows; direct/broker/server | A permanent owner thread serializes runtime work; server backup uses ordinary PostgreSQL tooling |
-| WASIX Rust | Async owner-thread root plus explicit `blocking` module; fluent `Sql`; typed ordered rows; memory/directory storage | Blocking direct uses exclusive `&mut` caller-thread calls; the root is cloneable and async; no cancellation |
+| Native Rust | Synchronous exclusive root plus async `worker` module; fluent `Sql`; typed ordered rows; direct/broker/server | Root executes on the caller thread; worker handles are cloneable and serialize runtime work on a permanent owner thread; server backup uses ordinary PostgreSQL tooling |
+| WASIX Rust | Synchronous exclusive root plus async `worker` module; fluent `Sql`; typed ordered rows; memory/directory storage | Root executes on the caller thread; worker handles are cloneable and owner-thread backed; no cancellation |
 | Swift | Actor-isolated async database; typed ordered rows and Foundation byte/path types | Direct Apple runtime; no server product |
 | Kotlin | Coroutine database; typed ordered rows and Kotlin byte/path types | Android is the current application facade; no server product |
 

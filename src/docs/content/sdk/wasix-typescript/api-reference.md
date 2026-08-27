@@ -22,7 +22,7 @@ Use the generated TypeDoc reference for exact declarations.
 | Query values | `QueryParam`, `QueryResult`, `RawQueryResult`, `QueryField`, `CommandResult`, `ExecResult`, `DescribeResult` | Use decoded or lossless PostgreSQL parameter and result values |
 | Diagnostics | query-scoped `notices`, `PostgresError`, `WasixStorageError` | Distinguish PostgreSQL diagnostics from host persistence failures |
 | Extensions | `WasixExtensionDescriptor` | Select an exact independently packaged WASIX extension |
-| Optional tools | `pgDump`, `psql`, `PostgresToolError` from `@oliphaunt/wasix-tools` | Run a standard plain logical dump against default Worker or blocking handles, or non-interactive psql against a default Worker handle |
+| Optional tools | `pgDump`, `psql`, `PostgresToolError` from `@oliphaunt/wasix-tools` | Run a standard plain logical dump against direct or Worker handles, or non-interactive psql against a Worker handle |
 | Optional local server | `openServer`, `ServerListen`, `OliphauntServer.connectionString`, read-only `OliphauntServer.closed`, `close`, and `Symbol.asyncDispose` from `@oliphaunt/wasix-ts/server/node`, `/bun`, or `/deno` | Publish and lifecycle-manage one loopback TCP or PostgreSQL-named Unix endpoint on a socket-capable host |
 
 ```ts

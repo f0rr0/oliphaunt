@@ -1,7 +1,12 @@
+use oliphaunt::worker::{
+    Oliphaunt as WorkerOliphaunt, OliphauntServer as WorkerOliphauntServer,
+    Transaction as WorkerTransaction,
+};
 use oliphaunt::{
-    DatabaseStorage, DecodeError, Error, ExecResult, Extension, FromSql, IntoParameter, Oliphaunt,
-    OliphauntBuilder, OliphauntServer, Parameter, PostgresError, PostgresNotice, QueryFormat,
-    QueryParam, StatementDescription, Transaction, TypeOid, ValueFormat, ValueRef,
+    CancelHandle, DatabaseStorage, DecodeError, Error, ExecResult, Extension, FromSql,
+    IntoParameter, Oliphaunt, OliphauntBuilder, OliphauntServer, Parameter, PostgresError,
+    PostgresNotice, QueryFormat, QueryParam, StatementDescription, Transaction, TypeOid,
+    ValueFormat, ValueRef,
 };
 
 struct PublicParameter;
@@ -42,18 +47,32 @@ fn public_api_has_only_the_deliberate_native_vocabulary() {
     let _: QueryParam = "text".into();
     let _: QueryFormat = QueryFormat::Text;
 
-    fn assert_send_sync<T: Send + Sync>() {}
     fn assert_error<T: std::error::Error + Send + Sync + 'static>() {}
-    assert_send_sync::<Oliphaunt>();
-    assert_send_sync::<OliphauntServer>();
-    assert_send_future(Oliphaunt::builder().temporary_directory().open());
-    assert_send_future(Oliphaunt::builder().open_server());
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<CancelHandle>();
+    fn cancellation_surface(handle: &CancelHandle) {
+        let _: CancelHandle = handle.clone();
+        let _: oliphaunt::Result<()> = handle.cancel();
+    }
+    let _: fn(&CancelHandle) = cancellation_surface;
+    // liboliphaunt-doc-example:rust-worker-basic
+    assert_send_sync::<WorkerOliphaunt>();
+    assert_send_sync::<WorkerOliphauntServer>();
+    assert_send_future(WorkerOliphaunt::builder().temporary_directory().open());
+    assert_send_future(WorkerOliphaunt::builder().open_server());
     assert_error::<Error>();
     assert_error::<PostgresError>();
-    assert_send_future(Oliphaunt::restore(
-        std::path::PathBuf::from("unused-public-api-check"),
-        Vec::<u8>::new(),
-    ));
+
+    fn caller_thread_terminals(builder: OliphauntBuilder) {
+        let _: oliphaunt::Result<Oliphaunt> = builder.open();
+        // liboliphaunt-doc-example:rust-open-server
+        let _: oliphaunt::Result<OliphauntServer> = Oliphaunt::builder().open_server();
+        let _: oliphaunt::Result<()> = Oliphaunt::restore(
+            std::path::PathBuf::from("unused-public-api-check"),
+            Vec::<u8>::new(),
+        );
+    }
+    let _: fn(OliphauntBuilder) = caller_thread_terminals;
 
     fn transaction_rollback_surface(error: &Error) {
         if let Error::TransactionRollback { callback, rollback } = error {
@@ -104,7 +123,7 @@ fn typed_and_fluent_database_api_is_public() {
         Some(TypeOid::INT4)
     );
 
-    fn database_surface(database: &Oliphaunt) {
+    fn database_surface(database: &mut Oliphaunt) {
         let _query = database
             .sql("SELECT $1::int4")
             .bind(1_i32)
@@ -121,31 +140,45 @@ fn typed_and_fluent_database_api_is_public() {
             .sql("SELECT $1::uuid")
             .bind_parameter(Parameter::typed_null(TypeOid::UUID))
             .describe();
-        let _exec: std::pin::Pin<
-            Box<dyn std::future::Future<Output = oliphaunt::Result<ExecResult>> + '_>,
-        > = Box::pin(database.exec("SELECT 1; SELECT 2"));
-        let _description: std::pin::Pin<
-            Box<dyn std::future::Future<Output = oliphaunt::Result<StatementDescription>> + '_>,
-        > = Box::pin(database.sql("SELECT 1").describe());
+        let _exec: oliphaunt::Result<ExecResult> = database.exec("SELECT 1; SELECT 2");
+        let _description: oliphaunt::Result<StatementDescription> =
+            database.sql("SELECT 1").describe();
         let _raw_stream = database.exec_protocol_raw_stream([], |_| Ok(()));
-        assert_send_future(database.cancel());
+        let _cancel = database.cancel();
+        let _cancel_handle = database.cancel_handle();
         let _closed = database.is_closed();
-        let _transaction = database.transaction(async |transaction: &Transaction| {
+        let _transaction = database.transaction(|transaction: &mut Transaction<'_>| {
             let _closed = transaction.is_closed();
             let _typed_query = transaction.query_with_params("SELECT $1::int8", [1_i64]);
             let _raw_stream = transaction.exec_protocol_raw_stream([], |_| Ok(()));
+            transaction.rollback()?;
+            Ok(())
+        });
+    }
+    let _: fn(&mut Oliphaunt) = database_surface;
+
+    fn server_surface(server: &mut OliphauntServer) {
+        let _describe = server.describe("SELECT 1");
+        let _raw_stream = server.exec_protocol_raw_stream([], |_| Ok(()));
+        let _cancel = server.cancel();
+        let _cancel_handle = server.cancel_handle();
+    }
+    let _: fn(&mut OliphauntServer) = server_surface;
+
+    fn worker_database_surface(database: &WorkerOliphaunt) {
+        let _query = database.sql("SELECT $1::int4").bind(1_i32).query();
+        let _execute = database.execute_with_params("SELECT $1::bool", [true]);
+        let _exec = database.exec("SELECT 1; SELECT 2");
+        let _description = database.describe("SELECT 1");
+        let _raw_stream = database.exec_protocol_raw_stream([], |_| Ok(()));
+        assert_send_future(database.cancel());
+        let _transaction = database.transaction(async |transaction: &WorkerTransaction| {
+            let _query = transaction.query_with_params("SELECT $1::int8", [1_i64]);
             transaction.rollback().await?;
             Ok(())
         });
     }
-    let _: fn(&Oliphaunt) = database_surface;
-
-    fn server_surface(server: &OliphauntServer) {
-        let _describe = server.describe("SELECT 1");
-        let _raw_stream = server.exec_protocol_raw_stream([], |_| Ok(()));
-        assert_send_future(server.cancel());
-    }
-    let _: fn(&OliphauntServer) = server_surface;
+    let _: fn(&WorkerOliphaunt) = worker_database_surface;
 }
 
 #[test]

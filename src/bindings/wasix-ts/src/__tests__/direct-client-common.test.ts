@@ -205,12 +205,7 @@ describe('direct WASIX session lifecycle', () => {
     };
     dispatchRequest = createWorkerSessionDispatcher(
       (options) =>
-        DirectWasixSession.open(
-          options,
-          host,
-          fakeDependencies(storage),
-          'browser-worker',
-        ),
+        DirectWasixSession.open(options, host, fakeDependencies(storage), 'browser-worker'),
       (response) => messageListener?.(response),
     );
 
@@ -218,9 +213,7 @@ describe('direct WASIX session lifecycle', () => {
     const first = database.close();
     const second = database.close();
     expect(second).toBe(first);
-    await expect(first).rejects.toThrow(
-      'WASIX PostgreSQL direct close failed: guest close failed',
-    );
+    await expect(first).rejects.toThrow('WASIX PostgreSQL direct close failed: guest close failed');
     await expect(second).rejects.toThrow(
       'WASIX PostgreSQL direct close failed: guest close failed',
     );
@@ -554,9 +547,7 @@ describe('direct WASIX session lifecycle', () => {
     await expect(
       session.serve({ frontend, backend: createWasixByteChannel() }, 'tool'),
     ).rejects.toThrow('byte channel failed');
-    await expect(session.exec(Uint8Array.of(1))).rejects.toThrow(
-      'Oliphaunt WASIX database failed',
-    );
+    await expect(session.exec(Uint8Array.of(1))).rejects.toThrow('Oliphaunt WASIX database failed');
     await session.close();
   });
 
@@ -579,9 +570,7 @@ describe('direct WASIX session lifecycle', () => {
     await expect(session.exec(Uint8Array.of(1))).rejects.toThrow(
       'protocol pump trapped; this database can no longer be used',
     );
-    await expect(session.exec(Uint8Array.of(2))).rejects.toThrow(
-      'Oliphaunt WASIX database failed',
-    );
+    await expect(session.exec(Uint8Array.of(2))).rejects.toThrow('Oliphaunt WASIX database failed');
     await session.close();
 
     expect(events).toEqual(['startup', 'exec', 'close', 'storage:failed', 'free']);
@@ -674,9 +663,7 @@ describe('direct WASIX session lifecycle', () => {
     );
 
     await expect(session.backup()).rejects.toThrow('could not confirm leaving backup mode');
-    await expect(session.exec(Uint8Array.of(1))).rejects.toThrow(
-      'Oliphaunt WASIX database failed',
-    );
+    await expect(session.exec(Uint8Array.of(1))).rejects.toThrow('Oliphaunt WASIX database failed');
     await session.close();
   });
 
@@ -790,9 +777,7 @@ describe('direct WASIX session lifecycle', () => {
         }),
         fakeDependencies(storage),
       );
-      const timedOut = expect(opening).rejects.toThrow(
-        'Oliphaunt WASIX startup exceeded 120000ms',
-      );
+      const timedOut = expect(opening).rejects.toThrow('Oliphaunt WASIX startup exceeded 120000ms');
       await vi.advanceTimersByTimeAsync(120_000);
 
       await timedOut;
@@ -878,7 +863,7 @@ describe('direct WASIX session lifecycle', () => {
 
     await expect(
       DirectWasixSession.open(options, fakeHost({}), guardedDependencies),
-    ).rejects.toThrow(/use the @oliphaunt\/wasix-ts root entrypoint for postgis/);
+    ).rejects.toThrow(/use @oliphaunt\/wasix-ts\/worker for postgis/);
     expect(prepared).toBe(false);
 
     const workerSession = await DirectWasixSession.open(

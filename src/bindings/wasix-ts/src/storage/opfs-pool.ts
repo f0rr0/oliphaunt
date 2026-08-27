@@ -209,11 +209,7 @@ export class DirectOpfsPool {
         pool.#closeHandles(false);
       } catch (closeError) {
         const primary = error instanceof Error ? error : new Error(describeError(error));
-        throw composeWasixStorageFailure(
-          primary,
-          'OPFS handle cleanup also failed',
-          closeError,
-        );
+        throw composeWasixStorageFailure(primary, 'OPFS handle cleanup also failed', closeError);
       }
       throw error;
     }

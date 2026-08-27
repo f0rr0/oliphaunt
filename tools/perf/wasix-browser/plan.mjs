@@ -29,7 +29,7 @@ const COMPARISON_INTEGRITY =
 const COMPARISON_COMMIT = '25d0a55e1f1e4c59f26d9e125150dda88a33fd00';
 const COMPARISON_TREE_SHA256 =
   'b3925de04c386f51859c1bf18c143b225e3850616718140dd32e8eb48e9a2c84';
-const ENGINE_NAMES = ['wasixBlocking', 'wasixWorker', 'pgliteDirect', 'pgliteWorker'];
+const ENGINE_NAMES = ['wasixDirect', 'wasixWorker', 'pgliteDirect', 'pgliteWorker'];
 const LEGACY_ENGINE_NAMES = ['wasixDirect', 'wasixWorker', 'pgliteDirect', 'pgliteWorker'];
 const PROFILE_FIELDS = [
   'startupRuns',
@@ -114,9 +114,21 @@ const RUNTIME_BUILD = {
   linkerFlags: '',
   backendTiming: '0',
 };
-const CALLING_CONTRACTS = {
-  blocking: ['wasixBlocking', 'pgliteDirect'],
+const SURFACE_COMPARISONS = {
+  direct: ['wasixDirect', 'pgliteDirect'],
   worker: ['wasixWorker', 'pgliteWorker'],
+};
+const CANDIDATE_EXECUTION_SURFACES = {
+  direct: {
+    entrypoint: '@oliphaunt/wasix-ts',
+    callingContract: 'async',
+    executionOwner: 'caller',
+  },
+  worker: {
+    entrypoint: '@oliphaunt/wasix-ts/worker',
+    callingContract: 'async',
+    executionOwner: 'sdk-worker',
+  },
 };
 
 export async function loadBrowserPlan(file = defaultBrowserPlanFile) {
@@ -152,26 +164,22 @@ export function validateBrowserPlan(plan) {
   requireEqual(candidate.package, CANDIDATE_PACKAGE, 'plan.engines.candidate.package');
   requireEqual(candidate.storage, 'memory', 'plan.engines.candidate.storage');
   requireExactRecord(
-    requireRecord(candidate.surfaces, 'plan.engines.candidate.surfaces').blocking,
+    requireRecord(candidate.surfaces, 'plan.engines.candidate.surfaces').direct,
     {
-      engine: 'wasixBlocking',
-      entrypoint: '@oliphaunt/wasix-ts/blocking',
-      callingContract: 'blocking',
-      executionOwner: 'caller',
+      engine: 'wasixDirect',
+      ...CANDIDATE_EXECUTION_SURFACES.direct,
     },
-    'plan.engines.candidate.surfaces.blocking',
+    'plan.engines.candidate.surfaces.direct',
   );
   requireExactRecord(
-    candidate.surfaces.default,
+    candidate.surfaces.worker,
     {
       engine: 'wasixWorker',
-      entrypoint: '@oliphaunt/wasix-ts',
-      callingContract: 'async',
-      executionOwner: 'package-worker',
+      ...CANDIDATE_EXECUTION_SURFACES.worker,
     },
-    'plan.engines.candidate.surfaces.default',
+    'plan.engines.candidate.surfaces.worker',
   );
-  requireExactKeys(candidate.surfaces, ['blocking', 'default'], 'plan.engines.candidate.surfaces');
+  requireExactKeys(candidate.surfaces, ['direct', 'worker'], 'plan.engines.candidate.surfaces');
   requireExactRecord(
     candidate.dependencies,
     { fzstd: '0.1.1' },
@@ -242,7 +250,7 @@ export function validateBrowserPlan(plan) {
     'plan.engines.comparison.surfaces.worker',
   );
 
-  validateCommonPlan(plan, 'requiresBothCallingContracts');
+  validateCommonPlan(plan, 'requiresBothExecutionSurfaces');
 }
 
 export function assertCurrentBrowserPlan(plan) {
@@ -317,7 +325,7 @@ function validatePlanEnvelope(plan, id) {
   requireNonEmptyString(plan.description, 'plan.description');
 }
 
-function validateCommonPlan(plan, bothContractsField) {
+function validateCommonPlan(plan, bothSurfacesField) {
   const profiles = requireRecord(plan.profiles, 'plan.profiles');
   requireExactKeys(profiles, ['quick', 'full'], 'plan.profiles');
   requireExactRecord(profiles.quick, QUICK_PROFILE, 'plan.profiles.quick');
@@ -338,7 +346,7 @@ function validateCommonPlan(plan, bothContractsField) {
     [
       'maxGeomeanRatio',
       'requiresCorrectness',
-      bothContractsField,
+      bothSurfacesField,
       'metric',
       'metrics',
       'excluded',
@@ -347,7 +355,7 @@ function validateCommonPlan(plan, bothContractsField) {
   );
   requireEqual(gate.maxGeomeanRatio, 0.8, 'plan.gate.maxGeomeanRatio');
   requireEqual(gate.requiresCorrectness, true, 'plan.gate.requiresCorrectness');
-  requireEqual(gate[bothContractsField], true, `plan.gate.${bothContractsField}`);
+  requireEqual(gate[bothSurfacesField], true, `plan.gate.${bothSurfacesField}`);
   requireEqual(
     gate.metric,
     'geometric-mean-of-median-paired-oliphaunt-over-pglite-ratios-lower-is-better',
@@ -393,8 +401,8 @@ export function summarizeBrowserResult(planSource, result) {
   validateBrowserResult(plan, result);
   const normalizedResult = normalizeBrowserResult(result);
   const correctness = summarizeCorrectness(plan, normalizedResult);
-  const callingContracts = Object.fromEntries(
-    Object.entries(CALLING_CONTRACTS).map(([contract, [candidate, comparison]]) => {
+  const comparisons = Object.fromEntries(
+    Object.entries(SURFACE_COMPARISONS).map(([surface, [candidate, comparison]]) => {
       const metrics = plan.gate.metrics.map((id) => {
         const candidateSamplesMs = metricSamples(normalizedResult, candidate, id);
         const comparisonSamplesMs = metricSamples(normalizedResult, comparison, id);
@@ -419,21 +427,21 @@ export function summarizeBrowserResult(planSource, result) {
         plan.gate.maxGeomeanRatio,
         correctness.passed,
       );
-      return [contract, { metrics, ...aggregate }];
+      return [surface, { metrics, ...aggregate }];
     }),
   );
   const qualificationEligible = plan.profiles[result.mode].qualificationEligible;
-  const performancePassed = Object.values(callingContracts).every(
-    (contract) => contract.gate.passed,
+  const performancePassed = Object.values(comparisons).every(
+    (comparison) => comparison.gate.passed,
   );
   return {
     correctness,
-    callingContracts,
+    comparisons,
     gate: {
       required: qualificationEligible,
       passed: qualificationEligible ? performancePassed && correctness.passed : null,
       maxGeomeanRatio: plan.gate.maxGeomeanRatio,
-      requiresBothCallingContracts: true,
+      requiresBothExecutionSurfaces: true,
       metric: plan.gate.metric,
       excluded: plan.gate.excluded,
     },
@@ -456,9 +464,9 @@ export function browserPlanSummary(source) {
 }
 
 export function browserMarkdownReport(report) {
-  const contractSections = Object.entries(report.summary.callingContracts)
-    .map(([name, contract]) => {
-      const rows = contract.metrics
+  const comparisonSections = Object.entries(report.summary.comparisons)
+    .map(([name, comparison]) => {
+      const rows = comparison.metrics
         .map(
           (metric) =>
             `| \`${metric.id}\` | ${metric.candidateMedianMs.toFixed(3)} | ` +
@@ -466,13 +474,13 @@ export function browserMarkdownReport(report) {
         )
         .join('\n');
       const gateLabel = report.summary.gate.required
-        ? `Comfortable-win gate: **${contract.gate.passed ? 'PASS' : 'FAIL'}**`
-        : `Comfortable-win statistic: **${contract.gate.passed ? 'would pass' : 'would fail'} (advisory quick profile)**`;
-      return `## ${name[0].toUpperCase()}${name.slice(1)} calling contract
+        ? `Comfortable-win gate: **${comparison.gate.passed ? 'PASS' : 'FAIL'}**`
+        : `Comfortable-win statistic: **${comparison.gate.passed ? 'would pass' : 'would fail'} (advisory quick profile)**`;
+      return `## ${name[0].toUpperCase()}${name.slice(1)} comparison
 
 - ${gateLabel}
-- Geometric-mean ratio: **${contract.geomeanRatio.toFixed(4)}** (required <= ${contract.gate.maxGeomeanRatio.toFixed(2)})
-- Observed aggregate win: **${contract.gate.observedWinPercent.toFixed(2)}%**
+- Geometric-mean ratio: **${comparison.geomeanRatio.toFixed(4)}** (required <= ${comparison.gate.maxGeomeanRatio.toFixed(2)})
+- Observed aggregate win: **${comparison.gate.observedWinPercent.toFixed(2)}%**
 
 | Metric (lower is better) | Oliphaunt median ms | PGlite median ms | Median paired ratio |
 | --- | ---: | ---: | ---: |
@@ -491,9 +499,9 @@ ${rows}`;
 - Indexed-insert WAL parity: **${report.summary.correctness.indexedInsertWal.passed ? 'PASS' : 'FAIL'}**
 - Overall qualification: **${report.summary.gate.required ? (report.summary.gate.passed ? 'PASS' : 'FAIL') : 'NOT GATED (quick profile)'}**
 
-${contractSections}
+${comparisonSections}
 
-First cold open, duplicated workload-open time, close, and insert decomposition remain in the JSON report but are not speed-gated. Close is descriptive because the public APIs make different worker-reclamation guarantees. The gate requires the geometric mean of median same-run Oliphaunt/PGlite ratios to be at most 0.80 independently for the explicit caller-owned blocking and package-owned Worker contracts, after workload assertions and PostgreSQL durability/WAL parity pass.
+First cold open, duplicated workload-open time, close, and insert decomposition remain in the JSON report but are not speed-gated. Close is descriptive because the public APIs make different worker-reclamation guarantees. The gate requires the geometric mean of median same-run Oliphaunt/PGlite ratios to be at most 0.80 independently for the caller-owned root and explicit SDK-owned Worker execution surfaces, after workload assertions and PostgreSQL durability/WAL parity pass.
 `;
 }
 
@@ -519,10 +527,10 @@ function validateBrowserResult(plan, result) {
   requireEqual(configuration.rows, plan.measurement.rows, 'result.configuration.rows');
   requireEqual(configuration.storage, plan.measurement.storage, 'result.configuration.storage');
   if (!legacy) {
-    requireExactStringList(
-      configuration.callingContracts,
-      ['caller-owned-blocking', 'package-worker-async'],
-      'result.configuration.callingContracts',
+    requireNestedExactRecord(
+      configuration.executionSurfaces,
+      CANDIDATE_EXECUTION_SURFACES,
+      'result.configuration.executionSurfaces',
     );
   }
   requireEqual(result.correctness?.assertionsPassed, true, 'result correctness');
@@ -569,7 +577,7 @@ function normalizeBrowserResult(result) {
 
 function renameLegacyEngineRecord(record) {
   return {
-    wasixBlocking: record.wasixDirect,
+    wasixDirect: record.wasixDirect,
     wasixWorker: record.wasixWorker,
     pgliteDirect: record.pgliteDirect,
     pgliteWorker: record.pgliteWorker,
@@ -579,7 +587,7 @@ function renameLegacyEngineRecord(record) {
 function summarizeCorrectness(plan, result) {
   const settings = plan.postgres.settings;
   const durability = Object.fromEntries(
-    Object.entries(CALLING_CONTRACTS).map(([contract, [candidate, comparison]]) => {
+    Object.entries(SURFACE_COMPARISONS).map(([surface, [candidate, comparison]]) => {
       const candidateProfile = result.postgresProfiles[candidate];
       const comparisonProfile = result.postgresProfiles[comparison];
       const candidateValid = profileMatches(candidateProfile, settings, plan.postgres.major);
@@ -588,21 +596,21 @@ function summarizeCorrectness(plan, result) {
         (setting) => candidateProfile?.[setting] === comparisonProfile?.[setting],
       );
       return [
-        contract,
+        surface,
         { passed: candidateValid && comparisonValid && parity, candidateProfile, comparisonProfile },
       ];
     }),
   );
-  durability.passed = durability.blocking.passed && durability.worker.passed;
+  durability.passed = durability.direct.passed && durability.worker.passed;
 
   const wal = result.insertDiagnostic.summary.indexedInsertWalBytes;
   const indexedInsertWal = Object.fromEntries(
-    Object.entries(CALLING_CONTRACTS).map(([contract, [candidate, comparison]]) => {
+    Object.entries(SURFACE_COMPARISONS).map(([surface, [candidate, comparison]]) => {
       const candidateBytes = positiveNumber(wal[candidate], `${candidate} WAL bytes`);
       const comparisonBytes = positiveNumber(wal[comparison], `${comparison} WAL bytes`);
       const deltaPercent = (Math.abs(candidateBytes - comparisonBytes) / comparisonBytes) * 100;
       return [
-        contract,
+        surface,
         {
           passed: deltaPercent <= plan.postgres.indexedInsertWalTolerancePercent,
           candidateBytes,
@@ -614,8 +622,7 @@ function summarizeCorrectness(plan, result) {
       ];
     }),
   );
-  indexedInsertWal.passed =
-    indexedInsertWal.blocking.passed && indexedInsertWal.worker.passed;
+  indexedInsertWal.passed = indexedInsertWal.direct.passed && indexedInsertWal.worker.passed;
   const workloadAssertionsPassed = result.correctness.assertionsPassed === true;
   return {
     passed: workloadAssertionsPassed && durability.passed && indexedInsertWal.passed,
@@ -672,6 +679,15 @@ function requireExactRecord(value, expected, label) {
   requireExactKeys(record, Object.keys(expected), label);
   for (const [field, expectedValue] of Object.entries(expected)) {
     requireEqual(record[field], expectedValue, `${label}.${field}`);
+  }
+  return record;
+}
+
+function requireNestedExactRecord(value, expected, label) {
+  const record = requireRecord(value, label);
+  requireExactKeys(record, Object.keys(expected), label);
+  for (const [field, expectedValue] of Object.entries(expected)) {
+    requireExactRecord(record[field], expectedValue, `${label}.${field}`);
   }
   return record;
 }

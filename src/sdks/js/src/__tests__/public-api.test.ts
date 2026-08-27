@@ -33,10 +33,7 @@ test('root entrypoint publishes the ORM-facing values', () => {
   assert.equal(text('value', postgresOids.text).format, 'text');
   assert.equal(binary(Uint8Array.of(1), postgresOids.bytea).format, 'binary');
   assert.equal(json({ ok: true }).typeOid, postgresOids.jsonb);
-  assert.equal(
-    array([1, 2], postgresOids.int4Array).typeOid,
-    postgresOids.int4Array,
-  );
+  assert.equal(array([1, 2], postgresOids.int4Array).typeOid, postgresOids.int4Array);
   assert.equal(typedNull(postgresOids.uuid).format, 'null');
 });
 
@@ -52,12 +49,11 @@ function assertPublicDatabaseTypes(
   const raw: Promise<RawQueryResult> = database.queryRaw('SELECT $1::bytea', [
     binary(Uint8Array.of(1), postgresOids.bytea),
   ]);
-  const execution: Promise<ExecResult<readonly unknown[]>> = database.exec<
-    readonly unknown[]
-  >('SELECT 1', { rowMode: 'array' });
-  const description: Promise<DescribeResult> = database.describe('SELECT $1', [
-    postgresOids.int4,
-  ]);
+  const execution: Promise<ExecResult<readonly unknown[]>> = database.exec<readonly unknown[]>(
+    'SELECT 1',
+    { rowMode: 'array' },
+  );
+  const description: Promise<DescribeResult> = database.describe('SELECT $1', [postgresOids.int4]);
   const streamed: Promise<void> = database.execProtocolRawStream(
     Uint8Array.of(0x51),
     () => undefined,
@@ -68,25 +64,16 @@ function assertPublicDatabaseTypes(
   );
   const rollback: Promise<void> = transaction.rollback();
   const closed: boolean = database.closed || transaction.closed;
-  void [
-    decoded,
-    raw,
-    execution,
-    description,
-    streamed,
-    transactionStreamed,
-    rollback,
-    closed,
-  ];
+  void [decoded, raw, execution, description, streamed, transactionStreamed, rollback, closed];
 }
 
 void assertPublicDatabaseTypes;
 
-const publicHelperTypes: [
-  TextQueryParameter,
-  BinaryQueryParameter,
-  NullQueryParameter,
-] = [text('value'), binary(Uint8Array.of(1)), typedNull(postgresOids.text)];
+const publicHelperTypes: [TextQueryParameter, BinaryQueryParameter, NullQueryParameter] = [
+  text('value'),
+  binary(Uint8Array.of(1)),
+  typedNull(postgresOids.text),
+];
 void publicHelperTypes;
 
 const publicProtocolCallback: ProtocolChunkCallback = (_chunk) => undefined;

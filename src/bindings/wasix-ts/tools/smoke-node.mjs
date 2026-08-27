@@ -8,7 +8,7 @@ import { createPackedWasixConsumer, runFixtureCommand } from './packed-node-fixt
 const { packageOnly, runtime } = readOptions(process.argv.slice(2));
 const runtimeName = runtime === 'bun' ? 'Bun' : runtime === 'deno' ? 'Deno' : 'Node';
 const expectedEntrypoint = `index.${runtime}.js`;
-const expectedBlockingEntrypoint = `blocking.${runtime}.js`;
+const expectedWorkerEntrypoint = `worker-entry.${runtime}.js`;
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const scratch = await mkdtemp(resolve(tmpdir(), `oliphaunt-wasix-${runtime}-smoke-`));
 
@@ -23,8 +23,7 @@ try {
   const extension = fixture.packages.extension?.name;
   await writeFile(
     resolve(fixture.consumer, 'verify.mjs'),
-    `import { access } from 'node:fs/promises';
-import { Worker } from 'node:worker_threads';
+    `import { Worker } from 'node:worker_threads';
 
 const candidate = ${JSON.stringify(candidate)};
 const extension = ${JSON.stringify(extension)};
@@ -32,8 +31,22 @@ const runtime = ${JSON.stringify(runtime)};
 const runtimeName = ${JSON.stringify(runtimeName)};
 const packageOnly = ${JSON.stringify(packageOnly)};
 const pgtap = packageOnly ? undefined : (await import(extension)).default;
+const executionSurfaces = {
+  direct: {
+    entrypoint: candidate,
+    resolvedEntrypoint: ${JSON.stringify(expectedEntrypoint)},
+    callingContract: 'async',
+    executionOwner: 'caller',
+  },
+  worker: {
+    entrypoint: candidate + '/worker',
+    resolvedEntrypoint: ${JSON.stringify(expectedWorkerEntrypoint)},
+    callingContract: 'async',
+    executionOwner: 'sdk-worker',
+  },
+};
 const { default: Oliphaunt, PostgresError, postgresOids, WasixStorageError } = await import(candidate);
-const { default: BlockingOliphaunt } = await import(candidate + '/blocking');
+const { default: WorkerOliphaunt } = await import(candidate + '/worker');
 const { directory } = await import(candidate + '/storage/' + runtime);
 const simpleQuery = (sql) => {
   const body = new TextEncoder().encode(sql + '\\0');
@@ -46,58 +59,56 @@ const simpleQuery = (sql) => {
 
 const resolved = import.meta.resolve(candidate);
 if (!resolved.endsWith('/lib/${expectedEntrypoint}')) {
-  throw new Error(runtimeName + ' did not select its worker_threads entrypoint: ' + resolved);
+  throw new Error(runtimeName + ' did not select its direct entrypoint: ' + resolved);
 }
-const blockingResolved = import.meta.resolve(candidate + '/blocking');
-if (!blockingResolved.endsWith('/lib/${expectedBlockingEntrypoint}')) {
+const workerResolved = import.meta.resolve(candidate + '/worker');
+if (!workerResolved.endsWith('/lib/${expectedWorkerEntrypoint}')) {
   throw new Error(
-    runtimeName + ' did not select its blocking entrypoint: ' + blockingResolved,
+    runtimeName + ' did not select its Worker entrypoint: ' + workerResolved,
   );
 }
-const callerSource = [
-  "import { parentPort } from 'node:worker_threads';",
-  'const { default: Oliphaunt } = await import(' + JSON.stringify(resolved) + ');',
-  'const { directory } = await import(' +
-    JSON.stringify(import.meta.resolve(candidate + '/storage/' + runtime)) +
-    ');',
-  'try {',
-  '  await Oliphaunt.open({ storage: directory(' +
-    JSON.stringify(new URL('./nested-worker-storage', import.meta.url).href) +
-    ') });',
-  "  parentPort.postMessage({ status: 'opened' });",
-  '} catch (error) {',
-  '  parentPort.postMessage({ name: error?.name, message: error?.message });',
-  '}',
-].join('\\n');
-const callerResult = await new Promise((resolveResult, rejectResult) => {
-  let receivedMessage = false;
-  const worker = new Worker(
-    new URL('data:text/javascript,' + encodeURIComponent(callerSource)),
-    { name: 'oliphaunt-caller-worker-check' },
-  );
-  worker.once('message', (message) => {
-    receivedMessage = true;
-    void worker.terminate().then(() => resolveResult(message), rejectResult);
+if (!packageOnly) {
+  const callerSource = [
+    "import { parentPort } from 'node:worker_threads';",
+    'const { default: DirectOliphaunt } = await import(' + JSON.stringify(resolved) + ');',
+    'const { default: WorkerOliphaunt } = await import(' + JSON.stringify(workerResolved) + ');',
+    'const { directory } = await import(' +
+      JSON.stringify(import.meta.resolve(candidate + '/storage/' + runtime)) +
+      ');',
+    'try {',
+    '  const direct = await DirectOliphaunt.open({ storage: directory(' +
+      JSON.stringify(new URL('./caller-worker-storage', import.meta.url).href) +
+      ') });',
+    "  const directAnswer = (await direct.queryRaw('SELECT 42::int AS answer')).getText(0, 'answer');",
+    '  await direct.close();',
+    '  const nestedWorker = await WorkerOliphaunt.open();',
+    "  const workerAnswer = (await nestedWorker.queryRaw('SELECT 43::int AS answer')).getText(0, 'answer');",
+    '  await nestedWorker.close();',
+    '  parentPort.postMessage({ directAnswer, workerAnswer });',
+    '} catch (error) {',
+    '  parentPort.postMessage({ name: error?.name, message: error?.message });',
+    '}',
+  ].join('\\n');
+  const callerResult = await new Promise((resolveResult, rejectResult) => {
+    let receivedMessage = false;
+    const worker = new Worker(
+      new URL('data:text/javascript,' + encodeURIComponent(callerSource)),
+      { name: 'oliphaunt-caller-worker-check' },
+    );
+    worker.once('message', (message) => {
+      receivedMessage = true;
+      void worker.terminate().then(() => resolveResult(message), rejectResult);
+    });
+    worker.once('error', rejectResult);
+    worker.once('exit', (code) => {
+      if (!receivedMessage && code !== 0) {
+        rejectResult(new Error('caller worker exited with code ' + code));
+      }
+    });
   });
-  worker.once('error', rejectResult);
-  worker.once('exit', (code) => {
-    if (!receivedMessage && code !== 0) {
-      rejectResult(new Error('caller worker exited with code ' + code));
-    }
-  });
-});
-if (
-  callerResult?.name !== 'TypeError' ||
-  callerResult?.message !==
-    '@oliphaunt/wasix-ts ' + runtimeName + ' directory storage must be opened from the main thread'
-) {
-  throw new Error('persistent storage caller-worker guard failed: ' + JSON.stringify(callerResult));
-}
-try {
-  await access(new URL('./nested-worker-storage', import.meta.url));
-  throw new Error('caller-worker rejection created persistent storage state');
-} catch (error) {
-  if (error?.code !== 'ENOENT') throw error;
+  if (callerResult?.directAnswer !== '42' || callerResult?.workerAnswer !== '43') {
+    throw new Error('caller-worker execution failed: ' + JSON.stringify(callerResult));
+  }
 }
 
 if (packageOnly) {
@@ -106,13 +117,12 @@ if (packageOnly) {
     throw new Error(runtimeName + ' storage condition returned an invalid adapter');
   }
   console.log(JSON.stringify({
-    host: runtime + '-package-condition-and-worker_threads',
-    entrypoint: ${JSON.stringify(expectedEntrypoint)},
-    blockingEntrypoint: ${JSON.stringify(expectedBlockingEntrypoint)},
+    host: runtime + '-package-condition-direct-and-worker_threads',
+    executionSurfaces,
     storage: runtime + '-directory',
   }));
 } else {
-async function verifyMemory(client, callingContract) {
+async function verifyMemory(client, executionSurface) {
   // OLIPHAUNT_DOCS_SNIPPET wasix-typescript-quickstart
   const db = await client.open({ extensions: [pgtap] });
   const structuredApi = await verifyStructuredApi(db);
@@ -184,7 +194,7 @@ async function verifyMemory(client, callingContract) {
     answer !== '42' ||
     structuredApi !== '42:9007199254740993:3:custom:42:42:2'
   ) {
-    throw new Error(callingContract + ': ' + JSON.stringify(result));
+    throw new Error(executionSurface + ': ' + JSON.stringify(result));
   }
   return result;
 }
@@ -247,14 +257,14 @@ async function verifyStructuredApi(db) {
   ].join(':');
 }
 
-const blocking = await verifyMemory(BlockingOliphaunt, 'blocking');
-const worker = await verifyMemory(Oliphaunt, 'worker');
-if (blocking.version !== worker.version) {
-  throw new Error('entrypoint extension versions differ: ' + JSON.stringify({ blocking, worker }));
+const direct = await verifyMemory(Oliphaunt, 'direct');
+const worker = await verifyMemory(WorkerOliphaunt, 'worker');
+if (direct.version !== worker.version) {
+  throw new Error('entrypoint extension versions differ: ' + JSON.stringify({ direct, worker }));
 }
 
 const storage = directory(new URL('./database space ü', import.meta.url));
-let persistent = await BlockingOliphaunt.open({ storage, extensions: [pgtap] });
+let persistent = await Oliphaunt.open({ storage, extensions: [pgtap] });
 await persistent.execute('CREATE SEQUENCE smoke_persistence_seq START WITH 10');
 await persistent.execute(
   'CREATE TABLE smoke_persistence (' +
@@ -268,24 +278,24 @@ await persistent.execute(
     "('東京', decode('deadbeef', 'hex'), 'present'), " +
     "('mañana', decode('', 'hex'), NULL)"
 );
-await persistent.execute('CREATE TEMP TABLE smoke_blocking_session(value text NOT NULL)');
-await persistent.execute("INSERT INTO smoke_blocking_session VALUES ('blocking-session')");
-await persistent.execute("SET application_name = 'packed-blocking-session'");
+await persistent.execute('CREATE TEMP TABLE smoke_direct_session(value text NOT NULL)');
+await persistent.execute("INSERT INTO smoke_direct_session VALUES ('direct-session')");
+await persistent.execute("SET application_name = 'packed-direct-session'");
 await persistent.execute('CHECKPOINT');
 let busy;
 try {
-  await Oliphaunt.open({ storage, extensions: [pgtap] });
+  await WorkerOliphaunt.open({ storage, extensions: [pgtap] });
 } catch (error) {
   if (!(error instanceof WasixStorageError)) throw error;
   busy = error.code;
 }
-const blockingArchive = await persistent.backup();
-const blockingSessionState = (await persistent.queryRaw(
-  "SELECT (SELECT value FROM smoke_blocking_session) || ':' || current_setting('application_name') AS value",
+const directArchive = await persistent.backup();
+const directSessionState = (await persistent.queryRaw(
+  "SELECT (SELECT value FROM smoke_direct_session) || ':' || current_setting('application_name') AS value",
 )).getText(0, 'value');
 await persistent.close();
 
-persistent = await Oliphaunt.open({ storage, extensions: [pgtap] });
+persistent = await WorkerOliphaunt.open({ storage, extensions: [pgtap] });
 const workerPersistedRows = (await persistent.queryRaw(
   'SELECT count(*)::int AS count FROM smoke_persistence',
 )).getText(0, 'count');
@@ -306,24 +316,24 @@ const workerSessionState = (await persistent.queryRaw(
 )).getText(0, 'value');
 await persistent.close();
 
-const blockingRestoreStorage = directory(new URL('./blocking-backup-restore', import.meta.url));
-await Oliphaunt.restore(blockingRestoreStorage, blockingArchive);
-let restored = await Oliphaunt.open({
-  storage: blockingRestoreStorage,
+const directRestoreStorage = directory(new URL('./direct-backup-restore', import.meta.url));
+await WorkerOliphaunt.restore(directRestoreStorage, directArchive);
+let restored = await WorkerOliphaunt.open({
+  storage: directRestoreStorage,
   extensions: [pgtap],
 });
-const blockingBackupRows = (await restored.queryRaw(
+const directBackupRows = (await restored.queryRaw(
   'SELECT count(*)::int AS count FROM smoke_persistence',
 )).getText(0, 'count');
-const blockingBackupValues = await richBackupValues(restored);
-const blockingBackupSequence = (await restored.queryRaw(
+const directBackupValues = await richBackupValues(restored);
+const directBackupSequence = (await restored.queryRaw(
   "SELECT nextval('smoke_persistence_seq')::text AS value",
 )).getText(0, 'value');
 await restored.close();
 
 const workerRestoreStorage = directory(new URL('./worker-backup-restore', import.meta.url));
 await Oliphaunt.restore(workerRestoreStorage, workerArchive);
-restored = await BlockingOliphaunt.open({
+restored = await Oliphaunt.open({
   storage: workerRestoreStorage,
   extensions: [pgtap],
 });
@@ -337,7 +347,7 @@ const workerBackupSequence = (await restored.queryRaw(
 await restored.close();
 let corruptRestore;
 try {
-  await Oliphaunt.restore(
+  await WorkerOliphaunt.restore(
     directory(new URL('./corrupt-backup-restore', import.meta.url)),
     Uint8Array.of(1, 2, 3),
   );
@@ -348,45 +358,46 @@ try {
 if (
   busy !== 'busy' ||
   workerPersistedRows !== '3' ||
-  blockingBackupRows !== '3' ||
+  directBackupRows !== '3' ||
   workerBackupRows !== '4' ||
-  blockingBackupValues !== 'café 🐘:00ff10:NULL|mañana::NULL|東京:deadbeef:present' ||
+  directBackupValues !== 'café 🐘:00ff10:NULL|mañana::NULL|東京:deadbeef:present' ||
   workerBackupValues !== 'café 🐘:00ff10:NULL|mañana::NULL|naïve:010203:NULL|東京:deadbeef:present' ||
-  blockingBackupSequence !== '13' ||
+  directBackupSequence !== '13' ||
   workerBackupSequence !== '14' ||
-  blockingSessionState !== 'blocking-session:packed-blocking-session' ||
+  directSessionState !== 'direct-session:packed-direct-session' ||
   workerSessionState !== 'worker-session:packed-worker-session' ||
   corruptRestore !== 'corrupt:unchanged' ||
-  persistentExtension !== blocking.version
+  persistentExtension !== direct.version
 ) {
   throw new Error(JSON.stringify({
     busy,
     workerPersistedRows,
-    blockingBackupRows,
+    directBackupRows,
     workerBackupRows,
-    blockingBackupValues,
+    directBackupValues,
     workerBackupValues,
-    blockingBackupSequence,
+    directBackupSequence,
     workerBackupSequence,
-    blockingSessionState,
+    directSessionState,
     workerSessionState,
     corruptRestore,
     persistentExtension,
-    version: blocking.version,
+    version: direct.version,
   }));
 }
 console.log(JSON.stringify({
-  host: runtime + '-blocking-and-worker_threads',
-  callingContracts: { blocking, worker },
+  host: runtime + '-direct-and-worker_threads',
+  executionSurfaces,
+  surfaceResults: { direct, worker },
   extension: 'pgtap',
-  version: blocking.version,
+  version: direct.version,
   storage: runtime + '-raw-pgdata-delta',
   busy,
   workerPersistedRows,
   backupRestore: {
-    blockingBackupRows,
+    directBackupRows,
     workerBackupRows,
-    blockingBackupSequence,
+    directBackupSequence,
     workerBackupSequence,
     corruptRestore,
   },

@@ -4,7 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use oliphaunt::{Error, Oliphaunt, OliphauntBuilder, QueryParam, Result};
+use oliphaunt::worker::{Oliphaunt, OliphauntBuilder};
+use oliphaunt::{Error, QueryParam, Result};
 use serde::Deserialize;
 
 mod support;
@@ -60,7 +61,6 @@ fn native_postgres_types_errors_and_transaction_recovery_when_available() {
     }
 
     let server_root = unique_root("server-sql-regression");
-    // liboliphaunt-doc-example:rust-open-server
     let server_result = (|| -> Result<()> {
         let server = block_on(Oliphaunt::builder().directory(&server_root).open_server())?;
         assert!(!server.connection_string().is_empty());

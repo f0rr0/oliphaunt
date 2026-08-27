@@ -2,17 +2,17 @@
 
 ## Unreleased
 
-- Make the root database and server APIs asynchronous and cloneable so embedded
-  PostgreSQL work and server lifecycle waits do not block the calling executor.
-- Preserve the synchronous API under `oliphaunt_wasix::blocking`, including its
-  no-hop direct database, SQL builder, transactions, raw protocol, server, and
-  tools. The server continues to own its existing listener/backend thread.
+- Keep the synchronous, no-hop database, SQL builder, transactions, raw
+  protocol, server, and tools at the crate root. PostgreSQL work runs on the
+  calling thread; the server continues to own its listener/backend thread.
+- Add the explicit `oliphaunt_wasix::worker` API for cloneable asynchronous
+  database and server handles backed by dedicated owner threads.
 - Add bounded owner admission, pinned asynchronous transactions, best-effort
   rollback when an in-flight transaction future is abandoned, and explicit
   owner-stop errors.
-- Make the blocking transaction callback unwind-safe: a panic rolls back when
+- Make the direct transaction callback unwind-safe: a panic rolls back when
   possible, poisons uncertain state, releases ownership, and is rethrown.
-- Keep the blocking server handle after `close(&mut self)`, add `is_closed()`,
+- Keep the direct server handle after `close(&mut self)`, add `is_closed()`,
   and replay the first terminal close result on repeated calls.
 
 ## [0.1.1](https://github.com/f0rr0/oliphaunt/compare/oliphaunt-wasix-rust-v0.1.0...oliphaunt-wasix-rust-v0.1.1) (2026-08-08)

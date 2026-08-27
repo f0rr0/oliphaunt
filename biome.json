@@ -24,6 +24,7 @@
       "src/sdks/js/package.json",
       "src/sdks/js/typedoc.json",
       "src/sdks/js/src/**/*.ts",
+      "src/shared/js-core/src/**/*.ts",
       "src/bindings/wasix-ts/package.json",
       "src/bindings/wasix-ts/src/**/*.ts",
       "src/bindings/wasix-ts/tools-package/**/*.json",

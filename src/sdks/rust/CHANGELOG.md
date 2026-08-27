@@ -2,11 +2,14 @@
 
 ## Unreleased
 
-- Construct native sessions on their permanent SDK owner thread and keep the
-  root API asynchronous across direct, broker, and server topologies.
-- Make restore and out-of-band cancellation asynchronous, bound ordinary owner
-  work while reserving FIFO lifecycle admission, and make explicit close
-  coalesced, phase-aware, and definitive.
+- Make the root API a synchronous, exclusive caller-thread contract across
+  direct, broker, and server topologies, and expose the cloneable asynchronous
+  owner-thread API explicitly under `oliphaunt::worker`.
+- Add a thread-safe root `CancelHandle` so another thread can interrupt a
+  synchronous operation without making the database handle shareable.
+- Keep worker restore and cancellation asynchronous, bound ordinary owner work
+  while reserving FIFO lifecycle admission, and make explicit close coalesced,
+  phase-aware, and definitive. Root restore and close execute synchronously.
 - Prevent owner failures and dropped reply senders from stranding futures;
   contain raw-stream callback panics and reject callback reentrancy.
 - Keep required transaction settlement admissible across an ordered close

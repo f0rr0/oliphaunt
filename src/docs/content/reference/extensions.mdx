@@ -26,14 +26,13 @@ Select extensions before opening the database:
 ```rust
 use oliphaunt::{Extension, Oliphaunt};
 
-# async fn demo() -> oliphaunt::Result<()> {
-let db = Oliphaunt::builder()
+# fn demo() -> oliphaunt::Result<()> {
+let mut db = Oliphaunt::builder()
     .direct()
     .extension(Extension::Vector)
-    .open()
-    .await?;
+    .open()?;
 
-db.execute("CREATE EXTENSION vector").await?;
+db.execute("CREATE EXTENSION vector")?;
 # Ok(())
 # }
 ```
@@ -55,7 +54,7 @@ oliphaunt-wasix = { version = "0.1", features = ["extension-pgtap"] }
 ```rust
 use oliphaunt_wasix::{extensions::PGTAP, Oliphaunt};
 
-let database = Oliphaunt::builder().extension(PGTAP).open().await?;
+let database = Oliphaunt::builder().extension(PGTAP).open()?;
 ```
 
 ## Browser WASIX selection
@@ -70,8 +69,8 @@ const database = await Oliphaunt.open({ extensions: [pgtap] });
 ```
 
 The descriptor carries the exact dependency and compatibility metadata needed
-by the Worker. SQL-name strings are intentionally not accepted by this API. Use
-only extensions published for the selected WASIX host.
+by the selected runtime owner. SQL-name strings are intentionally not accepted
+by this API. Use only extensions published for the selected WASIX host.
 
 ## Platform Behavior
 

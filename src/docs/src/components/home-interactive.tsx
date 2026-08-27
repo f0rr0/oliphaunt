@@ -295,12 +295,11 @@ const SDK_EXAMPLES: readonly SdkExample[] = [
     language: 'rust',
     code: `use oliphaunt::Oliphaunt;
 
-async fn open_database() -> oliphaunt::Result<()> {
-    let db = Oliphaunt::builder()
-        .path(".oliphaunt")
+fn open_database() -> oliphaunt::Result<()> {
+    let mut db = Oliphaunt::builder()
+        .directory(".oliphaunt")
         .direct()
-        .open()
-        .await?;
+        .open()?;
 
     db.execute(r#"
         CREATE TABLE IF NOT EXISTS todos (
@@ -308,18 +307,17 @@ async fn open_database() -> oliphaunt::Result<()> {
             title text NOT NULL UNIQUE,
             done boolean NOT NULL DEFAULT false
         )
-    "#).await?;
-    db.query_params(
+    "#)?;
+    db.execute_with_params(
         "INSERT INTO todos (title) VALUES ($1) \
          ON CONFLICT (title) DO UPDATE SET done = false",
         ["Run the first product query"],
-    ).await?;
+    )?;
     let todos = db
-        .query("SELECT title FROM todos WHERE NOT done ORDER BY id DESC LIMIT 20")
-        .await?;
+        .query("SELECT title FROM todos WHERE NOT done ORDER BY id DESC LIMIT 20")?;
     let first_title: &str = todos.rows()[0].try_get("title")?;
 
-    db.close().await?;
+    db.close()?;
     Ok(())
 }`,
   },

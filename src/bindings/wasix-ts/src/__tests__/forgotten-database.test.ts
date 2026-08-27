@@ -12,9 +12,8 @@ describe('WASIX forgotten database cleanup', () => {
     const work: Array<() => void> = [];
     const abort = vi.fn(async () => undefined);
     const close = vi.fn(async () => undefined);
-    const registry = new WasixForgottenDatabaseRegistry(
-      harness.create,
-      (operation) => work.push(operation),
+    const registry = new WasixForgottenDatabaseRegistry(harness.create, (operation) =>
+      work.push(operation),
     );
     const owner = {};
     const registration = registry.register(owner, session({ abort, close }));
@@ -44,9 +43,8 @@ describe('WASIX forgotten database cleanup', () => {
     const close = vi.fn(async () => {
       throw failure;
     });
-    const registry = new WasixForgottenDatabaseRegistry(
-      harness.create,
-      (operation) => work.push(operation),
+    const registry = new WasixForgottenDatabaseRegistry(harness.create, (operation) =>
+      work.push(operation),
     );
     const registration = registry.register({}, session({ close }));
 
@@ -63,9 +61,8 @@ describe('WASIX forgotten database cleanup', () => {
     const work: Array<() => void> = [];
     const firstClose = vi.fn(async () => undefined);
     const secondClose = vi.fn(async () => undefined);
-    const registry = new WasixForgottenDatabaseRegistry(
-      harness.create,
-      (operation) => work.push(operation),
+    const registry = new WasixForgottenDatabaseRegistry(harness.create, (operation) =>
+      work.push(operation),
     );
     const first = registry.register({}, session({ close: firstClose }));
     registry.unregister(first);
@@ -87,9 +84,8 @@ describe('WASIX forgotten database cleanup', () => {
     const harness = finalizerHarness();
     const work: Array<() => void> = [];
     const close = vi.fn(async () => undefined);
-    const registry = new WasixForgottenDatabaseRegistry(
-      harness.create,
-      (operation) => work.push(operation),
+    const registry = new WasixForgottenDatabaseRegistry(harness.create, (operation) =>
+      work.push(operation),
     );
     const database = new WasixDatabaseImpl(session({ close }), registry);
     const generation = harness.registered?.heldValue;
@@ -106,8 +102,7 @@ describe('WASIX forgotten database cleanup', () => {
 });
 
 function session(
-  lifecycle: Pick<WasixDatabaseSession, 'close'> &
-    Partial<Pick<WasixDatabaseSession, 'abort'>>,
+  lifecycle: Pick<WasixDatabaseSession, 'close'> & Partial<Pick<WasixDatabaseSession, 'abort'>>,
 ): WasixDatabaseSession {
   return {
     async exec(input) {

@@ -256,9 +256,7 @@ module.exports = {
     readonly releaseOwnership: () => void;
   };
   let finalizer: ((held: NodeForgottenHandle) => void) | undefined;
-  let registered:
-    | { target: object; held: NodeForgottenHandle; token?: object }
-    | undefined;
+  let registered: { target: object; held: NodeForgottenHandle; token?: object } | undefined;
   const unregistered: object[] = [];
   process.env.OLIPHAUNT_RUNTIME_DIR = runtimeDirectory;
   process.env.OLIPHAUNT_EMBEDDED_MODULE_DIR = callerModuleDirectory;
@@ -596,9 +594,7 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
   const pointerStrings = new Map<bigint, string>();
   let nextPointer = 0x1000n;
   const calls: string[] = [];
-  let finalizer:
-    | ((held: { generation: bigint; releaseOwnership: () => void }) => void)
-    | undefined;
+  let finalizer: ((held: { generation: bigint; releaseOwnership: () => void }) => void) | undefined;
   let registered:
     | {
         target: object;
@@ -609,9 +605,7 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
   const unregistered: object[] = [];
   try {
     (globalThis as { FinalizationRegistry: unknown }).FinalizationRegistry = class {
-      constructor(
-        callback: (held: { generation: bigint; releaseOwnership: () => void }) => void,
-      ) {
+      constructor(callback: (held: { generation: bigint; releaseOwnership: () => void }) => void) {
         finalizer = callback;
       }
 

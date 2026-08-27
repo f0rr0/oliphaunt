@@ -1,7 +1,7 @@
-import { simpleQuery } from "./protocol.js";
+import { simpleQuery } from './protocol.js';
 
 const utf8Encoder = new TextEncoder();
-const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
+const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
 
 export type QueryBinaryInput = ArrayBuffer | ArrayBufferView | Uint8Array;
 export type ByteInput = QueryBinaryInput | ReadonlyArray<number>;
@@ -67,7 +67,7 @@ type EncodedQueryParameterBrand = {
 
 export type TextQueryParameter = Readonly<
   EncodedQueryParameterBrand & {
-    format: "text";
+    format: 'text';
     value: string;
     typeOid?: number;
   }
@@ -75,7 +75,7 @@ export type TextQueryParameter = Readonly<
 
 export type BinaryQueryParameter = Readonly<
   EncodedQueryParameterBrand & {
-    format: "binary";
+    format: 'binary';
     value: QueryBinaryInput;
     typeOid?: number;
   }
@@ -83,13 +83,12 @@ export type BinaryQueryParameter = Readonly<
 
 export type NullQueryParameter = Readonly<
   EncodedQueryParameterBrand & {
-    format: "null";
+    format: 'null';
     typeOid: number;
   }
 >;
 
-export type EncodedQueryParameter =
-  TextQueryParameter | BinaryQueryParameter | NullQueryParameter;
+export type EncodedQueryParameter = TextQueryParameter | BinaryQueryParameter | NullQueryParameter;
 
 export type QueryParam =
   | null
@@ -103,12 +102,9 @@ export type QueryParam =
   | ReadonlyArray<unknown>
   | EncodedQueryParameter;
 
-export type QueryParameterEncoder = (
-  value: QueryParam,
-  typeOid: number,
-) => EncodedQueryParameter;
+export type QueryParameterEncoder = (value: QueryParam, typeOid: number) => EncodedQueryParameter;
 
-export type QueryFormat = "text" | "binary" | { code: number; kind: "other" };
+export type QueryFormat = 'text' | 'binary' | { code: number; kind: 'other' };
 
 export type QueryField = {
   name: string;
@@ -133,7 +129,7 @@ class ParsedRawQueryRow implements RawQueryRow {
       throw new Error(`query row has no column at index ${column}`);
     }
     const value = this.values[column]!;
-    return value === null ? null : decodeUtf8Strict(value, "query value");
+    return value === null ? null : decodeUtf8Strict(value, 'query value');
   }
 }
 
@@ -161,7 +157,7 @@ export type PostgresNotice = {
 };
 
 export type RawQueryResult = {
-  kind: "command" | "rows";
+  kind: 'command' | 'rows';
   fields: QueryField[];
   rows: RawQueryRow[];
   commandTag?: string;
@@ -184,7 +180,7 @@ export type QueryObjectRow = Record<string, QueryValue>;
 export type QueryArrayRow = QueryValue[];
 
 export type QueryResult<Row = QueryObjectRow> = {
-  kind: "command" | "rows";
+  kind: 'command' | 'rows';
   fields: QueryField[];
   rows: Row[];
   commandTag?: string;
@@ -195,8 +191,8 @@ export type QueryResult<Row = QueryObjectRow> = {
 export type QueryValueDecoder = (value: string, field: QueryField) => unknown;
 
 export type QueryOptions = Readonly<{
-  rowMode?: "object" | "array";
-  valueMode?: "decoded" | "text";
+  rowMode?: 'object' | 'array';
+  valueMode?: 'decoded' | 'text';
   decoders?: Readonly<Record<number, QueryValueDecoder>>;
   encoders?: Readonly<Record<number, QueryParameterEncoder>>;
 }>;
@@ -222,7 +218,7 @@ export type DescribeResult = {
   notices: PostgresNotice[];
 };
 
-export type TransactionStatus = "idle" | "transaction" | "failed";
+export type TransactionStatus = 'idle' | 'transaction' | 'failed';
 
 export { simpleQuery };
 
@@ -267,10 +263,9 @@ export class PostgresError extends Error {
   constructor(fields: PostgresErrorField[], notices: PostgresNotice[] = []) {
     const severity = fieldValue(fields, 0x53) ?? fieldValue(fields, 0x56);
     const sqlstate = fieldValue(fields, 0x43);
-    const postgresMessage =
-      fieldValue(fields, 0x4d) ?? "PostgreSQL ErrorResponse";
+    const postgresMessage = fieldValue(fields, 0x4d) ?? 'PostgreSQL ErrorResponse';
     super(formatPostgresError(severity, sqlstate, postgresMessage));
-    this.name = "PostgresError";
+    this.name = 'PostgresError';
     this.severity = severity;
     this.localizedSeverity = fieldValue(fields, 0x53);
     this.nonlocalizedSeverity = fieldValue(fields, 0x56);
@@ -304,16 +299,13 @@ export class PostgresError extends Error {
 }
 
 /** @internal Preserve query-scoped notices on caller codec failures. */
-export function errorWithNotices(
-  error: unknown,
-  notices: ReadonlyArray<PostgresNotice>,
-): unknown {
+export function errorWithNotices(error: unknown, notices: ReadonlyArray<PostgresNotice>): unknown {
   if (notices.length === 0 && isObjectLike(error)) return error;
   if (isObjectLike(error) && tryAttachNotices(error, notices)) return error;
 
   const wrapped = withCause(new Error(codecFailureMessage(error)), error);
   if (notices.length > 0) {
-    Object.defineProperty(wrapped, "notices", {
+    Object.defineProperty(wrapped, 'notices', {
       value: [...notices],
       configurable: true,
       enumerable: true,
@@ -322,10 +314,7 @@ export function errorWithNotices(
   return wrapped;
 }
 
-function tryAttachNotices(
-  error: object,
-  notices: ReadonlyArray<PostgresNotice>,
-): boolean {
+function tryAttachNotices(error: object, notices: ReadonlyArray<PostgresNotice>): boolean {
   try {
     const existing = (error as { notices?: unknown }).notices;
     if (Array.isArray(existing)) {
@@ -337,7 +326,7 @@ function tryAttachNotices(
       }
     }
     if (!Object.isExtensible(error)) return false;
-    Object.defineProperty(error, "notices", {
+    Object.defineProperty(error, 'notices', {
       value: [...notices],
       configurable: true,
       enumerable: true,
@@ -350,28 +339,26 @@ function tryAttachNotices(
 
 function codecFailureMessage(error: unknown): string {
   if (error instanceof Error && error.message.length > 0) return error.message;
-  if (typeof error === "string" && error.length > 0) return error;
+  if (typeof error === 'string' && error.length > 0) return error;
   if (isObjectLike(error)) {
     try {
       const message = (error as { message?: unknown }).message;
-      if (typeof message === "string" && message.length > 0) return message;
+      if (typeof message === 'string' && message.length > 0) return message;
     } catch {
       // Use the stable fallback for hostile thrown objects.
     }
   }
-  return "query codec failed";
+  return 'query codec failed';
 }
 
 function isObjectLike(value: unknown): value is object {
-  return (
-    (typeof value === "object" && value !== null) || typeof value === "function"
-  );
+  return (typeof value === 'object' && value !== null) || typeof value === 'function';
 }
 
 type ParameterMetadata =
-  | { format: "text"; value: string; typeOid?: number }
-  | { format: "binary"; value: QueryBinaryInput; typeOid?: number }
-  | { format: "null"; typeOid: number };
+  | { format: 'text'; value: string; typeOid?: number }
+  | { format: 'binary'; value: QueryBinaryInput; typeOid?: number }
+  | { format: 'null'; typeOid: number };
 
 const parameterMetadata = new WeakMap<object, ParameterMetadata>();
 
@@ -381,21 +368,18 @@ export function text(
 ): TextQueryParameter {
   const encoded = scalarText(value);
   return parameterWrapper({
-    format: "text",
+    format: 'text',
     value: encoded,
     typeOid,
   }) as TextQueryParameter;
 }
 
-export function binary(
-  value: QueryBinaryInput,
-  typeOid?: number,
-): BinaryQueryParameter {
+export function binary(value: QueryBinaryInput, typeOid?: number): BinaryQueryParameter {
   if (!isQueryBinaryInput(value)) {
-    throw new TypeError("binary() requires an ArrayBuffer or ArrayBuffer view");
+    throw new TypeError('binary() requires an ArrayBuffer or ArrayBuffer view');
   }
   return parameterWrapper({
-    format: "binary",
+    format: 'binary',
     value,
     typeOid,
   }) as BinaryQueryParameter;
@@ -403,60 +387,46 @@ export function binary(
 
 export function typedNull(typeOid: number): NullQueryParameter {
   validateTypeOid(typeOid, false);
-  return parameterWrapper({ format: "null", typeOid }) as NullQueryParameter;
+  return parameterWrapper({ format: 'null', typeOid }) as NullQueryParameter;
 }
 
-export function json(
-  value: unknown,
-  typeOid: number = postgresOids.jsonb,
-): TextQueryParameter {
+export function json(value: unknown, typeOid: number = postgresOids.jsonb): TextQueryParameter {
   validateTypeOid(typeOid, false);
   let encoded: string | undefined;
   try {
     encoded = JSON.stringify(value);
   } catch (error) {
-    throw withCause(
-      new TypeError("json() value must be acyclic and JSON-serializable"),
-      error,
-    );
+    throw withCause(new TypeError('json() value must be acyclic and JSON-serializable'), error);
   }
   if (encoded === undefined) {
-    throw new TypeError("json() value must be JSON-serializable");
+    throw new TypeError('json() value must be JSON-serializable');
   }
   return parameterWrapper({
-    format: "text",
+    format: 'text',
     value: encoded,
     typeOid,
   }) as TextQueryParameter;
 }
 
-export function array(
-  values: ReadonlyArray<unknown>,
-  typeOid?: number,
-): TextQueryParameter {
+export function array(values: ReadonlyArray<unknown>, typeOid?: number): TextQueryParameter {
   if (!Array.isArray(values)) {
-    throw new TypeError("array() requires a JavaScript array");
+    throw new TypeError('array() requires a JavaScript array');
   }
-  const elementTypeOid =
-    typeOid === undefined ? undefined : arrayElementTypeOid(typeOid);
+  const elementTypeOid = typeOid === undefined ? undefined : arrayElementTypeOid(typeOid);
   if (typeOid !== undefined && elementTypeOid === undefined) {
-    throw new TypeError(
-      "array() type OID " +
-        typeOid +
-        " is not a supported PostgreSQL array OID",
-    );
+    throw new TypeError('array() type OID ' + typeOid + ' is not a supported PostgreSQL array OID');
   }
   return parameterWrapper({
-    format: "text",
+    format: 'text',
     value: encodeArrayLiteral(values, elementTypeOid),
     typeOid,
   }) as TextQueryParameter;
 }
 
 export type QueryPlan =
-  | Readonly<{ kind: "complete"; input: Uint8Array }>
+  | Readonly<{ kind: 'complete'; input: Uint8Array }>
   | Readonly<{
-      kind: "describe";
+      kind: 'describe';
       input: Uint8Array;
       bind(parameterTypeOids: ReadonlyArray<number>): Uint8Array;
     }>;
@@ -470,28 +440,26 @@ export function planQuery(
   assertNoTopLevelCopy(sql);
   const snapshot = Array.from(parameters, snapshotQueryParam);
   const encoders =
-    options.encoders === undefined
-      ? undefined
-      : Object.freeze({ ...options.encoders });
+    options.encoders === undefined ? undefined : Object.freeze({ ...options.encoders });
   const declaredTypeOids = snapshot.map(parameterDeclaredTypeOid);
   if (declaredTypeOids.every((typeOid) => typeOid !== 0)) {
     const normalized = snapshot.map((parameter, index) =>
       normalizeQueryParam(parameter, declaredTypeOids[index]!, encoders),
     );
     return {
-      kind: "complete",
+      kind: 'complete',
       input: encodeParseBindExecute(sql, declaredTypeOids, normalized),
     };
   }
   return {
-    kind: "describe",
+    kind: 'describe',
     input: describeQuery(sql, declaredTypeOids),
     bind(parameterTypeOids: ReadonlyArray<number>): Uint8Array {
       if (parameterTypeOids.length !== snapshot.length) {
         throw new Error(
-          "PostgreSQL described " +
+          'PostgreSQL described ' +
             parameterTypeOids.length +
-            " parameters, expected " +
+            ' parameters, expected ' +
             snapshot.length,
         );
       }
@@ -510,10 +478,8 @@ export function extendedQuery(
   options: ParameterOptions = {},
 ): Uint8Array {
   const plan = planQuery(sql, parameters, options);
-  if (plan.kind === "describe") {
-    throw new Error(
-      "extended query parameters require PostgreSQL type inference; use planQuery()",
-    );
+  if (plan.kind === 'describe') {
+    throw new Error('extended query parameters require PostgreSQL type inference; use planQuery()');
   }
   return plan.input;
 }
@@ -563,19 +529,15 @@ function writeParse(
   for (const typeOid of parameterTypeOids) packet.i32(typeOid);
 }
 
-function writeBindExecute(
-  packet: ByteWriter,
-  parameters: ReadonlyArray<NormalizedParam>,
-): void {
+function writeBindExecute(packet: ByteWriter, parameters: ReadonlyArray<NormalizedParam>): void {
   packet.message(0x42, bindLength(parameters));
   packet.u8(0);
   packet.u8(0);
   packet.i16(parameters.length);
-  for (const parameter of parameters)
-    packet.i16(parameter.kind === "binary" ? 1 : 0);
+  for (const parameter of parameters) packet.i16(parameter.kind === 'binary' ? 1 : 0);
   packet.i16(parameters.length);
   for (const parameter of parameters) {
-    if (parameter.kind === "null") {
+    if (parameter.kind === 'null') {
       packet.i32(-1);
     } else {
       packet.i32(parameter.value.length);
@@ -596,7 +558,7 @@ function writeBindExecute(
 function bindLength(parameters: ReadonlyArray<NormalizedParam>): number {
   let length = 10 + parameters.length * 2;
   for (const parameter of parameters) {
-    length += 4 + (parameter.kind === "null" ? 0 : parameter.value.length);
+    length += 4 + (parameter.kind === 'null' ? 0 : parameter.value.length);
   }
   return length;
 }
@@ -609,9 +571,7 @@ type RawOperation = {
   transactionStatus: TransactionStatus;
 };
 
-export function responseTransactionStatus(
-  value: object,
-): TransactionStatus | undefined {
+export function responseTransactionStatus(value: object): TransactionStatus | undefined {
   return transactionStatuses.get(value);
 }
 
@@ -628,35 +588,32 @@ export function inspectReadyForQuery(bytes: Uint8Array): TransactionStatus {
   let status: TransactionStatus | undefined;
   while (!cursor.isAtEnd()) {
     if (status !== undefined) {
-      throw new Error("backend returned bytes after ReadyForQuery");
+      throw new Error('backend returned bytes after ReadyForQuery');
     }
-    const tag = cursor.readU8("backend message tag");
-    const length = cursor.readI32("backend message length");
-    if (length < 4) throw new Error("invalid backend message length " + length);
-    const body = new ByteCursor(
-      cursor.readBytes(length - 4, "backend message body"),
-    );
+    const tag = cursor.readU8('backend message tag');
+    const length = cursor.readI32('backend message length');
+    if (length < 4) throw new Error('invalid backend message length ' + length);
+    const body = new ByteCursor(cursor.readBytes(length - 4, 'backend message body'));
     if (tag === 0x5a) status = parseReadyForQuery(body);
   }
   if (status === undefined) {
-    throw new Error("backend response ended before ReadyForQuery");
+    throw new Error('backend response ended before ReadyForQuery');
   }
   return status;
 }
 
 export function parseQueryRawResponse(bytes: Uint8Array): RawQueryResult {
-  return singleRawResult(parseRawOperation(bytes, "extended-single"));
+  return singleRawResult(parseRawOperation(bytes, 'extended-single'));
 }
 
 /** @deprecated Protocol-fixture compatibility for one simple-query result. */
 export function parseQueryResponse(bytes: Uint8Array): RawQueryResult {
-  return singleRawResult(parseRawOperation(bytes, "either-single"));
+  return singleRawResult(parseRawOperation(bytes, 'either-single'));
 }
 
 function singleRawResult(operation: RawOperation): RawQueryResult {
   const result =
-    operation.statements[0] ??
-    rawResult("command", [], [], undefined, operation.notices);
+    operation.statements[0] ?? rawResult('command', [], [], undefined, operation.notices);
   if (operation.statements.length === 1) result.notices = operation.notices;
   transactionStatuses.set(result, operation.transactionStatus);
   return result;
@@ -672,14 +629,9 @@ export function decodeQueryResult<Row = QueryObjectRow>(
     stableOptions = {
       rowMode: options.rowMode,
       valueMode: options.valueMode,
-      decoders:
-        options.decoders === undefined
-          ? undefined
-          : Object.freeze({ ...options.decoders }),
+      decoders: options.decoders === undefined ? undefined : Object.freeze({ ...options.decoders }),
     };
-    rows = raw.rows.map((row) =>
-      materializeRow(row, raw.fields, stableOptions),
-    ) as Row[];
+    rows = raw.rows.map((row) => materializeRow(row, raw.fields, stableOptions)) as Row[];
   } catch (error) {
     const failure = errorWithNotices(error, raw.notices);
     const status = responseTransactionStatus(raw);
@@ -703,9 +655,9 @@ export function decodeQueryResult<Row = QueryObjectRow>(
 
 export function parseExecResponse<Row = QueryObjectRow>(
   bytes: Uint8Array,
-  options: Omit<QueryOptions, "encoders"> = {},
+  options: Omit<QueryOptions, 'encoders'> = {},
 ): ExecResult<Row> {
-  const operation = parseRawOperation(bytes, "simple-exec");
+  const operation = parseRawOperation(bytes, 'simple-exec');
   let result: ExecResult<Row>;
   try {
     result = {
@@ -728,11 +680,8 @@ export function parseExecResponse<Row = QueryObjectRow>(
 export function parseCommandResponse(bytes: Uint8Array): CommandResult {
   const raw = parseQueryRawResponse(bytes);
   const status = responseTransactionStatus(raw);
-  if (raw.kind === "rows") {
-    throwWithStatus(
-      new Error("execute() received rows; use query() for row results"),
-      status,
-    );
+  if (raw.kind === 'rows') {
+    throwWithStatus(new Error('execute() received rows; use query() for row results'), status);
   }
   const result: CommandResult = {
     commandTag: raw.commandTag,
@@ -755,25 +704,13 @@ export function parseDescribeResponse(bytes: Uint8Array): DescribeResult {
   let sawErrorResponse = false;
   let status: TransactionStatus | undefined;
   while (!cursor.isAtEnd()) {
-    const tag = cursor.readU8("backend message tag");
-    const length = cursor.readI32("backend message length");
-    if (length < 4) throw new Error("invalid backend message length " + length);
-    const body = new ByteCursor(
-      cursor.readBytes(length - 4, "backend message body"),
-    );
-    if (
-      sawErrorResponse &&
-      tag !== 0x4e &&
-      tag !== 0x53 &&
-      tag !== 0x41 &&
-      tag !== 0x5a
-    ) {
+    const tag = cursor.readU8('backend message tag');
+    const length = cursor.readI32('backend message length');
+    if (length < 4) throw new Error('invalid backend message length ' + length);
+    const body = new ByteCursor(cursor.readBytes(length - 4, 'backend message body'));
+    if (sawErrorResponse && tag !== 0x4e && tag !== 0x53 && tag !== 0x41 && tag !== 0x5a) {
       recoveryFailure ??= withCause(
-        new Error(
-          "describe response contained " +
-            hexBackendTag(tag) +
-            " after ErrorResponse",
-        ),
+        new Error('describe response contained ' + hexBackendTag(tag) + ' after ErrorResponse'),
         failure,
       );
       continue;
@@ -781,37 +718,30 @@ export function parseDescribeResponse(bytes: Uint8Array): DescribeResult {
     try {
       switch (tag) {
         case 0x31:
-          if (sawParseComplete) throw new Error("duplicate ParseComplete");
-          body.requireEnd("ParseComplete");
+          if (sawParseComplete) throw new Error('duplicate ParseComplete');
+          body.requireEnd('ParseComplete');
           sawParseComplete = true;
           break;
         case 0x74:
           if (!sawParseComplete)
-            throw new Error(
-              "ParameterDescription arrived before ParseComplete",
-            );
-          if (parameterTypeOids !== undefined)
-            throw new Error("duplicate ParameterDescription");
+            throw new Error('ParameterDescription arrived before ParseComplete');
+          if (parameterTypeOids !== undefined) throw new Error('duplicate ParameterDescription');
           parameterTypeOids = parseParameterDescription(body);
-          body.requireEnd("ParameterDescription");
+          body.requireEnd('ParameterDescription');
           break;
         case 0x54:
           if (parameterTypeOids === undefined)
-            throw new Error(
-              "RowDescription arrived before ParameterDescription",
-            );
-          if (fields !== undefined || sawNoData)
-            throw new Error("duplicate result description");
+            throw new Error('RowDescription arrived before ParameterDescription');
+          if (fields !== undefined || sawNoData) throw new Error('duplicate result description');
           fields = parseRowDescription(body);
-          body.requireEnd("RowDescription");
+          body.requireEnd('RowDescription');
           break;
         case 0x6e:
           if (parameterTypeOids === undefined)
-            throw new Error("NoData arrived before ParameterDescription");
-          if (fields !== undefined || sawNoData)
-            throw new Error("duplicate result description");
+            throw new Error('NoData arrived before ParameterDescription');
+          if (fields !== undefined || sawNoData) throw new Error('duplicate result description');
           sawNoData = true;
-          body.requireEnd("NoData");
+          body.requireEnd('NoData');
           break;
         case 0x45: {
           const postgresFailure = parseErrorResponse(body, notices);
@@ -821,7 +751,7 @@ export function parseDescribeResponse(bytes: Uint8Array): DescribeResult {
             (fields !== undefined || sawNoData)
           ) {
             failure ??= withCause(
-              new Error("ErrorResponse arrived after describe completion"),
+              new Error('ErrorResponse arrived after describe completion'),
               postgresFailure,
             );
           } else {
@@ -842,14 +772,13 @@ export function parseDescribeResponse(bytes: Uint8Array): DescribeResult {
         case 0x5a:
           status = parseReadyForQuery(body);
           if (!cursor.isAtEnd()) {
-            failure ??= new Error("backend returned bytes after ReadyForQuery");
+            failure ??= new Error('backend returned bytes after ReadyForQuery');
             cursor.discardRemaining();
           }
           break;
         default:
           failure ??= new Error(
-            "describe() received unexpected backend message tag " +
-              hexBackendTag(tag),
+            'describe() received unexpected backend message tag ' + hexBackendTag(tag),
           );
       }
     } catch (error) {
@@ -858,27 +787,18 @@ export function parseDescribeResponse(bytes: Uint8Array): DescribeResult {
   }
   if (status === undefined) {
     if (failure !== undefined) throw failure;
-    throw new Error("describe response ended before ReadyForQuery");
+    throw new Error('describe response ended before ReadyForQuery');
   }
   if (recoveryFailure !== undefined) throwWithStatus(recoveryFailure, status);
   if (failure !== undefined) throwWithStatus(failure, status);
   if (!sawParseComplete) {
-    throwWithStatus(
-      new Error("describe response omitted ParseComplete"),
-      status,
-    );
+    throwWithStatus(new Error('describe response omitted ParseComplete'), status);
   }
   if (parameterTypeOids === undefined) {
-    throwWithStatus(
-      new Error("describe response omitted ParameterDescription"),
-      status,
-    );
+    throwWithStatus(new Error('describe response omitted ParameterDescription'), status);
   }
   if (fields === undefined && !sawNoData) {
-    throwWithStatus(
-      new Error("describe response omitted RowDescription or NoData"),
-      status,
-    );
+    throwWithStatus(new Error('describe response omitted RowDescription or NoData'), status);
   }
   const result: DescribeResult = {
     parameterTypeOids,
@@ -890,22 +810,18 @@ export function parseDescribeResponse(bytes: Uint8Array): DescribeResult {
 }
 
 export function assertSuccessfulQueryResponse(bytes: Uint8Array): void {
-  const raw = singleRawResult(parseRawOperation(bytes, "simple-single"));
-  if (raw.kind === "rows") {
+  const raw = singleRawResult(parseRawOperation(bytes, 'simple-single'));
+  if (raw.kind === 'rows') {
     throwWithStatus(
-      new Error("command response unexpectedly contained rows"),
+      new Error('command response unexpectedly contained rows'),
       responseTransactionStatus(raw),
     );
   }
 }
 
-type RawOperationMode =
-  "extended-single" | "either-single" | "simple-single" | "simple-exec";
+type RawOperationMode = 'extended-single' | 'either-single' | 'simple-single' | 'simple-exec';
 
-function parseRawOperation(
-  bytes: Uint8Array,
-  mode: RawOperationMode,
-): RawOperation {
+function parseRawOperation(bytes: Uint8Array, mode: RawOperationMode): RawOperation {
   const cursor = new ByteCursor(bytes);
   const statements: RawQueryResult[] = [];
   const notices: PostgresNotice[] = [];
@@ -915,29 +831,16 @@ function parseRawOperation(
   let recoveryFailure: Error | undefined;
   let sawErrorResponse = false;
   let completionCount = 0;
-  let extendedStage: "start" | "parsed" | "bound" | "described" | "completed" =
-    "start";
+  let extendedStage: 'start' | 'parsed' | 'bound' | 'described' | 'completed' = 'start';
   let status: TransactionStatus | undefined;
   while (!cursor.isAtEnd()) {
-    const tag = cursor.readU8("backend message tag");
-    const length = cursor.readI32("backend message length");
-    if (length < 4) throw new Error("invalid backend message length " + length);
-    const body = new ByteCursor(
-      cursor.readBytes(length - 4, "backend message body"),
-    );
-    if (
-      sawErrorResponse &&
-      tag !== 0x4e &&
-      tag !== 0x53 &&
-      tag !== 0x41 &&
-      tag !== 0x5a
-    ) {
+    const tag = cursor.readU8('backend message tag');
+    const length = cursor.readI32('backend message length');
+    if (length < 4) throw new Error('invalid backend message length ' + length);
+    const body = new ByteCursor(cursor.readBytes(length - 4, 'backend message body'));
+    if (sawErrorResponse && tag !== 0x4e && tag !== 0x53 && tag !== 0x41 && tag !== 0x5a) {
       recoveryFailure ??= withCause(
-        new Error(
-          "query response contained " +
-            hexBackendTag(tag) +
-            " after ErrorResponse",
-        ),
+        new Error('query response contained ' + hexBackendTag(tag) + ' after ErrorResponse'),
         failure,
       );
       continue;
@@ -945,62 +848,50 @@ function parseRawOperation(
     try {
       switch (tag) {
         case 0x54:
-          if (mode !== "simple-exec" && completionCount > 0)
-            throw new Error(
-              "RowDescription arrived after statement completion",
-            );
-          if (mode === "extended-single" || mode === "either-single") {
-            if (!(mode === "either-single" && extendedStage === "start")) {
-              if (extendedStage !== "bound") {
-                throw new Error(
-                  "RowDescription arrived before ParseComplete and BindComplete",
-                );
+          if (mode !== 'simple-exec' && completionCount > 0)
+            throw new Error('RowDescription arrived after statement completion');
+          if (mode === 'extended-single' || mode === 'either-single') {
+            if (!(mode === 'either-single' && extendedStage === 'start')) {
+              if (extendedStage !== 'bound') {
+                throw new Error('RowDescription arrived before ParseComplete and BindComplete');
               }
-              extendedStage = "described";
+              extendedStage = 'described';
             }
           }
-          if (fields !== undefined)
-            failure ??= new Error("result received two RowDescriptions");
+          if (fields !== undefined) failure ??= new Error('result received two RowDescriptions');
           fields = parseRowDescription(body);
-          body.requireEnd("RowDescription");
+          body.requireEnd('RowDescription');
           break;
         case 0x44:
           if (completionCount > 0 && fields === undefined)
-            throw new Error("DataRow arrived after statement completion");
-          if (fields === undefined)
-            throw new Error("DataRow arrived before RowDescription");
+            throw new Error('DataRow arrived after statement completion');
+          if (fields === undefined) throw new Error('DataRow arrived before RowDescription');
           if (
-            (mode === "extended-single" && extendedStage !== "described") ||
-            (mode === "either-single" &&
-              extendedStage !== "start" &&
-              extendedStage !== "described")
+            (mode === 'extended-single' && extendedStage !== 'described') ||
+            (mode === 'either-single' && extendedStage !== 'start' && extendedStage !== 'described')
           ) {
-            throw new Error("DataRow arrived before the result description");
+            throw new Error('DataRow arrived before the result description');
           }
           rows.push(parseDataRow(body, fields.length));
-          body.requireEnd("DataRow");
+          body.requireEnd('DataRow');
           break;
         case 0x43: {
-          if (mode !== "simple-exec" && completionCount > 0) {
+          if (mode !== 'simple-exec' && completionCount > 0) {
             throw new Error(
-              "queryRaw() received multiple result completions; use exec() for multi-statement SQL",
+              'queryRaw() received multiple result completions; use exec() for multi-statement SQL',
             );
           }
           if (
-            (mode === "extended-single" && extendedStage !== "described") ||
-            (mode === "either-single" &&
-              extendedStage !== "start" &&
-              extendedStage !== "described")
+            (mode === 'extended-single' && extendedStage !== 'described') ||
+            (mode === 'either-single' && extendedStage !== 'start' && extendedStage !== 'described')
           ) {
-            throw new Error(
-              "CommandComplete arrived before the extended-query result description",
-            );
+            throw new Error('CommandComplete arrived before the extended-query result description');
           }
-          const commandTag = body.readCString("CommandComplete tag");
-          body.requireEnd("CommandComplete");
+          const commandTag = body.readCString('CommandComplete tag');
+          body.requireEnd('CommandComplete');
           statements.push(
             rawResult(
-              fields === undefined ? "command" : "rows",
+              fields === undefined ? 'command' : 'rows',
               fields ?? [],
               rows,
               commandTag,
@@ -1011,18 +902,18 @@ function parseRawOperation(
           rows = [];
           completionCount += 1;
           if (
-            mode === "extended-single" ||
-            (mode === "either-single" && extendedStage === "described")
+            mode === 'extended-single' ||
+            (mode === 'either-single' && extendedStage === 'described')
           ) {
-            extendedStage = "completed";
+            extendedStage = 'completed';
           }
           break;
         }
         case 0x45: {
           const postgresFailure = parseErrorResponse(body, notices);
-          if (mode !== "simple-exec" && completionCount > 0) {
+          if (mode !== 'simple-exec' && completionCount > 0) {
             failure ??= withCause(
-              new Error("ErrorResponse arrived after statement completion"),
+              new Error('ErrorResponse arrived after statement completion'),
               postgresFailure,
             );
           } else {
@@ -1037,78 +928,72 @@ function parseRawOperation(
         case 0x64:
         case 0x63:
           failure ??= new Error(
-            "query() does not support COPY protocol responses; use a raw protocol API for COPY traffic",
+            'query() does not support COPY protocol responses; use a raw protocol API for COPY traffic',
           );
           break;
         case 0x5a:
           status = parseReadyForQuery(body);
           if (!cursor.isAtEnd()) {
-            failure ??= new Error("backend returned bytes after ReadyForQuery");
+            failure ??= new Error('backend returned bytes after ReadyForQuery');
             cursor.discardRemaining();
           }
           break;
         case 0x31:
-          if (mode !== "extended-single" && mode !== "either-single") {
-            throw new Error("simple-query response contained ParseComplete");
+          if (mode !== 'extended-single' && mode !== 'either-single') {
+            throw new Error('simple-query response contained ParseComplete');
           }
-          if (extendedStage !== "start") {
-            throw new Error("ParseComplete arrived out of order");
+          if (extendedStage !== 'start') {
+            throw new Error('ParseComplete arrived out of order');
           }
-          body.requireEnd("ParseComplete");
-          extendedStage = "parsed";
+          body.requireEnd('ParseComplete');
+          extendedStage = 'parsed';
           break;
         case 0x32:
-          if (mode !== "extended-single" && mode !== "either-single") {
-            throw new Error("simple-query response contained BindComplete");
+          if (mode !== 'extended-single' && mode !== 'either-single') {
+            throw new Error('simple-query response contained BindComplete');
           }
-          if (extendedStage !== "parsed") {
-            throw new Error(
-              "BindComplete arrived before ParseComplete or out of order",
-            );
+          if (extendedStage !== 'parsed') {
+            throw new Error('BindComplete arrived before ParseComplete or out of order');
           }
-          body.requireEnd("BindComplete");
-          extendedStage = "bound";
+          body.requireEnd('BindComplete');
+          extendedStage = 'bound';
           break;
         case 0x33:
-          throw new Error("unsolicited CloseComplete in query response");
+          throw new Error('unsolicited CloseComplete in query response');
         case 0x49:
           if (fields !== undefined || rows.length !== 0)
-            throw new Error("EmptyQueryResponse arrived during a row result");
-          if (mode !== "simple-exec" && completionCount > 0) {
+            throw new Error('EmptyQueryResponse arrived during a row result');
+          if (mode !== 'simple-exec' && completionCount > 0) {
             throw new Error(
-              "queryRaw() received multiple result completions; use exec() for multi-statement SQL",
+              'queryRaw() received multiple result completions; use exec() for multi-statement SQL',
             );
           }
           if (
-            (mode === "extended-single" && extendedStage !== "described") ||
-            (mode === "either-single" &&
-              extendedStage !== "start" &&
-              extendedStage !== "described")
+            (mode === 'extended-single' && extendedStage !== 'described') ||
+            (mode === 'either-single' && extendedStage !== 'start' && extendedStage !== 'described')
           ) {
             throw new Error(
-              "EmptyQueryResponse arrived before the extended-query result description",
+              'EmptyQueryResponse arrived before the extended-query result description',
             );
           }
-          body.requireEnd("EmptyQueryResponse");
+          body.requireEnd('EmptyQueryResponse');
           completionCount += 1;
           if (
-            mode === "extended-single" ||
-            (mode === "either-single" && extendedStage === "described")
+            mode === 'extended-single' ||
+            (mode === 'either-single' && extendedStage === 'described')
           ) {
-            extendedStage = "completed";
+            extendedStage = 'completed';
           }
           break;
         case 0x6e:
-          if (mode !== "extended-single" && mode !== "either-single") {
-            throw new Error("simple-query response contained NoData");
+          if (mode !== 'extended-single' && mode !== 'either-single') {
+            throw new Error('simple-query response contained NoData');
           }
-          if (extendedStage !== "bound") {
-            throw new Error(
-              "NoData arrived before ParseComplete and BindComplete",
-            );
+          if (extendedStage !== 'bound') {
+            throw new Error('NoData arrived before ParseComplete and BindComplete');
           }
-          body.requireEnd("NoData");
-          extendedStage = "described";
+          body.requireEnd('NoData');
+          extendedStage = 'described';
           break;
         case 0x53:
           validateParameterStatus(body);
@@ -1120,9 +1005,7 @@ function parseRawOperation(
           validateNotificationResponse(body);
           break;
         default:
-          failure ??= new Error(
-            "unexpected backend message tag " + hexBackendTag(tag),
-          );
+          failure ??= new Error('unexpected backend message tag ' + hexBackendTag(tag));
       }
     } catch (error) {
       failure ??= asError(error);
@@ -1130,34 +1013,28 @@ function parseRawOperation(
   }
   if (status === undefined) {
     if (failure !== undefined) throw failure;
-    throw new Error("query response ended before ReadyForQuery");
+    throw new Error('query response ended before ReadyForQuery');
   }
   if (recoveryFailure !== undefined) throwWithStatus(recoveryFailure, status);
   if (fields !== undefined || rows.length !== 0) {
-    failure ??= new Error("query response ended before CommandComplete");
+    failure ??= new Error('query response ended before CommandComplete');
   }
   if (!sawErrorResponse && completionCount === 0) {
+    failure ??= new Error('query response omitted CommandComplete or EmptyQueryResponse');
+  }
+  if (!sawErrorResponse && mode === 'extended-single' && extendedStage !== 'completed') {
     failure ??= new Error(
-      "query response omitted CommandComplete or EmptyQueryResponse",
+      'extended-query response omitted ParseComplete, BindComplete, result description, or completion',
     );
   }
   if (
     !sawErrorResponse &&
-    mode === "extended-single" &&
-    extendedStage !== "completed"
+    mode === 'either-single' &&
+    extendedStage !== 'start' &&
+    extendedStage !== 'completed'
   ) {
     failure ??= new Error(
-      "extended-query response omitted ParseComplete, BindComplete, result description, or completion",
-    );
-  }
-  if (
-    !sawErrorResponse &&
-    mode === "either-single" &&
-    extendedStage !== "start" &&
-    extendedStage !== "completed"
-  ) {
-    failure ??= new Error(
-      "extended-query response omitted ParseComplete, BindComplete, result description, or completion",
+      'extended-query response omitted ParseComplete, BindComplete, result description, or completion',
     );
   }
   if (failure !== undefined) throwWithStatus(failure, status);
@@ -1165,7 +1042,7 @@ function parseRawOperation(
 }
 
 function rawResult(
-  kind: "command" | "rows",
+  kind: 'command' | 'rows',
   fields: QueryField[],
   rows: RawQueryRow[],
   commandTag: string | undefined,
@@ -1185,13 +1062,10 @@ function rawResult(
     getText(row: number, column: string): string | null {
       const columnIndex = this.fieldIndex(column);
       if (columnIndex === undefined) {
-        throw new Error(
-          "query result has no column named " + JSON.stringify(column),
-        );
+        throw new Error('query result has no column named ' + JSON.stringify(column));
       }
       const queryRow = rows[row];
-      if (queryRow === undefined)
-        throw new Error("query result has no row at index " + row);
+      if (queryRow === undefined) throw new Error('query result has no row at index ' + row);
       return queryRow.text(columnIndex);
     },
   };
@@ -1202,10 +1076,8 @@ function materializeRow(
   fields: QueryField[],
   options: QueryOptions,
 ): QueryObjectRow | QueryArrayRow {
-  const values = row.values.map((value, index) =>
-    decodeValue(value, fields[index]!, options),
-  );
-  if (options.rowMode === "array") return values;
+  const values = row.values.map((value, index) => decodeValue(value, fields[index]!, options));
+  if (options.rowMode === 'array') return values;
   const object: QueryObjectRow = {};
   for (let index = 0; index < fields.length; index += 1) {
     Object.defineProperty(object, fields[index]!.name, {
@@ -1224,11 +1096,11 @@ function decodeValue(
   options: QueryOptions,
 ): QueryValue {
   if (value === null) return null;
-  if (field.format !== "text") return value;
-  const decodedText = decodeUtf8Strict(value, "query value");
+  if (field.format !== 'text') return value;
+  const decodedText = decodeUtf8Strict(value, 'query value');
   const decoder = options.decoders?.[field.typeOid];
   if (decoder !== undefined) return decoder(decodedText, field) as QueryValue;
-  if (options.valueMode === "text") return decodedText;
+  if (options.valueMode === 'text') return decodedText;
   return decodeBuiltInText(decodedText, field.typeOid);
 }
 
@@ -1241,16 +1113,7 @@ function commandTagRowCount(commandTag: string | undefined): number | null {
   if (
     count === undefined ||
     !/^[0-9]+$/.test(count) ||
-    ![
-      "SELECT",
-      "INSERT",
-      "UPDATE",
-      "DELETE",
-      "MERGE",
-      "MOVE",
-      "FETCH",
-      "COPY",
-    ].includes(parts[0]!)
+    !['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'MERGE', 'MOVE', 'FETCH', 'COPY'].includes(parts[0]!)
   ) {
     return null;
   }
@@ -1259,9 +1122,9 @@ function commandTagRowCount(commandTag: string | undefined): number | null {
 }
 
 type NormalizedParam =
-  | { kind: "null" }
-  | { kind: "text"; value: Uint8Array }
-  | { kind: "binary"; value: Uint8Array };
+  | { kind: 'null' }
+  | { kind: 'text'; value: Uint8Array }
+  | { kind: 'binary'; value: Uint8Array };
 
 function normalizeQueryParam(
   parameter: QueryParam,
@@ -1270,7 +1133,7 @@ function normalizeQueryParam(
 ): NormalizedParam {
   validateTypeOid(typeOid, false);
   const wrapper =
-    parameter !== null && typeof parameter === "object"
+    parameter !== null && typeof parameter === 'object'
       ? parameterMetadata.get(parameter)
       : undefined;
   if (wrapper !== undefined) return normalizeWrapper(wrapper, typeOid);
@@ -1278,62 +1141,54 @@ function normalizeQueryParam(
   const custom = encoders?.[typeOid];
   if (custom !== undefined) {
     const encoded = custom(parameter, typeOid);
-    if (encoded === null || typeof encoded !== "object") {
-      throw new TypeError(
-        "query encoder for OID " + typeOid + " must return a parameter helper",
-      );
+    if (encoded === null || typeof encoded !== 'object') {
+      throw new TypeError('query encoder for OID ' + typeOid + ' must return a parameter helper');
     }
     const encodedMetadata = parameterMetadata.get(encoded);
     if (encodedMetadata === undefined) {
       throw new TypeError(
-        "query encoder for OID " +
-          typeOid +
-          " must use text(), binary(), or typedNull()",
+        'query encoder for OID ' + typeOid + ' must use text(), binary(), or typedNull()',
       );
     }
     return normalizeWrapper(encodedMetadata, typeOid);
   }
 
-  if (parameter === null) return { kind: "null" };
-  if (typeof parameter === "string") {
-    return { kind: "text", value: utf8Encoder.encode(parameter) };
+  if (parameter === null) return { kind: 'null' };
+  if (typeof parameter === 'string') {
+    return { kind: 'text', value: utf8Encoder.encode(parameter) };
   }
-  if (typeof parameter === "number") {
-    if (!isNumericOrTextOid(typeOid))
-      throw unsupportedParameter(parameter, typeOid);
-    return { kind: "text", value: utf8Encoder.encode(scalarText(parameter)) };
+  if (typeof parameter === 'number') {
+    if (!isNumericOrTextOid(typeOid)) throw unsupportedParameter(parameter, typeOid);
+    return { kind: 'text', value: utf8Encoder.encode(scalarText(parameter)) };
   }
-  if (typeof parameter === "bigint") {
-    if (!isNumericOrTextOid(typeOid))
-      throw unsupportedParameter(parameter, typeOid);
-    return { kind: "text", value: utf8Encoder.encode(parameter.toString()) };
+  if (typeof parameter === 'bigint') {
+    if (!isNumericOrTextOid(typeOid)) throw unsupportedParameter(parameter, typeOid);
+    return { kind: 'text', value: utf8Encoder.encode(parameter.toString()) };
   }
-  if (typeof parameter === "boolean") {
+  if (typeof parameter === 'boolean') {
     if (typeOid !== postgresOids.bool && !isTextOid(typeOid)) {
       throw unsupportedParameter(parameter, typeOid);
     }
     return {
-      kind: "text",
-      value: utf8Encoder.encode(parameter ? "true" : "false"),
+      kind: 'text',
+      value: utf8Encoder.encode(parameter ? 'true' : 'false'),
     };
   }
   if (parameter instanceof Date) {
     return {
-      kind: "text",
+      kind: 'text',
       value: utf8Encoder.encode(dateText(parameter, typeOid)),
     };
   }
   if (isQueryBinaryInput(parameter)) {
-    if (typeOid !== postgresOids.bytea)
-      throw unsupportedParameter(parameter, typeOid);
-    return { kind: "binary", value: toUint8Array(parameter) };
+    if (typeOid !== postgresOids.bytea) throw unsupportedParameter(parameter, typeOid);
+    return { kind: 'binary', value: toUint8Array(parameter) };
   }
   if (Array.isArray(parameter)) {
     const elementTypeOid = arrayElementTypeOid(typeOid);
-    if (elementTypeOid === undefined)
-      throw unsupportedParameter(parameter, typeOid);
+    if (elementTypeOid === undefined) throw unsupportedParameter(parameter, typeOid);
     return {
-      kind: "text",
+      kind: 'text',
       value: utf8Encoder.encode(encodeArrayLiteral(parameter, elementTypeOid)),
     };
   }
@@ -1341,34 +1196,29 @@ function normalizeQueryParam(
     if (typeOid !== postgresOids.json && typeOid !== postgresOids.jsonb) {
       throw unsupportedParameter(parameter, typeOid);
     }
-    return { kind: "text", value: utf8Encoder.encode(json(parameter).value) };
+    return { kind: 'text', value: utf8Encoder.encode(json(parameter).value) };
   }
-  throw new TypeError(
-    "query parameter is unsupported; use an explicit parameter helper",
-  );
+  throw new TypeError('query parameter is unsupported; use an explicit parameter helper');
 }
 
-function normalizeWrapper(
-  wrapper: ParameterMetadata,
-  typeOid: number,
-): NormalizedParam {
+function normalizeWrapper(wrapper: ParameterMetadata, typeOid: number): NormalizedParam {
   if (wrapper.typeOid !== undefined && wrapper.typeOid !== typeOid) {
     throw new Error(
-      "parameter declares PostgreSQL OID " +
+      'parameter declares PostgreSQL OID ' +
         wrapper.typeOid +
-        ", but PostgreSQL described OID " +
+        ', but PostgreSQL described OID ' +
         typeOid,
     );
   }
-  if (wrapper.format === "null") return { kind: "null" };
-  if (wrapper.format === "text") {
-    return { kind: "text", value: utf8Encoder.encode(wrapper.value) };
+  if (wrapper.format === 'null') return { kind: 'null' };
+  if (wrapper.format === 'text') {
+    return { kind: 'text', value: utf8Encoder.encode(wrapper.value) };
   }
-  return { kind: "binary", value: toUint8Array(wrapper.value) };
+  return { kind: 'binary', value: toUint8Array(wrapper.value) };
 }
 
 function parameterDeclaredTypeOid(parameter: QueryParam): number {
-  if (parameter !== null && typeof parameter === "object") {
+  if (parameter !== null && typeof parameter === 'object') {
     const wrapper = parameterMetadata.get(parameter);
     if (wrapper?.typeOid !== undefined) {
       validateTypeOid(wrapper.typeOid, false);
@@ -1381,22 +1231,18 @@ function parameterDeclaredTypeOid(parameter: QueryParam): number {
 function snapshotQueryParam(parameter: QueryParam): QueryParam {
   if (
     parameter === null ||
-    typeof parameter === "string" ||
-    typeof parameter === "number" ||
-    typeof parameter === "bigint" ||
-    typeof parameter === "boolean"
+    typeof parameter === 'string' ||
+    typeof parameter === 'number' ||
+    typeof parameter === 'bigint' ||
+    typeof parameter === 'boolean'
   ) {
     return parameter;
   }
-  if (parameter === undefined)
-    throw new TypeError("query parameters must not be undefined");
-  const wrapper =
-    typeof parameter === "object"
-      ? parameterMetadata.get(parameter)
-      : undefined;
+  if (parameter === undefined) throw new TypeError('query parameters must not be undefined');
+  const wrapper = typeof parameter === 'object' ? parameterMetadata.get(parameter) : undefined;
   if (wrapper !== undefined) {
-    if (wrapper.format === "null") return typedNull(wrapper.typeOid);
-    if (wrapper.format === "binary") {
+    if (wrapper.format === 'null') return typedNull(wrapper.typeOid);
+    if (wrapper.format === 'binary') {
       return binary(toUint8Array(wrapper.value).slice(), wrapper.typeOid);
     }
     return text(wrapper.value, wrapper.typeOid);
@@ -1404,43 +1250,33 @@ function snapshotQueryParam(parameter: QueryParam): QueryParam {
   if (parameter instanceof Date) return new Date(parameter.getTime());
   if (isQueryBinaryInput(parameter)) return toUint8Array(parameter).slice();
   if (Array.isArray(parameter))
-    return Array.from(parameter, (value) =>
-      snapshotQueryParam(value as QueryParam),
-    );
+    return Array.from(parameter, (value) => snapshotQueryParam(value as QueryParam));
   if (isPlainRecord(parameter)) {
     let encoded: string | undefined;
     try {
       encoded = JSON.stringify(parameter);
     } catch (error) {
       throw withCause(
-        new TypeError(
-          "plain-object query parameters must be JSON-serializable",
-        ),
+        new TypeError('plain-object query parameters must be JSON-serializable'),
         error,
       );
     }
     if (encoded === undefined)
-      throw new TypeError(
-        "plain-object query parameters must be JSON-serializable",
-      );
+      throw new TypeError('plain-object query parameters must be JSON-serializable');
     return JSON.parse(encoded) as Readonly<Record<string, unknown>>;
   }
-  throw new TypeError(
-    "query parameter is unsupported; use an explicit parameter helper",
-  );
+  throw new TypeError('query parameter is unsupported; use an explicit parameter helper');
 }
 
 function parameterWrapper(metadata: ParameterMetadata): EncodedQueryParameter {
   if (metadata.typeOid !== undefined) validateTypeOid(metadata.typeOid, false);
   const visible =
-    metadata.format === "null"
-      ? { format: "null" as const, typeOid: metadata.typeOid }
+    metadata.format === 'null'
+      ? { format: 'null' as const, typeOid: metadata.typeOid }
       : {
           format: metadata.format,
           value: metadata.value,
-          ...(metadata.typeOid === undefined
-            ? {}
-            : { typeOid: metadata.typeOid }),
+          ...(metadata.typeOid === undefined ? {} : { typeOid: metadata.typeOid }),
         };
   const wrapper = Object.freeze(visible) as EncodedQueryParameter;
   parameterMetadata.set(wrapper, metadata);
@@ -1451,47 +1287,30 @@ function isQueryBinaryInput(value: unknown): value is QueryBinaryInput {
   return value instanceof ArrayBuffer || ArrayBuffer.isView(value);
 }
 
-function validateStatementInput(
-  sql: string,
-  parameters: { length: number },
-): void {
+function validateStatementInput(sql: string, parameters: { length: number }): void {
   if (parameters.length > 0x7fff) {
-    throw new Error(
-      "extended query supports at most 32767 parameters, got " +
-        parameters.length,
-    );
+    throw new Error('extended query supports at most 32767 parameters, got ' + parameters.length);
   }
-  if (sql.includes("\0"))
-    throw new Error("extended query SQL must not contain NUL bytes");
+  if (sql.includes('\0')) throw new Error('extended query SQL must not contain NUL bytes');
 }
 
 function validateTypeOid(typeOid: number, allowZero: boolean): void {
-  if (
-    !Number.isInteger(typeOid) ||
-    typeOid < (allowZero ? 0 : 1) ||
-    typeOid > 0xffffffff
-  ) {
+  if (!Number.isInteger(typeOid) || typeOid < (allowZero ? 0 : 1) || typeOid > 0xffffffff) {
     throw new TypeError(
-      "PostgreSQL type OID must be " +
-        (allowZero ? "zero or " : "") +
-        "a positive uint32",
+      'PostgreSQL type OID must be ' + (allowZero ? 'zero or ' : '') + 'a positive uint32',
     );
   }
 }
 
 function scalarText(value: string | number | bigint | boolean | Date): string {
-  if (typeof value === "number") {
-    if (!Number.isFinite(value))
-      throw new TypeError("number query parameters must be finite");
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new TypeError('number query parameters must be finite');
     if (Number.isInteger(value) && !Number.isSafeInteger(value)) {
-      throw new TypeError(
-        "integer query parameters must be safe integers; use bigint instead",
-      );
+      throw new TypeError('integer query parameters must be safe integers; use bigint instead');
     }
   }
   if (value instanceof Date) {
-    if (Number.isNaN(value.getTime()))
-      throw new TypeError("Date query parameters must be valid");
+    if (Number.isNaN(value.getTime())) throw new TypeError('Date query parameters must be valid');
     return value.toISOString();
   }
   return String(value);
@@ -1500,8 +1319,7 @@ function scalarText(value: string | number | bigint | boolean | Date): string {
 function dateText(value: Date, typeOid: number): string {
   const iso = scalarText(value);
   if (typeOid === postgresOids.date) return iso.slice(0, 10);
-  if (typeOid === postgresOids.timestamp)
-    return iso.slice(0, -1).replace("T", " ");
+  if (typeOid === postgresOids.timestamp) return iso.slice(0, -1).replace('T', ' ');
   if (typeOid === postgresOids.timestamptz || isTextOid(typeOid)) return iso;
   throw unsupportedParameter(value, typeOid);
 }
@@ -1527,29 +1345,23 @@ function isTextOid(typeOid: number): boolean {
 }
 
 function unsupportedParameter(value: unknown, typeOid: number): TypeError {
-  const kind =
-    value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+  const kind = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
   return new TypeError(
-    "cannot safely encode " +
+    'cannot safely encode ' +
       kind +
-      " for PostgreSQL OID " +
+      ' for PostgreSQL OID ' +
       typeOid +
-      "; use a typed helper or encoder",
+      '; use a typed helper or encoder',
   );
 }
 
-function isPlainRecord(
-  value: unknown,
-): value is Readonly<Record<string, unknown>> {
-  if (value === null || typeof value !== "object") return false;
+function isPlainRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  if (value === null || typeof value !== 'object') return false;
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
 }
 
-function throwWithStatus(
-  error: Error,
-  status: TransactionStatus | undefined,
-): never {
+function throwWithStatus(error: Error, status: TransactionStatus | undefined): never {
   if (status !== undefined) transactionStatuses.set(error, status);
   throw error;
 }
@@ -1557,14 +1369,11 @@ function throwWithStatus(
 function asError(error: unknown): Error {
   return error instanceof Error
     ? error
-    : withCause(new Error("PostgreSQL response parsing failed"), error);
+    : withCause(new Error('PostgreSQL response parsing failed'), error);
 }
 
-function withCause<ErrorType extends Error>(
-  error: ErrorType,
-  cause: unknown,
-): ErrorType {
-  Object.defineProperty(error, "cause", {
+function withCause<ErrorType extends Error>(error: ErrorType, cause: unknown): ErrorType {
+  Object.defineProperty(error, 'cause', {
     value: cause,
     configurable: true,
     writable: true,
@@ -1575,9 +1384,9 @@ function withCause<ErrorType extends Error>(
 function decodeBuiltInText(value: string, typeOid: number): QueryValue {
   switch (typeOid) {
     case postgresOids.bool:
-      if (value === "t") return true;
-      if (value === "f") return false;
-      throw new Error("invalid PostgreSQL bool text " + JSON.stringify(value));
+      if (value === 't') return true;
+      if (value === 'f') return false;
+      throw new Error('invalid PostgreSQL bool text ' + JSON.stringify(value));
     case postgresOids.int2:
     case postgresOids.int4:
     case postgresOids.oid:
@@ -1610,48 +1419,36 @@ function decodeBuiltInText(value: string, typeOid: number): QueryValue {
 function decodeInteger(value: string, typeOid: number): number {
   if (!/^-?[0-9]+$/.test(value)) {
     throw new Error(
-      "invalid PostgreSQL integer text for OID " +
-        typeOid +
-        ": " +
-        JSON.stringify(value),
+      'invalid PostgreSQL integer text for OID ' + typeOid + ': ' + JSON.stringify(value),
     );
   }
   const decoded = Number(value);
   if (!Number.isSafeInteger(decoded)) {
-    throw new Error(
-      "PostgreSQL integer for OID " +
-        typeOid +
-        " exceeds JavaScript safe range",
-    );
+    throw new Error('PostgreSQL integer for OID ' + typeOid + ' exceeds JavaScript safe range');
   }
   return decoded;
 }
 
 function decodeFloat(value: string, typeOid: number): number {
-  if (value === "NaN") return Number.NaN;
-  if (value === "Infinity") return Number.POSITIVE_INFINITY;
-  if (value === "-Infinity") return Number.NEGATIVE_INFINITY;
-  if (
-    !/^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/.test(value)
-  ) {
+  if (value === 'NaN') return Number.NaN;
+  if (value === 'Infinity') return Number.POSITIVE_INFINITY;
+  if (value === '-Infinity') return Number.NEGATIVE_INFINITY;
+  if (!/^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/.test(value)) {
     throw new Error(
-      "invalid PostgreSQL float text for OID " +
-        typeOid +
-        ": " +
-        JSON.stringify(value),
+      'invalid PostgreSQL float text for OID ' + typeOid + ': ' + JSON.stringify(value),
     );
   }
   const decoded = Number(value);
   if (!Number.isFinite(decoded))
-    throw new Error("PostgreSQL float text is outside JavaScript range");
+    throw new Error('PostgreSQL float text is outside JavaScript range');
   return decoded;
 }
 
 function decodeBytea(value: string): Uint8Array {
-  if (value.startsWith("\\x")) {
+  if (value.startsWith('\\x')) {
     const hex = value.slice(2);
     if (hex.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(hex)) {
-      throw new Error("invalid PostgreSQL hex bytea text");
+      throw new Error('invalid PostgreSQL hex bytea text');
     }
     const bytes = new Uint8Array(hex.length / 2);
     for (let index = 0; index < bytes.length; index += 1) {
@@ -1661,18 +1458,17 @@ function decodeBytea(value: string): Uint8Array {
   }
   const bytes: number[] = [];
   for (let index = 0; index < value.length; index += 1) {
-    if (value[index] !== "\\") {
+    if (value[index] !== '\\') {
       bytes.push(value.charCodeAt(index));
       continue;
     }
-    if (value[index + 1] === "\\") {
+    if (value[index + 1] === '\\') {
       bytes.push(0x5c);
       index += 1;
       continue;
     }
     const octal = value.slice(index + 1, index + 4);
-    if (!/^[0-3][0-7]{2}$/.test(octal))
-      throw new Error("invalid PostgreSQL escape bytea text");
+    if (!/^[0-3][0-7]{2}$/.test(octal)) throw new Error('invalid PostgreSQL escape bytea text');
     bytes.push(Number.parseInt(octal, 8));
     index += 3;
   }
@@ -1710,28 +1506,18 @@ function arrayElementTypeOid(arrayTypeOid: number): number | undefined {
   return arrayElementOids.get(arrayTypeOid);
 }
 
-function encodeArrayLiteral(
-  values: ReadonlyArray<unknown>,
-  elementTypeOid?: number,
-): string {
+function encodeArrayLiteral(values: ReadonlyArray<unknown>, elementTypeOid?: number): string {
   return (
-    "{" +
-    Array.from(values, (value) =>
-      encodeArrayElement(value, elementTypeOid),
-    ).join(",") +
-    "}"
+    '{' + Array.from(values, (value) => encodeArrayElement(value, elementTypeOid)).join(',') + '}'
   );
 }
 
 function encodeArrayElement(value: unknown, elementTypeOid?: number): string {
-  if (value === null) return "NULL";
-  if (value === undefined)
-    throw new TypeError("PostgreSQL arrays cannot contain undefined");
+  if (value === null) return 'NULL';
+  if (value === undefined) throw new TypeError('PostgreSQL arrays cannot contain undefined');
   if (Array.isArray(value)) return encodeArrayLiteral(value, elementTypeOid);
   const wrapper =
-    typeof value === "object" && value !== null
-      ? parameterMetadata.get(value)
-      : undefined;
+    typeof value === 'object' && value !== null ? parameterMetadata.get(value) : undefined;
   if (wrapper !== undefined) {
     if (
       elementTypeOid !== undefined &&
@@ -1739,30 +1525,23 @@ function encodeArrayElement(value: unknown, elementTypeOid?: number): string {
       wrapper.typeOid !== elementTypeOid
     ) {
       throw new TypeError(
-        "array element declares PostgreSQL OID " +
+        'array element declares PostgreSQL OID ' +
           wrapper.typeOid +
-          ", but the array resolves element OID " +
+          ', but the array resolves element OID ' +
           elementTypeOid,
       );
     }
-    if (wrapper.format === "null") return "NULL";
-    if (wrapper.format === "binary") {
-      if (
-        elementTypeOid !== undefined &&
-        elementTypeOid !== postgresOids.bytea
-      ) {
+    if (wrapper.format === 'null') return 'NULL';
+    if (wrapper.format === 'binary') {
+      if (elementTypeOid !== undefined && elementTypeOid !== postgresOids.bytea) {
         throw unsupportedParameter(value, elementTypeOid);
       }
-      return quoteArrayElement("\\x" + bytesToHex(toUint8Array(wrapper.value)));
+      return quoteArrayElement('\\x' + bytesToHex(toUint8Array(wrapper.value)));
     }
     return quoteArrayElement(wrapper.value);
   }
-  if (typeof value === "string") return quoteArrayElement(value);
-  if (
-    typeof value === "number" ||
-    typeof value === "bigint" ||
-    typeof value === "boolean"
-  ) {
+  if (typeof value === 'string') return quoteArrayElement(value);
+  if (typeof value === 'number' || typeof value === 'bigint' || typeof value === 'boolean') {
     if (elementTypeOid !== undefined) {
       normalizeQueryParam(value as QueryParam, elementTypeOid, undefined);
     }
@@ -1770,53 +1549,42 @@ function encodeArrayElement(value: unknown, elementTypeOid?: number): string {
   }
   if (value instanceof Date) {
     return quoteArrayElement(
-      elementTypeOid === undefined
-        ? scalarText(value)
-        : dateText(value, elementTypeOid),
+      elementTypeOid === undefined ? scalarText(value) : dateText(value, elementTypeOid),
     );
   }
   if (isQueryBinaryInput(value)) {
     if (elementTypeOid !== undefined && elementTypeOid !== postgresOids.bytea) {
       throw unsupportedParameter(value, elementTypeOid);
     }
-    return quoteArrayElement("\\x" + bytesToHex(toUint8Array(value)));
+    return quoteArrayElement('\\x' + bytesToHex(toUint8Array(value)));
   }
   if (
     isPlainRecord(value) &&
-    (elementTypeOid === postgresOids.json ||
-      elementTypeOid === postgresOids.jsonb)
+    (elementTypeOid === postgresOids.json || elementTypeOid === postgresOids.jsonb)
   ) {
     return quoteArrayElement(json(value, elementTypeOid).value);
   }
-  throw new TypeError(
-    "PostgreSQL array element is unsupported; use an explicit helper",
-  );
+  throw new TypeError('PostgreSQL array element is unsupported; use an explicit helper');
 }
 
 function quoteArrayElement(value: string): string {
-  return '"' + value.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+  return '"' + value.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
 }
 
 function bytesToHex(bytes: Uint8Array): string {
-  let hex = "";
-  for (const byte of bytes) hex += byte.toString(16).padStart(2, "0");
+  let hex = '';
+  for (const byte of bytes) hex += byte.toString(16).padStart(2, '0');
   return hex;
 }
 
 type ParsedArrayValue = string | null | ParsedArrayValue[];
 
-function decodeArrayLiteral(
-  value: string,
-  elementTypeOid: number,
-): QueryValue[] {
+function decodeArrayLiteral(value: string, elementTypeOid: number): QueryValue[] {
   const parsed = new ArrayTextParser(value).parse();
   return decodeArrayValues(parsed, elementTypeOid);
 }
 
-function decodeArrayValues(
-  values: ParsedArrayValue[],
-  elementTypeOid: number,
-): QueryValue[] {
+function decodeArrayValues(values: ParsedArrayValue[], elementTypeOid: number): QueryValue[] {
   return values.map((value) =>
     Array.isArray(value)
       ? decodeArrayValues(value, elementTypeOid)
@@ -1835,37 +1603,34 @@ class ArrayTextParser {
   }
 
   parse(): ParsedArrayValue[] {
-    if (this.#input.startsWith("[")) {
-      const separator = this.#input.indexOf("=");
-      if (separator < 0) throw new Error("invalid PostgreSQL array dimensions");
+    if (this.#input.startsWith('[')) {
+      const separator = this.#input.indexOf('=');
+      if (separator < 0) throw new Error('invalid PostgreSQL array dimensions');
       this.#offset = separator + 1;
     }
     const result = this.#level();
     if (this.#offset !== this.#input.length)
-      throw new Error("PostgreSQL array text has trailing data");
+      throw new Error('PostgreSQL array text has trailing data');
     return result;
   }
 
   #level(): ParsedArrayValue[] {
-    if (this.#input[this.#offset] !== "{")
-      throw new Error("PostgreSQL array text must start with {");
+    if (this.#input[this.#offset] !== '{')
+      throw new Error('PostgreSQL array text must start with {');
     this.#offset += 1;
     const result: ParsedArrayValue[] = [];
-    if (this.#input[this.#offset] === "}") {
+    if (this.#input[this.#offset] === '}') {
       this.#offset += 1;
       return result;
     }
     for (;;) {
-      result.push(
-        this.#input[this.#offset] === "{" ? this.#level() : this.#element(),
-      );
+      result.push(this.#input[this.#offset] === '{' ? this.#level() : this.#element());
       const delimiter = this.#input[this.#offset];
-      if (delimiter === "}") {
+      if (delimiter === '}') {
         this.#offset += 1;
         return result;
       }
-      if (delimiter !== ",")
-        throw new Error("invalid PostgreSQL array delimiter");
+      if (delimiter !== ',') throw new Error('invalid PostgreSQL array delimiter');
       this.#offset += 1;
     }
   }
@@ -1873,17 +1638,15 @@ class ArrayTextParser {
   #element(): string | null {
     if (this.#input[this.#offset] === '"') {
       this.#offset += 1;
-      let value = "";
+      let value = '';
       for (;;) {
         const character = this.#input[this.#offset];
-        if (character === undefined)
-          throw new Error("unterminated quoted PostgreSQL array value");
+        if (character === undefined) throw new Error('unterminated quoted PostgreSQL array value');
         this.#offset += 1;
         if (character === '"') return value;
-        if (character === "\\") {
+        if (character === '\\') {
           const escaped = this.#input[this.#offset];
-          if (escaped === undefined)
-            throw new Error("unterminated PostgreSQL array escape");
+          if (escaped === undefined) throw new Error('unterminated PostgreSQL array escape');
           value += escaped;
           this.#offset += 1;
         } else {
@@ -1891,29 +1654,28 @@ class ArrayTextParser {
         }
       }
     }
-    let value = "";
+    let value = '';
     while (this.#offset < this.#input.length) {
       const character = this.#input[this.#offset]!;
-      if (character === "," || character === "}") break;
+      if (character === ',' || character === '}') break;
       this.#offset += 1;
-      if (character === "\\") {
+      if (character === '\\') {
         const escaped = this.#input[this.#offset];
-        if (escaped === undefined)
-          throw new Error("unterminated PostgreSQL array escape");
+        if (escaped === undefined) throw new Error('unterminated PostgreSQL array escape');
         value += escaped;
         this.#offset += 1;
       } else {
         value += character;
       }
     }
-    return value === "NULL" ? null : value;
+    return value === 'NULL' ? null : value;
   }
 }
 
 export function assertNoTopLevelCopy(sql: string): void {
   if (containsTopLevelCopy(sql)) {
     throw new Error(
-      "structured SQL does not support COPY; use a raw protocol API for COPY traffic",
+      'structured SQL does not support COPY; use a raw protocol API for COPY traffic',
     );
   }
 }
@@ -1927,10 +1689,7 @@ export function containsTopLevelCopy(sql: string): boolean {
   return scanTopLevelCopy(sql, false) || scanTopLevelCopy(sql, true);
 }
 
-function scanTopLevelCopy(
-  sql: string,
-  plainStringsEscapeBackslashes: boolean,
-): boolean {
+function scanTopLevelCopy(sql: string, plainStringsEscapeBackslashes: boolean): boolean {
   let offset = 0;
   let depth = 0;
   let statementStart = true;
@@ -1940,18 +1699,17 @@ function scanTopLevelCopy(
       offset += 1;
       continue;
     }
-    if (character === "-" && sql[offset + 1] === "-") {
+    if (character === '-' && sql[offset + 1] === '-') {
       let end = offset + 2;
-      while (end < sql.length && sql[end] !== "\n" && sql[end] !== "\r")
-        end += 1;
+      while (end < sql.length && sql[end] !== '\n' && sql[end] !== '\r') end += 1;
       offset = end < sql.length ? end + 1 : sql.length;
       continue;
     }
-    if (character === "/" && sql[offset + 1] === "*") {
+    if (character === '/' && sql[offset + 1] === '*') {
       offset = skipBlockComment(sql, offset + 2);
       continue;
     }
-    if ((character === "e" || character === "E") && sql[offset + 1] === "'") {
+    if ((character === 'e' || character === 'E') && sql[offset + 1] === "'") {
       statementStart = false;
       offset = skipSingleQuote(sql, offset + 1, true);
       continue;
@@ -1966,7 +1724,7 @@ function scanTopLevelCopy(
       offset = skipDoubleQuote(sql, offset);
       continue;
     }
-    if (character === "$") {
+    if (character === '$') {
       const delimiter = dollarQuoteDelimiter(sql, offset);
       if (delimiter !== undefined) {
         statementStart = false;
@@ -1975,18 +1733,18 @@ function scanTopLevelCopy(
         continue;
       }
     }
-    if (character === "(") {
+    if (character === '(') {
       depth += 1;
       statementStart = false;
       offset += 1;
       continue;
     }
-    if (character === ")") {
+    if (character === ')') {
       if (depth > 0) depth -= 1;
       offset += 1;
       continue;
     }
-    if (character === ";" && depth === 0) {
+    if (character === ';' && depth === 0) {
       statementStart = true;
       offset += 1;
       continue;
@@ -1994,10 +1752,8 @@ function scanTopLevelCopy(
     if (/[A-Za-z_]/.test(character)) {
       const start = offset;
       offset += 1;
-      while (offset < sql.length && /[A-Za-z0-9_$]/.test(sql[offset]!))
-        offset += 1;
-      if (statementStart && sql.slice(start, offset).toLowerCase() === "copy")
-        return true;
+      while (offset < sql.length && /[A-Za-z0-9_$]/.test(sql[offset]!)) offset += 1;
+      if (statementStart && sql.slice(start, offset).toLowerCase() === 'copy') return true;
       statementStart = false;
       continue;
     }
@@ -2011,10 +1767,10 @@ function skipBlockComment(sql: string, start: number): number {
   let depth = 1;
   let offset = start;
   while (offset < sql.length && depth > 0) {
-    if (sql[offset] === "/" && sql[offset + 1] === "*") {
+    if (sql[offset] === '/' && sql[offset + 1] === '*') {
       depth += 1;
       offset += 2;
-    } else if (sql[offset] === "*" && sql[offset + 1] === "/") {
+    } else if (sql[offset] === '*' && sql[offset + 1] === '/') {
       depth -= 1;
       offset += 2;
     } else {
@@ -2024,14 +1780,10 @@ function skipBlockComment(sql: string, start: number): number {
   return offset;
 }
 
-function skipSingleQuote(
-  sql: string,
-  quoteOffset: number,
-  escapeBackslash: boolean,
-): number {
+function skipSingleQuote(sql: string, quoteOffset: number, escapeBackslash: boolean): number {
   let offset = quoteOffset + 1;
   while (offset < sql.length) {
-    if (escapeBackslash && sql[offset] === "\\") {
+    if (escapeBackslash && sql[offset] === '\\') {
       offset += Math.min(2, sql.length - offset);
     } else if (sql[offset] === "'" && sql[offset + 1] === "'") {
       offset += 2;
@@ -2098,7 +1850,7 @@ class ByteWriter {
 
   finish(): Uint8Array {
     if (this.#offset !== this.#bytes.length) {
-      throw new Error("extended query packet length invariant failed");
+      throw new Error('extended query packet length invariant failed');
     }
     return this.#bytes;
   }
@@ -2118,30 +1870,27 @@ export function toUint8Array(input: ByteInput): Uint8Array {
 }
 
 function parseRowDescription(cursor: ByteCursor): QueryField[] {
-  const count = cursor.readI16("RowDescription field count");
+  const count = cursor.readI16('RowDescription field count');
   if (count < 0) {
     throw new Error(`invalid RowDescription field count ${count}`);
   }
   const fields: QueryField[] = [];
   for (let index = 0; index < count; index += 1) {
     fields.push({
-      name: cursor.readCString("field name"),
-      tableOid: cursor.readU32("field table oid"),
-      tableAttribute: cursor.readI16("field table attribute"),
-      typeOid: cursor.readU32("field type oid"),
-      typeSize: cursor.readI16("field type size"),
-      typeModifier: cursor.readI32("field type modifier"),
-      format: queryFormat(cursor.readI16("field format")),
+      name: cursor.readCString('field name'),
+      tableOid: cursor.readU32('field table oid'),
+      tableAttribute: cursor.readI16('field table attribute'),
+      typeOid: cursor.readU32('field type oid'),
+      typeSize: cursor.readI16('field type size'),
+      typeModifier: cursor.readI32('field type modifier'),
+      format: queryFormat(cursor.readI16('field format')),
     });
   }
   return fields;
 }
 
-function parseDataRow(
-  cursor: ByteCursor,
-  expectedColumns: number,
-): RawQueryRow {
-  const count = cursor.readI16("DataRow column count");
+function parseDataRow(cursor: ByteCursor, expectedColumns: number): RawQueryRow {
+  const count = cursor.readI16('DataRow column count');
   if (count < 0) {
     throw new Error(`invalid DataRow column count ${count}`);
   }
@@ -2152,32 +1901,23 @@ function parseDataRow(
   }
   const values = new Array<Uint8Array | null>(count);
   for (let index = 0; index < count; index += 1) {
-    const length = cursor.readI32("DataRow value length");
+    const length = cursor.readI32('DataRow value length');
     if (length === -1) {
       values[index] = null;
     } else if (length < 0) {
       throw new Error(`invalid DataRow value length ${length}`);
     } else {
-      values[index] = cursor.readBytes(length, "DataRow value");
+      values[index] = cursor.readBytes(length, 'DataRow value');
     }
   }
   return new ParsedRawQueryRow(values);
 }
 
-function parseErrorResponse(
-  cursor: ByteCursor,
-  notices: PostgresNotice[] = [],
-): PostgresError {
-  return new PostgresError(
-    parseDiagnosticFields(cursor, "ErrorResponse"),
-    notices,
-  );
+function parseErrorResponse(cursor: ByteCursor, notices: PostgresNotice[] = []): PostgresError {
+  return new PostgresError(parseDiagnosticFields(cursor, 'ErrorResponse'), notices);
 }
 
-function fieldValue(
-  fields: ReadonlyArray<PostgresErrorField>,
-  code: number,
-): string | undefined {
+function fieldValue(fields: ReadonlyArray<PostgresErrorField>, code: number): string | undefined {
   return fields.find((field) => field.code === code)?.value;
 }
 
@@ -2200,16 +1940,16 @@ function formatPostgresError(
 
 function queryFormat(code: number): QueryFormat {
   if (code === 0) {
-    return "text";
+    return 'text';
   }
   if (code === 1) {
-    return "binary";
+    return 'binary';
   }
-  return { code, kind: "other" };
+  return { code, kind: 'other' };
 }
 
 function hexBackendTag(tag: number): string {
-  return `0x${tag.toString(16).padStart(2, "0")}`;
+  return `0x${tag.toString(16).padStart(2, '0')}`;
 }
 
 function parseReadyForQuery(body: ByteCursor): TransactionStatus {
@@ -2217,34 +1957,31 @@ function parseReadyForQuery(body: ByteCursor): TransactionStatus {
   if (remaining !== 1) {
     throw new Error(`ReadyForQuery contained ${remaining} bytes, expected 1`);
   }
-  const status = body.readU8("ReadyForQuery transaction status");
-  if (status === 0x49) return "idle";
-  if (status === 0x54) return "transaction";
-  if (status === 0x45) return "failed";
-  throw new Error(
-    `ReadyForQuery contained invalid transaction status ${hexBackendTag(status)}`,
-  );
+  const status = body.readU8('ReadyForQuery transaction status');
+  if (status === 0x49) return 'idle';
+  if (status === 0x54) return 'transaction';
+  if (status === 0x45) return 'failed';
+  throw new Error(`ReadyForQuery contained invalid transaction status ${hexBackendTag(status)}`);
 }
 
 function parseParameterDescription(body: ByteCursor): number[] {
-  const count = body.readI16("ParameterDescription parameter count");
-  if (count < 0)
-    throw new Error("invalid ParameterDescription parameter count " + count);
+  const count = body.readI16('ParameterDescription parameter count');
+  if (count < 0) throw new Error('invalid ParameterDescription parameter count ' + count);
   const typeOids: number[] = [];
   for (let index = 0; index < count; index += 1) {
-    typeOids.push(body.readU32("ParameterDescription type OID"));
+    typeOids.push(body.readU32('ParameterDescription type OID'));
   }
   return typeOids;
 }
 
 function parseNoticeResponse(body: ByteCursor): PostgresNotice {
-  const fields = parseDiagnosticFields(body, "NoticeResponse");
+  const fields = parseDiagnosticFields(body, 'NoticeResponse');
   return {
     severity: fieldValue(fields, 0x53) ?? fieldValue(fields, 0x56),
     localizedSeverity: fieldValue(fields, 0x53),
     nonlocalizedSeverity: fieldValue(fields, 0x56),
     sqlstate: fieldValue(fields, 0x43),
-    message: fieldValue(fields, 0x4d) ?? "PostgreSQL notice",
+    message: fieldValue(fields, 0x4d) ?? 'PostgreSQL notice',
     detail: fieldValue(fields, 0x44),
     hint: fieldValue(fields, 0x48),
     position: fieldValue(fields, 0x50),
@@ -2263,33 +2000,30 @@ function parseNoticeResponse(body: ByteCursor): PostgresNotice {
   };
 }
 
-function parseDiagnosticFields(
-  body: ByteCursor,
-  label: string,
-): PostgresErrorField[] {
+function parseDiagnosticFields(body: ByteCursor, label: string): PostgresErrorField[] {
   const fields: PostgresErrorField[] = [];
   for (;;) {
-    if (body.isAtEnd()) throw new Error(label + " is missing terminator");
-    const code = body.readU8(label + " field code");
+    if (body.isAtEnd()) throw new Error(label + ' is missing terminator');
+    const code = body.readU8(label + ' field code');
     if (code === 0) {
       body.requireEnd(label);
       return fields;
     }
-    fields.push({ code, value: body.readCString(label + " field") });
+    fields.push({ code, value: body.readCString(label + ' field') });
   }
 }
 
 function validateParameterStatus(body: ByteCursor): void {
-  body.readCString("ParameterStatus name");
-  body.readCString("ParameterStatus value");
-  body.requireEnd("ParameterStatus");
+  body.readCString('ParameterStatus name');
+  body.readCString('ParameterStatus value');
+  body.requireEnd('ParameterStatus');
 }
 
 function validateNotificationResponse(body: ByteCursor): void {
-  body.readI32("NotificationResponse process id");
-  body.readCString("NotificationResponse channel");
-  body.readCString("NotificationResponse payload");
-  body.requireEnd("NotificationResponse");
+  body.readI32('NotificationResponse process id');
+  body.readCString('NotificationResponse channel');
+  body.readCString('NotificationResponse payload');
+  body.requireEnd('NotificationResponse');
 }
 
 class ByteCursor {
@@ -2345,8 +2079,7 @@ class ByteCursor {
 
   readI16(label: string): number {
     this.#require(2, label);
-    const value =
-      (this.#bytes[this.#offset]! << 8) | this.#bytes[this.#offset + 1]!;
+    const value = (this.#bytes[this.#offset]! << 8) | this.#bytes[this.#offset + 1]!;
     this.#offset += 2;
     return value > 0x7fff ? value - 0x10000 : value;
   }
@@ -2356,10 +2089,7 @@ class ByteCursor {
     if (end < 0) {
       throw new Error(`${label} is missing null terminator`);
     }
-    const value = decodeUtf8Strict(
-      this.#bytes.subarray(this.#offset, end),
-      label,
-    );
+    const value = decodeUtf8Strict(this.#bytes.subarray(this.#offset, end), label);
     this.#offset = end + 1;
     return value;
   }
@@ -2436,11 +2166,7 @@ function validateUtf8(bytes: Uint8Array, label: string): void {
   }
 }
 
-function requireContinuation(
-  bytes: Uint8Array,
-  index: number,
-  label: string,
-): void {
+function requireContinuation(bytes: Uint8Array, index: number, label: string): void {
   requireRange(bytes, index, 0x80, 0xbf, label);
 }
 

@@ -14,7 +14,7 @@ The dependency direction is:
 liboliphaunt-wasix portable assets
                  |
                  v
-   root Worker or explicit /blocking realm
+  direct root or explicit /worker owner
                  |
                  v
        PostgreSQL pgwire helpers
@@ -50,11 +50,11 @@ carrier envelope and portable extension bytes.
 The canonical guest also owns the backend-only single-backend spinlock and
 scalar-atomic specializations carried by PostgreSQL patches 0035 and 0036.
 They follow the guest into the Rust binding's AOT artifacts and the portable
-module used by the browser and Node-compatible root Workers and by the
-caller-owned blocking entrypoint; they
+module used by the browser and Node-compatible direct root and explicit
+package-owned Workers; they
 are not a TypeScript or Node/Bun/Deno host optimization. Frontends, PGXS side modules,
 and concurrent PostgreSQL builds retain the normal atomic implementation. Host
-lifecycle stays separate. Both TypeScript calling contracts assert the shared
+lifecycle stays separate. Both TypeScript execution surfaces assert the shared
 `OLIPHAUNT_WASIX_SINGLE_BACKEND=1` concurrency invariant and the pinned host
 denies guest process and thread creation under it. Both entrypoints use the
 Oliphaunt export driver and direct guest-memory protocol bridge that mirrors the
@@ -62,32 +62,32 @@ Rust host; the public entrypoint does not select a second transport implementati
 
 ## Browser lifecycle
 
-`Oliphaunt.open()` from the root package always creates one package-owned module
-Worker. `Oliphaunt.open()` from `@oliphaunt/wasix-ts/blocking` uses the same
-host driver in the importing realm: setup is asynchronous, but PostgreSQL
-lifecycle and protocol exports run on the calling stack and block that
-JavaScript agent. There is no public placement option and neither entrypoint
-falls back to the other. Both share one database state machine, mount
+`Oliphaunt.open()` from the root package uses the host driver in the importing
+realm: setup is asynchronous, but PostgreSQL lifecycle and protocol exports run
+in that realm and may monopolize its event loop while active. `Oliphaunt.open()` from
+`@oliphaunt/wasix-ts/worker` creates one package-owned module Worker around the
+same driver. There is no public placement option and neither entrypoint falls
+back to the other. Both share one database state machine, mount
 construction, PostgreSQL configuration, extension/role setup, and storage
 contract. Immutable preparation and compiled modules are cached by verified
 runtime identity, while writable `Directory` mounts and storage leases are
 recreated for every open. Each handle remains one serialized PostgreSQL
-session. The blocking entrypoint also contends for its caller's event loop.
+session. Only the root entrypoint contends for its caller's event loop.
 
 The pinned host currently instantiates dynamically loaded native side modules
-synchronously. Chromium refuses Window-realm modules above 8 MiB, so the
-blocking entrypoint fails early there for a selected carrier above that
-threshold. The root Worker and `/blocking` imported from a Dedicated Worker are
+synchronously. Chromium refuses Window-realm modules above 8 MiB, so the root
+entrypoint fails early there for a selected carrier above that threshold. The
+explicit `/worker` entrypoint and the root imported from a Dedicated Worker are
 outside that Window restriction and apply descriptor-declared native
 load order; a real Chrome canary loads PostGIS there and verifies recovery
 across its large dependency module. The core guest uses the asynchronous path;
-smaller qualified side modules remain supported in a blocking Window.
+smaller qualified side modules remain supported in a direct Window.
 
-1. The root entrypoint creates one module Web Worker per open and a temporary
-   Worker for restore. `/blocking` imports the package-relative host lazily in
-   the caller realm and creates no Worker.
+1. The root entrypoint imports the package-relative host lazily in the caller
+   realm and creates no Worker. `/worker` creates one module Web Worker per open
+   and a temporary Worker for restore.
 2. The binding resolves the default `@oliphaunt/liboliphaunt-wasix` descriptor
-   internally. The worker fetches or receives its canonical manifest, runtime,
+   internally. The selected realm fetches or receives its canonical manifest, runtime,
    and cluster-seed `.tar.zst` artifacts as one product/version identity. Each
    uncached identity verifies descriptor sizes and hashes plus the manifest's
    core/module and PostgreSQL/source identity; every open uses that exact
@@ -101,11 +101,11 @@ smaller qualified side modules remain supported in a blocking Window.
    host adds ephemeral `/dev/shm` and a real Wasmer `RandomFile` at
    `/dev/urandom`. Its narrow `Directory` mutation journal records successful
    writes and truncates through already-open descriptors as well as file,
-   directory, remove, and rename paths for either calling contract and every provider.
-   Both contracts pass the verified precompiled main module and its original
+   directory, remove, and rename paths for either execution surface and every provider.
+   Both execution surfaces pass the verified precompiled main module and its original
    bytes to `instantiateOliphauntDirect`. The root keeps the resulting Store in
-   its package Worker; `/blocking` keeps it in the caller realm.
-4. Both contracts push protocol bytes through guest-owned reusable input
+   the caller realm; `/worker` keeps it in its package Worker.
+4. Both execution surfaces push protocol bytes through guest-owned reusable input
    and output buffers. The host writes requests directly into canonical guest
    memory and returns one owned JavaScript response copy, so PostgreSQL can
    safely reuse or grow its memory after the call. Startup preserves an
@@ -133,23 +133,23 @@ smaller qualified side modules remain supported in a blocking Window.
    through `PostgresMainLoopOnce`. Normal ErrorResponse returns receive the same
    top-level cleanup as trapping errors.
 7. `close` establishes a terminal admission cutoff and lets already accepted
-   database work drain up to the bounded orderly-shutdown deadline. On expiry,
-   the root entrypoint requests forced Worker termination and awaits that
-   termination attempt before any entrypoint-owned resource cleanup begins; the
-   deadline does not falsely bound the subsequent termination attempt. It then
+   database work drain. `/worker` applies a bounded orderly-shutdown deadline.
+   On expiry, it requests forced Worker termination and awaits that termination
+   attempt before any entrypoint-owned resource cleanup begins; the deadline
+   does not falsely bound the subsequent termination attempt. The direct owner
    sends PostgreSQL Terminate through the same direct bridge, deactivates the
    embedded lifecycle, and runs its atexit exports synchronously in the owning
    realm. A successful close completes the
    provider's final persistence boundary. Every outcome attempts provider close,
    exclusive-lease release, and entrypoint-owned host-resource release. The
-   default Worker is terminated even when its close RPC rejects. The public
+   package Worker is terminated even when its close RPC rejects. The public
    handle memoizes that single outcome and becomes closed after teardown settles;
    a rejected close never advertises the destroyed Worker or guest as reusable.
 8. Each public database handle registers an opaque generation token for
    best-effort forgotten-handle recovery. The finalizer holds no reference to
    the public owner and only schedules work after returning. It atomically
-   claims the exact still-active generation, then force-terminates a root Worker
-   or closes a `/blocking` direct session and its storage lease. Explicit close
+   claims the exact still-active generation, then closes a root direct session
+   and its storage lease or force-terminates a `/worker` generation. Explicit close
    unregisters the generation before teardown, so queued stale finalizers are
    harmless and cannot affect a later database.
 
@@ -163,27 +163,32 @@ remain upstream behavior and are not part of the TypeScript database surface.
 
 Node, Bun, and Deno select `lib/index.node.js`, `lib/index.bun.js`, or
 `lib/index.deno.js` through explicit package export conditions. Each facade
-uses the runtime's `node:worker_threads` compatibility surface and creates one
-`worker_threads.Worker`. The matching conditional `/blocking` facade loads the
-same synchronous guest driver in the caller realm and creates no Worker. The
-root Worker reads package-relative runtime and extension `file:` URLs and calls
-the shared dispatcher around that driver without a second worker hop or stream
-pump. `/blocking` removes the RPC boundary and explicitly accepts blocking the
-calling JavaScript thread. Descriptor validation,
+loads the synchronous guest driver in the caller realm and creates no Worker.
+The matching conditional `/worker` facade uses the runtime's
+`node:worker_threads` compatibility surface and creates one
+`worker_threads.Worker`. That Worker reads package-relative runtime and
+extension `file:` URLs and calls the shared dispatcher around the direct driver
+without a second worker hop or stream pump. The root removes the RPC boundary
+and explicitly accepts blocking the calling JavaScript thread. Descriptor validation,
 archive verification, extension installation, query serialization, close
-semantics, and the memory default are not forked by calling contract.
+semantics, and the memory default are not forked by execution surface.
 
-IndexedDB and OPFS remain browser-only and are rejected before a Node/Bun/Deno host
-worker starts. Directory persistence is exposed through matching
+IndexedDB and OPFS remain browser-only and are rejected before a Node/Bun/Deno
+direct or Worker session starts. Directory persistence is exposed through matching
 `storage/node`, `storage/bun`, and `storage/deno` entrypoints backed by one
 portable managed-root provider with exclusive path ownership. No host falls back
-to native `@oliphaunt/ts`.
+to native `@oliphaunt/ts`. Direct and explicit Worker entrypoints may themselves
+be imported from an application-owned worker thread. Directory ownership uses
+filesystem lock slots and exact owner tokens rather than `isMainThread`; callers
+must close before externally terminating their own realm. The managed Worker
+client can recover its exact child-owner lock after a child crash while the
+importing realm remains alive.
 
 ## Protocol streams, tools, and local endpoints
 
-The public callback stream reuses the guest's COPY-aware hybrid transport.
-`/blocking` invokes its synchronous callback in the owning realm. The root
-entrypoint transfers at most 64 KiB per callback and blocks only its Worker with
+The public callback stream reuses the guest's COPY-aware hybrid transport. The
+root invokes its synchronous callback in the owning realm. `/worker` transfers
+at most 64 KiB per callback and blocks only its Worker with
 an atomic acknowledgement until the event-loop callback returns. Buffered raw
 protocol execution remains the simpler fast path when the complete response is
 already appropriate. A callback returning a Promise or thenable is rejected:
@@ -196,8 +201,8 @@ post-stream operation.
 
 `@oliphaunt/wasix-tools` is an optional facade over the separately published
 `@oliphaunt/liboliphaunt-wasix-tools` asset carrier. `pg_dump` is compiled and
-run in the realm that already owns the database: the caller realm for
-`/blocking` or the existing database Worker for the root entrypoint. Its synchronous
+run in the realm that already owns the database: the caller realm for the root
+or the existing database Worker for `/worker`. Its synchronous
 socket callbacks enter the already-stepped PostgreSQL backend directly, and an
 owned O(1) chunk deque returns responses without a second worker, shared
 channel, or Web Stream.
@@ -234,7 +239,9 @@ still allowing browser tools without pretending the browser has a TCP stack.
 The Node, Bun, and Deno server subpaths all export the same implementation. It
 adapts one loopback TCP or PostgreSQL-named Unix listener to that bounded
 connection bridge, rejects a concurrent client, and creates a fresh embedded
-backend for each admitted connection. `ReadyForQuery` at idle is withheld until
+backend for each admitted connection. Each server owns the managed Worker that
+the full-duplex bridge requires; changing the root database entrypoint does not
+move server execution into the listener realm. `ReadyForQuery` at idle is withheld until
 provider publication succeeds. The concurrent WASIX postmaster remains a
 separate runtime product rather than a mode of this single-backend SDK.
 
@@ -282,9 +289,9 @@ removals in one atomic read-write transaction using the browser's default
 commitState policy; an aborted write leaves the preceding generation intact,
 and distinct logical databases do not share an object-store transaction. OPFS
 stores a strict logical namespace and physical identity over flat backing files.
-The root Worker, and `/blocking` inside a Dedicated Worker, preopen synchronous
-access handles and perform exact-range guest I/O without a mailbox or nested
-worker. A blocking Window uses the portable path. Guest file flushes are immediate;
+`/worker`, and the root inside a Dedicated Worker, preopen synchronous access
+handles and perform exact-range guest I/O without a mailbox or nested worker. A
+direct Window uses the portable path. Guest file flushes are immediate;
 operation boundaries drain WAL; internal full-publication, close, and namespace publication
 flush WAL before ordinary files and `global/pg_control`. The portable path uses
 copy-on-write backing files and atomically replaces namespace state last. OPFS
@@ -357,7 +364,7 @@ type WasixExtensionDescriptor = {
 This is structural rather than nominal so a generated extension package can be
 dependency-free; it does not import the host binding merely to acquire a brand.
 The literal `runtime: 'wasix'` still makes native descriptors statically
-incompatible, and the main-thread client runtime-validates the complete shape.
+incompatible, and the client runtime-validates the complete shape.
 The binding keeps an internal validation/freezing helper for fixtures. It is not
 part of the consumer entrypoint and generated packages do not depend on it.
 
@@ -380,7 +387,7 @@ dependency-complete byte closure, not an alternate dependency declaration. The
 client validates each root's exact dependency closure, unions closures in
 deterministic SQL-name order, deduplicates shared rows only when their complete
 identity/install/compatibility metadata agrees, and rejects repeated rows,
-duplicate roots, or conflicts. The worker resolves dependencies solely from
+duplicate roots, or conflicts. The selected realm resolves dependencies solely from
 the imported install contracts, treating only the stripped core manifest's
 `runtime-support` entries as runtime-provided. Before reading extension bytes,
 it gates every carrier on the selected WASIX runtime version, PostgreSQL major,
@@ -396,9 +403,9 @@ JavaScript/WASM. `host/source.toml` pins the Wasmer JS Git source and Cargo
 crates; the adjacent patches are the reviewable compatibility delta. The build
 lands first in `target/oliphaunt-wasix-ts/host`. Public package staging copies
 the exact JS module, worker module, WebAssembly module, license, and provenance
-into `lib/host`; the browser blocking entrypoint imports the host in the caller
-realm, while root and blocking entrypoints on every host import the same
-package-relative module.
+into `lib/host`; the browser root imports the host in the caller realm, while
+root and Worker entrypoints on every host import the same package-relative
+module.
 
 This is not a general backport of WASIX 0.702 to Wasmer 0.601. The authoritative
 patch order is the `series` in `host/source.toml`; this document records the
@@ -440,7 +447,7 @@ the complete Rust syscall. Other WASIX programs retain the complete upstream
 per-call path.
 
 The exact pairing is qualified for the single-process direct Oliphaunt export
-path in both calling contracts, including repeated PostgreSQL `ERROR` recovery. The
+path in both execution surfaces, including repeated PostgreSQL `ERROR` recovery. The
 direct driver treats every `PostgresMainLoopOnce` trap as the guest's exported
 top-level recovery boundary and also cleans up non-trapping ErrorResponses.
 Its JavaScript memory bridge is limited to the direct Oliphaunt driver: generic
@@ -484,8 +491,8 @@ Oliphaunt deliberately uses an environment-gated Wasmer exception discriminator
 instead of Emscripten's numeric sentinel, but preserves the same separation
 between control-flow recovery and the pgwire `PostgresError` seen by callers.
 Lifecycle SQL for a selectively imported extension runs in the owning realm.
-Root-Worker errors are serialized by PostgreSQL field and rebuilt in the caller;
-blocking errors retain the same `PostgresError` identity in place. Generic
+Worker errors are serialized by PostgreSQL field and rebuilt in the caller;
+direct errors retain the same `PostgresError` identity in place. Generic
 Worker errors retain their name, message, and owner-side stack. Neither path
 collapses SQLSTATE and diagnostics into a generic error.
 
@@ -551,7 +558,7 @@ rewrite.
 The release runtime carrier owns a stripped core manifest (`extensions: []`).
 The development Vite plugin projects the same core-only bytes from the build
 pipeline's qualification manifest and derives separate exact extension install
-contracts from its extension rows. The worker rejects a nonempty core manifest,
+contracts from its extension rows. The binding rejects a nonempty core manifest,
 so the runtime carrier cannot become the authority for independently versioned
 extensions.
 
@@ -578,8 +585,8 @@ bundle.
 release metadata and changelog, declares an exact dependency on the published
 `@oliphaunt/liboliphaunt-wasix` runtime carrier, and publishes the patched host
 under `lib/host`. Conditional package exports choose browser, Node, Bun, or Deno
-adapters. The root import is always Worker-owned; the conditional `/blocking`
-subpath is always caller-owned.
+adapters. The root import is always caller-owned; the conditional `/worker`
+subpath is always Worker-owned.
 
 The browser smoke proves the exact runtime/host pairing can start PostgreSQL,
 activate `pgtap`, retain SQLSTATE across repeated PostgreSQL error recovery,

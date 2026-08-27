@@ -1,7 +1,7 @@
 {
   "schema": "oliphaunt-wasix-node-benchmark-plan-v2",
   "id": "node-pglite-memory-v2",
-  "description": "Compares Oliphaunt's asynchronous package-owned Worker default with a harness-owned PGlite Worker, and Oliphaunt's explicit caller-owned /blocking entrypoint with PGlite's caller-realm API, using memory storage.",
+  "description": "Compares Oliphaunt's explicit /worker entrypoint with a harness-owned PGlite Worker, and Oliphaunt's caller-owned root Promise API with PGlite's caller-realm API, using memory storage.",
   "engines": {
     "candidate": {
       "package": "@oliphaunt/wasix-ts",
@@ -36,19 +36,19 @@
         "backendTiming": "0"
       },
       "surfaces": {
-        "default": {
-          "engine": "candidate",
-          "entrypoint": "@oliphaunt/wasix-ts",
+        "worker": {
+          "engine": "candidate-worker",
+          "entrypoint": "@oliphaunt/wasix-ts/worker",
           "callingContract": "async",
-          "executionOwner": "package-worker",
+          "executionOwner": "sdk-worker",
           "executionBoundary": "node-worker-thread",
           "isolationImplementation": "package-owned-worker-threads-rpc",
           "timingBoundary": "host-end-to-end-around-one-worker-rpc"
         },
-        "blocking": {
-          "engine": "candidate-blocking",
-          "entrypoint": "@oliphaunt/wasix-ts/blocking",
-          "callingContract": "blocking",
+        "direct": {
+          "engine": "candidate-direct",
+          "entrypoint": "@oliphaunt/wasix-ts",
+          "callingContract": "async",
           "executionOwner": "caller",
           "executionBoundary": "node-caller-realm",
           "isolationImplementation": "none-caller-realm",
@@ -68,7 +68,7 @@
       "installedTreeSha256": "b3925de04c386f51859c1bf18c143b225e3850616718140dd32e8eb48e9a2c84",
       "surfaces": {
         "worker": {
-          "engine": "comparison",
+          "engine": "comparison-worker",
           "entrypoint": "tools/perf/wasix-node/pglite-node-worker.mjs",
           "callingContract": "async",
           "executionOwner": "harness-worker",
@@ -81,7 +81,7 @@
           "benchmarkMethodologySource": "packages/benchmark/src/benchmarks-worker.js"
         },
         "callerRealm": {
-          "engine": "comparison-caller-realm",
+          "engine": "comparison-direct",
           "entrypoint": "@electric-sql/pglite",
           "callingContract": "async",
           "executionOwner": "caller",
@@ -97,7 +97,7 @@
     "warmupIterations": 10,
     "sampleIterations": 100,
     "trimFraction": 0.1,
-    "processOrder": "alternating-worker-pairs-then-alternating-blocking-pairs-fresh-processes",
+    "processOrder": "alternating-worker-pairs-then-alternating-direct-pairs-fresh-processes",
     "pairing": "same-repeat-candidate-over-comparison",
     "percentileMethod": "nearest-rank",
     "startupMetric": "cold-to-first-result",
@@ -111,7 +111,7 @@
     "requiresCorrectness": true,
     "comparisons": [
       "worker",
-      "blocking"
+      "direct"
     ],
     "metric": "geometric-mean-of-median-paired-candidate-over-comparison-ratios-lower-is-better",
     "includes": [

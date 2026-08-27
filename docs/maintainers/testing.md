@@ -256,17 +256,17 @@ Rust API:
 ```rust,no_run
 use oliphaunt_wasix::Oliphaunt;
 
-#[tokio::test]
-async fn stores_rows() -> Result<(), Box<dyn std::error::Error>> {
-    let db = Oliphaunt::open().await?;
+#[test]
+fn stores_rows() -> Result<(), Box<dyn std::error::Error>> {
+    let mut db = Oliphaunt::open()?;
 
-    db.execute("CREATE TABLE items (id int primary key, name text)").await?;
-    db.execute("INSERT INTO items VALUES (1, 'alpha')").await?;
+    db.execute("CREATE TABLE items (id int primary key, name text)")?;
+    db.execute("INSERT INTO items VALUES (1, 'alpha')")?;
 
-    let rows = db.query("SELECT name FROM items WHERE id = 1").await?;
+    let rows = db.query("SELECT name FROM items WHERE id = 1")?;
     assert_eq!(rows.get_text(0, "name")?, Some("alpha"));
 
-    db.close().await?;
+    db.close()?;
     Ok(())
 }
 ```
@@ -281,7 +281,7 @@ Use `OliphauntServer` when the application already talks to Postgres through a
 client library:
 
 ```rust,no_run
-use oliphaunt_wasix::OliphauntServer;
+use oliphaunt_wasix::worker::OliphauntServer;
 use sqlx::{Connection, Row};
 
 #[tokio::test]
@@ -308,7 +308,7 @@ Keep client pools at one connection.
 Enable bundled extensions through the builder:
 
 ```rust,no_run
-use oliphaunt_wasix::{blocking::Oliphaunt, extensions};
+use oliphaunt_wasix::{Oliphaunt, extensions};
 
 #[test]
 fn vector_query() -> Result<(), Box<dyn std::error::Error>> {
@@ -336,7 +336,7 @@ Use `backup()` and static `restore()` when a test suite needs a pre-populated
 same-version independent root:
 
 ```rust,no_run
-use oliphaunt_wasix::{blocking::Oliphaunt, DatabaseStorage};
+use oliphaunt_wasix::{DatabaseStorage, Oliphaunt};
 
 #[test]
 fn clone_fixture() -> Result<(), Box<dyn std::error::Error>> {

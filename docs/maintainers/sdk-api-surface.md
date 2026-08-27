@@ -11,6 +11,8 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 
 ## Rust: oliphaunt
 
+- `oliphaunt::CancelHandle`
+- `oliphaunt::CancelHandle.cancel()`
 - `oliphaunt::CommandResult`
 - `oliphaunt::CommandResult.command_tag()`
 - `oliphaunt::CommandResult.notices()`
@@ -30,6 +32,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::Oliphaunt.backup()`
 - `oliphaunt::Oliphaunt.builder()`
 - `oliphaunt::Oliphaunt.cancel()`
+- `oliphaunt::Oliphaunt.cancel_handle()`
 - `oliphaunt::Oliphaunt.close()`
 - `oliphaunt::Oliphaunt.describe()`
 - `oliphaunt::Oliphaunt.exec()`
@@ -63,6 +66,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::OliphauntBuilder.username()`
 - `oliphaunt::OliphauntServer`
 - `oliphaunt::OliphauntServer.cancel()`
+- `oliphaunt::OliphauntServer.cancel_handle()`
 - `oliphaunt::OliphauntServer.close()`
 - `oliphaunt::OliphauntServer.connection_string()`
 - `oliphaunt::OliphauntServer.describe()`
@@ -156,6 +160,78 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::ValueRef.type_oid()`
 - `oliphaunt::register_build_resources!`
 - `oliphaunt::register_build_resources_dir`
+
+### Dedicated worker module: oliphaunt::worker
+
+- `oliphaunt::worker::Oliphaunt`
+- `oliphaunt::worker::Oliphaunt.backup()`
+- `oliphaunt::worker::Oliphaunt.builder()`
+- `oliphaunt::worker::Oliphaunt.cancel()`
+- `oliphaunt::worker::Oliphaunt.close()`
+- `oliphaunt::worker::Oliphaunt.describe()`
+- `oliphaunt::worker::Oliphaunt.exec()`
+- `oliphaunt::worker::Oliphaunt.exec_protocol_raw()`
+- `oliphaunt::worker::Oliphaunt.exec_protocol_raw_stream()`
+- `oliphaunt::worker::Oliphaunt.execute()`
+- `oliphaunt::worker::Oliphaunt.execute_with_params()`
+- `oliphaunt::worker::Oliphaunt.is_closed()`
+- `oliphaunt::worker::Oliphaunt.query()`
+- `oliphaunt::worker::Oliphaunt.query_with_params()`
+- `oliphaunt::worker::Oliphaunt.restore()`
+- `oliphaunt::worker::Oliphaunt.sql()`
+- `oliphaunt::worker::Oliphaunt.transaction()`
+- `oliphaunt::worker::OliphauntBuilder`
+- `oliphaunt::worker::OliphauntBuilder.broker()`
+- `oliphaunt::worker::OliphauntBuilder.broker_executable()`
+- `oliphaunt::worker::OliphauntBuilder.database()`
+- `oliphaunt::worker::OliphauntBuilder.direct()`
+- `oliphaunt::worker::OliphauntBuilder.directory()`
+- `oliphaunt::worker::OliphauntBuilder.extension()`
+- `oliphaunt::worker::OliphauntBuilder.extensions()`
+- `oliphaunt::worker::OliphauntBuilder.listen()`
+- `oliphaunt::worker::OliphauntBuilder.new()`
+- `oliphaunt::worker::OliphauntBuilder.open()`
+- `oliphaunt::worker::OliphauntBuilder.open_server()`
+- `oliphaunt::worker::OliphauntBuilder.server_executable()`
+- `oliphaunt::worker::OliphauntBuilder.startup_guc()`
+- `oliphaunt::worker::OliphauntBuilder.startup_gucs()`
+- `oliphaunt::worker::OliphauntBuilder.storage()`
+- `oliphaunt::worker::OliphauntBuilder.temporary_directory()`
+- `oliphaunt::worker::OliphauntBuilder.username()`
+- `oliphaunt::worker::OliphauntServer`
+- `oliphaunt::worker::OliphauntServer.cancel()`
+- `oliphaunt::worker::OliphauntServer.close()`
+- `oliphaunt::worker::OliphauntServer.connection_string()`
+- `oliphaunt::worker::OliphauntServer.describe()`
+- `oliphaunt::worker::OliphauntServer.exec()`
+- `oliphaunt::worker::OliphauntServer.exec_protocol_raw()`
+- `oliphaunt::worker::OliphauntServer.exec_protocol_raw_stream()`
+- `oliphaunt::worker::OliphauntServer.execute()`
+- `oliphaunt::worker::OliphauntServer.execute_with_params()`
+- `oliphaunt::worker::OliphauntServer.is_closed()`
+- `oliphaunt::worker::OliphauntServer.query()`
+- `oliphaunt::worker::OliphauntServer.query_with_params()`
+- `oliphaunt::worker::OliphauntServer.sql()`
+- `oliphaunt::worker::OliphauntServer.transaction()`
+- `oliphaunt::worker::Sql`
+- `oliphaunt::worker::Sql.bind()`
+- `oliphaunt::worker::Sql.bind_parameter()`
+- `oliphaunt::worker::Sql.describe()`
+- `oliphaunt::worker::Sql.execute()`
+- `oliphaunt::worker::Sql.query()`
+- `oliphaunt::worker::Sql.result_format()`
+- `oliphaunt::worker::Transaction`
+- `oliphaunt::worker::Transaction.describe()`
+- `oliphaunt::worker::Transaction.exec()`
+- `oliphaunt::worker::Transaction.exec_protocol_raw()`
+- `oliphaunt::worker::Transaction.exec_protocol_raw_stream()`
+- `oliphaunt::worker::Transaction.execute()`
+- `oliphaunt::worker::Transaction.execute_with_params()`
+- `oliphaunt::worker::Transaction.is_closed()`
+- `oliphaunt::worker::Transaction.query()`
+- `oliphaunt::worker::Transaction.query_with_params()`
+- `oliphaunt::worker::Transaction.rollback()`
+- `oliphaunt::worker::Transaction.sql()`
 
 ### Version-locked broker seam (not application API)
 
@@ -415,92 +491,92 @@ The unpublished workspace packaging tool enables `internal-native-packaging` and
 - `oliphaunt_wasix::tools::pg_dump()`
 - `oliphaunt_wasix::tools::psql()`
 
-### Explicit blocking module: oliphaunt_wasix::blocking
+### Dedicated worker module: oliphaunt_wasix::worker
 
-- `oliphaunt_wasix::blocking::Oliphaunt`
-- `oliphaunt_wasix::blocking::Oliphaunt.backup()`
-- `oliphaunt_wasix::blocking::Oliphaunt.builder()`
-- `oliphaunt_wasix::blocking::Oliphaunt.close()`
-- `oliphaunt_wasix::blocking::Oliphaunt.describe()`
-- `oliphaunt_wasix::blocking::Oliphaunt.exec()`
-- `oliphaunt_wasix::blocking::Oliphaunt.exec_protocol_raw()`
-- `oliphaunt_wasix::blocking::Oliphaunt.exec_protocol_raw_stream()`
-- `oliphaunt_wasix::blocking::Oliphaunt.execute()`
-- `oliphaunt_wasix::blocking::Oliphaunt.execute_with_params()`
-- `oliphaunt_wasix::blocking::Oliphaunt.is_closed()`
-- `oliphaunt_wasix::blocking::Oliphaunt.open()`
-- `oliphaunt_wasix::blocking::Oliphaunt.query()`
-- `oliphaunt_wasix::blocking::Oliphaunt.query_with_params()`
-- `oliphaunt_wasix::blocking::Oliphaunt.restore()`
-- `oliphaunt_wasix::blocking::Oliphaunt.sql()`
-- `oliphaunt_wasix::blocking::Oliphaunt.transaction()`
-- `oliphaunt_wasix::blocking::OliphauntBuilder`
-- `oliphaunt_wasix::blocking::OliphauntBuilder.database()`
-- `oliphaunt_wasix::blocking::OliphauntBuilder.extension()`
-- `oliphaunt_wasix::blocking::OliphauntBuilder.extensions()`
-- `oliphaunt_wasix::blocking::OliphauntBuilder.new()`
-- `oliphaunt_wasix::blocking::OliphauntBuilder.open()`
-- `oliphaunt_wasix::blocking::OliphauntBuilder.startup_guc()`
-- `oliphaunt_wasix::blocking::OliphauntBuilder.startup_gucs()`
-- `oliphaunt_wasix::blocking::OliphauntBuilder.storage()`
-- `oliphaunt_wasix::blocking::OliphauntBuilder.username()`
-- `oliphaunt_wasix::blocking::OliphauntServer`
-- `oliphaunt_wasix::blocking::OliphauntServer.builder()`
-- `oliphaunt_wasix::blocking::OliphauntServer.close()`
-- `oliphaunt_wasix::blocking::OliphauntServer.connection_string()`
-- `oliphaunt_wasix::blocking::OliphauntServer.is_closed()`
-- `oliphaunt_wasix::blocking::OliphauntServer.socket_path()`
-- `oliphaunt_wasix::blocking::OliphauntServer.tcp_addr()`
-- `oliphaunt_wasix::blocking::OliphauntServerBuilder`
-- `oliphaunt_wasix::blocking::OliphauntServerBuilder.database()`
-- `oliphaunt_wasix::blocking::OliphauntServerBuilder.extension()`
-- `oliphaunt_wasix::blocking::OliphauntServerBuilder.extensions()`
-- `oliphaunt_wasix::blocking::OliphauntServerBuilder.listen()`
-- `oliphaunt_wasix::blocking::OliphauntServerBuilder.new()`
-- `oliphaunt_wasix::blocking::OliphauntServerBuilder.start()`
-- `oliphaunt_wasix::blocking::OliphauntServerBuilder.startup_guc()`
-- `oliphaunt_wasix::blocking::OliphauntServerBuilder.startup_gucs()`
-- `oliphaunt_wasix::blocking::OliphauntServerBuilder.storage()`
-- `oliphaunt_wasix::blocking::OliphauntServerBuilder.username()`
-- `oliphaunt_wasix::blocking::Sql`
-- `oliphaunt_wasix::blocking::Sql.bind()`
-- `oliphaunt_wasix::blocking::Sql.bind_parameter()`
-- `oliphaunt_wasix::blocking::Sql.describe()`
-- `oliphaunt_wasix::blocking::Sql.execute()`
-- `oliphaunt_wasix::blocking::Sql.query()`
-- `oliphaunt_wasix::blocking::Sql.result_format()`
-- `oliphaunt_wasix::blocking::Transaction`
-- `oliphaunt_wasix::blocking::Transaction.describe()`
-- `oliphaunt_wasix::blocking::Transaction.exec()`
-- `oliphaunt_wasix::blocking::Transaction.exec_protocol_raw()`
-- `oliphaunt_wasix::blocking::Transaction.exec_protocol_raw_stream()`
-- `oliphaunt_wasix::blocking::Transaction.execute()`
-- `oliphaunt_wasix::blocking::Transaction.execute_with_params()`
-- `oliphaunt_wasix::blocking::Transaction.is_closed()`
-- `oliphaunt_wasix::blocking::Transaction.query()`
-- `oliphaunt_wasix::blocking::Transaction.query_with_params()`
-- `oliphaunt_wasix::blocking::Transaction.rollback()`
-- `oliphaunt_wasix::blocking::Transaction.sql()`
+- `oliphaunt_wasix::worker::Oliphaunt`
+- `oliphaunt_wasix::worker::Oliphaunt.backup()`
+- `oliphaunt_wasix::worker::Oliphaunt.builder()`
+- `oliphaunt_wasix::worker::Oliphaunt.close()`
+- `oliphaunt_wasix::worker::Oliphaunt.describe()`
+- `oliphaunt_wasix::worker::Oliphaunt.exec()`
+- `oliphaunt_wasix::worker::Oliphaunt.exec_protocol_raw()`
+- `oliphaunt_wasix::worker::Oliphaunt.exec_protocol_raw_stream()`
+- `oliphaunt_wasix::worker::Oliphaunt.execute()`
+- `oliphaunt_wasix::worker::Oliphaunt.execute_with_params()`
+- `oliphaunt_wasix::worker::Oliphaunt.is_closed()`
+- `oliphaunt_wasix::worker::Oliphaunt.open()`
+- `oliphaunt_wasix::worker::Oliphaunt.query()`
+- `oliphaunt_wasix::worker::Oliphaunt.query_with_params()`
+- `oliphaunt_wasix::worker::Oliphaunt.restore()`
+- `oliphaunt_wasix::worker::Oliphaunt.sql()`
+- `oliphaunt_wasix::worker::Oliphaunt.transaction()`
+- `oliphaunt_wasix::worker::OliphauntBuilder`
+- `oliphaunt_wasix::worker::OliphauntBuilder.database()`
+- `oliphaunt_wasix::worker::OliphauntBuilder.extension()`
+- `oliphaunt_wasix::worker::OliphauntBuilder.extensions()`
+- `oliphaunt_wasix::worker::OliphauntBuilder.new()`
+- `oliphaunt_wasix::worker::OliphauntBuilder.open()`
+- `oliphaunt_wasix::worker::OliphauntBuilder.startup_guc()`
+- `oliphaunt_wasix::worker::OliphauntBuilder.startup_gucs()`
+- `oliphaunt_wasix::worker::OliphauntBuilder.storage()`
+- `oliphaunt_wasix::worker::OliphauntBuilder.username()`
+- `oliphaunt_wasix::worker::OliphauntServer`
+- `oliphaunt_wasix::worker::OliphauntServer.builder()`
+- `oliphaunt_wasix::worker::OliphauntServer.close()`
+- `oliphaunt_wasix::worker::OliphauntServer.connection_string()`
+- `oliphaunt_wasix::worker::OliphauntServer.is_closed()`
+- `oliphaunt_wasix::worker::OliphauntServer.socket_path()`
+- `oliphaunt_wasix::worker::OliphauntServer.tcp_addr()`
+- `oliphaunt_wasix::worker::OliphauntServerBuilder`
+- `oliphaunt_wasix::worker::OliphauntServerBuilder.database()`
+- `oliphaunt_wasix::worker::OliphauntServerBuilder.extension()`
+- `oliphaunt_wasix::worker::OliphauntServerBuilder.extensions()`
+- `oliphaunt_wasix::worker::OliphauntServerBuilder.listen()`
+- `oliphaunt_wasix::worker::OliphauntServerBuilder.new()`
+- `oliphaunt_wasix::worker::OliphauntServerBuilder.start()`
+- `oliphaunt_wasix::worker::OliphauntServerBuilder.startup_guc()`
+- `oliphaunt_wasix::worker::OliphauntServerBuilder.startup_gucs()`
+- `oliphaunt_wasix::worker::OliphauntServerBuilder.storage()`
+- `oliphaunt_wasix::worker::OliphauntServerBuilder.username()`
+- `oliphaunt_wasix::worker::Sql`
+- `oliphaunt_wasix::worker::Sql.bind()`
+- `oliphaunt_wasix::worker::Sql.bind_parameter()`
+- `oliphaunt_wasix::worker::Sql.describe()`
+- `oliphaunt_wasix::worker::Sql.execute()`
+- `oliphaunt_wasix::worker::Sql.query()`
+- `oliphaunt_wasix::worker::Sql.result_format()`
+- `oliphaunt_wasix::worker::Transaction`
+- `oliphaunt_wasix::worker::Transaction.describe()`
+- `oliphaunt_wasix::worker::Transaction.exec()`
+- `oliphaunt_wasix::worker::Transaction.exec_protocol_raw()`
+- `oliphaunt_wasix::worker::Transaction.exec_protocol_raw_stream()`
+- `oliphaunt_wasix::worker::Transaction.execute()`
+- `oliphaunt_wasix::worker::Transaction.execute_with_params()`
+- `oliphaunt_wasix::worker::Transaction.is_closed()`
+- `oliphaunt_wasix::worker::Transaction.query()`
+- `oliphaunt_wasix::worker::Transaction.query_with_params()`
+- `oliphaunt_wasix::worker::Transaction.rollback()`
+- `oliphaunt_wasix::worker::Transaction.sql()`
 
-### Explicit blocking tools: oliphaunt_wasix::blocking::tools
+### Dedicated worker tools: oliphaunt_wasix::worker::tools
 
-- `oliphaunt_wasix::blocking::tools::PgDumpOptions`
-- `oliphaunt_wasix::blocking::tools::PgDumpOptions.arg()`
-- `oliphaunt_wasix::blocking::tools::PgDumpOptions.args()`
-- `oliphaunt_wasix::blocking::tools::PgDumpOptions.new()`
-- `oliphaunt_wasix::blocking::tools::PostgresToolError`
-- `oliphaunt_wasix::blocking::tools::PostgresToolError.exit_code()`
-- `oliphaunt_wasix::blocking::tools::PostgresToolError.stderr()`
-- `oliphaunt_wasix::blocking::tools::PostgresToolError.stdout()`
-- `oliphaunt_wasix::blocking::tools::PostgresToolError.tool()`
-- `oliphaunt_wasix::blocking::tools::PsqlOptions`
-- `oliphaunt_wasix::blocking::tools::PsqlOptions.arg()`
-- `oliphaunt_wasix::blocking::tools::PsqlOptions.args()`
-- `oliphaunt_wasix::blocking::tools::PsqlOptions.command()`
-- `oliphaunt_wasix::blocking::tools::PsqlOptions.new()`
-- `oliphaunt_wasix::blocking::tools::PsqlOptions.script()`
-- `oliphaunt_wasix::blocking::tools::pg_dump()`
-- `oliphaunt_wasix::blocking::tools::psql()`
+- `oliphaunt_wasix::worker::tools::PgDumpOptions`
+- `oliphaunt_wasix::worker::tools::PgDumpOptions.arg()`
+- `oliphaunt_wasix::worker::tools::PgDumpOptions.args()`
+- `oliphaunt_wasix::worker::tools::PgDumpOptions.new()`
+- `oliphaunt_wasix::worker::tools::PostgresToolError`
+- `oliphaunt_wasix::worker::tools::PostgresToolError.exit_code()`
+- `oliphaunt_wasix::worker::tools::PostgresToolError.stderr()`
+- `oliphaunt_wasix::worker::tools::PostgresToolError.stdout()`
+- `oliphaunt_wasix::worker::tools::PostgresToolError.tool()`
+- `oliphaunt_wasix::worker::tools::PsqlOptions`
+- `oliphaunt_wasix::worker::tools::PsqlOptions.arg()`
+- `oliphaunt_wasix::worker::tools::PsqlOptions.args()`
+- `oliphaunt_wasix::worker::tools::PsqlOptions.command()`
+- `oliphaunt_wasix::worker::tools::PsqlOptions.new()`
+- `oliphaunt_wasix::worker::tools::PsqlOptions.script()`
+- `oliphaunt_wasix::worker::tools::pg_dump()`
+- `oliphaunt_wasix::worker::tools::psql()`
 
 ## Native C ABI: liboliphaunt
 
@@ -1332,6 +1408,8 @@ The unpublished workspace packaging tool enables `internal-native-packaging` and
 - `RawQueryRow.text()`
 - `RawQueryRow.values`
 - `RestoreOptions.libraryPath`
+- `ServerOpenConfig.listen`
+- `ServerOpenConfig.serverExecutable`
 
 ## Native TypeScript tools: @oliphaunt/tools
 
@@ -1368,7 +1446,7 @@ The unpublished workspace packaging tool enables `internal-native-packaging` and
 ### Package exports
 
 - `. = {"types":"./lib/index.d.ts","deno":"./lib/index.deno.js","bun":"./lib/index.bun.js","node":"./lib/index.node.js","browser":"./lib/index.js","default":"./lib/index.js"}`
-- `./blocking = {"types":"./lib/blocking.d.ts","deno":"./lib/blocking.deno.js","bun":"./lib/blocking.bun.js","node":"./lib/blocking.node.js","browser":"./lib/blocking.js","default":"./lib/blocking.js"}`
+- `./worker = {"types":"./lib/worker-entry.d.ts","deno":"./lib/worker-entry.deno.js","bun":"./lib/worker-entry.bun.js","node":"./lib/worker-entry.node.js","browser":"./lib/worker-entry.js","default":"./lib/worker-entry.js"}`
 - `./internal/tools = {"types":"./lib/internal.d.ts","deno":"./lib/internal.node.js","bun":"./lib/internal.node.js","node":"./lib/internal.node.js","browser":"./lib/internal.js","default":"./lib/internal.js"}`
 - `./server/node = {"types":"./lib/server.node.d.ts","node":"./lib/server.node.js"}`
 - `./server/bun = {"types":"./lib/server.node.d.ts","bun":"./lib/server.node.js"}`
@@ -1555,7 +1633,7 @@ The unpublished workspace packaging tool enables `internal-native-packaging` and
 - `WasixStorageError.commitState`
 - `WasixStorageError.constructor()`
 
-### Blocking subpath: @oliphaunt/wasix-ts/blocking
+### Worker subpath: @oliphaunt/wasix-ts/worker
 
 #### Types
 

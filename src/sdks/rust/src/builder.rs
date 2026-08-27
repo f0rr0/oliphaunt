@@ -6,7 +6,7 @@ use crate::config::{
     OpenConfig, PostgresStartupGuc, ServerListen,
 };
 use crate::database::{Oliphaunt, OliphauntServer};
-use crate::engine::NativeRuntime;
+use crate::engine::{EngineSession, NativeRuntime};
 use crate::error::{Error, Result};
 use crate::executor::EngineExecutor;
 use crate::extension::Extension;
@@ -14,7 +14,7 @@ use crate::liboliphaunt::OliphauntRuntime;
 use crate::server::NativeServerRuntime;
 use crate::storage::DatabaseStorage;
 
-/// Builder for opening native Oliphaunt databases.
+/// Builder for opening native Oliphaunt databases on a dedicated owner thread.
 pub struct OliphauntBuilder {
     mode: EngineMode,
     mode_explicit: bool,
@@ -46,7 +46,7 @@ impl Default for OliphauntBuilder {
 }
 
 impl OliphauntBuilder {
-    /// Create a native builder. Defaults to direct mode.
+    /// Create an owner-thread builder. The database topology defaults to direct.
     pub fn new() -> Self {
         Self::default()
     }
@@ -147,7 +147,7 @@ impl OliphauntBuilder {
         self
     }
 
-    fn build_config(&self, terminal: BuilderTerminal) -> Result<OpenConfig> {
+    pub(crate) fn build_config(&self, terminal: BuilderTerminal) -> Result<OpenConfig> {
         self.validate_terminal(terminal)?;
         let config = OpenConfig {
             mode: match terminal {
@@ -202,27 +202,20 @@ impl OliphauntBuilder {
         Ok(())
     }
 
-    /// Open a direct or broker database.
+    /// Open a direct or broker database on a dedicated owner thread.
     ///
     /// Server-only listener and executable options are rejected instead of
     /// being silently ignored.
     pub async fn open(self) -> Result<Oliphaunt> {
         let config = self.build_config(BuilderTerminal::Open)?;
         let (executor, ()) = EngineExecutor::open("oliphaunt-owner", move || {
-            let session = match config.mode {
-                EngineMode::Direct => OliphauntRuntime::from_env().open(config)?,
-                EngineMode::Broker => {
-                    NativeBrokerRuntime::from_config(&config.broker).open(config)?
-                }
-                EngineMode::Server => unreachable!("server mode uses open_server"),
-            };
-            Ok((session, ()))
+            open_embedded_session(config).map(|session| (session, ()))
         })
         .await?;
         Ok(Oliphaunt::from_executor(executor))
     }
 
-    /// Open a local PostgreSQL server and return its server handle.
+    /// Open a local PostgreSQL server and return its asynchronous worker handle.
     ///
     /// Explicit direct/broker selectors and broker-only options are rejected
     /// instead of being silently ignored.
@@ -230,11 +223,7 @@ impl OliphauntBuilder {
         let config = self.build_config(BuilderTerminal::OpenServer)?;
         let (executor, connection_string) =
             EngineExecutor::open("oliphaunt-server-owner", move || {
-                let session = NativeServerRuntime::from_config(&config.server).open(config)?;
-                let connection_string = session.connection_string().ok_or_else(|| {
-                    Error::Engine("native server did not expose its connection string".to_owned())
-                })?;
-                Ok((session, connection_string))
+                open_server_session(config)
             })
             .await?;
         Ok(OliphauntServer::from_executor(executor, connection_string))
@@ -242,9 +231,25 @@ impl OliphauntBuilder {
 }
 
 #[derive(Clone, Copy)]
-enum BuilderTerminal {
+pub(crate) enum BuilderTerminal {
     Open,
     OpenServer,
+}
+
+pub(crate) fn open_embedded_session(config: OpenConfig) -> Result<Box<dyn EngineSession>> {
+    match config.mode {
+        EngineMode::Direct => OliphauntRuntime::from_env().open(config),
+        EngineMode::Broker => NativeBrokerRuntime::from_config(&config.broker).open(config),
+        EngineMode::Server => unreachable!("server mode uses open_server"),
+    }
+}
+
+pub(crate) fn open_server_session(config: OpenConfig) -> Result<(Box<dyn EngineSession>, String)> {
+    let session = NativeServerRuntime::from_config(&config.server).open(config)?;
+    let connection_string = session.connection_string().ok_or_else(|| {
+        Error::Engine("native server did not expose its connection string".to_owned())
+    })?;
+    Ok((session, connection_string))
 }
 
 #[cfg(test)]

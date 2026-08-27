@@ -25,14 +25,14 @@ describe('WASIX database recovery state', () => {
   });
 
   it('identifies protocol-capable targets without exposing a public capability flag', () => {
-    const blocking = new WasixDatabaseImpl({
+    const direct = new WasixDatabaseImpl({
       async exec() {
         return ready();
       },
       async sync() {},
       async close() {},
     });
-    const root = new WasixDatabaseImpl({
+    const worker = new WasixDatabaseImpl({
       supportsProtocolConnections: true,
       async exec() {
         return ready();
@@ -42,8 +42,8 @@ describe('WASIX database recovery state', () => {
       async close() {},
     });
 
-    expect(() => assertWasixProtocolConnectionTarget(blocking)).toThrow(/root entrypoint/);
-    expect(() => assertWasixProtocolConnectionTarget(root)).not.toThrow();
+    expect(() => assertWasixProtocolConnectionTarget(direct)).toThrow(/wasix-ts\/worker/);
+    expect(() => assertWasixProtocolConnectionTarget(worker)).not.toThrow();
   });
 
   it('reserves protocol FIFO order without entering a canceled guest connection', async () => {
@@ -219,12 +219,9 @@ describe('WASIX database recovery state', () => {
 
       for (const [name, invoke] of invalidCalls) {
         let caught: Promise<unknown> | undefined;
-        expect(
-          () => {
-            caught = invoke().catch((error: unknown) => error);
-          },
-          `${name} threw before returning its Promise`,
-        ).not.toThrow();
+        expect(() => {
+          caught = invoke().catch((error: unknown) => error);
+        }, `${name} threw before returning its Promise`).not.toThrow();
         await expect(caught, `${name} did not reject`).resolves.toBeInstanceOf(Error);
       }
     });
@@ -249,15 +246,13 @@ describe('WASIX database recovery state', () => {
     ];
     for (const [name, invoke] of closedCalls) {
       let caught: Promise<unknown> | undefined;
-      expect(
-        () => {
-          caught = invoke().catch((error: unknown) => error);
-        },
-        `${name} threw for a closed transaction`,
-      ).not.toThrow();
-      await expect(caught, `${name} did not reject for a closed transaction`).resolves.toMatchObject(
-        { message: expect.stringContaining('no longer active') },
-      );
+      expect(() => {
+        caught = invoke().catch((error: unknown) => error);
+      }, `${name} threw for a closed transaction`).not.toThrow();
+      await expect(
+        caught,
+        `${name} did not reject for a closed transaction`,
+      ).resolves.toMatchObject({ message: expect.stringContaining('no longer active') });
     }
     expect(statements).toEqual(['BEGIN', 'COMMIT']);
     await database.close();
@@ -674,7 +669,7 @@ describe('WASIX database recovery state', () => {
     await database.close();
   });
 
-  it('preserves public raw input ownership for both calling contracts', async () => {
+  it('preserves public raw input ownership for both execution surfaces', async () => {
     const executions: Uint8Array[] = [];
     const session: WasixDatabaseSession = {
       async exec(input) {
@@ -773,9 +768,9 @@ describe('WASIX database recovery state', () => {
       async close() {},
     });
 
-    await expect(database.execProtocolRawStream(Uint8Array.of(1), undefined as never)).rejects.toThrow(
-      TypeError,
-    );
+    await expect(
+      database.execProtocolRawStream(Uint8Array.of(1), undefined as never),
+    ).rejects.toThrow(TypeError);
     expect(executions).toBe(0);
     await database.close();
   });
@@ -821,16 +816,12 @@ describe('WASIX database recovery state', () => {
 
     let databaseReentry: Promise<unknown> | undefined;
     await database.execProtocolRawStream(Uint8Array.of(1), () => {
-      databaseReentry = database.query(
-        "SELECT 'forbidden database callback reentry'",
-      );
+      databaseReentry = database.query("SELECT 'forbidden database callback reentry'");
     });
     await expect(databaseReentry).rejects.toThrow(
       /must not reenter the same Oliphaunt database or transaction/,
     );
-    expect(executedSql).not.toContain(
-      "SELECT 'forbidden database callback reentry'",
-    );
+    expect(executedSql).not.toContain("SELECT 'forbidden database callback reentry'");
 
     let closeReentry: Promise<unknown> | undefined;
     await database.execProtocolRawStream(Uint8Array.of(2), () => {
@@ -844,17 +835,13 @@ describe('WASIX database recovery state', () => {
     let transactionReentry: Promise<unknown> | undefined;
     await database.transaction(async (transaction) => {
       await transaction.execProtocolRawStream(Uint8Array.of(3), () => {
-        transactionReentry = transaction.query(
-          "SELECT 'forbidden transaction callback reentry'",
-        );
+        transactionReentry = transaction.query("SELECT 'forbidden transaction callback reentry'");
       });
       await expect(transactionReentry).rejects.toThrow(
         /must not reenter the same Oliphaunt database or transaction/,
       );
     });
-    expect(executedSql).not.toContain(
-      "SELECT 'forbidden transaction callback reentry'",
-    );
+    expect(executedSql).not.toContain("SELECT 'forbidden transaction callback reentry'");
     await database.close();
   });
 
@@ -1155,9 +1142,7 @@ describe('WASIX database recovery state', () => {
       commitState: 'not-persisted',
     });
 
-    const checkpointExecution = expect(database.execute('CHECKPOINT')).rejects.toBe(
-      storageFailure,
-    );
+    const checkpointExecution = expect(database.execute('CHECKPOINT')).rejects.toBe(storageFailure);
     await started;
     const queuedQuery = expect(database.query('select 42')).rejects.toMatchObject({
       name: 'WasixStorageError',

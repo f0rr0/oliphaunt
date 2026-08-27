@@ -22,13 +22,13 @@ function manifest() {
         browser: './lib/index.js',
         default: './lib/index.js',
       },
-      './blocking': {
-        types: './lib/blocking.d.ts',
-        deno: './lib/blocking.deno.js',
-        bun: './lib/blocking.bun.js',
-        node: './lib/blocking.node.js',
-        browser: './lib/blocking.js',
-        default: './lib/blocking.js',
+      './worker': {
+        types: './lib/worker-entry.d.ts',
+        deno: './lib/worker-entry.deno.js',
+        bun: './lib/worker-entry.bun.js',
+        node: './lib/worker-entry.node.js',
+        browser: './lib/worker-entry.js',
+        default: './lib/worker-entry.js',
       },
       './internal/tools': {
         types: './lib/internal.d.ts',
@@ -106,18 +106,18 @@ describe('WASIX TypeScript release dependency closure', () => {
     );
   });
 
-  test('rejects a blocking condition order that lets Node shadow Deno or Bun', () => {
+  test('rejects a worker condition order that lets Node shadow Deno or Bun', () => {
     const candidate = manifest();
-    candidate.exports['./blocking'] = {
-      types: './lib/blocking.d.ts',
-      node: './lib/blocking.node.js',
-      deno: './lib/blocking.deno.js',
-      bun: './lib/blocking.bun.js',
-      browser: './lib/blocking.js',
-      default: './lib/blocking.js',
+    candidate.exports['./worker'] = {
+      types: './lib/worker-entry.d.ts',
+      node: './lib/worker-entry.node.js',
+      deno: './lib/worker-entry.deno.js',
+      bun: './lib/worker-entry.bun.js',
+      browser: './lib/worker-entry.js',
+      default: './lib/worker-entry.js',
     };
     expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
-      'must expose the exact browser, Node, Bun, and Deno blocking entrypoint',
+      'must expose the exact browser, Node, Bun, and Deno worker entrypoint',
     );
   });
 

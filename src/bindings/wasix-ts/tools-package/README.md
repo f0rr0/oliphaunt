@@ -16,16 +16,17 @@ pnpm add @oliphaunt/wasix-ts @oliphaunt/wasix-tools
 
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
+import WorkerOliphaunt from '@oliphaunt/wasix-ts/worker';
 import { pgDump, psql } from '@oliphaunt/wasix-tools';
 
 await using source = await Oliphaunt.open();
 const sql = await pgDump(source, { args: ['--schema-only'] });
-await using target = await Oliphaunt.open();
+await using target = await WorkerOliphaunt.open();
 await psql(target, { script: sql });
 ```
 
-`pgDump()` supports databases from the root and `/blocking` entrypoints.
-`psql()` requires the root entrypoint because COPY restore is full duplex.
+`pgDump()` supports databases from the root and `/worker` entrypoints.
+`psql()` requires `/worker` because COPY restore is full duplex.
 Ordinary PostgreSQL
 arguments are passed through, except connection, input/output, encoding, dump
 format, compression, and parallel-job arguments owned by the runner.

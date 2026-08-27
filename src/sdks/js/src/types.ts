@@ -26,10 +26,7 @@ export type OpenConfig = {
   brokerExecutable?: string;
 };
 
-export type ServerOpenConfig = Omit<
-  OpenConfig,
-  'topology' | 'brokerExecutable' | 'libraryPath'
-> & {
+export type ServerOpenConfig = Omit<OpenConfig, 'topology' | 'brokerExecutable' | 'libraryPath'> & {
   serverExecutable?: string;
   listen?: ServerListen;
 };

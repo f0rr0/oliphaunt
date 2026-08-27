@@ -8,7 +8,7 @@ use std::task::{Context, Poll, Waker};
 use std::thread;
 use std::time::Duration;
 
-use oliphaunt::Oliphaunt;
+use oliphaunt::worker::Oliphaunt;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let root = std::env::args_os()

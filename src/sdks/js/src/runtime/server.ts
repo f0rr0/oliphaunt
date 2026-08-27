@@ -46,8 +46,8 @@ type ServerTools = {
 };
 
 export function createServerRuntimeBinding(): RuntimeBinding {
-  const forgottenHandles = createForgottenRuntimeHandleCleanup<ServerHandle>(
-    (handle) => handle.detach(),
+  const forgottenHandles = createForgottenRuntimeHandleCleanup<ServerHandle>((handle) =>
+    handle.detach(),
   );
   return {
     connectionString(handle: RuntimeHandle): string {
@@ -148,9 +148,7 @@ class ServerHandle {
     try {
       const exited = await waitForChild(this.child, STOP_TIMEOUT_MS);
       if (!exited) {
-        failures.push(
-          new Error(`native server did not stop within ${STOP_TIMEOUT_MS}ms`),
-        );
+        failures.push(new Error(`native server did not stop within ${STOP_TIMEOUT_MS}ms`));
         this.child.kill('SIGKILL');
         await this.child.wait();
       }

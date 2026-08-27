@@ -8,11 +8,7 @@ import { assertNativeDatabaseContract } from './native-direct-contract.mjs';
 
 async function main(): Promise<void> {
   const libraryPath = requiredEnv('LIBOLIPHAUNT_PATH');
-  await assertNativeDatabaseContract(
-    Oliphaunt,
-    { topology: 'direct', libraryPath },
-    'node-direct',
-  );
+  await assertNativeDatabaseContract(Oliphaunt, { topology: 'direct', libraryPath }, 'node-direct');
   const brokerExecutable = process.env.OLIPHAUNT_BROKER;
   if (brokerExecutable) {
     await assertNativeDatabaseContract(

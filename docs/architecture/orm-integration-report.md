@@ -14,8 +14,8 @@ asset-independent verification: 2026-08-27.
 This report defines the work required for popular JavaScript and Rust
 PostgreSQL libraries to use Oliphaunt with minimal new concepts. It focuses on
 native direct topology, native broker topology, WASIX direct topology through
-the default owner-backed or explicit blocking surfaces, and browser Worker
-execution. Native server mode and the concurrent WASIX
+caller-owned root or explicit Worker surfaces, and browser Worker execution.
+Native server mode and the concurrent WASIX
 postmaster are only compatibility baselines.
 
 ## Executive decision
@@ -65,11 +65,11 @@ correctness limitations.
 
 | Component | What it unlocks | Runtime/protocol work | Recommendation |
 | --- | --- | --- | --- |
-| Shared JavaScript query core | One decoded, transactional database API for native direct, native broker, both WASIX TypeScript calling contracts, and React Native | Implemented directly in the SDKs over current complete-operation APIs; no C ABI change | Keep as the adapter foundation |
+| Shared JavaScript query core | One decoded, transactional database API for native direct, native broker, both WASIX TypeScript execution surfaces, and React Native | Implemented directly in the SDKs over current complete-operation APIs; no C ABI change | Keep as the adapter foundation |
 | `OliphauntDialect` | Kysely and the base of the MikroORM integration | Query-client adapter only | Build in the first integration milestone |
 | `@oliphaunt/drizzle` session | Drizzle's query, relational, transaction, and migration APIs | Query-client adapter with object/array row modes and parser overrides | Build with Kysely |
 | `OliphauntDriver` for MikroORM | Entity manager, unit of work, schema, and migrations | Reuse the Kysely dialect and multi-result execution | Build after the core API and Kysely are stable |
-| Browser host hardening | All socketless JavaScript ORMs in real applications | Package-Worker default, transfer policy, bundler/COOP/COEP tests, persistence failure semantics | Treat as part of first-class browser support |
+| Browser host hardening | All socketless JavaScript ORMs in real applications | Explicit Worker path, transfer policy, bundler/COOP/COEP tests, persistence failure semantics | Treat as part of first-class browser support |
 | Multi-tab owner/proxy | Safe sharing of one persistent browser database identity | SharedWorker or leader election, transaction tokens, failover without write replay | Build after single-tab correctness; required before claiming multi-tab support |
 | Broker generation and operation IDs | Safe cache invalidation and race-free cancellation | Extend scheduler and broker control IPC | Build before prepared caches or `AbortSignal` claims |
 | One-session embedded PostgreSQL endpoint | Stock SQLx, Diesel, diesel-async, SeaORM, and tokio-postgres APIs | Extract the WASIX proxy state machine and add native direct/broker backends | Run a bounded spike, then make an explicit product decision |
@@ -123,12 +123,14 @@ cross-runtime one-session endpoint.
 
 | Surface | Execution owner | Physical sessions | Relevant behavior |
 | --- | --- | ---: | --- |
-| Native direct SDKs | PostgreSQL runs in the application process behind each SDK's serial owner/async-work boundary | One process-wide active direct instance and one serialized session | No socket; native cancellation is out of band; app-facing operations are async/main-safe. The lower-level C ABI remains synchronous |
+| Native Rust root | PostgreSQL or synchronous broker transport runs on the calling thread through an exclusive handle | One process-wide active direct instance and one serialized session | No scheduling hop; direct cancellation uses a separate `CancelHandle` |
+| Native Rust `worker` | The selected direct, broker, or server topology is retained on an SDK owner thread | One serialized session | Cloneable asynchronous handle with bounded ordered admission |
+| Native TypeScript, Swift, Kotlin, and React Native | PostgreSQL runs behind each SDK/platform serial owner or async-work boundary | One process-wide active direct instance and one serialized session | No socket in direct mode; app-facing operations are async/main-safe. The lower-level C ABI remains synchronous |
 | Native broker | PostgreSQL runs in one SDK-owned helper per broker handle | One serialized session per helper | Same database API; a dead helper may be relaunched, losing all session state without a generation event today |
-| WASIX Rust root | PostgreSQL runs in the WASIX guest retained on an SDK owner thread | One serialized session | Async, cloneable handle; bounded ordered admission; no public cancellation |
-| WASIX Rust `blocking` | The direct guest runs on the caller thread and is owned by an exclusive `&mut` handle | One synchronous session | Explicit no-hop option; never selected by a topology flag |
-| WASIX TypeScript root | PostgreSQL runs in a package-owned module Worker/worker thread | One serialized session | Default, main-safe entry point; query bytes cross RPC; ORM logic remains in the caller realm |
-| WASIX TypeScript `/blocking` | PostgreSQL guest work runs in the importing JavaScript realm | One serialized session | Promise-shaped loading/publication does not make synchronous guest CPU work non-blocking |
+| WASIX Rust root | The direct guest runs on the caller thread and is owned by an exclusive `&mut` handle | One synchronous session | No scheduling hop; no public cancellation |
+| WASIX Rust `worker` | PostgreSQL runs in the WASIX guest retained on an SDK owner thread | One serialized session | Async, cloneable handle; bounded ordered admission; no public cancellation |
+| WASIX TypeScript root | PostgreSQL guest work runs in the importing JavaScript realm | One serialized session | Promise-shaped loading/publication does not move synchronous guest CPU work off the caller realm |
+| WASIX TypeScript `/worker` | PostgreSQL runs in a package-owned module Worker/worker thread | One serialized session | Main-safe entry point; query bytes cross RPC; ORM logic remains in the caller realm |
 | WASIX lightweight endpoint | One embedded backend is exposed locally | One connected client at a time | Standard clients on Rust, Node, Bun, and Deno; no browser endpoint |
 | Native server / WASIX postmaster | Normal server/postmaster | Independent sessions | Standard ORM path; not the focus here |
 
@@ -640,25 +642,25 @@ savepoint nesting can fit one physical session.
 
 ## Browser-specific product work
 
-### The root Worker entry point is the default ORM host
+### Choose execution placement explicitly
 
-Use the root `@oliphaunt/wasix-ts` entry point; it owns a package Worker and
-keeps PostgreSQL off the browser's main JavaScript agent. The explicit
-`@oliphaunt/wasix-ts/blocking` entry point runs synchronous guest work in its
-importing agent. It is appropriate only when the application already runs all
-database and ORM work in its own Worker, or when blocking is explicitly
-acceptable. Do not reintroduce a configuration option that makes this
-calling-contract distinction look like ordinary database configuration.
+The root `@oliphaunt/wasix-ts` entry point runs PostgreSQL in its importing
+JavaScript realm. This is the lowest-overhead path for Node scripts, tests, and
+applications that already place their ORM in an application-owned Worker. In a
+browser UI realm, prefer `@oliphaunt/wasix-ts/worker`; it owns a package Worker
+and keeps synchronous guest execution off the main JavaScript agent. Do not
+reintroduce an execution option that makes this placement choice look like
+ordinary database configuration.
 
-The package Worker already keeps PostgreSQL off the main thread. ORM code and
-type parsing may remain in the caller realm; only requests and raw results
-cross RPC. Transfer owned `ArrayBuffer` values rather than cloning large byte
-arrays. Keep callback-stream chunks bounded and do not describe that callback
-as row streaming.
+With the package Worker, ORM code and type parsing remain in the caller realm;
+only requests and raw results cross RPC. Transfer owned `ArrayBuffer` values
+rather than cloning large byte arrays. Keep callback-stream chunks bounded and
+do not describe that callback as row streaming.
 
-Browser applications must remain cross-origin isolated and preserve the
-package's module Worker edge. Test COOP and COEP response headers through a
-production-style bundle, not only a unit-test Worker.
+Browser applications must remain cross-origin isolated. Applications using the
+explicit Worker surface must also preserve the package's module Worker edge.
+Test COOP and COEP response headers through a production-style bundle, not only
+a unit-test Worker.
 
 ### Storage behavior adapters must preserve
 
@@ -671,11 +673,11 @@ production-style bundle, not only a unit-test Worker.
 - A publication failure poisons the live handle. Preserve the typed storage
   error and never retry the SQL automatically.
 - Synchronous OPFS access handles are available whenever the database-owning
-  realm has no `document`, including the package Worker and an explicitly
-  imported `/blocking` database inside an application Worker. A `/blocking`
-  database imported in a browser Window uses the portable journal path.
+  realm has no `document`, including the explicit package Worker and a root
+  database imported inside an application Worker. A root database imported in
+  a browser Window uses the portable journal path.
 - Chromium's Window-realm synchronous side-module limit means large extension
-  carriers require the root entrypoint or `/blocking` inside a Dedicated Worker.
+  carriers require `/worker` or the root entrypoint inside a Dedicated Worker.
 
 ### Multi-tab support is a separate deliverable
 
@@ -751,13 +753,12 @@ server process. It lends the embedded backend to one ordinary PostgreSQL client.
 Suggested API:
 
 ```rust
-let database = Oliphaunt::builder()
+let mut database = Oliphaunt::builder()
     .directory(path)
     .direct()
-    .open()
-    .await?;
+    .open()?;
 
-let endpoint = database.open_pgwire_endpoint().await?;
+let endpoint = database.open_pgwire_endpoint()?;
 assert_eq!(endpoint.max_connections(), 1);
 
 let pool = PgPoolOptions::new()
@@ -930,10 +931,10 @@ start/write/read/end frames need operation IDs and a concurrent input channel.
 
 WASIX Rust already has an internal duplex pump. WASIX TypeScript Worker has a
 full-duplex shared-memory byte channel behind its internal `serve` path. Expose
-or adapt these rather than rebuilding guest protocol machinery. The `/blocking`
+or adapt these rather than rebuilding guest protocol machinery. The root direct
 entrypoint still cannot asynchronously refill a synchronous Wasm callback, even
 when imported in an application Worker, so asynchronous COPY IN should require
-the root package-Worker contract.
+the explicit `/worker` contract.
 
 WASIX cancellation needs a real guest/host interrupt path. Worker cancellation
 likely needs an out-of-band shared signal because normal RPC cannot run while
@@ -971,12 +972,12 @@ Run the same JavaScript adapter contract against:
 - native TypeScript direct;
 - native TypeScript broker;
 - every desktop JavaScript host that is claimed;
-- WASIX TypeScript `/blocking` in Node;
-- WASIX TypeScript root Worker in Node;
+- WASIX TypeScript root direct in Node;
+- WASIX TypeScript `/worker` in Node;
 - Chromium, Firefox, and WebKit with Worker plus memory storage;
 - browser Worker plus IndexedDB;
 - browser Worker plus OPFS where supported;
-- browser `/blocking` only where intentionally supported;
+- browser root direct in both Window and application-owned Worker realms;
 - two tabs sharing one persistent identity after the multi-tab proxy exists.
 
 Run the Rust endpoint contract against native direct, native broker, and the
@@ -1074,7 +1075,7 @@ prepared queries, and result mapping add behavior above the transport.
 | Broker/Worker crash | Reject in-flight work; never replay unknown transactions |
 | Broker restart | Expose generation change and invalidate prepared/session state |
 | Multi-tab | One fail-fast Web Lock owner today; build a leader proxy first |
-| Direct browser | Blocks its realm and has side-module limits; Worker is default |
+| Direct browser | The root blocks its realm and has side-module limits; import `/worker` when the UI realm must stay responsive |
 | Cross-binding roots | Do not open one root simultaneously across providers |
 
 ## Implementation status and next steps
@@ -1091,7 +1092,7 @@ browser-safe query core is mirrored byte-for-byte into all three packages, and
 shared fixtures cover multi-results, arrays, notices, malformed frames, COPY
 preflight, and readiness recovery. Checked-in native and WASIX smoke programs
 exercise the same public structured surface, including both WASIX TypeScript
-calling contracts. In this checkout the asset-independent suites and packed
+execution surfaces. In this checkout the asset-independent suites and packed
 package checks passed, but the runtime smokes could not execute because usable
 native and staged WASIX runtime assets were absent; this report therefore makes
 no fresh real-runtime claim for those lanes.
@@ -1107,7 +1108,7 @@ Drizzle, or PGlite-typed application source-compatible.
 - Reject streaming and multi-session behavior clearly.
 
 Acceptance: both ORMs pass their public suites in native direct, broker, WASIX
-root-Worker, IndexedDB, and OPFS browser lanes.
+root-direct and explicit-Worker, IndexedDB, and OPFS browser lanes.
 
 ### 2. Qualify the single-tab browser host
 
@@ -1115,7 +1116,9 @@ root-Worker, IndexedDB, and OPFS browser lanes.
   Worker failure, and persistence poisoning.
 
 Acceptance: Kysely and Drizzle pass in real single-tab browser builds with
-memory, IndexedDB, and OPFS where supported, without blocking the main realm.
+memory, IndexedDB, and OPFS where supported. The `/worker` entrypoint and a root
+import inside an application-owned Worker keep the main realm responsive; a
+root import in `Window` is explicitly allowed to monopolize that realm.
 
 ### 3. Add MikroORM
 
@@ -1216,8 +1219,8 @@ let orm = Database::connect(options).await?;
 Users should need to learn only three Oliphaunt-specific facts:
 
 1. choose the native direct/broker/server or WASIX product; WASIX TypeScript's
-   root Worker is the default, with caller-blocking work available only from its
-   explicit `/blocking` import;
+   root runs in the caller realm, with package-owned isolation available from
+   its explicit `/worker` import;
 2. select storage and extension artifacts before open;
 3. direct topology provides one physical session, so transactions are exclusive and
    pools are never larger than one.

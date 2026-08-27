@@ -1,7 +1,7 @@
 #![cfg(feature = "extensions")]
 
 use anyhow::{Context, Result};
-use oliphaunt_wasix::blocking::Oliphaunt;
+use oliphaunt_wasix::Oliphaunt;
 use sqlx::{Connection, Row};
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};

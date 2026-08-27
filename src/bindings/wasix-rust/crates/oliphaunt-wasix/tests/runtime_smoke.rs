@@ -2,8 +2,8 @@
 
 use anyhow::Result;
 use oliphaunt_wasix::{
-    DatabaseStorage, Oliphaunt as AsyncOliphaunt, Transaction as AsyncTransaction,
-    blocking::Oliphaunt,
+    DatabaseStorage, Oliphaunt,
+    worker::{Oliphaunt as WorkerOliphaunt, Transaction as WorkerTransaction},
 };
 use std::future::Future;
 use std::pin::Pin;
@@ -146,9 +146,9 @@ fn direct_api_recovers_after_postgres_error() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn async_root_owns_the_runtime_and_serializes_clones() -> Result<()> {
+async fn worker_owns_the_runtime_and_serializes_clones() -> Result<()> {
     let caller_thread = std::thread::current().id();
-    let database = AsyncOliphaunt::open().await?;
+    let database = WorkerOliphaunt::open().await?;
     let clone = database.clone();
 
     database
@@ -200,7 +200,7 @@ async fn async_root_owns_the_runtime_and_serializes_clones() -> Result<()> {
             .expect("callback thread lock")
             .expect("stream callback ran"),
         caller_thread,
-        "root callbacks must run on the SDK-owned database thread"
+        "worker callbacks must run on the SDK-owned database thread"
     );
     assert!(
         reentrant_error
@@ -211,11 +211,11 @@ async fn async_root_owns_the_runtime_and_serializes_clones() -> Result<()> {
     );
 
     database
-        .transaction(async |transaction: &AsyncTransaction| {
+        .transaction(async |transaction: &WorkerTransaction| {
             let unpinned = clone.query("SELECT 99::int4 AS forbidden").await;
             assert!(
                 unpinned
-                    .expect_err("root work must be rejected during a pinned transaction")
+                    .expect_err("worker work must be rejected during a pinned transaction")
                     .to_string()
                     .contains("transaction is active")
             );
@@ -243,7 +243,7 @@ async fn async_root_owns_the_runtime_and_serializes_clones() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn admitted_query_precedes_later_transaction_begin() -> Result<()> {
-    let database = AsyncOliphaunt::open().await?;
+    let database = WorkerOliphaunt::open().await?;
     let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(1);
     let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
     let mut release_rx = Some(release_rx);
@@ -290,7 +290,7 @@ async fn admitted_query_precedes_later_transaction_begin() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn close_drains_admitted_query_and_rejects_later_work() -> Result<()> {
-    let database = AsyncOliphaunt::open().await?;
+    let database = WorkerOliphaunt::open().await?;
     let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(1);
     let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
     let mut release_rx = Some(release_rx);
@@ -340,19 +340,19 @@ async fn close_drains_admitted_query_and_rejects_later_work() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn abandoned_async_transaction_rolls_back_before_following_work() -> Result<()> {
-    let database = AsyncOliphaunt::open().await?;
+    let database = WorkerOliphaunt::open().await?;
     database
         .execute("CREATE TABLE rollback_items(id int PRIMARY KEY)")
         .await?;
 
-    let mut transaction = Box::pin(
-        database.transaction(async |transaction: &AsyncTransaction| {
+    let mut transaction = Box::pin(database.transaction(
+        async |transaction: &WorkerTransaction| {
             transaction
                 .execute("INSERT INTO rollback_items VALUES (1)")
                 .await?;
             std::future::pending::<oliphaunt_wasix::Result<()>>().await
-        }),
-    );
+        },
+    ));
     tokio::select! {
         _ = &mut transaction => panic!("transaction should remain pending"),
         _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {}

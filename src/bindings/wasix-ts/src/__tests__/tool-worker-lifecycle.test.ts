@@ -156,7 +156,7 @@ describe('persistent WASIX tool worker lifecycle', () => {
     });
 
     expect(() => run(database, createWorker)).toThrow(
-      'WASIX psql and local servers require the @oliphaunt/wasix-ts root entrypoint',
+      'WASIX psql and local servers require @oliphaunt/wasix-ts/worker',
     );
     expect(createWorker).not.toHaveBeenCalled();
     await database.close();

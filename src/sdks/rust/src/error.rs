@@ -9,7 +9,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// Error type for SDK configuration, lifecycle, and engine execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
-    /// The owner executor has stopped.
+    /// The native database session has stopped.
     EngineStopped,
     /// A runtime returned an execution failure.
     Engine(String),
@@ -31,7 +31,7 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EngineStopped => f.write_str("native engine executor has stopped"),
+            Self::EngineStopped => f.write_str("native database session has stopped"),
             Self::Engine(message) => f.write_str(message),
             Self::Postgres(error) => error.fmt(f),
             Self::TransactionActive => {

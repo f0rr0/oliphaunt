@@ -45,12 +45,12 @@ Every native language SDK exposes its idiomatic form of:
 
 PostgreSQL `CHECKPOINT` remains available through ordinary
 `execute("CHECKPOINT")`; it is not a separate public SDK method. Native Rust
-constructs direct, broker, or server state on a permanent owner thread and
-keeps later blocking runtime work there, so public futures do not block the
-executor thread polling them. Swift and Kotlin similarly use dedicated serial
-owners. Native TypeScript keeps Promise-facing direct calls behind its native
-async-work boundary; broker and server calls already cross process/transport
-boundaries.
+constructs direct, broker, or server state synchronously on the calling thread
+from its root API; its explicit `worker` module retains the same selected
+topology on a permanent owner thread and exposes futures. Swift and Kotlin use
+dedicated serial owners. Native TypeScript keeps Promise-facing direct calls
+behind its native async-work boundary; broker and server calls already cross
+process/transport boundaries.
 
 Direct and broker support physical backup. Native server SDK backup is not
 currently exposed; server applications use normal PostgreSQL tooling. Static

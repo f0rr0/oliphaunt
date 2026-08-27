@@ -2423,7 +2423,6 @@ dependencies = [
  "oliphaunt",
  "oliphaunt-tools",
  "serde_json",
- "tokio",
 ]
 
 [[package]]

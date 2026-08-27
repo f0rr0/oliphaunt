@@ -13,7 +13,7 @@ const serverMocks = vi.hoisted(() => ({
 }));
 const { closeDatabase, openWasix } = serverMocks;
 
-vi.mock('../node-client.js', () => ({
+vi.mock('../worker-node-client.js', () => ({
   openWasix: serverMocks.openWasix,
 }));
 

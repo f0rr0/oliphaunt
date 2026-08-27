@@ -350,11 +350,7 @@ export async function createDenoNativeBinding(
       if (generation === undefined || generation === 0n) {
         throw new Error('Deno native cleanup received a stale logical handle');
       }
-      forgottenHandles.register(
-        owner,
-        Object.freeze({ generation, releaseOwnership }),
-        owner,
-      );
+      forgottenHandles.register(owner, Object.freeze({ generation, releaseOwnership }), owner);
     },
     unregisterForgottenHandleCleanup(owner: object): void {
       forgottenHandles.unregister(owner);
@@ -362,10 +358,7 @@ export async function createDenoNativeBinding(
   };
 }
 
-async function closeDenoGeneration(
-  symbols: DenoSymbols,
-  generation: bigint,
-): Promise<void> {
+async function closeDenoGeneration(symbols: DenoSymbols, generation: bigint): Promise<void> {
   const rc = await symbols.oliphaunt_close_if_generation(generation);
   if (rc !== 0 && rc !== 1) {
     throw new Error(`native liboliphaunt generation cleanup failed with status ${rc}`);

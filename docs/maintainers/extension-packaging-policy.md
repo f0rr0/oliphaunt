@@ -157,15 +157,14 @@ selected exact extensions plus mandatory manifest dependencies.
 ```rust,no_run
 use oliphaunt::{Extension, Oliphaunt};
 
-# async fn demo() -> oliphaunt::Result<()> {
-let db = Oliphaunt::builder()
+# fn demo() -> oliphaunt::Result<()> {
+let mut db = Oliphaunt::builder()
     .direct()
     .extension(Extension::Vector)
-    .open()
-    .await?;
+    .open()?;
 
-db.execute("CREATE EXTENSION vector").await?;
-db.close().await?;
+db.execute("CREATE EXTENSION vector")?;
+db.close()?;
 # Ok(())
 # }
 ```

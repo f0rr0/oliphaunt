@@ -53,8 +53,8 @@ export type BrokerRuntimeBindingOptions = {
 export function createBrokerRuntimeBinding(
   options: BrokerRuntimeBindingOptions = {},
 ): RuntimeBinding {
-  const forgottenHandles = createForgottenRuntimeHandleCleanup<BrokerHandle>(
-    (handle) => handle.detach(),
+  const forgottenHandles = createForgottenRuntimeHandleCleanup<BrokerHandle>((handle) =>
+    handle.detach(),
   );
   return {
     async open(config: NormalizedOpenConfig): Promise<BrokerHandle> {
@@ -250,9 +250,7 @@ class BrokerHandle {
       try {
         const exited = await waitForChild(child, SHUTDOWN_TIMEOUT_MS);
         if (!exited) {
-          failures.push(
-            new Error(`native broker did not stop within ${SHUTDOWN_TIMEOUT_MS}ms`),
-          );
+          failures.push(new Error(`native broker did not stop within ${SHUTDOWN_TIMEOUT_MS}ms`));
           child.kill('SIGKILL');
           await child.wait();
         }

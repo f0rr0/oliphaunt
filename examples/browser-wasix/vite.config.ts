@@ -40,6 +40,10 @@ export default defineConfig({
               replacement: resolve(bindingLibRoot, 'index.js'),
             },
             {
+              find: /^@oliphaunt\/wasix-ts\/worker$/,
+              replacement: resolve(bindingLibRoot, 'worker-entry.js'),
+            },
+            {
               find: /^@oliphaunt\/wasix-ts\/(.+)$/,
               replacement: `${bindingLibRoot}/$1.js`,
             },
@@ -102,6 +106,7 @@ export default defineConfig({
 function packedBrowserPackageExports(consumerRoot: string): Plugin {
   const expected = new Map([
     ['@oliphaunt/wasix-ts', '/@oliphaunt/wasix-ts/lib/index.js'],
+    ['@oliphaunt/wasix-ts/worker', '/@oliphaunt/wasix-ts/lib/worker-entry.js'],
     ['@oliphaunt/wasix-ts/storage/indexed-db', '/@oliphaunt/wasix-ts/lib/storage/indexed-db.js'],
     ['@oliphaunt/liboliphaunt-wasix', '/@oliphaunt/liboliphaunt-wasix/index.js'],
     ['@oliphaunt/wasix-tools', '/@oliphaunt/wasix-tools/lib/index.js'],

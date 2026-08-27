@@ -9,9 +9,9 @@ The TypeScript SDK targets Node.js, Bun, and Deno. It is the desktop
 JavaScript SDK for the native runtime, native helpers, broker/server flows, and
 runtime asset resolution.
 
-It is separate from [`@oliphaunt/wasix-ts`](/docs/sdk/wasix-typescript),
-whose root owns a Worker and whose explicit `/blocking` entrypoint runs portable
-guest work in the importing realm. Neither package selects or falls back to the
+It is separate from [`@oliphaunt/wasix-ts`](/docs/sdk/wasix-typescript), whose
+root runs portable guest work in the importing realm and whose explicit
+`/worker` entrypoint owns a Worker. Neither package selects or falls back to the
 other.
 
 Use this SDK for supported desktop JavaScript runtimes. Tauri apps currently

@@ -121,7 +121,7 @@ The validation entrypoint is split by maintainer workflow:
   WASIX comparison lane;
 - `pnpm --dir tools/perf/wasix-node bench:streaming`: quick local WASIX
   TypeScript transport benchmark. It reuses staged packages and portable assets,
-  compares the explicit `/blocking` and root Worker contracts, exercises bounded COPY,
+  compares the root direct and explicit `/worker` contracts, exercises bounded COPY,
   backpressure, event-loop delay, process RSS, the local server, `pg_dump`, and
   `psql`, and prints a readable report (`-- --json` prints the complete JSON).
   Process RSS deltas are descriptive because the quick run reuses one process.

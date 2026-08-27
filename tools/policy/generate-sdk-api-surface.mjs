@@ -52,6 +52,7 @@ function extractRustSurface(
   sourceDir = 'src/sdks/rust/src',
   crateName = 'oliphaunt',
   extraSourceFiles = [],
+  methodSourceFiles,
 ) {
   const lines = readRelative(indexFile).split('\n');
   const symbols = [];
@@ -130,7 +131,13 @@ function extractRustSurface(
     }
   }
   symbols.push(
-    ...extractRustInherentMethods(sourceDir, crateName, exportedTypes, extraSourceFiles),
+    ...extractRustInherentMethods(
+      sourceDir,
+      crateName,
+      exportedTypes,
+      extraSourceFiles,
+      methodSourceFiles,
+    ),
   );
 
   return sorted(symbols);
@@ -155,8 +162,16 @@ function extractRustModuleSurface(files, sourceDir, crateName) {
   return sorted(symbols);
 }
 
-function extractWasixRustBlockingSurface() {
-  const crateName = 'oliphaunt_wasix::blocking';
+function extractReexportedRustModuleSurface(crateName, exportedTypeNames, methodSourceFiles) {
+  const exportedTypes = new Set(exportedTypeNames);
+  return sorted([
+    ...Array.from(exportedTypes, (name) => `${crateName}::${name}`),
+    ...extractRustInherentMethods('', crateName, exportedTypes, [], methodSourceFiles),
+  ]);
+}
+
+function extractWasixRustWorkerSurface() {
+  const crateName = 'oliphaunt_wasix::worker';
   const exportedTypes = new Set([
     'Oliphaunt',
     'OliphauntBuilder',
@@ -165,14 +180,11 @@ function extractWasixRustBlockingSurface() {
     'Sql',
     'Transaction',
   ]);
-  return sorted([
-    ...Array.from(exportedTypes, (name) => `${crateName}::${name}`),
-    ...extractRustInherentMethods(
-      'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt',
-      crateName,
-      exportedTypes,
-    ),
-  ]);
+  return extractReexportedRustModuleSurface(
+    crateName,
+    exportedTypes,
+    ['src/bindings/wasix-rust/crates/oliphaunt-wasix/src/worker.rs'],
+  );
 }
 
 function rustInherentImplType(header) {
@@ -200,9 +212,12 @@ function extractRustInherentMethods(
   crateName,
   exportedTypes,
   extraSourceFiles = [],
+  sourceFilesOverride,
 ) {
   const methods = [];
-  for (const file of sorted([...listFiles(sourceDir, '.rs'), ...extraSourceFiles])) {
+  const sourceFiles = sourceFilesOverride
+    ?? sorted([...listFiles(sourceDir, '.rs'), ...extraSourceFiles]);
+  for (const file of sorted(sourceFiles)) {
     let depth = 0;
     let pendingImpl = null;
     let activeImpl = null;
@@ -577,13 +592,13 @@ function extractOliphauntWasixTsSurface() {
   ]);
 }
 
-function extractOliphauntWasixBlockingTsSurface() {
+function extractOliphauntWasixWorkerTsSurface() {
   return extractTypeScriptSurface([
-    'src/bindings/wasix-ts/src/blocking.ts',
+    'src/bindings/wasix-ts/src/worker-entry.ts',
     'src/bindings/wasix-ts/src/public.ts',
   ], [
-    'src/bindings/wasix-ts/src/blocking-client.ts',
-    'src/bindings/wasix-ts/src/blocking-node-client.ts',
+    'src/bindings/wasix-ts/src/worker-client.ts',
+    'src/bindings/wasix-ts/src/worker-node-client.ts',
     'src/bindings/wasix-ts/src/types.ts',
   ]);
 }
@@ -739,7 +754,7 @@ function render() {
   const rn = extractReactNativeSurface();
   const ts = extractOliphauntTsSurface();
   const wasixTs = extractOliphauntWasixTsSurface();
-  const wasixBlockingTs = extractOliphauntWasixBlockingTsSurface();
+  const wasixWorkerTs = extractOliphauntWasixWorkerTsSurface();
   const wasixIndexedDb = extractTypeScriptSurface(
     'src/bindings/wasix-ts/src/storage/indexed-db.ts',
     ['src/bindings/wasix-ts/src/storage/indexed-db.ts'],
@@ -773,11 +788,27 @@ function render() {
     ['src/bindings/wasix-ts/tools-package/src/index.ts'],
   );
   const sharedRustQueryCore = ['src/shared/rust-query-core/query_core.rs'];
+  const nativeRustSourceDir = 'src/sdks/rust/src';
   const nativeRust = extractRustSurface(
     'src/sdks/rust/src/lib.rs',
-    'src/sdks/rust/src',
+    nativeRustSourceDir,
     'oliphaunt',
     sharedRustQueryCore,
+    [
+      ...listFiles(nativeRustSourceDir, '.rs').filter(
+        file => ![
+          'src/sdks/rust/src/builder.rs',
+          'src/sdks/rust/src/database.rs',
+          'src/sdks/rust/src/worker.rs',
+        ].includes(file),
+      ),
+      ...sharedRustQueryCore,
+    ],
+  );
+  const nativeRustWorker = extractReexportedRustModuleSurface(
+    'oliphaunt::worker',
+    ['Oliphaunt', 'OliphauntBuilder', 'OliphauntServer', 'Sql', 'Transaction'],
+    ['src/sdks/rust/src/builder.rs', 'src/sdks/rust/src/database.rs'],
   );
   const nativeRustBrokerSeam = extractRustModuleSurface(
     [
@@ -802,11 +833,19 @@ function render() {
       symbol.slice('oliphaunt::__private::packaging::'.length),
     ),
   );
+  const wasixRustSourceDir =
+    'src/bindings/wasix-rust/crates/oliphaunt-wasix/src';
   const wasixRust = extractRustSurface(
     'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs',
-    'src/bindings/wasix-rust/crates/oliphaunt-wasix/src',
+    wasixRustSourceDir,
     'oliphaunt_wasix',
     sharedRustQueryCore,
+    [
+      ...listFiles(wasixRustSourceDir, '.rs').filter(
+        file => file !== 'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/worker.rs',
+      ),
+      ...sharedRustQueryCore,
+    ],
   );
   requireRustQueryCoreSurface(nativeRust, 'oliphaunt');
   requireRustQueryCoreSurface(wasixRust, 'oliphaunt_wasix');
@@ -851,6 +890,8 @@ function render() {
   output += `\`\`\`\n\n`;
   output += `## Rust: oliphaunt\n\n`;
   output += markdownList(nativeRust);
+  output += `\n### Dedicated worker module: oliphaunt::worker\n\n`;
+  output += markdownList(nativeRustWorker);
   output += `\n### Version-locked broker seam (not application API)\n\n`;
   output += `The separately built \`oliphaunt-broker\` executable enables \`__internal-broker-helper\` and consumes this exact-version seam. It is absent from default builds and may change only in lockstep with that executable.\n\n`;
   output += markdownList(nativeRustBrokerSeam);
@@ -892,14 +933,14 @@ function render() {
       ),
     ]),
   );
-  output += `\n### Explicit blocking module: oliphaunt_wasix::blocking\n\n`;
-  output += markdownList(extractWasixRustBlockingSurface());
-  output += `\n### Explicit blocking tools: oliphaunt_wasix::blocking::tools\n\n`;
+  output += `\n### Dedicated worker module: oliphaunt_wasix::worker\n\n`;
+  output += markdownList(extractWasixRustWorkerSurface());
+  output += `\n### Dedicated worker tools: oliphaunt_wasix::worker::tools\n\n`;
   output += markdownList(
     extractRustModuleSurface(
       ['src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/tools.rs'],
       'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt',
-      'oliphaunt_wasix::blocking::tools',
+      'oliphaunt_wasix::worker::tools',
     ),
   );
   output += `\n## Native C ABI: liboliphaunt\n\n`;
@@ -963,13 +1004,13 @@ function render() {
   output += markdownList(wasixTs.values);
   output += `\n### Members\n\n`;
   output += markdownList(wasixTs.members);
-  output += `\n### Blocking subpath: @oliphaunt/wasix-ts/blocking\n\n`;
+  output += `\n### Worker subpath: @oliphaunt/wasix-ts/worker\n\n`;
   output += `#### Types\n\n`;
-  output += markdownList(wasixBlockingTs.types);
+  output += markdownList(wasixWorkerTs.types);
   output += `\n#### Values\n\n`;
-  output += markdownList(wasixBlockingTs.values);
+  output += markdownList(wasixWorkerTs.values);
   output += `\n#### Members\n\n`;
-  output += markdownList(wasixBlockingTs.members);
+  output += markdownList(wasixWorkerTs.members);
   output += `\n### Storage subpath: @oliphaunt/wasix-ts/storage/indexed-db\n\n`;
   output += markdownList([...wasixIndexedDb.types, ...wasixIndexedDb.values]);
   output += `\n### Storage subpath: @oliphaunt/wasix-ts/storage/opfs\n\n`;

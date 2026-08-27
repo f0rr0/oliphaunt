@@ -265,11 +265,11 @@ try {
           summary,
         };
         await writeBenchmarkReport(benchmarkOutput, report);
-        const blocking = summary.callingContracts.blocking;
-        const worker = summary.callingContracts.worker;
+        const direct = summary.comparisons.direct;
+        const worker = summary.comparisons.worker;
         console.log(
           `wasix-ts browser benchmark: ${summary.passed ? 'PASS' : 'FAIL'} ` +
-            `blocking=${blocking.geomeanRatio.toFixed(4)} worker=${worker.geomeanRatio.toFixed(4)} ` +
+            `direct=${direct.geomeanRatio.toFixed(4)} worker=${worker.geomeanRatio.toFixed(4)} ` +
             `gate<=${summary.gate.maxGeomeanRatio.toFixed(2)} ` +
             `report=${relative(repositoryRoot, benchmarkOutput)}`,
         );
@@ -317,7 +317,7 @@ async function stagePackedBrowserConsumer(scratch) {
   for (const [source, destination] of [
     ['examples/browser-wasix/index.html', 'index.html'],
     ['examples/browser-wasix/package-smoke.ts', 'main.ts'],
-    ['examples/browser-wasix/blocking-pg-dump-smoke.ts', 'blocking-pg-dump-smoke.ts'],
+    ['examples/browser-wasix/direct-pg-dump-smoke.ts', 'direct-pg-dump-smoke.ts'],
     ['examples/browser-wasix/structured-api-smoke.ts', 'structured-api-smoke.ts'],
     ['src/shared/fixtures/postgres/logical-tools.json', 'logical-tools.json'],
     ['src/shared/fixtures/postgres/logical-tools-seed.sql', 'logical-tools-seed.sql'],

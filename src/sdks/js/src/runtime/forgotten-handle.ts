@@ -22,10 +22,7 @@ export function createForgottenRuntimeHandleCleanup<Handle extends object>(
   const leaseByHandle = new WeakMap<Handle, Lease>();
   const heldByOwner = new WeakMap<object, Held>();
   const registry = new FinalizationRegistry<Held>((held) => {
-    if (
-      held.generation.state !== 'active' ||
-      leaseByHandle.get(held.handle) !== held.generation
-    ) {
+    if (held.generation.state !== 'active' || leaseByHandle.get(held.handle) !== held.generation) {
       return;
     }
     held.generation.state = 'claimed';
@@ -70,10 +67,7 @@ export function createForgottenRuntimeHandleCleanup<Handle extends object>(
 
     unregister(owner: object): void {
       const held = heldByOwner.get(owner);
-      if (
-        held !== undefined &&
-        leaseByHandle.get(held.handle) === held.generation
-      ) {
+      if (held !== undefined && leaseByHandle.get(held.handle) === held.generation) {
         held.generation.state = 'retired';
         leaseByHandle.delete(held.handle);
       }

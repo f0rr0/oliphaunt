@@ -2,10 +2,7 @@ use anyhow::Result;
 #[cfg(all(feature = "tools", feature = "extensions"))]
 use oliphaunt_wasix::extensions;
 #[cfg(feature = "tools")]
-use oliphaunt_wasix::{
-    DatabaseStorage,
-    blocking::{Oliphaunt, OliphauntBuilder, tools},
-};
+use oliphaunt_wasix::{DatabaseStorage, Oliphaunt, OliphauntBuilder, tools};
 #[cfg(feature = "tools")]
 use std::env;
 #[cfg(feature = "tools")]

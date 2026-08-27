@@ -3,6 +3,7 @@ use std::error::Error as _;
 use oliphaunt_wasix::{
     DecodeError, Error, FromSql, IntoParameter, Oliphaunt, Parameter, PostgresError,
     PostgresNotice, Result, Transaction, TransactionRollbackError, TypeOid, ValueFormat, ValueRef,
+    worker::{Oliphaunt as WorkerOliphaunt, Transaction as WorkerTransaction},
 };
 
 struct PublicParameter;
@@ -23,8 +24,8 @@ impl<'a> FromSql<'a> for PublicDecoder {
     }
 }
 
-#[tokio::test]
-async fn fallible_public_api_uses_the_sdk_result() {
+#[test]
+fn fallible_public_api_uses_the_sdk_result() {
     fn assert_result(_: Result<()>) {}
     fn assert_error<T: std::error::Error + Send + Sync + 'static>() {}
 
@@ -34,7 +35,7 @@ async fn fallible_public_api_uses_the_sdk_result() {
         .expect("temporary directory")
         .path()
         .join("restored");
-    let result = Oliphaunt::restore(destination, b"not a physical archive").await;
+    let result = Oliphaunt::restore(destination, b"not a physical archive");
     let error = result.expect_err("invalid archive must fail");
     assert!(!error.to_string().is_empty());
     assert!(error.postgres_error().is_none());
@@ -65,7 +66,6 @@ async fn fallible_public_api_uses_the_sdk_result() {
 
 #[test]
 fn typed_and_fluent_database_api_is_public() {
-    // liboliphaunt-doc-example:wasix-rust-basic-query
     fn assert_decoder<T>()
     where
         for<'a> T: FromSql<'a>,
@@ -94,11 +94,69 @@ fn typed_and_fluent_database_api_is_public() {
 
     fn assert_send_sync<T: Send + Sync>() {}
     fn assert_send<T: Send>(_: T) {}
-    assert_send_sync::<Oliphaunt>();
-    assert_send(Oliphaunt::builder().open());
-    assert_send(oliphaunt_wasix::OliphauntServer::builder().start());
+    assert_send_sync::<WorkerOliphaunt>();
+    assert_send_sync::<oliphaunt_wasix::worker::OliphauntServer>();
+    assert_send(WorkerOliphaunt::builder().open());
+    assert_send(WorkerOliphaunt::restore("unused", b""));
+    assert_send(oliphaunt_wasix::worker::OliphauntServer::builder().start());
 
-    fn database_surface(database: &Oliphaunt) {
+    fn direct_construction_surface() {
+        let _: Result<_> = Oliphaunt::builder().open();
+        let _: Result<_> = oliphaunt_wasix::OliphauntServer::builder().start();
+    }
+    let _: fn() = direct_construction_surface;
+
+    // liboliphaunt-doc-example:wasix-rust-basic-query
+    fn direct_database_surface(database: &mut Oliphaunt) {
+        let _: Result<_> = database.query("SELECT 1");
+        let _query = database
+            .sql("SELECT $1::int4")
+            .bind(1_i32)
+            .result_format(ValueFormat::Binary)
+            .query();
+        let _execute = database
+            .sql("UPDATE items SET value = $1")
+            .bind("value")
+            .execute();
+        let _typed_query = database.query_with_params("SELECT $1::int4", [1_i32]);
+        let _typed_execute = database.execute_with_params("SELECT $1::bool", [true]);
+        let _describe = database
+            .sql("SELECT $1::uuid")
+            .bind_parameter(Parameter::typed_null(TypeOid::UUID))
+            .describe();
+        let _exec = database.exec("SELECT 1; SELECT 2");
+        let _description = database.describe("SELECT $1::uuid");
+        let _raw = database.exec_protocol_raw([]);
+        let _raw_stream = database.exec_protocol_raw_stream([], |_| Ok(()));
+        let _backup = database.backup();
+        let _ = database.is_closed();
+        let _close = database.close();
+    }
+    fn direct_transaction_surface(transaction: &mut Transaction<'_>) {
+        let _ = transaction.is_closed();
+        let _query = transaction.sql("SELECT $1::int4").bind(1_i32).query();
+        let _execute = transaction
+            .sql("UPDATE items SET value = $1")
+            .bind("value")
+            .execute();
+        let _typed_query = transaction.query_with_params("SELECT $1::int8", [1_i64]);
+        let _describe = transaction.sql("SELECT 1").describe();
+        let _: Result<_> = transaction.exec("SELECT 1");
+        let _raw = transaction.exec_protocol_raw([]);
+        let _raw_stream = transaction.exec_protocol_raw_stream([], |_| Ok(()));
+        let _ = transaction.rollback();
+    }
+    fn direct_server_surface(server: &mut oliphaunt_wasix::OliphauntServer) {
+        let _ = server.is_closed();
+        let _: Result<_> = server.close();
+    }
+    let _: fn(&mut Oliphaunt) = direct_database_surface;
+    let _: fn(&mut Transaction<'_>) = direct_transaction_surface;
+    let _: fn(&mut oliphaunt_wasix::OliphauntServer) = direct_server_surface;
+
+    // liboliphaunt-doc-example:wasix-rust-worker
+    fn worker_database_surface(database: &WorkerOliphaunt) {
+        let _clone = database.clone();
         assert_send(database.query("SELECT 1"));
         let _query = database
             .sql("SELECT $1::int4")
@@ -117,10 +175,13 @@ fn typed_and_fluent_database_api_is_public() {
             .describe();
         let _exec = database.exec("SELECT 1; SELECT 2");
         let _description = database.describe("SELECT $1::uuid");
+        let _raw = database.exec_protocol_raw([]);
         let _raw_stream = database.exec_protocol_raw_stream([], |_| Ok(()));
+        let _backup = database.backup();
         let _ = database.is_closed();
+        let _close = database.close();
     }
-    fn transaction_surface(transaction: &Transaction) {
+    fn worker_transaction_surface(transaction: &WorkerTransaction) {
         let _ = transaction.is_closed();
         let _query = transaction.sql("SELECT $1::int4").bind(1_i32).query();
         let _execute = transaction
@@ -130,30 +191,22 @@ fn typed_and_fluent_database_api_is_public() {
         let _typed_query = transaction.query_with_params("SELECT $1::int8", [1_i64]);
         let _describe = transaction.sql("SELECT 1").describe();
         std::mem::drop(transaction.exec("SELECT 1"));
+        let _raw = transaction.exec_protocol_raw([]);
         let _raw_stream = transaction.exec_protocol_raw_stream([], |_| Ok(()));
         std::mem::drop(transaction.rollback());
     }
-    let _: fn(&Oliphaunt) = database_surface;
-    let _: fn(&Transaction) = transaction_surface;
-
-    // liboliphaunt-doc-example:wasix-rust-blocking
-    fn blocking_database_surface(database: &mut oliphaunt_wasix::blocking::Oliphaunt) {
-        let _: Result<_> = database.query("SELECT 1");
-        let _: Result<_> = database.execute("CREATE TABLE item(id int)");
-        let _: Result<_> = database.exec("SELECT 1; SELECT 2");
-        let _ = database.sql("SELECT $1::int4").bind(1_i32).query();
-    }
-    fn blocking_transaction_surface(transaction: &mut oliphaunt_wasix::blocking::Transaction<'_>) {
-        let _: Result<_> = transaction.query("SELECT 1");
-        let _ = transaction.rollback();
-    }
-    fn blocking_server_surface(server: &mut oliphaunt_wasix::blocking::OliphauntServer) {
+    fn worker_server_surface(server: &oliphaunt_wasix::worker::OliphauntServer) {
+        let _clone = server.clone();
+        let _ = server.tcp_addr();
+        #[cfg(unix)]
+        let _ = server.socket_path();
+        let _: &str = server.connection_string();
         let _ = server.is_closed();
-        let _: Result<_> = server.close();
+        assert_send(server.close());
     }
-    let _: fn(&mut oliphaunt_wasix::blocking::Oliphaunt) = blocking_database_surface;
-    let _: fn(&mut oliphaunt_wasix::blocking::Transaction<'_>) = blocking_transaction_surface;
-    let _: fn(&mut oliphaunt_wasix::blocking::OliphauntServer) = blocking_server_surface;
+    let _: fn(&WorkerOliphaunt) = worker_database_surface;
+    let _: fn(&WorkerTransaction) = worker_transaction_surface;
+    let _: fn(&oliphaunt_wasix::worker::OliphauntServer) = worker_server_surface;
 }
 
 #[cfg(feature = "extensions")]
@@ -176,26 +229,24 @@ fn packaged_psql_accepts_standard_script_input() {
     fn assert_tool_error<T: std::error::Error + Send + Sync + 'static>() {}
     assert_tool_error::<oliphaunt_wasix::tools::PostgresToolError>();
 
-    fn async_tool_surface(database: &Oliphaunt) {
-        std::mem::drop(oliphaunt_wasix::tools::pg_dump(
-            database,
-            oliphaunt_wasix::tools::PgDumpOptions::new(),
-        ));
-        std::mem::drop(oliphaunt_wasix::tools::psql(
+    fn direct_tool_surface(database: &mut Oliphaunt) {
+        let _: Result<_> =
+            oliphaunt_wasix::tools::pg_dump(database, oliphaunt_wasix::tools::PgDumpOptions::new());
+        let _: Result<_> = oliphaunt_wasix::tools::psql(
             database,
             oliphaunt_wasix::tools::PsqlOptions::new().command("SELECT 1"),
+        );
+    }
+    fn worker_tool_surface(database: &WorkerOliphaunt) {
+        std::mem::drop(oliphaunt_wasix::worker::tools::pg_dump(
+            database,
+            oliphaunt_wasix::worker::tools::PgDumpOptions::new(),
+        ));
+        std::mem::drop(oliphaunt_wasix::worker::tools::psql(
+            database,
+            oliphaunt_wasix::worker::tools::PsqlOptions::new().command("SELECT 1"),
         ));
     }
-    fn blocking_tool_surface(database: &mut oliphaunt_wasix::blocking::Oliphaunt) {
-        let _: Result<_> = oliphaunt_wasix::blocking::tools::pg_dump(
-            database,
-            oliphaunt_wasix::blocking::tools::PgDumpOptions::new(),
-        );
-        let _: Result<_> = oliphaunt_wasix::blocking::tools::psql(
-            database,
-            oliphaunt_wasix::blocking::tools::PsqlOptions::new().command("SELECT 1"),
-        );
-    }
-    let _: fn(&Oliphaunt) = async_tool_surface;
-    let _: fn(&mut oliphaunt_wasix::blocking::Oliphaunt) = blocking_tool_surface;
+    let _: fn(&mut Oliphaunt) = direct_tool_surface;
+    let _: fn(&WorkerOliphaunt) = worker_tool_surface;
 }

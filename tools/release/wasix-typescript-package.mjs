@@ -32,18 +32,6 @@ export const WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES = Object.freeze([
   'lib/asset-source.js',
   'lib/byte-channel.d.ts',
   'lib/byte-channel.js',
-  'lib/blocking.bun.d.ts',
-  'lib/blocking.bun.js',
-  'lib/blocking-client.d.ts',
-  'lib/blocking-client.js',
-  'lib/blocking.deno.d.ts',
-  'lib/blocking.deno.js',
-  'lib/blocking.d.ts',
-  'lib/blocking.js',
-  'lib/blocking.node.d.ts',
-  'lib/blocking.node.js',
-  'lib/blocking-node-client.d.ts',
-  'lib/blocking-node-client.js',
   'lib/client-common.d.ts',
   'lib/client-common.js',
   'lib/client.d.ts',
@@ -102,10 +90,6 @@ export const WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES = Object.freeze([
   'lib/node-host.js',
   'lib/node-tool-worker.d.ts',
   'lib/node-tool-worker.js',
-  'lib/node-web-worker-bootstrap.d.ts',
-  'lib/node-web-worker-bootstrap.js',
-  'lib/node-web-worker.d.ts',
-  'lib/node-web-worker.js',
   'lib/node-worker-options.d.ts',
   'lib/node-worker-options.js',
   'lib/node-worker-port.d.ts',
@@ -172,8 +156,20 @@ export const WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES = Object.freeze([
   'lib/tool-worker.js',
   'lib/wasix-runtime.d.ts',
   'lib/wasix-runtime.js',
+  'lib/worker-client.d.ts',
+  'lib/worker-client.js',
   'lib/worker-dispatch.d.ts',
   'lib/worker-dispatch.js',
+  'lib/worker-entry.bun.d.ts',
+  'lib/worker-entry.bun.js',
+  'lib/worker-entry.deno.d.ts',
+  'lib/worker-entry.deno.js',
+  'lib/worker-entry.d.ts',
+  'lib/worker-entry.js',
+  'lib/worker-entry.node.d.ts',
+  'lib/worker-entry.node.js',
+  'lib/worker-node-client.d.ts',
+  'lib/worker-node-client.js',
   'lib/worker-rpc.d.ts',
   'lib/worker-rpc.js',
   'lib/worker-transfer.d.ts',
@@ -236,7 +232,7 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
   const root = manifest.exports?.['.'];
   const expectedExports = [
     '.',
-    './blocking',
+    './worker',
     './package.json',
     './internal/tools',
     './server/bun',
@@ -263,18 +259,18 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
   ) {
     fail(`${label} must expose exact browser, Node, Bun, and Deno conditional entrypoints`);
   }
-  const blocking = manifest.exports?.['./blocking'];
+  const worker = manifest.exports?.['./worker'];
   if (
-    JSON.stringify(Object.keys(blocking ?? {}))
+    JSON.stringify(Object.keys(worker ?? {}))
       !== JSON.stringify(['types', 'deno', 'bun', 'node', 'browser', 'default'])
-    || blocking?.types !== './lib/blocking.d.ts'
-    || blocking?.deno !== './lib/blocking.deno.js'
-    || blocking?.bun !== './lib/blocking.bun.js'
-    || blocking?.node !== './lib/blocking.node.js'
-    || blocking?.browser !== './lib/blocking.js'
-    || blocking?.default !== './lib/blocking.js'
+    || worker?.types !== './lib/worker-entry.d.ts'
+    || worker?.deno !== './lib/worker-entry.deno.js'
+    || worker?.bun !== './lib/worker-entry.bun.js'
+    || worker?.node !== './lib/worker-entry.node.js'
+    || worker?.browser !== './lib/worker-entry.js'
+    || worker?.default !== './lib/worker-entry.js'
   ) {
-    fail(`${label} must expose the exact browser, Node, Bun, and Deno blocking entrypoint`);
+    fail(`${label} must expose the exact browser, Node, Bun, and Deno worker entrypoint`);
   }
   const internalTools = manifest.exports?.['./internal/tools'];
   if (
@@ -418,6 +414,10 @@ export function assertWasixTypescriptNpmArchive(archive) {
   for (const removed of [
     'package/lib/node-lock-identity.js',
     'package/lib/node-lock-identity.d.ts',
+    'package/lib/node-web-worker.js',
+    'package/lib/node-web-worker.d.ts',
+    'package/lib/node-web-worker-bootstrap.js',
+    'package/lib/node-web-worker-bootstrap.d.ts',
   ]) {
     if (entries.has(removed)) fail(`${path.basename(file)} retained deleted output ${removed}`);
   }
@@ -431,6 +431,7 @@ export function assertWasixTypescriptNpmArchive(archive) {
   const browserWorker = requireFile('lib/worker.js').toString('utf8');
   const nodeWorker = requireFile('lib/node-worker.js').toString('utf8');
   const nodeDirect = requireFile('lib/node-direct.js').toString('utf8');
+  const nodeHost = requireFile('lib/node-host.js').toString('utf8');
   if (
     !browserWorker.includes(esmImportFrom('./host/index.mjs'))
     || !nodeWorker.includes(esmImportFrom('./node-direct.js'))
@@ -440,6 +441,13 @@ export function assertWasixTypescriptNpmArchive(archive) {
     || nodeDirect.includes('@wasmer/sdk')
   ) {
     fail(`${path.basename(file)} workers do not resolve the package-relative patched host`);
+  }
+  if (
+    nodeHost.includes('node:worker_threads')
+    || nodeHost.includes('./node-web-worker.js')
+    || nodeHost.includes('workerUrl')
+  ) {
+    fail(`${path.basename(file)} direct Node host retained inner-Worker orchestration`);
   }
   JSON.parse(requireFile('lib/host/provenance.json').toString('utf8'));
   return manifest;

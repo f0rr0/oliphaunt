@@ -27,13 +27,14 @@ and backup APIs.
 | Multiple database instances or helper-process ownership | `.broker()` |
 | SQLx pools, ORMs, `psql`, or `pg_dump` | `.open_server()` |
 
-## Direct Rust State
+## Direct Topology In Async Rust State
 
-Use `Oliphaunt` with direct topology when your Tauri commands own the database
-calls and you want the lowest-latency embedded path:
+Use `oliphaunt::worker::Oliphaunt` with direct topology when async Tauri
+commands share application state. PostgreSQL runs on one package-owned thread,
+so its synchronous work does not monopolize Tauri's async executor:
 
 ```rust,no_run
-use oliphaunt::Oliphaunt;
+use oliphaunt::worker::Oliphaunt;
 use tauri::State;
 
 struct Db(Oliphaunt);
@@ -51,7 +52,7 @@ async fn add_item(db: State<'_, Db>, value: String) -> Result<(), String> {
 Open the database under your app data directory during setup:
 
 ```rust,no_run
-use oliphaunt::Oliphaunt;
+use oliphaunt::worker::Oliphaunt;
 
 async fn open_app_database(app_data_dir: std::path::PathBuf) -> oliphaunt::Result<Oliphaunt> {
     Oliphaunt::builder()
@@ -62,8 +63,10 @@ async fn open_app_database(app_data_dir: std::path::PathBuf) -> oliphaunt::Resul
 }
 ```
 
-Store the resulting `Oliphaunt` handle with `tauri::State`. Cloned SDK handles
-share the same executor and session semantics; server mode is the path for
+Store the resulting worker handle with `tauri::State`. Its clones share one
+FIFO owner thread and one PostgreSQL session. The synchronous crate-root
+`oliphaunt::Oliphaunt` is deliberately `!Send + !Sync`; use it only when one
+ordinary Rust thread owns the database directly. Server mode is the path for
 independent PostgreSQL client sessions.
 
 ## Existing Postgres Clients
@@ -72,7 +75,7 @@ Use `open_server()` when another Rust library expects a PostgreSQL URL, real
 independent sessions, SQLx pools, `psql`, or `pg_dump`:
 
 ```rust,no_run
-use oliphaunt::Oliphaunt;
+use oliphaunt::worker::Oliphaunt;
 
 async fn open_server_mode() -> oliphaunt::Result<String> {
     let server = Oliphaunt::builder()

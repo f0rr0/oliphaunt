@@ -82,10 +82,10 @@ async function testStartupGUCValidation(): Promise<void> {
   const db = await createOliphauntClient(native).open({
     startupGUCs: { _name: '', 'ext.name$1': 'on' },
   });
-  assert.deepEqual(
-    (native.openCalls[0] as { startupGUCs?: string[] }).startupGUCs,
-    ['_name=', 'ext.name$1=on'],
-  );
+  assert.deepEqual((native.openCalls[0] as { startupGUCs?: string[] }).startupGUCs, [
+    '_name=',
+    'ext.name$1=on',
+  ]);
   await db.close();
 
   for (const name of ['1name', '.foo', 'a..b', 'a.1b', 'ext.$name']) {
@@ -179,14 +179,11 @@ async function testExecuteSupportsParameters(): Promise<void> {
   const native = new MockNative();
   const db = await createOliphauntClient(native).open();
 
-  assert.deepEqual(
-    await db.execute('UPDATE items SET value = $1', ['updated']),
-    {
-      commandTag: 'UPDATE 2',
-      rowCount: 2,
-      notices: [],
-    },
-  );
+  assert.deepEqual(await db.execute('UPDATE items SET value = $1', ['updated']), {
+    commandTag: 'UPDATE 2',
+    rowCount: 2,
+    notices: [],
+  });
   assert.deepEqual(native.execRequests.slice(-2).map(frontendMessageTags), [
     ['P', 'D', 'S'],
     ['P', 'B', 'D', 'E', 'S'],
@@ -196,10 +193,7 @@ async function testExecuteSupportsParameters(): Promise<void> {
 
 async function testExecuteRejectsRows(): Promise<void> {
   const db = await createOliphauntClient(new MockNative()).open();
-  await assert.rejects(
-    () => db.execute('SELECT 1'),
-    /use query\(\) for row results/,
-  );
+  await assert.rejects(() => db.execute('SELECT 1'), /use query\(\) for row results/);
   await db.close();
 }
 
@@ -224,14 +218,11 @@ function testCommandParserRejectsUnknownAndCopyMessages(): void {
       ),
     /unexpected backend message tag 0x59/,
   );
-  assert.deepEqual(
-    parseCommandResponse(backendCommandResponse('CREATE TABLE')),
-    {
-      commandTag: 'CREATE TABLE',
-      rowCount: null,
-      notices: [],
-    },
-  );
+  assert.deepEqual(parseCommandResponse(backendCommandResponse('CREATE TABLE')), {
+    commandTag: 'CREATE TABLE',
+    rowCount: null,
+    notices: [],
+  });
 }
 
 async function testQueryReturnsRowsAndCommandMetadata(): Promise<void> {
@@ -257,9 +248,7 @@ async function testRawArrayExecAndDescribe(): Promise<void> {
   const raw = await db.queryRaw('SELECT $1::text AS value', ['hello']);
   assert.equal(raw.getText(0, 'value'), 'hello');
   assert.deepEqual(
-    raw.rows[0]?.values.map(
-      (value) => value && new TextDecoder().decode(value),
-    ),
+    raw.rows[0]?.values.map((value) => value && new TextDecoder().decode(value)),
     ['hello'],
   );
 
@@ -275,12 +264,7 @@ async function testRawArrayExecAndDescribe(): Promise<void> {
   const description = await db.describe('SELECT $1::text AS value');
   assert.deepEqual(description.parameterTypeOids, [25]);
   assert.equal(description.fields?.[0]?.name, 'value');
-  assert.equal(
-    frontendMessageTags(native.execRequests.at(-1) ?? new Uint8Array()).join(
-      '',
-    ),
-    'PDS',
-  );
+  assert.equal(frontendMessageTags(native.execRequests.at(-1) ?? new Uint8Array()).join(''), 'PDS');
   await db.close();
 }
 
@@ -296,11 +280,7 @@ async function testPhysicalSessionFifo(): Promise<void> {
   await started.promise;
   const second = db.query('SELECT $1::text AS value', ['second']);
   await Promise.resolve();
-  assert.equal(
-    native.execRequests.length,
-    1,
-    'the second logical operation must remain queued',
-  );
+  assert.equal(native.execRequests.length, 1, 'the second logical operation must remain queued');
   gate.resolve();
   await Promise.all([first, second]);
   assert.deepEqual(native.execRequests.map(frontendMessageTags), [
@@ -336,10 +316,7 @@ async function testQueuedInputsAndCodecsAreSnapshotted(): Promise<void> {
   gate.resolve();
   await blocker;
   assert.deepEqual((await queued).rows, [{ value: 'before:hello' }]);
-  assert.match(
-    native.requestTexts().find((request) => request.includes('before')) ?? '',
-    /before/,
-  );
+  assert.match(native.requestTexts().find((request) => request.includes('before')) ?? '', /before/);
   assert.deepEqual(Array.from(await raw), [1, 0xaa]);
   await db.close();
 }
@@ -354,10 +331,7 @@ async function testDescribeNoticesMergeIntoLogicalQuery(): Promise<void> {
     ['described'],
   );
 
-  for (const thrown of [
-    Object.freeze(new Error('frozen encoder failure')),
-    'primitive failure',
-  ]) {
+  for (const thrown of [Object.freeze(new Error('frozen encoder failure')), 'primitive failure']) {
     native.noticeOnDescribeOnce = true;
     const failure = await db
       .query('SELECT $1::text AS value', ['hello'], {
@@ -410,9 +384,7 @@ async function testDecoderFailureAfterReadyDoesNotPoison(): Promise<void> {
     ),
     ['exec notice'],
   );
-  assert.deepEqual((await db.query('SELECT 1 AS value')).rows, [
-    { value: 'hello' },
-  ]);
+  assert.deepEqual((await db.query('SELECT 1 AS value')).rows, [{ value: 'hello' }]);
   await db.close();
 }
 
@@ -420,10 +392,7 @@ async function testMultipleReadyMessagesPoisonTheHandle(): Promise<void> {
   const native = new MockNative();
   const db = await createOliphauntClient(native).open();
   native.appendReadyOnce = true;
-  await assert.rejects(
-    () => db.execute('UPDATE items SET value = value'),
-    /after ReadyForQuery/,
-  );
+  await assert.rejects(() => db.execute('UPDATE items SET value = value'), /after ReadyForQuery/);
   await assert.rejects(
     Promise.resolve().then(() => db.query('SELECT 1')),
     /session state is unknown/,
@@ -440,9 +409,7 @@ async function testUnexpectedTransactionStatusRecovers(): Promise<void> {
     /transaction status 'transaction'/,
   );
   assert.match(native.requestTexts().at(-1) ?? '', /ROLLBACK/);
-  assert.deepEqual((await db.query('SELECT 1 AS value')).rows, [
-    { value: 'hello' },
-  ]);
+  assert.deepEqual((await db.query('SELECT 1 AS value')).rows, [{ value: 'hello' }]);
   await db.close();
 }
 
@@ -488,10 +455,7 @@ async function testMalformedReadinessPoisonsTheHandle(): Promise<void> {
   const native = new MockNative();
   const db = await createOliphauntClient(native).open();
   native.omitReadyOnce = true;
-  await assert.rejects(
-    () => db.execute('UPDATE items SET value = value'),
-    /ReadyForQuery/,
-  );
+  await assert.rejects(() => db.execute('UPDATE items SET value = value'), /ReadyForQuery/);
   await assert.rejects(
     Promise.resolve().then(() => db.query('SELECT 1')),
     /session state is unknown/,
@@ -507,14 +471,9 @@ async function testRawProtocolSqlAndCancel(): Promise<void> {
 
   assert.equal('checkpoint' in db, false);
   assert.equal('execProtocolStream' in db, false);
-  assert.deepEqual(
-    Array.from(await db.execProtocolRaw(Uint8Array.from([0xaa]))),
-    [1, 0xaa],
-  );
+  assert.deepEqual(Array.from(await db.execProtocolRaw(Uint8Array.from([0xaa]))), [1, 0xaa]);
   const chunks: Uint8Array[] = [];
-  await db.execProtocolRawStream(Uint8Array.from([0xbb]), (chunk) =>
-    chunks.push(chunk),
-  );
+  await db.execProtocolRawStream(Uint8Array.from([0xbb]), (chunk) => chunks.push(chunk));
   assert.deepEqual(
     chunks.map((chunk) => Array.from(chunk)),
     [[1], [0xbb]],
@@ -620,12 +579,7 @@ async function testProtocolStreamCallbackFailure(): Promise<void> {
   assert.equal(native.streamChunkCallbackCalls, 3);
 
   native.swallowStreamCallbackErrors = false;
-  for (const thrown of [
-    undefined,
-    null,
-    'string failure',
-    { reason: 'object failure' },
-  ]) {
+  for (const thrown of [undefined, null, 'string failure', { reason: 'object failure' }]) {
     const outcome = await db
       .execProtocolRawStream(Uint8Array.from([0xce]), () => {
         throw thrown;
@@ -638,16 +592,9 @@ async function testProtocolStreamCallbackFailure(): Promise<void> {
     assert.ok(Object.is(outcome.error, thrown));
   }
 
-  for (const callback of [
-    async () => undefined,
-    () => ({ then: () => undefined }),
-  ]) {
+  for (const callback of [async () => undefined, () => ({ then: () => undefined })]) {
     await assert.rejects(
-      () =>
-        db.execProtocolRawStream(
-          Uint8Array.from([0xcf]),
-          callback,
-        ),
+      () => db.execProtocolRawStream(Uint8Array.from([0xcf]), callback),
       /must complete synchronously.*Promise or thenable/,
     );
   }
@@ -662,9 +609,7 @@ async function testProtocolStreamCallbackFailure(): Promise<void> {
   );
   assert.equal(native.execRequests.length, requestCountBeforeDatabaseReentry + 1);
   assert.equal(
-    native.requestTexts().some((sql) =>
-      sql.includes('forbidden database callback reentry'),
-    ),
+    native.requestTexts().some((sql) => sql.includes('forbidden database callback reentry')),
     false,
   );
 
@@ -680,25 +625,18 @@ async function testProtocolStreamCallbackFailure(): Promise<void> {
   await assert.rejects(
     () =>
       db.transaction(async (transaction) => {
-        await transaction.execProtocolRawStream(
-          Uint8Array.from([0xd2]),
-          () => {
-            let reentry!: Promise<unknown>;
-            assert.doesNotThrow(() => {
-              reentry = transaction.query(
-                "SELECT 'forbidden transaction callback reentry'",
-              );
-            });
-            void reentry.catch(() => undefined);
-          },
-        );
+        await transaction.execProtocolRawStream(Uint8Array.from([0xd2]), () => {
+          let reentry!: Promise<unknown>;
+          assert.doesNotThrow(() => {
+            reentry = transaction.query("SELECT 'forbidden transaction callback reentry'");
+          });
+          void reentry.catch(() => undefined);
+        });
       }),
     /must not reenter the same Oliphaunt database or transaction/,
   );
   assert.equal(
-    native.requestTexts().some((sql) =>
-      sql.includes('forbidden transaction callback reentry'),
-    ),
+    native.requestTexts().some((sql) => sql.includes('forbidden transaction callback reentry')),
     false,
   );
   await db.query('SELECT 1');
@@ -735,13 +673,8 @@ async function testTransactionsCommitAndRollback(): Promise<void> {
   const db = await createOliphauntClient(native).open();
 
   const value = await db.transaction(async (transaction) => {
-    assert.equal(
-      (await transaction.execute('UPDATE items SET value = $1', ['x']))
-        .rowCount,
-      2,
-    );
-    return (await transaction.query('SELECT $1::text AS value', ['hello']))
-      .rows[0]?.value;
+    assert.equal((await transaction.execute('UPDATE items SET value = $1', ['x'])).rowCount, 2);
+    return (await transaction.query('SELECT $1::text AS value', ['hello'])).rows[0]?.value;
   });
   assert.equal(value, 'hello');
   assert.match(native.requestTexts().join('\n'), /BEGIN/);
@@ -766,10 +699,7 @@ async function testTransactionPromiseMethodsNeverThrowSynchronously(): Promise<v
       () => transaction.queryRaw('SELECT\0invalid'),
       () => transaction.exec('COPY items TO STDOUT'),
       () => transaction.describe('SELECT 1', [-1]),
-      () =>
-        transaction.execProtocolRaw(
-          null as unknown as Uint8Array,
-        ),
+      () => transaction.execProtocolRaw(null as unknown as Uint8Array),
       () =>
         transaction.execProtocolRawStream(
           Uint8Array.of(1),
@@ -825,10 +755,7 @@ async function testCallbackAndRollbackFailuresAreBothPreserved(): Promise<void> 
     () => db.transaction(() => Promise.reject(bodyFailure)),
     (failure: unknown) => {
       assert.ok(failure instanceof AggregateError);
-      assert.match(
-        failure.message,
-        /automatic ROLLBACK could not prove recovery/,
-      );
+      assert.match(failure.message, /automatic ROLLBACK could not prove recovery/);
       assert.equal(failure.errors[0], bodyFailure);
       assert.match(String(failure.errors[1]), /ROLLBACK transport failed/);
       return true;
@@ -899,24 +826,11 @@ async function testUnawaitedFailedStatementRetainsPostgresError(): Promise<void>
       return true;
     },
   );
-  assert.equal(
-    ((await observedFailure) as { sqlstate?: unknown }).sqlstate,
-    'XX000',
-  );
-  const controls = native
-    .requestTexts()
-    .filter((request) => /BEGIN|COMMIT|ROLLBACK/.test(request));
-  assert.equal(
-    controls.filter((request) => request.includes('COMMIT')).length,
-    1,
-  );
-  assert.equal(
-    controls.filter((request) => request.includes('ROLLBACK')).length,
-    0,
-  );
-  assert.deepEqual((await db.query('SELECT recovered')).rows, [
-    { value: 'hello' },
-  ]);
+  assert.equal(((await observedFailure) as { sqlstate?: unknown }).sqlstate, 'XX000');
+  const controls = native.requestTexts().filter((request) => /BEGIN|COMMIT|ROLLBACK/.test(request));
+  assert.equal(controls.filter((request) => request.includes('COMMIT')).length, 1);
+  assert.equal(controls.filter((request) => request.includes('ROLLBACK')).length, 0);
+  assert.deepEqual((await db.query('SELECT recovered')).rows, [{ value: 'hello' }]);
   await db.close();
 }
 
@@ -929,8 +843,7 @@ async function testCaughtFailureCanRecoverToSavepoint(): Promise<void> {
     await transaction.execute('SAVEPOINT retry');
     await assert.rejects(
       () => transaction.execute('SELECT rejected'),
-      (failure: unknown) =>
-        (failure as { sqlstate?: unknown }).sqlstate === 'XX000',
+      (failure: unknown) => (failure as { sqlstate?: unknown }).sqlstate === 'XX000',
     );
     await transaction.execute('ROLLBACK TO SAVEPOINT retry');
     await transaction.query('SELECT recovered');
@@ -948,13 +861,8 @@ async function testCommitRollbackIsKnownAndReusable(): Promise<void> {
   const native = new MockNative();
   const db = await createOliphauntClient(native).open();
   native.commitAsRollbackOnce = true;
-  await assert.rejects(
-    () => db.transaction(() => 'not committed'),
-    /got ROLLBACK\/idle/,
-  );
-  assert.deepEqual((await db.query('SELECT 1 AS value')).rows, [
-    { value: 'hello' },
-  ]);
+  await assert.rejects(() => db.transaction(() => 'not committed'), /got ROLLBACK\/idle/);
+  assert.deepEqual((await db.query('SELECT 1 AS value')).rows, [{ value: 'hello' }]);
   await db.close();
 }
 
@@ -1003,13 +911,8 @@ async function testCommitNonIdleDoesNotSendRollback(): Promise<void> {
       }),
     /got COMMIT\/transaction/,
   );
-  const controls = native
-    .requestTexts()
-    .filter((request) => /BEGIN|COMMIT|ROLLBACK/.test(request));
-  assert.equal(
-    controls.filter((request) => request.includes('ROLLBACK')).length,
-    0,
-  );
+  const controls = native.requestTexts().filter((request) => /BEGIN|COMMIT|ROLLBACK/.test(request));
+  assert.equal(controls.filter((request) => request.includes('ROLLBACK')).length, 0);
   await db.close();
 }
 
@@ -1082,16 +985,10 @@ class MockNative implements Spec {
       async execProtocolStream(handle, request, onChunk) {
         const response = await native.execProtocolRawJsi(handle, request);
         const split = Math.max(1, Math.floor(response.byteLength / 2));
-        for (const chunk of [
-          response.subarray(0, split),
-          response.subarray(split),
-        ]) {
+        for (const chunk of [response.subarray(0, split), response.subarray(split)]) {
           native.streamChunkCallbackCalls += 1;
           const result = onChunk(chunk);
-          if (
-            result?.__oliphauntProtocolChunkFailure &&
-            !native.swallowStreamCallbackErrors
-          ) {
+          if (result?.__oliphauntProtocolChunkFailure && !native.swallowStreamCallbackErrors) {
             throw result.error;
           }
         }
@@ -1135,10 +1032,7 @@ class MockNative implements Spec {
     this.forgottenClosedGenerations.push(generation);
   }
 
-  async execProtocolRawJsi(
-    handle: number,
-    request: Uint8Array,
-  ): Promise<Uint8Array> {
+  async execProtocolRawJsi(handle: number, request: Uint8Array): Promise<Uint8Array> {
     this.execRequests.push(request);
     if (this.pauseNextRequest !== undefined) {
       const pause = this.pauseNextRequest;
@@ -1181,87 +1075,48 @@ class MockNative implements Spec {
       this.failStatementOnce = false;
       status = 0x45;
       this.#transactionStatus.set(handle, status);
-      response = backendErrorResponse(
-        'XX000',
-        'queued operation failed',
-        status,
-      );
+      response = backendErrorResponse('XX000', 'queued operation failed', status);
     } else if (sql.includes('SELECT')) {
-      response = backendSingleValueResponse(
-        'hello',
-        this.#consumeReadyStatus(status),
-      );
+      response = backendSingleValueResponse('hello', this.#consumeReadyStatus(status));
     } else if (sql.includes('INSERT')) {
-      response = backendCommandResponse(
-        'INSERT 0 3',
-        this.#consumeReadyStatus(status),
-      );
+      response = backendCommandResponse('INSERT 0 3', this.#consumeReadyStatus(status));
     } else if (sql.includes('UPDATE')) {
-      response = backendCommandResponse(
-        'UPDATE 2',
-        this.#consumeReadyStatus(status),
-      );
+      response = backendCommandResponse('UPDATE 2', this.#consumeReadyStatus(status));
     } else if (sql.includes('BEGIN')) {
       status = 0x54;
       this.#transactionStatus.set(handle, status);
-      response = backendCommandResponse(
-        'BEGIN',
-        this.#consumeReadyStatus(status),
-      );
+      response = backendCommandResponse('BEGIN', this.#consumeReadyStatus(status));
     } else if (sql.includes('ROLLBACK TO SAVEPOINT')) {
       status = 0x54;
       this.#transactionStatus.set(handle, status);
-      response = backendCommandResponse(
-        'ROLLBACK',
-        this.#consumeReadyStatus(status),
-      );
+      response = backendCommandResponse('ROLLBACK', this.#consumeReadyStatus(status));
     } else if (sql.includes('SAVEPOINT')) {
-      response = backendCommandResponse(
-        'SAVEPOINT',
-        this.#consumeReadyStatus(status),
-      );
+      response = backendCommandResponse('SAVEPOINT', this.#consumeReadyStatus(status));
     } else if (sql.includes('COMMIT')) {
       const transactionAborted = status === 0x45;
       status = 0x49;
       this.#transactionStatus.set(handle, status);
       if (this.malformedCommitOnce) {
         this.malformedCommitOnce = false;
-        response = backendResponse([
-          [0x5a, [this.#consumeReadyStatus(status)]],
-        ]);
+        response = backendResponse([[0x5a, [this.#consumeReadyStatus(status)]]]);
       } else {
-        const tag =
-          this.commitAsRollbackOnce || transactionAborted
-            ? 'ROLLBACK'
-            : 'COMMIT';
+        const tag = this.commitAsRollbackOnce || transactionAborted ? 'ROLLBACK' : 'COMMIT';
         this.commitAsRollbackOnce = false;
-        response = backendCommandResponse(
-          tag,
-          this.#consumeReadyStatus(status),
-        );
+        response = backendCommandResponse(tag, this.#consumeReadyStatus(status));
       }
     } else if (sql.includes('ROLLBACK')) {
       if (this.wrongRollbackBoundaryOnce) {
         this.wrongRollbackBoundaryOnce = false;
         status = 0x54;
         this.#transactionStatus.set(handle, status);
-        response = backendCommandResponse(
-          'COMMIT',
-          this.#consumeReadyStatus(status),
-        );
+        response = backendCommandResponse('COMMIT', this.#consumeReadyStatus(status));
       } else {
         status = 0x49;
         this.#transactionStatus.set(handle, status);
-        response = backendCommandResponse(
-          'ROLLBACK',
-          this.#consumeReadyStatus(status),
-        );
+        response = backendCommandResponse('ROLLBACK', this.#consumeReadyStatus(status));
       }
     } else {
-      response = backendCommandResponse(
-        'CHECKPOINT',
-        this.#consumeReadyStatus(status),
-      );
+      response = backendCommandResponse('CHECKPOINT', this.#consumeReadyStatus(status));
     }
     if (this.omitReadyOnce) {
       this.omitReadyOnce = false;
@@ -1269,10 +1124,7 @@ class MockNative implements Spec {
     }
     if (this.appendReadyOnce) {
       this.appendReadyOnce = false;
-      response = concatenateBytes(
-        response,
-        backendResponse([[0x5a, [status]]]),
-      );
+      response = concatenateBytes(response, backendResponse([[0x5a, [status]]]));
     }
     return response;
   }
@@ -1302,9 +1154,7 @@ class MockNative implements Spec {
   }
 
   requestTexts(): string[] {
-    return this.execRequests.map((request) =>
-      new TextDecoder().decode(request),
-    );
+    return this.execRequests.map((request) => new TextDecoder().decode(request));
   }
 }
 
@@ -1316,11 +1166,7 @@ class MockForgottenDatabaseRegistry implements ForgottenDatabaseRegistry {
   }> = [];
   readonly unregistered: object[] = [];
 
-  register(
-    target: object,
-    held: ForgottenDatabase,
-    token: object,
-  ): void {
+  register(target: object, held: ForgottenDatabase, token: object): void {
     this.registrations.push({ target, held, token });
   }
 
@@ -1334,10 +1180,7 @@ type GlobalWithJsi = typeof globalThis & {
   __oliphauntReactNativeJsi?: {
     version: 1;
     closeIfGeneration(generation: number): void;
-    execProtocolRaw(
-      handle: number,
-      request: Uint8Array,
-    ): Promise<ArrayBuffer | ArrayBufferView>;
+    execProtocolRaw(handle: number, request: Uint8Array): Promise<ArrayBuffer | ArrayBufferView>;
     execProtocolStream(
       handle: number,
       request: Uint8Array,
@@ -1388,8 +1231,7 @@ function backendDescribeResponse(
 ): Uint8Array {
   const out: number[] = [];
   pushMessage(out, 0x31, []);
-  if (notice !== undefined)
-    pushMessage(out, 0x4e, postgresDiagnostic('NOTICE', '00000', notice));
+  if (notice !== undefined) pushMessage(out, 0x4e, postgresDiagnostic('NOTICE', '00000', notice));
   const parameters: number[] = [];
   pushI16(parameters, parameterTypeOids.length);
   for (const typeOid of parameterTypeOids) pushI32(parameters, typeOid);
@@ -1412,14 +1254,10 @@ function backendDescribeResponse(
   return Uint8Array.from(out);
 }
 
-function backendMultiStatementResponse(
-  status: number,
-  notice?: string,
-): Uint8Array {
+function backendMultiStatementResponse(status: number, notice?: string): Uint8Array {
   const out: number[] = [];
   pushMessage(out, 0x43, [...encoder.encode('CREATE TABLE'), 0]);
-  if (notice !== undefined)
-    pushMessage(out, 0x4e, postgresDiagnostic('NOTICE', '00000', notice));
+  if (notice !== undefined) pushMessage(out, 0x4e, postgresDiagnostic('NOTICE', '00000', notice));
   const description: number[] = [];
   pushI16(description, 1);
   description.push(...encoder.encode('value'), 0);
@@ -1451,11 +1289,7 @@ function backendCommandResponse(commandTag: string, status = 0x49): Uint8Array {
   return Uint8Array.from(out);
 }
 
-function backendErrorResponse(
-  sqlstate: string,
-  message: string,
-  status: number,
-): Uint8Array {
+function backendErrorResponse(sqlstate: string, message: string, status: number): Uint8Array {
   return backendResponse([
     [0x31, []],
     [0x32, []],
@@ -1464,9 +1298,7 @@ function backendErrorResponse(
   ]);
 }
 
-function backendResponse(
-  messages: ReadonlyArray<readonly [number, number[]]>,
-): Uint8Array {
+function backendResponse(messages: ReadonlyArray<readonly [number, number[]]>): Uint8Array {
   const out: number[] = [];
   for (const [tag, body] of messages) {
     pushMessage(out, tag, body);
@@ -1488,24 +1320,18 @@ function frontendMessageTags(request: Uint8Array): string[] {
 function frontendSql(request: Uint8Array): string | undefined {
   if (request[0] === 0x51) {
     const end = request.indexOf(0, 5);
-    return new TextDecoder().decode(
-      request.subarray(5, end < 0 ? request.length : end),
-    );
+    return new TextDecoder().decode(request.subarray(5, end < 0 ? request.length : end));
   }
   if (request[0] !== 0x50) return undefined;
   let offset = 5;
   while (request[offset] !== 0 && offset < request.length) offset += 1;
   offset += 1;
   const end = request.indexOf(0, offset);
-  return new TextDecoder().decode(
-    request.subarray(offset, end < 0 ? request.length : end),
-  );
+  return new TextDecoder().decode(request.subarray(offset, end < 0 ? request.length : end));
 }
 
 function inferredParameterOids(sql: string): number[] {
-  const indexes = [...sql.matchAll(/\$(\d+)/g)].map((match) =>
-    Number(match[1]),
-  );
+  const indexes = [...sql.matchAll(/\$(\d+)/g)].map((match) => Number(match[1]));
   const count = indexes.length === 0 ? 0 : Math.max(...indexes);
   return Array.from({ length: count }, (_, index) => {
     const marker = `\\$${index + 1}`;
@@ -1520,9 +1346,7 @@ function withoutReadyForQuery(response: Uint8Array): Uint8Array {
 }
 
 function concatenateBytes(...parts: ReadonlyArray<Uint8Array>): Uint8Array {
-  const result = new Uint8Array(
-    parts.reduce((size, part) => size + part.length, 0),
-  );
+  const result = new Uint8Array(parts.reduce((size, part) => size + part.length, 0));
   let offset = 0;
   for (const part of parts) {
     result.set(part, offset);
@@ -1531,11 +1355,7 @@ function concatenateBytes(...parts: ReadonlyArray<Uint8Array>): Uint8Array {
   return result;
 }
 
-function postgresDiagnostic(
-  severity: string,
-  sqlstate: string,
-  message: string,
-): number[] {
+function postgresDiagnostic(severity: string, sqlstate: string, message: string): number[] {
   return [
     0x53,
     ...encoder.encode(severity),
@@ -1558,12 +1378,7 @@ function pushMessage(out: number[], tag: number, body: number[]): void {
 
 function pushI32(out: number[], value: number): void {
   const bits = value >>> 0;
-  out.push(
-    (bits >>> 24) & 0xff,
-    (bits >>> 16) & 0xff,
-    (bits >>> 8) & 0xff,
-    bits & 0xff,
-  );
+  out.push((bits >>> 24) & 0xff, (bits >>> 16) & 0xff, (bits >>> 8) & 0xff, bits & 0xff);
 }
 
 function pushI16(out: number[], value: number): void {

@@ -663,11 +663,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
             ? new Error(`WASIX allocation release failed: ${describeError(error)}`, {
                 cause: error,
               })
-            : composeLifecycleFailure(
-                failure,
-                'WASIX allocation release also failed',
-                error,
-              );
+            : composeLifecycleFailure(failure, 'WASIX allocation release also failed', error);
       }
     }
 
@@ -763,7 +759,7 @@ function assertDirectExtensionCompatibility(options: SerializedOpenOptions): voi
     )
     .join(', ');
   throw new TypeError(
-    `@oliphaunt/wasix-ts/blocking cannot load native extension modules larger than 8 MiB in a Chromium Window; use the @oliphaunt/wasix-ts root entrypoint for ${detail}`,
+    `@oliphaunt/wasix-ts cannot load native extension modules larger than 8 MiB in a Chromium Window; use @oliphaunt/wasix-ts/worker for ${detail}`,
   );
 }
 

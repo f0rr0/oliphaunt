@@ -11,7 +11,7 @@ import {
   type WasixByteChannel,
 } from './byte-channel.js';
 import { runWasixProtocolConnection } from './database.js';
-import { openWasix } from './node-client.js';
+import { openWasix } from './worker-node-client.js';
 import type { OliphauntDatabase, OpenConfig } from './types.js';
 
 const LOOPBACK = '127.0.0.1';

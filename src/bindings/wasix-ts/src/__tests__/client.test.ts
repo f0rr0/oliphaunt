@@ -1,8 +1,22 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { openWasix, Oliphaunt } from '../client.js';
-import { indexedDB } from '../storage/indexed-db.js';
-import type { WorkerRequest, WorkerResponse } from '../rpc.js';
+const directMocks = vi.hoisted(() => ({
+  openWasixDirect: vi.fn(),
+  openNodeDirect: vi.fn(),
+}));
+
+vi.mock('../direct-client-common.js', () => ({
+  openWasixDirect: directMocks.openWasixDirect,
+}));
+vi.mock('../node-direct.js', () => ({
+  openNodeDirect: directMocks.openNodeDirect,
+}));
+vi.mock('../worker-rpc.js', () => {
+  throw new Error('root entrypoint loaded Worker RPC machinery');
+});
+
+import { openWasixWithHost } from '../client.js';
+import type { OliphauntDatabase } from '../types.js';
 
 let crossOriginDescriptor: PropertyDescriptor | undefined;
 let workerDescriptor: PropertyDescriptor | undefined;
@@ -16,9 +30,27 @@ beforeEach(() => {
   });
   Object.defineProperty(globalThis, 'Worker', {
     configurable: true,
-    value: FakeBrowserWorker,
+    value: class ForbiddenWorker {
+      constructor() {
+        throw new Error('root entrypoint constructed a Worker');
+      }
+    },
   });
-  FakeBrowserWorker.instances.length = 0;
+  directMocks.openWasixDirect.mockReset();
+  directMocks.openWasixDirect.mockResolvedValue({} as OliphauntDatabase);
+  directMocks.openNodeDirect.mockReset();
+  directMocks.openNodeDirect.mockResolvedValue({} as OliphauntDatabase);
+});
+
+describe('WASIX Node-compatible root execution surface', () => {
+  it('opens directly without loading Worker RPC machinery', async () => {
+    const { openWasix } = await import('../node-client.js');
+
+    const database = await openWasix();
+
+    expect(database).toBe(await directMocks.openNodeDirect.mock.results[0]?.value);
+    expect(directMocks.openNodeDirect).toHaveBeenCalledOnce();
+  });
 });
 
 afterEach(() => {
@@ -26,77 +58,25 @@ afterEach(() => {
   restoreGlobal('Worker', workerDescriptor);
 });
 
-describe('WASIX browser root calling contract', () => {
-  it('always opens and closes through exactly one package Worker', async () => {
-    const database = await openWasix();
-    const worker = FakeBrowserWorker.instances[0];
-    expect(FakeBrowserWorker.instances).toHaveLength(1);
-    expect(worker?.url.pathname).toMatch(/\/worker\.js$/);
-    expect(worker?.options).toEqual({ type: 'module', name: 'oliphaunt-wasix' });
-    expect(worker?.requests[0]?.method).toBe('open');
-
-    await database.close();
-    expect(worker?.requests[1]?.method).toBe('close');
-    expect(worker?.terminations).toBe(1);
-  });
-
-  it('uses a temporary package Worker for restore', async () => {
-    await Oliphaunt.restore(indexedDB('root-restore'), Uint8Array.of(1, 2, 3));
-
-    const worker = FakeBrowserWorker.instances[0];
-    expect(FakeBrowserWorker.instances).toHaveLength(1);
-    expect(worker?.requests[0]?.method).toBe('restore');
-    expect(worker?.terminations).toBe(1);
-  });
-
-  it('rejects legacy placement before constructing a Worker', async () => {
-    await expect(openWasix({ execution: 'direct' } as never)).rejects.toThrow(
-      /no longer accepts the "execution" option/,
+describe('WASIX browser root execution surface', () => {
+  it('opens through the caller-realm engine and never constructs a Worker', async () => {
+    const database = await openWasixWithHost(
+      { username: 'application' },
+      async () => ({}) as never,
     );
-    expect(FakeBrowserWorker.instances).toHaveLength(0);
+
+    expect(database).toBe(await directMocks.openWasixDirect.mock.results[0]?.value);
+    expect(directMocks.openWasixDirect).toHaveBeenCalledOnce();
+    expect(directMocks.openWasixDirect.mock.calls[0]?.[2]).toBe('browser-main');
+  });
+
+  it('rejects legacy placement before loading the caller-realm engine', async () => {
+    await expect(
+      openWasixWithHost({ execution: 'worker' } as never, async () => ({}) as never),
+    ).rejects.toThrow(/no longer accepts the "execution" option/);
+    expect(directMocks.openWasixDirect).not.toHaveBeenCalled();
   });
 });
-
-class FakeBrowserWorker {
-  static readonly instances: FakeBrowserWorker[] = [];
-  readonly requests: WorkerRequest[] = [];
-  readonly url: URL;
-  readonly options: WorkerOptions;
-  terminations = 0;
-  readonly #listeners = new Map<string, Array<(event: MessageEvent | ErrorEvent) => void>>();
-
-  constructor(url: URL, options: WorkerOptions) {
-    this.url = url;
-    this.options = options;
-    FakeBrowserWorker.instances.push(this);
-  }
-
-  postMessage(message: WorkerRequest): void {
-    this.requests.push(message);
-    queueMicrotask(() => {
-      this.#emit('message', { data: { id: message.id, ok: true } satisfies WorkerResponse });
-    });
-  }
-
-  addEventListener(
-    type: string,
-    listener: (event: MessageEvent | ErrorEvent) => void,
-  ): void {
-    const listeners = this.#listeners.get(type) ?? [];
-    listeners.push(listener);
-    this.#listeners.set(type, listeners);
-  }
-
-  terminate(): void {
-    this.terminations += 1;
-  }
-
-  #emit(type: string, event: MessageEvent | { data: WorkerResponse }): void {
-    for (const listener of this.#listeners.get(type) ?? []) {
-      listener(event as MessageEvent);
-    }
-  }
-}
 
 function restoreGlobal(name: string, descriptor: PropertyDescriptor | undefined): void {
   if (descriptor === undefined) Reflect.deleteProperty(globalThis, name);

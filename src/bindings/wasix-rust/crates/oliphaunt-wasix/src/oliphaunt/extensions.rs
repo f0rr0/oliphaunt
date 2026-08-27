@@ -361,8 +361,8 @@ mod startup_config_tests {
 #[cfg(all(test, feature = "extensions"))]
 mod extension_tests {
     use super::*;
-    use crate::blocking::Oliphaunt;
-    use crate::{DatabaseStorage, OliphauntServer};
+    use crate::Oliphaunt;
+    use crate::{DatabaseStorage, worker::OliphauntServer};
     use anyhow::{Context, Result, ensure};
     use sqlx::{Connection, PgConnection};
     use std::collections::BTreeSet;
@@ -401,7 +401,7 @@ mod extension_tests {
     #[cfg(feature = "tools")]
     #[test]
     fn uuid_ossp_aot_dump_restore_smoke() -> Result<()> {
-        use crate::blocking::tools::{PgDumpOptions, PsqlOptions, pg_dump, psql};
+        use crate::tools::{PgDumpOptions, PsqlOptions, pg_dump, psql};
 
         let mut source = Oliphaunt::builder()
             .extension(generated::UUID_OSSP)

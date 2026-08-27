@@ -2,10 +2,9 @@
 
 Portable PostgreSQL 18 for TypeScript, backed by the canonical
 `liboliphaunt-wasix` guest. The same API runs in browsers, Node.js, Bun, and
-Deno. The root entrypoint always owns PostgreSQL in one package Worker so its
-database calls do not block the importing JavaScript realm. The explicit
-`@oliphaunt/wasix-ts/blocking` entrypoint runs PostgreSQL in the importing
-realm when avoiding the Worker boundary is worth accepting blocking calls.
+Deno. The root entrypoint runs PostgreSQL directly in the importing JavaScript
+realm. The explicit `@oliphaunt/wasix-ts/worker` entrypoint owns PostgreSQL in
+one package Worker so database work does not block the importing realm.
 
 ## Install
 
@@ -133,30 +132,37 @@ or qualified workflow.
 
 Node publication writes WAL before ordinary files and `global/pg_control`,
 then fsyncs changed files and parent directories. IndexedDB publishes a delta
-in one transaction. OPFS uses synchronous backing files when PostgreSQL owns a
-Worker realm, including the root entrypoint and `/blocking` imported from a
-Dedicated Worker. `/blocking` imported in a browser Window uses the same opaque
-format through a copy-on-write portable path. Both OPFS paths flush or publish
-in PostgreSQL-safe order. A
+in one transaction. OPFS uses synchronous backing files for `/worker` and when
+the root entrypoint is imported inside an application-owned Dedicated Worker.
+The root entrypoint in a browser Window uses the same opaque format through a
+copy-on-write portable path. Both OPFS paths flush or publish in
+PostgreSQL-safe order. A
 publication failure rejects with `WasixStorageError`; an uncertain state
 poisons the live database handle.
 
+Both entrypoints may be used inside an application-owned Node Worker, including
+with directory storage. Close the database before terminating that Worker.
+Abruptly terminating a caller-owned realm can leave the fail-closed filesystem
+lock behind; remove that lock only after establishing that no thread or process
+still owns the database. `/worker` can recover its own child-Worker lock while
+its importing realm remains alive.
+
 `close()` is one terminal, idempotent teardown attempt. It stops admitting new
-work and lets work already accepted by the database FIFO finish up to the
-bounded orderly-shutdown deadline. If that deadline expires, close requests
+work and lets work already accepted by the database FIFO finish. `/worker`
+applies a bounded orderly-shutdown deadline; after it expires, close requests
 forced Worker termination and waits for it to settle before releasing other
-owned resources; the deadline is not a claim that total teardown has already
-finished. Concurrent and later calls return the same promise. Timeout,
-termination, provider, and host cleanup failures are preserved together. If
-teardown rejects, `closed` still becomes `true`: cleanup was attempted and a
-destroyed Worker or guest is never treated as a retryable live session.
+owned resources. The direct root closes its caller-realm guest and storage
+lease without a transport to terminate. Concurrent and later calls return the
+same promise. Provider, host, and Worker termination failures are preserved.
+If teardown rejects, `closed` still becomes `true`: cleanup was attempted and
+a destroyed Worker or guest is never treated as a retryable live session.
 
 Forgetting a database handle schedules generation-guarded best-effort cleanup.
-The root entrypoint force-terminates only that handle's Worker generation; the
-explicit `/blocking` entrypoint closes only that caller-realm guest and its
-storage lease. A stale finalizer cannot affect a later open. Finalizers are not
-prompt or observable, so applications must still use `close()` or `await using`
-when ownership release matters.
+The root entrypoint closes only that caller-realm guest and its storage lease;
+`/worker` force-terminates only that handle's Worker generation. A stale
+finalizer cannot affect a later open. Finalizers are not prompt or observable,
+so applications must still use `close()` or `await using` when ownership
+release matters.
 
 ## Backup and restore
 
@@ -173,8 +179,8 @@ session. The archive is the shared strict ustar format containing
 `pgdata/**` and `.oliphaunt/backup-manifest.properties`. `restore` accepts only
 an absent or empty persistent destination, validates the complete archive
 before publication, and creates the receiving storage provider's outer
-identity. The root entrypoint performs restore in a temporary package Worker;
-the `/blocking` entrypoint performs it in the importing realm.
+identity. The root entrypoint performs restore in the importing realm;
+`/worker` uses a temporary package Worker.
 
 ## Extensions
 
@@ -194,39 +200,40 @@ artifacts before startup, applies required startup settings, and runs declared
 setup SQL. It does not infer extension upgrades or migrations for an existing
 database.
 
-## Calling contract
+## Calling shape and execution placement
 
-The normal import always creates one package-owned Worker:
+The normal import executes PostgreSQL directly in the importing realm:
 
-<!-- liboliphaunt-doc-example:wasix-typescript-worker-entrypoint -->
+<!-- liboliphaunt-doc-example:wasix-typescript-direct-entrypoint -->
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
 
 await using database = await Oliphaunt.open();
 ```
 
-Use the separate blocking import only when the importing realm may be
-monopolized by PostgreSQL work:
+Use the explicit Worker import when the importing realm must remain responsive:
 
-<!-- liboliphaunt-doc-example:wasix-typescript-blocking-entrypoint -->
+<!-- liboliphaunt-doc-example:wasix-typescript-worker-entrypoint -->
 ```ts
-import BlockingOliphaunt from '@oliphaunt/wasix-ts/blocking';
+import WorkerOliphaunt from '@oliphaunt/wasix-ts/worker';
 
-await using database = await BlockingOliphaunt.open();
+await using database = await WorkerOliphaunt.open();
 ```
 
 Both imports expose the same PostgreSQL interface and return Promises because
-asset loading and persistence are asynchronous. On `/blocking`, the guest
-portion of each operation nevertheless runs on the calling stack and blocks
-that JavaScript agent. Importing it from an application Worker blocks only that
-Worker; importing it in a Window blocks the page. Browser use requires
-cross-origin isolation. Chromium Window compilation of native side modules
-larger than 8 MiB requires the root entrypoint.
+asset loading and persistence are asynchronous. On the root entrypoint, the
+guest portion of each operation nevertheless runs in the importing realm and
+can monopolize that JavaScript agent while it is active. A Promise does not
+imply off-thread execution. Importing the root from an application Worker blocks
+only that Worker; importing it in a Window can block the page. `/worker`
+uses a Web Worker in browsers and `node:worker_threads` in Node, Bun, and Deno.
+Browser use requires cross-origin isolation. Chromium Window compilation of
+native side modules larger than 8 MiB requires `/worker`.
 
 The removed `execution` option is rejected at runtime as well as by TypeScript.
-Migrate `execution: 'worker'` by deleting the option. Migrate
-`execution: 'direct'` by importing `/blocking`; Oliphaunt never silently falls
-back from one calling contract to the other.
+Migrate `execution: 'direct'` by deleting the option. Migrate
+`execution: 'worker'` by importing `/worker`; Oliphaunt never silently falls
+back from one execution surface to the other.
 
 ## Optional PostgreSQL tools
 
@@ -236,19 +243,20 @@ Install `@oliphaunt/wasix-tools` when the application needs standard plain
 <!-- liboliphaunt-doc-example:wasix-typescript-tools -->
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
+import WorkerOliphaunt from '@oliphaunt/wasix-ts/worker';
 import { pgDump, psql } from '@oliphaunt/wasix-tools';
 
 await using source = await Oliphaunt.open();
 const sql = await pgDump(source, { args: ['--schema-only'] });
-await using target = await Oliphaunt.open();
+await using target = await WorkerOliphaunt.open();
 await psql(target, { script: sql });
 ```
 
 `pgDump()` runs in the database's existing realm, so it supports the root and
-blocking entrypoints, including browsers. `psql()` requires a database opened
-through the root entrypoint because restoring COPY input is full duplex. The package preserves
-PostgreSQL's normal plain SQL and COPY output. It does not support interactive
-psql, custom dump archives, parallel jobs, or pg_restore.
+`/worker` entrypoints, including browsers. `psql()` requires a database opened
+through `/worker` because restoring COPY input is full duplex. The package
+preserves PostgreSQL's normal plain SQL and COPY output. It does not support
+interactive psql, custom dump archives, parallel jobs, or pg_restore.
 
 ## Optional local server
 
@@ -268,7 +276,9 @@ The lightweight compatibility endpoint binds IPv4 loopback with an automatic
 port when `port` is omitted. Unix hosts may instead pass
 `{ transport: 'unix', directory, port? }`; the socket follows PostgreSQL's
 `.s.PGSQL.<port>` convention. One complete client connection owns the single
-embedded backend at a time; concurrent connections are rejected. The listener
+embedded backend at a time; concurrent connections are rejected. Server
+subpaths own their required managed Worker independently of the root database
+entrypoint. The listener
 and storage lease persist, while each admitted client receives a fresh backend.
 Use the separate WASIX postmaster product for concurrent PostgreSQL sessions.
 The server's read-only `closed` property remains `false` while terminal teardown

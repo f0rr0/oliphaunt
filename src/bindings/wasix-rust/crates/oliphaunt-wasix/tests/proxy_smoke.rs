@@ -1,7 +1,7 @@
 #![cfg(feature = "extensions")]
 
 use anyhow::{Context, Result, bail, ensure};
-use oliphaunt_wasix::{ServerListen, blocking::OliphauntServer};
+use oliphaunt_wasix::{OliphauntServer, ServerListen};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 #[cfg(unix)]

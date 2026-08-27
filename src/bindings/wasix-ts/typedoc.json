@@ -1,6 +1,6 @@
 {
   "$schema": "https://typedoc.org/schema.json",
-  "entryPoints": ["src/index.ts", "src/blocking.ts"],
+  "entryPoints": ["src/index.ts", "src/worker-entry.ts"],
   "exclude": ["src/__tests__/**"],
   "excludeInternal": true,
   "excludePrivate": true,

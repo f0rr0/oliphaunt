@@ -1,13 +1,13 @@
 import pgtap from '@oliphaunt/extension-pgtap-wasix';
 import Oliphaunt, { type OliphauntDatabase } from '@oliphaunt/wasix-ts';
-import BlockingOliphaunt from '@oliphaunt/wasix-ts/blocking';
+import WorkerOliphaunt from '@oliphaunt/wasix-ts/worker';
 import { indexedDB } from '@oliphaunt/wasix-ts/storage/indexed-db';
 import { pgDump, psql } from '@oliphaunt/wasix-tools';
 
 import logicalToolsFixtureJson from './logical-tools.json?raw';
 import logicalToolsSeed from './logical-tools-seed.sql?raw';
 import logicalToolsVerify from './logical-tools-verify.sql?raw';
-import { expectBlockingPgDump } from './blocking-pg-dump-smoke.js';
+import { expectDirectPgDump } from './direct-pg-dump-smoke.js';
 import { expectStructuredApi } from './structured-api-smoke.js';
 
 const logicalToolsFixture = JSON.parse(logicalToolsFixtureJson) as {
@@ -26,26 +26,26 @@ const output = requireElement<HTMLPreElement>('output');
 
 try {
   const storage = indexedDB('packed-browser-smoke');
-  let database = await BlockingOliphaunt.open({
+  let database = await Oliphaunt.open({
     storage,
     extensions: [pgtap],
   });
   let pgtapVersion: string;
   try {
     await expectAnswer(database);
-    await expectStructuredApi(database, 'packed browser blocking');
+    await expectStructuredApi(database, 'packed browser direct');
     pgtapVersion = await readPgtapVersion(database);
     await database.transaction(async (transaction) => {
       await transaction.execute('CREATE TABLE packed_reopen_probe (answer integer NOT NULL)');
       await transaction.execute('INSERT INTO packed_reopen_probe VALUES ($1)', [42]);
     });
     await database.execute('CHECKPOINT');
-    await expectBlockingPgDump(database);
+    await expectDirectPgDump(database);
   } finally {
     await database.close();
   }
 
-  database = await Oliphaunt.open({
+  database = await WorkerOliphaunt.open({
     storage,
     extensions: [pgtap],
   });
@@ -73,8 +73,8 @@ try {
     const logicalTools = await expectLogicalTools();
     status.textContent = 'Packed browser package smoke passed.';
     output.textContent = JSON.stringify({
-      blocking: 42,
-      blockingPgDump: true,
+      direct: 42,
+      directPgDump: true,
       worker: 42,
       indexedDB: answer,
       transactionRows: count,
@@ -92,7 +92,7 @@ try {
 }
 
 async function expectLogicalTools(): Promise<string> {
-  const source = await Oliphaunt.open({ extensions: [pgtap] });
+  const source = await WorkerOliphaunt.open({ extensions: [pgtap] });
   let sql: string;
   try {
     await psql(source, { script: logicalToolsSeed });
@@ -104,7 +104,7 @@ async function expectLogicalTools(): Promise<string> {
     await source.close();
   }
 
-  const target = await Oliphaunt.open({ extensions: [pgtap] });
+  const target = await WorkerOliphaunt.open({ extensions: [pgtap] });
   try {
     await psql(target, { script: sql });
     const result = await target.queryRaw(logicalToolsVerify);

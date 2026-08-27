@@ -145,10 +145,11 @@ try {
 }
 
 async function openEngine(engine, plan, candidateRoot) {
-  if (engine === 'candidate') return openCandidate(plan, candidateRoot, 'default');
-  if (engine === 'candidate-blocking') return openCandidate(plan, candidateRoot, 'blocking');
-  if (engine === 'comparison') return openComparisonWorker(plan);
-  return openComparisonCallerRealm(plan);
+  if (engine === 'candidate-direct') return openCandidate(plan, candidateRoot, 'direct');
+  if (engine === 'candidate-worker') return openCandidate(plan, candidateRoot, 'worker');
+  if (engine === 'comparison-direct') return openComparisonCallerRealm(plan);
+  if (engine === 'comparison-worker') return openComparisonWorker(plan);
+  throw new Error(`unsupported benchmark engine ${JSON.stringify(engine)}`);
 }
 
 async function openCandidate(plan, candidateRoot, surfaceName) {
@@ -158,7 +159,7 @@ async function openCandidate(plan, candidateRoot, surfaceName) {
   const surface = plan.engines.candidate.surfaces[surfaceName];
   const entry = require.resolve(surface.entrypoint);
   const { manifest } = await findPackageManifest(entry, plan.engines.candidate.package);
-  const expectedFile = surfaceName === 'blocking' ? 'blocking.node.js' : 'index.node.js';
+  const expectedFile = surfaceName === 'worker' ? 'worker-entry.node.js' : 'index.node.js';
   if (!entry.split('\\').join('/').endsWith(`/lib/${expectedFile}`)) {
     throw new Error(
       `${surface.entrypoint} resolved ${entry}, expected the conditional Node entrypoint lib/${expectedFile}`,
@@ -454,12 +455,12 @@ function parseArguments(argv) {
     values[flag] = value;
   }
   if (
-    !['candidate', 'candidate-blocking', 'comparison', 'comparison-caller-realm'].includes(
+    !['candidate-direct', 'candidate-worker', 'comparison-direct', 'comparison-worker'].includes(
       values['--engine'],
     )
   ) {
     throw new Error(
-      '--engine must be candidate, candidate-blocking, comparison, or comparison-caller-realm',
+      '--engine must be candidate-direct, candidate-worker, comparison-direct, or comparison-worker',
     );
   }
   const repeat = Number(values['--repeat']);

@@ -1,3 +1,12 @@
+//! Dedicated owner-thread API for applications that must keep their calling
+//! executor responsive while PostgreSQL runs synchronously on another thread.
+//!
+//! Each [`Oliphaunt`] owns one worker thread and one FIFO command queue. The
+//! handle is cloneable and asynchronous; the direct caller-thread API remains
+//! available from the crate root. Storage, query/result, error, extension, and
+//! listener configuration types are shared by both APIs and also live at the
+//! crate root.
+
 use std::borrow::Cow;
 use std::net::SocketAddr;
 #[cfg(unix)]
@@ -10,8 +19,8 @@ use std::thread;
 
 use tokio::sync::oneshot;
 
-use crate::oliphaunt::builder::OliphauntBuilder as BlockingOliphauntBuilder;
-use crate::oliphaunt::client::Oliphaunt as BlockingOliphaunt;
+use crate::oliphaunt::builder::OliphauntBuilder as DirectOliphauntBuilder;
+use crate::oliphaunt::client::Oliphaunt as DirectOliphaunt;
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::extensions::Extension;
 use crate::oliphaunt::query::{
@@ -19,10 +28,29 @@ use crate::oliphaunt::query::{
     ValueFormat,
 };
 use crate::oliphaunt::server::{
-    OliphauntServer as BlockingOliphauntServer,
-    OliphauntServerBuilder as BlockingOliphauntServerBuilder, ServerListen,
+    OliphauntServer as DirectOliphauntServer,
+    OliphauntServerBuilder as DirectOliphauntServerBuilder, ServerListen,
 };
 use crate::{DatabaseStorage, Error, PostgresError, Result};
+
+/// Packaged PostgreSQL frontend programs queued on the database worker.
+#[cfg(feature = "tools")]
+pub mod tools {
+    pub use crate::oliphaunt::tools::{PgDumpOptions, PostgresToolError, PsqlOptions};
+
+    /// Run packaged `pg_dump` on the database worker.
+    pub async fn pg_dump(
+        database: &super::Oliphaunt,
+        options: PgDumpOptions,
+    ) -> crate::Result<String> {
+        database.pg_dump(options).await
+    }
+
+    /// Run packaged non-interactive `psql` on the database worker.
+    pub async fn psql(database: &super::Oliphaunt, options: PsqlOptions) -> crate::Result<String> {
+        database.psql(options).await
+    }
+}
 
 const OWNER_QUEUE_CAPACITY: usize = 64;
 const OWNER_OPEN: u8 = 0;
@@ -35,7 +63,7 @@ const TRANSACTION_ROLLED_BACK: u8 = 2;
 const TRANSACTION_COMMITTED: u8 = 3;
 const TRANSACTION_FAILED: u8 = 4;
 
-type OwnerAction = Box<dyn FnOnce(&mut BlockingOliphaunt, Result<()>) + Send + 'static>;
+type OwnerAction = Box<dyn FnOnce(&mut DirectOliphaunt, Result<()>) + Send + 'static>;
 type SharedCloseResult = std::result::Result<(), Arc<str>>;
 type CloseWaiter = oneshot::Sender<SharedCloseResult>;
 
@@ -188,7 +216,7 @@ impl Drop for DatabaseOwnerInner {
 }
 
 impl DatabaseOwner {
-    async fn open(builder: BlockingOliphauntBuilder) -> Result<Self> {
+    async fn open(builder: DirectOliphauntBuilder) -> Result<Self> {
         let (queue, queue_rx) = mpsc::channel();
         let (open_tx, open_rx) = oneshot::channel();
         let state = Arc::new(AtomicU8::new(OWNER_OPEN));
@@ -322,7 +350,7 @@ impl DatabaseOwner {
     async fn call<T, F>(&self, transaction: Option<u64>, action: F) -> Result<T>
     where
         T: Send + 'static,
-        F: FnOnce(&mut BlockingOliphaunt) -> Result<T> + Send + 'static,
+        F: FnOnce(&mut DirectOliphaunt) -> Result<T> + Send + 'static,
     {
         self.ensure_not_owner_thread()?;
         let (reply, receiver) = oneshot::channel();
@@ -559,7 +587,7 @@ fn complete_owner_shutdown(
 }
 
 fn run_database_owner(
-    database: &mut BlockingOliphaunt,
+    database: &mut DirectOliphaunt,
     queue: Receiver<OwnerMessage>,
     state: &AtomicU8,
     admission: &Mutex<()>,
@@ -611,7 +639,7 @@ fn run_database_owner(
 }
 
 fn handle_database_control(
-    database: &mut BlockingOliphaunt,
+    database: &mut DirectOliphaunt,
     message: OwnerControl,
     active_transaction: &mut Option<u64>,
     state: &AtomicU8,
@@ -694,7 +722,7 @@ fn handle_database_control(
 }
 
 fn rollback_active(
-    database: &mut BlockingOliphaunt,
+    database: &mut DirectOliphaunt,
     active_transaction: &mut Option<u64>,
 ) -> Result<()> {
     if active_transaction.take().is_some() {
@@ -729,7 +757,7 @@ impl Oliphaunt {
         let destination = destination.into();
         let backup = backup.as_ref().to_vec();
         run_owned("oliphaunt-wasix-restore", move || {
-            BlockingOliphaunt::restore(destination, backup)
+            DirectOliphaunt::restore(destination, backup)
         })
         .await
     }
@@ -844,7 +872,7 @@ impl Oliphaunt {
 
     /// Create a session-preserving PostgreSQL online physical backup.
     pub async fn backup(&self) -> Result<Vec<u8>> {
-        self.owner.call(None, BlockingOliphaunt::backup).await
+        self.owner.call(None, DirectOliphaunt::backup).await
     }
 
     #[cfg(feature = "tools")]
@@ -888,7 +916,7 @@ impl Oliphaunt {
 /// Builder for an owner-thread [`Oliphaunt`] database.
 #[derive(Debug, Clone)]
 pub struct OliphauntBuilder {
-    inner: BlockingOliphauntBuilder,
+    inner: DirectOliphauntBuilder,
 }
 
 impl Default for OliphauntBuilder {
@@ -901,7 +929,7 @@ impl OliphauntBuilder {
     /// Create a builder for an in-memory database.
     pub fn new() -> Self {
         Self {
-            inner: BlockingOliphauntBuilder::new(),
+            inner: DirectOliphauntBuilder::new(),
         }
     }
 
@@ -1451,7 +1479,7 @@ impl OliphauntServer {
 /// Builder for an asynchronous local PostgreSQL wire server.
 #[derive(Debug, Clone)]
 pub struct OliphauntServerBuilder {
-    inner: BlockingOliphauntServerBuilder,
+    inner: DirectOliphauntServerBuilder,
 }
 
 impl Default for OliphauntServerBuilder {
@@ -1464,7 +1492,7 @@ impl OliphauntServerBuilder {
     /// Create a memory-backed server builder listening on loopback TCP.
     pub fn new() -> Self {
         Self {
-            inner: BlockingOliphauntServerBuilder::new(),
+            inner: DirectOliphauntServerBuilder::new(),
         }
     }
 
@@ -1598,7 +1626,7 @@ impl OliphauntServerBuilder {
 }
 
 fn run_server_owner(
-    mut server: BlockingOliphauntServer,
+    mut server: DirectOliphauntServer,
     receiver: Receiver<ServerControl>,
     state: &AtomicU8,
     admission: &Mutex<()>,

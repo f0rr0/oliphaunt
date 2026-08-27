@@ -7,7 +7,7 @@ import Oliphaunt, {
   type WasixStorage,
   WasixStorageError,
 } from '@oliphaunt/wasix-ts';
-import BlockingOliphaunt from '@oliphaunt/wasix-ts/blocking';
+import WorkerOliphaunt from '@oliphaunt/wasix-ts/worker';
 import { indexedDB } from '@oliphaunt/wasix-ts/storage/indexed-db';
 import { opfs } from '@oliphaunt/wasix-ts/storage/opfs';
 import { pgDump, psql } from '@oliphaunt/wasix-tools';
@@ -15,7 +15,7 @@ import { pgDump, psql } from '@oliphaunt/wasix-tools';
 import logicalToolsFixtureJson from '../../src/shared/fixtures/postgres/logical-tools.json?raw';
 import logicalToolsSeed from '../../src/shared/fixtures/postgres/logical-tools-seed.sql?raw';
 import logicalToolsVerify from '../../src/shared/fixtures/postgres/logical-tools-verify.sql?raw';
-import { expectBlockingPgDump } from './blocking-pg-dump-smoke.js';
+import { expectDirectPgDump } from './direct-pg-dump-smoke.js';
 import { expectStructuredApi } from './structured-api-smoke.js';
 
 const logicalToolsFixture = JSON.parse(logicalToolsFixtureJson) as {
@@ -37,7 +37,7 @@ const searchParams = new URL(globalThis.location.href).searchParams;
 const smoke = searchParams.has('smoke');
 const pgUuidv7Canary = searchParams.has('pg_uuidv7');
 const postgisWorkerCanary = searchParams.has('postgis_worker');
-const blockingWorkerAudit = smoke ? auditBlockingWorkerConstruction() : undefined;
+const directWorkerAudit = smoke ? auditDirectWorkerConstruction() : undefined;
 
 try {
   const extensions: WasixExtensionDescriptor[] = [pgtap];
@@ -47,17 +47,17 @@ try {
   }
   if (smoke) {
     expectOwnedMemoryCopyAcrossGrowth();
-    await expectFailedBlockingOpenRecovery();
+    await expectFailedDirectOpenRecovery();
   }
   const storage = indexedDB('browser-smoke');
-  let database = await (smoke ? BlockingOliphaunt : Oliphaunt).open({
+  let database = await (smoke ? Oliphaunt : WorkerOliphaunt).open({
     extensions,
     ...(smoke ? { storage } : {}),
   });
-  status.textContent = `PostgreSQL 18 is running through the ${smoke ? 'blocking' : 'Worker-owned'} entrypoint.`;
+  status.textContent = `PostgreSQL 18 is running through the ${smoke ? 'direct root' : 'Worker-owned'} entrypoint.`;
   if (smoke) {
-    await expectStructuredApi(database, 'browser blocking');
-    await expectConcurrentBlockingExecution(database);
+    await expectStructuredApi(database, 'browser direct');
+    await expectConcurrentDirectExecution(database);
     await expectExclusiveOwnership(storage, extensions, 'IndexedDB');
     const pgtapVersion = await exercisePgtap(database);
     const firstUuid = pgUuidv7Canary ? await readPgUuidv7(database) : undefined;
@@ -81,14 +81,14 @@ try {
     if (pgUuidv7Canary) {
       await readPgUuidv7(database);
     }
-    await expectBlockingPgDump(database);
+    await expectDirectPgDump(database);
     await database.close();
 
-    blockingWorkerAudit?.assertNoneAndRestore();
-    await expectBlockingWithoutWorker();
+    directWorkerAudit?.assertNoneAndRestore();
+    await expectDirectWithoutWorker();
     await expectFailedWorkerOpenRecovery();
 
-    database = await Oliphaunt.open({ storage, extensions });
+    database = await WorkerOliphaunt.open({ storage, extensions });
     await expectStructuredApi(database, 'browser Worker');
     await expectSqlstate(database, 'SELEC 1', '42601');
     await expectAnswer(database);
@@ -120,8 +120,8 @@ try {
       opfsAnswers,
       pgtap: pgtapVersion,
       startupSqlstate: '3D000',
-      blockingWorkers: 0,
-      blockingPgDump: true,
+      directWorkers: 0,
+      directPgDump: true,
       opfsTransport: 'synchronous-access',
       opfsCrashAnswer: opfsCrash.answer,
       opfsCrashRelations: opfsCrash.relations,
@@ -156,7 +156,7 @@ try {
   output.textContent = describeError(error);
   document.documentElement.dataset.oliphauntSmoke = 'failed';
 } finally {
-  blockingWorkerAudit?.restore();
+  directWorkerAudit?.restore();
 }
 
 function simpleQuery(sql: string): Uint8Array {
@@ -178,7 +178,7 @@ async function expectLargePostgisWorkerModule(): Promise<string> {
     throw new Error('browser worker canary requires a PostGIS side module larger than 8 MiB');
   }
 
-  const database = await Oliphaunt.open({ extensions: [postgis] });
+  const database = await WorkerOliphaunt.open({ extensions: [postgis] });
   try {
     const version = await readPostgisVersion(database);
     await database.queryRaw('CREATE TEMP TABLE postgis_nested_error_catch(value integer)');
@@ -241,11 +241,8 @@ function expectOwnedMemoryCopyAcrossGrowth(): void {
   }
 }
 
-async function expectConcurrentBlockingExecution(first: OliphauntDatabase): Promise<void> {
-  const attempts = await Promise.allSettled([
-    BlockingOliphaunt.open(),
-    BlockingOliphaunt.open(),
-  ]);
+async function expectConcurrentDirectExecution(first: OliphauntDatabase): Promise<void> {
+  const attempts = await Promise.allSettled([Oliphaunt.open(), Oliphaunt.open()]);
   const opened = attempts.flatMap((attempt) =>
     attempt.status === 'fulfilled' ? [attempt.value] : [],
   );
@@ -258,7 +255,7 @@ async function expectConcurrentBlockingExecution(first: OliphauntDatabase): Prom
   }
   const [second, third] = opened;
   if (second === undefined || third === undefined) {
-    throw new Error('blocking concurrent-open smoke produced an incomplete result');
+    throw new Error('direct concurrent-open smoke produced an incomplete result');
   }
   try {
     await expectAnswer(first);
@@ -269,7 +266,7 @@ async function expectConcurrentBlockingExecution(first: OliphauntDatabase): Prom
   }
 }
 
-async function expectBlockingWithoutWorker(): Promise<void> {
+async function expectDirectWithoutWorker(): Promise<void> {
   const workerDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'Worker');
   Object.defineProperty(globalThis, 'Worker', {
     configurable: true,
@@ -277,7 +274,7 @@ async function expectBlockingWithoutWorker(): Promise<void> {
     value: undefined,
   });
   try {
-    const database = await BlockingOliphaunt.open();
+    const database = await Oliphaunt.open();
     try {
       await expectAnswer(database);
       await expectOwnedRawProtocolResponse(database);
@@ -325,7 +322,7 @@ async function expectOwnedRawProtocolResponse(database: OliphauntDatabase): Prom
 }
 
 async function expectLogicalTools(): Promise<string> {
-  const source = await Oliphaunt.open({ extensions: [pgtap] });
+  const source = await WorkerOliphaunt.open({ extensions: [pgtap] });
   let sql: string;
   try {
     await psql(source, { script: logicalToolsSeed });
@@ -337,7 +334,7 @@ async function expectLogicalTools(): Promise<string> {
     await source.close();
   }
 
-  const target = await Oliphaunt.open({ extensions: [pgtap] });
+  const target = await WorkerOliphaunt.open({ extensions: [pgtap] });
   try {
     await psql(target, { script: sql });
     const result = await target.queryRaw(logicalToolsVerify);
@@ -398,13 +395,9 @@ async function expectStartupSqlstate(
   }
 }
 
-async function expectFailedBlockingOpenRecovery(): Promise<void> {
-  await expectStartupSqlstate(
-    'oliphaunt_browser_smoke_missing_database',
-    '3D000',
-    BlockingOliphaunt,
-  );
-  const reopened = await BlockingOliphaunt.open();
+async function expectFailedDirectOpenRecovery(): Promise<void> {
+  await expectStartupSqlstate('oliphaunt_browser_smoke_missing_database', '3D000', Oliphaunt);
+  const reopened = await Oliphaunt.open();
   try {
     await expectAnswer(reopened);
   } finally {
@@ -413,8 +406,12 @@ async function expectFailedBlockingOpenRecovery(): Promise<void> {
 }
 
 async function expectFailedWorkerOpenRecovery(): Promise<void> {
-  await expectStartupSqlstate('oliphaunt_browser_worker_missing_database', '3D000', Oliphaunt);
-  const reopened = await Oliphaunt.open();
+  await expectStartupSqlstate(
+    'oliphaunt_browser_worker_missing_database',
+    '3D000',
+    WorkerOliphaunt,
+  );
+  const reopened = await WorkerOliphaunt.open();
   try {
     await expectAnswer(reopened);
   } finally {
@@ -428,7 +425,7 @@ async function expectExclusiveOwnership(
   provider: string,
 ): Promise<void> {
   try {
-    const duplicate = await BlockingOliphaunt.open({ storage, extensions });
+    const duplicate = await Oliphaunt.open({ storage, extensions });
     await duplicate.close();
     throw new Error(`browser smoke opened one ${provider} database twice`);
   } catch (error) {
@@ -442,7 +439,7 @@ async function expectOpfsPersistence(
   extensions: readonly WasixExtensionDescriptor[],
 ): Promise<string> {
   const storage = opfs('browser-smoke');
-  let database = await BlockingOliphaunt.open({ storage, extensions });
+  let database = await Oliphaunt.open({ storage, extensions });
   await expectExclusiveOwnership(storage, extensions, 'OPFS');
   await database.queryRaw('CREATE TABLE opfs_reopen_probe (answer integer NOT NULL)');
   await database.queryRaw('INSERT INTO opfs_reopen_probe VALUES (1)');
@@ -451,7 +448,7 @@ async function expectOpfsPersistence(
   await database.queryRaw('INSERT INTO opfs_reopen_probe VALUES (2)');
   await database.close();
 
-  database = await Oliphaunt.open({ storage, extensions });
+  database = await WorkerOliphaunt.open({ storage, extensions });
   try {
     await expectSynchronousOpfsTransport('browser-smoke');
     const reopened = await database.queryRaw(
@@ -470,7 +467,7 @@ async function expectOpfsPersistence(
     await database.close();
   }
 
-  database = await BlockingOliphaunt.open({ storage, extensions });
+  database = await Oliphaunt.open({ storage, extensions });
   try {
     const reopened = await database.queryRaw(
       'SELECT string_agg(answer::text, $1 ORDER BY answer) AS answers FROM opfs_reopen_probe',
@@ -661,7 +658,7 @@ function describeError(error: unknown): string {
   return error instanceof Error ? (error.stack ?? error.message) : String(error);
 }
 
-function auditBlockingWorkerConstruction(): {
+function auditDirectWorkerConstruction(): {
   assertNoneAndRestore(): void;
   restore(): void;
 } {
@@ -685,7 +682,7 @@ function auditBlockingWorkerConstruction(): {
     assertNoneAndRestore() {
       restore();
       if (constructed !== 0) {
-        throw new Error(`blocking entrypoint constructed ${constructed} Web Worker(s)`);
+        throw new Error(`root entrypoint constructed ${constructed} Web Worker(s)`);
       }
     },
     restore,

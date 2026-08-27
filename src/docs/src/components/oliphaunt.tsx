@@ -1284,8 +1284,8 @@ const guideProofs: Record<string, Array<{ title: string; description: string }>>
       description: 'The selected entrypoint opens memory by default and runs SQL through the portable runtime.',
     },
     {
-      title: 'Calling contract',
-      description: 'The root package owns a Worker; an explicit blocking entry point keeps the same database contract without native fallback.',
+      title: 'Execution placement',
+      description: 'The root runs in the importing realm; the explicit worker entry point moves the same database contract to a package-owned Worker.',
     },
     {
       title: 'Persistence',
@@ -1565,15 +1565,14 @@ await db.close();`,
   {
     language: 'Rust',
     packageName: 'oliphaunt',
-    code: `let db = Oliphaunt::builder()
+    code: `let mut db = Oliphaunt::builder()
     .directory("main.oliphaunt")
     .direct()
     .extension(Extension::Vector)
-    .open()
-    .await?;
+    .open()?;
 
-db.query("select 1 as ready").await?;
-db.close().await?;`,
+db.query("select 1 as ready")?;
+db.close()?;`,
   },
   {
     language: 'Swift',

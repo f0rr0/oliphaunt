@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, ensure};
-use oliphaunt_wasix::{DatabaseStorage, blocking::Oliphaunt};
+use oliphaunt_wasix::{DatabaseStorage, Oliphaunt};
 use serde::Deserialize;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 

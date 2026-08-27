@@ -46,9 +46,9 @@ try {
     pathToFileURL(resolve(packageRoot(packed.packages.binding.name), `lib/index.${runtimeName}.js`))
       .href
   );
-  const { default: BlockingOliphaunt } = await import(
+  const { default: WorkerOliphaunt } = await import(
     pathToFileURL(
-      resolve(packageRoot(packed.packages.binding.name), `lib/blocking.${runtimeName}.js`),
+      resolve(packageRoot(packed.packages.binding.name), `lib/worker-entry.${runtimeName}.js`),
     ).href
   );
   const { PostgresToolError, pgDump, psql } = await import(
@@ -64,7 +64,7 @@ try {
   console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: logical tools`);
   await verifyLogicalTools({
     Oliphaunt,
-    BlockingOliphaunt,
+    WorkerOliphaunt,
     PostgresToolError,
     pgDump,
     psql,
@@ -89,13 +89,13 @@ console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: PASS`);
 
 async function verifyLogicalTools({
   Oliphaunt,
-  BlockingOliphaunt,
+  WorkerOliphaunt,
   PostgresToolError,
   pgDump,
   psql,
   extension,
 }) {
-  const source = await Oliphaunt.open({ extensions: [extension] });
+  const source = await WorkerOliphaunt.open({ extensions: [extension] });
   let sql;
   try {
     console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: psql seed`);
@@ -124,10 +124,10 @@ async function verifyLogicalTools({
   }
 
   if (runtimeName === 'node') {
-    await verifyBlockingPgDump(BlockingOliphaunt, pgDump);
+    await verifyDirectPgDump(Oliphaunt, pgDump);
   }
 
-  const target = await Oliphaunt.open({ extensions: [extension] });
+  const target = await WorkerOliphaunt.open({ extensions: [extension] });
   try {
     console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: psql restore`);
     await psql(target, { script: sql });
@@ -151,23 +151,21 @@ async function verifyLogicalTools({
   }
 }
 
-async function verifyBlockingPgDump(BlockingOliphaunt, pgDump) {
-  console.log('WASIX TypeScript node tools/server smoke: blocking pg_dump');
-  const database = await BlockingOliphaunt.open();
+async function verifyDirectPgDump(Oliphaunt, pgDump) {
+  console.log('WASIX TypeScript node tools/server smoke: direct pg_dump');
+  const database = await Oliphaunt.open();
   try {
     await database.execute(
-      'CREATE TABLE blocking_dump_probe (id integer PRIMARY KEY, value text NOT NULL)',
+      'CREATE TABLE direct_dump_probe (id integer PRIMARY KEY, value text NOT NULL)',
     );
-    await database.execute("INSERT INTO blocking_dump_probe VALUES (1, 'same-realm')");
+    await database.execute("INSERT INTO direct_dump_probe VALUES (1, 'same-realm')");
     const sql = await pgDump(database);
-    if (!sql.includes('COPY public.blocking_dump_probe') || !sql.includes('same-realm')) {
-      throw new Error('blocking pg_dump did not preserve standard plain COPY output');
+    if (!sql.includes('COPY public.direct_dump_probe') || !sql.includes('same-realm')) {
+      throw new Error('direct pg_dump did not preserve standard plain COPY output');
     }
-    const result = await database.queryRaw(
-      'SELECT count(*)::int AS rows FROM blocking_dump_probe',
-    );
+    const result = await database.queryRaw('SELECT count(*)::int AS rows FROM direct_dump_probe');
     if (result.getText(0, 'rows') !== '1') {
-      throw new Error('blocking database was not usable after pg_dump');
+      throw new Error('direct database was not usable after pg_dump');
     }
   } finally {
     await database.close();

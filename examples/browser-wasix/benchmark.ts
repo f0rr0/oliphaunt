@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { PGliteWorker } from '@electric-sql/pglite/worker';
 import Oliphaunt from '@oliphaunt/wasix-ts';
-import BlockingOliphaunt from '@oliphaunt/wasix-ts/blocking';
+import WorkerOliphaunt from '@oliphaunt/wasix-ts/worker';
 import { opfs } from '@oliphaunt/wasix-ts/storage/opfs';
 
 type QueryParameters = readonly (null | string | number | boolean)[];
@@ -21,7 +21,7 @@ type OpenResult = {
 };
 
 type Engine = {
-  name: 'wasixBlocking' | 'wasixWorker' | 'pgliteDirect' | 'pgliteWorker';
+  name: 'wasixDirect' | 'wasixWorker' | 'pgliteDirect' | 'pgliteWorker';
   open(): Promise<OpenResult>;
 };
 
@@ -136,11 +136,24 @@ const transactionInserts = quick ? 20 : 100;
 let pgliteAssetsPromise: Promise<PGliteAssets> | undefined;
 
 const engines: Engine[] = [
-  { name: 'wasixBlocking', open: () => openWasix('blocking') },
+  { name: 'wasixDirect', open: () => openWasix('direct') },
   { name: 'wasixWorker', open: () => openWasix('worker') },
   { name: 'pgliteDirect', open: openPGliteDirect },
   { name: 'pgliteWorker', open: openPGliteWorker },
 ];
+const oliphauntExecutionSurfaces = {
+  direct: {
+    entrypoint: '@oliphaunt/wasix-ts',
+    callingContract: 'async',
+    executionOwner: 'caller',
+  },
+  worker: {
+    entrypoint: '@oliphaunt/wasix-ts/worker',
+    callingContract: 'async',
+    executionOwner: 'sdk-worker',
+  },
+} as const;
+type OliphauntExecutionSurface = keyof typeof oliphauntExecutionSurfaces;
 
 document.documentElement.dataset.oliphauntSmoke = 'running';
 status.textContent = 'Running caller-owned and Worker-owned browser benchmarks…';
@@ -164,11 +177,11 @@ try {
       crossOriginIsolated: globalThis.crossOriginIsolated,
     },
     configuration: {
-      callingContracts: ['caller-owned-blocking', 'package-worker-async'],
+      executionSurfaces: oliphauntExecutionSurfaces,
       coldStartupComparable: false,
       coldStartupNote:
         'firstReady samples are descriptive because each implementation caches compiled assets differently',
-      storage: persistentWorkerStorage ? 'worker-opfs/blocking-memory' : 'ephemeral-memory',
+      storage: persistentWorkerStorage ? 'worker-opfs/direct-memory' : 'ephemeral-memory',
       workloadProfile: 'fresh database after one untimed representative warmup',
       startupRuns,
       workloadRuns,
@@ -504,15 +517,15 @@ function summarizeResults(
   workload: Record<Engine['name'], WorkloadRun[]>,
 ): Record<string, unknown> {
   const startupSummary = {
-    firstReadyMs: callingContractComparisons(startup, (samples) => samples.slice(0, 1)),
-    warmReadyMs: callingContractComparisons(startup, (samples) => samples.slice(1)),
+    firstReadyMs: executionSurfaceComparisons(startup, (samples) => samples.slice(0, 1)),
+    warmReadyMs: executionSurfaceComparisons(startup, (samples) => samples.slice(1)),
   };
   const workloadSummary = Object.fromEntries(
     workloadMetrics.map((metric) => [
       metric,
       {
-        blocking: pairedComparison(
-          workload.wasixBlocking.map((run) => run.metrics[metric]),
+        direct: pairedComparison(
+          workload.wasixDirect.map((run) => run.metrics[metric]),
           workload.pgliteDirect.map((run) => run.metrics[metric]),
         ),
         worker: pairedComparison(
@@ -525,12 +538,12 @@ function summarizeResults(
   return { startup: startupSummary, workload: workloadSummary };
 }
 
-function callingContractComparisons(
+function executionSurfaceComparisons(
   samples: Record<Engine['name'], number[]>,
   select: (values: number[]) => number[],
 ) {
   return {
-    blocking: pairedComparison(select(samples.wasixBlocking), select(samples.pgliteDirect)),
+    direct: pairedComparison(select(samples.wasixDirect), select(samples.pgliteDirect)),
     worker: pairedComparison(select(samples.wasixWorker), select(samples.pgliteWorker)),
   };
 }
@@ -582,11 +595,11 @@ function comparison(wasixMs: number | undefined, pgliteMs: number | undefined) {
   };
 }
 
-async function openWasix(callingContract: 'blocking' | 'worker'): Promise<OpenResult> {
+async function openWasix(executionSurface: OliphauntExecutionSurface): Promise<OpenResult> {
   const started = performance.now();
-  const client = callingContract === 'blocking' ? BlockingOliphaunt : Oliphaunt;
+  const client = executionSurface === 'direct' ? Oliphaunt : WorkerOliphaunt;
   const database = await client.open({
-    ...(persistentWorkerStorage && callingContract === 'worker'
+    ...(persistentWorkerStorage && executionSurface === 'worker'
       ? { storage: opfs(nextPersistentDatabase('wasix')) }
       : {}),
   });
@@ -843,7 +856,7 @@ function quantile(values: number[], value: number): number {
 }
 
 function emptySamples<Value>(): Record<Engine['name'], Value[]> {
-  return { wasixBlocking: [], wasixWorker: [], pgliteDirect: [], pgliteWorker: [] };
+  return { wasixDirect: [], wasixWorker: [], pgliteDirect: [], pgliteWorker: [] };
 }
 
 function requireEqual(actual: number, expected: number, label: string): void {

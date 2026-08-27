@@ -18,40 +18,58 @@ fn main() {
 }
 ```
 
-## Direct and broker databases
+## Execution placement and database topology
 
 Direct mode is the default. It runs the embedded backend in the application
 process. Broker mode uses the same database API while placing that backend in a
 helper process.
 
-The root API is asynchronous in every topology. Open constructs PostgreSQL on
-the SDK's permanent owner thread; query, backup, restore, cancellation, and
-close therefore do not perform their blocking native or transport work on the
-thread polling the returned future. There is deliberately no public native
-blocking facade yet: a distinct caller-thread implementation remains gated on
-repeatable benchmarks showing a material benefit.
+The root API is synchronous and caller-thread owned. `open`, SQL, backup,
+restore, and close perform their work before returning. Its database and server
+handles are exclusive, deliberately `!Send` and `!Sync`, and their methods take
+`&mut self`. This is the minimum-overhead path for CLIs, tests, dedicated
+application threads, and callers which already control scheduling.
 
 <!-- liboliphaunt-doc-example:rust-basic-query -->
 ```rust
 use oliphaunt::{Oliphaunt, QueryParam};
 
-# async fn example() -> oliphaunt::Result<()> {
-let db = Oliphaunt::builder()
+# fn example() -> oliphaunt::Result<()> {
+let mut db = Oliphaunt::builder()
     .directory(".oliphaunt")
     .startup_guc("application_name", "my-app")
-    .open()
-    .await?;
+    .open()?;
 
 db.execute_with_params(
     "INSERT INTO events(value) VALUES ($1)",
     [QueryParam::from("ready")],
-).await?;
-let result = db.query("SELECT value FROM events").await?;
+)?;
+let result = db.query("SELECT value FROM events")?;
 assert_eq!(result.get_text(0, "value")?, Some("ready"));
+db.close()?;
+# Ok(())
+# }
+```
+
+Import the explicit worker API to give Oliphaunt a dedicated owner thread:
+
+<!-- liboliphaunt-doc-example:rust-worker-basic -->
+```rust
+use oliphaunt::worker::Oliphaunt;
+
+# async fn example() -> oliphaunt::Result<()> {
+let db = Oliphaunt::builder().temporary_directory().open().await?;
+let rows = db.query("SELECT 42::int4 AS answer").await?;
+assert_eq!(rows.get_text(0, "answer")?, Some("42"));
 db.close().await?;
 # Ok(())
 # }
 ```
+
+Worker handles are cloneable and `Send + Sync`. Open constructs the runtime on
+its permanent owner thread, and async calls enter one bounded FIFO. PostgreSQL
+blocks that owner thread, not the async executor thread polling the future.
+Dropping a pending future is not query cancellation.
 
 Select broker mode with `.broker()`. An explicit
 `.broker_executable(path)` is normally only needed by development and packaging
@@ -77,42 +95,35 @@ validate OID and format, reject ambiguous duplicate names, and preserve raw
 access as the lossless fallback. SQL errors are structured `PostgresError`
 values with operation notices.
 
-`is_closed()` reports that the database handle is terminally retired. It becomes
-true after successful teardown and after teardown starts but fails; it remains
-false for a pre-teardown `TransactionActive` validation error. `transaction`
-pins the one physical session and mirrors query, execute, exec, and describe.
-One-shot `rollback()` closes the transaction and lets its callback return
-without committing. A failed rollback or uncertain COMMIT poisons the database
-and does not issue a misleading second control command.
+`is_closed()` reports that the database handle is terminally retired.
+`transaction` exclusively borrows the caller-thread database and pins the one
+physical session in the worker API; both variants mirror query, execute, exec,
+and describe. One-shot `rollback()` closes the transaction and lets its
+callback return without committing. A failed rollback or uncertain COMMIT
+poisons the database and does not issue a misleading second control command.
 
-`close().await` is an ordered queue boundary: operations admitted first drain,
-including an already-admitted `BEGIN`, and later application work is rejected.
-If that earlier work leaves a transaction active, close returns
-`Error::TransactionActive` without discarding the session; finish the
-transaction and retry close. Required `COMMIT` or `ROLLBACK` for a `BEGIN`
-admitted before the cutoff remains admissible in the same FIFO while close is
-pending. Concurrent close calls share the same attempt. Once runtime teardown
-starts, the handle is terminal even if teardown reports an error; repeated
-close calls return the same stored result and all other work is rejected.
+Caller-thread `close()` tears down synchronously and replays its first terminal
+result. Worker `close().await` is an ordered queue boundary: operations admitted
+first drain, including an already-admitted `BEGIN`, and later work is rejected.
+Once either variant begins runtime teardown, the handle is terminal even if
+teardown reports an error.
 
 For COPY or another protocol flow that the structured helpers cannot represent,
 use `exec_protocol_raw` for one owned response or
 `exec_protocol_raw_stream` to consume backend protocol chunks as they arrive.
 The stream is the raw PostgreSQL protocol; the SDK does not publish a second
-parser or a separate COPY-specific abstraction. Stream callbacks execute
-synchronously and serially on the owner thread, and their borrowed chunk is
-valid only until the callback returns. A slow callback applies backpressure.
-Returning an error or panicking stops delivery after the runtime drains back to
-`ReadyForQuery`; the database remains usable. Do not wait on another operation
-on the same database from the callback—reentrant owner work is rejected.
+parser or a separate COPY-specific abstraction. Root callbacks execute inline
+and may borrow caller state. Worker callbacks execute serially on the owner
+thread and therefore require `Send + 'static`. In both cases the borrowed chunk
+is valid only until the callback returns, slow callbacks apply backpressure, and
+callback panics are contained before crossing the native ABI.
 
-`cancel().await` sends cancellation out of band. It does not wait behind the
-query queue and it does not replace awaiting the query future, which reports
-PostgreSQL's final result. Starting close cuts off new SQL but cancellation
-remains accepted while earlier SQL drains; it is rejected only when destructive
-teardown begins or the handle is terminal. Dropping a query future only
-abandons its reply: work which has not started is skipped, while work already
-executing runs to its normal readiness boundary.
+Worker `cancel().await` sends cancellation out of band. For the synchronous
+root, obtain `db.cancel_handle()` before a long call and move that cloneable,
+thread-safe capability to the thread which may interrupt it. Calling `cancel()`
+on the database itself is immediate but cannot interrupt code already blocking
+the same thread. Cancellation never replaces observing the original operation,
+which reports PostgreSQL's final result.
 
 ## Physical backup and restore
 
@@ -124,15 +135,14 @@ an existing managed database.
 ```rust
 use oliphaunt::Oliphaunt;
 
-# async fn example() -> oliphaunt::Result<()> {
-let source = Oliphaunt::builder()
+# fn example() -> oliphaunt::Result<()> {
+let mut source = Oliphaunt::builder()
     .directory(".oliphaunt-source")
-    .open()
-    .await?;
-let backup = source.backup().await?;
-source.close().await?;
+    .open()?;
+let backup = source.backup()?;
+source.close()?;
 
-Oliphaunt::restore(".oliphaunt-restored", backup).await?;
+Oliphaunt::restore(".oliphaunt-restored", backup)?;
 # Ok(())
 # }
 ```
@@ -140,8 +150,8 @@ Oliphaunt::restore(".oliphaunt-restored", backup).await?;
 The archive is a PostgreSQL physical initialization payload. It contains
 PGDATA and its backup metadata, not the outer managed-root descriptor. Restore
 creates and validates the receiving root and publishes `.oliphaunt.json` only
-after complete PGDATA exists. Restore copies its input, then performs native and
-filesystem work on a dedicated blocking thread.
+after complete PGDATA exists. Root restore runs synchronously; worker restore
+copies its input and moves native and filesystem work to a dedicated thread.
 
 ## Local server
 
@@ -157,13 +167,12 @@ Select a fixed loopback port or, on Unix hosts, a PostgreSQL socket directory:
 ```rust,no_run
 use oliphaunt::{Oliphaunt, ServerListen};
 
-# async fn open() -> oliphaunt::Result<()> {
-let server = Oliphaunt::builder()
+# fn open() -> oliphaunt::Result<()> {
+let mut server = Oliphaunt::builder()
     .listen(ServerListen::tcp_port(15432))
-    .open_server()
-    .await?;
+    .open_server()?;
 println!("{}", server.connection_string());
-server.close().await?;
+server.close()?;
 # Ok(())
 # }
 ```

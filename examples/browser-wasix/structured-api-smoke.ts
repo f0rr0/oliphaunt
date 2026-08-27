@@ -1,7 +1,4 @@
-import {
-  type OliphauntDatabase,
-  postgresOids,
-} from '@oliphaunt/wasix-ts';
+import { type OliphauntDatabase, postgresOids } from '@oliphaunt/wasix-ts';
 
 type StructuredObjectRow = {
   answer: number;
@@ -35,7 +32,9 @@ export async function expectStructuredApi(
     { rowMode: 'array' },
   );
   if (JSON.stringify(positional.rows) !== '[[41,42]]') {
-    throw new Error(`${label} decoded array-row contract failed: ${JSON.stringify(positional.rows)}`);
+    throw new Error(
+      `${label} decoded array-row contract failed: ${JSON.stringify(positional.rows)}`,
+    );
   }
 
   const custom = await database.query<{ answer: string }>('SELECT 42::int4 AS answer', [], {

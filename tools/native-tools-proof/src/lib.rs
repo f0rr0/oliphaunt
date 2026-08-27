@@ -41,17 +41,10 @@ mod tests {
         let seed = fixture("logical-tools-seed.sql");
         let verify = fixture("logical-tools-verify.sql");
         let result = std::panic::catch_unwind(|| {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("build native logical tools runtime");
-            let source = runtime
-                .block_on(
-                    Oliphaunt::builder()
-                        .directory(&source_root)
-                        .extension(Extension::Pgtap)
-                        .open_server(),
-                )
+            let mut source = Oliphaunt::builder()
+                .directory(&source_root)
+                .extension(Extension::Pgtap)
+                .open_server()
                 .expect("open native logical source server");
             oliphaunt_tools::psql(
                 source.connection_string(),
@@ -63,17 +56,12 @@ mod tests {
                     .expect("dump native server through public pg_dump facade");
             assert!(dump_sql.contains("COPY public.logical_items"));
             assert!(!dump_sql.contains("INSERT INTO public.logical_items"));
-            runtime
-                .block_on(source.close())
-                .expect("close native logical source server");
+            source.close().expect("close native logical source server");
 
-            let restored = runtime
-                .block_on(
-                    Oliphaunt::builder()
-                        .directory(&restored_root)
-                        .extension(Extension::Pgtap)
-                        .open_server(),
-                )
+            let mut restored = Oliphaunt::builder()
+                .directory(&restored_root)
+                .extension(Extension::Pgtap)
+                .open_server()
                 .expect("open native logical restore server");
             oliphaunt_tools::psql(
                 restored.connection_string(),
@@ -86,8 +74,8 @@ mod tests {
             )
             .expect("verify native logical restore through public psql facade");
             assert_eq!(verify_output.trim(), expected_logical_tools_row());
-            runtime
-                .block_on(restored.close())
+            restored
+                .close()
                 .expect("close native logical restore server");
         });
         let _ = std::fs::remove_dir_all(source_root);

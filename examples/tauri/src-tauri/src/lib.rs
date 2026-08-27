@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
-use oliphaunt::{Extension, Oliphaunt, QueryResult};
+use oliphaunt::worker::Oliphaunt;
+use oliphaunt::{Extension, QueryResult};
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
-use tokio::sync::Mutex;
 
 const SCHEMA: &str = r#"
 CREATE EXTENSION IF NOT EXISTS hstore;
@@ -68,7 +68,7 @@ RETURNING
 "#;
 
 struct TodoStore {
-    db: Mutex<Oliphaunt>,
+    db: Oliphaunt,
 }
 
 #[derive(Debug, Deserialize)]
@@ -139,8 +139,10 @@ async fn list_todos(
     search: String,
     status: String,
 ) -> Result<Vec<Todo>, CommandError> {
-    let db = state.db.lock().await;
-    let result = db.query_with_params(SELECT_TODOS, [search, status]).await?;
+    let result = state
+        .db
+        .query_with_params(SELECT_TODOS, [search, status])
+        .await?;
     todos_from_result(&result).map_err(CommandError::from)
 }
 
@@ -149,14 +151,14 @@ async fn create_todo(
     state: tauri::State<'_, TodoStore>,
     input: CreateTodo,
 ) -> Result<Todo, CommandError> {
-    let db = state.db.lock().await;
     let priority = input.priority.clamp(1, 3).to_string();
     let sql = format!(
         "INSERT INTO todos (title, notes, tags, priority)
          VALUES ($1, $2, hstore(ARRAY['area', $3, 'context', $4]), $5::integer)
          {RETURNING_TODO}"
     );
-    let result = db
+    let result = state
+        .db
         .query_with_params(
             &sql,
             [
@@ -173,25 +175,25 @@ async fn create_todo(
 
 #[tauri::command]
 async fn toggle_todo(state: tauri::State<'_, TodoStore>, id: i64) -> Result<Todo, CommandError> {
-    let db = state.db.lock().await;
     let sql = format!(
         "UPDATE todos
          SET done = NOT done, updated_at = now()
          WHERE id = $1
          {RETURNING_TODO}"
     );
-    let result = db.query_with_params(&sql, [id]).await?;
+    let result = state.db.query_with_params(&sql, [id]).await?;
     one_todo(&result).map_err(CommandError::from)
 }
 
 #[tauri::command]
 async fn delete_todo(state: tauri::State<'_, TodoStore>, id: i64) -> Result<(), CommandError> {
-    let db = state.db.lock().await;
-    db.query_with_params(
-        "DELETE FROM todos WHERE id = $1 RETURNING id::text AS id",
-        [id],
-    )
-    .await?;
+    state
+        .db
+        .query_with_params(
+            "DELETE FROM todos WHERE id = $1 RETURNING id::text AS id",
+            [id],
+        )
+        .await?;
     Ok(())
 }
 
@@ -231,7 +233,7 @@ pub fn run() {
         .setup(|app| {
             let directory = app.path().app_data_dir()?.join("oliphaunt-native-todos");
             let db = tauri::async_runtime::block_on(open_database(directory))?;
-            app.manage(TodoStore { db: Mutex::new(db) });
+            app.manage(TodoStore { db });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

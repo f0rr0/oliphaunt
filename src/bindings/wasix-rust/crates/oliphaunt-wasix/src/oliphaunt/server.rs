@@ -103,7 +103,7 @@ impl OliphauntServer {
         }
     }
 
-    /// Whether this blocking server is permanently retired.
+    /// Whether this direct server is permanently retired.
     ///
     /// The value becomes true when shutdown begins, including when terminal
     /// cleanup later reports an error. Repeated [`Self::close`] calls replay
@@ -842,7 +842,7 @@ mod tests {
     }
 
     #[test]
-    fn blocking_server_close_keeps_observable_terminal_state_and_replays_failure() {
+    fn direct_server_close_keeps_observable_terminal_state_and_replays_failure() {
         let mut server = server_with_worker_result(Err(anyhow!("injected server stop failure")));
         assert!(!server.is_closed());
 

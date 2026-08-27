@@ -37,8 +37,10 @@ pub mod __private {
 }
 mod build_resources;
 mod builder;
+mod cancellation;
 mod config;
 mod database;
+mod direct;
 mod engine;
 mod error;
 mod executor;
@@ -54,14 +56,15 @@ mod query_core {
 }
 mod reply;
 mod server;
+mod session;
 mod storage;
 #[cfg(test)]
 mod test_fixtures;
+pub mod worker;
 
 pub use build_resources::register_build_resources_dir;
-pub use builder::OliphauntBuilder;
 pub use config::ServerListen;
-pub use database::{Oliphaunt, OliphauntServer, Sql, Transaction};
+pub use direct::{CancelHandle, Oliphaunt, OliphauntBuilder, OliphauntServer, Sql, Transaction};
 pub use error::{Error, PostgresError, PostgresErrorField, Result};
 pub use extension::Extension;
 pub use query::{

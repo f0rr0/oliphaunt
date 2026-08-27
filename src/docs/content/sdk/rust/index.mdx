@@ -13,6 +13,10 @@ database ownership in the Rust sidecar. It owns the full native runtime model:
 direct calls for embedded latency, broker helpers for desktop robustness, and
 server mode for normal PostgreSQL clients.
 
+The root import is the synchronous caller-thread API. Import
+`oliphaunt::worker` explicitly to give Oliphaunt a dedicated owner thread and
+use async methods.
+
 ## Install
 
 Add the crate to your Rust app:
@@ -29,15 +33,29 @@ Then open a database in app-owned storage:
 ```rust
 use oliphaunt::{Extension, Oliphaunt};
 
-async fn open_database() -> oliphaunt::Result<()> {
-    let db = Oliphaunt::builder()
+fn open_database() -> oliphaunt::Result<()> {
+    let mut db = Oliphaunt::builder()
         .directory("./app-data/main.oliphaunt")
         .direct()
         .extension(Extension::Vector)
-        .open()
-        .await?;
+        .open()?;
 
+    let rows = db.query("SELECT 1::text AS value")?;
+    assert_eq!(rows.get_text(0, "value")?, Some("1"));
+    db.close()?;
+    Ok(())
+}
+```
+
+For an async owner-thread handle, only the import and awaiting change:
+
+```rust
+use oliphaunt::worker::Oliphaunt;
+
+async fn open_database() -> oliphaunt::Result<()> {
+    let db = Oliphaunt::builder().temporary_directory().open().await?;
     let rows = db.query("SELECT 1::text AS value").await?;
+    assert_eq!(rows.get_text(0, "value")?, Some("1"));
     db.close().await?;
     Ok(())
 }
@@ -56,6 +74,13 @@ Rust exposes the complete native mode model:
 Direct and broker mode serialize work through one physical PostgreSQL session.
 Server mode is the mode for independent concurrent PostgreSQL clients.
 
+Execution placement is orthogonal to those modes:
+
+| Import | Calling contract | Ownership |
+| --- | --- | --- |
+| `oliphaunt::Oliphaunt` | Synchronous `&mut self` methods | Exclusive `!Send + !Sync` handle; work runs on the opening thread |
+| `oliphaunt::worker::Oliphaunt` | Async methods returning `Send` futures | Cloneable `Send + Sync` handle; one dedicated owner thread and bounded FIFO |
+
 The selected mode defines support. Use the static runtime support matrix when
 choosing a mode; opened handles expose operations directly.
 
@@ -66,7 +91,8 @@ choosing a mode; opened handles expose operations directly.
 - Select exact SQL extension names before opening the database.
 - Use SDK backup and restore APIs for data movement instead of copying a live
   PostgreSQL directory.
-- Use broker or server mode when crash isolation or independent clients matter.
+- Use the worker API when an async executor must remain responsive.
+- Use broker or server mode when process isolation or independent clients matter.
 
 ## First Query
 

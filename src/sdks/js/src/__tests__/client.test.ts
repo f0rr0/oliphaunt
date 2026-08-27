@@ -227,15 +227,10 @@ test('transaction Promise methods never leak admission or planning failures sync
         () => transaction.exec('SELECT\0invalid'),
         () => transaction.describe('SELECT\0invalid'),
       ]) {
-        assert.match(
-          String(await catchPromiseWithoutSynchronousThrow(call)),
-          /NUL bytes/,
-        );
+        assert.match(String(await catchPromiseWithoutSynchronousThrow(call)), /NUL bytes/);
       }
       assert.equal(
-        await catchPromiseWithoutSynchronousThrow(() =>
-          transaction.execProtocolRaw(invalidBytes),
-        ),
+        await catchPromiseWithoutSynchronousThrow(() => transaction.execProtocolRaw(invalidBytes)),
         byteError,
       );
       assert.equal(
@@ -247,10 +242,7 @@ test('transaction Promise methods never leak admission or planning failures sync
       assert.match(
         String(
           await catchPromiseWithoutSynchronousThrow(() =>
-            transaction.execProtocolRawStream(
-              new Uint8Array([0x51]),
-              undefined as never,
-            ),
+            transaction.execProtocolRawStream(new Uint8Array([0x51]), undefined as never),
           ),
         ),
         /callback must be a function/,
@@ -273,9 +265,7 @@ test('transaction Promise methods never leak admission or planning failures sync
       /transaction is no longer active/,
     );
     assert.match(
-      String(
-        await catchPromiseWithoutSynchronousThrow(() => expired.rollback()),
-      ),
+      String(await catchPromiseWithoutSynchronousThrow(() => expired.rollback())),
       /transaction is no longer active/,
     );
   } finally {
@@ -426,10 +416,7 @@ test('keeps cancellation out of band and close drains accepted work exactly once
     const cancellation = db.cancel();
     assert.equal(firstClose, secondClose);
     await Promise.all([operationStarted.promise, cancellationStarted.promise]);
-    assert.deepEqual(binding.operationEvents, [
-      'cancel',
-      'raw:UPDATE things SET value = 12',
-    ]);
+    assert.deepEqual(binding.operationEvents, ['cancel', 'raw:UPDATE things SET value = 12']);
     await assert.rejects(() => db.backup(), /closing/);
     assert.equal(binding.detachCalls, 0);
 
@@ -522,10 +509,7 @@ test('terminal broker and server close failures retire the facade and replay exa
       assert.equal(database.closed, true);
       assert.equal(closeCalls, 1);
       assert.equal(database.close(), first);
-      assert.equal(
-        await database.close().catch((error: unknown) => error),
-        closeError,
-      );
+      assert.equal(await database.close().catch((error: unknown) => error), closeError);
       await assert.rejects(() => database.query('SELECT 1'), /closed/);
       await assert.rejects(() => database.cancel(), /closed/);
       assert.equal(closeCalls, 1);
@@ -571,10 +555,7 @@ test('raw stream callbacks cannot queue same-handle work while cancel stays out 
         transactionAttempts = [
           transaction.execute('UPDATE callback_reentry SET value = 1'),
           transaction.rollback(),
-          transaction.execProtocolRawStream(
-            new Uint8Array([0x51]),
-            () => undefined,
-          ),
+          transaction.execProtocolRawStream(new Uint8Array([0x51]), () => undefined),
         ];
         for (const attempt of transactionAttempts) void attempt.catch(() => undefined);
       });
@@ -649,8 +630,7 @@ test('cleans an opened owner before rejecting failed facade publication', async 
         await binding.detach(handle);
         return { state: 'closed' };
       };
-      runtime.connectionString = () =>
-        'postgresql://postgres@127.0.0.1:5432/postgres';
+      runtime.connectionString = () => 'postgresql://postgres@127.0.0.1:5432/postgres';
       const client = createOliphauntClient(() => binding, {
         broker: runtime,
         server: runtime,
@@ -665,10 +645,7 @@ test('cleans an opened owner before rejecting failed facade publication', async 
               ...config,
               topology,
             });
-      assert.equal(
-        await firstOpen.catch((error: unknown) => error),
-        registrationError,
-      );
+      assert.equal(await firstOpen.catch((error: unknown) => error), registrationError);
       assert.equal(binding.detachCalls, 1);
       assert.equal(binding.registeredOwners.length, 1);
       assert.deepEqual(binding.unregisteredOwners, binding.registeredOwners);
@@ -1063,9 +1040,7 @@ class PublicationFailingFakeBinding extends FakeBinding {
   }
 }
 
-async function catchPromiseWithoutSynchronousThrow(
-  call: () => Promise<unknown>,
-): Promise<unknown> {
+async function catchPromiseWithoutSynchronousThrow(call: () => Promise<unknown>): Promise<unknown> {
   let caught!: Promise<unknown>;
   assert.doesNotThrow(() => {
     caught = call().catch((error: unknown) => error);

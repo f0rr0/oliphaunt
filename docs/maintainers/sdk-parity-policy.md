@@ -52,7 +52,7 @@ The runtime/product capabilities around that common database API are:
 | Physical backup | direct and broker; mobile direct | yes | yes |
 | Physical restore | new or empty destination | static restore into a new or empty directory | static restore into new or empty persistent storage |
 | Listening server | Rust and desktop TypeScript | yes | Node, Bun, and Deno through explicit server subpaths; no browser socket API |
-| PostgreSQL tools | optional endpoint-oriented Rust and desktop TypeScript products; no core SDK dependency | `tools` feature: open-database `pg_dump` and non-interactive `psql` | optional `@oliphaunt/wasix-tools`: `pgDump` with default Worker or explicit blocking handles; non-interactive `psql` with the default Worker handle |
+| PostgreSQL tools | optional endpoint-oriented Rust and desktop TypeScript products; no core SDK dependency | `tools` feature: open-database `pg_dump` and non-interactive `psql` on root or worker handles | optional `@oliphaunt/wasix-tools`: `pgDump` with direct or Worker handles; non-interactive `psql` with a Worker handle |
 | Cancellation | native C and language SDKs | no public direct cancellation contract | no |
 | Protocol/COPY response streaming | canonical `execProtocolRawStream`/`exec_protocol_raw_stream`, backed by `oliphaunt_exec_protocol_raw_stream` | `exec_protocol_raw_stream`; COPY uses the guest stream pump | `execProtocolRawStream` with bounded backpressure |
 
@@ -65,11 +65,11 @@ is runtime-owned and does not become a database method or option.
 These are language-native deltas, not parity failures:
 
 - Both Rust products expose the same fluent `Sql` statement builder with typed
-  binds and `query`, `execute`, or `describe` terminals. Their root APIs use
-  futures and retain blocking runtime work on dedicated owner threads. Rust
-  WASIX additionally exposes `oliphaunt_wasix::blocking`: its direct database
-  uses exclusive `&mut` caller-thread calls, while its server lifecycle calls
-  are synchronous around the existing listener-owned backend.
+  binds and `query`, `execute`, or `describe` terminals. Their roots are
+  synchronous, exclusive caller-thread APIs. Their explicit `worker` modules
+  retain the cloneable asynchronous contract and run database work on dedicated
+  owner threads. Rust WASIX server lifecycle calls remain synchronous at the
+  root while the listener owns its backend thread.
 - Swift uses actors, `URL`, `Data`, and `OliphauntPostgresDecodable`.
 - Kotlin uses coroutines, sealed storage types, `ByteArray`, and
   `PostgresDecoder<T>`.
@@ -84,9 +84,9 @@ These are language-native deltas, not parity failures:
   in browsers and exports it only from the Node, Bun, and Deno server subpaths.
 - WASIX tools run against an open embedded database in both bindings. Their
   optional carriers stay outside the core SDK packages. TypeScript `pgDump`
-  supports default Worker and explicit blocking database handles; TypeScript
-  `psql` requires the default Worker handle and uses a bounded internal pgwire
-  bridge between workers.
+  supports root-direct and explicit Worker database handles; TypeScript `psql`
+  requires a Worker handle and uses a bounded internal pgwire bridge between
+  workers.
   Neither needs a browser socket.
 - `@oliphaunt/wasix-ts/internal/tools` is a version-locked cross-package bridge
   owned solely by `@oliphaunt/wasix-tools`. Its export-map visibility does not

@@ -33,14 +33,10 @@ vi.mock('@oliphaunt/liboliphaunt-wasix', () => ({
   },
 }));
 
-import {
-  openWasixWithWorker,
-  restoreWasix,
-  restoreWasixWithWorker,
-  serializeOpenConfig,
-} from '../client-common.js';
+import { restoreWasix, serializeOpenConfig } from '../client-common.js';
 import { indexedDB } from '../storage/indexed-db.js';
 import type { WasixIcuDescriptor, WasixRuntimeDescriptor } from '../types.js';
+import { openWasixWithWorker, restoreWasixWithWorker } from '../worker-rpc.js';
 import { FakeWorkerPort, workerOpenOptions } from './worker-helpers.js';
 
 describe('WASIX shared client orchestration', () => {
@@ -87,9 +83,7 @@ describe('WASIX shared client orchestration', () => {
     for (const execution of ['direct', 'worker', undefined]) {
       expect(() =>
         serializeOpenConfig({ execution } as unknown as Parameters<typeof serializeOpenConfig>[0]),
-      ).toThrow(
-        /no longer accepts the "execution" option.*@oliphaunt\/wasix-ts\/blocking/,
-      );
+      ).toThrow(/no longer accepts the "execution" option.*@oliphaunt\/wasix-ts\/worker/);
     }
   });
 
@@ -133,7 +127,7 @@ describe('WASIX shared client orchestration', () => {
     );
   });
 
-  it('runs root restore in a temporary owner Worker without detaching caller bytes', async () => {
+  it('runs Worker restore without detaching caller bytes', async () => {
     const port = new FakeWorkerPort();
     const bytes = Uint8Array.of(1, 2, 3);
     const restoring = restoreWasixWithWorker(() => port, indexedDB('restore-target'), bytes);

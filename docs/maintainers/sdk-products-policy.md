@@ -17,7 +17,7 @@ same product concepts where the target platform can do so honestly:
 - TypeScript is the SDK for Node.js, Bun, and Deno. Tauri apps use the Rust SDK
   behind narrow app-owned commands.
 - WASIX TypeScript is the SDK for browser, Node.js, Bun, and Deno applications
-  using its package-Worker default or explicit caller-blocking entrypoint.
+  using its caller-realm root or explicit package-Worker entrypoint.
 
 `tools/policy/sdk-manifest.toml` is the repo-level SDK registry. The canonical
 product graph lives in `src/*/moon.yml`; `sdk-contracts:check` parses both and
@@ -28,11 +28,11 @@ not source-text assertions, prove runtime delegation and consumer behavior.
 - `src/bindings/wasix-rust/crates/oliphaunt-wasix/`: Rust SDK over the portable
   and host-AOT `liboliphaunt-wasix` runtime products.
 - `src/bindings/wasix-ts/`: TypeScript SDK over the portable WASIX carrier for
-  browser, Node.js, Bun, and Deno. Its root owns a Worker; its explicit
-  `/blocking` entry point owns caller-realm execution. `tools-package/` owns the
+  browser, Node.js, Bun, and Deno. Its root owns caller-realm execution; its
+  explicit `/worker` entry point owns a Worker. `tools-package/` owns the
   optional TypeScript facade for `pg_dump` against either handle and
-  non-interactive `psql` against default Worker handles; the executable modules
-  are a separate `liboliphaunt-wasix` carrier.
+  non-interactive `psql` against Worker handles; the executable modules are a
+  separate `liboliphaunt-wasix` carrier.
 - `src/sdks/swift/`: Swift package with an actor-first `Oliphaunt` API and a
   native-direct C ABI product boundary over `liboliphaunt`; it can materialize
   packaged runtime/cluster-seed resources for iOS and macOS apps.

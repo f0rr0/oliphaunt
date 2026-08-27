@@ -35,10 +35,7 @@ import {
   type TransactionStatus,
 } from './query';
 import { generatedExtensionBySqlName } from './generated/extensions';
-import type {
-  NativeOpenConfig,
-  Spec as NativeOliphauntModule,
-} from './specs/NativeOliphaunt';
+import type { NativeOpenConfig, Spec as NativeOliphauntModule } from './specs/NativeOliphaunt';
 
 export type BinaryInput = ByteInput;
 export type ProtocolChunkCallback = (chunk: Uint8Array) => void;
@@ -48,10 +45,7 @@ export type DatabaseStorage =
   | { readonly kind: 'directory'; readonly path: string }
   | { readonly kind: 'applicationData'; readonly name: string };
 
-export type RestoreDestination = Exclude<
-  DatabaseStorage,
-  { readonly kind: 'temporaryDirectory' }
->;
+export type RestoreDestination = Exclude<DatabaseStorage, { readonly kind: 'temporaryDirectory' }>;
 
 export type OpenConfig = {
   storage?: DatabaseStorage;
@@ -87,16 +81,10 @@ export type OliphauntTransaction = {
     sql: string,
     options?: Omit<QueryOptions, 'encoders'>,
   ): Promise<ExecResult<Row>>;
-  describe(
-    sql: string,
-    parameterTypeOids?: ReadonlyArray<number>,
-  ): Promise<DescribeResult>;
+  describe(sql: string, parameterTypeOids?: ReadonlyArray<number>): Promise<DescribeResult>;
   rollback(): Promise<void>;
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
-  execProtocolRawStream(
-    input: BinaryInput,
-    onChunk: ProtocolChunkCallback,
-  ): Promise<void>;
+  execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
 };
 
 export type OliphauntDatabase = {
@@ -120,20 +108,12 @@ export type OliphauntDatabase = {
     sql: string,
     options?: Omit<QueryOptions, 'encoders'>,
   ): Promise<ExecResult<Row>>;
-  describe(
-    sql: string,
-    parameterTypeOids?: ReadonlyArray<number>,
-  ): Promise<DescribeResult>;
+  describe(sql: string, parameterTypeOids?: ReadonlyArray<number>): Promise<DescribeResult>;
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
-  execProtocolRawStream(
-    input: BinaryInput,
-    onChunk: ProtocolChunkCallback,
-  ): Promise<void>;
+  execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
   backup(): Promise<Uint8Array>;
   cancel(): Promise<void>;
-  transaction<T>(
-    body: (transaction: OliphauntTransaction) => Promise<T> | T,
-  ): Promise<T>;
+  transaction<T>(body: (transaction: OliphauntTransaction) => Promise<T> | T): Promise<T>;
   close(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
 };
@@ -146,25 +126,19 @@ export type ForgottenDatabase = Readonly<{
 
 /** @internal Deterministic lifecycle-test seam; not exported by the package. */
 export type ForgottenDatabaseRegistry = {
-  register(
-    target: object,
-    heldValue: ForgottenDatabase,
-    unregisterToken: object,
-  ): void;
+  register(target: object, heldValue: ForgottenDatabase, unregisterToken: object): void;
   unregister(unregisterToken: object): boolean;
 };
 
 const forgottenDatabaseRegistry: ForgottenDatabaseRegistry | undefined =
   typeof FinalizationRegistry === 'function'
-    ? new FinalizationRegistry<ForgottenDatabase>(
-        ({ generation, transport }) => {
-          try {
-            transport.closeIfGeneration(generation);
-          } catch {
-            // Module invalidation remains the process-lifecycle fallback.
-          }
-        },
-      )
+    ? new FinalizationRegistry<ForgottenDatabase>(({ generation, transport }) => {
+        try {
+          transport.closeIfGeneration(generation);
+        } catch {
+          // Module invalidation remains the process-lifecycle fallback.
+        }
+      })
     : undefined;
 
 class NativeOliphauntDatabase implements OliphauntDatabase {
@@ -280,17 +254,12 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
     });
   }
 
-  describe(
-    sql: string,
-    parameterTypeOids: ReadonlyArray<number> = [],
-  ): Promise<DescribeResult> {
+  describe(sql: string, parameterTypeOids: ReadonlyArray<number> = []): Promise<DescribeResult> {
     this.#assertNotInProtocolStreamCallback();
     return this.#capturePromiseFailure(() => {
       this.#assertNoActiveTransaction();
       const input = describeQuery(sql, [...parameterTypeOids]);
-      return this.#serialize(() =>
-        this.#runOrdinaryExchangeUnlocked(input, parseDescribeResponse),
-      );
+      return this.#serialize(() => this.#runOrdinaryExchangeUnlocked(input, parseDescribeResponse));
     });
   }
 
@@ -303,10 +272,7 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
     });
   }
 
-  execProtocolRawStream(
-    input: BinaryInput,
-    onChunk: ProtocolChunkCallback,
-  ): Promise<void> {
+  execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void> {
     this.#assertNotInProtocolStreamCallback();
     return this.#capturePromiseFailure(() => {
       this.#assertNoActiveTransaction();
@@ -347,12 +313,7 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
         if (propagateFailure && failure !== undefined) throw failure;
       },
     );
-    await execProtocolStreamJsi(
-      this.#jsiTransport,
-      this.#handle,
-      toUint8Array(input),
-      consumer,
-    );
+    await execProtocolStreamJsi(this.#jsiTransport, this.#handle, toUint8Array(input), consumer);
   }
 
   backup(): Promise<Uint8Array> {
@@ -360,9 +321,7 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
     return this.#capturePromiseFailure(() => {
       this.#assertNoActiveTransaction();
       return this.#serialize(() => {
-        return this.#runNativeOperation(() =>
-          backupJsi(this.#jsiTransport, this.#handle),
-        );
+        return this.#runNativeOperation(() => backupJsi(this.#jsiTransport, this.#handle));
       });
     });
   }
@@ -383,16 +342,12 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
     }
   }
 
-  transaction<T>(
-    body: (transaction: OliphauntTransaction) => Promise<T> | T,
-  ): Promise<T> {
+  transaction<T>(body: (transaction: OliphauntTransaction) => Promise<T> | T): Promise<T> {
     this.#assertNotInProtocolStreamCallback();
     return this.#capturePromiseFailure(() => {
       this.#assertAvailable();
       if (typeof body !== 'function') {
-        return Promise.reject(
-          new TypeError('Oliphaunt transaction body must be a function'),
-        );
+        return Promise.reject(new TypeError('Oliphaunt transaction body must be a function'));
       }
       if (this.#activeTransaction) {
         return Promise.reject(new Error(transactionPinnedMessage));
@@ -437,10 +392,7 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
               try {
                 await this.#rollbackControlUnlocked();
               } catch (rollbackError) {
-                throw transactionRollbackAggregate(
-                  settlement.error,
-                  rollbackError,
-                );
+                throw transactionRollbackAggregate(settlement.error, rollbackError);
               }
             }
             throw settlement.error;
@@ -474,9 +426,7 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
         return this.#closeAttempt;
       }
       if (this.#activeTransaction) {
-        return Promise.reject(
-          new Error('cannot close Oliphaunt while a transaction is active'),
-        );
+        return Promise.reject(new Error('cannot close Oliphaunt while a transaction is active'));
       }
 
       this.#closing = true;
@@ -584,10 +534,7 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
     try {
       response = await this.#execProtocolRawUnlocked(input);
     } catch (error) {
-      const failure = asError(
-        error,
-        'Oliphaunt transport failed before PostgreSQL readiness',
-      );
+      const failure = asError(error, 'Oliphaunt transport failed before PostgreSQL readiness');
       this.#poison(failure);
       throw failure;
     }
@@ -596,10 +543,7 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
     try {
       inspectedStatus = inspectReadyForQuery(response);
     } catch (error) {
-      const failure = asError(
-        error,
-        'structured response has no valid ReadyForQuery boundary',
-      );
+      const failure = asError(error, 'structured response has no valid ReadyForQuery boundary');
       this.#poison(failure);
       throw failure;
     }
@@ -608,19 +552,14 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
       const result = parse(response);
       const parsedStatus = responseTransactionStatus(result);
       if (parsedStatus !== undefined && parsedStatus !== inspectedStatus) {
-        const failure = new Error(
-          'structured parser disagreed with the ReadyForQuery boundary',
-        );
+        const failure = new Error('structured parser disagreed with the ReadyForQuery boundary');
         this.#poison(failure);
         throw failure;
       }
       observedTransactionStatuses.set(result, inspectedStatus);
       return result;
     } catch (error) {
-      const failure = asError(
-        error,
-        'Oliphaunt could not parse the PostgreSQL response',
-      );
+      const failure = asError(error, 'Oliphaunt could not parse the PostgreSQL response');
       observedTransactionStatuses.set(failure, inspectedStatus);
       throw failure;
     }
@@ -660,12 +599,7 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
       );
       const status = requiredTransactionStatus(result);
       if (status !== 'idle' || result.commandTag !== 'ROLLBACK') {
-        recoveryFailure = transactionBoundaryError(
-          'ROLLBACK',
-          result.commandTag,
-          'idle',
-          status,
-        );
+        recoveryFailure = transactionBoundaryError('ROLLBACK', result.commandTag, 'idle', status);
       }
     } catch (error) {
       recoveryFailure = asError(error);
@@ -697,12 +631,7 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
     }
     const status = requiredTransactionStatus(result);
     if (result.commandTag === 'BEGIN' && status === 'transaction') return;
-    const failure = transactionBoundaryError(
-      'BEGIN',
-      result.commandTag,
-      'transaction',
-      status,
-    );
+    const failure = transactionBoundaryError('BEGIN', result.commandTag, 'transaction', status);
     if (status !== 'idle') await this.#recoverToIdleUnlocked(failure);
     throw failure;
   }
@@ -716,27 +645,14 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
       );
     } catch (error) {
       const failure = asError(error);
-      this.#poison(
-        errorWithCause(
-          'COMMIT outcome is unknown; close the database',
-          failure,
-        ),
-      );
+      this.#poison(errorWithCause('COMMIT outcome is unknown; close the database', failure));
       throw failure;
     }
     const status = requiredTransactionStatus(result);
     if (result.commandTag === 'COMMIT' && status === 'idle') return 'committed';
-    if (result.commandTag === 'ROLLBACK' && status === 'idle')
-      return 'rolledBack';
-    const failure = transactionBoundaryError(
-      'COMMIT',
-      result.commandTag,
-      'idle',
-      status,
-    );
-    this.#poison(
-      errorWithCause('COMMIT outcome is unknown; close the database', failure),
-    );
+    if (result.commandTag === 'ROLLBACK' && status === 'idle') return 'rolledBack';
+    const failure = transactionBoundaryError('COMMIT', result.commandTag, 'idle', status);
+    this.#poison(errorWithCause('COMMIT outcome is unknown; close the database', failure));
     throw failure;
   }
 
@@ -748,22 +664,12 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
       );
       const status = requiredTransactionStatus(result);
       if (result.commandTag === 'ROLLBACK' && status === 'idle') return;
-      const failure = transactionBoundaryError(
-        'ROLLBACK',
-        result.commandTag,
-        'idle',
-        status,
-      );
+      const failure = transactionBoundaryError('ROLLBACK', result.commandTag, 'idle', status);
       this.#poison(failure);
       throw failure;
     } catch (error) {
       const failure = asError(error);
-      this.#poison(
-        errorWithCause(
-          'ROLLBACK failed; PostgreSQL session state is unknown',
-          failure,
-        ),
-      );
+      this.#poison(errorWithCause('ROLLBACK failed; PostgreSQL session state is unknown', failure));
       throw failure;
     }
   }
@@ -782,8 +688,7 @@ type StructuredExchange = <T extends object>(
   parse: (bytes: Uint8Array) => T,
 ) => Promise<T>;
 
-type TransactionState =
-  'active' | 'finishing' | 'rolledBack' | 'failed' | 'expired';
+type TransactionState = 'active' | 'finishing' | 'rolledBack' | 'failed' | 'expired';
 
 type TransactionSettlement =
   | Readonly<{ kind: 'ready' }>
@@ -793,10 +698,7 @@ type TransactionSettlement =
 class OliphauntTransactionHandle implements OliphauntTransaction {
   readonly #exchange: StructuredExchange;
   readonly #execRaw: (input: BinaryInput) => Promise<Uint8Array>;
-  readonly #execStream: (
-    input: BinaryInput,
-    onChunk: ProtocolChunkCallback,
-  ) => Promise<void>;
+  readonly #execStream: (input: BinaryInput, onChunk: ProtocolChunkCallback) => Promise<void>;
   readonly #rollbackControl: () => Promise<void>;
   readonly #poison: (cause: Error) => void;
   readonly #protocolStreamCallbackReentry: () => Error | undefined;
@@ -808,10 +710,7 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
   constructor(
     exchange: StructuredExchange,
     execRaw: (input: BinaryInput) => Promise<Uint8Array>,
-    execStream: (
-      input: BinaryInput,
-      onChunk: ProtocolChunkCallback,
-    ) => Promise<void>,
+    execStream: (input: BinaryInput, onChunk: ProtocolChunkCallback) => Promise<void>,
     rollbackControl: () => Promise<void>,
     poison: (cause: Error) => void,
     protocolStreamCallbackReentry: () => Error | undefined,
@@ -838,11 +737,7 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
     options: ParameterOptions = {},
   ): Promise<CommandResult> {
     return this.#enqueue(() => {
-      const plan = planQuery(
-        sql,
-        parameters,
-        snapshotParameterOptions(options),
-      );
+      const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
       return runQueryPlan(
         (input, parse) => this.#runTransactionExchange(input, parse),
         plan,
@@ -874,11 +769,7 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
     options: ParameterOptions = {},
   ): Promise<RawQueryResult> {
     return this.#enqueue(() => {
-      const plan = planQuery(
-        sql,
-        parameters,
-        snapshotParameterOptions(options),
-      );
+      const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
       return runQueryPlan(
         (input, parse) => this.#runTransactionExchange(input, parse),
         plan,
@@ -900,10 +791,7 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
     });
   }
 
-  describe(
-    sql: string,
-    parameterTypeOids: ReadonlyArray<number> = [],
-  ): Promise<DescribeResult> {
+  describe(sql: string, parameterTypeOids: ReadonlyArray<number> = []): Promise<DescribeResult> {
     return this.#enqueue(() => {
       const input = describeQuery(sql, [...parameterTypeOids]);
       return this.#runTransactionExchange(input, parseDescribeResponse);
@@ -937,10 +825,7 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
     });
   }
 
-  execProtocolRawStream(
-    input: BinaryInput,
-    onChunk: ProtocolChunkCallback,
-  ): Promise<void> {
+  execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void> {
     return this.#enqueue(() => {
       if (typeof onChunk !== 'function') {
         throw new TypeError('protocol stream callback must be a function');
@@ -1053,9 +938,7 @@ async function runQueryPlan<T extends NoticeCarrier>(
 
 function snapshotParameterOptions(options: ParameterOptions): ParameterOptions {
   return Object.freeze({
-    ...(options.encoders === undefined
-      ? {}
-      : { encoders: Object.freeze({ ...options.encoders }) }),
+    ...(options.encoders === undefined ? {} : { encoders: Object.freeze({ ...options.encoders }) }),
   });
 }
 
@@ -1065,9 +948,7 @@ function snapshotReadOptions(
   return Object.freeze({
     rowMode: options.rowMode,
     valueMode: options.valueMode,
-    ...(options.decoders === undefined
-      ? {}
-      : { decoders: Object.freeze({ ...options.decoders }) }),
+    ...(options.decoders === undefined ? {} : { decoders: Object.freeze({ ...options.decoders }) }),
   });
 }
 
@@ -1086,24 +967,17 @@ function prependNotices<T extends NoticeCarrier>(
   return result;
 }
 
-const transactionPinnedMessage =
-  'physical session is pinned; use the active OliphauntTransaction';
+const transactionPinnedMessage = 'physical session is pinned; use the active OliphauntTransaction';
 const observedTransactionStatuses = new WeakMap<object, TransactionStatus>();
 
-function observedTransactionStatus(
-  value: object,
-): TransactionStatus | undefined {
-  return (
-    responseTransactionStatus(value) ?? observedTransactionStatuses.get(value)
-  );
+function observedTransactionStatus(value: object): TransactionStatus | undefined {
+  return responseTransactionStatus(value) ?? observedTransactionStatuses.get(value);
 }
 
 function requiredTransactionStatus(value: object): TransactionStatus {
   const status = observedTransactionStatus(value);
   if (status === undefined) {
-    throw new Error(
-      'structured operation did not retain its ReadyForQuery status',
-    );
+    throw new Error('structured operation did not retain its ReadyForQuery status');
   }
   return status;
 }
@@ -1148,29 +1022,19 @@ function synchronousProtocolChunkConsumer(
 
 function isThenable(value: unknown): value is PromiseLike<unknown> {
   return (
-    ((typeof value === 'object' && value !== null) ||
-      typeof value === 'function') &&
+    ((typeof value === 'object' && value !== null) || typeof value === 'function') &&
     typeof (value as { then?: unknown }).then === 'function'
   );
 }
 
-function asError(
-  error: unknown,
-  fallback = 'Oliphaunt operation failed',
-): Error {
+function asError(error: unknown, fallback = 'Oliphaunt operation failed'): Error {
   if (error instanceof Error) return error;
   const normalized = errorWithCause(fallback, error);
-  if (
-    error !== null &&
-    (typeof error === 'object' || typeof error === 'function')
-  ) {
+  if (error !== null && (typeof error === 'object' || typeof error === 'function')) {
     try {
       const notices = (error as { notices?: unknown }).notices;
       if (Array.isArray(notices)) {
-        return errorWithNotices(
-          normalized,
-          notices as PostgresNotice[],
-        ) as Error;
+        return errorWithNotices(normalized, notices as PostgresNotice[]) as Error;
       }
     } catch {
       // The normalized error still retains a hostile thrown object as cause.
@@ -1185,10 +1049,7 @@ function errorWithCause(message: string, cause: unknown): Error {
   return error;
 }
 
-function transactionRollbackAggregate(
-  primary: unknown,
-  rollback: unknown,
-): AggregateError {
+function transactionRollbackAggregate(primary: unknown, rollback: unknown): AggregateError {
   return new AggregateError(
     [primary, rollback],
     'Oliphaunt transaction failed and automatic ROLLBACK could not prove recovery',
@@ -1205,17 +1066,9 @@ export function createOliphauntClient(
       const jsiTransport = requireJsiRawProtocolTransport();
       const nativeConfig = normalizeOpenConfig(config);
       const handle = await native.open(nativeConfig);
-      return new NativeOliphauntDatabase(
-        native,
-        handle,
-        jsiTransport,
-        registry,
-      );
+      return new NativeOliphauntDatabase(native, handle, jsiTransport, registry);
     },
-    async restore(
-      destination: RestoreDestination,
-      backup: BinaryInput,
-    ): Promise<void> {
+    async restore(destination: RestoreDestination, backup: BinaryInput): Promise<void> {
       const storage = normalizeRestoreDestination(destination);
       const bytes = toUint8Array(backup).slice();
       await restoreJsi(requireJsiRawProtocolTransport(), storage, bytes);
@@ -1248,17 +1101,13 @@ function normalizeOpenConfig(config: OpenConfig): NativeOpenConfig {
   const storage = normalizeDatabaseStorage(config.storage);
   validateStartupIdentity(config.username, 'username');
   validateStartupIdentity(config.database, 'database');
-  const startupGUCs = config.startupGUCs
-    ? validateStartupGUCs(config.startupGUCs)
-    : undefined;
+  const startupGUCs = config.startupGUCs ? validateStartupGUCs(config.startupGUCs) : undefined;
   return {
     ...storage,
     startupGUCs,
     username: config.username,
     database: config.database,
-    extensions: config.extensions
-      ? validateExtensionIds(config.extensions)
-      : undefined,
+    extensions: config.extensions ? validateExtensionIds(config.extensions) : undefined,
   };
 }
 
@@ -1293,9 +1142,7 @@ function normalizeDatabaseStorage(
       storageName: validateApplicationDataName(storage.name),
     };
   }
-  throw new Error(
-    `unknown database storage kind ${String((storage as { kind?: unknown }).kind)}`,
-  );
+  throw new Error(`unknown database storage kind ${String((storage as { kind?: unknown }).kind)}`);
 }
 
 function validateApplicationDataName(value: string): string {
@@ -1308,10 +1155,7 @@ function validateApplicationDataName(value: string): string {
   return name;
 }
 
-function validateStartupIdentity(
-  value: string | undefined,
-  label: string,
-): void {
+function validateStartupIdentity(value: string | undefined, label: string): void {
   if (value === undefined) {
     return;
   }
@@ -1332,11 +1176,7 @@ function validateStartupGUCs(gucs: Readonly<Record<string, string>>): string[] {
     if (trimmedName.includes('\0') || value.includes('\0')) {
       throw new Error('PostgreSQL startup GUC must not contain NUL bytes');
     }
-    if (
-      !/^[A-Za-z_][A-Za-z0-9_$]*(?:\.[A-Za-z_][A-Za-z0-9_$]*)*$/.test(
-        trimmedName,
-      )
-    ) {
+    if (!/^[A-Za-z_][A-Za-z0-9_$]*(?:\.[A-Za-z_][A-Za-z0-9_$]*)*$/.test(trimmedName)) {
       throw new Error(
         `PostgreSQL startup GUC name '${name}': each dot-separated component must start with an ASCII letter or '_', followed by ASCII letters, digits, '_', or '$'`,
       );
@@ -1358,9 +1198,7 @@ function validateExtensionIds(extensions: ReadonlyArray<string>): string[] {
       );
     }
     if (generatedExtensionBySqlName(trimmed) === undefined) {
-      throw new Error(
-        `unknown React Native Oliphaunt extension id '${trimmed}'`,
-      );
+      throw new Error(`unknown React Native Oliphaunt extension id '${trimmed}'`);
     }
     normalized.push(trimmed);
   }

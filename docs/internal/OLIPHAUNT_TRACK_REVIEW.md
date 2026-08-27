@@ -175,10 +175,11 @@ This track pass addressed concrete gaps:
   `PGDATA` environment restoration after close, explicit same-process direct
   reopen rejection, and process-bound reopen through a second harness process.
 - `liboliphaunt` now exposes out-of-band direct query cancellation through
-  `oliphaunt_cancel` and `OLIPHAUNT_CAP_QUERY_CANCEL`. The Rust SDK surfaces this as
-  `Oliphaunt::cancel()` backed by an `EngineCancel` handle that bypasses the owner
-  queue, so a long-running direct query can be interrupted without waiting
-  behind itself.
+  `oliphaunt_cancel` and `OLIPHAUNT_CAP_QUERY_CANCEL`. The Rust root exposes a
+  `CancelHandle` that can be moved to the interrupting thread while the
+  exclusive database is blocked; the worker API retains asynchronous
+  `Oliphaunt::cancel()` backed by the same `EngineCancel` capability outside
+  its owner queue.
 - Broker and server now preserve that same out-of-band cancellation contract at
   their natural transport layer. Broker mode creates a separate authenticated
   cancel IPC endpoint so cancellation never competes with the busy query stream.
@@ -636,7 +637,8 @@ liboliphaunt should adopt that shape:
    - concurrent sessions in server mode.
 
 4. Concurrency:
-   - many async Rust tasks sharing one direct handle;
+   - many async Rust tasks sharing one explicit worker handle;
+   - exclusive caller-thread behavior on the Rust root handle;
    - fair queueing;
    - transaction pinning;
    - cancellation and close during active SDK-owned work;

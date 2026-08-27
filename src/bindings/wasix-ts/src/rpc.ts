@@ -107,7 +107,7 @@ export type SerializedIcuDescriptor = {
   };
 };
 
-/** Host-ready open options shared by both public calling contracts. */
+/** Host-ready open options shared by both public execution surfaces. */
 export type SerializedOpenOptions = {
   runtime: SerializedRuntimeDescriptor;
   icu?: SerializedIcuDescriptor;

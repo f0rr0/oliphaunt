@@ -1,7 +1,7 @@
 #![cfg(feature = "extensions")]
 
 use anyhow::Result;
-use oliphaunt_wasix::{OliphauntServer, blocking::Oliphaunt, extensions};
+use oliphaunt_wasix::{Oliphaunt, extensions, worker::OliphauntServer};
 use sqlx::{Connection, Row};
 
 #[test]

@@ -66,19 +66,19 @@ test('the checked-in plan pins identities, generated SQL, and the comfortable-wi
     linkerFlags: '',
     backendTiming: '0',
   });
-  assert.deepEqual(summary.engines.candidate.surfaces.default, {
-    engine: 'candidate',
-    entrypoint: '@oliphaunt/wasix-ts',
+  assert.deepEqual(summary.engines.candidate.surfaces.worker, {
+    engine: 'candidate-worker',
+    entrypoint: '@oliphaunt/wasix-ts/worker',
     callingContract: 'async',
-    executionOwner: 'package-worker',
+    executionOwner: 'sdk-worker',
     executionBoundary: 'node-worker-thread',
     isolationImplementation: 'package-owned-worker-threads-rpc',
     timingBoundary: 'host-end-to-end-around-one-worker-rpc',
   });
-  assert.deepEqual(summary.engines.candidate.surfaces.blocking, {
-    engine: 'candidate-blocking',
-    entrypoint: '@oliphaunt/wasix-ts/blocking',
-    callingContract: 'blocking',
+  assert.deepEqual(summary.engines.candidate.surfaces.direct, {
+    engine: 'candidate-direct',
+    entrypoint: '@oliphaunt/wasix-ts',
+    callingContract: 'async',
     executionOwner: 'caller',
     executionBoundary: 'node-caller-realm',
     isolationImplementation: 'none-caller-realm',
@@ -92,9 +92,9 @@ test('the checked-in plan pins identities, generated SQL, and the comfortable-wi
     'https://github.com/electric-sql/pglite',
   );
   assert.equal(summary.gate.maxGeomeanRatio, 0.8);
-  assert.deepEqual(summary.gate.comparisons, ['worker', 'blocking']);
+  assert.deepEqual(summary.gate.comparisons, ['worker', 'direct']);
   assert.deepEqual(summary.engines.comparison.surfaces.callerRealm, {
-    engine: 'comparison-caller-realm',
+    engine: 'comparison-direct',
     entrypoint: '@electric-sql/pglite',
     callingContract: 'async',
     executionOwner: 'caller',
@@ -103,7 +103,7 @@ test('the checked-in plan pins identities, generated SQL, and the comfortable-wi
     timingBoundary: 'caller-around-public-api',
   });
   assert.equal(
-    summary.engines.candidate.surfaces.default.timingBoundary,
+    summary.engines.candidate.surfaces.worker.timingBoundary,
     summary.engines.comparison.surfaces.worker.timingBoundary,
   );
   assert.equal(
@@ -343,17 +343,17 @@ test('plan validation rejects comparator drift and a weaker performance claim', 
     'public-result-plus-internal-timing';
   assert.throws(() => validatePlan(comparatorTelemetry), /gatedResponsePayload/u);
 
-  const blockingEntrypointDrift = structuredClone(plan);
-  blockingEntrypointDrift.engines.candidate.surfaces.blocking.entrypoint = '@oliphaunt/wasix-ts';
-  assert.throws(() => validatePlan(blockingEntrypointDrift), /surfaces\.blocking\.entrypoint/u);
+  const workerEntrypointDrift = structuredClone(plan);
+  workerEntrypointDrift.engines.candidate.surfaces.worker.entrypoint = '@oliphaunt/wasix-ts';
+  assert.throws(() => validatePlan(workerEntrypointDrift), /surfaces\.worker\.entrypoint/u);
 
-  const defaultOwnerDrift = structuredClone(plan);
-  defaultOwnerDrift.engines.candidate.surfaces.default.executionOwner = 'caller';
-  assert.throws(() => validatePlan(defaultOwnerDrift), /surfaces\.default\.executionOwner/u);
+  const directOwnerDrift = structuredClone(plan);
+  directOwnerDrift.engines.candidate.surfaces.direct.executionOwner = 'sdk-worker';
+  assert.throws(() => validatePlan(directOwnerDrift), /surfaces\.direct\.executionOwner/u);
 
-  const legacyGateLabel = structuredClone(plan);
-  legacyGateLabel.gate.comparisons[1] = 'direct';
-  assert.throws(() => validatePlan(legacyGateLabel), /gate\.comparisons/u);
+  const invalidGateLabel = structuredClone(plan);
+  invalidGateLabel.gate.comparisons[1] = 'inline';
+  assert.throws(() => validatePlan(invalidGateLabel), /gate\.comparisons/u);
 
   const unbalancedPairs = structuredClone(plan);
   unbalancedPairs.measurement.pairedRepeats = 9;

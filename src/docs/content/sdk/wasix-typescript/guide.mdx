@@ -40,8 +40,8 @@ const result = await database.query('select $1::int + 1 as answer', [41]);
 console.log(result.rows[0]?.answer);
 ```
 
-Browser pages must send these response headers and keep the package's module
-Worker edge intact:
+Browser pages must send these response headers. Bundlers using the explicit
+Worker surface must also preserve its module Worker asset:
 
 ```text
 Cross-Origin-Opener-Policy: same-origin
@@ -92,32 +92,33 @@ content. A persistent identity may have one owner at a time within its provider;
 simultaneous cross-binding mutation is unsupported rather than coordinated by a
 new public lock protocol.
 
-With the default Worker entry point, OPFS uses browser synchronous access
-handles for exact-range PostgreSQL file I/O when available. The blocking entry
-point and browsers without that facility use the portable journal against the
-same opaque OPFS format. This selection is automatic and adds no public mode or
-tuning option.
+OPFS uses browser synchronous access handles for exact-range PostgreSQL file
+I/O with the explicit Worker entry point and when the root entry point is
+imported inside an application-owned Dedicated Worker. A root import in a
+browser Window, and hosts without synchronous access handles, use the portable
+journal against the same opaque OPFS format. This selection is automatic and
+adds no public mode or tuning option.
 
 </Step>
 <Step>
 
-### Choose a calling contract
+### Choose execution placement
 
-Use the root entry point for the default package-owned Worker. Import the
-explicit blocking entry point only when blocking the caller's realm during
-PostgreSQL work is acceptable:
+Use the root entry point for direct execution in the importing realm. Import
+the explicit Worker entry point when the caller's event loop must remain
+responsive during PostgreSQL work:
 
 ```ts
-import OliphauntBlocking from '@oliphaunt/wasix-ts/blocking';
+import OliphauntWorker from '@oliphaunt/wasix-ts/worker';
 
-const database = await OliphauntBlocking.open();
+const database = await OliphauntWorker.open();
 ```
 
-Both entry points return the same `OliphauntDatabase` contract. Blocking open
-and operations remain promise-shaped for loading and durable publication, but
-synchronous guest execution occurs before the caller's realm can process other
-work. There is no runtime fallback, capability profile, or host-mode
-negotiation.
+Both entry points return the same `OliphauntDatabase` contract. Root open and
+operations remain promise-shaped for loading and durable publication, but
+synchronous guest execution can prevent the caller's realm from processing
+other work. The Worker surface adds an explicit RPC hop. There is no runtime
+fallback, capability profile, or host-mode negotiation.
 
 </Step>
 <Step>
@@ -139,8 +140,9 @@ transport or caller-realm guest has already been retired. `await using` calls
 the same operation through `Symbol.asyncDispose`.
 
 The shutdown deadline bounds orderly FIFO drain, not the entire close promise.
-After it expires, close waits for forced Worker termination to settle before
-releasing other owned resources, so storage cleanup never races a live Worker.
+On the Worker surface, expiry waits for forced Worker termination to settle
+before releasing other owned resources, so storage cleanup never races a live
+Worker.
 If the public handle is forgotten instead, an owner-free generation token
 schedules best-effort cleanup for only that Worker or direct guest/storage
 lease. Stale finalizers cannot affect later opens, but finalization is not
@@ -201,21 +203,22 @@ pnpm add @oliphaunt/wasix-tools
 
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
+import OliphauntWorker from '@oliphaunt/wasix-ts/worker';
 import { pgDump, psql } from '@oliphaunt/wasix-tools';
 
 await using source = await Oliphaunt.open();
 const sql = await pgDump(source, { args: ['--schema-only'] });
-await using target = await Oliphaunt.open();
+await using target = await OliphauntWorker.open();
 await psql(target, { script: sql });
 ```
 
-Tools work in browsers, Node.js, Bun, and Deno. `pgDump()` accepts a default
-Worker or explicit blocking handle and returns PostgreSQL's ordinary plain UTF-8 dump, including
-its normal COPY statements. It does not force inserts or rewrite valid SQL.
-`psql()` requires a default Worker handle because COPY restore is full duplex; it is
-included so the same standard output can be applied without inventing a second
-logical restore API. Interactive psql, custom archives, parallel jobs, and
-`pg_restore` are outside this minimal tools product.
+Tools work in browsers, Node.js, Bun, and Deno. `pgDump()` accepts either a
+direct or Worker handle and returns PostgreSQL's ordinary plain UTF-8 dump,
+including its normal COPY statements. It does not force inserts or rewrite
+valid SQL. `psql()` requires a Worker handle because COPY restore is full
+duplex; it is included so the same standard output can be applied without
+inventing a second logical restore API. Interactive psql, custom archives,
+parallel jobs, and `pg_restore` are outside this minimal tools product.
 
 Tool runs exclusively own and reset the embedded PostgreSQL session. Do not
 expect raw-protocol prepared statements or session settings to survive a tool

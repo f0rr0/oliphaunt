@@ -34,18 +34,18 @@ cross-origin isolated with COOP `same-origin` and COEP `require-corp`.
 
 ## Runtime Shape
 
-The root entry point always owns a Worker or worker thread. It is the default,
-main-safe API. The explicit `@oliphaunt/wasix-ts/blocking` entry point runs the
-same database contract in the importing JavaScript realm and blocks that realm
-during synchronous PostgreSQL work. It retains promises for asset loading and
-persistent publication; those promises do not move guest CPU work elsewhere.
-There is no `execution` option or silent calling-contract fallback.
+The root entry point runs the database in the importing JavaScript realm. It
+retains promises for asset loading and persistent publication, but synchronous
+PostgreSQL guest work can block that realm. The
+`@oliphaunt/wasix-ts/worker` entry point uses a package-owned Web Worker or
+Node-compatible worker thread and keeps the caller's event loop responsive. There is no
+`execution` option or silent placement fallback.
 
 The core package provides queries, commands, callback transactions, buffered
 and callback-streamed raw PostgreSQL protocol bytes, one physical backup,
 restore into persistent storage, and close. Optional
-`@oliphaunt/wasix-tools` adds `pgDump` for default Worker or blocking handles
-and non-interactive `psql` for default Worker handles on every host. Explicit server
+`@oliphaunt/wasix-tools` adds `pgDump` for direct or Worker handles and
+non-interactive `psql` for Worker handles on every host. Explicit server
 subpaths add a local endpoint on Node, Bun, and Deno. Cancellation and a
 dedicated typed COPY API remain absent.
 
@@ -58,8 +58,8 @@ dedicated typed COPY API remain absent.
   requires PostgreSQL `CHECKPOINT`, issue it through `execute('CHECKPOINT')`.
 - Treat physical archives as same-format recovery artifacts. Use logical SQL
   dumps for version upgrades or transfers outside the WASIX physical format.
-- Use a default Worker or blocking handle for `pgDump`; use a default Worker
-  handle for `psql`.
+- Use either direct or Worker handles for `pgDump`; use a Worker handle for
+  `psql`.
   Use the lightweight local endpoint for one compatibility client, or the
   separate postmaster product for concurrency.
 

@@ -8,7 +8,8 @@ use std::task::{Context, Poll, Wake, Waker};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use oliphaunt::{Extension, Oliphaunt, OliphauntServer, Result};
+use oliphaunt::worker::{Oliphaunt, OliphauntBuilder, OliphauntServer};
+use oliphaunt::{Extension, Result};
 
 mod support;
 
@@ -483,7 +484,7 @@ fn extension_builder(
     broker: Option<&str>,
     extension: Extension,
     root: &Path,
-) -> oliphaunt::OliphauntBuilder {
+) -> OliphauntBuilder {
     let builder = Oliphaunt::builder().directory(root).extension(extension);
     let mut builder = match mode {
         TestMode::Direct => builder.direct(),

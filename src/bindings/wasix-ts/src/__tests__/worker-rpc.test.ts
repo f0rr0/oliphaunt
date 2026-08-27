@@ -184,9 +184,7 @@ describe('WASIX worker RPC', () => {
 
       const query = database.execProtocolRaw(Uint8Array.of(1));
       await postedRequest(port, 1);
-      const queryFailure = expect(query).rejects.toThrow(
-        'Oliphaunt WASIX worker was terminated',
-      );
+      const queryFailure = expect(query).rejects.toThrow('Oliphaunt WASIX worker was terminated');
       const closing = database.close();
       const closeFailure = expect(closing).rejects.toThrow(
         'close exceeded 120000ms; worker termination was requested',

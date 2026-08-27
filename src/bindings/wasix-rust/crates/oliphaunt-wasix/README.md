@@ -1,9 +1,10 @@
 # `oliphaunt-wasix`
 
 Embedded PostgreSQL 18 for Rust through the canonical `liboliphaunt-wasix`
-runtime. The root API is asynchronous and owns a dedicated database thread; use
-the explicit `blocking` module when a caller-thread, no-hop direct database API
-is preferable.
+runtime. The root API is synchronous and runs PostgreSQL directly on the
+calling thread. Applications that need to keep an async executor responsive can
+opt into the cloneable, dedicated owner-thread API under
+`oliphaunt_wasix::worker`.
 You can also start a one-client local PostgreSQL endpoint. Narrow in-tree SQLx
 and `tokio-postgres` smokes cover ordinary connections and queries; this is not
 a blanket compatibility claim for PostgreSQL clients or ORMs.
@@ -12,62 +13,50 @@ a blanket compatibility claim for PostgreSQL clients or ORMs.
 cargo add oliphaunt-wasix
 ```
 
-## Async direct API
+## Direct API
 
 <!-- liboliphaunt-doc-example:wasix-rust-basic-query -->
 ```rust,no_run
 use oliphaunt_wasix::{DatabaseStorage, Oliphaunt};
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-let database = Oliphaunt::builder()
-    .storage(DatabaseStorage::Directory("./data/main".into()))
-    .startup_guc("work_mem", "8MB")
-    .open().await?;
+fn main() -> anyhow::Result<()> {
+    let mut database = Oliphaunt::builder()
+        .storage(DatabaseStorage::Directory("./data/main".into()))
+        .startup_guc("work_mem", "8MB")
+        .open()?;
 
-database.execute("CREATE TABLE items(id integer PRIMARY KEY, value text NOT NULL)").await?;
-database
-    .sql("INSERT INTO items VALUES ($1, $2)")
-    .bind(1_i32)
-    .bind("hello")
-    .execute()
-    .await?;
-let result = database.query_with_params(
-    "SELECT value FROM items WHERE id = $1",
-    [1_i32],
-).await?;
-assert_eq!(result.get_text(0, "value")?, Some("hello"));
+    database.execute("CREATE TABLE items(id integer PRIMARY KEY, value text NOT NULL)")?;
+    database
+        .sql("INSERT INTO items VALUES ($1, $2)")
+        .bind(1_i32)
+        .bind("hello")
+        .execute()?;
+    let result = database.query_with_params(
+        "SELECT value FROM items WHERE id = $1",
+        [1_i32],
+    )?;
+    assert_eq!(result.get_text(0, "value")?, Some("hello"));
 
-database.transaction(async |transaction| {
-    transaction.execute("UPDATE items SET value = 'committed' WHERE id = 1").await?;
+    database.transaction(|transaction| {
+        transaction.execute("UPDATE items SET value = 'committed' WHERE id = 1")?;
+        Ok(())
+    })?;
+    database.close()?;
     Ok(())
-}).await?;
-database.close().await?;
-Ok(())
 }
 ```
 
-`Oliphaunt` is `Clone + Send + Sync`. Every clone targets one PostgreSQL
-session whose Wasmer store is constructed and retained on an SDK-owned thread.
-Database work therefore does not block an async executor thread. All admitted
-database operations, transaction boundaries, and close are placed into one
-FIFO in their admission order. The ordinary-work portion is bounded; lifecycle
-controls retain reserved admission capacity but never overtake earlier work.
-Starting close establishes an atomic cutoff: earlier admitted work drains
-before close, while later ordinary work is rejected. Dropping an ordinary
-operation before it starts removes its database effect; after owner execution
-begins, it runs to a PostgreSQL readiness boundary even if its future is
-abandoned. Dropping an active transaction future queues best-effort rollback in
-the same order. While a callback transaction is active, unpinned work is
-rejected.
+The root `Oliphaunt` is the no-hop database. Opening, queries, transactions,
+backup, restore, and close run synchronously on the calling thread. The handle
+is deliberately exclusive: database methods take `&mut self`, and a
+transaction borrows that handle. This makes execution placement and ordering
+explicit without an internal queue or message boundary.
 
-Concurrent `close().await` callers join one immutable close attempt and receive
-the same success or failure. Pre-shutdown validation, such as an active
-transaction, publishes its failure before reopening admission for a distinct
-explicit attempt. Once database shutdown or server stop begins, the handle is
-permanently retired: `is_closed()` is true, later work is rejected, and every
-later close replays that terminal attempt's exact result. The explicit blocking
-database follows the same phase boundary on the caller thread.
+Starting close permanently retires the handle. `is_closed()` becomes true,
+later work is rejected, and repeated close calls replay the first terminal
+result. A transaction callback panic is caught long enough to attempt rollback;
+the original panic is then resumed. If rollback or commit cannot be confirmed,
+the database is poisoned until close.
 
 `execute` and `query` are the parameter-free forms;
 `execute_with_params` and `query_with_params` use PostgreSQL positional
@@ -77,11 +66,8 @@ nullable bytes. `exec` returns ordered simple-query results, `describe` resolves
 wire metadata without executing, and the database and transaction publish
 `is_closed()`. `query` also accepts command-only statements, returning empty
 fields and rows while retaining the command tag and affected-row count. A
-transaction mirrors the structured methods and supports one-shot async
-`rollback()` without a later commit. The blocking callback form also catches a
-callback panic, rolls back when the outcome is still known, releases its
-exclusive transaction borrow, and then resumes the original panic. If rollback
-cannot be confirmed, the database is poisoned until close.
+transaction mirrors the structured methods and supports explicit `rollback()`
+without a later commit.
 
 `exec_protocol_raw` is the buffered escape hatch for callers that need
 PostgreSQL frontend-protocol bytes. `exec_protocol_raw_stream` delivers
@@ -91,10 +77,8 @@ crate-owned `Result<T>`. Its opaque `Error` implements `std::error::Error` and
 offers `postgres_error()`; PostgreSQL failures return the exported
 `PostgresError` details, notices, and SQLSTATE. Failed rollback or an uncertain
 COMMIT poisons the database and never sends a misleading second control command.
-Streaming callbacks execute synchronously on the database owner thread, one at
-a time, and provide backpressure to PostgreSQL. They must not await reentrant
-work on the same database; owner-thread reentrancy is rejected instead of
-deadlocking. WASIX query cancellation is intentionally absent
+Streaming callbacks execute synchronously on the calling thread and provide
+backpressure to PostgreSQL. WASIX query cancellation is intentionally absent
 until the guest runtime can interrupt execution and prove protocol recovery.
 
 The builder also supports `username`, `database`, `startup_gucs`, and bundled
@@ -127,18 +111,17 @@ Physical backup is a PostgreSQL online backup in a plain tar archive:
 ```rust,no_run
 use oliphaunt_wasix::{DatabaseStorage, Oliphaunt};
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-let source = Oliphaunt::open().await?;
-let backup = source.backup().await?;
-source.close().await?;
+fn main() -> anyhow::Result<()> {
+    let mut source = Oliphaunt::open()?;
+    let backup = source.backup()?;
+    source.close()?;
 
-Oliphaunt::restore("./data/restored", backup).await?;
-let restored = Oliphaunt::builder()
-    .storage(DatabaseStorage::Directory("./data/restored".into()))
-    .open().await?;
-restored.close().await?;
-Ok(())
+    Oliphaunt::restore("./data/restored", backup)?;
+    let mut restored = Oliphaunt::builder()
+        .storage(DatabaseStorage::Directory("./data/restored".into()))
+        .open()?;
+    restored.close()?;
+    Ok(())
 }
 ```
 
@@ -146,8 +129,8 @@ Ok(())
 archive, then publishes the managed root. The archive contains `pgdata/**` and
 `.oliphaunt/backup-manifest.properties`; it does not contain the destination's
 `.oliphaunt.json` descriptor. Physical archives are for the same PostgreSQL
-major and WASIX physical format. Once its worker starts, abandoning the restore
-future does not cancel filesystem publication. Use logical dump/restore for
+major and WASIX physical format. Restore is synchronous; once publication
+starts, it runs to completion or returns an error. Use logical dump/restore for
 upgrades.
 
 ## Standard PostgreSQL clients and tools
@@ -166,14 +149,14 @@ use sqlx::{Connection, Row};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let server = OliphauntServer::builder().start().await?;
+    let mut server = OliphauntServer::builder().start()?;
     let mut connection = sqlx::PgConnection::connect(&server.connection_string()).await?;
     let row = sqlx::query("SELECT 42::int AS answer")
         .fetch_one(&mut connection)
         .await?;
     assert_eq!(row.try_get::<i32, _>("answer")?, 42);
     connection.close().await?;
-    server.close().await?;
+    server.close()?;
     Ok(())
 }
 ```
@@ -185,18 +168,17 @@ packaged WASIX PostgreSQL programs directly against an open database:
 ```rust,no_run
 use oliphaunt_wasix::{Oliphaunt, tools};
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-let source = Oliphaunt::open().await?;
-let sql = tools::pg_dump(
-    &source,
-    tools::PgDumpOptions::new().arg("--schema-only"),
-).await?;
-source.close().await?;
-let target = Oliphaunt::open().await?;
-tools::psql(&target, tools::PsqlOptions::new().script(sql)).await?;
-target.close().await?;
-Ok(())
+fn main() -> anyhow::Result<()> {
+    let mut source = Oliphaunt::open()?;
+    let sql = tools::pg_dump(
+        &mut source,
+        tools::PgDumpOptions::new().arg("--schema-only"),
+    )?;
+    source.close()?;
+    let mut target = Oliphaunt::open()?;
+    tools::psql(&mut target, tools::PsqlOptions::new().script(sql))?;
+    target.close()?;
+    Ok(())
 }
 ```
 
@@ -204,35 +186,51 @@ Ok(())
 non-interactive and accepts a command, a script, or ordinary passthrough
 arguments. Connection, file input/output, format, compression, encoding, and
 parallel-job flags are managed and rejected from passthrough arguments. Direct
-tools are exclusive operations on the database owner and reset session state
-before and after the tool run.
+tools are exclusive operations on the database and reset session state before
+and after the tool run.
 
-## Explicit blocking API
+## Worker API
 
-The original synchronous API remains available without a worker hop:
+Use the worker module when PostgreSQL must not block the calling async executor:
 
-<!-- liboliphaunt-doc-example:wasix-rust-blocking -->
+<!-- liboliphaunt-doc-example:wasix-rust-worker -->
 ```rust,no_run
-use oliphaunt_wasix::blocking::Oliphaunt;
+use oliphaunt_wasix::worker::Oliphaunt;
 
-fn main() -> oliphaunt_wasix::Result<()> {
-    let mut database = Oliphaunt::open()?;
-    let rows = database.query("SELECT 42::int4 AS answer")?;
+#[tokio::main]
+async fn main() -> oliphaunt_wasix::Result<()> {
+    let database = Oliphaunt::open().await?;
+    let rows = database.query("SELECT 42::int4 AS answer").await?;
     assert_eq!(rows.get_text(0, "answer")?, Some("42"));
-    database.close()
+    database.close().await
 }
 ```
 
-The blocking database handle is deliberately exclusive: methods take `&mut
-self`, a transaction borrows the handle, and direct PostgreSQL work runs on the
-calling thread. The same query values, SQL builder, errors, storage, backup, raw
-protocol, server, and optional tools are available under
-`oliphaunt_wasix::blocking`. The local server remains a synchronous lifecycle
-API but, by design, its listener thread owns the wire-protocol backend. Its
-`close(&mut self)` preserves the handle so `is_closed()` can report terminal
-retirement and repeated close calls can replay the first result. Use the direct
-blocking database in a dedicated application thread or Worker when blocking
-that caller is acceptable.
+`worker::Oliphaunt` is `Clone + Send + Sync`. Every clone targets one
+PostgreSQL session whose Wasmer store is constructed and retained on an
+SDK-owned thread. Database work therefore does not block the calling executor
+thread. All admitted operations, transaction boundaries, and close are placed
+into one FIFO. Ordinary-work admission is bounded; lifecycle controls retain
+reserved capacity but never overtake earlier work. Starting close establishes
+an atomic cutoff: earlier work drains, while later work is rejected.
+
+Dropping an ordinary operation before it starts removes its database effect.
+After worker execution begins, it runs to a PostgreSQL readiness boundary even
+if its future is abandoned. Dropping an active transaction future queues
+best-effort rollback in the same order. While a callback transaction is active,
+unpinned work is rejected. Concurrent `close().await` callers join one close
+attempt and receive the same result.
+
+The worker module mirrors the direct database, SQL builder, transaction,
+backup/restore, raw-protocol, server, and optional tools surfaces with async
+methods. Streaming callbacks run synchronously on the database worker and must
+not reenter the same database; reentrancy is rejected instead of deadlocking.
+`worker::tools` queues `pg_dump` and `psql` on that same owner.
+
+The direct local server has a synchronous lifecycle API, but its listener
+thread owns the wire-protocol backend. Its `close(&mut self)` preserves the
+handle so `is_closed()` can report terminal retirement and repeated close calls
+can replay the first result.
 
 TCP endpoints are loopback-only because the embedded proxy uses PostgreSQL
 trust authentication. The default listener uses an automatically assigned

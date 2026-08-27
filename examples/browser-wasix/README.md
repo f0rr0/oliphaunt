@@ -1,8 +1,8 @@
 # Browser WASIX
 
-This example exercises both public calling contracts: the normal package-owned
-Worker entrypoint and the explicit caller-realm `/blocking` entrypoint. It also
-demonstrates IndexedDB and OPFS persistence and verifies that `/blocking`
+This example exercises both public execution surfaces: the direct caller-realm
+root entrypoint and the explicit package-owned `/worker` entrypoint. It also
+demonstrates IndexedDB and OPFS persistence and verifies that the root
 constructs no hidden Worker.
 
 Build the WASIX runtime assets, then run:
