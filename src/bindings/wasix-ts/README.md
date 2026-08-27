@@ -156,6 +156,10 @@ lease without a transport to terminate. Concurrent and later calls return the
 same promise. Provider, host, and Worker termination failures are preserved.
 If teardown rejects, `closed` still becomes `true`: cleanup was attempted and
 a destroyed Worker or guest is never treated as a retryable live session.
+An unexpected `/worker` crash also makes `closed` true as soon as the transport
+observes ownership loss. Later operations fail without posting more work;
+`close()` remains idempotent and reports that terminal transport failure while
+finishing any remaining package-owned cleanup.
 
 Forgetting a database handle schedules generation-guarded best-effort cleanup.
 The root entrypoint closes only that caller-realm guest and its storage lease;

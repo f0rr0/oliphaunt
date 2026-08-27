@@ -4,6 +4,7 @@ import {
   normalizeWasixDatabaseIdentity,
   type WasixDatabaseIdentity,
   type WasixDatabaseSession,
+  type WasixDatabaseSessionTerminalState,
   type WasixPersistenceMode,
   type WasixProtocolConnectionMode,
 } from './database.js';
@@ -79,7 +80,9 @@ export async function restoreWasixWithWorker(
 
 /** @internal Correlates worker requests and fails them as one unit if the worker exits. */
 export class WorkerRpc {
+  readonly terminalState: WasixDatabaseSessionTerminalState;
   readonly #worker: WasixWorkerPort;
+  readonly #terminalState = new WorkerTerminalState();
   readonly #pending = new Map<
     number,
     {
@@ -92,10 +95,12 @@ export class WorkerRpc {
   >();
   #nextId = 1;
   #fatal: Error | undefined;
+  #terminationRequested = false;
   #termination: Promise<void> | undefined;
 
   constructor(worker: WasixWorkerPort) {
     this.#worker = worker;
+    this.terminalState = this.#terminalState;
     worker.onMessage((message) => {
       const pending = this.#pending.get(message.id);
       if (pending === undefined) {
@@ -128,7 +133,7 @@ export class WorkerRpc {
         pending.reject(deserializeWorkerError(message.error));
       }
     });
-    worker.onFatal((error) => this.#stop(error));
+    worker.onFatal((error) => this.#fail(error));
   }
 
   request(
@@ -188,6 +193,16 @@ export class WorkerRpc {
     return this.#termination ?? Promise.resolve();
   }
 
+  #fail(error: Error): void {
+    // A package-requested terminate is expected ownership teardown, not an
+    // independently observed crash. The public close state remains governed
+    // by its memoized close attempt in that case.
+    if (!this.#terminationRequested) {
+      this.#terminalState.fail(error);
+    }
+    this.#stop(error);
+  }
+
   #stop(error: Error): void {
     if (this.#fatal === undefined) {
       this.#fatal = error;
@@ -196,6 +211,7 @@ export class WorkerRpc {
     if (this.#termination !== undefined) {
       return;
     }
+    this.#terminationRequested = true;
     try {
       this.#termination = Promise.resolve(this.#worker.terminate());
     } catch (terminationError) {
@@ -268,12 +284,14 @@ function appendAssetTransfer(
 class WorkerDatabaseSession implements WasixDatabaseSession {
   readonly supportsProtocolConnections = true;
   readonly identity: WasixDatabaseIdentity;
+  readonly terminalState: WasixDatabaseSessionTerminalState;
   readonly #rpc: WorkerRpc;
   #closed = false;
   #closeAttempt: Promise<void> | undefined;
 
   constructor(rpc: WorkerRpc, options: SerializedOpenOptions) {
     this.#rpc = rpc;
+    this.terminalState = rpc.terminalState;
     this.identity = normalizeWasixDatabaseIdentity(options.username, options.database);
   }
 
@@ -386,6 +404,22 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
     if (this.#closed) {
       throw new Error('Oliphaunt WASIX worker session is closed');
     }
+  }
+}
+
+class WorkerTerminalState implements WasixDatabaseSessionTerminalState {
+  #failure: Error | undefined;
+
+  get terminal(): boolean {
+    return this.#failure !== undefined;
+  }
+
+  get failure(): Error | undefined {
+    return this.#failure;
+  }
+
+  fail(error: Error): void {
+    this.#failure ??= error;
   }
 }
 

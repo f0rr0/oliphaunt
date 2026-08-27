@@ -72,6 +72,14 @@ export type WasixDatabaseResource = Readonly<{
   close(): void | Promise<void>;
 }>;
 
+/** @internal Observable ownership loss for execution sessions with a fallible transport. */
+export type WasixDatabaseSessionTerminalState = Readonly<{
+  /** True only after the execution owner has terminated unexpectedly. */
+  readonly terminal: boolean;
+  /** The first transport failure that made the execution owner terminal. */
+  readonly failure: Error | undefined;
+}>;
+
 /** @internal Apply PostgreSQL's default database-name rule once at open. */
 export function normalizeWasixDatabaseIdentity(
   username: string,
@@ -99,6 +107,8 @@ export type WasixDatabaseSession = {
   /** The session can safely block away from its public caller while serving a connection. */
   readonly supportsProtocolConnections?: boolean;
   readonly identity?: WasixDatabaseIdentity;
+  /** Optional shared state for an execution owner that can die independently of the handle. */
+  readonly terminalState?: WasixDatabaseSessionTerminalState;
   exec(input: Uint8Array, persistence?: WasixPersistenceMode): Promise<Uint8Array>;
   execStream?(
     input: Uint8Array,
@@ -237,7 +247,7 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
   }
 
   get closed(): boolean {
-    return this.#closed;
+    return this.#closed || this.#session.terminalState?.terminal === true;
   }
 
   async execute(
@@ -897,8 +907,11 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
 
   #assertOpen(): void {
     this.#assertNotInProtocolStreamCallback();
-    if (this.#closed) {
-      throw new Error('Oliphaunt WASIX database is closed');
+    const terminalFailure = this.#session.terminalState?.failure;
+    if (this.#closed || terminalFailure !== undefined) {
+      throw new Error('Oliphaunt WASIX database is closed', {
+        ...(terminalFailure === undefined ? {} : { cause: terminalFailure }),
+      });
     }
     if (this.#closing) {
       throw new Error('Oliphaunt WASIX database is closing');

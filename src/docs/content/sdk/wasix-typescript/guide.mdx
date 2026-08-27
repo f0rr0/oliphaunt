@@ -143,6 +143,11 @@ The shutdown deadline bounds orderly FIFO drain, not the entire close promise.
 On the Worker surface, expiry waits for forced Worker termination to settle
 before releasing other owned resources, so storage cleanup never races a live
 Worker.
+If a package-owned Worker crashes independently, `closed` becomes `true` as
+soon as the transport observes that ownership loss. Later operations fail
+without posting to the dead Worker. Calling `close()` remains useful and
+idempotent: it reports the same terminal transport failure while completing
+any remaining package-owned cleanup.
 If the public handle is forgotten instead, an owner-free generation token
 schedules best-effort cleanup for only that Worker or direct guest/storage
 lease. Stale finalizers cannot affect later opens, but finalization is not

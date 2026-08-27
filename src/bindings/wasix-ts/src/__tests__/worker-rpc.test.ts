@@ -99,6 +99,34 @@ describe('WASIX worker RPC', () => {
     expect(port.terminations).toBe(1);
   });
 
+  it('makes an idle database terminal when its package Worker crashes', async () => {
+    const port = new FakeWorkerPort();
+    const opening = openWorkerDatabase(port, workerOpenOptions());
+    const open = await postedRequest(port, 0);
+    port.respond({ id: open.id, ok: true });
+    const database = await opening;
+    const failure = new Error('worker crashed while idle');
+
+    expect(database.closed).toBe(false);
+    port.fail(failure);
+
+    expect(database.closed).toBe(true);
+    const operationFailure = await database.query('select 1').catch((error: unknown) => error);
+    expect(operationFailure).toMatchObject({
+      message: 'Oliphaunt WASIX database is closed',
+      cause: failure,
+    });
+
+    const firstClose = database.close();
+    const secondClose = database.close();
+    expect(secondClose).toBe(firstClose);
+    await expect(firstClose).rejects.toBe(failure);
+    await expect(secondClose).rejects.toBe(failure);
+    expect(database.closed).toBe(true);
+    expect(port.requests.map(({ message }) => message.method)).toEqual(['open']);
+    expect(port.terminations).toBe(1);
+  });
+
   it('keeps a failed worker close terminal and never posts later work', async () => {
     const port = new FakeWorkerPort();
     const opening = openWorkerDatabase(port, workerOpenOptions());

@@ -67,6 +67,10 @@ type OwnerAction = Box<dyn FnOnce(&mut DirectOliphaunt, Result<()>) + Send + 'st
 type SharedCloseResult = std::result::Result<(), Arc<str>>;
 type CloseWaiter = oneshot::Sender<SharedCloseResult>;
 
+fn owner_is_terminal(state: &AtomicU8) -> bool {
+    matches!(state.load(Ordering::SeqCst), OWNER_CLOSED | OWNER_STOPPED)
+}
+
 #[derive(Default)]
 struct CloseAttempt {
     completion: Mutex<CloseCompletion>,
@@ -286,7 +290,7 @@ impl DatabaseOwner {
     }
 
     fn is_closed(&self) -> bool {
-        self.inner.state.load(Ordering::SeqCst) == OWNER_CLOSED
+        owner_is_terminal(&self.inner.state)
     }
 
     fn ensure_open(&self) -> Result<()> {
@@ -767,11 +771,11 @@ impl Oliphaunt {
         Sql::database(self, sql)
     }
 
-    /// Whether the database is permanently retired after a close attempt.
+    /// Whether the database is permanently retired.
     ///
-    /// This becomes `true` when shutdown begins, even if cleanup reports an
-    /// error. An unexpectedly stopped owner is not reported as an explicit
-    /// close attempt.
+    /// This becomes `true` after terminal shutdown settles, even if cleanup
+    /// reports an error, and when the owner stops unexpectedly. A close attempt
+    /// which can still fail validation and reopen admission is not terminal.
     pub fn is_closed(&self) -> bool {
         self.owner.is_closed()
     }
@@ -1427,9 +1431,12 @@ impl OliphauntServer {
         &self.info.connection_string
     }
 
-    /// Whether the server is permanently retired after a close attempt.
+    /// Whether the server is permanently retired.
+    ///
+    /// This includes both a settled terminal close attempt and an unexpectedly
+    /// stopped owner. A close attempt still in progress is not yet terminal.
     pub fn is_closed(&self) -> bool {
-        self.owner.state.load(Ordering::SeqCst) == OWNER_CLOSED
+        owner_is_terminal(&self.owner.state)
     }
 
     /// Stop the local server without blocking the calling executor thread.
@@ -1771,6 +1778,11 @@ mod close_tests {
 
         let mut close = Box::pin(owner.close());
         assert!(poll_once(close.as_mut()).is_pending());
+        assert_eq!(owner.inner.state.load(Ordering::SeqCst), OWNER_CLOSING);
+        assert!(
+            !owner.is_closed(),
+            "a close which can still fail validation is not terminal"
+        );
 
         let mut rejected = Box::pin(owner.call(None, |_| Ok(())));
         let Poll::Ready(rejected) = poll_once(rejected.as_mut()) else {
@@ -1801,6 +1813,22 @@ mod close_tests {
             receiver.try_recv(),
             Err(mpsc::TryRecvError::Empty)
         ));
+    }
+
+    #[test]
+    fn stopped_database_owner_is_terminal() {
+        let harness = database_close_harness();
+        harness
+            .owner
+            .inner
+            .state
+            .store(OWNER_STOPPED, Ordering::SeqCst);
+
+        assert!(harness.owner.is_closed());
+        assert_eq!(
+            harness.owner.ensure_open().unwrap_err().to_string(),
+            "WASIX database owner has stopped"
+        );
     }
 
     #[tokio::test]
@@ -2023,6 +2051,7 @@ mod close_tests {
         let harness = server_close_harness();
         let mut first = Box::pin(harness.server.close());
         assert!(poll_once(first.as_mut()).is_pending());
+        assert!(!harness.server.is_closed());
         assert_eq!(
             harness
                 .started
@@ -2095,5 +2124,17 @@ mod close_tests {
             harness.started.try_recv(),
             Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected)
         ));
+    }
+
+    #[test]
+    fn stopped_server_owner_is_terminal() {
+        let harness = server_close_harness();
+        harness
+            .server
+            .owner
+            .state
+            .store(OWNER_STOPPED, Ordering::SeqCst);
+
+        assert!(harness.server.is_closed());
     }
 }

@@ -219,7 +219,10 @@ export type OpenConfig = {
 };
 
 export type OliphauntDatabase = {
-  /** True after the terminal close attempt settles, including when teardown rejects. */
+  /**
+   * True after the terminal close attempt settles, including when teardown
+   * rejects, or as soon as a package-owned Worker terminates unexpectedly.
+   */
   readonly closed: boolean;
   execute(
     sql: string,

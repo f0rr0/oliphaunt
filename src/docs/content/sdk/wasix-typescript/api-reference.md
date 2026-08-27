@@ -35,16 +35,21 @@ The cross-SDK behavior follows the
 [stable database API](https://github.com/f0rr0/oliphaunt/blob/main/docs/architecture/stable-database-api.md).
 
 WASIX `close()` has one memoized terminal outcome. It stops admission as soon
-as close begins and lets already accepted database work finish up to the
-bounded orderly-shutdown deadline. On expiry it requests forced Worker
-termination and awaits that attempt before releasing other resources; the
-deadline does not claim that total teardown is already complete. A
+as close begins and lets already accepted database work finish. On the Worker
+surface, a bounded orderly-shutdown deadline requests forced Worker termination
+on expiry and awaits that attempt before releasing other resources; the
+caller-realm root has no Worker transport or forced-termination deadline. A
 rejected close still leaves `closed === true`; repeat calls return the same
 rejected promise rather than claiming the destroyed session can be retried.
 Provider close and allocation release are attempted before that rejection is
 reported. A close call made from the active transaction callback rejects before
 teardown begins and leaves the database open; call it again after the callback
 settles.
+
+An unexpected package-Worker failure also makes `closed === true` immediately.
+Later operations fail locally instead of posting to the terminal transport.
+`close()` remains idempotent and reports that transport failure while finishing
+any remaining package-owned cleanup.
 
 An unreachable database handle has generation-guarded best-effort cleanup. It
 can retire only its own Worker or caller-realm guest/storage lease, and a stale

@@ -145,6 +145,10 @@ smaller qualified side modules remain supported in a direct Window.
    package Worker is terminated even when its close RPC rejects. The public
    handle memoizes that single outcome and becomes closed after teardown settles;
    a rejected close never advertises the destroyed Worker or guest as reusable.
+   If the package Worker terminates independently, shared session state makes the
+   public handle closed immediately and prevents later work from crossing the
+   dead transport. An explicit close still memoizes and reports that terminal
+   failure while completing package-owned resource cleanup.
 8. Each public database handle registers an opaque generation token for
    best-effort forgotten-handle recovery. The finalizer holds no reference to
    the public owner and only schedules work after returning. It atomically

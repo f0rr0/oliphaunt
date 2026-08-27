@@ -47,7 +47,8 @@ async fn sqlx_uses_the_standard_postgres_connection_string() -> Result<()> {
         .database("postgres")
         .startup_guc("work_mem", "8MB")
         .start()?;
-    let mut connection = sqlx::PgConnection::connect(server.connection_string()).await?;
+    let connection_string = server.connection_string();
+    let mut connection = sqlx::PgConnection::connect(&connection_string).await?;
     let row = sqlx::query("SELECT current_setting('work_mem') AS work_mem, $1::text AS value")
         .bind("ok")
         .fetch_one(&mut connection)
