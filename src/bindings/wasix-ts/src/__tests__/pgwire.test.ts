@@ -33,7 +33,7 @@ describe('direct PostgreSQL startup protocol', () => {
       expect(error).toMatchObject({
         severity: 'FATAL',
         sqlstate: '3D000',
-        postgresMessage: 'database does not exist',
+        message: 'database does not exist',
       });
     }
   });

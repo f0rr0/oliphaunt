@@ -50,8 +50,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// Result returned by a callback-scoped transaction.
 ///
-/// `E` is the callback's application error type. The default preserves the
-/// crate's existing SDK-only transaction ergonomics.
+/// `E` is the callback's application error type. The default keeps callbacks
+/// which use only SDK errors concise.
 pub type TransactionResult<T, E = Error> = std::result::Result<T, TransactionError<E>>;
 
 /// Result returned by raw protocol streaming.

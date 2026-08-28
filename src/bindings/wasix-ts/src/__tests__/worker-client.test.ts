@@ -49,13 +49,6 @@ describe('WASIX browser Worker execution surface', () => {
     expect(worker?.terminations).toBe(1);
   });
 
-  it('rejects legacy placement before constructing a Worker', async () => {
-    await expect(openWasix({ execution: 'direct' } as never)).rejects.toThrow(
-      /no longer accepts the "execution" option/,
-    );
-    expect(FakeBrowserWorker.instances).toHaveLength(0);
-  });
-
   it('requires Worker support only on the explicit Worker surface', async () => {
     Object.defineProperty(globalThis, 'Worker', {
       configurable: true,

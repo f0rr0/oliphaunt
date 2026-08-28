@@ -620,6 +620,37 @@ fn managed_sync_transaction_rejects_manual_commit_and_retires_the_session() -> R
     Ok(())
 }
 
+#[test]
+fn managed_sync_transaction_rejects_and_chain_before_dispatch() -> Result<()> {
+    let mut database = Oliphaunt::open()?;
+    database.transaction(|transaction| {
+        for error in [
+            transaction
+                .execute("ROLLBACK AND CHAIN")
+                .expect_err("extended execute rejects transaction replacement"),
+            transaction
+                .query("ABORT WORK AND CHAIN")
+                .expect_err("extended query rejects transaction replacement"),
+            transaction
+                .exec("SELECT 1; ROLLBACK TRANSACTION AND CHAIN")
+                .expect_err("simple exec rejects transaction replacement"),
+        ] {
+            assert!(
+                error
+                    .to_string()
+                    .contains("not allowed inside an SDK-managed callback transaction"),
+                "{error}"
+            );
+        }
+        transaction.execute("SAVEPOINT retained_work")?;
+        transaction.execute("ROLLBACK TO SAVEPOINT retained_work")?;
+        Ok::<(), oliphaunt_wasix::Error>(())
+    })?;
+    database.query("SELECT 1")?;
+    database.close()?;
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn managed_async_transaction_rejects_manual_commit_and_retires_the_owner() -> Result<()> {
     let database = AsyncOliphaunt::open().await?;
@@ -650,6 +681,44 @@ async fn managed_async_transaction_rejects_manual_commit_and_retires_the_owner()
     );
     database.close().await?;
     assert!(database.is_closed());
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn managed_async_transaction_rejects_and_chain_before_dispatch() -> Result<()> {
+    let database = AsyncOliphaunt::open().await?;
+    database
+        .transaction(async |transaction: &mut AsyncTransaction| {
+            for error in [
+                transaction
+                    .execute("ROLLBACK AND CHAIN")
+                    .await
+                    .expect_err("extended execute rejects transaction replacement"),
+                transaction
+                    .query("ABORT WORK AND CHAIN")
+                    .await
+                    .expect_err("extended query rejects transaction replacement"),
+                transaction
+                    .exec("SELECT 1; ROLLBACK TRANSACTION AND CHAIN")
+                    .await
+                    .expect_err("simple exec rejects transaction replacement"),
+            ] {
+                assert!(
+                    error
+                        .to_string()
+                        .contains("not allowed inside an SDK-managed callback transaction"),
+                    "{error}"
+                );
+            }
+            transaction.execute("SAVEPOINT retained_work").await?;
+            transaction
+                .execute("ROLLBACK TO SAVEPOINT retained_work")
+                .await?;
+            Ok::<(), oliphaunt_wasix::Error>(())
+        })
+        .await?;
+    database.query("SELECT 1").await?;
+    database.close().await?;
     Ok(())
 }
 

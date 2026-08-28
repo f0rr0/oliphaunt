@@ -76,7 +76,7 @@ pub use error::{
 pub use extension::Extension;
 pub use query::{
     CommandResult, DecodeError, ExecResult, FromSql, IntoParameter, Parameter, PostgresNotice,
-    QueryField, QueryFormat, QueryParam, QueryResult, QueryRow, RowIndex, StatementDescription,
+    QueryField, QueryFormat, QueryResult, QueryRow, RowIndex, StatementDescription,
     StatementResult, TypeOid, ValueFormat, ValueRef,
 };
 pub use storage::DatabaseStorage;

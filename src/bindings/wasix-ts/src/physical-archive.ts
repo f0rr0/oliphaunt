@@ -6,7 +6,7 @@ import {
 import { extractTar } from './archive.js';
 import { WasixStorageError } from './errors.js';
 import { simpleQuery } from './protocol.js';
-import { PostgresError, parseQueryResponse, type RawQueryResult } from './query.js';
+import { PostgresError, parseSimpleQueryRawResponse, type RawQueryResult } from './query.js';
 import type { StorageDirectory } from './storage-provider.js';
 import {
   type StoredSnapshot,
@@ -66,7 +66,7 @@ export async function createPhysicalArchive(
     }
     let start: RawQueryResult;
     try {
-      start = parseQueryResponse(startResponse);
+      start = parseSimpleQueryRawResponse(startResponse);
       state = 'exit-required';
     } catch (error) {
       if (error instanceof PostgresError) throw error;
@@ -145,7 +145,7 @@ async function stopPhysicalBackup(exec: ExecProtocol): Promise<StopBackupAttempt
   const exitConfirmed = responseConfirmsCommandCompletion(response);
   let result: RawQueryResult;
   try {
-    result = parseQueryResponse(response);
+    result = parseSimpleQueryRawResponse(response);
   } catch (error) {
     if (exitConfirmed && !(error instanceof PostgresError)) {
       return { state: 'exited', validationError: error };

@@ -8,13 +8,13 @@ import type { SerializedOpenOptions } from './rpc.js';
 import { serializeWasixRuntimeDescriptor } from './runtime-descriptor.js';
 import { serializeWasixStorage } from './storage.js';
 import { restoreWasixStorage, WASIX_PHYSICAL_IDENTITY } from './storage-provider.js';
+import { normalizeWasixStartupGUCs } from './startup-config.js';
 import type { BinaryInput, OpenConfig, WasixRuntimeDescriptor } from './types.js';
 
 export function serializeOpenConfig(
   config: OpenConfig = {},
   runtimeDescriptor: WasixRuntimeDescriptor = defaultWasixRuntime,
 ): SerializedOpenOptions {
-  rejectLegacyExecutionOption(config);
   const extensions = serializeWasixExtensionDescriptors(config.extensions ?? []);
   const runtime = serializeWasixRuntimeDescriptor(runtimeDescriptor);
   const storage = serializeWasixStorage(config.storage);
@@ -25,18 +25,9 @@ export function serializeOpenConfig(
     extensions: extensions.selectedSqlNames,
     username: config.username ?? 'postgres',
     database: config.database ?? 'postgres',
-    startupGUCs: { ...(config.startupGUCs ?? {}) },
+    startupGUCs: normalizeWasixStartupGUCs(config.startupGUCs ?? {}),
     storage,
   };
-}
-
-/** @internal Prevent untyped JavaScript from silently changing calling semantics. */
-export function rejectLegacyExecutionOption(config: OpenConfig): void {
-  if (Object.prototype.hasOwnProperty.call(config, 'execution')) {
-    throw new TypeError(
-      '@oliphaunt/wasix-ts no longer accepts the "execution" option; use the root entrypoint for caller-realm execution or import @oliphaunt/wasix-ts/worker for a package-owned Worker',
-    );
-  }
 }
 
 export async function restoreWasix(

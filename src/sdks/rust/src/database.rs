@@ -18,6 +18,7 @@ use crate::query::{
     StatementDescription, ValueFormat, describe_statement_request, extended_statement_request,
     parse_exec_response, parse_extended_command_response, parse_extended_query_response,
     parse_simple_command_response, parse_statement_description, reject_copy_statements,
+    reject_transaction_chain,
 };
 use crate::session::{
     TRANSACTION_ACTIVE, TRANSACTION_FAILED, TRANSACTION_FINISHING, TRANSACTION_RELEASED,
@@ -144,6 +145,7 @@ impl<'db, 'q> AsyncSql<'db, 'q> {
 
     /// Execute a single statement that must not return rows.
     pub async fn execute(mut self) -> Result<CommandResult> {
+        self.reject_transaction_chain()?;
         let request = extended_statement_request(&self.sql, &self.params, self.result_format)?;
         let response = self.exchange(request, "execute()").await?;
         let result = parse_extended_command_response(&response)?;
@@ -156,6 +158,7 @@ impl<'db, 'q> AsyncSql<'db, 'q> {
     /// A command-only statement is accepted as an empty field/row result with
     /// its command tag retained for ORM call sites that cannot classify SQL.
     pub async fn query(mut self) -> Result<QueryResult> {
+        self.reject_transaction_chain()?;
         let request = extended_statement_request(&self.sql, &self.params, self.result_format)?;
         let response = self.exchange(request, "query()").await?;
         let result = parse_extended_query_response(&response)?;
@@ -170,6 +173,13 @@ impl<'db, 'q> AsyncSql<'db, 'q> {
         let description = parse_statement_description(&response)?;
         self.validate_ready(description.ready_status(), "describe()")?;
         Ok(description)
+    }
+
+    fn reject_transaction_chain(&self) -> Result<()> {
+        if matches!(&self.target, SqlTarget::Transaction(_)) {
+            reject_transaction_chain(&self.sql)?;
+        }
+        Ok(())
     }
 
     async fn exchange(
@@ -383,9 +393,9 @@ impl AsyncOliphaunt {
     /// Run a closure inside an explicit SQL transaction pinned to the physical
     /// session.
     ///
-    /// This is the ergonomic counterpart to `transaction()`: it sends `BEGIN`,
-    /// gives the closure access to the active transaction handle, commits on
-    /// success, and rolls back best-effort when the closure returns an error.
+    /// The SDK sends `BEGIN`, gives the closure access to the active transaction
+    /// handle, commits on success, and rolls back when the closure returns an
+    /// error.
     /// While the closure runs, unpinned work on the same `AsyncOliphaunt` handle is
     /// rejected.
     ///
@@ -489,6 +499,9 @@ impl AsyncOliphauntServer {
     }
 
     /// Whether the server has been terminally retired.
+    ///
+    /// This is lifecycle state, not a health check. `false` does not poll the
+    /// PostgreSQL child or prove that the published endpoint is reachable.
     pub fn is_closed(&self) -> bool {
         self.owner.is_closed()
     }
@@ -654,6 +667,7 @@ impl AsyncTransaction {
     /// Execute possibly multi-statement SQL through PostgreSQL's simple-query protocol.
     pub async fn exec(&mut self, sql: &str) -> Result<ExecResult> {
         reject_copy_statements(sql)?;
+        reject_transaction_chain(sql)?;
         let response = self
             .exec_request(
                 ProtocolRequest::simple_query(sql)?,
@@ -1150,6 +1164,52 @@ mod tests {
         runtime
             .block_on(db.close())
             .expect("poisoned transaction can close");
+    }
+
+    #[test]
+    fn transaction_chain_is_rejected_before_async_dispatch() {
+        let session = ScriptedTransactionSession::new([
+            Ok(command_response("BEGIN")),
+            Ok(command_response("COMMIT")),
+            Ok(ProtocolResponse::new([4, 8])),
+        ]);
+        let db = AsyncOliphaunt::from_executor(EngineExecutor::spawn(Box::new(session)));
+        let runtime = test_runtime();
+
+        runtime
+            .block_on(db.transaction(async |transaction| {
+                for error in [
+                    transaction
+                        .execute("ROLLBACK AND CHAIN")
+                        .await
+                        .expect_err("extended execute rejects transaction replacement"),
+                    transaction
+                        .query("ABORT WORK AND CHAIN")
+                        .await
+                        .expect_err("extended query rejects transaction replacement"),
+                    transaction
+                        .exec("SELECT 1; ROLLBACK TRANSACTION AND CHAIN")
+                        .await
+                        .expect_err("simple exec rejects transaction replacement"),
+                ] {
+                    assert!(
+                        error
+                            .to_string()
+                            .contains("not allowed inside an SDK-managed callback transaction"),
+                        "unexpected preflight error: {error}"
+                    );
+                }
+                Ok::<(), Error>(())
+            }))
+            .expect("preflight rejections leave the owned transaction active");
+
+        assert_eq!(
+            runtime
+                .block_on(db.exec_protocol_raw([1]))
+                .expect("only BEGIN and the outer COMMIT reached the session"),
+            vec![4, 8]
+        );
+        runtime.block_on(db.close()).expect("database closes");
     }
 
     #[test]

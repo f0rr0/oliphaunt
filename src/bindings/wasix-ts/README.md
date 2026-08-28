@@ -46,8 +46,9 @@ console.log(result.rows[0]?.title);
 
 `execute` asserts one command with no rows. `query` accepts command-only or
 row-producing SQL and defaults to decoded object rows; array rows, text value
-mode, and immutable per-query OID codecs are available. `queryRaw` retains
-ordered nullable bytes and complete field metadata. `exec` returns ordered
+mode, and immutable per-query OID codecs are available. Object mode rejects
+duplicate field names; use `rowMode: 'array'` to preserve them positionally.
+`queryRaw` retains ordered nullable bytes and complete field metadata. `exec` returns ordered
 simple-query results, while `describe` resolves parameter OIDs and optional
 result fields without executing. Structured operations preserve command
 metadata and ordered notices.
@@ -95,9 +96,10 @@ Do not issue manual `BEGIN`, `START TRANSACTION`, `COMMIT`, `END`, `ABORT`,
 `PREPARE TRANSACTION`, or `AND CHAIN` inside the callback; return/throw or call
 `rollback()` instead. `SAVEPOINT` and `ROLLBACK TO` are supported. `ROLLBACK AND
 CHAIN` is unsupported contract misuse and has the same PostgreSQL wire
-tag/readiness state as `ROLLBACK TO`, so the SDK validates the actual protocol
-boundary rather than parsing SQL. A proven ownership escape makes the database
-close-only and never causes a speculative SDK `COMMIT` or `ROLLBACK`.
+tag/readiness state as `ROLLBACK TO`, so the SDK rejects `ROLLBACK`/`ABORT ...
+AND CHAIN` before dispatch and still validates every actual protocol boundary.
+A proven ownership escape makes the database close-only and never causes a
+speculative SDK `COMMIT` or `ROLLBACK`.
 
 Callback failures trigger a best-effort `ROLLBACK`. Once `COMMIT` has been
 sent, the binding never sends a second rollback. PostgreSQL's clean `ROLLBACK`
@@ -258,11 +260,6 @@ only that Worker; importing it in a Window can block the page. `/worker`
 uses a Web Worker in browsers and `node:worker_threads` in Node, Bun, and Deno.
 Browser use requires cross-origin isolation. Chromium Window compilation of
 native side modules larger than 8 MiB requires `/worker`.
-
-The removed `execution` option is rejected at runtime as well as by TypeScript.
-Migrate `execution: 'direct'` by deleting the option. Migrate
-`execution: 'worker'` by importing `/worker`; Oliphaunt never silently falls
-back from one execution surface to the other.
 
 ## Optional PostgreSQL tools
 

@@ -78,6 +78,12 @@ func validateOliphauntStartupGUCs(_ gucs: [OliphauntStartupGUC]) throws {
                     "with an ASCII letter or '_', followed by ASCII letters, digits, '_', or '$'"
             )
         }
+        if name.lowercased() == "config_file" || name.lowercased() == "data_directory" {
+            throw OliphauntError.engine(
+                "Oliphaunt owns PostgreSQL startup GUC '\(name)'; " +
+                    "configure the database through Oliphaunt's storage API"
+            )
+        }
     }
 }
 
@@ -134,6 +140,17 @@ public enum OliphauntError: Error, Equatable, Sendable, CustomStringConvertible 
     }
 }
 
+private func sameTransactionError(_ left: any Error, _ right: any Error) -> Bool {
+    if let left = left as? OliphauntError,
+       let right = right as? OliphauntError {
+        return left == right
+    }
+    guard type(of: left) is AnyClass, type(of: right) is AnyClass else {
+        return false
+    }
+    return (left as AnyObject) === (right as AnyObject)
+}
+
 /// Reports both failures when a transaction callback throws and its automatic
 /// rollback cannot be confirmed. The database is poisoned and must be closed.
 public struct OliphauntTransactionRollbackError: Error, Sendable, CustomStringConvertible {
@@ -166,14 +183,6 @@ public struct OliphauntTransactionDatabaseError: Error, Sendable, CustomStringCo
         self.callbackError = callbackError
         self.databaseError = databaseError
     }
-}
-
-private func sameOliphauntError(_ left: any Error, _ right: any Error) -> Bool {
-    if let left = left as? OliphauntError,
-       let right = right as? OliphauntError {
-        return left == right
-    }
-    return (left as AnyObject) === (right as AnyObject)
 }
 
 // The engine boundary is deliberately internal. Applications use
@@ -254,6 +263,26 @@ private actor OliphauntAsyncSerialGate {
     }
 }
 
+private actor OliphauntTransactionSettlementSignal {
+    private var finished = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !finished else { return }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func finish() {
+        guard !finished else { return }
+        finished = true
+        let current = waiters
+        waiters.removeAll()
+        current.forEach { $0.resume() }
+    }
+}
+
 private enum OliphauntProtocolStreamTaskContext {
     @TaskLocal static var databaseID: UUID?
 }
@@ -305,12 +334,13 @@ public actor OliphauntDatabase {
         let token: UInt64
         var completion: TransactionCompletion = .active
         var databaseFailure: (any Error)?
+        var settlementFailure: (any Error)?
+        var settlementSignal: OliphauntTransactionSettlementSignal?
     }
 
     private var session: (any OliphauntSession)?
     private var closing = false
     private var closeTeardownStarted = false
-    private var closeTeardownStartWaiters: [CheckedContinuation<Void, Never>] = []
     private var activeCancellationCount = 0
     private var cancellationDrainWaiters: [CheckedContinuation<Void, Never>] = []
     private var poisonedMessage: String?
@@ -398,26 +428,44 @@ public actor OliphauntDatabase {
         let result: T
         var began = false
         do {
-            let begin = try await executeTransactionControl("BEGIN", token: token)
-            guard begin.commandTag == "BEGIN" else {
-                throw OliphauntError.engine("BEGIN returned unexpected command tag \(begin.commandTag ?? "<none>")")
-            }
+            _ = try await executeTransactionControl("BEGIN", token: token)
             began = true
+            try Task.checkCancellation()
             result = try await body(transaction)
+            try Task.checkCancellation()
         } catch let callbackError {
-            let databaseError: (any Error)?
-            if let transaction = activeTransaction, transaction.token == token {
-                databaseError = transaction.databaseFailure
-            } else {
-                databaseError = nil
-            }
             var rollbackError: (any Error)?
-            if began, transactionIsActive(token: token) {
-                do {
-                    try await rollbackTransaction(token: token)
-                } catch let error {
-                    rollbackError = error
+            if began {
+                if transactionIsActive(token: token) {
+                    do {
+                        try await rollbackTransaction(token: token)
+                    } catch let error {
+                        rollbackError = error
+                    }
+                } else if let transaction = activeTransaction,
+                          transaction.token == token,
+                          case .rollingBack = transaction.completion {
+                    if let settlementSignal = transaction.settlementSignal {
+                        await settlementSignal.wait()
+                    } else {
+                        let error = OliphauntError.engine(
+                            "transaction rollback settlement was lost; close and reopen the database"
+                        )
+                        poisonTransaction(token: token, message: String(describing: error), error: error)
+                        rollbackError = error
+                    }
                 }
+            }
+            let databaseFailure: (any Error)?
+            if let transaction = activeTransaction, transaction.token == token {
+                databaseFailure = transaction.databaseFailure
+                if rollbackError == nil,
+                   let settlementFailure = transaction.settlementFailure,
+                   !sameTransactionError(callbackError, settlementFailure) {
+                    rollbackError = settlementFailure
+                }
+            } else {
+                databaseFailure = nil
             }
             clearTransaction(token: token)
             if let rollbackError {
@@ -426,16 +474,26 @@ public actor OliphauntDatabase {
                     rollbackError: rollbackError
                 )
             }
-            if let databaseError,
-               !sameOliphauntError(callbackError, databaseError) {
+            if let databaseFailure,
+               !sameTransactionError(callbackError, databaseFailure) {
                 throw OliphauntTransactionDatabaseError(
                     callbackError: callbackError,
-                    databaseError: databaseError
+                    databaseError: databaseFailure
                 )
             }
             throw callbackError
         }
 
+        if let transaction = activeTransaction,
+           transaction.token == token,
+           case .rollingBack = transaction.completion {
+            if let settlementSignal = transaction.settlementSignal {
+                await settlementSignal.wait()
+            } else {
+                let message = "transaction rollback settlement was lost; close and reopen the database"
+                poisonTransaction(token: token, message: message)
+            }
+        }
         guard let activeTransaction, activeTransaction.token == token else {
             let message = "transaction state was lost; close and reopen the database"
             poisonedMessage = message
@@ -446,7 +504,11 @@ public actor OliphauntDatabase {
             clearTransaction(token: token)
             return result
         case .failed(let message):
+            let databaseFailure = activeTransaction.databaseFailure
             clearTransaction(token: token)
+            if let databaseFailure {
+                throw databaseFailure
+            }
             throw OliphauntError.engine(message)
         case .active:
             break
@@ -459,7 +521,7 @@ public actor OliphauntDatabase {
 
         let commit: OliphauntCommandResult
         do {
-            try beginTransactionSettlement(token: token, completion: .committing)
+            _ = try beginTransactionSettlement(token: token, completion: .committing)
             commit = try await executeTransactionControl(
                 "COMMIT",
                 token: token,
@@ -510,9 +572,6 @@ public actor OliphauntDatabase {
         closing = true
         await operationGate.acquire()
         closeTeardownStarted = true
-        let teardownWaiters = closeTeardownStartWaiters
-        closeTeardownStartWaiters.removeAll()
-        teardownWaiters.forEach { $0.resume() }
         await waitForCancellationDrain()
         do {
             try await closingSession.close()
@@ -611,7 +670,7 @@ public actor OliphauntDatabase {
                 response = try await session.execProtocolRaw(request)
             } catch {
                 if settlement == nil {
-                    poisonUnknownTypedOperation(transactionToken: token, error: error)
+                    try throwUnknownTypedOperation(transactionToken: token, error: error)
                 }
                 throw error
             }
@@ -620,15 +679,45 @@ public actor OliphauntDatabase {
                 terminalStatus = try inspectOliphauntTerminalReadyStatus(response)
             } catch {
                 if settlement == nil {
-                    poisonUnknownTypedOperation(transactionToken: token, error: error)
+                    try throwUnknownTypedOperation(transactionToken: token, error: error)
                 }
                 throw error
             }
-            let result = try parseOliphauntCommandResponse(response, expectedProtocol: .simple)
-            guard terminalStatus == expectedStatus, result.readyStatus == terminalStatus else {
-                throw OliphauntError.engine(
-                    "\(sql) returned unexpected ReadyForQuery status \(terminalStatus)"
-                )
+            let result: OliphauntCommandResult
+            do {
+                result = try parseOliphauntCommandResponse(response, expectedProtocol: .simple)
+                guard terminalStatus == expectedStatus, result.readyStatus == terminalStatus else {
+                    throw OliphauntError.engine(
+                        "\(sql) returned unexpected ReadyForQuery status \(terminalStatus)"
+                    )
+                }
+                if sql == "BEGIN", result.commandTag != "BEGIN" {
+                    throw OliphauntError.engine(
+                        "BEGIN returned unexpected command tag \(result.commandTag ?? "<none>")"
+                    )
+                }
+            } catch let primaryError {
+                if sql == "BEGIN" {
+                    do {
+                        try await recoverFailedTransactionBegin(
+                            terminalStatus,
+                            session: session
+                        )
+                    } catch let rollbackError {
+                        let failure = OliphauntError.engine(
+                            "BEGIN failed after a complete ReadyForQuery boundary, and automatic " +
+                                "ROLLBACK failed; close and reopen the database; " +
+                                "BEGIN: \(primaryError); rollback: \(rollbackError)"
+                        )
+                        poisonTransaction(
+                            token: token,
+                            message: String(describing: failure),
+                            error: failure
+                        )
+                        throw failure
+                    }
+                }
+                throw primaryError
             }
             if let settlement {
                 let completion: TransactionCompletion
@@ -662,24 +751,57 @@ public actor OliphauntDatabase {
                 poisonTransaction(
                     token: token,
                     message: "\(label); close and reopen the database: \(error)",
-                    error: error
+                    error: error,
+                    settlementFailure: sql == "ROLLBACK" ? error : nil
                 )
+                await operationGate.release()
+                throw error
             }
             await operationGate.release()
             throw error
         }
     }
 
+    private func recoverFailedTransactionBegin(
+        _ status: OliphauntReadyStatus,
+        session: any OliphauntSession
+    ) async throws {
+        guard status != .idle else { return }
+        let request = try OliphauntProtocol.simpleQuery("ROLLBACK")
+        let response = try await session.execProtocolRaw(request)
+        let terminalStatus = try inspectOliphauntTerminalReadyStatus(response)
+        let rollback = try parseOliphauntCommandResponse(
+            response,
+            expectedProtocol: .simple
+        )
+        guard terminalStatus == .idle,
+              rollback.readyStatus == terminalStatus,
+              rollback.commandTag == "ROLLBACK"
+        else {
+            throw OliphauntError.engine(
+                "automatic ROLLBACK after failed BEGIN returned an unexpected command tag or transaction status"
+            )
+        }
+    }
+
     private func beginTransactionSettlement(
         token: UInt64,
         completion: TransactionCompletion
-    ) throws {
+    ) throws -> OliphauntTransactionSettlementSignal? {
         try validateTransactionAccess(token: token)
         guard var transaction = activeTransaction, transaction.token == token else {
             throw OliphauntError.engine("transaction is no longer active")
         }
+        let signal: OliphauntTransactionSettlementSignal?
+        if case .rollingBack = completion {
+            signal = OliphauntTransactionSettlementSignal()
+        } else {
+            signal = nil
+        }
         transaction.completion = completion
+        transaction.settlementSignal = signal
         activeTransaction = transaction
+        return signal
     }
 
     private func validateTransactionSettlement(
@@ -728,8 +850,10 @@ public actor OliphauntDatabase {
             do {
                 response = try await session.execProtocolRaw(request)
             } catch {
-                poisonUnknownTypedOperation(transactionToken: transactionToken, error: error)
-                throw error
+                try throwUnknownTypedOperation(
+                    transactionToken: transactionToken,
+                    error: error
+                )
             }
             let transactionOutcome: OliphauntStructuredTransactionProtocolOutcome?
             if transactionToken == nil {
@@ -738,8 +862,10 @@ public actor OliphauntDatabase {
                 do {
                     transactionOutcome = try inspectOliphauntStructuredTransactionProtocolOutcome(response)
                 } catch {
-                    poisonUnknownTypedOperation(transactionToken: transactionToken, error: error)
-                    throw error
+                    try throwUnknownTypedOperation(
+                        transactionToken: transactionToken,
+                        error: error
+                    )
                 }
             }
             let terminalStatus: OliphauntReadyStatus
@@ -749,8 +875,10 @@ public actor OliphauntDatabase {
                 do {
                     terminalStatus = try inspectOliphauntTerminalReadyStatus(response)
                 } catch {
-                    poisonUnknownTypedOperation(transactionToken: transactionToken, error: error)
-                    throw error
+                    try throwUnknownTypedOperation(
+                        transactionToken: transactionToken,
+                        error: error
+                    )
                 }
             }
             let ownershipViolation = transactionOutcome.flatMap(
@@ -921,14 +1049,22 @@ public actor OliphauntDatabase {
         let message =
             "typed operation outcome is unknown before a complete ReadyForQuery boundary; " +
             "close and reopen the database: \(error)"
-        poisonedMessage = message
-        if let transactionToken,
-           var transaction = activeTransaction,
-           transaction.token == transactionToken {
-            transaction.completion = .failed(message)
-            transaction.databaseFailure = error
-            activeTransaction = transaction
+        if let transactionToken {
+            poisonTransaction(token: transactionToken, message: message, error: error)
+        } else {
+            poisonedMessage = message
         }
+    }
+
+    private func throwUnknownTypedOperation(
+        transactionToken: UInt64?,
+        error: any Error
+    ) throws -> Never {
+        poisonUnknownTypedOperation(
+            transactionToken: transactionToken,
+            error: error
+        )
+        throw error
     }
 
     private func poisonUnknownRawProtocolOperation(error: any Error) {
@@ -1018,12 +1154,18 @@ public actor OliphauntDatabase {
     }
 
     fileprivate func rollbackTransaction(token: UInt64) async throws {
-        try beginTransactionSettlement(token: token, completion: .rollingBack)
-        _ = try await executeTransactionControl(
-            "ROLLBACK",
-            token: token,
-            settlement: .rollingBack
-        )
+        let signal = try beginTransactionSettlement(token: token, completion: .rollingBack)
+        do {
+            _ = try await executeTransactionControl(
+                "ROLLBACK",
+                token: token,
+                settlement: .rollingBack
+            )
+            await signal?.finish()
+        } catch {
+            await signal?.finish()
+            throw error
+        }
     }
 
     private func transactionIsActive(token: UInt64) -> Bool {
@@ -1045,13 +1187,17 @@ public actor OliphauntDatabase {
     private func poisonTransaction(
         token: UInt64,
         message: String,
-        error: (any Error)? = nil
+        error: (any Error)? = nil,
+        settlementFailure: (any Error)? = nil
     ) {
         poisonedMessage = message
         if var transaction = activeTransaction, transaction.token == token {
             transaction.completion = .failed(message)
             if transaction.databaseFailure == nil {
                 transaction.databaseFailure = error
+            }
+            if transaction.settlementFailure == nil {
+                transaction.settlementFailure = settlementFailure
             }
             activeTransaction = transaction
         }
@@ -1062,13 +1208,6 @@ public actor OliphauntDatabase {
 
     func waitUntilQueuedOperationCount(atLeast expected: Int) async {
         await operationGate.waitUntilWaiterCount(atLeast: expected)
-    }
-
-    func waitUntilCloseTeardownStarted() async {
-        guard !closeTeardownStarted else { return }
-        await withCheckedContinuation { continuation in
-            closeTeardownStartWaiters.append(continuation)
-        }
     }
 }
 
@@ -1101,16 +1240,35 @@ public struct OliphauntTransaction: Sendable {
 
 extension OliphauntConfiguration {
     func postgresStartupArgs(sharedPreloadLibraries: [String] = []) -> [String] {
+        let requiredPreloads = Set(sharedPreloadLibraries).sorted()
+        if requiredPreloads.isEmpty {
+            return startupGUCs.flatMap { guc in
+                ["-c", "\(guc.name.trimmingCharacters(in: .whitespacesAndNewlines))=\(guc.value)"]
+            }
+        }
+
+        let configuredPreloads = startupGUCs.last { guc in
+            guc.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                == "shared_preload_libraries"
+        }?.value ?? ""
+        var seenPreloads: Set<String> = []
+        var mergedPreloads: [String] = []
+        for preload in configuredPreloads.split(separator: ",").map({
+            String($0).trimmingCharacters(in: .whitespacesAndNewlines)
+        }) + requiredPreloads where !preload.isEmpty && seenPreloads.insert(preload).inserted {
+            mergedPreloads.append(preload)
+        }
+
         var args: [String] = []
-        for guc in startupGUCs {
+        for guc in startupGUCs where
+            guc.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                != "shared_preload_libraries"
+        {
             args.append("-c")
             args.append("\(guc.name.trimmingCharacters(in: .whitespacesAndNewlines))=\(guc.value)")
         }
-        let preloadLibraries = Set(sharedPreloadLibraries).sorted()
-        if !preloadLibraries.isEmpty {
-            args.append("-c")
-            args.append("shared_preload_libraries=\(preloadLibraries.joined(separator: ","))")
-        }
+        args.append("-c")
+        args.append("shared_preload_libraries=\(mergedPreloads.joined(separator: ","))")
         return args
     }
 }

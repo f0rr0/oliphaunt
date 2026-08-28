@@ -194,6 +194,10 @@ impl Parameter {
     }
 
     /// Attach an explicit PostgreSQL type OID.
+    ///
+    /// OID 0 is PostgreSQL's inference sentinel. It is accepted when describing
+    /// a statement, but execution rejects an explicitly attached zero; leave
+    /// the OID unset to request execution-time inference.
     pub fn with_type_oid(mut self, type_oid: TypeOid) -> Self {
         self.type_oid = Some(type_oid);
         self
@@ -329,100 +333,6 @@ where
                 Some(type_oid) => Parameter::typed_null(type_oid),
                 None => Parameter::null(),
             })
-    }
-}
-
-/// Parameter value for a PostgreSQL extended-query execution.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum QueryParam {
-    /// SQL NULL.
-    Null,
-    /// Text-format parameter value.
-    Text(String),
-    /// Binary-format parameter value.
-    Binary(Vec<u8>),
-}
-
-impl QueryParam {
-    /// Construct a text parameter.
-    pub fn text(value: impl Into<String>) -> Self {
-        Self::Text(value.into())
-    }
-
-    /// Construct a binary parameter.
-    pub fn binary(value: impl Into<Vec<u8>>) -> Self {
-        Self::Binary(value.into())
-    }
-}
-
-impl From<&str> for QueryParam {
-    fn from(value: &str) -> Self {
-        Self::Text(value.to_owned())
-    }
-}
-
-impl From<String> for QueryParam {
-    fn from(value: String) -> Self {
-        Self::Text(value)
-    }
-}
-
-impl From<&String> for QueryParam {
-    fn from(value: &String) -> Self {
-        Self::Text(value.clone())
-    }
-}
-
-macro_rules! text_param {
-    ($($type:ty),* $(,)?) => {
-        $(
-            impl From<$type> for QueryParam {
-                fn from(value: $type) -> Self {
-                    Self::Text(value.to_string())
-                }
-            }
-        )*
-    };
-}
-
-text_param!(i16, i32, i64, f32, f64);
-
-impl From<bool> for QueryParam {
-    fn from(value: bool) -> Self {
-        Self::Text(value.to_string())
-    }
-}
-
-impl From<&[u8]> for QueryParam {
-    fn from(value: &[u8]) -> Self {
-        Self::Binary(value.to_vec())
-    }
-}
-
-impl From<Vec<u8>> for QueryParam {
-    fn from(value: Vec<u8>) -> Self {
-        Self::Binary(value)
-    }
-}
-
-impl<T> From<Option<T>> for QueryParam
-where
-    T: Into<QueryParam>,
-{
-    fn from(value: Option<T>) -> Self {
-        value.map(Into::into).unwrap_or(Self::Null)
-    }
-}
-
-impl IntoParameter for QueryParam {
-    const TYPE_OID: Option<TypeOid> = None;
-
-    fn into_parameter(self) -> Parameter {
-        match self {
-            Self::Null => Parameter::null(),
-            Self::Text(value) => Parameter::text(value),
-            Self::Binary(value) => Parameter::binary(value),
-        }
     }
 }
 
@@ -1284,11 +1194,6 @@ impl QueryResult {
         self.ready_status
     }
 
-    /// Return the index for a column name.
-    pub fn field_index(&self, name: &str) -> Option<usize> {
-        self.fields.iter().position(|field| field.name == name)
-    }
-
     pub(crate) fn row(&self, index: usize) -> Option<&QueryRow> {
         self.rows.get(index)
     }
@@ -1567,6 +1472,7 @@ pub(crate) fn extended_statement(
 ) -> Result<Vec<u8>> {
     reject_copy_statements(sql)?;
     validate_statement_input(sql, params.len())?;
+    validate_execution_parameters(params)?;
     let mut packet = Vec::new();
     push_parse(&mut packet, sql, params)?;
     push_bind(&mut packet, params, result_format_code)?;
@@ -1593,6 +1499,18 @@ fn validate_statement_input(sql: &str, parameter_count: usize) -> Result<()> {
         return Err(protocol(format!(
             "extended query supports at most {} parameters, got {parameter_count}",
             i16::MAX
+        )));
+    }
+    Ok(())
+}
+
+fn validate_execution_parameters(params: &[Parameter]) -> Result<()> {
+    if let Some(index) = params
+        .iter()
+        .position(|parameter| parameter.type_oid().is_some_and(|oid| oid.get() == 0))
+    {
+        return Err(protocol(format!(
+            "execution parameter {index} explicitly declares PostgreSQL type OID 0; omit the type OID to request server inference"
         )));
     }
     Ok(())
@@ -1671,63 +1589,191 @@ pub(crate) fn reject_copy_statements(sql: &str) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn reject_transaction_chain(sql: &str) -> Result<()> {
+    if contains_transaction_chain(sql, false) || contains_transaction_chain(sql, true) {
+        return Err(protocol(
+            "ROLLBACK ... AND CHAIN and ABORT ... AND CHAIN are not allowed inside an SDK-managed callback transaction; roll back through the transaction handle and start a new transaction explicitly",
+        ));
+    }
+    Ok(())
+}
+
 fn contains_top_level_copy(sql: &str, ordinary_backslash_escapes: bool) -> bool {
-    let bytes = sql.as_bytes();
-    let mut index = 0;
     let mut statement_start = true;
-    while index < bytes.len() {
-        match bytes[index] {
-            byte if byte.is_ascii_whitespace() => index += 1,
-            b';' => {
-                statement_start = true;
-                index += 1;
-            }
-            b'-' if bytes.get(index + 1) == Some(&b'-') => {
-                index += 2;
-                while index < bytes.len() && !matches!(bytes[index], b'\n' | b'\r') {
-                    index += 1;
-                }
-            }
-            b'/' if bytes.get(index + 1) == Some(&b'*') => {
-                index = skip_block_comment(bytes, index);
-            }
-            b'\'' => {
-                statement_start = false;
-                index = skip_quoted(bytes, index, b'\'', ordinary_backslash_escapes);
-            }
-            b'"' => {
-                statement_start = false;
-                index = skip_quoted(bytes, index, b'"', false);
-            }
-            b'$' if dollar_quote_delimiter(bytes, index).is_some() => {
-                statement_start = false;
-                index = skip_dollar_quote(bytes, index);
-            }
-            byte if byte.is_ascii_alphabetic() || byte == b'_' => {
-                let start = index;
-                index += 1;
-                while bytes.get(index).is_some_and(|byte| {
-                    byte.is_ascii_alphanumeric() || *byte == b'_' || *byte == b'$'
-                }) {
-                    index += 1;
-                }
-                if statement_start && bytes[start..index].eq_ignore_ascii_case(b"COPY") {
+    for token in TopLevelSqlTokens::new(sql, ordinary_backslash_escapes) {
+        match token {
+            TopLevelSqlToken::StatementBoundary => statement_start = true,
+            TopLevelSqlToken::Word(word) => {
+                if statement_start && word.eq_ignore_ascii_case(b"COPY") {
                     return true;
                 }
                 statement_start = false;
-                if bytes[start..index].eq_ignore_ascii_case(b"E")
-                    && bytes.get(index) == Some(&b'\'')
-                {
-                    index = skip_quoted(bytes, index, b'\'', true);
-                }
             }
-            _ => {
-                statement_start = false;
-                index += 1;
-            }
+            TopLevelSqlToken::Other => statement_start = false,
         }
     }
     false
+}
+
+#[derive(Clone, Copy)]
+enum TransactionChainState {
+    StatementStart,
+    AfterControl,
+    AfterQualifier,
+    AfterAnd,
+    Ineligible,
+}
+
+fn contains_transaction_chain(sql: &str, ordinary_backslash_escapes: bool) -> bool {
+    let mut state = TransactionChainState::StatementStart;
+    for token in TopLevelSqlTokens::new(sql, ordinary_backslash_escapes) {
+        state = match token {
+            TopLevelSqlToken::StatementBoundary => TransactionChainState::StatementStart,
+            TopLevelSqlToken::Other => TransactionChainState::Ineligible,
+            TopLevelSqlToken::Word(word) => match state {
+                TransactionChainState::StatementStart
+                    if word.eq_ignore_ascii_case(b"ROLLBACK")
+                        || word.eq_ignore_ascii_case(b"ABORT") =>
+                {
+                    TransactionChainState::AfterControl
+                }
+                TransactionChainState::AfterControl
+                    if word.eq_ignore_ascii_case(b"WORK")
+                        || word.eq_ignore_ascii_case(b"TRANSACTION") =>
+                {
+                    TransactionChainState::AfterQualifier
+                }
+                TransactionChainState::AfterControl | TransactionChainState::AfterQualifier
+                    if word.eq_ignore_ascii_case(b"AND") =>
+                {
+                    TransactionChainState::AfterAnd
+                }
+                TransactionChainState::AfterAnd if word.eq_ignore_ascii_case(b"CHAIN") => {
+                    return true;
+                }
+                _ => TransactionChainState::Ineligible,
+            },
+        };
+    }
+    false
+}
+
+#[derive(Clone, Copy)]
+enum TopLevelSqlToken<'a> {
+    StatementBoundary,
+    Word(&'a [u8]),
+    Other,
+}
+
+struct TopLevelSqlTokens<'a> {
+    bytes: &'a [u8],
+    index: usize,
+    depth: usize,
+    ordinary_backslash_escapes: bool,
+}
+
+impl<'a> TopLevelSqlTokens<'a> {
+    fn new(sql: &'a str, ordinary_backslash_escapes: bool) -> Self {
+        Self {
+            bytes: sql.as_bytes(),
+            index: 0,
+            depth: 0,
+            ordinary_backslash_escapes,
+        }
+    }
+}
+
+impl<'a> Iterator for TopLevelSqlTokens<'a> {
+    type Item = TopLevelSqlToken<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.index < self.bytes.len() {
+            match self.bytes[self.index] {
+                byte if byte.is_ascii_whitespace() => self.index += 1,
+                b'-' if self.bytes.get(self.index + 1) == Some(&b'-') => {
+                    self.index += 2;
+                    while self.index < self.bytes.len()
+                        && !matches!(self.bytes[self.index], b'\n' | b'\r')
+                    {
+                        self.index += 1;
+                    }
+                }
+                b'/' if self.bytes.get(self.index + 1) == Some(&b'*') => {
+                    self.index = skip_block_comment(self.bytes, self.index);
+                }
+                b'\'' => {
+                    let top_level = self.depth == 0;
+                    self.index = skip_quoted(
+                        self.bytes,
+                        self.index,
+                        b'\'',
+                        self.ordinary_backslash_escapes,
+                    );
+                    if top_level {
+                        return Some(TopLevelSqlToken::Other);
+                    }
+                }
+                b'"' => {
+                    let top_level = self.depth == 0;
+                    self.index = skip_quoted(self.bytes, self.index, b'"', false);
+                    if top_level {
+                        return Some(TopLevelSqlToken::Other);
+                    }
+                }
+                b'$' if dollar_quote_delimiter(self.bytes, self.index).is_some() => {
+                    let top_level = self.depth == 0;
+                    self.index = skip_dollar_quote(self.bytes, self.index);
+                    if top_level {
+                        return Some(TopLevelSqlToken::Other);
+                    }
+                }
+                b'(' => {
+                    let top_level = self.depth == 0;
+                    self.depth += 1;
+                    self.index += 1;
+                    if top_level {
+                        return Some(TopLevelSqlToken::Other);
+                    }
+                }
+                b')' if self.depth > 0 => {
+                    self.depth -= 1;
+                    self.index += 1;
+                }
+                b';' if self.depth == 0 => {
+                    self.index += 1;
+                    return Some(TopLevelSqlToken::StatementBoundary);
+                }
+                byte if is_postgres_identifier_start(byte) => {
+                    let start = self.index;
+                    self.index += 1;
+                    while self
+                        .bytes
+                        .get(self.index)
+                        .is_some_and(|byte| is_postgres_identifier_continuation(*byte))
+                    {
+                        self.index += 1;
+                    }
+                    let word = &self.bytes[start..self.index];
+                    if word.eq_ignore_ascii_case(b"E") && self.bytes.get(self.index) == Some(&b'\'')
+                    {
+                        self.index = skip_quoted(self.bytes, self.index, b'\'', true);
+                        if self.depth == 0 {
+                            return Some(TopLevelSqlToken::Other);
+                        }
+                    } else if self.depth == 0 {
+                        return Some(TopLevelSqlToken::Word(word));
+                    }
+                }
+                _ => {
+                    self.index += 1;
+                    if self.depth == 0 {
+                        return Some(TopLevelSqlToken::Other);
+                    }
+                }
+            }
+        }
+        None
+    }
 }
 
 fn skip_quoted(bytes: &[u8], mut index: usize, quote: u8, backslash_escapes: bool) -> usize {
@@ -1772,10 +1818,21 @@ fn dollar_quote_delimiter(bytes: &[u8], index: usize) -> Option<&[u8]> {
     }
     let tail = &bytes[index + 1..];
     let end = tail.iter().position(|byte| *byte == b'$')?;
-    tail[..end]
-        .iter()
-        .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
-        .then_some(&bytes[index..index + end + 2])
+    let tag = &tail[..end];
+    (tag.is_empty()
+        || (is_postgres_identifier_start(tag[0])
+            && tag[1..]
+                .iter()
+                .all(|byte| is_postgres_identifier_continuation(*byte) && *byte != b'$')))
+    .then_some(&bytes[index..index + end + 2])
+}
+
+fn is_postgres_identifier_start(byte: u8) -> bool {
+    byte.is_ascii_alphabetic() || byte == b'_' || byte >= 0x80
+}
+
+fn is_postgres_identifier_continuation(byte: u8) -> bool {
+    is_postgres_identifier_start(byte) || byte.is_ascii_digit() || byte == b'$'
 }
 
 fn skip_dollar_quote(bytes: &[u8], index: usize) -> usize {
@@ -2185,6 +2242,7 @@ pub(crate) fn parse_exec_response(bytes: &[u8]) -> Result<ExecResult> {
     let mut statements = Vec::new();
     let mut saw_completion = false;
     let mut notices = Vec::new();
+    let mut statement_notices = Vec::new();
     let mut ready_status = None;
     let mut postgres_error = None;
 
@@ -2226,7 +2284,7 @@ pub(crate) fn parse_exec_response(bytes: &[u8]) -> Result<ExecResult> {
                         rows,
                         command_tag: Some(command_tag),
                         row_count,
-                        notices: Vec::new(),
+                        notices: take_notices(&mut statement_notices),
                         ready_status: ReadyStatus::Idle,
                     }));
                 } else {
@@ -2236,7 +2294,7 @@ pub(crate) fn parse_exec_response(bytes: &[u8]) -> Result<ExecResult> {
                     statements.push(StatementResult::Command(CommandResult {
                         command_tag: Some(command_tag),
                         row_count,
-                        notices: Vec::new(),
+                        notices: take_notices(&mut statement_notices),
                         ready_status: ReadyStatus::Idle,
                     }));
                 }
@@ -2249,10 +2307,15 @@ pub(crate) fn parse_exec_response(bytes: &[u8]) -> Result<ExecResult> {
                         "exec() received EmptyQueryResponse before the prior row result completed",
                     ));
                 }
+                statement_notices.clear();
                 saw_completion = true;
             }
             b'E' => postgres_error = Some(parse_error_response(body)?),
-            b'N' => notices.push(parse_notice_response(body)?),
+            b'N' => {
+                let notice = parse_notice_response(body)?;
+                statement_notices.push(notice.clone());
+                notices.push(notice);
+            }
             b'S' => validate_parameter_status(body)?,
             b'A' => validate_notification_response(body)?,
             b'Z' => {
@@ -2296,6 +2359,13 @@ pub(crate) fn parse_exec_response(bytes: &[u8]) -> Result<ExecResult> {
         notices: notices.into_iter().map(PostgresNotice::from_core).collect(),
         ready_status,
     })
+}
+
+fn take_notices(notices: &mut Vec<Diagnostic>) -> Vec<PostgresNotice> {
+    std::mem::take(notices)
+        .into_iter()
+        .map(PostgresNotice::from_core)
+        .collect()
 }
 
 pub(crate) fn parse_statement_description(bytes: &[u8]) -> Result<StatementDescription> {

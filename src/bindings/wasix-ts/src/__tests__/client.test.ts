@@ -69,13 +69,6 @@ describe('WASIX browser root execution surface', () => {
     expect(directMocks.openWasixDirect).toHaveBeenCalledOnce();
     expect(directMocks.openWasixDirect.mock.calls[0]?.[2]).toBe('browser-main');
   });
-
-  it('rejects legacy placement before loading the caller-realm engine', async () => {
-    await expect(
-      openWasixWithHost({ execution: 'worker' } as never, async () => ({}) as never),
-    ).rejects.toThrow(/no longer accepts the "execution" option/);
-    expect(directMocks.openWasixDirect).not.toHaveBeenCalled();
-  });
 });
 
 function restoreGlobal(name: string, descriptor: PropertyDescriptor | undefined): void {

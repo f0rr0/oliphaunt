@@ -57,7 +57,7 @@ export function createWorkerSessionDispatcher(
           const session = requireProcess(process);
           const control = new Int32Array(request.control);
           let sequence = 0;
-          const onChunk = (chunk: Uint8Array): void => {
+          const onChunk = (chunk: Uint8Array): undefined => {
             if (Atomics.load(control, 1) !== 0) {
               throw new WorkerStreamCallbackAborted('protocol stream consumer failed');
             }
@@ -78,6 +78,7 @@ export function createWorkerSessionDispatcher(
             if (Atomics.load(control, 1) !== 0) {
               throw new WorkerStreamCallbackAborted('protocol stream consumer failed');
             }
+            return undefined;
           };
           let outcome: WasixProtocolStreamOutcome;
           if (session.execStream === undefined) {

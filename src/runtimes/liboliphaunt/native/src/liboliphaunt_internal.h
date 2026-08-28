@@ -36,7 +36,7 @@ void oliphaunt_error_scope_begin(
  * producer through the operation's owning mutex while this snapshot is made. */
 void oliphaunt_error_scope_capture_shared(OliphauntHandle *fallback_handle);
 void oliphaunt_error_scope_end(OliphauntErrorScope *scope, bool failed);
-/* Shared runners pass NULL only for legacy entry points; every public
+/* Shared runners pass NULL only for synchronous non-capture entry points; every public
  * `_with_error` wrapper rejects a NULL capture before dispatching work. */
 void oliphaunt_error_capture_current(
     OliphauntErrorCapture *capture,
@@ -171,6 +171,7 @@ struct OliphauntHandle {
     bool error_mutex_initialized;
     bool closing;
     bool logical_active;
+    bool external_root_lock;
     uint64_t logical_generation;
     unsigned char *input;
     size_t input_len;
@@ -237,6 +238,10 @@ void oliphaunt_static_extension_init(const OliphauntStaticExtension *extension);
 
 char *oliphaunt_dup_config_string(const char *value, const char *fallback);
 int oliphaunt_dup_startup_args(OliphauntHandle *handle, const OliphauntConfig *config);
+int oliphaunt_validate_startup_args(OliphauntHandle *handle, const OliphauntConfig *config);
+bool oliphaunt_config_matches_resident_runtime(
+    const OliphauntHandle *handle,
+    const OliphauntConfig *config);
 char *oliphaunt_resolve_postgres_argv0(const char *runtime_dir);
 
 int oliphaunt_build_backend_argv(OliphauntHandle *handle, OliphauntBackendArgv *out);

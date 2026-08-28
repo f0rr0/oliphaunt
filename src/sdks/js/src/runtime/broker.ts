@@ -125,6 +125,7 @@ export class BrokerHandle {
     readonly config: NormalizedOpenConfig,
     launch: BrokerLaunch,
     authToken: string,
+    private readonly shutdownTimeoutMs = SHUTDOWN_TIMEOUT_MS,
   ) {
     this.#child = launch.child;
     this.#stream = launch.stream;
@@ -208,24 +209,7 @@ export class BrokerHandle {
       throw new Error('native broker auth token is unavailable');
     }
     const stream = await connectEndpoint(parseReadyEndpoint(endpoint));
-    try {
-      await authenticateBroker(stream, authToken);
-      await writeBrokerRequest(stream, { kind: 'cancel' });
-      const response = await readBrokerResponse(stream);
-      if (response.kind === 'error') {
-        throw new Error(`native broker cancel failed: ${response.message}`);
-      }
-      if (response.kind === 'chunk') {
-        throw new Error('native broker cancel endpoint returned a stream chunk');
-      }
-      if (response.kind === 'streamCallbackAborted') {
-        throw new Error(
-          `native broker cancel endpoint returned a stream callback-aborted frame: ${response.message}`,
-        );
-      }
-    } finally {
-      await stream.close();
-    }
+    await cancelBrokerStream(stream, authToken);
   }
 
   async detach(): Promise<void> {
@@ -270,13 +254,20 @@ export class BrokerHandle {
     const child = this.#child;
     if (child !== undefined) {
       try {
-        const exited = await waitForManagedChild(child, SHUTDOWN_TIMEOUT_MS);
+        let exited = await waitForManagedChild(child, this.shutdownTimeoutMs);
         if (!exited) {
-          failures.push(new Error(`native broker did not stop within ${SHUTDOWN_TIMEOUT_MS}ms`));
+          failures.push(new Error(`native broker did not stop within ${this.shutdownTimeoutMs}ms`));
           child.kill('SIGKILL');
-          await child.wait();
+          exited = await waitForManagedChild(child, this.shutdownTimeoutMs);
+          if (!exited) {
+            failures.push(
+              new Error(
+                `native broker was not reaped within ${this.shutdownTimeoutMs}ms after SIGKILL`,
+              ),
+            );
+          }
         }
-        if (this.#child === child) {
+        if (exited && this.#child === child) {
           this.#child = undefined;
         }
       } catch (error) {
@@ -377,8 +368,8 @@ export class BrokerHandle {
     if (child !== undefined) {
       try {
         child.kill('SIGKILL');
-        await child.wait();
-        if (this.#child === child) {
+        const reaped = await waitForManagedChild(child, this.shutdownTimeoutMs);
+        if (reaped && this.#child === child) {
           this.#child = undefined;
         }
       } catch {
@@ -399,6 +390,37 @@ export class BrokerHandle {
     this.#cancelEndpoint = undefined;
     this.#authToken = undefined;
   }
+}
+
+/** @internal Execute one out-of-band cancellation and always release its control stream. */
+export async function cancelBrokerStream(stream: ByteStream, authToken: string): Promise<void> {
+  try {
+    await authenticateBroker(stream, authToken);
+    await writeBrokerRequest(stream, { kind: 'cancel' });
+    const response = await readBrokerResponse(stream);
+    if (response.kind === 'error') {
+      throw new Error(`native broker cancel failed: ${response.message}`);
+    }
+    if (response.kind === 'chunk') {
+      throw new Error('native broker cancel endpoint returned a stream chunk');
+    }
+    if (response.kind === 'streamCallbackAborted') {
+      throw new Error(
+        `native broker cancel endpoint returned a stream callback-aborted frame: ${response.message}`,
+      );
+    }
+  } catch (primaryFailure) {
+    try {
+      await stream.close();
+    } catch (closeFailure) {
+      throw new AggregateError(
+        [primaryFailure, closeFailure],
+        'native broker cancel and control-stream close both failed',
+      );
+    }
+    throw primaryFailure;
+  }
+  await stream.close();
 }
 
 // Intentionally process-lifetime ownership for resources whose destructive

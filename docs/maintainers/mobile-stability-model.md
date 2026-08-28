@@ -71,8 +71,9 @@ finalizer thread.
 The mobile bridges call `oliphaunt_copy_last_error` on the native operation's
 calling thread and move its operation-local snapshot into language-owned
 memory. The size probe and copy remain stable if the separate cancellation
-owner updates the handle-wide fallback concurrently. Bridges never keep the
-compatibility accessor's borrowed pointer across a native call or thread hop.
+owner updates the handle-wide fallback concurrently. The C boundary exposes no
+borrowed error pointer for a bridge to retain across a native call or thread
+hop.
 
 ## Extensions and packaging
 

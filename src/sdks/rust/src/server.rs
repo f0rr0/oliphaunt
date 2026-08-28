@@ -1,6 +1,5 @@
 use std::ffi::OsString;
 use std::fs;
-use std::io::Read;
 use std::net::{SocketAddr, TcpListener};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -12,12 +11,12 @@ use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::child_process::reap_child_process;
+#[cfg(unix)]
+use crate::config::server_unix_socket_directory_str;
 use crate::config::{EngineMode, NativeServerConfig, OpenConfig, ServerListen};
 use crate::engine::{EngineSession, NativeRuntime};
 use crate::error::{Error, Result};
-use crate::extension::{
-    Extension, extension_runtime_environment, required_shared_preload_libraries,
-};
+use crate::extension::{Extension, extension_runtime_environment};
 use crate::liboliphaunt::{PreparedNativeRoot, configure_native_tool_env};
 use crate::pgwire::{PostgresEndpoint, PostgresWireClient};
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
@@ -56,12 +55,20 @@ impl NativeRuntime for NativeServerRuntime {
         debug_assert_eq!(config.mode, EngineMode::Server);
         config.validate()?;
         let extensions = config.resolved_extensions()?;
-        let root = PreparedNativeRoot::prepare_for_server(&config, &extensions)?;
-        let executable = self
+        let explicit_executable = self
             .executable
             .clone()
-            .or_else(|| config.server.executable.clone())
-            .unwrap_or_else(|| root.tool_path("postgres"));
+            .or_else(|| config.server.executable.clone());
+        if let Some(executable) = explicit_executable.as_ref()
+            && !executable.is_file()
+        {
+            return Err(Error::InvalidConfig(format!(
+                "native server executable must be an existing file: {}",
+                executable.display()
+            )));
+        }
+        let root = PreparedNativeRoot::prepare_for_server(&config, &extensions)?;
+        let executable = explicit_executable.unwrap_or_else(|| root.tool_path("postgres"));
         let listen = self.listen.clone();
         let fixed_port = match &listen {
             ServerListen::Tcp { port } => *port,
@@ -87,9 +94,6 @@ impl NativeRuntime for NativeServerRuntime {
                     Err(error) => {
                         let mut cleanup_failures = Vec::new();
                         remove_owned_socket_dir(&mut owned_socket_dir, &mut cleanup_failures);
-                        if owned_socket_dir.is_some() {
-                            std::mem::forget(owned_socket_dir);
-                        }
                         return Err(failed_start_error(error, cleanup_failures));
                     }
                 };
@@ -105,26 +109,23 @@ impl NativeRuntime for NativeServerRuntime {
                     }));
                 }
                 Err(error) => {
-                    let retry_auto_port = fixed_port.is_none()
-                        && attempt + 1 < attempts
-                        && is_auto_port_bind_conflict(&error);
                     let (reaped, cleanup_failures) =
                         cleanup_failed_start(&mut child, &mut owned_socket_dir);
                     if !reaped {
                         // The process may still be using PGDATA and its socket.
-                        // Leak the exact resources process-lifetime rather than
-                        // delete or unlock either tree beneath a live backend.
-                        std::mem::forget((child, owned_socket_dir, root));
+                        // Retain resources with ownership-bearing destructors
+                        // rather than unlock PGDATA beneath a live backend.
+                        // Dropping the socket PathBuf does not delete it.
+                        std::mem::forget(child);
+                        std::mem::forget(root);
                         return Err(failed_start_error(error, cleanup_failures));
-                    }
-                    if owned_socket_dir.is_some() {
-                        // Reaping proved PGDATA safe to release, but preserve
-                        // the exact private socket path after failed deletion.
-                        std::mem::forget(owned_socket_dir);
                     }
                     if !cleanup_failures.is_empty() {
                         return Err(failed_start_error(error, cleanup_failures));
                     }
+                    let retry_auto_port = fixed_port.is_none()
+                        && attempt + 1 < attempts
+                        && tcp_port_is_occupied(port);
                     if retry_auto_port {
                         last_error = Some(error);
                     } else {
@@ -193,8 +194,12 @@ impl NativeServerSession {
                     .spawn();
                 match stop {
                     Ok(mut child) => {
-                        let outcome =
-                            reap_child_process(&mut child, SHUTDOWN_TIMEOUT, "pg_ctl stop");
+                        let outcome = reap_child_process(
+                            &mut child,
+                            SHUTDOWN_TIMEOUT,
+                            SHUTDOWN_TIMEOUT,
+                            "pg_ctl stop",
+                        );
                         cleanup_failures.extend(outcome.failures);
                         if outcome.reaped {
                             if outcome.exit_success == Some(false) {
@@ -219,7 +224,12 @@ impl NativeServerSession {
         }
 
         if let Some(child) = self.child.as_mut() {
-            let outcome = reap_child_process(child, SHUTDOWN_TIMEOUT, "native server process");
+            let outcome = reap_child_process(
+                child,
+                SHUTDOWN_TIMEOUT,
+                SHUTDOWN_TIMEOUT,
+                "native server process",
+            );
             cleanup_failures.extend(outcome.failures);
             if outcome.reaped {
                 self.child = None;
@@ -258,9 +268,6 @@ impl Drop for NativeServerSession {
             // unconfirmed PostgreSQL/pg_ctl process.
             if let Some(child) = self.child.take() {
                 std::mem::forget(child);
-            }
-            if let Some(socket_dir) = self.owned_socket_dir.take() {
-                std::mem::forget(socket_dir);
             }
         }
         if retain_root && let Some(root) = self.root.take() {
@@ -302,7 +309,7 @@ fn start_postgres(
             listen,
         )?)
         .stdout(Stdio::null())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::inherit());
     command
         .spawn()
         .map_err(|err| Error::Engine(format!("start native server postgres: {err}")))
@@ -377,10 +384,7 @@ fn postgres_startup_args(
         let socket_dir = socket_dir.ok_or_else(|| {
             Error::Engine("native server socket directory was not allocated".to_owned())
         })?;
-        args.push(OsString::from(format!(
-            "unix_socket_directories={}",
-            socket_dir.display()
-        )));
+        args.push(postgres_unix_socket_assignment(socket_dir)?);
     }
     #[cfg(not(unix))]
     {
@@ -389,17 +393,9 @@ fn postgres_startup_args(
         args.push(OsString::from("unix_socket_directories="));
     }
 
-    for assignment in config.postgres_startup_assignments() {
+    for assignment in config.postgres_startup_assignments(extensions) {
         args.push(OsString::from("-c"));
         args.push(OsString::from(assignment));
-    }
-    let preload_libraries = required_shared_preload_libraries(extensions);
-    if !preload_libraries.is_empty() {
-        args.push(OsString::from("-c"));
-        args.push(OsString::from(format!(
-            "shared_preload_libraries={}",
-            preload_libraries.join(",")
-        )));
     }
     Ok(args)
 }
@@ -416,9 +412,8 @@ fn wait_for_server(
             .try_wait()
             .map_err(|err| Error::Engine(format!("poll native server startup: {err}")))?
         {
-            let stderr = child_stderr(child);
             return Err(Error::Engine(format!(
-                "native server exited before accepting connections: {status}{stderr}"
+                "native server exited before accepting connections: {status}; PostgreSQL diagnostics were written to the parent process stderr"
             )));
         }
         match PostgresWireClient::connect_endpoint(
@@ -455,10 +450,24 @@ fn tcp_connection_string(config: &OpenConfig, port: u16) -> String {
 }
 
 #[cfg(unix)]
+fn postgres_unix_socket_assignment(directory: &Path) -> Result<OsString> {
+    let directory = server_unix_socket_directory_str(directory)?;
+    let mut assignment =
+        String::with_capacity(directory.len() + "unix_socket_directories=\"\"".len());
+    assignment.push_str("unix_socket_directories=\"");
+    for character in directory.chars() {
+        if character == '"' {
+            assignment.push('"');
+        }
+        assignment.push(character);
+    }
+    assignment.push('"');
+    Ok(assignment.into())
+}
+
+#[cfg(unix)]
 fn unix_connection_string(config: &OpenConfig, directory: &Path, port: u16) -> Result<String> {
-    let directory = directory.to_str().ok_or_else(|| {
-        Error::InvalidConfig("native server Unix socket directory must be valid UTF-8".to_owned())
-    })?;
+    let directory = server_unix_socket_directory_str(directory)?;
     Ok(format!(
         "postgresql:///{database}?host={host}&port={port}&user={user}&sslmode=disable",
         database = percent_encode_connection_component(&config.database),
@@ -558,6 +567,7 @@ fn prepare_server_listen(
                     })?
                     .join(directory)
             };
+            let connection_string = unix_connection_string(config, &directory, *port)?;
             prepare_public_socket_directory(&directory, *port)?;
             let socket = directory.join(format!(".s.PGSQL.{port}"));
             Ok((
@@ -566,7 +576,7 @@ fn prepare_server_listen(
                     port: *port,
                 },
                 PostgresEndpoint::Unix(socket),
-                unix_connection_string(config, &directory, *port)?,
+                connection_string,
                 None,
             ))
         }
@@ -575,6 +585,13 @@ fn prepare_server_listen(
 
 #[cfg(unix)]
 fn prepare_public_socket_directory(directory: &Path, port: u16) -> Result<()> {
+    let socket = directory.join(format!(".s.PGSQL.{port}"));
+    if socket.as_os_str().len() >= 100 {
+        return Err(Error::InvalidConfig(format!(
+            "native server Unix socket path is too long: {}",
+            socket.display()
+        )));
+    }
     if directory.exists() {
         let metadata = fs::symlink_metadata(directory).map_err(|err| {
             Error::Engine(format!(
@@ -602,15 +619,10 @@ fn prepare_public_socket_directory(directory: &Path, port: u16) -> Result<()> {
             ))
         })?;
     }
-    let socket = directory.join(format!(".s.PGSQL.{port}"));
-    if socket.as_os_str().len() >= 100 {
-        return Err(Error::InvalidConfig(format!(
-            "native server Unix socket path is too long: {}",
-            socket.display()
-        )));
-    }
     ensure_public_socket_path_available(&socket)?;
-    ensure_public_socket_path_available(&PathBuf::from(format!("{}.lock", socket.display())))?;
+    let mut lock = socket.as_os_str().to_os_string();
+    lock.push(".lock");
+    ensure_public_socket_path_available(Path::new(&lock))?;
     Ok(())
 }
 
@@ -674,7 +686,12 @@ fn cleanup_failed_start(
     child: &mut Child,
     owned_socket_dir: &mut Option<PathBuf>,
 ) -> (bool, Vec<String>) {
-    let outcome = reap_child_process(child, SHUTDOWN_TIMEOUT, "failed native server startup");
+    let outcome = reap_child_process(
+        child,
+        Duration::ZERO,
+        SHUTDOWN_TIMEOUT,
+        "failed native server startup",
+    );
     let mut failures = outcome.failures;
     if outcome.reaped {
         remove_owned_socket_dir(owned_socket_dir, &mut failures);
@@ -704,22 +721,9 @@ fn failed_start_error(error: Error, cleanup_failures: Vec<String>) -> Error {
     ))
 }
 
-fn is_auto_port_bind_conflict(error: &Error) -> bool {
-    let message = error.to_string();
-    message.contains("Address already in use")
-        || message.contains("could not bind IPv4 address")
-        || message.contains("could not create any TCP/IP sockets")
-}
-
-fn child_stderr(child: &mut Child) -> String {
-    let Some(mut stderr) = child.stderr.take() else {
-        return String::new();
-    };
-    let mut output = String::new();
-    match stderr.read_to_string(&mut output) {
-        Ok(_) if !output.trim().is_empty() => format!(": {}", output.trim()),
-        _ => String::new(),
-    }
+fn tcp_port_is_occupied(port: u16) -> bool {
+    TcpListener::bind((SERVER_HOST, port))
+        .is_err_and(|error| error.kind() == std::io::ErrorKind::AddrInUse)
 }
 
 #[cfg(test)]
@@ -727,30 +731,54 @@ mod tests {
     use super::*;
 
     #[test]
-    fn auto_port_retry_classifies_postgres_bind_conflicts() {
-        let error = Error::Engine(
-            "native server exited before accepting connections: exit status: 1: \
-             LOG: could not bind IPv4 address \"127.0.0.1\": Address already in use\n\
-             FATAL: could not create any TCP/IP sockets"
-                .to_owned(),
+    fn missing_explicit_server_executable_is_rejected_before_persistent_root_mutation() {
+        let test_root = std::env::temp_dir().join(format!(
+            "oliphaunt-native-server-executable-preflight-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after epoch")
+                .as_nanos()
+        ));
+        let _cleanup = RuntimeDirCleanup(test_root.clone());
+        std::fs::create_dir_all(&test_root).expect("create server preflight test root");
+        let storage = test_root.join("database");
+        let missing_executable = test_root.join("missing-postgres");
+        let mut config = OpenConfig::direct(storage.clone());
+        config.mode = EngineMode::Server;
+        config.server.executable = Some(missing_executable.clone());
+        let runtime = NativeServerRuntime::from_config(&config.server);
+
+        let error = match runtime.open(config) {
+            Ok(_) => panic!("missing explicit server executable unexpectedly started"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("must be an existing file"));
+        assert!(!missing_executable.exists());
+        assert!(
+            !storage.exists(),
+            "deterministic executable validation must run before PGDATA preparation"
         );
-        assert!(is_auto_port_bind_conflict(&error));
     }
 
     #[test]
-    fn auto_port_retry_does_not_mask_unrelated_startup_errors() {
-        let error = Error::Engine(
-            "native server exited before accepting connections: exit status: 1: \
-             FATAL: data directory has invalid permissions"
-                .to_owned(),
-        );
-        assert!(!is_auto_port_bind_conflict(&error));
+    fn auto_port_retry_only_classifies_a_current_loopback_owner() {
+        let listener = TcpListener::bind((SERVER_HOST, 0)).expect("bind loopback fixture");
+        let port = listener.local_addr().expect("read fixture address").port();
+        assert!(tcp_port_is_occupied(port));
+        drop(listener);
+        assert!(!tcp_port_is_occupied(port));
     }
 
     #[test]
     fn server_startup_args_include_required_preload_libraries_before_spawn() {
         let mut config = OpenConfig::direct("target/test-roots/native-server-preload");
         config.mode = EngineMode::Server;
+        config.startup_gucs = vec![crate::config::PostgresStartupGuc::new(
+            "shared_preload_libraries",
+            "auto_explain, pg_textsearch",
+        )];
         let args = postgres_startup_args(
             Path::new("/tmp/oliphaunt-preload/pgdata"),
             &config,
@@ -766,13 +794,13 @@ mod tests {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
 
-        assert_startup_config_arg(&args, "shared_preload_libraries=pg_textsearch");
+        assert_startup_config_arg(&args, "shared_preload_libraries=auto_explain,pg_textsearch");
         assert_eq!(
             args.iter()
-                .filter(|arg| arg.as_str() == "shared_preload_libraries=pg_textsearch")
+                .filter(|arg| arg.starts_with("shared_preload_libraries="))
                 .count(),
             1,
-            "preload libraries must be deduplicated in server startup args"
+            "caller and extension preload libraries must be merged once in server startup args"
         );
     }
 
@@ -910,6 +938,33 @@ mod tests {
         assert_eq!(
             unix_connection_string(&config, Path::new("/tmp/app sockets"), 15432).unwrap(),
             "postgresql:///app%2Fdb?host=%2Ftmp%2Fapp%20sockets&port=15432&user=app%20user&sslmode=disable"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_socket_directory_is_one_quoted_postgres_guc_list_item() {
+        let mut config = OpenConfig::direct("target/test-roots/native-server-unix-guc-list");
+        config.mode = EngineMode::Server;
+        let directory = PathBuf::from("/tmp/ application,\"primary\" ");
+        let args = postgres_startup_args(
+            Path::new("/tmp/pgdata"),
+            &config,
+            &[],
+            &PostgresProcessListen::Unix {
+                directory,
+                port: 15432,
+            },
+        )
+        .expect("a quoted PostgreSQL list item accepts path punctuation");
+        let args = args
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_startup_config_arg(
+            &args,
+            "unix_socket_directories=\"/tmp/ application,\"\"primary\"\" \"",
         );
     }
 

@@ -35,9 +35,10 @@ Inside a callback transaction, do not issue manual `BEGIN`, `START
 TRANSACTION`, `COMMIT`, `END`, `ABORT`, `PREPARE TRANSACTION`, or `AND CHAIN`.
 Use callback return/throw or `rollback()`; `SAVEPOINT` and `ROLLBACK TO` are
 supported. `ROLLBACK AND CHAIN` is unsupported and wire-indistinguishable from
-`ROLLBACK TO`, so Oliphaunt enforces ownership from PostgreSQL response frames
-rather than SQL text. A proven escape makes the database close-only and
-suppresses any follow-up SDK transaction command.
+`ROLLBACK TO`, so Oliphaunt rejects `ROLLBACK`/`ABORT ... AND CHAIN` before
+dispatch and enforces every other ownership boundary from PostgreSQL response
+frames. A proven escape makes the database close-only and suppresses any
+follow-up SDK transaction command.
 
 After a callback failure, a successful automatic rollback rethrows the original
 value unchanged. If rollback also fails, an `AggregateError` contains the

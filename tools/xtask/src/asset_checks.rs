@@ -835,13 +835,6 @@ pub(crate) fn verify_generated_extension_surface() -> Result<()> {
         );
     }
 
-    for obsolete in ["ExtensionSetup", "_LOAD_SQL", "_POST_CREATE_SQL"] {
-        ensure!(
-            !generated.contains(obsolete),
-            "generated extension API retains obsolete runtime activation metadata {obsolete}"
-        );
-    }
-
     for extension in &manifest.extensions {
         let rust_constant = supported_constants
             .get(&extension.sql_name)

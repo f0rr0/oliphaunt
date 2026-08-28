@@ -207,8 +207,10 @@ Parameters carry an optional `OliphauntPostgresOID`, text or binary format, and
 nullable owned bytes. Common factories such as `.bool`, `.int32`, `.int64`,
 `.string`, `.bytes`, and `.uuid` publish the correct OID; use `.typedNull(.uuid)`
 for an ambiguous null, or explicit `.text`/`.binary` with a custom OID for an
-extension type. Typed getters validate the field OID and format before decoding;
-`row.raw(_:)` remains the lossless fallback.
+extension type. Omit `typeOID` to request PostgreSQL parameter inference;
+explicit parameter OID `0` is rejected so omission cannot be confused with a
+caller-supplied type. Typed getters validate the field OID and format before
+decoding; `row.raw(_:)` remains the lossless fallback.
 
 The database also provides callback-scoped transactions, `cancel`, physical
 `backup` and `restore`, raw PostgreSQL protocol execution,
@@ -240,14 +242,18 @@ Transactions use one physical session and expose `query`, `execute`, `exec`,
 and `describe`; raw protocol execution stays on the database because it owns
 transaction lifecycle explicitly. `rollback()` is one-shot: it closes the
 transaction, lets the callback return a value, and suppresses `COMMIT`; returning
-normally commits. Do not issue manual `BEGIN`/`START TRANSACTION`, `COMMIT`/`END`,
-`ABORT`, `PREPARE TRANSACTION`, or `AND CHAIN` inside a managed callback. Use
+normally commits. Do not issue outer-lifecycle SQL such as `BEGIN`/`START
+TRANSACTION`, `COMMIT`/`END`, a full `ROLLBACK`/`ABORT` (with or without
+`AND [NO] CHAIN`), or `PREPARE TRANSACTION` inside a managed callback. Use
 `SAVEPOINT`, `RELEASE SAVEPOINT`, and `ROLLBACK TO SAVEPOINT` for nested work.
 PostgreSQL reports both `ROLLBACK TO` and `ROLLBACK AND CHAIN` as `ROLLBACK`
-with `ReadyForQuery=T`, so `AND CHAIN` is unsupported contract misuse rather
-than something the SDK can distinguish lexically. A detected lifecycle command,
-escaped idle session, failed rollback, or uncertain commit makes the database
-close-only; close it before reopening.
+with `ReadyForQuery=T`, so the SDK rejects `ROLLBACK`/`ABORT ... AND CHAIN`
+before dispatch and still validates every actual protocol boundary. A detected
+lifecycle command, escaped idle session, failed rollback, or uncertain commit
+makes the database close-only; close it before reopening.
+If a callback catches such a poisoning database or rollback error and returns,
+the transaction still fails with the stored original error; an unsafe session
+cannot be converted into success by swallowing the error.
 After a successful automatic rollback, the original callback error is rethrown.
 When the callback and rollback both fail,
 `OliphauntTransactionRollbackError` retains them in its public `callbackError`

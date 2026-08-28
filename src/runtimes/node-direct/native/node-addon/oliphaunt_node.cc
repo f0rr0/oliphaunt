@@ -6,8 +6,11 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#if defined(OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING) && \
+    OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING
 #include <cstdlib>
 #include <cstring>
+#endif
 #include <exception>
 #include <limits>
 #include <map>
@@ -40,7 +43,6 @@ using DetachFn = int32_t (*)(OliphauntHandle *);
 using LogicalGenerationFn = uint64_t (*)(OliphauntHandle *);
 using CloseIfGenerationFn = int32_t (*)(uint64_t);
 using CopyLastErrorFn = size_t (*)(OliphauntHandle *, char *, size_t);
-using LastErrorFn = const char *(*)(OliphauntHandle *);
 using VersionFn = const char *(*)();
 using FreeResponseFn = void (*)(OliphauntResponse *);
 
@@ -65,7 +67,6 @@ struct NativeLibrary {
   LogicalGenerationFn logical_generation = nullptr;
   CloseIfGenerationFn close_if_generation = nullptr;
   CopyLastErrorFn copy_last_error = nullptr;
-  LastErrorFn last_error = nullptr;
   VersionFn version = nullptr;
   FreeResponseFn free_response = nullptr;
   // JavaScript close is intentionally a logical detach so a direct backend can
@@ -105,9 +106,13 @@ struct AddonEnvironment {
   std::mutex mutex;
   std::condition_variable condition;
   size_t pending_operations = 0;
+  size_t pending_native_call_entries = 0;
+#if defined(OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING) && \
+    OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING
+  size_t cleanup_cancel_attempts = 0;
+#endif
   bool shutting_down = false;
   bool quiesce_hook_registered = false;
-  bool quiesce_completed = false;
   napi_async_cleanup_hook_handle async_cleanup_handle = nullptr;
   // Created by the async cleanup hook itself, after ordinary environment
   // resources have quiesced. The reaper uses it solely to finish cleanup on
@@ -120,6 +125,10 @@ struct EnvironmentOperation {
   AddonEnvironment *environment = nullptr;
   std::atomic<bool> registered = false;
   std::atomic<bool> started = false;
+  // Guarded by AddonEnvironment::mutex. Once set, cleanup must not issue its
+  // cancellation attempt until this worker has crossed the native-call entry
+  // boundary or retired the operation.
+  bool native_call_entry_pending = false;
 };
 
 struct ThreadsafeBridge {
@@ -176,12 +185,16 @@ void FinishEnvironmentOperation(EnvironmentOperation *operation) {
   }
   AddonEnvironment *environment = operation->environment;
   std::lock_guard<std::mutex> guard(environment->mutex);
+  if (operation->native_call_entry_pending) {
+    operation->native_call_entry_pending = false;
+    if (environment->pending_native_call_entries > 0) {
+      environment->pending_native_call_entries--;
+    }
+  }
   if (environment->pending_operations > 0) {
     environment->pending_operations--;
   }
-  if (environment->pending_operations == 0) {
-    environment->condition.notify_all();
-  }
+  environment->condition.notify_all();
 }
 
 void StartEnvironmentOperation(EnvironmentOperation *operation) {
@@ -196,6 +209,89 @@ bool EnvironmentIsShuttingDown(const EnvironmentOperation *operation) {
   std::lock_guard<std::mutex> guard(environment->mutex);
   return environment->shutting_down;
 }
+
+bool AdmitEnvironmentNativeCall(EnvironmentOperation *operation) {
+  AddonEnvironment *environment = operation->environment;
+  if (environment == nullptr) {
+    return false;
+  }
+  std::lock_guard<std::mutex> guard(environment->mutex);
+  if (environment->shutting_down) {
+    return false;
+  }
+  operation->native_call_entry_pending = true;
+  environment->pending_native_call_entries++;
+  environment->condition.notify_all();
+  return true;
+}
+
+void MarkEnvironmentNativeCallEntered(EnvironmentOperation *operation) {
+  AddonEnvironment *environment = operation->environment;
+  if (environment == nullptr) {
+    return;
+  }
+  std::lock_guard<std::mutex> guard(environment->mutex);
+  if (!operation->native_call_entry_pending) {
+    return;
+  }
+  operation->native_call_entry_pending = false;
+  if (environment->pending_native_call_entries > 0) {
+    environment->pending_native_call_entries--;
+  }
+  environment->condition.notify_all();
+}
+
+#if defined(OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING) && \
+    OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING
+void PauseNativeCallEntryForCleanupTest(
+    EnvironmentOperation *operation) {
+  const char *pause =
+      std::getenv("OLIPHAUNT_NODE_CLEANUP_TEST_PAUSE_NATIVE_CALL_ENTRY");
+  if (pause == nullptr || std::strcmp(pause, "1") != 0) {
+    return;
+  }
+  AddonEnvironment *environment = operation->environment;
+  std::unique_lock<std::mutex> lock(environment->mutex);
+  environment->condition.notify_all();
+  environment->condition.wait(
+      lock,
+      [environment]() { return environment->shutting_down; });
+}
+
+void WaitForNativeCallEntryPauseForCleanupTest(
+    EnvironmentOperation *operation) {
+  const char *pause =
+      std::getenv("OLIPHAUNT_NODE_CLEANUP_TEST_PAUSE_NATIVE_CALL_ENTRY");
+  if (pause == nullptr || std::strcmp(pause, "1") != 0) {
+    return;
+  }
+  AddonEnvironment *environment = operation->environment;
+  std::unique_lock<std::mutex> lock(environment->mutex);
+  environment->condition.wait(
+      lock,
+      [operation]() {
+        return operation->native_call_entry_pending ||
+            !operation->registered.load();
+      });
+}
+
+void WaitForFirstCleanupCancelForTest(
+    EnvironmentOperation *operation) {
+  const char *pause =
+      std::getenv("OLIPHAUNT_NODE_CLEANUP_TEST_PAUSE_NATIVE_CALL_ENTRY");
+  if (pause == nullptr || std::strcmp(pause, "1") != 0) {
+    return;
+  }
+  AddonEnvironment *environment = operation->environment;
+  std::unique_lock<std::mutex> lock(environment->mutex);
+  environment->condition.wait(
+      lock,
+      [environment, operation]() {
+        return environment->cleanup_cancel_attempts > 0 ||
+            !operation->registered.load();
+      });
+}
+#endif
 
 class EnvironmentOperationFinish {
  public:
@@ -304,9 +400,11 @@ bool StartBackgroundOperation(
     const std::shared_ptr<ThreadsafeBridge> &bridge,
     BackgroundOperation execute,
     BackgroundContextRelease release_context,
-    void *data) {
+  void *data) {
   try {
     std::thread([operation, bridge, execute, release_context, data]() {
+#if defined(OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING) && \
+    OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING
       // The cleanup fixture holds this narrow internal seam long enough to
       // deterministically terminate an environment after registration but
       // before Execute begins. It is not a public scheduling option.
@@ -315,6 +413,7 @@ bool StartBackgroundOperation(
       if (delay_start != nullptr && std::strcmp(delay_start, "1") == 0) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
       }
+#endif
       StartEnvironmentOperation(operation);
       {
         EnvironmentOperationFinish finish(operation);
@@ -544,20 +643,12 @@ std::shared_ptr<NativeLibrary> LoadNativeLibrary(
       reinterpret_cast<CancelFn>(LoadSymbol(dynamic, "oliphaunt_cancel", error));
   library->detach =
       reinterpret_cast<DetachFn>(LoadSymbol(dynamic, "oliphaunt_detach", error));
-  // Validate the mandatory terminal-close ABI even though Node cleanup uses
-  // only the generation-guarded entry point and never invokes this pointer API.
-  (void)LoadSymbol(dynamic, "oliphaunt_close", error);
   library->logical_generation = reinterpret_cast<LogicalGenerationFn>(
       LoadSymbol(dynamic, "oliphaunt_logical_generation", error));
   library->close_if_generation = reinterpret_cast<CloseIfGenerationFn>(
       LoadSymbol(dynamic, "oliphaunt_close_if_generation", error));
   library->copy_last_error = reinterpret_cast<CopyLastErrorFn>(
       LoadSymbol(dynamic, "oliphaunt_copy_last_error", error));
-  // ABI 10 keeps this accessor only for source compatibility. Loading it here
-  // catches malformed runtime images, while all bridge-owned errors use the
-  // atomic copy function above.
-  library->last_error =
-      reinterpret_cast<LastErrorFn>(LoadSymbol(dynamic, "oliphaunt_last_error", error));
   library->version =
       reinterpret_cast<VersionFn>(LoadSymbol(dynamic, "oliphaunt_version", error));
   library->free_response =
@@ -603,6 +694,46 @@ void CancelEnvironmentWork(AddonEnvironment *environment) {
   }
 }
 
+void CancelAndDrainEnvironmentWork(AddonEnvironment *environment) {
+  {
+    std::unique_lock<std::mutex> lock(environment->mutex);
+    environment->condition.wait(
+        lock,
+        [environment]() {
+          return environment->pending_native_call_entries == 0;
+        });
+    if (environment->pending_operations == 0) {
+      return;
+    }
+  }
+
+  // Cancellation can be consumed while PostgreSQL is still between commands,
+  // immediately before an admitted worker enters its blocking native call.
+  // Retry outside the environment lock until every admitted operation retires.
+  // A standalone restore has no resident owner to cancel; the timed waits still
+  // let it drain normally without spinning.
+  while (true) {
+    CancelEnvironmentWork(environment);
+#if defined(OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING) && \
+    OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING
+    {
+      std::lock_guard<std::mutex> guard(environment->mutex);
+      environment->cleanup_cancel_attempts++;
+      environment->condition.notify_all();
+    }
+#endif
+    std::unique_lock<std::mutex> lock(environment->mutex);
+    if (environment->condition.wait_for(
+            lock,
+            std::chrono::milliseconds(10),
+            [environment]() {
+              return environment->pending_operations == 0;
+            })) {
+      return;
+    }
+  }
+}
+
 void CloseEnvironmentLibraries(AddonEnvironment *environment) {
   for (const auto &library : SnapshotLibraries()) {
     std::lock_guard<std::mutex> guard(library->lifecycle_mutex);
@@ -642,6 +773,7 @@ void BeginEnvironmentShutdown(AddonEnvironment *environment) {
     std::lock_guard<std::mutex> guard(environment->mutex);
     environment->shutting_down = true;
     environment->quiesce_hook_registered = false;
+    environment->condition.notify_all();
   }
   {
     std::lock_guard<std::mutex> guard(g_environments_mutex);
@@ -671,19 +803,12 @@ void BeginEnvironmentShutdown(AddonEnvironment *environment) {
   }
 }
 
-void MarkEnvironmentQuiesced(AddonEnvironment *environment) {
-  std::lock_guard<std::mutex> guard(environment->mutex);
-  environment->quiesce_completed = true;
-  environment->condition.notify_all();
-}
-
 void QuiesceEnvironment(void *data) {
   auto *environment = static_cast<AddonEnvironment *>(data);
   if (environment == nullptr) {
     return;
   }
   BeginEnvironmentShutdown(environment);
-  MarkEnvironmentQuiesced(environment);
   /* This synchronous hook only closes JS delivery bridges. Potentially
    * blocking cancellation and terminal close are owned by the asynchronous
    * reaper below, never by Node's environment teardown thread. */
@@ -699,10 +824,6 @@ void CleanupEnvironment(
   }
 
   BeginEnvironmentShutdown(environment);
-  // The asynchronous hook performs the same bridge quiescence itself. Do not
-  // make its reaper depend on the separately registered synchronous hook: a
-  // failed hook refresh must not leave environment teardown waiting forever.
-  MarkEnvironmentQuiesced(environment);
 
   napi_handle_scope cleanup_scope = nullptr;
   napi_value cleanup_resource_name = nullptr;
@@ -734,16 +855,7 @@ void CleanupEnvironment(
 
   try {
     std::thread([environment, cleanup_handle]() {
-      CancelEnvironmentWork(environment);
-      {
-        std::unique_lock<std::mutex> lock(environment->mutex);
-        environment->condition.wait(
-            lock,
-            [environment]() {
-              return environment->quiesce_completed &&
-                  environment->pending_operations == 0;
-            });
-      }
+      CancelAndDrainEnvironmentWork(environment);
       CloseEnvironmentLibraries(environment);
       // napi_remove_async_cleanup_hook mutates Node environment state and must
       // run on its event-loop thread. Calling this freshly-created TSFN is the
@@ -855,23 +967,6 @@ std::string GetString(napi_env env, napi_value object, const char *name, bool re
   if (required && out.empty()) {
     Throw(env, std::string("string property must not be empty: ") + name);
   }
-  return out;
-}
-
-uint32_t GetUint32(napi_env env, napi_value object, const char *name) {
-  napi_value value = GetNamed(env, object, name);
-  uint32_t out = 0;
-  Check(env, napi_get_value_uint32(env, value, &out), "read uint32 property");
-  return out;
-}
-
-bool GetBool(napi_env env, napi_value object, const char *name) {
-  if (!HasNamedProperty(env, object, name)) {
-    return false;
-  }
-  napi_value value = GetNamed(env, object, name);
-  bool out = false;
-  Check(env, napi_get_value_bool(env, value, &out), "read boolean property");
   return out;
 }
 
@@ -1152,7 +1247,7 @@ void ExecuteAsyncOpen(void *data) {
   native_config.module_dir = context->module_dir.empty() ? nullptr : context->module_dir.c_str();
   native_config.username = context->username.c_str();
   native_config.database = context->database.c_str();
-  native_config.reserved_flags = 0;
+  native_config.flags = 0;
   native_config.startup_args = startup_ptrs.empty() ? nullptr : startup_ptrs.data();
   native_config.startup_arg_count = startup_ptrs.size();
 
@@ -1338,10 +1433,19 @@ struct AsyncQueryContext {
 
 void ExecuteAsyncQuery(void *data) {
   auto *context = static_cast<AsyncQueryContext *>(data);
-  if (EnvironmentIsShuttingDown(&context->environment_operation)) {
+  if (!AdmitEnvironmentNativeCall(&context->environment_operation)) {
     context->error = "native liboliphaunt environment is shutting down";
     return;
   }
+#if defined(OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING) && \
+    OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING
+  PauseNativeCallEntryForCleanupTest(&context->environment_operation);
+#endif
+  MarkEnvironmentNativeCallEntered(&context->environment_operation);
+#if defined(OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING) && \
+    OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING
+  WaitForFirstCleanupCancelForTest(&context->environment_operation);
+#endif
   if (context->kind == AsyncQueryKind::Protocol) {
     context->result = context->library->exec_protocol(
         context->handle,
@@ -1454,6 +1558,10 @@ napi_value QueueAsyncQuery(
     ReleaseBackgroundContext<AsyncQueryContext>(raw_context);
     return nullptr;
   }
+#if defined(OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING) && \
+    OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING
+  WaitForNativeCallEntryPauseForCleanupTest(&raw_context->environment_operation);
+#endif
   return promise;
 }
 
@@ -1619,6 +1727,8 @@ void CallStreamChunk(napi_env env, napi_value callback, void *data, void *chunk_
   (void)napi_close_handle_scope(env, scope);
 }
 
+#if defined(OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING) && \
+    OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING
 bool PrefillStreamQueueForCleanupTest(
     napi_env env,
     AsyncStreamContext *context) {
@@ -1644,6 +1754,7 @@ bool PrefillStreamQueueForCleanupTest(
   (void)queued_delivery.release();
   return true;
 }
+#endif
 
 int32_t StreamChunk(void *data, const uint8_t *bytes, size_t length) {
   auto *context = static_cast<AsyncStreamContext *>(data);
@@ -1806,10 +1917,19 @@ void FinalizeStreamCallback(napi_env env, void *data, void *) {
 
 void ExecuteAsyncStream(void *data) {
   auto *context = static_cast<AsyncStreamContext *>(data);
-  if (EnvironmentIsShuttingDown(&context->environment_operation)) {
+  if (!AdmitEnvironmentNativeCall(&context->environment_operation)) {
     context->error = "native liboliphaunt environment is shutting down";
     return;
   }
+#if defined(OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING) && \
+    OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING
+  PauseNativeCallEntryForCleanupTest(&context->environment_operation);
+#endif
+  MarkEnvironmentNativeCallEntered(&context->environment_operation);
+#if defined(OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING) && \
+    OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING
+  WaitForFirstCleanupCancelForTest(&context->environment_operation);
+#endif
   context->result = context->library->exec_protocol_raw_stream(
       context->handle,
       context->request.empty() ? nullptr : context->request.data(),
@@ -1878,7 +1998,10 @@ napi_value ExecProtocolRawStream(napi_env env, napi_callback_info info) {
       raw_context->callback_bridge);
   if (!RefreshEnvironmentQuiesceHook(
           env, raw_context->environment_operation.environment) ||
+#if defined(OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING) && \
+    OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING
       !PrefillStreamQueueForCleanupTest(env, raw_context) ||
+#endif
       !StartBackgroundOperation(
           env,
           &raw_context->environment_operation,
@@ -1932,6 +2055,19 @@ void ExecuteAsyncArchive(void *data) {
       return;
     }
   }
+  if (!AdmitEnvironmentNativeCall(&context->environment_operation)) {
+    context->error = "native liboliphaunt environment is shutting down";
+    return;
+  }
+#if defined(OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING) && \
+    OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING
+  PauseNativeCallEntryForCleanupTest(&context->environment_operation);
+#endif
+  MarkEnvironmentNativeCallEntered(&context->environment_operation);
+#if defined(OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING) && \
+    OLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING
+  WaitForFirstCleanupCancelForTest(&context->environment_operation);
+#endif
   if (context->kind == AsyncArchiveKind::Backup) {
     context->result = context->library->backup(context->handle, &context->response);
   } else {
@@ -2166,9 +2302,9 @@ void FinalizeAsyncDetach(napi_env env, void *data, void *) {
     napi_value out = nullptr;
     if (napi_get_undefined(env, &out) == napi_ok) {
       (void)napi_resolve_deferred(env, context->deferred, out);
-    } else {
-      RejectDeferred(env, context->deferred, "native liboliphaunt could not complete detach");
     }
+    // Logical detach already succeeded. Failure to materialize its JavaScript
+    // completion cannot safely be reported as a retryable native rejection.
   } else if (deliver) {
     // A failed logical detach remains retryable through Database.close().
     context->box->detached = false;

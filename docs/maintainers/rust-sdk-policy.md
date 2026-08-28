@@ -109,10 +109,12 @@ guard inspects every exact `CommandComplete` tag and the single terminal
 `ReadyForQuery` before high-level parsing. Manual transaction lifecycle SQL and
 `AND CHAIN` are unsupported; savepoints and `ROLLBACK TO` remain valid. Because
 PostgreSQL reports both `ROLLBACK TO` and `ROLLBACK AND CHAIN` as `ROLLBACK`
-with transactional readiness, the latter remains caller contract misuse rather
-than something an SDK SQL lexer can identify reliably. Proven or uncertain
-ownership escape retires the database without sending speculative follow-up
-`COMMIT` or `ROLLBACK`.
+with transactional readiness, the shared lexer rejects top-level
+`ROLLBACK`/`ABORT ... AND CHAIN` before dispatch while preserving comments,
+quoted text, and `ROLLBACK TO`. Exact backend tags and terminal readiness remain
+the authoritative boundary validation. Proven or uncertain ownership escape
+retires the database without sending speculative follow-up `COMMIT` or
+`ROLLBACK`.
 
 Stream callback failure is recoverable only when the topology adapter returns a
 typed, independently confirmed `ReadyForQuery` outcome. The blocking API then

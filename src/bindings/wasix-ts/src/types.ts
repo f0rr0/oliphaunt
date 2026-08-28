@@ -2,8 +2,8 @@ import type {
   CommandResult,
   DescribeResult,
   ExecResult,
+  InferQueryRow,
   ParameterOptions,
-  QueryObjectRow,
   QueryOptions,
   QueryParam,
   QueryResult,
@@ -11,17 +11,11 @@ import type {
 } from './query.js';
 import type { PersistentWasixStorage, WasixStorage } from './storage.js';
 
+type QueryReadOptions = Omit<QueryOptions, 'encoders'>;
+
 export type BinaryInput = ArrayBuffer | ArrayBufferView | Uint8Array | ReadonlyArray<number>;
-/**
- * Synchronous, serial protocol consumer. The callback must not return a
- * Promise or thenable because callback completion is the backpressure
- * acknowledgement. A thrown callback, including the contract error for
- * returning a thenable, is surfaced unchanged only after the runtime confirms
- * recovery to `ReadyForQuery`; the database then remains reusable. An
- * independent execution, transport, or recovery failure is authoritative and
- * poisons the database instead.
- */
-export type ProtocolChunkCallback = (chunk: Uint8Array) => void;
+/** A synchronous, serial raw-protocol consumer used as the backpressure acknowledgement. */
+export type ProtocolChunkCallback = (chunk: Uint8Array) => undefined;
 
 /** A host-neutral asset reference accepted by the portable WASIX carrier contract. */
 export type WasixAssetSource = string | URL | ArrayBuffer | Uint8Array;
@@ -232,20 +226,20 @@ export type OliphauntDatabase = {
     parameters?: ReadonlyArray<QueryParam>,
     options?: ParameterOptions,
   ): Promise<CommandResult>;
-  query<Row = QueryObjectRow>(
+  query<Row = never, const Options extends QueryOptions = {}>(
     sql: string,
     parameters?: ReadonlyArray<QueryParam>,
-    options?: QueryOptions,
-  ): Promise<QueryResult<Row>>;
+    options?: Options & QueryOptions,
+  ): Promise<QueryResult<InferQueryRow<Options, Row>>>;
   queryRaw(
     sql: string,
     parameters?: ReadonlyArray<QueryParam>,
     options?: ParameterOptions,
   ): Promise<RawQueryResult>;
-  exec<Row = QueryObjectRow>(
+  exec<Row = never, const Options extends QueryReadOptions = {}>(
     sql: string,
-    options?: Omit<QueryOptions, 'encoders'>,
-  ): Promise<ExecResult<Row>>;
+    options?: Options & QueryReadOptions,
+  ): Promise<ExecResult<InferQueryRow<Options, Row>>>;
   describe(sql: string, parameterTypeOids?: ReadonlyArray<number>): Promise<DescribeResult>;
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
   execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
@@ -276,20 +270,20 @@ export type OliphauntTransaction = {
     parameters?: ReadonlyArray<QueryParam>,
     options?: ParameterOptions,
   ): Promise<CommandResult>;
-  query<Row = QueryObjectRow>(
+  query<Row = never, const Options extends QueryOptions = {}>(
     sql: string,
     parameters?: ReadonlyArray<QueryParam>,
-    options?: QueryOptions,
-  ): Promise<QueryResult<Row>>;
+    options?: Options & QueryOptions,
+  ): Promise<QueryResult<InferQueryRow<Options, Row>>>;
   queryRaw(
     sql: string,
     parameters?: ReadonlyArray<QueryParam>,
     options?: ParameterOptions,
   ): Promise<RawQueryResult>;
-  exec<Row = QueryObjectRow>(
+  exec<Row = never, const Options extends QueryReadOptions = {}>(
     sql: string,
-    options?: Omit<QueryOptions, 'encoders'>,
-  ): Promise<ExecResult<Row>>;
+    options?: Options & QueryReadOptions,
+  ): Promise<ExecResult<InferQueryRow<Options, Row>>>;
   describe(sql: string, parameterTypeOids?: ReadonlyArray<number>): Promise<DescribeResult>;
   rollback(): Promise<void>;
 };

@@ -161,7 +161,7 @@ impl CommandQueue {
         token: &mut Option<Arc<AdmissionToken>>,
         command: &mut Option<Command>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<()>> {
+    ) -> (Poll<Result<()>>, Option<Waker>) {
         debug_assert!(command.as_ref().is_some_and(Command::is_ordinary));
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if state.stopped
@@ -169,7 +169,7 @@ impl CommandQueue {
                 .as_ref()
                 .is_some_and(|token| token.rejected.load(Ordering::SeqCst))
         {
-            return Poll::Ready(Err(Error::EngineStopped));
+            return (Poll::Ready(Err(Error::EngineStopped)), None);
         }
 
         let position = token.as_ref().and_then(|token| {
@@ -200,11 +200,7 @@ impl CommandQueue {
                 })
                 .flatten();
             self.ready.notify_one();
-            drop(state);
-            if let Some(waker) = next {
-                waker.wake();
-            }
-            return Poll::Ready(Ok(()));
+            return (Poll::Ready(Ok(())), next);
         }
 
         let token = token.get_or_insert_with(|| {
@@ -224,7 +220,7 @@ impl CommandQueue {
                 waker: cx.waker().clone(),
             }),
         }
-        Poll::Pending
+        (Poll::Pending, None)
     }
 
     fn cancel_admission(&self, token: &Arc<AdmissionToken>) {
@@ -574,25 +570,31 @@ impl EngineExecutor {
             if let Err(error) = self.ensure_not_owner_thread() {
                 return Poll::Ready(Err(error));
             }
-            let _admission = match self.shared.admission.lock() {
-                Ok(admission) => admission,
-                Err(_) => {
-                    return Poll::Ready(Err(Error::Engine(
-                        "database command admission lock was poisoned".to_owned(),
-                    )));
+            let (poll, next) = {
+                let _admission = match self.shared.admission.lock() {
+                    Ok(admission) => admission,
+                    Err(_) => {
+                        return Poll::Ready(Err(Error::Engine(
+                            "database command admission lock was poisoned".to_owned(),
+                        )));
+                    }
+                };
+                if self.shared.closed.load(Ordering::SeqCst)
+                    || self.shared.closing.load(Ordering::SeqCst)
+                {
+                    return Poll::Ready(Err(Error::EngineStopped));
                 }
+                if self.shared.transaction_poisoned.load(Ordering::SeqCst) {
+                    return Poll::Ready(Err(Error::Engine(SESSION_STATE_UNKNOWN.to_owned())));
+                }
+                self.shared
+                    .queue
+                    .poll_send_ordinary(&mut registration.token, &mut command, cx)
             };
-            if self.shared.closed.load(Ordering::SeqCst)
-                || self.shared.closing.load(Ordering::SeqCst)
-            {
-                return Poll::Ready(Err(Error::EngineStopped));
+            if let Some(waker) = next {
+                waker.wake();
             }
-            if self.shared.transaction_poisoned.load(Ordering::SeqCst) {
-                return Poll::Ready(Err(Error::Engine(SESSION_STATE_UNKNOWN.to_owned())));
-            }
-            self.shared
-                .queue
-                .poll_send_ordinary(&mut registration.token, &mut command, cx)
+            poll
         })
         .await
     }
@@ -1270,7 +1272,7 @@ impl Drop for ActiveWorkGuard<'_> {
 mod tests {
     use std::future::Future;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::sync::{Arc, mpsc};
+    use std::sync::{Arc, Weak, mpsc};
     use std::task::{Context, Poll, Wake, Waker};
     use std::time::{Duration, Instant};
 
@@ -1300,6 +1302,24 @@ mod tests {
 
     struct GateWake {
         gate: Mutex<Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>>,
+    }
+
+    struct AdmissionLockProbe {
+        shared: Weak<ExecutorShared>,
+        woke: AtomicBool,
+        admission_was_unlocked: AtomicBool,
+    }
+
+    impl Wake for AdmissionLockProbe {
+        fn wake(self: Arc<Self>) {
+            self.woke.store(true, Ordering::SeqCst);
+            let admission_was_unlocked = self
+                .shared
+                .upgrade()
+                .is_some_and(|shared| shared.admission.try_lock().is_ok());
+            self.admission_was_unlocked
+                .store(admission_was_unlocked, Ordering::SeqCst);
+        }
     }
 
     impl GateWake {
@@ -1370,6 +1390,19 @@ mod tests {
         }
     }
 
+    fn poll_queue_send(
+        queue: &CommandQueue,
+        registration: &mut AdmissionRegistration<'_>,
+        command: &mut Option<Command>,
+        context: &mut Context<'_>,
+    ) -> Poll<Result<()>> {
+        let (poll, next) = queue.poll_send_ordinary(&mut registration.token, command, context);
+        if let Some(waker) = next {
+            waker.wake();
+        }
+        poll
+    }
+
     fn fill_ordinary_queue(queue: &CommandQueue) {
         for value in 0..ORDINARY_QUEUE_CAPACITY {
             let mut registration = AdmissionRegistration::new(queue);
@@ -1377,8 +1410,9 @@ mod tests {
                 u8::try_from(value).expect("queue fixture fits in one byte"),
             ));
             assert!(matches!(
-                queue.poll_send_ordinary(
-                    &mut registration.token,
+                poll_queue_send(
+                    queue,
+                    &mut registration,
                     &mut command,
                     &mut Context::from_waker(Waker::noop()),
                 ),
@@ -1397,13 +1431,13 @@ mod tests {
         let mut first = AdmissionRegistration::new(&queue);
         let mut first_command = Some(abandoned_ordinary_command(1));
         assert!(
-            queue
-                .poll_send_ordinary(
-                    &mut first.token,
-                    &mut first_command,
-                    &mut Context::from_waker(&first_waker),
-                )
-                .is_pending()
+            poll_queue_send(
+                &queue,
+                &mut first,
+                &mut first_command,
+                &mut Context::from_waker(&first_waker),
+            )
+            .is_pending()
         );
 
         let second_wake = Arc::new(WakeCounter(AtomicUsize::new(0)));
@@ -1411,13 +1445,13 @@ mod tests {
         let mut second = AdmissionRegistration::new(&queue);
         let mut second_command = Some(abandoned_ordinary_command(2));
         assert!(
-            queue
-                .poll_send_ordinary(
-                    &mut second.token,
-                    &mut second_command,
-                    &mut Context::from_waker(&second_waker),
-                )
-                .is_pending()
+            poll_queue_send(
+                &queue,
+                &mut second,
+                &mut second_command,
+                &mut Context::from_waker(&second_waker),
+            )
+            .is_pending()
         );
 
         drop(first);
@@ -1426,8 +1460,9 @@ mod tests {
         assert_eq!(second_wake.0.load(Ordering::SeqCst), 1);
         assert_eq!(first_wake.0.load(Ordering::SeqCst), 0);
         assert!(matches!(
-            queue.poll_send_ordinary(
-                &mut second.token,
+            poll_queue_send(
+                &queue,
+                &mut second,
                 &mut second_command,
                 &mut Context::from_waker(&second_waker),
             ),
@@ -1444,20 +1479,21 @@ mod tests {
         let mut registration = AdmissionRegistration::new(&queue);
         let mut command = Some(abandoned_ordinary_command(3));
         assert!(
-            queue
-                .poll_send_ordinary(
-                    &mut registration.token,
-                    &mut command,
-                    &mut Context::from_waker(Waker::noop()),
-                )
-                .is_pending()
+            poll_queue_send(
+                &queue,
+                &mut registration,
+                &mut command,
+                &mut Context::from_waker(Waker::noop()),
+            )
+            .is_pending()
         );
 
         drop(queue.reject_admissions());
         drop(queue.receive().expect("capacity becomes available later"));
         assert_poll_error(
-            queue.poll_send_ordinary(
-                &mut registration.token,
+            poll_queue_send(
+                &queue,
+                &mut registration,
                 &mut command,
                 &mut Context::from_waker(Waker::noop()),
             ),
@@ -1465,6 +1501,56 @@ mod tests {
             "native database session has stopped",
         );
         drop(queue.stop());
+    }
+
+    #[test]
+    fn capacity_successor_is_woken_after_releasing_admission() {
+        let shared = Arc::new(ExecutorShared::new());
+        let executor = EngineExecutor {
+            shared: Arc::clone(&shared),
+        };
+        fill_ordinary_queue(&shared.queue);
+
+        let mut first = Box::pin(executor.send(abandoned_ordinary_command(1)));
+        assert!(poll_once(first.as_mut()).is_pending());
+
+        let probe = Arc::new(AdmissionLockProbe {
+            shared: Arc::downgrade(&shared),
+            woke: AtomicBool::new(false),
+            admission_was_unlocked: AtomicBool::new(false),
+        });
+        let probe_waker = Waker::from(Arc::clone(&probe));
+        let mut second = Box::pin(executor.send(abandoned_ordinary_command(2)));
+        assert!(
+            second
+                .as_mut()
+                .poll(&mut Context::from_waker(&probe_waker))
+                .is_pending()
+        );
+
+        {
+            let mut state = shared
+                .queue
+                .state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            for _ in 0..2 {
+                drop(state.commands.pop_front().expect("free saturated slot"));
+                state.ordinary_count -= 1;
+            }
+        }
+
+        assert!(matches!(poll_once(first.as_mut()), Poll::Ready(Ok(()))));
+        assert!(probe.woke.load(Ordering::SeqCst));
+        assert!(
+            probe.admission_was_unlocked.load(Ordering::SeqCst),
+            "a synchronous successor waker must never run under the admission lock"
+        );
+
+        drop(second);
+        drop(first);
+        drop(shared.queue.stop());
+        shared.closed.store(true, Ordering::SeqCst);
     }
 
     fn command_response(tag: &str, ready: u8) -> ProtocolResponse {

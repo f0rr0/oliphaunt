@@ -27,7 +27,7 @@ pub(super) struct NativeConfig {
     pub(super) module_dir: *const c_char,
     pub(super) username: *const c_char,
     pub(super) database: *const c_char,
-    pub(super) reserved_flags: u64,
+    pub(super) flags: u64,
     pub(super) startup_args: *const *const c_char,
     pub(super) startup_arg_count: usize,
 }

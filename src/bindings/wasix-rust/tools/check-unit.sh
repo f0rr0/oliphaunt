@@ -14,6 +14,9 @@ if ! cargo nextest --version >/dev/null 2>&1; then
   exit 1
 fi
 
+printf '\n==> cargo test -p oliphaunt-wasix --doc --locked\n'
+cargo test -p oliphaunt-wasix --doc --locked
+
 printf '\n==> cargo test -p oliphaunt-wasix --doc --locked --features tools\n'
 cargo test -p oliphaunt-wasix --doc --locked --features tools
 

@@ -90,11 +90,7 @@ class ServerState {
       server.on('error', (error) => state.listenerFailed(error));
       await listenNodeServer(server, listen.node);
       await listen.didListen();
-      state.#connectionString = listen.connectionString(
-        username,
-        databaseName,
-        server.address(),
-      );
+      state.#connectionString = listen.connectionString(username, databaseName, server.address());
       if (state.#listenerFailure !== undefined) throw state.#listenerFailure;
       state.#accepting = true;
       return state;

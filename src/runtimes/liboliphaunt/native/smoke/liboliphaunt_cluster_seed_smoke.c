@@ -4,6 +4,16 @@
 #include <stdio.h>
 #include <string.h>
 
+static char last_error_buffer[OLIPHAUNT_ERROR_CAPTURE_CAPACITY];
+
+static const char *last_error_message(OliphauntHandle *handle) {
+    (void)oliphaunt_copy_last_error(
+        handle,
+        last_error_buffer,
+        sizeof(last_error_buffer));
+    return last_error_buffer;
+}
+
 static int contains(const OliphauntResponse *response, const char *expected) {
     const size_t expected_len = strlen(expected);
     if (expected_len == 0 || response->data == NULL || response->len < expected_len) {
@@ -31,7 +41,7 @@ int main(int argc, char **argv) {
     };
     OliphauntHandle *database = NULL;
     if (oliphaunt_init(&config, &database) != 0 || database == NULL) {
-        fprintf(stderr, "cluster-seed open failed: %s\n", oliphaunt_last_error(database));
+        fprintf(stderr, "cluster-seed open failed: %s\n", last_error_message(database));
         return 1;
     }
     OliphauntResponse response = {0};
@@ -42,11 +52,11 @@ int main(int argc, char **argv) {
         &response);
     const int matched = query_result == 0 && contains(&response, argv[4]);
     if (!matched) {
-        fprintf(stderr, "cluster-seed profile probe failed: %s\n", oliphaunt_last_error(database));
+        fprintf(stderr, "cluster-seed profile probe failed: %s\n", last_error_message(database));
     }
     oliphaunt_free_response(&response);
     if (oliphaunt_close(database) != 0) {
-        fprintf(stderr, "cluster-seed close failed: %s\n", oliphaunt_last_error(NULL));
+        fprintf(stderr, "cluster-seed close failed: %s\n", last_error_message(NULL));
         return 1;
     }
     return matched ? 0 : 1;

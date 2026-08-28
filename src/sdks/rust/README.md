@@ -41,7 +41,7 @@ the async owner thread. Use the cloneable builders when configuration differs.
 
 <!-- liboliphaunt-doc-example:rust-basic-query -->
 ```rust
-use oliphaunt::{DatabaseStorage, Oliphaunt, QueryParam};
+use oliphaunt::{DatabaseStorage, Oliphaunt};
 
 # fn example() -> oliphaunt::Result<()> {
 let mut db = Oliphaunt::builder()
@@ -51,7 +51,7 @@ let mut db = Oliphaunt::builder()
 
 db.execute_with_params(
     "INSERT INTO events(value) VALUES ($1)",
-    [QueryParam::from("ready")],
+    ["ready"],
 )?;
 let result = db.query("SELECT value FROM events")?;
 assert_eq!(result.get_text(0, "value")?, Some("ready"));
@@ -106,11 +106,16 @@ result fields without executing. Call `db.describe(sql)` for an unparameterized
 statement, or `db.sql(sql).bind(...).describe()` when PostgreSQL needs explicit
 parameter values or type OIDs.
 
-`Parameter` carries an optional `TypeOid`, `ValueFormat`, and nullable owned
-bytes. `IntoParameter` covers common host values and typed nulls; use explicit
-text/binary parameters with a custom OID for extension types. Typed getters
-validate OID and format, reject ambiguous duplicate names, and preserve raw
-access as the lossless fallback. SQL errors are structured `PostgresError`
+Natural Rust values passed to `bind` or the `*_with_params` methods use
+`IntoParameter` and carry their PostgreSQL type OID and preferred encoding.
+`Parameter` provides explicit `TypeOid`, `ValueFormat`, and nullable owned
+bytes for typed nulls and extension types. Its `text`, `binary`, and `null`
+constructors deliberately leave the OID unspecified for PostgreSQL to infer.
+An absent OID is the single execution spelling for inference. `describe` also
+accepts explicit OID 0 because it is PostgreSQL's wire-level inference sentinel.
+Typed
+getters validate OID and format, reject ambiguous duplicate names, and preserve
+raw access as the lossless fallback. SQL errors are structured `PostgresError`
 values with operation notices. The public `Error` is opaque and cloneable;
 match its non-exhaustive `ErrorKind` through `kind()` and use typed accessors
 for PostgreSQL and paired transaction failures instead of destructuring or
@@ -212,9 +217,14 @@ nonoptional libpq connection string for standard PostgreSQL clients. The handle
 deliberately does not hide a privileged SDK query session: SQL, transactions,
 pools, cancellation, and raw protocol are owned by the external driver or ORM.
 Its stable surface is `connection_string()`, `is_closed()`, and `close()`.
+`is_closed()` reports SDK lifecycle state only; it does not poll the PostgreSQL
+child or guarantee that the endpoint is currently reachable. Use the ordinary
+driver or pool connected to `connection_string()` for connection health.
 
 The default listener is IPv4 loopback with an automatically assigned port.
-Select a fixed loopback port or, on Unix hosts, a PostgreSQL socket directory:
+Select a fixed loopback port or, on Unix hosts, a PostgreSQL socket directory.
+Unix socket directories must resolve to valid UTF-8 so the returned connection
+string preserves the exact path for Rust drivers and ORMs:
 
 <!-- liboliphaunt-doc-example:rust-start-server -->
 ```rust,no_run

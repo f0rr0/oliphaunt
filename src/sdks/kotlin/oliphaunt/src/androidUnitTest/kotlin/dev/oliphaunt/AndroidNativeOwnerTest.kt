@@ -17,12 +17,12 @@ import kotlin.test.assertTrue
 class AndroidNativeOwnerTest {
     @Test
     fun ownerUsesOneDedicatedThreadInsteadOfTheCallerThread() = runBlocking {
-        val caller = Thread.currentThread().id
+        val caller = Thread.currentThread()
         val owner = newAndroidNativeOwnerDispatcher("oliphaunt-owner-test")
         try {
             val threads =
                 List(8) {
-                    async { runOnAndroidNativeOwner(owner) { Thread.currentThread().id } }
+                    async { runOnAndroidNativeOwner(owner) { Thread.currentThread() } }
                 }.awaitAll()
 
             assertEquals(1, threads.toSet().size)

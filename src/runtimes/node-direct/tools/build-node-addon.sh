@@ -130,26 +130,41 @@ out_dir="$(resolve_output_path "${OLIPHAUNT_NODE_ADDON_OUT_DIR:-$root/target/oli
 asset_dir="$(resolve_output_path "${OLIPHAUNT_NODE_ADDON_ASSET_OUT_DIR:-$root/target/oliphaunt-node-direct/release-assets}")"
 npm_package_dir="$(resolve_output_path "${OLIPHAUNT_NODE_ADDON_NPM_PACKAGE_OUT_DIR:-$root/target/oliphaunt-node-direct/npm-packages}")"
 npm_package_work_root="$(resolve_output_path "${OLIPHAUNT_NODE_ADDON_NPM_PACKAGE_WORK_DIR:-$root/target/oliphaunt-node-direct/npm-package-work/$target}")"
+lifecycle_test_build_dir="$(resolve_output_path "${OLIPHAUNT_NODE_LIFECYCLE_ADDON_OUT_DIR:-$root/target/oliphaunt-node-direct/lifecycle-test-addon/$target}")"
 src="src/runtimes/node-direct/native/node-addon/oliphaunt_node.cc"
 addon="$out_dir/oliphaunt_node.node"
 addon_file="$addon"
+lifecycle_test_addon="$lifecycle_test_build_dir/oliphaunt_node.node"
+lifecycle_test_addon_file="$lifecycle_test_addon"
 
-mkdir -p "$out_dir" "$asset_dir" "$npm_package_dir"
+mkdir -p "$out_dir" "$asset_dir" "$npm_package_dir" "$lifecycle_test_build_dir"
 
 cxx="${CXX:-c++}"
 oliphaunt_include="$root/src/runtimes/liboliphaunt/native/include"
 
 case "$platform" in
   macos)
-    "$cxx" -std=c++17 -O3 -DNAPI_VERSION=8 -DNODE_GYP_MODULE_NAME=oliphaunt_node \
-      "-I$node_include" "-I$oliphaunt_include" -fPIC \
-      "-mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET" -bundle -undefined dynamic_lookup \
-      "$src" -o "$addon"
+    compile_addon() {
+      output="$1"
+      shift
+      "$cxx" -std=c++17 -O3 -DNAPI_VERSION=8 -DNODE_GYP_MODULE_NAME=oliphaunt_node \
+        "$@" "-I$node_include" "-I$oliphaunt_include" -fPIC \
+        "-mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET" -bundle -undefined dynamic_lookup \
+        "$src" -o "$output"
+    }
+    compile_addon "$addon"
+    compile_addon "$lifecycle_test_addon" -DOLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING=1
     ;;
   linux)
-    "$cxx" -std=c++17 -O3 -DNAPI_VERSION=8 -DNODE_GYP_MODULE_NAME=oliphaunt_node \
-      "-I$node_include" "-I$oliphaunt_include" -fPIC -shared \
-      "$src" -ldl -o "$addon"
+    compile_addon() {
+      output="$1"
+      shift
+      "$cxx" -std=c++17 -O3 -DNAPI_VERSION=8 -DNODE_GYP_MODULE_NAME=oliphaunt_node \
+        "$@" "-I$node_include" "-I$oliphaunt_include" -fPIC -shared \
+        "$src" -ldl -o "$output"
+    }
+    compile_addon "$addon"
+    compile_addon "$lifecycle_test_addon" -DOLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING=1
     ;;
   windows)
     node_lib="${NODE_LIB:-}"
@@ -185,23 +200,45 @@ case "$platform" in
     mkdir -p "$windows_build_dir"
     addon_object="$windows_build_dir/oliphaunt_node.obj"
     addon_import_library="$windows_build_dir/oliphaunt_node.lib"
+    lifecycle_test_addon_object="$windows_build_dir/oliphaunt_node_lifecycle_test.obj"
+    lifecycle_test_addon_import_library="$windows_build_dir/oliphaunt_node_lifecycle_test.lib"
     if command -v cygpath >/dev/null 2>&1; then
       node_include="$(cygpath -w "$node_include")"
       oliphaunt_include="$(cygpath -w "$oliphaunt_include")"
       node_lib="$(cygpath -w "$node_lib")"
       src="$(cygpath -w "$src")"
       addon="$(cygpath -w "$addon")"
+      lifecycle_test_addon="$(cygpath -w "$lifecycle_test_addon")"
       addon_object="$(cygpath -w "$addon_object")"
       addon_import_library="$(cygpath -w "$addon_import_library")"
+      lifecycle_test_addon_object="$(cygpath -w "$lifecycle_test_addon_object")"
+      lifecycle_test_addon_import_library="$(cygpath -w "$lifecycle_test_addon_import_library")"
     fi
-    "$cxx" //nologo //std:c++17 //O2 //EHsc //LD //DNAPI_VERSION=8 //DNODE_GYP_MODULE_NAME=oliphaunt_node "-I$node_include" "-I$oliphaunt_include" "$src" //Fo:"$addon_object" //link "$node_lib" //OUT:"$addon" //IMPLIB:"$addon_import_library"
+    compile_addon() {
+      output="$1"
+      object="$2"
+      import_library="$3"
+      shift 3
+      "$cxx" //nologo //std:c++17 //O2 //EHsc //LD //DNAPI_VERSION=8 \
+        //DNODE_GYP_MODULE_NAME=oliphaunt_node "$@" \
+        "-I$node_include" "-I$oliphaunt_include" "$src" //Fo:"$object" \
+        //link "$node_lib" //OUT:"$output" //IMPLIB:"$import_library"
+    }
+    compile_addon "$addon" "$addon_object" "$addon_import_library"
+    compile_addon \
+      "$lifecycle_test_addon" \
+      "$lifecycle_test_addon_object" \
+      "$lifecycle_test_addon_import_library" \
+      //DOLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING=1
     ;;
 esac
 
 tools/dev/bun.sh tools/release/strip_native_release_binaries.mjs "$addon_file"
 
-node - "$addon" <<'JS'
+node - "$addon_file" "$lifecycle_test_addon_file" <<'JS'
+const { readFileSync } = require('node:fs');
 const addonPath = process.argv[2];
+const lifecycleTestAddonPath = process.argv[3];
 const addon = require(addonPath);
 const expected = [
   'version',
@@ -215,15 +252,39 @@ const expected = [
   'detach',
   'createForgottenHandleRecoveryToken',
   'queueForgottenHandleRecovery',
-];
+].sort();
+const actual = Object.getOwnPropertyNames(addon).sort();
+if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+  throw new Error(
+    `compiled Node direct addon exports ${JSON.stringify(actual)}; expected ${JSON.stringify(expected)}`,
+  );
+}
 for (const name of expected) {
   if (typeof addon[name] !== 'function') {
-    throw new Error(`compiled Node direct addon is missing export ${name}`);
+    throw new Error(`Node direct export ${name} is not a function`);
+  }
+}
+
+const productionBytes = readFileSync(addonPath);
+const lifecycleTestBytes = readFileSync(lifecycleTestAddonPath);
+const testPrefix = Buffer.from('OLIPHAUNT_NODE_CLEANUP_TEST_');
+if (productionBytes.includes(testPrefix)) {
+  throw new Error('production Node direct addon contains lifecycle-test controls');
+}
+for (const control of [
+  'OLIPHAUNT_NODE_CLEANUP_TEST_DELAY_OPERATION_START',
+  'OLIPHAUNT_NODE_CLEANUP_TEST_PAUSE_NATIVE_CALL_ENTRY',
+  'OLIPHAUNT_NODE_CLEANUP_TEST_PREFILL_STREAM_QUEUE',
+]) {
+  if (!lifecycleTestBytes.includes(Buffer.from(control))) {
+    throw new Error(`instrumented Node direct addon is missing ${control}`);
   }
 }
 JS
 
-bash src/runtimes/node-direct/tools/test-node-addon-cleanup-lifecycle.sh "$addon_file"
+bash src/runtimes/node-direct/tools/test-node-addon-cleanup-lifecycle.sh \
+  "$addon_file" \
+  "$lifecycle_test_addon_file"
 
 if [ "$platform" = "windows" ]; then
   asset="oliphaunt-node-direct-$version-$target.zip"

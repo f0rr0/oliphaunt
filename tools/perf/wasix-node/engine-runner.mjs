@@ -6,7 +6,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 
 import {
-  assertCurrentPlan,
   assertExpectedRawProtocolResponse,
   assertExpectedResult,
   bulkSql,
@@ -23,7 +22,6 @@ import {
 
 const args = parseArguments(process.argv.slice(2));
 const source = await loadPlan(args.plan);
-assertCurrentPlan(source.plan);
 const expectedStream = createHash('sha256');
 const responseStream = createHash('sha256');
 let database;

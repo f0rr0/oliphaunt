@@ -3,6 +3,8 @@ package dev.oliphaunt
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -50,6 +52,11 @@ internal fun validateStartupGucs(gucs: List<PostgresStartupGuc>) {
                     "with an ASCII letter or '_', followed by ASCII letters, digits, '_', or '\$'",
             )
         }
+        if (name.equals("config_file", ignoreCase = true) || name.equals("data_directory", ignoreCase = true)) {
+            throw OliphauntException(
+                "Oliphaunt owns PostgreSQL startup GUC '$name'; configure the database through Oliphaunt's storage API",
+            )
+        }
     }
 }
 
@@ -72,13 +79,30 @@ internal fun validateGeneratedExtensionIds(
         if (!generatedExtensionSqlNameExists(extension)) throw OliphauntException("unknown $label '$extension'")
     }
 
-internal fun EngineConfig.postgresStartupArgs(sharedPreloadLibraries: Collection<String> = emptyList()): List<String> = startupGucs.flatMap { guc -> listOf("-c", "${guc.name.trim()}=${guc.value}") } +
-    sharedPreloadLibraries
-        .distinct()
-        .sorted()
-        .takeIf(List<String>::isNotEmpty)
-        ?.let { libraries -> listOf("-c", "shared_preload_libraries=${libraries.joinToString(",")}") }
-        .orEmpty()
+internal fun EngineConfig.postgresStartupArgs(sharedPreloadLibraries: Collection<String> = emptyList()): List<String> {
+    val requiredPreloads = sharedPreloadLibraries.distinct().sorted()
+    if (requiredPreloads.isEmpty()) {
+        return startupGucs.flatMap { guc -> listOf("-c", "${guc.name.trim()}=${guc.value}") }
+    }
+
+    val configuredPreloads =
+        startupGucs
+            .lastOrNull { it.name.trim().equals("shared_preload_libraries", ignoreCase = true) }
+            ?.value
+            .orEmpty()
+    val mergedPreloads = linkedSetOf<String>()
+    configuredPreloads
+        .split(',')
+        .map(String::trim)
+        .filter(String::isNotEmpty)
+        .forEach(mergedPreloads::add)
+    requiredPreloads.forEach(mergedPreloads::add)
+
+    return startupGucs
+        .filterNot { it.name.trim().equals("shared_preload_libraries", ignoreCase = true) }
+        .flatMap { guc -> listOf("-c", "${guc.name.trim()}=${guc.value}") } +
+        listOf("-c", "shared_preload_libraries=${mergedPreloads.joinToString(",")}")
+}
 
 internal fun validateDatabaseStorage(storage: EngineStorage) {
     if (storage is EngineStorage.Directory) validateDirectoryPath(storage.path, "database storage directory")
@@ -194,9 +218,17 @@ public class OliphauntDatabase private constructor(
 
     private data class ActiveTransaction(
         val token: Long,
+        val lease: TransactionLease,
         var completion: TransactionCompletion = TransactionCompletion.Active,
         var databaseFailure: Throwable? = null,
+        var settlementCompletion: Deferred<Unit>? = null,
+        var settlementFailure: Throwable? = null,
     )
+
+    internal class TransactionLease {
+        @Volatile
+        var closed: Boolean = false
+    }
 
     private data class Admission(
         val predecessor: Deferred<Unit>,
@@ -205,12 +237,17 @@ public class OliphauntDatabase private constructor(
 
     private data class BeginAdmission(
         val token: Long,
+        val lease: TransactionLease,
         val operation: Admission,
     )
 
     private data class TransactionSeal(
         val completion: TransactionCompletion,
         val commitAdmission: Admission? = null,
+        val rollbackAdmission: Admission? = null,
+        val settlementCompletion: Deferred<Unit>? = null,
+        val databaseFailure: Throwable? = null,
+        val settlementFailure: Throwable? = null,
     )
 
     private val stateMutex = Mutex()
@@ -222,6 +259,9 @@ public class OliphauntDatabase private constructor(
 
     @Volatile
     private var closed = false
+
+    @Volatile
+    private var protocolStreamCallbackActive = false
 
     private var poisonedMessage: String? = null
     private var activeTransaction: ActiveTransaction? = null
@@ -237,6 +277,7 @@ public class OliphauntDatabase private constructor(
     ): Unit = execProtocolRawStreamOwned(request.copyOf(), onChunk)
 
     public suspend fun backup(): ByteArray = runAdmitted(admitOperation(transactionToken = null)) {
+        ensureAdmittedOperationUsable()
         session.backup().copyOf()
     }
 
@@ -248,55 +289,128 @@ public class OliphauntDatabase private constructor(
                 if (activeTransaction != null) throw OliphauntException(sessionPinnedMessage)
                 val allocated = nextTransactionToken
                 nextTransactionToken = if (nextTransactionToken == Long.MAX_VALUE) 1L else nextTransactionToken + 1
-                activeTransaction = ActiveTransaction(allocated)
-                BeginAdmission(allocated, enqueueOperationLocked())
+                val lease = TransactionLease()
+                activeTransaction = ActiveTransaction(allocated, lease)
+                BeginAdmission(allocated, lease, enqueueOperationLocked())
             }
         val token = beginAdmission.token
-        val transaction = OliphauntTransaction(this, token)
+        val transaction = OliphauntTransaction(this, token, beginAdmission.lease)
 
         val result: T
         var began = false
         try {
-            val begin = executeBegin(token, beginAdmission.operation)
-            if (begin.commandTag != "BEGIN") {
-                throw OliphauntException("BEGIN returned unexpected command tag ${begin.commandTag ?: "<none>"}")
+            executeBegin(token, beginAdmission.operation) {
+                // Record the protocol boundary in the non-cancellable admitted
+                // phase. Cancellation delivered after BEGIN must roll it back,
+                // while cancellation in the queue must skip BEGIN entirely.
+                began = true
             }
-            began = true
+            currentCoroutineContext().ensureActive()
             result = block(transaction)
+            currentCoroutineContext().ensureActive()
         } catch (callbackError: Throwable) {
-            transaction.expire()
-            val databaseError =
-                stateMutex.withLock {
-                    activeTransaction?.takeIf { it.token == token }?.databaseFailure
-                }
-            var rollbackError: Throwable? = null
-            if (began && transactionIsActive(token)) {
-                try {
-                    withContext(NonCancellable) { rollbackTransaction(token) }
-                } catch (error: Throwable) {
-                    rollbackError = error
-                }
-            }
-            clearTransaction(token)
-            if (rollbackError != null) {
-                throw OliphauntTransactionRollbackException(callbackError, rollbackError)
-            }
-            if (databaseError != null && databaseError !== callbackError) {
-                throw OliphauntTransactionDatabaseException(callbackError, databaseError)
-            }
-            throw callbackError
+            finishFailedTransaction(token, transaction, began, callbackError)
         }
 
+        return finishSuccessfulTransaction(token, transaction, result)
+    }
+
+    private suspend fun finishFailedTransaction(
+        token: Long,
+        transaction: OliphauntTransaction,
+        began: Boolean,
+        callbackError: Throwable,
+    ): Nothing = withContext(NonCancellable) {
         transaction.expire()
-        val seal = sealTransactionCallback(token)
+        var rollbackError: Throwable? = null
+        var state = if (began) planCallbackFailureSettlement(token) else snapshotTransaction(token)
+        if (began && state.completion == TransactionCompletion.RollingBack) {
+            val rollbackAdmission = state.rollbackAdmission
+            if (rollbackAdmission == null) {
+                state = awaitRollbackSettlement(token, state)
+            } else {
+                try {
+                    executeRollbackTransaction(token, rollbackAdmission)
+                } catch (_: Throwable) {
+                    // State below distinguishes a failed rollback exchange from
+                    // an earlier independently poisoning admitted operation.
+                }
+                state = snapshotTransaction(token)
+            }
+            when (state.completion) {
+                TransactionCompletion.RolledBack -> Unit
+
+                is TransactionCompletion.Failed -> {
+                    rollbackError =
+                        state.settlementFailure?.takeUnless { settlementError ->
+                            failuresShareIdentity(callbackError, settlementError)
+                        }
+                }
+
+                else -> {
+                    val message =
+                        "transaction rollback settlement state is inconsistent; close and reopen the database"
+                    rollbackError = OliphauntException(message)
+                    poisonTransaction(token, message, rollbackError)
+                }
+            }
+        } else if (began) {
+            when (state.completion) {
+                TransactionCompletion.Active, TransactionCompletion.RollingBack -> {
+                    val message =
+                        "transaction rollback admission state is inconsistent; close and reopen the database"
+                    rollbackError = OliphauntException(message)
+                    poisonTransaction(token, message, rollbackError)
+                }
+
+                TransactionCompletion.RolledBack -> Unit
+
+                is TransactionCompletion.Failed -> {
+                    rollbackError =
+                        state.settlementFailure?.takeUnless { settlementError ->
+                            failuresShareIdentity(callbackError, settlementError)
+                        }
+                }
+
+                TransactionCompletion.Committing, TransactionCompletion.Committed -> {
+                    val message =
+                        "transaction settlement state is inconsistent; close and reopen the database"
+                    rollbackError = OliphauntException(message)
+                    poisonTransaction(token, message, rollbackError)
+                }
+            }
+        }
+        val databaseError = snapshotTransaction(token).databaseFailure
+        clearTransaction(token)
+        if (rollbackError != null) {
+            throw OliphauntTransactionRollbackException(callbackError, rollbackError)
+        }
+        if (began && databaseError != null && !failuresShareIdentity(callbackError, databaseError)) {
+            throw OliphauntTransactionDatabaseException(callbackError, databaseError)
+        }
+        throw callbackError
+    }
+
+    private suspend fun <T> finishSuccessfulTransaction(
+        token: Long,
+        transaction: OliphauntTransaction,
+        result: T,
+    ): T = withContext(NonCancellable) {
+        transaction.expire()
+        var seal = sealTransactionCallback(token)
+        if (seal.completion == TransactionCompletion.RollingBack) {
+            seal = awaitRollbackSettlement(token, seal)
+        }
         when (val completion = seal.completion) {
             TransactionCompletion.RolledBack -> {
                 clearTransaction(token)
-                return result
+                return@withContext result
             }
 
             is TransactionCompletion.Failed -> {
+                val databaseFailure = seal.databaseFailure
                 clearTransaction(token)
+                if (databaseFailure != null) throw databaseFailure
                 throw OliphauntException(completion.message)
             }
 
@@ -328,7 +442,7 @@ public class OliphauntDatabase private constructor(
             }
             throw OliphauntException("COMMIT returned unexpected command tag ${commit.commandTag ?: "<none>"}")
         }
-        return result
+        result
     }
 
     public suspend fun cancel() {
@@ -370,30 +484,34 @@ public class OliphauntDatabase private constructor(
                 }
             }
         if (admission == null) return
-        runAdmitted(admission) {
-            val cancellationDrain =
-                stateMutex.withLock {
-                    closeTeardownStarted = true
-                    if (activeCancellationCount == 0) {
-                        null
-                    } else {
-                        CompletableDeferred<Unit>().also { cancellationDrainWaiter = it }
+        try {
+            runAdmitted(admission) {
+                val cancellationDrain =
+                    stateMutex.withLock {
+                        closeTeardownStarted = true
+                        if (activeCancellationCount == 0) {
+                            null
+                        } else {
+                            CompletableDeferred<Unit>().also { cancellationDrainWaiter = it }
+                        }
                     }
-                }
-            cancellationDrain?.await()
-            try {
+                cancellationDrain?.await()
                 session.close()
                 stateMutex.withLock {
                     closing = false
                     closed = true
                 }
-            } catch (error: Throwable) {
-                stateMutex.withLock {
-                    closeTeardownStarted = false
-                    closing = false
-                }
-                throw error
             }
+        } catch (error: Throwable) {
+            withContext(NonCancellable) {
+                stateMutex.withLock {
+                    if (!closed) {
+                        closeTeardownStarted = false
+                        closing = false
+                    }
+                }
+            }
+            throw error
         }
     }
 
@@ -405,7 +523,8 @@ public class OliphauntDatabase private constructor(
     private suspend fun executeBegin(
         token: Long,
         admission: Admission,
-    ): CommandResult = runAdmitted(admission) {
+        markBegan: () -> Unit,
+    ) = runAdmitted(admission) {
         ensureAdmittedOperationUsable()
         val response =
             try {
@@ -421,31 +540,92 @@ public class OliphauntDatabase private constructor(
                 poisonUnknownOperation(token, error)
                 throw error
             }
-        val result = parseCommandResponse(response, ExpectedProtocol.Simple)
-        if (terminalStatus != ReadyStatus.Transaction || result.readyStatus != terminalStatus) {
-            throw OliphauntException("BEGIN returned unexpected ReadyForQuery status $terminalStatus")
+        val result =
+            try {
+                parseCommandResponse(response, ExpectedProtocol.Simple)
+            } catch (error: Throwable) {
+                recoverFailedBeginBoundary(token, terminalStatus, error)
+                throw error
+            }
+        if (
+            terminalStatus == ReadyStatus.Transaction &&
+            result.readyStatus == terminalStatus &&
+            result.commandTag == "BEGIN"
+        ) {
+            markBegan()
+            return@runAdmitted
         }
-        result
+        val error =
+            OliphauntException(
+                "BEGIN returned command tag ${result.commandTag ?: "<none>"} " +
+                    "with ReadyForQuery status $terminalStatus",
+            )
+        recoverFailedBeginBoundary(token, terminalStatus, error)
+        throw error
+    }
+
+    private suspend fun recoverFailedBeginBoundary(
+        token: Long,
+        status: ReadyStatus,
+        primaryError: Throwable,
+    ) {
+        if (status == ReadyStatus.Idle) return
+        try {
+            executeRollbackExchange()
+        } catch (rollbackError: Throwable) {
+            val message =
+                "BEGIN failed after PostgreSQL entered ${status.statusLabel()}, and automatic ROLLBACK failed; " +
+                    "close and reopen the database: $rollbackError"
+            val combined = OliphauntException(message, primaryError)
+            combined.addSuppressed(rollbackError)
+            poisonTransaction(token, message, combined)
+            throw combined
+        }
     }
 
     internal suspend fun rollbackTransaction(token: Long) {
         val admission = admitSettlement(token, TransactionCompletion.RollingBack)
+        withContext(NonCancellable) {
+            executeRollbackTransaction(token, admission)
+        }
+        currentCoroutineContext().ensureActive()
+    }
+
+    private suspend fun executeRollbackTransaction(
+        token: Long,
+        admission: Admission,
+    ) {
         runAdmitted(admission) {
+            var rollbackStarted = false
             try {
                 ensureAdmittedOperationUsable()
                 ensureSettlement(token, TransactionCompletion.RollingBack)
-                val response = session.execProtocolRaw(simpleQueryProtocol("ROLLBACK"))
-                val terminalStatus = inspectTerminalReadyStatus(response)
-                val result = parseCommandResponse(response, ExpectedProtocol.Simple)
-                if (terminalStatus != ReadyStatus.Idle || result.readyStatus != terminalStatus || result.commandTag != "ROLLBACK") {
-                    throw OliphauntException("ROLLBACK returned unexpected command tag or ReadyForQuery status")
-                }
+                rollbackStarted = true
+                executeRollbackExchange()
                 finishSettlement(token, TransactionCompletion.RollingBack, TransactionCompletion.RolledBack)
             } catch (error: Throwable) {
                 val message = "transaction rollback failed; close and reopen the database: $error"
-                poisonTransaction(token, message, error)
+                poisonTransaction(
+                    token,
+                    message,
+                    error,
+                    settlementFailure = error.takeIf { rollbackStarted },
+                )
                 throw error
             }
+        }
+    }
+
+    private suspend fun executeRollbackExchange() {
+        val response = session.execProtocolRaw(simpleQueryProtocol("ROLLBACK"))
+        val terminalStatus = inspectTerminalReadyStatus(response)
+        val result = parseCommandResponse(response, ExpectedProtocol.Simple)
+        if (
+            terminalStatus != ReadyStatus.Idle ||
+            result.readyStatus != terminalStatus ||
+            result.commandTag != "ROLLBACK"
+        ) {
+            throw OliphauntException("ROLLBACK returned unexpected command tag or ReadyForQuery status")
         }
     }
 
@@ -506,7 +686,9 @@ public class OliphauntDatabase private constructor(
             throw OliphauntException("transaction is no longer active")
         }
         active.completion = completion
-        enqueueOperationLocked()
+        enqueueOperationLocked().also { admission ->
+            active.settlementCompletion = admission.completion
+        }
     }
 
     private suspend fun ensureSettlement(
@@ -674,6 +856,7 @@ public class OliphauntDatabase private constructor(
             if (transactionToken != null && active?.token == transactionToken) {
                 active.completion = TransactionCompletion.Failed(message)
                 active.databaseFailure = error
+                active.lease.closed = true
             }
         }
     }
@@ -689,12 +872,15 @@ public class OliphauntDatabase private constructor(
         token: Long,
         message: String,
         error: Throwable? = null,
+        settlementFailure: Throwable? = null,
     ) {
         stateMutex.withLock {
             poisonedMessage = message
             activeTransaction?.takeIf { it.token == token }?.let { active ->
                 active.completion = TransactionCompletion.Failed(message)
                 if (active.databaseFailure == null) active.databaseFailure = error
+                if (settlementFailure != null) active.settlementFailure = settlementFailure
+                active.lease.closed = true
             }
         }
     }
@@ -709,15 +895,74 @@ public class OliphauntDatabase private constructor(
             active.completion = TransactionCompletion.Committing
             return@withLock TransactionSeal(active.completion, enqueueOperationLocked())
         }
-        TransactionSeal(active.completion)
+        TransactionSeal(
+            completion = active.completion,
+            settlementCompletion = active.settlementCompletion,
+            databaseFailure = active.databaseFailure,
+            settlementFailure = active.settlementFailure,
+        )
     }
 
-    private suspend fun transactionIsActive(token: Long): Boolean = stateMutex.withLock {
-        activeTransaction?.let { it.token == token && it.completion == TransactionCompletion.Active } == true
+    private suspend fun planCallbackFailureSettlement(token: Long): TransactionSeal = stateMutex.withLock {
+        val active =
+            activeTransaction?.takeIf { it.token == token }
+                ?: return@withLock TransactionSeal(
+                    TransactionCompletion.Failed("transaction state was lost; close and reopen the database"),
+                )
+        if (active.completion == TransactionCompletion.Active) {
+            val admission = enqueueOperationLocked()
+            active.completion = TransactionCompletion.RollingBack
+            active.settlementCompletion = admission.completion
+            return@withLock TransactionSeal(
+                completion = active.completion,
+                rollbackAdmission = admission,
+                settlementCompletion = admission.completion,
+            )
+        }
+        TransactionSeal(
+            completion = active.completion,
+            settlementCompletion = active.settlementCompletion,
+            databaseFailure = active.databaseFailure,
+            settlementFailure = active.settlementFailure,
+        )
+    }
+
+    private suspend fun snapshotTransaction(token: Long): TransactionSeal = stateMutex.withLock {
+        activeTransaction?.takeIf { it.token == token }?.let { active ->
+            TransactionSeal(
+                completion = active.completion,
+                settlementCompletion = active.settlementCompletion,
+                databaseFailure = active.databaseFailure,
+                settlementFailure = active.settlementFailure,
+            )
+        } ?: TransactionSeal(
+            TransactionCompletion.Failed("transaction state was lost; close and reopen the database"),
+        )
+    }
+
+    private suspend fun awaitRollbackSettlement(
+        token: Long,
+        state: TransactionSeal,
+    ): TransactionSeal = withContext(NonCancellable) {
+        val completion = state.settlementCompletion
+        if (completion == null) {
+            val message =
+                "transaction rollback settlement was lost; close and reopen the database"
+            val error = OliphauntException(message)
+            poisonTransaction(token, message, error)
+            return@withContext snapshotTransaction(token)
+        }
+        completion.await()
+        snapshotTransaction(token)
     }
 
     private suspend fun clearTransaction(token: Long) {
-        stateMutex.withLock { if (activeTransaction?.token == token) activeTransaction = null }
+        stateMutex.withLock {
+            activeTransaction?.takeIf { it.token == token }?.let { active ->
+                active.lease.closed = true
+                activeTransaction = null
+            }
+        }
     }
 
     private suspend fun execProtocolRawOwned(
@@ -738,7 +983,7 @@ public class OliphauntDatabase private constructor(
             val outcome =
                 runRawProtocolOperation {
                     session.execProtocolRawStream(ownedRequest) { chunk ->
-                        withProtocolStreamCallbackContext(this) {
+                        withProtocolStreamCallback {
                             onChunk(chunk.copyOf())
                         }
                     }
@@ -801,8 +1046,18 @@ public class OliphauntDatabase private constructor(
     }
 
     private fun ensureNoProtocolStreamCallbackReentry() {
-        if (currentProtocolStreamCallbackOwner() === this) {
+        if (protocolStreamCallbackActive) {
             throw OliphauntException(protocolStreamCallbackReentryMessage)
+        }
+    }
+
+    private inline fun <T> withProtocolStreamCallback(block: () -> T): T {
+        check(!protocolStreamCallbackActive)
+        protocolStreamCallbackActive = true
+        return try {
+            block()
+        } finally {
+            protocolStreamCallbackActive = false
         }
     }
 
@@ -823,13 +1078,29 @@ public class OliphauntDatabase private constructor(
     private suspend fun <T> runAdmitted(
         admission: Admission,
         operation: suspend () -> T,
-    ): T = withContext(NonCancellable) {
-        admission.predecessor.await()
+    ): T {
         try {
-            operation()
-        } finally {
-            admission.completion.complete(Unit)
+            admission.predecessor.await()
+            currentCoroutineContext().ensureActive()
+        } catch (error: Throwable) {
+            // A skipped node must remain behind its predecessor. Completing it
+            // immediately would let a later admission overtake active work.
+            admission.predecessor.invokeOnCompletion {
+                admission.completion.complete(Unit)
+            }
+            throw error
         }
+
+        val result =
+            withContext(NonCancellable) {
+                try {
+                    operation()
+                } finally {
+                    admission.completion.complete(Unit)
+                }
+            }
+        currentCoroutineContext().ensureActive()
+        return result
     }
 
     public companion object {
@@ -871,11 +1142,9 @@ public class OliphauntDatabase private constructor(
 public class OliphauntTransaction internal constructor(
     private val database: OliphauntDatabase,
     private val token: Long,
+    private val lease: OliphauntDatabase.TransactionLease,
 ) {
-    @Volatile
-    private var expired = false
-
-    public val isClosed: Boolean get() = expired
+    public val isClosed: Boolean get() = lease.closed
 
     public suspend fun rollback() {
         ensureActiveHandle()
@@ -892,11 +1161,11 @@ public class OliphauntTransaction internal constructor(
     }
 
     private fun ensureActiveHandle() {
-        if (expired) throw OliphauntException("transaction is no longer active")
+        if (lease.closed) throw OliphauntException("transaction is no longer active")
     }
 
     internal fun expire() {
-        expired = true
+        lease.closed = true
     }
 }
 
@@ -904,4 +1173,25 @@ private fun ReadyStatus.statusLabel(): String = when (this) {
     ReadyStatus.Transaction -> "an open transaction"
     ReadyStatus.FailedTransaction -> "a failed transaction"
     ReadyStatus.Idle -> "an idle transaction"
+}
+
+private fun failuresShareIdentity(
+    first: Throwable,
+    second: Throwable,
+): Boolean {
+    val firstCauses = mutableListOf<Throwable>()
+    var current: Throwable? = first
+    while (current != null && firstCauses.none { it === current }) {
+        firstCauses += current
+        current = current.cause
+    }
+
+    val visited = mutableListOf<Throwable>()
+    current = second
+    while (current != null && visited.none { it === current }) {
+        if (firstCauses.any { it === current }) return true
+        visited += current
+        current = current.cause
+    }
+    return false
 }

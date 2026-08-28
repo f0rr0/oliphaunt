@@ -2,10 +2,16 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { normalizeOpenConfig, validateDirectoryPath } from './config.js';
+import {
+  normalizeDatabaseTopology,
+  normalizeOpenConfig,
+  validateDirectoryPath,
+  validateNativeStartupGUCs,
+} from './config.js';
 import { createDefaultNativeBinding } from './native/default.js';
 import type { NativeBinding, NativeBindingOptions } from './native/types.js';
 import {
+  assertNoTransactionChain,
   decodeQueryResult,
   describeQuery,
   errorWithNotices,
@@ -21,10 +27,10 @@ import {
   type CommandResult,
   type DescribeResult,
   type ExecResult,
+  type InferQueryRow,
   type ParameterOptions,
   type PostgresNotice,
   type QueryParam,
-  type QueryObjectRow,
   type QueryOptions,
   type QueryPlan,
   type QueryResult,
@@ -58,6 +64,8 @@ type RuntimeBindingOverrides = {
   readonly broker?: RuntimeBinding;
   readonly server?: RuntimeBinding;
 };
+
+type QueryReadOptions = Omit<QueryOptions, 'encoders'>;
 
 class OliphauntDatabaseBase {
   protected readonly binding: RuntimeBinding;
@@ -118,12 +126,8 @@ class OliphauntDatabaseBase {
    */
   async #discardUnpublishedOwner(): Promise<unknown | undefined> {
     const failures: unknown[] = [];
-    try {
-      const outcome = await this.binding.close(this.handle);
-      if (outcome.state !== 'closed') failures.push(outcome.error);
-    } catch (error) {
-      failures.push(error);
-    }
+    const closeFailure = await closeRuntimeHandleFailure(this.binding, this.handle);
+    if (closeFailure !== undefined) failures.push(closeFailure);
     const retirementFailure = this.#retire();
     if (retirementFailure !== undefined) failures.push(retirementFailure);
     return collapseFailures(failures, 'unpublished Oliphaunt owner cleanup failed');
@@ -145,16 +149,16 @@ class OliphauntDatabaseBase {
     );
   }
 
-  async query<Row = QueryObjectRow>(
+  async query<Row = never, const Options extends QueryOptions = {}>(
     sql: string,
     parameters: ReadonlyArray<QueryParam> = [],
-    options: QueryOptions = {},
-  ): Promise<QueryResult<Row>> {
+    options: Options & QueryOptions = {} as Options & QueryOptions,
+  ): Promise<QueryResult<InferQueryRow<Options, Row>>> {
     this.assertNoActiveTransaction();
     const stableOptions = snapshotQueryOptions(options);
     const plan = planQuery(sql, parameters, stableOptions);
     return this.withSessionOperation(async () =>
-      decodeQueryResult<Row>(
+      decodeQueryResult<Row, Options>(
         await this.#runPlannedUnlocked(plan, 'database', parseQueryRawResponse),
         stableOptions,
       ),
@@ -173,16 +177,16 @@ class OliphauntDatabaseBase {
     );
   }
 
-  async exec<Row = QueryObjectRow>(
+  async exec<Row = never, const Options extends QueryReadOptions = {}>(
     sql: string,
-    options: Omit<QueryOptions, 'encoders'> = {},
-  ): Promise<ExecResult<Row>> {
+    options: Options & QueryReadOptions = {} as Options & QueryReadOptions,
+  ): Promise<ExecResult<InferQueryRow<Options, Row>>> {
     this.assertNoActiveTransaction();
     const input = structuredSimpleQuery(sql);
     const stableOptions = snapshotReadOptions(options);
     return this.withSessionOperation(() =>
       this.#runStructuredUnlocked(input, 'database', (response) =>
-        parseExecResponse<Row>(response, stableOptions),
+        parseExecResponse<Row, Options>(response, stableOptions),
       ),
     );
   }
@@ -737,21 +741,23 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
     options: ParameterOptions = {},
   ): Promise<CommandResult> {
     return promiseFromSynchronousCall(() => {
+      assertNoTransactionChain(sql);
       const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
       return this.#enqueue(() => this.#runPlan(plan, parseCommandResponse));
     });
   }
 
-  query<Row = QueryObjectRow>(
+  query<Row = never, const Options extends QueryOptions = {}>(
     sql: string,
     parameters: ReadonlyArray<QueryParam> = [],
-    options: QueryOptions = {},
-  ): Promise<QueryResult<Row>> {
+    options: Options & QueryOptions = {} as Options & QueryOptions,
+  ): Promise<QueryResult<InferQueryRow<Options, Row>>> {
     return promiseFromSynchronousCall(() => {
+      assertNoTransactionChain(sql);
       const stableOptions = snapshotQueryOptions(options);
       const plan = planQuery(sql, parameters, stableOptions);
       return this.#enqueue(async () => {
-        return decodeQueryResult<Row>(
+        return decodeQueryResult<Row, Options>(
           await this.#runPlan(plan, parseQueryRawResponse),
           stableOptions,
         );
@@ -765,21 +771,23 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
     options: ParameterOptions = {},
   ): Promise<RawQueryResult> {
     return promiseFromSynchronousCall(() => {
+      assertNoTransactionChain(sql);
       const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
       return this.#enqueue(() => this.#runPlan(plan, parseQueryRawResponse));
     });
   }
 
-  exec<Row = QueryObjectRow>(
+  exec<Row = never, const Options extends QueryReadOptions = {}>(
     sql: string,
-    options: Omit<QueryOptions, 'encoders'> = {},
-  ): Promise<ExecResult<Row>> {
+    options: Options & QueryReadOptions = {} as Options & QueryReadOptions,
+  ): Promise<ExecResult<InferQueryRow<Options, Row>>> {
     return promiseFromSynchronousCall(() => {
+      assertNoTransactionChain(sql);
       const input = structuredSimpleQuery(sql);
       const stableOptions = snapshotReadOptions(options);
       return this.#enqueue(() =>
         this.#runStructured(input, (response) =>
-          parseExecResponse<Row>(response, stableOptions),
+          parseExecResponse<Row, Options>(response, stableOptions),
         ),
       );
     });
@@ -879,21 +887,19 @@ function snapshotParameterOptions(options: ParameterOptions): ParameterOptions {
   });
 }
 
-function snapshotReadOptions(
-  options: Omit<QueryOptions, 'encoders'>,
-): Omit<QueryOptions, 'encoders'> {
+function snapshotReadOptions<const Options extends QueryReadOptions>(options: Options): Options {
   return Object.freeze({
     rowMode: options.rowMode,
     valueMode: options.valueMode,
     ...(options.decoders === undefined ? {} : { decoders: Object.freeze({ ...options.decoders }) }),
-  });
+  }) as Options;
 }
 
-function snapshotQueryOptions(options: QueryOptions): QueryOptions {
+function snapshotQueryOptions<const Options extends QueryOptions>(options: Options): Options {
   return Object.freeze({
     ...snapshotReadOptions(options),
     ...snapshotParameterOptions(options),
-  });
+  }) as Options;
 }
 
 function prependNotices<Result extends NoticeCarrier>(
@@ -1030,8 +1036,15 @@ export function createOliphauntClient(
       if (normalized.topology === 'server') {
         const connectionString = binding.connectionString?.(handle);
         if (connectionString === undefined) {
-          await binding.close(handle).catch(() => undefined);
-          throw new Error('native server did not expose its connection string');
+          const mismatch = new Error('native server did not expose its connection string');
+          const cleanupFailure = await closeRuntimeHandleFailure(binding, handle);
+          if (cleanupFailure !== undefined) {
+            throw new AggregateError(
+              [mismatch, cleanupFailure],
+              'native server omitted its connection string and cleanup also failed',
+            );
+          }
+          throw mismatch;
         }
         const owner = await OliphauntDatabaseBase.publish(
           new OliphauntServerOwner(binding, handle),
@@ -1076,7 +1089,10 @@ export function createOliphauntClient(
         ? serializeDirectOpen(() => openDatabase(effectiveConfig))
         : openDatabase(effectiveConfig));
       if (database instanceof OliphauntServerImpl) {
-        throw new Error('generic database opener returned a native server');
+        return rejectUnexpectedFacade(
+          database,
+          new Error('generic database opener returned a native server'),
+        );
       }
       return database;
     },
@@ -1084,7 +1100,10 @@ export function createOliphauntClient(
     async openServer(config: ServerOpenConfig = {}): Promise<OliphauntServer> {
       const database = await openDatabase(snapshotServerOpenConfig(config));
       if (!(database instanceof OliphauntServerImpl)) {
-        throw new Error('native server opener returned a non-server database');
+        return rejectUnexpectedFacade(
+          database,
+          new Error('native server opener returned a non-server database'),
+        );
       }
       return database;
     },
@@ -1106,17 +1125,47 @@ export function createOliphauntClient(
 }
 
 function snapshotOpenConfig(config: OpenConfig): OpenConfig & { topology: 'direct' | 'broker' } {
+  const topology = normalizeDatabaseTopology(config.topology);
+  validateNativeStartupGUCs(topology, config.startupGUCs ?? {});
   return {
     ...snapshotCommonOpenConfig(config),
-    topology: config.topology ?? 'direct',
+    topology,
     libraryPath: config.libraryPath,
     brokerExecutable: config.brokerExecutable,
   };
 }
 
+async function rejectUnexpectedFacade(
+  facade: OliphauntDatabaseImpl | OliphauntServerImpl,
+  mismatch: Error,
+): Promise<never> {
+  try {
+    await facade.close();
+  } catch (cleanupFailure) {
+    throw new AggregateError(
+      [mismatch, cleanupFailure],
+      'native runtime returned the wrong facade and cleanup also failed',
+    );
+  }
+  throw mismatch;
+}
+
+async function closeRuntimeHandleFailure(
+  binding: RuntimeBinding,
+  handle: RuntimeHandle,
+): Promise<unknown | undefined> {
+  try {
+    const outcome = await binding.close(handle);
+    return outcome.state === 'closed' ? undefined : outcome.error;
+  } catch (error) {
+    return error;
+  }
+}
+
 function snapshotServerOpenConfig(
   config: ServerOpenConfig,
 ): ServerOpenConfig & { topology: 'server' } {
+  validateNativeStartupGUCs('server', config.startupGUCs ?? {});
   return {
     ...snapshotCommonOpenConfig(config),
     topology: 'server',

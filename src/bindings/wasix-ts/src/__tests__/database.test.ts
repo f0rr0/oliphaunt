@@ -211,6 +211,22 @@ describe('WASIX database recovery state', () => {
         }, `${name} threw before returning its Promise`).not.toThrow();
         await expect(caught, `${name} did not reject`).resolves.toBeInstanceOf(Error);
       }
+      const chainCalls: ReadonlyArray<readonly [string, () => Promise<unknown>]> = [
+        ['execute', () => transaction.execute('ROLLBACK AND CHAIN')],
+        ['query', () => transaction.query('ABORT WORK AND CHAIN')],
+        ['queryRaw', () => transaction.queryRaw('ROLLBACK TRANSACTION /* ownership */ AND CHAIN')],
+        ['exec', () => transaction.exec('SELECT 1; RoLlBaCk AND /* comment */ CHAIN')],
+      ];
+      for (const [name, invoke] of chainCalls) {
+        let caught: Promise<unknown> | undefined;
+        expect(() => {
+          caught = invoke().catch((error: unknown) => error);
+        }, `${name} chain guard threw before returning its Promise`).not.toThrow();
+        await expect(caught, `${name} did not reject a transaction chain`).resolves.toMatchObject({
+          message: expect.stringContaining('do not support ROLLBACK/ABORT ... AND CHAIN'),
+        });
+      }
+      expect(statements).toEqual(['BEGIN']);
     });
 
     expect(statements).toEqual(['BEGIN', 'COMMIT']);
@@ -746,7 +762,9 @@ describe('WASIX database recovery state', () => {
     const input = Uint8Array.of(9, 8, 7);
     const received: Uint8Array[] = [];
 
-    await database.execProtocolRawStream(input, (chunk) => received.push(chunk));
+    await database.execProtocolRawStream(input, (chunk) => {
+      received.push(chunk);
+    });
 
     expect(inputs).toHaveLength(1);
     expect(inputs[0]).not.toBe(input);
@@ -821,13 +839,13 @@ describe('WASIX database recovery state', () => {
     {
       name: 'callback recovery without a consumer failure',
       outcome: 'callbackAborted' as const,
-      callback: (): void => undefined,
+      callback: (): undefined => undefined,
       message: 'without a retained callback failure',
     },
     {
       name: 'success after a consumer failure',
       outcome: 'complete' as const,
-      callback: (): void => {
+      callback: (): undefined => {
         throw new Error('consumer stopped');
       },
       message: 'success after rejecting its callback',
@@ -895,14 +913,22 @@ describe('WASIX database recovery state', () => {
       async close() {},
     });
 
+    const dynamicallyTypedAsyncCallback: (chunk: Uint8Array) => unknown = async () => undefined;
     await expect(
-      database.execProtocolRawStream(Uint8Array.of(1), async () => undefined),
+      database.execProtocolRawStream(
+        Uint8Array.of(1),
+        dynamicallyTypedAsyncCallback as unknown as (chunk: Uint8Array) => undefined,
+      ),
     ).rejects.toThrow(/must complete synchronously.*Promise or thenable/);
     await expect(database.execProtocolRaw(Uint8Array.of(2))).resolves.toEqual(ready());
+    const dynamicallyTypedThenableCallback: (chunk: Uint8Array) => unknown = () => ({
+      then: () => undefined,
+    });
     await expect(
-      database.execProtocolRawStream(Uint8Array.of(1), () => ({
-        then: () => undefined,
-      })),
+      database.execProtocolRawStream(
+        Uint8Array.of(1),
+        dynamicallyTypedThenableCallback as unknown as (chunk: Uint8Array) => undefined,
+      ),
     ).rejects.toThrow(/must complete synchronously.*Promise or thenable/);
     await expect(database.execProtocolRaw(Uint8Array.of(3))).resolves.toEqual(ready());
     expect(bufferedExecutions).toBe(2);

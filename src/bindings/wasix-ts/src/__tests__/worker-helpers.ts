@@ -1,4 +1,4 @@
-import type { WorkerOpenOptions, WorkerRequest, WorkerResponse } from '../rpc.js';
+import type { SerializedOpenOptions, WorkerRequest, WorkerResponse } from '../rpc.js';
 import type { WasixWorkerPort } from '../worker-rpc.js';
 
 export class FakeWorkerPort implements WasixWorkerPort {
@@ -35,7 +35,7 @@ export class FakeWorkerPort implements WasixWorkerPort {
   }
 }
 
-export function workerOpenOptions(): WorkerOpenOptions {
+export function workerOpenOptions(): SerializedOpenOptions {
   return {
     runtime: {
       schema: 'oliphaunt-wasix-runtime-v2',

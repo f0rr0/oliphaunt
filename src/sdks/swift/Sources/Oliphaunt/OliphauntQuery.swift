@@ -110,19 +110,19 @@ public struct OliphauntQueryParam: Equatable, Sendable {
 }
 
 public struct OliphauntQueryField: Equatable, Sendable {
-    public var name: String
-    public var tableOID: UInt32
-    public var tableAttribute: Int16
-    public var typeOID: OliphauntPostgresOID
-    public var typeSize: Int16
-    public var typeModifier: Int32
-    public var format: OliphauntQueryFormat
+    public let name: String
+    public let tableOID: UInt32
+    public let tableAttribute: Int16
+    public let typeOID: OliphauntPostgresOID
+    public let typeSize: Int16
+    public let typeModifier: Int32
+    public let format: OliphauntQueryFormat
 }
 
 public struct OliphauntQueryRow: Equatable, Sendable {
-    public var values: [Data?]
+    public let values: [Data?]
 
-    private var fields: [OliphauntQueryField]
+    private let fields: [OliphauntQueryField]
 
     init(values: [Data?], fields: [OliphauntQueryField] = []) {
         self.values = values
@@ -130,7 +130,7 @@ public struct OliphauntQueryRow: Equatable, Sendable {
     }
 
     public static func == (lhs: OliphauntQueryRow, rhs: OliphauntQueryRow) -> Bool {
-        lhs.values == rhs.values
+        lhs.values == rhs.values && lhs.fields == rhs.fields
     }
 
     public func raw(_ column: Int) throws -> Data? {
@@ -186,33 +186,56 @@ public struct OliphauntQueryRow: Equatable, Sendable {
 }
 
 public struct OliphauntQueryResult: Equatable, Sendable {
-    public var fields: [OliphauntQueryField]
-    public var rows: [OliphauntQueryRow]
-    public var commandTag: String?
-    public var rowCount: Int?
-    public var notices: [OliphauntPostgresNotice]
-    var readyStatus: OliphauntReadyStatus = .idle
+    public let fields: [OliphauntQueryField]
+    public let rows: [OliphauntQueryRow]
+    public let commandTag: String?
+    public let rowCount: Int?
+    public let notices: [OliphauntPostgresNotice]
+    let readyStatus: OliphauntReadyStatus
 
-    public func fieldIndex(_ name: String) -> Int? {
-        fields.firstIndex { $0.name == name }
+    init(
+        fields: [OliphauntQueryField],
+        rows: [OliphauntQueryRow],
+        commandTag: String?,
+        rowCount: Int?,
+        notices: [OliphauntPostgresNotice],
+        readyStatus: OliphauntReadyStatus = .idle
+    ) {
+        self.fields = fields
+        self.rows = rows
+        self.commandTag = commandTag
+        self.rowCount = rowCount
+        self.notices = notices
+        self.readyStatus = readyStatus
+    }
+
+    public static func == (lhs: OliphauntQueryResult, rhs: OliphauntQueryResult) -> Bool {
+        lhs.fields == rhs.fields &&
+            lhs.rows == rhs.rows &&
+            lhs.commandTag == rhs.commandTag &&
+            lhs.rowCount == rhs.rowCount &&
+            lhs.notices == rhs.notices
     }
 
     public func getText(row: Int, column: String) throws -> String? {
-        guard let columnIndex = fieldIndex(column) else {
-            throw OliphauntError.engine("query result has no column named \(String(reflecting: column))")
-        }
         guard rows.indices.contains(row) else {
             throw OliphauntError.engine("query result has no row at index \(row)")
         }
-        return try rows[row].text(columnIndex)
+        guard let value = try rows[row].raw(column) else {
+            return nil
+        }
+        guard let text = String(data: value, encoding: .utf8) else {
+            throw OliphauntError.engine("query value is not valid UTF-8")
+        }
+        return text
     }
 }
 
 public struct OliphauntCommandResult: Equatable, Sendable {
-    public var commandTag: String?
-    public var rowCount: Int?
-    public var notices: [OliphauntPostgresNotice]
-    var readyStatus: OliphauntReadyStatus
+    public let commandTag: String?
+    public let rowCount: Int?
+    public let notices: [OliphauntPostgresNotice]
+    let readyStatus: OliphauntReadyStatus
 
     public init(
         commandTag: String?,
@@ -236,11 +259,17 @@ public struct OliphauntCommandResult: Equatable, Sendable {
         self.notices = notices
         self.readyStatus = readyStatus
     }
+
+    public static func == (lhs: OliphauntCommandResult, rhs: OliphauntCommandResult) -> Bool {
+        lhs.commandTag == rhs.commandTag &&
+            lhs.rowCount == rhs.rowCount &&
+            lhs.notices == rhs.notices
+    }
 }
 
 public struct OliphauntPostgresErrorField: Equatable, Sendable {
-    public var code: UInt8
-    public var value: String
+    public let code: UInt8
+    public let value: String
 
     public init(code: UInt8, value: String) {
         self.code = code
@@ -249,19 +278,19 @@ public struct OliphauntPostgresErrorField: Equatable, Sendable {
 }
 
 public struct OliphauntPostgresDiagnostic: Equatable, Sendable, CustomStringConvertible {
-    public var severity: String?
-    public var sqlstate: String?
-    public var message: String
-    public var detail: String?
-    public var hint: String?
-    public var position: String?
-    public var whereText: String?
-    public var schemaName: String?
-    public var tableName: String?
-    public var columnName: String?
-    public var dataTypeName: String?
-    public var constraintName: String?
-    public var fields: [OliphauntPostgresErrorField]
+    public let severity: String?
+    public let sqlstate: String?
+    public let message: String
+    public let detail: String?
+    public let hint: String?
+    public let position: String?
+    public let whereText: String?
+    public let schemaName: String?
+    public let tableName: String?
+    public let columnName: String?
+    public let dataTypeName: String?
+    public let constraintName: String?
+    public let fields: [OliphauntPostgresErrorField]
 
     public var localizedSeverity: String? { fieldValue(fields, 0x53) }
     public var nonlocalizedSeverity: String? { fieldValue(fields, 0x56) }
@@ -307,8 +336,8 @@ public struct OliphauntPostgresDiagnostic: Equatable, Sendable, CustomStringConv
 public typealias OliphauntPostgresNotice = OliphauntPostgresDiagnostic
 
 public struct OliphauntPostgresError: Equatable, Sendable, CustomStringConvertible {
-    public var diagnostic: OliphauntPostgresDiagnostic
-    public var notices: [OliphauntPostgresNotice]
+    public let diagnostic: OliphauntPostgresDiagnostic
+    public let notices: [OliphauntPostgresNotice]
 
     public init(
         fields: [OliphauntPostgresErrorField],
@@ -319,6 +348,18 @@ public struct OliphauntPostgresError: Equatable, Sendable, CustomStringConvertib
             fallbackMessage: "PostgreSQL ErrorResponse"
         )
         self.notices = notices
+    }
+
+    init(
+        diagnostic: OliphauntPostgresDiagnostic,
+        notices: [OliphauntPostgresNotice]
+    ) {
+        self.diagnostic = diagnostic
+        self.notices = notices
+    }
+
+    func attaching(notices: [OliphauntPostgresNotice]) -> OliphauntPostgresError {
+        OliphauntPostgresError(diagnostic: diagnostic, notices: notices)
     }
 
     public var severity: String? { diagnostic.severity }
@@ -345,10 +386,10 @@ public struct OliphauntPostgresError: Equatable, Sendable, CustomStringConvertib
 }
 
 public struct OliphauntQueryDescription: Equatable, Sendable {
-    public var parameterTypes: [OliphauntPostgresOID]
-    public var fields: [OliphauntQueryField]?
-    public var notices: [OliphauntPostgresNotice]
-    var readyStatus: OliphauntReadyStatus
+    public let parameterTypes: [OliphauntPostgresOID]
+    public let fields: [OliphauntQueryField]?
+    public let notices: [OliphauntPostgresNotice]
+    let readyStatus: OliphauntReadyStatus
 
     public init(
         parameterTypes: [OliphauntPostgresOID],
@@ -371,6 +412,12 @@ public struct OliphauntQueryDescription: Equatable, Sendable {
         self.fields = fields
         self.notices = notices
         self.readyStatus = readyStatus
+    }
+
+    public static func == (lhs: OliphauntQueryDescription, rhs: OliphauntQueryDescription) -> Bool {
+        lhs.parameterTypes == rhs.parameterTypes &&
+            lhs.fields == rhs.fields &&
+            lhs.notices == rhs.notices
     }
 }
 
@@ -380,9 +427,9 @@ public enum OliphauntStatementResult: Equatable, Sendable {
 }
 
 public struct OliphauntExecResult: Equatable, Sendable {
-    public var statements: [OliphauntStatementResult]
-    public var notices: [OliphauntPostgresNotice]
-    var readyStatus: OliphauntReadyStatus
+    public let statements: [OliphauntStatementResult]
+    public let notices: [OliphauntPostgresNotice]
+    let readyStatus: OliphauntReadyStatus
 
     public init(
         statements: [OliphauntStatementResult],
@@ -401,6 +448,10 @@ public struct OliphauntExecResult: Equatable, Sendable {
         self.statements = statements
         self.notices = notices
         self.readyStatus = readyStatus
+    }
+
+    public static func == (lhs: OliphauntExecResult, rhs: OliphauntExecResult) -> Bool {
+        lhs.statements == rhs.statements && lhs.notices == rhs.notices
     }
 }
 
@@ -501,6 +552,7 @@ extension String: OliphauntPostgresDecodable {
                 OliphauntPostgresOID.varchar,
                 OliphauntPostgresOID.date,
                 OliphauntPostgresOID.time,
+                OliphauntPostgresOID.timetz,
                 OliphauntPostgresOID.timestamp,
                 OliphauntPostgresOID.timestamptz,
                 OliphauntPostgresOID.interval,
@@ -846,25 +898,64 @@ private func unsupportedPostgresFormat(
 }
 
 func containsOliphauntTopLevelCopy(_ sql: String) -> Bool {
-    scanOliphauntTopLevelCopy(sql, plainStringBackslashEscapes: false) ||
-        scanOliphauntTopLevelCopy(sql, plainStringBackslashEscapes: true)
+    oliphauntStructuredSQLFacts(sql).containsTopLevelCopy
 }
 
-private func rejectOliphauntStructuredCopy(_ sql: String) throws {
-    guard containsOliphauntTopLevelCopy(sql) else { return }
-    throw OliphauntError.engine(
-        "structured SQL does not support COPY because it requires streaming protocol ownership; " +
-            "use execProtocolRaw or execProtocolRawStream"
-    )
+func containsOliphauntTransactionChain(_ sql: String) -> Bool {
+    oliphauntStructuredSQLFacts(sql).containsTransactionChain
 }
 
-private func scanOliphauntTopLevelCopy(
+private struct OliphauntStructuredSQLFacts {
+    var containsTopLevelCopy = false
+    var containsTransactionChain = false
+
+    mutating func formUnion(_ other: OliphauntStructuredSQLFacts) {
+        containsTopLevelCopy = containsTopLevelCopy || other.containsTopLevelCopy
+        containsTransactionChain = containsTransactionChain || other.containsTransactionChain
+    }
+}
+
+private enum OliphauntTransactionChainState {
+    case none
+    case afterRollback
+    case afterOptionalKind
+    case afterAnd
+}
+
+private func oliphauntStructuredSQLFacts(_ sql: String) -> OliphauntStructuredSQLFacts {
+    var facts = scanOliphauntStructuredSQL(sql, plainStringBackslashEscapes: false)
+    facts.formUnion(scanOliphauntStructuredSQL(sql, plainStringBackslashEscapes: true))
+    return facts
+}
+
+private func rejectOliphauntStructuredSQL(
+    _ sql: String,
+    managedTransaction: Bool = false
+) throws {
+    let facts = oliphauntStructuredSQLFacts(sql)
+    if facts.containsTopLevelCopy {
+        throw OliphauntError.engine(
+            "structured SQL does not support COPY because it requires streaming protocol ownership; " +
+                "use execProtocolRaw or execProtocolRawStream"
+        )
+    }
+    if managedTransaction, facts.containsTransactionChain {
+        throw OliphauntError.engine(
+            "managed transactions do not support ROLLBACK or ABORT AND CHAIN; " +
+                "return from or throw inside the transaction callback instead"
+        )
+    }
+}
+
+private func scanOliphauntStructuredSQL(
     _ sql: String,
     plainStringBackslashEscapes: Bool
-) -> Bool {
+) -> OliphauntStructuredSQLFacts {
     let bytes = Array(sql.utf8)
     var index = 0
     var statementStart = true
+    var chainState = OliphauntTransactionChainState.none
+    var facts = OliphauntStructuredSQLFacts()
 
     while index < bytes.count {
         let byte = bytes[index]
@@ -872,6 +963,7 @@ private func scanOliphauntTopLevelCopy(
             index += 1
         } else if byte == 0x3b {
             statementStart = true
+            chainState = .none
             index += 1
         } else if index + 1 < bytes.count, byte == 0x2d, bytes[index + 1] == 0x2d {
             index += 2
@@ -882,6 +974,7 @@ private func scanOliphauntTopLevelCopy(
             index = skipOliphauntBlockComment(bytes, from: index)
         } else if byte == 0x27 {
             statementStart = false
+            chainState = .none
             index = skipOliphauntQuotedSQL(
                 bytes,
                 from: index,
@@ -891,6 +984,7 @@ private func scanOliphauntTopLevelCopy(
             )
         } else if byte == 0x22 {
             statementStart = false
+            chainState = .none
             index = skipOliphauntQuotedSQL(
                 bytes,
                 from: index,
@@ -899,6 +993,7 @@ private func scanOliphauntTopLevelCopy(
             )
         } else if byte == 0x24 {
             statementStart = false
+            chainState = .none
             guard let delimiter = oliphauntDollarQuoteDelimiter(bytes, from: index) else {
                 index += 1
                 continue
@@ -915,16 +1010,47 @@ private func scanOliphauntTopLevelCopy(
             while index < bytes.count, isOliphauntSQLIdentifierContinuation(bytes[index]) {
                 index += 1
             }
-            if statementStart, isOliphauntCopyKeyword(bytes[start..<index]) {
-                return true
+            let token = bytes[start..<index]
+            if statementStart {
+                if isOliphauntSQLKeyword(token, "COPY") {
+                    facts.containsTopLevelCopy = true
+                }
+                if isOliphauntSQLKeyword(token, "ROLLBACK") ||
+                    isOliphauntSQLKeyword(token, "ABORT") {
+                    chainState = .afterRollback
+                } else {
+                    chainState = .none
+                }
+            } else {
+                switch chainState {
+                case .none:
+                    break
+                case .afterRollback:
+                    if isOliphauntSQLKeyword(token, "WORK") ||
+                        isOliphauntSQLKeyword(token, "TRANSACTION") {
+                        chainState = .afterOptionalKind
+                    } else if isOliphauntSQLKeyword(token, "AND") {
+                        chainState = .afterAnd
+                    } else {
+                        chainState = .none
+                    }
+                case .afterOptionalKind:
+                    chainState = isOliphauntSQLKeyword(token, "AND") ? .afterAnd : .none
+                case .afterAnd:
+                    if isOliphauntSQLKeyword(token, "CHAIN") {
+                        facts.containsTransactionChain = true
+                    }
+                    chainState = .none
+                }
             }
             statementStart = false
         } else {
             statementStart = false
+            chainState = .none
             index += 1
         }
     }
-    return false
+    return facts
 }
 
 private func skipOliphauntBlockComment(
@@ -1007,16 +1133,17 @@ private func isOliphauntSQLWhitespace(_ byte: UInt8) -> Bool {
 }
 
 private func isOliphauntSQLIdentifierStart(_ byte: UInt8) -> Bool {
-    byte == 0x5f || (0x41...0x5a).contains(byte) || (0x61...0x7a).contains(byte)
+    byte == 0x5f || (0x41...0x5a).contains(byte) || (0x61...0x7a).contains(byte) || byte >= 0x80
 }
 
 private func isOliphauntSQLIdentifierContinuation(_ byte: UInt8) -> Bool {
     isOliphauntSQLIdentifierStart(byte) || (0x30...0x39).contains(byte) || byte == 0x24
 }
 
-private func isOliphauntCopyKeyword(_ bytes: ArraySlice<UInt8>) -> Bool {
-    guard bytes.count == 4 else { return false }
-    return zip(bytes, [UInt8(0x43), 0x4f, 0x50, 0x59]).allSatisfy { byte, expected in
+private func isOliphauntSQLKeyword(_ bytes: ArraySlice<UInt8>, _ keyword: StaticString) -> Bool {
+    let expectedBytes = keyword.withUTF8Buffer { Array($0) }
+    guard bytes.count == expectedBytes.count else { return false }
+    return zip(bytes, expectedBytes).allSatisfy { byte, expected in
         byte == expected || byte == expected + 0x20
     }
 }
@@ -1026,7 +1153,7 @@ public extension OliphauntDatabase {
         _ sql: String,
         parameters: [OliphauntQueryParam] = []
     ) async throws -> OliphauntCommandResult {
-        try rejectOliphauntStructuredCopy(sql)
+        try rejectOliphauntStructuredSQL(sql)
         let request = try OliphauntProtocol.extendedQuery(sql, parameters: parameters)
         return try await runTypedOperation(request, transactionToken: nil) { response in
             let result = try parseOliphauntCommandResponse(response, expectedProtocol: .extended)
@@ -1038,7 +1165,7 @@ public extension OliphauntDatabase {
         _ sql: String,
         parameters: [OliphauntQueryParam] = []
     ) async throws -> OliphauntQueryResult {
-        try rejectOliphauntStructuredCopy(sql)
+        try rejectOliphauntStructuredSQL(sql)
         let request = try OliphauntProtocol.extendedQuery(sql, parameters: parameters)
         return try await runTypedOperation(request, transactionToken: nil) { response in
             let result = try parseOliphauntQueryResponse(response, expectedProtocol: .extended)
@@ -1047,7 +1174,7 @@ public extension OliphauntDatabase {
     }
 
     func exec(_ sql: String) async throws -> OliphauntExecResult {
-        try rejectOliphauntStructuredCopy(sql)
+        try rejectOliphauntStructuredSQL(sql)
         let request = try OliphauntProtocol.simpleQuery(sql)
         return try await runTypedOperation(request, transactionToken: nil) { response in
             let result = try parseOliphauntExecResponse(response)
@@ -1072,7 +1199,7 @@ public extension OliphauntTransaction {
         _ sql: String,
         parameters: [OliphauntQueryParam] = []
     ) async throws -> OliphauntCommandResult {
-        try rejectOliphauntStructuredCopy(sql)
+        try rejectOliphauntStructuredSQL(sql, managedTransaction: true)
         let request = try OliphauntProtocol.extendedQuery(sql, parameters: parameters)
         return try await runTypedOperation(request) { response in
             let result = try parseOliphauntCommandResponse(response, expectedProtocol: .extended)
@@ -1084,7 +1211,7 @@ public extension OliphauntTransaction {
         _ sql: String,
         parameters: [OliphauntQueryParam] = []
     ) async throws -> OliphauntQueryResult {
-        try rejectOliphauntStructuredCopy(sql)
+        try rejectOliphauntStructuredSQL(sql, managedTransaction: true)
         let request = try OliphauntProtocol.extendedQuery(sql, parameters: parameters)
         return try await runTypedOperation(request) { response in
             let result = try parseOliphauntQueryResponse(response, expectedProtocol: .extended)
@@ -1093,7 +1220,7 @@ public extension OliphauntTransaction {
     }
 
     func exec(_ sql: String) async throws -> OliphauntExecResult {
-        try rejectOliphauntStructuredCopy(sql)
+        try rejectOliphauntStructuredSQL(sql, managedTransaction: true)
         let request = try OliphauntProtocol.simpleQuery(sql)
         return try await runTypedOperation(request) { response in
             let result = try parseOliphauntExecResponse(response)
@@ -1141,6 +1268,12 @@ enum OliphauntProtocol {
         }
         guard !sql.utf8.contains(0) else {
             throw OliphauntError.engine("extended query SQL must not contain NUL bytes")
+        }
+        if let index = parameters.firstIndex(where: { $0.typeOID?.rawValue == 0 }) {
+            throw OliphauntError.engine(
+                "extended query parameter \(index + 1) has explicit PostgreSQL type OID 0; " +
+                    "omit typeOID to request PostgreSQL inference"
+            )
         }
 
         var packet = Data()
@@ -1405,9 +1538,8 @@ func parseOliphauntCommandResponse(
     guard sawReady else {
         throw OliphauntError.engine("query response ended before ReadyForQuery")
     }
-    if var postgresError {
-        postgresError.notices = notices
-        throw OliphauntError.postgres(postgresError)
+    if let postgresError {
+        throw OliphauntError.postgres(postgresError.attaching(notices: notices))
     }
     guard phase == .complete else {
         throw OliphauntError.engine("execute response ended before statement completion")
@@ -1538,9 +1670,8 @@ func parseOliphauntQueryResponse(
     guard sawReady else {
         throw OliphauntError.engine("query response ended before ReadyForQuery")
     }
-    if var postgresError {
-        postgresError.notices = notices
-        throw OliphauntError.postgres(postgresError)
+    if let postgresError {
+        throw OliphauntError.postgres(postgresError.attaching(notices: notices))
     }
     guard phase == .complete else {
         throw OliphauntError.engine("query response ended before statement completion")
@@ -1561,6 +1692,7 @@ func parseOliphauntExecResponse(_ data: Data) throws -> OliphauntExecResult {
     var fields: [OliphauntQueryField]?
     var rows: [OliphauntQueryRow] = []
     var notices: [OliphauntPostgresNotice] = []
+    var statementNotices: [OliphauntPostgresNotice] = []
     var results: [OliphauntStatementResult] = []
     var sawCompletion = false
     var sawReady = false
@@ -1599,16 +1731,18 @@ func parseOliphauntExecResponse(_ data: Data) throws -> OliphauntExecResult {
                     rows: rows,
                     commandTag: commandTag,
                     rowCount: oliphauntCommandTagRowCount(commandTag),
-                    notices: []
+                    notices: statementNotices
                 )))
             } else {
                 results.append(.command(OliphauntCommandResult(
                     commandTag: commandTag,
-                    rowCount: oliphauntCommandTagRowCount(commandTag)
+                    rowCount: oliphauntCommandTagRowCount(commandTag),
+                    notices: statementNotices
                 )))
             }
             fields = nil
             rows = []
+            statementNotices = []
             sawCompletion = true
         case 0x49:
             guard fields == nil, rows.isEmpty else {
@@ -1617,6 +1751,7 @@ func parseOliphauntExecResponse(_ data: Data) throws -> OliphauntExecResult {
                 )
             }
             try bodyCursor.requireEnd(label: "EmptyQueryResponse")
+            statementNotices = []
             sawCompletion = true
         case 0x45:
             let parsed = try parseErrorResponse(&bodyCursor)
@@ -1641,7 +1776,9 @@ func parseOliphauntExecResponse(_ data: Data) throws -> OliphauntExecResult {
         case 0x53:
             try validateParameterStatus(&bodyCursor)
         case 0x4e:
-            notices.append(try parseNoticeResponse(&bodyCursor))
+            let notice = try parseNoticeResponse(&bodyCursor)
+            notices.append(notice)
+            statementNotices.append(notice)
         case 0x41:
             try validateNotificationResponse(&bodyCursor)
         default:
@@ -1654,9 +1791,8 @@ func parseOliphauntExecResponse(_ data: Data) throws -> OliphauntExecResult {
     guard sawReady else {
         throw OliphauntError.engine("exec response ended before ReadyForQuery")
     }
-    if var postgresError {
-        postgresError.notices = notices
-        throw OliphauntError.postgres(postgresError)
+    if let postgresError {
+        throw OliphauntError.postgres(postgresError.attaching(notices: notices))
     }
     guard sawCompletion else {
         throw OliphauntError.engine("exec response ended before statement completion")
@@ -1766,9 +1902,8 @@ func parseOliphauntDescribeResponse(_ data: Data) throws -> OliphauntQueryDescri
     guard sawReady else {
         throw OliphauntError.engine("describe response ended before ReadyForQuery")
     }
-    if var postgresError {
-        postgresError.notices = notices
-        throw OliphauntError.postgres(postgresError)
+    if let postgresError {
+        throw OliphauntError.postgres(postgresError.attaching(notices: notices))
     }
     guard sawParseComplete else {
         throw OliphauntError.engine("describe response did not include ParseComplete")

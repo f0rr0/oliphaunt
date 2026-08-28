@@ -67,20 +67,18 @@ export async function restoreWasixWithWorker(
   validate?.(openOptions);
   const input = toUint8Array(bytes).slice();
   const rpc = new WorkerRpc(createWorker(openOptions));
-  let primaryFailure: unknown;
   try {
     await rpc.request({ method: 'restore', storage: openOptions.storage, bytes: input }, [
       input.buffer,
     ]);
   } catch (error) {
-    primaryFailure = error;
+    return rethrowAfterWorkerTermination(
+      rpc,
+      error,
+      'Oliphaunt WASIX worker restore and termination both failed',
+    );
   }
-  try {
-    await rpc.terminate();
-  } catch (terminationFailure) {
-    if (primaryFailure === undefined) throw terminationFailure;
-  }
-  if (primaryFailure !== undefined) throw primaryFailure;
+  await rpc.terminate();
 }
 
 /** @internal Correlates worker requests and fails them as one unit if the worker exits. */
@@ -112,10 +110,7 @@ export class WorkerRpc {
         return;
       }
       if ('kind' in message) {
-        if (
-          pending.control === undefined ||
-          Atomics.load(pending.control, STREAM_FAILED) === 0
-        ) {
+        if (pending.control === undefined || Atomics.load(pending.control, STREAM_FAILED) === 0) {
           try {
             pending.onChunk?.(message.value);
           } catch {
@@ -266,9 +261,25 @@ export async function openWorkerDatabase(
     await rpc.request({ method: 'open', options }, transfer);
     return new WasixDatabaseImpl(new WorkerDatabaseSession(rpc, options));
   } catch (error) {
-    await rpc.terminate().catch(() => undefined);
-    throw error;
+    return rethrowAfterWorkerTermination(
+      rpc,
+      error,
+      'Oliphaunt WASIX worker open and termination both failed',
+    );
   }
+}
+
+async function rethrowAfterWorkerTermination(
+  rpc: WorkerRpc,
+  primaryFailure: unknown,
+  aggregateMessage: string,
+): Promise<never> {
+  try {
+    await rpc.terminate();
+  } catch (terminationFailure) {
+    throw new AggregateError([primaryFailure, terminationFailure], aggregateMessage);
+  }
+  throw primaryFailure;
 }
 
 function assetTransfers(options: SerializedOpenOptions): Transferable[] {

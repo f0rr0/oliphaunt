@@ -277,7 +277,6 @@ export const OLIPHAUNT_WINDOWS_IMPORT_SYMBOLS = Object.freeze([
   'oliphaunt_free_response',
   'oliphaunt_init',
   'oliphaunt_init_with_error',
-  'oliphaunt_last_error',
   'oliphaunt_logical_generation',
   'oliphaunt_register_static_extensions',
   'oliphaunt_restore',

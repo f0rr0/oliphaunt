@@ -124,9 +124,6 @@ export type SerializedOpenOptions = {
   storage: SerializedWasixStorage;
 };
 
-/** @internal Compatibility name for the serialized options sent to a worker. */
-export type WorkerOpenOptions = SerializedOpenOptions;
-
 export type WorkerRequest =
   | { id: number; method: 'open'; options: SerializedOpenOptions }
   | {
@@ -171,7 +168,7 @@ export type SerializedWorkerError =
       code: WasixStorageError['code'];
       commitState: WasixStorageError['commitState'];
     }
-  | { name: 'PostgresError'; message: string; fields: PostgresErrorField[] }
+  | { name: 'PostgresError'; fields: PostgresErrorField[] }
   | { name: 'Error'; message: string; errorName?: string; stack?: string };
 
 export type WorkerResponse =
@@ -192,7 +189,6 @@ export function serializeWorkerError(error: unknown): SerializedWorkerError {
   if (error instanceof PostgresError) {
     return {
       name: 'PostgresError',
-      message: error.message,
       fields: error.fields.map((field) => ({ ...field })),
     };
   }
@@ -213,9 +209,7 @@ export function deserializeWorkerError(error: SerializedWorkerError): Error {
     });
   }
   if (error.name === 'PostgresError') {
-    const restored = new PostgresError(error.fields);
-    restored.message = error.message;
-    return restored;
+    return new PostgresError(error.fields);
   }
   const restored = new Error(error.message);
   restored.name = error.errorName ?? 'Error';

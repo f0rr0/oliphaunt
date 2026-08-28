@@ -8,6 +8,7 @@ import {
   type JsiProtocolStreamOutcome,
 } from './jsiTransport';
 import {
+  assertNoTransactionChain,
   decodeQueryResult,
   describeQuery,
   errorWithNotices,
@@ -26,10 +27,10 @@ import {
   type CommandResult,
   type DescribeResult,
   type ExecResult,
+  type InferQueryRow,
   type ParameterOptions,
   type PostgresNotice,
   type QueryParam,
-  type QueryObjectRow,
   type QueryOptions,
   type QueryPlan,
   type QueryResult,
@@ -40,12 +41,15 @@ import { generatedExtensionBySqlName } from './generated/extensions';
 import type { NativeOpenConfig, Spec as NativeOliphauntModule } from './specs/NativeOliphaunt';
 
 export type BinaryInput = ByteInput;
-export type ProtocolChunkCallback = (chunk: Uint8Array) => void;
+/** A synchronous, serial raw-protocol consumer used as the backpressure acknowledgement. */
+type ProtocolChunkCallback = (chunk: Uint8Array) => undefined;
 
 export type DatabaseStorage =
   | { readonly kind: 'temporaryDirectory' }
   | { readonly kind: 'directory'; readonly path: string }
   | { readonly kind: 'applicationData'; readonly name: string };
+
+type QueryReadOptions = Omit<QueryOptions, 'encoders'>;
 
 export type RestoreDestination = Exclude<DatabaseStorage, { readonly kind: 'temporaryDirectory' }>;
 
@@ -69,20 +73,20 @@ export type OliphauntTransaction = {
     parameters?: ReadonlyArray<QueryParam>,
     options?: ParameterOptions,
   ): Promise<CommandResult>;
-  query<Row = QueryObjectRow>(
+  query<Row = never, const Options extends QueryOptions = {}>(
     sql: string,
     parameters?: ReadonlyArray<QueryParam>,
-    options?: QueryOptions,
-  ): Promise<QueryResult<Row>>;
+    options?: Options & QueryOptions,
+  ): Promise<QueryResult<InferQueryRow<Options, Row>>>;
   queryRaw(
     sql: string,
     parameters?: ReadonlyArray<QueryParam>,
     options?: ParameterOptions,
   ): Promise<RawQueryResult>;
-  exec<Row = QueryObjectRow>(
+  exec<Row = never, const Options extends QueryReadOptions = {}>(
     sql: string,
-    options?: Omit<QueryOptions, 'encoders'>,
-  ): Promise<ExecResult<Row>>;
+    options?: Options & QueryReadOptions,
+  ): Promise<ExecResult<InferQueryRow<Options, Row>>>;
   describe(sql: string, parameterTypeOids?: ReadonlyArray<number>): Promise<DescribeResult>;
   rollback(): Promise<void>;
 };
@@ -94,20 +98,20 @@ export type OliphauntDatabase = {
     parameters?: ReadonlyArray<QueryParam>,
     options?: ParameterOptions,
   ): Promise<CommandResult>;
-  query<Row = QueryObjectRow>(
+  query<Row = never, const Options extends QueryOptions = {}>(
     sql: string,
     parameters?: ReadonlyArray<QueryParam>,
-    options?: QueryOptions,
-  ): Promise<QueryResult<Row>>;
+    options?: Options & QueryOptions,
+  ): Promise<QueryResult<InferQueryRow<Options, Row>>>;
   queryRaw(
     sql: string,
     parameters?: ReadonlyArray<QueryParam>,
     options?: ParameterOptions,
   ): Promise<RawQueryResult>;
-  exec<Row = QueryObjectRow>(
+  exec<Row = never, const Options extends QueryReadOptions = {}>(
     sql: string,
-    options?: Omit<QueryOptions, 'encoders'>,
-  ): Promise<ExecResult<Row>>;
+    options?: Options & QueryReadOptions,
+  ): Promise<ExecResult<InferQueryRow<Options, Row>>>;
   describe(sql: string, parameterTypeOids?: ReadonlyArray<number>): Promise<DescribeResult>;
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
   execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
@@ -159,7 +163,6 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
   #operationTail = Promise.resolve();
   #activeTransaction = false;
   #streamCallbackActive = false;
-  #streamCallbackFailure?: Error;
   #poisoned?: Error;
 
   constructor(
@@ -188,7 +191,6 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
     parameters: ReadonlyArray<QueryParam> = [],
     options: ParameterOptions = {},
   ): Promise<CommandResult> {
-    this.#assertNotInProtocolStreamCallback();
     return this.#capturePromiseFailure(() => {
       this.#assertNoActiveTransaction();
       const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
@@ -202,12 +204,11 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
     });
   }
 
-  query<Row = QueryObjectRow>(
+  query<Row = never, const Options extends QueryOptions = {}>(
     sql: string,
     parameters: ReadonlyArray<QueryParam> = [],
-    options: QueryOptions = {},
-  ): Promise<QueryResult<Row>> {
-    this.#assertNotInProtocolStreamCallback();
+    options: Options & QueryOptions = {} as Options & QueryOptions,
+  ): Promise<QueryResult<InferQueryRow<Options, Row>>> {
     return this.#capturePromiseFailure(() => {
       this.#assertNoActiveTransaction();
       const stableOptions = snapshotQueryOptions(options);
@@ -218,7 +219,7 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
           plan,
           parseQueryRawResponse,
         );
-        return decodeQueryResult<Row>(raw, stableOptions);
+        return decodeQueryResult<Row, Options>(raw, stableOptions);
       });
     });
   }
@@ -228,7 +229,6 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
     parameters: ReadonlyArray<QueryParam> = [],
     options: ParameterOptions = {},
   ): Promise<RawQueryResult> {
-    this.#assertNotInProtocolStreamCallback();
     return this.#capturePromiseFailure(() => {
       this.#assertNoActiveTransaction();
       const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
@@ -242,25 +242,23 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
     });
   }
 
-  exec<Row = QueryObjectRow>(
+  exec<Row = never, const Options extends QueryReadOptions = {}>(
     sql: string,
-    options: Omit<QueryOptions, 'encoders'> = {},
-  ): Promise<ExecResult<Row>> {
-    this.#assertNotInProtocolStreamCallback();
+    options: Options & QueryReadOptions = {} as Options & QueryReadOptions,
+  ): Promise<ExecResult<InferQueryRow<Options, Row>>> {
     return this.#capturePromiseFailure(() => {
       this.#assertNoActiveTransaction();
       const input = structuredSimpleQuery(sql);
       const stableOptions = snapshotReadOptions(options);
       return this.#serialize(() =>
         this.#runOrdinaryExchangeUnlocked(input, (bytes) =>
-          parseExecResponse<Row>(bytes, stableOptions),
+          parseExecResponse<Row, Options>(bytes, stableOptions),
         ),
       );
     });
   }
 
   describe(sql: string, parameterTypeOids: ReadonlyArray<number> = []): Promise<DescribeResult> {
-    this.#assertNotInProtocolStreamCallback();
     return this.#capturePromiseFailure(() => {
       this.#assertNoActiveTransaction();
       const input = describeQuery(sql, [...parameterTypeOids]);
@@ -269,7 +267,6 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
   }
 
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array> {
-    this.#assertNotInProtocolStreamCallback();
     return this.#capturePromiseFailure(() => {
       this.#assertNoActiveTransaction();
       const bytes = toUint8Array(input).slice();
@@ -278,7 +275,6 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
   }
 
   execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void> {
-    this.#assertNotInProtocolStreamCallback();
     return this.#capturePromiseFailure(() => {
       this.#assertNoActiveTransaction();
       if (typeof onChunk !== 'function') {
@@ -334,23 +330,14 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
         this.#assertNotInProtocolStreamCallback();
         this.#streamCallbackActive = true;
       },
-      (propagateFailure) => {
-        const failure = this.#streamCallbackFailure;
-        this.#streamCallbackFailure = undefined;
+      () => {
         this.#streamCallbackActive = false;
-        if (propagateFailure && failure !== undefined) throw failure;
       },
     );
-    return execProtocolStreamJsi(
-      this.#jsiTransport,
-      this.#handle,
-      toUint8Array(input),
-      consumer,
-    );
+    return execProtocolStreamJsi(this.#jsiTransport, this.#handle, toUint8Array(input), consumer);
   }
 
   backup(): Promise<Uint8Array> {
-    this.#assertNotInProtocolStreamCallback();
     return this.#capturePromiseFailure(() => {
       this.#assertNoActiveTransaction();
       return this.#serialize(() => {
@@ -376,7 +363,6 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
   }
 
   transaction<T>(body: (transaction: OliphauntTransaction) => Promise<T> | T): Promise<T> {
-    this.#assertNotInProtocolStreamCallback();
     return this.#capturePromiseFailure(() => {
       this.#assertAvailable();
       if (typeof body !== 'function') {
@@ -458,8 +444,8 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
   }
 
   close(): Promise<void> {
-    this.#assertNotInProtocolStreamCallback();
     return this.#capturePromiseFailure(() => {
+      this.#assertNotInProtocolStreamCallback();
       if (this.#closed) {
         return Promise.resolve();
       }
@@ -762,30 +748,36 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
     parameters: ReadonlyArray<QueryParam> = [],
     options: ParameterOptions = {},
   ): Promise<CommandResult> {
-    return this.#enqueue(() => {
+    return promiseFromSynchronousCall(() => {
+      assertNoTransactionChain(sql);
       const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
-      return runQueryPlan(
-        (input, parse) => this.#runTransactionExchange(input, parse),
-        plan,
-        parseCommandResponse,
+      return this.#enqueue(() =>
+        runQueryPlan(
+          (input, parse) => this.#runTransactionExchange(input, parse),
+          plan,
+          parseCommandResponse,
+        ),
       );
     });
   }
 
-  query<Row = QueryObjectRow>(
+  query<Row = never, const Options extends QueryOptions = {}>(
     sql: string,
     parameters: ReadonlyArray<QueryParam> = [],
-    options: QueryOptions = {},
-  ): Promise<QueryResult<Row>> {
-    return this.#enqueue(async () => {
+    options: Options & QueryOptions = {} as Options & QueryOptions,
+  ): Promise<QueryResult<InferQueryRow<Options, Row>>> {
+    return promiseFromSynchronousCall(() => {
+      assertNoTransactionChain(sql);
       const stableOptions = snapshotQueryOptions(options);
       const plan = planQuery(sql, parameters, stableOptions);
-      const raw = await runQueryPlan(
-        (input, parse) => this.#runTransactionExchange(input, parse),
-        plan,
-        parseQueryRawResponse,
-      );
-      return decodeQueryResult<Row>(raw, stableOptions);
+      return this.#enqueue(async () => {
+        const raw = await runQueryPlan(
+          (input, parse) => this.#runTransactionExchange(input, parse),
+          plan,
+          parseQueryRawResponse,
+        );
+        return decodeQueryResult<Row, Options>(raw, stableOptions);
+      });
     });
   }
 
@@ -794,33 +786,39 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
     parameters: ReadonlyArray<QueryParam> = [],
     options: ParameterOptions = {},
   ): Promise<RawQueryResult> {
-    return this.#enqueue(() => {
+    return promiseFromSynchronousCall(() => {
+      assertNoTransactionChain(sql);
       const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
-      return runQueryPlan(
-        (input, parse) => this.#runTransactionExchange(input, parse),
-        plan,
-        parseQueryRawResponse,
+      return this.#enqueue(() =>
+        runQueryPlan(
+          (input, parse) => this.#runTransactionExchange(input, parse),
+          plan,
+          parseQueryRawResponse,
+        ),
       );
     });
   }
 
-  exec<Row = QueryObjectRow>(
+  exec<Row = never, const Options extends QueryReadOptions = {}>(
     sql: string,
-    options: Omit<QueryOptions, 'encoders'> = {},
-  ): Promise<ExecResult<Row>> {
-    return this.#enqueue(() => {
+    options: Options & QueryReadOptions = {} as Options & QueryReadOptions,
+  ): Promise<ExecResult<InferQueryRow<Options, Row>>> {
+    return promiseFromSynchronousCall(() => {
+      assertNoTransactionChain(sql);
       const input = structuredSimpleQuery(sql);
       const stableOptions = snapshotReadOptions(options);
-      return this.#runTransactionExchange(input, (bytes) =>
-        parseExecResponse<Row>(bytes, stableOptions),
+      return this.#enqueue(() =>
+        this.#runTransactionExchange(input, (bytes) =>
+          parseExecResponse<Row, Options>(bytes, stableOptions),
+        ),
       );
     });
   }
 
   describe(sql: string, parameterTypeOids: ReadonlyArray<number> = []): Promise<DescribeResult> {
-    return this.#enqueue(() => {
+    return promiseFromSynchronousCall(() => {
       const input = describeQuery(sql, [...parameterTypeOids]);
-      return this.#runTransactionExchange(input, parseDescribeResponse);
+      return this.#enqueue(() => this.#runTransactionExchange(input, parseDescribeResponse));
     });
   }
 
@@ -947,21 +945,27 @@ function snapshotParameterOptions(options: ParameterOptions): ParameterOptions {
   });
 }
 
-function snapshotReadOptions(
-  options: Omit<QueryOptions, 'encoders'>,
-): Omit<QueryOptions, 'encoders'> {
+function promiseFromSynchronousCall<T>(body: () => Promise<T>): Promise<T> {
+  try {
+    return body();
+  } catch (error) {
+    return Promise.reject(error);
+  }
+}
+
+function snapshotReadOptions<const Options extends QueryReadOptions>(options: Options): Options {
   return Object.freeze({
     rowMode: options.rowMode,
     valueMode: options.valueMode,
     ...(options.decoders === undefined ? {} : { decoders: Object.freeze({ ...options.decoders }) }),
-  });
+  }) as Options;
 }
 
-function snapshotQueryOptions(options: QueryOptions): QueryOptions {
+function snapshotQueryOptions<const Options extends QueryOptions>(options: Options): Options {
   return Object.freeze({
     ...snapshotReadOptions(options),
     ...snapshotParameterOptions(options),
-  });
+  }) as Options;
 }
 
 function prependNotices<T extends NoticeCarrier>(
@@ -1003,7 +1007,7 @@ function transactionBoundaryError(
 function synchronousProtocolChunkConsumer(
   callback: ProtocolChunkCallback,
   enter: () => void,
-  leave: (propagateCapturedFailure: boolean) => void,
+  leave: () => void,
 ): ProtocolChunkCallback {
   return (chunk) => {
     enter();
@@ -1017,11 +1021,9 @@ function synchronousProtocolChunkConsumer(
           'raw protocol stream callback must complete synchronously and must not return a Promise or thenable',
         );
       }
-    } catch (error) {
-      leave(false);
-      throw error;
+    } finally {
+      leave();
     }
-    leave(true);
   };
 }
 
@@ -1077,8 +1079,8 @@ export function createOliphauntClient(
 ): OliphauntClient {
   const client = {
     async open(config: OpenConfig = {}): Promise<OliphauntDatabase> {
-      const jsiTransport = requireJsiRawProtocolTransport();
       const nativeConfig = normalizeOpenConfig(config);
+      const jsiTransport = requireJsiRawProtocolTransport();
       const handle = await native.open(nativeConfig);
       return new NativeOliphauntDatabase(native, handle, jsiTransport, registry);
     },
@@ -1112,10 +1114,10 @@ function normalizeRestoreDestination(destination: RestoreDestination): {
 }
 
 function normalizeOpenConfig(config: OpenConfig): NativeOpenConfig {
-  const storage = normalizeDatabaseStorage(config.storage);
   validateStartupIdentity(config.username, 'username');
   validateStartupIdentity(config.database, 'database');
   const startupGUCs = config.startupGUCs ? validateStartupGUCs(config.startupGUCs) : undefined;
+  const storage = normalizeDatabaseStorage(config.storage);
   return {
     ...storage,
     startupGUCs,
@@ -1182,7 +1184,7 @@ function validateStartupIdentity(value: string | undefined, label: string): void
 }
 
 function validateStartupGUCs(gucs: Readonly<Record<string, string>>): string[] {
-  return Object.entries(gucs).map(([name, value]) => {
+  const entries = Object.entries(gucs).map(([name, value]) => {
     const trimmedName = name.trim();
     if (trimmedName.length === 0) {
       throw new Error('PostgreSQL startup GUC name must not be empty');
@@ -1195,8 +1197,19 @@ function validateStartupGUCs(gucs: Readonly<Record<string, string>>): string[] {
         `PostgreSQL startup GUC name '${name}': each dot-separated component must start with an ASCII letter or '_', followed by ASCII letters, digits, '_', or '$'`,
       );
     }
-    return `${trimmedName}=${value}`;
+    const canonicalName = trimmedName.toLowerCase();
+    if (canonicalName === 'config_file' || canonicalName === 'data_directory') {
+      throw new Error(
+        `Oliphaunt owns PostgreSQL startup GUC '${canonicalName}'; configure database storage through Oliphaunt open options`,
+      );
+    }
+    return { name: canonicalName, value };
   });
+  const lastIndexByName = new Map<string, number>();
+  entries.forEach(({ name }, index) => lastIndexByName.set(name, index));
+  return entries
+    .filter(({ name }, index) => lastIndexByName.get(name) === index)
+    .map(({ name, value }) => `${name}=${value}`);
 }
 
 function validateExtensionIds(extensions: ReadonlyArray<string>): string[] {

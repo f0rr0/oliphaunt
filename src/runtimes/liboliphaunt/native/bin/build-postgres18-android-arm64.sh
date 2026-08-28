@@ -335,7 +335,6 @@ artifact_ready() {
     oliphaunt_close \
     oliphaunt_register_static_extensions \
     oliphaunt_copy_last_error \
-    oliphaunt_last_error \
     oliphaunt_version \
     oliphaunt_free_response \
     oliphaunt_embedded_kill \

@@ -9,10 +9,10 @@ type QueryResult = {
 type PostgresError = Error & {
   severity?: string;
   sqlstate?: string;
-  postgresMessage: string;
 };
 
 export function assertSharedProtocolFixtures(options: {
-  parseQueryResponse(bytes: Uint8Array): QueryResult;
+  parseSimpleQueryResponse(bytes: Uint8Array): QueryResult;
+  parseExtendedQueryResponse(bytes: Uint8Array): QueryResult;
   isPostgresError(error: unknown): error is PostgresError;
 }): void;

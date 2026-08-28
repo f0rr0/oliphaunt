@@ -31,8 +31,8 @@ pub use builder::OliphauntBuilder;
 pub use client::{Oliphaunt, Sql, Transaction};
 pub use query::{
     CommandResult, DecodeError, ExecResult, FromSql, IntoParameter, Parameter, PostgresError,
-    PostgresErrorField, PostgresNotice, QueryField, QueryFormat, QueryParam, QueryResult, QueryRow,
-    RowIndex, StatementDescription, StatementResult, TypeOid, ValueFormat, ValueRef,
+    PostgresErrorField, PostgresNotice, QueryField, QueryFormat, QueryResult, QueryRow, RowIndex,
+    StatementDescription, StatementResult, TypeOid, ValueFormat, ValueRef,
 };
 pub use server::{OliphauntServer, OliphauntServerBuilder, ServerListen};
 pub use storage::DatabaseStorage;

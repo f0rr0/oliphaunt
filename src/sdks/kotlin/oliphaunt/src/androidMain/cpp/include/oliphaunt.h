@@ -74,7 +74,8 @@ typedef struct OliphauntConfig {
     const char *username;
     const char *database;
     /* OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK or zero. */
-    uint64_t reserved_flags;
+    uint64_t flags;
+    /* Zero or more `-c`, `name=value` pairs. Storage-routing GUCs are rejected. */
     const char *const *startup_args;
     size_t startup_arg_count;
 } OliphauntConfig;
@@ -246,8 +247,6 @@ OLIPHAUNT_API size_t oliphaunt_copy_last_error(
     OliphauntHandle *handle,
     char *out,
     size_t capacity);
-/* Compatibility accessor backed by a thread-local snapshot. */
-OLIPHAUNT_API const char *oliphaunt_last_error(OliphauntHandle *handle);
 OLIPHAUNT_API const char *oliphaunt_version(void);
 OLIPHAUNT_API void oliphaunt_free_response(OliphauntResponse *response);
 

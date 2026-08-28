@@ -15,7 +15,7 @@ surface by task.
 | Single-statement SQL | `query`, `execute`, `QueryResult` | Return ordered raw rows or assert that one extended-query command returns no rows |
 | Multi-statement and metadata | `exec`, `describe` | Return ordered command-or-row results or resolve parameter/result OIDs without executing |
 | Parameters and rows | `PostgresOid`, `QueryParam`, `ValueFormat`, `QueryRow.value`, `PostgresDecoder`, `PostgresDecoders` | Encode typed/null values and decode by OID-validated index or unambiguous name while retaining `ByteArray` |
-| Raw protocol | database `execProtocolRaw`, `execProtocolRawStream` | Send PostgreSQL protocol bytes as one result or synchronous callback chunks; raw ownership stays outside managed transaction handles, same-handle callback reentry is rejected, confirmed callback recovery leaves the session reusable, and transport/recovery failures poison it |
+| Raw protocol | database `execProtocolRaw`, `execProtocolRawStream` | Send PostgreSQL protocol bytes as one result or synchronous callback chunks; raw ownership stays outside managed transaction handles, all same-handle work is rejected while a callback runs, confirmed callback recovery leaves the session reusable, and transport/recovery failures poison it |
 | Transactions | `transaction`, transaction `query`/`execute`/`exec`/`describe`, `OliphauntTransaction.rollback`, transaction `isClosed` | Keep typed work inside the pinned session, return to commit, explicitly roll back without a later commit, and use savepoints for nested work |
 | Lifecycle | database `isClosed`, `cancel`, `close` | FIFO admission drains calls accepted before the close cutoff; cancellation remains available until native teardown starts, with nonblocking cleaner fallback for forgotten handles |
 | Data movement | `backup`, static `restore` | Move app data through the native physical archive |
@@ -32,13 +32,16 @@ val answer = result.rows.first().value("answer", PostgresDecoders.int)
 The cross-SDK behavior follows the
 [stable database API](https://github.com/f0rr0/oliphaunt/blob/main/docs/architecture/stable-database-api.md).
 
-Managed transaction callbacks must not issue manual `BEGIN`/`START TRANSACTION`,
-`COMMIT`/`END`, `ABORT`, `PREPARE TRANSACTION`, or `AND CHAIN`. Use
+Managed transaction callbacks must not issue outer-lifecycle SQL: `BEGIN`/`START
+TRANSACTION`, `COMMIT`/`END`, a full `ROLLBACK`/`ABORT` (with or without `AND
+[NO] CHAIN`), or `PREPARE TRANSACTION`. Use
 `rollback()` or return from the callback for outer settlement; `SAVEPOINT`,
 `RELEASE SAVEPOINT`, and `ROLLBACK TO SAVEPOINT` remain supported SQL. PostgreSQL
 reports `ROLLBACK TO` and `ROLLBACK AND CHAIN` with the same `ROLLBACK` command
-tag and transactional ready status, so `AND CHAIN` is unsupported contract
-misuse rather than a form the SDK can reliably pre-reject.
+tag and transactional ready status, so the SDK rejects `ROLLBACK`/`ABORT ...
+AND CHAIN` before dispatch and still validates every actual protocol boundary.
+If the callback catches a poisoning database or rollback error and returns, the
+transaction still fails with the stored original exception.
 
 After automatic rollback succeeds, the original callback exception is rethrown.
 `OliphauntTransactionRollbackException` exposes `callbackError` and

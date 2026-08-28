@@ -133,8 +133,8 @@ boundary, not a checkpoint method.
 
 ### JavaScript
 
-PGlite and the three Oliphaunt JavaScript surfaces now share the important
-shape:
+PGlite and the three Oliphaunt JavaScript SDK packages, including both WASIX
+root and Worker execution surfaces, now share the important shape:
 
 - object rows by default;
 - positional rows with `rowMode: 'array'`;
@@ -146,11 +146,16 @@ result preserves field name, table OID, table attribute number, type OID, type
 size, type modifier, format, and ordered nullable bytes. PGlite's public field
 shape contains only `name` and `dataTypeID`.
 
+The shared object-row default does not imply identical ambiguity handling.
+PGlite follows the common JavaScript behavior of overwriting an earlier value
+when result columns repeat a name. Oliphaunt rejects that object shape instead;
+callers use `rowMode: 'array'` (or `queryRaw`) to preserve duplicate columns.
+
 The option names are intentionally Oliphaunt-owned:
 
 | PGlite option | Oliphaunt | Difference |
 | --- | --- | --- |
-| `rowMode` | `rowMode` | Direct match |
+| `rowMode` | `rowMode` | Same object/array selection; Oliphaunt rejects duplicate names in object mode instead of overwriting an earlier value |
 | `parsers` | `decoders` | Oliphaunt decoder also receives field metadata |
 | `serializers` | `encoders` | Oliphaunt returns validated typed wire carriers rather than only strings |
 | `paramTypes` | OID-bearing parameter values and typed-null/text/binary/JSON/array wrappers | OID travels with each value |
@@ -238,8 +243,9 @@ shapes even though the database semantics are already available.
 PGlite `describeQuery` returns parameter descriptions and result fields that
 include the JavaScript serializer/parser functions selected by its mutable
 codec registry. Oliphaunt `describe` returns stable PostgreSQL facts: resolved
-parameter OIDs, optional complete field metadata, notices, and readiness state.
-It deliberately does not return executable codec objects.
+parameter OIDs, optional complete field metadata, and notices. It validates the
+terminal readiness state before returning rather than exposing it as result
+data, and deliberately does not return executable codec objects.
 
 Both operations use Parse/Describe without executing. Oliphaunt's result is
 more portable across languages and does not become stale when an application
@@ -266,12 +272,13 @@ transaction interface. Oliphaunt's ownership contract is stronger:
   recovery.
 
 Oliphaunt derives managed ownership from every exact backend command tag and
-the single terminal readiness status before high-level result parsing; it does
-not lex SQL. Manual lifecycle SQL and `AND CHAIN` are unsupported inside the
-callback, while savepoints and `ROLLBACK TO` remain valid. PostgreSQL makes
-`ROLLBACK AND CHAIN` indistinguishable from `ROLLBACK TO` at this protocol
-boundary, so callers must honor that contract. A proven or uncertain ownership
-escape makes the database close-only and suppresses speculative SDK control.
+the single terminal readiness status before high-level result parsing. Manual
+lifecycle SQL and `AND CHAIN` are unsupported inside the callback, while
+savepoints and `ROLLBACK TO` remain valid. Because PostgreSQL makes `ROLLBACK
+AND CHAIN` indistinguishable from `ROLLBACK TO` at this protocol boundary,
+Oliphaunt lexically rejects `ROLLBACK`/`ABORT ... AND CHAIN` before dispatch. A
+proven or uncertain ownership escape makes the database close-only and
+suppresses speculative SDK control.
 
 There is no public `runExclusive`. One structured call already owns its entire
 Parse/Describe/Bind/Execute/Sync cycle, and a callback transaction is the

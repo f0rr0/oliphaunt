@@ -6,7 +6,7 @@ import {
   parseDescribeResponse,
   parseExecResponse,
   parseQueryRawResponse,
-  parseQueryResponse,
+  parseSimpleQueryRawResponse,
   postgresOids,
   text,
 } from '../query.js';
@@ -44,7 +44,7 @@ describe('WASIX query protocol codec', () => {
 
   it('parses integers without copies and keeps row values as response views', () => {
     const response = queryResponse(new TextEncoder().encode('λ-value'));
-    const result = parseQueryResponse(response);
+    const result = parseSimpleQueryRawResponse(response);
 
     expect(result.fields).toEqual([
       {
@@ -64,33 +64,35 @@ describe('WASIX query protocol codec', () => {
   it('retains exact invalid UTF-8 field-name byte-offset diagnostics', () => {
     const malformedDescription = concatenate(Uint8Array.of(0, 1, 0xc0, 0), new Uint8Array(18));
 
-    expect(() => parseQueryResponse(backendMessage('T', malformedDescription))).toThrow(
+    expect(() => parseSimpleQueryRawResponse(backendMessage('T', malformedDescription))).toThrow(
       'field name is not valid UTF-8 at byte 0',
     );
   });
 
   it('retains exact invalid UTF-8 row-value byte-offset diagnostics', () => {
-    const result = parseQueryResponse(queryResponse(Uint8Array.of(0x61, 0xe2, 0x28, 0xa1)));
+    const result = parseSimpleQueryRawResponse(
+      queryResponse(Uint8Array.of(0x61, 0xe2, 0x28, 0xa1)),
+    );
 
     expect(() => result.rows[0]?.text(0)).toThrow('query value is not valid UTF-8 at byte 2');
   });
 
   it('retains truncated integer and body diagnostics', () => {
-    expect(() => parseQueryResponse(Uint8Array.of(0x54, 0, 0))).toThrow(
+    expect(() => parseSimpleQueryRawResponse(Uint8Array.of(0x54, 0, 0))).toThrow(
       'truncated backend message length',
     );
-    expect(() => parseQueryResponse(Uint8Array.of(0x54, 0, 0, 0, 6, 0))).toThrow(
+    expect(() => parseSimpleQueryRawResponse(Uint8Array.of(0x54, 0, 0, 0, 6, 0))).toThrow(
       'truncated backend message body',
     );
   });
 
   it('rejects incomplete and out-of-order completions while exec admits empty statements', () => {
     const ready = backendMessage('Z', Uint8Array.of('I'.charCodeAt(0)));
-    expect(() => parseQueryResponse(ready)).toThrow(
+    expect(() => parseSimpleQueryRawResponse(ready)).toThrow(
       'omitted CommandComplete or EmptyQueryResponse',
     );
     expect(() =>
-      parseQueryResponse(
+      parseSimpleQueryRawResponse(
         concatenate(
           backendMessage('C', new TextEncoder().encode('SELECT 1\0')),
           backendMessage('D', Uint8Array.of(0, 0)),

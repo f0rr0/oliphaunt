@@ -4,6 +4,7 @@ import type { Directory } from './host/index.mjs';
 import { simpleQuery } from './protocol.js';
 import { assertSuccessfulQueryResponse, PostgresError } from './query.js';
 import type { SerializedOpenOptions } from './rpc.js';
+import { normalizeWasixStartupGUCs } from './startup-config.js';
 
 let compiledModuleCache: { sha256: string; module: Promise<WebAssembly.Module> } | undefined;
 
@@ -105,9 +106,7 @@ export function wasixPostgresArgs(options: SerializedOpenOptions): string[] {
   const args = ['--single'];
   if (options.storage.kind === 'memory') args.push('-F');
   args.push('-O', '-j');
-  const startupGUCs = Object.fromEntries(
-    Object.entries(options.startupGUCs).map(([name, value]) => [name.trim(), value]),
-  );
+  const startupGUCs = normalizeWasixStartupGUCs(options.startupGUCs);
   for (const [configuredName, configuredValue] of Object.entries(startupGUCs)) {
     const managed = Object.entries(SINGLE_BACKEND_GUCS).find(
       ([name]) => name === configuredName.toLowerCase(),
@@ -130,7 +129,6 @@ export function wasixPostgresArgs(options: SerializedOpenOptions): string[] {
     ...SINGLE_BACKEND_GUCS,
     ...startupGUCs,
   })) {
-    validateGuc(name, value);
     args.push('-c', `${name}=${value}`);
   }
   // Keep a database name that begins with `-` out of PostgreSQL's option
@@ -182,17 +180,6 @@ export function wasixPostgresEnvironment(
   };
 }
 
-function validateGuc(name: string, value: string): void {
-  if (!/^[A-Za-z_][A-Za-z0-9_$]*(?:\.[A-Za-z_][A-Za-z0-9_$]*)*$/u.test(name)) {
-    throw new Error(
-      `PostgreSQL startup GUC name ${JSON.stringify(name)} must use dot-separated components that start with an ASCII letter or '_' and continue with ASCII letters, digits, '_', or '$'`,
-    );
-  }
-  if (value.includes('\0')) {
-    throw new Error(`PostgreSQL startup GUC ${JSON.stringify(name)} contains a NUL byte`);
-  }
-}
-
 /** @internal Normalize lifecycle diagnostics without discarding structured primary errors. */
 export function describeError(error: unknown): string {
   if (!(error instanceof Error)) {
@@ -212,8 +199,10 @@ export function composeLifecycleFailure(primary: Error, label: string, secondary
     `${label} while handling ${primary.name || 'Error'}`,
   );
   if (primary instanceof PostgresError) {
-    const composed = new PostgresError(primary.fields.map((field) => ({ ...field })));
-    composed.message = message;
+    const composed = new PostgresError(
+      primary.fields.map((field) => ({ ...field })),
+      [...primary.notices],
+    );
     Object.defineProperty(composed, 'cause', {
       configurable: true,
       value: cause,

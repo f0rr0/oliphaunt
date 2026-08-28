@@ -130,7 +130,6 @@ private suspend fun exerciseTypedDatabaseApi(database: OliphauntDatabase) {
         queryResult.commandTag,
         queryResult.rowCount,
         queryResult.notices,
-        queryResult.fieldIndex("value"),
         queryResult.getText(0, "value"),
         decoded,
         raw,

@@ -7,11 +7,14 @@ import {
 import type { OpenConfig, ServerListen, ServerOpenConfig } from './types.js';
 
 type RuntimeTopology = 'direct' | 'broker' | 'server';
+export type DatabaseTopology = Exclude<RuntimeTopology, 'server'>;
 
 type AnyOpenConfig = OpenConfig | (ServerOpenConfig & { topology: 'server' });
 
 export const DEFAULT_USERNAME = 'postgres';
 export const DEFAULT_DATABASE = 'postgres';
+const SERVER_OWNED_STARTUP_GUCS = new Set(['listen_addresses', 'port', 'unix_socket_directories']);
+const STORAGE_OWNED_STARTUP_GUCS = new Set(['config_file', 'data_directory']);
 
 export type NormalizedOpenConfig = {
   topology: RuntimeTopology;
@@ -40,6 +43,9 @@ export function normalizeOpenConfig(
   validateStartupIdentity(config.username ?? DEFAULT_USERNAME, 'username');
   validateStartupIdentity(config.database ?? DEFAULT_DATABASE, 'database');
   const extensions = config.extensions ? validateExtensionIds(config.extensions) : [];
+  const topology =
+    config.topology === 'server' ? 'server' : normalizeDatabaseTopology(config.topology);
+  validateNativeStartupGUCs(topology, config.startupGUCs ?? {});
   const startupArgs = buildStartupArgs({
     startupGUCs: config.startupGUCs ?? {},
     extensions,
@@ -60,7 +66,6 @@ export function normalizeOpenConfig(
     'serverExecutable' in config ? config.serverExecutable : undefined,
     'serverExecutable',
   );
-  const topology = config.topology ?? 'direct';
   const serverListen = 'listen' in config ? validateServerListen(config.listen) : undefined;
 
   return {
@@ -78,6 +83,14 @@ export function normalizeOpenConfig(
     serverExecutable,
     serverListen,
   };
+}
+
+export function normalizeDatabaseTopology(value: unknown): DatabaseTopology {
+  if (value === undefined || value === 'direct') return 'direct';
+  if (value === 'broker') return 'broker';
+  throw new TypeError(
+    `native database topology must be "direct" or "broker", received ${String(value)}`,
+  );
 }
 
 function validateServerListen(listen: ServerListen | undefined): ServerListen | undefined {
@@ -99,13 +112,60 @@ export function buildStartupArgs(options: {
   extensions?: ReadonlyArray<string>;
 }): string[] {
   const extensions = validateExtensionIds(options.extensions ?? []);
-  const assignments = [...validateStartupGUCs(options.startupGUCs ?? {})];
+  const entries = normalizedStartupGUCEntries(options.startupGUCs ?? {});
   const preloadLibraries = requiredSharedPreloadLibraries(extensions);
-  if (preloadLibraries.length > 0) {
-    assignments.push(`shared_preload_libraries=${preloadLibraries.join(',')}`);
+  if (preloadLibraries.length === 0) {
+    return startupArgs(entries);
   }
 
-  return assignments.flatMap((assignment) => ['-c', assignment]);
+  const configuredPreloads = entries.find(({ name }) => name === 'shared_preload_libraries')?.value;
+  const assignments = entries.filter(({ name }) => name !== 'shared_preload_libraries');
+  const mergedPreloads: string[] = [];
+  const seenPreloads = new Set<string>();
+  appendUniqueCsvValues(configuredPreloads, mergedPreloads, seenPreloads);
+  for (const required of preloadLibraries) {
+    appendUniqueCsvValues(required, mergedPreloads, seenPreloads);
+  }
+  assignments.push({
+    name: 'shared_preload_libraries',
+    value: mergedPreloads.join(','),
+  });
+  return startupArgs(assignments);
+}
+
+export function validateNativeStartupGUCs(
+  topology: RuntimeTopology,
+  gucs: Readonly<Record<string, string>>,
+): void {
+  for (const { name } of normalizedStartupGUCEntries(gucs)) {
+    if (STORAGE_OWNED_STARTUP_GUCS.has(name)) {
+      throw new Error(
+        `Oliphaunt owns PostgreSQL startup GUC '${name}'; configure database storage through Oliphaunt open options`,
+      );
+    }
+    if (topology === 'server' && SERVER_OWNED_STARTUP_GUCS.has(name)) {
+      throw new Error(
+        `native server owns PostgreSQL startup GUC '${name}'; configure storage and listen through Oliphaunt.openServer()`,
+      );
+    }
+  }
+}
+
+function startupArgs(entries: ReadonlyArray<NormalizedStartupGUC>): string[] {
+  return entries.flatMap(({ name, value }) => ['-c', `${name}=${value}`]);
+}
+
+function appendUniqueCsvValues(
+  value: string | undefined,
+  ordered: string[],
+  seen: Set<string>,
+): void {
+  for (const item of value?.split(',') ?? []) {
+    const trimmed = item.trim();
+    if (trimmed.length === 0 || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    ordered.push(trimmed);
+  }
 }
 
 export function validateDirectoryPath(value: string | undefined, label: string): void {
@@ -182,7 +242,15 @@ export function validateExtensionIds(extensions: ReadonlyArray<string>): string[
 }
 
 export function validateStartupGUCs(gucs: Readonly<Record<string, string>>): string[] {
-  return Object.entries(gucs).map(([name, value]) => {
+  return normalizedStartupGUCEntries(gucs).map(({ name, value }) => `${name}=${value}`);
+}
+
+type NormalizedStartupGUC = { name: string; value: string };
+
+function normalizedStartupGUCEntries(
+  gucs: Readonly<Record<string, string>>,
+): NormalizedStartupGUC[] {
+  const entries = Object.entries(gucs).map(([name, value]) => {
     const trimmedName = name.trim();
     if (trimmedName.length === 0) {
       throw new Error('PostgreSQL startup GUC name must not be empty');
@@ -195,8 +263,11 @@ export function validateStartupGUCs(gucs: Readonly<Record<string, string>>): str
         `PostgreSQL startup GUC name '${name}': each dot-separated component must start with an ASCII letter or '_', followed by ASCII letters, digits, '_', or '$'`,
       );
     }
-    return `${trimmedName}=${value}`;
+    return { name: trimmedName.toLowerCase(), value };
   });
+  const lastIndexByName = new Map<string, number>();
+  entries.forEach(({ name }, index) => lastIndexByName.set(name, index));
+  return entries.filter(({ name }, index) => lastIndexByName.get(name) === index);
 }
 
 function requiredSharedPreloadLibraries(extensions: ReadonlyArray<string>): string[] {

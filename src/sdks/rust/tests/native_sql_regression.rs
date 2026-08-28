@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use oliphaunt::{
     AsyncOliphaunt as Oliphaunt, AsyncOliphauntBuilder as OliphauntBuilder, AsyncOliphauntServer,
-    DatabaseStorage, Error, ErrorKind, QueryParam, Result, ServerListen,
+    DatabaseStorage, Error, ErrorKind, IntoParameter, Parameter, Result, ServerListen,
 };
 use serde::Deserialize;
 
@@ -162,8 +162,8 @@ fn run_embedded(builder: OliphauntBuilder) -> Result<()> {
     let parameters = block_on(db.query_with_params(
         "SELECT $1::text AS text_value, encode($2::bytea, 'hex') AS bytes_value",
         [
-            QueryParam::from("parameter"),
-            QueryParam::binary([0_u8, 1, 255]),
+            "parameter".into_parameter(),
+            Parameter::binary([0_u8, 1, 255]),
         ],
     ))?;
     assert_eq!(parameters.get_text(0, "text_value")?, Some("parameter"));

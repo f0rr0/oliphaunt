@@ -11,9 +11,7 @@ export const defaultPlanFile = resolve(
   'benchmarks/wasix/node-pglite-memory-v2.json',
 );
 
-const LEGACY_PLAN_SCHEMA = 'oliphaunt-wasix-node-benchmark-plan-v1';
 const PLAN_SCHEMA = 'oliphaunt-wasix-node-benchmark-plan-v2';
-const LEGACY_PLAN_ID = 'node-pglite-memory-v1';
 const PLAN_ID = 'node-pglite-memory-v2';
 const PACKAGE_NAME = '@oliphaunt/wasix-ts';
 const COMPARISON_PACKAGE = '@electric-sql/pglite';
@@ -64,22 +62,13 @@ export async function loadPlan(file = defaultPlanFile, { repositoryBindings = tr
     throw new Error(`${relative(file)} must contain JSON: ${describeError(error)}`);
   }
   validatePlan(plan);
-  if (repositoryBindings && plan.schema !== LEGACY_PLAN_SCHEMA) {
+  if (repositoryBindings) {
     await validateRepositoryBindings(plan);
   }
   return { plan, file: resolve(file), sha256: sha256(bytes), size: bytes.length };
 }
 
-export function assertCurrentPlan(plan) {
-  validatePlan(plan);
-  if (plan.schema !== PLAN_SCHEMA) {
-    throw new Error(
-      `${LEGACY_PLAN_ID} is historical input and cannot drive a new benchmark; use ${PLAN_ID}`,
-    );
-  }
-}
-
-function validateCurrentEngines(plan) {
+function validateEngines(plan) {
   equal(plan.id, PLAN_ID, 'plan.id');
   const engines = object(plan.engines, 'plan.engines');
   exactKeys(engines, ['candidate', 'comparison'], 'plan.engines');
@@ -171,112 +160,10 @@ function validateCurrentEngines(plan) {
   );
 }
 
-function validateLegacyEngines(plan) {
-  equal(plan.id, LEGACY_PLAN_ID, 'plan.id');
-  const engines = object(plan.engines, 'plan.engines');
-  exactKeys(engines, ['candidate', 'comparison'], 'plan.engines');
-  const candidate = object(engines.candidate, 'plan.engines.candidate');
-  exactKeys(
-    candidate,
-    [
-      'directExecutionBoundary',
-      'directIsolationImplementation',
-      'directTimingBoundary',
-      'executionBoundary',
-      'hostBuild',
-      'isolationImplementation',
-      'package',
-      'runtimeBuild',
-      'storage',
-      'timingBoundary',
-    ],
-    'plan.engines.candidate',
-  );
-  validateCandidateIdentity(candidate, candidate.hostBuild);
-  exactRecord(
-    {
-      directExecutionBoundary: candidate.directExecutionBoundary,
-      directIsolationImplementation: candidate.directIsolationImplementation,
-      directTimingBoundary: candidate.directTimingBoundary,
-      executionBoundary: candidate.executionBoundary,
-      isolationImplementation: candidate.isolationImplementation,
-      timingBoundary: candidate.timingBoundary,
-    },
-    {
-      directExecutionBoundary: 'node-main-thread',
-      directIsolationImplementation: 'none-main-thread',
-      directTimingBoundary: 'caller-around-public-api',
-      executionBoundary: 'node-worker-thread',
-      isolationImplementation: 'package-owned-worker-threads-rpc',
-      timingBoundary: GATED_TIMING_BOUNDARY,
-    },
-    'plan.engines.candidate legacy boundaries',
-  );
-
-  const comparison = object(engines.comparison, 'plan.engines.comparison');
-  exactKeys(
-    comparison,
-    [
-      'benchmarkMethodology',
-      'benchmarkMethodologySource',
-      'directExecutionBoundary',
-      'directIsolationImplementation',
-      'directTimingBoundary',
-      'executionBoundary',
-      'gatedResponsePayload',
-      'homepage',
-      'installedTreeHashSchema',
-      'installedTreeSha256',
-      'integrity',
-      'isolationImplementation',
-      'officialWorkerModule',
-      'package',
-      'sourceCommit',
-      'sourceRepository',
-      'storage',
-      'timingBoundary',
-      'version',
-    ],
-    'plan.engines.comparison',
-  );
-  validateComparisonIdentity(comparison);
-  exactRecord(
-    {
-      benchmarkMethodology: comparison.benchmarkMethodology,
-      benchmarkMethodologySource: comparison.benchmarkMethodologySource,
-      directExecutionBoundary: comparison.directExecutionBoundary,
-      directIsolationImplementation: comparison.directIsolationImplementation,
-      directTimingBoundary: comparison.directTimingBoundary,
-      executionBoundary: comparison.executionBoundary,
-      gatedResponsePayload: comparison.gatedResponsePayload,
-      isolationImplementation: comparison.isolationImplementation,
-      officialWorkerModule: comparison.officialWorkerModule,
-      timingBoundary: comparison.timingBoundary,
-    },
-    {
-      benchmarkMethodology: 'official-browser-worker-timer-reference-only-not-collected',
-      benchmarkMethodologySource: 'packages/benchmark/src/benchmarks-worker.js',
-      directExecutionBoundary: 'node-main-thread',
-      directIsolationImplementation: 'none-main-thread',
-      directTimingBoundary: 'caller-around-public-api',
-      executionBoundary: 'node-worker-thread',
-      gatedResponsePayload: 'public-result-only-no-comparator-telemetry',
-      isolationImplementation: 'harness-owned-worker-threads-rpc',
-      officialWorkerModule: 'browser-worker-only',
-      timingBoundary: GATED_TIMING_BOUNDARY,
-    },
-    'plan.engines.comparison legacy boundaries',
-  );
-}
-
-function validateCandidateIdentity(candidate, expectedHostBuild = HOST_BUILD) {
+function validateCandidateIdentity(candidate) {
   equal(candidate.package, PACKAGE_NAME, 'plan.engines.candidate.package');
   equal(candidate.storage, 'memory', 'plan.engines.candidate.storage');
-  assertHostBuildProvenance(
-    candidate.hostBuild,
-    expectedHostBuild,
-    'plan.engines.candidate.hostBuild',
-  );
+  assertHostBuildProvenance(candidate.hostBuild, HOST_BUILD, 'plan.engines.candidate.hostBuild');
   assertRuntimeBuildConfiguration(
     object(candidate.runtimeBuild, 'plan.engines.candidate.runtimeBuild'),
     RUNTIME_BUILD,
@@ -343,11 +230,8 @@ export function validatePlan(plan) {
     ],
     'plan',
   );
-  if (plan.schema === LEGACY_PLAN_SCHEMA) validateLegacyEngines(plan);
-  else {
-    equal(plan.schema, PLAN_SCHEMA, 'plan.schema');
-    validateCurrentEngines(plan);
-  }
+  equal(plan.schema, PLAN_SCHEMA, 'plan.schema');
+  validateEngines(plan);
   safeId(plan.id, 'plan.id');
   nonEmptyString(plan.description, 'plan.description');
 
@@ -395,10 +279,9 @@ export function validatePlan(plan) {
   );
 
   const gate = object(plan.gate, 'plan.gate');
-  const gateGrouping = plan.schema === LEGACY_PLAN_SCHEMA ? 'placements' : 'comparisons';
   exactKeys(
     gate,
-    ['includes', 'maxGeomeanRatio', 'metric', gateGrouping, 'requiresCorrectness'],
+    ['comparisons', 'includes', 'maxGeomeanRatio', 'metric', 'requiresCorrectness'],
     'plan.gate',
   );
   if (
@@ -409,7 +292,7 @@ export function validatePlan(plan) {
     fail('plan.gate.maxGeomeanRatio must be positive and no greater than 0.80');
   }
   equal(gate.requiresCorrectness, true, 'plan.gate.requiresCorrectness');
-  exactStringList(gate[gateGrouping], ['worker', 'direct'], `plan.gate.${gateGrouping}`);
+  exactStringList(gate.comparisons, ['worker', 'direct'], 'plan.gate.comparisons');
   equal(
     gate.metric,
     'geometric-mean-of-median-paired-candidate-over-comparison-ratios-lower-is-better',

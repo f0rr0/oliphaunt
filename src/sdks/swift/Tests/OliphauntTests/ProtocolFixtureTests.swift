@@ -10,13 +10,16 @@ func structuredSQLScannerMatchesSharedProtocolFixtures() throws {
         SharedStructuredSQLFixtureCorpus.self,
         from: Data(contentsOf: fixtureURL)
     )
-    #expect(corpus.schemaVersion == 1)
+    #expect(corpus.schemaVersion == 2)
     #expect(corpus.kind == "postgres-structured-sql-preflight")
     var names = Set<String>()
     for fixture in corpus.cases {
         #expect(names.insert(fixture.name).inserted)
         if containsOliphauntTopLevelCopy(fixture.sql) != fixture.containsTopLevelCopy {
-            Issue.record("structured SQL fixture \(fixture.name) did not match")
+            Issue.record("structured SQL COPY fixture \(fixture.name) did not match")
+        }
+        if containsOliphauntTransactionChain(fixture.sql) != fixture.containsTransactionChain {
+            Issue.record("structured SQL transaction-chain fixture \(fixture.name) did not match")
         }
     }
 }
@@ -230,4 +233,5 @@ private struct SharedStructuredSQLFixture: Decodable {
     var name: String
     var sql: String
     var containsTopLevelCopy: Bool
+    var containsTransactionChain: Bool
 }

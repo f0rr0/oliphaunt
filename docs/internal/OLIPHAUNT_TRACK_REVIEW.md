@@ -405,7 +405,8 @@ generation-guarded cleanup, owned and streaming protocol execution, simple
 query, cancellation, physical backup/restore, static extension registration,
 response release, version reporting, and caller-owned error copying. ABI 10
 also adds operation-specific `_with_error` variants for schedulers that resume
-on a different thread; the legacy entry points remain intact.
+on a different thread; synchronous bindings use the non-capture entry points
+and copy the operation-local error before leaving their owner thread.
 
 That is a stable low-level boundary. It keeps query semantics on PostgreSQL's
 native wire protocol and avoids inventing a second SQL API at the C layer.

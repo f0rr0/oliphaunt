@@ -3,11 +3,10 @@ export type DatabaseStorage =
   | { readonly kind: 'directory'; readonly path: string };
 
 export type BinaryInput = ArrayBuffer | ArrayBufferView | Uint8Array | ReadonlyArray<number>;
-/**
- * A synchronous, serial raw-protocol consumer. Returning a Promise or thenable
- * rejects the stream because the native callback boundary cannot await it.
- */
-export type ProtocolChunkCallback = (chunk: Uint8Array) => void;
+
+type QueryReadOptions = Omit<import('./query.js').QueryOptions, 'encoders'>;
+/** A synchronous, serial raw-protocol consumer used as the backpressure acknowledgement. */
+export type ProtocolChunkCallback = (chunk: Uint8Array) => undefined;
 
 export type OpenConfig = {
   /**
@@ -46,20 +45,20 @@ export type OliphauntTransaction = {
     parameters?: ReadonlyArray<import('./query.js').QueryParam>,
     options?: import('./query.js').ParameterOptions,
   ): Promise<import('./query.js').CommandResult>;
-  query<Row = import('./query.js').QueryObjectRow>(
+  query<Row = never, const Options extends import('./query.js').QueryOptions = {}>(
     sql: string,
     parameters?: ReadonlyArray<import('./query.js').QueryParam>,
-    options?: import('./query.js').QueryOptions,
-  ): Promise<import('./query.js').QueryResult<Row>>;
+    options?: Options & import('./query.js').QueryOptions,
+  ): Promise<import('./query.js').QueryResult<import('./query.js').InferQueryRow<Options, Row>>>;
   queryRaw(
     sql: string,
     parameters?: ReadonlyArray<import('./query.js').QueryParam>,
     options?: import('./query.js').ParameterOptions,
   ): Promise<import('./query.js').RawQueryResult>;
-  exec<Row = import('./query.js').QueryObjectRow>(
+  exec<Row = never, const Options extends QueryReadOptions = {}>(
     sql: string,
-    options?: Omit<import('./query.js').QueryOptions, 'encoders'>,
-  ): Promise<import('./query.js').ExecResult<Row>>;
+    options?: Options & QueryReadOptions,
+  ): Promise<import('./query.js').ExecResult<import('./query.js').InferQueryRow<Options, Row>>>;
   describe(
     sql: string,
     parameterTypeOids?: ReadonlyArray<number>,
@@ -74,20 +73,20 @@ export type OliphauntDatabase = {
     parameters?: ReadonlyArray<import('./query.js').QueryParam>,
     options?: import('./query.js').ParameterOptions,
   ): Promise<import('./query.js').CommandResult>;
-  query<Row = import('./query.js').QueryObjectRow>(
+  query<Row = never, const Options extends import('./query.js').QueryOptions = {}>(
     sql: string,
     parameters?: ReadonlyArray<import('./query.js').QueryParam>,
-    options?: import('./query.js').QueryOptions,
-  ): Promise<import('./query.js').QueryResult<Row>>;
+    options?: Options & import('./query.js').QueryOptions,
+  ): Promise<import('./query.js').QueryResult<import('./query.js').InferQueryRow<Options, Row>>>;
   queryRaw(
     sql: string,
     parameters?: ReadonlyArray<import('./query.js').QueryParam>,
     options?: import('./query.js').ParameterOptions,
   ): Promise<import('./query.js').RawQueryResult>;
-  exec<Row = import('./query.js').QueryObjectRow>(
+  exec<Row = never, const Options extends QueryReadOptions = {}>(
     sql: string,
-    options?: Omit<import('./query.js').QueryOptions, 'encoders'>,
-  ): Promise<import('./query.js').ExecResult<Row>>;
+    options?: Options & QueryReadOptions,
+  ): Promise<import('./query.js').ExecResult<import('./query.js').InferQueryRow<Options, Row>>>;
   describe(
     sql: string,
     parameterTypeOids?: ReadonlyArray<number>,

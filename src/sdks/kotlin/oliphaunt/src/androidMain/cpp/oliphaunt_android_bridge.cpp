@@ -358,7 +358,7 @@ Java_dev_oliphaunt_OliphauntAndroidNativeBridge_openNative(
       .module_dir = nullptr,
       .username = usernameString.c_str(),
       .database = databaseString.c_str(),
-      .reserved_flags = 0,
+      .flags = 0,
       .startup_args = argPointers.data(),
       .startup_arg_count = argPointers.size(),
   };

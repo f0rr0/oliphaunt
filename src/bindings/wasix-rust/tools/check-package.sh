@@ -42,16 +42,6 @@ require_source_text() {
   fi
 }
 
-reject_source_text() {
-  local file="$1"
-  local text="$2"
-  local message="$3"
-  if grep -Fq "$text" "$file"; then
-    echo "$message" >&2
-    exit 1
-  fi
-}
-
 require_entry "Cargo.toml"
 require_entry "README.md"
 require_entry "src/error.rs"
@@ -107,7 +97,6 @@ if git ls-files --error-unmatch \
   exit 1
 fi
 reject_pattern '^src/testdata/postgis-smoke\.sql$'
-reject_pattern '^src/worker\.rs$'
 
 cmp -s \
   src/bindings/wasix-rust/crates/oliphaunt-wasix/src/testdata/wasix-toolchain.toml \
@@ -169,8 +158,6 @@ require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml '"
   "oliphaunt-wasix tools feature must select the Windows x64 tools-AOT crate"
 require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/mod.rs 'pub mod tools;' \
   "WASIX tools must use the optional public tools namespace"
-reject_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs "pub mod blocking" \
-  "WASIX crate must not retain the obsolete blocking namespace"
 require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/tools.rs "pub fn script(mut self, sql: impl Into<String>)" \
   "WASIX PsqlOptions must expose standard script input"
 

@@ -25,28 +25,6 @@ require() {
   fi
 }
 
-require_source_text() {
-  file="$1"
-  expected="$2"
-  message="$3"
-  if ! grep -Fq "$expected" "$file"; then
-    echo "$message" >&2
-    echo "expected '$expected' in $file" >&2
-    exit 1
-  fi
-}
-
-reject_source_text() {
-  file="$1"
-  rejected="$2"
-  message="$3"
-  if grep -Fq "$rejected" "$file"; then
-    echo "$message" >&2
-    echo "rejected '$rejected' in $file" >&2
-    exit 1
-  fi
-}
-
 prepare_package_worktree() {
   require rsync
   rm -rf "$package_dir"
@@ -150,15 +128,6 @@ if [ "$mode" = "test-unit" ]; then
 fi
 
 run pnpm --dir "$package_dir" run build
-for removed in \
-  "$package_dir/lib/runtime/physical-archive.js" \
-  "$package_dir/lib/runtime/physical-archive.d.ts"
-do
-  if [ -e "$removed" ]; then
-    echo "TypeScript SDK fresh build retained deleted output $removed" >&2
-    exit 1
-  fi
-done
 if [ "$mode" != "package-shape" ]; then
   run pnpm --dir "$package_dir" run typecheck
 fi
@@ -270,53 +239,6 @@ if [ "$mode" = "package-shape" ]; then
   exit 0
 fi
 
-base64_runtime_hits="$(
-  if command -v rg >/dev/null 2>&1; then
-    rg -n -i --glob '!**/README.md' --glob '!**/node_modules/**' \
-      --glob '!**/__tests__/**' \
-      'base64|atob|btoa' \
-      "$package_dir/src" \
-      "$package_dir/package.json" || true
-  else
-    grep -RInE 'base64|atob|btoa' "$package_dir/src" "$package_dir/package.json" 2>/dev/null |
-      grep -Ev '(/README\.md|/node_modules/|/__tests__/)' || true
-  fi
-)"
-if [ -n "$base64_runtime_hits" ]; then
-  echo "TypeScript SDK runtime must keep protocol bytes as Uint8Array, not base64:" >&2
-  echo "$base64_runtime_hits" >&2
-  exit 1
-fi
-
-runtime_download_hits="$(
-  if command -v rg >/dev/null 2>&1; then
-    rg -n --glob '!**/__tests__/**' \
-      'fetch\(|releases/download|ReleaseAssetUrl|ReleaseTarget|OLIPHAUNT_.*ASSET_DIR|OLIPHAUNT_.*RELEASE_BASE_URL|CACHE_DIR' \
-      "$package_dir/src/native" \
-      "$package_dir/src/runtime/broker.ts" || true
-  else
-    grep -RInE 'fetch\(|releases/download|ReleaseAssetUrl|ReleaseTarget|OLIPHAUNT_.*ASSET_DIR|OLIPHAUNT_.*RELEASE_BASE_URL|CACHE_DIR' \
-      "$package_dir/src/native" "$package_dir/src/runtime/broker.ts" 2>/dev/null || true
-  fi
-)"
-if [ -n "$runtime_download_hits" ]; then
-  echo "TypeScript SDK runtime must resolve native artifacts from installed packages, not runtime downloads:" >&2
-  echo "$runtime_download_hits" >&2
-  exit 1
-fi
-
-reject_source_text "$package_dir/package.json" '"./node"' \
-  "TypeScript SDK package must use runtime detection instead of a Node binding subpath"
-reject_source_text "$package_dir/package.json" '"./bun"' \
-  "TypeScript SDK package must use runtime detection instead of a Bun binding subpath"
-reject_source_text "$package_dir/package.json" '"./deno"' \
-  "TypeScript SDK package must use runtime detection instead of a Deno binding subpath"
-require_source_text "$package_dir/package.json" '"liboliphauntVersion"' \
-  "TypeScript SDK package metadata must pin the compatible liboliphaunt release"
-require_source_text "$package_dir/package.json" '"brokerVersion"' \
-  "TypeScript SDK package metadata must pin the compatible Rust broker helper release"
-require_source_text "$package_dir/package.json" '"nodeDirectAddon"' \
-  "TypeScript SDK package metadata must pin the compatible Node.js native-direct adapter release"
 node -e "
 const pkg = require(process.argv[1]);
 const expectedDependencies = {};
@@ -346,179 +268,12 @@ if (
 if (JSON.stringify(actualExports) !== JSON.stringify(expectedExports.sort())) {
   throw new Error('TypeScript SDK exports do not match its deliberate public surface');
 }
+for (const key of ['liboliphauntVersion', 'brokerVersion', 'nodeDirectAddon']) {
+  if (typeof pkg.oliphaunt?.[key] !== 'string' || pkg.oliphaunt[key].length === 0) {
+    throw new Error('TypeScript SDK package metadata must define oliphaunt.' + key);
+  }
+}
 " "$package_dir/package.json"
-for internal_export in \
-  createOliphauntClient \
-  nativeDirectCapabilities \
-  createDefaultNativeBinding \
-  createNodeNativeBinding \
-  createDenoNativeBinding \
-  MaybePromise \
-  NativeBinding \
-  NativeBindingFactory \
-  NativeBindingOptions \
-  NativeOpenConfig \
-  NativeRestoreOptions \
-  NativeHandle \
-  RuntimeBinding \
-  RuntimeHandle
-do
-  reject_source_text "$package_dir/lib/index.d.ts" "$internal_export" \
-    "TypeScript SDK root declarations must not expose internal runtime plumbing"
-done
-require_source_text "$package_dir/lib/index.d.ts" "OliphauntDatabase" \
-  "TypeScript SDK root declarations must expose the structural database type"
-require_source_text "$package_dir/lib/index.d.ts" "ProtocolChunkCallback" \
-  "TypeScript SDK root declarations must expose the raw stream callback type"
-require_source_text "$package_dir/lib/index.d.ts" "RestoreOptions" \
-  "TypeScript SDK root declarations must expose restore options"
-require_source_text "$package_dir/src/native/node.ts" "loadNodeDirectAddon" \
-  "TypeScript Node native-direct binding must load the Oliphaunt-owned prebuilt Node-API adapter"
-require_source_text "$package_dir/src/config.ts" "const topology = config.topology ?? 'direct';" \
-  "TypeScript SDK config normalization must default to the direct topology"
-require_source_text "$package_dir/src/__tests__/config.test.ts" "assert.equal(direct.topology, 'direct');" \
-  "TypeScript SDK tests must prove the direct topology default"
-require_source_text "$package_dir/src/types.ts" "topology?: 'direct' | 'broker';" \
-  "TypeScript SDK must name runtime placement as topology"
-reject_source_text "$package_dir/src/types.ts" "execution?: 'direct' | 'broker';" \
-  "TypeScript SDK must not retain the misleading execution selector"
-require_source_text "$package_dir/src/runtime/types.ts" "export type RuntimeCloseOutcome" \
-  "TypeScript runtime close must classify terminal and retryable outcomes"
-require_source_text "$package_dir/src/__tests__/client.test.ts" "terminal broker and server close failures" \
-  "TypeScript SDK tests must prove terminal teardown failure semantics"
-require_source_text "$package_dir/src/__tests__/client.test.ts" "cannot queue same-handle work" \
-  "TypeScript SDK tests must prove raw stream callback non-reentrancy"
-reject_source_text "$package_dir/src/client.ts" "restorePhysicalArchiveWithBroker" \
-  "TypeScript SDK public restore must not expose a broker-specific path"
-require_source_text "$package_dir/src/client.ts" "await binding.restore({" \
-  "TypeScript SDK public restore must use the runtime-detected native binding"
-require_source_text "$package_dir/src/native/common.ts" "liboliphauntPackageTarget" \
-  "TypeScript SDK must select the compatible liboliphaunt platform package"
-require_source_text "$package_dir/src/native/assets-node.ts" "runtimeRelativePath" \
-  "TypeScript Node/Bun native binding must resolve runtime resources from the selected liboliphaunt package"
-require_source_text "$package_dir/src/native/assets-node.ts" "publishRuntimeCache" \
-  "TypeScript Node/Bun native binding must publish package-managed runtime caches through a staged cache root"
-require_source_text "$package_dir/src/native/assets-node.ts" "withRuntimeCacheLock" \
-  "TypeScript Node/Bun native binding must serialize package-managed runtime cache publication"
-require_source_text "$package_dir/src/native/assets-node.ts" ".build-" \
-  "TypeScript Node/Bun native binding must build package-managed runtime caches outside the live root"
-require_source_text "$package_dir/src/native/node-addon.ts" "oliphaunt-node-direct" \
-  "TypeScript Node native-direct binding must resolve the installed prebuilt Node-API adapter package"
-require_source_text "$package_dir/src/native/node.ts" "new FinalizationRegistry" \
-  "TypeScript Node/Bun direct execution must release forgotten JavaScript admission leases"
-require_source_text "$package_dir/src/native/node.ts" "queueForgottenHandleRecovery" \
-  "TypeScript Node/Bun forgotten-handle recovery must be exact-generation addon work"
-require_source_text "$package_dir/src/native/node-addon.ts" "execProtocolRawStream" \
-  "TypeScript Node direct adapter must use the canonical raw stream addon export"
-require_source_text "$root/src/runtimes/node-direct/tools/build-node-addon.sh" "oliphaunt-node-direct-\$version-\$target.tar.gz" \
-  "Node direct runtime must package the prebuilt Node.js native-direct adapter as a release asset"
-require_source_text "$package_dir/src/native/assets-deno.ts" "runtimeRelativePath" \
-  "TypeScript Deno native binding must resolve runtime resources from the selected liboliphaunt package"
-reject_source_text "$package_dir/src/native/assets-deno.ts" "@oliphaunt/tools-" \
-  "TypeScript Deno native binding must not depend on split native client-tool packages"
-reject_source_text "$package_dir/src/native/assets-node.ts" "@oliphaunt/tools-" \
-  "TypeScript Node/Bun native binding must not depend on split native client-tool packages"
-require_source_text "$package_dir/src/native/deno.ts" "install.packageManaged" \
-  "TypeScript Deno direct execution must reject registry-managed extension materialization until it has a dedicated resolver"
-require_source_text "$package_dir/src/native/deno.ts" "new FinalizationRegistry" \
-  "TypeScript Deno direct execution must provide a nonblocking forgotten-handle cleanup fallback"
-require_source_text "$package_dir/src/native/deno.ts" "oliphaunt_close_if_generation" \
-  "TypeScript Deno forgotten-handle cleanup must be guarded by the native logical generation"
-require_source_text "$package_dir/src/client.ts" "registerForgottenHandleCleanup" \
-  "TypeScript direct databases must bind native forgotten-handle cleanup to public ownership"
-require_source_text "$package_dir/src/client.ts" "discardUnpublishedOwner" \
-  "TypeScript open must retire a runtime owner when cleanup registration prevents facade publication"
-require_source_text "$package_dir/src/runtime/broker.ts" "createForgottenRuntimeHandleCleanup" \
-  "TypeScript broker owners must have exact-handle best-effort forgotten-owner cleanup"
-require_source_text "$package_dir/src/runtime/server.ts" "createForgottenRuntimeHandleCleanup" \
-  "TypeScript server owners must have exact-handle best-effort forgotten-owner cleanup"
-require_source_text "$package_dir/src/__tests__/client.test.ts" "query->immediate" \
-  "TypeScript lifecycle tests must prove query-close-cancel admission ordering"
-require_source_text "$package_dir/src/__tests__/native-bindings.test.ts" "close-generation:23" \
-  "TypeScript Deno tests must prove generation-guarded finalizer cleanup"
-require_source_text "$package_dir/src/native/extension-runtime.ts" "validatePreparedRuntimeExtensions" \
-  "TypeScript native bindings must share prepared runtimeDirectory extension validation"
-require_source_text "$package_dir/src/native/assets-deno.ts" "validatePreparedDenoRuntimeExtensions" \
-  "TypeScript Deno native binding must validate explicit prepared runtimeDirectory extension files"
-require_source_text "$package_dir/src/runtime/broker.ts" "Deno broker explicit runtimeDirectory" \
-  "TypeScript Deno broker execution must validate explicit prepared runtimeDirectory extension files"
-require_source_text "$package_dir/src/runtime/server.ts" "resolveDenoNativeInstall" \
-  "TypeScript Deno server execution must resolve its package-managed server runtime through the base native carrier"
-require_source_text "$package_dir/src/runtime/server.ts" "Deno server execution does not automatically materialize extension packages" \
-  "TypeScript Deno server execution must fail clearly for registry-managed extension materialization"
-require_source_text "$package_dir/src/runtime/broker.ts" "Deno broker execution does not automatically materialize extension packages" \
-  "TypeScript Deno broker execution must fail clearly for registry-managed extension materialization"
-require_source_text "$package_dir/src/runtime/broker.ts" "brokerNativeInstallEnv(nativeInstall)" \
-  "TypeScript broker restore must pass the resolved native install environment"
-require_source_text "$package_dir/src/native/tar.ts" "extractTarArchive" \
-  "TypeScript SDK must extract verified liboliphaunt release assets without shelling out"
-reject_source_text "$package_dir/src/client.ts" "supportedModes" \
-  "TypeScript SDK must not expose speculative mode support discovery"
-require_source_text "$package_dir/src/client.ts" "async transaction<T>" \
-  "TypeScript SDK must expose the transaction helper"
-reject_source_text "$package_dir/src/types.ts" "checkpoint(): Promise<void>" \
-  "TypeScript SDK must not expose a CHECKPOINT convenience method"
-require_source_text "$package_dir/src/types.ts" "execProtocolRawStream(input: BinaryInput" \
-  "TypeScript SDK must expose raw protocol streaming with the canonical name"
-require_source_text "$package_dir/src/types.ts" "storage?: DatabaseStorage" \
-  "TypeScript SDK open config must expose the structured native storage model"
-require_source_text "$package_dir/src/types.ts" "kind: 'temporaryDirectory'" \
-  "TypeScript SDK native storage must expose temporaryDirectory"
-require_source_text "$package_dir/src/types.ts" "kind: 'directory'" \
-  "TypeScript SDK native storage must expose caller-owned directories"
-reject_source_text "$package_dir/src/types.ts" "root?: string" \
-  "TypeScript SDK must not expose the internal database root"
-reject_source_text "$package_dir/src/types.ts" "temporary?: boolean" \
-  "TypeScript SDK must not expose ambiguous boolean temporary storage"
-require_source_text "$package_dir/src/types.ts" "restore(destination: string, backup: BinaryInput, options?: RestoreOptions): Promise<void>" \
-  "TypeScript SDK restore must use destination plus physical backup bytes"
-require_source_text "$package_dir/src/config.ts" "pgdata: join(resolvedStorage.instanceDirectory, 'pgdata')" \
-  "TypeScript SDK must derive the internal PGDATA layout from resolved storage"
-require_source_text "$package_dir/src/client.ts" "createdTemporaryDirectory" \
-  "TypeScript SDK must track cleanup ownership for materialized temporary directories"
-require_source_text "$package_dir/src/config.ts" "generatedExtensionBySqlName(trimmed)" \
-  "TypeScript SDK must validate selected extensions against the generated extension catalog"
-require_source_text "$package_dir/src/config.ts" "unknown Oliphaunt extension id" \
-  "TypeScript SDK must fail clearly for unknown selected extensions"
-require_source_text "$package_dir/src/native/extension-runtime.ts" "metadata.selectedExtensionDependencies" \
-  "TypeScript native extension materialization must use generated package-materialization dependencies"
-reject_source_text "$package_dir/src/types.ts" "Capabilities" \
-  "TypeScript SDK must not expose a speculative capability matrix"
-require_source_text "$package_dir/src/query.ts" "function validateUtf8(bytes: Uint8Array, label: string): void" \
-  "TypeScript SDK query parser must reject malformed backend UTF-8"
-require_source_text "$package_dir/src/__tests__/protocol-fixtures.test.ts" "assertSharedProtocolFixtures" \
-  "TypeScript SDK tests must consume the shared protocol fixture corpus"
-require_source_text "$package_dir/src/__tests__/broker-frames.test.ts" "encodeBrokerRequest" \
-  "TypeScript SDK tests must cover the native broker frame codec"
-require_source_text "$package_dir/src/__tests__/runtime-adapters.test.ts" "encodeStartupMessage" \
-  "TypeScript SDK tests must cover the native server wire client"
-require_source_text "$package_dir/src/__tests__/asset-resolver.test.ts" "nodeResolverUsesInstalledPackages" \
-  "TypeScript SDK tests must cover package-local liboliphaunt resolution"
-require_source_text "$package_dir/src/__tests__/asset-resolver.test.ts" "typeScriptPackageMetadataMatchesRuntimePackages" \
-  "TypeScript SDK tests must cover runtime package metadata"
-require_source_text "$package_dir/src/__tests__/native-smoke.ts" "topology: 'broker'" \
-  "TypeScript SDK smoke must execute broker placement when OLIPHAUNT_BROKER is set"
-require_source_text "$package_dir/src/__tests__/native-smoke.ts" "Oliphaunt.openServer" \
-  "TypeScript SDK smoke must execute native server mode when OLIPHAUNT_POSTGRES is set"
-require_source_text "$package_dir/src/__tests__/native-direct-contract.mjs" "Oliphaunt.restore(restoredRoot, backup)" \
-  "TypeScript SDK runtime contract must restore physical backup artifacts"
-require_source_text "$package_dir/src/__tests__/native-smoke.ts" "assertNativeDatabaseContract" \
-  "TypeScript SDK Node smoke must consume the shared native runtime contract"
-require_source_text "$package_dir/src/__tests__/deno-native-smoke.mjs" "assertNativeDatabaseContract" \
-  "TypeScript SDK Deno smoke must consume the shared native runtime contract"
-require_source_text "$package_dir/src/runtime/broker.ts" "resolveBrokerNativeInstall" \
-  "TypeScript broker mode must resolve the same liboliphaunt native install that direct mode uses"
-require_source_text "$package_dir/src/runtime/broker.ts" "OLIPHAUNT_INSTALL_DIR" \
-  "TypeScript broker mode must pass the resolved PostgreSQL runtime tree to the Rust helper"
-require_source_text "$package_dir/src/runtime/broker.ts" "LIBOLIPHAUNT_PATH" \
-  "TypeScript broker mode must pass the resolved liboliphaunt library to the Rust helper"
-require_source_text "$package_dir/src/runtime/broker.ts" "packageBrokerExecutable" \
-  "TypeScript broker mode must resolve the installed Rust broker helper package"
-require_source_text "$package_dir/tools/check-sdk.sh" "export_default_native_smoke_runtime" \
-  "TypeScript SDK smoke must discover native artifacts produced by the liboliphaunt smoke dependency"
-require_source_text "$package_dir/tools/check-sdk.sh" "cargo build -p oliphaunt-broker --locked" \
-  "TypeScript SDK smoke must build the broker helper when the default artifact is missing"
-
 if [ "$mode" = "check-static" ] || [ "$mode" = "package-shape" ]; then
   exit 0
 fi

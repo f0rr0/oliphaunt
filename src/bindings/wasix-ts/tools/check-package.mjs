@@ -53,30 +53,6 @@ try {
       throw new Error(`WASIX TypeScript package dry-run omitted ${path}`);
     }
   }
-  for (const removed of [
-    'lib/node-lock-identity.js',
-    'lib/node-lock-identity.d.ts',
-    'lib/blocking.js',
-    'lib/blocking.d.ts',
-    'lib/blocking.node.js',
-    'lib/blocking.node.d.ts',
-    'lib/blocking.bun.js',
-    'lib/blocking.bun.d.ts',
-    'lib/blocking.deno.js',
-    'lib/blocking.deno.d.ts',
-    'lib/blocking-client.js',
-    'lib/blocking-client.d.ts',
-    'lib/blocking-node-client.js',
-    'lib/blocking-node-client.d.ts',
-    'lib/node-web-worker.js',
-    'lib/node-web-worker.d.ts',
-    'lib/node-web-worker-bootstrap.js',
-    'lib/node-web-worker-bootstrap.d.ts',
-  ]) {
-    if (paths.has(removed)) {
-      throw new Error(`WASIX TypeScript package dry-run retained deleted output ${removed}`);
-    }
-  }
   const unexpectedPaths = [...paths].filter((path) => !expectedPaths.has(path)).sort();
   if (unexpectedPaths.length > 0) {
     throw new Error(
@@ -237,14 +213,6 @@ try {
     throw new Error('WASIX TypeScript package omitted patched-host provenance');
   }
 
-  const nodeHostSource = await readFile(resolve(packageDir, 'lib/node-host.js'), 'utf8');
-  if (
-    nodeHostSource.includes('node:worker_threads') ||
-    nodeHostSource.includes('./node-web-worker.js') ||
-    nodeHostSource.includes('workerUrl')
-  ) {
-    throw new Error('WASIX TypeScript direct Node host retained inner-Worker orchestration');
-  }
   const workerDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'Worker');
   const nodeHost = await import('../lib/node-host.js');
   await nodeHost.init();

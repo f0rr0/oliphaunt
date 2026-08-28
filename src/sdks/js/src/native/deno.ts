@@ -21,12 +21,13 @@ import {
   readResponsePointer,
   responseBuffer,
 } from './ffi-layout.js';
-import type {
-  NativeBinding,
-  NativeBindingOptions,
-  NativeHandle,
-  NativeOpenConfig,
-  NativeRestoreOptions,
+import {
+  NativeDetachOutcomeUnknownError,
+  type NativeBinding,
+  type NativeBindingOptions,
+  type NativeHandle,
+  type NativeOpenConfig,
+  type NativeRestoreOptions,
 } from './types.js';
 import { resolveExactNativeRuntimeProfile } from './runtime-profile.js';
 
@@ -41,10 +42,9 @@ type DenoSymbols = {
   oliphaunt_restore_with_error: (...args: unknown[]) => Promise<number>;
   oliphaunt_cancel: (...args: unknown[]) => unknown;
   oliphaunt_detach_with_error: (...args: unknown[]) => Promise<number>;
-  oliphaunt_logical_generation: (...args: unknown[]) => Promise<bigint>;
+  oliphaunt_logical_generation: (...args: unknown[]) => bigint;
   oliphaunt_close_if_generation: (...args: unknown[]) => Promise<number>;
   oliphaunt_copy_last_error: (...args: unknown[]) => unknown;
-  oliphaunt_last_error: (...args: unknown[]) => unknown;
   oliphaunt_free_response: (...args: unknown[]) => unknown;
 };
 
@@ -52,6 +52,9 @@ type DenoForgottenHandle = {
   readonly generation: bigint;
   readonly releaseOwnership: () => void;
 };
+
+let denoDirectAdmissionClosed = false;
+let denoDirectAdmissionFailure: unknown;
 
 export async function createDenoNativeBinding(
   options: NativeBindingOptions = {},
@@ -100,7 +103,6 @@ export async function createDenoNativeBinding(
     oliphaunt_logical_generation: {
       parameters: ['pointer'],
       result: 'u64',
-      nonblocking: true,
     },
     oliphaunt_close_if_generation: {
       parameters: ['u64'],
@@ -111,34 +113,37 @@ export async function createDenoNativeBinding(
       parameters: ['pointer', 'buffer', 'usize'],
       result: 'usize',
     },
-    // Retained as an ABI compatibility check. Error strings crossing the FFI
-    // boundary are copied into Deno-owned storage above.
-    oliphaunt_last_error: { parameters: ['pointer'], result: 'pointer' },
     oliphaunt_free_response: { parameters: ['buffer'], result: 'void' },
   });
   const symbols = dylib.symbols as DenoSymbols;
   const generations = new WeakMap<object, bigint>();
+  const uncertainDetaches = new WeakMap<object, NativeDetachOutcomeUnknownError>();
   const forgottenHandles = new FinalizationRegistry<DenoForgottenHandle>(
     ({ generation, releaseOwnership }) => {
       // A finalizer may only enqueue nonblocking FFI. Generation-guarded close
       // atomically becomes a no-op when this cleanup record no longer owns the
       // resident logical lease, so it can never dereference a stale pointer or
       // terminate a newer Deno handle.
-      void closeDenoGeneration(symbols, generation)
-        .catch(() => undefined)
-        .then(() => {
+      void closeDenoGeneration(symbols, generation).then(
+        () => {
           try {
             releaseOwnership();
           } catch {
             // Finalization is unobservable best effort. Never turn an owner
             // bookkeeping failure into an unhandled rejection.
           }
-        });
+        },
+        () => {
+          // The native process may still own this generation. Keep direct
+          // admission closed rather than publishing an unsafe second owner.
+        },
+      );
     },
   );
 
   return {
     async open(config: NativeOpenConfig): Promise<NativeHandle> {
+      assertDenoDirectAdmissionOpen();
       const explicitRuntimeDirectory =
         config.runtimeDirectory !== undefined || install.packageManaged === false;
       let openConfig = {
@@ -167,7 +172,7 @@ export async function createDenoNativeBinding(
           runtimeDirectory: validated.runtimeDirectory,
         };
         // Keep canonical lib/postgresql subprocess-owned during initdb. The
-        // separate lib/modules $libdir is carried in the ABI 7 config.
+        // separate lib/modules $libdir is carried in the native config.
         moduleDirectory = validated.moduleDirectory;
         applyNativeRuntimeLibraryEnvironment(validated.runtimeDirectory);
       }
@@ -196,18 +201,33 @@ export async function createDenoNativeBinding(
       );
       const out = new Uint8Array(8);
       const captured = errorCaptureBuffer();
-      const rc = await symbols.oliphaunt_init_with_error(packed.config, out, captured);
-      keepAlive(packed.keepAlive);
+      let rc: number;
+      try {
+        rc = await symbols.oliphaunt_init_with_error(packed.config, out, captured);
+      } catch (failure) {
+        closeDenoDirectAdmission(failure);
+        throw failure;
+      } finally {
+        keepAlive(packed.keepAlive);
+      }
       if (rc !== 0) {
         throw errorMessage('native liboliphaunt init failed', rc, readErrorCapture(captured));
       }
       const handle = pointerFromAddress(deno, readPointer(out));
       if (handle === null) {
-        throw new Error('native liboliphaunt init returned a null handle');
+        const failure = new Error('native liboliphaunt init returned a null handle');
+        closeDenoDirectAdmission(failure);
+        throw failure;
       }
-      const generation = await symbols.oliphaunt_logical_generation(handle);
+      const generation = symbols.oliphaunt_logical_generation(handle);
       if (generation === 0n) {
-        throw new Error('native liboliphaunt init returned an invalid logical generation');
+        // Zero means the native registry has already rejected this pointer as
+        // stale or non-current. It must not be dereferenced for cleanup.
+        const failure = new Error(
+          'native liboliphaunt init returned an invalid logical generation',
+        );
+        closeDenoDirectAdmission(failure);
+        throw failure;
       }
       generations.set(handle, generation);
       return handle;
@@ -343,8 +363,26 @@ export async function createDenoNativeBinding(
       }
     },
     async detach(handle: NativeHandle): Promise<void> {
+      if (typeof handle === 'object' && handle !== null) {
+        const priorFailure = uncertainDetaches.get(handle);
+        if (priorFailure !== undefined) throw priorFailure;
+      }
       const captured = errorCaptureBuffer();
-      const rc = await symbols.oliphaunt_detach_with_error(handle, captured);
+      let rc: number;
+      try {
+        rc = await symbols.oliphaunt_detach_with_error(handle, captured);
+      } catch (failure) {
+        const terminalFailure = new NativeDetachOutcomeUnknownError(
+          'Deno native detach delivery failed after its outcome became unknown; restart the process before opening another direct database',
+          { cause: failure },
+        );
+        closeDenoDirectAdmission(terminalFailure);
+        if (typeof handle === 'object' && handle !== null) {
+          generations.delete(handle);
+          uncertainDetaches.set(handle, terminalFailure);
+        }
+        throw terminalFailure;
+      }
       if (rc !== 0) {
         throw errorMessage('native liboliphaunt detach failed', rc, readErrorCapture(captured));
       }
@@ -377,6 +415,20 @@ async function closeDenoGeneration(symbols: DenoSymbols, generation: bigint): Pr
   if (rc !== 0 && rc !== 1) {
     throw new Error(`native liboliphaunt generation cleanup failed with status ${rc}`);
   }
+}
+
+function assertDenoDirectAdmissionOpen(): void {
+  if (!denoDirectAdmissionClosed) return;
+  throw new Error(
+    'Deno native direct admission is closed because a prior native lifecycle outcome left ownership unknown; restart the process before opening another direct database',
+    { cause: denoDirectAdmissionFailure },
+  );
+}
+
+function closeDenoDirectAdmission(failure: unknown): void {
+  if (denoDirectAdmissionClosed) return;
+  denoDirectAdmissionClosed = true;
+  denoDirectAdmissionFailure = failure;
 }
 
 async function prepareDenoPgdata(

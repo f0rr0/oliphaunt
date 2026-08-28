@@ -14,7 +14,6 @@ static pthread_mutex_t global_last_error_mutex = PTHREAD_MUTEX_INITIALIZER;
 #define OLIPHAUNT_THREAD_LOCAL _Thread_local
 #endif
 
-static OLIPHAUNT_THREAD_LOCAL char last_error_snapshot[OLIPHAUNT_ERROR_CAPACITY];
 static OLIPHAUNT_THREAD_LOCAL char completed_operation_error[OLIPHAUNT_ERROR_CAPACITY];
 static OLIPHAUNT_THREAD_LOCAL bool completed_operation_error_valid;
 static OLIPHAUNT_THREAD_LOCAL OliphauntErrorScope *active_error_scope;
@@ -214,9 +213,4 @@ void oliphaunt_error_capture_current(
         capture->message[length] = '\0';
     }
     capture->length = (uint32_t)length;
-}
-
-const char *oliphaunt_last_error(OliphauntHandle *handle) {
-    (void)oliphaunt_copy_last_error(handle, last_error_snapshot, sizeof(last_error_snapshot));
-    return last_error_snapshot;
 }

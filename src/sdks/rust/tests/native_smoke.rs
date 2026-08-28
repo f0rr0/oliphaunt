@@ -7,7 +7,7 @@ use std::task::{Context, Poll, Wake, Waker};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oliphaunt::{
-    AsyncOliphauntServer, DatabaseStorage, ErrorKind, Oliphaunt as DirectOliphaunt, QueryParam,
+    AsyncOliphauntServer, DatabaseStorage, ErrorKind, IntoParameter, Oliphaunt as DirectOliphaunt,
     ServerListen,
 };
 
@@ -429,7 +429,7 @@ fn seed_direct_database(root: &Path, backup: &Path) -> Result<(), Box<dyn std::e
     );
     database.execute_with_params(
         "INSERT INTO items VALUES ($1, $2)",
-        [QueryParam::from(1_i32), QueryParam::from("one")],
+        [1_i32.into_parameter(), "one".into_parameter()],
     )?;
     database.transaction(|transaction| {
         transaction.execute("INSERT INTO items VALUES (2, 'two')")?;

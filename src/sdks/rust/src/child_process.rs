@@ -5,7 +5,6 @@ use std::time::{Duration, Instant};
 pub(crate) trait ChildProcessReaper {
     fn try_exit_status(&mut self) -> std::io::Result<Option<bool>>;
     fn kill_process(&mut self) -> std::io::Result<()>;
-    fn wait_reaped(&mut self) -> std::io::Result<bool>;
 }
 
 impl ChildProcessReaper for Child {
@@ -17,10 +16,6 @@ impl ChildProcessReaper for Child {
     fn kill_process(&mut self) -> std::io::Result<()> {
         self.kill()
     }
-
-    fn wait_reaped(&mut self) -> std::io::Result<bool> {
-        self.wait().map(|status| status.success())
-    }
 }
 
 pub(crate) struct ChildReapOutcome {
@@ -31,11 +26,12 @@ pub(crate) struct ChildReapOutcome {
 
 pub(crate) fn reap_child_process(
     child: &mut impl ChildProcessReaper,
-    timeout: Duration,
+    graceful_timeout: Duration,
+    forced_timeout: Duration,
     label: &str,
 ) -> ChildReapOutcome {
     let mut failures = Vec::new();
-    match wait_for_child_exit(child, timeout) {
+    match wait_for_child_exit(child, graceful_timeout) {
         Ok(Some(exit_success)) => {
             return ChildReapOutcome {
                 reaped: true,
@@ -45,7 +41,7 @@ pub(crate) fn reap_child_process(
         }
         Ok(None) => failures.push(format!(
             "{label} did not stop within {}ms",
-            timeout.as_millis()
+            graceful_timeout.as_millis()
         )),
         Err(error) => failures.push(format!("wait for {label}: {error}")),
     }
@@ -55,14 +51,25 @@ pub(crate) fn reap_child_process(
             "kill {label} after failed graceful shutdown: {error}"
         ));
     }
-    match child.wait_reaped() {
-        Ok(exit_success) => ChildReapOutcome {
+    match wait_for_child_exit(child, forced_timeout) {
+        Ok(Some(exit_success)) => ChildReapOutcome {
             reaped: true,
             exit_success: Some(exit_success),
             failures,
         },
+        Ok(None) => {
+            failures.push(format!(
+                "{label} reap remained unconfirmed {}ms after kill",
+                forced_timeout.as_millis()
+            ));
+            ChildReapOutcome {
+                reaped: false,
+                exit_success: None,
+                failures,
+            }
+        }
         Err(error) => {
-            failures.push(format!("reap {label} after kill: {error}"));
+            failures.push(format!("poll {label} after kill: {error}"));
             ChildReapOutcome {
                 reaped: false,
                 exit_success: None,
@@ -95,18 +102,17 @@ mod tests {
     #[derive(Default)]
     struct FailingChildReaper {
         exited: bool,
-        try_error: bool,
+        try_errors: usize,
         kill_error: bool,
-        wait_error: bool,
         try_calls: usize,
         kill_calls: usize,
-        wait_calls: usize,
     }
 
     impl ChildProcessReaper for FailingChildReaper {
         fn try_exit_status(&mut self) -> std::io::Result<Option<bool>> {
             self.try_calls += 1;
-            if self.try_error {
+            if self.try_errors > 0 {
+                self.try_errors -= 1;
                 Err(std::io::Error::other("fixture child poll failed"))
             } else {
                 Ok(self.exited.then_some(true))
@@ -118,16 +124,8 @@ mod tests {
             if self.kill_error {
                 Err(std::io::Error::other("fixture child kill failed"))
             } else {
+                self.exited = true;
                 Ok(())
-            }
-        }
-
-        fn wait_reaped(&mut self) -> std::io::Result<bool> {
-            self.wait_calls += 1;
-            if self.wait_error {
-                Err(std::io::Error::other("fixture child reap failed"))
-            } else {
-                Ok(false)
             }
         }
     }
@@ -135,63 +133,69 @@ mod tests {
     #[test]
     fn retains_ownership_when_kill_or_reap_is_unconfirmed() {
         let mut kill_and_reap_failure = FailingChildReaper {
-            try_error: true,
+            try_errors: 2,
             kill_error: true,
-            wait_error: true,
             ..FailingChildReaper::default()
         };
         let outcome = reap_child_process(
             &mut kill_and_reap_failure,
             Duration::ZERO,
+            Duration::ZERO,
             "fixture process",
         );
         assert!(!outcome.reaped);
-        assert_eq!(kill_and_reap_failure.try_calls, 1);
+        assert_eq!(kill_and_reap_failure.try_calls, 2);
         assert_eq!(kill_and_reap_failure.kill_calls, 1);
-        assert_eq!(kill_and_reap_failure.wait_calls, 1);
         assert_eq!(outcome.failures.len(), 3);
         assert!(outcome.failures[0].contains("fixture child poll failed"));
         assert!(outcome.failures[1].contains("fixture child kill failed"));
-        assert!(outcome.failures[2].contains("fixture child reap failed"));
+        assert!(outcome.failures[2].contains("fixture child poll failed"));
 
         let mut reap_failure = FailingChildReaper {
-            wait_error: true,
+            kill_error: true,
             ..FailingChildReaper::default()
         };
-        let outcome = reap_child_process(&mut reap_failure, Duration::ZERO, "fixture process");
+        let outcome = reap_child_process(
+            &mut reap_failure,
+            Duration::ZERO,
+            Duration::ZERO,
+            "fixture process",
+        );
         assert!(!outcome.reaped);
         assert_eq!(reap_failure.kill_calls, 1);
-        assert_eq!(reap_failure.wait_calls, 1);
-        assert_eq!(outcome.failures.len(), 2);
+        assert_eq!(outcome.failures.len(), 3);
         assert!(outcome.failures[0].contains("did not stop"));
-        assert!(outcome.failures[1].contains("fixture child reap failed"));
+        assert!(outcome.failures[1].contains("fixture child kill failed"));
+        assert!(outcome.failures[2].contains("reap remained unconfirmed"));
     }
 
     #[test]
     fn releases_ownership_after_a_forced_reap() {
         let mut child = FailingChildReaper::default();
-        let outcome = reap_child_process(&mut child, Duration::ZERO, "fixture process");
+        let outcome = reap_child_process(
+            &mut child,
+            Duration::ZERO,
+            Duration::ZERO,
+            "fixture process",
+        );
         assert!(outcome.reaped);
         assert_eq!(child.kill_calls, 1);
-        assert_eq!(child.wait_calls, 1);
         assert_eq!(outcome.failures.len(), 1);
         assert!(outcome.failures[0].contains("did not stop"));
 
         let mut exited_between_kill_and_wait = FailingChildReaper {
-            try_error: true,
-            kill_error: true,
+            try_errors: 1,
             ..FailingChildReaper::default()
         };
         let outcome = reap_child_process(
             &mut exited_between_kill_and_wait,
             Duration::ZERO,
+            Duration::ZERO,
             "fixture process",
         );
         assert!(outcome.reaped);
         assert_eq!(exited_between_kill_and_wait.kill_calls, 1);
-        assert_eq!(exited_between_kill_and_wait.wait_calls, 1);
-        assert_eq!(outcome.failures.len(), 2);
+        assert_eq!(outcome.failures.len(), 1);
         assert!(outcome.failures[0].contains("fixture child poll failed"));
-        assert!(outcome.failures[1].contains("fixture child kill failed"));
     }
 }

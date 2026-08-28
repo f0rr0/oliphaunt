@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
@@ -64,6 +65,9 @@ pub enum ServerListen {
         port: Option<u16>,
     },
     /// Listen in a PostgreSQL Unix-domain socket directory.
+    ///
+    /// The resolved directory must be valid UTF-8 because server handles
+    /// publish it through a portable PostgreSQL connection string.
     #[cfg(unix)]
     Unix {
         /// Directory containing `.s.PGSQL.<port>`.
@@ -90,7 +94,8 @@ impl ServerListen {
         Self::Tcp { port: Some(port) }
     }
 
-    /// Listen in a Unix-domain socket directory using PostgreSQL port 5432.
+    /// Listen in a UTF-8 Unix-domain socket directory using PostgreSQL port
+    /// 5432.
     #[cfg(unix)]
     pub fn unix(directory: impl Into<PathBuf>) -> Self {
         Self::Unix {
@@ -99,7 +104,8 @@ impl ServerListen {
         }
     }
 
-    /// Listen in a Unix-domain socket directory using a fixed PostgreSQL port.
+    /// Listen in a UTF-8 Unix-domain socket directory using a fixed PostgreSQL
+    /// port.
     #[cfg(unix)]
     pub fn unix_port(directory: impl Into<PathBuf>, port: u16) -> Self {
         Self::Unix {
@@ -139,6 +145,15 @@ impl OpenConfig {
     pub(crate) fn validate(&self) -> Result<()> {
         for guc in &self.startup_gucs {
             validate_postgres_startup_guc(guc)?;
+            let name = guc.name.trim();
+            if ["config_file", "data_directory"]
+                .iter()
+                .any(|owned| name.eq_ignore_ascii_case(owned))
+            {
+                return Err(Error::InvalidConfig(format!(
+                    "Oliphaunt owns PostgreSQL startup GUC '{name}'; configure the database through Oliphaunt's storage API"
+                )));
+            }
         }
         if let DatabaseStorage::Directory(directory) = &self.storage {
             validate_config_path("database storage directory", directory)?;
@@ -153,6 +168,17 @@ impl OpenConfig {
                 }
             }
             EngineMode::Server => {
+                for guc in &self.startup_gucs {
+                    let name = guc.name.trim();
+                    if ["listen_addresses", "port", "unix_socket_directories"]
+                        .iter()
+                        .any(|owned| name.eq_ignore_ascii_case(owned))
+                    {
+                        return Err(Error::InvalidConfig(format!(
+                            "native server owns PostgreSQL startup GUC '{name}'; configure its storage and listener through OliphauntServerBuilder"
+                        )));
+                    }
+                }
                 match &self.server.listen {
                     ServerListen::Tcp { port: Some(0) } => {
                         return Err(Error::InvalidConfig(
@@ -163,12 +189,19 @@ impl OpenConfig {
                     #[cfg(unix)]
                     ServerListen::Unix { directory, port } => {
                         validate_config_path("native server Unix socket directory", directory)?;
-                        if directory.to_str().is_none() {
-                            return Err(Error::InvalidConfig(
-                                "native server Unix socket directory must be valid UTF-8 so it can be represented in a PostgreSQL connection string"
-                                    .to_owned(),
-                            ));
-                        }
+                        let resolved_directory = if directory.is_absolute() {
+                            directory.clone()
+                        } else {
+                            std::env::current_dir()
+                                .map_err(|error| {
+                                    Error::Engine(format!(
+                                        "resolve current directory for native server Unix socket: {error}"
+                                    ))
+                                })?
+                                .join(directory)
+                        };
+                        server_unix_socket_directory_str(&resolved_directory)?;
+                        validate_server_unix_socket_path(&resolved_directory, *port)?;
                         if *port == 0 {
                             return Err(Error::InvalidConfig(
                                 "native Unix server port must be greater than zero".to_owned(),
@@ -190,11 +223,59 @@ impl OpenConfig {
         resolve_extensions(&self.extensions)
     }
 
-    pub(crate) fn postgres_startup_assignments(&self) -> Vec<String> {
-        self.startup_gucs
+    pub(crate) fn postgres_startup_assignments(&self, extensions: &[Extension]) -> Vec<String> {
+        let required_preloads = crate::extension::required_shared_preload_libraries(extensions);
+        if required_preloads.is_empty() {
+            return self
+                .startup_gucs
+                .iter()
+                .map(PostgresStartupGuc::startup_assignment)
+                .collect();
+        }
+
+        let configured_preloads = self
+            .startup_gucs
             .iter()
+            .rev()
+            .find(|guc| {
+                guc.name
+                    .trim()
+                    .eq_ignore_ascii_case("shared_preload_libraries")
+            })
+            .map(|guc| guc.value.as_str());
+        let mut preloads = Vec::new();
+        let mut seen = BTreeSet::new();
+        if let Some(configured) = configured_preloads {
+            append_unique_csv_values(configured, &mut preloads, &mut seen);
+        }
+        for required in required_preloads {
+            append_unique_csv_values(required, &mut preloads, &mut seen);
+        }
+
+        let mut assignments = self
+            .startup_gucs
+            .iter()
+            .filter(|guc| {
+                !guc.name
+                    .trim()
+                    .eq_ignore_ascii_case("shared_preload_libraries")
+            })
             .map(PostgresStartupGuc::startup_assignment)
-            .collect()
+            .collect::<Vec<_>>();
+        assignments.push(format!("shared_preload_libraries={}", preloads.join(",")));
+        assignments
+    }
+}
+
+fn append_unique_csv_values(value: &str, ordered: &mut Vec<String>, seen: &mut BTreeSet<String>) {
+    for item in value
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+    {
+        if seen.insert(item.to_owned()) {
+            ordered.push(item.to_owned());
+        }
     }
 }
 
@@ -205,6 +286,28 @@ fn validate_config_path(label: &str, path: &Path) -> Result<()> {
     if path_contains_nul(path) {
         return Err(Error::InvalidConfig(format!(
             "{label} must not contain NUL bytes"
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+pub(crate) fn server_unix_socket_directory_str(directory: &Path) -> Result<&str> {
+    directory.to_str().ok_or_else(|| {
+        Error::InvalidConfig(
+            "native server Unix socket directory must be valid UTF-8 so the published PostgreSQL connection string preserves the exact path"
+                .to_owned(),
+        )
+    })
+}
+
+#[cfg(unix)]
+fn validate_server_unix_socket_path(directory: &Path, port: u16) -> Result<()> {
+    let socket = directory.join(format!(".s.PGSQL.{port}"));
+    if socket.as_os_str().len() >= 100 {
+        return Err(Error::InvalidConfig(format!(
+            "native server Unix socket path is too long: {}",
+            socket.display()
         )));
     }
     Ok(())
@@ -262,7 +365,7 @@ mod tests {
         ];
         config.validate().unwrap();
         assert_eq!(
-            config.postgres_startup_assignments(),
+            config.postgres_startup_assignments(&[]),
             ["_name=", "ext.name$1=on"]
         );
 
@@ -275,6 +378,32 @@ mod tests {
         }
         config.startup_gucs = vec![PostgresStartupGuc::new("good", "bad\0value")];
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn native_server_rejects_caller_owned_topology_gucs() {
+        for name in ["LISTEN_ADDRESSES", "port", "unix_socket_directories"] {
+            let mut config = OpenConfig::direct("target/test-roots/native-server-owned-guc");
+            config.mode = EngineMode::Server;
+            config.startup_gucs = vec![PostgresStartupGuc::new(name, "override")];
+
+            let error = config.validate().expect_err("server topology is SDK-owned");
+            assert!(error.to_string().contains("native server owns"), "{error}");
+        }
+    }
+
+    #[test]
+    fn every_native_topology_rejects_storage_redirection_gucs() {
+        for mode in [EngineMode::Direct, EngineMode::Broker, EngineMode::Server] {
+            for name in ["CONFIG_FILE", "data_directory"] {
+                let mut config = OpenConfig::direct("target/test-roots/native-owned-guc");
+                config.mode = mode;
+                config.startup_gucs = vec![PostgresStartupGuc::new(name, "/tmp/other")];
+
+                let error = config.validate().expect_err("storage is SDK-owned");
+                assert!(error.to_string().contains("Oliphaunt owns"), "{error}");
+            }
+        }
     }
 
     #[test]
@@ -296,5 +425,57 @@ mod tests {
         }
         config.server.listen = ServerListen::tcp_port(0);
         assert!(config.validate().is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn server_listen_rejects_non_utf8_unix_socket_directory_without_mutation() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let mut leaf = format!(
+            "oliphaunt-native-socket-{}-{}-",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock should be after epoch")
+                .as_nanos()
+        )
+        .into_bytes();
+        leaf.push(0xff);
+        let directory = std::env::temp_dir().join(OsString::from_vec(leaf));
+        assert!(!directory.exists());
+
+        let mut config = OpenConfig::direct("target/test-roots/native-server-non-utf8-uri");
+        config.mode = EngineMode::Server;
+        config.server.listen = ServerListen::unix_port(directory.clone(), 15432);
+        let error = config
+            .validate()
+            .expect_err("a String connection URI cannot preserve a non-UTF-8 socket path");
+
+        assert!(error.to_string().contains("must be valid UTF-8"));
+        assert!(!directory.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn server_listen_rejects_too_long_unix_socket_path_without_mutation() {
+        let directory = std::env::temp_dir().join(format!(
+            "oliphaunt-native-socket-{}-{}",
+            std::process::id(),
+            "x".repeat(120)
+        ));
+        assert!(!directory.exists());
+
+        let mut config = OpenConfig::direct("target/test-roots/native-server-long-uri");
+        config.mode = EngineMode::Server;
+        config.server.listen = ServerListen::unix_port(directory.clone(), 15432);
+        let error = config
+            .validate()
+            .expect_err("Unix socket sockaddr length must be validated before root preparation");
+
+        assert!(error.to_string().contains("socket path is too long"));
+        assert!(!directory.exists());
     }
 }

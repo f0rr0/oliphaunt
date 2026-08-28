@@ -30,11 +30,11 @@ use crate::oliphaunt::lifecycle::{
 };
 use crate::oliphaunt::postgres_mod::{ProtocolPumpOutcome, ProtocolStream};
 use crate::oliphaunt::query::{
-    CommandResult, ExecResult, IntoParameter, Parameter, QueryParam, QueryResult, ReadyStatus,
+    CommandResult, ExecResult, IntoParameter, Parameter, QueryResult, ReadyStatus,
     StatementDescription, ValueFormat, describe_statement, extended_statement, parse_exec_response,
     parse_extended_command_response, parse_extended_query_response, parse_simple_command_response,
-    parse_statement_description, reject_copy_statements, response_ready_status, simple_query,
-    validate_managed_transaction_response,
+    parse_statement_description, reject_copy_statements, reject_transaction_chain,
+    response_ready_status, simple_query, validate_managed_transaction_response,
 };
 use crate::oliphaunt::storage::PgDataStorage;
 #[cfg(all(feature = "extensions", test))]
@@ -214,6 +214,7 @@ impl<'db, 'q> Sql<'db, 'q> {
 
     fn execute_inner(&mut self) -> Result<CommandResult> {
         self.ensure_transaction_open()?;
+        self.reject_transaction_chain()?;
         let request = extended_statement(&self.sql, &self.params, self.result_format)?;
         let response = self
             .client
@@ -234,6 +235,7 @@ impl<'db, 'q> Sql<'db, 'q> {
 
     fn query_inner(&mut self) -> Result<QueryResult> {
         self.ensure_transaction_open()?;
+        self.reject_transaction_chain()?;
         let request = extended_statement(&self.sql, &self.params, self.result_format)?;
         let response = self
             .client
@@ -262,6 +264,13 @@ impl<'db, 'q> Sql<'db, 'q> {
     fn ensure_transaction_open(&self) -> Result<()> {
         if let Some(state) = &self.transaction_state {
             ensure!(state.is_active(), "transaction is no longer active");
+        }
+        Ok(())
+    }
+
+    fn reject_transaction_chain(&self) -> Result<()> {
+        if matches!(self.owner, StructuredOwner::Transaction) {
+            reject_transaction_chain(&self.sql)?;
         }
         Ok(())
     }
@@ -310,6 +319,12 @@ enum ProtocolCallbackFailure {
 enum ProtocolStreamFailure {
     Database(anyhow::Error),
     Callback(crate::Error),
+    CallbackPanicked(ProtocolCallbackPanic),
+}
+
+enum CapturedRawStreamError<E> {
+    Database(crate::Error),
+    Callback(E),
     CallbackPanicked(ProtocolCallbackPanic),
 }
 
@@ -714,6 +729,9 @@ impl Oliphaunt {
 
     fn exec_inner(&mut self, sql: &str, owner: StructuredOwner) -> Result<ExecResult> {
         reject_copy_statements(sql)?;
+        if matches!(owner, StructuredOwner::Transaction) {
+            reject_transaction_chain(sql)?;
+        }
         let request = simple_query(sql)?;
         let response = self.run_structured_request(&request, owner, "exec()")?;
         let result = parse_exec_response(&response)?;
@@ -825,45 +843,22 @@ impl Oliphaunt {
     pub fn exec_protocol_raw_stream<F, O>(
         &mut self,
         request: impl AsRef<[u8]>,
-        mut on_chunk: F,
+        on_chunk: F,
     ) -> crate::RawStreamResult<(), O::Error>
     where
         F: FnMut(&[u8]) -> O + Send + 'static,
         O: crate::RawStreamCallbackOutput,
         O::Error: Send + 'static,
     {
-        let callback_error = Arc::new(Mutex::new(None));
-        let callback_error_for_owner = Arc::clone(&callback_error);
-        let result =
-            self.exec_protocol_stream_inner(request.as_ref(), move |chunk| {
-                match on_chunk(chunk).into_raw_stream_callback_result() {
-                    Ok(()) => Ok(()),
-                    Err(error) => {
-                        *callback_error_for_owner
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(error);
-                        Err(crate::Error::message(
-                            "raw protocol stream callback stopped delivery",
-                        ))
-                    }
-                }
-            });
-        match result {
+        match self.exec_protocol_raw_stream_captured(request.as_ref(), on_chunk) {
             Ok(()) => Ok(()),
-            Err(ProtocolStreamFailure::Database(error)) => Err(crate::RawStreamError::Database(
-                crate::Error::from_anyhow(error),
-            )),
-            Err(ProtocolStreamFailure::Callback(error)) => {
-                let callback_error = callback_error
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .take();
-                match callback_error {
-                    Some(error) => Err(crate::RawStreamError::Callback(error)),
-                    None => Err(crate::RawStreamError::Database(error)),
-                }
+            Err(CapturedRawStreamError::Database(error)) => {
+                Err(crate::RawStreamError::Database(error))
             }
-            Err(ProtocolStreamFailure::CallbackPanicked(panic)) => resume_unwind(panic),
+            Err(CapturedRawStreamError::Callback(error)) => {
+                Err(crate::RawStreamError::Callback(error))
+            }
+            Err(CapturedRawStreamError::CallbackPanicked(panic)) => resume_unwind(panic),
         }
     }
 
@@ -873,8 +868,34 @@ impl Oliphaunt {
     pub(crate) fn exec_protocol_raw_stream_on_owner<F, O>(
         &mut self,
         request: impl AsRef<[u8]>,
-        mut on_chunk: F,
+        on_chunk: F,
     ) -> crate::RawStreamResult<(), O::Error>
+    where
+        F: FnMut(&[u8]) -> O + Send + 'static,
+        O: crate::RawStreamCallbackOutput,
+        O::Error: Send + 'static,
+    {
+        match self.exec_protocol_raw_stream_captured(request.as_ref(), on_chunk) {
+            Ok(()) => Ok(()),
+            Err(CapturedRawStreamError::Database(error)) => {
+                Err(crate::RawStreamError::Database(error))
+            }
+            Err(CapturedRawStreamError::Callback(error)) => {
+                Err(crate::RawStreamError::Callback(error))
+            }
+            Err(CapturedRawStreamError::CallbackPanicked(_)) => {
+                Err(crate::RawStreamError::CallbackPanicked(
+                    crate::Error::message("WASIX protocol callback panicked"),
+                ))
+            }
+        }
+    }
+
+    fn exec_protocol_raw_stream_captured<F, O>(
+        &mut self,
+        request: &[u8],
+        mut on_chunk: F,
+    ) -> std::result::Result<(), CapturedRawStreamError<O::Error>>
     where
         F: FnMut(&[u8]) -> O + Send + 'static,
         O: crate::RawStreamCallbackOutput,
@@ -882,23 +903,22 @@ impl Oliphaunt {
     {
         let callback_error = Arc::new(Mutex::new(None));
         let callback_error_for_owner = Arc::clone(&callback_error);
-        let result =
-            self.exec_protocol_stream_inner(request.as_ref(), move |chunk| {
-                match on_chunk(chunk).into_raw_stream_callback_result() {
-                    Ok(()) => Ok(()),
-                    Err(error) => {
-                        *callback_error_for_owner
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(error);
-                        Err(crate::Error::message(
-                            "raw protocol stream callback stopped delivery",
-                        ))
-                    }
+        let result = self.exec_protocol_raw_stream_inner(request, move |chunk| {
+            match on_chunk(chunk).into_raw_stream_callback_result() {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    *callback_error_for_owner
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(error);
+                    Err(crate::Error::message(
+                        "raw protocol stream callback stopped delivery",
+                    ))
                 }
-            });
+            }
+        });
         match result {
             Ok(()) => Ok(()),
-            Err(ProtocolStreamFailure::Database(error)) => Err(crate::RawStreamError::Database(
+            Err(ProtocolStreamFailure::Database(error)) => Err(CapturedRawStreamError::Database(
                 crate::Error::from_anyhow(error),
             )),
             Err(ProtocolStreamFailure::Callback(error)) => {
@@ -907,19 +927,17 @@ impl Oliphaunt {
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .take();
                 match callback_error {
-                    Some(error) => Err(crate::RawStreamError::Callback(error)),
-                    None => Err(crate::RawStreamError::Database(error)),
+                    Some(error) => Err(CapturedRawStreamError::Callback(error)),
+                    None => Err(CapturedRawStreamError::Database(error)),
                 }
             }
-            Err(ProtocolStreamFailure::CallbackPanicked(_)) => {
-                Err(crate::RawStreamError::CallbackPanicked(
-                    crate::Error::message("WASIX protocol callback panicked"),
-                ))
+            Err(ProtocolStreamFailure::CallbackPanicked(panic)) => {
+                Err(CapturedRawStreamError::CallbackPanicked(panic))
             }
         }
     }
 
-    fn exec_protocol_stream_inner<F>(
+    fn exec_protocol_raw_stream_inner<F>(
         &mut self,
         request: &[u8],
         on_chunk: F,
@@ -1231,7 +1249,7 @@ impl Oliphaunt {
     fn start_backup(&mut self) -> StartBackupAttempt {
         let response = match self.run_query(
             "SELECT pg_walfile_name(pg_backup_start(label => 'oliphaunt physical backup', fast => true)), pg_size_bytes(current_setting('wal_segment_size'))::text",
-            std::iter::empty::<QueryParam>(),
+            std::iter::empty::<Parameter>(),
         ) {
             Ok(response) => response,
             Err(error) => return StartBackupAttempt::ExitUnconfirmed(error),
@@ -1242,7 +1260,7 @@ impl Oliphaunt {
     fn stop_backup(&mut self) -> StopBackupAttempt {
         let response = match self.run_query(
             "SELECT pg_walfile_name(lsn), labelfile, spcmapfile FROM pg_backup_stop(wait_for_archive => false)",
-            std::iter::empty::<QueryParam>(),
+            std::iter::empty::<Parameter>(),
         ) {
             Ok(response) => response,
             Err(error) => return StopBackupAttempt::ExitUnconfirmed(error),

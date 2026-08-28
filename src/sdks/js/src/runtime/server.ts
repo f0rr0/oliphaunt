@@ -108,6 +108,9 @@ export class ServerHandle {
   #child: ManagedChild | undefined;
   #ownedSocketDir: string | undefined;
   #temporaryInstanceDirectory: string | undefined;
+  #shutdownCommandCompletion: Promise<number | null> | undefined;
+  #scheduledShutdownCommandCompletion: Promise<number | null> | undefined;
+  #detachTail: Promise<void> = Promise.resolve();
   readonly #shutdownServer: () => Promise<void>;
 
   constructor(
@@ -120,6 +123,7 @@ export class ServerHandle {
     readonly connectionString: string,
     readonly temporaryDirectory: boolean,
     shutdownServer?: () => Promise<void>,
+    private readonly shutdownTimeoutMs = STOP_TIMEOUT_MS,
   ) {
     this.#child = child;
     this.#ownedSocketDir = ownedSocketDir;
@@ -135,7 +139,16 @@ export class ServerHandle {
         ).then(() => undefined));
   }
 
-  async detach(): Promise<void> {
+  detach(): Promise<void> {
+    const attempt = this.#detachTail.then(() => this.#detachOnce());
+    this.#detachTail = attempt.then(
+      () => undefined,
+      () => undefined,
+    );
+    return attempt;
+  }
+
+  async #detachOnce(): Promise<void> {
     const firstAttempt = !this.#closed;
     this.#closed = true;
     const failures: unknown[] = [];
@@ -144,18 +157,57 @@ export class ServerHandle {
         await this.#shutdownServer();
       } catch (error) {
         failures.push(error);
+        const completion = unconfirmedServerCommandCompletion(error);
+        this.#shutdownCommandCompletion = completion;
+        if (completion !== undefined && this.#scheduledShutdownCommandCompletion !== completion) {
+          this.#scheduledShutdownCommandCompletion = completion;
+          void completion.then(
+            () => {
+              // Public close becomes terminal after its first failure. Queue
+              // one internal cleanup pass behind that attempt once pg_ctl is
+              // conclusively reaped so retained socket/PGDATA paths can be
+              // released without requiring another public close.
+              void this.detach().catch(() => {});
+            },
+            () => {},
+          );
+        }
+      }
+    } else if (this.#shutdownCommandCompletion !== undefined) {
+      const completion = this.#shutdownCommandCompletion;
+      try {
+        if (await waitForServerCommand(completion, this.shutdownTimeoutMs)) {
+          if (this.#shutdownCommandCompletion === completion) {
+            this.#shutdownCommandCompletion = undefined;
+          }
+        } else {
+          failures.push(
+            new Error(
+              `native server shutdown command reap remained unconfirmed after ${this.shutdownTimeoutMs}ms`,
+            ),
+          );
+        }
+      } catch (error) {
+        failures.push(error);
       }
     }
     const child = this.#child;
     if (child !== undefined) {
       try {
-        const exited = await waitForManagedChild(child, STOP_TIMEOUT_MS);
+        let exited = await waitForManagedChild(child, this.shutdownTimeoutMs);
         if (!exited) {
-          failures.push(new Error(`native server did not stop within ${STOP_TIMEOUT_MS}ms`));
+          failures.push(new Error(`native server did not stop within ${this.shutdownTimeoutMs}ms`));
           child.kill('SIGKILL');
-          await child.wait();
+          exited = await waitForManagedChild(child, this.shutdownTimeoutMs);
+          if (!exited) {
+            failures.push(
+              new Error(
+                `native server was not reaped within ${this.shutdownTimeoutMs}ms after SIGKILL`,
+              ),
+            );
+          }
         }
-        if (this.#child === child) {
+        if (exited && this.#child === child) {
           this.#child = undefined;
         }
       } catch (error) {
@@ -165,7 +217,7 @@ export class ServerHandle {
     // A process whose reap is unconfirmed may still be using its socket and
     // PGDATA. Retain both exact paths and defer deletion until the process is
     // conclusively gone.
-    if (this.#child === undefined) {
+    if (this.#child === undefined && this.#shutdownCommandCompletion === undefined) {
       const ownedSocketDir = this.#ownedSocketDir;
       try {
         await removeTree(ownedSocketDir);
@@ -189,6 +241,7 @@ export class ServerHandle {
     }
     if (
       this.#child !== undefined ||
+      this.#shutdownCommandCompletion !== undefined ||
       this.#ownedSocketDir !== undefined ||
       this.#temporaryInstanceDirectory !== undefined
     ) {
@@ -207,6 +260,24 @@ const retainedFailedServerHandles = new Set<ServerHandle>();
 // exact stream cannot be released even after the internal cleanup retry, keep
 // it alive instead of silently dropping unresolved socket ownership.
 const retainedFailedReadinessClients = new Set<PostgresWireClient>();
+
+type ServerCommandProcess = {
+  readonly stdout: NodeJS.ReadableStream;
+  readonly failures: unknown[];
+  kill(signal: NodeJS.Signals): boolean;
+  wait(): Promise<number | null>;
+};
+
+class UnconfirmedServerCommandReapError extends Error {
+  constructor(
+    message: string,
+    readonly completion: Promise<number | null>,
+  ) {
+    super(message);
+  }
+}
+
+const retainedUnreapedServerCommands = new Set<ServerCommandProcess>();
 
 async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
   let ownedSocketDir: string | undefined;
@@ -236,7 +307,7 @@ async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
     ownedSocketDir = listen.transport === 'tcp' ? socketDir : undefined;
     child = spawnManagedChild({
       executable,
-      args: postgresArgs(config, listen, port, socketDir),
+      args: postgresServerArguments(config, listen, port, socketDir),
       env: toolEnvironment,
       replaceEnv: true,
     });
@@ -263,10 +334,7 @@ async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
     const cleanupFailures = await cleanupFailedManagedLaunch(
       {
         child,
-        paths: [
-          ownedSocketDir,
-          config.temporaryDirectory ? config.instanceDirectory : undefined,
-        ],
+        paths: [ownedSocketDir, config.temporaryDirectory ? config.instanceDirectory : undefined],
       },
       STOP_TIMEOUT_MS,
       'native server startup child',
@@ -304,7 +372,8 @@ export async function initializeServerDataDir(
   });
 }
 
-function postgresArgs(
+/** @internal Exact PostgreSQL argv construction, exported only for contract tests. */
+export function postgresServerArguments(
   config: NormalizedOpenConfig,
   listen: ServerListen,
   port: number,
@@ -324,10 +393,16 @@ function postgresArgs(
   ];
   args.push(
     '-c',
-    socketDir === undefined ? 'unix_socket_directories=' : `unix_socket_directories=${socketDir}`,
+    socketDir === undefined
+      ? 'unix_socket_directories='
+      : postgresUnixSocketDirectoryAssignment(socketDir),
   );
   args.push(...config.startupArgs);
   return args;
+}
+
+function postgresUnixSocketDirectoryAssignment(directory: string): string {
+  return `unix_socket_directories="${directory.replaceAll('"', '""')}"`;
 }
 
 async function waitForServer(
@@ -665,42 +740,72 @@ async function runCommand(
     env: env ?? process.env,
     stdio: ['ignore', 'pipe', 'inherit'],
   });
-  const chunks: Uint8Array[] = [];
-  child.stdout.on('data', (chunk: Buffer) => chunks.push(new Uint8Array(chunk)));
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  const failures: unknown[] = [];
-  let timedOut = false;
-  const code = await new Promise<number | null>((resolve, reject) => {
+  const processFailures: unknown[] = [];
+  const exited = new Promise<number | null>((resolveExit, rejectExit) => {
     child.once('error', (error) => {
       if (child.pid === undefined) {
-        reject(error);
+        rejectExit(error);
       } else {
-        // A process exists, so retain the failure but keep waiting for the
-        // authoritative exit/reap boundary before its PGDATA may be removed.
-        failures.push(error);
+        processFailures.push(error);
       }
     });
-    child.once('exit', resolve);
-    if (timeoutMs !== undefined) {
-      timeout = setTimeout(() => {
-        timedOut = true;
-        failures.push(new Error(`${command} did not finish within ${timeoutMs}ms`));
-        try {
-          if (!child.kill('SIGKILL')) {
-            failures.push(new Error(`${command} could not be killed after its timeout`));
-          }
-        } catch (error) {
-          failures.push(error);
-        }
-      }, timeoutMs);
-      timeout.unref();
-    }
-  }).finally(() => {
-    if (timeout !== undefined) {
-      clearTimeout(timeout);
-    }
+    child.once('exit', resolveExit);
   });
-  if (code !== 0 && !timedOut) {
+  return runSpawnedServerCommand(
+    command,
+    {
+      stdout: child.stdout,
+      failures: processFailures,
+      kill: (signal) => child.kill(signal),
+      wait: () => exited,
+    },
+    timeoutMs,
+  );
+}
+
+/** @internal Process runner split out for deterministic lifecycle contract tests. */
+export async function runSpawnedServerCommand(
+  command: string,
+  child: ServerCommandProcess,
+  timeoutMs?: number,
+): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [];
+  child.stdout.on('data', (chunk: Buffer) => chunks.push(new Uint8Array(chunk)));
+  const failures = child.failures;
+  const completion = child.wait();
+  let timedOut = false;
+  let code: number | null | undefined;
+  if (timeoutMs === undefined) {
+    code = await completion;
+  } else if (await waitForServerCommand(completion, timeoutMs)) {
+    code = await completion;
+  } else {
+    timedOut = true;
+    failures.push(new Error(`${command} did not finish within ${timeoutMs}ms`));
+    try {
+      if (!child.kill('SIGKILL')) {
+        failures.push(new Error(`${command} could not be killed after its timeout`));
+      }
+    } catch (error) {
+      failures.push(error);
+    }
+    if (await waitForServerCommand(completion, timeoutMs)) {
+      code = await completion;
+    } else {
+      failures.push(
+        new UnconfirmedServerCommandReapError(
+          `${command} was not reaped within ${timeoutMs}ms after SIGKILL`,
+          completion,
+        ),
+      );
+      retainedUnreapedServerCommands.add(child);
+      void completion.then(
+        () => retainedUnreapedServerCommands.delete(child),
+        () => {},
+      );
+    }
+  }
+  if (code !== undefined && code !== 0 && !timedOut) {
     failures.push(new Error(`${command} exited with status ${code}`));
   }
   throwCollectedCloseFailures(failures, `${command} execution failed`);
@@ -712,6 +817,32 @@ async function runCommand(
     offset += chunk.length;
   }
   return out;
+}
+
+async function waitForServerCommand(
+  completion: Promise<number | null>,
+  timeoutMs: number,
+): Promise<boolean> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<false>((resolveTimeout) => {
+    timeoutHandle = setTimeout(() => resolveTimeout(false), timeoutMs);
+    timeoutHandle.unref();
+  });
+  try {
+    return await Promise.race([completion.then(() => true), timeout]);
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
+function unconfirmedServerCommandCompletion(error: unknown): Promise<number | null> | undefined {
+  if (error instanceof UnconfirmedServerCommandReapError) return error.completion;
+  if (!(error instanceof AggregateError)) return undefined;
+  for (const failure of error.errors) {
+    const completion = unconfirmedServerCommandCompletion(failure);
+    if (completion !== undefined) return completion;
+  }
+  return undefined;
 }
 
 function sleep(ms: number): Promise<void> {

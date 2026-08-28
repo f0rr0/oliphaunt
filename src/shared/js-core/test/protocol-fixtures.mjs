@@ -16,20 +16,21 @@ export function assertSharedProtocolFixtures(options) {
     if (expectation === undefined) continue;
 
     const bytes = hexToBytes(fixture.responseHex);
+    const parseQueryResponse = parserForFixture(fixture, options);
     if (expectation.ok !== undefined) {
-      assertOk(fixture.name, expectation.ok, options.parseQueryResponse(bytes));
+      assertOk(fixture.name, expectation.ok, parseQueryResponse(bytes));
     } else if (expectation.postgresError !== undefined) {
-      const thrown = thrownBy(() => options.parseQueryResponse(bytes));
+      const thrown = thrownBy(() => parseQueryResponse(bytes));
       assert.ok(options.isPostgresError(thrown), `${fixture.name} should throw PostgresError`);
       assert.equal(thrown.severity, expectation.postgresError.severity, `${fixture.name} severity`);
       assert.equal(thrown.sqlstate, expectation.postgresError.sqlstate, `${fixture.name} SQLSTATE`);
       assert.equal(
-        thrown.postgresMessage,
+        thrown.message,
         expectation.postgresError.message,
         `${fixture.name} PostgreSQL message`,
       );
     } else if (expectation.engineErrorContains !== undefined) {
-      const thrown = thrownBy(() => options.parseQueryResponse(bytes));
+      const thrown = thrownBy(() => parseQueryResponse(bytes));
       assert.ok(thrown instanceof Error, `${fixture.name} should throw Error`);
       assert.ok(
         thrown.message.includes(expectation.engineErrorContains),
@@ -39,6 +40,13 @@ export function assertSharedProtocolFixtures(options) {
       assert.fail(`shared protocol fixture ${fixture.name} has no query expectation`);
     }
   }
+}
+
+function parserForFixture(fixture, options) {
+  const modes = fixture.protocolModeExpectation;
+  return modes?.extendedQuery?.outcome === 'ok' && modes?.simpleCommand?.outcome !== 'ok'
+    ? options.parseExtendedQueryResponse
+    : options.parseSimpleQueryResponse;
 }
 
 function assertOk(name, expected, actual) {

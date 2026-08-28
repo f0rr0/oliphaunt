@@ -6,16 +6,23 @@ package dev.oliphaunt
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -82,12 +89,61 @@ class OliphauntDatabaseTest {
     }
 
     @Test
+    fun explicitZeroParameterOidsAreRejectedButOmittedOidsRemainInferable() {
+        assertEquals(
+            listOf(PostgresOid(0u), PostgresOid(0u)),
+            parseParameterOids(
+                extendedQueryProtocol(
+                    "SELECT $1, $2",
+                    listOf(QueryParam.Text("value"), QueryParam.Null),
+                ),
+            ),
+        )
+        assertTrue(parseParameterOids(describeQueryProtocol("SELECT $1::int4", emptyList())).isEmpty())
+        assertEquals(
+            listOf(PostgresOid(0u), PostgresOid.int4),
+            parseParameterOids(
+                describeQueryProtocol(
+                    "SELECT $1, $2::int4",
+                    listOf(PostgresOid(0u), PostgresOid.int4),
+                ),
+            ),
+        )
+
+        listOf(
+            QueryParam.Text("value", PostgresOid(0u)),
+            QueryParam.Binary(byteArrayOf(1), PostgresOid(0u)),
+            QueryParam.typedNull(PostgresOid(0u)),
+        ).forEach { parameter ->
+            val failure =
+                assertFailsWith<OliphauntException> {
+                    extendedQueryProtocol("SELECT $1", listOf(parameter))
+                }
+            assertTrue(failure.message.orEmpty().contains("parameter 1 type OID"))
+        }
+    }
+
+    @Test
     fun rowsOfferLosslessRawAndExtensibleOidAwareDecoding() {
         val intField = queryField("value", PostgresOid.int4)
         val row = QueryRow(listOf("-2147483648".encodeToByteArray()), listOf(intField))
         assertContentEquals("-2147483648".encodeToByteArray(), row.raw("value"))
         assertEquals(Int.MIN_VALUE, row.value("value", PostgresDecoders.int))
         assertEquals("-2147483648", row.value("value", PostgresDecoders.string))
+        val timeWithZone =
+            QueryRow(
+                listOf("04:05:06+02".encodeToByteArray()),
+                listOf(queryField("value", PostgresOid.timetz)),
+            )
+        assertEquals("04:05:06+02", timeWithZone.value("value", PostgresDecoders.string))
+        val binaryTimeWithZone =
+            QueryRow(
+                listOf(ByteArray(12)),
+                listOf(queryField("value", PostgresOid.timetz, QueryFormat.Binary)),
+            )
+        assertFailsWith<OliphauntException> {
+            binaryTimeWithZone.value("value", PostgresDecoders.string)
+        }
 
         val nullBytes = QueryRow(listOf(null), listOf(queryField("value", PostgresOid.bytea)))
         assertFailsWith<OliphauntException> { nullBytes.value(0, PostgresDecoders.string) }
@@ -106,21 +162,23 @@ class OliphauntDatabaseTest {
         assertEquals("decoded", row.value(0, mutatingDecoder))
         assertContentEquals("-2147483648".encodeToByteArray(), row.raw(0))
 
-        val source = "owned".encodeToByteArray()
-        val publicRow = QueryRow(listOf(source))
-        source.fill(0)
-        val exposedValues = publicRow.values
+        val parsedRow = QueryRow(listOf("owned".encodeToByteArray()), listOf(queryField("value", PostgresOid.text)))
+        val exposedValues = parsedRow.values
         exposedValues[0]?.fill(0)
-        val exposedRaw = requireNotNull(publicRow.raw(0))
+        val exposedRaw = requireNotNull(parsedRow.raw(0))
         exposedRaw.fill(0)
-        assertEquals("owned", publicRow.text(0))
+        assertEquals("owned", parsedRow.text(0))
 
+        val duplicateFields =
+            listOf(queryField("value", PostgresOid.text), queryField("value", PostgresOid.text))
         val duplicate =
             QueryRow(
                 listOf("a".encodeToByteArray(), "b".encodeToByteArray()),
-                listOf(queryField("value", PostgresOid.text), queryField("value", PostgresOid.text)),
+                duplicateFields,
             )
         assertFailsWith<OliphauntException> { duplicate.raw("value") }
+        val duplicateResult = QueryResult(duplicateFields, listOf(duplicate), null, null)
+        assertFailsWith<OliphauntException> { duplicateResult.getText(0, "value") }
     }
 
     @Test
@@ -139,7 +197,9 @@ class OliphauntDatabaseTest {
         val rowMessages = rowResultMessages("1".encodeToByteArray(), PostgresOid.text)
         val exec =
             parseExecResponse(
-                backendMessage('C', cstrings("CREATE TABLE")) +
+                noticeResponse("NOTICE", "created") +
+                    backendMessage('C', cstrings("CREATE TABLE")) +
+                    noticeResponse("NOTICE", "selected") +
                     rowMessages +
                     backendMessage('C', cstrings("SELECT 1")) +
                     backendMessage('I', ByteArray(0)) +
@@ -148,8 +208,14 @@ class OliphauntDatabaseTest {
             )
         assertEquals(2, exec.statements.size)
         assertTrue(exec.statements[0] is StatementResult.Command)
+        assertEquals(
+            listOf("created"),
+            (exec.statements[0] as StatementResult.Command).result.notices.map(PostgresNotice::message),
+        )
         val rows = (exec.statements[1] as StatementResult.Rows).result
         assertEquals("1", rows.rows.single().text(0))
+        assertEquals(listOf("selected"), rows.notices.map(PostgresNotice::message))
+        assertEquals(listOf("created", "selected"), exec.notices.map(PostgresNotice::message))
 
         val description =
             parseDescribeResponse(
@@ -195,6 +261,22 @@ class OliphauntDatabaseTest {
         assertFailsWith<OliphauntException> { database.exec("SELECT 1; COPY items TO STDOUT") }
         assertFailsWith<OliphauntException> { database.execute("/* nested /* x */ */ COPY items FROM STDIN") }
         assertTrue(session.requests.isEmpty())
+    }
+
+    @Test
+    fun transactionChainIsRejectedBeforeSessionDispatch() = runTest {
+        val session = TestSession(commandResponse("OK"))
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+
+        database.transaction { transaction ->
+            val requestCount = session.requests.size
+            assertFailsWith<OliphauntException> {
+                transaction.exec("ROLLBACK WORK /* keep ownership */ AND CHAIN")
+            }
+            assertEquals(requestCount, session.requests.size)
+        }
+
+        assertEquals(listOf("BEGIN", "COMMIT"), session.simpleQueries())
     }
 
     @Test
@@ -398,6 +480,29 @@ class OliphauntDatabaseTest {
     }
 
     @Test
+    fun lifecyclePoisonClosesTheSharedTransactionLeaseImmediately() = runTest {
+        val session = TestSession(commandResponse("COMMIT", 'T'), preserveResponseStatus = true)
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+
+        val failure =
+            assertFailsWith<OliphauntException> {
+                database.transaction { transaction ->
+                    val lifecycleFailure =
+                        assertFailsWith<OliphauntException> {
+                            transaction.execute("COMMIT")
+                        }
+                    assertTrue(transaction.isClosed)
+                    assertFailsWith<OliphauntException> { transaction.execute("SELECT never_runs") }
+                    throw lifecycleFailure
+                }
+            }
+        assertTrue(failure.message.orEmpty().contains("unsupported lifecycle command COMMIT"))
+        assertEquals(2, session.requests.size)
+        assertTrue(session.simpleQueries().none { it == "ROLLBACK" })
+        database.close()
+    }
+
+    @Test
     fun lifecycleTagBeforeLaterPostgresErrorWinsAndLeavesDatabaseCloseOnly() = runTest {
         val response =
             backendMessage('C', cstrings("COMMIT")) +
@@ -503,6 +608,207 @@ class OliphauntDatabaseTest {
         assertFailsWith<OliphauntException> { transaction.execute("SELECT 1") }
         session.releaseBlockedControl()
         assertEquals(1, outer.await())
+    }
+
+    @Test
+    fun transactionWaitsForInFlightExplicitRollbackBeforeReturningNormally() = runTest {
+        val session = TestSession(commandResponse("UPDATE 1"), blockedControl = "ROLLBACK")
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+        lateinit var rollback: Deferred<Unit>
+        lateinit var transaction: OliphauntTransaction
+
+        val outer =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                database.transaction { active ->
+                    transaction = active
+                    rollback =
+                        async(start = CoroutineStart.UNDISPATCHED) {
+                            active.rollback()
+                        }
+                    session.awaitBlockedControl()
+                    7
+                }
+            }
+
+        assertTrue(transaction.isClosed)
+        assertFalse(outer.isCompleted)
+        session.releaseBlockedControl()
+        rollback.await()
+        assertEquals(7, outer.await())
+        assertEquals(listOf("BEGIN", "ROLLBACK"), session.simpleQueries())
+        assertEquals("UPDATE 1", database.execute("UPDATE widgets SET ready = true").commandTag)
+        database.close()
+    }
+
+    @Test
+    fun transactionWaitsForInFlightExplicitRollbackBeforeRethrowingCallbackFailure() = runTest {
+        class Expected : RuntimeException()
+
+        val callbackError = Expected()
+        val session = TestSession(commandResponse("UPDATE 1"), blockedControl = "ROLLBACK")
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+        lateinit var rollback: Deferred<Unit>
+
+        val outer =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                runCatching {
+                    database.transaction<Unit> { transaction ->
+                        rollback =
+                            backgroundScope.async(start = CoroutineStart.UNDISPATCHED) {
+                                transaction.rollback()
+                            }
+                        session.awaitBlockedControl()
+                        throw callbackError
+                    }
+                }.exceptionOrNull()
+            }
+
+        assertFalse(outer.isCompleted)
+        session.releaseBlockedControl()
+        rollback.await()
+        val failure = assertNotNull(outer.await())
+        assertTrue(generateSequence<Throwable>(failure) { it.cause }.any { it === callbackError })
+        assertEquals(listOf("BEGIN", "ROLLBACK"), session.simpleQueries())
+        assertEquals("UPDATE 1", database.execute("UPDATE widgets SET ready = true").commandTag)
+        database.close()
+    }
+
+    @Test
+    fun callbackAndInFlightExplicitRollbackFailuresAreBothPreserved() = runTest {
+        class Expected : RuntimeException()
+
+        val callbackError = Expected()
+        val session =
+            TestSession(
+                commandResponse("UPDATE 1"),
+                failRollback = true,
+                blockedControl = "ROLLBACK",
+            )
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+        lateinit var rollback: Deferred<Result<Unit>>
+
+        val outer =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                runCatching {
+                    database.transaction<Unit> { transaction ->
+                        rollback =
+                            backgroundScope.async(start = CoroutineStart.UNDISPATCHED) {
+                                runCatching { transaction.rollback() }
+                            }
+                        session.awaitBlockedControl()
+                        throw callbackError
+                    }
+                }.exceptionOrNull()
+            }
+
+        assertFalse(outer.isCompleted)
+        session.releaseBlockedControl()
+        assertTrue(rollback.await().exceptionOrNull() is OliphauntException)
+        val failure = assertNotNull(outer.await())
+        val composite = assertIs<OliphauntTransactionRollbackException>(failure)
+        assertTrue(generateSequence(composite.callbackError) { it.cause }.any { it === callbackError })
+        assertEquals("rollback transport failed", composite.rollbackError.message)
+        assertEquals(listOf("BEGIN", "ROLLBACK"), session.simpleQueries())
+        assertFailsWith<OliphauntException> { database.execute("SELECT never_runs") }
+        database.close()
+    }
+
+    @Test
+    fun callbackAndCompletedExplicitRollbackFailuresAreBothPreserved() = runTest {
+        class Expected : RuntimeException()
+
+        val callbackError = Expected()
+        val session = TestSession(commandResponse("UPDATE 1"), failRollback = true)
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+
+        val failure =
+            assertFailsWith<OliphauntTransactionRollbackException> {
+                database.transaction<Unit> { transaction ->
+                    assertFailsWith<OliphauntException> { transaction.rollback() }
+                    throw callbackError
+                }
+            }
+
+        assertTrue(failure.callbackError === callbackError)
+        assertEquals("rollback transport failed", failure.rollbackError.message)
+        assertEquals(listOf("BEGIN", "ROLLBACK"), session.simpleQueries())
+        assertFailsWith<OliphauntException> { database.execute("SELECT never_runs") }
+        database.close()
+    }
+
+    @Test
+    fun propagatedExplicitRollbackFailureIsNotWrappedAsComposite() = runTest {
+        val session = TestSession(commandResponse("UPDATE 1"), failRollback = true)
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+
+        val failure =
+            assertFailsWith<OliphauntException> {
+                database.transaction<Unit> { transaction -> transaction.rollback() }
+            }
+
+        assertFalse(failure is OliphauntTransactionRollbackException)
+        assertFalse(failure is OliphauntTransactionDatabaseException)
+        assertEquals("rollback transport failed", failure.message)
+        assertEquals(listOf("BEGIN", "ROLLBACK"), session.simpleQueries())
+        assertFailsWith<OliphauntException> { database.execute("SELECT never_runs") }
+        database.close()
+    }
+
+    @Test
+    fun caughtExplicitRollbackFailureStillEscapesWithOriginalError() = runTest {
+        val session = TestSession(commandResponse("UPDATE 1"), failRollback = true)
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+        lateinit var rollbackFailure: OliphauntException
+
+        val failure =
+            assertFailsWith<OliphauntException> {
+                database.transaction { transaction ->
+                    rollbackFailure = assertFailsWith<OliphauntException> { transaction.rollback() }
+                    7
+                }
+            }
+
+        val rollbackFailureChain = generateSequence<Throwable>(rollbackFailure) { it.cause }.toList()
+        assertTrue(
+            generateSequence<Throwable>(failure) { it.cause }
+                .any { outer -> rollbackFailureChain.any { inner -> outer === inner } },
+        )
+        assertEquals("rollback transport failed", failure.message)
+        assertEquals(listOf("BEGIN", "ROLLBACK"), session.simpleQueries())
+        assertFailsWith<OliphauntException> { database.execute("SELECT never_runs") }
+        database.close()
+    }
+
+    @Test
+    fun cancelledQueuedExplicitRollbackStillSettlesAndReportsCancellation() = runTest {
+        val session = AdmissionOrderSession()
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+
+        val value =
+            database.transaction { transaction ->
+                val earlier =
+                    async(start = CoroutineStart.UNDISPATCHED) {
+                        transaction.execute("UPDATE records SET value = 1")
+                    }
+                session.awaitFirstRaw()
+                val rollback =
+                    async(start = CoroutineStart.UNDISPATCHED) {
+                        transaction.rollback()
+                    }
+
+                rollback.cancel()
+                assertFalse(rollback.isCompleted)
+                session.releaseFirstRaw()
+                assertEquals("UPDATE 1", earlier.await().commandTag)
+                rollback.join()
+                assertTrue(rollback.isCancelled)
+                7
+            }
+
+        assertEquals(7, value)
+        assertEquals(listOf("BEGIN", "typed:1", "ROLLBACK"), session.events)
+        assertContentEquals(byteArrayOf(2), database.execProtocolRaw(byteArrayOf(2)))
+        database.close()
     }
 
     @Test
@@ -624,6 +930,127 @@ class OliphauntDatabaseTest {
     }
 
     @Test
+    fun cancellationDeliveredAfterBeginBoundaryRollsBackBeforeReleasingOwnership() = runTest {
+        val session = TestSession(commandResponse("UPDATE 1"), blockedControl = "BEGIN")
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+        var callbackCalled = false
+        val outer =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                database.transaction {
+                    callbackCalled = true
+                }
+            }
+
+        session.awaitBlockedControl()
+        outer.cancel()
+        session.releaseBlockedControl()
+        outer.join()
+
+        assertFalse(callbackCalled)
+        assertEquals(listOf("BEGIN", "ROLLBACK"), session.simpleQueries())
+        assertEquals("UPDATE 1", database.execute("UPDATE widgets SET ready = true").commandTag)
+        database.close()
+    }
+
+    @Test
+    fun cancellationRequestedAtCallbackReturnRollsBackInsteadOfCommitting() = runTest {
+        val session = TestSession(commandResponse("UPDATE 1"))
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+        lateinit var transaction: OliphauntTransaction
+        val outer =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                database.transaction { active ->
+                    transaction = active
+                    currentCoroutineContext()[Job]?.cancel()
+                    7
+                }
+            }
+
+        outer.join()
+
+        assertTrue(outer.isCancelled)
+        assertTrue(transaction.isClosed)
+        assertEquals(listOf("BEGIN", "ROLLBACK"), session.simpleQueries())
+        assertEquals(9, database.transaction { 9 })
+        database.close()
+    }
+
+    @Test
+    fun failedBeginWithKnownTransactionStatusRollsBackAndReleasesOwnership() = runTest {
+        val beginResponse =
+            errorResponse("XX000", "BEGIN failed") +
+                backendMessage('Z', byteArrayOf('E'.code.toByte()))
+        val session = TestSession(commandResponse("UPDATE 1"), beginResponse = beginResponse)
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+
+        assertFailsWith<PostgresException> { database.transaction { 1 } }
+        assertEquals(listOf("BEGIN", "ROLLBACK"), session.simpleQueries())
+        assertEquals("UPDATE 1", database.execute("UPDATE widgets SET ready = true").commandTag)
+        database.close()
+    }
+
+    @Test
+    fun failedBeginWithKnownIdleStatusSkipsRollbackAndReleasesOwnership() = runTest {
+        val beginResponse =
+            errorResponse("XX000", "BEGIN failed before opening a transaction") +
+                backendMessage('Z', byteArrayOf('I'.code.toByte()))
+        val session = TestSession(commandResponse("UPDATE 1"), beginResponse = beginResponse)
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+
+        assertFailsWith<PostgresException> { database.transaction { 1 } }
+        assertEquals(listOf("BEGIN"), session.simpleQueries())
+        assertEquals("UPDATE 1", database.execute("UPDATE widgets SET ready = true").commandTag)
+        database.close()
+    }
+
+    @Test
+    fun malformedSuccessfulBeginRollsBackBeforeReturningTheError() = runTest {
+        val session =
+            TestSession(
+                commandResponse("UPDATE 1"),
+                beginResponse = simpleCommandResponse("SELECT 0", 'T'),
+            )
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+
+        val failure = assertFailsWith<OliphauntException> { database.transaction { 1 } }
+        assertTrue(failure.message.orEmpty().contains("BEGIN returned command tag SELECT 0"))
+        assertEquals(listOf("BEGIN", "ROLLBACK"), session.simpleQueries())
+        assertEquals("UPDATE 1", database.execute("UPDATE widgets SET ready = true").commandTag)
+        database.close()
+    }
+
+    @Test
+    fun failedBeginRollbackFailurePoisonsDatabaseAndPreservesBothErrors() = runTest {
+        val beginResponse =
+            errorResponse("XX000", "BEGIN failed") +
+                backendMessage('Z', byteArrayOf('E'.code.toByte()))
+        val session =
+            TestSession(
+                commandResponse("UPDATE 1"),
+                failRollback = true,
+                beginResponse = beginResponse,
+            )
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+
+        val failure = assertFailsWith<OliphauntException> { database.transaction { 1 } }
+        assertTrue(failure.message.orEmpty().contains("automatic ROLLBACK failed"))
+        assertFalse(failure is OliphauntTransactionDatabaseException)
+        val failureChain = generateSequence<Throwable>(failure) { it.cause }.toList()
+        assertTrue(failureChain.any { it is PostgresException })
+        assertEquals(
+            listOf("rollback transport failed"),
+            failureChain.flatMap(Throwable::suppressedExceptions).map(Throwable::message),
+        )
+        assertEquals(listOf("BEGIN", "ROLLBACK"), session.simpleQueries())
+
+        val requestCount = session.requests.size
+        val poison = assertFailsWith<OliphauntException> { database.execute("SELECT never_runs") }
+        assertTrue(poison.message.orEmpty().contains("automatic ROLLBACK failed"))
+        assertEquals(requestCount, session.requests.size)
+        database.close()
+    }
+
+    @Test
     fun rollbackFailurePoisonsFacadeUntilClose() = runTest {
         class Expected : RuntimeException()
         val callbackError = Expected()
@@ -663,6 +1090,7 @@ class OliphauntDatabaseTest {
                     } catch (_: Throwable) {
                         // Replace the independently poisoning transport error
                         // with a distinct business failure.
+                        assertTrue(transaction.isClosed)
                     }
                     throw callbackError
                 }
@@ -681,6 +1109,28 @@ class OliphauntDatabaseTest {
     }
 
     @Test
+    fun propagatedDatabaseFailureIsNotMisclassifiedAsAnIndependentCallbackFailure() = runTest {
+        val failedRequest = extendedQueryProtocol("SELECT transport_failure", emptyList())
+        val session =
+            TestSession(
+                commandResponse("UPDATE 1"),
+                failRawRequest = failedRequest,
+            )
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+
+        val failure =
+            assertFailsWith<OliphauntException> {
+                database.transaction { transaction ->
+                    transaction.execute("SELECT transport_failure")
+                }
+            }
+        assertFalse(failure is OliphauntTransactionDatabaseException)
+        assertEquals("raw transport failed", failure.message)
+        assertTrue(failure.cause?.message == "raw transport failed" || failure.cause == null)
+        database.close()
+    }
+
+    @Test
     fun closeIsIdempotentAndRejectsFurtherWork() = runTest {
         val session = TestSession(commandResponse("OK"))
         val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
@@ -690,6 +1140,189 @@ class OliphauntDatabaseTest {
         database.close()
         assertEquals(1, session.closeCount)
         assertFailsWith<OliphauntException> { database.execute("SELECT 1") }
+    }
+
+    @Test
+    fun cancellationWhileQueuedSkipsQueryWithoutBreakingFifo() = runTest {
+        val session = AdmissionOrderSession()
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+        val first =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                database.execProtocolRaw(byteArrayOf(1))
+            }
+        session.awaitFirstRaw()
+        val skipped =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                database.query("SELECT never_runs")
+            }
+        val successor =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                database.execProtocolRaw(byteArrayOf(2))
+            }
+
+        skipped.cancel()
+        skipped.join()
+
+        assertTrue(skipped.isCancelled)
+        assertFalse(successor.isCompleted)
+        assertEquals(listOf("raw:1"), session.events)
+
+        session.releaseFirstRaw()
+        assertContentEquals(byteArrayOf(1), first.await())
+        assertContentEquals(byteArrayOf(2), successor.await())
+        assertEquals(listOf("raw:1", "raw:2"), session.events)
+        database.close()
+    }
+
+    @Test
+    fun cancellationAfterRawStartsDrainsBeforeSuccessorRuns() = runTest {
+        val session = AdmissionOrderSession()
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+        val first =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                database.execProtocolRaw(byteArrayOf(1))
+            }
+        session.awaitFirstRaw()
+
+        first.cancel()
+        val successor =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                database.execProtocolRaw(byteArrayOf(2))
+            }
+
+        assertFalse(first.isCompleted)
+        assertFalse(successor.isCompleted)
+        assertEquals(listOf("raw:1"), session.events)
+
+        session.releaseFirstRaw()
+        first.join()
+        assertTrue(first.isCancelled)
+        assertContentEquals(byteArrayOf(2), successor.await())
+        assertEquals(listOf("raw:1", "raw:2"), session.events)
+        database.close()
+    }
+
+    @Test
+    fun rawFailureAfterCancellationPoisonsBeforeSuccessorReachesNative() = runTest {
+        val session = AdmissionOrderSession(failFirstRaw = true)
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+        var firstFailure: Throwable? = null
+        val first =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                try {
+                    database.execProtocolRaw(byteArrayOf(1))
+                } catch (error: Throwable) {
+                    firstFailure = error
+                }
+            }
+        session.awaitFirstRaw()
+
+        first.cancel()
+        val successor =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                runCatching { database.execProtocolRaw(byteArrayOf(2)) }.exceptionOrNull()
+            }
+
+        assertFalse(first.isCompleted)
+        assertFalse(successor.isCompleted)
+        assertEquals(listOf("raw:1"), session.events)
+
+        session.releaseFirstRaw()
+        first.join()
+        assertTrue(first.isCancelled)
+        assertEquals("raw transport failed", assertNotNull(firstFailure).message)
+        val successorFailure = assertNotNull(successor.await())
+        assertTrue(successorFailure.message.orEmpty().contains("outcome is unknown"))
+        assertEquals(listOf("raw:1"), session.events)
+        database.close()
+    }
+
+    @Test
+    fun queuedBackupSkipsNativeCallAfterPredecessorPoisonsDatabase() = runTest {
+        val session = AdmissionOrderSession(failFirstRaw = true)
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+        val first =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                runCatching { database.execProtocolRaw(byteArrayOf(1)) }.exceptionOrNull()
+            }
+        session.awaitFirstRaw()
+        val backup =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                runCatching { database.backup() }.exceptionOrNull()
+            }
+
+        session.releaseFirstRaw()
+
+        assertEquals("raw transport failed", assertNotNull(first.await()).message)
+        assertTrue(assertNotNull(backup.await()).message.orEmpty().contains("outcome is unknown"))
+        assertEquals(0, session.backupCount)
+        database.close()
+    }
+
+    @Test
+    fun cancellationWhileQueuedSkipsBeginAndReleasesOwnership() = runTest {
+        val session = AdmissionOrderSession()
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+        val first =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                database.execProtocolRaw(byteArrayOf(1))
+            }
+        session.awaitFirstRaw()
+        var callbackCalled = false
+        val skipped =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                database.transaction {
+                    callbackCalled = true
+                }
+            }
+
+        skipped.cancel()
+        skipped.join()
+        val successor =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                database.execProtocolRaw(byteArrayOf(2))
+            }
+
+        assertTrue(skipped.isCancelled)
+        assertFalse(callbackCalled)
+        assertFalse(successor.isCompleted)
+        assertEquals(listOf("raw:1"), session.events)
+
+        session.releaseFirstRaw()
+        assertContentEquals(byteArrayOf(1), first.await())
+        assertContentEquals(byteArrayOf(2), successor.await())
+        assertEquals(listOf("raw:1", "raw:2"), session.events)
+        database.close()
+    }
+
+    @Test
+    fun cancellationWhileQueuedSkipsCloseAndReleasesOwnership() = runTest {
+        val session = AdmissionOrderSession()
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+        val first =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                database.execProtocolRaw(byteArrayOf(1))
+            }
+        session.awaitFirstRaw()
+        val skipped = async(start = CoroutineStart.UNDISPATCHED) { database.close() }
+
+        skipped.cancel()
+        skipped.join()
+        val successor =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                database.execProtocolRaw(byteArrayOf(2))
+            }
+
+        assertTrue(skipped.isCancelled)
+        assertFalse(database.isClosed)
+        assertFalse(successor.isCompleted)
+        assertEquals(listOf("raw:1"), session.events)
+
+        session.releaseFirstRaw()
+        assertContentEquals(byteArrayOf(1), first.await())
+        assertContentEquals(byteArrayOf(2), successor.await())
+        assertEquals(listOf("raw:1", "raw:2"), session.events)
+        database.close()
     }
 
     @Test
@@ -816,6 +1449,42 @@ class OliphauntDatabaseTest {
         assertNull(cancellation.await())
         assertEquals(1, session.cancelCount)
         assertEquals(1, session.requests.size)
+        database.close()
+    }
+
+    @Test
+    fun rawStreamCallbackReentryIsRejectedAfterDispatchingToAnotherThread() = runTest {
+        val session = TestSession(commandResponse("OK"))
+        val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
+        var failure: Throwable? = null
+        var completedDuringCallback = false
+        lateinit var reentry: Deferred<Throwable?>
+
+        database.execProtocolRawStream(byteArrayOf(1)) {
+            reentry =
+                backgroundScope.async(Dispatchers.Default) {
+                    runCatching { database.query("SELECT 1") }.exceptionOrNull()
+                }
+            val completed =
+                runBlocking {
+                    withTimeoutOrNull(5_000) {
+                        Unit to reentry.await()
+                    }
+                }
+            completedDuringCallback = completed != null
+            failure = completed?.second
+        }
+
+        if (!completedDuringCallback) reentry.await()
+        assertTrue(completedDuringCallback, "cross-thread reentry waited on the active raw stream")
+        assertNotNull(failure)
+        assertTrue(
+            failure?.message.orEmpty().contains(
+                "must not reenter the same Oliphaunt database or transaction",
+            ),
+        )
+        database.execProtocolRaw(byteArrayOf(2))
+        assertEquals(2, session.requests.size)
         database.close()
     }
 
@@ -962,16 +1631,18 @@ class OliphauntDatabaseTest {
         assertNotEquals(binary, QueryParam.Binary(byteArrayOf(2, 1)))
         assertEquals(binary.hashCode(), QueryParam.Binary(byteArrayOf(1, 2)).hashCode())
 
-        val row = QueryRow(listOf("x".encodeToByteArray(), null))
+        val row = QueryRow(listOf("x".encodeToByteArray(), null), emptyList())
         assertEquals(row, row)
-        assertEquals(row, QueryRow(listOf("x".encodeToByteArray(), null)))
-        assertNotEquals(row, QueryRow(listOf("x".encodeToByteArray())))
-        assertNotEquals(row, QueryRow(listOf(null, null)))
+        assertEquals(row, QueryRow(listOf("x".encodeToByteArray(), null), emptyList()))
+        assertNotEquals(row, QueryRow(listOf("x".encodeToByteArray()), emptyList()))
+        assertNotEquals(row, QueryRow(listOf(null, null), emptyList()))
         assertTrue(!row.equals("row"))
         row.hashCode()
         assertNull(row.text(1))
         assertFailsWith<OliphauntException> { row.text(2) }
-        assertFailsWith<OliphauntException> { QueryRow(listOf(byteArrayOf(0xc3.toByte()))).text(0) }
+        assertFailsWith<OliphauntException> {
+            QueryRow(listOf(byteArrayOf(0xc3.toByte())), emptyList()).text(0)
+        }
 
         val result = QueryResult(emptyList(), emptyList(), null, null)
         assertFailsWith<OliphauntException> { result.getText(0, "missing") }
@@ -1190,6 +1861,8 @@ class OliphauntDatabaseTest {
                 EngineConfig(startupGucs = listOf(PostgresStartupGuc("a.1b", "1"))),
                 EngineConfig(startupGucs = listOf(PostgresStartupGuc("ext.\$name", "1"))),
                 EngineConfig(startupGucs = listOf(PostgresStartupGuc("good", "bad\u0000value"))),
+                EngineConfig(startupGucs = listOf(PostgresStartupGuc("CONFIG_FILE", "/tmp/other"))),
+                EngineConfig(startupGucs = listOf(PostgresStartupGuc("data_directory", "/tmp/other"))),
                 EngineConfig(extensions = listOf("bad/name")),
                 EngineConfig(extensions = listOf("not_in_generated_catalog")),
             )
@@ -1197,12 +1870,20 @@ class OliphauntDatabaseTest {
             assertFailsWith<OliphauntException> { OliphauntDatabase.open(config, engine) }
         }
         assertEquals(
-            listOf("-c", "_name=", "-c", "ext.name\$1=on", "-c", "shared_preload_libraries=a,z"),
+            listOf(
+                "-c",
+                "_name=",
+                "-c",
+                "ext.name\$1=on",
+                "-c",
+                "shared_preload_libraries=auto_explain,a,z",
+            ),
             EngineConfig(
                 startupGucs =
                 listOf(
                     PostgresStartupGuc(" _name ", ""),
                     PostgresStartupGuc("ext.name\$1", "on"),
+                    PostgresStartupGuc("SHARED_PRELOAD_LIBRARIES", "auto_explain,a"),
                 ),
             ).postgresStartupArgs(listOf("z", "a", "z")),
         )
@@ -1250,6 +1931,7 @@ private class TestSession(
     private val failRawRequest: ByteArray? = null,
     private val failStreamAfterCallback: Boolean = false,
     private val omitBeginReady: Boolean = false,
+    private val beginResponse: ByteArray? = null,
     private val blockedControl: String? = null,
     private val blockClose: Boolean = false,
     private val preserveResponseStatus: Boolean = false,
@@ -1273,17 +1955,21 @@ private class TestSession(
                 .takeIf { it.firstOrNull() == 'Q'.code.toByte() && it.size >= 6 }
                 ?.copyOfRange(5, request.size - 1)
                 ?.decodeToString()
-        if (sql == "BEGIN" && failBegin) throw OliphauntException("begin transport failed")
-        if (sql == "COMMIT" && failCommit) throw OliphauntException("commit transport failed")
-        if (sql == "ROLLBACK" && failRollback) throw OliphauntException("rollback transport failed")
         if (sql in listOf("BEGIN", "COMMIT", "ROLLBACK")) {
             if (sql == blockedControl) {
                 blockedControlStarted.complete(Unit)
                 blockedControlRelease.await()
             }
+            if (sql == "BEGIN" && failBegin) throw OliphauntException("begin transport failed")
+            if (sql == "COMMIT" && failCommit) throw OliphauntException("commit transport failed")
+            if (sql == "ROLLBACK" && failRollback) throw OliphauntException("rollback transport failed")
             if (sql == "BEGIN") {
                 inTransaction = true
                 if (omitBeginReady) return backendMessage('C', cstrings("BEGIN"))
+                beginResponse?.let { configured ->
+                    inTransaction = configured.lastOrNull() != 'I'.code.toByte()
+                    return configured
+                }
             } else {
                 inTransaction = false
             }
@@ -1347,6 +2033,7 @@ private class TestSession(
 private class AdmissionOrderSession(
     private val blockClose: Boolean = false,
     private val blockCancel: Boolean = false,
+    private val failFirstRaw: Boolean = false,
 ) : OliphauntSession {
     private val firstRawStarted = CompletableDeferred<Unit>()
     private val firstRawRelease = CompletableDeferred<Unit>()
@@ -1356,6 +2043,7 @@ private class AdmissionOrderSession(
     private val cancelRelease = CompletableDeferred<Unit>()
     val events = mutableListOf<String>()
     var cancelCount = 0
+    var backupCount = 0
     private var typedOperationCount = 0
 
     override suspend fun execProtocolRaw(request: ByteArray): ByteArray {
@@ -1385,6 +2073,7 @@ private class AdmissionOrderSession(
         if (request.contentEquals(byteArrayOf(1))) {
             firstRawStarted.complete(Unit)
             firstRawRelease.await()
+            if (failFirstRaw) throw OliphauntException("raw transport failed")
         }
         return request.copyOf()
     }
@@ -1394,7 +2083,10 @@ private class AdmissionOrderSession(
         onChunk: (ByteArray) -> Unit,
     ): ProtocolStreamOutcome = captureProtocolStreamCallback(execProtocolRaw(request), onChunk)
 
-    override suspend fun backup(): ByteArray = ByteArray(0)
+    override suspend fun backup(): ByteArray {
+        backupCount += 1
+        return ByteArray(0)
+    }
 
     override suspend fun cancel() {
         cancelCount += 1

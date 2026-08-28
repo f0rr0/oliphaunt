@@ -1,3 +1,4 @@
+// @generated from src/shared/js-core/src/query.ts. Do not edit this mirror; run `node src/shared/js-core/tools/check-js-core.mjs --write`.
 import { simpleQuery } from './protocol.js';
 
 const utf8Encoder = new TextEncoder();
@@ -163,7 +164,6 @@ export type RawQueryResult = {
   commandTag?: string;
   rowCount: number | null;
   notices: PostgresNotice[];
-  fieldIndex(name: string): number | undefined;
   getText(row: number, column: string): string | null;
 };
 
@@ -176,8 +176,8 @@ export type QueryValue =
   | QueryValue[]
   | { [key: string]: unknown };
 
-export type QueryObjectRow = Record<string, QueryValue>;
-export type QueryArrayRow = QueryValue[];
+export type QueryObjectRow<Value = QueryValue> = Record<string, Value>;
+export type QueryArrayRow<Value = QueryValue> = Value[];
 
 export type QueryResult<Row = QueryObjectRow> = {
   kind: 'command' | 'rows';
@@ -188,14 +188,42 @@ export type QueryResult<Row = QueryObjectRow> = {
   notices: PostgresNotice[];
 };
 
-export type QueryValueDecoder = (value: string, field: QueryField) => unknown;
+export type QueryValueDecoder<Value = unknown> = (value: string, field: QueryField) => Value;
+export type QueryDecoderMap = Readonly<Record<number, QueryValueDecoder>>;
+export type QueryRowMode = 'object' | 'array';
 
-export type QueryOptions = Readonly<{
-  rowMode?: 'object' | 'array';
+export type QueryOptions<
+  RowMode extends QueryRowMode = QueryRowMode,
+  Decoders extends QueryDecoderMap | undefined = QueryDecoderMap | undefined,
+> = Readonly<{
+  rowMode?: RowMode;
   valueMode?: 'decoded' | 'text';
-  decoders?: Readonly<Record<number, QueryValueDecoder>>;
+  decoders?: Decoders;
   encoders?: Readonly<Record<number, QueryParameterEncoder>>;
 }>;
+
+type QueryModeFromOptions<Options> = Options extends { readonly rowMode?: infer Mode }
+  ? Extract<Mode, QueryRowMode> extends never
+    ? 'object'
+    : Extract<Mode, QueryRowMode>
+  : 'object';
+
+type QueryDecoderOutput<Options> = Options extends { readonly decoders?: infer Decoders }
+  ? Decoders extends QueryDecoderMap
+    ? Decoders[keyof Decoders] extends QueryValueDecoder<infer Value>
+      ? Value
+      : never
+    : never
+  : never;
+
+type QueryRowForMode<Mode extends QueryRowMode, Value> = Mode extends 'array'
+  ? QueryArrayRow<Value>
+  : QueryObjectRow<Value>;
+
+/** Infer the runtime row shape from `rowMode` and custom decoder return types. */
+export type InferQueryRow<Options, ExplicitRow = never> = [ExplicitRow] extends [never]
+  ? QueryRowForMode<QueryModeFromOptions<Options>, QueryValue | QueryDecoderOutput<Options>>
+  : ExplicitRow;
 
 export type ParameterOptions = Readonly<{
   encoders?: Readonly<Record<number, QueryParameterEncoder>>;
@@ -247,30 +275,17 @@ export class PostgresError extends Error {
   readonly line?: string;
   readonly routine?: string;
   readonly fields: PostgresErrorField[];
-  readonly postgresMessage: string;
   readonly notices: PostgresNotice[];
-
-  /** node-postgres compatibility: matching properties above plus aliases below. */
-  readonly code?: string;
-  readonly severityNonLocalized?: string;
-  readonly where?: string;
-  readonly schema?: string;
-  readonly table?: string;
-  readonly column?: string;
-  readonly dataType?: string;
-  readonly constraint?: string;
 
   constructor(fields: PostgresErrorField[], notices: PostgresNotice[] = []) {
     const severity = fieldValue(fields, 0x53) ?? fieldValue(fields, 0x56);
     const sqlstate = fieldValue(fields, 0x43);
-    const postgresMessage = fieldValue(fields, 0x4d) ?? 'PostgreSQL ErrorResponse';
-    super(formatPostgresError(severity, sqlstate, postgresMessage));
+    super(fieldValue(fields, 0x4d) ?? 'PostgreSQL ErrorResponse');
     this.name = 'PostgresError';
     this.severity = severity;
     this.localizedSeverity = fieldValue(fields, 0x53);
     this.nonlocalizedSeverity = fieldValue(fields, 0x56);
     this.sqlstate = sqlstate;
-    this.postgresMessage = postgresMessage;
     this.detail = fieldValue(fields, 0x44);
     this.hint = fieldValue(fields, 0x48);
     this.position = fieldValue(fields, 0x50);
@@ -287,14 +302,6 @@ export class PostgresError extends Error {
     this.routine = fieldValue(fields, 0x52);
     this.fields = fields;
     this.notices = notices;
-    this.code = this.sqlstate;
-    this.severityNonLocalized = this.nonlocalizedSeverity;
-    this.where = this.whereText;
-    this.schema = this.schemaName;
-    this.table = this.tableName;
-    this.column = this.columnName;
-    this.dataType = this.dataTypeName;
-    this.constraint = this.constraintName;
   }
 }
 
@@ -647,9 +654,8 @@ export function parseQueryRawResponse(bytes: Uint8Array): RawQueryResult {
   return singleRawResult(parseRawOperation(bytes, 'extended-single'));
 }
 
-/** @deprecated Protocol-fixture compatibility for one simple-query result. */
-export function parseQueryResponse(bytes: Uint8Array): RawQueryResult {
-  return singleRawResult(parseRawOperation(bytes, 'either-single'));
+export function parseSimpleQueryRawResponse(bytes: Uint8Array): RawQueryResult {
+  return singleRawResult(parseRawOperation(bytes, 'simple-single'));
 }
 
 function singleRawResult(operation: RawOperation): RawQueryResult {
@@ -660,19 +666,23 @@ function singleRawResult(operation: RawOperation): RawQueryResult {
   return result;
 }
 
-export function decodeQueryResult<Row = QueryObjectRow>(
+export function decodeQueryResult<Row = never, const Options extends QueryOptions = {}>(
   raw: RawQueryResult,
-  options: QueryOptions = {},
-): QueryResult<Row> {
+  options: Options & QueryOptions = {} as Options & QueryOptions,
+): QueryResult<InferQueryRow<Options, Row>> {
   let stableOptions: QueryOptions;
-  let rows: Row[];
+  let rows: InferQueryRow<Options, Row>[];
   try {
     stableOptions = {
       rowMode: options.rowMode,
       valueMode: options.valueMode,
       decoders: options.decoders === undefined ? undefined : Object.freeze({ ...options.decoders }),
     };
-    rows = raw.rows.map((row) => materializeRow(row, raw.fields, stableOptions)) as Row[];
+    if (stableOptions.rowMode !== 'array') assertUniqueObjectRowFields(raw.fields);
+    rows = raw.rows.map((row) => materializeRow(row, raw.fields, stableOptions)) as InferQueryRow<
+      Options,
+      Row
+    >[];
   } catch (error) {
     const failure = errorWithNotices(error, raw.notices);
     const status = responseTransactionStatus(raw);
@@ -681,7 +691,7 @@ export function decodeQueryResult<Row = QueryObjectRow>(
     }
     throw failure;
   }
-  const result: QueryResult<Row> = {
+  const result: QueryResult<InferQueryRow<Options, Row>> = {
     kind: raw.kind,
     fields: raw.fields,
     rows,
@@ -694,17 +704,23 @@ export function decodeQueryResult<Row = QueryObjectRow>(
   return result;
 }
 
-export function parseExecResponse<Row = QueryObjectRow>(
+export function parseExecResponse<
+  Row = never,
+  const Options extends Omit<QueryOptions, 'encoders'> = {},
+>(
   bytes: Uint8Array,
-  options: Omit<QueryOptions, 'encoders'> = {},
-): ExecResult<Row> {
+  options: Options & Omit<QueryOptions, 'encoders'> = {} as Options &
+    Omit<QueryOptions, 'encoders'>,
+): ExecResult<InferQueryRow<Options, Row>> {
   const operation = parseRawOperation(bytes, 'simple-exec');
-  let result: ExecResult<Row>;
+  let result: ExecResult<InferQueryRow<Options, Row>>;
   try {
     result = {
-      statements: operation.statements.map((statement) =>
-        decodeQueryResult<Row>({ ...statement, notices: [] }, options),
-      ),
+      statements: operation.statements.map((statement) => {
+        const decoded = decodeQueryResult<Row, Options>({ ...statement, notices: [] }, options);
+        decoded.notices = statement.notices;
+        return decoded;
+      }),
       notices: operation.notices,
     };
   } catch (error) {
@@ -860,12 +876,13 @@ export function assertSuccessfulQueryResponse(bytes: Uint8Array): void {
   }
 }
 
-type RawOperationMode = 'extended-single' | 'either-single' | 'simple-single' | 'simple-exec';
+type RawOperationMode = 'extended-single' | 'simple-single' | 'simple-exec';
 
 function parseRawOperation(bytes: Uint8Array, mode: RawOperationMode): RawOperation {
   const cursor = new ByteCursor(bytes);
   const statements: RawQueryResult[] = [];
   const notices: PostgresNotice[] = [];
+  let statementNotices: PostgresNotice[] = [];
   let fields: QueryField[] | undefined;
   let rows: RawQueryRow[] = [];
   let failure: Error | undefined;
@@ -891,13 +908,11 @@ function parseRawOperation(bytes: Uint8Array, mode: RawOperationMode): RawOperat
         case 0x54:
           if (mode !== 'simple-exec' && completionCount > 0)
             throw new Error('RowDescription arrived after statement completion');
-          if (mode === 'extended-single' || mode === 'either-single') {
-            if (!(mode === 'either-single' && extendedStage === 'start')) {
-              if (extendedStage !== 'bound') {
-                throw new Error('RowDescription arrived before ParseComplete and BindComplete');
-              }
-              extendedStage = 'described';
+          if (mode === 'extended-single') {
+            if (extendedStage !== 'bound') {
+              throw new Error('RowDescription arrived before ParseComplete and BindComplete');
             }
+            extendedStage = 'described';
           }
           if (fields !== undefined) failure ??= new Error('result received two RowDescriptions');
           fields = parseRowDescription(body);
@@ -907,10 +922,7 @@ function parseRawOperation(bytes: Uint8Array, mode: RawOperationMode): RawOperat
           if (completionCount > 0 && fields === undefined)
             throw new Error('DataRow arrived after statement completion');
           if (fields === undefined) throw new Error('DataRow arrived before RowDescription');
-          if (
-            (mode === 'extended-single' && extendedStage !== 'described') ||
-            (mode === 'either-single' && extendedStage !== 'start' && extendedStage !== 'described')
-          ) {
+          if (mode === 'extended-single' && extendedStage !== 'described') {
             throw new Error('DataRow arrived before the result description');
           }
           rows.push(parseDataRow(body, fields.length));
@@ -922,10 +934,7 @@ function parseRawOperation(bytes: Uint8Array, mode: RawOperationMode): RawOperat
               'queryRaw() received multiple result completions; use exec() for multi-statement SQL',
             );
           }
-          if (
-            (mode === 'extended-single' && extendedStage !== 'described') ||
-            (mode === 'either-single' && extendedStage !== 'start' && extendedStage !== 'described')
-          ) {
+          if (mode === 'extended-single' && extendedStage !== 'described') {
             throw new Error('CommandComplete arrived before the extended-query result description');
           }
           const commandTag = body.readCString('CommandComplete tag');
@@ -936,16 +945,14 @@ function parseRawOperation(bytes: Uint8Array, mode: RawOperationMode): RawOperat
               fields ?? [],
               rows,
               commandTag,
-              [],
+              statementNotices,
             ),
           );
           fields = undefined;
           rows = [];
+          statementNotices = [];
           completionCount += 1;
-          if (
-            mode === 'extended-single' ||
-            (mode === 'either-single' && extendedStage === 'described')
-          ) {
+          if (mode === 'extended-single') {
             extendedStage = 'completed';
           }
           break;
@@ -980,7 +987,7 @@ function parseRawOperation(bytes: Uint8Array, mode: RawOperationMode): RawOperat
           }
           break;
         case 0x31:
-          if (mode !== 'extended-single' && mode !== 'either-single') {
+          if (mode !== 'extended-single') {
             throw new Error('simple-query response contained ParseComplete');
           }
           if (extendedStage !== 'start') {
@@ -990,7 +997,7 @@ function parseRawOperation(bytes: Uint8Array, mode: RawOperationMode): RawOperat
           extendedStage = 'parsed';
           break;
         case 0x32:
-          if (mode !== 'extended-single' && mode !== 'either-single') {
+          if (mode !== 'extended-single') {
             throw new Error('simple-query response contained BindComplete');
           }
           if (extendedStage !== 'parsed') {
@@ -1009,25 +1016,20 @@ function parseRawOperation(bytes: Uint8Array, mode: RawOperationMode): RawOperat
               'queryRaw() received multiple result completions; use exec() for multi-statement SQL',
             );
           }
-          if (
-            (mode === 'extended-single' && extendedStage !== 'described') ||
-            (mode === 'either-single' && extendedStage !== 'start' && extendedStage !== 'described')
-          ) {
+          if (mode === 'extended-single' && extendedStage !== 'described') {
             throw new Error(
               'EmptyQueryResponse arrived before the extended-query result description',
             );
           }
           body.requireEnd('EmptyQueryResponse');
+          statementNotices = [];
           completionCount += 1;
-          if (
-            mode === 'extended-single' ||
-            (mode === 'either-single' && extendedStage === 'described')
-          ) {
+          if (mode === 'extended-single') {
             extendedStage = 'completed';
           }
           break;
         case 0x6e:
-          if (mode !== 'extended-single' && mode !== 'either-single') {
+          if (mode !== 'extended-single') {
             throw new Error('simple-query response contained NoData');
           }
           if (extendedStage !== 'bound') {
@@ -1039,9 +1041,12 @@ function parseRawOperation(bytes: Uint8Array, mode: RawOperationMode): RawOperat
         case 0x53:
           validateParameterStatus(body);
           break;
-        case 0x4e:
-          notices.push(parseNoticeResponse(body));
+        case 0x4e: {
+          const notice = parseNoticeResponse(body);
+          notices.push(notice);
+          statementNotices.push(notice);
           break;
+        }
         case 0x41:
           validateNotificationResponse(body);
           break;
@@ -1068,16 +1073,6 @@ function parseRawOperation(bytes: Uint8Array, mode: RawOperationMode): RawOperat
       'extended-query response omitted ParseComplete, BindComplete, result description, or completion',
     );
   }
-  if (
-    !sawErrorResponse &&
-    mode === 'either-single' &&
-    extendedStage !== 'start' &&
-    extendedStage !== 'completed'
-  ) {
-    failure ??= new Error(
-      'extended-query response omitted ParseComplete, BindComplete, result description, or completion',
-    );
-  }
   if (failure !== undefined) throwWithStatus(failure, status);
   return { statements, notices, transactionStatus: status };
 }
@@ -1096,20 +1091,46 @@ function rawResult(
     commandTag,
     rowCount: commandTagRowCount(commandTag),
     notices,
-    fieldIndex(name: string): number | undefined {
-      const index = fields.findIndex((field) => field.name === name);
-      return index >= 0 ? index : undefined;
-    },
     getText(row: number, column: string): string | null {
-      const columnIndex = this.fieldIndex(column);
-      if (columnIndex === undefined) {
-        throw new Error('query result has no column named ' + JSON.stringify(column));
-      }
+      const columnIndex = resolveFieldIndex(fields, column);
       const queryRow = rows[row];
       if (queryRow === undefined) throw new Error('query result has no row at index ' + row);
       return queryRow.text(columnIndex);
     },
   };
+}
+
+function resolveFieldIndex(fields: QueryField[], name: string): number {
+  let match: number | undefined;
+  for (let index = 0; index < fields.length; index += 1) {
+    if (fields[index]!.name !== name) continue;
+    if (match !== undefined) {
+      throw new Error(
+        'query result has more than one column named ' +
+          JSON.stringify(name) +
+          '; use array row mode or a positional raw-row index',
+      );
+    }
+    match = index;
+  }
+  if (match === undefined) {
+    throw new Error('query result has no column named ' + JSON.stringify(name));
+  }
+  return match;
+}
+
+function assertUniqueObjectRowFields(fields: ReadonlyArray<QueryField>): void {
+  const names = new Set<string>();
+  for (const field of fields) {
+    if (names.has(field.name)) {
+      throw new Error(
+        'decoded object rows cannot represent more than one column named ' +
+          JSON.stringify(field.name) +
+          "; use { rowMode: 'array' } or queryRaw()",
+      );
+    }
+    names.add(field.name);
+  }
 }
 
 function materializeRow(
@@ -1721,19 +1742,73 @@ export function assertNoTopLevelCopy(sql: string): void {
   }
 }
 
+/**
+ * Reject transaction commands whose response boundary cannot prove that the
+ * callback still owns the transaction it started. PostgreSQL reports both
+ * `ROLLBACK TO SAVEPOINT` and `ROLLBACK AND CHAIN` as command tag `ROLLBACK`
+ * with ReadyForQuery status `transaction`, so the latter must be rejected
+ * before execution rather than inferred from the backend response.
+ */
+export function assertNoTransactionChain(sql: string): void {
+  if (containsTransactionChain(sql)) {
+    throw new Error(
+      'callback transactions do not support ROLLBACK/ABORT ... AND CHAIN; return or throw from the callback instead',
+    );
+  }
+}
+
 export function structuredSimpleQuery(sql: string): Uint8Array {
   assertNoTopLevelCopy(sql);
   return simpleQuery(sql);
 }
 
 export function containsTopLevelCopy(sql: string): boolean {
-  return scanTopLevelCopy(sql, false) || scanTopLevelCopy(sql, true);
+  return (
+    scanTopLevelTokens(sql, false, (word, first) => first && word === 'copy') ||
+    scanTopLevelTokens(sql, true, (word, first) => first && word === 'copy')
+  );
 }
 
-function scanTopLevelCopy(sql: string, plainStringsEscapeBackslashes: boolean): boolean {
+export function containsTransactionChain(sql: string): boolean {
+  return scanTransactionChain(sql, false) || scanTransactionChain(sql, true);
+}
+
+function scanTransactionChain(sql: string, plainStringsEscapeBackslashes: boolean): boolean {
+  let currentStatement = -1;
+  let state: 'afterControl' | 'afterQualifier' | 'afterAnd' | 'ineligible' = 'ineligible';
+  return scanTopLevelTokens(sql, plainStringsEscapeBackslashes, (word, first, statement) => {
+    if (statement !== currentStatement) {
+      currentStatement = statement;
+      state = first && (word === 'rollback' || word === 'abort') ? 'afterControl' : 'ineligible';
+      return false;
+    }
+    if (word === undefined) {
+      state = 'ineligible';
+      return false;
+    }
+    if (state === 'afterControl' && (word === 'work' || word === 'transaction')) {
+      state = 'afterQualifier';
+    } else if ((state === 'afterControl' || state === 'afterQualifier') && word === 'and') {
+      state = 'afterAnd';
+    } else if (state === 'afterAnd' && word === 'chain') {
+      return true;
+    } else {
+      // This also keeps ROLLBACK TO [SAVEPOINT] inside the managed transaction.
+      state = 'ineligible';
+    }
+    return false;
+  });
+}
+
+function scanTopLevelTokens(
+  sql: string,
+  plainStringsEscapeBackslashes: boolean,
+  visit: (word: string | undefined, first: boolean, statement: number) => boolean,
+): boolean {
   let offset = 0;
   let depth = 0;
   let statementStart = true;
+  let statement = 0;
   while (offset < sql.length) {
     const character = sql[offset]!;
     if (/\s/.test(character)) {
@@ -1751,16 +1826,19 @@ function scanTopLevelCopy(sql: string, plainStringsEscapeBackslashes: boolean): 
       continue;
     }
     if ((character === 'e' || character === 'E') && sql[offset + 1] === "'") {
+      if (depth === 0 && visit(undefined, statementStart, statement)) return true;
       statementStart = false;
       offset = skipSingleQuote(sql, offset + 1, true);
       continue;
     }
     if (character === "'") {
+      if (depth === 0 && visit(undefined, statementStart, statement)) return true;
       statementStart = false;
       offset = skipSingleQuote(sql, offset, plainStringsEscapeBackslashes);
       continue;
     }
     if (character === '"') {
+      if (depth === 0 && visit(undefined, statementStart, statement)) return true;
       statementStart = false;
       offset = skipDoubleQuote(sql, offset);
       continue;
@@ -1768,6 +1846,7 @@ function scanTopLevelCopy(sql: string, plainStringsEscapeBackslashes: boolean): 
     if (character === '$') {
       const delimiter = dollarQuoteDelimiter(sql, offset);
       if (delimiter !== undefined) {
+        if (depth === 0 && visit(undefined, statementStart, statement)) return true;
         statementStart = false;
         const end = sql.indexOf(delimiter, offset + delimiter.length);
         offset = end < 0 ? sql.length : end + delimiter.length;
@@ -1775,6 +1854,7 @@ function scanTopLevelCopy(sql: string, plainStringsEscapeBackslashes: boolean): 
       }
     }
     if (character === '(') {
+      if (depth === 0 && visit(undefined, statementStart, statement)) return true;
       depth += 1;
       statementStart = false;
       offset += 1;
@@ -1787,17 +1867,21 @@ function scanTopLevelCopy(sql: string, plainStringsEscapeBackslashes: boolean): 
     }
     if (character === ';' && depth === 0) {
       statementStart = true;
+      statement += 1;
       offset += 1;
       continue;
     }
-    if (/[A-Za-z_]/.test(character)) {
+    if (isPostgresIdentifierStart(character)) {
       const start = offset;
       offset += 1;
-      while (offset < sql.length && /[A-Za-z0-9_$]/.test(sql[offset]!)) offset += 1;
-      if (statementStart && sql.slice(start, offset).toLowerCase() === 'copy') return true;
+      while (offset < sql.length && isPostgresIdentifierContinuation(sql[offset]!)) offset += 1;
+      if (depth === 0 && visit(sql.slice(start, offset).toLowerCase(), statementStart, statement)) {
+        return true;
+      }
       statementStart = false;
       continue;
     }
+    if (depth === 0 && visit(undefined, statementStart, statement)) return true;
     statementStart = false;
     offset += 1;
   }
@@ -1848,8 +1932,31 @@ function skipDoubleQuote(sql: string, quoteOffset: number): number {
 }
 
 function dollarQuoteDelimiter(sql: string, offset: number): string | undefined {
-  const match = /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(offset));
-  return match?.[0];
+  let end = offset + 1;
+  if (sql[end] === '$') return '$$';
+  if (end >= sql.length || !isPostgresIdentifierStart(sql[end]!)) return undefined;
+  end += 1;
+  while (end < sql.length && sql[end] !== '$' && isPostgresIdentifierContinuation(sql[end]!)) {
+    end += 1;
+  }
+  return sql[end] === '$' ? sql.slice(offset, end + 1) : undefined;
+}
+
+function isPostgresIdentifierStart(character: string): boolean {
+  const code = character.charCodeAt(0);
+  return (
+    character === '_' ||
+    (code >= 0x41 && code <= 0x5a) ||
+    (code >= 0x61 && code <= 0x7a) ||
+    code >= 0x80
+  );
+}
+
+function isPostgresIdentifierContinuation(character: string): boolean {
+  const code = character.charCodeAt(0);
+  return (
+    isPostgresIdentifierStart(character) || character === '$' || (code >= 0x30 && code <= 0x39)
+  );
 }
 
 class ByteWriter {
@@ -1960,23 +2067,6 @@ function parseErrorResponse(cursor: ByteCursor, notices: PostgresNotice[] = []):
 
 function fieldValue(fields: ReadonlyArray<PostgresErrorField>, code: number): string | undefined {
   return fields.find((field) => field.code === code)?.value;
-}
-
-function formatPostgresError(
-  severity: string | undefined,
-  sqlstate: string | undefined,
-  message: string,
-): string {
-  if (severity !== undefined && sqlstate !== undefined) {
-    return `${severity} [${sqlstate}]: ${message}`;
-  }
-  if (severity !== undefined) {
-    return `${severity}: ${message}`;
-  }
-  if (sqlstate !== undefined) {
-    return `[${sqlstate}]: ${message}`;
-  }
-  return message;
 }
 
 function queryFormat(code: number): QueryFormat {

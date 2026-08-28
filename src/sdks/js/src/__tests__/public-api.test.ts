@@ -19,9 +19,11 @@ import {
   type OliphauntServer,
   type OliphauntTransaction,
   type OpenConfig,
-  type ProtocolChunkCallback,
+  type QueryArrayRow,
+  type QueryObjectRow,
   type QueryResult,
   type QueryParam,
+  type QueryValue,
   type RawQueryResult,
   type RestoreOptions,
   type TextQueryParameter,
@@ -37,6 +39,14 @@ test('root entrypoint publishes the ORM-facing values', () => {
   assert.equal(array([1, 2], postgresOids.int4Array).typeOid, postgresOids.int4Array);
   assert.equal(typedNull(postgresOids.uuid).format, 'null');
 });
+
+const canonicalPostgresError = new PostgresError([
+  { code: 0x43, value: '22000' },
+  { code: 0x4d, value: 'invalid value' },
+]);
+const canonicalSqlstate: string | undefined = canonicalPostgresError.sqlstate;
+const canonicalMessage: string = canonicalPostgresError.message;
+void [canonicalSqlstate, canonicalMessage];
 
 // Compile-time proof from the external root surface. Keeping this function
 // uncalled verifies declarations without needing a native runtime in the test.
@@ -55,10 +65,26 @@ function assertPublicDatabaseTypes(
     'SELECT 1',
     { rowMode: 'array' },
   );
+  const inferredArrays: Promise<QueryResult<QueryArrayRow>> = database.query('SELECT 1', [], {
+    rowMode: 'array',
+  });
+  const inferredDecoder: Promise<QueryResult<QueryObjectRow<QueryValue | Date>>> = database.query(
+    'SELECT now()',
+    [],
+    { decoders: { [postgresOids.timestamptz]: (value) => new Date(value) } },
+  );
   const description: Promise<DescribeResult> = database.describe('SELECT $1', [postgresOids.int4]);
   const streamed: Promise<void> = database.execProtocolRawStream(
     Uint8Array.of(0x51),
     () => undefined,
+  );
+  // @ts-expect-error Stream callbacks are synchronous backpressure acknowledgements.
+  const asyncStreamed = database.execProtocolRawStream(Uint8Array.of(0x51), async () => {});
+  const widenedAsyncCallback: (chunk: Uint8Array) => unknown = async () => {};
+  const widenedAsyncStreamed = database.execProtocolRawStream(
+    Uint8Array.of(0x51),
+    // @ts-expect-error Widening an async callback must not bypass the synchronous contract.
+    widenedAsyncCallback,
   );
   // @ts-expect-error Raw protocol is database/root-only; it bypasses callback transaction ownership.
   const transactionBuffered = transaction.execProtocolRaw(Uint8Array.of(0x51));
@@ -85,8 +111,12 @@ function assertPublicDatabaseTypes(
     decoded,
     raw,
     execution,
+    inferredArrays,
+    inferredDecoder,
     description,
     streamed,
+    asyncStreamed,
+    widenedAsyncStreamed,
     transactionBuffered,
     transactionStreamed,
     rollback,
@@ -110,20 +140,9 @@ const publicHelperTypes: [TextQueryParameter, BinaryQueryParameter, NullQueryPar
 ];
 void publicHelperTypes;
 
-const publicProtocolCallback: ProtocolChunkCallback = (_chunk) => undefined;
 const publicRestoreOptions: RestoreOptions = { libraryPath: '/opt/liboliphaunt.so' };
 const publicTopology: OpenConfig = { topology: 'broker' };
-// @ts-expect-error Server selection is explicit through Oliphaunt.openServer().
-const removedServerTopology: OpenConfig = { topology: 'server' };
-// @ts-expect-error The native selector is topology; execution is not a compatibility alias.
-const removedExecutionSelector: OpenConfig = { execution: 'broker' };
-void [
-  publicProtocolCallback,
-  publicRestoreOptions,
-  publicTopology,
-  removedServerTopology,
-  removedExecutionSelector,
-];
+void [publicRestoreOptions, publicTopology];
 
 const plainJsonParameter: QueryParam = {
   format: 'text',

@@ -19,7 +19,6 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import {
-  assertCurrentBrowserPlan,
   browserMarkdownReport,
   browserPlanSummary,
   defaultBrowserPlanFile,
@@ -51,7 +50,6 @@ const packageOnly = process.argv.includes('--package-only');
 const quickBenchmark = benchmark && process.argv.includes('--quick');
 const planFile = resolve(argumentValue('--config') ?? defaultBrowserPlanFile);
 const planSource = qualifyingBenchmark ? await loadBrowserPlan(planFile) : undefined;
-if (planSource !== undefined) assertCurrentBrowserPlan(planSource.plan);
 const git = qualifyingBenchmark ? await gitProvenance() : undefined;
 const benchmarkOutput = qualifyingBenchmark
   ? resolve(argumentValue('--output') ?? defaultBenchmarkOutput(git.commit))

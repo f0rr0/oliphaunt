@@ -79,7 +79,7 @@ execution in the importing JavaScript realm. Its methods return promises, but
 synchronous PostgreSQL guest work can block that realm. Applications that need
 the caller's event loop to remain responsive import
 `@oliphaunt/wasix-ts/worker`; it owns a Web Worker or Node-compatible worker
-thread. There is no execution option and no silent placement fallback. Browser
+thread. Execution placement is selected by that import boundary. Browser
 execution requires cross-origin isolation.
 
 Memory is the default. Persistent providers are selective imports:

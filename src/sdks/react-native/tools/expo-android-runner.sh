@@ -194,7 +194,6 @@ android_liboliphaunt_has_current_abi() {
     oliphaunt_close \
     oliphaunt_register_static_extensions \
     oliphaunt_copy_last_error \
-    oliphaunt_last_error \
     oliphaunt_version \
     oliphaunt_free_response
   do

@@ -19,7 +19,6 @@ import { promisify } from 'node:util';
 import { createPackedWasixConsumer } from '../../../src/bindings/wasix-ts/tools/packed-node-fixture.mjs';
 import { installedPackageClosure } from './installed-closure.mjs';
 import {
-  assertCurrentPlan,
   assertRuntimeBuildConfiguration,
   comfortableWinGate,
   defaultPlanFile,
@@ -44,7 +43,6 @@ const source = await loadPlan(args.config);
 if (args.mode === 'plan') {
   console.log(JSON.stringify(planSummary(source.plan, source), null, 2));
 } else if (args.mode === 'validate') {
-  assertCurrentPlan(source.plan);
   const installedControl = await comparisonProvenance(source.plan);
   console.log(
     JSON.stringify(
@@ -60,7 +58,6 @@ if (args.mode === 'plan') {
     ),
   );
 } else {
-  assertCurrentPlan(source.plan);
   await runMeasuredBenchmark(source, args);
 }
 

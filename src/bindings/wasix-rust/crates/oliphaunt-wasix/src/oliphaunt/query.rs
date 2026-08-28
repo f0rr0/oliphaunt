@@ -12,8 +12,8 @@ use crate::oliphaunt::query_core;
 pub(crate) use crate::oliphaunt::query_core::ReadyStatus;
 pub use crate::oliphaunt::query_core::{
     CommandResult, DecodeError, ExecResult, FromSql, IntoParameter, Parameter, PostgresError,
-    PostgresErrorField, PostgresNotice, QueryField, QueryFormat, QueryParam, QueryResult, QueryRow,
-    RowIndex, StatementDescription, StatementResult, TypeOid, ValueFormat, ValueRef,
+    PostgresErrorField, PostgresNotice, QueryField, QueryFormat, QueryResult, QueryRow, RowIndex,
+    StatementDescription, StatementResult, TypeOid, ValueFormat, ValueRef,
 };
 
 pub(crate) fn simple_query(sql: &str) -> Result<Vec<u8>> {
@@ -27,9 +27,7 @@ impl QueryResult {
     }
 
     fn get_text_inner(&self, row: usize, column: &str) -> Result<Option<&str>> {
-        let column = self
-            .field_index(column)
-            .ok_or_else(|| anyhow!("query result has no column named {column:?}"))?;
+        let column = column.resolve(self.fields()).map_err(anyhow::Error::new)?;
         let row = self
             .row(row)
             .ok_or_else(|| anyhow!("query result has no row at index {row}"))?;
@@ -116,16 +114,6 @@ pub(crate) fn parse_statement_description(bytes: &[u8]) -> Result<StatementDescr
     query_core_result(query_core::parse_statement_description(bytes))
 }
 
-#[cfg(test)]
-fn extended_query(sql: &str, params: &[QueryParam]) -> Result<Vec<u8>> {
-    let params = params
-        .iter()
-        .cloned()
-        .map(IntoParameter::into_parameter)
-        .collect::<Vec<_>>();
-    extended_statement(sql, &params, ValueFormat::Text)
-}
-
 pub(crate) fn extended_statement(
     sql: &str,
     params: &[Parameter],
@@ -144,6 +132,10 @@ pub(crate) fn describe_statement(sql: &str, params: &[Parameter]) -> Result<Vec<
 
 pub(crate) fn reject_copy_statements(sql: &str) -> Result<()> {
     query_core_result(query_core::reject_copy_statements(sql))
+}
+
+pub(crate) fn reject_transaction_chain(sql: &str) -> Result<()> {
+    query_core_result(query_core::reject_transaction_chain(sql))
 }
 
 pub(crate) fn validate_managed_transaction_response(response: &[u8]) -> Result<ReadyStatus> {
@@ -323,33 +315,33 @@ mod tests {
     }
 
     #[test]
-    fn query_parameter_conversions_feed_the_extended_protocol() {
+    fn parameter_conversions_feed_the_extended_protocol() {
         let owned = "owned".to_owned();
         let params = vec![
-            QueryParam::text("text"),
-            QueryParam::binary([1_u8, 2]),
-            QueryParam::from("borrowed"),
-            QueryParam::from(owned.clone()),
-            QueryParam::from(&owned),
-            QueryParam::from(1_i16),
-            QueryParam::from(2_i32),
-            QueryParam::from(3_i64),
-            QueryParam::from(4.5_f32),
-            QueryParam::from(6.25_f64),
-            QueryParam::from(true),
-            QueryParam::from(&[7_u8, 8][..]),
-            QueryParam::from(vec![9_u8]),
-            QueryParam::from(Some("optional")),
-            QueryParam::from(None::<&str>),
+            Parameter::text("text"),
+            Parameter::binary([1_u8, 2]),
+            "borrowed".into_parameter(),
+            owned.clone().into_parameter(),
+            (&owned).into_parameter(),
+            1_i16.into_parameter(),
+            2_i32.into_parameter(),
+            3_i64.into_parameter(),
+            4.5_f32.into_parameter(),
+            6.25_f64.into_parameter(),
+            true.into_parameter(),
+            (&[7_u8, 8][..]).into_parameter(),
+            vec![9_u8].into_parameter(),
+            Some("optional").into_parameter(),
+            None::<&str>.into_parameter(),
         ];
 
-        let packet = extended_query("SELECT $1", &params).expect("valid extended query");
+        let packet = extended_statement("SELECT $1", &params, ValueFormat::Text)
+            .expect("valid extended query");
         assert_eq!(packet.first(), Some(&b'P'));
         assert!(packet.contains(&b'B'));
-        assert!(extended_query("SELECT\0$1", &[]).is_err());
-        assert!(
-            extended_query("SELECT 1", &vec![QueryParam::Null; i16::MAX as usize + 1]).is_err()
-        );
+        assert!(extended_statement("SELECT\0$1", &[], ValueFormat::Text).is_err());
+        let too_many = vec![Parameter::null(); i16::MAX as usize + 1];
+        assert!(extended_statement("SELECT 1", &too_many, ValueFormat::Text).is_err());
     }
 
     #[test]
@@ -398,6 +390,31 @@ mod tests {
     }
 
     #[test]
+    fn explicit_oid_zero_is_describe_only() {
+        let parameter = Parameter::typed_text(TypeOid::new(0), "infer me");
+        let error = extended_statement(
+            "SELECT $1",
+            std::slice::from_ref(&parameter),
+            ValueFormat::Text,
+        )
+        .expect_err("execution rejects explicit OID 0");
+        assert!(
+            error
+                .to_string()
+                .contains("explicitly declares PostgreSQL type OID 0")
+        );
+
+        let packet = describe_statement("SELECT $1", &[parameter])
+            .expect("describe permits OID 0 as PostgreSQL inference");
+        let messages = frontend_messages(&packet);
+        let mut parse = messages[0].1;
+        assert_eq!(read_cstring(&mut parse, "statement").unwrap(), "");
+        assert_eq!(read_cstring(&mut parse, "SQL").unwrap(), "SELECT $1");
+        assert_eq!(read_i16(&mut parse, "OID count").unwrap(), 1);
+        assert_eq!(read_u32(&mut parse, "OID").unwrap(), 0);
+    }
+
+    #[test]
     fn query_result_accessors_report_postgres_shapes() {
         let fields: Arc<[QueryField]> = vec![QueryField {
             name: "value".to_owned(),
@@ -421,7 +438,6 @@ mod tests {
             ready_status: ReadyStatus::Idle,
         };
 
-        assert_eq!(result.field_index("value"), Some(0));
         assert_eq!(result.get_text(0, "value").expect("text value"), Some("ok"));
         assert!(result.get_text(0, "missing").is_err());
         assert!(result.get_text(1, "value").is_err());
@@ -471,6 +487,22 @@ mod tests {
             row.try_get::<String, _>("same"),
             Err(DecodeError::AmbiguousColumn(name)) if name == "same"
         ));
+
+        let result = QueryResult {
+            fields: Arc::clone(&row.fields),
+            rows: vec![row],
+            command_tag: Some("SELECT 1".to_owned()),
+            row_count: Some(1),
+            notices: Vec::new(),
+            ready_status: ReadyStatus::Idle,
+        };
+        assert!(
+            result
+                .get_text(0, "same")
+                .expect_err("text lookup must reject duplicate names")
+                .to_string()
+                .contains("more than one column")
+        );
     }
 
     #[test]
@@ -496,7 +528,9 @@ mod tests {
 
     #[test]
     fn exec_preserves_ordered_command_and_row_results() {
-        let mut response = backend_message(b'C', b"INSERT 0 1\0");
+        let mut response = backend_message(b'N', b"SNOTICE\0Minserted\0\0");
+        response.extend(backend_message(b'C', b"INSERT 0 1\0"));
+        response.extend(backend_message(b'N', b"SNOTICE\0Mselected\0\0"));
         response.extend(backend_message(
             b'T',
             &row_description_body(&[("answer", TypeOid::INT4)]),
@@ -506,24 +540,26 @@ mod tests {
         row.extend_from_slice(b"42");
         response.extend(backend_message(b'D', &row));
         response.extend(backend_message(b'C', b"SELECT 1\0"));
-        response.extend(backend_message(b'N', b"SNOTICE\0Mfinished\0\0"));
         response.extend(backend_message(b'Z', b"I"));
 
         let result = parse_exec_response(&response).expect("valid multi-statement response");
         assert_eq!(result.statements().len(), 2);
-        assert!(matches!(
-            &result.statements()[0],
-            StatementResult::Command(command)
-                if command.command_tag() == Some("INSERT 0 1") && command.row_count() == Some(1)
-        ));
+        let StatementResult::Command(command) = &result.statements()[0] else {
+            panic!("INSERT result must remain a command");
+        };
+        assert_eq!(command.command_tag(), Some("INSERT 0 1"));
+        assert_eq!(command.row_count(), Some(1));
+        assert_eq!(command.notices()[0].message, "inserted");
         match &result.statements()[1] {
             StatementResult::Rows(query) => {
                 assert_eq!(query.command_tag(), Some("SELECT 1"));
                 assert_eq!(query.rows()[0].try_get::<i32, _>("answer").unwrap(), 42);
+                assert_eq!(query.notices()[0].message, "selected");
             }
             StatementResult::Command(_) => panic!("SELECT result must retain its rows"),
         }
-        assert_eq!(result.notices()[0].message, "finished");
+        assert_eq!(result.notices()[0].message, "inserted");
+        assert_eq!(result.notices()[1].message, "selected");
     }
 
     #[test]
@@ -830,17 +866,20 @@ mod tests {
     }
 
     #[test]
-    fn structured_sql_copy_preflight_matches_shared_corpus() {
+    fn structured_sql_preflight_matches_shared_corpus() {
         let source = crate::oliphaunt::test_fixtures::text(
             "protocol/structured-sql-cases.json",
             "protocol-structured-sql-cases.json",
         );
         let fixture: serde_json::Value = serde_json::from_str(&source).unwrap();
+        assert_eq!(fixture["schemaVersion"], 2);
         for case in fixture["cases"].as_array().unwrap() {
             let name = case["name"].as_str().unwrap();
             let sql = case["sql"].as_str().unwrap();
             let expected = case["containsTopLevelCopy"].as_bool().unwrap();
             assert_eq!(reject_copy_statements(sql).is_err(), expected, "{name}");
+            let expected = case["containsTransactionChain"].as_bool().unwrap();
+            assert_eq!(reject_transaction_chain(sql).is_err(), expected, "{name}");
         }
     }
 

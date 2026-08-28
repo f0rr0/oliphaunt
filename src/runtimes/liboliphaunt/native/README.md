@@ -194,6 +194,9 @@ preparing direct, broker, and server roots, then passes
 try to acquire the same lease twice. Other C ABI consumers leave the flag clear
 and rely on the C runtime. The flag is only an ownership handoff; callers must
 already hold the stable lease for the full native handle lifetime.
+Detached reopens of a resident runtime must repeat the same root-lock ownership
+mode; changing the flag is rejected rather than silently changing who protects
+the live root.
 
 `oliphaunt_init` only validates an existing managed root. It requires the exact
 five-field `<root>/.oliphaunt.json`, a real `<root>/pgdata` directory,

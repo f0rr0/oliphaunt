@@ -71,8 +71,13 @@ selection, and lifecycle integration.
 
 `OliphauntConfig` contains the PGDATA path, optional runtime and module
 directories, username, database, and PostgreSQL startup arguments.
-`reserved_flags` must be zero. Higher-level SDKs prepare storage and translate
-direct-runtime settings into this record.
+Set `flags` to zero for normal ownership, or to
+`OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK` when the host already owns the managed
+root lock for the lifetime of the handle. A detached resident runtime accepts a
+new logical lease only when the reopen uses the same lock-ownership mode. Other
+flag bits are rejected.
+Higher-level SDKs prepare storage and translate direct-runtime settings into
+this record.
 
 </Step>
 <Step>

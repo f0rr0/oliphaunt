@@ -116,6 +116,8 @@ export const WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES = Object.freeze([
   'lib/runtime-descriptor.js',
   'lib/server.node.d.ts',
   'lib/server.node.js',
+  'lib/startup-config.d.ts',
+  'lib/startup-config.js',
   'lib/storage-provider.d.ts',
   'lib/storage-provider.js',
   'lib/storage-snapshot.d.ts',
@@ -411,16 +413,6 @@ export function assertWasixTypescriptNpmArchive(archive) {
   const expectedFiles = new Set(
     WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES.map((name) => `package/${name}`),
   );
-  for (const removed of [
-    'package/lib/node-lock-identity.js',
-    'package/lib/node-lock-identity.d.ts',
-    'package/lib/node-web-worker.js',
-    'package/lib/node-web-worker.d.ts',
-    'package/lib/node-web-worker-bootstrap.js',
-    'package/lib/node-web-worker-bootstrap.d.ts',
-  ]) {
-    if (entries.has(removed)) fail(`${path.basename(file)} retained deleted output ${removed}`);
-  }
   for (const [name, entry] of entries) {
     if (entry.isSymbolicLink) fail(`${path.basename(file)} contains symbolic link ${name}`);
     if (entry.isFile && !expectedFiles.has(name)) {
@@ -431,7 +423,6 @@ export function assertWasixTypescriptNpmArchive(archive) {
   const browserWorker = requireFile('lib/worker.js').toString('utf8');
   const nodeWorker = requireFile('lib/node-worker.js').toString('utf8');
   const nodeDirect = requireFile('lib/node-direct.js').toString('utf8');
-  const nodeHost = requireFile('lib/node-host.js').toString('utf8');
   if (
     !browserWorker.includes(esmImportFrom('./host/index.mjs'))
     || !nodeWorker.includes(esmImportFrom('./node-direct.js'))
@@ -441,13 +432,6 @@ export function assertWasixTypescriptNpmArchive(archive) {
     || nodeDirect.includes('@wasmer/sdk')
   ) {
     fail(`${path.basename(file)} workers do not resolve the package-relative patched host`);
-  }
-  if (
-    nodeHost.includes('node:worker_threads')
-    || nodeHost.includes('./node-web-worker.js')
-    || nodeHost.includes('workerUrl')
-  ) {
-    fail(`${path.basename(file)} direct Node host retained inner-Worker orchestration`);
   }
   JSON.parse(requireFile('lib/host/provenance.json').toString('utf8'));
   return manifest;

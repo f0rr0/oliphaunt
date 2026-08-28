@@ -105,7 +105,6 @@ type ExtensionPackageMetadata = {
     memberRuntimeRelativePaths?: Record<string, string>;
     memberModuleRelativePaths?: Record<string, string>;
     targetPackageNames?: Record<string, string>;
-    payloadPackageNames?: string[];
   };
 };
 
@@ -489,18 +488,7 @@ async function resolveExtensionPackage(
   }
   const runtimeDirectories: string[] = [];
   const moduleDirectories: string[] = [];
-  const payloadPackageNames = packageJson.oliphaunt.payloadPackageNames ?? [];
-  if (
-    !Array.isArray(payloadPackageNames) ||
-    payloadPackageNames.some((name) => typeof name !== 'string' || name.length === 0)
-  ) {
-    throw new Error(`${targetPackageName} payloadPackageNames metadata must be a string array`);
-  }
-  if (payloadPackageNames.length > 0) {
-    throw new Error(
-      `${targetPackageName} legacy payloadPackageNames carriers are unsupported; publish one exact canonical runtime tree`,
-    );
-  } else if (isBundle) {
+  if (isBundle) {
     const payload = await resolveExtensionBundleMember({
       extension,
       expectedMembers,

@@ -144,7 +144,7 @@ struct OliphauntNativeDirectEngine: OliphauntEngine {
                                     module_dir: nil,
                                     username: usernameCString,
                                     database: databaseCString,
-                                    reserved_flags: 0,
+                                    flags: 0,
                                     startup_args: startupArgPointers,
                                     startup_arg_count: startupArgs.count
                                 )

@@ -11,13 +11,13 @@ task.
 | Area | Public surface | Use it for |
 | --- | --- | --- |
 | Initialization | `oliphaunt_init`, `OliphauntConfig` | Open a native direct backend for the prepared `pgdata` child of a managed root; initialization does not create it |
-| Versioning | `oliphaunt_version` | Report the runtime and PostgreSQL build identity |
+| Versioning | `oliphaunt_version` | Report the Oliphaunt runtime package version |
 | Raw protocol | `oliphaunt_exec_protocol` | Send PostgreSQL frontend protocol bytes and receive backend messages |
 | Streaming | `oliphaunt_exec_protocol_raw_stream`, response sink callbacks | Handle large raw protocol responses without forcing one contiguous response buffer |
 | Simple SQL | `oliphaunt_exec_simple_query` | Execute one SQL string without constructing a frontend protocol frame |
 | Cancellation | `oliphaunt_cancel` | Request cancellation of the active PostgreSQL operation on a handle |
 | Response ownership | `OliphauntResponse`, `oliphaunt_free_response` | Free ABI-owned buffers exactly once |
-| Errors | `OliphauntErrorCapture`, the `_with_error` operation variants, `oliphaunt_copy_last_error`, compatibility `oliphaunt_last_error` | Capture an asynchronous FFI operation's error before its native worker returns, or copy a synchronous caller's operation-local error; use the pointer accessor only for source compatibility |
+| Errors | `OliphauntErrorCapture`, the `_with_error` operation variants, `oliphaunt_copy_last_error` | Capture an asynchronous FFI operation's error before its native worker returns, or copy a synchronous caller's operation-local error into caller-owned memory |
 | Data movement | `oliphaunt_backup`, `oliphaunt_restore`, `OliphauntRestoreOptions` | Back up PostgreSQL data from an open managed root and restore it into a new or existing-empty receiving root |
 | Static extensions | `oliphaunt_register_static_extensions`, `OliphauntStaticExtension`, `OliphauntStaticExtensionSymbol` | Register process-wide statically linked extension modules before backend startup |
 | Lifecycle | `oliphaunt_detach`, `oliphaunt_logical_generation`, `oliphaunt_close_if_generation`, `oliphaunt_close` | Detach a logical lease, guard host cleanup against stale leases, or terminate the resident backend |
@@ -52,9 +52,9 @@ there is no operation-local snapshot, the function atomically reads the latest
 handle error, or the process-global error when passed `NULL`.
 
 The return value is the full UTF-8 byte length even when the supplied buffer is
-smaller, and nonempty output capacity is always NUL-terminated.
-`oliphaunt_last_error` returns a separate thread-local compatibility snapshot;
-new bindings must not retain or share that pointer.
+smaller, and nonempty output capacity is always NUL-terminated. The ABI exposes
+no borrowed error pointer; bindings keep the copied message in language-owned
+memory.
 
 A raw-stream callback rejection returns
 `OLIPHAUNT_STREAM_CALLBACK_ABORTED` only after the runtime has confirmed

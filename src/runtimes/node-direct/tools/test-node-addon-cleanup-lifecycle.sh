@@ -46,16 +46,24 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 }
 cd "$root"
 
-addon="${1:-${OLIPHAUNT_NODE_ADDON_UNDER_TEST:-}}"
-if [[ -z "$addon" ]]; then
-  echo "usage: $0 <compiled-oliphaunt_node.node>" >&2
+addon="${1:-}"
+instrumented_addon="${2:-}"
+if [[ -z "$addon" || -z "$instrumented_addon" ]]; then
+  echo "usage: $0 <production-oliphaunt_node.node> <instrumented-oliphaunt_node.node>" >&2
   exit 2
 fi
 if ! is_absolute_path "$addon"; then
   addon="$root/$addon"
 fi
 if [[ ! -f "$addon" ]]; then
-  echo "compiled Node direct addon does not exist: $addon" >&2
+  echo "compiled production Node direct addon does not exist: $addon" >&2
+  exit 2
+fi
+if ! is_absolute_path "$instrumented_addon"; then
+  instrumented_addon="$root/$instrumented_addon"
+fi
+if [[ ! -f "$instrumented_addon" ]]; then
+  echo "compiled instrumented Node direct addon does not exist: $instrumented_addon" >&2
   exit 2
 fi
 
@@ -124,6 +132,7 @@ case "$platform" in
       object_path="$(cygpath -w "$object_path")"
       import_library_path="$(cygpath -w "$import_library_path")"
       addon="$(cygpath -w "$addon")"
+      instrumented_addon="$(cygpath -w "$instrumented_addon")"
     fi
     "$cxx" \
       //nologo \
@@ -144,4 +153,5 @@ esac
 node \
   src/runtimes/node-direct/tools/node-addon-cleanup-lifecycle.test.mjs \
   --addon "$addon" \
+  --instrumented-addon "$instrumented_addon" \
   --library "$library_path"

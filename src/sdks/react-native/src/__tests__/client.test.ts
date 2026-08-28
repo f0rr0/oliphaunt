@@ -10,11 +10,16 @@ import type {
   BinaryQueryParameter,
   EncodedQueryParameter,
   NullQueryParameter,
+  OliphauntDatabase,
+  QueryArrayRow,
+  QueryObjectRow,
   QueryParam,
+  QueryResult,
+  QueryValue,
   TextQueryParameter,
 } from '../index';
 import type { JsiProtocolChunkResult } from '../jsiTransport';
-import { parseCommandResponse } from '../query';
+import { parseCommandResponse, text } from '../query';
 import type { Spec } from '../specs/NativeOliphaunt';
 
 // OLIPHAUNT_DOCS_SNIPPET react-native-quickstart
@@ -28,6 +33,27 @@ function assertPublicHelperTypes(
   _null: NullQueryParameter,
 ): void {}
 void assertPublicHelperTypes;
+
+function assertInferredQueryTypes(database: OliphauntDatabase): void {
+  const arrays: Promise<QueryResult<QueryArrayRow>> = database.query('SELECT 1', [], {
+    rowMode: 'array',
+  });
+  const decoded: Promise<QueryResult<QueryObjectRow<QueryValue | Date>>> = database.query(
+    'SELECT now()',
+    [],
+    { decoders: { 1184: (value) => new Date(value) } },
+  );
+  // @ts-expect-error Stream callbacks are synchronous backpressure acknowledgements.
+  const asyncStreamed = database.execProtocolRawStream(Uint8Array.of(1), async () => {});
+  const widenedAsyncCallback: (chunk: Uint8Array) => unknown = async () => {};
+  const widenedAsyncStreamed = database.execProtocolRawStream(
+    Uint8Array.of(1),
+    // @ts-expect-error Widening an async callback must not bypass the synchronous contract.
+    widenedAsyncCallback,
+  );
+  void [arrays, decoded, asyncStreamed, widenedAsyncStreamed];
+}
+void assertInferredQueryTypes;
 const plainJsonParameter: QueryParam = {
   format: 'text',
   value: 'plain JSON data',
@@ -51,6 +77,7 @@ async function main(): Promise<void> {
   await testRawArrayExecAndDescribe();
   await testPhysicalSessionFifo();
   await testQueuedInputsAndCodecsAreSnapshotted();
+  await testQueuedTransactionInputsAndCodecsAreSnapshotted();
   await testDescribeNoticesMergeIntoLogicalQuery();
   await testDecoderFailureAfterReadyDoesNotPoison();
   await testMultipleReadyMessagesPoisonTheHandle();
@@ -92,6 +119,16 @@ async function testStartupGUCValidation(): Promise<void> {
   ]);
   await db.close();
 
+  const duplicateNative = new MockNative();
+  const duplicateDb = await createOliphauntClient(duplicateNative).open({
+    startupGUCs: { WORK_MEM: '8MB', search_path: 'public', work_mem: '16MB' },
+  });
+  assert.deepEqual((duplicateNative.openCalls[0] as { startupGUCs?: string[] }).startupGUCs, [
+    'search_path=public',
+    'work_mem=16MB',
+  ]);
+  await duplicateDb.close();
+
   for (const name of ['1name', '.foo', 'a..b', 'a.1b', 'ext.$name']) {
     await assert.rejects(
       () =>
@@ -108,6 +145,17 @@ async function testStartupGUCValidation(): Promise<void> {
       }),
     /must not contain NUL/,
   );
+  for (const name of ['CONFIG_FILE', 'data_directory']) {
+    const rejectedNative = new MockNative();
+    await assert.rejects(
+      () =>
+        createOliphauntClient(rejectedNative).open({
+          startupGUCs: { [name]: 'override' },
+        }),
+      /Oliphaunt owns PostgreSQL startup GUC.*configure database storage/,
+    );
+    assert.equal(rejectedNative.openCalls.length, 0);
+  }
 }
 
 async function testPublicEntrypointIsMinimal(): Promise<void> {
@@ -133,9 +181,6 @@ async function testPublicEntrypointIsMinimal(): Promise<void> {
       'text',
       'typedNull',
     ]);
-    assert.equal('supportedModes' in entrypoint.Oliphaunt, false);
-    assert.equal('packageSizeReport' in entrypoint.Oliphaunt, false);
-    assert.equal('processMemory' in entrypoint.Oliphaunt, false);
     assert.equal(entrypoint.default, entrypoint.Oliphaunt);
   } finally {
     vi.doUnmock('react-native');
@@ -325,6 +370,72 @@ async function testQueuedInputsAndCodecsAreSnapshotted(): Promise<void> {
   await db.close();
 }
 
+async function testQueuedTransactionInputsAndCodecsAreSnapshotted(): Promise<void> {
+  const native = new MockNative();
+  const db = await createOliphauntClient(native).open();
+
+  await db.transaction(async (transaction) => {
+    const gate = deferred<void>();
+    const started = deferred<void>();
+    native.pauseNextRequest = gate.promise;
+    native.onPausedRequest = () => started.resolve();
+    const blocker = transaction.query('SELECT $1::text AS value', ['blocker']);
+    await started.promise;
+
+    const executeParameters = ['execute-before'];
+    const rawParameters = ['raw-before'];
+    const queryParameters = ['query-before'];
+    const queryEncoders: Record<
+      number,
+      (value: QueryParam, typeOid: number) => EncodedQueryParameter
+    > = {
+      25: () => text('encoded-before', 25),
+    };
+    const queryDecoders: Record<number, (value: string) => string> = {
+      25: (value) => `decoded-before:${value}`,
+    };
+    const execDecoders: Record<number, (value: string) => string> = {
+      25: (value) => `exec-before:${value}`,
+    };
+    const parameterTypeOids = [25];
+
+    const queuedExecute = transaction.execute('UPDATE items SET value = $1', executeParameters);
+    const queuedQuery = transaction.query('SELECT $1::text AS value', queryParameters, {
+      encoders: queryEncoders,
+      decoders: queryDecoders,
+    });
+    const queuedRaw = transaction.queryRaw('SELECT $1::text AS value', rawParameters);
+    const queuedExec = transaction.exec('CREATE TABLE items; SELECT 1 AS value', {
+      decoders: execDecoders,
+    });
+    const queuedDescribe = transaction.describe('SELECT $1 AS value', parameterTypeOids);
+
+    executeParameters[0] = 'execute-after';
+    rawParameters[0] = 'raw-after';
+    queryParameters[0] = 'query-after';
+    queryEncoders[25] = () => text('encoded-after', 25);
+    queryDecoders[25] = (value) => `decoded-after:${value}`;
+    execDecoders[25] = (value) => `exec-after:${value}`;
+    parameterTypeOids[0] = -1;
+
+    gate.resolve();
+    await blocker;
+    await queuedExecute;
+    assert.deepEqual((await queuedQuery).rows, [{ value: 'decoded-before:hello' }]);
+    assert.equal((await queuedRaw).getText(0, 'value'), 'hello');
+    assert.deepEqual((await queuedExec).statements[1]?.rows, [{ value: 'exec-before:hello' }]);
+    assert.deepEqual((await queuedDescribe).parameterTypeOids, [25]);
+
+    const requests = native.requestTexts().join('\n');
+    assert.match(requests, /execute-before/);
+    assert.match(requests, /encoded-before/);
+    assert.match(requests, /raw-before/);
+    assert.doesNotMatch(requests, /execute-after|encoded-after|raw-after/);
+  });
+
+  await db.close();
+}
+
 async function testDescribeNoticesMergeIntoLogicalQuery(): Promise<void> {
   const native = new MockNative();
   const db = await createOliphauntClient(native).open();
@@ -473,11 +584,11 @@ async function testRawProtocolSqlAndCancel(): Promise<void> {
   const native = new MockNative();
   const db = await createOliphauntClient(native).open();
 
-  assert.equal('checkpoint' in db, false);
-  assert.equal('execProtocolStream' in db, false);
   assert.deepEqual(Array.from(await db.execProtocolRaw(Uint8Array.from([0xaa]))), [1, 0xaa]);
   const chunks: Uint8Array[] = [];
-  await db.execProtocolRawStream(Uint8Array.from([0xbb]), (chunk) => chunks.push(chunk));
+  await db.execProtocolRawStream(Uint8Array.from([0xbb]), (chunk) => {
+    chunks.push(chunk);
+  });
   assert.deepEqual(
     chunks.map((chunk) => Array.from(chunk)),
     [[1], [0xbb]],
@@ -612,33 +723,65 @@ async function testProtocolStreamCallbackFailure(): Promise<void> {
     assert.ok(Object.is(outcome.error, thrown));
   }
 
-  for (const callback of [async () => undefined, () => ({ then: () => undefined })]) {
+  const dynamicallyTypedInvalidCallbacks: Array<(chunk: Uint8Array) => unknown> = [
+    async () => undefined,
+    () => ({ then: () => undefined }),
+  ];
+  for (const callback of dynamicallyTypedInvalidCallbacks) {
     await assert.rejects(
-      () => db.execProtocolRawStream(Uint8Array.from([0xcf]), callback),
+      () =>
+        db.execProtocolRawStream(
+          Uint8Array.from([0xcf]),
+          callback as unknown as (chunk: Uint8Array) => undefined,
+        ),
       /must complete synchronously.*Promise or thenable/,
     );
   }
 
+  const databaseReentryCalls: ReadonlyArray<readonly [string, () => Promise<unknown>]> = [
+    ['execute', () => db.execute("UPDATE items SET value = 'forbidden reentry'")],
+    ['query', () => db.query("SELECT 'forbidden reentry'")],
+    ['queryRaw', () => db.queryRaw("SELECT 'forbidden reentry'")],
+    ['exec', () => db.exec("SELECT 'forbidden reentry'")],
+    ['describe', () => db.describe("SELECT 'forbidden reentry'")],
+    ['execProtocolRaw', () => db.execProtocolRaw(Uint8Array.of(0xaa))],
+    ['execProtocolRawStream', () => db.execProtocolRawStream(Uint8Array.of(0xaa), () => undefined)],
+    ['backup', () => db.backup()],
+    ['transaction', () => db.transaction(() => undefined)],
+    ['close', () => db.close()],
+    ['asyncDispose', () => db[Symbol.asyncDispose]()],
+  ];
   const requestCountBeforeDatabaseReentry = native.execRequests.length;
-  await assert.rejects(
-    () =>
-      db.execProtocolRawStream(Uint8Array.from([0xd0]), () => {
-        void db.query("SELECT 'forbidden database callback reentry'");
-      }),
-    /must not reenter the same Oliphaunt database or transaction/,
-  );
-  assert.equal(native.execRequests.length, requestCountBeforeDatabaseReentry + 1);
+  for (const [index, [name, call]] of databaseReentryCalls.entries()) {
+    let reentryOutcome:
+      | Promise<{ fulfilled: true; error?: never } | { fulfilled: false; error: unknown }>
+      | undefined;
+    await db.execProtocolRawStream(Uint8Array.of(0xd0 + index), () => {
+      if (reentryOutcome !== undefined) return;
+      const returned = call();
+      reentryOutcome = returned.then(
+        () => ({ fulfilled: true as const }),
+        (error: unknown) => ({ fulfilled: false as const, error }),
+      );
+    });
+    assert.ok(reentryOutcome, `${name} callback reentry must return a Promise`);
+    const outcome = await reentryOutcome;
+    assert.equal(outcome.fulfilled, false, `${name} callback reentry must reject`);
+    if (!outcome.fulfilled) {
+      assert.match(
+        String(outcome.error),
+        /must not reenter the same Oliphaunt database or transaction/,
+        name,
+      );
+    }
+  }
   assert.equal(
-    native.requestTexts().some((sql) => sql.includes('forbidden database callback reentry')),
-    false,
+    native.execRequests.length,
+    requestCountBeforeDatabaseReentry + databaseReentryCalls.length,
   );
-
-  await assert.rejects(
-    () =>
-      db.execProtocolRawStream(Uint8Array.from([0xd1]), () => {
-        void db.close();
-      }),
-    /must not reenter the same Oliphaunt database or transaction/,
+  assert.equal(
+    native.requestTexts().some((sql) => sql.includes('forbidden reentry')),
+    false,
   );
   assert.equal(db.closed, false);
 
@@ -728,6 +871,23 @@ async function testTransactionPromiseMethodsNeverThrowSynchronously(): Promise<v
     for (const call of invalidCalls) {
       await assertRejectsWithoutSynchronousThrow(call);
     }
+
+    const chainCalls: ReadonlyArray<() => Promise<unknown>> = [
+      () => transaction.execute('ROLLBACK AND CHAIN'),
+      () => transaction.query('ABORT WORK AND CHAIN'),
+      () => transaction.queryRaw('ROLLBACK TRANSACTION /* ownership */ AND CHAIN'),
+      () => transaction.exec('SELECT 1; RoLlBaCk AND /* comment */ CHAIN'),
+    ];
+    for (const call of chainCalls) {
+      await assertRejectsWithoutSynchronousThrow(
+        call,
+        /do not support ROLLBACK\/ABORT .* AND CHAIN/,
+      );
+    }
+    assert.deepEqual(
+      native.requestTexts().filter((sql) => sql.includes('CHAIN')),
+      [],
+    );
 
     await transaction.rollback();
     const expiredCalls: ReadonlyArray<() => Promise<unknown>> = [
@@ -978,7 +1138,9 @@ async function testTransactionCommandTagsPoisonBeforeParsing(): Promise<void> {
         }),
       entry.expected,
     );
-    const controls = native.requestTexts().filter((request) => /BEGIN|COMMIT|ROLLBACK/.test(request));
+    const controls = native
+      .requestTexts()
+      .filter((request) => /BEGIN|COMMIT|ROLLBACK/.test(request));
     assert.equal(controls.length, 1);
     assert.match(controls[0] ?? '', /BEGIN/);
     const requestCount = native.execRequests.length;

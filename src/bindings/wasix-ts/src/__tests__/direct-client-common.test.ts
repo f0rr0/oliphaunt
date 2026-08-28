@@ -86,12 +86,13 @@ describe('direct WASIX session lifecycle', () => {
     expect(failure).toBeInstanceOf(PostgresError);
     expect(failure).toMatchObject({
       sqlstate: '3D000',
-      postgresMessage: 'database does not exist',
+      message: 'database does not exist',
     });
-    expect(failure.message).toContain('WASIX instance cleanup also failed');
-    expect(failure.message).toContain('storage release also failed');
-    expect(failure.message).toContain('WASIX allocation release also failed');
     expect(failure.cause).toBeInstanceOf(AggregateError);
+    const diagnostics = failureMessages(failure);
+    expect(diagnostics).toContain('WASIX instance cleanup also failed');
+    expect(diagnostics).toContain('storage release also failed');
+    expect(diagnostics).toContain('WASIX allocation release also failed');
     expect(events).toEqual(['startup', 'close', 'storage:failed', 'free']);
   });
 
@@ -111,13 +112,7 @@ describe('direct WASIX session lifecycle', () => {
 
     await session.close();
 
-    expect(events).toEqual([
-      'startup',
-      'sync:full',
-      'close',
-      'storage:clean',
-      'free',
-    ]);
+    expect(events).toEqual(['startup', 'sync:full', 'close', 'storage:clean', 'free']);
   });
 
   it('closes the guest before publishing storage and frees it last', async () => {
@@ -461,6 +456,29 @@ describe('direct WASIX session lifecycle', () => {
     await session.close();
   });
 
+  it('rejects runtime-provided storage redirection before acquiring storage', async () => {
+    const prepared = preparedRuntime();
+    prepared.startupGUCs = { CONFIG_FILE: '/tmp/other' };
+    let acquired = false;
+    const dependencies: DirectWasixDependencies = {
+      async prepareRuntime() {
+        return prepared;
+      },
+      async acquireStorage() {
+        acquired = true;
+        return fakeLease(async () => undefined);
+      },
+      async compileModule() {
+        return {} as WebAssembly.Module;
+      },
+    };
+
+    await expect(
+      DirectWasixSession.open(openOptions(), fakeHost({}), dependencies),
+    ).rejects.toThrow('owns PostgreSQL startup GUC');
+    expect(acquired).toBe(false);
+  });
+
   it('rejects a non-postgres role before loading a seed for new storage', async () => {
     const options = openOptions();
     options.username = 'app_user';
@@ -611,9 +629,7 @@ describe('direct WASIX session lifecycle', () => {
     );
     expect(failure.message).toContain('ReadyForQuery recovery failed');
     expect(failure.cause).toBe(recoveryFailure);
-    await expect(session.exec(Uint8Array.of(2))).rejects.toThrow(
-      'Oliphaunt WASIX database failed',
-    );
+    await expect(session.exec(Uint8Array.of(2))).rejects.toThrow('Oliphaunt WASIX database failed');
     await session.close();
   });
 
@@ -1281,4 +1297,17 @@ function nextProtocolOutcome(outcomes: Array<Uint8Array | Error>): Uint8Array {
   if (outcome === undefined) throw new Error('test exhausted direct-session outcomes');
   if (outcome instanceof Error) throw outcome;
   return outcome;
+}
+
+function failureMessages(value: unknown, seen = new Set<unknown>()): string {
+  if ((typeof value !== 'object' && typeof value !== 'function') || value === null) {
+    return String(value);
+  }
+  if (seen.has(value)) return '';
+  seen.add(value);
+  const messages = [value instanceof Error ? value.message : ''];
+  if (value instanceof AggregateError)
+    messages.push(...value.errors.map((error) => failureMessages(error, seen)));
+  if ('cause' in value) messages.push(failureMessages(value.cause, seen));
+  return messages.filter(Boolean).join('\n');
 }

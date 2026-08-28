@@ -2974,7 +2974,7 @@ function Compile-LiboliphauntSources {
         $object = Join-Path $ObjDir ([System.IO.Path]::GetFileNameWithoutExtension($source) + ".obj")
         $sourceName = [System.IO.Path]::GetFileNameWithoutExtension($source)
         Invoke-Logged "compile-liboliphaunt-$sourceName.log" {
-            cl.exe /nologo /O2 /Zi /MD /DOLIPHAUNT_EMBEDDED /DOLIPHAUNT_BUILTIN_PLPGSQL /DOLIPHAUNT_BUILDING_DLL /D_CRT_SECURE_NO_WARNINGS `
+            cl.exe /nologo /std:c11 /O2 /Zi /MD /DOLIPHAUNT_EMBEDDED /DOLIPHAUNT_BUILTIN_PLPGSQL /DOLIPHAUNT_BUILDING_DLL /D_CRT_SECURE_NO_WARNINGS `
                 "/I$(Join-Path $RepoRoot "src/runtimes/liboliphaunt/native/include")" `
                 "/I$(Join-Path $RepoRoot "src/runtimes/liboliphaunt/native/src")" `
                 /c $source "/Fo$object"
@@ -3010,7 +3010,6 @@ function Link-LiboliphauntDll([System.Collections.Generic.List[string]]$Objects)
         "oliphaunt_close",
         "oliphaunt_register_static_extensions",
         "oliphaunt_copy_last_error",
-        "oliphaunt_last_error",
         "oliphaunt_version",
         "oliphaunt_free_response",
         "oliphaunt_embedded_kill",
@@ -3271,7 +3270,6 @@ function Artifact-Ready {
         "oliphaunt_close",
         "oliphaunt_register_static_extensions",
         "oliphaunt_copy_last_error",
-        "oliphaunt_last_error",
         "oliphaunt_version",
         "oliphaunt_free_response"
     )) {

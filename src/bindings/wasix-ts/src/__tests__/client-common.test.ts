@@ -79,11 +79,20 @@ describe('WASIX shared client orchestration', () => {
     expect(options.runtime.runtimeArchive.source).toEqual(Uint8Array.of(1, 1, 1, 1));
   });
 
-  it('rejects the removed execution option instead of silently changing placement', () => {
-    for (const execution of ['direct', 'worker', undefined]) {
+  it('canonicalizes case-insensitive GUCs and rejects storage redirection before open', () => {
+    const options = serializeOpenConfig(
+      { startupGUCs: { work_mem: '1MB', WORK_MEM: '2MB' } },
+      runtimeDescriptor(Uint8Array.of(1)),
+    );
+    expect(options.startupGUCs).toEqual({ work_mem: '2MB' });
+
+    for (const name of ['CONFIG_FILE', 'data_directory']) {
       expect(() =>
-        serializeOpenConfig({ execution } as unknown as Parameters<typeof serializeOpenConfig>[0]),
-      ).toThrow(/no longer accepts the "execution" option.*@oliphaunt\/wasix-ts\/worker/);
+        serializeOpenConfig(
+          { startupGUCs: { [name]: '/tmp/other' } },
+          runtimeDescriptor(Uint8Array.of(1)),
+        ),
+      ).toThrow('owns PostgreSQL startup GUC');
     }
   });
 
@@ -141,6 +150,35 @@ describe('WASIX shared client orchestration', () => {
     port.respond({ id: request.message.id, ok: true });
 
     await expect(restoring).resolves.toBeUndefined();
+    expect(port.terminations).toBe(1);
+  });
+
+  it('preserves both Worker restore and termination failures', async () => {
+    const port = new FakeWorkerPort();
+    port.terminate = () => {
+      port.terminations += 1;
+      throw new Error('worker termination failed');
+    };
+    const restoring = restoreWasixWithWorker(
+      () => port,
+      indexedDB('restore-failure-target'),
+      Uint8Array.of(1),
+    );
+    const request = port.requests[0]?.message;
+    if (request === undefined) throw new Error('restore request was not posted');
+    port.respond({
+      id: request.id,
+      ok: false,
+      error: { name: 'Error', message: 'restore failed' },
+    });
+
+    const failure = await restoring.catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(AggregateError);
+    if (!(failure instanceof AggregateError)) throw new Error('expected aggregate restore failure');
+    expect(failure.errors).toEqual([
+      expect.objectContaining({ message: 'restore failed' }),
+      expect.objectContaining({ message: 'worker termination failed' }),
+    ]);
     expect(port.terminations).toBe(1);
   });
 });

@@ -8,7 +8,6 @@ import test from 'node:test';
 import { installedPackageClosure } from './installed-closure.mjs';
 import { dispatchPgliteRequest } from './pglite-node-worker.mjs';
 import {
-  assertCurrentPlan,
   assertExpectedRawProtocolResponse,
   assertRuntimeBuildConfiguration,
   assertSuccessfulRawProtocolResponse,
@@ -26,12 +25,9 @@ import {
   pairedRatioSummary,
   planSummary,
   postgresSettingsParity,
-  repositoryRoot,
   simpleQueryMessage,
   validatePlan,
 } from './plan.mjs';
-
-const legacyPlanFile = resolve(repositoryRoot, 'benchmarks/wasix/node-pglite-memory-v1.json');
 
 test('the checked-in plan pins identities, generated SQL, and the comfortable-win gate', async () => {
   const source = await loadPlan(defaultPlanFile);
@@ -39,12 +35,11 @@ test('the checked-in plan pins identities, generated SQL, and the comfortable-wi
 
   assert.equal(summary.schema, 'oliphaunt-wasix-node-benchmark-plan-v2');
   assert.equal(summary.id, 'node-pglite-memory-v2');
-  assert.doesNotThrow(() => assertCurrentPlan(source.plan));
   assert.equal(summary.engines.candidate.package, '@oliphaunt/wasix-ts');
   assert.deepEqual(summary.engines.candidate.hostBuild, {
     wasmerJsCommit: '93b8b738ebd3ee57e118da0f0eb795b97d5b999e',
     wasmerWasixVersion: '0.601.0',
-    inputsSha256: '11224f5232a88b5b5612b389bc3cb24edc5134108e5aa72b47ef7189033c80d0',
+    inputsSha256: '0637f3d0bea86d9c713dc5f29f928e3358350c0286abecbc9510ff5be5ed526c',
     guestConcurrency: 'denied-for-oliphaunt-single-backend',
     optimization: {
       cargoProfile: 'release',
@@ -147,17 +142,6 @@ test('the checked-in plan pins identities, generated SQL, and the comfortable-wi
   assert.ok(source.plan.bulk.every((entry) => Buffer.byteLength(bulkSql(entry)) < 512));
 });
 
-test('the v1 Node plan stays readable, byte-pinned, and ineligible for new runs', async () => {
-  const source = await loadPlan(legacyPlanFile);
-
-  assert.equal(source.plan.schema, 'oliphaunt-wasix-node-benchmark-plan-v1');
-  assert.equal(source.plan.id, 'node-pglite-memory-v1');
-  assert.equal(source.sha256, '3aad018196546078820dc5670d424efec37d01ffc3c80229ded5edff786b51f7');
-  assert.throws(
-    () => assertCurrentPlan(source.plan),
-    /historical input and cannot drive a new benchmark/u,
-  );
-});
 test('the gated comparator worker returns public results without private timing telemetry', async () => {
   const rawResponse = Uint8Array.of(1, 2, 3);
   const calls = [];

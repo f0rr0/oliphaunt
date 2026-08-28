@@ -197,6 +197,7 @@ public object PostgresDecoders {
                 PostgresOid.varchar,
                 PostgresOid.date,
                 PostgresOid.time,
+                PostgresOid.timetz,
                 PostgresOid.timestamp,
                 PostgresOid.timestamptz,
                 PostgresOid.interval,
@@ -308,20 +309,11 @@ public object PostgresDecoders {
     }
 }
 
-public class QueryRow private constructor(
+public class QueryRow internal constructor(
     values: List<ByteArray?>,
     private val fields: List<QueryField>,
-    copyValues: Boolean,
 ) {
-    private val ownedValues: List<ByteArray?> = if (copyValues) {
-        values.map { it?.copyOf() }
-    } else {
-        values.toList()
-    }
-
-    internal constructor(values: List<ByteArray?>, fields: List<QueryField>) : this(values, fields, false)
-
-    public constructor(values: List<ByteArray?>) : this(values, emptyList(), true)
+    private val ownedValues: List<ByteArray?> = values.toList()
 
     public val values: List<ByteArray?> get() = ownedValues.map { it?.copyOf() }
 
@@ -371,7 +363,7 @@ public class QueryRow private constructor(
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
-        if (other !is QueryRow || ownedValues.size != other.ownedValues.size) return false
+        if (other !is QueryRow || fields != other.fields || ownedValues.size != other.ownedValues.size) return false
         return ownedValues.indices.all { index ->
             val left = ownedValues[index]
             val right = other.ownedValues[index]
@@ -383,7 +375,7 @@ public class QueryRow private constructor(
         }
     }
 
-    override fun hashCode(): Int = ownedValues.fold(1) { acc, value ->
+    override fun hashCode(): Int = 31 * fields.hashCode() + ownedValues.fold(1) { acc, value ->
         31 * acc + (value?.contentHashCode() ?: 0)
     }
 }
@@ -519,8 +511,6 @@ public data class QueryResult(
 ) {
     internal var readyStatus: ReadyStatus = ReadyStatus.Idle
 
-    public fun fieldIndex(name: String): Int? = fields.indexOfFirst { it.name == name }.takeIf { it >= 0 }
-
     public fun getText(
         row: Int,
         column: String,
@@ -569,7 +559,7 @@ public suspend fun OliphauntDatabase.execute(
     sql: String,
     parameters: List<QueryParam> = emptyList(),
 ): CommandResult {
-    rejectStructuredCopy(sql)
+    rejectStructuredSql(sql)
     return runTypedOperation(extendedQueryProtocol(sql, parameters), null) { response ->
         parseCommandResponse(response, ExpectedProtocol.Extended).let { it to it.readyStatus }
     }
@@ -579,14 +569,14 @@ public suspend fun OliphauntDatabase.query(
     sql: String,
     parameters: List<QueryParam> = emptyList(),
 ): QueryResult {
-    rejectStructuredCopy(sql)
+    rejectStructuredSql(sql)
     return runTypedOperation(extendedQueryProtocol(sql, parameters), null) { response ->
         parseQueryResponse(response, ExpectedProtocol.Extended).let { it to it.readyStatus }
     }
 }
 
 public suspend fun OliphauntDatabase.exec(sql: String): ExecResult {
-    rejectStructuredCopy(sql)
+    rejectStructuredSql(sql)
     return runTypedOperation(simpleQueryProtocol(sql), null) { response ->
         parseExecResponse(response).let { it to it.readyStatus }
     }
@@ -603,7 +593,7 @@ public suspend fun OliphauntTransaction.execute(
     sql: String,
     parameters: List<QueryParam> = emptyList(),
 ): CommandResult {
-    rejectStructuredCopy(sql)
+    rejectStructuredSql(sql, managedTransaction = true)
     return runTypedOperation(extendedQueryProtocol(sql, parameters)) { response ->
         parseCommandResponse(response, ExpectedProtocol.Extended).let { it to it.readyStatus }
     }
@@ -613,14 +603,14 @@ public suspend fun OliphauntTransaction.query(
     sql: String,
     parameters: List<QueryParam> = emptyList(),
 ): QueryResult {
-    rejectStructuredCopy(sql)
+    rejectStructuredSql(sql, managedTransaction = true)
     return runTypedOperation(extendedQueryProtocol(sql, parameters)) { response ->
         parseQueryResponse(response, ExpectedProtocol.Extended).let { it to it.readyStatus }
     }
 }
 
 public suspend fun OliphauntTransaction.exec(sql: String): ExecResult {
-    rejectStructuredCopy(sql)
+    rejectStructuredSql(sql, managedTransaction = true)
     return runTypedOperation(simpleQueryProtocol(sql)) { response ->
         parseExecResponse(response).let { it to it.readyStatus }
     }
@@ -639,6 +629,14 @@ internal fun extendedQueryProtocol(
 ): ByteArray {
     requireParameterCount(parameters.size, "extended query")
     requireSqlWithoutNul(sql, "extended query")
+    parameters.forEachIndexed { index, parameter ->
+        if (parameter.typeOid?.value == 0u) {
+            throw OliphauntException(
+                "extended query parameter ${index + 1} type OID must be a positive uint32; " +
+                    "omit it to let PostgreSQL infer the type",
+            )
+        }
+    }
     val packet = mutableListOf<Byte>()
     packet.addParse(sql, parameters.map { it.typeOid ?: PostgresOid(0u) })
     packet.addBind(parameters)
@@ -866,9 +864,14 @@ internal fun parseQueryResponse(
 internal fun parseExecResponse(bytes: ByteArray): ExecResult {
     var fields: List<QueryField>? = null
     val rows = mutableListOf<QueryRow>()
+    val statementNotices = mutableListOf<PostgresNotice>()
     val statements = mutableListOf<StatementResult>()
     var sawCompletion = false
-    val metadata = parseBackendResponse(bytes, "exec()") { tag, body ->
+    val metadata = parseBackendResponse(
+        bytes,
+        "exec()",
+        onNotice = statementNotices::add,
+    ) { tag, body ->
         when (tag) {
             0x54 -> {
                 if (fields != null || rows.isNotEmpty()) {
@@ -889,14 +892,23 @@ internal fun parseExecResponse(bytes: ByteArray): ExecResult {
                 body.requireEnd("CommandComplete")
                 val activeFields = fields
                 statements += if (activeFields == null) {
-                    StatementResult.Command(CommandResult(commandTag, commandTag.commandTagRowCount()))
+                    StatementResult.Command(
+                        CommandResult(commandTag, commandTag.commandTagRowCount(), statementNotices.toList()),
+                    )
                 } else {
                     StatementResult.Rows(
-                        QueryResult(activeFields, rows.toList(), commandTag, commandTag.commandTagRowCount()),
+                        QueryResult(
+                            activeFields,
+                            rows.toList(),
+                            commandTag,
+                            commandTag.commandTagRowCount(),
+                            statementNotices.toList(),
+                        ),
                     )
                 }
                 fields = null
                 rows.clear()
+                statementNotices.clear()
                 sawCompletion = true
             }
 
@@ -905,6 +917,7 @@ internal fun parseExecResponse(bytes: ByteArray): ExecResult {
                     throw OliphauntException("exec() received EmptyQueryResponse while a row result was pending")
                 }
                 body.requireEnd("EmptyQueryResponse")
+                statementNotices.clear()
                 sawCompletion = true
             }
 
@@ -1045,6 +1058,7 @@ private fun parseBackendResponse(
     bytes: ByteArray,
     operation: String,
     validate: (Int) -> Unit = {},
+    onNotice: (PostgresNotice) -> Unit = {},
     handle: (Int, ByteCursor) -> Unit,
 ): ResponseMetadata {
     val frames = decodeBackendFrames(bytes)
@@ -1063,9 +1077,16 @@ private fun parseBackendResponse(
         when (frame.tag) {
             0x45 -> if (postgresError == null) postgresError = PostgresError.fromFields(parseDiagnosticFields(body, "ErrorResponse"))
 
-            0x4e -> notices += PostgresNotice(
-                PostgresDiagnostic.fromFields(parseDiagnosticFields(body, "NoticeResponse"), "PostgreSQL NoticeResponse"),
-            )
+            0x4e -> {
+                val notice = PostgresNotice(
+                    PostgresDiagnostic.fromFields(
+                        parseDiagnosticFields(body, "NoticeResponse"),
+                        "PostgreSQL NoticeResponse",
+                    ),
+                )
+                notices += notice
+                onNotice(notice)
+            }
 
             0x53 -> validateParameterStatus(body)
 
@@ -1314,15 +1335,39 @@ private fun binaryUuidString(
         .joinToString("-")
 }
 
-internal fun containsTopLevelCopy(sql: String): Boolean = scanTopLevelCopy(sql, plainStringBackslashEscapes = false) ||
-    scanTopLevelCopy(sql, plainStringBackslashEscapes = true)
+internal fun containsTopLevelCopy(sql: String): Boolean = structuredSqlFacts(sql).containsTopLevelCopy
 
-private fun scanTopLevelCopy(
+internal fun containsTransactionChain(sql: String): Boolean = structuredSqlFacts(sql).containsTransactionChain
+
+private data class StructuredSqlFacts(
+    val containsTopLevelCopy: Boolean = false,
+    val containsTransactionChain: Boolean = false,
+) {
+    fun union(other: StructuredSqlFacts): StructuredSqlFacts = StructuredSqlFacts(
+        containsTopLevelCopy || other.containsTopLevelCopy,
+        containsTransactionChain || other.containsTransactionChain,
+    )
+}
+
+private enum class TransactionChainState {
+    None,
+    AfterRollback,
+    AfterOptionalKind,
+    AfterAnd,
+}
+
+private fun structuredSqlFacts(sql: String): StructuredSqlFacts = scanStructuredSql(sql, plainStringBackslashEscapes = false)
+    .union(scanStructuredSql(sql, plainStringBackslashEscapes = true))
+
+private fun scanStructuredSql(
     sql: String,
     plainStringBackslashEscapes: Boolean,
-): Boolean {
+): StructuredSqlFacts {
     var index = 0
     var statementStart = true
+    var chainState = TransactionChainState.None
+    var containsTopLevelCopy = false
+    var containsTransactionChain = false
     while (index < sql.length) {
         val character = sql[index]
         when {
@@ -1330,6 +1375,7 @@ private fun scanTopLevelCopy(
 
             character == ';' -> {
                 statementStart = true
+                chainState = TransactionChainState.None
                 index++
             }
 
@@ -1341,6 +1387,7 @@ private fun scanTopLevelCopy(
 
             character == '\'' -> {
                 statementStart = false
+                chainState = TransactionChainState.None
                 index = skipQuoted(
                     sql,
                     index,
@@ -1351,6 +1398,7 @@ private fun scanTopLevelCopy(
 
             character == '"' -> {
                 statementStart = false
+                chainState = TransactionChainState.None
                 index = skipQuoted(sql, index, '"', backslashEscapes = false)
             }
 
@@ -1358,38 +1406,85 @@ private fun scanTopLevelCopy(
                 val delimiter = dollarQuoteDelimiter(sql, index)
                 if (delimiter == null) {
                     statementStart = false
+                    chainState = TransactionChainState.None
                     index++
                 } else {
                     statementStart = false
+                    chainState = TransactionChainState.None
                     val end = sql.indexOf(delimiter, index + delimiter.length)
                     index = if (end < 0) sql.length else end + delimiter.length
                 }
             }
 
-            character == '_' || character.isLetter() -> {
+            isPostgresIdentifierStart(character) -> {
                 val start = index
                 index++
-                while (index < sql.length && (sql[index] == '_' || sql[index] == '$' || sql[index].isLetterOrDigit())) {
+                while (index < sql.length && isPostgresIdentifierContinuation(sql[index])) {
                     index++
                 }
-                if (statementStart && sql.substring(start, index).equals("COPY", ignoreCase = true)) return true
+                val token = sql.substring(start, index)
+                if (statementStart) {
+                    if (token.equals("COPY", ignoreCase = true)) containsTopLevelCopy = true
+                    chainState = if (
+                        token.equals("ROLLBACK", ignoreCase = true) || token.equals("ABORT", ignoreCase = true)
+                    ) {
+                        TransactionChainState.AfterRollback
+                    } else {
+                        TransactionChainState.None
+                    }
+                } else {
+                    chainState = when (chainState) {
+                        TransactionChainState.None -> TransactionChainState.None
+
+                        TransactionChainState.AfterRollback -> when {
+                            token.equals("WORK", ignoreCase = true) ||
+                                token.equals("TRANSACTION", ignoreCase = true) -> TransactionChainState.AfterOptionalKind
+
+                            token.equals("AND", ignoreCase = true) -> TransactionChainState.AfterAnd
+
+                            else -> TransactionChainState.None
+                        }
+
+                        TransactionChainState.AfterOptionalKind -> if (token.equals("AND", ignoreCase = true)) {
+                            TransactionChainState.AfterAnd
+                        } else {
+                            TransactionChainState.None
+                        }
+
+                        TransactionChainState.AfterAnd -> {
+                            if (token.equals("CHAIN", ignoreCase = true)) containsTransactionChain = true
+                            TransactionChainState.None
+                        }
+                    }
+                }
                 statementStart = false
             }
 
             else -> {
                 statementStart = false
+                chainState = TransactionChainState.None
                 index++
             }
         }
     }
-    return false
+    return StructuredSqlFacts(containsTopLevelCopy, containsTransactionChain)
 }
 
-private fun rejectStructuredCopy(sql: String) {
-    if (containsTopLevelCopy(sql)) {
+private fun rejectStructuredSql(
+    sql: String,
+    managedTransaction: Boolean = false,
+) {
+    val facts = structuredSqlFacts(sql)
+    if (facts.containsTopLevelCopy) {
         throw OliphauntException(
             "structured SQL does not support COPY because it requires streaming protocol ownership; " +
                 "use execProtocolRaw or execProtocolRawStream",
+        )
+    }
+    if (managedTransaction && facts.containsTransactionChain) {
+        throw OliphauntException(
+            "managed transactions do not support ROLLBACK or ABORT AND CHAIN; " +
+                "return from or throw inside the transaction callback instead",
         )
     }
 }
@@ -1445,7 +1540,7 @@ private fun precedingEscapePrefix(
     sql: String,
     quoteIndex: Int,
 ): Boolean = quoteIndex > 0 && sql[quoteIndex - 1].equals('E', ignoreCase = true) &&
-    (quoteIndex < 2 || !(sql[quoteIndex - 2] == '_' || sql[quoteIndex - 2] == '$' || sql[quoteIndex - 2].isLetterOrDigit()))
+    (quoteIndex < 2 || !isPostgresIdentifierContinuation(sql[quoteIndex - 2]))
 
 private fun dollarQuoteDelimiter(
     sql: String,
@@ -1453,11 +1548,15 @@ private fun dollarQuoteDelimiter(
 ): String? {
     var index = start + 1
     if (index < sql.length && sql[index] == '$') return "$$"
-    if (index >= sql.length || !(sql[index] == '_' || sql[index].isLetter())) return null
+    if (index >= sql.length || !isPostgresIdentifierStart(sql[index])) return null
     index++
-    while (index < sql.length && (sql[index] == '_' || sql[index].isLetterOrDigit())) index++
+    while (index < sql.length && sql[index] != '$' && isPostgresIdentifierContinuation(sql[index])) index++
     return if (index < sql.length && sql[index] == '$') sql.substring(start, index + 1) else null
 }
+
+private fun isPostgresIdentifierStart(character: Char): Boolean = character == '_' || character in 'A'..'Z' || character in 'a'..'z' || character.code >= 0x80
+
+private fun isPostgresIdentifierContinuation(character: Char): Boolean = isPostgresIdentifierStart(character) || character in '0'..'9' || character == '$'
 
 private class ByteCursor(
     private val bytes: ByteArray,

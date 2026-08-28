@@ -46,6 +46,26 @@ const TRANSACTION_ROLLED_BACK: u8 = 2;
 const TRANSACTION_COMMITTED: u8 = 3;
 const TRANSACTION_FAILED: u8 = 4;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TransactionDropAction {
+    Rollback,
+    AbandonFailed,
+    None,
+}
+
+fn claim_transaction_for_drop(state: &AtomicU8) -> TransactionDropAction {
+    match state.compare_exchange(
+        TRANSACTION_ACTIVE,
+        TRANSACTION_FINISHING,
+        Ordering::SeqCst,
+        Ordering::SeqCst,
+    ) {
+        Ok(_) => TransactionDropAction::Rollback,
+        Err(TRANSACTION_FAILED) => TransactionDropAction::AbandonFailed,
+        Err(_) => TransactionDropAction::None,
+    }
+}
+
 struct TransactionOutcomeGuard {
     state: AtomicU8,
     terminal_error: Mutex<Option<Error>>,
@@ -1615,7 +1635,6 @@ impl AsyncTransaction {
 
 impl Drop for AsyncTransaction {
     fn drop(&mut self) {
-        let state = self.guard.state.load(Ordering::SeqCst);
         if self.guard.settlement_started.load(Ordering::SeqCst) == 1
             && self.guard.settlement_observed.load(Ordering::SeqCst) == 0
         {
@@ -1623,21 +1642,14 @@ impl Drop for AsyncTransaction {
                 .abandon_unobserved_finish(self.token, Arc::clone(&self.guard));
             return;
         }
-        if self
-            .guard
-            .state
-            .compare_exchange(
-                TRANSACTION_ACTIVE,
-                TRANSACTION_FINISHING,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            )
-            .is_ok()
-        {
-            self.owner
-                .rollback_best_effort(self.token, Arc::clone(&self.guard));
-        } else if state == TRANSACTION_FAILED {
-            self.owner.abandon_failed_best_effort(self.token);
+        match claim_transaction_for_drop(&self.guard.state) {
+            TransactionDropAction::Rollback => self
+                .owner
+                .rollback_best_effort(self.token, Arc::clone(&self.guard)),
+            TransactionDropAction::AbandonFailed => {
+                self.owner.abandon_failed_best_effort(self.token);
+            }
+            TransactionDropAction::None => {}
         }
     }
 }
@@ -1708,6 +1720,8 @@ impl AsyncOliphauntServer {
     ///
     /// This includes both a settled terminal close attempt and an unexpectedly
     /// stopped owner. A close attempt still in progress is not yet terminal.
+    /// This is not an endpoint health check: `false` does not poll the proxy
+    /// listener or prove that the published endpoint is reachable.
     pub fn is_closed(&self) -> bool {
         owner_is_terminal(&self.owner.state)
     }
@@ -2097,6 +2111,42 @@ mod close_tests {
             Some("raw stream recovery failed")
         );
         assert!(error.rollback_error().is_none());
+    }
+
+    #[test]
+    fn drop_claim_uses_the_state_observed_by_compare_exchange() {
+        let state = AtomicU8::new(TRANSACTION_ACTIVE);
+        state.store(TRANSACTION_FAILED, Ordering::SeqCst);
+
+        assert_eq!(
+            claim_transaction_for_drop(&state),
+            TransactionDropAction::AbandonFailed
+        );
+        assert_eq!(state.load(Ordering::SeqCst), TRANSACTION_FAILED);
+    }
+
+    #[test]
+    fn dropping_a_failed_transaction_enqueues_only_host_retirement() {
+        let owner_thread = thread::spawn(|| thread::current().id())
+            .join()
+            .expect("capture a distinct fake owner thread id");
+        let (owner, receiver) = detached_owner(1, owner_thread);
+        let transaction = AsyncTransaction::new(owner.clone(), 78);
+        transaction.retain_failure(Error::message("raw stream recovery failed"));
+        drop(transaction);
+
+        let message = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("failed transaction retirement reaches its owner");
+        assert!(matches!(
+            message.operation,
+            OwnerOperation::Control(OwnerControl::AbandonFailed {
+                token: 78,
+                reply: None
+            })
+        ));
+        assert!(receiver.try_recv().is_err());
+        drop(owner);
     }
 
     #[test]

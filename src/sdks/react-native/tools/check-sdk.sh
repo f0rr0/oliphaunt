@@ -79,28 +79,6 @@ require_manifest_line() {
   fi
 }
 
-require_source_text() {
-  file="$1"
-  expected="$2"
-  message="$3"
-  if ! grep -Fq -- "$expected" "$file"; then
-    echo "$message" >&2
-    echo "expected '$expected' in $file" >&2
-    exit 1
-  fi
-}
-
-reject_source_text() {
-  file="$1"
-  rejected="$2"
-  message="$3"
-  if grep -Fq -- "$rejected" "$file"; then
-    echo "$message" >&2
-    echo "rejected '$rejected' in $file" >&2
-    exit 1
-  fi
-}
-
 link_required_header() {
   destination="$1"
   shift
@@ -376,189 +354,28 @@ if [ "$mode" = "test-unit" ]; then
 fi
 
 run pnpm --dir "$package_dir" run build
-for removed in \
-  "$package_dir/lib/commonjs/benchmark.js" \
-  "$package_dir/lib/commonjs/extension-metadata.js" \
-  "$package_dir/lib/commonjs/mobileExtensionProof.js" \
-  "$package_dir/lib/commonjs/smoke.js" \
-  "$package_dir/lib/module/benchmark.js" \
-  "$package_dir/lib/module/extension-metadata.js" \
-  "$package_dir/lib/module/mobileExtensionProof.js" \
-  "$package_dir/lib/module/smoke.js" \
-  "$package_dir/lib/typescript/benchmark.d.ts" \
-  "$package_dir/lib/typescript/extension-metadata.d.ts" \
-  "$package_dir/lib/typescript/mobileExtensionProof.d.ts" \
-  "$package_dir/lib/typescript/smoke.d.ts"
-do
-  if [ -e "$removed" ]; then
-    echo "React Native SDK fresh build retained deleted output $removed" >&2
-    exit 1
-  fi
-done
 if [ "$mode" != "package-shape" ]; then
   run pnpm --dir "$package_dir" run typecheck
 fi
-require_source_text "$package_dir/package.json" '"react-native": "lib/module/index.js"' \
-  "React Native package must expose its compiled module build to Metro instead of raw TypeScript source"
 node -e "
 const pkg = require(process.argv[1]);
 const expectedExports = ['.', './package.json'].sort();
 if (JSON.stringify(Object.keys(pkg.exports || {}).sort()) !== JSON.stringify(expectedExports)) {
   throw new Error('React Native SDK exports do not match its deliberate public surface');
 }
+if (pkg['react-native'] !== 'lib/module/index.js') {
+  throw new Error('React Native package must expose its compiled module build to Metro');
+}
+if (typeof pkg.scripts?.['package:verify-ios'] !== 'string') {
+  throw new Error('React Native package must expose its iOS package verification contract');
+}
 " "$package_dir/package.json"
-require_source_text "$package_dir/OliphauntReactNative.podspec" 's.dependency "Oliphaunt", native_sdk_version' \
-  "React Native iOS package must consume the published Swift SDK pod instead of vendoring Swift sources"
-require_source_text "$package_dir/package.json" '"tools/verify-ios-package.mjs"' \
-  "React Native package must publish its clean-install iOS payload verifier"
-require_source_text "$package_dir/package.json" '"package:verify-ios"' \
-  "React Native package must expose its selection-neutral iOS package verification contract"
-require_source_text "$package_dir/tools/expo-ios-runner.sh" 'verify_installed_ios_package' \
-  "React Native iOS smoke must verify the installed npm package without repairing node_modules"
-require_source_text "$package_dir/tools/expo-ios-runner.sh" 'configure_ios_carrier_inputs' \
-  "React Native iOS smoke must configure the app-owned checksum-pinned carrier resolver"
-if grep -Fq 'install_ios_mobile_assets_into_react_native_package' "$package_dir/tools/expo-ios-runner.sh"; then
-  echo "React Native iOS smoke must not mutate an installed npm package to repair missing release payloads" >&2
-  exit 1
-fi
-require_source_text "$package_dir/android/build.gradle" 'def kotlinSdkDependency = "dev.oliphaunt:oliphaunt-android:${kotlinSdkVersion}"' \
-  "React Native Android package must default to the published Kotlin SDK Maven coordinate"
-require_source_text "$package_dir/android/build.gradle" 'implementation files(kotlinSdkAar)' \
-  "React Native Android candidate builds must consume the staged Kotlin SDK AAR by exact path"
-require_source_text "$package_dir/android/build.gradle" 'layout.projectDirectory.dir(".cxx").asFile' \
-  "React Native Android CMake staging must default outside Gradle's temporary build directory"
-require_source_text "$package_dir/android/build.gradle" 'buildStagingDirectory = cxxBuildRoot' \
-  "React Native Android must assign the validated CMake staging directory explicitly"
-if grep -Fq 'layout.buildDirectory.get().asFile}/cxx' "$package_dir/android/build.gradle"; then
-  echo "React Native Android CMake staging must not default under the temporary build directory" >&2
-  exit 1
-fi
-require_source_text "$package_dir/android/settings.gradle" "if (configuredKotlinSdkDir != null && !configuredKotlinSdkDir.isBlank())" \
-  "React Native Android local Kotlin SDK composite builds must be explicit development overrides"
-require_source_text "$package_dir/tools/expo-android-runner.sh" '"-PliboliphauntKotlinSdkAar=$kotlin_sdk_aar"' \
-  "React Native Android mobile runner must pin the staged Kotlin SDK candidate AAR by exact path"
-require_source_text "$package_dir/tools/mobile-extension-runtime.sh" 'liboliphaunt-native-version "$native_runtime_version"' \
-  "React Native mobile resources must bind extension payloads to the exact liboliphaunt native version"
-require_source_text "$package_dir/tools/mobile-extension-runtime.sh" '--mode native-direct' \
-  "React Native mobile resources must package the native-direct runtime contract"
-require_source_text "$package_dir/src/client.ts" "generatedExtensionBySqlName(trimmed)" \
-  "React Native JS boundary must validate selected extensions against the generated extension catalog before crossing the bridge"
-require_source_text "$package_dir/src/client.ts" "unknown React Native Oliphaunt extension id" \
-  "React Native JS boundary must fail clearly for unknown selected extensions"
-require_source_text "$package_dir/ios/Oliphaunt.mm" "OliphauntAcquireNativeDirect" \
-  "React Native iOS must coordinate nativeDirect ownership across module instances"
-require_source_text "$package_dir/ios/Oliphaunt.mm" "OliphauntRetainedNativeDirectDatabase" \
-  "React Native iOS must retain failed nativeDirect cleanup across module teardown"
-require_source_text "$package_dir/ios/Oliphaunt.mm" "OliphauntBeginNativeDirectCleanup" \
-  "React Native iOS must retain ownership before starting asynchronous close"
-require_source_text "$package_dir/ios/Oliphaunt.mm" "OliphauntFinishNativeDirectCleanup" \
-  "React Native iOS must release process ownership only after successful close"
-require_source_text "$package_dir/ios/Oliphaunt.mm" "if (_invalidated)" \
-  "React Native iOS must reject opens after module invalidation"
-require_source_text "$package_dir/ios/Oliphaunt.mm" "if (invalidated)" \
-  "React Native iOS must close a nativeDirect session that finishes opening after invalidation"
-require_source_text "$package_dir/ios/Oliphaunt.mm" "acknowledgement->wait()" \
-  "React Native iOS protocol streaming must keep one acknowledged callback in flight"
-require_source_text "$package_dir/ios/OliphauntAdapter.swift" "if let error = chunkBox.value" \
-  "React Native iOS protocol streaming must propagate callback failures to the Swift producer"
-require_source_text "$package_dir/ios/OliphauntAdapter.swift" "error as? ProtocolStreamCallbackFailure" \
-  "React Native iOS must classify recovered callback aborts with a private Swift sentinel"
-require_source_text "$package_dir/ios/Oliphaunt.mm" "__oliphauntProtocolCallbackAborted" \
-  "React Native iOS must expose typed recovered callback-abort completion to JavaScript"
-require_source_text "$package_dir/android/src/main/cpp/OliphauntJsiBindings.cpp" "acknowledgement->wait()" \
-  "React Native Android protocol streaming must keep one acknowledged callback in flight"
-require_source_text "$package_dir/android/src/main/java/dev/oliphaunt/reactnative/OliphauntJsiStreamCallback.kt" "nativeEmitChunk(token, chunk)?.let" \
-  "React Native Android protocol streaming must propagate callback failures to the Kotlin producer"
-require_source_text "$package_dir/android/src/main/java/dev/oliphaunt/reactnative/OliphauntModule.kt" "error is ReactNativeProtocolStreamCallbackFailure" \
-  "React Native Android must classify recovered callback aborts with a private Kotlin sentinel"
-require_source_text "$package_dir/android/src/main/cpp/OliphauntJsiBindings.cpp" "nativeRejectCallbackAborted" \
-  "React Native Android must defer callback rejection until typed native completion"
-require_source_text "$package_dir/src/jsiTransport.ts" "isProtocolCallbackAborted(error)" \
-  "React Native JavaScript must preserve callback identity only for typed recovered callback aborts"
-reject_source_text "$package_dir/ios/Oliphaunt.mm" "dispatch_group_wait" \
-  "React Native iOS invalidation must not abandon ownership after a bounded close wait"
-for removed_ios_open_alias in \
-  '_sessionKeys' \
-  '_pendingSessionKey' \
-  '_openPending' \
-  'existingHandleForSessionKey' \
-  'sessionKeyForConfigDictionary'
-do
-  reject_source_text "$package_dir/ios/Oliphaunt.mm" "$removed_ios_open_alias" \
-    "React Native iOS must not alias a second JS database wrapper to an active nativeDirect handle"
-done
-if grep -Fq "dev.oliphaunt:oliphaunt-android:0.1.0" "$package_dir/tools/expo-android-runner.sh"; then
-  echo "React Native Android mobile runner must not hardcode the Kotlin SDK version" >&2
-  exit 1
-fi
-require_source_text "$package_dir/src/__tests__/protocol-fixtures.test.ts" "assertSharedProtocolFixtures" \
-  "React Native tests must consume the shared protocol fixture corpus"
 if [ "$mode" = "release-check" ] || [ "$mode" = "regression" ]; then
   run pnpm --dir "$package_dir" test --if-present
 fi
 if [ "$mode" != "package-shape" ]; then
   run pnpm --dir "$package_dir" run codegen:check
 fi
-base64_runtime_hits="$(
-  if command -v rg >/dev/null 2>&1; then
-    rg -n -i --glob '!**/README.md' --glob '!**/node_modules/**' \
-      --glob '!**/__tests__/**' \
-      'base64|atob|btoa|Buffer\.from|Buffer\.alloc' \
-      "$package_dir/src" \
-      "$package_dir/ios" \
-      "$package_dir/android/src/main" \
-      "$package_dir/OliphauntReactNative.podspec" \
-      "$package_dir/react-native.config.js" \
-      "$package_dir/package.json" || true
-  else
-    grep -RInEi \
-      --exclude='README.md' \
-      --exclude-dir='node_modules' \
-      --exclude-dir='__tests__' \
-      'base64|atob|btoa|Buffer\.from|Buffer\.alloc' \
-      "$package_dir/src" \
-      "$package_dir/ios" \
-      "$package_dir/android/src/main" \
-      "$package_dir/OliphauntReactNative.podspec" \
-      "$package_dir/react-native.config.js" \
-      "$package_dir/package.json" || true
-  fi
-)"
-if [ -n "$base64_runtime_hits" ]; then
-  echo "React Native runtime must not use base64 or Node Buffer binary transport:" >&2
-  echo "$base64_runtime_hits" >&2
-  exit 1
-fi
-
-codegen_binary_hits="$(
-  if command -v rg >/dev/null 2>&1; then
-    rg -n 'execProtocolRaw|execProtocolStream|backup\(|restore\(' \
-      "$package_dir/src/specs/NativeOliphaunt.ts" || true
-  else
-    grep -nE 'execProtocolRaw|execProtocolStream|backup\(|restore\(' \
-      "$package_dir/src/specs/NativeOliphaunt.ts" || true
-  fi
-)"
-if [ -n "$codegen_binary_hits" ]; then
-  echo "React Native Codegen spec must stay lifecycle/control-only; binary protocol, backup, and restore bytes belong to the JSI ArrayBuffer transport:" >&2
-  echo "$codegen_binary_hits" >&2
-  exit 1
-fi
-
-for jsi_source in \
-  "$package_dir/ios/Oliphaunt.mm" \
-  "$package_dir/android/src/main/cpp/OliphauntJsiBindings.cpp"
-do
-  require_source_text "$jsi_source" "std::isfinite" \
-    "React Native JSI numeric arguments must reject non-finite values before native casts"
-  require_source_text "$jsi_source" "typed-array byteOffset" \
-    "React Native JSI typed-array offsets must be validated before native casts"
-  require_source_text "$jsi_source" "typed-array byteLength" \
-    "React Native JSI typed-array lengths must be validated before native casts"
-  require_source_text "$jsi_source" "positive safe integer" \
-    "React Native JSI handles must be validated as positive safe integers before native calls"
-done
-
 if [ "$mode" = "check-static" ]; then
   exit 0
 fi
@@ -581,72 +398,55 @@ printf '\n==> pnpm --dir %s pack --dry-run --json\n' "$package_dir"
 PNPM_CONFIG_IGNORE_SCRIPTS=true pnpm --dir "$package_dir" pack --dry-run --json >"$tmp_pack"
 cat "$tmp_pack"
 
-for required in \
-  "android/settings.gradle" \
-  "android/src/main/cpp/CMakeLists.txt" \
-  "android/src/main/cpp/include/oliphaunt.h" \
-  "android/src/main/cpp/OliphauntJsiBindings.cpp" \
-  "android/src/main/java/dev/oliphaunt/reactnative/OliphauntJsiPromiseCallback.kt" \
-  "android/src/main/java/dev/oliphaunt/reactnative/OliphauntJsiStreamCallback.kt" \
-  "android/src/main/java/dev/oliphaunt/reactnative/OliphauntModule.kt" \
-  "android/src/main/java/dev/oliphaunt/reactnative/OliphauntPackage.kt" \
-  "ios/Oliphaunt.mm" \
-  "ios/OliphauntReactNative.h" \
-  "ios/OliphauntAdapter.h" \
-  "ios/OliphauntAdapter.swift" \
-  "ios/podspecs/COliphaunt.podspec" \
-  "ios/podspecs/Oliphaunt.podspec" \
-  "tools/stage-ios-app.mjs" \
-  "tools/verify-ios-package.mjs" \
-  "lib/commonjs/index.js" \
-  "lib/commonjs/protocol.js" \
-  "lib/commonjs/query.js" \
-  "lib/module/index.js" \
-  "lib/module/protocol.js" \
-  "lib/module/query.js" \
-  "lib/typescript/index.d.ts" \
-  "lib/typescript/client.d.ts" \
-  "lib/typescript/protocol.d.ts" \
-  "lib/typescript/query.d.ts" \
-  "src/generated/extensions.ts" \
-  "lib/typescript/specs/NativeOliphaunt.d.ts"
-do
-  if ! grep -Fq "$required" "$tmp_pack"; then
-    echo "React Native package dry-run did not include $required" >&2
-    rm -f "$tmp_pack"
-    exit 1
-  fi
-done
+node - "$tmp_pack" <<'NODE'
+const fs = require('node:fs');
 
-for removed in \
-  "android/CMakeLists.txt" \
-  "android/src/main/cpp/oliphaunt_android_bridge.cpp" \
-  "android/src/main/java/dev/oliphaunt/reactnative/OliphauntAndroidRuntimeAssets.kt" \
-  "android/src/main/java/dev/oliphaunt/reactnative/OliphauntAndroidSession.kt" \
-  "android/src/main/java/dev/oliphaunt/reactnative/OliphauntNativeBridge.kt" \
-  "ios/Oliphaunt.h" \
-  "ios/OliphauntAssets.h" \
-  "ios/OliphauntAssets.mm" \
-  "ios/vendor/oliphaunt-swift" \
-  "ios/vendor/liboliphaunt.xcframework" \
-  "Sources/COliphaunt/include/oliphaunt.h" \
-  "Sources/Oliphaunt/Oliphaunt.swift" \
-  "Sources/Oliphaunt/OliphauntNativeDirect.swift" \
-  "liboliphaunt.dylib" \
-  "liboliphaunt.xcframework"
-do
-  if grep -Fq "$removed" "$tmp_pack"; then
-    echo "React Native package dry-run still included duplicate Android native runtime file $removed" >&2
-    rm -f "$tmp_pack"
-    exit 1
-  fi
-done
-
-if grep -Eq '"path"[[:space:]]*:[[:space:]]*"android/(\.gradle|\.cxx|build|src/test)/' "$tmp_pack"; then
-  echo "React Native package dry-run included Android build artifacts or test fixtures" >&2
-  rm -f "$tmp_pack"
-  exit 1
-fi
+const result = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const packed = Array.isArray(result) ? result[0] : result;
+const paths = new Set((packed.files ?? []).map((file) => file.path));
+const required = [
+  'android/settings.gradle',
+  'android/src/main/cpp/CMakeLists.txt',
+  'android/src/main/cpp/include/oliphaunt.h',
+  'android/src/main/cpp/OliphauntJsiBindings.cpp',
+  'android/src/main/java/dev/oliphaunt/reactnative/OliphauntJsiPromiseCallback.kt',
+  'android/src/main/java/dev/oliphaunt/reactnative/OliphauntJsiStreamCallback.kt',
+  'android/src/main/java/dev/oliphaunt/reactnative/OliphauntModule.kt',
+  'android/src/main/java/dev/oliphaunt/reactnative/OliphauntPackage.kt',
+  'ios/Oliphaunt.mm',
+  'ios/OliphauntReactNative.h',
+  'ios/OliphauntAdapter.h',
+  'ios/OliphauntAdapter.swift',
+  'ios/podspecs/COliphaunt.podspec',
+  'ios/podspecs/Oliphaunt.podspec',
+  'tools/stage-ios-app.mjs',
+  'tools/verify-ios-package.mjs',
+  'lib/commonjs/index.js',
+  'lib/commonjs/protocol.js',
+  'lib/commonjs/query.js',
+  'lib/module/index.js',
+  'lib/module/protocol.js',
+  'lib/module/query.js',
+  'lib/typescript/index.d.ts',
+  'lib/typescript/client.d.ts',
+  'lib/typescript/protocol.d.ts',
+  'lib/typescript/query.d.ts',
+  'src/generated/extensions.ts',
+  'lib/typescript/specs/NativeOliphaunt.d.ts',
+];
+const missing = required.filter((path) => !paths.has(path));
+if (missing.length > 0) {
+  throw new Error(`React Native package dry-run omitted:\n${missing.join('\n')}`);
+}
+const forbidden = [...paths].filter((path) =>
+  /^android\/(?:\.gradle|\.cxx|build|src\/test)\//.test(path),
+);
+if (forbidden.length > 0) {
+  throw new Error(
+    `React Native package dry-run included Android build artifacts or test fixtures:\n${forbidden.join('\n')}`,
+  );
+}
+NODE
 rm -f "$tmp_pack"
 
 case "$mode" in

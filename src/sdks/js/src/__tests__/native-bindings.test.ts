@@ -13,7 +13,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { test } from 'vitest';
+import { test, vi } from 'vitest';
 import * as publicEntrypoint from '../index.js';
 import Oliphaunt, { type OliphauntClient } from '../index.js';
 import { resolveDenoNativeInstall } from '../native/assets-deno.js';
@@ -42,6 +42,7 @@ import {
 } from '../native/ffi-layout.js';
 import { createNodeNativeBinding } from '../native/node.js';
 import { publishNativeDescriptor } from '../root-descriptor.js';
+import { directRuntimeBinding } from '../runtime/direct.js';
 import { readTypeScriptPackageVersions } from './package-metadata.js';
 
 async function main(): Promise<void> {
@@ -488,7 +489,6 @@ async function testDenoNativeBindingRejectsPackageManagedExtensions(): Promise<v
         assert.deepEqual(definitions.oliphaunt_logical_generation, {
           parameters: ['pointer'],
           result: 'u64',
-          nonblocking: true,
         });
         assert.deepEqual(definitions.oliphaunt_close_if_generation, {
           parameters: ['u64'],
@@ -542,9 +542,6 @@ async function testDenoNativeBindingRejectsPackageManagedExtensions(): Promise<v
             oliphaunt_copy_last_error(_handle: unknown, output: Uint8Array) {
               output.fill(0);
               return 0n;
-            },
-            oliphaunt_last_error() {
-              return null;
             },
             oliphaunt_free_response() {},
           },
@@ -631,6 +628,14 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
   let restoreCallsStartedResolve: (() => void) | undefined;
   let releaseRestoreCalls: (() => void) | undefined;
   let restoreCallCount = 0;
+  let rejectInit = false;
+  let initFailure: unknown;
+  let initStatus = 0;
+  let initHandleAddress = 0x99n;
+  let logicalGeneration = 23n;
+  let rejectDetach = false;
+  let detachFailure: unknown;
+  let generationCleanupStatus = 1;
   const restoreCallsStarted = new Promise<void>((resolve) => {
     restoreCallsStartedResolve = resolve;
   });
@@ -709,7 +714,6 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
         assert.deepEqual(definitions.oliphaunt_logical_generation, {
           parameters: ['pointer'],
           result: 'u64',
-          nonblocking: true,
         });
         assert.deepEqual(definitions.oliphaunt_close_if_generation, {
           parameters: ['u64'],
@@ -732,14 +736,19 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
         });
         return {
           symbols: {
-            oliphaunt_init_with_error(config: Uint8Array, out: Uint8Array) {
+            async oliphaunt_init_with_error(config: Uint8Array, out: Uint8Array) {
               calls.push('init');
+              if (rejectInit) throw initFailure;
               assert.equal(process.env.OLIPHAUNT_EMBEDDED_MODULE_DIR, undefined);
               const view = new DataView(config.buffer, config.byteOffset, config.byteLength);
               assert.equal(view.getUint32(0, true), ABI_VERSION);
               assert.equal(pointerStrings.get(view.getBigUint64(24, true)), embeddedModules);
-              new DataView(out.buffer, out.byteOffset, out.byteLength).setBigUint64(0, 0x99n, true);
-              return 0;
+              new DataView(out.buffer, out.byteOffset, out.byteLength).setBigUint64(
+                0,
+                initHandleAddress,
+                true,
+              );
+              return initStatus;
             },
             oliphaunt_exec_protocol_with_error() {
               return 0;
@@ -785,26 +794,23 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
             oliphaunt_cancel() {
               return 0;
             },
-            oliphaunt_detach_with_error() {
+            async oliphaunt_detach_with_error(_handle: unknown, _captured: Uint8Array) {
               calls.push('detach');
+              if (rejectDetach) throw detachFailure;
               return 0;
             },
             oliphaunt_logical_generation() {
               calls.push('logical-generation');
-              return 23n;
+              return logicalGeneration;
             },
             oliphaunt_close_if_generation(generation: bigint) {
               calls.push(`close-generation:${generation}`);
-              // A stale generation is an ownership-safe successful no-op.
-              return 1;
+              return generationCleanupStatus;
             },
             oliphaunt_copy_last_error(_handle: unknown, output: Uint8Array) {
               copyLastErrorCalls += 1;
               output.fill(0);
               return 0n;
-            },
-            oliphaunt_last_error() {
-              return null;
             },
             oliphaunt_free_response() {},
           },
@@ -932,12 +938,132 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
     assert.equal(released, 1);
     assert.deepEqual(calls, ['init', 'logical-generation', 'close-generation:23']);
 
+    const failedCleanupOwner = {};
+    let releasedAfterFailedCleanup = 0;
+    generationCleanupStatus = -1;
+    binding.registerForgottenHandleCleanup?.(failedCleanupOwner, handle, () => {
+      releasedAfterFailedCleanup += 1;
+    });
+    finalizer?.(registered!.held);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(
+      releasedAfterFailedCleanup,
+      0,
+      'failed native generation cleanup must keep direct admission closed',
+    );
+    assert.equal(calls.at(-1), 'close-generation:23');
+
     const explicitlyClosedOwner = {};
     binding.registerForgottenHandleCleanup?.(explicitlyClosedOwner, handle, () => {});
     await binding.detach(handle);
     binding.unregisterForgottenHandleCleanup?.(explicitlyClosedOwner);
     assert.deepEqual(unregistered, [explicitlyClosedOwner]);
     assert.equal(calls.at(-1), 'detach');
+
+    calls.length = 0;
+    const openConfig = {
+      pgdata: join(databaseRoot, 'pgdata'),
+      runtimeDirectory: runtime,
+      username: 'postgres',
+      database: 'postgres',
+      extensions: ['hstore'],
+      startupArgs: [],
+    };
+
+    const uncertainHandle = await binding.open(openConfig);
+    rejectDetach = true;
+    detachFailure = new Error('Deno detach worker delivery rejected');
+    const uncertainClose = await directRuntimeBinding(binding).close(uncertainHandle);
+    assert.equal(uncertainClose.state, 'terminal');
+    assert.match(
+      String(uncertainClose.error),
+      /detach delivery failed after its outcome became unknown/,
+    );
+    assert.equal((uncertainClose.error as Error).cause, detachFailure);
+    await assert.rejects(
+      () => binding.detach(uncertainHandle),
+      (error: unknown) => error === uncertainClose.error,
+    );
+    await assert.rejects(
+      () => binding.open(openConfig),
+      /prior native lifecycle outcome left ownership unknown/,
+    );
+    assert.deepEqual(
+      calls,
+      ['init', 'logical-generation', 'detach'],
+      'an outcome-unknown detach is terminal, cannot be retried, and closes admission before another init',
+    );
+
+    const createFreshBinding = async () => {
+      vi.resetModules();
+      const freshDeno = await import('../native/deno.js');
+      return freshDeno.createDenoNativeBinding({
+        libraryPath: join(root, 'liboliphaunt.so'),
+      });
+    };
+
+    calls.length = 0;
+    rejectInit = false;
+    initStatus = -1;
+    initHandleAddress = 0x99n;
+    logicalGeneration = 23n;
+    rejectDetach = false;
+    detachFailure = undefined;
+    let freshBinding = await createFreshBinding();
+    await assert.rejects(() => freshBinding.open(openConfig), /native liboliphaunt init failed/);
+    initStatus = 0;
+    const retryHandle = await freshBinding.open(openConfig);
+    await freshBinding.detach(retryHandle);
+    assert.deepEqual(
+      calls,
+      ['init', 'init', 'logical-generation', 'detach'],
+      'a confirmed nonzero init status remains retryable',
+    );
+
+    calls.length = 0;
+    rejectInit = true;
+    initStatus = 0;
+    initFailure = new Error('Deno init worker delivery rejected');
+    rejectDetach = false;
+    detachFailure = undefined;
+    initHandleAddress = 0x99n;
+    logicalGeneration = 23n;
+    freshBinding = await createFreshBinding();
+    await assert.rejects(
+      () => freshBinding.open(openConfig),
+      (error) => error === initFailure,
+    );
+    await assert.rejects(
+      () => freshBinding.open(openConfig),
+      /prior native lifecycle outcome left ownership unknown/,
+    );
+    assert.deepEqual(calls, ['init'], 'a rejected init worker must close admission immediately');
+
+    calls.length = 0;
+    rejectInit = false;
+    initHandleAddress = 0n;
+    freshBinding = await createFreshBinding();
+    await assert.rejects(() => freshBinding.open(openConfig), /init returned a null handle/);
+    await assert.rejects(
+      () => freshBinding.open(openConfig),
+      /prior native lifecycle outcome left ownership unknown/,
+    );
+    assert.deepEqual(calls, ['init'], 'a null successful init must close admission immediately');
+
+    calls.length = 0;
+    initHandleAddress = 0x99n;
+    logicalGeneration = 0n;
+    freshBinding = await createFreshBinding();
+    await assert.rejects(() => freshBinding.open(openConfig), /invalid logical generation/);
+    await assert.rejects(
+      () => freshBinding.open(openConfig),
+      /prior native lifecycle outcome left ownership unknown/,
+    );
+    assert.deepEqual(
+      calls,
+      ['init', 'logical-generation'],
+      'an invalid generation must close admission without dereferencing the handle',
+    );
   } finally {
     if (previousDeno === undefined) {
       delete (globalThis as { Deno?: unknown }).Deno;

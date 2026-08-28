@@ -100,11 +100,7 @@ export async function waitForManagedChild(
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<false>((resolveTimeout) => {
     timeoutHandle = setTimeout(() => resolveTimeout(false), timeoutMs);
-    if (
-      typeof timeoutHandle === 'object' &&
-      timeoutHandle !== null &&
-      'unref' in timeoutHandle
-    ) {
+    if (typeof timeoutHandle === 'object' && timeoutHandle !== null && 'unref' in timeoutHandle) {
       timeoutHandle.unref();
     }
   });

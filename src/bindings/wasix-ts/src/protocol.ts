@@ -1,3 +1,4 @@
+// @generated from src/shared/js-core/src/protocol.ts. Do not edit this mirror; run `node src/shared/js-core/tools/check-js-core.mjs --write`.
 const encoder = new TextEncoder();
 
 export function simpleQuery(sql: string): Uint8Array {

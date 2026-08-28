@@ -134,7 +134,7 @@ describe('WASIX storage descriptors', () => {
     expect(roundTrip).toMatchObject({
       name: 'PostgresError',
       sqlstate: '42710',
-      postgresMessage: 'extension already exists',
+      message: 'extension already exists',
       fields: original.fields,
     });
   });

@@ -245,14 +245,16 @@ array, text, and binary wrappers remain the deterministic path. There is no
 mutable global or instance codec registry and no `refreshArrayTypes()` core
 method.
 
-Object row mode documents that later duplicate column names overwrite earlier
-names, as in common PostgreSQL JavaScript clients. Array and raw row modes
-preserve every field and are available for ORM field mapping.
+Object row mode rejects duplicate column names rather than silently discarding
+an earlier value. Array and raw row modes preserve every field and are
+available for ORM field mapping.
 
 ### Errors, notices, transactions, and lifecycle
 
 Adapters preserve existing `PostgresError` properties and may project familiar
-aliases at their own compatibility boundary:
+aliases at their own compatibility boundary. The core intentionally exposes
+only the canonical names in the left column; it does not publish these aliases
+itself:
 
 | Oliphaunt property | Compatibility alias |
 | --- | --- |
@@ -488,9 +490,8 @@ The root `@oliphaunt/wasix-ts` entry point runs PostgreSQL in its importing
 JavaScript realm. This is the lowest-overhead path for Node scripts, tests, and
 applications that already place their ORM in an application-owned Worker. In a
 browser UI realm, prefer `@oliphaunt/wasix-ts/worker`; it owns a package Worker
-and keeps synchronous guest execution off the main JavaScript agent. Do not
-reintroduce an execution option that makes this placement choice look like
-ordinary database configuration.
+and keeps synchronous guest execution off the main JavaScript agent. Execution
+placement is selected by the entry point rather than database configuration.
 
 With the package Worker, ORM code and type parsing remain in the caller realm;
 only requests and raw results cross RPC. Transfer owned `ArrayBuffer` values
@@ -923,10 +924,11 @@ no fresh real-runtime claim for those lanes.
 
 Raw protocol remains a database/root-only escape hatch. Managed transaction
 handles expose structured operations and explicit rollback only; their guard
-classifies every exact backend command tag plus the one terminal readiness
-status before parsing results. Manual transaction lifecycle SQL and `AND CHAIN`
-are unsupported, savepoints remain valid, and an ownership escape retires the
-database without speculative follow-up control.
+rejects `ROLLBACK`/`ABORT ... AND CHAIN` before dispatch and classifies every
+exact backend command tag plus the one terminal readiness status before parsing
+results. Other manual transaction lifecycle SQL is unsupported, savepoints
+remain valid, and an ownership escape retires the database without speculative
+follow-up control.
 
 This completion makes the SDKs adapter-ready; it does not itself make a Kysely,
 Drizzle, or PGlite-typed application source-compatible.

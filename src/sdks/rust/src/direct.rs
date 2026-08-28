@@ -21,6 +21,7 @@ use crate::query::{
     StatementDescription, ValueFormat, describe_statement_request, extended_statement_request,
     parse_exec_response, parse_extended_command_response, parse_extended_query_response,
     parse_simple_command_response, parse_statement_description, reject_copy_statements,
+    reject_transaction_chain,
 };
 use crate::session::{
     TRANSACTION_ACTIVE, TRANSACTION_FAILED, TRANSACTION_FINISHING, TRANSACTION_RELEASED,
@@ -678,6 +679,7 @@ impl<'db, 'q> Sql<'db, 'q> {
 
     /// Execute one statement which must not return rows.
     pub fn execute(mut self) -> Result<CommandResult> {
+        self.reject_transaction_chain()?;
         let request = extended_statement_request(&self.sql, &self.params, self.result_format)?;
         let response = self.exchange(request, "execute()")?;
         let result = parse_extended_command_response(&response)?;
@@ -687,6 +689,7 @@ impl<'db, 'q> Sql<'db, 'q> {
 
     /// Execute one statement and return its row-shaped result.
     pub fn query(mut self) -> Result<QueryResult> {
+        self.reject_transaction_chain()?;
         let request = extended_statement_request(&self.sql, &self.params, self.result_format)?;
         let response = self.exchange(request, "query()")?;
         let result = parse_extended_query_response(&response)?;
@@ -701,6 +704,13 @@ impl<'db, 'q> Sql<'db, 'q> {
         let result = parse_statement_description(&response)?;
         self.validate_ready(result.ready_status(), "describe()")?;
         Ok(result)
+    }
+
+    fn reject_transaction_chain(&self) -> Result<()> {
+        if self.transaction.is_some() {
+            reject_transaction_chain(&self.sql)?;
+        }
+        Ok(())
     }
 
     fn exchange(&mut self, request: ProtocolRequest, operation: &str) -> Result<ProtocolResponse> {
@@ -777,6 +787,7 @@ impl Transaction<'_> {
     pub fn exec(&mut self, sql: &str) -> Result<ExecResult> {
         self.ensure_active()?;
         reject_copy_statements(sql)?;
+        reject_transaction_chain(sql)?;
         let response = self.database.exec_transaction_structured(
             ProtocolRequest::simple_query(sql)?,
             "Transaction::exec()",
@@ -965,6 +976,9 @@ impl OliphauntServer {
     }
 
     /// Whether the server has begun terminal teardown.
+    ///
+    /// This is lifecycle state, not a health check. `false` does not poll the
+    /// PostgreSQL child or prove that the published endpoint is reachable.
     pub fn is_closed(&self) -> bool {
         self.owner.is_closed()
     }
@@ -1530,6 +1544,48 @@ mod tests {
             database.exec_protocol_raw([1]),
             ErrorKind::Other,
             SESSION_STATE_UNKNOWN,
+        );
+        database.close().unwrap();
+    }
+
+    #[test]
+    fn transaction_chain_is_rejected_before_direct_dispatch() {
+        let session = ScriptedSession::new([
+            Ok(command_response("BEGIN", b'T')),
+            Ok(command_response("COMMIT", b'I')),
+            Ok(ProtocolResponse::new([4, 8])),
+        ]);
+        let mut database = Oliphaunt::from_session(Box::new(session));
+
+        database
+            .transaction(|transaction| {
+                for error in [
+                    transaction
+                        .execute("ROLLBACK AND CHAIN")
+                        .expect_err("extended execute rejects transaction replacement"),
+                    transaction
+                        .query("ABORT WORK AND CHAIN")
+                        .expect_err("extended query rejects transaction replacement"),
+                    transaction
+                        .exec("SELECT 1; ROLLBACK TRANSACTION AND CHAIN")
+                        .expect_err("simple exec rejects transaction replacement"),
+                ] {
+                    assert!(
+                        error
+                            .to_string()
+                            .contains("not allowed inside an SDK-managed callback transaction"),
+                        "unexpected preflight error: {error}"
+                    );
+                }
+                Ok::<(), Error>(())
+            })
+            .expect("preflight rejections leave the owned transaction active");
+
+        assert_eq!(
+            database
+                .exec_protocol_raw([1])
+                .expect("only BEGIN and the outer COMMIT reached the session"),
+            [4, 8]
         );
         database.close().unwrap();
     }

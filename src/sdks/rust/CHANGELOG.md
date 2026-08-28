@@ -37,11 +37,15 @@
 - **Breaking:** remove raw protocol methods from managed transaction handles;
   arbitrary protocol bytes cannot preserve the SDK-owned transaction boundary.
   Root database raw APIs remain available to protocol adapters which own their
-  complete lifecycle.
+  complete lifecycle. Structured callback-transaction methods reject
+  `ROLLBACK`/`ABORT ... AND CHAIN` before dispatch while preserving savepoints
+  and `ROLLBACK TO`.
 - **Breaking:** make server handles endpoint/lifecycle-only. Use
   `connection_string()` with a PostgreSQL driver or ORM for SQL, transactions,
   cancellation, and raw protocol; server handles retain only `is_closed()` and
   `close()`.
+- Validate an explicit native server executable before preparing persistent
+  storage, so a deterministic path error cannot initialize or alter PGDATA.
 - **Breaking:** make `Error` opaque and expose the shared non-exhaustive
   `ErrorKind` recovery categories plus typed PostgreSQL and transaction-cause
   accessors. `Error` no longer promises equality or destructuring stability.
@@ -49,6 +53,12 @@
   constants, `Extension::ALL`, `Extension::by_sql_name`, and `sql_name`; remove
   the old free constants and PascalCase aliases. Selecting an artifact never
   installs database-local extension objects.
+- **Breaking:** remove the redundant `QueryParam` wrapper. Use natural
+  `IntoParameter` values or `Parameter::{text,binary,null}` for dynamically
+  typed values. Execution rejects an explicitly attached OID 0; leave the OID
+  unset for execution-time inference, while `describe` continues to accept 0.
+  Multi-statement `exec` now retains each notice on its statement result as
+  well as in the operation-wide ordered notice list.
 - Keep required transaction settlement admissible across an ordered close
   cutoff, and make every teardown-started close result terminal and replayable
   to concurrent or repeated callers. Pin-release failures are never discarded,

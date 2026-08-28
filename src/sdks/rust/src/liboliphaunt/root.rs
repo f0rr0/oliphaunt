@@ -922,7 +922,7 @@ mod tests {
             module_dir: module.as_ptr(),
             username: username.as_ptr(),
             database: database.as_ptr(),
-            reserved_flags: 0,
+            flags: 0,
             startup_args: std::ptr::null(),
             startup_arg_count: 0,
         };

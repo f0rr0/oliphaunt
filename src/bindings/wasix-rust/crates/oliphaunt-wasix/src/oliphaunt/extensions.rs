@@ -260,10 +260,11 @@ pub(crate) fn extension_smoke_statements(sql: &str) -> impl Iterator<Item = &str
 }
 
 #[cfg(test)]
-fn extension_activation_sql_for_test(extension: Extension) -> impl Iterator<Item = &'static str> {
-    generated::activation_sql_for_test(extension)
-        .iter()
-        .copied()
+fn extension_activation_sql_for_test(extension: Extension) -> Result<Vec<&'static str>> {
+    Ok(resolve_extension_set(&[extension])?
+        .into_iter()
+        .flat_map(|resolved| generated::activation_sql_for_test(resolved).iter().copied())
+        .collect())
 }
 
 #[cfg(all(test, feature = "extension-pg-textsearch"))]
@@ -315,6 +316,16 @@ mod extension_tests {
     #[test]
     fn public_extensions_materialize_only_requested_libraries() -> Result<()> {
         run_lifecycle_materialization_set(Extension::ALL)
+    }
+
+    #[test]
+    #[cfg(all(feature = "extension-cube", feature = "extension-earthdistance"))]
+    fn dependent_extension_activation_includes_dependencies_first() -> Result<()> {
+        let activation = extension_activation_sql_for_test(Extension::EARTHDISTANCE)?;
+        assert_eq!(activation.len(), 2);
+        assert!(activation[0].contains("\"cube\""));
+        assert!(activation[1].contains("\"earthdistance\""));
+        Ok(())
     }
 
     #[test]
@@ -546,7 +557,7 @@ mod extension_tests {
     }
 
     fn run_direct_smoke(db: &mut Oliphaunt, extension: Extension) -> Result<()> {
-        for statement in extension_activation_sql_for_test(extension) {
+        for statement in extension_activation_sql_for_test(extension)? {
             let request = crate::oliphaunt::query::simple_query(statement)?;
             db.exec_protocol_raw(request).with_context(|| {
                 format!(
@@ -571,7 +582,7 @@ mod extension_tests {
     }
 
     async fn run_server_smoke(conn: &mut PgConnection, extension: Extension) -> Result<()> {
-        for statement in extension_activation_sql_for_test(extension) {
+        for statement in extension_activation_sql_for_test(extension)? {
             sqlx::query(statement)
                 .execute(&mut *conn)
                 .await

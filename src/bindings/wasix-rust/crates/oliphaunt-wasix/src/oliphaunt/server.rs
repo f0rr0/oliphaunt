@@ -92,6 +92,9 @@ impl OliphauntServer {
     /// The value becomes true when shutdown begins, including when terminal
     /// cleanup later reports an error. Repeated [`Self::close`] calls replay
     /// that first terminal result.
+    ///
+    /// This is lifecycle state, not a health check. `false` does not poll the
+    /// proxy listener or prove that the published endpoint is reachable.
     pub fn is_closed(&self) -> bool {
         self.shutdown.load(Ordering::SeqCst) || self.close_result.is_some()
     }
@@ -211,7 +214,8 @@ pub enum ServerListen {
     #[cfg(unix)]
     /// Listen on a Unix host in a directory using PostgreSQL's
     /// `.s.PGSQL.<port>` filename. The directory path must be nonempty and
-    /// contain no NUL bytes.
+    /// valid UTF-8, and contain no NUL bytes. UTF-8 keeps the published
+    /// connection string lossless across Rust drivers and ORMs.
     Unix { directory: PathBuf, port: u16 },
 }
 
@@ -227,7 +231,7 @@ impl ServerListen {
         Self::Tcp { port: Some(port) }
     }
 
-    /// Listen on a Unix host in a Unix-domain socket directory using
+    /// Listen on a Unix host in a UTF-8 Unix-domain socket directory using
     /// PostgreSQL port 5432.
     #[cfg(unix)]
     pub fn unix(directory: impl Into<PathBuf>) -> Self {
@@ -237,7 +241,7 @@ impl ServerListen {
         }
     }
 
-    /// Listen on a Unix host in a Unix-domain socket directory using an
+    /// Listen on a Unix host in a UTF-8 Unix-domain socket directory using an
     /// explicit PostgreSQL port.
     #[cfg(unix)]
     pub fn unix_port(directory: impl Into<PathBuf>, port: u16) -> Self {
@@ -490,10 +494,13 @@ fn unix_connection_string(endpoint: &UnixSocketEndpoint, startup: &StartupConfig
         .path
         .parent()
         .expect("resolved Unix socket path is absolute");
+    let host = host
+        .to_str()
+        .expect("resolved Unix socket directory was validated as UTF-8");
     format!(
         "postgresql:///{database}?host={host}&port={port}&user={user}&sslmode=disable",
         database = percent_encode_uri_component(&startup.database),
-        host = percent_encode_bytes(host.as_os_str().as_bytes()),
+        host = percent_encode_uri_component(host),
         port = endpoint.port,
         user = percent_encode_uri_component(&startup.username),
     )
@@ -681,6 +688,23 @@ fn wake_listener(endpoint: &ServerEndpoint) {
 
 #[cfg(unix)]
 fn resolve_unix_socket_endpoint(directory: &Path, port: u16) -> Result<UnixSocketEndpoint> {
+    let current_directory = if directory.is_absolute() {
+        None
+    } else {
+        Some(
+            std::env::current_dir()
+                .context("resolve current directory for Unix socket directory")?,
+        )
+    };
+    resolve_unix_socket_endpoint_at(directory, port, current_directory.as_deref())
+}
+
+#[cfg(unix)]
+fn resolve_unix_socket_endpoint_at(
+    directory: &Path,
+    port: u16,
+    current_directory: Option<&Path>,
+) -> Result<UnixSocketEndpoint> {
     validate_host_path("Unix socket directory", directory)?;
     if port == 0 {
         return Err(crate::error::invalid_configuration(
@@ -690,11 +714,22 @@ fn resolve_unix_socket_endpoint(directory: &Path, port: u16) -> Result<UnixSocke
     let directory = if directory.is_absolute() {
         directory.to_path_buf()
     } else {
-        std::env::current_dir()
-            .context("resolve current directory for Unix socket directory")?
+        current_directory
+            .expect("relative Unix socket directory resolution provides a current directory")
             .join(directory)
     };
+    if directory.to_str().is_none() {
+        return Err(crate::error::invalid_configuration(
+            "Unix socket directory must be valid UTF-8 so the published PostgreSQL connection string preserves the exact path",
+        ));
+    }
     let path = directory.join(format!(".s.PGSQL.{port}"));
+    if path.as_os_str().as_bytes().len() >= 100 {
+        return Err(crate::error::invalid_configuration(format!(
+            "Unix socket path is too long: {}",
+            path.display()
+        )));
+    }
     Ok(UnixSocketEndpoint { path, port })
 }
 
@@ -751,6 +786,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn unix_connection_string_encodes_every_caller_controlled_component() {
+        use std::str::FromStr;
+
         let startup = StartupConfig {
             username: "role name".to_string(),
             database: "tenant/db#1".to_string(),
@@ -759,22 +796,38 @@ mod tests {
         let endpoint =
             resolve_unix_socket_endpoint(Path::new("/tmp/Application Support/db?slot"), 6543)
                 .unwrap();
+        let connection_string = unix_connection_string(&endpoint, &startup);
         assert_eq!(
-            unix_connection_string(&endpoint, &startup),
+            connection_string,
             "postgresql:///tenant%2Fdb%231?host=%2Ftmp%2FApplication%20Support%2Fdb%3Fslot&port=6543&user=role%20name&sslmode=disable"
         );
+
+        let options = sqlx::postgres::PgConnectOptions::from_str(&connection_string)
+            .expect("the published URI must retain its exact SQLx connection shape");
+        assert_eq!(
+            options.get_socket().map(|path| path.as_path()),
+            Some(Path::new("/tmp/Application Support/db?slot"))
+        );
+        assert_eq!(options.get_port(), 6543);
+        assert_eq!(options.get_username(), "role name");
+        assert_eq!(options.get_database(), Some("tenant/db#1"));
     }
 
     #[cfg(unix)]
     #[test]
-    fn unix_connection_string_preserves_non_utf8_path_bytes() {
+    fn unix_socket_endpoint_rejects_non_utf8_directory_without_mutation() {
         use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
 
         let temp = tempfile::TempDir::new().unwrap();
         let directory = temp.path().join(OsStr::from_bytes(b"db-\xFF"));
-        let endpoint = resolve_unix_socket_endpoint(&directory, 6543).unwrap();
+        assert!(!directory.exists());
 
-        assert!(unix_connection_string(&endpoint, &StartupConfig::default()).contains("db-%FF"));
+        let error = resolve_unix_socket_endpoint(&directory, 6543)
+            .expect_err("a String connection URI cannot preserve a non-UTF-8 socket path");
+
+        assert!(error.to_string().contains("must be valid UTF-8"));
+        assert!(!directory.exists());
     }
 
     #[cfg(unix)]
@@ -786,12 +839,29 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn unix_socket_endpoint_resolves_relative_paths() -> Result<()> {
-        let endpoint = resolve_unix_socket_endpoint(Path::new("run"), 6543)?;
-        assert_eq!(
-            endpoint.path,
-            std::env::current_dir()?.join("run/.s.PGSQL.6543")
+    fn unix_socket_endpoint_rejects_too_long_path_without_mutation() {
+        let directory = std::env::temp_dir().join(format!(
+            "oliphaunt-wasix-socket-{}-{}",
+            std::process::id(),
+            "x".repeat(120)
+        ));
+        assert!(!directory.exists());
+
+        let error = resolve_unix_socket_endpoint(&directory, 6543).expect_err(
+            "Unix socket sockaddr length must be validated before database preparation",
         );
+
+        assert!(error.to_string().contains("socket path is too long"));
+        assert!(!directory.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_socket_endpoint_resolves_relative_paths() -> Result<()> {
+        let current_directory = Path::new("/tmp/oliphaunt-relative-base");
+        let endpoint =
+            resolve_unix_socket_endpoint_at(Path::new("run"), 6543, Some(current_directory))?;
+        assert_eq!(endpoint.path, current_directory.join("run/.s.PGSQL.6543"));
         assert_eq!(endpoint.port, 6543);
         Ok(())
     }

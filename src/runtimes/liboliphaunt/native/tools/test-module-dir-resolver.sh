@@ -13,9 +13,9 @@ scratch=$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-module-dir-test.XXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 
 compiler=${CC:-cc}
-linker_args=()
+linker_arg=
 if [[ "$(uname -s)" == Linux ]]; then
-  linker_args=(-ldl)
+  linker_arg=-ldl
 fi
 
 "$compiler" \
@@ -27,7 +27,7 @@ fi
   -I "$root/src/runtimes/liboliphaunt/native/src" \
   "$root/src/runtimes/liboliphaunt/native/smoke/liboliphaunt_module_dir_resolver.c" \
   "$root/src/runtimes/liboliphaunt/native/src/liboliphaunt_fs.c" \
-  "${linker_args[@]}" \
+  ${linker_arg:+"$linker_arg"} \
   -o "$scratch/liboliphaunt_module_dir_resolver"
 
 mkdir "$scratch/fixture"

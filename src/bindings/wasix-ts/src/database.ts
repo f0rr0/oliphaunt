@@ -1,5 +1,6 @@
 import { composeWasixStorageFailure, WasixStorageError } from './errors.js';
 import {
+  assertNoTransactionChain,
   decodeQueryResult,
   describeQuery,
   errorWithNotices,
@@ -15,10 +16,10 @@ import {
   type CommandResult,
   type DescribeResult,
   type ExecResult,
+  type InferQueryRow,
   type ParameterOptions,
   type PostgresNotice,
   type QueryParam,
-  type QueryObjectRow,
   type QueryOptions,
   type QueryPlan,
   type QueryResult,
@@ -48,6 +49,8 @@ export const WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES = 64 * 1024;
 const pgDumpTargets = new WeakSet<OliphauntDatabase>();
 const protocolConnectionTargets = new WeakSet<OliphauntDatabase>();
 const transactionPinnedTargets = new WeakSet<OliphauntDatabase>();
+
+type QueryReadOptions = Omit<QueryOptions, 'encoders'>;
 
 /** @internal Publish a promise before starting reentrant ownership teardown. */
 export function createWasixDeferred<T>(): Readonly<{
@@ -263,17 +266,17 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     return this.#serialize(() => this.#runDatabasePlanUnlocked(plan, parseCommandResponse));
   }
 
-  async query<Row = QueryObjectRow>(
+  async query<Row = never, const Options extends QueryOptions = {}>(
     sql: string,
     parameters: ReadonlyArray<QueryParam> = [],
-    options: QueryOptions = {},
-  ): Promise<QueryResult<Row>> {
+    options: Options & QueryOptions = {} as Options & QueryOptions,
+  ): Promise<QueryResult<InferQueryRow<Options, Row>>> {
     this.#assertAvailable();
     const stableOptions = snapshotQueryOptions(options);
     const plan = planQuery(sql, parameters, stableOptions);
     return this.#serialize(() =>
       this.#runDatabasePlanUnlocked(plan, (response) =>
-        decodeQueryResult<Row>(parseQueryRawResponse(response), stableOptions),
+        decodeQueryResult<Row, Options>(parseQueryRawResponse(response), stableOptions),
       ),
     );
   }
@@ -288,16 +291,16 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
     return this.#serialize(() => this.#runDatabasePlanUnlocked(plan, parseQueryRawResponse));
   }
 
-  async exec<Row = QueryObjectRow>(
+  async exec<Row = never, const Options extends QueryReadOptions = {}>(
     sql: string,
-    options: Omit<QueryOptions, 'encoders'> = {},
-  ): Promise<ExecResult<Row>> {
+    options: Options & QueryReadOptions = {} as Options & QueryReadOptions,
+  ): Promise<ExecResult<InferQueryRow<Options, Row>>> {
     this.#assertAvailable();
     const input = structuredSimpleQuery(sql);
     const stableOptions = snapshotReadOptions(options);
     return this.#serialize(() =>
       this.#runDatabaseStructuredUnlocked(input, (response) =>
-        parseExecResponse<Row>(response, stableOptions),
+        parseExecResponse<Row, Options>(response, stableOptions),
       ),
     );
   }
@@ -1196,21 +1199,26 @@ class WasixTransactionImpl implements OliphauntTransaction {
     options: ParameterOptions = {},
   ): Promise<CommandResult> {
     return this.#publicPromise(() => {
+      assertNoTransactionChain(sql);
       const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
       return this.#enqueue(() => this.#runPlan(plan, parseCommandResponse));
     });
   }
 
-  query<Row = QueryObjectRow>(
+  query<Row = never, const Options extends QueryOptions = {}>(
     sql: string,
     parameters: ReadonlyArray<QueryParam> = [],
-    options: QueryOptions = {},
-  ): Promise<QueryResult<Row>> {
+    options: Options & QueryOptions = {} as Options & QueryOptions,
+  ): Promise<QueryResult<InferQueryRow<Options, Row>>> {
     return this.#publicPromise(() => {
+      assertNoTransactionChain(sql);
       const stableOptions = snapshotQueryOptions(options);
       const plan = planQuery(sql, parameters, stableOptions);
       return this.#enqueue(async () =>
-        decodeQueryResult<Row>(await this.#runPlan(plan, parseQueryRawResponse), stableOptions),
+        decodeQueryResult<Row, Options>(
+          await this.#runPlan(plan, parseQueryRawResponse),
+          stableOptions,
+        ),
       );
     });
   }
@@ -1221,20 +1229,24 @@ class WasixTransactionImpl implements OliphauntTransaction {
     options: ParameterOptions = {},
   ): Promise<RawQueryResult> {
     return this.#publicPromise(() => {
+      assertNoTransactionChain(sql);
       const plan = planQuery(sql, parameters, snapshotParameterOptions(options));
       return this.#enqueue(() => this.#runPlan(plan, parseQueryRawResponse));
     });
   }
 
-  exec<Row = QueryObjectRow>(
+  exec<Row = never, const Options extends QueryReadOptions = {}>(
     sql: string,
-    options: Omit<QueryOptions, 'encoders'> = {},
-  ): Promise<ExecResult<Row>> {
+    options: Options & QueryReadOptions = {} as Options & QueryReadOptions,
+  ): Promise<ExecResult<InferQueryRow<Options, Row>>> {
     return this.#publicPromise(() => {
+      assertNoTransactionChain(sql);
       const input = structuredSimpleQuery(sql);
       const stableOptions = snapshotReadOptions(options);
       return this.#enqueue(() =>
-        this.#runStructured(input, (response) => parseExecResponse<Row>(response, stableOptions)),
+        this.#runStructured(input, (response) =>
+          parseExecResponse<Row, Options>(response, stableOptions),
+        ),
       );
     });
   }
@@ -1340,21 +1352,19 @@ function snapshotParameterOptions(options: ParameterOptions): ParameterOptions {
   });
 }
 
-function snapshotReadOptions(
-  options: Omit<QueryOptions, 'encoders'>,
-): Omit<QueryOptions, 'encoders'> {
+function snapshotReadOptions<const Options extends QueryReadOptions>(options: Options): Options {
   return Object.freeze({
     rowMode: options.rowMode,
     valueMode: options.valueMode,
     ...(options.decoders === undefined ? {} : { decoders: Object.freeze({ ...options.decoders }) }),
-  });
+  }) as Options;
 }
 
-function snapshotQueryOptions(options: QueryOptions): QueryOptions {
+function snapshotQueryOptions<const Options extends QueryOptions>(options: Options): Options {
   return Object.freeze({
     ...snapshotReadOptions(options),
     ...snapshotParameterOptions(options),
-  });
+  }) as Options;
 }
 
 function prependNotices<Result extends NoticeCarrier>(

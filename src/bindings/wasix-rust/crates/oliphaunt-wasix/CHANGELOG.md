@@ -37,12 +37,20 @@
 - **Breaking:** remove raw protocol from managed transaction handles and make
   server handles endpoint/lifecycle-only. Root databases retain the raw escape
   hatch; server SQL goes through `connection_string()` and a PostgreSQL driver.
+  Structured callback-transaction methods reject `ROLLBACK`/`ABORT ... AND
+  CHAIN` before dispatch while preserving savepoints and `ROLLBACK TO`.
 - **Breaking:** replace the public extension module/free values with an opaque
   root `Extension` and uppercase associated constants. Each selector,
   `Extension::ALL`, and `by_sql_name` now reflects exactly the enabled
   `extension-*` Cargo features. Selection materializes artifacts and required
   pre-start configuration only; migrations own `CREATE EXTENSION`, `LOAD`, and
   all database-local setup.
+- **Breaking:** remove the redundant `QueryParam` wrapper. Use natural
+  `IntoParameter` values or `Parameter::{text,binary,null}` for dynamically
+  typed values. Execution rejects an explicitly attached OID 0; leave the OID
+  unset for execution-time inference, while `describe` continues to accept 0.
+  Multi-statement `exec` now retains each notice on its statement result as
+  well as in the operation-wide ordered notice list.
 - Keep the direct server handle after `close(&mut self)`, add `is_closed()`,
   and replay the first terminal close result on repeated calls.
 

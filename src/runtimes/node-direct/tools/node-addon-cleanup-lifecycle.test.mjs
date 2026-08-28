@@ -16,6 +16,15 @@ import {
 const scriptPath = fileURLToPath(import.meta.url);
 const workspaceRoot = path.resolve(path.dirname(scriptPath), "../../../..");
 const require = createRequire(import.meta.url);
+const streamFixtureRequest = Object.freeze({
+  normal: 0x01,
+  failRecovery: 0xf1,
+  unknownAfterCallback: 0xf2,
+  successAfterCallback: 0xf3,
+  abortWithoutCallback: 0xf4,
+  failureWithoutCallback: 0xf5,
+  unknownWithoutCallback: 0xf6,
+});
 
 async function bundleSdkCleanupRuntime(outputDirectory) {
   const clientSource = path.join(workspaceRoot, "src/sdks/js/src/client.ts");
@@ -546,129 +555,119 @@ async function runChild(options) {
     }
     case "async-stream-callback-contract": {
       const handle = await openFake(addon, options.library, options.root);
-      process.env.OLIPHAUNT_NODE_CLEANUP_TEST_SINGLE_STREAM_CHUNK = "1";
-      try {
-        await assert.rejects(
-          addon.execProtocolRawStream(handle, new Uint8Array([1]), () => Promise.resolve()),
-          /must complete synchronously.*Promise or thenable/u,
-        );
-        await assert.rejects(
-          addon.execProtocolRawStream(handle, new Uint8Array([1]), () => {
-            throw new Error("stream consumer failed");
-          }),
-          /stream consumer failed/u,
-        );
-        const callbackObject = { kind: "stream callback object identity" };
-        for (const callbackFailure of [
-          "stream callback string",
-          73,
-          Number.NaN,
-          undefined,
-          callbackObject,
-        ]) {
-          const outcome = await addon
-            .execProtocolRawStream(handle, new Uint8Array([1]), () => {
-              throw callbackFailure;
-            })
-            .then(
-              () => ({ rejected: false, error: undefined }),
-              (error) => ({ rejected: true, error }),
-            );
-          assert.equal(outcome.rejected, true, "a failed stream callback must reject");
-          assert.equal(
-            Object.is(outcome.error, callbackFailure),
-            true,
-            "a recovered callback abort must preserve the exact JavaScript throw value",
+      await assert.rejects(
+        addon.execProtocolRawStream(
+          handle,
+          new Uint8Array([streamFixtureRequest.normal]),
+          () => Promise.resolve(),
+        ),
+        /must complete synchronously.*Promise or thenable/u,
+      );
+      await assert.rejects(
+        addon.execProtocolRawStream(handle, new Uint8Array([streamFixtureRequest.normal]), () => {
+          throw new Error("stream consumer failed");
+        }),
+        /stream consumer failed/u,
+      );
+      const callbackObject = { kind: "stream callback object identity" };
+      for (const callbackFailure of [
+        "stream callback string",
+        73,
+        Number.NaN,
+        undefined,
+        callbackObject,
+      ]) {
+        const outcome = await addon
+          .execProtocolRawStream(handle, new Uint8Array([streamFixtureRequest.normal]), () => {
+            throw callbackFailure;
+          })
+          .then(
+            () => ({ rejected: false, error: undefined }),
+            (error) => ({ rejected: true, error }),
           );
-        }
-      } finally {
-        delete process.env.OLIPHAUNT_NODE_CLEANUP_TEST_SINGLE_STREAM_CHUNK;
+        assert.equal(outcome.rejected, true, "a failed stream callback must reject");
+        assert.equal(
+          Object.is(outcome.error, callbackFailure),
+          true,
+          "a recovered callback abort must preserve the exact JavaScript throw value",
+        );
       }
-      process.env.OLIPHAUNT_NODE_CLEANUP_TEST_FAIL_STREAM_RECOVERY = "1";
-      try {
-        await assert.rejects(
-          addon.execProtocolRawStream(handle, new Uint8Array([1]), () => {
+      await assert.rejects(
+        addon.execProtocolRawStream(
+          handle,
+          new Uint8Array([streamFixtureRequest.failRecovery]),
+          () => {
             throw new Error("secondary stream consumer failure");
-          }),
-          /native liboliphaunt protocol streaming failed: fake stream recovery failed/u,
-          "an unconfirmed native recovery must take precedence over the callback exception",
-        );
-      } finally {
-        delete process.env.OLIPHAUNT_NODE_CLEANUP_TEST_FAIL_STREAM_RECOVERY;
-      }
-      process.env.OLIPHAUNT_NODE_CLEANUP_TEST_UNKNOWN_STREAM_STATUS = "1";
-      try {
-        await assert.rejects(
-          addon.execProtocolRawStream(handle, new Uint8Array([1]), () => {
+          },
+        ),
+        /native liboliphaunt protocol streaming failed: fake stream recovery failed/u,
+        "an unconfirmed native recovery must take precedence over the callback exception",
+      );
+      await assert.rejects(
+        addon.execProtocolRawStream(
+          handle,
+          new Uint8Array([streamFixtureRequest.unknownAfterCallback]),
+          () => {
             throw new Error("tertiary stream consumer failure");
-          }),
-          /native liboliphaunt protocol streaming failed: fake stream returned an unknown positive status/u,
-          "an unknown positive native status must take precedence over the callback exception",
-        );
-      } finally {
-        delete process.env.OLIPHAUNT_NODE_CLEANUP_TEST_UNKNOWN_STREAM_STATUS;
-      }
+          },
+        ),
+        /native liboliphaunt protocol streaming failed: fake stream returned an unknown positive status/u,
+        "an unknown positive native status must take precedence over the callback exception",
+      );
       const successMismatchCallback = new Error(
         "a success mismatch must not escape as a recovered callback failure",
       );
-      process.env.OLIPHAUNT_NODE_CLEANUP_TEST_STREAM_SUCCESS_AFTER_CALLBACK_ABORT = "1";
-      try {
-        await assert.rejects(
-          addon.execProtocolRawStream(handle, new Uint8Array([1]), () => {
+      await assert.rejects(
+        addon.execProtocolRawStream(
+          handle,
+          new Uint8Array([streamFixtureRequest.successAfterCallback]),
+          () => {
             throw successMismatchCallback;
-          }),
-          (error) => {
-            assert.notStrictEqual(
-              error,
-              successMismatchCallback,
-              "native success after callback failure is authoritative adapter failure",
-            );
-            assert.match(
-              String(error),
-              /reported success after the callback failed/u,
-            );
-            return true;
           },
-        );
-      } finally {
-        delete process.env.OLIPHAUNT_NODE_CLEANUP_TEST_STREAM_SUCCESS_AFTER_CALLBACK_ABORT;
-      }
-      process.env.OLIPHAUNT_NODE_CLEANUP_TEST_STREAM_ABORT_WITHOUT_CALLBACK = "1";
-      try {
-        let callbackCalled = false;
-        await assert.rejects(
-          addon.execProtocolRawStream(handle, new Uint8Array([1]), () => {
+        ),
+        (error) => {
+          assert.notStrictEqual(
+            error,
+            successMismatchCallback,
+            "native success after callback failure is authoritative adapter failure",
+          );
+          assert.match(String(error), /reported success after the callback failed/u);
+          return true;
+        },
+      );
+      let callbackCalled = false;
+      await assert.rejects(
+        addon.execProtocolRawStream(
+          handle,
+          new Uint8Array([streamFixtureRequest.abortWithoutCallback]),
+          () => {
             callbackCalled = true;
-          }),
-          /native liboliphaunt protocol streaming failed: fake stream reported callback abort without callback failure/u,
-          "CALLBACK_ABORTED without a recorded callback failure is native/ABI failure",
-        );
-        assert.equal(callbackCalled, false);
-      } finally {
-        delete process.env.OLIPHAUNT_NODE_CLEANUP_TEST_STREAM_ABORT_WITHOUT_CALLBACK;
-      }
-      process.env.OLIPHAUNT_NODE_CLEANUP_TEST_STREAM_FAILURE_WITHOUT_CALLBACK = "1";
-      try {
-        await assert.rejects(
-          addon.execProtocolRawStream(handle, new Uint8Array([1]), () => {
+          },
+        ),
+        /native liboliphaunt protocol streaming failed: fake stream reported callback abort without callback failure/u,
+        "CALLBACK_ABORTED without a recorded callback failure is native/ABI failure",
+      );
+      assert.equal(callbackCalled, false);
+      await assert.rejects(
+        addon.execProtocolRawStream(
+          handle,
+          new Uint8Array([streamFixtureRequest.failureWithoutCallback]),
+          () => {
             assert.fail("native failure before delivery must not call the stream callback");
-          }),
-          /native liboliphaunt protocol streaming failed: fake stream failed before callback delivery/u,
-        );
-      } finally {
-        delete process.env.OLIPHAUNT_NODE_CLEANUP_TEST_STREAM_FAILURE_WITHOUT_CALLBACK;
-      }
-      process.env.OLIPHAUNT_NODE_CLEANUP_TEST_STREAM_UNKNOWN_WITHOUT_CALLBACK = "1";
-      try {
-        await assert.rejects(
-          addon.execProtocolRawStream(handle, new Uint8Array([1]), () => {
+          },
+        ),
+        /native liboliphaunt protocol streaming failed: fake stream failed before callback delivery/u,
+      );
+      await assert.rejects(
+        addon.execProtocolRawStream(
+          handle,
+          new Uint8Array([streamFixtureRequest.unknownWithoutCallback]),
+          () => {
             assert.fail("unknown native status before delivery must not call the stream callback");
-          }),
-          /native liboliphaunt protocol streaming failed: fake stream returned an unknown status before callback delivery/u,
-        );
-      } finally {
-        delete process.env.OLIPHAUNT_NODE_CLEANUP_TEST_STREAM_UNKNOWN_WITHOUT_CALLBACK;
-      }
+          },
+        ),
+        /native liboliphaunt protocol streaming failed: fake stream returned an unknown status before callback delivery/u,
+      );
       await addon.detach(handle);
       return;
     }
@@ -753,8 +752,12 @@ async function runChild(options) {
       return;
     }
     case "worker-terminate-query":
+    case "worker-terminate-query-entry-race":
     case "worker-terminate-backup": {
-      const operation = options.scenario.slice("worker-terminate-".length);
+      const entryRace = options.scenario === "worker-terminate-query-entry-race";
+      const operation = entryRace
+        ? "query"
+        : options.scenario.slice("worker-terminate-".length);
       const worker = new Worker(scriptPath, {
         workerData: {
           role: `open-with-active-${operation}`,
@@ -765,7 +768,9 @@ async function runChild(options) {
       });
       const workerExit = observeWorkerExit(worker);
       await waitForWorkerMessage(worker, "queued");
-      await waitForEvent(options.log, `${operation}-started`);
+      if (!entryRace) {
+        await waitForEvent(options.log, `${operation}-started`);
+      }
       assert.equal(await worker.terminate(), 1);
       await requireWorkerExit(workerExit, 1);
       return;
@@ -981,7 +986,7 @@ function assertGenerationAcquisitionRace(scenario, events) {
 }
 
 async function runParent(options) {
-  for (const candidate of [options.addon, options.library]) {
+  for (const candidate of [options.addon, options.instrumentedAddon, options.library]) {
     assert.ok(path.isAbsolute(candidate), `cleanup lifecycle input must be absolute: ${candidate}`);
     assert.ok(existsSync(candidate), `cleanup lifecycle input does not exist: ${candidate}`);
   }
@@ -1139,6 +1144,21 @@ async function runParent(options) {
         iterations: 3,
       },
       {
+        name: "worker-terminate-query-entry-race",
+        expectedBeforeClose: [
+          "init",
+          "cancel-early-ignored",
+          "query-started",
+          "cancel",
+          "query-cancelled",
+        ],
+        blockQuery: true,
+        ignoreEarlyCancel: true,
+        pauseNativeCallEntry: true,
+        usesAddonTestHooks: true,
+        iterations: 3,
+      },
+      {
         name: "worker-terminate-query-alias",
         expectedBeforeClose: ["init", "query-started", "cancel", "query-cancelled"],
         blockQuery: true,
@@ -1148,6 +1168,7 @@ async function runParent(options) {
         name: "worker-terminate-queued-query",
         expectedBeforeClose: ["init"],
         delayOperationStart: true,
+        usesAddonTestHooks: true,
         iterations: 3,
       },
       {
@@ -1161,6 +1182,7 @@ async function runParent(options) {
         blockStream: true,
         prefillStreamQueue: true,
         observeBlockedStreamCallback: true,
+        usesAddonTestHooks: true,
         iterations: 3,
       },
       {
@@ -1218,6 +1240,9 @@ async function runParent(options) {
         const executionName = iterations === 1
           ? scenario.name
           : `${scenario.name}-${iteration}-of-${iterations}`;
+        const scenarioAddon = scenario.usesAddonTestHooks
+          ? options.instrumentedAddon
+          : options.addon;
         const scenarioRoot = path.join(temporaryRoot, executionName);
         const logPath = path.join(temporaryRoot, `${executionName}.log`);
         const childArgs = [
@@ -1226,7 +1251,7 @@ async function runParent(options) {
           "--scenario",
           scenario.name,
           "--addon",
-          options.addon,
+          scenarioAddon,
           "--addon-copy-a",
           copiedAddonA,
           "--addon-copy-b",
@@ -1270,6 +1295,12 @@ async function runParent(options) {
               : {}),
             ...(scenario.delayOperationStart
               ? { OLIPHAUNT_NODE_CLEANUP_TEST_DELAY_OPERATION_START: "1" }
+              : {}),
+            ...(scenario.pauseNativeCallEntry
+              ? { OLIPHAUNT_NODE_CLEANUP_TEST_PAUSE_NATIVE_CALL_ENTRY: "1" }
+              : {}),
+            ...(scenario.ignoreEarlyCancel
+              ? { OLIPHAUNT_NODE_CLEANUP_TEST_IGNORE_EARLY_CANCEL: "1" }
               : {}),
             ...(scenario.prefillStreamQueue
               ? { OLIPHAUNT_NODE_CLEANUP_TEST_PREFILL_STREAM_QUEUE: "1" }

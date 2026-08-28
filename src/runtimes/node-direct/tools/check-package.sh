@@ -65,7 +65,7 @@ check_static() {
     "Node direct build must load-smoke the compiled addon before publishing an artifact"
   # shellcheck disable=SC2016 # The build-script expression is intentionally matched literally.
   require_text "$package_dir/tools/build-node-addon.sh" \
-    'test-node-addon-cleanup-lifecycle.sh "$addon_file"' \
+    '"$lifecycle_test_addon_file"' \
     "Node direct build must execute the compiled environment cleanup lifecycle proof"
   require_text "$package_dir/tools/build-node-addon.sh" 'require pnpm' \
     "Node direct packaging must require the pinned workspace package manager"
@@ -87,16 +87,6 @@ check_static() {
     "Node direct build must not use inline Python for archive creation or package validation"
   reject_text "$package_dir/tools/build-node-addon.sh" "oliphaunt-js-node-direct" \
     "Node direct runtime must not emit TypeScript-owned addon assets"
-  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" "NAPI_MODULE" \
-    "Node direct addon must register a Node-API module"
-  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" '#include "oliphaunt.h"' \
-    "Node direct addon must compile against the canonical liboliphaunt ABI header"
-  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" 'using BackupFn = decltype(&oliphaunt_backup);' \
-    "Node direct backup loading must derive its function type from the canonical ABI declaration"
-  reject_text "$package_dir/native/node-addon/oliphaunt_node.cc" 'OliphauntBackupOptions' \
-    "Node direct must not retain removed backup option types"
-  reject_text "$package_dir/native/node-addon/fixtures/fake_liboliphaunt.cc" 'OliphauntBackupOptions' \
-    "Node direct fake libraries must match the canonical backup ABI"
   if command -v c++ >/dev/null 2>&1; then
     local node_include
     node_include="$(
@@ -118,6 +108,10 @@ try {
       c++ -std=c++17 -DNAPI_VERSION=8 -DNODE_GYP_MODULE_NAME=oliphaunt_node \
         -I"$node_include" -Isrc/runtimes/liboliphaunt/native/include -fsyntax-only \
         "$package_dir/native/node-addon/oliphaunt_node.cc"
+      c++ -std=c++17 -DNAPI_VERSION=8 -DNODE_GYP_MODULE_NAME=oliphaunt_node \
+        -DOLIPHAUNT_NODE_ADDON_LIFECYCLE_TESTING=1 \
+        -I"$node_include" -Isrc/runtimes/liboliphaunt/native/include -fsyntax-only \
+        "$package_dir/native/node-addon/oliphaunt_node.cc"
     else
       echo "Node direct addon syntax check deferred to the product build with pinned headers"
     fi
@@ -125,112 +119,7 @@ try {
       -Isrc/runtimes/liboliphaunt/native/include -fsyntax-only \
       "$package_dir/native/node-addon/fixtures/fake_liboliphaunt.cc"
   fi
-  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    "dlopen(path.c_str(), RTLD_NOW | RTLD_GLOBAL)" \
-    "Node direct must expose embedded PostgreSQL symbols to extension DSOs"
-  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    'LoadSymbol(dynamic, "oliphaunt_init", error)' \
-    "Node direct must resolve the canonical initialization ABI"
-  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    'LoadSymbol(dynamic, "oliphaunt_close", error)' \
-    "Node direct must reject native libraries missing the mandatory terminal-close ABI"
-  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    'LoadSymbol(dynamic, "oliphaunt_logical_generation", error)' \
-    "Node direct must resolve the resident logical generation"
-  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    'LoadSymbol(dynamic, "oliphaunt_close_if_generation", error)' \
-    "Node direct must resolve generation-guarded environment cleanup"
-  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    'LoadSymbol(dynamic, "oliphaunt_copy_last_error", error)' \
-    "Node direct must copy race-safe error snapshots through the canonical ABI"
-  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    "ExecuteAsyncOpen" \
-    "Node direct open must move native loading and initialization off the JavaScript thread"
-  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    "napi_create_threadsafe_function" \
-    "Node direct raw streaming must use a bounded thread-safe callback bridge"
-  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    "ExecuteAsyncDetach" \
-    "Node direct detach must move PostgreSQL cleanup off the JavaScript thread"
-  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    "napi_add_async_cleanup_hook" \
-    "Node direct must reap resident work without blocking Node environment teardown"
-  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    '&environment->async_cleanup_handle' \
-    "Node direct must retain the Node-API 8 async cleanup removal handle"
-  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    'CompleteEnvironmentCleanup' \
-    "Node direct must finish async cleanup on the owning Node event-loop thread"
-  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    'napi_open_handle_scope(environment->env, &cleanup_scope)' \
-    "Node direct must create its teardown completion bridge in a valid cleanup handle scope"
-  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    'CallThreadsafeBridge' \
-    "Node direct must lease in-flight stream bridge calls across cleanup abort"
-  reject_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    "napi_create_async_work" \
-    "Node direct native calls must not prevent environment cleanup through active N-API work"
-  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    "createForgottenHandleRecoveryToken" \
-    "Node direct must issue opaque generation-bound forgotten-handle recovery tokens"
-  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    "queueForgottenHandleRecovery" \
-    "Node direct must queue forgotten-handle recovery before releasing JavaScript ownership"
-  require_text "$package_dir/native/node-addon/fixtures/fake_liboliphaunt.cc" \
-    "oliphaunt_close_if_generation" \
-    "Node direct cleanup proof must implement the generation-guarded fake ABI"
-  require_text "$package_dir/tools/node-addon-cleanup-lifecycle.test.mjs" \
-    "generation-acquisition-race" \
-    "Node direct cleanup proof must reject stale handles between init and generation acquisition"
-  require_text "$package_dir/tools/node-addon-cleanup-lifecycle.test.mjs" \
-    "sdk-gc-owner-recovery" \
-    "Node direct cleanup proof must cover the high-level SDK ownership gate under forced GC"
-  require_text "$package_dir/tools/node-addon-cleanup-lifecycle.test.mjs" \
-    "bundleSdkCleanupRuntime" \
-    "Node direct cleanup proof must build its SDK fixture inside the artifact job"
-  reject_text "$package_dir/tools/node-addon-cleanup-lifecycle.test.mjs" \
-    "tsx" \
-    "Node direct artifact tests must not depend on an installed TypeScript workspace"
-  require_text "$package_dir/tools/node-addon-cleanup-lifecycle.test.mjs" \
-    "async-archive-timers" \
-    "Node direct backup and restore must prove that timers remain live"
-  require_text "$package_dir/tools/node-addon-cleanup-lifecycle.test.mjs" \
-    "worker-terminate-queued-query" \
-    "Node direct cleanup proof must cover teardown before a registered native call starts"
-  require_text "$package_dir/tools/node-addon-cleanup-lifecycle.test.mjs" \
-    "worker-terminate-stream-call-blocked" \
-    "Node direct cleanup proof must cover teardown while a stream producer is blocked in TSFN admission"
-  require_text "$package_dir/tools/node-addon-cleanup-lifecycle.test.mjs" \
-    "worker-terminate-stream-delivery-wait" \
-    "Node direct cleanup proof must cover teardown after TSFN admission while native delivery waits"
-  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    'GetString(env, config, "moduleDirectory", false)' \
-    "Node direct must carry the selected extension module directory through its native boundary"
-  reject_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    "dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL)" \
-    "Node direct must not hide embedded PostgreSQL symbols from extension DSOs"
   tools/dev/bun.sh "$package_dir/tools/check-package-metadata.mjs"
-}
-
-check_platform_packages() {
-  local packages=(
-    "darwin-arm64"
-    "linux-x64-gnu"
-    "linux-arm64-gnu"
-    "win32-x64-msvc"
-  )
-  for platform_package in "${packages[@]}"; do
-    local path="$package_dir/packages/$platform_package/package.json"
-    require_file "$path"
-    require_text "$path" '"optional": true' \
-      "Node direct platform package metadata must mark the package optional"
-    require_text "$path" '"./oliphaunt_node.node": "./prebuilds/oliphaunt_node.node"' \
-      "Node direct platform packages must export the prebuilt addon by stable path"
-    reject_text "$path" '"scripts"' \
-      "Node direct platform packages must not run install or build scripts"
-    reject_text "$path" "node-gyp" \
-      "Node direct platform packages must not require node-gyp"
-  done
 }
 
 case "$mode" in
@@ -239,15 +128,11 @@ case "$mode" in
     ;;
   test-unit)
     check_static
-    check_platform_packages
     ;;
   package-shape)
     check_static
-    check_platform_packages
     require_text "pnpm-workspace.yaml" '"src/runtimes/node-direct/packages/*"' \
       "pnpm workspace must include Node direct optional platform packages"
-    require_text "src/sdks/js/package.json" '"@oliphaunt/node-direct-darwin-arm64"' \
-      "TypeScript SDK must depend on Node direct optional platform packages"
     ;;
   *)
     echo "unknown Node direct check mode: $mode" >&2

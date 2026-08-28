@@ -47,6 +47,7 @@ import {
   wasixToolAssetIdentity,
   wasixToolRunOptions,
 } from './tool-runtime.js';
+import { normalizeWasixStartupGUCs } from './startup-config.js';
 import {
   compileWasixModule,
   composeLifecycleFailure,
@@ -186,6 +187,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
       throw newStorageRoleError(options.username);
     }
     const prepared = await dependencies.prepareRuntime(options);
+    const startupGUCs = normalizeWasixStartupGUCs(prepared.startupGUCs);
     const eagerClusterSeed =
       options.storage.kind === 'memory' ? prepared.loadClusterSeed() : undefined;
     const [, module] = await Promise.all([
@@ -217,7 +219,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
         storage.createPgdataDirectory,
       );
       baseDirectory = materialized.baseDirectory;
-      const runtimeOptions = { ...options, startupGUCs: prepared.startupGUCs };
+      const runtimeOptions = { ...options, startupGUCs };
       const instantiate = () =>
         instantiateDirectWithDeadline(
           host.instantiateOliphauntDirect(module, prepared.layout.module, {
@@ -231,9 +233,7 @@ export class DirectWasixSession implements WasixDatabaseSession {
       const initialize: DirectInstanceInitializer = async (candidate, _storageState) => {
         const response = candidate.startup(startupPacket(options.username, options.database));
         assertSuccessfulStartupResponse(response);
-        await configureWasixDatabase(options, async (input) =>
-          candidate.execProtocolRaw(input),
-        );
+        await configureWasixDatabase(options, async (input) => candidate.execProtocolRaw(input));
         return new Uint8Array(response);
       };
       instance = await instantiate();

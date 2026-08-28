@@ -317,7 +317,6 @@ artifact_ready() {
     _oliphaunt_close \
     _oliphaunt_register_static_extensions \
     _oliphaunt_copy_last_error \
-    _oliphaunt_last_error \
     _oliphaunt_version \
     _oliphaunt_free_response \
     _oliphaunt_embedded_kill \

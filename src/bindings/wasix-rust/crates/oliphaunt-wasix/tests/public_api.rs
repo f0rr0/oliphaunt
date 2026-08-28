@@ -11,6 +11,16 @@ use oliphaunt_wasix::{
     TypeOid, ValueFormat, ValueRef,
 };
 
+#[cfg(unix)]
+fn non_utf8_unix_socket_directory() -> PathBuf {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let mut leaf = format!("oliphaunt-wasix-socket-{}-", std::process::id()).into_bytes();
+    leaf.push(0xff);
+    std::env::temp_dir().join(OsString::from_vec(leaf))
+}
+
 #[derive(Debug, Clone)]
 enum ApplicationError {
     Database(Error),
@@ -316,6 +326,23 @@ fn sync_builders_reject_invalid_host_paths_before_filesystem_work() {
             assert_invalid_configuration(error, &format!("Unix socket directory {reason}"));
         }
     }
+
+    #[cfg(unix)]
+    {
+        let path = non_utf8_unix_socket_directory();
+        assert!(!path.exists());
+        let error = expect_sdk_error(
+            oliphaunt_wasix::OliphauntServer::builder()
+                .listen(ServerListen::unix(path.clone()))
+                .start(),
+            "non-UTF-8 Unix listener path must fail before runtime setup",
+        );
+        assert_invalid_configuration(
+            error,
+            "Unix socket directory must be valid UTF-8 so the published PostgreSQL connection string preserves the exact path",
+        );
+        assert!(!path.exists());
+    }
 }
 
 #[tokio::test]
@@ -353,6 +380,24 @@ async fn async_builders_preserve_host_path_validation() {
             );
             assert_invalid_configuration(error, &format!("Unix socket directory {reason}"));
         }
+    }
+
+    #[cfg(unix)]
+    {
+        let path = non_utf8_unix_socket_directory();
+        assert!(!path.exists());
+        let error = expect_sdk_error(
+            AsyncOliphauntServer::builder()
+                .listen(ServerListen::unix(path.clone()))
+                .start()
+                .await,
+            "async non-UTF-8 Unix listener path must fail before runtime setup",
+        );
+        assert_invalid_configuration(
+            error,
+            "Unix socket directory must be valid UTF-8 so the published PostgreSQL connection string preserves the exact path",
+        );
+        assert!(!path.exists());
     }
 }
 

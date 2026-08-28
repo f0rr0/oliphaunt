@@ -19,6 +19,14 @@ export type NativeRestoreOptions = {
 
 export type NativeHandle = unknown;
 
+/** @internal The adapter cannot prove whether a logical detach took effect. */
+export class NativeDetachOutcomeUnknownError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'NativeDetachOutcomeUnknownError';
+  }
+}
+
 export type NativeBinding = {
   open(config: NativeOpenConfig): Promise<NativeHandle>;
   execProtocolRaw(handle: NativeHandle, request: Uint8Array): Promise<Uint8Array>;
@@ -32,9 +40,10 @@ export type NativeBinding = {
   restore(options: NativeRestoreOptions): Promise<void>;
   cancel(handle: NativeHandle): Promise<void>;
   /**
-   * Deactivate the logical handle. A rejection guarantees that deactivation
-   * did not occur and the same handle remains valid for a later retry. A
-   * handle that is already terminally unavailable is a successful detach.
+   * Deactivate the logical handle. An ordinary rejection guarantees that
+   * deactivation did not occur and the same handle remains valid for a later
+   * retry. NativeDetachOutcomeUnknownError is terminal. A handle that is
+   * already terminally unavailable is a successful detach.
    */
   detach(handle: NativeHandle): Promise<void>;
   /**

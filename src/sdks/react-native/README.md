@@ -59,7 +59,9 @@ only persistent directory/application-data destinations.
 `execute` returns command metadata. `query` defaults to decoded object rows,
 supports positional array rows and per-query OID codecs, and retains fields,
 notices, PostgreSQL's command tag, and nullable row count. `queryRaw` exposes
-ordered nullable bytes and complete field metadata. Parameter values use the
+ordered nullable bytes and complete field metadata. Object mode rejects
+duplicate field names; use `rowMode: 'array'` to preserve them positionally.
+Parameter values use the
 language-native TypeScript union, typed helpers, or immutable per-query
 encoders; SQL errors are structured `PostgresError` instances.
 
@@ -93,9 +95,10 @@ transaction. Do not issue manual `BEGIN`, `START TRANSACTION`, `COMMIT`, `END`,
 `ABORT`, `PREPARE TRANSACTION`, or `AND CHAIN` inside the callback; return/throw
 or call `rollback()` instead. `SAVEPOINT` and `ROLLBACK TO` are supported.
 `ROLLBACK AND CHAIN` is unsupported contract misuse and has the same PostgreSQL
-wire tag/readiness state as `ROLLBACK TO`, so the SDK validates the actual wire
-boundary rather than parsing SQL. A proven ownership escape makes the database
-close-only and never causes a speculative SDK `COMMIT` or `ROLLBACK`.
+wire tag/readiness state as `ROLLBACK TO`, so the SDK rejects `ROLLBACK`/`ABORT
+... AND CHAIN` before dispatch and still validates every actual wire boundary.
+A proven ownership escape makes the database close-only and never causes a
+speculative SDK `COMMIT` or `ROLLBACK`.
 
 ## Backup and storage
 

@@ -1,22 +1,16 @@
 import assert from 'node:assert/strict';
-import { resolve } from 'node:path';
 import test from 'node:test';
 
 import {
-  assertCurrentBrowserPlan,
   browserMarkdownReport,
   browserPlanSummary,
   loadBrowserPlan,
   qualifyingGitProvenance,
-  repositoryRoot,
   summarizeBrowserResult,
   validateBrowserPlan,
 } from './plan.mjs';
 
 const source = await loadBrowserPlan();
-const legacySource = await loadBrowserPlan(
-  resolve(repositoryRoot, 'benchmarks/wasix/browser-pglite-memory-v1.json'),
-);
 
 test('loads the exact browser plan and comparator pin', () => {
   const summary = browserPlanSummary(source);
@@ -39,29 +33,6 @@ test('loads the exact browser plan and comparator pin', () => {
   assert.equal(summary.engines.comparison.version, '0.5.4');
   assert.equal(summary.profiles.full.workloadRuns, 8);
   assert.equal(summary.gate.maxGeomeanRatio, 0.8);
-  assert.doesNotThrow(() => assertCurrentBrowserPlan(source.plan));
-});
-
-test('reads the versioned v1 plan and result without mutating historical bytes', () => {
-  assert.equal(legacySource.plan.schema, 'oliphaunt-wasix-browser-benchmark-plan-v1');
-  assert.equal(legacySource.plan.id, 'browser-pglite-memory-v1');
-  assert.throws(
-    () => assertCurrentBrowserPlan(legacySource.plan),
-    /historical input and cannot drive a new benchmark/u,
-  );
-  const result = legacyFixture('full', { directRatio: 0.6, workerRatio: 0.5 });
-  const before = JSON.stringify(result);
-
-  const summary = summarizeBrowserResult(legacySource, result);
-
-  assert.equal(JSON.stringify(result), before);
-  assert.ok(Math.abs(summary.comparisons.direct.geomeanRatio - 0.6) < 1e-12);
-  assert.ok(Math.abs(summary.comparisons.worker.geomeanRatio - 0.5) < 1e-12);
-  assert.equal(summary.passed, true);
-  assert.throws(
-    () => summarizeBrowserResult(source, result),
-    /result\.schema must be "oliphaunt-wasix-browser-engine-result-v2"/u,
-  );
 });
 
 test('rejects omitted metrics, settings, measurement fields, and execution surfaces', () => {
@@ -197,7 +168,6 @@ test('renders reports with the direct and Worker comparison names', () => {
 
   assert.match(markdown, /## Direct comparison/u);
   assert.match(markdown, /## Worker comparison/u);
-  assert.doesNotMatch(markdown, /Direct topology/u);
 });
 
 test('makes quick runs correctness smoke evidence rather than performance qualification', () => {
@@ -312,42 +282,5 @@ function fixture(mode, { directRatio, workerRatio }) {
         pgliteWorker: diagnostics(),
       },
     },
-  };
-}
-
-function legacyFixture(mode, ratios) {
-  const current = fixture(mode, ratios);
-  const configuration = { ...current.configuration };
-  delete configuration.executionSurfaces;
-  return {
-    ...current,
-    schema: 'oliphaunt-wasix-browser-engine-result-v1',
-    plan: legacySource.plan.id,
-    configuration,
-    postgresProfiles: legacyEngineRecord(current.postgresProfiles),
-    samples: {
-      ...current.samples,
-      startup: legacyEngineRecord(current.samples.startup),
-      workload: legacyEngineRecord(current.samples.workload),
-    },
-    insertDiagnostic: {
-      ...current.insertDiagnostic,
-      summary: {
-        ...current.insertDiagnostic.summary,
-        indexedInsertWalBytes: legacyEngineRecord(
-          current.insertDiagnostic.summary.indexedInsertWalBytes,
-        ),
-      },
-      samples: legacyEngineRecord(current.insertDiagnostic.samples),
-    },
-  };
-}
-
-function legacyEngineRecord(record) {
-  return {
-    wasixDirect: record.wasixDirect,
-    wasixWorker: record.wasixWorker,
-    pgliteDirect: record.pgliteDirect,
-    pgliteWorker: record.pgliteWorker,
   };
 }

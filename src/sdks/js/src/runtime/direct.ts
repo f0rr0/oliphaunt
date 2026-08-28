@@ -1,5 +1,9 @@
 import type { NormalizedOpenConfig } from '../config.js';
-import type { NativeBinding, NativeHandle } from '../native/types.js';
+import {
+  NativeDetachOutcomeUnknownError,
+  type NativeBinding,
+  type NativeHandle,
+} from '../native/types.js';
 import type { RuntimeBinding, RuntimeHandle } from './types.js';
 
 export function directRuntimeBinding(binding: NativeBinding): RuntimeBinding {
@@ -37,9 +41,12 @@ export function directRuntimeBinding(binding: NativeBinding): RuntimeBinding {
         await binding.detach(handle);
         return { state: 'closed' };
       } catch (error) {
-        // NativeBinding.detach() is required to reject before logical
-        // deactivation. Keeping this owner live is therefore safe and lets a
-        // caller retry an interrupted DISCARD ALL / ROLLBACK boundary.
+        if (error instanceof NativeDetachOutcomeUnknownError) {
+          return { state: 'terminal', error };
+        }
+        // Every other NativeBinding.detach() rejection is required to precede
+        // logical deactivation. Keeping this owner live is therefore safe and
+        // lets a caller retry an interrupted DISCARD ALL / ROLLBACK boundary.
         return { state: 'retryable', error };
       }
     },

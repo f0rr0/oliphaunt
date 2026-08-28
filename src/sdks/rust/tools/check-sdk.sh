@@ -475,7 +475,6 @@ if git ls-files --error-unmatch src/sdks/rust/tests/fixtures/extensions/'*.sql' 
   exit 1
 fi
 reject_cargo_package_entry_pattern "$package_listing" '^tests/fixtures/postgis-smoke\.sql$'
-reject_cargo_package_entry_pattern "$package_listing" '^src/worker\.rs$'
 reject_cargo_package_entry_pattern "$package_listing" '^testdata/logical-tools([.-]|$)'
 reject_cargo_package_entry_pattern "$package_listing" '^(target/|oliphaunt/|sdks/|src/bindings/wasix-rust/crates/oliphaunt-wasix/)'
 reject_cargo_package_entry_pattern "$package_listing" '^src/(runtime_resources|bin/oliphaunt-(resources|extension-artifact|extension-index))'

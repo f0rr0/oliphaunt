@@ -9,7 +9,7 @@
       "hostBuild": {
         "wasmerJsCommit": "93b8b738ebd3ee57e118da0f0eb795b97d5b999e",
         "wasmerWasixVersion": "0.601.0",
-        "inputsSha256": "11224f5232a88b5b5612b389bc3cb24edc5134108e5aa72b47ef7189033c80d0",
+        "inputsSha256": "0637f3d0bea86d9c713dc5f29f928e3358350c0286abecbc9510ff5be5ed526c",
         "guestConcurrency": "denied-for-oliphaunt-single-backend",
         "optimization": {
           "cargoProfile": "release",

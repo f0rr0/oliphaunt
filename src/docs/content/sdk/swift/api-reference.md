@@ -31,13 +31,16 @@ let answer: Int32? = try result.rows[0].value(named: "answer")
 The cross-SDK behavior follows the
 [stable database API](https://github.com/f0rr0/oliphaunt/blob/main/docs/architecture/stable-database-api.md).
 
-Managed transaction callbacks must not issue manual `BEGIN`/`START TRANSACTION`,
-`COMMIT`/`END`, `ABORT`, `PREPARE TRANSACTION`, or `AND CHAIN`. Use
+Managed transaction callbacks must not issue outer-lifecycle SQL: `BEGIN`/`START
+TRANSACTION`, `COMMIT`/`END`, a full `ROLLBACK`/`ABORT` (with or without `AND
+[NO] CHAIN`), or `PREPARE TRANSACTION`. Use
 `rollback()` or return from the callback for outer settlement; `SAVEPOINT`,
 `RELEASE SAVEPOINT`, and `ROLLBACK TO SAVEPOINT` remain supported SQL. PostgreSQL
 reports `ROLLBACK TO` and `ROLLBACK AND CHAIN` with the same `ROLLBACK` command
-tag and transactional ready status, so `AND CHAIN` is unsupported contract
-misuse rather than a form the SDK can reliably pre-reject.
+tag and transactional ready status, so the SDK rejects `ROLLBACK`/`ABORT ...
+AND CHAIN` before dispatch and still validates every actual protocol boundary.
+If the callback catches a poisoning database or rollback error and returns, the
+transaction still fails with the stored original error.
 
 After automatic rollback succeeds, the original callback error is rethrown.
 `OliphauntTransactionRollbackError` reports a callback-plus-rollback failure in

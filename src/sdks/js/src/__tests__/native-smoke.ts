@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 
 import { Oliphaunt } from '../index.js';
 import { simpleQuery } from '../protocol.js';
-import { parseQueryResponse } from '../query.js';
+import { parseSimpleQueryRawResponse } from '../query.js';
 import { PostgresWireClient } from '../runtime/pgwire.js';
 import { assertNativeDatabaseContract } from './native-direct-contract.mjs';
 
@@ -43,12 +43,12 @@ async function main(): Promise<void> {
           let identifier: string | null;
           try {
             if (index === 0) {
-              const one = parseQueryResponse(
+              const one = parseSimpleQueryRawResponse(
                 await connection.execProtocolRaw(simpleQuery('SELECT 1 AS value')),
               );
               assert.equal(one.getText(0, 'value'), '1');
             }
-            identifier = parseQueryResponse(
+            identifier = parseSimpleQueryRawResponse(
               await connection.execProtocolRaw(
                 simpleQuery(
                   'SELECT system_identifier::text AS system_identifier FROM pg_control_system()',

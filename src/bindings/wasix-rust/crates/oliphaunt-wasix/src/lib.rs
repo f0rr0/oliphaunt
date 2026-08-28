@@ -19,9 +19,9 @@ pub use error::{
 pub use oliphaunt::{
     CommandResult, DatabaseStorage, DecodeError, ExecResult, FromSql, IntoParameter, Oliphaunt,
     OliphauntBuilder, OliphauntServer, OliphauntServerBuilder, Parameter, PostgresError,
-    PostgresErrorField, PostgresNotice, QueryField, QueryFormat, QueryParam, QueryResult, QueryRow,
-    RowIndex, ServerListen, Sql, StatementDescription, StatementResult, Transaction, TypeOid,
-    ValueFormat, ValueRef,
+    PostgresErrorField, PostgresNotice, QueryField, QueryFormat, QueryResult, QueryRow, RowIndex,
+    ServerListen, Sql, StatementDescription, StatementResult, Transaction, TypeOid, ValueFormat,
+    ValueRef,
 };
 
 /// Options and structured errors for packaged PostgreSQL frontend programs.

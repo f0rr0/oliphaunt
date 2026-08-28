@@ -647,8 +647,6 @@ require_jar_entry "$metadata_jar" "META-INF/kotlin-project-structure-metadata.js
 
 require_jar_entry "$jvm_jar" "dev/oliphaunt/OliphauntDatabase.class" \
   "Kotlin JVM artifact must include the public SDK database class"
-reject_jar_entry_pattern "$jvm_jar" 'dev/oliphaunt/(ProtocolRequest|ProtocolResponse|RuntimeUnavailableEngine)\.class' \
-  "Kotlin JVM artifact must not expose removed protocol wrappers or the generic unavailable-runtime abstraction"
 
 require_jar_entry "$jvm_sources" "commonMain/dev/oliphaunt/Oliphaunt.kt" \
   "Kotlin JVM sources artifact must include the common SDK API"

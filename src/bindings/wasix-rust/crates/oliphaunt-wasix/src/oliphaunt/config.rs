@@ -40,7 +40,8 @@ impl PostgresConfig {
 
     pub(crate) fn insert(&mut self, name: impl Into<String>, value: impl Into<String>) {
         let name = name.into();
-        self.settings.insert(name.trim().to_owned(), value.into());
+        self.settings
+            .insert(name.trim().to_ascii_lowercase(), value.into());
     }
 
     #[cfg(feature = "extensions")]
@@ -51,6 +52,11 @@ impl PostgresConfig {
     pub(crate) fn validate(&self) -> Result<()> {
         for (name, value) in &self.settings {
             validate_guc_name(name)?;
+            if matches!(name.as_str(), "config_file" | "data_directory") {
+                return Err(invalid_configuration(format!(
+                    "Oliphaunt owns PostgreSQL startup GUC '{name}'; configure the database through Oliphaunt's storage API"
+                )));
+            }
             if let Some(required) = single_backend_guc_value(name)
                 && value != required
             {
@@ -200,6 +206,26 @@ mod tests {
         let config = PostgresConfig::new().set("MAX_WORKER_PROCESSES", "0");
         config.validate().unwrap();
         assert!(config.iter().next().is_none());
+    }
+
+    #[test]
+    fn guc_names_are_case_insensitive_and_last_insertion_wins() {
+        let config = PostgresConfig::new()
+            .set("work_mem", "1MB")
+            .set("WORK_MEM", "2MB");
+        config.validate().unwrap();
+        assert_eq!(config.iter().collect::<Vec<_>>(), [("work_mem", "2MB")]);
+    }
+
+    #[test]
+    fn rejects_storage_redirection_gucs_case_insensitively() {
+        for name in ["CONFIG_FILE", "data_directory"] {
+            let error = PostgresConfig::new()
+                .set(name, "/tmp/other")
+                .validate()
+                .expect_err("storage is SDK-owned");
+            assert!(error.to_string().contains("Oliphaunt owns"));
+        }
     }
 
     #[test]

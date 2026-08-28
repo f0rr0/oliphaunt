@@ -40,7 +40,7 @@ opening that root as them.
 val db = Oliphaunt.open(
     context = applicationContext,
     config = OliphauntConfig(
-        storage = DatabaseStorage.Directory(filesDir.resolve("database").path),
+        storage = DatabaseStorage.Directory(filesDir.resolve("database")),
         startupGucs = listOf(PostgresStartupGuc("application_name", "my-app")),
         extensions = listOf("vector"),
     ),
@@ -84,8 +84,9 @@ buffered `execProtocolRaw`, callback `execProtocolRawStream`, byte
 `backup`, a read-only `isClosed`, and idempotent `close`. The stream contains raw
 PostgreSQL backend bytes; callback chunks are transport-dependent and are not a
 separate public protocol parser. The callback is a synchronous backpressure
-boundary: same-database and transaction work is rejected from its scope, with
-`cancel()` as the sole out-of-band exception.
+boundary: while it is running, the database rejects all same-database and
+transaction work, including work launched onto another coroutine dispatcher;
+`cancel()` is the sole out-of-band exception.
 Callback failures are surfaced only after the native runtime confirms protocol
 recovery, so the session remains reusable. A buffered or streaming transport or
 recovery failure is authoritative and poisons the database; close it instead of
@@ -109,16 +110,19 @@ Transactions pin the single physical session and expose `query`, `execute`,
 `exec`, and `describe`; raw protocol execution stays on the database because it
 owns transaction lifecycle explicitly. One-shot `rollback()` closes the
 transaction and lets its callback return without committing; returning normally
-commits. Do not issue manual `BEGIN`/`START TRANSACTION`, `COMMIT`/`END`,
-`ABORT`, `PREPARE TRANSACTION`, or `AND CHAIN` inside a managed callback. Use
+commits. Do not issue outer-lifecycle SQL such as `BEGIN`/`START TRANSACTION`,
+`COMMIT`/`END`, a full `ROLLBACK`/`ABORT` (with or without `AND [NO] CHAIN`), or
+`PREPARE TRANSACTION` inside a managed callback. Use
 `SAVEPOINT`, `RELEASE SAVEPOINT`, and `ROLLBACK TO SAVEPOINT` for nested work.
 PostgreSQL reports both `ROLLBACK TO` and `ROLLBACK AND CHAIN` as `ROLLBACK`
-with `ReadyForQuery=T`, so `AND CHAIN` is unsupported contract misuse rather
-than something the SDK can distinguish lexically. A detected lifecycle command,
-escaped idle session, failed rollback, or uncertain COMMIT makes the database
-close-only; no second control command claims recovery. After a successful
-automatic rollback, the original callback exception is rethrown. When the
-callback and rollback both fail, `OliphauntTransactionRollbackException`
+with `ReadyForQuery=T`, so the SDK rejects `ROLLBACK`/`ABORT ... AND CHAIN`
+before dispatch and still validates every actual protocol boundary. A detected
+lifecycle command, escaped idle session, failed rollback, or uncertain COMMIT
+makes the database close-only; no second control command claims recovery. If a
+callback catches such a poisoning database or rollback error and returns, the
+transaction still fails with the stored original error. After a successful
+automatic rollback, the original callback exception is rethrown.
+When the callback and rollback both fail, `OliphauntTransactionRollbackException`
 exposes `callbackError` and `rollbackError`, uses the callback as its cause, and
 adds the rollback as a suppressed exception. If an earlier independent database
 or protocol failure has already poisoned or expired transaction ownership and

@@ -33,7 +33,7 @@ _Static_assert(OLIPHAUNT_STREAM_CALLBACK_ABORTED == 1, "unexpected callback-abor
 _Static_assert(OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK == 1ull, "unexpected external root lock flag");
 _Static_assert(offsetof(OliphauntConfig, abi_version) == 0, "OliphauntConfig must start with abi_version");
 _Static_assert(offsetof(OliphauntRestoreOptions, abi_version) == 0, "OliphauntRestoreOptions must start with abi_version");
-_Static_assert(sizeof(((OliphauntConfig *)0)->reserved_flags) == sizeof(uint64_t), "config flags must be 64-bit");
+_Static_assert(sizeof(((OliphauntConfig *)0)->flags) == sizeof(uint64_t), "config flags must be 64-bit");
 _Static_assert(sizeof(((OliphauntRestoreOptions *)0)->len) == sizeof(size_t), "restore length must be size_t");
 _Static_assert(sizeof(((OliphauntResponse *)0)->len) == sizeof(size_t), "response length must be size_t");
 _Static_assert(sizeof(((OliphauntStaticExtension *)0)->symbol_count) == sizeof(size_t), "symbol count must be size_t");
@@ -162,7 +162,6 @@ int main(void) {
         oliphaunt_register_static_extensions;
     size_t (*copy_last_error_fn)(OliphauntHandle *, char *, size_t) =
         oliphaunt_copy_last_error;
-    const char *(*last_error_fn)(OliphauntHandle *) = oliphaunt_last_error;
     const char *(*version_fn)(void) = oliphaunt_version;
     void (*free_response_fn)(OliphauntResponse *) = oliphaunt_free_response;
     OliphauntStreamCallback stream_callback_fn = stream_callback;
@@ -188,7 +187,6 @@ int main(void) {
     CHECK(close_fn != NULL, "oliphaunt_close must link");
     CHECK(register_static_extensions_fn != NULL, "oliphaunt_register_static_extensions must link");
     CHECK(copy_last_error_fn != NULL, "oliphaunt_copy_last_error must link");
-    CHECK(last_error_fn != NULL, "oliphaunt_last_error must link");
     CHECK(version_fn != NULL, "oliphaunt_version must link");
     CHECK(free_response_fn != NULL, "oliphaunt_free_response must link");
     CHECK(stream_callback_fn != NULL, "OliphauntStreamCallback must accept stream callbacks");
@@ -200,7 +198,7 @@ int main(void) {
     config.module_dir = NULL;
     config.username = "liboliphaunt";
     config.database = "postgres";
-    config.reserved_flags = 0;
+    config.flags = 0;
     config.startup_args = NULL;
     config.startup_arg_count = 0;
 
@@ -257,10 +255,6 @@ int main(void) {
           "oliphaunt_copy_last_error must report the untruncated length");
     CHECK(truncated_error[sizeof(truncated_error) - 1] == '\0',
           "oliphaunt_copy_last_error must terminate truncated output");
-    const char *error = last_error_fn(NULL);
-    CHECK(error != NULL && strstr(error, "invalid oliphaunt_cancel arguments") != NULL,
-          "oliphaunt_cancel(NULL) must set a global error");
-
     OliphauntErrorCapture captured;
     memset(&captured, 0xa5, sizeof(captured));
     CHECK(detach_with_error_fn(NULL, &captured) == 0,

@@ -1,5 +1,6 @@
 use std::env;
 use std::error::Error as StdError;
+use std::ffi::OsString;
 use std::fmt;
 use std::io::{self, Read, Write};
 use std::net::TcpListener;
@@ -65,7 +66,7 @@ fn main() {
 }
 
 fn run() -> BrokerResult<()> {
-    let args: Vec<String> = env::args().skip(1).collect();
+    let args: Vec<OsString> = env::args_os().skip(1).collect();
     let args = BrokerArgs::parse(args)?;
     let mut session = broker_support::open(
         args.root,
@@ -244,7 +245,14 @@ struct BrokerArgs {
 }
 
 impl BrokerArgs {
-    fn parse(args: Vec<String>) -> BrokerResult<Self> {
+    fn parse(args: Vec<OsString>) -> BrokerResult<Self> {
+        let auth_token = env::var(ENV_BROKER_AUTH_TOKEN).map_err(|_| {
+            BrokerError::configuration(format!("{ENV_BROKER_AUTH_TOKEN} is required"))
+        })?;
+        Self::parse_with_auth_token(args, auth_token)
+    }
+
+    fn parse_with_auth_token(args: Vec<OsString>, auth_token: String) -> BrokerResult<Self> {
         let mut root = None;
         let mut endpoint = BrokerListenEndpoint::Tcp("127.0.0.1:0".to_owned());
         let mut cancel_endpoint = BrokerListenEndpoint::Tcp("127.0.0.1:0".to_owned());
@@ -254,52 +262,48 @@ impl BrokerArgs {
         let mut extensions = Vec::new();
         let mut iter = args.into_iter();
         while let Some(arg) = iter.next() {
+            let arg = arg.into_string().map_err(|_| {
+                BrokerError::configuration("broker argument names must be valid UTF-8")
+            })?;
             match arg.as_str() {
-                "--root" => root = iter.next().map(Into::into),
+                "--root" => {
+                    root = Some(next_broker_arg(&mut iter, "--root", "a filesystem path")?.into())
+                }
                 "--listen" => {
-                    let listen = iter.next().ok_or_else(|| {
-                        BrokerError::configuration("--listen requires an address")
-                    })?;
+                    let listen = next_utf8_broker_arg(&mut iter, "--listen", "an address")?;
                     endpoint = BrokerListenEndpoint::Tcp(listen);
                 }
                 "--cancel-listen" => {
-                    let listen = iter.next().ok_or_else(|| {
-                        BrokerError::configuration("--cancel-listen requires an address")
-                    })?;
+                    let listen = next_utf8_broker_arg(&mut iter, "--cancel-listen", "an address")?;
                     cancel_endpoint = BrokerListenEndpoint::Tcp(listen);
                 }
                 "--socket" => {
-                    let socket = iter.next().ok_or_else(|| {
-                        BrokerError::configuration("--socket requires a filesystem path")
-                    })?;
+                    let socket = next_broker_arg(&mut iter, "--socket", "a filesystem path")?;
                     endpoint = BrokerListenEndpoint::unix(socket)?;
                 }
                 "--cancel-socket" => {
-                    let socket = iter.next().ok_or_else(|| {
-                        BrokerError::configuration("--cancel-socket requires a filesystem path")
-                    })?;
+                    let socket =
+                        next_broker_arg(&mut iter, "--cancel-socket", "a filesystem path")?;
                     cancel_endpoint = BrokerListenEndpoint::unix(socket)?;
                 }
                 "--startup-guc" => {
-                    let assignment = iter.next().ok_or_else(|| {
-                        BrokerError::configuration("--startup-guc requires name=value")
-                    })?;
+                    let assignment =
+                        next_utf8_broker_arg(&mut iter, "--startup-guc", "name=value")?;
                     startup_gucs.push(parse_startup_guc(&assignment)?);
                 }
                 "--username" => {
-                    username = iter.next().ok_or_else(|| {
-                        BrokerError::configuration("--username requires a PostgreSQL role")
-                    })?;
+                    username = next_utf8_broker_arg(&mut iter, "--username", "a PostgreSQL role")?;
                 }
                 "--database" => {
-                    database = iter.next().ok_or_else(|| {
-                        BrokerError::configuration("--database requires a PostgreSQL database name")
-                    })?;
+                    database = next_utf8_broker_arg(
+                        &mut iter,
+                        "--database",
+                        "a PostgreSQL database name",
+                    )?;
                 }
                 "--extension" => {
-                    let sql_name = iter.next().ok_or_else(|| {
-                        BrokerError::configuration("--extension requires a SQL extension name")
-                    })?;
+                    let sql_name =
+                        next_utf8_broker_arg(&mut iter, "--extension", "a SQL extension name")?;
                     let extension = Extension::by_sql_name(&sql_name).ok_or_else(|| {
                         BrokerError::configuration(format!(
                             "unsupported native extension '{sql_name}'"
@@ -314,9 +318,6 @@ impl BrokerArgs {
                 }
             }
         }
-        let auth_token = env::var(ENV_BROKER_AUTH_TOKEN).map_err(|_| {
-            BrokerError::configuration(format!("{ENV_BROKER_AUTH_TOKEN} is required"))
-        })?;
         if auth_token.is_empty() {
             return Err(BrokerError::configuration(format!(
                 "{ENV_BROKER_AUTH_TOKEN} must not be empty"
@@ -334,6 +335,29 @@ impl BrokerArgs {
             auth_token,
         })
     }
+}
+
+fn next_broker_arg(
+    iter: &mut impl Iterator<Item = OsString>,
+    option: &str,
+    expected: &str,
+) -> BrokerResult<OsString> {
+    iter.next()
+        .ok_or_else(|| BrokerError::configuration(format!("{option} requires {expected}")))
+}
+
+fn next_utf8_broker_arg(
+    iter: &mut impl Iterator<Item = OsString>,
+    option: &str,
+    expected: &str,
+) -> BrokerResult<String> {
+    next_broker_arg(iter, option, expected)?
+        .into_string()
+        .map_err(|_| {
+            BrokerError::configuration(format!(
+                "{option} requires {expected} encoded as valid UTF-8"
+            ))
+        })
 }
 
 fn parse_startup_guc(value: &str) -> BrokerResult<(String, String)> {
@@ -431,5 +455,26 @@ impl BrokerListener {
                     ))
                 }),
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::os::unix::ffi::OsStringExt;
+    use std::path::PathBuf;
+
+    use super::*;
+
+    #[test]
+    fn broker_arguments_preserve_non_utf8_database_roots() {
+        let root = PathBuf::from(OsString::from_vec(
+            b"/tmp/oliphaunt-broker-root-\xff".to_vec(),
+        ));
+        let args = vec![OsString::from("--root"), root.clone().into_os_string()];
+
+        let parsed = BrokerArgs::parse_with_auth_token(args, "test-token".to_owned())
+            .expect("non-UTF-8 filesystem paths remain valid broker roots");
+
+        assert_eq!(parsed.root, root);
     }
 }

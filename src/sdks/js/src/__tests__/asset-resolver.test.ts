@@ -1240,7 +1240,6 @@ async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): P
   const extensionVersion = '9.9.9';
   const basePackageName = '@oliphaunt/extension-vector';
   const targetPackageName = `${basePackageName}-${target.id}`;
-  const payloadPackageName = `${basePackageName}-payload-${target.id}`;
   const product = 'oliphaunt-extension-vector';
   const vectorMetadata = GENERATED_EXTENSION_METADATA.find(
     (candidate) => candidate.sqlName === 'vector',
@@ -1276,20 +1275,8 @@ async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): P
         target: target.id,
         liboliphauntVersion,
         extensionContract: 'extension-contract.json',
-        payloadPackageNames: [payloadPackageName],
-      },
-    });
-    const payloadRoot = await writeFixturePackage(payloadPackageName, createdPackageRoots, {
-      name: payloadPackageName,
-      version: extensionVersion,
-      oliphaunt: {
-        product,
-        kind: 'exact-extension-payload',
-        sqlName: 'vector',
-        target: target.id,
-        liboliphauntVersion,
-        runtimeRelativePath: 'runtime',
-        moduleRelativePath: 'runtime/lib/postgresql',
+        runtimeRelativePath: 'redirected-runtime',
+        moduleRelativePath: 'redirected-runtime/lib/postgresql',
       },
     });
     const vectorContractManifest = fixtureExtensionContractManifest(
@@ -1302,33 +1289,7 @@ async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): P
       join(targetRoot, 'extension-contract.json'),
       JSON.stringify(vectorContractManifest),
     );
-    await mkdir(join(payloadRoot, 'runtime/share/postgresql/extension'), {
-      recursive: true,
-    });
-    await mkdir(join(payloadRoot, 'runtime/lib/postgresql'), {
-      recursive: true,
-    });
-    await writeFile(
-      join(payloadRoot, 'runtime/share/postgresql/extension/vector.control'),
-      'extension',
-    );
-    await writeFile(
-      join(
-        payloadRoot,
-        'runtime/lib/postgresql',
-        `vector${nativeModuleSuffixForTarget(target.id)}`,
-      ),
-      'module',
-    );
     await mkdir(installRuntime, { recursive: true });
-
-    await assert.rejects(
-      () =>
-        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
-          'vector',
-        ]),
-      /legacy payloadPackageNames carriers are unsupported/,
-    );
 
     const redirectedRuntime = join(targetRoot, 'redirected-runtime');
     await mkdir(join(redirectedRuntime, 'share/postgresql/extension'), {
@@ -1356,23 +1317,6 @@ async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): P
     await mkdir(dirname(vectorLicense), { recursive: true });
     await writeFile(vectorLicense, 'canonical vector license');
     await chmod(vectorLicense, 0o644);
-    await writeFile(
-      join(targetRoot, 'package.json'),
-      JSON.stringify({
-        name: targetPackageName,
-        version: extensionVersion,
-        oliphaunt: {
-          product,
-          kind: 'exact-extension-target',
-          sqlName: 'vector',
-          target: target.id,
-          liboliphauntVersion,
-          extensionContract: 'extension-contract.json',
-          runtimeRelativePath: 'redirected-runtime',
-          moduleRelativePath: 'redirected-runtime/lib/postgresql',
-        },
-      }),
-    );
     await assert.rejects(
       () =>
         materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [

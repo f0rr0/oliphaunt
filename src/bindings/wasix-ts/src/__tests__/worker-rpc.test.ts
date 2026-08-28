@@ -78,6 +78,31 @@ describe('WASIX worker RPC', () => {
     expect(port.terminations).toBe(1);
   });
 
+  it('preserves both worker-open and termination failures', async () => {
+    const port = new FakeWorkerPort();
+    port.terminate = () => {
+      port.terminations += 1;
+      throw new Error('worker termination failed');
+    };
+    const opening = openWorkerDatabase(port, workerOpenOptions());
+    const request = port.requests[0]?.message;
+    if (request === undefined) throw new Error('open request was not posted');
+    port.respond({
+      id: request.id,
+      ok: false,
+      error: { name: 'Error', message: 'runtime initialization failed' },
+    });
+
+    const failure = await opening.catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(AggregateError);
+    if (!(failure instanceof AggregateError)) throw new Error('expected aggregate open failure');
+    expect(failure.errors).toEqual([
+      expect.objectContaining({ message: 'runtime initialization failed' }),
+      expect.objectContaining({ message: 'worker termination failed' }),
+    ]);
+    expect(port.terminations).toBe(1);
+  });
+
   it('rejects every pending and later request with one fatal worker error', async () => {
     const port = new FakeWorkerPort();
     const rpc = new WorkerRpc(port);
@@ -676,7 +701,11 @@ describe('WASIX worker RPC', () => {
     port.respond({ id: open.id, ok: true });
     const database = await opening;
 
-    const streaming = database.execProtocolRawStream(Uint8Array.of(1), async () => undefined);
+    const dynamicallyTypedAsyncCallback: (chunk: Uint8Array) => unknown = async () => undefined;
+    const streaming = database.execProtocolRawStream(
+      Uint8Array.of(1),
+      dynamicallyTypedAsyncCallback as unknown as (chunk: Uint8Array) => undefined,
+    );
     const request = await postedRequest(port, 1);
     if (request.method !== 'execStream') throw new Error('expected streaming request');
     const control = new Int32Array(request.control);

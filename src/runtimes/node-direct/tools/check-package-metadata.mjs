@@ -71,6 +71,27 @@ function assertCarrierManifest(manifest, file, expectedName) {
   }
 }
 
+function assertPlatformManifest(manifest, file) {
+  const label = path.relative(ROOT, file);
+  if (manifest.optional !== true) {
+    throw new Error(`${label} must be an optional platform package`);
+  }
+  if (
+    manifest.exports?.["./oliphaunt_node.node"]
+    !== "./prebuilds/oliphaunt_node.node"
+  ) {
+    throw new Error(`${label} must export its prebuilt addon by the stable package subpath`);
+  }
+  if (Object.hasOwn(manifest, "scripts")) {
+    throw new Error(`${label} must not run install or build scripts`);
+  }
+  for (const field of ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]) {
+    if (Object.hasOwn(manifest[field] ?? {}, "node-gyp")) {
+      throw new Error(`${label} must not depend on node-gyp`);
+    }
+  }
+}
+
 export function assertNodeDirectPackageMetadata() {
   const sourceFile = path.join(PACKAGE_ROOT, "package.json");
   assertCarrierManifest(readManifest(sourceFile), sourceFile, "@oliphaunt/node-direct");
@@ -79,6 +100,7 @@ export function assertNodeDirectPackageMetadata() {
     const file = path.join(PACKAGE_ROOT, "packages", directory, "package.json");
     const manifest = readManifest(file);
     assertCarrierManifest(manifest, file, expected.name);
+    assertPlatformManifest(manifest, file);
     if (manifest.oliphaunt?.target !== expected.target) {
       throw new Error(
         `${path.relative(ROOT, file)} must declare oliphaunt.target=${expected.target}, got ${JSON.stringify(manifest.oliphaunt?.target)}`,

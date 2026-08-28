@@ -65,8 +65,14 @@ the database is poisoned until close.
 `execute` and `query` are the parameter-free forms;
 `execute_with_params` and `query_with_params` use PostgreSQL positional
 parameters. Query rows retain ordered raw bytes and expose OID-aware typed
-access through `FromSql`; `Parameter`/`IntoParameter` carry OID, format, and
-nullable bytes. `exec` returns ordered simple-query results, `describe` resolves
+access through `FromSql`. Natural Rust values use `IntoParameter` and carry
+their PostgreSQL type OID and preferred encoding. `Parameter` provides
+explicit OID, format, and nullable bytes; its `text`, `binary`, and `null`
+constructors leave the OID for PostgreSQL to infer. An explicit OID 0 is
+accepted by `describe` because it is PostgreSQL's wire-level inference
+sentinel; an absent OID is the single execution spelling for inference. `exec`
+returns ordered simple-query
+results, `describe` resolves
 wire metadata without executing, and the database and transaction publish
 `is_closed()`. `query` also accepts command-only statements, returning empty
 fields and rows while retaining the command tag and affected-row count. A
@@ -202,8 +208,10 @@ their options and structured error type:
 
 <!-- liboliphaunt-doc-example:wasix-rust-tools -->
 ```rust,no_run
+# #[cfg(feature = "tools")]
 use oliphaunt_wasix::{Oliphaunt, tools};
 
+# #[cfg(feature = "tools")]
 fn main() -> anyhow::Result<()> {
     let mut source = Oliphaunt::open()?;
     let sql = source.pg_dump(tools::PgDumpOptions::new().arg("--schema-only"))?;
@@ -213,6 +221,9 @@ fn main() -> anyhow::Result<()> {
     target.close()?;
     Ok(())
 }
+
+# #[cfg(not(feature = "tools"))]
+# fn main() {}
 ```
 
 `pg_dump` returns standard plain PostgreSQL SQL unchanged. `psql` is
@@ -280,12 +291,17 @@ exclusive ownership between threads rather than sharing references. Its
 `close(&mut self)` preserves the handle so `is_closed()` can report terminal
 retirement and repeated close calls can replay the first result. The async
 server handle is cloneable `Send + Sync`.
+Server `is_closed()` reports SDK lifecycle state only. It does not poll the
+proxy listener or guarantee that the published PostgreSQL endpoint is
+reachable; use the connected driver or pool for connection health.
 
 TCP endpoints are loopback-only because the embedded proxy uses PostgreSQL
 trust authentication. The default listener uses an automatically assigned
 loopback port on every supported host. `ServerListen::tcp_port` selects a fixed
 TCP port. On Unix hosts only, `ServerListen::unix` or
 `ServerListen::unix_port` selects a PostgreSQL-style Unix socket directory.
+The resolved directory must be valid UTF-8 so the returned connection string
+preserves its exact path across Rust drivers and ORMs.
 The server deliberately owns one connected client at a time; use the separate
 postmaster product for concurrent sessions.
 

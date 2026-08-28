@@ -140,15 +140,19 @@ PostgreSQL checkpoint is needed.
 
 Inside `transaction {}`, use the transaction's typed `query`, `execute`, `exec`,
 and `describe` methods. Return to commit or call `rollback()` to settle the outer
-transaction; do not issue manual `BEGIN`/`START TRANSACTION`, `COMMIT`/`END`,
-`ABORT`, `PREPARE TRANSACTION`, or `AND CHAIN`. Nested `SAVEPOINT`, `RELEASE
+transaction; do not issue outer-lifecycle SQL such as `BEGIN`/`START TRANSACTION`,
+`COMMIT`/`END`, a full `ROLLBACK`/`ABORT` (with or without `AND [NO] CHAIN`), or
+`PREPARE TRANSACTION`. Nested `SAVEPOINT`, `RELEASE
 SAVEPOINT`, and `ROLLBACK TO SAVEPOINT` SQL is supported. PostgreSQL exposes
 `ROLLBACK TO` and `ROLLBACK AND CHAIN` with the same `ROLLBACK` command tag and
-transactional ready status, so `AND CHAIN` is unsupported contract misuse that
-cannot be reliably distinguished before or after execution. Raw protocol APIs
-stay on the database for callers that explicitly own transaction lifecycle.
+transactional ready status, so the SDK rejects `ROLLBACK`/`ABORT ... AND CHAIN`
+before dispatch and still validates every actual protocol boundary. Raw
+protocol APIs stay on the database for callers that explicitly own transaction
+lifecycle.
 
 After automatic rollback succeeds, Swift rethrows the original callback error.
+If the callback catches a poisoning database or rollback error and returns, the
+transaction still fails with that stored original error.
 If rollback also fails, `OliphauntTransactionRollbackError.callbackError` and
 `.rollbackError` preserve both outcomes. If the callback throws a different
 error after an earlier independent database or protocol failure poisoned or

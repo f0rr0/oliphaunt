@@ -14,7 +14,7 @@ Use the generated TypeDoc reference for exact declarations.
 | Multi-statement and metadata | `exec`, `describe` | Return simple-query results in order or resolve parameter/result OIDs without executing |
 | Parameters and codecs | `text`, `binary`, `typedNull`, `json`, `array`, `postgresOids`, per-query encoders and decoders | Use safe scalar inference, deterministic PostgreSQL types, or extension-owned OID codecs |
 | Transactions | `transaction`, `OliphauntTransaction.rollback`, transaction `closed` | Reserve the session for a callback and explicitly roll back without a later commit |
-| Raw protocol | database `execProtocolRaw`, `execProtocolRawStream`, `ProtocolChunkCallback` | Send PostgreSQL protocol bytes as one result or synchronous bounded chunks; transaction handles deliberately do not expose this bypass, confirmed callback recovery preserves the original error and session, and execution, transport, or recovery failures poison it |
+| Raw protocol | database `execProtocolRaw`, `execProtocolRawStream` | Send PostgreSQL protocol bytes as one result or synchronous bounded callback chunks; transaction handles deliberately do not expose this bypass, confirmed callback recovery preserves the original error and session, and execution, transport, or recovery failures poison it |
 | Data movement | `backup` | Create the single supported WASIX physical archive |
 | Persistence | Implicit operation and transaction publication boundaries | Publish persistent changes before the owning promise settles |
 | Lifecycle | read-only `closed`, `close`, `Symbol.asyncDispose` | Perform one terminal teardown, stop the database, and release provider ownership |
@@ -38,9 +38,10 @@ Inside a callback transaction, do not issue manual `BEGIN`, `START
 TRANSACTION`, `COMMIT`, `END`, `ABORT`, `PREPARE TRANSACTION`, or `AND CHAIN`.
 Use callback return/throw or `rollback()`; `SAVEPOINT` and `ROLLBACK TO` are
 supported. `ROLLBACK AND CHAIN` is unsupported and wire-indistinguishable from
-`ROLLBACK TO`, so Oliphaunt enforces the ownership boundary from PostgreSQL
-response frames rather than SQL text. A proven escape makes the database
-close-only and suppresses any follow-up SDK transaction command.
+`ROLLBACK TO`, so Oliphaunt rejects `ROLLBACK`/`ABORT ... AND CHAIN` before
+dispatch and enforces every other ownership boundary from PostgreSQL response
+frames. A proven escape makes the database close-only and suppresses any
+follow-up SDK transaction command.
 
 After rollback and required persistence publication succeed, the original
 callback failure is rethrown unchanged. If rollback also fails, an

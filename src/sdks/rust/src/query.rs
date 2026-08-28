@@ -9,16 +9,16 @@ use crate::query_core as core;
 pub(crate) use crate::query_core::ReadyStatus;
 pub use crate::query_core::{
     CommandResult, DecodeError, ExecResult, FromSql, IntoParameter, Parameter, PostgresNotice,
-    QueryField, QueryFormat, QueryParam, QueryResult, QueryRow, RowIndex, StatementDescription,
+    QueryField, QueryFormat, QueryResult, QueryRow, RowIndex, StatementDescription,
     StatementResult, TypeOid, ValueFormat, ValueRef,
 };
 
 impl QueryResult {
     /// Read a text-format value by row index and column name.
     pub fn get_text(&self, row: usize, column: &str) -> Result<Option<&str>> {
-        let column = self
-            .field_index(column)
-            .ok_or_else(|| Error::Engine(format!("query result has no column named {column:?}")))?;
+        let column = column
+            .resolve(self.fields())
+            .map_err(|error| Error::Engine(error.to_string()))?;
         let row = self
             .row(row)
             .ok_or_else(|| Error::Engine(format!("query result has no row at index {row}")))?;
@@ -69,20 +69,6 @@ fn parse_command_response_with_protocol(
     core::parse_command_response(bytes, expected_protocol).map_err(error_from_core)
 }
 
-#[cfg(test)]
-fn extended_query_request<I, P>(sql: &str, params: I) -> Result<ProtocolRequest>
-where
-    I: IntoIterator<Item = P>,
-    P: Into<QueryParam>,
-{
-    let params = params
-        .into_iter()
-        .map(Into::into)
-        .map(IntoParameter::into_parameter)
-        .collect::<Vec<_>>();
-    extended_statement_request(sql, &params, ValueFormat::Text)
-}
-
 pub(crate) fn extended_statement_request(
     sql: &str,
     params: &[Parameter],
@@ -95,6 +81,10 @@ pub(crate) fn extended_statement_request(
 
 pub(crate) fn reject_copy_statements(sql: &str) -> Result<()> {
     core::reject_copy_statements(sql).map_err(error_from_core)
+}
+
+pub(crate) fn reject_transaction_chain(sql: &str) -> Result<()> {
+    core::reject_transaction_chain(sql).map_err(error_from_core)
 }
 
 #[cfg(test)]
@@ -529,7 +519,7 @@ mod tests {
     }
 
     #[test]
-    fn typed_name_lookup_rejects_duplicates_but_legacy_lookup_keeps_first_match() {
+    fn every_name_lookup_rejects_duplicate_columns() {
         let mut bytes = Vec::new();
         push_row_description(&mut bytes, &[("same", 25), ("same", 25)]);
         push_data_row(&mut bytes, &[Some("first"), Some("second")]);
@@ -537,8 +527,13 @@ mod tests {
         push_ready_for_query(&mut bytes);
 
         let result = parse_query_response_bytes(&bytes).unwrap();
-        assert_eq!(result.field_index("same"), Some(0));
-        assert_eq!(result.get_text(0, "same").unwrap(), Some("first"));
+        assert!(
+            result
+                .get_text(0, "same")
+                .unwrap_err()
+                .to_string()
+                .contains("more than one column")
+        );
         assert!(matches!(
             result.rows()[0].try_get::<String, _>("same"),
             Err(DecodeError::AmbiguousColumn(name)) if name == "same"
@@ -670,8 +665,9 @@ mod tests {
     #[test]
     fn exec_preserves_ordered_command_and_row_results_with_notices() {
         let mut bytes = Vec::new();
-        push_command_complete(&mut bytes, "CREATE TABLE");
         push_notice_response(&mut bytes, "NOTICE", "table ready");
+        push_command_complete(&mut bytes, "CREATE TABLE");
+        push_notice_response(&mut bytes, "NOTICE", "select ready");
         push_row_description(&mut bytes, &[("answer", 23)]);
         push_data_row(&mut bytes, &[Some("42")]);
         push_command_complete(&mut bytes, "SELECT 1");
@@ -679,15 +675,18 @@ mod tests {
 
         let result = parse_exec_response(&ProtocolResponse::new(bytes)).unwrap();
         assert_eq!(result.statements().len(), 2);
-        assert!(matches!(
-            &result.statements()[0],
-            StatementResult::Command(command) if command.command_tag() == Some("CREATE TABLE")
-        ));
+        let StatementResult::Command(command) = &result.statements()[0] else {
+            panic!("first statement should be a command");
+        };
+        assert_eq!(command.command_tag(), Some("CREATE TABLE"));
+        assert_eq!(command.notices()[0].message, "table ready");
         let StatementResult::Rows(rows) = &result.statements()[1] else {
             panic!("second statement should return rows");
         };
         assert_eq!(rows.rows()[0].try_get::<i32, _>("answer").unwrap(), 42);
+        assert_eq!(rows.notices()[0].message, "select ready");
         assert_eq!(result.notices()[0].message, "table ready");
+        assert_eq!(result.notices()[1].message, "select ready");
     }
 
     #[test]
@@ -1147,14 +1146,16 @@ mod tests {
 
     #[test]
     fn builds_extended_query_protocol_request() {
-        let request = extended_query_request(
+        let params = [
+            7_i32.into_parameter(),
+            Some("hello").into_parameter(),
+            Parameter::binary([0_u8, 1, 2]),
+            None::<&str>.into_parameter(),
+        ];
+        let request = extended_statement_request(
             "SELECT $1::int4, $2::text, $3::bytea, $4::text",
-            [
-                QueryParam::from(7_i32),
-                QueryParam::from(Some("hello")),
-                QueryParam::binary([0_u8, 1, 2]),
-                QueryParam::from(None::<&str>),
-            ],
+            &params,
+            ValueFormat::Text,
         )
         .unwrap();
 
@@ -1222,14 +1223,36 @@ mod tests {
     }
 
     #[test]
-    fn structured_sql_copy_preflight_matches_shared_corpus() {
+    fn explicit_oid_zero_is_describe_only() {
+        let parameter = Parameter::typed_text(TypeOid::new(0), "infer me");
+        assert_other_error_contains(
+            extended_statement_request(
+                "SELECT $1",
+                std::slice::from_ref(&parameter),
+                ValueFormat::Text,
+            ),
+            "explicitly declares PostgreSQL type OID 0",
+        );
+
+        let request = describe_statement_request("SELECT $1", &[parameter])
+            .expect("describe permits OID 0 as PostgreSQL inference");
+        let messages = frontend_messages(request.as_bytes());
+        let mut parse = messages[0].1;
+        assert_eq!(read_cstring(&mut parse, "statement").unwrap(), "");
+        assert_eq!(read_cstring(&mut parse, "SQL").unwrap(), "SELECT $1");
+        assert_eq!(read_i16(&mut parse, "OID count").unwrap(), 1);
+        assert_eq!(read_u32(&mut parse, "OID").unwrap(), 0);
+    }
+
+    #[test]
+    fn structured_sql_preflight_matches_shared_corpus() {
         let source = crate::test_fixtures::text(
             "protocol/structured-sql-cases.json",
             "testdata/structured-sql-cases.json",
         );
         let fixture: serde_json::Value =
             serde_json::from_str(&source).expect("structured SQL fixture is valid JSON");
-        assert_eq!(fixture["schemaVersion"], 1);
+        assert_eq!(fixture["schemaVersion"], 2);
         for case in fixture["cases"].as_array().expect("fixture cases") {
             let name = case["name"].as_str().expect("case name");
             let sql = case["sql"].as_str().expect("case SQL");
@@ -1237,6 +1260,10 @@ mod tests {
                 .as_bool()
                 .expect("COPY expectation");
             assert_eq!(reject_copy_statements(sql).is_err(), expected, "{name}");
+            let expected = case["containsTransactionChain"]
+                .as_bool()
+                .expect("transaction-chain expectation");
+            assert_eq!(reject_transaction_chain(sql).is_err(), expected, "{name}");
         }
     }
 
@@ -1296,18 +1323,19 @@ mod tests {
 
     #[test]
     fn rejects_nul_in_extended_query_sql() {
+        let params = [Parameter::null()];
         assert_other_error_contains(
-            extended_query_request("SELECT '\0'", [QueryParam::Null]),
+            extended_statement_request("SELECT '\0'", &params, ValueFormat::Text),
             "extended query SQL must not contain NUL bytes",
         );
     }
 
     #[test]
     fn rejects_too_many_extended_query_parameters() {
-        let params = std::iter::repeat_n(QueryParam::Null, i16::MAX as usize + 1);
+        let params = vec![Parameter::null(); i16::MAX as usize + 1];
 
         assert_other_error_contains(
-            extended_query_request("SELECT 1", params),
+            extended_statement_request("SELECT 1", &params, ValueFormat::Text),
             &format!(
                 "extended query supports at most {} parameters, got {}",
                 i16::MAX,

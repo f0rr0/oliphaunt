@@ -104,6 +104,39 @@ static void *claim_and_close_current_generation(void *data) {
 }
 
 int main(void) {
+    char *startup_args[] = {"-c", "search_path=public"};
+    OliphauntHandle resident_config;
+    memset(&resident_config, 0, sizeof(resident_config));
+    resident_config.pgdata = "/managed/pgdata";
+    resident_config.runtime_dir = "/runtime";
+    resident_config.module_dir = "/modules";
+    resident_config.username = "postgres";
+    resident_config.database = "postgres";
+    resident_config.startup_args = startup_args;
+    resident_config.startup_arg_count = 2;
+    OliphauntConfig reopen_config = {
+        .abi_version = OLIPHAUNT_ABI_VERSION,
+        .pgdata = "/managed/pgdata",
+        .runtime_dir = "/runtime",
+        .module_dir = "/modules",
+        .username = "postgres",
+        .database = "postgres",
+        .flags = 0,
+        .startup_args = (const char *const *)startup_args,
+        .startup_arg_count = 2,
+    };
+    CHECK(oliphaunt_config_matches_resident_runtime(&resident_config, &reopen_config),
+          "an internally locked resident runtime must accept the same reopen mode");
+    reopen_config.flags = OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK;
+    CHECK(!oliphaunt_config_matches_resident_runtime(&resident_config, &reopen_config),
+          "an internally locked resident runtime must reject external-lock reopen");
+    resident_config.external_root_lock = true;
+    CHECK(oliphaunt_config_matches_resident_runtime(&resident_config, &reopen_config),
+          "an externally locked resident runtime must accept the same reopen mode");
+    reopen_config.flags = 0;
+    CHECK(!oliphaunt_config_matches_resident_runtime(&resident_config, &reopen_config),
+          "an externally locked resident runtime must reject internal-lock reopen");
+
     const uint8_t completed_select_one[] = {
         'C', 0, 0, 0, 13, 'S', 'E', 'L', 'E', 'C', 'T', ' ', '1', 0,
         'Z', 0, 0, 0, 5, 'I',

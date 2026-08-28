@@ -20,7 +20,7 @@ use self::ffi::{
 use crate::config::{EngineMode, OpenConfig};
 use crate::engine::{EngineCancel, EngineSession, NativeRuntime, ProtocolStreamOutcome};
 use crate::error::{Error, Result};
-use crate::extension::{Extension, required_shared_preload_libraries};
+use crate::extension::Extension;
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
 use crate::storage::DatabaseStorage;
 
@@ -431,7 +431,7 @@ impl OliphauntSession {
             module_dir: module_dir.as_ptr(),
             username: username.as_ptr(),
             database: database.as_ptr(),
-            reserved_flags: CONFIG_EXTERNAL_ROOT_LOCK,
+            flags: CONFIG_EXTERNAL_ROOT_LOCK,
             startup_args: startup_arg_ptrs.as_ptr(),
             startup_arg_count: startup_arg_ptrs.len(),
         };
@@ -747,17 +747,9 @@ impl Drop for OliphauntSession {
 
 fn startup_arg_strings(config: &OpenConfig, extensions: &[Extension]) -> Vec<String> {
     let mut args = Vec::new();
-    for assignment in config.postgres_startup_assignments() {
+    for assignment in config.postgres_startup_assignments(extensions) {
         args.push("-c".to_owned());
         args.push(assignment);
-    }
-    let preload_libraries = required_shared_preload_libraries(extensions);
-    if !preload_libraries.is_empty() {
-        args.push("-c".to_owned());
-        args.push(format!(
-            "shared_preload_libraries={}",
-            preload_libraries.join(",")
-        ));
     }
     args
 }
@@ -822,6 +814,10 @@ mod tests {
     #[test]
     fn direct_startup_args_include_required_preload_libraries_before_init() {
         let mut config = OpenConfig::direct("target/test-roots/native-direct-preload");
+        config.startup_gucs = vec![crate::config::PostgresStartupGuc::new(
+            "shared_preload_libraries",
+            "auto_explain, pg_textsearch",
+        )];
         config.extensions = vec![Extension::PG_TEXTSEARCH, Extension::PG_TEXTSEARCH];
         let extensions = config.resolved_extensions().unwrap();
         let args = startup_args(&config, &extensions).unwrap();
@@ -830,13 +826,13 @@ mod tests {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
 
-        assert_startup_config_arg(&args, "shared_preload_libraries=pg_textsearch");
+        assert_startup_config_arg(&args, "shared_preload_libraries=auto_explain,pg_textsearch");
         assert_eq!(
             args.iter()
-                .filter(|arg| arg.as_str() == "shared_preload_libraries=pg_textsearch")
+                .filter(|arg| arg.starts_with("shared_preload_libraries="))
                 .count(),
             1,
-            "preload libraries must be deduplicated before oliphaunt_init"
+            "caller and extension preload libraries must be merged once before oliphaunt_init"
         );
     }
 

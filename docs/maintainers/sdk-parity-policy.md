@@ -208,17 +208,20 @@ WASIX archives are not physically interchangeable; logical SQL is the bridge.
 
 Provider ownership remains binding-specific implementation:
 
-- Swift, Kotlin, React Native, desktop TypeScript direct mode, native Rust
-  direct/broker mode, and C restore use the C runtime's stable sibling lease;
-- native server modes rely on PostgreSQL's own live-cluster ownership after
-  bounded, atomic root initialization;
+- Swift, Kotlin, React Native, desktop TypeScript direct mode, and C restore
+  use the C runtime's stable sibling lease;
+- native Rust retains the byte-identical sibling lease in direct mode and
+  hands ownership into C explicitly; its broker child follows that direct path,
+  while native server mode retains the lease around the PostgreSQL process;
 - Rust WASIX uses its host-directory owner;
 - TypeScript uses Web Locks or a Node/Bun/Deno sibling owner as appropriate.
 
-Each mechanism prevents duplicate ownership within its provider. They do not
-coordinate simultaneous direct/broker/server mutation of one root, which is
-application error. Locks are provider-local state outside the managed root and
-backups. Cross-binding root use is not a supported or qualified workflow.
+The C and Rust native sibling leases use the same lock identity, so native
+direct, broker, server, and C-backed SDK owners reject overlapping use of one
+root even across those bindings. WASIX ownership remains provider-specific and
+does not establish a cross-runtime lock contract. Locks stay outside the
+managed root and backups. Cross-binding root use is not a supported or
+qualified workflow even where the native safety lock is shared.
 
 ## Registered deferred work
 

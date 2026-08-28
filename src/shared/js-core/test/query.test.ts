@@ -7,6 +7,7 @@ import {
   array,
   binary,
   containsTopLevelCopy,
+  containsTransactionChain,
   decodeQueryResult,
   describeQuery,
   inspectManagedTransactionResponse,
@@ -104,7 +105,7 @@ test("array helpers reject explicit element OID mismatches", () => {
   );
 });
 
-test("decoded rows are loss preserving, decoder-aware, and prototype safe", () => {
+test("decoded rows reject ambiguous object fields and preserve them in array mode", () => {
   const response = queryResponse(
     [
       field("__proto__", postgresOids.text),
@@ -127,14 +128,11 @@ test("decoded rows are loss preserving, decoder-aware, and prototype safe", () =
     "SELECT 1",
   );
   const raw = parseQueryRawResponse(response);
-  const decoded = decodeQueryResult(raw);
-  const row = decoded.rows[0]!;
-  assert.equal(Object.prototype.hasOwnProperty.call(row, "__proto__"), true);
-  assert.equal(row.__proto__, "safe");
-  assert.equal(row.constructor, "9007199254740993");
-  assert.deepEqual(row.payload, { ok: true });
-  assert.deepEqual(row.bytes, Uint8Array.of(0, 255));
-  assert.deepEqual(row.dates, ["2026-01-01", null]);
+  assert.throws(() => raw.getText(0, "constructor"), /more than one column/);
+  assert.throws(
+    () => decodeQueryResult(raw),
+    /cannot represent more than one column named "constructor"; use \{ rowMode: 'array' \}/,
+  );
 
   const custom = decodeQueryResult(raw, {
     rowMode: "array",
@@ -149,6 +147,47 @@ test("decoded rows are loss preserving, decoder-aware, and prototype safe", () =
     "\\x00ff",
     "{2026-01-01,NULL}",
   ]);
+});
+
+test("decoded object rows remain prototype safe when field names are unique", () => {
+  const decoded = decodeQueryResult(
+    parseQueryRawResponse(
+      queryResponse(
+        [field("__proto__", postgresOids.text), field("constructor", postgresOids.int4)],
+        [["safe", "7"]],
+        "SELECT 1",
+      ),
+    ),
+  );
+  const row = decoded.rows[0]!;
+  assert.equal(Object.prototype.hasOwnProperty.call(row, "__proto__"), true);
+  assert.equal(row.__proto__, "safe");
+  assert.equal(row.constructor, 7);
+});
+
+test("decoded floating-point scalars and arrays preserve PostgreSQL non-finite values", () => {
+  const decoded = decodeQueryResult(
+    parseQueryRawResponse(
+      queryResponse(
+        [
+          field("nan", postgresOids.float4),
+          field("positive", postgresOids.float8),
+          field("negative", postgresOids.float8),
+          field("values", postgresOids.float8Array),
+        ],
+        [["NaN", "Infinity", "-Infinity", "{NaN,Infinity,-Infinity,NULL}"]],
+        "SELECT 1",
+      ),
+    ),
+  );
+
+  const row = decoded.rows[0]!;
+  assert.equal(Number.isNaN(row.nan), true);
+  assert.equal(row.positive, Number.POSITIVE_INFINITY);
+  assert.equal(row.negative, Number.NEGATIVE_INFINITY);
+  const values = row.values as unknown[];
+  assert.equal(Number.isNaN(values[0]), true);
+  assert.deepEqual(values.slice(1), [Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, null]);
 });
 
 test("built-in ORM OIDs and text-fallback arrays stay portable", () => {
@@ -207,14 +246,16 @@ test("built-in ORM OIDs and text-fallback arrays stay portable", () => {
   );
 });
 
-test("exec returns ordered statements, omits empty queries, and retains operation notices", () => {
+test("exec attributes notices to each statement and retains aggregate operation notices", () => {
   const response = backendResponse([
-    [0x4e, diagnostic("NOTICE", "00000", "hello")],
+    [0x4e, diagnostic("NOTICE", "00000", "before create")],
     [0x43, cstring("CREATE TABLE")],
     [0x49, []],
+    [0x4e, diagnostic("NOTICE", "00000", "before select")],
     [0x54, rowDescription([field("value", postgresOids.int4)])],
     [0x44, dataRow(["42"])],
     [0x43, cstring("SELECT 1")],
+    [0x4e, diagnostic("NOTICE", "00000", "after statements")],
     [0x5a, [0x49]],
   ]);
   const result = parseExecResponse(response);
@@ -222,7 +263,16 @@ test("exec returns ordered statements, omits empty queries, and retains operatio
   assert.equal(result.statements[0]!.kind, "command");
   assert.equal(result.statements[1]!.kind, "rows");
   assert.deepEqual(result.statements[1]!.rows, [{ value: 42 }]);
-  assert.equal(result.notices[0]!.message, "hello");
+  assert.deepEqual(
+    result.statements.map((statement) =>
+      statement.notices.map((notice) => notice.message),
+    ),
+    [["before create"], ["before select"]],
+  );
+  assert.deepEqual(
+    result.notices.map((notice) => notice.message),
+    ["before create", "before select", "after statements"],
+  );
 });
 
 test("describe is structured and errors drain through ReadyForQuery with notices", () => {
@@ -256,7 +306,8 @@ test("describe is structured and errors drain through ReadyForQuery with notices
   assert.ok(failure instanceof PostgresError);
   assert.equal(failure.notices[0]!.message, "before error");
   assert.equal(responseTransactionStatus(failure), "failed");
-  assert.equal(failure.code, "22023");
+  assert.equal(failure.sqlstate, "22023");
+  assert.equal(failure.message, "bad value");
 });
 
 test("diagnostics promote standard PostgreSQL fields and preserve unknown fields", () => {
@@ -301,11 +352,9 @@ test("diagnostics promote standard PostgreSQL fields and preserve unknown fields
       severity: failure.severity,
       localizedSeverity: failure.localizedSeverity,
       nonlocalizedSeverity: failure.nonlocalizedSeverity,
-      severityNonLocalized: failure.severityNonLocalized,
       internalPosition: failure.internalPosition,
       internalQuery: failure.internalQuery,
       whereText: failure.whereText,
-      where: failure.where,
       file: failure.file,
       line: failure.line,
       routine: failure.routine,
@@ -314,11 +363,9 @@ test("diagnostics promote standard PostgreSQL fields and preserve unknown fields
       severity: "ERREUR",
       localizedSeverity: "ERREUR",
       nonlocalizedSeverity: "ERROR",
-      severityNonLocalized: "ERROR",
       internalPosition: "7",
       internalQuery: "SELECT broken",
       whereText: "PL/pgSQL function broken_fn() line 2",
-      where: "PL/pgSQL function broken_fn() line 2",
       file: "postgres.c",
       line: "200",
       routine: "exec_simple_query",
@@ -747,7 +794,7 @@ test("structured parsers require exact completion and reject post-completion row
   );
 });
 
-test("structured COPY scanner matches the shared lexical corpus", () => {
+test("structured SQL scanners match the shared lexical corpus", () => {
   const fixture = JSON.parse(
     readFileSync(
       new URL(
@@ -757,12 +804,24 @@ test("structured COPY scanner matches the shared lexical corpus", () => {
       "utf8",
     ),
   ) as {
-    cases: Array<{ name: string; sql: string; containsTopLevelCopy: boolean }>;
+    schemaVersion: number;
+    cases: Array<{
+      name: string;
+      sql: string;
+      containsTopLevelCopy: boolean;
+      containsTransactionChain: boolean;
+    }>;
   };
+  assert.equal(fixture.schemaVersion, 2);
   for (const entry of fixture.cases) {
     assert.equal(
       containsTopLevelCopy(entry.sql),
       entry.containsTopLevelCopy,
+      entry.name,
+    );
+    assert.equal(
+      containsTransactionChain(entry.sql),
+      entry.containsTransactionChain,
       entry.name,
     );
   }

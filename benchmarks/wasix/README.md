@@ -40,11 +40,6 @@ are written under `target/perf`. Benchmark runs require a clean worktree and
 record the exact Git commit and tree, runtime and staged host build identities,
 the built SDK tree, every harness source, and the installed PGlite closure.
 
-`browser-pglite-memory-v1.json` remains unchanged as a historical schema. The
-result reader accepts v1 plans and v1 engine results, maps the old
-`wasixDirect` identifier to the current direct comparison for analysis, and
-never treats a v1 result as v2 qualification evidence.
-
 For a harness smoke check without a full sample set, run:
 
 ```sh
@@ -81,12 +76,6 @@ a weak direct result or vice versa. The direct comparison has matched execution
 ownership and Promise-shaped public APIs; the plan and report separately record
 that Oliphaunt performs guest work in the caller realm while its promise is
 pending.
-
-`node-pglite-memory-v1.json` remains byte-identical historical input. The plan
-reader accepts and validates its v1 shape for analysis, but refuses to use it
-for new validation or benchmark runs. New engine results and aggregate reports
-use v2 schemas, so old direct/main-thread labels cannot be mistaken for current
-qualification evidence.
 
 Startup is one cold-to-first-result metric; public-open and
 immediate-first-query components remain visible without receiving separate

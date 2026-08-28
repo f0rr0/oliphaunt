@@ -93,8 +93,7 @@ impl NativeRuntime for NativeBrokerRuntime {
             endpoint,
             auth_token,
         };
-        let launch = launch_plan.launch()?;
-        open_guard.child = Some(launch.child);
+        let launch = launch_plan.launch(&mut open_guard)?;
         let cancel = Arc::new(BrokerCancel::new(
             launch.cancel_endpoint,
             launch_plan.auth_token.as_str().to_owned(),
@@ -247,22 +246,20 @@ struct BrokerLaunchPlan {
 }
 
 struct BrokerLaunch {
-    child: Child,
     transport: Box<dyn BrokerTransport>,
     cancel_endpoint: String,
 }
 
 impl BrokerLaunchPlan {
-    fn launch(&self) -> Result<BrokerLaunch> {
-        let child = spawn_broker(
+    fn launch(&self, guard: &mut BrokerOpenGuard) -> Result<BrokerLaunch> {
+        guard.child = Some(spawn_broker(
             &self.executable,
             &self.config,
             &self.root_path,
             &self.extensions,
             &self.endpoint,
             &self.auth_token,
-        )?;
-        let mut guard = BrokerChildLaunchGuard { child: Some(child) };
+        )?);
         let stdout = guard
             .child
             .as_mut()
@@ -280,26 +277,9 @@ impl BrokerLaunchPlan {
         let mut transport = self.endpoint.connect_primary(&ready)?;
         authenticate_broker(&mut transport, &self.auth_token)?;
         Ok(BrokerLaunch {
-            child: guard
-                .child
-                .take()
-                .expect("broker child exists after successful launch"),
             transport,
             cancel_endpoint: ready.cancel,
         })
-    }
-}
-
-struct BrokerChildLaunchGuard {
-    child: Option<Child>,
-}
-
-impl Drop for BrokerChildLaunchGuard {
-    fn drop(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
     }
 }
 
@@ -402,14 +382,13 @@ impl NativeBrokerSession {
         let first_error = self.failure.get_or_insert(error).clone();
         self.transport = None;
         if let Some(mut child) = self.child.take() {
-            let reaped = match child.try_wait() {
-                Ok(Some(_)) => true,
-                Ok(None) | Err(_) => {
-                    let _ = child.kill();
-                    child.wait().is_ok()
-                }
-            };
-            if !reaped {
+            let outcome = reap_child_process(
+                &mut child,
+                Duration::ZERO,
+                BROKER_SHUTDOWN_TIMEOUT,
+                "failed native broker",
+            );
+            if !outcome.reaped {
                 // Keep the process handle so explicit close can retry reaping
                 // it without weakening the terminal session failure.
                 self.child = Some(child);
@@ -430,7 +409,12 @@ impl NativeBrokerSession {
         }
         let mut cleanup_failures = Vec::new();
         if let Some(child) = self.child.as_mut() {
-            let outcome = reap_child_process(child, BROKER_SHUTDOWN_TIMEOUT, "native broker");
+            let outcome = reap_child_process(
+                child,
+                BROKER_SHUTDOWN_TIMEOUT,
+                BROKER_SHUTDOWN_TIMEOUT,
+                "native broker",
+            );
             cleanup_failures.extend(outcome.failures);
             if outcome.reaped {
                 self.child = None;
@@ -472,17 +456,11 @@ impl NativeBrokerSession {
 impl Drop for NativeBrokerSession {
     fn drop(&mut self) {
         if self.close_broker().is_err() {
-            // A terminal destructor has no later retry owner. Leak only the
-            // exact unresolved resources so a failed reap cannot silently
-            // discard the child handle or cleanup paths before process exit.
+            // A terminal destructor has no later retry owner. Retain an
+            // unreaped child handle for process lifetime; dropping PathBuf
+            // values has no filesystem cleanup behavior.
             if let Some(child) = self.child.take() {
                 std::mem::forget(child);
-            }
-            if let Some(root) = self.temporary_root.take() {
-                std::mem::forget(root);
-            }
-            if let Some(path) = self.ipc_cleanup.take() {
-                std::mem::forget(path);
             }
         }
     }
@@ -508,9 +486,24 @@ impl BrokerOpenGuard {
 
 impl Drop for BrokerOpenGuard {
     fn drop(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
+        let reaped = if let Some(mut child) = self.child.take() {
+            let outcome = reap_child_process(
+                &mut child,
+                Duration::ZERO,
+                BROKER_SHUTDOWN_TIMEOUT,
+                "failed broker open",
+            );
+            if !outcome.reaped {
+                std::mem::forget(child);
+            }
+            outcome.reaped
+        } else {
+            true
+        };
+        if !reaped {
+            // The helper may still own both trees. PathBuf has no cleanup
+            // destructor, so retaining means deliberately skipping deletion.
+            return;
         }
         if let Some(root) = self.temporary_root.take() {
             let _ = fs::remove_dir_all(root);

@@ -17,8 +17,7 @@ ABI version 10 exports one fixed surface from
 `src/runtimes/liboliphaunt/native/include/oliphaunt.h`:
 
 - `oliphaunt_init`, `oliphaunt_detach`, `oliphaunt_close`, generation-guarded
-  close, version access, atomic caller-owned error copies, and a thread-local
-  compatibility error accessor;
+  close, version access, and atomic caller-owned error copies;
 - simple query, owned raw protocol response, and callback protocol streaming;
 - `oliphaunt_cancel`;
 - one physical `oliphaunt_backup` and one static `oliphaunt_restore`;
@@ -27,18 +26,23 @@ ABI version 10 exports one fixed surface from
 - static extension registration; and
 - response release.
 
-`reserved_flags` must be zero. Fixed runtime behavior is not represented as a
-capability bitset, profile enum, archive-format enum, replacement policy, or
-initialization mode.
+`OliphauntConfig.flags` accepts zero or
+`OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK`. The flag tells `liboliphaunt` that the
+caller already owns the stable sibling root lease; without it, the C runtime
+acquires that lease itself. Every other bit is rejected. Fixed runtime behavior
+is not represented as a profile enum, archive-format enum, replacement policy,
+or initialization mode.
 
 ## Direct lifecycle
 
 One PostgreSQL backend may be resident in a process. The first successful init
 starts it and publishes a logical generation. `detach` ends the current logical
 lease while leaving the backend resident; a compatible reopen advances the
-generation. Generation-guarded close prevents stale language cleanup owners
-from terminating a newer logical lease. Terminal close shuts down the resident
-backend and prevents another physical backend from starting in that process.
+generation. Every reopen must preserve the resident runtime's original
+internal-versus-external root-lock ownership mode. Generation-guarded close
+prevents stale language cleanup owners from terminating a newer logical lease.
+Terminal close shuts down the resident backend and prevents another physical
+backend from starting in that process.
 
 The runtime temporarily owns process-global PostgreSQL environment needed by
 the embedded backend and restores caller state at terminal close. Applications
@@ -72,9 +76,11 @@ root.
 
 Direct init and static restore each take one non-blocking sibling lease for the
 target root. The lease is outside the managed root and outside backups. SDK
-direct and broker adapters rely on the C boundary rather than wrapping it in a
-second lease. The native Rust server takes the equivalent lease because its
-PostgreSQL process bypasses the C runtime.
+bindings that do not already own the lease leave the config flag clear and rely
+on the C boundary. The native Rust SDK instead retains the lease acquired while
+preparing a direct root and passes `OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK`; its
+broker child follows the same direct path. The native Rust server retains the
+equivalent lease itself because its PostgreSQL process bypasses the C runtime.
 
 ## Physical backup and restore
 

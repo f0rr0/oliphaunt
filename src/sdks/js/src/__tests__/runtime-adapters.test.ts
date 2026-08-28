@@ -7,7 +7,7 @@ import { test } from 'vitest';
 
 import { normalizeOpenConfig } from '../config.js';
 import { MemoryDuplexStream } from '../runtime/byte-stream.js';
-import { BrokerHandle, createBrokerRuntimeBinding } from '../runtime/broker.js';
+import { BrokerHandle, cancelBrokerStream, createBrokerRuntimeBinding } from '../runtime/broker.js';
 import { encodeBrokerResponse } from '../runtime/broker-frames.js';
 import { createForgottenRuntimeHandleCleanup } from '../runtime/forgotten-handle.js';
 import {
@@ -17,11 +17,13 @@ import {
   readReadyLine,
   unixSocketPathsFit,
 } from '../runtime/node-adapter.js';
+import { encodeStartupMessage, PostgresWireClient } from '../runtime/pgwire.js';
 import {
-  encodeStartupMessage,
-  PostgresWireClient,
-} from '../runtime/pgwire.js';
-import { createServerRuntimeBinding, ServerHandle } from '../runtime/server.js';
+  createServerRuntimeBinding,
+  postgresServerArguments,
+  runSpawnedServerCommand,
+  ServerHandle,
+} from '../runtime/server.js';
 
 // liboliphaunt-doc-example:typescript-open-server
 test('runtime adapters implement the shared internal operation boundary', async () => {
@@ -46,6 +48,43 @@ test('runtime adapters implement the shared internal operation boundary', async 
   assert.equal(brokerFailure.state, 'terminal');
   const serverFailure = await server.close({});
   assert.equal(serverFailure.state, 'terminal');
+});
+
+test('native server quotes one Unix socket directory as one PostgreSQL GUC-list item', () => {
+  const directory = '/tmp/ application,"primary" ';
+  const config = normalizeOpenConfig(
+    { topology: 'server', listen: { transport: 'unix', directory } },
+    { instanceDirectory: '/tmp/database', temporaryDirectory: false },
+  );
+  const args = postgresServerArguments(config, config.serverListen!, 15_432, directory);
+  const assignment = 'unix_socket_directories="/tmp/ application,""primary"" "';
+  const index = args.indexOf(assignment);
+
+  assert.notEqual(index, -1, `missing ${assignment} in ${JSON.stringify(args)}`);
+  assert.equal(args[index - 1], '-c');
+});
+
+test('broker cancellation preserves its protocol failure when control-stream close also fails', async () => {
+  const wire = new MemoryDuplexStream([
+    encodeBrokerResponse({ kind: 'ok', bytes: new Uint8Array() }),
+    encodeBrokerResponse({ kind: 'error', message: 'cancel rejected' }),
+  ]);
+  const stream = {
+    readExactly: (length: number) => wire.readExactly(length),
+    writeAll: (bytes: Uint8Array) => wire.writeAll(bytes),
+    async close(): Promise<void> {
+      throw new Error('cancel stream close failed');
+    },
+  };
+
+  await assert.rejects(cancelBrokerStream(stream, 'fixture-token'), (error: unknown) => {
+    assert.ok(error instanceof AggregateError);
+    assert.deepEqual(error.errors.map(String), [
+      'Error: native broker cancel failed: cancel rejected',
+      'Error: cancel stream close failed',
+    ]);
+    return true;
+  });
 });
 
 test('failed broker handles never relaunch and retain cleanup ownership for close', async () => {
@@ -116,6 +155,64 @@ test('failed broker handles never relaunch and retain cleanup ownership for clos
     await assert.rejects(stat(ipcDir), { code: 'ENOENT' });
   } finally {
     await chmod(scratch, 0o700).catch(() => undefined);
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
+
+test('broker failure and detach stay bounded when SIGKILL never produces a reap', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'oliphaunt-broker-unreaped-'));
+  const ipcDir = join(scratch, 'ipc');
+  await mkdir(ipcDir);
+  const stream = new MemoryDuplexStream([
+    encodeBrokerResponse({ kind: 'ok', bytes: new Uint8Array() }),
+  ]);
+  let childWaitAttempts = 0;
+  let childKillAttempts = 0;
+  const child = {
+    stdout: Readable.from([]),
+    kill(signal?: NodeJS.Signals): void {
+      assert.equal(signal, 'SIGKILL');
+      childKillAttempts += 1;
+    },
+    wait(): Promise<number> {
+      childWaitAttempts += 1;
+      return new Promise(() => {});
+    },
+    exited(): Promise<number> {
+      return new Promise(() => {});
+    },
+  };
+  const config = normalizeOpenConfig(
+    { topology: 'broker' },
+    { instanceDirectory: join(scratch, 'database'), temporaryDirectory: false },
+  );
+  const handle = new BrokerHandle(
+    config,
+    { child, stream, cancelEndpoint: 'tcp:127.0.0.1:1', ipcDir },
+    'fixture-token',
+    1,
+  );
+
+  try {
+    await settleWithin(handle.markFailed(new Error('fixture transport failed')), 250);
+    assert.equal(childKillAttempts, 1);
+    assert.equal(childWaitAttempts, 1);
+
+    await assert.rejects(settleWithin(handle.detach(), 250), (error: unknown) => {
+      assert.ok(error instanceof AggregateError);
+      assert.deepEqual(error.errors.map(String), [
+        'Error: native broker did not stop within 1ms',
+        'Error: native broker was not reaped within 1ms after SIGKILL',
+      ]);
+      return true;
+    });
+    assert.equal(childKillAttempts, 2);
+    assert.equal(childWaitAttempts, 3);
+    assert.ok(
+      (await stat(ipcDir)).isDirectory(),
+      'IPC storage remains owned while the killed broker reap is unconfirmed',
+    );
+  } finally {
     await rm(scratch, { recursive: true, force: true });
   }
 });
@@ -215,10 +312,10 @@ test('Postgres wire termination closes after a failed Terminate write and retain
 
   await assert.rejects(client.terminate(), (error: unknown) => {
     assert.ok(error instanceof AggregateError);
-    assert.deepEqual(
-      error.errors.map(String),
-      ['Error: fixture Terminate write failed', 'Error: fixture client stream close failed'],
-    );
+    assert.deepEqual(error.errors.map(String), [
+      'Error: fixture Terminate write failed',
+      'Error: fixture client stream close failed',
+    ]);
     return true;
   });
   assert.equal(client.isTerminated, false);
@@ -283,6 +380,136 @@ test('terminal server detach retains child and path ownership for internal clean
 
     await handle.detach();
     assert.equal(childWaitAttempts, 2);
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
+
+test('server detach stays bounded and retains paths when SIGKILL never produces a reap', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'oliphaunt-server-unreaped-'));
+  const socketDir = join(scratch, 'socket');
+  await mkdir(socketDir);
+  let childWaitAttempts = 0;
+  let childKillAttempts = 0;
+  const child = {
+    stdout: Readable.from([]),
+    kill(signal?: NodeJS.Signals): void {
+      assert.equal(signal, 'SIGKILL');
+      childKillAttempts += 1;
+    },
+    wait(): Promise<number> {
+      childWaitAttempts += 1;
+      return new Promise(() => {});
+    },
+    exited(): Promise<number> {
+      return new Promise(() => {});
+    },
+  };
+  const handle = new ServerHandle(
+    child,
+    join(scratch, 'database'),
+    join(scratch, 'database', 'pgdata'),
+    'fixture-pg-ctl',
+    {},
+    socketDir,
+    'postgresql://fixture',
+    false,
+    async () => {},
+    1,
+  );
+
+  try {
+    await assert.rejects(settleWithin(handle.detach(), 250), (error: unknown) => {
+      assert.ok(error instanceof AggregateError);
+      assert.deepEqual(error.errors.map(String), [
+        'Error: native server did not stop within 1ms',
+        'Error: native server was not reaped within 1ms after SIGKILL',
+      ]);
+      return true;
+    });
+    assert.equal(childKillAttempts, 1);
+    assert.equal(childWaitAttempts, 2);
+    assert.ok(
+      (await stat(socketDir)).isDirectory(),
+      'socket storage remains owned while the killed server reap is unconfirmed',
+    );
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
+
+test('server shutdown command retains storage when its post-SIGKILL reap is unconfirmed', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'oliphaunt-server-command-unreaped-'));
+  const socketDir = join(scratch, 'socket');
+  await mkdir(socketDir);
+  let commandWaitAttempts = 0;
+  let commandKillAttempts = 0;
+  let serverWaitAttempts = 0;
+  let confirmCommandReap: ((code: number | null) => void) | undefined;
+  const commandCompletion = new Promise<number | null>((resolve) => {
+    confirmCommandReap = resolve;
+  });
+  const command = {
+    stdout: Readable.from([]),
+    failures: [] as unknown[],
+    kill(signal?: NodeJS.Signals): boolean {
+      assert.equal(signal, 'SIGKILL');
+      commandKillAttempts += 1;
+      return true;
+    },
+    wait(): Promise<number | null> {
+      commandWaitAttempts += 1;
+      return commandCompletion;
+    },
+  };
+  const server = {
+    stdout: Readable.from([]),
+    kill(): void {
+      throw new Error('the exited fixture server must not be killed');
+    },
+    async wait(): Promise<number> {
+      serverWaitAttempts += 1;
+      return 0;
+    },
+    async exited(): Promise<number> {
+      return 0;
+    },
+  };
+  const handle = new ServerHandle(
+    server,
+    scratch,
+    join(scratch, 'pgdata'),
+    '/fixture/pg_ctl',
+    {},
+    socketDir,
+    'postgresql://fixture',
+    false,
+    () => runSpawnedServerCommand('/fixture/pg_ctl', command, 1).then(() => undefined),
+    1,
+  );
+
+  try {
+    await assert.rejects(settleWithin(handle.detach(), 250), (error: unknown) => {
+      assert.ok(error instanceof AggregateError);
+      assert.deepEqual(error.errors.map(String), [
+        'Error: /fixture/pg_ctl did not finish within 1ms',
+        'Error: /fixture/pg_ctl was not reaped within 1ms after SIGKILL',
+      ]);
+      return true;
+    });
+    assert.equal(commandKillAttempts, 1);
+    assert.equal(commandWaitAttempts, 1);
+    assert.equal(serverWaitAttempts, 1);
+    assert.ok(
+      (await stat(socketDir)).isDirectory(),
+      'server storage remains owned while the shutdown command reap is unconfirmed',
+    );
+
+    confirmCommandReap?.(0);
+    await waitForMissingPath(socketDir, 250);
+    assert.equal(commandKillAttempts, 1, 'the shutdown command is never started or killed twice');
+    assert.equal(commandWaitAttempts, 1, 'all reap checks share one stable completion promise');
+    assert.equal(serverWaitAttempts, 1);
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }
@@ -461,4 +688,38 @@ test('server readiness wire uses a PostgreSQL v3 startup packet', () => {
 
 function readI32(bytes: Uint8Array, offset: number): number {
   return new DataView(bytes.buffer, bytes.byteOffset + offset, 4).getInt32(0);
+}
+
+async function settleWithin<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`fixture operation did not settle within ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
+async function waitForMissingPath(path: string, timeoutMs: number): Promise<void> {
+  await settleWithin(
+    (async () => {
+      while (true) {
+        try {
+          await stat(path);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+          throw error;
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    })(),
+    timeoutMs,
+  );
 }

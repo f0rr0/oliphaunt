@@ -45,36 +45,6 @@ const char *oliphaunt_handle_pgdata(OliphauntHandle *handle) {
     return handle != NULL ? handle->pgdata : NULL;
 }
 
-static bool config_string_matches(const char *actual, const char *requested, const char *fallback) {
-    const char *expected = requested != NULL ? requested : fallback;
-    return strcmp(actual != NULL ? actual : "", expected != NULL ? expected : "") == 0;
-}
-
-static bool startup_args_match(OliphauntHandle *handle, const OliphauntConfig *config) {
-    if (handle->startup_arg_count != config->startup_arg_count) {
-        return false;
-    }
-    for (size_t i = 0; i < handle->startup_arg_count; i++) {
-        const char *expected = config->startup_args != NULL ? config->startup_args[i] : NULL;
-        if (expected == NULL || strcmp(handle->startup_args[i], expected) != 0) {
-            return false;
-        }
-    }
-    return true;
-}
-
-static bool config_matches_resident_runtime(
-    OliphauntHandle *handle,
-    const OliphauntConfig *config) {
-    return handle != NULL &&
-           config_string_matches(handle->pgdata, config->pgdata, "") &&
-           config_string_matches(handle->runtime_dir, config->runtime_dir, "") &&
-           config_string_matches(handle->module_dir, config->module_dir, "") &&
-           config_string_matches(handle->username, config->username, "postgres") &&
-           config_string_matches(handle->database, config->database, "postgres") &&
-           startup_args_match(handle, config);
-}
-
 static int advance_logical_generation_locked(OliphauntHandle *handle) {
     if (handle->logical_generation == UINT64_MAX) {
         return -1;
@@ -107,9 +77,9 @@ static int reopen_resident_runtime_locked(
         set_error(NULL, "native liboliphaunt resident runtime has already shut down");
         return -1;
     }
-    if (!config_matches_resident_runtime(handle, config)) {
+    if (!oliphaunt_config_matches_resident_runtime(handle, config)) {
         pthread_mutex_unlock(&handle->mutex);
-        set_error(NULL, "native liboliphaunt resident runtime is bound to a different root, identity, runtime, or extension startup configuration");
+        set_error(NULL, "native liboliphaunt resident runtime is bound to a different root, identity, runtime, root-lock ownership mode, or extension startup configuration");
         return -1;
     }
     if (advance_logical_generation_locked(handle) != 0) {
@@ -501,8 +471,11 @@ static int32_t oliphaunt_init_impl(const OliphauntConfig *config, OliphauntHandl
         set_error(NULL, "invalid oliphaunt_init module_dir");
         return -1;
     }
-    if ((config->reserved_flags & ~OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK) != 0) {
+    if ((config->flags & ~OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK) != 0) {
         set_error(NULL, "invalid oliphaunt_init config flags");
+        return -1;
+    }
+    if (oliphaunt_validate_startup_args(NULL, config) != 0) {
         return -1;
     }
     char symbol_scope_error[512];
@@ -535,6 +508,8 @@ static int32_t oliphaunt_init_impl(const OliphauntConfig *config, OliphauntHandl
     }
     handle->error_mutex_initialized = true;
     handle->stable_root_lock_fd = -1;
+    handle->external_root_lock =
+        (config->flags & OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK) != 0;
     handle->trace_protocol = oliphaunt_trace_enabled();
     handle->transaction_status = 'I';
 
@@ -556,7 +531,7 @@ static int32_t oliphaunt_init_impl(const OliphauntConfig *config, OliphauntHandl
         set_error(NULL, message);
         return -1;
     }
-    if ((config->reserved_flags & OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK) == 0 &&
+    if ((config->flags & OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK) == 0 &&
         oliphaunt_acquire_root_lock(handle, handle->pgdata) != 0) {
         char message[1024];
         (void)oliphaunt_copy_last_error(handle, message, sizeof(message));

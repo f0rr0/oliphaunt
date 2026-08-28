@@ -2,7 +2,7 @@ use oliphaunt::{
     AsyncOliphaunt, AsyncOliphauntBuilder, AsyncOliphauntServer, AsyncOliphauntServerBuilder,
     AsyncSql, AsyncTransaction, CancelHandle, DatabaseStorage, DecodeError, Error, ErrorKind,
     ExecResult, Extension, FromSql, IntoParameter, Oliphaunt, OliphauntBuilder, OliphauntServer,
-    OliphauntServerBuilder, Parameter, PostgresError, PostgresNotice, QueryFormat, QueryParam,
+    OliphauntServerBuilder, Parameter, PostgresError, PostgresNotice, QueryFormat,
     RawStreamCallbackOutput, RawStreamError, RawStreamResult, Sql, StatementDescription,
     Transaction, TransactionError, TransactionResult, TypeOid, ValueFormat, ValueRef,
 };
@@ -153,7 +153,7 @@ fn public_api_has_only_the_deliberate_native_vocabulary() {
         .database("postgres")
         .extension(Extension::VECTOR);
 
-    let _: QueryParam = "text".into();
+    let _: Parameter = "text".into_parameter();
     let _: QueryFormat = QueryFormat::Text;
 
     fn assert_error<T: std::error::Error + Send + Sync + 'static>() {}

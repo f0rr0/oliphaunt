@@ -49,9 +49,10 @@ The deliberate public vocabulary is:
 
 `execute` asserts one command with no rows. `query` accepts command-only or
 row-producing SQL and defaults to decoded object rows; use `rowMode: 'array'`
-for positional rows, `valueMode: 'text'` for text-format strings, or per-query
-OID decoders. `queryRaw` retains ordered nullable bytes and complete field
-metadata. `exec` returns each simple-query statement in wire order, and
+for positional rows or duplicate column names, `valueMode: 'text'` for
+text-format strings, or per-query OID decoders. Object mode rejects duplicate
+names rather than discarding a value. `queryRaw` retains ordered nullable bytes
+and complete field metadata. `exec` returns each simple-query statement in wire order, and
 `describe` returns resolved parameter OIDs and optional result fields without
 executing. All structured results preserve notices and command metadata.
 
@@ -85,9 +86,10 @@ TRANSACTION`, `COMMIT`, `END`, `ABORT`, `PREPARE TRANSACTION`, or `AND CHAIN`;
 return/throw from the callback or call `rollback()` instead. `SAVEPOINT` and
 `ROLLBACK TO` remain ordinary supported SQL. `ROLLBACK AND CHAIN` is unsupported
 contract misuse and cannot be distinguished from `ROLLBACK TO` by PostgreSQL's
-wire tag and readiness status, so Oliphaunt validates the actual protocol boundary
-without guessing from SQL text. A proven ownership escape makes the database
-close-only and the SDK sends no follow-up `COMMIT` or `ROLLBACK`.
+wire tag and readiness status, so Oliphaunt rejects `ROLLBACK`/`ABORT ... AND
+CHAIN` before dispatch and still validates every actual protocol boundary. A
+proven ownership escape makes the database close-only and the SDK sends no
+follow-up `COMMIT` or `ROLLBACK`.
 
 Always `await db.close()` or use `await using` for deterministic lifecycle.
 Garbage collection is only a best-effort leak guard: on Node/Bun a
@@ -189,10 +191,10 @@ vocabulary, not a TypeScript or Node marker. Root validation occurs before
 mutation, rejects symlink structural directories, requires complete PostgreSQL
 18 PGDATA, and publishes the descriptor last.
 
-Direct and broker share the native C sibling lease. The server provider prevents
-duplicate server ownership separately. These are provider-local lifecycle
-safeguards, not a public cross-provider lock protocol. Simultaneous
-direct/broker/server mutation of one root is application error.
+Direct and broker coordinate through the same native sibling-lock identity. The
+server provider prevents duplicate server ownership separately. These are
+provider-local lifecycle safeguards, not a public cross-provider lock protocol.
+Simultaneous direct/broker/server mutation of one root is application error.
 
 If server open reports an existing sibling owner directory, first confirm that
 no native server owns the root. Only then remove the exact reported directory;

@@ -112,6 +112,10 @@ two public calls with an interleaving window.
 | `execute` | Executes one statement that must not return rows. It returns the PostgreSQL command tag and a host-representable affected-row count when PostgreSQL supplied one. |
 | `describe` | Uses `Parse`, `Describe`, and `Sync` without executing the statement. It returns resolved parameter OIDs, optional result fields, and notices. Caller-supplied parameter OIDs are permitted. |
 
+Rust uses an absent parameter OID as the single execution spelling for
+inference. `describe` also accepts explicit OID 0 because it is PostgreSQL's
+wire-level inference sentinel.
+
 The PostgreSQL command tag is authoritative. A row count is optional because
 not every tag has one and a valid PostgreSQL count may exceed a host integer.
 `execute` remains distinct from `exec`: it is the command-only assertion for a
@@ -146,10 +150,8 @@ The portable row representation preserves:
 - each cell as null or owned raw bytes.
 
 Native Rust, Rust WASIX, Swift, and Kotlin expose typed access by index and
-name over that representation. New typed name lookup rejects a missing or
-ambiguous name; index access is the lossless choice when names repeat. A legacy
-field-index convenience may retain first-match behavior for source
-compatibility, but it is not the typed name-lookup contract. A typed getter
+name over that representation. Name lookup rejects a missing or ambiguous
+name; index access is the lossless choice when names repeat. A typed getter
 validates the field OID before decoding, represents null through the language's
 optional value convention, and reports incompatible OIDs, invalid encoding,
 and numeric overflow rather than silently coercing values. Callers can always
@@ -163,12 +165,14 @@ runs before the selected value mode and built-in decoder, and rejects the
 operation if it throws; null bypasses it. There is no mutable global parser
 registry in the core.
 
-The three JavaScript surfaces share a different, familiar presentation:
+The three JavaScript SDK packages, including both WASIX root and Worker
+execution surfaces, share a different, familiar presentation:
 
 - `query` defaults to decoded object rows;
 - `rowMode: 'array'` returns decoded positional arrays and preserves duplicate
   columns;
-- object mode uses the last field when names repeat;
+- object mode rejects duplicate field names instead of silently discarding a
+  value;
 - `valueMode: 'text'` returns strict UTF-8 strings for text-format cells while
   retaining binary-format cells as `Uint8Array`; and
 - `queryRaw` returns the portable byte rows and complete field metadata.
@@ -176,7 +180,7 @@ The three JavaScript surfaces share a different, familiar presentation:
 The JavaScript SDKs own their codec types and OID constants. An ORM adapter
 must not need `@electric-sql/pglite` merely for types or constants. Object rows
 cannot represent duplicate names losslessly, so callers that select duplicate
-columns use array or raw mode.
+columns use array or raw mode; object mode reports the ambiguity directly.
 
 The stable JavaScript defaults decode Boolean, `int2`, `int4`, OID, `float4`,
 and `float8` into JavaScript numbers or booleans; keep `int8` and arbitrary
@@ -235,10 +239,17 @@ notice uses the PostgreSQL error-field vocabulary, including severity,
 SQLSTATE, message, optional detail and hint, source location, object names, and
 unknown raw fields where the runtime received them. Notices remain ordered and
 query-scoped; they are data associated with an operation, not a global event
-subscription.
+subscription. Multi-statement `exec` retains the complete ordered notice list
+on its aggregate result and also attaches notices emitted before each statement
+completion to that statement's result.
 
 PostgreSQL errors preserve the same available fields and stay distinct from
 transport, storage, lifecycle, decoding, and unsupported-operation errors.
+In JavaScript, `PostgresError.message` is exactly PostgreSQL protocol field
+`M`, without an added severity or SQLSTATE prefix. `sqlstate`, `whereText`,
+and the `*Name` diagnostic properties are the canonical core vocabulary;
+driver-specific aliases such as `code`, `where`, or `schema` belong in an ORM
+adapter rather than the database core.
 The ordinary `severity` property represents protocol field `S`, falling back
 to `V` only when `S` is absent; the localized and nonlocalized (`V`) values
 remain separately available.
@@ -284,11 +295,11 @@ conflicts with callback ownership. Manual `BEGIN`, `START TRANSACTION`,
 CHAIN` are likewise unsupported inside the callback. Use callback return/throw
 or explicit `rollback`; `SAVEPOINT` and `ROLLBACK TO` remain supported SQL.
 `ROLLBACK AND CHAIN` is contract misuse but is wire-indistinguishable from
-`ROLLBACK TO` (both report `ROLLBACK` plus transactional readiness), so SDKs validate every
-actual command-complete tag and the terminal readiness frame without parsing
-SQL. A proven lifecycle escape makes the database close-only and suppresses
-all follow-up SDK control. Savepoints do not become a second core transaction
-API.
+`ROLLBACK TO` (both report `ROLLBACK` plus transactional readiness), so SDKs
+reject `ROLLBACK`/`ABORT ... AND CHAIN` before dispatch and validate every
+actual command-complete tag and terminal readiness frame. A proven lifecycle
+escape makes the database close-only and suppresses all follow-up SDK control.
+Savepoints do not become a second core transaction API.
 
 ## Runtime and language exceptions
 
@@ -329,9 +340,10 @@ to another client library.
 
 Protocol and behavior fixtures remain locked across encoded values, fields,
 rows, multi-results, notices, readiness, and transaction state. All three
-JavaScript surfaces continue to consume the shared decoded-query core. ORM
-adapters qualify against this contract; adapter-owned policy does not reopen
-the core unless executable evidence exposes a cross-runtime semantic gap.
+JavaScript SDK packages, including both WASIX execution surfaces, continue to
+consume the shared decoded-query core. ORM adapters qualify against this
+contract; adapter-owned policy does not reopen the core unless executable
+evidence exposes a cross-runtime semantic gap.
 
 ## Deliberate omissions
 

@@ -22,7 +22,7 @@ class SharedProtocolFixtureTest {
     fun structuredSqlScannerMatchesSharedFixtures() {
         val path = sharedStructuredSqlFixturePath() ?: return
         val corpus = Json.parseToJsonElement(Files.readString(path)).jsonObject
-        assertEquals(1, corpus.requiredInt("schemaVersion"))
+        assertEquals(2, corpus.requiredInt("schemaVersion"))
         assertEquals("postgres-structured-sql-preflight", corpus.requiredString("kind"))
 
         val names = mutableSetOf<String>()
@@ -33,6 +33,11 @@ class SharedProtocolFixtureTest {
             assertEquals(
                 fixture.requiredBoolean("containsTopLevelCopy"),
                 containsTopLevelCopy(fixture.requiredString("sql")),
+                name,
+            )
+            assertEquals(
+                fixture.requiredBoolean("containsTransactionChain"),
+                containsTransactionChain(fixture.requiredString("sql")),
                 name,
             )
         }

@@ -15,11 +15,8 @@ export const defaultBrowserPlanFile = resolve(
   'benchmarks/wasix/browser-pglite-memory-v2.json',
 );
 
-const LEGACY_PLAN_SCHEMA = 'oliphaunt-wasix-browser-benchmark-plan-v1';
 const PLAN_SCHEMA = 'oliphaunt-wasix-browser-benchmark-plan-v2';
-const LEGACY_RESULT_SCHEMA = 'oliphaunt-wasix-browser-engine-result-v1';
 const RESULT_SCHEMA = 'oliphaunt-wasix-browser-engine-result-v2';
-const LEGACY_PLAN_ID = 'browser-pglite-memory-v1';
 const PLAN_ID = 'browser-pglite-memory-v2';
 const CANDIDATE_PACKAGE = '@oliphaunt/wasix-ts';
 const COMPARISON_PACKAGE = '@electric-sql/pglite';
@@ -30,7 +27,6 @@ const COMPARISON_COMMIT = '25d0a55e1f1e4c59f26d9e125150dda88a33fd00';
 const COMPARISON_TREE_SHA256 =
   'b3925de04c386f51859c1bf18c143b225e3850616718140dd32e8eb48e9a2c84';
 const ENGINE_NAMES = ['wasixDirect', 'wasixWorker', 'pgliteDirect', 'pgliteWorker'];
-const LEGACY_ENGINE_NAMES = ['wasixDirect', 'wasixWorker', 'pgliteDirect', 'pgliteWorker'];
 const PROFILE_FIELDS = [
   'startupRuns',
   'workloadRuns',
@@ -145,12 +141,8 @@ export async function loadBrowserPlan(file = defaultBrowserPlanFile) {
 
 export function validateBrowserPlan(plan) {
   requireRecord(plan, 'plan');
-  if (plan.schema === LEGACY_PLAN_SCHEMA) {
-    validateLegacyBrowserPlan(plan);
-    return;
-  }
   requireEqual(plan.schema, PLAN_SCHEMA, 'plan.schema');
-  validatePlanEnvelope(plan, PLAN_ID);
+  validatePlanEnvelope(plan);
 
   const engines = requireRecord(plan.engines, 'plan.engines');
   requireExactKeys(engines, ['candidate', 'comparison'], 'plan.engines');
@@ -250,82 +242,20 @@ export function validateBrowserPlan(plan) {
     'plan.engines.comparison.surfaces.worker',
   );
 
-  validateCommonPlan(plan, 'requiresBothExecutionSurfaces');
+  validateCommonPlan(plan);
 }
 
-export function assertCurrentBrowserPlan(plan) {
-  validateBrowserPlan(plan);
-  if (plan.schema !== PLAN_SCHEMA) {
-    throw new Error(
-      `${LEGACY_PLAN_ID} is historical input and cannot drive a new benchmark; use ${PLAN_ID}`,
-    );
-  }
-}
-
-function validateLegacyBrowserPlan(plan) {
-  validatePlanEnvelope(plan, LEGACY_PLAN_ID);
-  const engines = requireRecord(plan.engines, 'plan.engines');
-  requireExactKeys(engines, ['candidate', 'comparison'], 'plan.engines');
-  const candidate = requireRecord(engines.candidate, 'plan.engines.candidate');
-  const comparison = requireRecord(engines.comparison, 'plan.engines.comparison');
-  requireExactKeys(
-    candidate,
-    ['package', 'storage', 'directBoundary', 'workerBoundary', 'dependencies', 'runtimeBuild'],
-    'plan.engines.candidate',
-  );
-  requireEqual(candidate.package, CANDIDATE_PACKAGE, 'plan.engines.candidate.package');
-  requireEqual(candidate.storage, 'memory', 'plan.engines.candidate.storage');
-  requireEqual(
-    candidate.directBoundary,
-    'browser-caller-realm',
-    'plan.engines.candidate.directBoundary',
-  );
-  requireEqual(
-    candidate.workerBoundary,
-    'package-owned-web-worker',
-    'plan.engines.candidate.workerBoundary',
-  );
-  requireExactRecord(
-    candidate.dependencies,
-    { fzstd: '0.1.1' },
-    'plan.engines.candidate.dependencies',
-  );
-  requireExactRecord(
-    candidate.runtimeBuild,
-    RUNTIME_BUILD,
-    'plan.engines.candidate.runtimeBuild',
-  );
-  requireExactRecord(
-    comparison,
-    {
-      package: COMPARISON_PACKAGE,
-      version: COMPARISON_VERSION,
-      integrity: COMPARISON_INTEGRITY,
-      homepage: 'https://pglite.dev',
-      sourceRepository: 'https://github.com/electric-sql/pglite',
-      sourceCommit: COMPARISON_COMMIT,
-      installedTreeHashSchema: 'oliphaunt-path-size-content-sha256-v1',
-      installedTreeSha256: COMPARISON_TREE_SHA256,
-      storage: 'memory',
-      directBoundary: 'browser-caller-realm',
-      workerBoundary: 'official-pglite-web-worker',
-    },
-    'plan.engines.comparison',
-  );
-  validateCommonPlan(plan, 'requiresBothTopologies');
-}
-
-function validatePlanEnvelope(plan, id) {
+function validatePlanEnvelope(plan) {
   requireExactKeys(
     plan,
     ['schema', 'id', 'description', 'engines', 'profiles', 'measurement', 'gate', 'postgres'],
     'plan',
   );
-  requireEqual(plan.id, id, 'plan.id');
+  requireEqual(plan.id, PLAN_ID, 'plan.id');
   requireNonEmptyString(plan.description, 'plan.description');
 }
 
-function validateCommonPlan(plan, bothSurfacesField) {
+function validateCommonPlan(plan) {
   const profiles = requireRecord(plan.profiles, 'plan.profiles');
   requireExactKeys(profiles, ['quick', 'full'], 'plan.profiles');
   requireExactRecord(profiles.quick, QUICK_PROFILE, 'plan.profiles.quick');
@@ -346,7 +276,7 @@ function validateCommonPlan(plan, bothSurfacesField) {
     [
       'maxGeomeanRatio',
       'requiresCorrectness',
-      bothSurfacesField,
+      'requiresBothExecutionSurfaces',
       'metric',
       'metrics',
       'excluded',
@@ -355,7 +285,11 @@ function validateCommonPlan(plan, bothSurfacesField) {
   );
   requireEqual(gate.maxGeomeanRatio, 0.8, 'plan.gate.maxGeomeanRatio');
   requireEqual(gate.requiresCorrectness, true, 'plan.gate.requiresCorrectness');
-  requireEqual(gate[bothSurfacesField], true, `plan.gate.${bothSurfacesField}`);
+  requireEqual(
+    gate.requiresBothExecutionSurfaces,
+    true,
+    'plan.gate.requiresBothExecutionSurfaces',
+  );
   requireEqual(
     gate.metric,
     'geometric-mean-of-median-paired-oliphaunt-over-pglite-ratios-lower-is-better',
@@ -399,13 +333,12 @@ export function qualifyingGitProvenance({ commit, tree, status }) {
 export function summarizeBrowserResult(planSource, result) {
   const plan = planSource.plan;
   validateBrowserResult(plan, result);
-  const normalizedResult = normalizeBrowserResult(result);
-  const correctness = summarizeCorrectness(plan, normalizedResult);
+  const correctness = summarizeCorrectness(plan, result);
   const comparisons = Object.fromEntries(
     Object.entries(SURFACE_COMPARISONS).map(([surface, [candidate, comparison]]) => {
       const metrics = plan.gate.metrics.map((id) => {
-        const candidateSamplesMs = metricSamples(normalizedResult, candidate, id);
-        const comparisonSamplesMs = metricSamples(normalizedResult, comparison, id);
+        const candidateSamplesMs = metricSamples(result, candidate, id);
+        const comparisonSamplesMs = metricSamples(result, comparison, id);
         const paired = pairedRatioSummary(candidateSamplesMs, comparisonSamplesMs);
         return {
           id,
@@ -507,8 +440,7 @@ First cold open, duplicated workload-open time, close, and insert decomposition 
 
 function validateBrowserResult(plan, result) {
   requireRecord(result, 'browser result');
-  const legacy = plan.schema === LEGACY_PLAN_SCHEMA;
-  requireEqual(result.schema, legacy ? LEGACY_RESULT_SCHEMA : RESULT_SCHEMA, 'result.schema');
+  requireEqual(result.schema, RESULT_SCHEMA, 'result.schema');
   requireEqual(result.plan, plan.id, 'result.plan');
   if (!['quick', 'full'].includes(result.mode)) throw new Error('result.mode is invalid');
   const expected = plan.profiles[result.mode];
@@ -526,17 +458,15 @@ function validateBrowserResult(plan, result) {
   }
   requireEqual(configuration.rows, plan.measurement.rows, 'result.configuration.rows');
   requireEqual(configuration.storage, plan.measurement.storage, 'result.configuration.storage');
-  if (!legacy) {
-    requireNestedExactRecord(
-      configuration.executionSurfaces,
-      CANDIDATE_EXECUTION_SURFACES,
-      'result.configuration.executionSurfaces',
-    );
-  }
+  requireNestedExactRecord(
+    configuration.executionSurfaces,
+    CANDIDATE_EXECUTION_SURFACES,
+    'result.configuration.executionSurfaces',
+  );
   requireEqual(result.correctness?.assertionsPassed, true, 'result correctness');
   requireEqual(result.environment?.crossOriginIsolated, true, 'cross-origin isolation');
 
-  for (const engine of legacy ? LEGACY_ENGINE_NAMES : ENGINE_NAMES) {
+  for (const engine of ENGINE_NAMES) {
     requireArrayLength(result.samples?.startup?.[engine], expected.startupRuns, `${engine} startup`);
     requireArrayLength(
       result.samples?.workload?.[engine],
@@ -549,39 +479,6 @@ function validateBrowserResult(plan, result) {
       `${engine} insert diagnostics`,
     );
   }
-}
-
-function normalizeBrowserResult(result) {
-  if (result.schema === RESULT_SCHEMA) return result;
-  return {
-    ...result,
-    schema: RESULT_SCHEMA,
-    postgresProfiles: renameLegacyEngineRecord(result.postgresProfiles),
-    samples: {
-      ...result.samples,
-      startup: renameLegacyEngineRecord(result.samples.startup),
-      workload: renameLegacyEngineRecord(result.samples.workload),
-    },
-    insertDiagnostic: {
-      ...result.insertDiagnostic,
-      summary: {
-        ...result.insertDiagnostic.summary,
-        indexedInsertWalBytes: renameLegacyEngineRecord(
-          result.insertDiagnostic.summary.indexedInsertWalBytes,
-        ),
-      },
-      samples: renameLegacyEngineRecord(result.insertDiagnostic.samples),
-    },
-  };
-}
-
-function renameLegacyEngineRecord(record) {
-  return {
-    wasixDirect: record.wasixDirect,
-    wasixWorker: record.wasixWorker,
-    pgliteDirect: record.pgliteDirect,
-    pgliteWorker: record.pgliteWorker,
-  };
 }
 
 function summarizeCorrectness(plan, result) {

@@ -90,7 +90,8 @@ describe('WASIX host runtime helpers', () => {
     ]);
     expect(composeLifecycleFailure(postgres, 'cleanup failed', 'close trapped')).toMatchObject({
       sqlstate: '3D000',
-      postgresMessage: 'database does not exist',
+      message: 'database does not exist',
+      cause: expect.any(AggregateError),
     });
     expect(
       composeLifecycleFailure(new Error('open failed'), 'cleanup failed', 'trap').message,
