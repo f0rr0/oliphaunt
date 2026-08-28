@@ -95,39 +95,7 @@ describe('direct WASIX session lifecycle', () => {
     expect(events).toEqual(['startup', 'close', 'storage:failed', 'free']);
   });
 
-  it('does not publish partial first-open setup when a later statement fails', async () => {
-    const events: string[] = [];
-    const storage = fakeLease(async (_directory, outcome) => {
-      events.push(`storage:${outcome}`);
-    }, 'new');
-    storage.sync = async (_directory, boundary) => {
-      events.push(`sync:${boundary}`);
-    };
-    const responses = [querySuccess(), queryError('22012', 'division by zero')];
-    const host = fakeHost({
-      events,
-      execProtocolRaw() {
-        return nextResponse(responses);
-      },
-    });
-
-    const failure = await rejection(
-      DirectWasixSession.open(
-        openOptions(),
-        host,
-        fakeDependencies(storage, preparedRuntime(['SELECT 1', 'SELECT 1 / 0'])),
-      ),
-    );
-
-    expect(failure).toBeInstanceOf(PostgresError);
-    expect(failure).toMatchObject({
-      sqlstate: '22012',
-      postgresMessage: 'division by zero',
-    });
-    expect(events).toEqual(['startup', 'exec', 'exec', 'close', 'storage:failed', 'free']);
-  });
-
-  it('publishes successful first-open setup once at its final full boundary', async () => {
+  it('publishes a new selected-artifact runtime without executing extension install SQL', async () => {
     const events: string[] = [];
     const storage = fakeLease(async (_directory, outcome) => {
       events.push(`storage:${outcome}`);
@@ -138,15 +106,13 @@ describe('direct WASIX session lifecycle', () => {
     const session = await DirectWasixSession.open(
       openOptions(),
       fakeHost({ events }),
-      fakeDependencies(storage, preparedRuntime(['SELECT 1', 'SELECT 2'])),
+      fakeDependencies(storage, preparedRuntime()),
     );
 
     await session.close();
 
     expect(events).toEqual([
       'startup',
-      'exec',
-      'exec',
       'sync:full',
       'close',
       'storage:clean',
@@ -576,6 +542,81 @@ describe('direct WASIX session lifecycle', () => {
     expect(events).toEqual(['startup', 'exec', 'close', 'storage:failed', 'free']);
   });
 
+  it('keeps a direct session usable after the host confirms stream callback recovery', async () => {
+    const events: string[] = [];
+    const storage = fakeLease(async (_directory, outcome) => {
+      events.push(`storage:${outcome}`);
+    });
+    storage.sync = async (_directory, boundary) => {
+      events.push(`sync:${boundary}`);
+    };
+    const session = await DirectWasixSession.open(
+      openOptions(),
+      fakeHost({
+        events,
+        execProtocolStream(onChunk) {
+          try {
+            onChunk(Uint8Array.of(1));
+            return 0;
+          } catch {
+            return 1;
+          }
+        },
+      }),
+      fakeDependencies(storage),
+    );
+    const callbackFailure = new Error('consumer stopped');
+
+    await expect(
+      session.execStream(Uint8Array.of(1), () => {
+        throw callbackFailure;
+      }),
+    ).resolves.toBe('callbackAborted');
+    await expect(session.exec(Uint8Array.of(2))).resolves.toEqual(querySuccess());
+    await session.close();
+
+    expect(events).toEqual([
+      'startup',
+      'execStream',
+      'sync:operation',
+      'exec',
+      'sync:operation',
+      'close',
+      'storage:clean',
+      'free',
+    ]);
+  });
+
+  it('makes a failed stream recovery authoritative and poisons the direct session', async () => {
+    const recoveryFailure = new Error('ReadyForQuery recovery failed');
+    const session = await DirectWasixSession.open(
+      openOptions(),
+      fakeHost({
+        execProtocolStream(onChunk) {
+          try {
+            onChunk(Uint8Array.of(1));
+          } catch {
+            throw recoveryFailure;
+          }
+          return 0;
+        },
+      }),
+      fakeDependencies(fakeLease(async () => undefined)),
+    );
+
+    const failure = await rejection(
+      session.execStream(Uint8Array.of(1), () => {
+        throw new Error('consumer stopped');
+      }),
+    );
+    expect(failure.message).toContain('ReadyForQuery recovery failed');
+    expect(failure.cause).toBe(recoveryFailure);
+    await expect(session.exec(Uint8Array.of(2))).rejects.toThrow(
+      'Oliphaunt WASIX database failed',
+    );
+    await session.close();
+  });
+
   it('keeps the session reusable after backup validation fails and cleanup is confirmed', async () => {
     const events: string[] = [];
     const responses = [
@@ -932,7 +973,7 @@ type FakeHostOptions = {
   init?(): Promise<void>;
   startup?(): Uint8Array;
   execProtocolRaw?(input: Uint8Array): Uint8Array;
-  execProtocolStream?(onChunk: (chunk: Uint8Array) => void): void;
+  execProtocolStream?(onChunk: (chunk: Uint8Array) => void): number | void;
   close?(): void;
   free?(): void;
   instantiate?(): Promise<OliphauntDirectInstance>;
@@ -958,10 +999,10 @@ function fakeHost(options: FakeHostOptions): DirectWasixHost {
     execProtocolStream(_input: Uint8Array, onChunk: (chunk: Uint8Array) => void) {
       events?.push('execStream');
       if (options.execProtocolStream !== undefined) {
-        options.execProtocolStream(onChunk);
-        return;
+        return options.execProtocolStream(onChunk) ?? 0;
       }
       onChunk(options.execProtocolRaw?.(_input) ?? querySuccess());
+      return 0;
     },
     execProtocolDuplex(
       input: Uint8Array,
@@ -1028,7 +1069,7 @@ class FakeDirectory {
   free(): void {}
 }
 
-function preparedRuntime(setupSql: string[] = []): PreparedWasixRuntime {
+function preparedRuntime(): PreparedWasixRuntime {
   return {
     layout: {
       module: Uint8Array.of(0),
@@ -1041,7 +1082,6 @@ function preparedRuntime(setupSql: string[] = []): PreparedWasixRuntime {
     catalogProfile: 'standard',
     icuEnabled: false,
     startupGUCs: {},
-    setupSql,
     physicalIdentity: WASIX_PHYSICAL_IDENTITY,
   };
 }

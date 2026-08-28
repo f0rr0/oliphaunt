@@ -615,12 +615,33 @@ static int32_t oliphaunt_init_impl(const OliphauntConfig *config, OliphauntHandl
     return 0;
 }
 
-int32_t oliphaunt_init(const OliphauntConfig *config, OliphauntHandle **out) {
+static int32_t run_init_operation(
+    const OliphauntConfig *config,
+    OliphauntHandle **out,
+    OliphauntErrorCapture *capture,
+    bool capture_required) {
     OliphauntErrorScope error_scope;
     oliphaunt_error_scope_begin(&error_scope, NULL, "oliphaunt_init");
-    int32_t rc = oliphaunt_init_impl(config, out);
+    int32_t rc = -1;
+    if (capture_required && capture == NULL) {
+        set_error(NULL, "oliphaunt_init error capture is null");
+    } else {
+        rc = oliphaunt_init_impl(config, out);
+    }
     oliphaunt_error_scope_end(&error_scope, rc != 0);
+    oliphaunt_error_capture_current(capture, NULL, rc != 0);
     return rc;
+}
+
+int32_t oliphaunt_init(const OliphauntConfig *config, OliphauntHandle **out) {
+    return run_init_operation(config, out, NULL, false);
+}
+
+int32_t oliphaunt_init_with_error(
+    const OliphauntConfig *config,
+    OliphauntHandle **out,
+    OliphauntErrorCapture *error) {
+    return run_init_operation(config, out, error, true);
 }
 
 static int32_t oliphaunt_detach_impl(OliphauntHandle *handle) {
@@ -679,12 +700,45 @@ static int32_t oliphaunt_detach_impl(OliphauntHandle *handle) {
     return 0;
 }
 
-int32_t oliphaunt_detach(OliphauntHandle *handle) {
+static int32_t run_detach_operation(
+    OliphauntHandle *handle,
+    OliphauntErrorCapture *capture,
+    bool capture_required) {
     OliphauntErrorScope error_scope;
-    oliphaunt_error_scope_begin(&error_scope, handle, "oliphaunt_detach");
-    int32_t rc = oliphaunt_detach_impl(handle);
+    oliphaunt_error_scope_begin(&error_scope, NULL, "oliphaunt_detach");
+    int32_t rc = -1;
+    bool retiring = false;
+    if (capture_required && capture == NULL) {
+        set_error(NULL, "oliphaunt_detach error capture is null");
+    } else if (handle == NULL) {
+        rc = oliphaunt_detach_impl(handle);
+    } else if (oliphaunt_begin_handle_retirement(handle) == 0) {
+        retiring = true;
+        error_scope.fallback_handle = handle;
+        rc = oliphaunt_detach_impl(handle);
+    }
     oliphaunt_error_scope_end(&error_scope, rc != 0);
+    /* A poisoned detach may promote this retirement to terminal close and
+     * free the handle. Successful captures are empty and never dereference
+     * their fallback; failures leave the retirement owner resident. */
+    oliphaunt_error_capture_current(
+        capture,
+        retiring && rc != 0 ? handle : NULL,
+        rc != 0);
+    if (retiring) {
+        oliphaunt_end_handle_retirement();
+    }
     return rc;
+}
+
+int32_t oliphaunt_detach(OliphauntHandle *handle) {
+    return run_detach_operation(handle, NULL, false);
+}
+
+int32_t oliphaunt_detach_with_error(
+    OliphauntHandle *handle,
+    OliphauntErrorCapture *error) {
+    return run_detach_operation(handle, error, true);
 }
 
 int32_t oliphaunt_close_claimed_global_instance(OliphauntHandle *handle) {
@@ -713,6 +767,11 @@ int32_t oliphaunt_close_claimed_global_instance(OliphauntHandle *handle) {
     if (handle->thread_started) {
         pthread_join(handle->backend_thread, NULL);
     }
+
+    /* Public wrappers may still be publishing an operation-owned error after
+     * their PostgreSQL work released handle->mutex. Keep every field and
+     * synchronization primitive alive through that boundary. */
+    oliphaunt_wait_for_active_handle_calls();
 
     if (handle->sync_initialized) {
         pthread_cond_destroy(&handle->input_cond);
@@ -850,9 +909,20 @@ static int32_t oliphaunt_cancel_impl(OliphauntHandle *handle) {
 
 int32_t oliphaunt_cancel(OliphauntHandle *handle) {
     OliphauntErrorScope error_scope;
-    oliphaunt_error_scope_begin(&error_scope, handle, "oliphaunt_cancel");
-    int32_t rc = oliphaunt_cancel_impl(handle);
+    oliphaunt_error_scope_begin(&error_scope, NULL, "oliphaunt_cancel");
+    int32_t rc = -1;
+    bool leased = false;
+    if (handle == NULL) {
+        rc = oliphaunt_cancel_impl(handle);
+    } else if (oliphaunt_begin_handle_call(handle) == 0) {
+        leased = true;
+        error_scope.fallback_handle = handle;
+        rc = oliphaunt_cancel_impl(handle);
+    }
     oliphaunt_error_scope_end(&error_scope, rc != 0);
+    if (leased) {
+        oliphaunt_end_handle_call();
+    }
     return rc;
 }
 

@@ -1,3 +1,5 @@
+use std::cell::Cell;
+use std::marker::PhantomData;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
@@ -22,9 +24,11 @@ use crate::oliphaunt::config::{PostgresConfig, StartupConfig};
 use crate::oliphaunt::extensions::{
     Extension, postgres_config_with_extension_startup, resolve_extension_set,
 };
-use crate::oliphaunt::lifecycle::{TerminalCloseResult, terminal_close};
+use crate::oliphaunt::lifecycle::{TeardownOwnership, TerminalCloseResult, teardown_result};
 use crate::oliphaunt::proxy::{ActiveConnection, OliphauntProxy};
 use crate::oliphaunt::storage::DatabaseStorage;
+#[cfg(unix)]
+use crate::oliphaunt::storage::validate_host_path;
 
 /// A supervised local PostgreSQL socket backed by one embedded Oliphaunt runtime.
 ///
@@ -34,10 +38,14 @@ use crate::oliphaunt::storage::DatabaseStorage;
 /// connection.
 #[derive(Debug)]
 pub struct OliphauntServer {
-    _workspace: Option<TempDir>,
-    _directory_lock: Option<DirectoryLock>,
+    // The listener is owned and stopped by one blocking caller. Moving that
+    // ownership to another thread is safe; sharing references concurrently is
+    // deliberately unsupported. AsyncOliphauntServer provides a Sync handle.
+    _not_sync: PhantomData<Cell<()>>,
+    _workspace: TeardownOwnership<Option<TempDir>>,
+    _directory_lock: TeardownOwnership<Option<DirectoryLock>>,
     endpoint: ServerEndpoint,
-    startup_config: StartupConfig,
+    connection_string: String,
     shutdown: Arc<AtomicBool>,
     active_connection: Arc<ActiveConnection>,
     handle: Option<JoinHandle<Result<()>>>,
@@ -74,33 +82,9 @@ impl OliphauntServer {
         OliphauntServerBuilder::new()
     }
 
-    /// Return the bound TCP address, if this server is using TCP.
-    pub fn tcp_addr(&self) -> Option<SocketAddr> {
-        match self.endpoint {
-            ServerEndpoint::Tcp(addr) => Some(addr),
-            #[cfg(unix)]
-            ServerEndpoint::Unix(_) => None,
-        }
-    }
-
-    /// Return the Unix-domain socket path, if this server is using UDS.
-    #[cfg(unix)]
-    pub fn socket_path(&self) -> Option<&Path> {
-        match &self.endpoint {
-            ServerEndpoint::Tcp(_) => None,
-            ServerEndpoint::Unix(endpoint) => Some(&endpoint.path),
-        }
-    }
-
     /// Return a PostgreSQL connection URI for the local server.
-    pub fn connection_string(&self) -> String {
-        match &self.endpoint {
-            ServerEndpoint::Tcp(addr) => tcp_connection_string(*addr, &self.startup_config),
-            #[cfg(unix)]
-            ServerEndpoint::Unix(endpoint) => {
-                unix_connection_string(endpoint, &self.startup_config)
-            }
-        }
+    pub fn connection_string(&self) -> &str {
+        &self.connection_string
     }
 
     /// Whether this direct server is permanently retired.
@@ -116,7 +100,8 @@ impl OliphauntServer {
     ///
     /// Any active client connection is closed before the listener thread is
     /// joined. Once stop begins, the server is terminal even when cleanup
-    /// reports an error.
+    /// reports an error. Successful teardown releases managed-root ownership;
+    /// failed teardown retains it until process exit.
     pub fn close(&mut self) -> crate::Result<()> {
         self.owner_close()
     }
@@ -126,11 +111,11 @@ impl OliphauntServer {
     /// Once stop begins, later calls replay its exact success or failure.
     pub(crate) fn owner_close(&mut self) -> crate::Result<()> {
         if let Some(result) = &self.close_result {
-            return result.clone().map_err(crate::Error::message);
+            return result.clone();
         }
-        let stopped = self.stop();
-        let result = terminal_close(&mut self.close_result, || stopped);
-        result.map_err(crate::Error::message)
+        let result = teardown_result("WASIX server", || self.stop());
+        self.close_result = Some(result.clone());
+        result
     }
 
     fn stop(&mut self) -> Result<()> {
@@ -156,13 +141,21 @@ impl OliphauntServer {
         #[cfg(not(unix))]
         let socket_result = Ok::<(), anyhow::Error>(());
 
-        match (worker_result, socket_result) {
+        let result = match (worker_result, socket_result) {
             (Ok(()), Ok(())) => Ok(()),
             (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
             (Err(worker), Err(socket)) => Err(anyhow!(
                 "Oliphaunt server worker failed: {worker:#}; Unix socket cleanup also failed: {socket:#}"
             )),
+        };
+        if result.is_ok() {
+            // Keep the managed-root lock until every other owned resource has
+            // been destroyed. `owner_close` contains a destructor panic and
+            // caches it as a terminal failure without a second cleanup.
+            self._workspace.release();
+            self._directory_lock.release();
         }
+        result
     }
 }
 
@@ -173,6 +166,29 @@ impl Drop for OliphauntServer {
         {
             tracing::warn!("oliphaunt server shutdown during drop failed: {err:#}");
         }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn server_with_worker_result_for_test(
+    result: Result<()>,
+    directory_lock: Option<DirectoryLock>,
+) -> OliphauntServer {
+    OliphauntServer {
+        _not_sync: PhantomData,
+        _workspace: TeardownOwnership::new(None),
+        _directory_lock: TeardownOwnership::new(directory_lock),
+        endpoint: ServerEndpoint::Tcp(SocketAddr::from(([127, 0, 0, 1], 0))),
+        connection_string: tcp_connection_string(
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+            &StartupConfig::default(),
+        ),
+        shutdown: Arc::new(AtomicBool::new(false)),
+        active_connection: Arc::new(ActiveConnection::default()),
+        handle: Some(thread::spawn(move || result)),
+        close_result: None,
+        #[cfg(unix)]
+        owned_unix_socket: None,
     }
 }
 
@@ -189,22 +205,30 @@ pub struct OliphauntServerBuilder {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServerListen {
-    /// Listen on IPv4 loopback. An omitted port asks the operating system for one.
+    /// Listen on IPv4 loopback on any supported host. An omitted port asks the
+    /// operating system for one.
     Tcp { port: Option<u16> },
     #[cfg(unix)]
-    /// Listen in a directory using PostgreSQL's `.s.PGSQL.<port>` filename.
+    /// Listen on a Unix host in a directory using PostgreSQL's
+    /// `.s.PGSQL.<port>` filename. The directory path must be nonempty and
+    /// contain no NUL bytes.
     Unix { directory: PathBuf, port: u16 },
 }
 
 impl ServerListen {
-    pub fn tcp() -> Self {
+    /// Listen on IPv4 loopback on any supported host and let the operating
+    /// system choose the port.
+    pub const fn tcp() -> Self {
         Self::Tcp { port: None }
     }
 
-    pub fn tcp_port(port: u16) -> Self {
+    /// Listen on IPv4 loopback on any supported host at an explicit port.
+    pub const fn tcp_port(port: u16) -> Self {
         Self::Tcp { port: Some(port) }
     }
 
+    /// Listen on a Unix host in a Unix-domain socket directory using
+    /// PostgreSQL port 5432.
     #[cfg(unix)]
     pub fn unix(directory: impl Into<PathBuf>) -> Self {
         Self::Unix {
@@ -213,12 +237,20 @@ impl ServerListen {
         }
     }
 
+    /// Listen on a Unix host in a Unix-domain socket directory using an
+    /// explicit PostgreSQL port.
     #[cfg(unix)]
     pub fn unix_port(directory: impl Into<PathBuf>, port: u16) -> Self {
         Self::Unix {
             directory: directory.into(),
             port,
         }
+    }
+}
+
+impl Default for ServerListen {
+    fn default() -> Self {
+        Self::tcp()
     }
 }
 
@@ -248,7 +280,8 @@ impl OliphauntServerBuilder {
         self
     }
 
-    /// Select a loopback TCP or PostgreSQL Unix-domain listener.
+    /// Select a loopback TCP listener on any supported host or a PostgreSQL
+    /// Unix-domain listener on a Unix host.
     pub fn listen(mut self, listen: ServerListen) -> Self {
         self.listen = listen;
         self
@@ -286,14 +319,16 @@ impl OliphauntServerBuilder {
         self
     }
 
-    /// Enable a bundled Postgres extension before serving connections.
+    /// Make one bundled PostgreSQL extension artifact available to clients.
+    /// Database-local installation remains the application's migration concern.
     #[cfg(feature = "extensions")]
     pub fn extension(mut self, extension: Extension) -> Self {
         self.extensions.push(extension);
         self
     }
 
-    /// Enable bundled Postgres extensions before serving connections.
+    /// Make bundled PostgreSQL extension artifacts available to clients.
+    /// Database-local installation remains the application's migration concern.
     #[cfg(feature = "extensions")]
     pub fn extensions(mut self, extensions: impl IntoIterator<Item = Extension>) -> Self {
         self.extensions.extend(extensions);
@@ -307,8 +342,8 @@ impl OliphauntServerBuilder {
 
     fn start_inner(self) -> Result<OliphauntServer> {
         if matches!(self.listen, ServerListen::Tcp { port: Some(0) }) {
-            return Err(anyhow!(
-                "TCP port must be in the range 1..=65535; omit it to allocate one"
+            return Err(crate::error::invalid_configuration(
+                "TCP port must be in the range 1..=65535; omit it to allocate one",
             ));
         }
         #[cfg(unix)]
@@ -324,6 +359,7 @@ impl OliphauntServerBuilder {
         #[cfg(not(feature = "extensions"))]
         let postgres_config = self.postgres_config.clone();
         postgres_config.validate()?;
+        self.storage.validate()?;
         self.startup_config.validate()?;
         let startup_config = self.startup_config.clone();
 
@@ -371,12 +407,18 @@ impl OliphauntServerBuilder {
                 start_tcp(proxy, addr, shutdown.clone(), active_connection.clone())?
             }
         };
+        let connection_string = match &endpoint {
+            ServerEndpoint::Tcp(addr) => tcp_connection_string(*addr, &startup_config),
+            #[cfg(unix)]
+            ServerEndpoint::Unix(endpoint) => unix_connection_string(endpoint, &startup_config),
+        };
 
         Ok(OliphauntServer {
-            _workspace: workspace,
-            _directory_lock: directory_lock,
+            _not_sync: PhantomData,
+            _workspace: TeardownOwnership::new(workspace),
+            _directory_lock: TeardownOwnership::new(directory_lock),
             endpoint,
-            startup_config,
+            connection_string,
             shutdown,
             active_connection,
             handle: Some(handle),
@@ -594,21 +636,27 @@ fn ensure_unix_socket_path_available(path: &Path) -> Result<()> {
 
 #[cfg(unix)]
 fn prepare_unix_socket_directory(path: &Path) -> Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow!("Unix socket path has no parent: {}", path.display()))?;
+    let parent = path.parent().ok_or_else(|| {
+        crate::error::invalid_configuration(format!(
+            "Unix socket path has no parent: {}",
+            path.display()
+        ))
+    })?;
     std::fs::create_dir_all(parent)
         .with_context(|| format!("create socket directory {}", parent.display()))?;
     let metadata = std::fs::symlink_metadata(parent)
         .with_context(|| format!("inspect socket directory {}", parent.display()))?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(anyhow!(
+        return Err(crate::error::invalid_configuration(format!(
             "Unix socket directory must be a real directory, not a symlink: {}",
             parent.display()
-        ));
+        )));
     }
     if path.as_os_str().as_bytes().len() >= 100 {
-        return Err(anyhow!("Unix socket path is too long: {}", path.display()));
+        return Err(crate::error::invalid_configuration(format!(
+            "Unix socket path is too long: {}",
+            path.display()
+        )));
     }
     Ok(())
 }
@@ -633,8 +681,11 @@ fn wake_listener(endpoint: &ServerEndpoint) {
 
 #[cfg(unix)]
 fn resolve_unix_socket_endpoint(directory: &Path, port: u16) -> Result<UnixSocketEndpoint> {
+    validate_host_path("Unix socket directory", directory)?;
     if port == 0 {
-        return Err(anyhow!("Unix socket port must be in the range 1..=65535"));
+        return Err(crate::error::invalid_configuration(
+            "Unix socket port must be in the range 1..=65535",
+        ));
     }
     let directory = if directory.is_absolute() {
         directory.to_path_buf()
@@ -672,8 +723,8 @@ fn percent_encode_bytes(value: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "extensions")]
-    use crate::oliphaunt::extensions::PG_TEXTSEARCH;
+    #[cfg(feature = "extension-pg-textsearch")]
+    use crate::oliphaunt::extensions::Extension;
 
     #[cfg(unix)]
     #[test]
@@ -826,24 +877,10 @@ mod tests {
         assert_eq!(builder.storage, DatabaseStorage::Memory);
     }
 
-    fn server_with_worker_result(result: Result<()>) -> OliphauntServer {
-        OliphauntServer {
-            _workspace: None,
-            _directory_lock: None,
-            endpoint: ServerEndpoint::Tcp(SocketAddr::from(([127, 0, 0, 1], 0))),
-            startup_config: StartupConfig::default(),
-            shutdown: Arc::new(AtomicBool::new(false)),
-            active_connection: Arc::new(ActiveConnection::default()),
-            handle: Some(thread::spawn(move || result)),
-            close_result: None,
-            #[cfg(unix)]
-            owned_unix_socket: None,
-        }
-    }
-
     #[test]
     fn direct_server_close_keeps_observable_terminal_state_and_replays_failure() {
-        let mut server = server_with_worker_result(Err(anyhow!("injected server stop failure")));
+        let mut server =
+            server_with_worker_result_for_test(Err(anyhow!("injected server stop failure")), None);
         assert!(!server.is_closed());
 
         let first = server.close().unwrap_err().to_string();
@@ -852,6 +889,42 @@ mod tests {
 
         assert_eq!(first, second);
         assert!(first.contains("injected server stop failure"));
+    }
+
+    #[test]
+    fn failed_direct_server_close_quarantines_managed_root_ownership() -> Result<()> {
+        let parent = TempDir::new()?;
+        let root = parent.path().join("failed-server-root");
+        let lock = DirectoryLock::acquire(&root)?;
+        let mut server = server_with_worker_result_for_test(
+            Err(anyhow!("injected server stop failure")),
+            Some(lock),
+        );
+
+        server.close().expect_err("server teardown fails");
+        assert!(!server._directory_lock.is_released());
+        drop(server);
+
+        let reopen = DirectoryLock::acquire(&root)
+            .expect_err("failed teardown must retain the managed root until process exit");
+        assert!(format!("{reopen:#}").contains("database root is already in use"));
+        Ok(())
+    }
+
+    #[test]
+    fn successful_direct_server_close_releases_managed_root_ownership() -> Result<()> {
+        let parent = TempDir::new()?;
+        let root = parent.path().join("successful-server-root");
+        let lock = DirectoryLock::acquire(&root)?;
+        let mut server = server_with_worker_result_for_test(Ok(()), Some(lock));
+
+        server.close()?;
+        assert!(server._directory_lock.is_released());
+        drop(server);
+
+        let reopened = DirectoryLock::acquire(&root)?;
+        drop(reopened);
+        Ok(())
     }
 
     #[test]
@@ -878,15 +951,16 @@ mod tests {
             .listen(ServerListen::tcp_port(0))
             .start()
             .unwrap_err();
+        assert_eq!(error.kind(), crate::ErrorKind::InvalidConfiguration);
         assert!(error.to_string().contains("omit it to allocate one"));
     }
 
-    #[cfg(feature = "extensions")]
+    #[cfg(feature = "extension-pg-textsearch")]
     #[test]
     fn server_path_merges_pg_textsearch_preload_once_before_start() {
         let builder = OliphauntServerBuilder::new()
             .startup_guc("shared_preload_libraries", "auto_explain,pg_textsearch")
-            .extensions([PG_TEXTSEARCH, PG_TEXTSEARCH]);
+            .extensions([Extension::PG_TEXTSEARCH, Extension::PG_TEXTSEARCH]);
 
         let (_, postgres_config) = builder.resolved_extension_startup().unwrap();
 

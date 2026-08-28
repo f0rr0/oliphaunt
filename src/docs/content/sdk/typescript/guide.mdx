@@ -27,6 +27,10 @@ module loading itself remains a synchronous one-time platform step
 (`require()` on Node/Bun and `dlopen()` on Deno); it is not a separate blocking
 database API.
 
+Deno's nonblocking calls carry a native error-capture buffer with each Promise.
+The worker fills that buffer before returning, so concurrent failures cannot be
+misreported through a later thread-local or shared-handle error lookup.
+
 <SdkGuideSummary id="typescript" />
 
 <Steps>
@@ -97,6 +101,15 @@ const notes = await db.query(
 const firstTitle = notes.rows[0]?.title;
 ```
 
+For callback transactions, a callback failure is rethrown unchanged after
+automatic rollback succeeds. If rollback also fails, `AggregateError.errors`
+contains the callback failure followed by the rollback failure. If the callback
+throws a different value after an earlier independent database or protocol
+failure poisoned or expired transaction ownership, the aggregate instead
+contains the callback failure followed by that database failure and the database
+is close-only. This independent-failure case does not include an ordinary
+PostgreSQL statement error that remains safely rollbackable.
+
 Tauri apps keep the database in Rust state and expose narrow app-owned commands
 to the webview.
 
@@ -117,7 +130,10 @@ Omit `storage` for an SDK-owned temporary directory; pass
 ### Choose a mode
 
 Omit `topology` for the direct topology. Select `topology: 'broker'` when process
-isolation and crash recovery matter. Use `Oliphaunt.openServer()` when
+isolation matters. If the helper fails, the existing database object rejects all
+later work; close it and explicitly open a new object on the same persistent
+storage for PostgreSQL WAL recovery. The SDK does not replace a session or
+replay uncertain work invisibly. Use `Oliphaunt.openServer()` when
 PostgreSQL-compatible tools and independent clients are required.
 
 </Step>
@@ -139,6 +155,10 @@ destructive cutoff retire the handle: `closed` becomes true, later work fails,
 and repeated `close()` calls replay the original result. A raw-protocol stream
 callback cannot reenter database/transaction work, backup, close, or another
 stream on the same handle; `cancel()` is the out-of-band exception.
+A callback error is rethrown unchanged only after the runtime confirms protocol
+recovery and leaves the session reusable. A buffered raw rejection or streamed
+execution, transport, or recovery failure is authoritative instead and poisons
+the session.
 
 Garbage-collection cleanup is a last-resort leak guard, not a lifecycle API.
 On Node/Bun, `FinalizationRegistry` passes an opaque exact-generation token to

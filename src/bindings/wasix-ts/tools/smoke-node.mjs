@@ -125,6 +125,7 @@ if (packageOnly) {
 async function verifyMemory(client, executionSurface) {
   // OLIPHAUNT_DOCS_SNIPPET wasix-typescript-quickstart
   const db = await client.open({ extensions: [pgtap] });
+  await db.execute('CREATE EXTENSION pgtap');
   const structuredApi = await verifyStructuredApi(db);
   const version = (await db.queryRaw('SELECT pgtap_version()::text AS version')).getText(0, 'version');
   const retainedProtocol = await db.execProtocolRaw(
@@ -265,6 +266,7 @@ if (direct.version !== worker.version) {
 
 const storage = directory(new URL('./database space ü', import.meta.url));
 let persistent = await Oliphaunt.open({ storage, extensions: [pgtap] });
+await persistent.execute('CREATE EXTENSION pgtap');
 await persistent.execute('CREATE SEQUENCE smoke_persistence_seq START WITH 10');
 await persistent.execute(
   'CREATE TABLE smoke_persistence (' +

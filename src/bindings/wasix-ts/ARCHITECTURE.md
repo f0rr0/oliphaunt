@@ -111,10 +111,11 @@ smaller qualified side modules remain supported in a direct Window.
    safely reuse or grow its memory after the call. Startup preserves an
    `ErrorResponse` and its SQLSTATE even when startup terminates the guest.
 5. The direct export driver completes the exported startup transition before
-   exposing the session. Carrier-owned extension lifecycle SQL then runs while
-   the fixed bootstrap superuser is active. As in the Rust binding, a requested
-   non-default user is selected from existing roles with `SET ROLE`; standalone
-   bootstrap itself remains the fixed `postgres` identity.
+   exposing the session. Selected carriers contribute verified artifacts and
+   required startup/preload configuration only; database-local extension SQL is
+   application/ORM-owned. A requested non-default user is selected from existing
+   roles with `SET ROLE`; standalone bootstrap remains the fixed `postgres`
+   identity.
 6. The binding frames later responses through `ReadyForQuery` and exposes
    serialized `query`, `execute`, buffered `execProtocolRaw`, callback
    `execProtocolRawStream`, and callback-scoped `transaction` calls
@@ -521,20 +522,20 @@ This binding keeps the following deliberate divergences:
 - runtime/PGDATA/manifest hashes, carrier hashes, required core exports, exact
   installed-file inventories, dependencies, and collisions are checked before
   startup;
-- selecting an extension also runs its canonical lifecycle while the bootstrap
-  superuser is active, whereas PGlite normally stages it for an explicit
-  `CREATE EXTENSION`; and
+- selecting an extension stages its verified artifacts and startup configuration;
+  applications explicitly run ordinary `CREATE EXTENSION`, `LOAD`, schema, or
+  migration SQL, matching the ownership expected by ORMs; and
 - IndexedDB and OPFS now use source-pinned dirty-path synchronization at each
   completed protocol operation, matching PGlite's useful commitState boundary
   without importing Emscripten FS. Oliphaunt keeps explicit provider-specific
   atomicity and exclusive ownership; multi-tab leadership remains unsupported.
 
 The host validates every native `load-order` entry against the carrier's exact
-installed-file inventory, then emits PostgreSQL `LOAD` statements in dependency
-and declared module order before `CREATE EXTENSION`. PostgreSQL and Wasmer's
-dynamic linker remain responsible for each module's declared `dylink-needed`
-closure. `shared-memory-required` contracts remain rejected because the
-single-backend runtime has not qualified that capability.
+installed-file inventory but does not execute it as SQL. Applications explicitly
+issue any required `LOAD`/`CREATE EXTENSION` lifecycle, after which PostgreSQL and
+Wasmer's dynamic linker remain responsible for each module's declared
+`dylink-needed` closure. `shared-memory-required` contracts remain rejected
+because the single-backend runtime has not qualified that capability.
 
 ## Asset ownership
 
@@ -566,8 +567,8 @@ contracts from its extension rows. The binding rejects a nonempty core manifest,
 so the runtime carrier cannot become the authority for independently versioned
 extensions.
 
-The first browser smoke selects the SQL-only `pgtap` carrier. That isolates
-manifest verification, dependency ordering, archive overlay, and lifecycle SQL
+The first browser smoke selects the SQL-only `pgtap` carrier and explicitly runs
+`CREATE EXTENSION`. That isolates manifest verification, dependency ordering, archive overlay, and lifecycle SQL
 from dynamic linking. The separate `smoke:browser:pg-uuidv7` profile selects the
 native carrier, calls `uuid_generate_v7()` before and after the two error
 recovery cases, verifies both results are UUIDv7 values, and checks clean
@@ -593,12 +594,12 @@ adapters. The root import is always caller-owned; the conditional `/worker`
 subpath is always Worker-owned.
 
 The browser smoke proves the exact runtime/host pairing can start PostgreSQL,
-activate `pgtap`, retain SQLSTATE across repeated PostgreSQL error recovery,
+explicitly activate `pgtap`, retain SQLSTATE across repeated PostgreSQL error recovery,
 continue with `42` on the same handle, persist through IndexedDB operation
 boundaries, run an explicit `CHECKPOINT` through `execute`, and close with a
 successful zero exit status. Each Node/Bun/Deno host smoke installs packed release
 candidates into a fresh external project, verifies the runtime selects its conditional export,
-starts the same portable runtime with package-relative assets, activates
+starts the same portable runtime with package-relative assets, explicitly activates
 `pgtap`, recovers from an error, and closes cleanly. The opt-in native browser
 profile additionally loads and calls the canonical `pg_uuidv7.so`; it remains
 a narrow canary rather than a generic dynamic-extension claim.

@@ -1,6 +1,6 @@
 use anyhow::{Result, bail};
 #[cfg(feature = "extensions")]
-use oliphaunt_wasix::extensions;
+use oliphaunt_wasix::Extension;
 use oliphaunt_wasix::{DatabaseStorage, OliphauntServer, ServerListen};
 use std::env;
 use std::path::PathBuf;
@@ -39,7 +39,7 @@ fn main() -> Result<()> {
     #[cfg(feature = "extensions")]
     {
         for name in &args.extensions {
-            let extension = extensions::by_sql_name(name)
+            let extension = Extension::by_sql_name(name)
                 .ok_or_else(|| anyhow::anyhow!("unknown extension: {name}"))?;
             builder = builder.extension(extension);
         }
@@ -149,5 +149,5 @@ fn print_usage() {
     eprintln!("  --print-uri       Print the PostgreSQL connection URI to stdout");
     eprintln!("  --startup-guc NAME=VALUE");
     eprintln!("                    Set a PostgreSQL startup GUC on the embedded backend");
-    eprintln!("  --extension NAME  Enable an installed extension by SQL name");
+    eprintln!("  --extension NAME  Select an extension artifact by SQL name");
 }

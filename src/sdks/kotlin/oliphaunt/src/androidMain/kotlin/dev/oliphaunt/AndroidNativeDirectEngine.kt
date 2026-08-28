@@ -642,16 +642,37 @@ private class AndroidNativeDirectSession(
     override suspend fun execProtocolRawStream(
         request: ByteArray,
         onChunk: (ByteArray) -> Unit,
-    ) {
-        state.runOnExecutionOwner { current ->
+    ): ProtocolStreamOutcome = state.runOnExecutionOwner { current ->
+        var callbackError: Throwable? = null
+        val callbackAborted =
             OliphauntAndroidNativeBridge.execProtocolRawStreamNative(
                 current,
                 request,
                 OliphauntAndroidProtocolStreamSink { chunk ->
-                    onChunk(chunk)
-                    0
+                    try {
+                        onChunk(chunk)
+                        0
+                    } catch (error: Throwable) {
+                        callbackError = error
+                        -1
+                    }
                 },
             )
+        when {
+            !callbackAborted && callbackError == null -> ProtocolStreamOutcome.Complete
+
+            callbackAborted && callbackError != null ->
+                ProtocolStreamOutcome.CallbackAborted(requireNotNull(callbackError))
+
+            callbackAborted ->
+                throw OliphauntException(
+                    "liboliphaunt reported a recovered callback abort without a callback failure",
+                )
+
+            else ->
+                throw OliphauntException(
+                    "liboliphaunt returned protocol stream success after the callback failed",
+                )
         }
     }
 

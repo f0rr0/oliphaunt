@@ -5,6 +5,8 @@ export const POINTER_SIZE = 8;
 export const OLIPHAUNT_CONFIG_SIZE = 72;
 export const OLIPHAUNT_RESPONSE_SIZE = 16;
 export const OLIPHAUNT_RESTORE_OPTIONS_SIZE = 32;
+export const OLIPHAUNT_ERROR_CAPTURE_CAPACITY = 1024;
+export const OLIPHAUNT_ERROR_CAPTURE_SIZE = 4 + OLIPHAUNT_ERROR_CAPTURE_CAPACITY;
 
 const textEncoder = new TextEncoder();
 
@@ -85,6 +87,28 @@ export function packRestoreOptionsPointers(
 
 export function responseBuffer(): Uint8Array {
   return new Uint8Array(OLIPHAUNT_RESPONSE_SIZE);
+}
+
+export function errorCaptureBuffer(): Uint8Array {
+  return new Uint8Array(OLIPHAUNT_ERROR_CAPTURE_SIZE);
+}
+
+export function readErrorCapture(capture: Uint8Array): string | null {
+  if (capture.byteLength !== OLIPHAUNT_ERROR_CAPTURE_SIZE) {
+    return 'native liboliphaunt returned an invalid error capture';
+  }
+  const length = new DataView(capture.buffer, capture.byteOffset, capture.byteLength).getUint32(
+    0,
+    true,
+  );
+  if (
+    length >= OLIPHAUNT_ERROR_CAPTURE_CAPACITY ||
+    capture[4 + length] !== 0 ||
+    capture.subarray(4, 4 + length).includes(0)
+  ) {
+    return 'native liboliphaunt returned an invalid error capture';
+  }
+  return length === 0 ? null : new TextDecoder().decode(capture.subarray(4, 4 + length));
 }
 
 export function readResponsePointer(response: Uint8Array): bigint {

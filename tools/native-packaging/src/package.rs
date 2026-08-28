@@ -169,7 +169,7 @@ fn prune_built_in_extension_data_files(
         .iter()
         .flat_map(|extension| extension.data_files.iter().cloned())
         .collect::<BTreeSet<_>>();
-    for extension in Extension::ALL_PG18_SUPPORTED {
+    for extension in Extension::ALL {
         for relative in catalog::for_extension(*extension)
             .runtime_share_data_files
             .iter()
@@ -201,7 +201,7 @@ fn prune_built_in_extension_module_files(
             selected_modules.insert(module.clone());
         }
     }
-    for extension in Extension::ALL_PG18_SUPPORTED {
+    for extension in Extension::ALL {
         let Some(stem) = catalog::for_extension(*extension)
             .native_module_stem
             .as_deref()

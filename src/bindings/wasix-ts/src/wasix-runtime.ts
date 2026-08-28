@@ -1,11 +1,9 @@
 import type { WasixDirectoryMount, WasixRuntimeLayout } from './archive.js';
 import { WasixStorageError } from './errors.js';
-import type { PreparedWasixRuntime } from './extensions.js';
 import type { Directory } from './host/index.mjs';
 import { simpleQuery } from './protocol.js';
 import { assertSuccessfulQueryResponse, PostgresError } from './query.js';
 import type { SerializedOpenOptions } from './rpc.js';
-import type { WasixStorageLease } from './storage-provider.js';
 
 let compiledModuleCache: { sha256: string; module: Promise<WebAssembly.Module> } | undefined;
 
@@ -232,20 +230,13 @@ export function composeLifecycleFailure(primary: Error, label: string, secondary
   return new Error(message, { cause });
 }
 
-/** @internal Complete extension and role setup after the direct bridge reaches ReadyForQuery. */
+/** @internal Apply caller role after the direct bridge reaches ReadyForQuery. */
 export async function configureWasixDatabase(
   options: SerializedOpenOptions,
-  prepared: PreparedWasixRuntime,
-  storageState: WasixStorageLease['state'],
   exec: (input: Uint8Array) => Promise<Uint8Array>,
 ): Promise<void> {
-  // Imported carrier install contracts own extension lifecycle. Activate them
-  // while the fixed bootstrap superuser is selected, then apply the caller's role.
-  if (storageState === 'new') {
-    for (const sql of prepared.setupSql) {
-      assertSuccessfulQueryResponse(await exec(simpleQuery(sql)));
-    }
-  }
+  // Extension selection owns files and startup configuration only. Database-
+  // local CREATE EXTENSION/LOAD/schema/migration SQL remains application-owned.
   await configureWasixRole(options.username, exec);
 }
 

@@ -37,11 +37,11 @@ export const sdkSurfaces: SdkSurface[] = [
     install: 'cargo add oliphaunt',
     target: 'Tauri and native Rust desktop apps',
     startWith: 'Direct, broker, and server modes',
-    owns: 'Rust-native async APIs, helper processes, and desktop runtime selection.',
+    owns: 'Rust-native synchronous and explicit async APIs, helper processes, and desktop runtime selection.',
     modes: ['direct', 'broker', 'server'],
     verifyFirst: 'Run a direct query, then use broker or server when the documented target support fits.',
     guideOutcomes: [
-      'Open persistent or temporary storage from async Rust code.',
+      'Open persistent or temporary storage from the synchronous root or explicit async owner handle.',
       'Choose direct, broker, or server mode deliberately.',
       'Select exact extensions and keep backup/restore behind SDK APIs.',
     ],

@@ -13,11 +13,12 @@ mod root;
 pub(crate) use self::root::{PreparedNativeRoot, configure_native_tool_env, native_root_key};
 
 use self::ffi::{
-    ABI_VERSION, CONFIG_EXTERNAL_ROOT_LOCK, NativeConfig, NativeHandle, NativeResponse,
-    NativeRestoreOptions, NativeSymbols, path_to_cstring,
+    ABI_VERSION, CONFIG_EXTERNAL_ROOT_LOCK, NativeConfig, NativeErrorCapture, NativeHandle,
+    NativeResponse, NativeRestoreOptions, NativeSymbols, STREAM_CALLBACK_ABORTED_STATUS,
+    path_to_cstring,
 };
 use crate::config::{EngineMode, OpenConfig};
-use crate::engine::{EngineCancel, EngineSession, NativeRuntime};
+use crate::engine::{EngineCancel, EngineSession, NativeRuntime, ProtocolStreamOutcome};
 use crate::error::{Error, Result};
 use crate::extension::{Extension, required_shared_preload_libraries};
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
@@ -113,11 +114,10 @@ impl OliphauntRuntime {
             },
             len: bytes.len(),
         };
-        let rc = unsafe { (symbols.restore)(&options) };
+        let mut error = NativeErrorCapture::zeroed();
+        let rc = unsafe { (symbols.restore_with_error)(&options, &mut error) };
         if rc != 0 {
-            let message = symbols
-                .last_error_text(std::ptr::null_mut())
-                .unwrap_or_else(|| format!("oliphaunt_restore failed with status {rc}"));
+            let message = captured_native_error(&error, "oliphaunt_restore", rc);
             return Err(Error::Engine(format!(
                 "native liboliphaunt restore failed: {message}"
             )));
@@ -245,7 +245,7 @@ fn take_or_prepare_direct_root(
         let bound_root = existing.key.actual_root_key.display().to_string();
         *resident = Some(existing);
         return Err(Error::Engine(format!(
-            "native direct resident runtime is already bound to root {bound_root}; use .broker() or .open_server() for multiple roots in one process"
+            "native direct resident runtime is already bound to root {bound_root}; use .broker() or OliphauntServer::builder().start() for multiple roots in one process"
         )));
     }
     drop(resident);
@@ -436,11 +436,16 @@ impl OliphauntSession {
             startup_arg_count: startup_arg_ptrs.len(),
         };
         let mut handle = ptr::null_mut();
-        let rc = unsafe { (symbols.init)(&native_config, &mut handle) };
+        let mut error = NativeErrorCapture::zeroed();
+        let rc = unsafe { (symbols.init_with_error)(&native_config, &mut handle, &mut error) };
         if rc != 0 || handle.is_null() {
-            let message = symbols
-                .last_error_text(handle)
-                .unwrap_or_else(|| format!("oliphaunt_init failed with status {rc}"));
+            let message = error.error_text().unwrap_or_else(|| {
+                if rc == 0 {
+                    "oliphaunt_init returned a null handle".to_owned()
+                } else {
+                    format!("oliphaunt_init failed with status {rc}")
+                }
+            });
             return Err(DirectOpenFailure::after_native(
                 root,
                 Error::Engine(format!("native liboliphaunt init failed: {message}")),
@@ -472,12 +477,10 @@ impl OliphauntSession {
         if handle.is_null() {
             return Ok(());
         }
-        let rc = unsafe { (self.symbols.detach)(handle) };
+        let mut error = NativeErrorCapture::zeroed();
+        let rc = unsafe { (self.symbols.detach_with_error)(handle, &mut error) };
         if rc != 0 {
-            let message = self
-                .symbols
-                .last_error_text(handle)
-                .unwrap_or_else(|| format!("oliphaunt_detach failed with status {rc}"));
+            let message = captured_native_error(&error, "oliphaunt_detach", rc);
             return Err(Error::Engine(format!(
                 "native liboliphaunt detach failed: {message}"
             )));
@@ -532,15 +535,19 @@ impl EngineSession for OliphauntSession {
             data: ptr::null_mut(),
             len: 0,
         };
+        let mut error = NativeErrorCapture::zeroed();
         let rc = unsafe {
-            (self.symbols.exec_protocol)(handle, bytes.as_ptr(), bytes.len(), &mut response)
+            (self.symbols.exec_protocol_with_error)(
+                handle,
+                bytes.as_ptr(),
+                bytes.len(),
+                &mut response,
+                &mut error,
+            )
         };
         if rc != 0 {
             self.free_failed_response(&mut response);
-            let message = self
-                .symbols
-                .last_error_text(handle)
-                .unwrap_or_else(|| format!("oliphaunt_exec_protocol failed with status {rc}"));
+            let message = captured_native_error(&error, "oliphaunt_exec_protocol", rc);
             return Err(Error::Engine(format!(
                 "native liboliphaunt protocol execution failed: {message}"
             )));
@@ -555,14 +562,18 @@ impl EngineSession for OliphauntSession {
         &mut self,
         request: ProtocolRequest,
         on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
-    ) -> Result<()> {
-        let guard =
-            self.handle.handle.read().map_err(|_| {
-                Error::Engine("native liboliphaunt handle lock poisoned".to_owned())
-            })?;
+    ) -> ProtocolStreamOutcome {
+        let guard = match self.handle.handle.read() {
+            Ok(guard) => guard,
+            Err(_) => {
+                return ProtocolStreamOutcome::SessionStateUnknown(Error::Engine(
+                    "native liboliphaunt handle lock poisoned".to_owned(),
+                ));
+            }
+        };
         let handle = *guard;
         if handle.is_null() {
-            return Err(Error::EngineStopped);
+            return ProtocolStreamOutcome::SessionStateUnknown(Error::EngineStopped);
         }
 
         struct StreamContext<'a> {
@@ -610,34 +621,47 @@ impl EngineSession for OliphauntSession {
             on_chunk,
             error: None,
         };
+        let mut error = NativeErrorCapture::zeroed();
         let rc = unsafe {
-            (self.symbols.exec_protocol_raw_stream)(
+            (self.symbols.exec_protocol_raw_stream_with_error)(
                 handle,
                 bytes.as_ptr(),
                 bytes.len(),
                 stream_callback,
                 (&mut context as *mut StreamContext<'_>).cast(),
+                &mut error,
             )
         };
+        if rc == STREAM_CALLBACK_ABORTED_STATUS {
+            return match context.error {
+                Some(error) => ProtocolStreamOutcome::ReadyForQuery(Err(error)),
+                None => ProtocolStreamOutcome::SessionStateUnknown(Error::Engine(
+                    "native liboliphaunt reported a recovered callback abort without a callback error"
+                        .to_owned(),
+                )),
+            };
+        }
         if rc != 0 {
-            if let Some(error) = context.error {
-                return Err(error);
-            }
-            let message = self.symbols.last_error_text(handle).unwrap_or_else(|| {
-                format!("oliphaunt_exec_protocol_raw_stream failed with status {rc}")
-            });
-            return Err(Error::Engine(format!(
+            let message = captured_native_error(&error, "oliphaunt_exec_protocol_raw_stream", rc);
+            // Every non-sentinel failure is independently authoritative: it
+            // may have interrupted recovery and must not be masked by a
+            // callback error (or by the original panic retained by the
+            // blocking API).
+            return ProtocolStreamOutcome::SessionStateUnknown(Error::Engine(format!(
                 "native liboliphaunt protocol stream failed: {message}"
             )));
         }
-        Ok(())
+        if context.error.is_some() {
+            return ProtocolStreamOutcome::SessionStateUnknown(Error::Engine(
+                "native liboliphaunt reported stream success after rejecting its callback"
+                    .to_owned(),
+            ));
+        }
+        ProtocolStreamOutcome::ReadyForQuery(Ok(()))
     }
 
     #[cfg(feature = "__internal-broker-helper")]
     fn exec_simple_query(&mut self, sql: &str) -> Result<ProtocolResponse> {
-        let Some(exec_simple_query) = self.symbols.exec_simple_query else {
-            return self.exec_protocol_raw(ProtocolRequest::simple_query(sql)?);
-        };
         if sql.as_bytes().contains(&0) {
             return Err(Error::InvalidConfig(
                 "simple query contains an interior NUL byte".to_owned(),
@@ -655,20 +679,19 @@ impl EngineSession for OliphauntSession {
             data: ptr::null_mut(),
             len: 0,
         };
+        let mut error = NativeErrorCapture::zeroed();
         let rc = unsafe {
-            exec_simple_query(
+            (self.symbols.exec_simple_query_with_error)(
                 handle,
                 sql.as_ptr().cast::<c_char>(),
                 sql.len(),
                 &mut response,
+                &mut error,
             )
         };
         if rc != 0 {
             self.free_failed_response(&mut response);
-            let message = self
-                .symbols
-                .last_error_text(handle)
-                .unwrap_or_else(|| format!("oliphaunt_exec_simple_query failed with status {rc}"));
+            let message = captured_native_error(&error, "oliphaunt_exec_simple_query", rc);
             return Err(Error::Engine(format!(
                 "native liboliphaunt simple query failed: {message}"
             )));
@@ -689,13 +712,11 @@ impl EngineSession for OliphauntSession {
             data: ptr::null_mut(),
             len: 0,
         };
-        let rc = unsafe { (self.symbols.backup)(handle, &mut response) };
+        let mut error = NativeErrorCapture::zeroed();
+        let rc = unsafe { (self.symbols.backup_with_error)(handle, &mut response, &mut error) };
         if rc != 0 {
             self.free_failed_response(&mut response);
-            let message = self
-                .symbols
-                .last_error_text(handle)
-                .unwrap_or_else(|| format!("oliphaunt_backup failed with status {rc}"));
+            let message = captured_native_error(&error, "oliphaunt_backup", rc);
             return Err(Error::Engine(format!(
                 "native liboliphaunt physical backup failed: {message}"
             )));
@@ -706,6 +727,16 @@ impl EngineSession for OliphauntSession {
     fn close(&mut self) -> Result<()> {
         self.close_handle()
     }
+}
+
+fn captured_native_error(
+    capture: &NativeErrorCapture,
+    operation: &str,
+    status: std::ffi::c_int,
+) -> String {
+    capture
+        .error_text()
+        .unwrap_or_else(|| format!("{operation} failed with status {status}"))
 }
 
 impl Drop for OliphauntSession {
@@ -791,7 +822,7 @@ mod tests {
     #[test]
     fn direct_startup_args_include_required_preload_libraries_before_init() {
         let mut config = OpenConfig::direct("target/test-roots/native-direct-preload");
-        config.extensions = vec![Extension::PgTextsearch, Extension::PgTextsearch];
+        config.extensions = vec![Extension::PG_TEXTSEARCH, Extension::PG_TEXTSEARCH];
         let extensions = config.resolved_extensions().unwrap();
         let args = startup_args(&config, &extensions).unwrap();
         let args = args
@@ -812,7 +843,7 @@ mod tests {
     #[test]
     fn direct_startup_args_omit_preload_when_selected_extensions_do_not_require_it() {
         let config = OpenConfig::direct("target/test-roots/native-direct-no-preload");
-        let args = startup_args(&config, &[Extension::Vector]).unwrap();
+        let args = startup_args(&config, &[Extension::VECTOR]).unwrap();
         let args = args
             .iter()
             .map(|arg| arg.to_string_lossy().into_owned())

@@ -29,7 +29,7 @@ use oliphaunt::{Extension, Oliphaunt};
 # fn demo() -> oliphaunt::Result<()> {
 let mut db = Oliphaunt::builder()
     .direct()
-    .extension(Extension::Vector)
+    .extension(Extension::VECTOR)
     .open()?;
 
 db.execute("CREATE EXTENSION vector")?;
@@ -44,7 +44,8 @@ artifacts and their declared dependencies.
 ## Rust WASIX selection
 
 Enable the exact extension feature and pass its typed value to the WASIX
-builder:
+builder. The builder makes the artifact available; application migrations must
+still install database-local objects explicitly:
 
 ```toml
 [dependencies]
@@ -52,9 +53,10 @@ oliphaunt-wasix = { version = "0.1", features = ["extension-pgtap"] }
 ```
 
 ```rust
-use oliphaunt_wasix::{extensions::PGTAP, Oliphaunt};
+use oliphaunt_wasix::{Extension, Oliphaunt};
 
-let database = Oliphaunt::builder().extension(PGTAP).open()?;
+let mut database = Oliphaunt::builder().extension(Extension::PGTAP).open()?;
+database.execute("CREATE EXTENSION pgtap")?;
 ```
 
 ## Browser WASIX selection

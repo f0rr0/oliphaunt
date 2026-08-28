@@ -8,9 +8,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use flate2::read::GzDecoder;
 use oliphaunt::Extension;
 use oliphaunt_native_packaging::{
-    MobileStaticRegistryState, NativeExtensionArtifactIndexOptions,
+    Error, MobileStaticRegistryState, NativeExtensionArtifactIndexOptions,
     NativeExtensionArtifactIndexTrustRoot, NativePackagingMode, NativePrebuiltExtensionArtifact,
-    NativeRuntimeFeature, NativeRuntimeResourceOptions, build_native_runtime_resources,
+    NativeRuntimeFeature, NativeRuntimeResourceOptions, Result, build_native_runtime_resources,
     built_in_extension_catalog, list_prebuilt_extension_artifact_index_catalog,
     resolve_prebuilt_extension_artifacts_from_indexes,
 };
@@ -26,12 +26,12 @@ fn main() {
     }
 }
 
-fn run() -> oliphaunt::Result<()> {
+fn run() -> Result<()> {
     let args = PackageArgs::parse(env::args().skip(1))?;
     run_with_package_args(args)
 }
 
-fn run_with_package_args(args: PackageArgs) -> oliphaunt::Result<()> {
+fn run_with_package_args(args: PackageArgs) -> Result<()> {
     if args.help {
         print_help();
         return Ok(());
@@ -48,9 +48,9 @@ fn run_with_package_args(args: PackageArgs) -> oliphaunt::Result<()> {
         resolve_release_assets(&args)?;
         return Ok(());
     }
-    let output_dir = args.output_dir.ok_or_else(|| {
-        oliphaunt::Error::InvalidConfig("missing required --output <directory>".to_owned())
-    })?;
+    let output_dir = args
+        .output_dir
+        .ok_or_else(|| Error::InvalidConfig("missing required --output <directory>".to_owned()))?;
     let extension_target = args
         .extension_target
         .clone()
@@ -208,7 +208,7 @@ struct PackageArgs {
 }
 
 impl PackageArgs {
-    fn parse(args: impl IntoIterator<Item = String>) -> oliphaunt::Result<Self> {
+    fn parse(args: impl IntoIterator<Item = String>) -> Result<Self> {
         Self::parse_with_native_runtime_version(
             args,
             env::var("OLIPHAUNT_LIBOLIPHAUNT_VERSION")
@@ -220,7 +220,7 @@ impl PackageArgs {
     fn parse_with_native_runtime_version(
         args: impl IntoIterator<Item = String>,
         native_runtime_version: Option<String>,
-    ) -> oliphaunt::Result<Self> {
+    ) -> Result<Self> {
         let mut parsed = Self {
             output_dir: None,
             mode: NativePackagingMode::NativeDirect,
@@ -538,9 +538,7 @@ impl PackageArgs {
                     );
                 }
                 _ => {
-                    return Err(oliphaunt::Error::InvalidConfig(format!(
-                        "unknown argument '{arg}'"
-                    )));
+                    return Err(Error::InvalidConfig(format!("unknown argument '{arg}'")));
                 }
             }
         }
@@ -548,9 +546,9 @@ impl PackageArgs {
     }
 }
 
-fn resolve_release_assets(args: &PackageArgs) -> oliphaunt::Result<()> {
+fn resolve_release_assets(args: &PackageArgs) -> Result<()> {
     let version = args.liboliphaunt_version.as_deref().ok_or_else(|| {
-        oliphaunt::Error::InvalidConfig(
+        Error::InvalidConfig(
             "--resolve-release-assets requires --liboliphaunt-native-version <version>".to_owned(),
         )
     })?;
@@ -566,7 +564,7 @@ fn resolve_release_assets(args: &PackageArgs) -> oliphaunt::Result<()> {
         .unwrap_or_else(default_release_asset_cache_dir)
         .join(version);
     fs::create_dir_all(&cache_dir).map_err(|err| {
-        oliphaunt::Error::Engine(format!(
+        Error::Engine(format!(
             "create liboliphaunt release asset cache {}: {err}",
             cache_dir.display()
         ))
@@ -610,9 +608,9 @@ fn resolve_release_assets(args: &PackageArgs) -> oliphaunt::Result<()> {
     Ok(())
 }
 
-fn resolve_broker_release_assets(args: &PackageArgs) -> oliphaunt::Result<()> {
+fn resolve_broker_release_assets(args: &PackageArgs) -> Result<()> {
     let version = args.broker_version.as_deref().ok_or_else(|| {
-        oliphaunt::Error::InvalidConfig(
+        Error::InvalidConfig(
             "--resolve-broker-release-assets requires --broker-version <version>".to_owned(),
         )
     })?;
@@ -633,7 +631,7 @@ fn resolve_broker_release_assets(args: &PackageArgs) -> oliphaunt::Result<()> {
         .unwrap_or_else(default_broker_release_asset_cache_dir)
         .join(version);
     fs::create_dir_all(&cache_dir).map_err(|err| {
-        oliphaunt::Error::Engine(format!(
+        Error::Engine(format!(
             "create oliphaunt-broker release asset cache {}: {err}",
             cache_dir.display()
         ))
@@ -663,12 +661,12 @@ fn resolve_broker_release_assets(args: &PackageArgs) -> oliphaunt::Result<()> {
     Ok(())
 }
 
-fn validate_release_version(version: &str, product_label: &str) -> oliphaunt::Result<()> {
+fn validate_release_version(version: &str, product_label: &str) -> Result<()> {
     let valid = version
         .bytes()
         .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'));
     if !valid || version.is_empty() {
-        return Err(oliphaunt::Error::InvalidConfig(format!(
+        return Err(Error::InvalidConfig(format!(
             "invalid {product_label} release version '{version}'"
         )));
     }
@@ -727,7 +725,7 @@ fn default_broker_release_asset_target() -> String {
     .to_owned()
 }
 
-fn release_asset_names_for_target(version: &str, target: &str) -> oliphaunt::Result<Vec<String>> {
+fn release_asset_names_for_target(version: &str, target: &str) -> Result<Vec<String>> {
     let mut assets = Vec::new();
     match target {
         "macos-arm64" => {
@@ -775,7 +773,7 @@ fn release_asset_names_for_target(version: &str, target: &str) -> oliphaunt::Res
             ));
         }
         value => {
-            return Err(oliphaunt::Error::InvalidConfig(format!(
+            return Err(Error::InvalidConfig(format!(
                 "unsupported liboliphaunt release asset target '{value}'"
             )));
         }
@@ -783,7 +781,7 @@ fn release_asset_names_for_target(version: &str, target: &str) -> oliphaunt::Res
     Ok(assets)
 }
 
-fn runtime_carrier_asset_name(version: &str, target: &str) -> oliphaunt::Result<String> {
+fn runtime_carrier_asset_name(version: &str, target: &str) -> Result<String> {
     let name = match target {
         "macos-arm64" => format!("liboliphaunt-{version}-macos-arm64.tar.gz"),
         "linux-x64-gnu" => format!("liboliphaunt-{version}-linux-x64-gnu.tar.gz"),
@@ -796,7 +794,7 @@ fn runtime_carrier_asset_name(version: &str, target: &str) -> oliphaunt::Result<
             format!("liboliphaunt-{version}-runtime-resources-android-datum64.tar.gz")
         }
         value => {
-            return Err(oliphaunt::Error::InvalidConfig(format!(
+            return Err(Error::InvalidConfig(format!(
                 "unsupported liboliphaunt release asset target '{value}'"
             )));
         }
@@ -804,13 +802,13 @@ fn runtime_carrier_asset_name(version: &str, target: &str) -> oliphaunt::Result<
     Ok(name)
 }
 
-fn broker_release_asset_name_for_target(version: &str, target: &str) -> oliphaunt::Result<String> {
+fn broker_release_asset_name_for_target(version: &str, target: &str) -> Result<String> {
     match target {
         "macos-arm64" => Ok(format!("oliphaunt-broker-{version}-macos-arm64.tar.gz")),
         "linux-x64-gnu" => Ok(format!("oliphaunt-broker-{version}-linux-x64-gnu.tar.gz")),
         "linux-arm64-gnu" => Ok(format!("oliphaunt-broker-{version}-linux-arm64-gnu.tar.gz")),
         "windows-x64-msvc" => Ok(format!("oliphaunt-broker-{version}-windows-x64-msvc.zip")),
-        value => Err(oliphaunt::Error::InvalidConfig(format!(
+        value => Err(Error::InvalidConfig(format!(
             "unsupported oliphaunt-broker release asset target '{value}'"
         ))),
     }
@@ -821,9 +819,9 @@ fn download_release_asset(
     asset: &str,
     cache_dir: &Path,
     product_label: &str,
-) -> oliphaunt::Result<PathBuf> {
+) -> Result<PathBuf> {
     if asset.contains('/') || asset.contains('\\') || asset == "." || asset == ".." {
-        return Err(oliphaunt::Error::InvalidConfig(format!(
+        return Err(Error::InvalidConfig(format!(
             "release asset name must be a plain file name: {asset}"
         )));
     }
@@ -839,7 +837,7 @@ fn download_release_asset(
         return Err(error);
     }
     fs::rename(&tmp_path, &output).map_err(|err| {
-        oliphaunt::Error::Engine(format!(
+        Error::Engine(format!(
             "publish downloaded {product_label} release asset {} to {}: {err}",
             url,
             output.display()
@@ -848,11 +846,11 @@ fn download_release_asset(
     Ok(output)
 }
 
-fn download_release_asset_url(url: &str, output: &Path) -> oliphaunt::Result<()> {
+fn download_release_asset_url(url: &str, output: &Path) -> Result<()> {
     if let Some(path) = url.strip_prefix("file://") {
         let source = PathBuf::from(path);
         fs::copy(&source, output).map_err(|err| {
-            oliphaunt::Error::InvalidConfig(format!(
+            Error::InvalidConfig(format!(
                 "copy release asset URL {} to {}: {err}",
                 url,
                 output.display()
@@ -864,17 +862,17 @@ fn download_release_asset_url(url: &str, output: &Path) -> oliphaunt::Result<()>
 }
 
 #[cfg(feature = "extension-download")]
-fn download_release_asset_https_url(url: &str, output: &Path) -> oliphaunt::Result<()> {
+fn download_release_asset_https_url(url: &str, output: &Path) -> Result<()> {
     let response = ureq::get(url).call().map_err(|err| {
-        oliphaunt::Error::InvalidConfig(format!(
+        Error::InvalidConfig(format!(
             "download liboliphaunt release asset URL {url}: {err}"
         ))
     })?;
     let mut reader = response.into_reader();
     let mut file = File::create(output)
-        .map_err(|err| oliphaunt::Error::Engine(format!("create {}: {err}", output.display())))?;
+        .map_err(|err| Error::Engine(format!("create {}: {err}", output.display())))?;
     std::io::copy(&mut reader, &mut file).map_err(|err| {
-        oliphaunt::Error::Engine(format!(
+        Error::Engine(format!(
             "write downloaded liboliphaunt release asset URL {} to {}: {err}",
             url,
             output.display()
@@ -884,18 +882,15 @@ fn download_release_asset_https_url(url: &str, output: &Path) -> oliphaunt::Resu
 }
 
 #[cfg(not(feature = "extension-download"))]
-fn download_release_asset_https_url(url: &str, _output: &Path) -> oliphaunt::Result<()> {
-    Err(oliphaunt::Error::InvalidConfig(format!(
+fn download_release_asset_https_url(url: &str, _output: &Path) -> Result<()> {
+    Err(Error::InvalidConfig(format!(
         "liboliphaunt release asset URL {url} requires an oliphaunt-resources binary built with the extension-download feature"
     )))
 }
 
-fn parse_release_checksum_file(
-    path: &Path,
-    product_label: &str,
-) -> oliphaunt::Result<Vec<(String, String)>> {
+fn parse_release_checksum_file(path: &Path, product_label: &str) -> Result<Vec<(String, String)>> {
     let text = fs::read_to_string(path).map_err(|err| {
-        oliphaunt::Error::InvalidConfig(format!(
+        Error::InvalidConfig(format!(
             "read {product_label} release checksum file {}: {err}",
             path.display()
         ))
@@ -909,7 +904,7 @@ fn parse_release_checksum_file(
         let digest = parts.next().unwrap_or_default();
         let filename = parts.next().unwrap_or_default();
         if parts.next().is_some() || !filename.starts_with("./") {
-            return Err(oliphaunt::Error::InvalidConfig(format!(
+            return Err(Error::InvalidConfig(format!(
                 "malformed {product_label} release checksum line {} in {}: {line}",
                 index + 1,
                 path.display()
@@ -925,34 +920,33 @@ fn verify_release_asset_checksum(
     asset: &str,
     path: &Path,
     product_label: &str,
-) -> oliphaunt::Result<()> {
+) -> Result<()> {
     let expected = checksums
         .iter()
         .find_map(|(name, digest)| (name == asset).then_some(digest))
         .ok_or_else(|| {
-            oliphaunt::Error::InvalidConfig(format!(
+            Error::InvalidConfig(format!(
                 "{product_label} release checksum manifest does not cover {asset}"
             ))
         })?;
     let actual = sha256_file(path)?;
     if expected != &actual {
-        return Err(oliphaunt::Error::InvalidConfig(format!(
+        return Err(Error::InvalidConfig(format!(
             "{product_label} release asset checksum mismatch for {asset}: expected {expected}, got {actual}"
         )));
     }
     Ok(())
 }
 
-fn sha256_file(path: &Path) -> oliphaunt::Result<String> {
-    let mut file = File::open(path).map_err(|err| {
-        oliphaunt::Error::InvalidConfig(format!("open {}: {err}", path.display()))
-    })?;
+fn sha256_file(path: &Path) -> Result<String> {
+    let mut file = File::open(path)
+        .map_err(|err| Error::InvalidConfig(format!("open {}: {err}", path.display())))?;
     let mut digest = Sha256::new();
     let mut buffer = [0; 8192];
     loop {
-        let read = file.read(&mut buffer).map_err(|err| {
-            oliphaunt::Error::InvalidConfig(format!("hash {}: {err}", path.display()))
-        })?;
+        let read = file
+            .read(&mut buffer)
+            .map_err(|err| Error::InvalidConfig(format!("hash {}: {err}", path.display())))?;
         if read == 0 {
             break;
         }
@@ -965,29 +959,26 @@ fn extract_runtime_resources_archive(
     archive_path: &Path,
     output_dir: &Path,
     replace_existing: bool,
-) -> oliphaunt::Result<()> {
+) -> Result<()> {
     let resource_root = output_dir.join("oliphaunt");
     if resource_root.exists() {
         if !replace_existing {
-            return Err(oliphaunt::Error::InvalidConfig(format!(
+            return Err(Error::InvalidConfig(format!(
                 "runtime-resource output already exists at {}; pass --force to replace it",
                 resource_root.display()
             )));
         }
-        fs::remove_dir_all(&resource_root).map_err(|err| {
-            oliphaunt::Error::Engine(format!("remove {}: {err}", resource_root.display()))
-        })?;
+        fs::remove_dir_all(&resource_root)
+            .map_err(|err| Error::Engine(format!("remove {}: {err}", resource_root.display())))?;
     }
-    fs::create_dir_all(output_dir).map_err(|err| {
-        oliphaunt::Error::Engine(format!("create {}: {err}", output_dir.display()))
-    })?;
-    let file = File::open(archive_path).map_err(|err| {
-        oliphaunt::Error::InvalidConfig(format!("open {}: {err}", archive_path.display()))
-    })?;
+    fs::create_dir_all(output_dir)
+        .map_err(|err| Error::Engine(format!("create {}: {err}", output_dir.display())))?;
+    let file = File::open(archive_path)
+        .map_err(|err| Error::InvalidConfig(format!("open {}: {err}", archive_path.display())))?;
     let decoder = GzDecoder::new(file);
     let mut archive = tar::Archive::new(decoder);
     archive.unpack(output_dir).map_err(|err| {
-        oliphaunt::Error::InvalidConfig(format!(
+        Error::InvalidConfig(format!(
             "extract liboliphaunt runtime resources {} into {}: {err}",
             archive_path.display(),
             output_dir.display()
@@ -1000,7 +991,7 @@ fn extract_native_runtime_archive(
     archive_path: &Path,
     output_dir: &Path,
     replace_existing: bool,
-) -> oliphaunt::Result<()> {
+) -> Result<()> {
     prepare_archive_output_dir(output_dir, replace_existing, "liboliphaunt")?;
     if archive_path
         .file_name()
@@ -1011,7 +1002,7 @@ fn extract_native_runtime_archive(
     } else if archive_path.extension().and_then(|value| value.to_str()) == Some("zip") {
         extract_zip_archive(archive_path, output_dir, "liboliphaunt")
     } else {
-        Err(oliphaunt::Error::InvalidConfig(format!(
+        Err(Error::InvalidConfig(format!(
             "unsupported liboliphaunt runtime archive {}",
             archive_path.display()
         )))
@@ -1022,7 +1013,7 @@ fn extract_broker_release_archive(
     archive_path: &Path,
     output_dir: &Path,
     replace_existing: bool,
-) -> oliphaunt::Result<()> {
+) -> Result<()> {
     prepare_archive_output_dir(output_dir, replace_existing, "oliphaunt-broker")?;
     if archive_path
         .file_name()
@@ -1033,7 +1024,7 @@ fn extract_broker_release_archive(
     } else if archive_path.extension().and_then(|value| value.to_str()) == Some("zip") {
         extract_zip_archive(archive_path, output_dir, "oliphaunt-broker")?;
     } else {
-        return Err(oliphaunt::Error::InvalidConfig(format!(
+        return Err(Error::InvalidConfig(format!(
             "unsupported oliphaunt-broker release archive {}",
             archive_path.display()
         )));
@@ -1045,46 +1036,40 @@ fn prepare_archive_output_dir(
     output_dir: &Path,
     replace_existing: bool,
     product_label: &str,
-) -> oliphaunt::Result<()> {
+) -> Result<()> {
     if output_dir.exists() {
         let has_entries = fs::read_dir(output_dir)
-            .map_err(|err| {
-                oliphaunt::Error::Engine(format!("read {}: {err}", output_dir.display()))
-            })?
+            .map_err(|err| Error::Engine(format!("read {}: {err}", output_dir.display())))?
             .next()
             .transpose()
-            .map_err(|err| {
-                oliphaunt::Error::Engine(format!("read {}: {err}", output_dir.display()))
-            })?
+            .map_err(|err| Error::Engine(format!("read {}: {err}", output_dir.display())))?
             .is_some();
         if has_entries {
             if !replace_existing {
-                return Err(oliphaunt::Error::InvalidConfig(format!(
+                return Err(Error::InvalidConfig(format!(
                     "{product_label} release output already exists at {}; pass --force to replace it",
                     output_dir.display()
                 )));
             }
-            fs::remove_dir_all(output_dir).map_err(|err| {
-                oliphaunt::Error::Engine(format!("remove {}: {err}", output_dir.display()))
-            })?;
+            fs::remove_dir_all(output_dir)
+                .map_err(|err| Error::Engine(format!("remove {}: {err}", output_dir.display())))?;
         }
     }
     fs::create_dir_all(output_dir)
-        .map_err(|err| oliphaunt::Error::Engine(format!("create {}: {err}", output_dir.display())))
+        .map_err(|err| Error::Engine(format!("create {}: {err}", output_dir.display())))
 }
 
 fn extract_tar_gz_archive(
     archive_path: &Path,
     output_dir: &Path,
     product_label: &str,
-) -> oliphaunt::Result<()> {
-    let file = File::open(archive_path).map_err(|err| {
-        oliphaunt::Error::InvalidConfig(format!("open {}: {err}", archive_path.display()))
-    })?;
+) -> Result<()> {
+    let file = File::open(archive_path)
+        .map_err(|err| Error::InvalidConfig(format!("open {}: {err}", archive_path.display())))?;
     let decoder = GzDecoder::new(file);
     let mut archive = tar::Archive::new(decoder);
     archive.unpack(output_dir).map_err(|err| {
-        oliphaunt::Error::InvalidConfig(format!(
+        Error::InvalidConfig(format!(
             "extract {product_label} release archive {} into {}: {err}",
             archive_path.display(),
             output_dir.display()
@@ -1092,51 +1077,42 @@ fn extract_tar_gz_archive(
     })
 }
 
-fn extract_zip_archive(
-    archive_path: &Path,
-    output_dir: &Path,
-    product_label: &str,
-) -> oliphaunt::Result<()> {
-    let file = File::open(archive_path).map_err(|err| {
-        oliphaunt::Error::InvalidConfig(format!("open {}: {err}", archive_path.display()))
-    })?;
+fn extract_zip_archive(archive_path: &Path, output_dir: &Path, product_label: &str) -> Result<()> {
+    let file = File::open(archive_path)
+        .map_err(|err| Error::InvalidConfig(format!("open {}: {err}", archive_path.display())))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|err| {
-        oliphaunt::Error::InvalidConfig(format!(
+        Error::InvalidConfig(format!(
             "open {product_label} release zip archive {}: {err}",
             archive_path.display()
         ))
     })?;
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).map_err(|err| {
-            oliphaunt::Error::InvalidConfig(format!(
+            Error::InvalidConfig(format!(
                 "read {product_label} release zip entry {index} from {}: {err}",
                 archive_path.display()
             ))
         })?;
         let enclosed = entry.enclosed_name().ok_or_else(|| {
-            oliphaunt::Error::InvalidConfig(format!(
+            Error::InvalidConfig(format!(
                 "{product_label} release zip entry {} is not safely relative",
                 entry.name()
             ))
         })?;
         let output_path = output_dir.join(enclosed);
         if entry.is_dir() {
-            fs::create_dir_all(&output_path).map_err(|err| {
-                oliphaunt::Error::Engine(format!("create {}: {err}", output_path.display()))
-            })?;
+            fs::create_dir_all(&output_path)
+                .map_err(|err| Error::Engine(format!("create {}: {err}", output_path.display())))?;
             continue;
         }
         if let Some(parent) = output_path.parent() {
-            fs::create_dir_all(parent).map_err(|err| {
-                oliphaunt::Error::Engine(format!("create {}: {err}", parent.display()))
-            })?;
+            fs::create_dir_all(parent)
+                .map_err(|err| Error::Engine(format!("create {}: {err}", parent.display())))?;
         }
-        let mut output = File::create(&output_path).map_err(|err| {
-            oliphaunt::Error::Engine(format!("create {}: {err}", output_path.display()))
-        })?;
-        std::io::copy(&mut entry, &mut output).map_err(|err| {
-            oliphaunt::Error::Engine(format!("extract {}: {err}", output_path.display()))
-        })?;
+        let mut output = File::create(&output_path)
+            .map_err(|err| Error::Engine(format!("create {}: {err}", output_path.display())))?;
+        std::io::copy(&mut entry, &mut output)
+            .map_err(|err| Error::Engine(format!("extract {}: {err}", output_path.display())))?;
     }
     Ok(())
 }
@@ -1148,7 +1124,7 @@ fn unique_timestamp_suffix() -> String {
         .unwrap_or_else(|_| "0".to_owned())
 }
 
-fn print_extension_catalog(args: &PackageArgs) -> oliphaunt::Result<()> {
+fn print_extension_catalog(args: &PackageArgs) -> Result<()> {
     println!(
         "sql_name\tpg_major\tcreates_extension\tnative_module_stem\tdependencies\tshared_preload\tdesktop_prebuilt\tmobile_prebuilt\tmobile_static_registry_required\tmobile_static_archive_targets\tdata_files\tartifact"
     );
@@ -1204,44 +1180,44 @@ fn empty_as_dash(value: &str) -> &str {
     if value.is_empty() { "-" } else { value }
 }
 
-fn next_value(args: &mut impl Iterator<Item = String>, flag: &str) -> oliphaunt::Result<String> {
+fn next_value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String> {
     args.next()
-        .ok_or_else(|| oliphaunt::Error::InvalidConfig(format!("{flag} requires a value")))
+        .ok_or_else(|| Error::InvalidConfig(format!("{flag} requires a value")))
 }
 
 fn value_without_prefix<'a>(value: &'a str, prefix: &str) -> &'a str {
     value.strip_prefix(prefix).expect("prefix was checked")
 }
 
-fn parse_key_value(value: &str) -> oliphaunt::Result<(String, String)> {
+fn parse_key_value(value: &str) -> Result<(String, String)> {
     let Some((key_id, hex)) = value.split_once(':') else {
-        return Err(oliphaunt::Error::InvalidConfig(
+        return Err(Error::InvalidConfig(
             "key values must use <key-id>:<hex-key>".to_owned(),
         ));
     };
     Ok((key_id.to_owned(), hex.trim().to_owned()))
 }
 
-fn read_key_file_value(value: &str) -> oliphaunt::Result<(String, String)> {
+fn read_key_file_value(value: &str) -> Result<(String, String)> {
     let Some((key_id, path)) = value.split_once(':') else {
-        return Err(oliphaunt::Error::InvalidConfig(
+        return Err(Error::InvalidConfig(
             "key file values must use <key-id>:<path>".to_owned(),
         ));
     };
     let text = fs::read_to_string(path).map_err(|err| {
-        oliphaunt::Error::InvalidConfig(format!(
+        Error::InvalidConfig(format!(
             "read trusted extension index key file {path}: {err}"
         ))
     })?;
     Ok((key_id.to_owned(), text.trim().to_owned()))
 }
 
-fn parse_mode(value: &str) -> oliphaunt::Result<NativePackagingMode> {
+fn parse_mode(value: &str) -> Result<NativePackagingMode> {
     match value {
         "native-direct" => Ok(NativePackagingMode::NativeDirect),
         "native-broker" => Ok(NativePackagingMode::NativeBroker),
         "native-server" => Ok(NativePackagingMode::NativeServer),
-        _ => Err(oliphaunt::Error::InvalidConfig(format!(
+        _ => Err(Error::InvalidConfig(format!(
             "unknown native runtime-resource mode '{value}'"
         ))),
     }
@@ -1253,20 +1229,17 @@ fn push_extension_names(target: &mut Vec<String>, value: &str) {
     }
 }
 
-fn push_runtime_feature_names(
-    target: &mut Vec<NativeRuntimeFeature>,
-    value: &str,
-) -> oliphaunt::Result<()> {
+fn push_runtime_feature_names(target: &mut Vec<NativeRuntimeFeature>, value: &str) -> Result<()> {
     for feature in split_csv(value) {
         target.push(parse_runtime_feature(feature)?);
     }
     Ok(())
 }
 
-fn parse_runtime_feature(value: &str) -> oliphaunt::Result<NativeRuntimeFeature> {
+fn parse_runtime_feature(value: &str) -> Result<NativeRuntimeFeature> {
     match value {
         "icu" => Ok(NativeRuntimeFeature::Icu),
-        _ => Err(oliphaunt::Error::InvalidConfig(format!(
+        _ => Err(Error::InvalidConfig(format!(
             "unknown native runtime feature '{value}'; supported values: icu"
         ))),
     }

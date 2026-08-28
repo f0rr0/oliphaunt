@@ -46,6 +46,19 @@ prepare_scratch_dir() {
   printf '%s\n' "$dir"
 }
 
+check_public_api_consumer() {
+  staged_package="$1"
+  consumer_package="$staged_package/Tests/PublicApiConsumer"
+  consumer_scratch="$(prepare_scratch_dir public-api-consumer)"
+  if [ "$(uname -s)" = "Linux" ]; then
+    run swift build --package-path "$consumer_package" \
+      --scratch-path "$consumer_scratch" -Xcc -D_GNU_SOURCE
+  else
+    run swift build --package-path "$consumer_package" \
+      --scratch-path "$consumer_scratch"
+  fi
+}
+
 require_archive_entry() {
   archive_listing="$1"
   entry="$2"
@@ -618,6 +631,7 @@ require swift
 require unzip
 require node
 require cc
+run sh "$package_dir/tools/test-c-bridge.sh"
 for product in COliphaunt Oliphaunt OliphauntExtensionSupport; do
   if ! grep -Fq ".library(name: \"$product\"" "$package_dir/Package.swift"; then
     echo "Swift base package must expose public consumer integration product $product" >&2
@@ -694,6 +708,7 @@ run "$root/tools/dev/bun.sh" \
   stage \
   "$archive_package_dir" \
   --profile source-sdk
+check_public_api_consumer "$archive_package_dir"
 swift_source_archive="$archive_work_dir/Oliphaunt-source.zip"
 run swift package --package-path "$archive_package_dir" archive-source --output "$swift_source_archive"
 run "$root/tools/dev/bun.sh" \
@@ -721,11 +736,15 @@ for required in \
   tools/render-extension-products.test-driver.mjs \
   tools/extension-resource-inventory.mjs \
   tools/extension-resource-inventory.test.mjs \
+  tools/bridge-mutex-init-failure.c \
+  tools/test-c-bridge.sh \
   tools/swift-carrier-resolver.mjs \
   tools/swift-carrier-resolver.test.mjs \
   Tests/Fixtures/swiftpm-extension-selection.json \
   Tests/Fixtures/swiftpm-extension-resources/pgtap/manifest.properties \
   Tests/Fixtures/swiftpm-extension-resources/pgtap/files/share/postgresql/extension/pgtap.control \
+  Tests/PublicApiConsumer/Package.swift \
+  Tests/PublicApiConsumer/Sources/OliphauntPublicApiConsumer/main.swift \
   Tests/OliphauntTests/ExtensionResourceCompositionTests.swift \
   Tests/OliphauntTests/OliphauntTests.swift \
   Tests/OliphauntTests/ProtocolFixtureTests.swift

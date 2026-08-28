@@ -79,6 +79,24 @@ handle, and lets the callback return without a later commit. Callback failure
 rolls back and a failed rollback poisons the database. COMMIT uncertainty is
 never followed by a misleading ROLLBACK.
 
+After a successful automatic rollback, the original callback value is rethrown
+unchanged. If the callback and rollback both fail, an `AggregateError` preserves
+the callback failure followed by the rollback failure. If an earlier independent
+database or protocol failure has already poisoned or expired transaction
+ownership and the callback then throws a different value, an `AggregateError`
+preserves the callback failure followed by that database failure; the database
+is close-only. An ordinary PostgreSQL statement error that remains safely
+rollbackable is not automatically aggregated.
+
+Raw protocol is database-only and deliberately absent from a callback
+transaction. Do not issue manual `BEGIN`, `START TRANSACTION`, `COMMIT`, `END`,
+`ABORT`, `PREPARE TRANSACTION`, or `AND CHAIN` inside the callback; return/throw
+or call `rollback()` instead. `SAVEPOINT` and `ROLLBACK TO` are supported.
+`ROLLBACK AND CHAIN` is unsupported contract misuse and has the same PostgreSQL
+wire tag/readiness state as `ROLLBACK TO`, so the SDK validates the actual wire
+boundary rather than parsing SQL. A proven ownership escape makes the database
+close-only and never causes a speculative SDK `COMMIT` or `ROLLBACK`.
+
 ## Backup and storage
 
 Backup has one representation: PostgreSQL physical initialization bytes.
@@ -106,7 +124,11 @@ work to the Swift or Kotlin SDK's serial native owner. No PostgreSQL, filesystem
 close, or invalidation work runs synchronously on the JavaScript, iOS main, or
 Android UI thread. Raw protocol streaming keeps one callback in flight: native
 production resumes only after the JavaScript callback returns, and a thrown
-callback error rejects the stream.
+callback error rejects the stream unchanged after native recovery reaches a
+known PostgreSQL protocol boundary. If execution, transport, or recovery also
+fails, that native failure is authoritative instead and poisons the database.
+The recovered callback-only case leaves the handle reusable; a buffered raw
+protocol rejection likewise poisons it because the session outcome is unknown.
 
 Module invalidation stops callback delivery to the retiring JSI runtime and
 schedules SDK close asynchronously. It does not wait synchronously for an open

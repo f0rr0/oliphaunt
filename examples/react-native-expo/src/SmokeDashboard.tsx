@@ -5,10 +5,10 @@ import {
   type QueryResult,
 } from '@oliphaunt/react-native';
 import {
-  GENERATED_EXTENSION_METADATA,
-  GENERATED_EXTENSION_METADATA_SHA256,
-} from '@oliphaunt/react-native/extension-metadata';
-import { GENERATED_MOBILE_EXTENSION_SMOKE } from './generated/extension-smoke';
+  GENERATED_MOBILE_EXTENSION_METADATA_SHA256,
+  GENERATED_MOBILE_EXTENSION_PLAN,
+  GENERATED_MOBILE_EXTENSION_SMOKE,
+} from './generated/extension-smoke';
 import {
   runMobileBindingProof,
   runMobileReleaseExtensionProof,
@@ -225,7 +225,7 @@ export default function HomeScreen() {
           activatedExtensions: extensionProofResult.activatedExtensions,
           extensionCatalogComplete: extensionProofResult.extensionCatalogComplete,
           pgTextsearchEnglishBm25: extensionProofResult.pgTextsearchEnglishBm25,
-          extensionCatalogSha256: GENERATED_EXTENSION_METADATA_SHA256,
+          extensionCatalogSha256: GENERATED_MOBILE_EXTENSION_METADATA_SHA256,
           catalogProfile: profileProof.catalogProfile,
           icuRuntimeProof: profileProof.catalogProfile === 'icu',
         });
@@ -521,7 +521,7 @@ function requiredPublicEnvironment(name: string, value: string | undefined): str
 }
 
 function mobileReleaseExtensionProofPlan() {
-  return GENERATED_EXTENSION_METADATA.map((extension) => {
+  return GENERATED_MOBILE_EXTENSION_PLAN.map((extension) => {
     const smokeStatements = (
       GENERATED_MOBILE_EXTENSION_SMOKE as Readonly<Record<string, readonly string[]>>
     )[extension.sqlName];

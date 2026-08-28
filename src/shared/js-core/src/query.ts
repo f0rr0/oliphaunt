@@ -584,8 +584,44 @@ export function responseTransactionStatus(value: object): TransactionStatus | un
  * physical PostgreSQL session reached a reusable boundary.
  */
 export function inspectReadyForQuery(bytes: Uint8Array): TransactionStatus {
+  return inspectResponseBoundary(bytes).status;
+}
+
+/**
+ * Validate a structured callback-transaction response before high-level
+ * parsing can discard earlier command tags after a later ErrorResponse.
+ */
+export function inspectManagedTransactionResponse(bytes: Uint8Array): TransactionStatus {
+  const boundary = inspectResponseBoundary(bytes);
+  if (boundary.status === 'idle') {
+    throw new Error(
+      'structured callback transaction operation ended PostgreSQL transaction ownership; close the database',
+    );
+  }
+  for (const rawTag of boundary.commandTags) {
+    const tag = rawTag;
+    if (
+      tag === 'BEGIN' ||
+      tag === 'START TRANSACTION' ||
+      tag === 'COMMIT' ||
+      tag === 'PREPARE TRANSACTION' ||
+      tag === 'COMMIT PREPARED' ||
+      tag === 'ROLLBACK PREPARED'
+    ) {
+      throw new Error(
+        `PostgreSQL command tag ${tag} violated callback transaction ownership; close the database`,
+      );
+    }
+  }
+  return boundary.status;
+}
+
+function inspectResponseBoundary(
+  bytes: Uint8Array,
+): Readonly<{ status: TransactionStatus; commandTags: string[] }> {
   const cursor = new ByteCursor(bytes);
   let status: TransactionStatus | undefined;
+  const commandTags: string[] = [];
   while (!cursor.isAtEnd()) {
     if (status !== undefined) {
       throw new Error('backend returned bytes after ReadyForQuery');
@@ -594,12 +630,17 @@ export function inspectReadyForQuery(bytes: Uint8Array): TransactionStatus {
     const length = cursor.readI32('backend message length');
     if (length < 4) throw new Error('invalid backend message length ' + length);
     const body = new ByteCursor(cursor.readBytes(length - 4, 'backend message body'));
-    if (tag === 0x5a) status = parseReadyForQuery(body);
+    if (tag === 0x43) {
+      commandTags.push(body.readCString('CommandComplete tag'));
+      body.requireEnd('CommandComplete');
+    } else if (tag === 0x5a) {
+      status = parseReadyForQuery(body);
+    }
   }
   if (status === undefined) {
     throw new Error('backend response ended before ReadyForQuery');
   }
-  return status;
+  return { status, commandTags };
 }
 
 export function parseQueryRawResponse(bytes: Uint8Array): RawQueryResult {

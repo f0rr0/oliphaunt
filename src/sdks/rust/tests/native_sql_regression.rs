@@ -4,8 +4,10 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use oliphaunt::worker::{Oliphaunt, OliphauntBuilder};
-use oliphaunt::{Error, QueryParam, Result};
+use oliphaunt::{
+    AsyncOliphaunt as Oliphaunt, AsyncOliphauntBuilder as OliphauntBuilder, AsyncOliphauntServer,
+    DatabaseStorage, Error, ErrorKind, QueryParam, Result, ServerListen,
+};
 use serde::Deserialize;
 
 mod support;
@@ -36,6 +38,36 @@ struct BehaviorAssertion {
     expected: String,
 }
 
+#[derive(Debug)]
+enum CallbackError {
+    Database(Error),
+    ApplicationFailure,
+}
+
+impl From<Error> for CallbackError {
+    fn from(error: Error) -> Self {
+        Self::Database(error)
+    }
+}
+
+impl std::fmt::Display for CallbackError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Database(error) => error.fmt(formatter),
+            Self::ApplicationFailure => formatter.write_str("application failure"),
+        }
+    }
+}
+
+impl std::error::Error for CallbackError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Database(error) => Some(error),
+            Self::ApplicationFailure => None,
+        }
+    }
+}
+
 #[test]
 fn native_postgres_types_errors_and_transaction_recovery_when_available() {
     if std::env::var_os("LIBOLIPHAUNT_PATH").is_none() {
@@ -43,45 +75,53 @@ fn native_postgres_types_errors_and_transaction_recovery_when_available() {
         return;
     }
 
-    run_embedded(Oliphaunt::builder().temporary_directory()).unwrap();
+    run_embedded(Oliphaunt::builder()).unwrap();
 
     if let Some(broker) = option_env!("CARGO_BIN_EXE_oliphaunt-broker")
         .map(str::to_owned)
         .or_else(|| std::env::var("OLIPHAUNT_BROKER").ok())
     {
-        run_embedded(
-            Oliphaunt::builder()
-                .temporary_directory()
-                .broker()
-                .broker_executable(broker),
-        )
-        .unwrap();
+        run_embedded(Oliphaunt::builder().broker().broker_executable(broker)).unwrap();
     } else {
         eprintln!("skipping native broker SQL regression: broker helper is unavailable");
     }
 
     let server_root = unique_root("server-sql-regression");
-    let server_result = (|| -> Result<()> {
-        let server = block_on(Oliphaunt::builder().directory(&server_root).open_server())?;
+    let server_result = (|| -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let server = block_on(
+            AsyncOliphauntServer::builder()
+                .storage(DatabaseStorage::Directory(server_root.clone()))
+                .listen(ServerListen::tcp())
+                .start(),
+        )?;
         assert!(!server.connection_string().is_empty());
-        let version =
-            block_on(server.query("SELECT current_setting('server_version_num') AS version"))?;
+        let version = support::external_raw_query(
+            server.connection_string(),
+            simple_query_request("SELECT current_setting('server_version_num') AS version"),
+        )?;
         assert!(
-            version
-                .get_text(0, "version")?
+            support::first_data_row_text_values(&version)
+                .first()
                 .is_some_and(|value| value.starts_with("18"))
         );
-        let chunks = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
-        let captured = Arc::clone(&chunks);
-        block_on(server.exec_protocol_raw_stream(
+        let copy = support::external_raw_query(
+            server.connection_string(),
             simple_query_request("COPY (SELECT 'server-stream') TO STDOUT"),
-            move |chunk| {
-                captured.lock().unwrap().push(chunk.to_vec());
-                Ok(())
-            },
-        ))?;
-        assert_streamed_copy_response(&chunks);
-        block_on(server.close())
+        )?;
+        assert!(
+            copy.contains(&b'H'),
+            "server response omitted CopyOutResponse"
+        );
+        assert!(copy.contains(&b'd'), "server response omitted CopyData");
+        assert!(
+            copy.contains(&b'C'),
+            "server response omitted CommandComplete"
+        );
+        assert!(
+            copy.contains(&b'Z'),
+            "server response omitted ReadyForQuery"
+        );
+        Ok(block_on(server.close())?)
     })();
     let _ = std::fs::remove_dir_all(server_root);
     server_result.unwrap();
@@ -101,9 +141,10 @@ fn run_embedded(builder: OliphauntBuilder) -> Result<()> {
         block_on(db.execute(statement))?;
     }
     let expected = block_on(db.execute(&contract.expected_error.sql)).unwrap_err();
-    let Error::Postgres(postgres) = expected else {
-        panic!("expected PostgreSQL behavior-contract error, got {expected:?}");
-    };
+    assert_eq!(expected.kind(), ErrorKind::Postgres);
+    let postgres = expected
+        .postgres_error()
+        .expect("PostgreSQL behavior-contract error has diagnostics");
     assert_eq!(
         postgres.sqlstate.as_deref(),
         Some(contract.expected_error.sqlstate.as_str())
@@ -132,9 +173,10 @@ fn run_embedded(builder: OliphauntBuilder) -> Result<()> {
         "INSERT INTO oliphaunt_contract.projects(slug, budget, labels, metadata, created_at) VALUES ('alpha', 1, ARRAY[]::text[], '{}', CURRENT_TIMESTAMP)",
     ))
     .unwrap_err();
-    let Error::Postgres(postgres) = duplicate else {
-        panic!("expected PostgreSQL duplicate-key error, got {duplicate:?}");
-    };
+    assert_eq!(duplicate.kind(), ErrorKind::Postgres);
+    let postgres = duplicate
+        .postgres_error()
+        .expect("PostgreSQL duplicate-key error has diagnostics");
     assert_eq!(postgres.sqlstate.as_deref(), Some("23505"));
 
     block_on(db.transaction(async |transaction| {
@@ -143,20 +185,17 @@ fn run_embedded(builder: OliphauntBuilder) -> Result<()> {
             .execute("INSERT INTO oliphaunt_contract.projects(slug, budget, labels, metadata, created_at) VALUES ('alpha', 1, ARRAY[]::text[], '{}', CURRENT_TIMESTAMP)")
             .await
             .unwrap_err();
-        assert!(matches!(duplicate, Error::Postgres(_)));
+        assert_eq!(duplicate.kind(), ErrorKind::Postgres);
+        assert_eq!(
+            duplicate
+                .postgres_error()
+                .and_then(|error| error.sqlstate.as_deref()),
+            Some("23505")
+        );
         transaction.execute("ROLLBACK TO SAVEPOINT before_duplicate").await?;
         transaction
             .execute("INSERT INTO oliphaunt_contract.projects(slug, budget, labels, metadata, created_at) VALUES ('saved', 1, ARRAY[]::text[], '{}', CURRENT_TIMESTAMP)")
             .await?;
-        let chunks = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
-        let captured = Arc::clone(&chunks);
-        transaction
-            .exec_protocol_raw_stream(simple_query_request("SELECT 'transaction-stream'"), move |chunk| {
-                captured.lock().unwrap().push(chunk.to_vec());
-                Ok(())
-            })
-            .await?;
-        assert!(!chunks.lock().unwrap().is_empty());
         Ok(())
     }))?;
 
@@ -164,10 +203,18 @@ fn run_embedded(builder: OliphauntBuilder) -> Result<()> {
         transaction
             .execute("INSERT INTO oliphaunt_contract.projects(slug, budget, labels, metadata, created_at) VALUES ('rolled-back', 1, ARRAY[]::text[], '{}', CURRENT_TIMESTAMP)")
             .await?;
-        Err::<(), _>(Error::Engine("application failure".to_owned()))
+        Err::<(), _>(CallbackError::ApplicationFailure)
     }))
     .unwrap_err();
-    assert_eq!(body_error, Error::Engine("application failure".to_owned()));
+    assert!(
+        matches!(
+            body_error.callback_error(),
+            Some(CallbackError::ApplicationFailure)
+        ),
+        "typed callback failure must remain intact: {body_error}"
+    );
+    assert!(body_error.database_error().is_none());
+    assert!(body_error.rollback_error().is_none());
 
     let count =
         block_on(db.query("SELECT count(*)::text AS count FROM oliphaunt_contract.projects"))?;
@@ -195,7 +242,6 @@ fn run_embedded(builder: OliphauntBuilder) -> Result<()> {
         simple_query_request("COPY (SELECT value FROM copy_probe ORDER BY id) TO STDOUT"),
         move |chunk| {
             captured.lock().unwrap().push(chunk.to_vec());
-            Ok(())
         },
     ))?;
     assert_streamed_copy_response(&chunks);

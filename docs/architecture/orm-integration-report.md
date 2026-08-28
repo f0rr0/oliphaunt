@@ -15,12 +15,12 @@ This report defines the work required for popular JavaScript and Rust
 PostgreSQL libraries to use Oliphaunt with minimal new concepts. It focuses on
 native direct topology, native broker topology, WASIX direct topology through
 caller-owned root or explicit Worker surfaces, and browser Worker execution.
-Native server mode and the concurrent WASIX
-postmaster are only compatibility baselines.
+Dedicated native and WASIX server modes, plus the concurrent WASIX postmaster,
+are compatibility baselines rather than socketless adapter implementations.
 
 ## Executive decision
 
-Oliphaunt should expose one reusable socketless JavaScript query core directly
+Oliphaunt exposes one reusable socketless JavaScript query core directly
 through every JavaScript database handle, not a separate public client layer or
 a different database driver for every ORM. The stable API now owns decoded and
 raw rows, PostgreSQL OID codecs, JavaScript parameter serialization, object and
@@ -45,17 +45,17 @@ The recommended order is:
 
 Rust has a different boundary. SQLx, Diesel, diesel-async, and SeaORM are
 tightly coupled to their PostgreSQL transports and row/value types. There is no
-small socketless adapter that preserves their normal APIs.
+small socketless adapter that preserves their normal APIs. Oliphaunt therefore
+keeps two honest products instead of making one handle pretend to be both:
 
-For Rust, Oliphaunt must make an explicit product choice:
-
-- If a local Unix socket or authenticated loopback socket is acceptable, expose
-  a one-session embedded PostgreSQL endpoint backed by direct, broker, or WASIX.
-  Stock SQLx, Diesel, diesel-async, and SeaORM can use it with pool size one
-  once endpoint conformance passes.
-- If `direct` strictly means no socket and no compatibility endpoint, advertise
-  the Oliphaunt Rust query API and a SeaQuery executor. Do not claim direct
-  SQLx, Diesel, or SeaORM compatibility.
+- Stock PostgreSQL Rust libraries use the dedicated `OliphauntServer` or
+  `AsyncOliphauntServer`, obtain its connection string, and own all client
+  connections through their ordinary APIs. Native server mode has independent
+  PostgreSQL sessions; the WASIX server owns one embedded backend and therefore
+  requires a pool size of one.
+- Strict socketless direct and broker applications use the Oliphaunt Rust query
+  API or a small SeaQuery executor. They do not claim direct SQLx, Diesel, or
+  SeaORM compatibility.
 
 A custom SQLx driver should not be built. A custom Diesel connection and a
 SeaORM proxy are possible research projects, but both have material API and
@@ -72,10 +72,10 @@ correctness limitations.
 | Browser host hardening | All socketless JavaScript ORMs in real applications | Explicit Worker path, transfer policy, bundler/COOP/COEP tests, persistence failure semantics | Treat as part of first-class browser support |
 | Multi-tab owner/proxy | Safe sharing of one persistent browser database identity | SharedWorker or leader election, transaction tokens, failover without write replay | Build after single-tab correctness; required before claiming multi-tab support |
 | Broker generation and operation IDs | Safe cache invalidation and race-free cancellation | Extend scheduler and broker control IPC | Build before prepared caches or `AbortSignal` claims |
-| One-session embedded PostgreSQL endpoint | Stock SQLx, Diesel, diesel-async, SeaORM, and tokio-postgres APIs | Extract the WASIX proxy state machine and add native direct/broker backends | Run a bounded spike, then make an explicit product decision |
-| `OliphauntSeaQueryExecutor` | Small, truly socketless Rust query-builder integration | Statement/value codecs over the existing direct API | Build independently of the endpoint decision |
+| Rust server qualification | Stock SQLx, Diesel, diesel-async, SeaORM, and tokio-postgres APIs | Exercise the existing dedicated native and WASIX server builders through connection strings | Add reproducible per-library suites; use pool size one on WASIX |
+| `OliphauntSeaQueryExecutor` | Small, truly socketless Rust query-builder integration | Statement/value codecs over the existing direct API | Build independently of server qualification |
 | Constrained `pg-compat` facade | Knex and TypeORM first; possibly Sequelize, Slonik, and Zapatos later | Single-session compatibility over the stable core, with any required lease kept adapter-private | Defer until the first three JavaScript integrations pass |
-| Duplex operation ABI | Interactive COPY, pull row streams, complete local endpoint behavior, and advanced client emulation | New C/Rust/broker/TypeScript/WASIX exchange path | Start only for a proven feature requirement |
+| Duplex operation ABI | Interactive COPY, pull row streams, and advanced socketless client emulation | New C/Rust/broker/TypeScript/WASIX exchange path | Start only for a proven feature requirement |
 
 Do not build a custom SQLx database implementation or a direct Prisma adapter.
 Do not put per-ORM SQL codecs, transaction schedulers, or browser ownership
@@ -97,8 +97,8 @@ and SeaORM are not durable repository evidence and are not used to support a
 compatibility claim. The in-tree WASIX Rust compatibility test currently proves
 only narrow tokio-postgres and SQLx paths. Until reproducible fixtures are
 checked in for the other libraries, none is an advertised integration. The
-existing endpoint tests do not validate a socketless path or the proposed
-cross-runtime one-session endpoint.
+existing server tests do not validate a socketless path and do not by
+themselves qualify an ORM's complete public API.
 
 ### Target outcome matrix
 
@@ -111,11 +111,17 @@ cross-runtime one-session endpoint.
 | Sequelize | Deferred | Deferred | Deferred | Not applicable | Only after full leased-client tests |
 | Prisma | No direct target | No direct target | No browser target | Not applicable | Use a standard endpoint |
 | `pg` / Postgres.js | No socketless target | No socketless target | No browser target | Not applicable | Use a standard endpoint |
-| SQLx | Endpoint only | Endpoint only | Not applicable | Narrow SQLx 0.8 smoke only; full endpoint suite pending | Shared one-client endpoint |
-| Diesel / diesel-async | Endpoint only | Endpoint only | Not applicable | Endpoint path is unvalidated | Shared one-client endpoint |
-| SeaORM | Endpoint; proxy research | Endpoint; proxy research | Not applicable | Endpoint path is unvalidated; proxy research only | Endpoint plus upstream proxy-v2 proposal |
-| tokio-postgres | Endpoint; in-memory research | Endpoint | Not applicable | Narrow endpoint smoke; full suite pending | `connect_raw` transport spike |
+| SQLx | No stock direct path; use native server | No stock broker path; use native server | Not applicable | Narrow SQLx 0.8 server smoke only; full suite pending | Qualify dedicated server products |
+| Diesel / diesel-async | No stock direct path; use native server | No stock broker path; use native server | Not applicable | Server path is unvalidated | Qualify dedicated server products |
+| SeaORM | No stock direct path; use native server; proxy research only | No stock broker path; use native server; proxy research only | Not applicable | Server path is unvalidated; proxy research only | Server qualification plus upstream proxy-v2 proposal |
+| tokio-postgres | No stock direct path; use native server; in-memory research only | No stock broker path; use native server | Not applicable | Narrow server smoke; full suite pending | Qualify server; optional `connect_raw` transport spike |
 | SeaQuery | Small direct executor | Same executor | Via JS/Wasm bridge only | Small direct executor | Statement/value codec integration |
+
+The matrix keeps its columns focused on socketless adapter work. Dedicated
+server mode is not an adapter: native server exposes ordinary independent
+PostgreSQL sessions, while the WASIX server exposes one connection at a time.
+Both still require the per-library public-API qualification described below;
+the connection string alone is not a compatibility claim.
 
 ## Runtime topology and hard boundaries
 
@@ -123,20 +129,24 @@ cross-runtime one-session endpoint.
 
 | Surface | Execution owner | Physical sessions | Relevant behavior |
 | --- | --- | ---: | --- |
-| Native Rust root | PostgreSQL or synchronous broker transport runs on the calling thread through an exclusive handle | One process-wide active direct instance and one serialized session | No scheduling hop; direct cancellation uses a separate `CancelHandle` |
-| Native Rust `worker` | The selected direct, broker, or server topology is retained on an SDK owner thread | One serialized session | Cloneable asynchronous handle with bounded ordered admission |
+| Native Rust `Oliphaunt` | Calls block the caller through an exclusive direct or broker handle; direct PostgreSQL uses liboliphaunt's backend pthread | One process-wide active direct instance and one serialized session per database handle | No SDK owner-queue hop; direct cancellation uses a separate `CancelHandle`; `Send + !Sync` |
+| Native Rust `AsyncOliphaunt` | The selected direct or broker topology is retained on an SDK owner thread | One serialized session | Cloneable `Send + Sync` asynchronous handle with bounded ordered admission |
 | Native TypeScript, Swift, Kotlin, and React Native | PostgreSQL runs behind each SDK/platform serial owner or async-work boundary | One process-wide active direct instance and one serialized session | No socket in direct mode; app-facing operations are async/main-safe. The lower-level C ABI remains synchronous |
-| Native broker | PostgreSQL runs in one SDK-owned helper per broker handle | One serialized session per helper | Same database API; a dead helper may be relaunched, losing all session state without a generation event today |
-| WASIX Rust root | The direct guest runs on the caller thread and is owned by an exclusive `&mut` handle | One synchronous session | No scheduling hop; no public cancellation |
-| WASIX Rust `worker` | PostgreSQL runs in the WASIX guest retained on an SDK owner thread | One serialized session | Async, cloneable handle; bounded ordered admission; no public cancellation |
+| Native broker | PostgreSQL runs in one SDK-owned helper per broker handle | One serialized session per helper | Same database API; helper loss permanently fails that handle, and recovery requires an explicit close plus a new open |
+| WASIX Rust `Oliphaunt` | The direct guest runs on the caller thread and is owned by an exclusive `&mut` handle | One synchronous session | No scheduling hop; `!Send + !Sync`; no public cancellation |
+| WASIX Rust `AsyncOliphaunt` | PostgreSQL runs in the WASIX guest retained on an SDK owner thread | One serialized session | Cloneable `Send + Sync` async handle; bounded ordered admission; no public cancellation |
 | WASIX TypeScript root | PostgreSQL guest work runs in the importing JavaScript realm | One serialized session | Promise-shaped loading/publication does not move synchronous guest CPU work off the caller realm |
 | WASIX TypeScript `/worker` | PostgreSQL runs in a package-owned module Worker/worker thread | One serialized session | Main-safe entry point; query bytes cross RPC; ORM logic remains in the caller realm |
-| WASIX lightweight endpoint | One embedded backend is exposed locally | One connected client at a time | Standard clients on Rust, Node, Bun, and Deno; no browser endpoint |
-| Native server / WASIX postmaster | Normal server/postmaster | Independent sessions | Standard ORM path; not the focus here |
+| WASIX Rust/TypeScript server | A dedicated server owner exposes one embedded backend locally | One connected client at a time | Standard clients on Rust, Node, Bun, and Deno; lifecycle/URI-only handle; no browser endpoint |
+| Native Rust/TypeScript server | A dedicated packaged PostgreSQL process | Independent sessions | Standard ORM path; lifecycle/URI-only handle; not the focus here |
+| WASIX postmaster | Normal postmaster product | Independent sessions | Concurrent server baseline, distinct from the embedded server facade |
 
 An SDK handle clone is not another connection. `Promise.all` may submit several
 operations, but the embedded session executes them serially. An adapter must
-not report a pool size above one or imply independent concurrent transactions.
+not report a pool size above one or imply independent concurrent transactions
+for a direct, broker, or single-backend WASIX database.
+Server handles are not database-handle clones: they expose only a connection
+string and lifecycle, and an ordinary PostgreSQL driver owns each connection.
 
 ### Consequences for every one-session embedded adapter
 
@@ -146,7 +156,7 @@ not report a pool size above one or imply independent concurrent transactions.
 | Transaction ownership | Database-level calls must not interleave with a callback transaction |
 | Session state | Temporary tables, `SET` values, advisory locks, and prepared statements belong to the one session |
 | ORM lifecycle | Borrowed handles are not closed by ORM shutdown; owned handles close exactly once |
-| Extensions | Native/WASIX artifacts are selected before open; later ORM SQL cannot install missing runtime code |
+| Extensions | Native/WASIX artifacts, dependencies, and preload settings are selected before open; selection never runs installation SQL, and later ORM SQL cannot materialize missing runtime code |
 | Programmatic tooling | Migrations can use the adapter; an external CLI cannot attach to a live browser or socketless process |
 | Persistence | WASIX publishes before resolving; a publication failure poisons the handle and is not an ordinary retryable SQL error |
 | Root ownership | A persistent identity has one provider owner; simultaneous cross-mode/cross-binding mutation is unsupported |
@@ -170,21 +180,19 @@ already return partial/no-readiness exchanges and drive multiple cycles.
 TypeScript still needs one serialization lease across those calls and must
 defer persistent publication until the final idle readiness boundary.
 
-This gives a clean staging decision:
+The implemented structured query core owns complete readiness cycles, inferred
+parameter description, and scheduling without exposing a session reservation
+or asking adapters to encode raw protocol. Cursors, interactive COPY, pull row
+streaming, complete socketless client emulation, and idle notifications still
+need the bidirectional protocol project below. Server-mode clients use ordinary
+PostgreSQL protocol instead.
 
-- Initial JavaScript query adapters whose exchanges finish at
-  `ReadyForQuery` need no PostgreSQL engine or C ABI work. They do need a
-  scheduler-level session reservation and a new raw-protocol encoder.
-- Native server-inferred parameter OIDs need a session reservation across two
-  complete readiness cycles, but not a partial-response ABI.
-- Native cursors, interactive COPY, a complete socket bridge, and idle
-  notifications need a bidirectional protocol pump.
-
-A stock Rust PostgreSQL client may issue `Flush`, pipeline work, or require
-several frontend/backend exchanges even for prepared queries. Therefore the
-embedded Rust endpoint must not inherit the JavaScript adapter's narrower
-no-ABI conclusion; its protocol needs are determined by the endpoint
-conformance suite.
+A future socketless Rust transport based on `tokio-postgres::connect_raw` may
+issue `Flush`, pipeline work, or require several frontend/backend exchanges
+even for prepared queries. It must not inherit the JavaScript adapter's narrower
+no-ABI conclusion; its protocol needs would be determined by its own
+conformance suite. The existing server products already speak ordinary
+PostgreSQL wire protocol and do not require that direct-handle experiment.
 
 The current callback stream is output transport, not an ORM row cursor. Native
 JavaScript direct callbacks execute synchronously, chunks need not align with
@@ -193,12 +201,9 @@ back to readiness.
 
 ## Shared JavaScript architecture
 
-> **Historical design evidence:** This section records the pressures that led
-> to the stable core API, but its proposed `@oliphaunt/query` package, additive
-> byte-oriented `query`, and public/session-host lease are superseded. The
-> implemented contract puts decoded `query`, byte-preserving `queryRaw`, and
-> callback ownership directly on each SDK; adapters may coordinate their own
-> private lease without adding one to the stable database surface.
+The stable SDKs own the reusable query contract directly. There is no separate
+`@oliphaunt/query` facade, compatibility readiness layer, or public session
+lease for an ORM to discover.
 
 The dependency flow should be:
 
@@ -215,169 +220,39 @@ exactly into the three JavaScript SDK packages by an enforced repository
 contract. `database.query()` is the decoded object/array operation;
 `database.queryRaw()` preserves the prior ordered byte-row result.
 
-### Historical proposed query-client surface (superseded)
-
-```ts
-type PostgresNotice = {
-  message: string;
-  severity?: string;
-  code?: string;
-  detail?: string;
-  hint?: string;
-};
-
-interface OliphauntProtocolHandle {
-  execProtocolRaw(input: Uint8Array): Promise<Uint8Array>;
-}
-
-interface OliphauntDatabaseLike extends OliphauntProtocolHandle {
-  transaction<T>(
-    callback: (tx: OliphauntProtocolHandle) => Promise<T> | T,
-  ): Promise<T>;
-  close(): Promise<void>;
-}
-
-type OliphauntQueryOptions = {
-  rowMode?: 'object' | 'array';
-  parsers?: Readonly<Record<number, (value: string) => unknown>>;
-  serializers?: Readonly<Record<number, (value: unknown) => string>>;
-  paramTypes?: readonly number[];
-  onNotice?: (notice: PostgresNotice) => void;
-};
-
-type OliphauntQueryResult<T> = {
-  rows: T[];
-  fields: Array<{ name: string; dataTypeID: number }>;
-  affectedRows?: number;
-  command?: string;
-  rowCount?: number;
-};
-
-interface OliphauntQueryable {
-  query<T>(
-    sql: string,
-    params?: readonly unknown[],
-    options?: OliphauntQueryOptions,
-  ): Promise<OliphauntQueryResult<T>>;
-
-  exec(
-    sql: string,
-    options?: OliphauntQueryOptions,
-  ): Promise<Array<OliphauntQueryResult<unknown>>>;
-}
-
-interface OliphauntQueryTransaction extends OliphauntQueryable {
-  rollback(): Promise<void>;
-  readonly closed: boolean;
-}
-
-interface OliphauntQueryClient extends OliphauntQueryable {
-
-  transaction<T>(
-    callback: (tx: OliphauntQueryTransaction) => Promise<T>,
-  ): Promise<T>;
-
-  refreshArrayTypes(): Promise<void>;
-  readonly ready: boolean;
-  readonly closed: boolean;
-  readonly waitReady: Promise<void>;
-  close(): Promise<void>;
-}
-
-function createQueryClient(
-  database: OliphauntDatabaseLike,
-  options?: {
-    ownership?: 'borrowed' | 'owned';
-    parsers?: Readonly<Record<number, (value: string) => unknown>>;
-    serializers?: Readonly<Record<number, (value: unknown) => string>>;
-    onNotice?: (notice: PostgresNotice) => void;
-  },
-): OliphauntQueryClient;
-```
-
-`borrowed` must be the default. A factory that opens Oliphaunt for the ORM can
-select `owned`. Construction is synchronous for compatibility with Drizzle,
-but bootstrap is not: `waitReady` owns catalog discovery, `ready` remains false
-until it finishes, and every query, execution, and transaction must await the
-same promise before touching the session.
-
-The structural host also needs a symbol-keyed, no-`BEGIN` session lease. Raw
-SDK operations queue behind that lease. The Kysely driver holds it from
-`acquireConnection()` through `releaseConnection()`, while the query client's
-callback transaction holds it across `BEGIN`, the callback, and the final
-`COMMIT` or `ROLLBACK`. The existing database callback transaction cannot
-serve as this primitive because it owns its own transaction boundaries.
-
-### Historical first query-client analysis: no PostgreSQL engine or C ABI work
-
-The first useful implementation can use complete raw protocol exchanges over a
-new scheduler/session lease:
-
-1. Convert ordinary JavaScript parameters into text, binary, or null values.
-2. Add a pure protocol encoder that can declare caller-supplied parameter OIDs
-   and select result formats. The existing `extendedQuery()` hard-codes zero
-   parameter OIDs and text results and cannot be reused unchanged.
-3. Use one unnamed `Parse + Bind + Describe + Execute + Sync` cycle when
-   generic preparation or explicit `paramTypes` is sufficient.
-4. When an OID-keyed serializer needs server inference, reserve the session and
-   use the two complete readiness cycles described below before binding.
-5. Decode each returned field using its `typeOid`, then produce object or array
-   rows and familiar result metadata.
-6. Implement callback transactions on the no-`BEGIN` lease, and use one
-   simple-query raw exchange for `exec()` while parsing every result set.
-
-This preserves the Kysely, Drizzle, and MikroORM contracts without changing the
-native C ABI. The complete adapter qualification still determines which custom
-and extension types are supported; generic preparation alone is only a
-built-in-type fallback, not a substitute for OID-aware serialization.
-
-Generic preparation should cover:
-
-- `null` and `undefined` as SQL null;
-- strings, finite numbers, booleans, and bigint;
-- `Date` as an ISO value;
-- `Uint8Array` and accepted byte views;
-- arrays as correctly escaped PostgreSQL array text;
-- acyclic plain records as JSON with a defined bigint policy.
-
-Never interpolate values into SQL. Unsupported class instances, cyclic
-structures, and unknown objects should fail before entering PostgreSQL rather
-than silently producing `[object Object]`. A `toPostgres(prepareValue)` hook is
-a node-postgres compatibility feature and belongs in the later `pg-compat`
-facade, not the base PGlite-shaped client.
-
 ### Type parsing and serialization
 
-Use a PGlite-compatible default profile because the target upstream adapters
-already account for it:
+Adapters consume Oliphaunt's precision-preserving defaults rather than mutating
+an instance-level PGlite registry:
 
 | PostgreSQL type | Default JavaScript value |
 | --- | --- |
 | bool | `boolean` |
 | int2, int4, OID, float4, float8 | `number` |
-| int8 | `number` inside the safe range, otherwise `bigint` |
+| int8 | Decimal string |
+| numeric | Decimal string |
 | JSON and JSONB | Parsed JavaScript value |
-| date, timestamp, timestamptz | `Date` |
+| date, time, timestamp, timestamptz, interval, UUID | String |
 | bytea | `Uint8Array` |
 | unknown/custom type | String |
 | arrays | Recursively parsed arrays |
 
-Per-query parsers override instance defaults. Drizzle depends on this to keep
-date, timestamp, timestamptz, interval, their arrays, and numeric-array OID
-`1231` as raw strings so its own column codecs remain authoritative.
+Immutable per-query OID decoders and encoders handle custom or extension types.
+Ambiguous JavaScript parameters are described and encoded while one scheduler
+operation retains the session. `undefined`, unsupported objects, incompatible
+OIDs, and silent `toString()` fallback are rejected. Explicit typed null, JSON,
+array, text, and binary wrappers remain the deterministic path. There is no
+mutable global or instance codec registry and no `refreshArrayTypes()` core
+method.
 
-At initialization, query `pg_catalog.pg_type` to map array OIDs to element OIDs.
-`refreshArrayTypes()` repeats that query after applications create enums or
-domains. Registries belong to a client instance, not mutable module-global
-state.
-
-Object row mode should document that later duplicate column names overwrite
-earlier names, as in common PostgreSQL JavaScript clients. Array row mode
-preserves every field and is required for Drizzle field mapping.
+Object row mode documents that later duplicate column names overwrite earlier
+names, as in common PostgreSQL JavaScript clients. Array and raw row modes
+preserve every field and are available for ORM field mapping.
 
 ### Errors, notices, transactions, and lifecycle
 
-Preserve existing `PostgresError` properties and add familiar aliases:
+Adapters preserve existing `PostgresError` properties and may project familiar
+aliases at their own compatibility boundary:
 
 | Oliphaunt property | Compatibility alias |
 | --- | --- |
@@ -393,67 +268,28 @@ while parsing it; triggers, functions, and extensions can make self-generated
 notifications useful. Continuous idle listener semantics are impossible today
 because native has no backend read/poll operation when no request is active.
 
-The transaction wrapper should expose `closed` and explicit rollback.
-`tx.rollback()` should resolve, mark the transaction closed, and suppress the
-outer `COMMIT`. Kysely normally requests rollback by rejecting its deferred
-callback instead. The shared state machine must support both paths without a
-double rollback or trailing `COMMIT`.
+The core transaction already exposes closed state and explicit rollback.
+Rollback marks the handle closed and suppresses outer commit; callback failure
+settles rollback before preserving the callback error. Managed callbacks expose
+no raw protocol. Exact backend command tags and terminal readiness enforce
+ownership without lexing SQL, so adapters must use callback return/failure,
+explicit rollback, and savepoints rather than manual lifecycle SQL.
 
 ### Full-fidelity parameter inference
 
-Build the complete-cycle session reservation before the first adapters. It is
-both the Kysely connection primitive and the basis of parameter inference:
-
-```ts
-const QUERY_HOST = Symbol.for('@oliphaunt/query-host/v1');
-
-interface QueryHost {
-  acquire(): Promise<ExclusiveWire>;
-}
-
-interface ExclusiveWire {
-  exchange(
-    request: Uint8Array,
-    boundary: 'intermediate' | 'operation',
-  ): Promise<Uint8Array>;
-  release(): Promise<void>;
-}
-```
-
-Within one native reservation:
-
-1. Send named `Parse + Describe(statement) + Sync`.
-2. Read inferred parameter OIDs.
-3. Serialize values using per-query or registered OID serializers.
-4. Send `Bind + Describe(portal) + Execute + Sync`.
-5. Best-effort close the statement at a known boundary.
-
-Use collision-free transient names. If extended-protocol execution fails,
-recover with `Sync`, drain through `ReadyForQuery`, then attempt cleanup. If
-recovery cannot be proven, poison the handle rather than leaking an ambiguous
-statement/session state.
-
-Native direct and broker need scheduler/session work only; each exchange still
-finishes at readiness. WASIX can use its partial exchange support, but the
-TypeScript binding must hold one serialization slot and publish persistence
-at the final idle `ReadyForQuery`. After an error before `Sync`, it must send
-`Sync` and drain to readiness or poison the handle. Reservation release must
-publish committed autocommit work even when the exclusive callback later
-throws.
-
-If an adapter owns and hides the database handle, its own mutex can provide the
-reservation. A host reservation is still preferable for borrowed handles
-because a raw SDK call or another adapter must not replace a statement between
-exchanges.
+The implemented query operation owns its Parse/Describe/Bind cycle and never
+exposes an intermediate lease. It resolves parameter OIDs, applies immutable
+per-query encoders, binds, executes, and recovers through readiness before the
+scheduler admits another caller. An adapter passes values and codecs through
+this public structured API rather than constructing raw protocol or reaching
+for a private host symbol.
 
 Do not add a statement cache initially. Schema changes, `search_path`, role
-changes, custom types, and broker replacement create invalidation rules. Broker
-must expose a generation/reset event before caching is safe; until then, a
-restart can silently destroy prepared statements, temp state, and settings.
-After a broker generation change, invalidate caches and surface the reset until
-the client has an explicit, proven session-reinitialization contract. Do not
-silently retry on SQLSTATE `26000`: replacement also loses `search_path`, role
-state, temp objects, advisory locks, and transaction context, so even a
+changes, custom types, and lifecycle boundaries all require invalidation rules.
+Broker helper loss permanently fails the current database handle; discard every
+cache with that handle and require an explicit new open. Do not silently retry
+on SQLSTATE `26000` or after helper loss: a new session also loses `search_path`,
+role state, temp objects, advisory locks, and transaction context, so even a
 pre-execute retry can change semantics.
 
 ## JavaScript ORM integrations
@@ -481,8 +317,10 @@ Kysely has a public dialect/driver extension and a built-in PGlite driver since
 - object rows;
 - `query(sql, parameters, { rowMode: 'object' })`;
 - `affectedRows` converted to bigint;
-- an acquired session held from Kysely connection acquisition through release,
-  with transaction boundaries controlled by the Kysely driver;
+- an adapter-private connection lease held from Kysely acquisition through
+  release; a Kysely transaction enters one Oliphaunt callback transaction and
+  routes that transaction's queries until commit/rollback is signalled, rather
+  than sending manual lifecycle SQL;
 - a client/leader-scoped migration mutex because separate migrators or tabs can
   otherwise interleave a multi-query migration;
 - explicit rejection of streaming.
@@ -501,9 +339,9 @@ const db = new Kysely<AppDatabase>({
 ```
 
 Reuse Kysely's PostgreSQL compiler, adapter, and introspector; implement only
-the driver and connection. A proof may pass the shared client to Kysely's
-structural `PGliteDialect`. The supported API should use Oliphaunt vocabulary
-and explicit ownership.
+the driver and connection. The supported API should use Oliphaunt vocabulary,
+explicit ownership, and the core callback-transaction boundary instead of
+claiming that the database structurally implements `PGliteInterface`.
 
 Initial support:
 
@@ -557,7 +395,7 @@ Initial support:
 Drizzle Kit cannot attach to a database living inside a browser page or a
 socketless native handle. `generate` remains offline, and generated migrations
 can run programmatically against the adapter. `push`, `introspect`, Studio, and
-CLI migration execution require a temporary PostgreSQL endpoint or a future
+CLI migration execution require Oliphaunt server mode or a future
 Drizzle Kit custom driver. In browsers, bundle generated migration SQL and
 apply it programmatically.
 
@@ -601,8 +439,8 @@ Implement `OliphauntConnection.createKyselyDialect()` and reuse
 `OliphauntDialect`. `executeDump()` calls the shared multi-result `exec()`.
 
 One direct handle is already attached to one PostgreSQL database. MikroORM
-database-create/drop workflows that close, recreate, or switch a PGlite data
-directory need an owned-root factory or must be unsupported. Ordinary schema
+database-create/drop workflows that close, recreate, or switch a physical
+database identity need an owned-root factory or must be unsupported. Ordinary schema
 generation and migrations within the selected database are in scope.
 
 ### Later single-session pg compatibility
@@ -634,9 +472,11 @@ story are a separate product.
 
 TypeORM may automatically issue `CREATE EXTENSION` for UUID generation, citext,
 hstore, PostGIS, cube, ltree, vector, and `btree_gist`. Users must preselect the
-matching Oliphaunt carrier before open or set `installExtensions: false` where
-the TypeORM API allows it. Knex and TypeORM stream APIs depend on
-`pg-query-stream` and must be rejected until true row streaming exists. If
+matching Oliphaunt carrier before open; that selection supplies runtime code but
+does not run TypeORM's database-local SQL. Set `installExtensions: false` only
+when application migrations own the equivalent installation. Knex and TypeORM
+stream APIs depend on `pg-query-stream` and must be rejected until true row
+streaming exists. If
 Sequelize is added later, reject `TransactionNestMode.separate`; only reuse and
 savepoint nesting can fit one physical session.
 
@@ -720,8 +560,9 @@ Broker-specific conformance must cover:
 - failure during an ordinary query;
 - helper loss before, during, and after `COMMIT`;
 - no transaction replay when outcome is unknown;
-- a generation/reset signal after transparent helper replacement;
-- prepared/type cache invalidation and loss of temp/session state;
+- permanent handle failure after helper loss, with no transparent replacement;
+- prepared/type cache disposal and documented loss of temp/session state on the
+  caller's explicit reopen;
 - cancellation on the separately authenticated cancel endpoint;
 - close while work is queued or streaming;
 - root-lock conflicts;
@@ -746,72 +587,45 @@ SQLx, Diesel, diesel-async, and SeaORM are not analogous to Kysely or Drizzle.
 Their connection, row, value, statement, error, transaction, and pool
 implementations are concrete library components.
 
-The lowest-risk way to preserve their APIs is a single-session embedded wire
-endpoint. It is not a concurrent postmaster and need not launch a `postgres`
-server process. It lends the embedded backend to one ordinary PostgreSQL client.
+The lowest-risk way to preserve their APIs is the already separate server
+product. It must not be opened through a database handle: that would make
+ownership, pooling, cancellation, and close look as though one privileged SDK
+session controlled independent client sessions.
 
-Suggested API:
+```rust,ignore
+use oliphaunt::AsyncOliphauntServer;
+use sqlx::postgres::PgPoolOptions;
 
-```rust
-let mut database = Oliphaunt::builder()
-    .directory(path)
-    .direct()
-    .open()?;
-
-let endpoint = database.open_pgwire_endpoint()?;
-assert_eq!(endpoint.max_connections(), 1);
-
+let server = AsyncOliphauntServer::builder().start().await?;
 let pool = PgPoolOptions::new()
-    .max_connections(1)
-    .connect(endpoint.connection_string())
+    .connect(server.connection_string())
     .await?;
 ```
 
-While the endpoint owns the session, direct SDK queries return a pinned/busy
-error. Prefer a mode-0700 Unix socket on Unix and authenticated IPv4 loopback
-on Windows/WASIX. The completed endpoint should reject a second ordinary
-connection immediately with SQLSTATE `53300`; the current WASIX sequential
-listener instead leaves additional clients waiting.
+The server handle exposes only `connection_string`, `is_closed`, and `close`.
+The pool owns SQL, transactions, cancellation, and connection lifecycle. Native
+server mode runs packaged PostgreSQL with independent sessions, so its pool
+size follows the application's workload. The WASIX server exposes one embedded
+backend, so downstream pools must set their maximum to one and concurrent
+connection rejection, disconnect reset, COPY, TLS/GSS refusal, and cancellation
+limits must remain explicit in its qualification evidence.
 
-On disconnect, first cancel and drain through `ReadyForQuery`, then run
-`ROLLBACK` and `DISCARD ALL` before admitting another client. If recovery fails
-or the client disconnected during COPY, discard and reopen the backend session.
-Endpoint close waits for client shutdown, and a broker crash invalidates
-connections without retrying a transaction.
-
-The WASIX Rust endpoint already implements much of the framing and reset
-behavior. Extract startup, TLS/GSS refusal, one-client admission, batching,
-COPY handoff, and reset into a platform-neutral state machine with adapters for:
-
-- WASIX `BackendSession`;
-- a pinned native direct session;
-- the native broker helper.
-
-Its current cancellation path is not complete: `CancelRequest` is classified,
-but PID/secret are not validated, no backend cancellation is invoked, and the
-sequential accept loop cannot service the control connection while an ordinary
-client owns the backend. TLS and GSS are refused. Treat cancellation as
-unsupported until authenticated concurrent control acceptance and a guest
-interrupt path are proven.
-
-For broker, host the listener in the helper and return it through control IPC.
-Native direct needs the duplex work below before claiming complete COPY and
-idle backend-message delivery. One physical session still cannot reproduce
-useful cross-session `LISTEN/NOTIFY` behavior.
-
-If this endpoint is judged equivalent to server mode and therefore out of
-scope, the honest result is no mainstream Rust ORM support in strict socketless
-direct mode.
+This endpoint choice does not make direct or broker mode ORM-compatible. Those
+database handles remain socketless one-session clients with their own fluent
+`Sql` and callback-transaction APIs. An optional `tokio-postgres::connect_raw`
+spike may prove an in-memory transport, and a SeaQuery executor remains a small
+direct integration, but neither should widen the core database API or add a
+dual-role endpoint method.
 
 ### Per-library decision
 
-| Library | Normal API over one-session endpoint | Strict socketless option | Decision |
+| Library | Normal API over Oliphaunt server | Strict socketless option | Decision |
 | --- | --- | --- | --- |
-| SQLx | `PgConnection` or `PgPool` max one | New custom database/type/macro stack | Use endpoint; do not build custom SQLx |
-| Diesel | `PgConnection` and r2d2 max one | Custom `Connection<Backend = Pg>`, unstable | Use endpoint; defer custom connection |
-| diesel-async | `AsyncPgConnection` and pool max one | Large custom connection or tokio-postgres spike | Use endpoint |
-| SeaORM | Stock PostgreSQL `ConnectOptions` max one | `ProxyDatabaseTrait` proof, semantically partial | Use endpoint; experiment only |
-| tokio-postgres | Normal client over endpoint | `Config::connect_raw` supports arbitrary async I/O | Best in-memory client spike |
+| SQLx | Stock `PgConnection` or `PgPool`; max one on WASIX only | New custom database/type/macro stack | Use server; do not build custom SQLx |
+| Diesel | Stock `PgConnection` and r2d2; max one on WASIX only | Custom `Connection<Backend = Pg>`, unstable | Use server; defer custom connection |
+| diesel-async | Stock `AsyncPgConnection`; max one on WASIX only | Large custom connection or tokio-postgres spike | Use server |
+| SeaORM | Stock PostgreSQL `ConnectOptions`; max one on WASIX only | `ProxyDatabaseTrait` proof, semantically partial | Use server; experiment only |
+| tokio-postgres | Normal client connection; max one on WASIX only | `Config::connect_raw` supports arbitrary async I/O | Use server; optional in-memory spike |
 | SeaQuery | Not a connection library | Direct statement/value executor | Build as small socketless integration |
 
 ### SQLx
@@ -832,12 +646,14 @@ Do not build an Oliphaunt SQLx driver:
 - SeaORM's PostgreSQL connector would not automatically use it.
 - `sqlx-core` is explicitly semver-exempt.
 
-Over the endpoint, use stock `Postgres` and max one connection. Online
-`query!` macros and `cargo sqlx prepare` still need a running endpoint or
+Over the server connection string, use stock `Postgres`. Set max one connection
+for the single-backend WASIX server; native server mode permits independent
+sessions. Online `query!` macros and `cargo sqlx prepare` still need a running endpoint or
 checked-in offline metadata. Qualify `#[sqlx::test]` separately because it
 expects an administrative endpoint that can create, drop, and reconnect to
 per-test databases. Parallel tests require distinct roots/endpoints or forced
-serialization; ordinary sequential tests do not inherently require a new root.
+serialization on WASIX; native server qualification should also cover normal
+parallel pools.
 
 ### Diesel and diesel-async
 
@@ -902,8 +718,10 @@ but that is a new cross-language API, not normal ORM compatibility.
 
 ## Advanced protocol project
 
-The first JavaScript adapters should not wait for this. It is necessary for
-full `pg` semantics, a complete embedded Rust endpoint, and advanced ORM APIs.
+The first JavaScript adapters should not wait for this. It is necessary only
+for advanced socketless behavior such as complete `pg` emulation, interactive
+COPY, pull-based row streams, and idle notifications. Dedicated server products
+already expose ordinary PostgreSQL protocol and do not depend on this project.
 
 Add an opaque operation/exchange abstraction with:
 
@@ -945,23 +763,24 @@ synchronous Wasm is executing.
 | Capability | Current foundation | First socketless JS adapter | Later work |
 | --- | --- | --- | --- |
 | CRUD and returning | Complete extended query | Shared decode/serialize | None |
-| Transactions/savepoints | Callback transaction plus scheduler FIFO | No-`BEGIN` lease and ORM mapping | None after early rollback is correct |
-| Multi-statement migrations | Raw simple query | Multi-result parser | None |
-| Per-query parsers | Field OIDs returned | OID registry/overrides | Custom binary codecs |
-| Inferred parameter serializers | Not in high-level native query | Reserved describe/bind cycles | Cache only after reset semantics exist |
+| Transactions/savepoints | Callback transaction plus response-derived ownership guard | ORM mapping over the callback | None after early rollback is correct |
+| Multi-statement migrations | Structured simple-query `exec` | ORM result projection | None |
+| Per-query parsers | Operation-scoped OID decoders | ORM codec mapping | Custom binary codecs |
+| Inferred parameter serializers | Owned Parse/Describe/Bind cycle | ORM value mapping | Cache only after reset semantics exist |
 | Named prepared statements | Expressible in raw protocol | Logical names only in Drizzle; reject `pg` query `name` | Cache and invalidation |
-| Query notices | Raw response contains them | Parse during request | Event policy |
+| Query notices | Ordered structured operation data | ORM result/error mapping | Event policy |
 | Cancellation | Native global active cancel; none in WASIX | Explicitly capability-gated | Operation IDs and WASIX interrupt |
 | Large result rows | Buffered typed; raw callback output | Buffered only | Pull-based row stream |
 | COPY OUT | Raw callback stream | Unsupported in ORM layer | Typed reader |
 | COPY IN | Native can prebuffer a complete request | Unsupported in ORM layer | Duplex writer |
 | Idle `LISTEN/NOTIFY` | No native idle poll; only one backend | Unsupported | Multi-backend server or new idle pump |
-| Full client facade | WASIX lightweight proxy only | Rust spike | Shared duplex endpoint |
+| Full client facade | Dedicated native and WASIX server products | Unsupported socketlessly | Revisit only with proven demand for direct-mode emulation |
 
 The streaming, prepared-name, and COPY restrictions in this table describe the
 socketless JavaScript/SeaQuery surface. Stock SQLx, Diesel, and tokio-postgres
-over a qualified endpoint should retain real backend prepared statements and
-their public streaming/COPY APIs wherever the endpoint conformance suite passes.
+over a qualified Oliphaunt server should retain real backend prepared
+statements and their public streaming/COPY APIs wherever that server's
+conformance suite passes.
 
 ## Conformance and validation plan
 
@@ -980,8 +799,10 @@ Run the same JavaScript adapter contract against:
 - browser root direct in both Window and application-owned Worker realms;
 - two tabs sharing one persistent identity after the multi-tab proxy exists.
 
-Run the Rust endpoint contract against native direct, native broker, and the
-WASIX Rust lightweight endpoint.
+Run the Rust client contract through the dedicated native Rust server and the
+single-backend WASIX Rust server. Also prove the WASIX TypeScript server with a
+stock client in every claimed non-browser host. Direct and broker remain
+separate socketless Oliphaunt APIs and are not server qualification lanes.
 
 ### JavaScript SQL and type cases
 
@@ -989,14 +810,14 @@ Every JavaScript adapter must cover:
 
 - create/drop schema objects and migration apply/rollback;
 - CRUD, upsert, joins, relations, and `RETURNING`;
-- null and undefined input;
-- bool, int2, int4, safe/unsafe int8, float4/8, numeric, text, and UUID;
-- JSON/JSONB including nested data and bigint policy;
+- null input and deterministic `undefined` rejection;
+- bool, int2, int4, precision-preserving int8, float4/8, numeric, text, and UUID;
+- JSON/JSONB including nested data and explicit bigint policy;
 - bytea including zero bytes;
 - date, time, timestamp, timestamptz, and interval;
 - one- and multi-dimensional arrays, null elements, and empty arrays;
-- enums, domains, enum arrays, and `refreshArrayTypes()`;
-- parser and serializer overrides;
+- enums, domains, enum arrays, and operation-scoped extension OID codecs;
+- per-query decoder and encoder overrides;
 - duplicate output names in object and array modes;
 - command tags, row counts, SQLSTATE, and every structured error field.
 
@@ -1004,12 +825,14 @@ The Rust endpoint suites use each library's native Rust values and row APIs.
 They must cover the same PostgreSQL families, nulls, arrays, enums/domains,
 precision, binary/text formats, SQLSTATE fields, and custom types, but they do
 not use JavaScript-only concepts such as `undefined`, safe versus unsafe JS
-integers, bigint JSON policy, `refreshArrayTypes()`, or object/array row mode.
+integers, bigint JSON policy, or object/array row mode.
 
 ### Transaction and concurrency cases
 
 - commit, callback rollback, and explicit rollback;
 - nested savepoints;
+- direct callback rejection of manual lifecycle and `AND CHAIN`, plus
+  response-derived close-only behavior after ownership escape;
 - isolation/access configuration;
 - a caught statement error followed by `ROLLBACK TO SAVEPOINT` and successful
   continuation;
@@ -1031,7 +854,8 @@ integers, bigint JSON policy, `refreshArrayTypes()`, or object/array row mode.
 - second-tab lock failure;
 - leader close/crash after the multi-tab proxy exists;
 - mismatched runtime/extension/storage configuration in another tab;
-- extension selection and persistent reopen;
+- selected-but-not-installed extensions, migration-owned `CREATE EXTENSION`,
+  and persistent reopen with the runtime artifact selected again;
 - production bundle loading with COOP/COEP and Worker assets;
 - large bytea/results with measured main-thread responsiveness.
 
@@ -1043,10 +867,10 @@ integers, bigint JSON policy, `refreshArrayTypes()`, or object/array row mode.
 | Drizzle | Relational and SQL-like APIs, prepared objects, transactions/savepoints/config, migrations |
 | MikroORM | Unit of work, entity manager CRUD, relations, cascades, schema generator, migrations, custom types, reopen |
 | Knex/TypeORM later | Their migration, transaction, schema, pool, callback/Promise, and lifecycle APIs over `pg-compat` |
-| SQLx endpoint | Prepared binary binds, streaming, offline/online macros, max-one pool, cancel, COPY |
-| Diesel endpoint | Typed DSL, `sql_query`, migrations, transaction builder, r2d2 max one, COPY |
-| diesel-async endpoint | Typed DSL, async transactions, pool max one, cancel/error forwarding |
-| SeaORM endpoint | Entity/ActiveModel CRUD, relations, transactions, migrations, pool max one |
+| SQLx server | Prepared binary binds, streaming, offline/online macros, cancel, COPY; ordinary native pool and max-one WASIX pool |
+| Diesel server | Typed DSL, `sql_query`, migrations, transaction builder, COPY; ordinary native r2d2 pool and max-one WASIX pool |
+| diesel-async server | Typed DSL, async transactions, cancel/error forwarding; ordinary native pool and max-one WASIX pool |
+| SeaORM server | Entity/ActiveModel CRUD, relations, transactions, migrations; ordinary native pool and max-one WASIX pool |
 | SeaQuery executor | Typed values, PostgreSQL SQL, row decoding, errors, explicit callback transactions |
 
 Passing raw SQL through the shared client is insufficient. Each lane must use
@@ -1062,7 +886,7 @@ prepared queries, and result mapping add behavior above the transport.
 | Transactions | Pin one session; reject database-level calls inside the callback |
 | ORM ownership | Borrowed by default; close only explicitly owned handles |
 | External CLI | Cannot attach to a live socketless/browser database; use a stopped-root runner or programmatic migrations |
-| Extensions | Select artifacts at open; `CREATE EXTENSION` cannot materialize code |
+| Extensions | Select artifacts/dependencies/preload at open; selection runs no SQL, while ORM-owned `CREATE EXTENSION` cannot materialize missing code |
 | int8/numeric | Preserve precision and make adapter mappings explicit |
 | Dates | Drizzle needs raw strings for its own decoders |
 | Duplicate columns | Object rows overwrite; array rows preserve position |
@@ -1073,7 +897,7 @@ prepared queries, and result mapping add behavior above the transport.
 | Cancellation | Native only and operation-global; add IDs before `AbortSignal` |
 | Storage failure | Preserve typed WASIX error and poison state; never auto-retry |
 | Broker/Worker crash | Reject in-flight work; never replay unknown transactions |
-| Broker restart | Expose generation change and invalidate prepared/session state |
+| Broker loss | Fail the handle permanently; discard caches and require explicit close/open without replay |
 | Multi-tab | One fail-fast Web Lock owner today; build a leader proxy first |
 | Direct browser | The root blocks its realm and has side-module limits; import `/worker` when the UI realm must stay responsive |
 | Cross-binding roots | Do not open one root simultaneously across providers |
@@ -1096,6 +920,13 @@ execution surfaces. In this checkout the asset-independent suites and packed
 package checks passed, but the runtime smokes could not execute because usable
 native and staged WASIX runtime assets were absent; this report therefore makes
 no fresh real-runtime claim for those lanes.
+
+Raw protocol remains a database/root-only escape hatch. Managed transaction
+handles expose structured operations and explicit rollback only; their guard
+classifies every exact backend command tag plus the one terminal readiness
+status before parsing results. Manual transaction lifecycle SQL and `AND CHAIN`
+are unsupported, savepoints remain valid, and an ownership escape retires the
+database without speculative follow-up control.
 
 This completion makes the SDKs adapter-ready; it does not itself make a Kysely,
 Drizzle, or PGlite-typed application source-compatible.
@@ -1141,17 +972,24 @@ lanes.
 Acceptance: two tabs serialize work, keep a transaction exclusive, recover
 from the last published generation, and reject mismatched configuration.
 
-### 5. Run the Rust compatibility spike
+### 5. Qualify the Rust server integrations
 
-- Extract the WASIX one-client proxy state machine.
-- Prototype a pinned native-direct and broker-hosted endpoint.
-- Prove SQLx, Diesel, diesel-async, and SeaORM with max-one pools.
-- Include COPY, cancellation, failed-transaction disconnect, second-client
-  `53300`, and SDK-query rejection while leased.
-- In parallel, prototype `tokio-postgres connect_raw` and a SeaQuery executor.
+- Start the existing dedicated native and WASIX sync/async server builders and
+  connect through their returned connection strings.
+- Prove SQLx, Diesel, diesel-async, SeaORM, and tokio-postgres through their
+  public APIs. Exercise ordinary pools on native server and enforce max one on
+  the single-backend WASIX server.
+- Include prepared binary binds, migrations, COPY, cancellation capability,
+  failed-transaction disconnect, WASIX second-client rejection, close with an
+  active client, and lifecycle-error replay.
+- Prove that server facades expose no SQL, transaction, raw, backup, or cancel
+  methods and never imply ownership of an external client's work.
+- In parallel, build a SeaQuery executor; keep any
+  `tokio-postgres::connect_raw` experiment explicitly non-product until it has
+  demand and full transport evidence.
 
-Acceptance: choose either the one-session endpoint as the mainstream Rust ORM
-path or an explicit no-direct-ORM policy. Do not leave this ambiguous.
+Acceptance: the server path is reproducibly qualified per library and runtime;
+direct and broker docs make no stock-ORM claim.
 
 ### 6. Decide on broader JavaScript compatibility
 
@@ -1167,8 +1005,8 @@ sizes above one fail, and unsupported `pg` APIs fail deterministically.
 - Add operation IDs and race-free cancellation first.
 - Add pull-based backend reads and incremental writes.
 - Propagate through C, Rust, broker IPC, TypeScript bindings, and WASIX Worker.
-- Use it for row streams, interactive COPY, notifications, and the complete
-  embedded Rust endpoint.
+- Use it for socketless row streams, interactive COPY, notifications, and only
+  such direct-mode client emulation as proven demand justifies.
 
 Acceptance: bounded backpressure, cancel recovery, no unread frames across
 readiness, and broker/Worker crash cleanup are proven before enabling an ORM
@@ -1209,9 +1047,10 @@ const orm = await MikroORM.init({
 
 Rust mainstream ORM:
 
-```rust
-let endpoint = database.open_pgwire_endpoint().await?;
-let mut options = ConnectOptions::new(endpoint.connection_string());
+```rust,ignore
+let server = AsyncOliphauntServer::builder().start().await?;
+let mut options = ConnectOptions::new(server.connection_string());
+// Required for the single-backend WASIX server; native server can use a pool.
 options.max_connections(1);
 let orm = Database::connect(options).await?;
 ```
@@ -1221,9 +1060,11 @@ Users should need to learn only three Oliphaunt-specific facts:
 1. choose the native direct/broker/server or WASIX product; WASIX TypeScript's
    root runs in the caller realm, with package-owned isolation available from
    its explicit `/worker` import;
-2. select storage and extension artifacts before open;
-3. direct topology provides one physical session, so transactions are exclusive and
-   pools are never larger than one.
+2. select storage and extension artifacts before open, then let migrations run
+   database-local extension SQL;
+3. direct and broker topology provide one physical session, so their
+   transactions are exclusive; WASIX server pools are max one, while native
+   server mode provides ordinary independent PostgreSQL sessions.
 
 ## Repository evidence
 

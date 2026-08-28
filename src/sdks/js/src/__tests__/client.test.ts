@@ -13,7 +13,12 @@ import type {
   NativeRestoreOptions,
 } from '../native/types.js';
 import type { CommandResult } from '../query.js';
-import type { BinaryInput, OliphauntTransaction } from '../types.js';
+import type {
+  OliphauntDatabase,
+  OliphauntTransaction,
+  OpenConfig,
+  ServerOpenConfig,
+} from '../types.js';
 import type { RuntimeBinding } from '../runtime/types.js';
 
 // OLIPHAUNT_DOCS_SNIPPET typescript-quickstart
@@ -81,6 +86,144 @@ test('exposes the minimal database lifecycle and byte backup contract', async ()
   }
 });
 
+test('snapshots open configuration before asynchronous storage work', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-open-snapshot-'));
+  const direct = new FakeBinding();
+  const broker = new FakeBinding();
+  const brokerRuntime = broker as unknown as RuntimeBinding;
+  brokerRuntime.close = async (handle) => {
+    await broker.detach(handle);
+    return { state: 'closed' };
+  };
+  const startupGUCs: Record<string, string> = { work_mem: '8MB' };
+  const extensions: string[] = [];
+  const config: OpenConfig = {
+    topology: 'broker',
+    storage: { kind: 'directory', path: root },
+    startupGUCs,
+    username: 'before',
+    database: 'before',
+    extensions,
+  };
+  const client = createOliphauntClient(() => direct, { broker: brokerRuntime });
+
+  try {
+    const opening = client.open(config);
+    config.topology = 'direct';
+    config.username = 'after';
+    config.database = 'after';
+    startupGUCs.work_mem = '64MB';
+    extensions.push('vector');
+
+    const database = await opening;
+    assert.equal(direct.openCalls.length, 0);
+    assert.equal(broker.openCalls.length, 1);
+    assert.deepEqual(broker.openCalls[0], {
+      topology: 'broker',
+      instanceDirectory: root,
+      pgdata: join(root, 'pgdata'),
+      temporaryDirectory: false,
+      startupArgs: ['-c', 'work_mem=8MB'],
+      username: 'before',
+      database: 'before',
+      extensions: [],
+      libraryPath: undefined,
+      runtimeDirectory: undefined,
+      brokerExecutable: undefined,
+      serverExecutable: undefined,
+      serverListen: undefined,
+    });
+    await database.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('snapshots server storage and nested configuration before asynchronous work', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-server-snapshot-'));
+  const movedRoot = join(root, 'mutated');
+  const server = new FakeBinding();
+  const serverRuntime = server as unknown as RuntimeBinding;
+  serverRuntime.close = async (handle) => {
+    await server.detach(handle);
+    return { state: 'closed' };
+  };
+  serverRuntime.connectionString = () => 'postgresql://postgres@127.0.0.1:15432/postgres';
+  const storage = { kind: 'directory' as const, path: root };
+  const listen = { transport: 'tcp' as const, port: 15432 };
+  const startupGUCs: Record<string, string> = { work_mem: '8MB' };
+  const extensions: string[] = [];
+  const config: ServerOpenConfig = { storage, listen, startupGUCs, extensions };
+  const client = createOliphauntClient(() => new FakeBinding(), { server: serverRuntime });
+
+  try {
+    const opening = client.openServer(config);
+    storage.path = movedRoot;
+    listen.port = 25432;
+    startupGUCs.work_mem = '64MB';
+    extensions.push('vector');
+
+    const database = await opening;
+    assert.equal(database.connectionString, 'postgresql://postgres@127.0.0.1:15432/postgres');
+    for (const operation of [
+      'execute',
+      'query',
+      'queryRaw',
+      'exec',
+      'describe',
+      'execProtocolRaw',
+      'execProtocolRawStream',
+      'backup',
+      'cancel',
+      'transaction',
+    ]) {
+      assert.equal(operation in database, false, `${operation} must not leak from server facade`);
+    }
+    assert.equal(server.openCalls.length, 1);
+    assert.deepEqual(server.openCalls[0], {
+      topology: 'server',
+      instanceDirectory: root,
+      pgdata: join(root, 'pgdata'),
+      temporaryDirectory: false,
+      startupArgs: ['-c', 'work_mem=8MB'],
+      username: 'postgres',
+      database: 'postgres',
+      extensions: [],
+      libraryPath: undefined,
+      runtimeDirectory: undefined,
+      brokerExecutable: undefined,
+      serverExecutable: undefined,
+      serverListen: { transport: 'tcp', port: 15432 },
+    });
+    await database.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('copies restore bytes before asynchronous binding resolution', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-restore-snapshot-'));
+  const binding = new FakeBinding();
+  const releaseBinding = deferred<void>();
+  const client = createOliphauntClient(async () => {
+    await releaseBinding.promise;
+    return binding;
+  });
+  const backup = new Uint8Array([7, 8]);
+
+  try {
+    const restoring = client.restore(join(root, 'restored'), backup);
+    backup.fill(0);
+    releaseBinding.resolve();
+    await restoring;
+    assert.deepEqual(binding.restoreCalls, [
+      { destination: join(root, 'restored'), bytes: new Uint8Array([7, 8]) },
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('transactions commit, roll back body failures, and never roll back a failed commit', async () => {
   const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-transaction-'));
   try {
@@ -124,6 +267,32 @@ test('transactions commit, roll back body failures, and never roll back a failed
     assert.equal(commitFailure.sqlCalls.includes('ROLLBACK'), false);
     await assert.rejects(() => uncertain.execute('SELECT 1'), /state is unknown/);
     await uncertain.close();
+
+    const poisonedCallback = new FakeBinding();
+    poisonedCallback.failSql = 'UPDATE transport_unknown';
+    const poisonedCallbackDb = await createOliphauntClient(() => poisonedCallback).open({
+      storage: { kind: 'directory', path: join(root, 'poisoned-callback') },
+    });
+    const businessFailure = new Error('business callback failed');
+    let databaseFailure: unknown;
+    const combinedFailure = await poisonedCallbackDb
+      .transaction(async (transaction) => {
+        try {
+          await transaction.execute('UPDATE transport_unknown');
+        } catch (error) {
+          databaseFailure = error;
+        }
+        throw businessFailure;
+      })
+      .catch((error: unknown) => error);
+    assert.ok(combinedFailure instanceof AggregateError);
+    assert.deepEqual(combinedFailure.errors, [businessFailure, databaseFailure]);
+    assert.match(combinedFailure.message, /independent database failure/);
+    assert.deepEqual(poisonedCallback.sqlCalls.slice(-2), ['BEGIN', 'UPDATE transport_unknown']);
+    const poisonedRequestCount = poisonedCallback.requests.length;
+    await assert.rejects(() => poisonedCallbackDb.execute('SELECT 1'), /state is unknown/);
+    assert.equal(poisonedCallback.requests.length, poisonedRequestCount);
+    await poisonedCallbackDb.close();
 
     const malformedCommit = new FakeBinding();
     malformedCommit.responseForSql.set('COMMIT', Uint8Array.from(backendMessage(0x5a, [0x49])));
@@ -210,12 +379,6 @@ test('transaction Promise methods never leak admission or planning failures sync
   const db = await createOliphauntClient(() => binding).open({
     storage: { kind: 'directory', path: root },
   });
-  const byteError = new Error('byte iterator failed');
-  const invalidBytes = {
-    *[Symbol.iterator](): IterableIterator<number> {
-      throw byteError;
-    },
-  } as unknown as BinaryInput;
   let expired!: OliphauntTransaction;
   try {
     await db.transaction(async (transaction) => {
@@ -229,25 +392,6 @@ test('transaction Promise methods never leak admission or planning failures sync
       ]) {
         assert.match(String(await catchPromiseWithoutSynchronousThrow(call)), /NUL bytes/);
       }
-      assert.equal(
-        await catchPromiseWithoutSynchronousThrow(() => transaction.execProtocolRaw(invalidBytes)),
-        byteError,
-      );
-      assert.equal(
-        await catchPromiseWithoutSynchronousThrow(() =>
-          transaction.execProtocolRawStream(invalidBytes, () => undefined),
-        ),
-        byteError,
-      );
-      assert.match(
-        String(
-          await catchPromiseWithoutSynchronousThrow(() =>
-            transaction.execProtocolRawStream(new Uint8Array([0x51]), undefined as never),
-          ),
-        ),
-        /callback must be a function/,
-      );
-
       // Planning failures never enter the transaction queue or poison it.
       assert.deepEqual(await transaction.execute('UPDATE things SET value = 22'), {
         commandTag: 'UPDATE 3',
@@ -375,6 +519,16 @@ test('serializes physical-session work in FIFO order and pins transactions', asy
         }),
       /stream consumer failed/,
     );
+    const nanCallbackOutcome = await db
+      .execProtocolRawStream(new Uint8Array([0x51]), () => {
+        throw Number.NaN;
+      })
+      .then(
+        () => ({ fulfilled: true as const, error: undefined }),
+        (error: unknown) => ({ fulfilled: false as const, error }),
+      );
+    assert.equal(nanCallbackOutcome.fulfilled, false);
+    assert.ok(Object.is(nanCallbackOutcome.error, Number.NaN));
     await assert.rejects(
       db.execProtocolRawStream(new Uint8Array([0x51]), async () => {}),
       /must complete synchronously.*Promise or thenable/,
@@ -510,8 +664,14 @@ test('terminal broker and server close failures retire the facade and replay exa
       assert.equal(closeCalls, 1);
       assert.equal(database.close(), first);
       assert.equal(await database.close().catch((error: unknown) => error), closeError);
-      await assert.rejects(() => database.query('SELECT 1'), /closed/);
-      await assert.rejects(() => database.cancel(), /closed/);
+      if (topology === 'broker') {
+        const brokerDatabase = database as OliphauntDatabase;
+        await assert.rejects(() => brokerDatabase.query('SELECT 1'), /closed/);
+        await assert.rejects(() => brokerDatabase.cancel(), /closed/);
+      } else {
+        assert.equal('query' in database, false);
+        assert.equal('cancel' in database, false);
+      }
       assert.equal(closeCalls, 1);
     }
   } finally {
@@ -519,7 +679,7 @@ test('terminal broker and server close failures retire the facade and replay exa
   }
 });
 
-test('raw stream callbacks cannot queue same-handle work while cancel stays out of band', async () => {
+test('database raw stream callbacks cannot queue same-handle work while cancel stays out of band', async () => {
   const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-stream-reentry-'));
   const binding = new FakeBinding();
   const db = await createOliphauntClient(() => binding).open({
@@ -548,23 +708,32 @@ test('raw stream callbacks cannot queue same-handle work while cancel stays out 
     assert.equal(binding.detachCalls, 0);
     assert.equal(binding.cancelCalls, 1);
 
-    await db.transaction(async (transaction) => {
-      let transactionAttempts: Promise<unknown>[] = [];
-      const beforeTransactionStream = binding.requests.length;
-      await transaction.execProtocolRawStream(new Uint8Array([0x51]), () => {
-        transactionAttempts = [
-          transaction.execute('UPDATE callback_reentry SET value = 1'),
-          transaction.rollback(),
-          transaction.execProtocolRawStream(new Uint8Array([0x51]), () => undefined),
-        ];
-        for (const attempt of transactionAttempts) void attempt.catch(() => undefined);
-      });
-      for (const attempt of transactionAttempts) {
-        await assert.rejects(attempt, /must not re-enter the same Oliphaunt handle/);
-      }
-      assert.equal(binding.requests.length, beforeTransactionStream + 1);
-      assert.equal(transaction.closed, false);
-    });
+  } finally {
+    await db.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('raw stream native recovery failure outranks an earlier callback failure', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-stream-error-precedence-'));
+  const binding = new FakeBinding();
+  const nativeFailure = new Error('native protocol stream recovery failed');
+  const callbackFailure = new Error('protocol stream callback failed');
+  binding.streamCompletionFailure = nativeFailure;
+  const db = await createOliphauntClient(() => binding).open({
+    storage: { kind: 'directory', path: root },
+  });
+  try {
+    await assert.rejects(
+      () =>
+        db.execProtocolRawStream(new Uint8Array([0x51]), () => {
+          throw callbackFailure;
+        }),
+      (error) => error === nativeFailure,
+    );
+    const requestsAfterFailure = binding.requests.length;
+    await assert.rejects(() => db.query('SELECT 1'), /session state is unknown/);
+    assert.equal(binding.requests.length, requestsAfterFailure);
   } finally {
     await db.close();
     await rm(root, { recursive: true, force: true });
@@ -666,48 +835,37 @@ test('cleans an opened owner before rejecting failed facade publication', async 
   }
 });
 
-test('broker and server facades inherit the same FIFO session ownership', async () => {
+test('broker facade preserves FIFO session ownership', async () => {
   const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-runtime-queue-'));
   try {
-    for (const topology of ['broker', 'server'] as const) {
-      const binding = new FakeBinding();
-      const started = deferred<void>();
-      const release = deferred<void>();
-      binding.protocolStarted = () => started.resolve();
-      binding.protocolGate = release.promise;
-      const runtime = binding as unknown as RuntimeBinding;
-      runtime.close = async (handle) => {
-        await binding.detach(handle);
-        return { state: 'closed' };
-      };
-      runtime.connectionString = () => 'postgresql://postgres@127.0.0.1:5432/postgres';
-      const client = createOliphauntClient(() => binding, {
-        broker: runtime,
-        server: runtime,
-      });
-      const database =
-        topology === 'broker'
-          ? await client.open({
-              topology,
-              storage: { kind: 'directory', path: join(root, topology) },
-            })
-          : await client.openServer({
-              storage: { kind: 'directory', path: join(root, topology) },
-            });
-      const first = database.execute('UPDATE things SET value = 20');
-      await started.promise;
-      const second = database.execute('UPDATE things SET value = 21');
-      await new Promise((resolve) => setImmediate(resolve));
-      assert.deepEqual(binding.operationEvents, ['raw:UPDATE things SET value = 20']);
-      binding.protocolGate = undefined;
-      release.resolve();
-      await Promise.all([first, second]);
-      assert.deepEqual(binding.operationEvents, [
-        'raw:UPDATE things SET value = 20',
-        'raw:UPDATE things SET value = 21',
-      ]);
-      await database.close();
-    }
+    const binding = new FakeBinding();
+    const started = deferred<void>();
+    const release = deferred<void>();
+    binding.protocolStarted = () => started.resolve();
+    binding.protocolGate = release.promise;
+    const runtime = binding as unknown as RuntimeBinding;
+    runtime.close = async (handle) => {
+      await binding.detach(handle);
+      return { state: 'closed' };
+    };
+    const client = createOliphauntClient(() => binding, { broker: runtime });
+    const database = await client.open({
+      topology: 'broker',
+      storage: { kind: 'directory', path: join(root, 'broker') },
+    });
+    const first = database.execute('UPDATE things SET value = 20');
+    await started.promise;
+    const second = database.execute('UPDATE things SET value = 21');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(binding.operationEvents, ['raw:UPDATE things SET value = 20']);
+    binding.protocolGate = undefined;
+    release.resolve();
+    await Promise.all([first, second]);
+    assert.deepEqual(binding.operationEvents, [
+      'raw:UPDATE things SET value = 20',
+      'raw:UPDATE things SET value = 21',
+    ]);
+    await database.close();
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -804,6 +962,21 @@ test('recovers database-level transaction leakage and poisons unknown wire bound
     await assert.rejects(() => malformed.query('SELECT malformed'), /before ReadyForQuery/);
     await assert.rejects(() => malformed.query('SELECT 1'), /session state is unknown/);
     await malformed.close();
+
+    const rawFailureBinding = new FakeBinding();
+    const rawTransportFailure = new Error('raw transport failed');
+    rawFailureBinding.protocolFailure = rawTransportFailure;
+    const rawFailure = await createOliphauntClient(() => rawFailureBinding).open({
+      storage: { kind: 'directory', path: join(root, 'raw-failure') },
+    });
+    await assert.rejects(
+      () => rawFailure.execProtocolRaw(new Uint8Array([0x51])),
+      (error) => error === rawTransportFailure,
+    );
+    const requestsAfterFailure = rawFailureBinding.requests.length;
+    await assert.rejects(() => rawFailure.query('SELECT 1'), /session state is unknown/);
+    assert.equal(rawFailureBinding.requests.length, requestsAfterFailure);
+    await rawFailure.close();
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -820,6 +993,8 @@ test('supports one-shot explicit transaction rollback and expires the handle', a
     const value = await db.transaction(async (transaction) => {
       completed = transaction;
       assert.equal(transaction.closed, false);
+      assert.equal('execProtocolRaw' in transaction, false);
+      assert.equal('execProtocolRawStream' in transaction, false);
       await transaction.execute('UPDATE things SET value = 40');
       await transaction.rollback();
       assert.equal(transaction.closed, true);
@@ -842,6 +1017,74 @@ test('supports one-shot explicit transaction rollback and expires the handle', a
   }
 });
 
+test('transaction ownership is enforced from complete protocol responses before parsing', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-transaction-ownership-'));
+  try {
+    const escapedResponses = [
+      {
+        sql: 'SELECT hidden_commit_then_begin',
+        response: Uint8Array.from([
+          ...backendMessage(0x43, cstring('COMMIT')),
+          ...backendMessage(0x43, cstring('BEGIN')),
+          ...backendMessage(0x45, diagnostic('ERROR', 'XX000', 'later failure')),
+          ...backendMessage(0x5a, [0x54]),
+        ]),
+        expected: /command tag COMMIT/,
+      },
+      {
+        sql: 'SELECT hidden_rollback_then_begin',
+        response: Uint8Array.from([
+          ...backendMessage(0x43, cstring('ROLLBACK')),
+          ...backendMessage(0x43, cstring('BEGIN')),
+          ...backendMessage(0x5a, [0x54]),
+        ]),
+        expected: /command tag BEGIN/,
+      },
+    ];
+
+    for (const [index, escaped] of escapedResponses.entries()) {
+      const binding = new FakeBinding();
+      binding.responseForSql.set(escaped.sql, escaped.response);
+      const db = await createOliphauntClient(() => binding).open({
+        storage: { kind: 'directory', path: join(root, `escaped-${index}`) },
+      });
+      const failure = await db
+        .transaction((transaction) => {
+          const ignored = transaction.exec(escaped.sql);
+          void ignored.catch(() => undefined);
+        })
+        .catch((error: unknown) => error);
+      assert.match(String(failure), escaped.expected);
+      assert.deepEqual(binding.sqlCalls, ['BEGIN', escaped.sql]);
+      const requestCount = binding.requests.length;
+      await assert.rejects(() => db.query('SELECT 1'), /session state is unknown/);
+      assert.equal(binding.requests.length, requestCount);
+      await db.close();
+    }
+
+    const savepointBinding = new FakeBinding();
+    const rollbackToSavepoint = 'ROLLBACK TO SAVEPOINT nested';
+    savepointBinding.responseForSql.set(
+      rollbackToSavepoint,
+      commandResponse('ROLLBACK', 0x54),
+    );
+    const reusable = await createOliphauntClient(() => savepointBinding).open({
+      storage: { kind: 'directory', path: join(root, 'savepoint') },
+    });
+    await reusable.transaction(async (transaction) => {
+      await transaction.exec(rollbackToSavepoint);
+    });
+    assert.deepEqual(savepointBinding.sqlCalls.slice(-3), [
+      'BEGIN',
+      rollbackToSavepoint,
+      'COMMIT',
+    ]);
+    await reusable.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 class FakeBinding implements NativeBinding {
   readonly openCalls: NativeOpenConfig[] = [];
   readonly restoreCalls: NativeRestoreOptions[] = [];
@@ -855,6 +1098,8 @@ class FakeBinding implements NativeBinding {
   failSql?: string;
   protocolGate?: Promise<void>;
   protocolStarted?: () => void;
+  protocolFailure?: unknown;
+  streamCompletionFailure?: unknown;
   cancelGate?: Promise<void>;
   cancelStarted?: () => void;
   detachGate?: Promise<void>;
@@ -890,6 +1135,7 @@ class FakeBinding implements NativeBinding {
     );
     try {
       await this.protocolGate;
+      if (this.protocolFailure !== undefined) throw this.protocolFailure;
       if (describeOnly) {
         return describeResponse(sql, inferredParameterOids(sql), this.#transactionStatus);
       }
@@ -909,7 +1155,17 @@ class FakeBinding implements NativeBinding {
     request: Uint8Array,
     onChunk: (chunk: Uint8Array) => void,
   ): Promise<void> {
-    onChunk(await this.execProtocolRaw(handle, request));
+    try {
+      onChunk(await this.execProtocolRaw(handle, request));
+    } catch (callbackError) {
+      if (this.streamCompletionFailure !== undefined) {
+        throw this.streamCompletionFailure;
+      }
+      throw callbackError;
+    }
+    if (this.streamCompletionFailure !== undefined) {
+      throw this.streamCompletionFailure;
+    }
   }
 
   async execSimpleQuery(_handle: NativeHandle, sql: string): Promise<Uint8Array> {

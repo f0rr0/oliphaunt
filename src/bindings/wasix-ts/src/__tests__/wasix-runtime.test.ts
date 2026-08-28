@@ -97,21 +97,18 @@ describe('WASIX host runtime helpers', () => {
     ).toBe('open failed; cleanup failed: trap');
   });
 
-  it('runs setup SQL before applying a quoted caller role', async () => {
+  it('does not install selected extensions and only applies the quoted caller role', async () => {
     const options = workerOpenOptions();
     options.username = 'app"role';
     const inputs: Uint8Array[] = [];
-    await configureWasixDatabase(
-      options,
-      { setupSql: ['CREATE EXTENSION vector'] } as never,
-      'new',
-      async (input) => {
-        inputs.push(input);
-        return querySuccess();
-      },
-    );
-    expect(inputs).toHaveLength(2);
-    expect(new TextDecoder().decode(inputs[1])).toContain('SET ROLE "app""role"');
+    await configureWasixDatabase(options, async (input) => {
+      inputs.push(input);
+      return querySuccess();
+    });
+    expect(inputs).toHaveLength(1);
+    const sql = new TextDecoder().decode(inputs[0]);
+    expect(sql).toContain('SET ROLE "app""role"');
+    expect(sql).not.toMatch(/CREATE EXTENSION|\bLOAD\b|CREATE SCHEMA/u);
   });
 });
 

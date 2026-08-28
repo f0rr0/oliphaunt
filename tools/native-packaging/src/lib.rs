@@ -11,7 +11,49 @@ use oliphaunt::__private::packaging::{
     NativePackagingCatalogProfile, NativePackagingResources as MaterializedNativeResources,
     NativePackagingRuntime, materialize_native_packaging_resources,
 };
-use oliphaunt::{Error, Extension, Result};
+use oliphaunt::Extension;
+
+/// Error returned by native packaging tooling.
+///
+/// Packaging validation and filesystem failures are intentionally owned by
+/// this unpublished tooling crate rather than constructed through the SDK's
+/// opaque public error type. SDK failures retain their original source.
+#[derive(Debug)]
+pub enum Error {
+    /// A packaging option, manifest, artifact, or command-line value is invalid.
+    InvalidConfig(String),
+    /// A packaging filesystem, archive, or subprocess operation failed.
+    Engine(String),
+    /// The native SDK failed while materializing runtime resources.
+    Oliphaunt(oliphaunt::Error),
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidConfig(message) | Self::Engine(message) => formatter.write_str(message),
+            Self::Oliphaunt(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Oliphaunt(error) => Some(error),
+            Self::InvalidConfig(_) | Self::Engine(_) => None,
+        }
+    }
+}
+
+impl From<oliphaunt::Error> for Error {
+    fn from(error: oliphaunt::Error) -> Self {
+        Self::Oliphaunt(error)
+    }
+}
+
+/// Result returned by native packaging tooling.
+pub type Result<T> = std::result::Result<T, Error>;
 
 /// Native product whose resources are being assembled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1928,7 +1970,7 @@ mod tests {
 
     #[test]
     fn mobile_static_registry_metadata_marks_sql_only_packages_not_required() {
-        let extensions = runtime_resource_extensions(&[Extension::Pgtap]);
+        let extensions = runtime_resource_extensions(&[Extension::PGTAP]);
         let metadata = mobile_static_registry_metadata(&extensions, &[]).unwrap();
         assert_eq!(metadata.state, MobileStaticRegistryState::NotRequired);
         assert!(metadata.registered_extensions.is_empty());
@@ -1938,7 +1980,7 @@ mod tests {
 
     #[test]
     fn mobile_static_registry_metadata_marks_module_extensions_pending() {
-        let extensions = runtime_resource_extensions(&[Extension::Vector]);
+        let extensions = runtime_resource_extensions(&[Extension::VECTOR]);
         let metadata = mobile_static_registry_metadata(&extensions, &[]).unwrap();
         assert_eq!(metadata.state, MobileStaticRegistryState::Pending);
         assert_eq!(metadata.pending_extensions, vec!["vector"]);
@@ -1948,21 +1990,20 @@ mod tests {
 
     #[test]
     fn mobile_static_registry_requirement_rejects_pending_modules() {
-        let extensions = runtime_resource_extensions(&[Extension::Vector]);
+        let extensions = runtime_resource_extensions(&[Extension::VECTOR]);
         let metadata = mobile_static_registry_metadata(&extensions, &[]).unwrap();
         let error = require_mobile_static_registry_ready(&metadata).unwrap_err();
-        assert_eq!(
+        assert!(matches!(
             error,
-            Error::InvalidConfig(
-                "selected extension(s) require mobile static registry entries before iOS/Android packaging: vector"
-                    .to_owned()
-            )
-        );
+            Error::InvalidConfig(message)
+                if message
+                    == "selected extension(s) require mobile static registry entries before iOS/Android packaging: vector"
+        ));
     }
 
     #[test]
     fn mobile_static_registry_metadata_marks_declared_modules_complete() {
-        let extensions = runtime_resource_extensions(&[Extension::Vector]);
+        let extensions = runtime_resource_extensions(&[Extension::VECTOR]);
         let metadata =
             mobile_static_registry_metadata(&extensions, &["vector".to_owned()]).unwrap();
         assert_eq!(metadata.state, MobileStaticRegistryState::Complete);
@@ -1974,7 +2015,7 @@ mod tests {
 
     #[test]
     fn mobile_static_registry_metadata_marks_hstore_complete_after_prebuilt_artifact_support() {
-        let extensions = runtime_resource_extensions(&[Extension::Hstore]);
+        let extensions = runtime_resource_extensions(&[Extension::HSTORE]);
         let metadata =
             mobile_static_registry_metadata(&extensions, &["hstore".to_owned()]).unwrap();
         assert_eq!(metadata.state, MobileStaticRegistryState::Complete);
@@ -1986,21 +2027,20 @@ mod tests {
 
     #[test]
     fn mobile_static_registry_metadata_rejects_unknown_registered_modules() {
-        let extensions = runtime_resource_extensions(&[Extension::Vector]);
+        let extensions = runtime_resource_extensions(&[Extension::VECTOR]);
         let error =
             mobile_static_registry_metadata(&extensions, &["hstore".to_owned()]).unwrap_err();
-        assert_eq!(
+        assert!(matches!(
             error,
-            Error::InvalidConfig(
-                "mobile static registry module stem(s) were not selected by these runtime resources: hstore"
-                    .to_owned()
-            )
-        );
+            Error::InvalidConfig(message)
+                if message
+                    == "mobile static registry module stem(s) were not selected by these runtime resources: hstore"
+        ));
     }
 
     #[test]
     fn manifest_records_mobile_static_registry_metadata() {
-        let extensions = runtime_resource_extensions(&[Extension::Vector]);
+        let extensions = runtime_resource_extensions(&[Extension::VECTOR]);
         let metadata = mobile_static_registry_metadata(&extensions, &[]).unwrap();
         let manifest = RuntimeResourceManifest {
             cache_key: "runtime-smoke",
@@ -2088,7 +2128,7 @@ mod tests {
     #[test]
     fn manifest_records_required_shared_preload_libraries() {
         let extensions =
-            runtime_resource_extensions(&[Extension::PgTextsearch, Extension::PgTextsearch]);
+            runtime_resource_extensions(&[Extension::PG_TEXTSEARCH, Extension::PG_TEXTSEARCH]);
         let preload = shared_preload_libraries(&extensions);
         let metadata = mobile_static_registry_metadata(&extensions, &[]).unwrap();
         let manifest = RuntimeResourceManifest {
@@ -2111,7 +2151,7 @@ mod tests {
 
     #[test]
     fn manifest_separates_selected_and_createable_extension_domains() {
-        let extensions = runtime_resource_extensions(&[Extension::Hstore, Extension::AutoExplain]);
+        let extensions = runtime_resource_extensions(&[Extension::HSTORE, Extension::AUTO_EXPLAIN]);
         let metadata = mobile_static_registry_metadata(&extensions, &[]).unwrap();
         let manifest = RuntimeResourceManifest {
             cache_key: "runtime-domain-smoke",
@@ -2246,7 +2286,7 @@ mod tests {
             b"state=pending\n",
         );
 
-        let selected_extensions = runtime_resource_extensions(&[Extension::Vector]);
+        let selected_extensions = runtime_resource_extensions(&[Extension::VECTOR]);
         let metadata = mobile_static_registry_metadata(&selected_extensions, &[]).unwrap();
         let report = runtime_resource_size_report(
             &root,
@@ -2306,7 +2346,7 @@ mod tests {
             b"state=pending\n",
         );
 
-        let selected_extensions = runtime_resource_extensions(&[Extension::Unaccent]);
+        let selected_extensions = runtime_resource_extensions(&[Extension::UNACCENT]);
         let metadata = mobile_static_registry_metadata(&selected_extensions, &[]).unwrap();
         let report = runtime_resource_size_report(
             &root,

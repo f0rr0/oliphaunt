@@ -1039,8 +1039,12 @@ static int exec_stream_callback_failure_recovers(OliphauntHandle *db) {
     int rc = oliphaunt_exec_protocol_raw_stream(db, query, query_len, fail_stream_chunk, &acc);
     free(query);
     free(acc.data);
-    if (rc == 0) {
-        fprintf(stderr, "oliphaunt_exec_protocol_raw_stream succeeded despite callback failure\n");
+    if (rc != OLIPHAUNT_STREAM_CALLBACK_ABORTED) {
+        fprintf(
+            stderr,
+            "oliphaunt_exec_protocol_raw_stream returned %d for callback failure, expected %d\n",
+            rc,
+            OLIPHAUNT_STREAM_CALLBACK_ABORTED);
         return 1;
     }
     if (acc.chunks == 0) {

@@ -21,6 +21,7 @@ pub(crate) fn simple_query(sql: &str) -> Result<Vec<u8>> {
 }
 
 impl QueryResult {
+    /// Read a text-format value by row index and column name.
     pub fn get_text(&self, row: usize, column: &str) -> crate::Result<Option<&str>> {
         crate::error::public_result(self.get_text_inner(row, column))
     }
@@ -37,6 +38,7 @@ impl QueryResult {
 }
 
 impl QueryRow {
+    /// Read a text-format value by column index.
     pub fn text(&self, column: usize) -> crate::Result<Option<&str>> {
         crate::error::public_result(self.text_inner(column))
     }
@@ -142,6 +144,10 @@ pub(crate) fn describe_statement(sql: &str, params: &[Parameter]) -> Result<Vec<
 
 pub(crate) fn reject_copy_statements(sql: &str) -> Result<()> {
     query_core_result(query_core::reject_copy_statements(sql))
+}
+
+pub(crate) fn validate_managed_transaction_response(response: &[u8]) -> Result<ReadyStatus> {
+    query_core_result(query_core::validate_managed_transaction_response(response))
 }
 
 pub(crate) fn response_ready_status(bytes: &[u8]) -> Result<ReadyStatus> {

@@ -25,13 +25,16 @@ use crate::oliphaunt::data_dir::{
 };
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::extensions::Extension;
-use crate::oliphaunt::lifecycle::{TerminalCloseResult, terminal_close};
+use crate::oliphaunt::lifecycle::{
+    TeardownOwnership, TerminalCloseResult, teardown_result, terminal_close,
+};
 use crate::oliphaunt::postgres_mod::{ProtocolPumpOutcome, ProtocolStream};
 use crate::oliphaunt::query::{
     CommandResult, ExecResult, IntoParameter, Parameter, QueryParam, QueryResult, ReadyStatus,
     StatementDescription, ValueFormat, describe_statement, extended_statement, parse_exec_response,
     parse_extended_command_response, parse_extended_query_response, parse_simple_command_response,
     parse_statement_description, reject_copy_statements, response_ready_status, simple_query,
+    validate_managed_transaction_response,
 };
 use crate::oliphaunt::storage::PgDataStorage;
 #[cfg(all(feature = "extensions", test))]
@@ -50,9 +53,9 @@ const DIRECT_TOOL_READ_BUFFER_BYTES: usize = 64 * 1024;
 
 /// Direct, single-session Oliphaunt WASIX database.
 pub struct Oliphaunt {
-    backend: BackendSession,
-    _workspace: Option<TempDir>,
-    _directory_lock: Option<DirectoryLock>,
+    backend: TeardownOwnership<BackendSession>,
+    _workspace: TeardownOwnership<Option<TempDir>>,
+    _directory_lock: TeardownOwnership<Option<DirectoryLock>>,
     in_transaction: bool,
     transaction_outcome_unknown: bool,
     backup_mode_exit_unconfirmed: bool,
@@ -74,64 +77,63 @@ enum TransactionState {
     RolledBack,
     Finishing,
     Committed,
-    Failed(Box<TransactionFailure>),
+    Failed {
+        error: Box<crate::Error>,
+        rollback_was_attempted: bool,
+    },
 }
 
 impl TransactionState {
     fn is_active(&self) -> bool {
         matches!(self, Self::Active)
     }
-}
 
-#[derive(Clone)]
-struct TransactionFailure {
-    report: String,
-    postgres: Option<crate::PostgresError>,
-}
-
-impl TransactionFailure {
-    fn capture(error: &crate::Error) -> Self {
-        Self {
-            report: format!("{error:#}"),
-            postgres: error.postgres_error().cloned(),
+    fn failed_database(error: crate::Error) -> Self {
+        Self::Failed {
+            error: Box::new(error),
+            rollback_was_attempted: false,
         }
     }
 
-    fn to_error(&self) -> crate::Error {
-        match &self.postgres {
-            Some(postgres) if self.report == postgres.to_string() => {
-                crate::Error::from_anyhow(anyhow::Error::new(postgres.clone()))
-            }
-            Some(postgres) => crate::Error::from_anyhow(
-                anyhow::Error::new(postgres.clone()).context(self.report.clone()),
-            ),
-            None => crate::Error::message(self.report.clone()),
+    fn failed_rollback(error: crate::Error) -> Self {
+        Self::Failed {
+            error: Box::new(error),
+            rollback_was_attempted: true,
         }
     }
 }
 
-fn resolve_inactive_transaction_callback<T>(
+fn resolve_inactive_transaction_callback<T, E>(
     state: &TransactionState,
-    callback_result: crate::Result<T>,
-) -> crate::Result<T> {
+    callback_result: std::result::Result<T, E>,
+) -> crate::TransactionResult<T, E> {
     match state {
-        TransactionState::RolledBack => callback_result,
-        TransactionState::Failed(failure) => match callback_result {
-            Ok(_) => Err(failure.to_error()),
-            Err(error) => Err(crate::Error::transaction_rollback(
-                error,
-                failure.to_error(),
-            )),
+        TransactionState::RolledBack => callback_result.map_err(crate::TransactionError::Callback),
+        TransactionState::Failed {
+            error,
+            rollback_was_attempted,
+        } => match callback_result {
+            Ok(_) => Err(crate::TransactionError::Database((**error).clone())),
+            Err(callback) if *rollback_was_attempted => {
+                Err(crate::TransactionError::CallbackAndRollback {
+                    callback,
+                    rollback: (**error).clone(),
+                })
+            }
+            Err(callback) => Err(crate::TransactionError::CallbackAndDatabase {
+                callback,
+                database: (**error).clone(),
+            }),
         },
-        TransactionState::Finishing => Err(crate::Error::message(
-            "transaction settlement did not reach a terminal state",
+        TransactionState::Finishing => Err(crate::TransactionError::Database(
+            crate::Error::message("transaction settlement did not reach a terminal state"),
         )),
-        TransactionState::Committed => Err(crate::Error::message(
-            "transaction was committed before callback settlement",
+        TransactionState::Committed => Err(crate::TransactionError::Database(
+            crate::Error::message("transaction was committed before callback settlement"),
         )),
-        TransactionState::Active => Err(crate::Error::message(
+        TransactionState::Active => Err(crate::TransactionError::Database(crate::Error::message(
             "internal transaction state error while settling callback",
-        )),
+        ))),
     }
 }
 
@@ -140,7 +142,7 @@ fn resolve_inactive_transaction_callback<T>(
 pub struct Sql<'db, 'q> {
     client: &'db mut Oliphaunt,
     owner: StructuredOwner,
-    transaction_open: bool,
+    transaction_state: Option<&'db mut TransactionState>,
     sql: Cow<'q, str>,
     params: Vec<Parameter>,
     result_format: ValueFormat,
@@ -151,7 +153,7 @@ impl<'db, 'q> Sql<'db, 'q> {
         Self {
             client,
             owner: StructuredOwner::Database,
-            transaction_open: true,
+            transaction_state: None,
             sql: sql.into(),
             params: Vec::new(),
             result_format: ValueFormat::Text,
@@ -160,13 +162,24 @@ impl<'db, 'q> Sql<'db, 'q> {
 
     fn transaction(
         client: &'db mut Oliphaunt,
-        transaction_open: bool,
+        transaction_state: &'db mut TransactionState,
         sql: impl Into<Cow<'q, str>>,
     ) -> Self {
         Self {
             client,
             owner: StructuredOwner::Transaction,
-            transaction_open,
+            transaction_state: Some(transaction_state),
+            sql: sql.into(),
+            params: Vec::new(),
+            result_format: ValueFormat::Text,
+        }
+    }
+
+    fn owner_transaction(client: &'db mut Oliphaunt, sql: impl Into<Cow<'q, str>>) -> Self {
+        Self {
+            client,
+            owner: StructuredOwner::Transaction,
+            transaction_state: None,
             sql: sql.into(),
             params: Vec::new(),
             result_format: ValueFormat::Text,
@@ -194,11 +207,12 @@ impl<'db, 'q> Sql<'db, 'q> {
         self
     }
 
-    pub fn execute(self) -> crate::Result<CommandResult> {
-        crate::error::public_result(self.execute_inner())
+    pub fn execute(mut self) -> crate::Result<CommandResult> {
+        let result = crate::error::public_result(self.execute_inner());
+        self.observe_transaction_outcome(result)
     }
 
-    fn execute_inner(self) -> Result<CommandResult> {
+    fn execute_inner(&mut self) -> Result<CommandResult> {
         self.ensure_transaction_open()?;
         let request = extended_statement(&self.sql, &self.params, self.result_format)?;
         let response = self
@@ -213,11 +227,12 @@ impl<'db, 'q> Sql<'db, 'q> {
     ///
     /// Command-only SQL is accepted as an empty row set with its command tag
     /// and affected-row count retained.
-    pub fn query(self) -> crate::Result<QueryResult> {
-        crate::error::public_result(self.query_inner())
+    pub fn query(mut self) -> crate::Result<QueryResult> {
+        let result = crate::error::public_result(self.query_inner());
+        self.observe_transaction_outcome(result)
     }
 
-    fn query_inner(self) -> Result<QueryResult> {
+    fn query_inner(&mut self) -> Result<QueryResult> {
         self.ensure_transaction_open()?;
         let request = extended_statement(&self.sql, &self.params, self.result_format)?;
         let response = self
@@ -228,11 +243,12 @@ impl<'db, 'q> Sql<'db, 'q> {
         Ok(result)
     }
 
-    pub fn describe(self) -> crate::Result<StatementDescription> {
-        crate::error::public_result(self.describe_inner())
+    pub fn describe(mut self) -> crate::Result<StatementDescription> {
+        let result = crate::error::public_result(self.describe_inner());
+        self.observe_transaction_outcome(result)
     }
 
-    fn describe_inner(self) -> Result<StatementDescription> {
+    fn describe_inner(&mut self) -> Result<StatementDescription> {
         self.ensure_transaction_open()?;
         let request = describe_statement(&self.sql, &self.params)?;
         let response = self
@@ -244,10 +260,21 @@ impl<'db, 'q> Sql<'db, 'q> {
     }
 
     fn ensure_transaction_open(&self) -> Result<()> {
-        if matches!(self.owner, StructuredOwner::Transaction) {
-            ensure!(self.transaction_open, "transaction is no longer active");
+        if let Some(state) = &self.transaction_state {
+            ensure!(state.is_active(), "transaction is no longer active");
         }
         Ok(())
+    }
+
+    fn observe_transaction_outcome<T>(&mut self, result: crate::Result<T>) -> crate::Result<T> {
+        if self.client.transaction_outcome_unknown
+            && let Err(error) = &result
+            && let Some(state) = self.transaction_state.as_deref_mut()
+            && state.is_active()
+        {
+            *state = TransactionState::failed_database(error.clone());
+        }
+        result
     }
 }
 
@@ -272,11 +299,77 @@ fn validate_structured_result(
 }
 
 type ProtocolCallback = Box<dyn FnMut(&[u8]) -> crate::Result<()> + Send>;
+type ProtocolCallbackPanic = Box<dyn std::any::Any + Send + 'static>;
+
+enum ProtocolCallbackFailure {
+    Error(crate::Error),
+    Panic(ProtocolCallbackPanic),
+}
+
+#[derive(Debug)]
+enum ProtocolStreamFailure {
+    Database(anyhow::Error),
+    Callback(crate::Error),
+    CallbackPanicked(ProtocolCallbackPanic),
+}
+
+impl From<anyhow::Error> for ProtocolStreamFailure {
+    fn from(error: anyhow::Error) -> Self {
+        Self::Database(error)
+    }
+}
+
+impl std::fmt::Display for ProtocolStreamFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Database(error) => error.fmt(formatter),
+            Self::Callback(error) => error.fmt(formatter),
+            Self::CallbackPanicked(_) => formatter.write_str("protocol callback panicked"),
+        }
+    }
+}
+
+fn invoke_protocol_callback(
+    callback: &mut ProtocolCallback,
+    chunk: &[u8],
+) -> std::result::Result<(), ProtocolCallbackFailure> {
+    match catch_unwind(AssertUnwindSafe(|| callback(chunk))) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(ProtocolCallbackFailure::Error(error)),
+        Err(panic) => Err(ProtocolCallbackFailure::Panic(panic)),
+    }
+}
+
+fn resolve_protocol_callback_outcome(
+    outcome: Result<ProtocolPumpOutcome>,
+    callback_error: Option<crate::Error>,
+    callback_panic: Option<ProtocolCallbackPanic>,
+    transaction_outcome_unknown: &mut bool,
+) -> std::result::Result<ProtocolPumpOutcome, ProtocolStreamFailure> {
+    // A failed pump did not prove the ReadyForQuery boundary. It is therefore
+    // authoritative over a callback failure and the retained panic payload
+    // must be dropped rather than resumed into an apparently reusable session.
+    let outcome = match outcome {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            *transaction_outcome_unknown = true;
+            return Err(ProtocolStreamFailure::Database(error));
+        }
+    };
+    if let Some(panic) = callback_panic {
+        return Err(ProtocolStreamFailure::CallbackPanicked(panic));
+    }
+    if let Some(error) = callback_error {
+        return Err(ProtocolStreamFailure::Callback(error));
+    }
+    Ok(outcome)
+}
 
 #[derive(Default)]
 struct CallbackProtocolState {
     callback: Option<ProtocolCallback>,
     error: Option<crate::Error>,
+    panic: Option<ProtocolCallbackPanic>,
     #[cfg(feature = "tools")]
     tool_io: Option<DirectToolProtocolIo>,
 }
@@ -312,16 +405,29 @@ impl Write for CallbackProtocolStream {
         if let Some(tool_io) = state.tool_io.as_mut() {
             return tool_io.write(buffer);
         }
-        let callback = state.callback.as_mut().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "WASIX protocol callback is not active",
-            )
-        })?;
+        if state.error.is_some() || state.panic.is_some() {
+            return Ok(buffer.len());
+        }
         for chunk in buffer.chunks(PROTOCOL_CALLBACK_CHUNK_BYTES) {
-            if let Err(error) = callback(chunk) {
-                state.error = Some(error);
-                return Err(io::Error::other("WASIX protocol callback failed"));
+            let result = {
+                let callback = state.callback.as_mut().ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "WASIX protocol callback is not active",
+                    )
+                })?;
+                invoke_protocol_callback(callback, chunk)
+            };
+            match result {
+                Ok(()) => {}
+                Err(ProtocolCallbackFailure::Error(error)) => {
+                    state.error = Some(error);
+                    return Ok(buffer.len());
+                }
+                Err(ProtocolCallbackFailure::Panic(panic)) => {
+                    state.panic = Some(panic);
+                    return Ok(buffer.len());
+                }
             }
         }
         Ok(buffer.len())
@@ -411,9 +517,9 @@ impl Oliphaunt {
 
     fn finish_open(backend: BackendSession, startup_config: StartupConfig) -> Result<Self> {
         let mut instance = Self {
-            backend,
-            _workspace: None,
-            _directory_lock: None,
+            backend: TeardownOwnership::new(backend),
+            _workspace: TeardownOwnership::new(None),
+            _directory_lock: TeardownOwnership::new(None),
             in_transaction: false,
             transaction_outcome_unknown: false,
             backup_mode_exit_unconfirmed: false,
@@ -571,7 +677,7 @@ impl Oliphaunt {
         params: Vec<Parameter>,
         result_format: ValueFormat,
     ) -> crate::Result<CommandResult> {
-        Sql::transaction(self, true, sql)
+        Sql::owner_transaction(self, sql)
             .with_parameters(params, result_format)
             .execute()
     }
@@ -582,7 +688,7 @@ impl Oliphaunt {
         params: Vec<Parameter>,
         result_format: ValueFormat,
     ) -> crate::Result<QueryResult> {
-        Sql::transaction(self, true, sql)
+        Sql::owner_transaction(self, sql)
             .with_parameters(params, result_format)
             .query()
     }
@@ -592,7 +698,7 @@ impl Oliphaunt {
         sql: &str,
         params: Vec<Parameter>,
     ) -> crate::Result<StatementDescription> {
-        Sql::transaction(self, true, sql)
+        Sql::owner_transaction(self, sql)
             .with_parameters(params, ValueFormat::Text)
             .describe()
     }
@@ -628,10 +734,12 @@ impl Oliphaunt {
     ) -> Result<Vec<u8>> {
         self.check_ready()?;
         match owner {
-            StructuredOwner::Database => ensure!(
-                !self.in_transaction,
-                "a callback transaction is active; use its transaction handle"
-            ),
+            StructuredOwner::Database if self.in_transaction => {
+                return Err(crate::error::transaction_active(
+                    "a callback transaction is active; use its transaction handle",
+                ));
+            }
+            StructuredOwner::Database => {}
             StructuredOwner::Transaction => {
                 ensure!(self.in_transaction, "transaction is no longer active")
             }
@@ -643,6 +751,15 @@ impl Oliphaunt {
                 return Err(error);
             }
         };
+        if matches!(owner, StructuredOwner::Transaction) {
+            if let Err(error) = validate_managed_transaction_response(&response) {
+                self.transaction_outcome_unknown = true;
+                return Err(error.context(format!(
+                    "{operation} did not preserve the SDK-managed transaction boundary; close and reopen the database"
+                )));
+            }
+            return Ok(response);
+        }
         let ready = match response_ready_status(&response) {
             Ok(ready) => ready,
             Err(error) => {
@@ -652,102 +769,227 @@ impl Oliphaunt {
                 )));
             }
         };
-        match (owner, ready) {
-            (StructuredOwner::Database, ReadyStatus::Idle)
-            | (
-                StructuredOwner::Transaction,
-                ReadyStatus::InTransaction | ReadyStatus::FailedTransaction,
-            ) => Ok(response),
-            (StructuredOwner::Database, _) => {
-                let recovery = simple_query("ROLLBACK")
-                    .and_then(|rollback| self.backend.send_buffered(&rollback))
-                    .and_then(|response| parse_simple_command_response(&response));
-                let recovered = recovery.as_ref().is_ok_and(|result| {
-                    result.command_tag() == Some("ROLLBACK")
-                        && result.ready_status() == ReadyStatus::Idle
-                });
-                if recovered {
-                    Ok(response)
-                } else {
-                    self.transaction_outcome_unknown = true;
-                    bail!(
-                        "{operation} left the embedded session in a transaction and rollback recovery failed: {}",
-                        recovery
-                            .err()
-                            .map(|error| error.to_string())
-                            .unwrap_or_else(|| "unexpected ROLLBACK response".to_owned())
-                    )
-                }
-            }
-            (StructuredOwner::Transaction, ReadyStatus::Idle) => {
-                self.transaction_outcome_unknown = true;
-                bail!(
-                    "{operation} ended the callback transaction outside Transaction::rollback(); close and reopen the database"
-                )
-            }
+        if ready == ReadyStatus::Idle {
+            return Ok(response);
+        }
+        let recovery = simple_query("ROLLBACK")
+            .and_then(|rollback| self.backend.send_buffered(&rollback))
+            .and_then(|response| parse_simple_command_response(&response));
+        let recovered = recovery.as_ref().is_ok_and(|result| {
+            result.command_tag() == Some("ROLLBACK") && result.ready_status() == ReadyStatus::Idle
+        });
+        if recovered {
+            Ok(response)
+        } else {
+            self.transaction_outcome_unknown = true;
+            bail!(
+                "{operation} left the embedded session in a transaction and rollback recovery failed: {}",
+                recovery
+                    .err()
+                    .map(|error| error.to_string())
+                    .unwrap_or_else(|| "unexpected ROLLBACK response".to_owned())
+            )
         }
     }
 
     /// Execute raw PostgreSQL frontend-protocol bytes.
+    ///
+    /// A runtime failure that returns no complete response makes the database
+    /// close-only because its PostgreSQL boundary is unknown.
     pub fn exec_protocol_raw(&mut self, request: impl AsRef<[u8]>) -> crate::Result<Vec<u8>> {
         crate::error::public_result(self.exec_protocol_raw_inner(request.as_ref()))
     }
 
     fn exec_protocol_raw_inner(&mut self, request: &[u8]) -> Result<Vec<u8>> {
         self.check_ready()?;
-        self.backend.send_buffered(request)
+        match self.backend.send_buffered(request) {
+            Ok(response) => Ok(response),
+            Err(error) => {
+                // Raw callers own response parsing, but an engine failure
+                // returned no complete response boundary and is close-only.
+                self.transaction_outcome_unknown = true;
+                Err(error)
+            }
+        }
     }
 
     /// Execute raw PostgreSQL protocol bytes and deliver response chunks as they arrive.
-    pub fn exec_protocol_raw_stream<F>(
+    ///
+    /// A callback error or panic is surfaced only after the guest protocol pump
+    /// confirms recovery. If the pump fails first, its error is returned, the
+    /// session becomes close-only, and a retained panic is not resumed.
+    /// The callback executes synchronously before this method returns, but the
+    /// retained WASIX protocol stream requires owned `Send + 'static` captures;
+    /// use `Arc<Mutex<_>>` for mutable caller state. Return `()` for infallible
+    /// delivery or `Result<(), E>` for a typed stop.
+    pub fn exec_protocol_raw_stream<F, O>(
         &mut self,
         request: impl AsRef<[u8]>,
-        on_chunk: F,
-    ) -> crate::Result<()>
+        mut on_chunk: F,
+    ) -> crate::RawStreamResult<(), O::Error>
     where
-        F: FnMut(&[u8]) -> crate::Result<()> + Send + 'static,
+        F: FnMut(&[u8]) -> O + Send + 'static,
+        O: crate::RawStreamCallbackOutput,
+        O::Error: Send + 'static,
     {
-        crate::error::public_result(self.exec_protocol_stream_inner(request.as_ref(), on_chunk))
+        let callback_error = Arc::new(Mutex::new(None));
+        let callback_error_for_owner = Arc::clone(&callback_error);
+        let result =
+            self.exec_protocol_stream_inner(request.as_ref(), move |chunk| {
+                match on_chunk(chunk).into_raw_stream_callback_result() {
+                    Ok(()) => Ok(()),
+                    Err(error) => {
+                        *callback_error_for_owner
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(error);
+                        Err(crate::Error::message(
+                            "raw protocol stream callback stopped delivery",
+                        ))
+                    }
+                }
+            });
+        match result {
+            Ok(()) => Ok(()),
+            Err(ProtocolStreamFailure::Database(error)) => Err(crate::RawStreamError::Database(
+                crate::Error::from_anyhow(error),
+            )),
+            Err(ProtocolStreamFailure::Callback(error)) => {
+                let callback_error = callback_error
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .take();
+                match callback_error {
+                    Some(error) => Err(crate::RawStreamError::Callback(error)),
+                    None => Err(crate::RawStreamError::Database(error)),
+                }
+            }
+            Err(ProtocolStreamFailure::CallbackPanicked(panic)) => resume_unwind(panic),
+        }
     }
 
-    fn exec_protocol_stream_inner<F>(&mut self, request: &[u8], on_chunk: F) -> Result<()>
+    /// Owner-thread counterpart which turns only a proven user-callback panic
+    /// into a typed recoverable result. Panics from the runtime or adapter are
+    /// deliberately not caught here and therefore terminalize the async owner.
+    pub(crate) fn exec_protocol_raw_stream_on_owner<F, O>(
+        &mut self,
+        request: impl AsRef<[u8]>,
+        mut on_chunk: F,
+    ) -> crate::RawStreamResult<(), O::Error>
+    where
+        F: FnMut(&[u8]) -> O + Send + 'static,
+        O: crate::RawStreamCallbackOutput,
+        O::Error: Send + 'static,
+    {
+        let callback_error = Arc::new(Mutex::new(None));
+        let callback_error_for_owner = Arc::clone(&callback_error);
+        let result =
+            self.exec_protocol_stream_inner(request.as_ref(), move |chunk| {
+                match on_chunk(chunk).into_raw_stream_callback_result() {
+                    Ok(()) => Ok(()),
+                    Err(error) => {
+                        *callback_error_for_owner
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(error);
+                        Err(crate::Error::message(
+                            "raw protocol stream callback stopped delivery",
+                        ))
+                    }
+                }
+            });
+        match result {
+            Ok(()) => Ok(()),
+            Err(ProtocolStreamFailure::Database(error)) => Err(crate::RawStreamError::Database(
+                crate::Error::from_anyhow(error),
+            )),
+            Err(ProtocolStreamFailure::Callback(error)) => {
+                let callback_error = callback_error
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .take();
+                match callback_error {
+                    Some(error) => Err(crate::RawStreamError::Callback(error)),
+                    None => Err(crate::RawStreamError::Database(error)),
+                }
+            }
+            Err(ProtocolStreamFailure::CallbackPanicked(_)) => {
+                Err(crate::RawStreamError::CallbackPanicked(
+                    crate::Error::message("WASIX protocol callback panicked"),
+                ))
+            }
+        }
+    }
+
+    fn exec_protocol_stream_inner<F>(
+        &mut self,
+        request: &[u8],
+        on_chunk: F,
+    ) -> std::result::Result<(), ProtocolStreamFailure>
     where
         F: FnMut(&[u8]) -> crate::Result<()> + Send + 'static,
     {
-        self.check_ready()?;
-        self.ensure_protocol_stream_attached()?;
+        self.check_ready()
+            .map_err(ProtocolStreamFailure::Database)?;
+        self.ensure_protocol_stream_attached()
+            .map_err(ProtocolStreamFailure::Database)?;
         {
-            let mut state = self
-                .protocol_stream
-                .lock()
-                .map_err(|_| anyhow::anyhow!("WASIX protocol callback lock poisoned"))?;
-            ensure!(
-                state.callback.is_none(),
-                "WASIX protocol callback is already active"
-            );
+            let mut state = self.protocol_stream.lock().map_err(|_| {
+                ProtocolStreamFailure::Database(anyhow::anyhow!(
+                    "WASIX protocol callback lock poisoned"
+                ))
+            })?;
+            if state.callback.is_some() {
+                return Err(ProtocolStreamFailure::Database(anyhow::anyhow!(
+                    "WASIX protocol callback is already active"
+                )));
+            }
             state.callback = Some(Box::new(on_chunk));
             state.error = None;
+            state.panic = None;
         }
         let outcome = self.backend.send_with_protocol_pump(request);
-        let (callback_error, callback) = {
-            let mut state = self
-                .protocol_stream
-                .lock()
-                .map_err(|_| anyhow::anyhow!("WASIX protocol callback lock poisoned"))?;
-            (state.error.take(), state.callback.take())
-        };
-        if let Some(error) = callback_error {
-            return Err(anyhow::Error::new(error));
-        }
-        let mut callback = callback.context("WASIX protocol callback disappeared")?;
-        match outcome? {
+        let (callback_error, callback_panic, callback, outcome) =
+            match (self.protocol_stream.lock(), outcome) {
+                (Ok(mut state), outcome) => (
+                    state.error.take(),
+                    state.panic.take(),
+                    state.callback.take(),
+                    outcome,
+                ),
+                (Err(_), Err(error)) => {
+                    self.transaction_outcome_unknown = true;
+                    return Err(ProtocolStreamFailure::Database(error));
+                }
+                (Err(_), Ok(_)) => {
+                    return Err(ProtocolStreamFailure::Database(anyhow::anyhow!(
+                        "WASIX protocol callback lock poisoned"
+                    )));
+                }
+            };
+        let outcome = resolve_protocol_callback_outcome(
+            outcome,
+            callback_error,
+            callback_panic,
+            &mut self.transaction_outcome_unknown,
+        )?;
+        let mut callback = callback.ok_or_else(|| {
+            ProtocolStreamFailure::Database(anyhow::anyhow!("WASIX protocol callback disappeared"))
+        })?;
+        match outcome {
             ProtocolPumpOutcome::Buffered(response) => {
                 for chunk in response.chunks(PROTOCOL_CALLBACK_CHUNK_BYTES) {
-                    callback(chunk).map_err(anyhow::Error::new)?;
+                    match invoke_protocol_callback(&mut callback, chunk) {
+                        Ok(()) => {}
+                        Err(ProtocolCallbackFailure::Error(error)) => {
+                            return Err(ProtocolStreamFailure::Callback(error));
+                        }
+                        Err(ProtocolCallbackFailure::Panic(panic)) => {
+                            return Err(ProtocolStreamFailure::CallbackPanicked(panic));
+                        }
+                    }
                 }
             }
             ProtocolPumpOutcome::Streamed => {}
-        }
+        };
         Ok(())
     }
 
@@ -787,10 +1029,11 @@ impl Oliphaunt {
     #[cfg(feature = "tools")]
     fn prepare_tool_session(&mut self) -> Result<()> {
         self.check_ready()?;
-        ensure!(
-            !self.in_transaction,
-            "WASIX tools cannot run while a callback transaction is active"
-        );
+        if self.in_transaction {
+            return Err(crate::error::transaction_active(
+                "WASIX tools cannot run while a callback transaction is active",
+            ));
+        }
         self.reset_tool_session()
             .context("prepare embedded session for WASIX tool")
     }
@@ -936,12 +1179,25 @@ impl Oliphaunt {
         crate::error::public_result(self.backup_inner())
     }
 
+    /// Run packaged `pg_dump` directly against this database.
+    #[cfg(feature = "tools")]
+    pub fn pg_dump(&mut self, options: PgDumpOptions) -> crate::Result<String> {
+        crate::error::public_result(self.run_pg_dump_tool(options))
+    }
+
+    /// Run packaged non-interactive `psql` directly against this database.
+    #[cfg(feature = "tools")]
+    pub fn psql(&mut self, options: PsqlOptions) -> crate::Result<String> {
+        crate::error::public_result(self.run_psql_tool(options))
+    }
+
     fn backup_inner(&mut self) -> Result<Vec<u8>> {
         self.check_ready()?;
-        ensure!(
-            !self.in_transaction,
-            "physical backup cannot run while a transaction is active"
-        );
+        if self.in_transaction {
+            return Err(crate::error::transaction_active(
+                "physical backup cannot run while a transaction is active",
+            ));
+        }
         let start_attempt = self.start_backup();
         let (start_wal, wal_segment_size) =
             resolve_start_backup_attempt(start_attempt, |error| self.cleanup_failed_backup(error))?;
@@ -1003,11 +1259,17 @@ impl Oliphaunt {
     }
 
     /// Run a callback inside a transaction pinned to this direct session.
-    pub fn transaction<F, T>(&mut self, callback: F) -> crate::Result<T>
+    ///
+    /// The callback returns ordinary `Result<T, E>` with `E: From<Error>`.
+    /// [`crate::TransactionError`] keeps typed business aborts distinct from
+    /// rollback failures and independent database/protocol failures.
+    pub fn transaction<F, T, E>(&mut self, callback: F) -> crate::TransactionResult<T, E>
     where
-        F: FnOnce(&mut Transaction<'_>) -> crate::Result<T>,
+        F: FnOnce(&mut Transaction<'_>) -> std::result::Result<T, E>,
+        E: From<crate::Error>,
     {
-        self.owner_begin_transaction()?;
+        self.owner_begin_transaction()
+            .map_err(crate::TransactionError::Database)?;
         let mut transaction = Transaction {
             client: self,
             state: TransactionState::Active,
@@ -1015,12 +1277,30 @@ impl Oliphaunt {
         let callback_result = catch_unwind(AssertUnwindSafe(|| callback(&mut transaction)));
         let result = match callback_result {
             Ok(callback_result) if transaction.state.is_active() => match callback_result {
-                Ok(value) => transaction.commit_internal().map(|()| value),
+                Ok(value) => transaction
+                    .commit_internal()
+                    .map(|()| value)
+                    .map_err(crate::TransactionError::Database),
                 Err(error) => match transaction.rollback_internal() {
-                    Ok(()) => Err(error),
-                    Err(rollback_error) => {
-                        Err(crate::Error::transaction_rollback(error, rollback_error))
+                    Ok(()) => Err(crate::TransactionError::Callback(error)),
+                    Err(database)
+                        if matches!(
+                            &transaction.state,
+                            TransactionState::Failed {
+                                rollback_was_attempted: false,
+                                ..
+                            }
+                        ) =>
+                    {
+                        Err(crate::TransactionError::CallbackAndDatabase {
+                            callback: error,
+                            database,
+                        })
                     }
+                    Err(rollback) => Err(crate::TransactionError::CallbackAndRollback {
+                        callback: error,
+                        rollback,
+                    }),
                 },
             },
             Ok(callback_result) => {
@@ -1040,7 +1320,9 @@ impl Oliphaunt {
     pub(crate) fn owner_begin_transaction(&mut self) -> crate::Result<()> {
         crate::error::public_result(self.check_ready())?;
         if self.in_transaction {
-            return Err(crate::Error::message("a transaction is already active"));
+            return Err(crate::Error::transaction_active(
+                "a transaction is already active",
+            ));
         }
         let begin = match crate::error::public_result(self.transaction_command_inner("BEGIN")) {
             Ok(begin) => begin,
@@ -1056,9 +1338,11 @@ impl Oliphaunt {
                 self.in_transaction = true;
                 Ok(())
             }
-            Some("ROLLBACK") => Err(crate::Error::message(
-                "PostgreSQL rolled back instead of beginning the transaction",
-            )),
+            Some("ROLLBACK") if begin.ready_status() == ReadyStatus::Idle => {
+                Err(crate::Error::message(
+                    "PostgreSQL rolled back instead of beginning the transaction",
+                ))
+            }
             command_tag => {
                 self.transaction_outcome_unknown = begin.ready_status() != ReadyStatus::Idle;
                 Err(crate::Error::message(format!(
@@ -1075,6 +1359,31 @@ impl Oliphaunt {
 
     pub(crate) fn owner_rollback_transaction(&mut self) -> crate::Result<()> {
         self.owner_finish_transaction("ROLLBACK")
+    }
+
+    pub(crate) fn owner_transaction_outcome_unknown(&self) -> bool {
+        self.transaction_outcome_unknown
+    }
+
+    pub(crate) fn owner_poison_unobserved_transaction_settlement(&mut self) {
+        self.transaction_outcome_unknown = true;
+        self.in_transaction = false;
+    }
+
+    pub(crate) fn owner_abandon_unknown_transaction(&mut self) -> crate::Result<()> {
+        if !self.in_transaction {
+            return Err(crate::Error::message("transaction is no longer active"));
+        }
+        if !self.transaction_outcome_unknown {
+            return Err(crate::Error::message(
+                "cannot abandon a transaction whose protocol state is still known",
+            ));
+        }
+        // No PostgreSQL command is safe once the protocol boundary is unknown.
+        // Retire only the host-side ownership token so terminal close remains
+        // reachable without pretending that rollback occurred.
+        self.in_transaction = false;
+        Ok(())
     }
 
     fn owner_finish_transaction(&mut self, command: &str) -> crate::Result<()> {
@@ -1139,45 +1448,46 @@ impl Oliphaunt {
     /// Validation before shutdown, such as an active callback transaction,
     /// leaves the database open and may be retried. Once shutdown begins, the
     /// database is permanently retired; repeated calls replay the same success
-    /// or failure.
+    /// or failure. Successful teardown releases the backend and storage root;
+    /// failed teardown retains that ownership until process exit rather than
+    /// attempting an unproven second destructive cleanup.
     pub fn close(&mut self) -> crate::Result<()> {
-        crate::error::public_result(self.close_inner())
+        self.close_inner()
     }
 
-    fn close_inner(&mut self) -> Result<()> {
+    fn close_inner(&mut self) -> crate::Result<()> {
         if let Some(result) = &self.close_result {
-            return result.clone().map_err(anyhow::Error::msg);
+            return result.clone();
         }
         if self.closed {
             return Ok(());
         }
-        ensure!(!self.closing, "Oliphaunt is closing");
-        ensure!(
-            !self.in_transaction,
-            "cannot close while a transaction is active"
-        );
+        if self.closing {
+            return Err(crate::Error::lifecycle("Oliphaunt is closing"));
+        }
+        if self.in_transaction {
+            return Err(crate::Error::transaction_active(
+                "cannot close while a transaction is active",
+            ));
+        }
         self.closing = true;
-        let result = terminal_close(&mut self.close_result, || self.backend.shutdown());
+        let backend = &mut self.backend;
+        let workspace = &mut self._workspace;
+        let directory_lock = &mut self._directory_lock;
+        let result = terminal_close(&mut self.close_result, "WASIX database", || {
+            shutdown_and_release_database_ownership(backend, workspace, directory_lock)
+        });
         self.closing = false;
         self.closed = true;
-        if result.is_ok() {
-            self._directory_lock = None;
-            self._workspace = None;
-        }
-        result.map_err(anyhow::Error::msg)
+        result
     }
 
     pub(crate) fn attach_workspace(&mut self, workspace: TempDir) {
-        self._workspace = Some(workspace);
+        *self._workspace = Some(workspace);
     }
 
     pub(crate) fn attach_directory_lock(&mut self, directory_lock: DirectoryLock) {
-        self._directory_lock = Some(directory_lock);
-    }
-
-    #[cfg(feature = "extensions")]
-    pub(crate) fn enable_startup_extensions(&mut self, extensions: &[Extension]) -> Result<()> {
-        self.backend.enable_extensions(extensions)
+        *self._directory_lock = Some(directory_lock);
     }
 
     #[cfg(all(feature = "extensions", test))]
@@ -1187,13 +1497,13 @@ impl Oliphaunt {
 
     fn check_ready(&self) -> Result<()> {
         if self.closing {
-            bail!("Oliphaunt is closing");
+            return Err(crate::error::lifecycle("Oliphaunt is closing"));
         }
         if self.closed {
-            bail!("Oliphaunt is closed");
+            return Err(crate::error::lifecycle("Oliphaunt is closed"));
         }
         if self.transaction_outcome_unknown {
-            bail!("Oliphaunt transaction outcome is unknown; close and reopen it");
+            bail!("Oliphaunt PostgreSQL session state is unknown; close and reopen it");
         }
         if self.backup_mode_exit_unconfirmed {
             bail!("Oliphaunt backup-mode exit is unconfirmed; close and reopen it");
@@ -1446,10 +1756,36 @@ impl Write for DirectToolProtocolIo {
 impl Drop for Oliphaunt {
     fn drop(&mut self) {
         if !self.closed {
-            let _ = self.backend.shutdown();
+            let result = teardown_result("WASIX database", || {
+                shutdown_and_release_database_ownership(
+                    &mut self.backend,
+                    &mut self._workspace,
+                    &mut self._directory_lock,
+                )
+            });
             self.closed = true;
+            if let Err(error) = result {
+                tracing::warn!(
+                    "Oliphaunt shutdown during drop failed; retaining WASIX backend and storage ownership until process exit: {error:#}"
+                );
+            }
         }
     }
+}
+
+fn shutdown_and_release_database_ownership(
+    backend: &mut TeardownOwnership<BackendSession>,
+    workspace: &mut TeardownOwnership<Option<TempDir>>,
+    directory_lock: &mut TeardownOwnership<Option<DirectoryLock>>,
+) -> Result<()> {
+    backend.shutdown()?;
+    // Release the managed-root lock last. If any destructor panics, the outer
+    // teardown boundary converts it to a terminal error while the lock remains
+    // quarantined against an unsafe reopen.
+    backend.release();
+    workspace.release();
+    directory_lock.release();
+    Ok(())
 }
 
 /// Callback-scoped transaction on the direct PostgreSQL session.
@@ -1476,7 +1812,7 @@ impl Transaction<'_> {
     }
 
     pub fn sql<'db, 'q>(&'db mut self, sql: impl Into<Cow<'q, str>>) -> Sql<'db, 'q> {
-        Sql::transaction(&mut *self.client, self.state.is_active(), sql)
+        Sql::transaction(&mut *self.client, &mut self.state, sql)
     }
 
     pub fn is_closed(&self) -> bool {
@@ -1529,7 +1865,9 @@ impl Transaction<'_> {
 
     pub fn exec(&mut self, sql: &str) -> crate::Result<ExecResult> {
         crate::error::public_result(self.ensure_open())?;
-        crate::error::public_result(self.client.exec_inner(sql, StructuredOwner::Transaction))
+        let result =
+            crate::error::public_result(self.client.exec_inner(sql, StructuredOwner::Transaction));
+        self.observe_database_outcome(result)
     }
 
     pub fn describe(&mut self, sql: &str) -> crate::Result<StatementDescription> {
@@ -1537,25 +1875,14 @@ impl Transaction<'_> {
         self.sql(sql).describe()
     }
 
-    pub fn exec_protocol_raw(&mut self, request: impl AsRef<[u8]>) -> crate::Result<Vec<u8>> {
-        crate::error::public_result(self.ensure_open())?;
-        self.client.exec_protocol_raw(request)
-    }
-
-    pub fn exec_protocol_raw_stream<F>(
-        &mut self,
-        request: impl AsRef<[u8]>,
-        on_chunk: F,
-    ) -> crate::Result<()>
-    where
-        F: FnMut(&[u8]) -> crate::Result<()> + Send + 'static,
-    {
-        crate::error::public_result(self.ensure_open())?;
-        self.client.exec_protocol_raw_stream(request, on_chunk)
-    }
-
     fn commit_internal(&mut self) -> crate::Result<()> {
         crate::error::public_result(self.ensure_open())?;
+        if self.client.transaction_outcome_unknown {
+            let error =
+                crate::Error::message("transaction protocol state is unknown; close the database");
+            self.state = TransactionState::failed_database(error.clone());
+            return Err(error);
+        }
         // Once COMMIT is sent, retrying with ROLLBACK can neither undo a
         // completed commit nor clarify a lost response. Seal the handle first.
         self.state = TransactionState::Finishing;
@@ -1566,8 +1893,7 @@ impl Transaction<'_> {
                     if error.postgres_error().is_none() {
                         self.client.transaction_outcome_unknown = true;
                     }
-                    self.state =
-                        TransactionState::Failed(Box::new(TransactionFailure::capture(&error)));
+                    self.state = TransactionState::failed_database(error.clone());
                     return Err(error);
                 }
             };
@@ -1580,8 +1906,7 @@ impl Transaction<'_> {
                 let error = crate::Error::message(
                     "PostgreSQL rolled back the transaction instead of committing",
                 );
-                self.state =
-                    TransactionState::Failed(Box::new(TransactionFailure::capture(&error)));
+                self.state = TransactionState::failed_database(error.clone());
                 Err(error)
             }
             (command_tag, ready_status) => {
@@ -1589,8 +1914,7 @@ impl Transaction<'_> {
                 let error = crate::Error::message(format!(
                     "transaction commit returned PostgreSQL command tag {command_tag:?} with readiness {ready_status:?}"
                 ));
-                self.state =
-                    TransactionState::Failed(Box::new(TransactionFailure::capture(&error)));
+                self.state = TransactionState::failed_database(error.clone());
                 Err(error)
             }
         }
@@ -1603,14 +1927,19 @@ impl Transaction<'_> {
 
     fn rollback_internal(&mut self) -> crate::Result<()> {
         crate::error::public_result(self.ensure_open())?;
+        if self.client.transaction_outcome_unknown {
+            let error =
+                crate::Error::message("transaction protocol state is unknown; close the database");
+            self.state = TransactionState::failed_database(error.clone());
+            return Err(error);
+        }
         self.state = TransactionState::Finishing;
         let result =
             match crate::error::public_result(self.client.transaction_command_inner("ROLLBACK")) {
                 Ok(result) => result,
                 Err(error) => {
                     self.client.transaction_outcome_unknown = true;
-                    self.state =
-                        TransactionState::Failed(Box::new(TransactionFailure::capture(&error)));
+                    self.state = TransactionState::failed_rollback(error.clone());
                     return Err(error);
                 }
             };
@@ -1621,7 +1950,7 @@ impl Transaction<'_> {
                 result.command_tag(),
                 result.ready_status()
             ));
-            self.state = TransactionState::Failed(Box::new(TransactionFailure::capture(&error)));
+            self.state = TransactionState::failed_rollback(error.clone());
             return Err(error);
         }
         self.state = TransactionState::RolledBack;
@@ -1631,6 +1960,16 @@ impl Transaction<'_> {
     fn ensure_open(&self) -> Result<()> {
         ensure!(self.state.is_active(), "transaction is no longer active");
         Ok(())
+    }
+
+    fn observe_database_outcome<T>(&mut self, result: crate::Result<T>) -> crate::Result<T> {
+        if self.client.transaction_outcome_unknown
+            && let Err(error) = &result
+            && self.state.is_active()
+        {
+            self.state = TransactionState::failed_database(error.clone());
+        }
+        result
     }
 }
 
@@ -1667,22 +2006,21 @@ mod transaction_state_tests {
     #[test]
     fn caught_rollback_failure_cannot_turn_into_callback_success() {
         let rollback_error = crate::Error::message("rollback transport failed");
-        let state =
-            TransactionState::Failed(Box::new(TransactionFailure::capture(&rollback_error)));
+        let state = TransactionState::failed_rollback(rollback_error.clone());
 
-        let error = resolve_inactive_transaction_callback(&state, Ok(42_u8))
+        let error = resolve_inactive_transaction_callback::<_, crate::Error>(&state, Ok(42_u8))
             .expect_err("a retained rollback failure must override callback success");
 
         assert!(error.to_string().contains("rollback transport failed"));
+        assert!(error.database_error().is_some());
     }
 
     #[test]
     fn callback_failure_reports_a_retained_rollback_failure() {
         let rollback_error = postgres_error("40001", "rollback failed");
-        let state =
-            TransactionState::Failed(Box::new(TransactionFailure::capture(&rollback_error)));
+        let state = TransactionState::failed_rollback(rollback_error.clone());
 
-        let error = resolve_inactive_transaction_callback::<()>(
+        let error = resolve_inactive_transaction_callback::<(), crate::Error>(
             &state,
             Err(postgres_error("23505", "callback failed")),
         )
@@ -1691,23 +2029,157 @@ mod transaction_state_tests {
             error.to_string(),
             "transaction callback failed: ERROR [23505]: callback failed; rollback also failed: ERROR [40001]: rollback failed"
         );
-        let composite = error
-            .transaction_rollback_error()
-            .expect("both failures must remain structured");
+        let callback = error
+            .callback_error()
+            .expect("the callback failure must remain structured");
+        let rollback = error
+            .rollback_error()
+            .expect("the rollback failure must remain structured");
         assert_eq!(
-            composite
-                .callback
+            callback
                 .postgres_error()
                 .and_then(|error| error.sqlstate.as_deref()),
             Some("23505")
         );
         assert_eq!(
-            composite
-                .rollback
+            rollback
                 .postgres_error()
                 .and_then(|error| error.sqlstate.as_deref()),
             Some("40001")
         );
+    }
+
+    #[test]
+    fn callback_and_unknown_database_failure_are_not_misreported_as_rollback() {
+        let database_error = crate::Error::message("raw stream recovery failed");
+        let state = TransactionState::failed_database(database_error.clone());
+
+        let error = resolve_inactive_transaction_callback::<(), crate::Error>(
+            &state,
+            Err(crate::Error::message("business abort")),
+        )
+        .expect_err("both independent failures must be retained");
+        assert!(error.rollback_error().is_none());
+        assert_eq!(
+            error.database_error().map(ToString::to_string).as_deref(),
+            Some("raw stream recovery failed")
+        );
+        assert_eq!(
+            error.callback_error().map(ToString::to_string).as_deref(),
+            Some("business abort")
+        );
+    }
+}
+
+#[cfg(test)]
+mod protocol_callback_tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    #[test]
+    fn callback_error_is_retained_while_protocol_output_keeps_draining() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let callback_calls = Arc::clone(&calls);
+        let state = Arc::new(Mutex::new(CallbackProtocolState {
+            callback: Some(Box::new(move |_| {
+                callback_calls.fetch_add(1, Ordering::SeqCst);
+                Err(crate::Error::message("consumer rejected protocol output"))
+            })),
+            ..CallbackProtocolState::default()
+        }));
+        let mut stream = CallbackProtocolStream {
+            state: Arc::clone(&state),
+        };
+
+        assert_eq!(stream.write(b"first frame").unwrap(), 11);
+        assert_eq!(stream.write(b"second frame").unwrap(), 12);
+
+        let state = state.lock().expect("callback state remains usable");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            state.error.as_ref().map(ToString::to_string).as_deref(),
+            Some("consumer rejected protocol output")
+        );
+        assert!(state.panic.is_none());
+    }
+
+    #[test]
+    fn callback_panic_is_retained_without_poisoning_protocol_state() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let callback_calls = Arc::clone(&calls);
+        let state = Arc::new(Mutex::new(CallbackProtocolState {
+            callback: Some(Box::new(move |_| {
+                callback_calls.fetch_add(1, Ordering::SeqCst);
+                panic!("consumer callback panicked");
+            })),
+            ..CallbackProtocolState::default()
+        }));
+        let mut stream = CallbackProtocolStream {
+            state: Arc::clone(&state),
+        };
+
+        assert_eq!(stream.write(b"first frame").unwrap(), 11);
+        assert_eq!(stream.write(b"second frame").unwrap(), 12);
+
+        let state = state
+            .lock()
+            .expect("caught panic must not poison callback state");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(state.error.is_none());
+        assert!(state.panic.is_some());
+    }
+
+    #[test]
+    fn pump_failure_overrides_a_retained_callback_error() {
+        let outcome: Result<ProtocolPumpOutcome> =
+            Err(anyhow::anyhow!("pump failed before ReadyForQuery"));
+        let mut transaction_outcome_unknown = false;
+        let error = resolve_protocol_callback_outcome(
+            outcome,
+            Some(crate::Error::message("consumer stopped")),
+            None,
+            &mut transaction_outcome_unknown,
+        )
+        .expect_err("pump failure is authoritative");
+        assert_eq!(error.to_string(), "pump failed before ReadyForQuery");
+        assert!(transaction_outcome_unknown);
+    }
+
+    #[test]
+    fn pump_failure_drops_instead_of_resuming_a_retained_callback_panic() {
+        let mut transaction_outcome_unknown = false;
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            resolve_protocol_callback_outcome(
+                Err(anyhow::anyhow!("pump failed before ReadyForQuery")),
+                None,
+                Some(Box::new("consumer panic")),
+                &mut transaction_outcome_unknown,
+            )
+        }))
+        .expect("unknown session state must not resume the callback panic");
+        assert_eq!(
+            outcome.expect_err("pump failure is returned").to_string(),
+            "pump failed before ReadyForQuery"
+        );
+        assert!(transaction_outcome_unknown);
+    }
+
+    #[test]
+    fn confirmed_pump_success_returns_a_recoverable_callback_panic() {
+        let mut transaction_outcome_unknown = false;
+        let error = resolve_protocol_callback_outcome(
+            Ok(ProtocolPumpOutcome::Streamed),
+            None,
+            Some(Box::new("consumer panic")),
+            &mut transaction_outcome_unknown,
+        )
+        .expect_err("confirmed recovery retains the callback panic");
+        let ProtocolStreamFailure::CallbackPanicked(panic) = error else {
+            panic!("expected a retained callback panic");
+        };
+        assert_eq!(panic.downcast_ref::<&str>(), Some(&"consumer panic"));
+        assert!(!transaction_outcome_unknown);
     }
 }
 

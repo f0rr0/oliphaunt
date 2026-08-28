@@ -2,9 +2,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use oliphaunt_wasix::{extensions, worker::OliphauntServer};
+use oliphaunt_wasix::{AsyncOliphauntServer, Extension};
 #[cfg(test)]
-use oliphaunt_wasix::{tools, Oliphaunt};
+use oliphaunt_wasix::{Oliphaunt, tools};
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
@@ -81,7 +81,7 @@ struct TodoStore {
 
 struct TodoDatabase {
     pool: PgPool,
-    _server: OliphauntServer,
+    _server: AsyncOliphauntServer,
 }
 
 #[derive(Debug, Deserialize)]
@@ -146,13 +146,13 @@ fn open_database(directory: PathBuf) -> Result<TodoDatabase> {
     })
 }
 
-async fn start_database_server(directory: PathBuf) -> Result<OliphauntServer> {
-    let server = OliphauntServer::builder()
+async fn start_database_server(directory: PathBuf) -> Result<AsyncOliphauntServer> {
+    let server = AsyncOliphauntServer::builder()
         .storage(oliphaunt_wasix::DatabaseStorage::Directory(directory))
         .extensions([
-            extensions::HSTORE,
-            extensions::PG_TRGM,
-            extensions::UNACCENT,
+            Extension::HSTORE,
+            Extension::PG_TRGM,
+            Extension::UNACCENT,
         ])
         .start()
         .await
@@ -160,7 +160,7 @@ async fn start_database_server(directory: PathBuf) -> Result<OliphauntServer> {
     Ok(server)
 }
 
-async fn connect_database(server: OliphauntServer) -> Result<TodoDatabase> {
+async fn connect_database(server: AsyncOliphauntServer) -> Result<TodoDatabase> {
     let pool = PgPoolOptions::new()
         .max_connections(1)
         .acquire_timeout(Duration::from_secs(30))
@@ -186,18 +186,12 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
 #[cfg(test)]
 fn validate_wasix_tools() -> Result<()> {
     let mut database = Oliphaunt::open()?;
-    let dump = tools::pg_dump(
-        &mut database,
-        tools::PgDumpOptions::new().arg("--schema-only"),
-    )?;
+    let dump = database.pg_dump(tools::PgDumpOptions::new().arg("--schema-only"))?;
     anyhow::ensure!(
         dump.contains("PostgreSQL database dump"),
         "pg_dump SQL backup smoke did not look like a PostgreSQL dump"
     );
-    let psql = tools::psql(
-        &mut database,
-        tools::PsqlOptions::new().arg("-tA").command("SELECT 1"),
-    )?;
+    let psql = database.psql(tools::PsqlOptions::new().arg("-tA").command("SELECT 1"))?;
     anyhow::ensure!(
         psql.lines().any(|line| line.trim() == "1"),
         "psql smoke did not return SELECT 1 output"

@@ -48,9 +48,14 @@ asynchronously; it never waits on the JavaScript, iOS main, or Android UI
 thread. A thrown raw-stream callback rejects the operation before the owner
 admits subsequent work. Chunk delivery is a synchronous backpressure boundary:
 returning a Promise or thenable, or reentering the same database or transaction
-from the callback, rejects the stream. `cancel()` remains independently
-admitted so it can interrupt active native work. It remains callable after
-close admission while earlier FIFO work drains and stops at native teardown.
+from the callback, rejects the stream. The original callback error is preserved
+only after native recovery confirms a known PostgreSQL protocol boundary; an
+execution, transport, or recovery failure is authoritative instead and poisons
+the database. A recovered callback-only failure leaves the handle reusable; a
+buffered raw-protocol rejection poisons it because the session outcome is
+unknown. `cancel()` remains independently admitted so it can interrupt active
+native work. It remains callable after close admission while earlier FIFO work
+drains and stops at native teardown.
 
 ## Binary transport
 

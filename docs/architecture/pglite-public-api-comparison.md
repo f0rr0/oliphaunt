@@ -1,7 +1,7 @@
 # PGlite and Oliphaunt public API comparison
 
 Status: current design and implementation report
-Compared: 2026-08-27
+Compared: 2026-08-28
 PGlite baseline: `@electric-sql/pglite` 0.5.7 at
 `faa505ad2ea0d14dfb1c99ab9614361c39d2c7e2`
 
@@ -52,8 +52,8 @@ mobile, and the two embedded Rust products.
 | `exec()` | `exec()` | Strong parity: parameterless simple-query, ordered multi-results |
 | `describeQuery()` | `describe()` | Same protocol purpose; result contracts deliberately differ |
 | `transaction()` | `transaction()` | Strong parity; Oliphaunt has stricter ownership and recovery semantics |
-| `execProtocolRaw()` | `execProtocolRaw` / `exec_protocol_raw` | Same raw-byte operation |
-| `execProtocolRawStream()` | `execProtocolRawStream` / `exec_protocol_raw_stream` | Same raw-byte streaming concept; JavaScript signatures differ |
+| `execProtocolRaw()` | `execProtocolRaw` / `exec_protocol_raw` on database/root handles | Same raw-byte operation and root-level escape-hatch placement |
+| `execProtocolRawStream()` | `execProtocolRawStream` / `exec_protocol_raw_stream` on database/root handles | Same raw-byte streaming concept; JavaScript signatures differ |
 | structured `execProtocol()` | Absent | Real gap for callers wanting parsed arbitrary backend messages |
 | `runExclusive()` | Absent publicly | Deliberate; one operation or callback transaction owns the session |
 | notification methods | Absent | Real gap for embedded idle `LISTEN`/`NOTIFY` delivery |
@@ -72,10 +72,11 @@ PGlite supports a synchronous constructor that begins initialization and an
 async factory that waits for readiness. Oliphaunt exposes only a ready handle,
 with execution placement kept separate from database topology:
 
-- native Rust and WASIX Rust roots open and execute synchronously on the
-  calling thread through exclusive handles; `oliphaunt::worker` and
-  `oliphaunt_wasix::worker` provide the cloneable asynchronous owner-thread
-  alternatives;
+- native Rust and WASIX Rust root `Oliphaunt` types are synchronous and
+  exclusive, while root `AsyncOliphaunt` types provide cloneable asynchronous
+  owner-thread alternatives. Native direct calls block without an SDK queue hop
+  but PostgreSQL runs on liboliphaunt's backend pthread; WASIX direct guest work
+  actually executes on the caller thread;
 - native TypeScript and React Native return promises and retain runtime work
   behind their SDK/platform asynchronous boundaries; and
 - Swift uses an async throwing factory and Kotlin uses a suspending factory,
@@ -93,6 +94,13 @@ Every SDK publishes closed state. Readiness properties remain unnecessary for
 Oliphaunt-native code because a successful `open` is the readiness boundary. A
 PGlite compatibility adapter may expose an already-resolved `waitReady` and
 `ready === true` without adding those compatibility fields to the stable core.
+
+Rust separates database construction from endpoint ownership. Synchronous
+`OliphauntBuilder` and asynchronous `AsyncOliphauntBuilder` end in `open`;
+dedicated `OliphauntServerBuilder` and `AsyncOliphauntServerBuilder` end in
+`start`. Server handles publish only their connection string, closed state, and
+close. This has no PGlite equivalent because PGlite is itself the query handle,
+not a supervisor for independent PostgreSQL client connections.
 
 ## `query`, `execute`, and `exec` are different operations
 
@@ -197,9 +205,9 @@ let rows = database
 
 The builder is available on native Rust and WASIX Rust databases and callback
 transactions. It accumulates typed parameters and result format, then ends in
-`query`, `execute`, or `describe`. Both root Rust APIs run terminals
-synchronously with exclusive mutable borrowing. Their explicit `worker`
-modules expose the same fluent terminals as futures executed by retained owner
+`query`, `execute`, or `describe`. Both root `Oliphaunt` types run terminals
+synchronously with exclusive mutable borrowing. Their root `AsyncOliphaunt`
+types expose the same fluent terminals as futures executed by retained owner
 threads.
 
 PGlite's tagged template instead interprets JavaScript template substitutions
@@ -244,9 +252,10 @@ throws, support explicit early rollback, and expose a closed transaction state.
 Their transaction handles provide `query`, `exec`, and rollback. PGlite
 additionally exposes tagged SQL and notification listening.
 
-Oliphaunt's transaction handle mirrors more of its database API: `queryRaw`,
-`execute`, `describe`, buffered raw protocol, and raw protocol streaming are
-available as well. Its ownership contract is also stronger:
+Oliphaunt's transaction handle adds the structured `execute` and `describe`
+operations while deliberately omitting buffered and streamed raw protocol.
+PGlite likewise keeps `execProtocolRaw` on its database rather than its
+transaction interface. Oliphaunt's ownership contract is stronger:
 
 - the physical session is pinned for the callback;
 - database-level operations cannot interleave with the callback;
@@ -256,6 +265,14 @@ available as well. Its ownership contract is also stronger:
 - uncertain rollback or commit outcomes poison the database rather than claim
   recovery.
 
+Oliphaunt derives managed ownership from every exact backend command tag and
+the single terminal readiness status before high-level result parsing; it does
+not lex SQL. Manual lifecycle SQL and `AND CHAIN` are unsupported inside the
+callback, while savepoints and `ROLLBACK TO` remain valid. PostgreSQL makes
+`ROLLBACK AND CHAIN` indistinguishable from `ROLLBACK TO` at this protocol
+boundary, so callers must honor that contract. A proven or uncertain ownership
+escape makes the database close-only and suppresses speculative SDK control.
+
 There is no public `runExclusive`. One structured call already owns its entire
 Parse/Describe/Bind/Execute/Sync cycle, and a callback transaction is the
 public multi-call ownership boundary. This is sufficient for ORM drivers
@@ -263,7 +280,8 @@ without exposing the scheduler lock as application API.
 
 ## Raw protocol
 
-Every SDK exposes the canonical pair:
+Every embedded database/root SDK surface exposes the canonical pair;
+transaction and server-lifecycle handles do not:
 
 - `execProtocolRaw` / `exec_protocol_raw` buffers one complete backend response;
 - `execProtocolRawStream` / `exec_protocol_raw_stream` delivers bounded raw
@@ -311,6 +329,12 @@ PostgreSQL `CHECKPOINT` remains ordinary SQL. Calling
 boundary as any other successful mutating statement. No public checkpoint
 convenience is required to make persistent storage correct.
 
+Extension selection is also deliberately separate from database-local SQL.
+Oliphaunt selection makes exact artifacts, dependencies, and required pre-start
+preload/GUC settings available, but never executes `CREATE EXTENSION`, `ALTER
+EXTENSION`, `LOAD`, schema setup, or post-create SQL. Applications and ORM
+migrations retain ordinary PostgreSQL ownership of installation and upgrades.
+
 ## Capabilities PGlite retains
 
 The meaningful PGlite-only embedded capabilities are:
@@ -338,11 +362,12 @@ Oliphaunt's public product family goes beyond PGlite core with:
 - native direct and broker execution;
 - native Rust, Swift, Kotlin, React Native, and desktop TypeScript SDKs;
 - WASIX Rust plus browser/Node/Bun/Deno TypeScript execution;
-- query-capable native server handles and endpoint-oriented WASIX server
-  products where sockets are honest;
+- lifecycle-and-URI-only native and WASIX server products where sockets are
+  honest;
 - ordinary PostgreSQL driver interoperability through connection strings;
 - native and WASIX PostgreSQL tools;
-- exact packaged PostgreSQL extension selection;
+- exact packaged PostgreSQL extension availability without implicit
+  database-local installation;
 - richer field metadata and raw-row fallbacks;
 - out-of-band native cancellation; and
 - validated physical backup/restore, explicit storage ownership, and poisoned
@@ -352,13 +377,23 @@ Oliphaunt's public product family goes beyond PGlite core with:
 
 | Surface | Public database shape | Deliberate difference |
 | --- | --- | --- |
-| Native TypeScript | Promise API; decoded `query`, `queryRaw`, `execute`, `exec`, `describe`, transactions, raw protocol, cancellation, backup/restore; direct/broker/server | Server adds `connectionString`; direct and broker keep one session |
-| WASIX TypeScript | Same JavaScript SQL shape through the caller-realm root or explicit `/worker` entry point; memory, IndexedDB, OPFS, and managed directories | Both surfaces are Promise-shaped; root guest CPU work runs in the caller realm while `/worker` adds RPC isolation; no cancellation; browser has no server sockets |
+| Native TypeScript | Promise database API in direct/broker mode: decoded `query`, `queryRaw`, `execute`, `exec`, `describe`, transactions, raw protocol, cancellation, backup/restore; separate server facade | Server exposes only `connectionString` and lifecycle; direct and broker keep one session |
+| WASIX TypeScript | Same JavaScript database shape through the caller-realm root or explicit `/worker`; separate Node/Bun/Deno server subpaths; memory, IndexedDB, OPFS, and managed directories | Both database surfaces are Promise-shaped; root guest CPU work runs in the caller realm while `/worker` adds RPC isolation; server is URI/lifecycle only; no cancellation; browsers have no server sockets |
 | React Native | Same JavaScript SQL and codec shape over Swift/Kotlin | Direct mobile only; JSI carries binary batches and raw chunks |
-| Native Rust | Synchronous exclusive root plus async `worker` module; fluent `Sql`; typed ordered rows; direct/broker/server | Root executes on the caller thread; worker handles are cloneable and serialize runtime work on a permanent owner thread; server backup uses ordinary PostgreSQL tooling |
-| WASIX Rust | Synchronous exclusive root plus async `worker` module; fluent `Sql`; typed ordered rows; memory/directory storage | Root executes on the caller thread; worker handles are cloneable and owner-thread backed; no cancellation |
+| Native Rust | Synchronous exclusive `Oliphaunt` plus root `AsyncOliphaunt`; fluent `Sql`; typed ordered rows; direct/broker; separate sync/async server builders | Sync database is `Send + !Sync`; async database is cloneable `Send + Sync`; server handle is URI/lifecycle only; direct PostgreSQL uses liboliphaunt's backend pthread |
+| WASIX Rust | Synchronous exclusive `Oliphaunt` plus root `AsyncOliphaunt`; fluent `Sql`; typed ordered rows; memory/directory storage; separate sync/async server builders | Sync database is `!Send + !Sync`; async database is cloneable `Send + Sync`; server is single-client and URI/lifecycle only; no cancellation |
 | Swift | Actor-isolated async database; typed ordered rows and Foundation byte/path types | Direct Apple runtime; no server product |
 | Kotlin | Coroutine database; typed ordered rows and Kotlin byte/path types | Android is the current application facade; no server product |
+
+Rust also has two stable value-shape decisions with no useful PGlite analogue.
+Both Rust products expose an opaque cloneable `Error` classified by a root
+non-exhaustive `ErrorKind` (`InvalidConfiguration`, `Lifecycle`,
+`TransactionActive`, `Postgres`, or `Other`) while retaining PostgreSQL and
+composite transaction detail through accessors. Their opaque root `Extension`
+uses uppercase associated constants, `Extension::ALL`,
+`Extension::by_sql_name`, and `sql_name`; WASIX exposes only extensions enabled
+by Cargo features. These are intentionally Rust-shaped APIs rather than copies
+of PGlite JavaScript error objects or extension objects.
 
 ## Migration assessment
 
@@ -396,7 +431,8 @@ Driver and compatibility qualification must cover:
 - zero, one, and many `exec` results with mid-batch PostgreSQL errors;
 - statement description without execution and ordered notices;
 - commit, callback failure, explicit rollback, expired transaction handles,
-  and rollback/commit uncertainty;
+  manual lifecycle/`AND CHAIN` misuse, protocol-derived ownership escape, and
+  rollback/commit uncertainty;
 - direct, broker, worker, browser, and React Native ownership boundaries; and
 - streamed raw chunks split at arbitrary offsets rather than only backend
   message boundaries.

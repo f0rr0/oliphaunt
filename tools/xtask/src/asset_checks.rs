@@ -835,6 +835,13 @@ pub(crate) fn verify_generated_extension_surface() -> Result<()> {
         );
     }
 
+    for obsolete in ["ExtensionSetup", "_LOAD_SQL", "_POST_CREATE_SQL"] {
+        ensure!(
+            !generated.contains(obsolete),
+            "generated extension API retains obsolete runtime activation metadata {obsolete}"
+        );
+    }
+
     for extension in &manifest.extensions {
         let rust_constant = supported_constants
             .get(&extension.sql_name)
@@ -845,16 +852,24 @@ pub(crate) fn verify_generated_extension_surface() -> Result<()> {
                 )
             })?;
         let definition_const = format!("DEFINITION_{rust_constant}");
+        let cargo_feature = format!("extension-{}", extension.sql_name.replace('_', "-"));
         for (needle, description) in [
             (
-                format!("const {definition_const}: Extension ="),
-                "extension definition constant",
+                format!(
+                    "#[cfg(feature = {cargo_feature:?})]\nconst {definition_const}: Extension ="
+                ),
+                "feature-gated extension definition constant",
             ),
             (
-                format!("pub const {rust_constant}: Extension = {definition_const};"),
-                "public extension constant",
+                format!(
+                    "#[cfg(feature = {cargo_feature:?})]\n    pub const {rust_constant}: Self = {definition_const};"
+                ),
+                "feature-gated public extension constant",
             ),
-            (format!("    {rust_constant},"), "extensions::ALL entry"),
+            (
+                format!("#[cfg(feature = {cargo_feature:?})]\n        Self::{rust_constant},"),
+                "feature-gated Extension::ALL entry",
+            ),
             (format!("{:?}", extension.sql_name), "extension SQL name"),
         ] {
             if !generated.contains(&needle) {

@@ -13,6 +13,9 @@ fn generated_extension_metadata() -> serde_json::Value {
 
 #[test]
 fn public_extension_catalog_matches_generated_extension_selection_metadata() {
+    fn assert_extension_traits<T: Copy + Eq + std::hash::Hash + Ord>() {}
+    assert_extension_traits::<Extension>();
+
     let metadata = generated_extension_metadata();
     let rows = metadata["extensions"]
         .as_array()
@@ -25,15 +28,15 @@ fn public_extension_catalog_matches_generated_extension_selection_metadata() {
                 .expect("extension row must define sql-name")
         })
         .collect::<BTreeSet<_>>();
-    let public_names = Extension::ALL_PG18_SUPPORTED
+    let public_names = Extension::ALL
         .iter()
         .map(|extension| extension.sql_name())
         .collect::<BTreeSet<_>>();
 
     assert_eq!(public_names, generated_names);
-    assert_eq!(public_names.len(), Extension::ALL_PG18_SUPPORTED.len());
+    assert_eq!(public_names.len(), Extension::ALL.len());
 
-    for extension in Extension::ALL_PG18_SUPPORTED {
+    for extension in Extension::ALL {
         assert_eq!(
             Extension::by_sql_name(extension.sql_name()),
             Some(*extension)
@@ -43,10 +46,10 @@ fn public_extension_catalog_matches_generated_extension_selection_metadata() {
 
 #[test]
 fn extension_selection_uses_exact_sql_names_without_aliases() {
-    assert_eq!(Extension::by_sql_name("vector"), Some(Extension::Vector));
+    assert_eq!(Extension::by_sql_name("vector"), Some(Extension::VECTOR));
     assert_eq!(
         Extension::by_sql_name("uuid-ossp"),
-        Some(Extension::UuidOssp)
+        Some(Extension::UUID_OSSP)
     );
     for unsupported_alias in [
         "core",

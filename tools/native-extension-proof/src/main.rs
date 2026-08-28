@@ -50,10 +50,10 @@ fn run_native_tools_npm_smoke(
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
     let root = unique_temp_root("native-tools-npm-smoke");
     let server = block_on(
-        Oliphaunt::builder()
-            .directory(&root)
-            .extension(Extension::Pgtap)
-            .open_server(),
+        OliphauntServer::builder()
+            .storage(DatabaseStorage::Directory(root.clone()))
+            .extension(Extension::PGTAP)
+            .start(),
     )?;
     let child = Command::new(&command[0])
         .args(&command[1..])

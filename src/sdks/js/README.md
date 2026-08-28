@@ -23,7 +23,10 @@ await db.close();
 ```
 
 Direct topology is the default. Set `topology: 'broker'` to place the embedded
-backend in a helper process while keeping the same database API.
+backend in a helper process while keeping the same database API. If that helper
+fails, the database object fails permanently; close it and explicitly open a new
+object on persistent storage for PostgreSQL WAL recovery. The SDK never swaps a
+new session under an existing object or replays uncertain work.
 
 The database API is promise-based on Node.js, Bun, and Deno. Native PostgreSQL
 work runs in addon jobs or Deno nonblocking FFI rather than on the JavaScript
@@ -66,6 +69,26 @@ and describe. One-shot `rollback()` closes the transaction and lets the callback
 return without committing. Failed rollback or COMMIT uncertainty poisons the
 database and never triggers a misleading second control command.
 
+When a callback throws, Oliphaunt waits for a successful automatic rollback and
+then rethrows the original value unchanged. If the callback and rollback both
+fail, the transaction rejects with an `AggregateError` whose `errors` are the
+callback failure followed by the rollback failure. If an earlier independent
+database or protocol failure has already poisoned or expired transaction
+ownership and the callback then throws a different value, an `AggregateError`
+preserves the callback failure followed by that database failure; the database
+is close-only. An ordinary PostgreSQL statement error that remains safely
+rollbackable uses the first rule and is not automatically aggregated.
+
+Raw protocol is intentionally database-only and absent from callback transaction
+handles. Inside a transaction callback, do not issue manual `BEGIN`, `START
+TRANSACTION`, `COMMIT`, `END`, `ABORT`, `PREPARE TRANSACTION`, or `AND CHAIN`;
+return/throw from the callback or call `rollback()` instead. `SAVEPOINT` and
+`ROLLBACK TO` remain ordinary supported SQL. `ROLLBACK AND CHAIN` is unsupported
+contract misuse and cannot be distinguished from `ROLLBACK TO` by PostgreSQL's
+wire tag and readiness status, so Oliphaunt validates the actual protocol boundary
+without guessing from SQL text. A proven ownership escape makes the database
+close-only and the SDK sends no follow-up `COMMIT` or `ROLLBACK`.
+
 Always `await db.close()` or use `await using` for deterministic lifecycle.
 Garbage collection is only a best-effort leak guard: on Node/Bun a
 `FinalizationRegistry` gives the addon an opaque exact-generation token and only
@@ -87,7 +110,10 @@ Raw-stream callbacks are synchronous, cannot reenter database or transaction
 work on the same handle, and may only use `cancel()` out of band. Once `close()`
 stops ordinary admission, `cancel()` remains available while previously
 admitted work drains; runtime teardown begins only after admitted cancellation
-requests settle.
+requests settle. A thrown callback is returned unchanged only after the runtime
+confirms that it recovered the PostgreSQL protocol boundary. An execution,
+transport, or recovery failure is authoritative instead and poisons the
+session when its state is unknown.
 
 ## Backup and restore
 
@@ -119,9 +145,12 @@ console.log(server.connectionString);
 await server.close();
 ```
 
-The server handle has the same structured query, transaction, raw protocol,
-cancellation, and close methods, but no SDK backup method. TCP is
-fixed to IPv4 loopback; omit `port` for automatic assignment. Unix hosts may
+The server handle owns only the PostgreSQL process/listener lifecycle and exposes
+its `connectionString`, `closed`, and `close`. Connect an ORM, PostgreSQL driver,
+or tool with that URI; the resulting connections own their own queries,
+transactions, raw protocol, and cancellation. The server handle cannot cancel
+or otherwise control work on external clients. TCP is fixed to IPv4 loopback;
+omit `port` for automatic assignment. Unix hosts may
 instead pass `{ transport: 'unix', directory, port? }`, which uses
 `.s.PGSQL.<port>` and never removes the caller's directory.
 

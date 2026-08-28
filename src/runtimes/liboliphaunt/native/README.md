@@ -125,6 +125,12 @@ calls fail busy until streaming drains to `ReadyForQuery`. This guard applies
 while the callback lock is released as well, preventing callback reentrancy or a
 concurrent close from corrupting protocol state or freeing the active handle.
 
+FFI schedulers that resume on a different thread use the ABI 10 `_with_error`
+variants with one caller-owned `OliphauntErrorCapture` per invocation. The
+worker fills that fixed-layout capture before its handle lease ends; synchronous
+callers may continue copying the operation-local error immediately with
+`oliphaunt_copy_last_error`.
+
 The C runtime keeps throughput-oriented PostgreSQL defaults for direct callers:
 `shared_buffers=128MB`, `wal_buffers=4MB`, and `min_wal_size=80MB`. SDKs that
 need different PostgreSQL settings do not need a new C ABI; they pass validated

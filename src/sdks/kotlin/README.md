@@ -86,6 +86,10 @@ PostgreSQL backend bytes; callback chunks are transport-dependent and are not a
 separate public protocol parser. The callback is a synchronous backpressure
 boundary: same-database and transaction work is rejected from its scope, with
 `cancel()` as the sole out-of-band exception.
+Callback failures are surfaced only after the native runtime confirms protocol
+recovery, so the session remains reusable. A buffered or streaming transport or
+recovery failure is authoritative and poisons the database; close it instead of
+assuming a later operation can recover the physical session.
 
 Suspending calls never execute embedded PostgreSQL or storage preparation on
 the Android UI thread. One single-thread owner dispatcher performs open,
@@ -101,13 +105,29 @@ interrupt. Applications must still call `close()` explicitly. A phantom-referenc
 cleaner is a best-effort forgotten-handle safety net and only schedules close on
 the native owner; it never blocks the garbage collector thread.
 
-Transactions pin the single physical session and mirror `query`, `execute`,
-`exec`, `describe`, and raw protocol methods. One-shot `rollback()` closes the
-transaction and lets its callback return without committing. A failed rollback
-or uncertain COMMIT poisons the database; no second control command claims
-recovery. When callback and automatic rollback both fail,
-`OliphauntTransactionRollbackException` retains the callback as its cause and
-the rollback as both `rollbackError` and a suppressed exception.
+Transactions pin the single physical session and expose `query`, `execute`,
+`exec`, and `describe`; raw protocol execution stays on the database because it
+owns transaction lifecycle explicitly. One-shot `rollback()` closes the
+transaction and lets its callback return without committing; returning normally
+commits. Do not issue manual `BEGIN`/`START TRANSACTION`, `COMMIT`/`END`,
+`ABORT`, `PREPARE TRANSACTION`, or `AND CHAIN` inside a managed callback. Use
+`SAVEPOINT`, `RELEASE SAVEPOINT`, and `ROLLBACK TO SAVEPOINT` for nested work.
+PostgreSQL reports both `ROLLBACK TO` and `ROLLBACK AND CHAIN` as `ROLLBACK`
+with `ReadyForQuery=T`, so `AND CHAIN` is unsupported contract misuse rather
+than something the SDK can distinguish lexically. A detected lifecycle command,
+escaped idle session, failed rollback, or uncertain COMMIT makes the database
+close-only; no second control command claims recovery. After a successful
+automatic rollback, the original callback exception is rethrown. When the
+callback and rollback both fail, `OliphauntTransactionRollbackException`
+exposes `callbackError` and `rollbackError`, uses the callback as its cause, and
+adds the rollback as a suppressed exception. If an earlier independent database
+or protocol failure has already poisoned or expired transaction ownership and
+the callback then throws a different exception,
+`OliphauntTransactionDatabaseException` exposes `callbackError` and
+`databaseError`, uses the callback as its cause, and adds the database error as a
+suppressed exception; the database is close-only. An ordinary PostgreSQL
+statement error that remains safely rollbackable is not automatically wrapped
+in either composite exception.
 
 Backup has one representation: PostgreSQL physical initialization bytes.
 Restore requires an absent or empty destination and never replaces an existing

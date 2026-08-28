@@ -7,7 +7,6 @@ import {
   assertExactCarrierClosure,
   assertExtensionCarriersCompatible,
   assertRuntimeDescriptorMatchesManifest,
-  extensionSetupSql,
   assertClusterSeedProfileContract,
   mergeExtensionStartupGUCs,
   overlayExtensionArchive,
@@ -65,10 +64,6 @@ describe('WASIX TypeScript extensions', () => {
       extensions: [pgtap],
       runtimeDependencies: ['plpgsql'],
     });
-    expect(extensionSetupSql(resolved)).toEqual([
-      'CREATE EXTENSION IF NOT EXISTS "plpgsql";',
-      'CREATE EXTENSION IF NOT EXISTS "pgtap" WITH SCHEMA "pg_catalog";',
-    ]);
   });
 
   it('orders selected extension carriers after their manifest dependencies', () => {
@@ -196,24 +191,16 @@ describe('WASIX TypeScript extensions', () => {
     ).toThrow('standard cluster seed archive size does not match the canonical manifest');
   });
 
-  it('does not create a lifecycle schema when extension creation is disabled', () => {
-    const manual = extension('manual', {
-      createExtension: false,
-      schema: 'manual_schema',
-    });
-    expect(
-      extensionSetupSql(resolveWasixExtensions(manifest(), carrierMap(manual), ['manual'])),
-    ).toEqual([]);
-  });
-
-  it('drives declared native load order and fails closed on shared-memory requirements', () => {
+  it('materializes declared native load order and fails closed on shared-memory requirements', () => {
     const ordered = extension('ordered', {
       installedFiles: ['share/postgresql/extension/ordered.control', 'lib/postgresql/ordered.so'],
       loadOrder: ['lib/postgresql/ordered.so'],
     });
     expect(
-      extensionSetupSql(resolveWasixExtensions(manifest(), carrierMap(ordered), ['ordered'])),
-    ).toEqual(["LOAD '/lib/postgresql/ordered.so';", 'CREATE EXTENSION IF NOT EXISTS "ordered";']);
+      resolveWasixExtensions(manifest(), carrierMap(ordered), ['ordered']).extensions[0]?.[
+        'load-order'
+      ],
+    ).toEqual(['lib/postgresql/ordered.so']);
 
     const shared = extension('shared', { sharedMemoryRequired: true });
     expect(() => resolveWasixExtensions(manifest(), carrierMap(shared), ['shared'])).toThrow(

@@ -2,14 +2,19 @@
 #include "oliphaunt.h"
 
 #include <atomic>
+#include <algorithm>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -93,9 +98,260 @@ struct ForgottenHandleRecoveryToken {
 std::mutex g_libraries_mutex;
 std::map<std::string, std::shared_ptr<NativeLibrary>> g_libraries;
 
+struct EnvironmentOperation;
+
 struct AddonEnvironment {
   napi_env env = nullptr;
+  std::mutex mutex;
+  std::condition_variable condition;
+  size_t pending_operations = 0;
+  bool shutting_down = false;
+  bool quiesce_hook_registered = false;
+  bool quiesce_completed = false;
+  napi_async_cleanup_hook_handle async_cleanup_handle = nullptr;
+  // Created by the async cleanup hook itself, after ordinary environment
+  // resources have quiesced. The reaper uses it solely to finish cleanup on
+  // Node's event-loop thread.
+  napi_threadsafe_function cleanup_completion = nullptr;
+  bool cleanup_completion_call_returned = false;
 };
+
+struct EnvironmentOperation {
+  AddonEnvironment *environment = nullptr;
+  std::atomic<bool> registered = false;
+  std::atomic<bool> started = false;
+};
+
+struct ThreadsafeBridge {
+  napi_threadsafe_function function = nullptr;
+  std::mutex release_mutex;
+  std::condition_variable release_condition;
+  size_t active_calls = 0;
+  bool acquisition_released = false;
+  std::atomic<bool> aborted = false;
+};
+
+std::mutex g_environments_mutex;
+std::map<napi_env, AddonEnvironment *> g_environments;
+std::mutex g_threadsafe_bridges_mutex;
+std::map<AddonEnvironment *, std::vector<std::weak_ptr<ThreadsafeBridge>>>
+    g_threadsafe_bridges;
+
+void Throw(napi_env env, const std::string &message);
+void QuiesceEnvironment(void *data);
+void CompleteEnvironmentCleanup(
+    napi_env env,
+    napi_value callback,
+    void *context,
+    void *data);
+
+AddonEnvironment *LookupEnvironment(napi_env env) {
+  std::lock_guard<std::mutex> guard(g_environments_mutex);
+  auto entry = g_environments.find(env);
+  return entry == g_environments.end() ? nullptr : entry->second;
+}
+
+bool RegisterEnvironmentOperation(
+    napi_env env,
+    EnvironmentOperation *operation) {
+  AddonEnvironment *environment = LookupEnvironment(env);
+  if (environment == nullptr) {
+    Throw(env, "Oliphaunt native environment is unavailable");
+    return false;
+  }
+  std::lock_guard<std::mutex> guard(environment->mutex);
+  if (environment->shutting_down) {
+    Throw(env, "Oliphaunt native environment is shutting down");
+    return false;
+  }
+  environment->pending_operations++;
+  operation->environment = environment;
+  operation->registered.store(true);
+  return true;
+}
+
+void FinishEnvironmentOperation(EnvironmentOperation *operation) {
+  if (operation == nullptr || !operation->registered.exchange(false)) {
+    return;
+  }
+  AddonEnvironment *environment = operation->environment;
+  std::lock_guard<std::mutex> guard(environment->mutex);
+  if (environment->pending_operations > 0) {
+    environment->pending_operations--;
+  }
+  if (environment->pending_operations == 0) {
+    environment->condition.notify_all();
+  }
+}
+
+void StartEnvironmentOperation(EnvironmentOperation *operation) {
+  operation->started.store(true);
+}
+
+bool EnvironmentIsShuttingDown(const EnvironmentOperation *operation) {
+  AddonEnvironment *environment = operation->environment;
+  if (environment == nullptr) {
+    return true;
+  }
+  std::lock_guard<std::mutex> guard(environment->mutex);
+  return environment->shutting_down;
+}
+
+class EnvironmentOperationFinish {
+ public:
+  explicit EnvironmentOperationFinish(EnvironmentOperation *operation)
+      : operation_(operation) {}
+  ~EnvironmentOperationFinish() { FinishEnvironmentOperation(operation_); }
+
+ private:
+  EnvironmentOperation *operation_;
+};
+
+void RegisterThreadsafeBridge(
+    AddonEnvironment *environment,
+    const std::shared_ptr<ThreadsafeBridge> &bridge) {
+  std::lock_guard<std::mutex> guard(g_threadsafe_bridges_mutex);
+  auto &bridges = g_threadsafe_bridges[environment];
+  bridges.erase(
+      std::remove_if(
+          bridges.begin(), bridges.end(),
+          [](const auto &candidate) { return candidate.expired(); }),
+      bridges.end());
+  bridges.emplace_back(bridge);
+}
+
+void ReleaseThreadsafeAcquisition(
+    const std::shared_ptr<ThreadsafeBridge> &bridge,
+    napi_threadsafe_function_release_mode mode) {
+  if (bridge == nullptr) {
+    return;
+  }
+  std::unique_lock<std::mutex> lock(bridge->release_mutex);
+  if (mode == napi_tsfn_abort) {
+    bridge->aborted.store(true);
+    bridge->release_condition.notify_all();
+  }
+  if (!bridge->acquisition_released && bridge->function != nullptr) {
+    bridge->acquisition_released = true;
+    // Keep bridge ownership serialized until Node-API has consumed the
+    // acquisition. Otherwise environment cleanup could observe the flag,
+    // destroy the Node 22 TSFN, and race this still-pending release call.
+    (void)napi_release_threadsafe_function(bridge->function, mode);
+  }
+  if (mode == napi_tsfn_abort) {
+    // Node 22 destroys TSFNs from its environment cleanup hook even when a
+    // producer thread is still alive. Keep our earlier quiesce hook on the
+    // event-loop stack until every producer has returned from Node-API, and
+    // make shutdown the bridge's sole acquisition release. The worker observes
+    // `aborted` and never touches the TSFN afterward.
+    bridge->release_condition.wait(
+        lock,
+        [bridge]() { return bridge->active_calls == 0; });
+  }
+}
+
+napi_status CallThreadsafeBridge(
+    const std::shared_ptr<ThreadsafeBridge> &bridge,
+    void *data,
+    napi_threadsafe_function_call_mode mode) {
+  if (bridge == nullptr) {
+    return napi_closing;
+  }
+  napi_threadsafe_function function = nullptr;
+  {
+    std::lock_guard<std::mutex> guard(bridge->release_mutex);
+    if (bridge->aborted.load() || bridge->function == nullptr) {
+      return napi_closing;
+    }
+    bridge->active_calls++;
+    function = bridge->function;
+  }
+  const napi_status status =
+      napi_call_threadsafe_function(function, data, mode);
+  {
+    std::lock_guard<std::mutex> guard(bridge->release_mutex);
+    if (status == napi_closing) {
+      // Node-API consumes one thread acquisition when Push observes a closing
+      // TSFN. Record that ownership transfer so the producer cannot release an
+      // already-destroyed Node 22 bridge later in environment teardown.
+      bridge->acquisition_released = true;
+      bridge->aborted.store(true);
+    }
+    if (bridge->active_calls > 0) {
+      bridge->active_calls--;
+    }
+    if (bridge->active_calls == 0) {
+      bridge->release_condition.notify_all();
+    }
+  }
+  return status;
+}
+
+using BackgroundOperation = void (*)(void *);
+using BackgroundContextRelease = void (*)(void *);
+
+template <typename Context>
+void ReleaseBackgroundContext(void *data) {
+  auto *context = static_cast<Context *>(data);
+  if (context->lifetime_references.fetch_sub(1) == 1) {
+    delete context;
+  }
+}
+
+bool StartBackgroundOperation(
+    napi_env env,
+    EnvironmentOperation *operation,
+    const std::shared_ptr<ThreadsafeBridge> &bridge,
+    BackgroundOperation execute,
+    BackgroundContextRelease release_context,
+    void *data) {
+  try {
+    std::thread([operation, bridge, execute, release_context, data]() {
+      // The cleanup fixture holds this narrow internal seam long enough to
+      // deterministically terminate an environment after registration but
+      // before Execute begins. It is not a public scheduling option.
+      const char *delay_start =
+          std::getenv("OLIPHAUNT_NODE_CLEANUP_TEST_DELAY_OPERATION_START");
+      if (delay_start != nullptr && std::strcmp(delay_start, "1") == 0) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+      }
+      StartEnvironmentOperation(operation);
+      {
+        EnvironmentOperationFinish finish(operation);
+        execute(data);
+      }
+      // Releasing the TSFN acquisition schedules its finalizer on the Node
+      // thread. Environment teardown may already have retired that
+      // acquisition; this helper retires it exactly once and no environment
+      // state is touched after the operation lease is retired above.
+      ReleaseThreadsafeAcquisition(bridge, napi_tsfn_release);
+      release_context(data);
+    }).detach();
+    return true;
+  } catch (const std::exception &error) {
+    Throw(env, std::string("start native background operation: ") + error.what());
+  } catch (...) {
+    Throw(env, "start native background operation failed");
+  }
+  return false;
+}
+
+void AbortBackgroundOperationSetup(
+    EnvironmentOperation *operation,
+    const std::shared_ptr<ThreadsafeBridge> &bridge) {
+  FinishEnvironmentOperation(operation);
+  ReleaseThreadsafeAcquisition(bridge, napi_tsfn_abort);
+}
+
+bool CanDeliverBackgroundCompletion(
+    napi_env env,
+    const EnvironmentOperation &operation,
+    const std::shared_ptr<ThreadsafeBridge> &bridge) {
+  return env != nullptr && operation.started.load() && bridge != nullptr &&
+      !bridge->aborted.load();
+}
+
+void IgnoreBackgroundCompletion(napi_env, napi_value, void *, void *) {}
 
 void Throw(napi_env env, const std::string &message) { napi_throw_error(env, nullptr, message.c_str()); }
 
@@ -135,6 +391,29 @@ bool Check(napi_env env, napi_status status, const char *message) {
   }
   Throw(env, message);
   return false;
+}
+
+bool RefreshEnvironmentQuiesceHook(
+    napi_env env,
+    AddonEnvironment *environment) {
+  if (environment->quiesce_hook_registered) {
+    if (!Check(
+            env,
+            napi_remove_env_cleanup_hook(
+                env, QuiesceEnvironment, environment),
+            "refresh native environment quiesce hook")) {
+      return false;
+    }
+    environment->quiesce_hook_registered = false;
+  }
+  if (!Check(
+          env,
+          napi_add_env_cleanup_hook(env, QuiesceEnvironment, environment),
+          "register native environment quiesce hook")) {
+    return false;
+  }
+  environment->quiesce_hook_registered = true;
+  return true;
 }
 
 bool ExceptionPending(napi_env env) {
@@ -274,7 +553,7 @@ std::shared_ptr<NativeLibrary> LoadNativeLibrary(
       LoadSymbol(dynamic, "oliphaunt_close_if_generation", error));
   library->copy_last_error = reinterpret_cast<CopyLastErrorFn>(
       LoadSymbol(dynamic, "oliphaunt_copy_last_error", error));
-  // ABI 9 keeps this accessor only for source compatibility. Loading it here
+  // ABI 10 keeps this accessor only for source compatibility. Loading it here
   // catches malformed runtime images, while all bridge-owned errors use the
   // atomic copy function above.
   library->last_error =
@@ -292,12 +571,7 @@ std::shared_ptr<NativeLibrary> LoadNativeLibrary(
   return library;
 }
 
-void CleanupEnvironment(void *data) {
-  std::unique_ptr<AddonEnvironment> environment(static_cast<AddonEnvironment *>(data));
-  if (environment == nullptr) {
-    return;
-  }
-
+std::vector<std::shared_ptr<NativeLibrary>> SnapshotLibraries() {
   std::vector<std::shared_ptr<NativeLibrary>> libraries;
   {
     std::lock_guard<std::mutex> guard(g_libraries_mutex);
@@ -306,15 +580,38 @@ void CleanupEnvironment(void *data) {
       libraries.push_back(entry.second);
     }
   }
+  // Equivalent loader paths intentionally share one NativeLibrary record.
+  // Collapse those aliases before lifecycle work so cancellation is invoked
+  // exactly once for the resident backend rather than once per spelling.
+  std::sort(libraries.begin(), libraries.end());
+  libraries.erase(
+      std::unique(libraries.begin(), libraries.end()), libraries.end());
+  return libraries;
+}
 
-  for (const auto &library : libraries) {
+void CancelEnvironmentWork(AddonEnvironment *environment) {
+  for (const auto &library : SnapshotLibraries()) {
+    std::lock_guard<std::mutex> guard(library->lifecycle_mutex);
+    if (library->owner_env == environment->env &&
+        library->resident_handle != nullptr && !library->terminally_closed &&
+        library->cancel != nullptr) {
+      /* Cancellation is the supported cross-thread operation. It wakes a
+       * query before the reaper waits for its background call to release the raw
+       * handle, and is harmless when the operation already completed. */
+      (void)library->cancel(library->resident_handle);
+    }
+  }
+}
+
+void CloseEnvironmentLibraries(AddonEnvironment *environment) {
+  for (const auto &library : SnapshotLibraries()) {
     std::lock_guard<std::mutex> guard(library->lifecycle_mutex);
     if (library->owner_env != environment->env || library->resident_handle == nullptr ||
         library->terminally_closed) {
       continue;
     }
 
-    uint64_t generation = library->resident_generation;
+    const uint64_t generation = library->resident_generation;
     // Node runs environment cleanup hooks before external finalizers. Publish
     // the local terminal state first so a later NativeHandleBox finalizer
     // cannot detach the generation being closed. A copied addon image has an
@@ -337,6 +634,182 @@ void CleanupEnvironment(void *data) {
       library->terminally_closed = false;
     }
   }
+}
+
+void BeginEnvironmentShutdown(AddonEnvironment *environment) {
+  std::vector<std::shared_ptr<ThreadsafeBridge>> bridges;
+  {
+    std::lock_guard<std::mutex> guard(environment->mutex);
+    environment->shutting_down = true;
+    environment->quiesce_hook_registered = false;
+  }
+  {
+    std::lock_guard<std::mutex> guard(g_environments_mutex);
+    auto entry = g_environments.find(environment->env);
+    if (entry != g_environments.end() && entry->second == environment) {
+      g_environments.erase(entry);
+    }
+  }
+  {
+    std::lock_guard<std::mutex> guard(g_threadsafe_bridges_mutex);
+    auto entry = g_threadsafe_bridges.find(environment);
+    if (entry != g_threadsafe_bridges.end()) {
+      bridges.reserve(entry->second.size());
+      for (const auto &candidate : entry->second) {
+        if (auto bridge = candidate.lock()) {
+          bridges.push_back(std::move(bridge));
+        }
+      }
+      g_threadsafe_bridges.erase(entry);
+    }
+  }
+  for (const auto &bridge : bridges) {
+    /* A blocking TSFN producer cannot depend on an event loop that is already
+     * tearing down. Aborting the bridge's sole acquisition wakes it and makes
+     * shutdown, rather than the producer, own the final Node-API operation. */
+    ReleaseThreadsafeAcquisition(bridge, napi_tsfn_abort);
+  }
+}
+
+void MarkEnvironmentQuiesced(AddonEnvironment *environment) {
+  std::lock_guard<std::mutex> guard(environment->mutex);
+  environment->quiesce_completed = true;
+  environment->condition.notify_all();
+}
+
+void QuiesceEnvironment(void *data) {
+  auto *environment = static_cast<AddonEnvironment *>(data);
+  if (environment == nullptr) {
+    return;
+  }
+  BeginEnvironmentShutdown(environment);
+  MarkEnvironmentQuiesced(environment);
+  /* This synchronous hook only closes JS delivery bridges. Potentially
+   * blocking cancellation and terminal close are owned by the asynchronous
+   * reaper below, never by Node's environment teardown thread. */
+}
+
+void CleanupEnvironment(
+    napi_async_cleanup_hook_handle cleanup_handle,
+    void *data) {
+  auto *environment = static_cast<AddonEnvironment *>(data);
+  if (environment == nullptr) {
+    (void)napi_remove_async_cleanup_hook(cleanup_handle);
+    return;
+  }
+
+  BeginEnvironmentShutdown(environment);
+  // The asynchronous hook performs the same bridge quiescence itself. Do not
+  // make its reaper depend on the separately registered synchronous hook: a
+  // failed hook refresh must not leave environment teardown waiting forever.
+  MarkEnvironmentQuiesced(environment);
+
+  napi_handle_scope cleanup_scope = nullptr;
+  napi_value cleanup_resource_name = nullptr;
+  if (napi_open_handle_scope(environment->env, &cleanup_scope) != napi_ok ||
+      napi_create_string_utf8(
+          environment->env,
+          "oliphaunt:environment-cleanup",
+          NAPI_AUTO_LENGTH,
+          &cleanup_resource_name) != napi_ok ||
+      napi_create_threadsafe_function(
+          environment->env,
+          nullptr,
+          nullptr,
+          cleanup_resource_name,
+          1,
+          1,
+          nullptr,
+          nullptr,
+          environment,
+          CompleteEnvironmentCleanup,
+          &environment->cleanup_completion) != napi_ok) {
+    napi_fatal_error(
+        "oliphaunt", NAPI_AUTO_LENGTH,
+        "could not create asynchronous environment cleanup completion",
+        NAPI_AUTO_LENGTH);
+    return;
+  }
+  (void)napi_close_handle_scope(environment->env, cleanup_scope);
+
+  try {
+    std::thread([environment, cleanup_handle]() {
+      CancelEnvironmentWork(environment);
+      {
+        std::unique_lock<std::mutex> lock(environment->mutex);
+        environment->condition.wait(
+            lock,
+            [environment]() {
+              return environment->quiesce_completed &&
+                  environment->pending_operations == 0;
+            });
+      }
+      CloseEnvironmentLibraries(environment);
+      // napi_remove_async_cleanup_hook mutates Node environment state and must
+      // run on its event-loop thread. Calling this freshly-created TSFN is the
+      // only Node-API operation the background reaper performs.
+      napi_threadsafe_function completion = environment->cleanup_completion;
+      const napi_status status = napi_call_threadsafe_function(
+          completion, cleanup_handle, napi_tsfn_nonblocking);
+      {
+        std::lock_guard<std::mutex> guard(environment->mutex);
+        environment->cleanup_completion_call_returned = true;
+        environment->condition.notify_all();
+      }
+      if (status != napi_ok) {
+        // The async hook owns this referenced TSFN until the callback below, so
+        // failure indicates an internal lifecycle violation. Removing the hook
+        // from this reaper thread would race Node environment state, while
+        // leaving it pending deadlocks teardown. Fail closed instead of silently
+        // hanging worker.terminate() or process shutdown forever.
+        napi_fatal_error(
+            "oliphaunt", NAPI_AUTO_LENGTH,
+            "could not queue asynchronous environment cleanup completion",
+            NAPI_AUTO_LENGTH);
+      }
+    }).detach();
+  } catch (...) {
+    // There is no recoverable completion path once an async cleanup hook owns
+    // the environment barrier. Never let a C++ thread-construction exception
+    // escape across the Node-API callback boundary.
+    napi_fatal_error(
+        "oliphaunt", NAPI_AUTO_LENGTH,
+        "could not start asynchronous environment cleanup reaper",
+        NAPI_AUTO_LENGTH);
+  }
+}
+
+void CompleteEnvironmentCleanup(
+    napi_env,
+    napi_value,
+    void *context,
+    void *data) {
+  auto *environment = static_cast<AddonEnvironment *>(context);
+  auto cleanup_handle =
+      static_cast<napi_async_cleanup_hook_handle>(data);
+  if (environment == nullptr || cleanup_handle == nullptr) {
+    return;
+  }
+  {
+    // A TSFN callback may overtake the producing thread immediately after its
+    // queue insertion. Wait until the producer has returned from the Node-API
+    // call before releasing the TSFN or deleting its context.
+    std::unique_lock<std::mutex> lock(environment->mutex);
+    environment->condition.wait(
+        lock,
+        [environment]() {
+          return environment->cleanup_completion_call_returned;
+        });
+  }
+  // This callback is dispatched by the environment's TSFN and therefore runs
+  // on the owning event-loop thread, including when Node is tearing a Worker
+  // down. Release the TSFN's producer reference before removing the hook: hook
+  // removal lets teardown close TSFN resources immediately, so a later reaper-
+  // thread release would race their destruction.
+  (void)napi_release_threadsafe_function(
+      environment->cleanup_completion, napi_tsfn_release);
+  (void)napi_remove_async_cleanup_hook(cleanup_handle);
+  delete environment;
 }
 
 bool HasNamedProperty(napi_env env, napi_value object, const char *name) {
@@ -635,7 +1108,9 @@ napi_value Version(napi_env env, napi_callback_info info) {
 }
 
 struct AsyncOpenContext {
-  napi_async_work work = nullptr;
+  std::atomic<size_t> lifetime_references = 2;
+  EnvironmentOperation environment_operation;
+  std::shared_ptr<ThreadsafeBridge> completion_bridge;
   napi_deferred deferred = nullptr;
   napi_ref handle_ref = nullptr;
   NativeHandleBox *box = nullptr;
@@ -654,8 +1129,12 @@ struct AsyncOpenContext {
   bool succeeded = false;
 };
 
-void ExecuteAsyncOpen(napi_env, void *data) {
+void ExecuteAsyncOpen(void *data) {
   auto *context = static_cast<AsyncOpenContext *>(data);
+  if (EnvironmentIsShuttingDown(&context->environment_operation)) {
+    context->error = "native liboliphaunt environment is shutting down";
+    return;
+  }
   context->library = LoadNativeLibrary(context->library_path, &context->error);
   if (context->library == nullptr) {
     return;
@@ -727,14 +1206,17 @@ void ExecuteAsyncOpen(napi_env, void *data) {
   context->succeeded = true;
 }
 
-void CompleteAsyncOpen(napi_env env, napi_status status, void *data) {
-  std::unique_ptr<AsyncOpenContext> context(static_cast<AsyncOpenContext *>(data));
-  if (status != napi_ok || !context->succeeded) {
+void FinalizeAsyncOpen(napi_env env, void *data, void *) {
+  auto *context = static_cast<AsyncOpenContext *>(data);
+  if (CanDeliverBackgroundCompletion(
+          env, context->environment_operation, context->completion_bridge) &&
+      !context->succeeded) {
     RejectDeferred(
         env,
         context->deferred,
-        status == napi_ok ? context->error : "native liboliphaunt open async work failed");
-  } else {
+        context->error);
+  } else if (CanDeliverBackgroundCompletion(
+                 env, context->environment_operation, context->completion_bridge)) {
     context->box->library = context->library;
     context->box->handle = context->handle;
     context->box->generation = context->generation;
@@ -746,12 +1228,11 @@ void CompleteAsyncOpen(napi_env env, napi_status status, void *data) {
       RejectDeferred(env, context->deferred, "native liboliphaunt could not publish its handle");
     }
   }
-  if (context->handle_ref != nullptr) {
+  if (env != nullptr && context->handle_ref != nullptr) {
     (void)napi_delete_reference(env, context->handle_ref);
+    context->handle_ref = nullptr;
   }
-  if (context->work != nullptr) {
-    (void)napi_delete_async_work(env, context->work);
-  }
+  ReleaseBackgroundContext<AsyncOpenContext>(context);
 }
 
 napi_value Open(napi_env env, napi_callback_info info) {
@@ -769,6 +1250,7 @@ napi_value Open(napi_env env, napi_callback_info info) {
   if (ExceptionPending(env)) return nullptr;
   context->owner_env = env;
   context->box = new NativeHandleBox();
+  context->completion_bridge = std::make_shared<ThreadsafeBridge>();
 
   napi_value promise = nullptr;
   napi_value external = nullptr;
@@ -784,19 +1266,19 @@ napi_value Open(napi_env env, napi_callback_info info) {
                  env, "oliphaunt.open", NAPI_AUTO_LENGTH, &resource_name),
              "create open resource name") ||
       !Check(env,
-             napi_create_async_work(
+             napi_create_threadsafe_function(
                  env,
                  nullptr,
+                 nullptr,
                  resource_name,
-                 ExecuteAsyncOpen,
-                 CompleteAsyncOpen,
+                 1,
+                 1,
                  context.get(),
-                 &context->work),
-             "create native open work") ||
-      !Check(env, napi_queue_async_work(env, context->work), "queue native open work")) {
-    if (context->work != nullptr) {
-      (void)napi_delete_async_work(env, context->work);
-    }
+                 FinalizeAsyncOpen,
+                 context.get(),
+                 IgnoreBackgroundCompletion,
+                 &context->completion_bridge->function),
+             "create native open completion")) {
     if (context->handle_ref != nullptr) {
       (void)napi_delete_reference(env, context->handle_ref);
     } else if (external == nullptr) {
@@ -804,15 +1286,38 @@ napi_value Open(napi_env env, napi_callback_info info) {
     }
     return nullptr;
   }
-  (void)context.release();
+  AsyncOpenContext *raw_context = context.release();
+  if (!RegisterEnvironmentOperation(env, &raw_context->environment_operation)) {
+    AbortBackgroundOperationSetup(
+        &raw_context->environment_operation, raw_context->completion_bridge);
+    ReleaseBackgroundContext<AsyncOpenContext>(raw_context);
+    return nullptr;
+  }
+  RegisterThreadsafeBridge(
+      raw_context->environment_operation.environment, raw_context->completion_bridge);
+  if (!RefreshEnvironmentQuiesceHook(
+          env, raw_context->environment_operation.environment) ||
+      !StartBackgroundOperation(
+          env,
+          &raw_context->environment_operation,
+          raw_context->completion_bridge,
+          ExecuteAsyncOpen,
+          ReleaseBackgroundContext<AsyncOpenContext>,
+          raw_context)) {
+    AbortBackgroundOperationSetup(
+        &raw_context->environment_operation, raw_context->completion_bridge);
+    ReleaseBackgroundContext<AsyncOpenContext>(raw_context);
+    return nullptr;
+  }
   return promise;
 }
 
 enum class AsyncQueryKind { Protocol, Simple };
 
 struct AsyncQueryContext {
-  napi_env env = nullptr;
-  napi_async_work work = nullptr;
+  std::atomic<size_t> lifetime_references = 2;
+  EnvironmentOperation environment_operation;
+  std::shared_ptr<ThreadsafeBridge> completion_bridge;
   napi_deferred deferred = nullptr;
   napi_ref handle_ref = nullptr;
   std::shared_ptr<NativeLibrary> library;
@@ -823,10 +1328,20 @@ struct AsyncQueryContext {
   OliphauntResponse response = {};
   int32_t result = -1;
   std::string error;
+
+  ~AsyncQueryContext() {
+    if (library != nullptr && (response.data != nullptr || response.len != 0)) {
+      library->free_response(&response);
+    }
+  }
 };
 
-void ExecuteAsyncQuery(napi_env, void *data) {
+void ExecuteAsyncQuery(void *data) {
   auto *context = static_cast<AsyncQueryContext *>(data);
+  if (EnvironmentIsShuttingDown(&context->environment_operation)) {
+    context->error = "native liboliphaunt environment is shutting down";
+    return;
+  }
   if (context->kind == AsyncQueryKind::Protocol) {
     context->result = context->library->exec_protocol(
         context->handle,
@@ -842,23 +1357,26 @@ void ExecuteAsyncQuery(napi_env, void *data) {
   }
 }
 
-void CompleteAsyncQuery(napi_env env, napi_status status, void *data) {
-  std::unique_ptr<AsyncQueryContext> context(static_cast<AsyncQueryContext *>(data));
-  if (context->handle_ref != nullptr) {
+void FinalizeAsyncQuery(napi_env env, void *data, void *) {
+  auto *context = static_cast<AsyncQueryContext *>(data);
+  const bool deliver = CanDeliverBackgroundCompletion(
+      env, context->environment_operation, context->completion_bridge);
+  if (env != nullptr && context->handle_ref != nullptr) {
     (void)napi_delete_reference(env, context->handle_ref);
     context->handle_ref = nullptr;
   }
 
-  if (status != napi_ok || context->result != 0) {
+  if (deliver && context->result != 0) {
     context->library->free_response(&context->response);
+    context->response.data = nullptr;
+    context->response.len = 0;
     const char *operation =
         context->kind == AsyncQueryKind::Protocol ? "protocol execution" : "simple query";
-    const std::string detail = status == napi_ok ? context->error : "Node async work failed";
     RejectDeferred(
         env,
         context->deferred,
-        std::string("native liboliphaunt ") + operation + " failed: " + detail);
-  } else {
+        std::string("native liboliphaunt ") + operation + " failed: " + context->error);
+  } else if (deliver) {
     napi_value response = MakeResponse(env, context->library.get(), &context->response);
     if (response != nullptr) {
       (void)napi_resolve_deferred(env, context->deferred, response);
@@ -866,10 +1384,7 @@ void CompleteAsyncQuery(napi_env env, napi_status status, void *data) {
       RejectResponseCreation(env, context->deferred);
     }
   }
-  if (context->work != nullptr) {
-    (void)napi_delete_async_work(env, context->work);
-    context->work = nullptr;
-  }
+  ReleaseBackgroundContext<AsyncQueryContext>(context);
 }
 
 napi_value QueueAsyncQuery(
@@ -878,14 +1393,14 @@ napi_value QueueAsyncQuery(
     NativeHandleBox *box,
     AsyncQueryKind kind,
     std::vector<uint8_t> request,
-    std::string sql) {
+  std::string sql) {
   auto context = std::make_unique<AsyncQueryContext>();
-  context->env = env;
   context->library = box->library;
   context->handle = box->handle;
   context->kind = kind;
   context->request = std::move(request);
   context->sql = std::move(sql);
+  context->completion_bridge = std::make_shared<ThreadsafeBridge>();
 
   napi_value promise = nullptr;
   napi_value resource_name = nullptr;
@@ -898,25 +1413,47 @@ napi_value QueueAsyncQuery(
       !Check(env, napi_create_string_utf8(env, resource, NAPI_AUTO_LENGTH, &resource_name),
              "create query resource name") ||
       !Check(env,
-             napi_create_async_work(
+             napi_create_threadsafe_function(
                  env,
                  nullptr,
+                 nullptr,
                  resource_name,
-                 ExecuteAsyncQuery,
-                 CompleteAsyncQuery,
+                 1,
+                 1,
                  context.get(),
-                 &context->work),
-             "create native query work") ||
-      !Check(env, napi_queue_async_work(env, context->work), "queue native query work")) {
-    if (context->work != nullptr) {
-      (void)napi_delete_async_work(env, context->work);
-    }
+                 FinalizeAsyncQuery,
+                 context.get(),
+                 IgnoreBackgroundCompletion,
+                 &context->completion_bridge->function),
+             "create native query completion")) {
     if (context->handle_ref != nullptr) {
       (void)napi_delete_reference(env, context->handle_ref);
     }
     return nullptr;
   }
-  (void)context.release();
+  AsyncQueryContext *raw_context = context.release();
+  if (!RegisterEnvironmentOperation(env, &raw_context->environment_operation)) {
+    AbortBackgroundOperationSetup(
+        &raw_context->environment_operation, raw_context->completion_bridge);
+    ReleaseBackgroundContext<AsyncQueryContext>(raw_context);
+    return nullptr;
+  }
+  RegisterThreadsafeBridge(
+      raw_context->environment_operation.environment, raw_context->completion_bridge);
+  if (!RefreshEnvironmentQuiesceHook(
+          env, raw_context->environment_operation.environment) ||
+      !StartBackgroundOperation(
+          env,
+          &raw_context->environment_operation,
+          raw_context->completion_bridge,
+          ExecuteAsyncQuery,
+          ReleaseBackgroundContext<AsyncQueryContext>,
+          raw_context)) {
+    AbortBackgroundOperationSetup(
+        &raw_context->environment_operation, raw_context->completion_bridge);
+    ReleaseBackgroundContext<AsyncQueryContext>(raw_context);
+    return nullptr;
+  }
   return promise;
 }
 
@@ -943,22 +1480,43 @@ napi_value ExecSimpleQuery(napi_env env, napi_callback_info info) {
 }
 
 struct AsyncStreamContext {
-  napi_async_work work = nullptr;
-  napi_threadsafe_function threadsafe_callback = nullptr;
+  std::atomic<size_t> lifetime_references = 2;
+  EnvironmentOperation environment_operation;
+  std::shared_ptr<ThreadsafeBridge> callback_bridge;
   napi_deferred deferred = nullptr;
   napi_ref handle_ref = nullptr;
-  napi_ref callback_exception = nullptr;
+  // Node-API versions before 10 cannot reference arbitrary primitive values.
+  // Retain an Array holder so every JavaScript throw value, including
+  // undefined and NaN, can be recovered without changing its identity.
+  napi_ref callback_exception_holder = nullptr;
   std::shared_ptr<NativeLibrary> library;
   OliphauntHandle *handle = nullptr;
   std::vector<uint8_t> request;
   int32_t result = -1;
-  napi_status work_status = napi_ok;
   std::atomic<bool> callback_failed = false;
-  std::atomic<bool> threadsafe_callback_released = false;
   std::mutex error_mutex;
   std::string error;
-  bool work_complete = false;
-  bool callback_complete = false;
+};
+
+struct StreamChunkDelivery {
+  std::vector<uint8_t> bytes;
+  std::shared_ptr<ThreadsafeBridge> bridge;
+  std::atomic<bool> completed = false;
+};
+
+class StreamChunkDeliveryCompletion {
+ public:
+  explicit StreamChunkDeliveryCompletion(
+      std::shared_ptr<StreamChunkDelivery> delivery)
+      : delivery_(std::move(delivery)) {}
+
+  ~StreamChunkDeliveryCompletion() {
+    delivery_->completed.store(true, std::memory_order_release);
+    delivery_->bridge->release_condition.notify_all();
+  }
+
+ private:
+  std::shared_ptr<StreamChunkDelivery> delivery_;
 };
 
 void RecordStreamError(AsyncStreamContext *context, std::string error) {
@@ -974,10 +1532,15 @@ void RecordStreamException(
     AsyncStreamContext *context,
     napi_value exception,
     const char *fallback) {
-  if (context->callback_exception == nullptr && exception != nullptr &&
-      napi_create_reference(env, exception, 1, &context->callback_exception) == napi_ok) {
-    context->callback_failed.store(true);
-    return;
+  if (context->callback_exception_holder == nullptr && exception != nullptr) {
+    napi_value holder = nullptr;
+    if (napi_create_array_with_length(env, 1, &holder) == napi_ok &&
+        napi_set_element(env, holder, 0, exception) == napi_ok &&
+        napi_create_reference(
+            env, holder, 1, &context->callback_exception_holder) == napi_ok) {
+      context->callback_failed.store(true);
+      return;
+    }
   }
   RecordStreamError(context, fallback);
 }
@@ -995,8 +1558,13 @@ void RecordPendingStreamException(
 }
 
 void CallStreamChunk(napi_env env, napi_value callback, void *data, void *chunk_data) {
-  std::unique_ptr<std::vector<uint8_t>> bytes(
-      static_cast<std::vector<uint8_t> *>(chunk_data));
+  std::unique_ptr<std::shared_ptr<StreamChunkDelivery>> queued_delivery(
+      static_cast<std::shared_ptr<StreamChunkDelivery> *>(chunk_data));
+  if (queued_delivery == nullptr || *queued_delivery == nullptr) {
+    return;
+  }
+  auto delivery = std::move(*queued_delivery);
+  StreamChunkDeliveryCompletion completion(delivery);
   auto *context = static_cast<AsyncStreamContext *>(data);
   if (env == nullptr || callback == nullptr || context->callback_failed.load()) {
     return;
@@ -1011,7 +1579,7 @@ void CallStreamChunk(napi_env env, napi_value callback, void *data, void *chunk_
   napi_value result = nullptr;
   napi_status status = napi_get_global(env, &global);
   if (status == napi_ok) {
-    chunk = MakeBytes(env, bytes->data(), bytes->size());
+    chunk = MakeBytes(env, delivery->bytes.data(), delivery->bytes.size());
     status = chunk == nullptr ? napi_generic_failure : napi_ok;
   }
   if (status == napi_ok) {
@@ -1051,6 +1619,32 @@ void CallStreamChunk(napi_env env, napi_value callback, void *data, void *chunk_
   (void)napi_close_handle_scope(env, scope);
 }
 
+bool PrefillStreamQueueForCleanupTest(
+    napi_env env,
+    AsyncStreamContext *context) {
+  const char *prefill =
+      std::getenv("OLIPHAUNT_NODE_CLEANUP_TEST_PREFILL_STREAM_QUEUE");
+  if (prefill == nullptr || std::strcmp(prefill, "1") != 0) {
+    return true;
+  }
+
+  // Keep one delivery queued while the fixture blocks its Worker event loop.
+  // The real stream producer then blocks inside napi_call_threadsafe_function,
+  // giving teardown a deterministic in-flight producer to abort.
+  auto delivery = std::make_shared<StreamChunkDelivery>();
+  delivery->bridge = context->callback_bridge;
+  auto queued_delivery =
+      std::make_unique<std::shared_ptr<StreamChunkDelivery>>(delivery);
+  const napi_status status = CallThreadsafeBridge(
+      context->callback_bridge, queued_delivery.get(), napi_tsfn_nonblocking);
+  if (status != napi_ok) {
+    Throw(env, "prefill native stream callback queue for cleanup test");
+    return false;
+  }
+  (void)queued_delivery.release();
+  return true;
+}
+
 int32_t StreamChunk(void *data, const uint8_t *bytes, size_t length) {
   auto *context = static_cast<AsyncStreamContext *>(data);
   if (context->callback_failed.load()) {
@@ -1060,94 +1654,174 @@ int32_t StreamChunk(void *data, const uint8_t *bytes, size_t length) {
     RecordStreamError(context, "native liboliphaunt stream returned null bytes");
     return 1;
   }
-  auto chunk = std::make_unique<std::vector<uint8_t>>();
+  auto delivery = std::make_shared<StreamChunkDelivery>();
+  delivery->bridge = context->callback_bridge;
   if (length != 0) {
-    chunk->assign(bytes, bytes + length);
+    delivery->bytes.assign(bytes, bytes + length);
   }
-  const napi_status status = napi_call_threadsafe_function(
-      context->threadsafe_callback, chunk.get(), napi_tsfn_blocking);
+  auto queued_delivery =
+      std::make_unique<std::shared_ptr<StreamChunkDelivery>>(delivery);
+  const napi_status status = CallThreadsafeBridge(
+      context->callback_bridge, queued_delivery.get(), napi_tsfn_blocking);
   if (status != napi_ok) {
     RecordStreamError(context, "queue stream callback failed");
     return 1;
   }
-  (void)chunk.release();
-  return context->callback_failed.load() ? 1 : 0;
+  (void)queued_delivery.release();
+
+  // `napi_tsfn_blocking` waits only for queue admission, not for the JavaScript
+  // callback to finish. The native stream callback must return the actual
+  // synchronous consumer result so liboliphaunt can stop delivery and drain to
+  // ReadyForQuery. Environment abort wakes this wait even if Node can no longer
+  // invoke JavaScript; the queued shared owner keeps the delivery alive until
+  // Node calls `CallStreamChunk` with a null environment to discard it.
+  bool aborted = false;
+  {
+    std::unique_lock<std::mutex> lock(context->callback_bridge->release_mutex);
+    context->callback_bridge->release_condition.wait(
+        lock,
+        [&]() {
+          return delivery->completed.load(std::memory_order_acquire) ||
+              context->callback_bridge->aborted.load();
+        });
+    aborted = context->callback_bridge->aborted.load();
+  }
+  return aborted || context->callback_failed.load() ? 1 : 0;
 }
 
-void FinishAsyncStreamIfReady(napi_env env, AsyncStreamContext *context) {
-  if (!context->work_complete || !context->callback_complete) {
+enum class AsyncStreamCompletion {
+  Success,
+  RecoveredCallbackFailure,
+  NativeFailure,
+  AdapterMismatch,
+};
+
+AsyncStreamCompletion ClassifyAsyncStreamCompletion(
+    int32_t result,
+    bool callback_failed) {
+  // This is the complete native-result/callback-state truth table:
+  //
+  //   result == 0                         false -> success
+  //   result == 0                         true  -> adapter/ABI mismatch
+  //   result == CALLBACK_ABORTED          true  -> recovered callback failure
+  //   result == CALLBACK_ABORTED          false -> native/ABI failure
+  //   every negative or unknown positive  either -> native/recovery failure
+  //
+  // Only the exact recovered-abort status is allowed to preserve a callback
+  // throw. Every other non-success result is authoritative native state.
+  if (result == 0) {
+    return callback_failed ? AsyncStreamCompletion::AdapterMismatch
+                           : AsyncStreamCompletion::Success;
+  }
+  if (result == OLIPHAUNT_STREAM_CALLBACK_ABORTED && callback_failed) {
+    return AsyncStreamCompletion::RecoveredCallbackFailure;
+  }
+  return AsyncStreamCompletion::NativeFailure;
+}
+
+void ReleaseStreamEnvironmentReferences(
+    napi_env env,
+    AsyncStreamContext *context) {
+  if (env == nullptr) {
     return;
   }
-  if (context->callback_exception != nullptr) {
-    napi_value exception = nullptr;
-    if (napi_get_reference_value(env, context->callback_exception, &exception) == napi_ok &&
-        exception != nullptr) {
-      (void)napi_reject_deferred(env, context->deferred, exception);
-    } else {
-      RejectDeferred(env, context->deferred, "stream callback failed");
-    }
-    (void)napi_delete_reference(env, context->callback_exception);
-  } else if (context->callback_failed.load()) {
-    std::lock_guard<std::mutex> guard(context->error_mutex);
-    RejectDeferred(
-        env,
-        context->deferred,
-        context->error.empty() ? "stream callback failed" : context->error);
-  } else if (context->work_status != napi_ok || context->result != 0) {
-    const std::string detail = context->work_status == napi_ok
-        ? context->error
-        : "Node async work failed";
-    RejectDeferred(
-        env,
-        context->deferred,
-        "native liboliphaunt protocol streaming failed: " + detail);
-  } else {
-    napi_value out = nullptr;
-    if (napi_get_undefined(env, &out) == napi_ok) {
-      (void)napi_resolve_deferred(env, context->deferred, out);
-    } else {
-      RejectDeferred(env, context->deferred, "native liboliphaunt could not complete streaming");
-    }
+  if (context->callback_exception_holder != nullptr) {
+    (void)napi_delete_reference(env, context->callback_exception_holder);
+    context->callback_exception_holder = nullptr;
   }
   if (context->handle_ref != nullptr) {
     (void)napi_delete_reference(env, context->handle_ref);
+    context->handle_ref = nullptr;
   }
-  if (context->work != nullptr) {
-    (void)napi_delete_async_work(env, context->work);
+}
+
+bool RejectRecordedStreamException(
+    napi_env env,
+    AsyncStreamContext *context) {
+  if (context->callback_exception_holder == nullptr) {
+    return false;
   }
-  delete context;
+  napi_value holder = nullptr;
+  napi_value exception = nullptr;
+  return napi_get_reference_value(
+             env, context->callback_exception_holder, &holder) == napi_ok &&
+      holder != nullptr &&
+      napi_get_element(env, holder, 0, &exception) == napi_ok &&
+      exception != nullptr &&
+      napi_reject_deferred(env, context->deferred, exception) == napi_ok;
+}
+
+void FinishAsyncStream(napi_env env, AsyncStreamContext *context) {
+  const AsyncStreamCompletion completion = ClassifyAsyncStreamCompletion(
+      context->result, context->callback_failed.load());
+  switch (completion) {
+    case AsyncStreamCompletion::Success: {
+      napi_value out = nullptr;
+      if (napi_get_undefined(env, &out) == napi_ok) {
+        (void)napi_resolve_deferred(env, context->deferred, out);
+      } else {
+        RejectDeferred(
+            env,
+            context->deferred,
+            "native liboliphaunt could not complete streaming");
+      }
+      break;
+    }
+    case AsyncStreamCompletion::RecoveredCallbackFailure: {
+      if (!RejectRecordedStreamException(env, context)) {
+        std::lock_guard<std::mutex> guard(context->error_mutex);
+        RejectDeferred(
+            env,
+            context->deferred,
+            context->error.empty() ? "stream callback failed" : context->error);
+      }
+      break;
+    }
+    case AsyncStreamCompletion::NativeFailure:
+      RejectDeferred(
+          env,
+          context->deferred,
+          "native liboliphaunt protocol streaming failed: " + context->error);
+      break;
+    case AsyncStreamCompletion::AdapterMismatch:
+      RejectDeferred(
+          env,
+          context->deferred,
+          "native liboliphaunt protocol streaming reported success after the callback failed");
+      break;
+  }
+  ReleaseStreamEnvironmentReferences(env, context);
 }
 
 void FinalizeStreamCallback(napi_env env, void *data, void *) {
   auto *context = static_cast<AsyncStreamContext *>(data);
-  context->callback_complete = true;
-  FinishAsyncStreamIfReady(env, context);
+  if (CanDeliverBackgroundCompletion(
+          env, context->environment_operation, context->callback_bridge)) {
+    FinishAsyncStream(env, context);
+  } else if (env != nullptr) {
+    ReleaseStreamEnvironmentReferences(env, context);
+  }
+  ReleaseBackgroundContext<AsyncStreamContext>(context);
 }
 
-void ExecuteAsyncStream(napi_env, void *data) {
+void ExecuteAsyncStream(void *data) {
   auto *context = static_cast<AsyncStreamContext *>(data);
+  if (EnvironmentIsShuttingDown(&context->environment_operation)) {
+    context->error = "native liboliphaunt environment is shutting down";
+    return;
+  }
   context->result = context->library->exec_protocol_raw_stream(
       context->handle,
       context->request.empty() ? nullptr : context->request.data(),
       context->request.size(),
       StreamChunk,
       context);
-  if (context->result != 0 && !context->callback_failed.load()) {
+  if (ClassifyAsyncStreamCompletion(
+          context->result,
+          context->callback_failed.load()) == AsyncStreamCompletion::NativeFailure) {
     std::lock_guard<std::mutex> guard(context->error_mutex);
     context->error = LastError(context->library.get(), context->handle);
   }
-  context->threadsafe_callback_released.store(true);
-  (void)napi_release_threadsafe_function(context->threadsafe_callback, napi_tsfn_release);
-}
-
-void CompleteAsyncStream(napi_env env, napi_status status, void *data) {
-  auto *context = static_cast<AsyncStreamContext *>(data);
-  context->work_status = status;
-  context->work_complete = true;
-  if (!context->threadsafe_callback_released.exchange(true)) {
-    (void)napi_release_threadsafe_function(context->threadsafe_callback, napi_tsfn_abort);
-  }
-  FinishAsyncStreamIfReady(env, context);
 }
 
 napi_value ExecProtocolRawStream(napi_env env, napi_callback_info info) {
@@ -1158,6 +1832,7 @@ napi_value ExecProtocolRawStream(napi_env env, napi_callback_info info) {
   auto context = std::make_unique<AsyncStreamContext>();
   context->library = box->library;
   context->handle = box->handle;
+  context->callback_bridge = std::make_shared<ThreadsafeBridge>();
   context->request = GetBytes(env, args[1]);
   if (ExceptionPending(env)) return nullptr;
 
@@ -1183,46 +1858,48 @@ napi_value ExecProtocolRawStream(napi_env env, napi_callback_info info) {
                 FinalizeStreamCallback,
                 context.get(),
                 CallStreamChunk,
-                &context->threadsafe_callback),
-            "create stream callback bridge") &&
-      Check(env,
-            napi_create_async_work(
-                env,
-                nullptr,
-                resource_name,
-                ExecuteAsyncStream,
-                CompleteAsyncStream,
-                context.get(),
-                &context->work),
-            "create native stream work") &&
-      Check(env, napi_queue_async_work(env, context->work), "queue native stream work");
+                &context->callback_bridge->function),
+            "create stream callback bridge");
   if (!setup_ok) {
-    if (context->threadsafe_callback != nullptr) {
-      context->work_complete = true;
-      context->work_status = napi_generic_failure;
-      context->threadsafe_callback_released.store(true);
-      (void)RejectPendingException(env, context->deferred);
-      (void)napi_release_threadsafe_function(
-          context->threadsafe_callback, napi_tsfn_abort);
-      (void)context.release();
-      return promise;
-    }
-    if (context->work != nullptr) {
-      (void)napi_delete_async_work(env, context->work);
-    }
     if (context->handle_ref != nullptr) {
       (void)napi_delete_reference(env, context->handle_ref);
     }
     return nullptr;
   }
-  (void)context.release();
+  AsyncStreamContext *raw_context = context.release();
+  if (!RegisterEnvironmentOperation(env, &raw_context->environment_operation)) {
+    AbortBackgroundOperationSetup(
+        &raw_context->environment_operation, raw_context->callback_bridge);
+    ReleaseBackgroundContext<AsyncStreamContext>(raw_context);
+    return nullptr;
+  }
+  RegisterThreadsafeBridge(
+      raw_context->environment_operation.environment,
+      raw_context->callback_bridge);
+  if (!RefreshEnvironmentQuiesceHook(
+          env, raw_context->environment_operation.environment) ||
+      !PrefillStreamQueueForCleanupTest(env, raw_context) ||
+      !StartBackgroundOperation(
+          env,
+          &raw_context->environment_operation,
+          raw_context->callback_bridge,
+          ExecuteAsyncStream,
+          ReleaseBackgroundContext<AsyncStreamContext>,
+          raw_context)) {
+    AbortBackgroundOperationSetup(
+        &raw_context->environment_operation, raw_context->callback_bridge);
+    ReleaseBackgroundContext<AsyncStreamContext>(raw_context);
+    return nullptr;
+  }
   return promise;
 }
 
 enum class AsyncArchiveKind { Backup, Restore };
 
 struct AsyncArchiveContext {
-  napi_async_work work = nullptr;
+  std::atomic<size_t> lifetime_references = 2;
+  EnvironmentOperation environment_operation;
+  std::shared_ptr<ThreadsafeBridge> completion_bridge;
   napi_deferred deferred = nullptr;
   napi_ref handle_ref = nullptr;
   std::shared_ptr<NativeLibrary> library;
@@ -1234,10 +1911,21 @@ struct AsyncArchiveContext {
   OliphauntResponse response = {};
   int32_t result = -1;
   std::string error;
+
+  ~AsyncArchiveContext() {
+    if (kind == AsyncArchiveKind::Backup && library != nullptr &&
+        (response.data != nullptr || response.len != 0)) {
+      library->free_response(&response);
+    }
+  }
 };
 
-void ExecuteAsyncArchive(napi_env, void *data) {
+void ExecuteAsyncArchive(void *data) {
   auto *context = static_cast<AsyncArchiveContext *>(data);
+  if (EnvironmentIsShuttingDown(&context->environment_operation)) {
+    context->error = "native liboliphaunt environment is shutting down";
+    return;
+  }
   if (context->library == nullptr) {
     context->library = LoadNativeLibrary(context->library_path, &context->error);
     if (context->library == nullptr) {
@@ -1259,31 +1947,34 @@ void ExecuteAsyncArchive(napi_env, void *data) {
   }
 }
 
-void CompleteAsyncArchive(napi_env env, napi_status status, void *data) {
-  std::unique_ptr<AsyncArchiveContext> context(static_cast<AsyncArchiveContext *>(data));
-  if (context->handle_ref != nullptr) {
+void FinalizeAsyncArchive(napi_env env, void *data, void *) {
+  auto *context = static_cast<AsyncArchiveContext *>(data);
+  const bool deliver = CanDeliverBackgroundCompletion(
+      env, context->environment_operation, context->completion_bridge);
+  if (env != nullptr && context->handle_ref != nullptr) {
     (void)napi_delete_reference(env, context->handle_ref);
     context->handle_ref = nullptr;
   }
 
-  if (status != napi_ok || context->result != 0) {
+  if (deliver && context->result != 0) {
     if (context->kind == AsyncArchiveKind::Backup) {
       context->library->free_response(&context->response);
+      context->response.data = nullptr;
+      context->response.len = 0;
     }
     const char *operation = context->kind == AsyncArchiveKind::Backup ? "backup" : "restore";
-    const std::string detail = status == napi_ok ? context->error : "Node async work failed";
     RejectDeferred(
         env,
         context->deferred,
-        std::string("native liboliphaunt ") + operation + " failed: " + detail);
-  } else if (context->kind == AsyncArchiveKind::Backup) {
+        std::string("native liboliphaunt ") + operation + " failed: " + context->error);
+  } else if (deliver && context->kind == AsyncArchiveKind::Backup) {
     napi_value response = MakeResponse(env, context->library.get(), &context->response);
     if (response != nullptr) {
       (void)napi_resolve_deferred(env, context->deferred, response);
     } else {
       RejectResponseCreation(env, context->deferred);
     }
-  } else {
+  } else if (deliver) {
     napi_value out = nullptr;
     if (napi_get_undefined(env, &out) == napi_ok) {
       (void)napi_resolve_deferred(env, context->deferred, out);
@@ -1291,10 +1982,7 @@ void CompleteAsyncArchive(napi_env env, napi_status status, void *data) {
       RejectDeferred(env, context->deferred, "native liboliphaunt could not complete restore");
     }
   }
-  if (context->work != nullptr) {
-    (void)napi_delete_async_work(env, context->work);
-    context->work = nullptr;
-  }
+  ReleaseBackgroundContext<AsyncArchiveContext>(context);
 }
 
 napi_value QueueAsyncArchive(
@@ -1313,6 +2001,7 @@ napi_value QueueAsyncArchive(
   context->kind = kind;
   context->destination = std::move(destination);
   context->bytes = std::move(bytes);
+  context->completion_bridge = std::make_shared<ThreadsafeBridge>();
 
   napi_value promise = nullptr;
   napi_value resource_name = nullptr;
@@ -1330,25 +2019,47 @@ napi_value QueueAsyncArchive(
   if (!Check(env, napi_create_string_utf8(env, resource, NAPI_AUTO_LENGTH, &resource_name),
              "create archive resource name") ||
       !Check(env,
-             napi_create_async_work(
+             napi_create_threadsafe_function(
                  env,
                  nullptr,
+                 nullptr,
                  resource_name,
-                 ExecuteAsyncArchive,
-                 CompleteAsyncArchive,
+                 1,
+                 1,
                  context.get(),
-                 &context->work),
-             "create native archive work") ||
-      !Check(env, napi_queue_async_work(env, context->work), "queue native archive work")) {
-    if (context->work != nullptr) {
-      (void)napi_delete_async_work(env, context->work);
-    }
+                 FinalizeAsyncArchive,
+                 context.get(),
+                 IgnoreBackgroundCompletion,
+                 &context->completion_bridge->function),
+             "create native archive completion")) {
     if (context->handle_ref != nullptr) {
       (void)napi_delete_reference(env, context->handle_ref);
     }
     return nullptr;
   }
-  (void)context.release();
+  AsyncArchiveContext *raw_context = context.release();
+  if (!RegisterEnvironmentOperation(env, &raw_context->environment_operation)) {
+    AbortBackgroundOperationSetup(
+        &raw_context->environment_operation, raw_context->completion_bridge);
+    ReleaseBackgroundContext<AsyncArchiveContext>(raw_context);
+    return nullptr;
+  }
+  RegisterThreadsafeBridge(
+      raw_context->environment_operation.environment, raw_context->completion_bridge);
+  if (!RefreshEnvironmentQuiesceHook(
+          env, raw_context->environment_operation.environment) ||
+      !StartBackgroundOperation(
+          env,
+          &raw_context->environment_operation,
+          raw_context->completion_bridge,
+          ExecuteAsyncArchive,
+          ReleaseBackgroundContext<AsyncArchiveContext>,
+          raw_context)) {
+    AbortBackgroundOperationSetup(
+        &raw_context->environment_operation, raw_context->completion_bridge);
+    ReleaseBackgroundContext<AsyncArchiveContext>(raw_context);
+    return nullptr;
+  }
   return promise;
 }
 
@@ -1403,7 +2114,9 @@ napi_value Cancel(napi_env env, napi_callback_info info) {
 }
 
 struct AsyncDetachContext {
-  napi_async_work work = nullptr;
+  std::atomic<size_t> lifetime_references = 2;
+  EnvironmentOperation environment_operation;
+  std::shared_ptr<ThreadsafeBridge> completion_bridge;
   napi_deferred deferred = nullptr;
   napi_ref handle_ref = nullptr;
   NativeHandleBox *box = nullptr;
@@ -1415,8 +2128,13 @@ struct AsyncDetachContext {
   std::string error;
 };
 
-void ExecuteAsyncDetach(napi_env, void *data) {
+void ExecuteAsyncDetach(void *data) {
   auto *context = static_cast<AsyncDetachContext *>(data);
+  if (EnvironmentIsShuttingDown(&context->environment_operation)) {
+    context->stale = true;
+    context->error = "native liboliphaunt environment is shutting down";
+    return;
+  }
   std::lock_guard<std::mutex> guard(context->library->lifecycle_mutex);
   if (context->library->terminally_closed ||
       context->library->resident_handle != context->handle ||
@@ -1436,9 +2154,11 @@ void ExecuteAsyncDetach(napi_env, void *data) {
   context->library->detach_pending = false;
 }
 
-void CompleteAsyncDetach(napi_env env, napi_status status, void *data) {
-  std::unique_ptr<AsyncDetachContext> context(static_cast<AsyncDetachContext *>(data));
-  if (status == napi_ok && (context->result == 0 || context->stale)) {
+void FinalizeAsyncDetach(napi_env env, void *data, void *) {
+  auto *context = static_cast<AsyncDetachContext *>(data);
+  const bool deliver = CanDeliverBackgroundCompletion(
+      env, context->environment_operation, context->completion_bridge);
+  if (deliver && (context->result == 0 || context->stale)) {
     // From the logical owner's perspective an exact-generation handle that is
     // already terminally unavailable is closed, not retryable. NativeBinding
     // reserves detach rejection for failures that leave this handle active.
@@ -1449,20 +2169,19 @@ void CompleteAsyncDetach(napi_env env, napi_status status, void *data) {
     } else {
       RejectDeferred(env, context->deferred, "native liboliphaunt could not complete detach");
     }
-  } else {
+  } else if (deliver) {
     // A failed logical detach remains retryable through Database.close().
     context->box->detached = false;
     RejectDeferred(
         env,
         context->deferred,
-        status == napi_ok ? context->error : "native liboliphaunt detach async work failed");
+        context->error);
   }
-  if (context->handle_ref != nullptr) {
+  if (env != nullptr && context->handle_ref != nullptr) {
     (void)napi_delete_reference(env, context->handle_ref);
+    context->handle_ref = nullptr;
   }
-  if (context->work != nullptr) {
-    (void)napi_delete_async_work(env, context->work);
-  }
+  ReleaseBackgroundContext<AsyncDetachContext>(context);
 }
 
 napi_value Detach(napi_env env, napi_callback_info info) {
@@ -1475,6 +2194,7 @@ napi_value Detach(napi_env env, napi_callback_info info) {
   context->library = box->library;
   context->handle = box->handle;
   context->generation = box->generation;
+  context->completion_bridge = std::make_shared<ThreadsafeBridge>();
 
   napi_value promise = nullptr;
   napi_value resource_name = nullptr;
@@ -1486,35 +2206,79 @@ napi_value Detach(napi_env env, napi_callback_info info) {
                  env, "oliphaunt.detach", NAPI_AUTO_LENGTH, &resource_name),
              "create detach resource name") ||
       !Check(env,
-             napi_create_async_work(
+             napi_create_threadsafe_function(
                  env,
                  nullptr,
+                 nullptr,
                  resource_name,
-                 ExecuteAsyncDetach,
-                 CompleteAsyncDetach,
+                 1,
+                 1,
                  context.get(),
-                 &context->work),
-             "create native detach work") ||
-      !Check(env, napi_queue_async_work(env, context->work), "queue native detach work")) {
-    if (context->work != nullptr) {
-      (void)napi_delete_async_work(env, context->work);
-    }
+                 FinalizeAsyncDetach,
+                 context.get(),
+                 IgnoreBackgroundCompletion,
+                 &context->completion_bridge->function),
+             "create native detach completion")) {
     if (context->handle_ref != nullptr) {
       (void)napi_delete_reference(env, context->handle_ref);
     }
     return nullptr;
   }
+  AsyncDetachContext *raw_context = context.release();
+  if (!RegisterEnvironmentOperation(env, &raw_context->environment_operation)) {
+    AbortBackgroundOperationSetup(
+        &raw_context->environment_operation, raw_context->completion_bridge);
+    ReleaseBackgroundContext<AsyncDetachContext>(raw_context);
+    return nullptr;
+  }
+  RegisterThreadsafeBridge(
+      raw_context->environment_operation.environment, raw_context->completion_bridge);
+  if (!RefreshEnvironmentQuiesceHook(
+          env, raw_context->environment_operation.environment) ||
+      !StartBackgroundOperation(
+          env,
+          &raw_context->environment_operation,
+          raw_context->completion_bridge,
+          ExecuteAsyncDetach,
+          ReleaseBackgroundContext<AsyncDetachContext>,
+          raw_context)) {
+    AbortBackgroundOperationSetup(
+        &raw_context->environment_operation, raw_context->completion_bridge);
+    ReleaseBackgroundContext<AsyncDetachContext>(raw_context);
+    return nullptr;
+  }
   // Reject new work immediately while the native detach runs. On failure the
   // completion callback restores the retryable logical handle.
   box->detached = true;
-  (void)context.release();
   return promise;
 }
 
 napi_value Init(napi_env env, napi_value exports) {
   auto *environment = new AddonEnvironment{env};
-  if (!Check(env, napi_add_env_cleanup_hook(env, CleanupEnvironment, environment),
-             "register native environment cleanup")) {
+  // Node-API 8 pairs asynchronous registration with removal through the
+  // returned opaque handle. Retain that handle explicitly; the addon never
+  // relies on a null output pointer being accepted by a particular Node build.
+  if (!Check(
+          env,
+          napi_add_async_cleanup_hook(
+              env,
+              CleanupEnvironment,
+              environment,
+              &environment->async_cleanup_handle),
+          "register asynchronous native environment cleanup")) {
+    delete environment;
+    return nullptr;
+  }
+  {
+    std::lock_guard<std::mutex> guard(g_environments_mutex);
+    g_environments[env] = environment;
+  }
+  if (!RefreshEnvironmentQuiesceHook(env, environment)) {
+    (void)napi_remove_async_cleanup_hook(environment->async_cleanup_handle);
+    {
+      std::lock_guard<std::mutex> guard(g_environments_mutex);
+      g_environments.erase(env);
+    }
     delete environment;
     return nullptr;
   }

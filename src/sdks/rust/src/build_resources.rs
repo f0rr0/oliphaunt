@@ -71,7 +71,10 @@ mod tests {
 
         let empty_error = register_build_resources_dir(PathBuf::new())
             .expect_err("an empty resource directory must be rejected");
-        assert!(matches!(empty_error, Error::InvalidConfig(_)));
+        assert_eq!(
+            empty_error.kind(),
+            crate::error::ErrorKind::InvalidConfiguration
+        );
         assert_eq!(registered_build_resources_dir(), None);
 
         // Keep the singleton's complete contract in one test so ordinary
@@ -100,9 +103,11 @@ mod tests {
             };
         let replacement_error = register_build_resources_dir(replacement.clone())
             .expect_err("a process-wide resource directory must not be replaceable");
-        let Error::InvalidConfig(message) = replacement_error else {
-            panic!("replacement must fail as invalid configuration");
-        };
+        assert_eq!(
+            replacement_error.kind(),
+            crate::error::ErrorKind::InvalidConfiguration
+        );
+        let message = replacement_error.to_string();
         assert!(message.contains(&registered.display().to_string()));
         assert!(message.contains(&replacement.display().to_string()));
         assert_eq!(registered_build_resources_dir(), Some(registered.clone()));
@@ -111,9 +116,8 @@ mod tests {
             Some(path) if path.as_os_str().is_empty() => {
                 let error = crate::register_build_resources!()
                     .expect_err("an empty compile-time resource directory must be rejected");
-                assert!(
-                    matches!(error, Error::InvalidConfig(message) if message.contains("cannot be empty"))
-                );
+                assert_eq!(error.kind(), crate::error::ErrorKind::InvalidConfiguration);
+                assert!(error.to_string().contains("cannot be empty"));
             }
             Some(_) => {
                 crate::register_build_resources!().expect(
@@ -123,9 +127,8 @@ mod tests {
             None => {
                 let error = crate::register_build_resources!()
                     .expect_err("the SDK crate itself has no oliphaunt-build configuration");
-                let Error::InvalidConfig(message) = error else {
-                    panic!("missing build resources must fail as invalid configuration");
-                };
+                assert_eq!(error.kind(), crate::error::ErrorKind::InvalidConfiguration);
+                let message = error.to_string();
                 assert!(message.contains("OLIPHAUNT_RESOURCES_DIR was not emitted"));
                 assert!(message.contains("oliphaunt_build::configure()"));
             }

@@ -259,14 +259,38 @@ function nullTerminatedAscii(values) {
   return Buffer.from(`${values.join('\0')}\0`, 'ascii');
 }
 
+export const OLIPHAUNT_WINDOWS_IMPORT_SYMBOLS = Object.freeze([
+  'oliphaunt_backup',
+  'oliphaunt_backup_with_error',
+  'oliphaunt_cancel',
+  'oliphaunt_close',
+  'oliphaunt_close_if_generation',
+  'oliphaunt_copy_last_error',
+  'oliphaunt_detach',
+  'oliphaunt_detach_with_error',
+  'oliphaunt_exec_protocol',
+  'oliphaunt_exec_protocol_raw_stream',
+  'oliphaunt_exec_protocol_raw_stream_with_error',
+  'oliphaunt_exec_protocol_with_error',
+  'oliphaunt_exec_simple_query',
+  'oliphaunt_exec_simple_query_with_error',
+  'oliphaunt_free_response',
+  'oliphaunt_init',
+  'oliphaunt_init_with_error',
+  'oliphaunt_last_error',
+  'oliphaunt_logical_generation',
+  'oliphaunt_register_static_extensions',
+  'oliphaunt_restore',
+  'oliphaunt_restore_with_error',
+  'oliphaunt_version',
+]);
+
 export function windowsImportLibraryFixture({
   dllName = 'oliphaunt.dll',
   importMachine = 0x8664,
   objectMachine = 0x8664,
   symbol,
-  importSymbols = symbol === undefined
-    ? ['oliphaunt_close_if_generation', 'oliphaunt_init', 'oliphaunt_logical_generation']
-    : [symbol],
+  importSymbols = symbol === undefined ? OLIPHAUNT_WINDOWS_IMPORT_SYMBOLS : [symbol],
 } = {}) {
   if (!Array.isArray(importSymbols) || importSymbols.length === 0) {
     throw new Error('Windows import-library fixture requires at least one import symbol');

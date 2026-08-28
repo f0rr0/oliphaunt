@@ -6,13 +6,14 @@ use std::net::TcpStream;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
-use std::sync::{Arc, Mutex, mpsc};
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::child_process::reap_child_process;
 use crate::config::{EngineMode, NativeBrokerConfig, OpenConfig};
-use crate::engine::{EngineCancel, EngineSession, NativeRuntime};
+use crate::engine::{EngineCancel, EngineSession, NativeRuntime, ProtocolStreamOutcome};
 use crate::error::{Error, Result};
 use crate::extension::Extension;
 use crate::ipc::{RequestFrame, ResponseFrame, read_response, write_request};
@@ -86,7 +87,7 @@ impl NativeRuntime for NativeBrokerRuntime {
         let auth_token = BrokerAuthToken::generate()?;
         let launch_plan = BrokerLaunchPlan {
             executable,
-            config: config.clone(),
+            config,
             root_path,
             extensions,
             endpoint,
@@ -104,9 +105,9 @@ impl NativeRuntime for NativeBrokerRuntime {
             child: Some(child),
             transport: Some(launch.transport),
             cancel,
-            launch_plan,
             temporary_root,
             ipc_cleanup,
+            failure: None,
             closed: false,
         }))
     }
@@ -116,9 +117,9 @@ struct NativeBrokerSession {
     child: Option<Child>,
     transport: Option<Box<dyn BrokerTransport>>,
     cancel: Arc<BrokerCancel>,
-    launch_plan: BrokerLaunchPlan,
     temporary_root: Option<PathBuf>,
     ipc_cleanup: Option<PathBuf>,
+    failure: Option<Error>,
     closed: bool,
 }
 
@@ -143,6 +144,10 @@ impl EngineSession for NativeBrokerSession {
             ResponseFrame::Chunk(_) => Err(Error::Engine(
                 "broker returned a stream chunk for buffered protocol execution".to_owned(),
             )),
+            ResponseFrame::StreamCallbackAborted(message) => Err(unexpected_stream_abort(
+                "buffered protocol execution",
+                message,
+            )),
         }
     }
 
@@ -150,25 +155,35 @@ impl EngineSession for NativeBrokerSession {
         &mut self,
         request: ProtocolRequest,
         on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
-    ) -> Result<()> {
+    ) -> ProtocolStreamOutcome {
         {
-            let transport = self.ensure_transport()?;
+            let transport = match self.ensure_transport() {
+                Ok(transport) => transport,
+                Err(error) => return ProtocolStreamOutcome::SessionStateUnknown(error),
+            };
             if let Err(error) = write_request(
                 transport,
                 RequestFrame::ExecProtocolStream(request.as_bytes().to_vec()),
             ) {
-                self.mark_broker_failed();
-                return Err(error);
+                self.mark_broker_failed(error.clone());
+                return ProtocolStreamOutcome::SessionStateUnknown(error);
             }
         }
 
         let mut callback_error = None;
         loop {
             let response = {
-                let transport = self.ensure_transport()?;
+                let transport = match self.ensure_transport() {
+                    Ok(transport) => transport,
+                    Err(error) => return ProtocolStreamOutcome::SessionStateUnknown(error),
+                };
                 read_response(transport)
             };
-            match self.read_response_or_mark_failed(response)? {
+            let response = match self.read_response_or_mark_failed(response) {
+                Ok(response) => response,
+                Err(error) => return ProtocolStreamOutcome::SessionStateUnknown(error),
+            };
+            match response {
                 ResponseFrame::Chunk(bytes) => {
                     if callback_error.is_none()
                         && let Err(error) = on_chunk(&bytes)
@@ -176,10 +191,7 @@ impl EngineSession for NativeBrokerSession {
                         callback_error = Some(error);
                     }
                 }
-                ResponseFrame::Ok(_) => return callback_error.map_or(Ok(()), Err),
-                ResponseFrame::Error(message) => {
-                    return callback_error.map_or(Err(Error::Engine(message)), Err);
-                }
+                terminal => return classify_stream_completion(terminal, callback_error),
             }
         }
     }
@@ -197,6 +209,9 @@ impl EngineSession for NativeBrokerSession {
             ResponseFrame::Chunk(_) => Err(Error::Engine(
                 "broker returned a stream chunk for simple-query execution".to_owned(),
             )),
+            ResponseFrame::StreamCallbackAborted(message) => {
+                Err(unexpected_stream_abort("simple-query execution", message))
+            }
         }
     }
 
@@ -211,6 +226,9 @@ impl EngineSession for NativeBrokerSession {
             ResponseFrame::Chunk(_) => Err(Error::Engine(
                 "broker returned a stream chunk for backup".to_owned(),
             )),
+            ResponseFrame::StreamCallbackAborted(message) => {
+                Err(unexpected_stream_abort("backup", message))
+            }
         }
     }
 
@@ -219,7 +237,6 @@ impl EngineSession for NativeBrokerSession {
     }
 }
 
-#[derive(Clone)]
 struct BrokerLaunchPlan {
     executable: PathBuf,
     config: OpenConfig,
@@ -287,34 +304,22 @@ impl Drop for BrokerChildLaunchGuard {
 }
 
 struct BrokerCancel {
-    endpoint: Mutex<String>,
+    endpoint: String,
     auth_token: String,
 }
 
 impl BrokerCancel {
     fn new(endpoint: String, auth_token: String) -> Self {
         Self {
-            endpoint: Mutex::new(endpoint),
+            endpoint,
             auth_token,
         }
-    }
-
-    fn set_endpoint(&self, endpoint: String) -> Result<()> {
-        *self.endpoint.lock().map_err(|_| {
-            Error::Engine("native broker cancel endpoint lock poisoned".to_owned())
-        })? = endpoint;
-        Ok(())
     }
 }
 
 impl EngineCancel for BrokerCancel {
     fn cancel(&self) -> Result<()> {
-        let endpoint = self
-            .endpoint
-            .lock()
-            .map_err(|_| Error::Engine("native broker cancel endpoint lock poisoned".to_owned()))?
-            .clone();
-        let mut transport = connect_ready_endpoint(&endpoint)?;
+        let mut transport = connect_ready_endpoint(&self.endpoint)?;
         let token = BrokerAuthToken(self.auth_token.clone());
         authenticate_broker(&mut transport, &token)?;
         write_request(&mut transport, RequestFrame::Cancel)?;
@@ -326,6 +331,9 @@ impl EngineCancel for BrokerCancel {
             ResponseFrame::Chunk(_) => Err(Error::Engine(
                 "native broker cancel endpoint returned a stream chunk".to_owned(),
             )),
+            ResponseFrame::StreamCallbackAborted(message) => {
+                Err(unexpected_stream_abort("cancellation", message))
+            }
         }
     }
 }
@@ -335,13 +343,46 @@ impl NativeBrokerSession {
         if self.closed {
             return Err(Error::EngineStopped);
         }
-        if self.reap_exited_child()?.is_some() {
+        if let Some(error) = &self.failure {
+            return Err(error.clone());
+        }
+
+        let exited = match self.child.as_mut() {
+            Some(child) => match child.try_wait() {
+                Ok(status) => status,
+                Err(error) => {
+                    let error = Error::Engine(format!(
+                        "poll native broker helper: {error}; close and reopen the database"
+                    ));
+                    return Err(self.mark_broker_failed(error));
+                }
+            },
+            None => {
+                let error = Error::Engine(
+                    "native broker helper is unavailable; close and reopen the database".to_owned(),
+                );
+                return Err(self.mark_broker_failed(error));
+            }
+        };
+        if let Some(status) = exited {
+            self.child = None;
             self.transport = None;
+            let error = Error::Engine(format!(
+                "native broker helper exited unexpectedly ({status}); close and reopen the database"
+            ));
+            self.failure = Some(error.clone());
+            return Err(error);
         }
         if self.transport.is_none() {
-            self.restart_broker()?;
+            let error = Error::Engine(
+                "native broker transport is unavailable; close and reopen the database".to_owned(),
+            );
+            return Err(self.mark_broker_failed(error));
         }
-        self.transport.as_mut().ok_or(Error::EngineStopped)
+        Ok(self
+            .transport
+            .as_mut()
+            .expect("native broker transport was checked above"))
     }
 
     fn read_response_or_mark_failed(
@@ -351,75 +392,78 @@ impl NativeBrokerSession {
         match response {
             Ok(frame) => Ok(frame),
             Err(error) => {
-                self.mark_broker_failed();
+                self.mark_broker_failed(error.clone());
                 Err(error)
             }
         }
     }
 
-    fn restart_broker(&mut self) -> Result<()> {
-        if self.closed {
-            return Err(Error::EngineStopped);
-        }
-        let launch = self.launch_plan.launch()?;
-        self.cancel.set_endpoint(launch.cancel_endpoint)?;
-        self.child = Some(launch.child);
-        self.transport = Some(launch.transport);
-        Ok(())
-    }
-
-    fn reap_exited_child(&mut self) -> Result<Option<ExitStatus>> {
-        let status = match self.child.as_mut() {
-            Some(child) => child
-                .try_wait()
-                .map_err(|err| Error::Engine(format!("poll native broker helper: {err}")))?,
-            None => None,
-        };
-        if status.is_some() {
-            self.child = None;
-            self.transport = None;
-        }
-        Ok(status)
-    }
-
-    fn mark_broker_failed(&mut self) {
+    fn mark_broker_failed(&mut self, error: Error) -> Error {
+        let first_error = self.failure.get_or_insert(error).clone();
         self.transport = None;
         if let Some(mut child) = self.child.take() {
-            match child.try_wait() {
-                Ok(Some(_)) => {}
+            let reaped = match child.try_wait() {
+                Ok(Some(_)) => true,
                 Ok(None) | Err(_) => {
                     let _ = child.kill();
-                    let _ = child.wait();
+                    child.wait().is_ok()
                 }
+            };
+            if !reaped {
+                // Keep the process handle so explicit close can retry reaping
+                // it without weakening the terminal session failure.
+                self.child = Some(child);
             }
         }
+        first_error
     }
 
     fn close_broker(&mut self) -> Result<()> {
-        if self.closed {
-            return Ok(());
-        }
+        let first_attempt = !self.closed;
         self.closed = true;
-        if let Some(transport) = self.transport.as_mut() {
-            let _ = write_request(transport, RequestFrame::Close);
-            let _ = read_response(transport);
+        if first_attempt {
+            if let Some(transport) = self.transport.as_mut() {
+                let _ = write_request(transport, RequestFrame::Close);
+                let _ = read_response(transport);
+            }
+            self.transport = None;
         }
-        self.transport = None;
-        if let Some(mut child) = self.child.take() {
-            match wait_for_child_exit(&mut child, BROKER_SHUTDOWN_TIMEOUT) {
-                Ok(Some(_)) => {}
-                Ok(None) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
-                Err(err) => return Err(Error::Engine(format!("wait for native broker: {err}"))),
+        let mut cleanup_failures = Vec::new();
+        if let Some(child) = self.child.as_mut() {
+            let outcome = reap_child_process(child, BROKER_SHUTDOWN_TIMEOUT, "native broker");
+            cleanup_failures.extend(outcome.failures);
+            if outcome.reaped {
+                self.child = None;
             }
         }
-        if let Some(root) = self.temporary_root.take() {
-            let _ = fs::remove_dir_all(root);
+        // Never delete PGDATA or the IPC tree underneath a process whose reap
+        // remains unconfirmed. A package-internal retry can remove the exact
+        // retained paths after it conclusively reaps the child.
+        if self.child.is_none() {
+            if let Some(root) = self.temporary_root.as_ref() {
+                match fs::remove_dir_all(root) {
+                    Ok(()) => self.temporary_root = None,
+                    Err(error) => cleanup_failures.push(format!(
+                        "remove temporary broker root {}: {error}",
+                        root.display()
+                    )),
+                }
+            }
+            if let Some(path) = self.ipc_cleanup.as_ref() {
+                match fs::remove_dir_all(path) {
+                    Ok(()) => self.ipc_cleanup = None,
+                    Err(error) => cleanup_failures.push(format!(
+                        "remove native broker IPC directory {}: {error}",
+                        path.display()
+                    )),
+                }
+            }
         }
-        if let Some(path) = self.ipc_cleanup.take() {
-            let _ = fs::remove_dir_all(path);
+        if !cleanup_failures.is_empty() {
+            return Err(Error::Engine(format!(
+                "native broker cleanup failed: {}",
+                cleanup_failures.join("; ")
+            )));
         }
         Ok(())
     }
@@ -427,7 +471,20 @@ impl NativeBrokerSession {
 
 impl Drop for NativeBrokerSession {
     fn drop(&mut self) {
-        let _ = self.close_broker();
+        if self.close_broker().is_err() {
+            // A terminal destructor has no later retry owner. Leak only the
+            // exact unresolved resources so a failed reap cannot silently
+            // discard the child handle or cleanup paths before process exit.
+            if let Some(child) = self.child.take() {
+                std::mem::forget(child);
+            }
+            if let Some(root) = self.temporary_root.take() {
+                std::mem::forget(root);
+            }
+            if let Some(path) = self.ipc_cleanup.take() {
+                std::mem::forget(path);
+            }
+        }
     }
 }
 
@@ -461,22 +518,6 @@ impl Drop for BrokerOpenGuard {
         if let Some(path) = self.ipc_cleanup.take() {
             let _ = fs::remove_dir_all(path);
         }
-    }
-}
-
-fn wait_for_child_exit(
-    child: &mut Child,
-    timeout: Duration,
-) -> std::io::Result<Option<std::process::ExitStatus>> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if let Some(status) = child.try_wait()? {
-            return Ok(Some(status));
-        }
-        if Instant::now() >= deadline {
-            return Ok(None);
-        }
-        thread::sleep(Duration::from_millis(10));
     }
 }
 
@@ -577,10 +618,36 @@ fn authenticate_broker(
         ResponseFrame::Chunk(_) => Err(Error::Engine(
             "native broker authentication returned a stream chunk".to_owned(),
         )),
+        ResponseFrame::StreamCallbackAborted(message) => {
+            Err(unexpected_stream_abort("authentication", message))
+        }
     }
 }
 
-#[derive(Clone)]
+fn unexpected_stream_abort(operation: &str, message: String) -> Error {
+    Error::Engine(format!(
+        "native broker returned a stream callback-aborted completion for {operation}: {message}"
+    ))
+}
+
+fn classify_stream_completion(
+    response: ResponseFrame,
+    callback_error: Option<Error>,
+) -> ProtocolStreamOutcome {
+    match response {
+        ResponseFrame::Ok(_) => {
+            ProtocolStreamOutcome::ReadyForQuery(callback_error.map_or(Ok(()), Err))
+        }
+        ResponseFrame::StreamCallbackAborted(message) => ProtocolStreamOutcome::ReadyForQuery(
+            callback_error.map_or_else(|| Err(Error::Engine(message)), Err),
+        ),
+        ResponseFrame::Error(message) => {
+            ProtocolStreamOutcome::SessionStateUnknown(Error::Engine(message))
+        }
+        ResponseFrame::Chunk(_) => unreachable!("stream chunks are consumed before completion"),
+    }
+}
+
 struct BrokerAuthToken(String);
 
 impl BrokerAuthToken {
@@ -802,30 +869,6 @@ enum BrokerEndpoint {
     },
 }
 
-impl Clone for BrokerEndpoint {
-    fn clone(&self) -> Self {
-        match self {
-            #[cfg(unix)]
-            Self::Unix {
-                dir,
-                socket,
-                cancel_socket,
-            } => Self::Unix {
-                dir: dir.clone(),
-                socket: socket.clone(),
-                cancel_socket: cancel_socket.clone(),
-            },
-            Self::Tcp {
-                listen,
-                cancel_listen,
-            } => Self::Tcp {
-                listen: listen.clone(),
-                cancel_listen: cancel_listen.clone(),
-            },
-        }
-    }
-}
-
 impl BrokerEndpoint {
     fn allocate() -> Result<Self> {
         if env::var(ENV_BROKER_TRANSPORT).ok().as_deref() == Some("tcp") {
@@ -986,6 +1029,97 @@ fn create_temporary_ipc_dir() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn exited_broker_is_terminal_for_the_existing_session_and_close_still_cleans_up() {
+        let mut command = if cfg!(windows) {
+            let mut command = Command::new("cmd");
+            command.args(["/C", "exit", "23"]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", "exit 23"]);
+            command
+        };
+        let mut child = command.spawn().expect("spawn exited broker fixture");
+        let exit = child.wait().expect("wait for exited broker fixture");
+        let temporary_root = create_temporary_root().expect("temporary broker root");
+        let ipc_cleanup = create_temporary_root().expect("temporary broker IPC root");
+        let mut session = NativeBrokerSession {
+            child: Some(child),
+            transport: Some(Box::new(Cursor::new(Vec::<u8>::new()))),
+            cancel: Arc::new(BrokerCancel::new(
+                "tcp:127.0.0.1:1".to_owned(),
+                "fixture-token".to_owned(),
+            )),
+            temporary_root: Some(temporary_root.clone()),
+            ipc_cleanup: Some(ipc_cleanup.clone()),
+            failure: None,
+            closed: false,
+        };
+
+        let first = match session.ensure_transport() {
+            Ok(_) => panic!("an exited broker must never be replaced under the same session"),
+            Err(error) => error,
+        };
+        assert!(
+            first
+                .to_string()
+                .contains(&format!("exited unexpectedly ({exit})")),
+            "the first failure must identify the observed helper exit: {first}"
+        );
+        assert!(first.to_string().contains("close and reopen"));
+        assert!(session.child.is_none());
+        assert!(session.transport.is_none());
+
+        let second = match session.ensure_transport() {
+            Ok(_) => panic!("a failed broker session must stay failed"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            second.kind(),
+            first.kind(),
+            "later calls must retain the first failure category"
+        );
+        assert_eq!(
+            second.to_string(),
+            first.to_string(),
+            "later calls must retain the first failure diagnostics"
+        );
+
+        session.close_broker().expect("failed broker close");
+        session
+            .close_broker()
+            .expect("idempotent failed broker close");
+        assert!(!temporary_root.exists());
+        assert!(!ipc_cleanup.exists());
+    }
+
+    #[test]
+    fn broker_stream_recovery_proof_controls_callback_error_precedence() {
+        let callback = Error::Engine("consumer stopped".to_owned());
+        match classify_stream_completion(
+            ResponseFrame::StreamCallbackAborted("helper callback stopped".to_owned()),
+            Some(callback.clone()),
+        ) {
+            ProtocolStreamOutcome::ReadyForQuery(Err(error)) => {
+                assert_eq!(error.kind(), callback.kind());
+                assert_eq!(error.to_string(), callback.to_string());
+            }
+            _ => panic!("typed callback abort must retain ReadyForQuery proof"),
+        }
+
+        let recovery = Error::Engine("broker transport failed before ReadyForQuery".to_owned());
+        match classify_stream_completion(ResponseFrame::Error(recovery.to_string()), Some(callback))
+        {
+            ProtocolStreamOutcome::SessionStateUnknown(error) => {
+                assert_eq!(error.kind(), recovery.kind());
+                assert_eq!(error.to_string(), recovery.to_string());
+            }
+            _ => panic!("independent broker failure must override the callback error"),
+        }
+    }
 
     #[test]
     fn broker_spawn_args_forward_preload_required_extensions_to_helper_before_startup() {
@@ -993,7 +1127,7 @@ mod tests {
         config.mode = EngineMode::Broker;
         config.username = "app_user".to_owned();
         config.database = "app_db".to_owned();
-        config.extensions = vec![Extension::PgTextsearch, Extension::PgTextsearch];
+        config.extensions = vec![Extension::PG_TEXTSEARCH, Extension::PG_TEXTSEARCH];
         let extensions = config.resolved_extensions().unwrap();
         let endpoint = BrokerEndpoint::Tcp {
             listen: "127.0.0.1:0".to_owned(),

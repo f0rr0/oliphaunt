@@ -8,8 +8,10 @@
 extern "C" {
 #endif
 
-#define OLIPHAUNT_ABI_VERSION 9u
+#define OLIPHAUNT_ABI_VERSION 10u
 #define OLIPHAUNT_STATIC_EXTENSION_ABI_VERSION 1u
+#define OLIPHAUNT_ERROR_CAPTURE_CAPACITY 1024u
+#define OLIPHAUNT_STREAM_CALLBACK_ABORTED 1
 /* The caller already owns liboliphaunt's stable sibling root lease. */
 #define OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK (1ull << 0)
 
@@ -82,6 +84,21 @@ typedef struct OliphauntResponse {
     size_t len;
 } OliphauntResponse;
 
+/*
+ * Operation-owned error storage for hosts whose FFI scheduler resumes the
+ * caller on a different thread. The `_with_error` entry points below execute
+ * the operation and capture its thread-local failure before that native
+ * invocation returns. `length` excludes the trailing NUL and is at most
+ * OLIPHAUNT_ERROR_CAPTURE_CAPACITY - 1; `message` is always NUL-terminated
+ * and is empty on success. The entire capture is zeroed on success. Native
+ * error sources use the same bound, so a valid runtime error is not
+ * additionally truncated during capture.
+ */
+typedef struct OliphauntErrorCapture {
+    uint32_t length;
+    char message[OLIPHAUNT_ERROR_CAPTURE_CAPACITY];
+} OliphauntErrorCapture;
+
 typedef struct OliphauntRestoreOptions {
     uint32_t abi_version;
     /* New or existing-empty managed-root path; this is not a PGDATA path. */
@@ -106,8 +123,10 @@ typedef struct OliphauntRestoreOptions {
  * handle. Those calls fail with a busy error while streaming is active,
  * including from another thread, so the callback cannot corrupt protocol
  * ordering or free its own handle. A non-zero callback result stops later
- * callback delivery, drains the backend to ReadyForQuery, and makes the stream
- * operation fail.
+ * callback delivery and drains the backend to ReadyForQuery. The stream then
+ * returns OLIPHAUNT_STREAM_CALLBACK_ABORTED; negative results identify
+ * validation, transport, backend, or recovery failures for which reuse may be
+ * unsafe.
  */
 typedef int32_t (*OliphauntStreamCallback)(void *context, const uint8_t *data, size_t len);
 
@@ -137,6 +156,44 @@ OLIPHAUNT_API int32_t oliphaunt_backup(
     OliphauntHandle *handle,
     OliphauntResponse *out);
 OLIPHAUNT_API int32_t oliphaunt_restore(const OliphauntRestoreOptions *options);
+/*
+ * Scheduler-safe variants for asynchronous FFI hosts. These preserve the
+ * return code and response ownership of their corresponding operation while
+ * filling a required caller-owned capture before returning.
+ */
+OLIPHAUNT_API int32_t oliphaunt_init_with_error(
+    const OliphauntConfig *config,
+    OliphauntHandle **out,
+    OliphauntErrorCapture *error);
+OLIPHAUNT_API int32_t oliphaunt_exec_protocol_with_error(
+    OliphauntHandle *handle,
+    const uint8_t *request,
+    size_t request_len,
+    OliphauntResponse *out,
+    OliphauntErrorCapture *error);
+OLIPHAUNT_API int32_t oliphaunt_exec_simple_query_with_error(
+    OliphauntHandle *handle,
+    const char *sql,
+    size_t sql_len,
+    OliphauntResponse *out,
+    OliphauntErrorCapture *error);
+OLIPHAUNT_API int32_t oliphaunt_exec_protocol_raw_stream_with_error(
+    OliphauntHandle *handle,
+    const uint8_t *request,
+    size_t request_len,
+    OliphauntStreamCallback callback,
+    void *callback_context,
+    OliphauntErrorCapture *error);
+OLIPHAUNT_API int32_t oliphaunt_backup_with_error(
+    OliphauntHandle *handle,
+    OliphauntResponse *out,
+    OliphauntErrorCapture *error);
+OLIPHAUNT_API int32_t oliphaunt_restore_with_error(
+    const OliphauntRestoreOptions *options,
+    OliphauntErrorCapture *error);
+OLIPHAUNT_API int32_t oliphaunt_detach_with_error(
+    OliphauntHandle *handle,
+    OliphauntErrorCapture *error);
 OLIPHAUNT_API int32_t oliphaunt_cancel(OliphauntHandle *handle);
 /* A poisoned backup session is terminally closed instead of retained. */
 OLIPHAUNT_API int32_t oliphaunt_detach(OliphauntHandle *handle);

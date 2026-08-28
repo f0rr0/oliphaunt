@@ -7,12 +7,12 @@ import {
   serializeExpoSmokePassReceipt,
 } from "../src/smoke-pass-receipt.ts";
 import {
-  GENERATED_EXTENSION_METADATA,
-  GENERATED_EXTENSION_METADATA_SHA256,
-} from "../../../src/sdks/react-native/src/generated/extensions.ts";
+  GENERATED_MOBILE_EXTENSION_METADATA_SHA256,
+  GENERATED_MOBILE_EXTENSION_PLAN,
+} from "../src/generated/extension-smoke.ts";
 
 function platformExtensions() {
-  return GENERATED_EXTENSION_METADATA
+  return GENERATED_MOBILE_EXTENSION_PLAN
     .map((extension) => extension.sqlName)
     .sort();
 }
@@ -25,7 +25,7 @@ function receiptInput(platform, overrides = {}) {
     activatedExtensions: extensions,
     extensionCatalogComplete: true,
     pgTextsearchEnglishBm25: extensions.includes("pg_textsearch"),
-    extensionCatalogSha256: GENERATED_EXTENSION_METADATA_SHA256,
+    extensionCatalogSha256: GENERATED_MOBILE_EXTENSION_METADATA_SHA256,
     catalogProfile: "icu",
     icuRuntimeProof: true,
     ...overrides,
@@ -98,7 +98,7 @@ test("receipt serialization fails closed on proof drift and remains constant-siz
     activatedExtensions: largeCatalog,
     extensionCatalogComplete: true,
     pgTextsearchEnglishBm25: false,
-    extensionCatalogSha256: GENERATED_EXTENSION_METADATA_SHA256,
+    extensionCatalogSha256: GENERATED_MOBILE_EXTENSION_METADATA_SHA256,
     catalogProfile: "standard",
     icuRuntimeProof: false,
   });

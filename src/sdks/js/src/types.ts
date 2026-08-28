@@ -65,8 +65,6 @@ export type OliphauntTransaction = {
     parameterTypeOids?: ReadonlyArray<number>,
   ): Promise<import('./query.js').DescribeResult>;
   rollback(): Promise<void>;
-  execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
-  execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
 };
 
 export type OliphauntDatabase = {
@@ -98,6 +96,11 @@ export type OliphauntDatabase = {
   execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
   backup(): Promise<Uint8Array>;
   cancel(): Promise<void>;
+  /**
+   * Own the session for one callback. Use callback return/throw or rollback()
+   * for lifecycle; manual BEGIN/START/COMMIT/END/ABORT/PREPARE TRANSACTION and
+   * AND CHAIN are unsupported. SAVEPOINT and ROLLBACK TO are allowed.
+   */
   transaction<T>(body: (transaction: OliphauntTransaction) => Promise<T> | T): Promise<T>;
   close(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
@@ -105,36 +108,10 @@ export type OliphauntDatabase = {
 
 export type OliphauntServer = {
   readonly closed: boolean;
-  execute(
-    sql: string,
-    parameters?: ReadonlyArray<import('./query.js').QueryParam>,
-    options?: import('./query.js').ParameterOptions,
-  ): Promise<import('./query.js').CommandResult>;
-  query<Row = import('./query.js').QueryObjectRow>(
-    sql: string,
-    parameters?: ReadonlyArray<import('./query.js').QueryParam>,
-    options?: import('./query.js').QueryOptions,
-  ): Promise<import('./query.js').QueryResult<Row>>;
-  queryRaw(
-    sql: string,
-    parameters?: ReadonlyArray<import('./query.js').QueryParam>,
-    options?: import('./query.js').ParameterOptions,
-  ): Promise<import('./query.js').RawQueryResult>;
-  exec<Row = import('./query.js').QueryObjectRow>(
-    sql: string,
-    options?: Omit<import('./query.js').QueryOptions, 'encoders'>,
-  ): Promise<import('./query.js').ExecResult<Row>>;
-  describe(
-    sql: string,
-    parameterTypeOids?: ReadonlyArray<number>,
-  ): Promise<import('./query.js').DescribeResult>;
-  execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
-  execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
-  cancel(): Promise<void>;
-  transaction<T>(body: (transaction: OliphauntTransaction) => Promise<T> | T): Promise<T>;
+  /** Endpoint for caller-owned ORM, driver, or tool connections. */
+  readonly connectionString: string;
   close(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
-  readonly connectionString: string;
 };
 
 export type RestoreOptions = {

@@ -36,21 +36,13 @@ export async function openServer(config: ServerOpenConfig = {}): Promise<Oliphau
   const listen = await prepareListen(config.listen ?? { transport: 'tcp' });
   const { listen: _listen, ...databaseConfig } = config;
   const database = await openWasix(databaseConfig);
-  let state: ServerState | undefined;
-  try {
-    state = await ServerState.open(
-      database,
-      listen,
-      config.username ?? 'postgres',
-      config.database ?? 'postgres',
-    );
-    return state.publicHandle();
-  } catch (error) {
-    await state?.close().catch(() => undefined);
-    await database.close().catch(() => undefined);
-    await listen.cleanup().catch(() => undefined);
-    throw error;
-  }
+  const state = await ServerState.open(
+    database,
+    listen,
+    config.username ?? 'postgres',
+    config.database ?? 'postgres',
+  );
+  return state.publicHandle();
 }
 
 type PreparedListen = Readonly<{
@@ -67,24 +59,22 @@ type PreparedListen = Readonly<{
 class ServerState {
   readonly #database: OliphauntDatabase;
   readonly #listen: PreparedListen;
-  readonly #server: Server;
-  readonly #connectionString: string;
+  #server: Server | undefined;
+  #connectionString: string | undefined;
   #active: ActiveConnection | undefined;
+  #accepting = false;
   #closing = false;
   #closed = false;
   #closeAttempt: Promise<void> | undefined;
   #listenerFailure: unknown;
+  #listenerClosedConfirmed = false;
+  #databaseCleanupConfirmed = false;
+  #listenCleanupConfirmed = false;
+  #cleanupRetryScheduled = false;
 
-  private constructor(
-    database: OliphauntDatabase,
-    listen: PreparedListen,
-    server: Server,
-    connectionString: string,
-  ) {
+  private constructor(database: OliphauntDatabase, listen: PreparedListen) {
     this.#database = database;
     this.#listen = listen;
-    this.#server = server;
-    this.#connectionString = connectionString;
   }
 
   static async open(
@@ -93,28 +83,43 @@ class ServerState {
     username: string,
     databaseName: string,
   ): Promise<ServerState> {
-    let state: ServerState | undefined;
-    const server = createServer((socket) => {
-      if (state === undefined) socket.destroy();
-      else state.accept(socket);
-    });
+    const state = new ServerState(database, listen);
     try {
+      const server = createServer((socket) => state.accept(socket));
+      state.#server = server;
+      server.on('error', (error) => state.listenerFailed(error));
       await listenNodeServer(server, listen.node);
       await listen.didListen();
-      const connectionString = listen.connectionString(username, databaseName, server.address());
-      state = new ServerState(database, listen, server, connectionString);
-      server.on('error', (error) => state?.listenerFailed(error));
+      state.#connectionString = listen.connectionString(
+        username,
+        databaseName,
+        server.address(),
+      );
+      if (state.#listenerFailure !== undefined) throw state.#listenerFailure;
+      state.#accepting = true;
       return state;
     } catch (error) {
-      await closeNodeServer(server).catch(() => undefined);
-      throw error;
+      const cleanupFailures = (await state.#closeOwnedResources()).filter(
+        (failure) => !Object.is(failure, error),
+      );
+      state.#closed = true;
+      state.#retainUnconfirmedOwnership();
+      if (cleanupFailures.length === 0) throw error;
+      throw new AggregateError(
+        [error, ...cleanupFailures],
+        'could not open Oliphaunt WASIX server and clean up its resources',
+      );
     }
   }
 
   publicHandle(): OliphauntServer {
+    const connectionString = this.#connectionString;
+    if (connectionString === undefined) {
+      throw new Error('Oliphaunt WASIX server was published before it became ready');
+    }
     const state = this;
     return Object.freeze({
-      connectionString: this.#connectionString,
+      connectionString,
       get closed() {
         return state.closed;
       },
@@ -128,7 +133,7 @@ class ServerState {
   }
 
   accept(socket: Socket): void {
-    if (this.#closing || this.#closed) {
+    if (!this.#accepting || this.#closing || this.#closed) {
       socket.destroy();
       return;
     }
@@ -155,6 +160,7 @@ class ServerState {
 
   listenerFailed(error: unknown): void {
     this.#listenerFailure ??= error;
+    this.#accepting = false;
     this.#active?.stop();
   }
 
@@ -166,31 +172,105 @@ class ServerState {
   async #closeInner(): Promise<void> {
     if (this.#closed) return;
     this.#closing = true;
+    this.#accepting = false;
     try {
-      const active = this.#active;
-      active?.stop();
-      // Close the database concurrently with the active stream. After its
-      // orderly-drain deadline the database force-terminates the Worker, but it
-      // still awaits confirmed termination before server resource cleanup.
-      const shutdown = await Promise.allSettled([
-        closeNodeServer(this.#server),
-        active?.finished ?? Promise.resolve(),
-        this.#database.close(),
-      ]);
-      const results = [...shutdown, await settled(this.#listen.cleanup())];
-      const failures = results
-        .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-        .map((result) => result.reason);
-      if (this.#listenerFailure !== undefined) failures.push(this.#listenerFailure);
+      const failures = await this.#closeOwnedResources();
       if (failures.length > 0) {
         throw new AggregateError(failures, 'could not close Oliphaunt WASIX server cleanly');
       }
     } finally {
       this.#closed = true;
       this.#closing = false;
+      this.#retainUnconfirmedOwnership();
     }
   }
+
+  async #closeOwnedResources(): Promise<unknown[]> {
+    this.#accepting = false;
+    const active = this.#active;
+    active?.stop();
+    // Closing is terminal for the public database, but the listener and its
+    // socket path remain separately owned until Node confirms it is no longer
+    // listening. Never unlink a Unix endpoint under a possibly live listener.
+    const server = this.#server;
+    const shutdown = await Promise.allSettled([
+      server === undefined ? Promise.resolve() : closeNodeServer(server),
+      active?.finished ?? Promise.resolve(),
+      this.#database.close(),
+    ]);
+    const failures: unknown[] = [];
+    for (const result of shutdown) {
+      if (result.status === 'rejected') pushUniqueFailure(failures, result.reason);
+    }
+    if (shutdown[2]?.status === 'fulfilled') this.#databaseCleanupConfirmed = true;
+    this.#listenerClosedConfirmed = server === undefined || !server.listening;
+    if (this.#listenerClosedConfirmed) {
+      const cleanup = await settled(this.#listen.cleanup());
+      if (cleanup.status === 'fulfilled') this.#listenCleanupConfirmed = true;
+      else pushUniqueFailure(failures, cleanup.reason);
+    }
+    if (this.#listenerFailure !== undefined) {
+      pushUniqueFailure(failures, this.#listenerFailure);
+    }
+    return failures;
+  }
+
+  #retainUnconfirmedOwnership(): void {
+    if (this.#ownsUnconfirmedResources()) {
+      retainedFailedServerStates.add(this);
+      this.#scheduleCleanupRetry();
+    } else {
+      retainedFailedServerStates.delete(this);
+    }
+  }
+
+  #ownsUnconfirmedResources(): boolean {
+    return (
+      !this.#listenerClosedConfirmed ||
+      !this.#databaseCleanupConfirmed ||
+      !this.#listenCleanupConfirmed
+    );
+  }
+
+  #scheduleCleanupRetry(): void {
+    if (this.#cleanupRetryScheduled) return;
+    this.#cleanupRetryScheduled = true;
+    const scheduled = setImmediate(() => {
+      this.#cleanupRetryScheduled = false;
+      void this.#retryUnconfirmedCleanup();
+    });
+    scheduled.unref();
+  }
+
+  async #retryUnconfirmedCleanup(): Promise<void> {
+    // Database close is a one-shot terminal contract. Its owner remains
+    // retained after failure, while listener/path cleanup can be retried
+    // without resending database teardown or exposing a second public close.
+    if (!this.#listenerClosedConfirmed) {
+      const server = this.#server;
+      if (server !== undefined) {
+        await closeNodeServer(server).catch(() => undefined);
+        this.#listenerClosedConfirmed = !server.listening;
+      } else {
+        this.#listenerClosedConfirmed = true;
+      }
+    }
+    if (this.#listenerClosedConfirmed && !this.#listenCleanupConfirmed) {
+      try {
+        await this.#listen.cleanup();
+        this.#listenCleanupConfirmed = true;
+      } catch {
+        // Retain the exact listener/path owner for process lifetime.
+      }
+    }
+    if (!this.#ownsUnconfirmedResources()) retainedFailedServerStates.delete(this);
+  }
 }
+
+// Public open and close have one terminal outcome. Keep unpublished or failed
+// owners alive whenever Node cannot prove listener, database, and socket-path
+// cleanup; an exact retained owner is safer than deleting live infrastructure.
+const retainedFailedServerStates = new Set<ServerState>();
 
 class ActiveConnection {
   readonly #socket: Socket;
@@ -381,6 +461,10 @@ function closeNodeServer(server: Server): Promise<void> {
   return new Promise((resolve, reject) => {
     server.close((error) => (error === undefined ? resolve() : reject(error)));
   });
+}
+
+function pushUniqueFailure(failures: unknown[], failure: unknown): void {
+  if (!failures.some((candidate) => Object.is(candidate, failure))) failures.push(failure);
 }
 
 async function prepareListen(listen: ServerListen): Promise<PreparedListen> {

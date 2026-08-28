@@ -353,7 +353,7 @@ mod tests {
             &install_dir,
             None,
             &[],
-            &[Extension::Hstore],
+            &[Extension::HSTORE],
         )
         .expect("create first runtime cache key");
 
@@ -366,7 +366,7 @@ mod tests {
             &install_dir,
             None,
             &[],
-            &[Extension::Hstore],
+            &[Extension::HSTORE],
         )
         .expect("create SQL-mutated runtime cache key");
         assert_ne!(
@@ -385,7 +385,7 @@ mod tests {
             &install_dir,
             None,
             &[],
-            &[Extension::Hstore],
+            &[Extension::HSTORE],
         )
         .expect("create module-mutated runtime cache key");
         assert_ne!(
@@ -413,7 +413,7 @@ mod tests {
             &install_dir,
             None,
             std::slice::from_ref(&extension_dir),
-            &[Extension::Hstore],
+            &[Extension::HSTORE],
         )
         .expect("create first sidecar extension runtime cache key");
 
@@ -427,7 +427,7 @@ mod tests {
             &install_dir,
             None,
             std::slice::from_ref(&extension_dir),
-            &[Extension::Hstore],
+            &[Extension::HSTORE],
         )
         .expect("create changed sidecar extension runtime cache key");
 
@@ -445,7 +445,7 @@ mod tests {
             .path()
             .join("extension/oliphaunt-extension-contrib-pg18");
         let embedded_modules = temp.path().join("embedded-modules");
-        let module = Extension::Hstore
+        let module = Extension::HSTORE
             .native_module_file()
             .expect("hstore has a native module");
         write_fake_install(&install_dir);
@@ -467,7 +467,7 @@ mod tests {
             &install_dir,
             Some(&embedded_modules),
             std::slice::from_ref(&extension_dir),
-            &[Extension::Hstore],
+            &[Extension::HSTORE],
         )
         .expect("create first embedded sidecar cache key");
 
@@ -480,7 +480,7 @@ mod tests {
             &install_dir,
             Some(&embedded_modules),
             std::slice::from_ref(&extension_dir),
-            &[Extension::Hstore],
+            &[Extension::HSTORE],
         )
         .expect("create server-mutated embedded cache key");
         assert_eq!(
@@ -497,7 +497,7 @@ mod tests {
             &install_dir,
             Some(&embedded_modules),
             &[extension_dir],
-            &[Extension::Hstore],
+            &[Extension::HSTORE],
         )
         .expect("create embedded-mutated sidecar cache key");
         assert_ne!(
@@ -693,7 +693,7 @@ mod tests {
                 NativeRuntimeProfile::PostgresServer,
                 &cache_dir,
                 "cache-key",
-                &[Extension::Hstore],
+                &[Extension::HSTORE],
             ),
             "selected extension cache must require the extension control and module files"
         );
@@ -713,7 +713,7 @@ mod tests {
                 NativeRuntimeProfile::PostgresServer,
                 &sql_without_module,
                 "cache-key",
-                &[Extension::Hstore],
+                &[Extension::HSTORE],
             ),
             "selected extension cache must reject SQL/control assets without the matching native module"
         );
@@ -734,7 +734,7 @@ mod tests {
                 NativeRuntimeProfile::PostgresServer,
                 &cache_dir,
                 "cache-key",
-                &[Extension::Hstore],
+                &[Extension::HSTORE],
             ),
             "selected extension cache must require an extension SQL install file, not only control and module files"
         );
@@ -749,7 +749,7 @@ mod tests {
                 NativeRuntimeProfile::PostgresServer,
                 &cache_dir,
                 "cache-key",
-                &[Extension::Hstore],
+                &[Extension::HSTORE],
             ),
             "selected extension cache is valid only after required assets are present"
         );

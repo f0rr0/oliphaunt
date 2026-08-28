@@ -38,17 +38,21 @@ public object Oliphaunt {
         destination: File,
         bytes: ByteArray,
     ) {
-        AndroidNativeDirectEngine(context = context).restore(destination.absolutePath, bytes)
+        OliphauntDatabase.restore(
+            destination = destination.absolutePath,
+            bytes = bytes,
+            engine = AndroidNativeDirectEngine(context = context),
+        )
     }
 }
 
-private fun OliphauntConfig.toEngineConfig(): EngineConfig = EngineConfig(
+internal fun OliphauntConfig.toEngineConfig(): EngineConfig = EngineConfig(
     storage = when (val selected = storage) {
         DatabaseStorage.TemporaryDirectory -> EngineStorage.TemporaryDirectory
         is DatabaseStorage.Directory -> EngineStorage.Directory(selected.path.absolutePath)
     },
-    startupGucs = startupGucs,
+    startupGucs = startupGucs.toList(),
     username = username,
     database = database,
-    extensions = extensions,
+    extensions = extensions.toList(),
 )

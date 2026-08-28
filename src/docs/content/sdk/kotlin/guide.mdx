@@ -142,11 +142,34 @@ even when its calling coroutine is cancelled. Cancellation remains available
 while close drains earlier admissions and stops when native teardown starts.
 Raw-stream callbacks are synchronous backpressure boundaries: same-handle
 database and transaction work is rejected from their scope, except for
-out-of-band `cancel()`. Use `cancel()` and `close()`
+out-of-band `cancel()`. A callback failure is returned only after confirmed
+protocol recovery and leaves the session reusable. A raw buffered or streaming
+transport/recovery failure poisons the database. Use `cancel()` and `close()`
 explicitly according to the app's lifecycle policy. A phantom-reference cleaner
 only schedules best-effort forgotten-handle cleanup on the owner; it does not
 replace explicit close or block the garbage collector thread. Run
 `execute("CHECKPOINT")` only when an explicit PostgreSQL checkpoint is needed.
+
+Inside `transaction {}`, use the transaction's typed `query`, `execute`, `exec`,
+and `describe` methods. Return to commit or call `rollback()` to settle the outer
+transaction; do not issue manual `BEGIN`/`START TRANSACTION`, `COMMIT`/`END`,
+`ABORT`, `PREPARE TRANSACTION`, or `AND CHAIN`. Nested `SAVEPOINT`, `RELEASE
+SAVEPOINT`, and `ROLLBACK TO SAVEPOINT` SQL is supported. PostgreSQL exposes
+`ROLLBACK TO` and `ROLLBACK AND CHAIN` with the same `ROLLBACK` command tag and
+transactional ready status, so `AND CHAIN` is unsupported contract misuse that
+cannot be reliably distinguished before or after execution. Raw protocol APIs
+stay on the database for callers that explicitly own transaction lifecycle.
+
+After automatic rollback succeeds, Kotlin rethrows the original callback
+exception. If rollback also fails,
+`OliphauntTransactionRollbackException.callbackError` and `.rollbackError`
+preserve both; the callback is the cause and rollback is suppressed. If the
+callback throws a different exception after an earlier independent database or
+protocol failure poisoned or expired transaction ownership,
+`OliphauntTransactionDatabaseException.callbackError` and `.databaseError`
+preserve both; the callback is the cause, the database error is suppressed, and
+the database is close-only. An ordinary PostgreSQL statement error that remains
+safely rollbackable is not automatically wrapped in either composite exception.
 
 </Step>
 <Step>

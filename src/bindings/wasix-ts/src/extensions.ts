@@ -106,15 +106,14 @@ export type PreparedWasixRuntime = {
   catalogProfile: 'standard' | 'icu';
   icuEnabled: boolean;
   startupGUCs: Record<string, string>;
-  setupSql: string[];
   physicalIdentity: WasixPhysicalIdentity;
 };
 
 /**
  * Loads and verifies one exact runtime/ICU/extension closure. The matching
  * cluster seed stays lazy until an exclusively leased storage provider reports
- * a new root. Extension lifecycle SQL remains separate for execution after
- * PostgreSQL reaches ReadyForQuery.
+ * a new root. Selection materializes exact artifacts and required startup
+ * configuration; database-local installation remains explicit application SQL.
  */
 export async function prepareWasixRuntime(
   options: SerializedOpenOptions,
@@ -247,7 +246,6 @@ export async function prepareWasixRuntime(
     catalogProfile: profile,
     icuEnabled: options.icu !== undefined,
     startupGUCs: mergeExtensionStartupGUCs(options.startupGUCs, resolved.extensions),
-    setupSql: extensionSetupSql(resolved),
     physicalIdentity: WASIX_PHYSICAL_IDENTITY,
   };
 }
@@ -674,34 +672,6 @@ export function mergeExtensionStartupGUCs(
   return merged;
 }
 
-export function extensionSetupSql(resolved: ResolvedWasixExtensions): string[] {
-  const statements = resolved.runtimeDependencies.map(
-    (dependency) => `CREATE EXTENSION IF NOT EXISTS ${quoteIdentifier(dependency)};`,
-  );
-  const loadedModules = new Set<string>();
-  for (const extension of resolved.extensions) {
-    const lifecycle = extension.lifecycle;
-    for (const path of extension['load-order']) {
-      if (!loadedModules.has(path)) {
-        statements.push(`LOAD ${quoteLiteral(`/${path}`)};`);
-        loadedModules.add(path);
-      }
-    }
-    if (lifecycle['create-extension']) {
-      const schema = lifecycle['create-schema'] ?? undefined;
-      if (schema !== undefined && schema !== 'pg_catalog') {
-        statements.push(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schema)};`);
-      }
-      statements.push(
-        `CREATE EXTENSION IF NOT EXISTS ${quoteIdentifier(extension['sql-name'])}` +
-          `${schema === undefined ? '' : ` WITH SCHEMA ${quoteIdentifier(schema)}`};`,
-      );
-    }
-    statements.push(...lifecycle['load-sql'], ...lifecycle['post-create-sql']);
-  }
-  return statements;
-}
-
 function parseClusterSeedManifest(
   bytes: Uint8Array,
   expectedProfile: CatalogProfile,
@@ -1104,20 +1074,6 @@ function extensionMountTarget(
     mountPath: path.slice(0, slash) === 'lib' ? '/lib' : '/share',
     relative: path.slice(slash + 1),
   };
-}
-
-function quoteIdentifier(identifier: string): string {
-  if (identifier.includes('\0')) {
-    throw new Error('PostgreSQL identifier contains a NUL byte');
-  }
-  return `"${identifier.replaceAll('"', '""')}"`;
-}
-
-function quoteLiteral(value: string): string {
-  if (value.includes('\0')) {
-    throw new Error('PostgreSQL string literal contains a NUL byte');
-  }
-  return `'${value.replaceAll("'", "''")}'`;
 }
 
 function appendCsv(value: string | undefined, ordered: string[], seen: Set<string>): void {

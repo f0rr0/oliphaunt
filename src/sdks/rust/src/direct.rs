@@ -1,15 +1,18 @@
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::marker::PhantomData;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::builder::{BuilderTerminal, open_embedded_session, open_server_session};
+use crate::builder::{AsyncOliphauntServerBuilder, open_embedded_session, start_server_session};
 use crate::cancellation::CancellationGate;
-use crate::engine::EngineSession;
-use crate::error::{Error, Result};
+use crate::engine::{EngineSession, ProtocolStreamOutcome};
+use crate::error::{
+    Error, RawStreamCallbackOutput, RawStreamError, RawStreamResult, Result, SESSION_STATE_UNKNOWN,
+    TransactionError, TransactionResult,
+};
 use crate::extension::Extension;
 use crate::liboliphaunt::OliphauntRuntime;
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
@@ -26,27 +29,29 @@ use crate::session::{
 };
 use crate::storage::DatabaseStorage;
 
-/// Builder for synchronous native databases which execute on the calling thread.
+/// Builder for blocking native database handles.
 ///
 /// Database topology and execution placement are independent: `.direct()` and
-/// `.broker()` select where PostgreSQL lives, while choosing this root builder
-/// means all SDK session calls happen synchronously on the thread that opened
-/// the handle. Use [`crate::worker::OliphauntBuilder`] for a dedicated owner
-/// thread and asynchronous methods.
+/// `.broker()` select where PostgreSQL lives. Operations through this builder's
+/// handles complete before returning and add no SDK owner-thread queue. The
+/// native runtime may still use its own backend thread. Use
+/// [`crate::AsyncOliphauntBuilder`] for asynchronous, cloneable handles backed
+/// by a dedicated SDK owner thread.
+#[derive(Debug, Clone)]
 pub struct OliphauntBuilder {
-    inner: crate::builder::OliphauntBuilder,
+    inner: crate::builder::AsyncOliphauntBuilder,
 }
 
 impl Default for OliphauntBuilder {
     fn default() -> Self {
         Self {
-            inner: crate::builder::OliphauntBuilder::new(),
+            inner: crate::builder::AsyncOliphauntBuilder::new(),
         }
     }
 }
 
 impl OliphauntBuilder {
-    /// Create a caller-thread builder. The database topology defaults to direct.
+    /// Create a blocking builder. The database topology defaults to direct.
     pub fn new() -> Self {
         Self::default()
     }
@@ -59,8 +64,8 @@ impl OliphauntBuilder {
 
     /// Select the broker-process database topology.
     ///
-    /// Protocol transport still runs synchronously on the calling thread. The
-    /// broker process is a PostgreSQL isolation boundary, not an SDK worker.
+    /// Protocol transport remains blocking. The broker process is a PostgreSQL
+    /// isolation boundary, not an SDK owner thread.
     pub fn broker(mut self) -> Self {
         self.inner = self.inner.broker();
         self
@@ -72,31 +77,86 @@ impl OliphauntBuilder {
         self
     }
 
-    /// Open a caller-owned persistent directory.
-    pub fn directory(mut self, path: impl Into<PathBuf>) -> Self {
-        self.inner = self.inner.directory(path);
-        self
-    }
-
-    /// Open an SDK-owned temporary directory.
-    pub fn temporary_directory(mut self) -> Self {
-        self.inner = self.inner.temporary_directory();
-        self
-    }
-
     /// Use an explicit broker helper executable with `broker().open()`.
     pub fn broker_executable(mut self, path: impl Into<PathBuf>) -> Self {
         self.inner = self.inner.broker_executable(path);
         self
     }
 
-    /// Use an explicit PostgreSQL server executable with [`Self::open_server`].
+    /// Add an explicit PostgreSQL startup GUC.
+    pub fn startup_guc(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.inner = self.inner.startup_guc(name, value);
+        self
+    }
+
+    /// Add explicit PostgreSQL startup GUCs.
+    pub fn startup_gucs<N, V>(mut self, gucs: impl IntoIterator<Item = (N, V)>) -> Self
+    where
+        N: Into<String>,
+        V: Into<String>,
+    {
+        self.inner = self.inner.startup_gucs(gucs);
+        self
+    }
+
+    /// Set the PostgreSQL startup user.
+    pub fn username(mut self, username: impl Into<String>) -> Self {
+        self.inner = self.inner.username(username);
+        self
+    }
+
+    /// Set the PostgreSQL database name.
+    pub fn database(mut self, database: impl Into<String>) -> Self {
+        self.inner = self.inner.database(database);
+        self
+    }
+
+    /// Make one bundled PostgreSQL extension artifact available to the database.
+    /// Database-local installation remains the application's migration concern.
+    pub fn extension(mut self, extension: Extension) -> Self {
+        self.inner = self.inner.extension(extension);
+        self
+    }
+
+    /// Make bundled PostgreSQL extension artifacts available to the database.
+    /// Database-local installation remains the application's migration concern.
+    pub fn extensions(mut self, extensions: impl IntoIterator<Item = Extension>) -> Self {
+        self.inner = self.inner.extensions(extensions);
+        self
+    }
+
+    /// Open a blocking direct or broker database.
+    pub fn open(self) -> Result<Oliphaunt> {
+        let config = self.inner.build_config()?;
+        open_embedded_session(config).map(Oliphaunt::from_session)
+    }
+}
+
+/// Builder for a blocking local PostgreSQL server lifecycle handle.
+#[derive(Debug, Clone, Default)]
+pub struct OliphauntServerBuilder {
+    inner: AsyncOliphauntServerBuilder,
+}
+
+impl OliphauntServerBuilder {
+    /// Create a blocking local-server builder.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Select server storage.
+    pub fn storage(mut self, storage: DatabaseStorage) -> Self {
+        self.inner = self.inner.storage(storage);
+        self
+    }
+
+    /// Use an explicit PostgreSQL server executable.
     pub fn server_executable(mut self, path: impl Into<PathBuf>) -> Self {
         self.inner = self.inner.server_executable(path);
         self
     }
 
-    /// Select the local endpoint exposed by [`Self::open_server`].
+    /// Select the endpoint exposed by the local server.
     pub fn listen(mut self, listen: crate::ServerListen) -> Self {
         self.inner = self.inner.listen(listen);
         self
@@ -130,42 +190,38 @@ impl OliphauntBuilder {
         self
     }
 
-    /// Opt into one native PostgreSQL extension.
+    /// Make one bundled PostgreSQL extension artifact available to clients.
+    /// Database-local installation remains the application's migration concern.
     pub fn extension(mut self, extension: Extension) -> Self {
         self.inner = self.inner.extension(extension);
         self
     }
 
-    /// Opt into native PostgreSQL extensions.
+    /// Make bundled PostgreSQL extension artifacts available to clients.
+    /// Database-local installation remains the application's migration concern.
     pub fn extensions(mut self, extensions: impl IntoIterator<Item = Extension>) -> Self {
         self.inner = self.inner.extensions(extensions);
         self
     }
 
-    /// Open a direct or broker database on the calling thread.
-    pub fn open(self) -> Result<Oliphaunt> {
-        let config = self.inner.build_config(BuilderTerminal::Open)?;
-        open_embedded_session(config).map(Oliphaunt::from_session)
-    }
-
-    /// Start a local PostgreSQL server and open its SDK session on the calling thread.
-    pub fn open_server(self) -> Result<OliphauntServer> {
-        let config = self.inner.build_config(BuilderTerminal::OpenServer)?;
-        let (session, connection_string) = open_server_session(config)?;
+    /// Start a local PostgreSQL server and return its lifecycle handle.
+    pub fn start(self) -> Result<OliphauntServer> {
+        let config = self.inner.build_config()?;
+        let (session, connection_string) = start_server_session(config)?;
         Ok(OliphauntServer {
-            database: Oliphaunt::from_session(session),
+            owner: Oliphaunt::from_session(session),
             connection_string,
         })
     }
 }
 
-/// Cloneable, thread-safe cancellation capability for a caller-thread database.
+/// Cloneable, thread-safe cancellation capability for a blocking database.
 ///
 /// Obtain this before starting a long synchronous operation, then move a clone
 /// to another thread. Calling [`Self::cancel`] sends cancellation out of band;
 /// the blocked database call still returns PostgreSQL's final outcome. Once
-/// database teardown reaches its terminal cutoff, retained handles return
-/// [`Error::EngineStopped`]. Teardown waits for cancellation calls admitted
+/// database teardown reaches its terminal cutoff, retained handles return an
+/// error categorized as [`crate::ErrorKind::Lifecycle`]. Teardown waits for cancellation calls admitted
 /// before that cutoff to finish.
 #[derive(Clone)]
 pub struct CancelHandle {
@@ -187,25 +243,38 @@ impl CancelHandle {
     }
 }
 
-/// Synchronous native database whose PostgreSQL work runs on the calling thread.
+/// Blocking native database with no SDK owner-thread queue.
 ///
-/// The handle is exclusive: mutating operations take `&mut self`, and it is
-/// deliberately neither `Send` nor `Sync`. Open and use it on one thread. Use
-/// [`crate::worker::Oliphaunt`] when the database must be cloneable, movable, or
-/// asynchronous.
+/// Calls wait on the invoking thread, while the native runtime may execute its
+/// PostgreSQL backend on an internal pthread. The exclusive handle is `Send`
+/// but not `Sync`: it can move between threads, but it cannot be shared for
+/// concurrent access. Use [`crate::AsyncOliphaunt`] when the database must be
+/// cloneable or used without blocking an async executor thread.
+///
+/// ```compile_fail
+/// fn require_sync<T: Sync>() {}
+/// fn main() {
+///     require_sync::<oliphaunt::Oliphaunt>();
+/// }
+/// ```
 pub struct Oliphaunt {
     session: Option<Box<dyn EngineSession>>,
     cancellation: Arc<CancellationGate>,
     transaction_poisoned: AtomicBool,
     closed: bool,
     close_result: Option<Result<()>>,
-    thread_affinity: PhantomData<Rc<()>>,
+    not_sync: PhantomData<Cell<()>>,
 }
 
 impl Oliphaunt {
-    /// Create a synchronous caller-thread native builder.
+    /// Create a blocking native builder.
     pub fn builder() -> OliphauntBuilder {
         OliphauntBuilder::new()
+    }
+
+    /// Open a blocking direct database with the default temporary-directory storage.
+    pub fn open() -> Result<Self> {
+        Self::builder().open()
     }
 
     /// Restore physical backup bytes synchronously into an empty destination.
@@ -221,7 +290,7 @@ impl Oliphaunt {
             transaction_poisoned: AtomicBool::new(false),
             closed: false,
             close_result: None,
-            thread_affinity: PhantomData,
+            not_sync: PhantomData,
         }
     }
 
@@ -251,6 +320,9 @@ impl Oliphaunt {
     }
 
     /// Execute raw PostgreSQL protocol bytes synchronously.
+    ///
+    /// A runtime failure that returns no complete response poisons the session
+    /// until close because its PostgreSQL boundary is unknown.
     pub fn exec_protocol_raw(&mut self, request: impl AsRef<[u8]>) -> Result<Vec<u8>> {
         self.exec_protocol_response(ProtocolRequest::new(request.as_ref().to_vec()))
             .map(ProtocolResponse::into_bytes)
@@ -259,32 +331,77 @@ impl Oliphaunt {
     /// Execute raw protocol bytes and synchronously receive bounded chunks.
     ///
     /// The callback runs inline and may borrow caller state. A slow callback
-    /// applies backpressure. Callback panics are contained before crossing the
-    /// native ABI and returned as SDK errors.
-    pub fn exec_protocol_raw_stream<F>(
+    /// applies backpressure. A callback panic is contained before crossing any
+    /// native ABI, then its original payload is resumed on the invoking thread
+    /// only after the adapter confirms `ReadyForQuery`. If transport or runtime
+    /// recovery independently fails, that failure is returned instead and the
+    /// session is poisoned until close.
+    ///
+    /// Return `()` from an infallible callback, or `Result<(), E>` to stop with
+    /// a typed parser/application error. A typed error is exposed through
+    /// [`RawStreamError::Callback`] only after confirmed recovery.
+    pub fn exec_protocol_raw_stream<F, O>(
         &mut self,
         request: impl AsRef<[u8]>,
         mut on_chunk: F,
-    ) -> Result<()>
+    ) -> RawStreamResult<(), O::Error>
     where
-        F: FnMut(&[u8]) -> Result<()>,
+        F: FnMut(&[u8]) -> O,
+        O: RawStreamCallbackOutput,
     {
-        self.ensure_ready()?;
-        let mut guarded = |chunk: &[u8]| {
-            catch_unwind(AssertUnwindSafe(|| on_chunk(chunk))).unwrap_or_else(|panic| {
-                Err(Error::Engine(format!(
-                    "raw protocol stream callback panicked: {}",
-                    panic_message(panic.as_ref())
-                )))
-            })
+        self.ensure_ready().map_err(RawStreamError::Database)?;
+        let mut callback_error = None;
+        let mut callback_panic = None;
+        let outcome = {
+            let mut guarded = |chunk: &[u8]| {
+                if callback_error.is_some() || callback_panic.is_some() {
+                    return Err(Error::Engine(
+                        "raw protocol stream callback already stopped".to_owned(),
+                    ));
+                }
+                match catch_unwind(AssertUnwindSafe(|| {
+                    on_chunk(chunk).into_raw_stream_callback_result()
+                })) {
+                    Ok(Ok(())) => Ok(()),
+                    Ok(Err(error)) => {
+                        callback_error = Some(error);
+                        Err(Error::Engine(
+                            "raw protocol stream callback stopped delivery".to_owned(),
+                        ))
+                    }
+                    Err(panic) => {
+                        let message = panic_message(panic.as_ref());
+                        callback_panic = Some(panic);
+                        Err(Error::Engine(format!(
+                            "raw protocol stream callback panicked: {message}"
+                        )))
+                    }
+                }
+            };
+            self.session
+                .as_deref_mut()
+                .ok_or(Error::EngineStopped)
+                .map_err(RawStreamError::Database)?
+                .exec_protocol_raw_stream(
+                    ProtocolRequest::new(request.as_ref().to_vec()),
+                    &mut guarded,
+                )
         };
-        self.session
-            .as_deref_mut()
-            .ok_or(Error::EngineStopped)?
-            .exec_protocol_raw_stream(
-                ProtocolRequest::new(request.as_ref().to_vec()),
-                &mut guarded,
-            )
+        match outcome {
+            ProtocolStreamOutcome::ReadyForQuery(result) => {
+                if let Some(panic) = callback_panic {
+                    resume_unwind(panic);
+                }
+                if let Some(error) = callback_error {
+                    return Err(RawStreamError::Callback(error));
+                }
+                result.map_err(RawStreamError::Database)
+            }
+            ProtocolStreamOutcome::SessionStateUnknown(error) => {
+                self.transaction_poisoned.store(true, Ordering::SeqCst);
+                Err(RawStreamError::Database(error))
+            }
+        }
     }
 
     /// Execute exactly one PostgreSQL command through the extended-query protocol.
@@ -344,11 +461,18 @@ impl Oliphaunt {
     /// The transaction exclusively borrows this database. Success commits;
     /// failure rolls back. Calling [`Transaction::rollback`] ends it early and
     /// makes the outer callback skip `COMMIT`.
-    pub fn transaction<F, T>(&mut self, callback: F) -> Result<T>
+    ///
+    /// The callback returns ordinary `Result<T, E>` with `E: From<Error>`, so
+    /// SDK calls use `?` and deliberate business aborts remain typed. The outer
+    /// [`TransactionError`] distinguishes callback errors, literal rollback
+    /// failures, and independent database/protocol failures.
+    pub fn transaction<F, T, E>(&mut self, callback: F) -> TransactionResult<T, E>
     where
-        F: FnOnce(&mut Transaction<'_>) -> Result<T>,
+        F: FnOnce(&mut Transaction<'_>) -> std::result::Result<T, E>,
+        E: From<Error>,
     {
-        self.begin_transaction()?;
+        self.begin_transaction()
+            .map_err(TransactionError::Database)?;
         let mut transaction = Transaction {
             database: self,
             guard: TransactionGuard::active(),
@@ -359,12 +483,15 @@ impl Oliphaunt {
                 if transaction.guard.state.load(Ordering::SeqCst) == TRANSACTION_ACTIVE =>
             {
                 match callback_result {
-                    Ok(value) => transaction.commit().map(|()| value),
+                    Ok(value) => transaction
+                        .commit()
+                        .map(|()| value)
+                        .map_err(TransactionError::Database),
                     Err(error) => match transaction.rollback() {
-                        Ok(()) => Err(error),
-                        Err(rollback) => Err(Error::TransactionRollback {
-                            callback: Box::new(error),
-                            rollback: Box::new(rollback),
+                        Ok(()) => Err(TransactionError::Callback(error)),
+                        Err(rollback) => Err(TransactionError::CallbackAndRollback {
+                            callback: error,
+                            rollback,
                         }),
                     },
                 }
@@ -389,12 +516,15 @@ impl Oliphaunt {
             .backup()
     }
 
-    /// Close the database synchronously and release its storage ownership.
+    /// Close the database synchronously.
     ///
     /// The first teardown result is retained. Once teardown starts, the handle
     /// is terminal even if the runtime reports a failure. New cancellation
     /// calls are rejected at the teardown cutoff; cancellation already admitted
     /// before it is allowed to finish before the engine session is closed.
+    /// Successful teardown releases the session and storage root. A failed
+    /// teardown deliberately retains that native ownership until process exit
+    /// rather than risking a second destructive cleanup attempt.
     pub fn close(&mut self) -> Result<()> {
         if let Some(result) = &self.close_result {
             return result.clone();
@@ -415,10 +545,17 @@ impl Oliphaunt {
 
     fn exec_protocol_response(&mut self, request: ProtocolRequest) -> Result<ProtocolResponse> {
         self.ensure_ready()?;
-        self.session
+        let result = self
+            .session
             .as_deref_mut()
             .ok_or(Error::EngineStopped)?
-            .exec_protocol_raw(request)
+            .exec_protocol_raw(request);
+        if result.is_err() {
+            // A raw response is the caller's responsibility, but a runtime
+            // error means no complete PostgreSQL boundary was returned at all.
+            self.transaction_poisoned.store(true, Ordering::SeqCst);
+        }
+        result
     }
 
     fn exec_control(&mut self, request: ProtocolRequest) -> Result<ProtocolResponse> {
@@ -473,9 +610,7 @@ impl Oliphaunt {
     fn ensure_ready(&self) -> Result<()> {
         self.ensure_not_closed()?;
         if self.transaction_poisoned.load(Ordering::SeqCst) {
-            Err(Error::Engine(
-                "transaction state is unknown; close the database".to_owned(),
-            ))
+            Err(Error::Engine(SESSION_STATE_UNKNOWN.to_owned()))
         } else {
             Ok(())
         }
@@ -579,19 +714,10 @@ impl<'db, 'q> Sql<'db, 'q> {
 
     fn validate_ready(&self, status: ReadyStatus, operation: &str) -> Result<()> {
         match (&self.transaction, status) {
-            (None, ReadyStatus::Idle)
-            | (Some(_), ReadyStatus::InTransaction | ReadyStatus::FailedTransaction) => Ok(()),
+            (None, ReadyStatus::Idle) | (Some(_), _) => Ok(()),
             (None, _) => Err(Error::Engine(format!(
                 "{operation} returned non-idle readiness after structured recovery"
             ))),
-            (Some(guard), ReadyStatus::Idle) => {
-                let error = Error::Engine(format!(
-                    "{operation} ended the callback transaction outside Transaction::rollback(); the session is now unusable"
-                ));
-                guard.fail(error.clone());
-                self.database.poison_transaction();
-                Err(error)
-            }
         }
     }
 }
@@ -657,32 +783,12 @@ impl Transaction<'_> {
             &self.guard,
         )?;
         let result = parse_exec_response(&response)?;
-        self.validate_ready(result.ready_status(), "Transaction::exec()")?;
         Ok(result)
     }
 
     /// Parse and describe a statement inside the transaction without executing it.
     pub fn describe(&mut self, sql: &str) -> Result<StatementDescription> {
         self.sql(sql).describe()
-    }
-
-    /// Execute raw frontend-protocol bytes inside the transaction.
-    pub fn exec_protocol_raw(&mut self, request: impl AsRef<[u8]>) -> Result<Vec<u8>> {
-        self.ensure_active()?;
-        self.database.exec_protocol_raw(request)
-    }
-
-    /// Execute raw protocol bytes and consume chunks inline inside the transaction.
-    pub fn exec_protocol_raw_stream<F>(
-        &mut self,
-        request: impl AsRef<[u8]>,
-        on_chunk: F,
-    ) -> Result<()>
-    where
-        F: FnMut(&[u8]) -> Result<()>,
-    {
-        self.ensure_active()?;
-        self.database.exec_protocol_raw_stream(request, on_chunk)
     }
 
     /// Roll back immediately and make the outer callback skip `COMMIT`.
@@ -706,7 +812,7 @@ impl Transaction<'_> {
             }
             Err(error) => {
                 self.database.poison_transaction();
-                self.guard.fail(error.clone());
+                self.guard.fail_rollback(error.clone());
                 Err(error)
             }
         }
@@ -771,20 +877,6 @@ impl Transaction<'_> {
         Ok(result)
     }
 
-    fn validate_ready(&self, status: ReadyStatus, operation: &str) -> Result<()> {
-        match status {
-            ReadyStatus::InTransaction | ReadyStatus::FailedTransaction => Ok(()),
-            ReadyStatus::Idle => {
-                let error = Error::Engine(format!(
-                    "{operation} ended the callback transaction outside Transaction::rollback(); the session is now unusable"
-                ));
-                self.database.poison_transaction();
-                self.guard.fail(error.clone());
-                Err(error)
-            }
-        }
-    }
-
     fn ensure_active(&self) -> Result<()> {
         if self.guard.state.load(Ordering::SeqCst) == TRANSACTION_ACTIVE {
             Ok(())
@@ -793,10 +885,13 @@ impl Transaction<'_> {
         }
     }
 
-    fn resolve_inactive<T>(&mut self, callback_result: Result<T>) -> Result<T> {
+    fn resolve_inactive<T, E>(
+        &mut self,
+        callback_result: std::result::Result<T, E>,
+    ) -> TransactionResult<T, E> {
         let state = self.guard.state.load(Ordering::SeqCst);
         if state == TRANSACTION_ROLLED_BACK {
-            return callback_result;
+            return callback_result.map_err(TransactionError::Callback);
         }
         let terminal = self
             .guard
@@ -814,11 +909,16 @@ impl Transaction<'_> {
                 _ => Error::Engine("transaction finished in an invalid state".to_owned()),
             });
         match callback_result {
-            Ok(_) => Err(terminal),
-            Err(callback) if callback == terminal => Err(callback),
-            Err(callback) => Err(Error::TransactionRollback {
-                callback: Box::new(callback),
-                rollback: Box::new(terminal),
+            Ok(_) => Err(TransactionError::Database(terminal)),
+            Err(callback) if self.guard.terminal_failure_was_rollback() => {
+                Err(TransactionError::CallbackAndRollback {
+                    callback,
+                    rollback: terminal,
+                })
+            }
+            Err(callback) => Err(TransactionError::CallbackAndDatabase {
+                callback,
+                database: terminal,
             }),
         }
     }
@@ -838,104 +938,44 @@ impl Transaction<'_> {
     }
 }
 
-/// Local PostgreSQL server with a synchronous SDK-owned session.
+/// Synchronous local PostgreSQL server lifecycle handle.
+///
+/// Like [`Oliphaunt`], this handle is `Send` but not `Sync`.
+///
+/// ```compile_fail
+/// fn require_sync<T: Sync>() {}
+/// fn main() {
+///     require_sync::<oliphaunt::OliphauntServer>();
+/// }
+/// ```
 pub struct OliphauntServer {
-    database: Oliphaunt,
+    owner: Oliphaunt,
     connection_string: String,
 }
 
 impl OliphauntServer {
+    /// Create a dedicated blocking local-server builder.
+    pub fn builder() -> OliphauntServerBuilder {
+        OliphauntServerBuilder::new()
+    }
+
     /// Return the libpq connection string for external PostgreSQL clients.
     pub fn connection_string(&self) -> &str {
         &self.connection_string
     }
 
-    /// Build a typed, fluent statement on the SDK session.
-    pub fn sql<'db, 'q>(&'db mut self, sql: impl Into<Cow<'q, str>>) -> Sql<'db, 'q> {
-        self.database.sql(sql)
-    }
-
-    /// Whether the SDK session has begun terminal teardown.
+    /// Whether the server has begun terminal teardown.
     pub fn is_closed(&self) -> bool {
-        self.database.is_closed()
-    }
-
-    /// Return an out-of-band cancellation handle for the SDK session.
-    pub fn cancel_handle(&self) -> Result<CancelHandle> {
-        self.database.cancel_handle()
-    }
-
-    /// Request cancellation immediately.
-    pub fn cancel(&self) -> Result<()> {
-        self.database.cancel()
-    }
-
-    /// Execute one PostgreSQL command.
-    pub fn execute(&mut self, sql: &str) -> Result<CommandResult> {
-        self.database.execute(sql)
-    }
-
-    /// Execute one parameterized PostgreSQL command.
-    pub fn execute_with_params<I, P>(&mut self, sql: &str, params: I) -> Result<CommandResult>
-    where
-        I: IntoIterator<Item = P>,
-        P: IntoParameter,
-    {
-        self.database.execute_with_params(sql, params)
-    }
-
-    /// Execute one statement and return rows.
-    pub fn query(&mut self, sql: &str) -> Result<QueryResult> {
-        self.database.query(sql)
-    }
-
-    /// Execute one parameterized statement and return rows.
-    pub fn query_with_params<I, P>(&mut self, sql: &str, params: I) -> Result<QueryResult>
-    where
-        I: IntoIterator<Item = P>,
-        P: IntoParameter,
-    {
-        self.database.query_with_params(sql, params)
-    }
-
-    /// Parse and describe a statement without executing it.
-    pub fn describe(&mut self, sql: &str) -> Result<StatementDescription> {
-        self.database.describe(sql)
-    }
-
-    /// Execute possibly multi-statement SQL through the simple-query protocol.
-    pub fn exec(&mut self, sql: &str) -> Result<ExecResult> {
-        self.database.exec(sql)
-    }
-
-    /// Execute raw PostgreSQL protocol bytes.
-    pub fn exec_protocol_raw(&mut self, request: impl AsRef<[u8]>) -> Result<Vec<u8>> {
-        self.database.exec_protocol_raw(request)
-    }
-
-    /// Execute raw protocol bytes and consume chunks inline.
-    pub fn exec_protocol_raw_stream<F>(
-        &mut self,
-        request: impl AsRef<[u8]>,
-        on_chunk: F,
-    ) -> Result<()>
-    where
-        F: FnMut(&[u8]) -> Result<()>,
-    {
-        self.database.exec_protocol_raw_stream(request, on_chunk)
-    }
-
-    /// Run a synchronous callback in a transaction on the SDK session.
-    pub fn transaction<F, T>(&mut self, callback: F) -> Result<T>
-    where
-        F: FnOnce(&mut Transaction<'_>) -> Result<T>,
-    {
-        self.database.transaction(callback)
+        self.owner.is_closed()
     }
 
     /// Stop the local server synchronously.
+    ///
+    /// Successful teardown releases managed-root ownership. If teardown fails,
+    /// the handle retains the server resources until process exit rather than
+    /// attempting an unproven second destructive cleanup.
     pub fn close(&mut self) -> Result<()> {
-        self.database.close()
+        self.owner.close()
     }
 }
 
@@ -956,7 +996,7 @@ fn close_session(mut session: Box<dyn EngineSession>) -> Result<()> {
         Err(error) => {
             // Teardown began but did not complete. A second implicit teardown
             // could corrupt native process state, so preserve ownership until
-            // process exit just like the worker executor does.
+            // process exit just like the asynchronous owner executor does.
             std::mem::forget(session);
             Err(error)
         }
@@ -976,13 +1016,32 @@ fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
     use std::sync::{Mutex, mpsc};
     use std::thread;
     use std::time::Duration;
 
     use super::*;
     use crate::engine::EngineCancel;
+    use crate::error::ErrorKind;
+
+    fn assert_error(error: &Error, expected_kind: ErrorKind, expected_message: &str) {
+        assert_eq!(error.kind(), expected_kind);
+        assert_eq!(error.to_string(), expected_message);
+    }
+
+    fn expect_error<T>(
+        result: Result<T>,
+        expected_kind: ErrorKind,
+        expected_message: &str,
+    ) -> Error {
+        let error = match result {
+            Ok(_) => panic!("expected an SDK error"),
+            Err(error) => error,
+        };
+        assert_error(&error, expected_kind, expected_message);
+        error
+    }
 
     struct ScriptedSession {
         responses: VecDeque<Result<ProtocolResponse>>,
@@ -1076,7 +1135,11 @@ mod tests {
         assert_eq!(implementation.calls.load(Ordering::SeqCst), 2);
         assert_eq!(gate.active_cancellations(), 0);
         gate.stop_and_wait();
-        assert_eq!(handle.cancel(), Err(Error::EngineStopped));
+        expect_error(
+            handle.cancel(),
+            ErrorKind::Lifecycle,
+            "native database session has stopped",
+        );
     }
 
     #[test]
@@ -1089,7 +1152,11 @@ mod tests {
         assert!(panic.is_err());
         assert_eq!(gate.active_cancellations(), 0);
         gate.stop_and_wait();
-        assert_eq!(handle.cancel(), Err(Error::EngineStopped));
+        expect_error(
+            handle.cancel(),
+            ErrorKind::Lifecycle,
+            "native database session has stopped",
+        );
     }
 
     struct BlockingCancel {
@@ -1172,7 +1239,11 @@ mod tests {
             }
             assert_eq!(gate.active_cancellations(), 1);
 
-            assert_eq!(late_handle.cancel(), Err(Error::EngineStopped));
+            expect_error(
+                late_handle.cancel(),
+                ErrorKind::Lifecycle,
+                "native database session has stopped",
+            );
             assert!(matches!(
                 close_started_rx.try_recv(),
                 Err(mpsc::TryRecvError::Empty)
@@ -1187,10 +1258,10 @@ mod tests {
 
         database.close().expect("close waits and then succeeds");
         coordinator.join().expect("coordinate close cutoff");
-        assert_eq!(
-            cancellation.join().expect("join cancellation thread"),
-            Ok(())
-        );
+        cancellation
+            .join()
+            .expect("join cancellation thread")
+            .expect("admitted cancellation succeeds");
         assert_eq!(closes.load(Ordering::SeqCst), 1);
     }
 
@@ -1208,13 +1279,17 @@ mod tests {
             database.cancel_handle().expect("cancellation is supported")
         };
 
-        assert_eq!(handle.cancel(), Err(Error::EngineStopped));
+        expect_error(
+            handle.cancel(),
+            ErrorKind::Lifecycle,
+            "native database session has stopped",
+        );
         assert_eq!(cancel.calls.load(Ordering::SeqCst), 0);
         assert_eq!(closes.load(Ordering::SeqCst), 1);
     }
 
     #[test]
-    fn raw_execution_stays_on_the_calling_thread() {
+    fn blocking_execution_adds_no_sdk_owner_thread_hop() {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let session = ScriptedSession {
             responses: VecDeque::from([Ok(ProtocolResponse::new([1, 2, 3]))]),
@@ -1223,6 +1298,154 @@ mod tests {
         let mut database = Oliphaunt::from_session(Box::new(session));
         assert_eq!(database.exec_protocol_raw([9]).unwrap(), [1, 2, 3]);
         assert_eq!(*calls.lock().unwrap(), [thread::current().id()]);
+        database.close().unwrap();
+    }
+
+    #[test]
+    fn blocking_database_can_move_between_threads_and_back() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let session = ScriptedSession {
+            responses: VecDeque::from([
+                Ok(ProtocolResponse::new([1, 2, 3])),
+                Ok(ProtocolResponse::new([4, 5, 6])),
+            ]),
+            calls: Some(Arc::clone(&calls)),
+        };
+        let database = Oliphaunt::from_session(Box::new(session));
+        let origin = thread::current().id();
+
+        let (mut database, moved_to) = thread::spawn(move || {
+            let moved_to = thread::current().id();
+            let mut database = database;
+            assert_eq!(database.exec_protocol_raw([9]).unwrap(), [1, 2, 3]);
+            (database, moved_to)
+        })
+        .join()
+        .expect("blocking database moves to another thread");
+
+        assert_ne!(origin, moved_to);
+        assert_eq!(database.exec_protocol_raw([8]).unwrap(), [4, 5, 6]);
+        assert_eq!(*calls.lock().unwrap(), [moved_to, origin]);
+        database.close().unwrap();
+    }
+
+    struct FailedRawSession {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl EngineSession for FailedRawSession {
+        fn exec_protocol_raw(&mut self, _request: ProtocolRequest) -> Result<ProtocolResponse> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(Error::Engine(
+                "raw transport failed before ReadyForQuery".to_owned(),
+            ))
+        }
+    }
+
+    #[test]
+    fn blocking_raw_transport_failure_poisons_without_a_second_engine_call() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut database = Oliphaunt::from_session(Box::new(FailedRawSession {
+            calls: Arc::clone(&calls),
+        }));
+
+        expect_error(
+            database.exec_protocol_raw([1]),
+            ErrorKind::Other,
+            "raw transport failed before ReadyForQuery",
+        );
+        expect_error(
+            database.exec_protocol_raw([2]),
+            ErrorKind::Other,
+            SESSION_STATE_UNKNOWN,
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        database.close().unwrap();
+    }
+
+    struct RecoveringStreamSession {
+        recovered: Arc<AtomicBool>,
+    }
+
+    impl EngineSession for RecoveringStreamSession {
+        fn exec_protocol_raw(&mut self, request: ProtocolRequest) -> Result<ProtocolResponse> {
+            assert!(
+                self.recovered.load(Ordering::SeqCst),
+                "the stream call returns only after recovery"
+            );
+            Ok(ProtocolResponse::new(request.as_bytes()))
+        }
+
+        fn exec_protocol_raw_stream(
+            &mut self,
+            _request: ProtocolRequest,
+            on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
+        ) -> ProtocolStreamOutcome {
+            let callback = on_chunk(&[1, 2, 3]);
+            self.recovered.store(true, Ordering::SeqCst);
+            ProtocolStreamOutcome::ReadyForQuery(callback)
+        }
+    }
+
+    #[test]
+    fn blocking_stream_resumes_callback_panic_after_recovery() {
+        let recovered = Arc::new(AtomicBool::new(false));
+        let mut database = Oliphaunt::from_session(Box::new(RecoveringStreamSession {
+            recovered: Arc::clone(&recovered),
+        }));
+
+        let panic = catch_unwind(AssertUnwindSafe(|| {
+            database.exec_protocol_raw_stream([1], |_| -> () { panic!("stream panic payload") })
+        }))
+        .expect_err("blocking callback panic resumes on its invoking thread");
+        assert_eq!(panic_message(panic.as_ref()), "stream panic payload");
+        assert!(recovered.load(Ordering::SeqCst));
+        assert_eq!(database.exec_protocol_raw([7]).unwrap(), [7]);
+        database.close().unwrap();
+    }
+
+    struct FailedStreamRecoverySession;
+
+    impl EngineSession for FailedStreamRecoverySession {
+        fn exec_protocol_raw(&mut self, _request: ProtocolRequest) -> Result<ProtocolResponse> {
+            Ok(ProtocolResponse::new([]))
+        }
+
+        fn exec_protocol_raw_stream(
+            &mut self,
+            _request: ProtocolRequest,
+            on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
+        ) -> ProtocolStreamOutcome {
+            let _ = on_chunk(&[1, 2, 3]);
+            ProtocolStreamOutcome::SessionStateUnknown(Error::Engine(
+                "stream transport failed before ReadyForQuery".to_owned(),
+            ))
+        }
+    }
+
+    #[test]
+    fn blocking_stream_does_not_resume_callback_panic_when_recovery_fails() {
+        let mut database = Oliphaunt::from_session(Box::new(FailedStreamRecoverySession));
+
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            database.exec_protocol_raw_stream([1], |_| -> () { panic!("stream panic payload") })
+        }))
+        .expect("an independent recovery failure takes precedence over callback unwind");
+        let stream_error = outcome.expect_err("stream recovery failure is reported");
+        assert!(stream_error.callback_error().is_none());
+        assert!(stream_error.callback_panic_error().is_none());
+        assert_error(
+            stream_error
+                .database_error()
+                .expect("recovery failure remains a database error"),
+            ErrorKind::Other,
+            "stream transport failed before ReadyForQuery",
+        );
+        expect_error(
+            database.exec_protocol_raw([7]),
+            ErrorKind::Other,
+            SESSION_STATE_UNKNOWN,
+        );
         database.close().unwrap();
     }
 
@@ -1240,7 +1463,7 @@ mod tests {
             database
                 .transaction(|transaction| {
                     transaction.execute("INSERT INTO items VALUES (1)")?;
-                    Ok(41_u8)
+                    Ok::<u8, Error>(41_u8)
                 })
                 .unwrap(),
             41
@@ -1263,8 +1486,12 @@ mod tests {
                 .transaction(|transaction| {
                     transaction.rollback()?;
                     assert!(transaction.is_closed());
-                    assert_eq!(transaction.rollback(), Err(inactive_transaction_error()));
-                    Ok(43_u8)
+                    expect_error(
+                        transaction.rollback(),
+                        ErrorKind::Other,
+                        "transaction is no longer active",
+                    );
+                    Ok::<u8, Error>(43_u8)
                 })
                 .unwrap(),
             43
@@ -1289,21 +1516,20 @@ mod tests {
                 assert!(
                     error
                         .to_string()
-                        .contains("outside Transaction::rollback()")
+                        .contains("outside the SDK-managed transaction lifecycle")
                 );
-                Ok(())
+                Ok::<(), Error>(())
             })
             .expect_err("outer transaction cannot turn manual COMMIT into success");
         assert!(
             error
                 .to_string()
-                .contains("outside Transaction::rollback()")
+                .contains("outside the SDK-managed transaction lifecycle")
         );
-        assert_eq!(
+        expect_error(
             database.exec_protocol_raw([1]),
-            Err(Error::Engine(
-                "transaction state is unknown; close the database".to_owned()
-            ))
+            ErrorKind::Other,
+            SESSION_STATE_UNKNOWN,
         );
         database.close().unwrap();
     }
@@ -1318,7 +1544,7 @@ mod tests {
         let mut database = Oliphaunt::from_session(Box::new(session));
 
         let panic = catch_unwind(AssertUnwindSafe(|| {
-            let _ = database.transaction::<_, ()>(|_| panic!("callback panic probe"));
+            let _ = database.transaction::<_, (), Error>(|_| panic!("callback panic probe"));
         }));
         assert!(panic.is_err());
         assert_eq!(database.exec_protocol_raw([1]).unwrap(), [7, 7]);
@@ -1355,11 +1581,14 @@ mod tests {
             cancel: Arc::clone(&cancel),
         }));
         let cancel_handle = database.cancel_handle().expect("cancellation is supported");
-        let expected = Err(Error::Engine("detach failed".to_owned()));
-        assert_eq!(database.close(), expected);
-        assert_eq!(database.close(), expected);
+        expect_error(database.close(), ErrorKind::Other, "detach failed");
+        expect_error(database.close(), ErrorKind::Other, "detach failed");
         assert!(database.is_closed());
-        assert_eq!(cancel_handle.cancel(), Err(Error::EngineStopped));
+        expect_error(
+            cancel_handle.cancel(),
+            ErrorKind::Lifecycle,
+            "native database session has stopped",
+        );
         assert_eq!(cancel.calls.load(Ordering::SeqCst), 0);
         assert_eq!(closes.load(Ordering::SeqCst), 1);
     }

@@ -16,7 +16,8 @@ export type BrokerRequestFrame =
 export type BrokerResponseFrame =
   | { kind: 'ok'; bytes: Uint8Array }
   | { kind: 'chunk'; bytes: Uint8Array }
-  | { kind: 'error'; message: string };
+  | { kind: 'error'; message: string }
+  | { kind: 'streamCallbackAborted'; message: string };
 
 export async function writeBrokerRequest(
   stream: ByteStream,
@@ -69,6 +70,8 @@ export function encodeBrokerResponse(frame: BrokerResponseFrame): Uint8Array {
       return encodeFrame(103, frame.bytes);
     case 'error':
       return encodeFrame(102, encodeUtf8(frame.message));
+    case 'streamCallbackAborted':
+      return encodeFrame(104, encodeUtf8(frame.message));
   }
 }
 
@@ -113,6 +116,11 @@ export function decodeBrokerResponse(kind: number, payload: Uint8Array): BrokerR
       };
     case 103:
       return { kind: 'chunk', bytes: payload };
+    case 104:
+      return {
+        kind: 'streamCallbackAborted',
+        message: decodeUtf8(payload, 'broker stream callback-aborted frame'),
+      };
     default:
       throw new Error(`unknown broker response frame ${kind}`);
   }

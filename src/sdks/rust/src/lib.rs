@@ -21,7 +21,7 @@ pub mod __private {
     #[doc(hidden)]
     pub use crate::ipc::{
         BrokerIpcRequest, broker_ipc_read_request, broker_ipc_write_chunk, broker_ipc_write_error,
-        broker_ipc_write_ok,
+        broker_ipc_write_ok, broker_ipc_write_stream_callback_aborted,
     };
 
     /// Version-locked bridge for the unpublished native packaging workspace tool.
@@ -38,6 +38,7 @@ pub mod __private {
 mod build_resources;
 mod builder;
 mod cancellation;
+mod child_process;
 mod config;
 mod database;
 mod direct;
@@ -60,12 +61,18 @@ mod session;
 mod storage;
 #[cfg(test)]
 mod test_fixtures;
-pub mod worker;
-
 pub use build_resources::register_build_resources_dir;
+pub use builder::{AsyncOliphauntBuilder, AsyncOliphauntServerBuilder};
 pub use config::ServerListen;
-pub use direct::{CancelHandle, Oliphaunt, OliphauntBuilder, OliphauntServer, Sql, Transaction};
-pub use error::{Error, PostgresError, PostgresErrorField, Result};
+pub use database::{AsyncOliphaunt, AsyncOliphauntServer, AsyncSql, AsyncTransaction};
+pub use direct::{
+    CancelHandle, Oliphaunt, OliphauntBuilder, OliphauntServer, OliphauntServerBuilder, Sql,
+    Transaction,
+};
+pub use error::{
+    Error, ErrorKind, PostgresError, PostgresErrorField, RawStreamCallbackOutput, RawStreamError,
+    RawStreamResult, Result, TransactionError, TransactionResult,
+};
 pub use extension::Extension;
 pub use query::{
     CommandResult, DecodeError, ExecResult, FromSql, IntoParameter, Parameter, PostgresNotice,

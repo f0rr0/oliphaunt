@@ -120,9 +120,9 @@ class OliphauntAndroidBoundaryTest {
       "React Native iOS JSI must use the bounded callback contract",
       iosSource.contains("class OliphauntChunkAcknowledgement") &&
         iosSource.contains("acknowledgement->wait()") &&
-        iosSource.contains("OliphauntProtocolStreamCallbackError") &&
+      iosSource.contains("OliphauntProtocolStreamCallbackError") &&
         adapterSource.contains("if let error = chunkBox.value") &&
-        adapterSource.contains("throw error"),
+        adapterSource.contains("throw ProtocolStreamCallbackFailure(error)"),
     )
     assertFalse(
       "React Native iOS must delegate async work to the Swift SDK owner instead of detached blocking tasks",
@@ -192,10 +192,12 @@ class OliphauntAndroidBoundaryTest {
         moduleSource.contains("session.execProtocolRaw(request)"),
     )
     assertTrue(
-      "React Native Android must stream through the Kotlin SDK and propagate acknowledged callback failures",
+      "React Native Android must classify recovered callback aborts with a private Kotlin sentinel",
       moduleSource.contains("fun execProtocolStreamBytes") &&
         moduleSource.contains("session.execProtocolRawStream(request)") &&
-        moduleSource.contains("callback.emitChunk(chunk)"),
+        moduleSource.contains("callback.emitChunk(chunk)") &&
+        moduleSource.contains("ReactNativeProtocolStreamCallbackFailure") &&
+        moduleSource.contains("callback.rejectCallbackAborted(error.callbackError.message)"),
     )
     assertTrue(
       "React Native Android must expose byte-array JSI backup/restore hooks instead of base64 TurboModule binary APIs",
@@ -244,6 +246,18 @@ class OliphauntAndroidBoundaryTest {
         jsiSource.contains("acknowledgement->wait()") &&
         jsiSource.contains("protocol stream callback failed"),
     )
+    val emitChunkSource = jsiSource
+      .substringAfter("static jni::local_ref<jni::JString> nativeEmitChunk")
+      .substringBefore("static void nativeResolveUnit")
+    assertFalse(
+      "React Native Android must not settle or remove the JS stream before Kotlin reports native recovery",
+      emitChunkSource.contains("takePendingStream") || emitChunkSource.contains("stream->settle()"),
+    )
+    assertTrue(
+      "React Native Android must expose a typed recovered callback-abort completion marker",
+      jsiSource.contains("nativeRejectCallbackAborted") &&
+        jsiSource.contains("__oliphauntProtocolCallbackAborted"),
+    )
     assertTrue(
       "React Native JSI operations must return promises and delegate execution to Kotlin callbacks",
       jsiSource.contains("getPropertyAsFunction(runtime, \"Promise\")") &&
@@ -254,9 +268,10 @@ class OliphauntAndroidBoundaryTest {
       "src/main/java/dev/oliphaunt/reactnative/OliphauntJsiStreamCallback.kt",
     ).readText()
     assertTrue(
-      "React Native Android must surface a failed JSI acknowledgement to the Kotlin producer",
+      "React Native Android must surface callback failure to Kotlin and defer JS rejection until typed completion",
       callbackSource.contains("nativeEmitChunk(token, chunk)?.let") &&
-        callbackSource.contains("throw IllegalStateException(error)"),
+        callbackSource.contains("throw IllegalStateException(error)") &&
+        callbackSource.contains("nativeRejectCallbackAborted"),
     )
   }
 

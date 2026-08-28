@@ -1,7 +1,7 @@
 # Electron WASIX Todo
 
 Electron keeps WASIX in a Rust sidecar. The sidecar starts
-the async `worker::OliphauntServer`, prints a local PostgreSQL URL, and stays alive until
+the root `AsyncOliphauntServer`, prints a local PostgreSQL URL, and stays alive until
 Electron exits. The Electron main process uses `pg` with a single connection
 and exposes the same preload API as the native Electron example. Its explicit
 Rust smoke test covers `pg_dump` and `psql` through the direct

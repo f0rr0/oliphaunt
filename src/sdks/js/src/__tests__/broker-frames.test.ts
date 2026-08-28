@@ -12,11 +12,13 @@ import {
   writeBrokerResponse,
 } from '../runtime/broker-frames.js';
 import { MemoryDuplexStream } from '../runtime/byte-stream.js';
+import { resolveBrokerStreamCompletion } from '../runtime/broker.js';
 
 async function main(): Promise<void> {
   await requestFramesRoundTrip();
   await responseFramesRoundTrip();
   rejectsMalformedFrames();
+  streamCompletionUsesRecoveryAwareErrorPrecedence();
   await streamHelpersUseBinaryFrames();
 }
 
@@ -64,12 +66,64 @@ async function responseFramesRoundTrip(): Promise<void> {
     kind: 'chunk',
     bytes: new Uint8Array([7, 8]),
   });
+
+  const callbackAborted = encodeBrokerResponse({
+    kind: 'streamCallbackAborted',
+    message: 'callback rejected; stream recovered to ReadyForQuery',
+  });
+  assert.deepEqual(await readBrokerResponse(new MemoryDuplexStream([callbackAborted])), {
+    kind: 'streamCallbackAborted',
+    message: 'callback rejected; stream recovered to ReadyForQuery',
+  });
 }
 
 function rejectsMalformedFrames(): void {
   assert.throws(() => decodeBrokerRequest(999, new Uint8Array()), /unknown broker request/);
   assert.throws(() => decodeBrokerResponse(999, new Uint8Array()), /unknown broker response/);
   assert.throws(() => decodeBrokerRequest(5, new Uint8Array([99])), /unexpectedly had a payload/);
+  assert.throws(
+    () => decodeBrokerResponse(104, new Uint8Array([0xff])),
+    /stream callback-aborted frame is not UTF-8/,
+  );
+}
+
+function streamCompletionUsesRecoveryAwareErrorPrecedence(): void {
+  const callbackError = new Error('client callback failed');
+  assert.throws(
+    () =>
+      resolveBrokerStreamCompletion(
+        { kind: 'streamCallbackAborted', message: 'stream recovered' },
+        true,
+        callbackError,
+      ),
+    (error) => error === callbackError,
+  );
+  assert.throws(
+    () =>
+      resolveBrokerStreamCompletion(
+        { kind: 'error', message: 'transport recovery failed' },
+        true,
+        callbackError,
+      ),
+    (error) => error instanceof Error && error.message === 'transport recovery failed',
+  );
+  assert.throws(
+    () =>
+      resolveBrokerStreamCompletion(
+        { kind: 'streamCallbackAborted', message: 'stream recovered' },
+        false,
+        undefined,
+      ),
+    /without a stored client callback error: stream recovered/,
+  );
+  assert.throws(
+    () =>
+      resolveBrokerStreamCompletion({ kind: 'ok', bytes: new Uint8Array() }, true, callbackError),
+    (error) => error === callbackError,
+  );
+  assert.doesNotThrow(() =>
+    resolveBrokerStreamCompletion({ kind: 'ok', bytes: new Uint8Array() }, false, undefined),
+  );
 }
 
 async function streamHelpersUseBinaryFrames(): Promise<void> {

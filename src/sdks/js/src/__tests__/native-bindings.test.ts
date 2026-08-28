@@ -26,13 +26,17 @@ import { createDenoNativeBinding } from '../native/deno.js';
 import { nativeModuleSuffixForTarget } from '../native/extension-runtime.js';
 import {
   cString,
+  errorCaptureBuffer,
   OLIPHAUNT_CONFIG_SIZE,
+  OLIPHAUNT_ERROR_CAPTURE_CAPACITY,
+  OLIPHAUNT_ERROR_CAPTURE_SIZE,
   OLIPHAUNT_RESPONSE_SIZE,
   packConfigPointers,
   packPointerArray,
   packRestoreOptionsPointers,
   readResponseLength,
   readResponsePointer,
+  readErrorCapture,
   responseBuffer,
   writePointer,
 } from '../native/ffi-layout.js';
@@ -114,6 +118,25 @@ function testFfiLayoutPackingAndBounds(): void {
   assert.equal(pointerView.getBigUint64(8, true), 2n);
   assert.equal(pointerView.getBigUint64(16, true), 3n);
   assert.equal(packPointerArray([]).byteLength, 8);
+
+  const emptyCapture = errorCaptureBuffer();
+  assert.equal(emptyCapture.byteLength, OLIPHAUNT_ERROR_CAPTURE_SIZE);
+  assert.equal(OLIPHAUNT_ERROR_CAPTURE_CAPACITY, 1024);
+  assert.equal(readErrorCapture(emptyCapture), null);
+  const capturedText = new TextEncoder().encode('operation-local failure');
+  new DataView(emptyCapture.buffer).setUint32(0, capturedText.byteLength, true);
+  emptyCapture.set(capturedText, 4);
+  assert.equal(readErrorCapture(emptyCapture), 'operation-local failure');
+  emptyCapture[4 + capturedText.byteLength] = 1;
+  assert.match(readErrorCapture(emptyCapture) ?? '', /invalid error capture/);
+  const invalidLengthCapture = errorCaptureBuffer();
+  new DataView(invalidLengthCapture.buffer).setUint32(0, OLIPHAUNT_ERROR_CAPTURE_CAPACITY, true);
+  assert.match(readErrorCapture(invalidLengthCapture) ?? '', /invalid error capture/);
+  const embeddedNulCapture = errorCaptureBuffer();
+  new DataView(embeddedNulCapture.buffer).setUint32(0, 3, true);
+  embeddedNulCapture.set([0x61, 0, 0x62], 4);
+  assert.match(readErrorCapture(embeddedNulCapture) ?? '', /invalid error capture/);
+  assert.match(readErrorCapture(new Uint8Array(4)) ?? '', /invalid error capture/);
 
   let nextPointer = 16n;
   const seenStrings: string[] = [];
@@ -437,18 +460,28 @@ async function testDenoNativeBindingRejectsPackageManagedExtensions(): Promise<v
       },
       dlopen(path: string, definitions: Record<string, unknown>) {
         calls.push(`dlopen:${path}`);
-        assert.deepEqual(definitions.oliphaunt_init, {
-          parameters: ['buffer', 'buffer'],
+        assert.deepEqual(definitions.oliphaunt_init_with_error, {
+          parameters: ['buffer', 'buffer', 'buffer'],
           result: 'i32',
           nonblocking: true,
         });
-        assert.deepEqual(definitions.oliphaunt_exec_protocol_raw_stream, {
-          parameters: ['pointer', 'buffer', 'usize', 'function', 'pointer'],
+        assert.deepEqual(definitions.oliphaunt_exec_protocol_with_error, {
+          parameters: ['pointer', 'buffer', 'usize', 'buffer', 'buffer'],
           result: 'i32',
           nonblocking: true,
         });
-        assert.deepEqual(definitions.oliphaunt_detach, {
-          parameters: ['pointer'],
+        assert.deepEqual(definitions.oliphaunt_exec_simple_query_with_error, {
+          parameters: ['pointer', 'buffer', 'usize', 'buffer', 'buffer'],
+          result: 'i32',
+          nonblocking: true,
+        });
+        assert.deepEqual(definitions.oliphaunt_exec_protocol_raw_stream_with_error, {
+          parameters: ['pointer', 'buffer', 'usize', 'function', 'pointer', 'buffer'],
+          result: 'i32',
+          nonblocking: true,
+        });
+        assert.deepEqual(definitions.oliphaunt_detach_with_error, {
+          parameters: ['pointer', 'buffer'],
           result: 'i32',
           nonblocking: true,
         });
@@ -466,38 +499,38 @@ async function testDenoNativeBindingRejectsPackageManagedExtensions(): Promise<v
           parameters: ['pointer', 'buffer', 'usize'],
           result: 'usize',
         });
-        assert.deepEqual(definitions.oliphaunt_backup, {
-          parameters: ['pointer', 'buffer'],
+        assert.deepEqual(definitions.oliphaunt_backup_with_error, {
+          parameters: ['pointer', 'buffer', 'buffer'],
           result: 'i32',
           nonblocking: true,
         });
-        assert.deepEqual(definitions.oliphaunt_restore, {
-          parameters: ['buffer'],
+        assert.deepEqual(definitions.oliphaunt_restore_with_error, {
+          parameters: ['buffer', 'buffer'],
           result: 'i32',
           nonblocking: true,
         });
         return {
           symbols: {
-            oliphaunt_init() {
+            oliphaunt_init_with_error() {
               calls.push('init');
               return 0;
             },
-            oliphaunt_exec_protocol() {
+            oliphaunt_exec_protocol_with_error() {
               return 0;
             },
-            oliphaunt_exec_simple_query() {
+            oliphaunt_exec_simple_query_with_error() {
               return 0;
             },
-            oliphaunt_backup() {
+            oliphaunt_backup_with_error() {
               return 0;
             },
-            oliphaunt_restore() {
+            oliphaunt_restore_with_error() {
               return 0;
             },
             oliphaunt_cancel() {
               return 0;
             },
-            oliphaunt_detach() {
+            oliphaunt_detach_with_error() {
               return 0;
             },
             oliphaunt_logical_generation() {
@@ -594,6 +627,16 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
   const pointerStrings = new Map<bigint, string>();
   let nextPointer = 0x1000n;
   const calls: string[] = [];
+  let copyLastErrorCalls = 0;
+  let restoreCallsStartedResolve: (() => void) | undefined;
+  let releaseRestoreCalls: (() => void) | undefined;
+  let restoreCallCount = 0;
+  const restoreCallsStarted = new Promise<void>((resolve) => {
+    restoreCallsStartedResolve = resolve;
+  });
+  const restoreCallsMayFinish = new Promise<void>((resolve) => {
+    releaseRestoreCalls = resolve;
+  });
   let finalizer: ((held: { generation: bigint; releaseOwnership: () => void }) => void) | undefined;
   let registered:
     | {
@@ -648,18 +691,18 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
     (globalThis as { Deno?: unknown }).Deno = {
       ...deno,
       dlopen(_path: string, definitions: Record<string, unknown>) {
-        assert.deepEqual(definitions.oliphaunt_init, {
-          parameters: ['buffer', 'buffer'],
+        assert.deepEqual(definitions.oliphaunt_init_with_error, {
+          parameters: ['buffer', 'buffer', 'buffer'],
           result: 'i32',
           nonblocking: true,
         });
-        assert.deepEqual(definitions.oliphaunt_exec_protocol_raw_stream, {
-          parameters: ['pointer', 'buffer', 'usize', 'function', 'pointer'],
+        assert.deepEqual(definitions.oliphaunt_exec_protocol_raw_stream_with_error, {
+          parameters: ['pointer', 'buffer', 'usize', 'function', 'pointer', 'buffer'],
           result: 'i32',
           nonblocking: true,
         });
-        assert.deepEqual(definitions.oliphaunt_detach, {
-          parameters: ['pointer'],
+        assert.deepEqual(definitions.oliphaunt_detach_with_error, {
+          parameters: ['pointer', 'buffer'],
           result: 'i32',
           nonblocking: true,
         });
@@ -677,19 +720,19 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
           parameters: ['pointer', 'buffer', 'usize'],
           result: 'usize',
         });
-        assert.deepEqual(definitions.oliphaunt_backup, {
-          parameters: ['pointer', 'buffer'],
+        assert.deepEqual(definitions.oliphaunt_backup_with_error, {
+          parameters: ['pointer', 'buffer', 'buffer'],
           result: 'i32',
           nonblocking: true,
         });
-        assert.deepEqual(definitions.oliphaunt_restore, {
-          parameters: ['buffer'],
+        assert.deepEqual(definitions.oliphaunt_restore_with_error, {
+          parameters: ['buffer', 'buffer'],
           result: 'i32',
           nonblocking: true,
         });
         return {
           symbols: {
-            oliphaunt_init(config: Uint8Array, out: Uint8Array) {
+            oliphaunt_init_with_error(config: Uint8Array, out: Uint8Array) {
               calls.push('init');
               assert.equal(process.env.OLIPHAUNT_EMBEDDED_MODULE_DIR, undefined);
               const view = new DataView(config.buffer, config.byteOffset, config.byteLength);
@@ -698,22 +741,51 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
               new DataView(out.buffer, out.byteOffset, out.byteLength).setBigUint64(0, 0x99n, true);
               return 0;
             },
-            oliphaunt_exec_protocol() {
+            oliphaunt_exec_protocol_with_error() {
               return 0;
             },
-            oliphaunt_exec_simple_query() {
+            oliphaunt_exec_protocol_raw_stream_with_error(
+              _handle: unknown,
+              request: Uint8Array,
+              _requestLength: bigint,
+              callback: (context: unknown, bytes: unknown, length: bigint) => number,
+              context: unknown,
+              captured: Uint8Array,
+            ) {
+              const callbackStatus = callback(context, null, 0n);
+              if (request[0] === 4) {
+                assert.equal(callbackStatus, 0);
+                return 1;
+              }
+              assert.equal(callbackStatus, 1);
+              if (request[0] === 3) return 0;
+              if (request[0] === 1) {
+                writeErrorCapture(captured, 'stream callback aborted after confirmed recovery');
+                return 1;
+              }
+              writeErrorCapture(captured, 'stream transport recovery failed');
+              return -1;
+            },
+            oliphaunt_exec_simple_query_with_error() {
               return 0;
             },
-            oliphaunt_backup() {
+            oliphaunt_backup_with_error() {
               return 0;
             },
-            oliphaunt_restore() {
-              return 0;
+            async oliphaunt_restore_with_error(options: Uint8Array, captured: Uint8Array) {
+              const view = new DataView(options.buffer, options.byteOffset, options.byteLength);
+              const destination = pointerStrings.get(view.getBigUint64(8, true));
+              assert.ok(destination);
+              restoreCallCount += 1;
+              if (restoreCallCount === 2) restoreCallsStartedResolve?.();
+              await restoreCallsMayFinish;
+              writeErrorCapture(captured, `${destination} failed on its native worker`);
+              return -1;
             },
             oliphaunt_cancel() {
               return 0;
             },
-            oliphaunt_detach() {
+            oliphaunt_detach_with_error() {
               calls.push('detach');
               return 0;
             },
@@ -727,6 +799,7 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
               return 1;
             },
             oliphaunt_copy_last_error(_handle: unknown, output: Uint8Array) {
+              copyLastErrorCalls += 1;
               output.fill(0);
               return 0n;
             },
@@ -754,6 +827,14 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
         },
       },
       UnsafePointerView: class {},
+      UnsafeCallback: {
+        threadSafe(_definition: unknown, callback: unknown) {
+          return {
+            pointer: callback,
+            close() {},
+          };
+        },
+      },
     };
 
     const binding = await createDenoNativeBinding({
@@ -769,6 +850,73 @@ async function testDenoNativeBindingUsesSeparateModuleDirectoryWithoutAmbientMut
     });
     assert.deepEqual(handle, { address: 0x99n });
     assert.deepEqual(calls, ['init', 'logical-generation']);
+
+    await assert.rejects(
+      () =>
+        binding.execProtocolStream(handle, new Uint8Array([1]), () => {
+          throw new Error('Deno stream callback failed');
+        }),
+      /Deno stream callback failed/,
+    );
+    const undefinedCallbackFailure = await binding
+      .execProtocolStream(handle, new Uint8Array([1]), () => {
+        throw undefined;
+      })
+      .then(
+        () => ({ fulfilled: true as const, error: undefined }),
+        (error: unknown) => ({ fulfilled: false as const, error }),
+      );
+    assert.equal(undefinedCallbackFailure.fulfilled, false);
+    assert.equal(
+      undefinedCallbackFailure.error,
+      undefined,
+      'a recovered Deno callback abort must preserve even an undefined rejection reason',
+    );
+    await assert.rejects(
+      () =>
+        binding.execProtocolStream(handle, new Uint8Array([3]), () => {
+          throw undefined;
+        }),
+      /reported success after the callback failed/,
+    );
+    await assert.rejects(
+      () => binding.execProtocolStream(handle, new Uint8Array([4]), () => undefined),
+      /reported a recovered callback abort without a callback failure/,
+    );
+    await assert.rejects(
+      () =>
+        binding.execProtocolStream(handle, new Uint8Array([2]), () => {
+          throw new Error('this callback failure must not mask native recovery');
+        }),
+      /stream transport recovery failed/,
+    );
+
+    const firstRestore = binding.restore({
+      destination: '/tmp/first-restore',
+      bytes: new Uint8Array([1]),
+    });
+    const secondRestore = binding.restore({
+      destination: '/tmp/second-restore',
+      bytes: new Uint8Array([2]),
+    });
+    await restoreCallsStarted;
+    releaseRestoreCalls?.();
+    const restoreResults = await Promise.allSettled([firstRestore, secondRestore]);
+    assert.equal(restoreResults[0]?.status, 'rejected');
+    assert.equal(restoreResults[1]?.status, 'rejected');
+    assert.match(
+      String((restoreResults[0] as PromiseRejectedResult).reason),
+      /\/tmp\/first-restore failed on its native worker/,
+    );
+    assert.match(
+      String((restoreResults[1] as PromiseRejectedResult).reason),
+      /\/tmp\/second-restore failed on its native worker/,
+    );
+    assert.equal(
+      copyLastErrorCalls,
+      0,
+      'nonblocking Deno failures must not read worker-local errors later on the JS thread',
+    );
 
     const forgottenOwner = {};
     let released = 0;
@@ -881,6 +1029,18 @@ function fsBackedDenoRuntime(tempRoot: string): unknown {
       };
     },
   };
+}
+
+function writeErrorCapture(capture: Uint8Array, message: string): void {
+  capture.fill(0);
+  const bytes = new TextEncoder().encode(message);
+  assert.ok(bytes.byteLength < OLIPHAUNT_ERROR_CAPTURE_CAPACITY);
+  new DataView(capture.buffer, capture.byteOffset, capture.byteLength).setUint32(
+    0,
+    bytes.byteLength,
+    true,
+  );
+  capture.set(bytes, 4);
 }
 
 function fsPath(path: string | URL): string {

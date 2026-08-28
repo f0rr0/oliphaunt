@@ -48,13 +48,16 @@ mobile SDK moves them to an owned execution context:
 | --- | --- | --- | --- |
 | Swift | `async throws` | One dedicated serial dispatch queue owns root preparation, open, protocol work, backup, and close. | Transaction pinning and close are FIFO admission cutoffs: earlier permits drain and later incompatible calls fail. `cancel()` uses a separate control queue so it can interrupt the active owner call. |
 | Kotlin | `suspend` | One single-thread coroutine dispatcher owns root preparation, JNI open, protocol work, backup, and close. | Transaction pinning and close are FIFO admission cutoffs. Admitted JNI work completes even if its caller is cancelled; close uses `NonCancellable`, while `cancel()` uses a separate control dispatcher. A phantom-reference fallback only enqueues forgotten-handle close on the owner. |
-| React Native / Expo | JavaScript `Promise` | JSI copies binary arguments, then delegates to the same Swift or Kotlin SDK owner. | A thrown stream callback rejects its promise. Invalidation stops callback delivery to the retiring runtime and schedules close without blocking the JavaScript, main, or UI thread. |
+| React Native / Expo | JavaScript `Promise` | JSI copies binary arguments, then delegates to the same Swift or Kotlin SDK owner. | A thrown stream callback rejects its promise after native recovery confirms a known protocol boundary; an execution, transport, or recovery failure is authoritative instead. Invalidation stops callback delivery to the retiring runtime and schedules close without blocking the JavaScript, main, or UI thread. |
 
 The synchronous callback used for raw protocol streaming is backpressure, not a
 synchronous database API. The callback runs as part of the native owner's one
 admitted operation; it must return before another chunk is produced. JavaScript
 callbacks cannot be async, and all SDKs propagate a thrown callback as the
-operation failure before releasing the owner for subsequent work.
+operation failure before releasing the owner for subsequent work when recovery
+reaches a known PostgreSQL protocol boundary. If execution, transport, or
+recovery fails, that failure takes precedence and the owner follows its normal
+session-poisoning rules.
 
 Admission and lifecycle state are one ordered contract. Publishing a transaction
 pin or close cutoff cannot revoke an older permit that is already queued. BEGIN,

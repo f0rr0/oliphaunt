@@ -13,7 +13,7 @@ lifecycle, archive parser, or root validation.
 
 ## Public C boundary
 
-ABI version 9 exports one fixed surface from
+ABI version 10 exports one fixed surface from
 `src/runtimes/liboliphaunt/native/include/oliphaunt.h`:
 
 - `oliphaunt_init`, `oliphaunt_detach`, `oliphaunt_close`, generation-guarded
@@ -22,6 +22,8 @@ ABI version 9 exports one fixed surface from
 - simple query, owned raw protocol response, and callback protocol streaming;
 - `oliphaunt_cancel`;
 - one physical `oliphaunt_backup` and one static `oliphaunt_restore`;
+- scheduler-safe `_with_error` variants that capture each operation's error in
+  caller-owned storage before its native invocation returns;
 - static extension registration; and
 - response release.
 
@@ -109,6 +111,16 @@ responses remain valid until `oliphaunt_free_response`. The streaming callback
 path applies a bounded queue so a slow consumer cannot create unbounded runtime
 memory. Cancellation targets the active backend operation and the connection
 must recover through normal PostgreSQL protocol readiness before reuse.
+Callback rejection has a typed positive status only after recovery reaches
+`ReadyForQuery`; a negative stream status is a native transport or recovery
+failure and must remain the primary error.
+
+Asynchronous FFI schedulers use the operation-specific `_with_error` ABI
+variants. Each invocation receives a fixed-layout `OliphauntErrorCapture` that
+is filled on the native worker before its handle lease is released. Synchronous
+bindings can continue to copy the operation-local TLS error immediately with
+`oliphaunt_copy_last_error`. This distinction prevents a resumed event-loop
+thread from reading another operation's shared handle error.
 
 Typed rows, callback transactions, and language stream shapes belong in SDKs.
 Keeping the C boundary byte-oriented avoids cross-language object ownership and
@@ -120,8 +132,10 @@ Desktop native runtimes load exact packaged extension modules through normal
 PostgreSQL `CREATE EXTENSION` and `$libdir` resolution. Mobile builds register
 selected statically linked modules before first init; the process-wide registry
 then becomes immutable. SDK packaging resolves exact extension artifacts and
-startup preload requirements. The runtime does not invent an extension
-migration system: PostgreSQL extension SQL remains authoritative.
+startup preload requirements. Selecting those artifacts does not execute
+`CREATE EXTENSION`, `LOAD`, schema setup, or post-create SQL. The runtime does
+not invent an extension migration system: application migrations and
+PostgreSQL extension SQL remain authoritative.
 
 ## Native modes
 
@@ -130,11 +144,13 @@ migration system: PostgreSQL extension SQL remains authoritative.
 - Server mode runs packaged PostgreSQL and exposes a connection endpoint; it
   does not call the C direct runtime.
 
-Mode-specific transport and process supervision remain SDK concerns. Storage,
-query, transaction, extension, backup, and error vocabulary stays aligned where
-the underlying mode supports it. Native server backup remains deliberately
-deferred in the SDK parity policy instead of being simulated through a hidden
-direct handle.
+Mode-specific transport and process supervision remain SDK concerns. Direct
+and broker database handles keep the aligned query, transaction, raw protocol,
+backup, and error vocabulary. A server handle owns only process/listener
+lifecycle and a connection string; ordinary PostgreSQL clients own its SQL,
+transactions, cancellation, and pooling. Native server backup remains
+deliberately deferred in the SDK parity policy instead of being simulated
+through a hidden direct handle.
 
 ## Verification
 

@@ -13,9 +13,9 @@ database ownership in the Rust sidecar. It owns the full native runtime model:
 direct calls for embedded latency, broker helpers for desktop robustness, and
 server mode for normal PostgreSQL clients.
 
-The root import is the synchronous caller-thread API. Import
-`oliphaunt::worker` explicitly to give Oliphaunt a dedicated owner thread and
-use async methods.
+The root `Oliphaunt` type is the synchronous API. Use root
+`AsyncOliphaunt` when the caller needs async methods backed by a dedicated
+owner thread.
 
 ## Install
 
@@ -31,13 +31,13 @@ oliphaunt = "0.1"
 Then open a database in app-owned storage:
 
 ```rust
-use oliphaunt::{Extension, Oliphaunt};
+use oliphaunt::{DatabaseStorage, Extension, Oliphaunt};
 
 fn open_database() -> oliphaunt::Result<()> {
     let mut db = Oliphaunt::builder()
-        .directory("./app-data/main.oliphaunt")
+        .storage(DatabaseStorage::Directory("./app-data/main.oliphaunt".into()))
         .direct()
-        .extension(Extension::Vector)
+        .extension(Extension::VECTOR)
         .open()?;
 
     let rows = db.query("SELECT 1::text AS value")?;
@@ -50,10 +50,10 @@ fn open_database() -> oliphaunt::Result<()> {
 For an async owner-thread handle, only the import and awaiting change:
 
 ```rust
-use oliphaunt::worker::Oliphaunt;
+use oliphaunt::AsyncOliphaunt;
 
 async fn open_database() -> oliphaunt::Result<()> {
-    let db = Oliphaunt::builder().temporary_directory().open().await?;
+    let db = AsyncOliphaunt::open().await?;
     let rows = db.query("SELECT 1::text AS value").await?;
     assert_eq!(rows.get_text(0, "value")?, Some("1"));
     db.close().await?;
@@ -78,8 +78,12 @@ Execution placement is orthogonal to those modes:
 
 | Import | Calling contract | Ownership |
 | --- | --- | --- |
-| `oliphaunt::Oliphaunt` | Synchronous `&mut self` methods | Exclusive `!Send + !Sync` handle; work runs on the opening thread |
-| `oliphaunt::worker::Oliphaunt` | Async methods returning `Send` futures | Cloneable `Send + Sync` handle; one dedicated owner thread and bounded FIFO |
+| `oliphaunt::Oliphaunt` | Synchronous `&mut self` methods | Exclusive `Send + !Sync` handle; calls block directly until completion |
+| `oliphaunt::AsyncOliphaunt` | Async methods; futures are `Send` when captured inputs, callbacks, and outputs are `Send` | Cloneable `Send + Sync` handle; fair bounded admission and one dedicated owner FIFO |
+
+In native direct mode, `liboliphaunt` owns PostgreSQL execution on its backend
+thread. “Synchronous” therefore means that the call blocks until completion,
+not that PostgreSQL is guaranteed to execute on the caller thread.
 
 The selected mode defines support. Use the static runtime support matrix when
 choosing a mode; opened handles expose operations directly.
@@ -91,8 +95,9 @@ choosing a mode; opened handles expose operations directly.
 - Select exact SQL extension names before opening the database.
 - Use SDK backup and restore APIs for data movement instead of copying a live
   PostgreSQL directory.
-- Use the worker API when an async executor must remain responsive.
-- Use broker or server mode when process isolation or independent clients matter.
+- Use `AsyncOliphaunt` when an async executor must remain responsive.
+- Use broker mode for process isolation. Use the dedicated server builder and
+  connect an ordinary driver or ORM when independent clients matter.
 
 ## First Query
 

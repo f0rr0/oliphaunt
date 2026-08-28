@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::process;
 
 use oliphaunt_native_packaging::{
-    NativeExtensionArtifactIndexCreateOptions, NativeExtensionArtifactIndexSigningOptions,
-    create_prebuilt_extension_artifact_index, sign_prebuilt_extension_artifact_index,
+    Error, NativeExtensionArtifactIndexCreateOptions, NativeExtensionArtifactIndexSigningOptions,
+    Result, create_prebuilt_extension_artifact_index, sign_prebuilt_extension_artifact_index,
 };
 
 fn main() {
@@ -18,17 +18,17 @@ fn main() {
     }
 }
 
-fn run() -> oliphaunt::Result<()> {
+fn run() -> Result<()> {
     let args = IndexArgs::parse(env::args().skip(1))?;
     if args.help {
         print_help();
         return Ok(());
     }
-    let output = args.output.ok_or_else(|| {
-        oliphaunt::Error::InvalidConfig("missing required --output <index.toml>".to_owned())
-    })?;
+    let output = args
+        .output
+        .ok_or_else(|| Error::InvalidConfig("missing required --output <index.toml>".to_owned()))?;
     let target = args.target.ok_or_else(|| {
-        oliphaunt::Error::InvalidConfig("missing required --target <artifact-target>".to_owned())
+        Error::InvalidConfig("missing required --target <artifact-target>".to_owned())
     })?;
     let index = create_prebuilt_extension_artifact_index(
         NativeExtensionArtifactIndexCreateOptions::new(output, target)
@@ -86,7 +86,7 @@ struct IndexArgs {
 }
 
 impl IndexArgs {
-    fn parse(args: impl IntoIterator<Item = String>) -> oliphaunt::Result<Self> {
+    fn parse(args: impl IntoIterator<Item = String>) -> Result<Self> {
         let mut parsed = Self {
             output: None,
             target: None,
@@ -180,9 +180,7 @@ impl IndexArgs {
                     )));
                 }
                 _ => {
-                    return Err(oliphaunt::Error::InvalidConfig(format!(
-                        "unknown argument '{arg}'"
-                    )));
+                    return Err(Error::InvalidConfig(format!("unknown argument '{arg}'")));
                 }
             }
         }
@@ -190,33 +188,32 @@ impl IndexArgs {
     }
 }
 
-fn next_value(args: &mut impl Iterator<Item = String>, flag: &str) -> oliphaunt::Result<String> {
+fn next_value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String> {
     args.next()
-        .ok_or_else(|| oliphaunt::Error::InvalidConfig(format!("{flag} requires a value")))
+        .ok_or_else(|| Error::InvalidConfig(format!("{flag} requires a value")))
 }
 
 fn value_without_prefix<'a>(value: &'a str, prefix: &str) -> &'a str {
     value.strip_prefix(prefix).expect("prefix was checked")
 }
 
-fn parse_key_value(value: &str) -> oliphaunt::Result<(String, String)> {
+fn parse_key_value(value: &str) -> Result<(String, String)> {
     let Some((key_id, hex)) = value.split_once(':') else {
-        return Err(oliphaunt::Error::InvalidConfig(
+        return Err(Error::InvalidConfig(
             "key values must use <key-id>:<hex-key>".to_owned(),
         ));
     };
     Ok((key_id.to_owned(), hex.trim().to_owned()))
 }
 
-fn read_key_file_value(value: &str) -> oliphaunt::Result<(String, String)> {
+fn read_key_file_value(value: &str) -> Result<(String, String)> {
     let Some((key_id, path)) = value.split_once(':') else {
-        return Err(oliphaunt::Error::InvalidConfig(
+        return Err(Error::InvalidConfig(
             "key file values must use <key-id>:<path>".to_owned(),
         ));
     };
-    let text = fs::read_to_string(path).map_err(|err| {
-        oliphaunt::Error::InvalidConfig(format!("read signing key file {path}: {err}"))
-    })?;
+    let text = fs::read_to_string(path)
+        .map_err(|err| Error::InvalidConfig(format!("read signing key file {path}: {err}")))?;
     Ok((key_id.to_owned(), text.trim().to_owned()))
 }
 

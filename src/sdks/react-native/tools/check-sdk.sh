@@ -378,12 +378,15 @@ fi
 run pnpm --dir "$package_dir" run build
 for removed in \
   "$package_dir/lib/commonjs/benchmark.js" \
+  "$package_dir/lib/commonjs/extension-metadata.js" \
   "$package_dir/lib/commonjs/mobileExtensionProof.js" \
   "$package_dir/lib/commonjs/smoke.js" \
   "$package_dir/lib/module/benchmark.js" \
+  "$package_dir/lib/module/extension-metadata.js" \
   "$package_dir/lib/module/mobileExtensionProof.js" \
   "$package_dir/lib/module/smoke.js" \
   "$package_dir/lib/typescript/benchmark.d.ts" \
+  "$package_dir/lib/typescript/extension-metadata.d.ts" \
   "$package_dir/lib/typescript/mobileExtensionProof.d.ts" \
   "$package_dir/lib/typescript/smoke.d.ts"
 do
@@ -399,22 +402,9 @@ require_source_text "$package_dir/package.json" '"react-native": "lib/module/ind
   "React Native package must expose its compiled module build to Metro instead of raw TypeScript source"
 node -e "
 const pkg = require(process.argv[1]);
-const expectedExports = ['.', './extension-metadata', './package.json'].sort();
+const expectedExports = ['.', './package.json'].sort();
 if (JSON.stringify(Object.keys(pkg.exports || {}).sort()) !== JSON.stringify(expectedExports)) {
   throw new Error('React Native SDK exports do not match its deliberate public surface');
-}
-for (const name of ['extension-metadata']) {
-  const entry = pkg.exports['./' + name];
-  const expected = {
-    types: './lib/typescript/' + name + '.d.ts',
-    'react-native': './lib/module/' + name + '.js',
-    import: './lib/module/' + name + '.js',
-    require: './lib/commonjs/' + name + '.js',
-    default: './lib/module/' + name + '.js',
-  };
-  if (JSON.stringify(entry) !== JSON.stringify(expected)) {
-    throw new Error('React Native SDK ' + name + ' subpath is not exact');
-  }
 }
 " "$package_dir/package.json"
 require_source_text "$package_dir/OliphauntReactNative.podspec" 's.dependency "Oliphaunt", native_sdk_version' \
@@ -471,10 +461,20 @@ require_source_text "$package_dir/ios/Oliphaunt.mm" "acknowledgement->wait()" \
   "React Native iOS protocol streaming must keep one acknowledged callback in flight"
 require_source_text "$package_dir/ios/OliphauntAdapter.swift" "if let error = chunkBox.value" \
   "React Native iOS protocol streaming must propagate callback failures to the Swift producer"
+require_source_text "$package_dir/ios/OliphauntAdapter.swift" "error as? ProtocolStreamCallbackFailure" \
+  "React Native iOS must classify recovered callback aborts with a private Swift sentinel"
+require_source_text "$package_dir/ios/Oliphaunt.mm" "__oliphauntProtocolCallbackAborted" \
+  "React Native iOS must expose typed recovered callback-abort completion to JavaScript"
 require_source_text "$package_dir/android/src/main/cpp/OliphauntJsiBindings.cpp" "acknowledgement->wait()" \
   "React Native Android protocol streaming must keep one acknowledged callback in flight"
 require_source_text "$package_dir/android/src/main/java/dev/oliphaunt/reactnative/OliphauntJsiStreamCallback.kt" "nativeEmitChunk(token, chunk)?.let" \
   "React Native Android protocol streaming must propagate callback failures to the Kotlin producer"
+require_source_text "$package_dir/android/src/main/java/dev/oliphaunt/reactnative/OliphauntModule.kt" "error is ReactNativeProtocolStreamCallbackFailure" \
+  "React Native Android must classify recovered callback aborts with a private Kotlin sentinel"
+require_source_text "$package_dir/android/src/main/cpp/OliphauntJsiBindings.cpp" "nativeRejectCallbackAborted" \
+  "React Native Android must defer callback rejection until typed native completion"
+require_source_text "$package_dir/src/jsiTransport.ts" "isProtocolCallbackAborted(error)" \
+  "React Native JavaScript must preserve callback identity only for typed recovered callback aborts"
 reject_source_text "$package_dir/ios/Oliphaunt.mm" "dispatch_group_wait" \
   "React Native iOS invalidation must not abandon ownership after a bounded close wait"
 for removed_ios_open_alias in \
@@ -599,15 +599,12 @@ for required in \
   "tools/stage-ios-app.mjs" \
   "tools/verify-ios-package.mjs" \
   "lib/commonjs/index.js" \
-  "lib/commonjs/extension-metadata.js" \
   "lib/commonjs/protocol.js" \
   "lib/commonjs/query.js" \
   "lib/module/index.js" \
-  "lib/module/extension-metadata.js" \
   "lib/module/protocol.js" \
   "lib/module/query.js" \
   "lib/typescript/index.d.ts" \
-  "lib/typescript/extension-metadata.d.ts" \
   "lib/typescript/client.d.ts" \
   "lib/typescript/protocol.d.ts" \
   "lib/typescript/query.d.ts" \
@@ -748,6 +745,14 @@ if [ "$run_ios_platform_checks" = "1" ] &&
   mkdir -p "$tmp_swift_adapter/Sources/RNAdapterCheck"
   cp "$package_dir/ios/OliphauntAdapter.swift" \
     "$tmp_swift_adapter/Sources/RNAdapterCheck/OliphauntAdapter.swift"
+  cat >"$tmp_swift_adapter/Sources/RNAdapterCheck/OliphauntAdapterContract.swift" <<'SWIFT'
+import Foundation
+
+// The CocoaPods target imports this declaration from OliphauntAdapter.h. The
+// standalone Swift syntax package has no mixed-language target, so only its
+// type needs a local compile stub.
+let OliphauntProtocolStreamCallbackAbortedErrorDomain: String = "compile-only"
+SWIFT
   cat >"$tmp_swift_adapter/Package.swift" <<SWIFTPACKAGE
 // swift-tools-version: 6.0
 import PackageDescription

@@ -823,7 +823,7 @@ const tauriModeCards = [
   },
   {
     title: 'Clients need a URL',
-    value: '.open_server()',
+    value: 'OliphauntServer::builder().start()',
     description: (
       <>
         Use server mode for pools, ORMs, <code>psql</code>, <code>pg_dump</code>, and
@@ -1037,7 +1037,7 @@ const wasmDataMovementRows = [
   {
     format: 'Logical dump',
     use: 'Portable SQL export, version upgrade, runtime-to-runtime movement.',
-    api: 'tools::pg_dump(&mut database, options), tools::psql(...), CLI',
+    api: 'database.pg_dump(options), database.psql(options), CLI',
   },
   {
     format: 'Physical archive',
@@ -1566,9 +1566,9 @@ await db.close();`,
     language: 'Rust',
     packageName: 'oliphaunt',
     code: `let mut db = Oliphaunt::builder()
-    .directory("main.oliphaunt")
+    .storage(DatabaseStorage::Directory("main.oliphaunt".into()))
     .direct()
-    .extension(Extension::Vector)
+    .extension(Extension::VECTOR)
     .open()?;
 
 db.query("select 1 as ready")?;

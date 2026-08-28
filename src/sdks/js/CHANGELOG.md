@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Fail broker database objects permanently after helper or IPC failure. Close
+  and explicitly open a new object for PostgreSQL WAL recovery; the SDK never
+  substitutes a new session or replays uncertain work under the old object.
+
 ## [0.1.1](https://github.com/f0rr0/oliphaunt/compare/oliphaunt-js-v0.1.0...oliphaunt-js-v0.1.1) (2026-08-08)
 
 

@@ -118,6 +118,15 @@ const notes = await db.query(
 const firstTitle = notes.rows[0]?.title;
 ```
 
+For callback transactions, a callback failure is rethrown unchanged after
+automatic rollback succeeds. If rollback also fails, `AggregateError.errors`
+contains the callback failure followed by the rollback failure. If the callback
+throws a different value after an earlier independent database or protocol
+failure poisoned or expired transaction ownership, the aggregate instead
+contains the callback failure followed by that database failure and the database
+is close-only. This independent-failure case does not include an ordinary
+PostgreSQL statement error that remains safely rollbackable.
+
 Reach for the buffered raw protocol API only when building adapters that need
 PostgreSQL wire messages directly.
 

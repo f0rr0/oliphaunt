@@ -120,13 +120,21 @@ internal interface OliphauntSession {
     suspend fun execProtocolRawStream(
         request: ByteArray,
         onChunk: (ByteArray) -> Unit,
-    )
+    ): ProtocolStreamOutcome
 
     suspend fun backup(): ByteArray
 
     suspend fun cancel()
 
     suspend fun close()
+}
+
+internal sealed interface ProtocolStreamOutcome {
+    data object Complete : ProtocolStreamOutcome
+
+    class CallbackAborted(
+        val error: Throwable,
+    ) : ProtocolStreamOutcome
 }
 
 public open class OliphauntException : RuntimeException {
@@ -145,6 +153,19 @@ public class OliphauntTransactionRollbackException internal constructor(
 ) {
     init {
         addSuppressed(rollbackError)
+    }
+}
+
+public class OliphauntTransactionDatabaseException internal constructor(
+    public val callbackError: Throwable,
+    public val databaseError: Throwable,
+) : OliphauntException(
+    "transaction callback failed after an independent database failure; " +
+        "close and reopen the database; callback: $callbackError; database: $databaseError",
+    callbackError,
+) {
+    init {
+        addSuppressed(databaseError)
     }
 }
 
@@ -174,6 +195,7 @@ public class OliphauntDatabase private constructor(
     private data class ActiveTransaction(
         val token: Long,
         var completion: TransactionCompletion = TransactionCompletion.Active,
+        var databaseFailure: Throwable? = null,
     )
 
     private data class Admission(
@@ -207,12 +229,12 @@ public class OliphauntDatabase private constructor(
 
     public val isClosed: Boolean get() = closed
 
-    public suspend fun execProtocolRaw(request: ByteArray): ByteArray = execProtocolRawOwned(request.copyOf(), transactionToken = null)
+    public suspend fun execProtocolRaw(request: ByteArray): ByteArray = execProtocolRawOwned(request.copyOf())
 
     public suspend fun execProtocolRawStream(
         request: ByteArray,
         onChunk: (ByteArray) -> Unit,
-    ): Unit = execProtocolRawStreamOwned(request.copyOf(), transactionToken = null, onChunk)
+    ): Unit = execProtocolRawStreamOwned(request.copyOf(), onChunk)
 
     public suspend fun backup(): ByteArray = runAdmitted(admitOperation(transactionToken = null)) {
         session.backup().copyOf()
@@ -243,6 +265,10 @@ public class OliphauntDatabase private constructor(
             result = block(transaction)
         } catch (callbackError: Throwable) {
             transaction.expire()
+            val databaseError =
+                stateMutex.withLock {
+                    activeTransaction?.takeIf { it.token == token }?.databaseFailure
+                }
             var rollbackError: Throwable? = null
             if (began && transactionIsActive(token)) {
                 try {
@@ -254,6 +280,9 @@ public class OliphauntDatabase private constructor(
             clearTransaction(token)
             if (rollbackError != null) {
                 throw OliphauntTransactionRollbackException(callbackError, rollbackError)
+            }
+            if (databaseError != null && databaseError !== callbackError) {
+                throw OliphauntTransactionDatabaseException(callbackError, databaseError)
             }
             throw callbackError
         }
@@ -414,7 +443,7 @@ public class OliphauntDatabase private constructor(
                 finishSettlement(token, TransactionCompletion.RollingBack, TransactionCompletion.RolledBack)
             } catch (error: Throwable) {
                 val message = "transaction rollback failed; close and reopen the database: $error"
-                poisonTransaction(token, message)
+                poisonTransaction(token, message, error)
                 throw error
             }
         }
@@ -447,7 +476,7 @@ public class OliphauntDatabase private constructor(
             result
         } catch (error: Throwable) {
             val message = "transaction COMMIT outcome is unknown; close and reopen the database: $error"
-            poisonTransaction(token, message)
+            poisonTransaction(token, message, error)
             throw error
         }
     }
@@ -505,26 +534,81 @@ public class OliphauntDatabase private constructor(
                 poisonUnknownOperation(transactionToken, error)
                 throw error
             }
+        val transactionOutcome =
+            if (transactionToken == null) {
+                null
+            } else {
+                try {
+                    inspectStructuredTransactionProtocolOutcome(response)
+                } catch (error: Throwable) {
+                    poisonUnknownOperation(transactionToken, error)
+                    throw error
+                }
+            }
         val terminalStatus =
-            try {
+            transactionOutcome?.readyStatus ?: try {
                 inspectTerminalReadyStatus(response)
             } catch (error: Throwable) {
                 poisonUnknownOperation(transactionToken, error)
                 throw error
             }
+        val ownershipViolation = transactionOutcome?.ownershipViolationMessage()
         val parsed =
             try {
                 parser(response)
             } catch (error: Throwable) {
-                validateTypedFailureStatus(terminalStatus, transactionToken)
+                if (transactionToken != null && ownershipViolation != null) {
+                    val lifecycleError = OliphauntException(
+                        "$ownershipViolation; response parsing also failed: $error",
+                        error,
+                    )
+                    poisonTransaction(
+                        transactionToken,
+                        requireNotNull(lifecycleError.message),
+                        lifecycleError,
+                    )
+                    throw lifecycleError
+                } else {
+                    validateTypedFailureStatus(terminalStatus, transactionToken)
+                }
                 throw error
             }
         if (parsed.second != terminalStatus) {
-            validateTypedFailureStatus(terminalStatus, transactionToken)
-            throw OliphauntException("typed response parser disagreed with terminal ReadyForQuery status")
+            val error = OliphauntException("typed response parser disagreed with terminal ReadyForQuery status")
+            if (transactionToken != null && ownershipViolation != null) {
+                val lifecycleError = OliphauntException(
+                    "$ownershipViolation; response parsing also failed: $error",
+                    error,
+                )
+                poisonTransaction(
+                    transactionToken,
+                    requireNotNull(lifecycleError.message),
+                    lifecycleError,
+                )
+                throw lifecycleError
+            } else {
+                validateTypedFailureStatus(terminalStatus, transactionToken)
+            }
+            throw error
+        }
+        if (transactionToken != null && ownershipViolation != null) {
+            val lifecycleError = OliphauntException(ownershipViolation)
+            poisonTransaction(transactionToken, ownershipViolation, lifecycleError)
+            throw lifecycleError
         }
         validateTypedSuccessStatus(terminalStatus, transactionToken)
         parsed.first
+    }
+
+    private fun StructuredTransactionProtocolOutcome.ownershipViolationMessage(): String? = when {
+        lifecycleCommandTag != null ->
+            "transaction structured operation completed unsupported lifecycle command $lifecycleCommandTag; " +
+                "transaction ownership is unknown, so close and reopen the database"
+
+        readyStatus == ReadyStatus.Idle ->
+            "transaction operation escaped callback ownership and left PostgreSQL idle; close and reopen the database"
+
+        else -> null
     }
 
     private suspend fun validateTypedSuccessStatus(
@@ -589,23 +673,29 @@ public class OliphauntDatabase private constructor(
             val active = activeTransaction
             if (transactionToken != null && active?.token == transactionToken) {
                 active.completion = TransactionCompletion.Failed(message)
+                active.databaseFailure = error
             }
         }
     }
 
     private suspend fun poisonEscapedTransaction(token: Long): OliphauntException {
         val message = "transaction operation escaped callback ownership and left PostgreSQL idle; close and reopen the database"
-        poisonTransaction(token, message)
-        return OliphauntException(message)
+        val error = OliphauntException(message)
+        poisonTransaction(token, message, error)
+        return error
     }
 
     private suspend fun poisonTransaction(
         token: Long,
         message: String,
+        error: Throwable? = null,
     ) {
         stateMutex.withLock {
             poisonedMessage = message
-            activeTransaction?.takeIf { it.token == token }?.completion = TransactionCompletion.Failed(message)
+            activeTransaction?.takeIf { it.token == token }?.let { active ->
+                active.completion = TransactionCompletion.Failed(message)
+                if (active.databaseFailure == null) active.databaseFailure = error
+            }
         }
     }
 
@@ -630,37 +720,53 @@ public class OliphauntDatabase private constructor(
         stateMutex.withLock { if (activeTransaction?.token == token) activeTransaction = null }
     }
 
-    internal suspend fun execProtocolRaw(
-        request: ByteArray,
-        transactionToken: Long,
-    ): ByteArray = execProtocolRawOwned(request.copyOf(), transactionToken)
-
-    internal suspend fun execProtocolRawStream(
-        request: ByteArray,
-        transactionToken: Long,
-        onChunk: (ByteArray) -> Unit,
-    ): Unit = execProtocolRawStreamOwned(request.copyOf(), transactionToken, onChunk)
-
     private suspend fun execProtocolRawOwned(
         ownedRequest: ByteArray,
-        transactionToken: Long?,
-    ): ByteArray = runAdmitted(admitOperation(transactionToken)) {
+    ): ByteArray = runAdmitted(admitOperation(transactionToken = null)) {
         ensureAdmittedOperationUsable()
-        session.execProtocolRaw(ownedRequest).copyOf()
+        runRawProtocolOperation {
+            session.execProtocolRaw(ownedRequest).copyOf()
+        }
     }
 
     private suspend fun execProtocolRawStreamOwned(
         ownedRequest: ByteArray,
-        transactionToken: Long?,
         onChunk: (ByteArray) -> Unit,
     ) {
-        runAdmitted(admitOperation(transactionToken)) {
+        runAdmitted(admitOperation(transactionToken = null)) {
             ensureAdmittedOperationUsable()
-            session.execProtocolRawStream(ownedRequest) { chunk ->
-                withProtocolStreamCallbackContext(this) {
-                    onChunk(chunk.copyOf())
+            val outcome =
+                runRawProtocolOperation {
+                    session.execProtocolRawStream(ownedRequest) { chunk ->
+                        withProtocolStreamCallbackContext(this) {
+                            onChunk(chunk.copyOf())
+                        }
+                    }
                 }
+            when (outcome) {
+                ProtocolStreamOutcome.Complete -> Unit
+                is ProtocolStreamOutcome.CallbackAborted -> throw outcome.error
             }
+        }
+    }
+
+    private suspend fun <T> runRawProtocolOperation(
+        operation: suspend () -> T,
+    ): T = try {
+        operation()
+    } catch (error: Throwable) {
+        poisonUnknownRawProtocolOperation(error)
+        throw error
+    }
+
+    private suspend fun poisonUnknownRawProtocolOperation(
+        error: Throwable,
+    ) {
+        val message =
+            "raw protocol operation outcome is unknown before confirmed recovery; " +
+                "close and reopen the database: $error"
+        stateMutex.withLock {
+            poisonedMessage = message
         }
     }
 
@@ -731,11 +837,17 @@ public class OliphauntDatabase private constructor(
             config: EngineConfig,
             engine: OliphauntEngine,
         ): OliphauntDatabase {
+            val startupGucs = config.startupGucs.toList()
+            val extensions = config.extensions.toList()
             validateDatabaseStorage(config.storage)
             validateStartupIdentity(config.username, "username")
             validateStartupIdentity(config.database, "database")
-            validateStartupGucs(config.startupGucs)
-            val normalized = config.copy(extensions = validateGeneratedExtensionIds(config.extensions))
+            validateStartupGucs(startupGucs)
+            val normalized =
+                config.copy(
+                    startupGucs = startupGucs,
+                    extensions = validateGeneratedExtensionIds(extensions),
+                )
             return OliphauntDatabase(engine.open(normalized))
         }
 
@@ -764,19 +876,6 @@ public class OliphauntTransaction internal constructor(
     private var expired = false
 
     public val isClosed: Boolean get() = expired
-
-    public suspend fun execProtocolRaw(request: ByteArray): ByteArray {
-        ensureActiveHandle()
-        return database.execProtocolRaw(request, transactionToken = token)
-    }
-
-    public suspend fun execProtocolRawStream(
-        request: ByteArray,
-        onChunk: (ByteArray) -> Unit,
-    ) {
-        ensureActiveHandle()
-        database.execProtocolRawStream(request, transactionToken = token, onChunk = onChunk)
-    }
 
     public suspend fun rollback() {
         ensureActiveHandle()

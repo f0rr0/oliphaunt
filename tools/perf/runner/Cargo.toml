@@ -5,14 +5,18 @@ edition = "2024"
 rust-version = "1.93"
 license.workspace = true
 publish = false
+default-run = "oliphaunt-perf"
 
 [features]
 default = []
+rust-api-model = []
+rust-api-model-wasix = ["rust-api-model", "dep:oliphaunt-wasix"]
 
 [dependencies]
 anyhow = "1"
 futures-util = "0.3"
 oliphaunt = { version = "0.1.1", path = "../../../src/sdks/rust" }
+oliphaunt-wasix = { version = "0.1.1", path = "../../../src/bindings/wasix-rust/crates/oliphaunt-wasix", optional = true }
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -23,3 +27,8 @@ sqlx = { version = "0.8", default-features = false, features = [
 tar = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 tokio-postgres = "0.7"
+
+[[bin]]
+name = "oliphaunt-rust-api-model"
+path = "src/rust_api_model.rs"
+required-features = ["rust-api-model"]

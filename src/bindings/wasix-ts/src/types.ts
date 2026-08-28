@@ -14,9 +14,12 @@ import type { PersistentWasixStorage, WasixStorage } from './storage.js';
 export type BinaryInput = ArrayBuffer | ArrayBufferView | Uint8Array | ReadonlyArray<number>;
 /**
  * Synchronous, serial protocol consumer. The callback must not return a
- * Promise or thenable; returning one rejects the stream and poisons the
- * underlying PostgreSQL session because callback completion is the
- * backpressure acknowledgement.
+ * Promise or thenable because callback completion is the backpressure
+ * acknowledgement. A thrown callback, including the contract error for
+ * returning a thenable, is surfaced unchanged only after the runtime confirms
+ * recovery to `ReadyForQuery`; the database then remains reusable. An
+ * independent execution, transport, or recovery failure is authoritative and
+ * poisons the database instead.
  */
 export type ProtocolChunkCallback = (chunk: Uint8Array) => void;
 
@@ -248,6 +251,11 @@ export type OliphauntDatabase = {
   execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
   /** Create a session-preserving PostgreSQL online physical backup. */
   backup(): Promise<Uint8Array>;
+  /**
+   * Own the session for one callback. Use callback return/throw or rollback()
+   * for lifecycle; manual BEGIN/START/COMMIT/END/ABORT/PREPARE TRANSACTION and
+   * AND CHAIN are unsupported. SAVEPOINT and ROLLBACK TO are allowed.
+   */
   transaction<T>(body: (transaction: OliphauntTransaction) => Promise<T> | T): Promise<T>;
   /**
    * Stop admitting work and perform one terminal teardown attempt.
@@ -284,8 +292,6 @@ export type OliphauntTransaction = {
   ): Promise<ExecResult<Row>>;
   describe(sql: string, parameterTypeOids?: ReadonlyArray<number>): Promise<DescribeResult>;
   rollback(): Promise<void>;
-  execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
-  execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
 };
 
 export type OliphauntClient = {

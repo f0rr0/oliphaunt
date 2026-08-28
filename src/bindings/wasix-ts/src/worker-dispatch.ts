@@ -1,4 +1,8 @@
-import { WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES, type WasixDatabaseSession } from './database.js';
+import {
+  WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES,
+  type WasixDatabaseSession,
+  type WasixProtocolStreamOutcome,
+} from './database.js';
 import { restoreWasixSerialized } from './client-common.js';
 import {
   type SerializedOpenOptions,
@@ -11,6 +15,8 @@ import { prepareTransferableBytes } from './worker-transfer.js';
 export type WorkerResponder = (response: WorkerResponse, transfer?: readonly ArrayBuffer[]) => void;
 
 export type WorkerSessionOpener = (options: SerializedOpenOptions) => Promise<WasixDatabaseSession>;
+
+class WorkerStreamCallbackAborted extends Error {}
 
 /** @internal One request state machine shared by browser and server worker realms. */
 export function createWorkerSessionDispatcher(
@@ -52,6 +58,9 @@ export function createWorkerSessionDispatcher(
           const control = new Int32Array(request.control);
           let sequence = 0;
           const onChunk = (chunk: Uint8Array): void => {
+            if (Atomics.load(control, 1) !== 0) {
+              throw new WorkerStreamCallbackAborted('protocol stream consumer failed');
+            }
             sequence += 1;
             const prepared = prepareTransferableBytes(chunk);
             respond(
@@ -67,22 +76,29 @@ export function createWorkerSessionDispatcher(
               Atomics.wait(control, 0, sequence - 1);
             }
             if (Atomics.load(control, 1) !== 0) {
-              throw new Error('protocol stream consumer failed');
+              throw new WorkerStreamCallbackAborted('protocol stream consumer failed');
             }
           };
+          let outcome: WasixProtocolStreamOutcome;
           if (session.execStream === undefined) {
             const response = await session.exec(request.input, request.persistence);
-            for (
-              let offset = 0;
-              offset < response.length;
-              offset += WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES
-            ) {
-              onChunk(response.slice(offset, offset + WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES));
+            outcome = 'complete';
+            try {
+              for (
+                let offset = 0;
+                offset < response.length;
+                offset += WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES
+              ) {
+                onChunk(response.slice(offset, offset + WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES));
+              }
+            } catch (error) {
+              if (!(error instanceof WorkerStreamCallbackAborted)) throw error;
+              outcome = 'callbackAborted';
             }
           } else {
-            await session.execStream(request.input, onChunk, request.persistence);
+            outcome = await session.execStream(request.input, onChunk, request.persistence);
           }
-          respond({ id: request.id, ok: true });
+          respond({ id: request.id, ok: true, streamOutcome: outcome });
           return;
         }
         case 'sync':

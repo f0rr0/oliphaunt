@@ -30,7 +30,8 @@ same-version clones and restores.
 
 ## Tool API
 
-Enable the `tools` feature for the optional `tools` namespace:
+Enable the `tools` feature for fluent database tool methods and the optional
+`tools` options/error namespace:
 
 ```toml
 [dependencies]
@@ -44,37 +45,33 @@ use oliphaunt_wasix::{Oliphaunt, tools};
 
 fn run() -> oliphaunt_wasix::Result<()> {
     let mut database = Oliphaunt::open()?;
-    let sql = tools::pg_dump(
-        &mut database,
-        tools::PgDumpOptions::new().arg("--schema-only"),
-    )?;
+    let sql = database.pg_dump(tools::PgDumpOptions::new().arg("--schema-only"))?;
     assert!(!sql.is_empty());
     database.close()?;
     Ok(())
 }
 ```
 
-The tools are free functions rather than database or server methods, so the
-core database API stays focused. On the root direct API they take
-`&mut Oliphaunt` and run synchronously against the caller-owned session. They
-cannot run inside a callback transaction. The tool connection resets PostgreSQL
+The methods are available on database handles, not server or transaction
+handles. On root `Oliphaunt` they take `&mut self` and run synchronously against
+the caller-owned session. They cannot run inside a callback transaction. The tool connection resets PostgreSQL
 session state before and after it runs, so
 prepared statements and session settings on the direct handle do not survive.
-`tools::pg_dump()` returns UTF-8 SQL text and `tools::psql()` returns UTF-8
+`database.pg_dump()` returns UTF-8 SQL text and `database.psql()` returns UTF-8
 standard output. Use `PsqlOptions::command(...)` for one
 command or `PsqlOptions::script(...)` for a complete SQL script. `pg_dump()`
 returns standard PostgreSQL 18 plain-text output unchanged, including its
 `COPY` data and `\\restrict`/`\\unrestrict` security delimiters.
 
-Use `worker::tools` to run the operation through a dedicated database owner
-thread:
+Use the same fluent methods on `AsyncOliphaunt` to run the operation through a
+dedicated database owner thread:
 
 ```rust,no_run
-use oliphaunt_wasix::worker::{Oliphaunt, tools};
+use oliphaunt_wasix::{AsyncOliphaunt, tools};
 
-async fn run_on_worker() -> oliphaunt_wasix::Result<()> {
-    let database = Oliphaunt::open().await?;
-    let sql = tools::pg_dump(&database, tools::PgDumpOptions::new()).await?;
+async fn run_asynchronously() -> oliphaunt_wasix::Result<()> {
+    let database = AsyncOliphaunt::open().await?;
+    let sql = database.pg_dump(tools::PgDumpOptions::new()).await?;
     assert!(!sql.is_empty());
     database.close().await
 }
@@ -150,15 +147,15 @@ fn clone_database() -> oliphaunt_wasix::Result<()> {
 Physical restore accepts an absent or empty managed-root directory and
 publishes a new root only after validating and staging the complete archive.
 The root call runs to completion or returns an error. The async
-`worker::Oliphaunt::restore` uses a temporary owner thread; once publication
+`AsyncOliphaunt::restore` uses a temporary owner thread; once publication
 starts, abandoning its future does not promise cancellation.
 
 For a logical restore, run
-`tools::psql(&mut database, PsqlOptions::new().script(sql))`. Do not pass the
+`database.psql(PsqlOptions::new().script(sql))`. Do not pass the
 script to `database.execute(...)`: plain `pg_dump` output can include `psql`
 meta commands. Oliphaunt does not expose a second logical-restore abstraction.
-With a worker handle, use the corresponding
-`worker::tools::psql(&database, ...).await` call.
+With an async handle, await the corresponding
+`database.psql(...).await` call.
 
 ## Upgrade Guidance
 
@@ -166,11 +163,11 @@ Use logical dump and restore when upgrading between `oliphaunt-wasix` versions o
 changing shipped runtime assets:
 
 1. Open the old database with the old crate/runtime.
-2. Create a logical dump with `tools::pg_dump(&mut database, ...)`, or use
+2. Create a logical dump with `database.pg_dump(...)`, or use
    `oliphaunt-wasix-dump`.
 3. Open a fresh database with the new crate/runtime.
 4. Feed the script through
-   `tools::psql(&mut database, PsqlOptions::new().script(sql))`.
+   `database.psql(PsqlOptions::new().script(sql))`.
 
 Use logical dumps for general upgrades. Physical data-dir archives are for the
 same runtime family and database format.

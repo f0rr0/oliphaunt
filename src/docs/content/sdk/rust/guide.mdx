@@ -9,9 +9,11 @@ Use the Rust SDK in Tauri backends and native Rust desktop apps. It owns the
 complete native mode model: direct for lowest latency, broker for helper-process
 isolation, and server when independent PostgreSQL clients are required.
 
-Execution placement is a separate choice. The root API is synchronous and runs
-PostgreSQL or protocol transport on the calling thread. The explicit
-`oliphaunt::worker` API owns a dedicated thread and exposes the same concepts
+Calling shape is a separate choice. Root `Oliphaunt` is synchronous and blocks
+the caller until the selected runtime completes, without first dispatching
+through an async SDK owner. In native direct mode, `liboliphaunt` owns
+PostgreSQL execution on its backend thread.
+Root `AsyncOliphaunt` owns a dedicated SDK thread and exposes the same concepts
 through async methods.
 
 <Callout type="info" title="Rust owns the complete native mode surface">
@@ -46,13 +48,13 @@ close.
 <!-- oliphaunt-snippet: oliphaunt-rust -->
 
 ```rust
-use oliphaunt::{Extension, Oliphaunt};
+use oliphaunt::{DatabaseStorage, Extension, Oliphaunt};
 
 fn open_database() -> oliphaunt::Result<()> {
     let mut db = Oliphaunt::builder()
-        .directory(".oliphaunt")
+        .storage(DatabaseStorage::Directory(".oliphaunt".into()))
         .direct()
-        .extension(Extension::Vector)
+        .extension(Extension::VECTOR)
         .open()?;
 
     let rows = db.query("SELECT 1::text AS value")?;
@@ -64,11 +66,12 @@ fn open_database() -> oliphaunt::Result<()> {
 }
 ```
 
-The root handle is exclusive, `!Send + !Sync`, and stays on the thread that
-opened it. Keep it in thread-local application state or on an application-owned
-database thread. Use `oliphaunt::worker::Oliphaunt` when async tasks need a
-cloneable `Send + Sync` handle. Cloned worker handles point to the same owner and
-do not create additional PostgreSQL sessions.
+The root handle is exclusive and `Send + !Sync`: ownership may move to another
+thread, but the session cannot be shared concurrently. Keep it in exclusively
+owned application state or on an application-owned database thread. Use
+`oliphaunt::AsyncOliphaunt` when async tasks need a cloneable `Send + Sync`
+handle. Cloned async handles point to the same owner and do not create
+additional PostgreSQL sessions.
 
 </Step>
 <Step>
@@ -106,44 +109,45 @@ handles directly to frontend code.
 
 ### Configure
 
-Configure storage, runtime selection, startup identity, PostgreSQL startup GUCs,
-selected extensions, broker executable, and server executable through the
-builder. `Oliphaunt::builder()` defaults to an SDK-owned temporary directory
-initialized from the packaged cluster seed; call `.directory(path)` when data must
-persist.
+Configure storage with `DatabaseStorage`, then select startup identity,
+PostgreSQL startup GUCs, extensions, and database topology through the database
+builder. `Oliphaunt::open()` and `AsyncOliphaunt::open().await` are the default
+direct, SDK-owned temporary-directory terminals. Use
+`.storage(DatabaseStorage::Directory(path))` when data must persist.
 
-The terminal validates topology-specific choices. Use `broker_executable` only
-with `broker().open()`, and use `listen` or `server_executable` only with
-`open_server()`. Do not add `.direct()` or `.broker()` before `open_server()`;
-mismatches return `InvalidConfig` rather than being ignored.
+Use `broker_executable` only with `broker().open()`. Local servers have a
+separate `OliphauntServer::builder()` or `AsyncOliphauntServer::builder()` with
+listener/server-executable options and a `start()` terminal. Separate builders
+make cross-topology configuration impossible to express.
 
 </Step>
 <Step>
 
 ### Choose execution placement
 
-Use the root import when the current thread is intentionally the database
-thread:
+Use the root import when the caller can intentionally block until each
+operation completes:
 
 ```rust
 use oliphaunt::Oliphaunt;
 
-let mut db = Oliphaunt::builder().temporary_directory().open()?;
+let mut db = Oliphaunt::open()?;
 let rows = db.query("SELECT 42::text AS answer")?;
 ```
 
-Use the explicit worker import when the application executor must stay free:
+Use the asynchronous type when the application executor must stay free:
 
 ```rust
-use oliphaunt::worker::Oliphaunt;
+use oliphaunt::AsyncOliphaunt;
 
-let db = Oliphaunt::builder().temporary_directory().open().await?;
+let db = AsyncOliphaunt::open().await?;
 let rows = db.query("SELECT 42::text AS answer").await?;
 ```
 
-The worker runs PostgreSQL synchronously on its own thread. Async calls cross a
-bounded in-process queue and resolve when that worker replies; they do not make
-one PostgreSQL session execute queries concurrently.
+The async API owns its selected runtime on one SDK thread. Calls await fair,
+bounded admission, enter one in-process FIFO, and resolve when that owner
+replies; saturation suspends the future instead of returning a queue-full error.
+This does not make one PostgreSQL session execute queries concurrently.
 
 </Step>
 <Step>
@@ -151,13 +155,19 @@ one PostgreSQL session execute queries concurrently.
 ### Choose a mode
 
 `direct()` runs one serialized embedded session in the process. With the root
-API it is a no-hop call; with `oliphaunt::worker` it runs on the owner thread.
+API there is no SDK queue hop; with `AsyncOliphaunt` the SDK calls it from the
+owner thread.
 
 `broker()` talks to a local helper process. Use it for desktop apps that need
-process isolation, crash recovery, or several instances managed by one application.
+process isolation or several instances managed by one application. A helper
+failure is terminal for that database handle: close it, open a new handle on the
+same persistent directory, and let PostgreSQL recover committed data from WAL.
+Oliphaunt never replaces the helper invisibly or replays an uncertain operation.
 
-`open_server()` starts a PostgreSQL-compatible server process and returns an
-`OliphauntServer`. Use its connection string when `psql`, ORMs, or true
+`OliphauntServer::builder().start()` (or the async server builder) starts a
+PostgreSQL-compatible server process. The returned lifecycle handle exposes its
+connection string, closed state, and close operation. Use an ordinary driver or
+ORM through that connection string when `psql`, pools, cancellation, SQL, or
 independent client sessions matter.
 
 </Step>
@@ -166,20 +176,51 @@ independent client sessions matter.
 ### Handle lifecycle
 
 Root transactions exclusively borrow the database until commit or rollback,
-and `close()` tears down synchronously. Before starting a long root call, obtain
-`db.cancel_handle()` and move that small thread-safe capability to the thread
-which may interrupt it.
+and `close()` tears down synchronously. Transaction callbacks return ordinary
+`Result<T, E>` with `E: From<oliphaunt::Error>`, so database calls use `?` and
+business-rule failures can remain application-owned. `CallbackAndRollback`
+means rollback was actually sent and failed; `CallbackAndDatabase` means an
+independent database or protocol failure expired the transaction and no
+rollback was sent. Before starting a long root call, obtain `db.cancel_handle()`
+and move that small thread-safe capability to the thread which may interrupt it.
 
-Worker work queues fairly on one owner executor. Worker `close().await`
-establishes an ordered cutoff: work already admitted drains, later application
-work is rejected, and then the selected runtime closes or detaches. A required
+Managed transaction handles deliberately omit raw protocol. Return an error or
+call `rollback()` instead of sending manual transaction-lifecycle SQL.
+Savepoints and `ROLLBACK TO SAVEPOINT` remain valid; manual lifecycle commands
+and `AND CHAIN` are unsupported. If PostgreSQL's response proves that callback
+ownership escaped, the database becomes close-only and the SDK sends no
+speculative `COMMIT` or `ROLLBACK`. A protocol adapter which owns the whole
+lifecycle may instead use raw protocol on the root database handle.
+
+Root transaction callback panics are contained long enough to settle the
+transaction, then resumed when settlement is known. An async transaction-body
+panic unwinds the awaiting task immediately; dropping its active transaction
+queues best-effort rollback in the owner FIFO. That rollback is not promised to
+finish before the unwind reaches the caller, but later database work cannot
+overtake it.
+
+Async work admits and queues fairly on one owner executor. Async `close().await`
+establishes an ordered cutoff: work already in the owner FIFO drains, capacity
+waiters and later application work are rejected, and then the selected runtime
+closes or detaches. A required
 `COMMIT` or `ROLLBACK` remains admissible for a transaction whose `BEGIN`
-crossed the cutoff first. Worker `cancel().await` is out of band and does not
+crossed the cutoff first. Async `cancel().await` is out of band and does not
 wait behind the SQL FIFO.
 
 Once either placement starts runtime teardown, the handle is terminal even
 when teardown fails: `is_closed()` is true, later work is rejected, and
-repeated close calls return the same retained result.
+repeated close calls return the same retained result. Root/session ownership is
+released only after successful teardown. A failed close intentionally retains
+that ownership until process exit rather than attempting a second destructive
+cleanup.
+
+Raw-stream callbacks return `()` for infallible delivery or `Result<(), E>`
+for a typed parser stop. Root callbacks run inline and may borrow caller state;
+async callbacks run on the owner thread and require `Send + 'static`. A root
+callback panic resumes only after confirmed protocol recovery. A recovered
+async callback panic is `RawStreamError::CallbackPanicked` and leaves the
+session reusable. Independent transport or recovery failure is
+`RawStreamError::Database`, takes precedence, and makes the session close-only.
 
 </Step>
 <Step>
@@ -198,7 +239,7 @@ implicit selectors. If you select `vector`, the generated artifacts include
 Use `backup()` and static restore instead of copying PostgreSQL directories from
 application code. Direct and broker expose the one native physical archive;
 restore accepts a new or existing-empty destination. Root backup and restore
-are synchronous. Their `oliphaunt::worker` counterparts are async and move
+are synchronous. Their `AsyncOliphaunt` counterparts are async and move
 blocking work off the polling executor thread. Server applications use normal
 PostgreSQL tooling.
 
@@ -231,6 +272,6 @@ Check storage ownership errors, missing runtime assets, unsupported-mode errors,
 selection errors, and SQLSTATE-bearing PostgreSQL errors. If concurrency looks
 surprising, confirm the selected mode first: direct mode serializes work by
 design, while independent sessions require server mode. If the issue is a
-blocked async executor rather than database placement, confirm the import:
-`oliphaunt::Oliphaunt` is caller-thread synchronous and
-`oliphaunt::worker::Oliphaunt` owns a dedicated thread.
+blocked async executor rather than database topology, confirm the type:
+`oliphaunt::Oliphaunt` blocks its caller and `oliphaunt::AsyncOliphaunt` owns a
+dedicated SDK thread.

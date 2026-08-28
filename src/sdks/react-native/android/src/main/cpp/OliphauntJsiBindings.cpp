@@ -161,6 +161,16 @@ jsi::Value createError(jsi::Runtime &runtime, const std::string &message)
       .callAsConstructor(runtime, jsi::String::createFromUtf8(runtime, message));
 }
 
+jsi::Value createProtocolCallbackAbortedError(
+    jsi::Runtime &runtime,
+    const std::string &message)
+{
+  auto value = createError(runtime, message);
+  auto object = value.asObject(runtime);
+  object.setProperty(runtime, "__oliphauntProtocolCallbackAborted", true);
+  return object;
+}
+
 size_t copySizeArgument(jsi::Runtime &runtime, double value, const char *name)
 {
   constexpr double kMaxSafeInteger = 9007199254740991.0;
@@ -440,6 +450,7 @@ class OliphauntJsiStreamCallback
     javaClassLocal()->registerNatives({
         makeNativeMethod("nativeEmitChunk", nativeEmitChunk),
         makeNativeMethod("nativeResolveUnit", nativeResolveUnit),
+        makeNativeMethod("nativeRejectCallbackAborted", nativeRejectCallbackAborted),
         makeNativeMethod("nativeReject", nativeReject),
     });
   }
@@ -458,7 +469,7 @@ class OliphauntJsiStreamCallback
     auto acknowledgement = std::make_shared<ChunkAcknowledgement>();
     stream->acknowledgeWith(acknowledgement);
     try {
-      stream->onChunk->call([token, stream, bytes = std::move(bytes), acknowledgement](
+      stream->onChunk->call([bytes = std::move(bytes), acknowledgement](
                                 jsi::Runtime &runtime,
                                 jsi::Function &chunkFunction) mutable {
         if (gBindingsInvalidated.load()) {
@@ -475,32 +486,12 @@ class OliphauntJsiStreamCallback
                 runtime,
                 "__oliphauntProtocolChunkFailure");
             if (failureMarker.isBool() && failureMarker.getBool()) {
-              auto failure = std::make_shared<jsi::Value>(
-                  runtime,
-                  resultObject.getProperty(runtime, "error"));
-              takePendingStream(token);
-              if (stream->settle()) {
-                stream->reject->call([failure](
-                                         jsi::Runtime &runtime,
-                                         jsi::Function &rejectFunction) {
-                  rejectFunction.call(runtime, jsi::Value(runtime, *failure));
-                });
-              }
               acknowledgement->reject("protocol stream callback failed");
               return;
             }
           }
           acknowledgement->resolve();
         } catch (const jsi::JSError &error) {
-          takePendingStream(token);
-          if (stream->settle()) {
-            auto value = std::make_shared<jsi::Value>(runtime, error.value());
-            stream->reject->call([value](
-                                     jsi::Runtime &runtime,
-                                     jsi::Function &rejectFunction) {
-              rejectFunction.call(runtime, jsi::Value(runtime, *value));
-            });
-          }
           acknowledgement->reject(error.what());
         } catch (const std::exception &error) {
           acknowledgement->reject(error.what());
@@ -531,6 +522,31 @@ class OliphauntJsiStreamCallback
     }
     stream->resolve->call([](jsi::Runtime &runtime, jsi::Function &resolveFunction) {
       resolveFunction.call(runtime, jsi::Value::undefined());
+    });
+  }
+
+  static void nativeRejectCallbackAborted(
+      jni::alias_ref<OliphauntJsiStreamCallback>,
+      jlong token,
+      jni::alias_ref<jni::JString> message)
+  {
+    auto stream = takePendingStream(static_cast<int64_t>(token));
+    if (stream == nullptr) {
+      return;
+    }
+    if (gBindingsInvalidated.load() || !stream->settle()) {
+      return;
+    }
+    std::string errorMessage =
+        message != nullptr
+        ? message->toStdString()
+        : "protocol stream callback aborted after recovery to ReadyForQuery";
+    stream->reject->call([errorMessage](
+                             jsi::Runtime &runtime,
+                             jsi::Function &rejectFunction) {
+      rejectFunction.call(
+          runtime,
+          createProtocolCallbackAbortedError(runtime, errorMessage));
     });
   }
 

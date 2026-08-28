@@ -2,13 +2,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use oliphaunt::{Error, Result};
-
-use super::NativeExtensionStaticSymbolAlias;
 use super::extension_artifact::{
     mobile_static_archive_artifact_relative_path,
     mobile_static_dependency_archive_artifact_relative_path,
 };
+use super::{Error, NativeExtensionStaticSymbolAlias, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct MobileStaticArchive {

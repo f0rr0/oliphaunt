@@ -36,10 +36,13 @@ selected by the application lockfile):
 oliphaunt-wasix = "0.1"
 ```
 
-Enable the extension API explicitly:
+Enable only the extension selectors the application uses:
 
 ```toml
-oliphaunt-wasix = { version = "0.1", features = ["extensions"] }
+oliphaunt-wasix = { version = "0.1", features = [
+  "extension-vector",
+  "extension-pg-trgm",
+] }
 ```
 
 The repository source version remains `0.0.0` until Release Please creates the
@@ -83,13 +86,17 @@ generated startup configuration, including `shared_preload_libraries`, before
 PostgreSQL starts:
 
 ```rust,no_run
-use oliphaunt_wasix::{extensions, Oliphaunt};
+use oliphaunt_wasix::{Extension, Oliphaunt};
 
 let mut db = Oliphaunt::builder()
-    .extensions([extensions::VECTOR, extensions::PG_TRGM])
+    .extensions([Extension::VECTOR, Extension::PG_TRGM])
     .open()?;
 # Ok::<_, Box<dyn std::error::Error>>(())
 ```
+
+Selection provides runtime artifacts and pre-start configuration; it does not
+create database-local extension objects. Migrations remain responsible for
+explicit `CREATE EXTENSION` statements.
 
 Archive extraction rejects parent traversal, absolute paths, symlinks,
 hardlinks, device nodes, and unsupported entry types.

@@ -61,11 +61,16 @@ Unsupported and mismatched values fail rather than being guessed.
 `execProtocolRawStream` delivers the same response through a synchronous callback
 with bounded backpressure, so COPY-sized responses need not be retained as one
 JavaScript value. The callback is invoked serially and must return before the
-next chunk can be produced. Returning a Promise or thenable rejects the stream
-and poisons the session; an asynchronous callback cannot provide this
-backpressure contract. The callback also cannot reenter the same database or
-transaction; fire-and-forget calls are rejected instead of being queued behind
-the stream. Neither method interprets responses for the caller.
+next chunk can be produced. A thrown callback, including the deterministic
+error for returning a Promise or thenable, is rethrown unchanged only after the
+guest confirms recovery to `ReadyForQuery`; the recovered database remains
+reusable. An asynchronous callback cannot provide this backpressure contract.
+The callback also cannot reenter the same database or transaction;
+fire-and-forget calls are rejected instead of being queued behind the stream.
+Neither method interprets responses for the caller. A buffered raw rejection,
+or a streamed execution, transport, or recovery failure, poisons the handle and
+takes precedence over a simultaneous callback error; close it and open a new
+database instead of assuming the physical session recovered.
 
 PostgreSQL `ErrorResponse` values reject with `PostgresError`, including the
 SQLSTATE and structured diagnostic fields.
@@ -85,11 +90,28 @@ boundary. It mirrors query/raw query, execute, exec, and describe; database-leve
 operations reject while it is active. One-shot `rollback()` closes the
 transaction and lets the callback return without a later commit.
 
+Raw protocol is database-only and deliberately absent from the callback handle.
+Do not issue manual `BEGIN`, `START TRANSACTION`, `COMMIT`, `END`, `ABORT`,
+`PREPARE TRANSACTION`, or `AND CHAIN` inside the callback; return/throw or call
+`rollback()` instead. `SAVEPOINT` and `ROLLBACK TO` are supported. `ROLLBACK AND
+CHAIN` is unsupported contract misuse and has the same PostgreSQL wire
+tag/readiness state as `ROLLBACK TO`, so the SDK validates the actual protocol
+boundary rather than parsing SQL. A proven ownership escape makes the database
+close-only and never causes a speculative SDK `COMMIT` or `ROLLBACK`.
+
 Callback failures trigger a best-effort `ROLLBACK`. Once `COMMIT` has been
 sent, the binding never sends a second rollback. PostgreSQL's clean `ROLLBACK`
 response is a known aborted outcome; a transport failure or malformed response
 after `COMMIT` makes the outcome unknown and poisons the handle until close.
 Persistent publication completes before a successful transaction resolves.
+After rollback and its required publication succeed, the original callback
+failure is rethrown unchanged. If the callback and rollback both fail, an
+`AggregateError` preserves the callback failure followed by the rollback
+failure. If an earlier independent database or protocol failure has already
+poisoned or expired transaction ownership and the callback then throws a
+different value, an `AggregateError` preserves the callback failure followed by
+that database failure; the database is close-only. Ordinary PostgreSQL statement
+errors that remain safely rollbackable are not automatically aggregated.
 
 ## Storage
 
@@ -196,13 +218,16 @@ import Oliphaunt from '@oliphaunt/wasix-ts';
 import pgtap from '@oliphaunt/extension-pgtap-wasix';
 
 await using database = await Oliphaunt.open({ extensions: [pgtap] });
+await database.execute('CREATE EXTENSION pgtap');
 const version = await database.query('select pgtap_version()');
 ```
 
 The binding verifies each carrier and its declared dependencies, installs
-artifacts before startup, applies required startup settings, and runs declared
-setup SQL. It does not infer extension upgrades or migrations for an existing
-database.
+artifacts before startup, and applies required startup/preload settings. It does
+not run database-local `CREATE EXTENSION`, `LOAD`, schema, post-create, upgrade,
+or migration SQL. Applications and ORM migrations own those ordinary PostgreSQL
+statements explicitly; selecting a carrier makes its code available but leaves
+the extension uninstalled in the database.
 
 ## Calling shape and execution placement
 

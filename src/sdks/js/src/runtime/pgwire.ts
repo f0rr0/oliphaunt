@@ -1,23 +1,16 @@
 import type { ByteStream } from './byte-stream.js';
 import { connectEndpoint, type LocalEndpoint } from './node-adapter.js';
+import { throwCollectedCloseFailures } from './close.js';
 
 const PROTOCOL_VERSION_3 = 196_608;
-const CANCEL_REQUEST_CODE = 80_877_102;
-
-export type BackendKeyData = {
-  processId: number;
-  secretKey: number;
-};
 
 export class PostgresWireClient {
   readonly #stream: ByteStream;
-  readonly #endpoint: LocalEndpoint;
-  readonly #backendKey: BackendKeyData;
+  #terminateRequested = false;
+  #streamClosed = false;
 
-  private constructor(stream: ByteStream, endpoint: LocalEndpoint, backendKey: BackendKeyData) {
+  private constructor(stream: ByteStream) {
     this.#stream = stream;
-    this.#endpoint = endpoint;
-    this.#backendKey = backendKey;
   }
 
   static async connect(
@@ -26,17 +19,23 @@ export class PostgresWireClient {
     database: string,
   ): Promise<PostgresWireClient> {
     const stream = await connectEndpoint(endpoint);
-    await stream.writeAll(encodeStartupMessage(username, database));
-    const backendKey = { current: undefined as BackendKeyData | undefined };
-    await readUntilReady(stream, {
-      includeMessages: false,
-      errorIsFatal: true,
-      backendKey,
-    });
-    if (backendKey.current === undefined) {
-      throw new Error('native server did not return BackendKeyData during startup');
+    try {
+      await stream.writeAll(encodeStartupMessage(username, database));
+      await readUntilReady(stream, {
+        includeMessages: false,
+        errorIsFatal: true,
+      });
+      return new PostgresWireClient(stream);
+    } catch (error) {
+      const failures: unknown[] = [error];
+      try {
+        await stream.close();
+      } catch (closeError) {
+        failures.push(closeError);
+      }
+      throwCollectedCloseFailures(failures, 'native server startup connection cleanup failed');
+      throw error;
     }
-    return new PostgresWireClient(stream, endpoint, backendKey.current);
   }
 
   async execProtocolRaw(request: Uint8Array): Promise<Uint8Array> {
@@ -47,30 +46,30 @@ export class PostgresWireClient {
     });
   }
 
-  async execProtocolStream(
-    request: Uint8Array,
-    onChunk: (chunk: Uint8Array) => void,
-  ): Promise<void> {
-    await this.#stream.writeAll(request);
-    await readUntilReady(this.#stream, {
-      includeMessages: false,
-      errorIsFatal: false,
-      onChunk,
-    });
-  }
-
   async terminate(): Promise<void> {
-    await this.#stream.writeAll(new Uint8Array([0x58, 0, 0, 0, 4]));
-    await this.#stream.close();
+    const failures: unknown[] = [];
+    if (!this.#terminateRequested) {
+      this.#terminateRequested = true;
+      try {
+        await this.#stream.writeAll(new Uint8Array([0x58, 0, 0, 0, 4]));
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (!this.#streamClosed) {
+      try {
+        await this.#stream.close();
+        this.#streamClosed = true;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    throwCollectedCloseFailures(failures, 'native server client termination failed');
   }
 
-  async cancel(): Promise<void> {
-    const stream = await connectEndpoint(this.#endpoint);
-    try {
-      await stream.writeAll(encodeCancelRequest(this.#backendKey));
-    } finally {
-      await stream.close();
-    }
+  /** @internal Whether the exact client stream has been released. */
+  get isTerminated(): boolean {
+    return this.#streamClosed;
   }
 }
 
@@ -90,36 +89,14 @@ export function encodeStartupMessage(username: string, database: string): Uint8A
   return Uint8Array.from(out);
 }
 
-export function encodeCancelRequest(key: BackendKeyData): Uint8Array {
-  const out: number[] = [];
-  pushI32(out, 16);
-  pushI32(out, CANCEL_REQUEST_CODE);
-  pushI32(out, key.processId);
-  pushI32(out, key.secretKey);
-  return Uint8Array.from(out);
-}
-
-export function parseBackendKeyData(body: Uint8Array): BackendKeyData {
-  if (body.length !== 8) {
-    throw new Error(`native server returned invalid BackendKeyData length ${body.length}`);
-  }
-  return {
-    processId: readI32(body, 0),
-    secretKey: readI32(body, 4),
-  };
-}
-
 async function readUntilReady(
   stream: ByteStream,
   options: {
     includeMessages: boolean;
     errorIsFatal: boolean;
-    backendKey?: { current: BackendKeyData | undefined };
-    onChunk?: (chunk: Uint8Array) => void;
   },
 ): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
-  let callbackError: unknown;
   for (;;) {
     const header = await stream.readExactly(5);
     const tag = header[0];
@@ -137,21 +114,9 @@ async function readUntilReady(
     if (options.includeMessages) {
       chunks.push(frame);
     }
-    if (options.onChunk !== undefined && callbackError === undefined) {
-      try {
-        options.onChunk(frame);
-      } catch (error) {
-        callbackError = error;
-      }
-    }
     switch (tag) {
       case 0x52:
         handleAuthentication(body);
-        break;
-      case 0x4b:
-        if (options.backendKey !== undefined) {
-          options.backendKey.current = parseBackendKeyData(body);
-        }
         break;
       case 0x45:
         if (options.errorIsFatal) {
@@ -159,7 +124,6 @@ async function readUntilReady(
         }
         break;
       case 0x5a:
-        if (callbackError !== undefined) throw callbackError;
         return concat(chunks);
       default:
         break;

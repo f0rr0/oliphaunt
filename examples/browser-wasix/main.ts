@@ -56,6 +56,7 @@ try {
   });
   status.textContent = `PostgreSQL 18 is running through the ${smoke ? 'direct root' : 'Worker-owned'} entrypoint.`;
   if (smoke) {
+    await installSelectedExtensions(database, extensions);
     await expectStructuredApi(database, 'browser direct');
     await expectConcurrentDirectExecution(database);
     await expectExclusiveOwnership(storage, extensions, 'IndexedDB');
@@ -180,6 +181,7 @@ async function expectLargePostgisWorkerModule(): Promise<string> {
 
   const database = await WorkerOliphaunt.open({ extensions: [postgis] });
   try {
+    await database.execute('CREATE EXTENSION postgis');
     const version = await readPostgisVersion(database);
     await database.queryRaw('CREATE TEMP TABLE postgis_nested_error_catch(value integer)');
     await database.queryRaw(
@@ -599,6 +601,16 @@ async function exercisePgtap(database: OliphauntDatabase): Promise<string> {
   }
   await database.queryRaw('SELECT * FROM finish()');
   return version;
+}
+
+async function installSelectedExtensions(
+  database: OliphauntDatabase,
+  extensions: readonly WasixExtensionDescriptor[],
+): Promise<void> {
+  for (const extension of extensions) {
+    const sqlName = `"${extension.sqlName.replaceAll('"', '""')}"`;
+    await database.execute(`CREATE EXTENSION IF NOT EXISTS ${sqlName}`);
+  }
 }
 
 async function readPgtapVersion(database: OliphauntDatabase): Promise<string> {

@@ -11,9 +11,11 @@ from every native SDK and from the WASIX TypeScript binding.
 <Callout type="info" title="This is the Rust binding">
 Browser, Node, Bun, and Deno TypeScript applications use [`@oliphaunt/wasix-ts`](/docs/sdk/wasix-typescript). The Rust
 and TypeScript bindings consume the portable WASIX runtime family. Their APIs
-follow the same conceptual rule: the root runs directly in the calling
-thread/realm, while an explicit worker entry point opts into a dedicated
-package-owned execution context. Signatures remain idiomatic to each language.
+follow the same conceptual rule: direct execution uses the calling
+thread/realm, while callers can opt into a dedicated package-owned execution
+context. Rust spells that choice with root `Async*` types; TypeScript uses a
+real `/worker` package entry point. Signatures remain idiomatic to each
+language.
 </Callout>
 
 <SdkGuideSummary id="wasix-rust" />
@@ -94,8 +96,9 @@ let mut database = Oliphaunt::builder()
 ```
 
 `DatabaseStorage::Memory` is the default. `Directory` uses a caller-owned host
-directory; applications resolve temporary or platform app-data paths with
-their preferred host library. New stores use the packaged cluster seed.
+directory; its Rust path must be nonempty and contain no NUL bytes.
+Applications resolve temporary or platform app-data paths with their preferred
+host library. New stores use the packaged cluster seed.
 
 </Step>
 <Step>
@@ -104,7 +107,8 @@ their preferred host library. New stores use the packaged cluster seed.
 
 Use the root `Oliphaunt` for the normal direct contract. PostgreSQL runs on the
 calling thread with no SDK queue or message hop. Database and transaction
-methods take `&mut self`:
+methods take `&mut self`. Its retained Wasmer store is thread-affine, so the
+handle is `!Send + !Sync` and its full lifetime must remain on that OS thread:
 
 ```rust
 use oliphaunt_wasix::Oliphaunt;
@@ -116,24 +120,31 @@ fn run_direct() -> oliphaunt_wasix::Result<()> {
 }
 ```
 
-Use `oliphaunt_wasix::worker::Oliphaunt` when an async application needs a
+Use `oliphaunt_wasix::AsyncOliphaunt` when an async application needs a
 cloneable `Send + Sync` handle and dedicated owner-thread execution:
 
 ```rust
-use oliphaunt_wasix::worker::Oliphaunt;
+use oliphaunt_wasix::AsyncOliphaunt;
 
-async fn run_on_worker() -> oliphaunt_wasix::Result<()> {
-    let database = Oliphaunt::open().await?;
+async fn run_asynchronously() -> oliphaunt_wasix::Result<()> {
+    let database = AsyncOliphaunt::open().await?;
     database.execute("CREATE TABLE notes (title text NOT NULL)").await?;
     database.close().await
 }
 ```
 
+The handle's auto-traits do not make every user-created future unconditionally
+`Send`: a future is `Send` only when the values, callback captures, and output
+types it carries across suspension points are also `Send`.
+
 Use the root `OliphauntServer` only when an existing PostgreSQL client library
 needs a local connection URL. Its `start()` and `close()` lifecycle is
 synchronous, while its listener thread owns the single-backend wire server.
-`worker::OliphauntServer` offers the same server with async lifecycle calls.
-Neither is an alias for native direct, broker, or server topology.
+The blocking handle is movable (`Send`) but exclusive (`!Sync`).
+`AsyncOliphauntServer` offers cloneable `Send + Sync` async lifecycle calls.
+Loopback TCP listeners are available on every supported host; Unix-domain
+listeners and `ServerListen::unix*` are available only on Unix hosts. Neither
+server handle is an alias for native direct, broker, or server topology.
 
 </Step>
 <Step>
@@ -142,15 +153,21 @@ Neither is an alias for native direct, broker, or server topology.
 
 Close the root database explicitly with `close()`. Once shutdown starts, the
 handle is permanently retired: `is_closed()` is true, later work is rejected,
-and later close calls replay the terminal result. Callback transactions roll
-back before resuming a callback panic and poison the database if rollback is
-uncertain. The direct server keeps its handle across `close(&mut self)`, exposes
-`is_closed()`, and replays its first terminal close result.
+and later close calls replay the terminal result. A direct callback transaction
+attempts rollback synchronously before resuming a callback panic and poisons
+the database if settlement is uncertain. The direct server keeps its handle
+across `close(&mut self)`, exposes `is_closed()`, and replays its first terminal
+close result.
 
-On a worker handle, `close().await` establishes an ordered FIFO cutoff. Work
-admitted earlier drains and later work is rejected. Concurrent close callers
+On an async handle, `close().await` establishes an ordered FIFO cutoff. Work
+already in the owner FIFO drains; capacity waiters and later work are rejected.
+A retryable close does not resurrect stale waiters. Concurrent close callers
 receive the same result. Dropping the last clone starts best-effort cleanup but
 does not wait for it, so explicit close remains the durable lifecycle boundary.
+An async transaction-body panic unwinds the awaiting task immediately. Dropping
+the still-active transaction enqueues best-effort rollback in FIFO order; the
+unwind does not wait for that rollback, but later database work cannot overtake
+it.
 
 Persistent directories have exclusive ownership: a second database or server
 open against the same directory returns a lock error instead of starting
@@ -162,8 +179,13 @@ another backend.
 ### Select extensions
 
 Enable only the exact Cargo features the application uses, then select the
-matching typed extension value on the builder. Optional extension payloads are
-not part of the core runtime.
+matching typed extension value on the builder. Selection makes the artifact
+and required pre-start settings available; it does not run `CREATE EXTENSION`,
+`LOAD`, or migration SQL. Optional extension payloads are not part of the core
+runtime. The matching associated constant exists only when that leaf feature is
+enabled. `Extension::ALL` and `Extension::by_sql_name` enumerate only the
+enabled set, so an unavailable artifact cannot be selected and fail later at
+runtime.
 
 ```toml
 [dependencies]
@@ -171,9 +193,10 @@ oliphaunt-wasix = { version = "0.1", features = ["extension-pgtap"] }
 ```
 
 ```rust
-use oliphaunt_wasix::{extensions::PGTAP, Oliphaunt};
+use oliphaunt_wasix::{Extension, Oliphaunt};
 
-let mut database = Oliphaunt::builder().extension(PGTAP).open()?;
+let mut database = Oliphaunt::builder().extension(Extension::PGTAP).open()?;
+database.execute("CREATE EXTENSION pgtap")?;
 ```
 
 </Step>
@@ -199,7 +222,9 @@ Oliphaunt::restore("./app-data/restored", archive)?;
 
 The direct callback receives an exclusive `&mut Transaction`. Success commits,
 callback failure rolls back, and `rollback()` explicitly rolls back without a
-later commit:
+later commit. Callbacks return ordinary `Result<T, E>` with
+`E: From<oliphaunt_wasix::Error>`, so database calls use `?` while an
+application may return its own typed abort:
 
 ```rust
 database.transaction(|transaction| {
@@ -211,15 +236,38 @@ database.transaction(|transaction| {
     let count = transaction.query("SELECT count(*)::int8 AS count FROM notes")?;
     let count: i64 = count.rows()[0].try_get("count")?;
     assert!(count > 0);
-    Ok(())
+    Ok::<(), oliphaunt_wasix::Error>(())
 })?;
 ```
 
+The explicit success error type is needed only when surrounding code does not
+otherwise choose `E`; it keeps the generic callback free to use an application
+error type when one is available.
+
 The transaction borrow prevents unrelated direct work until the callback
-settles. Under `worker`, the callback is async and receives a shared
-`&worker::Transaction`; work through another database clone is rejected while
-the transaction is pinned. Dropping an active worker transaction future queues
-best-effort rollback in FIFO order.
+settles. With `AsyncOliphaunt`, the callback is async and receives an exclusive
+`&mut AsyncTransaction`; work through another database clone is rejected while
+the transaction is pinned. Dropping an active async transaction future queues
+best-effort rollback in FIFO order. `TransactionError::CallbackAndRollback`
+means rollback was actually attempted and failed. `CallbackAndDatabase` means
+an independent database or protocol failure expired the transaction and no
+rollback was sent.
+
+Managed transaction handles intentionally omit raw-protocol methods. Do not
+issue `BEGIN`, `COMMIT`, `END`, `ROLLBACK`, or `AND CHAIN` through their
+structured SQL methods; let the callback settle or call `rollback()`. Savepoints
+and `ROLLBACK TO SAVEPOINT` remain supported. The root raw-protocol adapter is
+the escape hatch for callers that deliberately own PostgreSQL session state.
+
+Direct raw-stream callbacks run synchronously before the method returns, but
+the retained WASIX stdio attachment requires owned `Send + 'static` captures;
+use `Arc<Mutex<_>>` for mutable callback state. Return `()` for infallible
+delivery or `Result<(), E>` for a typed stop. A direct callback panic resumes
+only after confirmed pump recovery. A recovered async owner callback panic is
+`RawStreamError::CallbackPanicked`. Async callbacks also require owned
+`Send + 'static` captures and can use `Arc<Mutex<_>>` for shared mutable state.
+An independent pump/recovery failure is
+`RawStreamError::Database`, takes precedence, and poisons the session.
 
 </Step>
 </Steps>

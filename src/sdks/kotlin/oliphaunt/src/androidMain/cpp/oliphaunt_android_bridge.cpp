@@ -1,4 +1,5 @@
 #include "oliphaunt.h"
+#include "stream_completion.h"
 
 #include <dlfcn.h>
 #include <jni.h>
@@ -60,7 +61,6 @@ struct StreamContext {
   jobject sink = nullptr;
   jmethodID onChunk = nullptr;
   bool failed = false;
-  std::string error;
 };
 
 std::string jniString(JNIEnv *env, jstring value) {
@@ -263,7 +263,6 @@ int32_t streamCallback(void *context, const uint8_t *data, size_t len) {
   jbyteArray chunk = stream->env->NewByteArray(static_cast<jsize>(len));
   if (chunk == nullptr) {
     stream->failed = true;
-    stream->error = "failed to allocate protocol stream chunk";
     return -1;
   }
   if (len > 0 && data != nullptr) {
@@ -286,7 +285,6 @@ int32_t streamCallback(void *context, const uint8_t *data, size_t len) {
   }
   if (rc != 0) {
     stream->failed = true;
-    stream->error = "protocol stream callback failed";
     return -1;
   }
   return 0;
@@ -433,7 +431,7 @@ Java_dev_oliphaunt_OliphauntAndroidNativeBridge_execProtocolRawNative(
   return out;
 }
 
-extern "C" JNIEXPORT void JNICALL
+extern "C" JNIEXPORT jboolean JNICALL
 Java_dev_oliphaunt_OliphauntAndroidNativeBridge_execProtocolRawStreamNative(
     JNIEnv *env,
     jobject,
@@ -443,15 +441,15 @@ Java_dev_oliphaunt_OliphauntAndroidNativeBridge_execProtocolRawStreamNative(
   Session *session = sessionFromHandle(handle);
   if (session == nullptr || session->handle == nullptr) {
     throwIllegalState(env, "Oliphaunt database is closed");
-    return;
+    return JNI_FALSE;
   }
   if (request == nullptr) {
     throwRuntime(env, "request must not be null");
-    return;
+    return JNI_FALSE;
   }
   if (sink == nullptr) {
     throwRuntime(env, "stream sink must not be null");
-    return;
+    return JNI_FALSE;
   }
 
   const jsize requestLength = env->GetArrayLength(request);
@@ -463,19 +461,19 @@ Java_dev_oliphaunt_OliphauntAndroidNativeBridge_execProtocolRawStreamNative(
         requestLength,
         reinterpret_cast<jbyte *>(requestBytes.data()));
     if (env->ExceptionCheck()) {
-      return;
+      return JNI_FALSE;
     }
   }
 
   jclass sinkClass = env->GetObjectClass(sink);
   if (sinkClass == nullptr) {
-    return;
+    return JNI_FALSE;
   }
   jmethodID onChunk = env->GetMethodID(sinkClass, "onChunk", "([B)I");
   env->DeleteLocalRef(sinkClass);
   if (onChunk == nullptr) {
     throwRuntime(env, "stream sink is missing onChunk(byte[])");
-    return;
+    return JNI_FALSE;
   }
 
   StreamContext stream;
@@ -488,12 +486,45 @@ Java_dev_oliphaunt_OliphauntAndroidNativeBridge_execProtocolRawStreamNative(
       requestBytes.size(),
       streamCallback,
       &stream);
-  if (rc != 0) {
-    if (stream.failed && env->ExceptionCheck()) {
-      return;
+  using oliphaunt::android_bridge::StreamCompletion;
+  switch (oliphaunt::android_bridge::classifyStreamCompletion(rc, stream.failed)) {
+    case StreamCompletion::Success:
+      return JNI_FALSE;
+    case StreamCompletion::CallbackAborted:
+      // Expected Kotlin callback failures are captured by the sink. Any
+      // unexpected pending JNI exception remains pending when JNI returns.
+      return JNI_TRUE;
+    case StreamCompletion::NativeFailure: {
+      // Capture the same-thread native diagnostic before touching JNI state.
+      // Transport or recovery failure is authoritative over a callback error.
+      std::string nativeError = lastError(session);
+      if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+      }
+      throwRuntime(env, nativeError);
+      return JNI_FALSE;
     }
-    throwRuntime(env, stream.error.empty() ? lastError(session) : stream.error);
+    case StreamCompletion::ProtocolInconsistency:
+      if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+      }
+      if (rc == 0) {
+        throwRuntime(
+            env,
+            "liboliphaunt returned protocol stream success after the callback failed");
+      } else if (rc == OLIPHAUNT_STREAM_CALLBACK_ABORTED) {
+        throwRuntime(
+            env,
+            "liboliphaunt reported a recovered callback abort without a callback failure");
+      } else {
+        throwRuntime(
+            env,
+            "liboliphaunt returned an unknown positive protocol stream result");
+      }
+      return JNI_FALSE;
   }
+  throwRuntime(env, "unreachable protocol stream completion state");
+  return JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL

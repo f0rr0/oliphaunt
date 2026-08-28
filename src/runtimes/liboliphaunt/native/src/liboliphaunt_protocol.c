@@ -601,16 +601,51 @@ static int32_t oliphaunt_exec_protocol_impl(
     return 0;
 }
 
+static int32_t run_exec_protocol_operation(
+    OliphauntHandle *handle,
+    const uint8_t *request,
+    size_t request_len,
+    OliphauntResponse *out,
+    OliphauntErrorCapture *capture,
+    bool capture_required) {
+    OliphauntErrorScope error_scope;
+    oliphaunt_error_scope_begin(&error_scope, NULL, "oliphaunt_exec_protocol");
+    int32_t rc = -1;
+    bool leased = false;
+    if (capture_required && capture == NULL) {
+        set_error(NULL, "oliphaunt_exec_protocol error capture is null");
+    } else if (handle == NULL) {
+        rc = oliphaunt_exec_protocol_impl(handle, request, request_len, out);
+    } else if (oliphaunt_begin_handle_call(handle) == 0) {
+        leased = true;
+        error_scope.fallback_handle = handle;
+        rc = oliphaunt_exec_protocol_impl(handle, request, request_len, out);
+    }
+    oliphaunt_error_scope_end(&error_scope, rc != 0);
+    oliphaunt_error_capture_current(capture, leased ? handle : NULL, rc != 0);
+    if (leased) {
+        oliphaunt_end_handle_call();
+    }
+    return rc;
+}
+
 int32_t oliphaunt_exec_protocol(
     OliphauntHandle *handle,
     const uint8_t *request,
     size_t request_len,
     OliphauntResponse *out) {
-    OliphauntErrorScope error_scope;
-    oliphaunt_error_scope_begin(&error_scope, handle, "oliphaunt_exec_protocol");
-    int32_t rc = oliphaunt_exec_protocol_impl(handle, request, request_len, out);
-    oliphaunt_error_scope_end(&error_scope, rc != 0);
-    return rc;
+    return run_exec_protocol_operation(
+        handle, request, request_len, out, NULL, false);
+}
+
+int32_t oliphaunt_exec_protocol_with_error(
+    OliphauntHandle *handle,
+    const uint8_t *request,
+    size_t request_len,
+    OliphauntResponse *out,
+    OliphauntErrorCapture *error) {
+    return run_exec_protocol_operation(
+        handle, request, request_len, out, error, true);
 }
 
 static int32_t oliphaunt_exec_simple_query_impl(
@@ -679,16 +714,51 @@ static int32_t oliphaunt_exec_simple_query_impl(
     return 0;
 }
 
+static int32_t run_exec_simple_query_operation(
+    OliphauntHandle *handle,
+    const char *sql,
+    size_t sql_len,
+    OliphauntResponse *out,
+    OliphauntErrorCapture *capture,
+    bool capture_required) {
+    OliphauntErrorScope error_scope;
+    oliphaunt_error_scope_begin(&error_scope, NULL, "oliphaunt_exec_simple_query");
+    int32_t rc = -1;
+    bool leased = false;
+    if (capture_required && capture == NULL) {
+        set_error(NULL, "oliphaunt_exec_simple_query error capture is null");
+    } else if (handle == NULL) {
+        rc = oliphaunt_exec_simple_query_impl(handle, sql, sql_len, out);
+    } else if (oliphaunt_begin_handle_call(handle) == 0) {
+        leased = true;
+        error_scope.fallback_handle = handle;
+        rc = oliphaunt_exec_simple_query_impl(handle, sql, sql_len, out);
+    }
+    oliphaunt_error_scope_end(&error_scope, rc != 0);
+    oliphaunt_error_capture_current(capture, leased ? handle : NULL, rc != 0);
+    if (leased) {
+        oliphaunt_end_handle_call();
+    }
+    return rc;
+}
+
 int32_t oliphaunt_exec_simple_query(
     OliphauntHandle *handle,
     const char *sql,
     size_t sql_len,
     OliphauntResponse *out) {
-    OliphauntErrorScope error_scope;
-    oliphaunt_error_scope_begin(&error_scope, handle, "oliphaunt_exec_simple_query");
-    int32_t rc = oliphaunt_exec_simple_query_impl(handle, sql, sql_len, out);
-    oliphaunt_error_scope_end(&error_scope, rc != 0);
-    return rc;
+    return run_exec_simple_query_operation(
+        handle, sql, sql_len, out, NULL, false);
+}
+
+int32_t oliphaunt_exec_simple_query_with_error(
+    OliphauntHandle *handle,
+    const char *sql,
+    size_t sql_len,
+    OliphauntResponse *out,
+    OliphauntErrorCapture *error) {
+    return run_exec_simple_query_operation(
+        handle, sql, sql_len, out, error, true);
 }
 
 static int32_t oliphaunt_exec_protocol_raw_stream_impl(
@@ -762,6 +832,11 @@ static int32_t oliphaunt_exec_protocol_raw_stream_impl(
         }
 
         if (handle->stream_failed) {
+            /* Embedded writes report queue/scanner failures from PostgreSQL's
+             * backend thread. Snapshot that shared error before releasing the
+             * session mutex so a later caller cannot steal this operation's
+             * attribution window. */
+            oliphaunt_error_scope_capture_shared(handle);
             status = -1;
             break;
         }
@@ -815,10 +890,41 @@ static int32_t oliphaunt_exec_protocol_raw_stream_impl(
     pthread_cond_broadcast(&handle->output_cond);
     if (status == 0 && callback_failed) {
         set_error(handle, "protocol stream callback failed");
-        status = -1;
+        status = OLIPHAUNT_STREAM_CALLBACK_ABORTED;
     }
     pthread_mutex_unlock(&handle->mutex);
     return status;
+}
+
+static int32_t run_exec_protocol_raw_stream_operation(
+    OliphauntHandle *handle,
+    const uint8_t *request,
+    size_t request_len,
+    OliphauntStreamCallback callback,
+    void *callback_context,
+    OliphauntErrorCapture *capture,
+    bool capture_required) {
+    OliphauntErrorScope error_scope;
+    oliphaunt_error_scope_begin(&error_scope, NULL, "oliphaunt_exec_protocol_raw_stream");
+    int32_t rc = -1;
+    bool leased = false;
+    if (capture_required && capture == NULL) {
+        set_error(NULL, "oliphaunt_exec_protocol_raw_stream error capture is null");
+    } else if (handle == NULL) {
+        rc = oliphaunt_exec_protocol_raw_stream_impl(
+            handle, request, request_len, callback, callback_context);
+    } else if (oliphaunt_begin_handle_call(handle) == 0) {
+        leased = true;
+        error_scope.fallback_handle = handle;
+        rc = oliphaunt_exec_protocol_raw_stream_impl(
+            handle, request, request_len, callback, callback_context);
+    }
+    oliphaunt_error_scope_end(&error_scope, rc != 0);
+    oliphaunt_error_capture_current(capture, leased ? handle : NULL, rc != 0);
+    if (leased) {
+        oliphaunt_end_handle_call();
+    }
+    return rc;
 }
 
 int32_t oliphaunt_exec_protocol_raw_stream(
@@ -827,14 +933,17 @@ int32_t oliphaunt_exec_protocol_raw_stream(
     size_t request_len,
     OliphauntStreamCallback callback,
     void *callback_context) {
-    OliphauntErrorScope error_scope;
-    oliphaunt_error_scope_begin(&error_scope, handle, "oliphaunt_exec_protocol_raw_stream");
-    int32_t rc = oliphaunt_exec_protocol_raw_stream_impl(
-        handle,
-        request,
-        request_len,
-        callback,
-        callback_context);
-    oliphaunt_error_scope_end(&error_scope, rc != 0);
-    return rc;
+    return run_exec_protocol_raw_stream_operation(
+        handle, request, request_len, callback, callback_context, NULL, false);
+}
+
+int32_t oliphaunt_exec_protocol_raw_stream_with_error(
+    OliphauntHandle *handle,
+    const uint8_t *request,
+    size_t request_len,
+    OliphauntStreamCallback callback,
+    void *callback_context,
+    OliphauntErrorCapture *error) {
+    return run_exec_protocol_raw_stream_operation(
+        handle, request, request_len, callback, callback_context, error, true);
 }

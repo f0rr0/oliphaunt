@@ -21,6 +21,9 @@
 #include <string>
 #include <vector>
 
+NSString * const OliphauntProtocolStreamCallbackAbortedErrorDomain =
+    @"dev.oliphaunt.reactnative.ios.protocolStreamCallbackAborted";
+
 #ifdef RCT_NEW_ARCH_ENABLED
 class OliphauntChunkAcknowledgement final {
  public:
@@ -491,6 +494,16 @@ static facebook::jsi::Value OliphauntCreateError(
       .getPropertyAsFunction(runtime, "Error")
       .callAsConstructor(runtime, facebook::jsi::String::createFromUtf8(runtime, message));
 }
+
+static facebook::jsi::Value OliphauntCreateProtocolCallbackAbortedError(
+    facebook::jsi::Runtime &runtime,
+    const std::string &message)
+{
+  auto value = OliphauntCreateError(runtime, message);
+  auto object = value.asObject(runtime);
+  object.setProperty(runtime, "__oliphauntProtocolCallbackAborted", true);
+  return object;
+}
 #endif
 
 @interface Oliphaunt ()
@@ -901,7 +914,7 @@ RCT_EXPORT_MODULE(Oliphaunt)
                     auto acknowledgement = std::make_shared<OliphauntChunkAcknowledgement>();
                     OliphauntRegisterChunkAcknowledgement(acknowledgement);
                     try {
-                      chunkCallback->call([strongSelf, bytes = std::move(bytes), acknowledgement, reject, settled](
+                      chunkCallback->call([strongSelf, bytes = std::move(bytes), acknowledgement](
                                               facebook::jsi::Runtime &runtime,
                                               facebook::jsi::Function &chunkFunction) mutable {
                         @synchronized (strongSelf) {
@@ -920,32 +933,12 @@ RCT_EXPORT_MODULE(Oliphaunt)
                                 runtime,
                                 "__oliphauntProtocolChunkFailure");
                             if (failureMarker.isBool() && failureMarker.getBool()) {
-                              auto failure = std::make_shared<facebook::jsi::Value>(
-                                  runtime,
-                                  resultObject.getProperty(runtime, "error"));
-                              if (!settled->exchange(true)) {
-                                reject->call([failure](
-                                                 facebook::jsi::Runtime &runtime,
-                                                 facebook::jsi::Function &rejectFunction) {
-                                  rejectFunction.call(
-                                      runtime,
-                                      facebook::jsi::Value(runtime, *failure));
-                                });
-                              }
                               acknowledgement->reject("protocol stream callback failed");
                               return;
                             }
                           }
                           acknowledgement->resolve();
                         } catch (const facebook::jsi::JSError &error) {
-                          if (!settled->exchange(true)) {
-                            auto value = std::make_shared<facebook::jsi::Value>(runtime, error.value());
-                            reject->call([value](
-                                             facebook::jsi::Runtime &runtime,
-                                             facebook::jsi::Function &rejectFunction) {
-                              rejectFunction.call(runtime, facebook::jsi::Value(runtime, *value));
-                            });
-                          }
                           acknowledgement->reject(error.what());
                         } catch (const std::exception &error) {
                           acknowledgement->reject(error.what());
@@ -974,8 +967,14 @@ RCT_EXPORT_MODULE(Oliphaunt)
                     if (error != nil) {
                       const char *errorMessage = error.localizedDescription.UTF8String;
                       std::string message = errorMessage != nullptr ? errorMessage : "liboliphaunt stream failed";
-                      reject->call([message](facebook::jsi::Runtime &runtime, facebook::jsi::Function &rejectFunction) {
-                        rejectFunction.call(runtime, OliphauntCreateError(runtime, message));
+                      BOOL callbackAborted =
+                          [error.domain isEqualToString:OliphauntProtocolStreamCallbackAbortedErrorDomain];
+                      reject->call([message, callbackAborted](facebook::jsi::Runtime &runtime, facebook::jsi::Function &rejectFunction) {
+                        rejectFunction.call(
+                            runtime,
+                            callbackAborted
+                                ? OliphauntCreateProtocolCallbackAbortedError(runtime, message)
+                                : OliphauntCreateError(runtime, message));
                       });
                       return;
                     }

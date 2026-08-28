@@ -29,6 +29,7 @@
 #include <string.h>
 
 static pthread_mutex_t global_instance_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t global_instance_cond = PTHREAD_COND_INITIALIZER;
 static pthread_once_t process_exit_shutdown_once = PTHREAD_ONCE_INIT;
 #if OLIPHAUNT_DESKTOP_DYNAMIC_SCOPE
 static pthread_once_t extension_symbol_scope_once = PTHREAD_ONCE_INIT;
@@ -42,6 +43,137 @@ static enum {
     OLIPHAUNT_GLOBAL_SPENT,
 } global_instance_state = OLIPHAUNT_GLOBAL_UNUSED;
 static OliphauntHandle *global_instance = NULL;
+static size_t global_active_handle_calls = 0;
+static bool global_handle_retirement = false;
+
+#if defined(_MSC_VER)
+#define OLIPHAUNT_PROCESS_THREAD_LOCAL __declspec(thread)
+#else
+#define OLIPHAUNT_PROCESS_THREAD_LOCAL _Thread_local
+#endif
+
+/* Only the retirement owner may promote a poisoned detach to terminal close. */
+static OLIPHAUNT_PROCESS_THREAD_LOCAL OliphauntHandle *owned_retirement_handle;
+
+static bool current_instance_locked(OliphauntHandle *handle) {
+    return global_instance_state == OLIPHAUNT_GLOBAL_ACTIVE &&
+        global_instance != NULL && global_instance == handle;
+}
+
+static void set_stale_handle_error(void) {
+    set_error(NULL, "native liboliphaunt handle is stale or terminally closed");
+}
+
+int oliphaunt_begin_handle_call(OliphauntHandle *handle) {
+    if (handle == NULL) {
+        set_error(NULL, "native liboliphaunt handle is null");
+        return -1;
+    }
+
+    pthread_mutex_lock(&global_instance_mutex);
+    if (!current_instance_locked(handle)) {
+        pthread_mutex_unlock(&global_instance_mutex);
+        set_stale_handle_error();
+        return -1;
+    }
+    if (global_handle_retirement && owned_retirement_handle != handle) {
+        pthread_mutex_unlock(&global_instance_mutex);
+        set_error(NULL, "native liboliphaunt logical handle is closing");
+        return -1;
+    }
+    global_active_handle_calls++;
+    pthread_mutex_unlock(&global_instance_mutex);
+    return 0;
+}
+
+bool oliphaunt_try_begin_handle_call(OliphauntHandle *handle) {
+    if (handle == NULL) {
+        return false;
+    }
+    pthread_mutex_lock(&global_instance_mutex);
+    bool acquired = current_instance_locked(handle) && !global_handle_retirement;
+    if (acquired) {
+        global_active_handle_calls++;
+    }
+    pthread_mutex_unlock(&global_instance_mutex);
+    return acquired;
+}
+
+void oliphaunt_end_handle_call(void) {
+    pthread_mutex_lock(&global_instance_mutex);
+    if (global_active_handle_calls > 0) {
+        global_active_handle_calls--;
+        if (global_active_handle_calls == 0) {
+            pthread_cond_broadcast(&global_instance_cond);
+        }
+    }
+    pthread_mutex_unlock(&global_instance_mutex);
+}
+
+int oliphaunt_begin_handle_retirement(OliphauntHandle *handle) {
+    if (handle == NULL) {
+        return 0;
+    }
+
+    pthread_mutex_lock(&global_instance_mutex);
+    for (;;) {
+        if (!current_instance_locked(handle)) {
+            pthread_mutex_unlock(&global_instance_mutex);
+            set_stale_handle_error();
+            return -1;
+        }
+        if (!global_handle_retirement) {
+            break;
+        }
+        if (owned_retirement_handle == handle) {
+            pthread_mutex_unlock(&global_instance_mutex);
+            set_error(NULL, "native liboliphaunt logical retirement is already active on this thread");
+            return -1;
+        }
+        pthread_cond_wait(&global_instance_cond, &global_instance_mutex);
+    }
+
+    /* Check callback reentry before installing a gate that the stream owner
+     * would otherwise have to release itself. */
+    int lock_rc = pthread_mutex_lock(&handle->mutex);
+    if (lock_rc != 0) {
+        pthread_mutex_unlock(&global_instance_mutex);
+        set_error(NULL, "cannot lock the resident native liboliphaunt instance for logical close");
+        return -1;
+    }
+    int stream_rc = oliphaunt_reject_if_streaming_locked(handle);
+    pthread_mutex_unlock(&handle->mutex);
+    if (stream_rc != 0) {
+        pthread_mutex_unlock(&global_instance_mutex);
+        return -1;
+    }
+
+    global_handle_retirement = true;
+    owned_retirement_handle = handle;
+    while (global_active_handle_calls != 0) {
+        pthread_cond_wait(&global_instance_cond, &global_instance_mutex);
+    }
+    pthread_mutex_unlock(&global_instance_mutex);
+    return 0;
+}
+
+void oliphaunt_end_handle_retirement(void) {
+    pthread_mutex_lock(&global_instance_mutex);
+    if (global_handle_retirement) {
+        global_handle_retirement = false;
+        pthread_cond_broadcast(&global_instance_cond);
+    }
+    owned_retirement_handle = NULL;
+    pthread_mutex_unlock(&global_instance_mutex);
+}
+
+void oliphaunt_wait_for_active_handle_calls(void) {
+    pthread_mutex_lock(&global_instance_mutex);
+    while (global_active_handle_calls != 0) {
+        pthread_cond_wait(&global_instance_cond, &global_instance_mutex);
+    }
+    pthread_mutex_unlock(&global_instance_mutex);
+}
 
 #if OLIPHAUNT_DESKTOP_DYNAMIC_SCOPE
 static void oliphaunt_promote_extension_symbol_scope_once(void) {
@@ -125,6 +257,9 @@ int oliphaunt_acquire_global_instance(OliphauntHandle **existing) {
         *existing = NULL;
     }
     pthread_mutex_lock(&global_instance_mutex);
+    while (global_handle_retirement) {
+        pthread_cond_wait(&global_instance_cond, &global_instance_mutex);
+    }
     if (global_instance_state == OLIPHAUNT_GLOBAL_ACTIVE) {
         if (existing != NULL && global_instance != NULL) {
             OliphauntHandle *handle = global_instance;
@@ -164,6 +299,8 @@ void oliphaunt_release_global_instance(bool spent) {
     pthread_mutex_lock(&global_instance_mutex);
     global_instance_state = spent ? OLIPHAUNT_GLOBAL_SPENT : OLIPHAUNT_GLOBAL_UNUSED;
     global_instance = NULL;
+    global_handle_retirement = false;
+    pthread_cond_broadcast(&global_instance_cond);
     pthread_mutex_unlock(&global_instance_mutex);
 }
 
@@ -196,6 +333,9 @@ int oliphaunt_claim_global_instance_for_close(
     *claimed = NULL;
 
     pthread_mutex_lock(&global_instance_mutex);
+    while (global_handle_retirement && owned_retirement_handle != global_instance) {
+        pthread_cond_wait(&global_instance_cond, &global_instance_mutex);
+    }
     if (global_instance_state == OLIPHAUNT_GLOBAL_SPENT) {
         pthread_mutex_unlock(&global_instance_mutex);
         return 2;
@@ -228,6 +368,11 @@ int oliphaunt_claim_global_instance_for_close(
 
     global_instance = NULL;
     global_instance_state = OLIPHAUNT_GLOBAL_SPENT;
+    if (global_handle_retirement) {
+        global_handle_retirement = false;
+        owned_retirement_handle = NULL;
+        pthread_cond_broadcast(&global_instance_cond);
+    }
     *claimed = current;
     pthread_mutex_unlock(&current->mutex);
     pthread_mutex_unlock(&global_instance_mutex);

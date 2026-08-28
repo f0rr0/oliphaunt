@@ -14,11 +14,11 @@ SDK surface by task.
 | Single-statement SQL | `query`, `execute`, `OliphauntQueryResult` | Return ordered raw rows or assert that one extended-query command returns no rows |
 | Multi-statement and metadata | `exec`, `describe` | Return ordered command-or-row results or resolve parameter/result OIDs without executing |
 | Parameters and rows | `OliphauntPostgresOID`, `OliphauntQueryParam`, `OliphauntValueFormat`, `OliphauntQueryRow.value`, `OliphauntPostgresDecodable` | Encode typed/null values and decode by OID-validated index or unambiguous name while retaining `Data` |
-| Raw protocol | `execProtocolRaw`, `execProtocolRawStream` | Send PostgreSQL protocol bytes as one result or synchronous callback chunks; callbacks reject same-handle reentry except out-of-band cancellation |
-| Transactions | `transaction`, `OliphauntTransaction.rollback`, transaction `isClosed` | Keep work on the actor-owned session and explicitly roll back without a later commit |
+| Raw protocol | database `execProtocolRaw`, `execProtocolRawStream` | Send PostgreSQL protocol bytes as one result or synchronous callback chunks; raw ownership stays outside managed transaction handles, same-handle callback reentry is rejected, confirmed callback recovery leaves the session reusable, and transport/recovery failures poison it |
+| Transactions | `transaction`, transaction `query`/`execute`/`exec`/`describe`, `OliphauntTransaction.rollback`, transaction `isClosed` | Keep typed work on the actor-owned session, return to commit, explicitly roll back without a later commit, and use savepoints for nested work |
 | Lifecycle | database `isClosed`, `cancel`, `close` | FIFO admission drains calls accepted before the close cutoff; cancellation remains available until native teardown starts |
 | Data movement | `backup`, static `restore(destination:bytes:)` | Move user data through the native physical archive |
-| Diagnostics | result `notices`, `OliphauntError`, `OliphauntPostgresError`, `OliphauntTransactionRollbackError` | Preserve PostgreSQL diagnostics and both callback/rollback failures |
+| Diagnostics | result `notices`, `OliphauntError`, `OliphauntPostgresError`, `OliphauntTransactionRollbackError`, `OliphauntTransactionDatabaseError` | Preserve PostgreSQL diagnostics and independent transaction failures without dropping the callback error |
 
 ```swift
 let result = try await database.query(
@@ -30,6 +30,23 @@ let answer: Int32? = try result.rows[0].value(named: "answer")
 
 The cross-SDK behavior follows the
 [stable database API](https://github.com/f0rr0/oliphaunt/blob/main/docs/architecture/stable-database-api.md).
+
+Managed transaction callbacks must not issue manual `BEGIN`/`START TRANSACTION`,
+`COMMIT`/`END`, `ABORT`, `PREPARE TRANSACTION`, or `AND CHAIN`. Use
+`rollback()` or return from the callback for outer settlement; `SAVEPOINT`,
+`RELEASE SAVEPOINT`, and `ROLLBACK TO SAVEPOINT` remain supported SQL. PostgreSQL
+reports `ROLLBACK TO` and `ROLLBACK AND CHAIN` with the same `ROLLBACK` command
+tag and transactional ready status, so `AND CHAIN` is unsupported contract
+misuse rather than a form the SDK can reliably pre-reject.
+
+After automatic rollback succeeds, the original callback error is rethrown.
+`OliphauntTransactionRollbackError` reports a callback-plus-rollback failure in
+its public `callbackError` and `rollbackError` fields. If the callback throws a
+different error after an earlier independent database or protocol failure
+poisoned or expired ownership, `OliphauntTransactionDatabaseError` reports both
+through its public `callbackError` and `databaseError` fields, and the database
+is close-only. Ordinary PostgreSQL statement errors that remain safely
+rollbackable do not automatically create either composite error.
 
 iOS and macOS apps start with `OliphauntDatabase`. The C ABI remains the
 lower-level boundary used by the Swift package.

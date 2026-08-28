@@ -1,4 +1,6 @@
 use std::env;
+use std::error::Error as StdError;
+use std::fmt;
 use std::io::{self, Read, Write};
 use std::net::TcpListener;
 #[cfg(unix)]
@@ -12,6 +14,49 @@ const ENV_BROKER_AUTH_TOKEN: &str = "OLIPHAUNT_BROKER_AUTH_TOKEN";
 const DEFAULT_USERNAME: &str = "postgres";
 const DEFAULT_DATABASE: &str = "postgres";
 
+type BrokerResult<T> = std::result::Result<T, BrokerError>;
+
+#[derive(Debug)]
+enum BrokerError {
+    Configuration(String),
+    Runtime(String),
+    Oliphaunt(oliphaunt::Error),
+}
+
+impl BrokerError {
+    fn configuration(message: impl Into<String>) -> Self {
+        Self::Configuration(message.into())
+    }
+
+    fn runtime(message: impl Into<String>) -> Self {
+        Self::Runtime(message.into())
+    }
+}
+
+impl fmt::Display for BrokerError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Configuration(message) | Self::Runtime(message) => formatter.write_str(message),
+            Self::Oliphaunt(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl StdError for BrokerError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Self::Oliphaunt(error) => Some(error),
+            Self::Configuration(_) | Self::Runtime(_) => None,
+        }
+    }
+}
+
+impl From<oliphaunt::Error> for BrokerError {
+    fn from(error: oliphaunt::Error) -> Self {
+        Self::Oliphaunt(error)
+    }
+}
+
 fn main() {
     if let Err(error) = run() {
         println!("OLIPHAUNT_BROKER_ERROR {error}");
@@ -19,7 +64,7 @@ fn main() {
     }
 }
 
-fn run() -> oliphaunt::Result<()> {
+fn run() -> BrokerResult<()> {
     let args: Vec<String> = env::args().skip(1).collect();
     let args = BrokerArgs::parse(args)?;
     let mut session = broker_support::open(
@@ -41,7 +86,7 @@ fn run() -> oliphaunt::Result<()> {
     );
     io::stdout()
         .flush()
-        .map_err(|err| oliphaunt::Error::Engine(format!("flush broker ready line: {err}")))?;
+        .map_err(|err| BrokerError::runtime(format!("flush broker ready line: {err}")))?;
 
     let mut stream = listener.accept()?;
     authenticate_client(&mut stream, &args.auth_token)?;
@@ -63,8 +108,16 @@ fn run() -> oliphaunt::Result<()> {
                     broker_support::broker_ipc_write_chunk(&mut stream, chunk)
                 });
                 match result {
-                    Ok(()) => broker_support::broker_ipc_write_ok(&mut stream, Vec::new())?,
-                    Err(error) => {
+                    broker_support::BrokerStreamOutcome::ReadyForQuery(Ok(())) => {
+                        broker_support::broker_ipc_write_ok(&mut stream, Vec::new())?
+                    }
+                    broker_support::BrokerStreamOutcome::ReadyForQuery(Err(error)) => {
+                        broker_support::broker_ipc_write_stream_callback_aborted(
+                            &mut stream,
+                            error.to_string(),
+                        )?
+                    }
+                    broker_support::BrokerStreamOutcome::SessionStateUnknown(error) => {
                         broker_support::broker_ipc_write_error(&mut stream, error.to_string())?
                     }
                 }
@@ -76,11 +129,9 @@ fn run() -> oliphaunt::Result<()> {
                 write_broker_response(&mut stream, session.backup())?;
             }
             broker_support::BrokerIpcRequest::Cancel => {
-                write_broker_response(
+                broker_support::broker_ipc_write_error(
                     &mut stream,
-                    Err(oliphaunt::Error::Engine(
-                        "broker cancellation must use the cancel endpoint".to_owned(),
-                    )),
+                    "broker cancellation must use the cancel endpoint".to_owned(),
                 )?;
             }
             broker_support::BrokerIpcRequest::Close => {
@@ -124,50 +175,48 @@ fn handle_cancel_client(
     stream: &mut Box<dyn BrokerTransport>,
     cancel: &broker_support::BrokerCancel,
     expected_token: &str,
-) -> oliphaunt::Result<()> {
+) -> BrokerResult<()> {
     authenticate_client(stream, expected_token)?;
     match broker_support::broker_ipc_read_request(stream)? {
         broker_support::BrokerIpcRequest::Cancel => {
-            write_broker_response(stream, cancel.cancel().map(|()| Vec::new()))
+            write_broker_response(stream, cancel.cancel().map(|()| Vec::new()))?
         }
         broker_support::BrokerIpcRequest::Authenticate(_) => {
             broker_support::broker_ipc_write_error(
                 stream,
                 "broker cancel client is already authenticated".to_owned(),
-            )
+            )?
         }
         _ => broker_support::broker_ipc_write_error(
             stream,
             "broker cancel endpoint only accepts cancellation requests".to_owned(),
-        ),
+        )?,
     }
+    Ok(())
 }
 
 fn authenticate_client(
     stream: &mut Box<dyn BrokerTransport>,
     expected_token: &str,
-) -> oliphaunt::Result<()> {
+) -> BrokerResult<()> {
     match broker_support::broker_ipc_read_request(stream)? {
         broker_support::BrokerIpcRequest::Authenticate(token) if token == expected_token => {
-            broker_support::broker_ipc_write_ok(stream, Vec::new())
+            broker_support::broker_ipc_write_ok(stream, Vec::new())?;
+            Ok(())
         }
         broker_support::BrokerIpcRequest::Authenticate(_) => {
             broker_support::broker_ipc_write_error(
                 stream,
                 "invalid broker authentication token".to_owned(),
             )?;
-            Err(oliphaunt::Error::Engine(
-                "invalid broker authentication token".to_owned(),
-            ))
+            Err(BrokerError::runtime("invalid broker authentication token"))
         }
         _ => {
             broker_support::broker_ipc_write_error(
                 stream,
                 "broker client must authenticate before sending requests".to_owned(),
             )?;
-            Err(oliphaunt::Error::Engine(
-                "broker client did not authenticate".to_owned(),
-            ))
+            Err(BrokerError::runtime("broker client did not authenticate"))
         }
     }
 }
@@ -175,11 +224,12 @@ fn authenticate_client(
 fn write_broker_response(
     stream: &mut impl Write,
     result: oliphaunt::Result<Vec<u8>>,
-) -> oliphaunt::Result<()> {
+) -> BrokerResult<()> {
     match result {
-        Ok(bytes) => broker_support::broker_ipc_write_ok(stream, bytes),
-        Err(error) => broker_support::broker_ipc_write_error(stream, error.to_string()),
+        Ok(bytes) => broker_support::broker_ipc_write_ok(stream, bytes)?,
+        Err(error) => broker_support::broker_ipc_write_error(stream, error.to_string())?,
     }
+    Ok(())
 }
 
 struct BrokerArgs {
@@ -194,7 +244,7 @@ struct BrokerArgs {
 }
 
 impl BrokerArgs {
-    fn parse(args: Vec<String>) -> oliphaunt::Result<Self> {
+    fn parse(args: Vec<String>) -> BrokerResult<Self> {
         let mut root = None;
         let mut endpoint = BrokerListenEndpoint::Tcp("127.0.0.1:0".to_owned());
         let mut cancel_endpoint = BrokerListenEndpoint::Tcp("127.0.0.1:0".to_owned());
@@ -208,88 +258,73 @@ impl BrokerArgs {
                 "--root" => root = iter.next().map(Into::into),
                 "--listen" => {
                     let listen = iter.next().ok_or_else(|| {
-                        oliphaunt::Error::InvalidConfig("--listen requires an address".to_owned())
+                        BrokerError::configuration("--listen requires an address")
                     })?;
                     endpoint = BrokerListenEndpoint::Tcp(listen);
                 }
                 "--cancel-listen" => {
                     let listen = iter.next().ok_or_else(|| {
-                        oliphaunt::Error::InvalidConfig(
-                            "--cancel-listen requires an address".to_owned(),
-                        )
+                        BrokerError::configuration("--cancel-listen requires an address")
                     })?;
                     cancel_endpoint = BrokerListenEndpoint::Tcp(listen);
                 }
                 "--socket" => {
                     let socket = iter.next().ok_or_else(|| {
-                        oliphaunt::Error::InvalidConfig(
-                            "--socket requires a filesystem path".to_owned(),
-                        )
+                        BrokerError::configuration("--socket requires a filesystem path")
                     })?;
                     endpoint = BrokerListenEndpoint::unix(socket)?;
                 }
                 "--cancel-socket" => {
                     let socket = iter.next().ok_or_else(|| {
-                        oliphaunt::Error::InvalidConfig(
-                            "--cancel-socket requires a filesystem path".to_owned(),
-                        )
+                        BrokerError::configuration("--cancel-socket requires a filesystem path")
                     })?;
                     cancel_endpoint = BrokerListenEndpoint::unix(socket)?;
                 }
                 "--startup-guc" => {
                     let assignment = iter.next().ok_or_else(|| {
-                        oliphaunt::Error::InvalidConfig(
-                            "--startup-guc requires name=value".to_owned(),
-                        )
+                        BrokerError::configuration("--startup-guc requires name=value")
                     })?;
                     startup_gucs.push(parse_startup_guc(&assignment)?);
                 }
                 "--username" => {
                     username = iter.next().ok_or_else(|| {
-                        oliphaunt::Error::InvalidConfig(
-                            "--username requires a PostgreSQL role".to_owned(),
-                        )
+                        BrokerError::configuration("--username requires a PostgreSQL role")
                     })?;
                 }
                 "--database" => {
                     database = iter.next().ok_or_else(|| {
-                        oliphaunt::Error::InvalidConfig(
-                            "--database requires a PostgreSQL database name".to_owned(),
-                        )
+                        BrokerError::configuration("--database requires a PostgreSQL database name")
                     })?;
                 }
                 "--extension" => {
                     let sql_name = iter.next().ok_or_else(|| {
-                        oliphaunt::Error::InvalidConfig(
-                            "--extension requires a SQL extension name".to_owned(),
-                        )
+                        BrokerError::configuration("--extension requires a SQL extension name")
                     })?;
                     let extension = Extension::by_sql_name(&sql_name).ok_or_else(|| {
-                        oliphaunt::Error::InvalidConfig(format!(
+                        BrokerError::configuration(format!(
                             "unsupported native extension '{sql_name}'"
                         ))
                     })?;
                     extensions.push(extension);
                 }
                 _ => {
-                    return Err(oliphaunt::Error::InvalidConfig(format!(
+                    return Err(BrokerError::configuration(format!(
                         "unknown broker argument '{arg}'"
                     )));
                 }
             }
         }
         let auth_token = env::var(ENV_BROKER_AUTH_TOKEN).map_err(|_| {
-            oliphaunt::Error::InvalidConfig(format!("{ENV_BROKER_AUTH_TOKEN} is required"))
+            BrokerError::configuration(format!("{ENV_BROKER_AUTH_TOKEN} is required"))
         })?;
         if auth_token.is_empty() {
-            return Err(oliphaunt::Error::InvalidConfig(format!(
+            return Err(BrokerError::configuration(format!(
                 "{ENV_BROKER_AUTH_TOKEN} must not be empty"
             )));
         }
 
         Ok(Self {
-            root: root
-                .ok_or_else(|| oliphaunt::Error::InvalidConfig("--root is required".to_owned()))?,
+            root: root.ok_or_else(|| BrokerError::configuration("--root is required"))?,
             endpoint,
             cancel_endpoint,
             startup_gucs,
@@ -301,10 +336,10 @@ impl BrokerArgs {
     }
 }
 
-fn parse_startup_guc(value: &str) -> oliphaunt::Result<(String, String)> {
+fn parse_startup_guc(value: &str) -> BrokerResult<(String, String)> {
     let Some((name, guc_value)) = value.split_once('=') else {
-        return Err(oliphaunt::Error::InvalidConfig(
-            "--startup-guc requires name=value".to_owned(),
+        return Err(BrokerError::configuration(
+            "--startup-guc requires name=value",
         ));
     };
     Ok((name.to_owned(), guc_value.to_owned()))
@@ -318,14 +353,14 @@ enum BrokerListenEndpoint {
 
 impl BrokerListenEndpoint {
     #[cfg(unix)]
-    fn unix(path: impl Into<std::path::PathBuf>) -> oliphaunt::Result<Self> {
+    fn unix(path: impl Into<std::path::PathBuf>) -> BrokerResult<Self> {
         Ok(Self::Unix(path.into()))
     }
 
     #[cfg(not(unix))]
-    fn unix(_path: impl Into<std::path::PathBuf>) -> oliphaunt::Result<Self> {
-        Err(oliphaunt::Error::InvalidConfig(
-            "Unix-domain broker sockets are not supported on this platform".to_owned(),
+    fn unix(_path: impl Into<std::path::PathBuf>) -> BrokerResult<Self> {
+        Err(BrokerError::configuration(
+            "Unix-domain broker sockets are not supported on this platform",
         ))
     }
 }
@@ -344,18 +379,18 @@ enum BrokerListener {
 }
 
 impl BrokerListener {
-    fn bind(endpoint: BrokerListenEndpoint) -> oliphaunt::Result<Self> {
+    fn bind(endpoint: BrokerListenEndpoint) -> BrokerResult<Self> {
         match endpoint {
             BrokerListenEndpoint::Tcp(listen) => {
                 TcpListener::bind(&listen).map(Self::Tcp).map_err(|err| {
-                    oliphaunt::Error::Engine(format!("bind broker TCP listener {listen}: {err}"))
+                    BrokerError::runtime(format!("bind broker TCP listener {listen}: {err}"))
                 })
             }
             #[cfg(unix)]
             BrokerListenEndpoint::Unix(path) => {
                 if path.exists() {
                     std::fs::remove_file(&path).map_err(|err| {
-                        oliphaunt::Error::Engine(format!(
+                        BrokerError::runtime(format!(
                             "remove stale broker socket {}: {err}",
                             path.display()
                         ))
@@ -363,9 +398,7 @@ impl BrokerListener {
                 }
                 UnixListener::bind(&path)
                     .map(|listener| Self::Unix { listener, path })
-                    .map_err(|err| {
-                        oliphaunt::Error::Engine(format!("bind broker Unix socket: {err}"))
-                    })
+                    .map_err(|err| BrokerError::runtime(format!("bind broker Unix socket: {err}")))
             }
         }
     }
@@ -381,20 +414,18 @@ impl BrokerListener {
         }
     }
 
-    fn accept(&self) -> oliphaunt::Result<Box<dyn BrokerTransport>> {
+    fn accept(&self) -> BrokerResult<Box<dyn BrokerTransport>> {
         match self {
             Self::Tcp(listener) => listener
                 .accept()
                 .map(|(stream, _)| Box::new(stream) as Box<dyn BrokerTransport>)
-                .map_err(|err| {
-                    oliphaunt::Error::Engine(format!("accept broker TCP client: {err}"))
-                }),
+                .map_err(|err| BrokerError::runtime(format!("accept broker TCP client: {err}"))),
             #[cfg(unix)]
             Self::Unix { listener, path } => listener
                 .accept()
                 .map(|(stream, _)| Box::new(stream) as Box<dyn BrokerTransport>)
                 .map_err(|err| {
-                    oliphaunt::Error::Engine(format!(
+                    BrokerError::runtime(format!(
                         "accept broker Unix client on {}: {err}",
                         path.display()
                     ))

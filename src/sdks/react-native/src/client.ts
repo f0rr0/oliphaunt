@@ -5,12 +5,14 @@ import {
   requireJsiRawProtocolTransport,
   restoreJsi,
   type JsiRawProtocolTransport,
+  type JsiProtocolStreamOutcome,
 } from './jsiTransport';
 import {
   decodeQueryResult,
   describeQuery,
   errorWithNotices,
   extendedQuery,
+  inspectManagedTransactionResponse,
   inspectReadyForQuery,
   parseCommandResponse,
   parseDescribeResponse,
@@ -83,8 +85,6 @@ export type OliphauntTransaction = {
   ): Promise<ExecResult<Row>>;
   describe(sql: string, parameterTypeOids?: ReadonlyArray<number>): Promise<DescribeResult>;
   rollback(): Promise<void>;
-  execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
-  execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
 };
 
 export type OliphauntDatabase = {
@@ -113,6 +113,11 @@ export type OliphauntDatabase = {
   execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
   backup(): Promise<Uint8Array>;
   cancel(): Promise<void>;
+  /**
+   * Own the session for one callback. Use callback return/throw or rollback()
+   * for lifecycle; manual BEGIN/START/COMMIT/END/ABORT/PREPARE TRANSACTION and
+   * AND CHAIN are unsupported. SAVEPOINT and ROLLBACK TO are allowed.
+   */
   transaction<T>(body: (transaction: OliphauntTransaction) => Promise<T> | T): Promise<T>;
   close(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
@@ -268,7 +273,7 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
     return this.#capturePromiseFailure(() => {
       this.#assertNoActiveTransaction();
       const bytes = toUint8Array(input).slice();
-      return this.#serialize(() => this.#execProtocolRawUnlocked(bytes));
+      return this.#serialize(() => this.#runRawProtocolUnlocked(bytes));
     });
   }
 
@@ -293,6 +298,15 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
     );
   }
 
+  async #runRawProtocolUnlocked(input: BinaryInput): Promise<Uint8Array> {
+    try {
+      return await this.#execProtocolRawUnlocked(input);
+    } catch (error) {
+      this.#poison(asError(error, 'raw PostgreSQL transport outcome is unknown'));
+      throw error;
+    }
+  }
+
   async #execProtocolStreamUnlocked(
     input: BinaryInput,
     onChunk: ProtocolChunkCallback,
@@ -300,6 +314,20 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
     if (typeof onChunk !== 'function') {
       throw new TypeError('protocol stream callback must be a function');
     }
+    let outcome: JsiProtocolStreamOutcome;
+    try {
+      outcome = await this.#execProtocolStreamOutcomeUnlocked(input, onChunk);
+    } catch (error) {
+      this.#poison(asError(error, 'streaming raw PostgreSQL recovery was not proven'));
+      throw error;
+    }
+    if (outcome.kind === 'callbackAborted') throw outcome.error;
+  }
+
+  async #execProtocolStreamOutcomeUnlocked(
+    input: BinaryInput,
+    onChunk: ProtocolChunkCallback,
+  ): Promise<JsiProtocolStreamOutcome> {
     const consumer = synchronousProtocolChunkConsumer(
       onChunk,
       () => {
@@ -313,7 +341,12 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
         if (propagateFailure && failure !== undefined) throw failure;
       },
     );
-    await execProtocolStreamJsi(this.#jsiTransport, this.#handle, toUint8Array(input), consumer);
+    return execProtocolStreamJsi(
+      this.#jsiTransport,
+      this.#handle,
+      toUint8Array(input),
+      consumer,
+    );
   }
 
   backup(): Promise<Uint8Array> {
@@ -355,12 +388,9 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
       this.#activeTransaction = true;
       const operation = this.#serialize(async () => {
         const transaction = new OliphauntTransactionHandle(
-          (input, parse) => this.#runKnownExchangeUnlocked(input, parse),
-          (input) => this.#execProtocolRawUnlocked(input),
-          (input, onChunk) => this.#execProtocolStreamUnlocked(input, onChunk),
+          (input, parse) => this.#runKnownExchangeUnlocked(input, parse, true),
           () => this.#rollbackControlUnlocked(),
           (cause) => this.#poison(cause),
-          () => this.#captureTransactionStreamCallbackReentry(),
         );
         try {
           await this.#beginControlUnlocked();
@@ -379,6 +409,17 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
               } catch (rollbackError) {
                 throw transactionRollbackAggregate(bodyError, rollbackError);
               }
+            }
+            if (
+              settlement.kind === 'failed' &&
+              !settlement.needsRollback &&
+              settlement.error !== bodyError
+            ) {
+              throw transactionCallbackAggregate(
+                bodyError,
+                settlement.error,
+                'Oliphaunt transaction callback failed after an independent database failure',
+              );
             }
             throw bodyError;
           }
@@ -493,15 +534,6 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
     }
   }
 
-  #captureTransactionStreamCallbackReentry(): Error | undefined {
-    if (!this.#streamCallbackActive) return undefined;
-    const failure = new Error(
-      'raw protocol stream callback must not reenter the same Oliphaunt database or transaction',
-    );
-    this.#streamCallbackFailure ??= failure;
-    return failure;
-  }
-
   #capturePromiseFailure<T>(body: () => Promise<T>): Promise<T> {
     try {
       return body();
@@ -529,6 +561,7 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
   async #runKnownExchangeUnlocked<T extends object>(
     input: BinaryInput,
     parse: (bytes: Uint8Array) => T,
+    managedTransaction = false,
   ): Promise<T> {
     let response: Uint8Array;
     try {
@@ -541,7 +574,9 @@ class NativeOliphauntDatabase implements OliphauntDatabase {
 
     let inspectedStatus: TransactionStatus;
     try {
-      inspectedStatus = inspectReadyForQuery(response);
+      inspectedStatus = managedTransaction
+        ? inspectManagedTransactionResponse(response)
+        : inspectReadyForQuery(response);
     } catch (error) {
       const failure = asError(error, 'structured response has no valid ReadyForQuery boundary');
       this.#poison(failure);
@@ -697,11 +732,8 @@ type TransactionSettlement =
 
 class OliphauntTransactionHandle implements OliphauntTransaction {
   readonly #exchange: StructuredExchange;
-  readonly #execRaw: (input: BinaryInput) => Promise<Uint8Array>;
-  readonly #execStream: (input: BinaryInput, onChunk: ProtocolChunkCallback) => Promise<void>;
   readonly #rollbackControl: () => Promise<void>;
   readonly #poison: (cause: Error) => void;
-  readonly #protocolStreamCallbackReentry: () => Error | undefined;
   #state: TransactionState = 'active';
   #tail = Promise.resolve();
   #failure?: Readonly<{ error: Error; needsRollback: boolean }>;
@@ -709,18 +741,12 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
 
   constructor(
     exchange: StructuredExchange,
-    execRaw: (input: BinaryInput) => Promise<Uint8Array>,
-    execStream: (input: BinaryInput, onChunk: ProtocolChunkCallback) => Promise<void>,
     rollbackControl: () => Promise<void>,
     poison: (cause: Error) => void,
-    protocolStreamCallbackReentry: () => Error | undefined,
   ) {
     this.#exchange = exchange;
-    this.#execRaw = execRaw;
-    this.#execStream = execStream;
     this.#rollbackControl = rollbackControl;
     this.#poison = poison;
-    this.#protocolStreamCallbackReentry = protocolStreamCallbackReentry;
   }
 
   get closed(): boolean {
@@ -799,8 +825,6 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
   }
 
   rollback(): Promise<void> {
-    const callbackFailure = this.#protocolStreamCallbackReentry();
-    if (callbackFailure !== undefined) return Promise.reject(callbackFailure);
     try {
       this.#assertActive();
       this.#state = 'finishing';
@@ -816,23 +840,6 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
     } catch (error) {
       return Promise.reject(error);
     }
-  }
-
-  execProtocolRaw(input: BinaryInput): Promise<Uint8Array> {
-    return this.#enqueue(() => {
-      const bytes = toUint8Array(input).slice();
-      return this.#execRaw(bytes);
-    });
-  }
-
-  execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void> {
-    return this.#enqueue(() => {
-      if (typeof onChunk !== 'function') {
-        throw new TypeError('protocol stream callback must be a function');
-      }
-      const bytes = toUint8Array(input).slice();
-      return this.#execStream(bytes, onChunk);
-    });
   }
 
   async sealAndDrain(): Promise<TransactionSettlement> {
@@ -854,8 +861,6 @@ class OliphauntTransactionHandle implements OliphauntTransaction {
   }
 
   #enqueue<T>(body: () => T | Promise<T>): Promise<T> {
-    const callbackFailure = this.#protocolStreamCallbackReentry();
-    if (callbackFailure !== undefined) return Promise.reject(callbackFailure);
     try {
       this.#assertActive();
       return this.#enqueueAdmitted(body);
@@ -1050,10 +1055,19 @@ function errorWithCause(message: string, cause: unknown): Error {
 }
 
 function transactionRollbackAggregate(primary: unknown, rollback: unknown): AggregateError {
-  return new AggregateError(
-    [primary, rollback],
+  return transactionCallbackAggregate(
+    primary,
+    rollback,
     'Oliphaunt transaction failed and automatic ROLLBACK could not prove recovery',
   );
+}
+
+function transactionCallbackAggregate(
+  callback: unknown,
+  secondary: unknown,
+  message: string,
+): AggregateError {
+  return new AggregateError([callback, secondary], message);
 }
 
 /** @internal Package bootstrap and deterministic test injection only. */

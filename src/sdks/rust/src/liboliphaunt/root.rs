@@ -649,7 +649,7 @@ mod tests {
 
     use super::*;
     use crate::liboliphaunt::ffi::{
-        ABI_VERSION, NativeConfig, NativeHandle, NativeSymbols, path_to_cstring,
+        ABI_VERSION, NativeConfig, NativeErrorCapture, NativeHandle, NativeSymbols, path_to_cstring,
     };
 
     #[test]
@@ -928,27 +928,30 @@ mod tests {
         };
         let symbols = NativeSymbols::load().unwrap();
         let mut handle: *mut NativeHandle = std::ptr::null_mut();
-        let status = unsafe { (symbols.init)(&config, &mut handle) };
+        let mut error = NativeErrorCapture::zeroed();
+        let status = unsafe { (symbols.init_with_error)(&config, &mut handle, &mut error) };
         if mode == "expect-busy" {
             assert_ne!(status, 0, "C unexpectedly acquired the Rust-owned root");
             assert!(handle.is_null());
-            let message = symbols.last_error_text(handle).unwrap_or_default();
+            let message = error.error_text().unwrap_or_default();
             assert!(message.contains("already locked"), "{message}");
             return;
         }
         assert_eq!(mode, "hold");
-        assert_eq!(
-            status,
-            0,
-            "{}",
-            symbols.last_error_text(handle).unwrap_or_default()
-        );
+        assert_eq!(status, 0, "{}", error.error_text().unwrap_or_default());
         assert!(!handle.is_null());
         println!("OLIPHAUNT_C_LOCK_READY");
         std::io::stdout().flush().unwrap();
         let mut release = String::new();
         std::io::stdin().read_line(&mut release).unwrap();
-        assert_eq!(unsafe { (symbols.detach)(handle) }, 0);
+        let mut detach_error = NativeErrorCapture::zeroed();
+        let detach_status = unsafe { (symbols.detach_with_error)(handle, &mut detach_error) };
+        assert_eq!(
+            detach_status,
+            0,
+            "{}",
+            detach_error.error_text().unwrap_or_default()
+        );
     }
 
     fn spawn_native_c_lock_probe(mode: &str, prepared: &PreparedNativeRoot) -> std::process::Child {

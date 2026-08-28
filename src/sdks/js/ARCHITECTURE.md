@@ -9,7 +9,7 @@ physical backup to `liboliphaunt`.
 The default `Oliphaunt` client exposes `open`, `openServer`, and static
 `restore`. `open` returns the direct/broker database interface. `openServer`
 returns a distinct handle with a required connection string and no backup
-method.
+or database-connection methods.
 
 Typed execute/query results, callback transactions, cancellation, buffered and
 callback-streamed raw protocol, and close are common where meaningful. Backup
@@ -21,12 +21,16 @@ reports, and resource profiles are internal or absent.
 
 - Native direct uses the platform Node addon on Node/Bun and the Deno FFI
   adapter on Deno.
-- Native broker supervises one authenticated helper process per database.
-- Native server starts PostgreSQL and owns one wire connection while exposing a
-  libpq connection string for external clients.
+- Native broker owns one authenticated helper process per database. Helper or
+  IPC failure permanently fails that database handle; recovery is an explicit
+  close plus new open, never transparent session replacement or request replay.
+- Native server starts PostgreSQL, closes its private readiness probe before
+  publication, and exposes a connection string for caller-owned ORMs, drivers,
+  and tools.
 
-All three adapters implement the internal buffered runtime binding. The binding
-contains only operations required by the public handle. The Node addon and C ABI
+All three adapters implement the internal runtime binding. Its server adapter
+uses only open/connection-string/close/finalizer slots; required database slots
+reject internally and never appear on the public server facade. The Node addon and C ABI
 may have lower-level symbols for other consumers; the SDK does not mirror unused
 symbols into its own interface.
 
@@ -44,17 +48,18 @@ platform operations during first adapter resolution. They do not run a database
 operation or create an alternate synchronous database surface.
 
 Direct and broker databases have the same public methods. Server differs
-structurally instead of returning runtime-dependent failures: it exposes
-`connectionString` and omits `backup`. Standard PostgreSQL tools own server
-backup and logical import/export; applications provide those tools through their
-ordinary environment.
+structurally instead of returning runtime-dependent failures: it exposes only
+`connectionString`, `closed`, `close`, and async disposal. External connections
+own SQL, transactions, raw protocol, cancellation, and backup. Standard
+PostgreSQL tools own server backup and logical import/export; applications
+provide those tools through their ordinary environment.
 
 ## Lifecycle and concurrency
 
 Direct runtime admission prevents two active direct owners in one process.
 Broker supervision prevents duplicate roots and uses a separate cancellation
-endpoint so cancellation is not queued behind query output. Server cancellation
-uses PostgreSQL CancelRequest.
+endpoint so cancellation is not queued behind query output. The server handle
+does not control independent external connections.
 
 The database handle tracks close and active transaction state. A transaction
 pins the one SDK connection. Body failure rolls back; failed rollback poisons.
@@ -64,6 +69,12 @@ exception. Close waits for admitted operations. A pre-teardown direct failure
 may be retried; after success or a destructive broker/server failure, the one
 terminal close attempt is retained and later calls replay its exact outcome.
 The read-only `closed` state becomes true for either terminal result.
+
+Managed transaction handles expose structured SQL only. They reject ownership
+escape based on exact `CommandComplete` tags and the terminal `ReadyForQuery`
+frame before high-level parsing, then make the database close-only without a
+speculative SDK control command. Manual transaction lifecycle SQL and `AND
+CHAIN` are unsupported; `SAVEPOINT` and `ROLLBACK TO` remain supported.
 Closing stops ordinary session admission immediately, but keeps out-of-band
 cancel admission open while already-admitted work drains. Runtime teardown
 closes that cancel gate only after every admitted cancellation request settles.

@@ -5,6 +5,7 @@ import {
   type WasixDatabaseIdentity,
   type WasixDatabaseSession,
   type WasixPersistenceMode,
+  type WasixProtocolStreamOutcome,
   type WasixProtocolConnectionMode,
 } from './database.js';
 import { WasixStorageError } from './errors.js';
@@ -105,6 +106,8 @@ const MAX_PREPARED_RUNTIMES = 1;
 const initializedHosts = new WeakMap<object, Promise<void>>();
 const CHROMIUM_SYNC_WASM_LIMIT_BYTES = 8 * 1024 * 1024;
 const DIRECT_INSTANCE_DEADLINE_MS = 120_000;
+const PROTOCOL_STREAM_COMPLETE = 0;
+const PROTOCOL_STREAM_CALLBACK_ABORTED = 1;
 
 const defaultDependencies: DirectWasixDependencies = {
   prepareRuntime: prepareRuntimeCached,
@@ -225,10 +228,10 @@ export class DirectWasixSession implements WasixDatabaseSession {
             mount: materialized.mounts,
           }),
         );
-      const initialize: DirectInstanceInitializer = async (candidate, storageState) => {
+      const initialize: DirectInstanceInitializer = async (candidate, _storageState) => {
         const response = candidate.startup(startupPacket(options.username, options.database));
         assertSuccessfulStartupResponse(response);
-        await configureWasixDatabase(options, prepared, storageState, async (input) =>
+        await configureWasixDatabase(options, async (input) =>
           candidate.execProtocolRaw(input),
         );
         return new Uint8Array(response);
@@ -310,13 +313,17 @@ export class DirectWasixSession implements WasixDatabaseSession {
     input: Uint8Array,
     onChunk: (chunk: Uint8Array) => void,
     persistence: WasixPersistenceMode = 'sync',
-  ): Promise<void> {
+  ): Promise<WasixProtocolStreamOutcome> {
     this.#assertHealthy();
     try {
-      this.#currentInstance().execProtocolStream(input, onChunk);
+      const status = this.#currentInstance().execProtocolStream(input, onChunk);
+      if (status !== PROTOCOL_STREAM_COMPLETE && status !== PROTOCOL_STREAM_CALLBACK_ABORTED) {
+        throw new Error(`WASIX host returned unknown protocol stream status ${status}`);
+      }
       if (persistence === 'sync') {
         await this.#storage.sync(this.#baseDirectory, 'operation');
       }
+      return status === PROTOCOL_STREAM_CALLBACK_ABORTED ? 'callbackAborted' : 'complete';
     } catch (error) {
       this.#failed = true;
       if (error instanceof WasixStorageError) throw error;

@@ -5,7 +5,7 @@ use crate::config::{
     DEFAULT_DATABASE, DEFAULT_USERNAME, EngineMode, NativeBrokerConfig, NativeServerConfig,
     OpenConfig, PostgresStartupGuc,
 };
-use crate::engine::{EngineCancel, EngineSession, NativeRuntime};
+use crate::engine::{EngineCancel, EngineSession, NativeRuntime, ProtocolStreamOutcome};
 use crate::error::{Error, Result};
 use crate::extension::Extension;
 use crate::liboliphaunt::OliphauntRuntime;
@@ -22,6 +22,17 @@ pub struct BrokerSession {
 #[derive(Clone)]
 pub struct BrokerCancel {
     cancel: Arc<dyn EngineCancel>,
+}
+
+/// Version-locked streamed-protocol completion used by the broker helper.
+#[doc(hidden)]
+pub enum BrokerStreamOutcome {
+    /// The direct runtime confirmed ReadyForQuery; the nested result is the
+    /// chunk callback outcome.
+    ReadyForQuery(Result<()>),
+    /// The direct runtime could not confirm ReadyForQuery after an independent
+    /// runtime or transport failure.
+    SessionStateUnknown(Error),
 }
 
 impl BrokerCancel {
@@ -82,9 +93,15 @@ impl BrokerSession {
         &mut self,
         bytes: Vec<u8>,
         on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
-    ) -> Result<()> {
-        self.session
-            .exec_protocol_raw_stream(bytes.into(), on_chunk)
+    ) -> BrokerStreamOutcome {
+        match self.session.exec_protocol_raw_stream(bytes.into(), on_chunk) {
+            ProtocolStreamOutcome::ReadyForQuery(result) => {
+                BrokerStreamOutcome::ReadyForQuery(result)
+            }
+            ProtocolStreamOutcome::SessionStateUnknown(error) => {
+                BrokerStreamOutcome::SessionStateUnknown(error)
+            }
+        }
     }
 
     /// Execute a PostgreSQL simple query.

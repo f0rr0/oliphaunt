@@ -1643,10 +1643,10 @@ pub(crate) fn install_missing_extension_archives(
 ) -> Result<()> {
     for extension in extensions {
         let bytes = assets::extension_archive(extension.sql_name()).ok_or_else(|| {
-            anyhow!(
+            crate::error::invalid_configuration(format!(
                 "extension asset '{}' is not bundled in this oliphaunt-wasix build",
                 extension.sql_name()
-            )
+            ))
         })?;
         install_bundled_extension_bytes(
             &outcome.runtime_layout.mutable_root,

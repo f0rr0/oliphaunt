@@ -1,6 +1,31 @@
 import Foundation
 import COliphaunt
 
+enum OliphauntNativeStreamCompletion: Equatable {
+    case success
+    case callbackAborted
+    case nativeFailure
+    case protocolInconsistency
+
+    static let callbackAbortedResult = Int32(OLIPHAUNT_STREAM_CALLBACK_ABORTED)
+}
+
+func classifyOliphauntNativeStreamCompletion(
+    result: Int32,
+    callbackFailed: Bool
+) -> OliphauntNativeStreamCompletion {
+    if result < 0 {
+        return .nativeFailure
+    }
+    if result == OliphauntNativeStreamCompletion.callbackAbortedResult {
+        return callbackFailed ? .callbackAborted : .protocolInconsistency
+    }
+    if result == 0 {
+        return callbackFailed ? .protocolInconsistency : .success
+    }
+    return .protocolInconsistency
+}
+
 struct OliphauntNativeDirectEngine: OliphauntEngine {
     var libraryURL: URL?
     var runtimeDirectory: URL?
@@ -659,7 +684,7 @@ private final class NativeDirectSession: OliphauntSession, @unchecked Sendable {
     func execProtocolRawStream(
         _ bytes: Data,
         onChunk: @escaping @Sendable (Data) throws -> Void
-    ) async throws {
+    ) async throws -> OliphauntProtocolStreamOutcome {
         try await owner.run { [box] in
             try box.execProtocolRawStream(bytes, onChunk: onChunk)
         }
@@ -747,7 +772,7 @@ private final class NativeSessionBox: @unchecked Sendable {
     func execProtocolRawStream(
         _ bytes: Data,
         onChunk: @escaping @Sendable (Data) throws -> Void
-    ) throws {
+    ) throws -> OliphauntProtocolStreamOutcome {
         let pointer = try beginCall()
         defer {
             endCall()
@@ -783,11 +808,30 @@ private final class NativeSessionBox: @unchecked Sendable {
                 context
             )
         }
-        if let error = callbackBox.error {
-            throw error
-        }
-        guard rc == 0 else {
+        switch classifyOliphauntNativeStreamCompletion(
+            result: rc,
+            callbackFailed: callbackBox.error != nil
+        ) {
+        case .success:
+            return .complete
+        case .callbackAborted:
+            // The positive status proves liboliphaunt drained through
+            // ReadyForQuery; only this outcome may preserve callback identity.
+            guard let callbackError = callbackBox.error else {
+                throw OliphauntError.engine(
+                    "liboliphaunt reported a recovered callback abort without a callback failure"
+                )
+            }
+            return .callbackAborted(callbackError)
+        case .nativeFailure:
+            // A negative result means transport or recovery failed. Its native
+            // diagnostic is authoritative even when the callback also threw.
             throw OliphauntError.engine(OliphauntNativeDirectEngine.lastError(pointer))
+        case .protocolInconsistency:
+            throw OliphauntError.engine(
+                "liboliphaunt returned protocol stream result \(rc) with " +
+                    (callbackBox.error == nil ? "no callback failure" : "an unconfirmed callback failure")
+            )
         }
     }
 

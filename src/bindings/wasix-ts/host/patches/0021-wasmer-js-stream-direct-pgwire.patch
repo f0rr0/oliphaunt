@@ -150,13 +150,21 @@ index 17f74b6..b78334d 100644
 @@ -13 +14 @@ use virtual_fs::VirtualFile;
 -use wasm_bindgen::{prelude::wasm_bindgen, JsValue};
 +use wasm_bindgen::{prelude::wasm_bindgen, JsCast, JsValue};
-@@ -21,6 +22,276 @@ use crate::{runtime::Runtime, tasks::CallerRealmTaskManager, utils::Error, RunOp
+@@ -21,6 +22,292 @@ use crate::{runtime::Runtime, tasks::CallerRealmTaskManager, utils::Error, RunOp
  const DEFAULT_PROGRAM_NAME: &str = "/bin/postgres";
  const OLIPHAUNT_EXIT_ALIVE: i32 = 99;
  const STDERR_LIMIT_BYTES: usize = 16 * 1024;
 +const PROTOCOL_CHUNK_BYTES: usize = 64 * 1024;
 +const PROTOCOL_BUFFERED: i32 = 0;
 +const PROTOCOL_HYBRID: i32 = 2;
++const PROTOCOL_STREAM_COMPLETE: u32 = 0;
++const PROTOCOL_STREAM_CALLBACK_ABORTED: u32 = 1;
++
++#[derive(Debug)]
++enum ProtocolStreamOutcome {
++    Complete,
++    CallbackAborted(String),
++}
 +
 +thread_local! {
 +    static PROTOCOL_CALLBACK: RefCell<Option<Function>> = const { RefCell::new(None) };
@@ -319,20 +327,24 @@ index 17f74b6..b78334d 100644
 +        Ok(())
 +    }
 +
-+    fn finish(&self) -> anyhow::Result<()> {
++    fn finish(&self) -> Option<String> {
 +        PROTOCOL_CALLBACK.with(|active| *active.borrow_mut() = None);
-+        match self
++        self
 +            .failure
 +            .lock()
 +            .expect("protocol stdout lock poisoned")
 +            .take()
-+        {
-+            Some(failure) => anyhow::bail!("protocol stream callback failed: {failure}"),
-+            None => Ok(()),
-+        }
 +    }
 +
 +    fn deliver(&self, input: &[u8]) -> io::Result<()> {
++        if self
++            .failure
++            .lock()
++            .expect("protocol stdout lock poisoned")
++            .is_some()
++        {
++            return Ok(());
++        }
 +        let callback = PROTOCOL_CALLBACK
 +            .with(|active| active.borrow().clone())
 +            .ok_or_else(|| {
@@ -344,7 +356,11 @@ index 17f74b6..b78334d 100644
 +                let failure = format!("{error:?}");
 +                *self.failure.lock().expect("protocol stdout lock poisoned") =
 +                    Some(failure.clone());
-+                return Err(io::Error::other(failure));
++                // The callback result is reported only after the guest has
++                // continued to ReadyForQuery.  Stop delivery, but accept and
++                // discard subsequent writes so PostgreSQL can recover without
++                // invoking the failed consumer again.
++                return Ok(());
 +            }
 +        }
 +        Ok(())
@@ -427,7 +443,7 @@ index 17f74b6..b78334d 100644
  
  #[derive(Clone, Debug, Default)]
  struct BoundedStderr {
-@@ -186,9 +457,18 @@ pub async fn instantiate_oliphaunt_direct(
+@@ -186,9 +473,18 @@ pub async fn instantiate_oliphaunt_direct(
      options: RunOptions,
  ) -> Result<OliphauntDirectInstance, Error> {
      let stderr = BoundedStderr::default();
@@ -449,7 +465,7 @@ index 17f74b6..b78334d 100644
  }
  
  #[wasm_bindgen]
-@@ -198,6 +478,8 @@ pub struct OliphauntDirectInstance {
+@@ -198,6 +494,8 @@ pub struct OliphauntDirectInstance {
      store: Store,
      _instance: WasmerInstance,
      _env: WasiFunctionEnv,
@@ -458,7 +474,7 @@ index 17f74b6..b78334d 100644
      stderr: BoundedStderr,
      guest_memory: JsValue,
      input_reset: TypedFunction<(), i32>,
-@@ -208,6 +490,7 @@ pub struct OliphauntDirectInstance {
+@@ -208,6 +506,7 @@ pub struct OliphauntDirectInstance {
      output_len: TypedFunction<(), i32>,
      output_data: TypedFunction<(), i32>,
      output_contains_error: TypedFunction<(), i32>,
@@ -466,7 +482,7 @@ index 17f74b6..b78334d 100644
      set_force_host_error_recovery: Option<TypedFunction<i32, i32>>,
      set_active: TypedFunction<i32, i32>,
      wasi_start: TypedFunction<(), ()>,
-@@ -240,12 +523,45 @@ impl OliphauntDirectInstance {
+@@ -240,12 +539,48 @@ impl OliphauntDirectInstance {
      /// Execute raw PostgreSQL frontend-protocol bytes synchronously.
      #[wasm_bindgen(js_name = execProtocolRaw)]
      pub fn exec_protocol_raw(&mut self, input: Uint8Array) -> Result<Uint8Array, Error> {
@@ -488,9 +504,12 @@ index 17f74b6..b78334d 100644
 +        &mut self,
 +        input: Uint8Array,
 +        on_chunk: Function,
-+    ) -> Result<(), Error> {
++    ) -> Result<u32, Error> {
 +        match self.exec_protocol_stream_inner(&input, on_chunk) {
-+            Ok(()) => Ok(()),
++            Ok(ProtocolStreamOutcome::Complete) => Ok(PROTOCOL_STREAM_COMPLETE),
++            Ok(ProtocolStreamOutcome::CallbackAborted(_)) => {
++                Ok(PROTOCOL_STREAM_CALLBACK_ABORTED)
++            }
 +            Err(error) => Err(Error::from(self.stderr.attach(error))),
 +        }
 +    }
@@ -512,7 +531,7 @@ index 17f74b6..b78334d 100644
      /// Shut down the embedded lifecycle. This does not consume the JS object.
      pub fn close(&mut self) -> Result<(), Error> {
          match self.close_inner() {
-@@ -256,6 +572,56 @@ impl OliphauntDirectInstance {
+@@ -256,6 +591,65 @@ impl OliphauntDirectInstance {
  }
  
  impl OliphauntDirectInstance {
@@ -523,7 +542,14 @@ index 17f74b6..b78334d 100644
 +        on_chunk: Function,
 +    ) -> anyhow::Result<()> {
 +        self.protocol_stdin.begin(on_read)?;
-+        let result = self.exec_protocol_stream_inner(payload, on_chunk);
++        let result = self.exec_protocol_stream_inner(payload, on_chunk).and_then(|outcome| {
++            match outcome {
++                ProtocolStreamOutcome::Complete => Ok(()),
++                ProtocolStreamOutcome::CallbackAborted(failure) => {
++                    anyhow::bail!("protocol stream callback failed: {failure}")
++                }
++            }
++        });
 +        self.protocol_stdin.finish();
 +        result
 +    }
@@ -532,7 +558,7 @@ index 17f74b6..b78334d 100644
 +        &mut self,
 +        payload: &Uint8Array,
 +        on_chunk: Function,
-+    ) -> anyhow::Result<()> {
++    ) -> anyhow::Result<ProtocolStreamOutcome> {
 +        self.protocol_stdout.begin(on_chunk.clone())?;
 +        let previous = match self
 +            .set_protocol_transport
@@ -550,26 +576,28 @@ index 17f74b6..b78334d 100644
 +            .set_protocol_transport
 +            .call(&mut self.store, previous)
 +            .context("restore protocol transport");
-+        let callback = self.protocol_stdout.finish();
++        let callback_failure = self.protocol_stdout.finish();
 +
 +        let output = execution?;
 +        restore?;
-+        callback?;
++        if let Some(failure) = callback_failure {
++            return Ok(ProtocolStreamOutcome::CallbackAborted(failure));
++        }
 +        let length = output.length() as usize;
 +        for start in (0..length).step_by(PROTOCOL_CHUNK_BYTES) {
 +            let end = start.saturating_add(PROTOCOL_CHUNK_BYTES).min(length);
 +            let chunk = output.slice(start as u32, end as u32);
-+            on_chunk
-+                .call1(&JsValue::UNDEFINED, &chunk)
-+                .map_err(|error| anyhow::anyhow!("protocol stream callback failed: {error:?}"))?;
++            if let Err(error) = on_chunk.call1(&JsValue::UNDEFINED, &chunk) {
++                return Ok(ProtocolStreamOutcome::CallbackAborted(format!("{error:?}")));
++            }
 +        }
-+        Ok(())
++        Ok(ProtocolStreamOutcome::Complete)
 +    }
 +
      fn startup_inner(&mut self, packet: &Uint8Array) -> anyhow::Result<Uint8Array> {
          self.ensure_open()?;
          ensure!(
-@@ -357,6 +723,8 @@ impl OliphauntDirectInstance {
+@@ -357,6 +751,8 @@ impl OliphauntDirectInstance {
          module: WebAssembly::Module,
          module_bytes: Uint8Array,
          options: RunOptions,
@@ -578,7 +606,7 @@ index 17f74b6..b78334d 100644
          stderr: BoundedStderr,
      ) -> Result<Self, Error> {
          // Direct execution intentionally has no configurable networking or
-@@ -368,7 +736,12 @@ impl OliphauntDirectInstance {
+@@ -368,7 +764,12 @@ impl OliphauntDirectInstance {
              .as_string()
              .unwrap_or_else(|| DEFAULT_PROGRAM_NAME.to_owned());
          let mut builder = WasiEnvBuilder::new(program_name).runtime(runtime.clone());
@@ -592,7 +620,7 @@ index 17f74b6..b78334d 100644
  
          let module = wasmer::Module::from((module, module_bytes.to_vec()));
          let mut store = Store::new(runtime.engine());
-@@ -399,6 +772,11 @@ impl OliphauntDirectInstance {
+@@ -399,6 +800,11 @@ impl OliphauntDirectInstance {
              &instance,
              "oliphaunt_wasix_output_contains_error",
          )?;
@@ -604,7 +632,7 @@ index 17f74b6..b78334d 100644
          let set_force_host_error_recovery = optional_typed_export(
              &mut store,
              &instance,
-@@ -428,6 +806,8 @@ impl OliphauntDirectInstance {
+@@ -428,6 +834,8 @@ impl OliphauntDirectInstance {
              store,
              _instance: instance,
              _env: env,
@@ -613,7 +641,7 @@ index 17f74b6..b78334d 100644
              stderr,
              guest_memory,
              input_reset,
-@@ -438,6 +818,7 @@ impl OliphauntDirectInstance {
+@@ -438,6 +846,7 @@ impl OliphauntDirectInstance {
              output_len,
              output_data,
              output_contains_error,

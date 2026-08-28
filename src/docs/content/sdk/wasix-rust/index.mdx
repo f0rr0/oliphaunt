@@ -11,9 +11,12 @@ the native SDK products.
 
 The crate root is the default direct API. `Oliphaunt` constructs and retains the
 Wasmer store and PostgreSQL session on the calling thread; its synchronous
-database methods take `&mut self`. Applications that need to keep an async
-executor responsive can import the cloneable `oliphaunt_wasix::worker`
-surface. That choice is explicit and does not change storage or SQL semantics.
+database methods take `&mut self`. The retained store is thread-affine, so this
+root handle is `!Send + !Sync` and must be created, used, closed, and dropped on
+one OS thread. Applications that need a movable/shared handle or need to keep an
+async executor responsive use the cloneable `Send + Sync` root
+`AsyncOliphaunt` type. That choice is explicit and does not change storage or
+SQL semantics.
 
 Use this SDK when Rust owns the WASIX host. Native desktop and mobile apps use
 native SDKs when they select `liboliphaunt`. Browser, Node, Bun, and Deno TypeScript apps can use the
@@ -56,13 +59,13 @@ fn run() -> oliphaunt_wasix::Result<()> {
 }
 ```
 
-For a dedicated owner thread, import the worker type explicitly:
+For a dedicated owner thread, use the asynchronous type explicitly:
 
 ```rust
-use oliphaunt_wasix::worker::Oliphaunt;
+use oliphaunt_wasix::AsyncOliphaunt;
 
-async fn run_on_worker() -> oliphaunt_wasix::Result<()> {
-    let database = Oliphaunt::open().await?;
+async fn run_asynchronously() -> oliphaunt_wasix::Result<()> {
+    let database = AsyncOliphaunt::open().await?;
     let rows = database.query("select 1::text as value").await?;
     let value: &str = rows.rows()[0].try_get("value")?;
     assert_eq!(value, "1");
@@ -76,8 +79,8 @@ Rust WASIX is separate from native direct, native broker, and native server. It
 has its own filesystem, startup, server/proxy, dump/restore, and extension
 behavior.
 
-The Rust binding exposes the default direct caller-thread API, the explicit
-worker API, optional `pg_dump`/`psql`, and a local
+The Rust binding exposes the default direct caller-thread API, named root
+`Async*` handles, optional `pg_dump`/`psql`, and a local
 PostgreSQL-compatible URL. WASIX TypeScript makes the same calling choice at
 the package boundary: its root entry point runs in the importing realm, while
 `@oliphaunt/wasix-ts/worker` is the explicit package-owned Worker surface.

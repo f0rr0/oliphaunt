@@ -5,6 +5,14 @@ private struct SendableData: @unchecked Sendable {
     let value: Data
 }
 
+private final class ProtocolStreamCallbackFailure: Error, @unchecked Sendable {
+    let callbackError: NSError
+
+    init(_ callbackError: NSError) {
+        self.callbackError = callbackError
+    }
+}
+
 private extension OliphauntDatabase {
     func reactNativeBackup() async throws -> SendableData {
         SendableData(value: try await backup())
@@ -129,12 +137,20 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
             do {
                 try await database.execProtocolRawStream(request) { chunk in
                     if let error = chunkBox.value(chunk as NSData) {
-                        throw error
+                        throw ProtocolStreamCallbackFailure(error)
                     }
                 }
                 completionBox.value(nil)
             } catch {
-                completionBox.value(Self.nsError(error))
+                if let recoveredCallback = error as? ProtocolStreamCallbackFailure {
+                    // The Swift SDK can rethrow this private sentinel only for
+                    // the typed result after recovery reached ReadyForQuery.
+                    completionBox.value(
+                        Self.protocolStreamCallbackAbortedError(recoveredCallback.callbackError)
+                    )
+                } else {
+                    completionBox.value(Self.nsError(error))
+                }
             }
         }
     }
@@ -405,6 +421,17 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
             domain: errorDomain,
             code: 1,
             userInfo: [NSLocalizedDescriptionKey: message]
+        )
+    }
+
+    private static func protocolStreamCallbackAbortedError(_ error: NSError) -> NSError {
+        NSError(
+            domain: OliphauntProtocolStreamCallbackAbortedErrorDomain,
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey: error.localizedDescription,
+                NSUnderlyingErrorKey: error,
+            ]
         )
     }
 

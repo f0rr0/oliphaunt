@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use anyhow::{Result, bail, ensure};
+use anyhow::Result;
+
+use crate::error::invalid_configuration;
 
 pub(crate) const SINGLE_BACKEND_STARTUP_GUCS: &[(&str, &str)] = &[
     ("exit_on_error", "false"),
@@ -49,16 +51,18 @@ impl PostgresConfig {
     pub(crate) fn validate(&self) -> Result<()> {
         for (name, value) in &self.settings {
             validate_guc_name(name)?;
-            if let Some(required) = single_backend_guc_value(name) {
-                ensure!(
-                    value == required,
+            if let Some(required) = single_backend_guc_value(name)
+                && value != required
+            {
+                return Err(invalid_configuration(format!(
                     "PostgreSQL startup GUC '{name}' is managed by oliphaunt-wasix and must remain '{required}'"
-                );
+                )));
             }
-            ensure!(
-                !value.contains('\0'),
-                "PostgreSQL startup GUC value for '{name}' must not contain NUL bytes"
-            );
+            if value.contains('\0') {
+                return Err(invalid_configuration(format!(
+                    "PostgreSQL startup GUC value for '{name}' must not contain NUL bytes"
+                )));
+            }
         }
         Ok(())
     }
@@ -95,30 +99,34 @@ impl StartupConfig {
 }
 
 fn validate_guc_name(name: &str) -> Result<()> {
-    ensure!(
-        !name.is_empty(),
-        "PostgreSQL startup GUC name must not be empty"
-    );
-    ensure!(
-        !name.contains('\0') && !name.contains('='),
-        "PostgreSQL startup GUC name '{name}' must not contain NUL bytes or '='"
-    );
+    if name.is_empty() {
+        return Err(invalid_configuration(
+            "PostgreSQL startup GUC name must not be empty",
+        ));
+    }
+    if name.contains('\0') || name.contains('=') {
+        return Err(invalid_configuration(format!(
+            "PostgreSQL startup GUC name '{name}' must not contain NUL bytes or '='"
+        )));
+    }
 
     for part in name.split('.') {
         if part.is_empty() {
-            bail!("PostgreSQL startup GUC name '{name}' contains an empty identifier part");
+            return Err(invalid_configuration(format!(
+                "PostgreSQL startup GUC name '{name}' contains an empty identifier part"
+            )));
         }
         let mut chars = part.chars();
         let first = chars.next().expect("part is non-empty");
         if !(first == '_' || first.is_ascii_alphabetic()) {
-            bail!(
+            return Err(invalid_configuration(format!(
                 "PostgreSQL startup GUC name '{name}' must start each component with a letter or '_'"
-            );
+            )));
         }
         if chars.any(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())) {
-            bail!(
+            return Err(invalid_configuration(format!(
                 "PostgreSQL startup GUC name '{name}' may only contain letters, digits, '_', '$', and '.'"
-            );
+            )));
         }
     }
 
@@ -133,10 +141,14 @@ fn single_backend_guc_value(name: &str) -> Option<&'static str> {
 }
 
 fn validate_startup_value(name: &str, value: &str) -> Result<()> {
-    ensure!(
-        !value.contains('\0'),
-        "Postgres startup {name} must not contain NUL bytes"
-    );
+    if value.trim().is_empty() {
+        return Err(invalid_configuration(format!("{name} must not be empty")));
+    }
+    if value.contains('\0') {
+        return Err(invalid_configuration(format!(
+            "{name} must not contain NUL bytes"
+        )));
+    }
     Ok(())
 }
 
@@ -191,20 +203,46 @@ mod tests {
     }
 
     #[test]
-    fn startup_values_follow_postgres_cstring_rules() {
-        StartupConfig {
-            username: String::new(),
-            database: "  ".to_owned(),
+    fn startup_values_match_native_rust_identity_validation() {
+        for (username, database, expected_name) in [
+            ("", "postgres", "username"),
+            (" \t\n", "postgres", "username"),
+            ("postgres", "", "database"),
+            ("postgres", " \t\n", "database"),
+        ] {
+            let error = StartupConfig {
+                username: username.to_owned(),
+                database: database.to_owned(),
+            }
+            .validate()
+            .expect_err("empty and whitespace-only startup identities must be rejected");
+            assert_eq!(
+                error.to_string(),
+                format!("{expected_name} must not be empty")
+            );
         }
-        .validate()
-        .expect("empty and whitespace values fit the startup packet");
 
-        let error = StartupConfig {
-            username: "bad\0user".to_owned(),
-            database: "postgres".to_owned(),
+        for (username, database, expected_name) in [
+            ("bad\0user", "postgres", "username"),
+            ("postgres", "bad\0database", "database"),
+        ] {
+            let error = StartupConfig {
+                username: username.to_owned(),
+                database: database.to_owned(),
+            }
+            .validate()
+            .expect_err("NUL cannot be encoded in a startup cstring");
+            assert_eq!(
+                error.to_string(),
+                format!("{expected_name} must not contain NUL bytes")
+            );
+        }
+
+        StartupConfig {
+            username: " application user ".to_owned(),
+            database: " application database ".to_owned(),
         }
         .validate()
-        .expect_err("NUL cannot be encoded in a startup cstring");
-        assert!(error.to_string().contains("NUL"));
+        .expect("nonempty PostgreSQL identities are preserved rather than trimmed");
     }
 }

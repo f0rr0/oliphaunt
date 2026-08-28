@@ -123,7 +123,7 @@ fn savepoints_error_recovery_and_indexed_updates() -> Result<()> {
         }
         transaction.execute("ROLLBACK TO SAVEPOINT expected_error")?;
         transaction.execute("UPDATE indexed_items SET value = 'updated' WHERE key = 42")?;
-        Ok(())
+        Ok::<(), oliphaunt_wasix::Error>(())
     })?;
 
     database.execute("SET enable_seqscan = off")?;
@@ -172,10 +172,11 @@ fn panicking_transaction_callback_rolls_back_and_releases_the_database() -> Resu
     database.execute("CREATE TABLE panic_probe(value integer NOT NULL)")?;
 
     let panic = catch_unwind(AssertUnwindSafe(|| {
-        let _: oliphaunt_wasix::Result<()> = database.transaction(|transaction| {
-            transaction.execute("INSERT INTO panic_probe VALUES (1)")?;
-            panic!("transaction callback panic probe");
-        });
+        let _: oliphaunt_wasix::TransactionResult<(), oliphaunt_wasix::Error> = database
+            .transaction(|transaction| {
+                transaction.execute("INSERT INTO panic_probe VALUES (1)")?;
+                panic!("transaction callback panic probe");
+            });
     }));
     ensure!(panic.is_err(), "the callback panic must be rethrown");
     ensure!(
@@ -188,7 +189,7 @@ fn panicking_transaction_callback_rolls_back_and_releases_the_database() -> Resu
 
     database.transaction(|transaction| {
         transaction.execute("INSERT INTO panic_probe VALUES (2)")?;
-        Ok(())
+        Ok::<(), oliphaunt_wasix::Error>(())
     })?;
     ensure!(
         database

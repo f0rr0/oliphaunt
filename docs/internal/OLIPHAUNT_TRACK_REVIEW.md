@@ -83,11 +83,11 @@ This track pass addressed concrete gaps:
   A shared broker runtime enforces `.broker_max_instances(n)`, rejects duplicate
   active roots, and reports multi-root capability only when the configured root
   budget is greater than one.
-- Broker sessions now retain their helper launch plan and relaunch a fresh
-  helper against the same root when the previous helper exits between
-  operations. The SDK deliberately does not replay an in-flight request after a
-  crash because the request's commit state may be unknown; a caller observes
-  that failure and later operations can recover through PostgreSQL WAL recovery.
+- Broker sessions fail closed when their helper exits or IPC breaks. The first
+  failure is retained, later work on the same handle is rejected, and the SDK
+  never replaces the physical session invisibly or replays uncertain work. The
+  caller must close and explicitly open a new handle on persistent storage for
+  PostgreSQL WAL recovery.
 - The native root/runtime module is split by responsibility: process plus
   filesystem root locking and PGDATA path preparation stay in
   `oliphaunt/root.rs`; runtime-cache discovery
@@ -119,10 +119,9 @@ This track pass addressed concrete gaps:
 - The Rust owner executor now uses `crossbeam-channel` for the per-session
   command queue instead of `std::sync::mpsc`, preserving the serialized owner
   thread while reducing direct-mode RTT handoff overhead.
-- `liboliphaunt` now exposes `oliphaunt_exec_simple_query` and
-  `OLIPHAUNT_CAP_SIMPLE_QUERY` so SDK simple-query calls do not need to build and
-  revalidate frontend protocol frames outside the engine. The Rust direct
-  engine loads this symbol opportunistically, while broker mode forwards a
+- `liboliphaunt` now exposes the required `oliphaunt_exec_simple_query` ABI so
+  SDK simple-query calls do not need to build and revalidate frontend protocol
+  frames outside the engine. Broker mode forwards a
   first-class simple-query IPC frame to the helper and lets the helper call the
   same engine hook.
 - The C ABI no longer imposes a hard-coded default execution timeout while
@@ -166,7 +165,7 @@ This track pass addressed concrete gaps:
   class, native module requirement, dependencies, runtime data files, smoke SQL
   strategy, gated direct-C-ABI/broker/server coverage, and mobile static-link
   status. The gated native extension matrix iterates this manifest directly.
-- The C smoke harness now covers ABI version/capability reporting, invalid init
+- The C smoke harness now covers ABI version/layout reporting, invalid init
   and invalid exec/stream arguments, malformed frontend frame rejection and
   recovery, normal protocol success, SQL error recovery, large owned responses,
   stream callback delivery, stream callback failure recovery, response cleanup,
@@ -175,10 +174,10 @@ This track pass addressed concrete gaps:
   `PGDATA` environment restoration after close, explicit same-process direct
   reopen rejection, and process-bound reopen through a second harness process.
 - `liboliphaunt` now exposes out-of-band direct query cancellation through
-  `oliphaunt_cancel` and `OLIPHAUNT_CAP_QUERY_CANCEL`. The Rust root exposes a
+  `oliphaunt_cancel`. The Rust root exposes a
   `CancelHandle` that can be moved to the interrupting thread while the
-  exclusive database is blocked; the worker API retains asynchronous
-  `Oliphaunt::cancel()` backed by the same `EngineCancel` capability outside
+  exclusive database is blocked; `AsyncOliphaunt` retains asynchronous
+  `cancel()` backed by the same `EngineCancel` capability outside
   its owner queue.
 - Broker and server now preserve that same out-of-band cancellation contract at
   their natural transport layer. Broker mode creates a separate authenticated
@@ -200,8 +199,8 @@ This track pass addressed concrete gaps:
   extension code, including pgGraph persistence, reads `PGDATA` directly; the
   native runtime now supplies that root and restores the caller's environment
   after the embedded backend exits.
-- `liboliphaunt` now exposes `oliphaunt_register_static_extensions` and
-  `OLIPHAUNT_CAP_STATIC_EXTENSIONS`. The PostgreSQL `dfmgr` patch resolves
+- `liboliphaunt` now exposes `oliphaunt_register_static_extensions`. The
+  PostgreSQL `dfmgr` patch resolves
   registered in-binary extension modules through the normal dynamic-loader path,
   validates PostgreSQL magic, calls the registered init hook once, and resolves
   exported SQL-callable C symbols without requiring a module file. The C smoke
@@ -401,21 +400,15 @@ cannot.
 
 ## C ABI And PostgreSQL Patch Stack
 
-The current C ABI is deliberately small:
+The current C ABI is deliberately small. It exposes lifecycle and
+generation-guarded cleanup, owned and streaming protocol execution, simple
+query, cancellation, physical backup/restore, static extension registration,
+response release, version reporting, and caller-owned error copying. ABI 10
+also adds operation-specific `_with_error` variants for schedulers that resume
+on a different thread; the legacy entry points remain intact.
 
-- `oliphaunt_init`
-- `oliphaunt_exec_protocol`
-- `oliphaunt_exec_simple_query`
-- `oliphaunt_exec_protocol_raw_stream`
-- `oliphaunt_cancel`
-- `oliphaunt_close`
-- `oliphaunt_last_error`
-- `oliphaunt_version`
-- `oliphaunt_capabilities`
-- `oliphaunt_free_response`
-
-That is a good first boundary. It keeps query semantics on PostgreSQL's native
-wire protocol and avoids inventing a second SQL API at the C layer.
+That is a stable low-level boundary. It keeps query semantics on PostgreSQL's
+native wire protocol and avoids inventing a second SQL API at the C layer.
 
 The PostgreSQL 18 patch stack is mostly defensible:
 
@@ -495,9 +488,9 @@ Gaps:
   authenticated Unix-domain socket IPC on Unix. That is the correct shape while
   the direct C ABI is process-global: one worker can crash without taking down
   the application or other broker roots, and the SDK can bound root fan-out.
-  Helper relaunch after an observed crash is now covered; durable request
-  replay, richer crash policy, and upgrade orchestration remain
-  broker-supervisor release gates.
+  Helper loss is fail-closed and requires an explicit new database handle;
+  richer crash policy and upgrade orchestration remain broker-supervisor
+  release gates.
 - `NativeServer` is a real server process with release-gate smoke for `psql`,
   packaged `pg_dump`, `tokio-postgres`, `tokio-postgres` external cancellation,
   `sqlx` pools, restart, and concurrent sessions. It still needs broader
@@ -637,17 +630,18 @@ liboliphaunt should adopt that shape:
    - concurrent sessions in server mode.
 
 4. Concurrency:
-   - many async Rust tasks sharing one explicit worker handle;
-   - exclusive caller-thread behavior on the Rust root handle;
+   - many async Rust tasks sharing one `AsyncOliphaunt` handle;
+   - exclusive caller-blocking behavior on the native Rust root and true
+     caller-thread guest execution on the WASIX Rust root;
    - fair queueing;
    - transaction pinning;
    - cancellation and close during active SDK-owned work;
    - queued work rejection once close begins;
-   - broker crash/reconnect.
+   - broker crash followed by permanent same-handle rejection and explicit reopen.
 
-   Broker crash/reconnect now has an env-gated native smoke that kills the
-   helper, waits for PostgreSQL crash recovery on relaunch, and reads data
-   through the same Rust handle.
+   Broker crash qualification kills the helper, proves the original handle
+   cannot silently reconnect, then opens a new handle for PostgreSQL WAL
+   recovery of committed data.
 
 5. Extensions:
    - absent extension fails;

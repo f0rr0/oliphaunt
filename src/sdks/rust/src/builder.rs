@@ -5,7 +5,7 @@ use crate::config::{
     DEFAULT_DATABASE, DEFAULT_USERNAME, EngineMode, NativeBrokerConfig, NativeServerConfig,
     OpenConfig, PostgresStartupGuc, ServerListen,
 };
-use crate::database::{Oliphaunt, OliphauntServer};
+use crate::database::{AsyncOliphaunt, AsyncOliphauntServer};
 use crate::engine::{EngineSession, NativeRuntime};
 use crate::error::{Error, Result};
 use crate::executor::EngineExecutor;
@@ -14,29 +14,34 @@ use crate::liboliphaunt::OliphauntRuntime;
 use crate::server::NativeServerRuntime;
 use crate::storage::DatabaseStorage;
 
-/// Builder for opening native Oliphaunt databases on a dedicated owner thread.
-pub struct OliphauntBuilder {
+/// Builder for opening native Oliphaunt databases on a dedicated SDK owner thread.
+#[derive(Debug, Clone)]
+pub struct AsyncOliphauntBuilder {
     mode: EngineMode,
-    mode_explicit: bool,
-    storage: DatabaseStorage,
     broker: NativeBrokerConfig,
+    common: CommonOpenOptions,
+}
+
+/// Builder for starting a native PostgreSQL server on a dedicated SDK owner thread.
+#[derive(Debug, Clone, Default)]
+pub struct AsyncOliphauntServerBuilder {
     server: NativeServerConfig,
-    server_listen_configured: bool,
+    common: CommonOpenOptions,
+}
+
+#[derive(Debug, Clone)]
+struct CommonOpenOptions {
+    storage: DatabaseStorage,
     startup_gucs: Vec<PostgresStartupGuc>,
     username: String,
     database: String,
     extensions: Vec<Extension>,
 }
 
-impl Default for OliphauntBuilder {
+impl Default for CommonOpenOptions {
     fn default() -> Self {
         Self {
-            mode: EngineMode::Direct,
-            mode_explicit: false,
             storage: DatabaseStorage::TemporaryDirectory,
-            broker: NativeBrokerConfig::default(),
-            server: NativeServerConfig::default(),
-            server_listen_configured: false,
             startup_gucs: Vec::new(),
             username: DEFAULT_USERNAME.to_owned(),
             database: DEFAULT_DATABASE.to_owned(),
@@ -45,44 +50,60 @@ impl Default for OliphauntBuilder {
     }
 }
 
-impl OliphauntBuilder {
-    /// Create an owner-thread builder. The database topology defaults to direct.
+impl CommonOpenOptions {
+    fn build_config(
+        &self,
+        mode: EngineMode,
+        broker: NativeBrokerConfig,
+        server: NativeServerConfig,
+    ) -> Result<OpenConfig> {
+        let config = OpenConfig {
+            mode,
+            storage: self.storage.clone(),
+            broker,
+            server,
+            startup_gucs: self.startup_gucs.clone(),
+            username: self.username.clone(),
+            database: self.database.clone(),
+            extensions: self.extensions.clone(),
+        };
+        config.validate()?;
+        Ok(config)
+    }
+}
+
+impl Default for AsyncOliphauntBuilder {
+    fn default() -> Self {
+        Self {
+            mode: EngineMode::Direct,
+            broker: NativeBrokerConfig::default(),
+            common: CommonOpenOptions::default(),
+        }
+    }
+}
+
+impl AsyncOliphauntBuilder {
+    /// Create an asynchronous builder. The database topology defaults to direct.
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Select the in-process direct topology for [`Self::open`].
-    ///
-    /// Do not combine this selector with [`Self::open_server`].
     pub fn direct(mut self) -> Self {
         self.mode = EngineMode::Direct;
-        self.mode_explicit = true;
         self
     }
 
     /// Select the broker-process topology for [`Self::open`].
-    ///
-    /// Do not combine this selector with [`Self::open_server`].
     pub fn broker(mut self) -> Self {
         self.mode = EngineMode::Broker;
-        self.mode_explicit = true;
         self
     }
 
     /// Select database storage.
     pub fn storage(mut self, storage: DatabaseStorage) -> Self {
-        self.storage = storage;
+        self.common.storage = storage;
         self
-    }
-
-    /// Open a caller-owned persistent directory.
-    pub fn directory(self, path: impl Into<PathBuf>) -> Self {
-        self.storage(DatabaseStorage::Directory(path.into()))
-    }
-
-    /// Open an SDK-owned temporary directory.
-    pub fn temporary_directory(self) -> Self {
-        self.storage(DatabaseStorage::TemporaryDirectory)
     }
 
     /// Use an explicit broker helper executable with `broker().open()`.
@@ -91,22 +112,11 @@ impl OliphauntBuilder {
         self
     }
 
-    /// Use an explicit PostgreSQL server executable with [`Self::open_server`].
-    pub fn server_executable(mut self, path: impl Into<PathBuf>) -> Self {
-        self.server.executable = Some(path.into());
-        self
-    }
-
-    /// Select the local endpoint exposed by [`Self::open_server`].
-    pub fn listen(mut self, listen: ServerListen) -> Self {
-        self.server.listen = listen;
-        self.server_listen_configured = true;
-        self
-    }
-
     /// Add an explicit PostgreSQL startup GUC.
     pub fn startup_guc(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
-        self.startup_gucs.push(PostgresStartupGuc::new(name, value));
+        self.common
+            .startup_gucs
+            .push(PostgresStartupGuc::new(name, value));
         self
     }
 
@@ -116,7 +126,7 @@ impl OliphauntBuilder {
         N: Into<String>,
         V: Into<String>,
     {
-        self.startup_gucs.extend(
+        self.common.startup_gucs.extend(
             gucs.into_iter()
                 .map(|(name, value)| PostgresStartupGuc::new(name, value)),
         );
@@ -125,126 +135,157 @@ impl OliphauntBuilder {
 
     /// Set the PostgreSQL startup user.
     pub fn username(mut self, username: impl Into<String>) -> Self {
-        self.username = username.into();
+        self.common.username = username.into();
         self
     }
 
     /// Set the PostgreSQL database name.
     pub fn database(mut self, database: impl Into<String>) -> Self {
-        self.database = database.into();
+        self.common.database = database.into();
         self
     }
 
-    /// Opt into one native PostgreSQL extension.
+    /// Make one bundled PostgreSQL extension artifact available to the database.
+    /// Database-local installation remains the application's migration concern.
     pub fn extension(mut self, extension: Extension) -> Self {
-        self.extensions.push(extension);
+        self.common.extensions.push(extension);
         self
     }
 
-    /// Opt into native PostgreSQL extensions.
+    /// Make bundled PostgreSQL extension artifacts available to the database.
+    /// Database-local installation remains the application's migration concern.
     pub fn extensions(mut self, extensions: impl IntoIterator<Item = Extension>) -> Self {
-        self.extensions.extend(extensions);
+        self.common.extensions.extend(extensions);
         self
     }
 
-    pub(crate) fn build_config(&self, terminal: BuilderTerminal) -> Result<OpenConfig> {
-        self.validate_terminal(terminal)?;
-        let config = OpenConfig {
-            mode: match terminal {
-                BuilderTerminal::Open => self.mode,
-                BuilderTerminal::OpenServer => EngineMode::Server,
-            },
-            storage: self.storage.clone(),
-            broker: self.broker.clone(),
-            server: self.server.clone(),
-            startup_gucs: self.startup_gucs.clone(),
-            username: self.username.clone(),
-            database: self.database.clone(),
-            extensions: self.extensions.clone(),
-        };
-        config.validate()?;
-        Ok(config)
-    }
-
-    fn validate_terminal(&self, terminal: BuilderTerminal) -> Result<()> {
-        match terminal {
-            BuilderTerminal::Open => {
-                if self.server.executable.is_some() {
-                    return Err(Error::InvalidConfig(
-                        "server_executable(...) is only valid with open_server()".to_owned(),
-                    ));
-                }
-                if self.server_listen_configured {
-                    return Err(Error::InvalidConfig(
-                        "listen(...) is only valid with open_server()".to_owned(),
-                    ));
-                }
-                if self.mode == EngineMode::Direct && self.broker.executable.is_some() {
-                    return Err(Error::InvalidConfig(
-                        "broker_executable(...) requires broker().open()".to_owned(),
-                    ));
-                }
-            }
-            BuilderTerminal::OpenServer => {
-                if self.mode_explicit {
-                    return Err(Error::InvalidConfig(format!(
-                        "{}() selects an embedded topology and cannot be combined with open_server(); omit the topology selector",
-                        self.mode
-                    )));
-                }
-                if self.broker.executable.is_some() {
-                    return Err(Error::InvalidConfig(
-                        "broker_executable(...) is only valid with broker().open()".to_owned(),
-                    ));
-                }
-            }
+    pub(crate) fn build_config(&self) -> Result<OpenConfig> {
+        if self.mode == EngineMode::Direct && self.broker.executable.is_some() {
+            return Err(Error::InvalidConfig(
+                "broker_executable(...) requires broker().open()".to_owned(),
+            ));
         }
-        Ok(())
+        self.common.build_config(
+            self.mode,
+            self.broker.clone(),
+            NativeServerConfig::default(),
+        )
     }
 
     /// Open a direct or broker database on a dedicated owner thread.
-    ///
-    /// Server-only listener and executable options are rejected instead of
-    /// being silently ignored.
-    pub async fn open(self) -> Result<Oliphaunt> {
-        let config = self.build_config(BuilderTerminal::Open)?;
+    pub async fn open(self) -> Result<AsyncOliphaunt> {
+        let config = self.build_config()?;
         let (executor, ()) = EngineExecutor::open("oliphaunt-owner", move || {
             open_embedded_session(config).map(|session| (session, ()))
         })
         .await?;
-        Ok(Oliphaunt::from_executor(executor))
-    }
-
-    /// Open a local PostgreSQL server and return its asynchronous worker handle.
-    ///
-    /// Explicit direct/broker selectors and broker-only options are rejected
-    /// instead of being silently ignored.
-    pub async fn open_server(self) -> Result<OliphauntServer> {
-        let config = self.build_config(BuilderTerminal::OpenServer)?;
-        let (executor, connection_string) =
-            EngineExecutor::open("oliphaunt-server-owner", move || {
-                open_server_session(config)
-            })
-            .await?;
-        Ok(OliphauntServer::from_executor(executor, connection_string))
+        Ok(AsyncOliphaunt::from_executor(executor))
     }
 }
 
-#[derive(Clone, Copy)]
-pub(crate) enum BuilderTerminal {
-    Open,
-    OpenServer,
+impl AsyncOliphauntServerBuilder {
+    /// Create an asynchronous local-server builder.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Select server storage.
+    pub fn storage(mut self, storage: DatabaseStorage) -> Self {
+        self.common.storage = storage;
+        self
+    }
+
+    /// Use an explicit PostgreSQL server executable.
+    pub fn server_executable(mut self, path: impl Into<PathBuf>) -> Self {
+        self.server.executable = Some(path.into());
+        self
+    }
+
+    /// Select the endpoint exposed by the local server.
+    pub fn listen(mut self, listen: ServerListen) -> Self {
+        self.server.listen = listen;
+        self
+    }
+
+    /// Add an explicit PostgreSQL startup GUC.
+    pub fn startup_guc(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.common
+            .startup_gucs
+            .push(PostgresStartupGuc::new(name, value));
+        self
+    }
+
+    /// Add explicit PostgreSQL startup GUCs.
+    pub fn startup_gucs<N, V>(mut self, gucs: impl IntoIterator<Item = (N, V)>) -> Self
+    where
+        N: Into<String>,
+        V: Into<String>,
+    {
+        self.common.startup_gucs.extend(
+            gucs.into_iter()
+                .map(|(name, value)| PostgresStartupGuc::new(name, value)),
+        );
+        self
+    }
+
+    /// Set the PostgreSQL startup user.
+    pub fn username(mut self, username: impl Into<String>) -> Self {
+        self.common.username = username.into();
+        self
+    }
+
+    /// Set the PostgreSQL database name.
+    pub fn database(mut self, database: impl Into<String>) -> Self {
+        self.common.database = database.into();
+        self
+    }
+
+    /// Make one bundled PostgreSQL extension artifact available to clients.
+    /// Database-local installation remains the application's migration concern.
+    pub fn extension(mut self, extension: Extension) -> Self {
+        self.common.extensions.push(extension);
+        self
+    }
+
+    /// Make bundled PostgreSQL extension artifacts available to clients.
+    /// Database-local installation remains the application's migration concern.
+    pub fn extensions(mut self, extensions: impl IntoIterator<Item = Extension>) -> Self {
+        self.common.extensions.extend(extensions);
+        self
+    }
+
+    pub(crate) fn build_config(&self) -> Result<OpenConfig> {
+        self.common.build_config(
+            EngineMode::Server,
+            NativeBrokerConfig::default(),
+            self.server.clone(),
+        )
+    }
+
+    /// Start a local PostgreSQL server and return its lifecycle handle.
+    pub async fn start(self) -> Result<AsyncOliphauntServer> {
+        let config = self.build_config()?;
+        let (executor, connection_string) =
+            EngineExecutor::open("oliphaunt-server-owner", move || {
+                start_server_session(config)
+            })
+            .await?;
+        Ok(AsyncOliphauntServer::from_executor(
+            executor,
+            connection_string,
+        ))
+    }
 }
 
 pub(crate) fn open_embedded_session(config: OpenConfig) -> Result<Box<dyn EngineSession>> {
     match config.mode {
         EngineMode::Direct => OliphauntRuntime::from_env().open(config),
         EngineMode::Broker => NativeBrokerRuntime::from_config(&config.broker).open(config),
-        EngineMode::Server => unreachable!("server mode uses open_server"),
+        EngineMode::Server => unreachable!("server mode uses its dedicated builder"),
     }
 }
 
-pub(crate) fn open_server_session(config: OpenConfig) -> Result<(Box<dyn EngineSession>, String)> {
+pub(crate) fn start_server_session(config: OpenConfig) -> Result<(Box<dyn EngineSession>, String)> {
     let session = NativeServerRuntime::from_config(&config.server).open(config)?;
     let connection_string = session.connection_string().ok_or_else(|| {
         Error::Engine("native server did not expose its connection string".to_owned())
@@ -256,70 +297,34 @@ pub(crate) fn open_server_session(config: OpenConfig) -> Result<(Box<dyn EngineS
 mod tests {
     use super::*;
 
-    fn invalid_config(builder: OliphauntBuilder, terminal: BuilderTerminal) -> String {
-        match builder.build_config(terminal) {
-            Err(Error::InvalidConfig(message)) => message,
-            Err(error) => panic!("expected invalid configuration, got {error}"),
-            Ok(_) => panic!("expected terminal-specific configuration rejection"),
-        }
-    }
-
-    #[test]
-    fn open_rejects_server_only_options_including_an_explicit_default_listener() {
-        assert_eq!(
-            invalid_config(
-                OliphauntBuilder::new().server_executable("postgres"),
-                BuilderTerminal::Open,
-            ),
-            "server_executable(...) is only valid with open_server()"
-        );
-        assert_eq!(
-            invalid_config(
-                OliphauntBuilder::new().listen(ServerListen::tcp()),
-                BuilderTerminal::Open,
-            ),
-            "listen(...) is only valid with open_server()"
-        );
-    }
-
     #[test]
     fn direct_open_rejects_a_broker_executable_instead_of_ignoring_it() {
+        let error = AsyncOliphauntBuilder::new()
+            .broker_executable("oliphaunt-broker")
+            .build_config()
+            .expect_err("direct cannot silently ignore a broker executable");
+        assert_eq!(error.kind(), crate::error::ErrorKind::InvalidConfiguration);
         assert_eq!(
-            invalid_config(
-                OliphauntBuilder::new().broker_executable("oliphaunt-broker"),
-                BuilderTerminal::Open,
-            ),
+            error.to_string(),
             "broker_executable(...) requires broker().open()"
         );
-        OliphauntBuilder::new()
+        AsyncOliphauntBuilder::new()
             .broker()
             .broker_executable("oliphaunt-broker")
-            .build_config(BuilderTerminal::Open)
+            .build_config()
             .expect("broker executable is valid for broker open");
     }
 
     #[test]
-    fn open_server_rejects_embedded_topology_selection_and_broker_options() {
-        assert_eq!(
-            invalid_config(
-                OliphauntBuilder::new().direct(),
-                BuilderTerminal::OpenServer,
-            ),
-            "direct() selects an embedded topology and cannot be combined with open_server(); omit the topology selector"
-        );
-        assert_eq!(
-            invalid_config(
-                OliphauntBuilder::new().broker(),
-                BuilderTerminal::OpenServer,
-            ),
-            "broker() selects an embedded topology and cannot be combined with open_server(); omit the topology selector"
-        );
-        assert_eq!(
-            invalid_config(
-                OliphauntBuilder::new().broker_executable("oliphaunt-broker"),
-                BuilderTerminal::OpenServer,
-            ),
-            "broker_executable(...) is only valid with broker().open()"
-        );
+    fn dedicated_server_builder_produces_only_server_configuration() {
+        let config = AsyncOliphauntServerBuilder::new()
+            .listen(ServerListen::tcp_port(6543))
+            .server_executable("postgres")
+            .build_config()
+            .expect("server configuration");
+        assert_eq!(config.mode, EngineMode::Server);
+        assert_eq!(config.server.listen, ServerListen::tcp_port(6543));
+        assert_eq!(config.server.executable, Some(PathBuf::from("postgres")));
+        assert!(config.broker.executable.is_none());
     }
 }

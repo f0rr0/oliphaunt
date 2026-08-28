@@ -42,16 +42,28 @@ Physical archives use the dedicated restore API. There is no legacy
 PGDATA-only restore path; nonempty descriptorless roots and incomplete stores
 fail without mutation.
 
-`OliphauntServer` supplies a local PostgreSQL endpoint when an existing Rust
-client needs one. The optional `tools` feature supplies `pg_dump` and
-non-interactive `psql`. Applications that must keep an async executor responsive
-import `oliphaunt_wasix::worker`; that module owns a dedicated database thread,
-returns futures, and exposes a cloneable handle. The root stays the no-hop,
-exclusive caller-thread surface.
+`OliphauntServer::builder().start()` supplies a local PostgreSQL endpoint when
+an existing Rust client needs one; the returned handle exposes only its
+connection string, closed state, and close. The parallel
+`AsyncOliphauntServer::builder().start().await` keeps lifecycle work off the
+async caller. The optional `tools` feature supplies `pg_dump` and
+non-interactive `psql` as fluent database methods. Applications that must keep
+an async executor responsive use root `AsyncOliphaunt`; it owns a dedicated
+database thread, returns futures, and is cloneable. Root `Oliphaunt` stays the
+no-hop, exclusive caller-thread surface.
 
-Extensions are exact Cargo feature/package selections. Reopening a database
-whose catalog uses an extension requires the receiving host to provide that
-extension code again.
+Blocking `Oliphaunt` is neither `Send` nor `Sync`; blocking
+`OliphauntServer` is `Send` but not `Sync`. The cloneable async database and
+server handles are `Send + Sync`, while `AsyncTransaction` is `Send` but not
+`Sync` and requires exclusive mutable access. These traits expose the real
+Wasmer/runtime owner instead of implying concurrency that does not exist.
+
+Each exact `extension-*` leaf feature enables the common extension selector
+machinery and its matching uppercase associated constant. `Extension::ALL`
+and `Extension::by_sql_name` contain only the enabled leaf set, while
+`sql_name` returns the selected extension's PostgreSQL name. Reopening a
+database whose catalog uses an extension requires the receiving host to select
+and provide that runtime code again.
 
 ## TypeScript host
 
@@ -110,7 +122,11 @@ accepts that archive and new or empty persistent storage. Restore rejects
 memory and nonempty destinations. The destination creates its own descriptor.
 
 `execProtocolRawStream()` is the bounded callback form of the raw protocol
-escape hatch. The optional `@oliphaunt/wasix-tools` package runs standard plain
+escape hatch on a database/root handle. Managed transaction and server handles
+have no raw bypass. Transaction ownership is derived from exact backend command
+tags and its terminal readiness status; manual lifecycle SQL and `AND CHAIN`
+are unsupported, while savepoints and `ROLLBACK TO` remain valid. The optional
+`@oliphaunt/wasix-tools` package runs standard plain
 `pg_dump` against direct or Worker handles and non-interactive `psql` against a
 Worker handle, including in browsers. It preserves PostgreSQL's normal
 COPY-based plain dump rather than rewriting it.
@@ -120,13 +136,21 @@ Node, Bun, and Deno applications may import `openServer` from the matching
 PostgreSQL-named Unix socket and admits one complete client connection at a
 time, matching the single embedded backend; concurrent connections are
 rejected. The listener and storage lease persist, while each admitted client
-receives a fresh backend. Browsers have no server subpath.
+receives a fresh backend. The returned handle exposes only `connectionString`,
+closed state, close, and asynchronous disposal; the external driver or ORM owns
+all SQL, transactions, and cancellation. Browsers have no server subpath.
 This compatibility endpoint remains distinct from the concurrent
 `liboliphaunt-wasix-postmaster` product.
 
 TypeScript still has no cancellation or dedicated typed COPY API. Those
 absences are recorded in the SDK parity policy rather than represented as
 capability flags.
+
+Across both bindings, selecting extensions supplies exact runtime artifacts,
+dependencies, and required pre-start preload/GUC configuration only. Open and
+server start never execute database-local `CREATE EXTENSION`, `ALTER
+EXTENSION`, `LOAD`, schema setup, or post-create SQL. Applications and ORM
+migrations own those normal PostgreSQL operations.
 
 ## Shared storage contract
 

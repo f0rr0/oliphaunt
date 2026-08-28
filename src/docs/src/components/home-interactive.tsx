@@ -293,11 +293,11 @@ const SDK_EXAMPLES: readonly SdkExample[] = [
     brand: 'rust',
     packageName: 'oliphaunt',
     language: 'rust',
-    code: `use oliphaunt::Oliphaunt;
+    code: `use oliphaunt::{DatabaseStorage, Oliphaunt};
 
 fn open_database() -> oliphaunt::Result<()> {
     let mut db = Oliphaunt::builder()
-        .directory(".oliphaunt")
+        .storage(DatabaseStorage::Directory(".oliphaunt".into()))
         .direct()
         .open()?;
 

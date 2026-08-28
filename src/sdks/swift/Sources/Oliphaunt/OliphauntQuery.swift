@@ -927,7 +927,10 @@ private func scanOliphauntTopLevelCopy(
     return false
 }
 
-private func skipOliphauntBlockComment(_ bytes: [UInt8], from start: Int) -> Int {
+private func skipOliphauntBlockComment(
+    _ bytes: [UInt8],
+    from start: Int
+) -> Int {
     var index = start + 2
     var depth = 1
     while index < bytes.count, depth > 0 {
@@ -1923,6 +1926,59 @@ func inspectOliphauntTerminalReadyStatus(_ data: Data) throws -> OliphauntReadyS
     }
     return readyStatus
 }
+
+struct OliphauntStructuredTransactionProtocolOutcome: Sendable {
+    var readyStatus: OliphauntReadyStatus
+    var lifecycleCommandTag: String?
+}
+
+func inspectOliphauntStructuredTransactionProtocolOutcome(
+    _ data: Data
+) throws -> OliphauntStructuredTransactionProtocolOutcome {
+    var cursor = OliphauntByteCursor(data)
+    var readyStatus: OliphauntReadyStatus?
+    var lifecycleCommandTag: String?
+
+    while !cursor.isAtEnd {
+        guard readyStatus == nil else {
+            throw OliphauntError.engine("backend returned bytes after ReadyForQuery")
+        }
+        let tag = try cursor.readUInt8(label: "backend message tag")
+        let length = try cursor.readInt32(label: "backend message length")
+        guard length >= 4 else {
+            throw OliphauntError.engine("invalid backend message length \(length)")
+        }
+        let body = try cursor.readData(count: Int(length - 4), label: "backend message body")
+        if tag == 0x43 {
+            var bodyCursor = OliphauntByteCursor(body)
+            let commandTag = try bodyCursor.readCString(label: "CommandComplete tag")
+            try bodyCursor.requireEnd(label: "CommandComplete")
+            if lifecycleCommandTag == nil,
+               oliphauntStructuredTransactionLifecycleCommandTags.contains(commandTag) {
+                lifecycleCommandTag = commandTag
+            }
+        } else if tag == 0x5a {
+            readyStatus = try parseReadyForQuery(body)
+        }
+    }
+
+    guard let readyStatus else {
+        throw OliphauntError.engine("backend response ended before ReadyForQuery")
+    }
+    return OliphauntStructuredTransactionProtocolOutcome(
+        readyStatus: readyStatus,
+        lifecycleCommandTag: lifecycleCommandTag
+    )
+}
+
+private let oliphauntStructuredTransactionLifecycleCommandTags: Set<String> = [
+    "BEGIN",
+    "START TRANSACTION",
+    "COMMIT",
+    "PREPARE TRANSACTION",
+    "COMMIT PREPARED",
+    "ROLLBACK PREPARED",
+]
 
 private func rejectBackendMessageAfterError(
     _ tag: UInt8,

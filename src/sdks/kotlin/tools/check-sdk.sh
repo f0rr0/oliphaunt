@@ -145,6 +145,21 @@ prepare_scratch_dir() {
   printf '%s\n' "$dir"
 }
 
+check_public_api_consumer() {
+  consumer_aar="$1"
+  consumer_project="$project_dir/Tests/PublicApiConsumer"
+  if ! find "$consumer_project/src/main" -type f -name '*.kt' -size +0c -print 2>/dev/null | grep -q .; then
+    echo "Kotlin public API consumer has no nonempty Android source" >&2
+    exit 1
+  fi
+  consumer_scratch="$(prepare_scratch_dir public-api-consumer)"
+  run "$gradle_cmd" -p "$consumer_project" :compileDebugKotlin \
+    "-PoliphauntConsumerAar=$consumer_aar" \
+    "-PoliphauntConsumerBuildRoot=$consumer_scratch/build" \
+    --project-cache-dir "$consumer_scratch/gradle-cache" \
+    --no-configuration-cache
+}
+
 gradle_cmd="gradle"
 if [ -x "$project_dir/gradlew" ]; then
   gradle_cmd="$root/$project_dir/gradlew"
@@ -564,6 +579,7 @@ if [ "$mode" = "check-static" ]; then
 fi
 
 if [ "$mode" = "test-unit" ]; then
+  run sh "$project_dir/tools/test-cpp-bridge.sh"
   unit_tasks=":oliphaunt:jvmTest :oliphaunt:testDebugUnitTest :oliphaunt:testReleaseUnitTest"
   # shellcheck disable=SC2086
   run run_with_repository_retry "$gradle_cmd" -p "$project_dir" \
@@ -667,6 +683,7 @@ else
 fi
 reject_jar_entry_pattern "$android_release_aar" '^jni/[^/]+/liboliphaunt\.so$' \
   "Kotlin Android default release AAR must not bundle the PostgreSQL runtime binary without an explicit packaged runtime input"
+check_public_api_consumer "$android_release_aar"
 
 if [ -n "${ANDROID_HOME:-}" ]; then
   run_android_runtime_smoke

@@ -993,6 +993,47 @@ internal fun inspectTerminalReadyStatus(bytes: ByteArray): ReadyStatus = decodeB
     parseReadyForQuery(ByteCursor(frame.body))
 }
 
+internal data class StructuredTransactionProtocolOutcome(
+    val readyStatus: ReadyStatus,
+    val lifecycleCommandTag: String?,
+)
+
+internal fun inspectStructuredTransactionProtocolOutcome(bytes: ByteArray): StructuredTransactionProtocolOutcome {
+    val frames = decodeBackendFrames(bytes)
+    val terminal = frames.lastOrNull()
+        ?: throw OliphauntException("backend response ended before ReadyForQuery")
+    if (terminal.tag != 0x5a) throw OliphauntException("backend response ended before ReadyForQuery")
+
+    var lifecycleCommandTag: String? = null
+    var readyCount = 0
+    for (frame in frames) {
+        if (frame.tag == 0x5a) readyCount++
+        if (frame.tag != 0x43) continue
+        val body = ByteCursor(frame.body)
+        val commandTag = body.readCString("CommandComplete tag")
+        body.requireEnd("CommandComplete")
+        if (lifecycleCommandTag == null && commandTag in structuredTransactionLifecycleCommandTags) {
+            lifecycleCommandTag = commandTag
+        }
+    }
+    if (readyCount != 1) {
+        throw OliphauntException("backend response must contain exactly one terminal ReadyForQuery")
+    }
+    return StructuredTransactionProtocolOutcome(
+        readyStatus = parseReadyForQuery(ByteCursor(terminal.body)),
+        lifecycleCommandTag = lifecycleCommandTag,
+    )
+}
+
+private val structuredTransactionLifecycleCommandTags = setOf(
+    "BEGIN",
+    "START TRANSACTION",
+    "COMMIT",
+    "PREPARE TRANSACTION",
+    "COMMIT PREPARED",
+    "ROLLBACK PREPARED",
+)
+
 private data class BackendFrame(val tag: Int, val body: ByteArray)
 
 private data class ResponseMetadata(

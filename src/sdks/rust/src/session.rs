@@ -4,7 +4,10 @@ use std::sync::{Arc, Mutex};
 use crate::engine::EngineSession;
 use crate::error::{Error, Result};
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
-use crate::query::{ReadyStatus, parse_simple_command_response, response_ready_status};
+use crate::query::{
+    ReadyStatus, parse_simple_command_response, response_ready_status,
+    validate_managed_transaction_response,
+};
 
 pub(crate) const TRANSACTION_ACTIVE: u8 = 0;
 pub(crate) const TRANSACTION_FINISHING: u8 = 1;
@@ -15,6 +18,7 @@ pub(crate) const TRANSACTION_RELEASED: u8 = 4;
 pub(crate) struct TransactionGuard {
     pub(crate) state: AtomicU8,
     pub(crate) terminal_error: Mutex<Option<Error>>,
+    terminal_failure_was_rollback: AtomicBool,
 }
 
 impl TransactionGuard {
@@ -22,16 +26,31 @@ impl TransactionGuard {
         Arc::new(Self {
             state: AtomicU8::new(TRANSACTION_ACTIVE),
             terminal_error: Mutex::new(None),
+            terminal_failure_was_rollback: AtomicBool::new(false),
         })
     }
 
     pub(crate) fn fail(&self, error: Error) {
-        self.state.store(TRANSACTION_FAILED, Ordering::SeqCst);
+        self.fail_with_kind(error, false);
+    }
+
+    pub(crate) fn fail_rollback(&self, error: Error) {
+        self.fail_with_kind(error, true);
+    }
+
+    fn fail_with_kind(&self, error: Error, was_rollback: bool) {
         if let Ok(mut terminal_error) = self.terminal_error.lock()
             && terminal_error.is_none()
         {
             *terminal_error = Some(error);
+            self.terminal_failure_was_rollback
+                .store(was_rollback, Ordering::SeqCst);
         }
+        self.state.store(TRANSACTION_FAILED, Ordering::SeqCst);
+    }
+
+    pub(crate) fn terminal_failure_was_rollback(&self) -> bool {
+        self.terminal_failure_was_rollback.load(Ordering::SeqCst)
     }
 }
 
@@ -39,25 +58,41 @@ pub(crate) fn begin_transaction(
     session: &mut dyn EngineSession,
     transaction_poisoned: &AtomicBool,
 ) -> Result<()> {
-    let result = ProtocolRequest::simple_query("BEGIN")
-        .and_then(|request| session.exec_protocol_raw(request))
-        .and_then(|response| parse_simple_command_response(&response))
-        .and_then(|result| {
-            if result.command_tag() == Some("BEGIN")
-                && result.ready_status() == ReadyStatus::InTransaction
-            {
-                Ok(())
-            } else {
-                Err(Error::Engine(format!(
-                    "PostgreSQL transaction command expected BEGIN with InTransaction readiness, got {} with {:?}",
-                    result.command_tag().unwrap_or("no command tag"),
-                    result.ready_status()
-                )))
-            }
-        });
-    if result.is_ok() {
-        return result;
+    let request = ProtocolRequest::simple_query("BEGIN")?;
+    let response = match session.exec_protocol_raw(request) {
+        Ok(response) => response,
+        Err(error) => {
+            // No complete backend response means there is no proof that a
+            // second frontend command is safe. Preserve the primary transport
+            // failure and fail closed without sending a speculative ROLLBACK.
+            transaction_poisoned.store(true, Ordering::SeqCst);
+            return Err(error);
+        }
+    };
+    let parsed = parse_simple_command_response(&response);
+    if let Ok(result) = &parsed
+        && result.command_tag() == Some("BEGIN")
+        && result.ready_status() == ReadyStatus::InTransaction
+    {
+        return Ok(());
     }
+    let primary = match parsed {
+        Ok(result) => Error::Engine(format!(
+            "PostgreSQL transaction command expected BEGIN with InTransaction readiness, got {} with {:?}",
+            result.command_tag().unwrap_or("no command tag"),
+            result.ready_status()
+        )),
+        Err(error) => error,
+    };
+    match response_ready_status(&response) {
+        Ok(ReadyStatus::Idle) => return Err(primary),
+        Ok(ReadyStatus::InTransaction | ReadyStatus::FailedTransaction) => {}
+        Err(_) => {
+            transaction_poisoned.store(true, Ordering::SeqCst);
+            return Err(primary);
+        }
+    }
+
     let recovery = ProtocolRequest::simple_query("ROLLBACK")
         .and_then(|request| session.exec_protocol_raw(request))
         .and_then(|response| parse_simple_command_response(&response));
@@ -67,7 +102,7 @@ pub(crate) fn begin_transaction(
     if !recovered {
         transaction_poisoned.store(true, Ordering::SeqCst);
     }
-    result
+    Err(primary)
 }
 
 pub(crate) fn execute_structured_operation(
@@ -134,21 +169,11 @@ pub(crate) fn execute_transaction_structured_operation(
             return Err(error);
         }
     };
-    let status = match response_ready_status(&response) {
-        Ok(status) => status,
+    match validate_managed_transaction_response(&response) {
+        Ok(_) => Ok(response),
         Err(error) => {
             let terminal = Error::Engine(format!(
-                "{operation} returned an invalid readiness boundary and the transaction state is now unknown: {error}"
-            ));
-            fail_transaction_guard(guard, transaction_poisoned, terminal.clone());
-            return Err(terminal);
-        }
-    };
-    match status {
-        ReadyStatus::InTransaction | ReadyStatus::FailedTransaction => Ok(response),
-        ReadyStatus::Idle => {
-            let terminal = Error::Engine(format!(
-                "{operation} ended the callback transaction outside Transaction::rollback(); the session is now unusable"
+                "{operation} changed transaction ownership outside the SDK-managed transaction lifecycle; the session is now unusable: {error}"
             ));
             fail_transaction_guard(guard, transaction_poisoned, terminal.clone());
             Err(terminal)

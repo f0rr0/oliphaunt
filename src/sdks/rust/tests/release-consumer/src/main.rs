@@ -8,7 +8,7 @@ use std::task::{Context, Poll, Waker};
 use std::thread;
 use std::time::Duration;
 
-use oliphaunt::worker::Oliphaunt;
+use oliphaunt::{AsyncOliphauntServer, DatabaseStorage, ServerListen};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let root = std::env::args_os()
@@ -21,7 +21,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let pg_basebackup = packaged_tool("pg_basebackup")?;
     let pg_ctl = packaged_runtime_tool("pg_ctl")?;
 
-    let database = block_on(Oliphaunt::builder().directory(&root).open_server())?;
+    let database = block_on(
+        AsyncOliphauntServer::builder()
+            .storage(DatabaseStorage::Directory(root.clone()))
+            .listen(ServerListen::tcp())
+            .start(),
+    )?;
     let exercise_source = (|| -> Result<(), Box<dyn Error>> {
         command_succeeded(
             "packaged psql seed",

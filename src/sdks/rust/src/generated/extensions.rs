@@ -3,9 +3,14 @@
 
 use super::ExtensionRuntimeEnvironment;
 
-/// Native PostgreSQL 18 extension that can be explicitly selected by an app.
+/// Native PostgreSQL 18 extension artifact that can be selected by an app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Extension {
+pub struct Extension {
+    id: ExtensionId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum ExtensionId {
     /// PostgreSQL `amcheck`.
     Amcheck,
     /// PostgreSQL `auto_explain`.
@@ -86,308 +91,467 @@ pub enum Extension {
     Vector,
 }
 
-/// All PostgreSQL 18 extension rows known to the Rust SDK.
-pub(super) const ALL_PG18_SUPPORTED: &[Extension] = &[
-    Extension::Amcheck,
-    Extension::AutoExplain,
-    Extension::Bloom,
-    Extension::BtreeGin,
-    Extension::BtreeGist,
-    Extension::Citext,
-    Extension::Cube,
-    Extension::DictInt,
-    Extension::DictXsyn,
-    Extension::Earthdistance,
-    Extension::FileFdw,
-    Extension::Fuzzystrmatch,
-    Extension::Hstore,
-    Extension::Intarray,
-    Extension::Isn,
-    Extension::Lo,
-    Extension::Ltree,
-    Extension::Pageinspect,
-    Extension::PgBuffercache,
-    Extension::PgFreespacemap,
-    Extension::PgHashids,
-    Extension::PgIvm,
-    Extension::PgSurgery,
-    Extension::PgTextsearch,
-    Extension::PgTrgm,
-    Extension::PgUuidv7,
-    Extension::PgVisibility,
-    Extension::PgWalinspect,
-    Extension::Pgcrypto,
-    Extension::Pgtap,
-    Extension::Postgis,
-    Extension::Seg,
-    Extension::Tablefunc,
-    Extension::Tcn,
-    Extension::TsmSystemRows,
-    Extension::TsmSystemTime,
-    Extension::Unaccent,
-    Extension::UuidOssp,
-    Extension::Vector,
-];
+impl Extension {
+    /// Select the `amcheck` artifact.
+    pub const AMCHECK: Self = Self {
+        id: ExtensionId::Amcheck,
+    };
+    /// Select the `auto_explain` artifact.
+    pub const AUTO_EXPLAIN: Self = Self {
+        id: ExtensionId::AutoExplain,
+    };
+    /// Select the `bloom` artifact.
+    pub const BLOOM: Self = Self {
+        id: ExtensionId::Bloom,
+    };
+    /// Select the `btree_gin` artifact.
+    pub const BTREE_GIN: Self = Self {
+        id: ExtensionId::BtreeGin,
+    };
+    /// Select the `btree_gist` artifact.
+    pub const BTREE_GIST: Self = Self {
+        id: ExtensionId::BtreeGist,
+    };
+    /// Select the `citext` artifact.
+    pub const CITEXT: Self = Self {
+        id: ExtensionId::Citext,
+    };
+    /// Select the `cube` artifact.
+    pub const CUBE: Self = Self {
+        id: ExtensionId::Cube,
+    };
+    /// Select the `dict_int` artifact.
+    pub const DICT_INT: Self = Self {
+        id: ExtensionId::DictInt,
+    };
+    /// Select the `dict_xsyn` artifact.
+    pub const DICT_XSYN: Self = Self {
+        id: ExtensionId::DictXsyn,
+    };
+    /// Select the `earthdistance` artifact.
+    pub const EARTHDISTANCE: Self = Self {
+        id: ExtensionId::Earthdistance,
+    };
+    /// Select the `file_fdw` artifact.
+    pub const FILE_FDW: Self = Self {
+        id: ExtensionId::FileFdw,
+    };
+    /// Select the `fuzzystrmatch` artifact.
+    pub const FUZZYSTRMATCH: Self = Self {
+        id: ExtensionId::Fuzzystrmatch,
+    };
+    /// Select the `hstore` artifact.
+    pub const HSTORE: Self = Self {
+        id: ExtensionId::Hstore,
+    };
+    /// Select the `intarray` artifact.
+    pub const INTARRAY: Self = Self {
+        id: ExtensionId::Intarray,
+    };
+    /// Select the `isn` artifact.
+    pub const ISN: Self = Self {
+        id: ExtensionId::Isn,
+    };
+    /// Select the `lo` artifact.
+    pub const LO: Self = Self {
+        id: ExtensionId::Lo,
+    };
+    /// Select the `ltree` artifact.
+    pub const LTREE: Self = Self {
+        id: ExtensionId::Ltree,
+    };
+    /// Select the `pageinspect` artifact.
+    pub const PAGEINSPECT: Self = Self {
+        id: ExtensionId::Pageinspect,
+    };
+    /// Select the `pg_buffercache` artifact.
+    pub const PG_BUFFERCACHE: Self = Self {
+        id: ExtensionId::PgBuffercache,
+    };
+    /// Select the `pg_freespacemap` artifact.
+    pub const PG_FREESPACEMAP: Self = Self {
+        id: ExtensionId::PgFreespacemap,
+    };
+    /// Select the `pg_hashids` artifact.
+    pub const PG_HASHIDS: Self = Self {
+        id: ExtensionId::PgHashids,
+    };
+    /// Select the `pg_ivm` artifact.
+    pub const PG_IVM: Self = Self {
+        id: ExtensionId::PgIvm,
+    };
+    /// Select the `pg_surgery` artifact.
+    pub const PG_SURGERY: Self = Self {
+        id: ExtensionId::PgSurgery,
+    };
+    /// Select the `pg_textsearch` artifact.
+    pub const PG_TEXTSEARCH: Self = Self {
+        id: ExtensionId::PgTextsearch,
+    };
+    /// Select the `pg_trgm` artifact.
+    pub const PG_TRGM: Self = Self {
+        id: ExtensionId::PgTrgm,
+    };
+    /// Select the `pg_uuidv7` artifact.
+    pub const PG_UUIDV7: Self = Self {
+        id: ExtensionId::PgUuidv7,
+    };
+    /// Select the `pg_visibility` artifact.
+    pub const PG_VISIBILITY: Self = Self {
+        id: ExtensionId::PgVisibility,
+    };
+    /// Select the `pg_walinspect` artifact.
+    pub const PG_WALINSPECT: Self = Self {
+        id: ExtensionId::PgWalinspect,
+    };
+    /// Select the `pgcrypto` artifact.
+    pub const PGCRYPTO: Self = Self {
+        id: ExtensionId::Pgcrypto,
+    };
+    /// Select the `pgtap` artifact.
+    pub const PGTAP: Self = Self {
+        id: ExtensionId::Pgtap,
+    };
+    /// Select the `postgis` artifact.
+    pub const POSTGIS: Self = Self {
+        id: ExtensionId::Postgis,
+    };
+    /// Select the `seg` artifact.
+    pub const SEG: Self = Self {
+        id: ExtensionId::Seg,
+    };
+    /// Select the `tablefunc` artifact.
+    pub const TABLEFUNC: Self = Self {
+        id: ExtensionId::Tablefunc,
+    };
+    /// Select the `tcn` artifact.
+    pub const TCN: Self = Self {
+        id: ExtensionId::Tcn,
+    };
+    /// Select the `tsm_system_rows` artifact.
+    pub const TSM_SYSTEM_ROWS: Self = Self {
+        id: ExtensionId::TsmSystemRows,
+    };
+    /// Select the `tsm_system_time` artifact.
+    pub const TSM_SYSTEM_TIME: Self = Self {
+        id: ExtensionId::TsmSystemTime,
+    };
+    /// Select the `unaccent` artifact.
+    pub const UNACCENT: Self = Self {
+        id: ExtensionId::Unaccent,
+    };
+    /// Select the `uuid-ossp` artifact.
+    pub const UUID_OSSP: Self = Self {
+        id: ExtensionId::UuidOssp,
+    };
+    /// Select the `vector` artifact.
+    pub const VECTOR: Self = Self {
+        id: ExtensionId::Vector,
+    };
+
+    /// All PostgreSQL 18 extension artifacts known to the native SDK.
+    pub const ALL: &'static [Self] = &[
+        Extension::AMCHECK,
+        Extension::AUTO_EXPLAIN,
+        Extension::BLOOM,
+        Extension::BTREE_GIN,
+        Extension::BTREE_GIST,
+        Extension::CITEXT,
+        Extension::CUBE,
+        Extension::DICT_INT,
+        Extension::DICT_XSYN,
+        Extension::EARTHDISTANCE,
+        Extension::FILE_FDW,
+        Extension::FUZZYSTRMATCH,
+        Extension::HSTORE,
+        Extension::INTARRAY,
+        Extension::ISN,
+        Extension::LO,
+        Extension::LTREE,
+        Extension::PAGEINSPECT,
+        Extension::PG_BUFFERCACHE,
+        Extension::PG_FREESPACEMAP,
+        Extension::PG_HASHIDS,
+        Extension::PG_IVM,
+        Extension::PG_SURGERY,
+        Extension::PG_TEXTSEARCH,
+        Extension::PG_TRGM,
+        Extension::PG_UUIDV7,
+        Extension::PG_VISIBILITY,
+        Extension::PG_WALINSPECT,
+        Extension::PGCRYPTO,
+        Extension::PGTAP,
+        Extension::POSTGIS,
+        Extension::SEG,
+        Extension::TABLEFUNC,
+        Extension::TCN,
+        Extension::TSM_SYSTEM_ROWS,
+        Extension::TSM_SYSTEM_TIME,
+        Extension::UNACCENT,
+        Extension::UUID_OSSP,
+        Extension::VECTOR,
+    ];
+}
 
 /// Generated extension metadata accessor.
 pub(super) const fn sql_name(extension: Extension) -> &'static str {
-    match extension {
-        Extension::Amcheck => "amcheck",
-        Extension::AutoExplain => "auto_explain",
-        Extension::Bloom => "bloom",
-        Extension::BtreeGin => "btree_gin",
-        Extension::BtreeGist => "btree_gist",
-        Extension::Citext => "citext",
-        Extension::Cube => "cube",
-        Extension::DictInt => "dict_int",
-        Extension::DictXsyn => "dict_xsyn",
-        Extension::Earthdistance => "earthdistance",
-        Extension::FileFdw => "file_fdw",
-        Extension::Fuzzystrmatch => "fuzzystrmatch",
-        Extension::Hstore => "hstore",
-        Extension::Intarray => "intarray",
-        Extension::Isn => "isn",
-        Extension::Lo => "lo",
-        Extension::Ltree => "ltree",
-        Extension::Pageinspect => "pageinspect",
-        Extension::PgBuffercache => "pg_buffercache",
-        Extension::PgFreespacemap => "pg_freespacemap",
-        Extension::PgHashids => "pg_hashids",
-        Extension::PgIvm => "pg_ivm",
-        Extension::PgSurgery => "pg_surgery",
-        Extension::PgTextsearch => "pg_textsearch",
-        Extension::PgTrgm => "pg_trgm",
-        Extension::PgUuidv7 => "pg_uuidv7",
-        Extension::PgVisibility => "pg_visibility",
-        Extension::PgWalinspect => "pg_walinspect",
-        Extension::Pgcrypto => "pgcrypto",
-        Extension::Pgtap => "pgtap",
-        Extension::Postgis => "postgis",
-        Extension::Seg => "seg",
-        Extension::Tablefunc => "tablefunc",
-        Extension::Tcn => "tcn",
-        Extension::TsmSystemRows => "tsm_system_rows",
-        Extension::TsmSystemTime => "tsm_system_time",
-        Extension::Unaccent => "unaccent",
-        Extension::UuidOssp => "uuid-ossp",
-        Extension::Vector => "vector",
+    match extension.id {
+        ExtensionId::Amcheck => "amcheck",
+        ExtensionId::AutoExplain => "auto_explain",
+        ExtensionId::Bloom => "bloom",
+        ExtensionId::BtreeGin => "btree_gin",
+        ExtensionId::BtreeGist => "btree_gist",
+        ExtensionId::Citext => "citext",
+        ExtensionId::Cube => "cube",
+        ExtensionId::DictInt => "dict_int",
+        ExtensionId::DictXsyn => "dict_xsyn",
+        ExtensionId::Earthdistance => "earthdistance",
+        ExtensionId::FileFdw => "file_fdw",
+        ExtensionId::Fuzzystrmatch => "fuzzystrmatch",
+        ExtensionId::Hstore => "hstore",
+        ExtensionId::Intarray => "intarray",
+        ExtensionId::Isn => "isn",
+        ExtensionId::Lo => "lo",
+        ExtensionId::Ltree => "ltree",
+        ExtensionId::Pageinspect => "pageinspect",
+        ExtensionId::PgBuffercache => "pg_buffercache",
+        ExtensionId::PgFreespacemap => "pg_freespacemap",
+        ExtensionId::PgHashids => "pg_hashids",
+        ExtensionId::PgIvm => "pg_ivm",
+        ExtensionId::PgSurgery => "pg_surgery",
+        ExtensionId::PgTextsearch => "pg_textsearch",
+        ExtensionId::PgTrgm => "pg_trgm",
+        ExtensionId::PgUuidv7 => "pg_uuidv7",
+        ExtensionId::PgVisibility => "pg_visibility",
+        ExtensionId::PgWalinspect => "pg_walinspect",
+        ExtensionId::Pgcrypto => "pgcrypto",
+        ExtensionId::Pgtap => "pgtap",
+        ExtensionId::Postgis => "postgis",
+        ExtensionId::Seg => "seg",
+        ExtensionId::Tablefunc => "tablefunc",
+        ExtensionId::Tcn => "tcn",
+        ExtensionId::TsmSystemRows => "tsm_system_rows",
+        ExtensionId::TsmSystemTime => "tsm_system_time",
+        ExtensionId::Unaccent => "unaccent",
+        ExtensionId::UuidOssp => "uuid-ossp",
+        ExtensionId::Vector => "vector",
     }
 }
 
 /// Generated extension metadata accessor.
 pub(super) const fn native_module_stem(extension: Extension) -> Option<&'static str> {
-    match extension {
-        Extension::Amcheck => Some("amcheck"),
-        Extension::AutoExplain => Some("auto_explain"),
-        Extension::Bloom => Some("bloom"),
-        Extension::BtreeGin => Some("btree_gin"),
-        Extension::BtreeGist => Some("btree_gist"),
-        Extension::Citext => Some("citext"),
-        Extension::Cube => Some("cube"),
-        Extension::DictInt => Some("dict_int"),
-        Extension::DictXsyn => Some("dict_xsyn"),
-        Extension::Earthdistance => Some("earthdistance"),
-        Extension::FileFdw => Some("file_fdw"),
-        Extension::Fuzzystrmatch => Some("fuzzystrmatch"),
-        Extension::Hstore => Some("hstore"),
-        Extension::Intarray => Some("_int"),
-        Extension::Isn => Some("isn"),
-        Extension::Lo => Some("lo"),
-        Extension::Ltree => Some("ltree"),
-        Extension::Pageinspect => Some("pageinspect"),
-        Extension::PgBuffercache => Some("pg_buffercache"),
-        Extension::PgFreespacemap => Some("pg_freespacemap"),
-        Extension::PgHashids => Some("pg_hashids"),
-        Extension::PgIvm => Some("pg_ivm"),
-        Extension::PgSurgery => Some("pg_surgery"),
-        Extension::PgTextsearch => Some("pg_textsearch"),
-        Extension::PgTrgm => Some("pg_trgm"),
-        Extension::PgUuidv7 => Some("pg_uuidv7"),
-        Extension::PgVisibility => Some("pg_visibility"),
-        Extension::PgWalinspect => Some("pg_walinspect"),
-        Extension::Pgcrypto => Some("pgcrypto"),
-        Extension::Pgtap => None,
-        Extension::Postgis => Some("postgis-3"),
-        Extension::Seg => Some("seg"),
-        Extension::Tablefunc => Some("tablefunc"),
-        Extension::Tcn => Some("tcn"),
-        Extension::TsmSystemRows => Some("tsm_system_rows"),
-        Extension::TsmSystemTime => Some("tsm_system_time"),
-        Extension::Unaccent => Some("unaccent"),
-        Extension::UuidOssp => Some("uuid-ossp"),
-        Extension::Vector => Some("vector"),
+    match extension.id {
+        ExtensionId::Amcheck => Some("amcheck"),
+        ExtensionId::AutoExplain => Some("auto_explain"),
+        ExtensionId::Bloom => Some("bloom"),
+        ExtensionId::BtreeGin => Some("btree_gin"),
+        ExtensionId::BtreeGist => Some("btree_gist"),
+        ExtensionId::Citext => Some("citext"),
+        ExtensionId::Cube => Some("cube"),
+        ExtensionId::DictInt => Some("dict_int"),
+        ExtensionId::DictXsyn => Some("dict_xsyn"),
+        ExtensionId::Earthdistance => Some("earthdistance"),
+        ExtensionId::FileFdw => Some("file_fdw"),
+        ExtensionId::Fuzzystrmatch => Some("fuzzystrmatch"),
+        ExtensionId::Hstore => Some("hstore"),
+        ExtensionId::Intarray => Some("_int"),
+        ExtensionId::Isn => Some("isn"),
+        ExtensionId::Lo => Some("lo"),
+        ExtensionId::Ltree => Some("ltree"),
+        ExtensionId::Pageinspect => Some("pageinspect"),
+        ExtensionId::PgBuffercache => Some("pg_buffercache"),
+        ExtensionId::PgFreespacemap => Some("pg_freespacemap"),
+        ExtensionId::PgHashids => Some("pg_hashids"),
+        ExtensionId::PgIvm => Some("pg_ivm"),
+        ExtensionId::PgSurgery => Some("pg_surgery"),
+        ExtensionId::PgTextsearch => Some("pg_textsearch"),
+        ExtensionId::PgTrgm => Some("pg_trgm"),
+        ExtensionId::PgUuidv7 => Some("pg_uuidv7"),
+        ExtensionId::PgVisibility => Some("pg_visibility"),
+        ExtensionId::PgWalinspect => Some("pg_walinspect"),
+        ExtensionId::Pgcrypto => Some("pgcrypto"),
+        ExtensionId::Pgtap => None,
+        ExtensionId::Postgis => Some("postgis-3"),
+        ExtensionId::Seg => Some("seg"),
+        ExtensionId::Tablefunc => Some("tablefunc"),
+        ExtensionId::Tcn => Some("tcn"),
+        ExtensionId::TsmSystemRows => Some("tsm_system_rows"),
+        ExtensionId::TsmSystemTime => Some("tsm_system_time"),
+        ExtensionId::Unaccent => Some("unaccent"),
+        ExtensionId::UuidOssp => Some("uuid-ossp"),
+        ExtensionId::Vector => Some("vector"),
     }
 }
 
 /// Generated extension metadata accessor.
 pub(super) const fn creates_extension(extension: Extension) -> bool {
-    match extension {
-        Extension::Amcheck => true,
-        Extension::AutoExplain => false,
-        Extension::Bloom => true,
-        Extension::BtreeGin => true,
-        Extension::BtreeGist => true,
-        Extension::Citext => true,
-        Extension::Cube => true,
-        Extension::DictInt => true,
-        Extension::DictXsyn => true,
-        Extension::Earthdistance => true,
-        Extension::FileFdw => true,
-        Extension::Fuzzystrmatch => true,
-        Extension::Hstore => true,
-        Extension::Intarray => true,
-        Extension::Isn => true,
-        Extension::Lo => true,
-        Extension::Ltree => true,
-        Extension::Pageinspect => true,
-        Extension::PgBuffercache => true,
-        Extension::PgFreespacemap => true,
-        Extension::PgHashids => true,
-        Extension::PgIvm => true,
-        Extension::PgSurgery => true,
-        Extension::PgTextsearch => true,
-        Extension::PgTrgm => true,
-        Extension::PgUuidv7 => true,
-        Extension::PgVisibility => true,
-        Extension::PgWalinspect => true,
-        Extension::Pgcrypto => true,
-        Extension::Pgtap => true,
-        Extension::Postgis => true,
-        Extension::Seg => true,
-        Extension::Tablefunc => true,
-        Extension::Tcn => true,
-        Extension::TsmSystemRows => true,
-        Extension::TsmSystemTime => true,
-        Extension::Unaccent => true,
-        Extension::UuidOssp => true,
-        Extension::Vector => true,
+    match extension.id {
+        ExtensionId::Amcheck => true,
+        ExtensionId::AutoExplain => false,
+        ExtensionId::Bloom => true,
+        ExtensionId::BtreeGin => true,
+        ExtensionId::BtreeGist => true,
+        ExtensionId::Citext => true,
+        ExtensionId::Cube => true,
+        ExtensionId::DictInt => true,
+        ExtensionId::DictXsyn => true,
+        ExtensionId::Earthdistance => true,
+        ExtensionId::FileFdw => true,
+        ExtensionId::Fuzzystrmatch => true,
+        ExtensionId::Hstore => true,
+        ExtensionId::Intarray => true,
+        ExtensionId::Isn => true,
+        ExtensionId::Lo => true,
+        ExtensionId::Ltree => true,
+        ExtensionId::Pageinspect => true,
+        ExtensionId::PgBuffercache => true,
+        ExtensionId::PgFreespacemap => true,
+        ExtensionId::PgHashids => true,
+        ExtensionId::PgIvm => true,
+        ExtensionId::PgSurgery => true,
+        ExtensionId::PgTextsearch => true,
+        ExtensionId::PgTrgm => true,
+        ExtensionId::PgUuidv7 => true,
+        ExtensionId::PgVisibility => true,
+        ExtensionId::PgWalinspect => true,
+        ExtensionId::Pgcrypto => true,
+        ExtensionId::Pgtap => true,
+        ExtensionId::Postgis => true,
+        ExtensionId::Seg => true,
+        ExtensionId::Tablefunc => true,
+        ExtensionId::Tcn => true,
+        ExtensionId::TsmSystemRows => true,
+        ExtensionId::TsmSystemTime => true,
+        ExtensionId::Unaccent => true,
+        ExtensionId::UuidOssp => true,
+        ExtensionId::Vector => true,
     }
 }
 
 /// Generated extension metadata accessor.
 pub(super) const fn dependencies(extension: Extension) -> &'static [Extension] {
-    match extension {
-        Extension::Amcheck => &[],
-        Extension::AutoExplain => &[],
-        Extension::Bloom => &[],
-        Extension::BtreeGin => &[],
-        Extension::BtreeGist => &[],
-        Extension::Citext => &[],
-        Extension::Cube => &[],
-        Extension::DictInt => &[],
-        Extension::DictXsyn => &[],
-        Extension::Earthdistance => &[Extension::Cube],
-        Extension::FileFdw => &[],
-        Extension::Fuzzystrmatch => &[],
-        Extension::Hstore => &[],
-        Extension::Intarray => &[],
-        Extension::Isn => &[],
-        Extension::Lo => &[],
-        Extension::Ltree => &[],
-        Extension::Pageinspect => &[],
-        Extension::PgBuffercache => &[],
-        Extension::PgFreespacemap => &[],
-        Extension::PgHashids => &[],
-        Extension::PgIvm => &[],
-        Extension::PgSurgery => &[],
-        Extension::PgTextsearch => &[],
-        Extension::PgTrgm => &[],
-        Extension::PgUuidv7 => &[],
-        Extension::PgVisibility => &[],
-        Extension::PgWalinspect => &[],
-        Extension::Pgcrypto => &[],
-        Extension::Pgtap => &[],
-        Extension::Postgis => &[],
-        Extension::Seg => &[],
-        Extension::Tablefunc => &[],
-        Extension::Tcn => &[],
-        Extension::TsmSystemRows => &[],
-        Extension::TsmSystemTime => &[],
-        Extension::Unaccent => &[],
-        Extension::UuidOssp => &[],
-        Extension::Vector => &[],
+    match extension.id {
+        ExtensionId::Amcheck => &[],
+        ExtensionId::AutoExplain => &[],
+        ExtensionId::Bloom => &[],
+        ExtensionId::BtreeGin => &[],
+        ExtensionId::BtreeGist => &[],
+        ExtensionId::Citext => &[],
+        ExtensionId::Cube => &[],
+        ExtensionId::DictInt => &[],
+        ExtensionId::DictXsyn => &[],
+        ExtensionId::Earthdistance => &[Extension::CUBE],
+        ExtensionId::FileFdw => &[],
+        ExtensionId::Fuzzystrmatch => &[],
+        ExtensionId::Hstore => &[],
+        ExtensionId::Intarray => &[],
+        ExtensionId::Isn => &[],
+        ExtensionId::Lo => &[],
+        ExtensionId::Ltree => &[],
+        ExtensionId::Pageinspect => &[],
+        ExtensionId::PgBuffercache => &[],
+        ExtensionId::PgFreespacemap => &[],
+        ExtensionId::PgHashids => &[],
+        ExtensionId::PgIvm => &[],
+        ExtensionId::PgSurgery => &[],
+        ExtensionId::PgTextsearch => &[],
+        ExtensionId::PgTrgm => &[],
+        ExtensionId::PgUuidv7 => &[],
+        ExtensionId::PgVisibility => &[],
+        ExtensionId::PgWalinspect => &[],
+        ExtensionId::Pgcrypto => &[],
+        ExtensionId::Pgtap => &[],
+        ExtensionId::Postgis => &[],
+        ExtensionId::Seg => &[],
+        ExtensionId::Tablefunc => &[],
+        ExtensionId::Tcn => &[],
+        ExtensionId::TsmSystemRows => &[],
+        ExtensionId::TsmSystemTime => &[],
+        ExtensionId::Unaccent => &[],
+        ExtensionId::UuidOssp => &[],
+        ExtensionId::Vector => &[],
     }
 }
 
 /// Generated extension metadata accessor.
 pub(super) const fn required_shared_preload_library(extension: Extension) -> Option<&'static str> {
-    match extension {
-        Extension::Amcheck => None,
-        Extension::AutoExplain => None,
-        Extension::Bloom => None,
-        Extension::BtreeGin => None,
-        Extension::BtreeGist => None,
-        Extension::Citext => None,
-        Extension::Cube => None,
-        Extension::DictInt => None,
-        Extension::DictXsyn => None,
-        Extension::Earthdistance => None,
-        Extension::FileFdw => None,
-        Extension::Fuzzystrmatch => None,
-        Extension::Hstore => None,
-        Extension::Intarray => None,
-        Extension::Isn => None,
-        Extension::Lo => None,
-        Extension::Ltree => None,
-        Extension::Pageinspect => None,
-        Extension::PgBuffercache => None,
-        Extension::PgFreespacemap => None,
-        Extension::PgHashids => None,
-        Extension::PgIvm => None,
-        Extension::PgSurgery => None,
-        Extension::PgTextsearch => Some("pg_textsearch"),
-        Extension::PgTrgm => None,
-        Extension::PgUuidv7 => None,
-        Extension::PgVisibility => None,
-        Extension::PgWalinspect => None,
-        Extension::Pgcrypto => None,
-        Extension::Pgtap => None,
-        Extension::Postgis => None,
-        Extension::Seg => None,
-        Extension::Tablefunc => None,
-        Extension::Tcn => None,
-        Extension::TsmSystemRows => None,
-        Extension::TsmSystemTime => None,
-        Extension::Unaccent => None,
-        Extension::UuidOssp => None,
-        Extension::Vector => None,
+    match extension.id {
+        ExtensionId::Amcheck => None,
+        ExtensionId::AutoExplain => None,
+        ExtensionId::Bloom => None,
+        ExtensionId::BtreeGin => None,
+        ExtensionId::BtreeGist => None,
+        ExtensionId::Citext => None,
+        ExtensionId::Cube => None,
+        ExtensionId::DictInt => None,
+        ExtensionId::DictXsyn => None,
+        ExtensionId::Earthdistance => None,
+        ExtensionId::FileFdw => None,
+        ExtensionId::Fuzzystrmatch => None,
+        ExtensionId::Hstore => None,
+        ExtensionId::Intarray => None,
+        ExtensionId::Isn => None,
+        ExtensionId::Lo => None,
+        ExtensionId::Ltree => None,
+        ExtensionId::Pageinspect => None,
+        ExtensionId::PgBuffercache => None,
+        ExtensionId::PgFreespacemap => None,
+        ExtensionId::PgHashids => None,
+        ExtensionId::PgIvm => None,
+        ExtensionId::PgSurgery => None,
+        ExtensionId::PgTextsearch => Some("pg_textsearch"),
+        ExtensionId::PgTrgm => None,
+        ExtensionId::PgUuidv7 => None,
+        ExtensionId::PgVisibility => None,
+        ExtensionId::PgWalinspect => None,
+        ExtensionId::Pgcrypto => None,
+        ExtensionId::Pgtap => None,
+        ExtensionId::Postgis => None,
+        ExtensionId::Seg => None,
+        ExtensionId::Tablefunc => None,
+        ExtensionId::Tcn => None,
+        ExtensionId::TsmSystemRows => None,
+        ExtensionId::TsmSystemTime => None,
+        ExtensionId::Unaccent => None,
+        ExtensionId::UuidOssp => None,
+        ExtensionId::Vector => None,
     }
 }
 
 /// Generated extension metadata accessor.
 pub(super) const fn extension_data_files(extension: Extension) -> &'static [&'static str] {
-    match extension {
-        Extension::Amcheck => &[],
-        Extension::AutoExplain => &[],
-        Extension::Bloom => &[],
-        Extension::BtreeGin => &[],
-        Extension::BtreeGist => &[],
-        Extension::Citext => &[],
-        Extension::Cube => &[],
-        Extension::DictInt => &[],
-        Extension::DictXsyn => &["tsearch_data/xsyn_sample.rules"],
-        Extension::Earthdistance => &[],
-        Extension::FileFdw => &[],
-        Extension::Fuzzystrmatch => &[],
-        Extension::Hstore => &[],
-        Extension::Intarray => &[],
-        Extension::Isn => &[],
-        Extension::Lo => &[],
-        Extension::Ltree => &[],
-        Extension::Pageinspect => &[],
-        Extension::PgBuffercache => &[],
-        Extension::PgFreespacemap => &[],
-        Extension::PgHashids => &[],
-        Extension::PgIvm => &[],
-        Extension::PgSurgery => &[],
-        Extension::PgTextsearch => &[],
-        Extension::PgTrgm => &[],
-        Extension::PgUuidv7 => &[],
-        Extension::PgVisibility => &[],
-        Extension::PgWalinspect => &[],
-        Extension::Pgcrypto => &[],
-        Extension::Pgtap => &[],
-        Extension::Postgis => &[
+    match extension.id {
+        ExtensionId::Amcheck => &[],
+        ExtensionId::AutoExplain => &[],
+        ExtensionId::Bloom => &[],
+        ExtensionId::BtreeGin => &[],
+        ExtensionId::BtreeGist => &[],
+        ExtensionId::Citext => &[],
+        ExtensionId::Cube => &[],
+        ExtensionId::DictInt => &[],
+        ExtensionId::DictXsyn => &["tsearch_data/xsyn_sample.rules"],
+        ExtensionId::Earthdistance => &[],
+        ExtensionId::FileFdw => &[],
+        ExtensionId::Fuzzystrmatch => &[],
+        ExtensionId::Hstore => &[],
+        ExtensionId::Intarray => &[],
+        ExtensionId::Isn => &[],
+        ExtensionId::Lo => &[],
+        ExtensionId::Ltree => &[],
+        ExtensionId::Pageinspect => &[],
+        ExtensionId::PgBuffercache => &[],
+        ExtensionId::PgFreespacemap => &[],
+        ExtensionId::PgHashids => &[],
+        ExtensionId::PgIvm => &[],
+        ExtensionId::PgSurgery => &[],
+        ExtensionId::PgTextsearch => &[],
+        ExtensionId::PgTrgm => &[],
+        ExtensionId::PgUuidv7 => &[],
+        ExtensionId::PgVisibility => &[],
+        ExtensionId::PgWalinspect => &[],
+        ExtensionId::Pgcrypto => &[],
+        ExtensionId::Pgtap => &[],
+        ExtensionId::Postgis => &[
             "contrib/postgis-3.6/legacy.sql",
             "contrib/postgis-3.6/legacy_gist.sql",
             "contrib/postgis-3.6/legacy_minimal.sql",
@@ -398,108 +562,108 @@ pub(super) const fn extension_data_files(extension: Extension) -> &'static [&'st
             "contrib/postgis-3.6/uninstall_postgis.sql",
             "proj/proj.db",
         ],
-        Extension::Seg => &[],
-        Extension::Tablefunc => &[],
-        Extension::Tcn => &[],
-        Extension::TsmSystemRows => &[],
-        Extension::TsmSystemTime => &[],
-        Extension::Unaccent => &["tsearch_data/unaccent.rules"],
-        Extension::UuidOssp => &[],
-        Extension::Vector => &[],
+        ExtensionId::Seg => &[],
+        ExtensionId::Tablefunc => &[],
+        ExtensionId::Tcn => &[],
+        ExtensionId::TsmSystemRows => &[],
+        ExtensionId::TsmSystemTime => &[],
+        ExtensionId::Unaccent => &["tsearch_data/unaccent.rules"],
+        ExtensionId::UuidOssp => &[],
+        ExtensionId::Vector => &[],
     }
 }
 
 /// Generated extension metadata accessor.
 pub(super) const fn extension_sql_file_prefixes(extension: Extension) -> &'static [&'static str] {
-    match extension {
-        Extension::Amcheck => &[],
-        Extension::AutoExplain => &[],
-        Extension::Bloom => &[],
-        Extension::BtreeGin => &[],
-        Extension::BtreeGist => &[],
-        Extension::Citext => &[],
-        Extension::Cube => &[],
-        Extension::DictInt => &[],
-        Extension::DictXsyn => &[],
-        Extension::Earthdistance => &[],
-        Extension::FileFdw => &[],
-        Extension::Fuzzystrmatch => &[],
-        Extension::Hstore => &[],
-        Extension::Intarray => &[],
-        Extension::Isn => &[],
-        Extension::Lo => &[],
-        Extension::Ltree => &[],
-        Extension::Pageinspect => &[],
-        Extension::PgBuffercache => &[],
-        Extension::PgFreespacemap => &[],
-        Extension::PgHashids => &[],
-        Extension::PgIvm => &[],
-        Extension::PgSurgery => &[],
-        Extension::PgTextsearch => &[],
-        Extension::PgTrgm => &[],
-        Extension::PgUuidv7 => &[],
-        Extension::PgVisibility => &[],
-        Extension::PgWalinspect => &[],
-        Extension::Pgcrypto => &[],
-        Extension::Pgtap => &["pgtap-core", "pgtap-schema"],
-        Extension::Postgis => &[
+    match extension.id {
+        ExtensionId::Amcheck => &[],
+        ExtensionId::AutoExplain => &[],
+        ExtensionId::Bloom => &[],
+        ExtensionId::BtreeGin => &[],
+        ExtensionId::BtreeGist => &[],
+        ExtensionId::Citext => &[],
+        ExtensionId::Cube => &[],
+        ExtensionId::DictInt => &[],
+        ExtensionId::DictXsyn => &[],
+        ExtensionId::Earthdistance => &[],
+        ExtensionId::FileFdw => &[],
+        ExtensionId::Fuzzystrmatch => &[],
+        ExtensionId::Hstore => &[],
+        ExtensionId::Intarray => &[],
+        ExtensionId::Isn => &[],
+        ExtensionId::Lo => &[],
+        ExtensionId::Ltree => &[],
+        ExtensionId::Pageinspect => &[],
+        ExtensionId::PgBuffercache => &[],
+        ExtensionId::PgFreespacemap => &[],
+        ExtensionId::PgHashids => &[],
+        ExtensionId::PgIvm => &[],
+        ExtensionId::PgSurgery => &[],
+        ExtensionId::PgTextsearch => &[],
+        ExtensionId::PgTrgm => &[],
+        ExtensionId::PgUuidv7 => &[],
+        ExtensionId::PgVisibility => &[],
+        ExtensionId::PgWalinspect => &[],
+        ExtensionId::Pgcrypto => &[],
+        ExtensionId::Pgtap => &["pgtap-core", "pgtap-schema"],
+        ExtensionId::Postgis => &[
             "postgis_comments",
             "postgis_proc_set_search_path",
             "rtpostgis",
         ],
-        Extension::Seg => &[],
-        Extension::Tablefunc => &[],
-        Extension::Tcn => &[],
-        Extension::TsmSystemRows => &[],
-        Extension::TsmSystemTime => &[],
-        Extension::Unaccent => &[],
-        Extension::UuidOssp => &[],
-        Extension::Vector => &[],
+        ExtensionId::Seg => &[],
+        ExtensionId::Tablefunc => &[],
+        ExtensionId::Tcn => &[],
+        ExtensionId::TsmSystemRows => &[],
+        ExtensionId::TsmSystemTime => &[],
+        ExtensionId::Unaccent => &[],
+        ExtensionId::UuidOssp => &[],
+        ExtensionId::Vector => &[],
     }
 }
 
 /// Generated extension metadata accessor.
 pub(super) const fn extension_sql_file_names(extension: Extension) -> &'static [&'static str] {
-    match extension {
-        Extension::Amcheck => &[],
-        Extension::AutoExplain => &[],
-        Extension::Bloom => &[],
-        Extension::BtreeGin => &[],
-        Extension::BtreeGist => &[],
-        Extension::Citext => &[],
-        Extension::Cube => &[],
-        Extension::DictInt => &[],
-        Extension::DictXsyn => &[],
-        Extension::Earthdistance => &[],
-        Extension::FileFdw => &[],
-        Extension::Fuzzystrmatch => &[],
-        Extension::Hstore => &[],
-        Extension::Intarray => &[],
-        Extension::Isn => &[],
-        Extension::Lo => &[],
-        Extension::Ltree => &[],
-        Extension::Pageinspect => &[],
-        Extension::PgBuffercache => &[],
-        Extension::PgFreespacemap => &[],
-        Extension::PgHashids => &[],
-        Extension::PgIvm => &[],
-        Extension::PgSurgery => &[],
-        Extension::PgTextsearch => &[],
-        Extension::PgTrgm => &[],
-        Extension::PgUuidv7 => &[],
-        Extension::PgVisibility => &[],
-        Extension::PgWalinspect => &[],
-        Extension::Pgcrypto => &[],
-        Extension::Pgtap => &["uninstall_pgtap.sql"],
-        Extension::Postgis => &["uninstall_postgis.sql"],
-        Extension::Seg => &[],
-        Extension::Tablefunc => &[],
-        Extension::Tcn => &[],
-        Extension::TsmSystemRows => &[],
-        Extension::TsmSystemTime => &[],
-        Extension::Unaccent => &[],
-        Extension::UuidOssp => &[],
-        Extension::Vector => &[],
+    match extension.id {
+        ExtensionId::Amcheck => &[],
+        ExtensionId::AutoExplain => &[],
+        ExtensionId::Bloom => &[],
+        ExtensionId::BtreeGin => &[],
+        ExtensionId::BtreeGist => &[],
+        ExtensionId::Citext => &[],
+        ExtensionId::Cube => &[],
+        ExtensionId::DictInt => &[],
+        ExtensionId::DictXsyn => &[],
+        ExtensionId::Earthdistance => &[],
+        ExtensionId::FileFdw => &[],
+        ExtensionId::Fuzzystrmatch => &[],
+        ExtensionId::Hstore => &[],
+        ExtensionId::Intarray => &[],
+        ExtensionId::Isn => &[],
+        ExtensionId::Lo => &[],
+        ExtensionId::Ltree => &[],
+        ExtensionId::Pageinspect => &[],
+        ExtensionId::PgBuffercache => &[],
+        ExtensionId::PgFreespacemap => &[],
+        ExtensionId::PgHashids => &[],
+        ExtensionId::PgIvm => &[],
+        ExtensionId::PgSurgery => &[],
+        ExtensionId::PgTextsearch => &[],
+        ExtensionId::PgTrgm => &[],
+        ExtensionId::PgUuidv7 => &[],
+        ExtensionId::PgVisibility => &[],
+        ExtensionId::PgWalinspect => &[],
+        ExtensionId::Pgcrypto => &[],
+        ExtensionId::Pgtap => &["uninstall_pgtap.sql"],
+        ExtensionId::Postgis => &["uninstall_postgis.sql"],
+        ExtensionId::Seg => &[],
+        ExtensionId::Tablefunc => &[],
+        ExtensionId::Tcn => &[],
+        ExtensionId::TsmSystemRows => &[],
+        ExtensionId::TsmSystemTime => &[],
+        ExtensionId::Unaccent => &[],
+        ExtensionId::UuidOssp => &[],
+        ExtensionId::Vector => &[],
     }
 }
 
@@ -507,49 +671,49 @@ pub(super) const fn extension_sql_file_names(extension: Extension) -> &'static [
 pub(super) const fn runtime_environment(
     extension: Extension,
 ) -> &'static [ExtensionRuntimeEnvironment] {
-    match extension {
-        Extension::Amcheck => &[],
-        Extension::AutoExplain => &[],
-        Extension::Bloom => &[],
-        Extension::BtreeGin => &[],
-        Extension::BtreeGist => &[],
-        Extension::Citext => &[],
-        Extension::Cube => &[],
-        Extension::DictInt => &[],
-        Extension::DictXsyn => &[],
-        Extension::Earthdistance => &[],
-        Extension::FileFdw => &[],
-        Extension::Fuzzystrmatch => &[],
-        Extension::Hstore => &[],
-        Extension::Intarray => &[],
-        Extension::Isn => &[],
-        Extension::Lo => &[],
-        Extension::Ltree => &[],
-        Extension::Pageinspect => &[],
-        Extension::PgBuffercache => &[],
-        Extension::PgFreespacemap => &[],
-        Extension::PgHashids => &[],
-        Extension::PgIvm => &[],
-        Extension::PgSurgery => &[],
-        Extension::PgTextsearch => &[],
-        Extension::PgTrgm => &[],
-        Extension::PgUuidv7 => &[],
-        Extension::PgVisibility => &[],
-        Extension::PgWalinspect => &[],
-        Extension::Pgcrypto => &[],
-        Extension::Pgtap => &[],
-        Extension::Postgis => &[ExtensionRuntimeEnvironment {
+    match extension.id {
+        ExtensionId::Amcheck => &[],
+        ExtensionId::AutoExplain => &[],
+        ExtensionId::Bloom => &[],
+        ExtensionId::BtreeGin => &[],
+        ExtensionId::BtreeGist => &[],
+        ExtensionId::Citext => &[],
+        ExtensionId::Cube => &[],
+        ExtensionId::DictInt => &[],
+        ExtensionId::DictXsyn => &[],
+        ExtensionId::Earthdistance => &[],
+        ExtensionId::FileFdw => &[],
+        ExtensionId::Fuzzystrmatch => &[],
+        ExtensionId::Hstore => &[],
+        ExtensionId::Intarray => &[],
+        ExtensionId::Isn => &[],
+        ExtensionId::Lo => &[],
+        ExtensionId::Ltree => &[],
+        ExtensionId::Pageinspect => &[],
+        ExtensionId::PgBuffercache => &[],
+        ExtensionId::PgFreespacemap => &[],
+        ExtensionId::PgHashids => &[],
+        ExtensionId::PgIvm => &[],
+        ExtensionId::PgSurgery => &[],
+        ExtensionId::PgTextsearch => &[],
+        ExtensionId::PgTrgm => &[],
+        ExtensionId::PgUuidv7 => &[],
+        ExtensionId::PgVisibility => &[],
+        ExtensionId::PgWalinspect => &[],
+        ExtensionId::Pgcrypto => &[],
+        ExtensionId::Pgtap => &[],
+        ExtensionId::Postgis => &[ExtensionRuntimeEnvironment {
             name: "PROJ_DATA",
             relative_path: "share/postgresql/proj",
             required_file: "proj.db",
         }],
-        Extension::Seg => &[],
-        Extension::Tablefunc => &[],
-        Extension::Tcn => &[],
-        Extension::TsmSystemRows => &[],
-        Extension::TsmSystemTime => &[],
-        Extension::Unaccent => &[],
-        Extension::UuidOssp => &[],
-        Extension::Vector => &[],
+        ExtensionId::Seg => &[],
+        ExtensionId::Tablefunc => &[],
+        ExtensionId::Tcn => &[],
+        ExtensionId::TsmSystemRows => &[],
+        ExtensionId::TsmSystemTime => &[],
+        ExtensionId::Unaccent => &[],
+        ExtensionId::UuidOssp => &[],
+        ExtensionId::Vector => &[],
     }
 }

@@ -34,7 +34,7 @@ pub(super) fn core_share_file(relative: &Path) -> bool {
 }
 
 pub(super) fn packaged_extension_module_files() -> BTreeSet<String> {
-    Extension::ALL_PG18_SUPPORTED
+    Extension::ALL
         .iter()
         .filter_map(|extension| extension.native_module_file())
         .collect()
@@ -170,7 +170,7 @@ mod tests {
             b"select 'hstore install';\n",
         );
         let missing_control =
-            copy_extension_sql_files(&source_share, &target_share, Extension::Hstore).unwrap_err();
+            copy_extension_sql_files(&source_share, &target_share, Extension::HSTORE).unwrap_err();
         assert!(
             missing_control.to_string().contains("missing control file"),
             "unexpected missing-control error: {missing_control}"
@@ -183,7 +183,7 @@ mod tests {
             b"comment = 'hstore'\n",
         );
         let missing_sql =
-            copy_extension_sql_files(&source_share, &target_share, Extension::Hstore).unwrap_err();
+            copy_extension_sql_files(&source_share, &target_share, Extension::HSTORE).unwrap_err();
         assert!(
             missing_sql.to_string().contains("missing SQL install file"),
             "unexpected missing-SQL error: {missing_sql}"
@@ -193,7 +193,7 @@ mod tests {
             &source_share.join("extension/hstore--1.0.sql"),
             b"select 'hstore install';\n",
         );
-        copy_extension_sql_files(&source_share, &target_share, Extension::Hstore).unwrap();
+        copy_extension_sql_files(&source_share, &target_share, Extension::HSTORE).unwrap();
         assert!(target_share.join("extension/hstore.control").is_file());
         assert!(target_share.join("extension/hstore--1.0.sql").is_file());
     }
@@ -204,14 +204,14 @@ mod tests {
         let source_share = temp.path().join("source/share/postgresql");
         let target_share = temp.path().join("target/share/postgresql");
 
-        copy_extension_sql_files(&source_share, &target_share, Extension::AutoExplain).unwrap();
+        copy_extension_sql_files(&source_share, &target_share, Extension::AUTO_EXPLAIN).unwrap();
         assert!(!source_share.join("extension").exists());
         assert!(!target_share.join("extension").exists());
     }
 
     #[test]
     fn extension_sql_file_belongs_uses_generated_extra_file_metadata() {
-        let postgis = Extension::Postgis.sql_name();
+        let postgis = Extension::POSTGIS.sql_name();
 
         assert!(extension_sql_file_belongs(
             "pgtap",
@@ -281,7 +281,7 @@ mod tests {
             );
         }
 
-        copy_extension_sql_files(&source_share, &target_share, Extension::Hstore).unwrap();
+        copy_extension_sql_files(&source_share, &target_share, Extension::HSTORE).unwrap();
 
         for name in [
             "hstore.control",

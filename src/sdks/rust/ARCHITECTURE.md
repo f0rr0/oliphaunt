@@ -7,36 +7,40 @@ WASIX binding and has no runtime fallback matrix.
 
 The public database boundary is:
 
-- Root `Oliphaunt::builder()` for synchronous caller-thread direct and broker
-  databases.
-- `oliphaunt::worker` for the same topology vocabulary on a dedicated owner
-  thread with cloneable asynchronous handles.
-- Each execution placement has `OliphauntBuilder::open_server()` for the
-  distinct local-server handle.
+- Root `Oliphaunt::open()` or `Oliphaunt::builder()` for synchronous,
+  exclusive direct and broker databases.
+- Root `AsyncOliphaunt::open()` or `AsyncOliphaunt::builder()` for the same
+  topology vocabulary on a dedicated owner thread with cloneable asynchronous
+  handles.
+- Dedicated `OliphauntServer::builder().start()` and
+  `AsyncOliphauntServer::builder().start().await` terminals for local-server
+  lifecycle handles.
 - PostgreSQL-shaped execute, query, parameter, result, transaction,
-  cancellation, raw protocol, and close methods.
+  cancellation, raw protocol, and close methods on database handles.
+- Only `connection_string`, `is_closed`, and `close` on server handles; an
+  external driver or ORM owns SQL and protocol behavior.
 - One byte physical-backup method on direct and broker databases.
 - One static restore operation into an absent or empty destination.
 
 Internal engine modes, runtime profiles, lifecycle requests, backup envelopes,
 resource manifests, package reports, and protocol parsers are not public API.
-The shared builder validates its terminal: direct/broker selectors and broker
-executable options belong to `open()`, while listener and server executable
-options belong to `open_server()`. Cross-topology configuration is rejected,
-never ignored.
+Database and server builders are distinct, so listener/server options cannot be
+combined with direct/broker options. Within the database builder,
+`broker_executable` is valid only after selecting `broker()`.
 
 ## Runtime ownership
 
 Direct mode owns one embedded PostgreSQL backend in the application process.
 Broker mode owns the same backend in one authenticated helper process. These
-are database topologies, not scheduling modes. Root handles call either session
-synchronously; `oliphaunt::worker` serializes either session on one owner
-thread.
+are database topologies, not scheduling modes. Root `Oliphaunt` handles block
+until either session completes; `AsyncOliphaunt` serializes either session on
+one owner thread.
 
-Server mode starts a normal local PostgreSQL server, opens one SDK connection,
-and returns `OliphauntServer` with a nonoptional libpq connection string. It is
-the only product that supports independent external client connections. Its
-handle has no physical-backup method because PostgreSQL already provides
+Server mode starts a normal local PostgreSQL server and returns
+`OliphauntServer` with a nonoptional libpq connection string. Startup readiness
+uses a short-lived probe; the lifecycle handle retains no privileged PostgreSQL
+connection. It is the only product that supports independent external client
+connections. Its handle has no physical-backup method because PostgreSQL already provides
 `pg_basebackup`; the optional endpoint-oriented `oliphaunt-tools` crate runs
 plain `pg_dump` and non-interactive `psql` without entering the core SDK API.
 
@@ -47,24 +51,40 @@ tools.
 
 ## Execution and transactions
 
-The root API constructs and calls its runtime session on the calling thread.
-Its handle is deliberately `!Send + !Sync`, operations take `&mut self`, and a
-callback transaction exclusively borrows the database. This provides an exact
-no-hop contract without a mutex pretending that one session is concurrent.
-Inline raw-stream callbacks may borrow caller state and cannot reenter the
-database through safe Rust while its mutable borrow is active.
+The root API is synchronous: its operations take `&mut self` and block the
+calling thread until the selected runtime reports completion. It does not add
+an SDK owner queue. Native direct mode nevertheless runs the embedded backend
+on `liboliphaunt`'s internal pthread; broker and server keep their own process
+or server boundaries. The contract is therefore caller blocking, not
+caller-thread PostgreSQL execution. The handle is `Send + !Sync`, so ownership
+may move between threads but references cannot be shared concurrently. A
+callback transaction exclusively borrows the database. Inline raw-stream
+callbacks may borrow caller state and cannot reenter the database through safe
+Rust while its mutable borrow is active.
 
-The `worker` API constructs and calls its session on one permanent owner
-thread. A session is never opened on a temporary thread and then transferred.
-Cloneable `Send + Sync` handles share that owner; cloning does not create a
-PostgreSQL connection.
+A broker handle owns exactly one helper-backed PostgreSQL session. Helper exit
+or IPC failure is terminal for that handle and retains the first failure; no
+runtime path launches a replacement beneath it. Explicit close cleans owned
+resources, and a new open on persistent storage is the only recovery boundary.
+Requests with unknown outcomes are never replayed.
 
-Worker application work enters one bounded FIFO. Transaction control,
-rollback cleanup, and close enter the same FIFO through reserved admission, so
-queue pressure cannot strand lifecycle work and cannot reorder cleanup ahead of
-an already-admitted COMMIT. Close and command admission share one lock: work
+The `AsyncOliphaunt` API constructs and calls its session on one permanent
+SDK-owned thread. A session is never opened on a temporary thread and then
+transferred. Cloneable `Send + Sync` handles share that owner; cloning does not
+create a PostgreSQL connection. The public name describes its calling contract;
+the owner thread is an implementation placement guarantee, not a Rust
+`Worker` abstraction.
+
+Asynchronous application work awaits fair, bounded admission before entering
+one FIFO. Saturation suspends the admitting future rather than returning a
+queue-full error. Transaction control, rollback cleanup, and close enter the
+same FIFO without consuming ordinary capacity, so queue pressure cannot strand
+lifecycle work and cannot reorder cleanup ahead of an already-admitted COMMIT.
+Close and command admission share one lock: work
 admitted before the close cutoff remains ahead of Close and drains, while later
-application work is rejected. The closing state is never used to invalidate a
+application work, including capacity waiters that never entered the FIFO, is
+rejected. A rejected pre-cutoff waiter cannot cross a retryable close attempt
+after admission reopens. The closing state is never used to invalidate a
 command that is already in the FIFO. If a queued `BEGIN` succeeds before Close,
 the owner rejects that close attempt with `TransactionActive`, restores open
 admission, and retains the session for retry. If an operation future is dropped
@@ -81,22 +101,39 @@ the session is poisoned unless PostgreSQL explicitly returns the known idle
 `ROLLBACK` command tag. Pin cleanup remains admissible after poisoning so close
 cannot strand the owner thread.
 
-Cancellation is out of band: the C cancellation hook in direct mode, a separate
-authenticated endpoint in broker mode, and PostgreSQL CancelRequest in server
-mode. Root callers obtain a separate `CancelHandle` before blocking when
-another thread must interrupt the operation. Worker cancellation is
+A root transaction callback panic is contained until synchronous settlement
+completes and is then resumed when the outcome is known. An async transaction
+body panic unwinds the awaiting task immediately. Dropping its active
+transaction enqueues best-effort rollback in the same owner FIFO, so later work
+cannot overtake cleanup even though the unwind does not wait for it.
+
+Cancellation is out of band: the C cancellation hook in direct mode and a
+separate authenticated endpoint in broker mode. External clients of server
+mode own PostgreSQL CancelRequest through their driver. Root database callers
+obtain a separate `CancelHandle` before blocking when
+another thread must interrupt the operation. Asynchronous cancellation is
 asynchronous and does not wait in the ordinary FIFO. Close does not implicitly
-cancel active work. Root close is synchronous; worker close is an ordered queue
+cancel active work. Root close is synchronous; async close is an ordered queue
 boundary with shared concurrent waiters. Once direct detach, broker shutdown,
 or server shutdown begins, either handle is terminal and retains one exact
 close result. A failed teardown is never followed by a second implicit teardown.
-Final worker `Drop` requests cleanup without joining the owner thread.
+Session and managed-root ownership is released only after successful teardown.
+On failure the SDK intentionally retains that ownership until process exit;
+leaking the failed owner is safer than running an unproven second destructor.
+Final asynchronous-handle `Drop` requests cleanup without joining the owner
+thread.
 
-Every worker reply channel turns sender disappearance into `EngineStopped`; an owner
-panic therefore cannot strand callers. Runtime panics stop the owner and reject
-pending work. Raw-stream callback panics are contained before any C boundary,
-returned as SDK errors, and adapters drain to `ReadyForQuery`. Callbacks are
-synchronous owner-thread code, so reentrant work on the same worker handle is
+Every asynchronous reply channel turns sender disappearance into
+`EngineStopped`; an owner panic therefore cannot strand callers. Runtime panics
+stop the owner and reject pending work. Raw-stream callback panics are contained
+before any C boundary. A typed adapter outcome distinguishes confirmed
+`ReadyForQuery` recovery from an independent runtime or transport failure. The
+blocking root resumes the original panic only after confirmed recovery; the
+async API returns a recovered owner-thread panic as
+`RawStreamError::CallbackPanicked` and leaves the session reusable. An
+unconfirmed recovery failure is authoritative, becomes
+`RawStreamError::Database`, and poisons the session until close. Callbacks are
+synchronous owner-thread code, so reentrant work on the same async handle is
 rejected rather than deadlocking. Root callbacks run inline and rely on the
 exclusive borrow instead of runtime reentrancy detection.
 

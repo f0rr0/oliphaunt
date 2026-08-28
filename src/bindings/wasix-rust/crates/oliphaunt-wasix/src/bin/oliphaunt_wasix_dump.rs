@@ -1,6 +1,6 @@
 use anyhow::Result;
 #[cfg(all(feature = "tools", feature = "extensions"))]
-use oliphaunt_wasix::extensions;
+use oliphaunt_wasix::Extension;
 #[cfg(feature = "tools")]
 use oliphaunt_wasix::{DatabaseStorage, Oliphaunt, OliphauntBuilder, tools};
 #[cfg(feature = "tools")]
@@ -37,7 +37,7 @@ fn main() -> Result<()> {
             .database(&database)
             .username(&username);
         let mut database = configure_extensions(builder, &extensions)?.open()?;
-        let sql = tools::pg_dump(&mut database, tools::PgDumpOptions::new().args(passthrough))?;
+        let sql = database.pg_dump(tools::PgDumpOptions::new().args(passthrough))?;
         print!("{sql}");
         database.close()?;
         Ok(())
@@ -107,7 +107,7 @@ fn configure_extensions(
     extension_names: &[String],
 ) -> Result<OliphauntBuilder> {
     for name in extension_names {
-        let extension = extensions::by_sql_name(name)
+        let extension = Extension::by_sql_name(name)
             .ok_or_else(|| anyhow::anyhow!("unknown extension: {name}"))?;
         builder = builder.extension(extension);
     }
@@ -133,7 +133,7 @@ fn print_usage() {
     eprintln!("  --directory PATH  Use this database root. Defaults to ./.oliphaunt");
     eprintln!("  --database NAME   Select the database to dump. Defaults to postgres");
     eprintln!("  --username NAME   Select the database user. Defaults to postgres");
-    eprintln!("  --extension NAME  Enable an installed extension by SQL name; repeat as needed");
+    eprintln!("  --extension NAME  Select an extension artifact by SQL name; repeat as needed");
     eprintln!("Example: oliphaunt-wasix-dump --directory ./.oliphaunt -- --schema-only");
 }
 

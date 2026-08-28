@@ -16,6 +16,7 @@ use crate::oliphaunt::base::install_missing_extension_archives;
 use crate::oliphaunt::config::{PostgresConfig, StartupConfig};
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::extensions::Extension;
+use crate::oliphaunt::lifecycle::{TeardownOwnership, teardown_result};
 use crate::oliphaunt::postgres_mod::{
     ProtocolPumpOutcome, ProtocolStream, StartupProtocolResponse, startup_error_response_output,
 };
@@ -37,6 +38,7 @@ pub(crate) struct OliphauntProxy {
     prepared_database: Arc<InstallOutcome>,
     postgres_config: Arc<PostgresConfig>,
     startup_config: Arc<StartupConfig>,
+    backend_teardown_failure: Arc<Mutex<Option<String>>>,
     #[cfg(feature = "extensions")]
     extensions: Arc<Vec<Extension>>,
 }
@@ -125,6 +127,7 @@ impl OliphauntProxy {
             prepared_database: Arc::new(outcome),
             postgres_config: Arc::new(PostgresConfig::default()),
             startup_config: Arc::new(StartupConfig::default()),
+            backend_teardown_failure: Arc::new(Mutex::new(None)),
             #[cfg(feature = "extensions")]
             extensions: Arc::new(Vec::new()),
         }
@@ -140,7 +143,8 @@ impl OliphauntProxy {
         self
     }
 
-    /// Enable bundled extensions in the proxy backend before accepting clients.
+    /// Make selected extension artifacts and required pre-start settings
+    /// available to proxy clients.
     #[cfg(feature = "extensions")]
     pub(crate) fn with_extensions(mut self, extensions: Vec<Extension>) -> Self {
         self.extensions = Arc::new(extensions);
@@ -173,6 +177,9 @@ impl OliphauntProxy {
                 }
                 self.handle_stream(stream)
             })();
+            if let Some(error) = self.connection_teardown_failure(&result) {
+                return Err(error);
+            }
             if let Err(error) = result {
                 tracing::debug!("closing failed TCP proxy connection: {error:#}");
             }
@@ -208,6 +215,9 @@ impl OliphauntProxy {
                 }
                 self.handle_stream(stream)
             })();
+            if let Some(error) = self.connection_teardown_failure(&result) {
+                return Err(error);
+            }
             if let Err(error) = result {
                 tracing::debug!("closing failed Unix proxy connection: {error:#}");
             }
@@ -287,6 +297,7 @@ impl OliphauntProxy {
                                 &self.postgres_config,
                                 &connection_startup_config,
                                 self.extensions(),
+                                Arc::clone(&self.backend_teardown_failure),
                             )
                         };
                         let mut opened = match opened_result {
@@ -306,27 +317,20 @@ impl OliphauntProxy {
                         let response = opened.startup(message)?;
                         let response_accepted =
                             response.accepted && !response_contains_error(&response.output);
-                        if response_accepted {
-                            #[cfg(feature = "extensions")]
-                            {
-                                // Use the serving backend for idempotent extension setup; a separate
-                                // setup backend adds a full Postgres startup and can force WAL recovery.
-                                opened.enable_extensions(self.extensions())?;
-                            }
-                            if let Some(user) = startup_parameter(message, "user")?
-                                && user != "postgres"
-                            {
-                                let role_response = opened.set_role(user)?;
-                                if response_contains_error(&role_response) {
-                                    let _ = write_frontend(
-                                        &mut stream,
-                                        &role_response,
-                                        "write startup role rejection",
-                                    )?;
-                                    opened.close();
-                                    close_after_flush = true;
-                                    break;
-                                }
+                        if response_accepted
+                            && let Some(user) = startup_parameter(message, "user")?
+                            && user != "postgres"
+                        {
+                            let role_response = opened.set_role(user)?;
+                            if response_contains_error(&role_response) {
+                                let _ = write_frontend(
+                                    &mut stream,
+                                    &role_response,
+                                    "write startup role rejection",
+                                )?;
+                                let _ = opened.close();
+                                close_after_flush = true;
+                                break;
                             }
                         }
                         {
@@ -335,7 +339,7 @@ impl OliphauntProxy {
                                 &response.output,
                                 "write startup response",
                             )? {
-                                opened.close();
+                                let _ = opened.close();
                                 close_after_flush = true;
                                 break;
                             }
@@ -350,7 +354,7 @@ impl OliphauntProxy {
                             }
                             backend = Some(opened);
                         } else {
-                            opened.close();
+                            let _ = opened.close();
                             close_after_flush = true;
                         }
                     }
@@ -378,7 +382,7 @@ impl OliphauntProxy {
                             };
                             if streamed {
                                 if let Some(mut opened) = backend.take() {
-                                    opened.close();
+                                    opened.close()?;
                                 }
                                 return Ok(());
                             }
@@ -406,10 +410,14 @@ impl OliphauntProxy {
 
         {
             if let Some(mut backend) = backend {
-                backend.close();
+                backend.close()?;
             }
         }
         Ok(())
+    }
+
+    fn connection_teardown_failure(&self, primary: &Result<()>) -> Option<anyhow::Error> {
+        compose_connection_teardown_failure(&self.backend_teardown_failure, primary)
     }
 
     #[cfg(feature = "extensions")]
@@ -421,6 +429,22 @@ impl OliphauntProxy {
     fn extensions(&self) -> &[()] {
         &[]
     }
+}
+
+fn compose_connection_teardown_failure(
+    teardown_failure: &Mutex<Option<String>>,
+    primary: &Result<()>,
+) -> Option<anyhow::Error> {
+    let teardown = teardown_failure
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone()?;
+    Some(match primary {
+        Ok(()) => anyhow!("WASIX proxy backend teardown failed: {teardown}"),
+        Err(primary) => anyhow!(
+            "WASIX proxy connection failed: {primary:#}; backend teardown also failed: {teardown}"
+        ),
+    })
 }
 
 trait ProtocolReadiness {
@@ -557,7 +581,8 @@ impl<'a> ContinuationPrefix<'a> {
 }
 
 struct WireBackend {
-    session: BackendSession,
+    session: TeardownOwnership<BackendSession>,
+    teardown_failure: Arc<Mutex<Option<String>>>,
     connection_started: bool,
     closed: bool,
 }
@@ -569,6 +594,7 @@ impl WireBackend {
         postgres_config: &PostgresConfig,
         startup_config: &StartupConfig,
         extensions: &[Extension],
+        teardown_failure: Arc<Mutex<Option<String>>>,
     ) -> Result<Self> {
         {
             install_missing_extension_archives(prepared_database, extensions)?;
@@ -578,6 +604,7 @@ impl WireBackend {
             postgres_config,
             startup_config,
             extensions,
+            teardown_failure,
         )
     }
 
@@ -587,6 +614,7 @@ impl WireBackend {
         postgres_config: &PostgresConfig,
         startup_config: &StartupConfig,
         extensions: &[Extension],
+        teardown_failure: Arc<Mutex<Option<String>>>,
     ) -> Result<Self> {
         let session = BackendSession::open_with_extension_preload(
             outcome.clone(),
@@ -595,7 +623,8 @@ impl WireBackend {
             extensions,
         )?;
         Ok(Self {
-            session,
+            session: TeardownOwnership::new(session),
+            teardown_failure,
             connection_started: false,
             closed: false,
         })
@@ -607,6 +636,7 @@ impl WireBackend {
         postgres_config: &PostgresConfig,
         startup_config: &StartupConfig,
         _extensions: &[()],
+        teardown_failure: Arc<Mutex<Option<String>>>,
     ) -> Result<Self> {
         let session = BackendSession::open(
             prepared_database.clone(),
@@ -614,7 +644,8 @@ impl WireBackend {
             startup_config.clone(),
         )?;
         Ok(Self {
-            session,
+            session: TeardownOwnership::new(session),
+            teardown_failure,
             connection_started: false,
             closed: false,
         })
@@ -624,11 +655,6 @@ impl WireBackend {
         let response = self.session.startup_with_packet(message)?;
         self.connection_started = response.accepted && !response_contains_error(&response.output);
         Ok(response)
-    }
-
-    #[cfg(feature = "extensions")]
-    fn enable_extensions(&mut self, extensions: &[Extension]) -> Result<()> {
-        self.session.enable_extensions(extensions)
     }
 
     fn send(&mut self, message: &[u8]) -> Result<Vec<u8>> {
@@ -670,21 +696,44 @@ impl WireBackend {
         Ok(())
     }
 
-    fn close(&mut self) {
+    fn close(&mut self) -> Result<()> {
         if self.closed {
-            return;
+            return Ok(());
         }
-        if self.connection_started {
-            let _ = self.reset_session_state();
-        }
-        let _ = self.session.shutdown();
         self.closed = true;
+        let reset = if self.connection_started {
+            teardown_result("WASIX proxy session reset", || self.reset_session_state())
+        } else {
+            Ok(())
+        };
+        let shutdown = teardown_result("WASIX proxy backend", || {
+            self.session.shutdown()?;
+            self.session.release();
+            Ok(())
+        });
+        if let Err(shutdown) = shutdown {
+            let mut retained = self
+                .teardown_failure
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if retained.is_none() {
+                *retained = Some(format!("shutdown proxy backend: {shutdown}"));
+            }
+        }
+        // The listener reads the independent shutdown-failure latch after
+        // every handler return. Returning only the reset failure here keeps it
+        // primary without duplicating the same shutdown text during composition.
+        reset.map_err(|error| anyhow!("reset proxy session state: {error}"))
     }
 }
 
 impl Drop for WireBackend {
     fn drop(&mut self) {
-        self.close();
+        if let Err(error) = self.close() {
+            tracing::warn!(
+                "WASIX proxy backend teardown failed; retaining the backend until process exit: {error:#}"
+            );
+        }
     }
 }
 
@@ -859,6 +908,29 @@ mod tests {
             !runtime.windows(7).any(|window| window == b"C3D000\0"),
             "runtime failures must not be reported as missing databases"
         );
+    }
+
+    #[test]
+    fn backend_shutdown_latch_is_terminal_and_preserves_primary_error_order() {
+        let teardown = Mutex::new(Some("shutdown proxy backend: injected shutdown".to_owned()));
+        let primary = Err(anyhow!("injected connection read failure"));
+        let combined = compose_connection_teardown_failure(&teardown, &primary)
+            .expect("latched shutdown failure makes the listener terminal")
+            .to_string();
+
+        assert_eq!(
+            combined.matches("injected connection read failure").count(),
+            1
+        );
+        assert_eq!(combined.matches("injected shutdown").count(), 1);
+        assert!(
+            combined.find("injected connection read failure") < combined.find("injected shutdown")
+        );
+
+        let teardown_only = compose_connection_teardown_failure(&teardown, &Ok(()))
+            .expect("shutdown failure is terminal without a connection error")
+            .to_string();
+        assert_eq!(teardown_only.matches("injected shutdown").count(), 1);
     }
 
     fn backend_ready_response() -> Vec<u8> {

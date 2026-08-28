@@ -1,4 +1,8 @@
 use std::future::Future;
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
@@ -6,6 +10,8 @@ use anyhow::{Context, Result, bail};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::runtime::Runtime;
 use wasmer_wasix::virtual_fs::{self, FileSystem};
+
+use crate::error::invalid_configuration;
 
 /// The storage used for PostgreSQL's mutable database files.
 ///
@@ -15,8 +21,45 @@ pub enum DatabaseStorage {
     #[default]
     Memory,
     /// A caller-owned managed database root retained after the database closes.
-    /// PostgreSQL data lives under its `pgdata` child.
+    /// PostgreSQL data lives under its `pgdata` child. The path must be
+    /// nonempty and contain no NUL bytes.
     Directory(PathBuf),
+}
+
+impl DatabaseStorage {
+    pub(crate) fn validate(&self) -> Result<()> {
+        if let Self::Directory(directory) = self {
+            validate_host_path("database storage directory", directory)?;
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn validate_host_path(label: &str, path: &Path) -> Result<()> {
+    if path.as_os_str().is_empty() {
+        return Err(invalid_configuration(format!("{label} must not be empty")));
+    }
+    if path_contains_nul(path) {
+        return Err(invalid_configuration(format!(
+            "{label} must not contain NUL bytes"
+        )));
+    }
+    Ok(())
+}
+
+fn path_contains_nul(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        path.as_os_str().as_bytes().contains(&0)
+    }
+    #[cfg(windows)]
+    {
+        path.as_os_str().encode_wide().any(|unit| unit == 0)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        path.to_string_lossy().bytes().any(|byte| byte == 0)
+    }
 }
 
 #[derive(Debug, Clone)]

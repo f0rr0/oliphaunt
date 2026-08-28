@@ -2,10 +2,12 @@
 
 use anyhow::Result;
 use oliphaunt_wasix::{
-    DatabaseStorage, Oliphaunt,
-    worker::{Oliphaunt as WorkerOliphaunt, Transaction as WorkerTransaction},
+    AsyncOliphaunt, AsyncOliphauntServer, AsyncTransaction, DatabaseStorage, Error, Oliphaunt,
+    OliphauntServer, TransactionResult,
 };
+use std::convert::Infallible;
 use std::future::Future;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
@@ -16,6 +18,12 @@ use std::time::Duration;
 fn poll_once<F: Future>(future: Pin<&mut F>) -> Poll<F::Output> {
     let mut context = Context::from_waker(Waker::noop());
     future.poll(&mut context)
+}
+
+fn synthetic_sdk_error() -> oliphaunt_wasix::Error {
+    let workspace = tempfile::tempdir().expect("temporary callback-error workspace");
+    Oliphaunt::restore(workspace.path().join("invalid"), b"not a physical archive")
+        .expect_err("invalid archive creates a public SDK error")
 }
 
 #[test]
@@ -48,9 +56,9 @@ fn direct_api_query_transaction_persistence_and_backup() -> Result<()> {
             .bind(1_i32)
             .bind("committed")
             .execute()?;
-        Ok(())
+        Ok::<(), Error>(())
     })?;
-    let rollback: oliphaunt_wasix::Result<()> = database.transaction(|transaction| {
+    let rollback: TransactionResult<(), Error> = database.transaction(|transaction| {
         transaction
             .sql("INSERT INTO items VALUES ($1, $2)")
             .bind(2_i32)
@@ -145,10 +153,60 @@ fn direct_api_recovers_after_postgres_error() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn direct_protocol_callback_error_and_panic_recover_before_returning() -> Result<()> {
+    let mut database = Oliphaunt::open()?;
+    let mut callback_error = Some(synthetic_sdk_error());
+    let expected_error = callback_error.as_ref().expect("callback error").to_string();
+    let error = database
+        .exec_protocol_raw_stream(b"Q\0\0\0\rSELECT 1\0", move |_| {
+            Err(callback_error.take().expect("callback fails once"))
+        })
+        .expect_err("callback error is returned after protocol cleanup");
+    assert_eq!(error.to_string(), expected_error);
+    assert_eq!(
+        database
+            .query("SELECT 41::int4 + 1 AS answer")?
+            .get_text(0, "answer")?,
+        Some("42")
+    );
+
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        let _ = database.exec_protocol_raw_stream(b"Q\0\0\0\rSELECT 2\0", |_| -> () {
+            panic!("protocol callback panic probe")
+        });
+    }));
+    assert!(panic.is_err(), "direct callback panic must be resumed");
+    assert_eq!(
+        database
+            .query("SELECT 42::int4 AS answer")?
+            .get_text(0, "answer")?,
+        Some("42")
+    );
+    database.close()?;
+    Ok(())
+}
+
+#[test]
+fn direct_server_close_releases_directory_ownership_before_returning() -> Result<()> {
+    let workspace = tempfile::tempdir()?;
+    let root = workspace.path().join("server-root");
+    let mut server = OliphauntServer::builder()
+        .storage(DatabaseStorage::Directory(root.clone()))
+        .start()?;
+    server.close()?;
+    let mut database = Oliphaunt::builder()
+        .storage(DatabaseStorage::Directory(root))
+        .open()?;
+    database.close()?;
+    assert!(server.is_closed());
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn worker_owns_the_runtime_and_serializes_clones() -> Result<()> {
+async fn async_api_owns_the_runtime_and_serializes_clones() -> Result<()> {
     let caller_thread = std::thread::current().id();
-    let database = WorkerOliphaunt::open().await?;
+    let database = AsyncOliphaunt::open().await?;
     let clone = database.clone();
 
     database
@@ -189,7 +247,7 @@ async fn worker_owns_the_runtime_and_serializes_clones() -> Result<()> {
             *reentrant_error_capture
                 .lock()
                 .expect("reentrant error lock") = Some(error.to_string());
-            Ok(())
+            Ok::<(), Infallible>(())
         }),
     )
     .await
@@ -200,7 +258,7 @@ async fn worker_owns_the_runtime_and_serializes_clones() -> Result<()> {
             .expect("callback thread lock")
             .expect("stream callback ran"),
         caller_thread,
-        "worker callbacks must run on the SDK-owned database thread"
+        "async callbacks must run on the SDK-owned database thread"
     );
     assert!(
         reentrant_error
@@ -211,11 +269,11 @@ async fn worker_owns_the_runtime_and_serializes_clones() -> Result<()> {
     );
 
     database
-        .transaction(async |transaction: &WorkerTransaction| {
+        .transaction(async |transaction: &mut AsyncTransaction| {
             let unpinned = clone.query("SELECT 99::int4 AS forbidden").await;
             assert!(
                 unpinned
-                    .expect_err("worker work must be rejected during a pinned transaction")
+                    .expect_err("unpinned async work must be rejected during a pinned transaction")
                     .to_string()
                     .contains("transaction is active")
             );
@@ -225,7 +283,7 @@ async fn worker_owns_the_runtime_and_serializes_clones() -> Result<()> {
                 .bind("transaction")
                 .execute()
                 .await?;
-            Ok(())
+            Ok::<(), Error>(())
         })
         .await?;
 
@@ -242,8 +300,170 @@ async fn worker_owns_the_runtime_and_serializes_clones() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn async_protocol_callback_error_and_panic_recover_the_owner() -> Result<()> {
+    let database = AsyncOliphaunt::open().await?;
+    let mut callback_error = Some(synthetic_sdk_error());
+    let expected_error = callback_error.as_ref().expect("callback error").to_string();
+    let error = database
+        .exec_protocol_raw_stream(b"Q\0\0\0\rSELECT 1\0", move |_| {
+            Err(callback_error.take().expect("callback fails once"))
+        })
+        .await
+        .expect_err("callback error is returned after protocol cleanup");
+    assert_eq!(error.to_string(), expected_error);
+    assert_eq!(
+        database
+            .query("SELECT 42::int4 AS answer")
+            .await?
+            .get_text(0, "answer")?,
+        Some("42")
+    );
+
+    let error = database
+        .exec_protocol_raw_stream(b"Q\0\0\0\rSELECT 2\0", |_| -> () {
+            panic!("async protocol callback panic probe")
+        })
+        .await
+        .expect_err("owner-thread callback panic becomes an SDK error");
+    assert!(error.to_string().contains("protocol callback panicked"));
+    assert_eq!(
+        database
+            .query("SELECT 42::int4 AS answer")
+            .await?
+            .get_text(0, "answer")?,
+        Some("42")
+    );
+    database.close().await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn panicking_async_transaction_rolls_back_and_releases_the_owner() -> Result<()> {
+    let database = AsyncOliphaunt::open().await?;
+    database
+        .execute("CREATE TABLE panic_items(id int PRIMARY KEY)")
+        .await?;
+    let transaction_database = database.clone();
+    let task = tokio::spawn(async move {
+        transaction_database
+            .transaction(async |transaction: &mut AsyncTransaction| {
+                transaction
+                    .execute("INSERT INTO panic_items VALUES (1)")
+                    .await?;
+                panic!("async transaction callback panic probe");
+                #[allow(unreachable_code)]
+                Ok::<(), oliphaunt_wasix::Error>(())
+            })
+            .await
+    });
+    assert!(
+        task.await
+            .expect_err("transaction task must panic")
+            .is_panic()
+    );
+    assert_eq!(
+        database
+            .query("SELECT count(*)::int4 AS count FROM panic_items")
+            .await?
+            .get_text(0, "count")?,
+        Some("0")
+    );
+    database.close().await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dropped_queued_operation_has_no_database_effect() -> Result<()> {
+    let database = AsyncOliphaunt::open().await?;
+    database
+        .execute("CREATE TABLE abandoned_items(id int PRIMARY KEY)")
+        .await?;
+    let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
+    let mut release_rx = Some(release_rx);
+    let mut blocker = Box::pin(database.exec_protocol_raw_stream(
+        b"Q\0\0\0\rSELECT 1\0",
+        move |_| {
+            if let Some(release_rx) = release_rx.take() {
+                entered_tx.send(()).expect("signal blocked owner callback");
+                release_rx.recv().expect("release blocked owner callback");
+            }
+            Ok::<(), Infallible>(())
+        },
+    ));
+    assert!(poll_once(blocker.as_mut()).is_pending());
+    entered_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("owner callback starts");
+
+    let mut abandoned = Box::pin(database.execute("INSERT INTO abandoned_items VALUES (1)"));
+    assert!(poll_once(abandoned.as_mut()).is_pending());
+    drop(abandoned);
+
+    release_tx.send(()).expect("release owner callback");
+    blocker.await?;
+    assert_eq!(
+        database
+            .query("SELECT count(*)::int4 AS count FROM abandoned_items")
+            .await?
+            .get_text(0, "count")?,
+        Some("0")
+    );
+    database.close().await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dropping_close_future_does_not_cancel_the_close_attempt() -> Result<()> {
+    let database = AsyncOliphaunt::open().await?;
+    let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
+    let mut release_rx = Some(release_rx);
+    let mut blocker = Box::pin(database.exec_protocol_raw_stream(
+        b"Q\0\0\0\rSELECT 1\0",
+        move |_| {
+            if let Some(release_rx) = release_rx.take() {
+                entered_tx.send(()).expect("signal blocked owner callback");
+                release_rx.recv().expect("release blocked owner callback");
+            }
+            Ok::<(), Infallible>(())
+        },
+    ));
+    assert!(poll_once(blocker.as_mut()).is_pending());
+    entered_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("owner callback starts");
+
+    let mut close = Box::pin(database.close());
+    assert!(poll_once(close.as_mut()).is_pending());
+    drop(close);
+    release_tx.send(()).expect("release owner callback");
+    blocker.await?;
+    database.close().await?;
+    assert!(database.is_closed());
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn async_server_close_releases_directory_ownership_before_completion() -> Result<()> {
+    let workspace = tempfile::tempdir()?;
+    let root = workspace.path().join("async-server-root");
+    let server = AsyncOliphauntServer::builder()
+        .storage(DatabaseStorage::Directory(root.clone()))
+        .start()
+        .await?;
+    server.close().await?;
+    let mut database = Oliphaunt::builder()
+        .storage(DatabaseStorage::Directory(root))
+        .open()?;
+    database.close()?;
+    assert!(server.is_closed());
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn admitted_query_precedes_later_transaction_begin() -> Result<()> {
-    let database = WorkerOliphaunt::open().await?;
+    let database = AsyncOliphaunt::open().await?;
     let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(1);
     let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
     let mut release_rx = Some(release_rx);
@@ -254,7 +474,7 @@ async fn admitted_query_precedes_later_transaction_begin() -> Result<()> {
                 entered_tx.send(()).expect("signal owner callback entry");
                 release_rx.recv().expect("release owner callback");
             }
-            Ok(())
+            Ok::<(), Infallible>(())
         },
     ));
     assert!(poll_once(blocker.as_mut()).is_pending());
@@ -271,7 +491,7 @@ async fn admitted_query_precedes_later_transaction_begin() -> Result<()> {
         transaction
             .query("SELECT 7::int4 AS inside_transaction")
             .await?;
-        Ok(())
+        Ok::<(), Error>(())
     }));
     assert!(
         poll_once(transaction.as_mut()).is_pending(),
@@ -290,7 +510,7 @@ async fn admitted_query_precedes_later_transaction_begin() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn close_drains_admitted_query_and_rejects_later_work() -> Result<()> {
-    let database = WorkerOliphaunt::open().await?;
+    let database = AsyncOliphaunt::open().await?;
     let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(1);
     let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
     let mut release_rx = Some(release_rx);
@@ -301,7 +521,7 @@ async fn close_drains_admitted_query_and_rejects_later_work() -> Result<()> {
                 entered_tx.send(()).expect("signal owner callback entry");
                 release_rx.recv().expect("release owner callback");
             }
-            Ok(())
+            Ok::<(), Infallible>(())
         },
     ));
     assert!(poll_once(blocker.as_mut()).is_pending());
@@ -340,13 +560,13 @@ async fn close_drains_admitted_query_and_rejects_later_work() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn abandoned_async_transaction_rolls_back_before_following_work() -> Result<()> {
-    let database = WorkerOliphaunt::open().await?;
+    let database = AsyncOliphaunt::open().await?;
     database
         .execute("CREATE TABLE rollback_items(id int PRIMARY KEY)")
         .await?;
 
     let mut transaction = Box::pin(database.transaction(
-        async |transaction: &WorkerTransaction| {
+        async |transaction: &mut AsyncTransaction| {
             transaction
                 .execute("INSERT INTO rollback_items VALUES (1)")
                 .await?;
@@ -367,5 +587,119 @@ async fn abandoned_async_transaction_rolls_back_before_following_work() -> Resul
     .expect("best-effort rollback must release the owner")?;
     assert_eq!(result.get_text(0, "count")?, Some("0"));
     database.close().await?;
+    Ok(())
+}
+
+#[test]
+fn managed_sync_transaction_rejects_manual_commit_and_retires_the_session() -> Result<()> {
+    let mut database = Oliphaunt::open()?;
+    let outcome = database.transaction(|transaction| {
+        let manual_commit = transaction
+            .execute("COMMIT")
+            .expect_err("managed transactions must reject a manual COMMIT outcome");
+        assert!(
+            manual_commit
+                .to_string()
+                .contains("SDK-managed transaction"),
+            "{manual_commit}"
+        );
+        Ok::<(), oliphaunt_wasix::Error>(())
+    });
+    assert!(
+        outcome
+            .expect_err("the outer transaction cannot turn a manual COMMIT into success")
+            .to_string()
+            .contains("SDK-managed transaction")
+    );
+    assert!(
+        database.query("SELECT 1").is_err(),
+        "work after escaped managed ownership must remain close-only"
+    );
+    database.close()?;
+    assert!(database.is_closed());
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn managed_async_transaction_rejects_manual_commit_and_retires_the_owner() -> Result<()> {
+    let database = AsyncOliphaunt::open().await?;
+    let outcome = database
+        .transaction(async |transaction: &mut AsyncTransaction| {
+            let manual_commit = transaction
+                .execute("COMMIT")
+                .await
+                .expect_err("managed transactions must reject a manual COMMIT outcome");
+            assert!(
+                manual_commit
+                    .to_string()
+                    .contains("SDK-managed transaction"),
+                "{manual_commit}"
+            );
+            Ok::<(), oliphaunt_wasix::Error>(())
+        })
+        .await;
+    assert!(
+        outcome
+            .expect_err("the outer transaction cannot turn a manual COMMIT into success")
+            .to_string()
+            .contains("SDK-managed transaction")
+    );
+    assert!(
+        database.query("SELECT 1").await.is_err(),
+        "work after escaped managed ownership must remain close-only"
+    );
+    database.close().await?;
+    assert!(database.is_closed());
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn abandoning_an_in_flight_async_commit_retires_the_owner() -> Result<()> {
+    let database = AsyncOliphaunt::open().await?;
+    database
+        .exec(
+            "CREATE TABLE deferred_commit_probe(id int PRIMARY KEY); \
+             CREATE FUNCTION deferred_commit_sleep() RETURNS trigger \
+             LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(1); RETURN NEW; END $$; \
+             CREATE CONSTRAINT TRIGGER deferred_commit_sleep \
+             AFTER INSERT ON deferred_commit_probe DEFERRABLE INITIALLY DEFERRED \
+             FOR EACH ROW EXECUTE FUNCTION deferred_commit_sleep()",
+        )
+        .await?;
+
+    let transaction_database = database.clone();
+    let (callback_finished, callback_finished_rx) = tokio::sync::oneshot::channel();
+    let settlement = tokio::spawn(async move {
+        transaction_database
+            .transaction(async |transaction: &mut AsyncTransaction| {
+                transaction
+                    .execute("INSERT INTO deferred_commit_probe VALUES (1)")
+                    .await?;
+                let _ = callback_finished.send(());
+                Ok::<(), oliphaunt_wasix::Error>(())
+            })
+            .await
+    });
+    callback_finished_rx
+        .await
+        .expect("transaction callback reaches settlement");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    settlement.abort();
+    assert!(
+        settlement
+            .await
+            .expect_err("abandoned settlement task must be cancelled")
+            .is_cancelled()
+    );
+
+    let later = tokio::time::timeout(Duration::from_secs(5), database.query("SELECT 1"))
+        .await
+        .expect("owner must finish the in-flight control and reject later work");
+    assert!(
+        later.is_err(),
+        "an unobserved COMMIT result must make the owner close-only"
+    );
+    database.close().await?;
+    assert!(database.is_closed());
     Ok(())
 }

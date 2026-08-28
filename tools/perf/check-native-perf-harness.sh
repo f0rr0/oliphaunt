@@ -223,7 +223,7 @@ SH
   probe_output="$(
     OLIPHAUNT_WORK_ROOT="$extension_probe_root" \
       OLIPHAUNT_REQUIRE_NATIVE=1 \
-      src/sdks/rust/tools/check-sdk.sh 2>&1
+      src/sdks/rust/tools/check-sdk.sh extension-regression 2>&1
   )"
   probe_status=$?
   set -e

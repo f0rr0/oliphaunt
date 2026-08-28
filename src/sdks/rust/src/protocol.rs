@@ -76,9 +76,12 @@ mod tests {
 
     #[test]
     fn simple_query_rejects_nul_sql_before_building_protocol() {
+        let error = ProtocolRequest::simple_query("SELECT 1\0SELECT 2").unwrap_err();
+
+        assert_eq!(error.kind(), crate::error::ErrorKind::Other);
         assert_eq!(
-            ProtocolRequest::simple_query("SELECT 1\0SELECT 2").unwrap_err(),
-            Error::Engine("simple query SQL must not contain NUL bytes".to_owned())
+            error.to_string(),
+            "simple query SQL must not contain NUL bytes"
         );
     }
 

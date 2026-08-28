@@ -663,12 +663,20 @@ liboliphaunt_artifact_ready() {
     _oliphaunt_exec_protocol_raw_stream \
     _oliphaunt_backup \
     _oliphaunt_restore \
+    _oliphaunt_init_with_error \
+    _oliphaunt_exec_protocol_with_error \
+    _oliphaunt_exec_simple_query_with_error \
+    _oliphaunt_exec_protocol_raw_stream_with_error \
+    _oliphaunt_backup_with_error \
+    _oliphaunt_restore_with_error \
+    _oliphaunt_detach_with_error \
     _oliphaunt_cancel \
     _oliphaunt_detach \
     _oliphaunt_logical_generation \
     _oliphaunt_close_if_generation \
     _oliphaunt_close \
     _oliphaunt_register_static_extensions \
+    _oliphaunt_copy_last_error \
     _oliphaunt_last_error \
     _oliphaunt_version \
     _oliphaunt_free_response \

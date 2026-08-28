@@ -30,8 +30,8 @@ main_safe = false
 topologies = ["native-direct", "native-broker", "native-server"]
 
 [[sdks.rust.surfaces]]
-id = "worker"
-entrypoint = "oliphaunt::worker"
+id = "async"
+entrypoint = "oliphaunt::AsyncOliphaunt"
 calling_contract = "async"
 execution_owner = "sdk-thread"
 main_safe = true
@@ -54,8 +54,8 @@ main_safe = false
 topologies = ["wasix-direct", "wasix-server"]
 
 [[sdks.wasix-rust.surfaces]]
-id = "worker"
-entrypoint = "oliphaunt_wasix::worker"
+id = "async"
+entrypoint = "oliphaunt_wasix::AsyncOliphaunt"
 calling_contract = "async"
 execution_owner = "sdk-thread"
 main_safe = true

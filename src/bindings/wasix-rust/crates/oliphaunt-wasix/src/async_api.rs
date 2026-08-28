@@ -1,23 +1,22 @@
-//! Dedicated owner-thread API for applications that must keep their calling
+//! Asynchronous owner-thread API for applications that must keep their calling
 //! executor responsive while PostgreSQL runs synchronously on another thread.
 //!
-//! Each [`Oliphaunt`] owns one worker thread and one FIFO command queue. The
+//! Each [`AsyncOliphaunt`] owns one database thread and one FIFO command queue. The
 //! handle is cloneable and asynchronous; the direct caller-thread API remains
 //! available from the crate root. Storage, query/result, error, extension, and
 //! listener configuration types are shared by both APIs and also live at the
 //! crate root.
 
 use std::borrow::Cow;
-use std::net::SocketAddr;
-#[cfg(unix)]
-use std::path::Path;
+use std::cell::Cell;
+use std::marker::PhantomData;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use tokio::sync::oneshot;
+use tokio::sync::{Mutex as AsyncMutex, OwnedSemaphorePermit, Semaphore, oneshot};
 
 use crate::oliphaunt::builder::OliphauntBuilder as DirectOliphauntBuilder;
 use crate::oliphaunt::client::Oliphaunt as DirectOliphaunt;
@@ -31,26 +30,10 @@ use crate::oliphaunt::server::{
     OliphauntServer as DirectOliphauntServer,
     OliphauntServerBuilder as DirectOliphauntServerBuilder, ServerListen,
 };
-use crate::{DatabaseStorage, Error, PostgresError, Result};
-
-/// Packaged PostgreSQL frontend programs queued on the database worker.
-#[cfg(feature = "tools")]
-pub mod tools {
-    pub use crate::oliphaunt::tools::{PgDumpOptions, PostgresToolError, PsqlOptions};
-
-    /// Run packaged `pg_dump` on the database worker.
-    pub async fn pg_dump(
-        database: &super::Oliphaunt,
-        options: PgDumpOptions,
-    ) -> crate::Result<String> {
-        database.pg_dump(options).await
-    }
-
-    /// Run packaged non-interactive `psql` on the database worker.
-    pub async fn psql(database: &super::Oliphaunt, options: PsqlOptions) -> crate::Result<String> {
-        database.psql(options).await
-    }
-}
+use crate::{
+    DatabaseStorage, Error, RawStreamCallbackOutput, RawStreamError, RawStreamResult, Result,
+    TransactionError, TransactionResult,
+};
 
 const OWNER_QUEUE_CAPACITY: usize = 64;
 const OWNER_OPEN: u8 = 0;
@@ -63,8 +46,47 @@ const TRANSACTION_ROLLED_BACK: u8 = 2;
 const TRANSACTION_COMMITTED: u8 = 3;
 const TRANSACTION_FAILED: u8 = 4;
 
+struct TransactionOutcomeGuard {
+    state: AtomicU8,
+    terminal_error: Mutex<Option<Error>>,
+    terminal_failure_was_rollback: AtomicU8,
+    settlement_started: AtomicU8,
+    settlement_observed: AtomicU8,
+}
+
+impl TransactionOutcomeGuard {
+    fn active() -> Arc<Self> {
+        Arc::new(Self {
+            state: AtomicU8::new(TRANSACTION_ACTIVE),
+            terminal_error: Mutex::new(None),
+            terminal_failure_was_rollback: AtomicU8::new(0),
+            settlement_started: AtomicU8::new(0),
+            settlement_observed: AtomicU8::new(0),
+        })
+    }
+
+    fn retain_failure(&self, error: Error, rollback_was_attempted: bool) {
+        if let Ok(mut terminal) = self.terminal_error.lock()
+            && terminal.is_none()
+        {
+            *terminal = Some(error);
+            self.terminal_failure_was_rollback
+                .store(u8::from(rollback_was_attempted), Ordering::SeqCst);
+        }
+        self.state.store(TRANSACTION_FAILED, Ordering::SeqCst);
+    }
+
+    fn retained_error(&self) -> Error {
+        self.terminal_error
+            .lock()
+            .ok()
+            .and_then(|error| error.clone())
+            .unwrap_or_else(|| Error::message("transaction failed"))
+    }
+}
+
 type OwnerAction = Box<dyn FnOnce(&mut DirectOliphaunt, Result<()>) + Send + 'static>;
-type SharedCloseResult = std::result::Result<(), Arc<str>>;
+type SharedCloseResult = Result<()>;
 type CloseWaiter = oneshot::Sender<SharedCloseResult>;
 
 fn owner_is_terminal(state: &AtomicU8) -> bool {
@@ -114,7 +136,7 @@ impl CloseAttempt {
         };
         let result = receiver
             .await
-            .map_err(|_| Error::message(format!("{owner} stopped while closing")))?;
+            .map_err(|_| Error::lifecycle(format!("{owner} stopped while closing")))?;
         shared_close_result(result)
     }
 
@@ -154,23 +176,13 @@ struct OwnerMessage {
     // Ordinary work and transaction begin consume bounded admission. Lifecycle
     // controls omit the permit so close/rollback can always enter the same
     // ordered queue without overtaking already-admitted work.
-    _permit: Option<OrdinaryPermit>,
+    _permit: Option<OwnedSemaphorePermit>,
     operation: OwnerOperation,
 }
 
 enum OwnerOperation {
     Command(OwnerCommand),
     Control(OwnerControl),
-}
-
-struct OrdinaryPermit {
-    queued: Arc<AtomicUsize>,
-}
-
-impl Drop for OrdinaryPermit {
-    fn drop(&mut self) {
-        self.queued.fetch_sub(1, Ordering::SeqCst);
-    }
 }
 
 enum OwnerControl {
@@ -181,15 +193,33 @@ enum OwnerControl {
     Finish {
         token: u64,
         commit: bool,
-        reply: oneshot::Sender<Result<()>>,
+        guard: Arc<TransactionOutcomeGuard>,
+        reply: oneshot::Sender<TransactionFinishOutcome>,
+    },
+    FinishObserved {
+        token: u64,
+    },
+    FinishAbandoned {
+        token: u64,
+        guard: Arc<TransactionOutcomeGuard>,
     },
     RollbackBestEffort {
         token: u64,
+        guard: Arc<TransactionOutcomeGuard>,
+    },
+    AbandonFailed {
+        token: u64,
+        reply: Option<oneshot::Sender<Result<()>>>,
     },
     Close {
         attempt: Arc<CloseAttempt>,
     },
     Shutdown,
+}
+
+enum TransactionFinishOutcome {
+    Attempted(Result<()>),
+    NotAttempted(Error),
 }
 
 #[derive(Clone)]
@@ -202,8 +232,10 @@ struct DatabaseOwnerInner {
     // `admission`. The single receiver is therefore the total admission order.
     queue: mpsc::Sender<OwnerMessage>,
     admission: Arc<Mutex<()>>,
-    queued_ordinary: Arc<AtomicUsize>,
+    ordinary_order: Arc<AsyncMutex<()>>,
+    ordinary_capacity: Arc<Semaphore>,
     state: Arc<AtomicU8>,
+    close_epoch: AtomicU64,
     close_attempt: Arc<Mutex<Option<Arc<CloseAttempt>>>>,
     owner_thread: thread::ThreadId,
     next_transaction: AtomicU64,
@@ -224,7 +256,8 @@ impl DatabaseOwner {
         let (queue, queue_rx) = mpsc::channel();
         let (open_tx, open_rx) = oneshot::channel();
         let state = Arc::new(AtomicU8::new(OWNER_OPEN));
-        let queued_ordinary = Arc::new(AtomicUsize::new(0));
+        let ordinary_order = Arc::new(AsyncMutex::new(()));
+        let ordinary_capacity = Arc::new(Semaphore::new(OWNER_QUEUE_CAPACITY));
         let admission = Arc::new(Mutex::new(()));
         let close_attempt = Arc::new(Mutex::new(None));
         let thread_state = Arc::clone(&state);
@@ -235,7 +268,7 @@ impl DatabaseOwner {
             .spawn(move || {
                 let opened =
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| builder.open()));
-                let mut database = match opened {
+                let database = match opened {
                     Ok(Ok(database)) => {
                         let _ = open_tx.send(Ok(thread::current().id()));
                         database
@@ -254,16 +287,16 @@ impl DatabaseOwner {
                     }
                 };
 
-                let worker = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let owner = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     run_database_owner(
-                        &mut database,
+                        database,
                         queue_rx,
                         &thread_state,
                         &thread_admission,
                         &thread_close_attempt,
                     )
                 }));
-                if worker.is_err() {
+                if owner.is_err() {
                     stop_close_owner(
                         &thread_admission,
                         &thread_state,
@@ -273,15 +306,17 @@ impl DatabaseOwner {
                 }
             })
             .map_err(|error| Error::message(format!("spawn WASIX database owner: {error}")))?;
-        let owner_thread = open_rx
-            .await
-            .map_err(|_| Error::message("WASIX database owner stopped before open completed"))??;
+        let owner_thread = open_rx.await.map_err(|_| {
+            Error::lifecycle("WASIX database owner stopped before open completed")
+        })??;
         Ok(Self {
             inner: Arc::new(DatabaseOwnerInner {
                 queue,
                 admission,
-                queued_ordinary,
+                ordinary_order,
+                ordinary_capacity,
                 state,
+                close_epoch: AtomicU64::new(0),
                 close_attempt,
                 owner_thread,
                 next_transaction: AtomicU64::new(1),
@@ -296,9 +331,9 @@ impl DatabaseOwner {
     fn ensure_open(&self) -> Result<()> {
         match self.inner.state.load(Ordering::SeqCst) {
             OWNER_OPEN => Ok(()),
-            OWNER_CLOSED => Err(Error::message("Oliphaunt is closed")),
-            OWNER_STOPPED => Err(Error::message("WASIX database owner has stopped")),
-            OWNER_CLOSING => Err(Error::message("Oliphaunt is closing")),
+            OWNER_CLOSED => Err(Error::lifecycle("AsyncOliphaunt is closed")),
+            OWNER_STOPPED => Err(Error::lifecycle("WASIX database owner has stopped")),
+            OWNER_CLOSING => Err(Error::lifecycle("AsyncOliphaunt is closing")),
             _ => Err(Error::message("WASIX database owner has invalid state")),
         }
     }
@@ -320,24 +355,31 @@ impl DatabaseOwner {
             .map_err(|_| Error::message("WASIX database admission lock poisoned"))
     }
 
-    fn enqueue_ordinary(&self, operation: OwnerOperation) -> Result<()> {
+    async fn enqueue_ordinary(&self, operation: OwnerOperation) -> Result<()> {
+        let epoch = {
+            let _admission = self.lock_admission()?;
+            self.ensure_open()?;
+            self.inner.close_epoch.load(Ordering::SeqCst)
+        };
+        let _order = self.inner.ordinary_order.lock().await;
+        let permit = Arc::clone(&self.inner.ordinary_capacity)
+            .acquire_owned()
+            .await
+            .map_err(|_| Error::lifecycle("WASIX database owner admission has stopped"))?;
         let _admission = self.lock_admission()?;
         self.ensure_open()?;
-        if self.inner.queued_ordinary.load(Ordering::SeqCst) >= OWNER_QUEUE_CAPACITY {
-            return Err(Error::message(format!(
-                "WASIX database owner queue is full (capacity {OWNER_QUEUE_CAPACITY})"
-            )));
+        if self.inner.close_epoch.load(Ordering::SeqCst) != epoch {
+            return Err(Error::lifecycle(
+                "operation was not admitted before the AsyncOliphaunt close cutoff",
+            ));
         }
-        self.inner.queued_ordinary.fetch_add(1, Ordering::SeqCst);
         self.inner
             .queue
             .send(OwnerMessage {
-                _permit: Some(OrdinaryPermit {
-                    queued: Arc::clone(&self.inner.queued_ordinary),
-                }),
+                _permit: Some(permit),
                 operation,
             })
-            .map_err(|_| Error::message("WASIX database owner has stopped"))
+            .map_err(|_| Error::lifecycle("WASIX database owner has stopped"))
     }
 
     fn enqueue_control(&self, control: OwnerControl) -> Result<()> {
@@ -348,10 +390,36 @@ impl DatabaseOwner {
                 _permit: None,
                 operation: OwnerOperation::Control(control),
             })
-            .map_err(|_| Error::message("WASIX database owner has stopped"))
+            .map_err(|_| Error::lifecycle("WASIX database owner has stopped"))
     }
 
     async fn call<T, F>(&self, transaction: Option<u64>, action: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut DirectOliphaunt) -> Result<T> + Send + 'static,
+    {
+        self.call_with_guard(transaction, None, action).await
+    }
+
+    async fn call_transaction<T, F>(
+        &self,
+        token: u64,
+        guard: Arc<TransactionOutcomeGuard>,
+        action: F,
+    ) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut DirectOliphaunt) -> Result<T> + Send + 'static,
+    {
+        self.call_with_guard(Some(token), Some(guard), action).await
+    }
+
+    async fn call_with_guard<T, F>(
+        &self,
+        transaction: Option<u64>,
+        transaction_guard: Option<Arc<TransactionOutcomeGuard>>,
+        action: F,
+    ) -> Result<T>
     where
         T: Send + 'static,
         F: FnOnce(&mut DirectOliphaunt) -> Result<T> + Send + 'static,
@@ -368,12 +436,19 @@ impl DatabaseOwner {
                     return;
                 }
                 let result = admission.and_then(|()| action(database));
+                if database.owner_transaction_outcome_unknown()
+                    && let Err(error) = &result
+                    && let Some(guard) = transaction_guard.as_deref()
+                {
+                    guard.retain_failure(error.clone(), false);
+                }
                 let _ = reply.send(result);
             }),
         };
-        self.enqueue_ordinary(OwnerOperation::Command(command))?;
+        self.enqueue_ordinary(OwnerOperation::Command(command))
+            .await?;
         receiver.await.map_err(|_| {
-            Error::message("WASIX database owner stopped while running an operation")
+            Error::lifecycle("WASIX database owner stopped while running an operation")
         })?
     }
 
@@ -389,36 +464,72 @@ impl DatabaseOwner {
         self.enqueue_ordinary(OwnerOperation::Control(OwnerControl::Begin {
             token,
             reply,
-        }))?;
+        }))
+        .await?;
         receiver.await.map_err(|_| {
-            Error::message("WASIX database owner stopped while beginning a transaction")
+            Error::lifecycle("WASIX database owner stopped while beginning a transaction")
         })??;
         Ok(token)
     }
 
-    async fn finish_transaction(&self, token: u64, commit: bool) -> Result<()> {
+    async fn finish_transaction(
+        &self,
+        token: u64,
+        commit: bool,
+        guard: Arc<TransactionOutcomeGuard>,
+    ) -> Result<TransactionFinishOutcome> {
         self.ensure_not_owner_thread()?;
         let (reply, receiver) = oneshot::channel();
-        self.enqueue_control(OwnerControl::Finish {
+        if let Err(error) = self.enqueue_control(OwnerControl::Finish {
             token,
             commit,
+            guard: Arc::clone(&guard),
             reply,
+        }) {
+            guard.settlement_observed.store(1, Ordering::SeqCst);
+            return Err(error);
+        }
+        let outcome = receiver.await.map_err(|_| {
+            Error::lifecycle("WASIX database owner stopped while settling a transaction")
+        });
+        guard.settlement_observed.store(1, Ordering::SeqCst);
+        if outcome.is_ok() {
+            self.enqueue_control(OwnerControl::FinishObserved { token })?;
+        }
+        outcome
+    }
+
+    fn abandon_unobserved_finish(&self, token: u64, guard: Arc<TransactionOutcomeGuard>) {
+        let _ = self.enqueue_control(OwnerControl::FinishAbandoned { token, guard });
+    }
+
+    fn rollback_best_effort(&self, token: u64, guard: Arc<TransactionOutcomeGuard>) {
+        let _ = self.enqueue_control(OwnerControl::RollbackBestEffort { token, guard });
+    }
+
+    async fn abandon_failed_transaction(&self, token: u64) -> Result<()> {
+        self.ensure_not_owner_thread()?;
+        let (reply, receiver) = oneshot::channel();
+        self.enqueue_control(OwnerControl::AbandonFailed {
+            token,
+            reply: Some(reply),
         })?;
         receiver.await.map_err(|_| {
-            Error::message("WASIX database owner stopped while settling a transaction")
+            Error::lifecycle("WASIX database owner stopped while retiring a failed transaction")
         })?
     }
 
-    fn rollback_best_effort(&self, token: u64) {
-        let _ = self.enqueue_control(OwnerControl::RollbackBestEffort { token });
+    fn abandon_failed_best_effort(&self, token: u64) {
+        let _ = self.enqueue_control(OwnerControl::AbandonFailed { token, reply: None });
     }
 
     async fn close(&self) -> Result<()> {
         self.ensure_not_owner_thread()?;
         let attempt = {
             // The state cutoff and Close enqueue share the same lock as every
-            // ordinary admission. Work before this critical section is ahead
-            // of Close; work after it observes CLOSING and is rejected.
+            // ordinary admission. Only work which already acquired capacity
+            // and entered the owner queue drains ahead of Close. Capacity
+            // waiters are not admitted; they observe this cutoff and fail.
             let _admission = self.lock_admission()?;
             match admit_close(
                 &self.inner.state,
@@ -428,6 +539,7 @@ impl DatabaseOwner {
                 CloseAdmission::Closed => return Ok(()),
                 CloseAdmission::Join(attempt) => attempt,
                 CloseAdmission::Start(attempt) => {
+                    self.inner.close_epoch.fetch_add(1, Ordering::SeqCst);
                     if self
                         .inner
                         .queue
@@ -443,7 +555,7 @@ impl DatabaseOwner {
                             &self.inner.state,
                             &self.inner.close_attempt,
                             &attempt,
-                            Err(Arc::from("WASIX database owner has stopped")),
+                            Err(Error::lifecycle("WASIX database owner has stopped")),
                             CloseDisposition::Terminal,
                         );
                     }
@@ -456,7 +568,101 @@ impl DatabaseOwner {
 }
 
 fn shared_close_result(result: SharedCloseResult) -> Result<()> {
-    result.map_err(Error::message)
+    result
+}
+
+async fn exec_protocol_raw_stream_on_owner<F, O>(
+    owner: &DatabaseOwner,
+    request: Vec<u8>,
+    mut on_chunk: F,
+) -> RawStreamResult<(), O::Error>
+where
+    F: FnMut(&[u8]) -> O + Send + 'static,
+    O: RawStreamCallbackOutput,
+    O::Error: Send + 'static,
+{
+    let callback_error = Arc::new(Mutex::new(None));
+    let callback_error_for_owner = Arc::clone(&callback_error);
+    let callback_recovered = Arc::new(AtomicU8::new(0));
+    let callback_recovered_on_owner = Arc::clone(&callback_recovered);
+    let callback_panicked = Arc::new(AtomicU8::new(0));
+    let callback_panicked_on_owner = Arc::clone(&callback_panicked);
+    let session_unknown = Arc::new(AtomicU8::new(0));
+    let session_unknown_on_owner = Arc::clone(&session_unknown);
+    let outcome = owner
+        .call(None, move |database| {
+            let result = database.exec_protocol_raw_stream_on_owner(request, move |chunk| {
+                match on_chunk(chunk).into_raw_stream_callback_result() {
+                    Ok(()) => Ok(()),
+                    Err(error) => {
+                        *callback_error_for_owner
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(error);
+                        Err(Error::message(
+                            "raw protocol stream callback stopped delivery",
+                        ))
+                    }
+                }
+            });
+            if database.owner_transaction_outcome_unknown() {
+                session_unknown_on_owner.store(1, Ordering::SeqCst);
+            }
+            match result {
+                Ok(()) => Ok(()),
+                Err(RawStreamError::Database(error)) => Err(error),
+                Err(RawStreamError::Callback(error)) => {
+                    callback_recovered_on_owner.store(1, Ordering::SeqCst);
+                    Err(error)
+                }
+                Err(RawStreamError::CallbackPanicked(error)) => {
+                    callback_panicked_on_owner.store(1, Ordering::SeqCst);
+                    Err(error)
+                }
+            }
+        })
+        .await;
+
+    resolve_owner_stream_outcome(
+        outcome,
+        &callback_error,
+        callback_recovered.load(Ordering::SeqCst) == 1,
+        callback_panicked.load(Ordering::SeqCst) == 1,
+        session_unknown.load(Ordering::SeqCst) == 1,
+    )
+}
+
+fn resolve_owner_stream_outcome<E>(
+    outcome: Result<()>,
+    callback_error: &Mutex<Option<E>>,
+    callback_recovered: bool,
+    callback_panicked: bool,
+    session_unknown: bool,
+) -> RawStreamResult<(), E> {
+    if session_unknown {
+        return Err(RawStreamError::Database(outcome.err().unwrap_or_else(
+            || Error::message("WASIX protocol recovery was lost without its error"),
+        )));
+    }
+    if callback_recovered {
+        let callback_error = callback_error
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+        return match callback_error {
+            Some(error) => Err(RawStreamError::Callback(error)),
+            None => Err(RawStreamError::Database(outcome.err().unwrap_or_else(
+                || Error::message("WASIX protocol callback recovery lost its typed error"),
+            ))),
+        };
+    }
+    if callback_panicked {
+        return Err(RawStreamError::CallbackPanicked(
+            outcome
+                .err()
+                .unwrap_or_else(|| Error::message("WASIX protocol callback panic lost its error")),
+        ));
+    }
+    outcome.map_err(RawStreamError::Database)
 }
 
 fn admit_close(
@@ -497,7 +703,7 @@ fn admit_close(
                 None => CloseAdmission::Closed,
             })
         }
-        OWNER_STOPPED => Err(Error::message(format!("{owner} has stopped"))),
+        OWNER_STOPPED => Err(Error::lifecycle(format!("{owner} has stopped"))),
         _ => Err(Error::message(format!("{owner} has invalid state"))),
     }
 }
@@ -535,7 +741,6 @@ fn complete_close_attempt(
     result: Result<()>,
     disposition: CloseDisposition,
 ) -> bool {
-    let result = result.map_err(|error| Arc::<str>::from(error.to_string()));
     let _admission = admission.lock().unwrap_or_else(|error| error.into_inner());
     complete_close_attempt_locked(state, current, attempt, result, disposition)
 }
@@ -556,7 +761,7 @@ fn stop_close_owner(
             state,
             current,
             &attempt,
-            Err(Arc::from(message)),
+            Err(Error::message(message)),
             CloseDisposition::Terminal,
         );
     } else {
@@ -570,7 +775,6 @@ fn complete_owner_shutdown(
     current: &Mutex<Option<Arc<CloseAttempt>>>,
     result: Result<()>,
 ) {
-    let result = result.map_err(|error| Arc::<str>::from(error.to_string()));
     let _admission = admission.lock().unwrap_or_else(|error| error.into_inner());
     let attempt = current
         .lock()
@@ -591,7 +795,7 @@ fn complete_owner_shutdown(
 }
 
 fn run_database_owner(
-    database: &mut DirectOliphaunt,
+    mut database: DirectOliphaunt,
     queue: Receiver<OwnerMessage>,
     state: &AtomicU8,
     admission: &Mutex<()>,
@@ -607,15 +811,46 @@ fn run_database_owner(
                 // Release bounded admission when the message leaves the queue,
                 // before potentially long PostgreSQL work begins.
                 drop(_permit);
-                if handle_database_control(
-                    database,
-                    message,
-                    &mut active_transaction,
-                    state,
-                    admission,
-                    close_attempt,
-                ) {
-                    return;
+                match message {
+                    OwnerControl::Close { attempt } if active_transaction.is_none() => {
+                        let result = database.close();
+                        // Direct teardown ownership is released only on Ok;
+                        // dropping after Err preserves its process-lifetime quarantine.
+                        drop(database);
+                        complete_close_attempt(
+                            admission,
+                            state,
+                            close_attempt,
+                            &attempt,
+                            result,
+                            CloseDisposition::Terminal,
+                        );
+                        return;
+                    }
+                    OwnerControl::Close { attempt } => {
+                        complete_close_attempt(
+                            admission,
+                            state,
+                            close_attempt,
+                            &attempt,
+                            Err(Error::transaction_active(
+                                "cannot close while a transaction is active",
+                            )),
+                            CloseDisposition::Retryable,
+                        );
+                    }
+                    OwnerControl::Shutdown => {
+                        let _ = rollback_active(&mut database, &mut active_transaction);
+                        let result = database.close();
+                        // Direct teardown ownership is released only on Ok;
+                        // dropping after Err preserves its process-lifetime quarantine.
+                        drop(database);
+                        complete_owner_shutdown(admission, state, close_attempt, result);
+                        return;
+                    }
+                    message => {
+                        handle_database_control(&mut database, message, &mut active_transaction);
+                    }
                 }
             }
             Ok(OwnerMessage {
@@ -625,17 +860,21 @@ fn run_database_owner(
                 drop(_permit);
                 let admission = match (command.transaction, active_transaction) {
                     (None, None) => Ok(()),
-                    (None, Some(_)) => Err(Error::message(
+                    (None, Some(_)) => Err(Error::transaction_active(
                         "a callback transaction is active; use its transaction handle",
                     )),
                     (Some(expected), Some(active)) if expected == active => Ok(()),
                     (Some(_), _) => Err(Error::message("transaction is no longer active")),
                 };
-                (command.action)(database, admission);
+                (command.action)(&mut database, admission);
             }
             Err(_) => {
-                let _ = rollback_active(database, &mut active_transaction);
-                complete_owner_shutdown(admission, state, close_attempt, database.close());
+                let _ = rollback_active(&mut database, &mut active_transaction);
+                let result = database.close();
+                // Direct teardown ownership is released only on Ok; dropping
+                // after Err preserves its process-lifetime quarantine.
+                drop(database);
+                complete_owner_shutdown(admission, state, close_attempt, result);
                 return;
             }
         }
@@ -646,17 +885,14 @@ fn handle_database_control(
     database: &mut DirectOliphaunt,
     message: OwnerControl,
     active_transaction: &mut Option<u64>,
-    state: &AtomicU8,
-    admission: &Mutex<()>,
-    close_attempt: &Mutex<Option<Arc<CloseAttempt>>>,
-) -> bool {
+) {
     match message {
         OwnerControl::Begin { token, reply } => {
             if reply.is_closed() {
-                return false;
+                return;
             }
             let mut result = if active_transaction.is_some() {
-                Err(Error::message("a transaction is already active"))
+                Err(Error::transaction_active("a transaction is already active"))
             } else {
                 database.owner_begin_transaction()
             };
@@ -672,57 +908,102 @@ fn handle_database_control(
                     );
                 }
             }
-            false
         }
         OwnerControl::Finish {
             token,
             commit,
+            guard,
             reply,
         } => {
-            let result = if *active_transaction != Some(token) {
-                Err(Error::message("transaction is no longer active"))
+            if reply.is_closed() {
+                abandon_unobserved_finish(database, active_transaction, token, &guard);
+                return;
+            }
+            let outcome = if *active_transaction != Some(token) {
+                let error = Error::message("transaction is no longer active");
+                guard.retain_failure(error.clone(), false);
+                TransactionFinishOutcome::NotAttempted(error)
+            } else if database.owner_transaction_outcome_unknown() {
+                let error = guard.retained_error();
+                let _ = database.owner_abandon_unknown_transaction();
+                guard.retain_failure(error.clone(), false);
+                TransactionFinishOutcome::NotAttempted(error)
             } else if commit {
-                database.owner_commit_transaction()
+                let result = database.owner_commit_transaction();
+                match &result {
+                    Ok(()) => guard.state.store(TRANSACTION_COMMITTED, Ordering::SeqCst),
+                    Err(error) => guard.retain_failure(error.clone(), false),
+                }
+                TransactionFinishOutcome::Attempted(result)
             } else {
-                database.owner_rollback_transaction()
+                let result = database.owner_rollback_transaction();
+                match &result {
+                    Ok(()) => guard.state.store(TRANSACTION_ROLLED_BACK, Ordering::SeqCst),
+                    Err(error) => guard.retain_failure(error.clone(), true),
+                }
+                TransactionFinishOutcome::Attempted(result)
+            };
+            if reply.send(outcome).is_err() {
+                abandon_unobserved_finish(database, active_transaction, token, &guard);
+            }
+        }
+        OwnerControl::FinishObserved { token } => {
+            if *active_transaction == Some(token) {
+                *active_transaction = None;
+            }
+        }
+        OwnerControl::FinishAbandoned { token, guard } => {
+            abandon_unobserved_finish(database, active_transaction, token, &guard);
+        }
+        OwnerControl::RollbackBestEffort { token, guard } => {
+            if *active_transaction == Some(token) {
+                if database.owner_transaction_outcome_unknown() {
+                    let error = guard.retained_error();
+                    let _ = database.owner_abandon_unknown_transaction();
+                    guard.retain_failure(error, false);
+                } else {
+                    match database.owner_rollback_transaction() {
+                        Ok(()) => guard.state.store(TRANSACTION_ROLLED_BACK, Ordering::SeqCst),
+                        Err(error) => guard.retain_failure(error, true),
+                    }
+                }
+                *active_transaction = None;
+            }
+        }
+        OwnerControl::AbandonFailed { token, reply } => {
+            let result = if *active_transaction == Some(token) {
+                database.owner_abandon_unknown_transaction()
+            } else {
+                Err(Error::message("transaction is no longer active"))
             };
             if *active_transaction == Some(token) {
                 *active_transaction = None;
             }
-            let _ = reply.send(result);
-            false
-        }
-        OwnerControl::RollbackBestEffort { token } => {
-            if *active_transaction == Some(token) {
-                let _ = database.owner_rollback_transaction();
-                *active_transaction = None;
+            if let Some(reply) = reply {
+                let _ = reply.send(result);
             }
-            false
         }
-        OwnerControl::Close { attempt } => {
-            let (result, disposition) = if active_transaction.is_some() {
-                (
-                    Err(Error::message("cannot close while a transaction is active")),
-                    CloseDisposition::Retryable,
-                )
-            } else {
-                (database.close(), CloseDisposition::Terminal)
-            };
-            complete_close_attempt(
-                admission,
-                state,
-                close_attempt,
-                &attempt,
-                result,
-                disposition,
-            )
-        }
-        OwnerControl::Shutdown => {
-            let _ = rollback_active(database, active_transaction);
-            complete_owner_shutdown(admission, state, close_attempt, database.close());
-            true
+        OwnerControl::Close { .. } | OwnerControl::Shutdown => {
+            unreachable!("lifecycle controls are handled by the owner loop")
         }
     }
+}
+
+fn abandon_unobserved_finish(
+    database: &mut DirectOliphaunt,
+    active_transaction: &mut Option<u64>,
+    token: u64,
+    guard: &TransactionOutcomeGuard,
+) {
+    if *active_transaction != Some(token) {
+        return;
+    }
+    let error = Error::message(
+        "transaction settlement completed without being observed; close the database",
+    );
+    database.owner_poison_unobserved_transaction_settlement();
+    guard.retain_failure(error, false);
+    *active_transaction = None;
 }
 
 fn rollback_active(
@@ -736,19 +1017,19 @@ fn rollback_active(
     }
 }
 
-/// Asynchronous, owner-thread Oliphaunt WASIX database handle.
+/// Asynchronous, owner-thread AsyncOliphaunt WASIX database handle.
 ///
 /// Every clone refers to the same serialized PostgreSQL session. The Wasmer
 /// store is constructed and remains on the package-owned thread.
 #[derive(Clone)]
-pub struct Oliphaunt {
+pub struct AsyncOliphaunt {
     owner: DatabaseOwner,
 }
 
-impl Oliphaunt {
+impl AsyncOliphaunt {
     /// Build an asynchronous WASIX database. The default storage is memory.
-    pub fn builder() -> OliphauntBuilder {
-        OliphauntBuilder::new()
+    pub fn builder() -> AsyncOliphauntBuilder {
+        AsyncOliphauntBuilder::new()
     }
 
     /// Open an in-memory database on a newly owned thread.
@@ -767,8 +1048,8 @@ impl Oliphaunt {
     }
 
     /// Build a typed, fluent PostgreSQL statement.
-    pub fn sql<'db, 'q>(&'db self, sql: impl Into<Cow<'q, str>>) -> Sql<'db, 'q> {
-        Sql::database(self, sql)
+    pub fn sql<'db, 'q>(&'db self, sql: impl Into<Cow<'q, str>>) -> AsyncSql<'db, 'q> {
+        AsyncSql::database(self, sql)
     }
 
     /// Whether the database is permanently retired.
@@ -842,35 +1123,53 @@ impl Oliphaunt {
 
     /// Execute raw protocol bytes and synchronously receive bounded chunks on the owner thread.
     ///
-    /// The callback must not await reentrant work on this database.
-    pub async fn exec_protocol_raw_stream<F>(
+    /// The callback and values it retains must be owned, `Send + 'static`; use
+    /// `Arc<Mutex<_>>` when mutable state must outlive the call site. Each
+    /// callback invocation finishes synchronously on the owner before the next
+    /// chunk is pumped and before this future resolves.
+    ///
+    /// The callback must not await reentrant work on this database. A typed
+    /// callback failure is returned as [`RawStreamError::Callback`] only after
+    /// the guest pump confirms recovery; an independent pump failure is
+    /// authoritative, is returned as [`RawStreamError::Database`], and poisons
+    /// the session until close. A callback panic after confirmed recovery is
+    /// [`RawStreamError::CallbackPanicked`] and leaves the session reusable.
+    pub async fn exec_protocol_raw_stream<F, O>(
         &self,
         request: impl AsRef<[u8]>,
         on_chunk: F,
-    ) -> Result<()>
+    ) -> RawStreamResult<(), O::Error>
     where
-        F: FnMut(&[u8]) -> Result<()> + Send + 'static,
+        F: FnMut(&[u8]) -> O + Send + 'static,
+        O: RawStreamCallbackOutput,
+        O::Error: Send + 'static,
     {
         let request = request.as_ref().to_vec();
-        self.owner
-            .call(None, move |database| {
-                database.exec_protocol_raw_stream(request, on_chunk)
-            })
-            .await
+        exec_protocol_raw_stream_on_owner(&self.owner, request, on_chunk).await
     }
 
     /// Run an async callback in a transaction pinned to this physical session.
     ///
     /// Success commits, callback failure rolls back, and an explicit
-    /// [`Transaction::rollback`] suppresses the later commit. Unpinned work on
+    /// [`AsyncTransaction::rollback`] suppresses the later commit. Unpinned work on
     /// this database is rejected while the callback is active.
-    pub async fn transaction<T>(
+    /// The callback returns ordinary `Result<T, E>` with `E: From<Error>`;
+    /// [`TransactionError`] keeps business, rollback, and independent database
+    /// failures distinct.
+    pub async fn transaction<T, E>(
         &self,
-        body: impl for<'tx> AsyncFnOnce(&'tx Transaction) -> Result<T>,
-    ) -> Result<T> {
-        let token = self.owner.begin_transaction().await?;
-        let transaction = Transaction::new(self.owner.clone(), token);
-        let callback = body(&transaction).await;
+        body: impl for<'tx> AsyncFnOnce(&'tx mut AsyncTransaction) -> std::result::Result<T, E>,
+    ) -> TransactionResult<T, E>
+    where
+        E: From<Error>,
+    {
+        let token = self
+            .owner
+            .begin_transaction()
+            .await
+            .map_err(TransactionError::Database)?;
+        let mut transaction = AsyncTransaction::new(self.owner.clone(), token);
+        let callback = body(&mut transaction).await;
         transaction.settle(callback).await
     }
 
@@ -879,11 +1178,9 @@ impl Oliphaunt {
         self.owner.call(None, DirectOliphaunt::backup).await
     }
 
+    /// Run packaged `pg_dump` against this database on its owner thread.
     #[cfg(feature = "tools")]
-    pub(crate) async fn pg_dump(
-        &self,
-        options: crate::oliphaunt::tools::PgDumpOptions,
-    ) -> Result<String> {
+    pub async fn pg_dump(&self, options: crate::oliphaunt::tools::PgDumpOptions) -> Result<String> {
         self.owner
             .call(None, move |database| {
                 crate::error::public_result(database.run_pg_dump_tool(options))
@@ -891,11 +1188,9 @@ impl Oliphaunt {
             .await
     }
 
+    /// Run packaged non-interactive `psql` against this database on its owner thread.
     #[cfg(feature = "tools")]
-    pub(crate) async fn psql(
-        &self,
-        options: crate::oliphaunt::tools::PsqlOptions,
-    ) -> Result<String> {
+    pub async fn psql(&self, options: crate::oliphaunt::tools::PsqlOptions) -> Result<String> {
         self.owner
             .call(None, move |database| {
                 crate::error::public_result(database.run_psql_tool(options))
@@ -911,25 +1206,27 @@ impl Oliphaunt {
     /// success or failure. Validation before shutdown (for example, an active
     /// transaction) leaves the database open and may be retried. Once shutdown
     /// begins, the database is permanently retired and every later close
-    /// replays that attempt's exact result.
+    /// replays that attempt's exact result. Successful teardown releases the
+    /// backend and storage root; failed teardown retains that ownership until
+    /// process exit.
     pub async fn close(&self) -> Result<()> {
         self.owner.close().await
     }
 }
 
-/// Builder for an owner-thread [`Oliphaunt`] database.
+/// Builder for an owner-thread [`AsyncOliphaunt`] database.
 #[derive(Debug, Clone)]
-pub struct OliphauntBuilder {
+pub struct AsyncOliphauntBuilder {
     inner: DirectOliphauntBuilder,
 }
 
-impl Default for OliphauntBuilder {
+impl Default for AsyncOliphauntBuilder {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl OliphauntBuilder {
+impl AsyncOliphauntBuilder {
     /// Create a builder for an in-memory database.
     pub fn new() -> Self {
         Self {
@@ -972,43 +1269,45 @@ impl OliphauntBuilder {
     }
 
     #[cfg(feature = "extensions")]
-    /// Enable one bundled extension before returning the database.
+    /// Make one bundled PostgreSQL extension artifact available to the database.
+    /// Database-local installation remains the application's migration concern.
     pub fn extension(mut self, extension: Extension) -> Self {
         self.inner = self.inner.extension(extension);
         self
     }
 
     #[cfg(feature = "extensions")]
-    /// Enable bundled extensions before returning the database.
+    /// Make bundled PostgreSQL extension artifacts available to the database.
+    /// Database-local installation remains the application's migration concern.
     pub fn extensions(mut self, extensions: impl IntoIterator<Item = Extension>) -> Self {
         self.inner = self.inner.extensions(extensions);
         self
     }
 
     /// Construct the Wasmer runtime and PostgreSQL session on its permanent owner thread.
-    pub async fn open(self) -> Result<Oliphaunt> {
-        Ok(Oliphaunt {
+    pub async fn open(self) -> Result<AsyncOliphaunt> {
+        Ok(AsyncOliphaunt {
             owner: DatabaseOwner::open(self.inner).await?,
         })
     }
 }
 
 enum SqlOwner<'a> {
-    Database(&'a Oliphaunt),
-    Transaction(&'a Transaction),
+    Database(&'a AsyncOliphaunt),
+    AsyncTransaction(&'a mut AsyncTransaction),
 }
 
 /// Fluent asynchronous SQL statement bound to a database or transaction.
 #[must_use = "a SQL statement does nothing until execute(), query(), or describe() is awaited"]
-pub struct Sql<'db, 'q> {
+pub struct AsyncSql<'db, 'q> {
     owner: SqlOwner<'db>,
     sql: Cow<'q, str>,
     params: Vec<Parameter>,
     result_format: ValueFormat,
 }
 
-impl<'db, 'q> Sql<'db, 'q> {
-    fn database(database: &'db Oliphaunt, sql: impl Into<Cow<'q, str>>) -> Self {
+impl<'db, 'q> AsyncSql<'db, 'q> {
+    fn database(database: &'db AsyncOliphaunt, sql: impl Into<Cow<'q, str>>) -> Self {
         Self {
             owner: SqlOwner::Database(database),
             sql: sql.into(),
@@ -1017,9 +1316,9 @@ impl<'db, 'q> Sql<'db, 'q> {
         }
     }
 
-    fn transaction(transaction: &'db Transaction, sql: impl Into<Cow<'q, str>>) -> Self {
+    fn transaction(transaction: &'db mut AsyncTransaction, sql: impl Into<Cow<'q, str>>) -> Self {
         Self {
-            owner: SqlOwner::Transaction(transaction),
+            owner: SqlOwner::AsyncTransaction(transaction),
             sql: sql.into(),
             params: Vec::new(),
             result_format: ValueFormat::Text,
@@ -1056,12 +1355,12 @@ impl<'db, 'q> Sql<'db, 'q> {
                     .call(None, move |owner| owner.owner_execute(&sql, params, format))
                     .await
             }
-            SqlOwner::Transaction(transaction) => {
+            SqlOwner::AsyncTransaction(transaction) => {
                 transaction.ensure_active()?;
                 let token = transaction.token;
                 transaction
                     .owner
-                    .call(Some(token), move |owner| {
+                    .call_transaction(token, Arc::clone(&transaction.guard), move |owner| {
                         owner.owner_transaction_execute(&sql, params, format)
                     })
                     .await
@@ -1084,12 +1383,12 @@ impl<'db, 'q> Sql<'db, 'q> {
                     .call(None, move |owner| owner.owner_query(&sql, params, format))
                     .await
             }
-            SqlOwner::Transaction(transaction) => {
+            SqlOwner::AsyncTransaction(transaction) => {
                 transaction.ensure_active()?;
                 let token = transaction.token;
                 transaction
                     .owner
-                    .call(Some(token), move |owner| {
+                    .call_transaction(token, Arc::clone(&transaction.guard), move |owner| {
                         owner.owner_transaction_query(&sql, params, format)
                     })
                     .await
@@ -1108,12 +1407,12 @@ impl<'db, 'q> Sql<'db, 'q> {
                     .call(None, move |owner| owner.owner_describe(&sql, params))
                     .await
             }
-            SqlOwner::Transaction(transaction) => {
+            SqlOwner::AsyncTransaction(transaction) => {
                 transaction.ensure_active()?;
                 let token = transaction.token;
                 transaction
                     .owner
-                    .call(Some(token), move |owner| {
+                    .call_transaction(token, Arc::clone(&transaction.guard), move |owner| {
                         owner.owner_transaction_describe(&sql, params)
                     })
                     .await
@@ -1123,62 +1422,35 @@ impl<'db, 'q> Sql<'db, 'q> {
 }
 
 /// Callback-scoped asynchronous transaction pinned to the owner session.
-pub struct Transaction {
+pub struct AsyncTransaction {
     owner: DatabaseOwner,
     token: u64,
-    state: AtomicU8,
-    terminal_error: Mutex<Option<ErrorSnapshot>>,
+    guard: Arc<TransactionOutcomeGuard>,
+    not_sync: PhantomData<Cell<()>>,
 }
 
-#[derive(Clone)]
-struct ErrorSnapshot {
-    report: String,
-    postgres: Option<PostgresError>,
-}
-
-impl ErrorSnapshot {
-    fn capture(error: &Error) -> Self {
-        Self {
-            report: format!("{error:#}"),
-            postgres: error.postgres_error().cloned(),
-        }
-    }
-
-    fn to_error(&self) -> Error {
-        match &self.postgres {
-            Some(postgres) if self.report == postgres.to_string() => {
-                Error::from_anyhow(anyhow::Error::new(postgres.clone()))
-            }
-            Some(postgres) => Error::from_anyhow(
-                anyhow::Error::new(postgres.clone()).context(self.report.clone()),
-            ),
-            None => Error::message(self.report.clone()),
-        }
-    }
-}
-
-impl Transaction {
+impl AsyncTransaction {
     fn new(owner: DatabaseOwner, token: u64) -> Self {
         Self {
             owner,
             token,
-            state: AtomicU8::new(TRANSACTION_ACTIVE),
-            terminal_error: Mutex::new(None),
+            guard: TransactionOutcomeGuard::active(),
+            not_sync: PhantomData,
         }
     }
 
     /// Build a typed, fluent statement pinned to this transaction.
-    pub fn sql<'db, 'q>(&'db self, sql: impl Into<Cow<'q, str>>) -> Sql<'db, 'q> {
-        Sql::transaction(self, sql)
+    pub fn sql<'db, 'q>(&'db mut self, sql: impl Into<Cow<'q, str>>) -> AsyncSql<'db, 'q> {
+        AsyncSql::transaction(self, sql)
     }
 
     /// Whether the transaction handle has rolled back or begun settlement.
     pub fn is_closed(&self) -> bool {
-        self.state.load(Ordering::SeqCst) != TRANSACTION_ACTIVE
+        self.guard.state.load(Ordering::SeqCst) != TRANSACTION_ACTIVE
     }
 
     fn ensure_active(&self) -> Result<()> {
-        if self.state.load(Ordering::SeqCst) == TRANSACTION_ACTIVE {
+        if self.guard.state.load(Ordering::SeqCst) == TRANSACTION_ACTIVE {
             Ok(())
         } else {
             Err(Error::message("transaction is no longer active"))
@@ -1186,12 +1458,12 @@ impl Transaction {
     }
 
     /// Execute exactly one command inside this transaction.
-    pub async fn execute(&self, sql: &str) -> Result<CommandResult> {
+    pub async fn execute(&mut self, sql: &str) -> Result<CommandResult> {
         self.sql(sql).execute().await
     }
 
     /// Execute one parameterized command inside this transaction.
-    pub async fn execute_with_params<I, P>(&self, sql: &str, params: I) -> Result<CommandResult>
+    pub async fn execute_with_params<I, P>(&mut self, sql: &str, params: I) -> Result<CommandResult>
     where
         I: IntoIterator<Item = P>,
         P: IntoParameter,
@@ -1205,14 +1477,14 @@ impl Transaction {
     /// Execute one statement and return its row-shaped result.
     ///
     /// Command-only SQL is accepted as an empty row set.
-    pub async fn query(&self, sql: &str) -> Result<QueryResult> {
+    pub async fn query(&mut self, sql: &str) -> Result<QueryResult> {
         self.sql(sql).query().await
     }
 
     /// Execute one parameterized statement and return its row-shaped result.
     ///
     /// Command-only SQL is accepted as an empty row set.
-    pub async fn query_with_params<I, P>(&self, sql: &str, params: I) -> Result<QueryResult>
+    pub async fn query_with_params<I, P>(&mut self, sql: &str, params: I) -> Result<QueryResult>
     where
         I: IntoIterator<Item = P>,
         P: IntoParameter,
@@ -1224,60 +1496,30 @@ impl Transaction {
     }
 
     /// Execute possibly multi-statement SQL inside this transaction.
-    pub async fn exec(&self, sql: &str) -> Result<ExecResult> {
+    pub async fn exec(&mut self, sql: &str) -> Result<ExecResult> {
         self.ensure_active()?;
         let sql = sql.to_owned();
         let token = self.token;
         self.owner
-            .call(Some(token), move |database| {
+            .call_transaction(token, Arc::clone(&self.guard), move |database| {
                 database.owner_transaction_exec(&sql)
             })
             .await
     }
 
     /// Describe a statement inside this transaction without executing it.
-    pub async fn describe(&self, sql: &str) -> Result<StatementDescription> {
+    pub async fn describe(&mut self, sql: &str) -> Result<StatementDescription> {
         self.sql(sql).describe().await
     }
 
-    /// Execute raw protocol bytes while retaining this transaction's session pin.
-    pub async fn exec_protocol_raw(&self, request: impl AsRef<[u8]>) -> Result<Vec<u8>> {
-        self.ensure_active()?;
-        let request = request.as_ref().to_vec();
-        let token = self.token;
-        self.owner
-            .call(Some(token), move |database| {
-                database.exec_protocol_raw(request)
-            })
-            .await
-    }
-
-    /// Execute raw protocol bytes with a synchronous owner-thread callback.
-    pub async fn exec_protocol_raw_stream<F>(
-        &self,
-        request: impl AsRef<[u8]>,
-        on_chunk: F,
-    ) -> Result<()>
-    where
-        F: FnMut(&[u8]) -> Result<()> + Send + 'static,
-    {
-        self.ensure_active()?;
-        let request = request.as_ref().to_vec();
-        let token = self.token;
-        self.owner
-            .call(Some(token), move |database| {
-                database.exec_protocol_raw_stream(request, on_chunk)
-            })
-            .await
-    }
-
     /// Roll back immediately and expire this transaction handle.
-    pub async fn rollback(&self) -> Result<()> {
+    pub async fn rollback(&mut self) -> Result<()> {
         self.finish(false).await
     }
 
-    async fn finish(&self, commit: bool) -> Result<()> {
-        self.state
+    async fn finish(&mut self, commit: bool) -> Result<()> {
+        self.guard
+            .state
             .compare_exchange(
                 TRANSACTION_ACTIVE,
                 TRANSACTION_FINISHING,
@@ -1285,62 +1527,104 @@ impl Transaction {
                 Ordering::SeqCst,
             )
             .map_err(|_| Error::message("transaction is no longer active"))?;
-        let result = self.owner.finish_transaction(self.token, commit).await;
-        match &result {
-            Ok(()) => self.state.store(
-                if commit {
-                    TRANSACTION_COMMITTED
-                } else {
-                    TRANSACTION_ROLLED_BACK
-                },
-                Ordering::SeqCst,
-            ),
-            Err(error) => {
-                if let Ok(mut terminal) = self.terminal_error.lock() {
-                    *terminal = Some(ErrorSnapshot::capture(error));
-                }
-                self.state.store(TRANSACTION_FAILED, Ordering::SeqCst);
+        self.guard.settlement_started.store(1, Ordering::SeqCst);
+        match self
+            .owner
+            .finish_transaction(self.token, commit, Arc::clone(&self.guard))
+            .await
+        {
+            Ok(TransactionFinishOutcome::Attempted(result)) => result,
+            Ok(TransactionFinishOutcome::NotAttempted(error)) | Err(error) => {
+                self.retain_failure(error.clone());
+                Err(error)
             }
         }
-        result
     }
 
-    async fn settle<T>(&self, callback: Result<T>) -> Result<T> {
-        match (self.state.load(Ordering::SeqCst), callback) {
+    async fn settle<T, E>(
+        &mut self,
+        callback: std::result::Result<T, E>,
+    ) -> TransactionResult<T, E> {
+        match (self.guard.state.load(Ordering::SeqCst), callback) {
             (TRANSACTION_ACTIVE, Ok(value)) => {
-                self.finish(true).await?;
+                self.finish(true)
+                    .await
+                    .map_err(TransactionError::Database)?;
                 Ok(value)
             }
             (TRANSACTION_ACTIVE, Err(callback)) => match self.finish(false).await {
-                Ok(()) => Err(callback),
-                Err(rollback) => Err(Error::transaction_rollback(callback, rollback)),
+                Ok(()) => Err(TransactionError::Callback(callback)),
+                Err(database)
+                    if self
+                        .guard
+                        .terminal_failure_was_rollback
+                        .load(Ordering::SeqCst)
+                        == 0 =>
+                {
+                    Err(TransactionError::CallbackAndDatabase { callback, database })
+                }
+                Err(rollback) => Err(TransactionError::CallbackAndRollback { callback, rollback }),
             },
-            (TRANSACTION_ROLLED_BACK, callback) => callback,
-            (TRANSACTION_FAILED, Ok(_)) => Err(self.retained_error()),
-            (TRANSACTION_FAILED, Err(callback)) => {
-                Err(Error::transaction_rollback(callback, self.retained_error()))
+            (TRANSACTION_ROLLED_BACK, callback) => callback.map_err(TransactionError::Callback),
+            (TRANSACTION_FAILED, Ok(_)) => {
+                let error = self.retained_error();
+                self.retire_failed_owner_transaction().await;
+                Err(TransactionError::Database(error))
             }
-            (_, _) => Err(Error::message(
+            (TRANSACTION_FAILED, Err(callback)) => {
+                let database = self.retained_error();
+                let rollback_was_attempted = self
+                    .guard
+                    .terminal_failure_was_rollback
+                    .load(Ordering::SeqCst)
+                    == 1;
+                self.retire_failed_owner_transaction().await;
+                if rollback_was_attempted {
+                    Err(TransactionError::CallbackAndRollback {
+                        callback,
+                        rollback: database,
+                    })
+                } else {
+                    Err(TransactionError::CallbackAndDatabase { callback, database })
+                }
+            }
+            (_, _) => Err(TransactionError::Database(Error::message(
                 "transaction settlement did not reach a valid terminal state",
-            )),
+            ))),
         }
     }
 
     fn retained_error(&self) -> Error {
-        self.terminal_error
-            .lock()
-            .ok()
-            .and_then(|error| error.clone())
-            .map_or_else(
-                || Error::message("transaction failed"),
-                |error| error.to_error(),
-            )
+        self.guard.retained_error()
+    }
+
+    fn retain_failure(&self, error: Error) {
+        self.retain_failure_with_kind(error, false);
+    }
+
+    fn retain_failure_with_kind(&self, error: Error, rollback_was_attempted: bool) {
+        self.guard.retain_failure(error, rollback_was_attempted);
+    }
+
+    async fn retire_failed_owner_transaction(&mut self) {
+        // This owner control deliberately emits no PostgreSQL bytes. It clears
+        // only host-side ownership after a proven unknown protocol boundary.
+        let _ = self.owner.abandon_failed_transaction(self.token).await;
     }
 }
 
-impl Drop for Transaction {
+impl Drop for AsyncTransaction {
     fn drop(&mut self) {
+        let state = self.guard.state.load(Ordering::SeqCst);
+        if self.guard.settlement_started.load(Ordering::SeqCst) == 1
+            && self.guard.settlement_observed.load(Ordering::SeqCst) == 0
+        {
+            self.owner
+                .abandon_unobserved_finish(self.token, Arc::clone(&self.guard));
+            return;
+        }
         if self
+            .guard
             .state
             .compare_exchange(
                 TRANSACTION_ACTIVE,
@@ -1350,7 +1634,10 @@ impl Drop for Transaction {
             )
             .is_ok()
         {
-            self.owner.rollback_best_effort(self.token);
+            self.owner
+                .rollback_best_effort(self.token, Arc::clone(&self.guard));
+        } else if state == TRANSACTION_FAILED {
+            self.owner.abandon_failed_best_effort(self.token);
         }
     }
 }
@@ -1365,21 +1652,18 @@ where
         .name(name.to_owned())
         .spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation))
-                .map_err(|_| Error::message(format!("{name} worker panicked")))
+                .map_err(|_| Error::message(format!("{name} thread panicked")))
                 .and_then(|result| result);
             let _ = reply.send(result);
         })
         .map_err(|error| Error::message(format!("spawn {name}: {error}")))?;
     receiver
         .await
-        .map_err(|_| Error::message(format!("{name} stopped before returning a result")))?
+        .map_err(|_| Error::lifecycle(format!("{name} stopped before returning a result")))?
 }
 
 #[derive(Debug)]
 struct ServerInfo {
-    tcp_addr: Option<SocketAddr>,
-    #[cfg(unix)]
-    socket_path: Option<PathBuf>,
     connection_string: String,
 }
 
@@ -1404,26 +1688,15 @@ impl Drop for ServerOwnerInner {
 
 /// Asynchronous handle for a local PostgreSQL wire server.
 #[derive(Clone)]
-pub struct OliphauntServer {
+pub struct AsyncOliphauntServer {
     owner: Arc<ServerOwnerInner>,
     info: Arc<ServerInfo>,
 }
 
-impl OliphauntServer {
+impl AsyncOliphauntServer {
     /// Build an asynchronous local PostgreSQL server.
-    pub fn builder() -> OliphauntServerBuilder {
-        OliphauntServerBuilder::new()
-    }
-
-    /// Return the bound TCP address, when using TCP.
-    pub fn tcp_addr(&self) -> Option<SocketAddr> {
-        self.info.tcp_addr
-    }
-
-    #[cfg(unix)]
-    /// Return the PostgreSQL Unix-domain socket path, when using UDS.
-    pub fn socket_path(&self) -> Option<&Path> {
-        self.info.socket_path.as_deref()
+    pub fn builder() -> AsyncOliphauntServerBuilder {
+        AsyncOliphauntServerBuilder::new()
     }
 
     /// Return the standard PostgreSQL connection string.
@@ -1444,6 +1717,8 @@ impl OliphauntServer {
     /// Concurrent callers await the exact same attempt and receive the same
     /// success or failure. Once server stop begins, the server is permanently
     /// retired and every later close replays that attempt's exact result.
+    /// Successful teardown releases the managed root; failed teardown retains
+    /// it until process exit.
     pub async fn close(&self) -> Result<()> {
         let attempt = {
             let _admission = self
@@ -1471,7 +1746,7 @@ impl OliphauntServer {
                             &self.owner.state,
                             &self.owner.close_attempt,
                             &attempt,
-                            Err(Arc::from("WASIX server owner has stopped")),
+                            Err(Error::lifecycle("WASIX server owner has stopped")),
                             CloseDisposition::Terminal,
                         );
                     }
@@ -1485,17 +1760,17 @@ impl OliphauntServer {
 
 /// Builder for an asynchronous local PostgreSQL wire server.
 #[derive(Debug, Clone)]
-pub struct OliphauntServerBuilder {
+pub struct AsyncOliphauntServerBuilder {
     inner: DirectOliphauntServerBuilder,
 }
 
-impl Default for OliphauntServerBuilder {
+impl Default for AsyncOliphauntServerBuilder {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl OliphauntServerBuilder {
+impl AsyncOliphauntServerBuilder {
     /// Create a memory-backed server builder listening on loopback TCP.
     pub fn new() -> Self {
         Self {
@@ -1509,7 +1784,8 @@ impl OliphauntServerBuilder {
         self
     }
 
-    /// Select loopback TCP or a PostgreSQL Unix-domain socket.
+    /// Select loopback TCP on any supported host or a PostgreSQL Unix-domain
+    /// socket on a Unix host.
     pub fn listen(mut self, listen: ServerListen) -> Self {
         self.inner = self.inner.listen(listen);
         self
@@ -1544,21 +1820,23 @@ impl OliphauntServerBuilder {
     }
 
     #[cfg(feature = "extensions")]
-    /// Enable one bundled extension before serving connections.
+    /// Make one bundled PostgreSQL extension artifact available to clients.
+    /// Database-local installation remains the application's migration concern.
     pub fn extension(mut self, extension: Extension) -> Self {
         self.inner = self.inner.extension(extension);
         self
     }
 
     #[cfg(feature = "extensions")]
-    /// Enable bundled extensions before serving connections.
+    /// Make bundled PostgreSQL extension artifacts available to clients.
+    /// Database-local installation remains the application's migration concern.
     pub fn extensions(mut self, extensions: impl IntoIterator<Item = Extension>) -> Self {
         self.inner = self.inner.extensions(extensions);
         self
     }
 
     /// Start the server and await its bound endpoint.
-    pub async fn start(self) -> Result<OliphauntServer> {
+    pub async fn start(self) -> Result<AsyncOliphauntServer> {
         let (control, receiver) = mpsc::channel();
         let (open_tx, open_rx) = oneshot::channel();
         let state = Arc::new(AtomicU8::new(OWNER_OPEN));
@@ -1588,17 +1866,14 @@ impl OliphauntServerBuilder {
                     }
                 };
                 let info = ServerInfo {
-                    tcp_addr: server.tcp_addr(),
-                    #[cfg(unix)]
-                    socket_path: server.socket_path().map(Path::to_path_buf),
-                    connection_string: server.connection_string(),
+                    connection_string: server.connection_string().to_owned(),
                 };
                 if open_tx.send(Ok(info)).is_err() {
                     drop(server);
                     thread_state.store(OWNER_CLOSED, Ordering::SeqCst);
                     return;
                 }
-                let worker = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let owner = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     run_server_owner(
                         server,
                         receiver,
@@ -1607,7 +1882,7 @@ impl OliphauntServerBuilder {
                         &thread_close_attempt,
                     )
                 }));
-                if worker.is_err() {
+                if owner.is_err() {
                     stop_close_owner(
                         &thread_admission,
                         &thread_state,
@@ -1619,8 +1894,8 @@ impl OliphauntServerBuilder {
             .map_err(|error| Error::message(format!("spawn WASIX server owner: {error}")))?;
         let info = open_rx
             .await
-            .map_err(|_| Error::message("WASIX server owner stopped before start completed"))??;
-        Ok(OliphauntServer {
+            .map_err(|_| Error::lifecycle("WASIX server owner stopped before start completed"))??;
+        Ok(AsyncOliphauntServer {
             owner: Arc::new(ServerOwnerInner {
                 control,
                 admission,
@@ -1639,35 +1914,98 @@ fn run_server_owner(
     admission: &Mutex<()>,
     close_attempt: &Mutex<Option<Arc<CloseAttempt>>>,
 ) {
-    loop {
-        match receiver.recv() {
-            Ok(ServerControl::Close { attempt }) => {
-                let result = server.owner_close();
-                if complete_close_attempt(
-                    admission,
-                    state,
-                    close_attempt,
-                    &attempt,
-                    result,
-                    CloseDisposition::Terminal,
-                ) {
-                    return;
-                }
-            }
-            Ok(ServerControl::Shutdown) | Err(_) => {
-                complete_owner_shutdown(admission, state, close_attempt, server.owner_close());
-                return;
-            }
+    match receiver.recv() {
+        Ok(ServerControl::Close { attempt }) => {
+            let result = server.owner_close();
+            // The direct server releases its root only on Ok; dropping after
+            // Err preserves its process-lifetime quarantine.
+            drop(server);
+            complete_close_attempt(
+                admission,
+                state,
+                close_attempt,
+                &attempt,
+                result,
+                CloseDisposition::Terminal,
+            );
+        }
+        Ok(ServerControl::Shutdown) | Err(_) => {
+            let result = server.owner_close();
+            // The direct server releases its root only on Ok; dropping after
+            // Err preserves its process-lifetime quarantine.
+            drop(server);
+            complete_owner_shutdown(admission, state, close_attempt, result);
         }
     }
 }
 
 const _: fn() = || {
     fn assert_send_sync<T: Send + Sync>() {}
-    assert_send_sync::<Oliphaunt>();
-    assert_send_sync::<OliphauntServer>();
-    assert_send_sync::<Transaction>();
+    fn assert_send<T: Send>() {}
+    assert_send_sync::<AsyncOliphaunt>();
+    assert_send_sync::<AsyncOliphauntServer>();
+    assert_send::<AsyncTransaction>();
 };
+
+#[cfg(test)]
+mod raw_stream_outcome_tests {
+    use super::*;
+
+    #[test]
+    fn recovered_typed_callback_error_remains_distinct_from_database_failure() {
+        let callback = Mutex::new(Some("typed parser abort"));
+        let result = resolve_owner_stream_outcome(
+            Err(Error::message("callback sentinel")),
+            &callback,
+            true,
+            false,
+            false,
+        );
+        let error = result.expect_err("typed callback abort is returned");
+        assert_eq!(error.callback_error(), Some(&"typed parser abort"));
+        assert!(error.database_error().is_none());
+    }
+
+    #[test]
+    fn recovered_owner_callback_panic_is_typed_and_does_not_retire_the_session() {
+        let callback = Mutex::new(None::<()>);
+        let result = resolve_owner_stream_outcome(
+            Err(Error::message("WASIX protocol callback panicked")),
+            &callback,
+            false,
+            true,
+            false,
+        );
+        let error = result.expect_err("callback panic is returned");
+        assert_eq!(
+            error
+                .callback_panic_error()
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("WASIX protocol callback panicked")
+        );
+        assert!(error.database_error().is_none());
+    }
+
+    #[test]
+    fn failed_recovery_overrides_callback_error_and_panic_classification() {
+        let callback = Mutex::new(Some("typed parser abort"));
+        let result = resolve_owner_stream_outcome(
+            Err(Error::message("pump failed before ReadyForQuery")),
+            &callback,
+            true,
+            true,
+            true,
+        );
+        let error = result.expect_err("recovery failure is authoritative");
+        assert_eq!(
+            error.database_error().map(ToString::to_string).as_deref(),
+            Some("pump failed before ReadyForQuery")
+        );
+        assert!(error.callback_error().is_none());
+        assert!(error.callback_panic_error().is_none());
+    }
+}
 
 #[cfg(test)]
 mod close_tests {
@@ -1676,10 +2014,335 @@ mod close_tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::oliphaunt::base::DirectoryLock;
+    use crate::oliphaunt::server::server_with_worker_result_for_test;
 
     fn poll_once<F: Future>(future: std::pin::Pin<&mut F>) -> Poll<F::Output> {
         let mut context = Context::from_waker(Waker::noop());
         future.poll(&mut context)
+    }
+
+    fn detached_owner(
+        capacity: usize,
+        owner_thread: thread::ThreadId,
+    ) -> (DatabaseOwner, mpsc::Receiver<OwnerMessage>) {
+        let (queue, receiver) = mpsc::channel();
+        (
+            DatabaseOwner {
+                inner: Arc::new(DatabaseOwnerInner {
+                    queue,
+                    admission: Arc::new(Mutex::new(())),
+                    ordinary_order: Arc::new(AsyncMutex::new(())),
+                    ordinary_capacity: Arc::new(Semaphore::new(capacity)),
+                    state: Arc::new(AtomicU8::new(OWNER_OPEN)),
+                    close_epoch: AtomicU64::new(0),
+                    close_attempt: Arc::new(Mutex::new(None)),
+                    owner_thread,
+                    next_transaction: AtomicU64::new(1),
+                }),
+            },
+            receiver,
+        )
+    }
+
+    fn begin_operation(token: u64) -> OwnerOperation {
+        let (reply, _receiver) = oneshot::channel();
+        OwnerOperation::Control(OwnerControl::Begin { token, reply })
+    }
+
+    fn begin_token(message: OwnerMessage) -> u64 {
+        match message.operation {
+            OwnerOperation::Control(OwnerControl::Begin { token, .. }) => token,
+            _ => panic!("expected transaction-begin admission probe"),
+        }
+    }
+
+    #[test]
+    fn failed_transaction_settlement_abandons_host_ownership_without_rollback_control() {
+        let owner_thread = thread::spawn(|| thread::current().id())
+            .join()
+            .expect("capture a distinct fake owner thread id");
+        let (owner, receiver) = detached_owner(1, owner_thread);
+        let mut transaction = AsyncTransaction::new(owner, 77);
+        transaction.retain_failure(Error::message("raw stream recovery failed"));
+        assert!(transaction.is_closed());
+
+        let mut settlement =
+            Box::pin(transaction.settle(Err::<(), Error>(Error::message("business abort"))));
+        assert!(poll_once(settlement.as_mut()).is_pending());
+        let message = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("failed transaction retirement reaches its owner");
+        let reply = match message.operation {
+            OwnerOperation::Control(OwnerControl::AbandonFailed {
+                token: 77,
+                reply: Some(reply),
+            }) => reply,
+            OwnerOperation::Control(OwnerControl::Finish { .. }) => {
+                panic!("unknown raw state must not request COMMIT or ROLLBACK")
+            }
+            _ => panic!("expected host-only failed transaction retirement"),
+        };
+        reply.send(Ok(())).expect("settlement future is waiting");
+        let Poll::Ready(result) = poll_once(settlement.as_mut()) else {
+            panic!("host-only retirement completion resolves settlement");
+        };
+        let error = result.expect_err("callback and independent database failure remain visible");
+        assert_eq!(
+            error.callback_error().map(ToString::to_string).as_deref(),
+            Some("business abort")
+        );
+        assert_eq!(
+            error.database_error().map(ToString::to_string).as_deref(),
+            Some("raw stream recovery failed")
+        );
+        assert!(error.rollback_error().is_none());
+    }
+
+    #[test]
+    fn dropping_an_unobserved_finish_enqueues_close_only_retirement() {
+        let owner_thread = thread::spawn(|| thread::current().id())
+            .join()
+            .expect("capture a distinct fake owner thread id");
+        let (owner, receiver) = detached_owner(1, owner_thread);
+        let transaction = AsyncTransaction::new(owner.clone(), 91);
+        transaction
+            .guard
+            .state
+            .store(TRANSACTION_FINISHING, Ordering::SeqCst);
+        transaction
+            .guard
+            .settlement_started
+            .store(1, Ordering::SeqCst);
+        drop(transaction);
+
+        let message = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("unobserved settlement reaches its owner");
+        assert!(matches!(
+            message.operation,
+            OwnerOperation::Control(OwnerControl::FinishAbandoned { token: 91, .. })
+        ));
+        drop(owner);
+    }
+
+    #[test]
+    fn observed_finish_does_not_enqueue_abandonment() {
+        let owner_thread = thread::spawn(|| thread::current().id())
+            .join()
+            .expect("capture a distinct fake owner thread id");
+        let (owner, receiver) = detached_owner(1, owner_thread);
+        let transaction = AsyncTransaction::new(owner.clone(), 92);
+        transaction
+            .guard
+            .state
+            .store(TRANSACTION_COMMITTED, Ordering::SeqCst);
+        transaction
+            .guard
+            .settlement_started
+            .store(1, Ordering::SeqCst);
+        transaction
+            .guard
+            .settlement_observed
+            .store(1, Ordering::SeqCst);
+        drop(transaction);
+
+        assert!(receiver.try_recv().is_err());
+        drop(owner);
+    }
+
+    #[test]
+    fn ordinary_admission_waits_at_capacity_and_preserves_fifo() {
+        let owner_thread = thread::spawn(|| thread::current().id())
+            .join()
+            .expect("capture a distinct fake owner thread id");
+        let (owner, receiver) = detached_owner(1, owner_thread);
+        let mut first = Box::pin(owner.enqueue_ordinary(begin_operation(1)));
+        let mut second = Box::pin(owner.enqueue_ordinary(begin_operation(2)));
+        let mut third = Box::pin(owner.enqueue_ordinary(begin_operation(3)));
+
+        assert!(matches!(poll_once(first.as_mut()), Poll::Ready(Ok(()))));
+        assert!(poll_once(second.as_mut()).is_pending());
+        assert!(poll_once(third.as_mut()).is_pending());
+        assert_eq!(
+            begin_token(receiver.recv().expect("first admitted message")),
+            1
+        );
+
+        assert!(matches!(poll_once(second.as_mut()), Poll::Ready(Ok(()))));
+        assert!(poll_once(third.as_mut()).is_pending());
+        assert_eq!(
+            begin_token(receiver.recv().expect("second admitted message")),
+            2
+        );
+
+        assert!(matches!(poll_once(third.as_mut()), Poll::Ready(Ok(()))));
+        assert_eq!(
+            begin_token(receiver.recv().expect("third admitted message")),
+            3
+        );
+    }
+
+    #[test]
+    fn cancelled_capacity_waiter_never_enters_the_owner_queue() {
+        let owner_thread = thread::spawn(|| thread::current().id())
+            .join()
+            .expect("capture a distinct fake owner thread id");
+        let (owner, receiver) = detached_owner(1, owner_thread);
+        let mut first = Box::pin(owner.enqueue_ordinary(begin_operation(1)));
+        let mut cancelled = Box::pin(owner.enqueue_ordinary(begin_operation(2)));
+        let mut next = Box::pin(owner.enqueue_ordinary(begin_operation(3)));
+
+        assert!(matches!(poll_once(first.as_mut()), Poll::Ready(Ok(()))));
+        assert!(poll_once(cancelled.as_mut()).is_pending());
+        assert!(poll_once(next.as_mut()).is_pending());
+        drop(cancelled);
+        assert_eq!(
+            begin_token(receiver.recv().expect("first admitted message")),
+            1
+        );
+        assert!(matches!(poll_once(next.as_mut()), Poll::Ready(Ok(()))));
+        assert_eq!(
+            begin_token(receiver.recv().expect("next admitted message")),
+            3
+        );
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+    }
+
+    #[test]
+    fn owner_stop_drops_queued_permits_and_wakes_capacity_waiters() {
+        let owner_thread = thread::spawn(|| thread::current().id())
+            .join()
+            .expect("capture a distinct fake owner thread id");
+        let (owner, receiver) = detached_owner(1, owner_thread);
+        let mut admitted = Box::pin(owner.enqueue_ordinary(begin_operation(1)));
+        let mut first_waiter = Box::pin(owner.enqueue_ordinary(begin_operation(2)));
+        let mut second_waiter = Box::pin(owner.enqueue_ordinary(begin_operation(3)));
+
+        assert!(matches!(poll_once(admitted.as_mut()), Poll::Ready(Ok(()))));
+        assert!(poll_once(first_waiter.as_mut()).is_pending());
+        assert!(poll_once(second_waiter.as_mut()).is_pending());
+
+        owner.inner.state.store(OWNER_STOPPED, Ordering::SeqCst);
+        drop(receiver);
+
+        for waiter in [&mut first_waiter, &mut second_waiter] {
+            let Poll::Ready(result) = poll_once(waiter.as_mut()) else {
+                panic!("owner stop must wake every capacity waiter");
+            };
+            assert_eq!(
+                result
+                    .expect_err("stopped owner rejects waiter")
+                    .to_string(),
+                "WASIX database owner has stopped"
+            );
+        }
+        assert_eq!(owner.inner.ordinary_capacity.available_permits(), 1);
+    }
+
+    #[test]
+    fn close_rejects_a_capacity_waiter_without_putting_it_after_close() {
+        let owner_thread = thread::spawn(|| thread::current().id())
+            .join()
+            .expect("capture a distinct fake owner thread id");
+        let (owner, receiver) = detached_owner(1, owner_thread);
+        let mut admitted = Box::pin(owner.enqueue_ordinary(begin_operation(1)));
+        let mut waiting = Box::pin(owner.enqueue_ordinary(begin_operation(2)));
+        assert!(matches!(poll_once(admitted.as_mut()), Poll::Ready(Ok(()))));
+        assert!(poll_once(waiting.as_mut()).is_pending());
+
+        let mut close = Box::pin(owner.close());
+        assert!(poll_once(close.as_mut()).is_pending());
+        assert_eq!(
+            begin_token(receiver.recv().expect("work admitted before close")),
+            1
+        );
+        let close_message = receiver.recv().expect("close follows admitted work");
+        assert!(matches!(
+            close_message.operation,
+            OwnerOperation::Control(OwnerControl::Close { .. })
+        ));
+        let Poll::Ready(result) = poll_once(waiting.as_mut()) else {
+            panic!("capacity waiter must observe the close cutoff");
+        };
+        assert!(
+            result
+                .expect_err("waiter is rejected")
+                .to_string()
+                .contains("closing")
+        );
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+    }
+
+    #[test]
+    fn retryable_close_does_not_resurrect_a_pre_cutoff_waiter() {
+        let owner_thread = thread::spawn(|| thread::current().id())
+            .join()
+            .expect("capture a distinct fake owner thread id");
+        let (owner, receiver) = detached_owner(1, owner_thread);
+        let mut admitted = Box::pin(owner.enqueue_ordinary(begin_operation(1)));
+        let mut stale = Box::pin(owner.enqueue_ordinary(begin_operation(2)));
+        assert!(matches!(poll_once(admitted.as_mut()), Poll::Ready(Ok(()))));
+        assert!(poll_once(stale.as_mut()).is_pending());
+
+        let mut close = Box::pin(owner.close());
+        assert!(poll_once(close.as_mut()).is_pending());
+        assert_eq!(
+            begin_token(receiver.recv().expect("work admitted before close")),
+            1
+        );
+        let close_message = receiver.recv().expect("retryable close message");
+        let OwnerOperation::Control(OwnerControl::Close { attempt }) = close_message.operation
+        else {
+            panic!("expected close control");
+        };
+        complete_close_attempt(
+            &owner.inner.admission,
+            &owner.inner.state,
+            &owner.inner.close_attempt,
+            &attempt,
+            Err(Error::message("injected retryable close")),
+            CloseDisposition::Retryable,
+        );
+        assert!(matches!(poll_once(close.as_mut()), Poll::Ready(Err(_))));
+
+        let Poll::Ready(stale_result) = poll_once(stale.as_mut()) else {
+            panic!("stale waiter must settle after capacity is released");
+        };
+        assert!(
+            stale_result
+                .expect_err("pre-cutoff waiter stays rejected")
+                .to_string()
+                .contains("close cutoff")
+        );
+
+        let mut fresh = Box::pin(owner.enqueue_ordinary(begin_operation(3)));
+        assert!(matches!(poll_once(fresh.as_mut()), Poll::Ready(Ok(()))));
+        assert_eq!(
+            begin_token(receiver.recv().expect("fresh post-retry work")),
+            3
+        );
+    }
+
+    #[test]
+    fn reentrant_work_fails_before_waiting_for_capacity() {
+        let (owner, _receiver) = detached_owner(0, thread::current().id());
+        let mut call = Box::pin(owner.call(None, |_| Ok(())));
+        let Poll::Ready(result) = poll_once(call.as_mut()) else {
+            panic!("owner-thread reentrancy must not wait for capacity");
+        };
+        assert!(
+            result
+                .expect_err("reentrant work is rejected")
+                .to_string()
+                .contains("reentrant WASIX database work")
+        );
     }
 
     struct DatabaseCloseHarness {
@@ -1741,8 +2404,10 @@ mod close_tests {
                 inner: Arc::new(DatabaseOwnerInner {
                     queue,
                     admission,
-                    queued_ordinary: Arc::new(AtomicUsize::new(0)),
+                    ordinary_order: Arc::new(AsyncMutex::new(())),
+                    ordinary_capacity: Arc::new(Semaphore::new(OWNER_QUEUE_CAPACITY)),
                     state,
+                    close_epoch: AtomicU64::new(0),
                     close_attempt,
                     owner_thread: owner_id_rx
                         .recv_timeout(Duration::from_secs(2))
@@ -1765,8 +2430,10 @@ mod close_tests {
             inner: Arc::new(DatabaseOwnerInner {
                 queue,
                 admission: Arc::new(Mutex::new(())),
-                queued_ordinary: Arc::new(AtomicUsize::new(0)),
+                ordinary_order: Arc::new(AsyncMutex::new(())),
+                ordinary_capacity: Arc::new(Semaphore::new(OWNER_QUEUE_CAPACITY)),
                 state: Arc::new(AtomicU8::new(OWNER_OPEN)),
+                close_epoch: AtomicU64::new(0),
                 close_attempt: Arc::new(Mutex::new(None)),
                 owner_thread,
                 next_transaction: AtomicU64::new(1),
@@ -1792,7 +2459,7 @@ mod close_tests {
             rejected
                 .expect_err("post-cutoff work must fail")
                 .to_string(),
-            "Oliphaunt is closing"
+            "AsyncOliphaunt is closing"
         );
 
         assert!(matches!(
@@ -1854,7 +2521,7 @@ mod close_tests {
         harness
             .completion
             .send(FakeCloseCompletion {
-                result: Err(Arc::from("cannot close while a transaction is active")),
+                result: Err(Error::message("cannot close while a transaction is active")),
                 disposition: CloseDisposition::Retryable,
             })
             .expect("reject database close before shutdown");
@@ -1942,7 +2609,7 @@ mod close_tests {
         harness
             .completion
             .send(FakeCloseCompletion {
-                result: Err(Arc::from("injected database shutdown failure")),
+                result: Err(Error::message("injected database shutdown failure")),
                 disposition: CloseDisposition::Terminal,
             })
             .expect("fail database teardown");
@@ -1957,7 +2624,7 @@ mod close_tests {
         assert!(harness.owner.is_closed());
         assert_eq!(
             harness.owner.ensure_open().unwrap_err().to_string(),
-            "Oliphaunt is closed"
+            "AsyncOliphaunt is closed"
         );
         let retained_attempt = harness
             .owner
@@ -1984,7 +2651,7 @@ mod close_tests {
     }
 
     struct ServerCloseHarness {
-        server: OliphauntServer,
+        server: AsyncOliphauntServer,
         started: mpsc::Receiver<usize>,
         completion: mpsc::Sender<FakeCloseCompletion>,
     }
@@ -2027,7 +2694,7 @@ mod close_tests {
             }
         });
         ServerCloseHarness {
-            server: OliphauntServer {
+            server: AsyncOliphauntServer {
                 owner: Arc::new(ServerOwnerInner {
                     control,
                     admission,
@@ -2035,15 +2702,66 @@ mod close_tests {
                     close_attempt,
                 }),
                 info: Arc::new(ServerInfo {
-                    tcp_addr: None,
-                    #[cfg(unix)]
-                    socket_path: None,
                     connection_string: "postgresql://fake".to_owned(),
                 }),
             },
             started: started_rx,
             completion,
         }
+    }
+
+    fn server_owner_for_direct(server: DirectOliphauntServer) -> AsyncOliphauntServer {
+        let (control, receiver) = mpsc::channel();
+        let state = Arc::new(AtomicU8::new(OWNER_OPEN));
+        let admission = Arc::new(Mutex::new(()));
+        let close_attempt = Arc::new(Mutex::new(None));
+        let thread_state = Arc::clone(&state);
+        let thread_admission = Arc::clone(&admission);
+        let thread_close_attempt = Arc::clone(&close_attempt);
+        thread::spawn(move || {
+            run_server_owner(
+                server,
+                receiver,
+                &thread_state,
+                &thread_admission,
+                &thread_close_attempt,
+            );
+        });
+        AsyncOliphauntServer {
+            owner: Arc::new(ServerOwnerInner {
+                control,
+                admission,
+                state,
+                close_attempt,
+            }),
+            info: Arc::new(ServerInfo {
+                connection_string: "postgresql://fake".to_owned(),
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_async_server_close_cannot_release_managed_root_ownership() {
+        let parent = tempfile::TempDir::new().expect("create test root parent");
+        let root = parent.path().join("failed-async-server-root");
+        let lock = DirectoryLock::acquire(&root).expect("own managed root");
+        let direct = server_with_worker_result_for_test(
+            Err(anyhow::anyhow!("injected async server stop failure")),
+            Some(lock),
+        );
+        let server = server_owner_for_direct(direct);
+
+        let error = server.close().await.expect_err("server teardown fails");
+        assert!(
+            error
+                .to_string()
+                .contains("injected async server stop failure")
+        );
+        drop(server);
+
+        let reopen = DirectoryLock::acquire(&root)
+            .expect_err("async owner drop must not release a failed server root");
+        assert!(format!("{reopen:#}").contains("database root is already in use"));
     }
 
     #[tokio::test]
@@ -2088,7 +2806,7 @@ mod close_tests {
         harness
             .completion
             .send(FakeCloseCompletion {
-                result: Err(Arc::from("injected server stop failure")),
+                result: Err(Error::message("injected server stop failure")),
                 disposition: CloseDisposition::Terminal,
             })
             .expect("finish failed server close");

@@ -3,10 +3,10 @@ use std::path::PathBuf;
 use std::process;
 
 use oliphaunt_native_packaging::{
-    NativeExtensionArtifactFormat, NativeExtensionArtifactLegalContract,
+    Error, NativeExtensionArtifactFormat, NativeExtensionArtifactLegalContract,
     NativeExtensionArtifactLicenseProfile, NativeExtensionArtifactOptions,
     NativeExtensionMobileStaticArchive, NativeExtensionMobileStaticDependencyArchive,
-    NativeExtensionStaticSymbolAlias, create_prebuilt_extension_artifact,
+    NativeExtensionStaticSymbolAlias, Result, create_prebuilt_extension_artifact,
 };
 
 fn main() {
@@ -19,34 +19,32 @@ fn main() {
     }
 }
 
-fn run() -> oliphaunt::Result<()> {
+fn run() -> Result<()> {
     let args = ArtifactArgs::parse(env::args().skip(1))?;
     if args.help {
         print_help();
         return Ok(());
     }
-    let output = args.output.ok_or_else(|| {
-        oliphaunt::Error::InvalidConfig("missing required --output <path>".to_owned())
-    })?;
-    let runtime = args.runtime.ok_or_else(|| {
-        oliphaunt::Error::InvalidConfig("missing required --runtime <directory>".to_owned())
-    })?;
+    let output = args
+        .output
+        .ok_or_else(|| Error::InvalidConfig("missing required --output <path>".to_owned()))?;
+    let runtime = args
+        .runtime
+        .ok_or_else(|| Error::InvalidConfig("missing required --runtime <directory>".to_owned()))?;
     let sql_name = args.sql_name.ok_or_else(|| {
-        oliphaunt::Error::InvalidConfig("missing required --sql-name <extension>".to_owned())
+        Error::InvalidConfig("missing required --sql-name <extension>".to_owned())
     })?;
     let native_runtime_version = args.native_runtime_version.ok_or_else(|| {
-        oliphaunt::Error::InvalidConfig(
+        Error::InvalidConfig(
             "missing required --native-runtime-version <X.Y.Z> (or OLIPHAUNT_LIBOLIPHAUNT_VERSION)"
                 .to_owned(),
         )
     })?;
     let license_profile = args.license_profile.ok_or_else(|| {
-        oliphaunt::Error::InvalidConfig("missing required --license-profile <profile>".to_owned())
+        Error::InvalidConfig("missing required --license-profile <profile>".to_owned())
     })?;
     let legal_files_root = args.legal_files_root.ok_or_else(|| {
-        oliphaunt::Error::InvalidConfig(
-            "missing required --legal-files-root <directory>".to_owned(),
-        )
+        Error::InvalidConfig("missing required --legal-files-root <directory>".to_owned())
     })?;
     let legal_contract =
         NativeExtensionArtifactLegalContract::new(license_profile, legal_files_root)
@@ -127,7 +125,7 @@ struct ArtifactArgs {
 }
 
 impl ArtifactArgs {
-    fn parse(args: impl IntoIterator<Item = String>) -> oliphaunt::Result<Self> {
+    fn parse(args: impl IntoIterator<Item = String>) -> Result<Self> {
         let mut parsed = Self {
             output: None,
             runtime: None,
@@ -427,9 +425,7 @@ impl ArtifactArgs {
                     )?;
                 }
                 _ => {
-                    return Err(oliphaunt::Error::InvalidConfig(format!(
-                        "unknown argument '{arg}'"
-                    )));
+                    return Err(Error::InvalidConfig(format!("unknown argument '{arg}'")));
                 }
             }
         }
@@ -437,32 +433,32 @@ impl ArtifactArgs {
     }
 }
 
-fn next_value(args: &mut impl Iterator<Item = String>, flag: &str) -> oliphaunt::Result<String> {
+fn next_value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String> {
     args.next()
-        .ok_or_else(|| oliphaunt::Error::InvalidConfig(format!("{flag} requires a value")))
+        .ok_or_else(|| Error::InvalidConfig(format!("{flag} requires a value")))
 }
 
 fn value_without_prefix<'a>(value: &'a str, prefix: &str) -> &'a str {
     value.strip_prefix(prefix).expect("prefix was checked")
 }
 
-fn parse_format(value: &str) -> oliphaunt::Result<NativeExtensionArtifactFormat> {
+fn parse_format(value: &str) -> Result<NativeExtensionArtifactFormat> {
     match value {
         "directory" | "dir" => Ok(NativeExtensionArtifactFormat::Directory),
         "tar" => Ok(NativeExtensionArtifactFormat::Tar),
         "tar-gz" | "tar.gz" | "tgz" | "gz" => Ok(NativeExtensionArtifactFormat::TarGz),
         "tar-zst" | "tar.zst" | "zst" => Ok(NativeExtensionArtifactFormat::TarZst),
-        _ => Err(oliphaunt::Error::InvalidConfig(format!(
+        _ => Err(Error::InvalidConfig(format!(
             "unknown extension artifact format '{value}'"
         ))),
     }
 }
 
-fn parse_bool(value: &str) -> oliphaunt::Result<bool> {
+fn parse_bool(value: &str) -> Result<bool> {
     match value {
         "true" | "yes" | "1" => Ok(true),
         "false" | "no" | "0" => Ok(false),
-        _ => Err(oliphaunt::Error::InvalidConfig(format!(
+        _ => Err(Error::InvalidConfig(format!(
             "expected true/false, got '{value}'"
         ))),
     }
@@ -483,18 +479,16 @@ fn push_paths(target: &mut Vec<PathBuf>, value: &str) {
 fn push_mobile_static_archives(
     target: &mut Vec<NativeExtensionMobileStaticArchive>,
     value: &str,
-) -> oliphaunt::Result<()> {
+) -> Result<()> {
     for item in split_csv(value) {
         target.push(parse_mobile_static_archive(item)?);
     }
     Ok(())
 }
 
-fn parse_mobile_static_archive(
-    value: &str,
-) -> oliphaunt::Result<NativeExtensionMobileStaticArchive> {
+fn parse_mobile_static_archive(value: &str) -> Result<NativeExtensionMobileStaticArchive> {
     let separator = value.find('=').or_else(|| value.find(':')).ok_or_else(|| {
-        oliphaunt::Error::InvalidConfig(
+        Error::InvalidConfig(
             "--mobile-static-archive values must use <target>:<archive> or <target>=<archive>"
                 .to_owned(),
         )
@@ -502,7 +496,7 @@ fn parse_mobile_static_archive(
     let (target, archive) = value.split_at(separator);
     let archive = &archive[1..];
     if target.trim().is_empty() || archive.trim().is_empty() {
-        return Err(oliphaunt::Error::InvalidConfig(
+        return Err(Error::InvalidConfig(
             "--mobile-static-archive values must include both target and archive path".to_owned(),
         ));
     }
@@ -515,7 +509,7 @@ fn parse_mobile_static_archive(
 fn push_mobile_static_dependency_archives(
     target: &mut Vec<NativeExtensionMobileStaticDependencyArchive>,
     value: &str,
-) -> oliphaunt::Result<()> {
+) -> Result<()> {
     for item in split_csv(value) {
         target.push(parse_mobile_static_dependency_archive(item)?);
     }
@@ -524,7 +518,7 @@ fn push_mobile_static_dependency_archives(
 
 fn parse_mobile_static_dependency_archive(
     value: &str,
-) -> oliphaunt::Result<NativeExtensionMobileStaticDependencyArchive> {
+) -> Result<NativeExtensionMobileStaticDependencyArchive> {
     let (target_and_name, archive) = if let Some(separator) = value.find('=') {
         let (left, right) = value.split_at(separator);
         (left, &right[1..])
@@ -534,7 +528,7 @@ fn parse_mobile_static_dependency_archive(
         let name = parts.next().unwrap_or_default();
         let archive = parts.next().unwrap_or_default();
         if target.trim().is_empty() || name.trim().is_empty() || archive.trim().is_empty() {
-            return Err(oliphaunt::Error::InvalidConfig(
+            return Err(Error::InvalidConfig(
                 "--mobile-static-dependency-archive values must use <target>:<name>:<archive> or <target>:<name>=<archive>".to_owned(),
             ));
         }
@@ -545,12 +539,12 @@ fn parse_mobile_static_dependency_archive(
         ));
     };
     let Some((target, name)) = target_and_name.split_once(':') else {
-        return Err(oliphaunt::Error::InvalidConfig(
+        return Err(Error::InvalidConfig(
             "--mobile-static-dependency-archive values must use <target>:<name>:<archive> or <target>:<name>=<archive>".to_owned(),
         ));
     };
     if target.trim().is_empty() || name.trim().is_empty() || archive.trim().is_empty() {
-        return Err(oliphaunt::Error::InvalidConfig(
+        return Err(Error::InvalidConfig(
             "--mobile-static-dependency-archive values must include target, name, and archive path"
                 .to_owned(),
         ));
@@ -565,23 +559,23 @@ fn parse_mobile_static_dependency_archive(
 fn push_static_symbol_aliases(
     target: &mut Vec<NativeExtensionStaticSymbolAlias>,
     value: &str,
-) -> oliphaunt::Result<()> {
+) -> Result<()> {
     for item in split_csv(value) {
         target.push(parse_static_symbol_alias(item)?);
     }
     Ok(())
 }
 
-fn parse_static_symbol_alias(value: &str) -> oliphaunt::Result<NativeExtensionStaticSymbolAlias> {
+fn parse_static_symbol_alias(value: &str) -> Result<NativeExtensionStaticSymbolAlias> {
     let separator = value.find('=').or_else(|| value.find(':')).ok_or_else(|| {
-        oliphaunt::Error::InvalidConfig(
+        Error::InvalidConfig(
             "--static-symbol-alias values must use <sql-symbol>:<linked-symbol> or <sql-symbol>=<linked-symbol>".to_owned(),
         )
     })?;
     let (sql_symbol, linked_symbol) = value.split_at(separator);
     let linked_symbol = &linked_symbol[1..];
     if sql_symbol.trim().is_empty() || linked_symbol.trim().is_empty() {
-        return Err(oliphaunt::Error::InvalidConfig(
+        return Err(Error::InvalidConfig(
             "--static-symbol-alias values must include both SQL and linked C symbols".to_owned(),
         ));
     }

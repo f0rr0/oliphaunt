@@ -1,18 +1,14 @@
-#[cfg(feature = "extensions")]
-use anyhow::Context;
 use anyhow::{Result, ensure};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use crate::oliphaunt::base::InstallOutcome;
 use crate::oliphaunt::config::{PostgresConfig, StartupConfig};
 #[cfg(feature = "extensions")]
-use crate::oliphaunt::extensions::{Extension, extension_setup_sql};
+use crate::oliphaunt::extensions::Extension;
 use crate::oliphaunt::postgres_mod::{
     PostgresMod, ProtocolPumpOutcome, ProtocolPumpScope, ProtocolStream, StartupProtocolResponse,
 };
 use crate::oliphaunt::transport::Transport;
-#[cfg(feature = "extensions")]
-use crate::oliphaunt::{query::simple_query, wire::response_contains_error};
 
 static WASIX_BACKEND_OPEN_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -153,24 +149,6 @@ impl WasixBackendSession {
         self.pg.startup_config()
     }
 
-    #[cfg(feature = "extensions")]
-    pub(crate) fn enable_extensions(&mut self, extensions: &[Extension]) -> Result<()> {
-        for extension in extensions {
-            for sql in extension_setup_sql(*extension) {
-                let response = self.send_buffered(&simple_query(&sql)?).with_context(|| {
-                    format!("enable bundled extension '{}'", extension.sql_name())
-                })?;
-                if response_contains_error(&response) {
-                    anyhow::bail!(
-                        "enable bundled extension '{}' returned a Postgres error",
-                        extension.sql_name()
-                    );
-                }
-            }
-        }
-        Ok(())
-    }
-
     pub(crate) fn supports_protocol_pump(&self) -> bool {
         self.pg.supports_streaming_protocol()
     }
@@ -268,11 +246,6 @@ impl BackendSession {
     #[cfg(feature = "tools")]
     pub(crate) fn startup_config(&self) -> &StartupConfig {
         self.0.startup_config()
-    }
-
-    #[cfg(feature = "extensions")]
-    pub(crate) fn enable_extensions(&mut self, extensions: &[Extension]) -> Result<()> {
-        self.0.enable_extensions(extensions)
     }
 
     pub(crate) fn supports_protocol_pump(&self) -> bool {

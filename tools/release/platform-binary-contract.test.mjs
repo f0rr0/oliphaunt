@@ -9,7 +9,10 @@ import {
   inspectPlatformBinaryEntries,
   inspectPlatformBinaryTree,
 } from "./platform-binary-contract.mjs";
-import { windowsImportLibraryFixture } from "../test/release-fixture-utils.mjs";
+import {
+  OLIPHAUNT_WINDOWS_IMPORT_SYMBOLS,
+  windowsImportLibraryFixture,
+} from "../test/release-fixture-utils.mjs";
 
 const temporaryRoots = [];
 
@@ -501,7 +504,7 @@ describe("PE32+ architecture and self-contained runtime imports", () => {
     });
     expect(result.files).toEqual(["bin/oliphaunt.dll", "lib/oliphaunt.lib"]);
     expect(result.binaries).toBe(2);
-    expect(result.slices).toBe(5);
+    expect(result.slices).toBe(2 + OLIPHAUNT_WINDOWS_IMPORT_SYMBOLS.length);
 
     expect(() =>
       inspectPlatformBinaryEntries(runtimeEntries, { target: "windows-x64-msvc" }),
@@ -643,6 +646,15 @@ describe("PE32+ architecture and self-contained runtime imports", () => {
         }),
       ),
     ).toThrow(/does not expose required symbol oliphaunt_close_if_generation/u);
+    expect(() =>
+      inspectImportLibrary(
+        windowsImportLibraryFixture({
+          importSymbols: OLIPHAUNT_WINDOWS_IMPORT_SYMBOLS.filter(
+            (symbol) => symbol !== "oliphaunt_copy_last_error",
+          ),
+        }),
+      ),
+    ).toThrow(/does not expose required symbol oliphaunt_copy_last_error/u);
 
     const invalidOffset = Buffer.from(windowsImportLibraryFixture());
     invalidOffset.writeUInt32BE(0, 8 + 60 + 4);

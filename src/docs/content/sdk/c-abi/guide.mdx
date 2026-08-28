@@ -131,3 +131,8 @@ usual size-probe and copy calls even when another thread is cancelling or
 running work on the handle. Then check missing runtime resources, PGDATA locks,
 and PostgreSQL errors. Language bindings may parse protocol errors into richer
 ecosystem-native types.
+
+If the host's FFI scheduler resumes on a different thread, call the matching
+`_with_error` operation and keep one `OliphauntErrorCapture` with that call.
+Reading `oliphaunt_copy_last_error` later on the resumed thread cannot recover
+worker-local attribution. A null capture is rejected before the operation runs.

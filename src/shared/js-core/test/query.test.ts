@@ -9,6 +9,7 @@ import {
   containsTopLevelCopy,
   decodeQueryResult,
   describeQuery,
+  inspectManagedTransactionResponse,
   inspectReadyForQuery,
   json,
   parseDescribeResponse,
@@ -501,6 +502,86 @@ test("readiness inspection is decode-independent and malformed errors stay proto
   assert.equal(malformed instanceof PostgresError, false);
   assert.match(malformed.message, /ErrorResponse field is not valid UTF-8/);
   assert.equal(responseTransactionStatus(malformed), "idle");
+});
+
+test("managed transaction inspection uses every protocol tag and final readiness boundary", () => {
+  for (const tag of [
+    "BEGIN",
+    "START TRANSACTION",
+    "COMMIT",
+    "PREPARE TRANSACTION",
+    "COMMIT PREPARED",
+    "ROLLBACK PREPARED",
+  ]) {
+    assert.throws(
+      () =>
+        inspectManagedTransactionResponse(
+          backendResponse([
+            [0x43, cstring(tag)],
+            [0x5a, [0x54]],
+          ]),
+        ),
+      /violated callback transaction ownership/,
+      tag,
+    );
+  }
+
+  assert.throws(
+    () =>
+      inspectManagedTransactionResponse(
+        backendResponse([
+          [0x43, cstring("COMMIT")],
+          [0x43, cstring("BEGIN")],
+          [0x45, diagnostic("ERROR", "XX000", "later failure")],
+          [0x5a, [0x54]],
+        ]),
+      ),
+    /command tag COMMIT/,
+  );
+  assert.throws(
+    () =>
+      inspectManagedTransactionResponse(
+        backendResponse([
+          [0x43, cstring("ROLLBACK")],
+          [0x43, cstring("BEGIN")],
+          [0x5a, [0x54]],
+        ]),
+      ),
+    /command tag BEGIN/,
+  );
+  assert.throws(
+    () =>
+      inspectManagedTransactionResponse(
+        backendResponse([
+          [0x43, cstring("ROLLBACK")],
+          [0x5a, [0x49]],
+        ]),
+      ),
+    /ended PostgreSQL transaction ownership/,
+  );
+
+  for (const [tag, status] of [
+    ["ROLLBACK", 0x54],
+    ["ROLLBACK", 0x45],
+    ["SAVEPOINT", 0x54],
+    ["RELEASE", 0x54],
+    ["SET", 0x54],
+    ["PREPARE", 0x54],
+    ["CREATE FUNCTION", 0x54],
+    ["CALL", 0x54],
+    ["DO", 0x54],
+  ] as const) {
+    assert.equal(
+      inspectManagedTransactionResponse(
+        backendResponse([
+          [0x43, cstring(tag)],
+          [0x5a, [status]],
+        ]),
+      ),
+      status === 0x45 ? "failed" : "transaction",
+      tag,
+    );
+  }
 });
 
 test("structured parsers require exact completion and reject post-completion rows", () => {

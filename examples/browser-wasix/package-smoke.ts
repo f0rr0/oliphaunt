@@ -32,6 +32,7 @@ try {
   });
   let pgtapVersion: string;
   try {
+    await database.execute('CREATE EXTENSION pgtap');
     await expectAnswer(database);
     await expectStructuredApi(database, 'packed browser direct');
     pgtapVersion = await readPgtapVersion(database);

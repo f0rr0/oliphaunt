@@ -6,20 +6,20 @@ use std::net::{SocketAddr, TcpListener};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 #[cfg(unix)]
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::child_process::reap_child_process;
 use crate::config::{EngineMode, NativeServerConfig, OpenConfig, ServerListen};
-use crate::engine::{EngineCancel, EngineSession, NativeRuntime};
+use crate::engine::{EngineSession, NativeRuntime};
 use crate::error::{Error, Result};
 use crate::extension::{
     Extension, extension_runtime_environment, required_shared_preload_libraries,
 };
 use crate::liboliphaunt::{PreparedNativeRoot, configure_native_tool_env};
-use crate::pgwire::{PostgresCancelToken, PostgresEndpoint, PostgresWireClient};
+use crate::pgwire::{PostgresEndpoint, PostgresWireClient};
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
 
 const SERVER_HOST: &str = "127.0.0.1";
@@ -79,38 +79,57 @@ impl NativeRuntime for NativeServerRuntime {
                 Some(port) => port,
                 None => pick_port()?,
             };
-            let (process_listen, sdk_endpoint, connection_string, owned_socket_dir) =
+            let (process_listen, sdk_endpoint, connection_string, mut owned_socket_dir) =
                 prepare_server_listen(&listen, &config, port)?;
             let mut child =
-                start_postgres(&root, &executable, &config, &extensions, &process_listen)?;
+                match start_postgres(&root, &executable, &config, &extensions, &process_listen) {
+                    Ok(child) => child,
+                    Err(error) => {
+                        let mut cleanup_failures = Vec::new();
+                        remove_owned_socket_dir(&mut owned_socket_dir, &mut cleanup_failures);
+                        if owned_socket_dir.is_some() {
+                            std::mem::forget(owned_socket_dir);
+                        }
+                        return Err(failed_start_error(error, cleanup_failures));
+                    }
+                };
             match wait_for_server(sdk_endpoint, &mut child, &config) {
-                Ok(connection) => {
-                    let cancel = Arc::new(NativeServerCancel {
-                        token: connection.cancel_token(),
-                    });
+                Ok(()) => {
                     return Ok(Box::new(NativeServerSession {
-                        root,
+                        root: Some(root),
                         child: Some(child),
-                        connection: Some(connection),
-                        cancel,
                         connection_string,
                         owned_socket_dir,
+                        retain_root_on_drop: false,
                         closed: false,
                     }));
                 }
-                Err(error)
-                    if fixed_port.is_none()
-                        && attempt + 1 < attempts
-                        && is_auto_port_bind_conflict(&error) =>
-                {
-                    cleanup_failed_start(child);
-                    cleanup_socket_dir(owned_socket_dir.as_deref());
-                    last_error = Some(error);
-                }
                 Err(error) => {
-                    cleanup_failed_start(child);
-                    cleanup_socket_dir(owned_socket_dir.as_deref());
-                    return Err(error);
+                    let retry_auto_port = fixed_port.is_none()
+                        && attempt + 1 < attempts
+                        && is_auto_port_bind_conflict(&error);
+                    let (reaped, cleanup_failures) =
+                        cleanup_failed_start(&mut child, &mut owned_socket_dir);
+                    if !reaped {
+                        // The process may still be using PGDATA and its socket.
+                        // Leak the exact resources process-lifetime rather than
+                        // delete or unlock either tree beneath a live backend.
+                        std::mem::forget((child, owned_socket_dir, root));
+                        return Err(failed_start_error(error, cleanup_failures));
+                    }
+                    if owned_socket_dir.is_some() {
+                        // Reaping proved PGDATA safe to release, but preserve
+                        // the exact private socket path after failed deletion.
+                        std::mem::forget(owned_socket_dir);
+                    }
+                    if !cleanup_failures.is_empty() {
+                        return Err(failed_start_error(error, cleanup_failures));
+                    }
+                    if retry_auto_port {
+                        last_error = Some(error);
+                    } else {
+                        return Err(error);
+                    }
                 }
             }
         }
@@ -123,41 +142,24 @@ impl NativeRuntime for NativeServerRuntime {
 }
 
 struct NativeServerSession {
-    root: PreparedNativeRoot,
+    root: Option<PreparedNativeRoot>,
     child: Option<Child>,
-    connection: Option<PostgresWireClient>,
-    cancel: Arc<NativeServerCancel>,
     connection_string: String,
     owned_socket_dir: Option<PathBuf>,
+    retain_root_on_drop: bool,
     closed: bool,
 }
 
 impl EngineSession for NativeServerSession {
-    fn cancel_handle(&self) -> Option<Arc<dyn EngineCancel>> {
-        let cancel: Arc<dyn EngineCancel> = self.cancel.clone();
-        Some(cancel)
-    }
-
     fn connection_string(&self) -> Option<String> {
         Some(self.connection_string.clone())
     }
 
-    fn exec_protocol_raw(&mut self, request: ProtocolRequest) -> Result<ProtocolResponse> {
-        self.connection
-            .as_mut()
-            .ok_or(Error::EngineStopped)?
-            .exec_protocol_raw(request)
-    }
-
-    fn exec_protocol_raw_stream(
-        &mut self,
-        request: ProtocolRequest,
-        on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
-    ) -> Result<()> {
-        self.connection
-            .as_mut()
-            .ok_or(Error::EngineStopped)?
-            .exec_protocol_raw_stream(request, on_chunk)
+    fn exec_protocol_raw(&mut self, _request: ProtocolRequest) -> Result<ProtocolResponse> {
+        Err(Error::Engine(
+            "native server lifecycle handles do not expose an SDK query connection; connect an ordinary PostgreSQL client to connection_string()"
+                .to_owned(),
+        ))
     }
 
     fn close(&mut self) -> Result<()> {
@@ -165,131 +167,105 @@ impl EngineSession for NativeServerSession {
     }
 }
 
-struct NativeServerCancel {
-    token: PostgresCancelToken,
-}
-
-impl EngineCancel for NativeServerCancel {
-    fn cancel(&self) -> Result<()> {
-        self.token
-            .cancel(CONNECT_ATTEMPT_TIMEOUT, STARTUP_TIMEOUT)
-            .map_err(|err| Error::Engine(format!("native server cancel failed: {err}")))
-    }
-}
-
 impl NativeServerSession {
     fn close_server(&mut self) -> Result<()> {
-        if self.closed {
-            return Ok(());
-        }
+        let first_attempt = !self.closed;
         self.closed = true;
-        if let Some(connection) = self.connection.as_mut() {
-            let _ = connection.terminate();
-        }
-        self.connection = None;
-
-        let mut stop_error = None;
-        let pg_ctl = self.root.tool_path("pg_ctl");
-        if pg_ctl.is_file() {
-            let mut command = Command::new(&pg_ctl);
-            configure_native_tool_env(&mut command, &self.root.runtime_dir);
-            let stop = command
-                .arg("-D")
-                .arg(&self.root.pgdata)
-                .arg("-m")
-                .arg("fast")
-                .arg("-w")
-                .arg("stop")
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn();
-            match stop {
-                Ok(mut child) => match wait_for_child_exit(&mut child, SHUTDOWN_TIMEOUT) {
-                    Ok(Some(status)) if status.success() => {}
-                    Ok(Some(status)) => {
-                        stop_error = Some(format!("pg_ctl stop exited with {status}"));
+        let mut cleanup_failures = Vec::new();
+        if first_attempt {
+            let root = self
+                .root
+                .as_ref()
+                .expect("native server session retains its prepared root");
+            let pg_ctl = root.tool_path("pg_ctl");
+            if pg_ctl.is_file() {
+                let mut command = Command::new(&pg_ctl);
+                configure_native_tool_env(&mut command, &root.runtime_dir);
+                let stop = command
+                    .arg("-D")
+                    .arg(&root.pgdata)
+                    .arg("-m")
+                    .arg("fast")
+                    .arg("-w")
+                    .arg("stop")
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn();
+                match stop {
+                    Ok(mut child) => {
+                        let outcome =
+                            reap_child_process(&mut child, SHUTDOWN_TIMEOUT, "pg_ctl stop");
+                        cleanup_failures.extend(outcome.failures);
+                        if outcome.reaped {
+                            if outcome.exit_success == Some(false) {
+                                cleanup_failures
+                                    .push("pg_ctl stop exited unsuccessfully".to_owned());
+                            }
+                        } else {
+                            // No enclosing owner can safely retry an unconfirmed
+                            // pg_ctl child after this terminal close attempt.
+                            self.retain_root_on_drop = true;
+                            std::mem::forget(child);
+                        }
                     }
-                    Ok(None) => {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        stop_error = Some(format!(
-                            "pg_ctl stop did not finish within {} seconds",
-                            SHUTDOWN_TIMEOUT.as_secs()
-                        ));
-                    }
-                    Err(err) => {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        stop_error = Some(format!("wait for pg_ctl stop: {err}"));
-                    }
-                },
-                Err(err) => stop_error = Some(format!("run pg_ctl stop: {err}")),
-            }
-        } else {
-            stop_error = Some(format!(
-                "native server shutdown requires pg_ctl at {}",
-                pg_ctl.display()
-            ));
-        }
-
-        if let Some(mut child) = self.child.take() {
-            match wait_for_child_exit(&mut child, SHUTDOWN_TIMEOUT) {
-                Ok(Some(_)) => {}
-                Ok(None) => {
-                    if child.kill().is_err() && stop_error.is_none() {
-                        stop_error =
-                            Some("terminate native server process after timeout".to_owned());
-                    }
-                    if let Err(err) = child.wait()
-                        && stop_error.is_none()
-                    {
-                        stop_error = Some(format!("reap native server process: {err}"));
-                    }
-                    if stop_error.is_none() {
-                        stop_error = Some(format!(
-                            "native server did not stop within {} seconds",
-                            SHUTDOWN_TIMEOUT.as_secs()
-                        ));
-                    }
+                    Err(err) => cleanup_failures.push(format!("run pg_ctl stop: {err}")),
                 }
-                Err(err) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    if stop_error.is_none() {
-                        stop_error = Some(format!("wait for native server process: {err}"));
-                    }
-                }
+            } else {
+                cleanup_failures.push(format!(
+                    "native server shutdown requires pg_ctl at {}",
+                    pg_ctl.display()
+                ));
             }
         }
 
-        cleanup_socket_dir(self.owned_socket_dir.as_deref());
-        self.owned_socket_dir = None;
-        if let Some(error) = stop_error {
-            return Err(Error::Engine(error));
+        if let Some(child) = self.child.as_mut() {
+            let outcome = reap_child_process(child, SHUTDOWN_TIMEOUT, "native server process");
+            cleanup_failures.extend(outcome.failures);
+            if outcome.reaped {
+                self.child = None;
+            }
+        }
+
+        if self.child.is_none()
+            && let Some(socket_dir) = self.owned_socket_dir.as_ref()
+        {
+            match fs::remove_dir_all(socket_dir) {
+                Ok(()) => self.owned_socket_dir = None,
+                Err(error) => cleanup_failures.push(format!(
+                    "remove native server socket directory {}: {error}",
+                    socket_dir.display()
+                )),
+            }
+        }
+        if !cleanup_failures.is_empty() {
+            return Err(Error::Engine(format!(
+                "native server cleanup failed: {}",
+                cleanup_failures.join("; ")
+            )));
         }
         Ok(())
     }
 }
 
-fn wait_for_child_exit(
-    child: &mut Child,
-    timeout: Duration,
-) -> std::io::Result<Option<std::process::ExitStatus>> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if let Some(status) = child.try_wait()? {
-            return Ok(Some(status));
-        }
-        if Instant::now() >= deadline {
-            return Ok(None);
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-}
-
 impl Drop for NativeServerSession {
     fn drop(&mut self) {
-        let _ = self.close_server();
+        let close_failed = self.close_server().is_err();
+        let retain_root = self.retain_root_on_drop || self.child.is_some();
+        if close_failed {
+            // Drop is the last package-internal cleanup opportunity. Preserve
+            // every unresolved exact owner process-lifetime; in particular,
+            // never let PreparedNativeRoot unlock or delete PGDATA beneath an
+            // unconfirmed PostgreSQL/pg_ctl process.
+            if let Some(child) = self.child.take() {
+                std::mem::forget(child);
+            }
+            if let Some(socket_dir) = self.owned_socket_dir.take() {
+                std::mem::forget(socket_dir);
+            }
+        }
+        if retain_root && let Some(root) = self.root.take() {
+            std::mem::forget(root);
+        }
     }
 }
 
@@ -432,7 +408,7 @@ fn wait_for_server(
     endpoint: PostgresEndpoint,
     child: &mut Child,
     config: &OpenConfig,
-) -> Result<PostgresWireClient> {
+) -> Result<()> {
     let deadline = Instant::now() + STARTUP_TIMEOUT;
     let mut last_error = None;
     while Instant::now() < deadline {
@@ -452,7 +428,10 @@ fn wait_for_server(
             CONNECT_ATTEMPT_TIMEOUT,
             STARTUP_TIMEOUT,
         ) {
-            Ok(connection) => return Ok(connection),
+            Ok(mut connection) => {
+                connection.terminate()?;
+                return Ok(());
+            }
             Err(err) => last_error = Some(err),
         }
         thread::sleep(Duration::from_millis(50));
@@ -691,21 +670,38 @@ fn create_server_socket_dir(_port: u16) -> Result<Option<PathBuf>> {
     Ok(None)
 }
 
-fn cleanup_socket_dir(socket_dir: Option<&Path>) {
-    if let Some(socket_dir) = socket_dir {
-        let _ = fs::remove_dir_all(socket_dir);
+fn cleanup_failed_start(
+    child: &mut Child,
+    owned_socket_dir: &mut Option<PathBuf>,
+) -> (bool, Vec<String>) {
+    let outcome = reap_child_process(child, SHUTDOWN_TIMEOUT, "failed native server startup");
+    let mut failures = outcome.failures;
+    if outcome.reaped {
+        remove_owned_socket_dir(owned_socket_dir, &mut failures);
+    }
+    (outcome.reaped, failures)
+}
+
+fn remove_owned_socket_dir(socket_dir: &mut Option<PathBuf>, failures: &mut Vec<String>) {
+    if let Some(path) = socket_dir.as_ref() {
+        match fs::remove_dir_all(path) {
+            Ok(()) => *socket_dir = None,
+            Err(error) => failures.push(format!(
+                "remove failed native server startup socket directory {}: {error}",
+                path.display()
+            )),
+        }
     }
 }
 
-fn cleanup_failed_start(mut child: Child) {
-    match child.try_wait() {
-        Ok(Some(_)) => {}
-        Ok(None) => {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-        Err(_) => {}
+fn failed_start_error(error: Error, cleanup_failures: Vec<String>) -> Error {
+    if cleanup_failures.is_empty() {
+        return error;
     }
+    Error::Engine(format!(
+        "{error}; native server failed-start cleanup failed: {}",
+        cleanup_failures.join("; ")
+    ))
 }
 
 fn is_auto_port_bind_conflict(error: &Error) -> bool {
@@ -758,7 +754,7 @@ mod tests {
         let args = postgres_startup_args(
             Path::new("/tmp/oliphaunt-preload/pgdata"),
             &config,
-            &[Extension::PgTextsearch, Extension::PgTextsearch],
+            &[Extension::PG_TEXTSEARCH, Extension::PG_TEXTSEARCH],
             &PostgresProcessListen::Tcp {
                 port: 15432,
                 private_socket_dir: Some(PathBuf::from("/tmp/oliphaunt-preload-socket")),
@@ -792,7 +788,7 @@ mod tests {
         ));
         let _cleanup = RuntimeDirCleanup(runtime_dir.clone());
         let mut missing = Command::new("postgres");
-        configure_extension_runtime_env(&mut missing, &runtime_dir, &[Extension::Postgis]);
+        configure_extension_runtime_env(&mut missing, &runtime_dir, &[Extension::POSTGIS]);
         assert_eq!(
             missing
                 .get_envs()
@@ -805,7 +801,7 @@ mod tests {
         std::fs::write(proj_data.join("proj.db"), b"fixture").expect("write proj.db");
 
         let mut present = Command::new("postgres");
-        configure_extension_runtime_env(&mut present, &runtime_dir, &[Extension::Postgis]);
+        configure_extension_runtime_env(&mut present, &runtime_dir, &[Extension::POSTGIS]);
         assert_eq!(
             present
                 .get_envs()

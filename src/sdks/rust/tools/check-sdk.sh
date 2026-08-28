@@ -355,20 +355,32 @@ if [ "$mode" = "regression" ]; then
   exit 0
 fi
 
-if oliphaunt_runtime_native_host_ready extensions; then
-  native_runtime_ready=1
-  echo "using existing native Oliphaunt runtime at $(oliphaunt_runtime_native_host_work_root)"
-elif [ -n "${OLIPHAUNT_REQUIRE_NATIVE:-}" ]; then
-  oliphaunt_runtime_native_host_diagnostics extensions
-  exit 1
-else
-  echo "warning: native Oliphaunt runtime unavailable or incomplete; env-gated Rust SDK tests will skip" >&2
-  oliphaunt_runtime_native_host_diagnostics extensions
+native_runtime_profile=""
+case "$mode" in
+  extension-regression)
+    native_runtime_profile="extensions"
+    ;;
+  release-check|smoke-runtime|test-unit)
+    native_runtime_profile="basic"
+    ;;
+esac
+
+if [ -n "$native_runtime_profile" ]; then
+  if oliphaunt_runtime_native_host_ready "$native_runtime_profile"; then
+    native_runtime_ready=1
+    echo "using existing native Oliphaunt runtime at $(oliphaunt_runtime_native_host_work_root)"
+  elif [ -n "${OLIPHAUNT_REQUIRE_NATIVE:-}" ]; then
+    oliphaunt_runtime_native_host_diagnostics "$native_runtime_profile"
+    exit 1
+  else
+    echo "warning: native Oliphaunt runtime unavailable or incomplete; env-gated Rust SDK tests will skip" >&2
+    oliphaunt_runtime_native_host_diagnostics "$native_runtime_profile"
+  fi
 fi
 
 if [ "$mode" = "smoke-runtime" ]; then
   if [ "$native_runtime_ready" -ne 1 ]; then
-    oliphaunt_runtime_native_host_diagnostics extensions
+    oliphaunt_runtime_native_host_diagnostics basic
     exit 1
   fi
   native_runtime_lock cargo test -p oliphaunt --locked \
@@ -427,12 +439,12 @@ for required in \
   README.md \
   ARCHITECTURE.md \
   src/lib.rs \
+  src/builder.rs \
   src/database.rs \
   src/direct.rs \
   src/session.rs \
   src/query_core.rs \
   src/query.rs \
-  src/worker.rs \
   tests/public_api.rs \
   tests/sdk_extensions.rs \
   tests/native_smoke.rs \
@@ -463,6 +475,7 @@ if git ls-files --error-unmatch src/sdks/rust/tests/fixtures/extensions/'*.sql' 
   exit 1
 fi
 reject_cargo_package_entry_pattern "$package_listing" '^tests/fixtures/postgis-smoke\.sql$'
+reject_cargo_package_entry_pattern "$package_listing" '^src/worker\.rs$'
 reject_cargo_package_entry_pattern "$package_listing" '^testdata/logical-tools([.-]|$)'
 reject_cargo_package_entry_pattern "$package_listing" '^(target/|oliphaunt/|sdks/|src/bindings/wasix-rust/crates/oliphaunt-wasix/)'
 reject_cargo_package_entry_pattern "$package_listing" '^src/(runtime_resources|bin/oliphaunt-(resources|extension-artifact|extension-index))'

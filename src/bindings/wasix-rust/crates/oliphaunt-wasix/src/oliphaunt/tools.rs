@@ -627,22 +627,6 @@ fn decode_tool_output(tool: &'static str, output: ToolOutput) -> Result<String> 
     })
 }
 
-/// Run bundled `pg_dump` directly against an open WASIX database.
-pub fn pg_dump(
-    database: &mut crate::oliphaunt::client::Oliphaunt,
-    options: PgDumpOptions,
-) -> crate::Result<String> {
-    crate::error::public_result(database.run_pg_dump_tool(options))
-}
-
-/// Run bundled non-interactive `psql` directly against an open WASIX database.
-pub fn psql(
-    database: &mut crate::oliphaunt::client::Oliphaunt,
-    options: PsqlOptions,
-) -> crate::Result<String> {
-    crate::error::public_result(database.run_psql_tool(options))
-}
-
 pub(crate) type DirectToolSocket = TcpSocketHalf;
 
 pub(crate) fn run_direct_pg_dump<F>(
@@ -1260,20 +1244,20 @@ mod tests {
             .expect("logical tool contract must be valid JSON");
 
         let mut source = crate::oliphaunt::client::Oliphaunt::builder()
-            .extension(crate::extensions::PGTAP)
+            .extension(crate::Extension::PGTAP)
             .open()?;
-        psql(&mut source, PsqlOptions::new().script(seed))?;
-        let schema = pg_dump(&mut source, PgDumpOptions::new().arg("--schema-only"))?;
+        source.psql(PsqlOptions::new().script(seed))?;
+        let schema = source.pg_dump(PgDumpOptions::new().arg("--schema-only"))?;
         assert!(schema.contains("CREATE TABLE public.logical_items"));
         assert!(!schema.contains("COPY public.logical_items"));
-        let dump = pg_dump(&mut source, PgDumpOptions::new())?;
+        let dump = source.pg_dump(PgDumpOptions::new())?;
         assert!(dump.contains("COPY public.logical_items"));
         source.close()?;
 
         let mut restored = crate::oliphaunt::client::Oliphaunt::builder()
-            .extension(crate::extensions::PGTAP)
+            .extension(crate::Extension::PGTAP)
             .open()?;
-        psql(&mut restored, PsqlOptions::new().script(dump))?;
+        restored.psql(PsqlOptions::new().script(dump))?;
         let result = restored.query(&verify)?;
         let values = &expected["expected"];
         let rows = values["rows"].as_i64().unwrap().to_string();

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
-import { createConnection, Socket } from 'node:net';
+import { createConnection, Server, Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -80,6 +80,96 @@ describe('WASIX local server surface', () => {
     expect(server.closed).toBe(true);
     expect(server.close()).toBe(first);
     await expect(server.close()).rejects.toBe(failure);
+  });
+
+  it.runIf(process.platform !== 'win32')(
+    'keeps a live Unix listener and its socket owned after listener close is unconfirmed',
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'oliphaunt-wasix-server-'));
+      temporaryDirectories.push(directory);
+      const server = await openServer({ listen: { transport: 'unix', directory, port: 6544 } });
+      const socketPath = join(directory, `${fixture.unix.filePrefix}6544`);
+      const listenerFailure = new Error('fixture listener close failed');
+      let nodeServer: Server | undefined;
+      const originalClose = Server.prototype.close;
+      const close = vi.spyOn(Server.prototype, 'close').mockImplementation(function (
+        this: Server,
+        callback?: (error?: Error) => void,
+      ) {
+        nodeServer = this;
+        callback?.(listenerFailure);
+        return this;
+      });
+
+      try {
+        const failure = await server.close().catch((error: unknown) => error);
+        expect(failure).toBeInstanceOf(AggregateError);
+        if (!(failure instanceof AggregateError)) throw new Error('expected aggregate failure');
+        expect(failure.errors).toContain(listenerFailure);
+        expect(server.closed).toBe(true);
+        expect(nodeServer?.listening).toBe(true);
+        expect((await stat(socketPath)).isSocket()).toBe(true);
+        expect(closeDatabase).toHaveBeenCalledTimes(1);
+
+        // The public outcome is terminal, but the retained exact owner may
+        // safely retry listener/path cleanup without closing the database twice.
+        const owned = nodeServer;
+        if (owned === undefined) throw new Error('fixture did not capture the listener');
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(close).toHaveBeenCalledTimes(2);
+        expect(owned.listening).toBe(true);
+        close.mockRestore();
+        await closeServerForTest(owned, originalClose);
+        expect(closeDatabase).toHaveBeenCalledTimes(1);
+      } finally {
+        close.mockRestore();
+        if (nodeServer?.listening) await closeServerForTest(nodeServer, originalClose);
+      }
+    },
+  );
+
+  it('aggregates failed-open and cleanup failures while retaining the live listener', async () => {
+    const databaseFailure = new Error('fixture database cleanup failed');
+    const listenerFailure = new Error('fixture listener cleanup failed');
+    closeDatabase.mockRejectedValueOnce(databaseFailure);
+    const address = vi.spyOn(Server.prototype, 'address').mockReturnValue(null);
+    let nodeServer: Server | undefined;
+    const originalClose = Server.prototype.close;
+    const close = vi.spyOn(Server.prototype, 'close').mockImplementation(function (
+      this: Server,
+      callback?: (error?: Error) => void,
+    ) {
+      nodeServer = this;
+      callback?.(listenerFailure);
+      return this;
+    });
+
+    try {
+      const failure = await openServer().catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(AggregateError);
+      if (!(failure instanceof AggregateError)) throw new Error('expected aggregate failure');
+      expect(failure.errors[0]).toMatchObject({
+        message: 'Oliphaunt WASIX TCP listener did not report a port',
+      });
+      expect(failure.errors).toContain(listenerFailure);
+      expect(failure.errors).toContain(databaseFailure);
+      expect(nodeServer?.listening).toBe(true);
+      expect(closeDatabase).toHaveBeenCalledTimes(1);
+
+      address.mockRestore();
+      const owned = nodeServer;
+      if (owned === undefined) throw new Error('fixture did not capture the listener');
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(close).toHaveBeenCalledTimes(2);
+      expect(owned.listening).toBe(true);
+      close.mockRestore();
+      await closeServerForTest(owned, originalClose);
+      expect(closeDatabase).toHaveBeenCalledTimes(1);
+    } finally {
+      address.mockRestore();
+      close.mockRestore();
+      if (nodeServer?.listening) await closeServerForTest(nodeServer, originalClose);
+    }
   });
 
   it('rejects every invalid port in the shared listener contract', async () => {
@@ -218,3 +308,10 @@ describe('WASIX local server surface', () => {
     },
   );
 });
+
+function closeServerForTest(server: Server, close: Server['close']): Promise<void> {
+  if (!server.listening) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    close.call(server, (error) => (error === undefined ? resolve() : reject(error)));
+  });
+}

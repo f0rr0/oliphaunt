@@ -1,22 +1,40 @@
 use std::any::Any;
 use std::collections::VecDeque;
+use std::future::poll_fn;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::task::{Context, Poll, Waker};
 use std::thread;
 
 use crate::cancellation::CancellationGate;
-use crate::engine::EngineSession;
-use crate::error::{Error, Result};
+use crate::engine::{EngineSession, ProtocolStreamOutcome};
+use crate::error::{Error, Result, SESSION_STATE_UNKNOWN};
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
 use crate::query::{ReadyStatus, parse_simple_command_response};
 use crate::reply;
 use crate::session::{
-    TRANSACTION_ACTIVE, TransactionGuard, begin_transaction, execute_structured_operation,
+    TransactionGuard, begin_transaction, execute_structured_operation,
     execute_transaction_structured_operation, inactive_transaction_error,
 };
 
 type ProtocolChunkCallback = Box<dyn FnMut(&[u8]) -> Result<()> + Send>;
+
+pub(crate) enum ExecutorStreamOutcome {
+    ReadyForQuery(Result<()>),
+    CallbackPanicked(Error),
+    SessionStateUnknown(Error),
+}
+
+impl ExecutorStreamOutcome {
+    #[cfg(test)]
+    fn into_result(self) -> Result<()> {
+        match self {
+            Self::ReadyForQuery(result) => result,
+            Self::CallbackPanicked(error) | Self::SessionStateUnknown(error) => Err(error),
+        }
+    }
+}
 
 /// Ordinary application work is bounded. Lifecycle and transaction-recovery
 /// commands share the same FIFO but do not consume this capacity, so cleanup
@@ -80,7 +98,38 @@ struct CommandQueue {
 struct CommandQueueState {
     commands: VecDeque<Command>,
     ordinary_count: usize,
+    admission_waiters: VecDeque<AdmissionWaiter>,
     stopped: bool,
+}
+
+struct AdmissionWaiter {
+    token: Arc<AdmissionToken>,
+    waker: Waker,
+}
+
+struct AdmissionToken {
+    rejected: AtomicBool,
+}
+
+struct AdmissionRegistration<'queue> {
+    queue: &'queue CommandQueue,
+    // The uncontended path does not allocate. A stable token is created only
+    // if this operation actually has to join the capacity-waiter FIFO.
+    token: Option<Arc<AdmissionToken>>,
+}
+
+impl<'queue> AdmissionRegistration<'queue> {
+    fn new(queue: &'queue CommandQueue) -> Self {
+        Self { queue, token: None }
+    }
+}
+
+impl Drop for AdmissionRegistration<'_> {
+    fn drop(&mut self) {
+        if let Some(token) = &self.token {
+            self.queue.cancel_admission(token);
+        }
+    }
 }
 
 impl CommandQueue {
@@ -89,29 +138,130 @@ impl CommandQueue {
             state: Mutex::new(CommandQueueState {
                 commands: VecDeque::new(),
                 ordinary_count: 0,
+                admission_waiters: VecDeque::new(),
                 stopped: false,
             }),
             ready: Condvar::new(),
         }
     }
 
-    fn send(&self, command: Command) -> Result<()> {
-        let ordinary = command.is_ordinary();
+    fn send_control(&self, command: Command) -> Result<()> {
+        debug_assert!(!command.is_ordinary());
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if state.stopped {
             return Err(Error::EngineStopped);
         }
-        if ordinary && state.ordinary_count >= ORDINARY_QUEUE_CAPACITY {
-            return Err(Error::Engine(format!(
-                "native engine command queue is full (capacity {ORDINARY_QUEUE_CAPACITY})"
-            )));
-        }
-        if ordinary {
-            state.ordinary_count += 1;
-        }
         state.commands.push_back(command);
         self.ready.notify_one();
         Ok(())
+    }
+
+    fn poll_send_ordinary(
+        &self,
+        token: &mut Option<Arc<AdmissionToken>>,
+        command: &mut Option<Command>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<()>> {
+        debug_assert!(command.as_ref().is_some_and(Command::is_ordinary));
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.stopped
+            || token
+                .as_ref()
+                .is_some_and(|token| token.rejected.load(Ordering::SeqCst))
+        {
+            return Poll::Ready(Err(Error::EngineStopped));
+        }
+
+        let position = token.as_ref().and_then(|token| {
+            state
+                .admission_waiters
+                .iter()
+                .position(|waiter| Arc::ptr_eq(&waiter.token, token))
+        });
+        let is_next = match position {
+            Some(0) => true,
+            Some(_) => false,
+            None => state.admission_waiters.is_empty(),
+        };
+        if state.ordinary_count < ORDINARY_QUEUE_CAPACITY && is_next {
+            if position.is_some() {
+                state.admission_waiters.pop_front();
+            }
+            state.ordinary_count += 1;
+            state
+                .commands
+                .push_back(command.take().expect("ordinary command is admitted once"));
+            let next = (state.ordinary_count < ORDINARY_QUEUE_CAPACITY)
+                .then(|| {
+                    state
+                        .admission_waiters
+                        .front()
+                        .map(|waiter| waiter.waker.clone())
+                })
+                .flatten();
+            self.ready.notify_one();
+            drop(state);
+            if let Some(waker) = next {
+                waker.wake();
+            }
+            return Poll::Ready(Ok(()));
+        }
+
+        let token = token.get_or_insert_with(|| {
+            Arc::new(AdmissionToken {
+                rejected: AtomicBool::new(false),
+            })
+        });
+        match position {
+            Some(position) => {
+                let waiter = &mut state.admission_waiters[position];
+                if !waiter.waker.will_wake(cx.waker()) {
+                    waiter.waker = cx.waker().clone();
+                }
+            }
+            None => state.admission_waiters.push_back(AdmissionWaiter {
+                token: Arc::clone(token),
+                waker: cx.waker().clone(),
+            }),
+        }
+        Poll::Pending
+    }
+
+    fn cancel_admission(&self, token: &Arc<AdmissionToken>) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let Some(position) = state
+            .admission_waiters
+            .iter()
+            .position(|waiter| Arc::ptr_eq(&waiter.token, token))
+        else {
+            return;
+        };
+        let was_next = position == 0;
+        state.admission_waiters.remove(position);
+        let next = (was_next && state.ordinary_count < ORDINARY_QUEUE_CAPACITY)
+            .then(|| {
+                state
+                    .admission_waiters
+                    .front()
+                    .map(|waiter| waiter.waker.clone())
+            })
+            .flatten();
+        drop(state);
+        if let Some(waker) = next {
+            waker.wake();
+        }
+    }
+
+    fn reject_admissions(&self) -> Vec<Waker> {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state
+            .admission_waiters
+            .drain(..)
+            .map(|waiter| {
+                waiter.token.rejected.store(true, Ordering::SeqCst);
+                waiter.waker
+            })
+            .collect()
     }
 
     fn receive(&self) -> Option<Command> {
@@ -120,6 +270,14 @@ impl CommandQueue {
             if let Some(command) = state.commands.pop_front() {
                 if command.is_ordinary() {
                     state.ordinary_count -= 1;
+                }
+                let next = state
+                    .admission_waiters
+                    .front()
+                    .map(|waiter| waiter.waker.clone());
+                drop(state);
+                if let Some(waker) = next {
+                    waker.wake();
                 }
                 return Some(command);
             }
@@ -138,7 +296,19 @@ impl CommandQueue {
         state.stopped = true;
         state.ordinary_count = 0;
         let pending = state.commands.drain(..).collect();
+        let wakers = state
+            .admission_waiters
+            .drain(..)
+            .map(|waiter| {
+                waiter.token.rejected.store(true, Ordering::SeqCst);
+                waiter.waker
+            })
+            .collect::<Vec<_>>();
         self.ready.notify_all();
+        drop(state);
+        for waker in wakers {
+            waker.wake();
+        }
         pending
     }
 }
@@ -223,7 +393,7 @@ impl EngineExecutor {
         request: ProtocolRequest,
     ) -> Result<ProtocolResponse> {
         let (reply, receiver) = reply::channel();
-        self.send(Command::Exec { request, reply })?;
+        self.send(Command::Exec { request, reply }).await?;
         receiver.await
     }
 
@@ -237,7 +407,8 @@ impl EngineExecutor {
             request,
             operation: operation.into(),
             reply,
-        })?;
+        })
+        .await?;
         receiver.await
     }
 
@@ -245,39 +416,16 @@ impl EngineExecutor {
         &self,
         token: u64,
         request: ProtocolRequest,
-    ) -> Result<ProtocolResponse> {
-        self.pinned_exec(token, request, None, true).await
-    }
-
-    pub(crate) async fn pinned_exec_protocol_raw_guarded(
-        &self,
-        token: u64,
-        request: ProtocolRequest,
         guard: Arc<TransactionGuard>,
-    ) -> Result<ProtocolResponse> {
-        self.pinned_exec(token, request, Some(guard), false).await
-    }
-
-    async fn pinned_exec(
-        &self,
-        token: u64,
-        request: ProtocolRequest,
-        guard: Option<Arc<TransactionGuard>>,
-        must_run: bool,
     ) -> Result<ProtocolResponse> {
         let (reply, receiver) = reply::channel();
         let command = Command::PinnedExec {
             token,
             request,
             guard,
-            must_run,
             reply,
         };
-        if must_run {
-            self.send_transaction_settlement(command)?;
-        } else {
-            self.send(command)?;
-        }
+        self.send_transaction_settlement(command)?;
         receiver.await
     }
 
@@ -295,10 +443,12 @@ impl EngineExecutor {
             operation: operation.into(),
             guard,
             reply,
-        })?;
+        })
+        .await?;
         receiver.await
     }
 
+    #[cfg(test)]
     pub(crate) async fn exec_protocol_raw_stream<F>(
         &self,
         request: ProtocolRequest,
@@ -307,39 +457,32 @@ impl EngineExecutor {
     where
         F: FnMut(&[u8]) -> Result<()> + Send + 'static,
     {
+        self.exec_protocol_raw_stream_outcome(request, on_chunk)
+            .await?
+            .into_result()
+    }
+
+    pub(crate) async fn exec_protocol_raw_stream_outcome<F>(
+        &self,
+        request: ProtocolRequest,
+        on_chunk: F,
+    ) -> Result<ExecutorStreamOutcome>
+    where
+        F: FnMut(&[u8]) -> Result<()> + Send + 'static,
+    {
         let (reply, receiver) = reply::channel();
         self.send(Command::Stream {
             request,
             on_chunk: Box::new(on_chunk),
             reply,
-        })?;
-        receiver.await
-    }
-
-    pub(crate) async fn pinned_exec_protocol_raw_stream<F>(
-        &self,
-        token: u64,
-        request: ProtocolRequest,
-        guard: Option<Arc<TransactionGuard>>,
-        on_chunk: F,
-    ) -> Result<()>
-    where
-        F: FnMut(&[u8]) -> Result<()> + Send + 'static,
-    {
-        let (reply, receiver) = reply::channel();
-        self.send(Command::PinnedStream {
-            token,
-            request,
-            on_chunk: Box::new(on_chunk),
-            guard,
-            reply,
-        })?;
+        })
+        .await?;
         receiver.await
     }
 
     pub(crate) async fn begin_transaction(&self) -> Result<u64> {
         let (reply, receiver) = reply::channel();
-        self.send(Command::Begin { reply })?;
+        self.send(Command::Begin { reply }).await?;
         receiver.await
     }
 
@@ -377,13 +520,14 @@ impl EngineExecutor {
 
     pub(crate) async fn backup(&self) -> Result<Vec<u8>> {
         let (reply, receiver) = reply::channel();
-        self.send(Command::Backup { reply })?;
+        self.send(Command::Backup { reply }).await?;
         receiver.await
     }
 
     pub(crate) async fn close(&self) -> Result<()> {
         self.ensure_not_owner_thread()?;
         let (reply, receiver) = reply::channel();
+        let mut rejected_admissions = Vec::new();
         {
             // Setting the cutoff and appending Close happen under the same
             // admission lock used by every command submission. Commands that
@@ -406,29 +550,51 @@ impl EngineExecutor {
                 close.in_progress = true;
                 close.waiters.push(reply);
                 self.shared.closing.store(true, Ordering::SeqCst);
-                if let Err(error) = self.shared.queue.send(Command::Close) {
+                // Mark every already-registered capacity waiter while the
+                // admission cutoff is held. Waking is deferred until after the
+                // lock is released so even a synchronous waker cannot deadlock.
+                rejected_admissions = self.shared.queue.reject_admissions();
+                if let Err(error) = self.shared.queue.send_control(Command::Close) {
                     drop(close);
                     complete_terminal_close(&self.shared, Err(error));
                 }
             }
         }
+        for waker in rejected_admissions {
+            waker.wake();
+        }
         receiver.await
     }
 
-    fn send(&self, command: Command) -> Result<()> {
-        self.ensure_not_owner_thread()?;
-        let _admission = self.shared.admission.lock().map_err(|_| {
-            Error::Engine("database command admission lock was poisoned".to_owned())
-        })?;
-        if self.shared.closed.load(Ordering::SeqCst) || self.shared.closing.load(Ordering::SeqCst) {
-            return Err(Error::EngineStopped);
-        }
-        if self.shared.transaction_poisoned.load(Ordering::SeqCst) {
-            return Err(Error::Engine(
-                "transaction state is unknown; close the database".to_owned(),
-            ));
-        }
-        self.shared.queue.send(command)
+    async fn send(&self, command: Command) -> Result<()> {
+        debug_assert!(command.is_ordinary());
+        let mut registration = AdmissionRegistration::new(&self.shared.queue);
+        let mut command = Some(command);
+        poll_fn(|cx| {
+            if let Err(error) = self.ensure_not_owner_thread() {
+                return Poll::Ready(Err(error));
+            }
+            let _admission = match self.shared.admission.lock() {
+                Ok(admission) => admission,
+                Err(_) => {
+                    return Poll::Ready(Err(Error::Engine(
+                        "database command admission lock was poisoned".to_owned(),
+                    )));
+                }
+            };
+            if self.shared.closed.load(Ordering::SeqCst)
+                || self.shared.closing.load(Ordering::SeqCst)
+            {
+                return Poll::Ready(Err(Error::EngineStopped));
+            }
+            if self.shared.transaction_poisoned.load(Ordering::SeqCst) {
+                return Poll::Ready(Err(Error::Engine(SESSION_STATE_UNKNOWN.to_owned())));
+            }
+            self.shared
+                .queue
+                .poll_send_ordinary(&mut registration.token, &mut command, cx)
+        })
+        .await
     }
 
     /// COMMIT and ROLLBACK are required settlement for an existing pin, not
@@ -445,7 +611,7 @@ impl EngineExecutor {
         {
             return Err(Error::EngineStopped);
         }
-        self.shared.queue.send(command)
+        self.shared.queue.send_control(command)
     }
 
     /// Cleanup stays admissible after poisoning or a close cutoff and does not
@@ -461,7 +627,7 @@ impl EngineExecutor {
         {
             return Err(Error::EngineStopped);
         }
-        self.shared.queue.send(command)
+        self.shared.queue.send_control(command)
     }
 
     fn ensure_not_owner_thread(&self) -> Result<()> {
@@ -505,8 +671,7 @@ enum Command {
     PinnedExec {
         token: u64,
         request: ProtocolRequest,
-        guard: Option<Arc<TransactionGuard>>,
-        must_run: bool,
+        guard: Arc<TransactionGuard>,
         reply: reply::Sender<ProtocolResponse>,
     },
     PinnedStructuredExec {
@@ -519,14 +684,7 @@ enum Command {
     Stream {
         request: ProtocolRequest,
         on_chunk: ProtocolChunkCallback,
-        reply: reply::Sender<()>,
-    },
-    PinnedStream {
-        token: u64,
-        request: ProtocolRequest,
-        on_chunk: ProtocolChunkCallback,
-        guard: Option<Arc<TransactionGuard>>,
-        reply: reply::Sender<()>,
+        reply: reply::Sender<ExecutorStreamOutcome>,
     },
     Begin {
         reply: reply::Sender<u64>,
@@ -548,7 +706,7 @@ impl Command {
     fn is_ordinary(&self) -> bool {
         !matches!(
             self,
-            Self::PinnedExec { must_run: true, .. }
+            Self::PinnedExec { .. }
                 | Self::ReleasePin { .. }
                 | Self::RollbackAndReleasePin { .. }
                 | Self::Close
@@ -560,15 +718,10 @@ impl Command {
             Self::Exec { reply, .. }
             | Self::StructuredExec { reply, .. }
             | Self::PinnedStructuredExec { reply, .. } => reply.is_abandoned(),
-            Self::PinnedExec {
-                must_run: false,
-                reply,
-                ..
-            } => reply.is_abandoned(),
-            Self::Stream { reply, .. } | Self::PinnedStream { reply, .. } => reply.is_abandoned(),
+            Self::Stream { reply, .. } => reply.is_abandoned(),
             Self::Begin { reply } => reply.is_abandoned(),
             Self::Backup { reply } => reply.is_abandoned(),
-            Self::PinnedExec { must_run: true, .. }
+            Self::PinnedExec { .. }
             | Self::ReleasePin { .. }
             | Self::RollbackAndReleasePin { .. }
             | Self::Close => false,
@@ -717,7 +870,9 @@ fn execute_command(
             let result = if owner.active_pin.is_some() {
                 Err(Error::TransactionActive)
             } else {
-                run_active_work(&shared.active_work, || session.exec_protocol_raw(request))
+                run_active_work(&shared.active_work, || {
+                    execute_raw_operation(session, request, &shared.transaction_poisoned, None)
+                })
             };
             reply.send(result);
         }
@@ -744,17 +899,17 @@ fn execute_command(
             token,
             request,
             guard,
-            must_run: _,
             reply,
         } => {
-            let result = if owner.active_pin == Some(token)
-                && guard
-                    .as_ref()
-                    .is_none_or(|guard| guard.state.load(Ordering::SeqCst) == TRANSACTION_ACTIVE)
-            {
-                run_active_work(&shared.active_work, || session.exec_protocol_raw(request))
-            } else {
+            let result = if owner.active_pin != Some(token) {
                 Err(inactive_transaction_error())
+            } else if shared.transaction_poisoned.load(Ordering::SeqCst) {
+                Err(transaction_terminal_error(&guard)
+                    .unwrap_or_else(|| Error::Engine(SESSION_STATE_UNKNOWN.to_owned())))
+            } else {
+                run_active_work(&shared.active_work, || {
+                    execute_raw_operation(session, request, &shared.transaction_poisoned, None)
+                })
             };
             reply.send(result);
         }
@@ -788,29 +943,9 @@ fn execute_command(
             let result = if owner.active_pin.is_some() {
                 Err(Error::TransactionActive)
             } else {
-                run_active_work(&shared.active_work, || {
-                    execute_stream(session, request, on_chunk)
-                })
-            };
-            reply.send(result);
-        }
-        Command::PinnedStream {
-            token,
-            request,
-            on_chunk,
-            guard,
-            reply,
-        } => {
-            let result = if owner.active_pin == Some(token)
-                && guard
-                    .as_ref()
-                    .is_none_or(|guard| guard.state.load(Ordering::SeqCst) == TRANSACTION_ACTIVE)
-            {
-                run_active_work(&shared.active_work, || {
-                    execute_stream(session, request, on_chunk)
-                })
-            } else {
-                Err(inactive_transaction_error())
+                Ok(run_active_work(&shared.active_work, || {
+                    execute_stream(session, request, on_chunk, &shared.transaction_poisoned)
+                }))
             };
             reply.send(result);
         }
@@ -916,6 +1051,14 @@ fn rollback_active_pin(
     if owner.active_pin != Some(token) {
         return;
     }
+    if shared.transaction_poisoned.load(Ordering::SeqCst) {
+        // The physical transaction boundary is unknown. Releasing the SDK pin
+        // is safe, but sending ROLLBACK could act on a different protocol state
+        // and would falsely imply recovery.
+        owner.active_pin = None;
+        shared.session_pinned.store(false, Ordering::SeqCst);
+        return;
+    }
     let rollback = run_active_work(&shared.active_work, || {
         ProtocolRequest::simple_query("ROLLBACK")
             .and_then(|request| session.exec_protocol_raw(request))
@@ -931,20 +1074,66 @@ fn rollback_active_pin(
     shared.session_pinned.store(false, Ordering::SeqCst);
 }
 
+fn transaction_terminal_error(guard: &TransactionGuard) -> Option<Error> {
+    guard
+        .terminal_error
+        .lock()
+        .ok()
+        .and_then(|error| error.as_ref().cloned())
+}
+
+fn execute_raw_operation(
+    session: &mut dyn EngineSession,
+    request: ProtocolRequest,
+    transaction_poisoned: &AtomicBool,
+    guard: Option<&TransactionGuard>,
+) -> Result<ProtocolResponse> {
+    let result = session.exec_protocol_raw(request);
+    if let Err(error) = &result {
+        // Unlike a returned ErrorResponse byte stream, an engine error does
+        // not prove a terminal ReadyForQuery boundary for this raw exchange.
+        transaction_poisoned.store(true, Ordering::SeqCst);
+        if let Some(guard) = guard {
+            guard.fail(error.clone());
+        }
+    }
+    result
+}
+
 fn execute_stream(
     session: &mut dyn EngineSession,
     request: ProtocolRequest,
     mut on_chunk: ProtocolChunkCallback,
-) -> Result<()> {
-    let mut guarded = |chunk: &[u8]| {
-        catch_unwind(AssertUnwindSafe(|| on_chunk(chunk))).unwrap_or_else(|panic| {
-            Err(Error::Engine(format!(
-                "raw protocol stream callback panicked: {}",
-                panic_message(panic.as_ref())
-            )))
-        })
+    transaction_poisoned: &AtomicBool,
+) -> ExecutorStreamOutcome {
+    let mut callback_panic = None;
+    let outcome = {
+        let mut guarded = |chunk: &[u8]| {
+            catch_unwind(AssertUnwindSafe(|| on_chunk(chunk))).unwrap_or_else(|panic| {
+                let error = Error::Engine(format!(
+                    "raw protocol stream callback panicked: {}",
+                    panic_message(panic.as_ref())
+                ));
+                callback_panic = Some(error.clone());
+                Err(error)
+            })
+        };
+        session.exec_protocol_raw_stream(request, &mut guarded)
     };
-    session.exec_protocol_raw_stream(request, &mut guarded)
+    match outcome {
+        ProtocolStreamOutcome::ReadyForQuery(_) if callback_panic.is_some() => {
+            ExecutorStreamOutcome::CallbackPanicked(
+                callback_panic.expect("callback panic was checked"),
+            )
+        }
+        ProtocolStreamOutcome::ReadyForQuery(result) => {
+            ExecutorStreamOutcome::ReadyForQuery(result)
+        }
+        ProtocolStreamOutcome::SessionStateUnknown(error) => {
+            transaction_poisoned.store(true, Ordering::SeqCst);
+            ExecutorStreamOutcome::SessionStateUnknown(error)
+        }
+    }
 }
 
 fn complete_retryable_close(shared: &ExecutorShared, error: Error) {
@@ -994,7 +1183,7 @@ fn schedule_terminal_drop_close(shared: &ExecutorShared) {
         if close.terminal_result.is_none() && !close.in_progress {
             close.in_progress = true;
             shared.closing.store(true, Ordering::SeqCst);
-            shared.queue.send(Command::Close).err()
+            shared.queue.send_control(Command::Close).err()
         } else {
             None
         }
@@ -1087,12 +1276,25 @@ mod tests {
 
     use super::*;
     use crate::engine::EngineCancel;
+    use crate::error::ErrorKind;
 
     struct ThreadWake(thread::Thread);
 
     impl Wake for ThreadWake {
         fn wake(self: Arc<Self>) {
             self.0.unpark();
+        }
+    }
+
+    struct WakeCounter(AtomicUsize);
+
+    impl Wake for WakeCounter {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
         }
     }
 
@@ -1139,6 +1341,130 @@ mod tests {
     fn poll_once<F: Future>(future: std::pin::Pin<&mut F>) -> Poll<F::Output> {
         let mut context = Context::from_waker(Waker::noop());
         future.poll(&mut context)
+    }
+
+    fn assert_error_value(error: &Error, kind: ErrorKind, message: &str) {
+        assert_eq!(error.kind(), kind);
+        assert_eq!(error.to_string(), message);
+    }
+
+    fn assert_error_result<T>(result: Result<T>, kind: ErrorKind, message: &str) {
+        let error = result.err().expect("operation must fail");
+        assert_error_value(&error, kind, message);
+    }
+
+    fn assert_poll_error<T>(poll: Poll<Result<T>>, kind: ErrorKind, message: &str) {
+        match poll {
+            Poll::Ready(Err(error)) => assert_error_value(&error, kind, message),
+            Poll::Ready(Ok(_)) => panic!("operation unexpectedly succeeded"),
+            Poll::Pending => panic!("operation unexpectedly remained pending"),
+        }
+    }
+
+    fn abandoned_ordinary_command(value: u8) -> Command {
+        let (reply, receiver) = reply::channel();
+        drop(receiver);
+        Command::Exec {
+            request: ProtocolRequest::new([value]),
+            reply,
+        }
+    }
+
+    fn fill_ordinary_queue(queue: &CommandQueue) {
+        for value in 0..ORDINARY_QUEUE_CAPACITY {
+            let mut registration = AdmissionRegistration::new(queue);
+            let mut command = Some(abandoned_ordinary_command(
+                u8::try_from(value).expect("queue fixture fits in one byte"),
+            ));
+            assert!(matches!(
+                queue.poll_send_ordinary(
+                    &mut registration.token,
+                    &mut command,
+                    &mut Context::from_waker(Waker::noop()),
+                ),
+                Poll::Ready(Ok(()))
+            ));
+        }
+    }
+
+    #[test]
+    fn cancelling_the_next_capacity_waiter_does_not_strand_its_fifo_successor() {
+        let queue = CommandQueue::new();
+        fill_ordinary_queue(&queue);
+
+        let first_wake = Arc::new(WakeCounter(AtomicUsize::new(0)));
+        let first_waker = Waker::from(Arc::clone(&first_wake));
+        let mut first = AdmissionRegistration::new(&queue);
+        let mut first_command = Some(abandoned_ordinary_command(1));
+        assert!(
+            queue
+                .poll_send_ordinary(
+                    &mut first.token,
+                    &mut first_command,
+                    &mut Context::from_waker(&first_waker),
+                )
+                .is_pending()
+        );
+
+        let second_wake = Arc::new(WakeCounter(AtomicUsize::new(0)));
+        let second_waker = Waker::from(Arc::clone(&second_wake));
+        let mut second = AdmissionRegistration::new(&queue);
+        let mut second_command = Some(abandoned_ordinary_command(2));
+        assert!(
+            queue
+                .poll_send_ordinary(
+                    &mut second.token,
+                    &mut second_command,
+                    &mut Context::from_waker(&second_waker),
+                )
+                .is_pending()
+        );
+
+        drop(first);
+        assert_eq!(second_wake.0.load(Ordering::SeqCst), 0);
+        drop(queue.receive().expect("free one ordinary queue slot"));
+        assert_eq!(second_wake.0.load(Ordering::SeqCst), 1);
+        assert_eq!(first_wake.0.load(Ordering::SeqCst), 0);
+        assert!(matches!(
+            queue.poll_send_ordinary(
+                &mut second.token,
+                &mut second_command,
+                &mut Context::from_waker(&second_waker),
+            ),
+            Poll::Ready(Ok(()))
+        ));
+        drop(second);
+        drop(queue.stop());
+    }
+
+    #[test]
+    fn rejected_capacity_waiter_cannot_cross_a_reopened_close_cutoff() {
+        let queue = CommandQueue::new();
+        fill_ordinary_queue(&queue);
+        let mut registration = AdmissionRegistration::new(&queue);
+        let mut command = Some(abandoned_ordinary_command(3));
+        assert!(
+            queue
+                .poll_send_ordinary(
+                    &mut registration.token,
+                    &mut command,
+                    &mut Context::from_waker(Waker::noop()),
+                )
+                .is_pending()
+        );
+
+        drop(queue.reject_admissions());
+        drop(queue.receive().expect("capacity becomes available later"));
+        assert_poll_error(
+            queue.poll_send_ordinary(
+                &mut registration.token,
+                &mut command,
+                &mut Context::from_waker(Waker::noop()),
+            ),
+            ErrorKind::Lifecycle,
+            "native database session has stopped",
+        );
+        drop(queue.stop());
     }
 
     fn command_response(tag: &str, ready: u8) -> ProtocolResponse {
@@ -1192,12 +1518,10 @@ mod tests {
         .err()
         .expect("open panic is reported");
 
-        assert_eq!(
-            error,
-            Error::Engine(
-                "oliphaunt-owner-open-panic-test panicked while opening: open panic probe"
-                    .to_owned()
-            )
+        assert_error_value(
+            &error,
+            ErrorKind::Other,
+            "oliphaunt-owner-open-panic-test panicked while opening: open panic probe",
         );
     }
 
@@ -1255,13 +1579,15 @@ mod tests {
     #[test]
     fn owner_panic_wakes_active_and_future_operations() {
         let executor = EngineExecutor::spawn(Box::new(PanickingSession));
-        assert_eq!(
+        assert_error_result(
             block_on(executor.exec_protocol_raw(ProtocolRequest::new([1]))),
-            Err(Error::EngineStopped)
+            ErrorKind::Lifecycle,
+            "native database session has stopped",
         );
-        assert_eq!(
+        assert_error_result(
             block_on(executor.exec_protocol_raw(ProtocolRequest::new([2]))),
-            Err(Error::EngineStopped)
+            ErrorKind::Lifecycle,
+            "native database session has stopped",
         );
     }
 
@@ -1290,7 +1616,7 @@ mod tests {
     }
 
     #[test]
-    fn close_cutoff_drains_the_bounded_fifo_and_rejects_later_work() {
+    fn bounded_fifo_awaits_capacity_then_close_rejects_later_work() {
         let calls = Arc::new(AtomicUsize::new(0));
         let (started, started_rx) = mpsc::channel();
         let (release, release_rx) = mpsc::channel();
@@ -1315,36 +1641,64 @@ mod tests {
             queued.push(future);
         }
         let mut overflow = Box::pin(executor.exec_protocol_raw(ProtocolRequest::new([9, 9, 9])));
-        let Poll::Ready(Err(Error::Engine(message))) = poll_once(overflow.as_mut()) else {
-            panic!("the bounded queue must reject excess ordinary work");
-        };
-        assert!(message.contains("command queue is full"));
+        assert!(
+            poll_once(overflow.as_mut()).is_pending(),
+            "queue saturation applies asynchronous backpressure"
+        );
+
+        // Free one queue slot. The owner immediately occupies itself with the
+        // next operation, while the overflow future can now acquire the slot.
+        release.send(()).expect("release active operation");
+        assert_eq!(
+            block_on(active).expect("active work drains").as_bytes(),
+            &[1]
+        );
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("next operation reaches owner");
+        assert!(poll_once(overflow.as_mut()).is_pending());
+        {
+            let queue = executor
+                .shared
+                .queue
+                .state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            assert_eq!(queue.ordinary_count, ORDINARY_QUEUE_CAPACITY);
+            assert!(queue.admission_waiters.is_empty());
+        }
+
+        let mut cutoff_waiter =
+            Box::pin(executor.exec_protocol_raw(ProtocolRequest::new([8, 8, 8])));
+        assert!(poll_once(cutoff_waiter.as_mut()).is_pending());
 
         // Close is a control command and still enters the same FIFO after all
         // already-admitted ordinary work.
         let mut close = Box::pin(executor.close());
         assert!(poll_once(close.as_mut()).is_pending());
+        assert_poll_error(
+            poll_once(cutoff_waiter.as_mut()),
+            ErrorKind::Lifecycle,
+            "native database session has stopped",
+        );
         let mut after_cutoff = Box::pin(executor.exec_protocol_raw(ProtocolRequest::new([7, 7])));
-        assert_eq!(
+        assert_poll_error(
             poll_once(after_cutoff.as_mut()),
-            Poll::Ready(Err(Error::EngineStopped))
+            ErrorKind::Lifecycle,
+            "native database session has stopped",
         );
 
-        // The first permit releases active work. The remaining permits may be
-        // buffered, allowing every pre-cutoff command to run without depending
-        // on scheduler timing in this test.
+        // The remaining permits may be buffered, allowing every pre-cutoff
+        // command to run without depending on scheduler timing in this test.
         for _ in 0..=ORDINARY_QUEUE_CAPACITY {
             release.send(()).expect("release admitted operation");
         }
-        assert_eq!(
-            block_on(active).expect("active work drains").as_bytes(),
-            &[1]
-        );
         for operation in queued {
             block_on(operation).expect("pre-cutoff queued work drains");
         }
+        block_on(overflow).expect("capacity waiter is admitted before close");
         block_on(close).expect("reserved close command completes");
-        assert_eq!(calls.load(Ordering::SeqCst), ORDINARY_QUEUE_CAPACITY + 1);
+        assert_eq!(calls.load(Ordering::SeqCst), ORDINARY_QUEUE_CAPACITY + 2);
     }
 
     struct BlockingTransactionSession {
@@ -1390,21 +1744,27 @@ mod tests {
         let mut close = Box::pin(executor.close());
         assert!(poll_once(close.as_mut()).is_pending());
         let mut later_begin = Box::pin(executor.begin_transaction());
-        assert_eq!(
+        assert_poll_error(
             poll_once(later_begin.as_mut()),
-            Poll::Ready(Err(Error::EngineStopped))
+            ErrorKind::Lifecycle,
+            "native database session has stopped",
         );
 
         release.send(()).expect("release first operation");
         block_on(active).expect("active operation drains");
         let token = block_on(begin).expect("pre-cutoff BEGIN runs");
-        assert_eq!(block_on(close), Err(Error::TransactionActive));
+        assert_error_result(
+            block_on(close),
+            ErrorKind::TransactionActive,
+            "a transaction is active; use the active transaction handle",
+        );
         assert!(!executor.is_closed());
         assert!(executor.session_is_pinned());
 
         let rollback = block_on(executor.pinned_exec_protocol_control(
             token,
             ProtocolRequest::simple_query("ROLLBACK").expect("rollback request"),
+            TransactionGuard::active(),
         ))
         .expect("rollback after failed close");
         assert_eq!(
@@ -1457,7 +1817,7 @@ mod tests {
     }
 
     fn assert_pre_cutoff_begin_can_settle_after_close_cutoff(settlement_tag: &'static str) {
-        use crate::database::Oliphaunt;
+        use crate::database::AsyncOliphaunt;
 
         let calls = Arc::new(AtomicUsize::new(0));
         let (started, started_rx) = mpsc::channel();
@@ -1468,7 +1828,7 @@ mod tests {
             started,
             release: release_rx,
         }));
-        let database = Oliphaunt::from_executor(Arc::clone(&executor));
+        let database = AsyncOliphaunt::from_executor(Arc::clone(&executor));
 
         let mut active = Box::pin(database.exec_protocol_raw([1]));
         assert!(poll_once(active.as_mut()).is_pending());
@@ -1488,7 +1848,7 @@ mod tests {
             if settlement_tag == "ROLLBACK" {
                 transaction.rollback().await?;
             }
-            Ok(())
+            Ok::<(), Error>(())
         }));
         let mut gate_context = Context::from_waker(&gate_waker);
         assert!(transaction.as_mut().poll(&mut gate_context).is_pending());
@@ -1520,7 +1880,7 @@ mod tests {
             assert!(matches!(queue.commands.front(), Some(Command::Close)));
             assert!(matches!(
                 queue.commands.back(),
-                Some(Command::PinnedExec { must_run: true, .. })
+                Some(Command::PinnedExec { .. })
             ));
         }
         release_owner
@@ -1528,7 +1888,11 @@ mod tests {
             .expect("release owner after settlement admission");
 
         block_on(transaction).expect("callback transaction settles");
-        assert_eq!(block_on(close), Err(Error::TransactionActive));
+        assert_error_result(
+            block_on(close),
+            ErrorKind::TransactionActive,
+            "a transaction is active; use the active transaction handle",
+        );
         assert!(!executor.is_closed());
         block_on(database.close()).expect("retry closes settled session");
         assert_eq!(calls.load(Ordering::SeqCst), 3);
@@ -1551,13 +1915,13 @@ mod tests {
     }
 
     impl EngineSession for TransactionControlSession {
-        fn exec_protocol_raw(&mut self, request: ProtocolRequest) -> Result<ProtocolResponse> {
+        fn exec_protocol_raw(&mut self, _request: ProtocolRequest) -> Result<ProtocolResponse> {
             match self.calls.fetch_add(1, Ordering::SeqCst) {
                 0 => Ok(command_response("BEGIN", b'T')),
                 1 => {
                     self.started.send(()).expect("announce pinned work");
                     self.release.recv().expect("release pinned work");
-                    Ok(ProtocolResponse::new(request.as_bytes()))
+                    Ok(command_response("SELECT", b'T'))
                 }
                 2 => Ok(command_response("ROLLBACK", b'I')),
                 call => panic!("unexpected transaction-control session call {call}"),
@@ -1578,10 +1942,11 @@ mod tests {
 
         let token = block_on(executor.begin_transaction()).expect("transaction begins");
         let guard = TransactionGuard::active();
-        let mut pinned = Box::pin(executor.pinned_exec_protocol_raw_guarded(
+        let mut pinned = Box::pin(executor.pinned_exec_structured(
             token,
-            ProtocolRequest::new([1]),
-            guard,
+            ProtocolRequest::simple_query("SELECT 1").expect("query request"),
+            "transaction test",
+            Arc::clone(&guard),
         ));
         assert!(poll_once(pinned.as_mut()).is_pending());
         started_rx
@@ -1591,6 +1956,7 @@ mod tests {
         let mut rollback = Box::pin(executor.pinned_exec_protocol_control(
             token,
             ProtocolRequest::simple_query("ROLLBACK").expect("rollback request"),
+            guard,
         ));
         assert!(poll_once(rollback.as_mut()).is_pending());
         let mut close = Box::pin(executor.close());
@@ -1607,7 +1973,11 @@ mod tests {
         );
         // The protocol transaction is idle, but the SDK pin is deliberately a
         // separate ownership boundary and is still active at Close.
-        assert_eq!(block_on(close), Err(Error::TransactionActive));
+        assert_error_result(
+            block_on(close),
+            ErrorKind::TransactionActive,
+            "a transaction is active; use the active transaction handle",
+        );
         block_on(executor.release_pin(token)).expect("release transaction pin");
         block_on(executor.close()).expect("retry closes released session");
         assert_eq!(calls.load(Ordering::SeqCst), 3);
@@ -1628,14 +1998,13 @@ mod tests {
                     Ok(ProtocolResponse::new(request.as_bytes()))
                 }
                 1 => Err(Error::Engine("injected BEGIN failure".to_owned())),
-                2 => Ok(command_response("ROLLBACK", b'I')),
                 call => panic!("unexpected failed-begin session call {call}"),
             }
         }
     }
 
     #[test]
-    fn failed_pre_cutoff_begin_recovers_before_close_proceeds() {
+    fn failed_pre_cutoff_begin_transport_does_not_send_blind_rollback() {
         let calls = Arc::new(AtomicUsize::new(0));
         let (started, started_rx) = mpsc::channel();
         let (release, release_rx) = mpsc::channel();
@@ -1657,12 +2026,9 @@ mod tests {
 
         release.send(()).expect("release first operation");
         block_on(active).expect("active operation drains");
-        assert_eq!(
-            block_on(begin),
-            Err(Error::Engine("injected BEGIN failure".to_owned()))
-        );
-        block_on(close).expect("recovered BEGIN failure leaves close safe");
-        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert_error_result(block_on(begin), ErrorKind::Other, "injected BEGIN failure");
+        block_on(close).expect("unknown BEGIN failure remains closeable");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[test]
@@ -1812,9 +2178,43 @@ mod tests {
             &mut self,
             _request: ProtocolRequest,
             on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
-        ) -> Result<()> {
-            on_chunk(&[1, 2, 3])
+        ) -> ProtocolStreamOutcome {
+            ProtocolStreamOutcome::ReadyForQuery(on_chunk(&[1, 2, 3]))
         }
+    }
+
+    struct FailedRawSession {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl EngineSession for FailedRawSession {
+        fn exec_protocol_raw(&mut self, _request: ProtocolRequest) -> Result<ProtocolResponse> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(Error::Engine(
+                "raw transport failed before ReadyForQuery".to_owned(),
+            ))
+        }
+    }
+
+    #[test]
+    fn raw_transport_failure_poisons_without_a_second_owner_call() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let executor = EngineExecutor::spawn(Box::new(FailedRawSession {
+            calls: Arc::clone(&calls),
+        }));
+
+        assert_error_result(
+            block_on(executor.exec_protocol_raw(ProtocolRequest::new([1]))),
+            ErrorKind::Other,
+            "raw transport failed before ReadyForQuery",
+        );
+        assert_error_result(
+            block_on(executor.exec_protocol_raw(ProtocolRequest::new([2]))),
+            ErrorKind::Other,
+            SESSION_STATE_UNKNOWN,
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        block_on(executor.close()).expect("close poisoned raw session");
     }
 
     #[test]
@@ -1830,6 +2230,7 @@ mod tests {
             }),
         )
         .expect_err("callback panic is returned");
+        assert_eq!(error.kind(), ErrorKind::Other);
         assert!(error.to_string().contains("stream callback panicked"));
         assert_eq!(
             block_on(executor.exec_protocol_raw(ProtocolRequest::new([7])))
@@ -1839,6 +2240,46 @@ mod tests {
         );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         block_on(executor.close()).expect("close stream session");
+    }
+
+    struct FailedRecoveryStreamSession;
+
+    impl EngineSession for FailedRecoveryStreamSession {
+        fn exec_protocol_raw(&mut self, request: ProtocolRequest) -> Result<ProtocolResponse> {
+            Ok(ProtocolResponse::new(request.as_bytes()))
+        }
+
+        fn exec_protocol_raw_stream(
+            &mut self,
+            _request: ProtocolRequest,
+            on_chunk: &mut dyn FnMut(&[u8]) -> Result<()>,
+        ) -> ProtocolStreamOutcome {
+            let _ = on_chunk(&[1, 2, 3]);
+            ProtocolStreamOutcome::SessionStateUnknown(Error::Engine(
+                "stream transport failed before ReadyForQuery".to_owned(),
+            ))
+        }
+    }
+
+    #[test]
+    fn recovery_failure_overrides_callback_panic_and_poisons_the_session() {
+        let executor = EngineExecutor::spawn(Box::new(FailedRecoveryStreamSession));
+
+        assert_error_result(
+            block_on(
+                executor.exec_protocol_raw_stream(ProtocolRequest::new([1]), |_| {
+                    panic!("callback panic probe")
+                }),
+            ),
+            ErrorKind::Other,
+            "stream transport failed before ReadyForQuery",
+        );
+        assert_error_result(
+            block_on(executor.exec_protocol_raw(ProtocolRequest::new([7]))),
+            ErrorKind::Other,
+            SESSION_STATE_UNKNOWN,
+        );
+        block_on(executor.close()).expect("close failed-recovery stream session");
     }
 
     #[test]
@@ -1855,6 +2296,7 @@ mod tests {
                 let error = block_on(reentrant.pinned_exec_protocol_control(
                     1,
                     ProtocolRequest::simple_query("COMMIT").expect("control request"),
+                    TransactionGuard::active(),
                 ))
                 .expect_err("reentrant transaction settlement is rejected");
                 assert!(error.to_string().contains("reentrant database work"));
@@ -1967,7 +2409,11 @@ mod tests {
             "close establishes its destructive cancellation cutoff"
         );
         assert_eq!(executor.shared.cancellation.active_cancellations(), 1);
-        assert_eq!(block_on(executor.cancel()), Err(Error::EngineStopped));
+        assert_error_result(
+            block_on(executor.cancel()),
+            ErrorKind::Lifecycle,
+            "native database session has stopped",
+        );
         assert!(poll_once(close.as_mut()).is_pending());
 
         release.send(()).expect("finish admitted cancellation");
@@ -2038,7 +2484,11 @@ mod tests {
         block_on(query).expect("pre-cutoff query drains");
         block_on(close).expect("close runs after the query");
         assert!(executor.shared.teardown_started.load(Ordering::SeqCst));
-        assert_eq!(block_on(executor.cancel()), Err(Error::EngineStopped));
+        assert_error_result(
+            block_on(executor.cancel()),
+            ErrorKind::Lifecycle,
+            "native database session has stopped",
+        );
         assert_eq!(cancel.calls.load(Ordering::SeqCst), 1);
     }
 
@@ -2071,15 +2521,16 @@ mod tests {
             topology,
             close_attempts: Arc::clone(&attempts),
         }));
-        let expected = Error::Engine(format!("injected {topology} teardown failure"));
-        assert_eq!(block_on(executor.close()), Err(expected.clone()));
+        let expected = format!("injected {topology} teardown failure");
+        assert_error_result(block_on(executor.close()), ErrorKind::Other, &expected);
         assert!(executor.is_closed());
-        assert_eq!(
+        assert_error_result(
             block_on(executor.exec_protocol_raw(ProtocolRequest::new([4]))),
-            Err(Error::EngineStopped)
+            ErrorKind::Lifecycle,
+            "native database session has stopped",
         );
-        assert_eq!(block_on(executor.close()), Err(expected.clone()));
-        assert_eq!(block_on(executor.close()), Err(expected));
+        assert_error_result(block_on(executor.close()), ErrorKind::Other, &expected);
+        assert_error_result(block_on(executor.close()), ErrorKind::Other, &expected);
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
 
@@ -2113,16 +2564,15 @@ mod tests {
     #[test]
     fn close_panic_is_one_exact_terminal_outcome() {
         let executor = EngineExecutor::spawn(Box::new(PanickingCloseSession));
-        let expected = Error::Engine(
-            "native engine session panicked during close: injected close panic".to_owned(),
-        );
+        let expected = "native engine session panicked during close: injected close panic";
 
-        assert_eq!(block_on(executor.close()), Err(expected.clone()));
+        assert_error_result(block_on(executor.close()), ErrorKind::Other, expected);
         assert!(executor.is_closed());
-        assert_eq!(block_on(executor.close()), Err(expected));
-        assert_eq!(
+        assert_error_result(block_on(executor.close()), ErrorKind::Other, expected);
+        assert_error_result(
             block_on(executor.exec_protocol_raw(ProtocolRequest::new([1]))),
-            Err(Error::EngineStopped)
+            ErrorKind::Lifecycle,
+            "native database session has stopped",
         );
     }
 
@@ -2143,16 +2593,14 @@ mod tests {
     #[test]
     fn destructor_panic_fails_close_without_stranding_its_waiter() {
         let executor = EngineExecutor::spawn(Box::new(PanickingDropSession));
-        let expected = Error::Engine(
-            "native engine session destructor panicked after close: injected session destructor panic"
-                .to_owned(),
-        );
-        assert_eq!(block_on(executor.close()), Err(expected.clone()));
+        let expected = "native engine session destructor panicked after close: injected session destructor panic";
+        assert_error_result(block_on(executor.close()), ErrorKind::Other, expected);
         assert!(executor.is_closed());
-        assert_eq!(block_on(executor.close()), Err(expected));
-        assert_eq!(
+        assert_error_result(block_on(executor.close()), ErrorKind::Other, expected);
+        assert_error_result(
             block_on(executor.exec_protocol_raw(ProtocolRequest::new([1]))),
-            Err(Error::EngineStopped)
+            ErrorKind::Lifecycle,
+            "native database session has stopped",
         );
     }
 
@@ -2255,7 +2703,7 @@ mod tests {
             started,
             release: release_rx,
         }));
-        let expected = Error::Engine("injected concurrent teardown failure".to_owned());
+        let expected = "injected concurrent teardown failure";
 
         let first_executor = Arc::clone(&executor);
         let first = thread::spawn(move || block_on(first_executor.close()));
@@ -2290,16 +2738,18 @@ mod tests {
         );
         release.send(()).expect("finish failed close");
 
-        assert_eq!(
+        assert_error_result(
             first.join().expect("join first close"),
-            Err(expected.clone())
+            ErrorKind::Other,
+            expected,
         );
-        assert_eq!(
+        assert_error_result(
             second.join().expect("join second close"),
-            Err(expected.clone())
+            ErrorKind::Other,
+            expected,
         );
         assert!(executor.is_closed());
-        assert_eq!(block_on(executor.close()), Err(expected));
+        assert_error_result(block_on(executor.close()), ErrorKind::Other, expected);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

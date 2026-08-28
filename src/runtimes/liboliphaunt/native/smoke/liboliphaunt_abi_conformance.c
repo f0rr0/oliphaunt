@@ -16,8 +16,20 @@
         } \
     } while (0)
 
-_Static_assert(OLIPHAUNT_ABI_VERSION == 9u, "unexpected liboliphaunt ABI version");
+#define CHECK_NULL_CAPTURE(call, operation) \
+    do { \
+        CHECK((call) != 0, operation " must reject a null error capture"); \
+        copied_error[0] = '\0'; \
+        (void)copy_last_error_fn(NULL, copied_error, sizeof(copied_error)); \
+        CHECK( \
+            strcmp(copied_error, operation " error capture is null") == 0, \
+            operation " must publish its null-capture validation error"); \
+    } while (0)
+
+_Static_assert(OLIPHAUNT_ABI_VERSION == 10u, "unexpected liboliphaunt ABI version");
 _Static_assert(OLIPHAUNT_STATIC_EXTENSION_ABI_VERSION == 1u, "unexpected static extension ABI version");
+_Static_assert(OLIPHAUNT_ERROR_CAPTURE_CAPACITY == 1024u, "unexpected error capture capacity");
+_Static_assert(OLIPHAUNT_STREAM_CALLBACK_ABORTED == 1, "unexpected callback-aborted status");
 _Static_assert(OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK == 1ull, "unexpected external root lock flag");
 _Static_assert(offsetof(OliphauntConfig, abi_version) == 0, "OliphauntConfig must start with abi_version");
 _Static_assert(offsetof(OliphauntRestoreOptions, abi_version) == 0, "OliphauntRestoreOptions must start with abi_version");
@@ -25,6 +37,9 @@ _Static_assert(sizeof(((OliphauntConfig *)0)->reserved_flags) == sizeof(uint64_t
 _Static_assert(sizeof(((OliphauntRestoreOptions *)0)->len) == sizeof(size_t), "restore length must be size_t");
 _Static_assert(sizeof(((OliphauntResponse *)0)->len) == sizeof(size_t), "response length must be size_t");
 _Static_assert(sizeof(((OliphauntStaticExtension *)0)->symbol_count) == sizeof(size_t), "symbol count must be size_t");
+_Static_assert(offsetof(OliphauntErrorCapture, length) == 0, "error capture must start with length");
+_Static_assert(offsetof(OliphauntErrorCapture, message) == 4, "unexpected error capture message offset");
+_Static_assert(sizeof(OliphauntErrorCapture) == 1028, "unexpected error capture size");
 
 #if UINTPTR_MAX == UINT64_MAX
 _Static_assert(sizeof(OliphauntConfig) == 72, "unexpected 64-bit OliphauntConfig size");
@@ -61,6 +76,7 @@ typedef struct ErrorRaceWorker {
     size_t required;
     size_t copied_length;
     size_t truncated_length;
+    OliphauntErrorCapture captured;
     char copied[128];
     char truncated[4];
 } ErrorRaceWorker;
@@ -68,8 +84,9 @@ typedef struct ErrorRaceWorker {
 static void *run_error_race_worker(void *opaque) {
     ErrorRaceWorker *worker = (ErrorRaceWorker *)opaque;
     int32_t rc = worker->operation == 0
-        ? oliphaunt_cancel(NULL)
-        : oliphaunt_restore(NULL);
+        ? oliphaunt_exec_protocol_with_error(
+            NULL, NULL, 0, NULL, &worker->captured)
+        : oliphaunt_restore_with_error(NULL, &worker->captured);
     worker->operation_failed = rc != 0;
     worker->required = oliphaunt_copy_last_error(NULL, NULL, 0);
 
@@ -108,6 +125,33 @@ int main(void) {
     int32_t (*backup_fn)(OliphauntHandle *, OliphauntResponse *) =
         oliphaunt_backup;
     int32_t (*restore_fn)(const OliphauntRestoreOptions *) = oliphaunt_restore;
+    int32_t (*init_with_error_fn)(const OliphauntConfig *, OliphauntHandle **, OliphauntErrorCapture *) =
+        oliphaunt_init_with_error;
+    int32_t (*exec_protocol_with_error_fn)(
+        OliphauntHandle *,
+        const uint8_t *,
+        size_t,
+        OliphauntResponse *,
+        OliphauntErrorCapture *) = oliphaunt_exec_protocol_with_error;
+    int32_t (*exec_simple_query_with_error_fn)(
+        OliphauntHandle *,
+        const char *,
+        size_t,
+        OliphauntResponse *,
+        OliphauntErrorCapture *) = oliphaunt_exec_simple_query_with_error;
+    int32_t (*exec_protocol_raw_stream_with_error_fn)(
+        OliphauntHandle *,
+        const uint8_t *,
+        size_t,
+        OliphauntStreamCallback,
+        void *,
+        OliphauntErrorCapture *) = oliphaunt_exec_protocol_raw_stream_with_error;
+    int32_t (*backup_with_error_fn)(OliphauntHandle *, OliphauntResponse *, OliphauntErrorCapture *) =
+        oliphaunt_backup_with_error;
+    int32_t (*restore_with_error_fn)(const OliphauntRestoreOptions *, OliphauntErrorCapture *) =
+        oliphaunt_restore_with_error;
+    int32_t (*detach_with_error_fn)(OliphauntHandle *, OliphauntErrorCapture *) =
+        oliphaunt_detach_with_error;
     int32_t (*cancel_fn)(OliphauntHandle *) = oliphaunt_cancel;
     int32_t (*detach_fn)(OliphauntHandle *) = oliphaunt_detach;
     uint64_t (*logical_generation_fn)(OliphauntHandle *) = oliphaunt_logical_generation;
@@ -129,6 +173,14 @@ int main(void) {
     CHECK(exec_protocol_raw_stream_fn != NULL, "oliphaunt_exec_protocol_raw_stream must link");
     CHECK(backup_fn != NULL, "oliphaunt_backup must link");
     CHECK(restore_fn != NULL, "oliphaunt_restore must link");
+    CHECK(init_with_error_fn != NULL, "oliphaunt_init_with_error must link");
+    CHECK(exec_protocol_with_error_fn != NULL, "oliphaunt_exec_protocol_with_error must link");
+    CHECK(exec_simple_query_with_error_fn != NULL, "oliphaunt_exec_simple_query_with_error must link");
+    CHECK(exec_protocol_raw_stream_with_error_fn != NULL,
+          "oliphaunt_exec_protocol_raw_stream_with_error must link");
+    CHECK(backup_with_error_fn != NULL, "oliphaunt_backup_with_error must link");
+    CHECK(restore_with_error_fn != NULL, "oliphaunt_restore_with_error must link");
+    CHECK(detach_with_error_fn != NULL, "oliphaunt_detach_with_error must link");
     CHECK(cancel_fn != NULL, "oliphaunt_cancel must link");
     CHECK(detach_fn != NULL, "oliphaunt_detach must link");
     CHECK(logical_generation_fn != NULL, "oliphaunt_logical_generation must link");
@@ -209,6 +261,37 @@ int main(void) {
     CHECK(error != NULL && strstr(error, "invalid oliphaunt_cancel arguments") != NULL,
           "oliphaunt_cancel(NULL) must set a global error");
 
+    OliphauntErrorCapture captured;
+    memset(&captured, 0xa5, sizeof(captured));
+    CHECK(detach_with_error_fn(NULL, &captured) == 0,
+          "oliphaunt_detach_with_error(NULL) must retain detach semantics");
+    CHECK(captured.length == 0 && captured.message[0] == '\0',
+          "successful captured operations must clear the complete visible result");
+    for (size_t i = 0; i < sizeof(captured); i++) {
+        CHECK(((const unsigned char *)&captured)[i] == 0,
+              "successful captured operations must deterministically zero the capture");
+    }
+    CHECK_NULL_CAPTURE(init_with_error_fn(NULL, NULL, NULL), "oliphaunt_init");
+    CHECK_NULL_CAPTURE(
+        exec_protocol_with_error_fn(NULL, NULL, 0, NULL, NULL),
+        "oliphaunt_exec_protocol");
+    CHECK_NULL_CAPTURE(
+        exec_simple_query_with_error_fn(NULL, NULL, 0, NULL, NULL),
+        "oliphaunt_exec_simple_query");
+    CHECK_NULL_CAPTURE(
+        exec_protocol_raw_stream_with_error_fn(
+            NULL, NULL, 0, stream_callback_fn, NULL, NULL),
+        "oliphaunt_exec_protocol_raw_stream");
+    CHECK_NULL_CAPTURE(backup_with_error_fn(NULL, NULL, NULL), "oliphaunt_backup");
+    CHECK_NULL_CAPTURE(restore_with_error_fn(NULL, NULL), "oliphaunt_restore");
+    CHECK_NULL_CAPTURE(detach_with_error_fn(NULL, NULL), "oliphaunt_detach");
+    CHECK(restore_with_error_fn(NULL, &captured) != 0,
+          "oliphaunt_restore_with_error(NULL) must fail");
+    CHECK(captured.length == strlen(captured.message),
+          "captured operation errors must report their exact length");
+    CHECK(strstr(captured.message, "invalid oliphaunt_restore options") != NULL,
+          "captured operation errors must belong to the same native invocation");
+
 #ifndef _WIN32
     ErrorRaceGate error_gate;
     CHECK(pthread_mutex_init(&error_gate.mutex, NULL) == 0,
@@ -251,12 +334,16 @@ int main(void) {
     pthread_mutex_destroy(&error_gate.mutex);
 
     static const char *expected_worker_errors[2] = {
-        "invalid oliphaunt_cancel arguments",
+        "invalid oliphaunt_exec_protocol arguments",
         "invalid oliphaunt_restore options",
     };
     for (size_t i = 0; i < 2; i++) {
         CHECK(error_workers[i].operation_failed,
               "concurrent error-attribution operation must fail");
+        CHECK(error_workers[i].captured.length == strlen(expected_worker_errors[i]),
+              "same-call capture must report its operation-local error length");
+        CHECK(strcmp(error_workers[i].captured.message, expected_worker_errors[i]) == 0,
+              "same-call capture must retain the worker operation's error");
         CHECK(error_workers[i].required == strlen(expected_worker_errors[i]),
               "size probe must report the operation-local error length");
         CHECK(error_workers[i].copied_length == error_workers[i].required,

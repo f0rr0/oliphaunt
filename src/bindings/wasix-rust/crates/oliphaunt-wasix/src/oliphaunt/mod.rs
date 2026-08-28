@@ -8,7 +8,7 @@ pub(crate) mod config;
 pub(crate) mod data_dir;
 pub(crate) mod database_root_descriptor;
 #[cfg(feature = "extensions")]
-pub mod extensions;
+pub(crate) mod extensions;
 pub(crate) mod lifecycle;
 pub(crate) mod postgres_mod;
 pub(crate) mod proxy;

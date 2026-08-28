@@ -31,6 +31,10 @@ import kotlinx.coroutines.sync.withLock
 /** Process-wide nativeDirect ownership, including a failed close retained for recovery. */
 private val nativeDirectProcessOwner = NativeDirectProcessOwner<OliphauntDatabase>()
 
+private class ReactNativeProtocolStreamCallbackFailure(
+  val callbackError: Throwable,
+) : RuntimeException(callbackError.message, callbackError)
+
 internal const val REACT_NATIVE_MAX_SAFE_INTEGER_HANDLE: Long = 9_007_199_254_740_991L
 
 internal fun requireReactNativeHandle(handle: Double): Long {
@@ -192,14 +196,24 @@ class OliphauntModule(
       return
     }
     scope.launch {
-      runCatching {
+      try {
         session.execProtocolRawStream(request) { chunk ->
-          callback.emitChunk(chunk)
+          try {
+            callback.emitChunk(chunk)
+          } catch (error: Throwable) {
+            throw ReactNativeProtocolStreamCallbackFailure(error)
+          }
         }
-      }.fold(
-        onSuccess = { callback.resolveUnit() },
-        onFailure = { error -> callback.reject("liboliphaunt_stream_failed", error.message) },
-      )
+        callback.resolveUnit()
+      } catch (error: Throwable) {
+        if (error is ReactNativeProtocolStreamCallbackFailure) {
+          // The Kotlin SDK can rethrow this private sentinel only for the typed
+          // callback-aborted result after native recovery reached ReadyForQuery.
+          callback.rejectCallbackAborted(error.callbackError.message)
+        } else {
+          callback.reject("liboliphaunt_stream_failed", error.message)
+        }
+      }
     }
   }
 

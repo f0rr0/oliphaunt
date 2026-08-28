@@ -219,7 +219,10 @@ typed API. `execProtocolRaw` returns one owned response, while
 buffering the complete response. The callback is a synchronous backpressure
 boundary: same-database and transaction work is rejected from its scope, with
 `cancel()` as the sole out-of-band exception. Neither API adds a second protocol
-parser.
+parser. Callback failures are surfaced only after the native runtime confirms
+protocol recovery, so the session remains reusable. A buffered or streaming
+transport or recovery failure is authoritative and poisons the database; close
+it instead of assuming a later operation can recover the physical session.
 
 These APIs are genuinely asynchronous for the caller even though embedded
 PostgreSQL is blocking internally. A dedicated serial owner queue performs root
@@ -233,13 +236,27 @@ is draining earlier FIFO work and becomes unavailable when native teardown
 starts. Cancelling a Swift task does not implicitly
 cancel PostgreSQL; call `cancel()` when an interrupt is intended.
 
-Transactions use one physical session and mirror `query`, `execute`, `exec`,
-`describe`, and raw protocol operations. `rollback()` is one-shot: it closes the
-transaction, lets the callback return a value, and suppresses `COMMIT`. A failed
-rollback or uncertain commit poisons the database; close it before reopening.
-When callback and automatic rollback both fail,
-`OliphauntTransactionRollbackError` retains them as `callbackError` and
-`rollbackError` instead of hiding either outcome.
+Transactions use one physical session and expose `query`, `execute`, `exec`,
+and `describe`; raw protocol execution stays on the database because it owns
+transaction lifecycle explicitly. `rollback()` is one-shot: it closes the
+transaction, lets the callback return a value, and suppresses `COMMIT`; returning
+normally commits. Do not issue manual `BEGIN`/`START TRANSACTION`, `COMMIT`/`END`,
+`ABORT`, `PREPARE TRANSACTION`, or `AND CHAIN` inside a managed callback. Use
+`SAVEPOINT`, `RELEASE SAVEPOINT`, and `ROLLBACK TO SAVEPOINT` for nested work.
+PostgreSQL reports both `ROLLBACK TO` and `ROLLBACK AND CHAIN` as `ROLLBACK`
+with `ReadyForQuery=T`, so `AND CHAIN` is unsupported contract misuse rather
+than something the SDK can distinguish lexically. A detected lifecycle command,
+escaped idle session, failed rollback, or uncertain commit makes the database
+close-only; close it before reopening.
+After a successful automatic rollback, the original callback error is rethrown.
+When the callback and rollback both fail,
+`OliphauntTransactionRollbackError` retains them in its public `callbackError`
+and `rollbackError` fields. If an earlier independent database or protocol
+failure has already poisoned or expired transaction ownership and the callback
+then throws a different error, `OliphauntTransactionDatabaseError` retains the
+two errors in its public `callbackError` and `databaseError` fields; the database
+is close-only. An ordinary PostgreSQL statement error that remains safely
+rollbackable is not automatically wrapped in either composite error.
 
 `startupGUCs` are passed directly as PostgreSQL `-c name=value` arguments.
 There are no SDK-specific durability, memory, or runtime profiles.

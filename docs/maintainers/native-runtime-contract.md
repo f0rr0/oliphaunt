@@ -29,28 +29,36 @@ Reopening a nonempty incomplete root fails without mutation.
 
 Closing never removes an application-owned root. SDK-owned temporary roots live
 for the physical runtime lifetime; direct logical detach does not imply that
-the resident backend has stopped.
+the resident backend has stopped. Session/root ownership is released only when
+teardown succeeds. After a teardown failure, the native Rust SDK intentionally
+retains the failed owner until process exit so no destructor repeats an
+unconfirmed destructive operation.
 
 ## Shared application API
 
-Every native language SDK exposes its idiomatic form of:
+Every native embedded-database SDK exposes its idiomatic form of:
 
 - open and close;
 - query and command execution with typed values;
-- callback transactions;
-- raw PostgreSQL protocol access where the language boundary can carry bytes;
+- callback transactions without a raw-protocol bypass;
+- raw PostgreSQL protocol access on the database/root handle where the
+  language boundary can carry bytes;
 - cancellation where the platform has an out-of-band recovery contract;
-- exact extension selection before open; and
+- exact extension artifact selection before open; and
 - one physical backup and static restore where the runtime mode supports it.
 
 PostgreSQL `CHECKPOINT` remains available through ordinary
-`execute("CHECKPOINT")`; it is not a separate public SDK method. Native Rust
-constructs direct, broker, or server state synchronously on the calling thread
-from its root API; its explicit `worker` module retains the same selected
-topology on a permanent owner thread and exposes futures. Swift and Kotlin use
+`execute("CHECKPOINT")`; it is not a separate public SDK method. Native Rust's
+root `Oliphaunt` calls block the caller without an SDK owner-queue hop; direct
+PostgreSQL still runs on liboliphaunt's internal backend pthread. Root
+`AsyncOliphaunt` retains the selected direct or broker topology on a permanent
+owner thread and exposes futures. Dedicated `OliphauntServerBuilder` and
+`AsyncOliphauntServerBuilder` values start server products; their returned
+handles expose only the connection string, closed state, and close. Swift and Kotlin use
 dedicated serial owners. Native TypeScript keeps Promise-facing direct calls
-behind its native async-work boundary; broker and server calls already cross
-process/transport boundaries.
+behind its native async-work boundary; broker calls cross a process boundary,
+while server SQL belongs to external PostgreSQL clients rather than the server
+lifecycle facade.
 
 Direct and broker support physical backup. Native server SDK backup is not
 currently exposed; server applications use normal PostgreSQL tooling. Static
@@ -71,9 +79,11 @@ hidden bundle of tuning values.
 
 ## Extensions and tools
 
-Extensions are exact selections. SDK packaging resolves only the artifacts
-needed by those selections; the application still runs standard PostgreSQL
-`CREATE EXTENSION`, `ALTER EXTENSION`, and related SQL. Mobile direct builds use
+Extensions are exact artifact selections. SDK packaging resolves the selected
+runtime modules, dependencies, and required pre-start preload/GUC settings; it
+never runs database-local `CREATE EXTENSION`, `ALTER EXTENSION`, `LOAD`, schema
+setup, or post-create SQL. Applications and ORM migrations own that standard
+PostgreSQL SQL. Mobile direct builds use
 the static extension registry, while desktop direct/broker and server layouts
 use packaged modules appropriate to their runtime.
 
@@ -85,8 +95,10 @@ availability is package/target documentation, not a runtime capability query.
 
 PostgreSQL errors preserve SQLSTATE and available `ErrorResponse` fields.
 Transport, storage, lifecycle, unsupported-mode, and package-resolution errors
-remain distinct. Cancellation must recover the connection through PostgreSQL's
-normal readiness boundary before reuse.
+remain distinct. Native Rust exposes the stable categories through opaque
+`Error` plus non-exhaustive `ErrorKind`; the other SDKs use their native error
+taxonomy. Cancellation must recover the connection through PostgreSQL's normal
+readiness boundary before reuse.
 
 Direct close is generation guarded so stale async cleanup cannot terminate a
 newer logical reopen. Broker and server owners supervise their child processes

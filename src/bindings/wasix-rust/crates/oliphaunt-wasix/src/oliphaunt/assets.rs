@@ -1,5 +1,3 @@
-#[cfg(feature = "extensions")]
-use anyhow::anyhow;
 use anyhow::{Context, Result, ensure};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,7 +178,9 @@ pub(crate) fn expected_extension_archive_sha256(sql_name: &str) -> Result<String
     liboliphaunt_wasix_portable::expected_extension_archive_sha256(sql_name)
         .map(str::to_owned)
         .ok_or_else(|| {
-            anyhow!("extension asset '{sql_name}' is not embedded in this oliphaunt-wasix build")
+            crate::error::invalid_configuration(format!(
+                "extension asset '{sql_name}' is not embedded in this oliphaunt-wasix build"
+            ))
         })
 }
 

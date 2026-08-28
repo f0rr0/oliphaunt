@@ -212,11 +212,12 @@ nextest does not own doctest execution. Coverage lanes measure line coverage
 through `cargo llvm-cov nextest` and then run `cargo test --doc` as stable-Rust
 correctness evidence. Doctest coverage itself requires nightly rustdoc flags, so
 it is not part of the default stable LCOV gate.
-WASIX library unit coverage intentionally uses `--no-default-features`, while
-WASIX doctests run with default features because the README extension examples
-exercise the default extension surface. Runtime Postgres/WASIX execution stays
-in `smoke` and `regression`, where missing runtime assets must fail or skip
-explicitly according to the lane policy.
+WASIX library unit coverage intentionally uses `--no-default-features`.
+WASIX doctests run with the `tools` feature because the README contains
+tools-gated examples. The `public_api` lane separately enables one exact leaf
+extension feature to compile-check its root selector. Runtime Postgres/WASIX
+execution stays in `smoke` and `regression`, where missing runtime assets must
+fail or skip explicitly according to the lane policy.
 
 TypeScript and React Native unit tests use the shared Vitest discovery runner
 in `tools/test/run-js-tests.mjs`. Coverage calls the same runner with Vitest V8
@@ -281,12 +282,12 @@ Use `OliphauntServer` when the application already talks to Postgres through a
 client library:
 
 ```rust,no_run
-use oliphaunt_wasix::worker::OliphauntServer;
+use oliphaunt_wasix::AsyncOliphauntServer;
 use sqlx::{Connection, Row};
 
 #[tokio::test]
 async fn sqlx_query() -> Result<(), Box<dyn std::error::Error>> {
-    let server = OliphauntServer::builder().start().await?;
+    let server = AsyncOliphauntServer::builder().start().await?;
     let mut conn = sqlx::PgConnection::connect(&server.connection_string()).await?;
 
     let row = sqlx::query("SELECT $1::int4 + 1 AS n")
@@ -305,17 +306,19 @@ Keep client pools at one connection.
 
 ## Extension Tests
 
-Enable bundled extensions through the builder:
+Select extension runtime artifacts through the builder, then let migrations
+install the database-local objects:
 
 ```rust,no_run
-use oliphaunt_wasix::{Oliphaunt, extensions};
+use oliphaunt_wasix::{Extension, Oliphaunt};
 
 #[test]
 fn vector_query() -> Result<(), Box<dyn std::error::Error>> {
     let mut db = Oliphaunt::builder()
-        .extension(extensions::VECTOR)
+        .extension(Extension::VECTOR)
         .open()?;
 
+    db.execute("CREATE EXTENSION vector")?;
     db.execute("CREATE TABLE items (embedding vector(3))")?;
     db.execute("INSERT INTO items VALUES ('[1,2,3]')")?;
     let rows = db.query("SELECT embedding <-> '[1,2,4]' AS distance FROM items")?;

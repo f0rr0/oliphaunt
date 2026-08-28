@@ -3,7 +3,7 @@ name = "oliphaunt-wasix"
 version = "0.1.1"
 edition = "2024"
 rust-version = "1.93"
-description = "Embedded PostgreSQL 18 for Rust with direct and dedicated worker APIs."
+description = "Embedded PostgreSQL 18 for Rust with synchronous and asynchronous APIs."
 readme = "README.md"
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"
@@ -37,7 +37,11 @@ extension-citext = ["extensions", "liboliphaunt-wasix-portable/extension-citext"
 extension-cube = ["extensions", "liboliphaunt-wasix-portable/extension-cube"]
 extension-dict-int = ["extensions", "liboliphaunt-wasix-portable/extension-dict-int"]
 extension-dict-xsyn = ["extensions", "liboliphaunt-wasix-portable/extension-dict-xsyn"]
-extension-earthdistance = ["extensions", "liboliphaunt-wasix-portable/extension-earthdistance"]
+extension-earthdistance = [
+  "extensions",
+  "extension-cube",
+  "liboliphaunt-wasix-portable/extension-earthdistance",
+]
 extension-file-fdw = ["extensions", "liboliphaunt-wasix-portable/extension-file-fdw"]
 extension-fuzzystrmatch = ["extensions", "liboliphaunt-wasix-portable/extension-fuzzystrmatch"]
 extension-hstore = ["extensions", "liboliphaunt-wasix-portable/extension-hstore"]

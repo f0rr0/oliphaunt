@@ -53,8 +53,11 @@ await db.close();
 ## Runtime Shape
 
 The SDK detects Node.js, Bun, or Deno and selects its native direct adapter by
-default. Broker mode adds process isolation and crash recovery. Server mode is
-for PostgreSQL-compatible tools and independent clients.
+default. Broker mode adds process isolation. If its helper fails, close that
+database object and open a new one on the same persistent storage; PostgreSQL
+then performs WAL recovery. Oliphaunt never substitutes a new session under the
+same object. Server mode is for PostgreSQL-compatible tools and independent
+clients.
 
 The SDK resolves local helper binaries and runtime assets for the selected
 platform. App code keeps using TypeScript promises and typed result helpers while

@@ -179,10 +179,10 @@ mod tests {
         let temp = TempTree::new("missing-transitive-extension-assets");
         let install_dir = temp.path().join("install");
         write_minimal_install(&install_dir);
-        write_extension_assets(&install_dir, Extension::Earthdistance);
+        write_extension_assets(&install_dir, Extension::EARTHDISTANCE);
 
-        let extensions = resolve_extensions(&[Extension::Earthdistance]).unwrap();
-        assert_eq!(extensions, vec![Extension::Cube, Extension::Earthdistance]);
+        let extensions = resolve_extensions(&[Extension::EARTHDISTANCE]).unwrap();
+        assert_eq!(extensions, vec![Extension::CUBE, Extension::EARTHDISTANCE]);
 
         let error = install_cached_runtime(
             NativeRuntimeProfile::PostgresServer,
@@ -209,8 +209,8 @@ mod tests {
         let install_dir = temp.path().join("install");
         let runtime_dir = temp.path().join("runtime");
         write_minimal_install(&install_dir);
-        write_extension_assets(&install_dir, Extension::Vector);
-        write_extension_assets(&install_dir, Extension::Hstore);
+        write_extension_assets(&install_dir, Extension::VECTOR);
+        write_extension_assets(&install_dir, Extension::HSTORE);
 
         install_cached_runtime(
             NativeRuntimeProfile::PostgresServer,
@@ -218,7 +218,7 @@ mod tests {
             None,
             &[],
             &runtime_dir,
-            &[Extension::Vector],
+            &[Extension::VECTOR],
         )
         .unwrap();
 
@@ -230,7 +230,7 @@ mod tests {
         assert!(
             runtime_dir
                 .join("lib/postgresql")
-                .join(Extension::Vector.native_module_file().unwrap())
+                .join(Extension::VECTOR.native_module_file().unwrap())
                 .is_file()
         );
         assert!(
@@ -242,7 +242,7 @@ mod tests {
         assert!(
             !runtime_dir
                 .join("lib/postgresql")
-                .join(Extension::Hstore.native_module_file().unwrap())
+                .join(Extension::HSTORE.native_module_file().unwrap())
                 .exists(),
             "unselected hstore module must not leak into vector-only packages"
         );
@@ -257,7 +257,7 @@ mod tests {
             .join("extension/oliphaunt-extension-contrib-pg18");
         let runtime_dir = temp.path().join("runtime");
         write_minimal_install(&install_dir);
-        write_extension_assets(&extension_dir, Extension::Hstore);
+        write_extension_assets(&extension_dir, Extension::HSTORE);
 
         install_cached_runtime(
             NativeRuntimeProfile::PostgresServer,
@@ -265,7 +265,7 @@ mod tests {
             None,
             &[extension_dir],
             &runtime_dir,
-            &[Extension::Hstore],
+            &[Extension::HSTORE],
         )
         .unwrap();
 
@@ -277,7 +277,7 @@ mod tests {
         assert!(
             runtime_dir
                 .join("lib/postgresql")
-                .join(Extension::Hstore.native_module_file().unwrap())
+                .join(Extension::HSTORE.native_module_file().unwrap())
                 .is_file()
         );
     }
@@ -292,11 +292,11 @@ mod tests {
         let embedded_modules = temp.path().join("embedded-modules");
         let server_runtime = temp.path().join("server-runtime");
         let embedded_runtime = temp.path().join("embedded-runtime");
-        let module = Extension::Hstore
+        let module = Extension::HSTORE
             .native_module_file()
             .expect("hstore has a native module");
         write_minimal_install(&install_dir);
-        write_extension_assets(&extension_dir, Extension::Hstore);
+        write_extension_assets(&extension_dir, Extension::HSTORE);
         write_file(
             &extension_dir.join("lib/postgresql").join(&module),
             b"server-profile-module\n",
@@ -322,7 +322,7 @@ mod tests {
             None,
             std::slice::from_ref(&extension_dir),
             &server_runtime,
-            &[Extension::Hstore],
+            &[Extension::HSTORE],
         )
         .unwrap();
         install_cached_runtime(
@@ -331,7 +331,7 @@ mod tests {
             Some(&embedded_modules),
             &[extension_dir],
             &embedded_runtime,
-            &[Extension::Hstore],
+            &[Extension::HSTORE],
         )
         .unwrap();
 
@@ -353,7 +353,7 @@ mod tests {
             .path()
             .join("extension/oliphaunt-extension-contrib-pg18");
         let runtime_dir = temp.path().join("runtime");
-        let module = Extension::AutoExplain
+        let module = Extension::AUTO_EXPLAIN
             .native_module_file()
             .expect("auto_explain has a native module");
         write_minimal_install(&install_dir);
@@ -368,7 +368,7 @@ mod tests {
             None,
             &[extension_dir],
             &runtime_dir,
-            &[Extension::AutoExplain],
+            &[Extension::AUTO_EXPLAIN],
         )
         .unwrap();
 

@@ -19,6 +19,102 @@ export type ManagedChild = {
   exited(): Promise<number | null>;
 };
 
+/** Exact unpublished runtime resources retained after startup cleanup fails. */
+export type FailedManagedLaunch = {
+  child?: ManagedChild;
+  stream?: ByteStream;
+  paths: Array<string | undefined>;
+};
+
+const retainedFailedManagedLaunches = new Set<FailedManagedLaunch>();
+
+/**
+ * Best-effort cleanup for a runtime launch which failed before it could publish
+ * a handle. Paths are never deleted while the child reap is unconfirmed, and
+ * every unresolved exact resource remains process-lifetime owned.
+ */
+export async function cleanupFailedManagedLaunch(
+  launch: FailedManagedLaunch,
+  timeoutMs: number,
+  label: string,
+): Promise<unknown[]> {
+  const failures: unknown[] = [];
+  const stream = launch.stream;
+  if (stream !== undefined) {
+    try {
+      await stream.close();
+      if (launch.stream === stream) launch.stream = undefined;
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+
+  const child = launch.child;
+  if (child !== undefined) {
+    try {
+      child.kill('SIGKILL');
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      const reaped = await waitForManagedChild(child, timeoutMs);
+      if (reaped) {
+        if (launch.child === child) launch.child = undefined;
+      } else {
+        failures.push(new Error(`${label} did not stop within ${timeoutMs}ms`));
+      }
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+
+  if (launch.child === undefined) {
+    for (let index = 0; index < launch.paths.length; index += 1) {
+      const path = launch.paths[index];
+      if (path === undefined) continue;
+      try {
+        await removeTree(path);
+        launch.paths[index] = undefined;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+  }
+
+  if (
+    launch.child !== undefined ||
+    launch.stream !== undefined ||
+    launch.paths.some((path) => path !== undefined)
+  ) {
+    retainedFailedManagedLaunches.add(launch);
+  } else {
+    retainedFailedManagedLaunches.delete(launch);
+  }
+  return failures;
+}
+
+export async function waitForManagedChild(
+  child: ManagedChild,
+  timeoutMs: number,
+): Promise<boolean> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<false>((resolveTimeout) => {
+    timeoutHandle = setTimeout(() => resolveTimeout(false), timeoutMs);
+    if (
+      typeof timeoutHandle === 'object' &&
+      timeoutHandle !== null &&
+      'unref' in timeoutHandle
+    ) {
+      timeoutHandle.unref();
+    }
+  });
+  try {
+    return await Promise.race([child.wait().then(() => true), timeout]);
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
 export function randomHexToken(byteLength = 32): string {
   return randomBytes(byteLength).toString('hex');
 }
@@ -77,6 +173,7 @@ export async function readReadyLine(
   stream: Readable,
   timeoutMs: number,
   label: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let buffer = Buffer.alloc(0);
@@ -84,12 +181,14 @@ export async function readReadyLine(
       cleanup();
       reject(new Error(`${label} did not print a ready line within ${timeoutMs}ms`));
     }, timeoutMs);
+    timeout.unref();
 
     function cleanup(): void {
       clearTimeout(timeout);
       stream.off('data', onData);
       stream.off('error', onError);
       stream.off('end', onEnd);
+      signal?.removeEventListener('abort', onAbort);
     }
 
     function onData(chunk: Buffer): void {
@@ -119,9 +218,20 @@ export async function readReadyLine(
       reject(new Error(`${label} exited before printing a ready line`));
     }
 
+    function onAbort(): void {
+      cleanup();
+      reject(new Error(`${label} readiness wait was cancelled`));
+    }
+
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+
     stream.on('data', onData);
     stream.once('error', onError);
     stream.once('end', onEnd);
+    signal?.addEventListener('abort', onAbort, { once: true });
   });
 }
 
@@ -134,8 +244,19 @@ export async function connectEndpoint(endpoint: LocalEndpoint): Promise<ByteStre
     socket.setNoDelay(true);
   }
   await new Promise<void>((resolve, reject) => {
-    socket.once('connect', resolve);
-    socket.once('error', reject);
+    function onConnect(): void {
+      socket.off('error', onError);
+      resolve();
+    }
+
+    function onError(error: Error): void {
+      socket.off('connect', onConnect);
+      socket.destroy();
+      reject(error);
+    }
+
+    socket.once('connect', onConnect);
+    socket.once('error', onError);
   });
   return new NodeSocketByteStream(socket);
 }
@@ -162,9 +283,18 @@ class NodeSocketByteStream implements ByteStream {
   #ended = false;
   #error: Error | undefined;
   #wake: (() => void) | undefined;
+  readonly #closed: Promise<void>;
 
   constructor(socket: Socket) {
     this.#socket = socket;
+    this.#closed = new Promise((resolveClosed) => {
+      socket.once('close', () => {
+        this.#ended = true;
+        this.#wake?.();
+        this.#wake = undefined;
+        resolveClosed();
+      });
+    });
     socket.on('data', (chunk: Buffer) => {
       this.#chunks.push(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength).slice());
       this.#wake?.();
@@ -214,13 +344,12 @@ class NodeSocketByteStream implements ByteStream {
   async writeAll(bytes: Uint8Array): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       const done = (error?: Error | null) => (error ? reject(error) : resolve());
-      if (!this.#socket.write(bytes, done)) {
-        this.#socket.once('drain', resolve);
-      }
+      this.#socket.write(bytes, done);
     });
   }
 
   async close(): Promise<void> {
-    this.#socket.destroy();
+    if (!this.#socket.destroyed) this.#socket.destroy();
+    await this.#closed;
   }
 }

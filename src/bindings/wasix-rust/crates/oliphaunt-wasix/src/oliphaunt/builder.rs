@@ -78,14 +78,16 @@ impl OliphauntBuilder {
         self
     }
 
-    /// Enable a bundled Postgres extension before returning the database.
+    /// Make one bundled PostgreSQL extension artifact available to the database.
+    /// Database-local installation remains the application's migration concern.
     #[cfg(feature = "extensions")]
     pub fn extension(mut self, extension: Extension) -> Self {
         self.extensions.push(extension);
         self
     }
 
-    /// Enable bundled Postgres extensions before returning the database.
+    /// Make bundled PostgreSQL extension artifacts available to the database.
+    /// Database-local installation remains the application's migration concern.
     #[cfg(feature = "extensions")]
     pub fn extensions(mut self, extensions: impl IntoIterator<Item = Extension>) -> Self {
         self.extensions.extend(extensions);
@@ -103,6 +105,7 @@ impl OliphauntBuilder {
         #[cfg(not(feature = "extensions"))]
         let postgres_config = self.postgres_config.clone();
         postgres_config.validate()?;
+        self.storage.validate()?;
         self.startup_config.validate()?;
         let plan = DatabasePlan::new(self.storage.clone());
         let prepared = prepare_database(plan, &self.startup_config.username)?;
@@ -153,8 +156,6 @@ impl OliphauntBuilder {
         if let Some(workspace) = workspace {
             instance.attach_workspace(workspace);
         }
-        #[cfg(feature = "extensions")]
-        instance.enable_startup_extensions(&extensions)?;
         Ok(instance)
     }
 }
@@ -200,17 +201,17 @@ mod storage_tests {
     }
 }
 
-#[cfg(all(test, feature = "extensions"))]
+#[cfg(all(test, feature = "extension-pg-textsearch"))]
 mod tests {
     use super::*;
-    use crate::oliphaunt::extensions::PG_TEXTSEARCH;
+    use crate::oliphaunt::extensions::Extension;
 
     #[test]
     fn direct_path_merges_pg_textsearch_preload_once_before_open() {
         let builder = OliphauntBuilder::new()
             .startup_guc("shared_preload_libraries", "auto_explain")
             .startup_guc("work_mem", "16MB")
-            .extensions([PG_TEXTSEARCH, PG_TEXTSEARCH]);
+            .extensions([Extension::PG_TEXTSEARCH, Extension::PG_TEXTSEARCH]);
 
         let (_, postgres_config) = builder.resolved_extension_startup().unwrap();
 

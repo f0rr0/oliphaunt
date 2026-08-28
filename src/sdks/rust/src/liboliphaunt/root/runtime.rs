@@ -356,19 +356,19 @@ mod tests {
             .join("resources/extension/oliphaunt-extension-contrib-pg18");
         fs::create_dir_all(&install_dir).expect("create fallback runtime");
 
-        let amcheck_module = Extension::Amcheck
+        let amcheck_module = Extension::AMCHECK
             .native_module_file()
             .expect("amcheck has a native module");
         write_artifact_file(&product_root, &format!("lib/postgresql/{amcheck_module}"));
         assert!(!extension_artifact_root_contains(
             &product_root,
-            Extension::Amcheck
+            Extension::AMCHECK
         ));
         assert_eq!(
             extension_artifact_root_for(
                 &install_dir,
                 std::slice::from_ref(&product_root),
-                Extension::Amcheck,
+                Extension::AMCHECK,
             ),
             install_dir
         );
@@ -376,26 +376,26 @@ mod tests {
         write_artifact_file(&product_root, "share/postgresql/extension/amcheck.control");
         assert!(extension_artifact_root_contains(
             &product_root,
-            Extension::Amcheck
+            Extension::AMCHECK
         ));
 
-        let auto_explain_module = Extension::AutoExplain
+        let auto_explain_module = Extension::AUTO_EXPLAIN
             .native_module_file()
             .expect("auto_explain has a native module");
         write_artifact_file(
             &product_root,
             &format!("lib/postgresql/{auto_explain_module}"),
         );
-        assert!(!Extension::AutoExplain.creates_extension());
+        assert!(!Extension::AUTO_EXPLAIN.creates_extension());
         assert!(extension_artifact_root_contains(
             &product_root,
-            Extension::AutoExplain
+            Extension::AUTO_EXPLAIN
         ));
         assert_eq!(
             extension_artifact_root_for(
                 &install_dir,
                 std::slice::from_ref(&product_root),
-                Extension::AutoExplain,
+                Extension::AUTO_EXPLAIN,
             ),
             product_root
         );

@@ -28,13 +28,6 @@
       "require": "./lib/commonjs/index.js",
       "default": "./lib/module/index.js"
     },
-    "./extension-metadata": {
-      "types": "./lib/typescript/extension-metadata.d.ts",
-      "react-native": "./lib/module/extension-metadata.js",
-      "import": "./lib/module/extension-metadata.js",
-      "require": "./lib/commonjs/extension-metadata.js",
-      "default": "./lib/module/extension-metadata.js"
-    },
     "./package.json": "./package.json"
   },
   "oliphaunt": {

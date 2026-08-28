@@ -19,9 +19,29 @@ owners:
     "**/*": ["@oliphaunt/perf"]
 
 tasks:
+  rust-api-model-check:
+    tags: ["bench", "diagnostic", "quality", "ci-rust"]
+    command: "bash tools/perf/rust-api-model/check.sh"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/sdks/rust/**/*"
+      - "/src/bindings/wasix-rust/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
+      - "/src/shared/rust-query-core/**/*"
+      - "/tools/dev/bun.sh"
+      - "/tools/perf/runner/**/*"
+      - "/tools/perf/rust-api-model/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
   check:
     tags: ["policy", "assertion", "quality", "static"]
     command: "bash tools/perf/check-native-perf-harness.sh"
+    deps:
+      - "perf-tools:rust-api-model-check"
     inputs:
       - "/Cargo.lock"
       - "/Cargo.toml"
@@ -41,6 +61,47 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
+  rust-api-model-native:
+    tags: ["bench", "diagnostic", "measured", "ci-rust"]
+    command: "bash tools/perf/rust-api-model/run.sh --runtime native"
+    deps:
+      - "liboliphaunt-native:release-runtime"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/shared/rust-query-core/**/*"
+      - "/src/sdks/rust/**/*"
+      - "/tools/perf/runner/**/*"
+      - "/tools/perf/rust-api-model/**/*"
+      - "/tools/runtime/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  rust-api-model-wasix:
+    tags: ["bench", "diagnostic", "measured", "ci-rust"]
+    command: "bash tools/perf/rust-api-model/run.sh --runtime wasix"
+    deps:
+      - "liboliphaunt-wasix:runtime-aot"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/bindings/wasix-rust/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
+      - "/src/shared/rust-query-core/**/*"
+      - "/tools/perf/runner/**/*"
+      - "/tools/perf/rust-api-model/**/*"
+      - "/tools/runtime/**/*"
+      - "/tools/xtask/**/*"
+      - "/target/oliphaunt-wasix/assets/**/*"
+      - "/target/oliphaunt-wasix/aot/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
   bench:
     tags: ["bench", "plan"]
     command: "bash tools/perf/matrix/run_native_oliphaunt_matrix.sh --plan-only"

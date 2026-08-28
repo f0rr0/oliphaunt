@@ -130,6 +130,7 @@ pub(crate) fn startup_error_response_output(err: &anyhow::Error) -> Option<&[u8]
         .map(StartupErrorResponse::output)
 }
 
+#[derive(Debug)]
 pub(crate) enum ProtocolPumpOutcome {
     Buffered(Vec<u8>),
     Streamed,

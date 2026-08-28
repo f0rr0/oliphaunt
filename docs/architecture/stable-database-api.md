@@ -1,6 +1,6 @@
 # Stable public database API
 
-Status: locked implemented contract, updated 2026-08-27.
+Status: locked implemented contract, updated 2026-08-28.
 
 This document defines the smallest database and callback-transaction contract
 that Oliphaunt keeps conceptually stable across native Rust, Rust WASIX, Swift,
@@ -133,7 +133,8 @@ with an open or failed transaction (`T` or `E`) for the next borrower. They
 recover to idle when that outcome is provable and otherwise poison the handle.
 Inside a callback, successful operations preserve its active transaction;
 statement errors remain owned by the callback's rollback path. Raw protocol is
-the explicit bypass and does not promise this structured ownership guard.
+a database/root-only explicit bypass and is absent from managed transaction
+handles.
 
 ## Rows and decoding
 
@@ -203,8 +204,9 @@ not return a misleading partial-success value.
 
 ## Raw protocol escape hatches
 
-Every app-facing SDK exposes one buffered and one callback-streamed raw
-protocol operation. Their canonical names are `execProtocolRaw` and
+Every app-facing database/root handle exposes one buffered and one
+callback-streamed raw protocol operation. Transaction and server-lifecycle
+handles do not. Their canonical names are `execProtocolRaw` and
 `execProtocolRawStream`, or `exec_protocol_raw` and
 `exec_protocol_raw_stream` in Rust. Neither parses the response. Callback
 chunks are transport-dependent and callers must not assume that one chunk is
@@ -213,6 +215,17 @@ callback cannot reenter the same database or transaction handle. The low-level
 C boundary enforces this explicitly while its mutex is released: same-handle
 query, backup, detach, close, and nested stream calls fail busy, while
 out-of-band cancellation remains permitted.
+
+A buffered raw-protocol execution or transport failure leaves the session
+outcome unknown and poisons the handle. The same is true when streamed
+execution, transport, or recovery fails. A stream callback failure is the one
+typed exception: the adapter first recovers to a proven protocol boundary,
+then preserves the callback's identity or value in the language-idiomatic error
+channel and leaves the handle reusable. JavaScript, Swift, and Kotlin rethrow
+the same callback error; Rust retains the typed value in
+`RawStreamError::Callback(E)`. If recovery also fails, the recovery failure is
+authoritative and the handle is poisoned; it must not be masked by the earlier
+callback failure.
 
 ## Notices and errors
 
@@ -236,10 +249,11 @@ original backend bytes rather than dispatching a second notice channel.
 ## Callback transactions
 
 A transaction owns the physical session for the callback. Its handle mirrors
-the database's `query`, raw-query access, `execute`, `exec`, and `describe`
-concepts and publishes a read-only closed state. Database-level operations
-that would interleave with the owned session fail while the transaction is
-active.
+the database's structured `query`, `execute`, `exec`, and `describe` concepts
+and publishes a read-only closed state. Raw row views remain available through
+structured query options or language-native row access, but raw protocol
+execution is deliberately absent. Database-level operations that would
+interleave with the owned session fail while the transaction is active.
 
 The control flow is:
 
@@ -257,27 +271,37 @@ Further transaction operations, including another rollback, fail
 deterministically. A later callback error is still propagated without sending
 a second rollback.
 
-A callback error is rethrown unchanged only after an exact `ROLLBACK` completion
-and idle `ReadyForQuery`. If the automatic rollback also fails, the SDK throws
-an idiomatic composite lifecycle error that retains both failures and poisons
-the database. An uncertain commit outcome likewise poisons the database; the
-SDK must not claim recovery or send a second transaction-control command.
-Manual commit is deliberately absent because it conflicts with callback
-ownership. Nested transactions and savepoints can be expressed in SQL where
-an adapter owns their policy, but they are not a second core transaction API.
+A callback error is surfaced through the language-idiomatic error channel only
+after an exact `ROLLBACK` completion and idle `ReadyForQuery`. JavaScript,
+Swift, and Kotlin rethrow the same callback error; Rust preserves its typed
+value in `TransactionError::Callback(E)`. If the automatic rollback also
+fails, the SDK throws an idiomatic composite lifecycle error that retains both
+failures and poisons the database. An uncertain commit outcome likewise
+poisons the database; the SDK must not claim recovery or send a second
+transaction-control command. Manual commit is deliberately absent because it
+conflicts with callback ownership. Manual `BEGIN`, `START TRANSACTION`,
+`COMMIT`, `END`, bare `ROLLBACK`, `ABORT`, `PREPARE TRANSACTION`, and `AND
+CHAIN` are likewise unsupported inside the callback. Use callback return/throw
+or explicit `rollback`; `SAVEPOINT` and `ROLLBACK TO` remain supported SQL.
+`ROLLBACK AND CHAIN` is contract misuse but is wire-indistinguishable from
+`ROLLBACK TO` (both report `ROLLBACK` plus transactional readiness), so SDKs validate every
+actual command-complete tag and the terminal readiness frame without parsing
+SQL. A proven lifecycle escape makes the database close-only and suppresses
+all follow-up SDK control. Savepoints do not become a second core transaction
+API.
 
 ## Runtime and language exceptions
 
 | Difference | Exact scope and behavior |
 | --- | --- |
-| Calling contract and ownership | Calling shape and execution placement are independent. Rust and Rust WASIX roots are synchronous, exclusive caller-thread APIs; their explicit `worker` modules provide cloneable asynchronous handles backed by dedicated owner threads. The WASIX TypeScript root remains Promise-shaped but runs synchronous guest work in the importing realm; `@oliphaunt/wasix-ts/worker` moves that work to a package-owned Worker. Swift and Kotlin retain their idiomatic asynchronous serial owners, React Native delegates to those platform owners, and native TypeScript retains asynchronous addon/runtime work. The low-level C ABI remains synchronous. |
+| Calling contract and ownership | Calling shape and execution placement are independent. Rust and Rust WASIX root `Oliphaunt` types are synchronous and exclusive; their root `AsyncOliphaunt` types are cloneable asynchronous handles backed by dedicated owner threads. Native Rust sync calls block without an SDK owner-queue hop, but direct PostgreSQL uses liboliphaunt's backend pthread; WASIX Rust direct guest work actually executes on the caller thread. The WASIX TypeScript root remains Promise-shaped but runs synchronous guest work in the importing realm; `@oliphaunt/wasix-ts/worker` moves that work to a package-owned Worker. Swift and Kotlin retain their idiomatic asynchronous serial owners, React Native delegates to those platform owners, and native TypeScript retains asynchronous addon/runtime work. The low-level C ABI remains synchronous. |
 | JavaScript decoded rows | Native TypeScript, WASIX TypeScript, and React Native expose decoded object/array modes plus `queryRaw`. Rust, Swift, and Kotlin expose typed getters over raw ordered rows and do not manufacture JavaScript-shaped maps. |
 | React Native transport | Swift and Kotlin own database behavior. The TurboModule transports complete results; JavaScript owns decoded row shaping. Operations remain FIFO. |
 | WASIX persistence | A successful logical operation does not settle before its provider publication boundary. A callback transaction publishes once after confirmed `COMMIT` or `ROLLBACK`; publication failure retains its WASIX storage and commit-state error. A new persistent direct-OPFS root has one private initialization/full-publication boundary that is not public API. |
 | Cancellation | Native SDKs may cancel the runtime's active operation and must recover through readiness. WASIX has no public direct-query cancellation contract. Cancellation is not presented as query-scoped until operation IDs exist. |
-| Server handles | Server products exist only where local sockets are honest. Rust WASIX dedicates its one backend to the listener; applications query it with a PostgreSQL client. Browser TypeScript has no server API. |
+| Server handles | Server products exist only where local sockets are honest. Native/WASIX Rust, desktop TypeScript, and WASIX TypeScript server handles own only listener/process lifecycle plus a connection string; ORMs and external drivers own every database connection. Browser TypeScript has no server API. |
 | Physical backup | Embedded database handles use their runtime-family archive. Native server handles have no SDK backup method. Native and WASIX archives are not interchangeable. |
-| Raw streaming | All SDKs provide bounded callback response streaming as `execProtocolRawStream` or `exec_protocol_raw_stream`. Native streaming starts from complete frontend input; stronger WASIX guest streaming does not raise the native guarantee. |
+| Raw streaming | Every embedded database/root SDK surface provides bounded callback response streaming as `execProtocolRawStream` or `exec_protocol_raw_stream`; transaction and server handles do not. Native streaming starts from complete frontend input; stronger WASIX guest streaming does not raise the native guarantee. |
 
 Storage selectors, extension carriers, server and tool products, and archive
 compatibility remain governed by the parity and storage policies. They are not

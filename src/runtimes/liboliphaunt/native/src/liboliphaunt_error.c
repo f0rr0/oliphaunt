@@ -19,6 +19,19 @@ static OLIPHAUNT_THREAD_LOCAL char completed_operation_error[OLIPHAUNT_ERROR_CAP
 static OLIPHAUNT_THREAD_LOCAL bool completed_operation_error_valid;
 static OLIPHAUNT_THREAD_LOCAL OliphauntErrorScope *active_error_scope;
 
+_Static_assert(
+    OLIPHAUNT_ERROR_CAPTURE_CAPACITY == OLIPHAUNT_ERROR_CAPACITY,
+    "public error captures must hold one complete native error");
+_Static_assert(
+    sizeof(((OliphauntErrorCapture *)0)->message) == OLIPHAUNT_ERROR_CAPACITY,
+    "error capture layout must match the native error capacity");
+_Static_assert(
+    offsetof(OliphauntErrorCapture, message) == sizeof(uint32_t),
+    "error capture message must immediately follow its length");
+_Static_assert(
+    sizeof(OliphauntErrorCapture) == sizeof(uint32_t) + OLIPHAUNT_ERROR_CAPACITY,
+    "error capture layout must not contain trailing padding");
+
 static void copy_error_text(char *target, const char *message) {
     snprintf(
         target,
@@ -56,6 +69,24 @@ void oliphaunt_error_scope_begin(
         completed_operation_error_valid = false;
     }
     active_error_scope = scope;
+}
+
+void oliphaunt_error_scope_capture_shared(OliphauntHandle *fallback_handle) {
+    if (active_error_scope == NULL || active_error_scope->has_error ||
+        fallback_handle == NULL) {
+        return;
+    }
+
+    char snapshot[OLIPHAUNT_ERROR_CAPACITY];
+    (void)copy_shared_last_error(
+        fallback_handle,
+        snapshot,
+        sizeof(snapshot));
+    if (snapshot[0] == '\0') {
+        return;
+    }
+    copy_error_text(active_error_scope->error, snapshot);
+    active_error_scope->has_error = true;
 }
 
 void oliphaunt_error_scope_end(OliphauntErrorScope *scope, bool failed) {
@@ -142,7 +173,14 @@ size_t oliphaunt_copy_last_error(OliphauntHandle *handle, char *out, size_t capa
         source = completed_operation_error;
     }
     if (source == NULL) {
-        return copy_shared_last_error(handle, out, capacity);
+        if (handle != NULL && oliphaunt_try_begin_handle_call(handle)) {
+            size_t length = copy_shared_last_error(handle, out, capacity);
+            oliphaunt_end_handle_call();
+            return length;
+        }
+        /* A stale or retiring opaque pointer must not be dereferenced. The
+         * process-global slot is the only lifetime-safe fallback. */
+        return copy_shared_last_error(NULL, out, capacity);
     }
 
     size_t length = strlen(source);
@@ -152,6 +190,30 @@ size_t oliphaunt_copy_last_error(OliphauntHandle *handle, char *out, size_t capa
         out[copied] = '\0';
     }
     return length;
+}
+
+void oliphaunt_error_capture_current(
+    OliphauntErrorCapture *capture,
+    OliphauntHandle *fallback_handle,
+    bool failed) {
+    if (capture == NULL) {
+        return;
+    }
+    memset(capture, 0, sizeof(*capture));
+    if (!failed) {
+        return;
+    }
+
+    size_t length = oliphaunt_copy_last_error(
+        fallback_handle,
+        capture->message,
+        sizeof(capture->message));
+    /* Every native error source is bounded by the same public capacity. */
+    if (length >= sizeof(capture->message)) {
+        length = sizeof(capture->message) - 1;
+        capture->message[length] = '\0';
+    }
+    capture->length = (uint32_t)length;
 }
 
 const char *oliphaunt_last_error(OliphauntHandle *handle) {

@@ -280,7 +280,19 @@ int32_t oliphaunt_swift_open(
         set_global_error("out of memory allocating OliphauntSession");
         return -1;
     }
-    pthread_mutex_init(&session->error_lock, NULL);
+    int error_lock_status = pthread_mutex_init(&session->error_lock, NULL);
+    if (error_lock_status != 0) {
+        char message[256];
+        snprintf(
+            message,
+            sizeof(message),
+            "failed to initialize OliphauntSession error mutex: %s (%d)",
+            strerror(error_lock_status),
+            error_lock_status);
+        set_global_error(message);
+        free(session);
+        return -1;
+    }
     if (load_symbols(library_path, &session->symbols) != 0) {
         pthread_mutex_destroy(&session->error_lock);
         free(session->last_error);

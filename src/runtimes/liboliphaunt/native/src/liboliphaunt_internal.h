@@ -31,7 +31,17 @@ void oliphaunt_error_scope_begin(
     OliphauntErrorScope *scope,
     OliphauntHandle *fallback_handle,
     const char *operation);
+/* Promote a backend-thread error into the current thread's operation scope.
+ * The caller must keep fallback_handle alive and serialize the shared error
+ * producer through the operation's owning mutex while this snapshot is made. */
+void oliphaunt_error_scope_capture_shared(OliphauntHandle *fallback_handle);
 void oliphaunt_error_scope_end(OliphauntErrorScope *scope, bool failed);
+/* Shared runners pass NULL only for legacy entry points; every public
+ * `_with_error` wrapper rejects a NULL capture before dispatching work. */
+void oliphaunt_error_capture_current(
+    OliphauntErrorCapture *capture,
+    OliphauntHandle *fallback_handle,
+    bool failed);
 
 typedef struct OliphauntEmbeddedIO {
     void *context;
@@ -258,6 +268,23 @@ int oliphaunt_claim_global_instance_for_close(
     OliphauntHandle **claimed);
 int oliphaunt_claim_current_global_instance_for_close(OliphauntHandle **claimed);
 int32_t oliphaunt_close_claimed_global_instance(OliphauntHandle *handle);
+/*
+ * Pins the current published handle across one complete public C operation,
+ * including its error-scope teardown. Terminal close may make the registry
+ * reject new calls and interrupt the backend, but it cannot destroy the
+ * handle until every acquired call has ended.
+ */
+int oliphaunt_begin_handle_call(OliphauntHandle *handle);
+bool oliphaunt_try_begin_handle_call(OliphauntHandle *handle);
+void oliphaunt_end_handle_call(void);
+/*
+ * Serializes logical detach against public handle calls without holding the
+ * handle mutex across PostgreSQL reset work. A stream callback is rejected
+ * before waiting, so reentrant detach remains a prompt busy error.
+ */
+int oliphaunt_begin_handle_retirement(OliphauntHandle *handle);
+void oliphaunt_end_handle_retirement(void);
+void oliphaunt_wait_for_active_handle_calls(void);
 void oliphaunt_register_process_exit_shutdown(void);
 
 bool oliphaunt_trace_enabled(void);

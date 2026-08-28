@@ -68,6 +68,15 @@ Use `transaction(async tx => …)` for one callback-scoped transaction. Calls on
 the database handle do not interleave with the callback; use the `tx` handle
 inside it.
 
+A callback failure is rethrown unchanged after rollback and required persistence
+publication succeed. If rollback also fails, `AggregateError.errors` contains
+the callback failure followed by the rollback failure. If the callback throws a
+different value after an earlier independent database or protocol failure
+poisoned or expired transaction ownership, the aggregate instead contains the
+callback failure followed by that database failure and the database is
+close-only. Ordinary PostgreSQL statement errors that remain safely rollbackable
+do not automatically produce an aggregate.
+
 </Step>
 <Step>
 
@@ -168,11 +177,14 @@ Import exact WASIX extension descriptors and pass them to `open()`:
 import pgtap from '@oliphaunt/extension-pgtap-wasix';
 
 const database = await Oliphaunt.open({ extensions: [pgtap] });
+await database.execute('CREATE EXTENSION pgtap');
 ```
 
 The core runtime does not bundle every extension. Reopen persistent data with
-the same installed extension code. PostgreSQL's normal extension SQL remains
-authoritative; Oliphaunt does not add a generic extension-migration mode.
+the same selected carrier code. Selection materializes verified artifacts and
+required startup/preload configuration only; it does not silently run
+`CREATE EXTENSION`, `LOAD`, schema, post-create, upgrade, or migration SQL.
+Applications and ORM migrations own that ordinary PostgreSQL lifecycle.
 
 </Step>
 <Step>
@@ -276,5 +288,8 @@ subresource violates COEP.
 Use `execProtocolRawStream(input, callback)` instead of `execProtocolRaw(input)`
 when an adapter expects a large protocol response. The synchronous callback is
 backpressured and receives bounded chunks; it cannot return a Promise/thenable
-or reenter the same database or transaction. Typed query results remain
-buffered.
+or reenter the same database or transaction. A callback error is preserved only
+after confirmed protocol recovery and leaves the database reusable. A buffered
+raw rejection or streamed execution, transport, or recovery failure poisons the
+database and takes precedence over the callback outcome. Typed query results
+remain buffered.

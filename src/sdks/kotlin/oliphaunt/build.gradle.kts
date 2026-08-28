@@ -74,11 +74,11 @@ version = providers.gradleProperty("VERSION_NAME").orElse("0.0.0").get()
 
 spotless {
     kotlin {
-        target("src/**/*.kt")
+        target("src/**/*.kt", "../Tests/PublicApiConsumer/src/**/*.kt")
         ktlint().editorConfigOverride(mapOf("ktlint_standard_property-naming" to "disabled"))
     }
     kotlinGradle {
-        target("*.gradle.kts", "../*.gradle.kts")
+        target("*.gradle.kts", "../*.gradle.kts", "../Tests/PublicApiConsumer/*.gradle.kts")
         ktlint()
     }
 }

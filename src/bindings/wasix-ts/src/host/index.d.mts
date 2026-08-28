@@ -55,7 +55,8 @@ export class OliphauntDirectInstance {
   private constructor();
   startup(packet: Uint8Array): Uint8Array;
   execProtocolRaw(input: Uint8Array): Uint8Array;
-  execProtocolStream(input: Uint8Array, onChunk: (chunk: Uint8Array) => void): void;
+  /** 0 after normal completion; 1 only after callback abort and confirmed recovery. */
+  execProtocolStream(input: Uint8Array, onChunk: (chunk: Uint8Array) => void): number;
   execProtocolDuplex(
     input: Uint8Array,
     onRead: (maximumBytes: number) => Uint8Array,

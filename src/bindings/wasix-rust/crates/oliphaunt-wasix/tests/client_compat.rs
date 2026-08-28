@@ -1,13 +1,13 @@
 #![cfg(feature = "extensions")]
 
 use anyhow::{Context, Result};
-use oliphaunt_wasix::{OliphauntServer as DirectOliphauntServer, worker::OliphauntServer};
+use oliphaunt_wasix::{AsyncOliphauntServer, OliphauntServer as DirectOliphauntServer};
 use sqlx::{Connection, Row};
 use tokio_postgres::NoTls;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tokio_postgres_parameters_and_error_recovery_work() -> Result<()> {
-    let server = OliphauntServer::builder().start().await?;
+    let server = AsyncOliphauntServer::builder().start().await?;
     let (client, connection) = tokio_postgres::connect(server.connection_string(), NoTls)
         .await
         .context("connect with tokio-postgres")?;
@@ -48,7 +48,7 @@ async fn sqlx_uses_the_standard_postgres_connection_string() -> Result<()> {
         .startup_guc("work_mem", "8MB")
         .start()?;
     let connection_string = server.connection_string();
-    let mut connection = sqlx::PgConnection::connect(&connection_string).await?;
+    let mut connection = sqlx::PgConnection::connect(connection_string).await?;
     let row = sqlx::query("SELECT current_setting('work_mem') AS work_mem, $1::text AS value")
         .bind("ok")
         .fetch_one(&mut connection)

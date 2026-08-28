@@ -23,10 +23,11 @@ pub(crate) enum ResponseFrame {
     Ok(Vec<u8>),
     Error(String),
     Chunk(Vec<u8>),
+    StreamCallbackAborted(String),
 }
 
 /// Internal broker IPC request used by the packaged broker helper.
-#[cfg(any(feature = "__internal-broker-helper", test))]
+#[cfg(feature = "__internal-broker-helper")]
 #[doc(hidden)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrokerIpcRequest {
@@ -47,7 +48,7 @@ pub enum BrokerIpcRequest {
 }
 
 /// Read one broker IPC request from a stream.
-#[cfg(any(feature = "__internal-broker-helper", test))]
+#[cfg(feature = "__internal-broker-helper")]
 #[doc(hidden)]
 pub fn broker_ipc_read_request(reader: &mut impl Read) -> Result<BrokerIpcRequest> {
     match read_request(reader)? {
@@ -62,7 +63,7 @@ pub fn broker_ipc_read_request(reader: &mut impl Read) -> Result<BrokerIpcReques
 }
 
 /// Write a successful broker IPC response.
-#[cfg(any(feature = "__internal-broker-helper", test))]
+#[cfg(feature = "__internal-broker-helper")]
 #[doc(hidden)]
 pub fn broker_ipc_write_ok(writer: &mut impl Write, bytes: Vec<u8>) -> Result<()> {
     write_response(writer, ResponseFrame::Ok(bytes))
@@ -76,10 +77,21 @@ pub fn broker_ipc_write_chunk(writer: &mut impl Write, bytes: &[u8]) -> Result<(
 }
 
 /// Write a failed broker IPC response.
-#[cfg(any(feature = "__internal-broker-helper", test))]
+#[cfg(feature = "__internal-broker-helper")]
 #[doc(hidden)]
 pub fn broker_ipc_write_error(writer: &mut impl Write, message: String) -> Result<()> {
     write_response(writer, ResponseFrame::Error(message))
+}
+
+/// Write a streamed-protocol callback failure after the broker runtime has
+/// independently confirmed ReadyForQuery.
+#[cfg(any(feature = "__internal-broker-helper", test))]
+#[doc(hidden)]
+pub fn broker_ipc_write_stream_callback_aborted(
+    writer: &mut impl Write,
+    message: String,
+) -> Result<()> {
+    write_response(writer, ResponseFrame::StreamCallbackAborted(message))
 }
 
 pub(crate) fn write_request(writer: &mut impl Write, frame: RequestFrame) -> Result<()> {
@@ -122,6 +134,9 @@ pub(crate) fn write_response(writer: &mut impl Write, frame: ResponseFrame) -> R
         ResponseFrame::Ok(bytes) => write_frame(writer, 101, &bytes),
         ResponseFrame::Error(message) => write_frame(writer, 102, message.as_bytes()),
         ResponseFrame::Chunk(bytes) => write_frame(writer, 103, &bytes),
+        ResponseFrame::StreamCallbackAborted(message) => {
+            write_frame(writer, 104, message.as_bytes())
+        }
     }
 }
 
@@ -133,6 +148,13 @@ pub(crate) fn read_response(reader: &mut impl Read) -> Result<ResponseFrame> {
             .map(ResponseFrame::Error)
             .map_err(|err| Error::Engine(format!("broker error frame is not UTF-8: {err}"))),
         103 => Ok(ResponseFrame::Chunk(payload)),
+        104 => String::from_utf8(payload)
+            .map(ResponseFrame::StreamCallbackAborted)
+            .map_err(|err| {
+                Error::Engine(format!(
+                    "broker stream callback-aborted frame is not UTF-8: {err}"
+                ))
+            }),
         _ => Err(Error::Engine(format!(
             "unknown broker response frame {kind}"
         ))),
@@ -264,6 +286,14 @@ mod tests {
         assert_eq!(
             read_response(&mut Cursor::new(response)).unwrap(),
             ResponseFrame::Chunk(vec![0x5a])
+        );
+
+        let mut response = Vec::new();
+        broker_ipc_write_stream_callback_aborted(&mut response, "consumer stopped".to_owned())
+            .unwrap();
+        assert_eq!(
+            read_response(&mut Cursor::new(response)).unwrap(),
+            ResponseFrame::StreamCallbackAborted("consumer stopped".to_owned())
         );
     }
 }

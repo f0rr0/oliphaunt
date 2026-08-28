@@ -38,7 +38,8 @@ Compare each mode against the problem it solves:
 
 - Use direct mode when one embedded database session is enough and latency is
   the primary concern.
-- Use broker mode when crash isolation, recovery, upgrades, or multiple instances
+- Use broker mode when crash isolation, explicit reopen recovery, upgrades, or
+  multiple instances
   are more important than the last microseconds of latency.
 - Use server mode when independent PostgreSQL clients are part of the product.
 

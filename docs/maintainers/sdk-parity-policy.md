@@ -37,9 +37,9 @@ language SDKs and do not expand that ABI.
 | `exec` | Simple-query SQL with zero or more statements and ordered structured command-or-row results; no bind parameters; all structured executing operations reject top-level COPY before buffered dispatch | JavaScript applies its selected row/value mode; native languages use enums, sealed values, or equivalent |
 | `describe` | `Parse` + `Describe` + `Sync`, without execution; returns parameter OIDs, optional result fields, and notices | May accept caller parameter OIDs through options, a builder, or an overload; it does not return mutable codec objects |
 | Query-scoped notices | Structured PostgreSQL notices stay ordered with the `query`, `queryRaw`, `execute`, `exec`, or `describe` operation that received them | No global parser registry, notice bus, or idle notification pump is implied |
-| Callback transaction | Exclusive physical-session ownership; mirrors query/raw query, execute, exec, and describe; exposes closed state | Explicit rollback is one-shot, expires the handle, skips outer commit, and lets a normally returning callback return its value |
+| Callback transaction | Exclusive physical-session ownership; mirrors structured query, execute, exec, and describe; exposes closed state; has no raw-protocol bypass | Explicit rollback is one-shot, expires the handle, skips outer commit, and lets a normally returning callback return its value |
 | PostgreSQL errors | Preserve SQLSTATE, available `ErrorResponse` fields, and unknown raw fields; remain distinct from lifecycle, transport, storage, codec, and unsupported-operation errors | Language-native error classes, enums, or exceptions |
-| Transaction-status ownership | Structured database operations do not silently leave `ReadyForQuery` in an open or failed transaction for the next borrower; callback operations preserve the callback-owned boundary | Raw protocol is the explicit bypass; uncertain recovery poisons the handle |
+| Transaction-status ownership | Structured database operations do not silently leave `ReadyForQuery` in an open or failed transaction for the next borrower; callback operations inspect every exact wire command tag and the one terminal readiness status before high-level parsing | Raw protocol is a database/root-only explicit bypass; managed transactions settle by callback return or rollback, allow savepoint SQL, and make uncertain or escaped ownership close-only without a follow-up SDK control |
 
 The runtime/product capabilities around that common database API are:
 
@@ -47,12 +47,12 @@ The runtime/product capabilities around that common database API are:
 | --- | --- | --- | --- |
 | Default storage | SDK-owned temporary directory | true WASIX memory filesystem | true WASIX memory filesystem |
 | Persistent storage | managed filesystem root | managed filesystem root | IndexedDB or OPFS in browsers; managed filesystem root on Node, Bun, and Deno |
-| Raw PostgreSQL protocol | yes | yes | yes, owned byte response |
-| Exact extension selection | yes | yes | yes |
+| Raw PostgreSQL protocol on database/root handles | yes | yes | yes, owned byte response |
+| Exact extension artifact selection | yes | yes | yes |
 | Physical backup | direct and broker; mobile direct | yes | yes |
 | Physical restore | new or empty destination | static restore into a new or empty directory | static restore into new or empty persistent storage |
 | Listening server | Rust and desktop TypeScript | yes | Node, Bun, and Deno through explicit server subpaths; no browser socket API |
-| PostgreSQL tools | optional endpoint-oriented Rust and desktop TypeScript products; no core SDK dependency | `tools` feature: open-database `pg_dump` and non-interactive `psql` on root or worker handles | optional `@oliphaunt/wasix-tools`: `pgDump` with direct or Worker handles; non-interactive `psql` with a Worker handle |
+| PostgreSQL tools | optional endpoint-oriented Rust and desktop TypeScript products; no core SDK dependency | `tools` feature: fluent open-database `pg_dump` and non-interactive `psql` methods on sync or async handles | optional `@oliphaunt/wasix-tools`: `pgDump` with direct or Worker handles; non-interactive `psql` with a Worker handle |
 | Cancellation | native C and language SDKs | no public direct cancellation contract | no |
 | Protocol/COPY response streaming | canonical `execProtocolRawStream`/`exec_protocol_raw_stream`, backed by `oliphaunt_exec_protocol_raw_stream` | `exec_protocol_raw_stream`; COPY uses the guest stream pump | `execProtocolRawStream` with bounded backpressure |
 
@@ -65,11 +65,35 @@ is runtime-owned and does not become a database method or option.
 These are language-native deltas, not parity failures:
 
 - Both Rust products expose the same fluent `Sql` statement builder with typed
-  binds and `query`, `execute`, or `describe` terminals. Their roots are
-  synchronous, exclusive caller-thread APIs. Their explicit `worker` modules
-  retain the cloneable asynchronous contract and run database work on dedicated
-  owner threads. Rust WASIX server lifecycle calls remain synchronous at the
-  root while the listener owns its backend thread.
+  binds and `query`, `execute`, or `describe` terminals. Root `Oliphaunt` types
+  are synchronous and exclusive; root `AsyncOliphaunt` types retain the
+  cloneable asynchronous contract and use dedicated owner threads. Native Rust
+  synchronous calls block their caller without an SDK queue hop, while native
+  direct PostgreSQL itself runs on `liboliphaunt`'s internal backend pthread.
+  Rust WASIX direct guest work truly executes on the caller thread, and its
+  server lifecycle calls remain synchronous while the listener owns its backend
+  thread.
+- Native blocking `Oliphaunt` is `Send` but not `Sync`; WASIX blocking
+  `Oliphaunt` is neither `Send` nor `Sync`. Blocking server handles in both
+  products are `Send` but not `Sync`. The cloneable async database and server
+  handles are `Send + Sync`; an async transaction is `Send` but not `Sync` and
+  its operations require exclusive mutable access. These differences describe
+  real owner placement rather than different SQL semantics.
+- Both Rust products keep database and server construction separate:
+  `OliphauntBuilder` / `AsyncOliphauntBuilder` end in `open`, while dedicated
+  `OliphauntServerBuilder` / `AsyncOliphauntServerBuilder` end in `start`.
+- Both Rust products root-export an opaque, cloneable `Error` and a
+  `#[non_exhaustive] ErrorKind` with `InvalidConfiguration`, `Lifecycle`,
+  `TransactionActive`, `Postgres`, and `Other`; `Error::kind()` is the stable
+  category boundary. PostgreSQL and composite transaction detail remains
+  available through dedicated accessors without exposing runtime-specific
+  causes as public enum variants.
+- Both Rust products use an opaque root `Extension` with uppercase associated
+  constants, `Extension::ALL`, `Extension::by_sql_name`, and `sql_name`.
+  Native `ALL` is the packaged PostgreSQL 18 catalog; WASIX exposes only
+  Cargo-feature-enabled extensions and gates the type and builder methods on
+  its `extensions` feature. Free/module constants and PascalCase aliases are
+  not public compatibility surfaces.
 - Swift uses actors, `URL`, `Data`, and `OliphauntPostgresDecodable`.
 - Kotlin uses coroutines, sealed storage types, `ByteArray`, and
   `PostgresDecoder<T>`.
@@ -93,6 +117,12 @@ These are language-native deltas, not parity failures:
   make it an app-facing or stable database API. The JavaScript SDKs expose
   codec helpers and result types from their roots and deliberately do not
   publish implementation-heavy `query` or `protocol` subpaths.
+- Swift's `OliphauntExtensionSupport` product is a version-locked carrier seam
+  owned by generated Swift extension products. Ordinary applications select
+  extensions by SQL name through `Oliphaunt`; they should not import this
+  support product directly. It may evolve only in lockstep with the carrier
+  products that consume it. The public `COliphaunt` product is governed by the
+  documented C ABI contract rather than the Swift application API.
 - Native Rust's non-default `__internal-broker-helper` feature similarly exposes
   `oliphaunt::__private` only to the exact-version, unpublished
   `oliphaunt-broker` executable. It is absent from normal builds, is inventoried
@@ -100,10 +130,10 @@ These are language-native deltas, not parity failures:
 - Native tools are endpoint-oriented optional products. `oliphaunt-tools` and
   `@oliphaunt/tools` accept a PostgreSQL connection string and do not become
   dependencies or methods of the embedded database SDKs.
-- Native Rust server mode owns an SDK pgwire client, so its database handle
-  retains the ordinary session helpers. Rust WASIX dedicates its one embedded
-  backend to the listener; its server handle therefore owns only the endpoint
-  and lifecycle, and applications use an ordinary PostgreSQL client for SQL.
+- Server handles in native/WASIX Rust, desktop TypeScript, and WASIX TypeScript
+  own only the process/listener, connection string, and lifecycle. Applications
+  use an ordinary PostgreSQL ORM, driver, or tool for SQL and cancellation; a
+  server handle never controls independent client connections.
 - Native cancellation targets the runtime's active operation and recovers it
   through PostgreSQL readiness. It is not query-scoped cancellation, and WASIX
   exposes no cancellation method until it has a guest interrupt contract.
@@ -118,8 +148,19 @@ These are language-native deltas, not parity failures:
   logical-detach error is retryable only before deactivation; broker/server
   errors after their destructive cutoff retire the facade, set `closed`, and
   replay the same terminal attempt. Error strings are never lifecycle state.
+- Native broker helpers are one generation per public database handle in both
+  Rust and TypeScript. Helper or IPC loss fails the handle permanently; callers
+  explicitly close and open a new handle. Neither SDK transparently replaces
+  session state or replays uncertain work.
 - Native response streaming starts with complete frontend input. Stronger
   WASIX guest stream machinery does not raise that portable guarantee.
+
+Selecting an extension means making its exact runtime artifact, dependencies,
+and required pre-start preload/GUC configuration available. It never executes
+`CREATE EXTENSION`, `ALTER EXTENSION`, `LOAD`, schema setup, or post-create SQL.
+Applications and ORM migrations own database-local installation and upgrades;
+reopening a catalog that uses an extension requires selecting its runtime code
+again.
 
 ## Storage and physical data
 

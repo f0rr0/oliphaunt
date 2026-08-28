@@ -7,6 +7,7 @@ import {
   type WasixDatabaseSessionTerminalState,
   type WasixPersistenceMode,
   type WasixProtocolConnectionMode,
+  type WasixProtocolStreamOutcome,
 } from './database.js';
 import { serializeOpenConfig } from './client-common.js';
 import { toUint8Array } from './query.js';
@@ -22,7 +23,11 @@ import type { BinaryInput, OliphauntDatabase, OpenConfig } from './types.js';
 import type { WasixProtocolConnection } from './pgwire-connection.js';
 import type { WasixPgDumpProcessOptions, WasixToolProcessResult } from './tool-runtime.js';
 
-type WorkerResponseValue = Uint8Array | WasixToolProcessResult | undefined;
+type WorkerResponseValue =
+  | Uint8Array
+  | WasixToolProcessResult
+  | WasixProtocolStreamOutcome
+  | undefined;
 
 const STREAM_ACK = 0;
 const STREAM_FAILED = 1;
@@ -90,7 +95,7 @@ export class WorkerRpc {
       reject: (error: unknown) => void;
       onChunk?: (chunk: Uint8Array) => void;
       control?: Int32Array;
-      callbackFailure?: { error: unknown };
+      stream?: true;
     }
   >();
   #nextId = 1;
@@ -107,28 +112,39 @@ export class WorkerRpc {
         return;
       }
       if ('kind' in message) {
-        try {
-          pending.onChunk?.(message.value);
-        } catch (error) {
-          pending.callbackFailure ??= { error };
-          if (pending.control !== undefined) {
-            Atomics.store(pending.control, STREAM_FAILED, 1);
+        if (
+          pending.control === undefined ||
+          Atomics.load(pending.control, STREAM_FAILED) === 0
+        ) {
+          try {
+            pending.onChunk?.(message.value);
+          } catch {
+            if (pending.control !== undefined) {
+              Atomics.store(pending.control, STREAM_FAILED, 1);
+            }
           }
-        } finally {
-          if (pending.control !== undefined) {
-            Atomics.store(pending.control, STREAM_ACK, message.sequence);
-            Atomics.notify(pending.control, STREAM_ACK);
-          }
+        }
+        if (pending.control !== undefined) {
+          Atomics.store(pending.control, STREAM_ACK, message.sequence);
+          Atomics.notify(pending.control, STREAM_ACK);
         }
         return;
       }
       this.#pending.delete(message.id);
-      if (pending.callbackFailure !== undefined) {
-        pending.reject(pending.callbackFailure.error);
-        return;
-      }
       if (message.ok) {
-        pending.resolve(message.value);
+        if (pending.stream) {
+          if (!('streamOutcome' in message)) {
+            pending.reject(new Error('Oliphaunt WASIX worker omitted its protocol stream outcome'));
+            return;
+          }
+          pending.resolve(message.streamOutcome);
+        } else if ('streamOutcome' in message) {
+          pending.reject(
+            new Error('Oliphaunt WASIX worker returned a stream outcome for a non-stream request'),
+          );
+        } else {
+          pending.resolve(message.value);
+        }
       } else {
         pending.reject(deserializeWorkerError(message.error));
       }
@@ -159,7 +175,7 @@ export class WorkerRpc {
     input: Uint8Array,
     persistence: WasixPersistenceMode,
     onChunk: (chunk: Uint8Array) => void,
-  ): Promise<void> {
+  ): Promise<WasixProtocolStreamOutcome> {
     if (this.#fatal !== undefined) {
       return Promise.reject(this.#fatal);
     }
@@ -167,10 +183,17 @@ export class WorkerRpc {
     const control = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 2));
     return new Promise((resolve, reject) => {
       this.#pending.set(id, {
-        resolve: () => resolve(),
+        resolve: (value) => {
+          if (value === 'complete' || value === 'callbackAborted') {
+            resolve(value);
+          } else {
+            reject(new Error('Oliphaunt WASIX worker returned an invalid protocol stream outcome'));
+          }
+        },
         reject,
         onChunk,
         control,
+        stream: true,
       });
       const request: WorkerRequest = {
         id,
@@ -310,7 +333,7 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
     input: Uint8Array,
     onChunk: (chunk: Uint8Array) => void,
     persistence: WasixPersistenceMode = 'sync',
-  ): Promise<void> {
+  ): Promise<WasixProtocolStreamOutcome> {
     this.#assertOpen();
     return this.#rpc.stream(input, persistence, onChunk);
   }

@@ -162,29 +162,14 @@ function extractRustModuleSurface(files, sourceDir, crateName) {
   return sorted(symbols);
 }
 
-function extractReexportedRustModuleSurface(crateName, exportedTypeNames, methodSourceFiles) {
-  const exportedTypes = new Set(exportedTypeNames);
-  return sorted([
-    ...Array.from(exportedTypes, (name) => `${crateName}::${name}`),
-    ...extractRustInherentMethods('', crateName, exportedTypes, [], methodSourceFiles),
-  ]);
-}
-
-function extractWasixRustWorkerSurface() {
-  const crateName = 'oliphaunt_wasix::worker';
-  const exportedTypes = new Set([
-    'Oliphaunt',
-    'OliphauntBuilder',
-    'OliphauntServer',
-    'OliphauntServerBuilder',
-    'Sql',
-    'Transaction',
-  ]);
-  return extractReexportedRustModuleSurface(
-    crateName,
-    exportedTypes,
-    ['src/bindings/wasix-rust/crates/oliphaunt-wasix/src/worker.rs'],
-  );
+function extractRustAssociatedConstants(file, crateName, typeName) {
+  const constants = [];
+  for (const match of readRelative(file).matchAll(
+    /^\s*pub\s+const\s+([A-Z][A-Z0-9_]*)\s*:/gmu,
+  )) {
+    constants.push(`${crateName}::${typeName}.${match[1]}`);
+  }
+  return sorted(constants);
 }
 
 function rustInherentImplType(header) {
@@ -795,20 +780,14 @@ function render() {
     'oliphaunt',
     sharedRustQueryCore,
     [
-      ...listFiles(nativeRustSourceDir, '.rs').filter(
-        file => ![
-          'src/sdks/rust/src/builder.rs',
-          'src/sdks/rust/src/database.rs',
-          'src/sdks/rust/src/worker.rs',
-        ].includes(file),
-      ),
+      ...listFiles(nativeRustSourceDir, '.rs'),
       ...sharedRustQueryCore,
     ],
   );
-  const nativeRustWorker = extractReexportedRustModuleSurface(
-    'oliphaunt::worker',
-    ['Oliphaunt', 'OliphauntBuilder', 'OliphauntServer', 'Sql', 'Transaction'],
-    ['src/sdks/rust/src/builder.rs', 'src/sdks/rust/src/database.rs'],
+  const nativeRustExtensionConstants = extractRustAssociatedConstants(
+    'src/sdks/rust/src/generated/extensions.rs',
+    'oliphaunt',
+    'Extension',
   );
   const nativeRustBrokerSeam = extractRustModuleSurface(
     [
@@ -841,11 +820,14 @@ function render() {
     'oliphaunt_wasix',
     sharedRustQueryCore,
     [
-      ...listFiles(wasixRustSourceDir, '.rs').filter(
-        file => file !== 'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/worker.rs',
-      ),
+      ...listFiles(wasixRustSourceDir, '.rs'),
       ...sharedRustQueryCore,
     ],
+  );
+  const wasixRustExtensionConstants = extractRustAssociatedConstants(
+    'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/generated_extensions.rs',
+    'oliphaunt_wasix',
+    'Extension',
   );
   requireRustQueryCoreSurface(nativeRust, 'oliphaunt');
   requireRustQueryCoreSurface(wasixRust, 'oliphaunt_wasix');
@@ -889,9 +871,7 @@ function render() {
   output += `node tools/policy/generate-sdk-api-surface.mjs --write\n`;
   output += `\`\`\`\n\n`;
   output += `## Rust: oliphaunt\n\n`;
-  output += markdownList(nativeRust);
-  output += `\n### Dedicated worker module: oliphaunt::worker\n\n`;
-  output += markdownList(nativeRustWorker);
+  output += markdownList(sorted([...nativeRust, ...nativeRustExtensionConstants]));
   output += `\n### Version-locked broker seam (not application API)\n\n`;
   output += `The separately built \`oliphaunt-broker\` executable enables \`__internal-broker-helper\` and consumes this exact-version seam. It is absent from default builds and may change only in lockstep with that executable.\n\n`;
   output += markdownList(nativeRustBrokerSeam);
@@ -918,30 +898,13 @@ function render() {
   output += markdownList(
     sorted([
       ...wasixRust,
-      ...extractRustModuleSurface(
-        [
-          'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/extensions.rs',
-          'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/generated_extensions.rs',
-        ],
-        'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt',
-        'oliphaunt_wasix::extensions',
-      ),
+      ...wasixRustExtensionConstants,
       ...extractRustModuleSurface(
         ['src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/tools.rs'],
         'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt',
         'oliphaunt_wasix::tools',
       ),
     ]),
-  );
-  output += `\n### Dedicated worker module: oliphaunt_wasix::worker\n\n`;
-  output += markdownList(extractWasixRustWorkerSurface());
-  output += `\n### Dedicated worker tools: oliphaunt_wasix::worker::tools\n\n`;
-  output += markdownList(
-    extractRustModuleSurface(
-      ['src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/tools.rs'],
-      'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt',
-      'oliphaunt_wasix::worker::tools',
-    ),
   );
   output += `\n## Native C ABI: liboliphaunt\n\n`;
   output += `### Types\n\n`;
@@ -953,6 +916,11 @@ function render() {
   output += `\n## Swift: Oliphaunt\n\n`;
   output += markdownList(extractSwiftSurface());
   output += `\n## Swift: OliphauntExtensionSupport\n\n`;
+  output +=
+    `This version-locked carrier seam is consumed by generated Swift extension ` +
+    `products. It is not ordinary application API; applications select extensions ` +
+    `by SQL name through \`Oliphaunt\`. See ` +
+    `[SDK parity policy](./sdk-parity-policy.md).\n\n`;
   output += markdownList(
     extractSwiftSurface('src/sdks/swift/Sources/OliphauntExtensionSupport'),
   );

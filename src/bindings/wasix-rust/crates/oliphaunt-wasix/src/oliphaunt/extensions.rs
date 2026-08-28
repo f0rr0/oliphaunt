@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 
-use anyhow::{Result, bail, ensure};
+use anyhow::Result;
+#[cfg(all(test, feature = "extension-pg-textsearch"))]
+use anyhow::bail;
 
 use crate::oliphaunt::config::PostgresConfig;
 
@@ -9,22 +11,13 @@ const SHARED_PRELOAD_LIBRARIES: &str = "shared_preload_libraries";
 #[path = "generated_extensions.rs"]
 mod generated;
 
-pub use generated::*;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct ExtensionNativeModule {
     runtime_path: &'static str,
     aot_name: Option<&'static str>,
 }
 
 impl ExtensionNativeModule {
-    pub(crate) const fn new(runtime_path: &'static str, aot_name: Option<&'static str>) -> Self {
-        Self {
-            runtime_path,
-            aot_name,
-        }
-    }
-
     pub(crate) const fn runtime_path(self) -> &'static str {
         self.runtime_path
     }
@@ -34,66 +27,32 @@ impl ExtensionNativeModule {
     }
 }
 
-/// A bundled Postgres extension that can be installed into a Oliphaunt database.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// A bundled PostgreSQL extension artifact that Oliphaunt can make available.
+///
+/// Selecting an extension does not run `CREATE EXTENSION`, `LOAD`, or other
+/// database-local SQL. Applications retain ordinary migration ownership.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Extension {
     sql_name: &'static str,
     native_support_modules: &'static [ExtensionNativeModule],
     native_module_file: Option<&'static str>,
     aot_name: Option<&'static str>,
     dependencies: &'static [&'static str],
-    setup: ExtensionSetup,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct ExtensionSetup {
-    create_extension: bool,
-    create_schema: Option<&'static str>,
     startup_config: &'static [&'static str],
-    load_sql: &'static [&'static str],
-    post_create_sql: &'static [&'static str],
-}
-
-impl ExtensionSetup {
-    pub(crate) const fn new(
-        create_extension: bool,
-        create_schema: Option<&'static str>,
-        startup_config: &'static [&'static str],
-        load_sql: &'static [&'static str],
-        post_create_sql: &'static [&'static str],
-    ) -> Self {
-        Self {
-            create_extension,
-            create_schema,
-            startup_config,
-            load_sql,
-            post_create_sql,
-        }
-    }
 }
 
 impl Extension {
-    pub(crate) const fn new(
-        sql_name: &'static str,
-        native_support_modules: &'static [ExtensionNativeModule],
-        native_module_file: Option<&'static str>,
-        aot_name: Option<&'static str>,
-        dependencies: &'static [&'static str],
-        setup: ExtensionSetup,
-    ) -> Self {
-        Self {
-            sql_name,
-            native_support_modules,
-            native_module_file,
-            aot_name,
-            dependencies,
-            setup,
-        }
-    }
-
     /// SQL extension name used in `CREATE EXTENSION`.
     pub const fn sql_name(self) -> &'static str {
         self.sql_name
+    }
+
+    /// Resolve a known extension artifact by its SQL name.
+    pub fn by_sql_name(sql_name: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|extension| extension.sql_name == sql_name)
     }
 
     pub(crate) const fn aot_name(self) -> Option<&'static str> {
@@ -112,15 +71,9 @@ impl Extension {
         self.dependencies
     }
 
-    pub(crate) const fn setup(self) -> ExtensionSetup {
-        self.setup
+    pub(crate) const fn startup_config(self) -> &'static [&'static str] {
+        self.startup_config
     }
-}
-
-pub fn by_sql_name(sql_name: &str) -> Option<Extension> {
-    ALL.iter()
-        .copied()
-        .find(|extension| extension.sql_name == sql_name)
 }
 
 pub(crate) fn resolve_extension_set(extensions: &[Extension]) -> Result<Vec<Extension>> {
@@ -158,7 +111,7 @@ pub(crate) fn postgres_config_with_extension_startup(
     }
 
     for extension in extensions {
-        for assignment in extension.setup().startup_config {
+        for assignment in extension.startup_config() {
             let (name, value) = parse_startup_config_assignment(*extension, assignment)?;
 
             if name == SHARED_PRELOAD_LIBRARIES {
@@ -171,11 +124,12 @@ pub(crate) fn postgres_config_with_extension_startup(
             }
 
             if let Some(configured) = postgres_config.get(name) {
-                ensure!(
-                    configured == value,
-                    "extension '{}' requires PostgreSQL startup config {name}={value}, but the caller configured {name}={configured}",
-                    extension.sql_name()
-                );
+                if configured != value {
+                    return Err(crate::error::invalid_configuration(format!(
+                        "extension '{}' requires PostgreSQL startup config {name}={value}, but the caller configured {name}={configured}",
+                        extension.sql_name()
+                    )));
+                }
             } else {
                 postgres_config.insert(name, value);
             }
@@ -189,12 +143,12 @@ pub(crate) fn postgres_config_with_extension_startup(
     Ok(postgres_config)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "extension-pg-textsearch"))]
 pub(crate) fn ensure_extension_startup_config_is_active(
     postgres_config: &PostgresConfig,
     extension: Extension,
 ) -> Result<()> {
-    for assignment in extension.setup().startup_config {
+    for assignment in extension.startup_config() {
         let (name, required) = parse_startup_config_assignment(extension, assignment)?;
         let configured = postgres_config.get(name);
         let satisfied = if name == SHARED_PRELOAD_LIBRARIES {
@@ -222,23 +176,25 @@ pub(crate) fn ensure_extension_startup_config_is_active(
 
 fn parse_startup_config_assignment(extension: Extension, assignment: &str) -> Result<(&str, &str)> {
     let (name, value) = assignment.split_once('=').ok_or_else(|| {
-        anyhow::anyhow!(
+        crate::error::invalid_configuration(format!(
             "extension '{}' has invalid startup config assignment '{assignment}'; expected name=value",
             extension.sql_name()
-        )
+        ))
     })?;
     let name = name.trim();
     let value = value.trim();
-    ensure!(
-        !name.is_empty(),
-        "extension '{}' has an empty startup config name in assignment '{assignment}'",
-        extension.sql_name()
-    );
-    ensure!(
-        !value.is_empty(),
-        "extension '{}' has an empty startup config value in assignment '{assignment}'",
-        extension.sql_name()
-    );
+    if name.is_empty() {
+        return Err(crate::error::invalid_configuration(format!(
+            "extension '{}' has an empty startup config name in assignment '{assignment}'",
+            extension.sql_name()
+        )));
+    }
+    if value.is_empty() {
+        return Err(crate::error::invalid_configuration(format!(
+            "extension '{}' has an empty startup config value in assignment '{assignment}'",
+            extension.sql_name()
+        )));
+    }
     Ok((name, value))
 }
 
@@ -267,18 +223,18 @@ fn visit_extension(
         return Ok(());
     }
     if !visiting.insert(extension.sql_name()) {
-        bail!(
+        return Err(crate::error::invalid_configuration(format!(
             "cyclic bundled extension dependency involving '{}'",
             extension.sql_name()
-        );
+        )));
     }
     for dependency in extension.dependencies() {
-        let dependency_extension = by_sql_name(dependency).ok_or_else(|| {
-            anyhow::anyhow!(
+        let dependency_extension = Extension::by_sql_name(dependency).ok_or_else(|| {
+            crate::error::invalid_configuration(format!(
                 "selected extension '{}' depends on missing catalog extension '{}'",
                 extension.sql_name(),
                 dependency
-            )
+            ))
         })?;
         visit_extension(dependency_extension, visiting, visited, resolved)?;
     }
@@ -286,10 +242,6 @@ fn visit_extension(
     visited.insert(extension.sql_name());
     resolved.push(extension);
     Ok(())
-}
-
-pub(crate) fn extension_setup_sql(extension: Extension) -> Vec<String> {
-    extension_setup_sql_with_schema_policy(extension)
 }
 
 #[cfg(test)]
@@ -307,42 +259,24 @@ pub(crate) fn extension_smoke_statements(sql: &str) -> impl Iterator<Item = &str
         .filter(|statement| !statement.is_empty())
 }
 
-fn extension_setup_sql_with_schema_policy(extension: Extension) -> Vec<String> {
-    let setup = extension.setup();
-    let mut statements = Vec::new();
-    if setup.create_extension {
-        let create_schema = setup.create_schema;
-        if let Some(schema) = create_schema.filter(|schema| *schema != "pg_catalog") {
-            statements.push(format!(
-                "CREATE SCHEMA IF NOT EXISTS {};",
-                crate::oliphaunt::sql::quote_identifier(schema)
-            ));
-        }
-        let mut sql = format!(
-            "CREATE EXTENSION IF NOT EXISTS {}",
-            crate::oliphaunt::sql::quote_identifier(extension.sql_name())
-        );
-        if let Some(schema) = create_schema {
-            sql.push_str(" WITH SCHEMA ");
-            sql.push_str(&crate::oliphaunt::sql::quote_identifier(schema));
-        }
-        sql.push(';');
-        statements.push(sql);
-    }
-    statements.extend(setup.load_sql.iter().map(|sql| (*sql).to_owned()));
-    statements.extend(setup.post_create_sql.iter().map(|sql| (*sql).to_owned()));
-    statements
+#[cfg(test)]
+fn extension_activation_sql_for_test(extension: Extension) -> impl Iterator<Item = &'static str> {
+    generated::activation_sql_for_test(extension)
+        .iter()
+        .copied()
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "extension-pg-textsearch"))]
 mod startup_config_tests {
     use super::*;
 
     #[test]
     fn late_pg_textsearch_enable_requires_active_preload() {
-        let error =
-            ensure_extension_startup_config_is_active(&PostgresConfig::default(), PG_TEXTSEARCH)
-                .unwrap_err();
+        let error = ensure_extension_startup_config_is_active(
+            &PostgresConfig::default(),
+            Extension::PG_TEXTSEARCH,
+        )
+        .unwrap_err();
         let message = error.to_string();
 
         assert!(message.contains("shared_preload_libraries=pg_textsearch"));
@@ -354,7 +288,7 @@ mod startup_config_tests {
             "shared_preload_libraries",
             "auto_explain, pg_textsearch,pg_textsearch",
         );
-        ensure_extension_startup_config_is_active(&active, PG_TEXTSEARCH).unwrap();
+        ensure_extension_startup_config_is_active(&active, Extension::PG_TEXTSEARCH).unwrap();
     }
 }
 
@@ -362,7 +296,7 @@ mod startup_config_tests {
 mod extension_tests {
     use super::*;
     use crate::Oliphaunt;
-    use crate::{DatabaseStorage, worker::OliphauntServer};
+    use crate::{AsyncOliphauntServer, DatabaseStorage};
     use anyhow::{Context, Result, ensure};
     use sqlx::{Connection, PgConnection};
     use std::collections::BTreeSet;
@@ -370,55 +304,58 @@ mod extension_tests {
 
     #[test]
     fn public_extensions_pass_direct_and_restart_smoke() -> Result<()> {
-        run_direct_and_restart_smoke_set(generated::ALL)
+        run_direct_and_restart_smoke_set(Extension::ALL)
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn public_extensions_pass_server_smoke() -> Result<()> {
-        run_server_smoke_set(generated::ALL).await
+        run_server_smoke_set(Extension::ALL).await
     }
 
     #[test]
     fn public_extensions_materialize_only_requested_libraries() -> Result<()> {
-        run_lifecycle_materialization_set(generated::ALL)
+        run_lifecycle_materialization_set(Extension::ALL)
     }
 
     #[test]
+    #[cfg(feature = "extension-uuid-ossp")]
     fn uuid_ossp_aot_direct_and_restart_smoke() -> Result<()> {
-        run_direct_and_restart_smoke_set(&[generated::UUID_OSSP])
+        run_direct_and_restart_smoke_set(&[Extension::UUID_OSSP])
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[cfg(feature = "extension-uuid-ossp")]
     async fn uuid_ossp_aot_server_smoke() -> Result<()> {
-        run_server_smoke_set(&[generated::UUID_OSSP]).await
+        run_server_smoke_set(&[Extension::UUID_OSSP]).await
     }
 
     #[test]
+    #[cfg(feature = "extension-uuid-ossp")]
     fn uuid_ossp_aot_materialization_smoke() -> Result<()> {
-        run_lifecycle_materialization_set(&[generated::UUID_OSSP])
+        run_lifecycle_materialization_set(&[Extension::UUID_OSSP])
     }
 
-    #[cfg(feature = "tools")]
+    #[cfg(all(feature = "tools", feature = "extension-uuid-ossp"))]
     #[test]
     fn uuid_ossp_aot_dump_restore_smoke() -> Result<()> {
-        use crate::tools::{PgDumpOptions, PsqlOptions, pg_dump, psql};
+        use crate::tools::{PgDumpOptions, PsqlOptions};
 
         let mut source = Oliphaunt::builder()
-            .extension(generated::UUID_OSSP)
+            .extension(Extension::UUID_OSSP)
             .open()
             .context("open UUID-OSSP AOT dump source")?;
-        psql(
-            &mut source,
-            PsqlOptions::new().script(
-                "CREATE TABLE uuid_ossp_aot_items(\
+        source
+            .psql(PsqlOptions::new().script(
+                "CREATE EXTENSION \"uuid-ossp\";\
+                 CREATE TABLE uuid_ossp_aot_items(\
                    id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),\
                    label text NOT NULL\
                  );\
                 INSERT INTO uuid_ossp_aot_items(label) VALUES ('first'), ('second');",
-            ),
-        )
-        .context("seed UUID-OSSP AOT dump source through psql")?;
-        let dump = pg_dump(&mut source, PgDumpOptions::new())
+            ))
+            .context("seed UUID-OSSP AOT dump source through psql")?;
+        let dump = source
+            .pg_dump(PgDumpOptions::new())
             .context("dump UUID-OSSP AOT source through pg_dump")?;
         ensure!(
             dump.contains("COPY public.uuid_ossp_aot_items"),
@@ -427,10 +364,11 @@ mod extension_tests {
         source.close().context("close UUID-OSSP AOT dump source")?;
 
         let mut restored = Oliphaunt::builder()
-            .extension(generated::UUID_OSSP)
+            .extension(Extension::UUID_OSSP)
             .open()
             .context("open UUID-OSSP AOT restore target")?;
-        psql(&mut restored, PsqlOptions::new().script(dump))
+        restored
+            .psql(PsqlOptions::new().script(dump))
             .context("restore UUID-OSSP AOT dump through psql")?;
         let result = restored.query(
             "SELECT count(*)::int4 AS rows,\
@@ -497,6 +435,7 @@ mod extension_tests {
                 .extension(extension)
                 .open()
                 .with_context(|| format!("open temporary database with extension {name}"))?;
+            assert_extension_not_installed(&mut db, extension)?;
             run_direct_smoke(&mut db, extension)?;
             db.close()
                 .with_context(|| format!("close temporary database with extension {name}"))?;
@@ -512,6 +451,7 @@ mod extension_tests {
                 .with_context(|| {
                     format!("open persistent database with extension {name} before restart")
                 })?;
+            assert_extension_not_installed(&mut db, extension)?;
             run_direct_smoke(&mut db, extension)?;
             assert_extension_catalog_state(&mut db, extension)?;
             db.close()
@@ -550,7 +490,7 @@ mod extension_tests {
 
     async fn run_one_server_smoke(extension: Extension) -> Result<()> {
         let name = extension.sql_name();
-        let server = OliphauntServer::builder()
+        let server = AsyncOliphauntServer::builder()
             .extension(extension)
             .start()
             .await
@@ -558,6 +498,7 @@ mod extension_tests {
         let mut conn = PgConnection::connect(server.connection_string())
             .await
             .with_context(|| format!("connect server with extension {name}"))?;
+        assert_server_extension_not_installed(&mut conn, extension).await?;
         run_server_smoke(&mut conn, extension).await?;
         drop(conn);
         server
@@ -605,6 +546,16 @@ mod extension_tests {
     }
 
     fn run_direct_smoke(db: &mut Oliphaunt, extension: Extension) -> Result<()> {
+        for statement in extension_activation_sql_for_test(extension) {
+            let request = crate::oliphaunt::query::simple_query(statement)?;
+            db.exec_protocol_raw(request).with_context(|| {
+                format!(
+                    "explicit activation failed for extension {} while running:\n{}",
+                    extension.sql_name(),
+                    statement
+                )
+            })?;
+        }
         let smoke_sql = extension_smoke_sql(extension.sql_name());
         for statement in extension_smoke_statements(&smoke_sql) {
             let request = crate::oliphaunt::query::simple_query(statement)?;
@@ -620,6 +571,18 @@ mod extension_tests {
     }
 
     async fn run_server_smoke(conn: &mut PgConnection, extension: Extension) -> Result<()> {
+        for statement in extension_activation_sql_for_test(extension) {
+            sqlx::query(statement)
+                .execute(&mut *conn)
+                .await
+                .with_context(|| {
+                    format!(
+                        "explicit server activation failed for extension {} while running:\n{}",
+                        extension.sql_name(),
+                        statement
+                    )
+                })?;
+        }
         let smoke_sql = extension_smoke_sql(extension.sql_name());
         for statement in extension_smoke_statements(&smoke_sql) {
             sqlx::query(statement)
@@ -636,8 +599,44 @@ mod extension_tests {
         Ok(())
     }
 
+    fn assert_extension_not_installed(db: &mut Oliphaunt, extension: Extension) -> Result<()> {
+        if !generated::creates_database_object_for_test(extension) {
+            return Ok(());
+        }
+        let result = db.query_with_params(
+            "SELECT count(*)::int4 AS count FROM pg_extension WHERE extname = $1",
+            [extension.sql_name()],
+        )?;
+        ensure!(
+            result.get_text(0, "count")? == Some("0"),
+            "selecting extension {} must not install it in pg_extension",
+            extension.sql_name()
+        );
+        Ok(())
+    }
+
+    async fn assert_server_extension_not_installed(
+        conn: &mut PgConnection,
+        extension: Extension,
+    ) -> Result<()> {
+        if !generated::creates_database_object_for_test(extension) {
+            return Ok(());
+        }
+        let installed: i64 =
+            sqlx::query_scalar("SELECT count(*)::int8 FROM pg_extension WHERE extname = $1")
+                .bind(extension.sql_name())
+                .fetch_one(&mut *conn)
+                .await?;
+        ensure!(
+            installed == 0,
+            "selecting server extension {} must not install it in pg_extension",
+            extension.sql_name()
+        );
+        Ok(())
+    }
+
     fn assert_extension_catalog_state(db: &mut Oliphaunt, extension: Extension) -> Result<()> {
-        if extension.setup().create_extension {
+        if generated::creates_database_object_for_test(extension) {
             let result = db.query_with_params(
                 "SELECT count(*)::int4 AS count FROM pg_extension WHERE extname = $1",
                 [extension.sql_name()],

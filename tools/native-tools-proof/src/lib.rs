@@ -7,7 +7,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use oliphaunt::{Extension, Oliphaunt};
+    use oliphaunt::{DatabaseStorage, Extension, OliphauntServer};
     use oliphaunt_tools::{PgDumpOptions, PsqlOptions};
     use serde_json::Value;
 
@@ -41,10 +41,10 @@ mod tests {
         let seed = fixture("logical-tools-seed.sql");
         let verify = fixture("logical-tools-verify.sql");
         let result = std::panic::catch_unwind(|| {
-            let mut source = Oliphaunt::builder()
-                .directory(&source_root)
-                .extension(Extension::Pgtap)
-                .open_server()
+            let mut source = OliphauntServer::builder()
+                .storage(DatabaseStorage::Directory(source_root.clone()))
+                .extension(Extension::PGTAP)
+                .start()
                 .expect("open native logical source server");
             oliphaunt_tools::psql(
                 source.connection_string(),
@@ -58,10 +58,10 @@ mod tests {
             assert!(!dump_sql.contains("INSERT INTO public.logical_items"));
             source.close().expect("close native logical source server");
 
-            let mut restored = Oliphaunt::builder()
-                .directory(&restored_root)
-                .extension(Extension::Pgtap)
-                .open_server()
+            let mut restored = OliphauntServer::builder()
+                .storage(DatabaseStorage::Directory(restored_root.clone()))
+                .extension(Extension::PGTAP)
+                .start()
                 .expect("open native logical restore server");
             oliphaunt_tools::psql(
                 restored.connection_string(),

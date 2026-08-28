@@ -4,6 +4,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 @class OliphauntAdapterDatabase;
 
+FOUNDATION_EXPORT NSString * const OliphauntProtocolStreamCallbackAbortedErrorDomain;
+
 typedef void (^OliphauntOpenCompletion)(OliphauntAdapterDatabase *_Nullable database, NSError *_Nullable error);
 typedef void (^OliphauntDataCompletion)(NSData *_Nullable value, NSError *_Nullable error);
 typedef NSError *_Nullable (^OliphauntStreamChunk)(NSData *value);

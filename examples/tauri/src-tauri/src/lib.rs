@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use oliphaunt::worker::Oliphaunt;
+use oliphaunt::{AsyncOliphaunt, DatabaseStorage};
 use oliphaunt::{Extension, QueryResult};
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
@@ -68,7 +68,7 @@ RETURNING
 "#;
 
 struct TodoStore {
-    db: Oliphaunt,
+    db: AsyncOliphaunt,
 }
 
 #[derive(Debug, Deserialize)]
@@ -122,11 +122,11 @@ impl From<oliphaunt::Error> for CommandError {
     }
 }
 
-async fn open_database(directory: PathBuf) -> anyhow::Result<Oliphaunt> {
+async fn open_database(directory: PathBuf) -> anyhow::Result<AsyncOliphaunt> {
     oliphaunt::register_build_resources!()?;
-    let db = Oliphaunt::builder()
-        .directory(directory)
-        .extensions([Extension::Hstore, Extension::PgTrgm, Extension::Unaccent])
+    let db = AsyncOliphaunt::builder()
+        .storage(DatabaseStorage::Directory(directory))
+        .extensions([Extension::HSTORE, Extension::PG_TRGM, Extension::UNACCENT])
         .open()
         .await?;
     db.execute(SCHEMA).await?;

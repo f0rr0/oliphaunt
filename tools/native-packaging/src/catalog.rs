@@ -60,8 +60,8 @@ mod tests {
 
     #[test]
     fn generated_catalog_matches_the_rust_extension_domain() {
-        assert_eq!(catalog().len(), Extension::ALL_PG18_SUPPORTED.len());
-        for extension in Extension::ALL_PG18_SUPPORTED {
+        assert_eq!(catalog().len(), Extension::ALL.len());
+        for extension in Extension::ALL {
             let entry = for_extension(*extension);
             assert_eq!(entry.sql_name, extension.sql_name());
             assert_eq!(entry.postgres_major, 18);

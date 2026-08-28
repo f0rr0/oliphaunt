@@ -56,7 +56,7 @@ require_entry "Cargo.toml"
 require_entry "README.md"
 require_entry "src/error.rs"
 require_entry "src/lib.rs"
-require_entry "src/worker.rs"
+require_entry "src/async_api.rs"
 require_entry "src/bin/oliphaunt_wasix_dump.rs"
 require_entry "src/bin/oliphaunt_wasix_proxy.rs"
 require_entry "src/oliphaunt/aot.rs"
@@ -75,6 +75,7 @@ require_entry "src/testdata/protocol-structured-sql-cases.json"
 require_entry "src/testdata/wasix-toolchain.toml"
 require_entry "tests/public_api.rs"
 require_entry "tests/runtime_smoke.rs"
+require_entry "tests/client_compat.rs"
 
 query_core_member="$(tar -tzf "$crate_path" | grep -E '^[^/]+/src/oliphaunt/query_core[.]rs$')"
 if [ "$(printf '%s\n' "$query_core_member" | grep -c .)" -ne 1 ]; then
@@ -106,6 +107,7 @@ if git ls-files --error-unmatch \
   exit 1
 fi
 reject_pattern '^src/testdata/postgis-smoke\.sql$'
+reject_pattern '^src/worker\.rs$'
 
 cmp -s \
   src/bindings/wasix-rust/crates/oliphaunt-wasix/src/testdata/wasix-toolchain.toml \
@@ -167,22 +169,8 @@ require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml '"
   "oliphaunt-wasix tools feature must select the Windows x64 tools-AOT crate"
 require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/mod.rs 'pub mod tools;' \
   "WASIX tools must use the optional public tools namespace"
-require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs "pub mod worker;" \
-  "WASIX crate must expose the explicit dedicated worker module"
 reject_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs "pub mod blocking" \
   "WASIX crate must not retain the obsolete blocking namespace"
-require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs "PgDumpOptions, PostgresToolError, PsqlOptions, pg_dump, psql," \
-  "WASIX root tools namespace must expose the direct pg_dump and psql functions"
-require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/worker.rs "pub async fn pg_dump(" \
-  "WASIX worker tools namespace must expose asynchronous pg_dump"
-require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/worker.rs "pub async fn psql(" \
-  "WASIX worker tools namespace must expose asynchronous psql"
-require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/worker.rs 'name("oliphaunt-wasix-owner"' \
-  "WASIX worker database must construct its runtime on a named owner thread"
-require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/worker.rs "queue: mpsc::Sender<OwnerMessage>" \
-  "WASIX worker database must use one ordered owner queue"
-require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/worker.rs "queued_ordinary.load(Ordering::SeqCst) >= OWNER_QUEUE_CAPACITY" \
-  "WASIX worker database must retain bounded ordinary-work admission"
 require_source_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/tools.rs "pub fn script(mut self, sql: impl Into<String>)" \
   "WASIX PsqlOptions must expose standard script input"
 

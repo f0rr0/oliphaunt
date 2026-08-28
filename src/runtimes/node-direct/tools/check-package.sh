@@ -153,8 +153,23 @@ try {
     "ExecuteAsyncDetach" \
     "Node direct detach must move PostgreSQL cleanup off the JavaScript thread"
   require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
-    "napi_add_env_cleanup_hook" \
-    "Node direct must close its resident backend before Node finalizers and process teardown"
+    "napi_add_async_cleanup_hook" \
+    "Node direct must reap resident work without blocking Node environment teardown"
+  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
+    '&environment->async_cleanup_handle' \
+    "Node direct must retain the Node-API 8 async cleanup removal handle"
+  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
+    'CompleteEnvironmentCleanup' \
+    "Node direct must finish async cleanup on the owning Node event-loop thread"
+  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
+    'napi_open_handle_scope(environment->env, &cleanup_scope)' \
+    "Node direct must create its teardown completion bridge in a valid cleanup handle scope"
+  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
+    'CallThreadsafeBridge' \
+    "Node direct must lease in-flight stream bridge calls across cleanup abort"
+  reject_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
+    "napi_create_async_work" \
+    "Node direct native calls must not prevent environment cleanup through active N-API work"
   require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
     "createForgottenHandleRecoveryToken" \
     "Node direct must issue opaque generation-bound forgotten-handle recovery tokens"
@@ -179,6 +194,15 @@ try {
   require_text "$package_dir/tools/node-addon-cleanup-lifecycle.test.mjs" \
     "async-archive-timers" \
     "Node direct backup and restore must prove that timers remain live"
+  require_text "$package_dir/tools/node-addon-cleanup-lifecycle.test.mjs" \
+    "worker-terminate-queued-query" \
+    "Node direct cleanup proof must cover teardown before a registered native call starts"
+  require_text "$package_dir/tools/node-addon-cleanup-lifecycle.test.mjs" \
+    "worker-terminate-stream-call-blocked" \
+    "Node direct cleanup proof must cover teardown while a stream producer is blocked in TSFN admission"
+  require_text "$package_dir/tools/node-addon-cleanup-lifecycle.test.mjs" \
+    "worker-terminate-stream-delivery-wait" \
+    "Node direct cleanup proof must cover teardown after TSFN admission while native delivery waits"
   require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
     'GetString(env, config, "moduleDirectory", false)' \
     "Node direct must carry the selected extension module directory through its native boundary"

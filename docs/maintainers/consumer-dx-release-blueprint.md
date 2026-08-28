@@ -333,9 +333,9 @@ Consumer code uses the SDK without environment variables:
 
 ```rust
 let mut db = oliphaunt::Oliphaunt::builder()
-    .directory(".oliphaunt")
+    .storage(oliphaunt::DatabaseStorage::Directory(".oliphaunt".into()))
     .direct()
-    .extension(oliphaunt::Extension::Vector)
+    .extension(oliphaunt::Extension::VECTOR)
     .open()?;
 ```
 

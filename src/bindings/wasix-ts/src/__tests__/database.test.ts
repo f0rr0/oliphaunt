@@ -190,31 +190,18 @@ describe('WASIX database recovery state', () => {
       async sync() {},
       async close() {},
     });
-    const rawInputFailure = new Error('raw input iteration failed');
-    const invalidRawInput = {
-      get [Symbol.iterator](): never {
-        throw rawInputFailure;
-      },
-    } as never;
     let expired: OliphauntTransaction | undefined;
 
     await database.transaction(async (transaction) => {
       expired = transaction;
+      expect('execProtocolRaw' in transaction).toBe(false);
+      expect('execProtocolRawStream' in transaction).toBe(false);
       const invalidCalls: ReadonlyArray<readonly [string, () => Promise<unknown>]> = [
         ['execute', () => transaction.execute(undefined as never)],
         ['query', () => transaction.query(undefined as never)],
         ['queryRaw', () => transaction.queryRaw(undefined as never)],
         ['exec', () => transaction.exec(undefined as never)],
         ['describe', () => transaction.describe('SELECT $1', [Number.NaN])],
-        ['execProtocolRaw', () => transaction.execProtocolRaw(invalidRawInput)],
-        [
-          'execProtocolRawStream input',
-          () => transaction.execProtocolRawStream(invalidRawInput, () => undefined),
-        ],
-        [
-          'execProtocolRawStream callback',
-          () => transaction.execProtocolRawStream(Uint8Array.of(1), undefined as never),
-        ],
       ];
 
       for (const [name, invoke] of invalidCalls) {
@@ -237,11 +224,6 @@ describe('WASIX database recovery state', () => {
       ['queryRaw', () => closedTransaction.queryRaw('SELECT 1')],
       ['exec', () => closedTransaction.exec('SELECT 1')],
       ['describe', () => closedTransaction.describe('SELECT 1')],
-      ['execProtocolRaw', () => closedTransaction.execProtocolRaw(Uint8Array.of(1))],
-      [
-        'execProtocolRawStream',
-        () => closedTransaction.execProtocolRawStream(Uint8Array.of(1), () => undefined),
-      ],
       ['rollback', () => closedTransaction.rollback()],
     ];
     for (const [name, invoke] of closedCalls) {
@@ -290,6 +272,44 @@ describe('WASIX database recovery state', () => {
     expect(statements).toEqual(['BEGIN', 'SELECT before_failure', 'ROLLBACK', 'SELECT recovered']);
     expect(persistenceModes).toEqual(['defer', 'defer', 'defer', 'defer']);
     expect(syncBoundaries).toEqual(['operation', 'operation']);
+    await database.close();
+  });
+
+  it('preserves a callback failure plus an independently unknown transaction outcome', async () => {
+    const statements: string[] = [];
+    const transportFailure = new Error('transaction transport outcome is unknown');
+    const businessFailure = new Error('business callback failed');
+    const database = new WasixDatabaseImpl({
+      async exec(input) {
+        const statement = querySql(input);
+        statements.push(statement);
+        if (statement === 'BEGIN') return completed('BEGIN', 'T');
+        if (statement === 'SELECT transport_failure') throw transportFailure;
+        return completed('SELECT 0', 'T');
+      },
+      async sync() {},
+      async close() {},
+    });
+    let caughtDatabaseFailure: unknown;
+
+    const combined = await database
+      .transaction(async (transaction) => {
+        try {
+          await transaction.execute('SELECT transport_failure');
+        } catch (error) {
+          caughtDatabaseFailure = error;
+        }
+        throw businessFailure;
+      })
+      .catch((error: unknown) => error);
+
+    expect(combined).toBeInstanceOf(AggregateError);
+    if (!(combined instanceof AggregateError)) throw new Error('expected aggregate failure');
+    expect(combined.errors).toEqual([businessFailure, caughtDatabaseFailure]);
+    expect(combined.message).toContain('independent database failure');
+    expect(statements).toEqual(['BEGIN', 'SELECT transport_failure']);
+    await expect(database.query('SELECT never_runs')).rejects.toThrow(/outcome became unknown/);
+    expect(statements).toEqual(['BEGIN', 'SELECT transport_failure']);
     await database.close();
   });
 
@@ -437,40 +457,53 @@ describe('WASIX database recovery state', () => {
     await database.close();
   });
 
-  it('does not report a commit after raw protocol traffic aborts the server transaction', async () => {
-    const statements: string[] = [];
-    let transactionAborted = false;
-    const session: WasixDatabaseSession = {
-      async exec(input) {
-        if (input.length === 1) {
-          statements.push('RAW');
-          transactionAborted = true;
-          return concatenate(backendError('XX000', 'raw operation failed'), ready('E'));
-        }
-        const statement = querySql(input);
-        statements.push(statement);
-        if (statement === 'COMMIT' && transactionAborted) {
-          return completed('ROLLBACK', 'I');
-        }
-        if (statement === 'BEGIN') return completed('BEGIN', 'T');
-        return emptyComplete('I');
+  it('poisons on transaction command tags before a later response error can hide them', async () => {
+    const cases = [
+      {
+        response: concatenateMessages(
+          commandComplete('COMMIT'),
+          commandComplete('BEGIN'),
+          backendError('XX000', 'later failure'),
+          ready('T'),
+        ),
+        expected: 'command tag COMMIT',
       },
-      async sync() {},
-      async close() {},
-    };
-    const database = new WasixDatabaseImpl(session);
+      {
+        response: concatenateMessages(
+          commandComplete('ROLLBACK'),
+          commandComplete('BEGIN'),
+          ready('T'),
+        ),
+        expected: 'command tag BEGIN',
+      },
+    ];
 
-    await expect(
-      database.transaction(async (transaction) => {
-        await transaction.execProtocolRaw(Uint8Array.of(1));
-      }),
-    ).rejects.toThrow('rolled back the transaction instead of committing');
+    for (const entry of cases) {
+      const statements: string[] = [];
+      const database = new WasixDatabaseImpl({
+        async exec(input) {
+          const statement = querySql(input);
+          statements.push(statement);
+          if (statement === 'BEGIN') return completed('BEGIN', 'T');
+          return entry.response;
+        },
+        async sync() {},
+        async close() {},
+      });
 
-    expect(statements).toEqual(['BEGIN', 'RAW', 'COMMIT']);
-    await expect(database.query('SELECT recovered')).resolves.toMatchObject({
-      rowCount: null,
-    });
-    await database.close();
+      await expect(
+        database.transaction((transaction) => {
+          const ignored = transaction.exec('SELECT ownership_escape');
+          void ignored.catch(() => undefined);
+        }),
+      ).rejects.toThrow(entry.expected);
+      expect(statements).toEqual(['BEGIN', 'SELECT ownership_escape']);
+      await expect(database.query('SELECT never_runs')).rejects.toThrow(
+        'transaction outcome became unknown',
+      );
+      expect(statements).toEqual(['BEGIN', 'SELECT ownership_escape']);
+      await database.close();
+    }
   });
 
   it('poisons the handle when COMMIT returns a malformed successful response', async () => {
@@ -705,6 +738,7 @@ describe('WASIX database recovery state', () => {
         inputs.push(input);
         persistenceModes.push(persistence);
         for (const chunk of chunks) onChunk(chunk);
+        return 'complete';
       },
       async sync() {},
       async close() {},
@@ -723,36 +757,103 @@ describe('WASIX database recovery state', () => {
     await database.close();
   });
 
-  it('uses deferred streaming inside a callback transaction and expires the handle', async () => {
-    const persistenceModes: Array<string | undefined> = [];
-    const streamed: number[] = [];
-    let expired: OliphauntTransaction | undefined;
+  it('preserves the consumer failure only after streamed protocol recovery is confirmed', async () => {
+    const callbackFailure = { reason: 'consumer stopped' };
+    let executions = 0;
     const database = new WasixDatabaseImpl({
-      async exec(input, persistence) {
-        persistenceModes.push(persistence);
-        const statement = querySql(input);
-        return statement === 'BEGIN' ? completed('BEGIN', 'T') : completed('COMMIT', 'I');
+      async exec() {
+        executions += 1;
+        return ready();
       },
-      async execStream(_input, onChunk, persistence) {
-        persistenceModes.push(persistence);
-        onChunk(Uint8Array.of(4, 5));
+      async execStream(_input, onChunk) {
+        try {
+          onChunk(Uint8Array.of(1));
+        } catch {
+          return 'callbackAborted';
+        }
+        return 'complete';
       },
       async sync() {},
       async close() {},
     });
 
-    await database.transaction(async (transaction) => {
-      expired = transaction;
-      await transaction.execProtocolRawStream(Uint8Array.of(1), (chunk) => {
-        streamed.push(...chunk);
-      });
+    await expect(
+      database.execProtocolRawStream(Uint8Array.of(1), () => {
+        throw callbackFailure;
+      }),
+    ).rejects.toBe(callbackFailure);
+    await expect(database.execProtocolRaw(Uint8Array.of(2))).resolves.toEqual(ready());
+    expect(executions).toBe(1);
+    await database.close();
+  });
+
+  it('keeps a streamed transport failure primary over the consumer failure and poisons the handle', async () => {
+    const recoveryFailure = new Error('stream recovery failed');
+    const database = new WasixDatabaseImpl({
+      async exec() {
+        return ready();
+      },
+      async execStream(_input, onChunk) {
+        try {
+          onChunk(Uint8Array.of(1));
+        } catch {
+          throw recoveryFailure;
+        }
+        return 'complete';
+      },
+      async sync() {},
+      async close() {},
     });
 
-    expect(streamed).toEqual([4, 5]);
-    expect(persistenceModes).toEqual(['defer', 'defer', 'defer']);
-    if (expired === undefined) throw new Error('transaction handle was not captured');
-    await expect(expired.execProtocolRawStream(Uint8Array.of(1), () => undefined)).rejects.toThrow(
-      /no longer active/,
+    await expect(
+      database.execProtocolRawStream(Uint8Array.of(1), () => {
+        throw new Error('consumer stopped');
+      }),
+    ).rejects.toBe(recoveryFailure);
+    await expect(database.execProtocolRaw(Uint8Array.of(2))).rejects.toMatchObject({
+      message: expect.stringContaining('transaction outcome became unknown'),
+      cause: recoveryFailure,
+    });
+    await database.close();
+  });
+
+  it.each([
+    {
+      name: 'callback recovery without a consumer failure',
+      outcome: 'callbackAborted' as const,
+      callback: (): void => undefined,
+      message: 'without a retained callback failure',
+    },
+    {
+      name: 'success after a consumer failure',
+      outcome: 'complete' as const,
+      callback: (): void => {
+        throw new Error('consumer stopped');
+      },
+      message: 'success after rejecting its callback',
+    },
+  ])('poisons on an impossible stream outcome: $name', async ({ outcome, callback, message }) => {
+    const database = new WasixDatabaseImpl({
+      async exec() {
+        return ready();
+      },
+      async execStream(_input, onChunk) {
+        try {
+          onChunk(Uint8Array.of(1));
+        } catch {
+          // The deliberately inconsistent outcome below is the subject of the test.
+        }
+        return outcome;
+      },
+      async sync() {},
+      async close() {},
+    });
+
+    await expect(database.execProtocolRawStream(Uint8Array.of(1), callback)).rejects.toThrow(
+      message,
+    );
+    await expect(database.execProtocolRaw(Uint8Array.of(2))).rejects.toThrow(
+      'transaction outcome became unknown',
     );
     await database.close();
   });
@@ -776,12 +877,19 @@ describe('WASIX database recovery state', () => {
   });
 
   it('rejects thenable stream callbacks and preserves the caller failure', async () => {
+    let bufferedExecutions = 0;
     const database = new WasixDatabaseImpl({
       async exec() {
+        bufferedExecutions += 1;
         return ready();
       },
       async execStream(_input, onChunk) {
-        onChunk(Uint8Array.of(1));
+        try {
+          onChunk(Uint8Array.of(1));
+          return 'complete';
+        } catch {
+          return 'callbackAborted';
+        }
       },
       async sync() {},
       async close() {},
@@ -790,11 +898,14 @@ describe('WASIX database recovery state', () => {
     await expect(
       database.execProtocolRawStream(Uint8Array.of(1), async () => undefined),
     ).rejects.toThrow(/must complete synchronously.*Promise or thenable/);
+    await expect(database.execProtocolRaw(Uint8Array.of(2))).resolves.toEqual(ready());
     await expect(
       database.execProtocolRawStream(Uint8Array.of(1), () => ({
         then: () => undefined,
       })),
     ).rejects.toThrow(/must complete synchronously.*Promise or thenable/);
+    await expect(database.execProtocolRaw(Uint8Array.of(3))).resolves.toEqual(ready());
+    expect(bufferedExecutions).toBe(2);
     await database.close();
   });
 
@@ -809,6 +920,7 @@ describe('WASIX database recovery state', () => {
       },
       async execStream(_input, onChunk) {
         onChunk(Uint8Array.of(1));
+        return 'complete';
       },
       async sync() {},
       async close() {},
@@ -832,16 +944,6 @@ describe('WASIX database recovery state', () => {
     );
     expect(database.closed).toBe(false);
 
-    let transactionReentry: Promise<unknown> | undefined;
-    await database.transaction(async (transaction) => {
-      await transaction.execProtocolRawStream(Uint8Array.of(3), () => {
-        transactionReentry = transaction.query("SELECT 'forbidden transaction callback reentry'");
-      });
-      await expect(transactionReentry).rejects.toThrow(
-        /must not reenter the same Oliphaunt database or transaction/,
-      );
-    });
-    expect(executedSql).not.toContain("SELECT 'forbidden transaction callback reentry'");
     await database.close();
   });
 

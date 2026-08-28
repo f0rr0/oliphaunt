@@ -25,19 +25,19 @@ and backup APIs.
 | --- | --- |
 | One embedded app database with lowest overhead | `.direct()` |
 | Multiple database instances or helper-process ownership | `.broker()` |
-| SQLx pools, ORMs, `psql`, or `pg_dump` | `.open_server()` |
+| SQLx pools, ORMs, `psql`, or `pg_dump` | `OliphauntServer::builder().start()` |
 
 ## Direct Topology In Async Rust State
 
-Use `oliphaunt::worker::Oliphaunt` with direct topology when async Tauri
+Use `oliphaunt::AsyncOliphaunt` with direct topology when async Tauri
 commands share application state. PostgreSQL runs on one package-owned thread,
 so its synchronous work does not monopolize Tauri's async executor:
 
 ```rust,no_run
-use oliphaunt::worker::Oliphaunt;
+use oliphaunt::{AsyncOliphaunt, DatabaseStorage};
 use tauri::State;
 
-struct Db(Oliphaunt);
+struct Db(AsyncOliphaunt);
 
 #[tauri::command]
 async fn add_item(db: State<'_, Db>, value: String) -> Result<(), String> {
@@ -52,35 +52,37 @@ async fn add_item(db: State<'_, Db>, value: String) -> Result<(), String> {
 Open the database under your app data directory during setup:
 
 ```rust,no_run
-use oliphaunt::worker::Oliphaunt;
+use oliphaunt::{AsyncOliphaunt, DatabaseStorage};
 
-async fn open_app_database(app_data_dir: std::path::PathBuf) -> oliphaunt::Result<Oliphaunt> {
-    Oliphaunt::builder()
-        .directory(app_data_dir.join("postgres"))
+async fn open_app_database(app_data_dir: std::path::PathBuf) -> oliphaunt::Result<AsyncOliphaunt> {
+    AsyncOliphaunt::builder()
+        .storage(DatabaseStorage::Directory(app_data_dir.join("postgres")))
         .direct()
         .open()
         .await
 }
 ```
 
-Store the resulting worker handle with `tauri::State`. Its clones share one
-FIFO owner thread and one PostgreSQL session. The synchronous crate-root
-`oliphaunt::Oliphaunt` is deliberately `!Send + !Sync`; use it only when one
-ordinary Rust thread owns the database directly. Server mode is the path for
-independent PostgreSQL client sessions.
+Store the resulting async handle with `tauri::State`. Its clones share one FIFO
+owner thread and one PostgreSQL session. The synchronous crate-root
+`oliphaunt::Oliphaunt` is `Send + !Sync`: it may move between threads but blocks
+the thread making each call and requires exclusive `&mut` access. Use it from a
+synchronous command or application-owned database thread, not directly on an
+async executor thread. Server mode is the path for independent PostgreSQL
+client sessions.
 
 ## Existing Postgres Clients
 
-Use `open_server()` when another Rust library expects a PostgreSQL URL, real
-independent sessions, SQLx pools, `psql`, or `pg_dump`:
+Use the dedicated server builder when another Rust library expects a PostgreSQL
+URL, real independent sessions, SQLx pools, `psql`, or `pg_dump`:
 
 ```rust,no_run
-use oliphaunt::worker::Oliphaunt;
+use oliphaunt::{AsyncOliphauntServer, DatabaseStorage};
 
-async fn open_server_mode() -> oliphaunt::Result<String> {
-    let server = Oliphaunt::builder()
-        .directory("./.liboliphaunt")
-        .open_server()
+async fn start_server_mode() -> oliphaunt::Result<String> {
+    let server = AsyncOliphauntServer::builder()
+        .storage(DatabaseStorage::Directory("./.liboliphaunt".into()))
+        .start()
         .await?;
 
     Ok(server.connection_string().to_owned())
@@ -109,6 +111,7 @@ plain `pg_dump`/`psql` for logical workflows through the connection string.
 - Use `.direct()` for one embedded PostgreSQL session with minimal overhead.
 - Use `.broker()` when helper-process ownership matters more than direct
   call overhead.
-- Use `.open_server()` for real concurrent PostgreSQL client sessions and pools.
+- Use `OliphauntServer::builder().start()` for real concurrent PostgreSQL client
+  sessions and pools; the lifecycle handle itself does not execute SQL.
 - React Native apps use the React Native SDK, which delegates to Swift on
   iOS/macOS and Kotlin on Android.

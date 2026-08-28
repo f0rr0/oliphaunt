@@ -58,13 +58,16 @@ async function main(): Promise<void> {
   await testRecoveryFailuresRejectCurrentOperationAndPoison();
   await testMalformedReadinessPoisonsTheHandle();
   await testRawProtocolSqlAndCancel();
+  await testRawProtocolTransportFailuresPoison();
   await testCancelCanInterruptWorkAdmittedBeforeClose();
   await testForgottenHandleCleanupIsGenerationBound();
   await testProtocolStreamCallbackFailure();
+  await testProtocolStreamRecoveryFailuresPoison();
   await testPhysicalBackupAndStaticRestore();
   await testTransactionsCommitAndRollback();
   await testTransactionPromiseMethodsNeverThrowSynchronously();
   await testCallbackAndRollbackFailuresAreBothPreserved();
+  await testCallbackAndIndependentDatabaseFailuresAreBothPreserved();
   await testExplicitRollbackSkipsCommit();
   await testCaughtRollbackFailureCannotCommit();
   await testUnawaitedFailedStatementRetainsPostgresError();
@@ -72,6 +75,7 @@ async function main(): Promise<void> {
   await testCommitRollbackIsKnownAndReusable();
   await testUncertainCommitPoisonsTheHandle();
   await testTransactionOwnershipEscapePoisonsTheHandle();
+  await testTransactionCommandTagsPoisonBeforeParsing();
   await testCommitNonIdleDoesNotSendRollback();
   await testCloseDuringTransactionIsRejected();
   await testCloseIsIdempotent();
@@ -485,6 +489,22 @@ async function testRawProtocolSqlAndCancel(): Promise<void> {
   await db.close();
 }
 
+async function testRawProtocolTransportFailuresPoison(): Promise<void> {
+  const publicNative = new MockNative();
+  const publicDatabase = await createOliphauntClient(publicNative).open();
+  const publicFailure = new Error('raw protocol transport failed');
+  publicNative.rawTransportFailure = publicFailure;
+  await assert.rejects(
+    () => publicDatabase.execProtocolRaw(Uint8Array.of(0xaa)),
+    (error) => error === publicFailure,
+  );
+  publicNative.rawTransportFailure = undefined;
+  const publicCalls = publicNative.execRequests.length;
+  await assert.rejects(() => publicDatabase.query('SELECT 1'), /session state is unknown/);
+  assert.equal(publicNative.execRequests.length, publicCalls);
+  await publicDatabase.close();
+}
+
 async function testCancelCanInterruptWorkAdmittedBeforeClose(): Promise<void> {
   const native = new MockNative();
   const db = await createOliphauntClient(native).open();
@@ -622,25 +642,28 @@ async function testProtocolStreamCallbackFailure(): Promise<void> {
   );
   assert.equal(db.closed, false);
 
-  await assert.rejects(
-    () =>
-      db.transaction(async (transaction) => {
-        await transaction.execProtocolRawStream(Uint8Array.from([0xd2]), () => {
-          let reentry!: Promise<unknown>;
-          assert.doesNotThrow(() => {
-            reentry = transaction.query("SELECT 'forbidden transaction callback reentry'");
-          });
-          void reentry.catch(() => undefined);
-        });
-      }),
-    /must not reenter the same Oliphaunt database or transaction/,
-  );
-  assert.equal(
-    native.requestTexts().some((sql) => sql.includes('forbidden transaction callback reentry')),
-    false,
-  );
   await db.query('SELECT 1');
   await db.close();
+}
+
+async function testProtocolStreamRecoveryFailuresPoison(): Promise<void> {
+  const publicNative = new MockNative();
+  const publicDatabase = await createOliphauntClient(publicNative).open();
+  const callbackFailure = new Error('protocol stream callback failed');
+  const publicFailure = new Error('native protocol stream recovery failed');
+  publicNative.streamRecoveryFailure = publicFailure;
+  await assert.rejects(
+    () =>
+      publicDatabase.execProtocolRawStream(Uint8Array.of(0xcd), () => {
+        throw callbackFailure;
+      }),
+    (error) => error === publicFailure,
+  );
+  publicNative.streamRecoveryFailure = undefined;
+  const publicCalls = publicNative.execRequests.length;
+  await assert.rejects(() => publicDatabase.query('SELECT 1'), /session state is unknown/);
+  assert.equal(publicNative.execRequests.length, publicCalls);
+  await publicDatabase.close();
 }
 
 async function testPhysicalBackupAndStaticRestore(): Promise<void> {
@@ -693,18 +716,14 @@ async function testTransactionPromiseMethodsNeverThrowSynchronously(): Promise<v
   const db = await createOliphauntClient(native).open();
 
   await db.transaction(async (transaction) => {
+    assert.equal('execProtocolRaw' in transaction, false);
+    assert.equal('execProtocolRawStream' in transaction, false);
     const invalidCalls: ReadonlyArray<() => Promise<unknown>> = [
       () => transaction.execute('SELECT\0invalid'),
       () => transaction.query('SELECT\0invalid'),
       () => transaction.queryRaw('SELECT\0invalid'),
       () => transaction.exec('COPY items TO STDOUT'),
       () => transaction.describe('SELECT 1', [-1]),
-      () => transaction.execProtocolRaw(null as unknown as Uint8Array),
-      () =>
-        transaction.execProtocolRawStream(
-          Uint8Array.of(1),
-          undefined as unknown as (chunk: Uint8Array) => void,
-        ),
     ];
     for (const call of invalidCalls) {
       await assertRejectsWithoutSynchronousThrow(call);
@@ -718,8 +737,6 @@ async function testTransactionPromiseMethodsNeverThrowSynchronously(): Promise<v
       () => transaction.exec('SELECT 1'),
       () => transaction.describe('SELECT 1'),
       () => transaction.rollback(),
-      () => transaction.execProtocolRaw(Uint8Array.of(1)),
-      () => transaction.execProtocolRawStream(Uint8Array.of(1), () => {}),
     ];
     for (const call of expiredCalls) {
       await assertRejectsWithoutSynchronousThrow(call, /no longer active/);
@@ -765,6 +782,34 @@ async function testCallbackAndRollbackFailuresAreBothPreserved(): Promise<void> 
     Promise.resolve().then(() => db.query('SELECT 1')),
     /session state is unknown/,
   );
+  await db.close();
+}
+
+async function testCallbackAndIndependentDatabaseFailuresAreBothPreserved(): Promise<void> {
+  const native = new MockNative();
+  const db = await createOliphauntClient(native).open();
+  const transportFailure = new Error('transaction transport outcome is unknown');
+  const businessFailure = new Error('business callback failed');
+  let caughtDatabaseFailure: unknown;
+
+  const combined = await db
+    .transaction(async (transaction) => {
+      native.rawTransportFailure = transportFailure;
+      try {
+        await transaction.query('SELECT transport_failure');
+      } catch (error) {
+        caughtDatabaseFailure = error;
+      }
+      throw businessFailure;
+    })
+    .catch((error: unknown) => error);
+
+  assert.ok(combined instanceof AggregateError);
+  assert.deepEqual(combined.errors, [businessFailure, caughtDatabaseFailure]);
+  assert.match(combined.message, /independent database failure/);
+  const requestCount = native.execRequests.length;
+  await assert.rejects(() => db.query('SELECT never_runs'), /session state is unknown/);
+  assert.equal(native.execRequests.length, requestCount);
   await db.close();
 }
 
@@ -891,13 +936,56 @@ async function testTransactionOwnershipEscapePoisonsTheHandle(): Promise<void> {
         await transaction.query('SELECT 1').catch(() => undefined);
         return 'must not commit';
       }),
-    /callback transaction operation ended with PostgreSQL status 'idle'/,
+    /ended PostgreSQL transaction ownership/,
   );
   await assert.rejects(
     Promise.resolve().then(() => db.query('SELECT 1')),
     /session state is unknown/,
   );
   await db.close();
+}
+
+async function testTransactionCommandTagsPoisonBeforeParsing(): Promise<void> {
+  const cases = [
+    {
+      response: backendResponse([
+        [0x43, [...encoder.encode('COMMIT'), 0]],
+        [0x43, [...encoder.encode('BEGIN'), 0]],
+        [0x45, postgresDiagnostic('ERROR', 'XX000', 'later failure')],
+        [0x5a, [0x54]],
+      ]),
+      expected: /command tag COMMIT/,
+    },
+    {
+      response: backendResponse([
+        [0x43, [...encoder.encode('ROLLBACK'), 0]],
+        [0x43, [...encoder.encode('BEGIN'), 0]],
+        [0x5a, [0x54]],
+      ]),
+      expected: /command tag BEGIN/,
+    },
+  ];
+
+  for (const entry of cases) {
+    const native = new MockNative();
+    const db = await createOliphauntClient(native).open();
+    await assert.rejects(
+      () =>
+        db.transaction((transaction) => {
+          native.nextRawResponse = entry.response;
+          const ignored = transaction.exec('SELECT ownership_escape');
+          void ignored.catch(() => undefined);
+        }),
+      entry.expected,
+    );
+    const controls = native.requestTexts().filter((request) => /BEGIN|COMMIT|ROLLBACK/.test(request));
+    assert.equal(controls.length, 1);
+    assert.match(controls[0] ?? '', /BEGIN/);
+    const requestCount = native.execRequests.length;
+    await assert.rejects(() => db.query('SELECT 1'), /session state is unknown/);
+    assert.equal(native.execRequests.length, requestCount);
+    await db.close();
+  }
 }
 
 async function testCommitNonIdleDoesNotSendRollback(): Promise<void> {
@@ -937,6 +1025,8 @@ async function testCloseIsIdempotent(): Promise<void> {
 
 class MockNative implements Spec {
   swallowStreamCallbackErrors = false;
+  streamRecoveryFailure?: Error;
+  rawTransportFailure?: Error;
   streamChunkCallbackCalls = 0;
   pauseNextRequest?: Promise<void>;
   onPausedRequest?: () => void;
@@ -954,6 +1044,7 @@ class MockNative implements Spec {
   noticeOnDescribeOnce = false;
   noticeOnExecOnce = false;
   appendReadyOnce = false;
+  nextRawResponse?: Uint8Array;
   readonly openCalls: unknown[] = [];
   readonly execRequests: Uint8Array[] = [];
   readonly cancelledHandles: number[] = [];
@@ -988,8 +1079,13 @@ class MockNative implements Spec {
         for (const chunk of [response.subarray(0, split), response.subarray(split)]) {
           native.streamChunkCallbackCalls += 1;
           const result = onChunk(chunk);
-          if (result?.__oliphauntProtocolChunkFailure && !native.swallowStreamCallbackErrors) {
-            throw result.error;
+          if (result?.__oliphauntProtocolChunkFailure) {
+            if (native.streamRecoveryFailure !== undefined) {
+              throw native.streamRecoveryFailure;
+            }
+            if (!native.swallowStreamCallbackErrors) {
+              throw protocolCallbackAbortedError();
+            }
           }
         }
       },
@@ -1034,6 +1130,7 @@ class MockNative implements Spec {
 
   async execProtocolRawJsi(handle: number, request: Uint8Array): Promise<Uint8Array> {
     this.execRequests.push(request);
+    if (this.rawTransportFailure !== undefined) throw this.rawTransportFailure;
     if (this.pauseNextRequest !== undefined) {
       const pause = this.pauseNextRequest;
       this.pauseNextRequest = undefined;
@@ -1057,6 +1154,11 @@ class MockNative implements Spec {
       return response;
     }
     if (tags[0] === 'B') this.#pendingSql.delete(handle);
+    if (this.nextRawResponse !== undefined) {
+      const response = this.nextRawResponse;
+      this.nextRawResponse = undefined;
+      return response;
+    }
     if (this.failRollbackOnce && sql.includes('ROLLBACK')) {
       this.failRollbackOnce = false;
       throw new Error('ROLLBACK transport failed');
@@ -1197,6 +1299,14 @@ type GlobalWithJsi = typeof globalThis & {
     ): Promise<void>;
   };
 };
+
+function protocolCallbackAbortedError(): Error {
+  const error = new Error('protocol stream callback aborted after ReadyForQuery') as Error & {
+    __oliphauntProtocolCallbackAborted: true;
+  };
+  error.__oliphauntProtocolCallbackAborted = true;
+  return error;
+}
 
 function backendSingleValueResponse(value: string, status = 0x49): Uint8Array {
   const out: number[] = [];

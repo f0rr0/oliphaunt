@@ -2424,6 +2424,61 @@ pub(crate) fn response_ready_status(bytes: &[u8]) -> Result<ReadyStatus> {
     ready.ok_or_else(|| protocol("response ended before ReadyForQuery"))
 }
 
+/// Validate that a structured operation kept ownership of a callback-scoped
+/// transaction. This works from raw backend frames so an earlier
+/// CommandComplete cannot be hidden by a later ErrorResponse.
+pub(crate) fn validate_managed_transaction_response(bytes: &[u8]) -> Result<ReadyStatus> {
+    let mut input = bytes;
+    let mut ready = None;
+    let mut escaped_command = None;
+    while !input.is_empty() {
+        let (message, body, rest) = read_backend_message(input)?;
+        input = rest;
+        match message {
+            b'C' => {
+                let mut command = body;
+                let tag = read_cstring(&mut command, "CommandComplete tag")?;
+                if !command.is_empty() {
+                    return Err(protocol("CommandComplete contained trailing bytes"));
+                }
+                if matches!(
+                    tag,
+                    "BEGIN"
+                        | "START TRANSACTION"
+                        | "COMMIT"
+                        | "PREPARE TRANSACTION"
+                        | "COMMIT PREPARED"
+                        | "ROLLBACK PREPARED"
+                ) {
+                    escaped_command.get_or_insert_with(|| tag.to_owned());
+                }
+            }
+            b'Z' => {
+                if ready.is_some() {
+                    return Err(protocol("backend returned multiple ReadyForQuery messages"));
+                }
+                ready = Some(parse_ready_for_query(body)?);
+                if !input.is_empty() {
+                    return Err(protocol("backend returned bytes after ReadyForQuery"));
+                }
+            }
+            _ => {}
+        }
+    }
+    let ready = ready.ok_or_else(|| protocol("response ended before ReadyForQuery"))?;
+    if let Some(command) = escaped_command {
+        return Err(protocol(format!(
+            "PostgreSQL completed {command}, which changed the SDK-managed transaction lifecycle"
+        )));
+    }
+    if ready == ReadyStatus::Idle {
+        return Err(protocol(
+            "PostgreSQL returned idle readiness after SDK-managed transaction work",
+        ));
+    }
+    Ok(ready)
+}
+
 fn parse_parameter_description(mut body: &[u8]) -> Result<Vec<u32>> {
     let count = read_i16(&mut body, "ParameterDescription parameter count")?;
     if count < 0 {

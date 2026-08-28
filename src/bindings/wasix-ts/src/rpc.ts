@@ -1,4 +1,8 @@
-import type { WasixPersistenceMode, WasixProtocolConnectionMode } from './database.js';
+import type {
+  WasixPersistenceMode,
+  WasixProtocolConnectionMode,
+  WasixProtocolStreamOutcome,
+} from './database.js';
 import { WasixStorageError } from './errors.js';
 import { PostgresError, type PostgresErrorField } from './query.js';
 import type { SerializedWasixStorage } from './storage.js';
@@ -172,6 +176,7 @@ export type SerializedWorkerError =
 
 export type WorkerResponse =
   | { id: number; kind: 'chunk'; sequence: number; value: Uint8Array }
+  | { id: number; ok: true; streamOutcome: WasixProtocolStreamOutcome }
   | { id: number; ok: true; value?: Uint8Array | WasixToolProcessResult }
   | { id: number; ok: false; error: SerializedWorkerError };
 

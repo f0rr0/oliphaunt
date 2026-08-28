@@ -16,6 +16,13 @@ class OliphauntJsiStreamCallback @DoNotStrip constructor(
     nativeResolveUnit(token)
   }
 
+  fun rejectCallbackAborted(message: String?) {
+    nativeRejectCallbackAborted(
+      token,
+      message ?: "protocol stream callback aborted after recovery to ReadyForQuery",
+    )
+  }
+
   fun reject(code: String, message: String?) {
     nativeReject(token, if (message.isNullOrBlank()) code else "$code: $message")
   }
@@ -23,6 +30,8 @@ class OliphauntJsiStreamCallback @DoNotStrip constructor(
   private external fun nativeEmitChunk(token: Long, chunk: ByteArray): String?
 
   private external fun nativeResolveUnit(token: Long)
+
+  private external fun nativeRejectCallbackAborted(token: Long, message: String)
 
   private external fun nativeReject(token: Long, message: String)
 }

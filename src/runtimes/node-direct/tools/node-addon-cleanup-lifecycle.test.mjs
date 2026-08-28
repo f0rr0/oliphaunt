@@ -206,6 +206,64 @@ async function runWorker() {
     });
     return;
   }
+  if (role === "open-with-active-query") {
+    const handle = await openFake(addon, libraryPath, root);
+    globalThis.__oliphauntCleanupRaceHandle = handle;
+    globalThis.__oliphauntCleanupRaceOperation = addon
+      .execProtocolRaw(handle, new Uint8Array([1]))
+      .catch(() => undefined);
+    parentPort.postMessage("queued");
+    return;
+  }
+  if (role === "open-with-queued-query") {
+    const handle = await openFake(addon, libraryPath, root);
+    globalThis.__oliphauntCleanupRaceHandle = handle;
+    globalThis.__oliphauntCleanupRaceOperation = addon
+      .execProtocolRaw(handle, new Uint8Array([1]))
+      .catch(() => undefined);
+    parentPort.postMessage("queued");
+    return;
+  }
+  if (role === "open-with-active-stream") {
+    const handle = await openFake(addon, libraryPath, root);
+    globalThis.__oliphauntCleanupRaceHandle = handle;
+    globalThis.__oliphauntCleanupRaceOperation = addon
+      .execProtocolRawStream(handle, new Uint8Array([1]), () => undefined)
+      .catch(() => undefined);
+    parentPort.postMessage("queued");
+    return;
+  }
+  if (role === "open-with-stream-call-blocked") {
+    const handle = await openFake(addon, libraryPath, root);
+    globalThis.__oliphauntCleanupRaceHandle = handle;
+    globalThis.__oliphauntCleanupRaceOperation = addon
+      .execProtocolRawStream(handle, new Uint8Array([1]), () => {
+        assert.fail("the prefilled callback queue must not drain before Worker teardown");
+      })
+      .catch(() => undefined);
+    parentPort.postMessage("queued");
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60_000);
+    return;
+  }
+  if (role === "open-with-stream-delivery-wait") {
+    const handle = await openFake(addon, libraryPath, root);
+    globalThis.__oliphauntCleanupRaceHandle = handle;
+    globalThis.__oliphauntCleanupRaceOperation = addon
+      .execProtocolRawStream(handle, new Uint8Array([1]), () => {
+        assert.fail("the admitted callback must remain queued until Worker teardown");
+      })
+      .catch(() => undefined);
+    parentPort.postMessage("queued");
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60_000);
+    return;
+  }
+  if (role === "open-with-active-backup") {
+    const handle = await openFake(addon, libraryPath, root);
+    globalThis.__oliphauntCleanupRaceHandle = handle;
+    globalThis.__oliphauntCleanupRaceOperation = addon.backup(handle).catch(() => undefined);
+    parentPort.postMessage("queued");
+    return;
+  }
   throw new Error(`unknown cleanup lifecycle worker role: ${role}`);
 }
 
@@ -268,11 +326,12 @@ function observeCollection(value) {
 }
 
 async function waitForEvent(logPath, expectedEvent) {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
     if (eventsFrom(logPath).includes(expectedEvent)) {
       return;
     }
-    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 1));
   }
   throw new Error(`native lifecycle event did not arrive: ${expectedEvent}`);
 }
@@ -487,16 +546,129 @@ async function runChild(options) {
     }
     case "async-stream-callback-contract": {
       const handle = await openFake(addon, options.library, options.root);
-      await assert.rejects(
-        addon.execProtocolRawStream(handle, new Uint8Array([1]), () => Promise.resolve()),
-        /must complete synchronously.*Promise or thenable/u,
+      process.env.OLIPHAUNT_NODE_CLEANUP_TEST_SINGLE_STREAM_CHUNK = "1";
+      try {
+        await assert.rejects(
+          addon.execProtocolRawStream(handle, new Uint8Array([1]), () => Promise.resolve()),
+          /must complete synchronously.*Promise or thenable/u,
+        );
+        await assert.rejects(
+          addon.execProtocolRawStream(handle, new Uint8Array([1]), () => {
+            throw new Error("stream consumer failed");
+          }),
+          /stream consumer failed/u,
+        );
+        const callbackObject = { kind: "stream callback object identity" };
+        for (const callbackFailure of [
+          "stream callback string",
+          73,
+          Number.NaN,
+          undefined,
+          callbackObject,
+        ]) {
+          const outcome = await addon
+            .execProtocolRawStream(handle, new Uint8Array([1]), () => {
+              throw callbackFailure;
+            })
+            .then(
+              () => ({ rejected: false, error: undefined }),
+              (error) => ({ rejected: true, error }),
+            );
+          assert.equal(outcome.rejected, true, "a failed stream callback must reject");
+          assert.equal(
+            Object.is(outcome.error, callbackFailure),
+            true,
+            "a recovered callback abort must preserve the exact JavaScript throw value",
+          );
+        }
+      } finally {
+        delete process.env.OLIPHAUNT_NODE_CLEANUP_TEST_SINGLE_STREAM_CHUNK;
+      }
+      process.env.OLIPHAUNT_NODE_CLEANUP_TEST_FAIL_STREAM_RECOVERY = "1";
+      try {
+        await assert.rejects(
+          addon.execProtocolRawStream(handle, new Uint8Array([1]), () => {
+            throw new Error("secondary stream consumer failure");
+          }),
+          /native liboliphaunt protocol streaming failed: fake stream recovery failed/u,
+          "an unconfirmed native recovery must take precedence over the callback exception",
+        );
+      } finally {
+        delete process.env.OLIPHAUNT_NODE_CLEANUP_TEST_FAIL_STREAM_RECOVERY;
+      }
+      process.env.OLIPHAUNT_NODE_CLEANUP_TEST_UNKNOWN_STREAM_STATUS = "1";
+      try {
+        await assert.rejects(
+          addon.execProtocolRawStream(handle, new Uint8Array([1]), () => {
+            throw new Error("tertiary stream consumer failure");
+          }),
+          /native liboliphaunt protocol streaming failed: fake stream returned an unknown positive status/u,
+          "an unknown positive native status must take precedence over the callback exception",
+        );
+      } finally {
+        delete process.env.OLIPHAUNT_NODE_CLEANUP_TEST_UNKNOWN_STREAM_STATUS;
+      }
+      const successMismatchCallback = new Error(
+        "a success mismatch must not escape as a recovered callback failure",
       );
-      await assert.rejects(
-        addon.execProtocolRawStream(handle, new Uint8Array([1]), () => {
-          throw new Error("stream consumer failed");
-        }),
-        /stream consumer failed/u,
-      );
+      process.env.OLIPHAUNT_NODE_CLEANUP_TEST_STREAM_SUCCESS_AFTER_CALLBACK_ABORT = "1";
+      try {
+        await assert.rejects(
+          addon.execProtocolRawStream(handle, new Uint8Array([1]), () => {
+            throw successMismatchCallback;
+          }),
+          (error) => {
+            assert.notStrictEqual(
+              error,
+              successMismatchCallback,
+              "native success after callback failure is authoritative adapter failure",
+            );
+            assert.match(
+              String(error),
+              /reported success after the callback failed/u,
+            );
+            return true;
+          },
+        );
+      } finally {
+        delete process.env.OLIPHAUNT_NODE_CLEANUP_TEST_STREAM_SUCCESS_AFTER_CALLBACK_ABORT;
+      }
+      process.env.OLIPHAUNT_NODE_CLEANUP_TEST_STREAM_ABORT_WITHOUT_CALLBACK = "1";
+      try {
+        let callbackCalled = false;
+        await assert.rejects(
+          addon.execProtocolRawStream(handle, new Uint8Array([1]), () => {
+            callbackCalled = true;
+          }),
+          /native liboliphaunt protocol streaming failed: fake stream reported callback abort without callback failure/u,
+          "CALLBACK_ABORTED without a recorded callback failure is native/ABI failure",
+        );
+        assert.equal(callbackCalled, false);
+      } finally {
+        delete process.env.OLIPHAUNT_NODE_CLEANUP_TEST_STREAM_ABORT_WITHOUT_CALLBACK;
+      }
+      process.env.OLIPHAUNT_NODE_CLEANUP_TEST_STREAM_FAILURE_WITHOUT_CALLBACK = "1";
+      try {
+        await assert.rejects(
+          addon.execProtocolRawStream(handle, new Uint8Array([1]), () => {
+            assert.fail("native failure before delivery must not call the stream callback");
+          }),
+          /native liboliphaunt protocol streaming failed: fake stream failed before callback delivery/u,
+        );
+      } finally {
+        delete process.env.OLIPHAUNT_NODE_CLEANUP_TEST_STREAM_FAILURE_WITHOUT_CALLBACK;
+      }
+      process.env.OLIPHAUNT_NODE_CLEANUP_TEST_STREAM_UNKNOWN_WITHOUT_CALLBACK = "1";
+      try {
+        await assert.rejects(
+          addon.execProtocolRawStream(handle, new Uint8Array([1]), () => {
+            assert.fail("unknown native status before delivery must not call the stream callback");
+          }),
+          /native liboliphaunt protocol streaming failed: fake stream returned an unknown status before callback delivery/u,
+        );
+      } finally {
+        delete process.env.OLIPHAUNT_NODE_CLEANUP_TEST_STREAM_UNKNOWN_WITHOUT_CALLBACK;
+      }
       await addon.detach(handle);
       return;
     }
@@ -578,6 +750,85 @@ async function runChild(options) {
         ["init", "close"],
         "worker.terminate() must run the owning Node environment cleanup hook",
       );
+      return;
+    }
+    case "worker-terminate-query":
+    case "worker-terminate-backup": {
+      const operation = options.scenario.slice("worker-terminate-".length);
+      const worker = new Worker(scriptPath, {
+        workerData: {
+          role: `open-with-active-${operation}`,
+          addonPath: options.addon,
+          libraryPath: options.library,
+          root: path.join(options.root, "worker"),
+        },
+      });
+      const workerExit = observeWorkerExit(worker);
+      await waitForWorkerMessage(worker, "queued");
+      await waitForEvent(options.log, `${operation}-started`);
+      assert.equal(await worker.terminate(), 1);
+      await requireWorkerExit(workerExit, 1);
+      return;
+    }
+    case "worker-terminate-query-alias": {
+      const aliasPath = `${path.dirname(options.library)}${path.sep}.${path.sep}${path.basename(options.library)}`;
+      addon.version(aliasPath);
+      const worker = new Worker(scriptPath, {
+        workerData: {
+          role: "open-with-active-query",
+          addonPath: options.addon,
+          libraryPath: options.library,
+          root: path.join(options.root, "worker"),
+        },
+      });
+      const workerExit = observeWorkerExit(worker);
+      await waitForWorkerMessage(worker, "queued");
+      await waitForEvent(options.log, "query-started");
+      assert.equal(await worker.terminate(), 1);
+      await requireWorkerExit(workerExit, 1);
+      return;
+    }
+    case "worker-terminate-stream-call-blocked":
+    case "worker-terminate-stream-delivery-wait": {
+      const deliveryWait = options.scenario.endsWith("delivery-wait");
+      const worker = new Worker(scriptPath, {
+        workerData: {
+          role: deliveryWait
+            ? "open-with-stream-delivery-wait"
+            : "open-with-stream-call-blocked",
+          addonPath: options.addon,
+          libraryPath: options.library,
+          root: path.join(options.root, "worker"),
+        },
+      });
+      const workerExit = observeWorkerExit(worker);
+      await waitForWorkerMessage(worker, "queued");
+      // The fake runtime emits this only when its call into StreamChunk remains
+      // blocked for 50ms. The call-blocked case prefills the max-one queue, so
+      // the producer is inside blocking Push. The delivery-wait case leaves the
+      // queue empty but blocks the Worker event loop, so Push admits the chunk
+      // and StreamChunk can wake only from the teardown abort.
+      await waitForEvent(options.log, "stream-callback-blocked");
+      assert.equal(await worker.terminate(), 1);
+      await requireWorkerExit(workerExit, 1);
+      return;
+    }
+    case "worker-terminate-queued-query": {
+      const worker = new Worker(scriptPath, {
+        workerData: {
+          role: "open-with-queued-query",
+          addonPath: options.addon,
+          libraryPath: options.library,
+          root: path.join(options.root, "worker"),
+        },
+      });
+      const workerExit = observeWorkerExit(worker);
+      await waitForWorkerMessage(worker, "queued");
+      // The addon fixture delays the dedicated native thread before Execute,
+      // so cleanup must retire the registered pending count without relying on
+      // a JS Complete callback that can no longer run.
+      assert.equal(await worker.terminate(), 1);
+      await requireWorkerExit(workerExit, 1);
       return;
     }
     case "copied-image-same-env-active":
@@ -838,10 +1089,25 @@ async function runParent(options) {
         name: "async-stream-callback-contract",
         expectedBeforeClose: [
           "init",
+          ...Array.from(
+            { length: 7 },
+            () => ["stream-started", "stream-aborted"],
+          ).flat(),
           "stream-started",
           "stream-aborted",
+          "stream-recovery-failed",
           "stream-started",
           "stream-aborted",
+          "stream-unknown-status",
+          "stream-started",
+          "stream-aborted",
+          "stream-success-after-callback-abort",
+          "stream-started",
+          "stream-abort-without-callback",
+          "stream-started",
+          "stream-failure-without-callback",
+          "stream-started",
+          "stream-unknown-without-callback",
           "detach",
         ],
         blockStream: true,
@@ -865,6 +1131,55 @@ async function runParent(options) {
       {
         name: "worker-terminate-active",
         expectedBeforeClose: ["init"],
+      },
+      {
+        name: "worker-terminate-query",
+        expectedBeforeClose: ["init", "query-started", "cancel", "query-cancelled"],
+        blockQuery: true,
+        iterations: 3,
+      },
+      {
+        name: "worker-terminate-query-alias",
+        expectedBeforeClose: ["init", "query-started", "cancel", "query-cancelled"],
+        blockQuery: true,
+        recordRepeatCancel: true,
+      },
+      {
+        name: "worker-terminate-queued-query",
+        expectedBeforeClose: ["init"],
+        delayOperationStart: true,
+        iterations: 3,
+      },
+      {
+        name: "worker-terminate-stream-call-blocked",
+        expectedBeforeClose: [
+          "init",
+          "stream-started",
+          "stream-callback-blocked",
+          "stream-aborted",
+        ],
+        blockStream: true,
+        prefillStreamQueue: true,
+        observeBlockedStreamCallback: true,
+        iterations: 3,
+      },
+      {
+        name: "worker-terminate-stream-delivery-wait",
+        expectedBeforeClose: [
+          "init",
+          "stream-started",
+          "stream-callback-blocked",
+          "stream-aborted",
+        ],
+        blockStream: true,
+        observeBlockedStreamCallback: true,
+        iterations: 3,
+      },
+      {
+        name: "worker-terminate-backup",
+        expectedBeforeClose: ["init", "backup-started", "backup-finished"],
+        blockArchive: true,
+        iterations: 3,
       },
       {
         name: "copied-image-same-env-active",
@@ -952,6 +1267,18 @@ async function runParent(options) {
               : {}),
             ...(scenario.blockDetach
               ? { OLIPHAUNT_NODE_CLEANUP_TEST_BLOCK_DETACH: "1" }
+              : {}),
+            ...(scenario.delayOperationStart
+              ? { OLIPHAUNT_NODE_CLEANUP_TEST_DELAY_OPERATION_START: "1" }
+              : {}),
+            ...(scenario.prefillStreamQueue
+              ? { OLIPHAUNT_NODE_CLEANUP_TEST_PREFILL_STREAM_QUEUE: "1" }
+              : {}),
+            ...(scenario.observeBlockedStreamCallback
+              ? { OLIPHAUNT_NODE_CLEANUP_TEST_OBSERVE_BLOCKED_STREAM_CALLBACK: "1" }
+              : {}),
+            ...(scenario.recordRepeatCancel
+              ? { OLIPHAUNT_NODE_CLEANUP_TEST_RECORD_REPEAT_CANCEL: "1" }
               : {}),
           },
           timeout: 30_000,

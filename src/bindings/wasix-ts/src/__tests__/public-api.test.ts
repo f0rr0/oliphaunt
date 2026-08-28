@@ -58,13 +58,26 @@ function assertPublicDatabaseTypes(
   );
   const description: Promise<DescribeResult> = database.describe('SELECT $1', [postgresOids.int4]);
   const streamed: Promise<void> = database.execProtocolRawStream(Uint8Array.of(1), () => undefined);
-  const transactionStreamed: Promise<void> = transaction.execProtocolRawStream(
+  // @ts-expect-error Raw protocol is root-only; it bypasses callback transaction ownership.
+  const transactionBuffered = transaction.execProtocolRaw(Uint8Array.of(1));
+  // @ts-expect-error Raw protocol is root-only; it bypasses callback transaction ownership.
+  const transactionStreamed = transaction.execProtocolRawStream(
     Uint8Array.of(1),
     () => undefined,
   );
   const rollback: Promise<void> = transaction.rollback();
   const closed: boolean = database.closed || transaction.closed;
-  void [decoded, raw, execResults, description, streamed, transactionStreamed, rollback, closed];
+  void [
+    decoded,
+    raw,
+    execResults,
+    description,
+    streamed,
+    transactionBuffered,
+    transactionStreamed,
+    rollback,
+    closed,
+  ];
 }
 
 void assertPublicDatabaseTypes;

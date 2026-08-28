@@ -160,7 +160,7 @@ use oliphaunt::{Extension, Oliphaunt};
 # fn demo() -> oliphaunt::Result<()> {
 let mut db = Oliphaunt::builder()
     .direct()
-    .extension(Extension::Vector)
+    .extension(Extension::VECTOR)
     .open()?;
 
 db.execute("CREATE EXTENSION vector")?;
@@ -552,7 +552,7 @@ not a public target-support declaration. Each row records:
 - mobile static-link status;
 - first-party or external artifact policy.
 
-`Extension::ALL_PG18_SUPPORTED` is the public exact-extension catalog used by
+`Extension::ALL` is the public exact-extension catalog used by
 application code. The native-packaging tools consume the same generated
 metadata for artifact ownership and target support; vendor-provided
 artifact-index rows remain a separate runtime input. Desktop native, mobile,

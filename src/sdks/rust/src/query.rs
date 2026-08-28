@@ -136,6 +136,12 @@ pub(crate) fn response_ready_status(response: &ProtocolResponse) -> Result<Ready
     core::response_ready_status(response.as_bytes()).map_err(error_from_core)
 }
 
+pub(crate) fn validate_managed_transaction_response(
+    response: &ProtocolResponse,
+) -> Result<ReadyStatus> {
+    core::validate_managed_transaction_response(response.as_bytes()).map_err(error_from_core)
+}
+
 fn error_from_core(error: core::Error) -> Error {
     match error {
         core::Error::Protocol(message) => Error::Engine(message),
@@ -201,6 +207,18 @@ fn take<'a>(input: &mut &'a [u8], len: usize, label: &str) -> Result<&'a [u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_other_error_contains<T>(actual: Result<T>, expected: &str) {
+        let error = match actual {
+            Ok(_) => panic!("expected error containing {expected:?}"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), crate::error::ErrorKind::Other);
+        assert!(
+            error.to_string().contains(expected),
+            "{error:?} omitted {expected:?}"
+        );
+    }
 
     #[test]
     fn consumes_shared_query_response_contract() {
@@ -296,7 +314,10 @@ mod tests {
                         }
                     }
                 }
-                Err(Error::Postgres(error)) => {
+                Err(error) if error.postgres_error().is_some() => {
+                    let error = error
+                        .postgres_error()
+                        .expect("guard established PostgreSQL error identity");
                     let expected = expectation["postgresError"]
                         .as_object()
                         .unwrap_or_else(|| panic!("{name}: unexpected PostgreSQL error {error:?}"));
@@ -348,7 +369,9 @@ mod tests {
                         expected,
                     );
                 }
-                Err(Error::Engine(message)) => {
+                Err(error) => {
+                    assert_eq!(error.kind(), crate::error::ErrorKind::Other, "{name}");
+                    let message = error.to_string();
                     let expected = expectation["engineErrorContains"]
                         .as_str()
                         .unwrap_or_else(|| panic!("{name}: unexpected engine error {message}"));
@@ -357,7 +380,6 @@ mod tests {
                         "{name}: {message:?} omitted {expected:?}"
                     );
                 }
-                Err(error) => panic!("{name}: unexpected query parser error {error:?}"),
             }
         }
     }
@@ -376,9 +398,8 @@ mod tests {
             ),
             "engineError" => {
                 let error = actual.expect_err(&format!("{case} {mode} must fail"));
-                let Error::Engine(message) = error else {
-                    panic!("{case} {mode}: expected engine error, got {error:?}");
-                };
+                assert_eq!(error.kind(), crate::error::ErrorKind::Other);
+                let message = error.to_string();
                 let expected = expected["contains"].as_str().expect("error substring");
                 assert!(
                     message.contains(expected),
@@ -535,9 +556,10 @@ mod tests {
         push_ready_for_query(&mut bytes);
 
         let error = parse_query_response_bytes(&bytes).unwrap_err();
-        let Error::Postgres(postgres) = error else {
-            panic!("expected structured PostgreSQL error, got {error:?}");
-        };
+        assert_eq!(error.kind(), crate::error::ErrorKind::Postgres);
+        let postgres = error
+            .postgres_error()
+            .expect("Postgres errors expose structured diagnostics");
         assert_eq!(postgres.severity.as_deref(), Some("ERROR"));
         assert_eq!(postgres.sqlstate.as_deref(), Some("42P01"));
         assert_eq!(postgres.message, "relation does not exist");
@@ -554,10 +576,10 @@ mod tests {
         push_command_complete(&mut bytes, "SELECT 1");
         push_ready_for_query(&mut bytes);
 
-        assert!(matches!(
+        assert_other_error_contains(
             parse_command_response(&ProtocolResponse::new(bytes)),
-            Err(Error::Engine(message)) if message.contains("execute() received rows; use query()")
-        ));
+            "execute() received rows; use query()",
+        );
     }
 
     #[test]
@@ -568,9 +590,10 @@ mod tests {
         push_ready_for_query(&mut bytes);
 
         let error = parse_command_response(&ProtocolResponse::new(bytes)).unwrap_err();
-        let Error::Postgres(postgres) = error else {
-            panic!("expected structured PostgreSQL error, got {error:?}");
-        };
+        assert_eq!(error.kind(), crate::error::ErrorKind::Postgres);
+        let postgres = error
+            .postgres_error()
+            .expect("Postgres errors expose structured diagnostics");
         assert_eq!(postgres.sqlstate.as_deref(), Some("23505"));
         assert_eq!(postgres.message, "duplicate key value");
         assert_eq!(postgres.notices.len(), 1);
@@ -606,19 +629,19 @@ mod tests {
     fn error_response_requires_one_terminal_ready_boundary() {
         let mut missing_ready = Vec::new();
         push_error_response(&mut missing_ready, "ERROR", "42601", "syntax error");
-        assert!(matches!(
+        assert_other_error_contains(
             parse_command_response(&ProtocolResponse::new(missing_ready)),
-            Err(Error::Engine(message)) if message.contains("before ReadyForQuery")
-        ));
+            "before ReadyForQuery",
+        );
 
         let mut trailing = Vec::new();
         push_error_response(&mut trailing, "ERROR", "42601", "syntax error");
         push_ready_for_query(&mut trailing);
         push_notice_response(&mut trailing, "NOTICE", "too late");
-        assert!(matches!(
+        assert_other_error_contains(
             parse_command_response(&ProtocolResponse::new(trailing)),
-            Err(Error::Engine(message)) if message.contains("bytes after ReadyForQuery")
-        ));
+            "bytes after ReadyForQuery",
+        );
     }
 
     #[test]
@@ -626,20 +649,20 @@ mod tests {
         let mut malformed = Vec::new();
         push_backend_message(&mut malformed, b'E', b"SERROR\0Mmissing terminator");
         push_ready_for_query(&mut malformed);
-        assert!(matches!(
+        assert_other_error_contains(
             parse_command_response(&ProtocolResponse::new(malformed)),
-            Err(Error::Engine(message))
-                if message.contains("ErrorResponse field is missing null terminator")
-        ));
+            "ErrorResponse field is missing null terminator",
+        );
 
         let mut valid_without_message = Vec::new();
         push_backend_message(&mut valid_without_message, b'E', b"CXX000\0\0");
         push_ready_for_query(&mut valid_without_message);
-        let Error::Postgres(error) =
-            parse_command_response(&ProtocolResponse::new(valid_without_message)).unwrap_err()
-        else {
-            panic!("a valid ErrorResponse must retain PostgreSQL error identity");
-        };
+        let sdk_error =
+            parse_command_response(&ProtocolResponse::new(valid_without_message)).unwrap_err();
+        assert_eq!(sdk_error.kind(), crate::error::ErrorKind::Postgres);
+        let error = sdk_error
+            .postgres_error()
+            .expect("a valid ErrorResponse must retain PostgreSQL error identity");
         assert_eq!(error.sqlstate.as_deref(), Some("XX000"));
         assert_eq!(error.message, "PostgreSQL ErrorResponse");
     }
@@ -671,16 +694,14 @@ mod tests {
     fn single_statement_parsers_require_exactly_one_completion() {
         let mut ready_only = Vec::new();
         push_ready_for_query(&mut ready_only);
-        assert!(matches!(
+        assert_other_error_contains(
             parse_command_response(&ProtocolResponse::new(ready_only.clone())),
-            Err(Error::Engine(message))
-                if message.contains("before CommandComplete or EmptyQueryResponse")
-        ));
-        assert!(matches!(
+            "before CommandComplete or EmptyQueryResponse",
+        );
+        assert_other_error_contains(
             parse_query_response_bytes(&ready_only),
-            Err(Error::Engine(message))
-                if message.contains("before CommandComplete or EmptyQueryResponse")
-        ));
+            "before CommandComplete or EmptyQueryResponse",
+        );
 
         let mut empty = Vec::new();
         push_backend_message(&mut empty, b'I', &[]);
@@ -696,31 +717,28 @@ mod tests {
         push_command_complete(&mut command_then_empty, "UPDATE 1");
         push_backend_message(&mut command_then_empty, b'I', &[]);
         push_ready_for_query(&mut command_then_empty);
-        assert!(matches!(
+        assert_other_error_contains(
             parse_query_response_bytes(&command_then_empty),
-            Err(Error::Engine(message))
-                if message.contains("EmptyQueryResponse after CommandComplete")
-        ));
+            "EmptyQueryResponse after CommandComplete",
+        );
 
         let mut empty_then_command = Vec::new();
         push_backend_message(&mut empty_then_command, b'I', &[]);
         push_command_complete(&mut empty_then_command, "UPDATE 1");
         push_ready_for_query(&mut empty_then_command);
-        assert!(matches!(
+        assert_other_error_contains(
             parse_command_response(&ProtocolResponse::new(empty_then_command)),
-            Err(Error::Engine(message))
-                if message.contains("CommandComplete after EmptyQueryResponse")
-        ));
+            "CommandComplete after EmptyQueryResponse",
+        );
 
         let mut duplicate_empty = Vec::new();
         push_backend_message(&mut duplicate_empty, b'I', &[]);
         push_backend_message(&mut duplicate_empty, b'I', &[]);
         push_ready_for_query(&mut duplicate_empty);
-        assert!(matches!(
+        assert_other_error_contains(
             parse_query_response_bytes(&duplicate_empty),
-            Err(Error::Engine(message))
-                if message.contains("multiple EmptyQueryResponse")
-        ));
+            "multiple EmptyQueryResponse",
+        );
     }
 
     #[test]
@@ -733,62 +751,60 @@ mod tests {
         push_command_complete(&mut row_after_completion, "SELECT 0");
         push_data_row(&mut row_after_completion, &[Some("42")]);
         push_ready_for_query(&mut row_after_completion);
-        assert!(matches!(
+        assert_other_error_contains(
             parse_query_response_bytes(&row_after_completion),
-            Err(Error::Engine(message)) if message.contains("DataRow after statement completion")
-        ));
+            "DataRow after statement completion",
+        );
 
         let mut parse_after_completion = Vec::new();
         push_command_complete(&mut parse_after_completion, "UPDATE 1");
         push_backend_message(&mut parse_after_completion, b'1', &[]);
         push_ready_for_query(&mut parse_after_completion);
-        assert!(matches!(
+        assert_other_error_contains(
             parse_query_response_bytes(&parse_after_completion),
-            Err(Error::Engine(message)) if message.contains("ParseComplete out of order")
-        ));
+            "ParseComplete out of order",
+        );
 
         let mut bind_before_parse = Vec::new();
         push_backend_message(&mut bind_before_parse, b'2', &[]);
         push_backend_message(&mut bind_before_parse, b'n', &[]);
         push_command_complete(&mut bind_before_parse, "UPDATE 1");
         push_ready_for_query(&mut bind_before_parse);
-        assert!(matches!(
+        assert_other_error_contains(
             parse_query_response_bytes(&bind_before_parse),
-            Err(Error::Engine(message)) if message.contains("BindComplete out of order")
-        ));
+            "BindComplete out of order",
+        );
 
         let mut error_after_command = Vec::new();
         push_command_complete(&mut error_after_command, "UPDATE 1");
         push_error_response(&mut error_after_command, "ERROR", "XX000", "too late");
         push_ready_for_query(&mut error_after_command);
-        assert!(matches!(
+        assert_other_error_contains(
             parse_query_response_bytes(&error_after_command),
-            Err(Error::Engine(message))
-                if message.contains("ErrorResponse after statement completion")
-        ));
+            "ErrorResponse after statement completion",
+        );
 
         let mut error_after_empty = Vec::new();
         push_backend_message(&mut error_after_empty, b'I', &[]);
         push_error_response(&mut error_after_empty, "ERROR", "XX000", "too late");
         push_ready_for_query(&mut error_after_empty);
-        assert!(matches!(
+        assert_other_error_contains(
             parse_command_response(&ProtocolResponse::new(error_after_empty)),
-            Err(Error::Engine(message))
-                if message.contains("ErrorResponse after statement completion")
-        ));
+            "ErrorResponse after statement completion",
+        );
 
         let mut close_complete = Vec::new();
         push_backend_message(&mut close_complete, b'3', &[]);
         push_command_complete(&mut close_complete, "UPDATE 1");
         push_ready_for_query(&mut close_complete);
-        assert!(matches!(
+        assert_other_error_contains(
             parse_query_response_bytes(&close_complete),
-            Err(Error::Engine(message)) if message.contains("unexpected backend message tag 0x33")
-        ));
-        assert!(matches!(
+            "unexpected backend message tag 0x33",
+        );
+        assert_other_error_contains(
             parse_command_response(&ProtocolResponse::new(close_complete)),
-            Err(Error::Engine(message)) if message.contains("unexpected backend message tag 0x33")
-        ));
+            "unexpected backend message tag 0x33",
+        );
     }
 
     #[test]
@@ -818,22 +834,20 @@ mod tests {
 
         let mut ready_only = Vec::new();
         push_ready_for_query(&mut ready_only);
-        assert!(matches!(
+        assert_other_error_contains(
             parse_exec_response(&ProtocolResponse::new(ready_only)),
-            Err(Error::Engine(message))
-                if message.contains("before CommandComplete or EmptyQueryResponse")
-        ));
+            "before CommandComplete or EmptyQueryResponse",
+        );
 
         for tag in [b'1', b'2', b'3', b't', b'n'] {
             let mut extended_control = Vec::new();
             push_backend_message(&mut extended_control, tag, &[]);
             push_command_complete(&mut extended_control, "UPDATE 1");
             push_ready_for_query(&mut extended_control);
-            assert!(matches!(
+            assert_other_error_contains(
                 parse_exec_response(&ProtocolResponse::new(extended_control)),
-                Err(Error::Engine(message))
-                    if message.contains("unexpected backend message tag")
-            ));
+                "unexpected backend message tag",
+            );
         }
     }
 
@@ -862,21 +876,20 @@ mod tests {
     fn describe_requires_parse_complete_and_protocol_order() {
         let mut ready_only = Vec::new();
         push_ready_for_query(&mut ready_only);
-        assert!(matches!(
+        assert_other_error_contains(
             parse_statement_description(&ProtocolResponse::new(ready_only)),
-            Err(Error::Engine(message)) if message.contains("omitted ParseComplete")
-        ));
+            "omitted ParseComplete",
+        );
 
         let mut parameter_before_parse = Vec::new();
         push_parameter_description(&mut parameter_before_parse, &[]);
         push_backend_message(&mut parameter_before_parse, b'1', &[]);
         push_backend_message(&mut parameter_before_parse, b'n', &[]);
         push_ready_for_query(&mut parameter_before_parse);
-        assert!(matches!(
+        assert_other_error_contains(
             parse_statement_description(&ProtocolResponse::new(parameter_before_parse)),
-            Err(Error::Engine(message))
-                if message.contains("ParameterDescription out of order")
-        ));
+            "ParameterDescription out of order",
+        );
 
         let mut duplicate_parse = Vec::new();
         push_backend_message(&mut duplicate_parse, b'1', &[]);
@@ -884,10 +897,10 @@ mod tests {
         push_parameter_description(&mut duplicate_parse, &[]);
         push_backend_message(&mut duplicate_parse, b'n', &[]);
         push_ready_for_query(&mut duplicate_parse);
-        assert!(matches!(
+        assert_other_error_contains(
             parse_statement_description(&ProtocolResponse::new(duplicate_parse)),
-            Err(Error::Engine(message)) if message.contains("ParseComplete out of order")
-        ));
+            "ParseComplete out of order",
+        );
 
         let mut result_before_parameters = Vec::new();
         push_backend_message(&mut result_before_parameters, b'1', &[]);
@@ -897,10 +910,10 @@ mod tests {
         );
         push_parameter_description(&mut result_before_parameters, &[]);
         push_ready_for_query(&mut result_before_parameters);
-        assert!(matches!(
+        assert_other_error_contains(
             parse_statement_description(&ProtocolResponse::new(result_before_parameters)),
-            Err(Error::Engine(message)) if message.contains("RowDescription out of order")
-        ));
+            "RowDescription out of order",
+        );
 
         let mut error_after_result = Vec::new();
         push_backend_message(&mut error_after_result, b'1', &[]);
@@ -908,11 +921,10 @@ mod tests {
         push_backend_message(&mut error_after_result, b'n', &[]);
         push_error_response(&mut error_after_result, "ERROR", "XX000", "too late");
         push_ready_for_query(&mut error_after_result);
-        assert!(matches!(
+        assert_other_error_contains(
             parse_statement_description(&ProtocolResponse::new(error_after_result)),
-            Err(Error::Engine(message))
-                if message.contains("ErrorResponse after result description")
-        ));
+            "ErrorResponse after result description",
+        );
     }
 
     #[test]
@@ -927,9 +939,10 @@ mod tests {
         push_ready_for_query(&mut bytes);
 
         let error = parse_query_response_bytes(&bytes).unwrap_err();
-        let Error::Postgres(postgres) = error else {
-            panic!("expected structured PostgreSQL cancellation error, got {error:?}");
-        };
+        assert_eq!(error.kind(), crate::error::ErrorKind::Postgres);
+        let postgres = error
+            .postgres_error()
+            .expect("Postgres errors expose structured cancellation diagnostics");
         assert_eq!(postgres.severity.as_deref(), Some("ERROR"));
         assert_eq!(postgres.sqlstate.as_deref(), Some("57014"));
         assert_eq!(postgres.message, "canceling statement due to user request");
@@ -941,11 +954,10 @@ mod tests {
         push_raw_row_description(&mut bytes, &[(&[0xff], 25)]);
         push_ready_for_query(&mut bytes);
 
-        assert!(matches!(
+        assert_other_error_contains(
             parse_query_response_bytes(&bytes),
-            Err(Error::Engine(message))
-                if message.contains("field name is not valid UTF-8")
-        ));
+            "field name is not valid UTF-8",
+        );
     }
 
     #[test]
@@ -957,10 +969,10 @@ mod tests {
         push_ready_for_query(&mut bytes);
 
         let result = parse_query_response_bytes(&bytes).unwrap();
-        assert!(matches!(
+        assert_other_error_contains(
             result.get_text(0, "value"),
-            Err(Error::Engine(message)) if message.contains("query value is not valid UTF-8")
-        ));
+            "query value is not valid UTF-8",
+        );
     }
 
     #[test]
@@ -974,10 +986,7 @@ mod tests {
         push_command_complete(&mut bytes, "SELECT 1");
         push_ready_for_query(&mut bytes);
 
-        assert!(matches!(
-            parse_query_response_bytes(&bytes),
-            Err(Error::Engine(message)) if message.contains("multiple result sets")
-        ));
+        assert_other_error_contains(parse_query_response_bytes(&bytes), "multiple result sets");
     }
 
     #[test]
@@ -1014,10 +1023,10 @@ mod tests {
         push_backend_message(&mut bytes, b'1', &[0]);
         push_ready_for_query(&mut bytes);
 
-        assert!(matches!(
+        assert_other_error_contains(
             parse_query_response_bytes(&bytes),
-            Err(Error::Engine(message)) if message.contains("ParseComplete contained trailing bytes")
-        ));
+            "ParseComplete contained trailing bytes",
+        );
     }
 
     #[test]
@@ -1025,30 +1034,28 @@ mod tests {
         let mut malformed_parameter = Vec::new();
         push_backend_message(&mut malformed_parameter, b'S', b"client_encoding\0");
         push_ready_for_query(&mut malformed_parameter);
-        assert!(matches!(
+        assert_other_error_contains(
             parse_query_response_bytes(&malformed_parameter),
-            Err(Error::Engine(message))
-                if message.contains("ParameterStatus value is missing null terminator")
-        ));
+            "ParameterStatus value is missing null terminator",
+        );
 
         let mut malformed_notice = Vec::new();
         push_backend_message(&mut malformed_notice, b'N', b"SNOTICE\0");
         push_ready_for_query(&mut malformed_notice);
-        assert!(matches!(
+        assert_other_error_contains(
             parse_query_response_bytes(&malformed_notice),
-            Err(Error::Engine(message)) if message.contains("NoticeResponse is missing terminator")
-        ));
+            "NoticeResponse is missing terminator",
+        );
 
         let mut malformed_notification = Vec::new();
         let mut body = 123_i32.to_be_bytes().to_vec();
         body.extend_from_slice(b"channel");
         push_backend_message(&mut malformed_notification, b'A', &body);
         push_ready_for_query(&mut malformed_notification);
-        assert!(matches!(
+        assert_other_error_contains(
             parse_query_response_bytes(&malformed_notification),
-            Err(Error::Engine(message))
-                if message.contains("NotificationResponse channel is missing null terminator")
-        ));
+            "NotificationResponse channel is missing null terminator",
+        );
     }
 
     #[test]
@@ -1057,10 +1064,10 @@ mod tests {
         push_backend_message(&mut bytes, b'R', &[0, 0, 0, 0]);
         push_ready_for_query(&mut bytes);
 
-        assert!(matches!(
+        assert_other_error_contains(
             parse_query_response_bytes(&bytes),
-            Err(Error::Engine(message)) if message.contains("unexpected backend message tag 0x52")
-        ));
+            "unexpected backend message tag 0x52",
+        );
     }
 
     #[test]
@@ -1097,19 +1104,16 @@ mod tests {
     fn rejects_copy_and_bytes_after_ready_for_query() {
         let mut copy = Vec::new();
         push_backend_message(&mut copy, b'G', &[0, 0, 0]);
-        assert!(matches!(
-            parse_query_response_bytes(&copy),
-            Err(Error::Engine(message)) if message.contains("does not support COPY")
-        ));
+        assert_other_error_contains(parse_query_response_bytes(&copy), "does not support COPY");
 
         let mut trailing = Vec::new();
         push_command_complete(&mut trailing, "SELECT 0");
         push_ready_for_query(&mut trailing);
         trailing.push(0);
-        assert!(matches!(
+        assert_other_error_contains(
             parse_query_response_bytes(&trailing),
-            Err(Error::Engine(message)) if message.contains("bytes after ReadyForQuery")
-        ));
+            "bytes after ReadyForQuery",
+        );
     }
 
     #[test]
@@ -1128,19 +1132,17 @@ mod tests {
     fn rejects_malformed_ready_for_query_status() {
         let mut missing = Vec::new();
         push_backend_message(&mut missing, b'Z', &[]);
-        assert!(matches!(
+        assert_other_error_contains(
             parse_query_response_bytes(&missing),
-            Err(Error::Engine(message))
-                if message.contains("ReadyForQuery contained 0 bytes, expected 1")
-        ));
+            "ReadyForQuery contained 0 bytes, expected 1",
+        );
 
         let mut invalid = Vec::new();
         push_backend_message(&mut invalid, b'Z', &[0]);
-        assert!(matches!(
+        assert_other_error_contains(
             parse_query_response_bytes(&invalid),
-            Err(Error::Engine(message))
-                if message.contains("ReadyForQuery contained invalid transaction status 0x00")
-        ));
+            "ReadyForQuery contained invalid transaction status 0x00",
+        );
     }
 
     #[test]
@@ -1239,6 +1241,54 @@ mod tests {
     }
 
     #[test]
+    fn managed_transaction_wire_classifier_uses_command_tags_and_final_readiness() {
+        fn response(tags: &[&str], ready: u8) -> ProtocolResponse {
+            let mut bytes = Vec::new();
+            for tag in tags {
+                push_command_complete(&mut bytes, tag);
+            }
+            push_backend_message(&mut bytes, b'Z', &[ready]);
+            ProtocolResponse::new(bytes)
+        }
+
+        for tag in [
+            "BEGIN",
+            "START TRANSACTION",
+            "COMMIT",
+            "PREPARE TRANSACTION",
+            "COMMIT PREPARED",
+            "ROLLBACK PREPARED",
+        ] {
+            assert!(
+                validate_managed_transaction_response(&response(&[tag], b'T')).is_err(),
+                "{tag} changes transaction ownership"
+            );
+        }
+        assert!(validate_managed_transaction_response(&response(&["ROLLBACK"], b'I')).is_err());
+        assert!(
+            validate_managed_transaction_response(&response(&["COMMIT", "BEGIN"], b'T')).is_err()
+        );
+        for tags in [
+            &["ROLLBACK"][..],
+            &["SAVEPOINT"][..],
+            &["RELEASE"][..],
+            &["SET"][..],
+            &["PREPARE"][..],
+            &["CREATE FUNCTION"][..],
+            &["CALL"][..],
+            &["DO"][..],
+        ] {
+            validate_managed_transaction_response(&response(tags, b'T'))
+                .expect("ordinary or savepoint-preserving command remains managed");
+        }
+
+        let mut malformed = Vec::new();
+        push_backend_message(&mut malformed, b'C', b"COMMIT");
+        push_backend_message(&mut malformed, b'Z', b"T");
+        assert!(validate_managed_transaction_response(&ProtocolResponse::new(malformed)).is_err());
+    }
+
+    #[test]
     fn describe_allows_copy_because_it_does_not_execute() {
         describe_statement_request("COPY public.items TO STDOUT", &[])
             .expect("Parse + Describe + Sync cannot enter COPY mode");
@@ -1246,9 +1296,9 @@ mod tests {
 
     #[test]
     fn rejects_nul_in_extended_query_sql() {
-        assert_eq!(
-            extended_query_request("SELECT '\0'", [QueryParam::Null]).unwrap_err(),
-            Error::Engine("extended query SQL must not contain NUL bytes".to_owned())
+        assert_other_error_contains(
+            extended_query_request("SELECT '\0'", [QueryParam::Null]),
+            "extended query SQL must not contain NUL bytes",
         );
     }
 
@@ -1256,13 +1306,13 @@ mod tests {
     fn rejects_too_many_extended_query_parameters() {
         let params = std::iter::repeat_n(QueryParam::Null, i16::MAX as usize + 1);
 
-        assert_eq!(
-            extended_query_request("SELECT 1", params).unwrap_err(),
-            Error::Engine(format!(
+        assert_other_error_contains(
+            extended_query_request("SELECT 1", params),
+            &format!(
                 "extended query supports at most {} parameters, got {}",
                 i16::MAX,
-                i16::MAX as usize + 1
-            ))
+                i16::MAX as usize + 1,
+            ),
         );
     }
 

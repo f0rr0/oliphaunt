@@ -16,6 +16,7 @@ import {
   type ExecResult,
   type NullQueryParameter,
   type OliphauntDatabase,
+  type OliphauntServer,
   type OliphauntTransaction,
   type OpenConfig,
   type ProtocolChunkCallback,
@@ -41,6 +42,7 @@ test('root entrypoint publishes the ORM-facing values', () => {
 // uncalled verifies declarations without needing a native runtime in the test.
 function assertPublicDatabaseTypes(
   database: OliphauntDatabase,
+  server: OliphauntServer,
   transaction: OliphauntTransaction,
 ): void {
   const decoded: Promise<QueryResult<{ value: number }>> = database.query<{
@@ -58,13 +60,45 @@ function assertPublicDatabaseTypes(
     Uint8Array.of(0x51),
     () => undefined,
   );
-  const transactionStreamed: Promise<void> = transaction.execProtocolRawStream(
+  // @ts-expect-error Raw protocol is database/root-only; it bypasses callback transaction ownership.
+  const transactionBuffered = transaction.execProtocolRaw(Uint8Array.of(0x51));
+  // @ts-expect-error Raw protocol is database/root-only; it bypasses callback transaction ownership.
+  const transactionStreamed = transaction.execProtocolRawStream(
     Uint8Array.of(0x51),
     () => undefined,
   );
   const rollback: Promise<void> = transaction.rollback();
-  const closed: boolean = database.closed || transaction.closed;
-  void [decoded, raw, execution, description, streamed, transactionStreamed, rollback, closed];
+  const serverConnectionString: string = server.connectionString;
+  const serverClose: Promise<void> = server.close();
+  // @ts-expect-error Server handles own lifecycle, not a privileged database connection.
+  const serverQuery = server.query('SELECT 1');
+  // @ts-expect-error External driver connections own their own cancellation.
+  const serverCancel = server.cancel();
+  // @ts-expect-error Server handles do not expose the embedded database backup format.
+  const serverBackup = server.backup();
+  // @ts-expect-error Raw protocol belongs to database connections, not listener ownership.
+  const serverRaw = server.execProtocolRaw(Uint8Array.of(0x51));
+  // @ts-expect-error Transactions belong to caller-owned database connections.
+  const serverTransaction = server.transaction(() => undefined);
+  const closed: boolean = database.closed || server.closed || transaction.closed;
+  void [
+    decoded,
+    raw,
+    execution,
+    description,
+    streamed,
+    transactionBuffered,
+    transactionStreamed,
+    rollback,
+    serverConnectionString,
+    serverClose,
+    serverQuery,
+    serverCancel,
+    serverBackup,
+    serverRaw,
+    serverTransaction,
+    closed,
+  ];
 }
 
 void assertPublicDatabaseTypes;

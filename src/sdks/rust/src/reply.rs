@@ -128,10 +128,11 @@ mod tests {
         ));
         drop(sender);
         assert_eq!(wake.0.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert_eq!(
-            Pin::new(&mut receiver).poll(&mut context),
-            Poll::Ready(Err(Error::EngineStopped))
-        );
+        let Poll::Ready(Err(error)) = Pin::new(&mut receiver).poll(&mut context) else {
+            panic!("dropping the sender must stop the pending receiver");
+        };
+        assert_eq!(error.kind(), crate::error::ErrorKind::Lifecycle);
+        assert_eq!(error.to_string(), "native database session has stopped");
     }
 
     #[test]

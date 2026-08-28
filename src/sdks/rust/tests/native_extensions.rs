@@ -8,10 +8,14 @@ use std::task::{Context, Poll, Wake, Waker};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use oliphaunt::worker::{Oliphaunt, OliphauntBuilder, OliphauntServer};
-use oliphaunt::{Extension, Result};
+use oliphaunt::{
+    AsyncOliphaunt as Oliphaunt, AsyncOliphauntBuilder as OliphauntBuilder,
+    AsyncOliphauntServer as OliphauntServer, DatabaseStorage, Extension, ServerListen,
+};
 
 mod support;
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TestMode {
@@ -41,7 +45,7 @@ fn extension_smoke_statements(sql: &str) -> impl Iterator<Item = &str> {
 
 #[test]
 fn native_release_proof_catalog_and_smoke_recipes_match() {
-    let names = Extension::ALL_PG18_SUPPORTED
+    let names = Extension::ALL
         .iter()
         .map(|extension| extension.sql_name())
         .collect::<Vec<_>>();
@@ -133,7 +137,7 @@ pub fn run_native_extension_release_proof(shard_index: usize, shard_count: usize
         requested_raw.split(',').count(),
         "planned native extension proof set contains empty or duplicate SQL names"
     );
-    let release_extensions = Extension::ALL_PG18_SUPPORTED
+    let release_extensions = Extension::ALL
         .iter()
         .copied()
         .filter(|extension| requested.contains(extension.sql_name()))
@@ -203,7 +207,7 @@ fn native_extension_matrix_when_enabled() {
         return;
     };
 
-    for extension in Extension::ALL_PG18_SUPPORTED {
+    for extension in Extension::ALL {
         run_direct_extension_smoke(*extension);
         run_extension_smoke(TestMode::Broker, Some(broker), *extension).unwrap();
         run_extension_smoke(TestMode::Server, None, *extension).unwrap();
@@ -349,7 +353,7 @@ fn run_direct_extension_child_install_backup(
 ) -> Result<()> {
     let db = TestDatabase::Embedded(block_on(
         Oliphaunt::builder()
-            .directory(root)
+            .storage(DatabaseStorage::Directory(root.to_path_buf()))
             .direct()
             .extension(extension)
             .open(),
@@ -367,7 +371,7 @@ fn run_direct_extension_child_install_backup(
 fn run_direct_extension_child_assert_existing(extension: Extension, root: &Path) -> Result<()> {
     let db = TestDatabase::Embedded(block_on(
         Oliphaunt::builder()
-            .directory(root)
+            .storage(DatabaseStorage::Directory(root.to_path_buf()))
             .direct()
             .extension(extension)
             .open(),
@@ -443,11 +447,21 @@ async fn open_extension_database(
     extension: Extension,
     root: &Path,
 ) -> Result<TestDatabase> {
-    let builder = extension_builder(mode, broker, extension, root);
     if mode == TestMode::Server {
-        builder.open_server().await.map(TestDatabase::Server)
+        Ok(TestDatabase::Server(
+            OliphauntServer::builder()
+                .storage(DatabaseStorage::Directory(root.to_path_buf()))
+                .listen(ServerListen::tcp())
+                .extension(extension)
+                .start()
+                .await?,
+        ))
     } else {
-        builder.open().await.map(TestDatabase::Embedded)
+        Ok(TestDatabase::Embedded(
+            extension_builder(mode, broker, extension, root)
+                .open()
+                .await?,
+        ))
     }
 }
 
@@ -459,22 +473,25 @@ enum TestDatabase {
 impl TestDatabase {
     async fn exec_protocol_raw(&self, request: impl AsRef<[u8]>) -> Result<Vec<u8>> {
         match self {
-            Self::Embedded(database) => database.exec_protocol_raw(request).await,
-            Self::Server(database) => database.exec_protocol_raw(request).await,
+            Self::Embedded(database) => Ok(database.exec_protocol_raw(request).await?),
+            Self::Server(server) => Ok(support::external_raw_query(
+                server.connection_string(),
+                request,
+            )?),
         }
     }
 
     async fn backup(&self) -> Result<Vec<u8>> {
         match self {
-            Self::Embedded(database) => database.backup().await,
+            Self::Embedded(database) => Ok(database.backup().await?),
             Self::Server(_) => panic!("native server backup must use pg_basebackup"),
         }
     }
 
     async fn close(&self) -> Result<()> {
         match self {
-            Self::Embedded(database) => database.close().await,
-            Self::Server(database) => database.close().await,
+            Self::Embedded(database) => Ok(database.close().await?),
+            Self::Server(database) => Ok(database.close().await?),
         }
     }
 }
@@ -485,7 +502,9 @@ fn extension_builder(
     extension: Extension,
     root: &Path,
 ) -> OliphauntBuilder {
-    let builder = Oliphaunt::builder().directory(root).extension(extension);
+    let builder = Oliphaunt::builder()
+        .storage(DatabaseStorage::Directory(root.to_path_buf()))
+        .extension(extension);
     let mut builder = match mode {
         TestMode::Direct => builder.direct(),
         TestMode::Broker => builder.broker(),
@@ -514,7 +533,7 @@ fn assert_repeated_create_extension_error_recovers(
     mode: TestMode,
     extension: Extension,
 ) -> Result<()> {
-    if extension == Extension::AutoExplain {
+    if extension == Extension::AUTO_EXPLAIN {
         return Ok(());
     }
 
@@ -549,7 +568,7 @@ fn assert_repeated_create_extension_error_recovers(
 }
 
 fn assert_extension_visible(db: &TestDatabase, mode: TestMode, extension: Extension) -> Result<()> {
-    if extension != Extension::AutoExplain {
+    if extension != Extension::AUTO_EXPLAIN {
         let response = block_on(db.exec_protocol_raw(raw_query_message(&format!(
             "SELECT extname FROM pg_extension WHERE extname = '{}'",
             extension.sql_name()
@@ -569,7 +588,7 @@ fn assert_extension_visible(db: &TestDatabase, mode: TestMode, extension: Extens
 }
 
 fn install_sql(extension: Extension) -> String {
-    if extension != Extension::AutoExplain {
+    if extension != Extension::AUTO_EXPLAIN {
         let sql_name = extension.sql_name().replace('"', "\"\"");
         format!("CREATE EXTENSION \"{sql_name}\" CASCADE")
     } else {

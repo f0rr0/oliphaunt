@@ -7,9 +7,6 @@ mod generated_extensions;
 pub use generated_extensions::Extension;
 
 impl Extension {
-    /// All PostgreSQL 18 extensions known to the native lane.
-    pub const ALL_PG18_SUPPORTED: &'static [Self] = generated_extensions::ALL_PG18_SUPPORTED;
-
     /// SQL extension name used by `CREATE EXTENSION`.
     pub const fn sql_name(self) -> &'static str {
         generated_extensions::sql_name(self)
@@ -38,7 +35,7 @@ impl Extension {
 
     /// Resolve an extension by SQL name.
     pub fn by_sql_name(sql_name: &str) -> Option<Self> {
-        Self::ALL_PG18_SUPPORTED
+        Self::ALL
             .iter()
             .copied()
             .find(|extension| extension.sql_name() == sql_name)
@@ -84,7 +81,7 @@ fn visit_extension(
         return Ok(());
     }
     if !visiting.insert(extension) {
-        return Err(Error::Engine(format!(
+        return Err(Error::InvalidConfig(format!(
             "cyclic native extension dependency involving '{}'",
             extension.sql_name()
         )));
