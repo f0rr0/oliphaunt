@@ -151,7 +151,7 @@ broker="$target_dir/release/oliphaunt-broker"
 # shellcheck disable=SC2016
 docker_cargo none sh -euc '
   set +e
-  output="$(/output/release/oliphaunt-broker --oliphaunt-linux-abi-probe 2>&1)"
+  output="$(OLIPHAUNT_BROKER_AUTH_TOKEN=abi-probe /output/release/oliphaunt-broker --oliphaunt-linux-abi-probe 2>&1)"
   code=$?
   set -e
   [ "$code" -eq 2 ]

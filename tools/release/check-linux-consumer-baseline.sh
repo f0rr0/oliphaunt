@@ -172,7 +172,7 @@ timeout 300 docker run \
       case "${file##*/}" in
         oliphaunt-broker)
           set +e
-          output="$(timeout 10 "$file" --oliphaunt-linux-abi-probe 2>&1)"
+          output="$(OLIPHAUNT_BROKER_AUTH_TOKEN=abi-probe timeout 10 "$file" --oliphaunt-linux-abi-probe 2>&1)"
           code=$?
           set -e
           [ "$code" -eq 2 ]

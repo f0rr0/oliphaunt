@@ -2,9 +2,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use oliphaunt_wasix::{AsyncOliphauntServer, Extension};
 #[cfg(test)]
-use oliphaunt_wasix::{Oliphaunt, tools};
+use oliphaunt_wasix::{tools, Oliphaunt};
+use oliphaunt_wasix::{AsyncOliphauntServer, Extension};
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
@@ -149,11 +149,7 @@ fn open_database(directory: PathBuf) -> Result<TodoDatabase> {
 async fn start_database_server(directory: PathBuf) -> Result<AsyncOliphauntServer> {
     let server = AsyncOliphauntServer::builder()
         .storage(oliphaunt_wasix::DatabaseStorage::Directory(directory))
-        .extensions([
-            Extension::HSTORE,
-            Extension::PG_TRGM,
-            Extension::UNACCENT,
-        ])
+        .extensions([Extension::HSTORE, Extension::PG_TRGM, Extension::UNACCENT])
         .start()
         .await
         .context("start oliphaunt-wasix server")?;

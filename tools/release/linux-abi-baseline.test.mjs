@@ -79,6 +79,7 @@ test("Linux broker build is exact, isolated, offline, and non-privileged", () =>
     assert.match(calls, /:\/workspace:ro/u);
     assert.match(calls, /CARGO_NET_OFFLINE=true/u);
     assert.match(calls, /RUSTUP_TOOLCHAIN=1\.93\.1-/u);
+    assert.match(calls, /OLIPHAUNT_BROKER_AUTH_TOKEN=abi-probe/u);
     assert.doesNotMatch(calls, /docker\.sock|credentials|config\.json/u);
   } finally {
     rmSync(fixture, { recursive: true, force: true });
@@ -119,6 +120,7 @@ test("Linux ABI rehearsal pins Fedora and executes without network or privilege"
     const calls = readFileSync(log, "utf8");
     assert.match(calls, new RegExp(FEDORA_IMAGE.replaceAll(".", "\\."), "u"));
     assert.match(calls, /EXPECTED_GLIBC=glibc 2\.38/u);
+    assert.match(calls, /OLIPHAUNT_BROKER_AUTH_TOKEN=abi-probe/u);
     assert.match(calls, /--pull never/u);
     assert.match(calls, /--network none/u);
     assert.match(calls, /--read-only/u);
