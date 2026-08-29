@@ -43,4 +43,11 @@ series = [
   "0019-wasmer-parse-exception-reference-types.patch",
   "0020-wasmer-wasix-preserve-posix-close-durability.patch",
   "0021-wasmer-js-stream-direct-pgwire.patch",
+  # Independently preserve provider failures and cursor state in the
+  # synchronous JavaScript filesystem bridge.
+  "0034-wasmer-js-preserve-seek-end-errors.patch",
+  # Backport the fd_seek slice of upstream Wasmer 402cbd7ec4772c0b36226f2e5a21c7797614bf1b
+  # before its dependent first-poll fast path.
+  "0035-wasmer-wasix-preserve-shared-seek-offset.patch",
+  "0033-wasmer-wasix-poll-ready-asyncify-work.patch",
 ]
