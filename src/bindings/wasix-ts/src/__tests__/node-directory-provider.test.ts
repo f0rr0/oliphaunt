@@ -1,8 +1,22 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const fsCommit = vi.hoisted(() => ({ directories: [] as string[] }));
+
+vi.mock('../node-fs-commit-state.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../node-fs-commit-state.js')>();
+  return {
+    ...actual,
+    async syncNodeDirectory(path: string) {
+      fsCommit.directories.push(path);
+      await actual.syncNodeDirectory(path);
+    },
+  };
+});
+
 import { parseDatabaseRootDescriptor, parseDatabaseRootDescriptorText } from '../database-root.js';
 import { nodeDirectoryLockPath, releaseNodeDirectoryLockSync } from '../node-directory-lock.js';
 import {
@@ -10,20 +24,150 @@ import {
   restoreNodeDirectoryStorage,
 } from '../storage/node-directory-provider.js';
 import {
-  WASIX_PHYSICAL_IDENTITY,
   type StorageDirectory,
+  WASIX_PHYSICAL_IDENTITY,
   type WasixClusterSeedLoader,
   type WasixPhysicalIdentity,
+  type WasixStorageLease,
 } from '../storage-provider.js';
 
 const scratch: string[] = [];
+
+beforeEach(() => {
+  fsCommit.directories.length = 0;
+});
 
 afterEach(async () => {
   await Promise.all(scratch.splice(0).map((path) => rm(path, { force: true, recursive: true })));
 });
 
 describe('WASIX Node/Bun/Deno directory storage', () => {
-  it('uses a managed root and hydrates a compatible reopen', async () => {
+  it('rejects an unsupported identity before creating or seeding a managed root', async () => {
+    const root = await temporaryRoot('invalid-identity');
+    let seedLoads = 0;
+    await expect(
+      acquireNodeDirectoryStorage(
+        root,
+        async () => {
+          seedLoads += 1;
+          return clusterSeed()();
+        },
+        { ...compatible(), physicalFormat: 'wasix-pg18-unsupported' },
+      ),
+    ).rejects.toThrow(/unsupported physical identity/u);
+
+    expect(seedLoads).toBe(0);
+    expect(await pathExists(root)).toBe(false);
+    expect(await pathExists(nodeDirectoryLockPath(root))).toBe(false);
+  });
+
+  it('fsyncs each newly created managed-root parent before seeding PGDATA', async () => {
+    const top = await temporaryRoot('durable-root');
+    const root = join(top, 'nested', 'database');
+    const lease = await acquireNodeDirectoryStorage(root, clusterSeed(), compatible());
+
+    expect(fsCommit.directories.slice(0, 3)).toEqual([join(top, '..'), top, join(top, 'nested')]);
+    await lease.close(undefined, 'failed');
+  });
+
+  it('publishes a fresh direct generation only at its full initialization boundary and reopens it', async () => {
+    const root = await temporaryRoot('direct-initialization');
+    const lease = await acquireNodeDirectoryStorage(root, clusterSeed(), compatible());
+    expect(lease.state).toBe('new');
+    expect(await pathExists(join(root, 'pgdata/PG_VERSION'))).toBe(true);
+    expect(await pathExists(join(root, '.oliphaunt.json'))).toBe(false);
+    const materialized = await materializeDirectLease(lease);
+
+    await lease.sync(materialized.directory, 'operation');
+    expect(await pathExists(join(root, '.oliphaunt.json'))).toBe(false);
+    await lease.sync(materialized.directory, 'full');
+    expect(
+      parseDatabaseRootDescriptorText(await readFile(join(root, '.oliphaunt.json'), 'utf8')),
+    ).toMatchObject({ engineFamily: 'wasix', pgdata: 'pgdata', postgresMajor: 18 });
+    await lease.close(materialized.directory, 'clean');
+    expect(materialized.freed()).toBe(true);
+
+    const reopened = await acquireNodeDirectoryStorage(
+      root,
+      async () => {
+        throw new Error('a direct reopen must not load the cluster seed');
+      },
+      compatible(),
+    );
+    expect(reopened.state).toBe('existing');
+    const second = await materializeDirectLease(reopened);
+    await reopened.close(second.directory, 'clean');
+  });
+
+  it('removes a failed unpublished direct seed', async () => {
+    const root = await temporaryRoot('direct-unpublished');
+    const lease = await acquireNodeDirectoryStorage(root, clusterSeed(), compatible());
+    const materialized = await materializeDirectLease(lease);
+    await lease.close(materialized.directory, 'failed');
+
+    expect(await pathExists(join(root, 'pgdata'))).toBe(false);
+    expect(await pathExists(join(root, '.oliphaunt.json'))).toBe(false);
+    const reopened = await acquireNodeDirectoryStorage(root, clusterSeed(), compatible());
+    expect(reopened.state).toBe('new');
+    await reopened.close(undefined, 'failed');
+  });
+
+  it('rejects linked PGDATA before mounting it', async () => {
+    const root = await temporaryRoot('direct-links');
+    const initial = await acquireNodeDirectoryStorage(root, clusterSeed(), compatible());
+    const materialized = await materializeDirectLease(initial);
+    await initial.sync(materialized.directory, 'full');
+    await initial.close(materialized.directory, 'clean');
+
+    const external = join(root, '..', 'external-hardlink-target');
+    await writeFile(external, 'external');
+    await link(external, join(root, 'pgdata/hardlink'));
+    await expect(
+      acquireNodeDirectoryStorage(root, clusterSeed(), compatible()),
+    ).rejects.toMatchObject({ code: 'corrupt', commitState: 'unchanged' });
+    await rm(join(root, 'pgdata/hardlink'));
+
+    await symlink(external, join(root, 'pgdata/symlink'));
+    await expect(
+      acquireNodeDirectoryStorage(root, clusterSeed(), compatible()),
+    ).rejects.toMatchObject({ code: 'corrupt', commitState: 'unchanged' });
+  });
+
+  it('keeps a poisoned direct generation locked until failed close releases ownership', async () => {
+    const root = await temporaryRoot('direct-poison-lock');
+    const lease = await acquireNodeDirectoryStorage(root, clusterSeed(), compatible());
+    const materialized = await materializeDirectLease(lease);
+    await lease.sync(materialized.directory, 'full');
+
+    const opened = materialized.backend.request(7, 'dirty', new Uint8Array(), 0, 0, 2 | 4);
+    expect(opened[0]).toBe(0);
+    expect(
+      materialized.backend.request(10, '', new TextEncoder().encode('dirty'), opened[2], 0, 0)[0],
+    ).toBe(0);
+    expect(materialized.backend.request(8, '', new Uint8Array(), opened[2], 0, 0)[0]).toBe(0);
+
+    const outside = join(root, '..', 'direct-poison-outside');
+    await writeFile(outside, 'outside');
+    await rm(join(root, 'pgdata/dirty'));
+    await symlink(outside, join(root, 'pgdata/dirty'));
+    await expect(lease.sync(materialized.directory, 'operation')).rejects.toMatchObject({
+      code: 'publication-failed',
+      commitState: 'unknown',
+    });
+    expect(materialized.backend.request(1, 'PG_VERSION', new Uint8Array(), 0, 0, 0)[0]).toBe(11);
+    await expect(
+      acquireNodeDirectoryStorage(root, clusterSeed(), compatible()),
+    ).rejects.toMatchObject({ code: 'busy', commitState: 'unchanged' });
+
+    await lease.close(materialized.directory, 'failed');
+    expect(materialized.freed()).toBe(true);
+    await rm(join(root, 'pgdata/dirty'));
+    const reopened = await acquireNodeDirectoryStorage(root, clusterSeed(), compatible());
+    expect(reopened.state).toBe('existing');
+    await reopened.close(undefined, 'failed');
+  });
+
+  it('uses a managed root and reopens a compatible direct generation', async () => {
     const root = await temporaryRoot('space ünicode');
     const first = await acquireNodeDirectoryStorage(root, clusterSeed(), compatible());
     expect(first.state).toBe('new');
@@ -32,9 +176,10 @@ describe('WASIX Node/Bun/Deno directory storage', () => {
       acquireNodeDirectoryStorage(root, clusterSeed(), compatible()),
     ).rejects.toMatchObject({ code: 'busy', commitState: 'unchanged' });
 
-    await first.close(pgdataDirectory('persisted'), 'clean');
+    const materialized = await materializeDirectLease(first);
+    await first.sync(materialized.directory, 'full');
+    await first.close(materialized.directory, 'clean');
     expect(await readFile(join(root, 'pgdata/PG_VERSION'), 'utf8')).toBe('18\n');
-    expect(await readFile(join(root, 'pgdata/user/value'), 'utf8')).toBe('persisted');
     expect(JSON.parse(await readFile(join(root, '.oliphaunt.json'), 'utf8'))).toEqual({
       schema: 'oliphaunt-database-root-v1',
       engineFamily: 'wasix',
@@ -52,34 +197,16 @@ describe('WASIX Node/Bun/Deno directory storage', () => {
       compatible(),
     );
     expect(second.state).toBe('existing');
-    if (second.mount === undefined) throw new Error('portable storage did not provide a mount');
-    expect(new TextDecoder().decode(second.mount.files['user/value'])).toBe('persisted');
-    await second.close(undefined, 'failed');
-  });
-
-  it('publishes only journaled current-state changes after the first generation', async () => {
-    const root = await temporaryRoot('incremental');
-    const lease = await acquireNodeDirectoryStorage(root, clusterSeed(), compatible());
-    const directory = trackedPgdataDirectory('first');
-
-    await lease.sync(directory, 'operation');
-    const descriptor = await readFile(join(root, '.oliphaunt.json'));
-    await writeFile(join(root, 'unrelated-host-marker'), 'outside adapter metadata');
-    directory.setValue('second');
-    await lease.sync(directory, 'operation');
-    await lease.close(undefined, 'failed');
-
-    expect(await readFile(join(root, 'pgdata/user/value'), 'utf8')).toBe('second');
-    expect(await readFile(join(root, 'unrelated-host-marker'), 'utf8')).toBe(
-      'outside adapter metadata',
-    );
-    expect(await readFile(join(root, '.oliphaunt.json'))).toEqual(descriptor);
+    const reopened = await materializeDirectLease(second);
+    await second.close(reopened.directory, 'clean');
   });
 
   it('rejects physical format mismatches and symbolic links', async () => {
     const root = await temporaryRoot('fail-closed');
     const first = await acquireNodeDirectoryStorage(root, clusterSeed(), compatible());
-    await first.close(pgdataDirectory('complete'), 'clean');
+    const materialized = await materializeDirectLease(first);
+    await first.sync(materialized.directory, 'full');
+    await first.close(materialized.directory, 'clean');
 
     const descriptorPath = join(root, '.oliphaunt.json');
     const descriptor = JSON.parse(await readFile(descriptorPath, 'utf8')) as Record<
@@ -101,29 +228,19 @@ describe('WASIX Node/Bun/Deno directory storage', () => {
     ).rejects.toMatchObject({ code: 'corrupt', commitState: 'unchanged' });
   });
 
-  it('does not publish a failed database outcome', async () => {
-    const root = await temporaryRoot('failed');
-    const lease = await acquireNodeDirectoryStorage(root, clusterSeed(), compatible());
-    await lease.close(pgdataDirectory('must-not-persist'), 'failed');
-
-    expect(await pathExists(join(root, 'pgdata/PG_VERSION'))).toBe(false);
-    const reopened = await acquireNodeDirectoryStorage(root, clusterSeed(), compatible());
-    expect(reopened.state).toBe('new');
-    await reopened.close(undefined, 'failed');
-  });
-
   it('removes provider-owned PGDATA when first publication fails before the descriptor', async () => {
     const root = await temporaryRoot('failed-first-publication');
     const lease = await acquireNodeDirectoryStorage(root, clusterSeed(), compatible());
+    const materialized = await materializeDirectLease(lease);
     await mkdir(join(root, '.oliphaunt.json'));
 
-    await expect(lease.sync(pgdataDirectory('partial'), 'operation')).rejects.toMatchObject({
+    await expect(lease.sync(materialized.directory, 'full')).rejects.toMatchObject({
       code: 'publication-failed',
       commitState: 'unknown',
     });
     expect(await pathExists(join(root, 'pgdata/PG_VERSION'))).toBe(true);
 
-    await lease.close(undefined, 'failed');
+    await lease.close(materialized.directory, 'failed');
     expect(await pathExists(join(root, 'pgdata'))).toBe(false);
     expect(await pathExists(join(root, '.oliphaunt.json'))).toBe(true);
   });
@@ -178,15 +295,21 @@ describe('WASIX Node/Bun/Deno directory storage', () => {
         physicalFormat: 'native-pg18-v1',
       })}\n`,
     );
-    const nativeLease = await acquireNodeDirectoryStorage(native, clusterSeed(), compatible());
-    expect(nativeLease.state).toBe('existing');
-    await nativeLease.close(undefined, 'failed');
+    const nativeDescriptor = await readFile(join(native, '.oliphaunt.json'));
+    const nativeVersion = await readFile(join(native, 'pgdata/PG_VERSION'));
+    await expect(
+      acquireNodeDirectoryStorage(native, clusterSeed(), compatible()),
+    ).rejects.toMatchObject({ code: 'incompatible', commitState: 'unchanged' });
+    expect(await readFile(join(native, '.oliphaunt.json'))).toEqual(nativeDescriptor);
+    expect(await readFile(join(native, 'pgdata/PG_VERSION'))).toEqual(nativeVersion);
   });
 
   it('rejects interrupted publication files instead of silently mutating the root', async () => {
     const root = await temporaryRoot('interrupted-publication');
     const first = await acquireNodeDirectoryStorage(root, clusterSeed(), compatible());
-    await first.close(pgdataDirectory('complete'), 'clean');
+    const materialized = await materializeDirectLease(first);
+    await first.sync(materialized.directory, 'full');
+    await first.close(materialized.directory, 'clean');
 
     await writeFile(join(root, '.oliphaunt.json.oliphaunt-write-abandoned'), 'partial');
     await expect(
@@ -349,6 +472,54 @@ function compatible(): WasixPhysicalIdentity {
   return { ...WASIX_PHYSICAL_IDENTITY };
 }
 
+async function materializeDirectLease(
+  lease: Pick<WasixStorageLease, 'createPgdataDirectory'>,
+): Promise<{ directory: StorageDirectory; backend: DirectBackend; freed(): boolean }> {
+  if (lease.createPgdataDirectory === undefined) throw new Error('expected a direct lease');
+  let backend: DirectBackend | undefined;
+  let isFreed = false;
+  const directory = {
+    async readTextFile(path: string) {
+      if (backend === undefined) throw new Error('direct backend was not installed');
+      const opened = backend.request(7, path, new Uint8Array(), 0, 0, 1);
+      if (opened[0] !== 0) throw new Error(`could not open ${path}: ${opened[0]}`);
+      const bytes = new Uint8Array(64);
+      const read = backend.request(9, '', bytes, opened[2], 0, 0);
+      const closed = backend.request(8, '', new Uint8Array(), opened[2], 0, 0);
+      if (read[0] !== 0 || closed[0] !== 0) throw new Error(`could not read ${path}`);
+      return new TextDecoder().decode(bytes.subarray(0, read[1]));
+    },
+    async readDir() {
+      return [];
+    },
+    async readFile() {
+      return new Uint8Array();
+    },
+    free() {
+      isFreed = true;
+    },
+  };
+  await lease.createPgdataDirectory({
+    createSync(candidate: typeof backend) {
+      backend = candidate;
+      return directory;
+    },
+  } as never);
+  if (backend === undefined) throw new Error('direct backend was not installed');
+  return { directory, backend, freed: () => isFreed };
+}
+
+type DirectBackend = {
+  request(
+    opcode: number,
+    path: string,
+    bytes: Uint8Array,
+    arg0: number,
+    arg1: number,
+    flags: number,
+  ): [number, number, number, number];
+};
+
 function clusterSeed(): WasixClusterSeedLoader {
   const mount = {
     directories: ['global', 'pg_wal'],
@@ -369,70 +540,6 @@ function storedSnapshot(value: string) {
       { path: 'global/pg_control', bytes: Uint8Array.of(1) },
       { path: 'user/value', bytes: new TextEncoder().encode(value) },
     ],
-  };
-}
-
-function pgdataDirectory(value: string): StorageDirectory {
-  return {
-    async readDir(path) {
-      if (path === '') {
-        return [
-          { type: 'file', name: 'PG_VERSION' },
-          { type: 'dir', name: 'global' },
-          { type: 'dir', name: 'pg_wal' },
-          { type: 'dir', name: 'user' },
-          { type: 'file', name: 'postmaster.pid' },
-        ];
-      }
-      if (path === 'global') return [{ type: 'file', name: 'pg_control' }];
-      if (path === 'pg_wal') return [];
-      if (path === 'user') return [{ type: 'file', name: 'value' }];
-      throw new Error(`unexpected directory ${path}`);
-    },
-    async readFile(path) {
-      if (path === 'PG_VERSION') return new TextEncoder().encode('18\n');
-      if (path === 'global/pg_control') return Uint8Array.of(1, 2, 3);
-      if (path === 'user/value') return new TextEncoder().encode(value);
-      if (path === 'postmaster.pid') return new TextEncoder().encode('123');
-      throw new Error(`unexpected file ${path}`);
-    },
-  };
-}
-
-function trackedPgdataDirectory(initialValue: string): StorageDirectory & {
-  setValue(value: string): void;
-} {
-  let value = initialValue;
-  let changes = [''];
-  return {
-    setValue(next) {
-      value = next;
-      changes.push('user/value');
-    },
-    changedPaths() {
-      return changes;
-    },
-    clearChanges() {
-      changes = [];
-    },
-    entryType(path) {
-      if (path === '' || path === 'global' || path === 'pg_wal' || path === 'user') return 'dir';
-      if (path === 'PG_VERSION' || path === 'global/pg_control' || path === 'user/value') {
-        return 'file';
-      }
-      return 'missing';
-    },
-    ...pgdataDirectoryProxy(() => value),
-  };
-}
-
-function pgdataDirectoryProxy(value: () => string): Pick<StorageDirectory, 'readDir' | 'readFile'> {
-  return {
-    readDir: pgdataDirectory('').readDir,
-    async readFile(path) {
-      if (path === 'user/value') return new TextEncoder().encode(value());
-      return pgdataDirectory('').readFile(path);
-    },
   };
 }
 

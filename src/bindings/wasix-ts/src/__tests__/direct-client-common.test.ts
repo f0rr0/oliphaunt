@@ -1,16 +1,19 @@
-import { describe, expect, it, vi } from 'vitest';
+import { access, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
+import { describe, expect, it, vi } from 'vitest';
+import {
+  closeWasixByteChannel,
+  createWasixByteChannel,
+  failWasixByteChannel,
+} from '../byte-channel.js';
 import {
   type DirectWasixDependencies,
   type DirectWasixHost,
   DirectWasixSession,
   prepareRuntimeCached,
 } from '../direct-client-common.js';
-import {
-  closeWasixByteChannel,
-  createWasixByteChannel,
-  failWasixByteChannel,
-} from '../byte-channel.js';
 import { WasixStorageError } from '../errors.js';
 import type { PreparedWasixRuntime } from '../extensions.js';
 import type {
@@ -19,8 +22,10 @@ import type {
   OliphauntToolOutput,
   RunWasixOptions,
 } from '../host/index.mjs';
+import { nodeDirectoryLockPath } from '../node-directory-lock.js';
 import { PostgresError } from '../query.js';
 import type { SerializedOpenOptions, WorkerRequest, WorkerResponse } from '../rpc.js';
+import { acquireNodeDirectoryStorage } from '../storage/node-directory-provider.js';
 import { WASIX_PHYSICAL_IDENTITY, type WasixStorageLease } from '../storage-provider.js';
 import { wasixPostgresArgs } from '../wasix-runtime.js';
 import { createWorkerSessionDispatcher } from '../worker-dispatch.js';
@@ -94,6 +99,86 @@ describe('direct WASIX session lifecycle', () => {
     expect(diagnostics).toContain('storage release also failed');
     expect(diagnostics).toContain('WASIX allocation release also failed');
     expect(events).toEqual(['startup', 'close', 'storage:failed', 'free']);
+  });
+
+  it('releases a failed direct PGDATA materialization exactly once and permits immediate reopen', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'oliphaunt-wasix-direct-open-'));
+    const root = join(parent, 'database');
+    let directoryFrees = 0;
+    let poolCloses = 0;
+    let storageCloses = 0;
+
+    class InvalidPgVersionDirectory extends FakeDirectory {
+      static createSync(pool: { close(): void }): InvalidPgVersionDirectory {
+        const close = pool.close.bind(pool);
+        pool.close = () => {
+          poolCloses += 1;
+          close();
+        };
+        return new InvalidPgVersionDirectory();
+      }
+
+      async readTextFile(): Promise<string> {
+        return '17\n';
+      }
+
+      override free(): void {
+        directoryFrees += 1;
+      }
+    }
+
+    const prepared: PreparedWasixRuntime = {
+      ...preparedRuntime(),
+      async loadClusterSeed() {
+        return { ...pgdataMount(), directories: ['global', 'pg_wal'] };
+      },
+    };
+    const dependencies: DirectWasixDependencies = {
+      async prepareRuntime() {
+        return prepared;
+      },
+      async acquireStorage(_storage, loadClusterSeed, identity) {
+        const lease = await acquireNodeDirectoryStorage(root, loadClusterSeed, identity);
+        return {
+          state: lease.state,
+          mount: lease.mount,
+          createPgdataDirectory: lease.createPgdataDirectory,
+          sync: lease.sync.bind(lease),
+          async close(directory, outcome) {
+            storageCloses += 1;
+            await lease.close(directory, outcome);
+          },
+        };
+      },
+      async compileModule() {
+        return {} as WebAssembly.Module;
+      },
+    };
+
+    try {
+      await expect(
+        DirectWasixSession.open(
+          openOptions(),
+          fakeHost({ Directory: InvalidPgVersionDirectory }),
+          dependencies,
+        ),
+      ).rejects.toMatchObject({ code: 'corrupt', commitState: 'unchanged' });
+
+      expect(directoryFrees).toBe(1);
+      expect(poolCloses).toBe(1);
+      expect(storageCloses).toBe(1);
+      await expect(access(nodeDirectoryLockPath(root))).rejects.toMatchObject({ code: 'ENOENT' });
+
+      const reopened = await acquireNodeDirectoryStorage(
+        root,
+        prepared.loadClusterSeed,
+        prepared.physicalIdentity,
+      );
+      expect(reopened.state).toBe('new');
+      await reopened.close(undefined, 'failed');
+    } finally {
+      await rm(parent, { force: true, recursive: true });
+    }
   });
 
   it('publishes a new selected-artifact runtime without executing extension install SQL', async () => {

@@ -146,23 +146,29 @@ pgdata/
 
 The descriptor records the shared database-root schema, PostgreSQL major, and
 WASIX physical format. Runtime source fingerprints and package hashes validate
-the asset graph; they are not physical-reopen identity. Native and WASIX roots
-are not rejected merely because of the originating family.
+the asset graph; they are not physical-reopen identity. Because the direct
+host-directory provider writes PGDATA in place, it rejects a descriptor whose
+engine family is not `wasix` before mounting the root.
 
 Rust and WASIX TypeScript bindings use the same root and physical-archive
 contracts. Their locks are binding-local and only prevent competing opens
 within that binding. Cross-binding root or archive transfer is not a supported
 or qualified workflow.
 
-Node publication writes WAL before ordinary files and `global/pg_control`,
-then fsyncs changed files and parent directories. IndexedDB publishes a delta
-in one transaction. OPFS uses synchronous backing files for `/worker` and when
-the root entrypoint is imported inside an application-owned Dedicated Worker.
-The root entrypoint in a browser Window uses the same opaque format through a
-copy-on-write portable path. Both OPFS paths flush or publish in
-PostgreSQL-safe order. A
-publication failure rejects with `WasixStorageError`; an uncertain state
-poisons the live database handle.
+Node, Bun, and Deno mount the managed root's real `pgdata` directly; they do
+not hydrate a memory copy or republish a journal after each operation. At a
+completed durability boundary, the host fsyncs dirty files and affected
+directories in WAL/data/control order. The root must be a trusted,
+exclusively owned local directory; network and cross-host shared filesystems
+are unsupported. This changes neither `.oliphaunt.json` nor the physical
+archive and restore contract.
+
+IndexedDB publishes a delta in one transaction. OPFS uses synchronous backing
+files for `/worker` and when the root entrypoint is imported inside an
+application-owned Dedicated Worker. The root entrypoint in a browser Window
+uses the same opaque format through a copy-on-write portable path. Both OPFS
+paths flush or publish in PostgreSQL-safe order. A persistence failure rejects
+with `WasixStorageError`; an uncertain state poisons the live database handle.
 
 Both entrypoints may be used inside an application-owned Node Worker, including
 with directory storage. Close the database before terminating that Worker.

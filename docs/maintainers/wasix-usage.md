@@ -91,12 +91,16 @@ IndexedDB hydrates a Wasmer memory directory and publishes journaled changes.
 OPFS Worker execution uses synchronous access handles for exact-range I/O to an
 opaque backing-file pool; the root direct entry point and browsers without that
 facility publish the same journal to that same format.
-Node, Bun, and Deno directory providers publish below the managed root's
-`pgdata` child. Ordinary operations complete a provider boundary after
-`ReadyForQuery`; callback transactions do so once after confirmed `COMMIT` or
-`ROLLBACK`. A new persistent direct-OPFS database uses one separate internal
-full-publication boundary after initialization. That boundary is not a public
-operation or option. Applications that need a PostgreSQL checkpoint issue
+Node, Bun, and Deno directory providers instead mount the managed root's real
+`pgdata` directly. They do not hydrate or republish a steady-state memory
+mirror. The root must be a trusted, exclusively owned local directory; network
+and cross-host shared filesystems are unsupported. Ordinary operations
+complete a provider boundary after `ReadyForQuery`; callback transactions do
+so once after confirmed `COMMIT` or `ROLLBACK`. At that boundary the direct
+host fsyncs dirty files and affected directories in WAL/data/control order. A
+new persistent direct-OPFS database uses one separate internal full-publication
+boundary after initialization. That boundary is not a public operation or
+option. Applications that need a PostgreSQL checkpoint issue
 `execute("CHECKPOINT")`; it completes the same ordinary provider boundary as
 another successful statement.
 
@@ -120,6 +124,8 @@ is an internal performance detail, not a database-capacity setting.
 `backup()` produces the exact WASIX physical archive. `Oliphaunt.restore()`
 accepts that archive and new or empty persistent storage. Restore rejects
 memory and nonempty destinations. The destination creates its own descriptor.
+Direct host-directory I/O does not change the managed-root descriptor, archive,
+or restore format.
 
 `execProtocolRawStream()` is the bounded callback form of the raw protocol
 escape hatch on a database/root handle. Managed transaction and server handles

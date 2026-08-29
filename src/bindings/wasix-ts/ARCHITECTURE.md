@@ -95,13 +95,13 @@ smaller qualified side modules remain supported in a direct Window.
    closure.
 3. The selected realm safely expands the core artifacts and overlays only each
    extension carrier's install-contract files into separate `/bin`, `/lib`, `/share`,
-   writable `/base`, `/home`, and `/tmp` Wasmer memory mounts. Before `/base` is
+   writable `/base`, `/home`, and `/tmp` Wasmer mounts. Before `/base` is
    materialized, a storage provider lease supplies either the packaged cluster
-   seed or an exact-compatible persistent PGDATA. The source-pinned
+   seed, a portable mount, or an exact-compatible direct PGDATA. The source-pinned
    host adds ephemeral `/dev/shm` and a real Wasmer `RandomFile` at
-   `/dev/urandom`. Its narrow `Directory` mutation journal records successful
-   writes and truncates through already-open descriptors as well as file,
-   directory, remove, and rename paths for either execution surface and every provider.
+   `/dev/urandom`. Its narrow `Directory` mutation journal records changes for
+   portable providers, while its synchronous filesystem bridge serves direct
+   OPFS and Node-compatible host-directory mounts without a memory mirror.
    Both execution surfaces pass the verified precompiled main module and its original
    bytes to `instantiateOliphauntDirect`. The root keeps the resulting Store in
    the caller realm; `/worker` keeps it in its package Worker.
@@ -122,10 +122,12 @@ smaller qualified side modules remain supported in a direct Window.
    through one database contract. The same contract supports explicit
    `close()` and `await using` disposal.
    Every successfully completed protocol operation reaches `ReadyForQuery`, then
-   asks a persistent provider to publish only journaled `/base` paths before the
-   Promise resolves. A callback transaction defers publication for `BEGIN`, its
-   body, and `COMMIT`/`ROLLBACK`, then publishes exactly once after the confirmed
-   final boundary. A new persistent synchronous-OPFS root uses a separate internal
+   asks its persistent provider to complete the durability boundary before the
+   Promise resolves. Portable providers publish journaled `/base` paths; direct
+   host-directory providers fsync dirty files and affected directories in
+   WAL/data/control order. A callback transaction defers that provider boundary
+   for `BEGIN`, its body, and `COMMIT`/`ROLLBACK`, then completes it exactly once
+   after the confirmed final boundary. A new persistent synchronous-OPFS root uses a separate internal
    full-publication boundary after initialization; it is not a public database
    operation. PostgreSQL `CHECKPOINT` remains available through ordinary
    `execute`. If a
@@ -181,13 +183,18 @@ semantics, and the memory default are not forked by execution surface.
 IndexedDB and OPFS remain browser-only and are rejected before a Node/Bun/Deno
 direct or Worker session starts. Directory persistence is exposed through matching
 `storage/node`, `storage/bun`, and `storage/deno` entrypoints backed by one
-portable managed-root provider with exclusive path ownership. No host falls back
-to native `@oliphaunt/ts`. Direct and explicit Worker entrypoints may themselves
-be imported from an application-owned worker thread. Directory ownership uses
-filesystem lock slots and exact owner tokens rather than `isMainThread`; callers
-must close before externally terminating their own realm. The managed Worker
-client can recover its exact child-owner lock after a child crash while the
-importing realm remains alive.
+direct managed-root provider. PostgreSQL operates on the root's real `pgdata`
+and the host fsyncs dirty files and affected directories in WAL/data/control
+order at provider boundaries. The unchanged WASIX descriptor and restore
+contract identify the same root shape; a non-WASIX descriptor is rejected
+before this in-place provider mounts it. The root must be a trusted,
+exclusively owned local directory; network and cross-host shared filesystems
+are unsupported. No host falls back to native `@oliphaunt/ts`. Direct and explicit Worker
+entrypoints may themselves be imported from an application-owned worker
+thread. Directory ownership uses filesystem lock slots and exact owner tokens
+rather than `isMainThread`; callers must close before externally terminating
+their own realm. The managed Worker client can recover its exact child-owner
+lock after a child crash while the importing realm remains alive.
 
 ## Protocol streams, tools, and local endpoints
 
@@ -431,8 +438,8 @@ the patches:
   amortize bounded pending-work checks, and avoid turning synchronous-file POSIX
   close into an implicit fsync that bypasses PostgreSQL durability policy;
 - expose the current-state mutation journal and the narrow caller-realm
-  synchronous filesystem bridge used by synchronous OPFS, without reviving the old
-  mailbox transport;
+  synchronous filesystem bridge used by synchronous OPFS and Node-compatible
+  host directories, without reviving the old mailbox transport;
 - provide the caller-realm PostgreSQL lifecycle and reusable-memory pgwire
   driver, including COPY-aware callback streaming, top-level error recovery,
   and a bounded 16 KiB failure-only stderr tail; and

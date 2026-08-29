@@ -1,8 +1,9 @@
 /**
- * Select managed incremental directory storage for Deno.
+ * Select direct managed directory storage for Deno.
  *
- * Deno uses the same portable on-disk format and fail-closed local owner lock
- * as the Node.js host. The application must grant read and write permissions
- * for the selected directory.
+ * Deno operates on the real PGDATA below the same trusted, exclusively owned
+ * local-root format and fail-closed owner lock as the Node.js host. The
+ * application must grant read and write permissions for the selected
+ * directory.
  */
 export { directory } from './node.js';

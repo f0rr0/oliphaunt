@@ -5,10 +5,12 @@ import { defineDirectoryStorage, type PersistentWasixStorage } from '../storage.
 /**
  * Persist a managed database below a Node.js host directory.
  *
- * The selected path contains Oliphaunt metadata and a `pgdata` child. The
- * adapter publishes only paths mutated by PostgreSQL at every completed
- * operation boundary and uses WAL-first durable host writes. Network and
- * cross-host shared filesystems are unsupported.
+ * The selected path is a trusted, exclusively owned local root containing
+ * Oliphaunt metadata and a real `pgdata` child. PostgreSQL operates directly
+ * on that PGDATA; completed boundaries fsync dirty files and affected
+ * directories in WAL/data/control order. The descriptor and physical-restore
+ * formats are unchanged. Network and cross-host shared filesystems are
+ * unsupported.
  */
 export function directory(path: string | URL): PersistentWasixStorage {
   return defineDirectoryStorage(typeof path === 'string' ? path : fileURLToPath(path));

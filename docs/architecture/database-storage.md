@@ -68,11 +68,12 @@ crate and pass the result through `Directory(path)`.
 WASIX TypeScript does not expose a browser `temporaryDirectory` case: omitted
 storage already gives the cheapest anonymous lifetime without host I/O. Its
 hosts use the same memory default and selectively expose browser or
-managed-directory providers. IndexedDB and managed directories hydrate Wasmer
-memory and publish journaled changes. OPFS uses direct synchronous file I/O in
-a worker when the browser supports it and otherwise publishes the same journal
-to the same opaque format. Portable `@oliphaunt/wasix-ts` and native
-`@oliphaunt/ts` remain separate products.
+managed-directory providers. IndexedDB hydrates Wasmer memory and publishes
+journaled changes. Node, Bun, and Deno operate directly on the real PGDATA in a
+trusted, exclusively owned local managed root. OPFS uses direct synchronous
+file I/O in a worker when the browser supports it and otherwise publishes the
+same journal to the same opaque format. Portable `@oliphaunt/wasix-ts` and
+native `@oliphaunt/ts` remain separate products.
 
 ## Initialization and restore
 
@@ -127,8 +128,9 @@ state last. The direct path keeps a private preopened fast-path reserve. A large
 creation burst is staged until the mandatory host boundary, where every staged
 file is allocated, written, and flushed before namespace state can refer to it;
 failure aborts that boundary instead of publishing a partial namespace. Node,
-Bun, and Deno apply PostgreSQL-safe publication ordering below the managed
-root's `pgdata` child.
+Bun, and Deno do not hydrate or republish a steady-state memory mirror: their
+direct bridge fsyncs dirty files and affected directories below the real
+`pgdata` in WAL/data/control order at each provider boundary.
 
 Consequences are part of the public contract:
 
@@ -149,7 +151,9 @@ Consequences are part of the public contract:
   these locks do not coordinate across Rust and TypeScript, and cross-binding
   use is not a supported or qualified workflow; and
 - host-directory providers reject symlinked or foreign adapter state and never treat unrelated
-  files in the application directory as generations.
+  files in the application directory as generations; their roots must be
+  trusted, exclusively owned local directories rather than network or
+  cross-host shared filesystems.
 
 OPFS uses a synchronous guest mount only where worker-scoped synchronous access
 handles are available; other placements use the portable journal without
@@ -167,10 +171,11 @@ qualified workflow. The managed-root descriptor is
 written once when the root is created. WASIX source fingerprints remain
 asset-graph coherence identities used to reject mixed runtime, cluster-seed,
 AOT, and extension build outputs; they
-are not a physical-reopen key or binding identity in the root. Both runtime
-families validate either exact descriptor shape. Opening another family's root
-is not a supported transfer path, so the SDKs add no cross-family rejection
-policy; the underlying PostgreSQL/runtime behavior is authoritative.
+are not a physical-reopen key or binding identity in the root. The TypeScript
+direct host-directory provider writes PGDATA in place, so it rejects a
+descriptor whose engine family is not `wasix` before mounting that root.
+Cross-family root handoff remains unsupported; logical dump/restore is the
+supported transfer boundary.
 
 `.oliphaunt.json` is SDK-owned creation-time identity, not user configuration,
 a lock, or a copy of runtime provenance. Its five fields name the schema,
@@ -196,9 +201,9 @@ The shared unit is the invariant, not a universal filesystem interface:
 
 | Concern | Shared owner | Language/provider-specific part |
 | --- | --- | --- |
-| Database-root identity | The neutral fixture defines the `.oliphaunt.json` schema and `pgdata` location; each runtime family owns its physical-format value | Native SDKs publish descriptors last during root preparation; `liboliphaunt` validates them on open and creates one only in private restore staging. `liboliphaunt-wasix` defines the WASIX value consumed by Rust and TypeScript hosts; cross-family opens have no special guard because they are outside the supported contract |
+| Database-root identity | The neutral fixture defines the `.oliphaunt.json` schema and `pgdata` location; each runtime family owns its physical-format value | Native SDKs publish descriptors last during root preparation; `liboliphaunt` validates them on open and creates one only in private restore staging. `liboliphaunt-wasix` defines the WASIX value consumed by Rust and TypeScript hosts; the TypeScript direct provider rejects a non-WASIX descriptor before mounting because it writes PGDATA in place |
 | Native ownership | C-backed direct and restore paths plus native Rust direct, broker, and server paths coordinate through one sibling-lock identity; `liboliphaunt` validates direct descriptors | C-backed SDKs let `liboliphaunt` own the lease; native Rust retains the byte-identical lease and hands direct/broker ownership into C explicitly, while its server keeps the lease because it bypasses C |
-| WASIX host-directory persistence | PostgreSQL major plus the versioned WASIX physical format define reopen compatibility | Rust accesses host PGDATA directly and uses a binding-local stable sibling owner; TypeScript host-directory adapters hydrate Wasmer memory, publish journaled deltas, and use their own stable sibling owner |
+| WASIX host-directory persistence | PostgreSQL major plus the versioned WASIX physical format define reopen compatibility | Rust and TypeScript host-directory adapters access the real host PGDATA directly and use binding-local stable sibling owners; TypeScript fsyncs dirty files and affected directories in WAL/data/control order. The descriptor, archive, and restore formats are unchanged |
 | Browser persistence | Public lifecycle and error vocabulary | IndexedDB keeps atomic row transactions; OPFS uses one opaque pool for direct worker I/O and portable publication; both use Web Locks |
 | Cross-family transfer | Logical SQL dump/restore | Physical backup formats remain family-scoped |
 
