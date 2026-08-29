@@ -30,6 +30,7 @@ const FLAG_READ = 1 << 0;
 const FLAG_WRITE = 1 << 1;
 const FLAG_CREATE_NEW = 1 << 2;
 const FLAG_APPEND = 1 << 4;
+const FLAG_TRUNCATE = 1 << 5;
 const scratch: string[] = [];
 
 afterEach(async () => {
@@ -130,6 +131,131 @@ describe('Node synchronous directory bridge', () => {
     await pool.sync();
     expect(await readFile(join(root, 'data/log'), 'utf8')).toBe('onet');
     pool.close();
+  });
+
+  it('shares one inode extent across handles and every file-size mutation', async () => {
+    const root = await databaseRoot('shared-inode-extent');
+    const pool = new NodeSyncDirectoryPool(root);
+    const primary = requestOk(
+      pool,
+      OP.open,
+      'value',
+      new Uint8Array(),
+      0,
+      0,
+      FLAG_READ | FLAG_WRITE | FLAG_CREATE_NEW,
+    )[2];
+    expect(requestOk(pool, OP.write, '', new TextEncoder().encode('abc'), primary, 0)[3]).toBe(3);
+    expect(requestOk(pool, OP.write, '', new Uint8Array(), primary, 100)[3]).toBe(100);
+    expect(fileSize(pool, primary)).toBe(3);
+
+    const peerOpen = requestOk(
+      pool,
+      OP.open,
+      'value',
+      new Uint8Array(),
+      0,
+      0,
+      FLAG_READ | FLAG_WRITE,
+    );
+    const peer = peerOpen[2];
+    expect(peerOpen[3]).toBe(3);
+
+    expect(requestOk(pool, OP.write, '', Uint8Array.of(0x7a), peer, 8)[3]).toBe(9);
+    expect(fileSize(pool, primary)).toBe(9);
+    expect(fileSize(pool, peer)).toBe(9);
+
+    const appendOpen = requestOk(
+      pool,
+      OP.open,
+      'value',
+      new Uint8Array(),
+      0,
+      0,
+      FLAG_WRITE | FLAG_APPEND,
+    );
+    const append = appendOpen[2];
+    expect(appendOpen[3]).toBe(9);
+    expect(requestOk(pool, OP.write, '', new TextEncoder().encode('xy'), append, 0)[3]).toBe(11);
+    for (const descriptor of [primary, peer, append]) expect(fileSize(pool, descriptor)).toBe(11);
+
+    const contents = new Uint8Array(11);
+    expect(requestOk(pool, OP.read, '', contents, primary, 0)[1]).toBe(11);
+    expect(contents).toEqual(Uint8Array.of(0x61, 0x62, 0x63, 0, 0, 0, 0, 0, 0x7a, 0x78, 0x79));
+
+    requestOk(pool, OP.truncate, '', new Uint8Array(), peer, 4);
+    for (const descriptor of [primary, peer, append]) expect(fileSize(pool, descriptor)).toBe(4);
+
+    const truncateOpen = requestOk(
+      pool,
+      OP.open,
+      'value',
+      new Uint8Array(),
+      0,
+      0,
+      FLAG_WRITE | FLAG_TRUNCATE,
+    );
+    const truncate = truncateOpen[2];
+    expect(truncateOpen[3]).toBe(0);
+    for (const descriptor of [primary, peer, append, truncate]) {
+      expect(fileSize(pool, descriptor)).toBe(0);
+    }
+
+    requestOk(pool, OP.rename, 'value', new TextEncoder().encode('renamed'));
+    expect(requestOk(pool, OP.write, '', Uint8Array.of(0x71), primary, 5)[3]).toBe(6);
+    for (const descriptor of [primary, peer, append, truncate]) {
+      expect(fileSize(pool, descriptor)).toBe(6);
+    }
+
+    requestOk(pool, OP.unlink, '', new Uint8Array(), peer);
+    expect(pool.request(OP.metadata, 'renamed', new Uint8Array(), 0, 0, 0)[0]).toBe(1);
+    for (const descriptor of [primary, peer, append, truncate]) {
+      expect(fileSize(pool, descriptor)).toBe(6);
+    }
+
+    await pool.sync();
+    for (const descriptor of [primary, peer, append, truncate]) {
+      requestOk(pool, OP.close, '', new Uint8Array(), descriptor);
+    }
+    pool.close();
+  });
+
+  it('reinitializes an evicted inode extent and preserves it across a dirty reopen', async () => {
+    const root = await databaseRoot('reopen-extent');
+    const pool = new NodeSyncDirectoryPool(root);
+    const initial = requestOk(
+      pool,
+      OP.open,
+      'value',
+      new Uint8Array(),
+      0,
+      0,
+      FLAG_WRITE | FLAG_CREATE_NEW,
+    )[2];
+    requestOk(pool, OP.write, '', new TextEncoder().encode('value'), initial, 0);
+    requestOk(pool, OP.close, '', new Uint8Array(), initial);
+
+    const dirtyReopen = requestOk(pool, OP.open, 'value', new Uint8Array(), 0, 0, FLAG_READ);
+    expect(dirtyReopen[3]).toBe(5);
+    expect(fileSize(pool, dirtyReopen[2])).toBe(5);
+    requestOk(pool, OP.close, '', new Uint8Array(), dirtyReopen[2]);
+    await pool.sync();
+    pool.close();
+
+    const reopenedPool = new NodeSyncDirectoryPool(root);
+    const cleanReopen = requestOk(
+      reopenedPool,
+      OP.open,
+      'value',
+      new Uint8Array(),
+      0,
+      0,
+      FLAG_READ,
+    );
+    expect(cleanReopen[3]).toBe(5);
+    expect(fileSize(reopenedPool, cleanReopen[2])).toBe(5);
+    requestOk(reopenedPool, OP.close, '', new Uint8Array(), cleanReopen[2]);
+    reopenedPool.close();
   });
 
   it('rejects traversal and symbolic links instead of following them', async () => {
@@ -317,6 +443,10 @@ function requestOk(
   const result = pool.request(opcode, path, buffer, arg0, arg1, flags);
   expect(result[0]).toBe(0);
   return result;
+}
+
+function fileSize(pool: NodeSyncDirectoryPool, descriptor: number): number {
+  return requestOk(pool, OP.fileSize, '', new Uint8Array(), descriptor)[2];
 }
 
 function decodeDirectoryPage(bytes: Uint8Array): string[] {

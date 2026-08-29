@@ -71,6 +71,9 @@ type FileRecord = {
   path?: string;
   readonly identity: FileIdentity;
   readonly descriptors: Set<number>;
+  // Direct storage owns PGDATA bytes exclusively. Open and durability
+  // boundaries validate this cached extent before trusting it again.
+  extent: number;
 };
 
 type Descriptor = {
@@ -233,7 +236,7 @@ export class NodeSyncDirectoryPool {
         this.#unlinkDescriptor(arg0);
         break;
       case OP.fileSize:
-        return [RESULT.ok, 0, fileSize(this.#descriptor(arg0).fd), 0];
+        return [RESULT.ok, 0, this.#descriptor(arg0).record.extent, 0];
       default:
         throw new BridgeInputError('unsupported Node filesystem bridge operation');
     }
@@ -377,21 +380,31 @@ export class NodeSyncDirectoryPool {
       if (!info.isFile()) throw new BridgeNotFileError();
       requireSingleLink(info.nlink, path);
       const fileIdentity = identity(info);
+      const openedExtent = safeNumber(info.size, `${path} size`);
       const currentTarget = this.#safeExistingPath(path);
       const currentInfo = lstatSync(currentTarget, { bigint: true });
-      if (!currentInfo.isFile() || !sameIdentity(fileIdentity, identity(currentInfo))) {
+      if (
+        !currentInfo.isFile() ||
+        !sameIdentity(fileIdentity, identity(currentInfo)) ||
+        safeNumber(currentInfo.size, `${path} size`) !== openedExtent
+      ) {
         throw new BridgeIoError(`${path} changed while it was opened`);
       }
       requireSingleLink(currentInfo.nlink, path);
       const key = identityKey(fileIdentity);
       let record = this.#recordsByIdentity.get(key);
       if (record === undefined) {
-        record = { path, identity: fileIdentity, descriptors: new Set() };
+        record = { path, identity: fileIdentity, descriptors: new Set(), extent: openedExtent };
       } else if (record.path !== path) {
         throw new BridgeIoError(`file identity for ${path} aliases ${record.path ?? 'an unlink'}`);
+      } else if (record.extent !== openedExtent) {
+        throw new BridgeIoError(`${path} size changed while it was open`);
       }
 
-      if (truncate) ftruncateSync(fd, 0);
+      if (truncate) {
+        ftruncateSync(fd, 0);
+        record.extent = 0;
+      }
       if (!this.#recordsByIdentity.has(key)) {
         this.#recordsByIdentity.set(key, record);
       }
@@ -401,7 +414,7 @@ export class NodeSyncDirectoryPool {
       this.#descriptors.set(descriptor, { fd, record, append });
       if (!existed) this.#markNamespace(path);
       if (!existed || truncate) this.#dirtyRecords.add(record);
-      return [RESULT.ok, 0, descriptor, truncate ? 0 : safeNumber(info.size, `${path} size`)];
+      return [RESULT.ok, 0, descriptor, record.extent];
     } catch (error) {
       closeSync(fd);
       throw error;
@@ -426,10 +439,21 @@ export class NodeSyncDirectoryPool {
   #write(value: number, offset: number, bytes: Uint8Array): BridgeResult {
     validateOffset(offset);
     const descriptor = this.#descriptor(value);
-    const writeOffset = descriptor.append ? null : offset;
-    const written = writeSync(descriptor.fd, bytes, 0, bytes.byteLength, writeOffset);
+    const record = descriptor.record;
+    const writeOffset = descriptor.append ? record.extent : offset;
+    validateExtent(writeOffset, bytes.byteLength);
+    const written = writeSync(
+      descriptor.fd,
+      bytes,
+      0,
+      bytes.byteLength,
+      descriptor.append ? null : writeOffset,
+    );
+    const next = writeOffset + written;
+    // A zero-length positional write beyond EOF does not extend a regular
+    // file, even though its returned cursor is the requested offset.
+    if (written !== 0) record.extent = Math.max(record.extent, next);
     this.#dirtyRecords.add(descriptor.record);
-    const next = descriptor.append ? fileSize(descriptor.fd) : offset + written;
     return [RESULT.ok, 0, written, next];
   }
 
@@ -437,6 +461,7 @@ export class NodeSyncDirectoryPool {
     validateOffset(size);
     const descriptor = this.#descriptor(value);
     ftruncateSync(descriptor.fd, size);
+    descriptor.record.extent = size;
     this.#dirtyRecords.add(descriptor.record);
   }
 
@@ -463,7 +488,11 @@ export class NodeSyncDirectoryPool {
     if (path !== undefined) {
       target = this.#safeExistingPath(path);
       const current = lstatSync(target, { bigint: true });
-      if (!current.isFile() || !sameIdentity(record.identity, identity(current))) {
+      if (
+        !current.isFile() ||
+        !sameIdentity(record.identity, identity(current)) ||
+        safeNumber(current.size, `${path} size`) !== record.extent
+      ) {
         throw new BridgeIoError(`${path} changed before flush`);
       }
       requireSingleLink(current.nlink, path);
@@ -482,7 +511,11 @@ export class NodeSyncDirectoryPool {
       const fd = openSync(target as string, constants.O_RDONLY | NOFOLLOW);
       try {
         const current = fstatSync(fd, { bigint: true });
-        if (!current.isFile() || !sameIdentity(record.identity, identity(current))) {
+        if (
+          !current.isFile() ||
+          !sameIdentity(record.identity, identity(current)) ||
+          safeNumber(current.size, `${path} size`) !== record.extent
+        ) {
           throw new BridgeIoError(`${path} changed before flush`);
         }
         requireSingleLink(current.nlink, path);
@@ -678,8 +711,10 @@ function validateDescriptor(value: number): void {
   }
 }
 
-function fileSize(fd: number): number {
-  return safeNumber(fstatSync(fd, { bigint: true }).size, 'file size');
+function validateExtent(offset: number, length: number): void {
+  if (!Number.isSafeInteger(offset + length)) {
+    throw new BridgeInputError('file extent is outside the bridge range');
+  }
 }
 
 function safeNumber(value: bigint, label: string): number {

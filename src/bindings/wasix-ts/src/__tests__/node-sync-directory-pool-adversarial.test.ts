@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fsContract = vi.hoisted(() => ({
   events: [] as string[],
+  fstatCalls: 0,
   descriptorPaths: new Map<number, string>(),
   swapOnOpen: undefined as
     | Readonly<{ target: string; parent: string; displaced: string; outside: string }>
@@ -48,6 +49,10 @@ vi.mock('node:fs', async (importOriginal) => {
     fsyncSync(descriptor: number) {
       fsContract.events.push(`file:${fsContract.descriptorPaths.get(descriptor) ?? descriptor}`);
       return actual.fsyncSync(descriptor);
+    },
+    fstatSync(descriptor: number, options?: Parameters<typeof actual.fstatSync>[1]) {
+      fsContract.fstatCalls += 1;
+      return actual.fstatSync(descriptor, options as never);
     },
     renameSync(from: import('node:fs').PathLike, to: import('node:fs').PathLike) {
       const code = fsContract.renameErrorCode;
@@ -96,17 +101,20 @@ const OP = {
   write: 10,
   flush: 11,
   unlink: 13,
+  fileSize: 14,
 } as const;
 const RESULT_IO = 11;
 const RESULT_STORAGE_FULL = 8;
 const FLAG_READ = 1 << 0;
 const FLAG_WRITE = 1 << 1;
 const FLAG_CREATE_NEW = 1 << 2;
+const FLAG_APPEND = 1 << 4;
 const FLAG_TRUNCATE = 1 << 5;
 const scratch: string[] = [];
 
 beforeEach(() => {
   fsContract.events.length = 0;
+  fsContract.fstatCalls = 0;
   fsContract.descriptorPaths.clear();
   fsContract.swapOnOpen = undefined;
   fsContract.renameErrorCode = undefined;
@@ -269,6 +277,69 @@ describe('Node synchronous directory bridge adversarial contracts', () => {
     await pool.sync();
     expect(fileEvents(root)).toEqual(['churn/value-0']);
     pool.close();
+  });
+
+  it('serves extent queries and append progress without hot-path fstat calls', async () => {
+    const root = await databaseRoot('extent-without-fstat');
+    const pool = new NodeSyncDirectoryPool(root);
+    const descriptor = openWritable(pool, 'value');
+    const afterOpen = fsContract.fstatCalls;
+    write(pool, descriptor, 'value');
+    for (let index = 0; index < 2_000; index += 1) {
+      expect(requestOk(pool, OP.fileSize, '', new Uint8Array(), descriptor)[2]).toBe(5);
+    }
+    expect(fsContract.fstatCalls).toBe(afterOpen);
+
+    const append = requestOk(
+      pool,
+      OP.open,
+      'value',
+      new Uint8Array(),
+      0,
+      0,
+      FLAG_WRITE | FLAG_APPEND,
+    )[2];
+    const afterAppendOpen = fsContract.fstatCalls;
+    const appendResult = requestOk(
+      pool,
+      OP.write,
+      '',
+      new TextEncoder().encode('-next'),
+      append,
+      0,
+    );
+    expect(appendResult[3]).toBe(10);
+    expect(requestOk(pool, OP.fileSize, '', new Uint8Array(), descriptor)[2]).toBe(10);
+    expect(fsContract.fstatCalls).toBe(afterAppendOpen);
+
+    requestOk(pool, OP.close, '', new Uint8Array(), append);
+    requestOk(pool, OP.close, '', new Uint8Array(), descriptor);
+    pool.close();
+  });
+
+  it('fails closed when an externally resized dirty inode is reopened or published', async () => {
+    const root = await databaseRoot('external-resize');
+    const pool = new NodeSyncDirectoryPool(root);
+    const descriptor = openWritable(pool, 'value');
+    write(pool, descriptor, 'value');
+    requestOk(pool, OP.close, '', new Uint8Array(), descriptor);
+
+    await writeFile(join(root, 'value'), 'externally-resized');
+    expect(pool.request(OP.open, 'value', new Uint8Array(), 0, 0, FLAG_READ)[0]).toBe(RESULT_IO);
+    expect(pool.request(OP.metadata, 'PG_VERSION', new Uint8Array(), 0, 0, 0)[0]).toBe(RESULT_IO);
+    pool.close();
+
+    const syncRoot = await databaseRoot('external-resize-before-sync');
+    const syncPool = new NodeSyncDirectoryPool(syncRoot);
+    const syncDescriptor = openWritable(syncPool, 'value');
+    write(syncPool, syncDescriptor, 'value');
+    requestOk(syncPool, OP.close, '', new Uint8Array(), syncDescriptor);
+    await writeFile(join(syncRoot, 'value'), 'externally-resized');
+    await expect(syncPool.sync()).rejects.toThrow(/changed before flush/u);
+    expect(syncPool.request(OP.metadata, 'PG_VERSION', new Uint8Array(), 0, 0, 0)[0]).toBe(
+      RESULT_IO,
+    );
+    syncPool.close();
   });
 
   it('poisons after an injected mutating storage-full failure', async () => {
