@@ -43,6 +43,9 @@ series = [
   "0019-wasmer-parse-exception-reference-types.patch",
   "0020-wasmer-wasix-preserve-posix-close-durability.patch",
   "0021-wasmer-js-stream-direct-pgwire.patch",
+  # Isolate realm-local handle borrows so a trapped filesystem callback cannot
+  # replace the causal storage failure with a teardown RefCell panic.
+  "0027-wasmer-wasix-isolate-thread-local-handle-borrows.patch",
   # Independently preserve provider failures and cursor state in the
   # synchronous JavaScript filesystem bridge.
   "0034-wasmer-js-preserve-seek-end-errors.patch",

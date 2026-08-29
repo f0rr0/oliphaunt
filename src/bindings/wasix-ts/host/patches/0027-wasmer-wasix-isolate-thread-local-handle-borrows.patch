@@ -1,0 +1,172 @@
+Clone each realm-local registered handle under a short registry borrow before
+borrowing the handle value. This makes the unsafe extended Ref lifetime derive
+from the same Rc retained by the returned guard, while registry removal stays
+independent from access to the registered value.
+
+The JS engine can terminate a guest by trapping across a Rust host callback,
+and that boundary is not guaranteed to run every Rust destructor. Use fallible
+inner borrows so a stranded handle guard becomes absence, and make both
+callback_signal handle acquisitions translate that conflict to the existing
+terminal WASI Fault outcome. Registry borrow invariant violations still panic;
+this does not suppress unrelated reentrant registry mutation.
+
+diff --git a/src/state/handles/thread_local.rs b/src/state/handles/thread_local.rs
+index fd01509b..a6c4939d 100644
+--- a/src/state/handles/thread_local.rs
++++ b/src/state/handles/thread_local.rs
+@@ -17,6 +17,20 @@
+         = RefCell::new(HashMap::new());
+ }
+ 
++fn clone_registered<T>(
++    registry: &RefCell<HashMap<u64, Rc<RefCell<T>>>>,
++    id: u64,
++) -> Option<Rc<RefCell<T>>> {
++    registry.borrow().get(&id).cloned()
++}
++
++fn remove_registered<T>(
++    registry: &RefCell<HashMap<u64, Rc<RefCell<T>>>>,
++    id: u64,
++) -> Option<Rc<RefCell<T>>> {
++    registry.borrow_mut().remove(&id)
++}
++
+ /// This non-sendable guard provides memory safe access
+ /// to the WasiInstance object but only when it is
+ /// constructed with certain constraints
+@@ -75,48 +89,29 @@
+ }
+ impl WasiInstanceHandlesPointer {
+     pub fn get(&self) -> Option<WasiInstanceGuard<'_>> {
+-        self.id
+-            .iter()
+-            .filter_map(|id| {
+-                THREAD_LOCAL_INSTANCE_HANDLES.with(|map| {
+-                    let map = map.borrow();
+-                    if let Some(inner) = map.get(id) {
+-                        let borrow: Ref<WasiModuleTreeHandles> = inner.borrow();
+-                        let borrow: Ref<'static, WasiModuleTreeHandles> =
+-                            unsafe { std::mem::transmute(borrow) };
+-                        Some(WasiInstanceGuard {
+-                            borrow,
+-                            _pointer: self,
+-                            _inner: inner.clone(),
+-                        })
+-                    } else {
+-                        None
+-                    }
+-                })
+-            })
+-            .next()
++        let id = self.id?;
++        // Clone the registry-owned Rc before extending the inner Ref lifetime.
++        // The returned guard retains that same Rc, and registry cleanup never
++        // needs to borrow the registered value.
++        let inner = THREAD_LOCAL_INSTANCE_HANDLES.with(|map| clone_registered(map, id))?;
++        let borrow: Ref<WasiModuleTreeHandles> = inner.try_borrow().ok()?;
++        let borrow: Ref<'static, WasiModuleTreeHandles> = unsafe { std::mem::transmute(borrow) };
++        Some(WasiInstanceGuard {
++            borrow,
++            _pointer: self,
++            _inner: inner.clone(),
++        })
+     }
+     pub fn get_mut(&self) -> Option<WasiInstanceGuardMut<'_>> {
+-        self.id
+-            .into_iter()
+-            .filter_map(|id| {
+-                THREAD_LOCAL_INSTANCE_HANDLES.with(|map| {
+-                    let map = map.borrow_mut();
+-                    if let Some(inner) = map.get(&id) {
+-                        let borrow: RefMut<WasiModuleTreeHandles> = inner.borrow_mut();
+-                        let borrow: RefMut<'static, WasiModuleTreeHandles> =
+-                            unsafe { std::mem::transmute(borrow) };
+-                        Some(WasiInstanceGuardMut {
+-                            borrow,
+-                            _pointer: self,
+-                            _inner: inner.clone(),
+-                        })
+-                    } else {
+-                        None
+-                    }
+-                })
+-            })
+-            .next()
++        let id = self.id?;
++        let inner = THREAD_LOCAL_INSTANCE_HANDLES.with(|map| clone_registered(map, id))?;
++        let borrow: RefMut<WasiModuleTreeHandles> = inner.try_borrow_mut().ok()?;
++        let borrow: RefMut<'static, WasiModuleTreeHandles> = unsafe { std::mem::transmute(borrow) };
++        Some(WasiInstanceGuardMut {
++            borrow,
++            _pointer: self,
++            _inner: inner.clone(),
++        })
+     }
+     pub fn set(&mut self, val: WasiModuleTreeHandles) {
+         self.clear();
+@@ -138,12 +133,33 @@
+     }
+     fn destroy(id: u64) {
+         THREAD_LOCAL_INSTANCE_HANDLES.with(|map| {
+-            let mut map = map.borrow_mut();
+-            map.remove(&id);
++            remove_registered(map, id);
+         })
+     }
+ }
+ 
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn registry_removal_does_not_borrow_the_registered_value() {
++        let registry = RefCell::new(HashMap::new());
++        registry
++            .borrow_mut()
++            .insert(7, Rc::new(RefCell::new(41_u8)));
++
++        let inner = clone_registered(&registry, 7).expect("registered value");
++        let retained = inner.borrow();
++        assert!(inner.try_borrow_mut().is_err());
++
++        let removed = remove_registered(&registry, 7);
++        assert!(removed.is_some());
++        assert!(registry.borrow().is_empty());
++        assert_eq!(*retained, 41);
++    }
++}
++
+ /// This provides access to the memory inside the instance
+ pub(crate) struct WasiInstanceGuardMemory<'a> {
+     // the order is very important as the first value is
+diff --git a/src/syscalls/wasix/callback_signal.rs b/src/syscalls/wasix/callback_signal.rs
+index 940b34d2..5404ec72 100644
+--- a/src/syscalls/wasix/callback_signal.rs
++++ b/src/syscalls/wasix/callback_signal.rs
+@@ -28,7 +28,8 @@
+     Span::current().record("name", name.as_str());
+ 
+     let funct = env
+-        .inner()
++        .try_inner()
++        .ok_or_else(|| WasiError::Exit(Errno::Fault.into()))?
+         .main_module_instance_handles()
+         .instance
+         .exports
+@@ -37,7 +38,13 @@
+     Span::current().record("funct_is_some", funct.is_some());
+ 
+     {
+-        let mut env_inner = ctx.data_mut().inner_mut();
++        // A JS trap can strand an instance-handle guard. Treat that terminal
++        // lifecycle conflict as a guest fault instead of panicking while
++        // acquiring the RefCell mutably.
++        let mut env_inner = ctx
++            .data_mut()
++            .try_inner_mut()
++            .ok_or_else(|| WasiError::Exit(Errno::Fault.into()))?;
+         let inner = env_inner.main_module_instance_handles_mut();
+         inner.signal = funct;
+         inner.signal_set = true;

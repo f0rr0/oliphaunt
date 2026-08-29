@@ -1,8 +1,8 @@
 diff --git a/src/fs/sync_bridge.rs b/src/fs/sync_bridge.rs
-index e37f33e..7e79d76 100644
+index 08f28ff0..9b2b0b09 100644
 --- a/src/fs/sync_bridge.rs
 +++ b/src/fs/sync_bridge.rs
-@@ -356,6 +356,16 @@ impl fmt::Debug for SyncBridgeFile {
+@@ -440,6 +440,16 @@ impl fmt::Debug for SyncBridgeFile {
      }
  }
  
@@ -19,7 +19,7 @@ index e37f33e..7e79d76 100644
  impl Drop for SyncBridgeFile {
      fn drop(&mut self) {
          let _ = self
-@@ -489,7 +499,7 @@ impl AsyncSeek for SyncBridgeFile {
+@@ -573,7 +583,7 @@ impl AsyncSeek for SyncBridgeFile {
          let next = match position {
              SeekFrom::Start(offset) => offset,
              SeekFrom::Current(delta) => checked_offset(self.cursor, delta)?,
@@ -28,7 +28,7 @@ index e37f33e..7e79d76 100644
          };
          self.cursor = next;
          Ok(())
-@@ -500,6 +510,16 @@ impl AsyncSeek for SyncBridgeFile {
+@@ -584,6 +594,16 @@ impl AsyncSeek for SyncBridgeFile {
      }
  }
  
@@ -45,7 +45,7 @@ index e37f33e..7e79d76 100644
  fn checked_offset(base: u64, delta: i64) -> io::Result<u64> {
      if delta >= 0 {
          base.checked_add(delta as u64)
-@@ -509,6 +529,58 @@ fn checked_offset(base: u64, delta: i64) -> io::Result<u64> {
+@@ -593,6 +613,58 @@ fn checked_offset(base: u64, delta: i64) -> io::Result<u64> {
      .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))
  }
  

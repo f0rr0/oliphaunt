@@ -191,16 +191,47 @@ grep -Fq 'Directory::from_untracked_filesystem' "$wasmer_js_dir/src/fs/directory
 grep -Fq 'if !self.track_changes {' "$wasmer_js_dir/src/fs/directory.rs"
 grep -Fq 'struct SyncBridgeFileSystem' "$wasmer_js_dir/src/fs/sync_bridge.rs"
 grep -Fq 'struct Backend' "$wasmer_js_dir/src/fs/sync_bridge.rs"
-grep -Fq '.apply(&self.backend, &arguments)' "$wasmer_js_dir/src/fs/sync_bridge.rs"
-grep -Fq 'unsafe { Uint8Array::view(payload) }' "$wasmer_js_dir/src/fs/sync_bridge.rs"
-grep -Fq 'unsafe { Uint8Array::view_mut_raw(output.as_mut_ptr(), output.len()) }' \
+grep -Fq 'static REALM_BACKENDS: RefCell<HashMap<u32, Rc<RealmBackend>>>' \
   "$wasmer_js_dir/src/fs/sync_bridge.rs"
+grep -Fq 'wasmer::js::current_thread_id()' "$wasmer_js_dir/src/fs/sync_bridge.rs"
+grep -Fq 'let _guard = self.gate.try_lock().map_err(|_| FsError::Lock)?;' \
+  "$wasmer_js_dir/src/fs/sync_bridge.rs"
+grep -Fq 'let transfer = Uint8Array::new_with_length(' \
+  "$wasmer_js_dir/src/fs/sync_bridge.rs"
+grep -Fq 'transfer.copy_from(payload)' "$wasmer_js_dir/src/fs/sync_bridge.rs"
+grep -Fq '.copy_to(&mut output[..response_len]);' \
+  "$wasmer_js_dir/src/fs/sync_bridge.rs"
+grep -Fq '.apply(&realm_backend.backend, &arguments)' \
+  "$wasmer_js_dir/src/fs/sync_bridge.rs"
+grep -Fq 'if transfer.length() as usize != transfer_length {' \
+  "$wasmer_js_dir/src/fs/sync_bridge.rs"
+if grep -Eq 'unsafe impl (Send|Sync) for Backend|Uint8Array::view(_mut_raw)?|self\.gate\.lock\(' \
+  "$wasmer_js_dir/src/fs/sync_bridge.rs"; then
+  echo "wasix-ts host build: filesystem bridge exposes Rust-owned memory or permits blocking reentry" >&2
+  exit 1
+fi
 grep -Fq 'let output = buffer.initialize_unfilled_to(requested);' \
   "$wasmer_js_dir/src/fs/sync_bridge.rs"
 grep -Fq 'const OP_WRITE: i32 = 10;' "$wasmer_js_dir/src/fs/sync_bridge.rs"
 grep -Fq 'const OP_FILE_SIZE: i32 = 14;' "$wasmer_js_dir/src/fs/sync_bridge.rs"
 grep -Fq 'pub fn create_sync(backend: JsValue, capacity: usize)' \
   "$wasmer_js_dir/src/fs/directory.rs"
+grep -Fq 'fn clone_registered<T>(' \
+  "$wasmer_wasix_dir/src/state/handles/thread_local.rs"
+grep -Fq 'let borrow: Ref<WasiModuleTreeHandles> = inner.try_borrow().ok()?;' \
+  "$wasmer_wasix_dir/src/state/handles/thread_local.rs"
+grep -Fq 'let borrow: RefMut<WasiModuleTreeHandles> = inner.try_borrow_mut().ok()?;' \
+  "$wasmer_wasix_dir/src/state/handles/thread_local.rs"
+grep -Fq 'remove_registered(map, id);' \
+  "$wasmer_wasix_dir/src/state/handles/thread_local.rs"
+grep -Fq '.try_inner()' "$wasmer_wasix_dir/src/syscalls/wasix/callback_signal.rs"
+grep -Fq '.try_inner_mut()' "$wasmer_wasix_dir/src/syscalls/wasix/callback_signal.rs"
+if grep -Eq 'let map = map\.borrow_mut\(\);|ctx\.data_mut\(\)\.inner_mut\(\)' \
+  "$wasmer_wasix_dir/src/state/handles/thread_local.rs" \
+  "$wasmer_wasix_dir/src/syscalls/wasix/callback_signal.rs"; then
+  echo "wasix-ts host build: teardown still extends a registry or instance-handle borrow" >&2
+  exit 1
+fi
 if grep -Eq 'Atomics|Mailbox|OP_SYNC_ALL|OP_SHUTDOWN|OP_SYNC_WAL|js_name = "(syncAll|syncWal|closeSync)"|payload\.to_vec\(\)|buffer\.put_slice' \
   "$wasmer_js_dir/src/fs/sync_bridge.rs" "$wasmer_js_dir/src/fs/directory.rs"; then
   echo "wasix-ts host build: synchronous bridge retained the obsolete mailbox protocol" >&2

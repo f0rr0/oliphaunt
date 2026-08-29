@@ -39,6 +39,7 @@ export async function loadHostBuildContract() {
     wasmerWasixVersion: tomlString(source, 'wasmer-wasix', 'version'),
     inputsSha256: sha256(digests.join('')),
     guestConcurrency: 'denied-for-oliphaunt-single-backend',
+    syncFilesystemBridge: 'realm-local-fresh-owned-js-transfer',
     optimization: {
       cargoProfile: 'release',
       rustOptLevel: 3,
