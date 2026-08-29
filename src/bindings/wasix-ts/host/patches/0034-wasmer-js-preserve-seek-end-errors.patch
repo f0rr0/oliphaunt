@@ -1,0 +1,106 @@
+diff --git a/src/fs/sync_bridge.rs b/src/fs/sync_bridge.rs
+index e37f33e..7e79d76 100644
+--- a/src/fs/sync_bridge.rs
++++ b/src/fs/sync_bridge.rs
+@@ -356,6 +356,16 @@ impl fmt::Debug for SyncBridgeFile {
+     }
+ }
+ 
++impl SyncBridgeFile {
++    fn seek_from_end_sync(&mut self, offset: i64) -> io::Result<u64> {
++        let size = self
++            .backend
++            .request(OP_FILE_SIZE, "", &[], self.descriptor.into(), 0, 0)
++            .map(|response| response.value0);
++        update_cursor_from_end(&mut self.cursor, size, offset)
++    }
++}
++
+ impl Drop for SyncBridgeFile {
+     fn drop(&mut self) {
+         let _ = self
+@@ -489,7 +499,7 @@ impl AsyncSeek for SyncBridgeFile {
+         let next = match position {
+             SeekFrom::Start(offset) => offset,
+             SeekFrom::Current(delta) => checked_offset(self.cursor, delta)?,
+-            SeekFrom::End(delta) => checked_offset(self.size(), delta)?,
++            SeekFrom::End(delta) => return self.seek_from_end_sync(delta).map(|_| ()),
+         };
+         self.cursor = next;
+         Ok(())
+@@ -500,6 +510,16 @@ impl AsyncSeek for SyncBridgeFile {
+     }
+ }
+ 
++fn update_cursor_from_end(
++    cursor: &mut u64,
++    size: virtual_fs::Result<u64>,
++    offset: i64,
++) -> io::Result<u64> {
++    let next = checked_offset(size.map_err(io::Error::from)?, offset)?;
++    *cursor = next;
++    Ok(next)
++}
++
+ fn checked_offset(base: u64, delta: i64) -> io::Result<u64> {
+     if delta >= 0 {
+         base.checked_add(delta as u64)
+@@ -509,6 +529,58 @@ fn checked_offset(base: u64, delta: i64) -> io::Result<u64> {
+     .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))
+ }
+ 
++#[cfg(test)]
++mod seek_tests {
++    use super::*;
++    use wasm_bindgen_test::wasm_bindgen_test;
++
++    #[wasm_bindgen_test]
++    fn seek_from_end_preserves_bridge_arithmetic_and_cursor() {
++        let mut cursor = 3;
++        assert_eq!(update_cursor_from_end(&mut cursor, Ok(6), 5).unwrap(), 11);
++        assert_eq!(cursor, 11);
++        assert_eq!(update_cursor_from_end(&mut cursor, Ok(6), -5).unwrap(), 1);
++        assert_eq!(cursor, 1);
++    }
++
++    #[wasm_bindgen_test]
++    fn seek_from_end_preserves_cursor_on_arithmetic_error() {
++        let mut cursor = 3;
++        let error = update_cursor_from_end(&mut cursor, Ok(6), -7).unwrap_err();
++        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
++        assert_eq!(cursor, 3);
++    }
++
++    #[wasm_bindgen_test]
++    fn seek_from_end_propagates_provider_error_without_moving_cursor() {
++        let backend = js_sys::Object::new();
++        let request = Function::new_with_args(
++            "opcode, _path, _payload, _arg0, _arg1, _flags",
++            r#"
++                switch (opcode) {
++                    case 8: return [0, 0, 0, 0];
++                    case 14: return [6, 0, 0, 0];
++                    default: throw new Error(`unexpected filesystem opcode ${opcode}`);
++                }
++            "#,
++        );
++        js_sys::Reflect::set(&backend, &JsValue::from_str("request"), request.as_ref()).unwrap();
++        let mut file = SyncBridgeFile {
++            backend: Arc::new(Backend::new(backend.into(), 8 * 1024).unwrap()),
++            descriptor: 7,
++            readable: true,
++            writable: false,
++            cursor: 3,
++        };
++
++        let error = Pin::new(&mut file)
++            .start_seek(SeekFrom::End(0))
++            .unwrap_err();
++        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
++        assert_eq!(file.cursor, 3);
++    }
++}
++
+ fn normalize_path(path: &Path) -> virtual_fs::Result<String> {
+     let mut parts = Vec::new();
+     for component in path.components() {

@@ -1,0 +1,71 @@
+diff --git a/src/syscalls/wasi/fd_seek.rs b/src/syscalls/wasi/fd_seek.rs
+index 31cfe43e..18cf012e 100644
+--- a/src/syscalls/wasi/fd_seek.rs
++++ b/src/syscalls/wasi/fd_seek.rs
+@@ -95,6 +95,7 @@ pub(crate) fn fd_seek_internal(
+                     #[allow(clippy::await_holding_lock)]
+                     if let Some(handle) = handle {
+                         let handle = handle.clone();
++                        let fd_offset = fd_entry.inner.offset.clone();
+                         drop(guard);
+ 
+                         wasi_try_ok_ok!(__asyncify(ctx, None, async move {
+@@ -104,11 +105,7 @@ pub(crate) fn fd_seek_internal(
+                                 .await
+                                 .map_err(map_io_err)?;
+ 
+-                            // TODO: handle case if fd_entry.offset uses 64 bits of a u64
+-                            drop(handle);
+-                            let mut fd_map = state.fs.fd_map.write().unwrap();
+-                            let fd_entry = fd_map.get_mut(fd).ok_or(Errno::Badf)?;
+-                            fd_entry.offset.store(end, Ordering::Release);
++                            fd_offset.store(end, Ordering::Release);
+                             Ok(())
+                         })?);
+                     } else {
+@@ -150,3 +147,45 @@ pub(crate) fn fd_seek_internal(
+ 
+     Ok(Ok(new_offset))
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::future::Future as _;
++
++    #[test]
++    fn suspended_seek_updates_original_offset_after_descriptor_reuse() {
++        let original_offset = Arc::new(AtomicU64::new(3));
++        let replacement_offset = Arc::new(AtomicU64::new(7));
++        let mut fd_map = std::collections::HashMap::from([(4_u32, original_offset.clone())]);
++        let captured_offset = fd_map.get(&4).unwrap().clone();
++        let ready = Arc::new(AtomicBool::new(false));
++        let seek_ready = ready.clone();
++        let seek = futures::future::poll_fn(move |cx| {
++            if seek_ready.load(Ordering::Acquire) {
++                Poll::Ready(41)
++            } else {
++                cx.waker().wake_by_ref();
++                Poll::Pending
++            }
++        });
++        let work = async move {
++            let end = seek.await;
++            captured_offset.store(end, Ordering::Release);
++        };
++        futures::pin_mut!(work);
++
++        let waker = futures::task::noop_waker();
++        let mut cx = Context::from_waker(&waker);
++        assert_eq!(work.as_mut().poll(&mut cx), Poll::Pending);
++
++        assert!(fd_map.remove(&4).is_some());
++        assert!(fd_map.insert(4, replacement_offset.clone()).is_none());
++        ready.store(true, Ordering::Release);
++
++        assert_eq!(work.as_mut().poll(&mut cx), Poll::Ready(()));
++        assert_eq!(original_offset.load(Ordering::Acquire), 41);
++        assert_eq!(replacement_offset.load(Ordering::Acquire), 7);
++        assert!(Arc::ptr_eq(fd_map.get(&4).unwrap(), &replacement_offset));
++    }
++}
