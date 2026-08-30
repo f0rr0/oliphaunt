@@ -27,6 +27,8 @@ pub mod tools;
 pub(crate) mod transport;
 pub(crate) mod wire;
 
+#[cfg(any(feature = "__internal-napi", test))]
+pub use assets::CatalogProfile;
 pub use builder::OliphauntBuilder;
 pub use client::{Oliphaunt, Sql, Transaction};
 pub use query::{

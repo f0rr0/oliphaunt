@@ -14,8 +14,6 @@ import {
 import {
   acquireWasixStorage,
   canonicalJson,
-  installNodeDirectoryStorageProvider,
-  installNodeDirectoryStorageRestorer,
   restoreWasixStorage,
   assertWasixPhysicalIdentity,
   WASIX_PHYSICAL_IDENTITY,
@@ -38,7 +36,7 @@ describe('WASIX incremental PGDATA storage', () => {
         clusterSeed(),
         compatible(),
       ),
-    ).rejects.toThrow('directory storage is unavailable in this @oliphaunt/wasix-ts host');
+    ).rejects.toThrow('directory storage is owned directly by the native Rust runtime');
   });
 
   it('recursively snapshots files and empty directories but not process state', async () => {
@@ -452,7 +450,7 @@ describe('WASIX incremental PGDATA storage', () => {
     await lease.close(undefined, 'failed');
   });
 
-  it('routes memory and installed directory storage without weakening descriptors', async () => {
+  it('routes memory and leaves native directory storage outside the browser provider', async () => {
     const seedMount = clusterSeedMount();
     const loadClusterSeed = async () => seedMount;
     const memory = await acquireWasixStorage(
@@ -464,44 +462,28 @@ describe('WASIX incremental PGDATA storage', () => {
     await memory.sync(pgdataDirectory(), 'operation');
     await memory.close(undefined, 'clean');
 
-    const calls: string[] = [];
-    installNodeDirectoryStorageProvider(async (path, load, _compatibility, ownerToken) => {
-      calls.push(`open:${path}:${ownerToken}`);
-      return {
-        state: 'new',
-        mount: await load(),
-        async sync() {},
-        async close() {},
-      };
-    });
-    installNodeDirectoryStorageRestorer(async (path, snapshot, _identity, ownerToken) => {
-      calls.push(`restore:${path}:${snapshot.files.length}:${ownerToken}`);
-    });
-    const directory = await acquireWasixStorage(
-      {
-        schema: 'oliphaunt-wasix-storage-v1',
-        kind: 'directory',
-        path: '/tmp/todos',
-        ownerToken: '0123456789abcdef',
-      },
-      loadClusterSeed,
-      compatible(),
-    );
-    await directory.close(undefined, 'failed');
-    await restoreWasixStorage(
-      {
-        schema: 'oliphaunt-wasix-storage-v1',
-        kind: 'directory',
-        path: '/tmp/restored',
-        ownerToken: 'fedcba9876543210',
-      },
-      completeSnapshot(),
-      compatible(),
-    );
-    expect(calls).toEqual([
-      'open:/tmp/todos:0123456789abcdef',
-      'restore:/tmp/restored:2:fedcba9876543210',
-    ]);
+    await expect(
+      acquireWasixStorage(
+        {
+          schema: 'oliphaunt-wasix-storage-v1',
+          kind: 'directory',
+          path: '/tmp/todos',
+        },
+        loadClusterSeed,
+        compatible(),
+      ),
+    ).rejects.toThrow('directory storage is owned directly by the native Rust runtime');
+    await expect(
+      restoreWasixStorage(
+        {
+          schema: 'oliphaunt-wasix-storage-v1',
+          kind: 'directory',
+          path: '/tmp/restored',
+        },
+        completeSnapshot(),
+        compatible(),
+      ),
+    ).rejects.toThrow('directory restore is owned directly by the native Rust runtime');
 
     await expect(
       restoreWasixStorage(

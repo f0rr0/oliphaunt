@@ -56,7 +56,7 @@ configuration schema.
 | Kotlin | `DatabaseStorage.TemporaryDirectory` | `DatabaseStorage.Directory(path)` |
 | React Native | omitted `storage` | `{ kind: 'directory', path }` or `{ kind: 'applicationData', name }` |
 | Rust WASIX | `DatabaseStorage::Memory` | `DatabaseStorage::Directory(path)` |
-| WASIX TypeScript | omitted `storage` | `indexedDB(name)` or `opfs(name)` in browsers; `directory(path)` on Node, Bun, and Deno |
+| WASIX TypeScript | omitted `storage` | `indexedDB(name)` or `opfs(name)` in browsers; `directory(path)` on Node, Bun, Deno, and Electron |
 
 The React Native `applicationData` case is intentional. JavaScript has no
 portable API for constructing an iOS/Android app-sandbox path, so the native
@@ -68,10 +68,11 @@ crate and pass the result through `Directory(path)`.
 WASIX TypeScript does not expose a browser `temporaryDirectory` case: omitted
 storage already gives the cheapest anonymous lifetime without host I/O. Its
 hosts use the same memory default and selectively expose browser or
-managed-directory providers. IndexedDB and managed directories hydrate Wasmer
-memory and publish journaled changes. OPFS uses direct synchronous file I/O in
-a worker when the browser supports it and otherwise publishes the same journal
-to the same opaque format. Portable `@oliphaunt/wasix-ts` and native
+managed-directory providers. IndexedDB and portable browser OPFS hydrate Wasmer
+memory and publish journaled changes. Browser OPFS uses direct synchronous file
+I/O in a worker when the browser supports it. On Node, Bun, Deno, and Electron,
+managed directories delegate directly to the Rust WASIX runtime and its host
+filesystem implementation. Portable `@oliphaunt/wasix-ts` and native
 `@oliphaunt/ts` remain separate products.
 
 ## Initialization and restore
@@ -133,8 +134,8 @@ root's `pgdata` child.
 Consequences are part of the public contract:
 
 - one open database owns a persistent identity at a time, enforced with Web
-  Locks in browsers or a binding-local stable sibling owner outside the managed
-  root for Rust and TypeScript host directories;
+  Locks in browsers or the shared Rust WASIX stable sibling advisory lock for
+  Rust and native-host TypeScript directories;
 - distinct IndexedDB names use distinct physical databases and never share
   their metadata/path object-store transaction;
 - a PostgreSQL statement error recovers through `ReadyForQuery` and does not
@@ -145,9 +146,9 @@ Consequences are part of the public contract:
   live handle, because newer commits may exist only in memory; and
 - a successful operation or callback transaction does not settle before its
   provider boundary;
-- each binding prevents concurrent opens through its native host mechanism;
-  these locks do not coordinate across Rust and TypeScript, and cross-binding
-  use is not a supported or qualified workflow; and
+- the shared WASIX host lock coordinates Rust and native-host TypeScript
+  owners, although sequential cross-binding handoff is not yet a supported or
+  qualified workflow; and
 - host-directory providers reject symlinked or foreign adapter state and never treat unrelated
   files in the application directory as generations.
 
@@ -198,7 +199,7 @@ The shared unit is the invariant, not a universal filesystem interface:
 | --- | --- | --- |
 | Database-root identity | The neutral fixture defines the `.oliphaunt.json` schema and `pgdata` location; each runtime family owns its physical-format value | Native SDKs publish descriptors last during root preparation; `liboliphaunt` validates them on open and creates one only in private restore staging. `liboliphaunt-wasix` defines the WASIX value consumed by Rust and TypeScript hosts; cross-family opens have no special guard because they are outside the supported contract |
 | Native ownership | C-backed direct and restore paths plus native Rust direct, broker, and server paths coordinate through one sibling-lock identity; `liboliphaunt` validates direct descriptors | C-backed SDKs let `liboliphaunt` own the lease; native Rust retains the byte-identical lease and hands direct/broker ownership into C explicitly, while its server keeps the lease because it bypasses C |
-| WASIX host-directory persistence | PostgreSQL major plus the versioned WASIX physical format define reopen compatibility | Rust accesses host PGDATA directly and uses a binding-local stable sibling owner; TypeScript host-directory adapters hydrate Wasmer memory, publish journaled deltas, and use their own stable sibling owner |
+| WASIX host-directory persistence | PostgreSQL major plus the versioned WASIX physical format define reopen compatibility | Rust accesses host PGDATA directly and owns one stable sibling advisory lock; native-host TypeScript delegates to that same implementation and lock, while browser providers retain their Wasmer-specific persistence paths |
 | Browser persistence | Public lifecycle and error vocabulary | IndexedDB keeps atomic row transactions; OPFS uses one opaque pool for direct worker I/O and portable publication; both use Web Locks |
 | Cross-family transfer | Logical SQL dump/restore | Physical backup formats remain family-scoped |
 

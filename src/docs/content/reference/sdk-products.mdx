@@ -21,7 +21,7 @@ keeping public APIs native to each language and host.
 | React Native | `@oliphaunt/react-native` | Swift/Kotlin native runtime through TurboModule/JSI | Platform SDK default |
 | TypeScript | `@oliphaunt/ts` | Native runtime or native helper process | Temporary directory |
 | Rust WASIX | `oliphaunt-wasix` | Rust-owned portable WASIX host | Memory filesystem |
-| WASIX TypeScript | `@oliphaunt/wasix-ts` | Caller-realm root; explicit `/worker` entry point on browser, Node, Bun, or Deno | Memory filesystem |
+| WASIX TypeScript | `@oliphaunt/wasix-ts` | Browser Wasmer; Node/Bun/Deno/Electron Rust-owner root, explicit `/direct`, or `/worker` isolation | Memory filesystem |
 
 The existing native package and extension identifiers remain unchanged. WASIX
 is the explicit special-case identifier: for example,
@@ -33,21 +33,23 @@ is the explicit special-case identifier: for example,
 React Native delegates execution to the Swift and Kotlin SDKs. Native
 TypeScript owns Node.js, Bun, and Deno integration over native runtimes and
 helpers. WASIX TypeScript never imports that native package and does not silently
-change runtime families; its conditional export only selects the portable host.
+change runtime families; its conditional exports select the browser Wasmer host
+or its own WASIX Rust Node-API host.
 
 The native TypeScript npm package carries native runtime integration for Node.js,
 Bun, and Deno. WASIX TypeScript is a separate npm product supporting every
 declared host, including its Deno directory-storage subpath.
 
-Rust WASIX and WASIX TypeScript are peer bindings over portable WASIX runtime
-and tool assets plus the WASIX physical archive contract. Both expose the same
-single-backend local-endpoint concept on socket-capable hosts and optional
-open-database `pg_dump`/non-interactive `psql`. TypeScript keeps sockets absent
-in browsers: `pgDump` supports direct or Worker handles, while `psql` requires
-a Worker handle and uses a private pgwire bridge. The
-TypeScript binding also owns Worker-isolated host adapters, pgwire error
-recovery, callback-scoped transactions, and host-specific persistence
-(IndexedDB or OPFS in browsers, directories on Node/Bun/Deno). Shared concepts
+Rust WASIX and WASIX TypeScript are peer bindings over the WASIX runtime and
+physical archive contract. Browsers consume portable runtime/tool assets;
+Node, Bun, Deno, and Electron consume a platform Node-API carrier built from the same
+exact inputs. Both expose the same single-backend local-endpoint concept on
+socket-capable hosts and optional open-database `pg_dump`/non-interactive
+`psql`. TypeScript keeps sockets absent in browsers: `pgDump` supports root,
+direct, and Worker handles, while `psql` requires a browser Worker and supports
+all three native placements. The TypeScript binding also owns isolated host adapters, pgwire
+error recovery, callback-scoped transactions, and host-specific persistence
+(IndexedDB or OPFS in browsers, directories on Node/Bun/Deno/Electron). Shared concepts
 and carriers do not force identical host code or language signatures.
 
 ## Cohesive Concepts

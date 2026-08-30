@@ -549,12 +549,12 @@ describe("canonical publication catalog", () => {
 
   test("normalizes products and stable carriers without duplicate identities", () => {
     const catalog = loadPublicationCatalog("publication-lock.test");
-    expect(catalog.products).toHaveLength(19);
-    expect(catalog.carriers).toHaveLength(199);
+    expect(catalog.products).toHaveLength(20);
+    expect(catalog.carriers).toHaveLength(203);
     expect(catalog.carriers.reduce((counts, { ecosystem }) => ({
       ...counts,
       [ecosystem]: (counts[ecosystem] ?? 0) + 1,
-    }), {})).toEqual({ cargo: 103, npm: 73, maven: 23 });
+    }), {})).toEqual({ cargo: 103, npm: 77, maven: 23 });
     expect(catalog.products.some(({ id }) => id === "oliphaunt-extension-postgis")).toBe(true);
     expect(catalog.carriers.filter(({ product }) => product === "oliphaunt-extension-postgis")).toHaveLength(18);
     expect(new Set(catalog.carriers.map((carrier) => carrier.id)).size).toBe(catalog.carriers.length);

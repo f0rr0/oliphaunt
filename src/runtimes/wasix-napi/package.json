@@ -1,0 +1,46 @@
+{
+  "name": "@oliphaunt/wasix-napi",
+  "version": "0.0.0",
+  "description": "Private build package for the Oliphaunt WASIX Node-API runtime.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/f0rr0/oliphaunt.git",
+    "directory": "src/runtimes/wasix-napi"
+  },
+  "oliphaunt": {
+    "runtimeProduct": "liboliphaunt-wasix",
+    "runtimeVersion": "0.1.1",
+    "rustBindingProduct": "oliphaunt-wasix-rust",
+    "rustBindingVersion": "0.1.1",
+    "addonAbiVersion": 1,
+    "nodeApiVersion": 8,
+    "profiles": [
+      "standard",
+      "icu"
+    ]
+  },
+  "files": [
+    "src",
+    "packages",
+    "tools",
+    "Cargo.toml",
+    "build.rs",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "scripts": {
+    "build": "bash tools/build-native.sh",
+    "check": "bash tools/check-package.sh check-static",
+    "package": "node tools/package-platform.mjs"
+  },
+  "engines": {
+    "node": ">=22.13 <25",
+    "bun": ">=1.3.14",
+    "deno": ">=2.8.1"
+  }
+}

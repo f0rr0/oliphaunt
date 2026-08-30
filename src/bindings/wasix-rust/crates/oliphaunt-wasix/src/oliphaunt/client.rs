@@ -41,8 +41,8 @@ use crate::oliphaunt::storage::PgDataStorage;
 use crate::oliphaunt::storage::StorageRoot;
 #[cfg(feature = "tools")]
 use crate::oliphaunt::tools::{
-    DirectToolSocket, PgDumpOptions, PsqlOptions, is_direct_tool_outcome_unknown,
-    run_direct_pg_dump, run_direct_psql,
+    DirectToolSocket, PgDumpOptions, PostgresToolOutput, PsqlOptions, decode_tool_output,
+    is_direct_tool_outcome_unknown, run_direct_pg_dump_output, run_direct_psql_output,
 };
 #[cfg(feature = "tools")]
 use crate::oliphaunt::wire::{FrontendFrameKind, FrontendFrameReader, classify_frontend_message};
@@ -1024,23 +1024,43 @@ impl Oliphaunt {
 
     #[cfg(feature = "tools")]
     pub(crate) fn run_pg_dump_tool(&mut self, options: PgDumpOptions) -> Result<String> {
+        self.run_pg_dump_tool_output(options)
+            .and_then(|output| decode_tool_output("pg_dump", output))
+    }
+
+    #[cfg(feature = "tools")]
+    pub(crate) fn run_pg_dump_tool_output(
+        &mut self,
+        options: PgDumpOptions,
+    ) -> Result<PostgresToolOutput> {
         options.validate()?;
         self.prepare_tool_session()?;
         let startup = self.backend.startup_config().clone();
-        let result = run_direct_pg_dump(&startup.username, &startup.database, &options, |socket| {
-            self.serve_direct_tool_protocol(socket)
-        });
+        let result =
+            run_direct_pg_dump_output(&startup.username, &startup.database, &options, |socket| {
+                self.serve_direct_tool_protocol(socket)
+            });
         self.finish_tool_session(result)
     }
 
     #[cfg(feature = "tools")]
     pub(crate) fn run_psql_tool(&mut self, options: PsqlOptions) -> Result<String> {
+        self.run_psql_tool_output(options)
+            .and_then(|output| decode_tool_output("psql", output))
+    }
+
+    #[cfg(feature = "tools")]
+    pub(crate) fn run_psql_tool_output(
+        &mut self,
+        options: PsqlOptions,
+    ) -> Result<PostgresToolOutput> {
         options.validate()?;
         self.prepare_tool_session()?;
         let startup = self.backend.startup_config().clone();
-        let result = run_direct_psql(&startup.username, &startup.database, &options, |socket| {
-            self.serve_direct_tool_protocol(socket)
-        });
+        let result =
+            run_direct_psql_output(&startup.username, &startup.database, &options, |socket| {
+                self.serve_direct_tool_protocol(socket)
+            });
         self.finish_tool_session(result)
     }
 
@@ -1057,7 +1077,7 @@ impl Oliphaunt {
     }
 
     #[cfg(feature = "tools")]
-    fn finish_tool_session(&mut self, result: Result<String>) -> Result<String> {
+    fn finish_tool_session<T>(&mut self, result: Result<T>) -> Result<T> {
         let outcome_unknown = result
             .as_ref()
             .err()
@@ -1203,10 +1223,22 @@ impl Oliphaunt {
         crate::error::public_result(self.run_pg_dump_tool(options))
     }
 
+    /// Run packaged `pg_dump` and return exact stdout/stderr bytes.
+    #[cfg(feature = "tools")]
+    pub fn pg_dump_output(&mut self, options: PgDumpOptions) -> crate::Result<PostgresToolOutput> {
+        crate::error::public_result(self.run_pg_dump_tool_output(options))
+    }
+
     /// Run packaged non-interactive `psql` directly against this database.
     #[cfg(feature = "tools")]
     pub fn psql(&mut self, options: PsqlOptions) -> crate::Result<String> {
         crate::error::public_result(self.run_psql_tool(options))
+    }
+
+    /// Run packaged non-interactive `psql` and return exact stdout/stderr bytes.
+    #[cfg(feature = "tools")]
+    pub fn psql_output(&mut self, options: PsqlOptions) -> crate::Result<PostgresToolOutput> {
+        crate::error::public_result(self.run_psql_tool_output(options))
     }
 
     fn backup_inner(&mut self) -> Result<Vec<u8>> {

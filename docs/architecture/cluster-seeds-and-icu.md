@@ -277,7 +277,7 @@ These rules are locked:
 - PostgreSQL trusts only `OLIPHAUNT_INTERNAL_ICU_READY=1` during controlled
   `initdb`; ambient `ICU_DATA` alone cannot select a catalog profile.
 - The internal readiness variable is removed or set deterministically for every
-  child process. It is not a public feature switch.
+  runtime instance. It is not a public feature switch.
 - A published package with a missing, malformed, wrong-profile, or incompatible
   seed fails closed. Maintainer/source builds may use the explicit local
   `initdb` fallback.

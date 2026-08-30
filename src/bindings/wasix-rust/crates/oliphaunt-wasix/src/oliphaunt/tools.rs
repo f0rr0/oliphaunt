@@ -75,6 +75,8 @@ pub struct PostgresToolError {
     exit_code: Option<i32>,
     stdout: String,
     stderr: String,
+    stdout_bytes: Vec<u8>,
+    stderr_bytes: Vec<u8>,
     cause: anyhow::Error,
 }
 
@@ -95,6 +97,24 @@ pub(crate) fn is_direct_tool_outcome_unknown(error: &anyhow::Error) -> bool {
 }
 
 impl PostgresToolError {
+    fn from_output(
+        tool: &'static str,
+        exit_code: Option<i32>,
+        stdout_bytes: Vec<u8>,
+        stderr_bytes: Vec<u8>,
+        cause: anyhow::Error,
+    ) -> Self {
+        Self {
+            tool,
+            exit_code,
+            stdout: String::from_utf8_lossy(&stdout_bytes).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
+            stdout_bytes,
+            stderr_bytes,
+            cause,
+        }
+    }
+
     pub fn tool(&self) -> &'static str {
         self.tool
     }
@@ -109,6 +129,16 @@ impl PostgresToolError {
 
     pub fn stderr(&self) -> &str {
         &self.stderr
+    }
+
+    /// Exact stdout bytes, including output which is not valid UTF-8.
+    pub fn stdout_bytes(&self) -> &[u8] {
+        &self.stdout_bytes
+    }
+
+    /// Exact stderr bytes, including output which is not valid UTF-8.
+    pub fn stderr_bytes(&self) -> &[u8] {
+        &self.stderr_bytes
     }
 }
 
@@ -413,9 +443,28 @@ fn psql_wasm_asset() -> Result<&'static [u8]> {
         })
 }
 
-struct ToolOutput {
+/// Exact byte output from a packaged PostgreSQL frontend program.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PostgresToolOutput {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
+}
+
+impl PostgresToolOutput {
+    /// Exact stdout bytes without UTF-8 conversion.
+    pub fn stdout(&self) -> &[u8] {
+        &self.stdout
+    }
+
+    /// Exact stderr bytes without UTF-8 conversion.
+    pub fn stderr(&self) -> &[u8] {
+        &self.stderr
+    }
+
+    /// Consume the output into its exact stdout and stderr byte vectors.
+    pub fn into_parts(self) -> (Vec<u8>, Vec<u8>) {
+        (self.stdout, self.stderr)
+    }
 }
 
 struct ToolInvocation<'a, N> {
@@ -428,7 +477,7 @@ struct ToolInvocation<'a, N> {
     args: Vec<String>,
 }
 
-fn run_wasix_client_tool<N>(invocation: ToolInvocation<'_, N>) -> Result<ToolOutput>
+fn run_wasix_client_tool<N>(invocation: ToolInvocation<'_, N>) -> Result<PostgresToolOutput>
 where
     N: VirtualNetworking + Sync,
 {
@@ -509,22 +558,16 @@ where
             .find_map(|error| error.downcast_ref::<WasiRuntimeError>())
             .and_then(WasiRuntimeError::as_exit_code)
             .map(|code| code.raw());
-        let stdout =
-            String::from_utf8_lossy(&stdout.lock().expect("stdout capture poisoned")).into_owned();
-        let stderr =
-            String::from_utf8_lossy(&stderr.lock().expect("stderr capture poisoned")).into_owned();
-        return Err(anyhow::Error::new(PostgresToolError {
-            tool: name,
-            exit_code,
-            stdout,
-            stderr,
-            cause,
-        }));
+        let stdout = stdout.lock().expect("stdout capture poisoned").clone();
+        let stderr = stderr.lock().expect("stderr capture poisoned").clone();
+        return Err(anyhow::Error::new(PostgresToolError::from_output(
+            name, exit_code, stdout, stderr, cause,
+        )));
     }
 
     let stdout = std::mem::take(&mut *stdout.lock().expect("stdout capture poisoned"));
     let stderr = std::mem::take(&mut *stderr.lock().expect("stderr capture poisoned"));
-    Ok(ToolOutput { stdout, stderr })
+    Ok(PostgresToolOutput { stdout, stderr })
 }
 
 fn pg_dump_with_networking<N>(
@@ -533,7 +576,7 @@ fn pg_dump_with_networking<N>(
     database: &str,
     options: &PgDumpOptions,
     networking: N,
-) -> Result<String>
+) -> Result<PostgresToolOutput>
 where
     N: VirtualNetworking + Sync,
 {
@@ -547,7 +590,7 @@ where
         format!("--port={}", addr.port()),
         format!("--dbname={database}"),
     ]);
-    let output = run_wasix_client_tool(ToolInvocation {
+    run_wasix_client_tool(ToolInvocation {
         name: "pg_dump",
         wasm: pg_dump_wasm_asset()?,
         load_module: aot::load_pg_dump_module,
@@ -555,8 +598,7 @@ where
         networking,
         stdin: None,
         args,
-    })?;
-    decode_tool_output("pg_dump", output)
+    })
 }
 
 fn run_psql_with_networking<N>(
@@ -565,7 +607,7 @@ fn run_psql_with_networking<N>(
     database: &str,
     options: &PsqlOptions,
     networking: N,
-) -> Result<String>
+) -> Result<PostgresToolOutput>
 where
     N: VirtualNetworking + Sync,
 {
@@ -575,7 +617,7 @@ where
         _ => None,
     };
     let args = psql_args(addr, username, database, options);
-    let output = run_wasix_client_tool(ToolInvocation {
+    run_wasix_client_tool(ToolInvocation {
         name: "psql",
         wasm: psql_wasm_asset()?,
         load_module: aot::load_psql_module,
@@ -583,8 +625,7 @@ where
         networking,
         stdin,
         args,
-    })?;
-    decode_tool_output("psql", output)
+    })
 }
 
 fn psql_args(
@@ -613,28 +654,28 @@ fn psql_args(
     args
 }
 
-fn decode_tool_output(tool: &'static str, output: ToolOutput) -> Result<String> {
-    let ToolOutput { stdout, stderr } = output;
+pub(crate) fn decode_tool_output(tool: &'static str, output: PostgresToolOutput) -> Result<String> {
+    let PostgresToolOutput { stdout, stderr } = output;
     String::from_utf8(stdout).map_err(|cause| {
-        let stdout = String::from_utf8_lossy(cause.as_bytes()).into_owned();
-        anyhow::Error::new(PostgresToolError {
+        let stdout = cause.as_bytes().to_vec();
+        anyhow::Error::new(PostgresToolError::from_output(
             tool,
-            exit_code: Some(0),
+            Some(0),
             stdout,
-            stderr: String::from_utf8_lossy(&stderr).into_owned(),
-            cause: anyhow!(cause),
-        })
+            stderr,
+            anyhow!(cause),
+        ))
     })
 }
 
 pub(crate) type DirectToolSocket = TcpSocketHalf;
 
-pub(crate) fn run_direct_pg_dump<F>(
+pub(crate) fn run_direct_pg_dump_output<F>(
     username: &str,
     database: &str,
     options: &PgDumpOptions,
     serve: F,
-) -> Result<String>
+) -> Result<PostgresToolOutput>
 where
     F: FnOnce(DirectToolSocket) -> Result<()>,
 {
@@ -649,12 +690,12 @@ where
     )
 }
 
-pub(crate) fn run_direct_psql<F>(
+pub(crate) fn run_direct_psql_output<F>(
     username: &str,
     database: &str,
     options: &PsqlOptions,
     serve: F,
-) -> Result<String>
+) -> Result<PostgresToolOutput>
 where
     F: FnOnce(DirectToolSocket) -> Result<()>,
 {
@@ -669,9 +710,10 @@ where
     )
 }
 
-fn run_direct_tool<R, F>(run: R, serve: F) -> Result<String>
+fn run_direct_tool<T, R, F>(run: R, serve: F) -> Result<T>
 where
-    R: FnOnce(DirectToolNetworking) -> Result<String> + Send + 'static,
+    T: Send + 'static,
+    R: FnOnce(DirectToolNetworking) -> Result<T> + Send + 'static,
     F: FnOnce(DirectToolSocket) -> Result<()>,
 {
     let (socket_tx, socket_rx) = mpsc::sync_channel(1);
@@ -688,11 +730,11 @@ where
     finish_direct_tool(connection_started, serve_result, run_result)
 }
 
-fn finish_direct_tool(
+fn finish_direct_tool<T>(
     connection_started: bool,
     serve_result: Result<()>,
-    run_result: Result<String>,
-) -> Result<String> {
+    run_result: Result<T>,
+) -> Result<T> {
     match (serve_result, run_result) {
         (Ok(()), Ok(output)) => Ok(output),
         (Err(error), Ok(_)) if connection_started => Err(error.context(DirectToolOutcomeUnknown)),
@@ -900,9 +942,9 @@ impl VirtualTcpSocket for DirectToolTcpSocket {
     }
 }
 
-fn receive_direct_tool_socket(
+fn receive_direct_tool_socket<T>(
     socket_rx: &Receiver<DirectToolSocket>,
-    runner: &thread::JoinHandle<Result<String>>,
+    runner: &thread::JoinHandle<Result<T>>,
 ) -> Result<DirectToolSocket> {
     let started = Instant::now();
     loop {
@@ -1153,7 +1195,7 @@ mod tests {
     #[test]
     fn failure_before_direct_tool_connection_has_known_outcome() {
         let error = run_direct_tool(
-            |_| Err(anyhow!("tool failed before opening its virtual connection")),
+            |_| Err::<String, _>(anyhow!("tool failed before opening its virtual connection")),
             |_| panic!("a pre-connection failure must not enter the database protocol server"),
         )
         .expect_err("the tool runner must report its pre-connection failure");
@@ -1176,9 +1218,32 @@ mod tests {
     }
 
     #[test]
+    fn tool_failures_retain_exact_non_utf8_output_bytes() {
+        let error = decode_tool_output(
+            "pg_dump",
+            PostgresToolOutput {
+                stdout: vec![0xff, 0, b'a'],
+                stderr: vec![0x80, 0xfe],
+            },
+        )
+        .expect_err("invalid UTF-8 must remain a structured tool failure");
+        let error = error
+            .downcast_ref::<PostgresToolError>()
+            .expect("invalid UTF-8 must expose exact tool diagnostics");
+
+        assert_eq!(error.exit_code(), Some(0));
+        assert_eq!(error.stdout_bytes(), &[0xff, 0, b'a']);
+        assert_eq!(error.stderr_bytes(), &[0x80, 0xfe]);
+        assert!(error.stdout().contains('\u{fffd}'));
+        assert!(error.stderr().contains('\u{fffd}'));
+    }
+
+    #[test]
     fn runner_panic_is_unknown_only_after_direct_tool_connection() {
         let before_connection = run_direct_tool(
-            |_| panic!("tool runner panicked before opening its virtual connection"),
+            |_| -> Result<String> {
+                panic!("tool runner panicked before opening its virtual connection")
+            },
             |_| panic!("a pre-connection panic must not enter the database protocol server"),
         )
         .expect_err("the tool runner panic must become an ordinary error");
@@ -1189,7 +1254,7 @@ mod tests {
                 .contains("runner thread panicked")
         );
 
-        let after_connection = finish_direct_tool(
+        let after_connection = finish_direct_tool::<String>(
             true,
             Ok(()),
             Err(anyhow!("direct WASIX tool runner thread panicked")),
@@ -1206,23 +1271,24 @@ mod tests {
         assert!(is_direct_tool_outcome_unknown(&broken_connection));
 
         let ordinary_tool_failure =
-            finish_direct_tool(true, Ok(()), Err(postgres_tool_failure(Some(1))))
+            finish_direct_tool::<String>(true, Ok(()), Err(postgres_tool_failure(Some(1))))
                 .expect_err("a normal tool failure remains an error");
         assert!(!is_direct_tool_outcome_unknown(&ordinary_tool_failure));
 
-        let runtime_failure = finish_direct_tool(true, Ok(()), Err(postgres_tool_failure(None)))
-            .expect_err("an internal WASIX tool failure has an unknown outcome after connect");
+        let runtime_failure =
+            finish_direct_tool::<String>(true, Ok(()), Err(postgres_tool_failure(None)))
+                .expect_err("an internal WASIX tool failure has an unknown outcome after connect");
         assert!(is_direct_tool_outcome_unknown(&runtime_failure));
     }
 
     fn postgres_tool_failure(exit_code: Option<i32>) -> anyhow::Error {
-        anyhow::Error::new(PostgresToolError {
-            tool: "psql",
+        anyhow::Error::new(PostgresToolError::from_output(
+            "psql",
             exit_code,
-            stdout: String::new(),
-            stderr: "tool failed".to_owned(),
-            cause: anyhow!("WASIX tool process failed"),
-        })
+            Vec::new(),
+            b"tool failed".to_vec(),
+            anyhow!("WASIX tool process failed"),
+        ))
     }
 
     #[cfg(feature = "extension-pgtap")]

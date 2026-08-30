@@ -1,9 +1,11 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { arch, platform } from 'node:os';
 import { dirname, isAbsolute, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import { readPortableArchiveEntries } from '../../../../tools/release/portable-archive.mjs';
 import { WASIX_RUNTIME_NPM_ASSET_PATHS } from '../../../../tools/release/wasix-runtime-npm-contract.mjs';
 import {
   renderWasixRuntimeDescriptorModule,
@@ -11,6 +13,7 @@ import {
 } from '../../../../tools/release/wasix-runtime-npm-descriptor.mjs';
 import { prepareWasixToolsTypescriptPackage } from '../../../../tools/release/wasix-tools-typescript-package.mjs';
 import { prepareWasixTypescriptPackage } from '../../../../tools/release/wasix-typescript-package.mjs';
+import { portableCommand } from '../../../runtimes/wasix-napi/tools/portable-command.mjs';
 
 const execFileAsync = promisify(execFile);
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -20,6 +23,7 @@ const buildOutputsFile = resolve(
   repositoryRoot,
   'target/oliphaunt-wasix/wasix-build/build/outputs.json',
 );
+const nativeCarrierRoot = resolve(repositoryRoot, 'target/oliphaunt-wasix-napi/npm-packages');
 const databaseRootContractFile = resolve(
   repositoryRoot,
   'src/shared/fixtures/storage/database-root.json',
@@ -30,12 +34,17 @@ export async function createPackedWasixConsumer({
   consumerName = 'oliphaunt-wasix-node-consumer',
   includePgtap = false,
   includeTools = false,
+  includeNative = true,
   useStubRuntime = false,
+  packageManager = 'pnpm',
 }) {
   if (typeof scratch !== 'string' || !isAbsolute(scratch)) {
     throw new Error(
-      'packed WASIX Node/Bun/Deno host fixture requires an absolute scratch directory',
+      'packed WASIX Node/Bun/Deno/Electron host fixture requires an absolute scratch directory',
     );
+  }
+  if (!['npm', 'pnpm'].includes(packageManager)) {
+    throw new Error(`packed WASIX host fixture does not support package manager ${packageManager}`);
   }
   const releaseVersions = JSON.parse(
     await readFile(resolve(repositoryRoot, '.release-please-manifest.json'), 'utf8'),
@@ -46,6 +55,12 @@ export async function createPackedWasixConsumer({
   await mkdir(tarballs, { recursive: true });
 
   const binding = await packBinding({ scratch, tarballs });
+  const nativeCarrier = includeNative
+    ? await findNativeCarrier({
+        nativeVersion: binding.nativeVersion,
+        runtimeVersion,
+      })
+    : undefined;
   const toolsCarrier = includeTools
     ? await packToolsCarrier({ scratch, tarballs, runtimeVersion })
     : undefined;
@@ -64,12 +79,21 @@ export async function createPackedWasixConsumer({
   const consumer = resolve(scratch, 'consumer');
   await mkdir(consumer, { recursive: true });
   const dependencies = {
-    [runtime.name]: `file:${runtime.file}`,
-    [binding.name]: `file:${binding.file}`,
+    [runtime.name]: pathToFileURL(runtime.file).href,
+    [binding.name]: pathToFileURL(binding.file).href,
   };
-  if (extension !== undefined) dependencies[extension.name] = `file:${extension.file}`;
-  if (toolsCarrier !== undefined) dependencies[toolsCarrier.name] = `file:${toolsCarrier.file}`;
-  if (toolsFacade !== undefined) dependencies[toolsFacade.name] = `file:${toolsFacade.file}`;
+  if (nativeCarrier !== undefined) {
+    dependencies[nativeCarrier.name] = pathToFileURL(nativeCarrier.file).href;
+  }
+  if (extension !== undefined) {
+    dependencies[extension.name] = pathToFileURL(extension.file).href;
+  }
+  if (toolsCarrier !== undefined) {
+    dependencies[toolsCarrier.name] = pathToFileURL(toolsCarrier.file).href;
+  }
+  if (toolsFacade !== undefined) {
+    dependencies[toolsFacade.name] = pathToFileURL(toolsFacade.file).href;
+  }
   await writeJson(resolve(consumer, 'package.json'), {
     name: consumerName,
     version: '0.0.0',
@@ -77,27 +101,44 @@ export async function createPackedWasixConsumer({
     type: 'module',
     dependencies,
   });
-  const localPackages = [runtime, binding, extension, toolsCarrier, toolsFacade].filter(Boolean);
+  const localPackages = [
+    runtime,
+    binding,
+    nativeCarrier,
+    extension,
+    toolsCarrier,
+    toolsFacade,
+  ].filter(Boolean);
   await writeFile(
     resolve(consumer, 'pnpm-workspace.yaml'),
     `packages:\n  - .\noverrides:\n${localPackages
-      .map((candidate) => `  '${candidate.name}': file:${candidate.file}`)
+      .map((candidate) => `  '${candidate.name}': ${pathToFileURL(candidate.file).href}`)
       .join('\n')}\n`,
   );
-  await runFixtureCommand(
-    'pnpm',
-    ['install', '--ignore-scripts', '--no-frozen-lockfile'],
-    consumer,
-  );
+  if (packageManager === 'pnpm') {
+    await runFixtureCommand(
+      'pnpm',
+      ['install', '--ignore-scripts', '--no-frozen-lockfile'],
+      consumer,
+    );
+  } else {
+    await runFixtureCommand(
+      'npm',
+      ['install', '--ignore-scripts', '--no-audit', '--no-fund', '--package-lock=false'],
+      consumer,
+    );
+  }
   return {
     consumer,
     packages: {
       binding,
       runtime,
+      ...(nativeCarrier === undefined ? {} : { nativeCarrier }),
       ...(extension === undefined ? {} : { extension }),
       ...(toolsCarrier === undefined ? {} : { toolsCarrier }),
       ...(toolsFacade === undefined ? {} : { toolsFacade }),
     },
+    packageManager,
   };
 }
 
@@ -152,10 +193,16 @@ export default Object.freeze({
   return pack(staging, tarballs);
 }
 
-export async function runFixtureCommand(command, args, cwd, timeout = 120_000) {
-  return execFileAsync(command, args, {
+export async function runFixtureCommand(command, args, cwd, timeout = 120_000, extraEnv = {}) {
+  const invocation = portableCommand(command, args);
+  return execFileAsync(invocation.command, invocation.args, {
     cwd,
-    env: { ...process.env, PNPM_CONFIG_IGNORE_SCRIPTS: 'true' },
+    env: {
+      ...process.env,
+      NPM_CONFIG_IGNORE_SCRIPTS: 'true',
+      PNPM_CONFIG_IGNORE_SCRIPTS: 'true',
+      ...extraEnv,
+    },
     maxBuffer: 64 * 1024 * 1024,
     timeout,
   });
@@ -168,7 +215,128 @@ async function packBinding({ scratch, tarballs }) {
     await cp(resolve(packageRoot, name), resolve(staging, name), { recursive: true });
   }
   prepareWasixTypescriptPackage(staging);
-  return pack(staging, tarballs);
+  const manifest = JSON.parse(await readFile(resolve(staging, 'package.json'), 'utf8'));
+  const nativeVersion = manifest.oliphaunt?.wasixNapiVersion;
+  requireReleaseVersion(nativeVersion, 'oliphaunt-wasix-napi');
+  return { ...(await pack(staging, tarballs)), nativeVersion };
+}
+
+async function findNativeCarrier({ nativeVersion, runtimeVersion }) {
+  const expected = nativeCarrierIdentity(platform(), arch());
+  let names;
+  try {
+    names = (await readdir(nativeCarrierRoot)).filter((name) => name.endsWith('.tgz')).sort();
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+    throw new Error(
+      `packed WASIX Node/Bun/Deno/Electron smoke requires ${expected.name} ${nativeVersion} under ${nativeCarrierRoot}`,
+    );
+  }
+
+  const matches = [];
+  for (const filename of names) {
+    const file = resolve(nativeCarrierRoot, filename);
+    const entries = readPortableArchiveEntries(file);
+    const manifestEntry = entries.get('package/package.json');
+    if (!manifestEntry?.isFile || manifestEntry.isSymbolicLink) continue;
+    const manifest = JSON.parse(Buffer.from(manifestEntry.data()).toString('utf8'));
+    if (manifest.name !== expected.name || manifest.version !== nativeVersion) continue;
+    const artifactProvenance = validateNativeCarrierArchive(
+      file,
+      entries,
+      manifest,
+      expected,
+      runtimeVersion,
+    );
+    const bytes = await readFile(file);
+    matches.push({
+      file,
+      name: manifest.name,
+      version: manifest.version,
+      target: expected.target,
+      sha256: sha256(bytes),
+      size: bytes.length,
+      manifest,
+      artifactProvenance,
+      artifactProvenanceMember: 'package/artifact-provenance.json',
+    });
+  }
+  if (matches.length !== 1) {
+    throw new Error(
+      `packed WASIX Node/Bun/Deno/Electron smoke requires exactly one ${expected.name} ${nativeVersion} tarball under ${nativeCarrierRoot}; found ${matches.length}`,
+    );
+  }
+  return matches[0];
+}
+
+function validateNativeCarrierArchive(file, entries, manifest, expected, runtimeVersion) {
+  const label = file.slice(file.lastIndexOf('/') + 1);
+  if (
+    manifest.oliphaunt?.target !== expected.target ||
+    manifest.oliphaunt?.runtimeProduct !== 'liboliphaunt-wasix' ||
+    manifest.oliphaunt?.runtimeVersion !== runtimeVersion ||
+    manifest.oliphaunt?.addonAbiVersion !== 1 ||
+    manifest.oliphaunt?.nodeApiVersion !== 8 ||
+    JSON.stringify(manifest.oliphaunt?.profiles) !== JSON.stringify(['standard', 'icu'])
+  ) {
+    throw new Error(`${label} has incompatible WASIX Node-API carrier metadata`);
+  }
+  const provenanceEntry = entries.get('package/artifact-provenance.json');
+  if (!provenanceEntry?.isFile || provenanceEntry.isSymbolicLink) {
+    throw new Error(`${label} omits native artifact provenance`);
+  }
+  const provenance = JSON.parse(Buffer.from(provenanceEntry.data()).toString('utf8'));
+  if (
+    provenance.schema !== 'oliphaunt-wasix-napi-provenance-v1' ||
+    provenance.product !== 'oliphaunt-wasix-napi' ||
+    provenance.target !== expected.target ||
+    !/^[0-9a-f]{40}$/.test(provenance.artifactSourceSha ?? '')
+  ) {
+    throw new Error(`${label} has invalid native artifact provenance`);
+  }
+  if (
+    provenance.build?.cargoProfile !== 'release' ||
+    provenance.build?.incremental !== false ||
+    provenance.build?.codegenUnits !== 1 ||
+    provenance.build?.lto !== 'thin' ||
+    provenance.build?.strip !== 'symbols' ||
+    JSON.stringify(provenance.build?.features) !== JSON.stringify(['release']) ||
+    provenance.build?.targetTriple !== provenance.buildInputs?.targetTriple
+  ) {
+    throw new Error(`${label} has incompatible optimized native build provenance`);
+  }
+  const binary = 'oliphaunt_wasix_napi.node';
+  const entry = entries.get(`package/prebuilds/${binary}`);
+  if (!entry?.isFile || entry.isSymbolicLink || entry.size <= 0) {
+    throw new Error(`${label} omits non-empty ${binary}`);
+  }
+  const digest = sha256(Buffer.from(entry.data()));
+  if (
+    provenance.binary?.filename !== binary ||
+    provenance.binary?.sha256 !== digest ||
+    Object.hasOwn(provenance, 'binaries')
+  ) {
+    throw new Error(`${label} ${binary} differs from native artifact provenance`);
+  }
+  return provenance;
+}
+
+function nativeCarrierIdentity(currentPlatform, currentArch) {
+  if (currentPlatform === 'darwin' && currentArch === 'arm64') {
+    return { name: '@oliphaunt/wasix-napi-darwin-arm64', target: 'macos-arm64' };
+  }
+  if (currentPlatform === 'linux' && currentArch === 'arm64') {
+    return { name: '@oliphaunt/wasix-napi-linux-arm64-gnu', target: 'linux-arm64-gnu' };
+  }
+  if (currentPlatform === 'linux' && currentArch === 'x64') {
+    return { name: '@oliphaunt/wasix-napi-linux-x64-gnu', target: 'linux-x64-gnu' };
+  }
+  if (currentPlatform === 'win32' && currentArch === 'x64') {
+    return { name: '@oliphaunt/wasix-napi-win32-x64-msvc', target: 'windows-x64-msvc' };
+  }
+  throw new Error(
+    `packed WASIX Node/Bun/Deno/Electron smoke has no native carrier for ${currentPlatform}/${currentArch}`,
+  );
 }
 
 async function packToolsCarrier({ scratch, tarballs, runtimeVersion }) {

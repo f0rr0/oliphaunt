@@ -22,8 +22,8 @@ Use the generated TypeDoc reference for exact declarations.
 | Query values | `QueryParam`, `QueryResult`, `RawQueryResult`, `QueryField`, `CommandResult`, `ExecResult`, `DescribeResult` | Use decoded or lossless PostgreSQL parameter and result values |
 | Diagnostics | query-scoped `notices`, `PostgresError`, `WasixStorageError` | Distinguish PostgreSQL diagnostics from host persistence failures |
 | Extensions | `WasixExtensionDescriptor` | Materialize an exact independently packaged WASIX extension and its startup config; run normal database-local `CREATE EXTENSION`/`LOAD` explicitly in app or ORM migrations |
-| Optional tools | `pgDump`, `psql`, `PostgresToolError` from `@oliphaunt/wasix-tools` | Run a standard plain logical dump against direct or Worker handles, or non-interactive psql against a Worker handle |
-| Optional local server | `openServer`, `ServerListen`, `OliphauntServer.connectionString`, read-only `OliphauntServer.closed`, `close`, and `Symbol.asyncDispose` from `@oliphaunt/wasix-ts/server/node`, `/bun`, or `/deno` | Publish and lifecycle-manage one loopback TCP or PostgreSQL-named Unix endpoint on a socket-capable host |
+| Optional tools | `pgDump`, `psql`, `PostgresToolError` from `@oliphaunt/wasix-tools` | Run a standard plain logical dump against root, direct, or Worker handles; non-interactive psql accepts any native-host placement and requires a Worker handle in browsers |
+| Optional local server | `openServer`, `ServerListen`, `OliphauntServer.connectionString`, read-only `OliphauntServer.closed`, `close`, and `Symbol.asyncDispose` from `@oliphaunt/wasix-ts/server` | Publish and lifecycle-manage one loopback TCP or PostgreSQL-named Unix endpoint on Node, Bun, Deno, or Electron |
 
 ```ts
 const result = await database.query('select $1::int4 as answer', [41]);
@@ -53,10 +53,10 @@ close-only. Ordinary PostgreSQL statement errors that remain safely rollbackable
 do not automatically produce an aggregate.
 
 WASIX `close()` has one memoized terminal outcome. It stops admission as soon
-as close begins and lets already accepted database work finish. On the Worker
-surface, a bounded orderly-shutdown deadline requests forced Worker termination
-on expiry and awaits that attempt before releasing other resources; the
-caller-realm root has no Worker transport or forced-termination deadline. A
+as close begins and lets already accepted database work finish. The root actor
+drains its Rust owner, `/direct` closes on its owning thread, and `/worker`
+closes at quiescence, posts its reply, then exits itself without terminating an
+active Node-API frame. A
 rejected close still leaves `closed === true`; repeat calls return the same
 rejected promise rather than claiming the destroyed session can be retried.
 Provider close and allocation release are attempted before that rejection is
@@ -77,7 +77,7 @@ authoritative instead, poisons the database, and is never masked by a callback
 error.
 
 An unreachable database handle has generation-guarded best-effort cleanup. It
-can retire only its own Worker or caller-realm guest/storage lease, and a stale
+can retire only its own actor, direct guest/storage lease, or Worker, and a stale
 finalizer is a no-op. This is a leak-safety fallback, not a prompt lifecycle
 boundary; use `close()` or `await using` whenever teardown must be observed.
 

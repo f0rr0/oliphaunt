@@ -8,6 +8,8 @@ packages:
   - "src/runtimes/broker/packages/*"
   - "src/runtimes/node-direct"
   - "src/runtimes/node-direct/packages/*"
+  - "src/runtimes/wasix-napi"
+  - "src/runtimes/wasix-napi/packages/*"
   - "src/sdks/react-native"
   - "examples/browser-wasix"
   - "examples/react-native-expo"

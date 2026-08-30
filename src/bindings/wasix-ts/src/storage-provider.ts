@@ -54,33 +54,6 @@ export type WasixStorageLease = {
   close(directory: StorageDirectory | undefined, outcome: 'clean' | 'failed'): Promise<void>;
 };
 
-export type NodeDirectoryStorageAcquirer = (
-  path: string,
-  loadClusterSeed: WasixClusterSeedLoader,
-  identity: WasixPhysicalIdentity,
-  ownerToken?: string,
-) => Promise<WasixStorageLease>;
-
-export type NodeDirectoryStorageRestorer = (
-  path: string,
-  snapshot: StoredSnapshot,
-  identity: WasixPhysicalIdentity,
-  ownerToken?: string,
-) => Promise<void>;
-
-let acquireNodeDirectory: NodeDirectoryStorageAcquirer | undefined;
-let restoreNodeDirectory: NodeDirectoryStorageRestorer | undefined;
-
-/** @internal Installed only by a Node host realm so browser graphs stay Node-free. */
-export function installNodeDirectoryStorageProvider(acquire: NodeDirectoryStorageAcquirer): void {
-  acquireNodeDirectory = acquire;
-}
-
-/** @internal Installed only by a Node host realm so browser graphs stay Node-free. */
-export function installNodeDirectoryStorageRestorer(restore: NodeDirectoryStorageRestorer): void {
-  restoreNodeDirectory = restore;
-}
-
 /** Restore a validated snapshot into a closed, empty persistent destination. */
 export async function restoreWasixStorage(
   storage: SerializedWasixStorage,
@@ -104,13 +77,10 @@ export async function restoreWasixStorage(
       return restoreOpfsStorage(storage.name, snapshot, identity);
     }
     case 'directory':
-      if (restoreNodeDirectory === undefined) {
-        throw new WasixStorageError(
-          'directory restore is unavailable in this @oliphaunt/wasix-ts host',
-          { code: 'unavailable', commitState: 'unchanged' },
-        );
-      }
-      return restoreNodeDirectory(storage.path, snapshot, identity, storage.ownerToken);
+      throw new WasixStorageError(
+        'directory restore is owned directly by the native Rust runtime',
+        { code: 'unavailable', commitState: 'unchanged' },
+      );
   }
 }
 
@@ -139,16 +109,13 @@ export async function acquireWasixStorage(
       return acquireOpfsStorage(storage.name, loadClusterSeed, identity);
     }
     case 'directory':
-      if (acquireNodeDirectory === undefined) {
-        throw new WasixStorageError(
-          'directory storage is unavailable in this @oliphaunt/wasix-ts host',
-          {
-            code: 'unavailable',
-            commitState: 'unchanged',
-          },
-        );
-      }
-      return acquireNodeDirectory(storage.path, loadClusterSeed, identity, storage.ownerToken);
+      throw new WasixStorageError(
+        'directory storage is owned directly by the native Rust runtime',
+        {
+          code: 'unavailable',
+          commitState: 'unchanged',
+        },
+      );
   }
 }
 

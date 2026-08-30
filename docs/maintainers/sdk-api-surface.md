@@ -515,6 +515,7 @@ These symbols require no optional Cargo feature. Target-gated symbols (for examp
 - `oliphaunt_wasix::Error`
 - `oliphaunt_wasix::Error.kind()`
 - `oliphaunt_wasix::Error.postgres_error()`
+- `oliphaunt_wasix::Error.storage_error()`
 - `oliphaunt_wasix::Error.transaction_callback_database_errors()`
 - `oliphaunt_wasix::Error.transaction_rollback_errors()`
 - `oliphaunt_wasix::ErrorKind`
@@ -675,6 +676,13 @@ These symbols require no optional Cargo feature. Target-gated symbols (for examp
 - `oliphaunt_wasix::StatementDescription.notices()`
 - `oliphaunt_wasix::StatementDescription.parameter_types()`
 - `oliphaunt_wasix::StatementResult`
+- `oliphaunt_wasix::StorageCommitState`
+- `oliphaunt_wasix::StorageErrorCode`
+- `oliphaunt_wasix::StorageErrorDetails`
+- `oliphaunt_wasix::StorageErrorDetails.code()`
+- `oliphaunt_wasix::StorageErrorDetails.commit_state()`
+- `oliphaunt_wasix::StorageErrorDetails.phase()`
+- `oliphaunt_wasix::StorageErrorPhase`
 - `oliphaunt_wasix::Transaction`
 - `oliphaunt_wasix::Transaction.describe()`
 - `oliphaunt_wasix::Transaction.exec()`
@@ -773,7 +781,9 @@ These symbols require no optional Cargo feature. Target-gated symbols (for examp
 - `oliphaunt_wasix::AsyncOliphaunt.psql()`
 - `oliphaunt_wasix::Error.tool_error()`
 - `oliphaunt_wasix::Oliphaunt.pg_dump()`
+- `oliphaunt_wasix::Oliphaunt.pg_dump_output()`
 - `oliphaunt_wasix::Oliphaunt.psql()`
+- `oliphaunt_wasix::Oliphaunt.psql_output()`
 - `oliphaunt_wasix::tools::PgDumpOptions`
 - `oliphaunt_wasix::tools::PgDumpOptions.arg()`
 - `oliphaunt_wasix::tools::PgDumpOptions.args()`
@@ -781,8 +791,14 @@ These symbols require no optional Cargo feature. Target-gated symbols (for examp
 - `oliphaunt_wasix::tools::PostgresToolError`
 - `oliphaunt_wasix::tools::PostgresToolError.exit_code()`
 - `oliphaunt_wasix::tools::PostgresToolError.stderr()`
+- `oliphaunt_wasix::tools::PostgresToolError.stderr_bytes()`
 - `oliphaunt_wasix::tools::PostgresToolError.stdout()`
+- `oliphaunt_wasix::tools::PostgresToolError.stdout_bytes()`
 - `oliphaunt_wasix::tools::PostgresToolError.tool()`
+- `oliphaunt_wasix::tools::PostgresToolOutput`
+- `oliphaunt_wasix::tools::PostgresToolOutput.into_parts()`
+- `oliphaunt_wasix::tools::PostgresToolOutput.stderr()`
+- `oliphaunt_wasix::tools::PostgresToolOutput.stdout()`
 - `oliphaunt_wasix::tools::PsqlOptions`
 - `oliphaunt_wasix::tools::PsqlOptions.arg()`
 - `oliphaunt_wasix::tools::PsqlOptions.args()`
@@ -1752,10 +1768,9 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 
 - `. = {"types":"./lib/index.d.ts","deno":"./lib/index.deno.js","bun":"./lib/index.bun.js","node":"./lib/index.node.js","browser":"./lib/index.js","default":"./lib/index.js"}`
 - `./worker = {"types":"./lib/worker-entry.d.ts","deno":"./lib/worker-entry.deno.js","bun":"./lib/worker-entry.bun.js","node":"./lib/worker-entry.node.js","browser":"./lib/worker-entry.js","default":"./lib/worker-entry.js"}`
+- `./direct = {"types":"./lib/direct.node.d.ts","deno":"./lib/direct.node.js","bun":"./lib/direct.node.js","node":"./lib/direct.node.js"}`
 - `./internal/tools = {"types":"./lib/internal.d.ts","deno":"./lib/internal.node.js","bun":"./lib/internal.node.js","node":"./lib/internal.node.js","browser":"./lib/internal.js","default":"./lib/internal.js"}`
-- `./server/node = {"types":"./lib/server.node.d.ts","node":"./lib/server.node.js"}`
-- `./server/bun = {"types":"./lib/server.node.d.ts","bun":"./lib/server.node.js"}`
-- `./server/deno = {"types":"./lib/server.node.d.ts","deno":"./lib/server.node.js"}`
+- `./server = {"types":"./lib/server.node.d.ts","deno":"./lib/server.node.js","bun":"./lib/server.node.js","node":"./lib/server.node.js"}`
 - `./storage/indexed-db = {"types":"./lib/storage/indexed-db.d.ts","default":"./lib/storage/indexed-db.js"}`
 - `./storage/opfs = {"types":"./lib/storage/opfs.d.ts","default":"./lib/storage/opfs.js"}`
 - `./storage/node = {"types":"./lib/storage/node.d.ts","node":"./lib/storage/node.js"}`
@@ -1803,6 +1818,7 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 - `WasixStorage`
 - `WasixStorageCommitState`
 - `WasixStorageErrorCode`
+- `WasixStoragePhase`
 
 ### Values
 
@@ -1935,6 +1951,7 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 - `WasixStorageError.code`
 - `WasixStorageError.commitState`
 - `WasixStorageError.constructor()`
+- `WasixStorageError.phase`
 
 ### Worker subpath: @oliphaunt/wasix-ts/worker
 
@@ -1978,6 +1995,7 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 - `WasixStorage`
 - `WasixStorageCommitState`
 - `WasixStorageErrorCode`
+- `WasixStoragePhase`
 
 #### Values
 
@@ -2110,6 +2128,7 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 - `WasixStorageError.code`
 - `WasixStorageError.commitState`
 - `WasixStorageError.constructor()`
+- `WasixStorageError.phase`
 
 ### Storage subpath: @oliphaunt/wasix-ts/storage/indexed-db
 
@@ -2131,16 +2150,12 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 
 - `directory`
 
-### Server subpaths: @oliphaunt/wasix-ts/server/{node,bun,deno}
+### Server subpath: @oliphaunt/wasix-ts/server
 
 - `OliphauntServer`
 - `ServerListen`
 - `ServerOpenConfig`
 - `openServer`
-- `OliphauntServer.[Symbol.asyncDispose]()`
-- `OliphauntServer.close()`
-- `OliphauntServer.closed`
-- `OliphauntServer.connectionString`
 
 ## WASIX TypeScript tools: @oliphaunt/wasix-tools
 

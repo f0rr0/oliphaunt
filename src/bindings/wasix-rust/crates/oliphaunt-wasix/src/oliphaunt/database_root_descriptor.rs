@@ -3,10 +3,11 @@ use std::io::Write;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 
 use super::assets;
+use crate::{StorageCommitState, StorageErrorCode, StorageErrorPhase};
 
 pub(crate) const DESCRIPTOR_FILE: &str = ".oliphaunt.json";
 pub(crate) const PGDATA_DIRECTORY: &str = "pgdata";
@@ -36,10 +37,11 @@ pub(crate) fn inspect_directory_root(root: &Path) -> Result<DirectoryState> {
     let mut has_pgdata = false;
     let mut unexpected = None;
 
-    for entry in
-        fs::read_dir(root).with_context(|| format!("read database root {}", root.display()))?
+    for entry in fs::read_dir(root)
+        .with_context(|| format!("read database root {}", root.display()))
+        .map_err(open_unavailable)?
     {
-        let entry = entry?;
+        let entry = entry.map_err(|error| open_unavailable(error.into()))?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
         match name.as_ref() {
@@ -50,21 +52,30 @@ pub(crate) fn inspect_directory_root(root: &Path) -> Result<DirectoryState> {
     }
 
     if let Some(name) = unexpected {
-        bail!(
-            "database root {} contains unexpected entry {name:?}",
-            root.display()
-        );
+        return Err(open_storage_message(
+            format!(
+                "database root {} contains unexpected entry {name:?}",
+                root.display()
+            ),
+            StorageErrorCode::Corrupt,
+        ));
     }
     match (has_descriptor, has_pgdata) {
         (false, false) => Ok(DirectoryState::New),
-        (true, false) => bail!(
-            "database root {} contains {DESCRIPTOR_FILE} without {PGDATA_DIRECTORY}",
-            root.display()
-        ),
-        (false, true) => bail!(
-            "database root {} contains PGDATA without {DESCRIPTOR_FILE}; refusing to adopt unverified data",
-            root.display()
-        ),
+        (true, false) => Err(open_storage_message(
+            format!(
+                "database root {} contains {DESCRIPTOR_FILE} without {PGDATA_DIRECTORY}",
+                root.display()
+            ),
+            StorageErrorCode::Incomplete,
+        )),
+        (false, true) => Err(open_storage_message(
+            format!(
+                "database root {} contains PGDATA without {DESCRIPTOR_FILE}; refusing to adopt unverified data",
+                root.display()
+            ),
+            StorageErrorCode::Incomplete,
+        )),
         (true, true) => {
             read_validated_directory(root)?;
             Ok(DirectoryState::Existing)
@@ -74,13 +85,16 @@ pub(crate) fn inspect_directory_root(root: &Path) -> Result<DirectoryState> {
 
 fn read_validated_directory(root: &Path) -> Result<DatabaseRootDescriptor> {
     let pgdata = root.join(PGDATA_DIRECTORY);
-    let metadata = fs::symlink_metadata(&pgdata)
-        .with_context(|| format!("inspect PGDATA {}", pgdata.display()))?;
-    ensure!(
-        metadata.is_dir() && !metadata.file_type().is_symlink(),
-        "database root {} has an unsafe pgdata entry",
-        root.display()
-    );
+    let metadata = required_open_metadata(&pgdata, "PGDATA")?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(open_storage_message(
+            format!(
+                "database root {} has an unsafe pgdata entry",
+                root.display()
+            ),
+            StorageErrorCode::Corrupt,
+        ));
+    }
     let descriptor = read_descriptor(root)?;
     validate_descriptor(root, &descriptor)?;
     validate_complete_pgdata(root, &pgdata)?;
@@ -88,69 +102,141 @@ fn read_validated_directory(root: &Path) -> Result<DatabaseRootDescriptor> {
 }
 
 fn validate_descriptor(root: &Path, descriptor: &DatabaseRootDescriptor) -> Result<()> {
-    ensure!(
-        descriptor.schema == DESCRIPTOR_SCHEMA
-            && descriptor.pgdata == PGDATA_DIRECTORY
-            && descriptor.postgres_major == POSTGRES_MAJOR
-            && matches!(
-                (
-                    descriptor.engine_family.as_str(),
-                    descriptor.physical_format.as_str()
-                ),
-                ("native", "native-pg18-v1") | ("wasix", PHYSICAL_FORMAT)
+    if !(descriptor.schema == DESCRIPTOR_SCHEMA
+        && descriptor.pgdata == PGDATA_DIRECTORY
+        && descriptor.postgres_major == POSTGRES_MAJOR
+        && matches!(
+            (
+                descriptor.engine_family.as_str(),
+                descriptor.physical_format.as_str()
             ),
-        "database root {} has an unsupported database-root descriptor",
-        root.display()
-    );
+            ("native", "native-pg18-v1") | ("wasix", PHYSICAL_FORMAT)
+        ))
+    {
+        return Err(open_storage_message(
+            format!(
+                "database root {} has an unsupported database-root descriptor",
+                root.display()
+            ),
+            StorageErrorCode::Incompatible,
+        ));
+    }
     Ok(())
 }
 
 fn validate_complete_pgdata(root: &Path, pgdata: &Path) -> Result<()> {
     let pg_version = pgdata.join("PG_VERSION");
-    let version_metadata = fs::symlink_metadata(&pg_version)
-        .with_context(|| format!("inspect {}", pg_version.display()))?;
-    ensure!(
-        version_metadata.is_file() && !version_metadata.file_type().is_symlink(),
-        "database root {} has an unsafe or incomplete PG_VERSION",
-        root.display()
-    );
-    let version = fs::read_to_string(&pg_version)
-        .with_context(|| format!("read {}", pg_version.display()))?;
-    ensure!(
-        version.trim() == POSTGRES_MAJOR.to_string(),
-        "database root {} has PostgreSQL {}, expected {POSTGRES_MAJOR}",
-        root.display(),
-        version.trim()
-    );
+    let version_metadata = required_open_metadata(&pg_version, "PG_VERSION")?;
+    if !version_metadata.is_file() || version_metadata.file_type().is_symlink() {
+        return Err(open_storage_message(
+            format!(
+                "database root {} has an unsafe or incomplete PG_VERSION",
+                root.display()
+            ),
+            StorageErrorCode::Corrupt,
+        ));
+    }
+    let version = fs::read(&pg_version)
+        .with_context(|| format!("read {}", pg_version.display()))
+        .map_err(open_unavailable)?;
+    let version = std::str::from_utf8(&version).map_err(|error| {
+        open_storage_message(
+            format!(
+                "database root {} has a non-UTF-8 PG_VERSION: {error}",
+                root.display()
+            ),
+            StorageErrorCode::Corrupt,
+        )
+    })?;
+    if version.trim() != POSTGRES_MAJOR.to_string() {
+        return Err(open_storage_message(
+            format!(
+                "database root {} has PostgreSQL {}, expected {POSTGRES_MAJOR}",
+                root.display(),
+                version.trim()
+            ),
+            StorageErrorCode::Incompatible,
+        ));
+    }
 
     let global = pgdata.join("global");
-    let global_metadata =
-        fs::symlink_metadata(&global).with_context(|| format!("inspect {}", global.display()))?;
-    ensure!(
-        global_metadata.is_dir() && !global_metadata.file_type().is_symlink(),
-        "database root {} has an unsafe or incomplete global directory",
-        root.display()
-    );
+    let global_metadata = required_open_metadata(&global, "global directory")?;
+    if !global_metadata.is_dir() || global_metadata.file_type().is_symlink() {
+        return Err(open_storage_message(
+            format!(
+                "database root {} has an unsafe or incomplete global directory",
+                root.display()
+            ),
+            StorageErrorCode::Corrupt,
+        ));
+    }
     let control = global.join("pg_control");
-    let control_metadata =
-        fs::symlink_metadata(&control).with_context(|| format!("inspect {}", control.display()))?;
-    ensure!(
-        control_metadata.is_file()
-            && !control_metadata.file_type().is_symlink()
-            && control_metadata.len() > 0,
-        "database root {} has an unsafe or incomplete global/pg_control",
-        root.display()
-    );
+    let control_metadata = required_open_metadata(&control, "global/pg_control")?;
+    if !control_metadata.is_file() || control_metadata.file_type().is_symlink() {
+        return Err(open_storage_message(
+            format!(
+                "database root {} has an unsafe global/pg_control",
+                root.display()
+            ),
+            StorageErrorCode::Corrupt,
+        ));
+    }
+    if control_metadata.len() == 0 {
+        return Err(open_storage_message(
+            format!(
+                "database root {} has an incomplete global/pg_control",
+                root.display()
+            ),
+            StorageErrorCode::Incomplete,
+        ));
+    }
 
     let pg_wal = pgdata.join("pg_wal");
-    let wal_metadata =
-        fs::symlink_metadata(&pg_wal).with_context(|| format!("inspect {}", pg_wal.display()))?;
-    ensure!(
-        wal_metadata.is_dir() && !wal_metadata.file_type().is_symlink(),
-        "database root {} has an unsafe or incomplete pg_wal",
-        root.display()
-    );
+    let wal_metadata = required_open_metadata(&pg_wal, "pg_wal")?;
+    if !wal_metadata.is_dir() || wal_metadata.file_type().is_symlink() {
+        return Err(open_storage_message(
+            format!(
+                "database root {} has an unsafe or incomplete pg_wal",
+                root.display()
+            ),
+            StorageErrorCode::Corrupt,
+        ));
+    }
     Ok(())
+}
+
+fn required_open_metadata(path: &Path, label: &str) -> Result<fs::Metadata> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(metadata),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(open_storage_message(
+            format!(
+                "managed database is missing required {label} at {}",
+                path.display()
+            ),
+            StorageErrorCode::Incomplete,
+        )),
+        Err(error) => Err(open_unavailable(
+            anyhow::Error::new(error).context(format!("inspect {}", path.display())),
+        )),
+    }
+}
+
+fn open_storage_message(message: String, code: StorageErrorCode) -> anyhow::Error {
+    crate::error::storage_message(
+        message,
+        code,
+        StorageCommitState::Unchanged,
+        StorageErrorPhase::Open,
+    )
+}
+
+fn open_unavailable(error: anyhow::Error) -> anyhow::Error {
+    crate::error::storage_error(
+        error,
+        StorageErrorCode::Unavailable,
+        StorageCommitState::Unchanged,
+        StorageErrorPhase::Open,
+    )
 }
 
 pub(crate) fn write_database_root_descriptor(root: &Path) -> Result<()> {
@@ -202,18 +288,26 @@ fn open_private_descriptor(path: &Path) -> std::io::Result<fs::File> {
 
 fn read_descriptor(root: &Path) -> Result<DatabaseRootDescriptor> {
     let path = root.join(DESCRIPTOR_FILE);
-    let metadata =
-        fs::symlink_metadata(&path).with_context(|| format!("inspect {}", path.display()))?;
-    ensure!(
-        metadata.is_file() && !metadata.file_type().is_symlink(),
-        "database root {} has an unsafe {DESCRIPTOR_FILE} entry",
-        root.display()
-    );
-    let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
-    serde_json::from_slice(&bytes).with_context(|| {
-        format!(
-            "database root {} has a malformed {DESCRIPTOR_FILE}",
-            root.display()
+    let metadata = required_open_metadata(&path, DESCRIPTOR_FILE)?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(open_storage_message(
+            format!(
+                "database root {} has an unsafe {DESCRIPTOR_FILE} entry",
+                root.display()
+            ),
+            StorageErrorCode::Corrupt,
+        ));
+    }
+    let bytes = fs::read(&path)
+        .with_context(|| format!("read {}", path.display()))
+        .map_err(open_unavailable)?;
+    serde_json::from_slice(&bytes).map_err(|error| {
+        open_storage_message(
+            format!(
+                "database root {} has a malformed {DESCRIPTOR_FILE}: {error}",
+                root.display()
+            ),
+            StorageErrorCode::Corrupt,
         )
     })
 }
@@ -374,6 +468,13 @@ mod tests {
         let error = inspect_directory_root(root.path()).expect_err("incomplete PGDATA must fail");
 
         assert!(format!("{error:#}").contains("PG_VERSION"), "{error:#}");
+        let error = crate::Error::from_anyhow(error);
+        let details = error
+            .storage_error()
+            .expect("incomplete PGDATA must remain structurally tagged");
+        assert_eq!(details.code(), StorageErrorCode::Incomplete);
+        assert_eq!(details.commit_state(), StorageCommitState::Unchanged);
+        assert_eq!(details.phase(), StorageErrorPhase::Open);
         assert_eq!(
             fs::read(root.path().join(PGDATA_DIRECTORY).join("sentinel"))?,
             b"keep"
@@ -412,6 +513,13 @@ mod tests {
             format!("{error:#}").contains("unsupported database-root descriptor"),
             "{error:#}"
         );
+        let error = crate::Error::from_anyhow(error);
+        let details = error
+            .storage_error()
+            .expect("incompatible root must remain structurally tagged");
+        assert_eq!(details.code(), StorageErrorCode::Incompatible);
+        assert_eq!(details.commit_state(), StorageCommitState::Unchanged);
+        assert_eq!(details.phase(), StorageErrorPhase::Open);
         Ok(())
     }
 }

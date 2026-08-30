@@ -11,6 +11,7 @@ const BINARY_ARTIFACT_KINDS = new Set([
   "native-tools",
   "broker-helper",
   "node-direct-addon",
+  "wasix-napi-addon",
 ]);
 
 const artifacts = allArtifactTargets().filter((target) =>

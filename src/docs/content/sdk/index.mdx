@@ -17,11 +17,11 @@ keeps ecosystem-native naming and exposes only the behavior its host supports.
   embeds or supervises the native runtime family.
 - Choose Rust WASIX (`oliphaunt-wasix`) when Rust owns the portable WASIX host
   and needs Rust direct, local server, extension, or data-movement APIs.
-- Choose WASIX TypeScript (`@oliphaunt/wasix-ts`) when portable PostgreSQL runs
-  directly in the importing realm or through the explicit package-owned Worker
-  entrypoint in a browser, Node.js, Bun, or Deno.
+- Choose WASIX TypeScript (`@oliphaunt/wasix-ts`) for a caller-realm browser
+  database or the native Node.js, Bun, Deno, and Electron placements: the
+  default Rust owner, explicit `/direct`, or a JavaScript `/worker` realm.
   Memory is the default; extensions are selective imports, IndexedDB and OPFS
-  persistence are browser opt-ins, and directory persistence is a Node/Bun/Deno opt-in.
+  persistence are browser opt-ins, and directory persistence is a native-host opt-in.
 - Choose the C ABI only when building another native language binding or
   integrating `liboliphaunt` directly.
 
@@ -34,7 +34,7 @@ share portable runtime and extension carriers without sharing a public API.
 The products use a cohesive vocabulary where the host actually supports it:
 
 - storage describes database lifetime and persistence;
-- exact extension selection keeps unused payloads out of app artifacts;
+- exact extension selection keeps browser payloads narrow and native activation explicit;
 - structured PostgreSQL errors preserve SQLSTATE where available; and
 - explicit lifecycle methods define when runtime or persistent state is
   released.
@@ -43,9 +43,9 @@ Those concepts are not a signature-parity promise. Native SDKs expose their
 engine modes. Rust WASIX adds Rust host, server, physical archive, and optional
 tool APIs. WASIX TypeScript exposes `open`, typed and raw query operations,
 callback transactions, physical `backup`, static `restore`, and `close`; its
-optional tools package adds `pgDump` for direct or Worker handles and `psql`
-for Worker handles, while explicit server subpaths add a local
-endpoint on Node, Bun, and Deno.
+optional tools package adds `pgDump` for root, direct, or Worker handles and
+`psql` for all three native placements or a browser Worker handle, while explicit server
+subpaths add a local endpoint on Node, Bun, Deno, and Electron.
 
 <ModeMatrix />
 
@@ -54,7 +54,7 @@ endpoint on Node, Bun, and Deno.
 | Question | Why it matters |
 | --- | --- |
 | Which package do I install? | Package identity determines native versus WASIX runtime ownership. |
-| Which host runs PostgreSQL? | Native process, Rust WASIX host, and browser or Node/Bun/Deno caller realm/Worker have different lifecycle behavior. |
+| Which host runs PostgreSQL? | Native process, Rust WASIX host, browser realm, Rust owner, direct realm, and Worker placements have different lifecycle behavior. |
 | What is the storage default? | Sensible defaults avoid configuration while explicit storage opts into persistence. |
 | How do I select extensions? | Native SDKs select exact SQL names; WASIX TypeScript imports exact portable descriptors. |
 | Which APIs are actually present? | Server, tools, transaction-helper, and data-movement support differs by product. |
@@ -64,8 +64,8 @@ endpoint on Node, Bun, and Deno.
 - Use [Start](/docs/start) for the shortest first-query path.
 - Use [Runtime Support](/docs/reference/capabilities) before relying on a
   mode or feature in a packaged app.
-- Use [WASIX TypeScript](/docs/sdk/wasix-typescript) for direct caller-realm or
-  explicit Worker-owned browser, Node, Bun, and Deno execution, error recovery,
+- Use [WASIX TypeScript](/docs/sdk/wasix-typescript) for browser direct or
+  server actor, direct, and Worker execution, error recovery,
   host-specific persistent storage, and selective extensions.
 - Use [Rust WASIX](/docs/sdk/wasix-rust) for the Rust portable host.
 - Use [Native Runtime](/docs/learn/native-runtime) for native direct, broker,

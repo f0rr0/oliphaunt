@@ -18,6 +18,7 @@ use std::thread::{self, JoinHandle};
 use anyhow::{Context, Result, anyhow};
 use tempfile::TempDir;
 
+use crate::oliphaunt::assets::{CatalogProfile, default_catalog_profile};
 use crate::oliphaunt::base::{DatabasePlan, DirectoryLock, PreparedDatabase, prepare_database};
 use crate::oliphaunt::config::{PostgresConfig, StartupConfig};
 #[cfg(feature = "extensions")]
@@ -50,6 +51,10 @@ pub struct OliphauntServer {
     active_connection: Arc<ActiveConnection>,
     handle: Option<JoinHandle<Result<()>>>,
     close_result: Option<TerminalCloseResult>,
+    #[cfg(all(test, feature = "icu"))]
+    catalog_profile: CatalogProfile,
+    #[cfg(all(test, feature = "icu"))]
+    runtime_root: PathBuf,
     #[cfg(unix)]
     owned_unix_socket: Option<OwnedUnixSocket>,
 }
@@ -190,6 +195,10 @@ pub(crate) fn server_with_worker_result_for_test(
         active_connection: Arc::new(ActiveConnection::default()),
         handle: Some(thread::spawn(move || result)),
         close_result: None,
+        #[cfg(feature = "icu")]
+        catalog_profile: CatalogProfile::default(),
+        #[cfg(feature = "icu")]
+        runtime_root: PathBuf::new(),
         #[cfg(unix)]
         owned_unix_socket: None,
     }
@@ -199,6 +208,7 @@ pub(crate) fn server_with_worker_result_for_test(
 #[derive(Debug, Clone)]
 pub struct OliphauntServerBuilder {
     storage: DatabaseStorage,
+    catalog_profile: CatalogProfile,
     listen: ServerListen,
     postgres_config: PostgresConfig,
     startup_config: StartupConfig,
@@ -262,6 +272,7 @@ impl Default for OliphauntServerBuilder {
     fn default() -> Self {
         Self {
             storage: DatabaseStorage::Memory,
+            catalog_profile: default_catalog_profile(),
             listen: ServerListen::tcp(),
             postgres_config: PostgresConfig::default(),
             startup_config: StartupConfig::default(),
@@ -281,6 +292,14 @@ impl OliphauntServerBuilder {
     /// Select where PostgreSQL stores its mutable database files.
     pub fn storage(mut self, storage: DatabaseStorage) -> Self {
         self.storage = storage;
+        self
+    }
+
+    /// Select the packaged standard or ICU catalog and matching runtime data.
+    #[cfg(any(feature = "__internal-napi", test))]
+    #[doc(hidden)]
+    pub fn catalog_profile(mut self, profile: CatalogProfile) -> Self {
+        self.catalog_profile = profile;
         self
     }
 
@@ -368,7 +387,7 @@ impl OliphauntServerBuilder {
         let startup_config = self.startup_config.clone();
 
         let prepared_database = {
-            let plan = DatabasePlan::new(self.storage.clone());
+            let plan = DatabasePlan::new(self.storage.clone(), self.catalog_profile);
             prepare_database(plan, &startup_config.username)?
         };
         let PreparedDatabase {
@@ -376,6 +395,10 @@ impl OliphauntServerBuilder {
             directory_lock,
             outcome,
         } = prepared_database;
+        #[cfg(all(test, feature = "icu"))]
+        let catalog_profile = outcome.runtime_layout.catalog_profile;
+        #[cfg(all(test, feature = "icu"))]
+        let runtime_root = outcome.runtime_layout.module_root.clone();
 
         let shutdown = Arc::new(AtomicBool::new(false));
         let active_connection = Arc::new(ActiveConnection::default());
@@ -427,6 +450,10 @@ impl OliphauntServerBuilder {
             active_connection,
             handle: Some(handle),
             close_result: None,
+            #[cfg(all(test, feature = "icu"))]
+            catalog_profile,
+            #[cfg(all(test, feature = "icu"))]
+            runtime_root,
             #[cfg(unix)]
             owned_unix_socket,
         })
@@ -761,6 +788,27 @@ mod tests {
     #[cfg(feature = "extension-pg-textsearch")]
     use crate::oliphaunt::extensions::Extension;
 
+    #[cfg(feature = "icu")]
+    fn both_catalog_profiles_are_packaged() -> bool {
+        crate::oliphaunt::assets::runtime_archive().is_some()
+            && [CatalogProfile::Standard, CatalogProfile::Icu]
+                .into_iter()
+                .all(|profile| {
+                    crate::oliphaunt::assets::cluster_seed_archive(profile).is_some()
+                        && crate::oliphaunt::assets::cluster_seed_manifest(profile).is_some()
+                })
+            && crate::oliphaunt::assets::icu_data_archive(CatalogProfile::Icu).is_some()
+    }
+
+    #[cfg(feature = "icu")]
+    fn assert_server_profile(server: &OliphauntServer, expected: CatalogProfile) {
+        assert_eq!(server.catalog_profile, expected);
+        assert_eq!(
+            server.runtime_root.join("share/icu").is_dir(),
+            expected == CatalogProfile::Icu
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn unix_socket_uri_host_is_query_encoded() {
@@ -945,6 +993,79 @@ mod tests {
     fn default_server_builder_selects_memory() {
         let builder = OliphauntServerBuilder::default();
         assert_eq!(builder.storage, DatabaseStorage::Memory);
+        assert_eq!(builder.catalog_profile, CatalogProfile::default());
+    }
+
+    #[cfg(feature = "icu")]
+    #[test]
+    fn server_profiles_remain_isolated_in_both_construction_orders() -> Result<()> {
+        if !both_catalog_profiles_are_packaged() {
+            return Ok(());
+        }
+
+        for profiles in [
+            [CatalogProfile::Standard, CatalogProfile::Icu],
+            [CatalogProfile::Icu, CatalogProfile::Standard],
+        ] {
+            let mut first = OliphauntServerBuilder::new()
+                .catalog_profile(profiles[0])
+                .start()
+                .map_err(|error| anyhow!(error.to_string()))?;
+            let mut second = OliphauntServerBuilder::new()
+                .catalog_profile(profiles[1])
+                .start()
+                .map_err(|error| anyhow!(error.to_string()))?;
+
+            assert_server_profile(&first, profiles[0]);
+            assert_server_profile(&second, profiles[1]);
+            assert_ne!(first.runtime_root, second.runtime_root);
+
+            second.close().map_err(|error| anyhow!(error.to_string()))?;
+            first.close().map_err(|error| anyhow!(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "icu")]
+    #[test]
+    fn server_profiles_start_concurrently_without_contamination() -> Result<()> {
+        if !both_catalog_profiles_are_packaged() {
+            return Ok(());
+        }
+
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let start = |profile| {
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || -> Result<(CatalogProfile, PathBuf, bool)> {
+                let mut server = OliphauntServerBuilder::new()
+                    .catalog_profile(profile)
+                    .start()
+                    .map_err(|error| anyhow!(error.to_string()))?;
+                barrier.wait();
+                let snapshot = (
+                    server.catalog_profile,
+                    server.runtime_root.clone(),
+                    server.runtime_root.join("share/icu").is_dir(),
+                );
+                server.close().map_err(|error| anyhow!(error.to_string()))?;
+                Ok(snapshot)
+            })
+        };
+        let standard = start(CatalogProfile::Standard);
+        let icu = start(CatalogProfile::Icu);
+        let standard = standard
+            .join()
+            .map_err(|_| anyhow!("standard server startup panicked"))??;
+        let icu = icu
+            .join()
+            .map_err(|_| anyhow!("ICU server startup panicked"))??;
+
+        assert_eq!(standard.0, CatalogProfile::Standard);
+        assert!(!standard.2);
+        assert_eq!(icu.0, CatalogProfile::Icu);
+        assert!(icu.2);
+        assert_ne!(standard.1, icu.1);
+        Ok(())
     }
 
     #[test]

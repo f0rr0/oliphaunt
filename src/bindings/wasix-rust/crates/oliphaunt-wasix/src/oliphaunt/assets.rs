@@ -13,22 +13,41 @@ pub struct AssetManifestMetadata {
     pub cluster_seed_compatibility_key: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CatalogProfile {
+/// Packaged PostgreSQL initialization and runtime-data profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CatalogProfile {
+    /// The standard PostgreSQL catalog without packaged ICU data.
     Standard,
+    /// The ICU catalog with its matching packaged ICU data.
     Icu,
 }
 
 impl CatalogProfile {
-    pub(crate) const fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Standard => "standard",
             Self::Icu => "icu",
         }
     }
+
+    pub(crate) fn validate_available(self) -> Result<()> {
+        if self == Self::Icu && !cfg!(feature = "icu") {
+            return Err(crate::error::invalid_configuration(
+                "the ICU catalog profile requires the oliphaunt-wasix `icu` feature",
+            ));
+        }
+        Ok(())
+    }
 }
 
-pub(crate) const fn selected_catalog_profile() -> CatalogProfile {
+impl Default for CatalogProfile {
+    fn default() -> Self {
+        default_catalog_profile()
+    }
+}
+
+pub(crate) const fn default_catalog_profile() -> CatalogProfile {
     if cfg!(feature = "icu") {
         CatalogProfile::Icu
     } else {
@@ -37,19 +56,24 @@ pub(crate) const fn selected_catalog_profile() -> CatalogProfile {
 }
 
 pub fn asset_manifest_metadata() -> Result<AssetManifestMetadata> {
+    asset_manifest_metadata_for(default_catalog_profile())
+}
+
+pub(crate) fn asset_manifest_metadata_for(
+    selected_profile: CatalogProfile,
+) -> Result<AssetManifestMetadata> {
     let manifest =
         liboliphaunt_wasix_portable::manifest().context("parse oliphaunt-wasix asset manifest")?;
     if liboliphaunt_wasix_portable::HAS_EMBEDDED_ASSETS {
         let seed = manifest
             .cluster_seeds
-            .get(selected_catalog_profile().as_str())
+            .get(selected_profile.as_str())
             .context("embedded WASIX assets are missing the selected cluster seed entry")?;
         validate_embedded_source_fingerprints(
             manifest.source_fingerprint.as_deref(),
             seed.source_fingerprint.as_deref(),
         )?;
     }
-    let selected_profile = selected_catalog_profile();
     let seed = manifest.cluster_seeds.get(selected_profile.as_str());
     Ok(AssetManifestMetadata {
         source_lane: manifest.source_lane,
@@ -93,8 +117,8 @@ pub(crate) fn expected_runtime_archive_sha256() -> Result<String> {
     Ok(manifest.runtime.sha256)
 }
 
-pub(crate) fn cluster_seed_archive() -> Option<&'static [u8]> {
-    match selected_catalog_profile() {
+pub(crate) fn cluster_seed_archive(profile: CatalogProfile) -> Option<&'static [u8]> {
+    match profile {
         CatalogProfile::Standard => liboliphaunt_wasix_portable::standard_cluster_seed_archive(),
         CatalogProfile::Icu => {
             #[cfg(feature = "icu")]
@@ -109,8 +133,8 @@ pub(crate) fn cluster_seed_archive() -> Option<&'static [u8]> {
     }
 }
 
-pub(crate) fn cluster_seed_manifest() -> Option<&'static [u8]> {
-    match selected_catalog_profile() {
+pub(crate) fn cluster_seed_manifest(profile: CatalogProfile) -> Option<&'static [u8]> {
+    match profile {
         CatalogProfile::Standard => liboliphaunt_wasix_portable::standard_cluster_seed_manifest(),
         CatalogProfile::Icu => {
             #[cfg(feature = "icu")]
@@ -135,7 +159,10 @@ pub(crate) fn psql_wasm() -> Option<&'static [u8]> {
     oliphaunt_wasix_tools::psql_wasm()
 }
 
-pub(crate) fn icu_data_archive() -> Option<&'static [u8]> {
+pub(crate) fn icu_data_archive(profile: CatalogProfile) -> Option<&'static [u8]> {
+    if profile == CatalogProfile::Standard {
+        return None;
+    }
     #[cfg(feature = "icu")]
     {
         oliphaunt_icu::icu_data_archive()

@@ -47,6 +47,7 @@ const CLOSE_DEADLINE_MS = 120_000;
 /** @internal Buffered protocol fallbacks use the same observable callback granularity. */
 export const WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES = 64 * 1024;
 const pgDumpTargets = new WeakSet<OliphauntDatabase>();
+const nativeToolTargets = new WeakSet<OliphauntDatabase>();
 const protocolConnectionTargets = new WeakSet<OliphauntDatabase>();
 const transactionPinnedTargets = new WeakSet<OliphauntDatabase>();
 
@@ -84,12 +85,19 @@ export type WasixDatabaseSessionTerminalState = Readonly<{
   readonly failure: Error | undefined;
 }>;
 
-/** @internal Apply PostgreSQL's default database-name rule once at open. */
+/** @internal Validate the explicit PostgreSQL startup identity once at open. */
 export function normalizeWasixDatabaseIdentity(
   username: string,
   database: string,
 ): WasixDatabaseIdentity {
-  return { username, database: database === '' ? username : database };
+  assertWasixStartupIdentityValue('username', username);
+  assertWasixStartupIdentityValue('database', database);
+  return { username, database };
+}
+
+function assertWasixStartupIdentityValue(name: 'username' | 'database', value: string): void {
+  if (value.trim().length === 0) throw new TypeError(`${name} must not be empty`);
+  if (value.includes('\0')) throw new TypeError(`${name} must not contain NUL bytes`);
 }
 
 /** @internal Host-publication policy for one pgwire exchange. */
@@ -125,6 +133,8 @@ export type WasixDatabaseSession = {
   /** Internal test seams may omit backup; production sessions always provide it. */
   backup?(): Promise<Uint8Array>;
   runPgDump?(options: WasixPgDumpProcessOptions): Promise<WasixToolProcessResult>;
+  /** Internal Node-compatible native path for both packaged frontend tools. */
+  runTool?(options: WasixToolProcessOptions): Promise<WasixToolProcessResult>;
   serve?(connection: WasixProtocolConnection, mode: WasixProtocolConnectionMode): Promise<void>;
   /**
    * Begin the session's one terminal teardown attempt.
@@ -247,6 +257,7 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
       database: 'postgres',
     };
     if (session.runPgDump !== undefined) pgDumpTargets.add(this);
+    if (session.runTool !== undefined) nativeToolTargets.add(this);
     if (session.supportsProtocolConnections === true && session.serve !== undefined) {
       protocolConnectionTargets.add(this);
     }
@@ -378,6 +389,18 @@ export class WasixDatabaseImpl implements OliphauntDatabase {
         throw new Error('this WASIX database entrypoint does not support pg_dump');
       }
       return this.#session.runPgDump(options);
+    });
+  }
+
+  /** @internal Run a packaged tool without the legacy Wasmer tool worker. */
+  runNativeTool(options: WasixToolProcessOptions): Promise<WasixToolProcessResult> {
+    this.#assertAvailable();
+    return this.#serialize(async () => {
+      this.#assertHealthy();
+      if (this.#session.runTool === undefined) {
+        throw new Error('this WASIX database entrypoint does not support native tools');
+      }
+      return this.#session.runTool(options);
     });
   }
 
@@ -1033,6 +1056,16 @@ export function runWasixPgDumpProcess(
 ): Promise<WasixToolProcessResult> {
   assertWasixPgDumpTarget(database);
   return database.runPgDump(options);
+}
+
+/** @internal Return undefined only when this realm uses the browser Wasmer backend. */
+export function tryRunWasixNativeToolProcess(
+  database: OliphauntDatabase,
+  options: WasixToolProcessOptions,
+): Promise<WasixToolProcessResult> | undefined {
+  assertWasixDatabaseTarget(database);
+  if (!nativeToolTargets.has(database)) return undefined;
+  return database.runNativeTool(options);
 }
 
 /** @internal Reserve a Worker-owned connection in the database FIFO. */

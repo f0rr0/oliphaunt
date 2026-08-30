@@ -1,317 +1,156 @@
-import { readFileSync } from 'node:fs';
-import { mkdtemp, rm, stat } from 'node:fs/promises';
-import { createConnection, Server, Socket } from 'node:net';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resolve } from 'node:path';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { OliphauntDatabase } from '../types.js';
-
-const serverMocks = vi.hoisted(() => ({
-  closeDatabase: vi.fn(async () => undefined),
-  openWasix: vi.fn<() => Promise<OliphauntDatabase>>(),
-}));
-const { closeDatabase, openWasix } = serverMocks;
-
-vi.mock('../worker-node-client.js', () => ({
-  openWasix: serverMocks.openWasix,
+const nativeMocks = vi.hoisted(() => ({
+  close: vi.fn(),
+  mapError: vi.fn(),
+  nativeOpenOptions: vi.fn(),
+  open: vi.fn(),
+  requireAddon: vi.fn(),
+  requireNodeStorage: vi.fn(),
+  serialize: vi.fn(),
 }));
 
-import {
-  closeWasixByteChannel,
-  readWasixByteChannel,
-  writeWasixByteChannel,
-} from '../byte-channel.js';
-import { WasixDatabaseImpl } from '../database.js';
-import { openServer } from '../server.node.js';
-
-type ServerListenFixture = Readonly<{
-  tcp: Readonly<{ invalidPorts: readonly number[] }>;
-  unix: Readonly<{ defaultPort: number; filePrefix: string }>;
-}>;
-
-const fixture = JSON.parse(
-  readFileSync(
-    new URL('../../../../shared/fixtures/postgres/server-listen.json', import.meta.url),
-    'utf8',
-  ),
-) as ServerListenFixture;
-const temporaryDirectories: string[] = [];
-
-beforeEach(() => {
-  closeDatabase.mockClear();
-  openWasix.mockReset();
-  openWasix.mockResolvedValue({ close: closeDatabase } as unknown as OliphauntDatabase);
+vi.mock('../client-common.js', () => ({
+  serializeOpenConfig: nativeMocks.serialize,
+}));
+vi.mock('../native-session.js', () => ({
+  mapNativeError: nativeMocks.mapError,
+  nativeWasixOpenOptions: nativeMocks.nativeOpenOptions,
+  requireCompatibleNativeWasixAddon: nativeMocks.requireAddon,
+}));
+vi.mock('../node-client-common.js', () => ({
+  requireNodeStorage: nativeMocks.requireNodeStorage,
+}));
+vi.mock('../worker-node-client.js', () => {
+  throw new Error('native local server loaded the JavaScript Worker relay');
 });
 
-afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true })));
+import { openServer } from '../server.node.js';
+
+const memoryOptions = {
+  username: 'postgres',
+  database: 'postgres',
+  startupGUCs: {},
+  extensions: [],
+  storage: { kind: 'memory' as const },
+};
+
+beforeEach(() => {
+  for (const mock of Object.values(nativeMocks)) mock.mockReset();
+  nativeMocks.serialize.mockReturnValue(memoryOptions);
+  nativeMocks.mapError.mockImplementation((error) => error);
+  nativeMocks.close.mockResolvedValue(undefined);
+  nativeMocks.nativeOpenOptions.mockImplementation((options, storage) => ({
+    profile: options.icu === undefined ? 'standard' : 'icu',
+    storage,
+    username: 'postgres',
+    database: 'postgres',
+    startupGucs: {},
+    extensions: [],
+  }));
+  nativeMocks.open.mockResolvedValue({
+    connectionString: 'postgresql://postgres@127.0.0.1:6543/postgres?sslmode=disable',
+    closed: false,
+    close: nativeMocks.close,
+  });
+  nativeMocks.requireAddon.mockReturnValue({ NativeWasixServer: { open: nativeMocks.open } });
 });
 
 // liboliphaunt-doc-example:wasix-typescript-server
-describe('WASIX local server surface', () => {
-  it('opens loopback TCP with an automatic port and closes idempotently', async () => {
+describe('WASIX native local server surface', () => {
+  it('delegates TCP ownership directly to the Rust addon and closes idempotently', async () => {
     const server = await openServer();
-    expect(server.closed).toBe(false);
-    expect(server.connectionString).toMatch(
-      /^postgresql:\/\/postgres@127\.0\.0\.1:\d+\/postgres\?sslmode=disable$/,
+
+    expect(nativeMocks.requireNodeStorage).toHaveBeenCalledWith(memoryOptions);
+    expect(nativeMocks.open).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profile: 'standard',
+        listen: { transport: 'tcp' },
+        storage: { kind: 'memory' },
+      }),
     );
+    expect(server.connectionString).toBe(
+      'postgresql://postgres@127.0.0.1:6543/postgres?sslmode=disable',
+    );
+    expect(Object.isFrozen(server)).toBe(true);
+
     const first = server.close();
     const second = server.close();
     expect(second).toBe(first);
-    expect(server.closed).toBe(false);
-    await first;
+    await expect(first).resolves.toBeUndefined();
     expect(server.closed).toBe(true);
-    await second;
-    expect(closeDatabase).toHaveBeenCalledTimes(1);
+    expect(nativeMocks.close).toHaveBeenCalledOnce();
   });
 
-  it('becomes closed after a failed terminal close and replays that outcome', async () => {
-    const databaseFailure = new Error('database close failed');
-    closeDatabase.mockRejectedValueOnce(databaseFailure);
+  it('passes an absolute Unix socket directory and PostgreSQL default port to Rust', async () => {
+    await openServer({ listen: { transport: 'unix', directory: 'tmp/sockets' } });
+
+    expect(nativeMocks.open).toHaveBeenCalledWith(
+      expect.objectContaining({
+        listen: {
+          transport: 'unix',
+          directory: resolve('tmp/sockets'),
+          port: 5432,
+        },
+      }),
+    );
+  });
+
+  it.each([0, -1, 65_536, 1.5, Number.NaN])('rejects invalid TCP port %s', async (port) => {
+    await expect(openServer({ listen: { transport: 'tcp', port } })).rejects.toThrow(
+      'port must be an integer in 1..=65535',
+    );
+    expect(nativeMocks.open).not.toHaveBeenCalled();
+  });
+
+  it('passes the resolved directory directly to its Rust owner', async () => {
+    const directoryOptions = {
+      ...memoryOptions,
+      storage: {
+        kind: 'directory' as const,
+        path: '/canonical/database',
+      },
+    };
+    nativeMocks.serialize.mockReturnValue(directoryOptions);
+
+    const server = await openServer();
+    expect(nativeMocks.nativeOpenOptions).toHaveBeenCalledWith(directoryOptions, {
+      kind: 'directory',
+      path: '/canonical/database',
+    });
+
+    await server.close();
+    expect(nativeMocks.close).toHaveBeenCalledOnce();
+  });
+
+  it('maps a structured native server-open failure at the ABI boundary', async () => {
+    const openFailure = new Error('native server open failed');
+    const mapped = new Error('mapped native server open failed', { cause: openFailure });
+    nativeMocks.open.mockRejectedValue(openFailure);
+    nativeMocks.mapError.mockReturnValue(mapped);
+
+    const failure = await openServer().catch((error: unknown) => error);
+    expect(failure).toBe(mapped);
+    expect(nativeMocks.mapError).toHaveBeenCalledWith(openFailure);
+  });
+
+  it('marks closed only after the memoized native close attempt settles', async () => {
+    let finishClose!: () => void;
+    nativeMocks.close.mockReturnValue(
+      new Promise<void>((resolve) => {
+        finishClose = resolve;
+      }),
+    );
     const server = await openServer();
 
     const first = server.close();
     expect(server.closed).toBe(false);
-    const failure = await first.catch((error: unknown) => error);
-    expect(failure).toBeInstanceOf(AggregateError);
-    if (!(failure instanceof AggregateError)) throw new Error('expected aggregate failure');
-    expect(failure.errors).toContain(databaseFailure);
-    expect(server.closed).toBe(true);
     expect(server.close()).toBe(first);
-    await expect(server.close()).rejects.toBe(failure);
+    finishClose();
+    await first;
+
+    expect(server.closed).toBe(true);
+    expect(nativeMocks.close).toHaveBeenCalledOnce();
   });
-
-  it.runIf(process.platform !== 'win32')(
-    'keeps a live Unix listener and its socket owned after listener close is unconfirmed',
-    async () => {
-      const directory = await mkdtemp(join(tmpdir(), 'oliphaunt-wasix-server-'));
-      temporaryDirectories.push(directory);
-      const server = await openServer({ listen: { transport: 'unix', directory, port: 6544 } });
-      const socketPath = join(directory, `${fixture.unix.filePrefix}6544`);
-      const listenerFailure = new Error('fixture listener close failed');
-      let nodeServer: Server | undefined;
-      const originalClose = Server.prototype.close;
-      const close = vi.spyOn(Server.prototype, 'close').mockImplementation(function (
-        this: Server,
-        callback?: (error?: Error) => void,
-      ) {
-        nodeServer = this;
-        callback?.(listenerFailure);
-        return this;
-      });
-
-      try {
-        const failure = await server.close().catch((error: unknown) => error);
-        expect(failure).toBeInstanceOf(AggregateError);
-        if (!(failure instanceof AggregateError)) throw new Error('expected aggregate failure');
-        expect(failure.errors).toContain(listenerFailure);
-        expect(server.closed).toBe(true);
-        expect(nodeServer?.listening).toBe(true);
-        expect((await stat(socketPath)).isSocket()).toBe(true);
-        expect(closeDatabase).toHaveBeenCalledTimes(1);
-
-        // The public outcome is terminal, but the retained exact owner may
-        // safely retry listener/path cleanup without closing the database twice.
-        const owned = nodeServer;
-        if (owned === undefined) throw new Error('fixture did not capture the listener');
-        await new Promise<void>((resolve) => setImmediate(resolve));
-        expect(close).toHaveBeenCalledTimes(2);
-        expect(owned.listening).toBe(true);
-        close.mockRestore();
-        await closeServerForTest(owned, originalClose);
-        expect(closeDatabase).toHaveBeenCalledTimes(1);
-      } finally {
-        close.mockRestore();
-        if (nodeServer?.listening) await closeServerForTest(nodeServer, originalClose);
-      }
-    },
-  );
-
-  it('aggregates failed-open and cleanup failures while retaining the live listener', async () => {
-    const databaseFailure = new Error('fixture database cleanup failed');
-    const listenerFailure = new Error('fixture listener cleanup failed');
-    closeDatabase.mockRejectedValueOnce(databaseFailure);
-    const address = vi.spyOn(Server.prototype, 'address').mockReturnValue(null);
-    let nodeServer: Server | undefined;
-    const originalClose = Server.prototype.close;
-    const close = vi.spyOn(Server.prototype, 'close').mockImplementation(function (
-      this: Server,
-      callback?: (error?: Error) => void,
-    ) {
-      nodeServer = this;
-      callback?.(listenerFailure);
-      return this;
-    });
-
-    try {
-      const failure = await openServer().catch((error: unknown) => error);
-      expect(failure).toBeInstanceOf(AggregateError);
-      if (!(failure instanceof AggregateError)) throw new Error('expected aggregate failure');
-      expect(failure.errors[0]).toMatchObject({
-        message: 'Oliphaunt WASIX TCP listener did not report a port',
-      });
-      expect(failure.errors).toContain(listenerFailure);
-      expect(failure.errors).toContain(databaseFailure);
-      expect(nodeServer?.listening).toBe(true);
-      expect(closeDatabase).toHaveBeenCalledTimes(1);
-
-      address.mockRestore();
-      const owned = nodeServer;
-      if (owned === undefined) throw new Error('fixture did not capture the listener');
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      expect(close).toHaveBeenCalledTimes(2);
-      expect(owned.listening).toBe(true);
-      close.mockRestore();
-      await closeServerForTest(owned, originalClose);
-      expect(closeDatabase).toHaveBeenCalledTimes(1);
-    } finally {
-      address.mockRestore();
-      close.mockRestore();
-      if (nodeServer?.listening) await closeServerForTest(nodeServer, originalClose);
-    }
-  });
-
-  it('rejects every invalid port in the shared listener contract', async () => {
-    for (const port of fixture.tcp.invalidPorts) {
-      await expect(openServer({ listen: { transport: 'tcp', port } })).rejects.toThrow(
-        /range 1\.\.65535/,
-      );
-    }
-  });
-
-  it('settles close when a backpressured socket is destroyed', async () => {
-    let markServing: (() => void) | undefined;
-    const serving = new Promise<void>((resolve) => {
-      markServing = resolve;
-    });
-    const database = new WasixDatabaseImpl({
-      supportsProtocolConnections: true,
-      async exec() {
-        return new Uint8Array();
-      },
-      async sync() {},
-      async serve(connection) {
-        markServing?.();
-        await writeWasixByteChannel(connection.backend, Uint8Array.of(1));
-        try {
-          while ((await readWasixByteChannel(connection.frontend)).length !== 0) {
-            // The regression client sends no input; keep the fake session
-            // honest if that changes.
-          }
-        } finally {
-          closeWasixByteChannel(connection.backend);
-        }
-      },
-      async close() {},
-    });
-    openWasix.mockResolvedValueOnce(database);
-
-    let markBackpressured: (() => void) | undefined;
-    const backpressured = new Promise<void>((resolve) => {
-      markBackpressured = resolve;
-    });
-    const write = vi.spyOn(Socket.prototype, 'write').mockImplementation(function () {
-      markBackpressured?.();
-      return false;
-    });
-    const server = await openServer();
-    const endpoint = new URL(server.connectionString);
-    const client = createConnection({ host: endpoint.hostname, port: Number(endpoint.port) });
-    try {
-      await new Promise<void>((resolve, reject) => {
-        client.once('connect', resolve);
-        client.once('error', reject);
-      });
-      await Promise.all([serving, backpressured]);
-      await expect(server.close()).resolves.toBeUndefined();
-    } finally {
-      client.destroy();
-      write.mockRestore();
-      await server.close().catch(() => undefined);
-    }
-  });
-
-  it('waits for the final socket bytes to flush before destroying the connection', async () => {
-    const database = new WasixDatabaseImpl({
-      supportsProtocolConnections: true,
-      async exec() {
-        return new Uint8Array();
-      },
-      async sync() {},
-      async serve(connection) {
-        await writeWasixByteChannel(connection.backend, Uint8Array.of(1, 2, 3));
-        closeWasixByteChannel(connection.backend);
-      },
-      async close() {},
-    });
-    openWasix.mockResolvedValueOnce(database);
-
-    let endingSocket: Socket | undefined;
-    let markEnding: (() => void) | undefined;
-    const ending = new Promise<void>((resolve) => {
-      markEnding = resolve;
-    });
-    const end = vi.spyOn(Socket.prototype, 'end').mockImplementation(function (this: Socket) {
-      endingSocket = this;
-      markEnding?.();
-      return this;
-    });
-    const server = await openServer();
-    const endpoint = new URL(server.connectionString);
-    const client = createConnection({ host: endpoint.hostname, port: Number(endpoint.port) });
-    try {
-      await new Promise<void>((resolve, reject) => {
-        client.once('connect', resolve);
-        client.once('error', reject);
-      });
-      await ending;
-      if (endingSocket === undefined) throw new Error('server socket did not finish its output');
-      const socket = endingSocket;
-      expect(socket.destroyed).toBe(false);
-
-      const destroyed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
-      socket.emit('finish');
-      await destroyed;
-    } finally {
-      client.destroy();
-      end.mockRestore();
-      await server.close().catch(() => undefined);
-    }
-  });
-
-  it.runIf(process.platform !== 'win32')(
-    'uses PostgreSQL Unix socket naming and removes only its socket',
-    async () => {
-      const directory = await mkdtemp(join(tmpdir(), 'oliphaunt-wasix-server-'));
-      temporaryDirectories.push(directory);
-      const server = await openServer({
-        listen: { transport: 'unix', directory, port: 6543 },
-      });
-      const socket = join(directory, `${fixture.unix.filePrefix}6543`);
-      expect((await stat(socket)).isSocket()).toBe(true);
-      expect(server.connectionString).toContain(`host=${encodeURIComponent(directory)}`);
-      await server.close();
-      await expect(stat(socket)).rejects.toMatchObject({ code: 'ENOENT' });
-    },
-  );
-
-  it.runIf(process.platform !== 'win32')(
-    'uses the shared default PostgreSQL Unix socket port',
-    async () => {
-      const directory = await mkdtemp(join(tmpdir(), 'oliphaunt-wasix-server-'));
-      temporaryDirectories.push(directory);
-      const server = await openServer({ listen: { transport: 'unix', directory } });
-      const socket = join(directory, `${fixture.unix.filePrefix}${fixture.unix.defaultPort}`);
-      expect((await stat(socket)).isSocket()).toBe(true);
-      await server.close();
-    },
-  );
 });
-
-function closeServerForTest(server: Server, close: Server['close']): Promise<void> {
-  if (!server.listening) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    close.call(server, (error) => (error === undefined ? resolve() : reject(error)));
-  });
-}

@@ -309,29 +309,22 @@ expires = "before-0.2.0"
 
 [[products.oliphaunt-wasix-ts.waivers]]
 path = "src/bindings/wasix-ts/src/node-client.ts"
-reason = "Node entrypoint lifecycle requires packaged WASIX assets and a worker_threads or direct host"
-evidence = "Node, Bun, and Deno package smoke lanes"
+reason = "native host root lifecycle requires the packaged Node-API carrier and Rust owner actor"
+evidence = "Node, Bun, Deno, and Electron package smoke lanes"
 owner = "@oliphaunt/core"
 expires = "before-0.2.0"
 
 [[products.oliphaunt-wasix-ts.waivers]]
 path = "src/bindings/wasix-ts/src/node-direct.ts"
-reason = "direct Node startup requires the patched Wasmer host and packaged runtime carrier"
+reason = "direct native host startup requires the packaged Node-API carrier"
 evidence = "Node direct package smoke lanes"
 owner = "@oliphaunt/core"
 expires = "before-0.2.0"
 
 [[products.oliphaunt-wasix-ts.waivers]]
-path = "src/bindings/wasix-ts/src/node-host.ts"
-reason = "Node host adapter delegates to the patched Wasmer package loaded by the release artifact"
-evidence = "Node package build and direct smoke lanes"
-owner = "@oliphaunt/core"
-expires = "before-0.2.0"
-
-[[products.oliphaunt-wasix-ts.waivers]]
 path = "src/bindings/wasix-ts/src/node-worker.ts"
-reason = "Node Worker entrypoint lifecycle requires the packaged WASIX runtime and worker_threads host"
-evidence = "Node Worker package smoke lanes"
+reason = "native host isolated-entrypoint lifecycle requires a real Worker lane and packaged Node-API carrier"
+evidence = "Node, Bun, Deno, and Electron Worker package smoke lanes"
 owner = "@oliphaunt/core"
 expires = "before-0.2.0"
 

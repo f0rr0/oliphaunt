@@ -103,9 +103,9 @@ The cross-SDK behavior follows the
 
 The Rust WASIX binding owns its packaged PostgreSQL runtime assets and Rust host
 behavior. Native direct, broker, and server topologies are documented in the
-native SDK sections. The WASIX TypeScript root runs in the importing realm; its
-explicit `@oliphaunt/wasix-ts/worker` entry point opts into package-owned Worker
-execution.
+native SDK sections. The WASIX TypeScript browser root runs in the importing
+realm; its Node-compatible root uses a Rust owner, `/direct` uses the importing
+realm, and `/worker` uses a package-owned JavaScript Worker.
 TypeScript exposes equivalent optional tools and a local server on
 socket-capable hosts through TypeScript-native package entry points, while
 sharing the WASIX physical backup/restore contract rather than Rust signatures.

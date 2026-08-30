@@ -1,0 +1,41 @@
+{
+  "name": "@oliphaunt/wasix-napi-darwin-arm64",
+  "version": "0.0.0",
+  "description": "macOS arm64 prebuilt Oliphaunt WASIX Node-API runtime.",
+  "license": "MIT AND PostgreSQL AND Unicode-3.0 AND Apache-2.0",
+  "type": "commonjs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/f0rr0/oliphaunt.git",
+    "directory": "src/runtimes/wasix-napi/packages/darwin-arm64"
+  },
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "optional": true,
+  "oliphaunt": {
+    "target": "macos-arm64",
+    "runtimeProduct": "liboliphaunt-wasix",
+    "runtimeVersion": "0.1.1",
+    "addonAbiVersion": 1,
+    "nodeApiVersion": 8,
+    "profiles": ["standard", "icu"]
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "files": [
+    "prebuilds",
+    "artifact-provenance.json",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "THIRD_PARTY_NOTICES.oliphaunt-wasix.md",
+    "THIRD_PARTY_LICENSES"
+  ],
+  "exports": {
+    "./oliphaunt_wasix_napi.node": "./prebuilds/oliphaunt_wasix_napi.node",
+    "./artifact-provenance.json": "./artifact-provenance.json",
+    "./package.json": "./package.json"
+  }
+}

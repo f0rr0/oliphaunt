@@ -12,11 +12,14 @@ import {
   synchronizeReleaseCandidates,
   withDependentReleaseClosure,
 } from "./release-dependent-candidates.mjs";
+import { exactExtensionProducts } from "./release-artifact-targets.mjs";
 import { buildPlan, loadGraph } from "./release-graph.mjs";
 
 const NATIVE = "liboliphaunt-native";
 const WASIX = "liboliphaunt-wasix";
 const WASIX_RUST = "oliphaunt-wasix-rust";
+const WASIX_NAPI = "oliphaunt-wasix-napi";
+const WASIX_TS = "oliphaunt-wasix-ts";
 const RUST = "oliphaunt-rust";
 const BROKER = "oliphaunt-broker";
 const JS = "oliphaunt-js";
@@ -141,6 +144,7 @@ test("shared contrib source directly selects both runtime owners and no contrib 
     "release-dependent-candidates.test",
   );
   assert.deepEqual(plan.directProducts, [NATIVE, WASIX]);
+  assert.equal(plan.releaseProducts.includes(WASIX_NAPI), true);
   assert.equal(Object.hasOwn(graph.products, "oliphaunt-extension-contrib-pg18"), false);
   assert.equal(graph.moon_projects[NATIVE].dependencies.some(({ id }) => id === WASIX), false);
   assert.equal(graph.moon_projects[WASIX].dependencies.some(({ id }) => id === NATIVE), false);
@@ -157,7 +161,31 @@ test("shared contrib source directly selects both runtime owners and no contrib 
   for (const file of ["src/extensions/contrib/moon.yml"]) {
     const metadataPlan = buildPlan(graph, [file], "release-dependent-candidates.test");
     assert.deepEqual(metadataPlan.directProducts, []);
-    assert.deepEqual(metadataPlan.releaseProducts, []);
+    assert.deepEqual(metadataPlan.releaseProducts, [WASIX_NAPI, WASIX_TS]);
+  }
+});
+
+test("every exact extension product schedules and releases the embedded WASIX N-API carriers", () => {
+  const graph = loadGraph("release-dependent-candidates.test");
+  const exactProducts = exactExtensionProducts("release-dependent-candidates.test");
+  const dependencies = graph.moon_projects[WASIX_NAPI].dependencies
+    .filter(({ scope }) => scope === "production")
+    .map(({ id }) => id);
+  for (const product of exactProducts) {
+    assert.equal(dependencies.includes(product), true, `${product} is a production dependency`);
+    if (!(product in graph.products)) continue;
+    const closure = dependentReleaseClosure(graph, [product], {
+      prefix: "release-dependent-candidates.test",
+    });
+    assert.equal(closure.requiredProducts.includes(WASIX_NAPI), true, `${product} releases N-API`);
+    assert.equal(
+      closure.reasons[WASIX_NAPI].some(
+        ({ kind, sourceProduct, scope }) =>
+          kind === "moon" && sourceProduct === product && scope === "production",
+      ),
+      true,
+      `${product} records the production closure reason`,
+    );
   }
 });
 

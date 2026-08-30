@@ -2,8 +2,8 @@
 
 Status: current design and implementation report
 Compared: 2026-08-28
-PGlite baseline: `@electric-sql/pglite` 0.5.7 at
-`faa505ad2ea0d14dfb1c99ab9614361c39d2c7e2`
+PGlite baseline: installed `@electric-sql/pglite` 0.5.4 comparator at source
+commit `25d0a55e1f1e4c59f26d9e125150dda88a33fd00`
 
 This report compares the current Oliphaunt tree with PGlite's supported
 `PGliteInterface`, transaction, query options, results, construction options,
@@ -33,7 +33,7 @@ option-object shapes, lifecycle compatibility fields, and ownership policy.
 
 Server mode remains the zero-special-case path: ordinary PostgreSQL drivers and
 ORMs use `connectionString`. This comparison matters most for native direct and
-broker execution, WASIX caller-realm and explicit Worker execution, browsers,
+broker execution, WASIX browser caller-realm and native-host actor/direct/Worker execution, browsers,
 mobile, and the two embedded Rust products.
 
 ## Core method contrast
@@ -82,12 +82,11 @@ with execution placement kept separate from database topology:
 - Swift uses an async throwing factory and Kotlin uses a suspending factory,
   with dedicated serial owners appropriate to those platforms.
 
-WASIX TypeScript follows PGlite's placement philosophy directly. The root
-entry point runs PostgreSQL in the importing realm, while `/worker` opts into a
-package-owned Web Worker or Node-compatible worker thread. Both surfaces remain
-Promise-shaped because loading and durable provider publication are
-asynchronous. On the root surface, that Promise does not move synchronous guest
-CPU work off the caller's event loop. The Worker surface changes execution
+WASIX TypeScript follows PGlite's placement philosophy while adapting it to a
+native host. The browser root runs PostgreSQL in the importing realm;
+the native-host root uses a Rust owner actor. `/direct` opts into blocking
+caller-realm execution on Node-compatible runtimes, while `/worker` uses a real
+JavaScript Worker everywhere. All remain Promise-shaped and differ only in
 placement, not database topology or query semantics.
 
 Every SDK publishes closed state. Readiness properties remain unnecessary for
@@ -227,8 +226,7 @@ tagged SQL.
 | --- | --- |
 | `rows` | `rows` |
 | `fields[].dataTypeID` | `fields[].typeOid` plus full wire metadata |
-| `command` | complete `commandTag` |
-| `affectedRows` / `rowCount` | nullable `rowCount` derived from the command tag |
+| `affectedRows` | nullable `rowCount` derived from the complete `commandTag` |
 | optional `blob` | no structured blob result |
 | notice callback | ordered `notices` in the result or error |
 | no result discriminator | explicit command/rows kind where the language needs it |
@@ -305,11 +303,12 @@ method name therefore improves migration clarity but does not make the
 signature structurally identical.
 
 PGlite's concrete class also has `execProtocolRawSync`. Oliphaunt deliberately
-does not promise a synchronous-return JavaScript result. The WASIX root means
-guest computation runs in the caller realm; loading, persistence publication,
-and the public result remain promise-shaped. This keeps the calling shape and
-execution owner independently explicit without pretending durable I/O is
-synchronous.
+does not promise a synchronous-return JavaScript result. Browser root and
+native-host `/direct` guest computation run in the caller realm, while the
+native-host root uses a Rust actor and `/worker` uses a JavaScript Worker. Loading,
+persistence publication, and every public result remain promise-shaped. This
+keeps calling shape and execution owner independently explicit without
+pretending durable I/O is synchronous.
 
 PGlite additionally exposes structured `execProtocol`, which parses supported
 backend messages while retaining the raw data. Oliphaunt intentionally has no
@@ -368,7 +367,7 @@ Oliphaunt's public product family goes beyond PGlite core with:
 
 - native direct and broker execution;
 - native Rust, Swift, Kotlin, React Native, and desktop TypeScript SDKs;
-- WASIX Rust plus browser/Node/Bun/Deno TypeScript execution;
+- WASIX Rust plus browser/Node/Bun/Deno/Electron TypeScript execution;
 - lifecycle-and-URI-only native and WASIX server products where sockets are
   honest;
 - ordinary PostgreSQL driver interoperability through connection strings;
@@ -385,7 +384,7 @@ Oliphaunt's public product family goes beyond PGlite core with:
 | Surface | Public database shape | Deliberate difference |
 | --- | --- | --- |
 | Native TypeScript | Promise database API in direct/broker mode: decoded `query`, `queryRaw`, `execute`, `exec`, `describe`, transactions, raw protocol, cancellation, backup/restore; separate server facade | Server exposes only `connectionString` and lifecycle; direct and broker keep one session |
-| WASIX TypeScript | Same JavaScript database shape through the caller-realm root or explicit `/worker`; separate Node/Bun/Deno server subpaths; memory, IndexedDB, OPFS, and managed directories | Both database surfaces are Promise-shaped; root guest CPU work runs in the caller realm while `/worker` adds RPC isolation; server is URI/lifecycle only; no cancellation; browsers have no server sockets |
+| WASIX TypeScript | Same Promise-shaped database through browser root, native-host actor root, explicit `/direct`, or `/worker`; one host-only `/server` subpath on Node/Bun/Deno/Electron; memory, IndexedDB, OPFS, and managed directories | Browser root and native-host `/direct` run guest CPU work in their importing realm; native-host root uses one Rust owner and `/worker` adds JavaScript RPC isolation; `/server` is URI/lifecycle only; no cancellation; browsers have no server sockets |
 | React Native | Same JavaScript SQL and codec shape over Swift/Kotlin | Direct mobile only; JSI carries binary batches and raw chunks |
 | Native Rust | Synchronous exclusive `Oliphaunt` plus root `AsyncOliphaunt`; fluent `Sql`; typed ordered rows; direct/broker; separate sync/async server builders | Sync database is `Send + !Sync`; async database is cloneable `Send + Sync`; server handle is URI/lifecycle only; direct PostgreSQL uses liboliphaunt's backend pthread |
 | WASIX Rust | Synchronous exclusive `Oliphaunt` plus root `AsyncOliphaunt`; fluent `Sql`; typed ordered rows; memory/directory storage; separate sync/async server builders | Sync database is `!Send + !Sync`; async database is cloneable `Send + Sync`; server is single-client and URI/lifecycle only; no cancellation |
@@ -394,9 +393,10 @@ Oliphaunt's public product family goes beyond PGlite core with:
 
 Rust also has two stable value-shape decisions with no useful PGlite analogue.
 Both Rust products expose an opaque cloneable `Error` classified by a root
-non-exhaustive `ErrorKind` (`InvalidConfiguration`, `Lifecycle`,
-`TransactionActive`, `Postgres`, or `Other`) while retaining PostgreSQL and
-composite transaction detail through accessors. Their opaque root `Extension`
+non-exhaustive `ErrorKind`; WASIX Rust adds a `Storage` category and structured
+managed-storage accessors to the shared configuration, lifecycle, transaction,
+PostgreSQL, and other categories. PostgreSQL and composite transaction detail
+remain available through accessors. Their opaque root `Extension`
 uses uppercase associated constants, `Extension::ALL`,
 `Extension::by_sql_name`, and `sql_name`; WASIX exposes only extensions enabled
 by Cargo features. These are intentionally Rust-shaped APIs rather than copies
@@ -447,7 +447,7 @@ Driver and compatibility qualification must cover:
 ## Sources
 
 - [PGlite API documentation](https://pglite.dev/docs/api)
-- [PGlite public interface](https://github.com/electric-sql/pglite/blob/faa505ad2ea0d14dfb1c99ab9614361c39d2c7e2/packages/pglite/src/interface.ts)
-- [PGlite concrete implementation](https://github.com/electric-sql/pglite/blob/faa505ad2ea0d14dfb1c99ab9614361c39d2c7e2/packages/pglite/src/pglite.ts)
+- [PGlite public interface](https://github.com/electric-sql/pglite/blob/25d0a55e1f1e4c59f26d9e125150dda88a33fd00/packages/pglite/src/interface.ts)
+- [PGlite concrete implementation](https://github.com/electric-sql/pglite/blob/25d0a55e1f1e4c59f26d9e125150dda88a33fd00/packages/pglite/src/pglite.ts)
 - [Oliphaunt stable database API](stable-database-api.md)
 - [Oliphaunt SDK parity policy](../maintainers/sdk-parity-policy.md)

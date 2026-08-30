@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
-import { runWasixPgDumpProcess, WasixDatabaseImpl } from '../database.js';
+import { describe, expect, it } from 'vitest';
+import { runWasixPgDumpProcess, WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES } from '../database.js';
 import type { WorkerResponse } from '../rpc.js';
 import { createWorkerSessionDispatcher } from '../worker-dispatch.js';
 import { openWorkerDatabase, WorkerRpc } from '../worker-rpc.js';
@@ -211,54 +211,64 @@ describe('WASIX worker RPC', () => {
     expect(port.terminations).toBe(1);
   });
 
-  it('does not post an orderly close after a deadline aborts queued worker work', async () => {
-    vi.useFakeTimers();
-    try {
-      const port = new FakeWorkerPort();
-      let finishTermination: (() => void) | undefined;
-      port.terminate = () => {
-        port.terminations += 1;
-        return new Promise<void>((resolve) => {
-          finishTermination = resolve;
-        });
-      };
-      const opening = openWorkerDatabase(port, workerOpenOptions());
-      const open = await postedRequest(port, 0);
-      port.respond({ id: open.id, ok: true });
-      const database = await opening;
-      if (!(database instanceof WasixDatabaseImpl)) {
-        throw new Error('worker open returned an unexpected database handle');
-      }
-      let resourceCloses = 0;
-      database.registerResource({
-        close() {
-          resourceCloses += 1;
-        },
+  it('waits for a quiescent server Worker to self-exit without forced termination', async () => {
+    const port = new FakeWorkerPort();
+    let finishExit!: () => void;
+    port.expectSelfExit = () =>
+      new Promise<void>((resolve) => {
+        finishExit = resolve;
       });
+    const opening = openWorkerDatabase(port, workerOpenOptions());
+    const open = await postedRequest(port, 0);
+    port.respond({ id: open.id, ok: true });
+    const database = await opening;
 
-      const query = database.execProtocolRaw(Uint8Array.of(1));
-      await postedRequest(port, 1);
-      const queryFailure = expect(query).rejects.toThrow('Oliphaunt WASIX worker was terminated');
-      const closing = database.close();
-      const closeFailure = expect(closing).rejects.toThrow(
-        'close exceeded 120000ms; worker termination was requested',
-      );
+    const closing = database.close();
+    const close = await postedRequest(port, 1);
+    port.respond({ id: close.id, ok: true });
+    let settled = false;
+    void closing.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
 
-      await vi.advanceTimersByTimeAsync(120_000);
-      await queryFailure;
-      expect(resourceCloses).toBe(0);
-      expect(database.closed).toBe(false);
+    expect(settled).toBe(false);
+    expect(port.terminations).toBe(0);
+    finishExit();
+    await closing;
+    expect(port.terminations).toBe(0);
+  });
 
-      finishTermination?.();
-      await closeFailure;
+  it('waits for full Worker self-exit after a failing native close', async () => {
+    const port = new FakeWorkerPort();
+    let finishExit!: () => void;
+    port.expectSelfExit = () =>
+      new Promise<void>((resolve) => {
+        finishExit = resolve;
+      });
+    const opening = openWorkerDatabase(port, workerOpenOptions());
+    const open = await postedRequest(port, 0);
+    port.respond({ id: open.id, ok: true });
+    const database = await opening;
 
-      expect(database.closed).toBe(true);
-      expect(resourceCloses).toBe(1);
-      expect(port.requests.map(({ message }) => message.method)).toEqual(['open', 'exec']);
-      expect(port.terminations).toBe(1);
-    } finally {
-      vi.useRealTimers();
-    }
+    const closing = database.close();
+    const close = await postedRequest(port, 1);
+    port.respond({
+      id: close.id,
+      ok: false,
+      error: { name: 'Error', message: 'guest close failed' },
+    });
+    let settled = false;
+    void closing.catch(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+
+    expect(settled).toBe(false);
+    expect(port.terminations).toBe(0);
+    finishExit();
+    await expect(closing).rejects.toThrow('guest close failed');
+    expect(port.terminations).toBe(0);
   });
 
   it('preserves deferred execution and explicit sync boundaries across worker RPC', async () => {
@@ -390,6 +400,32 @@ describe('WASIX worker RPC', () => {
     expect(executions).toBe(0);
   });
 
+  it('announces Worker self-exit only after a failing native close reply is posted', async () => {
+    const events: string[] = [];
+    const dispatch = createWorkerSessionDispatcher(
+      async () => ({
+        async exec(input) {
+          return input;
+        },
+        async sync() {},
+        async close() {
+          events.push('native-close');
+          throw new Error('close failed');
+        },
+      }),
+      (response) => {
+        if ('ok' in response && response.id === 2) events.push(`response:${response.ok}`);
+      },
+      undefined,
+      { onQuiescentClose: () => events.push('self-exit') },
+    );
+
+    await dispatch({ id: 1, method: 'open', options: workerOpenOptions() });
+    await dispatch({ id: 2, method: 'close' });
+
+    expect(events).toEqual(['native-close', 'response:false', 'self-exit']);
+  });
+
   it('rejects a malformed one-shot restore without opening a database session', async () => {
     let opened = false;
     const responses: Array<{ id: number; ok: boolean }> = [];
@@ -457,6 +493,47 @@ describe('WASIX worker RPC', () => {
       },
     });
     expect(responses[1]?.transfer).toHaveLength(2);
+    const toolResponse = responses[1];
+    if (toolResponse === undefined) throw new Error('missing tool response');
+    const cloned = structuredClone(toolResponse.response, {
+      transfer: [...toolResponse.transfer],
+    }) as { value: { stdout: Uint8Array; stderr: Uint8Array } };
+    expect([...cloned.value.stdout]).toEqual([1, 2]);
+    expect([...cloned.value.stderr]).toEqual([3, 4]);
+    expect(toolResponse.transfer.every((buffer) => buffer.byteLength === 0)).toBe(true);
+  });
+
+  it('returns raw bytes in an ordinary transferable V8 buffer', async () => {
+    let sent: Readonly<{ response: WorkerResponse; transfer: readonly ArrayBuffer[] }> | undefined;
+    const dispatch = createWorkerSessionDispatcher(
+      async () => ({
+        async exec() {
+          return Uint8Array.of(21, 22, 23);
+        },
+        async sync() {},
+        async close() {},
+      }),
+      (response, transfer = []) => {
+        if ('ok' in response && response.id === 2) sent = { response, transfer };
+      },
+    );
+
+    await dispatch({ id: 1, method: 'open', options: workerOpenOptions() });
+    await dispatch({
+      id: 2,
+      method: 'exec',
+      input: Uint8Array.of(1),
+      persistence: 'sync',
+    });
+
+    if (sent === undefined) throw new Error('missing raw worker response');
+    const original = sent as { response: WorkerResponse; transfer: readonly ArrayBuffer[] };
+    const cloned = structuredClone(original.response, {
+      transfer: [...original.transfer],
+    });
+    expect(cloned).toMatchObject({ id: 2, ok: true, value: Uint8Array.of(21, 22, 23) });
+    expect(original.transfer).toHaveLength(1);
+    expect(original.transfer[0]?.byteLength).toBe(0);
   });
 
   it('fails closed around open state and transfers optional physical backups', async () => {
@@ -619,6 +696,32 @@ describe('WASIX worker RPC', () => {
     expect(Atomics.load(control, 0)).toBe(1);
     port.respond({ id: request.id, ok: true, streamOutcome: 'complete' });
     await streaming;
+
+    const closing = database.close();
+    const close = await postedRequest(port, 2);
+    port.respond({ id: close.id, ok: true });
+    await closing;
+  });
+
+  it('buffers and chunks streams without shared memory across a process transport', async () => {
+    const port = new FakeWorkerPort();
+    Object.defineProperty(port, 'supportsSharedMemory', { value: false });
+    const opening = openWorkerDatabase(port, workerOpenOptions());
+    const open = await postedRequest(port, 0);
+    port.respond({ id: open.id, ok: true });
+    const database = await opening;
+    const chunkLengths: number[] = [];
+
+    const streaming = database.execProtocolRawStream(Uint8Array.of(1), (chunk) => {
+      chunkLengths.push(chunk.length);
+    });
+    const request = await postedRequest(port, 1);
+    expect(request.method).toBe('exec');
+    const response = new Uint8Array(WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES + 3);
+    port.respond({ id: request.id, ok: true, value: response });
+
+    await streaming;
+    expect(chunkLengths).toEqual([WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES, 3]);
 
     const closing = database.close();
     const close = await postedRequest(port, 2);

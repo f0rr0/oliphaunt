@@ -6,10 +6,24 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createPackedWasixConsumer, runFixtureCommand } from './packed-node-fixture.mjs';
 
 const { packageOnly, runtime } = readOptions(process.argv.slice(2));
-const runtimeName = runtime === 'bun' ? 'Bun' : runtime === 'deno' ? 'Deno' : 'Node';
-const expectedEntrypoint = `index.${runtime}.js`;
-const expectedWorkerEntrypoint = `worker-entry.${runtime}.js`;
+const runtimeName =
+  runtime === 'bun'
+    ? 'Bun'
+    : runtime === 'deno'
+      ? 'Deno'
+      : runtime === 'electron'
+        ? 'Electron'
+        : 'Node';
+const packageCondition = runtime === 'electron' ? 'node' : runtime;
+const storageCondition = runtime === 'electron' ? 'node' : runtime;
+const expectedEntrypoint = `index.${packageCondition}.js`;
+const expectedDirectEntrypoint = 'direct.node.js';
+const expectedWorkerEntrypoint = `worker-entry.${packageCondition}.js`;
+const expectedServerEntrypoint = 'server.node.js';
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
+const pgwireClientUrl = pathToFileURL(
+  resolve(repositoryRoot, 'src/bindings/wasix-ts/tools/pgwire-client.mjs'),
+).href;
 const scratch = await mkdtemp(resolve(tmpdir(), `oliphaunt-wasix-${runtime}-smoke-`));
 
 try {
@@ -28,13 +42,20 @@ try {
 const candidate = ${JSON.stringify(candidate)};
 const extension = ${JSON.stringify(extension)};
 const runtime = ${JSON.stringify(runtime)};
+const storageCondition = ${JSON.stringify(storageCondition)};
 const runtimeName = ${JSON.stringify(runtimeName)};
 const packageOnly = ${JSON.stringify(packageOnly)};
 const pgtap = packageOnly ? undefined : (await import(extension)).default;
 const executionSurfaces = {
-  direct: {
+  actor: {
     entrypoint: candidate,
     resolvedEntrypoint: ${JSON.stringify(expectedEntrypoint)},
+    callingContract: 'async',
+    executionOwner: 'sdk-thread',
+  },
+  direct: {
+    entrypoint: candidate + '/direct',
+    resolvedEntrypoint: ${JSON.stringify(expectedDirectEntrypoint)},
     callingContract: 'async',
     executionOwner: 'caller',
   },
@@ -44,10 +65,26 @@ const executionSurfaces = {
     callingContract: 'async',
     executionOwner: 'sdk-worker',
   },
+  server: {
+    entrypoint: candidate + '/server',
+    resolvedEntrypoint: ${JSON.stringify(expectedServerEntrypoint)},
+    callingContract: 'async',
+    executionOwner: 'rust-listener',
+  },
 };
 const { default: Oliphaunt, PostgresError, postgresOids, WasixStorageError } = await import(candidate);
+const { default: DirectOliphaunt } = await import(candidate + '/direct');
 const { default: WorkerOliphaunt } = await import(candidate + '/worker');
-const { directory } = await import(candidate + '/storage/' + runtime);
+const { openServer } = await import(candidate + '/server');
+const { directory } = await import(candidate + '/storage/' + storageCondition);
+const {
+  connect,
+  onceClosed,
+  onceConnected,
+  readExchange,
+  simpleQuery: wireSimpleQuery,
+  startupPacket,
+} = await import(${JSON.stringify(pgwireClientUrl)});
 const simpleQuery = (sql) => {
   const body = new TextEncoder().encode(sql + '\\0');
   const message = new Uint8Array(body.length + 5);
@@ -59,7 +96,11 @@ const simpleQuery = (sql) => {
 
 const resolved = import.meta.resolve(candidate);
 if (!resolved.endsWith('/lib/${expectedEntrypoint}')) {
-  throw new Error(runtimeName + ' did not select its direct entrypoint: ' + resolved);
+  throw new Error(runtimeName + ' did not select its actor entrypoint: ' + resolved);
+}
+const directResolved = import.meta.resolve(candidate + '/direct');
+if (!directResolved.endsWith('/lib/${expectedDirectEntrypoint}')) {
+  throw new Error(runtimeName + ' did not select its direct entrypoint: ' + directResolved);
 }
 const workerResolved = import.meta.resolve(candidate + '/worker');
 if (!workerResolved.endsWith('/lib/${expectedWorkerEntrypoint}')) {
@@ -67,14 +108,25 @@ if (!workerResolved.endsWith('/lib/${expectedWorkerEntrypoint}')) {
     runtimeName + ' did not select its Worker entrypoint: ' + workerResolved,
   );
 }
+const serverResolved = import.meta.resolve(candidate + '/server');
+if (!serverResolved.endsWith('/lib/${expectedServerEntrypoint}')) {
+  throw new Error(
+    runtimeName + ' did not select its server entrypoint: ' + serverResolved,
+  );
+}
 if (!packageOnly) {
   const callerSource = [
-    "import { parentPort } from 'node:worker_threads';",
-    'const { default: DirectOliphaunt } = await import(' + JSON.stringify(resolved) + ');',
+    "import { parentPort, workerData } from 'node:worker_threads';",
+    'const { default: DirectOliphaunt } = await import(' + JSON.stringify(directResolved) + ');',
     'const { default: WorkerOliphaunt } = await import(' + JSON.stringify(workerResolved) + ');',
     'const { directory } = await import(' +
-      JSON.stringify(import.meta.resolve(candidate + '/storage/' + runtime)) +
+      JSON.stringify(import.meta.resolve(candidate + '/storage/' + storageCondition)) +
       ');',
+    'const finishWorker = () => {',
+    "  if (workerData.runtime === 'bun') return process.exit(0);",
+    '  parentPort.close?.();',
+    '  parentPort.unref();',
+    '};',
     'try {',
     '  const direct = await DirectOliphaunt.open({ storage: directory(' +
       JSON.stringify(new URL('./caller-worker-storage', import.meta.url).href) +
@@ -85,29 +137,50 @@ if (!packageOnly) {
     "  const workerAnswer = (await nestedWorker.queryRaw('SELECT 43::int AS answer')).getText(0, 'answer');",
     '  await nestedWorker.close();',
     '  parentPort.postMessage({ directAnswer, workerAnswer });',
+    '  finishWorker();',
     '} catch (error) {',
     '  parentPort.postMessage({ name: error?.name, message: error?.message });',
+    '  finishWorker();',
     '}',
   ].join('\\n');
-  const callerResult = await new Promise((resolveResult, rejectResult) => {
-    let receivedMessage = false;
+  const callerResults = [];
+  for (let iteration = 1; iteration <= 2; iteration += 1) {
     const worker = new Worker(
       new URL('data:text/javascript,' + encodeURIComponent(callerSource)),
-      { name: 'oliphaunt-caller-worker-check' },
+      { name: 'oliphaunt-caller-worker-check-' + iteration, workerData: { runtime } },
     );
-    worker.once('message', (message) => {
-      receivedMessage = true;
-      void worker.terminate().then(() => resolveResult(message), rejectResult);
-    });
-    worker.once('error', rejectResult);
-    worker.once('exit', (code) => {
-      if (!receivedMessage && code !== 0) {
-        rejectResult(new Error('caller worker exited with code ' + code));
-      }
-    });
-  });
-  if (callerResult?.directAnswer !== '42' || callerResult?.workerAnswer !== '43') {
-    throw new Error('caller-worker execution failed: ' + JSON.stringify(callerResult));
+    let callerResult;
+    let exitObserved = false;
+    try {
+      callerResult = await new Promise((resolveResult, rejectResult) => {
+        let message;
+        worker.once('message', (value) => {
+          message = value;
+        });
+        worker.once('error', rejectResult);
+        worker.once('exit', (code) => {
+          exitObserved = true;
+          if (code !== 0) {
+            rejectResult(new Error('caller worker exited with code ' + code));
+          } else if (message === undefined) {
+            rejectResult(new Error('caller worker self-exited without a result'));
+          } else {
+            resolveResult(message);
+          }
+        });
+      });
+    } finally {
+      // Forced termination is only failure cleanup. Bun does not settle a
+      // redundant terminate() after a Worker has emitted its exit event.
+      if (!exitObserved) await worker.terminate();
+    }
+    if (callerResult?.directAnswer !== '42' || callerResult?.workerAnswer !== '43') {
+      throw new Error('caller-worker execution failed: ' + JSON.stringify(callerResult));
+    }
+    callerResults.push(callerResult);
+  }
+  if (callerResults.length !== 2) {
+    throw new Error('caller-worker repetition failed');
   }
 }
 
@@ -117,7 +190,7 @@ if (packageOnly) {
     throw new Error(runtimeName + ' storage condition returned an invalid adapter');
   }
   console.log(JSON.stringify({
-    host: runtime + '-package-condition-direct-and-worker_threads',
+    host: runtime + '-package-condition-actor-direct-worker',
     executionSurfaces,
     storage: runtime + '-directory',
   }));
@@ -258,10 +331,41 @@ async function verifyStructuredApi(db) {
   ].join(':');
 }
 
-const direct = await verifyMemory(Oliphaunt, 'direct');
+async function verifyServer() {
+  const server = await openServer();
+  const socket = connect(server.connectionString);
+  let startup;
+  let query;
+  try {
+    await onceConnected(socket);
+    const startupResponse = readExchange(socket);
+    socket.write(startupPacket('postgres', 'postgres'));
+    startup = await startupResponse;
+    const queryResponse = readExchange(socket);
+    socket.write(wireSimpleQuery('SELECT 42::int AS answer'));
+    query = await queryResponse;
+  } finally {
+    socket.end();
+    await onceClosed(socket);
+    await server.close();
+  }
+  if (
+    !server.closed ||
+    startup.messages < 1 ||
+    query.messages < 3 ||
+    query.totalBytes < 6
+  ) {
+    throw new Error('server: ' + JSON.stringify({ closed: server.closed, startup, query }));
+  }
+  return { connection: 'tcp-loopback', startup, query };
+}
+
+const actor = await verifyMemory(Oliphaunt, 'actor');
+const direct = await verifyMemory(DirectOliphaunt, 'direct');
 const worker = await verifyMemory(WorkerOliphaunt, 'worker');
-if (direct.version !== worker.version) {
-  throw new Error('entrypoint extension versions differ: ' + JSON.stringify({ direct, worker }));
+const server = await verifyServer();
+if (actor.version !== direct.version || direct.version !== worker.version) {
+  throw new Error('entrypoint extension versions differ: ' + JSON.stringify({ actor, direct, worker }));
 }
 
 const storage = directory(new URL('./database space ü', import.meta.url));
@@ -369,7 +473,7 @@ if (
   directSessionState !== 'direct-session:packed-direct-session' ||
   workerSessionState !== 'worker-session:packed-worker-session' ||
   corruptRestore !== 'corrupt:unchanged' ||
-  persistentExtension !== direct.version
+  persistentExtension !== actor.version
 ) {
   throw new Error(JSON.stringify({
     busy,
@@ -384,15 +488,15 @@ if (
     workerSessionState,
     corruptRestore,
     persistentExtension,
-    version: direct.version,
+    version: actor.version,
   }));
 }
 console.log(JSON.stringify({
-  host: runtime + '-direct-and-worker_threads',
+  host: runtime + '-actor-direct-worker',
   executionSurfaces,
-  surfaceResults: { direct, worker },
+  surfaceResults: { actor, direct, worker, server },
   extension: 'pgtap',
-  version: direct.version,
+  version: actor.version,
   storage: runtime + '-raw-pgdata-delta',
   busy,
   workerPersistedRows,
@@ -432,6 +536,7 @@ async function richBackupValues(db) {
     verification.args,
     fixture.consumer,
     300_000,
+    verification.env,
   );
   console.log(`wasix-ts ${runtimeName} smoke: PASS ${stdout.trim()}`);
 } finally {
@@ -450,13 +555,13 @@ function readOptions(args) {
     if (
       argument === '--runtime' &&
       index + 1 < args.length &&
-      ['bun', 'deno', 'node'].includes(args[index + 1])
+      ['bun', 'deno', 'electron', 'node'].includes(args[index + 1])
     ) {
       runtime = args[index + 1];
       index += 1;
       continue;
     }
-    throw new Error('usage: smoke-node.mjs [--runtime node|bun|deno] [--package-only]');
+    throw new Error('usage: smoke-node.mjs [--runtime node|bun|deno|electron] [--package-only]');
   }
   return { packageOnly, runtime };
 }
@@ -477,7 +582,31 @@ function runtimeVerificationCommand(runtime, verificationUrl) {
     case 'deno':
       return {
         command: resolve(repositoryRoot, 'tools/dev/deno.sh'),
-        args: ['run', '--allow-all', verificationUrl],
+        args: [
+          'run',
+          '--allow-env',
+          '--allow-ffi',
+          '--allow-net=127.0.0.1',
+          '--allow-read',
+          verificationUrl,
+        ],
+      };
+    case 'electron':
+      return {
+        command: 'npm',
+        args: [
+          'exec',
+          '--yes',
+          '--package=electron@39.2.5',
+          '--',
+          'electron',
+          fileURLToPath(verificationUrl),
+        ],
+        env: {
+          ELECTRON_RUN_AS_NODE: '1',
+          NPM_CONFIG_IGNORE_SCRIPTS: 'false',
+          PNPM_CONFIG_IGNORE_SCRIPTS: 'false',
+        },
       };
   }
 }

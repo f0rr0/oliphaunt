@@ -167,6 +167,7 @@ const GITHUB_RELEASE_ASSET_PRODUCTS = new Set([
   "liboliphaunt-wasix-postmaster",
   "oliphaunt-broker",
   "oliphaunt-node-direct",
+  "oliphaunt-wasix-napi",
 ]);
 
 function activePublicationSourceRef(environment = process.env) {
@@ -932,6 +933,14 @@ async function publishNodeDirectNpmOptionalPackages(headRef) {
   }
 }
 
+async function publishWasixNapiNpmOptionalPackages(headRef) {
+  const product = "oliphaunt-wasix-napi";
+  verifyReleaseTag(product, headRef);
+  for (const carrier of frozenCarrierPackages("npm", { product })) {
+    await npmPublishTarball(carrier.name, carrier.file, carrier.version);
+  }
+}
+
 async function publishBrokerNpmPackages(headRef) {
   const product = "oliphaunt-broker";
   verifyReleaseTag(product, headRef);
@@ -1608,6 +1617,11 @@ if (publishProductStep?.product === "liboliphaunt-wasix" && publishProductStep.s
 
 if (publishProductStep?.product === "oliphaunt-node-direct" && publishProductStep.step === "npm") {
   await publishNodeDirectNpmOptionalPackages(publishProductStep.headRef);
+  process.exit(0);
+}
+
+if (publishProductStep?.product === "oliphaunt-wasix-napi" && publishProductStep.step === "npm") {
+  await publishWasixNapiNpmOptionalPackages(publishProductStep.headRef);
   process.exit(0);
 }
 

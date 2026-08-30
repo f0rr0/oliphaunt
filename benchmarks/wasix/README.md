@@ -67,12 +67,14 @@ memory while the Worker comparison uses OPFS.
 `node-pglite-memory-v2.json` is the deterministic Node comparison plan for the
 public `@oliphaunt/wasix-ts` package and the exact PGlite control named in the
 plan. The executable harness lives in `tools/perf/wasix-node`. It compares the
-explicit `@oliphaunt/wasix-ts/worker` entrypoint with a harness-owned PGlite
-Worker, and the caller-owned `@oliphaunt/wasix-ts` root with PGlite's
-asynchronous caller-realm API. Both use memory storage. The harness
+real `@oliphaunt/wasix-ts/worker` entrypoint with a harness-owned PGlite Worker,
+and the blocking `@oliphaunt/wasix-ts/direct` entrypoint with PGlite's
+caller-realm API. Both use memory storage. The harness
 alternates which engine runs first across ten fresh-process pairs per
-comparison and gates them independently, so a strong Worker result cannot hide
-a weak direct result or vice versa. The direct comparison has matched execution
+comparison and gates them independently, so a strong isolated result cannot
+hide a weak direct result or vice versa. Both Worker candidates own real Worker
+threads, while Oliphaunt's Worker loads its synchronous Node-API `/direct`
+placement. The direct comparison has matched execution
 ownership and Promise-shaped public APIs; the plan and report separately record
 that Oliphaunt performs guest work in the caller realm while its promise is
 pending.
@@ -83,8 +85,8 @@ gate weight. PGlite's published benchmark times `pg.exec()` inside a browser
 worker. Its official worker library requires browser Worker and Web Locks APIs,
 so this Node harness owns a deliberately small `worker_threads` RPC adapter and
 times both public APIs end-to-end from the Node host, including exactly one
-worker RPC for each engine. PGlite's official benchmark methodology is retained
-as provenance only: calls return public results without collecting or
+isolation RPC for each engine. PGlite's official benchmark methodology is
+retained as provenance only: calls return public results without collecting or
 serializing comparator-only internal timing. The caller-owned comparison times
 both packages around their public Promise APIs and does not imply that either
 implementation yields the caller realm while database work runs.
@@ -99,27 +101,44 @@ Generated SQL is bounded by the compact row counts in the plan; upstream
 generated benchmark files are not vendored.
 
 Validate the plan without runtime assets with
-`moon run oliphaunt-wasix-ts:bench`. After building the portable runtime, run
-the uncached local measurement with
-`moon run oliphaunt-wasix-ts:bench-run`. Each run writes machine-readable JSON
+`moon run oliphaunt-wasix-ts:bench`. The uncached measurement deliberately does
+not build its large native prerequisite. Stage the portable/AOT runtime, ICU,
+and extension inputs, then build and smoke the optimized carrier for the
+current host before running it:
+
+```sh
+bash src/runtimes/wasix-napi/tools/build-native.sh
+moon run oliphaunt-wasix-ts:bench-run
+```
+
+Each run writes machine-readable JSON
 and a compact Markdown table under `target/perf`; it passes only when canonical
 timed-response/result hashes and PostgreSQL settings agree and the geometric
 mean of median paired Oliphaunt/PGlite ratios is at most `0.80`. Reports pin the
 comparator tarball integrity and installed tree hash, and record the complete
 resolved installed closure of each engine. The candidate package fixture also
-requires its runtime module to match the canonical asset manifest and build
-outputs, then records the full build-profile signature plus the exact outputs
-digest. The checked-in plan rejects anything other than the qualified
-`release` profile with `-O2 -g0 -flto=thin` and a ThinLTO final link.
+requires its native carrier binary to match its recorded artifact provenance and
+its embedded runtime module to match the canonical asset manifest and build
+outputs. Reports record the carrier target, binary digest, artifact source,
+payload build inputs, native Cargo profile, and full guest build-profile
+signature. The checked-in plan rejects anything other than a non-incremental
+one-codegen-unit native `release` build with thin LTO and the qualified guest
+`release` profile with `-O2 -g0 -flto=thin`.
 
-For an advisory raw-streaming and tool-path comparison, build the staged SDK
-and runtime assets, then run:
+For an advisory placement, raw-streaming, server, tool, event-loop, and RSS
+comparison, build the staged SDK and runtime assets plus that optimized native
+carrier, then run:
 
 ```sh
 pnpm --dir tools/perf/wasix-node bench:streaming
+# exhaustive 1 KiB / 1 MiB / 64 MiB and 1 / 4 / 16 database profile
+node tools/perf/wasix-node/streaming-quick.mjs --full --json
 ```
 
-Its v2 report measures the caller-owned root and explicit `/worker` entrypoint
-separately, uses `execProtocolRawStream`, and records added Worker-boundary
-latency plus representative event-loop and RSS observations. It is descriptive
-rather than a qualification gate.
+Its v3 report measures the default Rust actor, blocking `/direct`, and real
+`/worker` placements separately. It reports p50/p95/p99 latency, actor and
+Worker overhead relative to direct, streaming throughput and backpressure, and
+representative event-loop and RSS observations. It is descriptive rather than
+a qualification gate. This is also the canonical actor-versus-direct overhead
+measurement; the PGlite gate above deliberately compares execution placements
+with matched caller/Worker ownership.

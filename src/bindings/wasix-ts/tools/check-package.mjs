@@ -18,6 +18,12 @@ const runtimePackage = '@oliphaunt/liboliphaunt-wasix';
 const benchmarkComparisonPackage = '@electric-sql/pglite';
 const fzstdPackage = 'fzstd';
 const fzstdVersion = '0.1.1';
+const nativePackages = Object.freeze([
+  '@oliphaunt/wasix-napi-darwin-arm64',
+  '@oliphaunt/wasix-napi-linux-arm64-gnu',
+  '@oliphaunt/wasix-napi-linux-x64-gnu',
+  '@oliphaunt/wasix-napi-win32-x64-msvc',
+]);
 const expectedHostBuild = (await loadHostBuildContract()).provenance;
 
 await execFileAsync('pnpm', ['run', 'package:build'], {
@@ -80,12 +86,11 @@ try {
   const exports = packageJson.exports ?? {};
   const expectedExports = [
     '.',
+    './direct',
     './worker',
     './package.json',
     './internal/tools',
-    './server/bun',
-    './server/deno',
-    './server/node',
+    './server',
     './storage/bun',
     './storage/deno',
     './storage/indexed-db',
@@ -98,6 +103,19 @@ try {
   if (exports['./storage/indexed-db'] === undefined) {
     throw new Error('WASIX TypeScript package omitted the selective IndexedDB entrypoint');
   }
+  const direct = exports['./direct'];
+  if (
+    JSON.stringify(Object.keys(direct ?? {})) !==
+      JSON.stringify(['types', 'deno', 'bun', 'node']) ||
+    direct?.types !== './lib/direct.node.d.ts' ||
+    direct?.deno !== './lib/direct.node.js' ||
+    direct?.bun !== './lib/direct.node.js' ||
+    direct?.node !== './lib/direct.node.js'
+  ) {
+    throw new Error(
+      'WASIX TypeScript package omitted its exact host-only conditional direct entrypoint',
+    );
+  }
   const internalTools = exports['./internal/tools'];
   if (
     internalTools?.types !== './lib/internal.d.ts' ||
@@ -109,15 +127,18 @@ try {
   ) {
     throw new Error('WASIX TypeScript package omitted its version-locked tools bridge');
   }
-  for (const runtime of ['node', 'bun', 'deno']) {
-    const server = exports[`./server/${runtime}`];
-    if (
-      server?.types !== './lib/server.node.d.ts' ||
-      server?.[runtime] !== './lib/server.node.js' ||
-      Object.keys(server ?? {}).some((condition) => !['types', runtime].includes(condition))
-    ) {
-      throw new Error(`WASIX TypeScript package omitted its ${runtime}-only server entrypoint`);
-    }
+  const server = exports['./server'];
+  if (
+    JSON.stringify(Object.keys(server ?? {})) !==
+      JSON.stringify(['types', 'deno', 'bun', 'node']) ||
+    server?.types !== './lib/server.node.d.ts' ||
+    server?.deno !== './lib/server.node.js' ||
+    server?.bun !== './lib/server.node.js' ||
+    server?.node !== './lib/server.node.js'
+  ) {
+    throw new Error(
+      'WASIX TypeScript package omitted its exact host-only conditional server entrypoint',
+    );
   }
   if (
     exports['./storage/node']?.types !== './lib/storage/node.d.ts' ||
@@ -166,7 +187,7 @@ try {
     rootExport?.default !== './lib/index.js'
   ) {
     throw new Error(
-      'WASIX TypeScript package omitted its exact browser/Node/Bun/Deno conditional facade',
+      'WASIX TypeScript package omitted its exact browser/Node/Bun/Deno/Electron conditional facade',
     );
   }
   const workerExport = exports['./worker'];
@@ -181,29 +202,53 @@ try {
     workerExport?.default !== './lib/worker-entry.js'
   ) {
     throw new Error(
-      'WASIX TypeScript package omitted its exact browser/Node/Bun/Deno Worker facade',
+      'WASIX TypeScript package omitted its exact browser/Node/Bun/Deno/Electron Worker facade',
     );
   }
 
   if (
     packageJson.dependencies?.[runtimePackage] !== undefined ||
     packageJson.dependencies?.[fzstdPackage] !== fzstdVersion ||
+    JSON.stringify(Object.keys(packageJson.dependencies ?? {}).sort()) !==
+      JSON.stringify([fzstdPackage]) ||
+    JSON.stringify(Object.keys(packageJson.optionalDependencies ?? {}).sort()) !==
+      JSON.stringify([...nativePackages].sort()) ||
+    nativePackages.some(
+      (name) => packageJson.optionalDependencies?.[name] !== 'workspace:*',
+    ) ||
     packageJson.dependencies?.[benchmarkComparisonPackage] !== undefined ||
     packageJson.dependencies?.['@wasmer/sdk'] !== undefined ||
-    packageJson.dependencies?.['@oliphaunt/ts'] !== undefined
+    packageJson.dependencies?.['@oliphaunt/ts'] !== undefined ||
+    packageJson.oliphaunt?.wasixNapiProduct !== 'oliphaunt-wasix-napi' ||
+    !/^\d+\.\d+\.\d+$/.test(packageJson.oliphaunt?.wasixNapiVersion ?? '') ||
+    packageJson.oliphaunt?.wasixAddonAbiVersion !== 1 ||
+    packageJson.oliphaunt?.nodeApiVersion !== 8 ||
+    packageJson.oliphaunt?.browserHost !== 'wasmer-js-patched' ||
+    packageJson.oliphaunt?.serverHost !== 'wasix-rust-napi'
   ) {
     throw new Error(
-      'WASIX TypeScript workspace manifest must not resolve generated or native hosts',
+      'WASIX TypeScript workspace manifest must keep Wasmer browser-only and declare every native carrier',
     );
   }
   if (
     stagedPackageJson.dependencies?.[runtimePackage] !== packageJson.oliphaunt?.runtimeVersion ||
     stagedPackageJson.dependencies?.[fzstdPackage] !== fzstdVersion ||
+    JSON.stringify(Object.keys(stagedPackageJson.dependencies ?? {}).sort()) !==
+      JSON.stringify([fzstdPackage, runtimePackage].sort()) ||
+    JSON.stringify(Object.keys(stagedPackageJson.optionalDependencies ?? {}).sort()) !==
+      JSON.stringify([...nativePackages].sort()) ||
+    nativePackages.some(
+      (name) =>
+        stagedPackageJson.optionalDependencies?.[name] !==
+        packageJson.oliphaunt?.wasixNapiVersion,
+    ) ||
     stagedPackageJson.dependencies?.[benchmarkComparisonPackage] !== undefined ||
     stagedPackageJson.dependencies?.['@wasmer/sdk'] !== undefined ||
     stagedPackageJson.dependencies?.['@oliphaunt/ts'] !== undefined
   ) {
-    throw new Error('WASIX TypeScript release package does not own an exact portable-only closure');
+    throw new Error(
+      'WASIX TypeScript release package does not own exact browser and native runtime closures',
+    );
   }
 
   const provenance = JSON.parse(
@@ -213,16 +258,66 @@ try {
     throw new Error('WASIX TypeScript package omitted patched-host provenance');
   }
 
-  const workerDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'Worker');
-  const nodeHost = await import('../lib/node-host.js');
-  await nodeHost.init();
-  if (!isDeepStrictEqual(Object.getOwnPropertyDescriptor(globalThis, 'Worker'), workerDescriptor)) {
-    throw new Error('WASIX TypeScript direct Node host mutated the caller realm Worker global');
+  const browserClient = await readFile(resolve(packageDir, 'lib/client.js'), 'utf8');
+  const browserWorker = await readFile(resolve(packageDir, 'lib/worker.js'), 'utf8');
+  const nodeDirect = await readFile(resolve(packageDir, 'lib/node-direct.js'), 'utf8');
+  const nodeActor = await readFile(resolve(packageDir, 'lib/node-actor.js'), 'utf8');
+  const nodeWorker = await readFile(resolve(packageDir, 'lib/node-worker.js'), 'utf8');
+  const nodeIsolatedClient = await readFile(
+    resolve(packageDir, 'lib/worker-node-client.js'),
+    'utf8',
+  );
+  const nodeServer = await readFile(resolve(packageDir, 'lib/server.node.js'), 'utf8');
+  if (
+    !browserClient.includes("import('./host/index.mjs')") ||
+    !browserWorker.includes("from './host/index.mjs'") ||
+    !nodeDirect.includes("from './native-session.js'") ||
+    !nodeActor.includes("from './native-session.js'") ||
+    !nodeWorker.includes("from './node-direct.js'") ||
+    !nodeIsolatedClient.includes("from 'node:worker_threads'") ||
+    !nodeIsolatedClient.includes("new URL('./node-worker.js', import.meta.url)") ||
+    !nodeServer.includes("from './native-server.js'") ||
+    nodeDirect.includes("from './node-host.js'") ||
+    nodeActor.includes("from './node-host.js'") ||
+    nodeWorker.includes("from './node-host.js'") ||
+    nodeIsolatedClient.includes("from 'node:child_process'") ||
+    nodeServer.includes("from './node-host.js'")
+  ) {
+    throw new Error('WASIX TypeScript package did not preserve its browser-Wasmer/native split');
   }
+
+  await assertMissingNativeCarrierFailsClosed(staging);
 
   console.log(`wasix-ts package-shape: PASS ${packed.filename}`);
 } finally {
   await rm(scratch, { force: true, recursive: true });
+}
+
+async function assertMissingNativeCarrierFailsClosed(staging) {
+  const environment = { ...process.env };
+  delete environment.OLIPHAUNT_WASIX_NAPI;
+  const source = String.raw`
+    const { loadNativeWasixAddon } = await import('./lib/native-addon.js');
+    try {
+      loadNativeWasixAddon();
+      throw new Error('native addon unexpectedly loaded without a platform carrier');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (
+        !message.includes('is not installed; reinstall @oliphaunt/wasix-ts with optional dependencies enabled') &&
+        !message.startsWith('no Oliphaunt WASIX Node-API package is defined for ')
+      ) {
+        throw error;
+      }
+      if (/Wasmer|WebAssembly/i.test(message)) {
+        throw new Error('missing native carrier attempted a Wasmer fallback');
+      }
+    }
+  `;
+  await execFileAsync(process.execPath, ['--input-type=module', '--eval', source], {
+    cwd: staging,
+    env: environment,
+  });
 }
 
 async function writePnpmPackInventory(cwd, outputPath) {

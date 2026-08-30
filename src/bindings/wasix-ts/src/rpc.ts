@@ -8,7 +8,11 @@ import { PostgresError, type PostgresErrorField } from './query.js';
 import type { SerializedWasixStorage } from './storage.js';
 import type { WasixStorageSyncBoundary } from './storage-provider.js';
 import type { WasixProtocolConnection } from './pgwire-connection.js';
-import type { WasixToolDescriptor, WasixToolProcessResult } from './tool-runtime.js';
+import type {
+  WasixToolDescriptor,
+  WasixToolProcessOptions,
+  WasixToolProcessResult,
+} from './tool-runtime.js';
 
 export type SerializedAssetSource = string | Uint8Array;
 
@@ -155,6 +159,11 @@ export type WorkerRequest =
     }
   | {
       id: number;
+      method: 'runTool';
+      options: WasixToolProcessOptions;
+    }
+  | {
+      id: number;
       method: 'serve';
       connection: WasixProtocolConnection;
       mode: WasixProtocolConnectionMode;
@@ -167,6 +176,16 @@ export type SerializedWorkerError =
       message: string;
       code: WasixStorageError['code'];
       commitState: WasixStorageError['commitState'];
+      phase?: NonNullable<WasixStorageError['phase']>;
+    }
+  | {
+      name: 'OliphauntWasixToolError';
+      message: string;
+      code: 'tool-error';
+      tool: string;
+      exitCode: number | null;
+      stdout: Uint8Array;
+      stderr: Uint8Array;
     }
   | { name: 'PostgresError'; fields: PostgresErrorField[] }
   | { name: 'Error'; message: string; errorName?: string; stack?: string };
@@ -184,12 +203,25 @@ export function serializeWorkerError(error: unknown): SerializedWorkerError {
       message: error.message,
       code: error.code,
       commitState: error.commitState,
+      ...(error.phase === undefined ? {} : { phase: error.phase }),
     };
   }
   if (error instanceof PostgresError) {
     return {
       name: 'PostgresError',
       fields: error.fields.map((field) => ({ ...field })),
+    };
+  }
+  const nativeTool = nativeToolError(error);
+  if (nativeTool !== undefined) {
+    return {
+      name: 'OliphauntWasixToolError',
+      message: nativeTool.message,
+      code: 'tool-error',
+      tool: nativeTool.tool,
+      exitCode: nativeTool.exitCode,
+      stdout: nativeTool.stdout.slice(),
+      stderr: nativeTool.stderr.slice(),
     };
   }
   const generic = {
@@ -206,13 +238,53 @@ export function deserializeWorkerError(error: SerializedWorkerError): Error {
     return new WasixStorageError(error.message, {
       code: error.code,
       commitState: error.commitState,
+      ...(error.phase === undefined ? {} : { phase: error.phase }),
     });
   }
   if (error.name === 'PostgresError') {
     return new PostgresError(error.fields);
   }
+  if (error.name === 'OliphauntWasixToolError') {
+    const restored = new Error(error.message);
+    restored.name = error.name;
+    return Object.assign(restored, {
+      oliphauntWasixError: 'tool' as const,
+      oliphauntWasixAddonAbi: 1 as const,
+      code: error.code,
+      tool: error.tool,
+      exitCode: error.exitCode,
+      stdout: error.stdout.slice(),
+      stderr: error.stderr.slice(),
+    });
+  }
   const restored = new Error(error.message);
   restored.name = error.errorName ?? 'Error';
   if (error.stack !== undefined) restored.stack = error.stack;
   return restored;
+}
+
+type NativeToolError = Readonly<{
+  message: string;
+  tool: string;
+  exitCode: number | null;
+  stdout: Uint8Array;
+  stderr: Uint8Array;
+}>;
+
+function nativeToolError(error: unknown): NativeToolError | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  const candidate = error as Record<string, unknown>;
+  if (
+    candidate.oliphauntWasixError !== 'tool' ||
+    candidate.oliphauntWasixAddonAbi !== 1 ||
+    candidate.code !== 'tool-error' ||
+    typeof candidate.message !== 'string' ||
+    typeof candidate.tool !== 'string' ||
+    (candidate.exitCode !== null && !Number.isSafeInteger(candidate.exitCode)) ||
+    !(candidate.stdout instanceof Uint8Array) ||
+    !(candidate.stderr instanceof Uint8Array)
+  ) {
+    return undefined;
+  }
+  return candidate as NativeToolError;
 }

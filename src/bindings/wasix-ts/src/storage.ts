@@ -34,15 +34,13 @@ export type SerializedWasixStorage =
       schema: 'oliphaunt-wasix-storage-v1';
       kind: 'directory';
       path: string;
-      /** @internal Per-worker identity used for exact-owner lock cleanup. */
-      ownerToken?: string;
     }>;
 
 const descriptorValues = new WeakMap<object, SerializedWasixStorage>();
 
 /**
- * Select a fresh Wasmer memory filesystem. This is also the default when
- * `storage` is omitted. Reusing the descriptor does not preserve data.
+ * Select a fresh in-memory database. This is also the default when `storage`
+ * is omitted. Reusing the descriptor does not preserve data.
  */
 export function memory(): WasixStorage {
   return defineStorage({
@@ -73,7 +71,7 @@ export function defineOpfsStorage(name: string): PersistentWasixStorage {
 
 /** @internal Used by the selectively imported Node directory adapter. */
 export function defineDirectoryStorage(path: string): PersistentWasixStorage {
-  validateNodeDirectoryPath(path);
+  validateHostDirectoryPath(path);
   return defineStorage({
     schema: 'oliphaunt-wasix-storage-v1',
     kind: 'directory',
@@ -125,9 +123,9 @@ export function validateOpfsDatabaseName(name: unknown): asserts name is string 
   }
 }
 
-export function validateNodeDirectoryPath(path: unknown): asserts path is string {
+export function validateHostDirectoryPath(path: unknown): asserts path is string {
   if (typeof path !== 'string' || path.length === 0 || path.includes('\0')) {
-    throw new TypeError('Node directory storage path must be a non-empty string without NUL bytes');
+    throw new TypeError('host directory storage path must be a non-empty string without NUL bytes');
   }
 }
 

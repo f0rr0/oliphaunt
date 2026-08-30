@@ -26,6 +26,7 @@ export const RELEASE_CARRIER_PROFILES = Object.freeze({
   "source-sdk": Object.freeze({ products: Object.freeze([]), components: Object.freeze([]) }),
   "code-facade": Object.freeze({ products: Object.freeze([]), components: Object.freeze([]) }),
   "node-direct-addon": Object.freeze({ products: Object.freeze([]), components: Object.freeze([]) }),
+  "wasix-napi-addon": Object.freeze({ products: Object.freeze(["wasix"]), components: Object.freeze(["postgresql", "icu", "openssl"]) }),
   broker: Object.freeze({ products: Object.freeze([]), components: Object.freeze([]) }),
   "native-runtime": Object.freeze({ products: Object.freeze(["native"]), components: Object.freeze(["postgresql", "icu"]) }),
   "native-tools": Object.freeze({ products: Object.freeze(["native"]), components: Object.freeze(["postgresql"]) }),

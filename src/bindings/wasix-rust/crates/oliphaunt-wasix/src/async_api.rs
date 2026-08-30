@@ -11,13 +11,19 @@ use std::borrow::Cow;
 use std::cell::Cell;
 use std::marker::PhantomData;
 use std::path::PathBuf;
+#[cfg(any(feature = "__internal-napi", test))]
+use std::sync::TryLockError as StdTryLockError;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+#[cfg(any(feature = "__internal-napi", test))]
+use tokio::sync::TryAcquireError;
 use tokio::sync::{Mutex as AsyncMutex, OwnedSemaphorePermit, Semaphore, oneshot};
 
+#[cfg(any(feature = "__internal-napi", test))]
+use crate::CatalogProfile;
 use crate::oliphaunt::builder::OliphauntBuilder as DirectOliphauntBuilder;
 use crate::oliphaunt::client::Oliphaunt as DirectOliphaunt;
 #[cfg(feature = "extensions")]
@@ -108,6 +114,133 @@ impl TransactionOutcomeGuard {
 type OwnerAction = Box<dyn FnOnce(&mut DirectOliphaunt, Result<()>) + Send + 'static>;
 type SharedCloseResult = Result<()>;
 type CloseWaiter = oneshot::Sender<SharedCloseResult>;
+type CloseCallback = Box<dyn FnOnce(SharedCloseResult) + Send + 'static>;
+type CloseCallbackGuard = CompletionGuard<(), CloseCallback>;
+
+/// One callback shared between an admission caller and its accepted owner work.
+///
+/// The callback is removed before invocation, so every path may attempt to
+/// settle safely while only the first attempt can observe it. Callback panics
+/// are contained because completion is an adapter boundary, not database work.
+struct SharedCompletion<T, C>
+where
+    C: FnOnce(Result<T>) + Send + 'static,
+{
+    callback: Arc<Mutex<Option<C>>>,
+    _output: PhantomData<fn() -> T>,
+}
+
+impl<T, C> Clone for SharedCompletion<T, C>
+where
+    C: FnOnce(Result<T>) + Send + 'static,
+{
+    fn clone(&self) -> Self {
+        Self {
+            callback: Arc::clone(&self.callback),
+            _output: PhantomData,
+        }
+    }
+}
+
+impl<T, C> SharedCompletion<T, C>
+where
+    C: FnOnce(Result<T>) + Send + 'static,
+{
+    fn new(callback: C) -> Self {
+        Self {
+            callback: Arc::new(Mutex::new(Some(callback))),
+            _output: PhantomData,
+        }
+    }
+
+    fn complete(&self, result: Result<T>) {
+        let callback = self
+            .callback
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take();
+        let Some(callback) = callback else {
+            return;
+        };
+        if let Err(payload) =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| callback(result)))
+        {
+            // A completion adapter cannot safely unwind through the owner loop,
+            // especially while another panic is already dropping queued work.
+            std::mem::forget(payload);
+        }
+    }
+}
+
+/// Settles accepted work if it is dropped before the owner explicitly replies.
+struct CompletionGuard<T, C>
+where
+    C: FnOnce(Result<T>) + Send + 'static,
+{
+    completion: Option<SharedCompletion<T, C>>,
+    owner_lost: &'static str,
+}
+
+impl<T, C> CompletionGuard<T, C>
+where
+    C: FnOnce(Result<T>) + Send + 'static,
+{
+    fn new(completion: SharedCompletion<T, C>, owner_lost: &'static str) -> Self {
+        Self {
+            completion: Some(completion),
+            owner_lost,
+        }
+    }
+
+    fn complete(mut self, result: Result<T>) {
+        if let Some(completion) = self.completion.take() {
+            completion.complete(result);
+        }
+    }
+}
+
+impl<T, C> Drop for CompletionGuard<T, C>
+where
+    C: FnOnce(Result<T>) + Send + 'static,
+{
+    fn drop(&mut self) {
+        if let Some(completion) = self.completion.take() {
+            completion.complete(Err(Error::lifecycle(self.owner_lost)));
+        }
+    }
+}
+
+trait OwnerReply<T>: Send + 'static {
+    fn is_abandoned(&self) -> bool;
+    fn complete(self, result: Result<T>);
+}
+
+impl<T> OwnerReply<T> for oneshot::Sender<Result<T>>
+where
+    T: Send + 'static,
+{
+    fn is_abandoned(&self) -> bool {
+        self.is_closed()
+    }
+
+    fn complete(self, result: Result<T>) {
+        let _ = self.send(result);
+    }
+}
+
+impl<T, C> OwnerReply<T> for CompletionGuard<T, C>
+where
+    T: Send + 'static,
+    C: FnOnce(Result<T>) + Send + 'static,
+{
+    fn is_abandoned(&self) -> bool {
+        false
+    }
+
+    fn complete(self, result: Result<T>) {
+        CompletionGuard::complete(self, result);
+    }
+}
 
 fn owner_is_terminal(state: &AtomicU8) -> bool {
     matches!(state.load(Ordering::SeqCst), OWNER_CLOSED | OWNER_STOPPED)
@@ -122,6 +255,24 @@ struct CloseAttempt {
 struct CloseCompletion {
     result: Option<SharedCloseResult>,
     waiters: Vec<CloseWaiter>,
+    callbacks: Vec<CloseCallbackGuard>,
+}
+
+struct CloseNotifications {
+    result: SharedCloseResult,
+    waiters: Vec<CloseWaiter>,
+    callbacks: Vec<CloseCallbackGuard>,
+}
+
+impl CloseNotifications {
+    fn dispatch(self) {
+        for waiter in self.waiters {
+            let _ = waiter.send(self.result.clone());
+        }
+        for callback in self.callbacks {
+            callback.complete(self.result.clone());
+        }
+    }
 }
 
 enum CloseAdmission {
@@ -141,49 +292,57 @@ enum CloseDisposition {
 }
 
 impl CloseAttempt {
-    async fn wait(&self, owner: &'static str) -> Result<()> {
-        let receiver = {
-            let mut completion = self
-                .completion
-                .lock()
-                .map_err(|_| Error::message(format!("{owner} close completion lock poisoned")))?;
-            if let Some(result) = completion.result.clone() {
-                return shared_close_result(result);
-            }
-            let (waiter, receiver) = oneshot::channel();
-            completion.waiters.push(waiter);
-            receiver
-        };
-        let result = receiver
-            .await
-            .map_err(|_| Error::lifecycle(format!("{owner} stopped while closing")))?;
-        shared_close_result(result)
-    }
-
-    fn complete(&self, result: SharedCloseResult) {
-        let waiters = {
+    fn retain_result(&self, result: SharedCloseResult) -> Option<CloseNotifications> {
+        let (waiters, callbacks) = {
             let mut completion = self
                 .completion
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
             if completion.result.is_some() {
-                return;
+                return None;
             }
             completion.result = Some(result.clone());
-            std::mem::take(&mut completion.waiters)
+            (
+                std::mem::take(&mut completion.waiters),
+                std::mem::take(&mut completion.callbacks),
+            )
         };
-        for waiter in waiters {
-            let _ = waiter.send(result.clone());
-        }
+        Some(CloseNotifications {
+            result,
+            waiters,
+            callbacks,
+        })
+    }
+
+    fn register_completion(
+        &self,
+        completion: SharedCompletion<(), CloseCallback>,
+        owner_lost: &'static str,
+    ) {
+        let guard = CompletionGuard::new(completion, owner_lost);
+        let result = {
+            let mut completion = self
+                .completion
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            match completion.result.clone() {
+                Some(result) => Some(result),
+                None => {
+                    completion.callbacks.push(guard);
+                    return;
+                }
+            }
+        };
+        guard.complete(result.expect("completed close attempt has a result"));
     }
 
     #[cfg(test)]
     fn waiter_count(&self) -> usize {
-        self.completion
+        let completion = self
+            .completion
             .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .waiters
-            .len()
+            .unwrap_or_else(|error| error.into_inner());
+        completion.waiters.len() + completion.callbacks.len()
     }
 }
 
@@ -203,6 +362,38 @@ struct OwnerMessage {
 enum OwnerOperation {
     Command(OwnerCommand),
     Control(OwnerControl),
+}
+
+fn owner_command<T, F, R>(
+    transaction: Option<u64>,
+    transaction_guard: Option<Arc<TransactionOutcomeGuard>>,
+    action: F,
+    reply: R,
+) -> OwnerOperation
+where
+    T: Send + 'static,
+    F: FnOnce(&mut DirectOliphaunt) -> Result<T> + Send + 'static,
+    R: OwnerReply<T>,
+{
+    OwnerOperation::Command(OwnerCommand {
+        transaction,
+        action: Box::new(move |database, admission| {
+            // Ordinary async work which has not started may be abandoned
+            // without changing PostgreSQL state. Accepted callback work always
+            // runs so its completion can report the authoritative outcome.
+            if reply.is_abandoned() {
+                return;
+            }
+            let result = admission.and_then(|()| action(database));
+            if database.owner_transaction_outcome_unknown()
+                && let Err(error) = &result
+                && let Some(guard) = transaction_guard.as_deref()
+            {
+                guard.retain_failure(error.clone(), false);
+            }
+            reply.complete(result);
+        }),
+    })
 }
 
 enum OwnerControl {
@@ -272,9 +463,13 @@ impl Drop for DatabaseOwnerInner {
 }
 
 impl DatabaseOwner {
-    async fn open(builder: DirectOliphauntBuilder) -> Result<Self> {
+    fn open_with_completion<C>(builder: DirectOliphauntBuilder, completion: C)
+    where
+        C: FnOnce(Result<Self>) + Send + 'static,
+    {
+        let completion = SharedCompletion::new(completion);
+        let thread_completion = completion.clone();
         let (queue, queue_rx) = mpsc::channel();
-        let (open_tx, open_rx) = oneshot::channel();
         let state = Arc::new(AtomicU8::new(OWNER_OPEN));
         let ordinary_order = Arc::new(AsyncMutex::new(()));
         let ordinary_capacity = Arc::new(Semaphore::new(OWNER_QUEUE_CAPACITY));
@@ -283,26 +478,42 @@ impl DatabaseOwner {
         let thread_state = Arc::clone(&state);
         let thread_admission = Arc::clone(&admission);
         let thread_close_attempt = Arc::clone(&close_attempt);
-        thread::Builder::new()
+        let spawned = thread::Builder::new()
             .name("oliphaunt-wasix-owner".to_owned())
             .spawn(move || {
+                let completion = CompletionGuard::new(
+                    thread_completion,
+                    "WASIX database owner stopped before open completed",
+                );
                 let opened =
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| builder.open()));
                 let database = match opened {
                     Ok(Ok(database)) => {
-                        let _ = open_tx.send(Ok(thread::current().id()));
+                        completion.complete(Ok(Self {
+                            inner: Arc::new(DatabaseOwnerInner {
+                                queue,
+                                admission,
+                                ordinary_order,
+                                ordinary_capacity,
+                                state,
+                                close_epoch: AtomicU64::new(0),
+                                close_attempt,
+                                owner_thread: thread::current().id(),
+                                next_transaction: AtomicU64::new(1),
+                            }),
+                        }));
                         database
                     }
                     Ok(Err(error)) => {
-                        let _ = open_tx.send(Err(error));
                         thread_state.store(OWNER_STOPPED, Ordering::SeqCst);
+                        completion.complete(Err(error));
                         return;
                     }
                     Err(_) => {
-                        let _ = open_tx.send(Err(Error::message(
+                        thread_state.store(OWNER_STOPPED, Ordering::SeqCst);
+                        completion.complete(Err(Error::message(
                             "WASIX database owner panicked while opening PostgreSQL",
                         )));
-                        thread_state.store(OWNER_STOPPED, Ordering::SeqCst);
                         return;
                     }
                 };
@@ -324,24 +535,12 @@ impl DatabaseOwner {
                         "WASIX database owner panicked while closing",
                     );
                 }
-            })
-            .map_err(|error| Error::message(format!("spawn WASIX database owner: {error}")))?;
-        let owner_thread = open_rx.await.map_err(|_| {
-            Error::lifecycle("WASIX database owner stopped before open completed")
-        })??;
-        Ok(Self {
-            inner: Arc::new(DatabaseOwnerInner {
-                queue,
-                admission,
-                ordinary_order,
-                ordinary_capacity,
-                state,
-                close_epoch: AtomicU64::new(0),
-                close_attempt,
-                owner_thread,
-                next_transaction: AtomicU64::new(1),
-            }),
-        })
+            });
+        if let Err(error) = spawned {
+            completion.complete(Err(Error::message(format!(
+                "spawn WASIX database owner: {error}"
+            ))));
+        }
     }
 
     fn is_closed(&self) -> bool {
@@ -402,6 +601,75 @@ impl DatabaseOwner {
             .map_err(|_| Error::lifecycle("WASIX database owner has stopped"))
     }
 
+    #[cfg(any(feature = "__internal-napi", test))]
+    fn try_enqueue_ordinary<F, R>(&self, operation: F, reject: R)
+    where
+        F: FnOnce() -> OwnerOperation,
+        R: FnOnce(Error),
+    {
+        // Keep failed sends alive until every admission guard has been dropped.
+        // Their operation may own a completion-on-drop guard, and adapters must
+        // never run while an internal ordering or admission lock is held.
+        let outcome = (|| -> std::result::Result<(), (Error, Option<OwnerMessage>)> {
+            self.ensure_not_owner_thread()
+                .map_err(|error| (error, None))?;
+            let _admission = self.inner.admission.try_lock().map_err(|error| {
+                (
+                    match error {
+                        StdTryLockError::WouldBlock => {
+                            Error::message("WASIX database owner admission is busy")
+                        }
+                        StdTryLockError::Poisoned(_) => {
+                            Error::message("WASIX database admission lock poisoned")
+                        }
+                    },
+                    None,
+                )
+            })?;
+            self.ensure_open().map_err(|error| (error, None))?;
+            let _order = Arc::clone(&self.inner.ordinary_order)
+                .try_lock_owned()
+                .map_err(|_| {
+                    (
+                        Error::message("WASIX database owner command admission is busy"),
+                        None,
+                    )
+                })?;
+            let permit = Arc::clone(&self.inner.ordinary_capacity)
+                .try_acquire_owned()
+                .map_err(|error| {
+                    (
+                        match error {
+                            TryAcquireError::Closed => {
+                                Error::lifecycle("WASIX database owner admission has stopped")
+                            }
+                            TryAcquireError::NoPermits => {
+                                Error::message("WASIX database owner command capacity is full")
+                            }
+                        },
+                        None,
+                    )
+                })?;
+            self.inner
+                .queue
+                .send(OwnerMessage {
+                    _permit: Some(permit),
+                    operation: operation(),
+                })
+                .map_err(|error| {
+                    (
+                        Error::lifecycle("WASIX database owner has stopped"),
+                        Some(error.0),
+                    )
+                })
+        })();
+
+        if let Err((error, rejected_message)) = outcome {
+            reject(error);
+            drop(rejected_message);
+        }
+    }
+
     fn enqueue_control(&self, control: OwnerControl) -> Result<()> {
         let _admission = self.lock_admission()?;
         self.inner
@@ -419,6 +687,28 @@ impl DatabaseOwner {
         F: FnOnce(&mut DirectOliphaunt) -> Result<T> + Send + 'static,
     {
         self.call_with_guard(transaction, None, action).await
+    }
+
+    #[cfg(any(feature = "__internal-napi", test))]
+    fn call_with_completion<T, F, C>(&self, transaction: Option<u64>, action: F, completion: C)
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut DirectOliphaunt) -> Result<T> + Send + 'static,
+        C: FnOnce(Result<T>) + Send + 'static,
+    {
+        let completion = SharedCompletion::new(completion);
+        let owner_completion = completion.clone();
+        let rejection_completion = completion.clone();
+        self.try_enqueue_ordinary(
+            move || {
+                let completion = CompletionGuard::new(
+                    owner_completion,
+                    "WASIX database owner stopped while running an operation",
+                );
+                owner_command(transaction, None, action, completion)
+            },
+            move |error| rejection_completion.complete(Err(error)),
+        );
     }
 
     async fn call_transaction<T, F>(
@@ -446,27 +736,8 @@ impl DatabaseOwner {
     {
         self.ensure_not_owner_thread()?;
         let (reply, receiver) = oneshot::channel();
-        let command = OwnerCommand {
-            transaction,
-            action: Box::new(move |database, admission| {
-                // Ordinary work which has not started may be abandoned without
-                // changing PostgreSQL state. Once the action begins it always
-                // runs to its protocol readiness boundary.
-                if reply.is_closed() {
-                    return;
-                }
-                let result = admission.and_then(|()| action(database));
-                if database.owner_transaction_outcome_unknown()
-                    && let Err(error) = &result
-                    && let Some(guard) = transaction_guard.as_deref()
-                {
-                    guard.retain_failure(error.clone(), false);
-                }
-                let _ = reply.send(result);
-            }),
-        };
-        self.enqueue_ordinary(OwnerOperation::Command(command))
-            .await?;
+        let command = owner_command(transaction, transaction_guard, action, reply);
+        self.enqueue_ordinary(command).await?;
         receiver.await.map_err(|_| {
             Error::lifecycle("WASIX database owner stopped while running an operation")
         })?
@@ -544,8 +815,22 @@ impl DatabaseOwner {
     }
 
     async fn close(&self) -> Result<()> {
-        self.ensure_not_owner_thread()?;
-        let attempt = {
+        let (reply, receiver) = oneshot::channel();
+        self.close_with_completion(move |result| {
+            let _ = reply.send(result);
+        });
+        receiver
+            .await
+            .map_err(|_| Error::lifecycle("WASIX database owner stopped while closing"))?
+    }
+
+    fn close_with_completion<C>(&self, completion: C)
+    where
+        C: FnOnce(Result<()>) + Send + 'static,
+    {
+        let completion = SharedCompletion::new(Box::new(completion) as CloseCallback);
+        let result = (|| -> Result<(Option<Arc<CloseAttempt>>, Option<CloseNotifications>)> {
+            self.ensure_not_owner_thread()?;
             // The state cutoff and Close enqueue share the same lock as every
             // ordinary admission. Only work which already acquired capacity
             // and entered the owner queue drains ahead of Close. Capacity
@@ -556,11 +841,11 @@ impl DatabaseOwner {
                 &self.inner.close_attempt,
                 "WASIX database owner",
             )? {
-                CloseAdmission::Closed => return Ok(()),
-                CloseAdmission::Join(attempt) => attempt,
+                CloseAdmission::Closed => Ok((None, None)),
+                CloseAdmission::Join(attempt) => Ok((Some(attempt), None)),
                 CloseAdmission::Start(attempt) => {
                     self.inner.close_epoch.fetch_add(1, Ordering::SeqCst);
-                    if self
+                    let notifications = if self
                         .inner
                         .queue
                         .send(OwnerMessage {
@@ -577,18 +862,32 @@ impl DatabaseOwner {
                             &attempt,
                             Err(Error::lifecycle("WASIX database owner has stopped")),
                             CloseDisposition::Terminal,
-                        );
-                    }
-                    attempt
+                        )
+                        .1
+                    } else {
+                        None
+                    };
+                    Ok((Some(attempt), notifications))
                 }
             }
-        };
-        attempt.wait("WASIX database owner").await
-    }
-}
+        })();
 
-fn shared_close_result(result: SharedCloseResult) -> Result<()> {
-    result
+        match result {
+            Ok((attempt, notifications)) => {
+                if let Some(notifications) = notifications {
+                    notifications.dispatch();
+                }
+                match attempt {
+                    Some(attempt) => attempt.register_completion(
+                        completion,
+                        "WASIX database owner stopped while closing",
+                    ),
+                    None => completion.complete(Ok(())),
+                }
+            }
+            Err(error) => completion.complete(Err(error)),
+        }
+    }
 }
 
 async fn exec_protocol_raw_stream_on_owner<F, O>(
@@ -734,13 +1033,12 @@ fn complete_close_attempt_locked(
     attempt: &Arc<CloseAttempt>,
     result: SharedCloseResult,
     disposition: CloseDisposition,
-) -> bool {
+) -> (bool, Option<CloseNotifications>) {
     let terminal = matches!(disposition, CloseDisposition::Terminal);
     state.store(
         if terminal { OWNER_CLOSED } else { OWNER_OPEN },
         Ordering::SeqCst,
     );
-    attempt.complete(result);
     if !terminal {
         let mut current = current.lock().unwrap_or_else(|error| error.into_inner());
         if current
@@ -750,7 +1048,7 @@ fn complete_close_attempt_locked(
             current.take();
         }
     }
-    terminal
+    (terminal, attempt.retain_result(result))
 }
 
 fn complete_close_attempt(
@@ -761,8 +1059,14 @@ fn complete_close_attempt(
     result: Result<()>,
     disposition: CloseDisposition,
 ) -> bool {
-    let _admission = admission.lock().unwrap_or_else(|error| error.into_inner());
-    complete_close_attempt_locked(state, current, attempt, result, disposition)
+    let (terminal, notifications) = {
+        let _admission = admission.lock().unwrap_or_else(|error| error.into_inner());
+        complete_close_attempt_locked(state, current, attempt, result, disposition)
+    };
+    if let Some(notifications) = notifications {
+        notifications.dispatch();
+    }
+    terminal
 }
 
 fn stop_close_owner(
@@ -771,21 +1075,28 @@ fn stop_close_owner(
     current: &Mutex<Option<Arc<CloseAttempt>>>,
     message: &'static str,
 ) {
-    let _admission = admission.lock().unwrap_or_else(|error| error.into_inner());
-    let attempt = current
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .clone();
-    if let Some(attempt) = attempt {
-        complete_close_attempt_locked(
-            state,
-            current,
-            &attempt,
-            Err(Error::message(message)),
-            CloseDisposition::Terminal,
-        );
-    } else {
-        state.store(OWNER_STOPPED, Ordering::SeqCst);
+    let notifications = {
+        let _admission = admission.lock().unwrap_or_else(|error| error.into_inner());
+        let attempt = current
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        if let Some(attempt) = attempt {
+            complete_close_attempt_locked(
+                state,
+                current,
+                &attempt,
+                Err(Error::message(message)),
+                CloseDisposition::Terminal,
+            )
+            .1
+        } else {
+            state.store(OWNER_STOPPED, Ordering::SeqCst);
+            None
+        }
+    };
+    if let Some(notifications) = notifications {
+        notifications.dispatch();
     }
 }
 
@@ -795,22 +1106,35 @@ fn complete_owner_shutdown(
     current: &Mutex<Option<Arc<CloseAttempt>>>,
     result: Result<()>,
 ) {
-    let _admission = admission.lock().unwrap_or_else(|error| error.into_inner());
-    let attempt = current
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .clone();
-    if let Some(attempt) = attempt {
-        complete_close_attempt_locked(state, current, &attempt, result, CloseDisposition::Terminal);
-    } else {
-        state.store(
-            if result.is_ok() {
-                OWNER_CLOSED
-            } else {
-                OWNER_STOPPED
-            },
-            Ordering::SeqCst,
-        );
+    let notifications = {
+        let _admission = admission.lock().unwrap_or_else(|error| error.into_inner());
+        let attempt = current
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        if let Some(attempt) = attempt {
+            complete_close_attempt_locked(
+                state,
+                current,
+                &attempt,
+                result,
+                CloseDisposition::Terminal,
+            )
+            .1
+        } else {
+            state.store(
+                if result.is_ok() {
+                    OWNER_CLOSED
+                } else {
+                    OWNER_STOPPED
+                },
+                Ordering::SeqCst,
+            );
+            None
+        }
+    };
+    if let Some(notifications) = notifications {
+        notifications.dispatch();
     }
 }
 
@@ -1067,6 +1391,21 @@ impl AsyncOliphaunt {
         .await
     }
 
+    /// Restore a validated physical backup and report completion without
+    /// creating or polling a Rust future.
+    #[cfg(any(feature = "__internal-napi", test))]
+    #[doc(hidden)]
+    pub fn restore_with_completion<C>(destination: PathBuf, backup: Vec<u8>, completion: C)
+    where
+        C: FnOnce(Result<()>) + Send + 'static,
+    {
+        run_owned_with_completion(
+            "oliphaunt-wasix-restore",
+            move || DirectOliphaunt::restore(destination, backup),
+            completion,
+        );
+    }
+
     /// Build a typed, fluent PostgreSQL statement.
     pub fn sql<'db, 'q>(&'db self, sql: impl Into<Cow<'q, str>>) -> AsyncSql<'db, 'q> {
         AsyncSql::database(self, sql)
@@ -1141,6 +1480,25 @@ impl AsyncOliphaunt {
             .await
     }
 
+    /// Submit raw protocol work without creating or polling a Rust future.
+    ///
+    /// Request ownership transfers into the database queue without another
+    /// core-side copy. Completion may run synchronously when admission fails or
+    /// later on the database owner thread. The callback is invoked exactly
+    /// once; a callback panic is contained at this adapter boundary.
+    #[cfg(any(feature = "__internal-napi", test))]
+    #[doc(hidden)]
+    pub fn exec_protocol_raw_with_completion<C>(&self, request: Vec<u8>, completion: C)
+    where
+        C: FnOnce(Result<Vec<u8>>) + Send + 'static,
+    {
+        self.owner.call_with_completion(
+            None,
+            move |database| database.exec_protocol_raw(request),
+            completion,
+        );
+    }
+
     /// Execute raw protocol bytes and synchronously receive bounded chunks on the owner thread.
     ///
     /// The callback and values it retains must be owned, `Send + 'static`; use
@@ -1166,6 +1524,81 @@ impl AsyncOliphaunt {
     {
         let request = request.as_ref().to_vec();
         exec_protocol_raw_stream_on_owner(&self.owner, request, on_chunk).await
+    }
+
+    /// Submit bounded raw-protocol streaming without creating or polling a
+    /// Rust future.
+    ///
+    /// The owner still invokes one chunk callback at a time and does not pump
+    /// the next chunk until that callback returns. Completion observes the
+    /// same recovery result as [`Self::exec_protocol_raw_stream`] and runs
+    /// exactly once, including immediate admission failure and owner loss.
+    #[cfg(any(feature = "__internal-napi", test))]
+    #[doc(hidden)]
+    pub fn exec_protocol_raw_stream_with_completion<F, O, C>(
+        &self,
+        request: Vec<u8>,
+        mut on_chunk: F,
+        completion: C,
+    ) where
+        F: FnMut(&[u8]) -> O + Send + 'static,
+        O: RawStreamCallbackOutput,
+        O::Error: Send + 'static,
+        C: FnOnce(RawStreamResult<(), O::Error>) + Send + 'static,
+    {
+        let callback_error = Arc::new(Mutex::new(None));
+        let callback_error_for_owner = Arc::clone(&callback_error);
+        let callback_recovered = Arc::new(AtomicU8::new(0));
+        let callback_recovered_on_owner = Arc::clone(&callback_recovered);
+        let callback_panicked = Arc::new(AtomicU8::new(0));
+        let callback_panicked_on_owner = Arc::clone(&callback_panicked);
+        let session_unknown = Arc::new(AtomicU8::new(0));
+        let session_unknown_on_owner = Arc::clone(&session_unknown);
+
+        self.owner.call_with_completion(
+            None,
+            move |database| {
+                let result =
+                    database.exec_protocol_raw_stream_on_owner(
+                        request,
+                        move |chunk| match on_chunk(chunk).into_raw_stream_callback_result() {
+                            Ok(()) => Ok(()),
+                            Err(error) => {
+                                *callback_error_for_owner
+                                    .lock()
+                                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(error);
+                                Err(Error::message(
+                                    "raw protocol stream callback stopped delivery",
+                                ))
+                            }
+                        },
+                    );
+                if database.owner_transaction_outcome_unknown() {
+                    session_unknown_on_owner.store(1, Ordering::SeqCst);
+                }
+                match result {
+                    Ok(()) => Ok(()),
+                    Err(RawStreamError::Database(error)) => Err(error),
+                    Err(RawStreamError::Callback(error)) => {
+                        callback_recovered_on_owner.store(1, Ordering::SeqCst);
+                        Err(error)
+                    }
+                    Err(RawStreamError::CallbackPanicked(error)) => {
+                        callback_panicked_on_owner.store(1, Ordering::SeqCst);
+                        Err(error)
+                    }
+                }
+            },
+            move |outcome| {
+                completion(resolve_owner_stream_outcome(
+                    outcome,
+                    &callback_error,
+                    callback_recovered.load(Ordering::SeqCst) == 1,
+                    callback_panicked.load(Ordering::SeqCst) == 1,
+                    session_unknown.load(Ordering::SeqCst) == 1,
+                ));
+            },
+        );
     }
 
     /// Run an async callback in a transaction pinned to this physical session.
@@ -1198,6 +1631,21 @@ impl AsyncOliphaunt {
         self.owner.call(None, DirectOliphaunt::backup).await
     }
 
+    /// Submit a physical backup without creating or polling a Rust future.
+    ///
+    /// Completion may run synchronously when admission fails or later on the
+    /// database owner thread. The callback is invoked exactly once; a callback
+    /// panic is contained at this adapter boundary.
+    #[cfg(any(feature = "__internal-napi", test))]
+    #[doc(hidden)]
+    pub fn backup_with_completion<C>(&self, completion: C)
+    where
+        C: FnOnce(Result<Vec<u8>>) + Send + 'static,
+    {
+        self.owner
+            .call_with_completion(None, DirectOliphaunt::backup, completion);
+    }
+
     /// Run packaged `pg_dump` against this database on its owner thread.
     #[cfg(feature = "tools")]
     pub async fn pg_dump(&self, options: crate::oliphaunt::tools::PgDumpOptions) -> Result<String> {
@@ -1208,6 +1656,24 @@ impl AsyncOliphaunt {
             .await
     }
 
+    /// Submit packaged `pg_dump` and return exact stdout/stderr bytes without
+    /// creating or polling a Rust future.
+    #[cfg(all(feature = "tools", any(feature = "__internal-napi", test)))]
+    #[doc(hidden)]
+    pub fn pg_dump_output_with_completion<C>(
+        &self,
+        options: crate::oliphaunt::tools::PgDumpOptions,
+        completion: C,
+    ) where
+        C: FnOnce(Result<crate::oliphaunt::tools::PostgresToolOutput>) + Send + 'static,
+    {
+        self.owner.call_with_completion(
+            None,
+            move |database| database.pg_dump_output(options),
+            completion,
+        );
+    }
+
     /// Run packaged non-interactive `psql` against this database on its owner thread.
     #[cfg(feature = "tools")]
     pub async fn psql(&self, options: crate::oliphaunt::tools::PsqlOptions) -> Result<String> {
@@ -1216,6 +1682,24 @@ impl AsyncOliphaunt {
                 crate::error::public_result(database.run_psql_tool(options))
             })
             .await
+    }
+
+    /// Submit packaged `psql` and return exact stdout/stderr bytes without
+    /// creating or polling a Rust future.
+    #[cfg(all(feature = "tools", any(feature = "__internal-napi", test)))]
+    #[doc(hidden)]
+    pub fn psql_output_with_completion<C>(
+        &self,
+        options: crate::oliphaunt::tools::PsqlOptions,
+        completion: C,
+    ) where
+        C: FnOnce(Result<crate::oliphaunt::tools::PostgresToolOutput>) + Send + 'static,
+    {
+        self.owner.call_with_completion(
+            None,
+            move |database| database.psql_output(options),
+            completion,
+        );
     }
 
     /// Close the shared database and wait for PostgreSQL cleanup.
@@ -1231,6 +1715,20 @@ impl AsyncOliphaunt {
     /// process exit.
     pub async fn close(&self) -> Result<()> {
         self.owner.close().await
+    }
+
+    /// Begin the shared close attempt without creating or polling a Rust future.
+    ///
+    /// This uses the same cutoff, retry, memoization, and terminal result as
+    /// [`Self::close`]. Completion may run synchronously or on the owner thread
+    /// and is invoked exactly once.
+    #[cfg(any(feature = "__internal-napi", test))]
+    #[doc(hidden)]
+    pub fn close_with_completion<C>(&self, completion: C)
+    where
+        C: FnOnce(Result<()>) + Send + 'static,
+    {
+        self.owner.close_with_completion(completion);
     }
 }
 
@@ -1257,6 +1755,14 @@ impl AsyncOliphauntBuilder {
     /// Select memory or managed-directory storage.
     pub fn storage(mut self, storage: DatabaseStorage) -> Self {
         self.inner = self.inner.storage(storage);
+        self
+    }
+
+    /// Select the packaged standard or ICU catalog and matching runtime data.
+    #[cfg(any(feature = "__internal-napi", test))]
+    #[doc(hidden)]
+    pub fn catalog_profile(mut self, profile: CatalogProfile) -> Self {
+        self.inner = self.inner.catalog_profile(profile);
         self
     }
 
@@ -1306,9 +1812,30 @@ impl AsyncOliphauntBuilder {
 
     /// Construct the Wasmer runtime and PostgreSQL session on its permanent owner thread.
     pub async fn open(self) -> Result<AsyncOliphaunt> {
-        Ok(AsyncOliphaunt {
-            owner: DatabaseOwner::open(self.inner).await?,
-        })
+        let (reply, receiver) = oneshot::channel();
+        DatabaseOwner::open_with_completion(self.inner, move |result| {
+            let _ = reply.send(result.map(|owner| AsyncOliphaunt { owner }));
+        });
+        receiver
+            .await
+            .map_err(|_| Error::lifecycle("WASIX database owner stopped before open completed"))?
+    }
+
+    /// Construct the database on its owner thread and report completion without
+    /// creating or polling a Rust future.
+    ///
+    /// Completion runs on the new owner thread after successful construction,
+    /// or on the submitting thread if that thread cannot be spawned. It is
+    /// invoked exactly once.
+    #[cfg(any(feature = "__internal-napi", test))]
+    #[doc(hidden)]
+    pub fn open_with_completion<C>(self, completion: C)
+    where
+        C: FnOnce(Result<AsyncOliphaunt>) + Send + 'static,
+    {
+        DatabaseOwner::open_with_completion(self.inner, move |result| {
+            completion(result.map(|owner| AsyncOliphaunt { owner }));
+        });
     }
 }
 
@@ -1660,18 +2187,34 @@ where
     F: FnOnce() -> Result<T> + Send + 'static,
 {
     let (reply, receiver) = oneshot::channel();
-    thread::Builder::new()
-        .name(name.to_owned())
-        .spawn(move || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation))
-                .map_err(|_| Error::message(format!("{name} thread panicked")))
-                .and_then(|result| result);
-            let _ = reply.send(result);
-        })
-        .map_err(|error| Error::message(format!("spawn {name}: {error}")))?;
+    run_owned_with_completion(name, operation, move |result| {
+        let _ = reply.send(result);
+    });
     receiver
         .await
         .map_err(|_| Error::lifecycle(format!("{name} stopped before returning a result")))?
+}
+
+fn run_owned_with_completion<T, F, C>(name: &'static str, operation: F, completion: C)
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+    C: FnOnce(Result<T>) + Send + 'static,
+{
+    let completion = SharedCompletion::new(completion);
+    let thread_completion = completion.clone();
+    if let Err(error) = thread::Builder::new().name(name.to_owned()).spawn(move || {
+        let completion = CompletionGuard::new(
+            thread_completion,
+            "WASIX owned operation stopped before returning a result",
+        );
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation))
+            .map_err(|_| Error::message(format!("{name} thread panicked")))
+            .and_then(|result| result);
+        completion.complete(result);
+    }) {
+        completion.complete(Err(Error::message(format!("spawn {name}: {error}"))));
+    }
 }
 
 #[derive(Debug)]
@@ -1734,7 +2277,21 @@ impl AsyncOliphauntServer {
     /// Successful teardown releases the managed root; failed teardown retains
     /// it until process exit.
     pub async fn close(&self) -> Result<()> {
-        let attempt = {
+        let (reply, receiver) = oneshot::channel();
+        self.close_with_reply(move |result| {
+            let _ = reply.send(result);
+        });
+        receiver
+            .await
+            .map_err(|_| Error::lifecycle("WASIX server owner stopped while closing"))?
+    }
+
+    fn close_with_reply<C>(&self, completion: C)
+    where
+        C: FnOnce(Result<()>) + Send + 'static,
+    {
+        let completion = SharedCompletion::new(Box::new(completion) as CloseCallback);
+        let result = (|| -> Result<(Option<Arc<CloseAttempt>>, Option<CloseNotifications>)> {
             let _admission = self
                 .owner
                 .admission
@@ -1745,10 +2302,10 @@ impl AsyncOliphauntServer {
                 &self.owner.close_attempt,
                 "WASIX server owner",
             )? {
-                CloseAdmission::Closed => return Ok(()),
-                CloseAdmission::Join(attempt) => attempt,
+                CloseAdmission::Closed => Ok((None, None)),
+                CloseAdmission::Join(attempt) => Ok((Some(attempt), None)),
                 CloseAdmission::Start(attempt) => {
-                    if self
+                    let notifications = if self
                         .owner
                         .control
                         .send(ServerControl::Close {
@@ -1762,13 +2319,43 @@ impl AsyncOliphauntServer {
                             &attempt,
                             Err(Error::lifecycle("WASIX server owner has stopped")),
                             CloseDisposition::Terminal,
-                        );
-                    }
-                    attempt
+                        )
+                        .1
+                    } else {
+                        None
+                    };
+                    Ok((Some(attempt), notifications))
                 }
             }
-        };
-        attempt.wait("WASIX server owner").await
+        })();
+
+        match result {
+            Ok((attempt, notifications)) => {
+                if let Some(notifications) = notifications {
+                    notifications.dispatch();
+                }
+                match attempt {
+                    Some(attempt) => attempt.register_completion(
+                        completion,
+                        "WASIX server owner stopped while closing",
+                    ),
+                    None => completion.complete(Ok(())),
+                }
+            }
+            Err(error) => completion.complete(Err(error)),
+        }
+    }
+
+    /// Begin the shared server close attempt without creating or polling a
+    /// Rust future. Completion uses the same cutoff and memoized result as
+    /// [`Self::close`] and runs exactly once.
+    #[cfg(any(feature = "__internal-napi", test))]
+    #[doc(hidden)]
+    pub fn close_with_completion<C>(&self, completion: C)
+    where
+        C: FnOnce(Result<()>) + Send + 'static,
+    {
+        self.close_with_reply(completion);
     }
 }
 
@@ -1795,6 +2382,14 @@ impl AsyncOliphauntServerBuilder {
     /// Select memory or managed-directory storage.
     pub fn storage(mut self, storage: DatabaseStorage) -> Self {
         self.inner = self.inner.storage(storage);
+        self
+    }
+
+    /// Select the packaged standard or ICU catalog and matching runtime data.
+    #[cfg(any(feature = "__internal-napi", test))]
+    #[doc(hidden)]
+    pub fn catalog_profile(mut self, profile: CatalogProfile) -> Self {
+        self.inner = self.inner.catalog_profile(profile);
         self
     }
 
@@ -1851,42 +2446,64 @@ impl AsyncOliphauntServerBuilder {
 
     /// Start the server and await its bound endpoint.
     pub async fn start(self) -> Result<AsyncOliphauntServer> {
+        let (reply, receiver) = oneshot::channel();
+        self.start_with_reply(move |result| {
+            let _ = reply.send(result);
+        });
+        receiver
+            .await
+            .map_err(|_| Error::lifecycle("WASIX server owner stopped before start completed"))?
+    }
+
+    fn start_with_reply<C>(self, completion: C)
+    where
+        C: FnOnce(Result<AsyncOliphauntServer>) + Send + 'static,
+    {
+        let completion = SharedCompletion::new(completion);
+        let thread_completion = completion.clone();
         let (control, receiver) = mpsc::channel();
-        let (open_tx, open_rx) = oneshot::channel();
         let state = Arc::new(AtomicU8::new(OWNER_OPEN));
         let admission = Arc::new(Mutex::new(()));
         let close_attempt = Arc::new(Mutex::new(None));
         let thread_state = Arc::clone(&state);
         let thread_admission = Arc::clone(&admission);
         let thread_close_attempt = Arc::clone(&close_attempt);
-        thread::Builder::new()
+        if let Err(error) = thread::Builder::new()
             .name("oliphaunt-wasix-server-owner".to_owned())
             .spawn(move || {
+                let completion = CompletionGuard::new(
+                    thread_completion,
+                    "WASIX server owner stopped before start completed",
+                );
                 let opened =
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.inner.start()));
                 let server = match opened {
                     Ok(Ok(server)) => server,
                     Ok(Err(error)) => {
-                        let _ = open_tx.send(Err(error));
                         thread_state.store(OWNER_STOPPED, Ordering::SeqCst);
+                        completion.complete(Err(error));
                         return;
                     }
                     Err(_) => {
-                        let _ = open_tx.send(Err(Error::message(
+                        thread_state.store(OWNER_STOPPED, Ordering::SeqCst);
+                        completion.complete(Err(Error::message(
                             "WASIX server owner panicked while starting PostgreSQL",
                         )));
-                        thread_state.store(OWNER_STOPPED, Ordering::SeqCst);
                         return;
                     }
                 };
                 let info = ServerInfo {
                     connection_string: server.connection_string().to_owned(),
                 };
-                if open_tx.send(Ok(info)).is_err() {
-                    drop(server);
-                    thread_state.store(OWNER_CLOSED, Ordering::SeqCst);
-                    return;
-                }
+                completion.complete(Ok(AsyncOliphauntServer {
+                    owner: Arc::new(ServerOwnerInner {
+                        control,
+                        admission,
+                        state,
+                        close_attempt,
+                    }),
+                    info: Arc::new(info),
+                }));
                 let owner = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     run_server_owner(
                         server,
@@ -1905,19 +2522,23 @@ impl AsyncOliphauntServerBuilder {
                     );
                 }
             })
-            .map_err(|error| Error::message(format!("spawn WASIX server owner: {error}")))?;
-        let info = open_rx
-            .await
-            .map_err(|_| Error::lifecycle("WASIX server owner stopped before start completed"))??;
-        Ok(AsyncOliphauntServer {
-            owner: Arc::new(ServerOwnerInner {
-                control,
-                admission,
-                state,
-                close_attempt,
-            }),
-            info: Arc::new(info),
-        })
+        {
+            completion.complete(Err(Error::message(format!(
+                "spawn WASIX server owner: {error}"
+            ))));
+        }
+    }
+
+    /// Start the server and report its bound endpoint without creating or
+    /// polling a Rust future. Completion runs exactly once, including thread
+    /// spawn failure and owner loss during startup.
+    #[cfg(any(feature = "__internal-napi", test))]
+    #[doc(hidden)]
+    pub fn start_with_completion<C>(self, completion: C)
+    where
+        C: FnOnce(Result<AsyncOliphauntServer>) + Send + 'static,
+    {
+        self.start_with_reply(completion);
     }
 }
 
@@ -2024,6 +2645,7 @@ mod raw_stream_outcome_tests {
 #[cfg(test)]
 mod close_tests {
     use std::future::Future;
+    use std::sync::atomic::AtomicUsize;
     use std::task::{Context, Poll, Waker};
     use std::time::Duration;
 
@@ -2234,6 +2856,171 @@ mod close_tests {
     }
 
     #[test]
+    fn callback_admission_rejects_synchronously_at_capacity() {
+        let owner_thread = thread::spawn(|| thread::current().id())
+            .join()
+            .expect("capture a distinct fake owner thread id");
+        let (owner, receiver) = detached_owner(1, owner_thread);
+        let mut admitted = Box::pin(owner.enqueue_ordinary(begin_operation(1)));
+        assert!(matches!(poll_once(admitted.as_mut()), Poll::Ready(Ok(()))));
+
+        let completions = Arc::new(AtomicUsize::new(0));
+        let callback_completions = Arc::clone(&completions);
+        let (reply, result) = mpsc::channel();
+        owner.call_with_completion(
+            None,
+            |_| Ok(2_u64),
+            move |outcome| {
+                callback_completions.fetch_add(1, Ordering::SeqCst);
+                reply
+                    .send(outcome.map_err(|error| error.to_string()))
+                    .expect("observe callback admission result");
+            },
+        );
+
+        assert_eq!(
+            result
+                .recv_timeout(Duration::from_secs(2))
+                .expect("capacity rejection is synchronous")
+                .expect_err("full callback admission is rejected"),
+            "WASIX database owner command capacity is full"
+        );
+        assert_eq!(completions.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            begin_token(receiver.recv().expect("only prior work was admitted")),
+            1
+        );
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+    }
+
+    #[test]
+    fn callback_admission_cannot_overtake_an_async_waiter() {
+        let owner_thread = thread::spawn(|| thread::current().id())
+            .join()
+            .expect("capture a distinct fake owner thread id");
+        let (owner, receiver) = detached_owner(1, owner_thread);
+        let order = Arc::clone(&owner.inner.ordinary_order)
+            .try_lock_owned()
+            .expect("reserve ordinary ordering gate");
+        let (reply, result) = mpsc::channel();
+
+        owner.call_with_completion(
+            None,
+            |_| Ok(()),
+            move |outcome| {
+                reply
+                    .send(outcome.map_err(|error| error.to_string()))
+                    .expect("observe callback ordering result");
+            },
+        );
+
+        assert_eq!(
+            result
+                .recv_timeout(Duration::from_secs(2))
+                .expect("busy ordering rejection is synchronous")
+                .expect_err("callback cannot overtake queued async work"),
+            "WASIX database owner command admission is busy"
+        );
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        drop(order);
+    }
+
+    #[test]
+    fn callback_send_failure_settles_once_after_releasing_admission() {
+        let owner_thread = thread::spawn(|| thread::current().id())
+            .join()
+            .expect("capture a distinct fake owner thread id");
+        let (owner, receiver) = detached_owner(1, owner_thread);
+        drop(receiver);
+        let completions = Arc::new(AtomicUsize::new(0));
+        let callback_completions = Arc::clone(&completions);
+        let callback_owner = owner.clone();
+        let (reply, result) = mpsc::channel();
+
+        owner.call_with_completion(
+            None,
+            |_| Ok(()),
+            move |outcome| {
+                callback_completions.fetch_add(1, Ordering::SeqCst);
+                assert!(
+                    callback_owner.inner.admission.try_lock().is_ok(),
+                    "completion runs after releasing the admission lock"
+                );
+                reply
+                    .send(outcome.map_err(|error| error.to_string()))
+                    .expect("observe failed send completion");
+            },
+        );
+
+        assert_eq!(
+            result
+                .recv_timeout(Duration::from_secs(2))
+                .expect("failed send completes immediately")
+                .expect_err("disconnected owner rejects work"),
+            "WASIX database owner has stopped"
+        );
+        assert_eq!(completions.load(Ordering::SeqCst), 1);
+        drop(owner);
+        assert_eq!(completions.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn dropping_accepted_callback_work_settles_it_once() {
+        let owner_thread = thread::spawn(|| thread::current().id())
+            .join()
+            .expect("capture a distinct fake owner thread id");
+        let (owner, receiver) = detached_owner(1, owner_thread);
+        let completions = Arc::new(AtomicUsize::new(0));
+        let callback_completions = Arc::clone(&completions);
+        let (reply, result) = mpsc::channel();
+
+        owner.call_with_completion(
+            None,
+            |_| Ok(7_u64),
+            move |outcome| {
+                callback_completions.fetch_add(1, Ordering::SeqCst);
+                reply
+                    .send(outcome.map_err(|error| error.to_string()))
+                    .expect("observe dropped work completion");
+            },
+        );
+        assert!(matches!(result.try_recv(), Err(mpsc::TryRecvError::Empty)));
+        drop(receiver);
+
+        assert_eq!(
+            result
+                .recv_timeout(Duration::from_secs(2))
+                .expect("queue loss settles accepted work")
+                .expect_err("dropped queued work reports owner loss"),
+            "WASIX database owner stopped while running an operation"
+        );
+        assert_eq!(completions.load(Ordering::SeqCst), 1);
+        drop(owner);
+        assert_eq!(completions.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn callback_panic_is_contained_and_cannot_complete_twice() {
+        let completions = Arc::new(AtomicUsize::new(0));
+        let callback_completions = Arc::clone(&completions);
+        let completion = SharedCompletion::new(move |_: Result<()>| {
+            callback_completions.fetch_add(1, Ordering::SeqCst);
+            panic!("injected completion adapter panic");
+        });
+
+        completion.complete(Ok(()));
+        completion.complete(Err(Error::message("second completion")));
+
+        assert_eq!(completions.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn cancelled_capacity_waiter_never_enters_the_owner_queue() {
         let owner_thread = thread::spawn(|| thread::current().id())
             .join()
@@ -2381,6 +3168,76 @@ mod close_tests {
     }
 
     #[test]
+    fn retryable_close_callback_can_reenter_reopened_admission() {
+        let owner_thread = thread::spawn(|| thread::current().id())
+            .join()
+            .expect("capture a distinct fake owner thread id");
+        let (owner, receiver) = detached_owner(1, owner_thread);
+        let callback_owner = owner.clone();
+        let (close_reply, close_result) = mpsc::channel();
+        let (nested_reply, nested_result) = mpsc::channel();
+        owner.close_with_completion(move |result| {
+            callback_owner.call_with_completion(
+                None,
+                |_| Ok(11_u64),
+                move |result| {
+                    nested_reply
+                        .send(result.map_err(|error| error.to_string()))
+                        .expect("observe callback reentry completion");
+                },
+            );
+            close_reply
+                .send(result.map_err(|error| error.to_string()))
+                .expect("observe retryable close completion");
+        });
+
+        let close_message = receiver.recv().expect("receive retryable close control");
+        let OwnerOperation::Control(OwnerControl::Close { attempt }) = close_message.operation
+        else {
+            panic!("expected close control");
+        };
+        assert!(!complete_close_attempt(
+            &owner.inner.admission,
+            &owner.inner.state,
+            &owner.inner.close_attempt,
+            &attempt,
+            Err(Error::message("injected retryable close")),
+            CloseDisposition::Retryable,
+        ));
+
+        assert_eq!(
+            close_result
+                .recv_timeout(Duration::from_secs(2))
+                .expect("retryable close callback settles")
+                .expect_err("retryable close reports its validation failure"),
+            "injected retryable close"
+        );
+        let nested_message = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("callback reentry is admitted after close state reopens");
+        match nested_message.operation {
+            OwnerOperation::Command(command) => drop(command),
+            _ => panic!("callback reentry must enqueue an ordinary command"),
+        }
+        assert_eq!(
+            nested_result
+                .recv_timeout(Duration::from_secs(2))
+                .expect("dropped admission probe settles")
+                .expect_err("probe owner does not execute commands"),
+            "WASIX database owner stopped while running an operation"
+        );
+        assert_eq!(owner.inner.state.load(Ordering::SeqCst), OWNER_OPEN);
+        assert!(
+            owner
+                .inner
+                .close_attempt
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .is_none()
+        );
+    }
+
+    #[test]
     fn reentrant_work_fails_before_waiting_for_capacity() {
         let (owner, _receiver) = detached_owner(0, thread::current().id());
         let mut call = Box::pin(owner.call(None, |_| Ok(())));
@@ -2431,16 +3288,22 @@ mod close_tests {
                         let completion =
                             completion_rx.recv().expect("complete fake database close");
                         close_index += 1;
-                        let _admission = thread_admission
-                            .lock()
-                            .unwrap_or_else(|error| error.into_inner());
-                        if complete_close_attempt_locked(
-                            &thread_state,
-                            &thread_close_attempt,
-                            &attempt,
-                            completion.result,
-                            completion.disposition,
-                        ) {
+                        let (terminal, notifications) = {
+                            let _admission = thread_admission
+                                .lock()
+                                .unwrap_or_else(|error| error.into_inner());
+                            complete_close_attempt_locked(
+                                &thread_state,
+                                &thread_close_attempt,
+                                &attempt,
+                                completion.result,
+                                completion.disposition,
+                            )
+                        };
+                        if let Some(notifications) = notifications {
+                            notifications.dispatch();
+                        }
+                        if terminal {
                             return;
                         }
                     }
@@ -2700,6 +3563,75 @@ mod close_tests {
         ));
     }
 
+    #[test]
+    fn database_close_callbacks_share_and_replay_the_existing_attempt() {
+        let harness = database_close_harness();
+        let (first_reply, first_result) = mpsc::channel();
+        let (second_reply, second_result) = mpsc::channel();
+        harness.owner.close_with_completion(move |result| {
+            first_reply
+                .send(result.map_err(|error| error.to_string()))
+                .expect("observe first close completion");
+        });
+        harness.owner.close_with_completion(move |result| {
+            second_reply
+                .send(result.map_err(|error| error.to_string()))
+                .expect("observe second close completion");
+        });
+
+        assert_eq!(
+            harness
+                .started
+                .recv_timeout(Duration::from_secs(2))
+                .expect("one shared database close starts"),
+            0
+        );
+        let attempt = harness
+            .owner
+            .inner
+            .close_attempt
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+            .expect("database close attempt is installed");
+        assert_eq!(attempt.waiter_count(), 2);
+        harness
+            .completion
+            .send(FakeCloseCompletion {
+                result: Err(Error::message("injected callback close failure")),
+                disposition: CloseDisposition::Terminal,
+            })
+            .expect("complete shared callback close");
+
+        for result in [first_result, second_result] {
+            assert_eq!(
+                result
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("shared close callback settles")
+                    .expect_err("terminal close fails"),
+                "injected callback close failure"
+            );
+        }
+
+        let (replay_reply, replay_result) = mpsc::channel();
+        harness.owner.close_with_completion(move |result| {
+            replay_reply
+                .send(result.map_err(|error| error.to_string()))
+                .expect("observe replayed close completion");
+        });
+        assert_eq!(
+            replay_result
+                .recv_timeout(Duration::from_secs(2))
+                .expect("terminal close result replays synchronously")
+                .expect_err("terminal failure is retained"),
+            "injected callback close failure"
+        );
+        assert!(matches!(
+            harness.started.try_recv(),
+            Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected)
+        ));
+    }
+
     struct ServerCloseHarness {
         server: AsyncOliphauntServer,
         started: mpsc::Receiver<usize>,
@@ -2726,16 +3658,22 @@ mod close_tests {
                             .expect("announce fake server close");
                         let completion = completion_rx.recv().expect("complete fake server close");
                         close_index += 1;
-                        let _admission = thread_admission
-                            .lock()
-                            .unwrap_or_else(|error| error.into_inner());
-                        if complete_close_attempt_locked(
-                            &thread_state,
-                            &thread_close_attempt,
-                            &attempt,
-                            completion.result,
-                            completion.disposition,
-                        ) {
+                        let (terminal, notifications) = {
+                            let _admission = thread_admission
+                                .lock()
+                                .unwrap_or_else(|error| error.into_inner());
+                            complete_close_attempt_locked(
+                                &thread_state,
+                                &thread_close_attempt,
+                                &attempt,
+                                completion.result,
+                                completion.disposition,
+                            )
+                        };
+                        if let Some(notifications) = notifications {
+                            notifications.dispatch();
+                        }
+                        if terminal {
                             return;
                         }
                     }

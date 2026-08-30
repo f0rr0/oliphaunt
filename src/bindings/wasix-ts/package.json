@@ -1,7 +1,7 @@
 {
   "name": "@oliphaunt/wasix-ts",
   "version": "0.0.0",
-  "description": "Portable Oliphaunt WASIX TypeScript SDK for browsers, Node.js, Bun, and Deno.",
+  "description": "Portable Oliphaunt WASIX TypeScript SDK for browsers, Node.js, Bun, Deno, and Electron.",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
@@ -17,7 +17,12 @@
   "oliphaunt": {
     "runtimeProduct": "liboliphaunt-wasix",
     "runtimeVersion": "0.1.1",
-    "host": "wasmer-js-patched"
+    "wasixNapiProduct": "oliphaunt-wasix-napi",
+    "wasixNapiVersion": "0.0.0",
+    "wasixAddonAbiVersion": 1,
+    "nodeApiVersion": 8,
+    "browserHost": "wasmer-js-patched",
+    "serverHost": "wasix-rust-napi"
   },
   "publishConfig": {
     "access": "public",
@@ -40,6 +45,12 @@
       "browser": "./lib/worker-entry.js",
       "default": "./lib/worker-entry.js"
     },
+    "./direct": {
+      "types": "./lib/direct.node.d.ts",
+      "deno": "./lib/direct.node.js",
+      "bun": "./lib/direct.node.js",
+      "node": "./lib/direct.node.js"
+    },
     "./internal/tools": {
       "types": "./lib/internal.d.ts",
       "deno": "./lib/internal.node.js",
@@ -48,17 +59,11 @@
       "browser": "./lib/internal.js",
       "default": "./lib/internal.js"
     },
-    "./server/node": {
+    "./server": {
       "types": "./lib/server.node.d.ts",
+      "deno": "./lib/server.node.js",
+      "bun": "./lib/server.node.js",
       "node": "./lib/server.node.js"
-    },
-    "./server/bun": {
-      "types": "./lib/server.node.d.ts",
-      "bun": "./lib/server.node.js"
-    },
-    "./server/deno": {
-      "types": "./lib/server.node.d.ts",
-      "deno": "./lib/server.node.js"
     },
     "./storage/indexed-db": {
       "types": "./lib/storage/indexed-db.d.ts",
@@ -116,6 +121,12 @@
   },
   "dependencies": {
     "fzstd": "0.1.1"
+  },
+  "optionalDependencies": {
+    "@oliphaunt/wasix-napi-darwin-arm64": "workspace:*",
+    "@oliphaunt/wasix-napi-linux-arm64-gnu": "workspace:*",
+    "@oliphaunt/wasix-napi-linux-x64-gnu": "workspace:*",
+    "@oliphaunt/wasix-napi-win32-x64-msvc": "workspace:*"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.4",

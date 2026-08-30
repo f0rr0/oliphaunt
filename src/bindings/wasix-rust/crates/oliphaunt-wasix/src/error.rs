@@ -16,8 +16,93 @@ pub enum ErrorKind {
     TransactionActive,
     /// PostgreSQL returned a structured backend `ErrorResponse`.
     Postgres,
+    /// Managed storage ownership, validation, publication, or durability failed.
+    Storage,
     /// A transport, runtime, protocol, callback, or other failure.
     Other,
+}
+
+/// Stable classification for a managed-storage failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum StorageErrorCode {
+    /// Another database or server owns the selected managed root.
+    Busy,
+    /// Stored bytes or metadata are malformed or unsafe.
+    Corrupt,
+    /// A managed root contains only part of a valid database.
+    Incomplete,
+    /// Stored data belongs to an incompatible runtime or physical format.
+    Incompatible,
+    /// Publication crossed or may have crossed its atomic commit point but durability failed.
+    PublicationFailed,
+    /// The storage provider or host filesystem operation was unavailable.
+    Unavailable,
+}
+
+/// What is known about the stored generation after a storage failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum StorageCommitState {
+    /// The attempted generation was not published.
+    NotPersisted,
+    /// The attempted generation was published and made durable.
+    Persisted,
+    /// The pre-operation generation is known to be unchanged.
+    Unchanged,
+    /// Publication or durability may have happened before the failure.
+    Unknown,
+}
+
+/// Stable operation phase at which managed storage failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum StorageErrorPhase {
+    /// Acquiring exclusive ownership of a managed directory root.
+    Ownership,
+    /// Inspecting or opening an existing managed root.
+    Open,
+    /// Publishing a newly initialized managed root.
+    OpenPublication,
+    /// Persisting one database protocol operation.
+    Operation,
+    /// Reading or materializing a physical backup.
+    Backup,
+    /// Shutting down and durably closing a database or server.
+    Close,
+    /// Validating a physical restore archive and destination.
+    RestoreValidation,
+    /// Materializing a validated restore in private staging.
+    RestoreStaging,
+    /// Atomically publishing a staged restore.
+    RestorePublication,
+    /// Making an already-published restore durable.
+    RestoreDurability,
+}
+
+/// Programmatically useful details carried by a managed-storage failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct StorageErrorDetails {
+    code: StorageErrorCode,
+    commit_state: StorageCommitState,
+    phase: StorageErrorPhase,
+}
+
+impl StorageErrorDetails {
+    /// Stable storage classification suitable for branching.
+    pub const fn code(self) -> StorageErrorCode {
+        self.code
+    }
+
+    /// What is known about the stored generation after the failure.
+    pub const fn commit_state(self) -> StorageCommitState {
+        self.commit_state
+    }
+
+    /// Storage operation phase which failed.
+    pub const fn phase(self) -> StorageErrorPhase {
+        self.phase
+    }
 }
 
 /// Error returned by the Oliphaunt Rust WASIX API.
@@ -31,6 +116,12 @@ pub struct Error {
 struct ClassifiedCause {
     kind: ErrorKind,
     message: String,
+}
+
+#[derive(Debug)]
+struct StorageCause {
+    details: StorageErrorDetails,
+    source: anyhow::Error,
 }
 
 #[derive(Debug, Clone)]
@@ -329,6 +420,13 @@ impl Error {
         self.inner.downcast_ref()
     }
 
+    /// Return structured managed-storage details without inspecting error text.
+    pub fn storage_error(&self) -> Option<StorageErrorDetails> {
+        self.inner
+            .downcast_ref::<StorageCause>()
+            .map(|cause| cause.details)
+    }
+
     /// Return both failures when a transaction callback and rollback failed.
     pub fn transaction_rollback_errors(&self) -> Option<(&Error, &Error)> {
         self.inner
@@ -352,8 +450,13 @@ impl Error {
 
     pub(crate) fn from_anyhow(inner: anyhow::Error) -> Self {
         let kind = inner
-            .downcast_ref::<ClassifiedCause>()
-            .map(|cause| cause.kind)
+            .downcast_ref::<StorageCause>()
+            .map(|_| ErrorKind::Storage)
+            .or_else(|| {
+                inner
+                    .downcast_ref::<ClassifiedCause>()
+                    .map(|cause| cause.kind)
+            })
             .or_else(|| {
                 inner
                     .downcast_ref::<crate::PostgresError>()
@@ -423,6 +526,18 @@ impl fmt::Display for ClassifiedCause {
 
 impl error::Error for ClassifiedCause {}
 
+impl fmt::Display for StorageCause {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.source.fmt(f)
+    }
+}
+
+impl error::Error for StorageCause {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
 pub(crate) fn classified_anyhow(
     kind: ErrorKind,
     message: impl fmt::Display + Send + Sync + 'static,
@@ -447,6 +562,34 @@ pub(crate) fn transaction_active(
     message: impl fmt::Display + Send + Sync + 'static,
 ) -> anyhow::Error {
     classified_anyhow(ErrorKind::TransactionActive, message)
+}
+
+pub(crate) fn storage_error(
+    source: anyhow::Error,
+    code: StorageErrorCode,
+    commit_state: StorageCommitState,
+    phase: StorageErrorPhase,
+) -> anyhow::Error {
+    if source.downcast_ref::<StorageCause>().is_some() {
+        return source;
+    }
+    anyhow::Error::new(StorageCause {
+        details: StorageErrorDetails {
+            code,
+            commit_state,
+            phase,
+        },
+        source,
+    })
+}
+
+pub(crate) fn storage_message(
+    message: impl fmt::Display + fmt::Debug + Send + Sync + 'static,
+    code: StorageErrorCode,
+    commit_state: StorageCommitState,
+    phase: StorageErrorPhase,
+) -> anyhow::Error {
+    storage_error(anyhow::Error::msg(message), code, commit_state, phase)
 }
 
 impl fmt::Display for TransactionRollbackCause {
@@ -552,6 +695,29 @@ mod tests {
             Error::transaction_active("active transaction").kind(),
             ErrorKind::TransactionActive
         );
+
+        let storage = Err::<(), _>(storage_message(
+            "misleading words: corrupt but actually owned",
+            StorageErrorCode::Busy,
+            StorageCommitState::Unchanged,
+            StorageErrorPhase::Ownership,
+        ))
+        .context("open database")
+        .unwrap_err();
+        let storage = Error::from_anyhow(storage);
+        assert_eq!(storage.kind(), ErrorKind::Storage);
+        assert_eq!(
+            storage.storage_error(),
+            Some(StorageErrorDetails {
+                code: StorageErrorCode::Busy,
+                commit_state: StorageCommitState::Unchanged,
+                phase: StorageErrorPhase::Ownership,
+            })
+        );
+
+        let same_storage_words = Error::message("database root is already in use");
+        assert_eq!(same_storage_words.kind(), ErrorKind::Other);
+        assert_eq!(same_storage_words.storage_error(), None);
     }
 
     #[test]

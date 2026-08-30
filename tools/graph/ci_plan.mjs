@@ -23,6 +23,7 @@ import {
   liboliphauntWasixPostmasterRuntimeMatrix,
   nodeDirectRuntimeMatrix,
   reactNativeAndroidMobileAppMatrix,
+  wasixNapiRuntimeMatrix,
 } from "../release/artifact_target_matrix.mjs";
 import {
   compareText,
@@ -59,6 +60,8 @@ export const BUILDER_JOBS = new Set([
   "mobile-extension-packages",
   "node-direct",
   "node-direct-release-assets",
+  "wasix-napi",
+  "wasix-napi-release-assets",
   "react-native-sdk-package",
   "rust-sdk-package",
   "swift-sdk-package",
@@ -293,6 +296,18 @@ export function addImpliedJobs(jobs, tasks) {
   if (jobs.has("node-direct-release-assets")) {
     jobs.add("node-direct");
   }
+  if (jobs.has("wasix-napi-release-assets")) {
+    jobs.add("wasix-napi");
+  }
+  // Release-feature N-API addons embed the portable WASIX payload, the
+  // current host's core/tool AOT payloads, and every selected extension's
+  // portable + host AOT payload. Keep all same-run producers in the plan so
+  // the native build can fail closed instead of emitting source-only crates.
+  if (jobs.has("wasix-napi")) {
+    jobs.add("extension-artifacts-wasix");
+    jobs.add("liboliphaunt-wasix-runtime");
+    jobs.add("liboliphaunt-wasix-aot");
+  }
   if (
     intersects(
       jobs,
@@ -387,11 +402,16 @@ export function planJobsForAffected(directProjects, tasks) {
   // to workspace or registry assets.
   if (jobs.has("wasix-ts-sdk-package")) {
     jobs.add("liboliphaunt-wasix-runtime");
+    jobs.add("wasix-napi");
   }
   if (intersects(directProjects, new Set(exactExtensionProducts()))) {
     jobs.add("extension-artifacts-native");
     jobs.add("extension-artifacts-wasix");
     jobs.add("extension-packages");
+    // The N-API carrier statically embeds the complete exact-extension set.
+    // Rebuild it even when a caller supplies only direct projects rather than
+    // Moon's already-expanded downstream task set.
+    jobs.add("wasix-napi");
   }
   if (jobs.has("react-native-sdk-package")) {
     for (const job of ANDROID_MOBILE_JOBS) {
@@ -933,6 +953,11 @@ export function renderPlanWithSelection({
       : emptyMatrix(),
     node_direct_runtime_matrix: jobs.has("node-direct")
       ? nodeDirectRuntimeMatrix(nativeTarget)
+      : emptyMatrix(),
+    wasix_napi_runtime_matrix: jobs.has("wasix-napi")
+      ? wasixNapiRuntimeMatrix(
+          jobs.has("wasix-napi-release-assets") ? nativeTarget : "linux-x64-gnu",
+        )
       : emptyMatrix(),
     reason,
   };

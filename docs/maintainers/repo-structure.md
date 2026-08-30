@@ -37,7 +37,7 @@ source lives under `src/<product>/`.
   `src/sdks/react-native/`, and `src/sdks/js/` own platform and
   runtime SDKs.
 - `src/bindings/wasix-rust/` owns the released Rust WASIX binding.
-- `src/bindings/wasix-ts/` owns the public browser, Node, Bun, and Deno WASIX TypeScript
+- `src/bindings/wasix-ts/` owns the public browser, Node, Bun, Deno, and Electron WASIX TypeScript
   binding and its optional `tools-package/` `pg_dump`/`psql` facade. It is a
   peer binding, not part of the native TypeScript SDK; portable program bytes
   remain owned by `liboliphaunt-wasix`.
@@ -109,13 +109,13 @@ synthetic root:
   release lane and comparison target. It should not expose native engine
   selection or link/load `liboliphaunt`; native Rust work belongs in
   `src/sdks/rust`.
-- `src/bindings/wasix-ts` is the public browser, Node, Bun, and Deno binding over the same
-  portable WASIX runtime. It owns module-Worker and worker-thread orchestration,
-  archive-to-memory mounts, the patched package-relative Wasmer host, and the
-  direct guest-memory pgwire client. It must not depend on `src/sdks/js`, native runtime
-  carriers, Node direct, or the broker. Ordinary opens consume the generated
-  host-neutral `@oliphaunt/liboliphaunt-wasix` carrier; conditional exports
-  select the host adapter without changing the public package identity.
+- `src/bindings/wasix-ts` is the public browser, Node, Bun, Deno, and Electron
+  binding over the same portable WASIX runtime. It owns browser module Workers,
+  native-host Rust actor/direct/Worker placement, archive-to-memory mounts,
+  the patched package-relative browser Wasmer host, and the direct pgwire
+  client. It must not depend on `src/sdks/js`, native runtime carriers other
+  than its exact WASIX Node-API carriers, Node direct, or the broker. Conditional
+  exports select the browser or native host without changing package identity.
 - `src/runtimes/liboliphaunt/wasix-postmaster` is a peer release product, not an
   implementation directory of `liboliphaunt-wasix`. It owns a distinct Moon
   release component and sealed carrier because its concurrent process and

@@ -19,11 +19,11 @@ import { promisify } from 'node:util';
 import { createPackedWasixConsumer } from '../../../src/bindings/wasix-ts/tools/packed-node-fixture.mjs';
 import { installedPackageClosure } from './installed-closure.mjs';
 import {
+  assertNativeArtifactProvenance,
   assertRuntimeBuildConfiguration,
   comfortableWinGate,
   defaultPlanFile,
   findPackageManifest,
-  installedHostBuildProvenance,
   loadPlan,
   median,
   metricIds,
@@ -49,7 +49,7 @@ if (args.mode === 'plan') {
       {
         status: 'PASS',
         validation:
-          'plan, candidate host build inputs, package identity, private comparator pin, and generated SQL',
+          'plan, native addon contract, package identity, private comparator pin, and generated SQL',
         installedControl,
         ...planSummary(source.plan, source),
       },
@@ -72,7 +72,7 @@ async function runMeasuredBenchmark(planSource, options) {
   const scratch = await mkdtemp(resolve(tmpdir(), 'oliphaunt-wasix-node-bench-'));
 
   try {
-    const fixture = await createPackedWasixConsumer({
+    const fixture = await createBenchmarkFixture({
       scratch,
       consumerName: 'oliphaunt-wasix-node-benchmark-consumer',
     });
@@ -80,6 +80,8 @@ async function runMeasuredBenchmark(planSource, options) {
       fixture.consumer,
       planSource.plan,
       fixture.packages.runtime,
+      fixture.packages.nativeCarrier,
+      git.commit,
     );
     const comparison = await comparisonProvenance(planSource.plan);
     const sequence = [];
@@ -214,6 +216,32 @@ async function runEngine({ engine, repeat, planSource, candidateRoot, scratch })
     throw new Error(`${engine} repeat ${repeat} failed${stderr}`, { cause: error });
   }
   return JSON.parse(await readFile(output, 'utf8'));
+}
+
+async function createBenchmarkFixture(options) {
+  try {
+    return await createPackedWasixConsumer(options);
+  } catch (cause) {
+    throwNativeCarrierPreflight(cause, 'measured WASIX Node benchmark');
+    throw cause;
+  }
+}
+
+function throwNativeCarrierPreflight(cause, consumer) {
+  const detail = cause instanceof Error ? cause.message : String(cause);
+  if (
+    /native carrier|Node-API carrier|native artifact provenance|oliphaunt_wasix_napi|wasix-napi-/iu.test(
+      detail,
+    )
+  ) {
+    throw new Error(
+      `${consumer} requires one optimized current-host WASIX Node-API carrier. ` +
+        'After staging the portable/AOT runtime, ICU, and extension inputs, run ' +
+        '`bash src/runtimes/wasix-napi/tools/build-native.sh`, then retry. ' +
+        `Carrier preflight: ${detail}`,
+      { cause },
+    );
+  }
 }
 
 function validateEngineReport(report, engine, repeat, planSource) {
@@ -486,15 +514,22 @@ async function comparisonProvenance(plan) {
   };
 }
 
-async function candidateClosureProvenance(consumer, plan, runtimePackage) {
+async function candidateClosureProvenance(
+  consumer,
+  plan,
+  runtimePackage,
+  nativeCarrier,
+  artifactSourceSha,
+) {
   const require = createRequire(resolve(consumer, 'package.json'));
-  const { file: manifestFile, manifest } = await findPackageManifest(
+  const { manifest } = await findPackageManifest(
     require.resolve(plan.engines.candidate.package),
     plan.engines.candidate.package,
   );
-  const hostBuild = await installedHostBuildProvenance(
-    manifestFile,
-    plan.engines.candidate.hostBuild,
+  const nativeAddon = assertNativeArtifactProvenance(
+    nativeCarrier,
+    plan.engines.candidate.nativeAddon,
+    artifactSourceSha,
   );
   for (const field of [
     'dependencies',
@@ -510,7 +545,12 @@ async function candidateClosureProvenance(consumer, plan, runtimePackage) {
     require.resolve(plan.engines.candidate.package),
     plan.engines.candidate.package,
   );
-  const expectedPackages = ['@oliphaunt/liboliphaunt-wasix', '@oliphaunt/wasix-ts', 'fzstd'];
+  const expectedPackages = [
+    '@oliphaunt/liboliphaunt-wasix',
+    '@oliphaunt/wasix-ts',
+    nativeCarrier.name,
+    'fzstd',
+  ].sort();
   const installedPackages = installedClosure.packages.map((candidate) => candidate.name).sort();
   if (JSON.stringify(installedPackages) !== JSON.stringify(expectedPackages)) {
     throw new Error(
@@ -546,7 +586,7 @@ async function candidateClosureProvenance(consumer, plan, runtimePackage) {
     package: manifest.name,
     version: manifest.version,
     dependencies: manifest.dependencies ?? {},
-    hostBuild,
+    nativeAddon,
     runtimeBuild: build,
     installedClosure,
   };
@@ -623,9 +663,9 @@ function markdownReport(report) {
   return `# WASIX Node benchmark report
 
 - Plan: \`${report.plan.id}\`
-- Candidate: \`${report.plan.engines.candidate.package}\` (caller-owned root Promise API and explicit package-owned \`/worker\` entrypoint)
+- Candidate: \`${report.plan.engines.candidate.package}\` (blocking \`/direct\` API and explicit package-owned \`/worker\` entrypoint)
 - Candidate runtime build: \`${report.provenance.candidate.packages.runtime.build.configuration.profile}\` with \`${report.provenance.candidate.packages.runtime.build.configuration.cflags}\` (signature \`${report.provenance.candidate.packages.runtime.build.buildProfile.sha256}\`)
-- Candidate host build: Wasmer JS \`${report.provenance.candidate.closure.hostBuild.wasmerJsCommit}\`, wasmer-wasix \`${report.provenance.candidate.closure.hostBuild.wasmerWasixVersion}\`, Cargo \`${report.provenance.candidate.closure.hostBuild.optimization.cargoProfile}\`, Rust \`opt-level=${report.provenance.candidate.closure.hostBuild.optimization.rustOptLevel}\` with LTO, wasm-opt \`${report.provenance.candidate.closure.hostBuild.optimization.wasmOpt.join(' ')}\`, guest concurrency \`${report.provenance.candidate.closure.hostBuild.guestConcurrency}\` (inputs \`${report.provenance.candidate.closure.hostBuild.inputsSha256}\`)
+- Candidate native host: \`${report.provenance.candidate.closure.nativeAddon.carrier}\` target \`${report.provenance.candidate.closure.nativeAddon.target}\`, addon ABI \`${report.plan.engines.candidate.nativeAddon.addonAbiVersion}\`, Node-API \`${report.plan.engines.candidate.nativeAddon.nodeApiVersion}\`, Cargo \`${report.provenance.candidate.closure.nativeAddon.artifactProvenance.build.cargoProfile}\`, thin LTO, one codegen unit, binary \`${report.provenance.candidate.closure.nativeAddon.artifactProvenance.binary.sha256}\` (artifact source \`${report.provenance.candidate.closure.nativeAddon.artifactProvenance.artifactSourceSha}\`)
 - Comparison: \`${report.plan.engines.comparison.package}@${report.plan.engines.comparison.version}\` (harness-owned Worker and caller-realm API)
 - Correctness: **${report.summary.correctness.passed ? 'PASS' : 'FAIL'}**
 - PostgreSQL settings parity: **${report.summary.correctness.postgresSettings.passed ? 'PASS' : 'FAIL'}**

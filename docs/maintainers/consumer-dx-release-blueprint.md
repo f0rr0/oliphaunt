@@ -185,8 +185,10 @@ Package layout:
 
 - `@oliphaunt/extension-<name>` is a descriptor package.
 - Descriptor packages declare native platform artifact packages.
-- `@oliphaunt/extension-<name>-wasix` is the separately imported portable
-  WASIX descriptor and byte carrier shared by browser, Node, Bun, and Deno hosts. It shares
+- `@oliphaunt/extension-<name>-wasix` is the separately imported host-neutral
+  WASIX descriptor package. It carries browser bytes; Node, Bun, Deno, and
+  Electron validate the descriptor and use the matching artifact embedded in
+  their Node-API addon. It shares
   the unsuffixed product's version and does not introduce a `-native` alias.
 - `@oliphaunt/liboliphaunt-wasix` is the generated, internal runtime carrier
   selected by the WASIX binding. Applications do not supply ordinary asset
@@ -213,8 +215,9 @@ import pgtap from '@oliphaunt/extension-pgtap-wasix';
 const db = await Oliphaunt.open({ extensions: [pgtap] });
 ```
 
-Browser, Node, Bun, and Deno WASIX hosts share the same `-wasix` extension
-descriptor and bytes. Host selection belongs to `@oliphaunt/wasix-ts`; native
+Browser, Node, Bun, Deno, and Electron WASIX hosts share the same `-wasix`
+descriptor. Browsers materialize its bytes; native hosts validate its identity
+and select addon-embedded artifacts. Host selection belongs to `@oliphaunt/wasix-ts`; native
 JavaScript remains on the established unsuffixed surface.
 
 ### JavaScript: Deno And npm
@@ -556,7 +559,7 @@ Keep these gates:
    GitHub-release URL construction, or runtime asset cache installer in normal
    runtime paths.
 4. Real package smoke: install from packed artifacts in scratch projects for npm
-   across Node, Bun, and Deno, plus Cargo native, Cargo WASIX, Android Gradle,
+   across Node, Bun, Deno, and Electron, plus Cargo native, Cargo WASIX, Android Gradle,
    SwiftPM, and React Native.
 5. Network-off smoke: after package install, disable network and open a database
    with one contrib extension and one external extension.

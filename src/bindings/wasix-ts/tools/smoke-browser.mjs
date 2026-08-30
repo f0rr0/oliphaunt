@@ -311,6 +311,7 @@ async function stagePackedBrowserConsumer(scratch) {
     consumerName: 'oliphaunt-wasix-browser-package-smoke-consumer',
     includePgtap: true,
     includeTools: true,
+    includeNative: false,
   });
   for (const [source, destination] of [
     ['examples/browser-wasix/index.html', 'index.html'],

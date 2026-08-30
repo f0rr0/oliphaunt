@@ -739,12 +739,13 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Download native helper release assets
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && (contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-broker') || contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-node-direct')) }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && (contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-broker') || contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-node-direct') || contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-wasix-napi')) }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           PRODUCT_OLIPHAUNT_BROKER: ${{ contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-broker') }}
           PRODUCT_OLIPHAUNT_NODE_DIRECT: ${{ contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-node-direct') }}
+          PRODUCT_OLIPHAUNT_WASIX_NAPI: ${{ contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-wasix-napi') }}
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
           RELEASE_ARTIFACT_SHA: ${{ steps.release_head.outputs.sha }}
         run: |
@@ -776,6 +777,12 @@ jobs:
               node-direct-addon \
               target/oliphaunt-node-direct/release-assets
           fi
+          if [ "$PRODUCT_OLIPHAUNT_WASIX_NAPI" = "true" ]; then
+            download_helper_artifacts \
+              oliphaunt-wasix-napi \
+              wasix-napi-addon \
+              target/oliphaunt-wasix-napi/release-assets
+          fi
 
       - name: Download Node direct optional npm packages
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-node-direct') }}
@@ -793,6 +800,26 @@ jobs:
             CI \
             "$RELEASE_ARTIFACT_SHA" \
             target/oliphaunt-node-direct/npm-packages \
+            --run-id "$CI_RUN_ID" \
+            --job Builds \
+            "${artifact_args[@]}"
+
+      - name: Download WASIX Node-API optional npm packages
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-wasix-napi') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
+          RELEASE_ARTIFACT_SHA: ${{ steps.release_head.outputs.sha }}
+        run: |
+          artifact_args=()
+          while IFS= read -r artifact; do
+            artifact_args+=(--artifact "$artifact")
+          done < <(tools/dev/bun.sh tools/release/release_graph_query.mjs ci-artifact-names --product oliphaunt-wasix-napi --kind wasix-napi-addon --family npm-package --format lines)
+          node .github/scripts/download-build-artifacts.mjs \
+            CI \
+            "$RELEASE_ARTIFACT_SHA" \
+            target/oliphaunt-wasix-napi/npm-packages \
             --run-id "$CI_RUN_ID" \
             --job Builds \
             "${artifact_args[@]}"
@@ -908,6 +935,7 @@ jobs:
         env:
           OLIPHAUNT_BROKER_RELEASE_ASSET_INPUT_DIRS: ${{ github.workspace }}/target/oliphaunt-broker/release-assets
           OLIPHAUNT_NODE_ADDON_ASSET_INPUT_DIRS: ${{ github.workspace }}/target/oliphaunt-node-direct/release-assets
+          OLIPHAUNT_WASIX_NAPI_ASSET_INPUT_DIRS: ${{ github.workspace }}/target/oliphaunt-wasix-napi/release-assets
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
         run: tools/dev/bun.sh tools/release/package-release-carriers.mjs --products-json "$PRODUCTS_JSON"
 
@@ -934,7 +962,9 @@ jobs:
             target/oliphaunt-broker/cargo-artifacts \
             target/oliphaunt-wasix/cargo-artifacts \
             target/oliphaunt-node-direct/release-assets \
-            target/oliphaunt-node-direct/npm-packages; do
+            target/oliphaunt-node-direct/npm-packages \
+            target/oliphaunt-wasix-napi/release-assets \
+            target/oliphaunt-wasix-napi/npm-packages; do
             if [[ -e "$artifact_root" ]]; then
               lock_args+=(--artifact-root "$artifact_root")
             fi
@@ -1227,6 +1257,23 @@ jobs:
             target/oliphaunt-node-direct/release-assets/*.zip
             target/oliphaunt-node-direct/release-assets/*.sha256
 
+      - name: Reserve WASIX Node-API attestation content write
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-wasix-napi') }}
+        run: |
+          tools/dev/bun.sh tools/release/github-content-write-pacer.mjs reserve --label "WASIX Node-API attestation"
+          tools/dev/bun.sh tools/release/github-core-request-journal.mjs reserve --label "WASIX Node-API attestation API attempt"
+
+      - name: Attest WASIX Node-API release assets
+        id: attest_wasix_napi
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-wasix-napi') }}
+        timeout-minutes: 5
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        with:
+          subject-path: |
+            target/oliphaunt-wasix-napi/release-assets/*.tar.gz
+            target/oliphaunt-wasix-napi/release-assets/*.zip
+            target/oliphaunt-wasix-napi/release-assets/*.sha256
+
       - name: Reserve WASIX attestation content write
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix') }}
         run: |
@@ -1273,6 +1320,7 @@ jobs:
           LIBOLIPHAUNT_NATIVE_ATTESTATION_BUNDLE: ${{ steps.attest_liboliphaunt_native.outputs.bundle-path }}
           BROKER_ATTESTATION_BUNDLE: ${{ steps.attest_broker.outputs.bundle-path }}
           NODE_DIRECT_ATTESTATION_BUNDLE: ${{ steps.attest_node_direct.outputs.bundle-path }}
+          WASIX_NAPI_ATTESTATION_BUNDLE: ${{ steps.attest_wasix_napi.outputs.bundle-path }}
           WASIX_ATTESTATION_BUNDLE: ${{ steps.attest_wasix.outputs.bundle-path }}
           WASIX_POSTMASTER_ATTESTATION_BUNDLE: ${{ steps.attest_wasix_postmaster.outputs.bundle-path }}
         run: |
@@ -1283,6 +1331,7 @@ jobs:
             "$LIBOLIPHAUNT_NATIVE_ATTESTATION_BUNDLE" \
             "$BROKER_ATTESTATION_BUNDLE" \
             "$NODE_DIRECT_ATTESTATION_BUNDLE" \
+            "$WASIX_NAPI_ATTESTATION_BUNDLE" \
             "$WASIX_ATTESTATION_BUNDLE" \
             "$WASIX_POSTMASTER_ATTESTATION_BUNDLE"
           do

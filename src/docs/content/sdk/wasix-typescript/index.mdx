@@ -1,6 +1,6 @@
 ---
 title: WASIX TypeScript SDK
-description: Run portable PostgreSQL in browsers, Node.js, Bun, and Deno with one small asynchronous API.
+description: Run portable PostgreSQL in browsers, Node.js, Bun, Deno, and Electron with one small asynchronous API.
 ---
 
 # WASIX TypeScript SDK
@@ -8,7 +8,7 @@ description: Run portable PostgreSQL in browsers, Node.js, Bun, and Deno with on
 <SdkLanding id="wasix-typescript" />
 
 `@oliphaunt/wasix-ts` hosts the portable `liboliphaunt-wasix` runtime in a
-browser, Node.js, Bun, or Deno. It is a separate product from native
+browser, Node.js, Bun, Deno, or Electron. It is a separate product from native
 `@oliphaunt/ts`: neither package selects or falls back to the other.
 
 ## Install
@@ -34,20 +34,21 @@ cross-origin isolated with COOP `same-origin` and COEP `require-corp`.
 
 ## Runtime Shape
 
-The root entry point runs the database in the importing JavaScript realm. It
-retains promises for asset loading and persistent publication, but synchronous
-PostgreSQL guest work can block that realm. The
-`@oliphaunt/wasix-ts/worker` entry point uses a package-owned Web Worker or
-Node-compatible worker thread and keeps the caller's event loop responsive. There is no
-`execution` option or silent placement fallback.
+In browsers the root runs the database in the importing JavaScript realm. On
+Node-compatible hosts the root uses a dedicated Rust owner and keeps the event
+loop responsive. `@oliphaunt/wasix-ts/direct` opts into the lowest-overhead
+blocking native placement, while `@oliphaunt/wasix-ts/worker` uses a
+package-owned JavaScript Worker on every runtime. There is no `execution`
+option or silent placement fallback.
 
 The core package provides queries, commands, callback transactions, buffered
 and callback-streamed raw PostgreSQL protocol bytes, one physical backup,
 restore into persistent storage, and close. Optional
-`@oliphaunt/wasix-tools` adds `pgDump` for direct or Worker handles and
-non-interactive `psql` for Worker handles on every host. Explicit server
-subpaths add a local endpoint on Node, Bun, and Deno. Cancellation and a
-dedicated typed COPY API remain absent.
+`@oliphaunt/wasix-tools` adds `pgDump` for root, direct, or Worker handles.
+Non-interactive `psql` works with all three placements on Node, Bun, Deno, and Electron; browsers
+require a Worker handle. The host-only `/server` subpath adds a local endpoint
+on Node, Bun, Deno, and Electron. Cancellation and a dedicated typed COPY API remain
+absent.
 
 ## App Responsibilities
 
@@ -58,8 +59,8 @@ dedicated typed COPY API remain absent.
   requires PostgreSQL `CHECKPOINT`, issue it through `execute('CHECKPOINT')`.
 - Treat physical archives as same-format recovery artifacts. Use logical SQL
   dumps for version upgrades or transfers outside the WASIX physical format.
-- Use either direct or Worker handles for `pgDump`; use a Worker handle for
-  `psql`.
+- Use root, direct, or Worker handles for `pgDump`. On Node, Bun, Deno, and Electron,
+  all three placements also support `psql`; browsers require a Worker handle.
   Use the lightweight local endpoint for one compatibility client, or the
   separate postmaster product for concurrency.
 

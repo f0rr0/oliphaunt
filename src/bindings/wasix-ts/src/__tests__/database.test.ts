@@ -13,15 +13,20 @@ import type { OliphauntTransaction } from '../types.js';
 
 // liboliphaunt-doc-example:wasix-typescript-transaction
 describe('WASIX database recovery state', () => {
-  it('normalizes an empty database name like PostgreSQL startup', () => {
-    expect(normalizeWasixDatabaseIdentity('application', '')).toEqual({
-      username: 'application',
-      database: 'application',
-    });
+  it('validates explicit startup identities like Rust WASIX', () => {
     expect(normalizeWasixDatabaseIdentity('application', 'products')).toEqual({
       username: 'application',
       database: 'products',
     });
+    expect(() => normalizeWasixDatabaseIdentity('application', '')).toThrow(
+      'database must not be empty',
+    );
+    expect(() => normalizeWasixDatabaseIdentity(' ', 'products')).toThrow(
+      'username must not be empty',
+    );
+    expect(() => normalizeWasixDatabaseIdentity('application', 'bad\0name')).toThrow(
+      'database must not contain NUL bytes',
+    );
   });
 
   it('identifies protocol-capable targets without exposing a public capability flag', () => {

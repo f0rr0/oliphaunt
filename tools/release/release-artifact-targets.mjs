@@ -32,6 +32,7 @@ export const DESKTOP_TARGETS = {
     liboliphauntToolsNpmPackage: "@oliphaunt/tools-linux-arm64-gnu",
     brokerNpmPackage: "@oliphaunt/broker-linux-arm64-gnu",
     nodePackage: "@oliphaunt/node-direct-linux-arm64-gnu",
+    wasixNapiPackage: "@oliphaunt/wasix-napi-linux-arm64-gnu",
     wasixLlvmUrl: "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-linux-aarch64.tar.xz",
     wasixLlvmSha256: "1fddcf5b30f9d3e073eb161509220b4136ea8e2f114f23084bdec33e40fa87c1",
     wasixLlvmBytes: 668873496,
@@ -47,6 +48,7 @@ export const DESKTOP_TARGETS = {
     liboliphauntToolsNpmPackage: "@oliphaunt/tools-linux-x64-gnu",
     brokerNpmPackage: "@oliphaunt/broker-linux-x64-gnu",
     nodePackage: "@oliphaunt/node-direct-linux-x64-gnu",
+    wasixNapiPackage: "@oliphaunt/wasix-napi-linux-x64-gnu",
     wasixLlvmUrl: "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-linux-amd64.tar.xz",
     wasixLlvmSha256: "5fb1c687c5e895d517a23e7aabea9ec3557e3a3e33f8a8d3a8d21395157b3906",
     wasixLlvmBytes: 741670068,
@@ -61,6 +63,7 @@ export const DESKTOP_TARGETS = {
     liboliphauntToolsNpmPackage: "@oliphaunt/tools-darwin-arm64",
     brokerNpmPackage: "@oliphaunt/broker-darwin-arm64",
     nodePackage: "@oliphaunt/node-direct-darwin-arm64",
+    wasixNapiPackage: "@oliphaunt/wasix-napi-darwin-arm64",
     wasixLlvmUrl: "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-darwin-aarch64.tar.xz",
     wasixLlvmSha256: "f64460f6c8a28876737402542fc5b28bb1f4262cef85f799b65ce2a7ee6f8847",
     wasixLlvmBytes: 479103872,
@@ -80,6 +83,7 @@ export const DESKTOP_TARGETS = {
     liboliphauntToolsNpmPackage: "@oliphaunt/tools-win32-x64-msvc",
     brokerNpmPackage: "@oliphaunt/broker-win32-x64-msvc",
     nodePackage: "@oliphaunt/node-direct-win32-x64-msvc",
+    wasixNapiPackage: "@oliphaunt/wasix-napi-win32-x64-msvc",
     wasixLlvmUrl: "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-windows-amd64.tar.xz",
     wasixLlvmSha256: "19ff22b0cf74b53dad2fc717db2209f8162b768fc6dede9e2caa6a83c724496e",
     wasixLlvmBytes: 757929860,
@@ -114,12 +118,14 @@ const WASIX_TARGETS = new Set(["portable", ...RELEASE_HOST_TARGETS]);
 const WASIX_POSTMASTER_TARGETS = new Set(RELEASE_HOST_TARGETS);
 const BROKER_TARGETS = new Set(RELEASE_HOST_TARGETS);
 const NODE_DIRECT_TARGETS = BROKER_TARGETS;
+const WASIX_NAPI_TARGETS = BROKER_TARGETS;
 const PRODUCT_PRESETS = {
   "liboliphaunt-native": "liboliphaunt-native",
   "liboliphaunt-wasix": "liboliphaunt-wasix",
   "liboliphaunt-wasix-postmaster": "liboliphaunt-wasix-postmaster",
   "oliphaunt-broker": "broker-helper",
   "oliphaunt-node-direct": "node-direct-addon",
+  "oliphaunt-wasix-napi": "wasix-napi-addon",
 };
 const EXTENSION_FAMILIES = new Set(["native", "wasix"]);
 const EXTENSION_KINDS = new Set(["native-dynamic", "native-static-registry", "wasix-runtime"]);
@@ -613,6 +619,43 @@ function nodeDirectRows(prefix) {
   return rows;
 }
 
+function wasixNapiRows(prefix) {
+  const product = "oliphaunt-wasix-napi";
+  const rows = [];
+  for (const target of productTargets(product, PRODUCT_PRESETS[product], WASIX_NAPI_TARGETS, prefix).sort(compareText)) {
+    const platform = DESKTOP_TARGETS[target];
+    rows.push({
+      id: `${product}.${target}`,
+      product,
+      kind: "wasix-napi-addon",
+      target,
+      triple: platform.triple,
+      runner: platform.runner,
+      asset: archiveAsset(product, target, platform.archive),
+      library_relative_path: "oliphaunt_wasix_napi.node",
+      npm_package: platform.wasixNapiPackage,
+      npm_os: platform.npmOs,
+      npm_cpu: platform.npmCpu,
+      npm_libc: platform.npmLibc,
+      surfaces: ["github-release", "npm-optional"],
+      binary_compatibility: requiredBinaryCompatibility(target, `${product} Node-API addon`, prefix),
+      extension_artifacts: false,
+      _source_file: "Moon release metadata",
+    });
+  }
+  rows.push({
+    id: `${product}.checksums`,
+    product,
+    kind: "checksums",
+    target: "portable",
+    asset: "oliphaunt-wasix-napi-{version}-release-assets.sha256",
+    surfaces: ["github-release"],
+    extension_artifacts: false,
+    _source_file: "Moon release metadata",
+  });
+  return rows;
+}
+
 export function rawArtifactTargetRows(prefix = "release-artifact-targets.mjs") {
   return [
     ...liboliphauntNativeRows(prefix),
@@ -620,6 +663,7 @@ export function rawArtifactTargetRows(prefix = "release-artifact-targets.mjs") {
     ...liboliphauntWasixPostmasterRows(prefix),
     ...brokerRows(prefix),
     ...nodeDirectRows(prefix),
+    ...wasixNapiRows(prefix),
   ];
 }
 

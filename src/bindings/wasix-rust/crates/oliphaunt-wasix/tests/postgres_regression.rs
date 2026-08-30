@@ -1,7 +1,14 @@
 use anyhow::{Context, Result, ensure};
 use oliphaunt_wasix::{DatabaseStorage, Oliphaunt};
 use serde::Deserialize;
+use std::fs::File;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
+
+const DURABILITY_CHILD_ROOT: &str = "OLIPHAUNT_WASIX_DURABILITY_CHILD_ROOT";
+const DURABILITY_CHILD_READY: &str = "OLIPHAUNT_WASIX_DURABILITY_CHILD_READY";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -247,4 +254,102 @@ fn persistent_clean_close_reopens_with_committed_data() -> Result<()> {
     );
     reopened.close()?;
     Ok(())
+}
+
+#[test]
+fn persistent_commit_survives_abrupt_process_exit() -> Result<()> {
+    let workspace = tempfile::tempdir()?;
+    let root = workspace.path().join("database");
+    let ready = workspace.path().join("committed");
+    let stderr = workspace.path().join("child.stderr");
+    let mut child = Command::new(std::env::current_exe()?)
+        .arg("--exact")
+        .arg("abrupt_process_child_commits_then_waits")
+        .arg("--nocapture")
+        .env(DURABILITY_CHILD_ROOT, &root)
+        .env(DURABILITY_CHILD_READY, &ready)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(File::create(&stderr)?))
+        .spawn()
+        .context("spawn abrupt durability child")?;
+
+    let deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        if ready.exists() {
+            break;
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let diagnostics = std::fs::read_to_string(&stderr).unwrap_or_default();
+                anyhow::bail!(
+                    "abrupt durability child exited before committing ({status}): {diagnostics}"
+                );
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error).context("poll abrupt durability child");
+            }
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            let diagnostics = std::fs::read_to_string(&stderr).unwrap_or_default();
+            anyhow::bail!("abrupt durability child did not commit in time: {diagnostics}");
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+
+    child.kill().context("kill abrupt durability child")?;
+    child.wait().context("reap abrupt durability child")?;
+
+    let mut reopened = Oliphaunt::builder()
+        .storage(DatabaseStorage::Directory(root))
+        .open()
+        .context("recover database after abrupt process exit")?;
+    let recovered_wal_sync_method = reopened
+        .query("SHOW wal_sync_method")?
+        .get_text(0, "wal_sync_method")?
+        .map(str::to_owned);
+    ensure!(
+        recovered_wal_sync_method.as_deref() == Some("fdatasync"),
+        "recovered WASIX database did not use fdatasync WAL durability: {recovered_wal_sync_method:?}"
+    );
+    ensure!(
+        reopened
+            .query("SELECT value::text AS value FROM durable")?
+            .get_text(0, "value")?
+            == Some("42"),
+        "abrupt process exit lost an acknowledged commit"
+    );
+    reopened.close()?;
+    Ok(())
+}
+
+#[test]
+fn abrupt_process_child_commits_then_waits() -> Result<()> {
+    let Some(root) = std::env::var_os(DURABILITY_CHILD_ROOT) else {
+        return Ok(());
+    };
+    let ready = std::env::var_os(DURABILITY_CHILD_READY)
+        .context("abrupt durability child has no readiness path")?;
+    let mut database = Oliphaunt::builder()
+        .storage(DatabaseStorage::Directory(root.into()))
+        .open()?;
+    let wal_sync_method = database
+        .query("SHOW wal_sync_method")?
+        .get_text(0, "wal_sync_method")?
+        .map(str::to_owned);
+    ensure!(
+        wal_sync_method.as_deref() == Some("fdatasync"),
+        "WASIX directory database did not use fdatasync WAL durability: {wal_sync_method:?}"
+    );
+    database.execute("CREATE TABLE durable(value integer NOT NULL)")?;
+    database.execute("INSERT INTO durable VALUES (42)")?;
+    std::fs::write(ready, b"committed")?;
+    loop {
+        thread::park();
+    }
 }

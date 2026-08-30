@@ -135,9 +135,11 @@ the connection string alone is not a compatibility claim.
 | Native broker | PostgreSQL runs in one SDK-owned helper per broker handle | One serialized session per helper | Same database API; helper loss permanently fails that handle, and recovery requires an explicit close plus a new open |
 | WASIX Rust `Oliphaunt` | The direct guest runs on the caller thread and is owned by an exclusive `&mut` handle | One synchronous session | No scheduling hop; `!Send + !Sync`; no public cancellation |
 | WASIX Rust `AsyncOliphaunt` | PostgreSQL runs in the WASIX guest retained on an SDK owner thread | One serialized session | Cloneable `Send + Sync` async handle; bounded ordered admission; no public cancellation |
-| WASIX TypeScript root | PostgreSQL guest work runs in the importing JavaScript realm | One serialized session | Promise-shaped loading/publication does not move synchronous guest CPU work off the caller realm |
-| WASIX TypeScript `/worker` | PostgreSQL runs in a package-owned module Worker/worker thread | One serialized session | Main-safe entry point; query bytes cross RPC; ORM logic remains in the caller realm |
-| WASIX Rust/TypeScript server | A dedicated server owner exposes one embedded backend locally | One connected client at a time | Standard clients on Rust, Node, Bun, and Deno; lifecycle/URI-only handle; no browser endpoint |
+| WASIX TypeScript browser root | PostgreSQL guest work runs in the importing JavaScript realm | One serialized session | Promise-shaped loading/publication does not move synchronous guest CPU work off the caller realm |
+| WASIX TypeScript root | PostgreSQL runs in a Rust owner actor on Node-compatible runtimes | One serialized session | Main-safe native default; ORM logic remains in the caller realm |
+| WASIX TypeScript `/direct` | PostgreSQL runs synchronously in the importing Node-compatible realm | One serialized session | Lowest dispatch overhead; guest work blocks that realm |
+| WASIX TypeScript `/worker` | PostgreSQL runs in a package-owned module Worker on every runtime | One serialized session | Main-safe realm isolation; query bytes cross RPC; ORM logic remains in the caller realm |
+| WASIX Rust/TypeScript server | A dedicated server owner exposes one embedded backend locally | One connected client at a time | Standard clients on Rust, Node, Bun, Deno, and Electron; lifecycle/URI-only handle; no browser endpoint |
 | Native Rust/TypeScript server | A dedicated packaged PostgreSQL process | Independent sessions | Standard ORM path; lifecycle/URI-only handle; not the focus here |
 | WASIX postmaster | Normal postmaster product | Independent sessions | Concurrent server baseline, distinct from the embedded server facade |
 
@@ -486,12 +488,14 @@ savepoint nesting can fit one physical session.
 
 ### Choose execution placement explicitly
 
-The root `@oliphaunt/wasix-ts` entry point runs PostgreSQL in its importing
-JavaScript realm. This is the lowest-overhead path for Node scripts, tests, and
-applications that already place their ORM in an application-owned Worker. In a
-browser UI realm, prefer `@oliphaunt/wasix-ts/worker`; it owns a package Worker
-and keeps synchronous guest execution off the main JavaScript agent. Execution
-placement is selected by the entry point rather than database configuration.
+The browser root `@oliphaunt/wasix-ts` entry point runs PostgreSQL in its
+importing JavaScript realm. On Node.js, Bun, Deno, and Electron the root instead
+uses a responsive Rust owner actor; `/direct` is the lowest-hop native path for
+scripts, tests, or applications that already place their ORM in an
+application-owned Worker. In a browser UI realm, prefer
+`@oliphaunt/wasix-ts/worker`; it owns a package Worker and keeps synchronous
+guest execution off the main JavaScript agent. Execution placement is selected
+by the entry point rather than database configuration.
 
 With the package Worker, ORM code and type parsing remain in the caller realm;
 only requests and raw results cross RPC. Transfer owned `ArrayBuffer` values
@@ -748,12 +752,12 @@ The broker cannot implement interactive COPY with another synchronous request
 kind. Its loop is blocked while PostgreSQL waits for input. Exchange
 start/write/read/end frames need operation IDs and a concurrent input channel.
 
-WASIX Rust already has an internal duplex pump. WASIX TypeScript Worker has a
-full-duplex shared-memory byte channel behind its internal `serve` path. Expose
-or adapt these rather than rebuilding guest protocol machinery. The root direct
-entrypoint still cannot asynchronously refill a synchronous Wasm callback, even
-when imported in an application Worker, so asynchronous COPY IN should require
-the explicit `/worker` contract.
+WASIX Rust already has an internal duplex pump. The browser WASIX TypeScript
+Worker has a full-duplex shared-memory byte channel behind its internal `serve`
+path. Expose or adapt these rather than rebuilding guest protocol machinery.
+The browser root and native `/direct` cannot asynchronously refill a synchronous
+guest callback from the same realm, so any future asynchronous COPY IN design
+must state which placements can service its input channel.
 
 WASIX cancellation needs a real guest/host interrupt path. Worker cancellation
 likely needs an out-of-band shared signal because normal RPC cannot run while
@@ -792,7 +796,7 @@ Run the same JavaScript adapter contract against:
 - native TypeScript direct;
 - native TypeScript broker;
 - every desktop JavaScript host that is claimed;
-- WASIX TypeScript root direct in Node;
+- WASIX TypeScript actor root and `/direct` in Node;
 - WASIX TypeScript `/worker` in Node;
 - Chromium, Firefox, and WebKit with Worker plus memory storage;
 - browser Worker plus IndexedDB;
@@ -1060,8 +1064,8 @@ let orm = Database::connect(options).await?;
 Users should need to learn only three Oliphaunt-specific facts:
 
 1. choose the native direct/broker/server or WASIX product; WASIX TypeScript's
-   root runs in the caller realm, with package-owned isolation available from
-   its explicit `/worker` import;
+   browser root is caller-owned, the native-host root uses a Rust actor, and explicit
+   `/direct` or `/worker` imports select alternate placement;
 2. select storage and extension artifacts before open, then let migrations run
    database-local extension SQL;
 3. direct and broker topology provide one physical session, so their

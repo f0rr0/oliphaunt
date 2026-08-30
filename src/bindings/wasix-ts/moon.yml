@@ -7,11 +7,12 @@ stack: "frontend"
 tags: ["binding", "wasix", "wasm", "typescript", "browser", "node", "bun", "deno", "sdk", "release-product"]
 dependsOn:
   - "liboliphaunt-wasix"
+  - "oliphaunt-wasix-napi"
   - "shared-js-core"
 
 project:
   title: "Oliphaunt WASIX TypeScript binding"
-  description: "Portable WASIX TypeScript binding with direct caller-realm and explicit Worker entrypoints for browsers, Node, Bun, and Deno."
+  description: "Universal WASIX TypeScript binding with Rust actor, direct, Worker, and listener placements on hosts and Wasmer-JS in browsers."
   owner: "oliphaunt"
   release:
     component: "oliphaunt-wasix-ts"

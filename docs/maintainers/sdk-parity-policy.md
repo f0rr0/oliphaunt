@@ -46,13 +46,13 @@ The runtime/product capabilities around that common database API are:
 | Concept | Native SDK family | Rust WASIX | WASIX TypeScript |
 | --- | --- | --- | --- |
 | Default storage | SDK-owned temporary directory | true WASIX memory filesystem | true WASIX memory filesystem |
-| Persistent storage | managed filesystem root | managed filesystem root | IndexedDB or OPFS in browsers; managed filesystem root on Node, Bun, and Deno |
+| Persistent storage | managed filesystem root | managed filesystem root | IndexedDB or OPFS in browsers; managed filesystem root on Node, Bun, Deno, and Electron |
 | Raw PostgreSQL protocol on database/root handles | yes | yes | yes, owned byte response |
 | Exact extension artifact selection | yes | yes | yes |
 | Physical backup | direct and broker; mobile direct | yes | yes |
 | Physical restore | new or empty destination | static restore into a new or empty directory | static restore into new or empty persistent storage |
-| Listening server | Rust and desktop TypeScript | yes | Node, Bun, and Deno through explicit server subpaths; no browser socket API |
-| PostgreSQL tools | optional endpoint-oriented Rust and desktop TypeScript products; no core SDK dependency | `tools` feature: fluent open-database `pg_dump` and non-interactive `psql` methods on sync or async handles | optional `@oliphaunt/wasix-tools`: `pgDump` with direct or Worker handles; non-interactive `psql` with a Worker handle |
+| Listening server | Rust and desktop TypeScript | yes | Node, Bun, Deno, and Electron through the host-only `/server` subpath; no browser socket API |
+| PostgreSQL tools | optional endpoint-oriented Rust and desktop TypeScript products; no core SDK dependency | `tools` feature: fluent open-database `pg_dump` and non-interactive `psql` methods on sync or async handles | optional `@oliphaunt/wasix-tools`: `pgDump` with root, direct, or Worker handles; `psql` with all three native placements or a browser Worker handle |
 | Cancellation | native C and language SDKs | no public direct cancellation contract | no |
 | Protocol/COPY response streaming | canonical `execProtocolRawStream`/`exec_protocol_raw_stream`, backed by `oliphaunt_exec_protocol_raw_stream` | `exec_protocol_raw_stream`; COPY uses the guest stream pump | `execProtocolRawStream` with bounded backpressure |
 
@@ -83,11 +83,12 @@ These are language-native deltas, not parity failures:
   `OliphauntBuilder` / `AsyncOliphauntBuilder` end in `open`, while dedicated
   `OliphauntServerBuilder` / `AsyncOliphauntServerBuilder` end in `start`.
 - Both Rust products root-export an opaque, cloneable `Error` and a
-  `#[non_exhaustive] ErrorKind` with `InvalidConfiguration`, `Lifecycle`,
-  `TransactionActive`, `Postgres`, and `Other`; `Error::kind()` is the stable
-  category boundary. PostgreSQL and composite transaction detail remains
-  available through dedicated accessors without exposing runtime-specific
-  causes as public enum variants.
+  `#[non_exhaustive] ErrorKind` with the shared `InvalidConfiguration`,
+  `Lifecycle`, `TransactionActive`, `Postgres`, and `Other` categories;
+  WASIX Rust additionally exposes `Storage` for its structured managed-storage
+  failures. `Error::kind()` is the stable category boundary. PostgreSQL,
+  structured WASIX storage, and composite transaction detail remains available
+  through dedicated accessors without exposing runtime-specific causes.
 - Both Rust products use an opaque root `Extension` with uppercase associated
   constants, `Extension::ALL`, `Extension::by_sql_name`, and `sql_name`.
   Native `ALL` is the packaged PostgreSQL 18 catalog; WASIX exposes only
@@ -105,12 +106,13 @@ These are language-native deltas, not parity failures:
   selective package subpaths, and `Symbol.asyncDispose` where appropriate.
 - Rust WASIX and WASIX TypeScript expose the same lightweight single-backend
   endpoint where the host has local sockets. TypeScript keeps the server absent
-  in browsers and exports it only from the Node, Bun, and Deno server subpaths.
+  in browsers and exports it through one host-only `/server` subpath on Node,
+  Bun, Deno, and Electron.
 - WASIX tools run against an open embedded database in both bindings. Their
   optional carriers stay outside the core SDK packages. TypeScript `pgDump`
-  supports root-direct and explicit Worker database handles; TypeScript `psql`
-  requires a Worker handle and uses a bounded internal pgwire bridge between
-  workers.
+  supports root, direct, and Worker database handles. TypeScript `psql` supports
+  all three native placements; in browsers it requires `/worker` and uses a
+  bounded internal pgwire bridge.
   Neither needs a browser socket.
 - `@oliphaunt/wasix-ts/internal/tools` is a version-locked cross-package bridge
   owned solely by `@oliphaunt/wasix-tools`. Its export-map visibility does not
@@ -132,8 +134,10 @@ These are language-native deltas, not parity failures:
   dependencies or methods of the embedded database SDKs.
 - Server handles in native/WASIX Rust, desktop TypeScript, and WASIX TypeScript
   own only the process/listener, connection string, and lifecycle. Applications
-  use an ordinary PostgreSQL ORM, driver, or tool for SQL and cancellation; a
-  server handle never controls independent client connections.
+  use an ordinary PostgreSQL ORM, driver, or tool for SQL, transactions, and
+  connection lifecycle; a server handle never controls independent client
+  connections. Native server clients own normal PostgreSQL cancellation;
+  lightweight WASIX server wire `CancelRequest` support is deferred.
 - Native cancellation targets the runtime's active operation and recovers it
   through PostgreSQL readiness. It is not query-scoped cancellation, and WASIX
   exposes no cancellation method until it has a guest interrupt contract.
@@ -214,7 +218,8 @@ Provider ownership remains binding-specific implementation:
   hands ownership into C explicitly; its broker child follows that direct path,
   while native server mode retains the lease around the PostgreSQL process;
 - Rust WASIX uses its host-directory owner;
-- TypeScript uses Web Locks or a Node/Bun/Deno sibling owner as appropriate.
+- WASIX TypeScript uses Web Locks in browsers and a Rust OS advisory owner for
+  managed directories on Node, Bun, Deno, and Electron.
 
 The C and Rust native sibling leases use the same lock identity, so native
 direct, broker, server, and C-backed SDK owners reject overlapping use of one

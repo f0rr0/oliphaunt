@@ -1,5 +1,6 @@
 use anyhow::Result;
 
+use crate::oliphaunt::assets::{CatalogProfile, default_catalog_profile};
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::base::install_missing_extension_archives;
 use crate::oliphaunt::base::{DatabasePlan, PreparedDatabase, prepare_database};
@@ -15,6 +16,7 @@ use crate::oliphaunt::storage::DatabaseStorage;
 #[derive(Debug, Clone)]
 pub struct OliphauntBuilder {
     storage: DatabaseStorage,
+    catalog_profile: CatalogProfile,
     postgres_config: PostgresConfig,
     startup_config: StartupConfig,
     #[cfg(feature = "extensions")]
@@ -25,6 +27,7 @@ impl Default for OliphauntBuilder {
     fn default() -> Self {
         Self {
             storage: DatabaseStorage::Memory,
+            catalog_profile: default_catalog_profile(),
             postgres_config: PostgresConfig::default(),
             startup_config: StartupConfig::default(),
             #[cfg(feature = "extensions")]
@@ -43,6 +46,14 @@ impl OliphauntBuilder {
     /// Select where PostgreSQL stores its mutable database files.
     pub fn storage(mut self, storage: DatabaseStorage) -> Self {
         self.storage = storage;
+        self
+    }
+
+    /// Select the packaged standard or ICU catalog and matching runtime data.
+    #[cfg(any(feature = "__internal-napi", test))]
+    #[doc(hidden)]
+    pub fn catalog_profile(mut self, profile: CatalogProfile) -> Self {
+        self.catalog_profile = profile;
         self
     }
 
@@ -107,7 +118,7 @@ impl OliphauntBuilder {
         postgres_config.validate()?;
         self.storage.validate()?;
         self.startup_config.validate()?;
-        let plan = DatabasePlan::new(self.storage.clone());
+        let plan = DatabasePlan::new(self.storage.clone(), self.catalog_profile);
         let prepared = prepare_database(plan, &self.startup_config.username)?;
         #[cfg(feature = "extensions")]
         {
@@ -168,6 +179,33 @@ mod storage_tests {
     fn default_builder_selects_memory() {
         let builder = OliphauntBuilder::default();
         assert_eq!(builder.storage, DatabaseStorage::Memory);
+        assert_eq!(builder.catalog_profile, CatalogProfile::default());
+    }
+
+    #[test]
+    fn catalog_profile_is_an_immutable_builder_value() {
+        let standard = OliphauntBuilder::new().catalog_profile(CatalogProfile::Standard);
+        let icu = standard.clone().catalog_profile(CatalogProfile::Icu);
+
+        assert_eq!(standard.catalog_profile, CatalogProfile::Standard);
+        assert_eq!(icu.catalog_profile, CatalogProfile::Icu);
+    }
+
+    #[cfg(not(feature = "icu"))]
+    #[test]
+    fn unavailable_icu_profile_is_rejected_before_storage_mutation() {
+        let parent = tempfile::tempdir().expect("temporary parent");
+        let root = parent.path().join("database");
+        let error = OliphauntBuilder::new()
+            .storage(DatabaseStorage::Directory(root.clone()))
+            .catalog_profile(CatalogProfile::Icu)
+            .open()
+            .err()
+            .expect("ICU profile requires its packaging feature");
+
+        assert_eq!(error.kind(), crate::ErrorKind::InvalidConfiguration);
+        assert!(error.to_string().contains("requires"));
+        assert!(!root.exists());
     }
 
     #[test]

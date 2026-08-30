@@ -7,13 +7,14 @@ description: Select exact PostgreSQL extensions through each SDK's native API an
 
 Oliphaunt uses exact, opt-in PostgreSQL extension selection. Native SDKs accept
 exact SQL names, Rust WASIX exposes exact Cargo features and typed values, and
-WASIX TypeScript accepts selectively imported portable descriptors. Release
+WASIX TypeScript accepts selectively imported portable descriptors. Browser
 artifacts contain only the selected extensions plus mandatory dependencies
-declared by extension metadata.
+declared by extension metadata. The Node/Bun/Deno/Electron Node-API carrier embeds the
+qualified catalog once and validates each selected descriptor against those
+exact bytes.
 
-There are no extension packs, aliases, grouped selectors, or broad runtime
-bundles. Selecting one extension includes that extension and only its declared
-dependency closure.
+There are no extension packs, aliases, or grouped selectors. Selection remains
+exact even when a native carrier physically contains the full catalog.
 
 <ExactExtensionRule />
 
@@ -59,9 +60,9 @@ let mut database = Oliphaunt::builder().extension(Extension::PGTAP).open()?;
 database.execute("CREATE EXTENSION pgtap")?;
 ```
 
-## Browser WASIX selection
+## WASIX TypeScript selection
 
-Import only the portable carrier descriptors the browser, Node, Bun, or Deno application uses:
+Import only the portable descriptors the browser, Node, Bun, Deno, or Electron application uses:
 
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
@@ -84,7 +85,7 @@ by this API. Use only extensions published for the selected WASIX host.
 | React Native | Config plugin delegates selection to Swift/Kotlin packaging |
 | TypeScript | SDK resolves selected native artifacts or helper-process resources |
 | Rust WASIX | Exact Cargo features carry selected portable artifacts; typed values select them at open |
-| WASIX TypeScript | Selective `-wasix` imports carry exact descriptors and portable bytes on browser, Node, Bun, and Deno hosts |
+| WASIX TypeScript | Selective `-wasix` imports carry exact descriptors and browser bytes; Node, Bun, Deno, and Electron validate those descriptors against extensions embedded in the matching Node-API carrier |
 
 ## Dependencies
 

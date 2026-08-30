@@ -15,6 +15,14 @@ import { prepareTransferableBytes } from './worker-transfer.js';
 export type WorkerResponder = (response: WorkerResponse, transfer?: readonly ArrayBuffer[]) => void;
 
 export type WorkerSessionOpener = (options: SerializedOpenOptions) => Promise<WasixDatabaseSession>;
+export type WorkerStorageRestorer = (
+  storage: SerializedOpenOptions['storage'],
+  bytes: Uint8Array,
+) => Promise<void>;
+export type WorkerDispatcherLifecycle = Readonly<{
+  /** Called only after close has settled and its response has been posted. */
+  onQuiescentClose?(): void;
+}>;
 
 class WorkerStreamCallbackAborted extends Error {}
 
@@ -22,11 +30,14 @@ class WorkerStreamCallbackAborted extends Error {}
 export function createWorkerSessionDispatcher(
   openSession: WorkerSessionOpener,
   respond: WorkerResponder,
+  restore: WorkerStorageRestorer = restoreWasixSerialized,
+  lifecycle: WorkerDispatcherLifecycle = {},
 ) {
   let process: WasixDatabaseSession | undefined;
   let terminal = false;
 
   return async (request: WorkerRequest): Promise<void> => {
+    let quiescentClose = false;
     try {
       if (terminal) {
         throw new Error('Oliphaunt WASIX worker session is closed');
@@ -43,7 +54,7 @@ export function createWorkerSessionDispatcher(
           if (process !== undefined) {
             throw new Error('this worker already owns an Oliphaunt WASIX process');
           }
-          await restoreWasixSerialized(request.storage, request.bytes);
+          await restore(request.storage, request.bytes);
           respond({ id: request.id, ok: true });
           return;
         case 'exec': {
@@ -137,6 +148,28 @@ export function createWorkerSessionDispatcher(
           );
           return;
         }
+        case 'runTool': {
+          const session = requireProcess(process);
+          if (session.runTool === undefined) {
+            throw new Error('this WASIX worker session does not support native tools');
+          }
+          const result = await session.runTool(request.options);
+          const stdout = prepareTransferableBytes(result.stdout);
+          const stderr = prepareTransferableBytes(result.stderr);
+          respond(
+            {
+              id: request.id,
+              ok: true,
+              value: {
+                exitCode: result.exitCode,
+                stdout: stdout.value,
+                stderr: stderr.value,
+              },
+            },
+            [...new Set([...stdout.transfer, ...stderr.transfer])],
+          );
+          return;
+        }
         case 'serve': {
           const session = requireProcess(process);
           if (session.serve === undefined) {
@@ -153,6 +186,7 @@ export function createWorkerSessionDispatcher(
           // destroyed by its owner safe to reopen or use again.
           process = undefined;
           terminal = true;
+          quiescentClose = true;
           await closing.close();
           respond({ id: request.id, ok: true });
           return;
@@ -164,6 +198,8 @@ export function createWorkerSessionDispatcher(
         ok: false,
         error: serializeWorkerError(error),
       });
+    } finally {
+      if (quiescentClose) lifecycle.onQuiescentClose?.();
     }
   };
 }

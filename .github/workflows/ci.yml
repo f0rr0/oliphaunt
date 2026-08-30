@@ -123,6 +123,7 @@ jobs:
       mobile_extension_package_native_targets_csv: ${{ steps.plan.outputs.mobile_extension_package_native_targets_csv }}
       react_native_android_mobile_app_matrix: ${{ steps.plan.outputs.react_native_android_mobile_app_matrix }}
       node_direct_runtime_matrix: ${{ steps.plan.outputs.node_direct_runtime_matrix }}
+      wasix_napi_runtime_matrix: ${{ steps.plan.outputs.wasix_napi_runtime_matrix }}
       projects: ${{ steps.plan.outputs.projects }}
       tasks: ${{ steps.plan.outputs.tasks }}
       test_count: ${{ steps.target-matrices.outputs.test_count }}
@@ -1389,6 +1390,149 @@ jobs:
         id: verify_aggregate_node_direct_release_assets
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh node-direct-release-assets
 
+  wasix-napi:
+    name: Builds / wasix-napi (${{ matrix.target }})
+    needs:
+      - affected
+      - extension-artifacts-wasix
+      - liboliphaunt-wasix-aot
+      - liboliphaunt-wasix-runtime
+    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.extension-artifacts-wasix.result == 'success' && needs.liboliphaunt-wasix-aot.result == 'success' && needs.liboliphaunt-wasix-runtime.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-napi') }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.affected.outputs.wasix_napi_runtime_matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Set up MSVC
+        if: ${{ runner.os == 'Windows' }}
+        uses: ./.github/actions/setup-msvc
+
+      - name: Download same-run portable WASIX outputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-wasix-runtime-portable
+          path: .
+
+      - name: Download same-run WASIX exact-extension outputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: liboliphaunt-wasix-extension-artifacts-*
+          path: target/extensions/wasix/release-assets
+          merge-multiple: true
+
+      - name: Download same-run target extension AOT outputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-wasix-extension-aot-${{ matrix.target }}
+          path: target/extensions/wasix/aot-artifacts
+
+      - name: Download same-run target core and tool AOT outputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: liboliphaunt-wasix-runtime-aot-${{ matrix.target }}
+          path: target/oliphaunt-wasix/napi-aot-download
+
+      - name: Restore exact target core and tool AOT layout
+        shell: bash
+        env:
+          EXPECTED_TARGET_TRIPLE: ${{ matrix.target_triple }}
+        run: |
+          artifact_dir=target/oliphaunt-wasix/napi-aot-download
+          marker="$artifact_dir/target-triple.txt"
+          raw_target_dir="$artifact_dir/files"
+          if [[ ! -f "$marker" || ! -d "$raw_target_dir" ]]; then
+            echo "invalid WASIX N-API AOT artifact envelope in $artifact_dir" >&2
+            exit 1
+          fi
+          target="$(tr -d '\r\n' < "$marker")"
+          if [[ "$target" != "${EXPECTED_TARGET_TRIPLE:?EXPECTED_TARGET_TRIPLE is required}" ]]; then
+            echo "WASIX N-API AOT artifact targets $target, expected $EXPECTED_TARGET_TRIPLE" >&2
+            exit 1
+          fi
+          destination="target/oliphaunt-wasix/aot/$target"
+          mkdir -p "$destination"
+          cp -R "$raw_target_dir/." "$destination/"
+
+      - name: Stage exact-extension WASIX build inputs
+        shell: bash
+        run: tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs --all --family wasix --require-wasix
+
+      - name: Build WASIX Node-API release assets
+        shell: bash
+        env:
+          OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD: "1"
+          OLIPHAUNT_ICU_DATA_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu
+          OLIPHAUNT_WASM_GENERATED_AOT_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/aot
+          OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT: ${{ github.workspace }}/target/extension-artifacts
+          OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR: ${{ github.workspace }}/target/oliphaunt-wasix/assets
+          OLIPHAUNT_WASIX_NAPI_ARTIFACT_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh wasix-napi
+
+      - name: Upload WASIX Node-API release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: oliphaunt-wasix-napi-release-assets-${{ matrix.target }}
+          path: target/oliphaunt-wasix-napi/release-assets
+          if-no-files-found: error
+
+      - name: Upload WASIX Node-API optional npm package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: oliphaunt-wasix-napi-npm-package-${{ matrix.target }}
+          path: target/oliphaunt-wasix-napi/npm-packages/*.tgz
+          if-no-files-found: error
+
+  wasix-napi-release-assets:
+    name: Builds / wasix-napi-release-assets
+    needs:
+      - affected
+      - wasix-napi
+    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.wasix-napi.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-napi-release-assets') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+
+      - name: Download WASIX Node-API target release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: oliphaunt-wasix-napi-release-assets-*
+          path: target/oliphaunt-wasix-napi/release-assets
+          merge-multiple: true
+
+      - name: Download WASIX Node-API optional npm packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: oliphaunt-wasix-napi-npm-package-*
+          path: target/oliphaunt-wasix-napi/npm-packages
+          merge-multiple: true
+
+      - name: Verify aggregate WASIX Node-API release assets
+        id: verify_aggregate_wasix_napi_release_assets
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh wasix-napi-release-assets
+
   swift-sdk-package:
     name: Builds / swift-sdk
     needs:
@@ -1592,7 +1736,8 @@ jobs:
     needs:
       - affected
       - liboliphaunt-wasix-runtime
-    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.liboliphaunt-wasix-runtime.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-ts-sdk-package') }}
+      - wasix-napi
+    if: ${{ always() && !cancelled() && needs.affected.result == 'success' && needs.liboliphaunt-wasix-runtime.result == 'success' && needs.wasix-napi.result == 'success' && contains(fromJson(needs.affected.outputs.jobs), 'wasix-ts-sdk-package') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -1624,12 +1769,19 @@ jobs:
           name: liboliphaunt-wasix-runtime-portable
           path: .
 
+      - name: Download same-run Linux x64 WASIX Node-API carrier
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: oliphaunt-wasix-napi-npm-package-linux-x64-gnu
+          path: target/oliphaunt-wasix-napi/npm-packages
+
       - name: Build and smoke WASIX TypeScript SDK package
         run: |
           pnpm --dir src/bindings/wasix-ts package:build:closure
           node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime node
           node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime bun
           node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime deno
+          node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime electron
           node src/bindings/wasix-ts/tools/smoke-browser.mjs --postgis-worker
           node src/bindings/wasix-ts/tools-package/tools/smoke-host.mjs --runtime node
           tools/dev/bun.sh src/bindings/wasix-ts/tools-package/tools/smoke-host.mjs --runtime bun
@@ -2856,6 +3008,8 @@ jobs:
       - broker-release-assets
       - node-direct
       - node-direct-release-assets
+      - wasix-napi
+      - wasix-napi-release-assets
       - swift-sdk-package
       - kotlin-sdk-package
       - kotlin-maven-staging

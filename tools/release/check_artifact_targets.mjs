@@ -3,7 +3,13 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
-import { BUILDER_JOBS, planForFullRun, renderPlanForFullRun } from "../graph/ci_plan.mjs";
+import {
+  BUILDER_JOBS,
+  addImpliedJobs,
+  planForFullRun,
+  planJobsForAffected,
+  renderPlanForFullRun,
+} from "../graph/ci_plan.mjs";
 import {
   extensionNativeRegistryPackageStrings,
   extensionRegistryPackageStrings,
@@ -21,6 +27,7 @@ import {
   liboliphauntWasixPostmasterRuntimeMatrix,
   nodeDirectRuntimeMatrix,
   reactNativeAndroidMobileAppMatrix,
+  wasixNapiRuntimeMatrix,
 } from "./artifact_target_matrix.mjs";
 import {
   allArtifactTargets,
@@ -49,6 +56,7 @@ const GITHUB = "github-release";
 const DESKTOP_SURFACES = [GITHUB, "rust-native-direct", "typescript-native-direct"];
 const BROKER_SURFACES = [GITHUB, "rust-broker", "typescript-broker"];
 const NODE_SURFACES = [GITHUB, "npm-optional"];
+const WASIX_NAPI_SURFACES = [GITHUB, "npm-optional"];
 
 const DESKTOP = Object.freeze([
   {
@@ -64,6 +72,7 @@ const DESKTOP = Object.freeze([
     toolsNpm: "@oliphaunt/tools-linux-arm64-gnu",
     brokerNpm: "@oliphaunt/broker-linux-arm64-gnu",
     nodeNpm: "@oliphaunt/node-direct-linux-arm64-gnu",
+    wasixNapiNpm: "@oliphaunt/wasix-napi-linux-arm64-gnu",
   },
   {
     target: "linux-x64-gnu",
@@ -78,6 +87,7 @@ const DESKTOP = Object.freeze([
     toolsNpm: "@oliphaunt/tools-linux-x64-gnu",
     brokerNpm: "@oliphaunt/broker-linux-x64-gnu",
     nodeNpm: "@oliphaunt/node-direct-linux-x64-gnu",
+    wasixNapiNpm: "@oliphaunt/wasix-napi-linux-x64-gnu",
   },
   {
     target: "macos-arm64",
@@ -91,6 +101,7 @@ const DESKTOP = Object.freeze([
     toolsNpm: "@oliphaunt/tools-darwin-arm64",
     brokerNpm: "@oliphaunt/broker-darwin-arm64",
     nodeNpm: "@oliphaunt/node-direct-darwin-arm64",
+    wasixNapiNpm: "@oliphaunt/wasix-napi-darwin-arm64",
   },
   {
     target: "windows-x64-msvc",
@@ -104,6 +115,7 @@ const DESKTOP = Object.freeze([
     toolsNpm: "@oliphaunt/tools-win32-x64-msvc",
     brokerNpm: "@oliphaunt/broker-win32-x64-msvc",
     nodeNpm: "@oliphaunt/node-direct-win32-x64-msvc",
+    wasixNapiNpm: "@oliphaunt/wasix-napi-win32-x64-msvc",
   },
 ]);
 
@@ -260,6 +272,17 @@ export function expectedArtifactTargetContract() {
         npm: platform.nodeNpm,
         ...common,
       }),
+      targetRow({
+        product: "oliphaunt-wasix-napi",
+        id: platform.target,
+        kind: "wasix-napi-addon",
+        asset: `oliphaunt-wasix-napi-{version}-${platform.target}.${platform.archive}`,
+        surfaces: WASIX_NAPI_SURFACES,
+        library: "oliphaunt_wasix_napi.node",
+        npm: platform.wasixNapiNpm,
+        extensionArtifacts: false,
+        ...common,
+      }),
     );
   }
   rows.push(
@@ -346,6 +369,15 @@ export function expectedArtifactTargetContract() {
     }),
     portableRow("oliphaunt-broker", "checksums", "checksums", "oliphaunt-broker-{version}-release-assets.sha256", BROKER_SURFACES),
     portableRow("oliphaunt-node-direct", "checksums", "checksums", "oliphaunt-node-direct-{version}-release-assets.sha256"),
+    targetRow({
+      product: "oliphaunt-wasix-napi",
+      id: "checksums",
+      kind: "checksums",
+      target: "portable",
+      asset: "oliphaunt-wasix-napi-{version}-release-assets.sha256",
+      surfaces: [GITHUB],
+      extensionArtifacts: false,
+    }),
   );
   for (const [target, triple, runner, llvmArchive, llvmBytes, llvmSha256] of WASIX_AOT) {
     rows.push(targetRow({
@@ -474,6 +506,7 @@ export function validateMatrixCoverage(targets, extensions, matrices) {
   );
   assertSameStrings(matrices.broker.include.map(({ target }) => target), selected("oliphaunt-broker", "broker-helper").map(({ target }) => target), "broker CI matrix");
   assertSameStrings(matrices.nodeDirect.include.map(({ target }) => target), selected("oliphaunt-node-direct", "node-direct-addon").map(({ target }) => target), "Node direct CI matrix");
+  assertSameStrings(matrices.wasixNapi.include.map(({ target }) => target), selected("oliphaunt-wasix-napi", "wasix-napi-addon").map(({ target }) => target), "WASIX Node-API CI matrix");
   assertSameStrings(matrices.wasixAot.include.map(({ target_id }) => target_id), selected("liboliphaunt-wasix", "wasix-aot-runtime").map(({ target }) => target), "WASIX AOT CI matrix");
   const wasixAotTargets = new Map(
     selected("liboliphaunt-wasix", "wasix-aot-runtime").map((target) => [target.target, target]),
@@ -563,7 +596,7 @@ export function validateCarrierCoverage({
   platformManifests,
 }) {
   const carriers = declaredCarrierMap(catalog);
-  const runtimeProducts = new Set(["liboliphaunt-native", "oliphaunt-broker", "oliphaunt-node-direct"]);
+  const runtimeProducts = new Set(["liboliphaunt-native", "oliphaunt-broker", "oliphaunt-node-direct", "oliphaunt-wasix-napi"]);
   for (const product of runtimeProducts) {
     const expected = registryPackageRows({ product, packageKind: "npm" }, TOOL)
       .map((row) => row.packageName);
@@ -749,6 +782,7 @@ export function validateCiArtifactCoverage(workflow, inventory) {
     nativeIos: inventory.matrices.nativeIos.include,
     broker: inventory.matrices.broker.include,
     nodeDirect: inventory.matrices.nodeDirect.include,
+    wasixNapi: inventory.matrices.wasixNapi.include,
     extensionNative: inventory.matrices.extensionNative.include,
     extensionWasix: inventory.matrices.extensionWasix.include,
     wasixAot: inventory.matrices.wasixAot.include,
@@ -790,6 +824,8 @@ export function validateCiArtifactCoverage(workflow, inventory) {
   validateWorkflowProducer(workflow, "broker-runtime", "oliphaunt-broker-release-assets-${{ matrix.target }}", matrixRows.broker, releaseAssets("oliphaunt-broker", "broker-helper"));
   validateWorkflowProducer(workflow, "node-direct", "oliphaunt-node-direct-release-assets-${{ matrix.target }}", matrixRows.nodeDirect, releaseAssets("oliphaunt-node-direct", "node-direct-addon"));
   validateWorkflowProducer(workflow, "node-direct", "oliphaunt-node-direct-npm-package-${{ matrix.target }}", matrixRows.nodeDirect, npmPackages("oliphaunt-node-direct", "node-direct-addon"));
+  validateWorkflowProducer(workflow, "wasix-napi", "oliphaunt-wasix-napi-release-assets-${{ matrix.target }}", matrixRows.wasixNapi, releaseAssets("oliphaunt-wasix-napi", "wasix-napi-addon"));
+  validateWorkflowProducer(workflow, "wasix-napi", "oliphaunt-wasix-napi-npm-package-${{ matrix.target }}", matrixRows.wasixNapi, npmPackages("oliphaunt-wasix-napi", "wasix-napi-addon"));
   const nativeExtensionArtifacts = sorted(new Set(inventory.extensions.filter(({ family }) => family === "native").map(({ target }) => `liboliphaunt-native-extension-artifacts-${target}`)));
   const wasixExtensionArtifacts = sorted(new Set(inventory.extensions.filter(({ family }) => family === "wasix").map(({ target }) => `liboliphaunt-wasix-extension-artifacts-${target}`)));
   validateWorkflowProducer(workflow, "extension-artifacts-native", "liboliphaunt-native-extension-artifacts-${{ matrix.target }}", matrixRows.extensionNative, nativeExtensionArtifacts);
@@ -904,13 +940,34 @@ export function validateCiArtifactCoverage(workflow, inventory) {
     "oliphaunt-node-direct-release-assets-*",
     "target/oliphaunt-node-direct/release-assets",
   );
+  validateWorkflowConsumer(
+    workflow,
+    "wasix-napi-release-assets",
+    ["wasix-napi"],
+    [
+      ...releaseAssets("oliphaunt-wasix-napi", "wasix-napi-addon"),
+      ...npmPackages("oliphaunt-wasix-napi", "wasix-napi-addon"),
+    ],
+  );
+  validateMergedSameRunDownload(
+    workflow,
+    "wasix-napi-release-assets",
+    "oliphaunt-wasix-napi-release-assets-*",
+    "target/oliphaunt-wasix-napi/release-assets",
+  );
+  validateMergedSameRunDownload(
+    workflow,
+    "wasix-napi-release-assets",
+    "oliphaunt-wasix-napi-npm-package-*",
+    "target/oliphaunt-wasix-napi/npm-packages",
+  );
   validateMergedSameRunDownload(
     workflow,
     "node-direct-release-assets",
     "oliphaunt-node-direct-npm-package-*",
     "target/oliphaunt-node-direct/npm-packages",
   );
-  for (const jobId of ["broker-release-assets", "node-direct-release-assets"]) {
+  for (const jobId of ["broker-release-assets", "node-direct-release-assets", "wasix-napi-release-assets"]) {
     invariant(
       actionSteps(workflow, jobId, "actions/upload-artifact@").length === 0,
       `${jobId} must validate same-run target artifacts without uploading a duplicate product artifact`,
@@ -953,6 +1010,49 @@ export function validateCiArtifactCoverage(workflow, inventory) {
   );
   validateWorkflowConsumer(workflow, "extension-artifacts-wasix", ["liboliphaunt-wasix-runtime"], ["liboliphaunt-wasix-runtime-portable"]);
   validateWorkflowConsumer(workflow, "liboliphaunt-wasix-aot", ["liboliphaunt-wasix-runtime"], ["liboliphaunt-wasix-runtime-portable"]);
+  validateWorkflowConsumer(
+    workflow,
+    "wasix-napi",
+    ["extension-artifacts-wasix", "liboliphaunt-wasix-aot", "liboliphaunt-wasix-runtime"],
+    [
+      "liboliphaunt-wasix-runtime-portable",
+      ...wasixExtensionArtifacts,
+      ...wasixAot,
+      ...extensionAot,
+    ],
+    matrixRows.wasixNapi,
+  );
+  validateMergedSameRunDownload(
+    workflow,
+    "wasix-napi",
+    "liboliphaunt-wasix-extension-artifacts-*",
+    "target/extensions/wasix/release-assets",
+  );
+  const wasixNapiBuild = namedStep(workflow, "wasix-napi", "Build WASIX Node-API release assets");
+  invariant(
+    wasixNapiBuild?.env?.OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD === "1"
+      && wasixNapiBuild.env.OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR === "${{ github.workspace }}/target/oliphaunt-wasix/assets"
+      && wasixNapiBuild.env.OLIPHAUNT_WASM_GENERATED_AOT_DIR === "${{ github.workspace }}/target/oliphaunt-wasix/aot"
+      && wasixNapiBuild.env.OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT === "${{ github.workspace }}/target/extension-artifacts"
+      && wasixNapiBuild.env.OLIPHAUNT_ICU_DATA_DIR === "${{ github.workspace }}/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu"
+      && wasixNapiBuild.env.OLIPHAUNT_WASIX_NAPI_ARTIFACT_SOURCE_SHA === "${{ github.event.pull_request.head.sha || github.sha }}"
+      && String(wasixNapiBuild.run ?? "").includes("OLIPHAUNT_MOON_UPSTREAM=none"),
+    "WASIX Node-API builds must fail closed on exact same-run portable, ICU, AOT, and extension payload roots",
+  );
+  const wasixNapiExtensionStage = namedStep(workflow, "wasix-napi", "Stage exact-extension WASIX build inputs");
+  invariant(
+    String(wasixNapiExtensionStage?.run ?? "").includes(
+      "build-extension-ci-artifacts.mjs --all --family wasix --require-wasix",
+    ),
+    "WASIX Node-API builds must stage complete exact-extension portable and target AOT inputs",
+  );
+  const wasixNapiAotRestore = namedStep(workflow, "wasix-napi", "Restore exact target core and tool AOT layout");
+  invariant(
+    wasixNapiAotRestore?.env?.EXPECTED_TARGET_TRIPLE === "${{ matrix.target_triple }}"
+      && String(wasixNapiAotRestore.run ?? "").includes("target-triple.txt")
+      && String(wasixNapiAotRestore.run ?? "").includes("target/oliphaunt-wasix/aot/$target"),
+    "WASIX Node-API builds must restore marker-validated host AOT inputs to the Cargo artifact layout",
+  );
   validateWorkflowConsumer(workflow, "wasix-release-regression", ["extension-artifacts-wasix", "liboliphaunt-wasix-runtime", "liboliphaunt-wasix-aot"], [
     "liboliphaunt-wasix-runtime-portable",
     ...wasixExtensionArtifacts,
@@ -1084,19 +1184,51 @@ export function repositoryInventory() {
       wasixPostmaster: liboliphauntWasixPostmasterRuntimeMatrix(),
       broker: brokerRuntimeMatrix(),
       nodeDirect: nodeDirectRuntimeMatrix(),
+      wasixNapi: wasixNapiRuntimeMatrix(),
     },
   };
 }
 
 export function validateRepository() {
   const inventory = repositoryInventory();
+  const wasixNapiNativeBuild = readFileSync(
+    path.join(ROOT, "src/runtimes/wasix-napi/tools/build-native.sh"),
+    "utf8",
+  );
+  const wasixNapiLinuxBaselineBuild = readFileSync(
+    path.join(ROOT, "tools/release/build-linux-wasix-napi-baseline.sh"),
+    "utf8",
+  );
+  invariant(
+    wasixNapiNativeBuild.includes("tools/release/build-linux-wasix-napi-baseline.sh"),
+    "WASIX Node-API Linux release variants must use the pinned baseline builder",
+  );
+  invariant(
+    wasixNapiLinuxBaselineBuild.includes(
+      "rust@sha256:5b9332190bb3b9ece73b810cd1f1e9f06343b294ce184bcb067f0747d7d333ea",
+    )
+      && wasixNapiLinuxBaselineBuild.includes('expected_builder_glibc="glibc 2.36"')
+      && wasixNapiLinuxBaselineBuild.includes("docker_cargo none")
+      && wasixNapiLinuxBaselineBuild.includes("cargo build")
+      && wasixNapiLinuxBaselineBuild.includes("--offline"),
+    "WASIX Node-API Linux baseline builder must pin Bookworm and compile in the sealed offline phase",
+  );
   invariant((inventory.graph.artifact_targets ?? []).length === 0, "artifact targets must be owned by Moon product metadata, not a central legacy table");
+  const wasixNapiDependencies = inventory.graph.moon_projects["oliphaunt-wasix-napi"]?.dependencies ?? [];
+  assertSameStrings(
+    wasixNapiDependencies
+      .filter(({ id, scope }) => scope === "production" && inventory.products.includes(id))
+      .map(({ id }) => id),
+    inventory.products,
+    "WASIX Node-API exact-extension production dependency closure",
+  );
   for (const [product, preset] of Object.entries({
     "liboliphaunt-native": "liboliphaunt-native",
     "liboliphaunt-wasix": "liboliphaunt-wasix",
     "liboliphaunt-wasix-postmaster": "liboliphaunt-wasix-postmaster",
     "oliphaunt-broker": "broker-helper",
     "oliphaunt-node-direct": "node-direct-addon",
+    "oliphaunt-wasix-napi": "wasix-napi-addon",
   })) invariant(releaseMetadata(product, TOOL).artifactTargets?.preset === preset, `${product} must use Moon artifact target preset ${preset}`);
   validateArtifactTargetContract(inventory.targets);
   validateExtensionCoverage(inventory.targets, inventory.products, inventory.extensions);
@@ -1119,6 +1251,25 @@ export function validateRepository() {
   const fullPlan = planForFullRun({ wasmTarget: "all", nativeTarget: "all", mobileTarget: "all" });
   const requiredProductBuilders = new Set([...BUILDER_JOBS].filter((job) => job !== "wasix-release-regression"));
   invariant([...requiredProductBuilders].every((job) => fullPlan.jobs.has(job)), "full CI planning must select every product artifact builder");
+  const wasixNapiPlan = new Set(["wasix-napi"]);
+  addImpliedJobs(wasixNapiPlan, new Set());
+  invariant(
+    ["extension-artifacts-wasix", "liboliphaunt-wasix-aot", "liboliphaunt-wasix-runtime"]
+      .every((job) => wasixNapiPlan.has(job)),
+    "WASIX Node-API CI planning must select every same-run embedded payload producer",
+  );
+  for (const product of inventory.products) {
+    const extensionPlan = planJobsForAffected(new Set([product]), new Set());
+    invariant(
+      [
+        "wasix-napi",
+        "extension-artifacts-wasix",
+        "liboliphaunt-wasix-aot",
+        "liboliphaunt-wasix-runtime",
+      ].every((job) => extensionPlan.has(job)),
+      `${product} CI planning must rebuild WASIX Node-API carriers and every embedded payload producer`,
+    );
+  }
   const focusedWasix = planForFullRun({ wasmTarget: "linux-x64-gnu", nativeTarget: "all", mobileTarget: "all" });
   assertSameStrings(focusedWasix.jobs, ["affected", "extension-artifacts-wasix", "liboliphaunt-wasix-aot", "liboliphaunt-wasix-runtime"], "focused WASIX CI jobs");
   const focusedAndroid = renderPlanForFullRun({

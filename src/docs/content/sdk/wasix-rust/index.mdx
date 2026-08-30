@@ -19,7 +19,7 @@ async executor responsive use the cloneable `Send + Sync` root
 SQL semantics.
 
 Use this SDK when Rust owns the WASIX host. Native desktop and mobile apps use
-native SDKs when they select `liboliphaunt`. Browser, Node, Bun, and Deno TypeScript apps can use the
+native SDKs when they select `liboliphaunt`. Browser, Node, Bun, Deno, and Electron TypeScript apps can use the
 separate [`@oliphaunt/wasix-ts` TypeScript binding](/docs/sdk/wasix-typescript);
 the two bindings share runtime and storage formats while keeping language-native APIs.
 
@@ -81,10 +81,12 @@ behavior.
 
 The Rust binding exposes the default direct caller-thread API, named root
 `Async*` handles, optional `pg_dump`/`psql`, and a local
-PostgreSQL-compatible URL. WASIX TypeScript makes the same calling choice at
-the package boundary: its root entry point runs in the importing realm, while
-`@oliphaunt/wasix-ts/worker` is the explicit package-owned Worker surface.
-Optional tools and Node, Bun, and Deno server subpaths remain language-specific.
+PostgreSQL-compatible URL. WASIX TypeScript chooses placement at the package
+boundary: browser root runs in the importing realm, the native-host root uses the Rust
+owner actor, `/direct` selects caller-thread execution, and `/worker` selects a
+package-owned JavaScript Worker.
+Optional tools and the Node, Bun, Deno, and Electron host-only `/server` subpath remain
+language-specific.
 
 Applications that need a real concurrent PostgreSQL listener on Linux x64 GNU or macOS arm64
 can instead deploy the separate [WASIX postmaster](/docs/sdk/wasix-rust/runtime#wasix-postmaster)

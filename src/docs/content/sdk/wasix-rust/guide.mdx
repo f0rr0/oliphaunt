@@ -9,13 +9,13 @@ Use `oliphaunt-wasix` when Rust owns the WASIX host. This crate is separate
 from every native SDK and from the WASIX TypeScript binding.
 
 <Callout type="info" title="This is the Rust binding">
-Browser, Node, Bun, and Deno TypeScript applications use [`@oliphaunt/wasix-ts`](/docs/sdk/wasix-typescript). The Rust
-and TypeScript bindings consume the portable WASIX runtime family. Their APIs
-follow the same conceptual rule: direct execution uses the calling
-thread/realm, while callers can opt into a dedicated package-owned execution
-context. Rust spells that choice with root `Async*` types; TypeScript uses a
-real `/worker` package entry point. Signatures remain idiomatic to each
-language.
+Browser, Node, Bun, Deno, and Electron TypeScript applications use [`@oliphaunt/wasix-ts`](/docs/sdk/wasix-typescript). The Rust
+and TypeScript bindings consume the portable WASIX runtime family. Rust uses a
+synchronous caller-thread root or explicit root `Async*` owner types. TypeScript
+uses a caller-realm browser root; on Node.js, Bun, Deno, and Electron its root
+uses a Rust actor, `/direct` selects blocking caller-thread execution, and
+`/worker` selects a real package-owned Worker. Signatures remain idiomatic to
+each language.
 </Callout>
 
 <SdkGuideSummary id="wasix-rust" />
@@ -279,6 +279,6 @@ An independent pump/recovery failure is
 Check whether the selected managed root is new or complete, the packaged
 cluster seed and exact runtime/AOT asset pair, enabled extension features,
 directory ownership, and SQLSTATE-bearing
-PostgreSQL errors. Browser, Node, Bun, and Deno direct/Worker behavior, the
+PostgreSQL errors. Browser, Node, Bun, Deno, and Electron actor/direct/Worker behavior, the
 explicit `/worker` entry point, IndexedDB, and recovery behavior are documented
 on the [WASIX TypeScript guide](/docs/sdk/wasix-typescript/guide).

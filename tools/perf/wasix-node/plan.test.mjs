@@ -1,14 +1,13 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
 import test from 'node:test';
 
 import { installedPackageClosure } from './installed-closure.mjs';
 import { dispatchPgliteRequest } from './pglite-node-worker.mjs';
 import {
   assertExpectedRawProtocolResponse,
+  assertNativeAddonContract,
+  assertNativeArtifactProvenance,
   assertRuntimeBuildConfiguration,
   assertSuccessfulRawProtocolResponse,
   bulkSql,
@@ -17,7 +16,6 @@ import {
   expandExpectedResult,
   expectedBulkProtocol,
   geomean,
-  installedHostBuildProvenance,
   latencySummary,
   loadPlan,
   median,
@@ -36,16 +34,20 @@ test('the checked-in plan pins identities, generated SQL, and the comfortable-wi
   assert.equal(summary.schema, 'oliphaunt-wasix-node-benchmark-plan-v2');
   assert.equal(summary.id, 'node-pglite-memory-v2');
   assert.equal(summary.engines.candidate.package, '@oliphaunt/wasix-ts');
-  assert.deepEqual(summary.engines.candidate.hostBuild, {
-    wasmerJsCommit: '93b8b738ebd3ee57e118da0f0eb795b97d5b999e',
-    wasmerWasixVersion: '0.601.0',
-    inputsSha256: '0637f3d0bea86d9c713dc5f29f928e3358350c0286abecbc9510ff5be5ed526c',
-    guestConcurrency: 'denied-for-oliphaunt-single-backend',
-    optimization: {
+  assert.deepEqual(summary.engines.candidate.nativeAddon, {
+    schema: 'oliphaunt-wasix-napi-host-v1',
+    product: 'oliphaunt-wasix-napi',
+    binary: 'oliphaunt_wasix_napi.node',
+    addonAbiVersion: 1,
+    nodeApiVersion: 8,
+    profiles: ['standard', 'icu'],
+    build: {
       cargoProfile: 'release',
-      rustOptLevel: 3,
-      lto: true,
-      wasmOpt: ['--enable-threads', '--enable-bulk-memory', '-O3'],
+      incremental: false,
+      codegenUnits: 1,
+      lto: 'thin',
+      strip: 'symbols',
+      features: ['release'],
     },
   });
   assert.deepEqual(summary.engines.candidate.runtimeBuild, {
@@ -59,7 +61,6 @@ test('the checked-in plan pins identities, generated SQL, and the comfortable-wi
     wasmOptPreserveUnoptimized: '',
     compilerFlags: '',
     linkerFlags: '',
-    backendTiming: '0',
   });
   assert.deepEqual(summary.engines.candidate.surfaces.worker, {
     engine: 'candidate-worker',
@@ -67,12 +68,12 @@ test('the checked-in plan pins identities, generated SQL, and the comfortable-wi
     callingContract: 'async',
     executionOwner: 'sdk-worker',
     executionBoundary: 'node-worker-thread',
-    isolationImplementation: 'package-owned-worker-threads-rpc',
-    timingBoundary: 'host-end-to-end-around-one-worker-rpc',
+    isolationImplementation: 'package-owned-worker-rpc',
+    timingBoundary: 'host-end-to-end-around-one-isolation-rpc',
   });
   assert.deepEqual(summary.engines.candidate.surfaces.direct, {
     engine: 'candidate-direct',
-    entrypoint: '@oliphaunt/wasix-ts',
+    entrypoint: '@oliphaunt/wasix-ts/direct',
     callingContract: 'async',
     executionOwner: 'caller',
     executionBoundary: 'node-caller-realm',
@@ -211,92 +212,93 @@ test('the exact installed comparator tree matches the plan byte pin', async () =
   assert.deepEqual(root.dependencies, []);
 });
 
-test('installed candidate host provenance must exactly match the speed-optimized plan', async () => {
+test('candidate native addon contract rejects ABI, profile, and optimization drift', async () => {
   const { plan } = await loadPlan(defaultPlanFile, { repositoryBindings: false });
-  const scratch = await mkdtemp(resolve(tmpdir(), 'oliphaunt-wasix-host-provenance-'));
-  const manifestFile = resolve(scratch, 'package.json');
-  const provenanceFile = resolve(scratch, 'lib/host/provenance.json');
-  await mkdir(resolve(scratch, 'lib/host'), { recursive: true });
-  await writeFile(manifestFile, '{}\n');
-  await writeFile(provenanceFile, `${JSON.stringify(plan.engines.candidate.hostBuild)}\n`);
-
-  try {
-    assert.deepEqual(
-      await installedHostBuildProvenance(manifestFile, plan.engines.candidate.hostBuild),
-      plan.engines.candidate.hostBuild,
+  assert.deepEqual(
+    assertNativeAddonContract(
+      plan.engines.candidate.nativeAddon,
+      plan.engines.candidate.nativeAddon,
+    ),
+    plan.engines.candidate.nativeAddon,
+  );
+  const drifts = [
+    ['addon ABI', (value) => (value.addonAbiVersion = 2), /addonAbiVersion/u],
+    ['Node-API floor', (value) => (value.nodeApiVersion = 9), /nodeApiVersion/u],
+    ['profiles', (value) => value.profiles.reverse(), /profiles/u],
+    ['Cargo profile', (value) => (value.build.cargoProfile = 'debug'), /cargoProfile/u],
+    ['incremental', (value) => (value.build.incremental = true), /incremental/u],
+    ['codegen units', (value) => (value.build.codegenUnits = 16), /codegenUnits/u],
+    ['LTO', (value) => (value.build.lto = false), /build\.lto/u],
+    ['features', (value) => value.build.features.push('icu'), /build\.features/u],
+  ];
+  for (const [label, mutate, error] of drifts) {
+    const drifted = structuredClone(plan.engines.candidate.nativeAddon);
+    mutate(drifted);
+    assert.throws(
+      () => assertNativeAddonContract(drifted, plan.engines.candidate.nativeAddon),
+      error,
+      label,
     );
-
-    const drifts = [
-      [
-        'Wasmer JS identity',
-        (value) => {
-          value.wasmerJsCommit = '0'.repeat(40);
-        },
-        /wasmerJsCommit/u,
-      ],
-      [
-        'wasmer-wasix identity',
-        (value) => {
-          value.wasmerWasixVersion = '0.602.0';
-        },
-        /wasmerWasixVersion/u,
-      ],
-      [
-        'host inputs',
-        (value) => {
-          value.inputsSha256 = '0'.repeat(64);
-        },
-        /inputsSha256/u,
-      ],
-      [
-        'guest concurrency policy',
-        (value) => {
-          value.guestConcurrency = 'allowed';
-        },
-        /guestConcurrency/u,
-      ],
-      [
-        'Cargo profile',
-        (value) => {
-          value.optimization.cargoProfile = 'debug';
-        },
-        /cargoProfile/u,
-      ],
-      [
-        'Rust optimization',
-        (value) => {
-          value.optimization.rustOptLevel = 2;
-        },
-        /rustOptLevel/u,
-      ],
-      [
-        'LTO',
-        (value) => {
-          value.optimization.lto = false;
-        },
-        /optimization\.lto/u,
-      ],
-      [
-        'wasm-opt',
-        (value) => {
-          value.optimization.wasmOpt[2] = '-Oz';
-        },
-        /optimization\.wasmOpt/u,
-      ],
-    ];
-    for (const [label, mutate, error] of drifts) {
-      const drifted = structuredClone(plan.engines.candidate.hostBuild);
-      mutate(drifted);
-      await writeFile(provenanceFile, `${JSON.stringify(drifted)}\n`);
-      await assert.rejects(
-        installedHostBuildProvenance(manifestFile, plan.engines.candidate.hostBuild),
-        error,
-        label,
-      );
-    }
-  } finally {
-    await rm(scratch, { force: true, recursive: true });
   }
+});
+
+test('candidate native artifact provenance must match the benchmark commit and target', async () => {
+  const { plan } = await loadPlan(defaultPlanFile, { repositoryBindings: false });
+  const artifactSourceSha = 'a'.repeat(40);
+  const target = 'linux-x64-gnu';
+  const targetTriple = 'x86_64-unknown-linux-gnu';
+  const carrier = {
+    name: '@oliphaunt/wasix-napi-linux-x64-gnu',
+    version: '0.0.0',
+    target,
+    artifactProvenanceMember: 'package/artifact-provenance.json',
+    manifest: {
+      oliphaunt: {
+        target,
+        addonAbiVersion: plan.engines.candidate.nativeAddon.addonAbiVersion,
+        nodeApiVersion: plan.engines.candidate.nativeAddon.nodeApiVersion,
+        profiles: plan.engines.candidate.nativeAddon.profiles,
+      },
+    },
+    artifactProvenance: {
+      schema: 'oliphaunt-wasix-napi-provenance-v1',
+      product: 'oliphaunt-wasix-napi',
+      target,
+      artifactSourceSha,
+      build: { ...plan.engines.candidate.nativeAddon.build, targetTriple },
+      buildInputs: {
+        schema: 'oliphaunt-wasix-napi-build-inputs-v1',
+        target,
+        targetTriple,
+      },
+      binary: {
+        filename: plan.engines.candidate.nativeAddon.binary,
+        sha256: 'b'.repeat(64),
+      },
+    },
+  };
+
+  assert.equal(
+    assertNativeArtifactProvenance(carrier, plan.engines.candidate.nativeAddon, artifactSourceSha)
+      .artifactProvenance,
+    carrier.artifactProvenance,
+  );
+  assert.throws(
+    () =>
+      assertNativeArtifactProvenance(carrier, plan.engines.candidate.nativeAddon, 'c'.repeat(40)),
+    /addon\/source contract/u,
+  );
+  const wrongBuildTarget = structuredClone(carrier);
+  wrongBuildTarget.artifactProvenance.buildInputs.target = 'linux-arm64-gnu';
+  assert.throws(
+    () =>
+      assertNativeArtifactProvenance(
+        wrongBuildTarget,
+        plan.engines.candidate.nativeAddon,
+        artifactSourceSha,
+      ),
+    /addon\/source contract/u,
+  );
 });
 
 test('plan validation rejects comparator drift and a weaker performance claim', async () => {
@@ -351,9 +353,9 @@ test('plan validation rejects comparator drift and a weaker performance claim', 
     /compilerFlags/u,
   );
 
-  const hostOptimizedForSize = structuredClone(plan);
-  hostOptimizedForSize.engines.candidate.hostBuild.optimization.rustOptLevel = 'z';
-  assert.throws(() => validatePlan(hostOptimizedForSize), /hostBuild\.optimization\.rustOptLevel/u);
+  const hostWithoutLto = structuredClone(plan);
+  hostWithoutLto.engines.candidate.nativeAddon.build.lto = 'off';
+  assert.throws(() => validatePlan(hostWithoutLto), /nativeAddon\.build\.lto/u);
 });
 
 test('summary math and correctness placeholders are deterministic', () => {

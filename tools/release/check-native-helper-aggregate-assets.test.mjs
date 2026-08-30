@@ -13,6 +13,7 @@ import {
   assertExactFilenames,
   exactRegularDirectoryFilenames,
   expectedNodeDirectNpmPackageNames,
+  expectedWasixNapiNpmPackageNames,
 } from "./check-native-helper-aggregate-assets.mjs";
 
 const scratch = [];
@@ -30,6 +31,15 @@ describe("native helper aggregate release assets", () => {
       "oliphaunt-node-direct-linux-arm64-gnu-1.2.3.tgz",
       "oliphaunt-node-direct-linux-x64-gnu-1.2.3.tgz",
       "oliphaunt-node-direct-win32-x64-msvc-1.2.3.tgz",
+    ]);
+  });
+
+  test("derives the exact WASIX Node-API optional npm carrier set", () => {
+    expect(expectedWasixNapiNpmPackageNames("1.2.3")).toEqual([
+      "oliphaunt-wasix-napi-darwin-arm64-1.2.3.tgz",
+      "oliphaunt-wasix-napi-linux-arm64-gnu-1.2.3.tgz",
+      "oliphaunt-wasix-napi-linux-x64-gnu-1.2.3.tgz",
+      "oliphaunt-wasix-napi-win32-x64-msvc-1.2.3.tgz",
     ]);
   });
 

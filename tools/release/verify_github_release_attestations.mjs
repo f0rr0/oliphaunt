@@ -64,6 +64,7 @@ const BASE_ASSET_BACKED_PRODUCTS = new Set([
   "liboliphaunt-wasix-postmaster",
   "oliphaunt-broker",
   "oliphaunt-node-direct",
+  "oliphaunt-wasix-napi",
 ]);
 
 const DESKTOP_TARGETS = new Set([
@@ -438,6 +439,9 @@ async function expectedAssets(product, version) {
   }
   if (product === "oliphaunt-node-direct") {
     return expectedDesktopAssets(product, "node-direct-addon", version, PREFIX);
+  }
+  if (product === "oliphaunt-wasix-napi") {
+    return expectedDesktopAssets(product, "wasix-napi-addon", version, PREFIX);
   }
   fail(`asset expectation is not defined for ${product}`);
 }

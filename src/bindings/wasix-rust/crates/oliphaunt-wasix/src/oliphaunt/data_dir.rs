@@ -17,6 +17,7 @@ use super::database_root_descriptor::{
     PGDATA_DIRECTORY, PHYSICAL_FORMAT, POSTGRES_MAJOR, write_database_root_descriptor,
 };
 use crate::oliphaunt::storage::{PgDataStorage, vfs_read};
+use crate::{StorageCommitState, StorageErrorCode, StorageErrorPhase};
 
 const PHYSICAL_ARCHIVE_MANIFEST_NAME: &str = ".oliphaunt/backup-manifest.properties";
 const PHYSICAL_ARCHIVE_LAYOUT: &str = "oliphaunt-physical-archive-v1";
@@ -414,60 +415,210 @@ pub(crate) fn unpack_pgdata_archive(bytes: &[u8], destination: &Path) -> Result<
 }
 
 pub(crate) fn restore_physical_archive(destination: &Path, bytes: &[u8]) -> Result<()> {
-    let _directory_lock = DirectoryLock::acquire(destination)?;
+    let _directory_lock =
+        DirectoryLock::acquire_for_phase(destination, StorageErrorPhase::RestoreValidation)?;
     let parent = destination
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)
-        .with_context(|| format!("create restore parent {}", parent.display()))?;
+        .with_context(|| format!("create restore parent {}", parent.display()))
+        .map_err(|error| {
+            restore_error(
+                error,
+                StorageErrorCode::Unavailable,
+                StorageCommitState::Unchanged,
+                StorageErrorPhase::RestoreValidation,
+            )
+        })?;
 
     let destination_existed = match fs::symlink_metadata(destination) {
         Ok(metadata) => {
-            ensure!(
-                metadata.is_dir() && !metadata.file_type().is_symlink(),
-                "physical restore destination {} is not a real directory",
-                destination.display()
-            );
-            ensure!(
-                fs::read_dir(destination)?.next().is_none(),
-                "physical restore destination {} is not empty",
-                destination.display()
-            );
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                return Err(restore_message(
+                    format!(
+                        "physical restore destination {} is not a real directory",
+                        destination.display()
+                    ),
+                    StorageErrorCode::Incomplete,
+                    StorageCommitState::Unchanged,
+                    StorageErrorPhase::RestoreValidation,
+                ));
+            }
+            let empty = fs::read_dir(destination)
+                .and_then(|mut entries| entries.next().transpose())
+                .map_err(|error| {
+                    restore_error(
+                        anyhow::Error::new(error).context(format!(
+                            "inspect restore destination {}",
+                            destination.display()
+                        )),
+                        StorageErrorCode::Unavailable,
+                        StorageCommitState::Unchanged,
+                        StorageErrorPhase::RestoreValidation,
+                    )
+                })?
+                .is_none();
+            if !empty {
+                return Err(restore_message(
+                    format!(
+                        "physical restore destination {} is not empty",
+                        destination.display()
+                    ),
+                    StorageErrorCode::Incomplete,
+                    StorageCommitState::Unchanged,
+                    StorageErrorPhase::RestoreValidation,
+                ));
+            }
             true
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => false,
         Err(error) => {
-            return Err(error)
-                .with_context(|| format!("inspect restore destination {}", destination.display()));
+            return Err(restore_error(
+                anyhow::Error::new(error).context(format!(
+                    "inspect restore destination {}",
+                    destination.display()
+                )),
+                StorageErrorCode::Unavailable,
+                StorageCommitState::Unchanged,
+                StorageErrorPhase::RestoreValidation,
+            ));
         }
     };
 
     let staging = tempfile::Builder::new()
         .prefix(".oliphaunt-restore-")
         .tempdir_in(parent)
-        .with_context(|| format!("create restore staging directory in {}", parent.display()))?;
-    let pgdata = staging.path().join(PGDATA_DIRECTORY);
-    unpack_pgdata_archive(bytes, &pgdata)?;
-    write_database_root_descriptor(staging.path())?;
-
-    if destination_existed {
-        fs::remove_dir(destination).with_context(|| {
-            format!(
-                "replace empty restore destination {}",
-                destination.display()
+        .with_context(|| format!("create restore staging directory in {}", parent.display()))
+        .map_err(|error| {
+            restore_error(
+                error,
+                StorageErrorCode::Unavailable,
+                StorageCommitState::Unchanged,
+                StorageErrorPhase::RestoreStaging,
             )
         })?;
+    let pgdata = staging.path().join(PGDATA_DIRECTORY);
+    unpack_pgdata_archive(bytes, &pgdata).map_err(|error| {
+        let code = restore_payload_error_code(&error);
+        restore_error(
+            error,
+            code,
+            StorageCommitState::Unchanged,
+            if code == StorageErrorCode::Corrupt {
+                StorageErrorPhase::RestoreValidation
+            } else {
+                StorageErrorPhase::RestoreStaging
+            },
+        )
+    })?;
+    write_database_root_descriptor(staging.path()).map_err(|error| {
+        restore_error(
+            error,
+            StorageErrorCode::Unavailable,
+            StorageCommitState::Unchanged,
+            StorageErrorPhase::RestoreStaging,
+        )
+    })?;
+
+    if destination_existed {
+        fs::remove_dir(destination)
+            .with_context(|| {
+                format!(
+                    "replace empty restore destination {}",
+                    destination.display()
+                )
+            })
+            .map_err(|error| {
+                restore_error(
+                    error,
+                    StorageErrorCode::PublicationFailed,
+                    StorageCommitState::Unknown,
+                    StorageErrorPhase::RestorePublication,
+                )
+            })?;
     }
     if let Err(error) = fs::rename(staging.path(), destination) {
         if destination_existed {
-            let _ = fs::create_dir(destination);
+            let recovery = fs::create_dir(destination);
+            let commit_state = if recovery.is_ok() {
+                StorageCommitState::Unchanged
+            } else {
+                StorageCommitState::Unknown
+            };
+            let source = match recovery {
+                Ok(()) => anyhow::Error::new(error),
+                Err(recovery) => anyhow::Error::new(error).context(format!(
+                    "restore publication recovery also failed: {recovery}"
+                )),
+            };
+            return Err(restore_error(
+                source.context(format!(
+                    "publish restored database root {}",
+                    destination.display()
+                )),
+                StorageErrorCode::PublicationFailed,
+                commit_state,
+                StorageErrorPhase::RestorePublication,
+            ));
         }
-        return Err(error)
-            .with_context(|| format!("publish restored database root {}", destination.display()));
+        return Err(restore_error(
+            anyhow::Error::new(error).context(format!(
+                "publish restored database root {}",
+                destination.display()
+            )),
+            StorageErrorCode::PublicationFailed,
+            StorageCommitState::Unchanged,
+            StorageErrorPhase::RestorePublication,
+        ));
     }
-    sync_parent_directory(parent)?;
+    sync_parent_directory(parent).map_err(|error| {
+        restore_error(
+            error,
+            StorageErrorCode::PublicationFailed,
+            StorageCommitState::Unknown,
+            StorageErrorPhase::RestoreDurability,
+        )
+    })?;
     Ok(())
+}
+
+fn restore_payload_error_code(error: &anyhow::Error) -> StorageErrorCode {
+    let mut saw_io = false;
+    for cause in error.chain() {
+        if let Some(io) = cause.downcast_ref::<std::io::Error>() {
+            if matches!(
+                io.kind(),
+                std::io::ErrorKind::InvalidData | std::io::ErrorKind::UnexpectedEof
+            ) {
+                return StorageErrorCode::Corrupt;
+            }
+            saw_io = true;
+        }
+    }
+    if saw_io {
+        StorageErrorCode::Unavailable
+    } else {
+        StorageErrorCode::Corrupt
+    }
+}
+
+fn restore_error(
+    error: anyhow::Error,
+    code: StorageErrorCode,
+    commit_state: StorageCommitState,
+    phase: StorageErrorPhase,
+) -> anyhow::Error {
+    crate::error::storage_error(error, code, commit_state, phase)
+}
+
+fn restore_message(
+    message: String,
+    code: StorageErrorCode,
+    commit_state: StorageCommitState,
+    phase: StorageErrorPhase,
+) -> anyhow::Error {
+    crate::error::storage_message(message, code, commit_state, phase)
 }
 
 #[cfg(unix)]
@@ -1826,8 +1977,15 @@ mod tests {
         let parent = tempfile::TempDir::new()?;
         let destination = parent.path().join("database");
 
-        restore_physical_archive(&destination, b"not a tar")
+        let error = restore_physical_archive(&destination, b"not a tar")
             .expect_err("invalid restore input must fail");
+        let error = crate::Error::from_anyhow(error);
+        let details = error
+            .storage_error()
+            .expect("invalid restore input must remain structurally tagged");
+        assert_eq!(details.code(), StorageErrorCode::Corrupt);
+        assert_eq!(details.commit_state(), StorageCommitState::Unchanged);
+        assert_eq!(details.phase(), StorageErrorPhase::RestoreValidation);
 
         assert!(!destination.exists());
         Ok(())
@@ -1923,6 +2081,13 @@ mod tests {
             format!("{error:#}").contains("already in use"),
             "unexpected error: {error:#}"
         );
+        let error = crate::Error::from_anyhow(error);
+        let details = error
+            .storage_error()
+            .expect("restore ownership must remain structurally tagged");
+        assert_eq!(details.code(), StorageErrorCode::Busy);
+        assert_eq!(details.commit_state(), StorageCommitState::Unchanged);
+        assert_eq!(details.phase(), StorageErrorPhase::RestoreValidation);
         assert!(!destination.exists());
         Ok(())
     }

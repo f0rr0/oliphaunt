@@ -141,9 +141,10 @@ incomplete or unexpected contents fail without being adopted, deleted, or
 reinitialized.
 
 Rust uses one stable sibling advisory lock for both open and restore. It
-coordinates Rust WASIX owners of that path, including before a new root exists.
-The WASIX TypeScript binding has its own binding-local lease. Cross-binding root
-handoff is not a supported or qualified workflow.
+coordinates Rust WASIX and native-host WASIX TypeScript owners of that path,
+including before a new root exists, because the Node-API path delegates
+directory ownership to this Rust runtime. Sequential cross-binding root handoff
+is not yet a supported or qualified workflow.
 
 Physical backup is a PostgreSQL online backup in a plain tar archive:
 

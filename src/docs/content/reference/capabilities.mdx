@@ -22,14 +22,14 @@ query after open.
 | React Native | `@oliphaunt/react-native` | Swift/Kotlin direct adapters |
 | TypeScript | `@oliphaunt/ts` | Native direct, broker, server on supported desktop runtimes |
 | Rust WASIX | `oliphaunt-wasix` | WASIX direct and local server |
-| WASIX TypeScript | `@oliphaunt/wasix-ts` | Caller-realm root; explicit `/worker` entry point on browser, Node, Bun, and Deno |
+| WASIX TypeScript | `@oliphaunt/wasix-ts` | Caller-realm browser Wasmer; native-host Node-API Rust-owner root, explicit `/direct`, and JavaScript `/worker` isolation |
 
 ## Feature support
 
 | Feature | Native SDK family | Rust WASIX | WASIX TypeScript |
 | --- | --- | --- | --- |
 | Default storage | SDK-owned temporary directory | Memory filesystem | Memory filesystem |
-| Persistent storage | Managed directory; React Native also resolves application-data names | Managed directory | IndexedDB/OPFS in browsers; managed directory on Node, Bun, Deno |
+| Persistent storage | Managed directory; React Native also resolves application-data names | Managed directory | IndexedDB/OPFS in browsers; managed directory on Node, Bun, Deno, and Electron |
 | Typed query and command helpers | Yes | Yes | Yes |
 | Raw PostgreSQL protocol | Buffered and callback-streamed | Buffered and callback-streamed; COPY uses the guest stream pump | Buffered and callback-streamed with bounded backpressure |
 | Callback transactions | Yes | Yes | Yes |
@@ -38,8 +38,8 @@ query after open.
 | Dedicated COPY streaming | No | No | No |
 | Exact extension selection | SQL names | Typed Cargo selections | Selectively imported WASIX descriptors |
 | Physical backup/restore | Backup in direct/broker and mobile direct; static restore to new/empty storage | Yes | Backup from memory or persistent open sessions; static restore to a new or empty persistent provider |
-| Listening server | Rust and desktop TypeScript | Yes | Node, Bun, and Deno explicit server subpaths; no browser sockets |
-| `pg_dump` / `psql` | Optional endpoint-oriented `oliphaunt-tools` / `@oliphaunt/tools` products on Rust and desktop TypeScript | Optional open-database `tools` feature | Optional `@oliphaunt/wasix-tools` package on every host; `pgDump` supports direct or Worker handles, while `psql` requires a Worker handle |
+| Listening server | Rust and desktop TypeScript | Yes | One host-only `/server` subpath on Node, Bun, Deno, and Electron; no browser sockets |
+| `pg_dump` / `psql` | Optional endpoint-oriented `oliphaunt-tools` / `@oliphaunt/tools` products on Rust and desktop TypeScript | Optional open-database `tools` feature | Optional `@oliphaunt/wasix-tools` package on every host; `pgDump` supports root, direct, and Worker handles, while `psql` supports all three native placements or a browser Worker handle |
 | Independent client sessions | Native server only | No; the local endpoint accepts one connected client at a time | No |
 
 The native SDKs and both WASIX bindings expose callback raw-protocol response
@@ -51,9 +51,10 @@ reader/writer API is promised.
 Choose a native SDK when the application ships native runtime artifacts and
 wants direct, helper-process, or server integration. Choose Rust WASIX when a
 Rust host needs the portable runtime, optional local endpoint, or packaged
-tools. Choose WASIX TypeScript for portable browser or Node/Bun/Deno embedding
-with memory or explicit persistent providers; add its optional tools package or
-host-specific server subpath only when the application needs those capabilities.
+tools. Choose WASIX TypeScript for browser Wasmer or Node/Bun/Deno/Electron WASIX Rust
+embedding with memory or explicit persistent providers; add its optional tools
+package or host-only `/server` subpath only when the application needs those
+capabilities.
 
 Native and WASIX packages never select or fall back to one another. Native and
 WASIX physical archives are family scoped; logical PostgreSQL dump/restore is

@@ -837,7 +837,7 @@ function assertReferencePageCoverage() {
       headings: [
         'Native selection',
         'Rust WASIX selection',
-        'Browser WASIX selection',
+        'WASIX TypeScript selection',
         'Platform Behavior',
         'Dependencies',
         'External Extensions',
@@ -1412,7 +1412,9 @@ function assertSdkInstallReleaseContracts() {
   for (const contract of [
     "npm:@oliphaunt/wasix-ts';",
     "npm:@oliphaunt/wasix-ts/storage/deno';",
-    'same npm package as browsers, Node.js, and Bun',
+    'same npm package as browsers, Node.js, Bun, and Electron',
+    '`--allow-ffi`, `--allow-read`, and',
+    '`app.asar.unpacked` beside',
   ]) {
     if (!wasixTypescriptDocs.includes(contract)) {
       fail(`WASIX TypeScript public docs must include ${JSON.stringify(contract)}`);

@@ -147,10 +147,14 @@ describe("normal publication plan", () => {
       .toThrow(/dependency cycle/u);
   });
 
-  test("real release selections are closed without pulling unrelated products", () => {
+  test("real release selections include exact embedded consumers without unrelated products", () => {
     const external = realSelection("src/extensions/external/vector/CHANGELOG.md");
     expect(external.release.directProducts).toEqual(["oliphaunt-extension-vector"]);
-    expect(external.release.releaseProducts).toEqual(["oliphaunt-extension-vector"]);
+    expect(external.release.releaseProducts).toEqual([
+      "oliphaunt-extension-vector",
+      "oliphaunt-wasix-napi",
+      "oliphaunt-wasix-ts",
+    ]);
     expect(external.catalog.products.map(({ id }) => id)).toEqual(external.release.requiredReleaseProducts);
     expect(external.topology.carrierCount).toBe(external.catalog.carriers.length);
 

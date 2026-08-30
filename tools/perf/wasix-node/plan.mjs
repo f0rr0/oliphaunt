@@ -3,8 +3,6 @@ import { readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative as relativePath, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { loadHostBuildContract } from '../../../src/bindings/wasix-ts/host/build-provenance.mjs';
-
 export const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 export const defaultPlanFile = resolve(
   repositoryRoot,
@@ -23,9 +21,22 @@ const COMPARISON_INTEGRITY =
 const COMPARISON_COMMIT = '25d0a55e1f1e4c59f26d9e125150dda88a33fd00';
 const COMPARISON_TREE_SHA256 = 'b3925de04c386f51859c1bf18c143b225e3850616718140dd32e8eb48e9a2c84';
 const FZSTD_VERSION = '0.1.1';
-const hostBuildContract = await loadHostBuildContract();
-const HOST_BUILD = hostBuildContract.provenance;
-const HOST_BUILD_INPUTS = hostBuildContract.inputs;
+const NATIVE_ADDON = Object.freeze({
+  schema: 'oliphaunt-wasix-napi-host-v1',
+  product: 'oliphaunt-wasix-napi',
+  binary: 'oliphaunt_wasix_napi.node',
+  addonAbiVersion: 1,
+  nodeApiVersion: 8,
+  profiles: Object.freeze(['standard', 'icu']),
+  build: Object.freeze({
+    cargoProfile: 'release',
+    incremental: false,
+    codegenUnits: 1,
+    lto: 'thin',
+    strip: 'symbols',
+    features: Object.freeze(['release']),
+  }),
+});
 const RUNTIME_BUILD = Object.freeze({
   profile: 'release',
   cflags: '-O2 -g0 -flto=thin',
@@ -37,11 +48,9 @@ const RUNTIME_BUILD = Object.freeze({
   wasmOptPreserveUnoptimized: '',
   compilerFlags: '',
   linkerFlags: '',
-  backendTiming: '0',
 });
-const GATED_TIMING_BOUNDARY = 'host-end-to-end-around-one-worker-rpc';
+const GATED_TIMING_BOUNDARY = 'host-end-to-end-around-one-isolation-rpc';
 const LOWER_GIT_SHA = /^[0-9a-f]{40}$/u;
-const LOWER_SHA256 = /^[0-9a-f]{64}$/u;
 const SAFE_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const SAFE_SETTING = /^[a-z][a-z0-9_]*$/u;
 const BULK_OPERATIONS = new Set([
@@ -75,7 +84,7 @@ function validateEngines(plan) {
   const candidate = object(engines.candidate, 'plan.engines.candidate');
   exactKeys(
     candidate,
-    ['hostBuild', 'package', 'runtimeBuild', 'storage', 'surfaces'],
+    ['nativeAddon', 'package', 'runtimeBuild', 'storage', 'surfaces'],
     'plan.engines.candidate',
   );
   validateCandidateIdentity(candidate);
@@ -89,7 +98,7 @@ function validateEngines(plan) {
       entrypoint: '@oliphaunt/wasix-ts/worker',
       executionBoundary: 'node-worker-thread',
       executionOwner: 'sdk-worker',
-      isolationImplementation: 'package-owned-worker-threads-rpc',
+      isolationImplementation: 'package-owned-worker-rpc',
       timingBoundary: GATED_TIMING_BOUNDARY,
     },
     'plan.engines.candidate.surfaces.worker',
@@ -99,7 +108,7 @@ function validateEngines(plan) {
     {
       callingContract: 'async',
       engine: 'candidate-direct',
-      entrypoint: '@oliphaunt/wasix-ts',
+      entrypoint: '@oliphaunt/wasix-ts/direct',
       executionBoundary: 'node-caller-realm',
       executionOwner: 'caller',
       isolationImplementation: 'none-caller-realm',
@@ -163,7 +172,11 @@ function validateEngines(plan) {
 function validateCandidateIdentity(candidate) {
   equal(candidate.package, PACKAGE_NAME, 'plan.engines.candidate.package');
   equal(candidate.storage, 'memory', 'plan.engines.candidate.storage');
-  assertHostBuildProvenance(candidate.hostBuild, HOST_BUILD, 'plan.engines.candidate.hostBuild');
+  assertNativeAddonContract(
+    candidate.nativeAddon,
+    NATIVE_ADDON,
+    'plan.engines.candidate.nativeAddon',
+  );
   assertRuntimeBuildConfiguration(
     object(candidate.runtimeBuild, 'plan.engines.candidate.runtimeBuild'),
     RUNTIME_BUILD,
@@ -355,6 +368,11 @@ export async function validateRepositoryBindings(plan) {
     `${relative(candidateFile)}.exports["."].node`,
   );
   equal(
+    candidate.exports?.['./direct']?.node,
+    './lib/direct.node.js',
+    `${relative(candidateFile)}.exports["./direct"].node`,
+  );
+  equal(
     candidate.exports?.['./worker']?.node,
     './lib/worker-entry.node.js',
     `${relative(candidateFile)}.exports["./worker"].node`,
@@ -393,14 +411,23 @@ export async function validateRepositoryBindings(plan) {
   if (!lock.includes(lockedControl)) {
     fail(`${relative(lockFile)} must lock the exact PGlite control and its expected integrity`);
   }
-  const hostInputDigests = [];
-  for (const input of HOST_BUILD_INPUTS) {
-    hostInputDigests.push(`${sha256(await readFile(resolve(repositoryRoot, input)))}\n`);
-  }
+  const nativeProductFile = resolve(repositoryRoot, 'src/runtimes/wasix-napi/package.json');
+  const nativeProduct = JSON.parse(await readFile(nativeProductFile, 'utf8'));
+  equal(nativeProduct.name, '@oliphaunt/wasix-napi', `${relative(nativeProductFile)}.name`);
   equal(
-    sha256(hostInputDigests.join('')),
-    plan.engines.candidate.hostBuild.inputsSha256,
-    'plan.engines.candidate.hostBuild.inputsSha256 for current host build inputs',
+    nativeProduct.oliphaunt?.addonAbiVersion,
+    plan.engines.candidate.nativeAddon.addonAbiVersion,
+    `${relative(nativeProductFile)}.oliphaunt.addonAbiVersion`,
+  );
+  equal(
+    nativeProduct.oliphaunt?.nodeApiVersion,
+    plan.engines.candidate.nativeAddon.nodeApiVersion,
+    `${relative(nativeProductFile)}.oliphaunt.nodeApiVersion`,
+  );
+  exactStringList(
+    nativeProduct.oliphaunt?.profiles,
+    plan.engines.candidate.nativeAddon.profiles,
+    `${relative(nativeProductFile)}.oliphaunt.profiles`,
   );
   return { candidate, harness };
 }
@@ -438,76 +465,97 @@ export function assertRuntimeBuildConfiguration(actual, expected, label = 'runti
   }
 }
 
-export function assertHostBuildProvenance(actual, expected, label = 'host build') {
+export function assertNativeAddonContract(actual, expected, label = 'native addon') {
   const fields = [
-    'guestConcurrency',
-    'inputsSha256',
-    'optimization',
-    'wasmerJsCommit',
-    'wasmerWasixVersion',
+    'addonAbiVersion',
+    'binary',
+    'build',
+    'nodeApiVersion',
+    'product',
+    'profiles',
+    'schema',
   ];
-  const actualBuild = object(actual, label);
-  const expectedBuild = object(expected, `${label} expectation`);
-  exactKeys(actualBuild, fields, label);
-  exactKeys(expectedBuild, fields, `${label} expectation`);
-  for (const build of [actualBuild, expectedBuild]) {
-    if (!LOWER_GIT_SHA.test(build.wasmerJsCommit)) {
-      fail(`${label}.wasmerJsCommit must be a full lowercase Git commit`);
-    }
-    nonEmptyString(build.wasmerWasixVersion, `${label}.wasmerWasixVersion`);
-    equal(
-      build.guestConcurrency,
-      'denied-for-oliphaunt-single-backend',
-      `${label}.guestConcurrency`,
-    );
-    if (!LOWER_SHA256.test(build.inputsSha256)) {
-      fail(`${label}.inputsSha256 must be a lowercase SHA-256 digest`);
-    }
-    const optimization = object(build.optimization, `${label}.optimization`);
+  const actualAddon = object(actual, label);
+  const expectedAddon = object(expected, `${label} expectation`);
+  exactKeys(actualAddon, fields, label);
+  exactKeys(expectedAddon, fields, `${label} expectation`);
+  for (const addon of [actualAddon, expectedAddon]) {
+    equal(addon.schema, 'oliphaunt-wasix-napi-host-v1', `${label}.schema`);
+    equal(addon.product, 'oliphaunt-wasix-napi', `${label}.product`);
+    equal(addon.binary, 'oliphaunt_wasix_napi.node', `${label}.binary`);
+    positiveInteger(addon.addonAbiVersion, `${label}.addonAbiVersion`, 1);
+    positiveInteger(addon.nodeApiVersion, `${label}.nodeApiVersion`, 8);
+    exactStringList(addon.profiles, ['standard', 'icu'], `${label}.profiles`);
+    const build = object(addon.build, `${label}.build`);
     exactKeys(
-      optimization,
-      ['cargoProfile', 'lto', 'rustOptLevel', 'wasmOpt'],
-      `${label}.optimization`,
+      build,
+      ['cargoProfile', 'codegenUnits', 'features', 'incremental', 'lto', 'strip'],
+      `${label}.build`,
     );
+    equal(build.cargoProfile, 'release', `${label}.build.cargoProfile`);
+    equal(build.incremental, false, `${label}.build.incremental`);
+    equal(build.codegenUnits, 1, `${label}.build.codegenUnits`);
+    equal(build.lto, 'thin', `${label}.build.lto`);
+    equal(build.strip, 'symbols', `${label}.build.strip`);
+    exactStringList(build.features, ['release'], `${label}.build.features`);
   }
-  equal(actualBuild.wasmerJsCommit, expectedBuild.wasmerJsCommit, `${label}.wasmerJsCommit`);
-  equal(
-    actualBuild.wasmerWasixVersion,
-    expectedBuild.wasmerWasixVersion,
-    `${label}.wasmerWasixVersion`,
-  );
-  equal(actualBuild.inputsSha256, expectedBuild.inputsSha256, `${label}.inputsSha256`);
-  equal(
-    actualBuild.optimization.cargoProfile,
-    expectedBuild.optimization.cargoProfile,
-    `${label}.optimization.cargoProfile`,
-  );
-  equal(
-    actualBuild.optimization.rustOptLevel,
-    expectedBuild.optimization.rustOptLevel,
-    `${label}.optimization.rustOptLevel`,
-  );
-  equal(actualBuild.optimization.lto, expectedBuild.optimization.lto, `${label}.optimization.lto`);
+  for (const field of ['schema', 'product', 'binary', 'addonAbiVersion', 'nodeApiVersion']) {
+    equal(actualAddon[field], expectedAddon[field], `${label}.${field}`);
+  }
+  exactStringList(actualAddon.profiles, expectedAddon.profiles, `${label}.profiles`);
+  for (const field of ['cargoProfile', 'incremental', 'codegenUnits', 'lto', 'strip']) {
+    equal(actualAddon.build[field], expectedAddon.build[field], `${label}.build.${field}`);
+  }
   exactStringList(
-    actualBuild.optimization.wasmOpt,
-    expectedBuild.optimization.wasmOpt,
-    `${label}.optimization.wasmOpt`,
+    actualAddon.build.features,
+    expectedAddon.build.features,
+    `${label}.build.features`,
   );
-  return actualBuild;
+  return actualAddon;
 }
 
-export async function installedHostBuildProvenance(packageManifestFile, expected) {
-  const file = resolve(dirname(packageManifestFile), 'lib/host/provenance.json');
-  let provenance;
-  try {
-    provenance = JSON.parse(await readFile(file, 'utf8'));
-  } catch (error) {
-    throw new Error(
-      `installed ${PACKAGE_NAME} host provenance is unreadable: ${describeError(error)}`,
-      { cause: error },
-    );
+export function assertNativeArtifactProvenance(carrier, expectedAddon, expectedArtifactSourceSha) {
+  assertNativeAddonContract(expectedAddon, expectedAddon, 'benchmark native addon contract');
+  if (!LOWER_GIT_SHA.test(expectedArtifactSourceSha ?? '')) {
+    fail('benchmark artifact source must be a full lowercase Git commit');
   }
-  return assertHostBuildProvenance(provenance, expected, `installed ${PACKAGE_NAME} host`);
+  if (carrier === undefined) fail('packed candidate has no native carrier');
+  const provenance = carrier.artifactProvenance;
+  const manifest = carrier.manifest;
+  const buildInputs = provenance?.buildInputs;
+  if (
+    provenance?.schema !== 'oliphaunt-wasix-napi-provenance-v1' ||
+    provenance.product !== expectedAddon.product ||
+    provenance.target !== carrier.target ||
+    provenance.artifactSourceSha !== expectedArtifactSourceSha ||
+    provenance.binary?.filename !== expectedAddon.binary ||
+    !/^[0-9a-f]{64}$/u.test(provenance.binary?.sha256 ?? '') ||
+    buildInputs?.schema !== 'oliphaunt-wasix-napi-build-inputs-v1' ||
+    buildInputs.target !== carrier.target ||
+    manifest?.oliphaunt?.target !== carrier.target ||
+    manifest.oliphaunt.addonAbiVersion !== expectedAddon.addonAbiVersion ||
+    manifest.oliphaunt.nodeApiVersion !== expectedAddon.nodeApiVersion ||
+    stableJson(manifest.oliphaunt.profiles) !== stableJson(expectedAddon.profiles)
+  ) {
+    fail('packed candidate native carrier differs from the benchmark addon/source contract');
+  }
+  const build = provenance.build;
+  const { targetTriple, ...portableBuild } = build ?? {};
+  if (
+    typeof targetTriple !== 'string' ||
+    targetTriple.length === 0 ||
+    stableJson(portableBuild) !== stableJson(expectedAddon.build) ||
+    targetTriple !== buildInputs.targetTriple
+  ) {
+    fail('packed candidate native carrier has incompatible optimized build provenance');
+  }
+  return {
+    carrier: carrier.name,
+    version: carrier.version,
+    target: carrier.target,
+    artifactProvenanceMember: carrier.artifactProvenanceMember,
+    artifactProvenance: provenance,
+  };
 }
 
 export function metricIds(plan) {

@@ -9,21 +9,37 @@ export type WasixStorageErrorCode =
 /** What is known about the latest storage generation after an operation fails. */
 export type WasixStorageCommitState = 'not-persisted' | 'persisted' | 'unchanged' | 'unknown';
 
+/** Native persistence boundary at which a storage failure was observed. */
+export type WasixStoragePhase =
+  | 'ownership'
+  | 'open'
+  | 'open-publication'
+  | 'operation'
+  | 'backup'
+  | 'close'
+  | 'restore-validation'
+  | 'restore-staging'
+  | 'restore-publication'
+  | 'restore-durability';
+
 /**
  * A persistence or ownership failure, kept distinct from PostgreSQL's
- * `PostgresError`. `code` is suitable for branching; `commitState` describes
- * only what is known about the stored generation. It does not by itself make
- * retrying an application transaction safe.
+ * `PostgresError`. `code` is suitable for branching, `phase` identifies the
+ * native persistence boundary, and `commitState` describes only what is known
+ * about the stored generation. None of these fields by itself makes retrying
+ * an application transaction safe.
  */
 export class WasixStorageError extends Error {
   readonly code: WasixStorageErrorCode;
   readonly commitState: WasixStorageCommitState;
+  readonly phase: WasixStoragePhase | undefined;
 
   constructor(
     message: string,
     options: Readonly<{
       code: WasixStorageErrorCode;
       commitState: WasixStorageCommitState;
+      phase?: WasixStoragePhase;
       cause?: unknown;
     }>,
   ) {
@@ -31,6 +47,7 @@ export class WasixStorageError extends Error {
     this.name = 'WasixStorageError';
     this.code = options.code;
     this.commitState = options.commitState;
+    this.phase = options.phase;
   }
 }
 
@@ -47,6 +64,7 @@ export function composeWasixStorageFailure(
     return new WasixStorageError(message, {
       code: primary.code,
       commitState: primary.commitState,
+      ...(primary.phase === undefined ? {} : { phase: primary.phase }),
       cause,
     });
   }

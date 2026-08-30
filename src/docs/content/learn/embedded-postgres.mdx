@@ -19,7 +19,7 @@ The product line has distinct native and WASIX hosts.
 | --- | --- |
 | Native `liboliphaunt` SDKs | Rust, Swift, Kotlin, React Native, TypeScript, and C ABI consumers |
 | Rust WASIX `oliphaunt-wasix` | Rust applications hosting the portable runtime |
-| WASIX TypeScript `@oliphaunt/wasix-ts` | Caller-realm root or explicit `/worker` entry point on browser, Node, Bun, or Deno; browsers may opt into IndexedDB or OPFS persistence and Node, Bun, and Deno hosts may opt into directory persistence |
+| WASIX TypeScript `@oliphaunt/wasix-ts` | Browser caller-realm root; native-host actor root, explicit `/direct`, or `/worker` on Node, Bun, Deno, and Electron; browsers may opt into IndexedDB or OPFS persistence and native hosts may opt into directory persistence |
 
 The products share storage, exact extension selection, structured errors, and
 lifecycle concepts. Backup/restore, server access, and persistence mechanisms

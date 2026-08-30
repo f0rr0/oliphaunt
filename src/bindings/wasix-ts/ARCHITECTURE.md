@@ -2,63 +2,54 @@
 
 ## Boundary
 
-`src/bindings/wasix-ts` and `src/bindings/wasix-rust` are peer bindings over
-`src/runtimes/liboliphaunt/wasix`. Neither binding is an implementation detail
-of the native TypeScript SDK. There is intentionally no source or package edge
-from this binding to `src/sdks/js`, `liboliphaunt-native`, `node-direct`, or the
-broker.
-
-The dependency direction is:
+`src/bindings/wasix-ts` is one public TypeScript API over two host adapters.
+The package export conditions, not a runtime option, select the adapter:
 
 ```text
-liboliphaunt-wasix portable assets
-                 |
-                 v
-  direct root or explicit /worker owner
-                 |
-                 v
-       PostgreSQL pgwire helpers
+browser/default                  node/bun/deno/electron
+      |                                      |
+      v                                      v
+patched Wasmer JavaScript host       napi-rs, Node-API 8 addon
+      |                                      |
+portable liboliphaunt-wasix       Rust actor, direct, Worker, server
+      `---------------------+----------------'
+                            v
+                 shared TypeScript database API
 ```
 
-Portable extension descriptors are a second input edge. Their package identity
-is runtime-specific but host-neutral, so browser, Node, Bun, and Deno WASIX adapters
-consume the same extension package:
+The browser adapter owns the portable runtime/seed descriptors and dynamic
+extension carrier installation. The server adapter owns no Wasmer JavaScript
+fallback: it loads one exact, prebuilt platform carrier whose Rust dependency
+embeds the runtime, AOT objects, cluster seed, tools, and supported extension
+catalog. Both execute the canonical WASIX guest and preserve its physical
+database and backup formats.
 
-```text
-@oliphaunt/extension-<name>-wasix
-        descriptor + portable carrier closure
-                         |
-                         v
-          carrier install/compatibility check
-                         +
-              stripped core manifest check
-                         |
-                         v
-                 WASIX host adapter
-```
+This boundary deliberately does not depend on `src/sdks/js`,
+`liboliphaunt-native`, `node-direct`, or the broker. The N-API product wraps the
+WASIX Rust binding; it is not a route into the native PostgreSQL SDK.
 
 Protocol and typed-query helpers are exact mirrors of `src/shared/js-core`.
 That is a shared semantic source, not a dependency on the native TypeScript
 product.
 
-The patched Wasmer host under `host/` is an implementation dependency
-of this binding, not another Oliphaunt runtime product. PostgreSQL binaries,
-PGDATA, and the canonical runtime manifest remain owned by
+The patched Wasmer host under `host/` is a browser-only implementation
+dependency of this binding, not another Oliphaunt runtime product. Browser
+PostgreSQL binaries, PGDATA, and the canonical runtime manifest remain owned by
 `liboliphaunt-wasix`; each extension product owns its separately versioned
-carrier envelope and portable extension bytes.
+portable carrier envelope. The N-API release embeds the corresponding frozen
+artifacts instead of resolving those bytes during application startup.
 
 The canonical guest also owns the backend-only single-backend spinlock and
 scalar-atomic specializations carried by PostgreSQL patches 0035 and 0036.
 They follow the guest into the Rust binding's AOT artifacts and the portable
-module used by the browser and Node-compatible direct root and explicit
-package-owned Workers; they
-are not a TypeScript or Node/Bun/Deno host optimization. Frontends, PGXS side modules,
-and concurrent PostgreSQL builds retain the normal atomic implementation. Host
-lifecycle stays separate. Both TypeScript execution surfaces assert the shared
-`OLIPHAUNT_WASIX_SINGLE_BACKEND=1` concurrency invariant and the pinned host
-denies guest process and thread creation under it. Both entrypoints use the
-Oliphaunt export driver and direct guest-memory protocol bridge that mirrors the
-Rust host; the public entrypoint does not select a second transport implementation.
+module used by the browser. They are not a TypeScript host optimization.
+Frontends, PGXS side modules, and concurrent PostgreSQL builds retain the normal
+atomic implementation. Each adapter asserts the shared
+`OLIPHAUNT_WASIX_SINGLE_BACKEND=1` concurrency invariant and denies guest
+process and thread creation under it. Browser root and `/worker` use the same
+Oliphaunt export driver. Native-host root, `/direct`, `/worker`, and `/server` use the
+same Rust WASIX semantics with different explicit owners. Placement changes
+ownership and hop count, not the PostgreSQL protocol contract.
 
 ## Browser lifecycle
 
@@ -134,27 +125,26 @@ smaller qualified side modules remain supported in a direct Window.
    through `PostgresMainLoopOnce`. Normal ErrorResponse returns receive the same
    top-level cleanup as trapping errors.
 7. `close` establishes a terminal admission cutoff and lets already accepted
-   database work drain. `/worker` applies a bounded orderly-shutdown deadline.
-   On expiry, it requests forced Worker termination and awaits that termination
-   attempt before any entrypoint-owned resource cleanup begins; the deadline
-   does not falsely bound the subsequent termination attempt. The direct owner
+   database work drain. The direct owner
    sends PostgreSQL Terminate through the same direct bridge, deactivates the
    embedded lifecycle, and runs its atexit exports synchronously in the owning
    realm. A successful close completes the
    provider's final persistence boundary. Every outcome attempts provider close,
    exclusive-lease release, and entrypoint-owned host-resource release. The
-   package Worker is terminated even when its close RPC rejects. The public
+   browser `/worker` waits for that close reply and then terminates its already
+   quiescent Worker; a Node-compatible `/worker` closes its native handle, posts
+   the reply, and exits itself. The public
    handle memoizes that single outcome and becomes closed after teardown settles;
-   a rejected close never advertises the destroyed Worker or guest as reusable.
-   If the package Worker terminates independently, shared session state makes the
+   a rejected close never advertises the destroyed owner or guest as reusable.
+   If the isolated owner terminates independently, shared session state makes the
    public handle closed immediately and prevents later work from crossing the
    dead transport. An explicit close still memoizes and reports that terminal
    failure while completing package-owned resource cleanup.
 8. Each public database handle registers an opaque generation token for
    best-effort forgotten-handle recovery. The finalizer holds no reference to
    the public owner and only schedules work after returning. It atomically
-   claims the exact still-active generation, then closes a root direct session
-   and its storage lease or force-terminates a `/worker` generation. Explicit close
+   claims the exact still-active generation, then schedules the same best-effort
+   close for that root, direct, or `/worker` generation. Explicit close
    unregisters the generation before teardown, so queued stale finalizers are
    harmless and cannot affect a later database.
 
@@ -164,53 +154,83 @@ narrow Oliphaunt export driver needed to match the Rust WASIX lifecycle; it is
 not a general synchronous WASIX process API. Generic Wasmer process streams
 remain upstream behavior and are not part of the TypeScript database surface.
 
-## Node, Bun, and Deno lifecycle
+## Node, Bun, Deno, and Electron lifecycle
 
-Node, Bun, and Deno select `lib/index.node.js`, `lib/index.bun.js`, or
-`lib/index.deno.js` through explicit package export conditions. Each facade
-loads the synchronous guest driver in the caller realm and creates no Worker.
-The matching conditional `/worker` facade uses the runtime's
-`node:worker_threads` compatibility surface and creates one
-`worker_threads.Worker`. That Worker reads package-relative runtime and
-extension `file:` URLs and calls the shared dispatcher around the direct driver
-without a second worker hop or stream pump. The root removes the RPC boundary
-and explicitly accepts blocking the calling JavaScript thread. Descriptor validation,
-archive verification, extension installation, query serialization, close
-semantics, and the memory default are not forked by execution surface.
+Native-host conditions load one Node-API 8 addon. The root constructs
+`NativeWasixActorDatabase`, which directly owns the Rust `AsyncOliphaunt`
+database actor. Bounded admission is synchronous, PostgreSQL runs on its one
+Rust owner thread, and completion settles the existing Promise on the importing
+JavaScript thread. This is the responsive default and adds one native queue hop.
 
-IndexedDB and OPFS remain browser-only and are rejected before a Node/Bun/Deno
-direct or Worker session starts. Directory persistence is exposed through matching
-`storage/node`, `storage/bun`, and `storage/deno` entrypoints backed by one
-portable managed-root provider with exclusive path ownership. No host falls back
-to native `@oliphaunt/ts`. Direct and explicit Worker entrypoints may themselves
-be imported from an application-owned worker thread. Directory ownership uses
-filesystem lock slots and exact owner tokens rather than `isMainThread`; callers
-must close before externally terminating their own realm. The managed Worker
-client can recover its exact child-owner lock after a child crash while the
-importing realm remains alive.
+The conditional `/direct` export constructs `NativeWasixDatabase` around
+synchronous `oliphaunt_wasix::Oliphaunt` on the importing JavaScript thread. It
+has the fewest hops and can block that event loop. The conditional `/worker`
+export creates one real package-owned Node-compatible Worker, which loads the
+same `/direct` implementation inside that Worker. It adds the requested
+JavaScript RPC hop and realm isolation without a child process or a second Rust
+owner thread. Native direct handles remain creator-thread-affine.
+
+Close establishes one admission cutoff. The actor drains accepted work and
+settles its terminal completion. Direct close runs on its owning thread. A
+package Worker closes its native database at quiescence, posts the close reply,
+then closes its parent port and exits itself; the parent does not terminate a
+Worker across an active Node-API frame. An unexpected Worker exit rejects
+pending work and leaves the public handle terminal.
+
+Query serialization, close semantics, the memory default, storage identity,
+and public errors remain TypeScript-owned. Descriptor validation also remains
+shared, but native release addons resolve validated extension SQL names against
+their compile-time catalog instead of expanding portable extension archives at
+open.
+
+IndexedDB and OPFS remain browser-only and are rejected before a native-host
+actor, direct, or Worker session starts. Directory persistence is exposed through matching
+`storage/node`, `storage/bun`, and `storage/deno` entrypoints. They preserve the
+shared managed-root descriptor and exclusive path ownership while Rust owns
+the database bytes and durability. No host falls back to native
+`@oliphaunt/ts`. Direct and explicit `/worker` entrypoints may themselves
+be imported from an application-owned worker thread. Rust holds one OS advisory
+lock for the managed-root lifetime, shared with direct Rust owners. There is no
+JavaScript marker lock to recover. Callers should still close before externally
+terminating their own realm.
 
 ## Protocol streams, tools, and local endpoints
 
-The public callback stream reuses the guest's COPY-aware hybrid transport. The
-root invokes its synchronous callback in the owning realm. `/worker` transfers
-at most 64 KiB per callback and blocks only its Worker with
-an atomic acknowledgement until the event-loop callback returns. Buffered raw
-protocol execution remains the simpler fast path when the complete response is
-already appropriate. A callback returning a Promise or thenable is rejected:
-asynchronous completion cannot acknowledge this synchronous backpressure
-contract, and the PostgreSQL session is poisoned conservatively.
-The callback is also an ownership boundary: it cannot queue work through the
-same database or transaction while that database is waiting for the chunk
-acknowledgement. Such reentry fails immediately instead of creating a hidden
-post-stream operation.
+The public callback stream reuses the guest's COPY-aware synchronous transport
+and emits at most 64 KiB per callback. Browser root and native `/direct` invoke
+the callback in their owning JavaScript realm. Browser and native-host
+Workers block only their Worker with a shared-memory acknowledgement until the
+importing-realm callback returns. The native actor uses a napi-rs thread-safe
+function with queue size one and waits for each JavaScript acknowledgement.
+Every path therefore preserves bounded backpressure and callback ordering.
 
-`@oliphaunt/wasix-tools` is an optional facade over the separately published
-`@oliphaunt/liboliphaunt-wasix-tools` asset carrier. `pg_dump` is compiled and
-run in the realm that already owns the database: the caller realm for the root
-or the existing database Worker for `/worker`. Its synchronous
-socket callbacks enter the already-stepped PostgreSQL backend directly, and an
-owned O(1) chunk deque returns responses without a second worker, shared
-channel, or Web Stream.
+Direct native requests borrow JavaScript input for the duration of their
+synchronous call. Actor requests copy into owned Rust admission data before the
+call returns. All native responses, backup archives, chunks, and tool output are
+ordinary V8-owned typed arrays with predictable detach and lifetime behavior.
+The Worker transport transfers eligible response `ArrayBuffer` values directly;
+there is no external-buffer finalizer crossing an isolate or environment exit.
+
+A callback returning a Promise or thenable is rejected: asynchronous
+completion cannot acknowledge this synchronous backpressure contract, and the
+PostgreSQL session is poisoned conservatively. The callback is also an
+ownership boundary: it cannot queue work through the same database or
+transaction while that database is waiting for the chunk acknowledgement. Such
+reentry fails immediately instead of creating a hidden post-stream operation.
+
+`@oliphaunt/wasix-tools` remains the optional public facade. In a browser it
+resolves the separately published `@oliphaunt/liboliphaunt-wasix-tools` asset
+carrier. `pg_dump` runs in the realm that already owns the database; `psql`
+uses a separate persistent browser tool worker because COPY input is genuinely
+full duplex. Its private pgwire connection has fixed, bounded shared-memory
+rings.
+
+Native release addons compile both frontends and the current extension catalog
+into every platform binary. Node.js, Bun, Deno, and Electron route `pg_dump` and
+`psql` through the existing Rust database owner on root, `/direct`, or `/worker` and do
+not resolve portable tool bytes at invocation time. This intentionally trades
+larger platform packages and a coordinated carrier release for fewer startup
+reads, decompressions, compilation steps, and runtime compatibility edges.
 
 The package export `@oliphaunt/wasix-ts/internal/tools` exists only so the
 version-matched `@oliphaunt/wasix-tools` package can reach this bridge. It is not
@@ -218,37 +238,24 @@ an application API or part of the stable SDK surface, is undocumented for app
 consumers, and may change only in lockstep with that companion package. Package
 checks reject any other low-level query or protocol subpath exports.
 
-`psql` keeps a separate, persistent tool worker because COPY input is genuinely
-full duplex: PostgreSQL can request later input while the frontend is still
-running. Its private pgwire connection has one fixed 256 KiB shared-memory ring
-in each direction and reads or writes at most 64 KiB at a time. These bounds
-provide four chunks of burst capacity and bounded backpressure; they are
-neither public tuning nor used by `pg_dump`.
-
-Both paths verify and cache the immutable compiled frontend module. Every
-invocation still receives a fresh Store, WASI process, stdio capture, and
-`/bin`, `/home`, and `/tmp` mounts, all released on every outcome. The real
-frontend module remains mounted at `/bin/<tool>`; server-only `/lib/postgresql`
-and `/share/postgresql` assets are not copied into frontend processes. Wasmer
-currently describes captured standard streams as character devices, so the
-runner marks only facade-owned `psql` invocations as noninteractive; standalone
-guest `psql` retains normal terminal detection.
-
 The database session is exclusively serialized. It resets PostgreSQL with
 `ROLLBACK`, `DISCARD ALL`, and the configured role before and after a tool, then
 publishes storage once after the final safe cleanup boundary. An uncertain tool
-transport outcome poisons the handle after making its stored state safe. This
-keeps `pg_dump` and `psql` out of the core database download and surface while
-still allowing browser tools without pretending the browser has a TCP stack.
+transport outcome poisons the handle after making its stored state safe. The
+tools remain outside the core public database surface on both adapters.
 
-The Node, Bun, and Deno server subpaths all export the same implementation. It
-adapts one loopback TCP or PostgreSQL-named Unix listener to that bounded
-connection bridge, rejects a concurrent client, and creates a fresh embedded
-backend for each admitted connection. Each server owns the managed Worker that
-the full-duplex bridge requires; changing the root database entrypoint does not
-move server execution into the listener realm. `ReadyForQuery` at idle is withheld until
-provider publication succeeds. The concurrent WASIX postmaster remains a
-separate runtime product rather than a mode of this single-backend SDK.
+The host-only `/server` subpath uses conditions to export the same implementation
+for Node, Bun, Deno, and Electron. It has no browser or default condition. The implementation
+constructs the Rust `OliphauntServer` through the same addon rather than
+adapting a JavaScript socket relay. It binds one loopback TCP or
+PostgreSQL-named Unix listener and serves one active client. Another connection
+may wait in the operating-system backlog, so consumers configure pools with a
+maximum size of one. Each admitted connection receives a fresh embedded
+backend. Server state, listener lifetime, and storage publication are
+Rust-owned; the TypeScript facade retains the
+existing Promise-shaped open/close and `closed` contract. The concurrent WASIX
+postmaster remains a separate runtime product rather than a mode of this
+single-backend SDK.
 
 ## Browser storage boundary
 
@@ -369,7 +376,8 @@ type WasixExtensionDescriptor = {
 This is structural rather than nominal so a generated extension package can be
 dependency-free; it does not import the host binding merely to acquire a brand.
 The literal `runtime: 'wasix'` still makes native descriptors statically
-incompatible, and the client runtime-validates the complete shape.
+incompatible with non-WASIX extension descriptors, and the client
+runtime-validates the complete shape.
 The binding keeps an internal validation/freezing helper for fixtures. It is not
 part of the consumer entrypoint and generated packages do not depend on it.
 
@@ -401,6 +409,16 @@ then verifies each archive's declared size/hash and overlays exactly its
 carrier-owned installed-file inventory. The core manifest is required to have
 `extensions: []` so it cannot quietly reclaim optional extension ownership.
 
+That byte-closure processing is the browser implementation. Node.js, Bun, Deno,
+and Electron retain the same public descriptor and perform its structural/runtime
+validation, but pass only the validated, dependency-ordered SQL names across
+the N-API boundary. The Rust runtime resolves those names against the exact
+extension features compiled into the release carrier. Unknown names fail; the
+addon never treats arbitrary descriptor bytes as native code. A new or upgraded
+extension can ship independently for browsers, but it becomes available to
+native-host consumers only after the N-API product is rebuilt and released
+with that feature.
+
 ## Host compatibility
 
 The host is rebuilt from source rather than maintained as hand-edited generated
@@ -409,8 +427,8 @@ crates; the adjacent patches are the reviewable compatibility delta. The build
 lands first in `target/oliphaunt-wasix-ts/host`. Public package staging copies
 the exact JS module, worker module, WebAssembly module, license, and provenance
 into `lib/host`; the browser root imports the host in the caller realm, while
-root and Worker entrypoints on every host import the same package-relative
-module.
+the browser `/worker` imports it in its package Worker. Node.js, Bun, Deno, and Electron
+conditions do not import this module.
 
 This is not a general backport of WASIX 0.702 to Wasmer 0.601. The authoritative
 patch order is the `series` in `host/source.toml`; this document records the
@@ -496,9 +514,9 @@ Oliphaunt deliberately uses an environment-gated Wasmer exception discriminator
 instead of Emscripten's numeric sentinel, but preserves the same separation
 between control-flow recovery and the pgwire `PostgresError` seen by callers.
 Lifecycle SQL for a selectively imported extension runs in the owning realm.
-Worker errors are serialized by PostgreSQL field and rebuilt in the caller;
+Isolated-host errors are serialized by PostgreSQL field and rebuilt in the caller;
 direct errors retain the same `PostgresError` identity in place. Generic
-Worker errors retain their name, message, and owner-side stack. Neither path
+transport errors retain their name, message, and owner-side stack. Neither path
 collapses SQLSTATE and diagnostics into a generic error.
 
 PGlite is also a useful ordering reference: it stages extension archives and
@@ -539,26 +557,46 @@ because the single-backend runtime has not qualified that capability.
 
 ## Asset ownership
 
-The binding does not commit or package PostgreSQL binaries. Its ordinary open
-path imports `@oliphaunt/liboliphaunt-wasix`, whose generated descriptor points
-at package-owned runtime, PGDATA, and manifest assets. There is no public raw
-runtime-source override. Development reads `target/oliphaunt-wasix/assets`,
-produced by `liboliphaunt-wasix:runtime-portable`, through the root browser
-example's Vite plugin, which models that generated carrier. Optional extensions
-remain exact, separately imported `-wasix` carriers; they do not become an
-implicit browser SDK bundle.
-Their package versions follow the owning extension product's existing release
-and changelog stream, so WASIX is another carrier rather than an independently
-versioned product.
+The `@oliphaunt/wasix-ts` tarball does not contain PostgreSQL binaries. Browser
+conditions import `@oliphaunt/liboliphaunt-wasix`, whose generated descriptor
+points at package-owned runtime, PGDATA, and manifest assets. There is no public
+raw runtime-source override. Development reads
+`target/oliphaunt-wasix/assets`, produced by
+`liboliphaunt-wasix:runtime-portable`, through the browser example's Vite
+plugin, which models that generated carrier.
+
+Node.js, Bun, Deno, and Electron also receive one target-filtered optional dependency.
+The public carriers are
+`@oliphaunt/wasix-napi-darwin-arm64`,
+`@oliphaunt/wasix-napi-linux-arm64-gnu`,
+`@oliphaunt/wasix-napi-linux-x64-gnu`, and
+`@oliphaunt/wasix-napi-win32-x64-msvc`. Each has no install script and contains
+one `oliphaunt_wasix_napi.node` binary with both standard and ICU profiles. The private
+`@oliphaunt/wasix-napi` product coordinates the Rust build and carrier release;
+applications never import it.
+
+Linux carriers are GNU/glibc-only. The adapter identifies libc from the
+runtime diagnostic report before resolving package-adjacent, optional, or
+explicit addon paths; known musl and unknown libc identities fail closed.
+
+Native release builds embed the runtime, seed, AOT objects, frontend tools, and
+complete currently supported extension feature set. Optional extensions remain
+exact, separately imported `-wasix` packages at the public TypeScript boundary,
+but native hosts use their descriptor identity to select compiled-in artifacts
+instead of copying the carrier bytes. Their availability is consequently a
+release-time N-API contract.
 
 The source workspace manifest deliberately does not resolve that generated
 carrier from npm: the carrier exists only after same-candidate runtime assets
 are frozen. SDK release staging injects the exact dependency recorded by
 `oliphaunt.runtimeVersion`, validates it, and publishes only that staged
 manifest. This keeps fresh frozen workspace installs independent of an
-unpublished candidate while making the consumer tarball's runtime edge exact.
-The Node, Bun, and Deno consumer smokes use the same staging function, not a test-only package
-rewrite.
+unpublished candidate while making the consumer tarball's browser runtime edge
+exact. The same staging step rewrites every native optional dependency to the
+exact N-API product version. The loader rejects a carrier whose package name,
+version, target, WASIX runtime, addon ABI, Node-API level, or profile inventory do
+not match the SDK metadata; the addon then self-reports its runtime and exact
+supported profile inventory before open.
 
 The release runtime carrier owns a stripped core manifest (`extensions: []`).
 The development Vite plugin projects the same core-only bytes from the build
@@ -587,22 +625,30 @@ bundle.
 ## Public package and qualification
 
 `@oliphaunt/wasix-ts` is a separately versioned public SDK product. It has its own
-release metadata and changelog, declares an exact dependency on the published
-`@oliphaunt/liboliphaunt-wasix` runtime carrier, and publishes the patched host
-under `lib/host`. Conditional package exports choose browser, Node, Bun, or Deno
-adapters. The root import is always caller-owned; the conditional `/worker`
-subpath is always Worker-owned.
+release metadata and changelog, declares an exact browser dependency on the
+published `@oliphaunt/liboliphaunt-wasix` runtime carrier, and declares the four
+exact native packages as optional dependencies. It publishes the patched host
+under `lib/host` for browser/default conditions. Conditional package exports
+choose browser, Node.js, Bun, Deno, or Electron adapters. Browser root remains
+caller-owned; the native-host root uses the Rust actor, `/direct` is caller-owned, and
+the conditional `/worker` subpath is owned by its isolated Worker.
 
 The browser smoke proves the exact runtime/host pairing can start PostgreSQL,
 explicitly activate `pgtap`, retain SQLSTATE across repeated PostgreSQL error recovery,
 continue with `42` on the same handle, persist through IndexedDB operation
 boundaries, run an explicit `CHECKPOINT` through `execute`, and close with a
-successful zero exit status. Each Node/Bun/Deno host smoke installs packed release
-candidates into a fresh external project, verifies the runtime selects its conditional export,
-starts the same portable runtime with package-relative assets, explicitly activates
-`pgtap`, recovers from an error, and closes cleanly. The opt-in native browser
-profile additionally loads and calls the canonical `pg_uuidv7.so`; it remains
-a narrow canary rather than a generic dynamic-extension claim.
+successful zero exit status. Each Node.js, Bun, Deno, and Electron host smoke installs the
+packed SDK and matching packed platform carrier into a fresh external project,
+verifies conditional-export and profile selection, starts the embedded
+WASIX Rust runtime, activates a compiled extension, recovers from an error, and
+closes cleanly. Each carrier also runs a real actor Simple Query roundtrip and
+proves its V8-owned response buffer is transferable; Node additionally proves
+direct and local-server lifecycles. The Deno proof uses local `node_modules`
+with explicit read, environment, and FFI permissions and qualifies the declared
+Deno CLI range, not managed Deno Deploy. Electron additionally qualifies the
+ASAR-unpacked native-addon layout. The opt-in native browser profile
+additionally loads and calls the canonical `pg_uuidv7.so`; it remains a narrow
+canary rather than a generic dynamic-extension claim.
 
 The intentional host, persistence, extension, and Wasmer compatibility limits
 remain listed in [README.md](./README.md). They are explicit product boundaries,

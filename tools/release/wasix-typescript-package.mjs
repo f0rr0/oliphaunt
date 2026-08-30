@@ -14,6 +14,13 @@ const PACKAGE_NAME = '@oliphaunt/wasix-ts';
 const RUNTIME_PACKAGE = '@oliphaunt/liboliphaunt-wasix';
 const FZSTD_PACKAGE = 'fzstd';
 const FZSTD_VERSION = '0.1.1';
+const NATIVE_PRODUCT = 'oliphaunt-wasix-napi';
+const NATIVE_PACKAGES = Object.freeze([
+  '@oliphaunt/wasix-napi-darwin-arm64',
+  '@oliphaunt/wasix-napi-linux-arm64-gnu',
+  '@oliphaunt/wasix-napi-linux-x64-gnu',
+  '@oliphaunt/wasix-napi-win32-x64-msvc',
+]);
 const NOTICE_OPTIONS = Object.freeze({ profile: 'source-sdk' });
 
 // One deliberate package contract is consumed by the source dry-run and the
@@ -44,6 +51,10 @@ export const WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES = Object.freeze([
   'lib/descriptor-validation.js',
   'lib/direct-client-common.d.ts',
   'lib/direct-client-common.js',
+  'lib/direct-client.d.ts',
+  'lib/direct-client.js',
+  'lib/direct.node.d.ts',
+  'lib/direct.node.js',
   'lib/errors.d.ts',
   'lib/errors.js',
   'lib/extension-descriptor.d.ts',
@@ -80,24 +91,20 @@ export const WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES = Object.freeze([
   'lib/node-client-common.js',
   'lib/node-direct.d.ts',
   'lib/node-direct.js',
-  'lib/node-directory-lock.d.ts',
-  'lib/node-directory-lock.js',
-  'lib/node-environment.d.ts',
-  'lib/node-environment.js',
-  'lib/node-fs-commit-state.d.ts',
-  'lib/node-fs-commit-state.js',
-  'lib/node-host.d.ts',
-  'lib/node-host.js',
-  'lib/node-tool-worker.d.ts',
-  'lib/node-tool-worker.js',
+  'lib/native-addon.d.ts',
+  'lib/native-addon.js',
+  'lib/native-server.d.ts',
+  'lib/native-server.js',
+  'lib/native-session.d.ts',
+  'lib/native-session.js',
+  'lib/node-actor.d.ts',
+  'lib/node-actor.js',
   'lib/node-worker-options.d.ts',
   'lib/node-worker-options.js',
   'lib/node-worker-port.d.ts',
   'lib/node-worker-port.js',
   'lib/node-worker.d.ts',
   'lib/node-worker.js',
-  'lib/node-zstd.d.ts',
-  'lib/node-zstd.js',
   'lib/pgwire.d.ts',
   'lib/pgwire.js',
   'lib/pgwire-connection.d.ts',
@@ -134,8 +141,6 @@ export const WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES = Object.freeze([
   'lib/storage/indexed-db-provider.js',
   'lib/storage/indexed-db.d.ts',
   'lib/storage/indexed-db.js',
-  'lib/storage/node-directory-provider.d.ts',
-  'lib/storage/node-directory-provider.js',
   'lib/storage/node.d.ts',
   'lib/storage/node.js',
   'lib/storage/opfs-provider.d.ts',
@@ -215,31 +220,36 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
     fail(`${label} must not publish development scripts or dependencies`);
   }
   const dependencies = manifest.dependencies ?? {};
+  const optionalDependencies = manifest.optionalDependencies ?? {};
   const expectedDependencies = [FZSTD_PACKAGE, RUNTIME_PACKAGE].sort(compareText);
+  const nativeVersion = manifest.oliphaunt?.wasixNapiVersion;
   if (
     JSON.stringify(sortedKeys(dependencies)) !== JSON.stringify(expectedDependencies)
     || typeof dependencies[RUNTIME_PACKAGE] !== 'string'
     || !/^\d+\.\d+\.\d+$/u.test(dependencies[RUNTIME_PACKAGE])
     || dependencies[FZSTD_PACKAGE] !== FZSTD_VERSION
-    || sortedKeys(manifest.optionalDependencies).length !== 0
+    || typeof nativeVersion !== 'string'
+    || !/^\d+\.\d+\.\d+$/u.test(nativeVersion)
+    || JSON.stringify(sortedKeys(optionalDependencies))
+      !== JSON.stringify([...NATIVE_PACKAGES].sort(compareText))
+    || NATIVE_PACKAGES.some((name) => optionalDependencies[name] !== nativeVersion)
     || sortedKeys(manifest.peerDependencies).length !== 0
     || manifest.peerDependenciesMeta !== undefined
     || manifest.bundledDependencies !== undefined
     || manifest.bundleDependencies !== undefined
   ) {
     fail(
-      `${label} must depend only on the exact portable runtime and decompression packages`,
+      `${label} must depend only on the exact portable runtime, decompressor, and native platform carriers`,
     );
   }
   const root = manifest.exports?.['.'];
   const expectedExports = [
     '.',
+    './direct',
     './worker',
     './package.json',
     './internal/tools',
-    './server/bun',
-    './server/deno',
-    './server/node',
+    './server',
     './storage/bun',
     './storage/deno',
     './storage/indexed-db',
@@ -274,6 +284,17 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
   ) {
     fail(`${label} must expose the exact browser, Node, Bun, and Deno worker entrypoint`);
   }
+  const direct = manifest.exports?.['./direct'];
+  if (
+    JSON.stringify(Object.keys(direct ?? {}))
+      !== JSON.stringify(['types', 'deno', 'bun', 'node'])
+    || direct?.types !== './lib/direct.node.d.ts'
+    || direct?.deno !== './lib/direct.node.js'
+    || direct?.bun !== './lib/direct.node.js'
+    || direct?.node !== './lib/direct.node.js'
+  ) {
+    fail(`${label} must expose one exact host-only conditional direct entrypoint`);
+  }
   const internalTools = manifest.exports?.['./internal/tools'];
   if (
     internalTools?.types !== './lib/internal.d.ts'
@@ -285,15 +306,16 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
   ) {
     fail(`${label} must expose the exact version-locked optional-tools bridge`);
   }
-  for (const runtime of ['node', 'bun', 'deno']) {
-    const server = manifest.exports?.[`./server/${runtime}`];
-    if (
-      server?.types !== './lib/server.node.d.ts'
-      || server?.[runtime] !== './lib/server.node.js'
-      || sortedKeys(server).some((condition) => !['types', runtime].includes(condition))
-    ) {
-      fail(`${label} must expose the local server only under the ${runtime} condition`);
-    }
+  const server = manifest.exports?.['./server'];
+  if (
+    JSON.stringify(Object.keys(server ?? {}))
+      !== JSON.stringify(['types', 'deno', 'bun', 'node'])
+    || server?.types !== './lib/server.node.d.ts'
+    || server?.deno !== './lib/server.node.js'
+    || server?.bun !== './lib/server.node.js'
+    || server?.node !== './lib/server.node.js'
+  ) {
+    fail(`${label} must expose one exact host-only conditional local-server entrypoint`);
   }
   const nodeStorage = manifest.exports?.['./storage/node'];
   if (
@@ -354,8 +376,13 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
   if (
     manifest.oliphaunt?.runtimeProduct !== 'liboliphaunt-wasix'
     || manifest.oliphaunt?.runtimeVersion !== dependencies[RUNTIME_PACKAGE]
+    || manifest.oliphaunt?.wasixNapiProduct !== NATIVE_PRODUCT
+    || manifest.oliphaunt?.wasixAddonAbiVersion !== 1
+    || manifest.oliphaunt?.nodeApiVersion !== 8
+    || manifest.oliphaunt?.browserHost !== 'wasmer-js-patched'
+    || manifest.oliphaunt?.serverHost !== 'wasix-rust-napi'
   ) {
-    fail(`${label} runtime compatibility metadata differs from its exact dependency`);
+    fail(`${label} runtime compatibility metadata differs from its exact dependencies`);
   }
   return manifest;
 }
@@ -375,6 +402,15 @@ export function prepareWasixTypescriptPackage(packageDir) {
   manifest.dependencies = Object.fromEntries(
     Object.entries({ ...(manifest.dependencies ?? {}), [RUNTIME_PACKAGE]: runtimeVersion })
       .sort(([left], [right]) => compareText(left, right)),
+  );
+  const nativeVersion = manifest.oliphaunt?.wasixNapiVersion;
+  if (typeof nativeVersion !== 'string' || !/^\d+\.\d+\.\d+$/u.test(nativeVersion)) {
+    fail(`${PACKAGE_NAME} source manifest must declare an exact oliphaunt.wasixNapiVersion`);
+  }
+  manifest.optionalDependencies = Object.fromEntries(
+    NATIVE_PACKAGES.map((name) => [name, nativeVersion]).sort(([left], [right]) =>
+      compareText(left, right),
+    ),
   );
   delete manifest.devDependencies;
   delete manifest.scripts;
@@ -421,17 +457,29 @@ export function assertWasixTypescriptNpmArchive(archive) {
   }
   for (const name of requiredPackageFiles) requireFile(name);
   const browserWorker = requireFile('lib/worker.js').toString('utf8');
+  const nodeActor = requireFile('lib/node-actor.js').toString('utf8');
   const nodeWorker = requireFile('lib/node-worker.js').toString('utf8');
+  const nodeIsolatedClient = requireFile('lib/worker-node-client.js').toString('utf8');
   const nodeDirect = requireFile('lib/node-direct.js').toString('utf8');
+  const nativeAddon = requireFile('lib/native-addon.js').toString('utf8');
+  const server = requireFile('lib/server.node.js').toString('utf8');
   if (
     !browserWorker.includes(esmImportFrom('./host/index.mjs'))
+    || !nodeActor.includes(esmImportFrom('./native-session.js'))
     || !nodeWorker.includes(esmImportFrom('./node-direct.js'))
-    || !nodeDirect.includes(esmImportFrom('./node-host.js'))
+    || !nodeIsolatedClient.includes(esmImportFrom('node:worker_threads'))
+    || !nodeIsolatedClient.includes("new URL('./node-worker.js', import.meta.url)")
+    || !nodeDirect.includes(esmImportFrom('./native-session.js'))
+    || !nativeAddon.includes(esmImportFrom('node:module'))
+    || !server.includes(esmImportFrom('./native-server.js'))
+    || nodeDirect.includes(esmImportFrom('./node-host.js'))
     || browserWorker.includes('@wasmer/sdk')
+    || nodeActor.includes('@wasmer/sdk')
     || nodeWorker.includes('@wasmer/sdk')
+    || nodeIsolatedClient.includes(esmImportFrom('node:child_process'))
     || nodeDirect.includes('@wasmer/sdk')
   ) {
-    fail(`${path.basename(file)} workers do not resolve the package-relative patched host`);
+    fail(`${path.basename(file)} does not preserve the browser host and native server split`);
   }
   JSON.parse(requireFile('lib/host/provenance.json').toString('utf8'));
   return manifest;

@@ -1,24 +1,13 @@
 import { WasixDatabaseImpl } from './database.js';
-import { DirectWasixSession, type DirectWasixHost } from './direct-client-common.js';
-import * as host from './node-host.js';
-import { installNodeEnvironment } from './node-environment.js';
+import { NativeWasixSession } from './native-session.js';
 import type { SerializedOpenOptions } from './rpc.js';
 import type { OliphauntDatabase } from './types.js';
 
-const directHost: DirectWasixHost = {
-  Directory: host.Directory,
-  init: host.init,
-  instantiateOliphauntDirect: host.instantiateOliphauntDirect,
-  prepareOliphauntTool: host.prepareOliphauntTool,
-  runOliphauntToolDirect: host.runOliphauntToolDirect,
-};
-
-/** @internal Own one Node-realm WASIX session without an RPC boundary. */
+/** @internal Own one synchronous Rust WASIX session in the current JS realm. */
 export async function openNodeDirectSession(
   options: SerializedOpenOptions,
-): Promise<DirectWasixSession> {
-  installNodeEnvironment();
-  return DirectWasixSession.open(options, directHost, undefined, 'node');
+): Promise<NativeWasixSession> {
+  return NativeWasixSession.open(options);
 }
 
 /** @internal Open the public database contract in the current Node realm. */

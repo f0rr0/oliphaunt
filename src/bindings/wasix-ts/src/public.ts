@@ -2,6 +2,7 @@ export {
   type WasixStorageCommitState,
   WasixStorageError,
   type WasixStorageErrorCode,
+  type WasixStoragePhase,
 } from './errors.js';
 export {
   array,

@@ -5,10 +5,9 @@ import { defineDirectoryStorage, type PersistentWasixStorage } from '../storage.
 /**
  * Persist a managed database below a Node.js host directory.
  *
- * The selected path contains Oliphaunt metadata and a `pgdata` child. The
- * adapter publishes only paths mutated by PostgreSQL at every completed
- * operation boundary and uses WAL-first durable host writes. Network and
- * cross-host shared filesystems are unsupported.
+ * Rust opens the selected managed root directly, owns its OS advisory lock,
+ * and performs PostgreSQL-safe durable writes at each native operation
+ * boundary. Network and cross-host shared filesystems are unsupported.
  */
 export function directory(path: string | URL): PersistentWasixStorage {
   return defineDirectoryStorage(typeof path === 'string' ? path : fileURLToPath(path));

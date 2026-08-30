@@ -74,13 +74,13 @@ await using database = await Oliphaunt.open();
 const result = await database.query('select $1::int + 1 as answer', [41]);
 ```
 
-The package runs in a browser, Node.js, Bun, or Deno. Its root entry point owns
-execution in the importing JavaScript realm. Its methods return promises, but
-synchronous PostgreSQL guest work can block that realm. Applications that need
-the caller's event loop to remain responsive import
-`@oliphaunt/wasix-ts/worker`; it owns a Web Worker or Node-compatible worker
-thread. Execution placement is selected by that import boundary. Browser
-execution requires cross-origin isolation.
+The package runs in a browser, Node.js, Bun, Deno, or Electron. In browsers the
+root owns execution in the importing JavaScript realm. On native hosts the
+root uses a dedicated Rust owner thread and keeps the importing event loop
+responsive. Import `@oliphaunt/wasix-ts/direct` for the lowest-overhead
+caller-realm native placement, or `@oliphaunt/wasix-ts/worker` for a separate
+JavaScript Worker realm on every runtime. Browser execution requires
+cross-origin isolation.
 
 Memory is the default. Persistent providers are selective imports:
 
@@ -91,7 +91,7 @@ IndexedDB hydrates a Wasmer memory directory and publishes journaled changes.
 OPFS Worker execution uses synchronous access handles for exact-range I/O to an
 opaque backing-file pool; the root direct entry point and browsers without that
 facility publish the same journal to that same format.
-Node, Bun, and Deno directory providers publish below the managed root's
+Node, Bun, Deno, and Electron directory providers publish below the managed root's
 `pgdata` child. Ordinary operations complete a provider boundary after
 `ReadyForQuery`; callback transactions do so once after confirmed `COMMIT` or
 `ROLLBACK`. A new persistent direct-OPFS database uses one separate internal
@@ -126,19 +126,22 @@ escape hatch on a database/root handle. Managed transaction and server handles
 have no raw bypass. Transaction ownership is derived from exact backend command
 tags and its terminal readiness status; manual lifecycle SQL and `AND CHAIN`
 are unsupported, while savepoints and `ROLLBACK TO` remain valid. The optional
-`@oliphaunt/wasix-tools` package runs standard plain
-`pg_dump` against direct or Worker handles and non-interactive `psql` against a
-Worker handle, including in browsers. It preserves PostgreSQL's normal
-COPY-based plain dump rather than rewriting it.
+`@oliphaunt/wasix-tools` package runs standard plain `pg_dump` against root,
+direct, or Worker handles. Non-interactive `psql` supports any handle on Node,
+Bun, Deno, and Electron and requires a Worker handle in browsers. It preserves PostgreSQL's
+normal COPY-based plain dump rather than rewriting it.
 
-Node, Bun, and Deno applications may import `openServer` from the matching
-`@oliphaunt/wasix-ts/server/*` subpath. It opens a loopback TCP endpoint or a
-PostgreSQL-named Unix socket and admits one complete client connection at a
-time, matching the single embedded backend; concurrent connections are
-rejected. The listener and storage lease persist, while each admitted client
+Node, Bun, Deno, and Electron applications may import `openServer` from the shared
+host-only `@oliphaunt/wasix-ts/server` subpath. It opens a loopback TCP endpoint
+or a PostgreSQL-named Unix socket and services one complete client connection
+at a time, matching the single embedded backend. An additional connection can
+wait in the operating-system listen backlog, so callers should configure pools
+with a maximum size of one instead of relying on deterministic concurrent
+rejection. The listener and storage lease persist, while each admitted client
 receives a fresh backend. The returned handle exposes only `connectionString`,
 closed state, close, and asynchronous disposal; the external driver or ORM owns
-all SQL, transactions, and cancellation. Browsers have no server subpath.
+all SQL, transactions, and connection lifecycle. PostgreSQL wire
+`CancelRequest` is not supported yet. Browsers have no server export.
 This compatibility endpoint remains distinct from the concurrent
 `liboliphaunt-wasix-postmaster` product.
 
@@ -161,8 +164,8 @@ Rust and TypeScript filesystem roots share:
 - PostgreSQL 18 and `wasix-pg18-v1` as the physical key;
 - the exact five-key physical archive manifest.
 
-Ownership mechanisms remain local. Rust and Node/Bun/Deno TypeScript hosts use
-their own stable sibling owners outside the managed root and outside backups;
+Ownership mechanisms remain local. Rust and Node/Bun/Deno/Electron TypeScript
+hosts use Rust OS advisory owners outside the managed root and outside backups;
 browser TypeScript uses Web Locks. Cross-binding root handoff is not a supported
 or qualified workflow, and the mechanisms deliberately do not coordinate it.
 
@@ -173,8 +176,8 @@ The canonical PostgreSQL WASIX patches and guest lifecycle live under
 remain with the binding that needs them:
 
 - Rust owns Wasmer-native filesystem, socket, and Rust stream integration;
-- TypeScript owns Web Workers, worker threads, IndexedDB, OPFS, Web Locks, and
-  JavaScript stream/value shapes.
+- TypeScript owns JavaScript Workers, native actor/direct placement, IndexedDB,
+  OPFS, Web Locks, and JavaScript stream/value shapes.
 
 Do not introduce a second control WebAssembly module or a universal filesystem
 interface merely to share host-specific code. Share a contract or fixture when

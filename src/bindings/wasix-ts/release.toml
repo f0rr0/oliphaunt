@@ -9,13 +9,20 @@ registry_packages = [
 release_artifacts = [
   "npm-package",
   "browser-worker",
-  "node-bun-deno-worker-threads",
+  "node-bun-deno-electron-node-api",
+  "node-bun-deno-electron-native-actor",
+  "node-bun-deno-electron-worker",
 ]
 
 [compatibility_versions.oliphaunt-wasix-ts-runtime]
 source_product = "liboliphaunt-wasix"
 path = "src/bindings/wasix-ts/package.json"
 parser = "json:oliphaunt.runtimeVersion"
+
+[compatibility_versions.oliphaunt-wasix-ts-napi]
+source_product = "oliphaunt-wasix-napi"
+path = "src/bindings/wasix-ts/package.json"
+parser = "json:oliphaunt.wasixNapiVersion"
 
 [compatibility_versions.oliphaunt-wasix-tools-runtime]
 source_product = "liboliphaunt-wasix"

@@ -1,4 +1,5 @@
 import {
+  WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES,
   WasixDatabaseImpl,
   createWasixDeferred,
   normalizeWasixDatabaseIdentity,
@@ -21,7 +22,11 @@ import { deserializeWorkerError } from './rpc.js';
 import type { WasixStorageSyncBoundary } from './storage-provider.js';
 import type { BinaryInput, OliphauntDatabase, OpenConfig } from './types.js';
 import type { WasixProtocolConnection } from './pgwire-connection.js';
-import type { WasixPgDumpProcessOptions, WasixToolProcessResult } from './tool-runtime.js';
+import type {
+  WasixPgDumpProcessOptions,
+  WasixToolProcessOptions,
+  WasixToolProcessResult,
+} from './tool-runtime.js';
 
 type WorkerResponseValue =
   | Uint8Array
@@ -39,23 +44,32 @@ type WorkerRequestWithoutId = WorkerRequest extends infer Request
   : never;
 
 export type WasixWorkerPort = {
+  /** Shared memory is available only for a same-process Worker transport. */
+  readonly supportsSharedMemory?: boolean;
   postMessage(message: WorkerRequest, transfer: readonly Transferable[]): void;
+  /** Mark and await a Worker-initiated exit after its quiescent close reply. */
+  expectSelfExit?(): Promise<void>;
   terminate(): void | Promise<void>;
   onMessage(listener: (message: WorkerResponse) => void): void;
   onFatal(listener: (error: Error) => void): void;
 };
 
-/** @internal Open through a package-owned Worker without burdening the direct root graph. */
+/** @internal Open through a package-owned isolated host without burdening the direct graph. */
 export async function openWasixWithWorker(
   createWorker: (options: SerializedOpenOptions) => WasixWorkerPort,
   openOptions: SerializedOpenOptions,
   validate?: (options: SerializedOpenOptions) => void,
+  transferAssets = true,
 ): Promise<OliphauntDatabase> {
   validate?.(openOptions);
-  return openWorkerDatabase(createWorker(openOptions), openOptions, assetTransfers(openOptions));
+  return openWorkerDatabase(
+    createWorker(openOptions),
+    openOptions,
+    transferAssets ? assetTransfers(openOptions) : [],
+  );
 }
 
-/** @internal Restore through a temporary package-owned Worker. */
+/** @internal Restore through a temporary package-owned isolated host. */
 export async function restoreWasixWithWorker(
   createWorker: (options: SerializedOpenOptions) => WasixWorkerPort,
   storage: OpenConfig['storage'],
@@ -147,6 +161,10 @@ export class WorkerRpc {
     worker.onFatal((error) => this.#fail(error));
   }
 
+  get supportsSharedMemory(): boolean {
+    return this.#worker.supportsSharedMemory !== false;
+  }
+
   request(
     request: WorkerRequestWithoutId,
     transfer: Transferable[] = [],
@@ -209,6 +227,15 @@ export class WorkerRpc {
   terminate(): Promise<void> {
     this.#stop(this.#fatal ?? new Error('Oliphaunt WASIX worker was terminated'));
     return this.#termination ?? Promise.resolve();
+  }
+
+  expectSelfExit(): Promise<void> | undefined {
+    if (this.#fatal !== undefined) return Promise.reject(this.#fatal);
+    try {
+      return this.#worker.expectSelfExit?.();
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
   }
 
   #fail(error: Error): void {
@@ -316,7 +343,7 @@ function appendAssetTransfer(
 }
 
 class WorkerDatabaseSession implements WasixDatabaseSession {
-  readonly supportsProtocolConnections = true;
+  readonly supportsProtocolConnections: boolean;
   readonly identity: WasixDatabaseIdentity;
   readonly terminalState: WasixDatabaseSessionTerminalState;
   readonly #rpc: WorkerRpc;
@@ -325,6 +352,7 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
 
   constructor(rpc: WorkerRpc, options: SerializedOpenOptions) {
     this.#rpc = rpc;
+    this.supportsProtocolConnections = rpc.supportsSharedMemory;
     this.terminalState = rpc.terminalState;
     this.identity = normalizeWasixDatabaseIdentity(options.username, options.database);
   }
@@ -346,7 +374,32 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
     persistence: WasixPersistenceMode = 'sync',
   ): Promise<WasixProtocolStreamOutcome> {
     this.#assertOpen();
+    if (!this.#rpc.supportsSharedMemory) {
+      return this.#execBufferedStream(input, onChunk, persistence);
+    }
     return this.#rpc.stream(input, persistence, onChunk);
+  }
+
+  async #execBufferedStream(
+    input: Uint8Array,
+    onChunk: (chunk: Uint8Array) => void,
+    persistence: WasixPersistenceMode,
+  ): Promise<WasixProtocolStreamOutcome> {
+    const response = await this.exec(input, persistence);
+    try {
+      for (
+        let offset = 0;
+        offset < response.length;
+        offset += WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES
+      ) {
+        onChunk(response.slice(offset, offset + WASIX_PROTOCOL_CALLBACK_CHUNK_BYTES));
+      }
+      return 'complete';
+    } catch {
+      // The complete response is already owned by the parent, so stopping
+      // callback delivery cannot leave the database protocol state unknown.
+      return 'callbackAborted';
+    }
   }
 
   async sync(boundary: WasixStorageSyncBoundary): Promise<void> {
@@ -376,11 +429,44 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
     return response;
   }
 
+  async runTool(options: WasixToolProcessOptions): Promise<WasixToolProcessResult> {
+    this.#assertOpen();
+    const stdin = options.stdin;
+    const transferableStdin =
+      stdin !== undefined &&
+      stdin.buffer instanceof ArrayBuffer &&
+      stdin.byteOffset === 0 &&
+      stdin.byteLength === stdin.buffer.byteLength;
+    const response = await this.#rpc.request(
+      {
+        method: 'runTool',
+        options: {
+          ...options,
+          // The release addon owns the verified tool payload. Preserve only
+          // the descriptor identity across the Worker boundary.
+          tool: { ...options.tool, source: 'oliphaunt:wasix-napi-embedded' },
+          args: [...options.args],
+          ...(stdin === undefined ? {} : { stdin }),
+        },
+      },
+      transferableStdin && stdin !== undefined ? [stdin.buffer as ArrayBuffer] : [],
+    );
+    if (!isWasixToolProcessResult(response)) {
+      throw new Error('Oliphaunt WASIX worker returned an invalid native tool result');
+    }
+    return response;
+  }
+
   async serve(
     connection: WasixProtocolConnection,
     mode: WasixProtocolConnectionMode,
   ): Promise<void> {
     this.#assertOpen();
+    if (!this.#rpc.supportsSharedMemory) {
+      throw new Error(
+        'Oliphaunt WASIX worker execution does not support shared-memory protocol connections',
+      );
+    }
     await this.#rpc.request({ method: 'serve', connection, mode });
   }
 
@@ -393,17 +479,12 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
     return attempt.promise;
   }
 
-  abort(): Promise<void> {
-    this.#closed = true;
-    const termination = this.#rpc.terminate();
-    // A deadline can abort the transport before queued orderly close reaches
-    // this session. In that case close must observe the same terminal outcome
-    // instead of posting a futile request to the destroyed Worker.
-    this.#closeAttempt ??= termination;
-    return termination;
-  }
-
   async #closeOrderly(): Promise<void> {
+    const selfExit = this.#rpc.expectSelfExit();
+    // An early Worker failure can reject this before the close reply rejects.
+    // Observe it immediately, then preserve the same rejection for the ordered
+    // aggregation below.
+    void selfExit?.catch(() => undefined);
     let requestFailed = false;
     let requestFailure: unknown;
     try {
@@ -415,12 +496,27 @@ class WorkerDatabaseSession implements WasixDatabaseSession {
     let terminationFailed = false;
     let terminationFailure: unknown;
     try {
-      await this.#rpc.terminate();
+      if (selfExit !== undefined) {
+        // A Node-compatible Worker acknowledges close only by exiting itself
+        // after the dispatcher has unwound and released its direct native
+        // handle. Wait for that full quiescence even when native close reports
+        // an error; the error response alone is not permission to terminate a
+        // Worker which may still be finishing Node-API cleanup. The observed
+        // exit is the completed host teardown contract; Bun does not settle a
+        // redundant terminate() after that event.
+        await selfExit;
+      } else {
+        // Browser Workers retain their existing post-close termination path.
+        await this.#rpc.terminate();
+      }
     } catch (error) {
       terminationFailed = true;
       terminationFailure = error;
     }
     if (requestFailed && terminationFailed) {
+      if (requestFailure === terminationFailure) {
+        throw requestFailure;
+      }
       throw new AggregateError(
         [requestFailure, terminationFailure],
         'Oliphaunt WASIX worker close and termination both failed',

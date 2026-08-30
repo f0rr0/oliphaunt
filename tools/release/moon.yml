@@ -28,6 +28,8 @@ dependsOn:
     scope: "build"
   - id: "oliphaunt-node-direct"
     scope: "build"
+  - id: "oliphaunt-wasix-napi"
+    scope: "build"
   - id: "oliphaunt-swift"
     scope: "build"
   - id: "oliphaunt-kotlin"

@@ -203,6 +203,39 @@
         }
       ]
     },
+    "src/runtimes/wasix-napi": {
+      "release-type": "node",
+      "component": "oliphaunt-wasix-napi",
+      "package-name": "@oliphaunt/wasix-napi",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "json",
+          "path": "packages/darwin-arm64/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "packages/linux-arm64-gnu/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "packages/linux-x64-gnu/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "packages/win32-x64-msvc/package.json",
+          "jsonpath": "$.version"
+        }
+      ]
+    },
     "src/sdks/swift": {
       "release-type": "simple",
       "component": "oliphaunt-swift",

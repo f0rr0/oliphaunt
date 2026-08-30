@@ -488,6 +488,31 @@ export function nodeDirectRuntimeMatrix(nativeTarget = "all") {
   return filterDesktopRuntimeMatrix(matrix, nativeTarget, "Node direct");
 }
 
+export function wasixNapiRuntimeMatrix(nativeTarget = "all") {
+  const matrix = {
+    include: allArtifactTargets(
+      {
+        product: "oliphaunt-wasix-napi",
+        kind: "wasix-napi-addon",
+      },
+      PREFIX,
+    ).map((target) => {
+      if (!target.runner) {
+        fail(PREFIX, `${target.id} must declare runner`);
+      }
+      if (!target.triple) {
+        fail(PREFIX, `${target.id} must declare triple`);
+      }
+      return {
+        target: target.target,
+        runner: target.runner,
+        target_triple: target.triple,
+      };
+    }),
+  };
+  return filterDesktopRuntimeMatrix(matrix, nativeTarget, "WASIX Node-API");
+}
+
 function filterDesktopRuntimeMatrix(matrix, nativeTarget, label) {
   if (matrix.include.length === 0) {
     fail(PREFIX, `no published ${label} targets`);
@@ -527,6 +552,8 @@ function matrixByName(name, options) {
       return brokerRuntimeMatrix(options.nativeTarget);
     case "node-direct-runtime":
       return nodeDirectRuntimeMatrix(options.nativeTarget);
+    case "wasix-napi-runtime":
+      return wasixNapiRuntimeMatrix(options.nativeTarget);
     default:
       fail(PREFIX, `unknown matrix ${name}`);
   }
@@ -556,6 +583,7 @@ Matrices:
   liboliphaunt-wasix-postmaster-runtime
   broker-runtime
   node-direct-runtime
+  wasix-napi-runtime
 
 Options:
   --github-output

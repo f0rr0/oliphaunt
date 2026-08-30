@@ -635,7 +635,7 @@ const capabilityCards = [
     title: 'WASIX TypeScript',
     value: 'portable host API',
     description:
-      'The browser and Node/Bun/Deno binding has bounded protocol streaming, optional tools, and host-only local server subpaths.',
+      'The browser and Node/Bun/Deno/Electron binding has actor, direct, and Worker placements, bounded protocol streaming, optional tools, and a host-only local server subpath.',
     icon: ListChecks,
   },
   {
@@ -1285,7 +1285,7 @@ const guideProofs: Record<string, Array<{ title: string; description: string }>>
     },
     {
       title: 'Execution placement',
-      description: 'The root runs in the importing realm; the explicit worker entry point moves the same database contract to a package-owned Worker.',
+      description: 'Browser root runs in the importing realm; the native-host root uses a Rust actor, /direct selects the importing thread, and /worker selects a package-owned Worker.',
     },
     {
       title: 'Persistence',

@@ -108,6 +108,7 @@ describe('WASIX storage descriptors', () => {
     const original = new WasixStorageError('the prior generation is still current', {
       code: 'publication-failed',
       commitState: 'not-persisted',
+      phase: 'open-publication',
     });
 
     const roundTrip = deserializeWorkerError(serializeWorkerError(original));
@@ -118,6 +119,33 @@ describe('WASIX storage descriptors', () => {
       message: 'the prior generation is still current',
       code: 'publication-failed',
       commitState: 'not-persisted',
+      phase: 'open-publication',
+    });
+  });
+
+  it('preserves exact native tool diagnostics across the worker boundary', () => {
+    const original = Object.assign(new Error('pg_dump reported an impossible success error'), {
+      name: 'OliphauntWasixToolError',
+      oliphauntWasixError: 'tool' as const,
+      oliphauntWasixAddonAbi: 1 as const,
+      code: 'tool-error' as const,
+      tool: 'pg_dump',
+      exitCode: 0,
+      stdout: Uint8Array.of(0xff, 0),
+      stderr: Uint8Array.of(0x80, 0xfe),
+    });
+
+    const roundTrip = deserializeWorkerError(serializeWorkerError(original));
+
+    expect(roundTrip).toMatchObject({
+      name: 'OliphauntWasixToolError',
+      oliphauntWasixError: 'tool',
+      oliphauntWasixAddonAbi: 1,
+      code: 'tool-error',
+      tool: 'pg_dump',
+      exitCode: 0,
+      stdout: Uint8Array.of(0xff, 0),
+      stderr: Uint8Array.of(0x80, 0xfe),
     });
   });
 

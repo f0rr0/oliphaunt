@@ -65,12 +65,12 @@ topologies = ["wasix-direct", "wasix-server"]
 package_identity = "npm:@oliphaunt/wasix-ts"
 implementation_path = "src/bindings/wasix-ts"
 documentation_path = "src/docs/content/sdk/wasix-typescript"
-consumer_targets = ["browser", "node", "bun", "deno"]
+consumer_targets = ["browser", "node", "bun", "deno", "electron"]
 runtime_owner = true
 runtime_boundary = "@oliphaunt/wasix-ts"
 
 [[sdks.wasix-typescript.surfaces]]
-id = "default"
+id = "default-browser"
 entrypoint = "@oliphaunt/wasix-ts"
 calling_contract = "async"
 execution_owner = "caller"
@@ -78,7 +78,23 @@ main_safe = false
 topologies = ["wasix-direct"]
 
 [[sdks.wasix-typescript.surfaces]]
-id = "worker"
+id = "default"
+entrypoint = "@oliphaunt/wasix-ts"
+calling_contract = "async"
+execution_owner = "sdk-thread"
+main_safe = true
+topologies = ["wasix-direct"]
+
+[[sdks.wasix-typescript.surfaces]]
+id = "direct-server"
+entrypoint = "@oliphaunt/wasix-ts/direct"
+calling_contract = "async"
+execution_owner = "caller"
+main_safe = false
+topologies = ["wasix-direct"]
+
+[[sdks.wasix-typescript.surfaces]]
+id = "worker-browser"
 entrypoint = "@oliphaunt/wasix-ts/worker"
 calling_contract = "async"
 execution_owner = "sdk-worker"
@@ -86,26 +102,18 @@ main_safe = true
 topologies = ["wasix-direct"]
 
 [[sdks.wasix-typescript.surfaces]]
-id = "server-node"
-entrypoint = "@oliphaunt/wasix-ts/server/node"
+id = "worker-server"
+entrypoint = "@oliphaunt/wasix-ts/worker"
 calling_contract = "async"
 execution_owner = "sdk-worker"
 main_safe = true
-topologies = ["wasix-server"]
+topologies = ["wasix-direct"]
 
 [[sdks.wasix-typescript.surfaces]]
-id = "server-bun"
-entrypoint = "@oliphaunt/wasix-ts/server/bun"
+id = "server"
+entrypoint = "@oliphaunt/wasix-ts/server"
 calling_contract = "async"
-execution_owner = "sdk-worker"
-main_safe = true
-topologies = ["wasix-server"]
-
-[[sdks.wasix-typescript.surfaces]]
-id = "server-deno"
-entrypoint = "@oliphaunt/wasix-ts/server/deno"
-calling_contract = "async"
-execution_owner = "sdk-worker"
+execution_owner = "sdk-thread"
 main_safe = true
 topologies = ["wasix-server"]
 

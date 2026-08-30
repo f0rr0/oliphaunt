@@ -19,7 +19,7 @@ use tracing::info;
 use zstd::stream::read::Decoder as ZstdDecoder;
 
 use super::postgres_mod::PostgresMod;
-use crate::oliphaunt::assets;
+use crate::oliphaunt::assets::{self, CatalogProfile};
 use crate::oliphaunt::database_root_descriptor::{
     DirectoryState, PGDATA_DIRECTORY, inspect_directory_root, sync_directory,
     write_database_root_descriptor,
@@ -30,6 +30,7 @@ use crate::oliphaunt::storage::{
     DatabaseStorage, PgDataStorage, StorageRoot, vfs_create_dir_all, vfs_file_exists, vfs_read,
     vfs_remove_file_if_exists, vfs_write,
 };
+use crate::{StorageCommitState, StorageErrorCode, StorageErrorPhase};
 use tempfile::TempDir;
 use wasmer_wasix::virtual_fs::FileSystem as VirtualFileSystem;
 
@@ -47,23 +48,48 @@ const CLUSTER_SEED_CACHE_FORMAT: &str = "v1";
 const DEFAULT_PASSWORD_FILE: &[u8] = b"password\n";
 const DATABASE_LOCK_FILE_SUFFIX: &str = ".oliphaunt-wasix-rust.lock";
 
-static RUNTIME_CACHE: OnceLock<std::result::Result<Arc<CachedRuntime>, String>> = OnceLock::new();
-static RUNTIME_CACHE_KEY: OnceLock<std::result::Result<String, String>> = OnceLock::new();
-static CLUSTER_SEED_CACHE: OnceLock<std::result::Result<Arc<CachedClusterSeed>, String>> =
-    OnceLock::new();
-static CLUSTER_SEED_MANIFEST: OnceLock<std::result::Result<ClusterSeedManifest, String>> =
-    OnceLock::new();
+static RUNTIME_CACHE: ProfileOnceLock<std::result::Result<Arc<CachedRuntime>, String>> =
+    ProfileOnceLock::new();
+static RUNTIME_CACHE_KEY: ProfileOnceLock<std::result::Result<String, String>> =
+    ProfileOnceLock::new();
+static CLUSTER_SEED_CACHE: ProfileOnceLock<std::result::Result<Arc<CachedClusterSeed>, String>> =
+    ProfileOnceLock::new();
+static CLUSTER_SEED_MANIFEST: ProfileOnceLock<std::result::Result<ClusterSeedManifest, String>> =
+    ProfileOnceLock::new();
 static ROOT_LOCKED_PATHS: OnceLock<Mutex<BTreeSet<PathBuf>>> = OnceLock::new();
 const CLUSTER_SEED_RUNTIME_STATE_FILES: &[&str] = &["postmaster.pid", "postmaster.opts"];
 
+struct ProfileOnceLock<T> {
+    standard: OnceLock<T>,
+    icu: OnceLock<T>,
+}
+
+impl<T> ProfileOnceLock<T> {
+    const fn new() -> Self {
+        Self {
+            standard: OnceLock::new(),
+            icu: OnceLock::new(),
+        }
+    }
+
+    fn get(&self, profile: CatalogProfile) -> &OnceLock<T> {
+        match profile {
+            CatalogProfile::Standard => &self.standard,
+            CatalogProfile::Icu => &self.icu,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct CachedRuntime {
+    catalog_profile: CatalogProfile,
     runtime_root: PathBuf,
     filesystem: Arc<dyn VirtualFileSystem + Send + Sync>,
 }
 
 #[derive(Debug)]
 struct CachedClusterSeed {
+    catalog_profile: CatalogProfile,
     pgdata: PathBuf,
 }
 
@@ -93,6 +119,7 @@ pub(crate) struct PreparedDatabase {
 
 #[derive(Debug, Clone)]
 pub(crate) struct RuntimeLayout {
+    pub(crate) catalog_profile: CatalogProfile,
     pub(crate) kind: RuntimeLayoutKind,
     pub(crate) mutable_root: StorageRoot,
     pub(crate) shared_root: Option<Arc<dyn VirtualFileSystem + Send + Sync>>,
@@ -111,16 +138,22 @@ pub(crate) enum RuntimeLayoutKind {
 struct RuntimeLayoutManifest {
     kind: RuntimeLayoutKind,
     source_key: String,
+    #[serde(default)]
+    catalog_profile: Option<CatalogProfile>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct DatabasePlan {
     pub(crate) storage: DatabaseStorage,
+    pub(crate) catalog_profile: CatalogProfile,
 }
 
 impl DatabasePlan {
-    pub(crate) fn new(storage: DatabaseStorage) -> Self {
-        Self { storage }
+    pub(crate) fn new(storage: DatabaseStorage, catalog_profile: CatalogProfile) -> Self {
+        Self {
+            storage,
+            catalog_profile,
+        }
     }
 }
 
@@ -236,6 +269,21 @@ impl OliphauntPaths {
 
 impl DirectoryLock {
     pub(crate) fn acquire(directory: &Path) -> Result<Self> {
+        Self::acquire_for_phase(directory, StorageErrorPhase::Ownership)
+    }
+
+    pub(crate) fn acquire_for_phase(directory: &Path, phase: StorageErrorPhase) -> Result<Self> {
+        Self::acquire_inner(directory, phase).map_err(|error| {
+            crate::error::storage_error(
+                error,
+                StorageErrorCode::Unavailable,
+                StorageCommitState::Unchanged,
+                phase,
+            )
+        })
+    }
+
+    fn acquire_inner(directory: &Path, phase: StorageErrorPhase) -> Result<Self> {
         let absolute = if directory.is_absolute() {
             directory.to_path_buf()
         } else {
@@ -277,29 +325,50 @@ impl DirectoryLock {
                 .get_or_init(|| Mutex::new(BTreeSet::new()))
                 .lock()
                 .expect("database directory lock set poisoned");
-            ensure!(
-                locked.insert(canonical_root.clone()),
-                "database root is already in use: {}",
-                directory.display()
-            );
+            if !locked.insert(canonical_root.clone()) {
+                return Err(crate::error::storage_message(
+                    format!("database root is already in use: {}", directory.display()),
+                    StorageErrorCode::Busy,
+                    StorageCommitState::Unchanged,
+                    phase,
+                ));
+            }
         }
         let file = match open_root_lock_file(&canonical_root) {
             Ok(file) => file,
             Err(err) => {
                 release_root_lock_path(&canonical_root);
-                return Err(err).with_context(|| {
-                    format!(
-                        "database root is already in use or unavailable: {}",
+                let code = if is_lock_contention(&err) {
+                    StorageErrorCode::Busy
+                } else {
+                    StorageErrorCode::Unavailable
+                };
+                return Err(crate::error::storage_error(
+                    anyhow::Error::new(err).context(format!(
+                        "database root ownership lock is unavailable: {}",
                         directory.display()
-                    )
-                });
+                    )),
+                    code,
+                    StorageCommitState::Unchanged,
+                    phase,
+                ));
             }
         };
         if let Err(err) = file.try_lock() {
             release_root_lock_path(&canonical_root);
-            return Err(err).with_context(|| {
-                format!("database root is already in use: {}", directory.display())
-            });
+            let code = match &err {
+                std::fs::TryLockError::WouldBlock => StorageErrorCode::Busy,
+                std::fs::TryLockError::Error(_) => StorageErrorCode::Unavailable,
+            };
+            return Err(crate::error::storage_error(
+                anyhow::Error::new(err).context(format!(
+                    "database root ownership lock failed: {}",
+                    directory.display()
+                )),
+                code,
+                StorageCommitState::Unchanged,
+                phase,
+            ));
         }
         Ok(Self {
             path: canonical_root,
@@ -343,6 +412,22 @@ fn open_root_lock_file(directory: &Path) -> std::io::Result<File> {
         options.share_mode(0);
     }
     options.open(path)
+}
+
+fn is_lock_contention(error: &std::io::Error) -> bool {
+    if error.kind() == std::io::ErrorKind::WouldBlock {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        // ERROR_SHARING_VIOLATION and ERROR_LOCK_VIOLATION are how the
+        // share_mode(0) open/LockFileEx paths report an existing owner.
+        matches!(error.raw_os_error(), Some(32 | 33))
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
 }
 
 fn release_root_lock_path(path: &Path) {
@@ -401,20 +486,21 @@ fn locate_runtime_module(paths: &OliphauntPaths) -> Option<(PathBuf, PathBuf)> {
     Some((module, bin_dir))
 }
 
-fn ensure_full_runtime(paths: &OliphauntPaths) -> Result<bool> {
-    let source_key = runtime_cache_key()?;
+fn ensure_full_runtime(paths: &OliphauntPaths, profile: CatalogProfile) -> Result<bool> {
+    let source_key = runtime_cache_key(profile)?;
     let existing_runtime = { locate_runtime_module(paths) };
     if existing_runtime.is_some() {
-        let source_key_matches = full_runtime_layout_matches_current(paths, &source_key)?;
+        let source_key_matches = full_runtime_layout_matches_current(paths, profile, &source_key)?;
         let repaired_runtime = if !source_key_matches || runtime_support_files_need_repair(paths)? {
             install_runtime_from_tar(paths)?
         } else {
             false
         };
-        let repaired_icu = install_optional_icu_data(&paths.runtime_root())?;
+        let repaired_icu = install_optional_icu_data(&paths.runtime_root(), profile)?;
         write_runtime_layout_manifest(
             &paths.runtime_root(),
             RuntimeLayoutKind::FullLocal,
+            profile,
             &source_key,
         )?;
         ensure_runtime_password_file(&paths.runtime_root())?;
@@ -429,7 +515,7 @@ fn ensure_full_runtime(paths: &OliphauntPaths) -> Result<bool> {
     }
 
     install_runtime_from_tar(paths)?;
-    install_optional_icu_data(&paths.runtime_root())?;
+    install_optional_icu_data(&paths.runtime_root(), profile)?;
     locate_runtime_module(paths).ok_or_else(|| {
         anyhow!(
             "runtime missing: could not locate module under {} after archive install",
@@ -439,6 +525,7 @@ fn ensure_full_runtime(paths: &OliphauntPaths) -> Result<bool> {
     write_runtime_layout_manifest(
         &paths.runtime_root(),
         RuntimeLayoutKind::FullLocal,
+        profile,
         &source_key,
     )?;
     ensure_runtime_password_file(&paths.runtime_root())?;
@@ -448,12 +535,15 @@ fn ensure_full_runtime(paths: &OliphauntPaths) -> Result<bool> {
 
 fn full_runtime_layout_matches_current(
     paths: &OliphauntPaths,
+    profile: CatalogProfile,
     expected_source_key: &str,
 ) -> Result<bool> {
     let Some(manifest) = read_runtime_layout_manifest(&paths.runtime_root())? else {
         return Ok(false);
     };
-    Ok(manifest.kind == RuntimeLayoutKind::FullLocal && manifest.source_key == expected_source_key)
+    Ok(manifest.kind == RuntimeLayoutKind::FullLocal
+        && manifest.catalog_profile == Some(profile)
+        && manifest.source_key == expected_source_key)
 }
 
 fn runtime_support_files_need_repair(paths: &OliphauntPaths) -> Result<bool> {
@@ -494,10 +584,17 @@ fn install_runtime_from_tar(paths: &OliphauntPaths) -> Result<bool> {
     Ok(true)
 }
 
-pub(crate) fn install_optional_icu_data(runtime_root: &Path) -> Result<bool> {
+pub(crate) fn install_optional_icu_data(
+    runtime_root: &Path,
+    profile: CatalogProfile,
+) -> Result<bool> {
     let icu_dir = runtime_root.join("share/icu");
     let marker = runtime_root.join(ICU_DATA_MARKER_NAME);
-    let Some(archive) = assets::icu_data_archive() else {
+    let Some(archive) = assets::icu_data_archive(profile) else {
+        ensure!(
+            profile == CatalogProfile::Standard,
+            "the selected ICU catalog profile is missing its packaged ICU data archive"
+        );
         let mut changed = false;
         if icu_dir.exists() {
             fs::remove_dir_all(&icu_dir)
@@ -558,6 +655,23 @@ fn installed_icu_marker_matches(runtime_root: &Path, expected_archive: &str) -> 
         Ok(value) => Ok(value.trim().eq_ignore_ascii_case(expected_archive)),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(err) => Err(err).with_context(|| format!("read {}", marker.display())),
+    }
+}
+
+fn installed_profile_data_matches(runtime_root: &Path, profile: CatalogProfile) -> Result<bool> {
+    let icu_root = runtime_root.join("share/icu");
+    match profile {
+        CatalogProfile::Standard => {
+            Ok(!icu_root.exists() && !runtime_root.join(ICU_DATA_MARKER_NAME).exists())
+        }
+        CatalogProfile::Icu => {
+            let Some(expected_archive) = assets::expected_icu_data_archive_sha256() else {
+                return Ok(false);
+            };
+            Ok(assets::icu_data_archive(profile).is_some()
+                && icu_data_root_contains_data(&icu_root)?
+                && installed_icu_marker_matches(runtime_root, expected_archive)?)
+        }
     }
 }
 
@@ -760,17 +874,25 @@ fn validate_embedded_runtime_archive_strict(bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn try_install_embedded_cluster_seed(paths: &OliphauntPaths, module_path: &Path) -> Result<bool> {
+fn try_install_embedded_cluster_seed(
+    paths: &OliphauntPaths,
+    module_path: &Path,
+    profile: CatalogProfile,
+) -> Result<bool> {
     if cluster_is_complete(paths) {
         return Ok(false);
     }
 
-    let Some(manifest) = validated_embedded_cluster_seed_manifest()? else {
+    let Some(manifest) = validated_embedded_cluster_seed_manifest(profile)? else {
         return Ok(false);
     };
 
     ensure_module_matches_seed(module_path, &manifest)?;
-    let seed = cluster_seed_cache()?;
+    let seed = cluster_seed_cache(profile)?;
+    ensure!(
+        seed.catalog_profile == profile,
+        "cached cluster seed catalog profile mismatch"
+    );
 
     publish_cluster_seed_clone(&seed.pgdata, &paths.pgdata)?;
     Ok(true)
@@ -1009,20 +1131,24 @@ fn collect_regular_files(
     Ok(())
 }
 
-fn validated_embedded_cluster_seed_manifest() -> Result<Option<ClusterSeedManifest>> {
-    let Some(seed_manifest) = assets::cluster_seed_manifest() else {
+fn validated_embedded_cluster_seed_manifest(
+    profile: CatalogProfile,
+) -> Result<Option<ClusterSeedManifest>> {
+    let Some(seed_manifest) = assets::cluster_seed_manifest(profile) else {
         return Ok(None);
     };
-    let Some(seed_archive) = assets::cluster_seed_archive() else {
+    let Some(seed_archive) = assets::cluster_seed_archive(profile) else {
         return Ok(None);
     };
 
     let manifest = CLUSTER_SEED_MANIFEST
+        .get(profile)
         .get_or_init(|| {
             let manifest: ClusterSeedManifest = serde_json::from_slice(seed_manifest)
                 .context("parse embedded cluster seed manifest")
                 .map_err(|err| format!("{err:#}"))?;
-            validate_cluster_seed_manifest_metadata(&manifest).map_err(|err| format!("{err:#}"))?;
+            validate_cluster_seed_manifest_metadata(&manifest, profile)
+                .map_err(|err| format!("{err:#}"))?;
 
             Ok(manifest)
         })
@@ -1039,8 +1165,11 @@ fn validated_embedded_cluster_seed_manifest() -> Result<Option<ClusterSeedManife
     Ok(Some(manifest))
 }
 
-fn validate_cluster_seed_manifest_metadata(manifest: &ClusterSeedManifest) -> Result<()> {
-    let selected_profile = assets::selected_catalog_profile().as_str();
+fn validate_cluster_seed_manifest_metadata(
+    manifest: &ClusterSeedManifest,
+    profile: CatalogProfile,
+) -> Result<()> {
+    let selected_profile = profile.as_str();
     validate_cluster_seed_profile_contract(ClusterSeedProfile::from(manifest), selected_profile)?;
     ensure!(
         manifest.runtime.product == "liboliphaunt-wasix"
@@ -1067,7 +1196,7 @@ fn validate_cluster_seed_manifest_metadata(manifest: &ClusterSeedManifest) -> Re
             && manifest.extensions.startup_configuration.is_empty(),
         "embedded cluster seed must be extension-free"
     );
-    let metadata = assets::asset_manifest_metadata()?;
+    let metadata = assets::asset_manifest_metadata_for(profile)?;
     ensure!(
         metadata.cluster_seed_profile == selected_profile
             && metadata.cluster_seed_compatibility_key == "wasix-pg18-datum32-v1",
@@ -1176,10 +1305,11 @@ fn validate_cluster_seed_profile_contract(
     Ok(())
 }
 
-fn cluster_seed_cache() -> Result<Arc<CachedClusterSeed>> {
+fn cluster_seed_cache(profile: CatalogProfile) -> Result<Arc<CachedClusterSeed>> {
     CLUSTER_SEED_CACHE
+        .get(profile)
         .get_or_init(|| {
-            build_cluster_seed_cache()
+            build_cluster_seed_cache(profile)
                 .map(Arc::new)
                 .map_err(|err| format!("{err:#}"))
         })
@@ -1187,11 +1317,11 @@ fn cluster_seed_cache() -> Result<Arc<CachedClusterSeed>> {
         .map_err(|message| anyhow!(message))
 }
 
-fn build_cluster_seed_cache() -> Result<CachedClusterSeed> {
-    let Some(manifest) = validated_embedded_cluster_seed_manifest()? else {
+fn build_cluster_seed_cache(profile: CatalogProfile) -> Result<CachedClusterSeed> {
+    let Some(manifest) = validated_embedded_cluster_seed_manifest(profile)? else {
         bail!("embedded cluster seed manifest is unavailable");
     };
-    let Some(seed_archive) = assets::cluster_seed_archive() else {
+    let Some(seed_archive) = assets::cluster_seed_archive(profile) else {
         bail!("embedded cluster seed archive is unavailable");
     };
 
@@ -1200,7 +1330,7 @@ fn build_cluster_seed_cache() -> Result<CachedClusterSeed> {
     let cache_root = dirs
         .cache_dir()
         .join("cluster-seeds")
-        .join(assets::selected_catalog_profile().as_str())
+        .join(profile.as_str())
         .join(CLUSTER_SEED_CACHE_FORMAT);
     let _cache_lock = CacheLock::acquire(
         &cache_root
@@ -1210,7 +1340,10 @@ fn build_cluster_seed_cache() -> Result<CachedClusterSeed> {
     let root = cache_root.join(&manifest.archive.sha256);
     let pgdata = root.join("base");
     if pgdata.join("PG_VERSION").is_file() && pgdata.join("global/pg_control").is_file() {
-        return Ok(CachedClusterSeed { pgdata });
+        return Ok(CachedClusterSeed {
+            catalog_profile: profile,
+            pgdata,
+        });
     }
 
     if root.exists() {
@@ -1248,7 +1381,10 @@ fn build_cluster_seed_cache() -> Result<CachedClusterSeed> {
         }
         return Err(error);
     }
-    Ok(CachedClusterSeed { pgdata })
+    Ok(CachedClusterSeed {
+        catalog_profile: profile,
+        pgdata,
+    })
 }
 
 fn validate_cluster_seed_dir(pgdata: &Path, manifest: &ClusterSeedManifest) -> Result<()> {
@@ -1388,8 +1524,9 @@ pub(crate) fn virtual_cluster_is_complete(
 
 fn ensure_virtual_pgdata_matches_runtime(
     filesystem: &(dyn VirtualFileSystem + Send + Sync),
+    profile: CatalogProfile,
 ) -> Result<()> {
-    let Some(expected_major) = runtime_postgres_major()? else {
+    let Some(expected_major) = runtime_postgres_major(profile)? else {
         return Ok(());
     };
     let pg_version = vfs_read(filesystem, Path::new("/PG_VERSION"))?;
@@ -1402,15 +1539,18 @@ fn ensure_virtual_pgdata_matches_runtime(
     Ok(())
 }
 
-fn ensure_existing_pgdata_matches_runtime(paths: &OliphauntPaths) -> Result<()> {
-    let Some(expected_major) = runtime_postgres_major()? else {
+fn ensure_existing_pgdata_matches_runtime(
+    paths: &OliphauntPaths,
+    profile: CatalogProfile,
+) -> Result<()> {
+    let Some(expected_major) = runtime_postgres_major(profile)? else {
         return Ok(());
     };
     ensure_pgdata_postgres_major_matches(paths, &expected_major)
 }
 
-fn runtime_postgres_major() -> Result<Option<String>> {
-    let metadata = assets::asset_manifest_metadata()?;
+fn runtime_postgres_major(profile: CatalogProfile) -> Result<Option<String>> {
+    let metadata = assets::asset_manifest_metadata_for(profile)?;
     if metadata.postgres_version.trim().is_empty() {
         return Ok(None);
     }
@@ -1496,8 +1636,9 @@ fn prepare_host_database(
     workspace: Option<TempDir>,
     directory_lock: Option<DirectoryLock>,
     initialize: bool,
+    profile: CatalogProfile,
 ) -> Result<PreparedDatabase> {
-    let outcome = prepare_database_root(paths, initialize)?;
+    let outcome = prepare_database_root(paths, initialize, profile)?;
     Ok(PreparedDatabase {
         workspace,
         directory_lock,
@@ -1509,6 +1650,7 @@ pub(crate) fn prepare_database(
     plan: DatabasePlan,
     initial_username: &str,
 ) -> Result<PreparedDatabase> {
+    plan.catalog_profile.validate_available()?;
     if matches!(plan.storage, DatabaseStorage::Memory) {
         ensure_initial_username(DirectoryState::New, initial_username)?;
         return prepare_memory_database(plan);
@@ -1521,20 +1663,49 @@ pub(crate) fn prepare_database(
     let directory_exists = match fs::symlink_metadata(directory) {
         Ok(_) => true,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-        Err(error) => return Err(error).context("inspect database directory"),
+        Err(error) => {
+            return Err(crate::error::storage_error(
+                anyhow::Error::new(error).context("inspect database directory"),
+                StorageErrorCode::Unavailable,
+                StorageCommitState::Unchanged,
+                StorageErrorPhase::Open,
+            ));
+        }
     };
     if !directory_exists {
         ensure_initial_username(DirectoryState::New, initial_username)?;
         fs::create_dir(directory)
-            .with_context(|| format!("create database directory {}", directory.display()))?;
+            .with_context(|| format!("create database directory {}", directory.display()))
+            .map_err(|error| {
+                crate::error::storage_error(
+                    error,
+                    StorageErrorCode::Unavailable,
+                    StorageCommitState::Unchanged,
+                    StorageErrorPhase::Open,
+                )
+            })?;
     }
     let metadata = fs::symlink_metadata(directory)
-        .with_context(|| format!("inspect database directory {}", directory.display()))?;
-    ensure!(
-        metadata.is_dir() && !metadata.file_type().is_symlink(),
-        "database directory must be a real directory: {}",
-        directory.display()
-    );
+        .with_context(|| format!("inspect database directory {}", directory.display()))
+        .map_err(|error| {
+            crate::error::storage_error(
+                error,
+                StorageErrorCode::Unavailable,
+                StorageCommitState::Unchanged,
+                StorageErrorPhase::Open,
+            )
+        })?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(crate::error::storage_message(
+            format!(
+                "database directory must be a real directory: {}",
+                directory.display()
+            ),
+            StorageErrorCode::Corrupt,
+            StorageCommitState::Unchanged,
+            StorageErrorPhase::Open,
+        ));
+    }
     let state = inspect_directory_root(directory)?;
     ensure_initial_username(state, initial_username)?;
     let workspace = TempDir::new().context("create WASIX runtime workspace")?;
@@ -1544,6 +1715,7 @@ pub(crate) fn prepare_database(
         Some(workspace),
         Some(directory_lock),
         state == DirectoryState::New,
+        plan.catalog_profile,
     ) {
         Ok(prepared) => prepared,
         Err(error) if state == DirectoryState::New => {
@@ -1560,15 +1732,27 @@ pub(crate) fn prepare_database(
         let descriptor =
             directory.join(crate::oliphaunt::database_root_descriptor::DESCRIPTOR_FILE);
         match fs::symlink_metadata(&descriptor) {
-            Ok(_) => return Err(error),
+            Ok(_) => {
+                return Err(crate::error::storage_error(
+                    error,
+                    StorageErrorCode::PublicationFailed,
+                    StorageCommitState::Unknown,
+                    StorageErrorPhase::OpenPublication,
+                ));
+            }
             Err(inspect) if inspect.kind() == std::io::ErrorKind::NotFound => {
-                return Err(cleanup_owned_new_pgdata(directory, error));
+                return Err(cleanup_failed_open_publication(directory, error));
             }
             Err(inspect) => {
-                return Err(error.context(format!(
-                    "preserved PGDATA because root descriptor publication at {} is uncertain: {inspect}",
-                    descriptor.display()
-                )));
+                return Err(crate::error::storage_error(
+                    error.context(format!(
+                        "preserved PGDATA because root descriptor publication at {} is uncertain: {inspect}",
+                        descriptor.display()
+                    )),
+                    StorageErrorCode::PublicationFailed,
+                    StorageCommitState::Unknown,
+                    StorageErrorPhase::OpenPublication,
+                ));
             }
         }
     }
@@ -1584,6 +1768,10 @@ fn ensure_initial_username(state: DirectoryState, username: &str) -> Result<()> 
 }
 
 fn cleanup_owned_new_pgdata(root: &Path, error: anyhow::Error) -> anyhow::Error {
+    cleanup_owned_new_pgdata_with_state(root, error).0
+}
+
+fn cleanup_owned_new_pgdata_with_state(root: &Path, error: anyhow::Error) -> (anyhow::Error, bool) {
     let pgdata = root.join(PGDATA_DIRECTORY);
     let removal = match fs::remove_dir_all(&pgdata) {
         Ok(()) => Ok(()),
@@ -1598,25 +1786,44 @@ fn cleanup_owned_new_pgdata(root: &Path, error: anyhow::Error) -> anyhow::Error 
             .with_context(|| format!("sync database root {} after cleanup", root.display()))
     });
     match cleanup {
-        Ok(()) => error,
-        Err(cleanup) => error.context(format!(
-            "failed to clean unpublished PGDATA created during first open: {cleanup:#}"
-        )),
+        Ok(()) => (error, true),
+        Err(cleanup) => (
+            error.context(format!(
+                "failed to clean unpublished PGDATA created during first open: {cleanup:#}"
+            )),
+            false,
+        ),
     }
 }
 
-fn prepare_memory_database(_plan: DatabasePlan) -> Result<PreparedDatabase> {
-    let runtime_layout = prepare_memory_runtime_layout()?;
+fn cleanup_failed_open_publication(root: &Path, error: anyhow::Error) -> anyhow::Error {
+    let (cleaned, cleanup_succeeded) = cleanup_owned_new_pgdata_with_state(root, error);
+    let commit_state = if cleanup_succeeded {
+        StorageCommitState::Unchanged
+    } else {
+        StorageCommitState::Unknown
+    };
+    crate::error::storage_error(
+        cleaned,
+        StorageErrorCode::PublicationFailed,
+        commit_state,
+        StorageErrorPhase::OpenPublication,
+    )
+}
+
+fn prepare_memory_database(plan: DatabasePlan) -> Result<PreparedDatabase> {
+    let profile = plan.catalog_profile;
+    let runtime_layout = prepare_memory_runtime_layout(profile)?;
     let pgdata_storage = PgDataStorage::memory();
     let filesystem = pgdata_storage
         .memory_filesystem()
         .expect("memory storage has a virtual filesystem");
 
-    let manifest = validated_embedded_cluster_seed_manifest()?
+    let manifest = validated_embedded_cluster_seed_manifest(profile)?
         .context("packaged cluster seed is unavailable")?;
     ensure_module_matches_seed(&runtime_layout.module_path(), &manifest)?;
-    let archive =
-        assets::cluster_seed_archive().context("packaged cluster seed archive is unavailable")?;
+    let archive = assets::cluster_seed_archive(profile)
+        .context("packaged cluster seed archive is unavailable")?;
     unpack_cluster_seed_archive_virtual(archive, filesystem.as_ref())?;
 
     remove_virtual_runtime_state(filesystem.as_ref())?;
@@ -1624,7 +1831,7 @@ fn prepare_memory_database(_plan: DatabasePlan) -> Result<PreparedDatabase> {
         virtual_cluster_is_complete(filesystem.as_ref()),
         "database initialization did not produce PG_VERSION and global/pg_control"
     );
-    ensure_virtual_pgdata_matches_runtime(filesystem.as_ref())?;
+    ensure_virtual_pgdata_matches_runtime(filesystem.as_ref(), profile)?;
 
     Ok(PreparedDatabase {
         workspace: None,
@@ -1660,9 +1867,10 @@ pub(crate) fn install_missing_extension_archives(
 pub(crate) fn prepare_database_root(
     paths: OliphauntPaths,
     initialize: bool,
+    profile: CatalogProfile,
 ) -> Result<InstallOutcome> {
-    let mut runtime_layout = prepare_runtime_layout(&paths)?;
-    prepare_pgdata(&paths, initialize, &mut runtime_layout)?;
+    let mut runtime_layout = prepare_runtime_layout(&paths, profile)?;
+    prepare_pgdata(&paths, initialize, profile, &mut runtime_layout)?;
     Ok(InstallOutcome {
         runtime_layout,
         pgdata_storage: PgDataStorage::host_directory(paths.pgdata),
@@ -1672,10 +1880,15 @@ pub(crate) fn prepare_database_root(
 fn prepare_pgdata(
     paths: &OliphauntPaths,
     initialize: bool,
+    profile: CatalogProfile,
     runtime_layout: &mut RuntimeLayout,
 ) -> Result<()> {
+    ensure!(
+        runtime_layout.catalog_profile == profile,
+        "runtime and database catalog profiles must match"
+    );
     if cluster_is_complete(paths) {
-        ensure_existing_pgdata_matches_runtime(paths)?;
+        ensure_existing_pgdata_matches_runtime(paths, profile)?;
         remove_cluster_seed_runtime_state(&paths.pgdata)?;
         return Ok(());
     }
@@ -1684,7 +1897,7 @@ fn prepare_pgdata(
         "existing managed database root has incomplete PGDATA at {}",
         paths.pgdata.display()
     );
-    if try_install_embedded_cluster_seed(paths, &runtime_layout.module_path())? {
+    if try_install_embedded_cluster_seed(paths, &runtime_layout.module_path(), profile)? {
         return Ok(());
     }
     if std::env::var("OLIPHAUNT_WASIX_DEVELOPMENT_INITDB").as_deref() == Ok("1") {
@@ -1695,7 +1908,7 @@ fn prepare_pgdata(
     } else {
         bail!(
             "the selected packaged {} cluster seed is unavailable; published packages do not silently fall back to initdb",
-            assets::selected_catalog_profile().as_str()
+            profile.as_str()
         );
     }
     ensure!(
@@ -1706,10 +1919,11 @@ fn prepare_pgdata(
     remove_cluster_seed_runtime_state(&paths.pgdata)
 }
 
-fn runtime_cache() -> Result<Arc<CachedRuntime>> {
+fn runtime_cache(profile: CatalogProfile) -> Result<Arc<CachedRuntime>> {
     RUNTIME_CACHE
+        .get(profile)
         .get_or_init(|| {
-            build_runtime_cache()
+            build_runtime_cache(profile)
                 .map(Arc::new)
                 .map_err(|err| format!("{err:#}"))
         })
@@ -1721,10 +1935,13 @@ pub(crate) fn shared_runtime_overlay_enabled() -> bool {
     true
 }
 
-fn prepare_runtime_layout(paths: &OliphauntPaths) -> Result<RuntimeLayout> {
+fn prepare_runtime_layout(
+    paths: &OliphauntPaths,
+    profile: CatalogProfile,
+) -> Result<RuntimeLayout> {
     match resolve_runtime_layout_kind(paths)? {
         RuntimeLayoutKind::FullLocal => {
-            ensure_full_runtime(paths)?;
+            ensure_full_runtime(paths, profile)?;
             let (module_path, _) = locate_runtime_module(paths).ok_or_else(|| {
                 anyhow!(
                     "runtime missing: could not locate module under {} after install",
@@ -1737,6 +1954,7 @@ fn prepare_runtime_layout(paths: &OliphauntPaths) -> Result<RuntimeLayout> {
                 .map(Path::to_path_buf)
                 .unwrap_or_else(|| paths.runtime_root());
             Ok(RuntimeLayout {
+                catalog_profile: profile,
                 kind: RuntimeLayoutKind::FullLocal,
                 mutable_root: StorageRoot::host_directory(module_root.clone()),
                 shared_root: None,
@@ -1744,9 +1962,14 @@ fn prepare_runtime_layout(paths: &OliphauntPaths) -> Result<RuntimeLayout> {
             })
         }
         RuntimeLayoutKind::SharedRuntimeOverlay => {
-            let cached_runtime = runtime_cache()?;
-            prepare_shared_runtime_upper_root(&cached_runtime.runtime_root, paths)?;
+            let cached_runtime = runtime_cache(profile)?;
+            ensure!(
+                cached_runtime.catalog_profile == profile,
+                "cached runtime catalog profile mismatch"
+            );
+            prepare_shared_runtime_upper_root(&cached_runtime.runtime_root, paths, profile)?;
             Ok(RuntimeLayout {
+                catalog_profile: profile,
                 kind: RuntimeLayoutKind::SharedRuntimeOverlay,
                 mutable_root: StorageRoot::host_directory(paths.runtime_root()),
                 shared_root: Some(cached_runtime.filesystem.clone()),
@@ -1756,13 +1979,18 @@ fn prepare_runtime_layout(paths: &OliphauntPaths) -> Result<RuntimeLayout> {
     }
 }
 
-fn prepare_memory_runtime_layout() -> Result<RuntimeLayout> {
-    let cached_runtime = runtime_cache()?;
+fn prepare_memory_runtime_layout(profile: CatalogProfile) -> Result<RuntimeLayout> {
+    let cached_runtime = runtime_cache(profile)?;
+    ensure!(
+        cached_runtime.catalog_profile == profile,
+        "cached runtime catalog profile mismatch"
+    );
     let mutable_root = StorageRoot::memory();
     for path in ["/home", "/dev", "/dev/shm", "/tmp"] {
         mutable_root.create_dir_all(Path::new(path))?;
     }
     Ok(RuntimeLayout {
+        catalog_profile: profile,
         kind: RuntimeLayoutKind::SharedRuntimeOverlay,
         mutable_root,
         shared_root: Some(cached_runtime.filesystem.clone()),
@@ -1788,6 +2016,7 @@ fn resolve_runtime_layout_kind(paths: &OliphauntPaths) -> Result<RuntimeLayoutKi
 fn write_runtime_layout_manifest(
     runtime_root: &Path,
     kind: RuntimeLayoutKind,
+    profile: CatalogProfile,
     source_key: &str,
 ) -> Result<()> {
     fs::create_dir_all(runtime_root)
@@ -1795,6 +2024,7 @@ fn write_runtime_layout_manifest(
     let manifest = RuntimeLayoutManifest {
         kind,
         source_key: source_key.to_owned(),
+        catalog_profile: Some(profile),
     };
     fs::write(
         runtime_root.join(RUNTIME_LAYOUT_MANIFEST_NAME),
@@ -1822,8 +2052,8 @@ fn read_runtime_layout_manifest(runtime_root: &Path) -> Result<Option<RuntimeLay
     }
 }
 
-fn build_runtime_cache() -> Result<CachedRuntime> {
-    let key = runtime_cache_key()?;
+fn build_runtime_cache(profile: CatalogProfile) -> Result<CachedRuntime> {
+    let key = runtime_cache_key(profile)?;
     let dirs = ProjectDirs::from("dev", "oliphaunt-wasix", "oliphaunt-wasix")
         .context("could not resolve oliphaunt-wasix cache directory")?;
     let cache_root = dirs.cache_dir().join("runtime");
@@ -1832,7 +2062,8 @@ fn build_runtime_cache() -> Result<CachedRuntime> {
     let mut paths = OliphauntPaths::with_root(&root);
     let cache_is_current = runtime_cache_completion_matches(&root, &key)?
         && locate_runtime_module(&paths).is_some()
-        && full_runtime_layout_matches_current(&paths, &key)?
+        && full_runtime_layout_matches_current(&paths, profile, &key)?
+        && installed_profile_data_matches(&paths.runtime_root(), profile)?
         && !runtime_support_files_need_repair(&paths)?;
     if !cache_is_current {
         let staging = cache_root.join(format!(".{key}.build"));
@@ -1843,7 +2074,7 @@ fn build_runtime_cache() -> Result<CachedRuntime> {
         }
         let staging_paths = OliphauntPaths::with_root(&staging);
         let build_result = (|| -> Result<()> {
-            ensure_full_runtime(&staging_paths)?;
+            ensure_full_runtime(&staging_paths, profile)?;
             reset_runtime_cache_mutable_state(&staging_paths.runtime_root())?;
             let marker = staging.join(RUNTIME_CACHE_COMPLETION_MARKER);
             fs::write(&marker, format!("{key}\n")).with_context(|| {
@@ -1870,7 +2101,7 @@ fn build_runtime_cache() -> Result<CachedRuntime> {
         })?
     };
     if strict_asset_verification()?
-        && let Some(manifest) = validated_embedded_cluster_seed_manifest()?
+        && let Some(manifest) = validated_embedded_cluster_seed_manifest(profile)?
     {
         ensure_module_matches_seed(&module_path, &manifest)?;
     }
@@ -1883,6 +2114,7 @@ fn build_runtime_cache() -> Result<CachedRuntime> {
         Arc::new(virtual_fs::mem_fs::FileSystem::default());
     copy_host_directory_into_virtual(&runtime_root, Path::new("/"), filesystem.as_ref())?;
     Ok(CachedRuntime {
+        catalog_profile: profile,
         runtime_root,
         filesystem,
     })
@@ -1967,20 +2199,21 @@ fn ensure_runtime_password_file(runtime_root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn runtime_cache_key() -> Result<String> {
+fn runtime_cache_key(profile: CatalogProfile) -> Result<String> {
     RUNTIME_CACHE_KEY
-        .get_or_init(|| build_runtime_cache_key().map_err(|error| format!("{error:#}")))
+        .get(profile)
+        .get_or_init(|| build_runtime_cache_key(profile).map_err(|error| format!("{error:#}")))
         .clone()
         .map_err(|message| anyhow!(message))
 }
 
-fn build_runtime_cache_key() -> Result<String> {
+fn build_runtime_cache_key(profile: CatalogProfile) -> Result<String> {
     ensure!(
         assets::runtime_archive().is_some(),
         "Oliphaunt WASIX runtime assets are unavailable; package-manager-resolved runtime artifacts were not staged"
     );
     let runtime_sha256 = assets::expected_runtime_archive_sha256()?;
-    let icu_sha256 = if assets::icu_data_archive().is_some() {
+    let icu_sha256 = if assets::icu_data_archive(profile).is_some() {
         Some(
             assets::expected_icu_data_archive_sha256()
                 .context("embedded ICU data archive is missing its packaged digest")?,
@@ -1988,12 +2221,22 @@ fn build_runtime_cache_key() -> Result<String> {
     } else {
         None
     };
-    Ok(runtime_cache_key_from_digests(&runtime_sha256, icu_sha256))
+    Ok(runtime_cache_key_from_digests(
+        profile,
+        &runtime_sha256,
+        icu_sha256,
+    ))
 }
 
-fn runtime_cache_key_from_digests(runtime_sha256: &str, icu_sha256: Option<&str>) -> String {
+fn runtime_cache_key_from_digests(
+    profile: CatalogProfile,
+    runtime_sha256: &str,
+    icu_sha256: Option<&str>,
+) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(b"oliphaunt-wasix-resolved-runtime-closure-v2\nruntime=");
+    hasher.update(b"oliphaunt-wasix-resolved-runtime-closure-v3\nprofile=");
+    hasher.update(profile.as_str().as_bytes());
+    hasher.update(b"\nruntime=");
     hasher.update(runtime_sha256.to_ascii_lowercase().as_bytes());
     hasher.update(b"\nicu=");
     hasher.update(
@@ -2006,7 +2249,11 @@ fn runtime_cache_key_from_digests(runtime_sha256: &str, icu_sha256: Option<&str>
     format!("{:x}", hasher.finalize())
 }
 
-fn prepare_shared_runtime_upper_root(src_runtime: &Path, paths: &OliphauntPaths) -> Result<()> {
+fn prepare_shared_runtime_upper_root(
+    src_runtime: &Path,
+    paths: &OliphauntPaths,
+    profile: CatalogProfile,
+) -> Result<()> {
     let dest_runtime = paths.runtime_root();
 
     {
@@ -2037,7 +2284,8 @@ fn prepare_shared_runtime_upper_root(src_runtime: &Path, paths: &OliphauntPaths)
     write_runtime_layout_manifest(
         &dest_runtime,
         RuntimeLayoutKind::SharedRuntimeOverlay,
-        &runtime_cache_key()?,
+        profile,
+        &runtime_cache_key(profile)?,
     )?;
     Ok(())
 }
@@ -2069,6 +2317,86 @@ fn copy_runtime_file_if_exists(src: PathBuf, dest: PathBuf) -> Result<()> {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "icu")]
+    #[derive(Debug)]
+    struct PreparedProfileSnapshot {
+        profile: CatalogProfile,
+        runtime_root: PathBuf,
+        runtime_manifest_profile: Option<CatalogProfile>,
+        seed_root: PathBuf,
+        seed_manifest_profile: String,
+        has_icu_data: bool,
+    }
+
+    #[cfg(feature = "icu")]
+    fn both_catalog_profiles_are_packaged() -> bool {
+        assets::runtime_archive().is_some()
+            && [CatalogProfile::Standard, CatalogProfile::Icu]
+                .into_iter()
+                .all(|profile| {
+                    assets::cluster_seed_archive(profile).is_some()
+                        && assets::cluster_seed_manifest(profile).is_some()
+                })
+            && assets::icu_data_archive(CatalogProfile::Icu).is_some()
+    }
+
+    #[cfg(feature = "icu")]
+    fn prepare_profile_snapshot(profile: CatalogProfile) -> Result<PreparedProfileSnapshot> {
+        let prepared = prepare_database(
+            DatabasePlan::new(DatabaseStorage::Memory, profile),
+            "postgres",
+        )?;
+        let layout = &prepared.outcome.runtime_layout;
+        ensure!(
+            layout.catalog_profile == profile,
+            "prepared database selected the wrong catalog profile"
+        );
+        let runtime_manifest = read_runtime_layout_manifest(&layout.module_root)?
+            .context("profile runtime cache is missing its layout manifest")?;
+        let seed_manifest = validated_embedded_cluster_seed_manifest(profile)?
+            .context("selected catalog profile is missing its seed manifest")?;
+        let seed = cluster_seed_cache(profile)?;
+        ensure!(
+            seed.catalog_profile == profile,
+            "selected catalog profile resolved the wrong seed cache"
+        );
+        let has_icu_data = icu_data_root_contains_data(&layout.module_root.join("share/icu"))?;
+        ensure!(
+            installed_profile_data_matches(&layout.module_root, profile)?,
+            "prepared runtime has a mismatched catalog-profile data receipt"
+        );
+        Ok(PreparedProfileSnapshot {
+            profile,
+            runtime_root: layout.module_root.clone(),
+            runtime_manifest_profile: runtime_manifest.catalog_profile,
+            seed_root: seed.pgdata.clone(),
+            seed_manifest_profile: seed_manifest.catalog_profile,
+            has_icu_data,
+        })
+    }
+
+    #[cfg(feature = "icu")]
+    fn assert_profile_snapshots_do_not_contaminate(
+        standard: &PreparedProfileSnapshot,
+        icu: &PreparedProfileSnapshot,
+    ) {
+        assert_eq!(standard.profile, CatalogProfile::Standard);
+        assert_eq!(
+            standard.runtime_manifest_profile,
+            Some(CatalogProfile::Standard)
+        );
+        assert_eq!(standard.seed_manifest_profile, "standard");
+        assert!(!standard.has_icu_data);
+
+        assert_eq!(icu.profile, CatalogProfile::Icu);
+        assert_eq!(icu.runtime_manifest_profile, Some(CatalogProfile::Icu));
+        assert_eq!(icu.seed_manifest_profile, "icu");
+        assert!(icu.has_icu_data);
+
+        assert_ne!(standard.runtime_root, icu.runtime_root);
+        assert_ne!(standard.seed_root, icu.seed_root);
+    }
+
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct SharedClusterSeedProfile {
@@ -2098,20 +2426,24 @@ mod tests {
         let icu = "c".repeat(64);
         let other_icu = "d".repeat(64);
 
-        let standard = runtime_cache_key_from_digests(&runtime, None);
+        let standard = runtime_cache_key_from_digests(CatalogProfile::Standard, &runtime, None);
         assert_eq!(
             standard,
-            runtime_cache_key_from_digests(&runtime.to_ascii_uppercase(), None)
+            runtime_cache_key_from_digests(
+                CatalogProfile::Standard,
+                &runtime.to_ascii_uppercase(),
+                None,
+            )
         );
         assert_ne!(
             standard,
-            runtime_cache_key_from_digests(&other_runtime, None)
+            runtime_cache_key_from_digests(CatalogProfile::Standard, &other_runtime, None)
         );
-        let with_icu = runtime_cache_key_from_digests(&runtime, Some(&icu));
+        let with_icu = runtime_cache_key_from_digests(CatalogProfile::Icu, &runtime, Some(&icu));
         assert_ne!(standard, with_icu);
         assert_ne!(
             with_icu,
-            runtime_cache_key_from_digests(&runtime, Some(&other_icu))
+            runtime_cache_key_from_digests(CatalogProfile::Icu, &runtime, Some(&other_icu))
         );
     }
 
@@ -2131,6 +2463,123 @@ mod tests {
             b"expected\n",
         )?;
         assert!(runtime_cache_completion_matches(root.path(), "expected")?);
+        Ok(())
+    }
+
+    #[test]
+    fn standard_profile_rejects_icu_materialization_and_receipts() -> Result<()> {
+        let root = TempDir::new()?;
+        assert!(installed_profile_data_matches(
+            root.path(),
+            CatalogProfile::Standard
+        )?);
+
+        fs::create_dir_all(root.path().join("share/icu/icudt76l"))?;
+        fs::write(root.path().join("share/icu/icudt76l/data.res"), b"icu")?;
+        assert!(!installed_profile_data_matches(
+            root.path(),
+            CatalogProfile::Standard
+        )?);
+
+        fs::remove_dir_all(root.path().join("share/icu"))?;
+        fs::write(root.path().join(ICU_DATA_MARKER_NAME), b"stale\n")?;
+        assert!(!installed_profile_data_matches(
+            root.path(),
+            CatalogProfile::Standard
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn profile_once_lock_keeps_parallel_profiles_independent() {
+        let cache = Arc::new(ProfileOnceLock::new());
+        let mut handles = Vec::new();
+        for profile in [
+            CatalogProfile::Standard,
+            CatalogProfile::Icu,
+            CatalogProfile::Icu,
+            CatalogProfile::Standard,
+        ] {
+            let cache = Arc::clone(&cache);
+            handles.push(std::thread::spawn(move || {
+                *cache.get(profile).get_or_init(|| match profile {
+                    CatalogProfile::Standard => 11_u8,
+                    CatalogProfile::Icu => 29_u8,
+                })
+            }));
+        }
+
+        let values = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("profile cache worker must finish"))
+            .collect::<Vec<_>>();
+        assert_eq!(values, [11, 29, 29, 11]);
+        assert_eq!(cache.get(CatalogProfile::Standard).get(), Some(&11));
+        assert_eq!(cache.get(CatalogProfile::Icu).get(), Some(&29));
+    }
+
+    #[test]
+    fn runtime_cache_identity_includes_catalog_profile() {
+        let standard = runtime_cache_key_from_digests(
+            CatalogProfile::Standard,
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            None,
+        );
+        let icu = runtime_cache_key_from_digests(
+            CatalogProfile::Icu,
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            None,
+        );
+
+        assert_ne!(standard, icu);
+        assert_eq!(
+            standard,
+            runtime_cache_key_from_digests(
+                CatalogProfile::Standard,
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                None,
+            )
+        );
+    }
+
+    #[cfg(feature = "icu")]
+    #[test]
+    fn database_profiles_remain_isolated_in_both_construction_orders() -> Result<()> {
+        if !both_catalog_profiles_are_packaged() {
+            return Ok(());
+        }
+
+        let standard_first = prepare_profile_snapshot(CatalogProfile::Standard)?;
+        let icu_second = prepare_profile_snapshot(CatalogProfile::Icu)?;
+        assert_profile_snapshots_do_not_contaminate(&standard_first, &icu_second);
+
+        let icu_first = prepare_profile_snapshot(CatalogProfile::Icu)?;
+        let standard_second = prepare_profile_snapshot(CatalogProfile::Standard)?;
+        assert_profile_snapshots_do_not_contaminate(&standard_second, &icu_first);
+        assert_eq!(standard_first.runtime_root, standard_second.runtime_root);
+        assert_eq!(standard_first.seed_root, standard_second.seed_root);
+        assert_eq!(icu_second.runtime_root, icu_first.runtime_root);
+        assert_eq!(icu_second.seed_root, icu_first.seed_root);
+        Ok(())
+    }
+
+    #[cfg(feature = "icu")]
+    #[test]
+    fn database_profiles_materialize_concurrently_without_contamination() -> Result<()> {
+        if !both_catalog_profiles_are_packaged() {
+            return Ok(());
+        }
+
+        let standard = std::thread::spawn(|| prepare_profile_snapshot(CatalogProfile::Standard));
+        let icu = std::thread::spawn(|| prepare_profile_snapshot(CatalogProfile::Icu));
+        let standard = standard
+            .join()
+            .map_err(|_| anyhow!("standard profile preparation panicked"))??;
+        let icu = icu
+            .join()
+            .map_err(|_| anyhow!("ICU profile preparation panicked"))??;
+
+        assert_profile_snapshots_do_not_contaminate(&standard, &icu);
         Ok(())
     }
 
@@ -2215,7 +2664,10 @@ mod tests {
         let parent = tempfile::tempdir()?;
         let root = parent.path().join("database");
         let error = prepare_database(
-            DatabasePlan::new(DatabaseStorage::Directory(root.clone())),
+            DatabasePlan::new(
+                DatabaseStorage::Directory(root.clone()),
+                CatalogProfile::default(),
+            ),
             "app_user",
         )
         .expect_err("a non-postgres role cannot initialize a new root");
@@ -2305,11 +2757,18 @@ mod tests {
 
     #[test]
     fn memory_storage_uses_no_host_workspace() -> Result<()> {
-        if assets::cluster_seed_archive().is_none() || assets::cluster_seed_manifest().is_none() {
+        let profile = CatalogProfile::default();
+        if assets::cluster_seed_archive(profile).is_none()
+            || assets::cluster_seed_manifest(profile).is_none()
+            || (profile == CatalogProfile::Icu && assets::icu_data_archive(profile).is_none())
+        {
             return Ok(());
         }
 
-        let prepared = prepare_database(DatabasePlan::new(DatabaseStorage::Memory), "postgres")?;
+        let prepared = prepare_database(
+            DatabasePlan::new(DatabaseStorage::Memory, profile),
+            "postgres",
+        )?;
         assert!(prepared.workspace.is_none());
         assert!(matches!(
             &prepared.outcome.runtime_layout.mutable_root,
@@ -2362,11 +2821,16 @@ mod tests {
 
         let temp_dir = TempDir::new()?;
         let paths = OliphauntPaths::with_root(temp_dir.path());
-        ensure_full_runtime(&paths)?;
+        let profile = CatalogProfile::default();
+        ensure_full_runtime(&paths, profile)?;
 
         let (module_path, _) =
             locate_runtime_module(&paths).context("runtime module should be installed")?;
-        assert!(try_install_embedded_cluster_seed(&paths, &module_path,)?);
+        assert!(try_install_embedded_cluster_seed(
+            &paths,
+            &module_path,
+            profile,
+        )?);
 
         assert!(paths.pgdata.join("PG_VERSION").exists());
         assert!(paths.pgdata.join("global/pg_control").exists());
@@ -2383,14 +2847,19 @@ mod tests {
 
         let temp_dir = TempDir::new()?;
         let paths = OliphauntPaths::with_root(temp_dir.path());
-        ensure_full_runtime(&paths)?;
+        let profile = CatalogProfile::default();
+        ensure_full_runtime(&paths, profile)?;
         fs::create_dir_all(paths.pgdata.join("global"))?;
         fs::write(paths.pgdata.join("postmaster.pid"), b"stale pid")?;
         fs::write(paths.pgdata.join("base.tmp"), b"interrupted initdb")?;
 
         let (module_path, _) =
             locate_runtime_module(&paths).context("runtime module should be installed")?;
-        assert!(try_install_embedded_cluster_seed(&paths, &module_path,)?);
+        assert!(try_install_embedded_cluster_seed(
+            &paths,
+            &module_path,
+            profile,
+        )?);
 
         assert!(paths.pgdata.join("PG_VERSION").exists());
         assert!(paths.pgdata.join("global/pg_control").exists());
@@ -2401,7 +2870,9 @@ mod tests {
 
     #[cfg(feature = "extensions")]
     fn embedded_cluster_seed_is_available() -> bool {
-        assets::cluster_seed_archive().is_some() && assets::cluster_seed_manifest().is_some()
+        let profile = CatalogProfile::default();
+        assets::cluster_seed_archive(profile).is_some()
+            && assets::cluster_seed_manifest(profile).is_some()
     }
 
     #[test]
@@ -2414,6 +2885,13 @@ mod tests {
         let err =
             DirectoryLock::acquire(&root).expect_err("second directory lock should be rejected");
         assert!(format!("{err:#}").contains("database root is already in use"));
+        let err = crate::Error::from_anyhow(err);
+        let details = err
+            .storage_error()
+            .expect("directory contention must remain structurally tagged");
+        assert_eq!(details.code(), StorageErrorCode::Busy);
+        assert_eq!(details.commit_state(), StorageCommitState::Unchanged);
+        assert_eq!(details.phase(), StorageErrorPhase::Ownership);
 
         drop(first);
         let second = DirectoryLock::acquire(&root)?;
@@ -2479,10 +2957,27 @@ mod tests {
     fn full_runtime_layout_requires_current_source_key() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let paths = OliphauntPaths::with_root(temp_dir.path());
-        write_runtime_layout_manifest(&paths.runtime_root(), RuntimeLayoutKind::FullLocal, "old")?;
+        let profile = CatalogProfile::default();
+        write_runtime_layout_manifest(
+            &paths.runtime_root(),
+            RuntimeLayoutKind::FullLocal,
+            profile,
+            "old",
+        )?;
 
-        assert!(!full_runtime_layout_matches_current(&paths, "new")?);
-        assert!(full_runtime_layout_matches_current(&paths, "old")?);
+        assert!(!full_runtime_layout_matches_current(
+            &paths, profile, "new"
+        )?);
+        assert!(full_runtime_layout_matches_current(&paths, profile, "old")?);
+        let other_profile = match profile {
+            CatalogProfile::Standard => CatalogProfile::Icu,
+            CatalogProfile::Icu => CatalogProfile::Standard,
+        };
+        assert!(!full_runtime_layout_matches_current(
+            &paths,
+            other_profile,
+            "old"
+        )?);
         Ok(())
     }
 

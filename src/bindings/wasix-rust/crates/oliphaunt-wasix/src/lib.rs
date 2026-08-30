@@ -14,8 +14,12 @@ pub use async_api::{
 };
 pub use error::{
     Error, ErrorKind, RawStreamCallbackOutput, RawStreamError, RawStreamResult, Result,
-    TransactionError, TransactionResult,
+    StorageCommitState, StorageErrorCode, StorageErrorDetails, StorageErrorPhase, TransactionError,
+    TransactionResult,
 };
+#[cfg(any(feature = "__internal-napi", test))]
+#[doc(hidden)]
+pub use oliphaunt::CatalogProfile;
 pub use oliphaunt::{
     CommandResult, DatabaseStorage, DecodeError, ExecResult, FromSql, IntoParameter, Oliphaunt,
     OliphauntBuilder, OliphauntServer, OliphauntServerBuilder, Parameter, PostgresError,
@@ -27,5 +31,7 @@ pub use oliphaunt::{
 /// Options and structured errors for packaged PostgreSQL frontend programs.
 #[cfg(feature = "tools")]
 pub mod tools {
-    pub use crate::oliphaunt::tools::{PgDumpOptions, PostgresToolError, PsqlOptions};
+    pub use crate::oliphaunt::tools::{
+        PgDumpOptions, PostgresToolError, PostgresToolOutput, PsqlOptions,
+    };
 }

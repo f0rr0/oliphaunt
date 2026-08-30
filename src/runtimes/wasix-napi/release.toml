@@ -1,0 +1,21 @@
+id = "oliphaunt-wasix-napi"
+owner = "@oliphaunt/wasix-napi"
+kind = "runtime"
+publish_targets = ["npm", "github-release-assets"]
+registry_packages = [
+  "npm:@oliphaunt/wasix-napi-darwin-arm64",
+  "npm:@oliphaunt/wasix-napi-linux-arm64-gnu",
+  "npm:@oliphaunt/wasix-napi-linux-x64-gnu",
+  "npm:@oliphaunt/wasix-napi-win32-x64-msvc",
+]
+release_artifacts = ["node-api-prebuilds", "npm-optional-platform-packages"]
+
+[compatibility_versions.oliphaunt-wasix-napi-runtime]
+source_product = "liboliphaunt-wasix"
+path = "src/runtimes/wasix-napi/package.json"
+parser = "json:oliphaunt.runtimeVersion"
+
+[compatibility_versions.oliphaunt-wasix-napi-wasix-rust]
+source_product = "oliphaunt-wasix-rust"
+path = "src/runtimes/wasix-napi/package.json"
+parser = "json:oliphaunt.rustBindingVersion"

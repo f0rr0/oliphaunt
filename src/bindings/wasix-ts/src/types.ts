@@ -218,7 +218,7 @@ export type OpenConfig = {
 export type OliphauntDatabase = {
   /**
    * True after the terminal close attempt settles, including when teardown
-   * rejects, or as soon as a package-owned Worker terminates unexpectedly.
+   * rejects, or as soon as a package-owned isolated host terminates unexpectedly.
    */
   readonly closed: boolean;
   execute(

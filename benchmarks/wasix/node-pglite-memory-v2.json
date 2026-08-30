@@ -1,24 +1,29 @@
 {
   "schema": "oliphaunt-wasix-node-benchmark-plan-v2",
   "id": "node-pglite-memory-v2",
-  "description": "Compares Oliphaunt's explicit /worker entrypoint with a harness-owned PGlite Worker, and Oliphaunt's caller-owned root Promise API with PGlite's caller-realm API, using memory storage.",
+  "description": "Compares Oliphaunt's real /worker entrypoint with a harness-owned PGlite Worker, and Oliphaunt's blocking /direct entrypoint with PGlite's caller-realm API, using memory storage.",
   "engines": {
     "candidate": {
       "package": "@oliphaunt/wasix-ts",
       "storage": "memory",
-      "hostBuild": {
-        "wasmerJsCommit": "93b8b738ebd3ee57e118da0f0eb795b97d5b999e",
-        "wasmerWasixVersion": "0.601.0",
-        "inputsSha256": "0637f3d0bea86d9c713dc5f29f928e3358350c0286abecbc9510ff5be5ed526c",
-        "guestConcurrency": "denied-for-oliphaunt-single-backend",
-        "optimization": {
+      "nativeAddon": {
+        "schema": "oliphaunt-wasix-napi-host-v1",
+        "product": "oliphaunt-wasix-napi",
+        "binary": "oliphaunt_wasix_napi.node",
+        "addonAbiVersion": 1,
+        "nodeApiVersion": 8,
+        "profiles": [
+          "standard",
+          "icu"
+        ],
+        "build": {
           "cargoProfile": "release",
-          "rustOptLevel": 3,
-          "lto": true,
-          "wasmOpt": [
-            "--enable-threads",
-            "--enable-bulk-memory",
-            "-O3"
+          "incremental": false,
+          "codegenUnits": 1,
+          "lto": "thin",
+          "strip": "symbols",
+          "features": [
+            "release"
           ]
         }
       },
@@ -32,8 +37,7 @@
         "wasmOptSuppressDefault": "",
         "wasmOptPreserveUnoptimized": "",
         "compilerFlags": "",
-        "linkerFlags": "",
-        "backendTiming": "0"
+        "linkerFlags": ""
       },
       "surfaces": {
         "worker": {
@@ -42,12 +46,12 @@
           "callingContract": "async",
           "executionOwner": "sdk-worker",
           "executionBoundary": "node-worker-thread",
-          "isolationImplementation": "package-owned-worker-threads-rpc",
-          "timingBoundary": "host-end-to-end-around-one-worker-rpc"
+          "isolationImplementation": "package-owned-worker-rpc",
+          "timingBoundary": "host-end-to-end-around-one-isolation-rpc"
         },
         "direct": {
           "engine": "candidate-direct",
-          "entrypoint": "@oliphaunt/wasix-ts",
+          "entrypoint": "@oliphaunt/wasix-ts/direct",
           "callingContract": "async",
           "executionOwner": "caller",
           "executionBoundary": "node-caller-realm",
@@ -74,7 +78,7 @@
           "executionOwner": "harness-worker",
           "executionBoundary": "node-worker-thread",
           "isolationImplementation": "harness-owned-worker-threads-rpc",
-          "timingBoundary": "host-end-to-end-around-one-worker-rpc",
+          "timingBoundary": "host-end-to-end-around-one-isolation-rpc",
           "officialWorkerModule": "browser-worker-only",
           "gatedResponsePayload": "public-result-only-no-comparator-telemetry",
           "benchmarkMethodology": "official-browser-worker-timer-reference-only-not-collected",

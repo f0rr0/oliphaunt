@@ -1,7 +1,10 @@
+import { execFile } from 'node:child_process';
 import { access, mkdtemp, rm } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { cpus, platform, release, tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 import { Worker } from 'node:worker_threads';
 
 import { createPackedWasixConsumer } from '../../../src/bindings/wasix-ts/tools/packed-node-fixture.mjs';
@@ -15,12 +18,17 @@ import {
 } from '../../../src/bindings/wasix-ts/tools/pgwire-client.mjs';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const roundTripWarmups = 4;
-const roundTripSamples = 20;
-const bulkSizesMiB = [1, 4];
+const execFileAsync = promisify(execFile);
+const benchmarkOptions = parseArguments(process.argv.slice(2));
+const roundTripWarmups = 10;
+const roundTripSamples = benchmarkOptions.full ? 200 : 100;
+const bulkSizesMiB = benchmarkOptions.full ? [1 / 1024, 1, 64] : [1 / 1024, 1, 4];
+const inputSizesMiB = benchmarkOptions.full ? [1 / 1024, 1, 64] : [1 / 1024, 1, 4];
+const activeDatabaseCounts = benchmarkOptions.full ? [1, 4, 16] : [1, 4];
+const overloadConcurrency = benchmarkOptions.full ? 16 : 4;
+const overloadInputMiB = benchmarkOptions.full ? 4 : 1;
 const slowConsumerDelayMs = 1;
 const toolRows = 4_096;
-const jsonOnly = parseArguments(process.argv.slice(2));
 const started = performance.now();
 
 await requireInputs();
@@ -31,35 +39,54 @@ const rssSampler = await openRssSampler().catch(async (error) => {
 });
 
 try {
-  const fixture = await createPackedWasixConsumer({
+  const fixture = await createBenchmarkFixture({
     scratch,
     consumerName: 'oliphaunt-wasix-streaming-quick-consumer',
     includeTools: true,
   });
-  const packageRoot = (name) => resolve(fixture.consumer, 'node_modules', ...name.split('/'));
-  const bindingRoot = packageRoot(fixture.packages.binding.name);
-  const toolsRoot = packageRoot(fixture.packages.toolsFacade.name);
-  const { default: DirectOliphaunt } = await import(
-    pathToFileURL(resolve(bindingRoot, 'lib/index.node.js')).href
+  const provenance = await benchmarkProvenance(fixture.packages);
+  const fixtureRequire = createRequire(resolve(fixture.consumer, 'package.json'));
+  const bindingName = fixture.packages.binding.name;
+  const { default: ActorOliphaunt } = await importPackedEntrypoint(
+    fixtureRequire,
+    bindingName,
+    '/lib/index.node.js',
   );
-  const { default: WorkerOliphaunt } = await import(
-    pathToFileURL(resolve(bindingRoot, 'lib/worker-entry.node.js')).href
+  const { default: DirectOliphaunt } = await importPackedEntrypoint(
+    fixtureRequire,
+    `${bindingName}/direct`,
+    '/lib/direct.node.js',
   );
-  const { openServer } = await import(
-    pathToFileURL(resolve(bindingRoot, 'lib/server.node.js')).href
+  const { default: WorkerOliphaunt } = await importPackedEntrypoint(
+    fixtureRequire,
+    `${bindingName}/worker`,
+    '/lib/worker-entry.node.js',
   );
-  const { pgDump, psql } = await import(pathToFileURL(resolve(toolsRoot, 'lib/index.js')).href);
+  const { openServer } = await importPackedEntrypoint(
+    fixtureRequire,
+    `${bindingName}/server`,
+    '/lib/server.node.js',
+  );
+  const { pgDump, psql } = await importPackedEntrypoint(
+    fixtureRequire,
+    fixture.packages.toolsFacade.name,
+    '/lib/index.js',
+  );
 
   const surfaces = {
+    actor: await benchmarkSurface(ActorOliphaunt, 'actor'),
     direct: await benchmarkSurface(DirectOliphaunt, 'direct'),
     worker: await benchmarkSurface(WorkerOliphaunt, 'worker'),
   };
   const server = await benchmarkServer(openServer);
-  const tools = await benchmarkTools(WorkerOliphaunt, pgDump, psql);
+  const tools = await benchmarkTools(ActorOliphaunt, pgDump, psql);
+  const fanout = await benchmarkDatabaseFanout(ActorOliphaunt);
+  const overload = await benchmarkActorOverload(ActorOliphaunt);
   const report = {
-    schema: 'oliphaunt-wasix-streaming-quick-v2',
+    schema: 'oliphaunt-wasix-placement-quick-v3',
     measuredAt: new Date().toISOString(),
     durationMs: rounded(performance.now() - started),
+    provenance,
     environment: {
       node: process.version,
       platform: `${platform()} ${release()}`,
@@ -70,12 +97,21 @@ try {
       roundTripWarmups,
       roundTripSamples,
       bulkSizesMiB,
+      inputSizesMiB,
+      activeDatabaseCounts,
+      overloadConcurrency,
+      overloadInputMiB,
       slowConsumerDelayMs,
       toolRows,
       storage: 'memory',
       executionSurfaces: {
-        direct: {
+        actor: {
           entrypoint: '@oliphaunt/wasix-ts',
+          callingContract: 'async',
+          executionOwner: 'rust-owner-thread',
+        },
+        direct: {
+          entrypoint: '@oliphaunt/wasix-ts/direct',
           callingContract: 'async',
           executionOwner: 'caller',
         },
@@ -85,7 +121,10 @@ try {
           executionOwner: 'sdk-worker',
         },
       },
-      resourceSamples: 'representative 4 MiB streams, data dump, and restore',
+      resourceSamples: `representative ${bulkSizesMiB.at(-1)} MiB streams, data dump, and restore`,
+      surfaceOrder: ['actor', 'direct', 'worker'],
+      openCloseNote:
+        'single sequential observations are descriptive and must not be used for placement comparisons',
       resourceNote:
         'RSS is process-wide growth from each scenario start; retained allocations can reduce later deltas',
     },
@@ -93,15 +132,49 @@ try {
     comparison: compareSurfaces(surfaces),
     server,
     tools,
+    fanout,
+    overload,
   };
 
-  if (jsonOnly) console.log(JSON.stringify(report, null, 2));
+  if (benchmarkOptions.json) console.log(JSON.stringify(report, null, 2));
   else printReport(report);
 } finally {
   await Promise.all([
     rm(scratch, { force: true, recursive: true }),
     rssSampler.terminate().then(() => undefined),
   ]);
+}
+
+async function createBenchmarkFixture(options) {
+  try {
+    return await createPackedWasixConsumer(options);
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    if (
+      /native carrier|Node-API carrier|native artifact provenance|oliphaunt_wasix_napi|wasix-napi-/iu.test(
+        detail,
+      )
+    ) {
+      throw new Error(
+        'WASIX placement benchmark requires one optimized current-host Node-API carrier. ' +
+          'After staging the portable/AOT runtime, ICU, and extension inputs, run ' +
+          '`bash src/runtimes/wasix-napi/tools/build-native.sh`, then retry. ' +
+          `Carrier preflight: ${detail}`,
+        { cause },
+      );
+    }
+    throw cause;
+  }
+}
+
+async function importPackedEntrypoint(fixtureRequire, specifier, expectedSuffix) {
+  const entry = fixtureRequire.resolve(specifier);
+  if (!entry.split('\\').join('/').endsWith(expectedSuffix)) {
+    throw new Error(
+      `${specifier} resolved ${entry}, expected packed entrypoint ${expectedSuffix.slice(1)}`,
+    );
+  }
+  return import(pathToFileURL(entry).href);
 }
 
 async function benchmarkSurface(Oliphaunt, surface) {
@@ -125,6 +198,19 @@ async function benchmarkSurface(Oliphaunt, surface) {
       });
       if (bytes !== expected.length) throw new Error('streamed protocol size changed');
     });
+    const largeInput = [];
+    for (const sizeMiB of inputSizesMiB) {
+      const input = simpleQuery(largeInputQuery(sizeMiB));
+      const measured = await resourceTimed(() => database.execProtocolRaw(input));
+      if (measured.value.length === 0) throw new Error(`${surface} large input returned no bytes`);
+      largeInput.push({
+        sizeMiB,
+        requestBytes: input.length,
+        responseBytes: measured.value.length,
+        elapsedMs: rounded(measured.ms),
+        resources: measured.resources,
+      });
+    }
 
     await consumeStream(database, copyQuery(0.25));
     const bulk = [];
@@ -154,7 +240,7 @@ async function benchmarkSurface(Oliphaunt, surface) {
     }
 
     let slowConsumer;
-    if (surface === 'worker') {
+    if (surface !== 'direct') {
       const input = simpleQuery(copyQuery(1));
       const sleeper = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
       const measured = await timed(async () => {
@@ -181,6 +267,7 @@ async function benchmarkSurface(Oliphaunt, surface) {
       openMs: rounded(opening.ms),
       closeMs: rounded(closing.ms),
       smallRoundTripMs: { query, rawBuffered, rawStreamed },
+      largeInput,
       bulk,
       ...(slowConsumer === undefined ? {} : { slowConsumer }),
     };
@@ -278,6 +365,57 @@ async function benchmarkTools(Oliphaunt, pgDump, psql) {
   }
 }
 
+async function benchmarkDatabaseFanout(Oliphaunt) {
+  const results = [];
+  for (const count of activeDatabaseCounts) {
+    const measured = await resourceTimed(async () => {
+      const databases = [];
+      try {
+        for (let index = 0; index < count; index += 1) {
+          databases.push(await Oliphaunt.open());
+        }
+        await Promise.all(
+          databases.map(async (database) => {
+            const result = await database.query('SELECT 1::int AS value');
+            if (result.rows[0]?.value !== 1)
+              throw new Error('fanout database returned wrong value');
+          }),
+        );
+      } finally {
+        await Promise.all(databases.map((database) => database.close().catch(() => undefined)));
+      }
+    });
+    results.push({ count, elapsedMs: rounded(measured.ms), resources: measured.resources });
+  }
+  return results;
+}
+
+async function benchmarkActorOverload(Oliphaunt) {
+  const database = await Oliphaunt.open();
+  try {
+    const input = simpleQuery(largeInputQuery(overloadInputMiB));
+    const measured = await resourceTimed(async () => {
+      const responses = await Promise.all(
+        Array.from({ length: overloadConcurrency }, () => database.execProtocolRaw(input)),
+      );
+      if (responses.some((response) => response.length === 0)) {
+        throw new Error('actor overload request returned an empty response');
+      }
+      return responses.reduce((sum, response) => sum + response.length, 0);
+    });
+    return {
+      concurrency: overloadConcurrency,
+      inputBytesPerCall: input.length,
+      queuedInputMiB: rounded((input.length * overloadConcurrency) / (1024 * 1024)),
+      responseBytes: measured.value,
+      elapsedMs: rounded(measured.ms),
+      resources: measured.resources,
+    };
+  } finally {
+    await database.close();
+  }
+}
+
 async function benchmarkRestore(Oliphaunt, psql, dump) {
   const target = await Oliphaunt.open();
   try {
@@ -302,6 +440,7 @@ async function samples(operation) {
   return {
     median: rounded(percentile(values, 0.5)),
     p95: rounded(percentile(values, 0.95)),
+    p99: rounded(percentile(values, 0.99)),
     min: rounded(values[0]),
     max: rounded(values.at(-1)),
   };
@@ -361,8 +500,13 @@ async function consumeStream(database, input) {
 }
 
 function copyQuery(sizeMiB) {
-  const rows = Math.round(sizeMiB * 1024);
+  const rows = Math.max(1, Math.round(sizeMiB * 1024));
   return `COPY (SELECT repeat('x', 1023) FROM generate_series(1, ${rows})) TO STDOUT`;
+}
+
+function largeInputQuery(sizeMiB) {
+  const bytes = Math.max(1, Math.round(sizeMiB * 1024 * 1024));
+  return `SELECT 1 /*${'x'.repeat(bytes)}*/`;
 }
 
 function transferResult(bytes, milliseconds) {
@@ -382,14 +526,22 @@ function textResult(value, milliseconds) {
 
 function compareSurfaces(surfaces) {
   const direct = surfaces.direct.smallRoundTripMs;
-  const worker = surfaces.worker.smallRoundTripMs;
   return Object.fromEntries(
     ['query', 'rawBuffered', 'rawStreamed'].map((name) => [
       name,
-      {
-        workerMinusDirectMedianMs: rounded(worker[name].median - direct[name].median),
-        workerToDirectMedianRatio: rounded(worker[name].median / direct[name].median),
-      },
+      Object.fromEntries(
+        ['actor', 'worker'].map((surface) => [
+          surface,
+          {
+            minusDirectMedianMs: rounded(
+              surfaces[surface].smallRoundTripMs[name].median - direct[name].median,
+            ),
+            toDirectMedianRatio: rounded(
+              surfaces[surface].smallRoundTripMs[name].median / direct[name].median,
+            ),
+          },
+        ]),
+      ),
     ]),
   );
 }
@@ -403,39 +555,97 @@ function rounded(value) {
   return Number(value.toFixed(3));
 }
 
+async function benchmarkProvenance(packages) {
+  const artifact = packages.nativeCarrier?.artifactProvenance;
+  if (artifact === undefined) throw new Error('placement benchmark has no native carrier metadata');
+  const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], {
+    cwd: repositoryRoot,
+  });
+  const sourceSha = stdout.trim();
+  if (artifact.artifactSourceSha !== sourceSha) {
+    throw new Error(
+      `placement benchmark native carrier source is ${artifact.artifactSourceSha}, expected current HEAD ${sourceSha}; ` +
+        'rebuild it with `bash src/runtimes/wasix-napi/tools/build-native.sh`',
+    );
+  }
+  return {
+    binding: {
+      package: packages.binding.name,
+      version: packages.binding.version,
+      archiveSha256: packages.binding.sha256,
+    },
+    runtime: {
+      package: packages.runtime.name,
+      version: packages.runtime.version,
+      archiveSha256: packages.runtime.sha256,
+      buildProfileSha256: packages.runtime.build?.buildProfile?.sha256,
+    },
+    nativeCarrier: {
+      package: packages.nativeCarrier.name,
+      version: packages.nativeCarrier.version,
+      target: packages.nativeCarrier.target,
+      archiveSha256: packages.nativeCarrier.sha256,
+      binarySha256: artifact.binary.sha256,
+      artifactSourceSha: artifact.artifactSourceSha,
+      build: artifact.build,
+    },
+  };
+}
+
 function printReport(report) {
   console.log(`WASIX streaming quick benchmark (${(report.durationMs / 1000).toFixed(1)}s)`);
   console.log(`Node ${report.environment.node} · ${report.environment.cpu}`);
-  console.log('\nSmall round-trip latency (median / p95 ms)');
-  console.log('scenario             direct           worker           worker added');
+  console.log(
+    `${report.provenance.nativeCarrier.package} (${report.provenance.nativeCarrier.target}, ` +
+      `${report.provenance.nativeCarrier.binarySha256.slice(0, 12)}, source ` +
+      `${report.provenance.nativeCarrier.artifactSourceSha.slice(0, 12)})`,
+  );
+  console.log('\nSmall round-trip latency (median / p95 / p99 ms)');
+  console.log('scenario             direct                  actor                   worker');
   for (const [label, name] of [
     ['query()', 'query'],
     ['raw buffered', 'rawBuffered'],
     ['raw streamed', 'rawStreamed'],
   ]) {
     const direct = report.surfaces.direct.smallRoundTripMs[name];
+    const actor = report.surfaces.actor.smallRoundTripMs[name];
     const worker = report.surfaces.worker.smallRoundTripMs[name];
-    const added = report.comparison[name].workerMinusDirectMedianMs;
     console.log(
-      `${label.padEnd(20)} ${formatPair(direct).padEnd(16)} ${formatPair(worker).padEnd(16)} ${formatMs(added)}`,
+      `${label.padEnd(20)} ${formatPair(direct).padEnd(23)} ${formatPair(actor).padEnd(23)} ${formatPair(worker)}`,
+    );
+    console.log(
+      `${''.padEnd(20)} actor ${formatDeltaMs(report.comparison[name].actor.minusDirectMedianMs)} (${report.comparison[name].actor.toDirectMedianRatio.toFixed(2)}x), ` +
+        `worker ${formatDeltaMs(report.comparison[name].worker.minusDirectMedianMs)} (${report.comparison[name].worker.toDirectMedianRatio.toFixed(2)}x)`,
     );
   }
   console.log('\nBulk protocol transfer (MiB/s; elapsed ms)');
-  for (const surface of ['direct', 'worker']) {
+  for (const surface of ['direct', 'actor', 'worker']) {
     for (const row of report.surfaces[surface].bulk) {
       console.log(
         `${surface.padEnd(8)} ${String(row.sizeMiB).padStart(2)} MiB  buffered ${formatTransfer(row.buffered)}  streamed ${formatTransfer(row.streamed)} (${row.streamed.chunks} chunks)`,
       );
     }
   }
-  const slow = report.surfaces.worker.slowConsumer;
-  console.log(
-    `\nSlow consumer: ${slow.chunks} chunks × ${slow.delayPerChunkMs} ms requested; ` +
-      `${slow.elapsedMs.toFixed(3)} ms total`,
-  );
+  for (const surface of ['actor', 'worker']) {
+    const slow = report.surfaces[surface].slowConsumer;
+    console.log(
+      `\n${surface} slow consumer: ${slow.chunks} chunks × ${slow.delayPerChunkMs} ms requested; ` +
+        `${slow.elapsedMs.toFixed(3)} ms total`,
+    );
+  }
   console.log(
     `Server: open ${formatMs(report.server.openMs)}, startup ${formatMs(report.server.connectAndStartupMs)}, ` +
       `query ${formatPair(report.server.smallRoundTripMs)}`,
+  );
+  console.log('Actor database fanout (count / elapsed / peak RSS growth)');
+  for (const row of report.fanout) {
+    console.log(
+      `${String(row.count).padStart(2)} databases  ${formatMs(row.elapsedMs).padEnd(12)} ${row.resources.rssGrowthMiB.toFixed(1)} MiB`,
+    );
+  }
+  console.log(
+    `Actor overload: ${report.overload.concurrency} × ${formatBytes(report.overload.inputBytesPerCall)} input, ` +
+      `${formatMs(report.overload.elapsedMs)}, ${report.overload.resources.rssGrowthMiB.toFixed(1)} MiB RSS growth`,
   );
   for (const row of report.server.bulk) {
     console.log(`Server ${row.sizeMiB} MiB COPY: ${formatTransfer(row)}`);
@@ -447,10 +657,21 @@ function printReport(report) {
       `restore ${formatMs(report.tools.restore.elapsedMs)}`,
   );
   console.log('\nRepresentative event-loop delay / process RSS growth');
+  const representativeBulkSize = report.configuration.bulkSizesMiB.at(-1);
   for (const [label, resources] of [
-    ['direct 4 MiB stream', report.surfaces.direct.bulk.at(-1).streamed.resources],
-    ['worker 4 MiB stream', report.surfaces.worker.bulk.at(-1).streamed.resources],
-    ['server 4 MiB COPY', report.server.bulk.at(-1).resources],
+    [
+      `direct ${representativeBulkSize} MiB stream`,
+      report.surfaces.direct.bulk.at(-1).streamed.resources,
+    ],
+    [
+      `actor ${representativeBulkSize} MiB stream`,
+      report.surfaces.actor.bulk.at(-1).streamed.resources,
+    ],
+    [
+      `worker ${representativeBulkSize} MiB stream`,
+      report.surfaces.worker.bulk.at(-1).streamed.resources,
+    ],
+    [`server ${representativeBulkSize} MiB COPY`, report.server.bulk.at(-1).resources],
     ['pg_dump data', report.tools.dataDump.resources],
     ['psql restore', report.tools.restore.resources],
   ]) {
@@ -464,7 +685,7 @@ function printReport(report) {
 }
 
 function formatPair(value) {
-  return `${value.median.toFixed(3)} / ${value.p95.toFixed(3)}`;
+  return `${value.median.toFixed(3)} / ${value.p95.toFixed(3)} / ${value.p99.toFixed(3)}`;
 }
 
 function formatTransfer(value) {
@@ -475,19 +696,30 @@ function formatMs(value) {
   return `${value.toFixed(3)} ms`;
 }
 
+function formatDeltaMs(value) {
+  return `${value >= 0 ? '+' : ''}${formatMs(value)}`;
+}
+
 function formatBytes(value) {
   return `${(value / (1024 * 1024)).toFixed(2)} MiB`;
 }
 
 function parseArguments(args) {
-  if (args.length === 0) return false;
-  if (args.length === 1 && args[0] === '--json') return true;
-  throw new Error('usage: node tools/perf/wasix-node/streaming-quick.mjs [--json]');
+  const options = { json: false, full: false };
+  for (const argument of args) {
+    if (argument === '--json') options.json = true;
+    else if (argument === '--full') options.full = true;
+    else {
+      throw new Error('usage: node tools/perf/wasix-node/streaming-quick.mjs [--json] [--full]');
+    }
+  }
+  return options;
 }
 
 async function requireInputs() {
   const required = [
     'src/bindings/wasix-ts/lib/index.node.js',
+    'src/bindings/wasix-ts/lib/direct.node.js',
     'src/bindings/wasix-ts/lib/worker-entry.node.js',
     'src/bindings/wasix-ts/lib/host/index.mjs',
     'src/bindings/wasix-ts/tools-package/lib/index.js',
@@ -500,7 +732,7 @@ async function requireInputs() {
   } catch (cause) {
     throw new Error(
       'quick WASIX streaming benchmark needs staged TypeScript packages and portable runtime assets; ' +
-        'run `moon run oliphaunt-wasix-ts:tools-package liboliphaunt-wasix:runtime-portable` first',
+        'run `moon run oliphaunt-wasix-ts:package liboliphaunt-wasix:runtime-portable` first',
       { cause },
     );
   }

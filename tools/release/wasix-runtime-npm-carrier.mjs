@@ -425,7 +425,7 @@ function writeReadme(packageDir) {
 Internal host-neutral portable runtime carrier for \`@oliphaunt/wasix-ts\`.
 Application code should depend on the binding, which selects this matching
 carrier automatically. The descriptor and assets can be consumed by browser
-or Node/Bun/Deno WASIX hosts; importing them alone is not a host-support claim.
+or Node/Bun/Deno/Electron WASIX hosts; importing them alone is not a host-support claim.
 The public binding declares this carrier as an exact release-staged dependency;
 applications do not configure its package-relative assets.
 

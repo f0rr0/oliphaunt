@@ -102,7 +102,10 @@ export async function pgDump(
   ]);
 }
 
-/** Run standard non-interactive psql against a `/worker` WASIX database. */
+/**
+ * Run standard non-interactive psql. Browsers require a `/worker` database;
+ * Node.js, Bun, Deno, and Electron support root, `/direct`, and `/worker` databases.
+ */
 export async function psql(
   database: OliphauntDatabase,
   options: PsqlOptions = {},

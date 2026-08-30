@@ -16,8 +16,9 @@ same product concepts where the target platform can do so honestly:
 - React Native is the TypeScript/TurboModule SDK over the Swift and Kotlin SDKs.
 - TypeScript is the SDK for Node.js, Bun, and Deno. Tauri apps use the Rust SDK
   behind narrow app-owned commands.
-- WASIX TypeScript is the SDK for browser, Node.js, Bun, and Deno applications
-  using its caller-realm root or explicit package-Worker entrypoint.
+- WASIX TypeScript is the SDK for browser, Node.js, Bun, Deno, and Electron
+  applications. Browser root is caller-owned; the native-host root uses a Rust actor,
+  with explicit `/direct` and package-Worker placements.
 
 `tools/policy/sdk-manifest.toml` is the repo-level SDK registry. The canonical
 product graph lives in `src/*/moon.yml`; `sdk-contracts:check` parses both and
@@ -27,12 +28,14 @@ not source-text assertions, prove runtime delegation and consumer behavior.
 - `src/sdks/rust/`: canonical native Rust SDK for Tauri and Rust desktop apps.
 - `src/bindings/wasix-rust/crates/oliphaunt-wasix/`: Rust SDK over the portable
   and host-AOT `liboliphaunt-wasix` runtime products.
-- `src/bindings/wasix-ts/`: TypeScript SDK over the portable WASIX carrier for
-  browser, Node.js, Bun, and Deno. Its root owns caller-realm execution; its
-  explicit `/worker` entry point owns a Worker. `tools-package/` owns the
-  optional TypeScript facade for `pg_dump` against either handle and
-  non-interactive `psql` against Worker handles; the executable modules are a
-  separate `liboliphaunt-wasix` carrier.
+- `src/bindings/wasix-ts/`: TypeScript SDK over the browser portable WASIX
+  carrier and the Node/Bun/Deno/Electron Rust Node-API carrier. Its native-host root
+  uses a Rust owner actor, `/direct` opts into caller-realm execution, and
+  `/worker` owns a JavaScript Worker on every runtime. `tools-package/` owns the optional
+  TypeScript facade for `pg_dump` against root, direct, or Worker handles and
+  non-interactive `psql` against browser Worker or any native-host placement. Browser tool
+  modules are a separate `liboliphaunt-wasix` carrier; native tools are embedded
+  in the Node-API carrier.
 - `src/sdks/swift/`: Swift package with an actor-first `Oliphaunt` API and a
   native-direct C ABI product boundary over `liboliphaunt`; it can materialize
   packaged runtime/cluster-seed resources for iOS and macOS apps.

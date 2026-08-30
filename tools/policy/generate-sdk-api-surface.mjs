@@ -1587,7 +1587,7 @@ function render() {
   output += markdownList([...wasixBunDirectory.types, ...wasixBunDirectory.values]);
   output += `\n### Storage subpath: @oliphaunt/wasix-ts/storage/deno\n\n`;
   output += markdownList([...wasixDenoDirectory.types, ...wasixDenoDirectory.values]);
-  output += `\n### Server subpaths: @oliphaunt/wasix-ts/server/{node,bun,deno}\n\n`;
+  output += `\n### Server subpath: @oliphaunt/wasix-ts/server\n\n`;
   output += markdownList([
     ...wasixTsServer.types,
     ...wasixTsServer.values,

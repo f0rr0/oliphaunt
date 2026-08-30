@@ -917,7 +917,7 @@ const routePresentation = {
     icon: 'Boxes',
   },
   'oliphaunt-wasix-typescript': {
-    description: 'Portable TypeScript SDK for browsers, Node.js, Bun, and Deno.',
+    description: 'Portable TypeScript SDK for browsers, Node.js, Bun, Deno, and Electron.',
     icon: 'Boxes',
   },
 };

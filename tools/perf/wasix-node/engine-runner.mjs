@@ -157,7 +157,7 @@ async function openCandidate(plan, candidateRoot, surfaceName) {
   const surface = plan.engines.candidate.surfaces[surfaceName];
   const entry = require.resolve(surface.entrypoint);
   const { manifest } = await findPackageManifest(entry, plan.engines.candidate.package);
-  const expectedFile = surfaceName === 'worker' ? 'worker-entry.node.js' : 'index.node.js';
+  const expectedFile = surfaceName === 'worker' ? 'worker-entry.node.js' : 'direct.node.js';
   if (!entry.split('\\').join('/').endsWith(`/lib/${expectedFile}`)) {
     throw new Error(
       `${surface.entrypoint} resolved ${entry}, expected the conditional Node entrypoint lib/${expectedFile}`,

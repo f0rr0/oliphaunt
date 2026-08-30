@@ -5,78 +5,127 @@ import { describe, expect, it } from 'vitest';
 
 import { nodeWorkerPort } from '../node-worker-port.js';
 import type { WorkerRequest, WorkerResponse } from '../rpc.js';
-import { openWorkerDatabase } from '../worker-rpc.js';
-import { workerOpenOptions } from './worker-helpers.js';
 
-describe('Node WASIX worker transport', () => {
-  it('turns a clean unexpected exit into a fatal error for pending database work', async () => {
+describe('Node-compatible WASIX Worker transport', () => {
+  it('turns an unexpected clean exit into a fatal ownership error', () => {
     const worker = new FakeNodeWorker();
-    let recoveries = 0;
-    const opening = openWorkerDatabase(
-      nodeWorkerPort(worker as unknown as Worker, () => {
-        recoveries += 1;
-      }),
-      workerOpenOptions(),
-    );
-    const openRequest = worker.requests[0]?.message;
-    if (openRequest === undefined) {
-      throw new Error('open request was not posted');
-    }
-    worker.respond({ id: openRequest.id, ok: true });
-    const database = await opening;
-
-    const query = database.execProtocolRaw(Uint8Array.of(1));
-    await Promise.resolve();
-    expect(worker.requests.map(({ message }) => message.method)).toEqual(['open', 'exec']);
-    const queryRejection = expect(query).rejects.toThrow(
-      'Node worker exited unexpectedly with code 0',
-    );
-
-    worker.emit('exit', 0);
-
-    expect(database.closed).toBe(true);
-    await queryRejection;
-    await expect(database.close()).rejects.toThrow('Node worker exited unexpectedly with code 0');
-    await expect(database.query('select 1')).rejects.toThrow('Oliphaunt WASIX database is closed');
-    expect(worker.terminations).toBe(1);
-    expect(recoveries).toBe(1);
-  });
-
-  it('silently performs token-safe cleanup after an intentional termination', async () => {
-    const worker = new FakeNodeWorker();
-    let recoveries = 0;
-    const port = nodeWorkerPort(worker as unknown as Worker, () => {
-      recoveries += 1;
-    });
+    const port = nodeWorkerPort(worker as unknown as Worker);
     const failures: Error[] = [];
     port.onFatal((error) => failures.push(error));
 
-    await port.terminate();
-    worker.emit('exit', 1);
+    worker.exit(0);
 
-    expect(worker.terminations).toBe(1);
+    expect(failures).toEqual([
+      expect.objectContaining({
+        message: 'Oliphaunt WASIX Node Worker exited unexpectedly with code 0',
+      }),
+    ]);
+  });
+
+  it('waits for a quiescent Worker to self-exit without calling terminate', async () => {
+    const worker = new FakeNodeWorker();
+    const port = nodeWorkerPort(worker as unknown as Worker);
+    const failures: Error[] = [];
+    port.onFatal((error) => failures.push(error));
+
+    const exited = port.expectSelfExit?.();
+    worker.respond({ id: 1, ok: true });
+    worker.exit(0);
+
+    await expect(exited).resolves.toBeUndefined();
+    expect(worker.terminations).toBe(0);
     expect(failures).toEqual([]);
-    expect(recoveries).toBe(1);
+  });
+
+  it('treats terminate after an observed self-exit as an idempotent no-op', async () => {
+    const worker = new FakeNodeWorker();
+    const port = nodeWorkerPort(worker as unknown as Worker, 'Bun');
+
+    const exited = port.expectSelfExit?.();
+    worker.respond({ id: 1, ok: true });
+    worker.exit(0);
+    await exited;
+    await port.terminate();
+
+    expect(worker.terminations).toBe(0);
+  });
+
+  it('rejects a nonzero self-exit without reclassifying it as an unrelated crash', async () => {
+    const worker = new FakeNodeWorker();
+    const port = nodeWorkerPort(worker as unknown as Worker, 'Bun');
+    const failures: Error[] = [];
+    port.onFatal((error) => failures.push(error));
+
+    const exited = port.expectSelfExit?.();
+    worker.respond({ id: 1, ok: true });
+    worker.exit(7);
+
+    await expect(exited).rejects.toThrow('Oliphaunt WASIX Bun Worker self-exited with code 7');
+    expect(failures).toEqual([]);
+  });
+
+  it('fails pending shutdown work if the Worker exits before its reply', async () => {
+    const worker = new FakeNodeWorker();
+    const port = nodeWorkerPort(worker as unknown as Worker);
+    const failures: Error[] = [];
+    port.onFatal((error) => failures.push(error));
+
+    const exited = port.expectSelfExit?.();
+    worker.exit(0);
+
+    await expect(exited).rejects.toThrow('self-exited before its shutdown reply');
+    expect(failures).toEqual([
+      expect.objectContaining({ message: expect.stringContaining('before its shutdown reply') }),
+    ]);
+  });
+
+  it('adapts messages and reserves terminate for idle/failure cleanup', async () => {
+    const worker = new FakeNodeWorker();
+    const port = nodeWorkerPort(worker as unknown as Worker);
+    const responses: WorkerResponse[] = [];
+    port.onMessage((message) => responses.push(message));
+    const request = { id: 1, method: 'close' } as const;
+
+    port.postMessage(request, []);
+    worker.respond({ id: 1, ok: true });
+    await port.terminate();
+
+    expect(worker.requests).toEqual([request]);
+    expect(responses).toEqual([{ id: 1, ok: true }]);
+    expect(worker.terminations).toBe(1);
+  });
+
+  it('delivers an early startup error when the fatal listener is installed', () => {
+    const worker = new FakeNodeWorker();
+    const port = nodeWorkerPort(worker as unknown as Worker);
+    const failure = new Error('Worker startup failed');
+    worker.emit('error', failure);
+    const failures: Error[] = [];
+
+    port.onFatal((error) => failures.push(error));
+
+    expect(failures).toEqual([failure]);
   });
 });
 
 class FakeNodeWorker extends EventEmitter {
-  readonly requests: Array<{
-    message: WorkerRequest;
-    transfer: readonly ArrayBuffer[];
-  }> = [];
+  readonly requests: WorkerRequest[] = [];
   terminations = 0;
 
-  postMessage(message: WorkerRequest, transfer: readonly ArrayBuffer[] = []): void {
-    this.requests.push({ message, transfer });
+  postMessage(message: WorkerRequest): void {
+    this.requests.push(message);
   }
 
-  terminate(): Promise<number> {
+  async terminate(): Promise<number> {
     this.terminations += 1;
-    return Promise.resolve(1);
+    return 0;
   }
 
   respond(response: WorkerResponse): void {
     this.emit('message', response);
+  }
+
+  exit(code: number): void {
+    this.emit('exit', code);
   }
 }

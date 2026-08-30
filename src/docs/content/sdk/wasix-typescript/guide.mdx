@@ -12,18 +12,23 @@ description: Open, persist, transact, back up, and restore portable PostgreSQL f
 
 ### Install
 
-Install the same package for browsers, Node.js, Bun, and Deno:
+Install the same package for browsers, Node.js, Bun, Deno, and Electron:
 
 ```sh
 pnpm add @oliphaunt/wasix-ts
 ```
 
-Deno uses the same npm package as browsers, Node.js, and Bun:
+Deno uses the same npm package as browsers, Node.js, Bun, and Electron:
 
 ```ts
 import Oliphaunt from 'npm:@oliphaunt/wasix-ts';
 import { directory } from 'npm:@oliphaunt/wasix-ts/storage/deno';
 ```
+
+Use local `node_modules` resolution and grant `--allow-ffi`, `--allow-read`, and
+`--allow-env`; `/worker` does not require process-spawn permission. Configure
+Electron packagers to leave `**/*.node` unpacked and ship `app.asar.unpacked` beside
+`app.asar`.
 
 </Step>
 <Step>
@@ -96,10 +101,10 @@ const database = await Oliphaunt.open({
 
 IndexedDB and OPFS names are origin-owned identities. Host-runtime directory
 adapters take a managed-root path containing `.oliphaunt.json` and `pgdata`.
-Their binding-specific sibling lock is outside that root and is not backup
-content. A persistent identity may have one owner at a time within its provider;
-simultaneous cross-binding mutation is unsupported rather than coordinated by a
-new public lock protocol.
+The Rust WASIX runtime's stable sibling advisory lock is outside that root and
+is not backup content. It coordinates Rust WASIX and native-host TypeScript
+owners without adding a public lock protocol. A root must have one live owner;
+close it before another process, Worker, or binding opens the same path.
 
 OPFS uses browser synchronous access handles for exact-range PostgreSQL file
 I/O with the explicit Worker entry point and when the root entry point is
@@ -113,21 +118,22 @@ adds no public mode or tuning option.
 
 ### Choose execution placement
 
-Use the root entry point for direct execution in the importing realm. Import
-the explicit Worker entry point when the caller's event loop must remain
-responsive during PostgreSQL work:
+Use the root normally. In browsers it executes in the importing realm; on
+Node-compatible hosts it uses a dedicated Rust owner and keeps the event loop
+responsive. Import `/direct` when deliberately trading responsiveness for the
+lowest dispatch overhead, or `/worker` for a separate JavaScript realm:
 
 ```ts
 import OliphauntWorker from '@oliphaunt/wasix-ts/worker';
+import OliphauntDirect from '@oliphaunt/wasix-ts/direct';
 
 const database = await OliphauntWorker.open();
 ```
 
-Both entry points return the same `OliphauntDatabase` contract. Root open and
-operations remain promise-shaped for loading and durable publication, but
-synchronous guest execution can prevent the caller's realm from processing
-other work. The Worker surface adds an explicit RPC hop. There is no runtime
-fallback, capability profile, or host-mode negotiation.
+All placements return the same Promise-shaped `OliphauntDatabase` contract.
+The native root adds one Rust-owner completion hop, `/direct` can block its
+realm, and `/worker` adds a JavaScript RPC hop. There is no runtime fallback,
+capability profile, or host-mode negotiation.
 
 </Step>
 <Step>
@@ -144,22 +150,20 @@ generation; close it and reopen the last complete generation.
 `close()` begins one terminal teardown attempt and attempts final provider
 publication and ownership release. Concurrent and later calls return the same
 promise. If teardown rejects, the error reports cleanup that could not complete,
-but the handle still becomes `closed` and cannot accept more work: its Worker
-transport or caller-realm guest has already been retired. `await using` calls
+but the handle still becomes `closed` and cannot accept more work: its actor,
+isolated transport, or direct guest has already been retired. `await using` calls
 the same operation through `Symbol.asyncDispose`.
 
-The shutdown deadline bounds orderly FIFO drain, not the entire close promise.
-On the Worker surface, expiry waits for forced Worker termination to settle
-before releasing other owned resources, so storage cleanup never races a live
-Worker.
-If a package-owned Worker crashes independently, `closed` becomes `true` as
-soon as the transport observes that ownership loss. Later operations fail
-without posting to the dead Worker. Calling `close()` remains useful and
-idempotent: it reports the same terminal transport failure while completing
-any remaining package-owned cleanup.
+On `/worker`, close stops admission, waits for the active native frame and
+queued work to settle, releases the native handle, and lets the Worker exit
+itself. The package never force-terminates an active Node-API frame. If the
+Worker exits unexpectedly, `closed` becomes `true` as soon as the transport
+observes ownership loss; later operations fail without posting to it. Calling
+`close()` remains useful and idempotent and completes remaining package-owned
+cleanup.
 If the public handle is forgotten instead, an owner-free generation token
-schedules best-effort cleanup for only that Worker or direct guest/storage
-lease. Stale finalizers cannot affect later opens, but finalization is not
+schedules best-effort cleanup for only that browser guest, Rust actor, direct
+session/storage lease, or Worker generation. Stale finalizers cannot affect later opens, but finalization is not
 prompt; explicit close remains required when release must be observed.
 
 Calling database `close()` from inside its active transaction callback is the
@@ -180,9 +184,11 @@ const database = await Oliphaunt.open({ extensions: [pgtap] });
 await database.execute('CREATE EXTENSION pgtap');
 ```
 
-The core runtime does not bundle every extension. Reopen persistent data with
-the same selected carrier code. Selection materializes verified artifacts and
-required startup/preload configuration only; it does not silently run
+In browsers, selection materializes only the verified carrier artifacts and
+required startup/preload configuration. On Node.js, Bun, Deno, and Electron,
+the addon embeds the frozen qualified catalog and validates each selected
+descriptor before resolving its SQL name to those exact compiled artifacts.
+Reopen persistent data with the same selection. Neither path silently runs
 `CREATE EXTENSION`, `LOAD`, schema, post-create, upgrade, or migration SQL.
 Applications and ORM migrations own that ordinary PostgreSQL lifecycle.
 
@@ -229,13 +235,14 @@ await using target = await OliphauntWorker.open();
 await psql(target, { script: sql });
 ```
 
-Tools work in browsers, Node.js, Bun, and Deno. `pgDump()` accepts either a
-direct or Worker handle and returns PostgreSQL's ordinary plain UTF-8 dump,
+Tools work in browsers, Node.js, Bun, Deno, and Electron. `pgDump()` accepts a
+root, direct, or Worker handle and returns PostgreSQL's ordinary plain UTF-8 dump,
 including its normal COPY statements. It does not force inserts or rewrite
-valid SQL. `psql()` requires a Worker handle because COPY restore is full
-duplex; it is included so the same standard output can be applied without
-inventing a second logical restore API. Interactive psql, custom archives,
-parallel jobs, and `pg_restore` are outside this minimal tools product.
+valid SQL. `psql()` accepts any handle on Node, Bun, Deno, and Electron; browsers
+require a Worker handle because COPY restore is full duplex. It is included so
+the same standard output can be applied without inventing a second logical
+restore API. Interactive psql, custom archives, parallel jobs, and `pg_restore`
+are outside this minimal tools product.
 
 Tool runs exclusively own and reset the embedded PostgreSQL session. Do not
 expect raw-protocol prepared statements or session settings to survive a tool
@@ -246,11 +253,11 @@ run.
 
 ### Open a local endpoint
 
-Node, Bun, and Deno may expose the single embedded backend through an explicit
+Node, Bun, Deno, and Electron may expose the single embedded backend through an explicit
 host subpath:
 
 ```ts
-import { openServer } from '@oliphaunt/wasix-ts/server/node';
+import { openServer } from '@oliphaunt/wasix-ts/server';
 import { directory } from '@oliphaunt/wasix-ts/storage/node';
 
 await using server = await openServer({
@@ -260,13 +267,15 @@ await using server = await openServer({
 console.log(server.connectionString);
 ```
 
-Use `/server/bun` or `/server/deno` on those hosts. TCP is IPv4 loopback-only;
-omitting the port chooses an available port. Unix hosts may use
+The same `/server` import works on Node, Bun, Deno, and Electron. TCP is IPv4
+loopback-only; omitting the port chooses an available port. Unix hosts may use
 `{ transport: 'unix', directory, port? }`, which creates
-`.s.PGSQL.<port>`. The compatibility endpoint admits one complete connection at
-a time and rejects concurrent connections. Each admitted client receives a
-fresh embedded backend while the listener and storage lease remain open. The
-endpoint is absent in browsers and is not the concurrent WASIX postmaster.
+`.s.PGSQL.<port>`. The compatibility endpoint serves one active client at a
+time. An additional connection is not deterministically rejected and may wait
+in the operating system's listen backlog, so configure a client pool with
+`max: 1`. Each served client receives a fresh embedded backend while the
+listener and storage lease remain open. The endpoint is absent in browsers and
+is not the concurrent WASIX postmaster.
 `server.closed` is read-only: it stays `false` while terminal teardown is in
 progress and becomes `true` after the memoized close attempt settles, even when
 that attempt rejects.

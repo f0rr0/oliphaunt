@@ -7,6 +7,7 @@ export class FakeWorkerPort implements WasixWorkerPort {
     transfer: readonly Transferable[];
   }> = [];
   terminations = 0;
+  expectSelfExit?: () => Promise<void>;
   #messageListener: ((message: WorkerResponse) => void) | undefined;
   #fatalListener: ((error: Error) => void) | undefined;
 
