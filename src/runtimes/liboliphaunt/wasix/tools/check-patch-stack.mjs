@@ -33,7 +33,7 @@ const EXPECTED_TOUCHPOINTS = new Map([
   ['src/backend/access/nbtree/nbtinsert.c', 'Adds the guarded int4 insert fast path.'],
   ['src/backend/access/nbtree/nbtsearch.c', 'Adds guarded int4 leaf fast paths.'],
   ['src/backend/access/transam/xact.c', 'Adds top-level current-transaction shortcut for embedded WASIX.'],
-  ['src/backend/access/transam/xlog.c', 'Avoids expensive segment division under embedded WASIX.'],
+  ['src/backend/access/transam/xlog.c', 'Keeps checkpoint work local, avoids expensive segment division, and exposes only explicit WAL sync operations under embedded WASIX.'],
   ['src/backend/commands/copyfromparse.c', 'Reports COPY protocol state to the host.'],
   ['src/backend/commands/copyto.c', 'Reports COPY protocol state to the host.'],
   ['src/backend/commands/collationcmds.c', 'System-collation import preserves PostgreSQL semantics unless a controlled seed producer suppresses discovery.'],
@@ -213,14 +213,15 @@ const REQUIRED_AUDIT_CHECKS = [
     posture: 'The single-backend guest omits only pg_flush_data hints that WASIX rejects on read-only descriptors; PostgreSQL fsync and fdatasync remain active.',
   },
   {
-    requirement: 'WASIX WAL durability uses explicit fdatasync calls',
+    requirement: 'WASIX WAL durability exposes only explicit sync operations',
     patches: ['0042-oliphaunt-wasix-default-wal-sync-to-fdatasync.patch'],
     evidence: [
       'PLATFORM_DEFAULT_WAL_SYNC_METHOD',
       'WAL_SYNC_METHOD_FDATASYNC',
+      'OLIPHAUNT_WASM_EXPLICIT_WAL_SYNC_ONLY',
       'explicit fd_datasync operation',
     ],
-    posture: 'The shared PostgreSQL port avoids relying on variable O_DSYNC open semantics and gives browser and Rust Wasmer hosts one durability default.',
+    posture: 'The shared PostgreSQL port selects fdatasync and removes open_sync/open_datasync from the WASIX GUC choices because Wasmer does not honor their open flags.',
   },
   {
     requirement: 'PostgreSQL side modules own their SJLJ catch frames',

@@ -1,24 +1,41 @@
 From: Oliphaunt Maintainers <dev@oliphaunt.dev>
 Date: Sun, 30 Aug 2026 00:00:00 +0000
-Subject: [PATCH] oliphaunt-wasix: default WAL sync to fdatasync
+Subject: [PATCH] oliphaunt-wasix: use explicit WAL sync operations
 
 WASIX libc defines O_DSYNC, so PostgreSQL's generic platform selection chooses
 open_datasync.  Wasmer-backed filesystems do not provide one portable
 open-time synchronization contract, while WASIX exposes an explicit
 fd_datasync operation.
 
-Select fdatasync in the shared WASIX port header.  Browser and Rust Wasmer
-hosts then use the same PostgreSQL-owned durability default without a
-language-binding startup override, while an explicit PostgreSQL configuration
-can still select another supported method.
+Select fdatasync in the shared WASIX port header and omit open_sync and
+open_datasync from the platform's GUC choices.  Browser and Rust Wasmer hosts
+then use the same PostgreSQL-owned durability contract without a
+language-binding startup override or an unsafe configuration escape hatch.
 ---
- src/include/port/wasix-dl.h | 6 ++++++
- 1 file changed, 6 insertions(+)
+ src/backend/access/transam/xlog.c | 4 ++--
+ src/include/port/wasix-dl.h       | 7 +++++++
+ 2 files changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/src/backend/access/transam/xlog.c b/src/backend/access/transam/xlog.c
+--- a/src/backend/access/transam/xlog.c
++++ b/src/backend/access/transam/xlog.c
+@@ -175,9 +175,9 @@ const struct config_enum_entry wal_sync_method_options[] = {
+ #endif
+ 	{"fdatasync", WAL_SYNC_METHOD_FDATASYNC, false},
+-#ifdef O_SYNC
++#if defined(O_SYNC) && !defined(OLIPHAUNT_WASM_EXPLICIT_WAL_SYNC_ONLY)
+ 	{"open_sync", WAL_SYNC_METHOD_OPEN, false},
+ #endif
+-#ifdef O_DSYNC
++#if defined(O_DSYNC) && !defined(OLIPHAUNT_WASM_EXPLICIT_WAL_SYNC_ONLY)
+ 	{"open_datasync", WAL_SYNC_METHOD_OPEN_DSYNC, false},
+ #endif
+ 	{NULL, 0, false}
 
 diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
 --- a/src/include/port/wasix-dl.h
 +++ b/src/include/port/wasix-dl.h
-@@ -6,6 +6,12 @@
+@@ -6,6 +6,13 @@
  #ifndef PG_PORT_WASIX_DL_H
  #define PG_PORT_WASIX_DL_H
  
@@ -26,6 +43,7 @@ diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
 + * Prefer WASIX's explicit fd_datasync operation over an O_DSYNC open flag,
 + * whose persistence semantics vary across Wasmer-backed filesystems.
 + */
++#define OLIPHAUNT_WASM_EXPLICIT_WAL_SYNC_ONLY 1
 +#define PLATFORM_DEFAULT_WAL_SYNC_METHOD WAL_SYNC_METHOD_FDATASYNC
 +
  #if defined(OLIPHAUNT_WASM_SINGLE_USER) || defined(OLIPHAUNT_WASM_SIDE_MODULE)
