@@ -3,7 +3,7 @@ use std::fs;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -448,14 +448,28 @@ async fn open_extension_database(
     root: &Path,
 ) -> Result<TestDatabase> {
     if mode == TestMode::Server {
-        Ok(TestDatabase::Server(
-            OliphauntServer::builder()
-                .storage(DatabaseStorage::Directory(root.to_path_buf()))
-                .listen(ServerListen::tcp())
-                .extension(extension)
-                .start()
-                .await?,
-        ))
+        let server = OliphauntServer::builder()
+            .storage(DatabaseStorage::Directory(root.to_path_buf()))
+            .listen(ServerListen::tcp())
+            .extension(extension)
+            .start()
+            .await?;
+        let session = match support::ExternalRawSession::connect(server.connection_string()) {
+            Ok(session) => session,
+            Err(error) => {
+                if let Err(close_error) = server.close().await {
+                    return Err(std::io::Error::other(format!(
+                        "connect native extension server test client: {error}; close server after failed client startup: {close_error}"
+                    ))
+                    .into());
+                }
+                return Err(error.into());
+            }
+        };
+        Ok(TestDatabase::Server {
+            server,
+            session: Mutex::new(session),
+        })
     } else {
         Ok(TestDatabase::Embedded(
             extension_builder(mode, broker, extension, root)
@@ -467,31 +481,64 @@ async fn open_extension_database(
 
 enum TestDatabase {
     Embedded(Oliphaunt),
-    Server(OliphauntServer),
+    Server {
+        server: OliphauntServer,
+        session: Mutex<support::ExternalRawSession>,
+    },
 }
 
 impl TestDatabase {
     async fn exec_protocol_raw(&self, request: impl AsRef<[u8]>) -> Result<Vec<u8>> {
         match self {
             Self::Embedded(database) => Ok(database.exec_protocol_raw(request).await?),
-            Self::Server(server) => Ok(support::external_raw_query(
-                server.connection_string(),
-                request,
-            )?),
+            Self::Server { session, .. } => Ok(session
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .exec_protocol_raw(request)?),
         }
     }
 
     async fn backup(&self) -> Result<Vec<u8>> {
         match self {
             Self::Embedded(database) => Ok(database.backup().await?),
-            Self::Server(_) => panic!("native server backup must use pg_basebackup"),
+            Self::Server { .. } => panic!("native server backup must use pg_basebackup"),
         }
     }
 
     async fn close(&self) -> Result<()> {
         match self {
             Self::Embedded(database) => Ok(database.close().await?),
-            Self::Server(database) => Ok(database.close().await?),
+            Self::Server { server, session } => {
+                let session_close = session
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .close();
+                let server_close = server.close().await;
+                session_close?;
+                server_close?;
+                Ok(())
+            }
+        }
+    }
+}
+
+impl Drop for TestDatabase {
+    fn drop(&mut self) {
+        let close = match self {
+            Self::Embedded(database) => block_on(database.close()),
+            Self::Server { server, session } => {
+                if let Err(error) = session
+                    .get_mut()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .close()
+                {
+                    eprintln!("close native extension server test client during drop: {error}");
+                }
+                block_on(server.close())
+            }
+        };
+        if let Err(error) = close {
+            eprintln!("close native extension test database during drop: {error}");
         }
     }
 }
