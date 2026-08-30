@@ -572,11 +572,22 @@ function bindLength(parameters: ReadonlyArray<NormalizedParam>): number {
 
 const transactionStatuses = new WeakMap<object, TransactionStatus>();
 
-type RawOperation = {
-  statements: RawQueryResult[];
+type ParsedOperation<Statement> = {
+  statements: Statement[];
   notices: PostgresNotice[];
   transactionStatus: TransactionStatus;
 };
+
+type RawOperation = ParsedOperation<RawQueryResult>;
+type PendingExecResult = QueryResult<RawQueryRow>;
+
+type OperationStatementFactory<Statement> = (
+  kind: 'command' | 'rows',
+  fields: QueryField[],
+  rows: RawQueryRow[],
+  commandTag: string | undefined,
+  notices: PostgresNotice[],
+) => Statement;
 
 export function responseTransactionStatus(value: object): TransactionStatus | undefined {
   return transactionStatuses.get(value);
@@ -673,16 +684,8 @@ export function decodeQueryResult<Row = never, const Options extends QueryOption
   let stableOptions: QueryOptions;
   let rows: InferQueryRow<Options, Row>[];
   try {
-    stableOptions = {
-      rowMode: options.rowMode,
-      valueMode: options.valueMode,
-      decoders: options.decoders === undefined ? undefined : Object.freeze({ ...options.decoders }),
-    };
-    if (stableOptions.rowMode !== 'array') assertUniqueObjectRowFields(raw.fields);
-    rows = raw.rows.map((row) => materializeRow(row, raw.fields, stableOptions)) as InferQueryRow<
-      Options,
-      Row
-    >[];
+    stableOptions = stabilizeQueryOptions(options);
+    rows = decodeRows<Row, Options>(raw.rows, raw.fields, stableOptions, false);
   } catch (error) {
     const failure = errorWithNotices(error, raw.notices);
     const status = responseTransactionStatus(raw);
@@ -712,15 +715,17 @@ export function parseExecResponse<
   options: Options & Omit<QueryOptions, 'encoders'> = {} as Options &
     Omit<QueryOptions, 'encoders'>,
 ): ExecResult<InferQueryRow<Options, Row>> {
-  const operation = parseRawOperation(bytes, 'simple-exec');
+  const operation = parseOperation(bytes, 'simple-exec', pendingExecResult);
   let result: ExecResult<InferQueryRow<Options, Row>>;
   try {
+    if (operation.statements.length > 0) {
+      const stableOptions = stabilizeQueryOptions(options);
+      for (const statement of operation.statements) {
+        materializePendingExecResult<Row, Options>(statement, stableOptions);
+      }
+    }
     result = {
-      statements: operation.statements.map((statement) => {
-        const decoded = decodeQueryResult<Row, Options>({ ...statement, notices: [] }, options);
-        decoded.notices = statement.notices;
-        return decoded;
-      }),
+      statements: operation.statements as unknown as QueryResult<InferQueryRow<Options, Row>>[],
       notices: operation.notices,
     };
   } catch (error) {
@@ -879,8 +884,16 @@ export function assertSuccessfulQueryResponse(bytes: Uint8Array): void {
 type RawOperationMode = 'extended-single' | 'simple-single' | 'simple-exec';
 
 function parseRawOperation(bytes: Uint8Array, mode: RawOperationMode): RawOperation {
+  return parseOperation(bytes, mode, rawResult);
+}
+
+function parseOperation<Statement>(
+  bytes: Uint8Array,
+  mode: RawOperationMode,
+  statementFactory: OperationStatementFactory<Statement>,
+): ParsedOperation<Statement> {
   const cursor = new ByteCursor(bytes);
-  const statements: RawQueryResult[] = [];
+  const statements: Statement[] = [];
   const notices: PostgresNotice[] = [];
   let statementNotices: PostgresNotice[] = [];
   let fields: QueryField[] | undefined;
@@ -940,7 +953,7 @@ function parseRawOperation(bytes: Uint8Array, mode: RawOperationMode): RawOperat
           const commandTag = body.readCString('CommandComplete tag');
           body.requireEnd('CommandComplete');
           statements.push(
-            rawResult(
+            statementFactory(
               fields === undefined ? 'command' : 'rows',
               fields ?? [],
               rows,
@@ -1077,6 +1090,23 @@ function parseRawOperation(bytes: Uint8Array, mode: RawOperationMode): RawOperat
   return { statements, notices, transactionStatus: status };
 }
 
+function pendingExecResult(
+  kind: 'command' | 'rows',
+  fields: QueryField[],
+  rows: RawQueryRow[],
+  commandTag: string | undefined,
+  notices: PostgresNotice[],
+): PendingExecResult {
+  return {
+    kind,
+    fields,
+    rows,
+    commandTag,
+    rowCount: commandTagRowCount(commandTag),
+    notices,
+  };
+}
+
 function rawResult(
   kind: 'command' | 'rows',
   fields: QueryField[],
@@ -1117,6 +1147,41 @@ function resolveFieldIndex(fields: QueryField[], name: string): number {
     throw new Error('query result has no column named ' + JSON.stringify(name));
   }
   return match;
+}
+
+function stabilizeQueryOptions(options: QueryOptions): QueryOptions {
+  const rowMode = options.rowMode;
+  const valueMode = options.valueMode;
+  const decoders = options.decoders;
+  return {
+    rowMode,
+    valueMode,
+    decoders: decoders === undefined ? undefined : Object.freeze({ ...decoders }),
+  };
+}
+
+function decodeRows<Row, Options>(
+  rawRows: RawQueryRow[],
+  fields: QueryField[],
+  options: QueryOptions,
+  reuseEmpty: boolean,
+): InferQueryRow<Options, Row>[] {
+  if (options.rowMode !== 'array' && fields.length > 1) assertUniqueObjectRowFields(fields);
+  if (reuseEmpty && rawRows.length === 0) {
+    return rawRows as unknown as InferQueryRow<Options, Row>[];
+  }
+  return rawRows.map((row) => materializeRow(row, fields, options)) as InferQueryRow<
+    Options,
+    Row
+  >[];
+}
+
+function materializePendingExecResult<Row, Options>(
+  pending: PendingExecResult,
+  options: QueryOptions,
+): void {
+  const rows = decodeRows<Row, Options>(pending.rows, pending.fields, options, true);
+  (pending as unknown as QueryResult<InferQueryRow<Options, Row>>).rows = rows;
 }
 
 function assertUniqueObjectRowFields(fields: ReadonlyArray<QueryField>): void {
@@ -1170,17 +1235,69 @@ function commandTagRowCount(commandTag: string | undefined): number | null {
   if (commandTag === undefined) {
     return null;
   }
-  const parts = commandTag.trim().split(/\s+/);
-  const count = parts.at(-1);
-  if (
-    count === undefined ||
-    !/^[0-9]+$/.test(count) ||
-    !['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'MERGE', 'MOVE', 'FETCH', 'COPY'].includes(parts[0]!)
-  ) {
-    return null;
+  let start = 0;
+  let end = commandTag.length;
+  while (start < end && isEcmaWhitespace(commandTag.charCodeAt(start))) start += 1;
+  while (end > start && isEcmaWhitespace(commandTag.charCodeAt(end - 1))) end -= 1;
+  if (start === end) return null;
+
+  let commandEnd = start;
+  while (commandEnd < end && !isEcmaWhitespace(commandTag.charCodeAt(commandEnd))) {
+    commandEnd += 1;
   }
-  const value = Number(count);
-  return Number.isSafeInteger(value) ? value : null;
+  if (!hasRowCountCommand(commandTag, start, commandEnd)) return null;
+
+  let countStart = end;
+  while (countStart > start && !isEcmaWhitespace(commandTag.charCodeAt(countStart - 1))) {
+    countStart -= 1;
+  }
+  if (countStart === start) return null;
+
+  let value = 0;
+  for (let index = countStart; index < end; index += 1) {
+    const digit = commandTag.charCodeAt(index) - 0x30;
+    if (digit < 0 || digit > 9) return null;
+    value = value * 10 + digit;
+    if (!Number.isSafeInteger(value)) return null;
+  }
+  return value;
+}
+
+function hasRowCountCommand(value: string, start: number, end: number): boolean {
+  const length = end - start;
+  if (length === 4) {
+    return value.startsWith('MOVE', start) || value.startsWith('COPY', start);
+  }
+  if (length === 5) {
+    return value.startsWith('MERGE', start) || value.startsWith('FETCH', start);
+  }
+  if (length === 6) {
+    return (
+      value.startsWith('SELECT', start) ||
+      value.startsWith('INSERT', start) ||
+      value.startsWith('UPDATE', start) ||
+      value.startsWith('DELETE', start)
+    );
+  }
+  return false;
+}
+
+function isEcmaWhitespace(code: number): boolean {
+  if ((code >= 0x09 && code <= 0x0d) || code === 0x20 || code === 0xa0 || code === 0x1680) {
+    return true;
+  }
+  if (code >= 0x2000 && code <= 0x200a) return true;
+  switch (code) {
+    case 0x2028:
+    case 0x2029:
+    case 0x202f:
+    case 0x205f:
+    case 0x3000:
+    case 0xfeff:
+      return true;
+    default:
+      return false;
+  }
 }
 
 type NormalizedParam =

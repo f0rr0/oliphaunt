@@ -275,6 +275,137 @@ test("exec attributes notices to each statement and retains aggregate operation 
   );
 });
 
+test("exec validates the complete response before decoding and snapshots options once", () => {
+  const validResponse = backendResponse([
+    [0x54, rowDescription([field("value", postgresOids.int4)])],
+    [0x44, dataRow(["1"])],
+    [0x43, cstring("SELECT 1")],
+    [0x54, rowDescription([field("value", postgresOids.int4)])],
+    [0x44, dataRow(["2"])],
+    [0x43, cstring("SELECT 1")],
+    [0x5a, [0x49]],
+  ]);
+  let optionReads = 0;
+  let decoderCalls = 0;
+  const result = parseExecResponse(validResponse, {
+    get decoders() {
+      optionReads += 1;
+      return {
+        [postgresOids.int4]: (value: string) => {
+          decoderCalls += 1;
+          return Number(value);
+        },
+      };
+    },
+  });
+  assert.equal(optionReads, 1);
+  assert.equal(decoderCalls, 2);
+  assert.deepEqual(
+    result.statements.map((statement) => statement.rows),
+    [[{ value: 1 }], [{ value: 2 }]],
+  );
+
+  let emptyOptionReads = 0;
+  const empty = parseExecResponse(
+    backendResponse([
+      [0x49, []],
+      [0x5a, [0x49]],
+    ]),
+    {
+      get decoders() {
+        emptyOptionReads += 1;
+        return undefined;
+      },
+    },
+  );
+  assert.equal(empty.statements.length, 0);
+  assert.equal(emptyOptionReads, 0);
+
+  decoderCalls = 0;
+  assert.throws(
+    () =>
+      parseExecResponse(
+        backendResponse([
+          [0x54, rowDescription([field("value", postgresOids.int4)])],
+          [0x44, dataRow(["1"])],
+          [0x43, cstring("SELECT 1")],
+          [0x31, []],
+          [0x5a, [0x49]],
+        ]),
+        {
+          decoders: {
+            [postgresOids.int4]: (value) => {
+              decoderCalls += 1;
+              return Number(value);
+            },
+          },
+        },
+      ),
+    /simple-query response contained ParseComplete/,
+  );
+  assert.equal(decoderCalls, 0);
+});
+
+test("exec decoder failures stop later decoding but retain all operation notices", () => {
+  let decoderCalls = 0;
+  const failure = thrownBy(() =>
+    parseExecResponse(
+      backendResponse([
+        [0x4e, diagnostic("NOTICE", "00000", "before first")],
+        [0x54, rowDescription([field("value", postgresOids.int4)])],
+        [0x44, dataRow(["1"])],
+        [0x43, cstring("SELECT 1")],
+        [0x4e, diagnostic("NOTICE", "00000", "before second")],
+        [0x54, rowDescription([field("value", postgresOids.int4)])],
+        [0x44, dataRow(["2"])],
+        [0x43, cstring("SELECT 1")],
+        [0x4e, diagnostic("NOTICE", "00000", "after statements")],
+        [0x5a, [0x49]],
+      ]),
+      {
+        decoders: {
+          [postgresOids.int4]: () => {
+            decoderCalls += 1;
+            throw new Error("decoder stopped");
+          },
+        },
+      },
+    ),
+  );
+  assert.equal(decoderCalls, 1);
+  assert.deepEqual(
+    (failure as Error & { notices: Array<{ message: string }> }).notices.map(
+      (notice) => notice.message,
+    ),
+    ["before first", "before second", "after statements"],
+  );
+  assert.equal(responseTransactionStatus(failure as object), "idle");
+});
+
+test("exec extracts row counts without narrowing backend whitespace semantics", () => {
+  const commandTags = [
+    "SELECT 42",
+    " INSERT 0 7 ",
+    "\u00a0UPDATE\t0003\u3000",
+    "FETCH FORWARD 9",
+    "COPY 10",
+    "CREATE TABLE",
+    "SELECT 9007199254740992",
+    "SELECT +1",
+    "SELECT",
+  ];
+  const result = parseExecResponse(
+    backendResponse([
+      ...commandTags.map((tag) => [0x43, cstring(tag)] as const),
+      [0x5a, [0x49]],
+    ]),
+  );
+  assert.deepEqual(
+    result.statements.map((statement) => statement.rowCount),
+    [42, 7, 3, 9, 10, null, null, null, null],
+  );
+});
+
 test("describe is structured and errors drain through ReadyForQuery with notices", () => {
   const described = parseDescribeResponse(
     backendResponse([
