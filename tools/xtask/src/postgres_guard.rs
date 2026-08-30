@@ -97,7 +97,7 @@ pub(crate) fn check_postgres_source_spine() -> Result<()> {
         "0037-oliphaunt-wasix-buffer-strong-random.patch",
         "0038-oliphaunt-wasix-disable-unsupported-writeback-hints.patch",
         "0039-oliphaunt-wasix-inline-sigsetjmp.patch",
-        "0042-oliphaunt-wasix-default-wal-sync-to-fdatasync.patch",
+        "0042-oliphaunt-wasix-use-explicit-wal-sync-operations.patch",
     ] {
         ensure!(
             series.contains(&required),
@@ -198,7 +198,7 @@ pub(crate) fn check_postgres_source_spine() -> Result<()> {
     )?;
     ensure_file_contains_all(
         &Path::new(POSTGRES_PATCH_DIR)
-            .join("0042-oliphaunt-wasix-default-wal-sync-to-fdatasync.patch"),
+            .join("0042-oliphaunt-wasix-use-explicit-wal-sync-operations.patch"),
         &[
             "src/include/port/wasix-dl.h",
             "PLATFORM_DEFAULT_WAL_SYNC_METHOD",

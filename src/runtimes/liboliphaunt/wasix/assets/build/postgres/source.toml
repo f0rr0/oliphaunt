@@ -41,5 +41,5 @@ series = [
   "0039-oliphaunt-wasix-inline-sigsetjmp.patch",
   "0040-oliphaunt-wasix-set-libpq-sockets-nonblocking.patch",
   "0041-oliphaunt-wasix-honor-noninteractive-psql-invocations.patch",
-  "0042-oliphaunt-wasix-default-wal-sync-to-fdatasync.patch",
+  "0042-oliphaunt-wasix-use-explicit-wal-sync-operations.patch",
 ]

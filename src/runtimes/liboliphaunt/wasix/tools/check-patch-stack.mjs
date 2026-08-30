@@ -214,7 +214,7 @@ const REQUIRED_AUDIT_CHECKS = [
   },
   {
     requirement: 'WASIX WAL durability exposes only explicit sync operations',
-    patches: ['0042-oliphaunt-wasix-default-wal-sync-to-fdatasync.patch'],
+    patches: ['0042-oliphaunt-wasix-use-explicit-wal-sync-operations.patch'],
     evidence: [
       'PLATFORM_DEFAULT_WAL_SYNC_METHOD',
       'WAL_SYNC_METHOD_FDATASYNC',
