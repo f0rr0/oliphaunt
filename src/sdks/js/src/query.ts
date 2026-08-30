@@ -602,7 +602,7 @@ export function responseTransactionStatus(value: object): TransactionStatus | un
  * physical PostgreSQL session reached a reusable boundary.
  */
 export function inspectReadyForQuery(bytes: Uint8Array): TransactionStatus {
-  return inspectResponseBoundary(bytes).status;
+  return inspectResponseBoundary(bytes, false).status;
 }
 
 /**
@@ -610,7 +610,7 @@ export function inspectReadyForQuery(bytes: Uint8Array): TransactionStatus {
  * parsing can discard earlier command tags after a later ErrorResponse.
  */
 export function inspectManagedTransactionResponse(bytes: Uint8Array): TransactionStatus {
-  const boundary = inspectResponseBoundary(bytes);
+  const boundary = inspectResponseBoundary(bytes, true);
   if (boundary.status === 'idle') {
     throw new Error(
       'structured callback transaction operation ended PostgreSQL transaction ownership; close the database',
@@ -636,6 +636,7 @@ export function inspectManagedTransactionResponse(bytes: Uint8Array): Transactio
 
 function inspectResponseBoundary(
   bytes: Uint8Array,
+  collectCommandTags: boolean,
 ): Readonly<{ status: TransactionStatus; commandTags: string[] }> {
   const cursor = new ByteCursor(bytes);
   let status: TransactionStatus | undefined;
@@ -647,7 +648,12 @@ function inspectResponseBoundary(
     const tag = cursor.readU8('backend message tag');
     const length = cursor.readI32('backend message length');
     if (length < 4) throw new Error('invalid backend message length ' + length);
-    const body = new ByteCursor(cursor.readBytes(length - 4, 'backend message body'));
+    const bodyBytes = cursor.readBytes(length - 4, 'backend message body');
+    if (tag === 0x43 && !collectCommandTags) {
+      validateCStringBody(bodyBytes, 'CommandComplete tag', 'CommandComplete');
+      continue;
+    }
+    const body = new ByteCursor(bodyBytes);
     if (tag === 0x43) {
       commandTags.push(body.readCString('CommandComplete tag'));
       body.requireEnd('CommandComplete');
@@ -2353,6 +2359,21 @@ class ByteCursor {
     if (count < 0 || count > this.#bytes.length - this.#offset) {
       throw new Error(`truncated ${label}`);
     }
+  }
+}
+
+function validateCStringBody(bytes: Uint8Array, valueLabel: string, bodyLabel: string): void {
+  const end = bytes.indexOf(0);
+  if (end < 0) {
+    throw new Error(`${valueLabel} is missing null terminator`);
+  }
+  for (let index = 0; index < end; index += 1) {
+    if (bytes[index]! < 0x80) continue;
+    validateUtf8(bytes.subarray(0, end), valueLabel);
+    break;
+  }
+  if (end !== bytes.length - 1) {
+    throw new Error(`${bodyLabel} contained trailing bytes`);
   }
 }
 

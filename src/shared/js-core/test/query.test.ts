@@ -667,6 +667,55 @@ test("readiness inspection is decode-independent and malformed errors stay proto
     () => inspectReadyForQuery(backendResponse([[0x43, cstring("SELECT 0")]])),
     /before ReadyForQuery/,
   );
+  assert.equal(
+    inspectReadyForQuery(
+      backendResponse([
+        [0x43, cstring("SÉLECT 0")],
+        [0x5a, [0x49]],
+      ]),
+    ),
+    "idle",
+  );
+  assert.throws(
+    () =>
+      inspectReadyForQuery(
+        backendResponse([
+          [0x43, [0xc0, 0]],
+          [0x5a, [0x49]],
+        ]),
+    ),
+    /CommandComplete tag is not valid UTF-8/,
+  );
+  assert.throws(
+    () =>
+      inspectReadyForQuery(
+        backendResponse([
+          [0x43, [0x53]],
+          [0x5a, [0x49]],
+        ]),
+      ),
+    /CommandComplete tag is missing null terminator/,
+  );
+  assert.throws(
+    () =>
+      inspectReadyForQuery(
+        backendResponse([
+          [0x43, [...cstring("SELECT 0"), 0x53]],
+          [0x5a, [0x49]],
+        ]),
+      ),
+    /CommandComplete contained trailing bytes/,
+  );
+  assert.throws(
+    () =>
+      inspectReadyForQuery(
+        backendResponse([
+          [0x43, [0xc0, 0, 0x53]],
+          [0x5a, [0x49]],
+        ]),
+      ),
+    /CommandComplete tag is not valid UTF-8/,
+  );
 
   const malformed = thrownBy(() =>
     parseQueryRawResponse(
