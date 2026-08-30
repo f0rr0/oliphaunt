@@ -145,9 +145,6 @@ const SINGLE_BACKEND_GUCS = {
   max_parallel_workers_per_gather: '0',
   max_parallel_maintenance_workers: '0',
   io_method: 'sync',
-  // WASIX VirtualFile cannot represent PostgreSQL's O_DSYNC open flag.
-  // fdatasync keeps the durability boundary explicit for direct storage.
-  wal_sync_method: 'fdatasync',
 } as const;
 
 /** @internal PostgreSQL environment shared by both execution surfaces. */

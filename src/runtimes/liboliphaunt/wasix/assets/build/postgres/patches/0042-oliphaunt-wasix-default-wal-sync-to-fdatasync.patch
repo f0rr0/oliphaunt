@@ -1,0 +1,35 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Sun, 30 Aug 2026 00:00:00 +0000
+Subject: [PATCH] oliphaunt-wasix: default WAL sync to fdatasync
+
+WASIX libc defines O_DSYNC, so PostgreSQL's generic platform selection chooses
+open_datasync.  Wasmer-backed filesystems do not provide one portable
+open-time synchronization contract, while WASIX exposes an explicit
+fd_datasync operation.
+
+Select fdatasync in the shared WASIX port header.  Browser and Rust Wasmer
+hosts then use the same PostgreSQL-owned durability default without a
+language-binding startup override, while an explicit PostgreSQL configuration
+can still select another supported method.
+---
+ src/include/port/wasix-dl.h | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
+--- a/src/include/port/wasix-dl.h
++++ b/src/include/port/wasix-dl.h
+@@ -6,6 +6,12 @@
+ #ifndef PG_PORT_WASIX_DL_H
+ #define PG_PORT_WASIX_DL_H
+ 
++/*
++ * Prefer WASIX's explicit fd_datasync operation over an O_DSYNC open flag,
++ * whose persistence semantics vary across Wasmer-backed filesystems.
++ */
++#define PLATFORM_DEFAULT_WAL_SYNC_METHOD WAL_SYNC_METHOD_FDATASYNC
++
+ #if defined(OLIPHAUNT_WASM_SINGLE_USER) || defined(OLIPHAUNT_WASM_SIDE_MODULE)
+ #include <setjmp.h>
+ #endif
+-- 
+2.51.0

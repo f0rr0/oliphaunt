@@ -12,6 +12,16 @@ export async function expectStructuredApi(
   database: OliphauntDatabase,
   label: string,
 ): Promise<void> {
+  const walSyncMethod = (await database.queryRaw('SHOW wal_sync_method')).getText(
+    0,
+    'wal_sync_method',
+  );
+  if (walSyncMethod !== 'fdatasync') {
+    throw new Error(
+      `${label} expected the compiled WASIX wal_sync_method default, received ${JSON.stringify(walSyncMethod)}`,
+    );
+  }
+
   const decoded = await database.query<StructuredObjectRow>(
     'SELECT $1::int4 AS answer, $2::int8 AS wide, $3::jsonb AS document, $4::int4[] AS numbers',
     [42, 9007199254740993n, { ok: true }, [1, 2, 3]],

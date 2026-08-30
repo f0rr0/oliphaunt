@@ -62,9 +62,9 @@ below.
   binding exposes it, and a blocking `/direct` call cannot service a cancel
   request from the same JavaScript realm. Close stops admission and drains
   admitted work exactly as it does today.
-- Do not change `wal_sync_method` in this migration. WASIX PostgreSQL already
-  defines `PLATFORM_DEFAULT_WAL_SYNC_METHOD` as `FDATASYNC`; the current
-  TypeScript override is redundant but is a separate durability cleanup.
+- Remove the redundant TypeScript `wal_sync_method` startup override. The
+  shared WASIX PostgreSQL port defines `PLATFORM_DEFAULT_WAL_SYNC_METHOD` as
+  `FDATASYNC`; browser smoke must prove the effective compiled default.
 - Do not add release targets. The first carrier set remains Linux x64/arm64
   GNU, macOS arm64, and Windows x64 MSVC. In particular, do not add macOS x64,
   Linux musl, or Windows arm64 here.
@@ -575,7 +575,6 @@ These items are not prerequisites for the Node-API migration:
 - extracting the duplicate JavaScript query codec into a new shared package;
 - independently loaded native extension carriers or a user-visible native
   profile package split;
-- removing the existing TypeScript `wal_sync_method` override;
 - new native carrier targets or a new glibc policy; and
 - unrelated storage, extension-catalog, SDK, or release-system redesigns.
 

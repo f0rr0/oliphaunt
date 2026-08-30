@@ -66,7 +66,7 @@ const EXPECTED_TOUCHPOINTS = new Map([
   ['src/include/access/xlog.h', 'Exposes the embedded idle-boundary checkpoint handoff within PostgreSQL.'],
   ['src/include/port/atomics.h', 'Selects scalar atomics only for the explicitly single-backend WASIX build.'],
   ['src/include/port/atomics/arch-wasix-single.h', 'Preserves PostgreSQL atomic layouts and contracts without guest atomic instructions.'],
-  ['src/include/port/wasix-dl.h', 'Defines the embedded WASIX port header, ABI redirects, and call-site SJLJ contract.'],
+  ['src/include/port/wasix-dl.h', 'Defines the embedded WASIX port header, durability default, ABI redirects, and call-site SJLJ contract.'],
   ['src/include/port/wasix-dl/sys/ipc.h', 'Provides the WASIX SysV IPC shim surface.'],
   ['src/include/port/wasix-dl/sys/shm.h', 'Provides the WASIX SysV shared-memory shim surface.'],
   ['src/include/storage/s_lock.h', 'Specializes spinlocks only for the enforced single-backend WASIX runtime.'],
@@ -211,6 +211,16 @@ const REQUIRED_AUDIT_CHECKS = [
       '#elif defined(HAVE_SYNC_FILE_RANGE)',
     ],
     posture: 'The single-backend guest omits only pg_flush_data hints that WASIX rejects on read-only descriptors; PostgreSQL fsync and fdatasync remain active.',
+  },
+  {
+    requirement: 'WASIX WAL durability uses explicit fdatasync calls',
+    patches: ['0042-oliphaunt-wasix-default-wal-sync-to-fdatasync.patch'],
+    evidence: [
+      'PLATFORM_DEFAULT_WAL_SYNC_METHOD',
+      'WAL_SYNC_METHOD_FDATASYNC',
+      'explicit fd_datasync operation',
+    ],
+    posture: 'The shared PostgreSQL port avoids relying on variable O_DSYNC open semantics and gives browser and Rust Wasmer hosts one durability default.',
   },
   {
     requirement: 'PostgreSQL side modules own their SJLJ catch frames',

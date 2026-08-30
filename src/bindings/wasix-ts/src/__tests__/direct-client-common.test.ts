@@ -36,6 +36,12 @@ const pgDumpDescriptor = {
 };
 
 describe('direct WASIX session lifecycle', () => {
+  it('relies on the compiled WASIX WAL sync default', () => {
+    expect(wasixPostgresArgs(openOptions()).some((arg) => arg.startsWith('wal_sync_method='))).toBe(
+      false,
+    );
+  });
+
   it('uses PostgreSQL startup GUC name and value grammar', () => {
     const valid = openOptions();
     valid.startupGUCs = {

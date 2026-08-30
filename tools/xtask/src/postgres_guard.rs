@@ -97,6 +97,7 @@ pub(crate) fn check_postgres_source_spine() -> Result<()> {
         "0037-oliphaunt-wasix-buffer-strong-random.patch",
         "0038-oliphaunt-wasix-disable-unsupported-writeback-hints.patch",
         "0039-oliphaunt-wasix-inline-sigsetjmp.patch",
+        "0042-oliphaunt-wasix-default-wal-sync-to-fdatasync.patch",
     ] {
         ensure!(
             series.contains(&required),
@@ -193,6 +194,17 @@ pub(crate) fn check_postgres_source_spine() -> Result<()> {
             "defined(__wasm_exception_handling__) && defined(OLIPHAUNT_WASM_SIDE_MODULE)",
             "#undef sigsetjmp",
             "#define sigsetjmp(env, savesigs) ((void) (savesigs), setjmp(env))",
+        ],
+    )?;
+    ensure_file_contains_all(
+        &Path::new(POSTGRES_PATCH_DIR)
+            .join("0042-oliphaunt-wasix-default-wal-sync-to-fdatasync.patch"),
+        &[
+            "src/include/port/wasix-dl.h",
+            "PLATFORM_DEFAULT_WAL_SYNC_METHOD",
+            "WAL_SYNC_METHOD_FDATASYNC",
+            "explicit fd_datasync operation",
+            "language-binding startup override",
         ],
     )?;
 
@@ -939,6 +951,7 @@ fn check_postgres_applied_runtime_abi(source: &Path) -> Result<()> {
             "defined(__wasm_exception_handling__) && defined(OLIPHAUNT_WASM_SIDE_MODULE)",
             "#undef sigsetjmp",
             "#define sigsetjmp(env, savesigs) ((void) (savesigs), setjmp(env))",
+            "#define PLATFORM_DEFAULT_WAL_SYNC_METHOD WAL_SYNC_METHOD_FDATASYNC",
         ],
     )?;
     ensure_file_contains_all(

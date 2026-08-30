@@ -16,7 +16,7 @@ import { createServer } from 'node:net';
 import { arch, cpus, hostname, platform, release, tmpdir, totalmem } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
+import { isDeepStrictEqual, promisify } from 'node:util';
 
 import {
   browserMarkdownReport,
@@ -30,11 +30,10 @@ import {
   directoryTreeSha256,
   installedPackageClosure,
 } from '../../../../tools/perf/wasix-node/installed-closure.mjs';
+import { assertRuntimeBuildConfiguration } from '../../../../tools/perf/wasix-node/plan.mjs';
 import {
-  assertRuntimeBuildConfiguration,
-  installedHostBuildProvenance,
-} from '../../../../tools/perf/wasix-node/plan.mjs';
-import { loadHostBuildContract } from '../host/build-provenance.mjs';
+  loadHostBuildContract,
+} from '../host/build-provenance.mjs';
 import { createPackedWasixConsumer, runtimeBuildProvenance } from './packed-node-fixture.mjs';
 
 const bindingRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -448,6 +447,24 @@ async function candidateProvenance(plan) {
       archiveSize: clusterSeedBytes.length,
     },
   };
+}
+
+async function installedHostBuildProvenance(packageManifestFile, expected) {
+  const file = resolve(dirname(packageManifestFile), 'lib/host/provenance.json');
+  let provenance;
+  try {
+    provenance = JSON.parse(await readFile(file, 'utf8'));
+  } catch (error) {
+    throw new Error('installed @oliphaunt/wasix-ts host provenance is unreadable', {
+      cause: error,
+    });
+  }
+  if (!isDeepStrictEqual(provenance, expected)) {
+    throw new Error(
+      'installed @oliphaunt/wasix-ts host provenance does not match the source build contract',
+    );
+  }
+  return provenance;
 }
 
 async function toolProvenance(plan) {
