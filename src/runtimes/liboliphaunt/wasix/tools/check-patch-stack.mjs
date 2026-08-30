@@ -50,6 +50,7 @@ const EXPECTED_TOUCHPOINTS = new Map([
   ['src/backend/tcop/postgres.c', 'Owns embedded lifecycle, protocol loop, and error recovery.'],
   ['src/backend/utils/adt/like.c', 'Adds guarded LIKE literal fast path for embedded WASIX.'],
   ['src/backend/utils/adt/like_match.c', 'Adds guarded LIKE literal fast path for embedded WASIX.'],
+  ['src/backend/utils/adt/jsonb.c', 'Caches immutable jsonb_build_object expression metadata while preserving PostgreSQL cast and VARIADIC semantics.'],
   ['src/backend/utils/init/miscinit.c', 'Routes process identity through the WASIX port layer.'],
   ['src/backend/utils/init/postinit.c', 'Skips data-directory ownership checks under embedded WASIX.'],
   ['src/backend/utils/misc/guc.c', 'Uses the embedded WASIX postmaster-style environment.'],
@@ -75,6 +76,8 @@ const EXPECTED_TOUCHPOINTS = new Map([
   ['src/makefiles/Makefile.wasix-dl', 'Builds side modules and PGXS artifacts for WASIX dynamic linking.'],
   ['src/makefiles/pgxs.mk', 'Installs PGXS extension artifacts for WASIX packaging.'],
   ['src/template/wasix-dl', 'Keeps the WASIX template and atomics invariants source-controlled.'],
+  ['src/test/regress/expected/jsonb.out', 'Records fixed, VARIADIC, Param, null, error, and mutable user-cast JSONB constructor semantics.'],
+  ['src/test/regress/sql/jsonb.sql', 'Covers fixed, VARIADIC, Param, null, error, and mutable user-cast JSONB constructor semantics.'],
 ]);
 
 const REQUIRED_AUDIT_CHECKS = [
@@ -222,6 +225,17 @@ const REQUIRED_AUDIT_CHECKS = [
       'explicit fd_datasync operation',
     ],
     posture: 'The shared PostgreSQL port selects fdatasync and removes open_sync/open_datasync from the WASIX GUC choices because Wasmer does not honor their open flags.',
+  },
+  {
+    requirement: 'Fixed JSONB constructor metadata preserves PostgreSQL semantics',
+    patches: ['0043-oliphaunt-wasix-cache-jsonb-build-object-metadata.patch'],
+    evidence: [
+      'JsonbBuildObjectState',
+      'get_fn_expr_variadic',
+      'FirstNormalObjectId',
+      'jsonb_build_object_cache_drop_cast',
+    ],
+    posture: 'Ordinary calls reuse immutable expression metadata; explicit VARIADIC arrays keep the generic path and user-defined types are recategorized so cast DDL remains visible.',
   },
   {
     requirement: 'PostgreSQL side modules own their SJLJ catch frames',

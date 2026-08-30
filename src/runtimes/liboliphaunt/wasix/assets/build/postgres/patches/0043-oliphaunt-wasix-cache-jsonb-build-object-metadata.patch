@@ -1,0 +1,350 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Sun, 30 Aug 2026 00:00:00 +0000
+Subject: [PATCH] oliphaunt-wasix: cache jsonb_build_object metadata
+
+Ordinary jsonb_build_object calls allocate argument metadata and repeat fixed
+type categorization for every row.  Cache immutable expression metadata and
+stable literal conversion in fn_extra while leaving explicit VARIADIC arrays
+on PostgreSQL's generic path.
+
+User-defined types are deliberately recategorized so casts added or dropped
+during execution take effect.  Focused regression coverage exercises fixed
+and VARIADIC calls, Const and Param values, cast invalidation, and the existing
+null and error semantics.
+---
+ src/backend/utils/adt/jsonb.c       | 185 +++++++++++++++++++++++++++-
+ src/test/regress/expected/jsonb.out |  51 ++++++++
+ src/test/regress/sql/jsonb.sql      |  41 ++++++
+ 3 files changed, 275 insertions(+), 2 deletions(-)
+
+diff --git a/src/backend/utils/adt/jsonb.c b/src/backend/utils/adt/jsonb.c
+index da94d42..b051693 100644
+--- a/src/backend/utils/adt/jsonb.c
++++ b/src/backend/utils/adt/jsonb.c
+@@ -62,6 +62,24 @@ static void datum_to_jsonb_internal(Datum val, bool is_null, JsonbInState *resul
+ 									bool key_scalar);
+ static void add_jsonb(Datum val, bool is_null, JsonbInState *result,
+ 					  Oid val_type, bool key_scalar);
++
++typedef struct JsonbBuildObjectArgState
++{
++	Datum		converted_arg;
++	Oid			type;
++	Oid			outfuncoid;
++	JsonTypeCategory category;
++	bool		convert_unknown;
++	bool		converted_unknown;
++	bool		categorized;
++} JsonbBuildObjectArgState;
++
++/* Per-expression metadata for ordinary jsonb_build_object() calls. */
++typedef struct JsonbBuildObjectState
++{
++	int			nargs;
++	JsonbBuildObjectArgState args[FLEXIBLE_ARRAY_MEMBER];
++} JsonbBuildObjectState;
+ static JsonbParseState *clone_parse_state(JsonbParseState *state);
+ static char *JsonbToCStringWorker(StringInfo out, JsonbContainer *in, int estimated_len, bool indent);
+ static void add_indent(StringInfo out, bool indent, int level);
+@@ -1037,6 +1055,107 @@ add_jsonb(Datum val, bool is_null, JsonbInState *result,
+ 							key_scalar);
+ }
+ 
++/*
++ * Initialize the type metadata for an ordinary (non-VARIADIC) call to
++ * jsonb_build_object().  The argument types are properties of the calling
++ * expression, so it is sufficient to inspect them once per expression.
++ *
++ * Stable unknown arguments need conversion from cstring to text.  Save that
++ * converted value in the FmgrInfo memory context too; otherwise a constant
++ * key such as 'name' would be copied for every input row.
++ */
++static JsonbBuildObjectState *
++init_jsonb_build_object_state(FunctionCallInfo fcinfo)
++{
++	JsonbBuildObjectState *state;
++	MemoryContext oldcontext;
++	Size		statesize;
++	int			i;
++
++	statesize = offsetof(JsonbBuildObjectState, args) +
++		PG_NARGS() * sizeof(JsonbBuildObjectArgState);
++	state = MemoryContextAllocZero(fcinfo->flinfo->fn_mcxt,
++								   statesize);
++	state->nargs = PG_NARGS();
++
++	oldcontext = MemoryContextSwitchTo(fcinfo->flinfo->fn_mcxt);
++	for (i = 0; i < state->nargs; i++)
++	{
++		JsonbBuildObjectArgState *argstate = &state->args[i];
++
++		argstate->type = get_fn_expr_argtype(fcinfo->flinfo, i);
++
++		if (argstate->type == UNKNOWNOID &&
++			get_fn_expr_arg_stable(fcinfo->flinfo, i))
++		{
++			Node	   *arg = fcinfo->flinfo->fn_expr;
++
++			argstate->type = TEXTOID;
++			argstate->convert_unknown = true;
++
++			/*
++			 * A Param is stable only for one query, not for FmgrInfo's
++			 * lifetime.
++			 */
++			if (IsA(arg, FuncExpr))
++				arg = (Node *) list_nth(((FuncExpr *) arg)->args, i);
++			else
++				arg = NULL;
++			if (IsA(arg, Const))
++			{
++				argstate->converted_unknown = true;
++				argstate->converted_arg = PG_ARGISNULL(i) ? (Datum) 0 :
++					CStringGetTextDatum(PG_GETARG_POINTER(i));
++			}
++		}
++
++		if (!OidIsValid(argstate->type) || argstate->type == UNKNOWNOID)
++			ereport(ERROR,
++					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
++					 errmsg("could not determine data type for argument %d",
++							i + 1)));
++	}
++	MemoryContextSwitchTo(oldcontext);
++
++	fcinfo->flinfo->fn_extra = state;
++	return state;
++}
++
++static void
++add_jsonb_cached(Datum val, bool is_null, JsonbInState *result,
++				 JsonbBuildObjectState *state, int argno, bool key_scalar)
++{
++	JsonbBuildObjectArgState *argstate = &state->args[argno];
++	JsonTypeCategory tcategory;
++	Oid			outfuncoid;
++
++	if (is_null)
++	{
++		tcategory = JSONTYPE_NULL;
++		outfuncoid = InvalidOid;
++	}
++	else
++	{
++		/*
++		 * A user-defined type can gain or lose a cast to json between calls.
++		 * Recheck those types, while caching the immutable built-in cases.
++		 */
++		if (!argstate->categorized || argstate->type >= FirstNormalObjectId)
++		{
++			json_categorize_type(argstate->type, true,
++								 &argstate->category,
++								 &argstate->outfuncoid);
++			if (argstate->type < FirstNormalObjectId)
++				argstate->categorized = true;
++		}
++		tcategory = argstate->category;
++		outfuncoid = argstate->outfuncoid;
++	}
++
++	datum_to_jsonb_internal(val, is_null, result, tcategory, outfuncoid,
++							key_scalar);
++}
++
+ 
+ /*
+  * Is the given type immutable when coming out of a JSONB context?
+@@ -1176,13 +1295,75 @@ jsonb_build_object_worker(int nargs, const Datum *args, const bool *nulls, const
+ Datum
+ jsonb_build_object(PG_FUNCTION_ARGS)
+ {
++	JsonbBuildObjectState *state;
++	JsonbInState result;
+ 	Datum	   *args;
+ 	bool	   *nulls;
+ 	Oid		   *types;
++	int			i;
++	int			nargs;
++
++	/*
++	 * An explicit VARIADIC array has to be deconstructed on every call.  Keep
++	 * using the general path for that case, but avoid its allocations and
++	 * repeated catalog lookups for the usual fixed argument list.
++	 */
++	if (!get_fn_expr_variadic(fcinfo->flinfo))
++	{
++		state = (JsonbBuildObjectState *) fcinfo->flinfo->fn_extra;
++		if (state == NULL)
++			state = init_jsonb_build_object_state(fcinfo);
++
++		nargs = state->nargs;
++		if (nargs % 2 != 0)
++			ereport(ERROR,
++					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
++					 errmsg("argument list must have even number of elements"),
++					 errhint("The arguments of %s must consist of alternating keys and values.",
++							 "jsonb_build_object()")));
++
++		memset(&result, 0, sizeof(JsonbInState));
++		result.res = pushJsonbValue(&result.parseState, WJB_BEGIN_OBJECT, NULL);
++
++		for (i = 0; i < nargs; i += 2)
++		{
++			JsonbBuildObjectArgState *keystate = &state->args[i];
++			JsonbBuildObjectArgState *valuestate = &state->args[i + 1];
++			Datum		key;
++			Datum		value;
++
++			if (PG_ARGISNULL(i))
++				ereport(ERROR,
++						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
++						 errmsg("argument %d: key must not be null", i + 1)));
++
++			if (keystate->converted_unknown)
++				key = keystate->converted_arg;
++			else if (keystate->convert_unknown)
++				key = CStringGetTextDatum(PG_GETARG_POINTER(i));
++			else
++				key = PG_GETARG_DATUM(i);
++
++			if (valuestate->converted_unknown)
++				value = valuestate->converted_arg;
++			else if (valuestate->convert_unknown)
++				value = PG_ARGISNULL(i + 1) ? (Datum) 0 :
++					CStringGetTextDatum(PG_GETARG_POINTER(i + 1));
++			else
++				value = PG_GETARG_DATUM(i + 1);
++
++			add_jsonb_cached(key, false, &result, state, i, true);
++			add_jsonb_cached(value, PG_ARGISNULL(i + 1), &result,
++							 state, i + 1, false);
++		}
++
++		result.res = pushJsonbValue(&result.parseState, WJB_END_OBJECT, NULL);
++		PG_RETURN_DATUM(JsonbPGetDatum(JsonbValueToJsonb(result.res)));
++	}
+ 
+ 	/* build argument values to build the object */
+-	int			nargs = extract_variadic_args(fcinfo, 0, true,
+-											  &args, &types, &nulls);
++	nargs = extract_variadic_args(fcinfo, 0, true,
++								  &args, &types, &nulls);
+ 
+ 	if (nargs < 0)
+ 		PG_RETURN_NULL();
+diff --git a/src/test/regress/expected/jsonb.out b/src/test/regress/expected/jsonb.out
+index 36c31c1..75717e4 100644
+--- a/src/test/regress/expected/jsonb.out
++++ b/src/test/regress/expected/jsonb.out
+@@ -1544,6 +1544,57 @@ SELECT jsonb_build_object(VARIADIC '{{1,4},{2,5},{3,6}}'::int[][]); -- ok
+  {"1": 4, "2": 5, "3": 6}
+ (1 row)
+ 
++-- fixed-argument metadata caching must preserve the generic VARIADIC path
++\pset format unaligned
++SELECT jsonb_build_object('a', '1'::text, 'b', NULL::text) =
++       jsonb_build_object(VARIADIC ARRAY['a', '1', 'b', NULL]::text[]);
++?column?
++t
++(1 row)
++-- cache expression metadata, not Param values
++PREPARE jsonb_build_object_cache_plan(text, int) AS
++SELECT jsonb_build_object('constant', 'value', 'parameter', $1,
++                          'number', $2, 'null', NULL);
++EXECUTE jsonb_build_object_cache_plan('first', 1);
++jsonb_build_object
++{"null": null, "number": 1, "constant": "value", "parameter": "first"}
++(1 row)
++EXECUTE jsonb_build_object_cache_plan('second', 2);
++jsonb_build_object
++{"null": null, "number": 2, "constant": "value", "parameter": "second"}
++(1 row)
++DEALLOCATE jsonb_build_object_cache_plan;
++-- user-defined casts can change while one expression is being evaluated
++CREATE TYPE jsonb_build_object_cache_type AS ENUM ('one');
++CREATE FUNCTION jsonb_build_object_cache_cast(jsonb_build_object_cache_type)
++RETURNS json
++LANGUAGE SQL IMMUTABLE STRICT
++RETURN json_build_object('cast', $1::text);
++CREATE CAST (jsonb_build_object_cache_type AS json)
++WITH FUNCTION jsonb_build_object_cache_cast(jsonb_build_object_cache_type);
++CREATE FUNCTION jsonb_build_object_cache_drop_cast(int,
++                                                   jsonb_build_object_cache_type)
++RETURNS jsonb_build_object_cache_type
++LANGUAGE plpgsql VOLATILE AS $$
++BEGIN
++  IF $1 = 2 THEN
++    EXECUTE 'DROP CAST (jsonb_build_object_cache_type AS json)';
++  END IF;
++  RETURN $2;
++END
++$$;
++SELECT g, jsonb_build_object(
++              'v', jsonb_build_object_cache_drop_cast(g, 'one'))
++FROM generate_series(1, 2) AS g ORDER BY g;
++g|jsonb_build_object
++1|{"v": {"cast": "one"}}
++2|{"v": "one"}
++(2 rows)
++DROP FUNCTION jsonb_build_object_cache_drop_cast(int,
++                                                 jsonb_build_object_cache_type);
++DROP FUNCTION jsonb_build_object_cache_cast(jsonb_build_object_cache_type);
++DROP TYPE jsonb_build_object_cache_type;
++\pset format aligned
+ -- empty objects/arrays
+ SELECT jsonb_build_array();
+  jsonb_build_array 
+diff --git a/src/test/regress/sql/jsonb.sql b/src/test/regress/sql/jsonb.sql
+index 07295b4..f852384 100644
+--- a/src/test/regress/sql/jsonb.sql
++++ b/src/test/regress/sql/jsonb.sql
+@@ -381,6 +381,47 @@ SELECT jsonb_build_object(VARIADIC '{1,2,3,4}'::text[]); -- ok
+ SELECT jsonb_build_object(VARIADIC '{1,2,3,4}'::int[]); -- ok
+ SELECT jsonb_build_object(VARIADIC '{{1,4},{2,5},{3,6}}'::int[][]); -- ok
+ 
++-- fixed-argument metadata caching must preserve the generic VARIADIC path
++\pset format unaligned
++SELECT jsonb_build_object('a', '1'::text, 'b', NULL::text) =
++       jsonb_build_object(VARIADIC ARRAY['a', '1', 'b', NULL]::text[]);
++
++-- cache expression metadata, not Param values
++PREPARE jsonb_build_object_cache_plan(text, int) AS
++SELECT jsonb_build_object('constant', 'value', 'parameter', $1,
++                          'number', $2, 'null', NULL);
++EXECUTE jsonb_build_object_cache_plan('first', 1);
++EXECUTE jsonb_build_object_cache_plan('second', 2);
++DEALLOCATE jsonb_build_object_cache_plan;
++
++-- user-defined casts can change while one expression is being evaluated
++CREATE TYPE jsonb_build_object_cache_type AS ENUM ('one');
++CREATE FUNCTION jsonb_build_object_cache_cast(jsonb_build_object_cache_type)
++RETURNS json
++LANGUAGE SQL IMMUTABLE STRICT
++RETURN json_build_object('cast', $1::text);
++CREATE CAST (jsonb_build_object_cache_type AS json)
++WITH FUNCTION jsonb_build_object_cache_cast(jsonb_build_object_cache_type);
++CREATE FUNCTION jsonb_build_object_cache_drop_cast(int,
++                                                   jsonb_build_object_cache_type)
++RETURNS jsonb_build_object_cache_type
++LANGUAGE plpgsql VOLATILE AS $$
++BEGIN
++  IF $1 = 2 THEN
++    EXECUTE 'DROP CAST (jsonb_build_object_cache_type AS json)';
++  END IF;
++  RETURN $2;
++END
++$$;
++SELECT g, jsonb_build_object(
++              'v', jsonb_build_object_cache_drop_cast(g, 'one'))
++FROM generate_series(1, 2) AS g ORDER BY g;
++DROP FUNCTION jsonb_build_object_cache_drop_cast(int,
++                                                 jsonb_build_object_cache_type);
++DROP FUNCTION jsonb_build_object_cache_cast(jsonb_build_object_cache_type);
++DROP TYPE jsonb_build_object_cache_type;
++\pset format aligned
++
+ -- empty objects/arrays
+ SELECT jsonb_build_array();
+ 
+-- 
+2.43.0
