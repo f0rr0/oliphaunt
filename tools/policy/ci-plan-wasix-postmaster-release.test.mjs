@@ -127,6 +127,17 @@ function assertReleaseSelection(relativePath) {
   );
 }
 
+function assertNativeExtensionLifecycleSelection(relativePath) {
+  const effects = directEffects(relativePath);
+  assert.equal(
+    effects.tasks.includes(
+      'release-tools:native-extension-lifecycle-trigger',
+    ),
+    true,
+  );
+  assert.equal(effects.jobs.includes('native-extension-lifecycle'), true);
+}
+
 test('postmaster source pins select its production builder and release', () => {
   assertReleaseSelection('src/sources/third-party/wasix-postmaster/wasmer.toml');
 });
@@ -144,4 +155,16 @@ test('postmaster aggregate helper remains owned by the product CI graph', () => 
     'liboliphaunt-wasix-postmaster:aggregate-release-assets',
   ), true);
   assert.equal(effects.jobs.includes('wasix-postmaster'), true);
+});
+
+test('native lifecycle runner changes select its exact hosted proof', () => {
+  assertNativeExtensionLifecycleSelection(
+    'tools/release/run-native-extension-lifecycle-proof.sh',
+  );
+});
+
+test('native lifecycle supervisor changes select its exact hosted proof', () => {
+  assertNativeExtensionLifecycleSelection(
+    'src/runtimes/liboliphaunt/wasix-postmaster/lib/process-supervision.sh',
+  );
 });

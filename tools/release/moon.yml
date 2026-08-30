@@ -65,6 +65,17 @@ tasks:
     options:
       cache: false
       runFromWorkspaceRoot: true
+  # Planner-only source edge for the executable and supervision contract used
+  # by the hosted native extension lifecycle proof.
+  native-extension-lifecycle-trigger:
+    tags: ["release", "planner"]
+    command: "true"
+    inputs:
+      - "/src/runtimes/liboliphaunt/wasix-postmaster/lib/process-supervision.sh"
+      - "/tools/release/run-native-extension-lifecycle-proof.sh"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
   check:
     tags: ["policy", "assertion", "quality", "static"]
     command: "tools/dev/bun.sh tools/release/release-check.mjs"

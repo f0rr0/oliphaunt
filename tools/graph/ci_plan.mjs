@@ -101,6 +101,9 @@ export const NATIVE_EXTENSION_LIFECYCLE_AGGREGATE_JOB =
 const IOS_CARRIER_VALIDATION_TRIGGER_TASKS = new Set([
   "release-tools:ios-carrier-validation-trigger",
 ]);
+const NATIVE_EXTENSION_LIFECYCLE_TRIGGER_TASKS = new Set([
+  "release-tools:native-extension-lifecycle-trigger",
+]);
 export const NATIVE_EXTENSION_LIFECYCLE_EXHAUSTIVE_SHARD_COUNT = 3;
 const NATIVE_EXTENSION_LIFECYCLE_TRIGGER_PROJECTS = new Set([
   "ci-workflows",
@@ -425,6 +428,7 @@ export function planJobsForAffected(directProjects, tasks) {
   if (
     intersects(directProjects, NATIVE_EXTENSION_LIFECYCLE_TRIGGER_PROJECTS) ||
     intersects(directTaskProjects, NATIVE_EXTENSION_LIFECYCLE_TRIGGER_PROJECTS) ||
+    intersects(tasks, NATIVE_EXTENSION_LIFECYCLE_TRIGGER_TASKS) ||
     intersects(directProjects, new Set(exactExtensionProducts()))
   ) {
     jobs.add(NATIVE_EXTENSION_LIFECYCLE_JOB);
