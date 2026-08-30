@@ -309,9 +309,28 @@ function main() {
   }
   const packageScript = readFileSync(path.join(PRODUCT_ROOT, "tools/package-platform.mjs"), "utf8");
   assert(packageScript.includes("buildInputs,"), "artifact provenance must embed validated build inputs");
+  for (const contract of [
+    "localWindowsTarInvocation",
+    "stageWindowsVcRuntime({",
+    "sourceDirectory: packagePrebuilds",
+    "WINDOWS_VC_RUNTIME_RECEIPT",
+  ]) {
+    assert(
+      packageScript.includes(contract),
+      `platform packaging is missing Windows carrier contract ${contract}`,
+    );
+  }
   assert(
     !packageScript.includes("write_checksum_manifest"),
     "per-target packaging must not emit the aggregate checksum manifest",
+  );
+  const packagedSmoke = readFileSync(
+    path.join(PRODUCT_ROOT, "tools/smoke-packaged-addon.mjs"),
+    "utf8",
+  );
+  assert(
+    packagedSmoke.includes('"**/prebuilds/**"'),
+    "Electron ASAR smoke must unpack the addon and all platform loader companions",
   );
   process.stdout.write("oliphaunt-wasix-napi package metadata validated\n");
 }

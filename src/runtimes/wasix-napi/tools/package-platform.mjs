@@ -13,6 +13,11 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { localWindowsTarInvocation } from "../../../../tools/release/tar-command.mjs";
+import {
+  WINDOWS_VC_RUNTIME_RECEIPT,
+  stageWindowsVcRuntime,
+} from "../../../../tools/release/windows-vc-runtime-closure.mjs";
 import { portableCommand } from "./portable-command.mjs";
 
 const WORKSPACE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
@@ -122,9 +127,16 @@ function main() {
   mkdirSync(path.join(packageWork, "prebuilds"), { recursive: true });
   mkdirSync(packageOutput, { recursive: true });
   cpSync(sourcePackage, packageWork, { recursive: true });
-  mkdirSync(path.join(packageWork, "prebuilds"), { recursive: true });
-  cpSync(path.join(prebuildDirectory, BINARY), path.join(packageWork, "prebuilds", BINARY));
+  const packagePrebuilds = path.join(packageWork, "prebuilds");
+  mkdirSync(packagePrebuilds, { recursive: true });
+  cpSync(path.join(prebuildDirectory, BINARY), path.join(packagePrebuilds, BINARY));
   stageReleaseNotices(packageWork);
+  const windowsRuntimeNames = target === "windows-x64-msvc"
+    ? stageWindowsVcRuntime({
+      root: packageWork,
+      destinations: [packagePrebuilds],
+    }).required
+    : [];
 
   const sourceSha = execFileSync("git", ["rev-parse", "HEAD"], {
     cwd: WORKSPACE_ROOT,
@@ -176,6 +188,16 @@ function main() {
     path.join(packageWork, "artifact-provenance.json"),
     path.join(releaseStage, "artifact-provenance.json"),
   );
+  if (target === "windows-x64-msvc") {
+    const releaseRuntimeNames = stageWindowsVcRuntime({
+      root: releaseStage,
+      sourceDirectory: packagePrebuilds,
+      destinations: [releaseStage],
+    }).required;
+    if (JSON.stringify(releaseRuntimeNames) !== JSON.stringify(windowsRuntimeNames)) {
+      throw new Error("release and npm carriers derived different Windows VC runtime closures");
+    }
+  }
   const platformCheck = portableCommand(BUN_WRAPPER, [
     PLATFORM_BINARY_CONTRACT,
     "--target",
@@ -233,10 +255,16 @@ function main() {
     : path.join(packageOutput, entry.filename);
   requireFile(tarball);
 
-  const listing = execFileSync("tar", ["-tzf", tarball], { encoding: "utf8" })
+  const tarInvocation = localWindowsTarInvocation(["-tzf", tarball], {
+    cwd: WORKSPACE_ROOT,
+  });
+  const listing = execFileSync("tar", tarInvocation.args, {
+    cwd: tarInvocation.cwd,
+    encoding: "utf8",
+  })
     .trim()
     .split(/\r?\n/u);
-  for (const member of [
+  const requiredMembers = [
     `package/prebuilds/${BINARY}`,
     "package/artifact-provenance.json",
     "package/LICENSE",
@@ -245,7 +273,14 @@ function main() {
     "package/THIRD_PARTY_LICENSES/PostgreSQL-COPYRIGHT",
     "package/THIRD_PARTY_LICENSES/ICU-LICENSE",
     "package/THIRD_PARTY_LICENSES/OpenSSL-LICENSE.txt",
-  ]) {
+  ];
+  if (windowsRuntimeNames.length > 0) {
+    requiredMembers.push(
+      ...windowsRuntimeNames.map((name) => `package/prebuilds/${name}`),
+      `package/prebuilds/${WINDOWS_VC_RUNTIME_RECEIPT}`,
+    );
+  }
+  for (const member of requiredMembers) {
     if (!listing.includes(member)) {
       throw new Error(`${path.basename(tarball)} is missing ${member}`);
     }

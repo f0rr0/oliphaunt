@@ -150,8 +150,10 @@ implementation and does not require process-spawn permission. Managed Deno
 Deploy is not a qualified distribution target. Node.js, Bun, Deno, and Electron
 load the same Node-API 8 binary for their platform.
 
-Electron applications should configure their packager to leave `**/*.node`
-unpacked and ship `app.asar.unpacked` beside `app.asar`. Electron can otherwise
-extract native modules to a temporary file, which adds startup work and can
-interact poorly with antivirus scanners. Each carrier job exercises the
-ASAR-unpacked layout and its missing-companion failure mode.
+Electron applications should configure their packager to leave
+`**/prebuilds/**` unpacked and ship `app.asar.unpacked` beside `app.asar`. This
+keeps the addon and any platform loader companions, including the Windows
+app-local VC runtime, in one loadable directory. Electron can otherwise extract
+native modules to a temporary file, which adds startup work and can interact
+poorly with antivirus scanners. Each carrier job exercises the ASAR-unpacked
+layout and its missing-companion failure mode.

@@ -27,8 +27,9 @@ import { directory } from 'npm:@oliphaunt/wasix-ts/storage/deno';
 
 Use local `node_modules` resolution and grant `--allow-ffi`, `--allow-read`, and
 `--allow-env`; `/worker` does not require process-spawn permission. Configure
-Electron packagers to leave `**/*.node` unpacked and ship `app.asar.unpacked` beside
-`app.asar`.
+Electron packagers to leave `**/prebuilds/**` unpacked and ship
+`app.asar.unpacked` beside `app.asar`, keeping the addon and platform loader
+companions in one directory.
 
 </Step>
 <Step>

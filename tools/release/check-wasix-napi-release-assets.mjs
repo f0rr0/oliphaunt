@@ -28,6 +28,10 @@ import {
   assertReleaseNoticesInEntries,
   releaseProfilePackageLicense,
 } from "./release-notices.mjs";
+import {
+  WINDOWS_VC_RUNTIME_DLLS,
+  WINDOWS_VC_RUNTIME_RECEIPT,
+} from "./windows-vc-runtime-closure.mjs";
 
 const PREFIX = "check-wasix-napi-release-assets.mjs";
 const PRODUCT = "oliphaunt-wasix-napi";
@@ -277,6 +281,54 @@ export function assertSingleWasixNapiAddonMember(entries, binaryMember, label = 
   }
 }
 
+export function assertWasixNapiPlatformEntries(
+  entries,
+  { target, label = "carrier", prefix = "", binaryDirectory = "" },
+) {
+  inspectPlatformBinaryEntries(
+    [...entries].map(([name, entry]) => ({ name, ...entry })),
+    { target, rootLabel: label },
+  );
+  if (target !== "windows-x64-msvc") return;
+
+  const sibling = (name) => [prefix, binaryDirectory, name].filter(Boolean).join("/");
+  const runtimeNames = new Set(WINDOWS_VC_RUNTIME_DLLS);
+  const actualRuntimeMembers = [...entries]
+    .filter(([name, entry]) => entry?.isFile && runtimeNames.has(path.posix.basename(name).toLowerCase()))
+    .map(([name]) => name)
+    .sort(compareText);
+  const expectedRuntimeMembers = WINDOWS_VC_RUNTIME_DLLS
+    .filter((name) => entries.has(sibling(name)))
+    .map((name) => sibling(name))
+    .sort(compareText);
+  if (JSON.stringify(actualRuntimeMembers) !== JSON.stringify(expectedRuntimeMembers)) {
+    throw new Error(
+      `${label} must place its exact app-local VC runtime closure beside ${sibling(BINARY)}`,
+    );
+  }
+
+  const expectedReceiptMember = sibling(WINDOWS_VC_RUNTIME_RECEIPT);
+  const actualReceiptMembers = [...entries.keys()]
+    .filter((name) => path.posix.basename(name).toLowerCase() === WINDOWS_VC_RUNTIME_RECEIPT)
+    .sort(compareText);
+  const expectedReceiptMembers = expectedRuntimeMembers.length > 0 ? [expectedReceiptMember] : [];
+  if (JSON.stringify(actualReceiptMembers) !== JSON.stringify(expectedReceiptMembers)) {
+    throw new Error(`${label} must carry one VC runtime receipt beside its app-local closure`);
+  }
+  if (expectedRuntimeMembers.length === 0) return;
+
+  const receipt = entries.get(expectedReceiptMember);
+  if (!receipt?.isFile || receipt.isSymbolicLink) {
+    throw new Error(`${label} is missing regular member ${expectedReceiptMember}`);
+  }
+  const expectedReceipt = expectedRuntimeMembers
+    .map((member) => `${entrySha256(entries.get(member))}  ${path.posix.basename(member)}\n`)
+    .join("");
+  if (Buffer.from(receipt.data()).toString("utf8") !== expectedReceipt) {
+    throw new Error(`${label} ${expectedReceiptMember} does not bind its exact VC runtime bytes`);
+  }
+}
+
 function assertPayload(entries, { prefix = "", label, target, version, npm = false }) {
   assertReleaseNoticesInEntries(entries, { profile: PROFILE, prefix, label });
   const member = (name) => prefix ? `${prefix}/${name}` : name;
@@ -341,6 +393,12 @@ export function assertWasixNapiNpmArchive(file, targets, version) {
     throw new Error(`${label} package name is not a published WASIX Node-API carrier: ${JSON.stringify(manifest.name)}`);
   }
   assertPayload(entries, { prefix: "package", label, target, version, npm: true });
+  assertWasixNapiPlatformEntries(entries, {
+    target: target.target,
+    label,
+    prefix: "package",
+    binaryDirectory: "prebuilds",
+  });
   return manifest;
 }
 
@@ -351,10 +409,10 @@ async function validateArchive(file, target, version) {
   } catch (error) {
     fail(PREFIX, error.message);
   }
-  inspectPlatformBinaryEntries(
-    [...entries].map(([name, entry]) => ({ name, ...entry })),
-    { target: target.target, rootLabel: path.basename(file) },
-  );
+  assertWasixNapiPlatformEntries(entries, {
+    target: target.target,
+    label: path.basename(file),
+  });
 }
 
 async function main(argv) {

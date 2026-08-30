@@ -1,9 +1,13 @@
+import { createHash } from "node:crypto";
+
 import { describe, expect, test } from "bun:test";
 
 import {
   assertSingleWasixNapiAddonMember,
   assertWasixNapiCarrierManifest,
+  assertWasixNapiPlatformEntries,
 } from "../../../../tools/release/check-wasix-napi-release-assets.mjs";
+import { windowsPeFixture } from "../../../../tools/test/release-fixture-utils.mjs";
 
 const target = Object.freeze({
   npmPackage: "@oliphaunt/wasix-napi-linux-x64-gnu",
@@ -45,6 +49,15 @@ function manifest() {
       "THIRD_PARTY_NOTICES.oliphaunt-wasix.md",
       "THIRD_PARTY_LICENSES",
     ],
+  };
+}
+
+function archiveEntry(data) {
+  return {
+    data: () => data,
+    isFile: true,
+    isSymbolicLink: false,
+    size: data.length,
   };
 }
 
@@ -97,5 +110,36 @@ describe("WASIX Node-API carrier fail-closed package contract", () => {
       expect(() => assertWasixNapiCarrierManifest(candidate, target, "1.2.3"))
         .toThrow();
     }
+  });
+
+  test("requires the exact Windows VC runtime closure beside the npm addon", () => {
+    const binary = windowsPeFixture({ imports: ["VCRUNTIME140.dll"] });
+    const runtime = windowsPeFixture();
+    const digest = createHash("sha256").update(runtime).digest("hex");
+    const entries = new Map([
+      ["package/prebuilds/oliphaunt_wasix_napi.node", archiveEntry(binary)],
+      ["package/prebuilds/vcruntime140.dll", archiveEntry(runtime)],
+      [
+        "package/prebuilds/windows-vc-runtime.sha256",
+        archiveEntry(Buffer.from(`${digest}  vcruntime140.dll\n`)),
+      ],
+    ]);
+    const options = {
+      target: "windows-x64-msvc",
+      prefix: "package",
+      binaryDirectory: "prebuilds",
+    };
+    expect(() => assertWasixNapiPlatformEntries(entries, options)).not.toThrow();
+
+    entries.delete("package/prebuilds/windows-vc-runtime.sha256");
+    expect(() => assertWasixNapiPlatformEntries(entries, options)).toThrow(/VC runtime receipt/u);
+
+    entries.set(
+      "package/prebuilds/windows-vc-runtime.sha256",
+      archiveEntry(Buffer.from(`${digest}  vcruntime140.dll\n`)),
+    );
+    entries.set("package/vcruntime140.dll", entries.get("package/prebuilds/vcruntime140.dll"));
+    entries.delete("package/prebuilds/vcruntime140.dll");
+    expect(() => assertWasixNapiPlatformEntries(entries, options)).toThrow(/beside/u);
   });
 });

@@ -70,6 +70,10 @@ tasks:
       - "/tools/release/platform-compatibility-policy.mjs"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-asset-validation.mjs"
+      - "/tools/release/native-runtime-payload-policy.json"
+      - "/tools/release/tar-command.mjs"
+      - "/tools/release/windows-vc-runtime-closure.mjs"
+      - "/tools/test/release-fixture-utils.mjs"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -124,6 +128,9 @@ tasks:
       - "/tools/release/platform-compatibility-policy.mjs"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-asset-validation.mjs"
+      - "/tools/release/native-runtime-payload-policy.json"
+      - "/tools/release/tar-command.mjs"
+      - "/tools/release/windows-vc-runtime-closure.mjs"
     outputs:
       - "/target/oliphaunt-wasix-napi/release-assets/**/*"
       - "/target/oliphaunt-wasix-napi/npm-packages/**/*"
@@ -154,6 +161,8 @@ tasks:
       - "/tools/release/release-asset-validation.mjs"
       - "/tools/release/release-notices.mjs"
       - "/tools/release/write_checksum_manifest.mjs"
+      - "/tools/release/native-runtime-payload-policy.json"
+      - "/tools/release/windows-vc-runtime-closure.mjs"
       - "/target/oliphaunt-wasix-napi/npm-packages/**/*"
       - "/target/oliphaunt-wasix-napi/release-assets/**/*"
     outputs:

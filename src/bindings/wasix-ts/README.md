@@ -46,12 +46,13 @@ smoke uses explicit host permissions. The qualified Deno surface is
 the Deno CLI version declared by this package; managed Deno Deploy is not
 currently a qualified distribution target.
 
-Electron applications that use ASAR should leave `**/*.node` unpacked and ship
-the generated `app.asar.unpacked` directory beside `app.asar`. Electron can
-temporarily extract a packed native module, but the unpacked layout avoids that
-startup overhead and antivirus interaction. Carrier qualification loads the
-addon from this packaged layout and proves that a missing unpacked companion
-fails explicitly.
+Electron applications that use ASAR should leave `**/prebuilds/**` unpacked and
+ship the generated `app.asar.unpacked` directory beside `app.asar`. This keeps
+the addon and any platform loader companions, including the Windows app-local
+VC runtime, in one loadable directory. Electron can temporarily extract a
+packed native module, but the unpacked layout avoids that startup overhead and
+antivirus interaction. Carrier qualification loads the addon from this
+packaged layout and proves that a missing unpacked companion fails explicitly.
 
 Optional ICU data and its matching `icu` seed are selected explicitly:
 

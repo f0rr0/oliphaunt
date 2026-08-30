@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFile } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -146,7 +146,7 @@ console.log('oliphaunt-wasix-napi-asar-unpacked:PASS');
       source,
       archive,
       "--unpack",
-      "**/*.node",
+      "**/prebuilds/**",
     ],
     scratch,
   );
@@ -157,6 +157,12 @@ console.log('oliphaunt-wasix-napi-asar-unpacked:PASS');
     scopedDirectory,
     "prebuilds",
     BINARY,
+  );
+  const installedPrebuilds = path.join(installedCarrier, "prebuilds");
+  const unpackedPrebuilds = path.dirname(unpackedBinary);
+  const packagedCompanions = await readdir(installedPrebuilds);
+  await Promise.all(
+    packagedCompanions.map((name) => access(path.join(unpackedPrebuilds, name))),
   );
   const heldBinary = `${unpackedBinary}.missing`;
   const verification = path.join(archive, "main.cjs");

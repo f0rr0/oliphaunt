@@ -331,9 +331,11 @@ dependency.
 
 Deno consumers need local `node_modules` resolution plus `--allow-ffi`,
 `--allow-read`, and `--allow-env`; `/worker` does not need process-spawn
-permission. Electron packagers should leave `**/*.node` unpacked and ship
-`app.asar.unpacked` beside `app.asar`. Carrier qualification exercises that
-layout and proves that a missing unpacked companion fails explicitly.
+permission. Electron packagers should leave `**/prebuilds/**` unpacked and ship
+`app.asar.unpacked` beside `app.asar`, keeping the addon and platform loader
+companions such as the Windows app-local VC runtime together. Carrier
+qualification exercises that layout and proves that a missing unpacked
+companion fails explicitly.
 
 ## Delivery and review boundaries
 
