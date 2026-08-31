@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { assertSuccessfulStartupResponse, startupPacket } from '../pgwire.js';
-import { PostgresError } from '../query.js';
+import { PostgresError } from '@oliphaunt/js-core/query';
 
 describe('direct PostgreSQL startup protocol', () => {
   it('encodes a normal PostgreSQL startup packet', () => {

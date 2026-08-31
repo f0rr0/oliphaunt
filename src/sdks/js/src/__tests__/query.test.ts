@@ -14,7 +14,7 @@ import {
   text,
   toUint8Array,
   typedNull,
-} from '../query.js';
+} from '@oliphaunt/js-core/query';
 
 test('extendedQuery serializes text, binary, and null parameters', () => {
   const bytes = extendedQuery('SELECT $1, $2, $3', [

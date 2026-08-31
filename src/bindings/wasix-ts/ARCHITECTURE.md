@@ -28,7 +28,10 @@ This boundary deliberately does not depend on `src/sdks/js`,
 `liboliphaunt-native`, `node-direct`, or the broker. The N-API product wraps the
 WASIX Rust binding; it is not a route into the native PostgreSQL SDK.
 
-Protocol and typed-query helpers are exact mirrors of `src/shared/js-core`.
+Protocol and typed-query helpers are imported from the private
+`@oliphaunt/js-core` workspace package. Moon builds that dependency once, and
+npm packaging bundles only its compiled `dist/module` and `dist/commonjs`
+payloads.
 That is a shared semantic source, not a dependency on the native TypeScript
 product.
 

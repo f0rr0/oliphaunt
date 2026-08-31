@@ -4,7 +4,7 @@ import type {
   WasixProtocolStreamOutcome,
 } from './database.js';
 import { WasixStorageError } from './errors.js';
-import { PostgresError, type PostgresErrorField } from './query.js';
+import { PostgresError, type PostgresErrorField } from '@oliphaunt/js-core/query';
 import type { SerializedWasixStorage } from './storage.js';
 import type { WasixStorageSyncBoundary } from './storage-provider.js';
 import type { WasixProtocolConnection } from './pgwire-connection.js';

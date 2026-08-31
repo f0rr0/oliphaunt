@@ -8,7 +8,7 @@ tags: ["shared", "typescript", "sdk"]
 
 project:
   title: "Shared JavaScript Core"
-  description: "Canonical TypeScript helpers mirrored into the JavaScript and React Native SDK packages."
+  description: "Private workspace package for the canonical TypeScript query and protocol helpers."
   owner: "oliphaunt"
 
 owners:
@@ -18,33 +18,55 @@ owners:
     "tools/**": ["@oliphaunt/sdk-js", "@oliphaunt/sdk-react-native"]
 
 tasks:
-  sync:
-    description: "Regenerate SDK mirrors from the canonical JavaScript query and protocol core."
-    command: "node src/shared/js-core/tools/check-js-core.mjs --write"
-    inputs:
-      - "/src/shared/js-core/src/*.ts"
-      - "/src/shared/js-core/tools/check-js-core.mjs"
-    outputs:
-      - "/src/sdks/js/src/protocol.ts"
-      - "/src/sdks/js/src/query.ts"
-      - "/src/sdks/react-native/src/protocol.ts"
-      - "/src/sdks/react-native/src/query.ts"
-      - "/src/bindings/wasix-ts/src/protocol.ts"
-      - "/src/bindings/wasix-ts/src/query.ts"
-    options:
-      cache: false
-      runFromWorkspaceRoot: true
   check:
     tags: ["quality", "static"]
-    command: "node src/shared/js-core/tools/check-js-core.mjs"
+    command: "pnpm --dir src/shared/js-core typecheck"
     inputs:
       - "/src/shared/js-core/**/*"
-      - "/src/sdks/js/src/protocol.ts"
-      - "/src/sdks/js/src/query.ts"
-      - "/src/sdks/react-native/src/protocol.ts"
-      - "/src/sdks/react-native/src/query.ts"
-      - "/src/bindings/wasix-ts/src/protocol.ts"
-      - "/src/bindings/wasix-ts/src/query.ts"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  build-module:
+    tags: ["build", "typescript"]
+    command: "pnpm --dir src/shared/js-core exec tsc -p tsconfig.build.module.json"
+    deps:
+      - "shared-js-core:check"
+    inputs:
+      - "/src/shared/js-core/package.json"
+      - "/src/shared/js-core/src/**/*.ts"
+      - "/src/shared/js-core/tsconfig*.json"
+      - "/pnpm-lock.yaml"
+    outputs:
+      - "/src/shared/js-core/dist/module/*.d.ts"
+      - "/src/shared/js-core/dist/module/*.js"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  build-commonjs:
+    tags: ["build", "typescript"]
+    command: "pnpm --dir src/shared/js-core exec tsc -p tsconfig.build.commonjs.json"
+    deps:
+      - "shared-js-core:check"
+    inputs:
+      - "/src/shared/js-core/package.json"
+      - "/src/shared/js-core/src/**/*.ts"
+      - "/src/shared/js-core/tsconfig*.json"
+      - "/pnpm-lock.yaml"
+    outputs:
+      - "/src/shared/js-core/dist/commonjs/*.d.ts"
+      - "/src/shared/js-core/dist/commonjs/*.js"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  build:
+    tags: ["build", "typescript", "aggregate"]
+    command: "true"
+    deps:
+      - "shared-js-core:build-module"
+      - "shared-js-core:build-commonjs"
     options:
       cache: true
       runFromWorkspaceRoot: true

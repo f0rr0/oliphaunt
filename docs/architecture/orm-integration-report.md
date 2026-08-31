@@ -917,10 +917,11 @@ TypeScript, and React Native rather than as the superseded
 byte-preserving `queryRaw`, explicit and inferred OID serialization,
 operation-scoped codecs, `describe`, ordered multi-statement `exec`, notices,
 callback transactions, and ownership-aware lifecycle. One canonical
-browser-safe query core is mirrored byte-for-byte into all three packages, and
-shared fixtures cover multi-results, arrays, notices, malformed frames, COPY
-preflight, and readiness recovery. Checked-in native and WASIX smoke programs
-exercise the same public structured surface, including both WASIX TypeScript
+browser-safe query core is imported from one private workspace package by all
+three SDKs, and shared fixtures cover multi-results, arrays, notices, malformed
+frames, COPY preflight, and readiness recovery. Checked-in native and WASIX
+smoke programs exercise the same public structured surface, including both
+WASIX TypeScript
 execution surfaces. In this checkout the asset-independent suites and packed
 package checks passed, but the runtime smokes could not execute because usable
 native and staged WASIX runtime assets were absent; this report therefore makes
@@ -1075,13 +1076,12 @@ Users should need to learn only three Oliphaunt-specific facts:
 ## Repository evidence
 
 - [Native TypeScript database state machine](../../src/sdks/js/src/client.ts)
-- [Native TypeScript query codec](../../src/sdks/js/src/query.ts)
+- [Shared TypeScript query codec](../../src/shared/js-core/src/query.ts)
 - [Native broker runtime](../../src/sdks/js/src/runtime/broker.ts)
 - [Native Rust executor](../../src/sdks/rust/src/executor.rs)
 - [Native Rust database API](../../src/sdks/rust/src/database.rs)
 - [Native C protocol ABI](../../src/runtimes/liboliphaunt/native/include/oliphaunt.h)
 - [WASIX TypeScript database](../../src/bindings/wasix-ts/src/database.ts)
-- [WASIX TypeScript query codec](../../src/bindings/wasix-ts/src/query.ts)
 - [WASIX TypeScript architecture](../../src/bindings/wasix-ts/ARCHITECTURE.md)
 - [WASIX Rust one-client proxy](../../src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/proxy.rs)
 - [WASIX Rust wire framing](../../src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/wire.rs)

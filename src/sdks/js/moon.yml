@@ -33,7 +33,7 @@ tasks:
     deps:
       - "liboliphaunt-native:check"
       - "oliphaunt-node-direct:check"
-      - "shared-js-core:check"
+      - "shared-js-core:build"
     inputs:
       - "/src/shared/fixtures/**/*"
       - "/src/shared/cluster-seed-contract/fixtures/**/*"
@@ -55,7 +55,7 @@ tasks:
     deps:
       - "liboliphaunt-native:check"
       - "oliphaunt-node-direct:check"
-      - "shared-js-core:check"
+      - "shared-js-core:build"
     inputs:
       - "/src/shared/fixtures/**/*"
       - "/src/shared/cluster-seed-contract/fixtures/**/*"
@@ -120,6 +120,7 @@ tasks:
       - "/tools/release/build-sdk-ci-artifacts.mjs"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/js-core-package.mjs"
       - "/tools/release/source-only-sdk-package.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
       - "/tools/release/extension-runtime-asset-contract.mjs"
@@ -168,6 +169,7 @@ tasks:
       - "/tools/release/release-graph.mjs"
       - "/tools/release/release-notices.mjs"
       - "/tools/release/rust-native-targets.mjs"
+      - "/tools/release/js-core-package.mjs"
       - "/tools/release/source-only-sdk-package.mjs"
       - "/tools/release/swift-source-carrier-contract.mjs"
       - "/tools/release/check-staged-artifacts.mjs"

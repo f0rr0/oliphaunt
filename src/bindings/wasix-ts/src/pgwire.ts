@@ -1,4 +1,4 @@
-import { assertSuccessfulQueryResponse } from './query.js';
+import { assertSuccessfulQueryResponse } from '@oliphaunt/js-core/query';
 
 const encoder = new TextEncoder();
 

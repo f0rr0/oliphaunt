@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { serializeOpenConfig } from './client-common.js';
 import { hostRuntime } from './host-runtime.js';
 import { restoreNativeWasix, restoreNativeWasixDirect } from './native-session.js';
-import { toUint8Array } from './query.js';
+import { toUint8Array } from '@oliphaunt/js-core/query';
 import type { SerializedOpenOptions } from './rpc.js';
 import type { PersistentWasixStorage } from './storage.js';
 import type { BinaryInput } from './types.js';

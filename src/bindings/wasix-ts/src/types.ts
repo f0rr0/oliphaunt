@@ -8,7 +8,7 @@ import type {
   QueryParam,
   QueryResult,
   RawQueryResult,
-} from './query.js';
+} from '@oliphaunt/js-core/query';
 import type { PersistentWasixStorage, WasixStorage } from './storage.js';
 
 type QueryReadOptions = Omit<QueryOptions, 'encoders'>;

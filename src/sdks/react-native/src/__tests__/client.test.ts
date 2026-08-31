@@ -19,7 +19,7 @@ import type {
   TextQueryParameter,
 } from '../index';
 import type { JsiProtocolChunkResult } from '../jsiTransport';
-import { parseCommandResponse, text } from '../query';
+import { parseCommandResponse, text } from '@oliphaunt/js-core/query';
 import type { Spec } from '../specs/NativeOliphaunt';
 
 // OLIPHAUNT_DOCS_SNIPPET react-native-quickstart

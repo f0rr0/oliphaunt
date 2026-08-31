@@ -116,12 +116,13 @@ JSON
   run node "$root/tools/dev/write-scoped-pnpm-workspace.mjs" \
     --source "$root/pnpm-workspace.yaml" \
     --output "$scratch_root/pnpm-workspace.yaml" \
-    --package "src/sdks/react-native"
+    --package "src/sdks/react-native" \
+    --package "src/shared/js-core"
   # Generate a package-scoped scratch lockfile. The root lockfile includes
   # unrelated example importers that should not be fetched by the SDK check.
   rm -f "$scratch_root/pnpm-lock.yaml"
   mkdir -p "$scratch_root/src/shared/fixtures"
-  mkdir -p "$scratch_root/src/shared/js-core/test"
+  mkdir -p "$scratch_root/src/shared/js-core"
   mkdir -p "$scratch_root/shared/cluster-seed-contract/fixtures"
   mkdir -p "$scratch_root/tools/dev"
   mkdir -p "$scratch_root/tools/policy"
@@ -134,9 +135,8 @@ JSON
   rsync -a --delete \
     src/shared/cluster-seed-contract/fixtures/ \
     "$scratch_root/shared/cluster-seed-contract/fixtures/"
-  cp src/shared/js-core/test/protocol-fixtures.mjs \
-    src/shared/js-core/test/protocol-fixtures.d.mts \
-    "$scratch_root/src/shared/js-core/test/"
+  rsync -a --delete --exclude node_modules \
+    src/shared/js-core/ "$scratch_root/src/shared/js-core/"
   # The copied SDK tests retain repository-relative imports and their legal
   # helpers resolve canonical data from that same repository root. Materialize
   # the exact module and data closure so a dirty prior scratch tree cannot make
@@ -395,7 +395,8 @@ rm -f "$tmp_pack"
 printf '\n==> pnpm --dir %s pack --dry-run --json\n' "$package_dir"
 # The verifier runs explicitly before publish metadata is sanitized. Neither
 # the dry-run nor final consumer tarball may depend on lifecycle scripts.
-PNPM_CONFIG_IGNORE_SCRIPTS=true pnpm --dir "$package_dir" pack --dry-run --json >"$tmp_pack"
+PNPM_CONFIG_IGNORE_SCRIPTS=true PNPM_CONFIG_NODE_LINKER=hoisted \
+  pnpm --dir "$package_dir" pack --dry-run --json >"$tmp_pack"
 cat "$tmp_pack"
 
 node - "$tmp_pack" <<'NODE'
@@ -422,17 +423,23 @@ const required = [
   'tools/stage-ios-app.mjs',
   'tools/verify-ios-package.mjs',
   'lib/commonjs/index.js',
-  'lib/commonjs/protocol.js',
-  'lib/commonjs/query.js',
   'lib/module/index.js',
-  'lib/module/protocol.js',
-  'lib/module/query.js',
   'lib/typescript/index.d.ts',
   'lib/typescript/client.d.ts',
-  'lib/typescript/protocol.d.ts',
-  'lib/typescript/query.d.ts',
   'src/generated/extensions.ts',
   'lib/typescript/specs/NativeOliphaunt.d.ts',
+  'node_modules/@oliphaunt/js-core/README.md',
+  'node_modules/@oliphaunt/js-core/dist/commonjs/package.json',
+  'node_modules/@oliphaunt/js-core/dist/commonjs/protocol.d.ts',
+  'node_modules/@oliphaunt/js-core/dist/commonjs/protocol.js',
+  'node_modules/@oliphaunt/js-core/dist/commonjs/query.d.ts',
+  'node_modules/@oliphaunt/js-core/dist/commonjs/query.js',
+  'node_modules/@oliphaunt/js-core/dist/module/package.json',
+  'node_modules/@oliphaunt/js-core/dist/module/protocol.d.ts',
+  'node_modules/@oliphaunt/js-core/dist/module/protocol.js',
+  'node_modules/@oliphaunt/js-core/dist/module/query.d.ts',
+  'node_modules/@oliphaunt/js-core/dist/module/query.js',
+  'node_modules/@oliphaunt/js-core/package.json',
 ];
 const missing = required.filter((path) => !paths.has(path));
 if (missing.length > 0) {
@@ -441,9 +448,14 @@ if (missing.length > 0) {
 const forbidden = [...paths].filter((path) =>
   /^android\/(?:\.gradle|\.cxx|build|src\/test)\//.test(path),
 );
+const expectedCore = new Set(required.filter((path) => path.startsWith('node_modules/@oliphaunt/js-core/')));
+const unexpectedCore = [...paths].filter(
+  (path) => path.startsWith('node_modules/@oliphaunt/js-core/') && !expectedCore.has(path),
+);
+forbidden.push(...unexpectedCore);
 if (forbidden.length > 0) {
   throw new Error(
-    `React Native package dry-run included Android build artifacts or test fixtures:\n${forbidden.join('\n')}`,
+    `React Native package dry-run included forbidden Android artifacts or JavaScript-core bundle files:\n${forbidden.join('\n')}`,
   );
 }
 NODE
@@ -459,10 +471,13 @@ case "$mode" in
     ios_clean_install="$ios_package_fixture/consumer/node_modules/@oliphaunt/react-native"
     mkdir -p "$ios_fixture_package" "$ios_fixture_pack" "$ios_clean_install"
     rsync -a --delete --exclude node_modules "$package_dir/" "$ios_fixture_package/"
+    run node "$root/tools/release/js-core-package.mjs" stage \
+      "$ios_fixture_package" "$scratch_root/src/shared/js-core"
 
     run node "$ios_fixture_package/tools/stage-ios-app.test.mjs"
 
-    run pnpm --dir "$ios_fixture_package" pack --pack-destination "$ios_fixture_pack"
+    run env PNPM_CONFIG_NODE_LINKER=hoisted \
+      pnpm --dir "$ios_fixture_package" pack --pack-destination "$ios_fixture_pack"
     ios_fixture_tarball="$(find "$ios_fixture_pack" -maxdepth 1 -type f -name '*.tgz' -print -quit)"
     if [ -z "$ios_fixture_tarball" ]; then
       echo "React Native clean-install package test did not produce an npm tarball" >&2

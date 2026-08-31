@@ -1,6 +1,11 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
+import {
+  assertJsCoreBundleInventory,
+  JS_CORE_BUNDLE_FILES,
+  JS_CORE_PACKAGE,
+} from './js-core-package.mjs';
 import { readPortableArchiveEntries } from './portable-archive.mjs';
 import {
   assertReleaseNoticesInArchive,
@@ -33,6 +38,7 @@ export const WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES = Object.freeze([
   'CHANGELOG.md',
   'LICENSE',
   'THIRD_PARTY_NOTICES.md',
+  ...JS_CORE_BUNDLE_FILES.map((name) => `node_modules/@oliphaunt/js-core/${name}`),
   'lib/archive.d.ts',
   'lib/archive.js',
   'lib/asset-source.d.ts',
@@ -71,11 +77,7 @@ export const WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES = Object.freeze([
   'lib/host/provenance.json',
   'lib/host/wasmer_js_bg.wasm',
   'lib/host/worker.mjs',
-  'lib/index.bun.d.ts',
-  'lib/index.bun.js',
   'lib/index.d.ts',
-  'lib/index.deno.d.ts',
-  'lib/index.deno.js',
   'lib/index.js',
   'lib/index.node.d.ts',
   'lib/index.node.js',
@@ -111,12 +113,8 @@ export const WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES = Object.freeze([
   'lib/pgwire-connection.js',
   'lib/physical-archive.d.ts',
   'lib/physical-archive.js',
-  'lib/protocol.d.ts',
-  'lib/protocol.js',
   'lib/public.d.ts',
   'lib/public.js',
-  'lib/query.d.ts',
-  'lib/query.js',
   'lib/rpc.d.ts',
   'lib/rpc.js',
   'lib/runtime-descriptor.d.ts',
@@ -167,10 +165,6 @@ export const WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES = Object.freeze([
   'lib/worker-client.js',
   'lib/worker-dispatch.d.ts',
   'lib/worker-dispatch.js',
-  'lib/worker-entry.bun.d.ts',
-  'lib/worker-entry.bun.js',
-  'lib/worker-entry.deno.d.ts',
-  'lib/worker-entry.deno.js',
   'lib/worker-entry.d.ts',
   'lib/worker-entry.js',
   'lib/worker-entry.node.d.ts',
@@ -221,13 +215,15 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
   }
   const dependencies = manifest.dependencies ?? {};
   const optionalDependencies = manifest.optionalDependencies ?? {};
-  const expectedDependencies = [FZSTD_PACKAGE, RUNTIME_PACKAGE].sort(compareText);
+  const expectedDependencies = [FZSTD_PACKAGE, JS_CORE_PACKAGE, RUNTIME_PACKAGE].sort(compareText);
   const nativeVersion = manifest.oliphaunt?.wasixNapiVersion;
   if (
     JSON.stringify(sortedKeys(dependencies)) !== JSON.stringify(expectedDependencies)
     || typeof dependencies[RUNTIME_PACKAGE] !== 'string'
     || !/^\d+\.\d+\.\d+$/u.test(dependencies[RUNTIME_PACKAGE])
     || dependencies[FZSTD_PACKAGE] !== FZSTD_VERSION
+    || typeof dependencies[JS_CORE_PACKAGE] !== 'string'
+    || !/^\d+\.\d+\.\d+$/u.test(dependencies[JS_CORE_PACKAGE])
     || typeof nativeVersion !== 'string'
     || !/^\d+\.\d+\.\d+$/u.test(nativeVersion)
     || JSON.stringify(sortedKeys(optionalDependencies))
@@ -235,11 +231,11 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
     || NATIVE_PACKAGES.some((name) => optionalDependencies[name] !== nativeVersion)
     || sortedKeys(manifest.peerDependencies).length !== 0
     || manifest.peerDependenciesMeta !== undefined
-    || manifest.bundledDependencies !== undefined
+    || JSON.stringify(manifest.bundledDependencies) !== JSON.stringify([JS_CORE_PACKAGE])
     || manifest.bundleDependencies !== undefined
   ) {
     fail(
-      `${label} must depend only on the exact portable runtime, decompressor, and native platform carriers`,
+      `${label} must depend only on the bundled JavaScript core, exact portable runtime, decompressor, and native platform carriers`,
     );
   }
   const root = manifest.exports?.['.'];
@@ -263,8 +259,8 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
     JSON.stringify(Object.keys(root ?? {}))
       !== JSON.stringify(['types', 'deno', 'bun', 'node', 'browser', 'default'])
     || root?.types !== './lib/index.d.ts'
-    || root?.deno !== './lib/index.deno.js'
-    || root?.bun !== './lib/index.bun.js'
+    || root?.deno !== './lib/index.node.js'
+    || root?.bun !== './lib/index.node.js'
     || root?.browser !== './lib/index.js'
     || root?.node !== './lib/index.node.js'
     || root?.default !== './lib/index.js'
@@ -276,8 +272,8 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
     JSON.stringify(Object.keys(worker ?? {}))
       !== JSON.stringify(['types', 'deno', 'bun', 'node', 'browser', 'default'])
     || worker?.types !== './lib/worker-entry.d.ts'
-    || worker?.deno !== './lib/worker-entry.deno.js'
-    || worker?.bun !== './lib/worker-entry.bun.js'
+    || worker?.deno !== './lib/worker-entry.node.js'
+    || worker?.bun !== './lib/worker-entry.node.js'
     || worker?.node !== './lib/worker-entry.node.js'
     || worker?.browser !== './lib/worker-entry.js'
     || worker?.default !== './lib/worker-entry.js'
@@ -391,6 +387,16 @@ export function prepareWasixTypescriptPackage(packageDir) {
   const root = path.resolve(packageDir);
   const manifestFile = path.join(root, 'package.json');
   const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
+  const coreManifestFile = path.join(root, 'node_modules', '@oliphaunt', 'js-core', 'package.json');
+  const coreManifest = JSON.parse(readFileSync(coreManifestFile, 'utf8'));
+  if (
+    coreManifest.name !== JS_CORE_PACKAGE
+    || coreManifest.private !== true
+    || typeof coreManifest.version !== 'string'
+    || !/^\d+\.\d+\.\d+$/u.test(coreManifest.version)
+  ) {
+    fail(`${PACKAGE_NAME} staged bundle has an invalid ${JS_CORE_PACKAGE} manifest`);
+  }
   const runtimeVersion = manifest.oliphaunt?.runtimeVersion;
   if (typeof runtimeVersion !== 'string' || !/^\d+\.\d+\.\d+$/u.test(runtimeVersion)) {
     fail(`${PACKAGE_NAME} source manifest must declare an exact oliphaunt.runtimeVersion`);
@@ -400,7 +406,11 @@ export function prepareWasixTypescriptPackage(packageDir) {
     fail(`${PACKAGE_NAME} source runtime dependency conflicts with oliphaunt.runtimeVersion`);
   }
   manifest.dependencies = Object.fromEntries(
-    Object.entries({ ...(manifest.dependencies ?? {}), [RUNTIME_PACKAGE]: runtimeVersion })
+    Object.entries({
+      ...(manifest.dependencies ?? {}),
+      [JS_CORE_PACKAGE]: coreManifest.version,
+      [RUNTIME_PACKAGE]: runtimeVersion,
+    })
       .sort(([left], [right]) => compareText(left, right)),
   );
   const nativeVersion = manifest.oliphaunt?.wasixNapiVersion;
@@ -429,6 +439,10 @@ export function assertWasixTypescriptNpmArchive(archive) {
     label: path.basename(file),
   });
   const entries = readPortableArchiveEntries(file);
+  assertJsCoreBundleInventory(
+    entries.keys(),
+    'package/node_modules/@oliphaunt/js-core/',
+  );
   const requireFile = (name) => {
     const entry = entries.get(`package/${name}`);
     if (!entry?.isFile || entry.isSymbolicLink || entry.size <= 0) {

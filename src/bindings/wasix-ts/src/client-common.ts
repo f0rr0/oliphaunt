@@ -3,7 +3,7 @@ import defaultWasixRuntime from '@oliphaunt/liboliphaunt-wasix';
 import { serializeWasixExtensionDescriptors } from './extension-descriptor.js';
 import { serializeWasixIcuDescriptor } from './icu-descriptor.js';
 import { decodePhysicalArchive } from './physical-archive.js';
-import { toUint8Array } from './query.js';
+import { toUint8Array } from '@oliphaunt/js-core/query';
 import type { SerializedOpenOptions } from './rpc.js';
 import { serializeWasixRuntimeDescriptor } from './runtime-descriptor.js';
 import { serializeWasixStorage } from './storage.js';

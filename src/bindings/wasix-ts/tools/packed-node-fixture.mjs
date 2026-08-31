@@ -11,6 +11,7 @@ import {
   renderWasixRuntimeDescriptorModule,
   renderWasixRuntimeDescriptorTypes,
 } from '../../../../tools/release/wasix-runtime-npm-descriptor.mjs';
+import { stageJsCoreBundle } from '../../../../tools/release/js-core-package.mjs';
 import { prepareWasixToolsTypescriptPackage } from '../../../../tools/release/wasix-tools-typescript-package.mjs';
 import { prepareWasixTypescriptPackage } from '../../../../tools/release/wasix-typescript-package.mjs';
 import { portableCommand } from '../../../runtimes/wasix-napi/tools/portable-command.mjs';
@@ -214,6 +215,7 @@ async function packBinding({ scratch, tarballs }) {
   for (const name of ['package.json', 'README.md', 'ARCHITECTURE.md', 'CHANGELOG.md', 'lib']) {
     await cp(resolve(packageRoot, name), resolve(staging, name), { recursive: true });
   }
+  stageJsCoreBundle(staging, resolve(repositoryRoot, 'src/shared/js-core'));
   prepareWasixTypescriptPackage(staging);
   const manifest = JSON.parse(await readFile(resolve(staging, 'package.json'), 'utf8'));
   const nativeVersion = manifest.oliphaunt?.wasixNapiVersion;
@@ -610,6 +612,8 @@ async function pack(directory, tarballs) {
     'pnpm',
     ['pack', '--pack-destination', tarballs, '--json'],
     directory,
+    120_000,
+    { PNPM_CONFIG_NODE_LINKER: 'hoisted' },
   );
   const result = stdout.trim() === '' ? undefined : JSON.parse(stdout);
   const reportedFilename = Array.isArray(result) ? result[0]?.filename : result?.filename;

@@ -16,7 +16,7 @@ import {
   validateBackupWalRange,
   withoutPostStopState,
 } from '../physical-archive.js';
-import { PostgresError } from '../query.js';
+import { PostgresError } from '@oliphaunt/js-core/query';
 import type { StorageDirectory } from '../storage-provider.js';
 import type { StoredSnapshot } from '../storage-snapshot.js';
 

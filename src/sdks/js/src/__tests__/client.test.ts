@@ -12,7 +12,7 @@ import type {
   NativeOpenConfig,
   NativeRestoreOptions,
 } from '../native/types.js';
-import type { CommandResult } from '../query.js';
+import type { CommandResult } from '@oliphaunt/js-core/query';
 import type {
   OliphauntDatabase,
   OliphauntTransaction,

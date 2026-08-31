@@ -1766,8 +1766,8 @@ This version-locked carrier seam is consumed by generated Swift extension produc
 
 ### Package exports
 
-- `. = {"types":"./lib/index.d.ts","deno":"./lib/index.deno.js","bun":"./lib/index.bun.js","node":"./lib/index.node.js","browser":"./lib/index.js","default":"./lib/index.js"}`
-- `./worker = {"types":"./lib/worker-entry.d.ts","deno":"./lib/worker-entry.deno.js","bun":"./lib/worker-entry.bun.js","node":"./lib/worker-entry.node.js","browser":"./lib/worker-entry.js","default":"./lib/worker-entry.js"}`
+- `. = {"types":"./lib/index.d.ts","deno":"./lib/index.node.js","bun":"./lib/index.node.js","node":"./lib/index.node.js","browser":"./lib/index.js","default":"./lib/index.js"}`
+- `./worker = {"types":"./lib/worker-entry.d.ts","deno":"./lib/worker-entry.node.js","bun":"./lib/worker-entry.node.js","node":"./lib/worker-entry.node.js","browser":"./lib/worker-entry.js","default":"./lib/worker-entry.js"}`
 - `./direct = {"types":"./lib/direct.node.d.ts","deno":"./lib/direct.node.js","bun":"./lib/direct.node.js","node":"./lib/direct.node.js"}`
 - `./internal/tools = {"types":"./lib/internal.d.ts","deno":"./lib/internal.node.js","bun":"./lib/internal.node.js","node":"./lib/internal.node.js","browser":"./lib/internal.js","default":"./lib/internal.js"}`
 - `./server = {"types":"./lib/server.node.d.ts","deno":"./lib/server.node.js","bun":"./lib/server.node.js","node":"./lib/server.node.js"}`

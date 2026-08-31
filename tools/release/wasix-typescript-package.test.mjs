@@ -10,9 +10,11 @@ function manifest() {
     type: 'module',
     publishConfig: { access: 'public', provenance: true },
     dependencies: {
+      '@oliphaunt/js-core': '0.0.0',
       '@oliphaunt/liboliphaunt-wasix': '1.2.3',
       fzstd: '0.1.1',
     },
+    bundledDependencies: ['@oliphaunt/js-core'],
     optionalDependencies: {
       '@oliphaunt/wasix-napi-darwin-arm64': '1.2.3',
       '@oliphaunt/wasix-napi-linux-arm64-gnu': '1.2.3',
@@ -22,16 +24,16 @@ function manifest() {
     exports: {
       '.': {
         types: './lib/index.d.ts',
-        deno: './lib/index.deno.js',
-        bun: './lib/index.bun.js',
+        deno: './lib/index.node.js',
+        bun: './lib/index.node.js',
         node: './lib/index.node.js',
         browser: './lib/index.js',
         default: './lib/index.js',
       },
       './worker': {
         types: './lib/worker-entry.d.ts',
-        deno: './lib/worker-entry.deno.js',
-        bun: './lib/worker-entry.bun.js',
+        deno: './lib/worker-entry.node.js',
+        bun: './lib/worker-entry.node.js',
         node: './lib/worker-entry.node.js',
         browser: './lib/worker-entry.js',
         default: './lib/worker-entry.js',
@@ -107,7 +109,7 @@ describe('WASIX TypeScript release dependency closure', () => {
     const candidate = manifest();
     delete candidate.optionalDependencies['@oliphaunt/wasix-napi-linux-x64-gnu'];
     expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
-      'must depend only on the exact portable runtime, decompressor, and native platform carriers',
+      'must depend only on the bundled JavaScript core, exact portable runtime, decompressor, and native platform carriers',
     );
   });
 
@@ -115,7 +117,7 @@ describe('WASIX TypeScript release dependency closure', () => {
     const candidate = manifest();
     candidate.optionalDependencies['@oliphaunt/wasix-napi-linux-x64-gnu'] = '1.2.4';
     expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
-      'must depend only on the exact portable runtime, decompressor, and native platform carriers',
+      'must depend only on the bundled JavaScript core, exact portable runtime, decompressor, and native platform carriers',
     );
   });
 
@@ -140,8 +142,8 @@ describe('WASIX TypeScript release dependency closure', () => {
     candidate.exports['.'] = {
       types: './lib/index.d.ts',
       node: './lib/index.node.js',
-      deno: './lib/index.deno.js',
-      bun: './lib/index.bun.js',
+      deno: './lib/index.node.js',
+      bun: './lib/index.node.js',
       browser: './lib/index.js',
       default: './lib/index.js',
     };
@@ -155,8 +157,8 @@ describe('WASIX TypeScript release dependency closure', () => {
     candidate.exports['./worker'] = {
       types: './lib/worker-entry.d.ts',
       node: './lib/worker-entry.node.js',
-      deno: './lib/worker-entry.deno.js',
-      bun: './lib/worker-entry.bun.js',
+      deno: './lib/worker-entry.node.js',
+      bun: './lib/worker-entry.node.js',
       browser: './lib/worker-entry.js',
       default: './lib/worker-entry.js',
     };
@@ -238,16 +240,16 @@ describe('WASIX TypeScript release dependency closure', () => {
       const candidate = manifest();
       candidate[family] = { ...candidate[family], [dependency]: '1.0.0' };
       expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
-        'must depend only on the exact portable runtime, decompressor, and native platform carriers',
+        'must depend only on the bundled JavaScript core, exact portable runtime, decompressor, and native platform carriers',
       );
     });
   }
 
-  test('rejects bundled dependency families', () => {
+  test('rejects bundling anything except the JavaScript core', () => {
     const candidate = manifest();
     candidate.bundledDependencies = ['fzstd'];
     expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
-      'must depend only on the exact portable runtime, decompressor, and native platform carriers',
+      'must depend only on the bundled JavaScript core, exact portable runtime, decompressor, and native platform carriers',
     );
   });
 });

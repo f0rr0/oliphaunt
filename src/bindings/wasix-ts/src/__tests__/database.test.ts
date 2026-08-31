@@ -8,7 +8,7 @@ import {
 } from '../database.js';
 import { createWasixByteChannel } from '../byte-channel.js';
 import { WasixStorageError } from '../errors.js';
-import { PostgresError } from '../query.js';
+import { PostgresError } from '@oliphaunt/js-core/query';
 import type { OliphauntTransaction } from '../types.js';
 
 // liboliphaunt-doc-example:wasix-typescript-transaction

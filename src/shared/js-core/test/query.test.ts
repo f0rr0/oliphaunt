@@ -16,12 +16,22 @@ import {
   parseDescribeResponse,
   parseExecResponse,
   parseQueryRawResponse,
+  parseSimpleQueryRawResponse,
   planQuery,
   postgresOids,
   responseTransactionStatus,
   text,
   typedNull,
 } from "../src/query.js";
+import { assertSharedProtocolFixtures } from "./protocol-fixtures.mjs";
+
+test("protocol fixtures", () => {
+  assertSharedProtocolFixtures({
+    parseSimpleQueryResponse: parseSimpleQueryRawResponse,
+    parseExtendedQueryResponse: parseQueryRawResponse,
+    isPostgresError: (error): error is PostgresError => error instanceof PostgresError,
+  });
+});
 
 test("parameter plans infer OIDs without exposing mutable values across the await", () => {
   const value = { stable: 1 };

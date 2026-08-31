@@ -33,7 +33,7 @@ export {
   type RawQueryRow,
   type TextQueryParameter,
   type TransactionStatus,
-} from './query.js';
+} from '@oliphaunt/js-core/query';
 export type {
   BinaryInput,
   DatabaseStorage,

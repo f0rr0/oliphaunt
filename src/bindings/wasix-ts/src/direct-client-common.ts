@@ -20,8 +20,8 @@ import type {
 } from './host/index.mjs';
 import { assertSuccessfulStartupResponse, startupPacket } from './pgwire.js';
 import { BackupModeExitUnconfirmedError, createPhysicalArchive } from './physical-archive.js';
-import { simpleQuery } from './protocol.js';
-import { assertSuccessfulQueryResponse, PostgresError } from './query.js';
+import { simpleQuery } from '@oliphaunt/js-core/protocol';
+import { assertSuccessfulQueryResponse, PostgresError } from '@oliphaunt/js-core/query';
 import type { SerializedOpenOptions } from './rpc.js';
 import {
   acquireWasixStorage,

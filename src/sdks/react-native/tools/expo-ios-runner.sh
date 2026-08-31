@@ -417,7 +417,7 @@ pack_react_native_sdk() {
   echo "==> (cd $package_work && pnpm pack --pack-destination $pack_dir)"
   (
     cd "$package_work"
-    pnpm pack --pack-destination "$pack_dir"
+    PNPM_CONFIG_NODE_LINKER=hoisted pnpm pack --pack-destination "$pack_dir"
   )
   install_react_native_sdk_tarball
   local installed_package="$example_dir/node_modules/@oliphaunt/react-native"

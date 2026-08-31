@@ -1608,7 +1608,8 @@ async function typeScriptPackageMetadataMatchesRuntimePackages(): Promise<void> 
   assert.equal(icuVersion, liboliphauntVersion);
   assert.equal(packageJson.oliphaunt?.nodeDirectAddon, 'oliphaunt-node-direct');
   assert.equal(packageJson.oliphaunt?.brokerHelper, 'oliphaunt-broker');
-  assert.deepEqual(packageJson.dependencies ?? {}, {});
+  assert.deepEqual(packageJson.dependencies ?? {}, { '@oliphaunt/js-core': 'workspace:*' });
+  assert.deepEqual(packageJson.bundledDependencies, ['@oliphaunt/js-core']);
   const optionalDependencyNames = [
     '@oliphaunt/broker-darwin-arm64',
     '@oliphaunt/broker-linux-arm64-gnu',

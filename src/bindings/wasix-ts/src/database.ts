@@ -26,7 +26,7 @@ import {
   type RawQueryResult,
   type TransactionStatus,
   toUint8Array,
-} from './query.js';
+} from '@oliphaunt/js-core/query';
 import type { WasixStorageSyncBoundary } from './storage-provider.js';
 import type { WasixProtocolConnection } from './pgwire-connection.js';
 import type {
