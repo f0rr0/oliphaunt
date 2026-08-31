@@ -7,7 +7,6 @@ import { createPackedWasixConsumer } from '../../tools/packed-node-fixture.mjs';
 import {
   connect,
   controlPacket,
-  expectClosedBeforeReady,
   onceClosed,
   onceConnected,
   readExchange,
@@ -29,6 +28,8 @@ const verify = await readFile(
 const fixture = JSON.parse(
   await readFile(resolve(root, 'src/shared/fixtures/postgres/logical-tools.json'), 'utf8'),
 );
+const socketOperationTimeoutMs = 30_000;
+const queuedClientObservationMs = 100;
 const scratch = await mkdtemp(join(tmpdir(), `oliphaunt-wasix-${runtimeName}-tools-`));
 
 try {
@@ -176,80 +177,120 @@ async function verifyServer(openServer, listen) {
   const server = await openServer({ listen });
   try {
     const socket = connect(server.connectionString);
+    let queued;
+    let queuedStartup;
     try {
-      await onceConnected(socket);
+      await withSocketDeadline(socket, onceConnected(socket), 'first client connect');
       for (const code of [80_877_103, 80_877_104]) {
+        const negotiation = withSocketDeadline(
+          socket,
+          readSingleByte(socket),
+          `PostgreSQL negotiation ${code}`,
+        );
         socket.write(controlPacket(code));
-        const response = await readSingleByte(socket);
+        const response = await negotiation;
         if (response !== 'N'.charCodeAt(0)) {
           throw new Error(
             `local server returned ${response} for PostgreSQL negotiation request ${code}`,
           );
         }
       }
+      const firstStartup = withSocketDeadline(socket, readExchange(socket), 'first client startup');
       socket.write(startupPacket('postgres', 'postgres'));
-      await readExchange(socket);
+      await firstStartup;
       console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: first startup`);
-      const rejected = connect(server.connectionString);
-      try {
-        await onceConnected(rejected);
-        const rejection = expectClosedBeforeReady(rejected);
-        rejected.write(startupPacket('postgres', 'postgres'));
-        await rejection;
-        console.log(
-          `WASIX TypeScript ${runtimeName} tools/server smoke: concurrent client rejected`,
-        );
-      } finally {
-        rejected.destroy();
-      }
+
+      // The Rust listener deliberately owns one complete client at a time. A
+      // second TCP/Unix connection can finish its host handshake in the OS
+      // backlog, but its PostgreSQL startup must wait for the active backend.
+      queued = connect(server.connectionString);
+      await withSocketDeadline(queued, onceConnected(queued), 'queued client connect');
+      queuedStartup = readExchange(queued);
+      queued.write(startupPacket('postgres', 'postgres'));
+      await expectStillPending(queuedStartup, queuedClientObservationMs, 'queued client startup');
+      console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: second client queued`);
+
+      const copy = withSocketDeadline(socket, readExchange(socket), 'first client COPY');
       socket.write(simpleQuery('COPY (SELECT generate_series(1, 100000)) TO STDOUT'));
-      const copied = await readExchange(socket);
+      const copied = await copy;
       console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: first COPY`);
       if (copied.copyBytes < 500_000) {
         throw new Error(`local server truncated COPY output at ${copied.copyBytes} bytes`);
       }
+      const begin = withSocketDeadline(socket, readExchange(socket), 'first client BEGIN');
       socket.write(simpleQuery('BEGIN'));
-      await readExchange(socket);
+      await begin;
+      const create = withSocketDeadline(
+        socket,
+        readExchange(socket),
+        'first client transaction query',
+      );
       socket.write(simpleQuery('CREATE TABLE disconnect_must_rollback(value integer)'));
-      await readExchange(socket);
+      await create;
+      const firstClosed = withSocketDeadline(socket, onceClosed(socket), 'first client disconnect');
       socket.destroy();
-      await onceClosed(socket);
+      await firstClosed;
       console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: disconnect recovered`);
 
-      const next = await connectWhenReady(server.connectionString);
-      try {
-        next.write(simpleQuery('CREATE TABLE disconnect_must_rollback(value integer)'));
-        await readExchange(next);
-        next.end(Uint8Array.of('X'.charCodeAt(0), 0, 0, 0, 4));
-        console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: next client accepted`);
-      } finally {
-        next.destroy();
-      }
+      await withSocketDeadline(queued, queuedStartup, 'queued client startup after handoff');
+      const queuedQuery = withSocketDeadline(queued, readExchange(queued), 'queued client query');
+      queued.write(simpleQuery('CREATE TABLE disconnect_must_rollback(value integer)'));
+      await queuedQuery;
+      const queuedClosed = withSocketDeadline(queued, onceClosed(queued), 'queued client close');
+      queued.end(Uint8Array.of('X'.charCodeAt(0), 0, 0, 0, 4));
+      await queuedClosed;
+      console.log(`WASIX TypeScript ${runtimeName} tools/server smoke: queued client accepted`);
     } finally {
       socket.destroy();
+      queued?.destroy();
+      await queuedStartup?.catch(() => undefined);
     }
   } finally {
     await server.close();
   }
 }
 
-async function connectWhenReady(connectionString) {
-  const deadline = Date.now() + 30_000;
-  let lastError;
-  while (Date.now() < deadline) {
-    const socket = connect(connectionString);
-    try {
-      await onceConnected(socket);
-      socket.write(startupPacket('postgres', 'postgres'));
-      await readExchange(socket);
-      return socket;
-    } catch (error) {
-      lastError = error;
+function withSocketDeadline(socket, operation, label) {
+  return new Promise((resolveOperation, rejectOperation) => {
+    let settled = false;
+    const finish = (settle, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      settle(value);
+    };
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
       socket.destroy();
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
-    }
+      rejectOperation(new Error(`${label} timed out after ${socketOperationTimeoutMs}ms`));
+    }, socketOperationTimeoutMs);
+    operation.then(
+      (value) => finish(resolveOperation, value),
+      (error) => finish(rejectOperation, error),
+    );
+  });
+}
+
+async function expectStillPending(operation, observationMs, label) {
+  let timeout;
+  const observed = await Promise.race([
+    operation.then(
+      () => ({ status: 'resolved' }),
+      (error) => ({ status: 'rejected', error }),
+    ),
+    new Promise((resolveObservation) => {
+      timeout = setTimeout(() => resolveObservation({ status: 'pending' }), observationMs);
+    }),
+  ]);
+  clearTimeout(timeout);
+  if (observed.status === 'pending') return;
+  if (observed.status === 'rejected') {
+    throw new Error(`${label} was rejected instead of waiting behind the active client`, {
+      cause: observed.error,
+    });
   }
-  throw new Error(`local server did not accept the next client: ${String(lastError)}`);
+  throw new Error(`${label} completed while the first client still owned the embedded backend`);
 }
 
 function readRuntime(args) {

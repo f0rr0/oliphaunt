@@ -29,7 +29,18 @@ export function onceConnected(socket) {
 
 export function onceClosed(socket) {
   if (socket.destroyed) return Promise.resolve();
-  return new Promise((resolveClosed) => socket.once('close', resolveClosed));
+  return new Promise((resolveClosed) => {
+    const onClose = () => {
+      socket.off('error', onError);
+      resolveClosed();
+    };
+    // A close waiter owns the socket after all protocol operations have
+    // completed. Keep transport errors from escaping as uncaught EventEmitter
+    // errors while preserving the helper's close-only completion contract.
+    const onError = () => {};
+    socket.once('close', onClose);
+    socket.on('error', onError);
+  });
 }
 
 export function readSingleByte(socket) {
@@ -61,26 +72,6 @@ export function readSingleByte(socket) {
     socket.once('error', onError);
     socket.once('close', onClose);
   });
-}
-
-export async function expectClosedBeforeReady(socket) {
-  try {
-    await readExchange(socket);
-  } catch (error) {
-    if (String(error).includes('closed before ReadyForQuery')) return;
-    if (
-      typeof error === 'object' &&
-      error !== null &&
-      'code' in error &&
-      ['ECONNRESET', 'EPIPE', 'ERR_SOCKET_CLOSED', 'ERR_STREAM_DESTROYED'].includes(
-        String(error.code),
-      )
-    ) {
-      return;
-    }
-    throw error;
-  }
-  throw new Error('concurrent local-server client unexpectedly reached ReadyForQuery');
 }
 
 export function readExchange(socket) {
