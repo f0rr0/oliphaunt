@@ -6,6 +6,30 @@
   and explicitly open a new object for PostgreSQL WAL recovery; the SDK never
   substitutes a new session or replays uncertain work under the old object.
 
+## [0.2.0](https://github.com/f0rr0/oliphaunt/compare/oliphaunt-js-v0.1.1...oliphaunt-js-v0.2.0) (2026-09-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* **sdk:** unify embedded PostgreSQL public APIs ([#153](https://github.com/f0rr0/oliphaunt/issues/153))
+* Rust WASIX removes temporary/application-data storage variants, and browser IndexedDB uses the new per-database v3 layout without migrating prior generations.
+* **release:** simplify releases and make contrib runtime-owned ([#127](https://github.com/f0rr0/oliphaunt/issues/127))
+
+### Features
+
+* **sdk:** unify embedded PostgreSQL public APIs ([#153](https://github.com/f0rr0/oliphaunt/issues/153)) ([4384d1b](https://github.com/f0rr0/oliphaunt/commit/4384d1bdfafee07e4e1963ac68027b4bcf002a1e))
+* unify native and WASIX runtimes and SDKs ([#129](https://github.com/f0rr0/oliphaunt/issues/129)) ([fae2bd7](https://github.com/f0rr0/oliphaunt/commit/fae2bd7bde00ae436d9b62ba6a37d919679ac790))
+
+
+### Performance Improvements
+
+* **js:** streamline exec response handling ([#158](https://github.com/f0rr0/oliphaunt/issues/158)) ([5eaf05b](https://github.com/f0rr0/oliphaunt/commit/5eaf05b8a8d21bd974b9fcb6d618103be5689151))
+
+
+### Code Refactoring
+
+* **release:** simplify releases and make contrib runtime-owned ([#127](https://github.com/f0rr0/oliphaunt/issues/127)) ([c45082d](https://github.com/f0rr0/oliphaunt/commit/c45082dc522f04ed0f020464282ed79150f83ecc))
+
 ## [0.1.1](https://github.com/f0rr0/oliphaunt/compare/oliphaunt-js-v0.1.0...oliphaunt-js-v0.1.1) (2026-08-08)
 
 
