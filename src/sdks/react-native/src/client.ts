@@ -36,7 +36,7 @@ import {
   type QueryResult,
   type RawQueryResult,
   type TransactionStatus,
-} from './query';
+} from '@oliphaunt/js-core/query';
 import { generatedExtensionBySqlName } from './generated/extensions';
 import type { NativeOpenConfig, Spec as NativeOliphauntModule } from './specs/NativeOliphaunt';
 

@@ -31,16 +31,16 @@
   "exports": {
     ".": {
       "types": "./lib/index.d.ts",
-      "deno": "./lib/index.deno.js",
-      "bun": "./lib/index.bun.js",
+      "deno": "./lib/index.node.js",
+      "bun": "./lib/index.node.js",
       "node": "./lib/index.node.js",
       "browser": "./lib/index.js",
       "default": "./lib/index.js"
     },
     "./worker": {
       "types": "./lib/worker-entry.d.ts",
-      "deno": "./lib/worker-entry.deno.js",
-      "bun": "./lib/worker-entry.bun.js",
+      "deno": "./lib/worker-entry.node.js",
+      "bun": "./lib/worker-entry.node.js",
       "node": "./lib/worker-entry.node.js",
       "browser": "./lib/worker-entry.js",
       "default": "./lib/worker-entry.js"
@@ -120,8 +120,12 @@
     "clean": "node ../../../tools/dev/clean-package-lib.mjs"
   },
   "dependencies": {
+    "@oliphaunt/js-core": "workspace:*",
     "fzstd": "0.1.1"
   },
+  "bundledDependencies": [
+    "@oliphaunt/js-core"
+  ],
   "optionalDependencies": {
     "@oliphaunt/wasix-napi-darwin-arm64": "workspace:*",
     "@oliphaunt/wasix-napi-linux-arm64-gnu": "workspace:*",

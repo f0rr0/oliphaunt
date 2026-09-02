@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { WasixStorageError } from '../errors.js';
-import { PostgresError } from '../query.js';
+import { PostgresError } from '@oliphaunt/js-core/query';
 import {
   compileWasixModule,
   composeLifecycleFailure,

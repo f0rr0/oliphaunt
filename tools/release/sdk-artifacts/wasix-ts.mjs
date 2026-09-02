@@ -1,6 +1,7 @@
 import { cpSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 
+import { stageJsCoreBundle } from '../js-core-package.mjs';
 import {
   assertWasixTypescriptNpmArchive,
   prepareWasixTypescriptPackage,
@@ -23,6 +24,7 @@ export function stageArtifacts(artifactRoot, workRoot) {
   ]) {
     cpSync(path.join(packageRoot, name), path.join(staging, name), { recursive: true });
   }
+  stageJsCoreBundle(staging, path.join(ROOT, 'src/shared/js-core'));
   const manifest = prepareWasixTypescriptPackage(staging);
   const archive = packageNpmWorkspace(staging, artifactRoot);
   assertWasixTypescriptNpmArchive(archive);

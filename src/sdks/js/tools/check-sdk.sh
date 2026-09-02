@@ -40,6 +40,7 @@ JSON
     --source "$root/pnpm-workspace.yaml" \
     --output "$scratch_root/pnpm-workspace.yaml" \
     --package "src/sdks/js" \
+    --package "src/shared/js-core" \
     --package "src/runtimes/liboliphaunt/native/packages/*" \
     --package "src/runtimes/broker/packages/*" \
     --package "src/runtimes/node-direct/packages/*"
@@ -47,16 +48,15 @@ JSON
   cp LICENSE "$scratch_root/LICENSE"
   mkdir -p "$scratch_root/src/shared/fixtures"
   mkdir -p "$scratch_root/src/shared/cluster-seed-contract/fixtures"
-  mkdir -p "$scratch_root/src/shared/js-core/test"
+  mkdir -p "$scratch_root/src/shared/js-core"
   mkdir -p "$scratch_root/tools/dev"
   mkdir -p "$scratch_root/tools/test"
   rsync -a --delete src/shared/fixtures/ "$scratch_root/src/shared/fixtures/"
   rsync -a --delete \
     src/shared/cluster-seed-contract/fixtures/ \
     "$scratch_root/src/shared/cluster-seed-contract/fixtures/"
-  cp src/shared/js-core/test/protocol-fixtures.mjs \
-    src/shared/js-core/test/protocol-fixtures.d.mts \
-    "$scratch_root/src/shared/js-core/test/"
+  rsync -a --delete --exclude node_modules \
+    src/shared/js-core/ "$scratch_root/src/shared/js-core/"
   cp "$root/tools/dev/clean-package-lib.mjs" "$scratch_root/tools/dev/clean-package-lib.mjs"
   cp "$root/tools/test/run-js-tests.mjs" "$scratch_root/tools/test/run-js-tests.mjs"
   mkdir -p "$scratch_root/src/runtimes/liboliphaunt/native/packages"
@@ -138,7 +138,7 @@ fi
 if [ "$mode" != "check-static" ]; then
   run node tools/release/source-only-sdk-package.mjs prepare-npm js "$package_dir"
   pack_dir="$(mktemp -d "$scratch_root/pack.XXXXXX")"
-  pack_json="$(pnpm --dir "$package_dir" pack --pack-destination "$pack_dir" --json)"
+  pack_json="$(PNPM_CONFIG_NODE_LINKER=hoisted pnpm --dir "$package_dir" pack --pack-destination "$pack_dir" --json)"
   printf '%s\n' "$pack_json"
   pack_file="$(
     PACK_JSON="$pack_json" PACK_DIR="$pack_dir" node -e "
@@ -169,7 +169,7 @@ process.stdin.on('end', () => {
   if (typeof nodeDirectVersion !== 'string' || nodeDirectVersion.length === 0) {
     throw new Error('source TypeScript package must pin oliphaunt.nodeDirectAddonVersion');
   }
-  const expectedDependencies = {};
+  const expectedDependencies = {'@oliphaunt/js-core': '0.0.0'};
   const expectedOptional = {
     '@oliphaunt/broker-darwin-arm64': brokerVersion,
     '@oliphaunt/broker-linux-arm64-gnu': brokerVersion,
@@ -185,7 +185,10 @@ process.stdin.on('end', () => {
     '@oliphaunt/node-direct-win32-x64-msvc': nodeDirectVersion,
   };
   if (JSON.stringify(pkg.dependencies || {}) !== JSON.stringify(expectedDependencies)) {
-    throw new Error('packed TypeScript package must not declare regular runtime artifact dependencies');
+    throw new Error('packed TypeScript package must declare only its bundled JavaScript core');
+  }
+  if (JSON.stringify(pkg.bundledDependencies || []) !== JSON.stringify(['@oliphaunt/js-core'])) {
+    throw new Error('packed TypeScript package must bundle only the shared JavaScript core');
   }
   if (JSON.stringify(pkg.optionalDependencies || {}) !== JSON.stringify(expectedOptional)) {
     throw new Error('packed TypeScript package must rewrite runtime optional dependencies to exact published versions');
@@ -241,7 +244,7 @@ fi
 
 node -e "
 const pkg = require(process.argv[1]);
-const expectedDependencies = {};
+const expectedDependencies = {'@oliphaunt/js-core': 'workspace:*'};
 const expectedOptional = [
   '@oliphaunt/broker-darwin-arm64',
   '@oliphaunt/broker-linux-arm64-gnu',
@@ -261,9 +264,10 @@ const expectedExports = ['.', './package.json'];
 const actualExports = Object.keys(pkg.exports || {}).sort();
 if (
   JSON.stringify(pkg.dependencies || {}) !== JSON.stringify(expectedDependencies) ||
+  JSON.stringify(pkg.bundledDependencies || []) !== JSON.stringify(['@oliphaunt/js-core']) ||
   JSON.stringify(optional) !== JSON.stringify(expectedOptional.sort())
 ) {
-  throw new Error('TypeScript SDK installs must declare only platform-selected runtime packages');
+  throw new Error('TypeScript SDK installs must declare only the bundled JavaScript core and platform-selected runtime packages');
 }
 if (JSON.stringify(actualExports) !== JSON.stringify(expectedExports.sort())) {
   throw new Error('TypeScript SDK exports do not match its deliberate public surface');

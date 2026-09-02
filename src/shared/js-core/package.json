@@ -1,0 +1,35 @@
+{
+  "name": "@oliphaunt/js-core",
+  "version": "0.0.0",
+  "private": true,
+  "exports": {
+    "./protocol": {
+      "import": {
+        "types": "./dist/module/protocol.d.ts",
+        "default": "./dist/module/protocol.js"
+      },
+      "require": {
+        "types": "./dist/commonjs/protocol.d.ts",
+        "default": "./dist/commonjs/protocol.js"
+      }
+    },
+    "./query": {
+      "import": {
+        "types": "./dist/module/query.d.ts",
+        "default": "./dist/module/query.js"
+      },
+      "require": {
+        "types": "./dist/commonjs/query.d.ts",
+        "default": "./dist/commonjs/query.js"
+      }
+    }
+  },
+  "files": ["dist/module", "dist/commonjs"],
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "catalog:"
+  }
+}

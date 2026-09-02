@@ -37,7 +37,7 @@ import {
   type RawQueryResult,
   type TransactionStatus,
   toUint8Array,
-} from './query.js';
+} from '@oliphaunt/js-core/query';
 import { createBrokerRuntimeBinding } from './runtime/broker.js';
 import { directRuntimeBinding } from './runtime/direct.js';
 import { createServerRuntimeBinding } from './runtime/server.js';

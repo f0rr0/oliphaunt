@@ -11,6 +11,7 @@ packages:
   - "src/runtimes/wasix-napi"
   - "src/runtimes/wasix-napi/packages/*"
   - "src/sdks/react-native"
+  - "src/shared/js-core"
   - "examples/browser-wasix"
   - "examples/react-native-expo"
   - "src/bindings/wasix-ts"

@@ -1,8 +1,8 @@
 import type { WasixDirectoryMount, WasixRuntimeLayout } from './archive.js';
 import { WasixStorageError } from './errors.js';
 import type { Directory } from './host/index.mjs';
-import { simpleQuery } from './protocol.js';
-import { assertSuccessfulQueryResponse, PostgresError } from './query.js';
+import { simpleQuery } from '@oliphaunt/js-core/protocol';
+import { assertSuccessfulQueryResponse, PostgresError } from '@oliphaunt/js-core/query';
 import type { SerializedOpenOptions } from './rpc.js';
 import { normalizeWasixStartupGUCs } from './startup-config.js';
 

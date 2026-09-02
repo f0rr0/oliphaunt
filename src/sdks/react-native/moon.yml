@@ -31,7 +31,7 @@ tasks:
     tags: ["quality", "static"]
     command: "bash src/sdks/react-native/tools/check-sdk.sh check-static"
     deps:
-      - "shared-js-core:check"
+      - "shared-js-core:build"
     inputs:
       - "/src/shared/fixtures/**/*"
       - "/src/shared/js-core/**/*"
@@ -89,7 +89,7 @@ tasks:
     command: "bash src/sdks/react-native/tools/check-sdk.sh build-android-bridge"
     deps:
       - "oliphaunt-kotlin:check"
-      - "shared-js-core:check"
+      - "shared-js-core:build"
     inputs:
       - "/src/shared/fixtures/**/*"
       - "/src/shared/js-core/**/*"
@@ -119,7 +119,7 @@ tasks:
     tags: ["quality", "unit"]
     command: "bash src/sdks/react-native/tools/check-sdk.sh test-unit"
     deps:
-      - "shared-js-core:check"
+      - "shared-js-core:build"
     inputs:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
@@ -602,6 +602,7 @@ tasks:
       - "/tools/release/build-sdk-ci-artifacts.mjs"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/js-core-package.mjs"
       - "/tools/release/source-only-sdk-package.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
       - "/tools/release/extension-runtime-asset-contract.mjs"
@@ -646,6 +647,7 @@ tasks:
       - "/tools/release/sdk-artifacts/shared.mjs"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/js-core-package.mjs"
       - "/tools/release/source-only-sdk-package.mjs"
       - "/tools/release/cargo-source-package.mjs"
       - "/tools/release/check-staged-artifacts.mjs"

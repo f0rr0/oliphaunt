@@ -12,6 +12,7 @@ export type TypeScriptPackageMetadata = {
     brokerHelper?: string;
   };
   dependencies?: Record<string, string>;
+  bundledDependencies?: string[];
   optionalDependencies?: Record<string, string>;
 };
 

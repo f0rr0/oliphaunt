@@ -9,11 +9,13 @@ import {
   prepareWasixTypescriptPackage,
   WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES,
 } from '../../../../tools/release/wasix-typescript-package.mjs';
+import { stageJsCoreBundle } from '../../../../tools/release/js-core-package.mjs';
 import { loadHostBuildContract } from '../host/build-provenance.mjs';
 
 const execFileAsync = promisify(execFile);
 const packageDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const packageJson = JSON.parse(await readFile(resolve(packageDir, 'package.json'), 'utf8'));
+const jsCorePackage = '@oliphaunt/js-core';
 const runtimePackage = '@oliphaunt/liboliphaunt-wasix';
 const benchmarkComparisonPackage = '@electric-sql/pglite';
 const fzstdPackage = 'fzstd';
@@ -39,6 +41,7 @@ try {
   for (const name of ['package.json', 'README.md', 'ARCHITECTURE.md', 'CHANGELOG.md', 'lib']) {
     await cp(resolve(packageDir, name), resolve(staging, name), { recursive: true });
   }
+  stageJsCoreBundle(staging, resolve(packageDir, '../../shared/js-core'));
   const stagedPackageJson = prepareWasixTypescriptPackage(staging);
   const packOutput = resolve(scratch, 'pack.json');
   await writePnpmPackInventory(staging, packOutput);
@@ -180,8 +183,8 @@ try {
     JSON.stringify(Object.keys(rootExport ?? {})) !==
       JSON.stringify(['types', 'deno', 'bun', 'node', 'browser', 'default']) ||
     rootExport?.types !== './lib/index.d.ts' ||
-    rootExport?.deno !== './lib/index.deno.js' ||
-    rootExport?.bun !== './lib/index.bun.js' ||
+    rootExport?.deno !== './lib/index.node.js' ||
+    rootExport?.bun !== './lib/index.node.js' ||
     rootExport?.browser !== './lib/index.js' ||
     rootExport?.node !== './lib/index.node.js' ||
     rootExport?.default !== './lib/index.js'
@@ -195,8 +198,8 @@ try {
     JSON.stringify(Object.keys(workerExport ?? {})) !==
       JSON.stringify(['types', 'deno', 'bun', 'node', 'browser', 'default']) ||
     workerExport?.types !== './lib/worker-entry.d.ts' ||
-    workerExport?.deno !== './lib/worker-entry.deno.js' ||
-    workerExport?.bun !== './lib/worker-entry.bun.js' ||
+    workerExport?.deno !== './lib/worker-entry.node.js' ||
+    workerExport?.bun !== './lib/worker-entry.node.js' ||
     workerExport?.browser !== './lib/worker-entry.js' ||
     workerExport?.node !== './lib/worker-entry.node.js' ||
     workerExport?.default !== './lib/worker-entry.js'
@@ -208,14 +211,14 @@ try {
 
   if (
     packageJson.dependencies?.[runtimePackage] !== undefined ||
+    packageJson.dependencies?.[jsCorePackage] !== 'workspace:*' ||
     packageJson.dependencies?.[fzstdPackage] !== fzstdVersion ||
     JSON.stringify(Object.keys(packageJson.dependencies ?? {}).sort()) !==
-      JSON.stringify([fzstdPackage]) ||
+      JSON.stringify([fzstdPackage, jsCorePackage].sort()) ||
+    JSON.stringify(packageJson.bundledDependencies) !== JSON.stringify([jsCorePackage]) ||
     JSON.stringify(Object.keys(packageJson.optionalDependencies ?? {}).sort()) !==
       JSON.stringify([...nativePackages].sort()) ||
-    nativePackages.some(
-      (name) => packageJson.optionalDependencies?.[name] !== 'workspace:*',
-    ) ||
+    nativePackages.some((name) => packageJson.optionalDependencies?.[name] !== 'workspace:*') ||
     packageJson.dependencies?.[benchmarkComparisonPackage] !== undefined ||
     packageJson.dependencies?.['@wasmer/sdk'] !== undefined ||
     packageJson.dependencies?.['@oliphaunt/ts'] !== undefined ||
@@ -232,15 +235,16 @@ try {
   }
   if (
     stagedPackageJson.dependencies?.[runtimePackage] !== packageJson.oliphaunt?.runtimeVersion ||
+    stagedPackageJson.dependencies?.[jsCorePackage] !== '0.0.0' ||
     stagedPackageJson.dependencies?.[fzstdPackage] !== fzstdVersion ||
     JSON.stringify(Object.keys(stagedPackageJson.dependencies ?? {}).sort()) !==
-      JSON.stringify([fzstdPackage, runtimePackage].sort()) ||
+      JSON.stringify([fzstdPackage, jsCorePackage, runtimePackage].sort()) ||
+    JSON.stringify(stagedPackageJson.bundledDependencies) !== JSON.stringify([jsCorePackage]) ||
     JSON.stringify(Object.keys(stagedPackageJson.optionalDependencies ?? {}).sort()) !==
       JSON.stringify([...nativePackages].sort()) ||
     nativePackages.some(
       (name) =>
-        stagedPackageJson.optionalDependencies?.[name] !==
-        packageJson.oliphaunt?.wasixNapiVersion,
+        stagedPackageJson.optionalDependencies?.[name] !== packageJson.oliphaunt?.wasixNapiVersion,
     ) ||
     stagedPackageJson.dependencies?.[benchmarkComparisonPackage] !== undefined ||
     stagedPackageJson.dependencies?.['@wasmer/sdk'] !== undefined ||
@@ -328,7 +332,11 @@ async function writePnpmPackInventory(cwd, outputPath) {
     await new Promise((resolveRun, rejectRun) => {
       const child = spawn('pnpm', ['pack', '--dry-run', '--json'], {
         cwd,
-        env: { ...process.env, PNPM_CONFIG_IGNORE_SCRIPTS: 'true' },
+        env: {
+          ...process.env,
+          PNPM_CONFIG_IGNORE_SCRIPTS: 'true',
+          PNPM_CONFIG_NODE_LINKER: 'hoisted',
+        },
         stdio: ['ignore', output.fd, 'inherit'],
       });
       child.once('error', rejectRun);

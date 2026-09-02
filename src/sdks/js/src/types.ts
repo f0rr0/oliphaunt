@@ -4,7 +4,7 @@ export type DatabaseStorage =
 
 export type BinaryInput = ArrayBuffer | ArrayBufferView | Uint8Array | ReadonlyArray<number>;
 
-type QueryReadOptions = Omit<import('./query.js').QueryOptions, 'encoders'>;
+type QueryReadOptions = Omit<import('@oliphaunt/js-core/query').QueryOptions, 'encoders'>;
 /** A synchronous, serial raw-protocol consumer used as the backpressure acknowledgement. */
 export type ProtocolChunkCallback = (chunk: Uint8Array) => undefined;
 
@@ -42,27 +42,35 @@ export type OliphauntTransaction = {
   readonly closed: boolean;
   execute(
     sql: string,
-    parameters?: ReadonlyArray<import('./query.js').QueryParam>,
-    options?: import('./query.js').ParameterOptions,
-  ): Promise<import('./query.js').CommandResult>;
-  query<Row = never, const Options extends import('./query.js').QueryOptions = {}>(
+    parameters?: ReadonlyArray<import('@oliphaunt/js-core/query').QueryParam>,
+    options?: import('@oliphaunt/js-core/query').ParameterOptions,
+  ): Promise<import('@oliphaunt/js-core/query').CommandResult>;
+  query<Row = never, const Options extends import('@oliphaunt/js-core/query').QueryOptions = {}>(
     sql: string,
-    parameters?: ReadonlyArray<import('./query.js').QueryParam>,
-    options?: Options & import('./query.js').QueryOptions,
-  ): Promise<import('./query.js').QueryResult<import('./query.js').InferQueryRow<Options, Row>>>;
+    parameters?: ReadonlyArray<import('@oliphaunt/js-core/query').QueryParam>,
+    options?: Options & import('@oliphaunt/js-core/query').QueryOptions,
+  ): Promise<
+    import('@oliphaunt/js-core/query').QueryResult<
+      import('@oliphaunt/js-core/query').InferQueryRow<Options, Row>
+    >
+  >;
   queryRaw(
     sql: string,
-    parameters?: ReadonlyArray<import('./query.js').QueryParam>,
-    options?: import('./query.js').ParameterOptions,
-  ): Promise<import('./query.js').RawQueryResult>;
+    parameters?: ReadonlyArray<import('@oliphaunt/js-core/query').QueryParam>,
+    options?: import('@oliphaunt/js-core/query').ParameterOptions,
+  ): Promise<import('@oliphaunt/js-core/query').RawQueryResult>;
   exec<Row = never, const Options extends QueryReadOptions = {}>(
     sql: string,
     options?: Options & QueryReadOptions,
-  ): Promise<import('./query.js').ExecResult<import('./query.js').InferQueryRow<Options, Row>>>;
+  ): Promise<
+    import('@oliphaunt/js-core/query').ExecResult<
+      import('@oliphaunt/js-core/query').InferQueryRow<Options, Row>
+    >
+  >;
   describe(
     sql: string,
     parameterTypeOids?: ReadonlyArray<number>,
-  ): Promise<import('./query.js').DescribeResult>;
+  ): Promise<import('@oliphaunt/js-core/query').DescribeResult>;
   rollback(): Promise<void>;
 };
 
@@ -70,27 +78,35 @@ export type OliphauntDatabase = {
   readonly closed: boolean;
   execute(
     sql: string,
-    parameters?: ReadonlyArray<import('./query.js').QueryParam>,
-    options?: import('./query.js').ParameterOptions,
-  ): Promise<import('./query.js').CommandResult>;
-  query<Row = never, const Options extends import('./query.js').QueryOptions = {}>(
+    parameters?: ReadonlyArray<import('@oliphaunt/js-core/query').QueryParam>,
+    options?: import('@oliphaunt/js-core/query').ParameterOptions,
+  ): Promise<import('@oliphaunt/js-core/query').CommandResult>;
+  query<Row = never, const Options extends import('@oliphaunt/js-core/query').QueryOptions = {}>(
     sql: string,
-    parameters?: ReadonlyArray<import('./query.js').QueryParam>,
-    options?: Options & import('./query.js').QueryOptions,
-  ): Promise<import('./query.js').QueryResult<import('./query.js').InferQueryRow<Options, Row>>>;
+    parameters?: ReadonlyArray<import('@oliphaunt/js-core/query').QueryParam>,
+    options?: Options & import('@oliphaunt/js-core/query').QueryOptions,
+  ): Promise<
+    import('@oliphaunt/js-core/query').QueryResult<
+      import('@oliphaunt/js-core/query').InferQueryRow<Options, Row>
+    >
+  >;
   queryRaw(
     sql: string,
-    parameters?: ReadonlyArray<import('./query.js').QueryParam>,
-    options?: import('./query.js').ParameterOptions,
-  ): Promise<import('./query.js').RawQueryResult>;
+    parameters?: ReadonlyArray<import('@oliphaunt/js-core/query').QueryParam>,
+    options?: import('@oliphaunt/js-core/query').ParameterOptions,
+  ): Promise<import('@oliphaunt/js-core/query').RawQueryResult>;
   exec<Row = never, const Options extends QueryReadOptions = {}>(
     sql: string,
     options?: Options & QueryReadOptions,
-  ): Promise<import('./query.js').ExecResult<import('./query.js').InferQueryRow<Options, Row>>>;
+  ): Promise<
+    import('@oliphaunt/js-core/query').ExecResult<
+      import('@oliphaunt/js-core/query').InferQueryRow<Options, Row>
+    >
+  >;
   describe(
     sql: string,
     parameterTypeOids?: ReadonlyArray<number>,
-  ): Promise<import('./query.js').DescribeResult>;
+  ): Promise<import('@oliphaunt/js-core/query').DescribeResult>;
   execProtocolRaw(input: BinaryInput): Promise<Uint8Array>;
   execProtocolRawStream(input: BinaryInput, onChunk: ProtocolChunkCallback): Promise<void>;
   backup(): Promise<Uint8Array>;

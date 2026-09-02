@@ -5,8 +5,12 @@ import {
 
 import { extractTar } from './archive.js';
 import { WasixStorageError } from './errors.js';
-import { simpleQuery } from './protocol.js';
-import { PostgresError, parseSimpleQueryRawResponse, type RawQueryResult } from './query.js';
+import { simpleQuery } from '@oliphaunt/js-core/protocol';
+import {
+  PostgresError,
+  parseSimpleQueryRawResponse,
+  type RawQueryResult,
+} from '@oliphaunt/js-core/query';
 import type { StorageDirectory } from './storage-provider.js';
 import {
   type StoredSnapshot,

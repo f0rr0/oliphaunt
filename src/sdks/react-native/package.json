@@ -86,6 +86,12 @@
       "optional": true
     }
   },
+  "dependencies": {
+    "@oliphaunt/js-core": "workspace:*"
+  },
+  "bundledDependencies": [
+    "@oliphaunt/js-core"
+  ],
   "devDependencies": {
     "@react-native/codegen": "^0.85.3",
     "@react-native/typescript-config": "^0.85.0",

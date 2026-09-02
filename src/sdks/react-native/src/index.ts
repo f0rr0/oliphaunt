@@ -38,7 +38,7 @@ export type {
   RawQueryRow,
   TextQueryParameter,
   TransactionStatus,
-} from './query';
+} from '@oliphaunt/js-core/query';
 export {
   PostgresError,
   array,
@@ -47,7 +47,7 @@ export {
   postgresOids,
   text,
   typedNull,
-} from './query';
+} from '@oliphaunt/js-core/query';
 export const Oliphaunt: import('./client').OliphauntClient = createOliphauntClient(NativeOliphaunt);
 
 export default Oliphaunt;

@@ -1,10 +1,13 @@
 import {
   mkdirSync,
+  readFileSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
 
+import { JS_CORE_PACKAGE, stageJsCoreBundle } from "../js-core-package.mjs";
 import {
+  ROOT,
   fail,
   isFile,
   rel,
@@ -105,10 +108,21 @@ export function parsePnpmPackOutput(output) {
 export function packageNpmWorkspace(packageDir, destination) {
   requireCommand("pnpm");
   mkdirSync(destination, { recursive: true });
+  const sourceManifest = JSON.parse(readFileSync(path.join(packageDir, "package.json"), "utf8"));
+  if (sourceManifest.bundledDependencies?.includes(JS_CORE_PACKAGE)) {
+    const bundledCore = path.join(packageDir, "node_modules", "@oliphaunt", "js-core");
+    if (!isFile(path.join(bundledCore, "package.json"))) {
+      stageJsCoreBundle(packageDir, path.join(ROOT, "src/shared/js-core"));
+    }
+  }
   const packJson = run(
     "pnpm",
     ["--dir", packageDir, "pack", "--pack-destination", destination, "--json"],
-    { capture: true, label: "pnpm pack" },
+    {
+      capture: true,
+      env: { ...process.env, PNPM_CONFIG_NODE_LINKER: "hoisted" },
+      label: "pnpm pack",
+    },
   );
   let parsed;
   try {

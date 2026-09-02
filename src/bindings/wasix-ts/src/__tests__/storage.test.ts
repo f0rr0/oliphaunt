@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { WasixStorageError } from '../errors.js';
-import { PostgresError } from '../query.js';
+import { PostgresError } from '@oliphaunt/js-core/query';
 import type { PersistentWasixStorage } from '../public.js';
 import { deserializeWorkerError, serializeWorkerError } from '../rpc.js';
 import { indexedDB } from '../storage/indexed-db.js';

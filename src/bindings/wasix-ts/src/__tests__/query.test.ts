@@ -9,7 +9,7 @@ import {
   parseSimpleQueryRawResponse,
   postgresOids,
   text,
-} from '../query.js';
+} from '@oliphaunt/js-core/query';
 
 // liboliphaunt-doc-example:wasix-typescript-query
 describe('WASIX query protocol codec', () => {

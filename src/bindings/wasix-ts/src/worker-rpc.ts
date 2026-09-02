@@ -11,7 +11,7 @@ import {
   type WasixProtocolStreamOutcome,
 } from './database.js';
 import { serializeOpenConfig } from './client-common.js';
-import { toUint8Array } from './query.js';
+import { toUint8Array } from '@oliphaunt/js-core/query';
 import type {
   SerializedAssetSource,
   SerializedOpenOptions,

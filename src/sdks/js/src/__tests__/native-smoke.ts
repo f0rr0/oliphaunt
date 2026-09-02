@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { Oliphaunt } from '../index.js';
-import { simpleQuery } from '../protocol.js';
-import { parseSimpleQueryRawResponse } from '../query.js';
+import { simpleQuery } from '@oliphaunt/js-core/protocol';
+import { parseSimpleQueryRawResponse } from '@oliphaunt/js-core/query';
 import { PostgresWireClient } from '../runtime/pgwire.js';
 import { assertNativeDatabaseContract } from './native-direct-contract.mjs';
 

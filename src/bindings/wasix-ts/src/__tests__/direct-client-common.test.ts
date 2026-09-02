@@ -19,7 +19,7 @@ import type {
   OliphauntToolOutput,
   RunWasixOptions,
 } from '../host/index.mjs';
-import { PostgresError } from '../query.js';
+import { PostgresError } from '@oliphaunt/js-core/query';
 import type { SerializedOpenOptions, WorkerRequest, WorkerResponse } from '../rpc.js';
 import { WASIX_PHYSICAL_IDENTITY, type WasixStorageLease } from '../storage-provider.js';
 import { wasixPostgresArgs } from '../wasix-runtime.js';
