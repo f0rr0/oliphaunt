@@ -179,6 +179,14 @@ function checkToolCrateBoundaries() {
       errors.push(`tools/perf/runner/Cargo.toml must own benchmark dependency ${JSON.stringify(depName)}`);
     }
   }
+  for (const [depName, spec] of Object.entries(perfDependencies)) {
+    if (isPlainObject(spec) && typeof spec.path === 'string' && 'version' in spec) {
+      errors.push(
+        `tools/perf/runner/Cargo.toml path dependency ${JSON.stringify(depName)} must not declare a registry version; ` +
+        'the unpublished perf runner must resolve the checked-out workspace source',
+      );
+    }
+  }
 
   const wasixRunner = new Set(Array.isArray(features['wasix-runner']) ? features['wasix-runner'] : []);
   for (const depName of ['dep:wasmer', 'dep:wasmer-wasix', 'dep:webc']) {
