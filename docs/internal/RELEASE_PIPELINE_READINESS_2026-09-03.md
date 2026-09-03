@@ -77,6 +77,38 @@ bumps many public products must build and qualify those products. What was
 removed is unrelated work, duplicate upstream execution, and release-tool unit
 tests repeated at every release phase.
 
+## PR #170 cold-runner follow-up
+
+[CI run 33731039633](https://github.com/f0rr0/oliphaunt/actions/runs/33731039633)
+on exact commit `a17cbdccbf6ed7acf7cdd3a0171101339f0b48d7` exposed three
+fresh-checkout assumptions. The failures and fixes are intentionally narrow:
+
+| Failed surface | Actual cause | Fix and retained proof |
+| --- | --- | --- |
+| Static docs check, macOS release metadata, and Vercel | The deleted duplicate favicon left an empty local `src/docs/static` directory, but Git does not preserve empty directories. The generator still required that directory. | Removed the obsolete copy step. Docs generation still owns and recreates its generated static output; the 44-route check passes after physically removing the local source directory. |
+| Rust SDK and WASIX Rust binding package jobs | Final `.crate` test-closure validation is deliberately offline, but the package job had not fetched the root lock on a cold runner. | Each Cargo SDK artifact wrapper now fetches the exact locked dependency graph before offline closure validation. Both products pass from separate empty Cargo homes; the offline final-crate test remains. |
+| Release tooling unit job | Its real concurrent Cargo packager test ran without Rust setup because `release-tools:unit` did not declare `ci-rust`. Two rustup proxies then raced to install the missing toolchain. | Declared the truthful Rust capability. The concurrency test remains unchanged and the full release-tools suite passes. |
+
+Visible CI naming is now responsibility-first and consistent without changing
+stable job IDs or gate protocols. Static partitions list the exact Moon targets
+they run instead of `static 1/4`; unit jobs use readable project/task labels;
+native extension lifecycle partitions show their extension count and members;
+and build leaves use product, artifact role, and target. The aggregate `Checks`,
+`Tests`, `Builds`, `E2E`, `Required`, and `Qualified` names remain stable because
+release replay, mobile E2E, and repository policy consume them as protocol
+identities.
+
+Focused local proof for this follow-up:
+
+- both Cargo SDK final-package closures from independent empty Cargo homes;
+- the complete five-minute release-tools mutation suite, including the exact
+  concurrent Cargo test that failed on GitHub;
+- actionlint, zizmor, workflow security, planner chaos tests, and toolchain
+  bootstrap tests;
+- release metadata and docs generation with no `src/docs/static` directory;
+- task-capability, label, and native lifecycle partition tests; and
+- Vercel deployment logs confirming the same removed-directory root cause.
+
 ## Hosted time and capacity
 
 Observed GitHub history:

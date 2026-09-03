@@ -16,6 +16,7 @@ import test from "node:test";
 
 import {
   NATIVE_EXTENSION_LIFECYCLE_EXHAUSTIVE_SHARD_COUNT,
+  nativeExtensionLifecycleShardPlan,
 } from "../graph/ci_plan.mjs";
 import {
   compareText,
@@ -129,6 +130,14 @@ function writeShard(value, shardIndex, {
 
 test("the current first-release extension catalog contains 39 products", () => {
   assert.equal(canonicalExtensions().length, 39);
+});
+
+test("native lifecycle CI labels describe each partition's actual extension work", () => {
+  const products = exactExtensionProducts("native-extension-lifecycle-receipts.test");
+  const plan = nativeExtensionLifecycleShardPlan(products);
+  assert.equal(plan.matrix.include.length, NATIVE_EXTENSION_LIFECYCLE_EXHAUSTIVE_SHARD_COUNT);
+  assert.ok(plan.matrix.include.every(({ label }) => /^13 Extensions \(.+\)$/u.test(label)));
+  assert.equal(plan.matrix.include.some(({ label }) => label.includes("shard")), false);
 });
 
 test("native staging excludes built-in dependencies from packaged extension dependency edges", () => {

@@ -1170,7 +1170,6 @@ function generateDocsUnlocked(options = {}) {
   resetDir(siteDocsRoot);
   resetDir(staticRoot);
   resetGeneratedMetadata();
-  copyDir(path.join(docsRoot, 'static'), staticRoot);
   const artifactLinksByRecordId = options.publishApiArtifacts
     ? copyApiArtifactsToStatic(apiSummary)
     : new Map();

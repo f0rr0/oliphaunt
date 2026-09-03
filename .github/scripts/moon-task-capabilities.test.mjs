@@ -5,6 +5,7 @@ import {
   matrixTarget,
   shardCheckTargets,
   taskCapabilities,
+  taskLabel,
 } from "./moon-task-capabilities.mjs";
 
 function tasks(...entries) {
@@ -12,6 +13,13 @@ function tasks(...entries) {
 }
 
 describe("Moon task capabilities", () => {
+  test("renders human-readable task labels", () => {
+    assert.equal(
+      taskLabel("oliphaunt-wasix-napi:format-check"),
+      "Oliphaunt WASIX Node-API / Format Check",
+    );
+  });
+
   test("propagates capabilities through dependencies and makes maintainer tools imply Rust", () => {
     const taskMap = tasks(
       { target: "repo:leaf", tags: ["ci-maintainer-tools"] },
@@ -54,6 +62,7 @@ describe("Moon task capabilities", () => {
     const shards = shardCheckTargets(targets, { maxTargets: 4 });
 
     assert.deepEqual(shards.map(({ target_count }) => target_count), [4, 4, 1, 1, 1, 1]);
+    assert.equal(shards[0].label, "Plain / 0 + Plain / 1 + Plain / 2 + Plain / 3");
     assert.equal(shards.filter(({ requires_rust }) => requires_rust).length, 2);
     assert.equal(shards.filter(({ requires_android_sdk }) => requires_android_sdk).length, 1);
     const selected = shards.flatMap(({ targets_json }) =>

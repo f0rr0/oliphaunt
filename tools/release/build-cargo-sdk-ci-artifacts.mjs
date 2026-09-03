@@ -49,6 +49,7 @@ function main() {
     fail(`usage: tools/release/${TOOL} <${PRODUCTS.join("|")}>`);
   }
 
+  run(TOOL, ["cargo", "fetch", "--locked"]);
   run(TOOL, [process.execPath, "tools/release/build-sdk-ci-artifacts.mjs", product]);
   verifyPackagedCargoTestClosure(cargoSdkPackageClosure(product));
   console.log(`Built and verified exact ${product} Cargo SDK artifacts`);

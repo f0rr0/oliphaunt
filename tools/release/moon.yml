@@ -137,7 +137,7 @@ tasks:
       runFromWorkspaceRoot: true
       runInCI: true
   unit:
-    tags: ["quality", "unit"]
+    tags: ["quality", "unit", "ci-rust"]
     command: "tools/dev/bun.sh tools/release/release-check.mjs --mutation-tests-only --mutation-scope=release"
     inputs:
       - "/.github/scripts/bootstrap-registry-*"

@@ -873,12 +873,18 @@ export function nativeExtensionLifecycleShardPlan(products) {
   const exact = new Set(exactExtensionProducts());
   const exhaustive = selected.size === exact.size && [...selected].every((product) => exact.has(product));
   const shardCount = exhaustive ? NATIVE_EXTENSION_LIFECYCLE_EXHAUSTIVE_SHARD_COUNT : 1;
+  const sqlNames = extensionSqlNamesForProducts(selected);
   return {
     matrix: {
-      include: Array.from({ length: shardCount }, (_, shard) => ({
-        shard,
-        shard_count: shardCount,
-      })),
+      include: Array.from({ length: shardCount }, (_, shard) => {
+        const names = sqlNames.filter((_, index) => index % shardCount === shard);
+        const shown = names.slice(0, 4).join(", ");
+        return {
+          shard,
+          shard_count: shardCount,
+          label: `${names.length} Extensions (${shown}${names.length > 4 ? ` + ${names.length - 4} More` : ""})`,
+        };
+      }),
     },
     shardCount,
   };

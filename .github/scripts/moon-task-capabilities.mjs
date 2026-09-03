@@ -2,6 +2,28 @@ const RUST_CAPABILITY_TAG = "ci-rust";
 const MAINTAINER_TOOLS_CAPABILITY_TAG = "ci-maintainer-tools";
 const ANDROID_SDK_CAPABILITY_TAG = "ci-android-sdk";
 
+const DISPLAY_WORDS = Object.freeze({
+  abi: "ABI",
+  aot: "AOT",
+  api: "API",
+  ci: "CI",
+  e2e: "E2E",
+  icu: "ICU",
+  ios: "iOS",
+  js: "JavaScript",
+  liboliphaunt: "liboliphaunt",
+  macos: "macOS",
+  napi: "Node-API",
+  node: "Node.js",
+  npm: "npm",
+  sdk: "SDK",
+  sql: "SQL",
+  ts: "TypeScript",
+  wasm: "WebAssembly",
+  wasix: "WASIX",
+  xtask: "xtask",
+});
+
 export const CHECK_SHARD_MAX_TARGETS = 4;
 
 function taskTags(task) {
@@ -67,22 +89,26 @@ export function taskCapabilities(task, taskMap, state = {}) {
 export function matrixTarget(task, upstream, taskMap) {
   return {
     target: taskTarget(task),
+    label: taskLabel(taskTarget(task)),
     upstream,
     ...taskCapabilities(task, taskMap),
   };
+}
+
+export function taskLabel(target) {
+  return target.split(":").map((part) => part.split("-").map((word) =>
+    DISPLAY_WORDS[word] ?? `${word.slice(0, 1).toUpperCase()}${word.slice(1)}`
+  ).join(" ")).join(" / ");
 }
 
 function compareTargets(left, right) {
   return left.target < right.target ? -1 : left.target > right.target ? 1 : 0;
 }
 
-function shardRow(targets, { index, total }) {
+function shardRow(targets) {
   const first = targets[0];
-  const label = targets.length === 1
-    ? first.target
-    : `static ${index + 1}/${total} (${targets.length} targets)`;
   return {
-    label,
+    label: targets.map(({ label }) => label).join(" + "),
     target_count: targets.length,
     requires_rust: first.requires_rust,
     requires_maintainer_tools: first.requires_maintainer_tools,
@@ -114,15 +140,5 @@ export function shardCheckTargets(targets, { maxTargets = CHECK_SHARD_MAX_TARGET
   }
   groups.push(...dedicated.map((target) => [target]));
 
-  const staticGroupCount = groups.filter((group) => group.length > 1).length;
-  let staticIndex = 0;
-  return groups.map((group) => {
-    const isStaticShard = group.length > 1;
-    const row = shardRow(group, {
-      index: isStaticShard ? staticIndex : 0,
-      total: isStaticShard ? staticGroupCount : 1,
-    });
-    if (isStaticShard) staticIndex += 1;
-    return row;
-  });
+  return groups.map(shardRow);
 }
