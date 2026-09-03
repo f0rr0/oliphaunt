@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/wasix-ts",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Portable Oliphaunt WASIX TypeScript SDK for browsers, Node.js, Bun, Deno, and Electron.",
   "license": "MIT",
   "type": "module",

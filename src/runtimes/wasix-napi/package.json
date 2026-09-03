@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/wasix-napi",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Private build package for the Oliphaunt WASIX Node-API runtime.",
   "license": "MIT",
   "private": true,
