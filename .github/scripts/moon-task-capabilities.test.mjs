@@ -18,6 +18,7 @@ describe("Moon task capabilities", () => {
       taskLabel("oliphaunt-wasix-napi:format-check"),
       "Oliphaunt WASIX Node-API / Format Check",
     );
+    assert.equal(taskLabel("extension-artifacts-native:unit"), "Native Extension Artifacts / Unit");
   });
 
   test("propagates capabilities through dependencies and makes maintainer tools imply Rust", () => {

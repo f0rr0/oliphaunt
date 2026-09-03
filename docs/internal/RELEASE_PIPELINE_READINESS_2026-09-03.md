@@ -87,7 +87,7 @@ fresh-checkout assumptions. The failures and fixes are intentionally narrow:
 | --- | --- | --- |
 | Static docs check, macOS release metadata, and Vercel | The deleted duplicate favicon left an empty local `src/docs/static` directory, but Git does not preserve empty directories. The generator still required that directory. | Removed the obsolete copy step. Docs generation still owns and recreates its generated static output; the 44-route check passes after physically removing the local source directory. |
 | Rust SDK and WASIX Rust binding package jobs | Final `.crate` test-closure validation is deliberately offline, but the package job had not fetched the root lock on a cold runner. | Each Cargo SDK artifact wrapper now fetches the exact locked dependency graph before offline closure validation. Both products pass from separate empty Cargo homes; the offline final-crate test remains. |
-| Release tooling unit job | Its real concurrent Cargo packager test ran without Rust setup because `release-tools:unit` did not declare `ci-rust`. Two rustup proxies then raced to install the missing toolchain. | Declared the truthful Rust capability. The concurrency test remains unchanged and the full release-tools suite passes. |
+| Release tooling unit job | It did not declare `ci-rust`, so two rustup proxies raced to install a missing toolchain. Once Rust setup exposed the next cold-cache assumptions, three unrelated facade behavior checks requested Cargo offline mode without provisioning registry dependencies, and an extension-model self-test also reran the complete model/xtask check under a 15-second child timeout. | Declared the truthful Rust capability, removed the false offline constraints, and made `--self-test` stop after its own adversarial checks. The real concurrency, facade behavior, and genuine offline-closure tests remain. |
 
 Visible CI naming is now responsibility-first and consistent without changing
 stable job IDs or gate protocols. Static partitions list the exact Moon targets
@@ -108,6 +108,13 @@ Focused local proof for this follow-up:
 - release metadata and docs generation with no `src/docs/static` directory;
 - task-capability, label, and native lifecycle partition tests; and
 - Vercel deployment logs confirming the same removed-directory root cause.
+
+The follow-up cold-cache chaos pass then exposed and removed three false
+`--offline` constraints from Cargo-backed behavior tests, while retaining the
+dedicated offline package-closure proof. It also reduced the extension-model
+`--self-test` from a duplicate full model/xtask run to its own adversarial
+checks. The complete release-tools suite passes from an empty Cargo home in
+4m52s after these corrections.
 
 ## Hosted time and capacity
 

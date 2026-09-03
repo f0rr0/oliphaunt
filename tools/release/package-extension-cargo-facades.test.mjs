@@ -270,7 +270,7 @@ oliphaunt-build = { path = ${JSON.stringify(path.join(import.meta.dir, "../../sr
 
 [workspace]
 `);
-    const cargo = spawnSync("cargo", ["check", "--offline", "--target-dir", path.join(root, "cargo-target")], {
+    const cargo = spawnSync("cargo", ["check", "--target-dir", path.join(root, "cargo-target")], {
       cwd: app,
       encoding: "utf8",
       env: { ...process.env, OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD: "1" },

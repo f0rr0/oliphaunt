@@ -2604,6 +2604,8 @@ def main() -> None:
 
     if args.self_test:
         self_test()
+        print("extension model self-tests passed")
+        return
 
     for path in (
         RECIPE_SCHEMA,

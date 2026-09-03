@@ -307,7 +307,7 @@ test("generated release readiness closes the cheap pre-fanout fixed point", () =
 test("extension evidence self-test proves summary writes preserve immutable inputs", () => {
   const result = spawnSync(
     "python3",
-    ["src/extensions/tools/check-extension-model.py", "--self-test", "--check"],
+    ["src/extensions/tools/check-extension-model.py", "--self-test"],
     {
       cwd: ROOT,
       encoding: "utf8",

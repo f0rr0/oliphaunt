@@ -23,6 +23,9 @@ const DISPLAY_WORDS = Object.freeze({
   wasix: "WASIX",
   xtask: "xtask",
 });
+const DISPLAY_PARTS = Object.freeze({
+  "extension-artifacts-native": "Native Extension Artifacts",
+});
 
 export const CHECK_SHARD_MAX_TARGETS = 4;
 
@@ -96,7 +99,7 @@ export function matrixTarget(task, upstream, taskMap) {
 }
 
 export function taskLabel(target) {
-  return target.split(":").map((part) => part.split("-").map((word) =>
+  return target.split(":").map((part) => DISPLAY_PARTS[part] ?? part.split("-").map((word) =>
     DISPLAY_WORDS[word] ?? `${word.slice(0, 1).toUpperCase()}${word.slice(1)}`
   ).join(" ")).join(" / ");
 }
