@@ -184,16 +184,6 @@ jobs:
 
           release_pr_number="$(bun .github/scripts/resolve-release-please-pr.mjs)"
           if [[ -z "${release_pr_number}" ]]; then
-            release_pr_number="$(
-              gh pr list \
-                --base main \
-                --head release-please--branches--main \
-                --state open \
-                --json number \
-                --jq '.[0].number // empty'
-            )"
-          fi
-          if [[ -z "${release_pr_number}" ]]; then
             if [[ "${RELEASE_PLEASE_PRS_CREATED}" == "true" ]]; then
               echo "release-please reported PR changes, but no release PR number could be resolved." >&2
               exit 1
@@ -202,7 +192,7 @@ jobs:
               tools/dev/bun.sh tools/release/sync-release-pr.mjs --shared-contrib-status
             )"
             if [[ "${shared_contrib_status}" != "required=true" ]]; then
-              echo "No open release-please PR or unreleased shared contrib source change found."
+              echo "Release Please produced no PR and no unreleased shared contrib source change was found."
               exit 0
             fi
 
