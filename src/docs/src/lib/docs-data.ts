@@ -70,7 +70,7 @@ export const sdkSurfaces: SdkSurface[] = [
     title: 'Kotlin',
     href: '/docs/sdk/kotlin',
     packageName: 'dev.oliphaunt:oliphaunt-android',
-    install: 'id("dev.oliphaunt.android") + implementation("dev.oliphaunt:oliphaunt-android:0.1.1")',
+    install: 'id("dev.oliphaunt.android") + implementation("dev.oliphaunt:oliphaunt-android:<version>")',
     target: 'Android apps',
     startWith: 'Coroutines, Android resources, and ABI artifacts',
     owns: 'Android resource hydration, ABI selection, coroutines, and native runtime ownership.',

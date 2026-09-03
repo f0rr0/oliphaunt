@@ -1357,39 +1357,38 @@ function assertSdkInstallReleaseContracts() {
       `the first SwiftPM-compatible Oliphaunt version must remain 0.6.0; got ${swiftInitialVersion}`,
     );
   }
-  const swiftVersion = releaseGraph.products?.['oliphaunt-swift']?.current_version;
-  const kotlinVersion = releaseGraph.products?.['oliphaunt-kotlin']?.current_version;
-  if (!swiftVersion || !kotlinVersion) {
-    fail('release graph must provide current Swift and Kotlin SDK versions');
-  }
-
-  const required = new Map([
+  const versionPlaceholder = '<version>';
+  const required = [
     [
       'src/docs/content/sdk/swift/index.mdx',
-      `.package(url: "https://github.com/f0rr0/oliphaunt.git", from: "${swiftVersion}")`,
+      `.package(url: "https://github.com/f0rr0/oliphaunt.git", from: "${versionPlaceholder}")`,
     ],
     [
       'src/docs/content/sdk/swift/guide.mdx',
-      `.package(url: "https://github.com/f0rr0/oliphaunt.git", from: "${swiftVersion}")`,
-    ],
-    [
-      'src/sdks/swift/README.md',
-      `.package(url: "https://github.com/f0rr0/oliphaunt.git", exact: "${swiftVersion}")`,
+      `.package(url: "https://github.com/f0rr0/oliphaunt.git", from: "${versionPlaceholder}")`,
     ],
     [
       'src/docs/content/sdk/kotlin/index.mdx',
-      `implementation("dev.oliphaunt:oliphaunt-android:${kotlinVersion}")`,
+      `id("dev.oliphaunt.android") version "${versionPlaceholder}"`,
+    ],
+    [
+      'src/docs/content/sdk/kotlin/index.mdx',
+      `implementation("dev.oliphaunt:oliphaunt-android:${versionPlaceholder}")`,
     ],
     [
       'src/docs/content/sdk/kotlin/guide.mdx',
-      `implementation("dev.oliphaunt:oliphaunt-android:${kotlinVersion}")`,
+      `id("dev.oliphaunt.android") version "${versionPlaceholder}"`,
     ],
     [
-      'src/sdks/kotlin/README.md',
-      `implementation("dev.oliphaunt:oliphaunt-android:${kotlinVersion}")`,
+      'src/docs/content/sdk/kotlin/guide.mdx',
+      `implementation("dev.oliphaunt:oliphaunt-android:${versionPlaceholder}")`,
+    ],
+    [
+      'src/docs/src/lib/docs-data.ts',
+      `id("dev.oliphaunt.android") + implementation("dev.oliphaunt:oliphaunt-android:${versionPlaceholder}")`,
     ],
     ['src/docs/src/lib/docs-data.ts', `packageName: 'dev.oliphaunt:oliphaunt-android'`],
-  ]);
+  ];
   for (const [file, text] of required) {
     if (!readText(file).includes(text)) {
       fail(`${file} must use the release-owned SDK install contract ${JSON.stringify(text)}`);

@@ -25,9 +25,11 @@ Swift API plus the platform runtime artifacts required for the selected target.
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/f0rr0/oliphaunt.git", from: "0.6.1")
+    .package(url: "https://github.com/f0rr0/oliphaunt.git", from: "<version>")
 ]
 ```
+
+Replace `<version>` with the release version you want to use.
 
 Persistent storage lives under your app container. App users install your app; the
 SDK package carries the runtime files it needs.

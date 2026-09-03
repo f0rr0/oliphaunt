@@ -255,3 +255,14 @@ checks and repeated gates provided earlier or duplicate diagnostics, not unique
 runtime proof. Compile, package reopening, installed-product smoke, regression,
 mobile lifecycle, exact-SHA qualification, registry reconciliation, public
 consumer checks, and final attestations remain.
+
+## Hosted follow-up: release PR #171
+
+The first release PR after this refactor exposed one remaining prose-to-release
+coupling. Release preparation successfully normalized and verified the generated
+release files, then stopped before pushing because Swift and Kotlin install
+examples contained the previously published version strings. The public docs
+now use an explicit `<version>` placeholder, while the docs check still enforces
+the real Swift repository, Gradle plugin, and Maven package coordinates. This
+removes no product, packaging, or runtime coverage and prevents future version
+bumps from failing on duplicated prose.
