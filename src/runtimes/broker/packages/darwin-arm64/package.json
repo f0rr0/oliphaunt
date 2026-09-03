@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/broker-darwin-arm64",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "macOS arm64 oliphaunt-broker helper binary.",
   "license": "MIT AND ISC AND Unicode-3.0",
   "type": "module",
