@@ -13,6 +13,7 @@ import {
   prepareOliphauntBuildReleaseSource,
   prepareRustReleaseSource,
 } from "./prepare-rust-release-source.mjs";
+import { productCompatibilityVersion } from "./release-graph.mjs";
 import {
   assertReleaseNoticesInArchive,
   assertReleaseNoticesInDirectory,
@@ -52,8 +53,16 @@ test("freezes the generated target-wired Rust SDK source instead of the workspac
       "utf8",
     );
     const workspaceSource = readFileSync(path.join(ROOT, "src/sdks/rust/src/lib.rs"), "utf8");
-    const nativeVersion = currentProductVersionSync("liboliphaunt-native", "prepare-rust-release-source.test.mjs");
-    const brokerVersion = currentProductVersionSync("oliphaunt-broker", "prepare-rust-release-source.test.mjs");
+    const nativeVersion = productCompatibilityVersion(
+      "oliphaunt-rust",
+      "liboliphaunt-native",
+      "prepare-rust-release-source.test.mjs",
+    );
+    const brokerVersion = productCompatibilityVersion(
+      "oliphaunt-rust",
+      "oliphaunt-broker",
+      "prepare-rust-release-source.test.mjs",
+    );
     const sdkVersion = currentProductVersionSync("oliphaunt-rust", "prepare-rust-release-source.test.mjs");
     const targets = allArtifactTargets({
       product: "liboliphaunt-native",

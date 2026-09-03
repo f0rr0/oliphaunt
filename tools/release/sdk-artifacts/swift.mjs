@@ -16,7 +16,7 @@ import {
   assertReleaseNoticesInDirectory,
   stageReleaseNotices,
 } from "../release-notices.mjs";
-import { currentProductVersionSync } from "../release-artifact-targets.mjs";
+import { productCompatibilityVersion } from "../release-graph.mjs";
 import { validateSwiftSourceReleaseContract } from "../swift-source-carrier-contract.mjs";
 import {
   BUN,
@@ -74,7 +74,11 @@ export function stageArtifacts(artifactRoot, workRoot) {
   try {
     validateSwiftSourceReleaseContract({
       carrier,
-      expectedNativeVersion: currentProductVersionSync("liboliphaunt-native", PREFIX),
+      expectedNativeVersion: productCompatibilityVersion(
+        "oliphaunt-swift",
+        "liboliphaunt-native",
+        PREFIX,
+      ),
       label: `${rel(artifactRoot)} source release`,
       manifestText: manifest,
     });

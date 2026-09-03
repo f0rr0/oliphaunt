@@ -25,7 +25,6 @@ tasks:
       - "ci-workflows:check"
       - "repo:docs-policy"
       - "repo:release-metadata"
-      - "repo:prek"
       - "release-tools:broker-dependency-license-audit"
     options:
       cache: true
@@ -88,7 +87,7 @@ tasks:
       # The macOS publication-host job owns this exact proof in hosted CI.
       runInCI: skip
   prek:
-    tags: ["policy", "assertion", "quality", "static", "ci-maintainer-tools"]
+    tags: ["policy", "assertion", "quality", "static", "requires-maintainer-tools"]
     command: "bash tools/policy/check-prek.sh"
     inputs:
       - "/.config/nextest.toml"
@@ -119,6 +118,9 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
+      # Local hook validation only; hosted checks already run the owned format
+      # and policy tasks without bootstrapping every maintainer binary.
+      runInCI: false
   smoke:
     tags: ["runtime", "smoke"]
     command: "bash tools/dev/bun.sh examples/tools/check-examples.mjs"

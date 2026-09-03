@@ -348,13 +348,6 @@ jobs:
           INPUT_RELEASE_COMMIT: ${{ inputs.release_commit }}
         run: .github/scripts/resolve-release-head.sh
 
-      - name: Set up pinned Node.js
-        id: setup_github_stage_node
-        timeout-minutes: 3
-        uses: ./.github/actions/setup-node-runtime
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
         with:

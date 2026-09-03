@@ -1,6 +1,6 @@
 # Tooling Decisions
 
-Status: normative tooling decision record. Last verified: 2026-07-22. Owner: repository maintainers.
+Status: normative tooling decision record. Last verified: 2026-09-03. Owner: repository maintainers.
 
 Oliphaunt is a polyglot product monorepo. Tooling has to make product work
 predictable without hiding ecosystem-native behavior.
@@ -14,7 +14,7 @@ predictable without hiding ecosystem-native behavior.
   releases.
 - Product-local `release.toml` files activate a public product and own package
   metadata Release Please does not model: owner, kind, publish targets,
-  registry packages, release artifacts, compatibility-version files, and
+  registry packages, release artifacts, exact published compatibility pins, and
   derived version files. Incomplete extension work stays on a branch.
 - Runtime products select target presets in Moon
   `project.release.artifactTargets`; the global extension target-profile
@@ -35,15 +35,16 @@ Install Moon through proto from `.prototools` and run `moon` directly:
 ```sh
 moon query projects
 moon query tasks
-moon query affected --upstream none --downstream deep
-moon run :check :compile :format-check :lint :tools-compile
+moon query affected --upstream none --downstream direct
+moon run :check :compile :format-check :js-format-check :rust-format-check :lint :tools-compile
 moon run :test :unit :tools-unit
 moon run :coverage
 ```
 
 Moon task names carry stable intent:
 
-- `check`, `compile`, `format-check`, and `lint`: distinct static validation.
+- `check`, `compile`, `format-check`, `js-format-check`, `rust-format-check`,
+  and `lint`: distinct static validation.
 - `test` and `unit`: product-native unit or contract tests.
 - `package`: assemble or inspect a carrier; it never publishes.
 - `smoke`: one runtime happy path.
@@ -58,11 +59,15 @@ Every task must declare explicit inputs. Tasks with deterministic output that
 other tasks consume must declare outputs. Use Moon tags for CI lanes and ad-hoc
 selection; do not create root script aliases for new lanes.
 
-Moon dependency scopes are meaningful:
+Moon dependency scopes describe local source relationships:
 
-- `production` and `peer` are release-affecting compatibility edges.
-- `build` is for tests, fixtures, generated metadata, package-shape checks, and
-  other non-release coupling.
+- `production` and `peer` mean a local consumer uses the dependency's code or
+  artifact.
+- `build` is for tests, fixtures, generated metadata, and package-shape checks.
+
+Release propagation stops at the first publishable product boundary. Exact
+published dependency versions live in product-local `compatibility_versions`;
+Moon edges qualify direct consumers but never invent downstream releases.
 
 ## pnpm
 
@@ -204,17 +209,18 @@ CI flow:
 
 1. The affected job uses Moon queries to select stable job names from task tags
    named `ci-<job>` and to emit the exact Moon task targets for each job.
-2. The affected job emits dynamic `Checks / <target>` and `Tests / <target>`
+2. The affected job emits dynamic `Checks / <targets>` and `Tests / <targets>`
    matrices plus one compact `Policy` task batch from Moon-selected targets.
+   Each visible entry lists and runs at most four tasks with identical setup.
    `Checks` are normal static/lint/typecheck-style package or tool checks.
    Policy targets are invariant assertions that parse repository files,
    workflow YAML, release metadata, generated graphs, or package topology.
    Package checks and tests keep task inheritance; the policy batch runs its
    selected targets with `--upstream none` so it does not re-run package
    prerequisites that already have their own visible jobs. A task that truly
-   needs the Android SDK declares the `ci-android-sdk` Moon tag. The planner
+   needs the Android SDK declares the `requires-android-sdk` Moon tag. The planner
    projects that capability into runner setup, so unrelated check, policy, and
-   test shards do not install Android tooling.
+   test groups do not install Android tooling.
 3. Product build jobs call `.github/scripts/run-planned-moon-job.sh <job>`.
 4. The planned-job wrapper reads the affected job target map, then delegates to
    `.github/scripts/run-moon-targets.sh`, which runs
@@ -229,8 +235,8 @@ CI flow:
    runtime target, broker target, Node direct target, WASIX AOT target, Android
    emulator, and iOS simulator.
 
-The required PR gate is thin: visible `Checks / <target>`, `Policy`,
-`Tests / <target>`, `Builds / <artifact>`, and installed-app
+The required PR gate is thin: visible `Checks / <targets>`, `Policy`,
+`Tests / <targets>`, `Builds / <artifact>`, and installed-app
 `E2E` jobs all fan out from the affected plan, while Moon models package-local
 prerequisites. The final `Required` job aggregates the `Checks`, `Tests`,
 `Builds`, and `E2E` phase gates plus `release-intent`; the selected `Policy`

@@ -2,8 +2,8 @@ import { strict as assert } from "node:assert";
 import { describe, test } from "node:test";
 
 import {
+  groupTargets,
   matrixTarget,
-  shardCheckTargets,
   taskCapabilities,
   taskLabel,
 } from "./moon-task-capabilities.mjs";
@@ -23,8 +23,8 @@ describe("Moon task capabilities", () => {
 
   test("propagates capabilities through dependencies and makes maintainer tools imply Rust", () => {
     const taskMap = tasks(
-      { target: "repo:leaf", tags: ["ci-maintainer-tools"] },
-      { target: "repo:middle", tags: ["ci-android-sdk"], deps: [{ target: "repo:leaf" }] },
+      { target: "repo:leaf", tags: ["requires-maintainer-tools"] },
+      { target: "repo:middle", tags: ["requires-android-sdk"], deps: [{ target: "repo:leaf" }] },
       { target: "repo:root", tags: [], deps: ["repo:middle"] },
     );
 
@@ -52,21 +52,21 @@ describe("Moon task capabilities", () => {
     );
   });
 
-  test("creates bounded static shards while keeping capability-bearing work dedicated", () => {
+  test("creates bounded groups with one setup profile per job", () => {
     const taskMap = tasks(
       ...Array.from({ length: 9 }, (_, index) => ({ target: `plain:${index}`, tags: [] })),
-      { target: "rust:first", tags: ["ci-rust"] },
-      { target: "rust:second", tags: ["ci-rust"] },
-      { target: "android:check", tags: ["ci-android-sdk"] },
+      { target: "rust:first", tags: ["requires-rust"] },
+      { target: "rust:second", tags: ["requires-rust"] },
+      { target: "android:check", tags: ["requires-android-sdk"] },
     );
     const targets = [...taskMap.values()].map((task) => matrixTarget(task, "deep", taskMap));
-    const shards = shardCheckTargets(targets, { maxTargets: 4 });
+    const groups = groupTargets(targets, { maxTargets: 4 });
 
-    assert.deepEqual(shards.map(({ target_count }) => target_count), [4, 4, 1, 1, 1, 1]);
-    assert.equal(shards[0].label, "Plain / 0 + Plain / 1 + Plain / 2 + Plain / 3");
-    assert.equal(shards.filter(({ requires_rust }) => requires_rust).length, 2);
-    assert.equal(shards.filter(({ requires_android_sdk }) => requires_android_sdk).length, 1);
-    const selected = shards.flatMap(({ targets_json }) =>
+    assert.deepEqual(groups.map(({ target_count }) => target_count), [1, 4, 4, 1, 2]);
+    assert.equal(groups[1].label, "Plain / 0 + Plain / 1 + Plain / 2 + Plain / 3");
+    assert.equal(groups.filter(({ requires_rust }) => requires_rust).length, 1);
+    assert.equal(groups.filter(({ requires_android_sdk }) => requires_android_sdk).length, 1);
+    const selected = groups.flatMap(({ targets_json }) =>
       JSON.parse(targets_json).include.map(({ target }) => target));
     assert.deepEqual(selected.sort(), [...taskMap.keys()].sort());
   });
@@ -79,7 +79,7 @@ describe("Moon task capabilities", () => {
       requires_maintainer_tools: false,
       requires_android_sdk: false,
     };
-    assert.throws(() => shardCheckTargets([row, row]), /duplicate/u);
-    assert.throws(() => shardCheckTargets([row], { maxTargets: 0 }), /positive integer/u);
+    assert.throws(() => groupTargets([row, row]), /duplicate/u);
+    assert.throws(() => groupTargets([row], { maxTargets: 0 }), /positive integer/u);
   });
 });

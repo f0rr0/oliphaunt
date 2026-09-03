@@ -1,6 +1,6 @@
 # Maintainer Development Guide
 
-Status: normative local-development guide. Last verified: 2026-07-15. Owner: repository maintainers.
+Status: normative local-development guide. Last verified: 2026-09-03. Owner: repository maintainers.
 
 This page is maintainer documentation for repository validation, generated
 artifacts, and local release metadata checks. It is not end-user product
@@ -18,8 +18,8 @@ inspect Moon affectedness, run focused checks first, and expand only when the
 changed contract requires it. A normal affected source feedback pass is:
 
 ```sh
-moon query affected --upstream none --downstream deep
-moon run :check :compile :format-check :lint :tools-compile --affected
+moon query affected --upstream none --downstream direct
+moon run :check :compile :format-check :js-format-check :rust-format-check :lint :tools-compile --affected
 moon run :test :unit :tools-unit --affected
 ```
 
@@ -51,7 +51,7 @@ directly:
 
 ```sh
 moon query projects
-moon query affected --upstream none --downstream deep
+moon query affected --upstream none --downstream direct
 moon run :coverage --affected
 ```
 
@@ -194,9 +194,9 @@ The validation entrypoint is split by maintainer workflow:
   API compatibility;
 - `tools/dev/bun.sh tools/policy/check-supply-chain.mjs`: cargo-deny dependency
   policy checks;
-- `moon run :check :compile :format-check :lint :tools-compile && moon run :test :unit :tools-unit && moon run :package && moon run :coverage`:
+- `moon run :check :compile :format-check :js-format-check :rust-format-check :lint :tools-compile && moon run :test :unit :tools-unit && moon run :package && moon run :coverage`:
   explicit full local parity lane, including measured coverage;
-- `moon run :check :compile :format-check :lint :tools-compile && moon run :test :unit :tools-unit && moon run :smoke`: full source/runtime lane for repo, lint, source
+- `moon run :check :compile :format-check :js-format-check :rust-format-check :lint :tools-compile && moon run :test :unit :tools-unit && moon run :smoke`: full source/runtime lane for repo, lint, source
   tests, and examples;
 - `moon run :regression`: broader SQL, protocol, extension, and runtime regression suites;
 - `moon run release-tools:check`: the canonical full local release-policy gate.
@@ -294,7 +294,7 @@ generated native AOT payloads. Use it for ordinary Rust, docs, tests, examples,
 and workflow edits:
 
 ```sh
-moon run :check :compile :format-check :lint :tools-compile --affected && moon run :test :unit :tools-unit --affected
+moon run :check :compile :format-check :js-format-check :rust-format-check :lint :tools-compile --affected && moon run :test :unit :tools-unit --affected
 ```
 
 For native liboliphaunt work, prefer the native-only track. It keeps the C ABI,

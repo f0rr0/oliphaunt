@@ -98,7 +98,7 @@ function manifest() {
   };
 }
 
-describe('WASIX TypeScript release dependency closure', () => {
+describe('WASIX TypeScript package dependency contract', () => {
   test('accepts the portable browser runtime and exact native platform carriers', () => {
     expect(() => assertWasixTypescriptManifest(manifest())).not.toThrow();
   });

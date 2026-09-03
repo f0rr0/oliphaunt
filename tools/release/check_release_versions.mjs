@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { currentVersion } from "./product-version.mjs";
@@ -9,10 +9,11 @@ import {
   assertStringList as graphAssertStringList,
   commandJson,
   compareVersion,
+  compatibilityVersionEntries,
+  compatibilityVersionValue,
   formatVersion,
   loadGraph,
   parseStableVersion as graphParseStableVersion,
-  releaseProductProjectId as graphReleaseProductProjectId,
   tagMatchPattern,
   tagPrefixes as graphTagPrefixes,
 } from "./release-graph.mjs";
@@ -24,10 +25,6 @@ const REGISTRY_INVENTORY_SCHEMA = "oliphaunt-release-registry-inventory-v1";
 function fail(message) {
   console.error(`${TOOL}: ${message}`);
   process.exit(1);
-}
-
-function readText(relativePath) {
-  return readFileSync(`${ROOT}/${relativePath}`, "utf8");
 }
 
 function gitOutput(args) {
@@ -208,56 +205,6 @@ function validateSwiftpmVersionTag(product, version, headCommit) {
   );
 }
 
-function reactNativeCompatibilityVersions() {
-  const packageJson = JSON.parse(readText("src/sdks/react-native/package.json"));
-  const metadata = packageJson.oliphaunt;
-  if (metadata === null || Array.isArray(metadata) || typeof metadata !== "object") {
-    fail("React Native package.json must declare oliphaunt compatibility metadata");
-  }
-  if (typeof metadata.swiftSdkVersion !== "string" || typeof metadata.kotlinSdkVersion !== "string") {
-    fail("React Native compatibility metadata must include Swift and Kotlin SDK versions");
-  }
-  return [metadata.swiftSdkVersion, metadata.kotlinSdkVersion];
-}
-
-function typescriptCompatibilityVersions() {
-  const packageJson = JSON.parse(readText("src/sdks/js/package.json"));
-  const metadata = packageJson.oliphaunt;
-  if (metadata === null || Array.isArray(metadata) || typeof metadata !== "object") {
-    fail("TypeScript package.json must declare oliphaunt compatibility metadata");
-  }
-  if (
-    typeof metadata.liboliphauntVersion !== "string" ||
-    typeof metadata.brokerVersion !== "string" ||
-    typeof metadata.nodeDirectAddonVersion !== "string"
-  ) {
-    fail("TypeScript compatibility metadata must include liboliphaunt, broker, and Node direct versions");
-  }
-  return [metadata.liboliphauntVersion, metadata.brokerVersion, metadata.nodeDirectAddonVersion];
-}
-
-async function dependencyVersionFor(consumer, dependency) {
-  if (consumer === "oliphaunt-swift" && dependency === "liboliphaunt-native") {
-    return readText("src/sdks/swift/LIBOLIPHAUNT_VERSION").trim();
-  }
-  if (consumer === "oliphaunt-react-native" && dependency === "oliphaunt-swift") {
-    return reactNativeCompatibilityVersions()[0];
-  }
-  if (consumer === "oliphaunt-react-native" && dependency === "oliphaunt-kotlin") {
-    return reactNativeCompatibilityVersions()[1];
-  }
-  if (consumer === "oliphaunt-js" && dependency === "liboliphaunt-native") {
-    return typescriptCompatibilityVersions()[0];
-  }
-  if (consumer === "oliphaunt-js" && dependency === "oliphaunt-broker") {
-    return typescriptCompatibilityVersions()[1];
-  }
-  if (consumer === "oliphaunt-js" && dependency === "oliphaunt-node-direct") {
-    return typescriptCompatibilityVersions()[2];
-  }
-  return currentVersion(dependency);
-}
-
 async function validateProduct(product, config, headRef) {
   if (typeof config.tag_prefix !== "string" || config.tag_prefix.length === 0) {
     fail(`${product} must declare tag_prefix`);
@@ -365,10 +312,6 @@ async function validateRegistryPublication(products, graph, currentTagAtHead, he
   };
 }
 
-function releaseProductProjectId(product, products, projects) {
-  return graphReleaseProductProjectId(product, products, projects, TOOL);
-}
-
 function validateReleasedDependencyArtifacts(consumer, dependency, dependencyVersion, graph) {
   const dependencyConfig = graph.products[dependency];
   if (dependencyConfig === null || Array.isArray(dependencyConfig) || typeof dependencyConfig !== "object") {
@@ -387,9 +330,14 @@ function validateReleasedDependencyArtifacts(consumer, dependency, dependencyVer
   }
 }
 
-function validateDependencyTag(consumer, dependency, dependencyVersion, graph, selected) {
+async function validateDependencyTag(consumer, dependency, dependencyVersion, graph, selected) {
   parseStableVersion(dependencyVersion);
-  if (selected.has(dependency)) {
+  if (selectedDependencySatisfiesPin(
+    selected,
+    dependency,
+    dependencyVersion,
+    selected.has(dependency) ? await currentVersion(dependency) : undefined,
+  )) {
     return;
   }
   const dependencyConfig = graph.products[dependency];
@@ -402,43 +350,38 @@ function validateDependencyTag(consumer, dependency, dependencyVersion, graph, s
   const tag = `${dependencyConfig.tag_prefix}${dependencyVersion}`;
   if (!tagExists(tag)) {
     fail(
-      `${consumer} depends on ${dependency} ${dependencyVersion}, but release tag ${tag} does not exist and ${dependency} is not selected for this release`,
+      `${consumer} depends on ${dependency} ${dependencyVersion}, but release tag ${tag} does not exist; ` +
+        `publish that exact dependency version first or select ${dependency} at ${dependencyVersion}`,
     );
   }
   validateReleasedDependencyArtifacts(consumer, dependency, dependencyVersion, graph);
 }
 
+export function selectedDependencySatisfiesPin(selected, dependency, pinnedVersion, selectedVersion) {
+  return selected.has(dependency) && selectedVersion === pinnedVersion;
+}
+
 async function validateReleaseDependencies(products, graph) {
   const selected = new Set(products);
-  const graphProducts = graph.products;
-  const moonProjects = graph.moon_projects;
-  if (moonProjects === null || Array.isArray(moonProjects) || typeof moonProjects !== "object") {
-    fail("Moon project graph is missing from release metadata");
-  }
-  const productProject = Object.fromEntries(
-    Object.keys(graphProducts).map((product) => [
-      product,
-      releaseProductProjectId(product, graphProducts, moonProjects),
-    ]),
-  );
-  const projectProduct = Object.fromEntries(
-    Object.entries(productProject).map(([product, project]) => [project, product]),
-  );
+  const entries = compatibilityVersionEntries(graph.products, {
+    requireSourceProduct: true,
+    prefix: TOOL,
+  });
   for (const product of products) {
-    const config = graphProducts[product];
-    if (config === null || Array.isArray(config) || typeof config !== "object") {
-      fail(`selected product ${product} is missing from release metadata`);
+    const dependencies = new Map();
+    for (const entry of entries.filter(({ product: owner }) => owner === product)) {
+      const version = compatibilityVersionValue(entry, { prefix: TOOL });
+      const existing = dependencies.get(entry.sourceProduct);
+      if (existing !== undefined && existing !== version) {
+        fail(`${product} declares conflicting versions of ${entry.sourceProduct}`);
+      }
+      dependencies.set(entry.sourceProduct, version);
     }
-    const project = moonProjects[productProject[product]] ?? {};
-    const dependencies = (Array.isArray(project.dependencies) ? project.dependencies : [])
-      .map((dependency) => dependency?.id)
-      .filter((dependency) => dependency in projectProduct)
-      .map((dependency) => projectProduct[dependency]);
-    for (const dependency of dependencies) {
-      validateDependencyTag(
+    for (const [dependency, dependencyVersion] of dependencies) {
+      await validateDependencyTag(
         product,
         dependency,
-        await dependencyVersionFor(product, dependency),
+        dependencyVersion,
         graph,
         selected,
       );

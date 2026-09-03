@@ -32,7 +32,7 @@ owners:
 
 tasks:
   compile:
-    tags: ["quality", "static", "ci-rust"]
+    tags: ["quality", "static", "requires-rust"]
     command: "cargo check -p oliphaunt-broker --locked"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-broker/check"
@@ -48,7 +48,7 @@ tasks:
       runFromWorkspaceRoot: true
 
   unit:
-    tags: ["quality", "unit", "ci-rust"]
+    tags: ["quality", "unit", "requires-rust"]
     command: "cargo test -p oliphaunt-broker --locked"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-broker/unit"

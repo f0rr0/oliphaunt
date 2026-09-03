@@ -66,12 +66,12 @@ intentionally not maintained here.
   asserts Android mobile builds request only `android-arm64-v8a` and
   `android-x86_64` extension artifacts while iOS mobile builds request only
   `ios-xcframework`.
-- [x] Moon dependency scopes encode release-affecting versus build-only edges.
+- [x] Moon dependency scopes encode source/qualification impact; product-local compatibility metadata encodes published dependencies.
   Evidence: `tools/dev/bun.sh tools/release/release_plan.mjs --changed-file ... --format json`
   probes prove extension catalog changes run affected CI without releases,
   exact extension target changes release only that extension product,
-  native runtime patches release native plus production downstream products, and
-  WASIX patches release only WASIX runtime plus the WASIX Rust binding.
+  native runtime patches release only native, and WASIX patches release only
+  WASIX; consumers remain independently versioned.
 - [x] React Native depends on Swift/Kotlin at the product graph level. Mobile
   installed-app builder jobs consume target-scoped exact-extension package
   artifacts through CI artifact handoff, not a Moon product dependency.

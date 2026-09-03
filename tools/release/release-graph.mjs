@@ -8,8 +8,6 @@ import { CONTRIB_CARRIERS_PATH, loadContribCarriers } from "./contrib-carriers.m
 
 export const ROOT = path.resolve(import.meta.dir, "../..");
 export const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-export const RELEASE_DEPENDENCY_SCOPES = new Set(["production", "peer"]);
-
 const GENERATED_PATH_PARTS = new Set([
   ".build",
   ".cxx",
@@ -577,6 +575,73 @@ export function compatibilityVersionEntries(
   return entries;
 }
 
+export function compatibilityVersionValue(
+  entry,
+  { ref = null, root = ROOT, prefix = "release-graph", missingValue = undefined } = {},
+) {
+  const text = ref === null
+    ? readFileSync(path.join(root, entry.path), "utf8")
+    : fileAtRef(root, ref, entry.path);
+  if (text === null) {
+    if (missingValue !== undefined) return missingValue;
+    fail(prefix, `cannot read ${entry.path} at immutable compatibility ref ${ref}`);
+  }
+  if (entry.parser === "raw") return text.trim();
+  if (entry.parser.startsWith("rust-const:")) {
+    const name = entry.parser.slice("rust-const:".length);
+    if (!/^[A-Z][A-Z0-9_]*$/u.test(name)) {
+      fail(prefix, `${entry.id} has an invalid Rust constant parser`);
+    }
+    const matches = [...text.matchAll(new RegExp(
+      `(?:pub\\s+)?const\\s+${name}\\s*:[^=]+?=\\s*"([^"]+)"\\s*;`,
+      "gu",
+    ))];
+    if (matches.length !== 1) {
+      if (matches.length === 0 && missingValue !== undefined) return missingValue;
+      fail(prefix, `${entry.id} must name exactly one Rust string constant`);
+    }
+    return matches[0][1];
+  }
+  const separator = entry.parser.indexOf(":");
+  const type = entry.parser.slice(0, separator);
+  if (type !== "json" && type !== "toml") {
+    fail(prefix, `${entry.id} uses unsupported compatibility parser ${entry.parser}`);
+  }
+  const parts = entry.parser.slice(separator + 1).split(".");
+  let data;
+  try {
+    data = type === "json" ? JSON.parse(text) : type === "toml" ? Bun.TOML.parse(text) : null;
+  } catch (cause) {
+    fail(prefix, `${entry.path} is not valid ${type.toUpperCase()}: ${cause.message}`);
+  }
+  const value = valueAtPath(data, parts);
+  if (typeof value !== "string" || value.length === 0) {
+    if (value === undefined && missingValue !== undefined) return missingValue;
+    fail(prefix, `${entry.id} parser ${entry.parser} must resolve to a non-empty string`);
+  }
+  return value;
+}
+
+export function productCompatibilityVersion(
+  product,
+  sourceProduct,
+  prefix = "release-graph",
+) {
+  const graph = loadGraph(prefix);
+  const entries = compatibilityVersionEntries(graph.products, {
+    requireSourceProduct: true,
+    prefix,
+  }).filter((entry) => entry.product === product && entry.sourceProduct === sourceProduct);
+  if (entries.length === 0) {
+    fail(prefix, `${product} does not declare compatibility with ${sourceProduct}`);
+  }
+  const values = new Set(entries.map((entry) => compatibilityVersionValue(entry, { prefix })));
+  if (values.size !== 1) {
+    fail(prefix, `${product} declares conflicting compatibility versions for ${sourceProduct}`);
+  }
+  return [...values][0];
+}
+
 export function tagMatchPattern(prefix) {
   return prefix ? `${prefix}[0-9]*` : "[0-9]*";
 }
@@ -1133,38 +1198,6 @@ export function releaseOwnerProjectsForPath(products, projects, candidate, prefi
     .sort(compareText);
 }
 
-export function dependentsByProject(projects, { releaseOnly = false } = {}) {
-  const dependents = Object.fromEntries(Object.keys(projects).map((project) => [project, new Set()]));
-  for (const [project, config] of Object.entries(projects)) {
-    for (const dependency of config.dependencies ?? []) {
-      if (releaseOnly && !RELEASE_DEPENDENCY_SCOPES.has(dependency.scope)) {
-        continue;
-      }
-      if (!(dependency.id in dependents)) {
-        dependents[dependency.id] = new Set();
-      }
-      dependents[dependency.id].add(project);
-    }
-  }
-  return dependents;
-}
-
-export function downstreamProjects(projects, direct, { releaseOnly = false } = {}) {
-  const dependents = dependentsByProject(projects, { releaseOnly });
-  const selected = new Set(direct);
-  const queue = [...selected].sort(compareText);
-  while (queue.length > 0) {
-    const current = queue.shift();
-    for (const downstream of [...(dependents[current] ?? [])].sort(compareText)) {
-      if (!selected.has(downstream)) {
-        selected.add(downstream);
-        queue.push(downstream);
-      }
-    }
-  }
-  return selected;
-}
-
 export function releaseProductProjectId(product, products, projects, prefix = "release-graph") {
   if (product in projects) {
     return product;
@@ -1194,32 +1227,57 @@ export function releaseProductsForProjects(products, projects, projectIds, prefi
   return selected;
 }
 
-export function releaseOrder(products, projects, selected, prefix = "release-graph") {
-  const selectedSet = new Set(selected);
-  const productProject = Object.fromEntries(
-    Object.keys(products).map((product) => [product, releaseProductProjectId(product, products, projects, prefix)]),
+function releaseProductsForSourceProjects(products, projects, projectIds, prefix) {
+  const productByProject = new Map(
+    Object.keys(products).map((product) => [
+      releaseProductProjectId(product, products, projects, prefix),
+      product,
+    ]),
   );
+  const dependents = new Map();
+  for (const project of Object.values(projects)) {
+    for (const dependency of project.dependencies ?? []) {
+      if (dependency.scope !== "production" && dependency.scope !== "peer") continue;
+      dependents.set(dependency.id, [...(dependents.get(dependency.id) ?? []), project.id]);
+    }
+  }
+
+  const selected = new Set();
+  const visited = new Set();
+  const queue = [...projectIds];
+  while (queue.length > 0) {
+    const project = queue.shift();
+    if (visited.has(project)) continue;
+    visited.add(project);
+    const product = productByProject.get(project);
+    if (product !== undefined) {
+      selected.add(product);
+      continue;
+    }
+    queue.push(...(dependents.get(project) ?? []));
+  }
+  return selected;
+}
+
+export function releaseOrder(products, _projects, selected, prefix = "release-graph") {
+  const selectedSet = new Set(selected);
   const ordered = [];
   const remaining = new Set(selectedSet);
   while (remaining.size > 0) {
     const ready = [];
     for (const product of [...remaining].sort(compareText)) {
-      const projectId = productProject[product];
-      const projectConfig = projects[projectId] ?? {};
       const deps = new Set(
-        (projectConfig.dependencies ?? [])
-          .filter((dependency) => RELEASE_DEPENDENCY_SCOPES.has(dependency.scope))
-          .map((dependency) => dependency.id),
+        Object.values(products[product]?.compatibility_versions ?? {})
+          .map((dependency) => dependency?.source_product)
+          .filter((dependency) => typeof dependency === "string" && dependency !== product),
       );
-      const selectedDeps = Object.entries(productProject)
-        .filter(([candidate, candidateProject]) => selectedSet.has(candidate) && deps.has(candidateProject))
-        .map(([candidate]) => candidate);
+      const selectedDeps = [...deps].filter((dependency) => selectedSet.has(dependency));
       if (selectedDeps.every((dependency) => ordered.includes(dependency))) {
         ready.push(product);
       }
     }
     if (ready.length === 0) {
-      fail(prefix, `Moon release product graph has a dependency cycle: ${JSON.stringify([...remaining].sort(compareText))}`);
+      fail(prefix, `release compatibility graph has a dependency cycle: ${JSON.stringify([...remaining].sort(compareText))}`);
     }
     for (const product of ready) {
       ordered.push(product);
@@ -1240,6 +1298,18 @@ export function buildPlan(graph, files, prefix = "release-graph") {
   }
   const directProjects = new Set();
   for (const file of files) {
+    const sharedImpacts = (graph.shared_release_sources ?? [])
+      .filter((impact) => (impact.files ?? []).includes(file));
+    if (sharedImpacts.length > 0) {
+      for (const impact of sharedImpacts) {
+        for (const product of impact.products) {
+          directProjects.add(releaseProductProjectId(product, products, projects, prefix));
+        }
+      }
+      // The explicit carrier mapping is authoritative. Traversing the shared
+      // source project's other consumers would fabricate downstream releases.
+      continue;
+    }
     const owner = ownerProjectForPath(projects, file);
     if (owner !== undefined) {
       directProjects.add(owner);
@@ -1250,15 +1320,16 @@ export function buildPlan(graph, files, prefix = "release-graph") {
     for (const releaseOwner of releaseOwnerProjectsForPath(products, projects, file, prefix)) {
       directProjects.add(releaseOwner);
     }
-    for (const impact of graph.shared_release_sources ?? []) {
-      if (!(impact.files ?? []).includes(file)) continue;
-      for (const product of impact.products) {
-        directProjects.add(releaseProductProjectId(product, products, projects, prefix));
-      }
-    }
   }
-  const releaseProjects = downstreamProjects(projects, directProjects, { releaseOnly: true });
-  const releaseProductSet = releaseProductsForProjects(products, projects, releaseProjects, prefix);
+  // Follow owned source inputs to their first independently publishable
+  // boundary, then stop. A runtime change selects the runtime, not every SDK
+  // that can consume it; a private source-pin change still selects its runtime.
+  const releaseProductSet = releaseProductsForSourceProjects(
+    products,
+    projects,
+    directProjects,
+    prefix,
+  );
   const releaseProducts = releaseOrder(products, projects, releaseProductSet, prefix);
   const direct = releaseOrder(
     products,
@@ -1283,7 +1354,6 @@ export function buildPlanFromProductTags(
   const direct = new Set();
   const changed = new Set();
   const currentTaggedProducts = new Set();
-  const versionEligibleProducts = new Set();
   const compatibilityEntries = compatibilityVersionEntries(products, {
     requireSourceProduct: true,
     prefix,
@@ -1333,7 +1403,6 @@ export function buildPlanFromProductTags(
       }
       continue;
     }
-    versionEligibleProducts.add(product);
     if (transition.rerun) {
       direct.add(product);
       currentTaggedProducts.add(product);
@@ -1350,18 +1419,7 @@ export function buildPlanFromProductTags(
   }
 
   const projects = graph.moon_projects;
-  const directProjects = new Set(
-    [...direct].map((product) => releaseProductProjectId(product, products, projects, prefix)),
-  );
-  const releaseProjects = downstreamProjects(projects, directProjects, { releaseOnly: true });
-  const releaseProductSet = releaseProductsForProjects(products, projects, releaseProjects, prefix);
-  const ineligibleClosure = [...releaseProductSet].filter((product) => !versionEligibleProducts.has(product)).sort(compareText);
-  if (ineligibleClosure.length > 0) {
-    throw new Error(
-      `${prefix}: release dependency closure requires product(s) without a verified manifest ` +
-      `version transition or exact-tag rerun: ${ineligibleClosure.join(", ")}`,
-    );
-  }
+  const releaseProductSet = new Set(direct);
   const releaseProducts = releaseOrder(products, projects, releaseProductSet, prefix);
   return {
     changedFiles: [...changed].sort(compareText),

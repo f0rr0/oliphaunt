@@ -23,18 +23,18 @@
     "brokerHelper": "oliphaunt-broker"
   },
   "optionalDependencies": {
-    "@oliphaunt/broker-darwin-arm64": "workspace:0.1.1",
-    "@oliphaunt/broker-linux-arm64-gnu": "workspace:0.1.1",
-    "@oliphaunt/broker-linux-x64-gnu": "workspace:0.1.1",
-    "@oliphaunt/broker-win32-x64-msvc": "workspace:0.1.1",
-    "@oliphaunt/liboliphaunt-darwin-arm64": "workspace:0.1.1",
-    "@oliphaunt/liboliphaunt-linux-arm64-gnu": "workspace:0.1.1",
-    "@oliphaunt/liboliphaunt-linux-x64-gnu": "workspace:0.1.1",
-    "@oliphaunt/liboliphaunt-win32-x64-msvc": "workspace:0.1.1",
-    "@oliphaunt/node-direct-darwin-arm64": "workspace:0.1.1",
-    "@oliphaunt/node-direct-linux-arm64-gnu": "workspace:0.1.1",
-    "@oliphaunt/node-direct-linux-x64-gnu": "workspace:0.1.1",
-    "@oliphaunt/node-direct-win32-x64-msvc": "workspace:0.1.1"
+    "@oliphaunt/broker-darwin-arm64": "workspace:*",
+    "@oliphaunt/broker-linux-arm64-gnu": "workspace:*",
+    "@oliphaunt/broker-linux-x64-gnu": "workspace:*",
+    "@oliphaunt/broker-win32-x64-msvc": "workspace:*",
+    "@oliphaunt/liboliphaunt-darwin-arm64": "workspace:*",
+    "@oliphaunt/liboliphaunt-linux-arm64-gnu": "workspace:*",
+    "@oliphaunt/liboliphaunt-linux-x64-gnu": "workspace:*",
+    "@oliphaunt/liboliphaunt-win32-x64-msvc": "workspace:*",
+    "@oliphaunt/node-direct-darwin-arm64": "workspace:*",
+    "@oliphaunt/node-direct-linux-arm64-gnu": "workspace:*",
+    "@oliphaunt/node-direct-linux-x64-gnu": "workspace:*",
+    "@oliphaunt/node-direct-win32-x64-msvc": "workspace:*"
   },
   "publishConfig": {
     "access": "public",

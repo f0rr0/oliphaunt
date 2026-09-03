@@ -4,7 +4,6 @@ import { normalPublicationPlan } from "./normal-publication-plan.mjs";
 import { loadPublicationCatalog } from "./publication-catalog.mjs";
 import { extensionSqlNames } from "./release-artifact-targets.mjs";
 import { buildPlan, loadGraph } from "./release-graph.mjs";
-import { withDependentReleaseClosure } from "./release-dependent-candidates.mjs";
 
 function carrier({
   id,
@@ -33,12 +32,8 @@ function lock(carriers) {
 
 function realSelection(changedFile) {
   const graph = loadGraph("normal-publication-plan.test");
-  const release = withDependentReleaseClosure(
-    graph,
-    buildPlan(graph, [changedFile], "normal-publication-plan.test"),
-    { prefix: "normal-publication-plan.test" },
-  );
-  const publicationProducts = release.requiredReleaseProducts;
+  const release = buildPlan(graph, [changedFile], "normal-publication-plan.test");
+  const publicationProducts = release.releaseProducts;
   const catalog = loadPublicationCatalog("normal-publication-plan.test", { products: publicationProducts });
   const frozen = {
     products: catalog.products,
@@ -150,12 +145,8 @@ describe("normal publication plan", () => {
   test("real release selections include exact embedded consumers without unrelated products", () => {
     const external = realSelection("src/extensions/external/vector/CHANGELOG.md");
     expect(external.release.directProducts).toEqual(["oliphaunt-extension-vector"]);
-    expect(external.release.releaseProducts).toEqual([
-      "oliphaunt-extension-vector",
-      "oliphaunt-wasix-napi",
-      "oliphaunt-wasix-ts",
-    ]);
-    expect(external.catalog.products.map(({ id }) => id)).toEqual(external.release.requiredReleaseProducts);
+    expect(external.release.releaseProducts).toEqual(["oliphaunt-extension-vector"]);
+    expect(external.catalog.products.map(({ id }) => id)).toEqual(external.release.releaseProducts);
     expect(external.topology.carrierCount).toBe(external.catalog.carriers.length);
 
     const runtime = realSelection("src/runtimes/liboliphaunt/native/CHANGELOG.md");
@@ -170,15 +161,19 @@ describe("normal publication plan", () => {
     expect(contribCarriers).toHaveLength(12);
     expect(contribCarriers.every(({ product }) => product === "liboliphaunt-native")).toBe(true);
     expect(runtime.release.releaseProducts).not.toContain("oliphaunt-extension-vector");
-    expect(runtime.release.requiredReleaseProducts).toContain("oliphaunt-extension-vector");
-    expect(runtime.release.dependentReleaseProducts).toContain("oliphaunt-extension-vector");
-    expect(runtime.catalog.products.map(({ id }) => id)).toEqual(runtime.release.requiredReleaseProducts);
+    expect(runtime.release.releaseProducts).toEqual(["liboliphaunt-native"]);
+    expect(runtime.catalog.products.map(({ id }) => id)).toEqual(runtime.release.releaseProducts);
     expect(runtime.topology.carrierCount).toBe(runtime.catalog.carriers.length);
+
+    const contrib = realSelection("src/extensions/contrib/postgres18.toml");
+    expect(contrib.release.directProducts).toEqual(["liboliphaunt-native", "liboliphaunt-wasix"]);
+    expect(contrib.release.releaseProducts).toEqual(["liboliphaunt-native", "liboliphaunt-wasix"]);
+    expect(contrib.release.releaseProducts).not.toContain("oliphaunt-wasix-napi");
 
     const sdk = realSelection("src/sdks/react-native/CHANGELOG.md");
     expect(sdk.release.directProducts).toEqual(["oliphaunt-react-native"]);
     expect(sdk.release.releaseProducts).toEqual(["oliphaunt-react-native"]);
-    expect(sdk.catalog.products.map(({ id }) => id)).toEqual(sdk.release.requiredReleaseProducts);
+    expect(sdk.catalog.products.map(({ id }) => id)).toEqual(sdk.release.releaseProducts);
     expect(sdk.topology.carrierCount).toBe(sdk.catalog.carriers.length);
   });
 });

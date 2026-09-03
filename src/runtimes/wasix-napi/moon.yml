@@ -6,6 +6,8 @@ layer: "library"
 stack: "systems"
 tags: ["runtime", "wasix", "native", "node-api", "release-product"]
 dependsOn:
+  - id: "liboliphaunt-wasix"
+    scope: "production"
   - id: "oliphaunt-extension-contrib-pg18"
     scope: "production"
   - id: "oliphaunt-extension-pg-hashids"
@@ -49,7 +51,7 @@ owners:
 
 tasks:
   format-check:
-    tags: ["quality", "format", "ci-rust"]
+    tags: ["quality", "format", "requires-rust"]
     command: "bash src/runtimes/wasix-napi/tools/check-package.sh format-check"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-napi/format-check"
@@ -61,7 +63,7 @@ tasks:
       runFromWorkspaceRoot: true
 
   compile:
-    tags: ["quality", "static", "ci-rust"]
+    tags: ["quality", "static", "requires-rust"]
     command: "bash src/runtimes/wasix-napi/tools/check-package.sh check-static"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-napi/compile"
@@ -89,7 +91,7 @@ tasks:
       runFromWorkspaceRoot: true
 
   unit:
-    tags: ["quality", "unit", "ci-rust"]
+    tags: ["quality", "unit", "requires-rust"]
     command: "bash src/runtimes/wasix-napi/tools/check-package.sh test-unit"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-napi/unit"

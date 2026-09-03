@@ -33,7 +33,7 @@ use sha2::{Digest, Sha256};
 
 const ADDON_ABI_VERSION: u32 = 1;
 const NODE_API_VERSION: u32 = 8;
-const RUNTIME_VERSION: &str = env!("OLIPHAUNT_WASIX_RUNTIME_VERSION");
+const RUNTIME_VERSION: &str = liboliphaunt_wasix_portable::PACKAGE_VERSION;
 
 /// Keep the native image mapped after a JavaScript Worker environment exits.
 ///

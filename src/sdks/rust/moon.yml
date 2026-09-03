@@ -25,7 +25,7 @@ owners:
 
 tasks:
   compile:
-    tags: ["quality", "static", "ci-rust"]
+    tags: ["quality", "static", "requires-rust"]
     command: "bash src/sdks/rust/tools/check-sdk.sh check-static"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/check"
@@ -45,7 +45,7 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   unit:
-    tags: ["quality", "unit", "ci-rust"]
+    tags: ["quality", "unit", "requires-rust"]
     command: "bash src/sdks/rust/tools/check-sdk.sh test-unit"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/test"

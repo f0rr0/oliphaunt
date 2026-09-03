@@ -24,7 +24,7 @@ owners:
 
 tasks:
   compile:
-    tags: ["quality", "static", "ci-android-sdk"]
+    tags: ["quality", "static", "requires-android-sdk"]
     command: "bash src/sdks/kotlin/tools/check-sdk.sh check-static"
     inputs:
       - "/LICENSE"
@@ -43,7 +43,7 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   unit:
-    tags: ["quality", "unit", "ci-android-sdk"]
+    tags: ["quality", "unit", "requires-android-sdk"]
     command: "bash src/sdks/kotlin/tools/check-sdk.sh test-unit"
     inputs:
       - "/LICENSE"

@@ -45,13 +45,13 @@
     "clean": "node ../../../../tools/dev/clean-package-lib.mjs"
   },
   "dependencies": {
-    "@oliphaunt/liboliphaunt-wasix-tools": "workspace:0.1.1"
+    "@oliphaunt/liboliphaunt-wasix-tools": "workspace:*"
   },
   "peerDependencies": {
-    "@oliphaunt/wasix-ts": "workspace:0.0.0"
+    "@oliphaunt/wasix-ts": "workspace:*"
   },
   "devDependencies": {
-    "@oliphaunt/wasix-ts": "workspace:0.0.0",
+    "@oliphaunt/wasix-ts": "workspace:*",
     "@types/node": "^24.10.1",
     "typescript": "catalog:",
     "vitest": "catalog:"

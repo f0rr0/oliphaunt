@@ -70,7 +70,7 @@ export function triggeringProjectNames(value) {
 
 function affectedSummary() {
   const direct = moon(["query", "affected", "--upstream", "none", "--downstream", "none"]);
-  const downstream = moon(["query", "affected", "--upstream", "none", "--downstream", "deep"]);
+  const downstream = moon(["query", "affected", "--upstream", "none", "--downstream", "direct"]);
   return {
     directProjects: triggeringProjectNames(direct.projects),
     projects: affectedNames(downstream.projects),

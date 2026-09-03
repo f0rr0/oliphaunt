@@ -22,7 +22,7 @@ import {
   extensionSourceIdentity,
   extensionSqlNames,
 } from "./release-artifact-targets.mjs";
-import { loadGraph } from "./release-graph.mjs";
+import { loadGraph, productCompatibilityVersion } from "./release-graph.mjs";
 import { extensionRuntimeAssetContract } from "./extension-runtime-asset-contract.mjs";
 import {
   assertSameNativeTargetSet,
@@ -698,10 +698,8 @@ async function validateRustSdkCrate(crate) {
   const expectedCfgs = targetIds.map((target) => `cfg(${rustNativeTargetCfg(target)})`);
   exactSortedStrings(`${rel(crate)} native target tables`, Object.keys(targetTables), expectedCfgs);
 
-  const [nativeVersion, brokerVersion] = await Promise.all([
-    currentProductVersion("liboliphaunt-native", PREFIX),
-    currentProductVersion("oliphaunt-broker", PREFIX),
-  ]);
+  const nativeVersion = productCompatibilityVersion("oliphaunt-rust", "liboliphaunt-native", PREFIX);
+  const brokerVersion = productCompatibilityVersion("oliphaunt-rust", "oliphaunt-broker", PREFIX);
   for (const target of nativeTargets) {
     const cfg = `cfg(${rustNativeTargetCfg(target)})`;
     const table = targetTables[cfg];
@@ -763,7 +761,11 @@ async function validateWasixSdkCrate(crate) {
   if (packagedQueryCore !== canonicalQueryCore) {
     fail(`${rel(crate)} Rust query core is stale relative to src/shared/rust-query-core/query_core.rs`);
   }
-  const runtimeVersion = await currentProductVersion("liboliphaunt-wasix", PREFIX);
+  const runtimeVersion = productCompatibilityVersion(
+    "oliphaunt-wasix-rust",
+    "liboliphaunt-wasix",
+    PREFIX,
+  );
   const dependencies = manifest.dependencies;
   if (dependencies === null || Array.isArray(dependencies) || typeof dependencies !== "object") {
     fail(`${rel(crate)} must declare Cargo dependencies`);
@@ -1159,7 +1161,11 @@ async function checkSdkProduct(product, { require }) {
           validateReactNativePackagedCarrier({
             artifact: tarball,
             evidence: readFileSync(carrierEvidence),
-            expectedNativeVersion: await currentProductVersion("liboliphaunt-native", PREFIX),
+            expectedNativeVersion: productCompatibilityVersion(
+              "oliphaunt-swift",
+              "liboliphaunt-native",
+              PREFIX,
+            ),
             memberBytes: tarReadBytes(tarball, carrierMember),
             names,
           });
@@ -1215,7 +1221,11 @@ async function checkSdkProduct(product, { require }) {
         );
         validateSwiftSourceReleaseContract({
           carrier,
-          expectedNativeVersion: await currentProductVersion("liboliphaunt-native", PREFIX),
+          expectedNativeVersion: productCompatibilityVersion(
+            "oliphaunt-swift",
+            "liboliphaunt-native",
+            PREFIX,
+          ),
           label: `${product} staged source release`,
           manifestText: text,
         });

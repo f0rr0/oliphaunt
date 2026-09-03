@@ -67,7 +67,7 @@ afterEach(async () => {
 });
 
 describe("Moon command resolution", () => {
-  test("release graph consumes Moon's resolved dependency scopes", async () => {
+  test("release graph separates Moon dependencies from published compatibility", async () => {
     const root = await fixture("resolved-dependencies");
     const bin = path.join(root, "bin");
     const script = path.join(root, "moon-stub.mjs");
@@ -98,14 +98,17 @@ describe("Moon command resolution", () => {
     };
     delete environment.MOON_BIN;
     const probe = [
-      'import { downstreamProjects, moonProjectsById, releaseOrder } from "./tools/release/release-graph.mjs";',
+      'import { moonProjectsById, releaseOrder } from "./tools/release/release-graph.mjs";',
       'const projects = moonProjectsById("moon-query-test");',
       'const graph = Object.fromEntries(projects);',
-      'const products = Object.fromEntries([...projects.keys()].map((id) => [id, { path: `packages/${id}` }]));',
+      'const products = {',
+      '  runtime: { path: "packages/runtime" },',
+      '  "consumer-production": { path: "packages/consumer-production", compatibility_versions: { runtime: { source_product: "runtime" } } },',
+      '  "consumer-build": { path: "packages/consumer-build" },',
+      '};',
       'process.stdout.write(JSON.stringify({',
       '  productionScope: graph["consumer-production"].dependencies[0].scope,',
       '  buildScope: graph["consumer-build"].dependencies[0].scope,',
-      '  releaseClosure: [...downstreamProjects(graph, ["runtime"], { releaseOnly: true })].sort(),',
       '  order: releaseOrder(products, graph, new Set(Object.keys(products)), "moon-query-test"),',
       '}));',
     ].join("\n");
@@ -119,7 +122,6 @@ describe("Moon command resolution", () => {
     expect(JSON.parse(new TextDecoder().decode(result.stdout))).toEqual({
       productionScope: "production",
       buildScope: "build",
-      releaseClosure: ["consumer-production", "runtime"],
       order: ["consumer-build", "runtime", "consumer-production"],
     });
   });

@@ -18,6 +18,7 @@ import {
   assertReleaseNoticesInDirectory,
   stageReleaseNotices,
 } from './release-notices.mjs';
+import { productCompatibilityVersion } from './release-graph.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SOURCE_NOTICE_OPTIONS = Object.freeze({ profile: 'source-sdk' });
@@ -127,14 +128,6 @@ export async function currentOliphauntWasixSdkVersion() {
   ).version;
 }
 
-async function currentLiboliphauntWasixVersion() {
-  const version = (await readText('src/runtimes/liboliphaunt/wasix/VERSION')).trim();
-  if (!version) {
-    fail('src/runtimes/liboliphaunt/wasix/VERSION must not be empty');
-  }
-  return version;
-}
-
 async function wasixCargoRegistryPackages() {
   const text = await readText('src/runtimes/liboliphaunt/wasix/release.toml');
   const match = text.match(/^registry_packages\s*=\s*\[([\s\S]*?)^\]/mu);
@@ -156,7 +149,7 @@ function renderOliphauntWasixReleaseCargoToml(source, runtimeVersion, registryPa
   let text = packagedCargoManifestText(source);
   for (const crate of registryPackages) {
     const pattern = new RegExp(
-      `^(${escapeRegExp(crate)}\\s*=\\s*\\{[^}\\n]*version\\s*=\\s*")=[^"]+("[^}\\n]*\\})$`,
+      `^(${escapeRegExp(crate)}\\s*=\\s*\\{[^}\\n]*version\\s*=\\s*")[^"]+("[^}\\n]*\\})$`,
       'mu',
     );
     if (!pattern.test(text)) {
@@ -232,7 +225,11 @@ async function stagePackageFixtures(stageDir) {
 }
 
 export async function prepareOliphauntWasixReleaseSource(version) {
-  const runtimeVersion = await currentLiboliphauntWasixVersion();
+  const runtimeVersion = productCompatibilityVersion(
+    'oliphaunt-wasix-rust',
+    'liboliphaunt-wasix',
+    'package_oliphaunt_wasix_sdk_crate.mjs',
+  );
   const registryPackages = await wasixCargoRegistryPackages();
   const sourceDir = path.join(root, 'src/bindings/wasix-rust/crates/oliphaunt-wasix');
   const stageDir = path.join(root, 'target/release/cargo-package-sources/oliphaunt-wasix');

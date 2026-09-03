@@ -16,7 +16,7 @@ owners:
 
 tasks:
   unit:
-    tags: ["quality", "unit", "ci-rust"]
+    tags: ["quality", "unit", "requires-rust"]
     command: "cargo test -p oliphaunt-native-tools-proof --locked"
     env:
       CARGO_TARGET_DIR: "target/moon/native-tools-proof/unit"

@@ -6,6 +6,9 @@ include!(concat!(env!("OUT_DIR"), "/generated_assets.rs"));
 
 /// PostgreSQL major whose on-disk layout is carried by this runtime family.
 pub const POSTGRES_MAJOR: u32 = 18;
+/// Version of the runtime payload selected by Cargo.
+#[doc(hidden)]
+pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Stable WASIX physical-storage compatibility identity.
 pub const PHYSICAL_FORMAT: &str = "wasix-pg18-v1";
 

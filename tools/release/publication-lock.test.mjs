@@ -38,6 +38,7 @@ import {
   extensionSourceIdentity,
   extensionSqlNames,
 } from "./release-artifact-targets.mjs";
+import { productCompatibilityVersion } from "./release-graph.mjs";
 import {
   buildSwiftExtensionCarrierManifest,
   iosBaseLegalMetadata,
@@ -1073,7 +1074,11 @@ describe("publication artifact discovery and freezing", () => {
       "release-tree/src/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json",
     );
     const canonicalSourceCarrier = selectionNeutralSwiftSourceCarrier(
-      currentProductVersionSync("liboliphaunt-native", "publication-lock.test"),
+      productCompatibilityVersion(
+        "oliphaunt-swift",
+        "liboliphaunt-native",
+        "publication-lock.test",
+      ),
     );
     writeFileSync(sourceCarrier, `${JSON.stringify(canonicalSourceCarrier)}\n`);
     const baseXcframework = canonicalSourceCarrier.base.assets.find(({ role }) => role === "base-xcframework");

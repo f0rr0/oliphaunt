@@ -18,7 +18,7 @@ owners:
 
 tasks:
   check:
-    tags: ["policy", "assertion", "quality", "static", "ci-maintainer-tools"]
+    tags: ["policy", "assertion", "quality", "static", "requires-maintainer-tools"]
     command: "bash tools/policy/check-workflows.sh"
     inputs:
       - "/.moon/toolchains.yml"

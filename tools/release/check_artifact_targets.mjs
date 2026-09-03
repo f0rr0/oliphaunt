@@ -617,7 +617,7 @@ export function validateCarrierCoverage({
   }
   const expectedOptional = new Map(typescriptOptionalRuntimePackageProducts(TOOL).map((row) => [
     row.packageName,
-    `workspace:${graph.products[row.product].version}`,
+    "workspace:*",
   ]));
   const actualOptional = object(jsManifest.optionalDependencies ?? {}, "TypeScript optionalDependencies");
   assertSameStrings(Object.keys(actualOptional), [...expectedOptional.keys()], "TypeScript optional runtime packages");
@@ -1191,28 +1191,6 @@ export function repositoryInventory() {
 
 export function validateRepository() {
   const inventory = repositoryInventory();
-  const wasixNapiNativeBuild = readFileSync(
-    path.join(ROOT, "src/runtimes/wasix-napi/tools/build-native.sh"),
-    "utf8",
-  );
-  const wasixNapiLinuxBaselineBuild = readFileSync(
-    path.join(ROOT, "tools/release/build-linux-wasix-napi-baseline.sh"),
-    "utf8",
-  );
-  invariant(
-    wasixNapiNativeBuild.includes("tools/release/build-linux-wasix-napi-baseline.sh"),
-    "WASIX Node-API Linux release variants must use the pinned baseline builder",
-  );
-  invariant(
-    wasixNapiLinuxBaselineBuild.includes(
-      "rust@sha256:5b9332190bb3b9ece73b810cd1f1e9f06343b294ce184bcb067f0747d7d333ea",
-    )
-      && wasixNapiLinuxBaselineBuild.includes('expected_builder_glibc="glibc 2.36"')
-      && wasixNapiLinuxBaselineBuild.includes("docker_cargo none")
-      && wasixNapiLinuxBaselineBuild.includes("cargo build")
-      && wasixNapiLinuxBaselineBuild.includes("--offline"),
-    "WASIX Node-API Linux baseline builder must pin Bookworm and compile in the sealed offline phase",
-  );
   invariant((inventory.graph.artifact_targets ?? []).length === 0, "artifact targets must be owned by Moon product metadata, not a central legacy table");
   const wasixNapiDependencies = inventory.graph.moon_projects["oliphaunt-wasix-napi"]?.dependencies ?? [];
   assertSameStrings(

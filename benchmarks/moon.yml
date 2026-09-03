@@ -15,13 +15,3 @@ owners:
   defaultOwner: "@oliphaunt/perf"
   paths:
     "**/*": ["@oliphaunt/perf"]
-
-tasks:
-  check:
-    tags: ["quality", "static"]
-    command: "true"
-    inputs:
-      - "/benchmarks/**/*"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true

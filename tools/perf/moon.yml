@@ -20,7 +20,7 @@ owners:
 
 tasks:
   rust-api-model-check:
-    tags: ["bench", "diagnostic", "quality", "ci-rust"]
+    tags: ["bench", "diagnostic", "quality", "requires-rust"]
     command: "bash tools/perf/rust-api-model/check.sh"
     inputs:
       - "/Cargo.lock"
@@ -59,7 +59,7 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   rust-api-model-native:
-    tags: ["bench", "diagnostic", "measured", "ci-rust"]
+    tags: ["bench", "diagnostic", "measured", "requires-rust"]
     command: "bash tools/perf/rust-api-model/run.sh --runtime native"
     deps:
       - "liboliphaunt-native:release-runtime"
@@ -78,7 +78,7 @@ tasks:
       runFromWorkspaceRoot: true
       runInCI: false
   rust-api-model-wasix:
-    tags: ["bench", "diagnostic", "measured", "ci-rust"]
+    tags: ["bench", "diagnostic", "measured", "requires-rust"]
     command: "bash tools/perf/rust-api-model/run.sh --runtime wasix"
     deps:
       - "liboliphaunt-wasix:runtime-aot"

@@ -65,7 +65,7 @@ tasks:
       - "liboliphaunt-native:tools-test"
     inputs: []
   tools-test:
-    tags: ["ci-rust"]
+    tags: ["requires-rust"]
     command: "cargo test -p oliphaunt-tools --locked"
     env:
       CARGO_TARGET_DIR: "target/moon/liboliphaunt-native/tools-test"

@@ -15,6 +15,7 @@ import {
   currentProductVersionSync,
   registryPackageRows,
 } from "./release-artifact-targets.mjs";
+import { productCompatibilityVersion } from "./release-graph.mjs";
 import { packagedCargoManifestText } from "./cargo-source-package.mjs";
 import { ROOT } from "./release-cli-utils.mjs";
 import {
@@ -207,8 +208,8 @@ function stageRustQueryCore(outputDir) {
 
 export function prepareRustReleaseSource({ stageDir = DEFAULT_STAGE_DIR, log = true } = {}) {
   const version = currentProductVersionSync(RUST_PRODUCT, TOOL);
-  const nativeVersion = currentProductVersionSync(LIBOLIPHAUNT_NATIVE_PRODUCT, TOOL);
-  const brokerVersion = currentProductVersionSync(BROKER_PRODUCT, TOOL);
+  const nativeVersion = productCompatibilityVersion(RUST_PRODUCT, LIBOLIPHAUNT_NATIVE_PRODUCT, TOOL);
+  const brokerVersion = productCompatibilityVersion(RUST_PRODUCT, BROKER_PRODUCT, TOOL);
   const artifactTargets = nativeSdkArtifactTargets();
   const sourceDir = path.join(ROOT, "src/sdks/rust");
   const outputDir = releaseStageDir(stageDir);

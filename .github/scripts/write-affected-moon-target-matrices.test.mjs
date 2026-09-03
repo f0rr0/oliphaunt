@@ -25,7 +25,7 @@ function invoke(stub, output) {
     MOON_BIN: stub,
     MOON_HEAD: "",
   };
-  return spawnSync(process.execPath, [WRITER, "check", "compile", "format-check", "lint", "tools-compile", "metadata", "graph-unit", "test", "tools-unit", "unit"], {
+  return spawnSync(process.execPath, [WRITER, "check", "compile", "format-check", "js-format-check", "lint", "rust-format-check", "tools-compile", "metadata", "graph-unit", "test", "tools-unit", "unit"], {
     cwd: ROOT,
     encoding: "utf8",
     env,
@@ -75,7 +75,8 @@ test("Node planner captures Moon JSON written at the successful child's final ev
       "alpha:compile",
       "alpha:tools-compile",
     ]);
-    assert.deepEqual(JSON.parse(values.get("test_matrix")).include.map(({ target }) => target), [
+    assert.deepEqual(JSON.parse(values.get("test_matrix")).include.flatMap(({ targets_json }) =>
+      JSON.parse(targets_json).include.map(({ target }) => target)), [
       "alpha:graph-unit",
       "alpha:test",
       "alpha:tools-unit",

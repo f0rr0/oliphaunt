@@ -75,7 +75,7 @@ import {
   githubReleaseAssetUploadChildEnvironment,
   writeConcurrentGithubReleaseAssetUploadReport,
 } from "./concurrent-github-release-asset-upload.mjs";
-import { loadGraph, releaseOrder } from "./release-graph.mjs";
+import { loadGraph, productCompatibilityVersion, releaseOrder } from "./release-graph.mjs";
 import { readSelectedRemoteTagMapSync } from "../../.github/scripts/manage-release-drafts.mjs";
 
 const TOOL = "release-publish.mjs";
@@ -1079,8 +1079,8 @@ async function publishRustCratesIo(headRef) {
     return;
   }
   verifyReleaseTag(product, headRef);
-  const nativeVersion = currentProductVersionSync("liboliphaunt-native", TOOL);
-  const brokerVersion = currentProductVersionSync("oliphaunt-broker", TOOL);
+  const nativeVersion = productCompatibilityVersion(product, "liboliphaunt-native", TOOL);
+  const brokerVersion = productCompatibilityVersion(product, "oliphaunt-broker", TOOL);
   requireProductRegistryVersionPublished("liboliphaunt-native", "crates", nativeVersion);
   requireProductRegistryVersionPublished("oliphaunt-broker", "crates", brokerVersion);
   const carriers = frozenCarrierPackages("cargo", { product });
@@ -1098,7 +1098,7 @@ async function publishWasixRustCratesIo(headRef) {
     return;
   }
   verifyReleaseTag(product, headRef);
-  const runtimeVersion = currentProductVersionSync("liboliphaunt-wasix", TOOL);
+  const runtimeVersion = productCompatibilityVersion(product, "liboliphaunt-wasix", TOOL);
   requireProductRegistryVersionPublished("liboliphaunt-wasix", "crates", runtimeVersion);
   const carriers = frozenCarrierPackages("cargo", { product });
   for (const carrier of carriers) {

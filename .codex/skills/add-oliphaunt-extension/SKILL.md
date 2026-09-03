@@ -9,11 +9,12 @@ Make support claims fail closed. A runtime target existing does not prove an ext
 
 ## Classify
 
-- contrib: source is PostgreSQL 18. The SQL member belongs to the single
-  `oliphaunt-extension-contrib-pg18` distribution product at
-  `src/extensions/contrib/`; that product is `runtime-bound` and is linked to
-  both liboliphaunt runtimes. A contrib member does not own a leaf `VERSION`,
-  changelog, `release.toml`, tag, or registry identity.
+- contrib: source is PostgreSQL 18. The SQL member belongs to the
+  `oliphaunt-extension-contrib-pg18` logical distribution at
+  `src/extensions/contrib/`. It is not an independently versioned release
+  product: its native and WASIX carriers belong to the corresponding runtime.
+  A contrib member does not own a leaf `VERSION`, changelog, `release.toml`,
+  tag, or registry identity.
 - external: source uses an immutable upstream commit, packaging versioning is `upstream-bound`, and runtime versions are compatibility metadata rather than release coupling. `release.toml` is the public-product boundary. Incomplete or blocked work stays on a branch and has no main-branch catalog state.
 
 Keep the SQL extension name distinct from the release product id and upstream project name.
@@ -29,7 +30,7 @@ Keep the SQL extension name distinct from the release product id and upstream pr
    referenced content-addressed blobs, and audit those bytes against the clean
    pinned checkout. Never put independently versioned extensions into one
    shared legal-data file. For a contrib member, update the canonical `postgres18.toml` inventory and the
-   shared contrib product metadata; never create leaf release state. Check
+   shared contrib distribution metadata; never create leaf release state. Check
    whether the upstream project operates an authoritative HTTPS Git mirror.
    When it does, record that reviewed endpoint as `mirror_url` and prove that
    it serves the exact pinned commit; never infer a mirror or use a community

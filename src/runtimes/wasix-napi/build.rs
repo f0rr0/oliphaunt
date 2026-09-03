@@ -14,25 +14,8 @@ fn main() {
     for name in RELEASE_INPUT_ENVS {
         println!("cargo::rerun-if-env-changed={name}");
     }
-    let manifest = std::fs::read_to_string("Cargo.toml")
-        .expect("read WASIX N-API Cargo.toml for embedded runtime version");
-    let runtime_version = exact_dependency_version(&manifest, "liboliphaunt-wasix-portable");
-    let rust_binding_version = exact_dependency_version(&manifest, "oliphaunt-wasix");
-    println!("cargo::rerun-if-changed=Cargo.toml");
     println!("cargo::rustc-env=OLIPHAUNT_WASIX_NAPI_ABI_VERSION=1");
-    println!("cargo::rustc-env=OLIPHAUNT_WASIX_RUNTIME_VERSION={runtime_version}");
-    println!("cargo::rustc-env=OLIPHAUNT_WASIX_RUST_BINDING_VERSION={rust_binding_version}");
     validate_release_inputs();
-}
-
-fn exact_dependency_version<'a>(manifest: &'a str, dependency: &str) -> &'a str {
-    manifest
-        .lines()
-        .find(|line| line.trim_start().starts_with(&format!("{dependency} =")))
-        .and_then(|line| line.split_once("version = \"=").map(|(_, tail)| tail))
-        .and_then(|tail| tail.split_once('"').map(|(version, _)| version))
-        .filter(|version| !version.is_empty())
-        .unwrap_or_else(|| panic!("{dependency} must have an exact =version dependency"))
 }
 
 fn validate_release_inputs() {

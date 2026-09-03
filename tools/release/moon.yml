@@ -137,7 +137,7 @@ tasks:
       runFromWorkspaceRoot: true
       runInCI: true
   unit:
-    tags: ["quality", "unit", "ci-rust"]
+    tags: ["quality", "unit", "requires-rust"]
     command: "tools/dev/bun.sh tools/release/release-check.mjs --mutation-tests-only --mutation-scope=release"
     inputs:
       - "/.github/scripts/bootstrap-registry-*"
@@ -165,7 +165,7 @@ tasks:
       runFromWorkspaceRoot: true
   graph-unit:
     tags: ["quality", "unit"]
-    command: "tools/dev/bun.sh test --isolate --max-concurrency=1 --timeout=30000 tools/release/native-extension-lifecycle-receipts.test.mjs tools/release/product-task-model.test.mjs tools/release/release-dependent-candidates.test.mjs"
+    command: "tools/dev/bun.sh test --isolate --max-concurrency=1 --timeout=30000 tools/release/native-extension-lifecycle-receipts.test.mjs tools/release/product-task-model.test.mjs tools/release/release-candidate-sync.test.mjs"
     inputs:
       - "/.moon/tasks/**/*"
       - "/.moon/toolchains.yml"
@@ -200,8 +200,8 @@ tasks:
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/product-task-model.test.mjs"
       - "/tools/release/release-artifact-targets.mjs"
-      - "/tools/release/release-dependent-candidates.mjs"
-      - "/tools/release/release-dependent-candidates.test.mjs"
+      - "/tools/release/release-candidate-sync.mjs"
+      - "/tools/release/release-candidate-sync.test.mjs"
       - "/tools/release/release-directory-safety.mjs"
       - "/tools/release/release-graph.mjs"
       - "/tools/release/release-notices.mjs"
@@ -227,7 +227,7 @@ tasks:
       runFromWorkspaceRoot: true
       runInCI: false
   broker-dependency-license-audit:
-    tags: ["policy", "assertion", "quality", "static", "ci-rust"]
+    tags: ["policy", "assertion", "quality", "static", "requires-rust"]
     command: "tools/dev/bun.sh tools/release/broker-dependency-license-contract.mjs audit-contract"
     inputs:
       - "/Cargo.lock"

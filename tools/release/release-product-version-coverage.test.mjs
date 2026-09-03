@@ -131,7 +131,7 @@ function graph(versions) {
   };
 }
 
-test("partial runtime release requires a versioned external compatibility sink", { timeout: 20_000 }, (t) => {
+test("runtime releases leave compatible extension versions independent", { timeout: 20_000 }, (t) => {
   const repo = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-release-coverage-"));
   t.after(() => rmSync(repo, { force: true, recursive: true }));
   git(repo, "init", "-q");
@@ -150,8 +150,8 @@ test("partial runtime release requires a versioned external compatibility sink",
   assert.deepEqual(
     releaseProductVersionCoverage(graph(v2), verified.products, "release-coverage-test"),
     {
-      missingProducts: [VECTOR],
-      requiredProducts: [NATIVE, WASIX, VECTOR],
+      missingProducts: [],
+      requiredProducts: [NATIVE, WASIX],
       versionedProducts: [NATIVE, WASIX],
     },
   );

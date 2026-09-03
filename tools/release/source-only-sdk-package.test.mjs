@@ -28,7 +28,7 @@ function writeJson(file, value) {
 }
 
 function packageManifest(profile) {
-  return {
+  const manifest = {
     name: profile.name,
     version: "1.2.3",
     license: "MIT",
@@ -41,6 +41,15 @@ function packageManifest(profile) {
     },
     devDependencies: { imaginary: "1.0.0" },
   };
+  if (profile.optionalDependencyVersions !== undefined) {
+    manifest.oliphaunt = Object.fromEntries(
+      [...new Set(Object.values(profile.optionalDependencyVersions))].map((field) => [field, "1.2.0"]),
+    );
+    manifest.optionalDependencies = Object.fromEntries(
+      Object.keys(profile.optionalDependencyVersions).map((name) => [name, "workspace:*"]),
+    );
+  }
+  return manifest;
 }
 
 function pack(directory, destination) {
@@ -70,11 +79,18 @@ for (const [profileName, profile] of Object.entries(SOURCE_ONLY_NPM_PROFILES)) {
       writeJson(path.join(packageDir, "package.json"), packageManifest(profile));
       writeFileSync(path.join(packageDir, "index.js"), "export {};\n", "utf8");
       prepareSourceOnlyNpmPackage(packageDir, profile);
+      prepareSourceOnlyNpmPackage(packageDir, profile);
 
       const staged = JSON.parse(readFileSync(path.join(packageDir, "package.json"), "utf8"));
       assert.equal(staged.license, "MIT");
       assert.deepEqual(staged.scripts ?? {}, profile.scripts);
       assert.equal(staged.devDependencies, undefined);
+      if (profile.optionalDependencyVersions !== undefined) {
+        assert.deepEqual(
+          staged.optionalDependencies,
+          Object.fromEntries(Object.keys(profile.optionalDependencyVersions).map((name) => [name, "1.2.0"])),
+        );
+      }
       const archive = pack(packageDir, path.join(scratch, "packed"));
       const packed = assertSourceOnlyNpmArchive(archive, profile);
       assert.deepEqual(packed.scripts ?? {}, profile.scripts);

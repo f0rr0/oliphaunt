@@ -19,7 +19,7 @@ owners:
 
 tasks:
   unit:
-    tags: ["quality", "unit", "ci-rust"]
+    tags: ["quality", "unit", "requires-rust"]
     command: "cargo test -p xtask --locked"
     env:
       CARGO_TARGET_DIR: "target/moon/xtask/unit"
@@ -46,7 +46,7 @@ tasks:
       runFromWorkspaceRoot: true
       runInCI: skip
   compile-aot-serializer:
-    tags: ["quality", "static", "ci-rust"]
+    tags: ["quality", "static", "requires-rust"]
     command: "cargo check -p xtask --features aot-serializer --locked"
     env:
       CARGO_TARGET_DIR: "target/moon/xtask/compile-aot-serializer"

@@ -5,8 +5,8 @@ import process from 'node:process';
 
 import {moonCommand} from '../../tools/dev/moon-command.mjs';
 import {
+  groupTargets,
   matrixTarget,
-  shardCheckTargets,
   taskDependencies,
 } from './moon-task-capabilities.mjs';
 
@@ -39,7 +39,7 @@ function moonQueryTaskArgs(taskId = '', {affected = useAffectedQuery()} = {}) {
     args.push('--id', taskId);
   }
   if (affected) {
-    args.push('--upstream', 'none', '--downstream', 'deep');
+    args.push('--upstream', 'none', '--downstream', 'direct');
   }
   return args;
 }
@@ -218,7 +218,15 @@ if (taskIds.length === 0 || taskIds.some((taskId) => !/^[A-Za-z0-9_-]+$/.test(ta
 
 const completeTasks = allTaskMap();
 const selectedScopeTasks = selectedScopeTaskMap();
-const staticTaskIds = new Set(['check', 'compile', 'format-check', 'lint', 'tools-compile']);
+const staticTaskIds = new Set([
+  'check',
+  'compile',
+  'format-check',
+  'js-format-check',
+  'lint',
+  'rust-format-check',
+  'tools-compile',
+]);
 const unitTaskIds = new Set(['graph-unit', 'test', 'tools-unit', 'unit']);
 const checkTargets = new Map();
 const policyTargets = new Map();
@@ -256,15 +264,20 @@ for (const taskId of taskIds) {
   }
 }
 
-const checkShards = shardCheckTargets([...checkTargets.values()]);
+const checkGroups = groupTargets([...checkTargets.values()]);
+const testGroups = groupTargets([...testTargets.values()]);
 output('check_count', String(checkTargets.size));
-output('check_job_count', String(checkShards.length));
-output('check_matrix', matrix(checkShards));
+output('check_job_count', String(checkGroups.length));
+output('check_matrix', matrix(checkGroups));
 output('policy_count', String(policyTargets.size));
 output('policy_matrix', matrix([...policyTargets.values()]));
 output(
   'policy_requires_android_sdk',
   String([...policyTargets.values()].some((target) => target.requires_android_sdk)),
+);
+output(
+  'policy_requires_rust',
+  String([...policyTargets.values()].some((target) => target.requires_rust)),
 );
 output(
   'policy_requires_maintainer_tools',
@@ -275,5 +288,5 @@ output('check_jobs', [
   ...(policyTargets.size > 0 ? ['policy-targets'] : []),
 ]);
 output('test_count', String(testTargets.size));
-output('test_matrix', matrix([...testTargets.values()]));
+output('test_matrix', matrix(testGroups));
 output('test_jobs', testTargets.size > 0 ? ['test-targets'] : []);

@@ -348,8 +348,6 @@ tasks:
       node --check tools/perf/wasix-node/rss-sampler-worker.mjs
       node --check tools/perf/wasix-node/streaming-quick.mjs
       node tools/perf/wasix-node/benchmark.mjs --validate
-    deps:
-      - "benchmarks:check"
     inputs:
       - "/package.json"
       - "/pnpm-lock.yaml"

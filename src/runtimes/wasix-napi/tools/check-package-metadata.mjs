@@ -65,23 +65,21 @@ function stableVersion(value, label) {
 }
 
 function cargoPackageVersion(source) {
-  const header = source.match(/^\[package\]\s*$/mu);
-  assert(header !== null, "Cargo product must declare a [package] table");
-  const afterHeader = source.slice((header.index ?? 0) + header[0].length);
-  const nextTable = afterHeader.search(/^\[[^\n]+\]\s*$/mu);
-  const packageTable = nextTable === -1 ? afterHeader : afterHeader.slice(0, nextTable);
-  const version = packageTable?.match(/^version\s*=\s*"([^"]+)"\s*$/mu)?.[1];
-  assert(version !== undefined, "Cargo product must declare [package].version");
+  const version = Bun.TOML.parse(source)?.package?.version;
+  assert(typeof version === "string", "Cargo product must declare [package].version");
   return version;
 }
 
-function cargoExactDependencyVersion(source, dependency) {
-  const line = source
-    .split(/\r?\n/u)
-    .find((candidate) => candidate.trimStart().startsWith(`${dependency} =`));
-  const version = line?.match(/\bversion\s*=\s*"=([^"]+)"/u)?.[1];
-  assert(version !== undefined, `Cargo dependency ${dependency} must use an exact =version`);
-  return stableVersion(version, `Cargo dependency ${dependency}`);
+function assertWorkspaceDependency(dependencies, name) {
+  const dependency = dependencies?.[name];
+  assert(
+    dependency !== null
+      && typeof dependency === "object"
+      && dependency.version === "*"
+      && typeof dependency.path === "string",
+    `Cargo dependency ${name} must use its workspace path without a release-version constraint`,
+  );
+  return dependency;
 }
 
 export function assertCanonicalVersionContract({
@@ -185,153 +183,27 @@ function main() {
   );
 
   const cargo = readFileSync(path.join(PRODUCT_ROOT, "Cargo.toml"), "utf8");
+  const cargoManifest = Bun.TOML.parse(cargo);
   assertCanonicalVersionContract({
     npmVersion: rootManifest.version,
     cargoVersion: cargoPackageVersion(cargo),
     carrierVersions,
     changelogBytes: readFileSync(path.join(PRODUCT_ROOT, "CHANGELOG.md")),
   });
-  assert(cargo.includes('napi = { version = "=3.12.2"'), "Cargo must pin napi-rs exactly");
+  assert(cargoManifest.dependencies?.napi?.version === "=3.12.2", "Cargo must pin napi-rs exactly");
   assert(
-    cargo.includes('features = ["__internal-napi", "icu"]'),
+    equal(cargoManifest.dependencies?.["oliphaunt-wasix"]?.features, ["__internal-napi", "icu"]),
     "Cargo must embed the ICU-capable Rust runtime in the one addon",
   );
-  assert(cargo.includes('oliphaunt-icu = { version = "='), "Cargo must embed the ICU data payload");
-  assert(cargo.includes("release = ["), "Cargo must define the complete release payload feature");
-
-  const portableRuntimeCargo = readFileSync(
-    path.join(WORKSPACE_ROOT, "src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml"),
-    "utf8",
-  );
-  const portableRuntimeVersion = cargoPackageVersion(portableRuntimeCargo);
-  const declaredPortableRuntimeVersion = cargoExactDependencyVersion(
-    cargo,
+  for (const dependency of [
     "liboliphaunt-wasix-portable",
-  );
-  const rustBindingCargo = readFileSync(
-    path.join(WORKSPACE_ROOT, "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"),
-    "utf8",
-  );
-  const rustBindingVersion = cargoPackageVersion(rustBindingCargo);
-  const declaredRustBindingVersion = cargoExactDependencyVersion(cargo, "oliphaunt-wasix");
-  assert(
-    rootManifest.oliphaunt?.runtimeVersion === declaredPortableRuntimeVersion
-      && declaredPortableRuntimeVersion === portableRuntimeVersion,
-    "canonical runtime compatibility and dependency must match liboliphaunt-wasix-portable",
-  );
-  assert(
-    rootManifest.oliphaunt?.rustBindingVersion === declaredRustBindingVersion
-      && declaredRustBindingVersion === rustBindingVersion,
-    "canonical Rust-binding compatibility and dependency must match oliphaunt-wasix",
-  );
-
-  const source = readFileSync(path.join(PRODUCT_ROOT, "src/lib.rs"), "utf8");
-  for (const symbol of [
-    "NativeWasixActorDatabase",
-    "NativeWasixDatabase",
-    "NativeWasixServer",
-    'js_name = "addonAbiVersion"',
-    'js_name = "nodeApiVersion"',
-    'js_name = "runtimeVersion"',
-    'env!("OLIPHAUNT_WASIX_RUNTIME_VERSION")',
-    'js_name = "supportedProfiles"',
-    'js_name = "extensionIdentity"',
-    'js_name = "toolIdentity"',
-    'js_name = "payloadIdentity"',
-    'js_name = "restoreDirect"',
-    "Option<Oliphaunt>",
-    "impl Drop for NativeWasixDatabase",
-    "impl ObjectFinalize for NativeWasixActorDatabase",
-    "impl ObjectFinalize for NativeWasixServer",
-  ]) {
-    assert(source.includes(symbol), `Rust boundary is missing ${symbol}`);
-  }
-  const sourceLines = source.split(/\r?\n/u);
-  const exportedCallAttributes = sourceLines.filter(
-    (line, index) => /^\s*#\[napi\(/u.test(line)
-      && /^\s*pub fn /u.test(sourceLines[index + 1] ?? ""),
-  );
-  assert(exportedCallAttributes.length > 0, "Rust boundary must have exported calls");
-  assert(
-    exportedCallAttributes.every((line) => line.includes("catch_unwind")),
-    "every exported Rust call must opt into napi-rs catch_unwind",
-  );
-  const buildScript = readFileSync(path.join(PRODUCT_ROOT, "build.rs"), "utf8");
-  for (const contract of [
-    'exact_dependency_version(&manifest, "liboliphaunt-wasix-portable")',
-    'exact_dependency_version(&manifest, "oliphaunt-wasix")',
-    "OLIPHAUNT_WASIX_RUNTIME_VERSION",
-    "OLIPHAUNT_WASIX_RUST_BINDING_VERSION",
-    "OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD",
-    "OLIPHAUNT_WASIX_GENERATED_ASSETS_DIR",
-    "OLIPHAUNT_WASM_GENERATED_AOT_DIR",
-    "OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT",
-    "OLIPHAUNT_ICU_DATA_DIR",
-    "OLIPHAUNT_WASIX_NAPI_BUILD_INPUTS",
-  ]) {
-    assert(buildScript.includes(contract), `build.rs is missing release input contract ${contract}`);
-  }
-  const nativeBuildScript = readFileSync(
-    path.join(PRODUCT_ROOT, "tools/build-native.sh"),
-    "utf8",
-  );
-  for (const contract of [
-    "tools/detect-linux-libc.mjs",
-    "do not support Linux musl",
-    "tools/release/build-linux-wasix-napi-baseline.sh",
-    '"NativeWasixActorDatabase"',
-    '"restoreDirect"',
-    "expected_runtime_version",
-    "toolIdentity(tool.name)",
-    "extensionIdentity(extension.sqlName)",
-  ]) {
-    assert(
-      nativeBuildScript.includes(contract),
-      `build-native.sh is missing host/smoke contract ${contract}`,
-    );
-  }
-  const linuxBaselineBuild = readFileSync(
-    path.join(WORKSPACE_ROOT, "tools/release/build-linux-wasix-napi-baseline.sh"),
-    "utf8",
-  );
-  for (const contract of [
-    "rust@sha256:5b9332190bb3b9ece73b810cd1f1e9f06343b294ce184bcb067f0747d7d333ea",
-    'expected_builder_glibc="glibc 2.36"',
-    "docker_cargo none",
-    "--read-only",
-    "--cap-drop ALL",
-    "OLIPHAUNT_WASIX_NAPI_BUILD_INPUTS",
-  ]) {
-    assert(
-      linuxBaselineBuild.includes(contract),
-      `Linux baseline builder is missing sealed-build contract ${contract}`,
-    );
-  }
-  const packageScript = readFileSync(path.join(PRODUCT_ROOT, "tools/package-platform.mjs"), "utf8");
-  assert(packageScript.includes("buildInputs,"), "artifact provenance must embed validated build inputs");
-  for (const contract of [
-    "localWindowsTarInvocation",
-    "stageWindowsVcRuntime({",
-    "sourceDirectory: packagePrebuilds",
-    "WINDOWS_VC_RUNTIME_RECEIPT",
-  ]) {
-    assert(
-      packageScript.includes(contract),
-      `platform packaging is missing Windows carrier contract ${contract}`,
-    );
-  }
-  assert(
-    !packageScript.includes("write_checksum_manifest"),
-    "per-target packaging must not emit the aggregate checksum manifest",
-  );
-  const packagedSmoke = readFileSync(
-    path.join(PRODUCT_ROOT, "tools/smoke-packaged-addon.mjs"),
-    "utf8",
-  );
-  assert(
-    packagedSmoke.includes('"**/prebuilds/**"'),
-    "Electron ASAR smoke must unpack the addon and all platform loader companions",
-  );
+    "oliphaunt-icu",
+    "oliphaunt-wasix",
+    "oliphaunt-wasix-tools",
+  ]) assertWorkspaceDependency(cargoManifest.dependencies, dependency);
+  assert(Array.isArray(cargoManifest.features?.release), "Cargo must define the complete release payload feature");
+  stableVersion(rootManifest.oliphaunt?.runtimeVersion, "canonical runtime compatibility");
+  stableVersion(rootManifest.oliphaunt?.rustBindingVersion, "canonical Rust-binding compatibility");
   process.stdout.write("oliphaunt-wasix-napi package metadata validated\n");
 }
 

@@ -2,9 +2,10 @@
 
 - A product owns SemVer, changelog, source identity, product tag, and GitHub release.
 - A carrier is an ecosystem/target package for one product version. Carrier count is driven by consumer selection and registry limits, not by product count.
-- PostgreSQL 18 contrib SQL members share the single runtime-bound
-  `oliphaunt-extension-contrib-pg18` distribution product while retaining exact
-  member paths/checksums inside each target carrier. External extensions own
+- PostgreSQL 18 contrib SQL members share the logical
+  `oliphaunt-extension-contrib-pg18` distribution while retaining exact member
+  paths/checksums inside carriers owned by the native or WASIX runtime. The
+  distribution is not an independently versioned release product. External extensions own
   independent packaging SemVer and record their upstream version/commit
   separately.
 - The generated release-bump commit, qualified workflow head, artifact

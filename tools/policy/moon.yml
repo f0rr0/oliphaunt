@@ -56,13 +56,10 @@ tasks:
     options:
       cache: false
       runFromWorkspaceRoot: true
-  format-check:
-    tags: ["format", "quality", "static", "ci-rust"]
-    command: "bash tools/policy/format.sh --check"
+  js-format-check:
+    tags: ["format", "quality", "static"]
+    command: "bash tools/policy/format.sh --check-js"
     inputs:
-      - "/Cargo.toml"
-      - "/Cargo.lock"
-      - "/rust-toolchain.toml"
       - "/package.json"
       - "/pnpm-lock.yaml"
       - "/biome.json"
@@ -92,6 +89,18 @@ tasks:
       - "/tools/perf/matrix/**/*"
       - "/tools/perf/wasix-browser/**/*"
       - "/tools/test/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  rust-format-check:
+    tags: ["format", "quality", "static", "requires-rust"]
+    command: "cargo fmt --check"
+    inputs:
+      - "/Cargo.toml"
+      - "/Cargo.lock"
+      - "/rust-toolchain.toml"
+      - "/src/**/Cargo.toml"
+      - "/src/**/*.rs"
     options:
       cache: true
       runFromWorkspaceRoot: true

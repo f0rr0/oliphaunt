@@ -1,6 +1,6 @@
-const RUST_CAPABILITY_TAG = "ci-rust";
-const MAINTAINER_TOOLS_CAPABILITY_TAG = "ci-maintainer-tools";
-const ANDROID_SDK_CAPABILITY_TAG = "ci-android-sdk";
+const RUST_CAPABILITY_TAG = "requires-rust";
+const MAINTAINER_TOOLS_CAPABILITY_TAG = "requires-maintainer-tools";
+const ANDROID_SDK_CAPABILITY_TAG = "requires-android-sdk";
 
 const DISPLAY_WORDS = Object.freeze({
   abi: "ABI",
@@ -27,7 +27,7 @@ const DISPLAY_PARTS = Object.freeze({
   "extension-artifacts-native": "Native Extension Artifacts",
 });
 
-export const CHECK_SHARD_MAX_TARGETS = 4;
+export const MAX_TARGETS_PER_JOB = 4;
 
 function taskTags(task) {
   return new Set(Array.isArray(task?.tags) ? task.tags : []);
@@ -108,7 +108,7 @@ function compareTargets(left, right) {
   return left.target < right.target ? -1 : left.target > right.target ? 1 : 0;
 }
 
-function shardRow(targets) {
+function groupRow(targets) {
   const first = targets[0];
   return {
     label: targets.map(({ label }) => label).join(" + "),
@@ -122,26 +122,30 @@ function shardRow(targets) {
   };
 }
 
-export function shardCheckTargets(targets, { maxTargets = CHECK_SHARD_MAX_TARGETS } = {}) {
+export function groupTargets(targets, { maxTargets = MAX_TARGETS_PER_JOB } = {}) {
   if (!Number.isInteger(maxTargets) || maxTargets < 1) {
-    throw new Error("check shard size must be a positive integer");
+    throw new Error("target group size must be a positive integer");
   }
   const ordered = [...targets].sort(compareTargets);
   const unique = new Set(ordered.map(({ target }) => target));
   if (unique.size !== ordered.length) {
-    throw new Error("check shard input contains duplicate Moon targets");
+    throw new Error("target group input contains duplicate Moon targets");
   }
 
-  const shardable = ordered.filter((target) =>
-    !target.requires_rust
-    && !target.requires_maintainer_tools
-    && !target.requires_android_sdk);
-  const dedicated = ordered.filter((target) => !shardable.includes(target));
+  const byCapabilities = new Map();
+  for (const target of ordered) {
+    const key = [
+      target.requires_rust,
+      target.requires_maintainer_tools,
+      target.requires_android_sdk,
+    ].map(Number).join("");
+    byCapabilities.set(key, [...(byCapabilities.get(key) ?? []), target]);
+  }
   const groups = [];
-  for (let index = 0; index < shardable.length; index += maxTargets) {
-    groups.push(shardable.slice(index, index + maxTargets));
+  for (const targetsWithSameSetup of [...byCapabilities.values()]) {
+    for (let index = 0; index < targetsWithSameSetup.length; index += maxTargets) {
+      groups.push(targetsWithSameSetup.slice(index, index + maxTargets));
+    }
   }
-  groups.push(...dedicated.map((target) => [target]));
-
-  return groups.map(shardRow);
+  return groups.map(groupRow);
 }

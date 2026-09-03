@@ -15,7 +15,7 @@ Oliphaunt uses one source graph and one release identity system:
   validation.
 - Product-local `release.toml` files own package metadata that release-please
   does not model: owner, kind, publish targets, registry coordinates, release
-  artifacts, and compatibility-version files.
+  artifacts, and exact published-product compatibility pins.
 - Product-local `targets/*.toml` files own platform artifact metadata.
 - Bun entrypoints under `tools/release/*.mjs` own release checks, dry-runs,
   publication routing, checksums, attestations, registry checks, and artifact
@@ -44,8 +44,10 @@ src/sdks/react-native            React Native SDK
 src/sdks/js                      TypeScript SDK
 src/bindings/wasix-rust          Rust binding for the WASIX runtime
 src/bindings/wasix-ts            TypeScript browser and Node/Bun/Deno/Electron WASIX binding with optional tools
-src/shared/contracts             cross-language protocol and API contracts
+src/shared/js-core              shared JavaScript query and protocol code
+src/shared/rust-query-core      shared Rust query code
 src/shared/extension-runtime-contract extension/runtime ABI contract
+src/shared/cluster-seed-contract shared cluster-seed format contract
 src/shared/fixtures              shared semantic test fixtures
 src/docs                         public docs site
 ```
@@ -57,12 +59,20 @@ generated state and must not be tracked.
 
 ## Moon Graph
 
-Moon is the only task and affectedness graph. Project dependencies represent
-real source relationships and use dependency scopes:
+Moon is the only local task and affectedness graph. Project dependencies
+represent real source relationships and use dependency scopes:
 
-- `production` and `peer` are release-affecting compatibility edges.
-- `build` is a test, generation, fixture, or package-shape edge. It affects CI
-  and local affected tasks, but it does not force downstream product releases.
+- `production` and `peer` mean that a local consumer uses the dependency's code
+  or artifact.
+- `build` means that a task uses the dependency for tests, generation, fixtures,
+  or package shape.
+- Task `deps` are the narrower run-before edges that produce files or state a
+  command actually consumes.
+
+Moon edges never mean "release this consumer too". Product-local
+`compatibility_versions` declare exact published dependencies. A changed
+publishable product is therefore a CI input to direct consumers, but remains an
+independent release boundary.
 
 Examples:
 
@@ -71,9 +81,10 @@ Examples:
   production edges.
 - `oliphaunt-swift -> oliphaunt-react-native` and
   `oliphaunt-kotlin -> oliphaunt-react-native` are production edges.
-- `oliphaunt-rust -> oliphaunt-js` is a production edge because the TypeScript
-  SDK uses the Rust broker helper.
+- `oliphaunt-broker`, `oliphaunt-node-direct`, and `liboliphaunt-native` are
+  direct local inputs to `oliphaunt-js`; the npm package pins each independently.
 - `liboliphaunt-wasix -> oliphaunt-wasix-rust` and
+  `liboliphaunt-wasix -> oliphaunt-wasix-napi` and
   `liboliphaunt-wasix -> oliphaunt-wasix-ts` are separate WASIX binding edges.
   The WASIX TypeScript binding has no edge to the TypeScript SDK's native runtime or native
   runtime products.
@@ -88,7 +99,7 @@ Use Moon queries for graph inspection:
 ```sh
 moon query projects
 moon query tasks
-moon query affected --upstream none --downstream deep
+moon query affected --upstream none --downstream direct
 moon project-graph
 moon action-graph oliphaunt-rust:unit
 ```
@@ -117,22 +128,23 @@ The flow is:
 3. GitHub matrix is used only for real runner or target fan-out: OS, CPU, ABI,
    simulator, device, native runtime target, broker target, Node direct target,
    and WASIX AOT target.
-4. The affected planner emits visible `Checks / <target>` and
-   `Tests / <target>` matrices plus one compact `Policy` batch from
-   Moon-selected targets. `Checks / <target>` is for normal
+4. The affected planner emits visible `Checks / <targets>` and
+   `Tests / <targets>` matrices plus one compact `Policy` batch from
+   Moon-selected targets. Each matrix entry groups at most four tasks with the
+   same runner capabilities, and its label lists those tasks. `Checks` is for normal
    static/lint/typecheck-style work. `Policy` is for repository assertions that
    parse code, workflows, release metadata, or generated graphs and enforce
-   invariants. Check and test matrix jobs delegate one exact target to
-   `moon run --upstream deep`, so task inheritance and target dependencies stay
+   invariants. Check and test matrix jobs delegate one compatible target group
+   to `moon run --upstream deep`, so task inheritance and target dependencies stay
    in Moon without pulling unrelated affected tests into the checks phase. The
    policy batch runs its exact selected targets with `--upstream none`, because
    package prerequisites already have their own visible jobs. Tasks that truly
-   need Android tooling declare the `ci-android-sdk` capability tag; the planner
+   need Android tooling declare the `requires-android-sdk` capability tag; the planner
    projects it into runner setup instead of provisioning Android for every
-   check, policy, and test shard. When a selected build lane already inherits a
+   check, policy, and test group. When a selected build lane already inherits a
    `check` or `test` target, the phase selector skips that covered target.
 5. The aggregate `Checks` and `Tests` jobs are gates over those visible target
-   jobs. `Checks` waits for both `Checks / <target>` jobs and the selected
+   jobs. `Checks` waits for both `Checks / <targets>` jobs and the selected
    `Policy` batch, but policy assertions are named separately because they are
    not normal package checks.
 6. Artifact-producing jobs call
@@ -177,16 +189,22 @@ Moon task options must be semantic:
 
 ## Release Model
 
-Release decisions come from release-please components and Moon dependency
-scopes:
+Release decisions come from release-please components, Moon source ownership,
+and product-local compatibility pins:
 
 1. Release Please identifies product components, versions, and changelogs and
    prepares the generated release PR.
 2. Product-local `release.toml` adds publish and artifact metadata.
 3. `tools/dev/bun.sh tools/release/release_plan.mjs` maps changed paths to
    owning Moon projects.
-4. The release closure follows only Moon `production` and `peer` dependencies.
-5. CI affectedness still follows all Moon dependencies, including `build`.
+4. A changed non-publishable source project follows `production` and `peer`
+   edges only until the first publishable product boundary.
+5. A changed publishable product selects only that product for release. Its
+   direct Moon consumers are still qualified by CI, but are released only when
+   their own version changes.
+6. `compatibility_versions` order publication and prove that an unselected
+   dependency tag or registry artifact already exists at the exact pinned
+   version.
 
 The protected publish workflow derives `<component>-v<version>` from that
 reviewed release state and creates the product tags and draft GitHub releases
@@ -194,10 +212,28 @@ at the exact qualified commit. Release Please never targets the moving `main`
 ref to create them.
 
 This keeps release behavior explicit without duplicating source globs. A
-PostgreSQL 18 source change releases native and WASIX runtimes plus downstream
-products that have production/peer compatibility edges. A shared fixture change
-runs affected tests but releases no package. An exact extension source change
-releases that exact extension artifact product, not every SDK.
+PostgreSQL source-pin change selects its first owning runtime products. A native
+runtime product change qualifies direct consumers without silently bumping them.
+A shared fixture change runs affected tests but releases no package. An exact
+extension source change releases that exact extension artifact product, not
+every SDK.
+
+## Local and Published Dependencies
+
+Every ecosystem uses the same two-mode rule:
+
+| Ecosystem | Local integrated development | Published consumer |
+| --- | --- | --- |
+| npm | `workspace:*` resolves sibling packages | staged manifests contain exact compatibility versions |
+| Cargo | path dependencies resolve workspace source; publishable SDK staging replaces runtime paths with exact registry versions | `.crate` manifests contain exact versions and no repository paths |
+| Kotlin/Gradle | local projects or explicitly supplied candidate AARs win | the plugin resolves exact Maven runtime coordinates from its embedded native-version pin |
+| Swift | the root package compiles local `COliphaunt` and SDK sources | the rendered release package uses the exact pinned liboliphaunt binary artifact |
+| React Native | npm workspace plus local Kotlin project and local Swift pod/source overrides | the npm package, Gradle dependency, and podspec use exact pinned Kotlin and Swift SDK versions |
+
+The source link makes native-plus-SDK development easy. The compatibility pin
+makes dependency-only releases independent: unchanged consumers retain their
+published pin. Selecting a consumer for release advances its pin to the current
+qualified dependency; selecting the dependency alone never bumps the consumer.
 
 Release planning adapts Moon project sources and dependency scopes for
 product-tag diffs; it must not introduce hand-authored source glob or dependency
@@ -256,12 +292,12 @@ checks must prove unselected extension files do not enter app artifacts.
 Use Moon directly for repository tasks:
 
 ```sh
-moon run :check :compile :format-check :lint :tools-compile
+moon run :check :compile :format-check :js-format-check :rust-format-check :lint :tools-compile
 moon run :test :unit :tools-unit
 moon run :coverage
 moon run :package
 moon run :smoke --cache off
-moon query affected --upstream none --downstream deep
+moon query affected --upstream none --downstream direct
 ```
 
 `moon run :package` is the workspace-wide carrier assembly/inspection lane and

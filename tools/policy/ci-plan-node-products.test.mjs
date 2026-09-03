@@ -54,7 +54,7 @@ test("JavaScript SDK source does not rebuild the Node Direct addon", () => {
   assert.equal(result.tasks.includes("release-tools:unit"), false);
 });
 
-test("Node Direct source qualifies its addon and downstream JavaScript SDK", () => {
+test("Node Direct source qualifies its addon and downstream JavaScript SDK without releasing the SDK", () => {
   const result = effects("src/runtimes/node-direct/native/node-addon/oliphaunt_node.cc");
   assert.deepEqual(result.jobs, [
     "affected",
@@ -62,12 +62,12 @@ test("Node Direct source qualifies its addon and downstream JavaScript SDK", () 
     "node-direct",
     "node-direct-release-assets",
   ]);
-  assert.deepEqual(result.releaseProducts, ["oliphaunt-node-direct", "oliphaunt-js"]);
+  assert.deepEqual(result.releaseProducts, ["oliphaunt-node-direct"]);
   assert.equal(result.tasks.includes("oliphaunt-node-direct:compile"), true);
   assert.equal(result.tasks.includes("oliphaunt-js:unit"), true);
 });
 
-test("combined JavaScript SDK and WASIX N-API changes preserve both release closures", () => {
+test("combined JavaScript SDK and WASIX N-API changes release only changed products", () => {
   const result = effects([
     "src/runtimes/wasix-napi/src/lib.rs",
     "src/sdks/js/src/client.ts",
@@ -85,8 +85,17 @@ test("combined JavaScript SDK and WASIX N-API changes preserve both release clos
   assert.deepEqual(result.releaseProducts, [
     "oliphaunt-js",
     "oliphaunt-wasix-napi",
-    "oliphaunt-wasix-ts",
   ]);
+});
+
+test("shared contrib source releases only its two runtime owners", () => {
+  const release = buildPlan(
+    GRAPH,
+    ["src/extensions/contrib/postgres18.toml"],
+    "ci-plan-node-products.test.mjs",
+  );
+  assert.deepEqual(release.directProducts, ["liboliphaunt-native", "liboliphaunt-wasix"]);
+  assert.deepEqual(release.releaseProducts, ["liboliphaunt-native", "liboliphaunt-wasix"]);
 });
 
 test("WASIX N-API source selects only its real WASIX artifact inputs", () => {
@@ -100,7 +109,7 @@ test("WASIX N-API source selects only its real WASIX artifact inputs", () => {
     "wasix-napi-release-assets",
     "wasix-ts-sdk-package",
   ]);
-  assert.deepEqual(result.releaseProducts, ["oliphaunt-wasix-napi", "oliphaunt-wasix-ts"]);
+  assert.deepEqual(result.releaseProducts, ["oliphaunt-wasix-napi"]);
   assert.equal(result.tasks.includes("oliphaunt-wasix-napi:format-check"), true);
   assert.equal(result.tasks.includes("oliphaunt-wasix-napi:unit"), true);
 });

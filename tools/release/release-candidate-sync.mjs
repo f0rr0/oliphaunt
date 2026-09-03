@@ -1,12 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import {
-  RELEASE_DEPENDENCY_SCOPES,
-  releaseOrder,
-} from "./release-graph.mjs";
-
-const STABLE_VERSION = /^(?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)$/u;
 const VERSION_IN_MARKER = /(?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)/gu;
 const TOML_TABLE = /^\s*\[([^\]]+)\]\s*(?:#.*)?$/u;
 
@@ -23,287 +17,6 @@ function object(value, context, prefix) {
     throw error(prefix, `${context} must be an object`);
   }
   return value;
-}
-
-function stableVersion(value, context, prefix) {
-  if (typeof value !== "string" || !STABLE_VERSION.test(value)) {
-    throw error(prefix, `${context} must be a stable x.y.z version, got ${JSON.stringify(value)}`);
-  }
-  const parsed = value.split(".").map((part) => Number.parseInt(part, 10));
-  if (parsed.some((part) => !Number.isSafeInteger(part))) {
-    throw error(prefix, `${context} contains a numeric component outside JavaScript's safe integer range`);
-  }
-  return parsed;
-}
-
-function patchVersion(value, context, prefix) {
-  const [major, minor, patch] = stableVersion(value, context, prefix);
-  if (major === 0 && minor === 0 && patch === 0) {
-    throw error(
-      prefix,
-      `${context} is still 0.0.0; Release Please must create its first release candidate instead of ` +
-        "letting dependent-candidate synchronization invent a first-release version",
-    );
-  }
-  if (patch >= Number.MAX_SAFE_INTEGER) {
-    throw error(prefix, `${context} cannot be patch-incremented safely`);
-  }
-  return `${major}.${minor}.${patch + 1}`;
-}
-
-function productProjectId(product, products, projects, prefix) {
-  if (product in projects) return product;
-  const packagePath = products[product]?.path;
-  if (typeof packagePath !== "string" || packagePath.length === 0) {
-    throw error(prefix, `${product} is missing release package path metadata`);
-  }
-  const matches = Object.entries(projects)
-    .filter(([, project]) =>
-      typeof project?.source === "string" &&
-      (packagePath === project.source || packagePath.startsWith(`${project.source}/`)))
-    .sort((left, right) => right[1].source.length - left[1].source.length || compareText(left[0], right[0]));
-  if (matches.length === 0) {
-    throw error(prefix, `${product} has no owning Moon project for ${packagePath}`);
-  }
-  return matches[0][0];
-}
-
-function edgeKey(edge) {
-  return [edge.source, edge.target, edge.kind, edge.id].join("\u0000");
-}
-
-function reasonKey(reason) {
-  return [reason.sourceProduct, reason.kind, reason.id].join("\u0000");
-}
-
-function compareEdges(left, right) {
-  return compareText(edgeKey(left), edgeKey(right));
-}
-
-/**
- * Build the only dependency directions that can require another release:
- * dependency -> Moon production/peer consumer and compatibility source -> owner.
- * Build/dev/test Moon scopes and reverse compatibility traversal are excluded.
- */
-export function dependentReleaseEdges(
-  graph,
-  { prefix = "release-dependent-candidates" } = {},
-) {
-  object(graph, "release graph", prefix);
-  const products = object(graph.products, "release graph products", prefix);
-  const projects = object(graph.moon_projects, "release graph Moon projects", prefix);
-  const productIds = Object.keys(products).sort(compareText);
-  const productProjects = Object.fromEntries(
-    productIds.map((product) => [product, productProjectId(product, products, projects, prefix)]),
-  );
-  const productsByProject = new Map();
-  for (const product of productIds) {
-    const project = productProjects[product];
-    productsByProject.set(project, [...(productsByProject.get(project) ?? []), product].sort(compareText));
-  }
-
-  const edges = [];
-  for (const target of productIds) {
-    const targetProject = productProjects[target];
-    const project = object(projects[targetProject], `Moon project ${targetProject}`, prefix);
-    const dependencies = project.dependencies ?? [];
-    if (!Array.isArray(dependencies)) {
-      throw error(prefix, `Moon project ${targetProject}.dependencies must be a list`);
-    }
-    for (const dependency of dependencies) {
-      object(dependency, `Moon project ${targetProject} dependency`, prefix);
-      const dependencyProject = dependency.id;
-      const scope = dependency.scope;
-      if (typeof dependencyProject !== "string" || typeof scope !== "string") {
-        throw error(prefix, `Moon project ${targetProject} dependencies must have string ids and scopes`);
-      }
-      if (!RELEASE_DEPENDENCY_SCOPES.has(scope)) continue;
-      for (const source of productsByProject.get(dependencyProject) ?? []) {
-        if (source === target) continue;
-        edges.push({
-          source,
-          target,
-          kind: "moon",
-          id: `${dependencyProject}->${targetProject}:${scope}`,
-          scope,
-          sourceProject: dependencyProject,
-          targetProject,
-        });
-      }
-    }
-  }
-
-  for (const target of productIds) {
-    const specs = products[target].compatibility_versions ?? {};
-    if (specs === null || Array.isArray(specs) || typeof specs !== "object") {
-      throw error(prefix, `${target}.compatibility_versions must be an object`);
-    }
-    for (const [specId, spec] of Object.entries(specs).sort(([left], [right]) => compareText(left, right))) {
-      object(spec, `${target}.compatibility_versions.${specId}`, prefix);
-      const source = spec.source_product;
-      if (typeof source !== "string" || !(source in products)) {
-        throw error(
-          prefix,
-          `${target}.compatibility_versions.${specId}.source_product must name a release product`,
-        );
-      }
-      if (source === target) continue;
-      edges.push({
-        source,
-        target,
-        kind: "compatibility",
-        id: specId,
-      });
-    }
-  }
-
-  return [...new Map(edges.sort(compareEdges).map((edge) => [edgeKey(edge), edge])).values()];
-}
-
-/** Compute the deterministic fixed point without assigning versions. */
-export function dependentReleaseClosure(
-  graph,
-  directProducts,
-  { prefix = "release-dependent-candidates" } = {},
-) {
-  if (
-    !Array.isArray(directProducts) ||
-    directProducts.some((product) => typeof product !== "string" || product.length === 0)
-  ) {
-    throw error(prefix, "direct release products must be a string list");
-  }
-  if (new Set(directProducts).size !== directProducts.length) {
-    throw error(prefix, "direct release products must not contain duplicates");
-  }
-  const products = object(graph?.products, "release graph products", prefix);
-  const projects = object(graph?.moon_projects, "release graph Moon projects", prefix);
-  const direct = [...directProducts].sort(compareText);
-  const unknown = direct.filter((product) => !(product in products));
-  if (unknown.length > 0) {
-    throw error(prefix, `direct release products are absent from the release graph: ${unknown.join(", ")}`);
-  }
-  const edges = dependentReleaseEdges(graph, { prefix });
-  const required = new Set(direct);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const edge of edges) {
-      if (required.has(edge.source) && !required.has(edge.target)) {
-        required.add(edge.target);
-        changed = true;
-      }
-    }
-  }
-
-  const requiredProducts = releaseOrder(products, projects, required, prefix);
-  const directSet = new Set(direct);
-  const reasons = {};
-  for (const product of requiredProducts) {
-    if (directSet.has(product)) continue;
-    reasons[product] = edges
-      .filter((edge) => edge.target === product && required.has(edge.source))
-      .map((edge) => ({
-        sourceProduct: edge.source,
-        kind: edge.kind,
-        id: edge.id,
-        ...(edge.scope === undefined ? {} : { scope: edge.scope }),
-        ...(edge.sourceProject === undefined ? {} : { sourceProject: edge.sourceProject }),
-        ...(edge.targetProject === undefined ? {} : { targetProject: edge.targetProject }),
-      }))
-      .sort((left, right) => compareText(reasonKey(left), reasonKey(right)));
-    if (reasons[product].length === 0) {
-      throw error(prefix, `${product} entered the dependent release closure without a dependency reason`);
-    }
-  }
-  return {
-    directProducts: direct,
-    missingProducts: requiredProducts.filter((product) => !directSet.has(product)),
-    reasons,
-    requiredProducts,
-  };
-}
-
-/**
- * Attach the final release fixed point to a Moon build-impact plan without
- * changing the long-standing `releaseProducts` meaning used by CI task
- * selection. Callers that prepare or describe publication must consume
- * `requiredReleaseProducts`; `releaseProducts`/`buildImpactProducts` are only
- * the products selected by Moon ownership and release dependency scopes.
- */
-export function withDependentReleaseClosure(
-  graph,
-  plan,
-  { prefix = "release-dependent-candidates" } = {},
-) {
-  object(plan, "Moon build-impact plan", prefix);
-  if (
-    !Array.isArray(plan.releaseProducts)
-    || plan.releaseProducts.some((product) => typeof product !== "string" || product.length === 0)
-  ) {
-    throw error(prefix, "Moon build-impact plan.releaseProducts must be a string list");
-  }
-  const closure = dependentReleaseClosure(graph, plan.releaseProducts, { prefix });
-  return {
-    ...plan,
-    releaseProductsScope: "moon-build-impact",
-    buildImpactProducts: [...plan.releaseProducts],
-    requiredReleaseProducts: closure.requiredProducts,
-    dependentReleaseProducts: closure.missingProducts,
-    dependentReleaseReasons: closure.reasons,
-    dependencyClosed: closure.missingProducts.length === 0,
-  };
-}
-
-/**
- * Preserve every Release Please candidate exactly and assign patch versions
- * only to otherwise-missing, already-released dependents.
- */
-export function planDependentReleaseCandidates(
-  graph,
-  transitions,
-  { prefix = "release-dependent-candidates" } = {},
-) {
-  if (!Array.isArray(transitions) || transitions.length === 0) {
-    throw error(prefix, "Release Please transitions must be a non-empty list");
-  }
-  const byProduct = new Map();
-  for (const transition of transitions) {
-    object(transition, "Release Please transition", prefix);
-    const product = transition.product;
-    if (typeof product !== "string" || product.length === 0 || byProduct.has(product)) {
-      throw error(prefix, `Release Please transitions have a missing or duplicate product ${JSON.stringify(product)}`);
-    }
-    stableVersion(transition.after, `${product} Release Please candidate`, prefix);
-    if (!(product in graph.products)) {
-      throw error(prefix, `Release Please transition names unknown product ${product}`);
-    }
-    if (graph.products[product].version !== transition.after) {
-      throw error(
-        prefix,
-        `${product} graph version ${JSON.stringify(graph.products[product].version)} does not match ` +
-          `Release Please candidate ${transition.after}`,
-      );
-    }
-    byProduct.set(product, transition);
-  }
-
-  const closure = dependentReleaseClosure(graph, [...byProduct.keys()], { prefix });
-  const versions = new Map([...byProduct].map(([product, transition]) => [product, transition.after]));
-  for (const product of closure.missingProducts) {
-    const current = graph.products[product]?.version;
-    versions.set(product, patchVersion(current, `${product} current version`, prefix));
-  }
-  const candidates = closure.missingProducts.map((product) => ({
-    product,
-    packagePath: graph.products[product].path,
-    before: graph.products[product].version,
-    after: versions.get(product),
-    reasons: closure.reasons[product].map((reason) => ({
-      ...reason,
-      sourceVersion: versions.get(reason.sourceProduct),
-    })),
-  }));
-  return { ...closure, candidates };
 }
 
 function packageRelative(packagePath, relativePath, context, prefix) {
@@ -498,19 +211,7 @@ function reasonText(reason) {
   if (reason.kind === "shared-source") {
     return `shared contrib carrier source: ${reason.summary} (${reason.commit.slice(0, 8)})`;
   }
-  if (reason.kind === "moon") {
-    return (
-      `align with \`${reason.sourceProduct}\` ${reason.sourceVersion} ` +
-      `(Moon ${reason.scope} dependency: \`${reason.sourceProject}\` -> \`${reason.targetProject}\`)`
-    );
-  }
-  if (reason.kind === "compatibility") {
-    return (
-      `align with \`${reason.sourceProduct}\` ${reason.sourceVersion} ` +
-      `(release compatibility field \`${reason.id}\`)`
-    );
-  }
-  throw error("release-dependent-candidates", `unsupported dependent release reason ${reason.kind}`);
+  throw error("release-candidate-sync", `unsupported release reason ${reason.kind}`);
 }
 
 function changelogContent(candidate) {
@@ -529,7 +230,7 @@ function updateChangelog(text, candidate, context, prefix) {
   if (!lines.some((line) => changelogHeadingVersion(line) === candidate.before)) {
     throw error(
       prefix,
-      `${context} has no prior release heading for ${candidate.before}; dependent synthesis is post-first-release only`,
+      `${context} has no prior release heading for ${candidate.before}; candidate synchronization is post-first-release only`,
     );
   }
   const newline = text.includes("\r\n") ? "\r\n" : "\n";
@@ -637,7 +338,7 @@ export function synchronizeReleaseCandidates({
   releasePleaseConfig,
   manifest,
   write = false,
-  prefix = "release-dependent-candidates",
+  prefix = "release-candidate-sync",
 }) {
   if (typeof root !== "string" || root.length === 0) throw error(prefix, "root must be a path");
   if (!Array.isArray(candidates)) throw error(prefix, "release candidates must be a list");
@@ -689,7 +390,7 @@ export function synchronizeReleaseCandidates({
         prefix,
       );
       for (const descriptor of descriptors) {
-        const detail = `${candidate.product} dependent candidate ${candidate.before} -> ${candidate.after}`;
+        const detail = `${candidate.product} release candidate ${candidate.before} -> ${candidate.after}`;
         stageFile(
           root,
           descriptor.path,
@@ -751,32 +452,10 @@ export function synchronizeReleaseCandidates({
     .map(({ path: file }) => file)
     .filter((file, index, files) => files.indexOf(file) !== index);
   if (duplicatePaths.length > 0) {
-    throw error(prefix, `dependent candidate outputs overlap: ${[...new Set(duplicatePaths)].join(", ")}`);
+    throw error(prefix, `release candidate outputs overlap: ${[...new Set(duplicatePaths)].join(", ")}`);
   }
   if (write) {
     for (const change of changes) writeFileSync(change.path, change.text, "utf8");
   }
   return changes.map(({ path: file, detail }) => ({ path: file, detail }));
-}
-
-export function synchronizeDependentReleaseCandidates({
-  root,
-  graph,
-  transitions,
-  releasePleaseConfig,
-  manifest,
-  write = false,
-  prefix = "release-dependent-candidates",
-}) {
-  const plan = planDependentReleaseCandidates(graph, transitions, { prefix });
-  const changes = synchronizeReleaseCandidates({
-    root,
-    graph,
-    candidates: plan.candidates,
-    releasePleaseConfig,
-    manifest,
-    write,
-    prefix,
-  });
-  return { ...plan, changes };
 }

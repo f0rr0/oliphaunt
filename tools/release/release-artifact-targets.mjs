@@ -1436,14 +1436,6 @@ export function extensionMetadata(product, prefix = "release-artifact-targets.mj
   }
   const nativeVersion = nonEmptyString(compatibility.native_runtime_version, `${product}.extension.compatibility.native_runtime_version`, prefix);
   const wasixVersion = nonEmptyString(compatibility.wasix_runtime_version, `${product}.extension.compatibility.wasix_runtime_version`, prefix);
-  const expectedNativeVersion = currentProductVersionSync(nativeProduct, prefix);
-  const expectedWasixVersion = currentProductVersionSync(wasixProduct, prefix);
-  if (nativeVersion !== expectedNativeVersion) {
-    fail(prefix, `${product}.extension.compatibility.native_runtime_version must be ${JSON.stringify(expectedNativeVersion)}, got ${JSON.stringify(nativeVersion)}`);
-  }
-  if (wasixVersion !== expectedWasixVersion) {
-    fail(prefix, `${product}.extension.compatibility.wasix_runtime_version must be ${JSON.stringify(expectedWasixVersion)}, got ${JSON.stringify(wasixVersion)}`);
-  }
   return {
     sqlName,
     sqlNames,

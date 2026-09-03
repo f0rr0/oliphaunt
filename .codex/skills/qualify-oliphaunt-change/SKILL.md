@@ -10,7 +10,8 @@ Use the repository graph to select work, but require the full exact-SHA gate for
 ## Local feedback
 
 1. Inspect the diff and ask Moon for affected projects/tasks. Do not infer affected products from directory names alone.
-2. Run affected `format-check`, `lint`, `compile`, `unit`, and `package` tasks
+2. Run affected formatting (`format-check`, `js-format-check`, or
+   `rust-format-check`), `lint`, `compile`, `unit`, and `package` tasks
    independently. Run producer, smoke, regression, and E2E lanes only when
    their inputs or public behavior changed.
 3. If the diff changes WASIX source pins, patches, build recipes, the toolchain,
@@ -94,12 +95,11 @@ preservation of an existing checkout when every endpoint fails.
    This behavioral gate is authoritative for Bash 3.2 `set -u` empty-array
    semantics; a syntax check or a source-pattern check is not a substitute.
 6. Declare runner capabilities on the narrowest Moon task that needs them. Use
-   `ci-rust` for Cargo, rustc, rustfmt, or another Rust-toolchain command;
-   `ci-maintainer-tools` for the pinned tools installed by
-   `tools/dev/bootstrap-tools.sh`; and `ci-android-sdk` for Android SDK work.
+   `requires-rust` for Cargo, rustc, rustfmt, or another Rust-toolchain command;
+   `requires-maintainer-tools` for the pinned tools installed by
+   `tools/dev/bootstrap-tools.sh`; and `requires-android-sdk` for Android SDK work.
    Capabilities propagate through task dependencies. The planner keeps
-   capability-bearing checks dedicated and combines only compatible static
-   checks into bounded shards.
+   capability-bearing checks grouped only with tasks requiring the same setup.
 7. Treat a hosted runner-image pin as a toolchain dependency. Never introduce a mutable `*-latest` alias; after changing an explicit runner pin, inspect the image delta and run the platform binary contract for every affected release target.
 
 For a WASIX Docker, APT snapshot, or bootstrap trust change, also run the
