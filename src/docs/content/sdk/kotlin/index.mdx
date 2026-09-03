@@ -20,17 +20,19 @@ Add the Android package to your app:
 ```kotlin
 plugins {
     id("com.android.application")
-    id("dev.oliphaunt.android") version "0.1.1"
+    id("dev.oliphaunt.android") version "<version>"
 }
 
 dependencies {
-    implementation("dev.oliphaunt:oliphaunt-android:0.1.1")
+    implementation("dev.oliphaunt:oliphaunt-android:<version>")
 }
 
 oliphaunt {
     selectedExtensions.add("vector")
 }
 ```
+
+Replace `<version>` with the release version you want to use in both places.
 
 The Gradle plugin verifies and packages selected native runtime artifacts,
 Android ABIs, and exact extension files. The app ships only the selected
