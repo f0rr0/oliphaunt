@@ -20,8 +20,6 @@ tasks:
   check:
     tags: ["quality", "static", "ci-rust"]
     command: "cargo check -p oliphaunt-native-packaging --locked --all-targets"
-    deps:
-      - "oliphaunt-rust:check"
     env:
       CARGO_TARGET_DIR: "target/moon/native-packaging/check"
     inputs:
@@ -34,13 +32,11 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  test:
+  unit:
     tags: ["quality", "unit", "ci-rust"]
     command: "cargo test -p oliphaunt-native-packaging --locked"
-    deps:
-      - "native-packaging:check"
     env:
-      CARGO_TARGET_DIR: "target/moon/native-packaging/test"
+      CARGO_TARGET_DIR: "target/moon/native-packaging/unit"
     inputs:
       - "/Cargo.lock"
       - "/Cargo.toml"

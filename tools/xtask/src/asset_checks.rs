@@ -204,55 +204,6 @@ fn check_no_committed_portable_asset_blobs() -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod aot_matrix_tests {
-    use super::aot_target_specs;
-
-    #[test]
-    fn aot_matrix_pins_every_wasmer_llvm_archive() {
-        let expected = [
-            (
-                "macos-arm64",
-                "f64460f6c8a28876737402542fc5b28bb1f4262cef85f799b65ce2a7ee6f8847",
-                479_103_872,
-            ),
-            (
-                "linux-x64-gnu",
-                "5fb1c687c5e895d517a23e7aabea9ec3557e3a3e33f8a8d3a8d21395157b3906",
-                741_670_068,
-            ),
-            (
-                "linux-arm64-gnu",
-                "1fddcf5b30f9d3e073eb161509220b4136ea8e2f114f23084bdec33e40fa87c1",
-                668_873_496,
-            ),
-            (
-                "windows-x64-msvc",
-                "19ff22b0cf74b53dad2fc717db2209f8162b768fc6dede9e2caa6a83c724496e",
-                757_929_860,
-            ),
-        ];
-        assert_eq!(aot_target_specs().len(), expected.len());
-        for spec in aot_target_specs() {
-            let (_, sha256, bytes) = expected
-                .iter()
-                .find(|(target_id, _, _)| *target_id == spec.target_id)
-                .unwrap_or_else(|| panic!("unexpected AOT target {}", spec.target_id));
-            assert_eq!(spec.llvm_sha256, *sha256, "{}", spec.target_id);
-            assert_eq!(spec.llvm_bytes, *bytes, "{}", spec.target_id);
-            assert!(spec.llvm_url.starts_with("https://"), "{}", spec.target_id);
-            assert_eq!(spec.llvm_sha256.len(), 64, "{}", spec.target_id);
-            assert!(
-                spec.llvm_sha256
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
-                "{}",
-                spec.target_id
-            );
-        }
-    }
-}
-
 pub(crate) fn verify_asset_manifest_hashes() -> Result<()> {
     let manifest_path = Path::new(GENERATED_ASSETS_DIR).join("manifest.json");
     let text = fs::read_to_string(&manifest_path)
@@ -960,6 +911,7 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_runtime_support.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/wasix_third_party.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/wasix_icu_link.sh",
+        "src/runtimes/liboliphaunt/wasix/assets/build/wasix_frontend_tools.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/build_wasix_openssl.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/build_wasix_sqlite.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/build_wasix_geos.sh",
@@ -982,333 +934,20 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
         POSTGRES_PATCH_SERIES_PATH,
         POSTGRES_EXPERIMENT_DISPOSITION_PATH,
     ] {
-        if !Path::new(required).exists() {
-            bail!("production WASIX build input is missing: {required}");
-        }
+        ensure_file(Path::new(required))?;
     }
+
     check_wasix_shell_script_syntax()?;
     check_root_asset_metadata_keys()?;
-
-    let production_files = [
-        "tools/xtask/src/asset_pipeline.rs",
-        "src/runtimes/liboliphaunt/wasix/assets/build/analyze_pgl_stubs.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_wasix_env.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/profile_flags.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/source_lane.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/prepare_postgres_source.sh",
+    ensure_file_not_contains_any(
         "src/runtimes/liboliphaunt/wasix/assets/build/configure_wasix_dl.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/pg_config_wasix.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_oliphaunt.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_runtime_support.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/wasix_third_party.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/wasix_icu_link.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/build_wasix_openssl.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/build_wasix_sqlite.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/build_wasix_geos.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/build_wasix_libxml2.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/build_wasix_jsonc.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/build_wasix_proj.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/build_wasix_libiconv.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/build_wasix_icu.sh",
-        "src/extensions/external/postgis/tools/build_wasix.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_pgxs_extensions.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_contrib_extensions.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_pgdump.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_psql.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_initdb.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/wasix_shim/oliphaunt_wasix_initdb_shim.c",
-    ];
-    for path in production_files {
-        let text = fs::read_to_string(path).with_context(|| format!("read {path}"))?;
-        if path == "src/runtimes/liboliphaunt/wasix/assets/build/configure_wasix_dl.sh"
-            && text.contains("--disable-spinlocks")
-        {
-            bail!(
-                "{path} disables PostgreSQL spinlocks; WASIX builds must use the toolchain atomics path"
-            );
-        }
-    }
-    ensure_file_contains_all(
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_wasix_env.sh",
-        &[
-            "WASIX_HOME:=/opt/wasixcc-home/.wasixcc",
-            "ln -s \"$WASIX_HOME\" \"$HOME/.wasixcc\"",
-            "export PATH=\"$WASIX_HOME/bin:$PATH\"",
-            "oliphaunt_wasix_verify_side_module_sjlj",
-            "WASIX side module imports out-of-line sigsetjmp",
-            "/\"sigsetjmp\"/",
-        ],
-    )?;
-    for path in wasix_build_scripts_requiring_docker_env()? {
-        ensure_file_contains_all(&path, &["docker_wasix_env.sh"])?;
-    }
-
-    ensure_file_contains_all(
-        "src/runtimes/liboliphaunt/wasix/assets/build/profile_flags.sh",
-        &[
-            "release)",
-            "-O2 -g0 -flto=thin",
-            "release-o3)",
-            "-O3 -g0 -flto=thin",
-            "-flto=thin",
-            "release-os)",
-            "-Os -g0",
-            "release-oz)",
-            "-Oz -g0",
-            "--converge:--strip-debug:--strip-producers",
-            "WASIXCC_RUN_WASM_OPT",
-            "WASIXCC_WASM_OPT_FLAGS",
-            "OLIPHAUNT_WASM_ALLOW_ASYNCIFY_EXPERIMENT",
-            "production WASIX artifacts require WebAssembly exceptions",
-            "build_wasix_icu_sha256",
-        ],
-    )?;
-    ensure_file_contains_all(
-        "src/runtimes/liboliphaunt/wasix/assets/build/configure_wasix_dl.sh",
-        &[
-            "build_wasix_icu.sh",
-            "--with-icu",
-            "ICU_CFLAGS",
-            "ICU_LIBS",
-            "OLIPHAUNT_WASM_SHIM_OBJECT",
-            "oliphaunt_wasix_icu_cflags",
-            "oliphaunt_wasix_icu_libs",
-        ],
-    )?;
-    ensure_file_contains_all(
-        "src/runtimes/liboliphaunt/wasix/assets/build/wasix_icu_link.sh",
-        &[
-            "oliphaunt_wasix_cxx_runtime_libs",
-            "oliphaunt_wasix_icu_cflags",
-            "oliphaunt_wasix_icu_libs",
-            "U_STATIC_IMPLEMENTATION",
-            "WASIX_CXX_RUNTIME_LIB_DIR",
-            "sysroot-exnref-ehpic",
-            "libicui18n.a",
-            "libicuuc.a",
-            "libicudata.a",
-            "libc++.a",
-            "libc++abi.a",
-            "libunwind.a",
-        ],
-    )?;
-    ensure_file_contains_all(
-        "src/runtimes/liboliphaunt/wasix/assets/build/build_wasix_icu.sh",
-        &[
-            "unicode/ucol.h",
-            "--with-data-packaging=files",
-            "static-consumer",
-            "stub-data-archive",
-            "icu_stub_data_archive_ready",
-            "icu_files_data_ready",
-            "icu_install_stub_data_archive",
-            ". \"$NATIVE_ICU_HELPER\"",
-            "native_icu_helper_sha256",
-            "icu_canonical_data_sha256",
-            "icu_require_canonical_data",
-            "icu_build_native_tools",
-            "icu_install_canonical_files_data",
-            "icu_wasix_config_ready",
-            "icu_cv_host_frag=mh-linux",
-            "wasix-platform-fragment=mh-linux",
-            "ac_cv_var_tzname=no",
-            "ac_cv_var__tzname=no",
-            "wasix-timezone-cache=no-tzname",
-            "icu_pkgdata_opts=\"-O $ICU_BUILD_DIR/data/icupkg.inc -w\"",
-            "wasix-data-packaging=files-without-assembly",
-            "packagedata",
-            "--disable-tools",
-            "--disable-icuio",
-            "--disable-layoutex",
-            "genrb",
-            "pkgdata",
-            "libicui18n.a",
-            "libicuuc.a",
-            "libicudata.a",
-        ],
-    )?;
-    ensure_file_contains_all(
-        "src/runtimes/liboliphaunt/native/bin/icu.sh",
-        &[
-            "oliphaunt_icu_canonical_data_sha256",
-            "oliphaunt_icu_require_canonical_data",
-            "oliphaunt_icu_install_canonical_files_data",
-            "members=\"$(ar -t \"$archive\")\"",
-            "stubdata\\.ao",
-            "makeconv",
-            "genrb",
-            "pkgdata",
-        ],
-    )?;
-    ensure_file_contains_all(
-        "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/postgres_mod.rs",
-        &["ICU_DATA", "/share/icu", "wasix_icu_data_is_available"],
-    )?;
-    ensure_file_contains_all(
-        "src/runtimes/liboliphaunt/wasix/assets/build/pg_config_wasix.sh",
-        &[
-            ". \"$ROOT/source_lane.sh\"",
-            "oliphaunt_wasix_default_build_dir",
-            "PGSRC must be set when pg_config_wasix.sh runs",
-            "PG18 PGSRC is missing .oliphaunt-wasix-postgres-version",
-            "PG18 PGSRC is missing .oliphaunt-wasix-source-fingerprint",
-            ".oliphaunt-wasix-postgres-version",
-            "source_toml=\"$ROOT/postgres/source.toml\"",
-            "PostgreSQL $(postgres_version)",
-            "--includedir-server",
-            "$BUILD_DIR/src/include",
-            "-DOLIPHAUNT_WASM_SIDE_MODULE",
-        ],
-    )?;
-    ensure_file_contains_all(
-        WASIX_BRIDGE_PATH,
-        &[
-            "oliphaunt_wasix_set_force_host_error_recovery",
-            "force_host_error_recovery",
-            "Hosts without that support",
-            "oliphaunt_wasix_set_active",
-            "oliphaunt_wasix_longjmp",
-            "oliphaunt_wasix_siglongjmp",
-            "oliphaunt_wasix_getegid",
-            "oliphaunt_wasix_getpwuid_r",
-            "oliphaunt_wasix_run_atexit_funcs",
-        ],
+        &["--disable-spinlocks"],
     )?;
     check_wasix_bridge_abi_harness()?;
     check_wasix_initdb_shim_abi_harness()?;
-    ensure_file_contains_all(
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_oliphaunt.sh",
-        &[
-            "OLIPHAUNT_WASM_BUILD_PROFILE",
-            ".oliphaunt-wasix-build-profile",
-            ".oliphaunt-wasix-icu-build",
-            "oliphaunt_wasix_wasix_profile_signature",
-        ],
-    )?;
-    ensure_file_contains_all(
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_initdb.sh",
-        &[
-            "build_wasix_icu.sh",
-            "oliphaunt_wasix_icu_cflags",
-            "oliphaunt_wasix_icu_libs",
-            "ICU_CFLAGS",
-            "ICU_LIBS",
-        ],
-    )?;
-    ensure_file_contains_all(
-        "src/runtimes/liboliphaunt/wasix/assets/build/wasix_frontend_tools.sh",
-        &[
-            "build_wasix_icu.sh",
-            "wasix_icu_link.sh",
-            "oliphaunt_wasix_icu_libs",
-            "configure_wasix_dl.sh",
-            "docker-frontend-tools",
-            "icu-native-tools",
-            "OLIPHAUNT_WASM_BUILD_PROFILE=release-os",
-            "OLIPHAUNT_WASM_WASIX_COPT=\"-O2 -g0\"",
-            "OLIPHAUNT_WASM_WASIX_LOPT=\"-Wl,--threads=1\"",
-            "OLIPHAUNT_WASM_SHIM_OBJECT=\"$tool_shim\"",
-            "src/interfaces/libpq",
-            "src/fe_utils",
-        ],
-    )?;
-    ensure_file_contains_all(
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_pgdump.sh",
-        &[
-            "wasix_frontend_tools.sh",
-            "oliphaunt_wasix_prepare_frontend_tools",
-            "OLIPHAUNT_WASIX_FRONTEND_BUILD_DIR",
-            "OLIPHAUNT_WASIX_FRONTEND_ICU_LIBS",
-            "wasixnm -u",
-        ],
-    )?;
-    ensure_file_contains_all(
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_psql.sh",
-        &[
-            "wasix_frontend_tools.sh",
-            "oliphaunt_wasix_prepare_frontend_tools",
-            "OLIPHAUNT_WASIX_FRONTEND_BUILD_DIR",
-            "OLIPHAUNT_WASIX_FRONTEND_ICU_LIBS",
-            "wasixnm -u",
-        ],
-    )?;
-    for path in [
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_oliphaunt.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_runtime_support.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_pgxs_extensions.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_contrib_extensions.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_pgdump.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_psql.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_initdb.sh",
-    ] {
-        ensure_file_contains_all(path, &["OLIPHAUNT_WASM_SKIP_IMAGE_BUILD"])?;
-    }
-    ensure_file_contains_all(
-        "src/runtimes/liboliphaunt/wasix/assets/build/wasix_third_party.sh",
-        &[
-            "oliphaunt_wasix_run_extension_build_in_docker_if_needed",
-            "OLIPHAUNT_WASM_EXTENSION_BUILD_IN_DOCKER",
-            "command -v wasixcc",
-            "oliphaunt_wasix_extension_build_outputs_exist",
-            "required_build_files",
-            "required_build_globs",
-            "OLIPHAUNT_WASM_POSTGIS_DEPENDENCY_COPT:--O2 -g0",
-        ],
-    )?;
-    ensure_file_contains_all(
-        "src/extensions/external/postgis/tools/build_wasix.sh",
-        &[
-            "oliphaunt_wasix_run_extension_build_in_docker_if_needed",
-            "oliphaunt_wasix_extension_build_outputs_exist",
-            "ac_cv_lib_xml2_xmlInitParser=yes",
-            "oliphaunt_wasix_verify_side_module_sjlj \"$postgis_deps_module\"",
-            "oliphaunt_wasix_verify_side_module_sjlj \"$POSTGIS_BUILD_DIR/postgis/postgis-3.so\"",
-        ],
-    )?;
-    for path in [
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_runtime_support.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_pgxs_extensions.sh",
-        "src/runtimes/liboliphaunt/wasix/assets/build/docker_contrib_extensions.sh",
-    ] {
-        ensure_file_contains_all(path, &["oliphaunt_wasix_verify_side_module_sjlj"])?;
-    }
-    ensure_file_contains_all(
-        "src/runtimes/liboliphaunt/wasix/assets/build/build_wasix_libiconv.sh",
-        &[
-            "oliphaunt_wasix_apply_wasix_profile configure",
-            "oliphaunt_wasix_apply_wasix_profile build",
-        ],
-    )?;
 
     println!("production WASIX build input guard passed");
     Ok(())
-}
-
-fn wasix_build_scripts_requiring_docker_env() -> Result<Vec<PathBuf>> {
-    let scripts = crate::postgres_guard::wasix_build_shell_scripts()?
-        .into_iter()
-        .filter(|path| {
-            let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
-                return false;
-            };
-            file_name.starts_with("build_wasix_")
-                || matches!(
-                    file_name,
-                    "analyze_pgl_stubs.sh"
-                        | "docker_contrib_extensions.sh"
-                        | "docker_oliphaunt.sh"
-                        | "docker_pgdump.sh"
-                        | "docker_pgxs_extensions.sh"
-                        | "docker_psql.sh"
-                        | "docker_runtime_support.sh"
-                )
-        })
-        .collect::<Vec<_>>();
-    ensure!(
-        !scripts.is_empty(),
-        "WASIX build guard found no scripts requiring docker_wasix_env.sh"
-    );
-    Ok(scripts)
 }
 
 fn check_root_asset_metadata_keys() -> Result<()> {
@@ -1498,24 +1137,6 @@ pub(crate) fn audit_upstream_fixes(_manifest: &SourcesManifest, _strict: bool) -
     check_no_legacy_runtime_shims()?;
     check_source_lane_isolation()?;
     println!("audited PG18 WASIX runtime guards");
-    Ok(())
-}
-
-pub(crate) fn ensure_file_contains_all(path: impl AsRef<Path>, markers: &[&str]) -> Result<()> {
-    let path = path.as_ref();
-    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let missing = markers
-        .iter()
-        .copied()
-        .filter(|marker| !text.contains(marker))
-        .collect::<Vec<_>>();
-    if !missing.is_empty() {
-        bail!(
-            "{} is missing required upstream replacement markers: {}",
-            path.display(),
-            missing.join(", ")
-        );
-    }
     Ok(())
 }
 

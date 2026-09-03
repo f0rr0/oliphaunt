@@ -31,9 +31,7 @@ import {
   installedPackageClosure,
 } from '../../../../tools/perf/wasix-node/installed-closure.mjs';
 import { assertRuntimeBuildConfiguration } from '../../../../tools/perf/wasix-node/plan.mjs';
-import {
-  loadHostBuildContract,
-} from '../host/build-provenance.mjs';
+import { loadHostBuildContract } from '../host/build-provenance.mjs';
 import { createPackedWasixConsumer, runtimeBuildProvenance } from './packed-node-fixture.mjs';
 
 const bindingRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');

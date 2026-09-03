@@ -124,7 +124,6 @@ const IOS_MOBILE_JOBS = new Set(["mobile-build-ios"]);
 const EXTENSION_ARTIFACT_CONSUMER_JOBS = new Set(["extension-packages", "mobile-extension-packages"]);
 const WASIX_EXTENSION_ARTIFACT_PORTABLE_CONSUMER_JOBS = new Set([
   "extension-packages",
-  "extension-artifacts-wasix",
 ]);
 function fail(message) {
   console.error(`${PREFIX}: ${message}`);
@@ -292,7 +291,7 @@ export function jobsForTargets(targets, { allowedJobs = undefined } = {}) {
   return jobs;
 }
 
-export function addImpliedJobs(jobs, tasks) {
+export function addImpliedJobs(jobs, tasks, { directlySelectedJobs = jobs } = {}) {
   if (jobs.has("broker-release-assets")) {
     jobs.add("broker-runtime");
   }
@@ -301,6 +300,9 @@ export function addImpliedJobs(jobs, tasks) {
   }
   if (jobs.has("wasix-napi-release-assets")) {
     jobs.add("wasix-napi");
+  }
+  if (directlySelectedJobs.has("wasix-napi")) {
+    jobs.add("wasix-napi-release-assets");
   }
   // Release-feature N-API addons embed the portable WASIX payload, the
   // current host's core/tool AOT payloads, and every selected extension's
@@ -313,7 +315,7 @@ export function addImpliedJobs(jobs, tasks) {
   }
   if (
     intersects(
-      jobs,
+      directlySelectedJobs,
       new Set(["liboliphaunt-wasix-runtime", "liboliphaunt-wasix-aot", "liboliphaunt-wasix-release-assets"]),
     ) ||
     intersects(new Set([WASM_RUNTIME_PORTABLE_TASK, WASM_RUNTIME_AOT_TASK]), tasks)
@@ -350,7 +352,7 @@ export function addImpliedJobs(jobs, tasks) {
     jobs.add("liboliphaunt-native-ios");
   }
 
-  if (intersects(jobs, new Set(["extension-artifacts-native", "extension-artifacts-wasix"]))) {
+  if (intersects(directlySelectedJobs, new Set(["extension-artifacts-native", "extension-artifacts-wasix"]))) {
     jobs.add("extension-packages");
   }
 
@@ -397,8 +399,17 @@ export function addImpliedJobs(jobs, tasks) {
 
 export function planJobsForAffected(directProjects, tasks) {
   const jobs = new Set(ALWAYS_JOBS);
-  for (const job of jobsForTargets(tasks, { allowedJobs: ALL_BUILDER_JOBS })) {
+  const directlySelectedJobs = jobsForTargets(tasks, { allowedJobs: ALL_BUILDER_JOBS });
+  for (const job of directlySelectedJobs) {
     jobs.add(job);
+  }
+  if (
+    intersects(
+      directlySelectedJobs,
+      new Set(["wasix-napi", "wasix-napi-release-assets"]),
+    )
+  ) {
+    jobs.add("wasix-ts-sdk-package");
   }
   // The WASIX TypeScript package runs packed Node, Bun, and Deno consumers
   // against the same-run portable runtime rather than silently falling back
@@ -438,7 +449,7 @@ export function planJobsForAffected(directProjects, tasks) {
       jobs.add(job);
     }
   }
-  addImpliedJobs(jobs, tasks);
+  addImpliedJobs(jobs, tasks, { directlySelectedJobs });
   if (intersects(tasks, IOS_CARRIER_VALIDATION_TRIGGER_TASKS)) {
     jobs.add("extension-artifacts-native");
     jobs.add("liboliphaunt-native-ios");
@@ -618,7 +629,7 @@ export function selectedExtensionProductsForPlan(directProjects, tasks, jobs) {
   if (intersects(directProjects, broadExtensionInputs)) {
     return exactProducts;
   }
-  if (tasks.has("extension-packages:assemble-release") && selected.size === 0) {
+  if (tasks.has("extension-packages:package") && selected.size === 0) {
     return exactProducts;
   }
   if (jobs.has("extension-packages") && selected.size === 0) {
@@ -627,7 +638,7 @@ export function selectedExtensionProductsForPlan(directProjects, tasks, jobs) {
   if (intersects(jobs, new Set(["extension-artifacts-native", "extension-artifacts-wasix"])) && selected.size === 0) {
     return exactProducts;
   }
-  if (tasks.has("extension-packages:assemble-mobile") && selected.size === 0) {
+  if (tasks.has("extension-packages:package-mobile") && selected.size === 0) {
     return exactProducts;
   }
   return selected.size > 0 ? selected : null;
@@ -862,12 +873,18 @@ export function nativeExtensionLifecycleShardPlan(products) {
   const exact = new Set(exactExtensionProducts());
   const exhaustive = selected.size === exact.size && [...selected].every((product) => exact.has(product));
   const shardCount = exhaustive ? NATIVE_EXTENSION_LIFECYCLE_EXHAUSTIVE_SHARD_COUNT : 1;
+  const sqlNames = extensionSqlNamesForProducts(selected);
   return {
     matrix: {
-      include: Array.from({ length: shardCount }, (_, shard) => ({
-        shard,
-        shard_count: shardCount,
-      })),
+      include: Array.from({ length: shardCount }, (_, shard) => {
+        const names = sqlNames.filter((_, index) => index % shardCount === shard);
+        const shown = names.slice(0, 4).join(", ");
+        return {
+          shard,
+          shard_count: shardCount,
+          label: `${names.length} Extensions (${shown}${names.length > 4 ? ` + ${names.length - 4} More` : ""})`,
+        };
+      }),
     },
     shardCount,
   };

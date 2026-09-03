@@ -152,11 +152,10 @@ export function hasCanonicalBrokerFilesystemMode(mode, expectedMode, platform = 
 export function hasSafeBrokerSourceFilesystemMode(mode, platform = process.platform) {
   if (platform === "win32") return true;
   const permissions = mode & 0o777;
-  // Git records only the executable bit for regular files. A restrictive
-  // checkout umask may therefore narrow 0644 to 0640 or 0600 without changing
-  // the repository identity. Accept only such safe subsets here; staged and
-  // archived carrier members remain normalized and verified as exact 0644.
-  return (permissions & 0o400) !== 0 && (permissions & ~0o644) === 0;
+  // Git records only the executable bit for regular files; checkout read/write
+  // bits reflect the host umask. Staged and archived members are normalized and
+  // verified as exact 0644, so source inputs need only be readable and non-executable.
+  return (permissions & 0o444) !== 0 && (permissions & 0o111) === 0;
 }
 
 function requireRealFile(file, label) {

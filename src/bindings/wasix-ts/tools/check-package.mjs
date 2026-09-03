@@ -213,9 +213,7 @@ try {
       JSON.stringify([fzstdPackage]) ||
     JSON.stringify(Object.keys(packageJson.optionalDependencies ?? {}).sort()) !==
       JSON.stringify([...nativePackages].sort()) ||
-    nativePackages.some(
-      (name) => packageJson.optionalDependencies?.[name] !== 'workspace:*',
-    ) ||
+    nativePackages.some((name) => packageJson.optionalDependencies?.[name] !== 'workspace:*') ||
     packageJson.dependencies?.[benchmarkComparisonPackage] !== undefined ||
     packageJson.dependencies?.['@wasmer/sdk'] !== undefined ||
     packageJson.dependencies?.['@oliphaunt/ts'] !== undefined ||
@@ -239,8 +237,7 @@ try {
       JSON.stringify([...nativePackages].sort()) ||
     nativePackages.some(
       (name) =>
-        stagedPackageJson.optionalDependencies?.[name] !==
-        packageJson.oliphaunt?.wasixNapiVersion,
+        stagedPackageJson.optionalDependencies?.[name] !== packageJson.oliphaunt?.wasixNapiVersion,
     ) ||
     stagedPackageJson.dependencies?.[benchmarkComparisonPackage] !== undefined ||
     stagedPackageJson.dependencies?.['@wasmer/sdk'] !== undefined ||

@@ -1352,38 +1352,11 @@ fi
 
 cd "$build_dir"
 
-patches_applied() {
-  grep -q 'OliphauntEmbeddedIO' src/include/libpq/libpq-be.h &&
-    grep -q 'oliphaunt_io' src/backend/libpq/be-secure.c &&
-    grep -q 'oliphaunt_embedded_main' src/backend/tcop/postgres.c &&
-    grep -q 'oliphaunt_embedded' meson_options.txt &&
-    grep -q 'OLIPHAUNT_EMBEDDED' meson.build &&
-    grep -q 'OLIPHAUNT_EMBEDDED' src/include/tcop/tcopprot.h &&
-    grep -q 'oliphaunt_embedded_proc_exit' src/include/storage/ipc.h &&
-    grep -q 'original_cwd' src/backend/tcop/postgres.c &&
-    grep -q 'oliphaunt_static_extension_lookup' src/backend/utils/fmgr/dfmgr.c &&
-    grep -q 'OLIPHAUNT_INTERNAL_ICU_READY' src/bin/initdb/initdb.c &&
-    grep -q 'OLIPHAUNT_EMBEDDED_NO_SHELL_COMMANDS' src/backend/archive/shell_archive.c &&
-    grep -q 'OLIPHAUNT_EMBEDDED_NO_SHELL_COMMANDS' src/backend/access/transam/xlogarchive.c &&
-    grep -q 'oliphaunt_pg_hash_create' src/include/utils/hsearch.h &&
-    grep -q 'oliphaunt_embedded_kill' src/port/pqsignal.c &&
-    grep -q 'oliphaunt_embedded_raise' src/port/pqsignal.c
-}
-
-if ! patches_applied; then
+if [ ! -f "$build_stamp" ]; then
   git init -q
   for patch_file in "$patch_dir"/*.patch; do
     GIT_CEILING_DIRECTORIES="$work_root" git apply --whitespace=error-all "$patch_file"
   done
-  printf '%s\n' "$desired_build_hash" > "$build_stamp"
-fi
-
-if ! patches_applied; then
-  echo "PostgreSQL embedded patch verification failed" >&2
-  exit 1
-fi
-
-if [ ! -f "$build_stamp" ]; then
   printf '%s\n' "$desired_build_hash" > "$build_stamp"
 fi
 

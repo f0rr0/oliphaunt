@@ -34,9 +34,7 @@ use crate::postgres_guard::{
     check_source_lane_isolation, check_wasix_shell_script_syntax, postgres_default_source_dir,
     postgres_expected_source_fingerprint,
 };
-use crate::release_workspace::{
-    package_release_assets, run_in_release_workspace, stage_release_workspace,
-};
+use crate::release_workspace::{package_release_assets, stage_release_workspace};
 use crate::source_spine::{
     SourceFetchScope, check_source_spine_for_source_lane, check_sources_manifest,
     check_sources_manifest_for_wasix_asset_build, fetch_pinned_sources_for_source_lane,
@@ -131,24 +129,12 @@ const REQUIRED_RUNTIME_ABI_EXPORTS: &[&str] = &[
     "oliphaunt_wasix_output_contains_error",
     "oliphaunt_wasix_set_protocol_transport",
 ];
-const PG18_POSTGRES_HOST_EXPORTS: &[&str] = &[
-    "ProcessStartupPacket",
-    "oliphaunt_wasix_start",
-    "oliphaunt_wasix_pq_flush",
-    "oliphaunt_wasix_get_proc_port",
-    "oliphaunt_wasix_send_conn_data",
-    "PostgresSendReadyForQueryIfNecessary",
-    "PostgresMainLongJmp",
-    "PostgresMainLoopOnce",
-];
-
 fn main() -> Result<()> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("assets") => assets(args.collect()),
         Some("extensions") => extension_catalog::extensions(args.collect()),
         Some("release") => release(args.collect()),
-        Some("package-size") => package_size(args.collect()),
         Some("aot-serializer") => aot_serializer(args.collect()),
         Some("help") | None => {
             print_usage();
@@ -302,91 +288,9 @@ fn release(args: Vec<String>) -> Result<()> {
     match args.first().map(String::as_str) {
         Some("stage") => stage_release_workspace(),
         Some("package-assets") => package_release_assets(),
-        Some("dry-run") => {
-            stage_release_workspace()?;
-            run_in_release_workspace(
-                "cargo",
-                &["run", "-p", "xtask", "--", "release", "package-assets"],
-            )
-        }
-        Some("publish") => {
-            stage_release_workspace()?;
-            run_in_release_workspace(
-                "cargo",
-                &["run", "-p", "xtask", "--", "release", "package-assets"],
-            )?;
-            bail!(
-                "xtask release publish staged and validated the release workspace; publishing belongs to the protected Release workflow"
-            )
-        }
         Some(other) => bail!("unknown release subcommand: {other}"),
-        None => {
-            bail!("usage: cargo run -p xtask -- release <stage|package-assets|dry-run|publish>")
-        }
+        None => bail!("usage: cargo run -p xtask -- release <stage|package-assets>"),
     }
-}
-
-fn package_size(args: Vec<String>) -> Result<()> {
-    let enforce = args.iter().any(|arg| arg == "--enforce");
-    let source_lane =
-        canonical_source_lane(value_after(&args, "--source-lane").unwrap_or(DEFAULT_SOURCE_LANE))?;
-    ensure!(
-        source_lane == DEFAULT_SOURCE_LANE,
-        "package-size checks publishable crate tarballs for the stable source lane only; source lane {source_lane:?} is legacy-only"
-    );
-    let package_dir = Path::new("target/package");
-    if !package_dir.exists() {
-        fs::create_dir_all(package_dir)
-            .with_context(|| format!("create {}", package_dir.display()))?;
-    } else {
-        fs::remove_dir_all(package_dir)
-            .with_context(|| format!("remove {}", package_dir.display()))?;
-    }
-    run(
-        "cargo",
-        &[
-            "package",
-            "--workspace",
-            "--exclude",
-            "xtask",
-            "--locked",
-            "--no-verify",
-            "--allow-dirty",
-        ],
-    )?;
-
-    let limit = 10 * 1024 * 1024;
-    let mut failures = Vec::new();
-    for entry in WalkDir::new(package_dir).max_depth(1) {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("crate") {
-            continue;
-        }
-        let size = entry.metadata()?.len();
-        println!("{} {} bytes", path.display(), size);
-        if size > limit {
-            failures.push((path.to_path_buf(), size));
-        }
-    }
-
-    if enforce && !failures.is_empty() {
-        let details = failures
-            .iter()
-            .map(|(path, size)| format!("{} ({size} bytes)", path.display()))
-            .collect::<Vec<_>>()
-            .join(", ");
-        bail!("crate package size limit exceeded: {details}");
-    }
-    Ok(())
-}
-
-fn enforce_package_size_for_source_lane(source_lane: &str) -> Result<()> {
-    package_size(vec![
-        "--enforce".to_owned(),
-        "--source-lane".to_owned(),
-        source_lane.to_owned(),
-    ])
 }
 
 fn host_target_triple() -> &'static str {
@@ -546,13 +450,10 @@ fn print_usage() {
     eprintln!("  cargo run -p xtask -- assets smoke");
     eprintln!("  cargo run -p xtask -- release stage");
     eprintln!("  cargo run -p xtask -- release package-assets");
-    eprintln!("  cargo run -p xtask -- release dry-run");
-    eprintln!("  cargo run -p xtask -- release publish");
     eprintln!("  cargo run -p xtask -- extensions discover [--write]");
     eprintln!("  cargo run -p xtask -- extensions build-plan [--write|--check]");
     eprintln!("  cargo run -p xtask -- extensions generate");
     eprintln!("  cargo run -p xtask -- extensions check");
-    eprintln!("  cargo run -p xtask -- package-size --enforce");
     eprintln!("  cargo run -p oliphaunt-perf -- bench");
     eprintln!("  cargo run -p oliphaunt-perf -- native-liboliphaunt --engine direct --suite rtt");
     eprintln!("  cargo run -p oliphaunt-perf -- native-postgres --suite rtt");

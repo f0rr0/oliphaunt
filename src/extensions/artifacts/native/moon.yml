@@ -21,37 +21,7 @@ project:
   owner: "oliphaunt"
 
 tasks:
-  check:
-    tags: ["quality", "static"]
-    command: "bash tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --check"
-    deps:
-      - "extension-model:check"
-      - "extension-artifacts-native:observed-phase-test"
-    inputs:
-      - "/src/extensions/**/*"
-      - "!/src/extensions/generated/docs"
-      - "!/src/extensions/generated/docs/**"
-      - "!/src/extensions/evidence"
-      - "!/src/extensions/evidence/**"
-      - "/src/shared/extension-runtime-contract/**/*"
-      - "/tools/release/release_graph_query.mjs"
-      - "/tools/release/extension-target-profiles.mjs"
-      - "/tools/release/extension-target-profiles.toml"
-      - "/tools/release/release-artifact-targets.mjs"
-      - "/tools/release/release-graph.mjs"
-      - "/tools/xtask/**/*"
-      - "/tools/release/check-linux-consumer-baseline.sh"
-      - "/tools/release/linux-abi-baseline.test.mjs"
-      - "/tools/release/platform-compatibility-policy.mjs"
-      - "/tools/release/platform-compatibility-policy.test.mjs"
-      - "/tools/release/platform-binary-contract.mjs"
-      - "/tools/release/platform-binary-contract.test.mjs"
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
-  observed-phase-test:
+  unit:
     tags: ["quality", "unit"]
     command: "bash src/extensions/artifacts/native/tools/run-observed-phase.test.sh"
     inputs:
@@ -60,13 +30,15 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  release-check:
+  qualify:
     tags: ["release", "package"]
     command: "bash src/extensions/artifacts/native/tools/check-release-artifacts.sh"
     env:
       OLIPHAUNT_TRACK_BUILD: "missing"
     deps:
-      - "extension-artifacts-native:check"
+      - "extension-model:lint"
+      - "extension-model:unit"
+      - "extension-artifacts-native:unit"
       - "source-inputs:source-fetch-native-runtime"
     inputs:
       - "/LICENSE"
@@ -111,7 +83,6 @@ tasks:
     tags: ["release", "artifact-builder", "ci-extension-artifacts-native"]
     command: "bash src/extensions/artifacts/native/tools/package-release-assets.sh"
     deps:
-      - "extension-artifacts-native:check"
       - "source-inputs:source-fetch-native-runtime"
     inputs:
       - "/LICENSE"

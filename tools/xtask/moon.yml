@@ -18,11 +18,11 @@ owners:
     "Cargo.toml": ["@oliphaunt/wasix"]
 
 tasks:
-  check:
-    tags: ["quality", "static", "ci-rust"]
-    command: "cargo check -p xtask --locked"
+  unit:
+    tags: ["quality", "unit", "ci-rust"]
+    command: "cargo test -p xtask --locked"
     env:
-      CARGO_TARGET_DIR: "target/moon/xtask/check"
+      CARGO_TARGET_DIR: "target/moon/xtask/unit"
     inputs:
       - "/Cargo.lock"
       - "/Cargo.toml"
@@ -45,11 +45,11 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
       runInCI: skip
-  release-check:
-    tags: ["release", "package"]
+  compile-aot-serializer:
+    tags: ["quality", "static", "ci-rust"]
     command: "cargo check -p xtask --features aot-serializer --locked"
     env:
-      CARGO_TARGET_DIR: "target/moon/xtask/release-check"
+      CARGO_TARGET_DIR: "target/moon/xtask/compile-aot-serializer"
     inputs:
       - "/Cargo.lock"
       - "/Cargo.toml"

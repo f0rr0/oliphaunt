@@ -29,17 +29,16 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
+js_files=()
 while IFS= read -r script; do
-  output_name="${script#./}"
-  output_name="${output_name//\//__}"
-  output_name="${output_name%.mjs}.js"
-  run bun build "$script" --target=bun --outfile="$js_check_root/$output_name"
+  js_files+=("$script")
 done < <(
   {
     find .github/scripts examples/tools tools/policy tools/graph -type f -name '*.mjs'
     printf '%s\n' src/runtimes/liboliphaunt/native/tools/build-ci-target.mjs
   } | LC_ALL=C sort
 )
+run bun build "${js_files[@]}" --target=bun --root "$root" --outdir="$js_check_root/js"
 
 python_files=()
 while IFS= read -r script; do

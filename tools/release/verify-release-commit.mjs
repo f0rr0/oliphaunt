@@ -11,7 +11,10 @@ import {
   typescriptOptionalRuntimePackageProducts,
 } from "./release-artifact-targets.mjs";
 import { compatibilityVersionEntries, loadGraph } from "./release-graph.mjs";
-import { releaseDerivedPathInventory } from "./sync-release-pr.mjs";
+import {
+  releaseDerivedPathInventory,
+  wasixToolsWorkspaceDependencyBindings,
+} from "./sync-release-pr.mjs";
 import { RELEASE_PLEASE_BOOTSTRAP_SHA } from "./release-please-bootstrap.mjs";
 
 const TOOL = "verify-release-commit.mjs";
@@ -251,6 +254,31 @@ function derivedVersionRules() {
         "specifier",
       ],
       product,
+      true,
+    );
+  }
+
+  for (const binding of wasixToolsWorkspaceDependencyBindings()) {
+    for (const table of binding.manifestTables) {
+      addStructured(
+        "json",
+        "src/bindings/wasix-ts/tools-package/package.json",
+        [table, binding.packageName],
+        binding.sourceProduct,
+        true,
+      );
+    }
+    addStructured(
+      "yaml",
+      "pnpm-lock.yaml",
+      [
+        "importers",
+        "src/bindings/wasix-ts/tools-package",
+        binding.lockfileTable,
+        binding.packageName,
+        "specifier",
+      ],
+      binding.sourceProduct,
       true,
     );
   }

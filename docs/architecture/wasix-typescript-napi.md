@@ -526,11 +526,11 @@ Phase 1 acceptance:
   they are unreachable.
 - [x] Update focused CI first; add the full carrier/runtime matrix only with the
   packaging PR. Avoid duplicating Moon-owned checks in workflows.
-- [x] Run `moon run oliphaunt-wasix-napi:check`,
+- [x] Run `moon run oliphaunt-wasix-napi:qualify`,
   `moon run oliphaunt-wasix-napi:package`,
-  `moon run oliphaunt-wasix-rust:check`,
-  `moon run oliphaunt-wasix-ts:test`,
-  `moon run oliphaunt-wasix-ts:typecheck`, and the product package checks.
+  `moon run oliphaunt-wasix-rust:compile`,
+  `moon run oliphaunt-wasix-ts:unit`,
+  `moon run oliphaunt-wasix-ts:compile`, and the product package checks.
 - [x] Run `moon run sdk-contracts:check` for public-surface changes.
 - [x] Run workflow-policy, release-check, committed-asset, extension-model,
   WASIX source/patch, portable/AOT, carrier, license, provenance, and Linux ABI

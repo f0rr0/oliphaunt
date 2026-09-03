@@ -23,11 +23,9 @@ owners:
     "Package.swift": ["@oliphaunt/sdk-swift"]
 
 tasks:
-  check:
+  compile:
     tags: ["quality", "static"]
     command: "bash src/sdks/swift/tools/check-sdk.sh check-static"
-    deps:
-      - "liboliphaunt-native:check"
     inputs:
       - "/Package.swift"
       - "/src/shared/fixtures/**/*"
@@ -39,11 +37,9 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  test:
+  unit:
     tags: ["quality", "unit"]
     command: "bash src/sdks/swift/tools/check-sdk.sh test-unit"
-    deps:
-      - "liboliphaunt-native:check"
     inputs:
       - "/Package.swift"
       - "/src/shared/fixtures/**/*"
@@ -78,10 +74,6 @@ tasks:
   package:
     tags: ["package"]
     command: "bash src/sdks/swift/tools/check-sdk.sh package-shape"
-    deps:
-      - "oliphaunt-swift:check"
-      - "oliphaunt-swift:test"
-      - "liboliphaunt-native:check"
     inputs:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
@@ -107,13 +99,11 @@ tasks:
     inputs:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
-      - "/.release-please-manifest.json"
       - "/release-please-config.json"
       - "/Package.swift"
       - "/src/shared/fixtures/**/*"
       - "/src/extensions/generated/sdk/extensions.json"
-      - "/src/**/moon.yml"
-      - "/src/**/release.toml"
+      - "/src/sdks/swift/moon.yml"
       - "/src/runtimes/liboliphaunt/native/VERSION"
       - "/src/sdks/swift/**/*"
       - "!/src/sdks/swift/.build"
@@ -152,11 +142,10 @@ tasks:
     options:
       cache: local
       runFromWorkspaceRoot: true
-  release-check:
+  qualify:
     tags: ["release", "package"]
     command: "bash src/sdks/swift/tools/check-sdk.sh release-check"
     deps:
-      - "liboliphaunt-native:check"
       - "liboliphaunt-native:release-runtime"
     inputs:
       - "/Package.swift"
@@ -180,8 +169,6 @@ tasks:
       - "/tools/perf/**/*"
       - "/benchmarks/**/*"
       - "/release-please-config.json"
-      - "/.release-please-manifest.json"
-      - "/src/**/release.toml"
       - "/src/**/targets/**/*.toml"
     options:
       cache: true
@@ -190,8 +177,6 @@ tasks:
   regression:
     tags: ["regression", "runtime"]
     command: "bash src/sdks/swift/tools/check-sdk.sh regression"
-    deps:
-      - "liboliphaunt-native:check"
     inputs:
       - "/Package.swift"
       - "/src/shared/fixtures/**/*"
@@ -230,8 +215,6 @@ tasks:
       - "/tools/perf/**/*"
       - "/benchmarks/**/*"
       - "/release-please-config.json"
-      - "/.release-please-manifest.json"
-      - "/src/**/release.toml"
       - "/src/**/targets/**/*.toml"
     options:
       cache: false

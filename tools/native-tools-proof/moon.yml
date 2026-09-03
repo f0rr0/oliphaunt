@@ -15,11 +15,11 @@ owners:
   defaultOwner: "@oliphaunt/sdk-rust"
 
 tasks:
-  check:
+  unit:
     tags: ["quality", "unit", "ci-rust"]
     command: "cargo test -p oliphaunt-native-tools-proof --locked"
     env:
-      CARGO_TARGET_DIR: "target/moon/native-tools-proof/check"
+      CARGO_TARGET_DIR: "target/moon/native-tools-proof/unit"
     inputs:
       - "/Cargo.lock"
       - "/Cargo.toml"

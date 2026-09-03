@@ -36,22 +36,23 @@ Install Moon through proto from `.prototools` and run `moon` directly:
 moon query projects
 moon query tasks
 moon query affected --upstream none --downstream deep
-moon run :check
-moon run :test
+moon run :check :compile :format-check :lint :tools-compile
+moon run :test :unit :tools-unit
 moon run :coverage
 ```
 
 Moon task names carry stable intent:
 
-- `check`: static, typecheck, lint, codegen, or build-only validation.
-- `test`: product-native unit or contract tests.
-- `package`: package-shape checks and publish dry-runs.
+- `check`, `compile`, `format-check`, and `lint`: distinct static validation.
+- `test` and `unit`: product-native unit or contract tests.
+- `package`: assemble or inspect a carrier; it never publishes.
 - `smoke`: one runtime happy path.
 - `regression`: broader SQL, protocol, extension, lifecycle, or runtime
   regressions.
 - `bench`: benchmark plan/report validation.
 - `bench-run`: measured benchmark execution.
 - `coverage`: measured product-native line coverage.
+- `qualify`: an explicit local/release aggregate, never an ordinary CI leaf.
 
 Every task must declare explicit inputs. Tasks with deterministic output that
 other tasks consume must declare outputs. Use Moon tags for CI lanes and ad-hoc

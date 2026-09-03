@@ -44,59 +44,6 @@ function moonQueryTaskArgs(taskId = '', {affected = useAffectedQuery()} = {}) {
   return args;
 }
 
-function targetsForTask(taskId) {
-  const result = spawnSync(process.execPath, ['.github/scripts/select-affected-moon-targets.mjs', taskId], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'inherit'],
-    env: process.env,
-    maxBuffer: MAX_CAPTURE_BYTES,
-  });
-  if (result.error !== undefined || result.status !== 0) {
-    fail(`failed to select affected Moon ${taskId} targets`);
-  }
-  return result.stdout
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
-function taskMapForTask(taskId) {
-  const result = spawnSync(
-    moonCommand(),
-    moonQueryTaskArgs(taskId),
-    {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'inherit'],
-      maxBuffer: MAX_CAPTURE_BYTES,
-    },
-  );
-  if (result.error !== undefined || result.status !== 0) {
-    fail(`moon query tasks failed for ${taskId}`);
-  }
-  let query;
-  try {
-    query = JSON.parse(result.stdout);
-  } catch (error) {
-    fail(`moon query tasks returned invalid JSON for ${taskId}: ${error.message}`);
-  }
-  const tasksByProject = query.tasks;
-  if (!tasksByProject || typeof tasksByProject !== 'object' || Array.isArray(tasksByProject)) {
-    fail(`moon query tasks did not return a tasks object for ${taskId}`);
-  }
-  const tasks = new Map();
-  for (const projectTasks of Object.values(tasksByProject)) {
-    if (!projectTasks || typeof projectTasks !== 'object' || Array.isArray(projectTasks)) {
-      continue;
-    }
-    for (const task of Object.values(projectTasks)) {
-      if (task?.id === taskId && typeof task.target === 'string') {
-        tasks.set(task.target, task);
-      }
-    }
-  }
-  return tasks;
-}
-
 function selectedScopeTaskMap() {
   const result = spawnSync(
     moonCommand(),
@@ -270,15 +217,18 @@ if (taskIds.length === 0 || taskIds.some((taskId) => !/^[A-Za-z0-9_-]+$/.test(ta
 }
 
 const completeTasks = allTaskMap();
-let wroteCheckOutputs = false;
-let wrotePolicyOutputs = false;
+const selectedScopeTasks = selectedScopeTaskMap();
+const staticTaskIds = new Set(['check', 'compile', 'format-check', 'lint', 'tools-compile']);
+const unitTaskIds = new Set(['graph-unit', 'test', 'tools-unit', 'unit']);
+const checkTargets = new Map();
+const policyTargets = new Map();
+const testTargets = new Map();
 for (const taskId of taskIds) {
-  const targets = targetsForTask(taskId);
-  if (taskId === 'check') {
-    const taskMap = taskMapForTask(taskId);
-    const selectedScopeTasks = selectedScopeTaskMap();
-    const checkTargets = new Map();
-    const policyTargets = new Map();
+  const taskMap = new Map(
+    [...selectedScopeTasks].filter(([, task]) => task.id === taskId),
+  );
+  const targets = [...taskMap.keys()].sort();
+  if (staticTaskIds.has(taskId)) {
     for (const target of targets) {
       const task = taskMap.get(target);
       if (!task) {
@@ -289,29 +239,8 @@ for (const taskId of taskIds) {
         allTasks: completeTasks,
       });
     }
-    const checkShards = shardCheckTargets([...checkTargets.values()]);
-    output('check_count', String(checkTargets.size));
-    output('check_job_count', String(checkShards.length));
-    output('check_matrix', matrix(checkShards));
-    output('policy_count', String(policyTargets.size));
-    output('policy_matrix', matrix([...policyTargets.values()]));
-    output(
-      'policy_requires_android_sdk',
-      String([...policyTargets.values()].some((target) => target.requires_android_sdk)),
-    );
-    output(
-      'policy_requires_maintainer_tools',
-      String([...policyTargets.values()].some((target) => target.requires_maintainer_tools)),
-    );
-    output('check_jobs', [
-      ...(checkTargets.size > 0 ? ['check-targets'] : []),
-      ...(policyTargets.size > 0 ? ['policy-targets'] : []),
-    ]);
-    wroteCheckOutputs = true;
-    wrotePolicyOutputs = true;
     continue;
   }
-  const taskMap = taskMapForTask(taskId);
   const matrixTargets = targets.flatMap((target) => {
     const task = taskMap.get(target);
     if (!task) {
@@ -319,22 +248,32 @@ for (const taskId of taskIds) {
     }
     return runsInCI(task) ? [matrixTarget(task, 'deep', completeTasks)] : [];
   });
-  output(`${taskId}_count`, String(matrixTargets.length));
-  output(`${taskId}_matrix`, matrix(matrixTargets));
-  if (taskId === 'test') {
-    output('test_jobs', matrixTargets.length > 0 ? ['test-targets'] : []);
+  if (unitTaskIds.has(taskId)) {
+    for (const target of matrixTargets) testTargets.set(target.target, target);
+  } else {
+    output(`${taskId}_count`, String(matrixTargets.length));
+    output(`${taskId}_matrix`, matrix(matrixTargets));
   }
 }
 
-if (!wroteCheckOutputs) {
-  output('check_count', '0');
-  output('check_job_count', '0');
-  output('check_matrix', matrix([]));
-}
-if (!wrotePolicyOutputs) {
-  output('policy_count', '0');
-  output('policy_matrix', matrix([]));
-  output('policy_requires_android_sdk', 'false');
-  output('policy_requires_maintainer_tools', 'false');
-  output('check_jobs', []);
-}
+const checkShards = shardCheckTargets([...checkTargets.values()]);
+output('check_count', String(checkTargets.size));
+output('check_job_count', String(checkShards.length));
+output('check_matrix', matrix(checkShards));
+output('policy_count', String(policyTargets.size));
+output('policy_matrix', matrix([...policyTargets.values()]));
+output(
+  'policy_requires_android_sdk',
+  String([...policyTargets.values()].some((target) => target.requires_android_sdk)),
+);
+output(
+  'policy_requires_maintainer_tools',
+  String([...policyTargets.values()].some((target) => target.requires_maintainer_tools)),
+);
+output('check_jobs', [
+  ...(checkTargets.size > 0 ? ['check-targets'] : []),
+  ...(policyTargets.size > 0 ? ['policy-targets'] : []),
+]);
+output('test_count', String(testTargets.size));
+output('test_matrix', matrix([...testTargets.values()]));
+output('test_jobs', testTargets.size > 0 ? ['test-targets'] : []);

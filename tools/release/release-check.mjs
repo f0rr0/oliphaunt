@@ -10,6 +10,9 @@ import { run } from "./release-cli-utils.mjs";
 const TOOL = "release-check.mjs";
 const ROOT = path.resolve(import.meta.dir, "../..");
 export const DEDICATED_GATE_TESTS = new Set([
+  "tools/policy/assertions/workflow-security.test.mjs",
+  "tools/policy/ci-plan-node-products.test.mjs",
+  "tools/policy/ci-plan-wasix-postmaster-release.test.mjs",
   "tools/release/toolchain-bootstrap.test.mjs",
 ]);
 export const MUTATION_TEST_PROCESS_CONCURRENCY = 4;
@@ -123,10 +126,26 @@ function runMutationTest(test, environment) {
   });
 }
 
+export function releaseCheckPlan(argv) {
+  const mutationTestsOnly = argv.includes("--mutation-tests-only");
+  const scopeArguments = argv.filter((arg) => arg.startsWith("--mutation-scope="));
+  if (scopeArguments.length > 1) {
+    throw new Error(`${TOOL}: --mutation-scope may be provided only once`);
+  }
+  const mutationScope = scopeArguments[0]?.slice("--mutation-scope=".length) || "all";
+  if (!new Set(["all", "policy", "release"]).has(mutationScope)) {
+    throw new Error(`${TOOL}: --mutation-scope must be all, policy, or release`);
+  }
+  const passthrough = argv.filter(
+    (arg) => arg !== "--mutation-tests-only" && !arg.startsWith("--mutation-scope="),
+  );
+  return { mutationScope, mutationTestsOnly, passthrough };
+}
+
 function parseArgs(argv) {
   for (const arg of argv) {
     if (arg === "-h" || arg === "--help") {
-      console.log(`usage: tools/release/release-check.mjs [legacy passthrough args]
+      console.log(`usage: tools/release/release-check.mjs [--mutation-tests-only] [--mutation-scope=all|policy|release] [legacy passthrough args]
 
 Runs release metadata gates followed by release mutation unit tests. Current passthrough flags remain
 accepted for compatibility with release workflow and Moon callers.
@@ -134,15 +153,18 @@ accepted for compatibility with release workflow and Moon callers.
       process.exit(0);
     }
   }
+  return releaseCheckPlan(argv);
 }
 
 async function main(argv) {
-  parseArgs(argv);
-  run(TOOL, [process.execPath, "tools/release/release-metadata-check.mjs", ...argv]);
-  const tests = [
-    ...mutationTests("tools/policy"),
-    ...mutationTests("tools/release"),
-  ];
+  const plan = parseArgs(argv);
+  if (!plan.mutationTestsOnly) {
+    run(TOOL, [process.execPath, "tools/release/release-metadata-check.mjs", ...plan.passthrough]);
+  }
+  const roots = plan.mutationScope === "all"
+    ? ["tools/policy", "tools/release"]
+    : [`tools/${plan.mutationScope}`];
+  const tests = roots.flatMap((root) => mutationTests(root));
   // Bun 1.3 can retain stale epoll registrations while moving between test
   // files. Give every file a fresh process, and preserve bounded throughput by
   // draining a fixed-size wave before starting the next one.

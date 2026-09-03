@@ -18,7 +18,6 @@ test("synthetic GitHub fixtures discard hostile credentials, state, lineage, and
     GITHUB_SHA: "a".repeat(40),
     GITHUB_TOKEN: "live-github-token",
     KEEP_ME: "preserved",
-    OLIPHAUNT_GITHUB_CONTENT_WRITE_COLD_START_EPOCH: "1",
     OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_PATH: "/live/pacer.json",
     OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_TEST_MODE: "true",
     OLIPHAUNT_GITHUB_CORE_REQUEST_JOURNAL_PATH: "/live/journal.json",

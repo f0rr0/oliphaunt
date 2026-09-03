@@ -35,9 +35,24 @@ owners:
     "**/*": ["@oliphaunt/core"]
 
 tasks:
-  check:
+  lint:
     tags: ["quality", "static"]
     command: "node src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs"
+    inputs:
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/postgres/versions/18/**/*"
+      - "/src/sources/third-party/shared/**/*"
+      - "/src/sources/third-party/native/**/*"
+      - "/src/shared/extension-runtime-contract/**/*"
+      - "/tools/policy/check-native-boundaries.sh"
+      - "/release-please-config.json"
+      - "/src/**/targets/**/*.toml"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  unit:
+    tags: ["quality", "unit"]
+    command: "true"
     deps:
       - "liboliphaunt-native:external-source-fetch-test"
       - "liboliphaunt-native:error-attribution-test"
@@ -48,22 +63,9 @@ tasks:
       - "liboliphaunt-native:static-extension-registry-test"
       - "liboliphaunt-native:symbol-scope-test"
       - "liboliphaunt-native:tools-test"
-    inputs:
-      - "/src/runtimes/liboliphaunt/native/**/*"
-      - "/src/postgres/versions/18/**/*"
-      - "/src/sources/third-party/shared/**/*"
-      - "/src/sources/third-party/native/**/*"
-      - "/src/shared/extension-runtime-contract/**/*"
-      - "/tools/policy/check-native-boundaries.sh"
-      - "/release-please-config.json"
-      - "/.release-please-manifest.json"
-      - "/src/**/release.toml"
-      - "/src/**/targets/**/*.toml"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
+    inputs: []
   tools-test:
-    tags: ["quality", "unit", "ci-rust"]
+    tags: ["ci-rust"]
     command: "cargo test -p oliphaunt-tools --locked"
     env:
       CARGO_TARGET_DIR: "target/moon/liboliphaunt-native/tools-test"
@@ -76,7 +78,6 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   external-source-fetch-test:
-    tags: ["quality", "unit"]
     command: "bash src/runtimes/liboliphaunt/native/bin/fetch-pinned-git-checkout.test.sh"
     inputs:
       - "/src/runtimes/liboliphaunt/native/bin/fetch-pinned-git-checkout.sh"
@@ -85,7 +86,6 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   error-attribution-test:
-    tags: ["quality", "unit"]
     command: "bash src/runtimes/liboliphaunt/native/tools/test-error-attribution.sh"
     inputs:
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
@@ -98,7 +98,6 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   generation-lifecycle-test:
-    tags: ["quality", "unit"]
     command: "bash src/runtimes/liboliphaunt/native/tools/test-generation-lifecycle.sh"
     inputs:
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
@@ -112,7 +111,6 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   ios-extension-packager-test:
-    tags: ["quality", "unit"]
     command: "bash src/runtimes/liboliphaunt/native/bin/build-ios-extension-xcframeworks.test.sh"
     inputs:
       - "/src/runtimes/liboliphaunt/native/bin/build-ios-extension-xcframeworks.sh"
@@ -124,7 +122,6 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   postgis-reproducible-time-test:
-    tags: ["quality", "unit"]
     script: |
       bash src/runtimes/liboliphaunt/native/bin/postgis-reproducible-time.test.sh
     inputs:
@@ -149,7 +146,6 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   module-dir-resolver-test:
-    tags: ["quality", "unit"]
     command: "bash src/runtimes/liboliphaunt/native/tools/test-module-dir-resolver.sh"
     inputs:
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
@@ -162,7 +158,6 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   static-extension-registry-test:
-    tags: ["quality", "unit"]
     command: "bash src/runtimes/liboliphaunt/native/tools/test-static-extension-registry.sh"
     inputs:
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
@@ -175,7 +170,6 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   symbol-scope-test:
-    tags: ["quality", "unit"]
     command: "bash src/runtimes/liboliphaunt/native/tools/test-symbol-scope.sh"
     inputs:
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
@@ -269,7 +263,6 @@ tasks:
   release-runtime-desktop:
     tags: ["runtime", "release", "ci-liboliphaunt-native-desktop"]
     deps:
-      - "liboliphaunt-native:check"
       - "source-inputs:source-fetch-native-runtime"
     command: "node src/runtimes/liboliphaunt/native/tools/build-release-runtime.mjs"
     inputs:
@@ -311,7 +304,6 @@ tasks:
         "ci-liboliphaunt-native-ios",
       ]
     deps:
-      - "liboliphaunt-native:check"
       - "source-inputs:source-fetch-native-runtime"
     command: "bun src/runtimes/liboliphaunt/native/tools/build-ci-target.mjs \"$OLIPHAUNT_CI_TARGET\""
     inputs:
@@ -336,7 +328,6 @@ tasks:
     tags: ["runtime", "release", "artifact-package", "ci-liboliphaunt-native-release-assets"]
     command: "bash tools/release/package-liboliphaunt-aggregate-assets.sh"
     inputs:
-      - "/.release-please-manifest.json"
       - "/release-please-config.json"
       - "/src/extensions/generated/sdk/extensions.json"
       - "/src/runtimes/liboliphaunt/native/moon.yml"
@@ -363,7 +354,6 @@ tasks:
     tags: ["runtime", "artifact"]
     command: "bash src/runtimes/liboliphaunt/native/bin/build-ios-xcframework.sh"
     deps:
-      - "liboliphaunt-native:check"
       - "source-inputs:source-fetch-native-runtime"
     inputs:
       - "/src/runtimes/liboliphaunt/native/**/*"
@@ -375,29 +365,14 @@ tasks:
       cache: false
       runFromWorkspaceRoot: true
       runInCI: false
-  release-check:
+  qualify:
     tags: ["release", "package"]
-    command: "bash src/runtimes/liboliphaunt/native/tools/check-track.sh host-smoke"
-    env:
-      OLIPHAUNT_TRACK_BUILD: "never"
+    command: "true"
     deps:
-      - "liboliphaunt-native:release-runtime"
-    inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/src/runtimes/liboliphaunt/native/**/*"
-      - "/src/postgres/versions/18/**/*"
-      - "/src/sources/third-party/shared/**/*"
-      - "/src/sources/third-party/native/**/*"
-      - "/src/shared/extension-runtime-contract/**/*"
-      - "/src/shared/fixtures/storage/physical-archive-native-v1.properties"
-      - "/src/shared/fixtures/storage/physical-backup-wal-range-v1.properties"
-      - "/tools/xtask/**/*"
-      - "/rust-toolchain.toml"
-    options:
-      cache: false
-      runFromWorkspaceRoot: true
-      runInCI: false
+      - "liboliphaunt-native:lint"
+      - "liboliphaunt-native:unit"
+      - "liboliphaunt-native:host-smoke"
+    inputs: []
   bench:
     tags: ["bench", "plan"]
     command: "bash tools/perf/check-native-perf-harness.sh"
@@ -412,8 +387,6 @@ tasks:
       - "/tools/perf/**/*"
       - "/benchmarks/**/*"
       - "/release-please-config.json"
-      - "/.release-please-manifest.json"
-      - "/src/**/release.toml"
       - "/src/**/targets/**/*.toml"
       - "/rust-toolchain.toml"
     options:

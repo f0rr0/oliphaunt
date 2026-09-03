@@ -90,7 +90,7 @@ moon query projects
 moon query tasks
 moon query affected --upstream none --downstream deep
 moon project-graph
-moon action-graph oliphaunt-rust:test
+moon action-graph oliphaunt-rust:unit
 ```
 
 Do not add a second graph format to answer questions Moon already answers.
@@ -256,17 +256,18 @@ checks must prove unselected extension files do not enter app artifacts.
 Use Moon directly for repository tasks:
 
 ```sh
-moon run :check
-moon run :test
+moon run :check :compile :format-check :lint :tools-compile
+moon run :test :unit :tools-unit
 moon run :coverage
 moon run :package
 moon run :smoke --cache off
 moon query affected --upstream none --downstream deep
 ```
 
-`moon run :package` is the local package-shape lane. It must not build
-platform runtimes, exact-extension matrices, mobile apps, or publishable SDK
-artifact envelopes. Publishable artifacts are produced by explicit
+`moon run :package` is the workspace-wide carrier assembly/inspection lane and
+may require platform artifacts produced earlier. For a fast check, run the
+affected product's exact `package` task. Package tasks must not build platform
+runtimes or mobile apps; publishable artifacts are produced by explicit
 `package-artifacts`, runtime, extension, and mobile builder tasks selected by
 the `CI` workflow.
 

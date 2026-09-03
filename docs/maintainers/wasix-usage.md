@@ -188,8 +188,11 @@ already naturally portable.
 
 ```sh
 moon run oliphaunt-wasix-rust:package
+moon run oliphaunt-wasix-rust:compile oliphaunt-wasix-rust:unit
 moon run oliphaunt-wasix-ts:package
-moon run oliphaunt-wasix-ts:tools-check
+moon run oliphaunt-wasix-ts:compile oliphaunt-wasix-ts:unit
+moon run oliphaunt-wasix-ts:tools-compile oliphaunt-wasix-ts:tools-unit oliphaunt-wasix-ts:tools-package
 ```
 
-Product package and smoke tasks own the host/runtime combinations they publish.
+Package tasks inspect carriers. Explicit artifact and smoke tasks own the
+host/runtime combinations they build and execute.

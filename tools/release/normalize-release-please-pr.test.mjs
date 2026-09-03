@@ -137,7 +137,24 @@ test("rejects wrong PR number, base, and branch identities before checkout", (t)
   }
 });
 
-test("rejects a canonical-looking release branch that is not descended from exact main", (t) => {
+test("rebases a stale generated release branch onto exact current main", (t) => {
+  const f = fixture(t);
+  git(f.seed, ["switch", "main"]);
+  writeFileSync(path.join(f.seed, "main-only.txt"), "advanced main\n");
+  git(f.seed, ["add", "main-only.txt"]);
+  git(f.seed, ["commit", "-m", "fix: advance main"]);
+  git(f.seed, ["push", "origin", "main"]);
+  const currentMain = gitText(f.seed, ["rev-parse", "HEAD"]);
+
+  const result = invoke(f, "normalize", { mainSha: currentMain });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /normalized=true/u);
+  assert.equal(gitText(f.work, ["rev-parse", "HEAD^"]), currentMain);
+  assert.equal(readFileSync(path.join(f.work, "main-only.txt"), "utf8"), "advanced main\n");
+  assert.equal(readFileSync(path.join(f.work, "second-035.txt"), "utf8"), "second-035.txt\n");
+});
+
+test("rejects a canonical-looking release branch with unrelated history", (t) => {
   const f = fixture(t);
   git(f.seed, ["switch", "--orphan", "unrelated"]);
   writeFileSync(path.join(f.seed, "release-please-config.json"), `${JSON.stringify({
@@ -151,7 +168,7 @@ test("rejects a canonical-looking release branch that is not descended from exac
 
   const result = invoke(f, "normalize", { headSha: unrelated });
   assert.equal(result.status, 1, result.stderr);
-  assert.match(result.stderr, /not descended from exact main/u);
+  assert.match(result.stderr, /does not share canonical main history/u);
   assert.equal(gitText(f.work, ["branch", "--show-current"]), "main");
 });
 

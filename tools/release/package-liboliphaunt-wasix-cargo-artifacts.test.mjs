@@ -239,7 +239,7 @@ liboliphaunt-wasix-portable = { path = ${JSON.stringify(path.join(ROOT, "src/run
     assert!(liboliphaunt_wasix_portable::extension_aot_manifest_json(${JSON.stringify(hostTriple)}, "cube").is_some());
 }
 `);
-    run("cargo", ["run", "--offline", "--manifest-path", path.join(app, "Cargo.toml")], {
+    run("cargo", ["run", "--manifest-path", path.join(app, "Cargo.toml")], {
       env: {
         ...process.env,
         CARGO_TARGET_DIR: path.join(root, "cargo-target"),
@@ -523,7 +523,7 @@ liboliphaunt-wasix-portable = { path = ${JSON.stringify(path.join(sources, runti
     assert!(liboliphaunt_wasix_portable::extension_aot_manifest_json(${JSON.stringify(hostTriple)}, "hstore").is_none());
 }
 `);
-    run("cargo", ["run", "--offline", "--manifest-path", path.join(app, "Cargo.toml")], {
+    run("cargo", ["run", "--manifest-path", path.join(app, "Cargo.toml")], {
       env: { ...process.env, CARGO_TARGET_DIR: path.join(root, "cargo-target") },
     });
 

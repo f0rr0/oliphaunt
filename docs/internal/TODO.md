@@ -175,10 +175,10 @@ Acceptance:
 
 - `src/runtimes/liboliphaunt/native/tools/check-track.sh extensions` passes with first-party
   extension artifacts.
-- `extension-packages:assemble-release` receives native extension artifacts for every
+- `extension-packages:package` receives native extension artifacts for every
   published native runtime target and WASIX extension artifacts for every
   published WASIX target.
-- `extension-packages:assemble-mobile` receives only the Android/iOS native
+- `extension-packages:package-mobile` receives only the Android/iOS native
   extension artifacts needed by focused mobile installed-app builders and does
   not force WASIX or desktop extension builders into mobile E2E runs.
 - External extensions pass the opt-in external pgrx lane before they are

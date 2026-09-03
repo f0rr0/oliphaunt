@@ -24,14 +24,11 @@ owners:
     "Cargo.toml": ["@oliphaunt/sdk-rust"]
 
 tasks:
-  check:
+  compile:
     tags: ["quality", "static", "ci-rust"]
     command: "bash src/sdks/rust/tools/check-sdk.sh check-static"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/check"
-    deps:
-      - "liboliphaunt-native:check"
-      - "shared-rust-query-core:check"
     inputs:
       - "/Cargo.lock"
       - "/Cargo.toml"
@@ -47,14 +44,11 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  test:
+  unit:
     tags: ["quality", "unit", "ci-rust"]
     command: "bash src/sdks/rust/tools/check-sdk.sh test-unit"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/test"
-    deps:
-      - "liboliphaunt-native:check"
-      - "shared-rust-query-core:check"
     inputs:
       - "/Cargo.lock"
       - "/Cargo.toml"
@@ -103,15 +97,11 @@ tasks:
   package:
     tags: ["package"]
     command: "bash src/sdks/rust/tools/check-sdk.sh package-shape"
-    deps:
-      - "oliphaunt-rust:check"
-      - "oliphaunt-rust:test"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/package"
     inputs:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
-      - "/.release-please-manifest.json"
       - "/Cargo.lock"
       - "/Cargo.toml"
       - "/release-please-config.json"
@@ -230,15 +220,13 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  release-check:
+  qualify:
     tags: ["release", "package"]
     command: "bash src/sdks/rust/tools/check-sdk.sh release-check"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/release-check"
     deps:
-      - "liboliphaunt-native:check"
       - "liboliphaunt-native:release-runtime"
-      - "shared-rust-query-core:check"
     inputs:
       - "/Cargo.lock"
       - "/Cargo.toml"
@@ -268,8 +256,6 @@ tasks:
       - "/tools/perf/**/*"
       - "/benchmarks/**/*"
       - "/release-please-config.json"
-      - "/.release-please-manifest.json"
-      - "/src/**/release.toml"
       - "/src/**/targets/**/*.toml"
       - "/rust-toolchain.toml"
     options:
@@ -304,7 +290,7 @@ tasks:
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/extension-regression"
     deps:
-      - "extension-artifacts-native:release-check"
+      - "extension-artifacts-native:qualify"
     inputs:
       - "/Cargo.lock"
       - "/Cargo.toml"
@@ -363,8 +349,6 @@ tasks:
       - "/tools/perf/**/*"
       - "/benchmarks/**/*"
       - "/release-please-config.json"
-      - "/.release-please-manifest.json"
-      - "/src/**/release.toml"
       - "/src/**/targets/**/*.toml"
       - "/rust-toolchain.toml"
     options:

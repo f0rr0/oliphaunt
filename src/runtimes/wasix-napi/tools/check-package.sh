@@ -17,7 +17,7 @@ require_file() {
   fi
 }
 
-check_static() {
+require_product_files() {
   for file in \
     "$product/Cargo.toml" \
     "$product/build.rs" \
@@ -45,15 +45,23 @@ check_static() {
     require_file "$product/packages/$carrier/package.json"
     require_file "$product/packages/$carrier/README.md"
   done
-  tools/dev/bun.sh "$product/tools/check-package-metadata.mjs"
+}
+
+check_format() {
+  cargo fmt --manifest-path "$product/Cargo.toml" --check
+}
+
+check_compile() {
+  node --check "$product/tools/smoke-packaged-addon.mjs"
+  cargo check --manifest-path "$product/Cargo.toml" --locked --no-default-features
+}
+
+test_unit() {
   tools/dev/bun.sh test \
     "$product/tools/check-package-metadata.test.mjs" \
     "$product/tools/detect-linux-libc.test.mjs" \
     "$product/tools/package-contract.test.mjs" \
     "$product/tools/portable-command.test.mjs"
-  node --check "$product/tools/smoke-packaged-addon.mjs"
-  cargo fmt --manifest-path "$product/Cargo.toml" --check
-  cargo check --manifest-path "$product/Cargo.toml" --locked --no-default-features
   cargo test --manifest-path "$product/Cargo.toml" \
     --locked \
     --no-default-features \
@@ -61,16 +69,27 @@ check_static() {
     --lib
 }
 
+check_package_shape() {
+  require_product_files
+  tools/dev/bun.sh "$product/tools/check-package-metadata.mjs"
+  if ! grep -Fq '"src/runtimes/wasix-napi/packages/*"' pnpm-workspace.yaml; then
+    echo "pnpm workspace must include WASIX N-API optional platform packages" >&2
+    exit 1
+  fi
+}
+
 case "$mode" in
-  check-static|test-unit)
-    check_static
+  format-check)
+    check_format
+    ;;
+  check-static)
+    check_compile
+    ;;
+  test-unit)
+    test_unit
     ;;
   package-shape)
-    check_static
-    if ! grep -Fq '"src/runtimes/wasix-napi/packages/*"' pnpm-workspace.yaml; then
-      echo "pnpm workspace must include WASIX N-API optional platform packages" >&2
-      exit 1
-    fi
+    check_package_shape
     ;;
   *)
     echo "unknown WASIX N-API check mode: $mode" >&2

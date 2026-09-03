@@ -111,17 +111,20 @@ surface:
 ```sh
 tools/dev/bootstrap-tools.sh
 moon run dev-tools:doctor
-moon run policy-tools:fmt-check
-moon run :check
-moon run :test
+moon run policy-tools:format-check
+moon run :check :compile :format-check :lint :tools-compile --affected
+moon run :test :unit :tools-unit --affected
 ```
 
-For a release-sensitive change, also run the metadata and package contract
-gate:
+For a product metadata change, also run the metadata gate:
 
 ```sh
-moon run repo:release-check
+moon run release-tools:metadata
 ```
+
+Use `release-tools:unit`, `policy-tools:unit`, or `ci-workflows:check` when its
+corresponding machinery changes. Reserve `release-tools:check` for an exact
+release candidate.
 
 The protected GitHub `Release` workflow owns candidate dry-runs and all public
 mutation. Local development commands do not publish packages, create tags, or

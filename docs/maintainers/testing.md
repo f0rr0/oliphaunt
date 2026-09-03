@@ -118,7 +118,7 @@ Moon task names are intentionally narrow:
 
 - `check`: static checks, typecheck, codegen, lint, or build-only validation.
 - `test`: real unit or contract tests in the product-native runner.
-- `package`: package-shape checks and publish dry-runs.
+- `package`: carrier assembly or inspection; it never publishes.
 - `smoke`: one runtime happy path for that product.
 - `regression`: broader SQL, protocol, extension, lifecycle, or runtime
   regression suites.
@@ -146,7 +146,7 @@ React Native installed-app smoke is split by platform:
 ```sh
 moon run oliphaunt-react-native:smoke-android
 moon run oliphaunt-react-native:smoke-ios
-moon run oliphaunt-react-native:smoke-mobile
+moon run oliphaunt-react-native:smoke
 ```
 
 PR jobs run RN static, unit, Codegen, JSI, config-plugin, and package checks.

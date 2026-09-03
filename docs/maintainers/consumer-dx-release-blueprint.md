@@ -577,8 +577,9 @@ Enforcement ownership:
 
 - Release metadata and artifact-target checks validate package manifests,
   registry carriers, platform selectors, and exact-extension targets.
-- Product `package` and `release-check` tasks own packed-package, clean-project,
-  no-network, and runtime behavior. Candidate CI executes those tasks on the
+- Product `package` tasks own carrier assembly/inspection; `smoke` and `e2e`
+  own installed runtime behavior. `qualify` is the explicit aggregate when a
+  candidate needs both. Candidate CI executes the independent tasks on the
   runner and artifact combinations they require.
 - The Rust package-shape check builds a scratch Cargo application from the
   generated `oliphaunt` release source, calls `oliphaunt-build`, and verifies

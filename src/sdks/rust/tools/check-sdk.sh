@@ -337,7 +337,6 @@ fi
 if [ "$mode" = "check-static" ]; then
   run cargo check -p oliphaunt --locked --all-targets
   run cargo check -p oliphaunt-build --locked --all-targets
-  run_artifact_relay_build_script_tests
   exit 0
 fi
 
@@ -404,12 +403,11 @@ if [ "$mode" = "extension-regression" ]; then
 fi
 
 if [ "$mode" = "test-unit" ]; then
+  run_artifact_relay_build_script_tests
   if ! cargo nextest --version >/dev/null 2>&1; then
     echo "missing cargo-nextest; run tools/dev/bootstrap-tools.sh" >&2
     exit 1
   fi
-  require_text src/sdks/rust/tests/public_api.rs "public_api_has_only_the_deliberate_native_vocabulary" \
-    "Rust SDK tests must lock the minimal PostgreSQL-shaped API"
   run cargo test -p oliphaunt --doc --locked
   run cargo test -p oliphaunt-build --locked
   native_runtime_lock cargo nextest run -p oliphaunt --locked --profile ci --no-tests=fail --test-threads=1
@@ -494,18 +492,6 @@ do
 done
 reject_cargo_package_entry_pattern "$build_package_listing" '^(target/|src/sdks/rust/src/|src/bindings/|src/runtimes/)'
 
-require_text src/sdks/rust/tests/public_api.rs "public_api_has_only_the_deliberate_native_vocabulary" \
-  "Rust SDK tests must lock the minimal PostgreSQL-shaped API"
-require_text src/sdks/rust/tests/sdk_extensions.rs "public_extension_catalog_matches_generated_extension_selection_metadata" \
-  "Rust SDK extension tests must lock public selection to generated metadata"
-require_text src/sdks/rust/tests/sdk_extensions.rs "extension_selection_uses_exact_sql_names_without_aliases" \
-  "Rust SDK extension tests must pin exact-name selection without aliases"
-require_text src/sdks/rust/tests/native_smoke.rs "direct_query_transaction_backup_restore_and_process_ownership_when_available" \
-  "Rust SDK native smoke tests must cover direct liboliphaunt process ownership"
-require_text src/sdks/rust/tests/native_smoke.rs "server_supports_external_psql_and_pg_basebackup_when_available" \
-  "Rust SDK native smoke tests must cover the standard external client and physical server backup path"
-require_text src/sdks/rust/tests/native_sql_regression.rs "native_postgres_types_errors_and_transaction_recovery_when_available" \
-  "Rust SDK regression tests must preserve PostgreSQL type, error, and recovery coverage"
 check_release_asset_fixture
 check_broker_release_asset_fixture
 

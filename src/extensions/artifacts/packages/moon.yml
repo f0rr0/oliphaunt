@@ -19,13 +19,12 @@ project:
   owner: "oliphaunt"
 
 tasks:
-  assemble-mobile:
+  package-mobile:
     tags: ["release", "artifact-package", "ci-mobile-extension-packages"]
     command: "bash src/extensions/artifacts/packages/tools/package-mobile-release-assets.sh"
     inputs:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
-      - "/.release-please-manifest.json"
       - "/release-please-config.json"
       - "/src/extensions/**/*"
       - "!/src/extensions/generated/docs"
@@ -76,13 +75,12 @@ tasks:
       runFromWorkspaceRoot: true
       runInCI: true
 
-  assemble-release:
+  package:
     tags: ["release", "artifact-package", "ci-extension-packages"]
     command: "bash src/extensions/artifacts/packages/tools/package-release-assets.sh"
     inputs:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
-      - "/.release-please-manifest.json"
       - "/release-please-config.json"
       - "/src/extensions/**/*"
       - "!/src/extensions/generated/docs"

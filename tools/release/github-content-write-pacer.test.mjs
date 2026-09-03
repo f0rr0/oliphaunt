@@ -9,7 +9,6 @@ import test from "node:test";
 import { pathToFileURL } from "node:url";
 
 import {
-  GITHUB_CONTENT_WRITE_COLD_START_MS,
   GITHUB_CONTENT_WRITE_INTERVAL_MS,
   reserveGitHubContentWriteSync,
 } from "./github-content-write-pacer.mjs";
@@ -29,7 +28,6 @@ function fixture(t) {
     GITHUB_RUN_ATTEMPT: "1",
     GITHUB_RUN_ID: "123",
     GITHUB_SHA: SHA,
-    OLIPHAUNT_GITHUB_CONTENT_WRITE_COLD_START_EPOCH: "1000",
     OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_PATH: path.join(root, "pacer.json"),
     OLIPHAUNT_GITHUB_CORE_REQUEST_JOURNAL_PATH: path.join(root, "core-requests.json"),
   };
@@ -44,7 +42,7 @@ function fixture(t) {
   };
 }
 
-test("a new runner waits out the remaining rolling hour and persists before each request slot", (t) => {
+test("a new runner reserves immediately and persists each subsequent request slot", (t) => {
   const f = fixture(t);
   const first = reserveGitHubContentWriteSync({
     environment: f.environment,
@@ -52,7 +50,7 @@ test("a new runner waits out the remaining rolling hour and persists before each
     now: f.now,
     sleep: f.sleep,
   });
-  assert.equal(first.waitedMs, GITHUB_CONTENT_WRITE_COLD_START_MS - 10_000);
+  assert.equal(first.waitedMs, 0);
   assert.equal(first.sequence, 1);
   const second = reserveGitHubContentWriteSync({
     environment: f.environment,
@@ -66,8 +64,8 @@ test("a new runner waits out the remaining rolling hour and persists before each
   assert.equal(state.sequence, 2);
   assert.equal(state.lastLabel, "second");
   assert.deepEqual(state.reservations, [
-    { label: "first", reservedAtMs: 4_600_000, sequence: 1 },
-    { label: "second", reservedAtMs: 4_610_000, sequence: 2 },
+    { label: "first", reservedAtMs: 1_010_000, sequence: 1 },
+    { label: "second", reservedAtMs: 1_020_000, sequence: 2 },
   ]);
 });
 
@@ -108,7 +106,7 @@ for (let attempt = 0; attempt < 4; attempt += 1) {
   reserveGitHubContentWriteSync({
     environment: process.env,
     label,
-    timing: { coldStartMs: 0, intervalMs: 50, maxLockWaitMs: 2_000 },
+    timing: { intervalMs: 50, maxLockWaitMs: 2_000 },
   });
   reserveGitHubCoreRequestSync({ environment: process.env, label });
 }
@@ -120,7 +118,6 @@ for (let attempt = 0; attempt < 4; attempt += 1) {
     GITHUB_RUN_ATTEMPT: "1",
     GITHUB_RUN_ID: "456",
     GITHUB_SHA: SHA,
-    OLIPHAUNT_GITHUB_CONTENT_WRITE_COLD_START_EPOCH: "1",
     OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_PATH: pacer,
     OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_TEST_MODE: "true",
     OLIPHAUNT_GITHUB_CORE_REQUEST_JOURNAL_PATH: core,
@@ -128,11 +125,10 @@ for (let attempt = 0; attempt < 4; attempt += 1) {
   };
   const seedReservedAtMs = Date.now() + 500;
   writeFileSync(pacer, `${JSON.stringify({
-    schema: "oliphaunt-github-content-write-pacer-v3",
+    schema: "oliphaunt-github-content-write-pacer-v4",
     headSha: SHA,
     repository: "f0rr0/oliphaunt",
     runId: "456",
-    coldStartMs: 0,
     intervalMs: 50,
     sequence: 1,
     lastReservedAtMs: seedReservedAtMs,
@@ -202,14 +198,21 @@ test("GitHub Actions cannot weaken production pacer timing", (t) => {
     () => reserveGitHubContentWriteSync({
       environment: { ...f.environment, OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_TEST_MODE: "true" },
       label: "forbidden-override",
-      timing: { coldStartMs: 0, intervalMs: 1, maxLockWaitMs: 1 },
+      timing: { intervalMs: 1, maxLockWaitMs: 1 },
     }),
     /custom timing is test-only/u,
   );
 });
 
-test("cold-start pacing occurs outside a complete 60-second request timeout", (t) => {
+test("pacing occurs outside a complete 60-second request timeout", (t) => {
   const f = fixture(t);
+  reserveGitHubContentWriteSync({
+    environment: f.environment,
+    label: "first",
+    now: f.now,
+    sleep: f.sleep,
+  });
+  f.sleeps.length = 0;
   let observedTimeout = 0;
   const output = runGitHubMutationSync(
     ["api", "repos/f0rr0/oliphaunt/git/refs", "-X", "POST", "--input", "-"],
@@ -226,17 +229,23 @@ test("cold-start pacing occurs outside a complete 60-second request timeout", (t
   );
   assert.equal(output, "{}");
   assert.equal(observedTimeout, 60_000);
-  assert.equal(f.sleeps[0], GITHUB_CONTENT_WRITE_COLD_START_MS - 10_000);
+  assert.equal(f.sleeps[0], GITHUB_CONTENT_WRITE_INTERVAL_MS);
 });
 
 test("pacing that crosses the absolute deadline issues no transport attempt", (t) => {
   const f = fixture(t);
+  reserveGitHubContentWriteSync({
+    environment: f.environment,
+    label: "first",
+    now: f.now,
+    sleep: f.sleep,
+  });
   let spawnCalls = 0;
   assert.throws(
     () => runGitHubMutationSync(
       ["api", "repos/f0rr0/oliphaunt/git/refs", "-X", "POST", "--input", "-"],
       {
-        deadlineMs: 4_659_999,
+        deadlineMs: 1_079_999,
         environment: f.environment,
         input: `${JSON.stringify({ ref: "refs/tags/test-v1.0.0", sha: SHA })}\n`,
         now: f.now,

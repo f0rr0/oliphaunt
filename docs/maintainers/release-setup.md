@@ -14,7 +14,8 @@ Protect `main` before the first public release:
 
 - require pull requests and the repository's aggregate `Required` check;
 - allow squash merges only and require linear history;
-- enforce the rules for administrators, and block force-push and deletion;
+- allow administrator bypass, while blocking force-push and deletion for
+  protected-branch users;
 - require conversations to be resolved and dismiss stale approvals;
 - require at least one independent approval in team governance, but set the
   approval count to zero when the repository has only one collaborator so a
@@ -462,8 +463,8 @@ versioning and qualification. First-identity bootstrap alone restores its checkp
 - the read-only GitHub controls audit has no `FAIL` findings for the applicable
   solo/team governance and `idle`, `ready`, or `retired` bootstrap lifecycle;
 - main requires `Required`, squash-only merges, linear history, resolved
-  conversations, stale-approval dismissal, administrator enforcement, and no
-  force-push or deletion;
+  conversations, stale-approval dismissal, and no force-push or deletion for
+  protected-branch users; administrators may bypass branch protection;
 - `release-pr`, `release-dry-run`, and `release-publish` admit only the `main`
   branch; `release-bootstrap` additionally admits the
   `oliphaunt-release-transport/*` tag pattern required for exact verified

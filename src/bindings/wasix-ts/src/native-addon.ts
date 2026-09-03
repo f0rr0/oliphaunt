@@ -286,8 +286,7 @@ export function detectLinuxLibc(
   if (typeof versions.musl === 'string' && versions.musl.length > 0) return 'musl';
   if (denoTarget?.endsWith('-linux-musl')) return 'musl';
   if (denoTarget?.endsWith('-linux-gnu')) return 'glibc';
-  const diagnostic =
-    report ?? (process.report?.getReport?.() as LinuxDiagnosticReport | undefined);
+  const diagnostic = report ?? (process.report?.getReport?.() as LinuxDiagnosticReport | undefined);
   if (
     Array.isArray(diagnostic?.sharedObjects) &&
     diagnostic.sharedObjects.some(

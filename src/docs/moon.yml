@@ -105,8 +105,6 @@ tasks:
   build:
     tags: ["build", "package"]
     command: "pnpm --dir src/docs run build"
-    deps:
-      - "docs:check"
     inputs:
       - "/docs/**/*"
       - "/.release-please-manifest.json"
@@ -150,12 +148,10 @@ tasks:
       - "/target/docs/build/**/*"
       - "/target/docs/static/**/*"
       - "/src/docs/tools/smoke-built-site.mjs"
-    outputs:
-      - "/target/docs/build/**/*"
     options:
       cache: local
       runFromWorkspaceRoot: true
-  release-check:
+  qualify:
     tags: ["release", "package"]
     command: "pnpm --dir src/docs run release-check"
     deps:

@@ -68,8 +68,7 @@ Current active artifact:
 - latest accepted perf patch:
   `0036-oliphaunt-wasix-skip-activity-id-reporting.patch`
 - verification:
-  `assets release-build --profile release
-  --skip-build --skip-package-size` passes source-spine, source-isolation,
+  `assets release-build --profile release --skip-build` passes source-spine, source-isolation,
   canonical-layout, manifest-pin, and AOT packaging checks.
 - current release-host result files:
   `target/perf/pg18-wasix-core-release-o2-36patch-skip-activity-id-release-host-speed-server-sqlx.json`,

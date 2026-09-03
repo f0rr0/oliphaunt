@@ -72,54 +72,160 @@ tasks:
     command: "true"
     inputs:
       - "/src/runtimes/liboliphaunt/wasix-postmaster/lib/process-supervision.sh"
+      - "/tools/native-extension-proof/**/*"
       - "/tools/release/run-native-extension-lifecycle-proof.sh"
     options:
       cache: false
       runFromWorkspaceRoot: true
-  check:
+  metadata:
     tags: ["policy", "assertion", "quality", "static"]
-    command: "tools/dev/bun.sh tools/release/release-check.mjs"
+    command: "tools/dev/bun.sh tools/release/release-metadata-check.mjs"
     inputs:
-      # Release planning and mutation tests query Moon and CI selection code.
       - "/.moon/workspace.yml"
       - "/.moon/toolchains.yml"
-      - "/.github/**/*"
+      - "/.github/workflows/ci.yml"
+      - "/.github/workflows/release.yml"
+      - "/.release-please-manifest.json"
       - "/benchmarks/moon.yml"
       - "/Cargo.lock"
       - "/Cargo.toml"
       - "/coverage/baseline.toml"
       - "/examples/moon.yml"
+      - "/examples/**/Cargo.toml"
       - "/moon.yml"
-      - "/README.md"
-      - "/docs/**/*"
+      - "/Package.swift"
       - "/package.json"
       - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
       - "/release-please-config.json"
-      - "/.release-please-manifest.json"
-      - "/src/**/*"
-      - "!/src/**/node_modules"
-      - "!/src/**/node_modules/**"
-      - "!/src/**/.build"
-      - "!/src/**/.build/**"
-      - "!/src/**/.gradle/**"
-      - "!/src/**/.cxx/**"
-      - "!/src/**/.next/**"
-      - "!/src/**/.source/**"
-      - "!/src/**/build/**"
-      - "!/src/**/out/**"
-      - "!/src/**/Pods/**"
-      - "!/src/**/DerivedData/**"
+      - "/src/**/CHANGELOG.md"
+      - "/src/**/Cargo.toml"
+      - "/src/**/LIBOLIPHAUNT_VERSION"
+      - "/src/**/Package.swift"
+      - "/src/**/VERSION"
+      - "/src/**/gradle.properties"
+      - "/src/**/moon.yml"
+      - "/src/**/package.json"
+      - "/src/**/release.toml"
+      - "/src/**/targets/**/*.toml"
+      - "/src/extensions/catalog/**/*"
+      - "/src/extensions/contrib/*.toml"
+      - "/src/extensions/evidence/**/*.toml"
+      - "/src/extensions/external/**/recipe.toml"
+      - "/src/extensions/external/**/source.toml"
+      - "/src/extensions/external/**/tools/**/*"
+      - "/src/extensions/external/**/upstream-license-data.json"
+      - "/src/extensions/generated/**/*"
+      - "/src/extensions/model/**/*"
+      - "/src/extensions/schemas/**/*"
+      - "/src/extensions/tools/**/*"
+      - "/src/postgres/versions/*/source.toml"
+      - "/src/runtimes/liboliphaunt/licenses/**/*"
+      - "/src/runtimes/wasix-napi/tools/build-native.sh"
+      - "/src/shared/fixtures/extensions/**/*"
+      - "/src/sources/**/*.toml"
       - "/tools/**/moon.yml"
       - "/tools/graph/**/*"
-      - "/tools/policy/**/*"
       - "/tools/release/**/*"
+      - "!/tools/release/**/*.test.mjs"
+      - "!/tools/release/**/*.md"
       - "/tools/test/create-broker-release-fixture.mjs"
       - "/tools/test/create-liboliphaunt-release-fixture.mjs"
       - "/tools/test/release-fixture-utils.mjs"
     options:
-      # Release planning observes live Git and Moon state.
       cache: false
       runFromWorkspaceRoot: true
+      runInCI: true
+  unit:
+    tags: ["quality", "unit", "ci-rust"]
+    command: "tools/dev/bun.sh tools/release/release-check.mjs --mutation-tests-only --mutation-scope=release"
+    inputs:
+      - "/.github/scripts/bootstrap-registry-*"
+      - "/.github/scripts/dispatch-release-*"
+      - "/.github/scripts/download-bootstrap-*"
+      - "/.github/scripts/download-build-artifacts*"
+      - "/.github/scripts/download-wasix-runtime-*"
+      - "/.github/scripts/manage-release-*"
+      - "/.github/scripts/merge-checksum-*"
+      - "/.github/scripts/normalize-release-*"
+      - "/.github/scripts/prepare-release-*"
+      - "/.github/scripts/registry-bootstrap-*"
+      - "/.github/scripts/*release*.mjs"
+      - "/.github/scripts/require-workflow-success*"
+      - "/.github/scripts/setup-native-build-tools*"
+      - "/.github/scripts/verify-github-oidc-*"
+      - "/tools/dev/bun.sh"
+      - "/tools/dev/capture-command-output.mjs"
+      - "/tools/dev/moon-command.mjs"
+      - "/tools/release/**/*"
+      - "!/tools/release/**/*.md"
+      - "/tools/test/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  graph-unit:
+    tags: ["quality", "unit"]
+    command: "tools/dev/bun.sh test --isolate --max-concurrency=1 --timeout=30000 tools/release/native-extension-lifecycle-receipts.test.mjs tools/release/product-task-model.test.mjs tools/release/release-dependent-candidates.test.mjs"
+    inputs:
+      - "/.moon/tasks/**/*"
+      - "/.moon/toolchains.yml"
+      - "/.moon/workspace.yml"
+      - "/benchmarks/moon.yml"
+      - "/examples/moon.yml"
+      - "/moon.yml"
+      - "/.release-please-manifest.json"
+      - "/Cargo.toml"
+      - "/Package.swift"
+      - "/package.json"
+      - "/release-please-config.json"
+      - "/src/**/release.toml"
+      - "/src/**/targets/**/*.toml"
+      - "/src/**/moon.yml"
+      - "/tools/graph/**/*"
+      - "/tools/**/moon.yml"
+      - "/tools/dev/capture-command-output.mjs"
+      - "/tools/dev/moon-command.mjs"
+      - "/tools/policy/source-fetch-core.mjs"
+      - "/tools/release/artifact_target_matrix.mjs"
+      - "/tools/release/contrib-carriers.mjs"
+      - "/tools/release/extension-artifact-archive-policy.mjs"
+      - "/tools/release/extension-artifact-inventory.mjs"
+      - "/tools/release/extension-registry-packages.mjs"
+      - "/tools/release/extension-target-profiles.mjs"
+      - "/tools/release/extension-upstream-licenses.mjs"
+      - "/tools/release/native-extension-asset-index-contract.mjs"
+      - "/tools/release/native-extension-lifecycle-receipts.test.mjs"
+      - "/tools/release/optimize_native_runtime_payload.mjs"
+      - "/tools/release/platform-compatibility-policy.mjs"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/product-task-model.test.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-dependent-candidates.mjs"
+      - "/tools/release/release-dependent-candidates.test.mjs"
+      - "/tools/release/release-directory-safety.mjs"
+      - "/tools/release/release-graph.mjs"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/stage-native-extension-lifecycle.mjs"
+      - "/tools/release/verify-native-extension-lifecycle-receipts.mjs"
+      - "/tools/release/wasix-cargo-artifact-contract.mjs"
+      - "/tools/release/windows-vc-runtime-closure.mjs"
+      - "/tools/release/write-native-extension-lifecycle-receipt.mjs"
+      - "/tools/test/fd-backed-spawn-sync.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  check:
+    tags: ["policy", "aggregate", "quality"]
+    command: "true"
+    deps:
+      - "release-tools:metadata"
+      - "release-tools:unit"
+      - "policy-tools:unit"
+    inputs: []
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
   broker-dependency-license-audit:
     tags: ["policy", "assertion", "quality", "static", "ci-rust"]
     command: "tools/dev/bun.sh tools/release/broker-dependency-license-contract.mjs audit-contract"
@@ -137,12 +243,4 @@ tasks:
       - "/tools/release/broker-dependency-license-contract.mjs"
     options:
       cache: false
-      runFromWorkspaceRoot: true
-  release-check:
-    tags: ["release", "package"]
-    command: "true"
-    deps:
-      - "release-tools:check"
-    options:
-      cache: true
       runFromWorkspaceRoot: true

@@ -56,7 +56,7 @@ tasks:
     options:
       cache: false
       runFromWorkspaceRoot: true
-  fmt-check:
+  format-check:
     tags: ["format", "quality", "static", "ci-rust"]
     command: "bash tools/policy/format.sh --check"
     inputs:
@@ -99,36 +99,36 @@ tasks:
     tags: ["policy", "assertion", "quality", "static"]
     command: "bash tools/policy/check-policy-tools.sh"
     inputs:
-      - "/.github/**/*"
-      - "/.moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}"
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/README.md"
-      - "/coverage/**/*"
-      - "/docs/**/*"
-      - "/src/shared/fixtures/**/*"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/release-please-config.json"
-      - "/.release-please-manifest.json"
-      - "/src/**/*"
-      - "!/src/**/node_modules"
-      - "!/src/**/node_modules/**"
-      - "!/src/**/.build"
-      - "!/src/**/.build/**"
-      - "!/src/**/.gradle/**"
-      - "!/src/**/.cxx/**"
-      - "!/src/**/.next/**"
-      - "!/src/**/.source/**"
-      - "!/src/**/build/**"
-      - "!/src/**/out/**"
-      - "!/src/**/Pods/**"
-      - "!/src/**/DerivedData/**"
+      - "/.github/scripts/**/*.mjs"
+      - "/examples/tools/**/*.mjs"
+      - "/src/runtimes/liboliphaunt/native/tools/build-ci-target.mjs"
       - "/tools/graph/**/*"
       - "/tools/policy/**/*"
-      - "/tools/release/**/*"
-      - "/tools/perf/**/*"
-      - "/tools/test/**/*"
     options:
       cache: true
+      runFromWorkspaceRoot: true
+  unit:
+    tags: ["quality", "unit"]
+    command: "tools/dev/bun.sh tools/release/release-check.mjs --mutation-tests-only --mutation-scope=policy"
+    inputs:
+      - "/.gitattributes"
+      - "/.github/scripts/check-ci-gate.mjs"
+      - "/.github/scripts/check-release-intent.sh"
+      - "/.github/scripts/resolve-mobile-e2e.mjs"
+      - "/.github/scripts/resolve-mobile-e2e.test.mjs"
+      - "/.github/scripts/validate-release-workflow-inputs.sh"
+      - "/src/extensions/generated/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/pinned-wasixcc-assets.tsv"
+      - "/src/sdks/react-native/tools/**/*"
+      - "/src/sources/**/*"
+      - "/tools/dev/bun.sh"
+      - "/tools/dev/capture-command-output.mjs"
+      - "/tools/policy/**/*"
+      - "!/tools/policy/check-policy-tools.sh"
+      - "!/tools/policy/format.sh"
+      - "/tools/release/release-check.mjs"
+      - "/tools/release/release-cli-utils.mjs"
+      - "/tools/test/isolated-github-test-environment.mjs"
+    options:
+      cache: false
       runFromWorkspaceRoot: true

@@ -147,7 +147,7 @@ prepare_scratch_dir() {
 
 check_public_api_consumer() {
   consumer_aar="$1"
-  consumer_project="$project_dir/Tests/PublicApiConsumer"
+  consumer_project="$project_dir/tests/public-api-consumer"
   if ! find "$consumer_project/src/main" -type f -name '*.kt' -size +0c -print 2>/dev/null | grep -q .; then
     echo "Kotlin public API consumer has no nonempty Android source" >&2
     exit 1
