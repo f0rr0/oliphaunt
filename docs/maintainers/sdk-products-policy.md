@@ -72,16 +72,16 @@ runtime error. Silent drift between SDKs is a release blocker.
 Validation is package-native:
 
 ```sh
-moon run oliphaunt-rust:check
-moon run oliphaunt-wasix-rust:check
-moon run oliphaunt-wasix-ts:check
-moon run oliphaunt-wasix-ts:tools-check
-moon run oliphaunt-swift:check
-moon run oliphaunt-kotlin:check
-moon run oliphaunt-react-native:check
-moon run oliphaunt-js:check
+moon run oliphaunt-rust:compile
+moon run oliphaunt-wasix-rust:compile
+moon run oliphaunt-wasix-ts:compile
+moon run oliphaunt-wasix-ts:tools-compile
+moon run oliphaunt-swift:compile
+moon run oliphaunt-kotlin:compile
+moon run oliphaunt-react-native:compile
+moon run oliphaunt-js:compile
 moon run sdk-contracts:check
-moon run extension-model:check
+moon run extension-model:lint
 ```
 
 The Kotlin and React Native Android validation scripts opt into Gradle

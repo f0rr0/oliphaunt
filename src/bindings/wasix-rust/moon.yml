@@ -25,12 +25,9 @@ owners:
     "tools/**": ["@oliphaunt/wasix-rust"]
 
 tasks:
-  check:
+  compile:
     tags: ["quality", "static", "ci-rust"]
     command: "cargo check -p oliphaunt-wasix --locked"
-    deps:
-      - "liboliphaunt-wasix:check"
-      - "shared-rust-query-core:check"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/check"
     inputs:
@@ -44,12 +41,9 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
 
-  test:
+  unit:
     tags: ["quality", "unit", "ci-rust"]
     command: "bash src/bindings/wasix-rust/tools/check-unit.sh"
-    deps:
-      - "liboliphaunt-wasix:check"
-      - "shared-rust-query-core:check"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/test"
     inputs:
@@ -68,9 +62,6 @@ tasks:
   package:
     tags: ["package"]
     command: "bash src/bindings/wasix-rust/tools/check-package.sh"
-    deps:
-      - "oliphaunt-wasix-rust:check"
-      - "oliphaunt-wasix-rust:test"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/package"
     inputs:
@@ -155,12 +146,11 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
 
-  release-check:
+  qualify:
     tags: ["release", "package"]
     command: "bash src/bindings/wasix-rust/tools/check-release.sh"
     deps:
       - "liboliphaunt-wasix:runtime-aot"
-      - "shared-rust-query-core:check"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/release-check"
     inputs:
@@ -197,8 +187,6 @@ tasks:
   coverage:
     tags: ["coverage", "quality"]
     command: "tools/coverage/run-product oliphaunt-wasix-rust"
-    deps:
-      - "liboliphaunt-wasix:check"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/coverage"
     inputs:

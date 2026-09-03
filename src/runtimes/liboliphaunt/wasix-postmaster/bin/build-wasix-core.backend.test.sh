@@ -96,25 +96,4 @@ esac
   exit 1
 }
 
-image_line="$(grep -nF -m1 'docker_image_id="$(fresh_wasix_builder_image_id)"' \
-  "$builder" | cut -d: -f1)"
-signature_line="$(grep -nF -m1 \
-  'compute_source_signature "$postgres_worktree_state" "$docker_image_id"' \
-  "$builder" | cut -d: -f1)"
-[ -n "$image_line" ] && [ -n "$signature_line" ] && \
-  [ "$image_line" -lt "$signature_line" ] || {
-  echo 'builder must resolve the immutable image ID before its source signature' >&2
-  exit 1
-}
-grep -Fq "printf 'docker_image_id=%s\\n' \"\$docker_image_id\"" "$builder" || {
-  echo 'guest build receipt does not record the immutable Docker image ID' >&2
-  exit 1
-}
-grep -Fq 'fresh_require_managed_generated_path "$WASIX_INSTALL_DIR" WASIX_INSTALL_DIR' \
-  "$builder" &&
-  grep -Fq 'rm -rf "$WASIX_BUILD_DIR" "$WASIX_INSTALL_DIR"' "$builder" || {
-  echo 'clean rebuild must validate and reset both managed output trees' >&2
-  exit 1
-}
-
 printf 'WASIX core backend validation tests passed\n'

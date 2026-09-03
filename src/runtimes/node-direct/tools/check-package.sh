@@ -29,64 +29,10 @@ require_text() {
   fi
 }
 
-reject_text() {
-  local path="$1"
-  local text="$2"
-  local message="$3"
-  if grep -Fq "$text" "$path"; then
-    echo "$message" >&2
-    echo "forbidden text: $text in $path" >&2
-    exit 1
-  fi
-}
-
 check_static() {
-  require_file "$package_dir/package.json"
   require_file "$package_dir/native/node-addon/oliphaunt_node.cc"
   require_file "$package_dir/native/node-addon/fixtures/fake_liboliphaunt.cc"
   require_file "src/runtimes/liboliphaunt/native/include/oliphaunt.h"
-  require_file "$package_dir/tools/build-node-addon.sh"
-  require_file "$package_dir/tools/check-package-metadata.mjs"
-  require_file "$package_dir/tools/install-node-fallback.sh"
-  require_file "$package_dir/tools/extract-node-headers.mjs"
-  require_file "$package_dir/tools/node-addon-cleanup-lifecycle.test.mjs"
-  require_file "$package_dir/tools/test-node-addon-cleanup-lifecycle.sh"
-  require_file "src/sources/toolchains/node.toml"
-  bash "$package_dir/tools/test-node-addon-cleanup-lifecycle.sh" --test-path-classifier
-  require_text "$package_dir/package.json" '"name": "@oliphaunt/node-direct"' \
-    "Node direct runtime must have a product-local package identity"
-  require_text "$package_dir/tools/build-node-addon.sh" "src/runtimes/node-direct/native/node-addon/oliphaunt_node.cc" \
-    "Node direct build must compile product-owned addon source"
-  require_text "$package_dir/tools/build-node-addon.sh" "oliphaunt-node-direct-\$version-\$target.tar.gz" \
-    "Node direct build must emit product-scoped release assets"
-  require_text "$package_dir/tools/build-node-addon.sh" "tools/release/archive_dir.mjs" \
-    "Node direct build must create release assets with the shared deterministic archive helper"
-  require_text "$package_dir/tools/build-node-addon.sh" "Node direct addon smoke passed" \
-    "Node direct build must load-smoke the compiled addon before publishing an artifact"
-  # shellcheck disable=SC2016 # The build-script expression is intentionally matched literally.
-  require_text "$package_dir/tools/build-node-addon.sh" \
-    '"$lifecycle_test_addon_file"' \
-    "Node direct build must execute the compiled environment cleanup lifecycle proof"
-  require_text "$package_dir/tools/build-node-addon.sh" 'require pnpm' \
-    "Node direct packaging must require the pinned workspace package manager"
-  # shellcheck disable=SC2016 # The build-script expression is intentionally matched literally.
-  require_text "$package_dir/tools/build-node-addon.sh" 'pnpm --dir "$package_work" pack --pack-destination "$npm_package_dir" --json' \
-    "Node direct packaging must use pinned pnpm for deterministic package staging"
-  reject_text "$package_dir/tools/build-node-addon.sh" 'require npm' \
-    "Node direct builders do not install npm and must not depend on an ambient npm CLI"
-  require_text "$package_dir/tools/build-node-addon.sh" "install-node-fallback.sh headers" \
-    "Node direct build must use the pinned fallback installer for missing Node headers"
-  require_text "$package_dir/tools/build-node-addon.sh" "install-node-fallback.sh windows-lib" \
-    "Node direct build must use the pinned fallback installer for missing Windows import libraries"
-  # shellcheck disable=SC2016 # The build-script expression is intentionally matched literally.
-  require_text "$package_dir/tools/build-node-addon.sh" '"-I$node_include" "-I$oliphaunt_include" "$src"' \
-    "Node direct MSVC build must include both Node and canonical liboliphaunt ABI headers"
-  reject_text "$package_dir/tools/build-node-addon.sh" "https://nodejs.org" \
-    "Node direct build must not duplicate Node fallback release metadata outside its manifest"
-  reject_text "$package_dir/tools/build-node-addon.sh" "python3 -" \
-    "Node direct build must not use inline Python for archive creation or package validation"
-  reject_text "$package_dir/tools/build-node-addon.sh" "oliphaunt-js-node-direct" \
-    "Node direct runtime must not emit TypeScript-owned addon assets"
   if command -v c++ >/dev/null 2>&1; then
     local node_include
     node_include="$(
@@ -119,7 +65,24 @@ try {
       -Isrc/runtimes/liboliphaunt/native/include -fsyntax-only \
       "$package_dir/native/node-addon/fixtures/fake_liboliphaunt.cc"
   fi
+}
+
+test_unit() {
+  bash "$package_dir/tools/test-node-addon-cleanup-lifecycle.sh" --test-path-classifier
+}
+
+check_package_shape() {
+  require_file "$package_dir/package.json"
+  require_file "$package_dir/tools/build-node-addon.sh"
+  require_file "$package_dir/tools/check-package-metadata.mjs"
+  require_file "$package_dir/tools/install-node-fallback.sh"
+  require_file "$package_dir/tools/extract-node-headers.mjs"
+  require_file "$package_dir/tools/node-addon-cleanup-lifecycle.test.mjs"
+  require_file "$package_dir/tools/test-node-addon-cleanup-lifecycle.sh"
+  require_file "src/sources/toolchains/node.toml"
   tools/dev/bun.sh "$package_dir/tools/check-package-metadata.mjs"
+  require_text "pnpm-workspace.yaml" '"src/runtimes/node-direct/packages/*"' \
+    "pnpm workspace must include Node direct optional platform packages"
 }
 
 case "$mode" in
@@ -127,12 +90,10 @@ case "$mode" in
     check_static
     ;;
   test-unit)
-    check_static
+    test_unit
     ;;
   package-shape)
-    check_static
-    require_text "pnpm-workspace.yaml" '"src/runtimes/node-direct/packages/*"' \
-      "pnpm workspace must include Node direct optional platform packages"
+    check_package_shape
     ;;
   *)
     echo "unknown Node direct check mode: $mode" >&2

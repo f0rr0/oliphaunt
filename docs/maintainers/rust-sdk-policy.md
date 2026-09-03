@@ -156,7 +156,7 @@ cargo run -p oliphaunt-native-packaging --bin oliphaunt-extension-index -- ...
 Validate the application crate with:
 
 ```sh
-moon run oliphaunt-rust:check
-moon run oliphaunt-rust:test
+moon run oliphaunt-rust:compile
+moon run oliphaunt-rust:unit
 moon run oliphaunt-rust:package
 ```

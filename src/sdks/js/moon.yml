@@ -27,13 +27,9 @@ owners:
     "tools/**": ["@oliphaunt/sdk-js"]
 
 tasks:
-  check:
+  compile:
     tags: ["quality", "static"]
     command: "bash src/sdks/js/tools/check-sdk.sh check-static"
-    deps:
-      - "liboliphaunt-native:check"
-      - "oliphaunt-node-direct:check"
-      - "shared-js-core:check"
     inputs:
       - "/src/shared/fixtures/**/*"
       - "/src/shared/cluster-seed-contract/fixtures/**/*"
@@ -49,13 +45,9 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  test:
+  unit:
     tags: ["quality", "unit"]
     command: "bash src/sdks/js/tools/check-sdk.sh test-unit"
-    deps:
-      - "liboliphaunt-native:check"
-      - "oliphaunt-node-direct:check"
-      - "shared-js-core:check"
     inputs:
       - "/src/shared/fixtures/**/*"
       - "/src/shared/cluster-seed-contract/fixtures/**/*"
@@ -78,8 +70,7 @@ tasks:
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-js/smoke"
     deps:
-      - "liboliphaunt-native:smoke"
-      - "oliphaunt-broker:check"
+      - "liboliphaunt-native:release-runtime"
       - "oliphaunt-node-direct:release-assets"
     options:
       cache: local
@@ -100,11 +91,6 @@ tasks:
   package:
     tags: ["package"]
     command: "bash src/sdks/js/tools/check-sdk.sh package-shape"
-    deps:
-      - "oliphaunt-js:check"
-      - "oliphaunt-js:test"
-      - "liboliphaunt-native:check"
-      - "oliphaunt-node-direct:package"
     inputs:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
@@ -180,13 +166,9 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  release-check:
+  qualify:
     tags: ["release", "package"]
     command: "bash src/sdks/js/tools/check-sdk.sh release-check"
-    deps:
-      - "liboliphaunt-native:release-check"
-      - "oliphaunt-rust:release-check"
-      - "oliphaunt-node-direct:release-assets"
     inputs:
       - "/src/shared/fixtures/**/*"
       - "/src/shared/js-core/**/*"
@@ -215,8 +197,6 @@ tasks:
       - "/tools/perf/**/*"
       - "/benchmarks/**/*"
       - "/release-please-config.json"
-      - "/.release-please-manifest.json"
-      - "/src/**/release.toml"
       - "/src/**/targets/**/*.toml"
     options:
       cache: true
@@ -225,9 +205,6 @@ tasks:
   regression:
     tags: ["regression", "runtime"]
     command: "bash src/sdks/js/tools/check-sdk.sh regression"
-    deps:
-      - "liboliphaunt-native:check"
-      - "oliphaunt-rust:check"
     inputs:
       - "/src/shared/fixtures/**/*"
       - "/src/shared/js-core/**/*"
@@ -272,8 +249,6 @@ tasks:
       - "/tools/perf/**/*"
       - "/benchmarks/**/*"
       - "/release-please-config.json"
-      - "/.release-please-manifest.json"
-      - "/src/**/release.toml"
       - "/src/**/targets/**/*.toml"
     options:
       cache: false

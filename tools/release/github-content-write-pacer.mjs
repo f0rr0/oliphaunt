@@ -17,13 +17,12 @@ import { fileURLToPath } from "node:url";
 import { githubReleaseLineageIdentity } from "./github-release-lineage.mjs";
 
 export const GITHUB_CONTENT_WRITE_INTERVAL_MS = 10_000;
-export const GITHUB_CONTENT_WRITE_COLD_START_MS = 60 * 60_000;
 export const GITHUB_CONTENT_WRITES_PER_ROLLING_HOUR =
   Math.floor((60 * 60_000) / GITHUB_CONTENT_WRITE_INTERVAL_MS) + 1;
 export const GITHUB_CONTENT_WRITES_PER_ROLLING_MINUTE =
   Math.floor(60_000 / GITHUB_CONTENT_WRITE_INTERVAL_MS) + 1;
 
-const SCHEMA = "oliphaunt-github-content-write-pacer-v3";
+const SCHEMA = "oliphaunt-github-content-write-pacer-v4";
 const POSITIVE_INTEGER = /^[1-9][0-9]*$/u;
 const MAX_LOCK_WAIT_MS = 60_000;
 const TEST_TIMING_ENV = "OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_TEST_MODE";
@@ -78,7 +77,6 @@ function parseState(file, expectedIdentity, timing) {
     || Array.isArray(state)
     || typeof state !== "object"
     || state.schema !== SCHEMA
-    || state.coldStartMs !== timing.coldStartMs
     || state.intervalMs !== timing.intervalMs
     || !Number.isSafeInteger(state.sequence)
     || state.sequence < 1
@@ -167,28 +165,9 @@ function hardDeadlineMs(environment) {
   return result;
 }
 
-function coldWindowStartedAtMs(environment, observedAt) {
-  const value = environment.OLIPHAUNT_GITHUB_CONTENT_WRITE_COLD_START_EPOCH;
-  if (value === undefined || value === "") {
-    if (environment.GITHUB_ACTIONS === "true") {
-      fail("OLIPHAUNT_GITHUB_CONTENT_WRITE_COLD_START_EPOCH is required in GitHub Actions");
-    }
-    return observedAt;
-  }
-  if (!POSITIVE_INTEGER.test(value)) {
-    fail("OLIPHAUNT_GITHUB_CONTENT_WRITE_COLD_START_EPOCH must be a positive Unix timestamp");
-  }
-  const result = Number(value) * 1_000;
-  if (!Number.isSafeInteger(result) || result > observedAt) {
-    fail("content-write cold-start epoch is outside the valid elapsed job window");
-  }
-  return result;
-}
-
 function timingOptions(environment, timing) {
   if (timing === undefined) {
     return {
-      coldStartMs: GITHUB_CONTENT_WRITE_COLD_START_MS,
       intervalMs: GITHUB_CONTENT_WRITE_INTERVAL_MS,
       maxLockWaitMs: MAX_LOCK_WAIT_MS,
     };
@@ -200,13 +179,9 @@ function timingOptions(environment, timing) {
     fail("custom timing must be an object");
   }
   const result = {
-    coldStartMs: timing.coldStartMs,
     intervalMs: timing.intervalMs,
     maxLockWaitMs: timing.maxLockWaitMs,
   };
-  if (!Number.isSafeInteger(result.coldStartMs) || result.coldStartMs < 0) {
-    fail("custom cold-start timing must be a non-negative safe integer");
-  }
   for (const [label, value] of Object.entries({
     "interval timing": result.intervalMs,
     "lock-wait timing": result.maxLockWaitMs,
@@ -244,13 +219,11 @@ export function reserveGitHubContentWriteSync({
     const previous = parseState(file, expectedIdentity, resolvedTiming);
     const observedAt = now();
     if (!Number.isSafeInteger(observedAt) || observedAt < 0) fail("clock returned an invalid timestamp");
-    // A fresh runner cannot prove whether an interrupted predecessor consumed
-    // secondary-rate-limit write slots without leaving remote state. Charge a
-    // complete rolling-hour cooldown before its first write. Allocate and
-    // persist the next globally ordered slot while holding the lock briefly,
-    // then wait outside it. A crashed waiter burns its slot conservatively.
+    // Allocate and persist the next globally ordered slot while holding the
+    // lock briefly, then wait outside it. A crashed waiter burns its slot
+    // conservatively.
     const earliest = previous === null
-      ? coldWindowStartedAtMs(environment, observedAt) + resolvedTiming.coldStartMs
+      ? observedAt
       : previous.lastReservedAtMs + resolvedTiming.intervalMs;
     reservedAt = Math.max(observedAt, earliest);
     waitMs = reservedAt - observedAt;
@@ -263,7 +236,6 @@ export function reserveGitHubContentWriteSync({
     const state = {
       schema: SCHEMA,
       ...expectedIdentity,
-      coldStartMs: resolvedTiming.coldStartMs,
       intervalMs: resolvedTiming.intervalMs,
       sequence,
       lastReservedAtMs: reservedAt,

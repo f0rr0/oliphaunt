@@ -100,6 +100,7 @@ jobs:
       policy_matrix: ${{ steps.target-matrices.outputs.policy_matrix }}
       policy_requires_android_sdk: ${{ steps.target-matrices.outputs.policy_requires_android_sdk }}
       policy_requires_maintainer_tools: ${{ steps.target-matrices.outputs.policy_requires_maintainer_tools }}
+      metadata_count: ${{ steps.target-matrices.outputs.metadata_count }}
       jobs: ${{ steps.plan.outputs.jobs }}
       e2e_jobs: ${{ steps.plan.outputs.e2e_jobs }}
       job_targets: ${{ steps.plan.outputs.job_targets }}
@@ -163,7 +164,7 @@ jobs:
         env:
           MOON_BASE: ${{ github.event.pull_request.base.sha }}
           MOON_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: node .github/scripts/write-affected-moon-target-matrices.mjs check test
+        run: node .github/scripts/write-affected-moon-target-matrices.mjs check compile format-check lint tools-compile metadata graph-unit test tools-unit unit
 
       - name: Upload build plan
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -293,6 +294,7 @@ jobs:
     name: Checks / release metadata (macOS)
     needs:
       - affected
+    if: ${{ needs.affected.outputs.metadata_count != '0' }}
     runs-on: macos-26
     timeout-minutes: 30
     steps:
@@ -325,7 +327,7 @@ jobs:
 
       - name: Validate release metadata on the publication host
         id: release_metadata_portability
-        run: tools/dev/bun.sh tools/release/release-check.mjs
+        run: tools/dev/bun.sh tools/release/release-metadata-check.mjs
 
   checks:
     name: Checks
@@ -359,6 +361,7 @@ jobs:
         run: bun .github/scripts/check-ci-gate.mjs selected
 
       - name: Check publication-host release metadata
+        if: ${{ needs.affected.outputs.metadata_count != '0' }}
         id: release_metadata_portability_gate
         env:
           NEEDS_JSON: ${{ toJson(needs) }}
@@ -666,7 +669,7 @@ jobs:
       - name: Assemble exact-extension product packages
         env:
           OLIPHAUNT_EXTENSION_PACKAGE_PRODUCTS: ${{ needs.affected.outputs.extension_package_products_csv }}
-        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream none extension-packages:assemble-release
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream none extension-packages:package
 
       - name: Upload exact-extension package artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -2559,7 +2562,7 @@ jobs:
             target/qualification/wasix-release-regression/runtime-smoke.log
           if-no-files-found: error
           overwrite: true
-          retention-days: 30
+          retention-days: 90
 
       - name: Upload WASIX regression diagnostics
         if: ${{ always() && steps.regression.outcome != 'success' }}
@@ -3349,4 +3352,4 @@ jobs:
           path: target/qualification/oliphaunt-release-candidate.json
           if-no-files-found: error
           overwrite: true
-          retention-days: 14
+          retention-days: 90

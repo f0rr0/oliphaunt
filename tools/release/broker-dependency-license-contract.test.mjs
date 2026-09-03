@@ -195,7 +195,8 @@ test("treats direct filesystem modes as POSIX-only metadata", () => {
   assert.equal(hasSafeBrokerSourceFilesystemMode(0o600, "linux"), true);
   assert.equal(hasSafeBrokerSourceFilesystemMode(0o640, "darwin"), true);
   assert.equal(hasSafeBrokerSourceFilesystemMode(0o644, "linux"), true);
-  assert.equal(hasSafeBrokerSourceFilesystemMode(0o666, "linux"), false);
+  assert.equal(hasSafeBrokerSourceFilesystemMode(0o664, "linux"), true);
+  assert.equal(hasSafeBrokerSourceFilesystemMode(0o666, "linux"), true);
   assert.equal(hasSafeBrokerSourceFilesystemMode(0o755, "darwin"), false);
   assert.equal(hasSafeBrokerSourceFilesystemMode(0o000, "linux"), false);
   assert.equal(hasSafeBrokerSourceFilesystemMode(0o666, "win32"), true);

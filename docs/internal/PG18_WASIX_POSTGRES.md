@@ -500,13 +500,11 @@ major version before they are accepted, including overlay PGDATA manifests.  A
 PG17 root must fail with an explicit migration/separate-root error under the
 PG18 lane instead of being paired with PG18 binaries.
 
-Crate package-size enforcement is deliberately released-lane only for now.  The
-PG18 lane writes experimental generated assets under ignored target paths; it is
-not staged into the publishable `liboliphaunt-wasix-portable/payload` and AOT crate
-`artifacts` directories.  Therefore `assets release-build --source fingerprint
-stable` must use `--skip-package-size` until PG18 gets a dedicated
-release-staging path; otherwise xtask fails instead of silently measuring the
-released PG17 crate payload.
+Crate package-size enforcement belongs to the registry-carrier packaging lanes.
+`assets release-build` builds WASIX runtime assets and no longer packages every
+Cargo workspace crate as an unrelated final step. Run `moon run repo:package`
+for the workspace crate gate; each release carrier also enforces the registry
+limit while creating the exact package it publishes.
 
 Perf reports now carry WASIX runtime asset provenance when the measured engine
 is the bundled WASIX runtime.  The JSON field is `wasixRuntimeAssets` and
@@ -516,17 +514,13 @@ SQLite, native liboliphaunt, and Node Oliphaunt controls omit the field.  This
 keeps future PG18-versus-released-lane benchmark reports self-identifying even
 when both lanes can be built from the same xtask binary.
 
-`assets check` and `assets verify-committed` now include a source-fingerprint isolation
-guard.  It proves the released and PG18 build manifests, portable asset
-directories, and AOT directories are distinct; it also checks that public
-download, local install, and release bundle paths still target the released
-PG17.5 lane, and that package-size enforcement does not silently fall back to
-the released crate lane for a PG18 release-build.  The same guard checks that
-PG18 fetch/release-build preflight skips the released backend source pin and
-uses the tarball source-prep script instead.  PG18-owned source-prep, configure,
-and backend Docker scripts are also source-guarded against released checkout
-paths, the released `postgres-oliphaunt` source name, the generated PG17 patched
-source root, and the old `__OLIPHAUNT__`/`OLIPHAUNT_WASIX_DL` export macro style.
+`assets check` and `assets verify-committed` include a source-fingerprint
+isolation guard. It validates lane selection and output paths, rejects legacy
+PG17/Oliphaunt inputs, checks the patch manifest/series and prepared-source
+fingerprints, syntax-checks build scripts, and compiles the C ABI harnesses.
+It deliberately does not grep for exact positive implementation spellings;
+patch application, compilation, artifact/export validation, smoke, and
+regression tasks own those proofs.
 Generated asset manifest
 validation also checks the manifest `source fingerprint` field when a lane is selected,
 so PG18 packaged assets cannot pass as released-lane assets by version inference
@@ -566,9 +560,6 @@ Verified locally:
   and a prepared tree containing `.orig` or `.rej` artifacts is rejected.  The
   prepared source and work-root fingerprint markers must also match the current
   tarball metadata and patch stack hash.
-- The PG18 patch stack is source-guarded for review hygiene: sequential patch
-  numbering, Oliphaunt subjects matching filenames, maintainer headers, rationale
-  text, and no TODO/FIXME placeholders.
 - The prepared PG18 source contains the standalone `initdb` and `pg_dump` source
   files, the released-lane runtime-support inputs for `plpgsql`, `dict_snowball`,
   and timezones, plus every promoted contrib source/control input required by
@@ -585,10 +576,9 @@ Verified locally:
   files just to recover lifecycle/dependency metadata.  PG18 extension manifest
   control-file metadata is derived from packaged archive contents rather than
   released-lane source paths.
-- The applied PG18 source contains the expected embedded runtime ABI hooks and
-  the currently carried performance/tool patches, including hash load folding,
-  top-XID lookup short-circuiting, btree int4 comparison and delete scratch
-  paths, and pg_dump helper renaming.
+- The patch stack applies cleanly and the built runtime, ABI harness, smoke,
+  regression, and performance lanes prove the embedded runtime behavior without
+  asserting exact source-code spellings.
 - The source-controlled WASIX export list includes the Rust host's required
   lifecycle, protocol, buffered I/O, and hybrid streaming symbols.
 - The Rust WASIX host loader, runtime export validator, and PG18 PostgreSQL
@@ -640,13 +630,9 @@ Verified locally:
 - `assets source-spine` passes after the
   canonical patch stack, including the PG18 source-spine guard and source fingerprint
   isolation guard.
-- `assets release-build --skip-build --skip-aot
-  --skip-package-size` regenerates the PG18 asset manifest, and the regenerated
+- `assets release-build --skip-build --skip-aot` regenerates the PG18 asset manifest, and the regenerated
   source pins contain the PostgreSQL 18.4 tarball plus PG18 patch-series
   fingerprint rather than released-lane backend provenance.
-- `assets release-build` carries source-fingerprint
-  validation through its package-size step; without `--skip-package-size` it now
-  fails explicitly because PG18 is not staged into publishable crates yet.
 - `cargo check -p xtask` passes for the current edited
   xtask surface.  Earlier `cargo check -p xtask --all-features` coverage passed
   for the feature-gated packaging/AOT/perf code paths.

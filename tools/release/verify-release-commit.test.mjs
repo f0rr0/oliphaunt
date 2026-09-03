@@ -321,6 +321,60 @@ test("binds derived Cargo pins and lock entries to the referenced local package"
   );
 });
 
+test("accepts exact WASIX tools workspace dependency rewrites", { timeout: 20_000 }, () => {
+  const repo = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-release-wasix-tools-"));
+  git(repo, "init", "-q");
+  git(repo, "config", "user.name", "Release Test");
+  git(repo, "config", "user.email", "release@example.invalid");
+  write(repo, "release-please-config.json", `${JSON.stringify({
+    packages: {
+      "src/runtimes/liboliphaunt/wasix": {
+        "release-type": "simple",
+        component: "liboliphaunt-wasix",
+        "version-file": "VERSION",
+        "changelog-path": "CHANGELOG.md",
+      },
+      "src/bindings/wasix-ts": {
+        "release-type": "node",
+        component: "oliphaunt-wasix-ts",
+        "changelog-path": "CHANGELOG.md",
+      },
+    },
+  }, null, 2)}\n`);
+  const writeVersion = (version) => {
+    write(repo, ".release-please-manifest.json", `${JSON.stringify({
+      "src/runtimes/liboliphaunt/wasix": version,
+      "src/bindings/wasix-ts": version,
+    })}\n`);
+    write(repo, "src/runtimes/liboliphaunt/wasix/VERSION", `${version}\n`);
+    write(repo, "src/runtimes/liboliphaunt/wasix/CHANGELOG.md", `# Changelog\n\n## ${version}\n`);
+    write(repo, "src/bindings/wasix-ts/package.json", `${JSON.stringify({
+      name: "@oliphaunt/wasix-ts",
+      version,
+    })}\n`);
+    write(repo, "src/bindings/wasix-ts/CHANGELOG.md", `# Changelog\n\n## ${version}\n`);
+    write(repo, "src/bindings/wasix-ts/tools-package/package.json", `${JSON.stringify({
+      dependencies: { "@oliphaunt/liboliphaunt-wasix-tools": `workspace:${version}` },
+      peerDependencies: { "@oliphaunt/wasix-ts": `workspace:${version}` },
+      devDependencies: { "@oliphaunt/wasix-ts": `workspace:${version}` },
+    })}\n`);
+    write(repo, "pnpm-lock.yaml", `lockfileVersion: '9.0'\nimporters:\n  src/bindings/wasix-ts/tools-package:\n    dependencies:\n      '@oliphaunt/liboliphaunt-wasix-tools':\n        specifier: workspace:${version}\n        version: link:../../../runtimes/liboliphaunt/wasix/tools-npm\n    devDependencies:\n      '@oliphaunt/wasix-ts':\n        specifier: workspace:${version}\n        version: link:..\n`);
+  };
+  writeVersion("0.1.0");
+  commit(repo, "feat: introduce WASIX tools fixture");
+  writeVersion("0.2.0");
+  const release = commit(repo, "chore(release): prepare WASIX releases");
+
+  assert.deepEqual(
+    verifyReleaseCommit({
+      repo,
+      headRef: release,
+      products: ["liboliphaunt-wasix", "oliphaunt-wasix-ts"],
+    }).products,
+    ["liboliphaunt-wasix", "oliphaunt-wasix-ts"],
+  );
+});
+
 test("binds example Cargo registry pins and runtime metadata to their release product", { timeout: 20_000 }, () => {
   const repo = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-release-example-cargo-"));
   const nativeProduct = "liboliphaunt-native";

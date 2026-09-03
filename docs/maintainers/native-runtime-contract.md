@@ -108,11 +108,11 @@ another mode.
 ## Qualification
 
 ```sh
-moon run oliphaunt-rust:check
-moon run oliphaunt-typescript:check
-moon run oliphaunt-swift:check
-moon run oliphaunt-kotlin:check
-moon run oliphaunt-react-native:check
+moon run oliphaunt-rust:compile
+moon run oliphaunt-js:compile
+moon run oliphaunt-swift:compile
+moon run oliphaunt-kotlin:compile
+moon run oliphaunt-react-native:compile
 moon run liboliphaunt-native:host-smoke
 ```
 

@@ -170,6 +170,15 @@ function releaseRangeShape(repo, mainSha, headRef, title) {
   return { count, headTree };
 }
 
+function mergeBase(repo, left, right) {
+  const result = git(["merge-base", left, right], { cwd: repo, check: false });
+  const base = result.stdout.trimEnd();
+  if (result.status !== 0 || !FULL_SHA.test(base)) {
+    fail("release PR head does not share canonical main history");
+  }
+  return base;
+}
+
 function normalize(args, repo) {
   const title = validateIdentity(args, repo);
   requireClean(repo);
@@ -179,12 +188,23 @@ function normalize(args, repo) {
   git(["fetch", "--no-tags", args.remote, `+refs/heads/${RELEASE_BRANCH}:${headRemoteRef}`], { cwd: repo });
   requireCommit(repo, mainRemoteRef, args.mainSha, "current remote main");
   requireCommit(repo, headRemoteRef, args.headSha, "inspected release PR head");
-  const shape = releaseRangeShape(repo, args.mainSha, headRemoteRef, title);
+  const baseSha = mergeBase(repo, args.mainSha, headRemoteRef);
+  releaseRangeShape(repo, baseSha, headRemoteRef, title);
 
   git(["switch", "-C", RELEASE_BRANCH, headRemoteRef], { cwd: repo });
-  const directParent = gitText(["rev-parse", "HEAD^"], { cwd: repo, check: false });
   let normalized = false;
-  if (shape.count !== 1 || directParent !== args.mainSha) {
+  if (baseSha !== args.mainSha) {
+    git([
+      "-c", "user.name=oliphaunt-release-bot",
+      "-c", "user.email=oliphaunt-release-bot@users.noreply.github.com",
+      "rebase", "--onto", args.mainSha, baseSha,
+    ], { cwd: repo });
+    normalized = true;
+  }
+  const generatedTree = gitText(["rev-parse", "HEAD^{tree}"], { cwd: repo });
+  const directParent = gitText(["rev-parse", "HEAD^"], { cwd: repo, check: false });
+  const count = Number(gitText(["rev-list", "--count", `${args.mainSha}..HEAD`], { cwd: repo }));
+  if (count !== 1 || directParent !== args.mainSha) {
     git(["reset", "--soft", args.mainSha], { cwd: repo });
     if (git(["diff", "--cached", "--quiet", "--exit-code"], { cwd: repo, check: false }).status === 0) {
       fail("release PR normalization produced no staged tree change");
@@ -201,7 +221,7 @@ function normalize(args, repo) {
   if (localShape.count !== 1 || gitText(["rev-parse", "HEAD^"], { cwd: repo }) !== args.mainSha) {
     fail("normalized release PR must be exactly one commit above exact main");
   }
-  if (localShape.headTree !== shape.headTree) fail("normalization changed the generated release PR tree");
+  if (localShape.headTree !== generatedTree) fail("normalization changed the generated release PR tree");
   requireClean(repo);
   console.log(`release PR #${args.prNumber} checked out at ${gitText(["rev-parse", "HEAD"], { cwd: repo })}; normalized=${normalized}`);
 }

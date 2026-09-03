@@ -31,36 +31,25 @@ owners:
     "tools/**": ["@oliphaunt/node-direct"]
 
 tasks:
-  check:
+  compile:
     tags: ["quality", "static"]
     command: "bash src/runtimes/node-direct/tools/check-package.sh check-static"
-    deps:
-      - "liboliphaunt-native:check"
     inputs:
       - "/src/runtimes/node-direct/**/*"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
       - "/src/sources/toolchains/node.toml"
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/check_artifact_targets.mjs"
-      - "/tools/release/check-node-direct-release-assets.mjs"
-      - "/tools/release/check-linux-consumer-baseline.sh"
-      - "/tools/release/linux-abi-baseline.test.mjs"
-      - "/tools/release/platform-compatibility-policy.mjs"
-      - "/tools/release/platform-compatibility-policy.test.mjs"
-      - "/tools/release/platform-binary-contract.mjs"
-      - "/tools/release/platform-binary-contract.test.mjs"
-      - "/tools/release/release-asset-validation.mjs"
-      - "/tools/release/extension-target-profiles.mjs"
-      - "/tools/release/release-artifact-targets.mjs"
-      - "/tools/release/release_graph_query.mjs"
-      - "/tools/policy/moon.mjs"
-      - "/release-please-config.json"
-      - "/.release-please-manifest.json"
-      - "/src/**/release.toml"
-      - "/src/**/targets/**/*.toml"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  unit:
+    tags: ["quality", "unit"]
+    command: "bash src/runtimes/node-direct/tools/check-package.sh test-unit"
+    inputs:
+      - "/src/runtimes/node-direct/tools/node-addon-cleanup-lifecycle.test.mjs"
+      - "/src/runtimes/node-direct/tools/test-node-addon-cleanup-lifecycle.sh"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -68,8 +57,6 @@ tasks:
   package:
     tags: ["package"]
     command: "bash src/runtimes/node-direct/tools/check-package.sh package-shape"
-    deps:
-      - "oliphaunt-node-direct:check"
     inputs:
       - "/src/runtimes/node-direct/**/*"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
@@ -77,30 +64,27 @@ tasks:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
       - "/pnpm-workspace.yaml"
-      - "/src/sdks/js/package.json"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
     options:
       cache: true
       runFromWorkspaceRoot: true
 
-  release-check:
+  qualify:
     tags: ["release", "package"]
     command: "true"
     deps:
+      - "oliphaunt-node-direct:compile"
+      - "oliphaunt-node-direct:unit"
       - "oliphaunt-node-direct:package"
     inputs: []
 
   release-assets:
     tags: ["release", "artifact", "ci-node-direct"]
     command: "bash src/runtimes/node-direct/tools/build-node-addon.sh"
-    deps:
-      - "oliphaunt-node-direct:package"
     inputs:
       - "/src/runtimes/node-direct/**/*"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
-      - "/src/sdks/js/package.json"
-      - "/src/sdks/js/src/**/*"
       - "/src/sources/toolchains/node.toml"
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
@@ -120,9 +104,6 @@ tasks:
       - "/tools/release/release_graph_query.mjs"
       - "/tools/policy/moon.mjs"
       - "/release-please-config.json"
-      - "/.release-please-manifest.json"
-      - "/src/**/release.toml"
-      - "/src/**/targets/**/*.toml"
     outputs:
       - "/target/oliphaunt-node-direct/release-assets/**/*"
       - "/target/oliphaunt-node-direct/npm-packages/**/*"
@@ -139,7 +120,6 @@ tasks:
       - "/pnpm-workspace.yaml"
       - "/src/runtimes/node-direct/**/*"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
-      - "/src/sdks/js/package.json"
       - "/src/sources/toolchains/node.toml"
       - "/tools/policy/moon.mjs"
       - "/tools/release/artifact_target_matrix.mjs"
@@ -159,9 +139,6 @@ tasks:
       - "/tools/release/release_graph_query.mjs"
       - "/tools/release/write_checksum_manifest.mjs"
       - "/release-please-config.json"
-      - "/.release-please-manifest.json"
-      - "/src/**/release.toml"
-      - "/src/**/targets/**/*.toml"
       - "/target/oliphaunt-node-direct/npm-packages/**/*"
       - "/target/oliphaunt-node-direct/release-assets/**/*"
     outputs:

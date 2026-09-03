@@ -33,7 +33,6 @@ export DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-1}"
 cargo run -p xtask --features cluster-seed-runner -- assets release-build \
   --profile "$asset_profile" \
   --target-triple x86_64-unknown-linux-gnu \
-  --skip-aot \
-  --skip-package-size
+  --skip-aot
 
 cargo run -p xtask -- assets check --strict-generated

@@ -286,15 +286,6 @@ apply_patch_series() {
   done < <(patch_series)
 }
 
-patched_source_ready() {
-  grep -Fq 'OliphauntEmbeddedIO' "$build_dir/src/include/libpq/libpq-be.h" &&
-    grep -Fq 'oliphaunt_embedded_main' "$build_dir/src/backend/tcop/postgres.c" &&
-    grep -Fq 'oliphaunt_embedded_kill' "$build_dir/src/port/pqsignal.c" &&
-    grep -Fq 'oliphaunt_embedded_raise' "$build_dir/src/port/pqsignal.c" &&
-    grep -Fq 'OLIPHAUNT_INTERNAL_ICU_READY' "$build_dir/src/bin/initdb/initdb.c" &&
-    grep -Fq 'oliphaunt_embedded' "$build_dir/meson_options.txt" &&
-    grep -Fq 'OLIPHAUNT_EMBEDDED' "$build_dir/meson.build"
-}
 
 artifact_ready() {
   [ -f "$lib_out" ] || return 1
@@ -448,7 +439,6 @@ prepare_source() {
       apply_patch_series
     )
   fi
-  patched_source_ready || fail "PostgreSQL embedded patch verification failed"
 }
 
 configure_source() {

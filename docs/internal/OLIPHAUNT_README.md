@@ -103,13 +103,13 @@ Maintainers track release-claim evidence and open blocker audits in
 moon query projects
 moon query tasks
 moon run repo:check
-moon run :check
-moon run :test
+moon run :check :compile :format-check :lint :tools-compile
+moon run :test :unit :tools-unit
 moon run :package
 moon run :coverage
 moon run liboliphaunt-native:host-smoke
-moon run oliphaunt-react-native:smoke-mobile
-moon run oliphaunt-js:check
+moon run oliphaunt-react-native:smoke
+moon run oliphaunt-js:compile
 ```
 
 Moon is the contributor command surface. `.prototools` pins Moon, Node, pnpm,
@@ -123,15 +123,16 @@ React Native installed-app validation uses the Expo development-client example
 as the default harness because the package always exercises custom Swift/Kotlin
 native code. `moon run oliphaunt-react-native:smoke-android`,
 `moon run oliphaunt-react-native:smoke-ios`, and
-`moon run oliphaunt-react-native:smoke-mobile` run the installed app lanes.
-`moon run oliphaunt-react-native:check` is the package-only TypeScript,
-Codegen, and native-source lane. `moon run
-oliphaunt-js:check` validates the desktop JavaScript SDK, including npm
-package shape.
+`moon run oliphaunt-react-native:smoke` runs the installed app lanes.
+`moon run oliphaunt-react-native:compile` is the package-only TypeScript,
+Codegen, and native-source lane. `moon run oliphaunt-js:compile` builds and
+type-checks the desktop JavaScript SDK; `moon run oliphaunt-js:package` owns
+its npm package-shape check.
 
 For liboliphaunt work, use the product Moon tasks above. Product inner loops
-should use `moon run <product>:check` and `moon run <product>:test`; CI lanes
-use `moon ci` through `.github/scripts/run-moon-ci.sh`.
+should select the affected product's `lint`/`compile`, `unit`, and `package`
+tasks independently; CI lanes use `moon ci` through
+`.github/scripts/run-moon-ci.sh`.
 
 ## Native Performance Matrix
 

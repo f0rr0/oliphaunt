@@ -160,7 +160,7 @@ jobs:
 
       - name: Validate release metadata
         run: |
-          tools/dev/bun.sh tools/release/release-check.mjs
+          tools/dev/bun.sh tools/release/release-metadata-check.mjs
 
       - name: Create or update release-please PR
         id: release_please
@@ -338,7 +338,6 @@ jobs:
           hard_deadline=$(( $(date +%s) + RELEASE_JOB_HARD_WINDOW_SECONDS ))
           {
             echo "RELEASE_JOB_HARD_DEADLINE_EPOCH=$hard_deadline"
-            echo "OLIPHAUNT_GITHUB_CONTENT_WRITE_COLD_START_EPOCH=$(date +%s)"
             echo "OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_PATH=$RUNNER_TEMP/oliphaunt-github-content-write-pacer.json"
             echo "OLIPHAUNT_GITHUB_CORE_REQUEST_JOURNAL_PATH=$RUNNER_TEMP/oliphaunt-github-core-request-journal.json"
             echo "OLIPHAUNT_REQUIRE_GITHUB_CORE_REQUEST_JOURNAL=true"
@@ -380,7 +379,7 @@ jobs:
 
       - name: Validate release metadata
         run: |
-          tools/dev/bun.sh tools/release/release-check.mjs
+          tools/dev/bun.sh tools/release/release-metadata-check.mjs
 
       - name: Plan product releases
         id: release_plan
@@ -1097,12 +1096,12 @@ jobs:
           overwrite: true
           retention-days: 90
 
-      - name: Cool down and open the shared GitHub content-write journal
+      - name: Reserve release transport content write
         if: ${{ inputs.operation == 'publish' && steps.release_plan.outputs.has_release_changes == 'true' }}
-        timeout-minutes: 65
+        timeout-minutes: 3
         run: |
           tools/dev/bun.sh tools/release/github-content-write-pacer.mjs reserve \
-            --label "release mutation cold-start reservation"
+            --label "release transport tag"
 
       - name: Ensure exact immutable release transport ref
         id: ensure_release_transport_ref

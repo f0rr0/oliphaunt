@@ -68,6 +68,12 @@ test("release commit inventory owns the workspace Cargo lock", () => {
   assert.equal(inventory.includes("Cargo.lock"), true);
 });
 
+test("release commit inventory owns generated npm facade dependency versions", () => {
+  const inventory = new Set(releaseDerivedPathInventory());
+  assert.ok(inventory.has("src/runtimes/liboliphaunt/native/tools-npm/package.json"));
+  assert.ok(inventory.has("src/bindings/wasix-ts/tools-package/package.json"));
+});
+
 test("Cargo manifest inventory retains a successful child's final NUL record", () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-cargo-manifest-inventory-"));
   try {

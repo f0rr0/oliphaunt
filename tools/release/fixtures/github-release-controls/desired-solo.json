@@ -24,7 +24,7 @@
         "users": []
       }
     },
-    "enforce_admins": { "enabled": true },
+    "enforce_admins": { "enabled": false },
     "required_linear_history": { "enabled": true },
     "allow_force_pushes": { "enabled": false },
     "allow_deletions": { "enabled": false },
@@ -98,8 +98,7 @@
         }
       },
       "branchPolicies": [
-        { "name": "main", "type": "branch" },
-        { "name": "oliphaunt-release-transport/*", "type": "tag" }
+        { "name": "main", "type": "branch" }
       ],
       "secretNames": [
         "MAVEN_CENTRAL_PASSWORD",

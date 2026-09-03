@@ -37,7 +37,7 @@ owners:
     "tools/**": ["@oliphaunt/wasix"]
 
 tasks:
-  check:
+  lint:
     tags: ["quality", "static"]
     command: "src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs"
     inputs:
@@ -59,7 +59,7 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
 
-  release-check:
+  artifact-lint:
     tags: ["release", "package"]
     command: "bash tools/policy/check-wasm-artifacts.sh"
     inputs:
@@ -89,7 +89,6 @@ tasks:
     tags: ["runtime", "artifact", "ci-liboliphaunt-wasix-runtime"]
     command: "bash src/runtimes/liboliphaunt/wasix/tools/build-runtime-portable.sh"
     deps:
-      - "liboliphaunt-wasix:check"
       - "source-inputs:source-fetch-wasix-runtime"
     inputs:
       - "/LICENSE"
@@ -207,6 +206,8 @@ tasks:
   smoke:
     tags: ["runtime", "smoke"]
     command: "bash src/runtimes/liboliphaunt/wasix/tools/runtime-smoke.sh"
+    deps:
+      - "liboliphaunt-wasix:runtime-aot"
     inputs:
       - "/Cargo.lock"
       - "/Cargo.toml"
@@ -234,8 +235,9 @@ tasks:
   regression:
     tags: ["regression", "runtime"]
     command: "bash src/runtimes/liboliphaunt/wasix/tools/runtime-smoke.sh regression"
+    deps:
+      - "liboliphaunt-wasix:runtime-aot"
     inputs:
-      - "/.release-please-manifest.json"
       - "/Cargo.lock"
       - "/Cargo.toml"
       - "/LICENSE"
@@ -269,3 +271,16 @@ tasks:
     options:
       cache: local
       runFromWorkspaceRoot: true
+
+  qualify:
+    tags: ["release", "package"]
+    command: "true"
+    deps:
+      - "liboliphaunt-wasix:lint"
+      - "liboliphaunt-wasix:artifact-lint"
+      - "liboliphaunt-wasix:release-assets"
+      - "liboliphaunt-wasix:smoke"
+      - "liboliphaunt-wasix:regression"
+    inputs: []
+    options:
+      runInCI: false

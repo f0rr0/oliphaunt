@@ -691,16 +691,6 @@ fn wasix_runtime_release_version() -> Result<String> {
     ))
 }
 
-pub(super) fn run_in_release_workspace(command: &str, args: &[&str]) -> Result<()> {
-    let workspace = Path::new(RELEASE_STAGE_DIR).join("workspace");
-    let mut command = command_for_host(command);
-    command
-        .args(args)
-        .current_dir(&workspace)
-        .env("OLIPHAUNT_WASM_RELEASE_STAGED", "1");
-    run_command(&mut command)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -12,11 +12,9 @@ project:
   owner: "oliphaunt"
 
 tasks:
-  check:
+  lint:
     tags: ["quality", "static"]
     command: "bash tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --check"
-    deps:
-      - "extension-model:native-component-test"
     inputs:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
@@ -49,7 +47,7 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  native-component-test:
+  unit:
     tags: ["quality", "unit"]
     command: "bash tools/dev/bun.sh test '--path-ignore-patterns=target/**' src/extensions/tools/native-component-contract.test.mjs"
     inputs:

@@ -163,6 +163,12 @@ test('native lifecycle runner changes select its exact hosted proof', () => {
   );
 });
 
+test('native lifecycle proof source selects its exact hosted proof', () => {
+  assertNativeExtensionLifecycleSelection(
+    'tools/native-extension-proof/src/main.rs',
+  );
+});
+
 test('native lifecycle supervisor changes select its exact hosted proof', () => {
   assertNativeExtensionLifecycleSelection(
     'src/runtimes/liboliphaunt/wasix-postmaster/lib/process-supervision.sh',

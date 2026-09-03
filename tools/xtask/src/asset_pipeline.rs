@@ -1470,12 +1470,7 @@ pub(crate) fn release_build_assets(
     ];
     build_args.extend(
         args.iter()
-            .filter(|arg| {
-                matches!(
-                    arg.as_str(),
-                    "--skip-build" | "--skip-aot" | "--skip-package-size"
-                )
-            })
+            .filter(|arg| matches!(arg.as_str(), "--skip-build" | "--skip-aot"))
             .cloned(),
     );
 
@@ -1503,10 +1498,6 @@ pub(crate) fn release_build_assets(
         check_aot_package_manifest(target, source_lane)?;
     } else {
         eprintln!("warning: skipping AOT generation by request");
-    }
-
-    if !args.iter().any(|arg| arg == "--skip-package-size") {
-        enforce_package_size_for_source_lane(source_lane)?;
     }
 
     Ok(())

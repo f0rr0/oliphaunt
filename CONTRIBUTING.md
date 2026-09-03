@@ -8,9 +8,9 @@ opening a PR:
 ```sh
 tools/dev/bootstrap-tools.sh
 moon run dev-tools:doctor
-moon run policy-tools:fmt-check
-moon run :check
-moon run :test
+moon run policy-tools:format-check
+moon run :check :compile :format-check :lint :tools-compile --affected
+moon run :test :unit :tools-unit --affected
 ```
 
 The runtime smoke starts embedded Postgres and is intentionally slower than unit tests.
@@ -28,8 +28,9 @@ tools/dev/bun.sh tools/dev/install-hooks.mjs
 
 Hooks stay deliberately smaller than CI: pre-commit handles file hygiene and
 formatting, while commit-msg validates Conventional Commit messages. Run
-`moon run repo:release-check` in addition to the normal checks for a
-release-sensitive PR. CI remains the source of truth for generated AOT runtime
+`moon run release-tools:metadata` for a product metadata change. Release code
+uses `release-tools:unit`; repository policy uses `policy-tools:unit`; workflow
+and planner code uses `ci-workflows:check`. CI remains the source of truth for generated AOT runtime
 matrices, packaging, Tauri, frontend, feature combinations, public API
 compatibility, and supply-chain checks.
 

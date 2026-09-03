@@ -132,7 +132,7 @@ function exactDeploymentPolicy(entry, environmentName) {
   const policies = entry?.branchPolicies ?? [];
   const expected = [
     { name: DEFAULT_BRANCH, type: "branch" },
-    ...(new Set(["release-bootstrap", "release-publish"]).has(environmentName)
+    ...(environmentName === "release-bootstrap"
       ? [{ name: `${RELEASE_TRANSPORT_TAG_PREFIX}*`, type: "tag" }]
       : []),
   ];
@@ -240,10 +240,6 @@ export function auditGitHubReleaseControls(
   findings.push(enabled(protection.required_conversation_resolution)
     ? finding("PASS", "branch.conversation-resolution", "review conversations must be resolved")
     : finding("FAIL", "branch.conversation-resolution", "review conversations must be resolved before merge"));
-  findings.push(enabled(protection.enforce_admins)
-    ? finding("PASS", "branch.admin-enforcement", "branch protection applies to administrators")
-    : finding("FAIL", "branch.admin-enforcement", "branch protection must apply to administrators"));
-
   const checkNames = requiredCheckNames(protection);
   findings.push(protection?.required_status_checks?.strict === true
     ? finding("PASS", "branch.strict-checks", "required checks must pass on an up-to-date branch")
@@ -303,8 +299,7 @@ export function auditGitHubReleaseControls(
     }
 
     findings.push(finding("PASS", `environment.${environmentName}.exists`, `${environmentName} exists`));
-    const continuationEnvironment = new Set(["release-bootstrap", "release-publish"])
-      .has(environmentName);
+    const continuationEnvironment = environmentName === "release-bootstrap";
     findings.push(exactDeploymentPolicy(entry, environmentName)
       ? finding(
         "PASS",

@@ -18,8 +18,23 @@ import {
   mutationTestEnvironment,
   mutationTests,
   mutationTestWaves,
+  releaseCheckPlan,
 } from "./release-check.mjs";
 import { uniqueValueFlag } from "./release-cli-utils.mjs";
+
+test("release mutation-only mode skips metadata without forwarding its private flag", () => {
+  assert.deepEqual(releaseCheckPlan(["--mutation-tests-only", "--head-ref", "abc"]), {
+    mutationScope: "all",
+    mutationTestsOnly: true,
+    passthrough: ["--head-ref", "abc"],
+  });
+  assert.deepEqual(releaseCheckPlan(["--mutation-scope=release", "--head-ref", "abc"]), {
+    mutationScope: "release",
+    mutationTestsOnly: false,
+    passthrough: ["--head-ref", "abc"],
+  });
+  assert.throws(() => releaseCheckPlan(["--mutation-scope=other"]), /must be all, policy, or release/u);
+});
 
 test("release CLI value flags reject ambiguous duplicate identities", () => {
   assert.equal(

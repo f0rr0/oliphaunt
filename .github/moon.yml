@@ -44,20 +44,13 @@ tasks:
       - "/tools/dev/start-android-emulator-ci.test.sh"
       - "/tools/policy/assertions/workflow-security.mjs"
       - "/tools/policy/assertions/workflow-security.test.mjs"
+      - "/tools/policy/ci-plan-node-products.test.mjs"
       - "/tools/policy/ci-plan-wasix-postmaster-release.test.mjs"
       - "/tools/policy/check-workflows.sh"
       - "/tools/graph/affected.mjs"
       - "/tools/graph/ci_plan.mjs"
       - "/tools/release/release-graph.mjs"
       - "/tools/release/toolchain-bootstrap.test.mjs"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
-  release-check:
-    tags: ["release", "package"]
-    command: "true"
-    deps:
-      - "ci-workflows:check"
     options:
       cache: true
       runFromWorkspaceRoot: true

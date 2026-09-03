@@ -182,7 +182,7 @@ for (let attempt = 0; attempt < 2; attempt += 1) {
   reserveGitHubContentWriteSync({
     environment: process.env,
     label,
-    timing: { coldStartMs: 0, intervalMs: 5, maxLockWaitMs: 1_000 },
+    timing: { intervalMs: 5, maxLockWaitMs: 1_000 },
   });
   reserveGitHubCoreRequestSync({ environment: process.env, label });
 }
@@ -195,7 +195,6 @@ for (let attempt = 0; attempt < 2; attempt += 1) {
         GITHUB_RUN_ATTEMPT: "1",
         GITHUB_RUN_ID: "789",
         GITHUB_SHA: sourceCommit,
-        OLIPHAUNT_GITHUB_CONTENT_WRITE_COLD_START_EPOCH: "1",
         OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_PATH: pacerPath,
         OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_TEST_MODE: "true",
         OLIPHAUNT_GITHUB_CORE_REQUEST_JOURNAL_PATH: corePath,

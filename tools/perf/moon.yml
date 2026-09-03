@@ -37,8 +37,8 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
 
-  check:
-    tags: ["policy", "assertion", "quality", "static"]
+  unit:
+    tags: ["quality", "unit"]
     command: "bash tools/perf/check-native-perf-harness.sh"
     deps:
       - "perf-tools:rust-api-model-check"
@@ -54,9 +54,6 @@ tasks:
       - "/src/extensions/**/*"
       - "/tools/perf/**/*"
       - "/benchmarks/**/*"
-      - "/release-please-config.json"
-      - "/.release-please-manifest.json"
-      - "/src/**/release.toml"
       - "/rust-toolchain.toml"
     options:
       cache: true
@@ -117,9 +114,6 @@ tasks:
       - "/src/extensions/**/*"
       - "/tools/perf/**/*"
       - "/benchmarks/**/*"
-      - "/release-please-config.json"
-      - "/.release-please-manifest.json"
-      - "/src/**/release.toml"
       - "/rust-toolchain.toml"
     options:
       cache: true

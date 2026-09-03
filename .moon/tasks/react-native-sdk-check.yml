@@ -8,7 +8,7 @@ inheritedBy:
     and: ["sdk", "react-native"]
 
 tasks:
-  check:
+  compile:
     inputs: &sdk-check-inputs
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
@@ -34,11 +34,11 @@ tasks:
     inputs: *sdk-check-inputs
   build-android-bridge:
     inputs: *sdk-check-inputs
-  test:
+  unit:
     inputs: *sdk-check-inputs
   package:
     inputs: *sdk-check-inputs
-  release-check:
+  qualify:
     inputs: *sdk-check-inputs
   regression:
     inputs: *sdk-check-inputs

@@ -39,7 +39,6 @@ tasks:
       - "/src/sdks/react-native/moon.yml"
       - "/src/**/examples/**/*"
       - "/src/extensions/contrib/carriers.toml"
-      - "/.release-please-manifest.json"
       - "/src/sdks/react-native/tools/mobile-e2e.sh"
       - "/src/sdks/react-native/tools/expo-android-runner.sh"
       - "/src/sdks/react-native/tools/expo-ios-runner.sh"

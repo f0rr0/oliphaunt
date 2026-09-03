@@ -14,8 +14,9 @@ with adjacent experiments.
   manifest and public boundary:
   https://doc.rust-lang.org/cargo/reference/workspaces.html
 - Swift Package Manager expects each package to own a `Package.swift`, products,
-  targets, and target-scoped resources. The Swift SDK therefore lives under
-  `src/sdks/swift` as a normal Swift package instead of as ad hoc root files:
+  targets, and target-scoped resources. The normal development package lives
+  under `src/sdks/swift`; the root `Package.swift` is the public tag entrypoint
+  and points at those same product-owned source directories:
   https://docs.swift.org/package-manager/PackageDescription/PackageDescription.html
 - Gradle's multi-project model uses a root build plus isolated subprojects
   declared from settings, which maps to the Kotlin/Android SDK under
@@ -30,6 +31,10 @@ with adjacent experiments.
 
 The repository root should contain shared metadata and entrypoints only. Product
 source lives under `src/<product>/`.
+
+The root `Cargo.toml`, `package.json`, `pnpm-workspace.yaml`, `moon.yml`, and
+`Package.swift` are workspace or public package-manager entrypoints, not product
+source. Product-native manifests remain beside their source.
 
 - `src/runtimes/liboliphaunt/native/` owns the C ABI and PostgreSQL patch stack.
 - `src/sdks/rust/` owns the Rust SDK and Cargo package.
@@ -268,7 +273,7 @@ support behavior honestly; gaps must be explicit and justified in
 - `sdk-contracts:check` owns generated API, SDK registry, C ABI header-copy,
   native-boundary, and README-example contracts. The small
   `tools/policy/check-sdk-parity.sh` entry point is a local convenience
-  aggregate. Exact extension catalogs belong to `extension-model:check`, while
+  aggregate. Exact extension catalogs belong to `extension-model:lint`, while
   SDK behavior, React Native delegation, package contents, and installed-app
   evidence belong to product-local Moon tasks. Stable CI does not infer those
   contracts from prose, test names, or implementation-source spellings.
@@ -288,27 +293,33 @@ support behavior honestly; gaps must be explicit and justified in
 ```text
 .
 ├── Cargo.toml
+├── Package.swift
 ├── package.json
+├── moon.yml
 ├── benchmarks/
-├── docs/
-├── examples/
-│   └── integration/
+├── docs/{architecture,internal,maintainers}/
+├── examples/{browser-wasix,electron,electron-wasix,react-native-expo,tauri,tauri-wasix}/
 ├── src/
-│   ├── shared/
-│   │   ├── contracts/
-│   │   └── fixtures/
-│   ├── liboliphaunt/
-│   ├── oliphaunt-rust/
-│   ├── oliphaunt-swift/
-│   ├── oliphaunt-kotlin/
-│   ├── oliphaunt-react-native/
-│   ├── oliphaunt-js/
-│   ├── oliphaunt-wasix/
-│   └── docs/
+│   ├── bindings/{wasix-rust,wasix-ts}/
+│   ├── docs/
+│   ├── extensions/{artifacts,catalog,contrib,external,generated,model}/
+│   ├── postgres/versions/18/
+│   ├── runtimes/{broker,liboliphaunt,node-direct,wasix-napi}/
+│   ├── sdks/{js,kotlin,react-native,rust,swift}/
+│   ├── shared/{cluster-seed-contract,extension-runtime-contract,fixtures,js-core,rust-query-core}/
+│   └── sources/{third-party,toolchains}/
 └── tools/
+    ├── coverage/
     ├── dev/
+    ├── graph/
+    ├── native-extension-proof/
+    ├── native-packaging/
+    ├── native-tools-proof/
     ├── perf/
     ├── policy/
     ├── release/
+    ├── runtime/
+    ├── sdk-contracts/
+    ├── test/
     └── xtask/
 ```

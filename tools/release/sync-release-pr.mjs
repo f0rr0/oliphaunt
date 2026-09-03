@@ -67,6 +67,24 @@ const EXTENSION_EVIDENCE_SUMMARY_PATH = path.join(
   "src/extensions/generated/docs/extension-evidence.json",
 );
 const EXTENSION_MODEL_CHECK_PATH = "src/extensions/tools/check-extension-model.mjs";
+
+export function wasixToolsWorkspaceDependencyBindings() {
+  return [
+    {
+      packageName: WASIX_TOOLS_CARRIER_PACKAGE,
+      sourceProduct: "liboliphaunt-wasix",
+      manifestTables: ["dependencies"],
+      lockfileTable: "dependencies",
+    },
+    {
+      packageName: WASIX_TYPESCRIPT_BINDING_PACKAGE,
+      sourceProduct: "oliphaunt-wasix-ts",
+      manifestTables: ["peerDependencies", "devDependencies"],
+      lockfileTable: "devDependencies",
+    },
+  ];
+}
+
 function fail(message) {
   console.error(`${PREFIX}: ${message}`);
   process.exit(2);
@@ -1240,6 +1258,8 @@ export function releaseDerivedPathInventory() {
     RELEASE_PLEASE_CONFIG,
     ELECTRON_EXAMPLE_PACKAGE,
     EXTENSION_EVIDENCE_SUMMARY_PATH,
+    NATIVE_TOOLS_FACADE_PACKAGE,
+    WASIX_TOOLS_FACADE_PACKAGE,
     ...compatibilityVersionLinks().map(({ path: pathText }) => path.join(ROOT, pathText)),
     ...exactExtensionReleaseProducts(PREFIX).map((product) => path.join(ROOT, packagePath(product), "release.toml")),
     path.join(ROOT, "src/sdks/js/package.json"),

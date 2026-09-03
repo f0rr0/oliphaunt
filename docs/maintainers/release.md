@@ -210,8 +210,8 @@ If the candidate changes a GitHub workflow or local action, also run
 helper behavior tests;
 `actionlint` by itself is not equivalent.
 
-The default `release-check.mjs` invocation includes publication metadata
-validation and the release mutation unit suite. `check-release-metadata.mjs`
+The default `release-check.mjs` invocation includes publication metadata plus
+the release-owned and policy-owned mutation unit suites. `check-release-metadata.mjs`
 is the canonical product, version, registry ownership, and dependency graph
 validator. `release-metadata-check.mjs` is a distinct internal replay surface
 that also executes Release Please, artifact, changelog, and synchronization

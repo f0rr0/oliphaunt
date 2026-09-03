@@ -27,7 +27,6 @@ tasks:
       - "repo:release-metadata"
       - "repo:prek"
       - "release-tools:broker-dependency-license-audit"
-      - "native-tools-proof:check"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -86,7 +85,7 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-      # release-tools:check owns this exact proof in hosted CI.
+      # The macOS publication-host job owns this exact proof in hosted CI.
       runInCI: skip
   prek:
     tags: ["policy", "assertion", "quality", "static", "ci-maintainer-tools"]
@@ -201,15 +200,6 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  release-check:
-    tags: ["release", "package"]
-    command: "true"
-    deps:
-      - "release-tools:check"
-    options:
-      cache: local
-      runFromWorkspaceRoot: true
-      runInCI: false
   bench-run:
     tags: ["bench", "measured"]
     command: "bash tools/perf/matrix/run_native_oliphaunt_matrix.sh"
@@ -226,8 +216,6 @@ tasks:
       - "/tools/perf/**/*"
       - "/benchmarks/**/*"
       - "/release-please-config.json"
-      - "/.release-please-manifest.json"
-      - "/src/**/release.toml"
       - "/rust-toolchain.toml"
     options:
       cache: false
@@ -249,8 +237,6 @@ tasks:
       - "/tools/perf/**/*"
       - "/benchmarks/**/*"
       - "/release-please-config.json"
-      - "/.release-please-manifest.json"
-      - "/src/**/release.toml"
       - "/rust-toolchain.toml"
     options:
       cache: true

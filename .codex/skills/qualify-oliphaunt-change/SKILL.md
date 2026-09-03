@@ -10,26 +10,52 @@ Use the repository graph to select work, but require the full exact-SHA gate for
 ## Local feedback
 
 1. Inspect the diff and ask Moon for affected projects/tasks. Do not infer affected products from directory names alone.
-2. Run formatting/static checks and focused unit/package tests first. Run expensive producer/E2E lanes only when their inputs or release contract changed.
+2. Run affected `format-check`, `lint`, `compile`, `unit`, and `package` tasks
+   independently. Run producer, smoke, regression, and E2E lanes only when
+   their inputs or public behavior changed.
 3. If the diff changes WASIX source pins, patches, build recipes, the toolchain,
    or producer code, run the product-owned source checks and portable/AOT build.
    Version, changelog, package-description, smoke-expectation, and
    target-envelope-only changes do not require that expensive build.
-4. For any release, package identity, workflow, version, or extension change, run:
+4. Select release-policy checks by the contract that changed:
 
 ```sh
+# Product/release metadata only:
+moon run release-tools:metadata
+
+# Release implementation changes:
+moon run release-tools:unit
+
+# Moon/release graph topology changes:
+moon run release-tools:graph-unit
+
+# Repository policy implementation changes:
+moon run policy-tools:unit
+
+# Exact release candidate (metadata plus both unit suites):
 tools/dev/bun.sh tools/release/release-check.mjs
+
+# Committed generated runtime assets only:
 cargo run -p xtask -- assets verify-committed
-tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --check
+
+# Extension catalog, recipe, carrier, or generated extension metadata only:
+moon run extension-model:lint extension-model:unit
 ```
 
-The canonical `release-check` runs the live repository-structure and uncached
-repository-graph policies before release metadata and mutation tests. Its
-uncached `release-tools:check` Moon task is the single hosted graph-validation
-owner; `graph-tools:check` remains a focused local target and
-`graph-tools:generate` is the sole writer of `target/graph`. Do not substitute
-the policy unit tests: they prove the classifiers but do not scan the candidate
-tree.
+Do not run all three for an unrelated package or version edit. The repository
+release-policy gate runs structure, graph, metadata, and mutation checks; it is
+not product build/test/package qualification. `release-tools:check` is the local
+aggregate of metadata plus the release and policy unit suites. Hosted CI runs
+metadata on the publication host, gives workflow/planner tests to
+`ci-workflows:check`, and selects release or policy units only when their actual
+implementation inputs change. Release workflows invoke the combined runner
+directly for an exact candidate. Do not schedule both forms in one lane.
+The macOS publication-host metadata job is affected-only on pull requests and
+mandatory on exhaustive push/manual runs; product source alone does not justify
+that toolchain setup unless it changes release metadata or graph inputs.
+`tools/graph/ci_plan.mjs` writes `target/graph/ci-plan.json`; there is no
+`graph-tools` Moon project. Do not substitute policy unit tests: they prove the
+classifiers but do not scan the candidate tree.
 
 For source-acquisition policy or a source `mirror_url`, run
 `tools/dev/bun.sh test tools/policy/source-fetch-core.test.mjs` and
@@ -42,17 +68,14 @@ preservation of an existing checkout when every endpoint fails.
 5. For any workflow or local-action change, run
    `bash tools/policy/check-workflows.sh` before waiting for CI. This is the
    repository's exact pinned `actionlint` plus `zizmor` gate and its workflow
-   behavior tests; running `actionlint` alone is not sufficient. If the direct
-   release job graph, job permissions, protected environment, dispatch input,
-   or continuation dependency changed, also push the exact candidate to a
-   disposable branch and dispatch one supported `publish-dry-run` compiler
-   probe. Require GitHub to materialize the direct job graph, then cancel it
-   before expensive qualification and delete the probe branch. The local gate
-   cannot prove hosted environment-secret resolution or dispatch-time graph
-   compilation.
-   When a release workflow shell block or a shell script transitively reached by
-   `release-check` changes, run the complete gate with GNU Bash 3.2, matching
-   `/bin/bash` on the `macos-26` release runner. On macOS, omit the override;
+   behavior tests; running `actionlint` alone is not sufficient. A disposable
+   `publish-dry-run` compiler probe is needed only when a release candidate
+   changes hosted-only job topology, permissions, protected environments, or
+   dispatch inputs. The local gate cannot prove hosted environment-secret
+   resolution or dispatch-time graph compilation.
+   When a changed release shell block is expected to run on macOS, run its
+   focused behavioral test with GNU Bash 3.2. Run the complete release-policy
+   gate under Bash 3.2 only for a release candidate. On macOS, omit the override;
    elsewhere, point `OLIPHAUNT_BASH3` at a maintained local Bash 3.2 build:
 
    ```sh
@@ -93,32 +116,22 @@ successful TLS-verified snapshot transaction and the exact declared wasixcc,
 Clang, and Binaryen versions; a source-spine/static check alone does not prove
 that the pinned trust chain still reaches the snapshot service.
 
-For an SDK change, run `moon run sdk-contracts:check`, then run every affected
-SDK's `package` target in one Moon invocation. SDK package targets own their
-same-project `check` and `test` dependencies, so this is the compact product
-gate without the platform artifact or E2E matrix. Set `MOON_BASE` and
-`MOON_HEAD`, then select SDK project IDs with
-`moon query projects --affected --downstream deep --tags sdk --tasks package`.
-Pass the exact `<project>:package` targets to `moon run`; a workspace-wide
-`:package` selector also selects non-SDK products and is not this lane. Confirm
-ownership with
-`moon query tasks --project <sdk-project> --id package` when changing task
-topology. Never replace the product task with a narrower native command: for
-example, `cargo test -p oliphaunt --lib` excludes Rust executable tests under
-`src/bin/**`, while `moon run oliphaunt-rust:test` includes the library,
+For an SDK change, run `moon run sdk-contracts:check`, then run each affected
+SDK's `compile`, `unit`, and `package` tasks in one Moon invocation. These tasks
+are independent; `package` does not silently rerun source qualification. Set
+`MOON_BASE` and `MOON_HEAD`, inspect affected SDK projects, and pass the exact
+targets to `moon run`; a workspace-wide selector also selects non-SDK products.
+Confirm ownership with `moon query tasks --project <sdk-project>` when changing
+task topology. Never replace the product task with a narrower native command:
+for example, `cargo test -p oliphaunt --lib` excludes Rust executable tests under
+`src/bin/**`, while `moon run oliphaunt-rust:unit` includes the library,
 executable, integration, build-crate, and documentation tests. Add
-`release-check` when package or registry behavior changes, and run
-`moon run extension-model:check` when an extension catalog or generated SDK
+the product's `qualify` task when the complete product replay is needed, and run
+`moon run extension-model:lint extension-model:unit` when an extension catalog or generated SDK
 extension surface changes. Put new guarantees in a parsed schema/generated
 contract, clean-consumer package check, or product-owned behavioral test. Do
 not qualify SDK behavior by grepping prose, test names, or
 implementation-source spellings.
-
-Advisory cleanup is not qualification. Use
-`moon run dev-tools:helper-reference-audit` or
-`moon run dev-tools:source-reference-audit` when intentionally looking for
-possibly unreferenced helpers or modules, then inspect each result before
-removing it. Do not turn reference counts into a required CI gate.
 
 ## GitHub qualification
 

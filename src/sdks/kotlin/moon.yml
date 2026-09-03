@@ -23,11 +23,9 @@ owners:
     "**/*.kts": ["@oliphaunt/sdk-android"]
 
 tasks:
-  check:
+  compile:
     tags: ["quality", "static", "ci-android-sdk"]
     command: "bash src/sdks/kotlin/tools/check-sdk.sh check-static"
-    deps:
-      - "liboliphaunt-native:check"
     inputs:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
@@ -44,11 +42,9 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  test:
+  unit:
     tags: ["quality", "unit", "ci-android-sdk"]
     command: "bash src/sdks/kotlin/tools/check-sdk.sh test-unit"
-    deps:
-      - "liboliphaunt-native:check"
     inputs:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
@@ -69,7 +65,7 @@ tasks:
     tags: ["runtime", "smoke"]
     command: "bash src/sdks/kotlin/tools/check-sdk.sh smoke-runtime"
     deps:
-      - "liboliphaunt-native:check"
+      - "liboliphaunt-native:release-runtime"
     inputs:
       - "/src/extensions/**/*"
       - "/src/runtimes/liboliphaunt/native/**/*"
@@ -87,10 +83,6 @@ tasks:
   package:
     tags: ["package"]
     command: "bash src/sdks/kotlin/tools/check-sdk.sh package-shape"
-    deps:
-      - "oliphaunt-kotlin:check"
-      - "oliphaunt-kotlin:test"
-      - "liboliphaunt-native:check"
     inputs:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
@@ -107,8 +99,6 @@ tasks:
   package-artifacts:
     tags: ["release", "artifact-package", "ci-kotlin-sdk-package"]
     command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-kotlin"
-    deps:
-      - "oliphaunt-kotlin:package"
     inputs:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
@@ -160,11 +150,10 @@ tasks:
       cache: false
       runFromWorkspaceRoot: true
       runInCI: true
-  release-check:
+  qualify:
     tags: ["release", "package"]
     command: "bash src/sdks/kotlin/tools/check-sdk.sh release-check"
     deps:
-      - "liboliphaunt-native:check"
       - "liboliphaunt-native:release-runtime"
     inputs:
       - "/src/extensions/generated/sdk/extensions.json"
@@ -189,8 +178,6 @@ tasks:
       - "/tools/perf/**/*"
       - "/benchmarks/**/*"
       - "/release-please-config.json"
-      - "/.release-please-manifest.json"
-      - "/src/**/release.toml"
       - "/src/**/targets/**/*.toml"
     options:
       cache: true
@@ -199,8 +186,6 @@ tasks:
   regression:
     tags: ["regression", "runtime"]
     command: "bash src/sdks/kotlin/tools/check-sdk.sh regression"
-    deps:
-      - "liboliphaunt-native:check"
     inputs:
       - "/src/shared/fixtures/**/*"
       - "/src/sdks/kotlin/**/*"
@@ -236,8 +221,6 @@ tasks:
       - "/tools/perf/**/*"
       - "/benchmarks/**/*"
       - "/release-please-config.json"
-      - "/.release-please-manifest.json"
-      - "/src/**/release.toml"
       - "/src/**/targets/**/*.toml"
     options:
       cache: false

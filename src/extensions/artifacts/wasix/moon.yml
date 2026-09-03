@@ -21,34 +21,10 @@ project:
   owner: "oliphaunt"
 
 tasks:
-  check:
-    tags: ["quality", "static"]
-    command: "bash tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --check"
-    deps:
-      - "extension-model:check"
-    inputs:
-      - "/src/extensions/**/*"
-      - "!/src/extensions/generated/docs"
-      - "!/src/extensions/generated/docs/**"
-      - "!/src/extensions/evidence"
-      - "!/src/extensions/evidence/**"
-      - "/src/shared/extension-runtime-contract/**/*"
-      - "/tools/release/release_graph_query.mjs"
-      - "/tools/release/extension-target-profiles.mjs"
-      - "/tools/release/extension-target-profiles.toml"
-      - "/tools/release/release-artifact-targets.mjs"
-      - "/tools/release/release-graph.mjs"
-      - "/tools/xtask/**/*"
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
   build-target:
     tags: ["release", "artifact-builder", "ci-extension-artifacts-wasix"]
     command: "bash src/extensions/artifacts/wasix/tools/package-release-assets.sh"
     deps:
-      - "extension-artifacts-wasix:check"
       - "liboliphaunt-wasix:runtime-portable"
     inputs:
       - "/LICENSE"

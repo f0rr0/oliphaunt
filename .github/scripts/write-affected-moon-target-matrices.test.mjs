@@ -25,7 +25,7 @@ function invoke(stub, output) {
     MOON_BIN: stub,
     MOON_HEAD: "",
   };
-  return spawnSync(process.execPath, [WRITER, "check", "test"], {
+  return spawnSync(process.execPath, [WRITER, "check", "compile", "format-check", "lint", "tools-compile", "metadata", "graph-unit", "test", "tools-unit", "unit"], {
     cwd: ROOT,
     encoding: "utf8",
     env,
@@ -40,7 +40,12 @@ test("Node planner captures Moon JSON written at the successful child's final ev
       tasks: {
         alpha: {
           check: { args: [], command: "node check.mjs", deps: [], id: "check", options: {}, tags: [], target: "alpha:check" },
+          compile: { args: [], command: "node compile.mjs", deps: [], id: "compile", options: {}, tags: [], target: "alpha:compile" },
+          "graph-unit": { args: [], command: "node graph-unit.mjs", deps: [], id: "graph-unit", options: {}, tags: [], target: "alpha:graph-unit" },
+          "tools-compile": { args: [], command: "node tools-compile.mjs", deps: [], id: "tools-compile", options: {}, tags: [], target: "alpha:tools-compile" },
           test: { args: [], command: "node test.mjs", deps: [], id: "test", options: {}, tags: [], target: "alpha:test" },
+          "tools-unit": { args: [], command: "node tools-unit.mjs", deps: [], id: "tools-unit", options: {}, tags: [], target: "alpha:tools-unit" },
+          unit: { args: [], command: "node unit.mjs", deps: [], id: "unit", options: {}, tags: [], target: "alpha:unit" },
         },
       },
     });
@@ -61,15 +66,20 @@ test("Node planner captures Moon JSON written at the successful child's final ev
         return [line.slice(0, separator), line.slice(separator + 1)];
       }),
     );
-    assert.equal(values.get("check_count"), "1");
-    assert.equal(values.get("test_count"), "1");
+    assert.equal(values.get("check_count"), "3");
+    assert.equal(values.get("test_count"), "4");
     const checkRows = JSON.parse(values.get("check_matrix")).include;
     assert.equal(checkRows.length, 1);
     assert.deepEqual(JSON.parse(checkRows[0].targets_json).include.map(({ target }) => target), [
       "alpha:check",
+      "alpha:compile",
+      "alpha:tools-compile",
     ]);
     assert.deepEqual(JSON.parse(values.get("test_matrix")).include.map(({ target }) => target), [
+      "alpha:graph-unit",
       "alpha:test",
+      "alpha:tools-unit",
+      "alpha:unit",
     ]);
   } finally {
     rmSync(root, { force: true, recursive: true });

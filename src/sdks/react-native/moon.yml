@@ -27,11 +27,9 @@ owners:
     "android/**": ["@oliphaunt/sdk-react-native", "@oliphaunt/sdk-android"]
 
 tasks:
-  check:
+  compile:
     tags: ["quality", "static"]
     command: "bash src/sdks/react-native/tools/check-sdk.sh check-static"
-    deps:
-      - "shared-js-core:check"
     inputs:
       - "/src/shared/fixtures/**/*"
       - "/src/shared/js-core/**/*"
@@ -56,8 +54,6 @@ tasks:
   build-ios-bridge:
     tags: ["build", "ios", "react-native-new-architecture"]
     command: "bash src/sdks/react-native/tools/check-sdk.sh build-ios-bridge"
-    deps:
-      - "oliphaunt-swift:check"
     inputs:
       - "/Package.swift"
       - "/src/shared/fixtures/**/*"
@@ -87,9 +83,6 @@ tasks:
   build-android-bridge:
     tags: ["build", "android", "react-native-new-architecture"]
     command: "bash src/sdks/react-native/tools/check-sdk.sh build-android-bridge"
-    deps:
-      - "oliphaunt-kotlin:check"
-      - "shared-js-core:check"
     inputs:
       - "/src/shared/fixtures/**/*"
       - "/src/shared/js-core/**/*"
@@ -115,11 +108,9 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  test:
+  unit:
     tags: ["quality", "unit"]
     command: "bash src/sdks/react-native/tools/check-sdk.sh test-unit"
-    deps:
-      - "shared-js-core:check"
     inputs:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
@@ -241,40 +232,6 @@ tasks:
       - "/src/shared/fixtures/extensions/**/*"
       - "/src/runtimes/liboliphaunt/native/**/*"
       - "/src/runtimes/liboliphaunt/wasix/VERSION"
-      - "/src/sdks/react-native/**/*"
-      - "!/src/sdks/react-native/**/node_modules"
-      - "!/src/sdks/react-native/**/node_modules/**"
-      - "!/src/sdks/react-native/**/.build"
-      - "!/src/sdks/react-native/**/.build/**"
-      - "!/src/sdks/react-native/**/.gradle/**"
-      - "!/src/sdks/react-native/**/.cxx/**"
-      - "!/src/sdks/react-native/**/build/**"
-      - "!/src/sdks/react-native/**/lib/**"
-      - "!/src/sdks/react-native/ios/vendor/**"
-      - "/src/sdks/swift/**/*"
-      - "!/src/sdks/swift/.build"
-      - "!/src/sdks/swift/.build/**"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/tools/dev/write-scoped-pnpm-workspace.mjs"
-    options:
-      cache: local
-      runFromWorkspaceRoot: true
-  smoke-mobile:
-    tags: ["runtime", "smoke", "mobile"]
-    command: "pnpm --dir examples/react-native-expo run smoke"
-    deps:
-      - "oliphaunt-swift:smoke"
-      - "oliphaunt-kotlin:smoke"
-    inputs:
-      - "/Package.swift"
-      - "/src/extensions/**/*"
-      - "/src/runtimes/liboliphaunt/native/**/*"
-      - "/src/runtimes/liboliphaunt/wasix/VERSION"
-      - "/src/sources/toolchains/android-sdk.toml"
-      - "/src/sdks/kotlin/**/*"
-      - "/tools/native-packaging/extension-artifact-archive-policy.properties"
       - "/src/sdks/react-native/**/*"
       - "!/src/sdks/react-native/**/node_modules"
       - "!/src/sdks/react-native/**/node_modules/**"
@@ -575,9 +532,6 @@ tasks:
   package:
     tags: ["package"]
     command: "bash src/sdks/react-native/tools/check-sdk.sh package-shape"
-    deps:
-      - "oliphaunt-react-native:check"
-      - "oliphaunt-react-native:test"
     inputs:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
@@ -618,12 +572,10 @@ tasks:
     inputs:
       - "/LICENSE"
       - "/THIRD_PARTY_NOTICES.md"
-      - "/.release-please-manifest.json"
       - "/release-please-config.json"
       - "/src/shared/fixtures/**/*"
       - "/src/shared/js-core/**/*"
-      - "/src/**/moon.yml"
-      - "/src/**/release.toml"
+      - "/src/sdks/react-native/moon.yml"
       - "/src/runtimes/liboliphaunt/native/VERSION"
       - "/package.json"
       - "/pnpm-lock.yaml"
@@ -671,12 +623,9 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  release-check:
+  qualify:
     tags: ["release", "package"]
     command: "bash src/sdks/react-native/tools/check-sdk.sh release-check"
-    deps:
-      - "oliphaunt-swift:release-check"
-      - "oliphaunt-kotlin:release-check"
     inputs:
       - "/src/shared/fixtures/**/*"
       - "/src/shared/js-core/**/*"
@@ -732,8 +681,6 @@ tasks:
       - "/tools/perf/**/*"
       - "/benchmarks/**/*"
       - "/release-please-config.json"
-      - "/.release-please-manifest.json"
-      - "/src/**/release.toml"
       - "/src/**/targets/**/*.toml"
     options:
       cache: true
@@ -742,9 +689,6 @@ tasks:
   regression:
     tags: ["regression", "runtime"]
     command: "bash src/sdks/react-native/tools/check-sdk.sh regression"
-    deps:
-      - "oliphaunt-swift:check"
-      - "oliphaunt-kotlin:check"
     inputs:
       - "/src/shared/fixtures/**/*"
       - "/src/shared/js-core/**/*"
@@ -828,8 +772,6 @@ tasks:
       - "/tools/perf/**/*"
       - "/benchmarks/**/*"
       - "/release-please-config.json"
-      - "/.release-please-manifest.json"
-      - "/src/**/release.toml"
       - "/src/**/targets/**/*.toml"
     options:
       cache: false
