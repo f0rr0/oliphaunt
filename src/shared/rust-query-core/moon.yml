@@ -23,8 +23,8 @@ tasks:
     command: "node src/shared/rust-query-core/tools/check-rust-query-core.mjs"
     inputs:
       - "**/*"
-      - "/src/sdks/rust/src/query_core.rs"
-      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/query_core.rs"
+      - "/src/sdks/rust/src/query_core*"
+      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/query_core*"
     options:
       cache: true
       runFromWorkspaceRoot: true

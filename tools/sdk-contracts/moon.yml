@@ -15,7 +15,7 @@ dependsOn:
 
 project:
   title: "SDK Contracts"
-  description: "Generated API, ownership, native boundary, header, documentation-example, and extension-model contracts shared by product SDKs."
+  description: "Generated API, ownership, native boundary, header, and extension-model contracts shared by product SDKs."
   owner: "oliphaunt"
 
 owners:
@@ -29,7 +29,6 @@ tasks:
     command: "node tools/policy/generate-sdk-api-surface.mjs --check"
     deps:
       - "sdk-contracts:cluster-seeds"
-      - "sdk-contracts:doc-examples"
       - "sdk-contracts:fixtures"
       - "sdk-contracts:headers"
       - "sdk-contracts:manifest"
@@ -77,25 +76,6 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  doc-examples:
-    tags: ["quality", "static"]
-    command: "node tools/policy/check-sdk-doc-examples.mjs"
-    inputs:
-      - "/src/sdks/{js,kotlin,react-native,rust,swift}/README.md"
-      - "/src/bindings/wasix-ts/README.md"
-      - "/src/bindings/wasix-ts/src/__tests__/**/*"
-      - "/src/sdks/js/src/__tests__/**/*"
-      - "/src/sdks/kotlin/oliphaunt/src/**/*"
-      - "/src/sdks/react-native/src/__tests__/**/*"
-      - "/src/sdks/rust/tests/**/*"
-      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/README.md"
-      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/tests/**/*"
-      - "/src/runtimes/liboliphaunt/native/crates/tools/src/**/*"
-      - "/src/sdks/swift/Tests/**/*"
-      - "/tools/policy/check-sdk-doc-examples.mjs"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
   headers:
     tags: ["quality", "static"]
     command: "bun tools/policy/check-sdk-header-copies.mjs"
@@ -134,6 +114,8 @@ tasks:
       - "/src/bindings/wasix-rust/**/*"
       - "/src/runtimes/**/*"
       - "/src/sdks/**/*"
+      - "!/src/sdks/**/{.build,.cxx,.gradle,build,DerivedData,lib,Pods}"
+      - "!/src/sdks/**/{.build,.cxx,.gradle,build,DerivedData,lib,Pods}/**"
       - "/tools/perf/**/*"
       - "/tools/policy/check-native-boundaries.mjs"
       - "/tools/policy/check-native-boundaries.sh"

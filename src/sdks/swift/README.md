@@ -161,7 +161,6 @@ XCFrameworks and runtime files must not enter the app bundle.
 
 ## Quickstart
 
-<!-- liboliphaunt-doc-example:swift-open-exec-close -->
 ```swift
 let db = try await OliphauntDatabase.open(
     configuration: OliphauntConfiguration(
@@ -281,7 +280,6 @@ until the transaction commits or rolls back.
 Use `execute("CHECKPOINT")` when an explicit PostgreSQL checkpoint is required;
 like other database operations, it is rejected while a transaction is active.
 
-<!-- liboliphaunt-doc-example:swift-parameterized-query -->
 ```swift
 let result = try await db.query(
     "SELECT $1::text AS value, $2::uuid AS optional_id",
@@ -294,7 +292,6 @@ let result = try await db.query(
 `backup()` returns the native physical archive as `Data`. Restore accepts those
 bytes and a new destination; it never replaces an existing database root.
 
-<!-- liboliphaunt-doc-example:swift-backup-restore -->
 ```swift
 let bytes = try await db.backup()
 try await db.close()

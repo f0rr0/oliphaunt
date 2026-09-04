@@ -11,7 +11,6 @@ import { WasixStorageError } from '../errors.js';
 import { PostgresError } from '../query.js';
 import type { OliphauntTransaction } from '../types.js';
 
-// liboliphaunt-doc-example:wasix-typescript-transaction
 describe('WASIX database recovery state', () => {
   it('validates explicit startup identities like Rust WASIX', () => {
     expect(normalizeWasixDatabaseIdentity('application', 'products')).toEqual({

@@ -11,7 +11,6 @@ import {
   text,
 } from '../query.js';
 
-// liboliphaunt-doc-example:wasix-typescript-query
 describe('WASIX query protocol codec', () => {
   it('writes the exact PostgreSQL extended-query packet', () => {
     const packet = extendedQuery('SELECT $1::text, $2::bytea, $3::bool', [

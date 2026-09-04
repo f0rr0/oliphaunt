@@ -16,7 +16,6 @@ import { openNodeDirectSession } from '../node-direct.js';
 beforeEach(() => nativeMocks.open.mockReset());
 
 describe('WASIX Node direct native routing', () => {
-  // liboliphaunt-doc-example:wasix-typescript-direct-entrypoint
   it('opens one synchronous native session in the importing realm', async () => {
     const options = workerOpenOptions();
     const session = {} as NativeWasixSession;

@@ -139,8 +139,6 @@ assert_not_impl!(OliphauntServer: Sync);
 assert_not_impl!(AsyncTransaction: Sync);
 
 // OLIPHAUNT_DOCS_SNIPPET rust-quickstart
-// liboliphaunt-doc-example:rust-build-script
-// liboliphaunt-doc-example:rust-basic-query
 
 #[test]
 fn public_api_has_only_the_deliberate_native_vocabulary() {
@@ -186,7 +184,6 @@ fn public_api_has_only_the_deliberate_native_vocabulary() {
         let _: oliphaunt::Result<()> = handle.cancel();
     }
     let _: fn(&CancelHandle) = cancellation_surface;
-    // liboliphaunt-doc-example:rust-async-basic
     assert_send_sync::<AsyncOliphaunt>();
     assert_send_sync::<AsyncOliphauntServer>();
     assert_send::<AsyncTransaction>();
@@ -242,7 +239,6 @@ fn public_api_has_only_the_deliberate_native_vocabulary() {
     fn caller_thread_terminals(builder: OliphauntBuilder) {
         let _: oliphaunt::Result<Oliphaunt> = builder.open();
         let _: oliphaunt::Result<Oliphaunt> = Oliphaunt::open();
-        // liboliphaunt-doc-example:rust-start-server
         let _: oliphaunt::Result<OliphauntServer> = OliphauntServer::builder().start();
         let _: oliphaunt::Result<()> = Oliphaunt::restore(
             std::path::PathBuf::from("unused-public-api-check"),

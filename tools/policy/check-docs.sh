@@ -41,4 +41,4 @@ if git grep -n -E \
   exit 1
 fi
 
-echo "documentation examples are current"
+echo "documentation command and identity policy passed"

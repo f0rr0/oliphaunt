@@ -1,7 +1,6 @@
 package dev.oliphaunt
 
 // liboliphaunt-doc-example:kotlin-typed-query
-// liboliphaunt-doc-example:kotlin-setup
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart

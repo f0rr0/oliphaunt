@@ -1582,20 +1582,12 @@ release publishing:
 - React Native already inspects `npm pack --dry-run --json`, so the SDK parity
   gate now requires all four package artifact checks to remain in place.
 
-## SDK README Example Coverage
+## SDK README Example Coverage (removed)
 
-The SDK parity gate now mechanically links public README code examples to
-compiled or tested SDK coverage:
-
-- Rust, Swift, Kotlin, and React Native README code blocks carry
-  `liboliphaunt-doc-example:<id>` markers;
-- `tools/policy/check-sdk-doc-examples.mjs` rejects unmarked Rust/Swift/Kotlin/
-  TypeScript README examples, duplicate IDs, stale coverage markers, and
-  examples without SDK test/source coverage;
-- the current coverage set includes Rust backup/restore and typed-query
-  examples, Swift open/raw/streaming/typed/parameterized examples, Kotlin
-  Android-open/streaming/typed/parameterized examples, and React Native
-  open/query plus parameterized query examples.
+The marker-only parity gate was removed during the CI audit. It matched comment
+IDs between README fences and arbitrary source/test locations but neither
+compared nor executed the snippets, so it did not prove the claimed coverage.
+Product compile and unit tasks remain the executable evidence.
 
 ## Android Fast ABI Validation
 

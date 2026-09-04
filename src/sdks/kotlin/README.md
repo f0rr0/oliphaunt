@@ -11,7 +11,6 @@ Apply `dev.oliphaunt.android` and depend on
 only the selected extension artifacts; applications do not build PostgreSQL at
 runtime.
 
-<!-- liboliphaunt-doc-example:kotlin-setup -->
 ```kotlin
 plugins {
     id("dev.oliphaunt.android") version "0.1.1"
@@ -35,7 +34,6 @@ Open with the Android `Oliphaunt` object and an application `Context`.
 the fixed `postgres` role, so create additional roles from `postgres` before
 opening that root as them.
 
-<!-- liboliphaunt-doc-example:kotlin-typed-query -->
 ```kotlin
 val db = Oliphaunt.open(
     context = applicationContext,

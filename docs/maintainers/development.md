@@ -113,7 +113,7 @@ The validation entrypoint is split by maintainer workflow:
   SDK package only. Run `compile`, `unit`, and `package` together for the compact
   pre-push gate; none silently owns the others;
 - `moon run sdk-contracts:check`: fast generated API, SDK registry, C ABI
-  header-copy, native-boundary, and README-example contract validation. Use
+  header-copy, and native-boundary contract validation. Use
   product `compile`, `unit`, and `package` targets for behavior and package proof;
   `tools/policy/check-sdk-parity.sh` remains a compatible local aggregate;
 - `moon run oliphaunt-swift:compile`: SwiftPM package description and build checks

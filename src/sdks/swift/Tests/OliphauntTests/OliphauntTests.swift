@@ -43,9 +43,6 @@ func runtimeCacheUsesApplicationDataNamespaceCasing() {
 }
 
 // OLIPHAUNT_DOCS_SNIPPET swift-quickstart
-// liboliphaunt-doc-example:swift-open-exec-close
-// liboliphaunt-doc-example:swift-parameterized-query
-// liboliphaunt-doc-example:swift-backup-restore
 
 @Test
 func executeReturnsPostgresCommandMetadata() async throws {

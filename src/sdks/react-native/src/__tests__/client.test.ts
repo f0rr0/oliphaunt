@@ -23,7 +23,6 @@ import { parseCommandResponse, text } from '../query';
 import type { Spec } from '../specs/NativeOliphaunt';
 
 // OLIPHAUNT_DOCS_SNIPPET react-native-quickstart
-// liboliphaunt-doc-example:react-native-open-query
 
 const encoder = new TextEncoder();
 

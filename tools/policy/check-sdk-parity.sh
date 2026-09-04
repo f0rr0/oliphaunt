@@ -15,7 +15,6 @@ run() {
 # This is a local convenience aggregate. Stable CI owns the same checks as
 # direct Moon task dependencies under sdk-contracts:check.
 run node tools/policy/generate-sdk-api-surface.mjs --check
-run node tools/policy/check-sdk-doc-examples.mjs
 run tools/dev/bun.sh tools/policy/check-sdk-manifest.mjs
 run tools/policy/check-native-boundaries.sh
 run tools/dev/bun.sh tools/policy/check-sdk-header-copies.mjs

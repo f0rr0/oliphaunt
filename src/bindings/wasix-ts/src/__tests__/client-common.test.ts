@@ -40,7 +40,6 @@ import { openWasixWithWorker, restoreWasixWithWorker } from '../worker-rpc.js';
 import { FakeWorkerPort, workerOpenOptions } from './worker-helpers.js';
 
 describe('WASIX shared client orchestration', () => {
-  // liboliphaunt-doc-example:wasix-typescript-icu
   it('serializes the explicit ICU data and matching seed as one closure', () => {
     const options = serializeOpenConfig(
       { icu: icuDescriptor() },

@@ -257,7 +257,7 @@ either execute ShellCheck/SwiftLint or stop claiming/bootstrapping them.
 | `repo:check` | A no-op aggregate over tooling semantics, workflow checks, documentation grep policy, release metadata, all-file pre-commit hooks, broker licensing, and native-tools tests. | Accurate only as an aggregate. Do not schedule it beside its children. Rename child tasks precisely and reserve the aggregate for local `qualify-repo`. |
 | `repo:prek` | Validates Prek config and applies basic file hygiene, TOML/YAML/JSON parsing, secret/size checks, and Cargo formatting to every tracked file. | Useful hygiene, but all-files execution is unnecessary for most PRs. Use affected files and remove its duplicate Cargo-format hook. |
 | `release-tools:check` | Seven metadata/graph/doc checks followed by 164 policy/release test-file processes. | Severely **overloaded**. Split `release-metadata`, `release-policy-tests`, and registry/transport tests. Give each one owner and affected inputs. |
-| `sdk-contracts` | Checks generated API documentation, marker coverage for README examples, shared fixtures, copied C headers, SDK manifest metadata, native boundaries, and cluster-seed contracts. | Mostly valuable static drift detection, but `doc-examples` proves only that examples have matching markers—not that snippets compile. Rename it `doc-example-coverage` or compile examples. `cluster-seeds` exactly duplicates `cluster-seed-contract:check`; keep one owner. |
+| `sdk-contracts` | Checks generated API documentation, shared fixtures, copied C headers, SDK manifest metadata, native boundaries, and cluster-seed contracts. | The deceptive `doc-examples` marker matcher was removed: it never compiled or compared README examples. Product compile/unit tasks retain executable coverage. `cluster-seeds` is the sole executable checker; the `cluster-seed-contract` project is its taskless data boundary. |
 | Shared JS/Rust query cores | JS check verifies six committed generated mirrors; Rust check verifies the canonical source exists and no mirrors are committed. | Rust staging is lean. JS should use the same staging approach or a workspace package instead of committing six mirrors and maintaining a sync task. |
 | `source-inputs:unit` | Validates source metadata and runs the source-fetch and PostgreSQL transport tests. | Accurate after splitting out unrelated consumers: WASIX owns its pinned builder-installer tests, while the existing CI toolchain-bootstrap suite owns Maestro. |
 | `xtask` Moon tasks | `unit` runs the default-feature test suite; `cluster-seed-runner-check` compiles the optional runner locally; `compile-aot-serializer` compiles the actual AOT feature path. | The CI names now describe the work, and the 44 default-feature tests are no longer absent from declared CI. |
@@ -1109,10 +1109,20 @@ miniature CI systems:
   and generated audit document it reads; stale extension/toolchain/`xtask`
   inputs were removed, and the previously omitted native audit document was
   added.
+- Removed `sdk-contracts:doc-examples` and its script. It only matched identical
+  comment IDs between README code fences and arbitrary test/source locations;
+  it did not compare or execute snippets. SDK compile, unit, package, and
+  runtime checks are unchanged. The obsolete marker comments were removed
+  except for the separate Kotlin docs-route marker still consumed by the docs
+  product checker.
+- The remaining SDK contract run is warning-free under pinned Moon: prohibited
+  Rust query-core mirrors use optional globs so their absence is not reported as
+  a hash error, and native-boundary inputs exclude derived Swift/Gradle/Xcode
+  SDK trees that the checker never reads.
 
-The resolved graph is **56 projects, 196 tasks, and 158 task edges**. Twenty-eight
-implementation tasks are internal, leaving **168 public tasks**. Cache policy is
-116 normal, 13 local-only, and 67 uncached tasks; the latter are deliberate
+The resolved graph is **56 projects, 195 tasks, and 157 task edges**. Twenty-eight
+implementation tasks are internal, leaving **167 public tasks**. Cache policy is
+115 normal, 13 local-only, and 67 uncached tasks; the latter are deliberate
 hosted/runtime/release side-effect boundaries rather than missing cache flags.
 
 Local execution evidence:

@@ -56,7 +56,6 @@ packaged layout and proves that a missing unpacked companion fails explicitly.
 
 Optional ICU data and its matching `icu` seed are selected explicitly:
 
-<!-- liboliphaunt-doc-example:wasix-typescript-icu -->
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
 import icu from '@oliphaunt/wasix-icu';
@@ -72,7 +71,6 @@ target, and ICU profile before running native code.
 
 ## Query PostgreSQL
 
-<!-- liboliphaunt-doc-example:wasix-typescript-query -->
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
 
@@ -125,7 +123,6 @@ SQLSTATE and structured diagnostic fields.
 
 ## Transactions
 
-<!-- liboliphaunt-doc-example:wasix-typescript-transaction -->
 ```ts
 await database.transaction(async (transaction) => {
   await transaction.execute('insert into todo values ($1)', ['inside transaction']);
@@ -167,7 +164,6 @@ errors that remain safely rollbackable are not automatically aggregated.
 Omitting `storage` creates a fresh true-memory database. Persistent adapters
 are explicit, host-specific imports:
 
-<!-- liboliphaunt-doc-example:wasix-typescript-storage-node -->
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
 import { directory } from '@oliphaunt/wasix-ts/storage/node';
@@ -240,7 +236,6 @@ matters.
 
 ## Backup and restore
 
-<!-- liboliphaunt-doc-example:wasix-typescript-backup-restore -->
 ```ts
 const backup = await database.backup();
 await database.close();
@@ -261,7 +256,6 @@ thread, and `/worker` uses a temporary package-owned Worker.
 
 Import package-authored WASIX extension descriptors and pass them at open:
 
-<!-- liboliphaunt-doc-example:wasix-typescript-extensions -->
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
 import pgtap from '@oliphaunt/extension-pgtap-wasix';
@@ -292,7 +286,6 @@ its code available but leaves the extension uninstalled in the database.
 The normal import keeps the public API consistent while selecting the safest
 default placement for the host:
 
-<!-- liboliphaunt-doc-example:wasix-typescript-root-entrypoint -->
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
 
@@ -302,7 +295,6 @@ await using database = await Oliphaunt.open();
 On Node.js, Bun, Deno, and Electron, use `/direct` only when the lowest-hop path
 is more important than keeping the importing event loop responsive:
 
-<!-- liboliphaunt-doc-example:wasix-typescript-direct-entrypoint -->
 ```ts
 import DirectOliphaunt from '@oliphaunt/wasix-ts/direct';
 
@@ -312,7 +304,6 @@ await using database = await DirectOliphaunt.open();
 Use the explicit Worker import when a separate JavaScript realm is part of the
 application's isolation or placement model:
 
-<!-- liboliphaunt-doc-example:wasix-typescript-worker-entrypoint -->
 ```ts
 import WorkerOliphaunt from '@oliphaunt/wasix-ts/worker';
 
@@ -337,7 +328,6 @@ of native side modules larger than 8 MiB requires `/worker`.
 Install `@oliphaunt/wasix-tools` when the application needs standard plain
 `pg_dump` or non-interactive `psql`:
 
-<!-- liboliphaunt-doc-example:wasix-typescript-tools -->
 ```ts
 import Oliphaunt from '@oliphaunt/wasix-ts';
 import WorkerOliphaunt from '@oliphaunt/wasix-ts/worker';
@@ -368,7 +358,6 @@ Node, Bun, Deno, and Electron may import `openServer` from the shared host-only 
 subpath. Package export conditions select the runtime; browsers cannot resolve
 this entrypoint:
 
-<!-- liboliphaunt-doc-example:wasix-typescript-server -->
 ```ts
 import { openServer } from '@oliphaunt/wasix-ts/server';
 
