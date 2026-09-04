@@ -26,6 +26,12 @@ project:
 owners:
   defaultOwner: "@oliphaunt/node-direct"
 
+fileGroups:
+  code:
+    - "native/**/*"
+    - "tools/**/*"
+    - "package.json"
+
 tasks:
   compile:
     tags: ["quality", "static"]

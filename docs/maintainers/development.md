@@ -270,14 +270,14 @@ For native liboliphaunt work, run only the product boundary you changed:
 ```sh
 moon run liboliphaunt-native:host-smoke
 moon run oliphaunt-rust:regression
-moon run extension-artifacts-native:qualify oliphaunt-rust:extension-regression
+moon run extension-artifacts-native:build-host oliphaunt-rust:extension-regression
 ```
 
 `liboliphaunt-native:host-smoke` proves the C ABI. The Rust regression uses the basic native
 runtime and runs SQL/protocol regression across direct, broker, and server mode.
 `moon run oliphaunt-rust:extension-regression` is the separate
-extension-artifact lane; it depends on `extension-artifacts-native:qualify` and is
-intentionally not part of normal PR CI. The extension artifact qualifier uses
+extension-artifact lane; it depends on `extension-artifacts-native:build-host` and is
+intentionally not part of normal PR CI. The host artifact builder uses
 the build script's no-build freshness probe before running the matrix, which avoids both
 unnecessary rebuilds and the failure mode where a core-only runtime is
 accidentally treated as extension ready. `sdks` validates SDK ownership/parity,

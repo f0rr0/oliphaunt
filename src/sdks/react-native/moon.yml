@@ -6,6 +6,8 @@ layer: "library"
 stack: "frontend"
 tags: ["sdk", "react-native", "typescript", "ios", "android", "release-product"]
 dependsOn:
+  - id: "extensions"
+    scope: "build"
   - id: "cluster-seed-contract"
     scope: "development"
   - "oliphaunt-swift"
@@ -30,6 +32,13 @@ owners:
     "ios/**": ["@oliphaunt/sdk-react-native", "@oliphaunt/sdk-swift"]
     "android/**": ["@oliphaunt/sdk-react-native", "@oliphaunt/sdk-android"]
 
+fileGroups:
+  code:
+    - "**/*"
+    - "!**/*.md"
+    - "!moon.yml"
+    - "!release.toml"
+
 tasks:
   compile:
     tags: ["quality", "static"]
@@ -40,8 +49,9 @@ tasks:
       pnpm run codegen:check
     inputs:
       - project: "shared-js-core"
+        group: "sources"
       - "@group(pnpm-workspace)"
-      - "**/*"
+      - "@group(code)"
       - "!/src/sdks/react-native/**/node_modules"
       - "!/src/sdks/react-native/**/node_modules/**"
       - "!/src/sdks/react-native/**/.build"
@@ -65,11 +75,13 @@ tasks:
       pnpm test
     inputs:
       - project: "shared-js-core"
+        group: "sources"
       - "@group(pnpm-workspace)"
       - project: "cluster-seed-contract"
-      - "/src/extensions/generated/sdk/extensions.json"
-      - "/src/extensions/generated/sdk/ios-static-dependencies.json"
-      - "**/*"
+        group: "contract"
+      - project: "extensions"
+        group: "sdk-metadata"
+      - "@group(code)"
       - "!/src/sdks/react-native/**/node_modules"
       - "!/src/sdks/react-native/**/node_modules/**"
       - "!/src/sdks/react-native/**/.build"
@@ -99,8 +111,9 @@ tasks:
     inputs:
       - "@group(legal-files)"
       - project: "shared-js-core"
-      - "/src/extensions/generated/sdk/extensions.json"
-      - "/src/extensions/generated/sdk/ios-static-dependencies.json"
+        group: "sources"
+      - project: "extensions"
+        group: "sdk-metadata"
       - "@group(pnpm-workspace)"
       - "**/*"
       - "!/src/sdks/react-native/**/node_modules"

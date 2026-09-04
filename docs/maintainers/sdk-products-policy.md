@@ -81,7 +81,7 @@ moon run oliphaunt-kotlin:check
 moon run oliphaunt-react-native:compile
 moon run oliphaunt-js:compile
 moon run sdk-contracts:check
-moon run extension-model:lint
+moon run extensions:lint
 ```
 
 The Kotlin and React Native Android validation scripts opt into Gradle

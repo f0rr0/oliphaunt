@@ -98,7 +98,7 @@ Implemented:
   throughput, so those misses remain tracked work instead of parity claims.
 - `tools/xtask` now keeps `wasmer-types` behind the AOT serializer feature.
   Native no-default-feature builds no longer compile that legacy runtime crate,
-  and `tools/policy/check-native-boundaries.sh` guards the feature boundary.
+  and `sdk-contracts:native-boundaries` guards the feature boundary.
 
 ## Runtime Direction
 

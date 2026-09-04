@@ -8,13 +8,15 @@ tags: ["extensions", "artifacts", "native"]
 dependsOn:
   - id: "extension-runtime-contract"
     scope: "build"
-  - id: "extension-model"
-    scope: "build"
   - id: "extensions"
     scope: "build"
   - id: "liboliphaunt-native"
     scope: "build"
   - id: "source-inputs"
+    scope: "build"
+  - id: "third-party-native"
+    scope: "build"
+  - id: "third-party-shared"
     scope: "build"
 
 project:
@@ -32,30 +34,32 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  qualify:
-    tags: ["release", "package"]
-    command: "bash src/extensions/artifacts/native/tools/check-release-artifacts.sh"
+  build-host:
+    tags: ["release", "artifact-builder"]
+    script: |
+      set -eu
+      . src/runtimes/liboliphaunt/native/tools/runtime-preflight.sh
+      export OLIPHAUNT_EXTENSION_TARGET="${OLIPHAUNT_EXTENSION_TARGET:-$(oliphaunt_runtime_native_host_target_id)}"
+      exec src/extensions/artifacts/native/tools/package-release-assets.sh
     env:
       OLIPHAUNT_TRACK_BUILD: "missing"
     deps:
-      - "extension-model:lint"
-      - "extension-model:unit"
-      - "extension-artifacts-native:unit"
       - "source-inputs:source-fetch-native-runtime"
     inputs:
       - "@group(legal-files)"
       - "@group(cargo-workspace)"
       - project: "extensions"
-      - "!/src/extensions/generated/docs"
-      - "!/src/extensions/generated/docs/**"
-      - "!/src/extensions/evidence"
-      - "!/src/extensions/evidence/**"
+        group: "build"
       - "/src/postgres/versions/18/**/*"
       - "/src/runtimes/liboliphaunt/licenses/**/*"
       - project: "liboliphaunt-native"
+        group: "runtime"
       - project: "extension-runtime-contract"
-      - "/src/sources/third-party/shared/**/*"
-      - "/src/sources/third-party/native/**/*"
+        group: "contract"
+      - project: "third-party-shared"
+        group: "sources"
+      - project: "third-party-native"
+        group: "sources"
       - "/tools/xtask/**/*"
       - "/tools/release/check-linux-consumer-baseline.sh"
       - "/src/sources/tools/source-fetch-core.mjs"
@@ -77,7 +81,7 @@ tasks:
     options:
       cache: false
       runFromWorkspaceRoot: true
-      runInCI: true
+      runInCI: false
   build-target:
     tags: ["release", "artifact-builder", "ci-extension-artifacts-native"]
     command: "bash src/extensions/artifacts/native/tools/package-release-assets.sh"
@@ -87,16 +91,17 @@ tasks:
       - "@group(legal-files)"
       - "@group(cargo-workspace)"
       - project: "extensions"
-      - "!/src/extensions/generated/docs"
-      - "!/src/extensions/generated/docs/**"
-      - "!/src/extensions/evidence"
-      - "!/src/extensions/evidence/**"
+        group: "build"
       - "/src/postgres/versions/18/**/*"
       - "/src/runtimes/liboliphaunt/licenses/**/*"
       - project: "liboliphaunt-native"
+        group: "runtime"
       - project: "extension-runtime-contract"
-      - "/src/sources/third-party/shared/**/*"
-      - "/src/sources/third-party/native/**/*"
+        group: "contract"
+      - project: "third-party-shared"
+        group: "sources"
+      - project: "third-party-native"
+        group: "sources"
       - "/tools/xtask/**/*"
       - "/tools/release/check-linux-consumer-baseline.sh"
       - "/src/sources/tools/source-fetch-core.mjs"

@@ -20,6 +20,10 @@ owners:
     "**/*.ts": ["@oliphaunt/sdk-js", "@oliphaunt/sdk-react-native"]
     "tools/**": ["@oliphaunt/sdk-js", "@oliphaunt/sdk-react-native"]
 
+fileGroups:
+  sources:
+    - "src/*.ts"
+
 tasks:
   sync:
     description: "Regenerate SDK mirrors from the canonical JavaScript query and protocol core."
@@ -41,7 +45,8 @@ tasks:
     tags: ["quality", "static"]
     command: "node src/shared/js-core/tools/check-js-core.mjs"
     inputs:
-      - "**/*"
+      - "@group(sources)"
+      - "tools/check-js-core.mjs"
       - "/src/sdks/js/src/protocol.ts"
       - "/src/sdks/js/src/query.ts"
       - "/src/sdks/react-native/src/protocol.ts"
@@ -55,8 +60,10 @@ tasks:
     tags: ["quality", "unit"]
     command: "bun test src/shared/js-core/test/query.test.ts"
     inputs:
-      - "**/*"
+      - "@group(sources)"
+      - "test/**/*"
       - project: "shared-test-fixtures"
+        group: "fixtures"
     options:
       cache: true
       runFromWorkspaceRoot: true

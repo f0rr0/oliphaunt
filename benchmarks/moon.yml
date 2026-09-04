@@ -15,3 +15,7 @@ owners:
   defaultOwner: "@oliphaunt/perf"
   paths:
     "**/*": ["@oliphaunt/perf"]
+
+fileGroups:
+  native-sql:
+    - "native/sql/*.sql"

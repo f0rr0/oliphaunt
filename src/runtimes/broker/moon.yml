@@ -26,6 +26,13 @@ project:
 owners:
   defaultOwner: "@oliphaunt/broker"
 
+fileGroups:
+  code:
+    - "**/*"
+    - "!**/*.md"
+    - "!moon.yml"
+    - "!release.toml"
+
 tasks:
   build:
     tags: ["build", "requires-rust"]
@@ -34,8 +41,9 @@ tasks:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-broker/build"
     inputs:
       - "@group(cargo-workspace)"
-      - "**/*"
+      - "@group(code)"
       - project: "oliphaunt-rust"
+        group: "code"
     outputs:
       - "/target/moon/oliphaunt-broker/build/debug/oliphaunt-broker*"
     options:
@@ -49,8 +57,9 @@ tasks:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-broker/check"
     inputs:
       - "@group(cargo-workspace)"
-      - "**/*"
+      - "@group(code)"
       - project: "oliphaunt-rust"
+        group: "code"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -62,8 +71,9 @@ tasks:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-broker/unit"
     inputs:
       - "@group(cargo-workspace)"
-      - "**/*"
+      - "@group(code)"
       - project: "oliphaunt-rust"
+        group: "code"
     options:
       cache: true
       runFromWorkspaceRoot: true

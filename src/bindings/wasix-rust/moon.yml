@@ -26,6 +26,13 @@ owners:
     "crates/oliphaunt-wasix/**": ["@oliphaunt/wasix-rust"]
     "tools/**": ["@oliphaunt/wasix-rust"]
 
+fileGroups:
+  code:
+    - "**/*"
+    - "!**/*.md"
+    - "!moon.yml"
+    - "!release.toml"
+
 tasks:
   compile:
     tags: ["quality", "static", "requires-rust"]
@@ -35,7 +42,8 @@ tasks:
     inputs:
       - "@group(cargo-workspace)"
       - project: "shared-rust-query-core"
-      - "**/*"
+        group: "sources"
+      - "@group(code)"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
     options:
       cache: true
@@ -55,8 +63,10 @@ tasks:
     inputs:
       - "@group(cargo-workspace)"
       - project: "shared-test-fixtures"
+        group: "fixtures"
       - project: "shared-rust-query-core"
-      - "**/*"
+        group: "sources"
+      - "@group(code)"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
     options:
       cache: true
@@ -76,7 +86,9 @@ tasks:
       - "@group(cargo-workspace)"
       - "**/*"
       - project: "shared-test-fixtures"
+        group: "fixtures"
       - project: "shared-rust-query-core"
+        group: "sources"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
       - "/src/sources/toolchains/wasix.toml"
       - "/src/bindings/wasix-rust/tools/package-source.mjs"

@@ -29,6 +29,13 @@ project:
 owners:
   defaultOwner: "@oliphaunt/wasix-napi"
 
+fileGroups:
+  code:
+    - "**/*"
+    - "!**/*.md"
+    - "!moon.yml"
+    - "!release.toml"
+
 tasks:
   format-check:
     tags: ["quality", "format", "requires-rust"]
@@ -51,6 +58,7 @@ tasks:
     inputs:
       - "@group(cargo-workspace)"
       - project: "oliphaunt-wasix-rust"
+        group: "code"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
       - "/src/runtimes/liboliphaunt/icu/**/*"
       - "Cargo.toml"
@@ -70,7 +78,7 @@ tasks:
       CARGO_TARGET_DIR: "../../../target/moon/oliphaunt-wasix-napi/unit"
     inputs:
       - "@group(cargo-workspace)"
-      - "**/*"
+      - "@group(code)"
     options:
       cache: true
 

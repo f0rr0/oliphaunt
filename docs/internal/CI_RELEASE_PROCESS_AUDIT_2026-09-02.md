@@ -216,7 +216,7 @@ Judgment terms below:
 | `liboliphaunt-wasix` | `check` validates the patch stack; `runtime-portable` builds the WASM runtime; `runtime-aot` consumes it to make AOT artifacts; `smoke`/`regression` execute PostgreSQL, proxy, CLI, extension, and client behavior; `release-assets` packages outputs; `release-check` checks artifact policy. | Mostly **aligned**, but `smoke` relies on pre-existing assets without declaring a build/artifact input, while local Moon deps imply builds that hosted CI deliberately bypasses. Rename `release-check` to `artifact-contract`; keep `build-portable -> build-aot` as a real data dependency; pass downloaded artifacts explicitly to smoke/package tasks. |
 | `liboliphaunt-wasix-postmaster` | `check` validates source locks, release metadata, script syntax, and static policy; `test` runs 27 Python/shell unit tests of orchestration and failure handling; `prepare-*`, `runtime-build`, `configure`, and `postgres-build` create the runtime; `initdb-*`, `smoke`, `regression`, stress, and recovery tasks exercise behavior; `carrier`/`release-assets` package it. | The fine-grained build chain is valuable. `test` is truthful as an orchestration-unit suite but does **not** prove the running PostgreSQL product; the smoke/regression/recovery tasks do. Remove `test` as a dependency of `carrier`, remove regression as a dependency of `portable-inputs`, and make one `qualify` aggregate depend on unit, behavior, and package tasks. Delete the `release-check -> test` alias. |
 | Contrib and external extensions | Each exact-extension project exposes only carrier assembly. Shared native/WASIX artifact projects build selected extensions; shared lifecycle lanes exercise the installed extension set. The contrib project represents 32 SQL extensions; seven external projects represent one SQL extension each. | The deeper carrier audit changes the initial recommendation: **do not split external extensions into native and WASIX versioned products** while both families share one upstream source/version. Native and WASIX targets/carriers are already distinct. Keep shared builders and selected lifecycle proof rather than duplicating four tasks seven times. Contrib should remain one runtime-bound bundle, never 32 leaf products. |
-| Extension artifact/model projects | `extension-model:check` validates generated/catalog metadata; native/WASIX `check` tasks call that same command again; builders make platform artifacts; package tasks assemble registry carriers. | **Exactly redundant.** Both artifact checks depend on `extension-model:check` and rerun the same model command. Let the model task own it once. Builders and carrier assembly must consume explicit/downloaded artifact roots rather than smuggling quality gates in as data dependencies. |
+| Extension artifact/model projects | The former `extension-model:check` validated generated/catalog metadata; native/WASIX `check` tasks called that same command again; builders make platform artifacts; package tasks assemble registry carriers. | **Exactly redundant.** The catalog now owns `extensions:lint` once. Builders and carrier assembly consume explicit/downloaded artifact roots rather than smuggling quality gates in as data dependencies. |
 | `oliphaunt-broker` | `check` compiles the broker; `test` runs broker tests; `package` checks Cargo package contents; `release-assets` builds the binary/archive and checks notices; aggregation merges platform artifacts. | Individual commands are **aligned**. Dependencies are not: broker check/test pull Rust SDK and native-runtime checks, and producer tasks rerun check/test already scheduled elsewhere. Make check, test, package-shape, and build-assets independent; use `qualify` to aggregate them. Delete the `release-check -> package` alias. |
 | `oliphaunt-node-direct` | `check` verifies files/metadata, tests a path classifier, and syntax-compiles C++; `package` reruns that same function plus one workspace assertion; `release-assets` builds, packages, loads, and lifecycle-smokes the addon. There is no product `test` task. | `check` is partly structural testing; `package` **duplicates it exactly** through both its dependency and its own wrapper. Split `static`, `unit`, `package-shape`, `build-addon`, and `addon-smoke`. Source-text assertions about how the build script is written should be replaced by executing the claimed contract. |
 | `oliphaunt-wasix-napi` | `check` runs metadata tests, four JS unit suites, `cargo fmt`, `cargo check`, and Cargo tests; `package` reruns all of that and adds one workspace assertion; `release-assets` builds and smoke-tests the packed addon. | Strongly **overloaded and redundant**. `check` is not static, and every package invocation runs the full check twice. Split format/static/unit/package/build/smoke and keep the packed-addon smoke as the behavioral proof. |
@@ -415,7 +415,7 @@ unchanged while changing task ownership:
 | Node Direct metadata/C++ syntax/classifier/package shape | Static work executed once directly and again inside package | `compile`, `unit`, and `package` each execute their own command once | None |
 | WASIX N-API format/metadata/compile/JS+Rust unit/package shape | All work in `check`, then repeated by `package` | `format-check`, `compile`, `unit`, and `package` | None |
 | SDK source, unit, and carrier checks | `package` pulled `check`/`test`; producers pulled `package` | Independent `compile`, `unit`, and `package`; artifact producers retain only `package` edges where they consume staged output | None; an intentionally narrow local `package` command now does package work only |
-| Extension catalog/model | Model command executed by three tasks | `extension-model:lint` is the single model owner; `unit` owns its parser/component tests | None |
+| Extension catalog/model | Model command executed by three tasks | `extensions:lint` is the single model owner; `extensions:unit` owns its parser/component tests | None |
 | External extension native/WASIX artifacts | Seven identical leaf wrappers called the shared assembler | Leaf wrappers deleted; shared native/WASIX builders and `extension-packages:package` remain selected from source changes | None; chaos tests prove both families and the shared package job remain reachable |
 | Contrib membership and carriers | One runtime-bound bundle plus two runtime owners | Taskless bundle descriptor consumed directly by the two runtime builders and shared carrier assembler | None; no independent contrib product or command existed |
 | Release aliases | Multiple `true`/exact-command `release-check` aliases | Underlying commands retained under their semantic owner or `qualify` aggregate | None |
@@ -995,7 +995,7 @@ command/libc tests and four Rust behavior tests.
 
 Residual root-tool boundary: SDK, binding, broker, Node Direct, and WASIX
 Node-API product tasks no longer invoke repository release/performance/coverage
-machinery. Native, WASIX, Postmaster, extension-artifact, extension-model, and
+machinery. Native, WASIX, Postmaster, extension-artifact, extension-catalog, and
 source-input projects still execute root `tools/xtask` or release-contract
 helpers. The source-fetch implementation itself now lives with its owner under
 `src/sources/tools`; it still reuses the root process-capture and extension
@@ -1120,16 +1120,38 @@ miniature CI systems:
   a hash error, and native-boundary inputs exclude derived Swift/Gradle/Xcode
   SDK trees that the checker never reads.
 - Deleted the two SDK parity compatibility shells. They only repeated
-  `sdk-contracts:check` and `extension-model:lint`; documentation and audit
+  `sdk-contracts:check` and `extensions:lint`; documentation and audit
   commands now call those cached, affected Moon owners directly.
+- Replaced every bare cross-project Moon input (which means the dependency's
+  entire `**/*` tree) with a named code, source, contract, fixture, runtime, or
+  package surface. README and Moon-config edits no longer compile, test, cover,
+  or rebuild consumers unless the task really packages that prose or topology.
+- Deleted the empty `third-party-wasix` placeholder. WASIX source scopes still
+  consume the real shared pins and `wasix.toml`; Postmaster keeps its separate
+  private pin project. Source-fetch, runtime, and release graph tests passed.
+- Merged the task-only `extension-model` pseudo-project into the real
+  `extensions` catalog. Its lint now declares the evidence and generated files
+  it actually reads. Build and package consumers use narrower catalog groups,
+  so evidence records and package helper edits no longer masquerade as runtime
+  source changes.
+- Renamed the native extension `qualify` wrapper to the truthful local
+  `build-host` task, removed quality gates from its build dependencies, and
+  replaced its hard-coded macOS ARM default with the existing host-target
+  resolver. Hosted target builds remain explicit and unchanged.
+- The shared-fixture check no longer scans every JSON/properties file for an
+  exact byte-for-byte copy. It still validates the canonical manifest, files,
+  JSON keys, and query-response contract; product tests still consume the same
+  fixtures. The only lost signal is a non-behavioral copy-placement policy.
 
-The resolved graph is **56 projects, 195 tasks, and 157 task edges**. Twenty-eight
+The resolved graph is **54 projects, 195 tasks, and 154 task edges**. Twenty-eight
 implementation tasks are internal, leaving **167 public tasks**. Cache policy is
 115 normal, 13 local-only, and 67 uncached tasks; the latter are deliberate
 hosted/runtime/release side-effect boundaries rather than missing cache flags.
 
 Local execution evidence:
 
+- after the input refactor, the unchanged `extensions:lint` restored from
+  Moon's local cache twice in 74ms and 79ms;
 - cold portable WASIX production took 20m53s; the identical follow-up restored
   the runtime from Moon's local cache in 901ms (3.6s including source
   verification);

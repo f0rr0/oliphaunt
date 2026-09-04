@@ -163,6 +163,25 @@ test('source fetch implementation changes retain their real consumers', () => {
   }
 });
 
+test('source prose, transport tests, and unrelated toolchains do not rebuild runtimes', () => {
+  const cases = [
+    ['src/postgres/versions/18/fetch-source.test.sh', 'source-inputs:unit'],
+    ['src/sources/third-party/native/README.md', null],
+    ['src/sources/toolchains/maestro.toml', 'ci-workflows:check'],
+  ];
+  for (const [relativePath, expectedTask] of cases) {
+    const effects = directEffects(relativePath);
+    if (expectedTask !== null) assert.equal(effects.tasks.includes(expectedTask), true);
+    for (const target of [
+      'liboliphaunt-native:release-runtime',
+      'liboliphaunt-wasix-postmaster:prepare-runtime',
+      'liboliphaunt-wasix:runtime-portable',
+    ]) {
+      assert.equal(effects.tasks.includes(target), false, `${target} does not consume ${relativePath}`);
+    }
+  }
+});
+
 test('runtime patch lint follows only the patch inputs it reads', () => {
   for (const relativePath of [
     'src/extensions/external/vector/source.toml',

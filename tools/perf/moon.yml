@@ -6,6 +6,10 @@ layer: "tool"
 stack: "systems"
 tags: ["tools", "performance", "bench"]
 dependsOn:
+  - id: "oliphaunt-rust"
+    scope: "development"
+  - id: "oliphaunt-wasix-rust"
+    scope: "development"
   - id: "shared-test-fixtures"
     scope: "development"
   - id: "shared-rust-query-core"
@@ -29,10 +33,13 @@ tasks:
     command: "bash tools/perf/rust-api-model/check.sh"
     inputs:
       - "@group(cargo-workspace)"
-      - "/src/sdks/rust/**/*"
-      - "/src/bindings/wasix-rust/**/*"
+      - project: "oliphaunt-rust"
+        group: "code"
+      - project: "oliphaunt-wasix-rust"
+        group: "code"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
       - project: "shared-rust-query-core"
+        group: "sources"
       - "/tools/dev/bun.sh"
       - "/tools/perf/runner/**/*"
       - "/tools/perf/rust-api-model/**/*"
@@ -49,6 +56,7 @@ tasks:
       - "@group(cargo-workspace)"
       - "/src/runtimes/liboliphaunt/native/**/*"
       - project: "shared-rust-query-core"
+        group: "sources"
       - "/src/sdks/rust/**/*"
       - "/tools/perf/runner/**/*"
       - "/tools/perf/rust-api-model/**/*"
@@ -68,6 +76,7 @@ tasks:
       - "/src/bindings/wasix-rust/**/*"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
       - project: "shared-rust-query-core"
+        group: "sources"
       - "/tools/perf/runner/**/*"
       - "/tools/perf/rust-api-model/**/*"
       - "/src/runtimes/liboliphaunt/native/tools/runtime-preflight.sh"
@@ -98,8 +107,10 @@ tasks:
       - "/src/runtimes/liboliphaunt/native/**/*"
       - "/src/sdks/rust/**/*"
       - project: "shared-test-fixtures"
+        group: "fixtures"
       - "/tools/perf/matrix/**/*"
       - project: "benchmarks"
+        group: "native-sql"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -123,8 +134,8 @@ tasks:
       - "/src/sdks/react-native/**/*"
       - "/src/sdks/swift/**/*"
       - project: "shared-test-fixtures"
+        group: "fixtures"
       - "/tools/perf/matrix/**/*"
-      - project: "benchmarks"
     options:
       cache: false
       runFromWorkspaceRoot: true

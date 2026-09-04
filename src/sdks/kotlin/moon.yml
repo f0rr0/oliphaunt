@@ -6,6 +6,8 @@ layer: "library"
 stack: "systems"
 tags: ["sdk", "kotlin", "android", "native", "release-product"]
 dependsOn:
+  - id: "extensions"
+    scope: "build"
   - id: "cluster-seed-contract"
     scope: "development"
   - id: "shared-test-fixtures"
@@ -28,6 +30,13 @@ owners:
     "**/*.kt": ["@oliphaunt/sdk-android"]
     "**/*.kts": ["@oliphaunt/sdk-android"]
 
+fileGroups:
+  code:
+    - "**/*"
+    - "!**/*.md"
+    - "!moon.yml"
+    - "!release.toml"
+
 tasks:
   check:
     tags: ["quality", "static", "requires-android-sdk"]
@@ -45,9 +54,11 @@ tasks:
       :oliphaunt-android-gradle-plugin:classes
       --configuration-cache
     inputs:
-      - "/src/extensions/generated/sdk/extensions.json"
-      - "**/*"
+      - project: "extensions"
+        group: "sdk-metadata"
+      - "@group(code)"
       - project: "extension-runtime-contract"
+        group: "contract"
     options:
       cache: true
   unit:
@@ -59,11 +70,15 @@ tasks:
       sh tools/test-cpp-bridge.sh
       ./gradlew :oliphaunt:jvmTest :oliphaunt:testDebugUnitTest :oliphaunt:testReleaseUnitTest :oliphaunt-android-gradle-plugin:check -x :oliphaunt:koverVerify --configuration-cache
     inputs:
-      - "/src/extensions/generated/sdk/extensions.json"
+      - project: "extensions"
+        group: "sdk-metadata"
       - project: "shared-test-fixtures"
+        group: "fixtures"
       - project: "cluster-seed-contract"
-      - "**/*"
+        group: "contract"
+      - "@group(code)"
       - project: "extension-runtime-contract"
+        group: "contract"
     options:
       cache: true
   package:
@@ -79,10 +94,12 @@ tasks:
     env:
       OLIPHAUNT_GRADLE_BUILD_ROOT: "../../../target/moon/oliphaunt-kotlin/package"
     inputs:
-      - "/src/extensions/generated/sdk/extensions.json"
+      - project: "extensions"
+        group: "sdk-metadata"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
-      - "**/*"
+      - "@group(code)"
       - project: "extension-runtime-contract"
+        group: "contract"
     outputs:
       - "/target/moon/oliphaunt-kotlin/package/maven/**/*"
     options:

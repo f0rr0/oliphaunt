@@ -173,7 +173,7 @@ Remaining work:
 
 Acceptance:
 
-- `moon run extension-artifacts-native:qualify oliphaunt-rust:extension-regression`
+- `moon run extension-artifacts-native:build-host oliphaunt-rust:extension-regression`
   passes with first-party extension artifacts.
 - `extension-packages:package` receives native extension artifacts for every
   published native runtime target and WASIX extension artifacts for every

@@ -8,6 +8,8 @@ tags: ["sdk", "rust", "tauri", "native", "release-product"]
 dependsOn:
   - id: "shared-test-fixtures"
     scope: "development"
+  - id: "extensions"
+    scope: "build"
   - "liboliphaunt-native"
   - "shared-rust-query-core"
 
@@ -25,6 +27,13 @@ owners:
     "**/*.rs": ["@oliphaunt/sdk-rust"]
     "Cargo.toml": ["@oliphaunt/sdk-rust"]
 
+fileGroups:
+  code:
+    - "**/*"
+    - "!**/*.md"
+    - "!moon.yml"
+    - "!release.toml"
+
 tasks:
   compile:
     tags: ["quality", "static", "requires-rust"]
@@ -38,7 +47,8 @@ tasks:
       - "@group(cargo-workspace)"
       - "/clippy.toml"
       - project: "shared-rust-query-core"
-      - "**/*"
+        group: "sources"
+      - "@group(code)"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -61,8 +71,10 @@ tasks:
     inputs:
       - "@group(cargo-workspace)"
       - project: "shared-test-fixtures"
+        group: "fixtures"
       - project: "shared-rust-query-core"
-      - "**/*"
+        group: "sources"
+      - "@group(code)"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -80,7 +92,9 @@ tasks:
       - "@group(legal-files)"
       - "@group(cargo-workspace)"
       - project: "shared-test-fixtures"
+        group: "fixtures"
       - project: "shared-rust-query-core"
+        group: "sources"
       - "**/*"
     outputs:
       - "/target/liboliphaunt-sdk-check/rust-cargo-package-list.txt"
@@ -115,8 +129,10 @@ tasks:
     inputs:
       - "@group(cargo-workspace)"
       - project: "shared-test-fixtures"
+        group: "fixtures"
       - project: "shared-rust-query-core"
-      - "**/*"
+        group: "sources"
+      - "@group(code)"
       - "/src/runtimes/liboliphaunt/native/tools/runtime-preflight.sh"
     options:
       cache: local
@@ -131,18 +147,18 @@ tasks:
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/extension-regression"
     deps:
-      - "extension-artifacts-native:qualify"
+      - "extension-artifacts-native:build-host"
     inputs:
       - "@group(cargo-workspace)"
       - project: "shared-test-fixtures"
+        group: "fixtures"
       - project: "shared-rust-query-core"
-      - "/src/extensions/**/*"
-      - "!/src/extensions/generated/docs"
-      - "!/src/extensions/generated/docs/**"
-      - "!/src/extensions/evidence"
-      - "!/src/extensions/evidence/**"
+        group: "sources"
+      - project: "extensions"
+        group: "build"
       - project: "liboliphaunt-native"
-      - "**/*"
+        group: "runtime"
+      - "@group(code)"
       - "/src/runtimes/liboliphaunt/native/tools/runtime-preflight.sh"
     options:
       cache: local

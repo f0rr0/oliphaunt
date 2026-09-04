@@ -15,3 +15,8 @@ owners:
   defaultOwner: "@oliphaunt/core"
   paths:
     "**/*": ["@oliphaunt/core"]
+
+fileGroups:
+  fixtures:
+    - "**/*"
+    - "!moon.yml"

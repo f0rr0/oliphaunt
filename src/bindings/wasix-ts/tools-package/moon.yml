@@ -17,13 +17,19 @@ project:
 owners:
   defaultOwner: "@oliphaunt/sdk-js"
 
+fileGroups:
+  code:
+    - "**/*"
+    - "!**/*.md"
+    - "!moon.yml"
+
 tasks:
   compile:
     tags: ["quality", "static"]
     command: "pnpm --dir src/bindings/wasix-ts/tools-package typecheck"
     inputs:
       - "@group(pnpm-workspace)"
-      - "**/*"
+      - "@group(code)"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -33,8 +39,9 @@ tasks:
     command: "pnpm --dir src/bindings/wasix-ts/tools-package test"
     inputs:
       - "@group(pnpm-workspace)"
-      - "**/*"
+      - "@group(code)"
       - project: "shared-test-fixtures"
+        group: "fixtures"
     options:
       cache: true
       runFromWorkspaceRoot: true

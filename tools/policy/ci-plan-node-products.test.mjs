@@ -58,6 +58,47 @@ test("JavaScript SDK source does not rebuild the Node Direct addon", () => {
   assert.equal(result.tasks.includes("release-tools:unit"), false);
 });
 
+test("product prose validates package shape without compiling or testing code", () => {
+  const javascript = effects("src/sdks/js/README.md");
+  assert.deepEqual(javascript.jobs, ["affected", "js-sdk-package"]);
+  assert.equal(javascript.tasks.includes("oliphaunt-js:package"), true);
+  for (const target of [
+    "coverage-tools:js",
+    "integration-examples:js-sdk-smoke",
+    "oliphaunt-js:compile",
+    "oliphaunt-js:unit",
+    "sdk-contracts:native-boundaries",
+  ]) {
+    assert.equal(javascript.tasks.includes(target), false, `${target} does not consume SDK prose`);
+  }
+
+  const napi = effects("src/runtimes/wasix-napi/README.md");
+  assert.deepEqual(napi.jobs, ["affected"]);
+  assert.equal(napi.tasks.includes("oliphaunt-wasix-napi:unit"), false);
+});
+
+test("shared implementation documentation has no product consumers", () => {
+  const result = effects("src/shared/js-core/README.md");
+  assert.deepEqual(result.jobs, ["affected"]);
+  assert.equal(result.tasks.includes("shared-js-core:check"), false);
+  assert.equal(result.tasks.includes("shared-js-core:test"), false);
+  assert.equal(result.tasks.some((target) => target.endsWith(":compile")), false);
+});
+
+test("extension evidence validates evidence without rebuilding products", () => {
+  const result = effects("src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json");
+  assert.equal(result.tasks.includes("extensions:lint"), true);
+  assert.equal(result.tasks.includes("docs:check"), true);
+  assert.equal(result.tasks.includes("sdk-contracts:fixtures"), false);
+  for (const job of [
+    "extension-artifacts-native",
+    "extension-artifacts-wasix",
+    "native-extension-lifecycle",
+  ]) {
+    assert.equal(result.jobs.includes(job), false, `${job} does not consume evidence records`);
+  }
+});
+
 test("Node Direct source does not rebuild the independently versioned JavaScript SDK", () => {
   const result = effects("src/runtimes/node-direct/native/node-addon/oliphaunt_node.cc");
   assert.deepEqual(result.jobs, [
@@ -125,15 +166,10 @@ test("WASIX N-API source selects only its real WASIX artifact inputs", () => {
   assert.equal(result.tasks.includes("oliphaunt-wasix-napi:unit"), true);
 });
 
-test("WASIX N-API prose and isolated unit fixtures do not start artifact builders", () => {
-  for (const relativePath of [
-    "src/runtimes/wasix-napi/README.md",
-    "src/runtimes/wasix-napi/tools/portable-command.test.mjs",
-  ]) {
-    const result = effects(relativePath);
-    assert.deepEqual(result.jobs, ["affected"]);
-    assert.equal(result.tasks.includes("oliphaunt-wasix-napi:unit"), true);
-  }
+test("WASIX N-API isolated unit fixtures do not start artifact builders", () => {
+  const result = effects("src/runtimes/wasix-napi/tools/portable-command.test.mjs");
+  assert.deepEqual(result.jobs, ["affected"]);
+  assert.equal(result.tasks.includes("oliphaunt-wasix-napi:unit"), true);
 });
 
 test("WASIX N-API production helpers keep the release builder affected", () => {
@@ -251,5 +287,19 @@ test("extension sources select shared builders without leaf package wrappers", (
       false,
       `${relativePath} must not need a duplicate leaf package task`,
     );
+  }
+});
+
+test("extension package tooling invalidates packaging without changing builders", () => {
+  const result = effects("src/extensions/artifacts/packages/tools/package-release-assets.sh");
+  assert.equal(result.tasks.includes("extension-packages:package"), true);
+  assert.equal(result.tasks.includes("extension-packages:package-mobile"), false);
+  for (const target of [
+    "extension-artifacts-native:build-target",
+    "extension-artifacts-wasix:build-target",
+    "liboliphaunt-wasix:runtime-portable",
+    "oliphaunt-rust:extension-regression",
+  ]) {
+    assert.equal(result.tasks.includes(target), false, `${target} does not consume package tooling`);
   }
 });

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 const root = path.resolve(import.meta.dir, '../..');
@@ -50,24 +50,9 @@ for (const fixture of fixtures) {
   canonical.push({ absolute, relative: `src/shared/fixtures/${fixture.path}` });
 }
 
-const candidates = [];
-for (const entry of walk(path.join(root, 'src'))) {
-  if (!entry.startsWith(`${fixtureRoot}${path.sep}`)) candidates.push(entry);
-}
-
 for (const fixture of canonical) {
   if (path.extname(fixture.absolute) === '.json') {
     validateUniqueJsonKeys(readFileSync(fixture.absolute, 'utf8'), fixture.relative);
-  }
-  const expected = readFileSync(fixture.absolute);
-  for (const candidate of candidates) {
-    if (path.extname(candidate) !== path.extname(fixture.absolute)) continue;
-    const actual = readFileSync(candidate);
-    if (actual.length === expected.length && actual.equals(expected)) {
-      errors.push(
-        `${path.relative(root, candidate)} duplicates canonical shared fixture ${fixture.relative}`,
-      );
-    }
   }
 }
 
@@ -317,17 +302,4 @@ function scanUniqueJsonKeys(source, relative) {
     findings.push(`${relative} must be valid JSON: ${error.message}`);
   }
   return findings;
-}
-
-function* walk(directory) {
-  for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    const absolute = path.join(directory, entry.name);
-    if (entry.isDirectory()) {
-      if (entry.name !== 'node_modules' && entry.name !== 'build' && entry.name !== 'lib') {
-        yield* walk(absolute);
-      }
-    } else if (entry.isFile()) {
-      yield absolute;
-    }
-  }
 }

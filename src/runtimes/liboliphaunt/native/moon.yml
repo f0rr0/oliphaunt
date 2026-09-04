@@ -6,6 +6,8 @@ layer: "library"
 stack: "systems"
 tags: ["native", "postgres", "c-abi", "pg18", "release-product"]
 dependsOn:
+  - id: "extensions"
+    scope: "build"
   - id: "shared-test-fixtures"
     scope: "development"
   - id: "postgres18"
@@ -41,6 +43,12 @@ owners:
   defaultOwner: "@oliphaunt/core"
   paths:
     "**/*": ["@oliphaunt/core"]
+
+fileGroups:
+  runtime:
+    - "**/*"
+    - "!**/*.md"
+    - "!moon.yml"
 
 tasks:
   lint:
@@ -209,10 +217,15 @@ tasks:
     inputs:
       - "**/*"
       - project: "postgres18"
+        group: "source"
       - project: "third-party-shared"
+        group: "sources"
       - project: "third-party-native"
+        group: "sources"
       - project: "extension-runtime-contract"
+        group: "contract"
       - project: "shared-test-fixtures"
+        group: "fixtures"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -225,10 +238,14 @@ tasks:
     inputs:
       - "@group(legal-files)"
       - project: "postgres18"
+        group: "source"
       - "/src/runtimes/liboliphaunt/licenses/**/*"
       - project: "third-party-shared"
+        group: "sources"
       - project: "third-party-native"
+        group: "sources"
       - project: "extension-runtime-contract"
+        group: "contract"
       - "**/*"
       - "/tools/native-packaging/**/*"
       - "/tools/release/check-linux-consumer-baseline.sh"
@@ -264,10 +281,14 @@ tasks:
     inputs:
       - "@group(legal-files)"
       - project: "postgres18"
+        group: "source"
       - "/src/runtimes/liboliphaunt/licenses/**/*"
       - project: "third-party-shared"
+        group: "sources"
       - project: "third-party-native"
+        group: "sources"
       - project: "extension-runtime-contract"
+        group: "contract"
       - "**/*"
       - "/tools/native-packaging/**/*"
       - "/tools/release/release-notices.mjs"
@@ -282,7 +303,8 @@ tasks:
     command: "bash tools/release/package-liboliphaunt-aggregate-assets.sh"
     inputs:
       - "/release-please-config.json"
-      - "/src/extensions/generated/sdk/extensions.json"
+      - project: "extensions"
+        group: "sdk-metadata"
       - "/src/runtimes/liboliphaunt/native/moon.yml"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/check-liboliphaunt-release-assets.mjs"
@@ -308,9 +330,13 @@ tasks:
     inputs:
       - "**/*"
       - project: "postgres18"
+        group: "source"
       - project: "third-party-shared"
+        group: "sources"
       - project: "third-party-native"
+        group: "sources"
       - project: "extension-runtime-contract"
+        group: "contract"
     outputs:
       - "/target/liboliphaunt-ios-xcframework/**/*"
     options:

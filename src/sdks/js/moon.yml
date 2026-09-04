@@ -29,14 +29,22 @@ owners:
     "**/*.ts": ["@oliphaunt/sdk-js"]
     "tools/**": ["@oliphaunt/sdk-js"]
 
+fileGroups:
+  code:
+    - "**/*"
+    - "!**/*.md"
+    - "!moon.yml"
+    - "!release.toml"
+
 tasks:
   compile:
     tags: ["quality", "static"]
     command: "pnpm run build"
     inputs:
       - project: "shared-js-core"
+        group: "sources"
       - "@group(pnpm-workspace)"
-      - "**/*"
+      - "@group(code)"
     outputs:
       - "lib/**/*"
     options:
@@ -46,10 +54,13 @@ tasks:
     command: "pnpm test"
     inputs:
       - project: "shared-test-fixtures"
+        group: "fixtures"
       - project: "cluster-seed-contract"
+        group: "contract"
       - project: "shared-js-core"
+        group: "sources"
       - "@group(pnpm-workspace)"
-      - "**/*"
+      - "@group(code)"
     options:
       cache: true
   package:
@@ -68,6 +79,7 @@ tasks:
     inputs:
       - "@group(legal-files)"
       - project: "shared-js-core"
+        group: "sources"
       - "@group(pnpm-workspace)"
       - "**/*"
     outputs:

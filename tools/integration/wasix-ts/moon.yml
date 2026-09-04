@@ -46,6 +46,7 @@ tasks:
       - "/benchmarks/wasix/**/*"
       - "/examples/browser-wasix/**/*"
       - project: "shared-test-fixtures"
+        group: "fixtures"
       - "**/*"
       - "/tools/dev/bun.sh"
       - "/tools/dev/deno.sh"

@@ -6,6 +6,8 @@ layer: "tool"
 stack: "systems"
 tags: ["maintainer-tool", "native", "rust"]
 dependsOn:
+  - id: "extensions"
+    scope: "build"
   - id: "extension-runtime-contract"
     scope: "build"
 
@@ -25,9 +27,12 @@ tasks:
       CARGO_TARGET_DIR: "target/moon/native-packaging/check"
     inputs:
       - "@group(cargo-workspace)"
-      - "/src/extensions/generated/sdk/extensions.json"
+      - project: "extensions"
+        group: "sdk-metadata"
       - project: "extension-runtime-contract"
+        group: "contract"
       - project: "oliphaunt-rust"
+        group: "code"
       - "**/*"
     options:
       cache: true
@@ -39,9 +44,12 @@ tasks:
       CARGO_TARGET_DIR: "target/moon/native-packaging/unit"
     inputs:
       - "@group(cargo-workspace)"
-      - "/src/extensions/generated/sdk/extensions.json"
+      - project: "extensions"
+        group: "sdk-metadata"
       - project: "extension-runtime-contract"
+        group: "contract"
       - project: "oliphaunt-rust"
+        group: "code"
       - "**/*"
     options:
       cache: true

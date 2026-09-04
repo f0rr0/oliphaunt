@@ -22,12 +22,19 @@ owners:
     "**/*.swift": ["@oliphaunt/sdk-swift"]
     "Package.swift": ["@oliphaunt/sdk-swift"]
 
+fileGroups:
+  code:
+    - "**/*"
+    - "!**/*.md"
+    - "!moon.yml"
+    - "!release.toml"
+
 tasks:
   compile:
     tags: ["quality", "static"]
     command: "swift build --scratch-path ../../../target/moon/oliphaunt-swift/compile"
     inputs:
-      - "**/*"
+      - "@group(code)"
     options:
       cache: true
   unit:
@@ -37,7 +44,7 @@ tasks:
       sh tools/test-c-bridge.sh
       swift test --scratch-path ../../../target/moon/oliphaunt-swift/unit
     inputs:
-      - "**/*"
+      - "@group(code)"
       - "!/src/sdks/swift/.build"
       - "!/src/sdks/swift/.build/**"
     options:
@@ -56,7 +63,8 @@ tasks:
       - "liboliphaunt-native:host-smoke"
     inputs:
       - project: "liboliphaunt-native"
-      - "**/*"
+        group: "runtime"
+      - "@group(code)"
       - "!/src/sdks/swift/.build"
       - "!/src/sdks/swift/.build/**"
       - "/src/runtimes/liboliphaunt/native/tools/runtime-preflight.sh"

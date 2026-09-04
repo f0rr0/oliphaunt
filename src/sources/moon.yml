@@ -26,11 +26,8 @@ tasks:
       bash src/postgres/versions/18/fetch-source.test.sh
     inputs:
       - "/src/postgres/versions/18/**/*"
-      - "/src/sources/toolchains/**/*"
-      - "/src/sources/third-party/shared/**/*"
-      - "/src/sources/third-party/native/**/*"
-      - "/src/sources/third-party/wasix/**/*"
-      - "/src/sources/third-party/wasix-postmaster/**/*"
+      - "/src/sources/toolchains/wasix.toml"
+      - "/src/sources/third-party/**/*.toml"
       - "/src/extensions/external/**/source.toml"
       - "/src/extensions/external/**/dependencies/**/source.toml"
       - "/src/extensions/external/*/upstream-license-data.json"
@@ -42,11 +39,8 @@ tasks:
     tags: ["source", "fetch"]
     command: "bun src/sources/tools/fetch-sources.mjs production-all --force"
     inputs:
-      - "/src/sources/toolchains/**/*"
-      - "/src/sources/third-party/shared/**/*"
-      - "/src/sources/third-party/native/**/*"
-      - "/src/sources/third-party/wasix/**/*"
-      - "/src/sources/third-party/wasix-postmaster/**/*"
+      - "/src/sources/toolchains/wasix.toml"
+      - "/src/sources/third-party/**/*.toml"
       - "/src/extensions/external/**/source.toml"
       - "/src/extensions/external/**/dependencies/**/source.toml"
       - "/src/extensions/external/*/upstream-license-data.json"
@@ -69,8 +63,8 @@ tasks:
     tags: ["source", "fetch"]
     command: "bun src/sources/tools/fetch-sources.mjs native-runtime --force"
     inputs:
-      - "/src/sources/third-party/shared/**/*"
-      - "/src/sources/third-party/native/**/*"
+      - "/src/sources/third-party/shared/*.toml"
+      - "/src/sources/third-party/native/*.toml"
       - "/src/extensions/external/**/source.toml"
       - "/src/extensions/external/**/dependencies/**/source.toml"
       - "/src/extensions/external/*/upstream-license-data.json"
@@ -88,9 +82,8 @@ tasks:
     tags: ["source", "fetch"]
     command: "bun src/sources/tools/fetch-sources.mjs wasix-runtime --force"
     inputs:
-      - "/src/sources/toolchains/**/*"
-      - "/src/sources/third-party/shared/**/*"
-      - "/src/sources/third-party/wasix/**/*"
+      - "/src/sources/toolchains/wasix.toml"
+      - "/src/sources/third-party/shared/*.toml"
       - "/src/extensions/external/**/source.toml"
       - "/src/extensions/external/**/dependencies/**/source.toml"
       - "/src/extensions/external/*/upstream-license-data.json"
@@ -113,10 +106,9 @@ tasks:
     tags: ["source", "fetch"]
     command: "bun src/sources/tools/fetch-sources.mjs wasix-postmaster-runtime --force"
     inputs:
-      - "/src/sources/toolchains/**/*"
-      - "/src/sources/third-party/shared/**/*"
-      - "/src/sources/third-party/wasix/**/*"
-      - "/src/sources/third-party/wasix-postmaster/**/*"
+      - "/src/sources/toolchains/wasix.toml"
+      - "/src/sources/third-party/shared/*.toml"
+      - "/src/sources/third-party/wasix-postmaster/*.toml"
       - "tools/**/*"
       - "!tools/**/*.test.*"
       - "!tools/verify-source-tree.py"

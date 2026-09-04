@@ -160,7 +160,7 @@ support behavior honestly; gaps must be explicit and justified in
   portable runtime carrier plus separately selected WASIX extension npm leaves;
   `oliphaunt` may load `liboliphaunt`. None should call another public
   product's private modules.
-- `tools/policy/check-native-boundaries.sh` enforces the native/WASIX split:
+- `moon run sdk-contracts:native-boundaries` enforces the native/WASIX split:
   the Rust-native SDK and Swift/Kotlin/React Native package manifests must not
   depend on `oliphaunt-wasix`, WASIX AOT payload crates, or Wasmer runtime
   packages.
@@ -272,7 +272,7 @@ support behavior honestly; gaps must be explicit and justified in
   orchestration over Moon tasks and the release CLI.
 - `sdk-contracts:check` owns generated API, SDK registry, C ABI header-copy,
   and native-boundary contracts. Exact extension catalogs belong to
-  `extension-model:lint`, while
+  `extensions:lint`, while
   SDK behavior, React Native delegation, package contents, and installed-app
   evidence belong to product-local Moon tasks. Stable CI does not infer those
   contracts from prose, test names, or implementation-source spellings.

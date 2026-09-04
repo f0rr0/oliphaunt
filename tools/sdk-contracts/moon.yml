@@ -46,6 +46,7 @@ tasks:
       - "/src/sdks/react-native/package.json"
       - "/src/sdks/rust/src/**/*.rs"
       - project: "shared-rust-query-core"
+        group: "sources"
       - "/src/sdks/rust/crates/oliphaunt-build/src/**/*.rs"
       - "/src/sdks/swift/Sources/Oliphaunt/**/*.swift"
       - "/src/sdks/swift/Sources/OliphauntExtensionSupport/**/*.swift"
@@ -61,6 +62,7 @@ tasks:
     command: "bun tools/policy/check-cluster-seed-contract.mjs"
     inputs:
       - project: "cluster-seed-contract"
+        group: "contract"
       - "/tools/policy/check-cluster-seed-contract.mjs"
       - "/tools/release/native-cluster-seed-contract.mjs"
     options:
@@ -71,7 +73,7 @@ tasks:
     command: "bun tools/policy/check-shared-fixtures.mjs"
     inputs:
       - project: "shared-test-fixtures"
-      - "/src/**/*.{json,properties}"
+        group: "fixtures"
       - "/tools/policy/check-shared-fixtures.mjs"
     options:
       cache: true
@@ -110,16 +112,21 @@ tasks:
     tags: ["quality", "static"]
     command: "bun tools/policy/check-native-boundaries.mjs"
     inputs:
-      - "/Cargo.toml"
-      - "/src/bindings/wasix-rust/**/*"
-      - "/src/runtimes/**/*"
-      - "/src/sdks/**/*"
-      - "!/src/sdks/**/{.build,.cxx,.gradle,build,DerivedData,lib,Pods}"
-      - "!/src/sdks/**/{.build,.cxx,.gradle,build,DerivedData,lib,Pods}/**"
-      - "/tools/perf/**/*"
+      - "/examples/react-native-expo/package.json"
+      - "/src/sdks/rust/Cargo.toml"
+      - "/src/sdks/react-native/package.json"
+      - "/src/sdks/{rust/src,rust/tests,swift/Sources,swift/Tests,kotlin/oliphaunt/src,react-native/src,react-native/ios,react-native/android/src}/**/*.{c,cpp,h,java,kt,m,mm,rs,swift,ts,tsx}"
+      - "/src/runtimes/liboliphaunt/native/{include,src}/**/*.{c,h}"
+      - "/src/sdks/swift/Package.swift"
+      - "/src/sdks/react-native/OliphauntReactNative.podspec"
+      - "/src/sdks/kotlin/build.gradle.kts"
+      - "/src/sdks/kotlin/oliphaunt/build.gradle.kts"
+      - "/src/sdks/react-native/android/build.gradle"
+      - "/src/sdks/react-native/android/settings.gradle"
+      - "/tools/perf/runner/Cargo.toml"
+      - "/tools/policy/sdk-manifest.toml"
       - "/tools/policy/check-native-boundaries.mjs"
-      - "/tools/policy/check-native-boundaries.sh"
-      - "/tools/xtask/**/*"
+      - "/tools/xtask/Cargo.toml"
     options:
       cache: true
       runFromWorkspaceRoot: true

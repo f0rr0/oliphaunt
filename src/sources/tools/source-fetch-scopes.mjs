@@ -1,7 +1,6 @@
 export const sourceOrigins = Object.freeze({
   sharedThirdParty: 'shared-third-party',
   nativeThirdParty: 'native-third-party',
-  wasixThirdParty: 'wasix-third-party',
   wasixPostmasterThirdParty: 'wasix-postmaster-third-party',
   extension: 'extension',
 });
@@ -12,7 +11,6 @@ const SOURCE_ORIGINS_BY_SCOPE = Object.freeze({
   'production-all': Object.freeze([
     sourceOrigins.sharedThirdParty,
     sourceOrigins.nativeThirdParty,
-    sourceOrigins.wasixThirdParty,
     sourceOrigins.wasixPostmasterThirdParty,
     sourceOrigins.extension,
   ]),
@@ -24,12 +22,10 @@ const SOURCE_ORIGINS_BY_SCOPE = Object.freeze({
   ]),
   'wasix-runtime': Object.freeze([
     sourceOrigins.sharedThirdParty,
-    sourceOrigins.wasixThirdParty,
     sourceOrigins.extension,
   ]),
   'wasix-postmaster-runtime': Object.freeze([
     sourceOrigins.sharedThirdParty,
-    sourceOrigins.wasixThirdParty,
     sourceOrigins.wasixPostmasterThirdParty,
   ]),
   extensions: Object.freeze([sourceOrigins.extension]),
@@ -40,7 +36,6 @@ export const sourceScopes = Object.freeze(Object.keys(SOURCE_ORIGINS_BY_SCOPE));
 const domainEntries = Object.freeze([
   Object.freeze(['shared', sourceOrigins.sharedThirdParty]),
   Object.freeze(['native', sourceOrigins.nativeThirdParty]),
-  Object.freeze(['wasix', sourceOrigins.wasixThirdParty]),
   Object.freeze(['wasix-postmaster', sourceOrigins.wasixPostmasterThirdParty]),
 ]);
 
@@ -50,7 +45,7 @@ export function sourceDomainsForScope(selectedScope) {
 }
 
 export function scopeIncludesWasix(selectedScope) {
-  return scopeIncludes(selectedScope, sourceOrigins.wasixThirdParty);
+  return ['production-all', 'all', 'wasix-runtime', 'wasix-postmaster-runtime'].includes(selectedScope);
 }
 
 export function scopeIncludesExtensions(selectedScope) {

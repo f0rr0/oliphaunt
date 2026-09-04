@@ -6,6 +6,8 @@ layer: "tool"
 stack: "infrastructure"
 tags: ["integration", "react-native"]
 dependsOn:
+  - id: "extensions"
+    scope: "build"
   - "oliphaunt-react-native"
 
 project:
@@ -26,7 +28,8 @@ tasks:
       bash tools/integration/react-native/expo-runner-ios-installed-app.test.sh
       bash tools/integration/react-native/expo-runner-workspace.test.sh
     inputs:
-      - "/src/extensions/generated/sdk/extensions.json"
+      - project: "extensions"
+        group: "sdk-metadata"
       - "/src/sdks/react-native/tools/**/*"
       - "**/*"
     options:

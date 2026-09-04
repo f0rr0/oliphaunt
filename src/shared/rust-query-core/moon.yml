@@ -17,12 +17,17 @@ owners:
     "query_core.rs": ["@oliphaunt/sdk-rust", "@oliphaunt/wasix-rust"]
     "tools/**": ["@oliphaunt/core"]
 
+fileGroups:
+  sources:
+    - "query_core.rs"
+
 tasks:
   check:
     tags: ["quality", "static"]
     command: "node src/shared/rust-query-core/tools/check-rust-query-core.mjs"
     inputs:
-      - "**/*"
+      - "@group(sources)"
+      - "tools/check-rust-query-core.mjs"
       - "/src/sdks/rust/src/query_core*"
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/query_core*"
     options:

@@ -25,6 +25,13 @@ project:
 owners:
   defaultOwner: "@oliphaunt/sdk-js"
 
+fileGroups:
+  code:
+    - "**/*"
+    - "!**/*.md"
+    - "!moon.yml"
+    - "!release.toml"
+
 tasks:
   compile:
     tags: ["quality", "static"]
@@ -32,7 +39,8 @@ tasks:
     inputs:
       - "@group(pnpm-workspace)"
       - project: "shared-js-core"
-      - "**/*"
+        group: "sources"
+      - "@group(code)"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -43,9 +51,12 @@ tasks:
     inputs:
       - "@group(pnpm-workspace)"
       - project: "shared-js-core"
+        group: "sources"
       - project: "shared-test-fixtures"
+        group: "fixtures"
       - project: "cluster-seed-contract"
-      - "**/*"
+        group: "contract"
+      - "@group(code)"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -60,6 +71,7 @@ tasks:
       - "@group(legal-files)"
       - "@group(pnpm-workspace)"
       - project: "shared-js-core"
+        group: "sources"
       - "**/*"
     outputs:
       - "/target/oliphaunt-wasix-ts/package/**/*"

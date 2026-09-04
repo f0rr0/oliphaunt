@@ -107,8 +107,6 @@ export const NATIVE_EXTENSION_LIFECYCLE_EXHAUSTIVE_SHARD_COUNT = 3;
 export const NATIVE_EXTENSION_LIFECYCLE_TRIGGER_PROJECTS = new Set([
   "extension-artifacts-native",
   "oliphaunt-extension-contrib-pg18",
-  "extension-model",
-  "extensions",
   "liboliphaunt-native",
   "oliphaunt-broker",
   "oliphaunt-rust",
@@ -126,15 +124,12 @@ export const BROAD_EXTENSION_INPUT_PROJECTS = new Set([
   "extension-artifacts-native",
   "extension-artifacts-wasix",
   "oliphaunt-extension-contrib-pg18",
-  "extension-model",
   "extension-packages",
-  "extensions",
   "liboliphaunt-native",
   "liboliphaunt-wasix",
   "postgres18",
   "third-party-native",
   "third-party-shared",
-  "third-party-wasix",
 ]);
 function fail(message) {
   console.error(`${PREFIX}: ${message}`);

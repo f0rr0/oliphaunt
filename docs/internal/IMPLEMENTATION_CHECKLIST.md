@@ -566,7 +566,7 @@ Run before claiming this architecture complete:
 - [x] `moon run oliphaunt-react-native:compile oliphaunt-react-native:unit`
 - [x] `moon run policy-tools:tools-compile release-tools:check graph-tools:check`
 - [x] `MOON_BIN=$HOME/.proto/shims/moon
-  .github/scripts/run-moon-targets.sh extension-model:check
+  .github/scripts/run-moon-targets.sh extensions:lint
   extension-artifacts-native:check extension-artifacts-wasix:check`
 - [x] `moon query projects`
 - [x] `moon query tasks`
@@ -721,7 +721,7 @@ Run before claiming this architecture complete:
   .github/workflows/release.yml`, `python3 tools/release/check_artifact_targets.py`,
   `python3 tools/policy/check-release-policy.py`,
   `node tools/policy/check-moon-product-graph.mjs`,
-  `moon run extension-model:lint`,
+  `moon run extensions:lint`,
   `moon run sdk-contracts:check`, and
   `bash tools/policy/check-repo-structure.sh`.
 - [x] Local PR 38 Windows builder follow-up checks passed after making native
@@ -735,7 +735,7 @@ Run before claiming this architecture complete:
   `python3 tools/release/check_artifact_targets.py`,
   `python3 tools/policy/check-release-policy.py`,
   `node tools/policy/check-moon-product-graph.mjs`,
-  `moon run extension-model:lint`,
+  `moon run extensions:lint`,
   `moon run sdk-contracts:check`, `bash tools/policy/check-repo-structure.sh`,
   and `moon run oliphaunt-node-direct:compile`.
   PowerShell parsing/execution still needs the GitHub Windows runner because
@@ -780,7 +780,7 @@ Run before claiming this architecture complete:
   `python3 tools/release/check_artifact_targets.py`,
   `python3 tools/policy/check-release-policy.py`, `python3 -m py_compile` for
   touched Python release/graph modules,
-  `moon run extension-model:lint`,
+  `moon run extensions:lint`,
   `python3 tools/release/artifact_target_matrix.py extension-artifacts-native`,
   and the focused extension package checks.
 - [x] GitHub Builds run `27383810080` on `d7ad6eca` proved the next CI-only
@@ -805,7 +805,7 @@ Run before claiming this architecture complete:
   `python3 src/extensions/tools/check-extension-model.py --check`,
   `python3 tools/release/check_artifact_targets.py`,
   `python3 tools/policy/check-release-policy.py`,
-  `moon run extension-model:lint`,
+  `moon run extensions:lint`,
   `node tools/policy/check-moon-product-graph.mjs`, and `git diff --check`.
 - [x] Builds workflow green on PR for affected builder jobs, including
   Android/iOS release-mode mobile build jobs when selected.
@@ -859,7 +859,7 @@ Run before claiming this architecture complete:
   dependency packaging. The follow-up guards the empty-array expansions for
   selected dependencies/extensions/stems and adds a mobile policy assertion for
   the strict-mode guard. Local evidence after this patch passed: `bash -n` for
-  the touched shell scripts, `moon run extension-model:lint`,
+  the touched shell scripts, `moon run extensions:lint`,
   `git diff --check`, and a focused `dict_xsyn` iOS XCFramework packaging
   smoke that produced simulator/device archives under
   `target/ios-xcframework-dict-xsyn-smoke/out` with `dependencies=` in the
@@ -896,7 +896,7 @@ Run before claiming this architecture complete:
   static registry source, and also hardens React Native runner empty-array
   expansions under Bash 3.2 strict mode. Local evidence after this patch
   passed: Bash syntax checks for the touched runner/policy scripts,
-  `moon run extension-model:lint`,
+  `moon run extensions:lint`,
   `node tools/policy/check-moon-product-graph.mjs`,
   `python3 tools/release/check_artifact_targets.py`, `git diff --check`,
   CI-artifact package lookup for the selected `vector` iOS XCFramework zip,

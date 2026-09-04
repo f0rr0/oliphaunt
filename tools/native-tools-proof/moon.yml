@@ -6,6 +6,8 @@ layer: "tool"
 stack: "systems"
 tags: ["maintainer-tool", "native", "rust", "tools"]
 dependsOn:
+  - id: "liboliphaunt-native"
+    scope: "development"
   - id: "shared-test-fixtures"
     scope: "development"
 
@@ -25,9 +27,12 @@ tasks:
       CARGO_TARGET_DIR: "target/moon/native-tools-proof/unit"
     inputs:
       - "@group(cargo-workspace)"
-      - "/src/runtimes/liboliphaunt/native/crates/tools/**/*"
+      - project: "liboliphaunt-native"
+        group: "runtime"
       - project: "oliphaunt-rust"
+        group: "code"
       - project: "shared-test-fixtures"
+        group: "fixtures"
       - "**/*"
     options:
       cache: true

@@ -5,6 +5,9 @@ language: "typescript"
 layer: "application"
 stack: "frontend"
 tags: ["docs", "fumadocs", "next", "public"]
+dependsOn:
+  - id: "extensions"
+    scope: "build"
 
 project:
   title: "Oliphaunt Docs"
@@ -29,7 +32,8 @@ tasks:
       - "/release-please-config.json"
       - "/src/**/release.toml"
       - "**/*"
-      - "/src/extensions/**/*"
+      - project: "extensions"
+        group: "model"
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
     options:
@@ -64,7 +68,8 @@ tasks:
       - "/src/bindings/wasix-ts/src/**/*"
       - "/src/**/release.toml"
       - "**/*"
-      - "/src/extensions/**/*"
+      - project: "extensions"
+        group: "model"
       - "@group(pnpm-workspace)"
     options:
       cache: true
@@ -96,7 +101,8 @@ tasks:
       - "/src/bindings/wasix-ts/src/**/*"
       - "/src/**/release.toml"
       - "**/*"
-      - "/src/extensions/**/*"
+      - project: "extensions"
+        group: "model"
       - "@group(pnpm-workspace)"
     outputs:
       - "/target/docs/build/**/*"
@@ -148,7 +154,8 @@ tasks:
       - "/src/bindings/wasix-ts/src/**/*"
       - "/src/**/release.toml"
       - "**/*"
-      - "/src/extensions/**/*"
+      - project: "extensions"
+        group: "model"
       - "@group(pnpm-workspace)"
     options:
       cache: local

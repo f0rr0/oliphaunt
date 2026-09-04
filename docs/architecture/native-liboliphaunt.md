@@ -168,5 +168,5 @@ SDK package and smoke lanes then prove their adapters against the same artifact.
 ```sh
 moon run liboliphaunt-native:host-smoke
 moon run oliphaunt-rust:regression
-moon run extension-artifacts-native:qualify oliphaunt-rust:extension-regression
+moon run extension-artifacts-native:build-host oliphaunt-rust:extension-regression
 ```

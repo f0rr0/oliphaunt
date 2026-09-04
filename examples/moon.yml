@@ -6,8 +6,8 @@ layer: "application"
 stack: "frontend"
 tags: ["examples", "integration"]
 dependsOn:
-  - id: "shared-test-fixtures"
-    scope: "development"
+  - id: "extensions"
+    scope: "build"
   - "liboliphaunt-native"
   - "oliphaunt-broker"
   - "oliphaunt-js"
@@ -37,10 +37,8 @@ tasks:
       - "oliphaunt-broker:build"
       - "release-tools:node-direct-runtime"
     inputs:
-      - project: "shared-test-fixtures"
       - project: "oliphaunt-js"
-      - project: "oliphaunt-broker"
-      - project: "oliphaunt-node-direct"
+        group: "code"
       - "/src/runtimes/liboliphaunt/native/tools/runtime-preflight.sh"
       - "tools/smoke-js-sdk.sh"
     options:
@@ -54,6 +52,7 @@ tasks:
     inputs:
       - "browser-wasix/**/*"
       - project: "oliphaunt-wasix-ts"
+        group: "code"
       - "@group(pnpm-workspace)"
     options:
       cache: true
@@ -81,8 +80,11 @@ tasks:
     inputs:
       - "react-native-expo/**/*"
       - project: "oliphaunt-kotlin"
+        group: "code"
       - project: "oliphaunt-react-native"
-      - "/src/extensions/**/*"
+        group: "code"
+      - project: "extensions"
+        group: "build"
       - "/target/extension-artifacts/**/*"
       - "/target/sdk-artifacts/oliphaunt-kotlin/**/*"
       - "/target/sdk-artifacts/oliphaunt-react-native/**/*"
@@ -102,6 +104,7 @@ tasks:
       - "react-native-expo/maestro/**/*"
       - "react-native-expo/package.json"
       - project: "oliphaunt-react-native"
+        group: "code"
       - "/src/sources/toolchains/android-emulator-runner.toml"
       - "/src/sources/toolchains/maestro.toml"
       - "/tools/dev/setup-maestro.sh"
@@ -116,8 +119,11 @@ tasks:
     inputs:
       - "react-native-expo/**/*"
       - project: "oliphaunt-kotlin"
+        group: "code"
       - project: "oliphaunt-react-native"
-      - "/src/extensions/**/*"
+        group: "code"
+      - project: "extensions"
+        group: "build"
       - "/tools/native-packaging/**/*"
     options:
       cache: false
@@ -132,8 +138,11 @@ tasks:
     inputs:
       - "react-native-expo/**/*"
       - project: "oliphaunt-react-native"
+        group: "code"
       - project: "oliphaunt-swift"
-      - "/src/extensions/**/*"
+        group: "code"
+      - project: "extensions"
+        group: "build"
       - "/target/extension-artifacts/**/*"
       - "/target/sdk-artifacts/oliphaunt-react-native/**/*"
       - "/target/sdk-artifacts/oliphaunt-swift/**/*"
@@ -153,6 +162,7 @@ tasks:
       - "react-native-expo/maestro/**/*"
       - "react-native-expo/package.json"
       - project: "oliphaunt-react-native"
+        group: "code"
       - "/src/sources/toolchains/maestro.toml"
       - "/tools/dev/setup-maestro.sh"
       - "/target/mobile-build/react-native/ios/**/*"
@@ -166,8 +176,11 @@ tasks:
     inputs:
       - "react-native-expo/**/*"
       - project: "oliphaunt-react-native"
+        group: "code"
       - project: "oliphaunt-swift"
-      - "/src/extensions/**/*"
+        group: "code"
+      - project: "extensions"
+        group: "build"
       - "/tools/native-packaging/**/*"
     options:
       cache: false
