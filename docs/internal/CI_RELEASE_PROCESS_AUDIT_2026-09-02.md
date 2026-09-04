@@ -520,9 +520,9 @@ Moon task cache across jobs or runs.
 
 ### Dependency graph
 
-Moon resolves **52 projects with 112 project edges** and **232 tasks across 35
-task-owning projects with 158 task edges**. Project edges comprise 59
-production/release relationships, 52 build/compatibility relationships, and one
+Moon resolves **52 projects with 117 project edges** and **232 tasks across 35
+task-owning projects with 158 task edges**. Project edges comprise 24
+production relationships, 92 build/compatibility relationships, and one
 development relationship.
 
 Task edges now have an executable invariant:
@@ -533,9 +533,10 @@ Task edges now have an executable invariant:
 | `outputs` | 11 | Consumer hydrates a producer's declared outputs | All producers declare outputs |
 | `ignored` | 101 | Ordering/qualification only; no artifact data is consumed | No producer declares outputs |
 
-`product-task-model.test.mjs` now checks this for the entire task graph and also
-checks the five SDK carrier tasks that consume product package staging. Moon
-itself rejects missing targets and cycles while constructing the graph.
+`product-task-model.test.mjs` now checks this for the entire task graph, the five
+SDK carrier tasks that consume product package staging, and the absence of
+`src/ -> tools/` project edges. Moon itself rejects missing targets and cycles
+while constructing the graph.
 
 Cross-product judgments:
 
