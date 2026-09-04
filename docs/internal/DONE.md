@@ -1073,7 +1073,7 @@ The native SDK parity track now has a no-build public surface inventory:
 - `tools/policy/generate-sdk-api-surface.mjs --write` regenerates
   `src/docs/content/reference/sdk-api-surface.md` from the current Rust, Swift, Kotlin, and React
   Native SDK sources;
-- `tools/policy/check-sdk-parity.sh` runs the generator in `--check` mode so
+- `sdk-contracts:check` runs the generator in `--check` mode so
   accidental public symbol drift is visible in the fast parity gate;
 - `docs/maintainers/sdk-parity-policy.md` links the inventory next to `docs/products/sdk-manifest.toml`, so
   ownership, supported platform shape, and public API review evidence stay

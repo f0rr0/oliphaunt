@@ -276,7 +276,7 @@ The lightweight contract checks are:
 
 ```sh
 moon run sdk-contracts:check
-tools/policy/check-sdk-parity.sh
+moon run extension-model:lint
 ```
 
 Product-owned compile, package, smoke, and release tasks remain the authority

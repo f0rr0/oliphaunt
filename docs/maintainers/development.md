@@ -115,7 +115,6 @@ The validation entrypoint is split by maintainer workflow:
 - `moon run sdk-contracts:check`: fast generated API, SDK registry, C ABI
   header-copy, and native-boundary contract validation. Use
   product `compile`, `unit`, and `package` targets for behavior and package proof;
-  `tools/policy/check-sdk-parity.sh` remains a compatible local aggregate;
 - `moon run oliphaunt-swift:compile`: SwiftPM package description and build checks
   for the SDK package and repository root package;
 - `moon run oliphaunt-swift:smoke`: Swift SDK tests against the current native

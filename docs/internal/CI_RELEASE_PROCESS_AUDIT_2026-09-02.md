@@ -1119,6 +1119,9 @@ miniature CI systems:
   Rust query-core mirrors use optional globs so their absence is not reported as
   a hash error, and native-boundary inputs exclude derived Swift/Gradle/Xcode
   SDK trees that the checker never reads.
+- Deleted the two SDK parity compatibility shells. They only repeated
+  `sdk-contracts:check` and `extension-model:lint`; documentation and audit
+  commands now call those cached, affected Moon owners directly.
 
 The resolved graph is **56 projects, 195 tasks, and 157 task edges**. Twenty-eight
 implementation tasks are internal, leaving **167 public tasks**. Cache policy is
