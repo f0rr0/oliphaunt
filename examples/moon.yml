@@ -23,11 +23,9 @@ tasks:
     inputs:
       - "/Cargo.lock"
       - "/Cargo.toml"
-      - "/examples/**/*"
+      - "**/*"
       - "/tools/dev/capture-command-output.mjs"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
+      - "@group(pnpm-workspace)"
       - "/release-please-config.json"
       - "!/examples/**/node_modules"
       - "!/examples/**/node_modules/**"

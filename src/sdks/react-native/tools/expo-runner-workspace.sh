@@ -238,8 +238,6 @@ prepare_react_native_package_worktree() {
   cp \
     "$root/src/extensions/generated/sdk/ios-static-dependencies.json" \
     "$package_work/src/generated/ios-static-dependencies.json"
-  mkdir -p "$scratch_root/tools/dev"
-  cp "$root/tools/dev/clean-package-lib.mjs" "$scratch_root/tools/dev/clean-package-lib.mjs"
   if [ -d "$rn_dir/node_modules" ]; then
     ln -s "$rn_dir/node_modules" "$package_work/node_modules"
   else

@@ -8,7 +8,7 @@
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { moonCommand } from "../dev/moon-command.mjs";
+import { moonCommand, moonEnvironment } from "../dev/moon-command.mjs";
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 
 import {
@@ -145,12 +145,13 @@ function fail(message) {
   process.exit(2);
 }
 
-function commandJson(command, args) {
+function commandJson(command, args, options = {}) {
   const result = captureCommandOutput(command, args, {
     cwd: ROOT,
     env: process.env,
     label: `${command} ${args.join(" ")}`,
     maxOutputBytes: 100 * 1024 * 1024,
+    ...options,
   });
   if (result.error !== undefined || result.status !== 0) {
     const detail = result.error?.message || result.stderr.trim() || `exit ${result.status}`;
@@ -160,7 +161,7 @@ function commandJson(command, args) {
 }
 
 function moon(args) {
-  return commandJson(moonCommand(), args);
+  return commandJson(moonCommand(), args, { env: moonEnvironment() });
 }
 
 function affectedProjectsAndTasks() {

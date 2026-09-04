@@ -2,7 +2,7 @@
 import path from "node:path";
 
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
-import { moonCommand } from "../dev/moon-command.mjs";
+import { moonCommand, moonEnvironment } from "../dev/moon-command.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 
@@ -14,7 +14,7 @@ function fail(message) {
 function moon(args) {
   const result = captureCommandOutput(moonCommand(), args, {
     cwd: ROOT,
-    env: process.env,
+    env: moonEnvironment(),
     label: `moon ${args.join(" ")}`,
     maxOutputBytes: 100 * 1024 * 1024,
   });

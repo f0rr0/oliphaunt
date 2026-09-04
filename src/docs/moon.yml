@@ -28,7 +28,7 @@ tasks:
       - "/.release-please-manifest.json"
       - "/release-please-config.json"
       - "/src/**/release.toml"
-      - "/src/docs/**/*"
+      - "**/*"
       - "/src/extensions/**/*"
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
@@ -63,11 +63,9 @@ tasks:
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/**/*"
       - "/src/bindings/wasix-ts/src/**/*"
       - "/src/**/release.toml"
-      - "/src/docs/**/*"
+      - "**/*"
       - "/src/extensions/**/*"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
+      - "@group(pnpm-workspace)"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -97,11 +95,9 @@ tasks:
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/**/*"
       - "/src/bindings/wasix-ts/src/**/*"
       - "/src/**/release.toml"
-      - "/src/docs/**/*"
+      - "**/*"
       - "/src/extensions/**/*"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
+      - "@group(pnpm-workspace)"
     outputs:
       - "/target/docs/build/**/*"
     options:
@@ -151,11 +147,9 @@ tasks:
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/**/*"
       - "/src/bindings/wasix-ts/src/**/*"
       - "/src/**/release.toml"
-      - "/src/docs/**/*"
+      - "**/*"
       - "/src/extensions/**/*"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
+      - "@group(pnpm-workspace)"
     options:
       cache: local
       runFromWorkspaceRoot: true

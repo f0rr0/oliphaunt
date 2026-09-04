@@ -6,11 +6,16 @@ layer: "library"
 stack: "systems"
 tags: ["native", "postgres", "c-abi", "pg18", "release-product"]
 dependsOn:
-  - "postgres18"
-  - "third-party-shared"
-  - "third-party-native"
-  - "extension-runtime-contract"
-  - "oliphaunt-extension-contrib-pg18"
+  - id: "postgres18"
+    scope: "build"
+  - id: "third-party-shared"
+    scope: "build"
+  - id: "third-party-native"
+    scope: "build"
+  - id: "extension-runtime-contract"
+    scope: "build"
+  - id: "oliphaunt-extension-contrib-pg18"
+    scope: "build"
 
 project:
   title: "liboliphaunt Native"
@@ -40,11 +45,11 @@ tasks:
     tags: ["quality", "static"]
     command: "node src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs"
     inputs:
-      - "/src/runtimes/liboliphaunt/native/**/*"
-      - "/src/postgres/versions/18/**/*"
-      - "/src/sources/third-party/shared/**/*"
-      - "/src/sources/third-party/native/**/*"
-      - "/src/shared/extension-runtime-contract/**/*"
+      - "**/*"
+      - project: "postgres18"
+      - project: "third-party-shared"
+      - project: "third-party-native"
+      - project: "extension-runtime-contract"
       - "/tools/policy/check-native-boundaries.sh"
       - "/release-please-config.json"
       - "/src/**/targets/**/*.toml"
@@ -71,9 +76,7 @@ tasks:
     env:
       CARGO_TARGET_DIR: "target/moon/liboliphaunt-native/tools-test"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
+      - "@group(cargo-workspace)"
       - "/src/runtimes/liboliphaunt/native/crates/tools/**/*"
     options:
       cache: true
@@ -194,11 +197,11 @@ tasks:
     deps:
       - "liboliphaunt-native:release-runtime"
     inputs:
-      - "/src/runtimes/liboliphaunt/native/**/*"
-      - "/src/postgres/versions/18/**/*"
-      - "/src/sources/third-party/shared/**/*"
-      - "/src/sources/third-party/native/**/*"
-      - "/src/shared/extension-runtime-contract/**/*"
+      - "**/*"
+      - project: "postgres18"
+      - project: "third-party-shared"
+      - project: "third-party-native"
+      - project: "extension-runtime-contract"
       - "/src/shared/fixtures/storage/physical-archive-native-v1.properties"
       - "/src/shared/fixtures/storage/physical-backup-wal-range-v1.properties"
       - "/tools/runtime/**/*"
@@ -210,18 +213,16 @@ tasks:
     tags: ["runtime", "smoke"]
     command: "bash src/runtimes/liboliphaunt/native/tools/check-track.sh quick"
     inputs:
-      - "/src/postgres/versions/18/**/*"
-      - "/src/sources/third-party/shared/**/*"
-      - "/src/sources/third-party/native/**/*"
-      - "/src/shared/extension-runtime-contract/**/*"
+      - project: "postgres18"
+      - project: "third-party-shared"
+      - project: "third-party-native"
+      - project: "extension-runtime-contract"
       - "/src/shared/fixtures/storage/physical-archive-native-v1.properties"
       - "/src/shared/fixtures/storage/physical-backup-wal-range-v1.properties"
-      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "**/*"
       - "/src/sdks/rust/**/*"
       - "/tools/xtask/**/*"
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
+      - "@group(cargo-workspace)"
     options:
       cache: local
       runFromWorkspaceRoot: true
@@ -232,14 +233,13 @@ tasks:
       - "source-inputs:source-fetch-native-runtime"
     command: "node src/runtimes/liboliphaunt/native/tools/build-release-runtime.mjs"
     inputs:
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/src/postgres/versions/18/**/*"
+      - "@group(legal-files)"
+      - project: "postgres18"
       - "/src/runtimes/liboliphaunt/licenses/**/*"
-      - "/src/sources/third-party/shared/**/*"
-      - "/src/sources/third-party/native/**/*"
-      - "/src/shared/extension-runtime-contract/**/*"
-      - "/src/runtimes/liboliphaunt/native/**/*"
+      - project: "third-party-shared"
+      - project: "third-party-native"
+      - project: "extension-runtime-contract"
+      - "**/*"
       - "/tools/native-packaging/**/*"
       - "/tools/release/check-linux-consumer-baseline.sh"
       - "/tools/release/linux-abi-baseline.test.mjs"
@@ -256,9 +256,7 @@ tasks:
       - "/tools/release/release-notices.mjs"
       - "/tools/release/release-directory-safety.mjs"
       - "/tools/xtask/**/*"
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
+      - "@group(cargo-workspace)"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -268,14 +266,13 @@ tasks:
       - "source-inputs:source-fetch-native-runtime"
     command: "node src/runtimes/liboliphaunt/native/tools/build-release-runtime.mjs"
     inputs:
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/src/postgres/versions/18/**/*"
+      - "@group(legal-files)"
+      - project: "postgres18"
       - "/src/runtimes/liboliphaunt/licenses/**/*"
-      - "/src/sources/third-party/shared/**/*"
-      - "/src/sources/third-party/native/**/*"
-      - "/src/shared/extension-runtime-contract/**/*"
-      - "/src/runtimes/liboliphaunt/native/**/*"
+      - project: "third-party-shared"
+      - project: "third-party-native"
+      - project: "extension-runtime-contract"
+      - "**/*"
       - "/tools/native-packaging/**/*"
       - "/tools/release/check-linux-consumer-baseline.sh"
       - "/tools/release/linux-abi-baseline.test.mjs"
@@ -292,9 +289,7 @@ tasks:
       - "/tools/release/release-notices.mjs"
       - "/tools/release/release-directory-safety.mjs"
       - "/tools/xtask/**/*"
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
+      - "@group(cargo-workspace)"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -310,21 +305,18 @@ tasks:
       - "source-inputs:source-fetch-native-runtime"
     command: "bun src/runtimes/liboliphaunt/native/tools/build-ci-target.mjs \"$OLIPHAUNT_CI_TARGET\""
     inputs:
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/src/postgres/versions/18/**/*"
+      - "@group(legal-files)"
+      - project: "postgres18"
       - "/src/runtimes/liboliphaunt/licenses/**/*"
-      - "/src/sources/third-party/shared/**/*"
-      - "/src/sources/third-party/native/**/*"
-      - "/src/shared/extension-runtime-contract/**/*"
-      - "/src/runtimes/liboliphaunt/native/**/*"
+      - project: "third-party-shared"
+      - project: "third-party-native"
+      - project: "extension-runtime-contract"
+      - "**/*"
       - "/tools/native-packaging/**/*"
       - "/tools/release/release-notices.mjs"
       - "/tools/release/release-directory-safety.mjs"
       - "/tools/xtask/**/*"
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
+      - "@group(cargo-workspace)"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -338,13 +330,10 @@ tasks:
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/check-liboliphaunt-release-assets.mjs"
       - "/tools/release/package-liboliphaunt-aggregate-assets.sh"
-      - "/tools/release/platform-compatibility-policy.mjs"
+      - "@group(release-target-contract)"
       - "/tools/release/platform-compatibility-policy.test.mjs"
       - "/tools/release/platform-binary-contract.mjs"
       - "/tools/release/platform-binary-contract.test.mjs"
-      - "/tools/release/extension-target-profiles.mjs"
-      - "/tools/release/extension-target-profiles.toml"
-      - "/tools/release/release-artifact-targets.mjs"
       - "/tools/release/release-graph.mjs"
       - "/tools/release/release_graph_query.mjs"
       - "/target/liboliphaunt/release-assets/**/*"
@@ -360,11 +349,11 @@ tasks:
     deps:
       - "source-inputs:source-fetch-native-runtime"
     inputs:
-      - "/src/runtimes/liboliphaunt/native/**/*"
-      - "/src/postgres/versions/18/**/*"
-      - "/src/sources/third-party/shared/**/*"
-      - "/src/sources/third-party/native/**/*"
-      - "/src/shared/extension-runtime-contract/**/*"
+      - "**/*"
+      - project: "postgres18"
+      - project: "third-party-shared"
+      - project: "third-party-native"
+      - project: "extension-runtime-contract"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -381,18 +370,16 @@ tasks:
     tags: ["bench", "plan"]
     command: "bash tools/perf/check-native-perf-harness.sh"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "@group(cargo-workspace)"
+      - "**/*"
       - "/src/sdks/rust/**/*"
-      - "/src/postgres/versions/18/**/*"
-      - "/src/sources/third-party/shared/**/*"
-      - "/src/sources/third-party/native/**/*"
+      - project: "postgres18"
+      - project: "third-party-shared"
+      - project: "third-party-native"
       - "/tools/perf/**/*"
       - "/benchmarks/**/*"
       - "/release-please-config.json"
       - "/src/**/targets/**/*.toml"
-      - "/rust-toolchain.toml"
     options:
       cache: true
       runFromWorkspaceRoot: true

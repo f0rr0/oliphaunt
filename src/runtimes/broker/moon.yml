@@ -36,12 +36,10 @@ tasks:
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-broker/check"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
-      - "/src/runtimes/broker/**/*"
-      - "/src/sdks/rust/**/*"
-      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "@group(cargo-workspace)"
+      - "**/*"
+      - project: "oliphaunt-rust"
+      - project: "liboliphaunt-native"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -52,11 +50,9 @@ tasks:
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-broker/unit"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
-      - "/src/runtimes/broker/**/*"
-      - "/src/sdks/rust/**/*"
+      - "@group(cargo-workspace)"
+      - "**/*"
+      - project: "oliphaunt-rust"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -67,11 +63,9 @@ tasks:
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-broker/package"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
-      - "/src/runtimes/broker/**/*"
-      - "/src/sdks/rust/**/*"
+      - "@group(cargo-workspace)"
+      - "**/*"
+      - project: "oliphaunt-rust"
       - "/src/runtimes/broker/tools/check-package.sh"
     options:
       cache: true
@@ -93,19 +87,15 @@ tasks:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-broker/release-assets"
       OLIPHAUNT_RELEASE_ASSET_PARTIAL: "1"
     inputs:
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
-      - "/src/runtimes/broker/**/*"
-      - "/src/sdks/rust/**/*"
+      - "@group(legal-files)"
+      - "@group(cargo-workspace)"
+      - "**/*"
+      - project: "oliphaunt-rust"
       - "/tools/release/build-linux-broker-baseline.sh"
       - "/tools/release/broker-dependency-license-contract.mjs"
       - "/tools/release/check-linux-consumer-baseline.sh"
       - "/tools/release/linux-abi-baseline.test.mjs"
       - "/tools/release/package-broker-assets.sh"
-      - "/tools/release/portable-archive.mjs"
       - "/tools/release/check-broker-release-assets.mjs"
       - "/tools/release/platform-compatibility-policy.mjs"
       - "/tools/release/platform-compatibility-policy.test.mjs"
@@ -114,8 +104,7 @@ tasks:
       - "/tools/release/release-asset-validation.mjs"
       - "/tools/release/extension-target-profiles.mjs"
       - "/tools/release/release-artifact-targets.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-directory-safety.mjs"
+      - "@group(release-archive-contract)"
       - "/tools/policy/moon.mjs"
       - "/tools/release/artifact_target_matrix.mjs"
       - "/release-please-config.json"
@@ -129,13 +118,10 @@ tasks:
     tags: ["release", "artifact-package", "ci-broker-release-assets"]
     command: "tools/dev/bun.sh tools/release/check-native-helper-aggregate-assets.mjs --product oliphaunt-broker"
     inputs:
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
-      - "/src/runtimes/broker/**/*"
-      - "/src/sdks/rust/**/*"
+      - "@group(legal-files)"
+      - "@group(cargo-workspace)"
+      - "**/*"
+      - project: "oliphaunt-rust"
       - "/tools/release/artifact_target_matrix.mjs"
       - "/tools/release/broker-dependency-license-contract.mjs"
       - "/tools/release/build-linux-broker-baseline.sh"
@@ -148,12 +134,10 @@ tasks:
       - "/tools/release/platform-compatibility-policy.test.mjs"
       - "/tools/release/platform-binary-contract.mjs"
       - "/tools/release/platform-binary-contract.test.mjs"
-      - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-asset-validation.mjs"
       - "/tools/release/extension-target-profiles.mjs"
       - "/tools/release/release-artifact-targets.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-directory-safety.mjs"
+      - "@group(release-archive-contract)"
       - "/tools/release/write_checksum_manifest.mjs"
       - "/tools/policy/moon.mjs"
       - "/release-please-config.json"

@@ -3,7 +3,7 @@ import {appendFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import process from 'node:process';
 
-import {moonCommand} from '../../tools/dev/moon-command.mjs';
+import {moonCommand, moonEnvironment} from '../../tools/dev/moon-command.mjs';
 import {
   groupTargets,
   matrixTarget,
@@ -50,6 +50,7 @@ function selectedScopeTaskMap() {
     moonQueryTaskArgs(),
     {
       encoding: 'utf8',
+      env: moonEnvironment(),
       stdio: ['ignore', 'pipe', 'inherit'],
       maxBuffer: MAX_CAPTURE_BYTES,
     },
@@ -87,6 +88,7 @@ function allTaskMap() {
     moonQueryTaskArgs('', {affected: false}),
     {
       encoding: 'utf8',
+      env: moonEnvironment(),
       stdio: ['ignore', 'pipe', 'inherit'],
       maxBuffer: MAX_CAPTURE_BYTES,
     },

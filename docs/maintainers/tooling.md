@@ -30,9 +30,13 @@ Do not add a repo-wide tool because it is popular in one language ecosystem.
 
 ## Moon
 
-Install Moon through proto from `.prototools` and run `moon` directly:
+Install Moon through Proto from `.prototools` and run `moon` directly. Moon's
+current plugins require the Proto version pinned in
+`src/sources/toolchains/proto.toml` (currently 0.61.3):
 
 ```sh
+proto upgrade 0.61.3
+proto install
 moon query projects
 moon query tasks
 moon query affected --upstream none --downstream direct

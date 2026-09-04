@@ -145,9 +145,6 @@ JSON
     "$root/tools/dev/capture-command-output.mjs" \
     "$scratch_root/tools/dev/capture-command-output.mjs"
   cp \
-    "$root/tools/dev/clean-package-lib.mjs" \
-    "$scratch_root/tools/dev/clean-package-lib.mjs"
-  cp \
     "$root/tools/policy/source-fetch-core.mjs" \
     "$scratch_root/tools/policy/source-fetch-core.mjs"
   cp \
@@ -159,7 +156,6 @@ JSON
     "$scratch_root/tools/release/"
   cp \
     "$root/tools/test/fd-backed-spawn-sync.mjs" \
-    "$root/tools/test/run-js-tests.mjs" \
     "$scratch_root/tools/test/"
   cp "$root/LICENSE" "$root/THIRD_PARTY_NOTICES.md" "$scratch_root/"
   rm -rf "$scratch_root/src/extensions"

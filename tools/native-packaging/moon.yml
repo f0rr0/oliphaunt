@@ -5,6 +5,9 @@ language: "rust"
 layer: "tool"
 stack: "systems"
 tags: ["maintainer-tool", "native", "rust"]
+dependsOn:
+  - id: "extension-runtime-contract"
+    scope: "build"
 
 project:
   title: "Native packaging tools"
@@ -21,12 +24,11 @@ tasks:
     env:
       CARGO_TARGET_DIR: "target/moon/native-packaging/check"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
+      - "@group(cargo-workspace)"
       - "/src/extensions/generated/sdk/extensions.json"
-      - "/src/sdks/rust/**/*"
-      - "/tools/native-packaging/**/*"
+      - project: "extension-runtime-contract"
+      - project: "oliphaunt-rust"
+      - "**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -36,12 +38,11 @@ tasks:
     env:
       CARGO_TARGET_DIR: "target/moon/native-packaging/unit"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
+      - "@group(cargo-workspace)"
       - "/src/extensions/generated/sdk/extensions.json"
-      - "/src/sdks/rust/**/*"
-      - "/tools/native-packaging/**/*"
+      - project: "extension-runtime-contract"
+      - project: "oliphaunt-rust"
+      - "**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true

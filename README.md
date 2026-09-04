@@ -109,6 +109,8 @@ Install the pinned toolchain once, then use Moon as the repository task
 surface:
 
 ```sh
+proto upgrade 0.61.3
+proto install
 tools/dev/bootstrap-tools.sh
 moon run dev-tools:doctor
 moon run policy-tools:format-check

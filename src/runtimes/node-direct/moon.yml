@@ -35,11 +35,10 @@ tasks:
     tags: ["quality", "static"]
     command: "bash src/runtimes/node-direct/tools/check-package.sh check-static"
     inputs:
-      - "/src/runtimes/node-direct/**/*"
+      - "**/*"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
       - "/src/sources/toolchains/node.toml"
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
+      - "@group(legal-files)"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -58,15 +57,12 @@ tasks:
     tags: ["package"]
     command: "bash src/runtimes/node-direct/tools/check-package.sh package-shape"
     inputs:
-      - "/src/runtimes/node-direct/**/*"
+      - "**/*"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
       - "/src/sources/toolchains/node.toml"
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
+      - "@group(legal-files)"
       - "/pnpm-workspace.yaml"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-directory-safety.mjs"
+      - "@group(release-archive-contract)"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -84,14 +80,11 @@ tasks:
     tags: ["release", "artifact", "ci-node-direct"]
     command: "bash src/runtimes/node-direct/tools/build-node-addon.sh"
     inputs:
-      - "/src/runtimes/node-direct/**/*"
+      - "**/*"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
       - "/src/sources/toolchains/node.toml"
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-directory-safety.mjs"
+      - "@group(legal-files)"
+      - "@group(release-archive-contract)"
       - "/tools/release/artifact_target_matrix.mjs"
       - "/tools/release/check-node-direct-release-assets.mjs"
       - "/tools/release/check-linux-consumer-baseline.sh"
@@ -117,10 +110,9 @@ tasks:
     tags: ["release", "artifact-package", "ci-node-direct-release-assets"]
     command: "tools/dev/bun.sh tools/release/check-native-helper-aggregate-assets.mjs --product oliphaunt-node-direct"
     inputs:
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
+      - "@group(legal-files)"
       - "/pnpm-workspace.yaml"
-      - "/src/runtimes/node-direct/**/*"
+      - "**/*"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
       - "/src/sources/toolchains/node.toml"
       - "/tools/policy/moon.mjs"
@@ -133,12 +125,10 @@ tasks:
       - "/tools/release/platform-compatibility-policy.test.mjs"
       - "/tools/release/platform-binary-contract.mjs"
       - "/tools/release/platform-binary-contract.test.mjs"
-      - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-asset-validation.mjs"
       - "/tools/release/extension-target-profiles.mjs"
       - "/tools/release/release-artifact-targets.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-directory-safety.mjs"
+      - "@group(release-archive-contract)"
       - "/tools/release/release_graph_query.mjs"
       - "/tools/release/write_checksum_manifest.mjs"
       - "/release-please-config.json"

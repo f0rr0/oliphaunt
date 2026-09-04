@@ -21,13 +21,11 @@ tasks:
     env:
       CARGO_TARGET_DIR: "target/moon/native-tools-proof/unit"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
+      - "@group(cargo-workspace)"
       - "/src/runtimes/liboliphaunt/native/crates/tools/**/*"
-      - "/src/sdks/rust/**/*"
+      - project: "oliphaunt-rust"
       - "/src/shared/fixtures/postgres/logical-tools*"
-      - "/tools/native-tools-proof/**/*"
+      - "**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true

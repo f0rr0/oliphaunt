@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { moonCommand } from "../dev/moon-command.mjs";
+import { moonCommand, moonEnvironment } from "../dev/moon-command.mjs";
 import {
   BROAD_EXTENSION_INPUT_PROJECTS,
   NATIVE_EXTENSION_LIFECYCLE_TRIGGER_PROJECTS,
@@ -11,6 +11,7 @@ import { execFileSync } from "../test/fd-backed-spawn-sync.mjs";
 function moonJson(args) {
   return JSON.parse(execFileSync(moonCommand(), args, {
     encoding: "utf8",
+    env: moonEnvironment(),
     maxBuffer: 64 * 1024 * 1024,
   }));
 }
@@ -130,6 +131,23 @@ test("Moon projects do not duplicate inferred dependency edges", () => {
       dependencies.includes(project.id),
       false,
       `${project.id} depends on itself`,
+    );
+  }
+});
+
+test("source projects do not depend on repository tooling projects", () => {
+  const projects = moonJson(["query", "projects"]).projects;
+  const tooling = new Set(
+    projects.filter(({ source }) => source.startsWith("tools/")).map(({ id }) => id),
+  );
+  for (const project of projects.filter(({ source }) => source.startsWith("src/"))) {
+    const dependencies = (project.config.dependsOn ?? []).map((dependency) =>
+      typeof dependency === "string" ? dependency : dependency.id
+    );
+    assert.deepEqual(
+      dependencies.filter((dependency) => tooling.has(dependency)),
+      [],
+      `${project.id} depends on repository tooling`,
     );
   }
 });

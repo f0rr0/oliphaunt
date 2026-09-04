@@ -22,7 +22,7 @@ tasks:
     tags: ["quality", "static"]
     command: "node src/shared/rust-query-core/tools/check-rust-query-core.mjs"
     inputs:
-      - "/src/shared/rust-query-core/**/*"
+      - "**/*"
       - "/src/sdks/rust/build.rs"
       - "/src/sdks/rust/tools/check-sdk.sh"
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/build.rs"

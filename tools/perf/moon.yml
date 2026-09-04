@@ -6,7 +6,8 @@ layer: "tool"
 stack: "systems"
 tags: ["tools", "performance", "bench"]
 dependsOn:
-  - "benchmarks"
+  - id: "benchmarks"
+    scope: "build"
 
 project:
   title: "Performance Tools"
@@ -23,9 +24,7 @@ tasks:
     tags: ["bench", "diagnostic", "quality", "requires-rust"]
     command: "bash tools/perf/rust-api-model/check.sh"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
+      - "@group(cargo-workspace)"
       - "/src/sdks/rust/**/*"
       - "/src/bindings/wasix-rust/**/*"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
@@ -43,8 +42,7 @@ tasks:
     deps:
       - "perf-tools:rust-api-model-check"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
+      - "@group(cargo-workspace)"
       - "/src/runtimes/liboliphaunt/native/**/*"
       - "/src/sdks/rust/**/*"
       - "/src/bindings/wasix-rust/**/*"
@@ -52,9 +50,8 @@ tasks:
       - "/src/sources/toolchains/**/*"
       - "/src/sources/third-party/**/*"
       - "/src/extensions/**/*"
-      - "/tools/perf/**/*"
-      - "/benchmarks/**/*"
-      - "/rust-toolchain.toml"
+      - "**/*"
+      - project: "benchmarks"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -64,9 +61,7 @@ tasks:
     deps:
       - "liboliphaunt-native:release-runtime"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
+      - "@group(cargo-workspace)"
       - "/src/runtimes/liboliphaunt/native/**/*"
       - "/src/shared/rust-query-core/**/*"
       - "/src/sdks/rust/**/*"
@@ -83,9 +78,7 @@ tasks:
     deps:
       - "liboliphaunt-wasix:runtime-aot"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
+      - "@group(cargo-workspace)"
       - "/src/bindings/wasix-rust/**/*"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
       - "/src/shared/rust-query-core/**/*"
@@ -103,8 +96,7 @@ tasks:
     tags: ["bench", "plan"]
     command: "bash tools/perf/matrix/run_native_oliphaunt_matrix.sh --plan-only"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
+      - "@group(cargo-workspace)"
       - "/src/runtimes/liboliphaunt/native/**/*"
       - "/src/sdks/rust/**/*"
       - "/src/bindings/wasix-rust/**/*"
@@ -112,9 +104,8 @@ tasks:
       - "/src/sources/toolchains/**/*"
       - "/src/sources/third-party/**/*"
       - "/src/extensions/**/*"
-      - "/tools/perf/**/*"
-      - "/benchmarks/**/*"
-      - "/rust-toolchain.toml"
+      - "**/*"
+      - project: "benchmarks"
     options:
       cache: true
       runFromWorkspaceRoot: true

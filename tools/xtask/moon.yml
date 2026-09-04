@@ -24,10 +24,8 @@ tasks:
     env:
       CARGO_TARGET_DIR: "target/moon/xtask/unit"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
-      - "/tools/xtask/**/*"
+      - "@group(cargo-workspace)"
+      - "**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -37,10 +35,8 @@ tasks:
     env:
       CARGO_TARGET_DIR: "target/moon/xtask/cluster-seed-runner-check"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
-      - "/tools/xtask/**/*"
+      - "@group(cargo-workspace)"
+      - "**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -51,10 +47,8 @@ tasks:
     env:
       CARGO_TARGET_DIR: "target/moon/xtask/compile-aot-serializer"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
-      - "/tools/xtask/**/*"
+      - "@group(cargo-workspace)"
+      - "**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true

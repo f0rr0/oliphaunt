@@ -7,38 +7,47 @@ inheritedBy:
   tags:
     and: ["sdk", "react-native"]
 
+fileGroups:
+  react-native-sdk-check:
+    - "/LICENSE"
+    - "/THIRD_PARTY_NOTICES.md"
+    - "/src/extensions/external/**/*"
+    - "/src/extensions/generated/mobile/**/*"
+    - "/src/extensions/generated/sdk/**/*"
+    - "/src/postgres/versions/18/source.toml"
+    - "/src/runtimes/liboliphaunt/licenses/**/*"
+    - "/src/sources/third-party/shared/icu.toml"
+    - "/src/sources/third-party/shared/openssl.toml"
+    - "/src/shared/fixtures/**/*"
+    - "/tools/dev/capture-command-output.mjs"
+    - "/tools/dev/write-scoped-pnpm-workspace.mjs"
+    - "/tools/policy/source-fetch-core.mjs"
+    - "/tools/release/extension-upstream-licenses.mjs"
+    - "/tools/release/portable-archive.mjs"
+    - "/tools/release/release-directory-safety.mjs"
+    - "/tools/release/release-notices.mjs"
+    - "/tools/release/wasix-extension-install-contract.mjs"
+    - "/tools/test/fd-backed-spawn-sync.mjs"
+
 tasks:
   compile:
-    inputs: &sdk-check-inputs
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/src/extensions/external/**/*"
-      - "/src/extensions/generated/mobile/**/*"
-      - "/src/extensions/generated/sdk/**/*"
-      - "/src/postgres/versions/18/source.toml"
-      - "/src/runtimes/liboliphaunt/licenses/**/*"
-      - "/src/sources/third-party/shared/icu.toml"
-      - "/src/sources/third-party/shared/openssl.toml"
-      - "/src/shared/fixtures/**/*"
-      - "/tools/dev/capture-command-output.mjs"
-      - "/tools/dev/write-scoped-pnpm-workspace.mjs"
-      - "/tools/policy/source-fetch-core.mjs"
-      - "/tools/release/extension-upstream-licenses.mjs"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/release-directory-safety.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/wasix-extension-install-contract.mjs"
-      - "/tools/test/fd-backed-spawn-sync.mjs"
-      - "/tools/test/run-js-tests.mjs"
+    inputs:
+      - "@group(react-native-sdk-check)"
   build-ios-bridge:
-    inputs: *sdk-check-inputs
+    inputs:
+      - "@group(react-native-sdk-check)"
   build-android-bridge:
-    inputs: *sdk-check-inputs
+    inputs:
+      - "@group(react-native-sdk-check)"
   unit:
-    inputs: *sdk-check-inputs
+    inputs:
+      - "@group(react-native-sdk-check)"
   package:
-    inputs: *sdk-check-inputs
+    inputs:
+      - "@group(react-native-sdk-check)"
   qualify:
-    inputs: *sdk-check-inputs
+    inputs:
+      - "@group(react-native-sdk-check)"
   regression:
-    inputs: *sdk-check-inputs
+    inputs:
+      - "@group(react-native-sdk-check)"

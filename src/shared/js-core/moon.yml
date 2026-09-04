@@ -38,7 +38,7 @@ tasks:
     tags: ["quality", "static"]
     command: "node src/shared/js-core/tools/check-js-core.mjs"
     inputs:
-      - "/src/shared/js-core/**/*"
+      - "**/*"
       - "/src/sdks/js/src/protocol.ts"
       - "/src/sdks/js/src/query.ts"
       - "/src/sdks/react-native/src/protocol.ts"
@@ -52,7 +52,7 @@ tasks:
     tags: ["quality", "unit"]
     command: "tools/dev/bun.sh x vitest run src/shared/js-core/test/query.test.ts"
     inputs:
-      - "/src/shared/js-core/**/*"
+      - "**/*"
       - "/src/shared/fixtures/protocol/**/*"
     options:
       cache: true

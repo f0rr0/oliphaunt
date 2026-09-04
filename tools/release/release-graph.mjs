@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-import { moonCommand } from "../dev/moon-command.mjs";
+import { moonCommand, moonEnvironment } from "../dev/moon-command.mjs";
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { CONTRIB_CARRIERS_PATH, loadContribCarriers } from "./contrib-carriers.mjs";
 
@@ -70,11 +70,12 @@ export function readToml(relativePath, prefix) {
   return value;
 }
 
-export function commandJson(args, prefix) {
+export function commandJson(args, prefix, options = {}) {
   const result = captureCommandOutput(args[0], args.slice(1), {
     cwd: ROOT,
     label: args.join(" "),
     maxOutputBytes: 100 * 1024 * 1024,
+    ...options,
   });
   if (result.error !== undefined || result.status !== 0) {
     const detail = result.error?.message || result.stderr.trim() || `exit ${result.status}`;
@@ -170,7 +171,9 @@ export function moonProjectsById(prefix = "release-graph") {
   if (moonProjectsSnapshot !== undefined && moonProjectsSnapshotCommand === command) {
     return cloneMoonProjects(moonProjectsSnapshot);
   }
-  const result = commandJson([command, "query", "projects"], prefix);
+  const result = commandJson([command, "query", "projects"], prefix, {
+    env: moonEnvironment(),
+  });
   if (!Array.isArray(result.projects)) {
     fail(prefix, "moon query projects did not return a projects array");
   }
@@ -1237,7 +1240,7 @@ function releaseProductsForSourceProjects(products, projects, projectIds, prefix
   const dependents = new Map();
   for (const project of Object.values(projects)) {
     for (const dependency of project.dependencies ?? []) {
-      if (dependency.scope !== "production" && dependency.scope !== "peer") continue;
+      if (dependency.scope === "development") continue;
       dependents.set(dependency.id, [...(dependents.get(dependency.id) ?? []), project.id]);
     }
   }

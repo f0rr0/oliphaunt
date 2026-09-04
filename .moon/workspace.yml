@@ -23,11 +23,8 @@ projects:
   sources:
     ci-workflows: ".github"
 
-defaultProject: "oliphaunt-rust"
-
 pipeline:
   installDependencies: false
-  cacheLifetime: "7 days"
   logRunningCommand: true
 
 vcs:
@@ -37,7 +34,4 @@ vcs:
 telemetry: false
 
 experiments:
-  asyncAffectedTracking: true
-  asyncGraphBuilding: true
   casOutputsCache: true
-  nativeFileHashing: true

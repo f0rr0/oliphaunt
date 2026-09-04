@@ -738,14 +738,53 @@ rather than treating YAML declarations as the graph.
   and release-directory safety from global task inputs. Their changes now
   affect 32, 15, 17, and 61 tasks instead of invalidating the whole workspace.
   Release-directory safety remains on every importing package/runtime task.
-  The cross-language Bun launcher deliberately remains global.
+  The root Bun launcher is no longer universal: it affects only the 20 tasks
+  in 13 projects that actually execute it, rather than all 232 resolved tasks.
 - Fixed the WASIX Rust package-closure proof exposed by hosted CI. Workspace
   path dependencies remain unconstrained for local head-to-head development,
   while the proof now checks the packaged crate's exact runtime pins against
   those local dependency versions.
+- Replaced repeated workspace manifests, legal files, release helper sets,
+  local source roots, and existing dependency source roots with six shared
+  file groups, `**/*`, and Moon project inputs. Raw input entries fell from
+  3,172 to 2,744 and hard-coded whole-project paths from 518 to 196. Every
+  resolved task `inputFiles` and `inputGlobs` set was byte-for-byte unchanged
+  at that checkpoint; the final root-tool cleanup then deliberately narrowed
+  the launcher input and relocated the shared extension archive policy.
+  Promoting the remaining task-scoped cross-project reads would add 103 false
+  project-wide dependencies, including 10 graph cycles.
+- Upgraded the verified Moon CLI from 2.3.2 to 2.5.4, its official JavaScript,
+  Node, PNPM, and Rust plugins to the matching current OCI digests, and Proto
+  from 0.57.4 to 0.61.3. Nested graph queries now use the verified `MOON_BIN`
+  and discard Moon-injected `PROTO_*` overrides, avoiding accidental fallback
+  to a developer's global Moon/Proto installation.
+- Publishable JavaScript package manifests no longer reach into repository
+  `tools/`: native Node filesystem cleanup and direct Vitest commands replaced
+  two shared wrappers, which were deleted. Shared extension archive policy was
+  moved to `src/shared/extension-runtime-contract`. Product-local `tools/`
+  directories remain part of their products. Root `tools/` is now referenced
+  only by repository qualification, packaging, and release tasks that actually
+  execute it; it is not a package-manager dependency of a shipped project.
+  The resolved graph has zero `src/ -> tools/` project edges, enforced by a
+  graph-level regression test.
+- Reclassifying build-recipe edges exposed one planner bug: source changes to
+  build inputs stopped at build-scoped edges. Release selection now traverses
+  every non-development edge until the first independently versioned product,
+  preserving independent downstream SDK versions while still releasing the
+  runtime produced from a changed build recipe.
 
 No task dependency, artifact hydration edge, release boundary, or behavior
-proof was removed. The final focused qualification passed 16 resolved-graph
+proof was removed. The final focused qualification passed 17 resolved-graph
 tests, the policy/static/format suite, all 22 affected-selection chaos tests,
 workflow security, actionlint, zizmor, 12 pinned-tool bootstrap tests, and the
-full offline WASIX Rust package test closure.
+full offline WASIX Rust package test closure. A final combined run of graph,
+workflow, policy, and all release-tool unit tests passed in 4m53s; all four
+JavaScript package builds and 431 unit tests, React Native workspace staging,
+native-packaging unit tests, and Kotlin Gradle resource processing also passed.
+An unchanged 5.31s graph-unit result was then restored from Moon's local cache
+in 132ms, proving the upgraded cache path is active.
+
+The existing `oliphaunt-js` coverage threshold remains a recorded issue:
+both the old wrapper-equivalent invocation and direct Vitest coverage report
+77.96% against the configured 80% line floor. This refactor did not lower the
+threshold or conceal that pre-existing failure.

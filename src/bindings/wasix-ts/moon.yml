@@ -28,11 +28,9 @@ tasks:
     tags: ["quality", "static"]
     command: "pnpm --dir src/bindings/wasix-ts typecheck"
     inputs:
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/src/shared/js-core/**/*"
-      - "/src/bindings/wasix-ts/**/*"
+      - "@group(pnpm-workspace)"
+      - project: "shared-js-core"
+      - "**/*"
       - "/examples/browser-wasix/**/*"
     options:
       cache: true
@@ -41,18 +39,15 @@ tasks:
     tags: ["quality", "unit"]
     command: "pnpm --dir src/bindings/wasix-ts test"
     inputs:
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/src/shared/js-core/**/*"
+      - "@group(pnpm-workspace)"
+      - project: "shared-js-core"
       - "/src/shared/fixtures/postgres/server-listen.json"
       - "/src/shared/fixtures/protocol/query-response-cases.json"
       - "/src/shared/fixtures/storage/database-root.json"
       - "/src/shared/fixtures/storage/physical-archive-wasix-v1.properties"
       - "/src/shared/fixtures/storage/physical-backup-wal-range-v1.properties"
       - "/src/shared/cluster-seed-contract/fixtures/**/*"
-      - "/src/bindings/wasix-ts/**/*"
-      - "/tools/test/run-js-tests.mjs"
+      - "**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -60,9 +55,7 @@ tasks:
     tags: ["quality", "static"]
     command: "pnpm --dir src/bindings/wasix-ts/tools-package typecheck"
     inputs:
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
+      - "@group(pnpm-workspace)"
       - "/src/bindings/wasix-ts/tools-package/**/*"
     options:
       cache: true
@@ -71,12 +64,9 @@ tasks:
     tags: ["quality", "unit"]
     command: "pnpm --dir src/bindings/wasix-ts/tools-package test"
     inputs:
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
+      - "@group(pnpm-workspace)"
       - "/src/bindings/wasix-ts/tools-package/**/*"
       - "/src/shared/fixtures/postgres/logical-tools.json"
-      - "/tools/test/run-js-tests.mjs"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -84,11 +74,8 @@ tasks:
     tags: ["package"]
     command: "pnpm --dir src/bindings/wasix-ts/tools-package build"
     inputs:
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
+      - "@group(pnpm-workspace)"
       - "/src/bindings/wasix-ts/tools-package/**/*"
-      - "/tools/dev/clean-package-lib.mjs"
     outputs:
       - "/src/bindings/wasix-ts/tools-package/lib/**/*"
     options:
@@ -100,13 +87,10 @@ tasks:
     inputs:
       - "/coverage/baseline.toml"
       - "/src/shared/fixtures/**/*"
-      - "/src/shared/js-core/**/*"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/src/bindings/wasix-ts/**/*"
+      - project: "shared-js-core"
+      - "@group(pnpm-workspace)"
+      - "**/*"
       - "/tools/coverage/**/*"
-      - "/tools/test/run-js-tests.mjs"
     outputs:
       - "/target/coverage/oliphaunt-wasix-ts/**/*"
     options:
@@ -118,16 +102,10 @@ tasks:
     deps:
       - "oliphaunt-wasix-ts:tools-package"
     inputs:
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/src/bindings/wasix-ts/**/*"
-      - "/tools/dev/clean-package-lib.mjs"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-directory-safety.mjs"
+      - "@group(legal-files)"
+      - "@group(pnpm-workspace)"
+      - "**/*"
+      - "@group(release-archive-contract)"
       - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
     outputs:
@@ -142,16 +120,11 @@ tasks:
       - "oliphaunt-wasix-ts:package"
       - "liboliphaunt-wasix:runtime-portable"
     inputs:
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/src/bindings/wasix-ts/**/*"
-      - "/src/runtimes/liboliphaunt/wasix/**/*"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-directory-safety.mjs"
+      - "@group(legal-files)"
+      - "@group(pnpm-workspace)"
+      - "**/*"
+      - project: "liboliphaunt-wasix"
+      - "@group(release-archive-contract)"
       - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
     options:
@@ -165,16 +138,11 @@ tasks:
       - "liboliphaunt-wasix:runtime-portable"
     inputs:
       - "/.prototools"
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/src/bindings/wasix-ts/**/*"
-      - "/src/runtimes/liboliphaunt/wasix/**/*"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-directory-safety.mjs"
+      - "@group(legal-files)"
+      - "@group(pnpm-workspace)"
+      - "**/*"
+      - project: "liboliphaunt-wasix"
+      - "@group(release-archive-contract)"
       - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
       - "/src/sources/toolchains/bun.toml"
@@ -191,16 +159,11 @@ tasks:
       - "liboliphaunt-wasix:runtime-portable"
     inputs:
       - "/.prototools"
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/src/bindings/wasix-ts/**/*"
-      - "/src/runtimes/liboliphaunt/wasix/**/*"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-directory-safety.mjs"
+      - "@group(legal-files)"
+      - "@group(pnpm-workspace)"
+      - "**/*"
+      - project: "liboliphaunt-wasix"
+      - "@group(release-archive-contract)"
       - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
       - "/src/sources/toolchains/deno.toml"
@@ -216,7 +179,7 @@ tasks:
       - "oliphaunt-wasix-ts:package"
       - "liboliphaunt-wasix:runtime-portable"
     inputs:
-      - "/src/bindings/wasix-ts/**/*"
+      - "**/*"
       - "/src/shared/fixtures/postgres/**/*"
       - "/src/runtimes/liboliphaunt/wasix/tools-npm/**/*"
       - "/target/oliphaunt-wasix/assets/**/*"
@@ -231,8 +194,8 @@ tasks:
       - "liboliphaunt-wasix:runtime-portable"
     inputs:
       - "/examples/browser-wasix/**/*"
-      - "/src/bindings/wasix-ts/**/*"
-      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "**/*"
+      - project: "liboliphaunt-wasix"
       - "/target/oliphaunt-wasix/assets/**/*"
       - "/tools/perf/wasix-browser/plan.mjs"
       - "/tools/perf/wasix-node/installed-closure.mjs"
@@ -248,7 +211,7 @@ tasks:
       - "liboliphaunt-wasix:runtime-portable"
     inputs:
       - "/.prototools"
-      - "/src/bindings/wasix-ts/**/*"
+      - "**/*"
       - "/src/shared/fixtures/postgres/**/*"
       - "/src/runtimes/liboliphaunt/wasix/tools-npm/**/*"
       - "/src/sources/toolchains/bun.toml"
@@ -265,7 +228,7 @@ tasks:
       - "liboliphaunt-wasix:runtime-portable"
     inputs:
       - "/.prototools"
-      - "/src/bindings/wasix-ts/**/*"
+      - "**/*"
       - "/src/shared/fixtures/postgres/**/*"
       - "/src/runtimes/liboliphaunt/wasix/tools-npm/**/*"
       - "/src/sources/toolchains/deno.toml"
@@ -280,15 +243,10 @@ tasks:
     deps:
       - "oliphaunt-wasix-ts:package"
     inputs:
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/src/bindings/wasix-ts/**/*"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-directory-safety.mjs"
+      - "@group(legal-files)"
+      - "@group(pnpm-workspace)"
+      - "**/*"
+      - "@group(release-archive-contract)"
       - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
     options:
@@ -301,15 +259,10 @@ tasks:
       - "oliphaunt-wasix-ts:package"
     inputs:
       - "/.prototools"
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/src/bindings/wasix-ts/**/*"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-directory-safety.mjs"
+      - "@group(legal-files)"
+      - "@group(pnpm-workspace)"
+      - "**/*"
+      - "@group(release-archive-contract)"
       - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
       - "/src/sources/toolchains/bun.toml"
@@ -325,15 +278,10 @@ tasks:
       - "oliphaunt-wasix-ts:package"
     inputs:
       - "/.prototools"
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/src/bindings/wasix-ts/**/*"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-directory-safety.mjs"
+      - "@group(legal-files)"
+      - "@group(pnpm-workspace)"
+      - "**/*"
+      - "@group(release-archive-contract)"
       - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
       - "/src/sources/toolchains/deno.toml"
@@ -356,9 +304,7 @@ tasks:
       node --check tools/perf/wasix-node/streaming-quick.mjs
       node tools/perf/wasix-node/benchmark.mjs --validate
     inputs:
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
+      - "@group(pnpm-workspace)"
       - "/benchmarks/wasix/node-pglite-memory-v2.json"
       - "/benchmarks/wasix/browser-pglite-memory-v2.json"
       - "/src/bindings/wasix-ts/host/**/*"
@@ -368,9 +314,7 @@ tasks:
       - "/tools/perf/wasix-node/*.mjs"
       - "/tools/perf/wasix-node/package.json"
       - "/tools/perf/wasix-browser/*.mjs"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-directory-safety.mjs"
+      - "@group(release-archive-contract)"
       - "/tools/release/wasix-typescript-package.mjs"
     options:
       cache: true
@@ -384,20 +328,14 @@ tasks:
       - "oliphaunt-wasix-ts:bench"
       - "liboliphaunt-wasix:runtime-portable"
     inputs:
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
+      - "@group(legal-files)"
+      - "@group(pnpm-workspace)"
       - "/benchmarks/wasix/node-pglite-memory-v2.json"
-      - "/src/bindings/wasix-ts/**/*"
-      - "/tools/dev/clean-package-lib.mjs"
-      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "**/*"
+      - project: "liboliphaunt-wasix"
       - "/tools/perf/wasix-node/*.mjs"
       - "/tools/perf/wasix-node/package.json"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-directory-safety.mjs"
+      - "@group(release-archive-contract)"
       - "/tools/release/wasix-typescript-package.mjs"
     options:
       cache: false
@@ -412,15 +350,11 @@ tasks:
       - "oliphaunt-wasix-ts:bench"
       - "liboliphaunt-wasix:runtime-portable"
     inputs:
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
+      - "@group(legal-files)"
+      - "@group(pnpm-workspace)"
       - "/benchmarks/wasix/browser-pglite-memory-v2.json"
-      - "/src/bindings/wasix-ts/**/*"
-      - "/tools/dev/clean-package-lib.mjs"
-      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "**/*"
+      - project: "liboliphaunt-wasix"
       - "/tools/perf/wasix-browser/*.mjs"
       - "/tools/perf/wasix-node/installed-closure.mjs"
       - "/tools/perf/wasix-node/plan.mjs"
@@ -436,14 +370,11 @@ tasks:
     deps:
       - "liboliphaunt-wasix:runtime-portable"
     inputs:
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
+      - "@group(legal-files)"
+      - "@group(pnpm-workspace)"
       - "/examples/browser-wasix/**/*"
-      - "/src/bindings/wasix-ts/**/*"
-      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "**/*"
+      - project: "liboliphaunt-wasix"
       - "/src/shared/fixtures/postgres/logical-tools.json"
       - "/src/shared/fixtures/postgres/logical-tools-seed.sql"
       - "/src/shared/fixtures/postgres/logical-tools-verify.sql"
@@ -454,9 +385,7 @@ tasks:
       - "/tools/perf/wasix-node/plan.mjs"
       - "/tools/release/build-sdk-ci-artifacts.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-directory-safety.mjs"
+      - "@group(release-archive-contract)"
       - "/tools/release/sdk-artifacts/npm.mjs"
       - "/tools/release/sdk-artifacts/shared.mjs"
       - "/tools/release/sdk-artifacts/wasix-ts.mjs"
@@ -475,11 +404,9 @@ tasks:
     deps:
       - "liboliphaunt-wasix:runtime-portable"
     inputs:
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/src/bindings/wasix-ts/**/*"
-      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "@group(pnpm-workspace)"
+      - "**/*"
+      - project: "liboliphaunt-wasix"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -490,11 +417,9 @@ tasks:
     deps:
       - "liboliphaunt-wasix:runtime-portable"
     inputs:
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/src/bindings/wasix-ts/**/*"
-      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "@group(pnpm-workspace)"
+      - "**/*"
+      - project: "liboliphaunt-wasix"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -505,12 +430,10 @@ tasks:
     deps:
       - "liboliphaunt-wasix:runtime-portable"
     inputs:
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/src/bindings/wasix-ts/**/*"
+      - "@group(pnpm-workspace)"
+      - "**/*"
       - "/src/extensions/external/postgis/**/*"
-      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - project: "liboliphaunt-wasix"
     options:
       cache: false
       runFromWorkspaceRoot: true

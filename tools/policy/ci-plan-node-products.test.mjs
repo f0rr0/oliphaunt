@@ -3,7 +3,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
-import { moonCommand } from "../dev/moon-command.mjs";
+import { moonCommand, moonEnvironment } from "../dev/moon-command.mjs";
 import { affectedNames, triggeringProjectNames } from "../graph/affected.mjs";
 import { planJobsForAffected } from "../graph/ci_plan.mjs";
 import { buildPlan, loadGraph, normalizeFiles } from "../release/release-graph.mjs";
@@ -21,7 +21,7 @@ function effects(paths) {
     ["query", "affected", "stdin", "--upstream", "none", "--downstream", "none"],
     {
       cwd: ROOT,
-      env: environment,
+      env: moonEnvironment(environment),
       input: `${relativePaths.join("\n")}\n`,
       label: `Moon Node-product chaos fixture ${relativePaths.join(", ")}`,
     },

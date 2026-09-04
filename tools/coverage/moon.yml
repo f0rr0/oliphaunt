@@ -21,7 +21,7 @@ tasks:
     tags: ["quality", "static"]
     command: "bash tools/dev/bun.sh tools/coverage/coverage.mjs check-tools"
     inputs:
-      - "/tools/coverage/**/*"
+      - "**/*"
       - "/coverage/baseline.toml"
       - "/tools/dev/capture-command-output.mjs"
     options:

@@ -49,7 +49,6 @@ JSON
   mkdir -p "$scratch_root/src/shared/cluster-seed-contract/fixtures"
   mkdir -p "$scratch_root/src/shared/js-core/test"
   mkdir -p "$scratch_root/tools/dev"
-  mkdir -p "$scratch_root/tools/test"
   rsync -a --delete src/shared/fixtures/ "$scratch_root/src/shared/fixtures/"
   rsync -a --delete \
     src/shared/cluster-seed-contract/fixtures/ \
@@ -57,8 +56,6 @@ JSON
   cp src/shared/js-core/test/protocol-fixtures.mjs \
     src/shared/js-core/test/protocol-fixtures.d.mts \
     "$scratch_root/src/shared/js-core/test/"
-  cp "$root/tools/dev/clean-package-lib.mjs" "$scratch_root/tools/dev/clean-package-lib.mjs"
-  cp "$root/tools/test/run-js-tests.mjs" "$scratch_root/tools/test/run-js-tests.mjs"
   mkdir -p "$scratch_root/src/runtimes/liboliphaunt/native/packages"
   rsync -a --delete \
     src/runtimes/liboliphaunt/native/packages/ \

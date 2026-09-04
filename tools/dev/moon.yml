@@ -26,7 +26,7 @@ tasks:
       - "/.prototools"
       - "/package.json"
       - "/pnpm-lock.yaml"
-      - "/tools/dev/**/*"
+      - "**/*"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -40,7 +40,7 @@ tasks:
       - "/docs/maintainers/tooling.md"
       - "/package.json"
       - "/pnpm-lock.yaml"
-      - "/tools/dev/**/*"
+      - "**/*"
       - "/tools/policy/assertions/repository-semantics.mjs"
       - "/tools/policy/check-tooling-stack.sh"
     options:

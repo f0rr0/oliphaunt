@@ -219,9 +219,8 @@ extension feature to compile-check its root selector. Runtime Postgres/WASIX
 execution stays in `smoke` and `regression`, where missing runtime assets must
 fail or skip explicitly according to the lane policy.
 
-TypeScript and React Native unit tests use the shared Vitest discovery runner
-in `tools/test/run-js-tests.mjs`. Coverage calls the same runner with Vitest V8
-coverage enabled, so test discovery and coverage discovery cannot drift. React
+TypeScript and React Native packages invoke Vitest directly. The coverage runner
+invokes the same test directories with Vitest V8 coverage enabled. React
 Native native adapter compile checks, Codegen checks, Expo prebuild/app wiring,
 and installed-device smokes remain separate package or runtime lanes; Vitest
 coverage is only evidence for TypeScript API/config/JSI contract code.

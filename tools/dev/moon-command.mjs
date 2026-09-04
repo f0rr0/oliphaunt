@@ -6,3 +6,11 @@
 export function moonCommand(environment = process.env) {
   return environment.MOON_BIN || "moon";
 }
+
+export function moonEnvironment(environment = process.env) {
+  const clean = { ...environment };
+  for (const name of Object.keys(clean)) {
+    if (name.startsWith("PROTO_")) delete clean[name];
+  }
+  return clean;
+}

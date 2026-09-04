@@ -38,9 +38,7 @@ tasks:
       - "/.moon/toolchains.yml"
       - "/docs/maintainers/tooling.md"
       - "/moon.yml"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
+      - "@group(pnpm-workspace)"
       - "/src/**/moon.yml"
       - "/tools/**/*"
     options:
@@ -142,12 +140,8 @@ tasks:
       - "!/src/**/Pods/**"
       - "!/src/**/DerivedData/**"
       - "/tools/**/*"
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/rust-toolchain.toml"
+      - "@group(cargo-workspace)"
+      - "@group(pnpm-workspace)"
     options:
       cache: local
       runFromWorkspaceRoot: true
@@ -208,8 +202,7 @@ tasks:
     tags: ["bench", "measured"]
     command: "bash tools/perf/matrix/run_native_oliphaunt_matrix.sh"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
+      - "@group(cargo-workspace)"
       - "/src/shared/fixtures/**/*"
       - "/src/runtimes/liboliphaunt/native/**/*"
       - "/src/sdks/rust/**/*"
@@ -220,7 +213,6 @@ tasks:
       - "/tools/perf/**/*"
       - "/benchmarks/**/*"
       - "/release-please-config.json"
-      - "/rust-toolchain.toml"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -229,8 +221,7 @@ tasks:
     tags: ["bench", "plan"]
     command: "bash tools/perf/check-native-perf-harness.sh"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
+      - "@group(cargo-workspace)"
       - "/src/runtimes/liboliphaunt/native/**/*"
       - "/src/sdks/rust/**/*"
       - "/src/bindings/wasix-rust/**/*"
@@ -241,7 +232,6 @@ tasks:
       - "/tools/perf/**/*"
       - "/benchmarks/**/*"
       - "/release-please-config.json"
-      - "/rust-toolchain.toml"
     options:
       cache: true
       runFromWorkspaceRoot: true

@@ -3,7 +3,7 @@ import path from 'node:path';
 import {test} from 'node:test';
 
 import {captureCommandOutput} from '../dev/capture-command-output.mjs';
-import {moonCommand} from '../dev/moon-command.mjs';
+import {moonCommand, moonEnvironment} from '../dev/moon-command.mjs';
 import {affectedNames, triggeringProjectNames} from '../graph/affected.mjs';
 import {
   CI_JOB_TARGETS,
@@ -70,7 +70,7 @@ test('postmaster source preparation waits for the shared source fetch', () => {
     ],
     {
       cwd: ROOT,
-      env: environment,
+      env: moonEnvironment(environment),
       label: 'Moon WASIX postmaster prepare-postgres dependency graph',
     },
   );
@@ -96,7 +96,7 @@ function directEffects(relativePath) {
     ['query', 'affected', 'stdin', '--upstream', 'none', '--downstream', 'none'],
     {
       cwd: ROOT,
-      env: environment,
+      env: moonEnvironment(environment),
       input: `${relativePath}\n`,
       label: `moon WASIX postmaster release fixture ${relativePath}`,
     },
@@ -138,7 +138,7 @@ function assertNativeExtensionLifecycleSelection(relativePath) {
   assert.equal(effects.jobs.includes('native-extension-lifecycle'), true);
 }
 
-test('postmaster source pins select its production builder and release', () => {
+test('postmaster build-input pins select its builder and release', () => {
   assertReleaseSelection('src/sources/third-party/wasix-postmaster/wasmer.toml');
 });
 

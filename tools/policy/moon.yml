@@ -21,9 +21,7 @@ tasks:
     tags: ["format"]
     command: "bash tools/policy/format.sh --write"
     inputs:
-      - "/Cargo.toml"
-      - "/Cargo.lock"
-      - "/rust-toolchain.toml"
+      - "@group(cargo-workspace)"
       - "/package.json"
       - "/pnpm-lock.yaml"
       - "/biome.json"
@@ -96,9 +94,7 @@ tasks:
     tags: ["format", "quality", "static", "requires-rust"]
     command: "cargo fmt --check"
     inputs:
-      - "/Cargo.toml"
-      - "/Cargo.lock"
-      - "/rust-toolchain.toml"
+      - "@group(cargo-workspace)"
       - "/src/**/Cargo.toml"
       - "/src/**/*.rs"
     options:
@@ -112,7 +108,7 @@ tasks:
       - "/examples/tools/**/*.mjs"
       - "/src/runtimes/liboliphaunt/native/tools/build-ci-target.mjs"
       - "/tools/graph/**/*"
-      - "/tools/policy/**/*"
+      - "**/*"
       - "/tools/dev/capture-command-output.mjs"
       - "/tools/dev/moon-command.mjs"
     options:
@@ -135,7 +131,7 @@ tasks:
       - "/tools/dev/bun.sh"
       - "/tools/dev/capture-command-output.mjs"
       - "/tools/dev/moon-command.mjs"
-      - "/tools/policy/**/*"
+      - "**/*"
       - "!/tools/policy/check-policy-tools.sh"
       - "!/tools/policy/format.sh"
       - "/tools/release/release-check.mjs"

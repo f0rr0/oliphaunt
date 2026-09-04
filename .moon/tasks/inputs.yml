@@ -1,20 +1,47 @@
 $schema: "https://moonrepo.dev/schemas/tasks.json"
 
+fileGroups:
+  cargo-workspace:
+    - "/Cargo.lock"
+    - "/Cargo.toml"
+    - "/rust-toolchain.toml"
+  pnpm-workspace:
+    - "/package.json"
+    - "/pnpm-lock.yaml"
+    - "/pnpm-workspace.yaml"
+  legal-files:
+    - "/LICENSE"
+    - "/THIRD_PARTY_NOTICES.md"
+  release-archive-contract:
+    - "/tools/release/release-directory-safety.mjs"
+    - "/tools/release/portable-archive.mjs"
+    - "/tools/release/release-notices.mjs"
+  release-target-contract:
+    - "/tools/release/platform-compatibility-policy.mjs"
+    - "/tools/release/extension-target-profiles.mjs"
+    - "/tools/release/extension-target-profiles.toml"
+    - "/tools/release/release-artifact-targets.mjs"
+  source-sdk-packaging:
+    - "/tools/release/source-only-sdk-package.mjs"
+    - "/tools/release/cargo-source-package.mjs"
+    - "/tools/release/rust-native-targets.mjs"
+    - "/tools/release/prepare-rust-release-source.mjs"
+    - "/tools/release/prepare-swift-release-consumer.mjs"
+    - "/tools/release/swift-source-carrier-contract.mjs"
+
 # Installed dependency trees are derived state. Task invalidation comes from
 # tracked package manifests, workspace configuration, and lockfiles instead of
 # pnpm's directory symlinks, which Moon cannot hash as files.
 implicitInputs:
-  - "/.moon/tasks/**/*"
-  # Moon resolves tool versions from this file before it evaluates tasks.
-  - "/.prototools"
+  # Changes to shared groups and universal inputs must invalidate their users.
+  - "/.moon/tasks/inputs.yml"
   # Git and Moon use ignore policy while constructing repository and affected
   # inventories, so it is part of every task's interpreted input universe.
   - "/.gitignore"
   # Checkout normalization affects every source byte seen by every task.
   - "/.gitattributes"
-  # Runtime and packaging scripts invoke this pinned launcher across project
-  # boundaries, so a launcher change requires full qualification.
-  - "/tools/dev/bun.sh"
+  # Toolchain pin changes alter task execution even when project sources do not.
+  - "/.prototools"
   - "!/node_modules"
   - "!/node_modules/**"
   - "!/examples/**/node_modules"

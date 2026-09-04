@@ -6,7 +6,8 @@ layer: "library"
 stack: "systems"
 tags: ["extensions", "external", "vector", "release-product"]
 dependsOn:
-  - "extension-runtime-contract"
+  - id: "extension-runtime-contract"
+    scope: "build"
   - id: "liboliphaunt-native"
     scope: "build"
   - id: "liboliphaunt-wasix"

@@ -71,9 +71,7 @@ tasks:
       - "/tools/policy/source-archive.py"
       - "/tools/dev/capture-command-output.mjs"
       - "/tools/release/extension-upstream-licenses.mjs"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-directory-safety.mjs"
+      - "@group(release-archive-contract)"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -92,9 +90,7 @@ tasks:
       - "/tools/policy/source-archive.py"
       - "/tools/dev/capture-command-output.mjs"
       - "/tools/release/extension-upstream-licenses.mjs"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-directory-safety.mjs"
+      - "@group(release-archive-contract)"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -119,9 +115,7 @@ tasks:
       - "/tools/policy/source-archive.py"
       - "/tools/dev/capture-command-output.mjs"
       - "/tools/release/extension-upstream-licenses.mjs"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-directory-safety.mjs"
+      - "@group(release-archive-contract)"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -138,9 +132,7 @@ tasks:
       - "/tools/policy/source-archive.py"
       - "/tools/dev/capture-command-output.mjs"
       - "/tools/release/extension-upstream-licenses.mjs"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-directory-safety.mjs"
+      - "@group(release-archive-contract)"
     options:
       cache: false
       runFromWorkspaceRoot: true

@@ -845,15 +845,29 @@ function runJavascript(product) {
   const excludePatterns = [...excludeGlobs(config), ...waiverPatterns(config)].map((pattern) =>
     pattern.startsWith(sourcePrefix) ? pattern.slice(sourcePrefix.length) : pattern
   );
-  const env = {
-    ...process.env,
-    OLIPHAUNT_VITEST_COVERAGE: '1',
-    OLIPHAUNT_VITEST_COVERAGE_DIR: out,
-    OLIPHAUNT_VITEST_COVERAGE_INCLUDE: JSON.stringify(includePatterns),
-    OLIPHAUNT_VITEST_COVERAGE_EXCLUDE: JSON.stringify(excludePatterns),
-    OLIPHAUNT_VITEST_COVERAGE_LINES: threshold,
-  };
-  run(['pnpm', '--dir', packageDir, 'test'], { env });
+  run([
+    'pnpm',
+    '--dir',
+    packageDir,
+    'exec',
+    'vitest',
+    'run',
+    '--pool=forks',
+    '--fileParallelism=false',
+    '--coverage.enabled=true',
+    '--coverage.provider=v8',
+    `--coverage.reportsDirectory=${out}`,
+    '--coverage.reporter=text',
+    '--coverage.reporter=lcov',
+    '--coverage.reporter=json-summary',
+    '--coverage.thresholds.branches=0',
+    '--coverage.thresholds.functions=0',
+    '--coverage.thresholds.statements=0',
+    `--coverage.thresholds.lines=${threshold}`,
+    ...includePatterns.map((pattern) => `--coverage.include=${pattern}`),
+    ...excludePatterns.map((pattern) => `--coverage.exclude=${pattern}`),
+    '--dir=src/__tests__',
+  ]);
   const summaryReport = path.join(out, 'coverage-summary.json');
   if (!existsSync(summaryReport) || !statSync(summaryReport).isFile()) {
     fail(`${product}: Vitest did not emit ${relPath(summaryReport)}`);

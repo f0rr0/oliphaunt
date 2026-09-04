@@ -6,11 +6,16 @@ layer: "library"
 stack: "systems"
 tags: ["runtime", "wasix", "wasm", "postgres", "release-product"]
 dependsOn:
-  - "postgres18"
-  - "source-toolchains"
-  - "third-party-shared"
-  - "third-party-wasix"
-  - "third-party-wasix-postmaster"
+  - id: "postgres18"
+    scope: "build"
+  - id: "source-toolchains"
+    scope: "build"
+  - id: "third-party-shared"
+    scope: "build"
+  - id: "third-party-wasix"
+    scope: "build"
+  - id: "third-party-wasix-postmaster"
+    scope: "build"
   - id: "liboliphaunt-wasix"
     scope: "build"
 
@@ -41,13 +46,13 @@ tasks:
       - "/rust-toolchain.toml"
       - "/src/postgres/versions/18/source.toml"
       - "/src/sources/toolchains/wasix.toml"
-      - "/src/sources/third-party/shared/**/*"
-      - "/src/sources/third-party/wasix/**/*"
-      - "/src/sources/third-party/wasix-postmaster/**/*"
+      - project: "third-party-shared"
+      - project: "third-party-wasix"
+      - project: "third-party-wasix-postmaster"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/**/*"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker_wasix_env.sh"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/postgres/patches/**/*"
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/**/*"
+      - "**/*"
       - "/docs/maintainers/wasix-postmaster.md"
       - "/tools/dev/bun.sh"
       - "/tools/policy/fetch-sources.mjs"
@@ -61,7 +66,7 @@ tasks:
     tags: ["quality", "unit", "requires-rust"]
     command: "bash src/runtimes/liboliphaunt/wasix-postmaster/bin/check-product.sh --tests"
     inputs:
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/**/*"
+      - "**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -79,10 +84,10 @@ tasks:
     tags: ["source", "fetch", "wasix", "postmaster"]
     command: "bun tools/policy/fetch-sources.mjs wasix-postmaster-runtime"
     inputs:
-      - "/src/sources/toolchains/**/*"
-      - "/src/sources/third-party/shared/**/*"
-      - "/src/sources/third-party/wasix/**/*"
-      - "/src/sources/third-party/wasix-postmaster/**/*"
+      - project: "source-toolchains"
+      - project: "third-party-shared"
+      - project: "third-party-wasix"
+      - project: "third-party-wasix-postmaster"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/**/*"
       - "/src/runtimes/liboliphaunt/wasix-postmaster/runtime/bin/prepare-upstream-checkouts.sh"
       - "/src/runtimes/liboliphaunt/wasix-postmaster/runtime/patches/**/*"
@@ -133,9 +138,7 @@ tasks:
     deps:
       - "liboliphaunt-wasix-postmaster:prepare-runtime"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
+      - "@group(cargo-workspace)"
       - "/src/sources/toolchains/wasix.toml"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/**/*"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker_wasix_env.sh"
@@ -275,13 +278,10 @@ tasks:
       - "liboliphaunt-wasix-postmaster:postgres-build"
       - "liboliphaunt-wasix-postmaster:runtime-capabilities"
     inputs:
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/**/*"
-      - "/src/sources/third-party/wasix-postmaster/**/*"
+      - "@group(legal-files)"
+      - "@group(cargo-workspace)"
+      - "**/*"
+      - project: "third-party-wasix-postmaster"
       - "/src/sources/toolchains/wasix.toml"
       - "/tools/release/archive_dir.mjs"
       - "/tools/release/portable-archive.mjs"
@@ -300,10 +300,9 @@ tasks:
       - "liboliphaunt-wasix-postmaster:backend-wave-stress"
       - "liboliphaunt-wasix-postmaster:immediate-recovery"
     inputs:
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/**/*"
-      - "/src/sources/third-party/wasix-postmaster/**/*"
+      - "@group(legal-files)"
+      - "**/*"
+      - project: "third-party-wasix-postmaster"
       - "/tools/dev/bun.sh"
       - "/tools/release/archive_dir.mjs"
       - "/tools/release/portable-archive.mjs"
@@ -359,7 +358,7 @@ tasks:
       - "liboliphaunt-wasix-postmaster:carrier"
       - "liboliphaunt-wasix-postmaster:backend-wave-stress"
     inputs:
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/**/*"
+      - "**/*"
       - "/target/oliphaunt-wasix-postmaster/carriers/**/*"
     options:
       cache: false
@@ -373,8 +372,8 @@ tasks:
       - "liboliphaunt-wasix-postmaster:regression"
       - "liboliphaunt-wasix-postmaster:runtime-capabilities"
     inputs:
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/**/*"
-      - "/src/sources/third-party/wasix-postmaster/**/*"
+      - "**/*"
+      - project: "third-party-wasix-postmaster"
       - "/tools/dev/bun.sh"
       - "/tools/release/archive_dir.mjs"
       - "/tools/release/materialize-release-symlinks.mjs"

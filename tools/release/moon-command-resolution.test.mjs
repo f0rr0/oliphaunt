@@ -4,7 +4,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { moonCommand } from "../dev/moon-command.mjs";
+import { moonCommand, moonEnvironment } from "../dev/moon-command.mjs";
 import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -162,6 +162,9 @@ describe("Moon command resolution", () => {
   test("honors an explicit MOON_BIN and reports a missing command cleanly", () => {
     expect(moonCommand({ MOON_BIN: "/verified/moon" })).toBe("/verified/moon");
     expect(moonCommand({})).toBe("moon");
+    expect(moonEnvironment({ PATH: "/verified", PROTO_VERSION: "poison" })).toEqual({
+      PATH: "/verified",
+    });
 
     const missing = path.join(tmpdir(), `missing-moon-${randomUUID()}`);
     const result = spawnSync(process.execPath, [CHECK], {

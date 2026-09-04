@@ -67,14 +67,14 @@
     "!src/__tests__"
   ],
   "scripts": {
-    "build": "node ../../../tools/dev/clean-package-lib.mjs && tsc -p tsconfig.build.types.json && tsc -p tsconfig.build.module.json && tsc -p tsconfig.build.commonjs.json",
+    "build": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\" && tsc -p tsconfig.build.types.json && tsc -p tsconfig.build.module.json && tsc -p tsconfig.build.commonjs.json",
     "codegen:check": "node ./tools/codegen-check.cjs /tmp/oliphaunt-react-native-schema.json src/specs/NativeOliphaunt.ts",
     "docs:api": "typedoc --options typedoc.json",
     "package:verify-ios": "node ./tools/verify-ios-package.mjs --package-dir .",
     "prepack": "node ./tools/verify-ios-package.mjs --package-dir .",
-    "test": "node ../../../tools/test/run-js-tests.mjs src/__tests__",
+    "test": "vitest run --pool=forks --fileParallelism=false --dir=src/__tests__",
     "typecheck": "tsc --noEmit",
-    "clean": "node ../../../tools/dev/clean-package-lib.mjs"
+    "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\""
   },
   "peerDependencies": {
     "expo": ">=56.0.0",
