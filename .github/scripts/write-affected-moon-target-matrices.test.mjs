@@ -36,19 +36,17 @@ function invoke(stub, output) {
 test("Node planner captures Moon JSON written at the successful child's final event-loop turn", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-affected-matrices-"));
   try {
-    const document = JSON.stringify({
-      tasks: {
-        alpha: {
-          check: { args: [], command: "node check.mjs", deps: [], id: "check", options: {}, tags: [], target: "alpha:check" },
-          compile: { args: [], command: "node compile.mjs", deps: [], id: "compile", options: {}, tags: [], target: "alpha:compile" },
-          "graph-unit": { args: [], command: "node graph-unit.mjs", deps: [], id: "graph-unit", options: {}, tags: [], target: "alpha:graph-unit" },
-          "tools-compile": { args: [], command: "node tools-compile.mjs", deps: [], id: "tools-compile", options: {}, tags: [], target: "alpha:tools-compile" },
-          test: { args: [], command: "node test.mjs", deps: [], id: "test", options: {}, tags: [], target: "alpha:test" },
-          "tools-unit": { args: [], command: "node tools-unit.mjs", deps: [], id: "tools-unit", options: {}, tags: [], target: "alpha:tools-unit" },
-          unit: { args: [], command: "node unit.mjs", deps: [], id: "unit", options: {}, tags: [], target: "alpha:unit" },
-        },
-      },
-    });
+    const tasks = {
+      check: { args: [], command: "node check.mjs", deps: [], id: "check", options: {}, tags: [], target: "alpha:check" },
+      compile: { args: [], command: "node compile.mjs", deps: [], id: "compile", options: {}, tags: [], target: "alpha:compile" },
+      "graph-unit": { args: [], command: "node graph-unit.mjs", deps: [], id: "graph-unit", options: {}, tags: [], target: "alpha:graph-unit" },
+      "tools-compile": { args: [], command: "node tools-compile.mjs", deps: [], id: "tools-compile", options: {}, tags: [], target: "alpha:tools-compile" },
+      test: { args: [], command: "node test.mjs", deps: [], id: "test", options: {}, tags: [], target: "alpha:test" },
+      "tools-unit": { args: [], command: "node tools-unit.mjs", deps: [], id: "tools-unit", options: {}, tags: [], target: "alpha:tools-unit" },
+      unit: { args: [], command: "node unit.mjs", deps: [{ target: "alpha:internal" }], id: "unit", options: {}, tags: [], target: "alpha:unit" },
+    };
+    const internal = { args: [], command: "node internal.mjs", deps: [], id: "internal", options: { internal: true }, tags: ["requires-rust"], target: "alpha:internal" };
+    const document = JSON.stringify({ tasks: { alpha: tasks }, data: { ...tasks, internal } });
     const midpoint = Math.floor(document.length / 2);
     const stub = moonStub(root, [
       `const first = ${JSON.stringify(document.slice(0, midpoint))};`,
@@ -82,6 +80,12 @@ test("Node planner captures Moon JSON written at the successful child's final ev
       "alpha:tools-unit",
       "alpha:unit",
     ]);
+    assert.equal(
+      JSON.parse(values.get("test_matrix")).include.find(({ targets_json }) =>
+        JSON.parse(targets_json).include.some(({ target }) => target === "alpha:unit")
+      ).requires_rust,
+      true,
+    );
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

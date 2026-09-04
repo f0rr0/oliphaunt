@@ -1,10 +1,10 @@
 $schema: "https://moonrepo.dev/schemas/project.json"
 
-id: "integration-tests"
+id: "wasix-ts-integration"
 language: "typescript"
 layer: "tool"
 stack: "infrastructure"
-tags: ["integration"]
+tags: ["integration", "wasix", "typescript"]
 dependsOn:
   - id: "shared-test-fixtures"
     scope: "development"
@@ -12,34 +12,17 @@ dependsOn:
   - "oliphaunt-wasix-napi"
   - "oliphaunt-wasix-tools-ts"
   - "oliphaunt-wasix-ts"
-  - "oliphaunt-react-native"
 
 project:
-  title: "Integration Tests"
-  description: "Cross-package runtime checks that do not belong to an individual product."
+  title: "WASIX TypeScript Integration"
+  description: "Installed-package runtime checks across the WASIX TypeScript packages and runtime carriers."
   owner: "oliphaunt"
 
 owners:
   defaultOwner: "@oliphaunt/core"
 
 tasks:
-  react-native-runner-unit:
-    tags: ["quality", "unit"]
-    script: |
-      set -e
-      bash tools/integration/react-native/expo-android-gradle-limits.test.sh
-      bash tools/integration/react-native/expo-runner-android-device.test.sh
-      bash tools/integration/react-native/expo-runner-ios-installed-app.test.sh
-      bash tools/integration/react-native/expo-runner-workspace.test.sh
-    inputs:
-      - "/src/extensions/generated/sdk/extensions.json"
-      - "/src/sdks/react-native/tools/**/*"
-      - "react-native/**/*"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
-
-  wasix-ts-runtime:
+  runtime:
     tags: ["integration", "runtime", "ci-wasix-ts-sdk-package"]
     script: |
       set -e
@@ -63,7 +46,7 @@ tasks:
       - "/benchmarks/wasix/**/*"
       - "/examples/browser-wasix/**/*"
       - project: "shared-test-fixtures"
-      - "wasix-ts/**/*"
+      - "**/*"
       - "/tools/dev/bun.sh"
       - "/tools/dev/deno.sh"
       - "/tools/perf/wasix-browser/*.mjs"

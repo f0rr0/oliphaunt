@@ -125,7 +125,7 @@ test("WASIX Postmaster qualification includes its packaged runtime behavior", ()
 
 test("WASIX TypeScript products build packages and root integration consumes them", () => {
   const tasks = moonJson(["query", "tasks"]).tasks;
-  const integration = tasks["integration-tests"]["wasix-ts-runtime"];
+  const integration = tasks["wasix-ts-integration"].runtime;
   const dependencies = new Set(integration.deps.map(({ target }) => target));
 
   assert.deepEqual(

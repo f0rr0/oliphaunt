@@ -1012,7 +1012,7 @@ miniature CI systems:
   `shared-test-fixtures` project. Product tests use a semantic project input;
   they no longer repeat fixture file inventories in Rust source or Moon YAML.
 - Cross-package WASIX TypeScript installed-package checks moved from both npm
-  products to `integration-tests:wasix-ts-runtime`. The product tasks only
+  products to `wasix-ts-integration:runtime`. The product tasks only
   type-check, run their own unit tests, and build/package their own npm source.
   The root integration task consumes those package outputs plus the separately
   built portable and Node-API runtime carriers.
@@ -1047,8 +1047,18 @@ miniature CI systems:
   terminate on an app failure, accept a valid receipt, and reject a receipt
   bound to another tree. The root task passed in 27s; the untrimmed restoration
   had taken 3m19s under Moon.
+- The first hosted run of commit `87078ee3` exposed a planner bug hidden by the
+  local fixture: capability propagation read `moon query tasks`, which omits
+  internal tasks, then failed when a public native unit task depended on an
+  internal source-fetch test. It now reads Moon's complete `task-graph --json`;
+  the fixture includes that exact public-to-internal edge. The generic
+  `integration-tests` project was also split into bounded React Native runner
+  and WASIX TypeScript integration projects, allowing the runner check to use
+  Moon's standard `unit` classification and the visible label `React Native
+  Runner Integration / Unit` without a planner exception. The exact hosted
+  base/head matrix command and the full 2m03s workflow suite pass locally.
 
-The resolved graph is **55 projects, 195 tasks, and 158 task edges**. Twenty-eight
+The resolved graph is **56 projects, 195 tasks, and 158 task edges**. Twenty-eight
 implementation tasks are internal, leaving **167 public tasks**. Cache policy is
 115 normal, 13 local-only, and 67 uncached tasks; the latter are deliberate
 hosted/runtime/release side-effect boundaries rather than missing cache flags.

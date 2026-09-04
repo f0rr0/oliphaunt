@@ -85,7 +85,7 @@ function selectedScopeTaskMap() {
 function allTaskMap() {
   const result = spawnSync(
     moonCommand(),
-    moonQueryTaskArgs('', {affected: false}),
+    ['task-graph', '--json'],
     {
       encoding: 'utf8',
       env: moonEnvironment(),
@@ -94,27 +94,22 @@ function allTaskMap() {
     },
   );
   if (result.error !== undefined || result.status !== 0) {
-    fail('moon query tasks failed for complete task capability metadata');
+    fail('moon task-graph failed for complete task capability metadata');
   }
   let query;
   try {
     query = JSON.parse(result.stdout);
   } catch (error) {
-    fail(`moon query tasks returned invalid JSON for complete task capability metadata: ${error.message}`);
+    fail(`moon task-graph returned invalid JSON for complete task capability metadata: ${error.message}`);
   }
-  const tasksByProject = query.tasks;
-  if (!tasksByProject || typeof tasksByProject !== 'object' || Array.isArray(tasksByProject)) {
-    fail('moon query tasks did not return a tasks object for complete task capability metadata');
+  const taskData = query.data;
+  if (!taskData || typeof taskData !== 'object') {
+    fail('moon task-graph did not return task data for complete task capability metadata');
   }
   const tasks = new Map();
-  for (const projectTasks of Object.values(tasksByProject)) {
-    if (!projectTasks || typeof projectTasks !== 'object' || Array.isArray(projectTasks)) {
-      continue;
-    }
-    for (const task of Object.values(projectTasks)) {
-      if (task && typeof task === 'object' && typeof task.target === 'string') {
-        tasks.set(task.target, task);
-      }
+  for (const task of Object.values(taskData)) {
+    if (task && typeof task === 'object' && typeof task.target === 'string') {
+      tasks.set(task.target, task);
     }
   }
   return tasks;

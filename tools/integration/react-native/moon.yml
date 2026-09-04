@@ -1,0 +1,34 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "react-native-runner-integration"
+language: "bash"
+layer: "tool"
+stack: "infrastructure"
+tags: ["integration", "react-native"]
+dependsOn:
+  - "oliphaunt-react-native"
+
+project:
+  title: "React Native Runner Integration"
+  description: "Failure, receipt, Gradle-limit, and package-staging checks for the mobile runners."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+
+tasks:
+  unit:
+    tags: ["quality", "unit"]
+    script: |
+      set -e
+      bash tools/integration/react-native/expo-android-gradle-limits.test.sh
+      bash tools/integration/react-native/expo-runner-android-device.test.sh
+      bash tools/integration/react-native/expo-runner-ios-installed-app.test.sh
+      bash tools/integration/react-native/expo-runner-workspace.test.sh
+    inputs:
+      - "/src/extensions/generated/sdk/extensions.json"
+      - "/src/sdks/react-native/tools/**/*"
+      - "**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

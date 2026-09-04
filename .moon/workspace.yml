@@ -21,6 +21,7 @@ projects:
     - "src/sources/third-party/*/moon.yml"
     - "src/shared/*/moon.yml"
     - "tools/*/moon.yml"
+    - "tools/integration/*/moon.yml"
   sources:
     ci-workflows: ".github"
 

@@ -1735,7 +1735,7 @@ jobs:
 
       - name: Test installed WASIX TypeScript packages
         run: |
-          MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream none integration-tests:wasix-ts-runtime
+          MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream none wasix-ts-integration:runtime
 
       - name: Assemble WASIX TypeScript SDK artifacts
         run: |
