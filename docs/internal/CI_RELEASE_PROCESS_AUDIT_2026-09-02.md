@@ -521,8 +521,8 @@ Moon task cache across jobs or runs.
 ### Dependency graph
 
 Moon resolves **52 projects with 117 project edges** and **232 tasks across 35
-task-owning projects with 158 task edges**. Project edges comprise 24
-production relationships, 92 build/compatibility relationships, and one
+task-owning projects with 158 task edges**. Project edges comprise 32
+production relationships, 84 build/compatibility relationships, and one
 development relationship.
 
 Task edges now have an executable invariant:
