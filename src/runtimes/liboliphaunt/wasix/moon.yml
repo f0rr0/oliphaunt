@@ -43,10 +43,16 @@ owners:
     "tools/**": ["@oliphaunt/wasix"]
 
 fileGroups:
-  runtime:
-    - "**/*"
-    - "!**/*.md"
-    - "!moon.yml"
+  artifact-source:
+    - "assets/build/**/*"
+    - "assets/generated/**/*"
+    - "crates/**/*"
+    - "tools/build-aot-target.sh"
+    - "tools/build-runtime-portable.sh"
+    - "VERSION"
+    - "release.toml"
+  crates:
+    - "crates/**/*"
 
 tasks:
   unit:
@@ -73,9 +79,9 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
 
-  artifact-lint:
+  assets-verify:
     tags: ["release", "package"]
-    command: "bash tools/policy/check-wasm-artifacts.sh"
+    command: "bash src/runtimes/liboliphaunt/wasix/tools/verify-committed-assets.sh"
     inputs:
       - "@group(cargo-workspace)"
       - project: "postgres18"
@@ -88,9 +94,11 @@ tasks:
         group: "build"
       - project: "extension-runtime-contract"
         group: "contract"
-      - "**/*"
+      - "assets/build/**/*"
+      - "assets/generated/**/*"
+      - "crates/**/*"
+      - "tools/verify-committed-assets.sh"
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
-      - "/tools/policy/check-wasm-artifacts.sh"
       - "/tools/xtask/**/*"
       - "/src/sources/tools/verify-source-tree.py"
     options:
@@ -117,7 +125,9 @@ tasks:
         group: "build"
       - project: "extension-runtime-contract"
         group: "contract"
-      - "**/*"
+      - "assets/build/**/*"
+      - "crates/**/*"
+      - "tools/build-runtime-portable.sh"
       - "!assets/generated"
       - "!assets/generated/**"
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
@@ -155,7 +165,9 @@ tasks:
         group: "build"
       - project: "extension-runtime-contract"
         group: "contract"
-      - "**/*"
+      - "crates/**/*"
+      - "tools/build-aot-target.sh"
+      - "tools/cargo-test-filter.sh"
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
       - "/src/runtimes/liboliphaunt/wasix/tools/runtime-preflight.sh"
       - "/tools/xtask/**/*"
@@ -185,7 +197,8 @@ tasks:
       - "/src/bindings/wasix-rust/THIRD_PARTY_NOTICES.md"
       - "/src/postgres/versions/18/source.toml"
       - "/src/runtimes/liboliphaunt/licenses/**/*"
-      - "**/*"
+      - "assets/generated/**/*"
+      - "crates/**/*"
       - "/src/sources/third-party/shared/icu.toml"
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
       - "/src/runtimes/liboliphaunt/wasix/crates/assets/**/*"
@@ -198,7 +211,6 @@ tasks:
       - "/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu/**/*"
       - "/target/oliphaunt-wasix/assets/**/*"
       - "/target/oliphaunt-wasix/aot/**/*"
-      - "/tools/test/cargo-test-filter.sh"
     outputs:
       - "/target/oliphaunt-wasix/release-assets/**/*"
     options:
@@ -221,10 +233,11 @@ tasks:
         group: "sources"
       - project: "extensions"
         group: "build"
-      - "**/*"
+      - "tools/cargo-test-filter.sh"
+      - "tools/runtime-preflight.sh"
+      - "tools/runtime-smoke.sh"
       - "/src/bindings/wasix-rust/**/*"
       - "/src/runtimes/liboliphaunt/wasix/tools/runtime-preflight.sh"
-      - "/tools/test/cargo-test-filter.sh"
       - "/tools/xtask/**/*"
       - "/src/sources/tools/verify-source-tree.py"
     options:
@@ -249,12 +262,13 @@ tasks:
         group: "sources"
       - project: "extensions"
         group: "build"
-      - "**/*"
+      - "tools/cargo-test-filter.sh"
+      - "tools/runtime-preflight.sh"
+      - "tools/runtime-smoke.sh"
       - "/src/bindings/wasix-rust/**/*"
       - "/src/bindings/wasix-ts/**/*"
       - "/src/shared/js-core/**/*"
       - "/src/runtimes/liboliphaunt/wasix/tools/runtime-preflight.sh"
-      - "/tools/test/cargo-test-filter.sh"
       - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-tools-npm-carrier.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
@@ -270,7 +284,7 @@ tasks:
     command: "true"
     deps:
       - "liboliphaunt-wasix:lint"
-      - "liboliphaunt-wasix:artifact-lint"
+      - "liboliphaunt-wasix:assets-verify"
       - "liboliphaunt-wasix:release-assets"
       - "liboliphaunt-wasix:smoke"
       - "liboliphaunt-wasix:regression"

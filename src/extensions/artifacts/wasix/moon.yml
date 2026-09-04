@@ -36,7 +36,7 @@ tasks:
       - "/src/postgres/versions/18/**/*"
       - "/src/runtimes/liboliphaunt/licenses/**/*"
       - project: "liboliphaunt-wasix"
-        group: "runtime"
+        group: "artifact-source"
       - project: "extension-runtime-contract"
         group: "contract"
       - project: "third-party-shared"
@@ -47,7 +47,6 @@ tasks:
       - "/tools/release/extension-upstream-licenses.mjs"
       - "/tools/release/release-notices.mjs"
       - "/tools/release/release-directory-safety.mjs"
-      - "/tools/xtask/**/*"
     outputs:
       - "/target/extensions/wasix/release-assets/**/*"
     options:

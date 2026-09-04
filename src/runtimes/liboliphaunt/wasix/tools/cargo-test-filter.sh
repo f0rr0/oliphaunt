@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 
-# Cargo treats a test-name filter that matches nothing as success. Release and
-# runtime smoke lanes must state how many tests they intend to select before
-# running the filtered command.
+# Cargo treats a test-name filter that matches nothing as success. Runtime
+# smoke lanes must state how many tests they intend to select first.
 oliphaunt_assert_cargo_test_filter_count() {
   local expected="$1"
   local filter="$2"

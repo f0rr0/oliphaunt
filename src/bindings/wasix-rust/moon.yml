@@ -44,7 +44,8 @@ tasks:
       - project: "shared-rust-query-core"
         group: "sources"
       - "@group(code)"
-      - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
+      - project: "liboliphaunt-wasix"
+        group: "crates"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -67,7 +68,8 @@ tasks:
       - project: "shared-rust-query-core"
         group: "sources"
       - "@group(code)"
-      - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
+      - project: "liboliphaunt-wasix"
+        group: "crates"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -89,7 +91,8 @@ tasks:
         group: "fixtures"
       - project: "shared-rust-query-core"
         group: "sources"
-      - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
+      - project: "liboliphaunt-wasix"
+        group: "crates"
       - "/src/sources/toolchains/wasix.toml"
       - "/src/bindings/wasix-rust/tools/package-source.mjs"
     outputs:

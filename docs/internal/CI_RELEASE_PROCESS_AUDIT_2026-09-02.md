@@ -260,7 +260,7 @@ either execute ShellCheck/SwiftLint or stop claiming/bootstrapping them.
 | `sdk-contracts` | Checks generated API documentation, shared fixtures, copied C headers, SDK manifest metadata, native boundaries, and cluster-seed contracts. | The deceptive `doc-examples` marker matcher was removed: it never compiled or compared README examples. Product compile/unit tasks retain executable coverage. `cluster-seeds` is the sole executable checker; the `cluster-seed-contract` project is its taskless data boundary. |
 | Shared JS/Rust query cores | JS check verifies six committed generated mirrors; Rust check verifies the canonical source exists and no mirrors are committed. | Rust staging is lean. JS should use the same staging approach or a workspace package instead of committing six mirrors and maintaining a sync task. |
 | `source-inputs:unit` | Validates source metadata and runs the source-fetch and PostgreSQL transport tests. | Accurate after splitting out unrelated consumers: WASIX owns its pinned builder-installer tests, while the existing CI toolchain-bootstrap suite owns Maestro. |
-| `xtask` Moon tasks | `unit` runs the default-feature test suite; `cluster-seed-runner-check` compiles the optional runner locally; `compile-aot-serializer` compiles the actual AOT feature path. | The CI names now describe the work, and the 44 default-feature tests are no longer absent from declared CI. |
+| `xtask` Moon tasks | `unit` runs the default-feature test suite; `cluster-seed-compile` compiles the optional runner locally; `aot-serializer-compile` compiles the actual AOT feature path. | The CI names now describe the work, and the 44 default-feature tests are no longer absent from declared CI. |
 | `xtask` executable | A 13,364-line Rust program implementing WASIX source/fetch/build/install/package, AOT serialization, extension catalog generation, cluster-seed execution, and release staging. | Most of it is real WASIX/extension release machinery. Dead publish/package-size commands and brittle source-spelling guards were removed. Moving the remaining crate would be high-churn path cleanup with no execution saving; split it only when modules need independent cache/change boundaries. |
 | Native packaging/proof tools | One crate checks native package mechanics; another runs tests despite being named `check`. | Rename both test runners to `unit`; remove `native-packaging:unit -> check` because Cargo test already compiles the crate. Aggregate both only when native packaging changes. |
 | Bench tasks | Many `bench` tasks only validate or plan a benchmark; `bench-run` performs measurements. | Rename plan-only tasks `bench-check` or `bench-plan`. Keep measured runs manual/scheduled and affected. |
@@ -562,7 +562,7 @@ Cross-product judgments:
 | Work | Measured/predicted cost | Judgment |
 | --- | --- | --- |
 | `xtask:unit` | 4.9 s cold after dependency compilation; 65 ms cached. Final 44-test run: 2.9 s incremental. | Justified and previously missing from declared CI. |
-| `xtask:compile-aot-serializer` | 37.7 s cold; 45 ms cached; 2.6 s incremental after source edits. | Justified only because it compiles the release-only Wasmer/LLVM feature path. The cost is seconds, not the reported product-build minutes. |
+| `xtask:aot-serializer-compile` | 37.7 s cold; 45 ms cached; 2.6 s incremental after source edits. | Justified only because it compiles the release-only Wasmer/LLVM feature path. The cost is seconds, not the reported product-build minutes. |
 | Small cached contract task | 2.18 s cold; 62 ms cached. | Confirms hashing and local cache hydration work. |
 | `perf-tools:unit` | 49 s to compile its Rust API model cold; 168 ms for the fully cached two-task closure. | Justified: retained checks execute plans, output contracts, no-build behavior, provenance, and mobile probes instead of inspecting source spelling. |
 | WASIX N-API production source closure | About 88–100 min wall / 155–185 runner-minutes. | The portable runtime, AOT, N-API carriers, extensions, and downstream packed TypeScript smoke are real behavior. The minutes are justified for production source, not prose/unit-only changes. |
@@ -657,7 +657,7 @@ Changes made:
 
 - Moon `check` became `unit` and now runs all 44 default-feature tests; the old
   configuration compiled the binary but silently skipped them.
-- `release-check` became `compile-aot-serializer`; it now says exactly what it
+- `release-check` became `aot-serializer-compile`; it now says exactly what it
   proves.
 - Removed unused `release dry-run` and `release publish`. The latter always
   stopped with an error after staging and never published anything.
@@ -679,7 +679,7 @@ those real ownership boundaries, not into another generic support project.
 Focused qualification completed:
 
 - `xtask:unit`: 44 passed;
-- `xtask:compile-aot-serializer`: passed;
+- `xtask:aot-serializer-compile`: passed;
 - `xtask assets check`: passed in source-only mode, including shell syntax and
   compiled bridge ABI validation;
 - full Postmaster compile and unit suite: passed in 2m38s;
@@ -1142,6 +1142,20 @@ miniature CI systems:
   exact byte-for-byte copy. It still validates the canonical manifest, files,
   JSON keys, and query-response contract; product tests still consume the same
   fixtures. The only lost signal is a non-behavioral copy-placement policy.
+- The WASIX committed-asset verifier and Cargo test filter moved from generic
+  root `tools/policy` and `tools/test` directories into the runtime that owns
+  them. The verifier is now the truthful `assets-verify` task; the test filter
+  invalidates only AOT, smoke, and regression tasks that execute it.
+- WASIX runtime inputs are split into crate and release/build surfaces. Rust
+  bindings, Node-API, release tooling, coverage, and diagnostics reference the
+  named crate surface instead of repeating raw source paths. Node/browser
+  measurements rely on their explicit portable-runtime producer rather than
+  also watching the runtime's entire tree. A chaos test locks this boundary.
+- The root Rust helper keeps its conventional Cargo package name `xtask`, but
+  Moon now exposes the honest project label `WASIX and Extension Asset Tooling`
+  and the concrete `cluster-seed-compile` and `aot-serializer-compile` tasks.
+  Extension artifact builders no longer claim `xtask` as an input when their
+  scripts never invoke or import it.
 
 The resolved graph is **54 projects, 195 tasks, and 154 task edges**. Twenty-eight
 implementation tasks are internal, leaving **167 public tasks**. Cache policy is

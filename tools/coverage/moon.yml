@@ -145,7 +145,7 @@ tasks:
       - project: "oliphaunt-wasix-rust"
         group: "code"
       - project: "liboliphaunt-wasix"
-        group: "runtime"
+        group: "crates"
       - project: "shared-rust-query-core"
         group: "sources"
       - project: "shared-test-fixtures"

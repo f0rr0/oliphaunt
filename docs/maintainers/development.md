@@ -71,7 +71,7 @@ The validation entrypoint is split by maintainer workflow:
   C ABI/runtime smoke. It depends on the native release-runtime producer and
   refuses any implicit rebuild inside the smoke;
 - `moon run repo:check`: file hygiene and formatting;
-- `tools/policy/check-wasm-artifacts.sh`: source-controlled asset input verification
+- `moon run liboliphaunt-wasix:assets-verify`: source-controlled asset input verification
   plus AOT crate template checks;
 - `tools/dev/bun.sh tools/policy/check-rust-lint.mjs`: dependency invariants
   and clippy;
@@ -197,7 +197,7 @@ The hook split is intentionally small:
 
 - pre-commit: file hygiene and formatting
 - release readiness: `tools/dev/bun.sh tools/policy/check-rust-lint.mjs` and
-  `tools/policy/check-wasm-artifacts.sh`
+  `moon run liboliphaunt-wasix:assets-verify`
 - CI/release: path-aware combinations of the same validation modes, workflow
   linting, feature powerset, public API compatibility, crate packaging,
   native AOT runtime tests, frozen Cargo publication dry-runs, and supply-chain

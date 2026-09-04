@@ -34,8 +34,10 @@ function effects(paths) {
     assert.equal(result.status, 0, result.stderr);
   }
   const projects = triggeringProjectNames(JSON.parse(direct.stdout).projects);
+  const directTasks = affectedNames(JSON.parse(direct.stdout).tasks);
   const tasks = affectedNames(JSON.parse(downstream.stdout).tasks);
   return {
+    directTasks,
     jobs: [...planJobsForAffected(new Set(projects), new Set(tasks))].sort(),
     projects,
     releaseProducts: buildPlan(
@@ -170,6 +172,28 @@ test("WASIX N-API isolated unit fixtures do not start artifact builders", () => 
   const result = effects("src/runtimes/wasix-napi/tools/portable-command.test.mjs");
   assert.deepEqual(result.jobs, ["affected"]);
   assert.equal(result.tasks.includes("oliphaunt-wasix-napi:unit"), true);
+});
+
+test("WASIX test helpers invalidate only tasks that execute them", () => {
+  const result = effects("src/runtimes/liboliphaunt/wasix/tools/cargo-test-filter.sh");
+  for (const target of [
+    "liboliphaunt-wasix:runtime-aot",
+    "liboliphaunt-wasix:smoke",
+    "liboliphaunt-wasix:regression",
+  ]) {
+    assert.equal(result.directTasks.includes(target), true, `${target} executes the helper`);
+  }
+  for (const target of [
+    "coverage-tools:wasix-rust",
+    "extension-artifacts-wasix:build-target",
+    "liboliphaunt-wasix:assets-verify",
+    "liboliphaunt-wasix:release-assets",
+    "liboliphaunt-wasix:runtime-portable",
+    "perf-tools:wasix-browser-measure",
+    "perf-tools:wasix-node-measure",
+  ]) {
+    assert.equal(result.directTasks.includes(target), false, `${target} does not execute the helper`);
+  }
 });
 
 test("WASIX N-API production helpers keep the release builder affected", () => {

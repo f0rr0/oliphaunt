@@ -7,8 +7,8 @@ stack: "systems"
 tags: ["tools", "rust", "xtask", "wasix"]
 
 project:
-  title: "xtask"
-  description: "Rust helper binary for WASIX assets, release staging, and source-policy checks."
+  title: "WASIX and Extension Asset Tooling"
+  description: "Rust checks and generators shared by WASIX runtime and extension assets."
   owner: "oliphaunt"
 
 owners:
@@ -29,11 +29,11 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  cluster-seed-runner-check:
+  cluster-seed-compile:
     tags: ["quality", "static", "wasix"]
     command: "cargo check -p xtask --features cluster-seed-runner --locked"
     env:
-      CARGO_TARGET_DIR: "target/moon/xtask/cluster-seed-runner-check"
+      CARGO_TARGET_DIR: "target/moon/xtask/cluster-seed-compile"
     inputs:
       - "@group(cargo-workspace)"
       - "**/*"
@@ -41,11 +41,11 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
       runInCI: skip
-  compile-aot-serializer:
+  aot-serializer-compile:
     tags: ["quality", "static", "requires-rust"]
     command: "cargo check -p xtask --features aot-serializer --locked"
     env:
-      CARGO_TARGET_DIR: "target/moon/xtask/compile-aot-serializer"
+      CARGO_TARGET_DIR: "target/moon/xtask/aot-serializer-compile"
     inputs:
       - "@group(cargo-workspace)"
       - "**/*"
