@@ -1057,6 +1057,25 @@ miniature CI systems:
   Moon's standard `unit` classification and the visible label `React Native
   Runner Integration / Unit` without a planner exception. The exact hosted
   base/head matrix command and the full 2m03s workflow suite pass locally.
+- The next hosted run reached the macOS metadata job and exposed one stale
+  assertion: it still required every extension to be a production dependency
+  of the WASIX Node-API product, even though extension artifacts are now an
+  explicit dependency of the release producer that actually consumes them.
+  The obsolete product-level assertion was removed. A task-graph test now locks
+  the two real build inputs, `liboliphaunt-wasix:runtime-aot` and
+  `release-tools:wasix-extension-packages`, without coupling the addon product
+  to every extension project.
+- The same run exposed a synthetic Postmaster fixture that made modules unique
+  by appending arbitrary bytes after valid WebAssembly. The first byte was
+  interpreted as a code-section ID, so all three release builders correctly
+  rejected the malformed module. The fixture now appends a valid custom
+  section; Node's WebAssembly validator accepts the generated module.
+- Both React Native app builders exposed that the simplified npm package had
+  dropped two generated extension manifests previously copied by the deleted
+  SDK dispatcher. The package task now includes those exact generated inputs
+  and places them under `src/generated`, where the Expo plugin, Android build,
+  and iOS staging code already expect them. The rebuilt tarball contains both
+  manifests and passes the package's selection-neutral contract check.
 
 The resolved graph is **56 projects, 195 tasks, and 158 task edges**. Twenty-eight
 implementation tasks are internal, leaving **167 public tasks**. Cache policy is

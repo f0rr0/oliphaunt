@@ -88,6 +88,8 @@ tasks:
       rm -rf target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape target/liboliphaunt-sdk-check/oliphaunt-react-native/packages
       mkdir -p target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native target/liboliphaunt-sdk-check/oliphaunt-react-native/packages
       rsync -a --exclude node_modules --exclude .build --exclude android/.gradle --exclude android/.cxx --exclude android/build --exclude ios/vendor src/sdks/react-native/ target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native/
+      mkdir -p target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native/src/generated
+      cp src/extensions/generated/sdk/extensions.json src/extensions/generated/sdk/ios-static-dependencies.json target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native/src/generated/
       cp LICENSE THIRD_PARTY_NOTICES.md target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native/
       ln -s "$PWD/src/sdks/react-native/node_modules" target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native/node_modules
       pnpm --silent --dir target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native pack --pack-destination "$PWD/target/liboliphaunt-sdk-check/oliphaunt-react-native/packages"
@@ -97,6 +99,8 @@ tasks:
     inputs:
       - "@group(legal-files)"
       - project: "shared-js-core"
+      - "/src/extensions/generated/sdk/extensions.json"
+      - "/src/extensions/generated/sdk/ios-static-dependencies.json"
       - "@group(pnpm-workspace)"
       - "**/*"
       - "!/src/sdks/react-native/**/node_modules"

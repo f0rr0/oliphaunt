@@ -147,6 +147,14 @@ test("WASIX TypeScript products build packages and root integration consumes the
   );
 });
 
+test("WASIX Node-API release build consumes its runtime and extension artifacts", () => {
+  const task = moonJson(["query", "tasks"]).tasks["release-tools"]["wasix-napi-runtime"];
+  assert.deepEqual(task.deps.map(({ target }) => target).sort(), [
+    "liboliphaunt-wasix:runtime-aot",
+    "release-tools:wasix-extension-packages",
+  ]);
+});
+
 test("CI planner project selectors resolve to Moon projects", () => {
   const projects = moonJson(["query", "projects"]).projects;
   const projectIds = new Set(projects.map(({ id }) => id));

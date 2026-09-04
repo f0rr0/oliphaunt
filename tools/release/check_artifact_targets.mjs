@@ -1192,14 +1192,6 @@ export function repositoryInventory() {
 export function validateRepository() {
   const inventory = repositoryInventory();
   invariant((inventory.graph.artifact_targets ?? []).length === 0, "artifact targets must be owned by Moon product metadata, not a central legacy table");
-  const wasixNapiDependencies = inventory.graph.moon_projects["oliphaunt-wasix-napi"]?.dependencies ?? [];
-  assertSameStrings(
-    wasixNapiDependencies
-      .filter(({ id, scope }) => scope === "production" && inventory.products.includes(id))
-      .map(({ id }) => id),
-    inventory.products,
-    "WASIX Node-API exact-extension production dependency closure",
-  );
   for (const [product, preset] of Object.entries({
     "liboliphaunt-native": "liboliphaunt-native",
     "liboliphaunt-wasix": "liboliphaunt-wasix",
