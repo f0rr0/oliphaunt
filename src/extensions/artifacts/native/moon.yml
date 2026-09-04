@@ -74,6 +74,7 @@ tasks:
       - "/tools/release/platform-binary-contract.mjs"
       - "/tools/release/platform-binary-contract.test.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/release/windows-vc-runtime-closure.mjs"
     options:
       cache: false
@@ -118,6 +119,7 @@ tasks:
       - "/tools/release/platform-binary-contract.mjs"
       - "/tools/release/platform-binary-contract.test.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/release/windows-vc-runtime-closure.mjs"
     outputs:
       - "/target/extensions/native/release-assets/**/*"

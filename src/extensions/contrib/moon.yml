@@ -8,8 +8,6 @@ tags: ["extensions", "contrib", "pg18"]
 dependsOn:
   - "postgres18"
   - "extension-runtime-contract"
-  - "liboliphaunt-native"
-  - "liboliphaunt-wasix"
 
 project:
   title: "PostgreSQL 18 Contrib Extensions"

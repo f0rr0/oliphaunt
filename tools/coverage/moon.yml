@@ -23,6 +23,7 @@ tasks:
     inputs:
       - "/tools/coverage/**/*"
       - "/coverage/baseline.toml"
+      - "/tools/dev/capture-command-output.mjs"
     options:
       cache: true
       runFromWorkspaceRoot: true

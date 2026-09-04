@@ -127,6 +127,7 @@ tasks:
       - "/tools/dev/clean-package-lib.mjs"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
     outputs:
@@ -150,6 +151,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix/**/*"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
     options:
@@ -172,6 +174,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix/**/*"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
       - "/src/sources/toolchains/bun.toml"
@@ -197,6 +200,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix/**/*"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
       - "/src/sources/toolchains/deno.toml"
@@ -284,6 +288,7 @@ tasks:
       - "/src/bindings/wasix-ts/**/*"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
     options:
@@ -304,6 +309,7 @@ tasks:
       - "/src/bindings/wasix-ts/**/*"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
       - "/src/sources/toolchains/bun.toml"
@@ -327,6 +333,7 @@ tasks:
       - "/src/bindings/wasix-ts/**/*"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
       - "/src/sources/toolchains/deno.toml"
@@ -363,6 +370,7 @@ tasks:
       - "/tools/perf/wasix-browser/*.mjs"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
     options:
       cache: true
@@ -389,6 +397,7 @@ tasks:
       - "/tools/perf/wasix-node/package.json"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
     options:
       cache: false
@@ -447,6 +456,7 @@ tasks:
       - "/tools/release/check-staged-artifacts.mjs"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/release/sdk-artifacts/npm.mjs"
       - "/tools/release/sdk-artifacts/shared.mjs"
       - "/tools/release/sdk-artifacts/wasix-ts.mjs"

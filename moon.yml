@@ -80,6 +80,8 @@ tasks:
       - "!/src/**/Pods/**"
       - "!/src/**/DerivedData/**"
       - "/tools/dev/bun.sh"
+      - "/tools/dev/capture-command-output.mjs"
+      - "/tools/dev/moon-command.mjs"
       - "/tools/release/**/*"
     options:
       cache: true

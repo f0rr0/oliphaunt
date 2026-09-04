@@ -12,6 +12,7 @@ dependsOn:
   - "third-party-wasix"
   - "extension-model"
   - "extension-runtime-contract"
+  - "oliphaunt-extension-contrib-pg18"
 
 project:
   title: "liboliphaunt WASIX"
@@ -115,6 +116,7 @@ tasks:
       - "/tools/xtask/**/*"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/policy/verify-source-tree.py"
     outputs:
       - "/target/oliphaunt-wasix/wasix-build/build/**/*"
@@ -158,6 +160,7 @@ tasks:
       - "/tools/xtask/**/*"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/policy/verify-source-tree.py"
     options:
       cache: false
@@ -190,6 +193,7 @@ tasks:
       - "/tools/release/check-liboliphaunt-wasix-release-assets.mjs"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/policy/verify-source-tree.py"
       - "/target/oliphaunt-wasix/wasix-build/build/**/*"
       - "/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu/**/*"
@@ -266,6 +270,7 @@ tasks:
       - "/tools/release/wasix-typescript-package.mjs"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/xtask/**/*"
       - "/tools/policy/verify-source-tree.py"
     options:

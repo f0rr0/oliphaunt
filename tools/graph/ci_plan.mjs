@@ -105,10 +105,10 @@ const NATIVE_EXTENSION_LIFECYCLE_TRIGGER_TASKS = new Set([
   "release-tools:native-extension-lifecycle-trigger",
 ]);
 export const NATIVE_EXTENSION_LIFECYCLE_EXHAUSTIVE_SHARD_COUNT = 3;
-const NATIVE_EXTENSION_LIFECYCLE_TRIGGER_PROJECTS = new Set([
+export const NATIVE_EXTENSION_LIFECYCLE_TRIGGER_PROJECTS = new Set([
   "ci-workflows",
   "extension-artifacts-native",
-  "extension-contrib-postgres18",
+  "oliphaunt-extension-contrib-pg18",
   "extension-model",
   "extensions",
   "liboliphaunt-native",
@@ -124,6 +124,21 @@ const IOS_MOBILE_JOBS = new Set(["mobile-build-ios"]);
 const EXTENSION_ARTIFACT_CONSUMER_JOBS = new Set(["extension-packages", "mobile-extension-packages"]);
 const WASIX_EXTENSION_ARTIFACT_PORTABLE_CONSUMER_JOBS = new Set([
   "extension-packages",
+]);
+export const BROAD_EXTENSION_INPUT_PROJECTS = new Set([
+  "extension-artifacts-native",
+  "extension-artifacts-wasix",
+  "oliphaunt-extension-contrib-pg18",
+  "extension-model",
+  "extension-packages",
+  "extensions",
+  "liboliphaunt-native",
+  "liboliphaunt-wasix",
+  "postgres18",
+  "source-inputs",
+  "third-party-native",
+  "third-party-shared",
+  "third-party-wasix",
 ]);
 function fail(message) {
   console.error(`${PREFIX}: ${message}`);
@@ -611,22 +626,7 @@ export function selectedExtensionProductsForPlan(directProjects, tasks, jobs) {
       selected.add(project);
     }
   }
-  const broadExtensionInputs = new Set([
-    "extension-artifacts-native",
-    "extension-artifacts-wasix",
-    "extension-contrib-postgres18",
-    "extension-model",
-    "extension-packages",
-    "extensions",
-    "liboliphaunt-native",
-    "liboliphaunt-wasix",
-    "postgres18",
-    "source-inputs",
-    "third-party-native",
-    "third-party-shared",
-    "third-party-wasix",
-  ]);
-  if (intersects(directProjects, broadExtensionInputs)) {
+  if (intersects(directProjects, BROAD_EXTENSION_INPUT_PROJECTS)) {
     return exactProducts;
   }
   if (tasks.has("extension-packages:package") && selected.size === 0) {

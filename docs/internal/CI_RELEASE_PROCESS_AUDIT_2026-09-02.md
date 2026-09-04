@@ -520,18 +520,18 @@ Moon task cache across jobs or runs.
 
 ### Dependency graph
 
-Moon resolves **52 projects with 144 project edges** and **232 tasks across 36
-task-owning projects with 159 task edges**. Project edges comprise 59
-production/release relationships, 84 build/compatibility relationships, and one
+Moon resolves **52 projects with 112 project edges** and **232 tasks across 35
+task-owning projects with 158 task edges**. Project edges comprise 59
+production/release relationships, 52 build/compatibility relationships, and one
 development relationship.
 
 Task edges now have an executable invariant:
 
 | Edge kind | Count | Required meaning | Result |
 | --- | ---: | --- | --- |
-| `hash` | 45 | Consumer identity includes a producer with declared outputs | All producers declare outputs |
+| `hash` | 46 | Consumer identity includes a producer with declared outputs | All producers declare outputs |
 | `outputs` | 11 | Consumer hydrates a producer's declared outputs | All producers declare outputs |
-| `ignored` | 103 | Ordering/qualification only; no artifact data is consumed | No producer declares outputs |
+| `ignored` | 101 | Ordering/qualification only; no artifact data is consumed | No producer declares outputs |
 
 `product-task-model.test.mjs` now checks this for the entire task graph and also
 checks the five SDK carrier tasks that consume product package staging. Moon
@@ -714,3 +714,38 @@ source or user-authored data was removed.
 
 Repository placement and naming were audited separately in
 [`REPOSITORY_ORGANIZATION_AUDIT_2026-09-03.md`](REPOSITORY_ORGANIZATION_AUDIT_2026-09-03.md).
+
+## Final resolved-Moon-graph audit
+
+This pass inspected Moon's resolved project, task, affected, and action graphs
+rather than treating YAML declarations as the graph.
+
+- Removed 31 false `docs -> product` and `release-tools -> product` build
+  declarations. Those tasks read declared source/metadata inputs; they do not
+  consume built product artifacts. Moon infers the two real docs workspace
+  dependencies from `package.json`.
+- Removed explicit Cargo/PNPM edges already inferred by Moon, including
+  `broker -> rust`, `native-packaging -> rust`, and the docs' workspace
+  packages. A resolved-graph invariant now rejects duplicate and self edges.
+- Corrected contrib ownership direction: native and WASIX runtimes depend on
+  the bundled PostgreSQL contrib definition; contrib no longer pretends to
+  depend on its two owners.
+- Corrected the stale planner identity `extension-contrib-postgres18` to the
+  real Moon ID `oliphaunt-extension-contrib-pg18`, centralized both extension
+  project sets, and added a test that every planner selector resolves.
+- Reclassified the taskless extension catalog from `tool` to `configuration`.
+- Removed command capture, Moon command resolution, fd-backed test spawning,
+  and release-directory safety from global task inputs. Their changes now
+  affect 32, 15, 17, and 61 tasks instead of invalidating the whole workspace.
+  Release-directory safety remains on every importing package/runtime task.
+  The cross-language Bun launcher deliberately remains global.
+- Fixed the WASIX Rust package-closure proof exposed by hosted CI. Workspace
+  path dependencies remain unconstrained for local head-to-head development,
+  while the proof now checks the packaged crate's exact runtime pins against
+  those local dependency versions.
+
+No task dependency, artifact hydration edge, release boundary, or behavior
+proof was removed. The final focused qualification passed 16 resolved-graph
+tests, the policy/static/format suite, all 22 affected-selection chaos tests,
+workflow security, actionlint, zizmor, 12 pinned-tool bootstrap tests, and the
+full offline WASIX Rust package test closure.

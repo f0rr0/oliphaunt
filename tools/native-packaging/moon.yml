@@ -5,8 +5,6 @@ language: "rust"
 layer: "tool"
 stack: "systems"
 tags: ["maintainer-tool", "native", "rust"]
-dependsOn:
-  - "oliphaunt-rust"
 
 project:
   title: "Native packaging tools"

@@ -24,6 +24,7 @@ tasks:
       - "/Cargo.lock"
       - "/Cargo.toml"
       - "/examples/**/*"
+      - "/tools/dev/capture-command-output.mjs"
       - "/package.json"
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"

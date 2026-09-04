@@ -6,7 +6,6 @@ layer: "library"
 stack: "systems"
 tags: ["runtime", "broker", "native", "postgres", "release-product"]
 dependsOn:
-  - "oliphaunt-rust"
   - "liboliphaunt-native"
 
 project:
@@ -116,6 +115,7 @@ tasks:
       - "/tools/release/extension-target-profiles.mjs"
       - "/tools/release/release-artifact-targets.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/policy/moon.mjs"
       - "/tools/release/artifact_target_matrix.mjs"
       - "/release-please-config.json"
@@ -153,6 +153,7 @@ tasks:
       - "/tools/release/extension-target-profiles.mjs"
       - "/tools/release/release-artifact-targets.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/release/write_checksum_manifest.mjs"
       - "/tools/policy/moon.mjs"
       - "/release-please-config.json"

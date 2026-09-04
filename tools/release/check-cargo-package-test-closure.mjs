@@ -168,9 +168,10 @@ function copyCleanDependencySource(source, destination) {
   visit(source, destination);
 }
 
-function pathDependencyPatches(manifests, scratch) {
+function pathDependencyPatches(manifests, scratch, packagedManifest) {
   const patches = new Map();
   const sourceDirectories = new Map();
+  const packagedDependencies = dependencyRows(packagedManifest);
   for (const manifestFile of manifests) {
     const resolvedManifest = path.resolve(manifestFile);
     const manifest = parseManifest(resolvedManifest, "path-dependency source manifest");
@@ -182,9 +183,14 @@ function pathDependencyPatches(manifests, scratch) {
       if (local.name !== dependency.name) {
         throw error(`local patch ${localManifestFile} declares ${local.name}, expected ${dependency.name}`);
       }
-      if (dependency.version !== null && exactVersion(dependency.version, dependency.name) !== local.version) {
+      const packagedVersions = new Set(
+        packagedDependencies
+          .filter(({ name }) => name === dependency.name)
+          .map(({ version }) => exactVersion(version, dependency.name)),
+      );
+      if (packagedVersions.size !== 1 || !packagedVersions.has(local.version)) {
         throw error(
-          `local patch ${dependency.name}@${local.version} does not satisfy ${dependency.version}`,
+          `local patch ${dependency.name}@${local.version} does not match packaged requirement ${[...packagedVersions].join(", ") || "none"}`,
         );
       }
       const realSource = realpathSync(directory);
@@ -345,7 +351,11 @@ export function verifyPackagedCargoTestClosure({
   const scratch = mkdtempSync(path.join(realpathSync(os.tmpdir()), "oliphaunt-cargo-package-test-"));
   try {
     const extracted = extractCrate(crate, scratch);
-    const patches = pathDependencyPatches(pathDependencyManifests, scratch);
+    const patches = pathDependencyPatches(
+      pathDependencyManifests,
+      scratch,
+      extracted.manifest,
+    );
     const stubs = createStubPatches({
       manifest: extracted.manifest,
       scratch,

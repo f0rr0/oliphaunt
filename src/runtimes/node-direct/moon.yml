@@ -66,6 +66,7 @@ tasks:
       - "/pnpm-workspace.yaml"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -90,6 +91,7 @@ tasks:
       - "/THIRD_PARTY_NOTICES.md"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/release/artifact_target_matrix.mjs"
       - "/tools/release/check-node-direct-release-assets.mjs"
       - "/tools/release/check-linux-consumer-baseline.sh"
@@ -136,6 +138,7 @@ tasks:
       - "/tools/release/extension-target-profiles.mjs"
       - "/tools/release/release-artifact-targets.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/release/release_graph_query.mjs"
       - "/tools/release/write_checksum_manifest.mjs"
       - "/release-please-config.json"

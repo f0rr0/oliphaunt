@@ -36,6 +36,7 @@ tasks:
       - "/tools/release/extension-target-profiles.toml"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/release/release_graph_query.mjs"
       - "/tools/release/platform-compatibility-policy.mjs"
       - "/tools/release/platform-compatibility-policy.test.mjs"

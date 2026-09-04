@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { moonCommand } from "../dev/moon-command.mjs";
+import {
+  BROAD_EXTENSION_INPUT_PROJECTS,
+  NATIVE_EXTENSION_LIFECYCLE_TRIGGER_PROJECTS,
+} from "../graph/ci_plan.mjs";
 import { execFileSync } from "../test/fd-backed-spawn-sync.mjs";
 
 function moonJson(args) {
@@ -99,4 +103,33 @@ test("WASIX Postmaster qualification includes its packaged runtime behavior", ()
     ),
     true,
   );
+});
+
+test("CI planner project selectors resolve to Moon projects", () => {
+  const projects = moonJson(["query", "projects"]).projects;
+  const projectIds = new Set(projects.map(({ id }) => id));
+  for (const project of new Set([
+    ...BROAD_EXTENSION_INPUT_PROJECTS,
+    ...NATIVE_EXTENSION_LIFECYCLE_TRIGGER_PROJECTS,
+  ])) {
+    assert.equal(projectIds.has(project), true, `unknown CI planner project ${project}`);
+  }
+});
+
+test("Moon projects do not duplicate inferred dependency edges", () => {
+  for (const project of moonJson(["query", "projects"]).projects) {
+    const dependencies = (project.config.dependsOn ?? []).map((dependency) =>
+      typeof dependency === "string" ? dependency : dependency.id
+    );
+    assert.equal(
+      new Set(dependencies).size,
+      dependencies.length,
+      `${project.id} duplicates a project dependency already inferred by Moon`,
+    );
+    assert.equal(
+      dependencies.includes(project.id),
+      false,
+      `${project.id} depends on itself`,
+    );
+  }
 });

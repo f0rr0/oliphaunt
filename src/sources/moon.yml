@@ -73,6 +73,7 @@ tasks:
       - "/tools/release/extension-upstream-licenses.mjs"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -93,6 +94,7 @@ tasks:
       - "/tools/release/extension-upstream-licenses.mjs"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -119,6 +121,7 @@ tasks:
       - "/tools/release/extension-upstream-licenses.mjs"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -137,6 +140,7 @@ tasks:
       - "/tools/release/extension-upstream-licenses.mjs"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
     options:
       cache: false
       runFromWorkspaceRoot: true

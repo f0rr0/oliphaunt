@@ -7,7 +7,6 @@ stack: "backend"
 tags: ["sdk", "typescript", "node", "bun", "deno", "release-product"]
 dependsOn:
   - "liboliphaunt-native"
-  - "oliphaunt-rust"
   - "oliphaunt-broker"
   - "oliphaunt-node-direct"
   - "shared-js-core"
@@ -106,6 +105,7 @@ tasks:
       - "/tools/release/build-sdk-ci-artifacts.mjs"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/release/source-only-sdk-package.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
       - "/tools/release/extension-runtime-asset-contract.mjs"
@@ -153,6 +153,7 @@ tasks:
       - "/tools/release/release-cli-utils.mjs"
       - "/tools/release/release-graph.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/release/rust-native-targets.mjs"
       - "/tools/release/source-only-sdk-package.mjs"
       - "/tools/release/swift-source-carrier-contract.mjs"

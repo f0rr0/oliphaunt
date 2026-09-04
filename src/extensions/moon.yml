@@ -2,7 +2,7 @@ $schema: "https://moonrepo.dev/schemas/project.json"
 
 id: "extensions"
 language: "unknown"
-layer: "tool"
+layer: "configuration"
 stack: "systems"
 tags: ["extensions", "catalog", "assets"]
 dependsOn:

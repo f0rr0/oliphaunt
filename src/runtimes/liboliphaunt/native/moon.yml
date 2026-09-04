@@ -10,6 +10,7 @@ dependsOn:
   - "third-party-shared"
   - "third-party-native"
   - "extension-runtime-contract"
+  - "oliphaunt-extension-contrib-pg18"
 
 project:
   title: "liboliphaunt Native"
@@ -253,6 +254,7 @@ tasks:
       - "/tools/release/platform-binary-contract.mjs"
       - "/tools/release/platform-binary-contract.test.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/xtask/**/*"
       - "/Cargo.lock"
       - "/Cargo.toml"
@@ -288,6 +290,7 @@ tasks:
       - "/tools/release/platform-binary-contract.mjs"
       - "/tools/release/platform-binary-contract.test.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/xtask/**/*"
       - "/Cargo.lock"
       - "/Cargo.toml"
@@ -317,6 +320,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/native/**/*"
       - "/tools/native-packaging/**/*"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/xtask/**/*"
       - "/Cargo.lock"
       - "/Cargo.toml"

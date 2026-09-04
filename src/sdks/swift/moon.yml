@@ -85,6 +85,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/native/bin/build-ios-xcframework.sh"
       - "/tools/release/portable-archive.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/runtime/**/*"
     outputs:
       - "/target/liboliphaunt-sdk-check/oliphaunt-swift/package-shape/swift-source-archive/Oliphaunt-source.zip"
@@ -130,6 +131,7 @@ tasks:
       - "/tools/release/release-cli-utils.mjs"
       - "/tools/release/release-graph.mjs"
       - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
       - "/tools/release/source-only-sdk-package.mjs"
       - "/tools/release/render_swiftpm_release_package.mjs"
       - "/tools/release/rust-native-targets.mjs"
