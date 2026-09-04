@@ -70,6 +70,14 @@ test("Node Direct source does not rebuild the independently versioned JavaScript
   assert.equal(result.tasks.includes("oliphaunt-js:unit"), false);
 });
 
+test("native implementation does not compile the version-decoupled broker", () => {
+  const result = effects("src/runtimes/liboliphaunt/native/src/liboliphaunt_process.c");
+  assert.equal(result.tasks.includes("oliphaunt-broker:compile"), false);
+  assert.equal(result.tasks.includes("liboliphaunt-native:lint"), false);
+  assert.equal(result.tasks.includes("oliphaunt-rust:regression"), true);
+  assert.equal(result.tasks.includes("oliphaunt-swift:smoke"), true);
+});
+
 test("combined JavaScript SDK and WASIX N-API changes release only changed products", () => {
   const result = effects([
     "src/runtimes/wasix-napi/src/lib.rs",

@@ -51,7 +51,6 @@ tasks:
       - "@group(cargo-workspace)"
       - "**/*"
       - project: "oliphaunt-rust"
-      - project: "liboliphaunt-native"
     options:
       cache: true
       runFromWorkspaceRoot: true

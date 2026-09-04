@@ -163,6 +163,25 @@ test('source fetch implementation changes retain their real consumers', () => {
   }
 });
 
+test('runtime patch lint follows only the patch inputs it reads', () => {
+  for (const relativePath of [
+    'src/extensions/external/vector/source.toml',
+    'src/runtimes/liboliphaunt/wasix/crates/tools/src/lib.rs',
+    'tools/xtask/src/main.rs',
+  ]) {
+    const effects = directEffects(relativePath);
+    assert.equal(effects.tasks.includes('liboliphaunt-wasix:lint'), false);
+  }
+  assert.equal(
+    directEffects('src/postgres/versions/18/source.toml').tasks.includes('liboliphaunt-wasix:lint'),
+    true,
+  );
+  assert.equal(
+    directEffects('docs/internal/OLIPHAUNT_PATCH_STACK.md').tasks.includes('liboliphaunt-native:lint'),
+    true,
+  );
+});
+
 test('postmaster runtime changes select its production builder and release', () => {
   assertReleaseSelection(
     'src/runtimes/liboliphaunt/wasix-postmaster/runtime/capabilities.tsv',

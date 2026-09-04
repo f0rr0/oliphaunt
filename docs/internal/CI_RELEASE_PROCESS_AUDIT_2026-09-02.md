@@ -1102,6 +1102,13 @@ miniature CI systems:
   class instead of the deceptive `policy-tools:check` name. Source-fetch test
   fixtures are excluded from the separate policy mutation suite, and the local
   guide no longer advertises a nonexistent combined format-check task.
+- Native implementation edits no longer invalidate `oliphaunt-broker:compile`:
+  that task checks only broker/Rust SDK code and does not consume or link a
+  native artifact. Runtime regressions retain the real dependency. Native and
+  WASIX patch-stack lint now watches only the manifests, patches, consumers,
+  and generated audit document it reads; stale extension/toolchain/`xtask`
+  inputs were removed, and the previously omitted native audit document was
+  added.
 
 The resolved graph is **56 projects, 196 tasks, and 158 task edges**. Twenty-eight
 implementation tasks are internal, leaving **168 public tasks**. Cache policy is

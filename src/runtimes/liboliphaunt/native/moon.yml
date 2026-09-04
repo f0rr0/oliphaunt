@@ -47,14 +47,10 @@ tasks:
     tags: ["quality", "static"]
     command: "node src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs"
     inputs:
-      - "**/*"
-      - project: "postgres18"
-      - project: "third-party-shared"
-      - project: "third-party-native"
-      - project: "extension-runtime-contract"
-      - "/tools/policy/check-native-boundaries.sh"
-      - "/release-please-config.json"
-      - "/src/**/targets/**/*.toml"
+      - "bin/*postgres18*"
+      - "postgres18/**/*"
+      - "tools/check-patch-stack.mjs"
+      - "/docs/internal/OLIPHAUNT_PATCH_STACK.md"
     options:
       cache: true
       runFromWorkspaceRoot: true

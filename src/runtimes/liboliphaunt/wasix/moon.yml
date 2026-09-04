@@ -61,19 +61,9 @@ tasks:
     tags: ["quality", "static"]
     command: "src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs"
     inputs:
-      - project: "postgres18"
-      - project: "source-toolchains"
-      - project: "third-party-shared"
-      - project: "third-party-wasix"
-      - "/src/extensions/**/*"
-      - "!/src/extensions/generated/docs"
-      - "!/src/extensions/generated/docs/**"
-      - "!/src/extensions/evidence"
-      - "!/src/extensions/evidence/**"
-      - project: "extension-runtime-contract"
-      - "**/*"
-      - "/tools/xtask/**/*"
-      - "/src/sources/tools/verify-source-tree.py"
+      - "assets/build/postgres/**/*"
+      - "tools/check-patch-stack.mjs"
+      - "/src/postgres/versions/18/source.toml"
       - "/docs/internal/WASIX_PATCH_STACK.md"
     options:
       cache: true
