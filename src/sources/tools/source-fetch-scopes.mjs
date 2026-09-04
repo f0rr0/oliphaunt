@@ -8,7 +8,7 @@ export const sourceOrigins = Object.freeze({
 
 export const defaultSourceScope = 'production-all';
 
-const originsByScope = Object.freeze({
+const SOURCE_ORIGINS_BY_SCOPE = Object.freeze({
   'production-all': Object.freeze([
     sourceOrigins.sharedThirdParty,
     sourceOrigins.nativeThirdParty,
@@ -35,7 +35,7 @@ const originsByScope = Object.freeze({
   extensions: Object.freeze([sourceOrigins.extension]),
 });
 
-export const sourceScopes = Object.freeze(Object.keys(originsByScope));
+export const sourceScopes = Object.freeze(Object.keys(SOURCE_ORIGINS_BY_SCOPE));
 
 const domainEntries = Object.freeze([
   Object.freeze(['shared', sourceOrigins.sharedThirdParty]),
@@ -45,7 +45,7 @@ const domainEntries = Object.freeze([
 ]);
 
 export function sourceDomainsForScope(selectedScope) {
-  const origins = new Set(originsByScope[selectedScope] ?? []);
+  const origins = new Set(SOURCE_ORIGINS_BY_SCOPE[selectedScope] ?? []);
   return domainEntries.filter(([, origin]) => origins.has(origin));
 }
 
@@ -58,5 +58,5 @@ export function scopeIncludesExtensions(selectedScope) {
 }
 
 export function scopeIncludes(selectedScope, origin) {
-  return (originsByScope[selectedScope] ?? []).includes(origin);
+  return (SOURCE_ORIGINS_BY_SCOPE[selectedScope] ?? []).includes(origin);
 }

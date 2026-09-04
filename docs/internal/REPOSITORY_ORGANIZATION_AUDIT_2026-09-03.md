@@ -188,7 +188,7 @@ Passed locally:
 - `moon run release-tools:metadata --force` — release metadata in 37s;
 - `moon run release-tools:graph-unit --force` — 27 focused graph/closure tests
   in 24.6s; its identical rerun was cached in 105ms;
-- `moon run policy-tools:check --force` — 129 JavaScript modules plus shell and
+- `moon run policy-tools:tools-compile --force` — 129 JavaScript modules plus shell and
   Python syntax in 1.4s;
 - the product-task model and dependency-edge invariants passed inside the
   release suite, including taskless contrib/external leaf projects;

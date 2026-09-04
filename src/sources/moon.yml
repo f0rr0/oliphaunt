@@ -17,46 +17,36 @@ owners:
     "**/*": ["@oliphaunt/core"]
 
 tasks:
-  check:
-    tags: ["quality", "static"]
-    command: "bash tools/policy/check-source-inputs.sh"
+  unit:
+    tags: ["quality", "unit"]
+    script: |
+      set -e
+      bun src/sources/tools/fetch-sources.mjs production-all --validate-only
+      bun test src/sources/tools/source-fetch-core.test.mjs src/sources/tools/source-fetch-scopes.test.mjs
+      bash src/postgres/versions/18/fetch-source.test.sh
     inputs:
       - "/src/postgres/versions/18/**/*"
       - "/src/sources/toolchains/**/*"
       - "/src/sources/third-party/shared/**/*"
       - "/src/sources/third-party/native/**/*"
       - "/src/sources/third-party/wasix/**/*"
+      - "/src/sources/third-party/wasix-postmaster/**/*"
       - "/src/extensions/external/**/source.toml"
       - "/src/extensions/external/**/dependencies/**/source.toml"
       - "/src/extensions/external/*/upstream-license-data.json"
-      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/Dockerfile"
-      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/isrg-root-x1.pem"
-      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-apt-packages.sh"
-      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-apt-packages.test.sh"
-      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-wasixcc.sh"
-      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-wasixcc.test.sh"
-      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/pinned-wasixcc-assets.tsv"
-      - "/tools/policy/check-source-inputs.sh"
-      - "/tools/policy/fetch-sources.mjs"
-      - "/tools/policy/source-fetch-scopes.mjs"
-      - "/tools/policy/source-fetch-scopes.test.mjs"
-      - "/tools/policy/source-fetch-core.mjs"
-      - "/tools/policy/source-fetch-core.test.mjs"
-      - "/tools/policy/source-archive.py"
-      - "/tools/policy/verify-source-tree.py"
-      - "/tools/dev/setup-maestro.sh"
-      - "/tools/dev/setup-maestro.test.sh"
+      - "tools/**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true
-  source-fetch:
+  fetch-all:
     tags: ["source", "fetch"]
-    command: "bun tools/policy/fetch-sources.mjs production-all --force"
+    command: "bun src/sources/tools/fetch-sources.mjs production-all --force"
     inputs:
       - "/src/sources/toolchains/**/*"
       - "/src/sources/third-party/shared/**/*"
       - "/src/sources/third-party/native/**/*"
       - "/src/sources/third-party/wasix/**/*"
+      - "/src/sources/third-party/wasix-postmaster/**/*"
       - "/src/extensions/external/**/source.toml"
       - "/src/extensions/external/**/dependencies/**/source.toml"
       - "/src/extensions/external/*/upstream-license-data.json"
@@ -65,29 +55,28 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-apt-packages.sh"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-wasixcc.sh"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/pinned-wasixcc-assets.tsv"
-      - "/tools/policy/fetch-sources.mjs"
-      - "/tools/policy/source-fetch-scopes.mjs"
-      - "/tools/policy/source-fetch-core.mjs"
-      - "/tools/policy/source-archive.py"
+      - "tools/**/*"
+      - "!tools/**/*.test.*"
+      - "!tools/verify-source-tree.py"
       - "/tools/dev/capture-command-output.mjs"
       - "/tools/release/extension-upstream-licenses.mjs"
       - "@group(release-archive-contract)"
     options:
       cache: false
       runFromWorkspaceRoot: true
+      runInCI: false
   source-fetch-native-runtime:
     tags: ["source", "fetch"]
-    command: "bun tools/policy/fetch-sources.mjs native-runtime --force"
+    command: "bun src/sources/tools/fetch-sources.mjs native-runtime --force"
     inputs:
       - "/src/sources/third-party/shared/**/*"
       - "/src/sources/third-party/native/**/*"
       - "/src/extensions/external/**/source.toml"
       - "/src/extensions/external/**/dependencies/**/source.toml"
       - "/src/extensions/external/*/upstream-license-data.json"
-      - "/tools/policy/fetch-sources.mjs"
-      - "/tools/policy/source-fetch-scopes.mjs"
-      - "/tools/policy/source-fetch-core.mjs"
-      - "/tools/policy/source-archive.py"
+      - "tools/**/*"
+      - "!tools/**/*.test.*"
+      - "!tools/verify-source-tree.py"
       - "/tools/dev/capture-command-output.mjs"
       - "/tools/release/extension-upstream-licenses.mjs"
       - "@group(release-archive-contract)"
@@ -97,7 +86,7 @@ tasks:
       runFromWorkspaceRoot: true
   source-fetch-wasix-runtime:
     tags: ["source", "fetch"]
-    command: "bun tools/policy/fetch-sources.mjs wasix-runtime --force"
+    command: "bun src/sources/tools/fetch-sources.mjs wasix-runtime --force"
     inputs:
       - "/src/sources/toolchains/**/*"
       - "/src/sources/third-party/shared/**/*"
@@ -110,10 +99,9 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-apt-packages.sh"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-wasixcc.sh"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/pinned-wasixcc-assets.tsv"
-      - "/tools/policy/fetch-sources.mjs"
-      - "/tools/policy/source-fetch-scopes.mjs"
-      - "/tools/policy/source-fetch-core.mjs"
-      - "/tools/policy/source-archive.py"
+      - "tools/**/*"
+      - "!tools/**/*.test.*"
+      - "!tools/verify-source-tree.py"
       - "/tools/dev/capture-command-output.mjs"
       - "/tools/release/extension-upstream-licenses.mjs"
       - "@group(release-archive-contract)"
@@ -123,16 +111,15 @@ tasks:
       runFromWorkspaceRoot: true
   source-fetch-wasix-postmaster-runtime:
     tags: ["source", "fetch"]
-    command: "bun tools/policy/fetch-sources.mjs wasix-postmaster-runtime --force"
+    command: "bun src/sources/tools/fetch-sources.mjs wasix-postmaster-runtime --force"
     inputs:
       - "/src/sources/toolchains/**/*"
       - "/src/sources/third-party/shared/**/*"
       - "/src/sources/third-party/wasix/**/*"
       - "/src/sources/third-party/wasix-postmaster/**/*"
-      - "/tools/policy/fetch-sources.mjs"
-      - "/tools/policy/source-fetch-scopes.mjs"
-      - "/tools/policy/source-fetch-core.mjs"
-      - "/tools/policy/source-archive.py"
+      - "tools/**/*"
+      - "!tools/**/*.test.*"
+      - "!tools/verify-source-tree.py"
       - "/tools/dev/capture-command-output.mjs"
     options:
       cache: false
@@ -140,15 +127,14 @@ tasks:
       runFromWorkspaceRoot: true
   source-fetch-extensions:
     tags: ["source", "fetch"]
-    command: "bun tools/policy/fetch-sources.mjs extensions --force"
+    command: "bun src/sources/tools/fetch-sources.mjs extensions --force"
     inputs:
       - "/src/extensions/external/**/source.toml"
       - "/src/extensions/external/**/dependencies/**/source.toml"
       - "/src/extensions/external/*/upstream-license-data.json"
-      - "/tools/policy/fetch-sources.mjs"
-      - "/tools/policy/source-fetch-scopes.mjs"
-      - "/tools/policy/source-fetch-core.mjs"
-      - "/tools/policy/source-archive.py"
+      - "tools/**/*"
+      - "!tools/**/*.test.*"
+      - "!tools/verify-source-tree.py"
       - "/tools/dev/capture-command-output.mjs"
       - "/tools/release/extension-upstream-licenses.mjs"
       - "@group(release-archive-contract)"

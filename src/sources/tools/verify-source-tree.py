@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline verifier for a managed archive source checkout."""
+"""Verify a managed archive source checkout offline."""
 
 from __future__ import annotations
 

@@ -45,6 +45,18 @@ owners:
     "tools/**": ["@oliphaunt/wasix"]
 
 tasks:
+  unit:
+    tags: ["quality", "unit"]
+    script: |
+      set -e
+      bash src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-apt-packages.test.sh
+      bash src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-wasixcc.test.sh
+    inputs:
+      - "assets/build/docker/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
   lint:
     tags: ["quality", "static"]
     command: "src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs"
@@ -61,7 +73,7 @@ tasks:
       - project: "extension-runtime-contract"
       - "**/*"
       - "/tools/xtask/**/*"
-      - "/tools/policy/verify-source-tree.py"
+      - "/src/sources/tools/verify-source-tree.py"
       - "/docs/internal/WASIX_PATCH_STACK.md"
     options:
       cache: true
@@ -86,7 +98,7 @@ tasks:
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
       - "/tools/policy/check-wasm-artifacts.sh"
       - "/tools/xtask/**/*"
-      - "/tools/policy/verify-source-tree.py"
+      - "/src/sources/tools/verify-source-tree.py"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -117,7 +129,7 @@ tasks:
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
       - "/tools/xtask/**/*"
       - "@group(release-archive-contract)"
-      - "/tools/policy/verify-source-tree.py"
+      - "/src/sources/tools/verify-source-tree.py"
     outputs:
       - "/target/oliphaunt-wasix/wasix-build/build/**/*"
       - "/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu/**/*"
@@ -154,7 +166,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix/tools/runtime-preflight.sh"
       - "/tools/xtask/**/*"
       - "@group(release-archive-contract)"
-      - "/tools/policy/verify-source-tree.py"
+      - "/src/sources/tools/verify-source-tree.py"
     outputs:
       - "/target/oliphaunt-wasix/aot/**/*"
       - "/target/extensions/wasix/aot-artifacts/**/*"
@@ -187,7 +199,7 @@ tasks:
       - "/tools/xtask/**/*"
       - "/tools/release/check-liboliphaunt-wasix-release-assets.mjs"
       - "@group(release-archive-contract)"
-      - "/tools/policy/verify-source-tree.py"
+      - "/src/sources/tools/verify-source-tree.py"
       - "/target/oliphaunt-wasix/wasix-build/build/**/*"
       - "/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu/**/*"
       - "/target/oliphaunt-wasix/assets/**/*"
@@ -221,7 +233,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix/tools/runtime-preflight.sh"
       - "/tools/test/cargo-test-filter.sh"
       - "/tools/xtask/**/*"
-      - "/tools/policy/verify-source-tree.py"
+      - "/src/sources/tools/verify-source-tree.py"
     options:
       cache: local
       runFromWorkspaceRoot: true
@@ -256,7 +268,7 @@ tasks:
       - "/tools/release/wasix-typescript-package.mjs"
       - "@group(release-archive-contract)"
       - "/tools/xtask/**/*"
-      - "/tools/policy/verify-source-tree.py"
+      - "/src/sources/tools/verify-source-tree.py"
     options:
       cache: local
       runFromWorkspaceRoot: true

@@ -17,7 +17,7 @@ import {
 } from 'node:fs';
 import {dirname, isAbsolute, join, relative, resolve, sep} from 'node:path';
 
-import {captureCommandOutput} from '../dev/capture-command-output.mjs';
+import {captureCommandOutput} from '../../../tools/dev/capture-command-output.mjs';
 
 const ARCHIVE_SAFETY_VERSION = 'source-archive-v2';
 const ARCHIVE_DOWNLOAD_TIMEOUT_MS = 620_000;
@@ -662,8 +662,8 @@ export function createSourceFetcher({
   workspaceRoot,
   checkoutRoot,
   archiveRoot,
-  archiveTool = join(workspaceRoot, 'tools', 'policy', 'source-archive.py'),
-  zipArchiveTool = join(workspaceRoot, 'tools', 'policy', 'source-zip.py'),
+  archiveTool = join(workspaceRoot, 'src', 'sources', 'tools', 'source-archive.py'),
+  zipArchiveTool = join(workspaceRoot, 'src', 'sources', 'tools', 'source-zip.py'),
   runProcess = defaultRunProcess,
   sleep = defaultSleep,
   gitAttempts = 5,

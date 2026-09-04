@@ -39,7 +39,7 @@ tasks:
       - project: "liboliphaunt-wasix"
       - "/src/shared/extension-runtime-contract/**/*"
       - "/src/sources/third-party/shared/**/*"
-      - "/tools/policy/source-fetch-core.mjs"
+      - "/src/sources/tools/source-fetch-core.mjs"
       - "/tools/release/extension-target-profiles.mjs"
       - "/tools/release/extension-target-profiles.toml"
       - "/tools/release/extension-upstream-licenses.mjs"

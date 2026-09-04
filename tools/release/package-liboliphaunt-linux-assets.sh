@@ -23,7 +23,7 @@ fetch_release_source_assets() {
     return 0
   fi
   echo "==> Fetching pinned source assets"
-  bun tools/policy/fetch-sources.mjs native-runtime >/tmp/liboliphaunt-release-linux-assets-fetch.log
+  bun src/sources/tools/fetch-sources.mjs native-runtime >/tmp/liboliphaunt-release-linux-assets-fetch.log
 }
 
 if [ "$(uname -s)" != "Linux" ]; then

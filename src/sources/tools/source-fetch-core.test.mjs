@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {spawnSync} from '../test/fd-backed-spawn-sync.mjs';
+import {spawnSync} from '../../../tools/test/fd-backed-spawn-sync.mjs';
 import {
   copyFileSync,
   existsSync,
@@ -254,10 +254,11 @@ function writeArchiveManifest(manifestPath, source) {
 
 function sourceFetcher(root, overrides = {}) {
   return createSourceFetcher({
-    workspaceRoot: path.resolve(import.meta.dirname, '..', '..'),
+    workspaceRoot: path.resolve(import.meta.dirname, '..', '..', '..'),
     checkoutRoot: path.join(root, 'checkouts'),
     archiveRoot: path.join(root, 'archives'),
     archiveTool,
+    zipArchiveTool,
     gitAttempts: 1,
     sleep: async () => {},
     ...overrides,

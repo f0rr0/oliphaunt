@@ -100,7 +100,7 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  check:
+  tools-compile:
     tags: ["policy", "assertion", "quality", "static"]
     command: "bash tools/policy/check-policy-tools.sh"
     inputs:
@@ -128,6 +128,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/pinned-wasixcc-assets.tsv"
       - "/src/sdks/react-native/tools/**/*"
       - "/src/sources/**/*"
+      - "!/src/sources/tools/**/*.test.*"
       - "/tools/dev/bun.sh"
       - "/tools/dev/capture-command-output.mjs"
       - "/tools/dev/moon-command.mjs"

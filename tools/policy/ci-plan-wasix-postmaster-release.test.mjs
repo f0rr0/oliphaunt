@@ -140,6 +140,29 @@ test('postmaster build-input pins select its builder and release', () => {
   assertReleaseSelection('src/sources/third-party/wasix-postmaster/wasmer.toml');
 });
 
+test('source fetch unit fixtures do not rebuild product artifacts', () => {
+  const effects = directEffects('src/sources/tools/source-fetch-core.test.mjs');
+  assert.deepEqual(effects.jobs, ['affected']);
+  assert.equal(effects.tasks.includes('source-inputs:unit'), true);
+  assert.equal(effects.tasks.includes('policy-tools:unit'), false);
+  assert.equal(
+    effects.tasks.some((target) => target.startsWith('source-inputs:source-fetch-')),
+    false,
+  );
+});
+
+test('source fetch implementation changes retain their real consumers', () => {
+  const effects = directEffects('src/sources/tools/source-fetch-core.mjs');
+  for (const target of [
+    'extension-artifacts-native:build-target',
+    'liboliphaunt-native:release-runtime',
+    'liboliphaunt-wasix-postmaster:prepare-runtime',
+    'liboliphaunt-wasix:runtime-portable',
+  ]) {
+    assert.equal(effects.tasks.includes(target), true, `${target} must consume source fetching`);
+  }
+});
+
 test('postmaster runtime changes select its production builder and release', () => {
   assertReleaseSelection(
     'src/runtimes/liboliphaunt/wasix-postmaster/runtime/capabilities.tsv',

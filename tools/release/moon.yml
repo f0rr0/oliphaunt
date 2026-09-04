@@ -55,7 +55,7 @@ tasks:
       - "/tools/release/sdk-artifacts/shared.mjs"
       - "/tools/release/source-only-sdk-package.mjs"
       - "/tools/dev/bun.sh"
-      - "/tools/policy/source-fetch-core.mjs"
+      - "/src/sources/tools/source-fetch-core.mjs"
     outputs:
       - "/target/sdk-artifacts/oliphaunt-js/**/*"
     options:
@@ -85,7 +85,7 @@ tasks:
       - "/tools/release/sdk-artifacts/rust.mjs"
       - "/tools/release/sdk-artifacts/shared.mjs"
       - "/tools/dev/bun.sh"
-      - "/tools/policy/source-fetch-core.mjs"
+      - "/src/sources/tools/source-fetch-core.mjs"
     outputs:
       - "/target/sdk-artifacts/oliphaunt-rust/**/*"
     options:
@@ -124,7 +124,7 @@ tasks:
       - "/tools/release/sdk-artifacts/kotlin.mjs"
       - "/tools/release/sdk-artifacts/shared.mjs"
       - "/tools/dev/bun.sh"
-      - "/tools/policy/source-fetch-core.mjs"
+      - "/src/sources/tools/source-fetch-core.mjs"
     outputs:
       - "/target/sdk-artifacts/oliphaunt-kotlin/**/*"
     options:
@@ -168,7 +168,7 @@ tasks:
       - "/src/extensions/generated/sdk/extensions.json"
       - "/target/liboliphaunt/release-assets/**/*"
       - "/tools/dev/bun.sh"
-      - "/tools/policy/source-fetch-core.mjs"
+      - "/src/sources/tools/source-fetch-core.mjs"
     outputs:
       - "/target/sdk-artifacts/oliphaunt-swift/**/*"
     options:
@@ -200,7 +200,7 @@ tasks:
       - "/src/sdks/react-native/tools/ios-icu-autolinking.test.mjs"
       - "/target/liboliphaunt/release-assets/**/*"
       - "/tools/dev/bun.sh"
-      - "/tools/policy/source-fetch-core.mjs"
+      - "/src/sources/tools/source-fetch-core.mjs"
     outputs:
       - "/target/sdk-artifacts/oliphaunt-react-native/**/*"
     options:
@@ -233,7 +233,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
       - "/src/sources/toolchains/wasix.toml"
       - "/tools/dev/bun.sh"
-      - "/tools/policy/source-fetch-core.mjs"
+      - "/src/sources/tools/source-fetch-core.mjs"
     outputs:
       - "/target/sdk-artifacts/oliphaunt-wasix-rust/**/*"
     options:
@@ -395,7 +395,7 @@ tasks:
       - "/tools/**/moon.yml"
       - "/tools/dev/capture-command-output.mjs"
       - "/tools/dev/moon-command.mjs"
-      - "/tools/policy/source-fetch-core.mjs"
+      - "/src/sources/tools/source-fetch-core.mjs"
       - "/tools/release/artifact_target_matrix.mjs"
       - "/tools/release/contrib-carriers.mjs"
       - "/tools/release/extension-artifact-archive-policy.mjs"

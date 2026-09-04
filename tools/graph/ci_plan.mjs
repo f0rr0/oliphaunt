@@ -113,7 +113,6 @@ export const NATIVE_EXTENSION_LIFECYCLE_TRIGGER_PROJECTS = new Set([
   "oliphaunt-broker",
   "oliphaunt-rust",
   "postgres18",
-  "source-inputs",
   "third-party-native",
   "third-party-shared",
 ]);
@@ -133,7 +132,6 @@ export const BROAD_EXTENSION_INPUT_PROJECTS = new Set([
   "liboliphaunt-native",
   "liboliphaunt-wasix",
   "postgres18",
-  "source-inputs",
   "third-party-native",
   "third-party-shared",
   "third-party-wasix",

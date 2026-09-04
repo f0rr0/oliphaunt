@@ -93,7 +93,7 @@ const stageRoot = path.join(root, "target/liboliphaunt-native-ci", target);
 rmSync(stageRoot, { recursive: true, force: true });
 mkdirSync(stageRoot, { recursive: true });
 
-run("bun", ["tools/policy/fetch-sources.mjs", "native-runtime"]);
+run("bun", ["src/sources/tools/fetch-sources.mjs", "native-runtime"]);
 
 if (target === "android-arm64-v8a") {
   run("src/runtimes/liboliphaunt/native/bin/build-postgres18-android-arm64.sh", [], {

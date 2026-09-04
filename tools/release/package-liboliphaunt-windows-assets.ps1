@@ -64,7 +64,7 @@ if (-not (Get-Command bun -ErrorAction SilentlyContinue)) {
 
 if ($env:OLIPHAUNT_RELEASE_FETCH_ASSETS -ne "0") {
     Write-Output "==> Fetching pinned source assets"
-    bun tools/policy/fetch-sources.mjs native-runtime *> "$env:TEMP\liboliphaunt-release-windows-assets-fetch.log"
+    bun src/sources/tools/fetch-sources.mjs native-runtime *> "$env:TEMP\liboliphaunt-release-windows-assets-fetch.log"
     if ($LASTEXITCODE -ne 0) {
         Fail "failed to fetch pinned source assets"
     }

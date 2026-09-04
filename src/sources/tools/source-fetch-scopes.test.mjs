@@ -18,7 +18,7 @@ const productionDomains = [
   ['wasix-postmaster', sourceOrigins.wasixPostmasterThirdParty],
 ];
 
-test('production-all is the explicit default and includes every release product pin', () => {
+test('production-all is the default release scope and includes every product pin', () => {
   assert.equal(defaultSourceScope, 'production-all');
   assert.equal(sourceScopes.includes(defaultSourceScope), true);
   assert.deepEqual(sourceDomainsForScope('production-all'), productionDomains);

@@ -14,9 +14,9 @@ import {
   sourceOrigins,
   sourceScopes,
 } from './source-fetch-scopes.mjs';
-import {auditExtensionUpstreamLicenseSources} from '../release/extension-upstream-licenses.mjs';
+import {auditExtensionUpstreamLicenseSources} from '../../../tools/release/extension-upstream-licenses.mjs';
 
-const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 process.chdir(workspaceRoot);
 
 const sourceCheckoutRoot = join(workspaceRoot, 'target', 'oliphaunt-sources', 'checkouts');
@@ -77,7 +77,7 @@ function parseArgs(args) {
     }
     if (arg === '--help' || arg === '-h') {
       console.log(
-        `usage: bun tools/policy/fetch-sources.mjs [${sourceScopes.join('|')}] [--force|--validate-only|--verify-only]`,
+        `usage: bun src/sources/tools/fetch-sources.mjs [${sourceScopes.join('|')}] [--force|--validate-only|--verify-only]`,
       );
       process.exit(0);
     }

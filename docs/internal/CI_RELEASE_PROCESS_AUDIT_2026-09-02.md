@@ -251,15 +251,15 @@ either execute ShellCheck/SwiftLint or stop claiming/bootstrapping them.
 
 | Boundary | What it actually does | Judgment and change |
 | --- | --- | --- |
-| `policy-tools:check` | Shell syntax-checks policy scripts, Bun-compiles every `.mjs` under GitHub scripts/examples/policy/graph, compiles one native CI script, and Python-compiles policy files. | This is a **script-syntax** task, not a policy test. Rename it. Give the 13 policy behavior tests an explicit `policy-tests` owner instead of hiding them in release-check. |
-| `policy-tools:fmt[-check]` | Runs workspace Cargo formatting and Biome formatting over selected JS/TS/docs/tool paths. | Valuable but belongs at `repo:format[-check]`, not under policy tools. Remove duplicated Cargo formatting from `prek`. |
+| `policy-tools:tools-compile` | Shell syntax-checks policy scripts, Bun-compiles every `.mjs` under GitHub scripts/examples/policy/graph, compiles one native CI script, and Python-compiles policy files. | Accurate after replacing the vague `check` name. It now fills CI's existing `tools-compile` task class instead of inventing another class. |
+| `policy-tools:fmt`, `js-format-check`, `rust-format-check` | Formats the workspace or checks selected JS/TS/docs/tool paths and Rust separately. | The read-only task names are accurate. The developer guide no longer refers to a nonexistent combined `format-check`; duplicated Cargo formatting in `prek` remains a separate cleanup. |
 | `ci-workflows:check` | Runs actionlint, zizmor, workflow-security assertions, three GitHub helper tests, one CI-plan test, and the toolchain-bootstrap test. | Useful and mostly accurate. Stop rerunning its policy tests through the dynamic release suite. |
 | `repo:check` | A no-op aggregate over tooling semantics, workflow checks, documentation grep policy, release metadata, all-file pre-commit hooks, broker licensing, and native-tools tests. | Accurate only as an aggregate. Do not schedule it beside its children. Rename child tasks precisely and reserve the aggregate for local `qualify-repo`. |
 | `repo:prek` | Validates Prek config and applies basic file hygiene, TOML/YAML/JSON parsing, secret/size checks, and Cargo formatting to every tracked file. | Useful hygiene, but all-files execution is unnecessary for most PRs. Use affected files and remove its duplicate Cargo-format hook. |
 | `release-tools:check` | Seven metadata/graph/doc checks followed by 164 policy/release test-file processes. | Severely **overloaded**. Split `release-metadata`, `release-policy-tests`, and registry/transport tests. Give each one owner and affected inputs. |
 | `sdk-contracts` | Checks generated API documentation, marker coverage for README examples, shared fixtures, copied C headers, SDK manifest metadata, native boundaries, and cluster-seed contracts. | Mostly valuable static drift detection, but `doc-examples` proves only that examples have matching markers—not that snippets compile. Rename it `doc-example-coverage` or compile examples. `cluster-seeds` exactly duplicates `cluster-seed-contract:check`; keep one owner. |
 | Shared JS/Rust query cores | JS check verifies six committed generated mirrors; Rust check verifies the canonical source exists and no mirrors are committed. | Rust staging is lean. JS should use the same staging approach or a workspace package instead of committing six mirrors and maintaining a sync task. |
-| `source-inputs:check` | Validates the source manifest, runs source-fetch unit/fault tests, PostgreSQL fetch tests, pinned APT/WASIXCC tests, and Maestro setup tests. | Useful but **overloaded**: source policy, Docker bootstrap, PostgreSQL acquisition, and mobile-tool setup are unrelated. Split by source family so affected selection works. |
+| `source-inputs:unit` | Validates source metadata and runs the source-fetch and PostgreSQL transport tests. | Accurate after splitting out unrelated consumers: WASIX owns its pinned builder-installer tests, while the existing CI toolchain-bootstrap suite owns Maestro. |
 | `xtask` Moon tasks | `unit` runs the default-feature test suite; `cluster-seed-runner-check` compiles the optional runner locally; `compile-aot-serializer` compiles the actual AOT feature path. | The CI names now describe the work, and the 44 default-feature tests are no longer absent from declared CI. |
 | `xtask` executable | A 13,364-line Rust program implementing WASIX source/fetch/build/install/package, AOT serialization, extension catalog generation, cluster-seed execution, and release staging. | Most of it is real WASIX/extension release machinery. Dead publish/package-size commands and brittle source-spelling guards were removed. Moving the remaining crate would be high-churn path cleanup with no execution saving; split it only when modules need independent cache/change boundaries. |
 | Native packaging/proof tools | One crate checks native package mechanics; another runs tests despite being named `check`. | Rename both test runners to `unit`; remove `native-packaging:unit -> check` because Cargo test already compiles the crate. Aggregate both only when native packaging changes. |
@@ -996,12 +996,14 @@ command/libc tests and four Rust behavior tests.
 Residual root-tool boundary: SDK, binding, broker, Node Direct, and WASIX
 Node-API product tasks no longer invoke repository release/performance/coverage
 machinery. Native, WASIX, Postmaster, extension-artifact, extension-model, and
-source-input projects still execute root `tools/xtask`, source-fetch, or release
-contract helpers. Those calls are pre-existing production build machinery and
-were not renamed or copied into a generic `src/build`. They remain the next
-real extraction boundary; the graph test is deliberately worded as a check of
-Moon project-dependency metadata, not a false claim that these executable path
-dependencies are gone.
+source-input projects still execute root `tools/xtask` or release-contract
+helpers. The source-fetch implementation itself now lives with its owner under
+`src/sources/tools`; it still reuses the root process-capture and extension
+license libraries. The remaining calls are pre-existing production build
+machinery and were not renamed or copied into a generic `src/build`. They remain
+the next real extraction boundary; the graph test is deliberately worded as a
+check of Moon project-dependency metadata, not a false claim that every
+executable path dependency is gone.
 
 ### Final graph and WASIX package boundary review
 
@@ -1076,10 +1078,34 @@ miniature CI systems:
   and places them under `src/generated`, where the Expo plugin, Android build,
   and iOS staging code already expect them. The rebuilt tarball contains both
   manifests and passes the package's selection-neutral contract check.
+- `Source Inputs / Check` was still a misleading mixed suite: source acquisition,
+  WASIX Docker bootstrap, and the Maestro mobile installer. It is now
+  `Source Inputs / Unit` and runs only source-fetch plus PostgreSQL transport
+  behavior. The WASIX project owns its two pinned builder-installer tests, and
+  Maestro joins the existing CI toolchain-bootstrap suite. No test was removed;
+  the three focused local runs passed in 13s, 6s, and 2.5s respectively.
+- The source fetcher, archive validators, scope model, offline verifier, and
+  their tests moved from the misleading root `tools/policy` directory to their
+  actual `src/sources/tools` owner. Each fetch task now uses one bounded tools
+  glob while excluding test-only and offline-verifier files, so adding the ZIP
+  validator can no longer be omitted from its cache inputs and changing a test
+  cannot rebuild runtimes. The all-source convenience task is now the explicit,
+  local-only `fetch-all`; production builds use the focused internal fetch tasks.
+- That move exposed a second blanket planner override: any `source-inputs` file,
+  even a unit fixture, forced native extension, broker, and Rust SDK builders.
+  The override is gone. A chaos proof locks zero product builders for a source
+  test while a production fetcher change still reaches native, WASIX,
+  Postmaster, and extension consumers through real task edges. The missing
+  `wasix-postmaster` input was also added to the all-source validation/fetch
+  tasks.
+- The repository script compiler now uses CI's existing `tools-compile` task
+  class instead of the deceptive `policy-tools:check` name. Source-fetch test
+  fixtures are excluded from the separate policy mutation suite, and the local
+  guide no longer advertises a nonexistent combined format-check task.
 
-The resolved graph is **56 projects, 195 tasks, and 158 task edges**. Twenty-eight
-implementation tasks are internal, leaving **167 public tasks**. Cache policy is
-115 normal, 13 local-only, and 67 uncached tasks; the latter are deliberate
+The resolved graph is **56 projects, 196 tasks, and 158 task edges**. Twenty-eight
+implementation tasks are internal, leaving **168 public tasks**. Cache policy is
+116 normal, 13 local-only, and 67 uncached tasks; the latter are deliberate
 hosted/runtime/release side-effect boundaries rather than missing cache flags.
 
 Local execution evidence:

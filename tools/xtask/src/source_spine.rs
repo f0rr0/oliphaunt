@@ -127,7 +127,11 @@ impl SourceFetchScope {
 
 fn run_hardened_source_fetch(scope: SourceFetchScope) -> Result<()> {
     let mut command = Command::new("tools/dev/bun.sh");
-    command.args(["tools/policy/fetch-sources.mjs", scope.as_arg(), "--force"]);
+    command.args([
+        "src/sources/tools/fetch-sources.mjs",
+        scope.as_arg(),
+        "--force",
+    ]);
     run_command(&mut command).with_context(|| {
         format!(
             "materialize {} sources through the hardened source acquisition spine",

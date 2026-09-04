@@ -564,7 +564,7 @@ Run before claiming this architecture complete:
 - [x] `MOON_BIN=$HOME/.proto/shims/moon
   .github/scripts/run-moon-targets.sh ci-workflows:check`
 - [x] `moon run oliphaunt-react-native:compile oliphaunt-react-native:unit`
-- [x] `moon run policy-tools:check release-tools:check graph-tools:check`
+- [x] `moon run policy-tools:tools-compile release-tools:check graph-tools:check`
 - [x] `MOON_BIN=$HOME/.proto/shims/moon
   .github/scripts/run-moon-targets.sh extension-model:check
   extension-artifacts-native:check extension-artifacts-wasix:check`
@@ -801,7 +801,7 @@ Run before claiming this architecture complete:
   focused macOS `OLIPHAUNT_NATIVE_EXTENSION_SQL_NAMES=amcheck`
   `build-postgres18-macos.sh`, `bash -n` for touched shell scripts,
   `cargo run -p xtask -- assets verify-committed`,
-  `bash tools/policy/check-source-inputs.sh`,
+  `moon run source-inputs:unit --upstream none`,
   `python3 src/extensions/tools/check-extension-model.py --check`,
   `python3 tools/release/check_artifact_targets.py`,
   `python3 tools/policy/check-release-policy.py`,
@@ -1113,8 +1113,8 @@ Run before claiming this architecture complete:
   compatibility headers now define `PROJ_DLL` empty before `proj.h` is
   included, and the PostGIS compatibility header maps those case-insensitive
   string calls to MSVC's `_stricmp`/`_strnicmp`. Local evidence passed:
-  `bun tools/policy/fetch-sources.mjs native-runtime --force`,
-  `bun tools/policy/fetch-sources.mjs wasix-runtime --force`,
+  `bun src/sources/tools/fetch-sources.mjs native-runtime --force`,
+  `bun src/sources/tools/fetch-sources.mjs wasix-runtime --force`,
   `node tools/policy/check-moon-product-graph.mjs`,
   `bash tools/policy/check-tooling-stack.sh`,
   `bash tools/policy/check-repo-structure.sh`, Bash syntax checks for touched

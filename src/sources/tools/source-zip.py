@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate and safely extract a pinned ZIP source archive.
+"""Validate and extract a pinned ZIP source archive safely.
 
 This is the ZIP counterpart to source-archive.py.  It intentionally accepts
 only the small portable subset needed by pinned upstream binary/data releases:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate and safely extract a pinned .tar.gz source archive.
+"""Validate and extract a pinned .tar.gz source archive safely.
 
 The standard tar CLI intentionally accepts archive features that are unsafe for
 an unattended source bootstrap.  This helper implements the much smaller

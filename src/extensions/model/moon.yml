@@ -29,7 +29,7 @@ tasks:
       - "/src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/extension-legal-catalog.json"
       - "/src/sources/third-party/shared/openssl.toml"
       - "/tools/dev/capture-command-output.mjs"
-      - "/tools/policy/source-fetch-core.mjs"
+      - "/src/sources/tools/source-fetch-core.mjs"
       - "/tools/release/extension-upstream-licenses.mjs"
       - "@group(release-archive-contract)"
       - "/tools/release/release_graph_query.mjs"
