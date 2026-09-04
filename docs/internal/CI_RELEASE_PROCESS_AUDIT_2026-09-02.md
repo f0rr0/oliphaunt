@@ -773,6 +773,11 @@ rather than treating YAML declarations as the graph.
   every non-development edge until the first independently versioned product,
   preserving independent downstream SDK versions while still releasing the
   runtime produced from a changed build recipe.
+- Hosted qualification caught two boundary mistakes before merge. The eight
+  WASIX Node-API extension carrier edges remain production dependencies because
+  they ship with that runtime; only source/build recipes use build scope. The
+  isolated JS and React Native harnesses now invoke their mandatory `test`
+  scripts without pnpm's misplaced `--if-present` flag.
 
 No task dependency, artifact hydration edge, release boundary, or behavior
 proof was removed. The final focused qualification passed 17 resolved-graph

@@ -345,7 +345,7 @@ if [ "$mode" = "test-unit" ]; then
   run "$root/tools/dev/bun.sh" test "$package_dir/tools/ios-app-transport.test.mjs"
   run "$root/tools/dev/bun.sh" test "$package_dir/tools/mobile-extension-artifact-paths.test.mjs"
   run "$root/tools/dev/bun.sh" test "$package_dir/tools/validate-android-link-evidence.test.mjs"
-  run pnpm --dir "$package_dir" test --if-present
+  run pnpm --dir "$package_dir" test
   exit 0
 fi
 
@@ -367,7 +367,7 @@ if (typeof pkg.scripts?.['package:verify-ios'] !== 'string') {
 }
 " "$package_dir/package.json"
 if [ "$mode" = "release-check" ] || [ "$mode" = "regression" ]; then
-  run pnpm --dir "$package_dir" test --if-present
+  run pnpm --dir "$package_dir" test
 fi
 if [ "$mode" != "package-shape" ]; then
   run pnpm --dir "$package_dir" run codegen:check

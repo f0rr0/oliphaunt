@@ -120,7 +120,7 @@ fi
 
 prepare_package_worktree
 if [ "$mode" = "test-unit" ]; then
-  run pnpm --dir "$package_dir" test --if-present
+  run pnpm --dir "$package_dir" test
   exit 0
 fi
 
@@ -129,7 +129,7 @@ if [ "$mode" != "package-shape" ]; then
   run pnpm --dir "$package_dir" run typecheck
 fi
 if [ "$mode" = "release-check" ] || [ "$mode" = "regression" ]; then
-  run pnpm --dir "$package_dir" test --if-present
+  run pnpm --dir "$package_dir" test
 fi
 
 if [ "$mode" != "check-static" ]; then
