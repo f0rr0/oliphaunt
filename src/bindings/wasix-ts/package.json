@@ -106,17 +106,9 @@
     "host:build": "bash host/build-sdk.sh",
     "package:build": "pnpm run host:build && pnpm run build && node tools/stage-host.mjs",
     "package:build:closure": "pnpm run package:build && pnpm --dir tools-package build",
-    "package:check": "node tools/check-package.mjs",
-    "bench:browser": "pnpm run package:build && node tools/smoke-browser.mjs --benchmark",
     "docs:api": "typedoc --options typedoc.json",
-    "smoke:browser": "pnpm run package:build && node tools/smoke-browser.mjs",
-    "smoke:browser:pg-uuidv7": "pnpm run package:build && node tools/smoke-browser.mjs --pg-uuidv7",
-    "smoke:browser:postgis-worker": "pnpm run package:build && node tools/smoke-browser.mjs --postgis-worker",
-    "smoke:bun": "pnpm run package:build && node tools/smoke-node.mjs --runtime bun",
-    "smoke:deno": "pnpm run package:build && node tools/smoke-node.mjs --runtime deno",
-    "smoke:node": "pnpm run package:build && node tools/smoke-node.mjs --runtime node",
     "test": "vitest run --pool=forks --fileParallelism=false --dir=src/__tests__",
-    "typecheck": "tsc --noEmit && pnpm --dir ../../../examples/browser-wasix typecheck",
+    "typecheck": "tsc --noEmit",
     "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\""
   },
   "dependencies": {

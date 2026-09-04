@@ -21,14 +21,6 @@ fileGroups:
     - "/tools/release/extension-target-profiles.mjs"
     - "/tools/release/extension-target-profiles.toml"
     - "/tools/release/release-artifact-targets.mjs"
-  source-sdk-packaging:
-    - "/tools/release/source-only-sdk-package.mjs"
-    - "/tools/release/cargo-source-package.mjs"
-    - "/tools/release/rust-native-targets.mjs"
-    - "/tools/release/prepare-rust-release-source.mjs"
-    - "/tools/release/prepare-swift-release-consumer.mjs"
-    - "/tools/release/swift-source-carrier-contract.mjs"
-
 # Installed dependency trees are derived state. Task invalidation comes from
 # tracked package manifests, workspace configuration, and lockfiles instead of
 # pnpm's directory symlinks, which Moon cannot hash as files.

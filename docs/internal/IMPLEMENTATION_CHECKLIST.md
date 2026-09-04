@@ -226,7 +226,7 @@ intentionally not maintained here.
   `oliphaunt-android-static-extension-link-v1` rows for ABI, liboliphaunt, each
   selected static extension archive, and dependency archives. React Native
   Android passes the same property through its builder and
-  `src/sdks/react-native/tools/check-sdk.sh build-android-bridge` asserts that
+  `bun test src/sdks/react-native/tools/validate-android-link-evidence.test.mjs` asserts that
   vector's `liboliphaunt_extension_vector.a` was linked for the selected ABI.
   The staged mobile artifact checker now requires this Android link evidence
   whenever `--require-mobile android --require-mobile-prebuilt-extensions` is
@@ -240,7 +240,7 @@ intentionally not maintained here.
   `swift-sdk-package` depends on `liboliphaunt-native-ios`, downloads
   `liboliphaunt-native-release-assets-ios-xcframework`, sets
   `OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR`, and
-  `src/sdks/swift/tools/check-sdk.sh package-shape` fails closed unless that
+  `release-tools:swift-sdk-package` fails closed unless that
   directory contains a real
   `liboliphaunt-<version>-apple-spm-xcframework.zip` with macOS, iOS device,
   and iOS simulator slices.
@@ -259,7 +259,7 @@ intentionally not maintained here.
   `release.py` validates staged Cargo crates, Kotlin Maven repository
   artifacts, Swift release manifests/source archives, and npm tarballs;
   Kotlin, React Native, TypeScript, WASIX Rust, and Rust dry-runs return after
-  staged validation rather than invoking `check-sdk.sh`, Gradle local publish,
+  staged validation rather than invoking source qualification, Gradle local publish,
   `cargo package`, or `cargo publish --dry-run`.
 - [x] Kotlin SDK builder artifacts use the consumer-facing Maven repository as
   the package boundary. Evidence: `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs`
@@ -510,7 +510,7 @@ intentionally not maintained here.
   released.
 - [x] Node direct optional npm packages are built in the Builds workflow and
   published from staged tarballs. Evidence:
-  `src/runtimes/node-direct/tools/build-node-addon.sh` emits both
+  `tools/release/package-node-direct-runtime.sh` emits both
   `target/oliphaunt-node-direct/release-assets/*` and
   `target/oliphaunt-node-direct/npm-packages/*.tgz`; the release workflow
   downloads `oliphaunt-node-direct-npm-package-*`; `release.py` validates and
@@ -563,7 +563,7 @@ Run before claiming this architecture complete:
 - [x] `moon run ci-workflows:check graph-tools:check`
 - [x] `MOON_BIN=$HOME/.proto/shims/moon
   .github/scripts/run-moon-targets.sh ci-workflows:check`
-- [x] `bash src/sdks/react-native/tools/check-sdk.sh build-android-bridge`
+- [x] `moon run oliphaunt-react-native:compile oliphaunt-react-native:unit`
 - [x] `moon run policy-tools:check release-tools:check graph-tools:check`
 - [x] `MOON_BIN=$HOME/.proto/shims/moon
   .github/scripts/run-moon-targets.sh extension-model:check
@@ -693,8 +693,8 @@ Run before claiming this architecture complete:
   installs the pinned platform-tools/platform/build-tools/CMake/NDK packages
   through `sdkmanager`, and passes idempotently on the local Android SDK with
   NDK `27.0.12077973`, CMake `3.22.1`, and compile SDK `36`.
-- [x] `bash src/sdks/kotlin/tools/check-sdk.sh check-static`
-- [x] `bash src/runtimes/node-direct/tools/build-node-addon.sh`
+- [x] `moon run oliphaunt-kotlin:check`
+- [x] `bash tools/release/package-node-direct-runtime.sh`
 - [x] `tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs
   oliphaunt-extension-vector --output-root target/extension-artifacts-validate
   --require-native-target android-x86_64 --require-native-target
@@ -716,7 +716,7 @@ Run before claiming this architecture complete:
   `python3 tools/policy/check-release-policy.py`.
 - [x] Local PR 38 CI hardening checks passed after fixing the observed builder
   failures: `cargo run -p xtask -- assets verify-committed`, `bash -n` for the
-  touched native scripts, `sh -n src/runtimes/node-direct/tools/build-node-addon.sh`,
+  touched native scripts, `sh -n tools/release/package-node-direct-runtime.sh`,
   `actionlint .github/workflows/ci.yml .github/workflows/mobile-e2e.yml
   .github/workflows/release.yml`, `python3 tools/release/check_artifact_targets.py`,
   `python3 tools/policy/check-release-policy.py`,
@@ -737,7 +737,7 @@ Run before claiming this architecture complete:
   `node tools/policy/check-moon-product-graph.mjs`,
   `bash tools/policy/check-sdk-mobile-extension-surface.sh`,
   `bash tools/policy/check-sdk-parity.sh`, `bash tools/policy/check-repo-structure.sh`,
-  and `bash src/runtimes/node-direct/tools/check-package.sh check-static`.
+  and `moon run oliphaunt-node-direct:compile`.
   PowerShell parsing/execution still needs the GitHub Windows runner because
   `pwsh` is not installed in this macOS worktree.
 - [x] GitHub Builds run `27380605889` on `ff25ab64` proved the next CI-only

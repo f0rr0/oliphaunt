@@ -23,13 +23,8 @@ tasks:
     command: "node src/shared/rust-query-core/tools/check-rust-query-core.mjs"
     inputs:
       - "**/*"
-      - "/src/sdks/rust/build.rs"
-      - "/src/sdks/rust/tools/check-sdk.sh"
-      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/build.rs"
-      - "/src/bindings/wasix-rust/tools/check-package.sh"
-      - "/tools/release/prepare-rust-release-source.mjs"
-      - "/tools/release/package_oliphaunt_wasix_sdk_crate.mjs"
-      - "/tools/release/check-staged-artifacts.mjs"
+      - "/src/sdks/rust/src/query_core.rs"
+      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/query_core.rs"
     options:
       cache: true
       runFromWorkspaceRoot: true

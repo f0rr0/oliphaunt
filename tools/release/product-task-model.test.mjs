@@ -20,7 +20,7 @@ test("release product tasks use semantic names and keep package independent", ()
   const projects = moonJson(["query", "projects"]).projects;
   const tasks = moonJson(["query", "tasks"]).tasks;
   const releaseProducts = projects.filter((project) => project.config?.tags?.includes("release-product"));
-  const forbidden = new Set(["check", "test", "release-check", "assemble-release"]);
+  const forbidden = new Set(["test", "release-check", "assemble-release"]);
 
   assert.ok(releaseProducts.length > 0);
   for (const project of releaseProducts) {
@@ -32,33 +32,50 @@ test("release product tasks use semantic names and keep package independent", ()
     );
     for (const dependency of productTasks.package?.deps ?? []) {
       assert.ok(
-        !/:(?:check|compile|format-check|lint|test|unit)$/u.test(dependency.target),
-        `${project.id}:package depends on quality task ${dependency.target}`,
+        !/:(?:check|format-check|lint|test|unit)$/u.test(dependency.target),
+        `${project.id}:package hides unrelated quality task ${dependency.target}`,
       );
     }
   }
 
-  for (const project of [
+  const sdkProducts = [
     "oliphaunt-js",
+    "oliphaunt-kotlin",
     "oliphaunt-react-native",
     "oliphaunt-rust",
     "oliphaunt-swift",
     "oliphaunt-wasix-rust",
+    "oliphaunt-wasix-ts",
+  ];
+  for (const project of sdkProducts) {
+    assert.deepEqual(
+      Object.values(tasks[project]).filter((task) => task.tags?.includes("artifact-package")),
+      [],
+      `${project} must not own repository release orchestration`,
+    );
+  }
+
+  const releaseTasks = tasks["release-tools"];
+  for (const [task, product] of [
+    ["js-sdk-package", "oliphaunt-js"],
+    ["react-native-sdk-package", "oliphaunt-react-native"],
+    ["rust-sdk-package", "oliphaunt-rust"],
+    ["swift-sdk-package", "oliphaunt-swift"],
+    ["wasix-rust-package", "oliphaunt-wasix-rust"],
+    ["wasix-ts-sdk-package", "oliphaunt-wasix-ts"],
   ]) {
     assert.equal(
-      tasks[project]["package-artifacts"].deps.some(
-        ({ target }) => target === `${project}:package`,
+      releaseTasks[task].deps.some(
+        ({ target }) => target === `${product}:package`,
       ),
       true,
-      `${project}:package-artifacts must consume ${project}:package output`,
+      `release-tools:${task} must consume ${product}:package output`,
     );
   }
 });
 
 test("task edges distinguish artifact data from ordering gates", () => {
-  const tasks = Object.values(moonJson(["query", "tasks"]).tasks).flatMap((project) =>
-    Object.values(project)
-  );
+  const tasks = Object.values(moonJson(["task-graph", "--json"]).data);
   const byTarget = new Map(tasks.map((task) => [task.target, task]));
 
   for (const consumer of tasks) {
@@ -106,6 +123,30 @@ test("WASIX Postmaster qualification includes its packaged runtime behavior", ()
   );
 });
 
+test("WASIX TypeScript products build packages and root integration consumes them", () => {
+  const tasks = moonJson(["query", "tasks"]).tasks;
+  const integration = tasks["integration-tests"]["wasix-ts-runtime"];
+  const dependencies = new Set(integration.deps.map(({ target }) => target));
+
+  assert.deepEqual(
+    [...dependencies].sort(),
+    [
+      "liboliphaunt-wasix:runtime-portable",
+      "oliphaunt-wasix-tools-ts:package",
+      "oliphaunt-wasix-ts:package",
+      "release-tools:wasix-napi-runtime",
+    ],
+  );
+  assert.deepEqual(integration.outputs ?? [], []);
+  assert.equal(integration.options.cache, false);
+  assert.equal(
+    tasks["release-tools"]["wasix-ts-sdk-package"].deps.some(
+      ({ target }) => target === integration.target,
+    ),
+    false,
+  );
+});
+
 test("CI planner project selectors resolve to Moon projects", () => {
   const projects = moonJson(["query", "projects"]).projects;
   const projectIds = new Set(projects.map(({ id }) => id));
@@ -119,13 +160,24 @@ test("CI planner project selectors resolve to Moon projects", () => {
 
 test("Moon projects do not duplicate inferred dependency edges", () => {
   for (const project of moonJson(["query", "projects"]).projects) {
-    const dependencies = (project.config.dependsOn ?? []).map((dependency) =>
-      typeof dependency === "string" ? dependency : dependency.id
+    const configured = project.config.dependsOn ?? [];
+    const dependencies = configured
+      .filter((dependency) => typeof dependency === "string" || dependency.source !== "implicit")
+      .map((dependency) => typeof dependency === "string" ? dependency : dependency.id);
+    const inferred = new Set(
+      configured
+        .filter((dependency) => typeof dependency !== "string" && dependency.source === "implicit")
+        .map((dependency) => dependency.id),
     );
     assert.equal(
       new Set(dependencies).size,
       dependencies.length,
       `${project.id} duplicates a project dependency already inferred by Moon`,
+    );
+    assert.deepEqual(
+      dependencies.filter((dependency) => inferred.has(dependency)),
+      [],
+      `${project.id} explicitly repeats an inferred project dependency`,
     );
     assert.equal(
       dependencies.includes(project.id),
@@ -135,7 +187,7 @@ test("Moon projects do not duplicate inferred dependency edges", () => {
   }
 });
 
-test("source projects do not depend on repository tooling projects", () => {
+test("Moon project metadata has no source-to-tool dependency edges", () => {
   const projects = moonJson(["query", "projects"]).projects;
   const tooling = new Set(
     projects.filter(({ source }) => source.startsWith("tools/")).map(({ id }) => id),

@@ -75,7 +75,6 @@ const NATIVE_RUNTIME_JOBS = new Set([
 ]);
 const NATIVE_RUNTIME_TASKS = new Set([
   "liboliphaunt-native:release-runtime",
-  "liboliphaunt-native:release-runtime-desktop",
   "liboliphaunt-native:release-runtime-mobile-target",
 ]);
 export const WASM_RUNTIME_JOBS = new Set([
@@ -106,7 +105,6 @@ const NATIVE_EXTENSION_LIFECYCLE_TRIGGER_TASKS = new Set([
 ]);
 export const NATIVE_EXTENSION_LIFECYCLE_EXHAUSTIVE_SHARD_COUNT = 3;
 export const NATIVE_EXTENSION_LIFECYCLE_TRIGGER_PROJECTS = new Set([
-  "ci-workflows",
   "extension-artifacts-native",
   "oliphaunt-extension-contrib-pg18",
   "extension-model",
@@ -169,7 +167,7 @@ function affectedProjectsAndTasks() {
   return {
     directProjects: new Set(stringList(summary.directProjects ?? [])),
     projects: new Set(stringList(summary.projects ?? [])),
-    directTasks: new Set(stringList(summary.directTasks ?? [])),
+    affectedTasks: new Set(stringList(summary.tasks ?? [])),
   };
 }
 
@@ -269,16 +267,9 @@ export const ALL_BUILDER_JOBS = difference(
   setUnion(BUILDER_JOBS, WASM_RUNTIME_JOBS, AGGREGATE_ARTIFACT_JOBS),
   ALWAYS_JOBS,
 );
-export const COVERAGE_JOB_PRODUCTS = Object.fromEntries(
-  Object.entries(CI_JOB_TARGETS)
-    .filter(([, targets]) => targets.some((target) => target.endsWith(":coverage")))
-    .map(([job, targets]) => [job, targets[0].split(":", 1)[0]])
-    .sort(([left], [right]) => compareText(left, right)),
-);
 export const CI_JOBS_CONFIG = {
   always_jobs: sorted(ALWAYS_JOBS),
   ci_job_targets: CI_JOB_TARGETS,
-  coverage_job_products: COVERAGE_JOB_PRODUCTS,
   wasm_runtime_jobs: sorted(WASM_RUNTIME_JOBS),
 };
 
@@ -460,11 +451,6 @@ export function planJobsForAffected(directProjects, tasks) {
   ) {
     jobs.add(NATIVE_EXTENSION_LIFECYCLE_JOB);
   }
-  if (directProjects.has("ci-workflows")) {
-    for (const job of ALL_BUILDER_JOBS) {
-      jobs.add(job);
-    }
-  }
   addImpliedJobs(jobs, tasks, { directlySelectedJobs });
   if (intersects(tasks, IOS_CARRIER_VALIDATION_TRIGGER_TASKS)) {
     jobs.add("extension-artifacts-native");
@@ -594,14 +580,14 @@ export function planForPullRequest() {
     throw new Error("MOON_BASE and MOON_HEAD are required for pull_request CI planning");
   }
 
-  const { directProjects, projects, directTasks } = affectedProjectsAndTasks();
-  const jobs = planJobsForAffected(directProjects, directTasks);
-  const selectedNativeTargets = nativeTargetSubsetForJobs(jobs, directTasks);
+  const { directProjects, projects, affectedTasks } = affectedProjectsAndTasks();
+  const jobs = planJobsForAffected(directProjects, affectedTasks);
+  const selectedNativeTargets = nativeTargetSubsetForJobs(jobs, affectedTasks);
   const reason =
     `direct affected projects: ${sorted(directProjects).join(", ") || "(none)"}; ` +
     `downstream affected projects: ${sorted(projects).join(", ") || "(none)"}; ` +
-    `direct affected tasks: ${sorted(directTasks).join(", ") || "(none)"}`;
-  return { jobs, projects, tasks: directTasks, reason, selectedTargets: selectedNativeTargets };
+    `affected task closure: ${sorted(affectedTasks).join(", ") || "(none)"}`;
+  return { jobs, projects, tasks: affectedTasks, reason, selectedTargets: selectedNativeTargets };
 }
 
 export function selectedExtensionProductsForPlan(directProjects, tasks, jobs) {

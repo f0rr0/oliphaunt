@@ -1403,13 +1403,11 @@ export async function wasixNapiOptionalNpmTarballs(version) {
 }
 
 async function packageNodeDirectCarriers() {
-  run(TOOL, ["src/runtimes/node-direct/tools/check-package.sh", "package-shape"]);
   ensureNodeDirectReleaseAssets();
   await nodeDirectOptionalNpmTarballs(currentProductVersionSync(NODE_DIRECT_PRODUCT, TOOL));
 }
 
 async function packageWasixNapiCarriers() {
-  run(TOOL, ["src/runtimes/wasix-napi/tools/check-package.sh", "package-shape"]);
   ensureWasixNapiReleaseAssets();
   await wasixNapiOptionalNpmTarballs(currentProductVersionSync(WASIX_NAPI_PRODUCT, TOOL));
 }

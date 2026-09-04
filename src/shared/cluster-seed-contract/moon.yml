@@ -15,14 +15,3 @@ owners:
   defaultOwner: "@oliphaunt/core"
   paths:
     "**/*": ["@oliphaunt/core"]
-
-tasks:
-  check:
-    tags: ["quality", "static", "contract"]
-    command: "tools/dev/bun.sh tools/policy/check-cluster-seed-contract.mjs"
-    inputs:
-      - "**/*"
-      - "/tools/policy/check-cluster-seed-contract.mjs"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true

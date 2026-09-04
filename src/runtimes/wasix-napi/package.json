@@ -35,7 +35,6 @@
   ],
   "scripts": {
     "build": "bash tools/build-native.sh",
-    "check": "bash tools/check-package.sh check-static",
     "package": "node tools/package-platform.mjs"
   },
   "engines": {

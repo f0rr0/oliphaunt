@@ -5,6 +5,9 @@ language: "rust"
 layer: "tool"
 stack: "systems"
 tags: ["maintainer-tool", "native", "rust", "tools"]
+dependsOn:
+  - id: "shared-test-fixtures"
+    scope: "development"
 
 project:
   title: "Native tools proof"
@@ -24,7 +27,7 @@ tasks:
       - "@group(cargo-workspace)"
       - "/src/runtimes/liboliphaunt/native/crates/tools/**/*"
       - project: "oliphaunt-rust"
-      - "/src/shared/fixtures/postgres/logical-tools*"
+      - project: "shared-test-fixtures"
       - "**/*"
     options:
       cache: true

@@ -54,9 +54,9 @@ Moon task names carry stable intent:
 - `smoke`: one runtime happy path.
 - `regression`: broader SQL, protocol, extension, lifecycle, or runtime
   regressions.
-- `bench`: benchmark plan/report validation.
-- `bench-run`: measured benchmark execution.
-- `coverage`: measured product-native line coverage.
+- `perf-tools:*-plan`: benchmark plan/report validation.
+- `perf-tools:*-measure`: measured benchmark execution.
+- `coverage-tools:<product>`: measured product-native line coverage.
 - `qualify`: an explicit local/release aggregate, never an ordinary CI leaf.
 
 Every task must declare explicit inputs. Tasks with deterministic output that
@@ -232,9 +232,8 @@ CI flow:
    whose producer jobs may be selected by release-product implications rather
    than by direct file affectedness. Jobs that consume downloaded artifacts pass
    `OLIPHAUNT_MOON_UPSTREAM=none`; other build jobs keep Moon upstream task
-   inheritance enabled. SDK `package-artifacts` tasks depend on the product
-   `package` task and consume its package-shape outputs instead of rerunning
-   package assertions inside the artifact staging script.
+   inheritance enabled. `release-tools:<product>-sdk-package` tasks consume the
+   product `package` outputs instead of hiding release assembly in source projects.
 5. GitHub matrix fans out only target dimensions such as OS, CPU, ABI, native
    runtime target, broker target, Node direct target, WASIX AOT target, Android
    emulator, and iOS simulator.
@@ -277,8 +276,8 @@ Force live execution for CI/mobile/device proof with `MOON_CACHE=off`; those
 lanes prove the current runner, simulator/device, signing environment, app
 artifact, and runtime artifact.
 
-Cache benchmark plan checks, never measured benchmark runs. `bench` validates
-matrix and report shape; `bench-run` measures current hardware and runtime
+Cache benchmark plan checks, never measured benchmark runs. `*-plan` validates
+matrix and report shape; `*-measure` measures current hardware and runtime
 state.
 
 Use `runInCI: skip` for expensive dependency-only tasks that must stay valid in
@@ -314,7 +313,7 @@ Use Moon's graph and cache diagnostics before adding scripts:
 
 ```sh
 moon project-graph
-moon action-graph oliphaunt-react-native:package-artifacts
+moon action-graph release-tools:react-native-sdk-package
 moon hash <hash>
 moon run <target> --cache off --log trace
 ```

@@ -193,7 +193,7 @@ Passed locally:
 - the product-task model and dependency-edge invariants passed inside the
   release suite, including taskless contrib/external leaf projects;
 - `moon run sdk-contracts:check` — including all three package-local C-header copies;
-- `moon run oliphaunt-kotlin:compile oliphaunt-kotlin:unit oliphaunt-kotlin:package` — includes compiling the moved standalone consumer against the produced AAR;
+- `moon run oliphaunt-kotlin:check oliphaunt-kotlin:unit oliphaunt-kotlin:package` — includes compiling the moved standalone consumer against the produced AAR;
 - `moon run docs:check docs:build docs:smoke` — 44 routes, 139 generated pages, and 49 emitted HTML files;
 - `moon run native-tools-proof:unit native-packaging:unit`; and
 - the global 17-task compile/format/lint selector passed in 58.7s and its

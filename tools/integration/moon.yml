@@ -1,0 +1,76 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "integration-tests"
+language: "typescript"
+layer: "tool"
+stack: "infrastructure"
+tags: ["integration"]
+dependsOn:
+  - id: "shared-test-fixtures"
+    scope: "development"
+  - "liboliphaunt-wasix"
+  - "oliphaunt-wasix-napi"
+  - "oliphaunt-wasix-tools-ts"
+  - "oliphaunt-wasix-ts"
+  - "oliphaunt-react-native"
+
+project:
+  title: "Integration Tests"
+  description: "Cross-package runtime checks that do not belong to an individual product."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+
+tasks:
+  react-native-runner-unit:
+    tags: ["quality", "unit"]
+    script: |
+      set -e
+      bash tools/integration/react-native/expo-android-gradle-limits.test.sh
+      bash tools/integration/react-native/expo-runner-android-device.test.sh
+      bash tools/integration/react-native/expo-runner-ios-installed-app.test.sh
+      bash tools/integration/react-native/expo-runner-workspace.test.sh
+    inputs:
+      - "/src/extensions/generated/sdk/extensions.json"
+      - "/src/sdks/react-native/tools/**/*"
+      - "react-native/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  wasix-ts-runtime:
+    tags: ["integration", "runtime", "ci-wasix-ts-sdk-package"]
+    script: |
+      set -e
+      node tools/integration/wasix-ts/smoke-node.mjs --runtime node
+      node tools/integration/wasix-ts/smoke-node.mjs --runtime bun
+      node tools/integration/wasix-ts/smoke-node.mjs --runtime deno
+      node tools/integration/wasix-ts/smoke-node.mjs --runtime electron
+      node tools/integration/wasix-ts/smoke-browser.mjs --postgis-worker
+      node tools/integration/wasix-ts/smoke-tools-host.mjs --runtime node
+      tools/dev/bun.sh tools/integration/wasix-ts/smoke-tools-host.mjs --runtime bun
+      tools/dev/deno.sh run --allow-all tools/integration/wasix-ts/smoke-tools-host.mjs --runtime deno
+      node tools/integration/wasix-ts/smoke-browser.mjs --package-only
+    deps:
+      - "liboliphaunt-wasix:runtime-portable"
+      - "oliphaunt-wasix-tools-ts:package"
+      - "oliphaunt-wasix-ts:package"
+      - "release-tools:wasix-napi-runtime"
+    inputs:
+      - "@group(legal-files)"
+      - "@group(pnpm-workspace)"
+      - "/benchmarks/wasix/**/*"
+      - "/examples/browser-wasix/**/*"
+      - project: "shared-test-fixtures"
+      - "wasix-ts/**/*"
+      - "/tools/dev/bun.sh"
+      - "/tools/dev/deno.sh"
+      - "/tools/perf/wasix-browser/*.mjs"
+      - "/tools/perf/wasix-node/installed-closure.mjs"
+      - "/tools/perf/wasix-node/plan.mjs"
+      - "/tools/release/wasix-*.mjs"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true

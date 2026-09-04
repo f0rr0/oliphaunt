@@ -5,6 +5,9 @@ language: "typescript"
 layer: "library"
 stack: "frontend"
 tags: ["shared", "typescript", "sdk"]
+dependsOn:
+  - id: "shared-test-fixtures"
+    scope: "development"
 
 project:
   title: "Shared JavaScript Core"
@@ -50,10 +53,10 @@ tasks:
       runFromWorkspaceRoot: true
   test:
     tags: ["quality", "unit"]
-    command: "tools/dev/bun.sh x vitest run src/shared/js-core/test/query.test.ts"
+    command: "bun test src/shared/js-core/test/query.test.ts"
     inputs:
       - "**/*"
-      - "/src/shared/fixtures/protocol/**/*"
+      - project: "shared-test-fixtures"
     options:
       cache: true
       runFromWorkspaceRoot: true

@@ -51,7 +51,7 @@ tasks:
       runFromWorkspaceRoot: true
   source-fetch:
     tags: ["source", "fetch"]
-    command: "bun tools/policy/fetch-sources.mjs production-all"
+    command: "bun tools/policy/fetch-sources.mjs production-all --force"
     inputs:
       - "/src/sources/toolchains/**/*"
       - "/src/sources/third-party/shared/**/*"
@@ -77,7 +77,7 @@ tasks:
       runFromWorkspaceRoot: true
   source-fetch-native-runtime:
     tags: ["source", "fetch"]
-    command: "bun tools/policy/fetch-sources.mjs native-runtime"
+    command: "bun tools/policy/fetch-sources.mjs native-runtime --force"
     inputs:
       - "/src/sources/third-party/shared/**/*"
       - "/src/sources/third-party/native/**/*"
@@ -93,10 +93,11 @@ tasks:
       - "@group(release-archive-contract)"
     options:
       cache: false
+      internal: true
       runFromWorkspaceRoot: true
   source-fetch-wasix-runtime:
     tags: ["source", "fetch"]
-    command: "bun tools/policy/fetch-sources.mjs wasix-runtime"
+    command: "bun tools/policy/fetch-sources.mjs wasix-runtime --force"
     inputs:
       - "/src/sources/toolchains/**/*"
       - "/src/sources/third-party/shared/**/*"
@@ -118,10 +119,28 @@ tasks:
       - "@group(release-archive-contract)"
     options:
       cache: false
+      internal: true
+      runFromWorkspaceRoot: true
+  source-fetch-wasix-postmaster-runtime:
+    tags: ["source", "fetch"]
+    command: "bun tools/policy/fetch-sources.mjs wasix-postmaster-runtime --force"
+    inputs:
+      - "/src/sources/toolchains/**/*"
+      - "/src/sources/third-party/shared/**/*"
+      - "/src/sources/third-party/wasix/**/*"
+      - "/src/sources/third-party/wasix-postmaster/**/*"
+      - "/tools/policy/fetch-sources.mjs"
+      - "/tools/policy/source-fetch-scopes.mjs"
+      - "/tools/policy/source-fetch-core.mjs"
+      - "/tools/policy/source-archive.py"
+      - "/tools/dev/capture-command-output.mjs"
+    options:
+      cache: false
+      internal: true
       runFromWorkspaceRoot: true
   source-fetch-extensions:
     tags: ["source", "fetch"]
-    command: "bun tools/policy/fetch-sources.mjs extensions"
+    command: "bun tools/policy/fetch-sources.mjs extensions --force"
     inputs:
       - "/src/extensions/external/**/source.toml"
       - "/src/extensions/external/**/dependencies/**/source.toml"
@@ -135,4 +154,5 @@ tasks:
       - "@group(release-archive-contract)"
     options:
       cache: false
+      internal: true
       runFromWorkspaceRoot: true

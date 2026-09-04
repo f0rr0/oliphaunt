@@ -8,28 +8,12 @@ tags: ["runtime", "wasix", "native", "node-api", "release-product"]
 dependsOn:
   - id: "liboliphaunt-wasix"
     scope: "production"
-  - id: "oliphaunt-extension-contrib-pg18"
-    scope: "production"
-  - id: "oliphaunt-extension-pg-hashids"
-    scope: "production"
-  - id: "oliphaunt-extension-pg-ivm"
-    scope: "production"
-  - id: "oliphaunt-extension-pg-textsearch"
-    scope: "production"
-  - id: "oliphaunt-extension-pg-uuidv7"
-    scope: "production"
-  - id: "oliphaunt-extension-pgtap"
-    scope: "production"
-  - id: "oliphaunt-extension-postgis"
-    scope: "production"
-  - id: "oliphaunt-extension-vector"
-    scope: "production"
   - id: "oliphaunt-wasix-rust"
     scope: "production"
 
 project:
   title: "Oliphaunt WASIX Node-API Runtime"
-  description: "napi-rs adapter exposing actor-thread, importing-thread direct, and listener ownership over the Oliphaunt WASIX runtime."
+  description: "Node-API adapter over the Oliphaunt WASIX Rust binding."
   owner: "oliphaunt"
   release:
     component: "oliphaunt-wasix-napi"
@@ -44,176 +28,59 @@ project:
 
 owners:
   defaultOwner: "@oliphaunt/wasix-napi"
-  paths:
-    "src/**": ["@oliphaunt/wasix-napi"]
-    "packages/**": ["@oliphaunt/wasix-napi"]
-    "tools/**": ["@oliphaunt/wasix-napi"]
 
 tasks:
   format-check:
     tags: ["quality", "format", "requires-rust"]
-    command: "bash src/runtimes/wasix-napi/tools/check-package.sh format-check"
-    env:
-      CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-napi/format-check"
+    command: "cargo fmt --manifest-path Cargo.toml --check"
     inputs:
-      - "/rust-toolchain.toml"
-      - "/src/runtimes/wasix-napi/**/*.rs"
+      - "Cargo.toml"
+      - "build.rs"
+      - "src/**/*.rs"
     options:
       cache: true
-      runFromWorkspaceRoot: true
 
   compile:
     tags: ["quality", "static", "requires-rust"]
-    command: "bash src/runtimes/wasix-napi/tools/check-package.sh check-static"
+    script: |
+      set -e
+      node --check tools/smoke-packaged-addon.mjs
+      cargo check --manifest-path Cargo.toml --locked --no-default-features
     env:
-      CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-napi/compile"
+      CARGO_TARGET_DIR: "../../../target/moon/oliphaunt-wasix-napi/compile"
     inputs:
       - "@group(cargo-workspace)"
-      - "**/*"
       - project: "oliphaunt-wasix-rust"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
       - "/src/runtimes/liboliphaunt/icu/**/*"
-      - "/tools/release/check-wasix-napi-release-assets.mjs"
-      - "/tools/release/build-linux-wasix-napi-baseline.sh"
-      - "/tools/release/check-linux-consumer-baseline.sh"
-      - "/tools/release/platform-binary-contract.mjs"
-      - "/tools/release/platform-compatibility-policy.mjs"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/release-asset-validation.mjs"
-      - "/tools/release/native-runtime-payload-policy.json"
-      - "/tools/release/tar-command.mjs"
-      - "/tools/release/windows-vc-runtime-closure.mjs"
-      - "/tools/test/release-fixture-utils.mjs"
+      - "Cargo.toml"
+      - "build.rs"
+      - "src/**/*"
+      - "tools/smoke-packaged-addon.mjs"
     options:
       cache: true
-      runFromWorkspaceRoot: true
 
   unit:
     tags: ["quality", "unit", "requires-rust"]
-    command: "bash src/runtimes/wasix-napi/tools/check-package.sh test-unit"
+    script: |
+      set -e
+      bun test tools/detect-linux-libc.test.mjs tools/portable-command.test.mjs
+      cargo test --manifest-path Cargo.toml --locked --no-default-features --features test-noop --lib
     env:
-      CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-napi/unit"
+      CARGO_TARGET_DIR: "../../../target/moon/oliphaunt-wasix-napi/unit"
     inputs:
       - "@group(cargo-workspace)"
       - "**/*"
     options:
       cache: true
-      runFromWorkspaceRoot: true
-
-  package:
-    tags: ["package"]
-    command: "bash src/runtimes/wasix-napi/tools/check-package.sh package-shape"
-    inputs:
-      - "/pnpm-workspace.yaml"
-      - "@group(legal-files)"
-      - "**/*"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
 
   qualify:
-    tags: ["release", "package"]
+    tags: ["release"]
     command: "true"
     deps:
       - "oliphaunt-wasix-napi:format-check"
       - "oliphaunt-wasix-napi:compile"
       - "oliphaunt-wasix-napi:unit"
-      - "oliphaunt-wasix-napi:package"
     inputs: []
-
-  release-assets:
-    tags: ["release", "artifact", "ci-wasix-napi"]
-    command: "bash src/runtimes/wasix-napi/tools/build-native.sh"
-    inputs:
-      - "@group(cargo-workspace)"
-      - "@group(legal-files)"
-      - "/src/runtimes/wasix-napi/Cargo.toml"
-      - "/src/runtimes/wasix-napi/build.rs"
-      - "/src/runtimes/wasix-napi/package.json"
-      - "/src/runtimes/wasix-napi/packages/**/*"
-      - "/src/runtimes/wasix-napi/src/**/*"
-      - "/src/runtimes/wasix-napi/tools/build-native.sh"
-      - "/src/runtimes/wasix-napi/tools/check-build-inputs.mjs"
-      - "/src/runtimes/wasix-napi/tools/detect-linux-libc.mjs"
-      - "/src/runtimes/wasix-napi/tools/package-platform.mjs"
-      - "/src/runtimes/wasix-napi/tools/portable-command.mjs"
-      - "/src/runtimes/wasix-napi/tools/smoke-packaged-addon.mjs"
-      - "/src/bindings/wasix-ts/tools/pgwire-client.mjs"
-      - project: "oliphaunt-wasix-rust"
-      - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
-      - "/src/runtimes/liboliphaunt/icu/**/*"
-      - "/target/oliphaunt-wasix/assets/**/*"
-      - "/target/oliphaunt-wasix/aot/**/*"
-      - "/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu/**/*"
-      - "/target/extensions/wasix/release-assets/**/*"
-      - "/target/extensions/wasix/aot-artifacts/**/*"
-      - "/target/extension-artifacts/**/*"
-      - "/tools/xtask/**/*"
-      - "/.prototools"
-      - "/src/runtimes/wasix-napi/moon.yml"
-      - "/src/extensions/contrib/carriers.toml"
-      - "/src/extensions/generated/extensions.catalog.json"
-      - "/src/sources/toolchains/bun.toml"
-      - "/src/sources/toolchains/deno.toml"
-      - "/tools/dev/bun.sh"
-      - "/tools/dev/capture-command-output.mjs"
-      - "/tools/dev/deno.sh"
-      - "/tools/dev/install-pinned-js-runtime.sh"
-      - "/tools/dev/moon-command.mjs"
-      - "/tools/release/archive_dir.mjs"
-      - "/tools/release/check-wasix-napi-release-assets.mjs"
-      - "/tools/release/build-linux-wasix-napi-baseline.sh"
-      - "/tools/release/check-linux-consumer-baseline.sh"
-      - "/tools/release/contrib-carriers.mjs"
-      - "/tools/release/extension-registry-packages.mjs"
-      - "/tools/release/platform-binary-contract.mjs"
-      - "@group(release-target-contract)"
-      - "/tools/release/release-asset-validation.mjs"
-      - "/tools/release/release-graph.mjs"
-      - "@group(release-archive-contract)"
-      - "/tools/release/native-runtime-payload-policy.json"
-      - "/tools/release/tar-command.mjs"
-      - "/tools/release/wasix-aot-manifest.mjs"
-      - "/tools/release/windows-vc-runtime-closure.mjs"
-    outputs:
-      - "/target/oliphaunt-wasix-napi/release-assets/**/*"
-      - "/target/oliphaunt-wasix-napi/npm-packages/**/*"
     options:
-      cache: false
-      runFromWorkspaceRoot: true
-
-  aggregate-release-assets:
-    tags: ["release", "artifact-package", "ci-wasix-napi-release-assets"]
-    command: "tools/dev/bun.sh tools/release/check-native-helper-aggregate-assets.mjs --product oliphaunt-wasix-napi"
-    inputs:
-      - "@group(legal-files)"
-      - "/pnpm-workspace.yaml"
-      - "/src/runtimes/wasix-napi/moon.yml"
-      - "/src/runtimes/wasix-napi/package.json"
-      - "/src/runtimes/wasix-napi/packages/**/*"
-      - "/src/runtimes/wasix-napi/release.toml"
-      - project: "oliphaunt-wasix-rust"
-      - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
-      - "/src/runtimes/liboliphaunt/icu/**/*"
-      - "/tools/release/archive_dir.mjs"
-      - "/tools/release/check-native-helper-aggregate-assets.mjs"
-      - "/tools/release/check-wasix-napi-release-assets.mjs"
-      - "/tools/release/build-linux-wasix-napi-baseline.sh"
-      - "/tools/release/check-linux-consumer-baseline.sh"
-      - "/tools/release/platform-binary-contract.mjs"
-      - "/tools/release/platform-compatibility-policy.mjs"
-      - "/tools/release/release-artifact-targets.mjs"
-      - "/tools/release/release-asset-validation.mjs"
-      - "@group(release-archive-contract)"
-      - "/tools/release/write_checksum_manifest.mjs"
-      - "/tools/release/native-runtime-payload-policy.json"
-      - "/tools/release/windows-vc-runtime-closure.mjs"
-      - "/target/oliphaunt-wasix-napi/npm-packages/**/*"
-      - "/target/oliphaunt-wasix-napi/release-assets/**/*"
-    outputs:
-      - "/target/oliphaunt-wasix-napi/npm-packages/**/*"
-      - "/target/oliphaunt-wasix-napi/release-assets/**/*"
-    options:
-      cache: false
-      runFromWorkspaceRoot: true
-      runInCI: true
+      cache: true

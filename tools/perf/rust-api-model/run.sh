@@ -104,7 +104,8 @@ done
 
 # Runtime artifact checks stay outside the measured processes. Cargo output is
 # also on stderr, so each redirected stdout file contains only one JSON run.
-. "$root/tools/runtime/preflight.sh"
+. "$root/src/runtimes/liboliphaunt/native/tools/runtime-preflight.sh"
+. "$root/src/runtimes/liboliphaunt/wasix/tools/runtime-preflight.sh"
 features="rust-api-model"
 if [[ "$runtime" == native ]]; then
   oliphaunt_runtime_native_host_require basic

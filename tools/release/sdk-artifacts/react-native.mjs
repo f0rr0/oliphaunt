@@ -60,6 +60,15 @@ export function stageArtifacts(artifactRoot) {
   prepareSourceOnlyNpmPackage(packageShapeDir, SOURCE_ONLY_NPM_PROFILES["react-native"]);
   const archive = packageNpmWorkspace(packageShapeDir, artifactRoot);
   assertSourceOnlyNpmArchive(archive, SOURCE_ONLY_NPM_PROFILES["react-native"]);
+  run("node", [
+    path.join(ROOT, "src/sdks/react-native/tools/ios-icu-autolinking.test.mjs"),
+    "--react-native-tarball",
+    archive,
+    "--icu-source",
+    path.join(ROOT, "src/runtimes/liboliphaunt/native/icu-npm"),
+    "--expo-project",
+    path.join(ROOT, "examples/react-native-expo"),
+  ], { label: "React Native and ICU autolinking contract" });
   const carrierEvidence = path.join(artifactRoot, "ios-carriers", IOS_CARRIER_FILENAME);
   mkdirSync(path.dirname(carrierEvidence), { recursive: true });
   writeFileSync(carrierEvidence, `${JSON.stringify(carrier, null, 2)}\n`, "utf8");

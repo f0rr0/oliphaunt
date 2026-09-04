@@ -6,6 +6,10 @@ layer: "tool"
 stack: "systems"
 tags: ["tools", "performance", "bench"]
 dependsOn:
+  - id: "shared-test-fixtures"
+    scope: "development"
+  - id: "shared-rust-query-core"
+    scope: "development"
   - id: "benchmarks"
     scope: "build"
 
@@ -28,7 +32,7 @@ tasks:
       - "/src/sdks/rust/**/*"
       - "/src/bindings/wasix-rust/**/*"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
-      - "/src/shared/rust-query-core/**/*"
+      - project: "shared-rust-query-core"
       - "/tools/dev/bun.sh"
       - "/tools/perf/runner/**/*"
       - "/tools/perf/rust-api-model/**/*"
@@ -36,25 +40,6 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
 
-  unit:
-    tags: ["quality", "unit"]
-    command: "bash tools/perf/check-native-perf-harness.sh"
-    deps:
-      - "perf-tools:rust-api-model-check"
-    inputs:
-      - "@group(cargo-workspace)"
-      - "/src/runtimes/liboliphaunt/native/**/*"
-      - "/src/sdks/rust/**/*"
-      - "/src/bindings/wasix-rust/**/*"
-      - "/src/postgres/versions/18/**/*"
-      - "/src/sources/toolchains/**/*"
-      - "/src/sources/third-party/**/*"
-      - "/src/extensions/**/*"
-      - "**/*"
-      - project: "benchmarks"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
   rust-api-model-native:
     tags: ["bench", "diagnostic", "measured", "requires-rust"]
     command: "bash tools/perf/rust-api-model/run.sh --runtime native"
@@ -63,11 +48,12 @@ tasks:
     inputs:
       - "@group(cargo-workspace)"
       - "/src/runtimes/liboliphaunt/native/**/*"
-      - "/src/shared/rust-query-core/**/*"
+      - project: "shared-rust-query-core"
       - "/src/sdks/rust/**/*"
       - "/tools/perf/runner/**/*"
       - "/tools/perf/rust-api-model/**/*"
-      - "/tools/runtime/**/*"
+      - "/src/runtimes/liboliphaunt/native/tools/runtime-preflight.sh"
+      - "/src/runtimes/liboliphaunt/wasix/tools/runtime-preflight.sh"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -81,10 +67,11 @@ tasks:
       - "@group(cargo-workspace)"
       - "/src/bindings/wasix-rust/**/*"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
-      - "/src/shared/rust-query-core/**/*"
+      - project: "shared-rust-query-core"
       - "/tools/perf/runner/**/*"
       - "/tools/perf/rust-api-model/**/*"
-      - "/tools/runtime/**/*"
+      - "/src/runtimes/liboliphaunt/native/tools/runtime-preflight.sh"
+      - "/src/runtimes/liboliphaunt/wasix/tools/runtime-preflight.sh"
       - "/tools/xtask/**/*"
       - "/target/oliphaunt-wasix/assets/**/*"
       - "/target/oliphaunt-wasix/aot/**/*"
@@ -92,21 +79,135 @@ tasks:
       cache: false
       runFromWorkspaceRoot: true
       runInCI: false
-  bench:
+  native-plan:
     tags: ["bench", "plan"]
     command: "bash tools/perf/matrix/run_native_oliphaunt_matrix.sh --plan-only"
+    inputs:
+      - "/tools/perf/matrix/run_native_oliphaunt_matrix.sh"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+      runInCI: false
+  native-measure:
+    tags: ["bench", "measured"]
+    command: "bash tools/perf/matrix/run_native_oliphaunt_matrix.sh"
+    deps:
+      - "liboliphaunt-native:release-runtime"
     inputs:
       - "@group(cargo-workspace)"
       - "/src/runtimes/liboliphaunt/native/**/*"
       - "/src/sdks/rust/**/*"
-      - "/src/bindings/wasix-rust/**/*"
-      - "/src/postgres/versions/18/**/*"
-      - "/src/sources/toolchains/**/*"
-      - "/src/sources/third-party/**/*"
-      - "/src/extensions/**/*"
-      - "**/*"
+      - project: "shared-test-fixtures"
+      - "/tools/perf/matrix/**/*"
       - project: "benchmarks"
     options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  mobile-plan:
+    tags: ["bench", "plan"]
+    command: "bash tools/perf/matrix/run_mobile_footprint_matrix.sh --plan-only --quick"
+    inputs:
+      - "/examples/react-native-expo/package.json"
+      - "/tools/perf/matrix/run_mobile_footprint_matrix.sh"
+    options:
       cache: true
+      runFromWorkspaceRoot: true
+      runInCI: false
+  mobile-measure:
+    tags: ["bench", "measured"]
+    command: "bash tools/perf/matrix/run_mobile_footprint_matrix.sh"
+    inputs:
+      - "/examples/react-native-expo/**/*"
+      - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/react-native/**/*"
+      - "/src/sdks/swift/**/*"
+      - project: "shared-test-fixtures"
+      - "/tools/perf/matrix/**/*"
+      - project: "benchmarks"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  wasix-plan:
+    tags: ["bench", "plan"]
+    script: |
+      set -e
+      node --test tools/perf/wasix-browser/plan.test.mjs
+      node --test tools/perf/wasix-node/plan.test.mjs
+      node --check tools/perf/wasix-browser/plan.mjs
+      node --check tools/perf/wasix-node/engine-runner.mjs
+      node --check tools/perf/wasix-node/benchmark.mjs
+      node --check tools/perf/wasix-node/pglite-node-worker.mjs
+      node --check src/bindings/wasix-ts/tools/pgwire-client.mjs
+      node --check tools/perf/wasix-node/rss-sampler-worker.mjs
+      node --check tools/perf/wasix-node/streaming-quick.mjs
+      node tools/perf/wasix-node/benchmark.mjs --validate
+    inputs:
+      - "@group(pnpm-workspace)"
+      - "/benchmarks/wasix/**/*"
+      - "/src/bindings/wasix-ts/host/**/*"
+      - "/src/bindings/wasix-ts/package.json"
+      - "/tools/integration/wasix-ts/packed-node-fixture.mjs"
+      - "/src/bindings/wasix-ts/tools/pgwire-client.mjs"
+      - "/src/runtimes/wasix-napi/package.json"
+      - "/tools/perf/wasix-browser/*.mjs"
+      - "/tools/perf/wasix-node/*.mjs"
+      - "/tools/perf/wasix-node/package.json"
+      - "@group(release-archive-contract)"
+      - "/tools/release/wasix-runtime-npm-*.mjs"
+      - "/tools/release/wasix-tools-typescript-package.mjs"
+      - "/tools/release/wasix-typescript-package.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+      runInCI: false
+  wasix-node-measure:
+    tags: ["bench", "measured", "local-only"]
+    script: |
+      set -e
+      pnpm --dir src/bindings/wasix-ts package:build
+      node tools/perf/wasix-node/benchmark.mjs --run
+    deps:
+      - "perf-tools:wasix-plan"
+      - "liboliphaunt-wasix:runtime-portable"
+    inputs:
+      - "@group(legal-files)"
+      - "@group(pnpm-workspace)"
+      - "/benchmarks/wasix/node-pglite-memory-v2.json"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "/tools/integration/wasix-ts/packed-node-fixture.mjs"
+      - "/tools/perf/wasix-node/*.mjs"
+      - "/tools/perf/wasix-node/package.json"
+      - "@group(release-archive-contract)"
+      - "/tools/release/wasix-runtime-npm-*.mjs"
+      - "/tools/release/wasix-tools-typescript-package.mjs"
+      - "/tools/release/wasix-typescript-package.mjs"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  wasix-browser-measure:
+    tags: ["bench", "measured", "browser", "local-only"]
+    script: |
+      set -e
+      pnpm --dir src/bindings/wasix-ts package:build
+      node tools/integration/wasix-ts/smoke-browser.mjs --benchmark
+    deps:
+      - "perf-tools:wasix-plan"
+      - "liboliphaunt-wasix:runtime-portable"
+    inputs:
+      - "@group(legal-files)"
+      - "@group(pnpm-workspace)"
+      - "/benchmarks/wasix/browser-pglite-memory-v2.json"
+      - "/src/bindings/wasix-ts/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "/tools/integration/wasix-ts/*.mjs"
+      - "/tools/perf/wasix-browser/*.mjs"
+      - "/tools/perf/wasix-node/installed-closure.mjs"
+      - "/tools/perf/wasix-node/plan.mjs"
+    options:
+      cache: false
       runFromWorkspaceRoot: true
       runInCI: false

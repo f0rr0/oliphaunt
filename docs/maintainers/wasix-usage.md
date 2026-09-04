@@ -191,7 +191,7 @@ moon run oliphaunt-wasix-rust:package
 moon run oliphaunt-wasix-rust:compile oliphaunt-wasix-rust:unit
 moon run oliphaunt-wasix-ts:package
 moon run oliphaunt-wasix-ts:compile oliphaunt-wasix-ts:unit
-moon run oliphaunt-wasix-ts:tools-compile oliphaunt-wasix-ts:tools-unit oliphaunt-wasix-ts:tools-package
+moon run oliphaunt-wasix-tools-ts:qualify
 ```
 
 Package tasks inspect carriers. Explicit artifact and smoke tasks own the

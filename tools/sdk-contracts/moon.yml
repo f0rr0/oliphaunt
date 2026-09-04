@@ -5,6 +5,13 @@ language: "javascript"
 layer: "tool"
 stack: "infrastructure"
 tags: ["sdk", "contract"]
+dependsOn:
+  - id: "cluster-seed-contract"
+    scope: "development"
+  - id: "shared-test-fixtures"
+    scope: "development"
+  - id: "shared-rust-query-core"
+    scope: "development"
 
 project:
   title: "SDK Contracts"
@@ -39,7 +46,7 @@ tasks:
       - "/src/sdks/react-native/src/**/*.ts"
       - "/src/sdks/react-native/package.json"
       - "/src/sdks/rust/src/**/*.rs"
-      - "/src/shared/rust-query-core/**/*"
+      - project: "shared-rust-query-core"
       - "/src/sdks/rust/crates/oliphaunt-build/src/**/*.rs"
       - "/src/sdks/swift/Sources/Oliphaunt/**/*.swift"
       - "/src/sdks/swift/Sources/OliphauntExtensionSupport/**/*.swift"
@@ -54,7 +61,7 @@ tasks:
     tags: ["quality", "static"]
     command: "bun tools/policy/check-cluster-seed-contract.mjs"
     inputs:
-      - "/src/shared/cluster-seed-contract/**/*"
+      - project: "cluster-seed-contract"
       - "/tools/policy/check-cluster-seed-contract.mjs"
       - "/tools/release/native-cluster-seed-contract.mjs"
     options:
@@ -64,7 +71,7 @@ tasks:
     tags: ["quality", "static"]
     command: "bun tools/policy/check-shared-fixtures.mjs"
     inputs:
-      - "/src/shared/fixtures/**/*"
+      - project: "shared-test-fixtures"
       - "/src/**/*.{json,properties}"
       - "/tools/policy/check-shared-fixtures.mjs"
     options:

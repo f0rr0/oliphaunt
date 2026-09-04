@@ -25,119 +25,33 @@ project:
 
 owners:
   defaultOwner: "@oliphaunt/node-direct"
-  paths:
-    "native/**": ["@oliphaunt/node-direct"]
-    "packages/**": ["@oliphaunt/node-direct"]
-    "tools/**": ["@oliphaunt/node-direct"]
 
 tasks:
   compile:
     tags: ["quality", "static"]
-    command: "bash src/runtimes/node-direct/tools/check-package.sh check-static"
+    command: "bash tools/check-native-source.sh"
     inputs:
-      - "**/*"
+      - "native/**/*"
+      - "tools/check-native-source.sh"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
-      - "/src/sources/toolchains/node.toml"
-      - "@group(legal-files)"
+      - "@group(pnpm-workspace)"
     options:
       cache: true
-      runFromWorkspaceRoot: true
 
   unit:
     tags: ["quality", "unit"]
-    command: "bash src/runtimes/node-direct/tools/check-package.sh test-unit"
+    command: "bash tools/test-node-addon-cleanup-lifecycle.sh --test-path-classifier"
     inputs:
-      - "/src/runtimes/node-direct/tools/node-addon-cleanup-lifecycle.test.mjs"
-      - "/src/runtimes/node-direct/tools/test-node-addon-cleanup-lifecycle.sh"
+      - "tools/test-node-addon-cleanup-lifecycle.sh"
     options:
       cache: true
-      runFromWorkspaceRoot: true
-
-  package:
-    tags: ["package"]
-    command: "bash src/runtimes/node-direct/tools/check-package.sh package-shape"
-    inputs:
-      - "**/*"
-      - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
-      - "/src/sources/toolchains/node.toml"
-      - "@group(legal-files)"
-      - "/pnpm-workspace.yaml"
-      - "@group(release-archive-contract)"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
 
   qualify:
-    tags: ["release", "package"]
+    tags: ["release"]
     command: "true"
     deps:
       - "oliphaunt-node-direct:compile"
       - "oliphaunt-node-direct:unit"
-      - "oliphaunt-node-direct:package"
     inputs: []
-
-  release-assets:
-    tags: ["release", "artifact", "ci-node-direct"]
-    command: "bash src/runtimes/node-direct/tools/build-node-addon.sh"
-    inputs:
-      - "**/*"
-      - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
-      - "/src/sources/toolchains/node.toml"
-      - "@group(legal-files)"
-      - "@group(release-archive-contract)"
-      - "/tools/release/artifact_target_matrix.mjs"
-      - "/tools/release/check-node-direct-release-assets.mjs"
-      - "/tools/release/check-linux-consumer-baseline.sh"
-      - "/tools/release/linux-abi-baseline.test.mjs"
-      - "/tools/release/platform-compatibility-policy.mjs"
-      - "/tools/release/platform-compatibility-policy.test.mjs"
-      - "/tools/release/platform-binary-contract.mjs"
-      - "/tools/release/platform-binary-contract.test.mjs"
-      - "/tools/release/release-asset-validation.mjs"
-      - "/tools/release/extension-target-profiles.mjs"
-      - "/tools/release/release-artifact-targets.mjs"
-      - "/tools/release/release_graph_query.mjs"
-      - "/tools/policy/moon.mjs"
-      - "/release-please-config.json"
-    outputs:
-      - "/target/oliphaunt-node-direct/release-assets/**/*"
-      - "/target/oliphaunt-node-direct/npm-packages/**/*"
     options:
-      cache: false
-      runFromWorkspaceRoot: true
-
-  aggregate-release-assets:
-    tags: ["release", "artifact-package", "ci-node-direct-release-assets"]
-    command: "tools/dev/bun.sh tools/release/check-native-helper-aggregate-assets.mjs --product oliphaunt-node-direct"
-    inputs:
-      - "@group(legal-files)"
-      - "/pnpm-workspace.yaml"
-      - "**/*"
-      - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
-      - "/src/sources/toolchains/node.toml"
-      - "/tools/policy/moon.mjs"
-      - "/tools/release/artifact_target_matrix.mjs"
-      - "/tools/release/check-linux-consumer-baseline.sh"
-      - "/tools/release/check-native-helper-aggregate-assets.mjs"
-      - "/tools/release/check-node-direct-release-assets.mjs"
-      - "/tools/release/linux-abi-baseline.test.mjs"
-      - "/tools/release/platform-compatibility-policy.mjs"
-      - "/tools/release/platform-compatibility-policy.test.mjs"
-      - "/tools/release/platform-binary-contract.mjs"
-      - "/tools/release/platform-binary-contract.test.mjs"
-      - "/tools/release/release-asset-validation.mjs"
-      - "/tools/release/extension-target-profiles.mjs"
-      - "/tools/release/release-artifact-targets.mjs"
-      - "@group(release-archive-contract)"
-      - "/tools/release/release_graph_query.mjs"
-      - "/tools/release/write_checksum_manifest.mjs"
-      - "/release-please-config.json"
-      - "/target/oliphaunt-node-direct/npm-packages/**/*"
-      - "/target/oliphaunt-node-direct/release-assets/**/*"
-    outputs:
-      - "/target/oliphaunt-node-direct/npm-packages/**/*"
-      - "/target/oliphaunt-node-direct/release-assets/**/*"
-    options:
-      cache: false
-      runFromWorkspaceRoot: true
-      runInCI: true
+      cache: true

@@ -607,7 +607,7 @@ extensions.
 
 The first browser smoke selects the SQL-only `pgtap` carrier and explicitly runs
 `CREATE EXTENSION`. That isolates manifest verification, dependency ordering, archive overlay, and lifecycle SQL
-from dynamic linking. The separate `smoke:browser:pg-uuidv7` profile selects the
+from dynamic linking. The separate `smoke-browser.mjs --pg-uuidv7` profile selects the
 native carrier, calls `uuid_generate_v7()` before and after the two error
 recovery cases, verifies both results are UUIDv7 values, and checks clean
 process exit. That proves one exact `.so` against the pinned package-owned host; it

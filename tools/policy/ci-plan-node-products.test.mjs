@@ -16,21 +16,25 @@ function effects(paths) {
   const environment = { ...process.env, MOON_CACHE: "off" };
   delete environment.MOON_BASE;
   delete environment.MOON_HEAD;
-  const result = captureCommandOutput(
-    moonCommand(environment),
-    ["query", "affected", "stdin", "--upstream", "none", "--downstream", "none"],
-    {
-      cwd: ROOT,
-      env: moonEnvironment(environment),
-      input: `${relativePaths.join("\n")}\n`,
-      label: `Moon Node-product chaos fixture ${relativePaths.join(", ")}`,
-    },
-  );
-  assert.equal(result.error, undefined, result.error?.message ?? result.stderr);
-  assert.equal(result.status, 0, result.stderr);
-  const affected = JSON.parse(result.stdout);
-  const projects = triggeringProjectNames(affected.projects);
-  const tasks = affectedNames(affected.tasks);
+  const query = (downstream) =>
+    captureCommandOutput(
+      moonCommand(environment),
+      ["query", "affected", "stdin", "--upstream", "none", "--downstream", downstream],
+      {
+        cwd: ROOT,
+        env: moonEnvironment(environment),
+        input: `${relativePaths.join("\n")}\n`,
+        label: `Moon Node-product chaos fixture ${relativePaths.join(", ")}`,
+      },
+    );
+  const direct = query("none");
+  const downstream = query("direct");
+  for (const result of [direct, downstream]) {
+    assert.equal(result.error, undefined, result.error?.message ?? result.stderr);
+    assert.equal(result.status, 0, result.stderr);
+  }
+  const projects = triggeringProjectNames(JSON.parse(direct.stdout).projects);
+  const tasks = affectedNames(JSON.parse(downstream.stdout).tasks);
   return {
     jobs: [...planJobsForAffected(new Set(projects), new Set(tasks))].sort(),
     projects,
@@ -49,22 +53,21 @@ test("JavaScript SDK source does not rebuild the Node Direct addon", () => {
   assert.deepEqual(result.releaseProducts, ["oliphaunt-js"]);
   assert.equal(result.tasks.includes("oliphaunt-js:compile"), true);
   assert.equal(result.tasks.includes("oliphaunt-js:unit"), true);
-  assert.equal(result.tasks.includes("oliphaunt-node-direct:release-assets"), false);
+  assert.equal(result.tasks.includes("release-tools:node-direct-runtime"), false);
   assert.equal(result.tasks.includes("release-tools:metadata"), false);
   assert.equal(result.tasks.includes("release-tools:unit"), false);
 });
 
-test("Node Direct source qualifies its addon and downstream JavaScript SDK without releasing the SDK", () => {
+test("Node Direct source does not rebuild the independently versioned JavaScript SDK", () => {
   const result = effects("src/runtimes/node-direct/native/node-addon/oliphaunt_node.cc");
   assert.deepEqual(result.jobs, [
     "affected",
-    "js-sdk-package",
     "node-direct",
     "node-direct-release-assets",
   ]);
   assert.deepEqual(result.releaseProducts, ["oliphaunt-node-direct"]);
   assert.equal(result.tasks.includes("oliphaunt-node-direct:compile"), true);
-  assert.equal(result.tasks.includes("oliphaunt-js:unit"), true);
+  assert.equal(result.tasks.includes("oliphaunt-js:unit"), false);
 });
 
 test("combined JavaScript SDK and WASIX N-API changes release only changed products", () => {
@@ -134,7 +137,7 @@ test("WASIX N-API production helpers keep the release builder affected", () => {
   ]) {
     const result = effects(relativePath);
     assert.equal(
-      result.tasks.includes("oliphaunt-wasix-napi:release-assets"),
+      result.tasks.includes("release-tools:wasix-napi-runtime"),
       true,
       `${relativePath} must invalidate the WASIX N-API release builder`,
     );
@@ -161,6 +164,31 @@ test("release mutation tests follow release helpers, not policy or workflow file
   assert.equal(result.tasks.includes("release-tools:graph-unit"), false);
 });
 
+test("workflow changes run workflow checks without rebuilding product artifacts", () => {
+  const result = effects(".github/workflows/ci.yml");
+  assert.deepEqual(result.jobs, ["affected"]);
+  assert.equal(result.tasks.includes("ci-workflows:check"), true);
+  assert.equal(result.tasks.includes("release-tools:metadata"), true);
+});
+
+test("release helper changes invalidate only their product artifacts", () => {
+  const kotlin = effects("tools/release/sdk-artifacts/kotlin.mjs");
+  assert.deepEqual(kotlin.jobs, [
+    "affected",
+    "extension-artifacts-native",
+    "kotlin-maven-staging",
+    "kotlin-sdk-package",
+    "liboliphaunt-native-android",
+    "liboliphaunt-native-ios",
+    "mobile-build-android",
+    "mobile-extension-packages",
+    "react-native-sdk-package",
+  ]);
+
+  const nodeDirect = effects("tools/release/check-node-direct-release-assets.mjs");
+  assert.deepEqual(nodeDirect.jobs, ["affected", "node-direct", "node-direct-release-assets"]);
+});
+
 test("product Moon topology selects the focused release graph proof", () => {
   const result = effects("src/sdks/js/moon.yml");
   assert.deepEqual(result.jobs, ["affected", "js-sdk-package"]);
@@ -176,10 +204,10 @@ test("JavaScript release metadata does not rebuild unrelated products", () => {
   assert.equal(result.tasks.includes("release-tools:metadata"), true);
   assert.equal(result.tasks.includes("release-tools:unit"), false);
   for (const target of [
-    "oliphaunt-broker:release-assets",
-    "oliphaunt-react-native:package-artifacts",
-    "oliphaunt-swift:package-artifacts",
-    "oliphaunt-wasix-napi:release-assets",
+    "release-tools:broker-runtime",
+    "release-tools:react-native-sdk-package",
+    "release-tools:swift-sdk-package",
+    "release-tools:wasix-napi-runtime",
   ]) {
     assert.equal(result.tasks.includes(target), false, `${target} is unrelated to the JavaScript SDK`);
   }
@@ -192,7 +220,7 @@ test("release-please bookkeeping does not rebuild product artifacts", () => {
   assert.equal(result.tasks.includes("release-tools:metadata"), true);
   assert.equal(result.tasks.includes("release-tools:unit"), false);
   assert.equal(
-    result.tasks.some((target) => /:(aggregate-release-assets|package-artifacts|release-assets)$/u.test(target)),
+    result.tasks.some((target) => /:(aggregate-release-assets|package-artifacts|release-assets|[a-z-]+-sdk-package)$/u.test(target)),
     false,
   );
 });

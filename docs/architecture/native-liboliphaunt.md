@@ -167,6 +167,6 @@ SDK package and smoke lanes then prove their adapters against the same artifact.
 
 ```sh
 moon run liboliphaunt-native:host-smoke
-src/runtimes/liboliphaunt/native/tools/check-track.sh quick
-src/runtimes/liboliphaunt/native/tools/check-track.sh sdks
+moon run oliphaunt-rust:regression
+moon run extension-artifacts-native:qualify oliphaunt-rust:extension-regression
 ```

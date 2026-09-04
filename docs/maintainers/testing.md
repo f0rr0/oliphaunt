@@ -122,9 +122,9 @@ Moon task names are intentionally narrow:
 - `smoke`: one runtime happy path for that product.
 - `regression`: broader SQL, protocol, extension, lifecycle, or runtime
   regression suites.
-- `bench`: benchmark plan/report validation only.
-- `bench-run`: measured benchmark execution.
-- `coverage`: runs product-native measured line coverage and writes
+- `perf-tools:*-plan`: benchmark plan/report validation only.
+- `perf-tools:*-measure`: measured benchmark execution.
+- `coverage-tools:<product>`: runs product-native measured line coverage and writes
   machine-readable reports under `target/coverage/<product>/`.
 
 `check` and `test` must not call the same command for SDK products. `test`
@@ -132,7 +132,7 @@ must run tests, not metadata-only checks. `smoke` targets must be explicit
 runtime probes and must be run with `--cache off` in CI/release evidence lanes
 where current device/simulator/runtime state matters.
 
-Runtime prerequisites are centralized in `tools/runtime/preflight.sh`. Rust,
+Native and WASIX runtime prerequisites are owned by their runtime projects. Rust,
 Swift, Kotlin, TypeScript, and WASIX smoke/regression lanes use that helper for
 host liboliphaunt, Android liboliphaunt, iOS simulator probe, and WASIX
 asset/AOT checks. Static, package, unit, and coverage lanes remain
@@ -173,7 +173,7 @@ or inconsistent metadata fails before any download.
 
 The Node direct addon likewise treats `src/sources/toolchains/node.toml` as the
 single source for fallback header and Windows import-library release metadata.
-`build-node-addon.sh` continues to prefer an explicit or installed local header
+`package-node-direct-runtime.sh` continues to prefer an explicit or installed local header
 or `node.lib` candidate. Only a missing candidate activates the fallback, which
 then requires the manifest's exact Node runtime, HTTPS-only bounded transfer,
 SHA-256 verification, safe staged header extraction, and atomic cache promotion.

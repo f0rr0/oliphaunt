@@ -1,0 +1,69 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "oliphaunt-wasix-tools-ts"
+language: "typescript"
+layer: "library"
+stack: "frontend"
+tags: ["binding", "wasix", "typescript", "tools", "package"]
+dependsOn:
+  - id: "shared-test-fixtures"
+    scope: "development"
+
+project:
+  title: "Oliphaunt WASIX TypeScript tools"
+  description: "TypeScript pg_dump and psql facade for the WASIX runtime."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/sdk-js"
+
+tasks:
+  compile:
+    tags: ["quality", "static"]
+    command: "pnpm --dir src/bindings/wasix-ts/tools-package typecheck"
+    inputs:
+      - "@group(pnpm-workspace)"
+      - "**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  unit:
+    tags: ["quality", "unit"]
+    command: "pnpm --dir src/bindings/wasix-ts/tools-package test"
+    inputs:
+      - "@group(pnpm-workspace)"
+      - "**/*"
+      - project: "shared-test-fixtures"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  package:
+    tags: ["package"]
+    script: |
+      set -e
+      pnpm --dir src/bindings/wasix-ts/tools-package build
+      node src/bindings/wasix-ts/tools-package/tools/package.mjs target/oliphaunt-wasix-tools-ts/package
+    inputs:
+      - "@group(legal-files)"
+      - "@group(pnpm-workspace)"
+      - "**/*"
+      - "/src/bindings/wasix-ts/package.json"
+    outputs:
+      - "/target/oliphaunt-wasix-tools-ts/package/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  qualify:
+    tags: ["release", "package"]
+    command: "true"
+    deps:
+      - "oliphaunt-wasix-tools-ts:compile"
+      - "oliphaunt-wasix-tools-ts:unit"
+      - "oliphaunt-wasix-tools-ts:package"
+    inputs: []
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

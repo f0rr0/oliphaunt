@@ -1,5 +1,6 @@
-import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+
+import { prepareWasixTypescriptPackage as prepareProductPackage } from '../../src/bindings/wasix-ts/tools/package.mjs';
 
 import { readPortableArchiveEntries } from './portable-archive.mjs';
 import {
@@ -23,180 +24,12 @@ const NATIVE_PACKAGES = Object.freeze([
 ]);
 const NOTICE_OPTIONS = Object.freeze({ profile: 'source-sdk' });
 
-// One deliberate package contract is consumed by the source dry-run and the
-// final archive verifier. Keep this explicit: it catches missing internal
-// runtime/type dependencies without introducing a second module resolver.
-export const WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES = Object.freeze([
-  'package.json',
-  'README.md',
-  'ARCHITECTURE.md',
-  'CHANGELOG.md',
-  'LICENSE',
-  'THIRD_PARTY_NOTICES.md',
-  'lib/archive.d.ts',
-  'lib/archive.js',
-  'lib/asset-source.d.ts',
-  'lib/asset-source.js',
-  'lib/byte-channel.d.ts',
-  'lib/byte-channel.js',
-  'lib/client-common.d.ts',
-  'lib/client-common.js',
-  'lib/client.d.ts',
-  'lib/client.js',
-  'lib/database-root.d.ts',
-  'lib/database-root.js',
-  'lib/database.d.ts',
-  'lib/database.js',
-  'lib/descriptor-validation.d.ts',
-  'lib/descriptor-validation.js',
-  'lib/direct-client-common.d.ts',
-  'lib/direct-client-common.js',
-  'lib/direct-client.d.ts',
-  'lib/direct-client.js',
-  'lib/direct.node.d.ts',
-  'lib/direct.node.js',
-  'lib/errors.d.ts',
-  'lib/errors.js',
-  'lib/extension-descriptor.d.ts',
-  'lib/extension-descriptor.js',
-  'lib/extensions.d.ts',
-  'lib/extensions.js',
-  'lib/host-runtime.d.ts',
-  'lib/host-runtime.js',
-  'lib/icu-descriptor.d.ts',
-  'lib/icu-descriptor.js',
-  'lib/host/LICENSE',
-  'lib/host/index.d.mts',
-  'lib/host/index.mjs',
-  'lib/host/provenance.json',
-  'lib/host/wasmer_js_bg.wasm',
-  'lib/host/worker.mjs',
-  'lib/index.bun.d.ts',
-  'lib/index.bun.js',
-  'lib/index.d.ts',
-  'lib/index.deno.d.ts',
-  'lib/index.deno.js',
-  'lib/index.js',
-  'lib/index.node.d.ts',
-  'lib/index.node.js',
-  'lib/internal-common.d.ts',
-  'lib/internal-common.js',
-  'lib/internal.d.ts',
-  'lib/internal.js',
-  'lib/internal.node.d.ts',
-  'lib/internal.node.js',
-  'lib/node-client.d.ts',
-  'lib/node-client.js',
-  'lib/node-client-common.d.ts',
-  'lib/node-client-common.js',
-  'lib/node-direct.d.ts',
-  'lib/node-direct.js',
-  'lib/native-addon.d.ts',
-  'lib/native-addon.js',
-  'lib/native-server.d.ts',
-  'lib/native-server.js',
-  'lib/native-session.d.ts',
-  'lib/native-session.js',
-  'lib/node-actor.d.ts',
-  'lib/node-actor.js',
-  'lib/node-worker-options.d.ts',
-  'lib/node-worker-options.js',
-  'lib/node-worker-port.d.ts',
-  'lib/node-worker-port.js',
-  'lib/node-worker.d.ts',
-  'lib/node-worker.js',
-  'lib/pgwire.d.ts',
-  'lib/pgwire.js',
-  'lib/pgwire-connection.d.ts',
-  'lib/pgwire-connection.js',
-  'lib/physical-archive.d.ts',
-  'lib/physical-archive.js',
-  'lib/protocol.d.ts',
-  'lib/protocol.js',
-  'lib/public.d.ts',
-  'lib/public.js',
-  'lib/query.d.ts',
-  'lib/query.js',
-  'lib/rpc.d.ts',
-  'lib/rpc.js',
-  'lib/runtime-descriptor.d.ts',
-  'lib/runtime-descriptor.js',
-  'lib/server.node.d.ts',
-  'lib/server.node.js',
-  'lib/startup-config.d.ts',
-  'lib/startup-config.js',
-  'lib/storage-provider.d.ts',
-  'lib/storage-provider.js',
-  'lib/storage-snapshot.d.ts',
-  'lib/storage-snapshot.js',
-  'lib/storage.d.ts',
-  'lib/storage.js',
-  'lib/storage/bun.d.ts',
-  'lib/storage/bun.js',
-  'lib/storage/deno.d.ts',
-  'lib/storage/deno.js',
-  'lib/storage/incremental-storage.d.ts',
-  'lib/storage/incremental-storage.js',
-  'lib/storage/indexed-db-provider.d.ts',
-  'lib/storage/indexed-db-provider.js',
-  'lib/storage/indexed-db.d.ts',
-  'lib/storage/indexed-db.js',
-  'lib/storage/node.d.ts',
-  'lib/storage/node.js',
-  'lib/storage/opfs-provider.d.ts',
-  'lib/storage/opfs-provider.js',
-  'lib/storage/opfs-pool.d.ts',
-  'lib/storage/opfs-pool.js',
-  'lib/storage/opfs.d.ts',
-  'lib/storage/opfs.js',
-  'lib/storage/restore-cleanup.d.ts',
-  'lib/storage/restore-cleanup.js',
-  'lib/storage/web-lock.d.ts',
-  'lib/storage/web-lock.js',
-  'lib/types.d.ts',
-  'lib/types.js',
-  'lib/tool-runtime.d.ts',
-  'lib/tool-runtime.js',
-  'lib/tool-worker-common.d.ts',
-  'lib/tool-worker-common.js',
-  'lib/tool-worker.d.ts',
-  'lib/tool-worker.js',
-  'lib/wasix-runtime.d.ts',
-  'lib/wasix-runtime.js',
-  'lib/worker-client.d.ts',
-  'lib/worker-client.js',
-  'lib/worker-dispatch.d.ts',
-  'lib/worker-dispatch.js',
-  'lib/worker-entry.bun.d.ts',
-  'lib/worker-entry.bun.js',
-  'lib/worker-entry.deno.d.ts',
-  'lib/worker-entry.deno.js',
-  'lib/worker-entry.d.ts',
-  'lib/worker-entry.js',
-  'lib/worker-entry.node.d.ts',
-  'lib/worker-entry.node.js',
-  'lib/worker-node-client.d.ts',
-  'lib/worker-node-client.js',
-  'lib/worker-rpc.d.ts',
-  'lib/worker-rpc.js',
-  'lib/worker-transfer.d.ts',
-  'lib/worker-transfer.js',
-  'lib/worker.d.ts',
-  'lib/worker.js',
-  'lib/zstd.d.ts',
-  'lib/zstd.js',
-]);
-
 function fail(message) {
   throw new Error(`${TOOL}: ${message}`);
 }
 
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function esmImportFrom(specifier) {
-  return `from '${specifier}'`;
 }
 
 function sortedKeys(value) {
@@ -389,32 +222,7 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
 
 export function prepareWasixTypescriptPackage(packageDir) {
   const root = path.resolve(packageDir);
-  const manifestFile = path.join(root, 'package.json');
-  const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
-  const runtimeVersion = manifest.oliphaunt?.runtimeVersion;
-  if (typeof runtimeVersion !== 'string' || !/^\d+\.\d+\.\d+$/u.test(runtimeVersion)) {
-    fail(`${PACKAGE_NAME} source manifest must declare an exact oliphaunt.runtimeVersion`);
-  }
-  const declaredRuntime = manifest.dependencies?.[RUNTIME_PACKAGE];
-  if (declaredRuntime !== undefined && declaredRuntime !== runtimeVersion) {
-    fail(`${PACKAGE_NAME} source runtime dependency conflicts with oliphaunt.runtimeVersion`);
-  }
-  manifest.dependencies = Object.fromEntries(
-    Object.entries({ ...(manifest.dependencies ?? {}), [RUNTIME_PACKAGE]: runtimeVersion })
-      .sort(([left], [right]) => compareText(left, right)),
-  );
-  const nativeVersion = manifest.oliphaunt?.wasixNapiVersion;
-  if (typeof nativeVersion !== 'string' || !/^\d+\.\d+\.\d+$/u.test(nativeVersion)) {
-    fail(`${PACKAGE_NAME} source manifest must declare an exact oliphaunt.wasixNapiVersion`);
-  }
-  manifest.optionalDependencies = Object.fromEntries(
-    NATIVE_PACKAGES.map((name) => [name, nativeVersion]).sort(([left], [right]) =>
-      compareText(left, right),
-    ),
-  );
-  delete manifest.devDependencies;
-  delete manifest.scripts;
-  writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
+  const manifest = prepareProductPackage(root);
   stageReleaseNotices(root, NOTICE_OPTIONS);
   assertReleaseNoticesInDirectory(root, NOTICE_OPTIONS);
   assertWasixTypescriptManifest(manifest, `${PACKAGE_NAME} staged package.json`);
@@ -440,46 +248,37 @@ export function assertWasixTypescriptNpmArchive(archive) {
     JSON.parse(requireFile('package.json').toString('utf8')),
     `${path.basename(file)} package.json`,
   );
-  // The first-release changelog is intentionally empty and may be emitted as
-  // a zero-byte member or omitted. Every released version still has to carry
-  // the non-empty Release Please entry.
-  const requiredPackageFiles = WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES.filter(
-    (name) => name !== 'CHANGELOG.md' || manifest.version !== '0.0.0',
-  );
-  const expectedFiles = new Set(
-    WASIX_TYPESCRIPT_REQUIRED_PACKAGE_FILES.map((name) => `package/${name}`),
-  );
+  const packageFiles = [
+    'ARCHITECTURE.md',
+    'CHANGELOG.md',
+    'LICENSE',
+    'README.md',
+    'THIRD_PARTY_NOTICES.md',
+    'lib',
+  ];
+  if (JSON.stringify([...(manifest.files ?? [])].sort(compareText)) !== JSON.stringify(packageFiles)) {
+    fail(`${path.basename(file)} package.json files differ from the owned package roots`);
+  }
+  const allowedFiles = new Set(['package.json', ...manifest.files.filter((name) => name !== 'lib')]);
   for (const [name, entry] of entries) {
     if (entry.isSymbolicLink) fail(`${path.basename(file)} contains symbolic link ${name}`);
-    if (entry.isFile && !expectedFiles.has(name)) {
-      fail(`${path.basename(file)} contains file outside the explicit package inventory: ${name}`);
+    const relative = name.replace(/^package\//u, '');
+    if (entry.isFile && !allowedFiles.has(relative) && !relative.startsWith('lib/')) {
+      fail(`${path.basename(file)} contains file outside package.json files: ${name}`);
     }
   }
-  for (const name of requiredPackageFiles) requireFile(name);
-  const browserWorker = requireFile('lib/worker.js').toString('utf8');
-  const nodeActor = requireFile('lib/node-actor.js').toString('utf8');
-  const nodeWorker = requireFile('lib/node-worker.js').toString('utf8');
-  const nodeIsolatedClient = requireFile('lib/worker-node-client.js').toString('utf8');
-  const nodeDirect = requireFile('lib/node-direct.js').toString('utf8');
-  const nativeAddon = requireFile('lib/native-addon.js').toString('utf8');
-  const server = requireFile('lib/server.node.js').toString('utf8');
-  if (
-    !browserWorker.includes(esmImportFrom('./host/index.mjs'))
-    || !nodeActor.includes(esmImportFrom('./native-session.js'))
-    || !nodeWorker.includes(esmImportFrom('./node-direct.js'))
-    || !nodeIsolatedClient.includes(esmImportFrom('node:worker_threads'))
-    || !nodeIsolatedClient.includes("new URL('./node-worker.js', import.meta.url)")
-    || !nodeDirect.includes(esmImportFrom('./native-session.js'))
-    || !nativeAddon.includes(esmImportFrom('node:module'))
-    || !server.includes(esmImportFrom('./native-server.js'))
-    || nodeDirect.includes(esmImportFrom('./node-host.js'))
-    || browserWorker.includes('@wasmer/sdk')
-    || nodeActor.includes('@wasmer/sdk')
-    || nodeWorker.includes('@wasmer/sdk')
-    || nodeIsolatedClient.includes(esmImportFrom('node:child_process'))
-    || nodeDirect.includes('@wasmer/sdk')
-  ) {
-    fail(`${path.basename(file)} does not preserve the browser host and native server split`);
+  for (const name of manifest.files) {
+    if (name === 'lib' || (name === 'CHANGELOG.md' && manifest.version === '0.0.0')) continue;
+    requireFile(name);
+  }
+  const exportedFiles = new Set();
+  const visit = (value) => {
+    if (typeof value === 'string' && value.startsWith('./')) exportedFiles.add(value.slice(2));
+    else if (value && typeof value === 'object') Object.values(value).forEach(visit);
+  };
+  visit(manifest.exports);
+  for (const name of exportedFiles) {
+    requireFile(name);
   }
   JSON.parse(requireFile('lib/host/provenance.json').toString('utf8'));
   return manifest;

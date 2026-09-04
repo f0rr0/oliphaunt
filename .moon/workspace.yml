@@ -8,6 +8,7 @@ projects:
     - "examples/moon.yml"
     - "src/*/moon.yml"
     - "src/bindings/*/moon.yml"
+    - "src/bindings/wasix-ts/tools-package/moon.yml"
     - "src/extensions/artifacts/*/moon.yml"
     - "src/extensions/contrib/moon.yml"
     - "src/extensions/external/*/moon.yml"

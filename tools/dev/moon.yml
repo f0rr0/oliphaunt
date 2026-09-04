@@ -30,21 +30,3 @@ tasks:
     options:
       cache: false
       runFromWorkspaceRoot: true
-  check:
-    tags: ["policy", "assertion", "quality", "static"]
-    command: "bash tools/policy/check-tooling-stack.sh"
-    inputs:
-      - "/.github/actions/**/*"
-      - "/.github/workflows/**/*"
-      - "/.moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}"
-      - "/docs/maintainers/tooling.md"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "**/*"
-      - "/tools/policy/assertions/repository-semantics.mjs"
-      - "/tools/policy/check-tooling-stack.sh"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
-      # repo:tooling owns this exact command in hosted CI.
-      runInCI: skip

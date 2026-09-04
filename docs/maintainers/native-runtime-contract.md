@@ -111,7 +111,7 @@ another mode.
 moon run oliphaunt-rust:compile
 moon run oliphaunt-js:compile
 moon run oliphaunt-swift:compile
-moon run oliphaunt-kotlin:compile
+moon run oliphaunt-kotlin:check
 moon run oliphaunt-react-native:compile
 moon run liboliphaunt-native:host-smoke
 ```

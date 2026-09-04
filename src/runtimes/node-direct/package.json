@@ -22,10 +22,6 @@
     "LICENSE",
     "THIRD_PARTY_NOTICES.md"
   ],
-  "scripts": {
-    "build": "tools/build-node-addon.sh",
-    "package": "tools/check-package.sh"
-  },
   "engines": {
     "node": ">=22.13 <25"
   },

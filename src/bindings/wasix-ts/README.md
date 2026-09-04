@@ -405,7 +405,7 @@ Cancellation and a dedicated typed COPY reader/writer are not exposed today.
 ```sh
 pnpm --dir src/bindings/wasix-ts typecheck
 pnpm --dir src/bindings/wasix-ts test
-pnpm --dir src/bindings/wasix-ts package:check
+moon run oliphaunt-wasix-ts:package
 pnpm --dir src/runtimes/wasix-napi check
 ```
 

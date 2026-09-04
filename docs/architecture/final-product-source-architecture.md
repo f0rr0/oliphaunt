@@ -165,9 +165,8 @@ The flow is:
    that consume downloaded artifacts pass `--upstream none` through
    `.github/scripts/run-planned-moon-job.sh` so producer artifacts are not
    rebuilt in the consumer job.
-   SDK `package-artifacts` tasks depend on the product `package` task and
-   consume its package-shape outputs instead of rerunning package assertions
-   inside the artifact staging script.
+   `release-tools:<product>-sdk-package` tasks consume the product `package`
+   outputs instead of hiding release assembly in source projects.
 10. Expensive runtime, mobile, benchmark, publish, registry, and provenance jobs
    are selected by affectedness, but they execute live when current runner state
    matters.
@@ -304,7 +303,7 @@ moon query affected --upstream none --downstream direct
 may require platform artifacts produced earlier. For a fast check, run the
 affected product's exact `package` task. Package tasks must not build platform
 runtimes or mobile apps; publishable artifacts are produced by explicit
-`package-artifacts`, runtime, extension, and mobile builder tasks selected by
+release-tool, runtime, extension, and mobile builder tasks selected by
 the `CI` workflow.
 
 Use pnpm only for JavaScript dependency installation and package-manager

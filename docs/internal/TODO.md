@@ -74,8 +74,8 @@ Remaining work:
 
 Acceptance:
 
-- `src/runtimes/liboliphaunt/native/tools/check-track.sh quick` proves C smoke plus Rust SDK
-  smoke without rebuilding current artifacts.
+- `moon run liboliphaunt-native:host-smoke oliphaunt-rust:regression` proves C
+  smoke plus Rust SDK behavior against current artifacts.
 - Patch-stack review output is deterministic and checked into release evidence.
 - No patch grows product-specific branching that belongs above PostgreSQL.
 
@@ -137,8 +137,8 @@ Remaining work:
 
 Acceptance:
 
-- `src/runtimes/liboliphaunt/native/tools/check-track.sh sdks` passes on a current native
-  runtime.
+- Each affected SDK's `compile`, `unit`, `package`, and runtime smoke tasks pass
+  against a current native runtime.
 - `pnpm --dir src/sdks/react-native/examples/expo run smoke:android` passes on an Android
   emulator/device with current native Android artifacts.
 - `pnpm moon run oliphaunt-swift:smoke` passes on macOS with Xcode and
@@ -173,8 +173,8 @@ Remaining work:
 
 Acceptance:
 
-- `src/runtimes/liboliphaunt/native/tools/check-track.sh extensions` passes with first-party
-  extension artifacts.
+- `moon run extension-artifacts-native:qualify oliphaunt-rust:extension-regression`
+  passes with first-party extension artifacts.
 - `extension-packages:package` receives native extension artifacts for every
   published native runtime target and WASIX extension artifacts for every
   published WASIX target.
@@ -224,7 +224,7 @@ Remaining work:
 
 Acceptance:
 
-- `tools/perf/check-native-perf-harness.sh` passes.
+- `moon run perf-tools:native-plan` passes.
 - A complete provenance-verified report exists for direct, broker, server,
   native PostgreSQL, and SQLite.
 - `src/docs/content/reference/performance.md` is updated only from verified output.

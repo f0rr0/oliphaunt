@@ -51,7 +51,7 @@ code when it starts.
 Run the focused source and product checks:
 
 ```sh
-moon run liboliphaunt-wasix-postmaster:compile
+moon run liboliphaunt-wasix-postmaster:lint
 ```
 
 Build the pinned runtime and PostgreSQL guest, then construct the sealed

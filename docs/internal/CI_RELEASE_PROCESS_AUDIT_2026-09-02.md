@@ -667,11 +667,12 @@ Changes made:
 - Kept `release stage`/`package-assets`, extension catalog generation, asset
   commands, and feature-gated runner/AOT code because they have live callers.
 
-Do not move the remaining crate merely to make the directory tree look purer;
-that changes paths and caches without reducing work. Split it when the WASIX
-asset, extension-model, and release-staging modules need independently selected
-Cargo targets. Until then, deletion and truthful Moon boundaries are the lower
-risk win.
+Do not move the remaining crate wholesale merely to make the directory tree
+look purer; that changes paths and caches without reducing work. The later
+product-boundary audit supersedes the earlier decision to leave its ownership
+unchanged: delete redundant wrappers, keep WASIX build behavior with the WASIX
+runtime, and keep repository release orchestration at the root. Split only at
+those real ownership boundaries, not into another generic support project.
 
 ### Change/qualification ledger
 
@@ -763,11 +764,12 @@ rather than treating YAML declarations as the graph.
   `tools/`: native Node filesystem cleanup and direct Vitest commands replaced
   two shared wrappers, which were deleted. Shared extension archive policy was
   moved to `src/shared/extension-runtime-contract`. Product-local `tools/`
-  directories remain part of their products. Root `tools/` is now referenced
-  only by repository qualification, packaging, and release tasks that actually
-  execute it; it is not a package-manager dependency of a shipped project.
-  The resolved graph has zero `src/ -> tools/` project edges, enforced by a
-  graph-level regression test.
+  directories remain part of their products. However, the subsequent
+  executable-boundary audit found many product Moon tasks and product-local
+  helpers still invoking root `tools/`. The resolved graph's zero semantic
+  `src/ -> tools/` project edges therefore proved only that these dependencies
+  were hidden, not absent. That earlier conclusion was too strong and is being
+  corrected below.
 - Reclassifying build-recipe edges exposed one planner bug: source changes to
   build inputs stopped at build-scoped edges. Release selection now traverses
   every non-development edge until the first independently versioned product,
@@ -794,3 +796,295 @@ The existing `oliphaunt-js` coverage threshold remains a recorded issue:
 both the old wrapper-equivalent invocation and direct Vitest coverage report
 77.96% against the configured 80% line floor. This refactor did not lower the
 threshold or conceal that pre-existing failure.
+
+## Product task ownership correction (2026-09-04)
+
+Principle: a product owns small, ecosystem-native build, test, and package
+interfaces. Coverage, benchmarking, repository policy, cross-target assembly,
+and publishing are consumers of product outputs; a product must not call back
+into those root concerns. Shared implementation belongs only to a real product
+or library contract, never to a generic `src/build` or per-product copy.
+
+Implemented first because behavior could be preserved exactly:
+
+- moved the seven measured coverage targets from product projects to
+  `coverage-tools:<product>` and removed the five product `check-sdk.sh`
+  coverage dispatch modes. The coverage runner still calls Cargo llvm-cov,
+  SwiftPM, Gradle Kover, and Vitest directly and owns the same report outputs;
+- deleted the duplicated Rust/JavaScript native, Swift/Kotlin/React Native
+  mobile, native-runtime, and WASIX product benchmark aliases. The surviving
+  entry points are explicit `perf-tools:native-plan`, `native-measure`,
+  `mobile-plan`, `mobile-measure`, `wasix-plan`, `wasix-node-measure`, and
+  `wasix-browser-measure` tasks;
+- removed the root `repo:bench`/`repo:bench-run` duplicates. They obscured which
+  runtime was measured and repeated commands already owned by `perf-tools`;
+- deleted `tools/policy/check-coverage.sh`. It asserted literal strings in Moon
+  YAML rather than coverage behavior. `repo:coverage-policy` now directly runs
+  the existing semantic TOML validator.
+
+The resolved task count fell from 232 to **222** with no coverage runner,
+benchmark harness, threshold, or output contract removed. Local proof passed
+all three benchmark plans, coverage-tool self-checks, the semantic coverage
+policy, repository tooling checks, and a full resolved-Moon configuration
+query. Measured runs remain deliberately local and uncached; this pass did not
+pretend to reproduce device- or host-specific measurements.
+
+### Product boundary simplification and adversarial proof
+
+The second ownership pass applied a stricter rule: product ownership permits a
+small native `compile`, `unit`, and `package` command, not a product-specific CI
+framework. Repository policy, cross-product integration, performance,
+coverage, release assembly, and registry checks stay outside the product.
+
+Changes:
+
+- deleted the five SDK `check-sdk.sh` dispatchers, the native `check-track.sh`,
+  the broker/Node Direct/WASIX Node-API package dispatchers, three WASIX Rust
+  check dispatchers, the React Native runner source-assertion tests, and the
+  925-line performance source-string harness;
+- replaced those dispatchers with ecosystem commands in Moon. The only new
+  product helpers stage package-manager source where a workspace package is not
+  itself publishable; they use Cargo or `package.json.files` as the inventory
+  instead of maintaining a parallel source-file list;
+- moved installed-app and cross-product JavaScript behavior to
+  `integration-examples`, and moved registry/release artifact assembly to
+  `release-tools`. Product `package` tasks now produce their own source package;
+  release tasks consume that output instead of hiding release policy inside the
+  product;
+- split the WASIX TypeScript tools package into the real
+  `oliphaunt-wasix-tools-ts` product rather than exposing its lifecycle through
+  the main binding; and
+- removed the 232-line native runtime lock wrapper after the direct commands
+  proved not to share mutable test state. It had been moved into the product
+  during the first pass, which changed its address without reducing the
+  machinery.
+
+Adversarial execution found two correctness bugs:
+
+1. Moon multiline `script` tasks continued after a failed intermediate
+   command. Every multiline task now starts with `set -e`; no later success can
+   conceal an earlier compiler or test failure.
+2. The WASIX Rust `unit` task enabled runtime/extension features and then failed
+   five tests when generated runtime artifacts were absent. Before the
+   fail-fast fix those failures were reported as a successful task. Source unit
+   now runs the 192 artifact-independent library tests plus public API,
+   documentation, and compile-only runtime/client suites. Actual generated
+   runtime behavior remains in the WASIX runtime smoke/regression and release
+   boundaries.
+
+The React Native unit boundary now includes its iOS staging behavior; the prior
+standalone task was not part of `qualify`. Real product behavior was retained.
+Removed checks asserted source spelling, wrapper dispatch, or configuration
+text; no runtime, package-install, archive-content, ABI, extension, or registry
+contract was removed.
+
+Moon 2.5 `options.internal` now hides 25 native/Postmaster/source-fetch implementation
+phases while preserving them as resolved dependencies. The public surface is
+**176 tasks** and the complete dependency graph is **201 tasks**. This is a UI
+and ownership reduction, not omitted execution.
+
+Local proof:
+
+- 30 SDK, binding, and add-on compile/unit/package tasks passed in 21.9s; an
+  identical run restored all 30 from Moon cache in 556ms;
+- 19 product-edge/affected-selection tests, 17 release graph tests, three
+  performance plans, integration examples, documentation, policy tests, and
+  workflow/action security all passed;
+- all four directly changed Rust/WASIX source-package tasks passed and were
+  restored from cache in 212ms; and
+- the complete release mutation suite passed in 4m56s.
+
+One local reproducibility defect was fixed while exercising the real portable
+WASIX release dependency. `source-inputs:source-fetch-*` used to report success
+while deliberately doing nothing outside CI, leaving the consumer to fail later
+with a missing checkout. An explicit Moon source-fetch task now passes
+`--force`, so it actually materializes or verifies its declared source output
+on every host.
+
+The final boundary review found and removed two remaining disguises:
+
+- Node Direct's package-local `build-node-addon.sh` was actually a 383-line
+  release pipeline: it compiled two addons, ran lifecycle behavior, built
+  archives and optional npm packages, wrote checksums, and applied release
+  policy. It now lives in `release-tools` as
+  `package-node-direct-runtime.sh`; the private package no longer advertises it
+  as a normal `build` script. The product exposes only its direct native source
+  compile and cleanup-path unit check, while the real compiled-addon lifecycle
+  proof remains part of release artifact validation.
+- Kotlin release packaging used to invoke Gradle a second time after the
+  product `package` task. The product task now publishes the exact AAR, plugin
+  JAR, POM, and metadata set into a Moon output directory once. Release tooling
+  depends on that output and only validates and stages it. An uncached local
+  run completed the producer in 1.6s with warm Gradle state and the release
+  validator/stager in 3.0s; no second SDK build remains.
+- The WASIX TypeScript binding and its tools package likewise already emitted
+  release-contract-valid npm tarballs, but release staging rebuilt both. It now
+  copies and validates the product outputs. A direct release staging run took
+  1.9s after the product package tasks completed.
+
+The obsolete CI-plan `coverage_job_products` projection was also deleted. No
+workflow or caller consumed it, and moving coverage to explicit
+`coverage-tools:<product>` tasks had left it permanently empty.
+
+The wall-clock audit found one unjustified graph override: any change anywhere
+under the `ci-workflows` project forced every artifact builder plus the native
+extension lifecycle. That bypassed Moon's task inputs and made a four-line CI
+cleanup look like a whole-product release. The override is gone. A workflow
+change now selects the workflow, tooling, and release-metadata checks and zero
+artifact builders; full main/manual qualification still selects every builder.
+A chaos test locks that distinction.
+
+The seven SDK release tasks also each named all of `tools/release/**` as an
+input. That made a Kotlin staging-module or Node Direct validator edit rebuild
+every SDK package. The blanket inputs are now limited to the existing shared
+archive/target contracts and each task's actual entrypoint and product module.
+Chaos queries now map the Kotlin module only to Kotlin package plus Maven
+staging, and the Node Direct validator only to Node Direct build plus aggregate
+validation. Shared npm-source and Cargo-source helpers invalidate only their
+real product families.
+
+The forced producer/stager replay then caught a Swift archive-mode regression:
+`swift package archive-source` preserved the checkout's group-writable legal
+files, but the release contract requires portable `0644` notice members. The
+Swift package producer now normalizes those two modes before archiving. SDK
+release tasks also no longer hash an entire product tree in addition to their
+declared package-output dependency; this removed Moon warnings from SwiftPM's
+derived `.build` symlinks and avoids redundant invalidation. Swift and React
+Native release staging now default their carrier input to the same canonical
+target path used by CI, while retaining CI overrides for downloaded
+cross-runner artifacts.
+
+The cold local `release-tools:wasix-ts-sdk-package` path then passed end to end
+in 39m36s. The portable runtime producer consumed 38m35s (PostgreSQL, ICU,
+PostGIS, remaining extensions, and package validation); the SDK staging plus
+real packed browser/database/tools smoke consumed 57s. This establishes both
+the true cold upper bound and where the cost belongs: runtime-affecting changes,
+not ordinary SDK, documentation, policy, or workflow changes.
+
+An adversarial follow-up rejected one attempted boundary fix: copying the
+shared 573-line runtime preflight into product-local files only changed its
+address. The native half is now a 110-line artifact-path/readiness contract;
+it no longer probes ICU configuration, runs a throwaway `initdb`, inventories
+extensions, audits dynamic linkage, or exposes unused Android/iOS/CLI modes
+before the real smoke tests. Those smoke and regression tests remain the
+behavioral proof.
+
+That follow-up also found two React Native release-package proofs orphaned by
+the deleted `check-sdk.sh` dispatcher. The 10-case extension materialization
+and tamper suite now belongs to `release-tools:unit`, and the actual packed
+React Native tarball again runs the ICU Expo/bare autolinking contract during
+release staging. Both passed locally. This is a real correction to the earlier
+claim that wrapper deletion had preserved every reachable proof.
+
+Two more product-local meta-checkers were removed rather than relocated.
+Postmaster's 141-line `check-product.sh` duplicated release metadata, searched
+for retired wording, and maintained a 27-file test list. Its `lint` task now
+uses the existing semantic source-lock verifier plus native shell/Python syntax
+checks; `unit` discovers and runs all 29 product tests, including two the
+manual list had omitted. Twenty-eight source-only tests run in `unit`; the
+remaining linear-memory test needs the built memory-profile binary, so one
+explicit internal integration task runs from `release-assets` instead of being
+an orphan or pretending to be unit-level. Node Direct's unused 126-line
+package-metadata checker was also
+deleted, while its release-only pinned Node fallback installer, extractor, and
+fault suite moved together to `release-tools`. WASIX Node-API release metadata
+and carrier-contract tests likewise left the product unit task; the redundant
+metadata spelling checker was deleted and the six-case carrier contract now
+runs under release tooling. Its product unit task retains the six portable
+command/libc tests and four Rust behavior tests.
+
+Residual root-tool boundary: SDK, binding, broker, Node Direct, and WASIX
+Node-API product tasks no longer invoke repository release/performance/coverage
+machinery. Native, WASIX, Postmaster, extension-artifact, extension-model, and
+source-input projects still execute root `tools/xtask`, source-fetch, or release
+contract helpers. Those calls are pre-existing production build machinery and
+were not renamed or copied into a generic `src/build`. They remain the next
+real extraction boundary; the graph test is deliberately worded as a check of
+Moon project-dependency metadata, not a false claim that these executable path
+dependencies are gone.
+
+### Final graph and WASIX package boundary review
+
+The final pass removed another hidden coupling without turning products into
+miniature CI systems:
+
+- Rust and JavaScript fixtures are represented by the taskless
+  `shared-test-fixtures` project. Product tests use a semantic project input;
+  they no longer repeat fixture file inventories in Rust source or Moon YAML.
+- Cross-package WASIX TypeScript installed-package checks moved from both npm
+  products to `integration-tests:wasix-ts-runtime`. The product tasks only
+  type-check, run their own unit tests, and build/package their own npm source.
+  The root integration task consumes those package outputs plus the separately
+  built portable and Node-API runtime carriers.
+- `release-tools:wasix-ts-sdk-package` now only validates and stages release
+  artifacts. Browser behavior is no longer concealed inside a task named
+  `package`.
+- The WASIX Node-API producer was missing the AOT runtime and WASIX extension
+  package edges that its build actually reads. Those producers are now explicit
+  dependencies. WASIX extension staging selects only the WASIX family, so it
+  does not pull native extension builds into this path.
+- CI runs the three artifact-injection stages in order: product packages,
+  installed-package integration, then release assembly. This preserves the
+  same-run portable/NAPI artifact downloads without asking Moon to rebuild
+  upstream producers in the consumer job.
+- The browser CDP client now rejects pending calls when the socket closes and
+  bounds every request at 30 seconds. A browser failure can no longer hang well
+  beyond the task deadline.
+- Broad product-tree inputs were removed from the integration task. Producer
+  task edges already carry the required artifacts; the redundant inputs made a
+  WASIX NAPI README or isolated unit-fixture edit select every runtime builder.
+  The existing affected-selection chaos test caught this and now passes.
+- The Rust SDK's redundant `smoke` alias and its 22-line command dispatcher
+  were deleted. `regression` and `extension-regression` now state their exact
+  preflight and Cargo commands directly. Four unused React Native example
+  `true`-command aggregates were also deleted; their Android/iOS build, device
+  E2E, and release-drill tasks remain unchanged.
+- Adversarial review rejected deleting the React Native runner fault tests with
+  the old SDK dispatcher. Their real failure, receipt-tamper, Gradle-limit, and
+  staging checks now live in one root integration task instead of the SDK's
+  `unit` task. Literal runner-source assertions were removed, and the exhaustive
+  509-line iOS simulator was reduced to the three contracts CI relies on:
+  terminate on an app failure, accept a valid receipt, and reject a receipt
+  bound to another tree. The root task passed in 27s; the untrimmed restoration
+  had taken 3m19s under Moon.
+
+The resolved graph is **55 projects, 195 tasks, and 158 task edges**. Twenty-eight
+implementation tasks are internal, leaving **167 public tasks**. Cache policy is
+115 normal, 13 local-only, and 67 uncached tasks; the latter are deliberate
+hosted/runtime/release side-effect boundaries rather than missing cache flags.
+
+Local execution evidence:
+
+- cold portable WASIX production took 20m53s; the identical follow-up restored
+  the runtime from Moon's local cache in 901ms (3.6s including source
+  verification);
+- the independently publishable WASIX Node-API Linux carrier passed Node npm,
+  Node pnpm, Bun pnpm, Deno pnpm, and Electron pnpm installed-package rehearsals
+  in 3m24s after its upstream artifacts were staged;
+- the two TypeScript product package tasks passed together in 9.1s, the complete
+  installed Node/Bun/Deno/Electron/browser/PostGIS/tools integration passed in
+  4m25s, and release artifact assembly passed in 3.8s;
+- the Rust native and WASIX binding unit/package closures passed together in
+  40.2s; and
+- the inlined Rust SDK native regression rebuilt its declared runtime upstream
+  and passed all five ABI-smoke and two SQL-regression cases in 3m07s overall
+  (17.5s in the SDK task); and
+- graph, workflow, documentation, tooling, performance-plan, policy, and the
+  complete release mutation suite passed together in 5m06s.
+
+One first NAPI rehearsal ended at the Electron copy with `ENOSPC`. It had
+already passed Node, Bun, and Deno and was not a graph or behavior failure.
+Removing two exact generated Cargo target directories recovered 13 GiB; the
+unchanged rerun then passed Electron. No source, cache, or release artifact was
+deleted.
+
+No end-to-end product behavior proof was removed in this pass. The retained
+integration checks exercise package installation and database behavior rather
+than asserting source strings. The deliberately dropped proof surface is the
+exhaustive fake iOS runner permutation set (malformed/unknown receipt fields,
+every ICU mismatch direction, and repeated missing-file variants); the focused
+failure/tamper test plus both hosted installed-app E2E lanes cover the operational
+contract with much less test machinery. The remaining complex product-local
+build helpers are retained only where they directly build that product (for
+example, applying and building the pinned patched Wasmer host); moving or
+copying those helpers would merely rename the same machinery.

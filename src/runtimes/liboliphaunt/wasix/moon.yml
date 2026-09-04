@@ -106,12 +106,14 @@ tasks:
       - project: "third-party-shared"
       - project: "third-party-wasix"
       - "/src/extensions/**/*"
-      - "!/src/extensions/generated/docs"
-      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/generated"
+      - "!/src/extensions/generated/**"
       - "!/src/extensions/evidence"
       - "!/src/extensions/evidence/**"
       - project: "extension-runtime-contract"
       - "**/*"
+      - "!assets/generated"
+      - "!assets/generated/**"
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
       - "/tools/xtask/**/*"
       - "@group(release-archive-contract)"
@@ -123,7 +125,7 @@ tasks:
       - "/src/extensions/generated/**/*"
       - "/src/runtimes/liboliphaunt/wasix/assets/generated/**/*"
     options:
-      cache: false
+      cache: local
       runFromWorkspaceRoot: true
       runInCI: true
 
@@ -149,10 +151,15 @@ tasks:
       - project: "extension-runtime-contract"
       - "**/*"
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
-      - "/tools/runtime/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/tools/runtime-preflight.sh"
       - "/tools/xtask/**/*"
       - "@group(release-archive-contract)"
       - "/tools/policy/verify-source-tree.py"
+    outputs:
+      - "/target/oliphaunt-wasix/aot/**/*"
+      - "/target/extensions/wasix/aot-artifacts/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/crates/aot/*/artifacts/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/crates/tools-aot/*/artifacts/**/*"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -211,7 +218,7 @@ tasks:
       - "!/src/extensions/evidence/**"
       - "**/*"
       - "/src/bindings/wasix-rust/**/*"
-      - "/tools/runtime/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/tools/runtime-preflight.sh"
       - "/tools/test/cargo-test-filter.sh"
       - "/tools/xtask/**/*"
       - "/tools/policy/verify-source-tree.py"
@@ -242,7 +249,7 @@ tasks:
       - "/src/bindings/wasix-rust/**/*"
       - "/src/bindings/wasix-ts/**/*"
       - "/src/shared/js-core/**/*"
-      - "/tools/runtime/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/tools/runtime-preflight.sh"
       - "/tools/test/cargo-test-filter.sh"
       - "/tools/release/wasix-runtime-npm-*.mjs"
       - "/tools/release/wasix-tools-npm-carrier.mjs"

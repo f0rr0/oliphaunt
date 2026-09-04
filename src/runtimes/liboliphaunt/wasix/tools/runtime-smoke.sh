@@ -12,7 +12,7 @@ root="$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)" || {
 }
 cd "$root"
 
-. "$root/tools/runtime/preflight.sh"
+. "$root/src/runtimes/liboliphaunt/wasix/tools/runtime-preflight.sh"
 . "$root/tools/test/cargo-test-filter.sh"
 
 mode="${1:-smoke}"

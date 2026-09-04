@@ -60,14 +60,7 @@ test('postmaster source preparation waits for the shared source fetch', () => {
   const environment = {...process.env, MOON_CACHE: 'off'};
   const result = captureCommandOutput(
     moonCommand(environment),
-    [
-      'query',
-      'tasks',
-      '--project',
-      'liboliphaunt-wasix-postmaster',
-      '--id',
-      'prepare-postgres',
-    ],
+    ['task-graph', '--json'],
     {
       cwd: ROOT,
       env: moonEnvironment(environment),
@@ -76,12 +69,13 @@ test('postmaster source preparation waits for the shared source fetch', () => {
   );
   assert.equal(result.error, undefined, result.error?.message ?? result.stderr);
   assert.equal(result.status, 0, result.stderr);
-  const task = JSON.parse(result.stdout).tasks['liboliphaunt-wasix-postmaster'][
-    'prepare-postgres'
-  ];
+  const task = Object.values(JSON.parse(result.stdout).data).find(
+    ({target}) => target === 'liboliphaunt-wasix-postmaster:prepare-postgres',
+  );
+  assert.ok(task);
   assert.equal(
     task.deps.some(
-      ({target}) => target === 'liboliphaunt-wasix-postmaster:source-fetch',
+      ({target}) => target === 'source-inputs:source-fetch-wasix-postmaster-runtime',
     ),
     true,
   );
@@ -91,21 +85,25 @@ function directEffects(relativePath) {
   const environment = {...process.env, MOON_CACHE: 'off'};
   delete environment.MOON_BASE;
   delete environment.MOON_HEAD;
-  const result = captureCommandOutput(
-    moonCommand(environment),
-    ['query', 'affected', 'stdin', '--upstream', 'none', '--downstream', 'none'],
-    {
-      cwd: ROOT,
-      env: moonEnvironment(environment),
-      input: `${relativePath}\n`,
-      label: `moon WASIX postmaster release fixture ${relativePath}`,
-    },
-  );
-  assert.equal(result.error, undefined, result.error?.message ?? result.stderr);
-  assert.equal(result.status, 0, result.stderr);
-  const affected = JSON.parse(result.stdout);
-  const projects = triggeringProjectNames(affected.projects);
-  const tasks = affectedNames(affected.tasks);
+  const query = (downstream) =>
+    captureCommandOutput(
+      moonCommand(environment),
+      ['query', 'affected', 'stdin', '--upstream', 'none', '--downstream', downstream],
+      {
+        cwd: ROOT,
+        env: moonEnvironment(environment),
+        input: `${relativePath}\n`,
+        label: `moon WASIX postmaster release fixture ${relativePath}`,
+      },
+    );
+  const direct = query('none');
+  const downstream = query('direct');
+  for (const result of [direct, downstream]) {
+    assert.equal(result.error, undefined, result.error?.message ?? result.stderr);
+    assert.equal(result.status, 0, result.stderr);
+  }
+  const projects = triggeringProjectNames(JSON.parse(direct.stdout).projects);
+  const tasks = affectedNames(JSON.parse(downstream.stdout).tasks);
   const jobs = [...planJobsForAffected(new Set(projects), new Set(tasks))].sort();
   return {projects, tasks, jobs};
 }

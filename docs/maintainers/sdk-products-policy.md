@@ -75,9 +75,9 @@ Validation is package-native:
 moon run oliphaunt-rust:compile
 moon run oliphaunt-wasix-rust:compile
 moon run oliphaunt-wasix-ts:compile
-moon run oliphaunt-wasix-ts:tools-compile
+moon run oliphaunt-wasix-tools-ts:compile
 moon run oliphaunt-swift:compile
-moon run oliphaunt-kotlin:compile
+moon run oliphaunt-kotlin:check
 moon run oliphaunt-react-native:compile
 moon run oliphaunt-js:compile
 moon run sdk-contracts:check

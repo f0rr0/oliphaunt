@@ -930,10 +930,6 @@ jobs:
       - name: Set up Apple
         uses: ./.github/actions/setup-apple
 
-      - name: Test iOS app artifact transport
-        id: ios_app_transport_test
-        run: node src/sdks/react-native/tools/ios-app-transport.test.mjs
-
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
 
@@ -1688,7 +1684,7 @@ jobs:
           if-no-files-found: error
 
   wasix-ts-sdk-package:
-    name: Builds / WASIX TypeScript SDK Package
+    name: Builds / WASIX TypeScript SDK
     needs:
       - affected
       - liboliphaunt-wasix-runtime
@@ -1731,18 +1727,19 @@ jobs:
           name: oliphaunt-wasix-napi-npm-package-linux-x64-gnu
           path: target/oliphaunt-wasix-napi/npm-packages
 
-      - name: Build and smoke WASIX TypeScript SDK package
+      # Portable and Node-API artifacts come from the two required producer jobs,
+      # so this job runs the remaining graph stages without rebuilding upstreams.
+      - name: Build WASIX TypeScript packages
         run: |
-          pnpm --dir src/bindings/wasix-ts package:build:closure
-          node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime node
-          node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime bun
-          node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime deno
-          node src/bindings/wasix-ts/tools/smoke-node.mjs --runtime electron
-          node src/bindings/wasix-ts/tools/smoke-browser.mjs --postgis-worker
-          node src/bindings/wasix-ts/tools-package/tools/smoke-host.mjs --runtime node
-          tools/dev/bun.sh src/bindings/wasix-ts/tools-package/tools/smoke-host.mjs --runtime bun
-          tools/dev/deno.sh run --allow-all src/bindings/wasix-ts/tools-package/tools/smoke-host.mjs --runtime deno
-          OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh wasix-ts-sdk-package
+          MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream none oliphaunt-wasix-ts:package oliphaunt-wasix-tools-ts:package
+
+      - name: Test installed WASIX TypeScript packages
+        run: |
+          MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream none integration-tests:wasix-ts-runtime
+
+      - name: Assemble WASIX TypeScript SDK artifacts
+        run: |
+          MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream none release-tools:wasix-ts-sdk-package
 
       - name: Upload WASIX TypeScript SDK package artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

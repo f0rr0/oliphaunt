@@ -408,11 +408,9 @@ mod tests {
 
     #[test]
     fn server_listen_matches_shared_postgres_vocabulary() {
-        let fixture: serde_json::Value = serde_json::from_str(&crate::test_fixtures::text(
-            "postgres/server-listen.json",
-            "testdata/server-listen.json",
-        ))
-        .unwrap();
+        let fixture: serde_json::Value =
+            serde_json::from_str(&crate::test_fixtures::text("postgres/server-listen.json"))
+                .unwrap();
         assert_eq!(fixture["tcp"]["host"], "127.0.0.1");
         assert_eq!(fixture["unix"]["defaultPort"], 5432);
         assert_eq!(fixture["unix"]["filePrefix"], ".s.PGSQL.");

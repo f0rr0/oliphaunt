@@ -867,10 +867,7 @@ mod tests {
 
     #[test]
     fn structured_sql_preflight_matches_shared_corpus() {
-        let source = crate::oliphaunt::test_fixtures::text(
-            "protocol/structured-sql-cases.json",
-            "protocol-structured-sql-cases.json",
-        );
+        let source = crate::oliphaunt::test_fixtures::text("protocol/structured-sql-cases.json");
         let fixture: serde_json::Value = serde_json::from_str(&source).unwrap();
         assert_eq!(fixture["schemaVersion"], 2);
         for case in fixture["cases"].as_array().unwrap() {

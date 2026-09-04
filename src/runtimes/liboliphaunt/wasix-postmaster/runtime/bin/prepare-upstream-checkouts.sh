@@ -95,7 +95,7 @@ verify_durable_source() {
 
 	if [ ! -d "$root/.git" ]; then
 		printf 'missing durable %s source checkout: %s\n' "$name" "$root" >&2
-		printf 'run: OLIPHAUNT_FETCH_SOURCES=1 moon run liboliphaunt-wasix-postmaster:source-fetch\n' >&2
+		printf 'run: moon run source-inputs:source-fetch-wasix-postmaster-runtime\n' >&2
 		exit 2
 	fi
 	local actual_ref

@@ -212,10 +212,7 @@ mod tests {
 
     #[test]
     fn consumes_shared_query_response_contract() {
-        let source = crate::test_fixtures::text(
-            "protocol/query-response-cases.json",
-            "testdata/query-response-cases.json",
-        );
+        let source = crate::test_fixtures::text("protocol/query-response-cases.json");
         let fixture: serde_json::Value =
             serde_json::from_str(&source).expect("shared query response fixture is valid JSON");
         assert_eq!(fixture["schemaVersion"], 1);
@@ -1246,10 +1243,7 @@ mod tests {
 
     #[test]
     fn structured_sql_preflight_matches_shared_corpus() {
-        let source = crate::test_fixtures::text(
-            "protocol/structured-sql-cases.json",
-            "testdata/structured-sql-cases.json",
-        );
+        let source = crate::test_fixtures::text("protocol/structured-sql-cases.json");
         let fixture: serde_json::Value =
             serde_json::from_str(&source).expect("structured SQL fixture is valid JSON");
         assert_eq!(fixture["schemaVersion"], 2);

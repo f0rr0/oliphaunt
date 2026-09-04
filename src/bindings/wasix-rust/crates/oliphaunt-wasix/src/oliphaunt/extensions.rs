@@ -246,10 +246,7 @@ fn visit_extension(
 
 #[cfg(test)]
 pub(crate) fn extension_smoke_sql(sql_name: &str) -> String {
-    crate::oliphaunt::test_fixtures::source_text(
-        &format!("shared/fixtures/extensions/{sql_name}.sql"),
-        &format!("extensions/{sql_name}.sql"),
-    )
+    crate::oliphaunt::test_fixtures::text(&format!("extensions/{sql_name}.sql"))
 }
 
 #[cfg(test)]

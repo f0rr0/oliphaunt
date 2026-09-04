@@ -121,31 +121,6 @@ tasks:
       # Local hook validation only; hosted checks already run the owned format
       # and policy tasks without bootstrapping every maintainer binary.
       runInCI: false
-  smoke:
-    tags: ["runtime", "smoke"]
-    command: "bash tools/dev/bun.sh examples/tools/check-examples.mjs"
-    inputs:
-      - "/examples/**/*"
-      - "/src/**/*"
-      - "!/src/**/node_modules"
-      - "!/src/**/node_modules/**"
-      - "!/src/**/.build"
-      - "!/src/**/.build/**"
-      - "!/src/**/.gradle/**"
-      - "!/src/**/.cxx/**"
-      - "!/src/**/.next/**"
-      - "!/src/**/.source/**"
-      - "!/src/**/build/**"
-      - "!/src/**/out/**"
-      - "!/src/**/Pods/**"
-      - "!/src/**/DerivedData/**"
-      - "/tools/**/*"
-      - "@group(cargo-workspace)"
-      - "@group(pnpm-workspace)"
-    options:
-      cache: local
-      runFromWorkspaceRoot: true
-      runInCI: false
   package:
     tags: ["package"]
     command: "bash tools/policy/check-crate-package.sh --allow-dirty"
@@ -163,19 +138,19 @@ tasks:
     tags: ["coverage", "quality"]
     command: "tools/coverage/summarize"
     deps:
-      - target: "oliphaunt-rust:coverage"
+      - target: "coverage-tools:rust"
         cacheStrategy: "outputs"
-      - target: "oliphaunt-swift:coverage"
+      - target: "coverage-tools:swift"
         cacheStrategy: "outputs"
-      - target: "oliphaunt-kotlin:coverage"
+      - target: "coverage-tools:kotlin"
         cacheStrategy: "outputs"
-      - target: "oliphaunt-js:coverage"
+      - target: "coverage-tools:js"
         cacheStrategy: "outputs"
-      - target: "oliphaunt-react-native:coverage"
+      - target: "coverage-tools:react-native"
         cacheStrategy: "outputs"
-      - target: "oliphaunt-wasix-rust:coverage"
+      - target: "coverage-tools:wasix-rust"
         cacheStrategy: "outputs"
-      - target: "oliphaunt-wasix-ts:coverage"
+      - target: "coverage-tools:wasix-ts"
         cacheStrategy: "outputs"
     inputs:
       - "/coverage/baseline.toml"
@@ -188,51 +163,10 @@ tasks:
       runFromWorkspaceRoot: true
   coverage-policy:
     tags: ["coverage", "policy"]
-    command: "bash tools/policy/check-coverage.sh all"
+    command: "bun tools/policy/check-coverage-baseline.mjs all"
     inputs:
       - "/coverage/baseline.toml"
-      - "/src/**/moon.yml"
-      - "/src/bindings/*/moon.yml"
-      - "/tools/coverage/**/*"
-      - "/tools/policy/check-coverage.sh"
+      - "/tools/policy/check-coverage-baseline.mjs"
     options:
       cache: true
       runFromWorkspaceRoot: true
-  bench-run:
-    tags: ["bench", "measured"]
-    command: "bash tools/perf/matrix/run_native_oliphaunt_matrix.sh"
-    inputs:
-      - "@group(cargo-workspace)"
-      - "/src/shared/fixtures/**/*"
-      - "/src/runtimes/liboliphaunt/native/**/*"
-      - "/src/sdks/rust/**/*"
-      - "/src/postgres/versions/18/**/*"
-      - "/src/sources/toolchains/**/*"
-      - "/src/sources/third-party/**/*"
-      - "/src/extensions/**/*"
-      - "/tools/perf/**/*"
-      - "/benchmarks/**/*"
-      - "/release-please-config.json"
-    options:
-      cache: false
-      runFromWorkspaceRoot: true
-      runInCI: false
-  bench:
-    tags: ["bench", "plan"]
-    command: "bash tools/perf/check-native-perf-harness.sh"
-    inputs:
-      - "@group(cargo-workspace)"
-      - "/src/runtimes/liboliphaunt/native/**/*"
-      - "/src/sdks/rust/**/*"
-      - "/src/bindings/wasix-rust/**/*"
-      - "/src/postgres/versions/18/**/*"
-      - "/src/sources/toolchains/**/*"
-      - "/src/sources/third-party/**/*"
-      - "/src/extensions/**/*"
-      - "/tools/perf/**/*"
-      - "/benchmarks/**/*"
-      - "/release-please-config.json"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
-      runInCI: false

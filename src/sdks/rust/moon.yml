@@ -6,6 +6,8 @@ layer: "library"
 stack: "systems"
 tags: ["sdk", "rust", "tauri", "native", "release-product"]
 dependsOn:
+  - id: "shared-test-fixtures"
+    scope: "development"
   - "liboliphaunt-native"
   - "shared-rust-query-core"
 
@@ -26,246 +28,113 @@ owners:
 tasks:
   compile:
     tags: ["quality", "static", "requires-rust"]
-    command: "bash src/sdks/rust/tools/check-sdk.sh check-static"
+    script: |
+      set -e
+      cargo check -p oliphaunt --locked --all-targets
+      cargo check -p oliphaunt-build --locked --all-targets
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/check"
     inputs:
       - "@group(cargo-workspace)"
       - "/clippy.toml"
-      - "/src/shared/fixtures/postgres/**/*"
-      - "/src/shared/fixtures/protocol/query-response-cases.json"
-      - "/src/shared/fixtures/protocol/structured-sql-cases.json"
-      - "/src/shared/fixtures/storage/database-root.json"
       - project: "shared-rust-query-core"
       - "**/*"
-      - "/tools/runtime/**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true
   unit:
     tags: ["quality", "unit", "requires-rust"]
-    command: "bash src/sdks/rust/tools/check-sdk.sh test-unit"
+    script: |
+      set -e
+      mkdir -p "$CARGO_TARGET_DIR"
+      if [ -n "${CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER:-}" ]; then
+        rustc --edition=2024 --test src/sdks/rust/build.rs -C "linker=$CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" -o "$CARGO_TARGET_DIR/build-script-tests"
+      else
+        rustc --edition=2024 --test src/sdks/rust/build.rs -o "$CARGO_TARGET_DIR/build-script-tests"
+      fi
+      "$CARGO_TARGET_DIR/build-script-tests"
+      cargo test -p oliphaunt --doc --locked
+      cargo test -p oliphaunt-build --locked
+      cargo nextest run -p oliphaunt --locked --profile ci --no-tests=fail --lib --test public_api --test sdk_extensions
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/test"
     inputs:
       - "@group(cargo-workspace)"
-      - "/src/shared/fixtures/extensions/**/*"
-      - "/src/shared/fixtures/postgres/**/*"
-      - "/src/shared/fixtures/protocol/query-response-cases.json"
-      - "/src/shared/fixtures/protocol/structured-sql-cases.json"
-      - "/src/shared/fixtures/storage/database-root.json"
+      - project: "shared-test-fixtures"
       - project: "shared-rust-query-core"
       - "**/*"
-      - "/tools/runtime/**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true
-  smoke:
-    tags: ["runtime", "smoke"]
-    command: "bash src/sdks/rust/tools/check-sdk.sh smoke-runtime"
-    env:
-      CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/smoke"
-    deps:
-      - "liboliphaunt-native:host-smoke"
-    inputs:
-      - "/src/extensions/**/*"
-      - "!/src/extensions/generated/docs"
-      - "!/src/extensions/generated/docs/**"
-      - "!/src/extensions/evidence"
-      - "!/src/extensions/evidence/**"
-      - project: "liboliphaunt-native"
-      - "/src/shared/fixtures/postgres/**/*"
-      - "/src/shared/fixtures/protocol/query-response-cases.json"
-      - "/src/shared/fixtures/protocol/structured-sql-cases.json"
-      - "/src/shared/fixtures/storage/database-root.json"
-      - project: "shared-rust-query-core"
-      - "**/*"
-      - "/tools/runtime/**/*"
-      - "/tools/native-tools-proof/**/*"
-      - "/tools/xtask/**/*"
-      - "@group(cargo-workspace)"
-    options:
-      cache: local
-      runFromWorkspaceRoot: true
-      runInCI: false
   package:
     tags: ["package"]
-    command: "bash src/sdks/rust/tools/check-sdk.sh package-shape"
+    script: |
+      set -e
+      node src/sdks/rust/tools/package-source.mjs
+      cargo package --manifest-path target/liboliphaunt-sdk-check/oliphaunt-rust/package-source/Cargo.toml --allow-dirty --no-verify
+      cargo package --manifest-path target/liboliphaunt-sdk-check/oliphaunt-rust/package-source/Cargo.toml --allow-dirty --list > target/liboliphaunt-sdk-check/rust-cargo-package-list.txt
+      cargo package -p oliphaunt-build --locked --allow-dirty --no-verify
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/package"
     inputs:
       - "@group(legal-files)"
       - "@group(cargo-workspace)"
-      - "/release-please-config.json"
-      - "/src/extensions/generated/sdk/extensions.json"
-      - "/src/shared/fixtures/extensions/**/*"
-      - "/src/runtimes/broker/**/*"
-      - project: "liboliphaunt-native"
-      - "/src/shared/fixtures/postgres/**/*"
-      - "/src/shared/fixtures/protocol/query-response-cases.json"
-      - "/src/shared/fixtures/protocol/structured-sql-cases.json"
-      - "/src/shared/fixtures/storage/database-root.json"
+      - project: "shared-test-fixtures"
       - project: "shared-rust-query-core"
       - "**/*"
-      - "/src/sources/toolchains/bun.toml"
-      - "/tools/native-packaging/**/*"
-      - "/tools/dev/bun.sh"
-      - "/tools/release/broker-dependency-license-contract.mjs"
-      - "/tools/release/check-broker-release-assets.mjs"
-      - "/tools/release/check-liboliphaunt-release-assets.mjs"
-      - "/tools/release/cargo-source-package.mjs"
-      - "/tools/release/package-liboliphaunt-cargo-artifacts.mjs"
-      - "/tools/release/package_broker_cargo_artifacts.mjs"
-      - "/tools/release/platform-binary-contract.mjs"
-      - "@group(release-target-contract)"
-      - "/tools/release/prepare-rust-release-source.mjs"
-      - "/tools/release/product-version.mjs"
-      - "/tools/release/release-asset-validation.mjs"
-      - "/tools/release/release-cli-utils.mjs"
-      - "/tools/release/release-graph.mjs"
-      - "@group(release-archive-contract)"
-      - "/tools/release/rust-native-targets.mjs"
-      - "/tools/release/tar-command.mjs"
-      - "/tools/release/windows-vc-runtime-closure.mjs"
-      - "/tools/runtime/**/*"
-      - "/tools/test/**/*"
     outputs:
       - "/target/liboliphaunt-sdk-check/rust-cargo-package-list.txt"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
-  package-artifacts:
-    tags: ["release", "artifact-package", "ci-rust-sdk-package"]
-    command: "tools/dev/bun.sh tools/release/build-cargo-sdk-ci-artifacts.mjs oliphaunt-rust"
-    deps:
-      - "oliphaunt-rust:package"
-    env:
-      CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/package-artifacts"
-    inputs:
-      - "@group(legal-files)"
-      - "@group(cargo-workspace)"
-      - "/src/shared/fixtures/extensions/**/*"
-      - "/src/shared/fixtures/postgres/**/*"
-      - "/src/shared/fixtures/protocol/query-response-cases.json"
-      - "/src/shared/fixtures/protocol/structured-sql-cases.json"
-      - "/src/shared/fixtures/storage/database-root.json"
-      - project: "shared-rust-query-core"
-      - "**/*"
-      - "/tools/dev/capture-command-output.mjs"
-      - "/tools/dev/moon-command.mjs"
-      - "/tools/release/build-cargo-sdk-ci-artifacts.mjs"
-      - "/tools/release/build-sdk-ci-artifacts.mjs"
-      - "/tools/release/sdk-artifacts/rust.mjs"
-      - "/tools/release/sdk-artifacts/shared.mjs"
-      - "/tools/release/ios-carrier-manifest.mjs"
-      - "/tools/release/cargo-crate-filename.mjs"
-      - "/tools/release/check-cargo-package-test-closure.mjs"
-      - "/tools/release/check-staged-artifacts.mjs"
-      - "/tools/release/extension-runtime-asset-contract.mjs"
-      - "/tools/release/extension-upstream-licenses.mjs"
-      - "@group(release-target-contract)"
-      - "/tools/release/release-cli-utils.mjs"
-      - "/tools/release/release-graph.mjs"
-      - "@group(release-archive-contract)"
-      - "@group(source-sdk-packaging)"
-      - "/tools/policy/source-fetch-core.mjs"
-      - "/tools/runtime/**/*"
-    outputs:
-      - "/target/sdk-artifacts/oliphaunt-rust/**/*"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
-  release-consumer-build:
-    tags: ["release", "runtime", "ci-rust-sdk-package"]
-    command: >-
-      src/sdks/rust/tools/check-release-consumer.sh build
-      target/sdk-artifacts/oliphaunt-rust
-      target/native-extension-proof/oliphaunt-rust-release-consumer
-    deps:
-      - "oliphaunt-rust:package-artifacts"
-    env:
-      CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/release-consumer-build"
-    inputs:
-      - "/rust-toolchain.toml"
-      - "/src/sdks/rust/tests/release-consumer/**/*"
-      - "/src/sdks/rust/tools/check-release-consumer.sh"
-      - "/tools/dev/bun.sh"
-    outputs:
-      - "/target/native-extension-proof/oliphaunt-rust-release-consumer"
+      - "/target/liboliphaunt-sdk-check/oliphaunt-rust/package-source/**/*"
+      - "/target/moon/oliphaunt-rust/package/package/**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true
   qualify:
     tags: ["release", "package"]
-    command: "bash src/sdks/rust/tools/check-sdk.sh release-check"
-    env:
-      CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/release-check"
+    command: "true"
     deps:
-      - "liboliphaunt-native:release-runtime"
-    inputs:
-      - "@group(cargo-workspace)"
-      - "/src/shared/fixtures/extensions/**/*"
-      - "/src/shared/fixtures/postgres/**/*"
-      - "/src/shared/fixtures/protocol/query-response-cases.json"
-      - "/src/shared/fixtures/protocol/structured-sql-cases.json"
-      - "/src/shared/fixtures/storage/database-root.json"
-      - project: "shared-rust-query-core"
-      - "**/*"
-      - "/tools/native-packaging/**/*"
-      - "/tools/runtime/**/*"
-    options:
-      cache: local
-      runFromWorkspaceRoot: true
-  bench:
-    tags: ["bench", "plan"]
-    command: "bash tools/perf/matrix/run_native_oliphaunt_matrix.sh --plan-only"
-    env:
-      CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/bench"
-    inputs:
-      - "@group(cargo-workspace)"
-      - project: "shared-rust-query-core"
-      - "**/*"
-      - "/tools/perf/**/*"
-      - "/benchmarks/**/*"
-      - "/release-please-config.json"
-      - "/src/**/targets/**/*.toml"
+      - "oliphaunt-rust:compile"
+      - "oliphaunt-rust:unit"
+      - "oliphaunt-rust:package"
+      - "oliphaunt-rust:regression"
+    inputs: []
     options:
       cache: true
       runFromWorkspaceRoot: true
-      runInCI: false
   regression:
     tags: ["regression", "runtime"]
-    command: "bash src/sdks/rust/tools/check-sdk.sh regression"
+    script: |
+      set -e
+      . src/runtimes/liboliphaunt/native/tools/runtime-preflight.sh
+      oliphaunt_runtime_native_host_require basic
+      cargo test -p oliphaunt --locked --test native_smoke --test native_sql_regression -- --test-threads=1
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/regression"
     deps:
       - "liboliphaunt-native:host-smoke"
     inputs:
       - "@group(cargo-workspace)"
-      - "/src/shared/fixtures/postgres/**/*"
-      - "/src/shared/fixtures/protocol/query-response-cases.json"
-      - "/src/shared/fixtures/protocol/structured-sql-cases.json"
-      - "/src/shared/fixtures/storage/database-root.json"
+      - project: "shared-test-fixtures"
       - project: "shared-rust-query-core"
       - "**/*"
-      - "/tools/native-tools-proof/**/*"
-      - "/tools/runtime/**/*"
+      - "/src/runtimes/liboliphaunt/native/tools/runtime-preflight.sh"
     options:
       cache: local
       runFromWorkspaceRoot: true
   extension-regression:
     tags: ["regression", "runtime", "extensions"]
-    command: "bash src/sdks/rust/tools/check-sdk.sh extension-regression"
+    script: |
+      set -e
+      . src/runtimes/liboliphaunt/native/tools/runtime-preflight.sh
+      oliphaunt_runtime_native_host_require extensions
+      cargo test -p oliphaunt --locked --test native_extensions -- --test-threads=1
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/extension-regression"
     deps:
       - "extension-artifacts-native:qualify"
     inputs:
       - "@group(cargo-workspace)"
-      - "/src/shared/fixtures/postgres/**/*"
-      - "/src/shared/fixtures/protocol/query-response-cases.json"
-      - "/src/shared/fixtures/protocol/structured-sql-cases.json"
-      - "/src/shared/fixtures/storage/database-root.json"
+      - project: "shared-test-fixtures"
       - project: "shared-rust-query-core"
       - "/src/extensions/**/*"
       - "!/src/extensions/generated/docs"
@@ -274,47 +143,8 @@ tasks:
       - "!/src/extensions/evidence/**"
       - project: "liboliphaunt-native"
       - "**/*"
-      - "/tools/runtime/**/*"
+      - "/src/runtimes/liboliphaunt/native/tools/runtime-preflight.sh"
     options:
       cache: local
-      runFromWorkspaceRoot: true
-      runInCI: false
-  coverage:
-    tags: ["coverage", "quality"]
-    command: "tools/coverage/run-product oliphaunt-rust"
-    env:
-      CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/coverage"
-    inputs:
-      - "/.config/nextest.toml"
-      - "@group(cargo-workspace)"
-      - "/coverage/baseline.toml"
-      - "/src/shared/fixtures/extensions/**/*"
-      - "/src/shared/fixtures/postgres/**/*"
-      - "/src/shared/fixtures/protocol/query-response-cases.json"
-      - "/src/shared/fixtures/protocol/structured-sql-cases.json"
-      - "/src/shared/fixtures/storage/database-root.json"
-      - project: "shared-rust-query-core"
-      - "**/*"
-      - "/tools/coverage/**/*"
-    outputs:
-      - "/target/coverage/oliphaunt-rust/**/*"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
-  bench-run:
-    tags: ["bench", "measured"]
-    command: "bash tools/perf/matrix/run_native_oliphaunt_matrix.sh --engines direct,broker,server"
-    env:
-      CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/bench-run"
-    inputs:
-      - "@group(cargo-workspace)"
-      - project: "shared-rust-query-core"
-      - "**/*"
-      - "/tools/perf/**/*"
-      - "/benchmarks/**/*"
-      - "/release-please-config.json"
-      - "/src/**/targets/**/*.toml"
-    options:
-      cache: false
       runFromWorkspaceRoot: true
       runInCI: false

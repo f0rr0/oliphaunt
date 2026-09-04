@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { test } from "vitest";
+import { test } from "bun:test";
 
 import {
   PostgresError,
@@ -21,7 +21,7 @@ import {
   responseTransactionStatus,
   text,
   typedNull,
-} from "../src/query.js";
+} from "../src/query.ts";
 
 test("parameter plans infer OIDs without exposing mutable values across the await", () => {
   const value = { stable: 1 };
