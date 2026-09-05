@@ -1319,7 +1319,7 @@ JavaScript 82.97%, React Native 87.30%, WASIX Rust 85.49%, and WASIX TypeScript
 80.32%.
 
 The resolved pinned-Moon graph remains 55 projects and 207 tasks; it now has
-204 declared task dependency edges and no alternate output-producer exemption.
+206 declared task dependency edges and no alternate output-producer exemption.
 Affected-path fixtures issue one Moon query per change, and their former
 host-load-sensitive 15-second test deadlines are gone; the workflow job timeout
 remains the failure bound.
@@ -1329,3 +1329,13 @@ handoff regression now checks the actual Android/iOS download directories
 against ABI finalizer inputs. Product-task, planner, source-scope, package, and
 workflow gates remain the local proof; full platform compilers and registry
 writes remain intentionally hosted or protected operations.
+
+Hosted run `33975872438` at `73a7a054` exposed four clean-runner gaps. Node
+Direct packaging and the browser WASIX example now wait for the shared
+JavaScript core they resolve. API-surface inventory reads that canonical source
+instead of empty re-export facades, the JavaScript package test metadata models
+its bundled dependency, and the 512 MiB archive-bomb proof has a 120-second
+case-specific bound rather than inheriting the 30-second default. The exact
+Node Direct package, clean-output browser compile, SDK contract, full release
+mutation suite, uncached graph suite, and uncached workflow suite passed after
+these corrections.

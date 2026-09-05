@@ -51,6 +51,8 @@ tasks:
   browser-wasix-compile:
     tags: ["quality", "static", "browser", "wasix"]
     command: "pnpm --dir examples/browser-wasix typecheck"
+    deps:
+      - "shared-js-core:build"
     inputs:
       - "browser-wasix/**/*"
       - project: "oliphaunt-wasix-ts"

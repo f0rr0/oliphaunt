@@ -1188,4 +1188,4 @@ async function main() {
   }
 }
 
-test("extension artifact inventory enforces exact inventory and adversarial bounds", main);
+test("extension artifact inventory enforces exact inventory and adversarial bounds", { timeout: 120_000 }, main);
