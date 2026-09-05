@@ -6,7 +6,9 @@ Keep Moon and the ecosystem build tools. Reduce the number of places that decide
 what to build, what depends on it, and what counts as proof. Prioritize reusable
 artifact boundaries and the measured critical path over directory moves or
 arbitrary test deletion. The implementation below removes repeated work from
-the measured critical path; hosted timing for the new graph is still pending.
+the measured critical path. Its first hosted baseline is green and 14.1 minutes
+shorter wall-clock than the preceding PR run, without deleting behavioral
+qualification.
 
 This is the target architecture plus an implementation ledger. Only changes
 listed under **Implemented in this branch** are complete. It supersedes the
@@ -17,25 +19,31 @@ implication that graph invariants prove task semantics.
 
 Inspected on 2026-09-04: freshly fetched `origin/main` at
 `e20791d85b13151ef6eee023ff4b8cf39de0e123`; PR #173 at
-`ac35e58ae0a257fd91ea2919d95011508d8db61f`. The implementation recorded below
-is newer than that green PR SHA and requires a new hosted run.
+`3305a2f40207d1bcd7e39e0d343803e97f093585`. Shared-source ownership and trusted
+base-cache restoration are newer than that hosted baseline and require the next
+PR run.
 
 | Completed CI run | Wall time | Executed jobs | Summed job time |
 | --- | ---: | ---: | ---: |
 | [Latest main](https://github.com/f0rr0/oliphaunt/actions/runs/33801742528) | 135.5 min | 109 | 917.9 min |
 | [Latest PR #173](https://github.com/f0rr0/oliphaunt/actions/runs/33877271711) | 125.1 min | 87 | 900.2 min |
+| [Separated Postmaster baseline](https://github.com/f0rr0/oliphaunt/actions/runs/33931939861) | 111.0 min | 87 | 899.3 min |
 
 Calculated from GitHub job/run timestamps, excluding skipped jobs. Summed job
 time is not billed time; runner types have different costs. Different events,
 scope, queueing and cache states prevent a causal speedup claim. These runs do
 not substantiate a recent massive regression, but both remain very expensive.
-PR `Required` passed; `Qualified` was skipped by its event condition.
+PR `Required` passed; `Qualified` was skipped by its event condition. The newest
+run completed all 88 scheduled jobs without a failure; one job was skipped by
+its event condition, leaving 87 executed jobs.
 
-The PR critical path includes 52.6 minutes for Postmaster portable inputs,
-followed by 61.3 minutes for its macOS release-asset job. Inside that macOS job,
-Moon reports `runtime-build` at 46m11s, `initdb-stress` at 1m11s, and
-`backend-wave-stress` at 46s. Deleting those two stress checks would barely affect
-the critical path. Native iOS extension artifacts separately took 64.5 minutes.
+In the new baseline, Postmaster portable build and qualification took 48.7
+minutes. Moon ran the 34m23s production build and 36m06s patched-runtime test
+battery concurrently; portable packaging itself took 7 seconds. Target jobs
+took 25.6 minutes for Linux ARM64, 29.4 for Linux x64, and 30.8 for macOS. Native
+iOS extension artifacts remained the largest single producer at 78.5 minutes.
+The result localizes the next optimization to reusable compiler/producer state,
+not deletion of fast behavioral checks.
 
 Current resolved Moon graph: 55 projects, 198 tasks, 156 edges; 26 internal tasks;
 117 normal-cache, 13 local-cache, 68 uncached. Use `moon task-graph --json` for
@@ -300,8 +308,9 @@ Observed local runs, all with the repository-pinned Moon 2.5.4 toolchain and
 
 No behavioral test command was removed. The source parser deletion changes only
 the kind of proof: implementation spelling is no longer enforced, while the
-runtime behavior remains exercised. Hosted cache reuse is not claimed, and the
-new GitHub timings must be compared only after the updated SHA completes.
+runtime behavior remains exercised. The separated Postmaster graph passed its
+first hosted run; hosted reuse of the newly added base-main WASIX cache is not
+claimed until the updated SHA completes.
 
 During local qualification, generated compiler/build directories under
 `target/` were removed when disk pressure required it. They are reproducible
