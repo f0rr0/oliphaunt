@@ -55,6 +55,15 @@ test("downloaded Moon dependencies are explicit direct handoffs", () => {
       for (const transfer of transfers) {
         assert.ok(direct.has(transfer), `${workflowJob} transfers non-direct dependency ${transfer}`);
       }
+      for (const dependency of direct) {
+        if (!transfers.includes(dependency)) {
+          assert.notEqual(
+            tasks.get(dependency)?.options?.internal,
+            true,
+            `${workflowJob} cannot directly run internal dependency ${dependency}`,
+          );
+        }
+      }
 
       assert.ok(
         steps.slice(0, index).some(({ uses }) => String(uses ?? "").startsWith("actions/download-artifact@")),

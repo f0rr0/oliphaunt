@@ -1351,3 +1351,17 @@ same run found real WASIX asset-helper coverage below the unchanged per-file
 floor; one behavioral feature-contract test raised that file to 114/121 covered
 lines. The exact uncached Node Direct package, WASIX Rust coverage (193 tests,
 85.73% overall), graph, workflow, and format gates passed locally.
+
+Hosted run `33983325338` at `22bc63b0` exposed three further assumptions. Two
+test lanes ran without embedded WASIX assets, so the asset contract now checks
+the manifest digest against actual asset presence and also covers the ICU
+feature matrix. Slower macOS cleanup legitimately retried an already-ignored
+early cancel; the lifecycle check now collapses only duplicate ignored retries
+while still requiring the first race observation, real cancellation, and one
+terminal close. Finally, a downloaded WASIX runtime handoff tried to execute the
+internal `source-fetch-extensions` task as a new Moon root. That source task is
+now explicitly runnable, and the workflow contract rejects any future handoff
+whose remaining direct dependency is internal. Exact uncached source fetch,
+Node Direct packaging, WASIX Rust coverage, graph, workflow, and format checks
+passed locally; the failed `Tests` aggregate was downstream of the two test
+lanes rather than a separate cause.

@@ -1199,7 +1199,11 @@ async function runParent(options) {
             scenario.expectStaleCleanup ?? false,
           );
         } else {
-          assertTerminalLifecycle(executionName, events, scenario.expectedBeforeClose);
+          const assertedEvents = scenario.ignoreEarlyCancel
+            ? events.filter((event, index) =>
+                event !== "cancel-early-ignored" || index === events.indexOf(event))
+            : events;
+          assertTerminalLifecycle(executionName, assertedEvents, scenario.expectedBeforeClose);
         }
       }
     }

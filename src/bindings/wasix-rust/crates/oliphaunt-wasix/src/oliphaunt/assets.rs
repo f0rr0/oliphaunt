@@ -232,7 +232,12 @@ mod tests {
 
     #[test]
     fn asset_helpers_expose_a_consistent_feature_contract() {
-        assert_eq!(CatalogProfile::default(), CatalogProfile::Standard);
+        let default_profile = if cfg!(feature = "icu") {
+            CatalogProfile::Icu
+        } else {
+            CatalogProfile::Standard
+        };
+        assert_eq!(CatalogProfile::default(), default_profile);
         CatalogProfile::Standard.validate_available().unwrap();
         assert_eq!(
             CatalogProfile::Icu.validate_available().is_ok(),
@@ -240,32 +245,25 @@ mod tests {
         );
 
         let metadata = asset_manifest_metadata().unwrap();
+        assert_eq!(metadata.cluster_seed_profile, default_profile.as_str());
+        let has_embedded_assets = liboliphaunt_wasix_portable::HAS_EMBEDDED_ASSETS;
         assert_eq!(
-            metadata.cluster_seed_profile,
-            CatalogProfile::Standard.as_str()
+            !expected_runtime_archive_sha256().unwrap().is_empty(),
+            has_embedded_assets
         );
-        assert!(!expected_runtime_archive_sha256().unwrap().is_empty());
-        assert_eq!(
-            runtime_archive().is_some(),
-            liboliphaunt_wasix_portable::HAS_EMBEDDED_ASSETS
-        );
+        assert_eq!(runtime_archive().is_some(), has_embedded_assets);
         assert_eq!(
             cluster_seed_archive(CatalogProfile::Standard).is_some(),
-            liboliphaunt_wasix_portable::HAS_EMBEDDED_ASSETS
+            has_embedded_assets
         );
         assert_eq!(
             cluster_seed_manifest(CatalogProfile::Standard).is_some(),
-            liboliphaunt_wasix_portable::HAS_EMBEDDED_ASSETS
+            has_embedded_assets
         );
         assert!(icu_data_archive(CatalogProfile::Standard).is_none());
-        assert_eq!(
-            expected_icu_data_archive_sha256().is_some(),
-            cfg!(feature = "icu")
-        );
-        assert_eq!(
-            expected_icu_data_tree_sha256().is_some(),
-            cfg!(feature = "icu")
-        );
+        let has_icu_assets = icu_data_archive(CatalogProfile::Icu).is_some();
+        assert_eq!(expected_icu_data_archive_sha256().is_some(), has_icu_assets);
+        assert_eq!(expected_icu_data_tree_sha256().is_some(), has_icu_assets);
     }
 
     #[test]

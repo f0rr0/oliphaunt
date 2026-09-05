@@ -130,5 +130,4 @@ tasks:
       - "@group(release-archive-contract)"
     options:
       cache: false
-      internal: true
       runFromWorkspaceRoot: true
