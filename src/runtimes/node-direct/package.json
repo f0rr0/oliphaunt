@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/node-direct",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Node-API native direct adapter for Oliphaunt.",
   "license": "MIT",
   "private": true,
@@ -11,7 +11,7 @@
     "directory": "src/runtimes/node-direct"
   },
   "oliphaunt": {
-    "liboliphauntVersion": "0.1.1"
+    "liboliphauntVersion": "0.2.0"
   },
   "files": [
     "native",

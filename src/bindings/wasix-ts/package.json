@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/wasix-ts",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Portable Oliphaunt WASIX TypeScript SDK for browsers, Node.js, Bun, Deno, and Electron.",
   "license": "MIT",
   "type": "module",
@@ -16,9 +16,9 @@
   "homepage": "https://oliphaunt.dev",
   "oliphaunt": {
     "runtimeProduct": "liboliphaunt-wasix",
-    "runtimeVersion": "0.1.1",
+    "runtimeVersion": "0.2.0",
     "wasixNapiProduct": "oliphaunt-wasix-napi",
-    "wasixNapiVersion": "0.0.0",
+    "wasixNapiVersion": "0.1.0",
     "wasixAddonAbiVersion": 1,
     "nodeApiVersion": 8,
     "browserHost": "wasmer-js-patched",
