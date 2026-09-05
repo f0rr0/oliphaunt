@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/wasix-napi",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Private build package for the Oliphaunt WASIX Node-API runtime.",
   "license": "MIT",
   "private": true,
@@ -12,9 +12,9 @@
   },
   "oliphaunt": {
     "runtimeProduct": "liboliphaunt-wasix",
-    "runtimeVersion": "0.1.1",
+    "runtimeVersion": "0.2.0",
     "rustBindingProduct": "oliphaunt-wasix-rust",
-    "rustBindingVersion": "0.1.1",
+    "rustBindingVersion": "0.2.0",
     "addonAbiVersion": 1,
     "nodeApiVersion": 8,
     "profiles": [

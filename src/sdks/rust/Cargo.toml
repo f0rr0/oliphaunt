@@ -1,6 +1,6 @@
 [package]
 name = "oliphaunt"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.93"
 description = "Native-first Rust SDK surface for embedded PostgreSQL through liboliphaunt."
@@ -29,8 +29,8 @@ internal-native-packaging = []
 
 [package.metadata.oliphaunt]
 broker-helper = "oliphaunt-broker"
-broker-version = "0.1.1"
-native-version = "0.1.1"
+broker-version = "0.2.0"
+native-version = "0.2.0"
 
 [dependencies]
 fs2 = "0.4"
