@@ -26,7 +26,7 @@ import {
 
 import { createDeterministicTar } from "./cargo-source-package.mjs";
 import { extensionRuntimeAssetContract } from "./extension-runtime-asset-contract.mjs";
-import { canonicalGzipSync } from "./portable-archive.mjs";
+import { canonicalGzipSync } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import {
   ROOT,
   compareText,
@@ -50,7 +50,7 @@ import {
   assertWasixExtensionArchiveInstall,
   assertWasixExtensionInstallSidecar,
   projectWasixExtensionInstallSidecar,
-} from "./wasix-extension-install-contract.mjs";
+} from "../../src/shared/extension-runtime-contract/wasix-extension-install.mjs";
 
 const PREFIX = "build-extension-ci-artifacts.mjs";
 

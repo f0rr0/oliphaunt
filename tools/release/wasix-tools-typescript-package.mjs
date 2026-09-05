@@ -3,7 +3,7 @@ import path from 'node:path';
 import { prepareWasixToolsTypescriptPackage as prepareProductPackage } from '../../src/bindings/wasix-ts/tools-package/tools/package.mjs';
 
 import { validateNpmTrustedPublishingManifest } from './npm-trusted-publishing.mjs';
-import { readPortableArchiveEntries } from './portable-archive.mjs';
+import { readPortableArchiveEntries } from '../../src/shared/artifact-packaging/portable-archive.mjs';
 import {
   assertReleaseNoticesInArchive,
   assertReleaseNoticesInDirectory,

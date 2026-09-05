@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { archiveTreeDigest } from "../../src/sources/tools/source-fetch-core.mjs";
 import { requireSafeDirectoryChain as requireReleaseDirectoryChain } from "./release-directory-safety.mjs";
-import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import { readPortableArchiveEntries } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import {
   hasCanonicalReleaseStagingMode,
   releaseNoticeRows,

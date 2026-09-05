@@ -17,7 +17,7 @@ import {
   fail,
 } from "./release-artifact-targets.mjs";
 import { inspectPlatformBinaryEntries } from "./platform-binary-contract.mjs";
-import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import { readPortableArchiveEntries } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import {
   assertReleaseNoticesInEntries,
   releaseProfilePackageLicense,

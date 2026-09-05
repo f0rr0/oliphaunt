@@ -6,6 +6,8 @@ layer: "tool"
 stack: "infrastructure"
 tags: ["tools", "release"]
 dependsOn:
+  - id: "artifact-packaging"
+    scope: "build"
   - id: "shared-test-fixtures"
     scope: "development"
   - id: "extension-runtime-contract"
@@ -75,6 +77,8 @@ tasks:
       - "@group(release-target-contract)"
       - "/tools/release/build-cargo-sdk-ci-artifacts.mjs"
       - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - project: "artifact-packaging"
+        group: "source"
       - "/tools/release/cargo-source-package.mjs"
       - "/tools/release/check-cargo-package-test-closure.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
@@ -220,6 +224,8 @@ tasks:
       - "@group(release-target-contract)"
       - "/tools/release/build-cargo-sdk-ci-artifacts.mjs"
       - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - project: "artifact-packaging"
+        group: "source"
       - "/tools/release/cargo-source-package.mjs"
       - "/tools/release/check-cargo-package-test-closure.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
@@ -271,7 +277,8 @@ tasks:
     tags: ["release", "planner"]
     command: "true"
     inputs:
-      - "/tools/release/portable-archive.mjs"
+      - project: "artifact-packaging"
+        group: "source"
       - "/tools/release/validate-ios-carrier-zips.mjs"
     options:
       cache: false
@@ -405,7 +412,7 @@ tasks:
         group: "contract"
       - "/tools/release/extension-artifact-inventory.mjs"
       - "/tools/release/extension-registry-packages.mjs"
-      - "/tools/release/extension-target-profiles.mjs"
+      - "/src/shared/extension-runtime-contract/extension-target-profiles.mjs"
       - "/tools/release/extension-upstream-licenses.mjs"
       - "/tools/release/native-extension-asset-index-contract.mjs"
       - "/tools/release/native-extension-lifecycle-receipts.test.mjs"
@@ -480,7 +487,7 @@ tasks:
       - "/tools/release/platform-binary-contract.mjs"
       - "/tools/release/platform-binary-contract.test.mjs"
       - "/tools/release/release-asset-validation.mjs"
-      - "/tools/release/extension-target-profiles.mjs"
+      - "/src/shared/extension-runtime-contract/extension-target-profiles.mjs"
       - "/tools/release/release-artifact-targets.mjs"
       - "@group(release-archive-contract)"
       - "/tools/policy/moon.mjs"
@@ -515,7 +522,7 @@ tasks:
       - "/tools/release/platform-binary-contract.mjs"
       - "/tools/release/platform-binary-contract.test.mjs"
       - "/tools/release/release-asset-validation.mjs"
-      - "/tools/release/extension-target-profiles.mjs"
+      - "/src/shared/extension-runtime-contract/extension-target-profiles.mjs"
       - "/tools/release/release-artifact-targets.mjs"
       - "@group(release-archive-contract)"
       - "/tools/release/write_checksum_manifest.mjs"
@@ -550,7 +557,7 @@ tasks:
       - "/tools/release/install-node-fallback.sh"
       - "/tools/release/package-node-direct-runtime.sh"
       - "/tools/release/release-asset-validation.mjs"
-      - "/tools/release/extension-target-profiles.mjs"
+      - "/src/shared/extension-runtime-contract/extension-target-profiles.mjs"
       - "/tools/release/release-artifact-targets.mjs"
       - "/tools/release/release_graph_query.mjs"
       - "/tools/policy/moon.mjs"
@@ -583,7 +590,7 @@ tasks:
       - "/tools/release/platform-binary-contract.mjs"
       - "/tools/release/platform-binary-contract.test.mjs"
       - "/tools/release/release-asset-validation.mjs"
-      - "/tools/release/extension-target-profiles.mjs"
+      - "/src/shared/extension-runtime-contract/extension-target-profiles.mjs"
       - "/tools/release/release-artifact-targets.mjs"
       - "@group(release-archive-contract)"
       - "/tools/release/release_graph_query.mjs"
@@ -641,7 +648,8 @@ tasks:
       - "/tools/dev/deno.sh"
       - "/tools/dev/install-pinned-js-runtime.sh"
       - "/tools/dev/moon-command.mjs"
-      - "/tools/release/archive_dir.mjs"
+      - project: "artifact-packaging"
+        group: "source"
       - "/tools/release/check-wasix-napi-release-assets.mjs"
       - "/tools/release/build-linux-wasix-napi-baseline.sh"
       - "/tools/release/check-linux-consumer-baseline.sh"
@@ -663,6 +671,30 @@ tasks:
       cache: false
       runFromWorkspaceRoot: true
 
+  postmaster-release-assets:
+    tags: ["release", "artifact-package", "ci-wasix-postmaster"]
+    script: |
+      set -eu
+      version="$(tr -d '\r\n' < src/runtimes/liboliphaunt/wasix-postmaster/VERSION)"
+      bun tools/release/merge-product-release-assets.mjs \
+        --product liboliphaunt-wasix-postmaster \
+        --version "$version" \
+        --asset-dir target/oliphaunt-wasix-postmaster/release-assets
+    inputs:
+      - "/src/runtimes/liboliphaunt/wasix-postmaster/VERSION"
+      - "/src/runtimes/liboliphaunt/wasix-postmaster/moon.yml"
+      - "/tools/release/merge-product-release-assets.mjs"
+      - "/tools/release/platform-compatibility-policy.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-graph.mjs"
+      - "/target/oliphaunt-wasix-postmaster/release-assets/**/*"
+    outputs:
+      - "/target/oliphaunt-wasix-postmaster/release-assets/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true
+
   wasix-extension-packages:
     tags: ["release", "artifact-package"]
     command: "tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs --all --family wasix --require-wasix"
@@ -678,13 +710,16 @@ tasks:
       - "/src/shared/extension-runtime-contract/**/*"
       - "/tools/dev/bun.sh"
       - "/tools/release/build-extension-ci-artifacts.mjs"
+      - project: "artifact-packaging"
+        group: "source"
       - "/tools/release/cargo-source-package.mjs"
       - "/tools/release/extension-runtime-asset-contract.mjs"
       - "/tools/release/extension-upstream-licenses.mjs"
       - "/tools/release/release-artifact-targets.mjs"
       - "/tools/release/wasix-aot-manifest.mjs"
       - "/tools/release/wasix-cargo-artifact-contract.mjs"
-      - "/tools/release/wasix-extension-install-contract.mjs"
+      - project: "extension-runtime-contract"
+        group: "contract"
       - "/target/extensions/wasix/release-assets/**/*"
       - "/target/extensions/wasix/aot-artifacts/**/*"
     outputs:
@@ -709,7 +744,8 @@ tasks:
       - project: "liboliphaunt-wasix"
         group: "crates"
       - "/src/runtimes/liboliphaunt/icu/**/*"
-      - "/tools/release/archive_dir.mjs"
+      - project: "artifact-packaging"
+        group: "source"
       - "/tools/release/check-native-helper-aggregate-assets.mjs"
       - "/tools/release/check-wasix-napi-release-assets.mjs"
       - "/tools/release/build-linux-wasix-napi-baseline.sh"

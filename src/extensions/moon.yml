@@ -105,8 +105,8 @@ tasks:
       - "tools/native-component-contract.mjs"
       - "tools/native-component-contract.test.mjs"
       - "/src/runtimes/liboliphaunt/native/portable-uuid/**/*"
-      - "/tools/release/extension-target-profiles.mjs"
-      - "/tools/release/extension-target-profiles.toml"
+      - project: "extension-runtime-contract"
+        group: "contract"
     options:
       cache: true
       runFromWorkspaceRoot: true

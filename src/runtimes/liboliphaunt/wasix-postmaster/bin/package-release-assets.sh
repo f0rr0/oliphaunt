@@ -99,7 +99,7 @@ cp -p "$repo_root/LICENSE" "$package_root/LICENSE"
 cp -p "$repo_root/THIRD_PARTY_NOTICES.md" "$package_root/THIRD_PARTY_NOTICES.md"
 cp -p "$project_root/README.md" "$package_root/README.md"
 
-"$repo_root/tools/dev/bun.sh" "$repo_root/tools/release/archive_dir.mjs" \
+node "$repo_root/src/shared/artifact-packaging/archive-directory.mjs" \
   --keep-parent "$package_root" "$asset_dir/$asset_name"
 asset_sha256="$(fresh_wasmer_bin_hash "$asset_dir/$asset_name")"
 asset_size="$(wc -c <"$asset_dir/$asset_name" | tr -d '[:space:]')"

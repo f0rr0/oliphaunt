@@ -99,7 +99,7 @@ done
 # PostgreSQL installs versioned shared-library aliases as symlinks. Release
 # archives are link-free consumer inputs, so materialize only validated,
 # relative aliases that remain inside the staged tree.
-tools/dev/bun.sh tools/release/materialize-release-symlinks.mjs "$stage"
+tools/dev/bun.sh src/shared/artifact-packaging/materialize-release-symlinks.mjs "$stage"
 
 echo "==> Optimizing staged liboliphaunt $target_id release payload"
 tools/dev/bun.sh tools/release/optimize_native_runtime_payload.mjs "$stage" --target "$target_id" --tool-set runtime
@@ -126,8 +126,8 @@ env \
   OLIPHAUNT_ICU_DATA_DIR="$work_root/icu/share/icu" \
   node src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.mjs --cluster-seeds
 
-tools/release/archive_dir.mjs "$stage" "$out_dir/$asset"
-tools/release/archive_dir.mjs "$tools_stage" "$out_dir/$tools_asset"
+src/shared/artifact-packaging/archive-directory.mjs "$stage" "$out_dir/$asset"
+src/shared/artifact-packaging/archive-directory.mjs "$tools_stage" "$out_dir/$tools_asset"
 tools/dev/bun.sh tools/release/release-notices.mjs check-archive "$out_dir/$asset" --profile native-runtime
 tools/dev/bun.sh tools/release/release-notices.mjs check-archive "$out_dir/$tools_asset" --profile native-tools
 echo "liboliphauntMacosReleaseAsset=$out_dir/$asset"

@@ -24,7 +24,7 @@ import {
   extensionMavenLicenses,
   extensionRegistryLicense,
 } from "./extension-upstream-licenses.mjs";
-import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import { readPortableArchiveEntries } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const PREFIX = "build_maven_artifact_manifest.mjs";

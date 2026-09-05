@@ -1,7 +1,9 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 import { deflateRawSync } from 'node:zlib';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 
 import {
   canonicalGzipSync,
@@ -9,7 +11,7 @@ import {
 } from './portable-archive.mjs';
 
 function fail(message) {
-  throw new Error(`archive_dir.mjs: ${message}`);
+  throw new Error(`archive-directory.mjs: ${message}`);
 }
 
 function compareText(left, right) {
@@ -159,7 +161,7 @@ function tarHeader(entry, size, mode) {
   return header;
 }
 
-async function createTar(root, options) {
+export async function createDeterministicTar(root, options = {}) {
   const chunks = [];
   for (const entry of await archiveEntries(root, options)) {
     const stat = entry.stat;
@@ -302,7 +304,7 @@ function parseArgs(argv) {
     values.shift();
   }
   if (values.length !== 2) {
-    fail('usage: tools/release/archive_dir.mjs [--keep-parent] <source-dir> <output.tar.gz|output.tar.zst|output.zip>');
+    fail('usage: src/shared/artifact-packaging/archive-directory.mjs [--keep-parent] <source-dir> <output.tar.gz|output.tar.zst|output.zip>');
   }
   return {
     keepParent,
@@ -319,9 +321,9 @@ async function main(argv) {
   }
   await fs.mkdir(path.dirname(output), { recursive: true });
   if (output.endsWith('.tar.gz')) {
-    await fs.writeFile(output, canonicalGzipSync(await createTar(source, { keepParent })));
+    await fs.writeFile(output, canonicalGzipSync(await createDeterministicTar(source, { keepParent })));
   } else if (output.endsWith('.tar.zst')) {
-    await fs.writeFile(output, releaseZstdCompressSync(await createTar(source, { keepParent })));
+    await fs.writeFile(output, releaseZstdCompressSync(await createDeterministicTar(source, { keepParent })));
   } else if (path.extname(output) === '.zip') {
     await fs.writeFile(output, await createDeterministicZip(source, { keepParent }));
   } else {
@@ -329,9 +331,9 @@ async function main(argv) {
   }
 }
 
-if (import.meta.main) {
+if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    await main(Bun.argv.slice(2));
+    await main(process.argv.slice(2));
   } catch (cause) {
     console.error(cause instanceof Error ? cause.message : String(cause));
     process.exit(2);

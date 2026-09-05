@@ -17,7 +17,7 @@ import {
   NPM_TRUSTED_PUBLISHING_REPOSITORY,
   validateNpmTrustedPublishingManifest,
 } from './npm-trusted-publishing.mjs';
-import { readPortableArchiveEntries } from './portable-archive.mjs';
+import { readPortableArchiveEntries } from '../../src/shared/artifact-packaging/portable-archive.mjs';
 import {
   assertReleaseNoticesInArchive,
   assertReleaseNoticesInDirectory,

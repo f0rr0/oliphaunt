@@ -6,6 +6,8 @@ layer: "library"
 stack: "systems"
 tags: ["runtime", "wasix", "wasm", "postgres", "release-product"]
 dependsOn:
+  - id: "artifact-packaging"
+    scope: "build"
   - id: "postgres18"
     scope: "build"
   - id: "source-toolchains"
@@ -312,8 +314,8 @@ tasks:
       - project: "third-party-wasix-postmaster"
         group: "sources"
       - "/src/sources/toolchains/wasix.toml"
-      - "/tools/release/archive_dir.mjs"
-      - "/tools/release/portable-archive.mjs"
+      - project: "artifact-packaging"
+        group: "source"
     outputs:
       - "/target/oliphaunt-wasix-postmaster/carriers/**/*"
     options:
@@ -332,30 +334,9 @@ tasks:
       - "**/*"
       - project: "third-party-wasix-postmaster"
         group: "sources"
-      - "/tools/dev/bun.sh"
-      - "/tools/release/archive_dir.mjs"
-      - "/tools/release/portable-archive.mjs"
+      - project: "artifact-packaging"
+        group: "source"
       - "/target/oliphaunt-wasix-postmaster/carriers/**/*"
-    outputs:
-      - "/target/oliphaunt-wasix-postmaster/release-assets/**/*"
-    options:
-      cache: false
-      runFromWorkspaceRoot: true
-      runInCI: true
-
-  aggregate-release-assets:
-    tags: ["release", "artifact-package", "ci-wasix-postmaster"]
-    command: "bash src/runtimes/liboliphaunt/wasix-postmaster/bin/merge-release-assets.sh"
-    inputs:
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/VERSION"
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/bin/merge-release-assets.sh"
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/moon.yml"
-      - "/tools/dev/bun.sh"
-      - "/tools/release/merge-product-release-assets.mjs"
-      - "/tools/release/platform-compatibility-policy.mjs"
-      - "/tools/release/release-artifact-targets.mjs"
-      - "/tools/release/release-graph.mjs"
-      - "/target/oliphaunt-wasix-postmaster/release-assets/**/*"
     outputs:
       - "/target/oliphaunt-wasix-postmaster/release-assets/**/*"
     options:
@@ -406,10 +387,8 @@ tasks:
       - "**/*"
       - project: "third-party-wasix-postmaster"
         group: "sources"
-      - "/tools/dev/bun.sh"
-      - "/tools/release/archive_dir.mjs"
-      - "/tools/release/materialize-release-symlinks.mjs"
-      - "/tools/release/portable-archive.mjs"
+      - project: "artifact-packaging"
+        group: "source"
       - "/target/oliphaunt-wasix-postmaster/install/wasix-core-release-o3/**/*"
       - "/target/oliphaunt-wasix-postmaster/runtime/build/patched-wasixcc-sysroot/**/*"
       - "/target/oliphaunt-wasix-postmaster/runtime/build/probes/**/*"

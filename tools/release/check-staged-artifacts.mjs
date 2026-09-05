@@ -47,7 +47,7 @@ import {
   readAndroidApkEntries,
   readCanonicalTarGzipEntries,
   readPortableArchiveEntries,
-} from "./portable-archive.mjs";
+} from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import {
   assertReleaseNoticesInArchive,
   releaseNoticeRows,
@@ -62,7 +62,7 @@ import {
 } from "./source-only-sdk-package.mjs";
 import { assertWasixTypescriptNpmArchive } from "./wasix-typescript-package.mjs";
 import { assertWasixToolsTypescriptNpmArchive } from "./wasix-tools-typescript-package.mjs";
-import { assertWasixExtensionMemberInstall } from "./wasix-extension-install-contract.mjs";
+import { assertWasixExtensionMemberInstall } from "../../src/shared/extension-runtime-contract/wasix-extension-install.mjs";
 import {
   validateSelectionNeutralSwiftCarrierIdentity,
   validateSelectionNeutralSwiftSourceCarrierFile,

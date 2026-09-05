@@ -5,6 +5,9 @@ language: "javascript"
 layer: "configuration"
 stack: "systems"
 tags: ["extensions", "contract", "runtime"]
+dependsOn:
+  - id: "artifact-packaging"
+    scope: "build"
 
 project:
   title: "Extension Runtime Contract"
@@ -18,5 +21,21 @@ owners:
 
 fileGroups:
   contract:
-    - "**/*"
-    - "!moon.yml"
+    - "contract.toml"
+    - "extension-artifact-archive-policy.properties"
+    - "extension-target-profiles.mjs"
+    - "extension-target-profiles.toml"
+    - "wasix-extension-install.mjs"
+
+tasks:
+  test:
+    tags: ["quality", "unit"]
+    command: "bun test src/shared/extension-runtime-contract/*.test.mjs"
+    inputs:
+      - "@group(contract)"
+      - "*.test.mjs"
+      - project: "artifact-packaging"
+        group: "source"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

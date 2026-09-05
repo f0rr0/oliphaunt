@@ -23,7 +23,7 @@ import {
   extensionNpmWasixPackageForProduct,
   extensionRegistryPackageEntries,
 } from "./extension-registry-packages.mjs";
-import { canonicalGzipSync } from "./portable-archive.mjs";
+import { canonicalGzipSync } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import {
   currentProductVersionSync,
   extensionReleaseVersion,

@@ -22,7 +22,7 @@ import {
   stageMavenArtifactManifest,
 } from "./maven-artifact-staging.mjs";
 import { validateMavenCentralPublication } from "./maven-central-contract.mjs";
-import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import { readPortableArchiveEntries } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 
 const roots = [];
 const ROOT = path.resolve(import.meta.dir, "../..");

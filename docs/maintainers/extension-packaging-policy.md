@@ -31,7 +31,7 @@ boundary, not general build metadata. Experimental extension work belongs on a
 branch; an extension merged into the public catalog has a complete package
 identity and only claims targets it supports.
 
-`tools/release/extension-target-profiles.toml` is the single exact-extension
+`src/shared/extension-runtime-contract/extension-target-profiles.toml` is the single exact-extension
 target contract. Every extension merged to main ships on every target in that
 contract; incomplete target work stays on a branch. This keeps target coverage
 fail-closed without 39 identical member manifests or status fields. The

@@ -44,7 +44,7 @@ import {
   iosBaseLegalMetadata,
   swiftExtensionCarrierAssetName,
 } from "./ios-carrier-manifest.mjs";
-import { canonicalGzipSync } from "./portable-archive.mjs";
+import { canonicalGzipSync } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 
 const temporaryDirectories = [];
 

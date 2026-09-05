@@ -1,7 +1,7 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -17,7 +17,7 @@ import path from "node:path";
 import test from "node:test";
 import { gunzipSync, zstdDecompressSync } from "node:zlib";
 
-const ARCHIVER = path.resolve(import.meta.dir, "archive_dir.mjs");
+const ARCHIVER = path.resolve(import.meta.dirname, "archive-directory.mjs");
 
 function run(command, args) {
   const result = spawnSync(command, args, { encoding: "utf8" });

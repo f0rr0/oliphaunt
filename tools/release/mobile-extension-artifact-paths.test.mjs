@@ -23,7 +23,7 @@ import {
   extensionCarrierLegalContract,
   extensionCarrierLegalFileInventory,
 } from "./extension-upstream-licenses.mjs";
-import { canonicalGzipSync } from "./portable-archive.mjs";
+import { canonicalGzipSync } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import { stageReleaseNotices } from "./release-notices.mjs";
 
 const SCRIPT = fileURLToPath(

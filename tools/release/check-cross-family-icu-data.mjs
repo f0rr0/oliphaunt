@@ -8,7 +8,7 @@ import {
   ICU_DATA_VERSION,
   parseNativeIcuDataIdentity,
 } from "./native-icu-data-contract.mjs";
-import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import { readPortableArchiveEntries } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import { WASIX_PORTABLE_RELEASE_MEMBERS } from "./wasix-runtime-npm-contract.mjs";
 
 const TOOL = "check-cross-family-icu-data.mjs";

@@ -32,9 +32,9 @@ function taskGraph(target) {
 
 test('postmaster CI selects only terminal product roots', () => {
   assert.deepEqual(CI_JOB_TARGETS['wasix-postmaster'], [
-    'liboliphaunt-wasix-postmaster:aggregate-release-assets',
     'liboliphaunt-wasix-postmaster:portable-inputs',
     'liboliphaunt-wasix-postmaster:release-assets',
+    'release-tools:postmaster-release-assets',
   ]);
 });
 
@@ -232,11 +232,12 @@ test('postmaster runtime changes select its production builder and release', () 
   );
 });
 
-test('postmaster aggregate helper remains owned by the product CI graph', () => {
+test('postmaster aggregate helper is owned by release orchestration', () => {
   const effects = directEffects('tools/release/merge-product-release-assets.mjs');
-  assert.equal(effects.projects.includes('liboliphaunt-wasix-postmaster'), true);
+  assert.equal(effects.projects.includes('release-tools'), true);
+  assert.equal(effects.projects.includes('liboliphaunt-wasix-postmaster'), false);
   assert.equal(effects.tasks.includes(
-    'liboliphaunt-wasix-postmaster:aggregate-release-assets',
+    'release-tools:postmaster-release-assets',
   ), true);
   assert.equal(effects.jobs.includes('wasix-postmaster'), true);
 });

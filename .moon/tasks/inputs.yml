@@ -14,12 +14,12 @@ fileGroups:
     - "/THIRD_PARTY_NOTICES.md"
   release-archive-contract:
     - "/tools/release/release-directory-safety.mjs"
-    - "/tools/release/portable-archive.mjs"
+    - "/src/shared/artifact-packaging/portable-archive.mjs"
     - "/tools/release/release-notices.mjs"
   release-target-contract:
     - "/tools/release/platform-compatibility-policy.mjs"
-    - "/tools/release/extension-target-profiles.mjs"
-    - "/tools/release/extension-target-profiles.toml"
+    - "/src/shared/extension-runtime-contract/extension-target-profiles.mjs"
+    - "/src/shared/extension-runtime-contract/extension-target-profiles.toml"
     - "/tools/release/release-artifact-targets.mjs"
 # Installed dependency trees are derived state. Task invalidation comes from
 # tracked package manifests, workspace configuration, and lockfiles instead of

@@ -43,8 +43,8 @@ import {
   extensionCarrierLegalContract,
   extensionCarrierLegalFileInventory,
 } from "./extension-upstream-licenses.mjs";
-import { readCanonicalTarGzipEntries } from "./portable-archive.mjs";
-import { assertWasixExtensionMemberInstall } from "./wasix-extension-install-contract.mjs";
+import { readCanonicalTarGzipEntries } from "../../src/shared/artifact-packaging/portable-archive.mjs";
+import { assertWasixExtensionMemberInstall } from "../../src/shared/extension-runtime-contract/wasix-extension-install.mjs";
 
 export { validateSelectionNeutralSwiftSourceCarrier };
 

@@ -13,7 +13,7 @@ import { loadContribCarriers } from "./contrib-carriers.mjs";
 import {
   EXTENSION_TARGET_PROFILES_RELATIVE_PATH,
   loadExtensionTargetProfiles,
-} from "./extension-target-profiles.mjs";
+} from "../../src/shared/extension-runtime-contract/extension-target-profiles.mjs";
 import { loadGraph } from "./release-graph.mjs";
 
 export { PLATFORM_COMPATIBILITY_POLICY };

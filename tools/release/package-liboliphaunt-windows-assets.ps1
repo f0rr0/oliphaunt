@@ -267,11 +267,11 @@ if ($LASTEXITCODE -ne 0) {
     Fail "failed to stage release notices in the Windows tools asset"
 }
 
-bun tools/release/archive_dir.mjs $Stage (Join-Path $OutDir $Asset)
+bun src/shared/artifact-packaging/archive-directory.mjs $Stage (Join-Path $OutDir $Asset)
 if ($LASTEXITCODE -ne 0) {
     Fail "failed to archive Windows liboliphaunt asset"
 }
-bun tools/release/archive_dir.mjs $ToolsStage (Join-Path $OutDir $ToolsAsset)
+bun src/shared/artifact-packaging/archive-directory.mjs $ToolsStage (Join-Path $OutDir $ToolsAsset)
 if ($LASTEXITCODE -ne 0) {
     Fail "failed to archive Windows oliphaunt-tools asset"
 }

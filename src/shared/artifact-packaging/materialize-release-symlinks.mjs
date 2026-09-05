@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
@@ -15,6 +15,7 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
 const TOOL = "materialize-release-symlinks.mjs";
 
@@ -152,14 +153,14 @@ export async function materializeReleaseSymlinks(rootInput) {
 
 async function main(argv) {
   if (argv.length !== 1) {
-    fail("usage: tools/release/materialize-release-symlinks.mjs ROOT");
+    fail("usage: src/shared/artifact-packaging/materialize-release-symlinks.mjs ROOT");
   }
   const count = await materializeReleaseSymlinks(argv[0]);
   console.log(`materializedReleaseSymlinks=${count}`);
 }
 
-if (import.meta.main) {
-  main(Bun.argv.slice(2)).catch((error) => {
+if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main(process.argv.slice(2)).catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
   });

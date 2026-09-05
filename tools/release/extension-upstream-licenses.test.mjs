@@ -20,7 +20,7 @@ import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import {
   canonicalGzipSync,
   readPortableArchiveEntries,
-} from "./portable-archive.mjs";
+} from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import { hasCanonicalReleaseStagingMode } from "./release-notices.mjs";
 import {
   auditExtensionUpstreamLicenseSources,
@@ -154,7 +154,7 @@ test("committed legal bytes stage every active external release without source c
     import { mkdirSync, writeFileSync } from "node:fs";
     import path from "node:path";
     import { createDeterministicTar } from ${JSON.stringify(path.join(ROOT, "tools/release/cargo-source-package.mjs"))};
-    import { canonicalGzipSync } from ${JSON.stringify(path.join(ROOT, "tools/release/portable-archive.mjs"))};
+    import { canonicalGzipSync } from ${JSON.stringify(path.join(ROOT, "src/shared/artifact-packaging/portable-archive.mjs"))};
     import {
       assertExtensionUpstreamLicensesInArchive,
       assertExtensionUpstreamLicensesInDirectory,

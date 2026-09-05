@@ -37,8 +37,8 @@ Moon reports `runtime-build` at 46m11s, `initdb-stress` at 1m11s, and
 `backend-wave-stress` at 46s. Deleting those two stress checks would barely affect
 the critical path. Native iOS extension artifacts separately took 64.5 minutes.
 
-Current resolved Moon graph: 54 projects, 195 tasks, 154 edges; 28 internal tasks;
-115 normal-cache, 13 local-cache, 67 uncached. Use `moon task-graph --json` for
+Current resolved Moon graph: 55 projects, 198 tasks, 156 edges; 26 internal tasks;
+117 normal-cache, 13 local-cache, 68 uncached. Use `moon task-graph --json` for
 this inventory: `moon query tasks` omits internal tasks.
 
 Tracked-file footprint, including comments/tests/data: `tools/` has 517 files /
@@ -94,12 +94,23 @@ dispatch/orchestration as Moon/native commands assume it. Relocating its entire
   with zero tests.
 - Postmaster runtime build inputs use one future-proof source glob that excludes
   documentation and Python unit tests; changing those no longer rebuilds Wasmer.
+- Deterministic archive creation, archive reading, and safe symlink
+  materialization now live in the normal `artifact-packaging` shared project.
+  Product packagers consume that project directly instead of reaching into
+  `tools/release` or using its Bun wrapper.
+- Extension target profiles and WASIX installation rules now live with the
+  existing extension runtime contract. Native and WASIX extension packagers use
+  the same source-level contract while retaining distinct target outputs.
+- Postmaster now owns only per-target product assembly. Combining independently
+  built target assets is a repository release operation named
+  `release-tools:postmaster-release-assets`; its workflow job remains fail-closed
+  unless the exact Linux ARM64, Linux x64, and macOS set is present.
 
 Still open: hosted cache persistence, host/portable Postmaster producer
 separation, removal of planner implications after equivalent Moon/data edges
-exist, product-to-`tools/` import removal, PR #166 integration, and evidence-led
-review of remaining source-spelling tests. These are not hidden behind this
-first change.
+exist, removal of the remaining native/SDK product-to-`tools/` imports, PR #166
+integration, and evidence-led review of remaining source-spelling tests. These
+are not hidden behind this change.
 
 ## One owner for each kind of dependency
 
@@ -252,6 +263,10 @@ guarantee:
 - Fixed two rebuild failures discovered by warm-run chaos testing: Postmaster
   portable and target packagers now replace only their own exact archive, and
   the patched PostgreSQL archive recipe removes stale members before rebuilding.
+- Moved the pure archive and extension-install contracts into shared source
+  projects. The move changes ownership and invalidation edges, not archive bytes
+  or accepted package shape. Repository-wide Postmaster asset aggregation moved
+  in the opposite dependency direction, from the product to release tooling.
 
 Observed local runs, all with the repository-pinned Moon 2.5.4 toolchain and
 `MOON_CACHE=off` for production graphs:
@@ -269,6 +284,9 @@ Observed local runs, all with the repository-pinned Moon 2.5.4 toolchain and
 | Product graph assertions | 19 passed |
 | Workflow/security/planner/bootstrap policy suite | Passed: 8 security tests, 36 planner scenarios and 13 bootstrap tests; `actionlint` and `zizmor` clean |
 | Release artifact-target contract | Passed for 42 runtime/helper rows, 8 exact-extension products, 312 extension rows, 203 registry carrier minima and 7 SDK packages |
+| Shared artifact packaging contract | Passed: 29 archive/symlink tests; Postmaster portable and target package rebuilds passed |
+| Shared extension runtime contract | Passed: 7 target-profile and WASIX install tests; WASIX staging produced all 39 extensions |
+| Complete release-tool mutation suite after the move | Passed in 4m57s |
 
 No behavioral test command was removed. The source parser deletion changes only
 the kind of proof: implementation spelling is no longer enforced, while the

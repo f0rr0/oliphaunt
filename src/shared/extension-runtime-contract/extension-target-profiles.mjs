@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-export const EXTENSION_TARGET_PROFILES_RELATIVE_PATH = "tools/release/extension-target-profiles.toml";
-const ROOT = path.resolve(import.meta.dir, "../..");
+export const EXTENSION_TARGET_PROFILES_RELATIVE_PATH =
+  "src/shared/extension-runtime-contract/extension-target-profiles.toml";
+const ROOT = path.resolve(import.meta.dir, "../../..");
 const ID = /^[a-z][a-z0-9_-]*$/u;
 
 function fail(message) {

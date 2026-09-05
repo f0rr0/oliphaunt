@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import { readPortableArchiveEntries } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import { productCompatibilityVersion } from "./release-graph.mjs";
 import { validateNativeIcuDataManifest } from "./native-icu-data-contract.mjs";
 

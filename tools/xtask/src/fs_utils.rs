@@ -163,7 +163,7 @@ fn append_tree<W: io::Write>(
             header.set_cksum();
             // Keep the path marker and the authoritative tar type flag in
             // agreement. The marker is significant to portable extractors and
-            // to tools/release/portable-archive.mjs on every host OS.
+            // to src/shared/artifact-packaging/portable-archive.mjs on every host OS.
             let directory_archive_path = archive_path.join("");
             builder
                 .append_data(&mut header, &directory_archive_path, io::empty())

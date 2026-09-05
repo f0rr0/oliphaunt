@@ -15,7 +15,7 @@ import path from "node:path";
 import { extractReleaseArchiveTree } from "./package-release-carriers.mjs";
 import { ROOT } from "./release-cli-utils.mjs";
 
-const ARCHIVER = path.join(ROOT, "tools/release/archive_dir.mjs");
+const ARCHIVER = path.join(ROOT, "src/shared/artifact-packaging/archive-directory.mjs");
 const NATIVE_PACKAGE_ROOT = path.join(ROOT, "src/runtimes/liboliphaunt/native/packages");
 const REQUIRED_LEGAL_FILES = [
   "LICENSE",

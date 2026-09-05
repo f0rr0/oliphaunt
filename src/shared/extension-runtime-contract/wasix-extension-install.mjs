@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { readPortableTarZstdBufferEntries } from "./portable-archive.mjs";
+import { readPortableTarZstdBufferEntries } from "../artifact-packaging/portable-archive.mjs";
 
 export const WASIX_EXTENSION_INSTALL_SIDECAR_SCHEMA =
   "oliphaunt-wasix-extension-install-sidecar-v1";

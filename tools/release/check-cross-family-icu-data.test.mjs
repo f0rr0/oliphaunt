@@ -6,7 +6,7 @@ import path from "node:path";
 import { createDeterministicTar } from "./cargo-source-package.mjs";
 import { checkCrossFamilyIcuData } from "./check-cross-family-icu-data.mjs";
 import { nativeIcuDataManifestFromRows } from "./native-icu-data-contract.mjs";
-import { canonicalGzipSync, releaseZstdCompressSync } from "./portable-archive.mjs";
+import { canonicalGzipSync, releaseZstdCompressSync } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import { WASIX_PORTABLE_RELEASE_MEMBERS } from "./wasix-runtime-npm-contract.mjs";
 
 const scratch = [];

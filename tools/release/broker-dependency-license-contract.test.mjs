@@ -38,7 +38,7 @@ import {
 } from "./broker-dependency-license-contract.mjs";
 import { currentProductVersionSync } from "./release-artifact-targets.mjs";
 import { brokerNpmTarballs } from "./package-release-carriers.mjs";
-import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import { readPortableArchiveEntries } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import { stageReleaseNotices } from "./release-notices.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
@@ -77,7 +77,7 @@ function writeMutatedContract(t, mutate) {
 function archive(directory, extension) {
   const output = `${directory}.${extension}`;
   const result = spawnSync(
-    path.join(ROOT, "tools/release/archive_dir.mjs"),
+    path.join(ROOT, "src/shared/artifact-packaging/archive-directory.mjs"),
     [directory, output],
     { cwd: ROOT, encoding: "utf8" },
   );

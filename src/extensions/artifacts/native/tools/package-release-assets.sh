@@ -222,7 +222,7 @@ archive_swiftpm_xcframework() {
   local output="$2"
   [ -d "$xcframework" ] || fail "missing SwiftPM XCFramework input at $xcframework"
   rm -f "$output"
-  tools/dev/bun.sh tools/release/archive_dir.mjs --keep-parent "$xcframework" "$output"
+  tools/dev/bun.sh src/shared/artifact-packaging/archive-directory.mjs --keep-parent "$xcframework" "$output"
 }
 
 mobile_static_dependency_archive() {
@@ -320,7 +320,7 @@ prepare_extension_release_runtime() {
   rm -rf "$staged_runtime"
   mkdir -p "$staged_runtime"
   rsync -a --delete "$source_runtime/" "$staged_runtime/"
-  tools/dev/bun.sh tools/release/materialize-release-symlinks.mjs "$staged_runtime" >&2
+  tools/dev/bun.sh src/shared/artifact-packaging/materialize-release-symlinks.mjs "$staged_runtime" >&2
   printf '%s\n' "$staged_runtime"
 }
 

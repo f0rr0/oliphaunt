@@ -20,7 +20,7 @@ import {
   NATIVE_MOBILE_ABI_TARGETS_BY_DOMAIN,
   parseNativeMobileAbiReceipt,
 } from "./native-mobile-abi-contract.mjs";
-import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import { readPortableArchiveEntries } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 
 function fail(message) {
   throw new Error(`finalize-native-mobile-abi-proofs.mjs: ${message}`);
@@ -98,7 +98,10 @@ function finalizeArchive(archive, receipts) {
     for (const [target, text] of receipts) {
       writeFileSync(path.join(proof, `${target}.properties`), text);
     }
-    const archiveScript = path.resolve(import.meta.dirname, "archive_dir.mjs");
+    const archiveScript = path.resolve(
+      import.meta.dirname,
+      "../../src/shared/artifact-packaging/archive-directory.mjs",
+    );
     const result = spawnSync(process.execPath, [archiveScript, staging, output], {
       stdio: "inherit",
     });

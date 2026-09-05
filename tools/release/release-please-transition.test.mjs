@@ -93,7 +93,7 @@ function writeCarrierDescriptor(root) {
     contribManifest("18.4"),
   );
   writeFileSync(
-    path.join(root, "tools/release/extension-target-profiles.toml"),
+    path.join(root, "src/shared/extension-runtime-contract/extension-target-profiles.toml"),
     'schema = "oliphaunt-extension-artifact-target-profiles-v1"\n',
   );
   writeFileSync(path.join(root, "src/postgres/versions/18/source.toml"), 'version = "18.4"\n');

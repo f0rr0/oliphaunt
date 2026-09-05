@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import {
   constants as zlibConstants,
@@ -26,7 +26,7 @@ import {
   releaseZstdCompressSync,
 } from "./portable-archive.mjs";
 
-const ROOT = path.resolve(import.meta.dirname, "../..");
+const ROOT = path.resolve(import.meta.dirname, "../../..");
 
 test("exposes the same portable member contract to nested carrier consumers", () => {
   const archive = "/tmp/carrier.tar.gz";
@@ -811,7 +811,7 @@ test("rejects symlink archive inputs before parsing", (t) => {
   assert.throws(() => readPortableArchiveEntries(linked), /regular, non-symlink/u);
 });
 
-test("accepts ZIPs emitted by the canonical archive_dir producer", (t) => {
+test("accepts ZIPs emitted by the canonical archive-directory producer", (t) => {
   const root = mkdtempSync(path.join(tmpdir(), "portable-producer-test-"));
   t.after(() => rmSync(root, { force: true, recursive: true }));
   const source = path.join(root, "Fixture.xcframework");
@@ -820,7 +820,7 @@ test("accepts ZIPs emitted by the canonical archive_dir producer", (t) => {
   const output = path.join(root, "fixture.zip");
   const result = spawnSync(
     path.join(ROOT, "tools/dev/bun.sh"),
-    ["tools/release/archive_dir.mjs", "--keep-parent", source, output],
+    ["src/shared/artifact-packaging/archive-directory.mjs", "--keep-parent", source, output],
     { cwd: ROOT, encoding: "utf8" },
   );
   assert.equal(result.status, 0, result.stderr);

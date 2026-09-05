@@ -300,7 +300,7 @@ tools/dev/bun.sh tools/release/platform-binary-contract.mjs --target "$target" -
 if [ "$platform" = "linux" ]; then
   tools/release/check-linux-consumer-baseline.sh --target "$target" --root "$asset_stage"
 fi
-tools/release/archive_dir.mjs "$asset_stage" "$asset_dir/$asset"
+src/shared/artifact-packaging/archive-directory.mjs "$asset_stage" "$asset_dir/$asset"
 
 input_dirs="${OLIPHAUNT_NODE_ADDON_ASSET_INPUT_DIRS:-${OLIPHAUNT_RELEASE_ASSET_INPUT_DIRS:-}}"
 if [ -n "$input_dirs" ]; then

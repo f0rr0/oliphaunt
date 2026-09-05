@@ -2078,7 +2078,7 @@ jobs:
           if-no-files-found: error
 
   wasix-postmaster-portable:
-    name: WASIX Postmaster / Portable build and qualification
+    name: Builds / WASIX Postmaster / Portable + qualification
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'wasix-postmaster') }}
@@ -2118,7 +2118,7 @@ jobs:
           if-no-files-found: error
 
   wasix-postmaster-target:
-    name: WASIX Postmaster / ${{ matrix.target_id }} build and qualification
+    name: Builds / WASIX Postmaster / ${{ matrix.target_id }} + qualification
     needs:
       - affected
       - wasix-postmaster-portable
@@ -2187,7 +2187,7 @@ jobs:
           if-no-files-found: error
 
   wasix-postmaster:
-    name: WASIX Postmaster / Aggregate release assets
+    name: Builds / WASIX Postmaster / Aggregate release assets
     needs:
       - affected
       - wasix-postmaster-target
@@ -2213,7 +2213,7 @@ jobs:
           merge-multiple: true
 
       - name: Merge target WASIX postmaster release assets
-        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream none liboliphaunt-wasix-postmaster:aggregate-release-assets
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream none release-tools:postmaster-release-assets
 
       - name: Upload complete WASIX postmaster release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

@@ -1,10 +1,11 @@
 #!/usr/bin/env bun
 import { copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import process from "node:process";
 
 import {
   projectWasixExtensionInstallSidecar,
-} from "../../../../../tools/release/wasix-extension-install-contract.mjs";
+} from "../../../../shared/extension-runtime-contract/wasix-extension-install.mjs";
 import {
   loadNativeComponentContract,
   resolveNativeComponentClosure,
@@ -120,7 +121,7 @@ function tsvCell(value) {
   return text;
 }
 
-const args = Bun.argv.slice(2);
+const args = process.argv.slice(2);
 const root = path.resolve(optionValue(args, "--root"));
 const assetRoot = path.resolve(optionValue(args, "--asset-root"));
 const metadataPath = path.resolve(optionValue(args, "--metadata"));

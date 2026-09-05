@@ -6,7 +6,7 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import { createDeterministicTar } from "./cargo-source-package.mjs";
 import { stageExtensionUpstreamLicenses } from "./extension-upstream-licenses.mjs";
-import { canonicalGzipSync } from "./portable-archive.mjs";
+import { canonicalGzipSync } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import { discoverPublicationArtifacts } from "./publication-lock.mjs";
 import {
   currentProductVersionSync,

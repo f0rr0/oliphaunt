@@ -44,7 +44,7 @@ archive_staged_dir() {
   local profile="$2"
   local name
   name="$(basename "$staged")"
-  tools/release/archive_dir.mjs "$staged" "$out_dir/${name}.tar.gz"
+  src/shared/artifact-packaging/archive-directory.mjs "$staged" "$out_dir/${name}.tar.gz"
   tools/dev/bun.sh tools/release/release-notices.mjs check-archive \
     "$out_dir/${name}.tar.gz" \
     --profile "$profile"
@@ -55,7 +55,7 @@ archive_swiftpm_xcframework() {
   local output="$2"
   [ -d "$xcframework" ] || fail "missing SwiftPM XCFramework input at $xcframework"
   rm -f "$output"
-  tools/dev/bun.sh tools/release/archive_dir.mjs --keep-parent "$xcframework" "$output"
+  tools/dev/bun.sh src/shared/artifact-packaging/archive-directory.mjs --keep-parent "$xcframework" "$output"
 }
 
 stage_runtime_resource_closure() {

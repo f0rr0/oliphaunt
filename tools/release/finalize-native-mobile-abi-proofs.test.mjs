@@ -5,7 +5,7 @@ import path from "node:path";
 
 import { writeEntriesArchive } from "../test/release-fixture-utils.mjs";
 import { finalizeNativeMobileAbiProofs } from "./finalize-native-mobile-abi-proofs.mjs";
-import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import { readPortableArchiveEntries } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 
 function receipt(target, blockSize = 8192) {
   return [

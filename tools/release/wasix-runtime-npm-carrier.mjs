@@ -21,7 +21,7 @@ import {
 import {
   readPortableArchiveEntries,
   readPortableTarZstdBufferEntries,
-} from "./portable-archive.mjs";
+} from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import {
   assertReleaseNoticesInArchive,
   assertReleaseNoticesInDirectory,

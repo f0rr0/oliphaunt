@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import { prepareWasixTypescriptPackage as prepareProductPackage } from '../../src/bindings/wasix-ts/tools/package.mjs';
 
-import { readPortableArchiveEntries } from './portable-archive.mjs';
+import { readPortableArchiveEntries } from '../../src/shared/artifact-packaging/portable-archive.mjs';
 import {
   assertReleaseNoticesInArchive,
   assertReleaseNoticesInDirectory,

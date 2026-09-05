@@ -895,7 +895,7 @@ export function validateCiArtifactCoverage(workflow, inventory) {
     .find((step) => step.name === "Merge target WASIX postmaster release assets");
   invariant(
     String(postmasterAggregation?.run ?? "").includes(
-      "run-moon-targets.sh --upstream none liboliphaunt-wasix-postmaster:aggregate-release-assets",
+      "run-moon-targets.sh --upstream none release-tools:postmaster-release-assets",
     ),
     "WASIX postmaster aggregation must run the product-owned aggregate Moon task without producer dependencies",
   );

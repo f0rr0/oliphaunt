@@ -55,11 +55,10 @@ mkdir -p "$stage/portable-inputs/install" "$stage/portable-inputs/runtime/build"
 cp -a "$guest_dir" "$stage/portable-inputs/install/wasix-core-release-o3"
 cp -a "$sysroot_dir" "$stage/portable-inputs/runtime/build/patched-wasixcc-sysroot"
 cp -a "$probes_dir" "$stage/portable-inputs/runtime/build/probes"
-"$repo_root/tools/dev/bun.sh" \
-  "$repo_root/tools/release/materialize-release-symlinks.mjs" \
+node "$repo_root/src/shared/artifact-packaging/materialize-release-symlinks.mjs" \
   "$stage/portable-inputs"
 
-"$repo_root/tools/dev/bun.sh" "$repo_root/tools/release/archive_dir.mjs" \
+node "$repo_root/src/shared/artifact-packaging/archive-directory.mjs" \
   --keep-parent "$stage/portable-inputs" "$archive"
 chmod 0444 "$archive"
 printf 'packaged portable WASIX postmaster build inputs: %s\n' "$archive"

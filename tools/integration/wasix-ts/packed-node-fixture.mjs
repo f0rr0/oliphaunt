@@ -5,7 +5,7 @@ import { arch, platform } from 'node:os';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import { readPortableArchiveEntries } from '../../release/portable-archive.mjs';
+import { readPortableArchiveEntries } from '../../../src/shared/artifact-packaging/portable-archive.mjs';
 import { WASIX_RUNTIME_NPM_ASSET_PATHS } from '../../release/wasix-runtime-npm-contract.mjs';
 import {
   renderWasixRuntimeDescriptorModule,

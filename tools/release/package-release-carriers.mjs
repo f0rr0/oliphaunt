@@ -79,7 +79,7 @@ import {
 } from "./icu-npm-carrier-contract.mjs";
 import { stageMavenArtifactManifest } from "./maven-artifact-staging.mjs";
 import { buildMavenArtifactManifest } from "./build_maven_artifact_manifest.mjs";
-import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import { readPortableArchiveEntries } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import { assertWasixNapiNpmArchive } from "./check-wasix-napi-release-assets.mjs";
 import { packWasixRuntimeNpmCarrier } from "./wasix-runtime-npm-carrier.mjs";
 import { packWasixIcuNpmCarrier } from "./wasix-icu-npm-carrier.mjs";

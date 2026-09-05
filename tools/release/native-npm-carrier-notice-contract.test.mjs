@@ -13,7 +13,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
-import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import { readPortableArchiveEntries } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import {
   assertReleaseNoticesInArchive,
   releaseNoticeRows,

@@ -11,12 +11,12 @@ import path from "node:path";
 import { zstdCompressSync } from "node:zlib";
 import { afterAll, expect, test } from "bun:test";
 
-import { createDeterministicTar } from "./cargo-source-package.mjs";
+import { createDeterministicTar } from "../artifact-packaging/archive-directory.mjs";
 import {
   assertWasixExtensionInstall,
   assertWasixExtensionMemberInstall,
   projectWasixExtensionInstallSidecar,
-} from "./wasix-extension-install-contract.mjs";
+} from "./wasix-extension-install.mjs";
 
 const directories = [];
 
@@ -28,7 +28,7 @@ function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-function fixture() {
+async function fixture() {
   const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-wasix-install-contract-"));
   directories.push(root);
   const moduleBytes = Buffer.from("wasix-side-module");
@@ -42,12 +42,7 @@ function fixture() {
     mkdirSync(path.dirname(output), { recursive: true });
     writeFileSync(output, bytes);
   }
-  const archiveBytes = zstdCompressSync(createDeterministicTar(root, ".", {
-    fail(message) {
-      throw new Error(message);
-    },
-    fixedFileMode: 0o644,
-  }));
+  const archiveBytes = zstdCompressSync(await createDeterministicTar(root));
   const lifecycle = {
     "create-extension": true,
     "create-schema": "pg_catalog",
@@ -93,8 +88,8 @@ function fixture() {
   return { archiveBytes, manifestRow, modelRow };
 }
 
-test("projects and deeply freezes only the compact extension-owned install authority", () => {
-  const value = fixture();
+test("projects and deeply freezes only the compact extension-owned install authority", async () => {
+  const value = await fixture();
   const sidecar = projectWasixExtensionInstallSidecar(value, {
     archiveBytes: value.archiveBytes,
     label: "example fixture",
@@ -120,15 +115,15 @@ test("projects and deeply freezes only the compact extension-owned install autho
   expect(Object.isFrozen(sidecar.install.lifecycle.loadSql)).toBe(true);
 });
 
-test("rejects installed-file and compact module hash drift against the archive", () => {
-  const missingFile = fixture();
+test("rejects installed-file and compact module hash drift against the archive", async () => {
+  const missingFile = await fixture();
   missingFile.manifestRow["installed-files"] = ["lib/postgresql/example.so"];
   expect(() => projectWasixExtensionInstallSidecar(missingFile, {
     archiveBytes: missingFile.archiveBytes,
     label: "missing file fixture",
   })).toThrow(/regular file inventory differs from install[.]installedFiles/u);
 
-  const badModule = fixture();
+  const badModule = await fixture();
   badModule.manifestRow["native-modules"][0]["module-sha256"] = "a".repeat(64);
   expect(() => projectWasixExtensionInstallSidecar(badModule, {
     archiveBytes: badModule.archiveBytes,
@@ -136,8 +131,8 @@ test("rejects installed-file and compact module hash drift against the archive",
   })).toThrow(/differs from its compact identity/u);
 });
 
-test("rejects install contracts that the consumer descriptor cannot accept", () => {
-  const value = fixture();
+test("rejects install contracts that the consumer descriptor cannot accept", async () => {
+  const value = await fixture();
   const install = structuredClone(projectWasixExtensionInstallSidecar(value, {
     archiveBytes: value.archiveBytes,
     label: "consumer parity fixture",
@@ -170,8 +165,8 @@ test("rejects install contracts that the consumer descriptor cannot accept", () 
   })).toThrow(/must appear in installedFiles/u);
 });
 
-test("binds one install contract to exactly one portable member asset", () => {
-  const value = fixture();
+test("binds one install contract to exactly one portable member asset", async () => {
+  const value = await fixture();
   const install = projectWasixExtensionInstallSidecar(value, {
     archiveBytes: value.archiveBytes,
     label: "member fixture",
