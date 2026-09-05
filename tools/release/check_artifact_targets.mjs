@@ -1214,6 +1214,10 @@ export function validateRepository() {
   validateStructuredExtensionRecipes(inventory.products, inventory.extensions, inventory.graph);
   const ci = parseWorkflow(ROOT, ".github/workflows/ci.yml");
   const release = parseWorkflow(ROOT, ".github/workflows/release.yml");
+  invariant(
+    actionSteps(release, "prepare-release-pr", "./.github/actions/setup-moon")[0]?.with?.["install-workspace"] === "true",
+    "release PR preparation must install workspace dependencies before validating generated metadata",
+  );
   validateCiArtifactCoverage(ci, inventory);
   validateCrossFamilyIcuWorkflow(ci, release);
   const fullPlan = planForFullRun({ wasmTarget: "all", nativeTarget: "all", mobileTarget: "all" });
