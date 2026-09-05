@@ -10,7 +10,9 @@ import {
   cargoManifestPaths,
   extensionEvidenceSummaryCommand,
   releaseDerivedPathInventory,
+  SDK_INSTALL_VERSION_RULES,
   sharedContribBootstrapRequired,
+  syncSdkInstallDocs,
   syncExampleCargoManifestText,
   syncLockfile,
 } from "./sync-release-pr.mjs";
@@ -33,6 +35,35 @@ test("release metadata accepts source and normalized local Cargo pins", () => {
     () => workspaceDependency(dependency("0.1.0"), "runtime", "0.2.0"),
     /local workspace version "0[.]2[.]0"/u,
   );
+});
+
+test("release sync advances every SDK install contract with its product", (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-sdk-install-docs-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const transitions = [
+    { product: "oliphaunt-swift", before: "0.6.1", after: "0.7.0" },
+    { product: "oliphaunt-kotlin", before: "0.1.1", after: "0.2.0" },
+  ];
+  for (const rule of SDK_INSTALL_VERSION_RULES) {
+    const transition = transitions.find(({ product }) => product === rule.product);
+    const file = path.join(root, rule.file);
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, `${rule.prefix}${transition.before}${rule.suffix}\n`);
+  }
+
+  const changes = [];
+  syncSdkInstallDocs(changes, { root, write: true, transitions });
+  assert.deepEqual(
+    changes.map(({ path: file }) => path.relative(root, file)).sort(),
+    SDK_INSTALL_VERSION_RULES.map(({ file }) => file).sort(),
+  );
+  for (const rule of SDK_INSTALL_VERSION_RULES) {
+    const transition = transitions.find(({ product }) => product === rule.product);
+    assert.equal(readFileSync(path.join(root, rule.file), "utf8"), `${rule.prefix}${transition.after}${rule.suffix}\n`);
+  }
+  const checkChanges = [];
+  syncSdkInstallDocs(checkChanges, { root, write: false, transitions });
+  assert.deepEqual(checkChanges, []);
 });
 
 test("shared contrib bootstrap is allowed only from unreleased main state", () => {
