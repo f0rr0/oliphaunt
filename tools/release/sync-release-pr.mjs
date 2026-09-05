@@ -658,7 +658,33 @@ function iterDependencyTables(manifest) {
   return tables;
 }
 
-function desiredCargoPathDependencyVersions(manifestPath, localPackages) {
+export function desiredCargoPathDependencyVersion(current, packageVersion) {
+  if (current === "*") return current;
+  return current.startsWith("=") ? `=${packageVersion}` : packageVersion;
+}
+
+function priorCargoPathDependencyVersions(manifestPath) {
+  const file = rel(manifestPath);
+  const result = captureCommandOutput("git", ["show", `HEAD^:${file}`], {
+    cwd: ROOT,
+    label: `git show HEAD^:${file}`,
+  });
+  if (result.status !== 0 || result.error !== undefined) {
+    fail(`could not read prior Cargo manifest ${file}: ${commandOutputForError(result)}`);
+  }
+  const versions = new Map();
+  for (const table of iterDependencyTables(Bun.TOML.parse(result.stdout))) {
+    for (const [name, dependency] of Object.entries(table)) {
+      if (dependency !== null && !Array.isArray(dependency) && typeof dependency === "object" &&
+        typeof dependency.path === "string" && typeof dependency.version === "string") {
+        versions.set(name, dependency.version);
+      }
+    }
+  }
+  return versions;
+}
+
+function desiredCargoPathDependencyVersions(manifestPath, localPackages, priorVersions) {
   const manifest = Bun.TOML.parse(readText(manifestPath));
   const desired = new Map();
   for (const table of iterDependencyTables(manifest)) {
@@ -677,7 +703,10 @@ function desiredCargoPathDependencyVersions(manifestPath, localPackages) {
         continue;
       }
       const packageVersion = packageInfo[1];
-      desired.set(dependencyName, versionValue.startsWith("=") ? `=${packageVersion}` : packageVersion);
+      desired.set(
+        dependencyName,
+        desiredCargoPathDependencyVersion(priorVersions.get(dependencyName) ?? versionValue, packageVersion),
+      );
     }
   }
   return desired;
@@ -692,7 +721,11 @@ function syncCargoPathDependencyPins(changes, { write, transitions }) {
     if (!selectedRoots.some((root) => manifestPath === root || manifestPath.startsWith(`${root}${path.sep}`))) {
       continue;
     }
-    const desired = desiredCargoPathDependencyVersions(manifestPath, localPackages);
+    const desired = desiredCargoPathDependencyVersions(
+      manifestPath,
+      localPackages,
+      priorCargoPathDependencyVersions(manifestPath),
+    );
     if (desired.size === 0) {
       continue;
     }

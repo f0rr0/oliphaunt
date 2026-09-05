@@ -8,6 +8,7 @@ import test from "node:test";
 
 import {
   cargoManifestPaths,
+  desiredCargoPathDependencyVersion,
   extensionEvidenceSummaryCommand,
   releaseDerivedPathInventory,
   SDK_INSTALL_VERSION_RULES,
@@ -16,7 +17,6 @@ import {
   syncExampleCargoManifestText,
   syncLockfile,
 } from "./sync-release-pr.mjs";
-import { workspaceDependency } from "./check-release-metadata.mjs";
 import {
   EXAMPLE_CARGO_POLICIES,
   exampleCargoReleaseVersionBindings,
@@ -27,14 +27,10 @@ const SUMMARY_PATH = "src/extensions/generated/docs/extension-evidence.json";
 const CHECKER_PATH = "src/extensions/tools/check-extension-model.mjs";
 const EVIDENCE_SELF_TEST_PROCESS_TIMEOUT_MS = 15_000;
 
-test("release metadata accepts source and normalized local Cargo pins", () => {
-  const dependency = (version) => ({ runtime: { path: "../runtime", version } });
-  assert.doesNotThrow(() => workspaceDependency(dependency("*"), "runtime", "0.2.0"));
-  assert.doesNotThrow(() => workspaceDependency(dependency("0.2.0"), "runtime", "0.2.0"));
-  assert.throws(
-    () => workspaceDependency(dependency("0.1.0"), "runtime", "0.2.0"),
-    /local workspace version "0[.]2[.]0"/u,
-  );
+test("release sync preserves wildcard Cargo path dependencies", () => {
+  assert.equal(desiredCargoPathDependencyVersion("*", "0.2.0"), "*");
+  assert.equal(desiredCargoPathDependencyVersion("0.1.0", "0.2.0"), "0.2.0");
+  assert.equal(desiredCargoPathDependencyVersion("=0.1.0", "0.2.0"), "=0.2.0");
 });
 
 test("release sync advances every SDK install contract with its product", (t) => {

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { describe, expect, test } from "bun:test";
+import productManifest from "../../src/runtimes/wasix-napi/package.json" with { type: "json" };
 
 import {
   assertSingleWasixNapiAddonMember,
@@ -16,7 +17,6 @@ const target = Object.freeze({
   npmCpu: "x64",
   npmLibc: "glibc",
 });
-
 function manifest() {
   return {
     name: target.npmPackage,
@@ -30,7 +30,7 @@ function manifest() {
     oliphaunt: {
       target: target.target,
       runtimeProduct: "liboliphaunt-wasix",
-      runtimeVersion: "0.1.1",
+      runtimeVersion: productManifest.oliphaunt.runtimeVersion,
       addonAbiVersion: 1,
       nodeApiVersion: 8,
       profiles: ["standard", "icu"],
