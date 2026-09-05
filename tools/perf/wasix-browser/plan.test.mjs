@@ -213,7 +213,10 @@ function fixture(mode, { directRatio, workerRatio }) {
         ['closeMs', 1_000_000],
       ]),
     }));
-  const startup = (ratio) => [10, ...Array.from({ length: profile.startupRuns - 1 }, () => 10 * ratio)];
+  const startup = (ratio) => [
+    10,
+    ...Array.from({ length: profile.startupRuns - 1 }, () => 10 * ratio),
+  ];
   const diagnostics = () =>
     Array.from({ length: profile.insertDiagnosticRuns }, () => ({ indexedInsertWalBytes: 1000 }));
   const postgres = () => ({

@@ -61,12 +61,26 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
 
+  browser-host:
+    tags: ["artifact", "build", "requires-rust"]
+    command: "bash src/bindings/wasix-ts/host/build-sdk.sh"
+    inputs:
+      - "host/**/*"
+    outputs:
+      - "/target/oliphaunt-wasix-ts/host/wasmer-sdk/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
   package:
     tags: ["package"]
     script: |
       set -e
-      pnpm --dir src/bindings/wasix-ts package:build
+      pnpm --dir src/bindings/wasix-ts build
+      node src/bindings/wasix-ts/tools/stage-host.mjs
       node src/bindings/wasix-ts/tools/package.mjs target/oliphaunt-wasix-ts/package
+    deps:
+      - "oliphaunt-wasix-ts:browser-host"
     inputs:
       - "@group(legal-files)"
       - "@group(pnpm-workspace)"

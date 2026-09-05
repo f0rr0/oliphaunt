@@ -77,7 +77,7 @@ test("task edges distinguish artifact data from ordering gates", () => {
   const projectSources = new Map(
     moonJson(["query", "projects"]).projects.map(({ id, source }) => [id, source]),
   );
-  const outputOwners = new Map();
+  const outputs = [];
 
   for (const consumer of tasks) {
     const consumerTags = new Set(consumer.tags ?? []);
@@ -96,7 +96,7 @@ test("task edges distinguish artifact data from ordering gates", () => {
     for (const output of consumer.outputs ?? []) {
       const path = output.file ?? output.glob;
       const resolvedPath = resolvePath(path);
-      outputOwners.set(resolvedPath, [...(outputOwners.get(resolvedPath) ?? []), consumer]);
+      outputs.push({ path: resolvedPath, task: consumer });
       if (inputs.has(resolvedPath)) {
         assert.equal(
           consumer.options?.cache,
@@ -124,13 +124,39 @@ test("task edges distinguish artifact data from ordering gates", () => {
     }
   }
 
-  for (const [output, owners] of outputOwners) {
-    if (owners.length < 2) continue;
-    assert.equal(
-      owners.every((task) => task.options?.cache === false),
-      true,
-      `${output} has multiple cached producers: ${owners.map(({ target }) => target).join(", ")}`,
-    );
+  const staticRoot = (value) => value.slice(0, value.search(/[?*[{]/u) < 0 ? value.length : value.search(/[?*[{]/u));
+  const overlaps = (left, right) => {
+    const leftRoot = staticRoot(left);
+    const rightRoot = staticRoot(right);
+    return leftRoot === rightRoot || leftRoot.startsWith(rightRoot) || rightRoot.startsWith(leftRoot);
+  };
+  for (let left = 0; left < outputs.length; left += 1) {
+    for (let right = left + 1; right < outputs.length; right += 1) {
+      const first = outputs[left];
+      const second = outputs[right];
+      if (first.task.target === second.task.target || !overlaps(first.path, second.path)) continue;
+      const pair = [first.task, second.task];
+      const alternatives = pair.every((task) => task.tags?.includes("alternative-producer"));
+      const finalizer = pair.find((task) => task.tags?.includes("in-place-finalizer"));
+      const input = pair.find((task) => task.tags?.includes("in-place-finalizer-input"));
+      assert.equal(
+        alternatives || Boolean(finalizer && input),
+        true,
+        `${first.path} and ${second.path} have overlapping owners without an explicit ownership contract: ${pair.map(({ target }) => target).join(", ")}`,
+      );
+      assert.equal(
+        pair.every((task) => task.options?.cache === false),
+        true,
+        `overlapping output owners must not be cached: ${pair.map(({ target }) => target).join(", ")}`,
+      );
+      if (finalizer && input) {
+        assert.equal(
+          finalizer.deps.some(({ target }) => target === input.target),
+          true,
+          `${finalizer.target} must directly finalize ${input.target}`,
+        );
+      }
+    }
   }
 });
 

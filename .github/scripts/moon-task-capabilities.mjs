@@ -1,6 +1,7 @@
 const RUST_CAPABILITY_TAG = "requires-rust";
 const MAINTAINER_TOOLS_CAPABILITY_TAG = "requires-maintainer-tools";
 const ANDROID_SDK_CAPABILITY_TAG = "requires-android-sdk";
+const APPLE_CAPABILITY_TAG = "requires-apple";
 
 const DISPLAY_WORDS = Object.freeze({
   abi: "ABI",
@@ -67,6 +68,8 @@ export function taskCapabilities(task, taskMap, state = {}) {
   let requiresMaintainerTools = tags.has(MAINTAINER_TOOLS_CAPABILITY_TAG);
   let requiresRust = tags.has(RUST_CAPABILITY_TAG) || requiresMaintainerTools;
   let requiresAndroidSdk = tags.has(ANDROID_SDK_CAPABILITY_TAG);
+  let requiresApple = tags.has(APPLE_CAPABILITY_TAG);
+  let requiresWorkspace = Array.isArray(task.toolchains) && task.toolchains.includes("pnpm");
 
   for (const dependency of taskDependencies(task)) {
     const dependencyTask = taskMap.get(dependency);
@@ -77,6 +80,8 @@ export function taskCapabilities(task, taskMap, state = {}) {
     requiresMaintainerTools ||= capabilities.requires_maintainer_tools;
     requiresRust ||= capabilities.requires_rust;
     requiresAndroidSdk ||= capabilities.requires_android_sdk;
+    requiresApple ||= capabilities.requires_apple;
+    requiresWorkspace ||= capabilities.requires_workspace;
   }
 
   visiting.delete(target);
@@ -84,6 +89,8 @@ export function taskCapabilities(task, taskMap, state = {}) {
     requires_rust: requiresRust,
     requires_maintainer_tools: requiresMaintainerTools,
     requires_android_sdk: requiresAndroidSdk,
+    requires_apple: requiresApple,
+    requires_workspace: requiresWorkspace,
   });
   memo.set(target, capabilities);
   return capabilities;
@@ -116,6 +123,9 @@ function groupRow(targets) {
     requires_rust: first.requires_rust,
     requires_maintainer_tools: first.requires_maintainer_tools,
     requires_android_sdk: first.requires_android_sdk,
+    requires_apple: first.requires_apple,
+    requires_workspace: first.requires_workspace,
+    runner: first.requires_apple ? "macos-26" : "ubuntu-24.04",
     targets_json: JSON.stringify({
       include: targets.map(({ target, upstream }) => ({ target, upstream })),
     }),
@@ -138,6 +148,8 @@ export function groupTargets(targets, { maxTargets = MAX_TARGETS_PER_JOB } = {})
       target.requires_rust,
       target.requires_maintainer_tools,
       target.requires_android_sdk,
+      target.requires_apple,
+      target.requires_workspace,
     ].map(Number).join("");
     byCapabilities.set(key, [...(byCapabilities.get(key) ?? []), target]);
   }

@@ -11,8 +11,9 @@ mode="${1:---check}"
 case "$mode" in
   --check) biome_args=(format); cargo_fmt_args=(--check); run_cargo=1 ;;
   --check-js) biome_args=(format); cargo_fmt_args=(); run_cargo=0 ;;
+  --lint-js) biome_args=(lint --diagnostic-level=error); cargo_fmt_args=(); run_cargo=0 ;;
   --write) biome_args=(format --write); cargo_fmt_args=(); run_cargo=1 ;;
-  *) echo "usage: tools/policy/format.sh [--check|--check-js|--write]" >&2; exit 2 ;;
+  *) echo "usage: tools/policy/format.sh [--check|--check-js|--lint-js|--write]" >&2; exit 2 ;;
 esac
 
 if [ "$run_cargo" = 1 ]; then
@@ -21,7 +22,7 @@ fi
 
 # Biome owns JS/TS/JSON/CSS formatting. Other language-native formatters are
 # wired through their product build files to avoid overlapping format engines.
-pnpm --package=@biomejs/biome@2.4.16 dlx biome "${biome_args[@]}" \
+biome_paths=(
   package.json \
   biome.json \
   renovate.json \
@@ -53,3 +54,6 @@ pnpm --package=@biomejs/biome@2.4.16 dlx biome "${biome_args[@]}" \
   tools/perf/wasix-browser \
   tools/perf/wasix-node \
   tools/test
+)
+pnpm --dir src/docs exec biome "${biome_args[@]}" --config-path "$root/biome.json" \
+  "${biome_paths[@]/#/$root/}"

@@ -139,6 +139,8 @@ package_ios() {
   local ios_work_root="${OLIPHAUNT_IOS_XCFRAMEWORK_ROOT:-$root/target/liboliphaunt-ios-xcframework}"
   local macos_work_root="${OLIPHAUNT_WORK_ROOT:-$root/target/liboliphaunt-pg18}"
   local ios_xcframework="$ios_work_root/out/liboliphaunt.xcframework"
+  local packaged_ios_work_root="$stage_root/packaged-ios-xcframework"
+  local packaged_ios_xcframework="$packaged_ios_work_root/out/liboliphaunt.xcframework"
   local macos_runtime="$macos_work_root/install"
   local catalog_file="$stage_root/extension-catalog.tsv"
   local macos_runtime_stage="$stage_root/liboliphaunt-${version}-runtime-resources-macos-arm64"
@@ -187,14 +189,10 @@ package_ios() {
   cp "$macos_producer_receipt" "$ios_proof/macos-arm64.properties"
   OLIPHAUNT_MACOS_RUNTIME_RESOURCES_ROOT="$macos_runtime_stage/oliphaunt" \
     OLIPHAUNT_IOS_RUNTIME_RESOURCES_ROOT="$ios_runtime_stage/oliphaunt" \
+    OLIPHAUNT_IOS_XCFRAMEWORK_ROOT="$packaged_ios_work_root" \
     src/runtimes/liboliphaunt/native/bin/build-ios-xcframework.sh >/tmp/liboliphaunt-release-ios-xcframework-resources.log
-  local ci_xcframework_out="$root/target/liboliphaunt-native-ci/ios-xcframework/target/liboliphaunt-ios-xcframework/out"
-  if [ -d "$ci_xcframework_out" ]; then
-    rsync -a --delete "$ios_work_root/out/" "$ci_xcframework_out/"
-  fi
-
   mkdir -p "$stage_ios"
-  rsync -a --delete "$ios_xcframework" "$stage_ios/"
+  rsync -a --delete "$packaged_ios_xcframework" "$stage_ios/"
   echo "==> Stripping staged liboliphaunt iOS release binaries"
   tools/dev/bun.sh tools/release/strip_native_release_binaries.mjs --target "$target_id" "$stage_ios"
   echo "==> Verifying staged liboliphaunt iOS binary compatibility"

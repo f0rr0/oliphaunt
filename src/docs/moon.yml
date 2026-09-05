@@ -75,7 +75,7 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   build:
-    tags: ["build", "package"]
+    tags: ["build", "quality", "static"]
     command: "pnpm --dir src/docs run build"
     inputs:
       - "/docs/**/*"
@@ -106,18 +106,19 @@ tasks:
       - "@group(pnpm-workspace)"
     outputs:
       - "/target/docs/build/**/*"
+      - "/target/docs/generated/routes.json"
     options:
       cache: local
       runFromWorkspaceRoot: true
   smoke:
-    tags: ["runtime", "smoke"]
+    tags: ["quality", "runtime", "smoke"]
     command: "pnpm --dir src/docs run smoke"
     deps:
       - target: "docs:build"
         cacheStrategy: "outputs"
     inputs:
       - "/target/docs/build/**/*"
-      - "/target/docs/static/**/*"
+      - "/target/docs/generated/routes.json"
       - "/src/docs/tools/smoke-built-site.mjs"
     options:
       cache: local

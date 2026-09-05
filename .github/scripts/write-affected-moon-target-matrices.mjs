@@ -229,6 +229,20 @@ const unitTaskIds = new Set(['graph-unit', 'test', 'tools-unit', 'unit']);
 const checkTargets = new Map();
 const policyTargets = new Map();
 const testTargets = new Map();
+for (const task of selectedScopeTasks.values()) {
+  const taskTags = tags(task);
+  if (taskTags.has('coverage') || (taskTags.has('quality') && taskTags.has('unit'))) {
+    if (runsInCI(task)) testTargets.set(task.target, matrixTarget(task, 'deep', completeTasks));
+  } else if (
+    taskTags.has('quality')
+    && ['format', 'smoke', 'static'].some((role) => taskTags.has(role))
+  ) {
+    classifySelectedTask(task, {check: checkTargets, policy: policyTargets}, {
+      selectedScopeTasks,
+      allTasks: completeTasks,
+    });
+  }
+}
 for (const taskId of taskIds) {
   const taskMap = new Map(
     [...selectedScopeTasks].filter(([, task]) => task.id === taskId),
@@ -280,6 +294,10 @@ output(
 output(
   'policy_requires_maintainer_tools',
   String([...policyTargets.values()].some((target) => target.requires_maintainer_tools)),
+);
+output(
+  'policy_requires_workspace',
+  String([...policyTargets.values()].some((target) => target.requires_workspace)),
 );
 output('check_jobs', [
   ...(checkTargets.size > 0 ? ['check-targets'] : []),

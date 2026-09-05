@@ -50,9 +50,11 @@ mkdir -p "$out_dir" "$stage/include" "$stage/lib" "$stage/runtime" "$tools_stage
 
 fetch_release_source_assets
 
-echo "==> Building liboliphaunt $target_id"
-OLIPHAUNT_BUILD_EXTENSIONS="${OLIPHAUNT_BUILD_EXTENSIONS:-0}" \
-  src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh >/tmp/liboliphaunt-release-"$target_id".log
+if [ "${OLIPHAUNT_RELEASE_BUILD_RUNTIME:-1}" = "1" ]; then
+  echo "==> Building liboliphaunt $target_id"
+  OLIPHAUNT_BUILD_EXTENSIONS="${OLIPHAUNT_BUILD_EXTENSIONS:-0}" \
+    src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh >/tmp/liboliphaunt-release-"$target_id".log
+fi
 
 [ -f "$lib" ] || fail "missing macOS liboliphaunt dylib at $lib"
 oliphaunt_assert_base_embedded_modules_exact "$embedded_modules" dylib ||

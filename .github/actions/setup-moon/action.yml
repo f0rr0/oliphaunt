@@ -99,6 +99,16 @@ runs:
       shell: bash
       run: pnpm install --frozen-lockfile
 
+    - name: Restore Moon task outputs
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: |
+          .moon/cache/hashes
+          .moon/cache/outputs
+        key: moon-task-cache-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ strategy.job-index }}-${{ hashFiles('.prototools', '.moon/**/*.yml', '**/moon.yml', 'Cargo.lock', 'pnpm-lock.yaml') }}-${{ github.sha }}
+        restore-keys: |
+          moon-task-cache-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ strategy.job-index }}-${{ hashFiles('.prototools', '.moon/**/*.yml', '**/moon.yml', 'Cargo.lock', 'pnpm-lock.yaml') }}-
+
     - name: Hydrate Moon plugins
       shell: bash
       run: moon query projects >/dev/null

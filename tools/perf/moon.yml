@@ -54,7 +54,7 @@ tasks:
     tags: ["bench", "diagnostic", "measured", "requires-rust"]
     command: "bash tools/perf/rust-api-model/run.sh --runtime native"
     deps:
-      - "liboliphaunt-native:release-runtime"
+      - "liboliphaunt-native:build-runtime-desktop-target"
     inputs:
       - "@group(cargo-workspace)"
       - "/src/runtimes/liboliphaunt/native/**/*"
@@ -105,7 +105,7 @@ tasks:
     tags: ["bench", "measured"]
     command: "bash tools/perf/matrix/run_native_oliphaunt_matrix.sh"
     deps:
-      - "liboliphaunt-native:release-runtime"
+      - "liboliphaunt-native:build-runtime-desktop-target"
     inputs:
       - "@group(cargo-workspace)"
       - "/src/runtimes/liboliphaunt/native/**/*"
@@ -181,11 +181,13 @@ tasks:
     tags: ["bench", "measured", "local-only"]
     script: |
       set -e
-      pnpm --dir src/bindings/wasix-ts package:build
+      pnpm --dir src/bindings/wasix-ts build
+      node src/bindings/wasix-ts/tools/stage-host.mjs
       node tools/perf/wasix-node/benchmark.mjs --run
     deps:
       - "perf-tools:wasix-plan"
       - "liboliphaunt-wasix:runtime-portable"
+      - "oliphaunt-wasix-ts:browser-host"
     inputs:
       - "@group(legal-files)"
       - "@group(pnpm-workspace)"
@@ -206,11 +208,13 @@ tasks:
     tags: ["bench", "measured", "browser", "local-only"]
     script: |
       set -e
-      pnpm --dir src/bindings/wasix-ts package:build
+      pnpm --dir src/bindings/wasix-ts build
+      node src/bindings/wasix-ts/tools/stage-host.mjs
       node tools/integration/wasix-ts/smoke-browser.mjs --benchmark
     deps:
       - "perf-tools:wasix-plan"
       - "liboliphaunt-wasix:runtime-portable"
+      - "oliphaunt-wasix-ts:browser-host"
     inputs:
       - "@group(legal-files)"
       - "@group(pnpm-workspace)"

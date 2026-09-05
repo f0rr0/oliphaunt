@@ -156,10 +156,10 @@ tasks:
     tags: ["release", "artifact-package", "ci-swift-sdk-package"]
     command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-swift"
     env:
-      OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR: "target/liboliphaunt/release-assets"
+      OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR: "target/liboliphaunt/abi-compatible-release-assets/ios-datum64"
     deps:
       - "oliphaunt-swift:package"
-      - "liboliphaunt-native:release-runtime-ios-target"
+      - "liboliphaunt-native:finalize-runtime-ios-abi"
     inputs:
       - "@group(legal-files)"
       - "@group(release-archive-contract)"
@@ -175,7 +175,7 @@ tasks:
       - "/tools/release/swift-source-carrier-contract.mjs"
       - "/Package.swift"
       - "/src/extensions/generated/sdk/extensions.json"
-      - "/target/liboliphaunt/release-assets/**/*"
+      - "/target/liboliphaunt/abi-compatible-release-assets/ios-datum64/**/*"
       - "/tools/dev/bun.sh"
       - "/src/sources/tools/source-fetch-core.mjs"
     outputs:
@@ -187,10 +187,10 @@ tasks:
     tags: ["release", "artifact-package", "ci-react-native-sdk-package"]
     command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-react-native"
     env:
-      OLIPHAUNT_REACT_NATIVE_IOS_RELEASE_ASSET_DIR: "target/liboliphaunt/release-assets"
+      OLIPHAUNT_REACT_NATIVE_IOS_RELEASE_ASSET_DIR: "target/liboliphaunt/abi-compatible-release-assets/ios-datum64"
     deps:
       - "oliphaunt-react-native:package"
-      - "liboliphaunt-native:release-runtime-ios-target"
+      - "liboliphaunt-native:finalize-runtime-ios-abi"
     inputs:
       - "@group(legal-files)"
       - "@group(pnpm-workspace)"
@@ -208,7 +208,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/native/icu-npm/**/*"
       - "/examples/react-native-expo/package.json"
       - "/src/sdks/react-native/tools/ios-icu-autolinking.test.mjs"
-      - "/target/liboliphaunt/release-assets/**/*"
+      - "/target/liboliphaunt/abi-compatible-release-assets/ios-datum64/**/*"
       - "/tools/dev/bun.sh"
       - "/src/sources/tools/source-fetch-core.mjs"
     outputs:
@@ -282,7 +282,7 @@ tasks:
     command: "tools/release/run-native-extension-lifecycle-proof.sh"
     deps:
       - "extension-artifacts-native:build-target"
-      - "liboliphaunt-native:release-runtime"
+      - "liboliphaunt-native:build-runtime-desktop-target"
       - "release-tools:broker-runtime"
       - "release-tools:rust-sdk-package"
     inputs:
@@ -459,7 +459,7 @@ tasks:
       runFromWorkspaceRoot: true
 
   broker-runtime:
-    tags: ["release", "artifact", "ci-broker-runtime"]
+    tags: ["release", "artifact", "in-place-finalizer-input", "ci-broker-runtime"]
     command: "bash tools/release/package-broker-assets.sh"
     env:
       CARGO_TARGET_DIR: "target/moon/release-tools/broker-runtime"
@@ -495,7 +495,7 @@ tasks:
       runFromWorkspaceRoot: true
 
   broker-release-assets:
-    tags: ["release", "artifact-package", "ci-broker-release-assets"]
+    tags: ["release", "artifact-package", "in-place-finalizer", "ci-broker-release-assets"]
     command: "tools/dev/bun.sh tools/release/check-native-helper-aggregate-assets.mjs --product oliphaunt-broker"
     deps:
       - "release-tools:broker-runtime"
@@ -533,7 +533,7 @@ tasks:
       runFromWorkspaceRoot: true
 
   node-direct-runtime:
-    tags: ["release", "artifact", "ci-node-direct"]
+    tags: ["release", "artifact", "in-place-finalizer-input", "ci-node-direct"]
     command: "bash tools/release/package-node-direct-runtime.sh"
     inputs:
       - project: "oliphaunt-node-direct"
@@ -567,7 +567,7 @@ tasks:
       runFromWorkspaceRoot: true
 
   node-direct-release-assets:
-    tags: ["release", "artifact-package", "ci-node-direct-release-assets"]
+    tags: ["release", "artifact-package", "in-place-finalizer", "ci-node-direct-release-assets"]
     command: "tools/dev/bun.sh tools/release/check-native-helper-aggregate-assets.mjs --product oliphaunt-node-direct"
     deps:
       - "release-tools:node-direct-runtime"
@@ -605,7 +605,7 @@ tasks:
       runFromWorkspaceRoot: true
 
   wasix-napi-runtime:
-    tags: ["release", "artifact", "ci-wasix-napi"]
+    tags: ["release", "artifact", "in-place-finalizer-input", "ci-wasix-napi"]
     command: "bash src/runtimes/wasix-napi/tools/build-native.sh"
     deps:
       - "liboliphaunt-wasix:runtime-aot"
@@ -671,7 +671,7 @@ tasks:
       runFromWorkspaceRoot: true
 
   postmaster-release-assets:
-    tags: ["release", "artifact-package", "ci-wasix-postmaster"]
+    tags: ["release", "artifact-package", "in-place-finalizer", "ci-wasix-postmaster"]
     script: |
       set -eu
       version="$(tr -d '\r\n' < src/runtimes/liboliphaunt/wasix-postmaster/VERSION)"
@@ -679,6 +679,8 @@ tasks:
         --product liboliphaunt-wasix-postmaster \
         --version "$version" \
         --asset-dir target/oliphaunt-wasix-postmaster/release-assets
+    deps:
+      - "liboliphaunt-wasix-postmaster:release-assets"
     inputs:
       - "/src/runtimes/liboliphaunt/wasix-postmaster/VERSION"
       - "/src/runtimes/liboliphaunt/wasix-postmaster/moon.yml"
@@ -695,7 +697,7 @@ tasks:
       runInCI: true
 
   wasix-extension-packages:
-    tags: ["release", "artifact-package"]
+    tags: ["release", "artifact-package", "alternative-producer"]
     command: "tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs --all --family wasix --require-wasix"
     deps:
       - "extension-artifacts-wasix:build-target"
@@ -729,7 +731,7 @@ tasks:
       runFromWorkspaceRoot: true
 
   wasix-napi-release-assets:
-    tags: ["release", "artifact-package", "ci-wasix-napi-release-assets"]
+    tags: ["release", "artifact-package", "in-place-finalizer", "ci-wasix-napi-release-assets"]
     command: "tools/dev/bun.sh tools/release/check-native-helper-aggregate-assets.mjs --product oliphaunt-wasix-napi"
     deps:
       - "release-tools:wasix-napi-runtime"

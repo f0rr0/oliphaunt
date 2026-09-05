@@ -338,7 +338,7 @@ fn verify_cluster_seed_hash(profile: &str, archive: &Path, manifest_path: &Path)
         manifest_path.display(),
         archive.display()
     );
-    let text = fs::read_to_string(&manifest_path)
+    let text = fs::read_to_string(manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
     let manifest: serde_json::Value = serde_json::from_str(&text)
         .with_context(|| format!("parse {}", manifest_path.display()))?;

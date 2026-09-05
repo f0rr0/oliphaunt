@@ -65,14 +65,10 @@ tasks:
     inputs:
       - "/src/sources/third-party/shared/*.toml"
       - "/src/sources/third-party/native/*.toml"
-      - "/src/extensions/external/**/source.toml"
-      - "/src/extensions/external/**/dependencies/**/source.toml"
-      - "/src/extensions/external/*/upstream-license-data.json"
       - "tools/**/*"
       - "!tools/**/*.test.*"
       - "!tools/verify-source-tree.py"
       - "/tools/dev/capture-command-output.mjs"
-      - "/tools/release/extension-upstream-licenses.mjs"
       - "@group(release-archive-contract)"
     options:
       cache: false
@@ -84,9 +80,6 @@ tasks:
     inputs:
       - "/src/sources/toolchains/wasix.toml"
       - "/src/sources/third-party/shared/*.toml"
-      - "/src/extensions/external/**/source.toml"
-      - "/src/extensions/external/**/dependencies/**/source.toml"
-      - "/src/extensions/external/*/upstream-license-data.json"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/Dockerfile"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/isrg-root-x1.pem"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-apt-packages.sh"
@@ -96,7 +89,6 @@ tasks:
       - "!tools/**/*.test.*"
       - "!tools/verify-source-tree.py"
       - "/tools/dev/capture-command-output.mjs"
-      - "/tools/release/extension-upstream-licenses.mjs"
       - "@group(release-archive-contract)"
     options:
       cache: false

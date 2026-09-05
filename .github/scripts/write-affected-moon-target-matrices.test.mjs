@@ -40,8 +40,12 @@ test("Node planner captures Moon JSON written at the successful child's final ev
   const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-affected-matrices-"));
   try {
     const tasks = {
+      "aot-qualification": { args: [], command: "node aot.mjs", deps: [], id: "aot-qualification", options: {}, tags: ["quality", "static"], target: "alpha:aot-qualification" },
+      "browser-qualification": { args: [], command: "node browser.mjs", deps: [], id: "browser-qualification", options: {}, tags: ["quality", "static"], target: "alpha:browser-qualification" },
       check: { args: [], command: "node check.mjs", deps: [], id: "check", options: {}, tags: [], target: "alpha:check" },
       compile: { args: [], command: "node compile.mjs", deps: [], id: "compile", options: {}, tags: [], target: "alpha:compile" },
+      "coverage-report": { args: [], command: "node coverage.mjs", deps: [], id: "coverage-report", options: {}, tags: ["coverage"], target: "alpha:coverage-report" },
+      "docs-preview": { args: [], command: "node docs.mjs", deps: [], id: "docs-preview", options: {}, tags: ["quality", "smoke"], target: "alpha:docs-preview" },
       "graph-unit": { args: [], command: "node graph-unit.mjs", deps: [], id: "graph-unit", options: {}, tags: [], target: "alpha:graph-unit" },
       "tools-compile": { args: [], command: "node tools-compile.mjs", deps: [], id: "tools-compile", options: {}, tags: [], target: "alpha:tools-compile" },
       test: { args: [], command: "node test.mjs", deps: [], id: "test", options: {}, tags: [], target: "alpha:test" },
@@ -67,17 +71,22 @@ test("Node planner captures Moon JSON written at the successful child's final ev
         return [line.slice(0, separator), line.slice(separator + 1)];
       }),
     );
-    assert.equal(values.get("check_count"), "3");
-    assert.equal(values.get("test_count"), "4");
+    assert.equal(values.get("check_count"), "6");
+    assert.equal(values.get("test_count"), "5");
     const checkRows = JSON.parse(values.get("check_matrix")).include;
-    assert.equal(checkRows.length, 1);
-    assert.deepEqual(JSON.parse(checkRows[0].targets_json).include.map(({ target }) => target), [
+    assert.equal(checkRows.length, 2);
+    assert.deepEqual(checkRows.flatMap(({ targets_json }) =>
+      JSON.parse(targets_json).include.map(({ target }) => target)), [
+      "alpha:aot-qualification",
+      "alpha:browser-qualification",
       "alpha:check",
       "alpha:compile",
+      "alpha:docs-preview",
       "alpha:tools-compile",
     ]);
     assert.deepEqual(JSON.parse(values.get("test_matrix")).include.flatMap(({ targets_json }) =>
       JSON.parse(targets_json).include.map(({ target }) => target)), [
+      "alpha:coverage-report",
       "alpha:graph-unit",
       "alpha:test",
       "alpha:tools-unit",

@@ -63,6 +63,7 @@ tasks:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/test"
     inputs:
       - "@group(cargo-workspace)"
+      - "@group(rust-test-config)"
       - project: "shared-test-fixtures"
         group: "fixtures"
       - project: "shared-rust-query-core"

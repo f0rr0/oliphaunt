@@ -553,10 +553,10 @@ Cross-product judgments:
   it needs no independent package task or release.
 - WASIX AOT consumes portable WASM, mobile E2E consumes mobile builds, and the
   Postmaster stages consume their predecessor outputs through data edges.
-- GitHub artifact aggregators intentionally do not depend on local Moon
-  producers: the workflow downloads exact-SHA artifacts from other jobs. Adding
-  Moon producer edges would rebuild the same expensive artifacts, especially
-  because those jobs run with `MOON_CACHE=off`.
+- GitHub artifact aggregators retain real Moon producer edges. The workflow
+  declares which direct dependencies were satisfied by exact-SHA artifact
+  downloads; the execution adapter validates and subtracts only those edges,
+  while preserving any local prerequisites.
 - Release ordering uses production/peer relationships; build-scope compatibility
   does not create a release cycle. In particular, Rust records broker
   compatibility without adding the reverse Moon edge that would cycle through
@@ -588,20 +588,14 @@ input is now limited to `.moon/tasks`, `toolchains.yml`, and `workspace.yml`.
 After the fix its 27-test run took 24.6 seconds and the immediate identical run
 was cached in 105 ms under the same hash.
 
-Hosted CI restores verified Moon/tool archives and Cargo caches, but it does
-not restore `.moon/cache`, configure a Moon remote cache, or persist task
-outputs between jobs. Thirty heavy workflow invocations explicitly use
-`MOON_CACHE=off`. This means “Moon caching exists” is true locally and false as
-a cross-job/cross-run hosted claim.
-
-That is not the primary cause of the largest bills: the expensive artifact
-jobs deliberately bypass Moon output caching for exact build/packaging
-boundaries. Add a hosted/remote cache first for deterministic static/unit tasks
-only, after defining trust, eviction, and matrix-key ownership. Do not push
-multi-gigabyte platform/release outputs into a generic GitHub cache merely to
-claim caching. Moon documents that task hashes use declared inputs, output
-hydration requires declared outputs, and CI cache persistence must be configured
-explicitly: [project/task cache configuration](https://moonrepo.dev/docs/config/project),
+Hosted CI now persists only Moon's documented `hashes` and `outputs`
+directories, keyed by platform, job partition, Moon configuration, and commit.
+Exact same-run product artifacts continue to use GitHub artifact transport.
+Source, compiler, package-manager, Moon, and release-artifact caches remain
+separate. A future remote cache is optional, not required for correctness. Moon
+documents that task hashes use declared inputs, output hydration requires
+declared outputs, and CI cache persistence must be configured explicitly:
+[project/task cache configuration](https://moonrepo.dev/docs/config/project),
 [task inputs and outputs](https://moonrepo.dev/docs/create-task),
 [local cache behavior](https://moonrepo.dev/docs/concepts/cache), and
 [CI/remote-cache setup](https://moonrepo.dev/docs/guides/ci).
@@ -1162,7 +1156,8 @@ miniature CI systems:
   Extension artifact builders no longer claim `xtask` as an input when their
   scripts never invoke or import it.
 
-The resolved graph is **54 projects, 195 tasks, and 154 task edges**. Twenty-eight
+Before the 2026-09-05 follow-up, the resolved graph was **54 projects, 195 tasks,
+and 154 task edges**. Twenty-eight
 implementation tasks are internal, leaving **167 public tasks**. Cache policy is
 115 normal, 13 local-only, and 67 uncached tasks; the latter are deliberate
 hosted/runtime/release side-effect boundaries rather than missing cache flags.
@@ -1204,3 +1199,75 @@ contract with much less test machinery. The remaining complex product-local
 build helpers are retained only where they directly build that product (for
 example, applying and building the pinned patched Wasmer host); moving or
 copying those helpers would merely rename the same machinery.
+
+## 2026-09-05 review follow-up
+
+The follow-up review found that selected CI roots, Moon traversal, and
+downloaded artifacts could disagree. This pass corrected the shared contracts
+instead of adding product wrappers or another scheduler:
+
+- The pinned graph now contains 55 projects, 207 tasks, and 193 dependency
+  edges. The additional tasks are explicit native build/package/finalizer,
+  browser-host, and lint boundaries that replace workflow-only or hidden work;
+  they do not add release products.
+
+- `run-planned-moon-job.sh` now resolves selected roots against the pinned
+  Moon task graph. A job declares downloaded direct dependencies explicitly;
+  the runner executes remaining local prerequisites, rejects unrelated or
+  transitively required transfers, and runs roots without rebuilding only the
+  transferred producers. Every workflow use of blanket
+  `OLIPHAUNT_MOON_UPSTREAM=none` was replaced, including extension, ABI,
+  runtime aggregate, addon, Kotlin, Postmaster, and mobile-app handoffs.
+- Native runtime build, target packaging, mobile ABI finalization, and aggregate
+  assembly are separate Moon tasks with disjoint target outputs. iOS packaging
+  uses package-owned scratch space, and ABI finalization copies the complete
+  immutable input asset set before rewriting the qualified runtime closure.
+- Swift and React Native packaging consume the finalized iOS artifact while
+  still running their local package prerequisites. JS and React Native release
+  assembly mutate release-owned copies rather than cached product outputs.
+- Native and WASIX source fetch scopes no longer acquire external extension
+  sources. Extension builders own those sources and include their executable
+  packagers in task inputs. WASIX TypeScript browser-host production is a
+  reusable task instead of hidden package-script work.
+- ICU shared source, Nextest configuration, docs build metadata, browser
+  example typechecking, AOT serializer compilation, and coverage measurements
+  have semantic selection ownership. JavaScript and Rust lint are explicit CI
+  tasks; Biome paths now cover maintained docs, integration, and performance
+  sources, and the pinned workspace Biome is used directly.
+- Generic check/test jobs install only capabilities inferred from their task
+  closure; Apple requirements select a macOS runner. Hosted Moon caching
+  persists only documented hash/output state, while same-run release artifacts
+  remain explicit transports. Gradle build caching is enabled for Kotlin.
+- Output-ownership checks now reject overlapping producer globs unless the
+  relationship is an explicit alternative or in-place finalizer. Release
+  ownership tests cover shared ICU source and source/helper invalidation.
+
+Adversarial proof completed locally with repository-pinned Moon 2.5.4:
+
+- all 19 cross-runner plans resolved with exactly their downloaded direct
+  dependencies; Swift retained `oliphaunt-swift:package`, React Native retained
+  `oliphaunt-react-native:package`, and WASIX TypeScript retained both local
+  package tasks;
+- actionlint, zizmor, workflow security, 15 capability/execution-plan tests,
+  40 product/Postmaster/handoff planner tests, and 13 bootstrap tests passed;
+- artifact finalization and graph ownership tests passed, including immutable
+  mobile finalization and the real multi-root WASIX TypeScript plan;
+- repository-wide pinned Biome lint and Cargo Clippy with warnings denied
+  passed. Enabling those checks exposed and fixed stale Biome coverage, six
+  Clippy findings, and one stale WASIX dependency-policy assertion;
+- a JavaScript product package and release-owned reassembly passed without
+  changing the producer tree; the unchanged Moon rerun restored both tasks
+  from cache in 232 ms;
+- the docs production build and built-site smoke passed cold, restored together
+  from Moon cache in 334 ms, and recovered a deliberately deleted generated
+  routes artifact in 296 ms; and
+- the complete release metadata, graph, policy, and release-tool unit suite
+  passed in 4m58s, followed by the outer workflow and release qualification
+  gates with the repository-pinned Moon 2.5.4 toolchain.
+
+No behavioral or installed-consumer guarantee was removed in this follow-up.
+The execution graph now runs one previously skipped prerequisite: WASIX
+extension source acquisition. Full Android/iOS/native matrix builds and real
+registry publication remain hosted-only proofs; ordinary CI, dry-run, and
+publish workflows were validated statically and through their local policy and
+execution-plan gates, without external writes.

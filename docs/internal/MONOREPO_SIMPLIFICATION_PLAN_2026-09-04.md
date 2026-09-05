@@ -235,19 +235,17 @@ Kotlin/Java; explicit cross-language edges remain necessary. [Moon toolchains](h
 
 ## Make caching real before enabling more flags
 
-The workspace enables local CAS, but hosted setup only persists tool archives;
-there is no configured Moon remote task cache or persistence of Moon task
-results. Heavy workflow commands explicitly set `MOON_CACHE=off`.
-`setup-rust-tools` defaults cache writes to false; only the portable liboliphaunt
-WASIX CI caller opts into the Cargo save policy. Postmaster's separate Cargo
-target directories also require deliberate workspace mappings. Therefore
-“cache: true” in a Moon file is not evidence of hosted reuse.
+The workspace enables local CAS, and hosted setup persists Moon's supported
+`hashes` and `outputs` directories with configuration-, job-, platform-, and
+commit-scoped keys. Same-run release artifacts still use GitHub artifact
+transport rather than treating a cache hit as publication authority.
+`setup-rust-tools` defaults cache writes to false; only selected heavyweight
+callers opt into Cargo save policy. Postmaster's separate Cargo target
+directories still require deliberate workspace mappings.
 
-First correct declared output ownership and cache keys, then use a supported
-remote task cache for deterministic work and correctly scoped compiler caches
-for expensive builds. Keep same-run artifact transport for release candidates;
-a cache hit does not authorize publication. Do not archive all of `target/` or
-all Moon internal state. [Moon cache](https://moonrepo.dev/docs/concepts/cache),
+Keep correctly scoped compiler caches for expensive builds and consider a
+remote cache only if GitHub cache persistence becomes insufficient. Do not
+archive all of `target/` or all Moon internal state. [Moon cache](https://moonrepo.dev/docs/concepts/cache),
 [CI persistence guidance](https://moonrepo.dev/docs/guides/ci#caching-artifacts)
 
 Moon v2 supports dependency `cacheStrategy: outputs` to invalidate consumers
@@ -325,8 +323,9 @@ guarantee:
   or accepted package shape. Repository-wide Postmaster asset aggregation moved
   in the opposite dependency direction, from the product to release tooling.
 
-Observed local runs, all with the repository-pinned Moon 2.5.4 toolchain and
-`MOON_CACHE=off` for production graphs:
+Observed local runs with the repository-pinned Moon 2.5.4 toolchain. These
+historical measurements disabled Moon output restoration to measure production
+work directly:
 
 | Proof | Result |
 | --- | --- |

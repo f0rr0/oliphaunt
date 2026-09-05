@@ -35,7 +35,7 @@ tasks:
     tags: ["runtime", "smoke", "node", "bun", "deno"]
     command: "sh tools/smoke-js-sdk.sh"
     deps:
-      - "liboliphaunt-native:release-runtime"
+      - "liboliphaunt-native:build-runtime-desktop-target"
       - "oliphaunt-broker:build"
       - "release-tools:node-direct-runtime"
     inputs:
@@ -78,7 +78,7 @@ tasks:
     command: "pnpm --dir examples/react-native-expo run mobile-build:android"
     deps:
       - "extension-packages:package-mobile"
-      - "liboliphaunt-native:release-runtime-android-target"
+      - "liboliphaunt-native:package-runtime-android-target"
       - "release-tools:kotlin-sdk-package"
       - "release-tools:react-native-sdk-package"
     inputs:
@@ -138,7 +138,7 @@ tasks:
     command: "pnpm --dir examples/react-native-expo run mobile-build:ios"
     deps:
       - "extension-packages:package-mobile"
-      - "liboliphaunt-native:release-runtime-ios-target"
+      - "liboliphaunt-native:package-runtime-ios-target"
       - "release-tools:react-native-sdk-package"
       - "release-tools:swift-sdk-package"
     inputs:

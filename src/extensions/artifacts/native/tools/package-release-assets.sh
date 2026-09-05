@@ -212,9 +212,10 @@ fetch_extension_source_assets() {
   fi
   echo "==> Fetching pinned native runtime and extension source assets"
   "$observed_phase" \
-    --label "fetch pinned native extension sources" \
+    --label "fetch pinned native dependency sources" \
     --log /tmp/liboliphaunt-release-extension-assets-fetch.log \
     -- bun src/sources/tools/fetch-sources.mjs native-runtime
+  bun src/sources/tools/fetch-sources.mjs extensions
 }
 
 archive_swiftpm_xcframework() {

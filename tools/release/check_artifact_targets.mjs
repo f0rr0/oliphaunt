@@ -891,14 +891,6 @@ export function validateCiArtifactCoverage(workflow, inventory) {
     actionSteps(workflow, "wasix-postmaster", "./.github/actions/setup-moon").length === 1,
     "WASIX postmaster aggregation must load its release catalog through the pinned Moon toolchain",
   );
-  const postmasterAggregation = workflowJob(workflow, "wasix-postmaster").steps
-    .find((step) => step.name === "Merge target WASIX postmaster release assets");
-  invariant(
-    String(postmasterAggregation?.run ?? "").includes(
-      "run-moon-targets.sh --upstream none release-tools:postmaster-release-assets",
-    ),
-    "WASIX postmaster aggregation must run the product-owned aggregate Moon task without producer dependencies",
-  );
   validateMergedSameRunDownload(
     workflow,
     "wasix-postmaster",
@@ -1039,8 +1031,7 @@ export function validateCiArtifactCoverage(workflow, inventory) {
       && wasixNapiBuild.env.OLIPHAUNT_WASM_GENERATED_AOT_DIR === "${{ github.workspace }}/target/oliphaunt-wasix/aot"
       && wasixNapiBuild.env.OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT === "${{ github.workspace }}/target/extension-artifacts"
       && wasixNapiBuild.env.OLIPHAUNT_ICU_DATA_DIR === "${{ github.workspace }}/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu"
-      && wasixNapiBuild.env.OLIPHAUNT_WASIX_NAPI_ARTIFACT_SOURCE_SHA === "${{ github.event.pull_request.head.sha || github.sha }}"
-      && String(wasixNapiBuild.run ?? "").includes("OLIPHAUNT_MOON_UPSTREAM=none"),
+      && wasixNapiBuild.env.OLIPHAUNT_WASIX_NAPI_ARTIFACT_SOURCE_SHA === "${{ github.event.pull_request.head.sha || github.sha }}",
     "WASIX Node-API builds must fail closed on exact same-run portable, ICU, AOT, and extension payload roots",
   );
   const wasixNapiExtensionStage = namedStep(workflow, "wasix-napi", "Stage exact-extension WASIX build inputs");

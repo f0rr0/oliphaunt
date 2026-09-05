@@ -5,6 +5,8 @@ fileGroups:
     - "/Cargo.lock"
     - "/Cargo.toml"
     - "/rust-toolchain.toml"
+  rust-test-config:
+    - "/.config/nextest.toml"
   pnpm-workspace:
     - "/package.json"
     - "/pnpm-lock.yaml"

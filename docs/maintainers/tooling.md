@@ -231,9 +231,11 @@ CI flow:
    `moon run` with the selected targets. This is for planned artifact targets
    whose producer jobs may be selected by release-product implications rather
    than by direct file affectedness. Jobs that consume downloaded artifacts pass
-   `OLIPHAUNT_MOON_UPSTREAM=none`; other build jobs keep Moon upstream task
-   inheritance enabled. `release-tools:<product>-sdk-package` tasks consume the
-   product `package` outputs instead of hiding release assembly in source projects.
+   their direct producer targets through
+   `OLIPHAUNT_MOON_TRANSFERRED_DEPS_JSON`; the wrapper validates those edges,
+   runs remaining local prerequisites, and suppresses only the transferred
+   producers. `release-tools:<product>-sdk-package` tasks consume product
+   `package` outputs instead of hiding release assembly in source projects.
 5. GitHub matrix fans out only target dimensions such as OS, CPU, ABI, native
    runtime target, broker target, Node direct target, WASIX AOT target, Android
    emulator, and iOS simulator.
@@ -272,9 +274,10 @@ outputs.
 Use `cache: local` for developer smoke tasks that are useful to replay when
 local source inputs have not changed.
 
-Force live execution for CI/mobile/device proof with `MOON_CACHE=off`; those
-lanes prove the current runner, simulator/device, signing environment, app
-artifact, and runtime artifact.
+Set `cache: false` on CI/mobile/device proof tasks; those lanes prove the
+current runner, simulator/device, signing environment, app artifact, and
+runtime artifact. Keep Moon caching enabled so deterministic prerequisites can
+still be restored.
 
 Cache benchmark plan checks, never measured benchmark runs. `*-plan` validates
 matrix and report shape; `*-measure` measures current hardware and runtime

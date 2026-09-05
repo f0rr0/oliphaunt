@@ -170,6 +170,10 @@ describe("normal publication plan", () => {
     expect(contrib.release.releaseProducts).toEqual(["liboliphaunt-native", "liboliphaunt-wasix"]);
     expect(contrib.release.releaseProducts).not.toContain("oliphaunt-wasix-napi");
 
+    const icu = realSelection("src/runtimes/liboliphaunt/icu/src/lib.rs");
+    expect(icu.release.directProducts).toEqual(["liboliphaunt-wasix"]);
+    expect(icu.release.releaseProducts).toEqual(["liboliphaunt-wasix"]);
+
     const sdk = realSelection("src/sdks/react-native/CHANGELOG.md");
     expect(sdk.release.directProducts).toEqual(["oliphaunt-react-native"]);
     expect(sdk.release.releaseProducts).toEqual(["oliphaunt-react-native"]);

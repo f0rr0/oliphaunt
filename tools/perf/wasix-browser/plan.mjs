@@ -2,12 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import {
-  comfortableWinGate,
-  median,
-  pairedRatioSummary,
-  sha256,
-} from '../wasix-node/plan.mjs';
+import { comfortableWinGate, median, pairedRatioSummary, sha256 } from '../wasix-node/plan.mjs';
 
 export const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 export const defaultBrowserPlanFile = resolve(
@@ -24,8 +19,7 @@ const COMPARISON_VERSION = '0.5.4';
 const COMPARISON_INTEGRITY =
   'sha512-yYZUyyXrHU7tPlCjwZQJ6hIG9DscdCCn7Uk0mYKwC1FeHX286AbcmFveMiRBEak8e9iPupjsoVImN3yJZVed2g==';
 const COMPARISON_COMMIT = '25d0a55e1f1e4c59f26d9e125150dda88a33fd00';
-const COMPARISON_TREE_SHA256 =
-  'b3925de04c386f51859c1bf18c143b225e3850616718140dd32e8eb48e9a2c84';
+const COMPARISON_TREE_SHA256 = 'b3925de04c386f51859c1bf18c143b225e3850616718140dd32e8eb48e9a2c84';
 const ENGINE_NAMES = ['wasixDirect', 'wasixWorker', 'pgliteDirect', 'pgliteWorker'];
 const PROFILE_FIELDS = [
   'startupRuns',
@@ -88,8 +82,7 @@ const GATE_EXCLUSIONS = {
     'descriptive because the public close methods make different worker-reclamation guarantees',
   'insertDiagnostic.*Ms':
     'diagnostic decomposition would otherwise overweight the primary insert workload',
-  'insertDiagnostic.indexedInsertWalBytes':
-    'semantic parity constraint rather than a speed metric',
+  'insertDiagnostic.indexedInsertWalBytes': 'semantic parity constraint rather than a speed metric',
 };
 const POSTGRES_SETTINGS = {
   fsync: 'off',
@@ -177,11 +170,7 @@ export function validateBrowserPlan(plan) {
     { fzstd: '0.1.1' },
     'plan.engines.candidate.dependencies',
   );
-  requireExactRecord(
-    candidate.runtimeBuild,
-    RUNTIME_BUILD,
-    'plan.engines.candidate.runtimeBuild',
-  );
+  requireExactRecord(candidate.runtimeBuild, RUNTIME_BUILD, 'plan.engines.candidate.runtimeBuild');
 
   requireExactKeys(
     comparison,
@@ -212,10 +201,7 @@ export function validateBrowserPlan(plan) {
   })) {
     requireEqual(comparison[field], expected, `plan.engines.comparison.${field}`);
   }
-  const comparisonSurfaces = requireRecord(
-    comparison.surfaces,
-    'plan.engines.comparison.surfaces',
-  );
+  const comparisonSurfaces = requireRecord(comparison.surfaces, 'plan.engines.comparison.surfaces');
   requireExactKeys(
     comparisonSurfaces,
     ['callerRealm', 'worker'],
@@ -265,7 +251,10 @@ function validateCommonPlan(plan) {
     requireEqual(full[field], expected, `plan.profiles.full.${field}`);
   }
   requirePositiveInteger(full.workloadRuns, 'plan.profiles.full.workloadRuns');
-  if (full.workloadRuns < ENGINE_NAMES.length * 2 || full.workloadRuns % ENGINE_NAMES.length !== 0) {
+  if (
+    full.workloadRuns < ENGINE_NAMES.length * 2 ||
+    full.workloadRuns % ENGINE_NAMES.length !== 0
+  ) {
     throw new Error('plan.profiles.full.workloadRuns must be a multiple of 4 and at least 8');
   }
 
@@ -285,11 +274,7 @@ function validateCommonPlan(plan) {
   );
   requireEqual(gate.maxGeomeanRatio, 0.8, 'plan.gate.maxGeomeanRatio');
   requireEqual(gate.requiresCorrectness, true, 'plan.gate.requiresCorrectness');
-  requireEqual(
-    gate.requiresBothExecutionSurfaces,
-    true,
-    'plan.gate.requiresBothExecutionSurfaces',
-  );
+  requireEqual(gate.requiresBothExecutionSurfaces, true, 'plan.gate.requiresBothExecutionSurfaces');
   requireEqual(
     gate.metric,
     'geometric-mean-of-median-paired-oliphaunt-over-pglite-ratios-lower-is-better',
@@ -467,7 +452,11 @@ function validateBrowserResult(plan, result) {
   requireEqual(result.environment?.crossOriginIsolated, true, 'cross-origin isolation');
 
   for (const engine of ENGINE_NAMES) {
-    requireArrayLength(result.samples?.startup?.[engine], expected.startupRuns, `${engine} startup`);
+    requireArrayLength(
+      result.samples?.startup?.[engine],
+      expected.startupRuns,
+      `${engine} startup`,
+    );
     requireArrayLength(
       result.samples?.workload?.[engine],
       expected.workloadRuns,
@@ -494,7 +483,11 @@ function summarizeCorrectness(plan, result) {
       );
       return [
         surface,
-        { passed: candidateValid && comparisonValid && parity, candidateProfile, comparisonProfile },
+        {
+          passed: candidateValid && comparisonValid && parity,
+          candidateProfile,
+          comparisonProfile,
+        },
       ];
     }),
   );
@@ -531,9 +524,9 @@ function summarizeCorrectness(plan, result) {
 
 function metricSamples(result, engine, id) {
   if (id === 'startup.warmReadyMs') {
-    return result.samples.startup[engine].slice(1).map((value, index) =>
-      positiveNumber(value, `${engine} ${id} sample ${index}`),
-    );
+    return result.samples.startup[engine]
+      .slice(1)
+      .map((value, index) => positiveNumber(value, `${engine} ${id} sample ${index}`));
   }
   const match = /^workload\.([A-Za-z][A-Za-z0-9]*)$/u.exec(id);
   if (match === null) throw new Error(`unsupported browser benchmark metric ${id}`);
@@ -625,6 +618,8 @@ function positiveNumber(value, label) {
 
 function requireEqual(actual, expected, label) {
   if (actual !== expected) {
-    throw new Error(`${label} must be ${JSON.stringify(expected)}, received ${JSON.stringify(actual)}`);
+    throw new Error(
+      `${label} must be ${JSON.stringify(expected)}, received ${JSON.stringify(actual)}`,
+    );
   }
 }

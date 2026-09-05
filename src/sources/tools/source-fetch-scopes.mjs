@@ -18,11 +18,9 @@ const SOURCE_ORIGINS_BY_SCOPE = Object.freeze({
   'native-runtime': Object.freeze([
     sourceOrigins.sharedThirdParty,
     sourceOrigins.nativeThirdParty,
-    sourceOrigins.extension,
   ]),
   'wasix-runtime': Object.freeze([
     sourceOrigins.sharedThirdParty,
-    sourceOrigins.extension,
   ]),
   'wasix-postmaster-runtime': Object.freeze([
     sourceOrigins.sharedThirdParty,

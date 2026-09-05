@@ -3,6 +3,7 @@
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
+  cpSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -113,7 +114,7 @@ function finalizeArchive(archive, receipts) {
   }
 }
 
-export function finalizeNativeMobileAbiProofs({ domain, assetDir, receiptRoot }) {
+export function finalizeNativeMobileAbiProofs({ domain, assetDir, receiptRoot, outputDir = assetDir }) {
   const receipts = loadDomainReceipts(domain, receiptRoot);
   const suffix = `-runtime-resources-${domain}.tar.gz`;
   const archives = readdirSync(assetDir)
@@ -122,8 +123,15 @@ export function finalizeNativeMobileAbiProofs({ domain, assetDir, receiptRoot })
   if (archives.length !== 1) {
     fail(`${assetDir} must contain exactly one *${suffix}; found ${archives.length}`);
   }
-  finalizeArchive(archives[0], receipts);
-  return { archive: archives[0], targets: [...receipts.keys()] };
+  const sourceArchive = archives[0];
+  let outputArchive = sourceArchive;
+  if (path.resolve(outputDir) !== path.resolve(assetDir)) {
+    rmSync(outputDir, {recursive: true, force: true});
+    cpSync(assetDir, outputDir, {recursive: true});
+    outputArchive = path.join(outputDir, path.basename(sourceArchive));
+  }
+  finalizeArchive(outputArchive, receipts);
+  return { archive: outputArchive, targets: [...receipts.keys()] };
 }
 
 function parseArgs(argv) {
@@ -132,12 +140,12 @@ function parseArgs(argv) {
     const key = argv[index];
     const value = argv[index + 1];
     if (!key?.startsWith("--") || value === undefined || values.has(key)) {
-      fail("usage: --domain DOMAIN --asset-dir DIR --receipt-root DIR");
+      fail("usage: --domain DOMAIN --asset-dir DIR --receipt-root DIR [--output-dir DIR]");
     }
     values.set(key, value);
   }
   if (
-    values.size !== 3
+    (values.size !== 3 && values.size !== 4)
     || !values.has("--domain")
     || !values.has("--asset-dir")
     || !values.has("--receipt-root")
@@ -148,6 +156,7 @@ function parseArgs(argv) {
     domain: values.get("--domain"),
     assetDir: path.resolve(values.get("--asset-dir")),
     receiptRoot: path.resolve(values.get("--receipt-root")),
+    outputDir: values.has("--output-dir") ? path.resolve(values.get("--output-dir")) : undefined,
   };
 }
 

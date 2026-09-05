@@ -926,6 +926,7 @@ describe('WASIX database recovery state', () => {
     ).rejects.toThrow(/must complete synchronously.*Promise or thenable/);
     await expect(database.execProtocolRaw(Uint8Array.of(2))).resolves.toEqual(ready());
     const dynamicallyTypedThenableCallback: (chunk: Uint8Array) => unknown = () => ({
+      // biome-ignore lint/suspicious/noThenProperty: This test deliberately supplies a thenable.
       then: () => undefined,
     });
     await expect(

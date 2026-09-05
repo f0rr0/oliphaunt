@@ -37,7 +37,7 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   build-host:
-    tags: ["release", "artifact-builder"]
+    tags: ["release", "artifact-builder", "alternative-producer"]
     script: |
       set -eu
       . src/runtimes/liboliphaunt/native/tools/runtime-preflight.sh
@@ -47,6 +47,7 @@ tasks:
       OLIPHAUNT_TRACK_BUILD: "missing"
     deps:
       - "source-inputs:source-fetch-native-runtime"
+      - "source-inputs:source-fetch-extensions"
     inputs:
       - "@group(legal-files)"
       - "@group(cargo-workspace)"
@@ -62,6 +63,7 @@ tasks:
         group: "sources"
       - project: "third-party-native"
         group: "sources"
+      - "/src/extensions/artifacts/native/tools/**/*"
       - "/tools/release/check-linux-consumer-baseline.sh"
       - "/src/sources/tools/source-fetch-core.mjs"
       - "/tools/release/extension-upstream-licenses.mjs"
@@ -79,15 +81,18 @@ tasks:
       - "/tools/release/release-directory-safety.mjs"
       - "/tools/release/validate-ios-carrier-zips.mjs"
       - "/tools/release/windows-vc-runtime-closure.mjs"
+    outputs:
+      - "/target/extensions/native/release-assets/**/*"
     options:
       cache: false
       runFromWorkspaceRoot: true
       runInCI: false
   build-target:
-    tags: ["release", "artifact-builder", "ci-extension-artifacts-native"]
+    tags: ["release", "artifact-builder", "alternative-producer", "ci-extension-artifacts-native"]
     command: "bash src/extensions/artifacts/native/tools/package-release-assets.sh"
     deps:
       - "source-inputs:source-fetch-native-runtime"
+      - "source-inputs:source-fetch-extensions"
     inputs:
       - "@group(legal-files)"
       - "@group(cargo-workspace)"
@@ -103,6 +108,7 @@ tasks:
         group: "sources"
       - project: "third-party-native"
         group: "sources"
+      - "/src/extensions/artifacts/native/tools/**/*"
       - "/tools/release/check-linux-consumer-baseline.sh"
       - "/src/sources/tools/source-fetch-core.mjs"
       - "/tools/release/extension-upstream-licenses.mjs"

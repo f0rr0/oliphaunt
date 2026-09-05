@@ -134,18 +134,14 @@ intentionally not maintained here.
   only the native extension artifact builder and does not select
   `liboliphaunt-native`. WASIX AOT target fan-out is emitted by the affected
   planner as matrix data, not by a separate CI planner job.
-- [x] Builds workflow disables Moon output cache for every artifact-producing
-  builder invocation. Evidence: `tools/policy/check-release-policy.py` rejects
-  any selected `ci-*` builder job whose `run-planned-moon-job.sh` line omits
-  `MOON_CACHE=off`; compiler/package-manager caches remain available below
-  Moon for ccache, Cargo, Gradle, pnpm, and Docker layers.
-- [x] Builds workflow disables upstream Moon expansion for every
-  artifact-producing builder invocation. Evidence:
-  `tools/policy/check-release-policy.py` rejects any selected `ci-*` builder
-  job whose `run-planned-moon-job.sh` line omits
-  `OLIPHAUNT_MOON_UPSTREAM=none`, so `Builds` jobs cannot silently pull in
-  `check`, `test`, docs, coverage, regression, or release-readiness work while
-  producing runtime, SDK, extension, or mobile app artifacts.
+- [x] Builds workflow preserves Moon's supported `hashes` and `outputs` cache
+  directories between equivalent hosted jobs. Exact release artifacts still
+  travel through same-run GitHub artifacts; compiler/package-manager caches
+  remain separate below Moon.
+- [x] Cross-runner execution distinguishes downloaded direct dependencies from
+  local prerequisites. `run-planned-moon-job.sh` validates transferred targets
+  against Moon's task graph, executes remaining local prerequisites normally,
+  then runs only the selected roots without rebuilding transferred producers.
 - [x] Native exact-extension artifact builders are independent target builders
   from the same PostgreSQL/liboliphaunt source and ABI inputs. They are now
   addressed by target, receive the exact selected product set as
@@ -235,20 +231,18 @@ intentionally not maintained here.
   (`android-arm64-v8a`/`android-x86_64`), and rejects missing or unselected
   dependency archive rows.
 - [x] Swift SDK package artifacts render the public SwiftPM release manifest
-  from the real Apple liboliphaunt SwiftPM target artifact in CI, not a local
+  from the ABI-finalized Apple liboliphaunt artifact set in CI, not a local
   fixture and not the all-platform aggregate release asset job. Evidence:
-  `swift-sdk-package` depends on `liboliphaunt-native-ios`, downloads
-  `liboliphaunt-native-release-assets-ios-xcframework`, sets
+  `swift-sdk-package` depends on `liboliphaunt-native-ios-abi`, downloads
+  `liboliphaunt-native-abi-compatible-release-assets-ios-datum64`, sets
   `OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR`, and
   `release-tools:swift-sdk-package` fails closed unless that
   directory contains a real
   `liboliphaunt-<version>-apple-spm-xcframework.zip` with macOS, iOS device,
   and iOS simulator slices.
-- [x] Downloaded-artifact consumer jobs run their explicit Moon target with
-  `OLIPHAUNT_MOON_UPSTREAM=none`, so they do not re-run producer tasks after
-  GitHub artifact handoff. SDK package jobs also run their package target with
-  upstream traversal disabled so they cannot silently rebuild helper/runtime
-  package tasks inside an SDK builder.
+- [x] Downloaded-artifact consumers declare transferred direct producer targets
+  to the planned-job wrapper. The wrapper validates those graph edges, preserves
+  local package prerequisites, and suppresses only already-downloaded producers.
 - [x] WASIX exact-extension packaging consumes portable runtime outputs instead
   of rerunning source-generation checks. Evidence: strict generated asset
   validation remains in `liboliphaunt-wasix:runtime-portable`; the WASIX
@@ -1018,7 +1012,7 @@ Run before claiming this architecture complete:
   `crates:oliphaunt-wasix@0.6.0` plus the renamed internal WASIX crates.
 - [x] GitHub Builds run `27448574605` on `927457d3` proved the native
   exact-extension source-fetch gap after decoupling artifact packaging from Rust:
-  all native extension rows failed before build work because CI runs
+  all native extension rows failed before build work because CI then ran
   `extension-artifacts-native` with `OLIPHAUNT_MOON_UPSTREAM=none`, so the
   `source-inputs:source-fetch-native-runtime` dependency did not materialize ICU,
   OpenSSL, and extension checkouts. The follow-up makes source checkout

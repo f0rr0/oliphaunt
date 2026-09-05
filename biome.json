@@ -8,12 +8,13 @@
       ".markdownlint-cli2.jsonc",
       "src/docs/package.json",
       "src/docs/tsconfig.json",
-      "src/docs/app/**/*.ts",
-      "src/docs/app/**/*.tsx",
-      "src/docs/app/**/*.css",
-      "src/docs/lib/**/*.ts",
+      "src/docs/src/**/*.ts",
+      "src/docs/src/**/*.tsx",
+      "src/docs/src/**/*.css",
       "src/docs/mdx-components.tsx",
       "src/docs/next.config.mjs",
+      "src/docs/postcss.config.mjs",
+      "src/docs/proxy.ts",
       "src/docs/source.config.ts",
       "src/docs/tools/**/*.mjs",
       "src/sdks/react-native/package.json",
@@ -38,8 +39,11 @@
       "src/runtimes/liboliphaunt/native/tools/smoke-packed-tools-npm.mjs",
       "tools/perf/matrix/**/*.json",
       "tools/perf/matrix/**/*.ts",
+      "tools/perf/wasix-browser/**/*.mjs",
+      "tools/perf/wasix-browser/**/*.ts",
       "tools/perf/wasix-node/**/*.mjs",
       "tools/perf/wasix-node/package.json",
+      "tools/integration/**/*.mjs",
       "tools/test/**/*.mjs",
       "!**/node_modules",
       "!**/lib",
@@ -54,6 +58,11 @@
     "indentStyle": "space",
     "indentWidth": 2,
     "lineWidth": 100
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
   },
   "javascript": {
     "formatter": {

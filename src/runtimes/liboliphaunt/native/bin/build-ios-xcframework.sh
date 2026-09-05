@@ -15,6 +15,7 @@ script_mode="${1:-build}"
 macos_runtime_resources_root="${OLIPHAUNT_MACOS_RUNTIME_RESOURCES_ROOT:-}"
 ios_runtime_resources_root="${OLIPHAUNT_IOS_RUNTIME_RESOURCES_ROOT:-}"
 runtime_version_file="$repo_root/src/runtimes/liboliphaunt/native/VERSION"
+macos_work_root="${OLIPHAUNT_WORK_ROOT:-$repo_root/target/liboliphaunt-pg18}"
 
 if [ "$(uname -s)" != "Darwin" ]; then
   echo "liboliphaunt iOS XCFramework build requires Darwin" >&2
@@ -42,7 +43,7 @@ simulator_script="$repo_root/src/runtimes/liboliphaunt/native/bin/build-postgres
 device_script="$repo_root/src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-device.sh"
 macos_script="$repo_root/src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh"
 public_header="$repo_root/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
-default_macos_library="$repo_root/target/liboliphaunt-pg18/out/liboliphaunt.dylib"
+default_macos_library="$macos_work_root/out/liboliphaunt.dylib"
 default_simulator_library="$repo_root/target/liboliphaunt-ios-simulator/out/liboliphaunt.dylib"
 default_device_library="$repo_root/target/liboliphaunt-ios-device/out/liboliphaunt.dylib"
 default_simulator_static_registry="$repo_root/target/liboliphaunt-ios-simulator/out/liboliphaunt_mobile_static_registry.c"

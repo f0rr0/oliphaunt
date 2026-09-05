@@ -44,9 +44,9 @@ const NATIVE_RUNTIME_JOBS = new Set([
   "liboliphaunt-native-ios",
 ]);
 const NATIVE_RUNTIME_TASKS = new Set([
-  "liboliphaunt-native:release-runtime",
-  "liboliphaunt-native:release-runtime-android-target",
-  "liboliphaunt-native:release-runtime-ios-target",
+  "liboliphaunt-native:package-runtime-desktop-target",
+  "liboliphaunt-native:package-runtime-android-target",
+  "liboliphaunt-native:package-runtime-ios-target",
 ]);
 export const WASM_RUNTIME_JOBS = new Set([
   "liboliphaunt-wasix-runtime",

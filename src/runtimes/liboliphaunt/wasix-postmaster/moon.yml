@@ -325,7 +325,7 @@ tasks:
       runInCI: true
 
   release-assets:
-    tags: ["release", "artifact", "ci-wasix-postmaster"]
+    tags: ["release", "artifact", "in-place-finalizer-input", "ci-wasix-postmaster"]
     command: "bash src/runtimes/liboliphaunt/wasix-postmaster/bin/package-release-assets.sh"
     deps:
       - "liboliphaunt-wasix-postmaster:carrier"

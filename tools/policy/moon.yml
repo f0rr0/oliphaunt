@@ -90,6 +90,42 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
+  js-lint:
+    tags: ["quality", "static"]
+    command: "bash tools/policy/format.sh --lint-js"
+    inputs:
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/biome.json"
+      - "/renovate.json"
+      - "/.markdownlint-cli2.jsonc"
+      - "/src/docs/**/*"
+      - "!/src/docs/node_modules"
+      - "!/src/docs/node_modules/**"
+      - "!/src/docs/.next/**"
+      - "!/src/docs/.source/**"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "!/src/sdks/react-native/**/.build/**"
+      - "!/src/sdks/react-native/**/.gradle/**"
+      - "!/src/sdks/react-native/**/.cxx/**"
+      - "!/src/sdks/react-native/**/build/**"
+      - "!/src/sdks/react-native/**/lib/**"
+      - "/src/sdks/js/**/*"
+      - "!/src/sdks/js/node_modules/**"
+      - "!/src/sdks/js/lib/**"
+      - "/src/bindings/wasix-ts/**/*"
+      - "!/src/bindings/wasix-ts/node_modules/**"
+      - "!/src/bindings/wasix-ts/lib/**"
+      - "/examples/browser-wasix/**/*"
+      - "!/examples/browser-wasix/dist/**"
+      - "/tools/integration/**/*"
+      - "/tools/perf/**/*"
+      - "/tools/test/**/*"
+      - "/tools/policy/format.sh"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
   rust-format-check:
     tags: ["format", "quality", "static", "requires-rust"]
     command: "cargo fmt --check"
@@ -97,6 +133,23 @@ tasks:
       - "@group(cargo-workspace)"
       - "/src/**/Cargo.toml"
       - "/src/**/*.rs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  rust-lint:
+    tags: ["quality", "static", "requires-rust"]
+    command: "tools/dev/bun.sh tools/policy/check-rust-lint.mjs"
+    env:
+      CARGO_TARGET_DIR: "target/moon/cargo-quality"
+    inputs:
+      - "@group(cargo-workspace)"
+      - "/clippy.toml"
+      - "/src/**/Cargo.toml"
+      - "/src/**/*.rs"
+      - "/tools/**/Cargo.toml"
+      - "/tools/**/*.rs"
+      - "/tools/policy/check-rust-lint.mjs"
+      - "/tools/policy/check-dependency-invariants.sh"
     options:
       cache: true
       runFromWorkspaceRoot: true

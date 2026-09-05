@@ -104,11 +104,13 @@ $VcRuntimeClosureTool = Join-Path $Root "tools/release/windows-vc-runtime-closur
 Remove-Item -Recurse -Force $StageRoot -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $OutDir, (Join-Path $Stage "include"), (Join-Path $Stage "bin"), (Join-Path $Stage "lib"), (Join-Path $Stage "lib/modules"), (Join-Path $Stage "runtime"), (Join-Path $ToolsStage "runtime/bin") | Out-Null
 
-Write-Output "==> Building liboliphaunt $TargetId"
-pwsh -NoProfile -ExecutionPolicy Bypass -File src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1 *> "$env:TEMP\liboliphaunt-release-$TargetId.log"
-if ($LASTEXITCODE -ne 0) {
-    Get-Content "$env:TEMP\liboliphaunt-release-$TargetId.log" -Tail 160 | Write-Error
-    Fail "failed to build liboliphaunt $TargetId"
+if ($env:OLIPHAUNT_RELEASE_BUILD_RUNTIME -ne "0") {
+    Write-Output "==> Building liboliphaunt $TargetId"
+    pwsh -NoProfile -ExecutionPolicy Bypass -File src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1 *> "$env:TEMP\liboliphaunt-release-$TargetId.log"
+    if ($LASTEXITCODE -ne 0) {
+        Get-Content "$env:TEMP\liboliphaunt-release-$TargetId.log" -Tail 160 | Write-Error
+        Fail "failed to build liboliphaunt $TargetId"
+    }
 }
 
 if (-not (Test-Path $Dll)) {

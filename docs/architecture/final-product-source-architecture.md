@@ -162,9 +162,10 @@ The flow is:
 9. Builder jobs invoke only their planned builder Moon targets. GitHub `needs:`
    expresses artifact ordering for uploaded artifacts. Builder jobs that can
    run local task prerequisites keep Moon upstream inheritance enabled; jobs
-   that consume downloaded artifacts pass `--upstream none` through
-   `.github/scripts/run-planned-moon-job.sh` so producer artifacts are not
-   rebuilt in the consumer job.
+   that consume downloaded artifacts declare those transferred producer tasks
+   to `.github/scripts/run-planned-moon-job.sh`; it runs remaining local
+   prerequisites normally, then runs the consumer roots with upstream traversal
+   disabled so transferred producers are not rebuilt.
    `release-tools:<product>-sdk-package` tasks consume the product `package`
    outputs instead of hiding release assembly in source projects.
 10. Expensive runtime, mobile, benchmark, publish, registry, and provenance jobs
@@ -184,7 +185,8 @@ Moon task options must be semantic:
 - use `runInCI: skip` for expensive dependency tasks that should remain valid
   in CI action graphs but should not run as broad affected work.
 - use `runInCI: false` only for local/manual tasks that CI must never invoke.
-- keep runtime/device/provenance tasks uncached in CI with `MOON_CACHE=off`.
+- declare runtime/device/provenance tasks with `cache: false`; do not disable
+  Moon caching for unrelated deterministic prerequisites in the same job.
 
 ## Release Model
 

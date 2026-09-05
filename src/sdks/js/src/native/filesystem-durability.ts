@@ -1,10 +1,10 @@
-import { lstat, open, readdir, readlink } from 'node:fs/promises';
+import { lstat, open, readdir, readlink, type FileHandle } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const UNSUPPORTED_DIRECTORY_SYNC_ERRORS = new Set(['EISDIR', 'EINVAL', 'EPERM', 'ENOTSUP']);
 
 export async function syncDirectory(directory: string): Promise<void> {
-  let handle;
+  let handle: FileHandle | undefined;
   try {
     handle = await open(directory, 'r');
     await handle.sync();

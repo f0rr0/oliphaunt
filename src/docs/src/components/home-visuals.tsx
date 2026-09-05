@@ -38,16 +38,35 @@ export function UseCaseVisual({ kind }: { kind: UseCaseKind }) {
 
       {kind === 'field' ? (
         <svg aria-hidden="true" viewBox="0 0 420 210">
-          <path className="home-use-signal__contour" d="M-8 180C48 110 119 130 145 75S260 18 300 72s81 66 132 15" />
-          <path className="home-use-signal__contour" d="M-10 207C57 139 132 161 173 98S270 45 311 94s78 55 118 30" />
-          <path className="home-use-signal__contour" d="M54 217c22-55 92-43 126-90s77-44 111-9 79 31 131-10" />
+          <path
+            className="home-use-signal__contour"
+            d="M-8 180C48 110 119 130 145 75S260 18 300 72s81 66 132 15"
+          />
+          <path
+            className="home-use-signal__contour"
+            d="M-10 207C57 139 132 161 173 98S270 45 311 94s78 55 118 30"
+          />
+          <path
+            className="home-use-signal__contour"
+            d="M54 217c22-55 92-43 126-90s77-44 111-9 79 31 131-10"
+          />
           <circle className="home-use-signal__radius" cx="228" cy="103" r="72" />
-          <circle className="home-use-signal__radius home-use-signal__radius--inner" cx="228" cy="103" r="38" />
+          <circle
+            className="home-use-signal__radius home-use-signal__radius--inner"
+            cx="228"
+            cy="103"
+            r="38"
+          />
           <path className="home-use-signal__crosshair" d="M228 16v174M141 103h174" />
           <circle className="home-use-signal__target" cx="228" cy="103" r="9" />
           <circle className="home-use-signal__asset" cx="177" cy="74" r="5" />
           <circle className="home-use-signal__asset" cx="268" cy="126" r="5" />
-          <circle className="home-use-signal__asset home-use-signal__asset--outside" cx="337" cy="55" r="5" />
+          <circle
+            className="home-use-signal__asset home-use-signal__asset--outside"
+            cx="337"
+            cy="55"
+            r="5"
+          />
         </svg>
       ) : null}
 
@@ -55,10 +74,18 @@ export function UseCaseVisual({ kind }: { kind: UseCaseKind }) {
         <svg aria-hidden="true" viewBox="0 0 420 210">
           <path className="home-use-signal__vector-line" d="M55 164 156 114 224 97 310 49" />
           <path className="home-use-signal__vector-line" d="m55 164 151 2 59-38 101 9" />
-          <path className="home-use-signal__vector-line home-use-signal__vector-line--active" d="M55 164 224 97" />
+          <path
+            className="home-use-signal__vector-line home-use-signal__vector-line--active"
+            d="M55 164 224 97"
+          />
           <circle className="home-use-signal__query" cx="55" cy="164" r="13" />
           <circle className="home-use-signal__vector" cx="156" cy="114" r="7" />
-          <circle className="home-use-signal__vector home-use-signal__vector--match" cx="224" cy="97" r="11" />
+          <circle
+            className="home-use-signal__vector home-use-signal__vector--match"
+            cx="224"
+            cy="97"
+            r="11"
+          />
           <circle className="home-use-signal__vector" cx="310" cy="49" r="7" />
           <circle className="home-use-signal__vector" cx="206" cy="166" r="7" />
           <circle className="home-use-signal__vector" cx="265" cy="128" r="7" />
@@ -79,7 +106,14 @@ export function UseCaseVisual({ kind }: { kind: UseCaseKind }) {
             <path d="M175 103h176M228 103v77M295 103v77M191 125h20M245 125h31M312 125h22M191 148h20M245 148h31M312 148h22" />
           </g>
           <path className="home-use-signal__cursor" d="m329 34 19 49 9-17 18-8-46-24Z" />
-          <rect className="home-use-signal__selection" height="23" rx="6" width="67" x="228" y="103" />
+          <rect
+            className="home-use-signal__selection"
+            height="23"
+            rx="6"
+            width="67"
+            x="228"
+            y="103"
+          />
         </svg>
       ) : null}
     </figure>
@@ -112,13 +146,18 @@ export function PostgresEngineVisual() {
           <strong>18</strong>
         </div>
         <div className="home-engine-visual__layer home-engine-visual__layer--sql">
-          <span>SQL</span><span>types</span><span>transactions</span>
+          <span>SQL</span>
+          <span>types</span>
+          <span>transactions</span>
         </div>
         <div className="home-engine-visual__layer home-engine-visual__layer--data">
-          <span>relations</span><span>indexes</span><span>JSONB</span>
+          <span>relations</span>
+          <span>indexes</span>
+          <span>JSONB</span>
         </div>
         <div className="home-engine-visual__layer home-engine-visual__layer--wal">
-          <span>WAL</span><span>recovery</span>
+          <span>WAL</span>
+          <span>recovery</span>
         </div>
       </div>
 
@@ -192,13 +231,21 @@ export function RuntimeFamilyVisual() {
       </div>
       <div className="home-runtime-family__native">
         <span className="home-runtime-family__native-mark" aria-hidden="true">
-          <i /><i /><i />
+          <i />
+          <i />
+          <i />
         </span>
-        <div><strong>Native</strong><small>direct · broker · server</small></div>
+        <div>
+          <strong>Native</strong>
+          <small>direct · broker · server</small>
+        </div>
       </div>
       <div className="home-runtime-family__wasix">
         <WasixMark />
-        <div><strong>WASIX</strong><small>portable runtime assets</small></div>
+        <div>
+          <strong>WASIX</strong>
+          <small>portable runtime assets</small>
+        </div>
       </div>
       <div className="home-runtime-family__surface" aria-hidden="true">
         <span>direct SDK calls</span>

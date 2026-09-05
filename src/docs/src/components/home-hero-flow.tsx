@@ -75,10 +75,11 @@ export function HomeHeroFlow() {
                 rotateY,
                 x: shiftX,
                 y: shiftY,
-          }
+              }
         }
       >
         <svg
+          aria-hidden="true"
           className="home-pg-sculpture__assembly"
           preserveAspectRatio="xMidYMid meet"
           viewBox="0 0 640 640"
@@ -156,10 +157,7 @@ export function HomeHeroFlow() {
             />
           </g>
 
-          <g
-            className="home-pg-sculpture__elephant"
-            transform="translate(174 151) scale(12.2)"
-          >
+          <g className="home-pg-sculpture__elephant" transform="translate(174 151) scale(12.2)">
             <path className="home-pg-sculpture__elephant-ghost" d={siPostgresql.path} />
             <path
               className="home-pg-sculpture__elephant-outline"
@@ -189,13 +187,38 @@ export function HomeHeroFlow() {
           </g>
 
           <g className="home-pg-sculpture__nodes">
-            <circle className="home-pg-sculpture__node home-pg-sculpture__node--one" cx="73" cy="430" r="5" />
-            <circle className="home-pg-sculpture__node home-pg-sculpture__node--two" cx="142" cy="384" r="4" />
+            <circle
+              className="home-pg-sculpture__node home-pg-sculpture__node--one"
+              cx="73"
+              cy="430"
+              r="5"
+            />
+            <circle
+              className="home-pg-sculpture__node home-pg-sculpture__node--two"
+              cx="142"
+              cy="384"
+              r="4"
+            />
             <circle className="home-pg-sculpture__core-halo" cx="322" cy="337" r="60" />
             <circle className="home-pg-sculpture__core-ring" cx="322" cy="337" r="20" />
-            <circle className="home-pg-sculpture__node home-pg-sculpture__node--core" cx="322" cy="337" r="5" />
-            <circle className="home-pg-sculpture__node home-pg-sculpture__node--three" cx="493" cy="340" r="4" />
-            <circle className="home-pg-sculpture__node home-pg-sculpture__node--four" cx="570" cy="376" r="5" />
+            <circle
+              className="home-pg-sculpture__node home-pg-sculpture__node--core"
+              cx="322"
+              cy="337"
+              r="5"
+            />
+            <circle
+              className="home-pg-sculpture__node home-pg-sculpture__node--three"
+              cx="493"
+              cy="340"
+              r="4"
+            />
+            <circle
+              className="home-pg-sculpture__node home-pg-sculpture__node--four"
+              cx="570"
+              cy="376"
+              r="5"
+            />
           </g>
         </svg>
       </motion.div>

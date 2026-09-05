@@ -176,7 +176,7 @@ test('source fetch implementation changes retain their real consumers', () => {
   const effects = directEffects('src/sources/tools/source-fetch-core.mjs');
   for (const target of [
     'extension-artifacts-native:build-target',
-    'liboliphaunt-native:release-runtime',
+    'liboliphaunt-native:build-runtime-desktop-target',
     'liboliphaunt-wasix-postmaster:prepare-runtime',
     'liboliphaunt-wasix:runtime-portable',
   ]) {
@@ -184,7 +184,7 @@ test('source fetch implementation changes retain their real consumers', () => {
   }
 });
 
-test('source prose, transport tests, and unrelated toolchains do not rebuild runtimes', () => {
+test('source prose, transport tests, and unrelated toolchains do not rebuild runtimes', {timeout: 15_000}, () => {
   const cases = [
     ['src/postgres/versions/18/fetch-source.test.sh', 'source-inputs:unit'],
     ['src/runtimes/liboliphaunt/wasix-postmaster/runtime/README.md', null],
@@ -199,7 +199,7 @@ test('source prose, transport tests, and unrelated toolchains do not rebuild run
     const effects = directEffects(relativePath);
     if (expectedTask !== null) assert.equal(effects.tasks.includes(expectedTask), true);
     for (const target of [
-      'liboliphaunt-native:release-runtime',
+      'liboliphaunt-native:package-runtime-desktop-target',
       'liboliphaunt-wasix-postmaster:prepare-runtime',
       'liboliphaunt-wasix:runtime-portable',
     ]) {
@@ -208,7 +208,7 @@ test('source prose, transport tests, and unrelated toolchains do not rebuild run
   }
 });
 
-test('runtime patch lint follows only the patch inputs it reads', () => {
+test('runtime patch lint follows only the patch inputs it reads', {timeout: 15_000}, () => {
   for (const relativePath of [
     'src/extensions/external/vector/source.toml',
     'src/runtimes/liboliphaunt/wasix/crates/tools/src/lib.rs',

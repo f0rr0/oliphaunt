@@ -1,4 +1,5 @@
 import {
+  cpSync,
   mkdirSync,
   readFileSync,
   writeFileSync,
@@ -23,9 +24,11 @@ import {
   run,
 } from "./shared.mjs";
 
-export function stageArtifacts(artifactRoot) {
+export function stageArtifacts(artifactRoot, workRoot) {
   const packageShapeDir = path.join(ROOT, "target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native");
   requireDir(packageShapeDir);
+  const releasePackageDir = path.join(workRoot, "package");
+  cpSync(packageShapeDir, releasePackageDir, { recursive: true });
   const assetDir = process.env.OLIPHAUNT_REACT_NATIVE_IOS_RELEASE_ASSET_DIR;
   if (!assetDir) {
     fail("oliphaunt-react-native package artifacts require OLIPHAUNT_REACT_NATIVE_IOS_RELEASE_ASSET_DIR");
@@ -35,11 +38,11 @@ export function stageArtifacts(artifactRoot) {
     extensionManifests: [],
   });
   writeFileSync(
-    path.join(packageShapeDir, IOS_CARRIER_FILENAME),
+    path.join(releasePackageDir, IOS_CARRIER_FILENAME),
     `${JSON.stringify(carrier, null, 2)}\n`,
     "utf8",
   );
-  const packageJsonFile = path.join(packageShapeDir, "package.json");
+  const packageJsonFile = path.join(releasePackageDir, "package.json");
   const packageJson = JSON.parse(readFileSync(packageJsonFile, "utf8"));
   packageJson.oliphaunt = {
     ...(packageJson.oliphaunt ?? {}),
@@ -53,12 +56,12 @@ export function stageArtifacts(artifactRoot) {
   writeFileSync(packageJsonFile, `${JSON.stringify(packageJson, null, 2)}\n`, "utf8");
   requireCommand("node");
   run("node", [
-    path.join(packageShapeDir, "tools/verify-ios-package.mjs"),
+    path.join(releasePackageDir, "tools/verify-ios-package.mjs"),
     "--package-dir",
-    packageShapeDir,
+    releasePackageDir,
   ], { label: "React Native source-only package verification" });
-  prepareSourceOnlyNpmPackage(packageShapeDir, SOURCE_ONLY_NPM_PROFILES["react-native"]);
-  const archive = packageNpmWorkspace(packageShapeDir, artifactRoot);
+  prepareSourceOnlyNpmPackage(releasePackageDir, SOURCE_ONLY_NPM_PROFILES["react-native"]);
+  const archive = packageNpmWorkspace(releasePackageDir, artifactRoot);
   assertSourceOnlyNpmArchive(archive, SOURCE_ONLY_NPM_PROFILES["react-native"]);
   run("node", [
     path.join(ROOT, "src/sdks/react-native/tools/ios-icu-autolinking.test.mjs"),

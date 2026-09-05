@@ -632,6 +632,7 @@ function requirePortableExtensionContractPath(value: string, field: string, labe
     decoded !== value ||
     value.startsWith('/') ||
     /^[A-Za-z]:/u.test(value) ||
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: Control characters make archive paths unsafe.
     /[\u0000-\u001f\u007f]/u.test(value) ||
     Buffer.byteLength(value, 'utf8') > 4096 ||
     parts.some(
@@ -1171,6 +1172,7 @@ async function exactRuntimeLeafPaths(root: string, source: string): Promise<stri
       if (
         relativePath.includes('\\') ||
         relativePath !== relativePath.normalize('NFC') ||
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: Control characters make archive paths unsafe.
         /[\u0000-\u001f\u007f]/u.test(relativePath)
       ) {
         throw new Error(`${source} contains a noncanonical runtime path ${relativePath}`);

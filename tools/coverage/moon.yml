@@ -52,7 +52,7 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   rust:
-    tags: ["coverage", "quality"]
+    tags: ["coverage", "quality", "requires-rust"]
     command: "tools/coverage/run-product oliphaunt-rust"
     inputs:
       - "/.config/nextest.toml"
@@ -71,7 +71,7 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   swift:
-    tags: ["coverage", "quality"]
+    tags: ["coverage", "quality", "requires-apple"]
     command: "tools/coverage/run-product oliphaunt-swift"
     inputs:
       - "/Package.swift"
@@ -87,7 +87,7 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   kotlin:
-    tags: ["coverage", "quality"]
+    tags: ["coverage", "quality", "requires-android-sdk"]
     command: "tools/coverage/run-product oliphaunt-kotlin"
     inputs:
       - "/coverage/baseline.toml"
@@ -136,7 +136,7 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   wasix-rust:
-    tags: ["coverage", "quality"]
+    tags: ["coverage", "quality", "requires-rust"]
     command: "tools/coverage/run-product oliphaunt-wasix-rust"
     inputs:
       - "/.config/nextest.toml"

@@ -14,6 +14,8 @@ dependsOn:
     scope: "build"
   - id: "liboliphaunt-wasix"
     scope: "build"
+  - id: "source-inputs"
+    scope: "build"
 
 project:
   title: "WASIX Extension Artifacts"
@@ -26,6 +28,7 @@ tasks:
     command: "bash src/extensions/artifacts/wasix/tools/package-release-assets.sh"
     deps:
       - "liboliphaunt-wasix:runtime-portable"
+      - "source-inputs:source-fetch-extensions"
     inputs:
       - project: "extensions"
         group: "build"

@@ -724,6 +724,7 @@ async function testProtocolStreamCallbackFailure(): Promise<void> {
 
   const dynamicallyTypedInvalidCallbacks: Array<(chunk: Uint8Array) => unknown> = [
     async () => undefined,
+    // biome-ignore lint/suspicious/noThenProperty: This test deliberately supplies a thenable.
     () => ({ then: () => undefined }),
   ];
   for (const callback of dynamicallyTypedInvalidCallbacks) {

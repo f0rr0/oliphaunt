@@ -446,13 +446,30 @@ function contribCarrierImpact(products, prefix) {
   };
 }
 
+function declaredSharedSourceImpacts(products, prefix) {
+  return Object.entries(products).flatMap(([product, config]) => {
+    const paths = config.shared_source_paths ?? [];
+    assertStringList(paths, `${product}.shared_source_paths`, prefix);
+    return paths.map((sourcePath) => {
+      if (!sourcePath || path.isAbsolute(sourcePath) || sourcePath.startsWith('../')) {
+        fail(prefix, `${product}.shared_source_paths must contain repository-relative paths`);
+      }
+      requireExistingPath(sourcePath, `${product} shared source`, prefix);
+      return {source_paths: [sourcePath.replace(/\/$/u, '')], products: [product]};
+    });
+  });
+}
+
 export function loadGraph(prefix = "release-graph") {
   const moonProjects = moonProjectsById(prefix);
   const products = graphProducts(moonProjects, prefix);
   const graph = {
     products,
     moon_projects: Object.fromEntries(moonProjects),
-    shared_release_sources: [contribCarrierImpact(products, prefix)],
+    shared_release_sources: [
+      contribCarrierImpact(products, prefix),
+      ...declaredSharedSourceImpacts(products, prefix),
+    ],
   };
   return graph;
 }
@@ -1302,7 +1319,12 @@ export function buildPlan(graph, files, prefix = "release-graph") {
   const directProjects = new Set();
   for (const file of files) {
     const sharedImpacts = (graph.shared_release_sources ?? [])
-      .filter((impact) => (impact.files ?? []).includes(file));
+      .filter((impact) =>
+        (impact.files ?? []).includes(file)
+        || (impact.source_paths ?? []).some((sourcePath) =>
+          file === sourcePath || file.startsWith(`${sourcePath}/`)
+        )
+      );
     if (sharedImpacts.length > 0) {
       for (const impact of sharedImpacts) {
         for (const product of impact.products) {
