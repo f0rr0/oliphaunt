@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import assert from "node:assert/strict";
 import { execFileSync } from "../test/fd-backed-spawn-sync.mjs";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -319,6 +319,50 @@ test("binds derived Cargo pins and lock entries to the referenced local package"
     () => verifyReleaseCommit({ repo, headRef: unrelatedCargoLock, products: [RELEASE_PRODUCT] }),
     /derived file.*package[.]1[.]version/u,
   );
+});
+
+test("binds wildcard Cargo pins to the referenced local package", { timeout: 20_000 }, (t) => {
+  const repo = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-release-cargo-wildcard-"));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
+  const packagePath = "src/runtimes/broker";
+  const dependency = 'oliphaunt = { path = "../../sdks/rust", version = "*", features = [] }';
+  const cargo = (version, entry) => `[package]\nname = "oliphaunt-broker"\nversion = "${version}"\n`
+    + ["dependencies", "dev-dependencies", "build-dependencies"].flatMap((table) => [
+      `\n[${table}]\n${entry}\n`,
+      `\n[target.'cfg(unix)'.${table}]\n${entry}\n`,
+    ]).join("");
+  git(repo, "init", "-q");
+  git(repo, "config", "user.name", "Release Test");
+  git(repo, "config", "user.email", "release@example.invalid");
+  write(repo, "release-please-config.json", JSON.stringify({
+    packages: { [packagePath]: { "release-type": "rust", component: RELEASE_PRODUCT } },
+  }));
+  write(repo, ".release-please-manifest.json", JSON.stringify({ [packagePath]: "0.1.0" }));
+  write(repo, `${packagePath}/Cargo.toml`, cargo("0.1.0", dependency));
+  write(repo, `${packagePath}/CHANGELOG.md`, "# Changelog\n");
+  write(repo, "src/sdks/rust/Cargo.toml", '[package]\nname = "oliphaunt"\nversion = "0.2.0"\n');
+  const base = commit(repo, "feat: introduce wildcard Cargo fixture");
+
+  const pinned = dependency.replace('"*"', '"0.2.0"');
+  for (const [name, entry] of [
+    ["local-version", pinned],
+    ["wrong-version", pinned.replace('"0.2.0"', '"0.3.0"')],
+    ["changed-path", pinned.replace("../../sdks/rust", "../../sdks/other")],
+    ["removed-path", pinned.replace('path = "../../sdks/rust", ', "")],
+    ["changed-features", pinned.replace("features = []", 'features = ["extra"]')],
+  ]) {
+    git(repo, "switch", "-q", "-c", name, base);
+    write(repo, ".release-please-manifest.json", JSON.stringify({ [packagePath]: "0.2.0" }));
+    write(repo, `${packagePath}/Cargo.toml`, cargo("0.2.0", entry));
+    write(repo, `${packagePath}/CHANGELOG.md`, "# Changelog\n\n## 0.2.0\n");
+    const headRef = commit(repo, "chore(release): prepare broker release");
+    const verify = () => verifyReleaseCommit({ repo, headRef, products: [RELEASE_PRODUCT] });
+    if (name === "local-version") {
+      assert.deepEqual(verify().products, [RELEASE_PRODUCT]);
+    } else {
+      assert.throws(verify, /canonical version file.*non-version semantic change/u, name);
+    }
+  }
 });
 
 test("keeps WASIX tools workspace links independent of release versions", { timeout: 20_000 }, () => {
