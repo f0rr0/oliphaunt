@@ -479,9 +479,12 @@ function validateCatalogAndTargets(graph) {
   };
 }
 
-function workspaceDependency(table, name, { optional = false } = {}) {
+export function workspaceDependency(table, name, expectedVersion, { optional = false } = {}) {
   const dependency = object(table?.[name], `oliphaunt-wasix dependency ${name}`);
-  assert(dependency.version === "*", `${name} must use the local workspace runtime without a release-version constraint`);
+  assert(
+    dependency.version === "*" || dependency.version === expectedVersion,
+    `${name} must use "*" or local workspace version ${JSON.stringify(expectedVersion)}`,
+  );
   assert(typeof dependency.path === "string" && dependency.path.length > 0, `${name} must use a local workspace path`);
   assert(optional ? dependency.optional === true : dependency.optional !== true, `${name} optional dependency contract is wrong`);
 }
@@ -512,15 +515,15 @@ function validateWasixContract(graph, catalog) {
 
   const sdk = readToml("src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml");
   const dependencies = object(sdk.dependencies, "oliphaunt-wasix dependencies");
-  workspaceDependency(dependencies, RUNTIME_PACKAGE);
-  workspaceDependency(dependencies, TOOLS_PACKAGE, { optional: true });
-  workspaceDependency(dependencies, ICU_PACKAGE, { optional: true });
+  workspaceDependency(dependencies, RUNTIME_PACKAGE, runtimeVersion);
+  workspaceDependency(dependencies, TOOLS_PACKAGE, runtimeVersion, { optional: true });
+  workspaceDependency(dependencies, ICU_PACKAGE, runtimeVersion, { optional: true });
   const targetTables = object(sdk.target, "oliphaunt-wasix target dependencies");
   for (const [cfg, name] of Object.entries(publicAotCargoDependencies())) {
-    workspaceDependency(object(targetTables[cfg], `oliphaunt-wasix target ${cfg}`).dependencies, name);
+    workspaceDependency(object(targetTables[cfg], `oliphaunt-wasix target ${cfg}`).dependencies, name, runtimeVersion);
   }
   for (const [cfg, name] of Object.entries(publicToolsAotCargoDependencies())) {
-    workspaceDependency(object(targetTables[cfg], `oliphaunt-wasix target ${cfg}`).dependencies, name, { optional: true });
+    workspaceDependency(object(targetTables[cfg], `oliphaunt-wasix target ${cfg}`).dependencies, name, runtimeVersion, { optional: true });
   }
   assert(sameStrings(sdk.features?.tools ?? [], publicToolsFeatureDependencies()), "oliphaunt-wasix tools feature must select exactly the split tool carriers");
   assert(!("bundled" in object(sdk.features, "oliphaunt-wasix features")), "oliphaunt-wasix must not expose an inert bundled feature");
@@ -596,9 +599,11 @@ function main(argv) {
   }
 }
 
-try {
-  main(Bun.argv.slice(2));
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
+if (import.meta.main) {
+  try {
+    main(Bun.argv.slice(2));
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
 }

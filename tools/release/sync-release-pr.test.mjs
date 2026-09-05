@@ -14,6 +14,7 @@ import {
   syncExampleCargoManifestText,
   syncLockfile,
 } from "./sync-release-pr.mjs";
+import { workspaceDependency } from "./check-release-metadata.mjs";
 import {
   EXAMPLE_CARGO_POLICIES,
   exampleCargoReleaseVersionBindings,
@@ -23,6 +24,16 @@ const ROOT = path.resolve(import.meta.dir, "../..");
 const SUMMARY_PATH = "src/extensions/generated/docs/extension-evidence.json";
 const CHECKER_PATH = "src/extensions/tools/check-extension-model.mjs";
 const EVIDENCE_SELF_TEST_PROCESS_TIMEOUT_MS = 15_000;
+
+test("release metadata accepts source and normalized local Cargo pins", () => {
+  const dependency = (version) => ({ runtime: { path: "../runtime", version } });
+  assert.doesNotThrow(() => workspaceDependency(dependency("*"), "runtime", "0.2.0"));
+  assert.doesNotThrow(() => workspaceDependency(dependency("0.2.0"), "runtime", "0.2.0"));
+  assert.throws(
+    () => workspaceDependency(dependency("0.1.0"), "runtime", "0.2.0"),
+    /local workspace version "0[.]2[.]0"/u,
+  );
+});
 
 test("shared contrib bootstrap is allowed only from unreleased main state", () => {
   assert.equal(
