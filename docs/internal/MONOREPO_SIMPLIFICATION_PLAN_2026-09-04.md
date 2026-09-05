@@ -108,8 +108,13 @@ dispatch/orchestration as Moon/native commands assume it. Relocating its entire
 - Moon project discovery now uses one recursive `src` glob and one recursive
   `tools` glob instead of fourteen overlapping directory inventories. The
   resolved 55-project set and 198-task/156-edge graph are unchanged.
+- The portable WASIX compilation cache keeps its exact-SHA primary key, but a
+  PR may now restore the exact base-main cache and a main push may restore its
+  exact predecessor. Only main can save a new cache, so untrusted PR code cannot
+  seed reusable native build state; release outputs are still rebuilt and
+  validated for the candidate SHA.
 
-Still open: hosted cache persistence, host/portable Postmaster producer
+Still open: Moon task-cache persistence, host/portable Postmaster producer
 separation, removal of planner implications after equivalent Moon/data edges
 exist, removal of the remaining native/SDK product-to-`tools/` imports, PR #166
 integration, and evidence-led review of remaining source-spelling tests. These
@@ -291,6 +296,7 @@ Observed local runs, all with the repository-pinned Moon 2.5.4 toolchain and
 | Shared extension runtime contract | Passed: 7 target-profile and WASIX install tests; WASIX staging produced all 39 extensions |
 | Complete release-tool mutation suite after the move | Passed in 4m57s |
 | Recursive Moon project discovery | Exact project inventory unchanged; task count and edge count unchanged |
+| WASIX compiler-cache policy | Exact head/base/predecessor keys linted; the PR base has a 305 MB main-branch cache; PR restore remains read-only and candidate outputs remain uncached |
 
 No behavioral test command was removed. The source parser deletion changes only
 the kind of proof: implementation spelling is no longer enforced, while the
