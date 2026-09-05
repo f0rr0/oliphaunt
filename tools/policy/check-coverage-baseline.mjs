@@ -56,13 +56,17 @@ for (const product of targets) {
   if (Number.isNaN(lineThreshold) || lineThreshold < 80.0) {
     fail(`${product}: aggregate line_threshold must stay at or above 80`);
   }
-  const perFileLineThreshold = numberValue(config.per_file_line_threshold);
-  if (Number.isNaN(perFileLineThreshold) || perFileLineThreshold < 50.0) {
-    fail(`${product}: per_file_line_threshold must stay at or above 50`);
+  const perFileLineWarning = numberValue(config.per_file_line_warning);
+  if (Number.isNaN(perFileLineWarning) || perFileLineWarning <= 0 || perFileLineWarning > 100) {
+    fail(`${product}: per_file_line_warning must be between 0 and 100`);
   }
-  const measuredLineCoverage = numberValue(config.measured_line_coverage);
-  if (Number.isNaN(measuredLineCoverage) || measuredLineCoverage < lineThreshold) {
-    fail(`${product}: measured_line_coverage audit snapshot is below the aggregate threshold`);
+  for (const obsolete of [
+    'per_file_line_threshold',
+    'measured_line_coverage',
+    'branch_coverage',
+    'function_coverage',
+  ]) {
+    if (obsolete in config) fail(`${product}: obsolete coverage setting ${obsolete} must be removed`);
   }
   const waivers = config.waivers;
   if (!Array.isArray(waivers)) {

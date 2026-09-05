@@ -49,8 +49,9 @@ not product build/test/package qualification. `release-tools:check` is the local
 aggregate of metadata plus the release and policy unit suites. Hosted CI runs
 metadata on the publication host, gives workflow/planner tests to
 `ci-workflows:check`, and selects release or policy units only when their actual
-implementation inputs change. Release workflows invoke the combined runner
-directly for an exact candidate. Do not schedule both forms in one lane.
+implementation inputs change. Exact release candidates require the combined
+runner in qualification; slim publishers consume that evidence instead of
+replaying source-only checks. Do not schedule both forms in one lane.
 The macOS publication-host metadata job is affected-only on pull requests and
 mandatory on exhaustive push/manual runs; product source alone does not justify
 that toolchain setup unless it changes release metadata or graph inputs.
@@ -117,7 +118,7 @@ successful TLS-verified snapshot transaction and the exact declared wasixcc,
 Clang, and Binaryen versions; a source-spine/static check alone does not prove
 that the pinned trust chain still reaches the snapshot service.
 
-For an SDK change, run `moon run sdk-contracts:check`, then run each affected
+For an SDK change, run `moon run sdk-contracts:all`, then run each affected
 SDK's `compile`, `unit`, and `package` tasks in one Moon invocation. These tasks
 are independent; `package` does not silently rerun source qualification. Set
 `MOON_BASE` and `MOON_HEAD`, inspect affected SDK projects, and pass the exact

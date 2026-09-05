@@ -19,8 +19,8 @@ on:
         required: false
         type: string
         default: ""
-      continuation_pointer:
-        description: Internal exact-parent continuation pointer; leave empty for a maintainer dispatch
+      approval_run_id:
+        description: Successful publish-dry-run workflow run that froze the approved candidate (required for publish/bootstrap)
         required: false
         type: string
         default: ""
@@ -91,7 +91,7 @@ jobs:
         env:
           RELEASE_OPERATION: ${{ inputs.operation }}
           RELEASE_COMMIT: ${{ inputs.release_commit }}
-          RELEASE_CONTINUATION_POINTER: ${{ inputs.continuation_pointer }}
+          RELEASE_APPROVAL_RUN_ID: ${{ inputs.approval_run_id }}
         run: bash .github/scripts/validate-release-workflow-inputs.sh
 
       - name: Set up pinned Node.js
@@ -153,14 +153,10 @@ jobs:
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
         with:
-          install-workspace: "true"
+          install-workspace: ${{ inputs.operation == 'publish-dry-run' && 'true' || 'false' }}
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
-
-      - name: Validate release metadata
-        run: |
-          tools/dev/bun.sh tools/release/release-metadata-check.mjs
 
       - name: Create or update release-please PR
         id: release_please
@@ -358,11 +354,8 @@ jobs:
 
       - name: Configure macOS release toolchains
         id: configure_release_candidate_toolchains
+        if: ${{ inputs.operation == 'publish-dry-run' }}
         run: bash .github/scripts/configure-macos-release-toolchains.sh --android
-
-      - name: Validate release metadata
-        run: |
-          tools/dev/bun.sh tools/release/release-metadata-check.mjs
 
       - name: Plan product releases
         id: release_plan
@@ -465,7 +458,7 @@ jobs:
 
       - name: Require qualified release-commit CI run
         id: ci_qualification
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -497,7 +490,7 @@ jobs:
           bash .github/scripts/require-workflow-success.sh "${qualification_args[@]}"
 
       - name: Download exact-SHA qualification record
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -512,7 +505,7 @@ jobs:
             --artifact oliphaunt-release-candidate
 
       - name: Download exact-SHA affected plan
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -527,7 +520,7 @@ jobs:
             --artifact artifact-build-plan
 
       - name: Download required exact-SHA WASIX evidence
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.requires_wasix_release_regression_evidence == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && steps.release_plan.outputs.requires_wasix_release_regression_evidence == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -543,7 +536,7 @@ jobs:
 
       - name: Verify exact-SHA qualification record
         id: verify_qualification
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' }}
         env:
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
           WASIX_EVIDENCE_REQUIRED: ${{ steps.release_plan.outputs.requires_wasix_release_regression_evidence }}
@@ -555,28 +548,30 @@ jobs:
             --wasix-evidence-required "$WASIX_EVIDENCE_REQUIRED" \
             --wasix-evidence-root target/release-candidate/wasix-evidence
 
-      - name: Require one approved dry-run lock and capsule
+      - name: Require the explicitly approved dry-run candidate
         id: approved_publication_lock
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          APPROVAL_RUN_ID: ${{ inputs.approval_run_id }}
         run: |
           approved_artifacts=(
             --artifact oliphaunt-publication-lock
-            --artifact oliphaunt-bootstrap-capsule
+            --artifact oliphaunt-publication-candidate
           )
           gate_output="$RUNNER_TEMP/approved-publication-inputs-gate.out"
           GITHUB_OUTPUT="$gate_output" \
           bash .github/scripts/require-workflow-success.sh \
             Release \
             "$RELEASE_HEAD_SHA" \
-            300 \
+            0 \
+            --run-id "$APPROVAL_RUN_ID" \
             --event workflow_dispatch \
             "${approved_artifacts[@]}"
           cat "$gate_output" >> "$GITHUB_OUTPUT"
 
-      - name: Download prior approved publication lock
+      - name: Download the approved lock and frozen candidate
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -587,10 +582,25 @@ jobs:
           node .github/scripts/download-build-artifacts.mjs \
             Release \
             "$RELEASE_HEAD_SHA" \
-            target/approved-publication-lock \
+            "$RUNNER_TEMP/approved-publication" \
             --run-id "$RELEASE_LOCK_RUN_ID" \
             --artifact-metadata-json "$APPROVED_ARTIFACT_METADATA_JSON" \
-            --artifact oliphaunt-publication-lock
+            --artifact oliphaunt-publication-lock \
+            --artifact oliphaunt-publication-candidate
+
+      - name: Verify and install the complete approved candidate
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
+        env:
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+          APPROVAL_RUN_ID: ${{ inputs.approval_run_id }}
+        run: |
+          tools/dev/bun.sh tools/release/bootstrap-publication-capsule.mjs verify-extract \
+            --transport "$RUNNER_TEMP/approved-publication/oliphaunt-publication-candidate.tar" \
+            --approved-lock "$RUNNER_TEMP/approved-publication/publication-lock.json" \
+            --products-json "$PRODUCTS_JSON" \
+            --head-ref "$RELEASE_HEAD_SHA" \
+            --approval-run-id "$APPROVAL_RUN_ID" \
+            --workspace-root "$GITHUB_WORKSPACE"
 
       - name: Validate product versions and registry state
         id: validate_release_registry_state
@@ -605,7 +615,7 @@ jobs:
             --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Download WASIX runtime build artifacts
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix') }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
@@ -613,7 +623,7 @@ jobs:
         run: bun .github/scripts/download-wasix-runtime-build-artifacts.mjs
 
       - name: Download WASIX release assets
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix') }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -629,7 +639,7 @@ jobs:
             --artifact liboliphaunt-wasix-release-assets
 
       - name: Download WASIX postmaster release assets
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix-postmaster') }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix-postmaster') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -645,7 +655,7 @@ jobs:
             --artifact liboliphaunt-wasix-postmaster-release-assets
 
       - name: Download exact-extension package artifacts
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.has_extension_artifacts == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && steps.release_plan.outputs.has_extension_artifacts == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -661,7 +671,7 @@ jobs:
             --artifact oliphaunt-extension-package-artifacts
 
       - name: Download SDK package artifacts
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -688,7 +698,7 @@ jobs:
           done < <(tools/dev/bun.sh tools/release/release_graph_query.mjs ci-products --family sdk-package --products-json "$PRODUCTS_JSON" --format lines)
 
       - name: Download liboliphaunt release assets
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-native') }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-native') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -704,24 +714,24 @@ jobs:
             --artifact liboliphaunt-native-release-assets
 
       - name: Prove native and WASIX ICU data identity
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-native') && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix') }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-native') && contains(fromJson(steps.release_plan.outputs.products_json), 'liboliphaunt-wasix') }}
         run: |
           tools/dev/bun.sh tools/release/check-cross-family-icu-data.mjs \
             target/liboliphaunt/release-assets \
             target/oliphaunt-wasix/release-assets
 
       - name: Set up Bun for TypeScript npm consumer checks
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-js') }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-js') }}
         uses: ./.github/actions/setup-bun
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
       - name: Install TypeScript release tooling
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-js') }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-js') }}
         run: pnpm install --frozen-lockfile
 
       - name: Download native helper release assets
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && (contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-broker') || contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-node-direct') || contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-wasix-napi')) }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && (contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-broker') || contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-node-direct') || contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-wasix-napi')) }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -767,7 +777,7 @@ jobs:
           fi
 
       - name: Download Node direct optional npm packages
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-node-direct') }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-node-direct') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -787,7 +797,7 @@ jobs:
             "${artifact_args[@]}"
 
       - name: Download WASIX Node-API optional npm packages
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-wasix-napi') }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-wasix-napi') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -807,7 +817,7 @@ jobs:
             "${artifact_args[@]}"
 
       - name: Freeze canonical Apple extension carrier input
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && (contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-swift') || contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-react-native')) }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' && (contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-swift') || contains(fromJson(steps.release_plan.outputs.products_json), 'oliphaunt-react-native')) }}
         env:
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
         run: |
@@ -905,7 +915,7 @@ jobs:
 
       - name: Validate selected release
         id: validate_release
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' }}
         env:
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
@@ -913,7 +923,7 @@ jobs:
         run: tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run --qualified-ci --products-json "${PRODUCTS_JSON}" --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Package public release carriers
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' }}
         env:
           OLIPHAUNT_BROKER_RELEASE_ASSET_INPUT_DIRS: ${{ github.workspace }}/target/oliphaunt-broker/release-assets
           OLIPHAUNT_NODE_ADDON_ASSET_INPUT_DIRS: ${{ github.workspace }}/target/oliphaunt-node-direct/release-assets
@@ -923,7 +933,7 @@ jobs:
 
       - name: Freeze exhaustive publication lock
         id: freeze_publication_lock
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish-dry-run' }}
         env:
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
         run: |
@@ -968,17 +978,6 @@ jobs:
             verify \
             --lock target/release/publication-lock.json \
             --head-ref "$RELEASE_HEAD_SHA"
-
-      - name: Match prior approved publication lock
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
-        run: |
-          approved_lock=target/approved-publication-lock/publication-lock.json
-          if ! cmp -s "$approved_lock" "$PUBLICATION_LOCK_PATH"; then
-            echo 'publication lock differs from the prior approved dry-run lock' >&2
-            diff --unified "$approved_lock" "$PUBLICATION_LOCK_PATH" || true
-            exit 1
-          fi
-          echo 'publication lock exactly matches the prior approved dry-run lock'
 
       - name: Assemble and sign the exact Maven Central bundle before release mutation
         id: preflight_maven_bundle
@@ -1035,8 +1034,8 @@ jobs:
             --products-json "$PRODUCTS_JSON" \
             --verify-registries
 
-      - name: Freeze bootstrap publication capsule
-        id: freeze_bootstrap_capsule
+      - name: Freeze complete publication candidate
+        id: freeze_publication_candidate
         if: ${{ inputs.operation == 'publish-dry-run' && steps.release_plan.outputs.has_release_changes == 'true' }}
         env:
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
@@ -1045,7 +1044,9 @@ jobs:
             --lock "$PUBLICATION_LOCK_PATH" \
             --products-json "$PRODUCTS_JSON" \
             --head-ref "$RELEASE_HEAD_SHA" \
-            --output target/release/oliphaunt-bootstrap-capsule.tar
+            --approval-run-id "$GITHUB_RUN_ID" \
+            --qualification-run-id "${{ steps.ci_qualification.outputs.run_id }}" \
+            --output target/release/oliphaunt-publication-candidate.tar
 
       - name: Upload frozen publication lock
         id: preserve_publication_lock
@@ -1058,13 +1059,13 @@ jobs:
           overwrite: true
           retention-days: 90
 
-      - name: Upload frozen bootstrap publication capsule
-        id: preserve_bootstrap_capsule
+      - name: Upload complete frozen publication candidate
+        id: preserve_publication_candidate
         if: ${{ inputs.operation == 'publish-dry-run' && steps.release_plan.outputs.has_release_changes == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: oliphaunt-bootstrap-capsule
-          path: target/release/oliphaunt-bootstrap-capsule.tar
+          name: oliphaunt-publication-candidate
+          path: target/release/oliphaunt-publication-candidate.tar
           if-no-files-found: error
           overwrite: true
           retention-days: 90
@@ -1485,13 +1486,7 @@ jobs:
     permissions:
       actions: read
       contents: write
-      id-token: write
       pull-requests: read
-    outputs:
-      continuation_required: ${{ steps.require_bootstrap_execution_decision.outputs.deferred }}
-      continuation_artifact_id: ${{ steps.preserve_deferred_bootstrap_ledger.outputs.artifact-id }}
-      continuation_artifact_digest: ${{ steps.preserve_deferred_bootstrap_ledger.outputs.artifact-digest }}
-      continuation_contract_digest: ${{ steps.prepare_bootstrap_continuation.outputs.contract_digest }}
     steps:
       - name: Record bounded bootstrap job deadline
         id: bootstrap_job_deadline
@@ -1571,38 +1566,6 @@ jobs:
         with:
           npm-version: ${{ env.NPM_VERSION }}
 
-      - name: Verify direct-workflow OIDC identity
-        id: verify_bootstrap_oidc_identity
-        if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
-        env:
-          RELEASE_OPERATION: publish-bootstrap
-          RELEASE_CONTINUATION_POINTER: ${{ inputs.continuation_pointer }}
-        run: bun .github/scripts/verify-github-oidc-identity.mjs
-
-      - name: Prove workflow HEAD is the release commit
-        id: verify_bootstrap_publication_candidate
-        if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
-        timeout-minutes: 2
-        env:
-          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-        run: |
-          tools/dev/bun.sh tools/release/verify-publication-candidate.mjs \
-            --products-json "$PRODUCTS_JSON" \
-            --head-ref "$RELEASE_HEAD_SHA" \
-            --github-output "$GITHUB_OUTPUT"
-
-      - name: Prove Release Please PR can complete after bootstrap publication
-        id: assert_bootstrap_release_please_markable
-        if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
-        timeout-minutes: 1
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mjs \
-            assert-markable \
-            --release-sha "${{ steps.verify_bootstrap_publication_candidate.outputs.release_sha }}" \
-            --base main
-
       - name: Preflight selected product tag and release collisions
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
         env:
@@ -1617,128 +1580,33 @@ jobs:
             --products-json "$PRODUCTS_JSON" \
             --head-ref "$RELEASE_HEAD_SHA"
 
-      - name: Require existing qualified release-commit CI run
-        id: ci_qualification
+      - name: Require the explicitly approved dry-run candidate
+        id: approved_candidate
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          REQUIRES_WASIX_EVIDENCE: ${{ steps.release_plan.outputs.requires_wasix_release_regression_evidence }}
-        run: |
-          qualification_args=(
-            CI
-            "$RELEASE_HEAD_SHA"
-            0
-            --event push
-            --event workflow_dispatch
-            --job Builds
-            --job Required
-            --job Qualified
-            --artifact artifact-build-plan
-            --artifact oliphaunt-release-candidate
-          )
-          if [[ "$REQUIRES_WASIX_EVIDENCE" == true ]]; then
-            qualification_args+=(--artifact wasix-release-regression-evidence)
-          fi
-          bash .github/scripts/require-workflow-success.sh "${qualification_args[@]}"
-
-      - name: Download exact-SHA qualification record
-        if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
-        run: |
-          node .github/scripts/download-build-artifacts.mjs \
-            CI \
-            "$RELEASE_HEAD_SHA" \
-            "$RUNNER_TEMP/release-candidate" \
-            --run-id "$CI_RUN_ID" \
-            --job Qualified \
-            --artifact oliphaunt-release-candidate
-
-      - name: Download exact-SHA affected plan
-        if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
-        run: |
-          node .github/scripts/download-build-artifacts.mjs \
-            CI \
-            "$RELEASE_HEAD_SHA" \
-            "$RUNNER_TEMP/release-candidate/affected-plan" \
-            --run-id "$CI_RUN_ID" \
-            --job Plan \
-            --artifact artifact-build-plan
-
-      - name: Download required exact-SHA WASIX evidence
-        if: ${{ steps.bootstrap_scope.outputs.required == 'true' && steps.release_plan.outputs.requires_wasix_release_regression_evidence == 'true' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
-        run: |
-          node .github/scripts/download-build-artifacts.mjs \
-            CI \
-            "$RELEASE_HEAD_SHA" \
-            "$RUNNER_TEMP/release-candidate/wasix-evidence" \
-            --run-id "$CI_RUN_ID" \
-            --job "E2E / WASIX release regression" \
-            --artifact wasix-release-regression-evidence
-
-      - name: Verify exact-SHA qualification record
-        id: verify_bootstrap_qualification
-        if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
-        env:
-          CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
-          WASIX_EVIDENCE_REQUIRED: ${{ steps.release_plan.outputs.requires_wasix_release_regression_evidence }}
-        run: |
-          node .github/scripts/verify-release-candidate.mjs \
-            "$RUNNER_TEMP/release-candidate/oliphaunt-release-candidate.json" \
-            --plan "$RUNNER_TEMP/release-candidate/affected-plan/ci-plan.json" \
-            --wasix-evidence-required "$WASIX_EVIDENCE_REQUIRED" \
-            --wasix-evidence-root "$RUNNER_TEMP/release-candidate/wasix-evidence"
-
-      - name: Inspect exact parent bootstrap continuation
-        id: inspect_bootstrap_continuation
-        if: ${{ steps.bootstrap_scope.outputs.required == 'true' && inputs.continuation_pointer != '' }}
-        # Covers the 53-minute sequential GitHub-read envelope plus local verification margin.
-        timeout-minutes: 55
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-          RELEASE_CONTINUATION_POINTER: ${{ inputs.continuation_pointer }}
-          RELEASE_CONTINUATION_ARCHIVE: ${{ runner.temp }}/release-continuation.zip
-          RELEASE_OPERATION: publish-bootstrap
-        run: node .github/scripts/inspect-release-continuation.mjs
-
-      - name: Select one approved dry-run capsule
-        id: approved_bootstrap_capsule
-        if: ${{ steps.bootstrap_scope.outputs.required == 'true' && inputs.continuation_pointer == '' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
+          APPROVAL_RUN_ID: ${{ inputs.approval_run_id }}
         run: |
           approved_artifacts=(
             --artifact oliphaunt-publication-lock
-            --artifact oliphaunt-bootstrap-capsule
+            --artifact oliphaunt-publication-candidate
           )
           bash .github/scripts/require-workflow-success.sh \
             Release \
             "$RELEASE_HEAD_SHA" \
             0 \
+            --run-id "$APPROVAL_RUN_ID" \
             --event workflow_dispatch \
             "${approved_artifacts[@]}"
 
-      - name: Download approved lock and capsule from one dry-run
+      - name: Download approved lock and candidate from one dry-run
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          DRY_RUN_ID: ${{ steps.inspect_bootstrap_continuation.outputs.approved_run_id || steps.approved_bootstrap_capsule.outputs.run_id }}
-          APPROVED_ARTIFACT_METADATA_JSON: ${{ steps.inspect_bootstrap_continuation.outputs.approved_artifact_metadata_json || steps.approved_bootstrap_capsule.outputs.artifact_metadata_json }}
+          DRY_RUN_ID: ${{ steps.approved_candidate.outputs.run_id }}
+          APPROVED_ARTIFACT_METADATA_JSON: ${{ steps.approved_candidate.outputs.artifact_metadata_json }}
         run: |
           node .github/scripts/download-build-artifacts.mjs \
             Release \
@@ -1747,31 +1615,33 @@ jobs:
             --run-id "$DRY_RUN_ID" \
             --artifact-metadata-json "$APPROVED_ARTIFACT_METADATA_JSON" \
             --artifact oliphaunt-publication-lock \
-            --artifact oliphaunt-bootstrap-capsule
+            --artifact oliphaunt-publication-candidate
 
-      - name: Verify and install approved bootstrap capsule
-        id: verify_bootstrap_capsule
+      - name: Verify and install approved publication candidate
+        id: verify_bootstrap_candidate
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
         env:
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+          APPROVAL_RUN_ID: ${{ inputs.approval_run_id }}
         run: |
           if [[ -e "$GITHUB_WORKSPACE/target" ]]; then
-            echo 'bootstrap capsule installation requires an absent workspace target directory' >&2
+            echo 'publication candidate installation requires an absent workspace target directory' >&2
             exit 1
           fi
           tools/dev/bun.sh tools/release/bootstrap-publication-capsule.mjs verify-extract \
-            --transport "$RUNNER_TEMP/approved-bootstrap/oliphaunt-bootstrap-capsule.tar" \
+            --transport "$RUNNER_TEMP/approved-bootstrap/oliphaunt-publication-candidate.tar" \
             --approved-lock "$RUNNER_TEMP/approved-bootstrap/publication-lock.json" \
             --products-json "$PRODUCTS_JSON" \
             --head-ref "$RELEASE_HEAD_SHA" \
+            --approval-run-id "$APPROVAL_RUN_ID" \
             --workspace-root "$GITHUB_WORKSPACE"
 
-      - name: Verify external lock equals installed capsule lock
+      - name: Verify external lock equals installed candidate lock
         id: verify_bootstrap_lock
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
         run: |
           if ! cmp -s "$RUNNER_TEMP/approved-bootstrap/publication-lock.json" "$PUBLICATION_LOCK_PATH"; then
-            echo 'installed capsule lock differs from the separately downloaded approved publication lock' >&2
+            echo 'installed candidate lock differs from the separately downloaded approved publication lock' >&2
             exit 1
           fi
           tools/dev/bun.sh tools/release/publication-lock.mjs verify \
@@ -1784,8 +1654,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_CONTINUATION_POINTER: ${{ inputs.continuation_pointer }}
-          RELEASE_CONTINUATION_ARCHIVE: ${{ runner.temp }}/release-continuation.zip
         run: node .github/scripts/download-bootstrap-ledger.mjs
 
       - name: Require bootstrap credentials before mutation
@@ -1822,13 +1690,12 @@ jobs:
 
       - name: Ensure exact immutable release transport ref
         id: ensure_bootstrap_transport_ref
-        if: ${{ steps.bootstrap_scope.outputs.required == 'true' && inputs.continuation_pointer == '' }}
+        if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
         timeout-minutes: 3
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_OPERATION: publish-bootstrap
-          RELEASE_CONTINUATION_POINTER: ${{ inputs.continuation_pointer }}
           RELEASE_TRANSPORT_CONTENT_WRITE_ADMISSION: isolated-bootstrap
         run: node .github/scripts/release-transport-ref.mjs ensure "$RELEASE_HEAD_SHA"
 
@@ -1908,6 +1775,11 @@ jobs:
                 echo 'bootstrap rate-limit deferral cannot claim durable progress' >&2
                 exit 1
               fi
+            elif [[ "$DEFERRAL_MODE" == pre-mutation-capacity ]]; then
+              if [[ "$PROGRESS_COUNT" != 0 ]]; then
+                echo 'bootstrap pre-mutation capacity deferral cannot claim durable progress' >&2
+                exit 1
+              fi
             elif [[ "$DEFERRAL_MODE" == pre-mutation-deadline ]]; then
               if [[ "$PROGRESS_COUNT" != 0 ]]; then
                 echo 'bootstrap pre-mutation deadline deferral cannot claim durable progress' >&2
@@ -1930,21 +1802,6 @@ jobs:
             echo "not_before_epoch=$NOT_BEFORE_EPOCH"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Seal exact bootstrap continuation contract
-        id: prepare_bootstrap_continuation
-        if: ${{ steps.require_bootstrap_execution_decision.outputs.deferred == 'true' }}
-        timeout-minutes: 3
-        env:
-          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-          APPROVED_RUN_ID: ${{ steps.inspect_bootstrap_continuation.outputs.approved_run_id || steps.approved_bootstrap_capsule.outputs.run_id }}
-          APPROVED_ARTIFACT_METADATA_JSON: ${{ steps.inspect_bootstrap_continuation.outputs.approved_artifact_metadata_json || steps.approved_bootstrap_capsule.outputs.artifact_metadata_json }}
-          RELEASE_OPERATION: publish-bootstrap
-          RELEASE_CONTINUATION_POINTER: ${{ inputs.continuation_pointer }}
-          RELEASE_EXECUTION_RESULT_PATH: target/release/bootstrap-execution-result.json
-          RELEASE_CONTINUATION_STATE_PATH: target/release/bootstrap-ledger
-          RELEASE_CONTINUATION_CONTRACT_PATH: target/release/release-continuation-contract.json
-        run: bun .github/scripts/prepare-release-continuation.mjs
-
       - name: Record bootstrap identity result
         if: ${{ steps.require_bootstrap_execution_decision.outputs.complete == 'true' }}
         run: |
@@ -1963,22 +1820,6 @@ jobs:
         if: ${{ always() }}
         run: rm -f "$RUNNER_TEMP/oliphaunt-bootstrap.npmrc"
 
-      - name: Upload immutable deferred bootstrap continuation
-        id: preserve_deferred_bootstrap_ledger
-        if: ${{ steps.require_bootstrap_execution_decision.outputs.deferred == 'true' }}
-        timeout-minutes: 10
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: bootstrap-continuation-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ steps.prepare_bootstrap_continuation.outputs.next_generation }}
-          path: |
-            target/release/bootstrap-ledger
-            target/release/bootstrap-execution-result.json
-            target/release/release-continuation-contract.json
-          if-no-files-found: error
-          include-hidden-files: true
-          compression-level: 0
-          retention-days: 90
-
       - name: Upload bootstrap identity ledger
         id: preserve_bootstrap_ledger
         if: ${{ always() }}
@@ -1990,50 +1831,23 @@ jobs:
           overwrite: true
           retention-days: 90
 
-  dispatch-bootstrap-continuation:
-    name: Dispatch verified bootstrap continuation
-    needs: publish-bootstrap
-    if: ${{ needs.publish-bootstrap.outputs.continuation_required == 'true' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    permissions:
-      actions: write
-      contents: read
-    steps:
-      - name: Checkout exact release transport
-        timeout-minutes: 3
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          persist-credentials: false
-
-      - name: Set up pinned Node.js
-        id: setup_dispatch_node
-        timeout-minutes: 3
-        uses: ./.github/actions/setup-node-runtime
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Dispatch exact verified child run
-        id: dispatch_continuation
-        timeout-minutes: 40
+      - name: Stop incomplete bootstrap for manual rerun
+        if: ${{ steps.require_bootstrap_execution_decision.outputs.deferred == 'true' }}
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_OPERATION: publish-bootstrap
-          RELEASE_HEAD_SHA: ${{ github.sha }}
-          CONTINUATION_ARTIFACT_ID: ${{ needs.publish-bootstrap.outputs.continuation_artifact_id }}
-          CONTINUATION_ARTIFACT_DIGEST: ${{ needs.publish-bootstrap.outputs.continuation_artifact_digest }}
-          CONTINUATION_CONTRACT_DIGEST: ${{ needs.publish-bootstrap.outputs.continuation_contract_digest }}
-          CONTINUATION_AUTHORIZATION_PATH: ${{ runner.temp }}/release-continuation-authorization.json
-        run: node .github/scripts/dispatch-release-continuation.mjs
-
-      - name: Publish exact dispatched-child authorization
-        id: preserve_continuation_authorization
-        timeout-minutes: 5
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: ${{ steps.dispatch_continuation.outputs.authorization_artifact_name }}
-          path: ${{ runner.temp }}/release-continuation-authorization.json
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 90
+          DEFERRAL_MODE: ${{ steps.require_bootstrap_execution_decision.outputs.deferral_mode }}
+          NOT_BEFORE_EPOCH: ${{ steps.require_bootstrap_execution_decision.outputs.not_before_epoch }}
+          REMAINING_COUNT: ${{ steps.require_bootstrap_execution_decision.outputs.remaining_count }}
+          APPROVAL_RUN_ID: ${{ inputs.approval_run_id }}
+        run: |
+          {
+            echo '## Registry identity bootstrap incomplete—rerun required'
+            echo
+            echo "- Release commit: \`$RELEASE_HEAD_SHA\`"
+            echo "- Approved dry-run: \`$APPROVAL_RUN_ID\`"
+            echo "- Remaining identities: \`$REMAINING_COUNT\`"
+            echo "- Reason: \`$DEFERRAL_MODE\`"
+            echo "- Do not rerun before Unix time: \`$NOT_BEFORE_EPOCH\`"
+            echo "- Resume this exact SHA and approval: \`gh run rerun $GITHUB_RUN_ID --failed\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Bootstrap is incomplete; rerun failed jobs for workflow run $GITHUB_RUN_ID after $NOT_BEFORE_EPOCH." >&2
+          exit 1

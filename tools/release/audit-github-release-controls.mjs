@@ -2,7 +2,6 @@
 
 import { readFileSync } from "node:fs";
 
-import { RELEASE_TRANSPORT_TAG_PREFIX } from "../../.github/scripts/release-transport-ref.mjs";
 import { runGitHubGraphqlReadSync, runGitHubReadSync } from "./github-read.mjs";
 
 export const CANONICAL_REPOSITORY = "f0rr0/oliphaunt";
@@ -127,15 +126,10 @@ function bypassActorCount(reviews) {
   );
 }
 
-function exactDeploymentPolicy(entry, environmentName) {
+function exactDeploymentPolicy(entry) {
   const deployment = entry?.environment?.deployment_branch_policy;
   const policies = entry?.branchPolicies ?? [];
-  const expected = [
-    { name: DEFAULT_BRANCH, type: "branch" },
-    ...(environmentName === "release-bootstrap"
-      ? [{ name: `${RELEASE_TRANSPORT_TAG_PREFIX}*`, type: "tag" }]
-      : []),
-  ];
+  const expected = [{ name: DEFAULT_BRANCH, type: "branch" }];
   const identity = (policy) => `${policy?.type ?? ""}\0${policy?.name ?? ""}`;
   return deployment?.protected_branches === false
     && deployment?.custom_branch_policies === true
@@ -299,21 +293,16 @@ export function auditGitHubReleaseControls(
     }
 
     findings.push(finding("PASS", `environment.${environmentName}.exists`, `${environmentName} exists`));
-    const continuationEnvironment = environmentName === "release-bootstrap";
-    findings.push(exactDeploymentPolicy(entry, environmentName)
+    findings.push(exactDeploymentPolicy(entry)
       ? finding(
         "PASS",
         `environment.${environmentName}.branch-policy`,
-        continuationEnvironment
-          ? `${environmentName} accepts only branch main and exact release transport tags`
-          : `${environmentName} accepts only branch main`,
+        `${environmentName} accepts only branch main`,
       )
       : finding(
         "FAIL",
         `environment.${environmentName}.branch-policy`,
-        continuationEnvironment
-          ? `${environmentName} must allow exactly branch main and tag ${RELEASE_TRANSPORT_TAG_PREFIX}*`
-          : `${environmentName} must use one exact custom branch policy for main and no tag policy`,
+        `${environmentName} must use one exact custom branch policy for main and no tag policy`,
       ));
 
     const actualSecrets = [...new Set(entry.secretNames ?? [])].sort();

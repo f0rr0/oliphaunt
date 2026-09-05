@@ -255,8 +255,9 @@ The implementation has four layers:
 The cross-language contract lives in
 `src/shared/cluster-seed-contract/contract.json`. It owns profile names,
 artifact roles, ICU form/version, readiness signal, physical formats,
-compatibility keys, and the logical digest algorithm. The policy gate validates
-canonical fixtures and is a dependency of `sdk-contracts:check`. Release tools
+compatibility keys, and the logical digest algorithm. The independently
+scheduled `sdk-contracts:cluster-seeds` gate validates canonical fixtures and
+is included in the local `sdk-contracts:all` aggregate. Release tools
 reuse one native manifest/digest validator rather than reimplementing it.
 
 Filesystem hot paths deliberately remain provider-local. A universal
@@ -368,7 +369,7 @@ The repository implementation must keep every item below true:
   for data files.
 - [x] Package footprint reports separate runtime, standard seed, ICU seed, and
   ICU data bytes where those products are assembled.
-- [x] The cluster-seed contract is wired into `sdk-contracts:check`; source-free
+- [x] The cluster-seed contract is wired into `sdk-contracts:cluster-seeds`; source-free
   asset and release checks cover the generated graph.
 - [x] Negative tests cover profile mismatches, missing members, changed data
   digests, unsafe inputs, and fail-closed package resolution.

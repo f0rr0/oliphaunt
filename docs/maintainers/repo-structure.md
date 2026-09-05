@@ -270,8 +270,9 @@ support behavior honestly; gaps must be explicit and justified in
 - `tools/policy`, `tools/dev`, `tools/perf`, and `tools/release` own
   shell/Python/Node entrypoints by responsibility. CI is thin workflow
   orchestration over Moon tasks and the release CLI.
-- `sdk-contracts:check` owns generated API, SDK registry, C ABI header-copy,
-  and native-boundary contracts. Exact extension catalogs belong to
+- `sdk-contracts:all` is the local aggregate for generated API, SDK registry,
+  C ABI header-copy, fixtures, cluster seeds, shared Rust, and native-boundary
+  contracts; hosted CI schedules its children independently. Exact extension catalogs belong to
   `extensions:lint`, while
   SDK behavior, React Native delegation, package contents, and installed-app
   evidence belong to product-local Moon tasks. Stable CI does not infer those

@@ -207,31 +207,26 @@ helper behavior tests;
 The default `release-check.mjs` invocation includes publication metadata plus
 the release-owned and policy-owned mutation unit suites. `check-release-metadata.mjs`
 is the canonical product, version, registry ownership, and dependency graph
-validator. `release-metadata-check.mjs` is a distinct internal replay surface
-that also executes Release Please, artifact, changelog, and synchronization
-checks. The workflow may
-call it only after the structured generated-release commit verifier succeeds,
-or after the exact hosted qualification record is reverified against a clean
-checkout at `RELEASE_HEAD_SHA`. Do not substitute it for the full local
-pre-dispatch gate.
+validator. The release-PR job runs `release-metadata-check.mjs` once after the
+generated commit is synchronized, while hosted qualification owns candidate
+source-metadata evidence. Publishers verify the frozen candidate identity and
+live external state instead of replaying source-only metadata checks.
 
 The `Release` workflow has four operations:
 
 1. `prepare-release-pr` — run from current `main`; creates/updates the single generated release PR and syncs derived files.
-2. `publish-dry-run` — downloads exact-SHA CI artifacts, performs release and registry preflight, packages public carriers, freezes/verifies the lock, and emits the lock-bound Cargo/npm bootstrap capsule without write credentials.
-3. `publish-bootstrap` — creation of missing npm/crates identities only, from the already-approved capsule in bounded resumable Linux jobs. npm requires a short-lived granular `@oliphaunt` read/write token with 2FA bypass only when an npm identity is absent; the exact operator checklist is in `release-setup.md`. Configure trusted publishers and revoke every provisioned bootstrap token immediately after the chain seals. Provision only credentials required by the exact missing-identity inventory; a recovery in which every Cargo/npm version already matches requires neither token.
-4. `publish` — normal trusted release. It uses short-lived Cargo/npm credentials, Maven protected secrets, the frozen lock, and idempotent publication checks.
+2. `publish-dry-run` — downloads exact-SHA CI artifacts, packages every public carrier, freezes/verifies the exhaustive lock, and uploads the complete lock-bound publication candidate without write credentials.
+3. `publish-bootstrap` — creation of missing npm/crates identities only, from an explicitly approved candidate in a bounded Linux job. If it stops incomplete, rerun the failed job of that same workflow run; the checkpoint ledger resumes the exact SHA and approval. npm requires a short-lived granular `@oliphaunt` read/write token with 2FA bypass only when an npm identity is absent.
+4. `publish` — normal trusted release. It installs that same explicitly approved candidate, adds signing/upload envelopes, and uses short-lived Cargo/npm credentials plus Maven protected secrets.
 
 On the normal path, only a successful `publish-dry-run` uploads the canonical
-`oliphaunt-publication-lock` and `oliphaunt-bootstrap-capsule` approval
-artifacts. Bootstrap selects one successful same-SHA dry-run that contains both
-artifacts, downloads both by that one run ID, verifies the embedded lock is
-byte-identical to the separately downloaded lock, and atomically installs only
-the exact locked Cargo/npm bytes. It does not rebuild packages. Normal publish
-independently reassembles the complete candidate from the same exact-SHA CI
-artifacts, downloads the approved lock, and byte-compares the two locks before
-publication. A mutating run therefore cannot
-approve itself or silently combine artifacts from different dry-runs.
+`oliphaunt-publication-lock` and `oliphaunt-publication-candidate` approval
+artifacts. Both mutating operations require the operator-supplied dry-run ID,
+download both artifacts by immutable artifact identity, and verify the archive's
+source SHA/tree, qualification run, approval run, products, lock, hashes, sizes,
+dependencies, and complete file set. Missing, expired, extra, unsafe, or changed
+contents stop publication. Neither operation rebuilds or silently selects a
+newer dry-run.
 
 Because GitHub hides drafts from tokens without push access, this read-only
 dry-run validates exact selected tags plus any visible public releases, then
@@ -243,12 +238,12 @@ drafts.
 
 `.github/workflows/release.yml` is the one directly dispatched release
 workflow. Its operation jobs declare their own least-privilege permissions and
-protected environments: dry-run is repository-read-only, bootstrap adds OIDC
-and `contents: write`, preparation receives only release-PR writes, and normal
+protected environments: dry-run is repository-read-only, bootstrap adds
+`contents: write`, preparation receives only release-PR writes, and normal
 publication runs as one direct `release-publish` job. Bootstrap's
 content write exists solely for the root generation to create the immutable
 release transport tag immediately before its first registry mutation;
-continuation generations never create, update, or delete that tag. Dry-run and
+reruns never create, update, or delete that tag. Dry-run and
 normal publish are separate jobs over one YAML-anchored step list, so this
 separation does not create two release implementations that can drift.
 
@@ -275,7 +270,7 @@ the SHA alias. Repository policy separately forbids delegated operation jobs
 and `workflow_call`. An unconditional, bounded,
 repository-read-only validation job checks the canonical repository, exact
 workflow commit, operation, optional exact commit, and the corresponding
-root-main or bootstrap-continuation transport ref before any operation job.
+root-main ref and pinned approval run before any operation job.
 Malformed or contradictory manual inputs therefore fail before release work
 begins.
 After bootstrap, derive the complete configuration inventory from the exact
@@ -285,9 +280,9 @@ creation requires both `--apply` and confirmation of the exact lock digest.
 Wrong or extra configurations are blockers and are never automatically
 replaced.
 
-Normal release execution reuses the verified Node and pnpm payloads installed
-by `setup-moon`; the slim bootstrap job uses the same digest-pinned Node runtime
-through `setup-node-runtime`. Neither path relies on Corepack. When the selected
+Dry-run assembly installs the full workspace; normal publish and bootstrap
+install only the verified command-line tools required for signing, uploading,
+and public verification. Neither path relies on Corepack. When the selected
 carrier set includes npm, both normal and bootstrap jobs use
 `setup-npm-publisher` to install the workflow-pinned npm archive. That action
 verifies the canonical URL, compressed digests and byte count, safe archive
@@ -300,11 +295,10 @@ the frozen registry mutation logic.
 
 Installer fault-injection suites are owned by the exact-SHA
 `ci-workflows:check` gate. Publication does not execute those download, cache,
-and rollback suites again. Release-PR preparation runs one full release check
-before generation and the live metadata checker only after structured commit
-verification. The protected normal publish job runs one full release check before
-qualification, then uses the live metadata checker only after the same-SHA
-`Qualified` record is verified.
+and rollback suites again. Release-PR preparation runs the live metadata checker
+once after structured commit verification. The protected dry-run verifies the
+same-SHA `Qualified` record before freezing the candidate; slim publishers do
+not replay that source-only validation.
 `--qualified-ci` is not a trusted Boolean bypass: the publisher rejects dirty
 or non-hosted use, binds HEAD to `RELEASE_HEAD_SHA`, and reruns the fixed
 candidate/plan/WASIX-evidence verifier before omitting mutation tests. Workflow
@@ -319,14 +313,13 @@ ref at its exact release SHA. If the tag is absent, or this is the first run
 attempt, the helper proves current `main` before creating or accepting it;
 creating an absent append-only tag is the root generation's first mutation.
 Only a genuine rerun (`GITHUB_RUN_ATTEMPT > 1`) of the exact root operation,
-original `refs/heads/main` workflow SHA, and no bootstrap continuation may reuse an
+original `refs/heads/main` workflow SHA may reuse an
 already exact tag after `main` advances. A missing tag still requires the proof
 on every attempt, while a wrong or annotated tag fails closed. The helper never
-updates or deletes the tag and never replays an ambiguous create. Bootstrap
-continuation dispatch verifies the ref both before and after any bounded delay
-and dispatches the child from the tag rather than from moving `main`. Normal
-publication completes in the root run and remains exact-SHA and lock-bound
-after the first mutation.
+updates or deletes the tag and never replays an ambiguous create. A manual
+rerun retains the original workflow SHA and approved dry-run even after `main`
+advances. Normal publication remains exact-SHA and lock-bound after the first
+mutation.
 
 ## Publish order
 
@@ -344,14 +337,13 @@ The job stages GitHub state, publishes the complete exact registry topology,
 verifies public consumers, and promotes drafts without a normal-publication
 checkpoint, continuation, or phase handoff. It attempts the complete plan once
 inside its bounded window. If it cannot finish, a maintainer uses GitHub's
-rerun on the original Release run; the rerun rebuilds and verifies the same
-lock, accepts only byte-matching immutable state, and publishes only what
+rerun on the original Release run; the rerun reinstalls and verifies the same
+approved candidate, accepts only byte-matching immutable state, and publishes only what
 remains absent.
 
-Only first-identity bootstrap is automatically resumable across jobs. Its
-secret-free dispatcher consumes the typed output of `publish-bootstrap` and
-dispatches the sealed exact-parent pointer at the SHA-derived transport tag.
-Normal recovery reruns `publish` at the exact same release commit.
+First-identity bootstrap is manually resumable. An incomplete run uploads its
+lock-bound checkpoint, fails with an exact rerun command, and resumes only when
+the maintainer reruns the failed job of that same Release workflow run.
 
 The workflow does not encode a second product/ecosystem publish order. The
 normal registry executor derives its in-memory plan directly from the approved
@@ -380,8 +372,8 @@ An existing immutable identity is skipped only when its version/integrity matche
 Identity bootstrap is checkpointed before and during publication. The genesis
 checkpoint freezes the source SHA/tree, publication-lock and catalog digests,
 selected products, and complete expected registry envelope before the first
-write. The slim bootstrap job consumes only the canonical dry-run's
-manifest-bound Cargo/npm capsule; it neither reconstructs packages nor repeats
+write. The slim bootstrap job consumes the canonical dry-run's complete
+manifest-bound publication candidate; it neither reconstructs packages nor repeats
 the macOS build ceremony. Bootstrap preserves the lock's Cargo/npm dependency
 edges and executes one sequential lane per registry, overlapping only
 independent operations. Its one serialized checkpoint writer receives newly
@@ -391,8 +383,8 @@ failure stops new starts, lets the peer's one in-flight immutable mutation
 drain, and triggers a final reconciliation/checkpoint attempt; publication and
 checkpoint failures are reported together rather than masking either. The
 workflow uploads the chain even when a later phase fails and restores the newest
-compatible chain for the same workflow and exact SHA on a rerun attempt or a
-fresh recovery dispatch. Sealing succeeds only after
+compatible chain for the same workflow and exact SHA on a rerun attempt.
+Sealing succeeds only after
 every expected Cargo and npm identity exists with lock-matching bytes; an
 altered, missing, reordered, or conflicting checkpoint fails closed.
 
@@ -403,12 +395,10 @@ first-release catalog in one hosted job. No API exposes support-granted account
 capacity, so an operator-entered number is not accepted as a correctness gate.
 The planner uses the documented bucket, treats a valid `429 Retry-After` as
 authoritative, and admits only a dependency-closed batch that fits the current
-window. After progress, it uploads the immutable checkpoint before a separate
-credential-free job dispatches an exact-parent continuation. The continuation
-is bound to the release SHA/tree, lock and package-envelope digests, products,
-root and parent run identities, artifact ID/digest/size, checkpoint identity,
-and a bounded generation. Zero-progress recursion is forbidden; ambiguous
-uploads and integrity or checkpoint failures remain hard failures.
+window. After progress or a safe deadline/rate-limit stop, it uploads the
+immutable checkpoint and marks the job incomplete. The summary gives the exact
+`gh run rerun <run-id> --failed` command and not-before time. Ambiguous uploads
+and integrity or checkpoint failures remain hard failures.
 Bootstrap retains its bounded job window and restores only a validated
 checkpoint for the same source, lock, products, and package envelope. Normal
 publish has one hosted-job deadline. It reserves enough time for public

@@ -11,7 +11,7 @@ function error(message) {
 
 /**
  * Narrow, dependency-neutral control-flow signal for a known-safe registry
- * continuation. Callers may construct it only before any mutation request
+ * pause. Callers may construct it only before any mutation request
  * starts, or after an explicit HTTP 429 proves that a registry rejected the
  * mutation without accepting its payload.
  */

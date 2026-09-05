@@ -7,9 +7,9 @@ description: Prepare, audit, bootstrap, publish, verify, or recover Oliphaunt re
 
 Treat a release as a frozen, exact-SHA promotion of already-qualified
 artifacts. Never rebuild binary producer outputs or substitute artifacts.
-Normal publish may deterministically reassemble carrier packages only from the
-same qualified inputs, and the resulting publication lock must byte-match the
-approved dry-run lock; bootstrap publishes the approved capsule bytes directly.
+Dry-run assembles the complete publication candidate once. Normal publish and
+bootstrap both install the same explicitly approved candidate and verify its
+complete contents against the embedded exhaustive lock.
 
 Select release products and versions from the publication catalog and
 product-local metadata. PostgreSQL 18 contrib SQL members belong to the logical
@@ -51,11 +51,9 @@ replace an older pending dispatch. Wait for the active bootstrap, publish, or
 release-PR mutation to finish before starting another.
 
 Treat `.github/workflows/release.yml` as the sole release workflow. Its
-credential-bearing jobs directly select their protected environments. Its
-environment-free, secret-free bootstrap-continuation dispatcher consumes only
-the typed output of `publish-bootstrap` and dispatches the sealed exact-parent
-pointer. Normal publish has no continuation dispatcher and recovery reruns the
-exact same release commit.
+credential-bearing jobs directly select their protected environments.
+Bootstrap and normal recovery rerun the original failed workflow run at the
+exact same release commit and approved dry-run ID.
 
 A root `publish-bootstrap` or `publish` dispatch must run from the qualified
 current `main` commit. At the mutation boundary the transport helper first
@@ -64,20 +62,20 @@ direct-commit tag at that exact SHA. When the tag is absent, or the root is on
 its first run attempt, the helper must reverify current `main` before it may
 create or accept the tag; creating an absent tag is the root generation's first
 mutation. Only a genuine GitHub rerun (`GITHUB_RUN_ATTEMPT > 1`) of the exact
-root operation, original `refs/heads/main` workflow SHA, and empty continuation
+root operation and original `refs/heads/main` workflow SHA
 may reuse an already exact tag after `main` advances. Wrong, annotated, or
 missing tags fail closed, and a missing tag always requires the current-main
 proof even on a rerun.
-The tag is the immutable transaction ref: never update or delete it. Every
-bootstrap continuation targets and validates that exact tag, SHA, tree, and
-sealed parent state instead of reconsulting moving `main`. A later ordinary
-merge does not invalidate an already pinned release transaction. Bootstrap's
+The tag is the immutable transaction ref: never update or delete it. A rerun
+validates that exact tag, SHA, tree, approved candidate, and ledger instead of
+reconsulting moving `main`. A later ordinary merge does not invalidate an
+already pinned release transaction. Bootstrap's
 `contents: write` permission exists solely so
 the root bootstrap job can create this transport tag and must not be used for
 another repository mutation.
 
 - Prepare: synchronize release-owned files, run release checks, create the generated release PR, and stop for review.
-- Bootstrap: use the dedicated bootstrap environment only for identities that cannot use trusted publishing until their first package exists, including generated part identities introduced by a future lock. For npm, require a short-lived granular token with explicit `@oliphaunt` scope selection, Packages and scopes `Read and write`, and 2FA bypass, owned by a 2FA-enabled actor with scope write access; an ordinary token can authenticate yet fail the noninteractive publish with `EOTP`. Require one successful exact-SHA dry-run containing both `oliphaunt-publication-lock` and `oliphaunt-bootstrap-capsule`; select one run ID, verify the capsule's embedded lock against the separately downloaded lock, and publish only those frozen Cargo/npm bytes without rebuilding. Inventory the exact lock first. Model crates.io's documented token bucket; never accept an unverifiable numeric capacity assertion. Execute one sequential Cargo lane and one sequential npm lane, overlap only independent carriers, and preserve every lock dependency as a barrier. If one hosted job cannot finish, flush and upload the canonical hash-chained checkpoint before a separate credential-free job dispatches a bounded exact-parent continuation. Bind it to release/lock/package identity and exact artifact ID/digest/size, and permit zero-progress recursion only for explicitly typed, finite-budget rate-limit/deadline continuations. A valid `429 Retry-After` may defer; ambiguous uploads, timeouts, integrity mismatches, malformed responses, and checkpoint failures remain hard failures. After every identity has a receipt, use that exact lock with `tools/release/trusted-publisher-config.mjs`: its default plan has no network access, `--audit` is read-only, and mutation requires both `--apply` and the exact `--confirm-lock-digest`. Run npm audit/apply in a real TTY and retain each fresh `--output` JSON report, never the discarded authentication warm-up display. Require workflow `release.yml`, environment `release-publish`, and npm publish-only permission; reject extra or mismatched configurations. Revoke long-lived credentials, then resume normal publish.
+- Bootstrap: use the dedicated bootstrap environment only for identities that cannot use trusted publishing until their first package exists, including generated part identities introduced by a future lock. For npm, require a short-lived granular token with explicit `@oliphaunt` scope selection, Packages and scopes `Read and write`, and 2FA bypass, owned by a 2FA-enabled actor with scope write access; an ordinary token can authenticate yet fail the noninteractive publish with `EOTP`. Require one successful exact-SHA dry-run containing both `oliphaunt-publication-lock` and `oliphaunt-publication-candidate`; supply that run ID and publish only its frozen Cargo/npm bytes without rebuilding. Inventory the exact lock first. Model crates.io's documented token bucket; never accept an unverifiable numeric capacity assertion. Execute one sequential Cargo lane and one sequential npm lane, overlap only independent carriers, and preserve every lock dependency as a barrier. If one hosted job cannot finish, drain in-flight uploads, reconcile receipts, upload the canonical hash-chained checkpoint, and fail as incomplete with the exact manual rerun command and not-before time. The maintainer reruns the failed job of that original workflow run; the rerun restores only the same release/lock/candidate identity and skips byte-matching public versions. A valid `429 Retry-After` may defer; ambiguous uploads, timeouts, integrity mismatches, malformed responses, and checkpoint failures remain hard failures. After every identity has a receipt, use that exact lock with `tools/release/trusted-publisher-config.mjs`: its default plan has no network access, `--audit` is read-only, and mutation requires both `--apply` and the exact `--confirm-lock-digest`. Run npm audit/apply in a real TTY and retain each fresh `--output` JSON report, never the discarded authentication warm-up display. Require workflow `release.yml`, environment `release-publish`, and npm publish-only permission; reject extra or mismatched configurations. Revoke long-lived credentials, then resume normal publish.
 - Publish: require a successful exact-SHA `Qualified` gate, complete artifact
   set, frozen publication lock, and exact Release Please PR markability proof.
   Pin the immutable transport, stage GitHub drafts/assets/attestations, attempt
@@ -92,12 +90,13 @@ another repository mutation.
   trusted credential cannot move dist-tags, so publish each exact npm version
   with its normal tag.
 - Recover: inventory external state first, then rerun root `publish` at the
-  exact same release commit with the same qualified artifacts and approved
-  lock. Use GitHub's rerun for the original failed Release run, not a fresh
+  exact same release commit with the same approved publication candidate. Use
+  GitHub's rerun for the original failed Release run, not a fresh
   dispatch after `main` moves; the original run and referenced artifacts must
   still be available. Prove and skip matching immutable state; publish only
   what remains absent. A required code fix creates a new candidate and follows
-  normal versioning. Bootstrap retains its separate checkpoint recovery.
+  normal versioning. Bootstrap uses the same manual rerun rule and its
+  lock-bound checkpoint chain.
 
 ## Local gates
 
@@ -131,8 +130,9 @@ tools/dev/bun.sh tools/release/sync-release-pr.mjs
 tools/dev/bun.sh tools/release/sync-release-pr.mjs --check
 ```
 
-Use the protected `publish-dry-run` operation to assemble carriers and create,
-freeze, and verify the publication lock from exact-SHA artifacts.
+Use the protected `publish-dry-run` operation to assemble carriers once and
+create, freeze, and verify the complete publication candidate from exact-SHA
+artifacts. Preserve its run ID for bootstrap and normal publish.
 
 The committed extension evidence table may say `requires-exact-candidate-ci`; that is an honest pre-qualification state, not permission to skip the lane. The selected CI run must provide the current evidence artifact. Do not use `--allow-dirty` for release evidence. Do not publish from a local rebuild, a different workflow run, a branch name, or a moving ref.
 

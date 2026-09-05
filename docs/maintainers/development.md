@@ -112,8 +112,9 @@ The validation entrypoint is split by maintainer workflow:
 - `moon run oliphaunt-rust:package`: creates and inspects the publishable Rust
   SDK package only. Run `compile`, `unit`, and `package` together for the compact
   pre-push gate; none silently owns the others;
-- `moon run sdk-contracts:check`: fast generated API, SDK registry, C ABI
-  header-copy, and native-boundary contract validation. Use
+- `moon run sdk-contracts:all`: local aggregate for generated API, SDK registry,
+  C ABI header-copy, fixture, and native-boundary validation. Hosted CI schedules
+  those checks independently from their own inputs. Use
   product `compile`, `unit`, and `package` targets for behavior and package proof;
 - `moon run oliphaunt-swift:compile`: SwiftPM package description and build checks
   for the SDK package and repository root package;

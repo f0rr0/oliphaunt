@@ -21,7 +21,7 @@ same product concepts where the target platform can do so honestly:
   with explicit `/direct` and package-Worker placements.
 
 `tools/policy/sdk-manifest.toml` is the repo-level SDK registry. The canonical
-product graph lives in `src/*/moon.yml`; `sdk-contracts:check` parses both and
+product graph lives in `src/*/moon.yml`; `sdk-contracts:manifest` parses both and
 rejects ownership or package-identity drift. Product tests and package checks,
 not source-text assertions, prove runtime delegation and consumer behavior.
 
@@ -80,7 +80,7 @@ moon run oliphaunt-swift:compile
 moon run oliphaunt-kotlin:check
 moon run oliphaunt-react-native:compile
 moon run oliphaunt-js:compile
-moon run sdk-contracts:check
+moon run sdk-contracts:all
 moon run extensions:lint
 ```
 

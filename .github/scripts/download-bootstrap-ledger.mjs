@@ -4,7 +4,6 @@ import {
   appendFileSync,
   copyFileSync,
   existsSync,
-  lstatSync,
   readFileSync,
   readdirSync,
   rmSync,
@@ -26,13 +25,7 @@ import {
   runGitHubPaginatedJsonSync,
   runGitHubReadSync,
 } from "../../tools/release/github-read.mjs";
-import {
-  parseContinuationJson,
-  sha256Bytes,
-  validateReleaseContinuationPointer,
-} from "../../tools/release/release-continuation-contract.mjs";
 import { captureCommandOutput } from "../../tools/dev/capture-command-output.mjs";
-import { openContinuationEnvelope } from "./release-continuation-artifact.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const ARTIFACT = "oliphaunt-bootstrap-ledger";
@@ -114,7 +107,7 @@ function attemptNumber(value) {
   return parsed;
 }
 
-function ledgerArtifactInventory(repo, sha) {
+function ledgerArtifactInventory(repo, sha, currentRun) {
   const artifacts = runGitHubPaginatedJsonSync(
     `repos/${repo}/actions/artifacts?name=${encodeURIComponent(ARTIFACT)}`,
     {
@@ -139,8 +132,11 @@ function ledgerArtifactInventory(repo, sha) {
     ) {
       fail(`repository ${ARTIFACT} inventory contains malformed workflow binding`);
     }
-    if (entry.workflow_run.head_sha !== sha) continue;
     const runId = String(entry.workflow_run.id);
+    if (runId !== currentRun) continue;
+    if (entry.workflow_run.head_sha !== sha) {
+      fail(`current Release run ${currentRun} artifact disagrees with its exact-SHA binding`);
+    }
     const runArtifacts = byRun.get(runId) ?? [];
     runArtifacts.push(entry);
     byRun.set(runId, runArtifacts);
@@ -200,11 +196,6 @@ export function selectEarlierAttemptArtifact(artifacts, { runId, currentAttemptS
   };
 }
 
-export function selectLatestArtifact(artifacts, { runId }) {
-  const normalizedRunId = positiveIntegerString(runId, "prior Release run id");
-  return ledgerArtifacts(artifacts, normalizedRunId).sort(newest)[0]?.raw ?? null;
-}
-
 export function validateAttemptMetadata(metadata, { runId, attempt, sha }) {
   if (metadata === null || Array.isArray(metadata) || typeof metadata !== "object") {
     fail("current Release run attempt metadata must be an object");
@@ -226,33 +217,8 @@ export function validateCurrentRunMetadata(metadata, { runId, sha }) {
   if (String(metadata.id ?? "") !== normalizedRunId) fail("current Release run metadata has the wrong run id");
   if (metadata.head_sha !== sha) fail("current Release run metadata has the wrong release SHA");
   if (metadata.event !== "workflow_dispatch") fail("current Release run metadata is not a workflow_dispatch run");
-  const workflowId = positiveIntegerString(metadata.workflow_id, "current Release workflow id");
+  positiveIntegerString(metadata.workflow_id, "current Release workflow id");
   timestamp(metadata.created_at, "current Release run created_at");
-  return { workflowId };
-}
-
-export function validatePriorRunMetadata(metadata, { runId, sha, workflowId }) {
-  if (metadata === null || Array.isArray(metadata) || typeof metadata !== "object") {
-    fail(`prior Release run ${runId} metadata must be an object`);
-  }
-  const normalizedRunId = positiveIntegerString(runId, "prior Release run id");
-  if (String(metadata.id ?? "") !== normalizedRunId) {
-    fail(`prior Release run ${normalizedRunId} metadata has the wrong run id`);
-  }
-  if (metadata.head_sha !== sha) {
-    fail(`prior Release run ${normalizedRunId} metadata disagrees with its exact-SHA artifact binding`);
-  }
-  const candidateWorkflowId = positiveIntegerString(
-    metadata.workflow_id,
-    `prior Release run ${normalizedRunId} workflow id`,
-  );
-  const createdAt = timestamp(metadata.created_at, `prior Release run ${normalizedRunId} created_at`);
-  if (candidateWorkflowId !== workflowId || metadata.event !== "workflow_dispatch") return null;
-  if (typeof metadata.status !== "string" || metadata.status.length === 0) {
-    fail(`prior Release run ${normalizedRunId} has malformed status metadata`);
-  }
-  if (metadata.status !== "completed") return null;
-  return { createdAt, runId: normalizedRunId };
 }
 
 function files(directory) {
@@ -388,63 +354,6 @@ function restoreArtifact(repo, runId, artifact, destination, sourceDescription) 
   );
 }
 
-export function restoreExactContinuationLedger(envelope, destination) {
-  if (!Array.isArray(envelope?.checkpointEntries) || envelope.checkpointEntries.length === 0) {
-    fail("exact continuation envelope contains no bootstrap checkpoints");
-  }
-  const stage = stageExistingDirectory(destination, "exact-continuation");
-  try {
-    for (const entry of envelope.checkpointEntries) {
-      if (
-        entry === null
-        || typeof entry !== "object"
-        || !CHECKPOINT.test(entry.name)
-        || !Buffer.isBuffer(entry.bytes)
-        || entry.bytes.length === 0
-      ) {
-        fail("exact continuation envelope contains a malformed bootstrap checkpoint");
-      }
-      const target = path.join(stage, entry.name);
-      if (statSync(target, { throwIfNoEntry: false })?.isFile()) {
-        const existing = readFileSync(target);
-        if (existing.length !== entry.bytes.length || sha256Bytes(existing) !== sha256Bytes(entry.bytes)) {
-          fail(`exact continuation checkpoint conflicts with local ${entry.name}`);
-        }
-      } else {
-        writeFileSync(target, entry.bytes, { flag: "wx", mode: 0o600 });
-      }
-    }
-    promoteDirectory(stage, destination);
-  } finally {
-    if (existsSync(stage)) removeTemporaryPath(stage);
-  }
-}
-
-function priorRuns(repo, sha, currentRun, workflowId, artifactsByRun) {
-  const document = runGitHubPaginatedJsonSync(
-    `repos/${repo}/actions/workflows/${workflowId}/runs?head_sha=${encodeURIComponent(sha)}&event=workflow_dispatch`,
-    {
-      cwd: ROOT,
-      itemsField: "workflow_runs",
-      label: `exact-SHA Release workflow ${workflowId} run inventory`,
-      maxBuffer: MAX_ARTIFACT_BYTES,
-    },
-  );
-  const result = [];
-  const seen = new Set();
-  for (const metadata of document) {
-    const runId = positiveIntegerString(metadata?.id, "exact-SHA Release run id");
-    if (seen.has(runId)) fail(`exact-SHA Release run inventory repeats run ${runId}`);
-    seen.add(runId);
-    if (runId === currentRun) continue;
-    const candidate = validatePriorRunMetadata(metadata, { runId, sha, workflowId });
-    if (candidate !== null && artifactsByRun.has(runId)) result.push(candidate);
-  }
-  return result.sort((left, right) =>
-    right.createdAt - left.createdAt
-      || (BigInt(left.runId) < BigInt(right.runId) ? 1 : -1));
-}
-
 export async function main() {
   const repo = required("GH_REPO");
   const sha = required("RELEASE_HEAD_SHA");
@@ -454,47 +363,16 @@ export async function main() {
     process.env.BOOTSTRAP_LEDGER_PATH || "target/release/bootstrap-ledger",
   );
   const currentRun = positiveIntegerString(required("GITHUB_RUN_ID"), "GITHUB_RUN_ID");
-  const rawPointer = process.env.RELEASE_CONTINUATION_POINTER?.trim() ?? "";
-  if (rawPointer !== "") {
-    if (rawPointer.length > 32 * 1024) fail("RELEASE_CONTINUATION_POINTER exceeds 32 KiB");
-    const pointer = validateReleaseContinuationPointer(
-      parseContinuationJson(rawPointer, "RELEASE_CONTINUATION_POINTER"),
-      { operation: "publish-bootstrap", releaseCommit: sha },
-    );
-    const archive = path.resolve(required("RELEASE_CONTINUATION_ARCHIVE"));
-    const metadata = lstatSync(archive, { throwIfNoEntry: false });
-    if (!metadata?.isFile() || metadata.isSymbolicLink() || metadata.size !== pointer.artifact.size) {
-      fail("cached exact continuation archive has the wrong file identity");
-    }
-    const bytes = readFileSync(archive);
-    if (`sha256:${sha256Bytes(bytes)}` !== pointer.artifact.digest) {
-      fail("cached exact continuation archive digest differs from its pointer");
-    }
-    const envelope = openContinuationEnvelope(bytes, pointer);
-    restoreExactContinuationLedger(envelope, destination);
-    if (process.env.GITHUB_OUTPUT) {
-      appendFileSync(
-        process.env.GITHUB_OUTPUT,
-        `found=true\nrun_id=${pointer.parentRunId}\nartifact_id=${pointer.artifact.id}\n`
-          + `generation=${pointer.generation}\n`,
-      );
-    }
-    console.log(
-      `restored exact bootstrap continuation generation ${pointer.generation}/${pointer.maxGenerations} `
-        + `from parent run ${pointer.parentRunId}, artifact ${pointer.artifact.id}`,
-    );
-    return;
-  }
   const currentAttempt = attemptNumber(required("GITHUB_RUN_ATTEMPT"));
   const currentRunMetadata = json(
     gh(["api", `repos/${repo}/actions/runs/${currentRun}`]),
     `current Release run ${currentRun}`,
   );
-  const { workflowId } = validateCurrentRunMetadata(currentRunMetadata, {
+  validateCurrentRunMetadata(currentRunMetadata, {
     runId: currentRun,
     sha,
   });
-  const artifactsByRun = ledgerArtifactInventory(repo, sha);
+  const artifactsByRun = ledgerArtifactInventory(repo, sha, currentRun);
 
   let excludedCurrentAttemptIds = [];
   if (currentAttempt > 1) {
@@ -524,18 +402,10 @@ export async function main() {
     }
   }
 
-  for (const run of priorRuns(repo, sha, currentRun, workflowId, artifactsByRun)) {
-    const { runId } = run;
-    const artifact = selectLatestArtifact(artifactsByRun.get(runId) ?? [], { runId });
-    if (artifact === null) continue;
-    restoreArtifact(repo, runId, artifact, destination, "a prior completed dispatch");
-    return;
-  }
-
   if (excludedCurrentAttemptIds.length > 0) {
     fail(
       "the current rerun attempt has bootstrap ledger artifact(s), but no artifact can be proven to " +
-        `predate the attempt and no prior dispatch can recover the chain; refusing genesis ` +
+        `predate the attempt; refusing genesis ` +
         `(excluded artifact ids: ${excludedCurrentAttemptIds.join(", ")})`,
     );
   }
