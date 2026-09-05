@@ -33,9 +33,10 @@ tuning is rejected for release carriers.
 From the repository root:
 
 ```sh
-moon run liboliphaunt-wasix-postmaster:source-fetch
+moon run source-inputs:source-fetch-wasix-postmaster-runtime
 moon run liboliphaunt-wasix-postmaster:prepare-runtime
 moon run liboliphaunt-wasix-postmaster:runtime-build
+moon run liboliphaunt-wasix-postmaster:runtime-patch-tests
 moon run liboliphaunt-wasix-postmaster:runtime-capabilities
 ```
 

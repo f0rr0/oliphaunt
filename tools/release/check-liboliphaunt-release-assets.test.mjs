@@ -59,7 +59,7 @@ test("aggregate validation reads Apple notices from the canonical XCFramework me
   const archive = path.join(root, "liboliphaunt-0.0.0-apple-spm-xcframework.zip");
   const result = spawnSync(
     path.join(ROOT, "tools/dev/bun.sh"),
-    ["tools/release/archive_dir.mjs", "--keep-parent", framework, archive],
+    ["src/shared/artifact-packaging/archive-directory.mjs", "--keep-parent", framework, archive],
     { cwd: ROOT, stdio: "inherit" },
   );
   assert.equal(result.status, 0, result.stderr);
@@ -76,7 +76,7 @@ test("aggregate validation reads Apple notices from the canonical XCFramework me
   const missingNoticeResult = spawnSync(
     path.join(ROOT, "tools/dev/bun.sh"),
     [
-      "tools/release/archive_dir.mjs",
+      "src/shared/artifact-packaging/archive-directory.mjs",
       "--keep-parent",
       framework,
       missingNoticeArchive,

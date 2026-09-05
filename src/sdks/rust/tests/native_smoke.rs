@@ -13,8 +13,6 @@ use oliphaunt::{
 
 mod support;
 
-// liboliphaunt-doc-example:rust-backup-restore
-
 const DIRECT_CHILD_ACTION: &str = "OLIPHAUNT_NATIVE_SMOKE_DIRECT_CHILD";
 const DIRECT_CHILD_ROOT: &str = "OLIPHAUNT_NATIVE_SMOKE_DIRECT_ROOT";
 const DIRECT_CHILD_BACKUP: &str = "OLIPHAUNT_NATIVE_SMOKE_DIRECT_BACKUP";

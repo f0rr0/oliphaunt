@@ -11,10 +11,7 @@ use super::{
 
 #[test]
 fn typed_parsers_match_shared_query_fixtures() -> Result<()> {
-    let fixture = crate::oliphaunt::test_fixtures::text(
-        "protocol/query-response-cases.json",
-        "protocol-query-response-cases.json",
-    );
+    let fixture = crate::oliphaunt::test_fixtures::text("protocol/query-response-cases.json");
     let corpus: ProtocolFixtureCorpus = serde_json::from_str(&fixture)?;
     assert_eq!(corpus.schema_version, 1);
     assert_eq!(corpus.kind, "postgres-backend-query-response");

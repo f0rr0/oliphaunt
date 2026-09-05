@@ -4,3 +4,8 @@ kind = "sdk"
 publish_targets = ["crates-io"]
 registry_packages = ["crates:oliphaunt-wasix"]
 release_artifacts = ["cargo-crate"]
+
+[compatibility_versions.runtime]
+source_product = "liboliphaunt-wasix"
+path = "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
+parser = "toml:package.metadata.oliphaunt.runtime-version"

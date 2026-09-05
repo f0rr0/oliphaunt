@@ -5,6 +5,11 @@ language: "rust"
 layer: "tool"
 stack: "systems"
 tags: ["maintainer-tool", "native", "rust", "tools"]
+dependsOn:
+  - id: "liboliphaunt-native"
+    scope: "development"
+  - id: "shared-test-fixtures"
+    scope: "development"
 
 project:
   title: "Native tools proof"
@@ -16,18 +21,19 @@ owners:
 
 tasks:
   unit:
-    tags: ["quality", "unit", "ci-rust"]
+    tags: ["quality", "unit", "requires-rust"]
     command: "cargo test -p oliphaunt-native-tools-proof --locked"
     env:
       CARGO_TARGET_DIR: "target/moon/native-tools-proof/unit"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
-      - "/src/runtimes/liboliphaunt/native/crates/tools/**/*"
-      - "/src/sdks/rust/**/*"
-      - "/src/shared/fixtures/postgres/logical-tools*"
-      - "/tools/native-tools-proof/**/*"
+      - "@group(cargo-workspace)"
+      - project: "liboliphaunt-native"
+        group: "runtime"
+      - project: "oliphaunt-rust"
+        group: "code"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - "**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true

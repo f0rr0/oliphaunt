@@ -173,28 +173,32 @@ const learnRoutes = [
     title: 'Native Runtime',
     href: '/docs/learn/native-runtime',
     question: 'Which runtime boundary fits my app?',
-    answer: 'Direct gives one embedded session, broker adds a helper process, and server gives PostgreSQL client sessions.',
+    answer:
+      'Direct gives one embedded session, broker adds a helper process, and server gives PostgreSQL client sessions.',
     icon: GitBranch,
   },
   {
     title: 'Mobile Stability',
     href: '/docs/learn/mobile-stability',
     question: 'How does this behave on iOS and Android?',
-    answer: 'Mobile direct mode covers app storage, foreground/background transitions, relaunch, and WAL recovery.',
+    answer:
+      'Mobile direct mode covers app storage, foreground/background transitions, relaunch, and WAL recovery.',
     icon: ShieldCheck,
   },
   {
     title: 'Moving From SQLite',
     href: '/docs/learn/sqlite-upgrade',
     question: 'What changes when I move from one file to PostgreSQL?',
-    answer: 'Storage, schema features, extension selection, export/import, and app artifact size change first.',
+    answer:
+      'Storage, schema features, extension selection, export/import, and app artifact size change first.',
     icon: Route,
   },
   {
     title: 'Tauri Usage',
     href: '/docs/learn/tauri',
     question: 'Where does the database handle live in a Tauri app?',
-    answer: 'Rust state owns Oliphaunt. The webview calls narrow app commands instead of raw runtime handles.',
+    answer:
+      'Rust state owns Oliphaunt. The webview calls narrow app commands instead of raw runtime handles.',
     icon: BookOpen,
   },
 ];
@@ -261,8 +265,7 @@ const embeddedModelRows = [
   },
   {
     title: 'App-owned lifecycle',
-    description:
-      'Apps decide when to close and use cancellation or data movement where exposed.',
+    description: 'Apps decide when to close and use cancellation or data movement where exposed.',
     icon: Route,
   },
   {
@@ -334,7 +337,8 @@ const mobileContractRows = [
   },
   {
     title: 'WAL recovery',
-    description: 'After process exit, the next launch reopens persistent storage and PostgreSQL recovers it.',
+    description:
+      'After process exit, the next launch reopens persistent storage and PostgreSQL recovers it.',
   },
   {
     title: 'Platform lifecycle',
@@ -456,28 +460,32 @@ const referenceRows = [
   },
   {
     need: 'Ship one extension',
-    answer: 'Select exact SQL extension names and verify the app artifact contains only selected files.',
+    answer:
+      'Select exact SQL extension names and verify the app artifact contains only selected files.',
     href: '/docs/reference/extensions',
     label: 'Extensions',
     icon: ShieldCheck,
   },
   {
     need: 'Look up exact extension support',
-    answer: 'Use the generated catalog for extension status, dependencies, and runtime availability.',
+    answer:
+      'Use the generated catalog for extension status, dependencies, and runtime availability.',
     href: '/docs/reference/extension-catalog',
     label: 'Extension Catalog',
     icon: FileSearch,
   },
   {
     need: 'Read performance claims',
-    answer: 'Use the measurement guide for latency, throughput, package size, memory, and comparison scope.',
+    answer:
+      'Use the measurement guide for latency, throughput, package size, memory, and comparison scope.',
     href: '/docs/reference/performance',
     label: 'Performance',
     icon: Gauge,
   },
   {
     need: 'Update an installed app',
-    answer: 'Match SDK versions, runtime artifacts, selected extensions, docs versions, and release notes.',
+    answer:
+      'Match SDK versions, runtime artifacts, selected extensions, docs versions, and release notes.',
     href: '/docs/reference/releases',
     label: 'Releases',
     icon: PackageCheck,
@@ -657,8 +665,8 @@ export function CapabilitySnapshot() {
           <div>
             <p className="text-sm font-semibold">Match features to the selected product</p>
             <p className="mt-1 text-sm leading-6 text-fd-muted-foreground">
-              The static matrix records deliberate runtime differences. Public SDKs expose operations
-              directly instead of mirroring documentation as capability objects.
+              The static matrix records deliberate runtime differences. Public SDKs expose
+              operations directly instead of mirroring documentation as capability objects.
             </p>
           </div>
         </div>
@@ -710,7 +718,8 @@ const extensionFlow = [
   },
   {
     title: 'Verify the app',
-    description: 'Inspect selected names, included files, dependency files, target, and built artifact cost.',
+    description:
+      'Inspect selected names, included files, dependency files, target, and built artifact cost.',
   },
 ];
 
@@ -732,9 +741,7 @@ export function ExtensionArtifactFlow() {
             </span>
             <div className="min-w-0">
               <p className="text-sm font-semibold">{step.title}</p>
-              <p className="mt-2 text-sm leading-6 text-fd-muted-foreground">
-                {step.description}
-              </p>
+              <p className="mt-2 text-sm leading-6 text-fd-muted-foreground">{step.description}</p>
             </div>
           </li>
         ))}
@@ -826,8 +833,8 @@ const tauriModeCards = [
     value: 'OliphauntServer::builder().start()',
     description: (
       <>
-        Use server mode for pools, ORMs, <code>psql</code>, <code>pg_dump</code>, and
-        independent sessions.
+        Use server mode for pools, ORMs, <code>psql</code>, <code>pg_dump</code>, and independent
+        sessions.
       </>
     ),
     icon: Route,
@@ -845,8 +852,8 @@ export function TauriAppPattern() {
           <div>
             <p className="text-sm font-semibold">Keep PostgreSQL ownership in Rust state</p>
             <p className="mt-1 text-sm leading-6 text-fd-muted-foreground">
-              The webview calls app commands. Rust owns the database handle, storage,
-              lifecycle, extension selection, and backup APIs.
+              The webview calls app commands. Rust owns the database handle, storage, lifecycle,
+              extension selection, and backup APIs.
             </p>
           </div>
         </div>
@@ -864,9 +871,7 @@ export function TauriAppPattern() {
               <div className="mt-2">
                 <InlineCode>{card.value}</InlineCode>
               </div>
-              <p className="mt-3 text-sm leading-6 text-fd-muted-foreground">
-                {card.description}
-              </p>
+              <p className="mt-3 text-sm leading-6 text-fd-muted-foreground">{card.description}</p>
             </div>
           );
         })}
@@ -877,7 +882,7 @@ export function TauriAppPattern() {
             key: 'commands',
             label: (
               <>
-              Expose narrow commands such as <code>add_item</code> or <code>search_items</code>.
+                Expose narrow commands such as <code>add_item</code> or <code>search_items</code>.
               </>
             ),
           },
@@ -923,8 +928,8 @@ export function ReactNativeBoundaryMap() {
           <div>
             <p className="text-sm font-semibold">React Native owns the JS boundary</p>
             <p className="mt-1 text-sm leading-6 text-fd-muted-foreground">
-              Platform runtime behavior flows through Swift on Apple targets and Kotlin on
-              Android. JavaScript gets one consistent SDK surface over those native handles.
+              Platform runtime behavior flows through Swift on Apple targets and Kotlin on Android.
+              JavaScript gets one consistent SDK surface over those native handles.
             </p>
           </div>
         </div>
@@ -1022,9 +1027,7 @@ export function WasmRuntimeMap() {
               <div className="mt-2">
                 <InlineCode>{card.value}</InlineCode>
               </div>
-              <p className="mt-3 text-sm leading-6 text-fd-muted-foreground">
-                {card.description}
-              </p>
+              <p className="mt-3 text-sm leading-6 text-fd-muted-foreground">{card.description}</p>
             </div>
           );
         })}
@@ -1155,25 +1158,30 @@ const guideProofs: Record<string, Array<{ title: string; description: string }>>
   'c-abi': [
     {
       title: 'Handle lifecycle',
-      description: 'A binding can open an opaque handle, send protocol bytes, free responses, and close cleanly.',
+      description:
+        'A binding can open an opaque handle, send protocol bytes, free responses, and close cleanly.',
     },
     {
       title: 'Ownership',
-      description: 'The binding exposes response ownership, last-error reads, and close state directly.',
+      description:
+        'The binding exposes response ownership, last-error reads, and close state directly.',
     },
     {
       title: 'Runtime assets',
-      description: 'The app carries only the native runtime and exact extension artifacts selected by the binding.',
+      description:
+        'The app carries only the native runtime and exact extension artifacts selected by the binding.',
     },
     {
       title: 'Language surface',
-      description: 'The public wrapper uses platform-native async, errors, and buffers over the C ABI.',
+      description:
+        'The public wrapper uses platform-native async, errors, and buffers over the C ABI.',
     },
   ],
   rust: [
     {
       title: 'First query',
-      description: 'A Rust or Tauri app opens app-owned storage and runs a query through the chosen mode.',
+      description:
+        'A Rust or Tauri app opens app-owned storage and runs a query through the chosen mode.',
     },
     {
       title: 'Mode choice',
@@ -1181,17 +1189,20 @@ const guideProofs: Record<string, Array<{ title: string; description: string }>>
     },
     {
       title: 'Data movement',
-      description: 'Use SDK backup/restore where available and packaged PostgreSQL tools for server data movement.',
+      description:
+        'Use SDK backup/restore where available and packaged PostgreSQL tools for server data movement.',
     },
     {
       title: 'App boundary',
-      description: 'Tauri webviews call narrow Rust commands instead of owning database storage or raw handles.',
+      description:
+        'Tauri webviews call narrow Rust commands instead of owning database storage or raw handles.',
     },
   ],
   swift: [
     {
       title: 'First query',
-      description: 'An iOS or macOS target opens from app storage and runs a query off the main actor.',
+      description:
+        'An iOS or macOS target opens from app storage and runs a query off the main actor.',
     },
     {
       title: 'Lifecycle',
@@ -1199,35 +1210,42 @@ const guideProofs: Record<string, Array<{ title: string; description: string }>>
     },
     {
       title: 'Resources',
-      description: 'The Apple package carries the native runtime and only selected extension artifacts.',
+      description:
+        'The Apple package carries the native runtime and only selected extension artifacts.',
     },
     {
       title: 'Concurrency',
-      description: 'Swift tasks share the actor-owned database handle and preserve transaction ordering.',
+      description:
+        'Swift tasks share the actor-owned database handle and preserve transaction ordering.',
     },
   ],
   kotlin: [
     {
       title: 'First query',
-      description: 'An Android app opens from app-private storage and runs a query from coroutine code.',
+      description:
+        'An Android app opens from app-private storage and runs a query from coroutine code.',
     },
     {
       title: 'Packaging',
-      description: 'The Gradle plugin resolves ABI assets, native libraries, and selected extension resources.',
+      description:
+        'The Gradle plugin resolves ABI assets, native libraries, and selected extension resources.',
     },
     {
       title: 'Lifecycle',
-      description: 'The app calls cancellation and close when Android lifecycle state requires them.',
+      description:
+        'The app calls cancellation and close when Android lifecycle state requires them.',
     },
     {
       title: 'App artifact',
-      description: 'The APK or AAB contains selected extension files and their declared dependencies only.',
+      description:
+        'The APK or AAB contains selected extension files and their declared dependencies only.',
     },
   ],
   'react-native': [
     {
       title: 'Native app binary',
-      description: 'The app runs in an Expo development build or React Native New Architecture binary.',
+      description:
+        'The app runs in an Expo development build or React Native New Architecture binary.',
     },
     {
       title: 'Binary transport',
@@ -1235,11 +1253,13 @@ const guideProofs: Record<string, Array<{ title: string; description: string }>>
     },
     {
       title: 'Platform delegation',
-      description: 'Apple behavior flows through Swift, Android behavior flows through Kotlin, and JS owns DX.',
+      description:
+        'Apple behavior flows through Swift, Android behavior flows through Kotlin, and JS owns DX.',
     },
     {
       title: 'Config output',
-      description: 'The config plugin selects exact extensions and native runtime assets for the app artifact.',
+      description:
+        'The config plugin selects exact extensions and native runtime assets for the app artifact.',
     },
   ],
   typescript: [
@@ -1249,7 +1269,8 @@ const guideProofs: Record<string, Array<{ title: string; description: string }>>
     },
     {
       title: 'Mode connection',
-      description: 'The app connects to broker or server mode where the selected runtime advertises it.',
+      description:
+        'The app connects to broker or server mode where the selected runtime advertises it.',
     },
     {
       title: 'Query shape',
@@ -1257,7 +1278,8 @@ const guideProofs: Record<string, Array<{ title: string; description: string }>>
     },
     {
       title: 'Desktop packaging',
-      description: 'The app packages helper executables, selected extensions, and backup/restore flows together.',
+      description:
+        'The app packages helper executables, selected extensions, and backup/restore flows together.',
     },
   ],
   'wasix-rust': [
@@ -1271,29 +1293,35 @@ const guideProofs: Record<string, Array<{ title: string; description: string }>>
     },
     {
       title: 'Data movement',
-      description: 'Dump, restore, and upgrade flows use the WASIX tooling documented for that runtime.',
+      description:
+        'Dump, restore, and upgrade flows use the WASIX tooling documented for that runtime.',
     },
     {
       title: 'Runtime family',
-      description: 'The app treats WASIX as its own runtime family with separate assets and build rules.',
+      description:
+        'The app treats WASIX as its own runtime family with separate assets and build rules.',
     },
   ],
   'wasix-typescript': [
     {
       title: 'First query',
-      description: 'The selected entrypoint opens memory by default and runs SQL through the portable runtime.',
+      description:
+        'The selected entrypoint opens memory by default and runs SQL through the portable runtime.',
     },
     {
       title: 'Execution placement',
-      description: 'Browser root runs in the importing realm; the native-host root uses a Rust actor, /direct selects the importing thread, and /worker selects a package-owned Worker.',
+      description:
+        'Browser root runs in the importing realm; the native-host root uses a Rust actor, /direct selects the importing thread, and /worker selects a package-owned Worker.',
     },
     {
       title: 'Persistence',
-      description: 'A selectively imported provider publishes changes at PostgreSQL-safe boundaries.',
+      description:
+        'A selectively imported provider publishes changes at PostgreSQL-safe boundaries.',
     },
     {
       title: 'Data movement',
-      description: 'Physical archives restore same-format storage; optional pg_dump and psql provide portable logical SQL.',
+      description:
+        'Physical archives restore same-format storage; optional pg_dump and psql provide portable logical SQL.',
     },
   ],
 };
@@ -1320,9 +1348,7 @@ export function SdkGuideProof({ id }: { id: string }) {
             <CheckCircle2 className="mt-1 size-4 shrink-0 text-fd-primary" />
             <div>
               <p className="text-sm font-semibold">{check.title}</p>
-              <p className="mt-2 text-sm leading-6 text-fd-muted-foreground">
-                {check.description}
-              </p>
+              <p className="mt-2 text-sm leading-6 text-fd-muted-foreground">{check.description}</p>
             </div>
           </div>
         ))}
@@ -1432,23 +1458,23 @@ export function QuickstartPath() {
   const steps = [
     {
       title: 'Pick the SDK',
-      description:
-        'Choose a native SDK, Rust WASIX, WASIX TypeScript, or the C ABI.',
+      description: 'Choose a native SDK, Rust WASIX, WASIX TypeScript, or the C ABI.',
     },
     {
       title: 'Install through the platform tool',
-      description: 'Use Cargo, SwiftPM/Xcode, Gradle, npm, Expo, or the released C artifacts. Native apps rebuild when runtime assets or selected extensions change.',
+      description:
+        'Use Cargo, SwiftPM/Xcode, Gradle, npm, Expo, or the released C artifacts. Native apps rebuild when runtime assets or selected extensions change.',
     },
     {
       title: 'Choose database storage',
-      description: 'Use the zero-configuration temporary default or select persistent app storage for user data.',
+      description:
+        'Use the zero-configuration temporary default or select persistent app storage for user data.',
     },
     {
       title: 'Run SQL and verify the runtime',
       description: (
         <>
-          Run <code>SELECT 1</code> and create only the extensions selected for the app
-          artifact.
+          Run <code>SELECT 1</code> and create only the extensions selected for the app artifact.
         </>
       ),
     },
@@ -1490,7 +1516,8 @@ export function StartOutcome() {
   const outcomes = [
     {
       title: 'One SDK selected',
-      description: 'You have the package, runtime artifacts, and build path for the app users install.',
+      description:
+        'You have the package, runtime artifacts, and build path for the app users install.',
       icon: PackageCheck,
     },
     {
@@ -1509,7 +1536,8 @@ export function StartOutcome() {
     },
     {
       title: 'One next page',
-      description: 'You move to the platform guide, runtime model, extensions, or performance lookup.',
+      description:
+        'You move to the platform guide, runtime model, extensions, or performance lookup.',
       icon: Route,
     },
   ];
@@ -1637,7 +1665,8 @@ export function FirstQueryFlow() {
 const startNextSteps = [
   {
     title: 'Choose the platform guide',
-    description: 'Install, build, query, lifecycle, extensions, backup, and troubleshooting for one SDK.',
+    description:
+      'Install, build, query, lifecycle, extensions, backup, and troubleshooting for one SDK.',
     href: '/docs/sdk',
     label: 'SDKs',
     icon: PackageCheck,
@@ -1652,14 +1681,16 @@ const startNextSteps = [
   },
   {
     title: 'Select extensions exactly',
-    description: 'Choose SQL extension names and verify only selected files enter the app artifact.',
+    description:
+      'Choose SQL extension names and verify only selected files enter the app artifact.',
     href: '/docs/reference/extensions',
     label: 'Extensions',
     icon: ShieldCheck,
   },
   {
     title: 'Plan storage and backup',
-    description: 'Use explicit persistent storage, lifecycle APIs, backup, restore, and recovery behavior.',
+    description:
+      'Use explicit persistent storage, lifecycle APIs, backup, restore, and recovery behavior.',
     href: '/docs/learn/embedded-postgres',
     label: 'Embedded PostgreSQL',
     icon: HardDriveDownload,
@@ -1682,9 +1713,7 @@ export function StartNextSteps() {
               <Icon className="size-4" />
             </SurfaceIcon>
             <div className="min-w-0">
-              <p className="text-xs font-medium uppercase text-fd-muted-foreground">
-                {step.label}
-              </p>
+              <p className="text-xs font-medium uppercase text-fd-muted-foreground">{step.label}</p>
               <p className="mt-1 text-sm font-semibold">{step.title}</p>
             </div>
             <p className="text-sm leading-6 text-fd-muted-foreground">{step.description}</p>
@@ -1700,7 +1729,8 @@ export function VerifyChecklist() {
   const checks = [
     {
       title: 'Install',
-      description: 'The package resolves through the normal package manager and platform build tool.',
+      description:
+        'The package resolves through the normal package manager and platform build tool.',
       icon: PackageCheck,
     },
     {
@@ -1742,7 +1772,8 @@ export function ShipChecklist() {
   const items = [
     {
       title: 'Package',
-      description: 'Build the app binary or helper package that carries the selected runtime artifacts.',
+      description:
+        'Build the app binary or helper package that carries the selected runtime artifacts.',
     },
     {
       title: 'Lifecycle',
@@ -1751,16 +1782,17 @@ export function ShipChecklist() {
     },
     {
       title: 'Extensions',
-      description: 'Select SQL extension names explicitly and verify selected files in the app artifact.',
+      description:
+        'Select SQL extension names explicitly and verify selected files in the app artifact.',
     },
     {
       title: 'Data movement',
-      description:
-        'Use the available SDK data-movement APIs for user-visible export and import.',
+      description: 'Use the available SDK data-movement APIs for user-visible export and import.',
     },
     {
       title: 'Runtime support',
-      description: 'Choose broker, server, and platform-specific behavior from the documented static SDK support.',
+      description:
+        'Choose broker, server, and platform-specific behavior from the documented static SDK support.',
     },
   ];
 

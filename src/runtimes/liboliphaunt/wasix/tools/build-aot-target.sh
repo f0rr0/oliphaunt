@@ -12,7 +12,7 @@ root="$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)" || {
 }
 cd "$root"
 
-. "$root/tools/test/cargo-test-filter.sh"
+. "$root/src/runtimes/liboliphaunt/wasix/tools/cargo-test-filter.sh"
 
 target="${AOT_TARGET:-${1:-}}"
 if [ -z "$target" ]; then

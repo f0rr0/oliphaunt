@@ -64,7 +64,7 @@ if (-not (Get-Command bun -ErrorAction SilentlyContinue)) {
 
 if ($env:OLIPHAUNT_RELEASE_FETCH_ASSETS -ne "0") {
     Write-Output "==> Fetching pinned source assets"
-    bun tools/policy/fetch-sources.mjs native-runtime *> "$env:TEMP\liboliphaunt-release-windows-assets-fetch.log"
+    bun src/sources/tools/fetch-sources.mjs native-runtime *> "$env:TEMP\liboliphaunt-release-windows-assets-fetch.log"
     if ($LASTEXITCODE -ne 0) {
         Fail "failed to fetch pinned source assets"
     }
@@ -104,11 +104,13 @@ $VcRuntimeClosureTool = Join-Path $Root "tools/release/windows-vc-runtime-closur
 Remove-Item -Recurse -Force $StageRoot -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $OutDir, (Join-Path $Stage "include"), (Join-Path $Stage "bin"), (Join-Path $Stage "lib"), (Join-Path $Stage "lib/modules"), (Join-Path $Stage "runtime"), (Join-Path $ToolsStage "runtime/bin") | Out-Null
 
-Write-Output "==> Building liboliphaunt $TargetId"
-pwsh -NoProfile -ExecutionPolicy Bypass -File src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1 *> "$env:TEMP\liboliphaunt-release-$TargetId.log"
-if ($LASTEXITCODE -ne 0) {
-    Get-Content "$env:TEMP\liboliphaunt-release-$TargetId.log" -Tail 160 | Write-Error
-    Fail "failed to build liboliphaunt $TargetId"
+if ($env:OLIPHAUNT_RELEASE_BUILD_RUNTIME -ne "0") {
+    Write-Output "==> Building liboliphaunt $TargetId"
+    pwsh -NoProfile -ExecutionPolicy Bypass -File src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1 *> "$env:TEMP\liboliphaunt-release-$TargetId.log"
+    if ($LASTEXITCODE -ne 0) {
+        Get-Content "$env:TEMP\liboliphaunt-release-$TargetId.log" -Tail 160 | Write-Error
+        Fail "failed to build liboliphaunt $TargetId"
+    }
 }
 
 if (-not (Test-Path $Dll)) {
@@ -267,11 +269,11 @@ if ($LASTEXITCODE -ne 0) {
     Fail "failed to stage release notices in the Windows tools asset"
 }
 
-bun tools/release/archive_dir.mjs $Stage (Join-Path $OutDir $Asset)
+bun src/shared/artifact-packaging/archive-directory.mjs $Stage (Join-Path $OutDir $Asset)
 if ($LASTEXITCODE -ne 0) {
     Fail "failed to archive Windows liboliphaunt asset"
 }
-bun tools/release/archive_dir.mjs $ToolsStage (Join-Path $OutDir $ToolsAsset)
+bun src/shared/artifact-packaging/archive-directory.mjs $ToolsStage (Join-Path $OutDir $ToolsAsset)
 if ($LASTEXITCODE -ne 0) {
     Fail "failed to archive Windows oliphaunt-tools asset"
 }

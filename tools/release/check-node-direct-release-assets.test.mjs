@@ -18,7 +18,7 @@ import {
   assertNodeDirectNpmArchive,
   assertNodeDirectReleaseNoticeEntries,
 } from "./check-node-direct-release-assets.mjs";
-import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import { readPortableArchiveEntries } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import { stageReleaseNotices } from "./release-notices.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
@@ -37,7 +37,7 @@ function archiveDirectory(source, output, { keepParent = false } = {}) {
   const archive = output.endsWith(".tar.gz") || output.endsWith(".zip")
     ? output
     : `${output}.tar.gz`;
-  const args = ["tools/release/archive_dir.mjs"];
+  const args = ["src/shared/artifact-packaging/archive-directory.mjs"];
   if (keepParent) args.push("--keep-parent");
   args.push(source, archive);
   const result = spawnSync(path.join(ROOT, "tools/dev/bun.sh"), args, {

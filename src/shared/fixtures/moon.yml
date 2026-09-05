@@ -1,0 +1,22 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "shared-test-fixtures"
+language: "unknown"
+layer: "library"
+stack: "systems"
+tags: ["shared", "test", "fixtures"]
+
+project:
+  title: "Shared Test Fixtures"
+  description: "Canonical cross-language protocol, storage, PostgreSQL, and extension fixtures."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+fileGroups:
+  fixtures:
+    - "**/*"
+    - "!moon.yml"

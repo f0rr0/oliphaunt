@@ -3,6 +3,16 @@ import { spawnSync } from 'node:child_process';
 import process from 'node:process';
 
 const env = { ...process.env };
+const ciTarget = env.OLIPHAUNT_CI_TARGET;
+const hostTargets = {
+  darwin: ['macos-arm64'],
+  linux: ['linux-arm64-gnu', 'linux-x64-gnu'],
+  win32: ['windows-x64-msvc'],
+};
+if (ciTarget && !hostTargets[process.platform]?.includes(ciTarget)) {
+  console.error(`cannot build native runtime target ${JSON.stringify(ciTarget)} on ${process.platform}`);
+  process.exit(2);
+}
 let command;
 let args;
 

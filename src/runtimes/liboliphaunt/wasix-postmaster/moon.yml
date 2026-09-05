@@ -6,11 +6,16 @@ layer: "library"
 stack: "systems"
 tags: ["runtime", "wasix", "wasm", "postgres", "release-product"]
 dependsOn:
-  - "postgres18"
-  - "source-toolchains"
-  - "third-party-shared"
-  - "third-party-wasix"
-  - "third-party-wasix-postmaster"
+  - id: "artifact-packaging"
+    scope: "build"
+  - id: "postgres18"
+    scope: "build"
+  - id: "source-toolchains"
+    scope: "build"
+  - id: "third-party-shared"
+    scope: "build"
+  - id: "third-party-wasix-postmaster"
+    scope: "build"
   - id: "liboliphaunt-wasix"
     scope: "build"
 
@@ -33,35 +38,45 @@ owners:
   paths:
     "**/*": ["@oliphaunt/wasix"]
 
+fileGroups:
+  runtime-source:
+    - "runtime/**/*"
+    - "!runtime/**/*.md"
+    - "!runtime/**/*.test.py"
+
 tasks:
-  compile:
-    tags: ["quality", "static", "ci-rust"]
-    command: "bash src/runtimes/liboliphaunt/wasix-postmaster/bin/check-product.sh --static"
+  lint:
+    tags: ["quality", "static", "requires-rust"]
+    script: |
+      set -e
+      python3 src/runtimes/liboliphaunt/wasix-postmaster/runtime/bin/verify-source-lock.py
+      while IFS= read -r script; do bash -n "$script"; done < <(find src/runtimes/liboliphaunt/wasix-postmaster -type f -name '*.sh' | LC_ALL=C sort)
+      PYTHONPYCACHEPREFIX=target/moon/liboliphaunt-wasix-postmaster/pycache python3 -m compileall -q src/runtimes/liboliphaunt/wasix-postmaster
     inputs:
       - "/rust-toolchain.toml"
       - "/src/postgres/versions/18/source.toml"
       - "/src/sources/toolchains/wasix.toml"
-      - "/src/sources/third-party/shared/**/*"
-      - "/src/sources/third-party/wasix/**/*"
-      - "/src/sources/third-party/wasix-postmaster/**/*"
+      - project: "third-party-shared"
+        group: "sources"
+      - project: "third-party-wasix-postmaster"
+        group: "sources"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/**/*"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker_wasix_env.sh"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/postgres/patches/**/*"
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/**/*"
+      - "**/*"
       - "/docs/maintainers/wasix-postmaster.md"
-      - "/tools/dev/bun.sh"
-      - "/tools/policy/fetch-sources.mjs"
-      - "/tools/policy/source-fetch-scopes.mjs"
-      - "/tools/policy/source-fetch-core.mjs"
     options:
       cache: true
       runFromWorkspaceRoot: true
 
   unit:
-    tags: ["quality", "unit", "ci-rust"]
-    command: "bash src/runtimes/liboliphaunt/wasix-postmaster/bin/check-product.sh --tests"
+    tags: ["quality", "unit", "requires-rust"]
+    script: |
+      set -e
+      while IFS= read -r test_file; do python3 "$test_file"; done < <(find src/runtimes/liboliphaunt/wasix-postmaster -type f -name '*.test.py' | LC_ALL=C sort)
+      while IFS= read -r test_file; do bash "$test_file"; done < <(find src/runtimes/liboliphaunt/wasix-postmaster -type f -name '*.test.sh' ! -name 'seal-wasix-linear-memory.test.sh' | LC_ALL=C sort)
     inputs:
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/**/*"
+      - "**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -70,37 +85,20 @@ tasks:
     tags: ["release", "package"]
     command: "true"
     deps:
-      - "liboliphaunt-wasix-postmaster:compile"
+      - "liboliphaunt-wasix-postmaster:lint"
       - "liboliphaunt-wasix-postmaster:unit"
+      - "liboliphaunt-wasix-postmaster:runtime-patch-tests"
+      - "liboliphaunt-wasix-postmaster:regression"
       - "liboliphaunt-wasix-postmaster:release-assets"
+      - "liboliphaunt-wasix-postmaster:immediate-recovery"
+      - "liboliphaunt-wasix-postmaster:linear-memory-integration"
     inputs: []
-
-  source-fetch:
-    tags: ["source", "fetch", "wasix", "postmaster"]
-    command: "bun tools/policy/fetch-sources.mjs wasix-postmaster-runtime"
-    inputs:
-      - "/src/sources/toolchains/**/*"
-      - "/src/sources/third-party/shared/**/*"
-      - "/src/sources/third-party/wasix/**/*"
-      - "/src/sources/third-party/wasix-postmaster/**/*"
-      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/**/*"
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/runtime/bin/prepare-upstream-checkouts.sh"
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/runtime/patches/**/*"
-      - "/tools/policy/fetch-sources.mjs"
-      - "/tools/policy/source-fetch-scopes.mjs"
-      - "/tools/policy/source-fetch-core.mjs"
-      - "/tools/policy/source-archive.py"
-      - "/tools/dev/capture-command-output.mjs"
-    options:
-      cache: false
-      runFromWorkspaceRoot: true
-      runInCI: true
 
   prepare-postgres:
     tags: ["runtime", "source"]
     command: "bash src/runtimes/liboliphaunt/wasix-postmaster/bin/apply-wasix-core-overlay.sh"
     deps:
-      - "liboliphaunt-wasix-postmaster:source-fetch"
+      - "source-inputs:source-fetch-wasix-postmaster-runtime"
     inputs:
       - "/src/postgres/versions/18/source.toml"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/postgres/patches/**/*"
@@ -110,6 +108,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix-postmaster/lib/common.sh"
     options:
       cache: false
+      internal: true
       runFromWorkspaceRoot: true
       runInCI: true
 
@@ -117,29 +116,55 @@ tasks:
     tags: ["runtime", "source", "rust"]
     command: "UPSTREAM_WORK_ROOT=$PWD/target/oliphaunt-wasix-postmaster/runtime bash src/runtimes/liboliphaunt/wasix-postmaster/runtime/bin/prepare-upstream-checkouts.sh"
     deps:
-      - "liboliphaunt-wasix-postmaster:source-fetch"
+      - "source-inputs:source-fetch-wasix-postmaster-runtime"
     inputs:
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/runtime/**/*"
+      - "@group(runtime-source)"
       - "/src/runtimes/liboliphaunt/wasix-postmaster/lib/common.sh"
       - "/src/runtimes/liboliphaunt/wasix-postmaster/sources.lock.toml"
     options:
       cache: false
+      internal: true
       runFromWorkspaceRoot: true
       runInCI: true
 
   runtime-build:
-    tags: ["runtime", "wasix", "rust"]
-    command: "bash src/runtimes/liboliphaunt/wasix-postmaster/runtime/bin/build-runtime.sh"
+    tags: ["runtime", "wasix", "rust", "build"]
+    command: "bash src/runtimes/liboliphaunt/wasix-postmaster/runtime/bin/build-runtime.sh --build-only"
     deps:
       - "liboliphaunt-wasix-postmaster:prepare-runtime"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
+      - "@group(cargo-workspace)"
       - "/src/sources/toolchains/wasix.toml"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/**/*"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker_wasix_env.sh"
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/runtime/**/*"
+      - "@group(runtime-source)"
+      - "/src/runtimes/liboliphaunt/wasix-postmaster/lib/common.sh"
+      - "/src/runtimes/liboliphaunt/wasix-postmaster/sources.lock.toml"
+    outputs:
+      - "/target/oliphaunt-wasix-postmaster/runtime/build/**/*"
+      - "/target/oliphaunt-wasix-postmaster/runtime/wasmer/target/release/wasmer"
+      - "/target/oliphaunt-wasix-postmaster/runtime/wasmer/target/release/wasmer-headless"
+      - "/target/oliphaunt-wasix-postmaster/runtime/postmaster-executor-target/release/oliphaunt-wasix-postmaster-executor"
+      - "/target/oliphaunt-wasix-postmaster/runtime/postmaster-executor-target/release/oliphaunt-wasix-start-proof"
+      - "/target/oliphaunt-wasix-postmaster/runtime/postmaster-executor-target/release/oliphaunt-wasix-memory-profile"
+      - "/target/oliphaunt-wasix-postmaster/runtime/postmaster-compiler-target/release/oliphaunt-wasix-postmaster-compiler"
+    options:
+      cache: false
+      internal: true
+      runFromWorkspaceRoot: true
+      runInCI: true
+
+  runtime-patch-tests:
+    tags: ["runtime", "wasix", "test", "requires-rust"]
+    command: "bash src/runtimes/liboliphaunt/wasix-postmaster/runtime/bin/build-runtime.sh --tests-only"
+    deps:
+      - "liboliphaunt-wasix-postmaster:prepare-runtime"
+    inputs:
+      - "@group(cargo-workspace)"
+      - "/src/sources/toolchains/wasix.toml"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker_wasix_env.sh"
+      - "@group(runtime-source)"
       - "/src/runtimes/liboliphaunt/wasix-postmaster/lib/common.sh"
       - "/src/runtimes/liboliphaunt/wasix-postmaster/sources.lock.toml"
     options:
@@ -161,6 +186,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix-postmaster/lib/common.sh"
     options:
       cache: false
+      internal: true
       runFromWorkspaceRoot: true
       runInCI: true
 
@@ -180,8 +206,11 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix-postmaster/lib/common.sh"
       - "/src/runtimes/liboliphaunt/wasix-postmaster/runtime/bin/verify-postmaster-wasm-import.py"
       - "/src/runtimes/liboliphaunt/wasix-postmaster/runtime/bin/verify-postmaster-concurrency-contract.py"
+    outputs:
+      - "/target/oliphaunt-wasix-postmaster/install/wasix-core-release-o3/**/*"
     options:
       cache: false
+      internal: true
       runFromWorkspaceRoot: true
       runInCI: true
 
@@ -194,14 +223,15 @@ tasks:
       - "/src/sources/toolchains/wasix.toml"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/**/*"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker_wasix_env.sh"
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/runtime/**/*"
+      - "@group(runtime-source)"
       - "/src/runtimes/liboliphaunt/wasix-postmaster/lib/common.sh"
     options:
       cache: false
+      internal: true
       runFromWorkspaceRoot: true
       runInCI: true
 
-  linear-memory-test:
+  linear-memory-integration:
     tags: ["runtime", "wasix", "test"]
     command: "bash src/runtimes/liboliphaunt/wasix-postmaster/bin/seal-wasix-linear-memory.test.sh"
     deps:
@@ -225,6 +255,7 @@ tasks:
       - "liboliphaunt-wasix-postmaster:postgres-build"
     options:
       cache: false
+      internal: true
       runFromWorkspaceRoot: true
       runInCI: true
 
@@ -235,6 +266,7 @@ tasks:
       - "liboliphaunt-wasix-postmaster:initdb-smoke"
     options:
       cache: false
+      internal: true
       runFromWorkspaceRoot: true
       runInCI: true
 
@@ -268,6 +300,7 @@ tasks:
   carrier:
     tags: ["runtime", "artifact"]
     script: |
+      set -e
       export WASIX_CORE_PROFILE=release-o3
       bash src/runtimes/liboliphaunt/wasix-postmaster/bin/precompile-wasix-core.sh
       bash src/runtimes/liboliphaunt/wasix-postmaster/bin/build-sealed-headless-carrier.sh
@@ -275,59 +308,35 @@ tasks:
       - "liboliphaunt-wasix-postmaster:postgres-build"
       - "liboliphaunt-wasix-postmaster:runtime-capabilities"
     inputs:
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/**/*"
-      - "/src/sources/third-party/wasix-postmaster/**/*"
+      - "@group(legal-files)"
+      - "@group(cargo-workspace)"
+      - "**/*"
+      - project: "third-party-wasix-postmaster"
+        group: "sources"
       - "/src/sources/toolchains/wasix.toml"
-      - "/tools/release/archive_dir.mjs"
-      - "/tools/release/portable-archive.mjs"
+      - project: "artifact-packaging"
+        group: "source"
     outputs:
       - "/target/oliphaunt-wasix-postmaster/carriers/**/*"
     options:
       cache: false
+      internal: true
       runFromWorkspaceRoot: true
       runInCI: true
 
   release-assets:
-    tags: ["release", "artifact", "ci-wasix-postmaster"]
+    tags: ["release", "artifact", "in-place-finalizer-input", "ci-wasix-postmaster"]
     command: "bash src/runtimes/liboliphaunt/wasix-postmaster/bin/package-release-assets.sh"
     deps:
       - "liboliphaunt-wasix-postmaster:carrier"
-      - "liboliphaunt-wasix-postmaster:backend-wave-stress"
-      - "liboliphaunt-wasix-postmaster:immediate-recovery"
     inputs:
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/**/*"
-      - "/src/sources/third-party/wasix-postmaster/**/*"
-      - "/tools/dev/bun.sh"
-      - "/tools/release/archive_dir.mjs"
-      - "/tools/release/portable-archive.mjs"
+      - "@group(legal-files)"
+      - "**/*"
+      - project: "third-party-wasix-postmaster"
+        group: "sources"
+      - project: "artifact-packaging"
+        group: "source"
       - "/target/oliphaunt-wasix-postmaster/carriers/**/*"
-    outputs:
-      - "/target/oliphaunt-wasix-postmaster/release-assets/**/*"
-    options:
-      cache: false
-      runFromWorkspaceRoot: true
-      runInCI: true
-
-  aggregate-release-assets:
-    tags: ["release", "artifact-package", "ci-wasix-postmaster"]
-    command: "bash src/runtimes/liboliphaunt/wasix-postmaster/bin/merge-release-assets.sh"
-    inputs:
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/VERSION"
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/bin/merge-release-assets.sh"
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/moon.yml"
-      - "/tools/dev/bun.sh"
-      - "/tools/release/merge-product-release-assets.mjs"
-      - "/tools/release/platform-compatibility-policy.mjs"
-      - "/tools/release/release-artifact-targets.mjs"
-      - "/tools/release/release-graph.mjs"
-      - "/target/oliphaunt-wasix-postmaster/release-assets/**/*"
     outputs:
       - "/target/oliphaunt-wasix-postmaster/release-assets/**/*"
     options:
@@ -338,6 +347,7 @@ tasks:
   backend-wave-stress:
     tags: ["runtime", "wasix", "postgres", "reliability"]
     script: |
+      set -e
       source src/runtimes/liboliphaunt/wasix-postmaster/lib/common.sh
       source "$FRESH_ROOT/lib/sealed-carrier.sh"
       carrier="$(fresh_select_current_sealed_carrier)"
@@ -349,6 +359,7 @@ tasks:
       - "liboliphaunt-wasix-postmaster:regression"
     options:
       cache: false
+      internal: true
       runFromWorkspaceRoot: true
       runInCI: true
 
@@ -359,7 +370,7 @@ tasks:
       - "liboliphaunt-wasix-postmaster:carrier"
       - "liboliphaunt-wasix-postmaster:backend-wave-stress"
     inputs:
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/**/*"
+      - "**/*"
       - "/target/oliphaunt-wasix-postmaster/carriers/**/*"
     options:
       cache: false
@@ -370,15 +381,14 @@ tasks:
     tags: ["runtime", "artifact", "ci-wasix-postmaster"]
     command: "bash src/runtimes/liboliphaunt/wasix-postmaster/bin/package-portable-build-inputs.sh"
     deps:
-      - "liboliphaunt-wasix-postmaster:regression"
+      - "liboliphaunt-wasix-postmaster:postgres-build"
       - "liboliphaunt-wasix-postmaster:runtime-capabilities"
     inputs:
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/**/*"
-      - "/src/sources/third-party/wasix-postmaster/**/*"
-      - "/tools/dev/bun.sh"
-      - "/tools/release/archive_dir.mjs"
-      - "/tools/release/materialize-release-symlinks.mjs"
-      - "/tools/release/portable-archive.mjs"
+      - "**/*"
+      - project: "third-party-wasix-postmaster"
+        group: "sources"
+      - project: "artifact-packaging"
+        group: "source"
       - "/target/oliphaunt-wasix-postmaster/install/wasix-core-release-o3/**/*"
       - "/target/oliphaunt-wasix-postmaster/runtime/build/patched-wasixcc-sysroot/**/*"
       - "/target/oliphaunt-wasix-postmaster/runtime/build/probes/**/*"

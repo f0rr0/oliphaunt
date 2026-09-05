@@ -47,7 +47,8 @@ const useCases: readonly {
   },
   {
     title: 'Field and mobile software',
-    description: 'Keep records with the app and run spatial queries where the target ships PostGIS.',
+    description:
+      'Keep records with the app and run spatial queries where the target ships PostGIS.',
     capability: 'transactions · geography · recovery',
     kind: 'field',
   },
@@ -281,7 +282,10 @@ export default function HomePage() {
                 Get started
                 <ArrowRight aria-hidden="true" />
               </Link>
-              <Link href="/docs/learn/native-runtime" className="home-button home-button--dark-quiet">
+              <Link
+                href="/docs/learn/native-runtime"
+                className="home-button home-button--dark-quiet"
+              >
                 Read the runtime guide
               </Link>
             </div>

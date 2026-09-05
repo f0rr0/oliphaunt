@@ -5,6 +5,11 @@ publish_targets = ["crates-io"]
 registry_packages = ["crates:oliphaunt", "crates:oliphaunt-build"]
 release_artifacts = ["cargo-crate", "runtime-resource-cli"]
 
+[compatibility_versions.native_runtime]
+source_product = "liboliphaunt-native"
+path = "src/sdks/rust/Cargo.toml"
+parser = "toml:package.metadata.oliphaunt.native-version"
+
 [compatibility_versions.broker_runtime]
 source_product = "oliphaunt-broker"
 path = "src/sdks/rust/Cargo.toml"

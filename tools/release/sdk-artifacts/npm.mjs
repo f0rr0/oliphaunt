@@ -108,7 +108,11 @@ export function packageNpmWorkspace(packageDir, destination) {
   const packJson = run(
     "pnpm",
     ["--dir", packageDir, "pack", "--pack-destination", destination, "--json"],
-    { capture: true, label: "pnpm pack" },
+    {
+      capture: true,
+      env: { ...process.env, PNPM_CONFIG_NODE_LINKER: "hoisted" },
+      label: "pnpm pack",
+    },
   );
   let parsed;
   try {

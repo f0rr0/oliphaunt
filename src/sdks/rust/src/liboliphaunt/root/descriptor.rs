@@ -285,8 +285,7 @@ mod tests {
 
     #[test]
     fn shared_database_root_descriptors_define_the_native_contract() {
-        let source =
-            crate::test_fixtures::text("storage/database-root.json", "testdata/database-root.json");
+        let source = crate::test_fixtures::text("storage/database-root.json");
         let fixture: serde_json::Value = serde_json::from_str(&source).unwrap();
         assert_eq!(fixture["descriptor"], ROOT_DESCRIPTOR_FILE);
         let root = std::env::temp_dir().join(format!(

@@ -1120,12 +1120,10 @@ mod tests {
 
     #[test]
     fn server_listen_contract_cannot_express_a_remote_tcp_bind() {
-        let fixture: serde_json::Value =
-            serde_json::from_str(&crate::oliphaunt::test_fixtures::text(
-                "postgres/server-listen.json",
-                "postgres-server-listen.json",
-            ))
-            .unwrap();
+        let fixture: serde_json::Value = serde_json::from_str(
+            &crate::oliphaunt::test_fixtures::text("postgres/server-listen.json"),
+        )
+        .unwrap();
         assert_eq!(fixture["tcp"]["host"], "127.0.0.1");
         assert_eq!(fixture["unix"]["defaultPort"], 5432);
         assert_eq!(fixture["unix"]["filePrefix"], ".s.PGSQL.");

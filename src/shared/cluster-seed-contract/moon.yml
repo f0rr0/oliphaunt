@@ -16,13 +16,7 @@ owners:
   paths:
     "**/*": ["@oliphaunt/core"]
 
-tasks:
-  check:
-    tags: ["quality", "static", "contract"]
-    command: "tools/dev/bun.sh tools/policy/check-cluster-seed-contract.mjs"
-    inputs:
-      - "/src/shared/cluster-seed-contract/**/*"
-      - "/tools/policy/check-cluster-seed-contract.mjs"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
+fileGroups:
+  contract:
+    - "**/*"
+    - "!moon.yml"

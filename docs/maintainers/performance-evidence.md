@@ -57,7 +57,7 @@ For an even faster no-build sanity check of the benchmark plan:
 tools/perf/matrix/run_native_oliphaunt_matrix.sh --quick --plan-only
 tools/perf/matrix/run_native_oliphaunt_matrix.sh \
   --quick --plan-only --engines broker --suites streaming
-tools/perf/check-native-perf-harness.sh
+moon run perf-tools:native-plan
 ```
 
 Use `--engines direct|broker|server|all` and
@@ -426,16 +426,16 @@ That command covers:
 3. SQLite embedded control runs for the speed suite;
 4. p50/p90/p95 latency, throughput, RSS, CPU, and footprint report generation.
 
-The WASIX TypeScript binding owns the shared WASIX browser and Node benchmark
-plans:
+The repository performance tooling owns the shared WASIX browser and Node
+benchmark plans:
 
 ```sh
-moon run oliphaunt-wasix-ts:bench
+moon run perf-tools:wasix-plan
 ```
 
 Run measured Node or browser evidence explicitly with
-`moon run oliphaunt-wasix-ts:bench-run` or
-`moon run oliphaunt-wasix-ts:bench-browser`.
+`moon run perf-tools:wasix-node-measure` or
+`moon run perf-tools:wasix-browser-measure`.
 
 Outputs land under `target/perf/`:
 

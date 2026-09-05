@@ -5,7 +5,7 @@ import path from "node:path";
 
 import {
   BUILDER_JOBS,
-  addImpliedJobs,
+  addRequiredJobs,
   planForFullRun,
   planJobsForAffected,
   renderPlanForFullRun,
@@ -617,7 +617,7 @@ export function validateCarrierCoverage({
   }
   const expectedOptional = new Map(typescriptOptionalRuntimePackageProducts(TOOL).map((row) => [
     row.packageName,
-    `workspace:${graph.products[row.product].version}`,
+    "workspace:*",
   ]));
   const actualOptional = object(jsManifest.optionalDependencies ?? {}, "TypeScript optionalDependencies");
   assertSameStrings(Object.keys(actualOptional), [...expectedOptional.keys()], "TypeScript optional runtime packages");
@@ -861,20 +861,24 @@ export function validateCiArtifactCoverage(workflow, inventory) {
     [{}],
     ["liboliphaunt-wasix-postmaster-portable-build-inputs"],
   );
-  const portablePostmasterQualification = workflowJob(workflow, "wasix-postmaster-portable").steps
-    .find((step) => step.name === "Build and qualify portable WASIX postmaster inputs");
+  const portablePostmasterSteps = workflowJob(workflow, "wasix-postmaster-portable").steps;
+  const portablePostmasterBuild = portablePostmasterSteps.find((step) =>
+    step.run?.includes("liboliphaunt-wasix-postmaster:portable-inputs"));
   invariant(
-    portablePostmasterQualification?.run?.includes("--upstream deep")
-      && portablePostmasterQualification.run.includes("liboliphaunt-wasix-postmaster:portable-inputs"),
-    "portable WASIX postmaster qualification must execute its complete Moon dependency graph",
+    portablePostmasterBuild?.run?.includes("--upstream deep")
+      && portablePostmasterBuild.run.includes("liboliphaunt-wasix-postmaster:runtime-patch-tests")
+      && portablePostmasterBuild.run.includes("liboliphaunt-wasix-postmaster:regression"),
+    "portable WASIX postmaster production and qualification must execute their complete Moon graphs",
   );
-  const targetPostmasterQualification = workflowJob(workflow, "wasix-postmaster-target").steps
-    .find((step) => step.name === "Build, verify, qualify, and package WASIX postmaster");
+  const targetPostmasterSteps = workflowJob(workflow, "wasix-postmaster-target").steps;
+  const targetPostmasterBuild = targetPostmasterSteps.find((step) =>
+    step.run?.includes("liboliphaunt-wasix-postmaster:release-assets"));
   invariant(
-    targetPostmasterQualification?.run?.includes("--upstream deep")
-      && targetPostmasterQualification.run.includes("liboliphaunt-wasix-postmaster:release-assets")
-      && targetPostmasterQualification.if === undefined,
-    "every WASIX postmaster target must execute its complete Moon dependency graph",
+    targetPostmasterBuild?.run?.includes("--upstream deep")
+      && targetPostmasterBuild.if === undefined
+      && targetPostmasterBuild.run.includes("liboliphaunt-wasix-postmaster:immediate-recovery")
+      && targetPostmasterBuild.run.includes("liboliphaunt-wasix-postmaster:linear-memory-integration"),
+    "every WASIX postmaster target must execute complete production and qualification Moon graphs",
   );
   const postmasterUpload = actionSteps(workflow, "wasix-postmaster-target", "actions/upload-artifact@")
     .find((step) => step.with?.name === "liboliphaunt-wasix-postmaster-release-assets-${{ matrix.target_id }}");
@@ -886,14 +890,6 @@ export function validateCiArtifactCoverage(workflow, inventory) {
   invariant(
     actionSteps(workflow, "wasix-postmaster", "./.github/actions/setup-moon").length === 1,
     "WASIX postmaster aggregation must load its release catalog through the pinned Moon toolchain",
-  );
-  const postmasterAggregation = workflowJob(workflow, "wasix-postmaster").steps
-    .find((step) => step.name === "Merge target WASIX postmaster release assets");
-  invariant(
-    String(postmasterAggregation?.run ?? "").includes(
-      "run-moon-targets.sh --upstream none liboliphaunt-wasix-postmaster:aggregate-release-assets",
-    ),
-    "WASIX postmaster aggregation must run the product-owned aggregate Moon task without producer dependencies",
   );
   validateMergedSameRunDownload(
     workflow,
@@ -1035,13 +1031,15 @@ export function validateCiArtifactCoverage(workflow, inventory) {
       && wasixNapiBuild.env.OLIPHAUNT_WASM_GENERATED_AOT_DIR === "${{ github.workspace }}/target/oliphaunt-wasix/aot"
       && wasixNapiBuild.env.OLIPHAUNT_WASIX_EXTENSION_ARTIFACT_ROOT === "${{ github.workspace }}/target/extension-artifacts"
       && wasixNapiBuild.env.OLIPHAUNT_ICU_DATA_DIR === "${{ github.workspace }}/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu"
-      && wasixNapiBuild.env.OLIPHAUNT_WASIX_NAPI_ARTIFACT_SOURCE_SHA === "${{ github.event.pull_request.head.sha || github.sha }}"
-      && String(wasixNapiBuild.run ?? "").includes("OLIPHAUNT_MOON_UPSTREAM=none"),
+      && wasixNapiBuild.env.OLIPHAUNT_WASIX_NAPI_ARTIFACT_SOURCE_SHA === "${{ github.event.pull_request.head.sha || github.sha }}",
     "WASIX Node-API builds must fail closed on exact same-run portable, ICU, AOT, and extension payload roots",
   );
-  const wasixNapiExtensionStage = namedStep(workflow, "wasix-napi", "Stage exact-extension WASIX build inputs");
+  const releaseTasks = object(
+    Bun.YAML.parse(readFileSync(path.join(ROOT, "tools/release/moon.yml"), "utf8")),
+    "tools/release/moon.yml",
+  ).tasks;
   invariant(
-    String(wasixNapiExtensionStage?.run ?? "").includes(
+    String(releaseTasks?.["wasix-napi-runtime"]?.script ?? "").includes(
       "build-extension-ci-artifacts.mjs --all --family wasix --require-wasix",
     ),
     "WASIX Node-API builds must stage complete exact-extension portable and target AOT inputs",
@@ -1191,37 +1189,7 @@ export function repositoryInventory() {
 
 export function validateRepository() {
   const inventory = repositoryInventory();
-  const wasixNapiNativeBuild = readFileSync(
-    path.join(ROOT, "src/runtimes/wasix-napi/tools/build-native.sh"),
-    "utf8",
-  );
-  const wasixNapiLinuxBaselineBuild = readFileSync(
-    path.join(ROOT, "tools/release/build-linux-wasix-napi-baseline.sh"),
-    "utf8",
-  );
-  invariant(
-    wasixNapiNativeBuild.includes("tools/release/build-linux-wasix-napi-baseline.sh"),
-    "WASIX Node-API Linux release variants must use the pinned baseline builder",
-  );
-  invariant(
-    wasixNapiLinuxBaselineBuild.includes(
-      "rust@sha256:5b9332190bb3b9ece73b810cd1f1e9f06343b294ce184bcb067f0747d7d333ea",
-    )
-      && wasixNapiLinuxBaselineBuild.includes('expected_builder_glibc="glibc 2.36"')
-      && wasixNapiLinuxBaselineBuild.includes("docker_cargo none")
-      && wasixNapiLinuxBaselineBuild.includes("cargo build")
-      && wasixNapiLinuxBaselineBuild.includes("--offline"),
-    "WASIX Node-API Linux baseline builder must pin Bookworm and compile in the sealed offline phase",
-  );
   invariant((inventory.graph.artifact_targets ?? []).length === 0, "artifact targets must be owned by Moon product metadata, not a central legacy table");
-  const wasixNapiDependencies = inventory.graph.moon_projects["oliphaunt-wasix-napi"]?.dependencies ?? [];
-  assertSameStrings(
-    wasixNapiDependencies
-      .filter(({ id, scope }) => scope === "production" && inventory.products.includes(id))
-      .map(({ id }) => id),
-    inventory.products,
-    "WASIX Node-API exact-extension production dependency closure",
-  );
   for (const [product, preset] of Object.entries({
     "liboliphaunt-native": "liboliphaunt-native",
     "liboliphaunt-wasix": "liboliphaunt-wasix",
@@ -1249,27 +1217,26 @@ export function validateRepository() {
   validateCiArtifactCoverage(ci, inventory);
   validateCrossFamilyIcuWorkflow(ci, release);
   const fullPlan = planForFullRun({ wasmTarget: "all", nativeTarget: "all", mobileTarget: "all" });
-  const requiredProductBuilders = new Set([...BUILDER_JOBS].filter((job) => job !== "wasix-release-regression"));
-  invariant([...requiredProductBuilders].every((job) => fullPlan.jobs.has(job)), "full CI planning must select every product artifact builder");
+  invariant([...BUILDER_JOBS].every((job) => fullPlan.jobs.has(job)), "full CI planning must select every product artifact builder");
   const wasixNapiPlan = new Set(["wasix-napi"]);
-  addImpliedJobs(wasixNapiPlan, new Set());
+  addRequiredJobs(wasixNapiPlan);
   invariant(
     ["extension-artifacts-wasix", "liboliphaunt-wasix-aot", "liboliphaunt-wasix-runtime"]
       .every((job) => wasixNapiPlan.has(job)),
     "WASIX Node-API CI planning must select every same-run embedded payload producer",
   );
-  for (const product of inventory.products) {
-    const extensionPlan = planJobsForAffected(new Set([product]), new Set());
-    invariant(
-      [
-        "wasix-napi",
-        "extension-artifacts-wasix",
-        "liboliphaunt-wasix-aot",
-        "liboliphaunt-wasix-runtime",
-      ].every((job) => extensionPlan.has(job)),
-      `${product} CI planning must rebuild WASIX Node-API carriers and every embedded payload producer`,
-    );
-  }
+  const extensionPlan = planJobsForAffected(
+    new Set(["extension-artifacts-wasix:build-target"]),
+  );
+  invariant(
+    [
+      "wasix-napi",
+      "extension-artifacts-wasix",
+      "liboliphaunt-wasix-aot",
+      "liboliphaunt-wasix-runtime",
+    ].every((job) => extensionPlan.has(job)),
+    "WASIX extension changes must rebuild Node-API carriers and every embedded payload producer",
+  );
   const focusedWasix = planForFullRun({ wasmTarget: "linux-x64-gnu", nativeTarget: "all", mobileTarget: "all" });
   assertSameStrings(focusedWasix.jobs, ["affected", "extension-artifacts-wasix", "liboliphaunt-wasix-aot", "liboliphaunt-wasix-runtime"], "focused WASIX CI jobs");
   const focusedAndroid = renderPlanForFullRun({

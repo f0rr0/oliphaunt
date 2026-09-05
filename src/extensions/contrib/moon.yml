@@ -6,10 +6,10 @@ layer: "library"
 stack: "systems"
 tags: ["extensions", "contrib", "pg18"]
 dependsOn:
-  - "postgres18"
-  - "extension-runtime-contract"
-  - "liboliphaunt-native"
-  - "liboliphaunt-wasix"
+  - id: "postgres18"
+    scope: "build"
+  - id: "extension-runtime-contract"
+    scope: "build"
 
 project:
   title: "PostgreSQL 18 Contrib Extensions"

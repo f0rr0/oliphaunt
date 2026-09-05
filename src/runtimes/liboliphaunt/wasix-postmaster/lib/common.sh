@@ -919,8 +919,6 @@ fresh_runtime_build_recipe_sha256() {
     "$FRESH_ROOT/runtime/bin/build-runtime.sh"
     "$FRESH_ROOT/runtime/bin/build-patched-wasix-libc-sysroot.sh"
     "$FRESH_ROOT/runtime/bin/validate-runtime-capabilities.sh"
-    "$FRESH_ROOT/runtime/bin/verify-runtime-execution-ownership.py"
-    "$FRESH_ROOT/runtime/bin/verify-runtime-state-ownership.py"
     "$FRESH_ROOT/runtime/bin/verify-source-lock.py"
     "$WASIX_TOOLCHAIN_ROOT/docker_wasix_env.sh"
   )

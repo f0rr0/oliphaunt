@@ -109,11 +109,6 @@ kover {
                 )
             }
         }
-        verify {
-            rule {
-                minBound(80)
-            }
-        }
     }
 }
 

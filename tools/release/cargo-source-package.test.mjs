@@ -21,7 +21,7 @@ import {
   createDeterministicTar,
   manualCargoPackageSource,
 } from "./cargo-source-package.mjs";
-import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import { readPortableArchiveEntries } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 
 function fixture(t, name) {
   const root = mkdtempSync(path.join(os.tmpdir(), `oliphaunt-${name}-`));

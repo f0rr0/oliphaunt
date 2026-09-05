@@ -30,6 +30,7 @@ internal-native-packaging = []
 [package.metadata.oliphaunt]
 broker-helper = "oliphaunt-broker"
 broker-version = "0.1.1"
+native-version = "0.1.1"
 
 [dependencies]
 fs2 = "0.4"

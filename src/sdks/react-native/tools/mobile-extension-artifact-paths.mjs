@@ -25,7 +25,7 @@ import {
   extensionCarrierLegalContract,
   extensionCarrierLegalFileInventory,
 } from "../../../../tools/release/extension-upstream-licenses.mjs";
-import { assertWasixExtensionMemberInstall } from "../../../../tools/release/wasix-extension-install-contract.mjs";
+import { assertWasixExtensionMemberInstall } from "../../../../src/shared/extension-runtime-contract/wasix-extension-install.mjs";
 
 const OPTION_NAMES = new Set([
   "--root",

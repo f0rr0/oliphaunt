@@ -64,8 +64,7 @@ for the literal C library artifact path.
 The direct build produces PostgreSQL runtime artifacts without optional
 extension artifacts by default. Set `OLIPHAUNT_BUILD_EXTENSIONS=1` only when
 refreshing or validating exact extension artifacts; the
-`src/runtimes/liboliphaunt/native/tools/check-track.sh extensions` and `full` lanes set that
-flag for you.
+`extension-artifacts-native:build-target` sets that flag when building extension artifacts.
 
 External pgrx extensions are not folded into the first-party extension build by
 default. Their source pins live in
@@ -104,8 +103,8 @@ direct/broker embedded loading. Use
 The ParadeDB lane is intentionally disk-guarded because `pg_search` pulls a
 large DataFusion/Tantivy release build; free target space first, or set
 `OLIPHAUNT_EXTERNAL_PGRX_SKIP_DISK_PREFLIGHT=1` only for local experiments.
-`src/runtimes/liboliphaunt/native/tools/check-track.sh external-pgrx` runs the no-build
-`--check-current` gate for those artifacts.
+Run `src/runtimes/liboliphaunt/native/bin/build-external-pgrx-extensions-macos.sh --check-current`
+for the no-build freshness gate.
 The build-input digest excludes harness prose and other non-build text.
 When only the digest schema changes, use `--refresh-current-stamps` to
 validate the existing normal/embedded payloads and restamp them without running
@@ -223,27 +222,17 @@ of platform-specific tar behavior.
 
 ## Fast Native Iteration
 
-For product-track work, prefer the native-only validation wrapper instead of the
-workspace-wide WASIX lanes:
+Run the narrow product boundary instead of a workspace-wide track wrapper:
 
 ```sh
 moon run liboliphaunt-native:host-smoke
-src/runtimes/liboliphaunt/native/tools/check-track.sh quick
-src/runtimes/liboliphaunt/native/tools/check-track.sh sdks
-src/runtimes/liboliphaunt/native/tools/check-track.sh full
+moon run oliphaunt-rust:regression
+moon run extension-artifacts-native:build-target oliphaunt-rust:extension-regression
 ```
 
 `liboliphaunt-native:host-smoke` is the no-build host C ABI smoke for the current platform.
 It reuses the release-runtime artifact produced for macOS, Linux, or Windows
-and fails if that artifact is missing or stale. `quick` reuses the existing
-native runtime when it is present, then runs the C ABI smoke and Rust native SDK
-tests. `sdks`
-validates Swift, Kotlin, and React Native package checks against the same
-runtime. `full` enables native extension artifacts and the extension matrix; in
-the default `missing` policy it first runs the build script's no-build
-`--check-extension-artifacts-current` probe and only rebuilds when the extension
-fingerprint or required artifacts are stale or absent. Set
-`OLIPHAUNT_TRACK_BUILD=never` to prove the command will not rebuild native
-PostgreSQL; the native track also runs the no-build
-`--check-oliphaunt-current` probe so stale C ABI sources fail before tests trust
-an old dylib. Use `OLIPHAUNT_TRACK_BUILD=always` for an intentional rebuild.
+and fails if that artifact is missing or stale. The Rust regression checks direct,
+broker, and server behavior; the separate extension pair checks packaged extension behavior.
+See [`docs/maintainers/sdk-parity-policy.md`](../../../../docs/maintainers/sdk-parity-policy.md)
+for the SDK ownership contract.

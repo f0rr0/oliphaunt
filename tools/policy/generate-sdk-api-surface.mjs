@@ -788,16 +788,16 @@ function splitTypeScriptExportNames(raw) {
 function extractReactNativeSurface() {
   return extractTypeScriptSurface('src/sdks/react-native/src/index.ts', [
     'src/sdks/react-native/src/client.ts',
-    'src/sdks/react-native/src/protocol.ts',
-    'src/sdks/react-native/src/query.ts',
+    'src/shared/js-core/src/protocol.ts',
+    'src/shared/js-core/src/query.ts',
   ]);
 }
 
 function extractOliphauntTsSurface() {
   return extractTypeScriptSurface('src/sdks/js/src/index.ts', [
     'src/sdks/js/src/client.ts',
-    'src/sdks/js/src/protocol.ts',
-    'src/sdks/js/src/query.ts',
+    'src/shared/js-core/src/protocol.ts',
+    'src/shared/js-core/src/query.ts',
     'src/sdks/js/src/types.ts',
   ]);
 }
@@ -810,8 +810,8 @@ function extractOliphauntWasixTsSurface() {
     'src/bindings/wasix-ts/src/client.ts',
     'src/bindings/wasix-ts/src/errors.ts',
     'src/bindings/wasix-ts/src/extension-descriptor.ts',
-    'src/bindings/wasix-ts/src/protocol.ts',
-    'src/bindings/wasix-ts/src/query.ts',
+    'src/shared/js-core/src/protocol.ts',
+    'src/shared/js-core/src/query.ts',
     'src/bindings/wasix-ts/src/storage.ts',
     'src/bindings/wasix-ts/src/types.ts',
   ]);
@@ -826,8 +826,8 @@ function extractOliphauntWasixWorkerTsSurface() {
     'src/bindings/wasix-ts/src/worker-node-client.ts',
     'src/bindings/wasix-ts/src/errors.ts',
     'src/bindings/wasix-ts/src/extension-descriptor.ts',
-    'src/bindings/wasix-ts/src/protocol.ts',
-    'src/bindings/wasix-ts/src/query.ts',
+    'src/shared/js-core/src/protocol.ts',
+    'src/shared/js-core/src/query.ts',
     'src/bindings/wasix-ts/src/storage.ts',
     'src/bindings/wasix-ts/src/types.ts',
   ]);

@@ -5,10 +5,17 @@ language: "javascript"
 layer: "tool"
 stack: "infrastructure"
 tags: ["sdk", "contract"]
+dependsOn:
+  - id: "cluster-seed-contract"
+    scope: "development"
+  - id: "shared-test-fixtures"
+    scope: "development"
+  - id: "shared-rust-query-core"
+    scope: "development"
 
 project:
   title: "SDK Contracts"
-  description: "Generated API, ownership, native boundary, header, documentation-example, and extension-model contracts shared by product SDKs."
+  description: "Generated API, ownership, native boundary, header, and extension-model contracts shared by product SDKs."
   owner: "oliphaunt"
 
 owners:
@@ -22,7 +29,6 @@ tasks:
     command: "node tools/policy/generate-sdk-api-surface.mjs --check"
     deps:
       - "sdk-contracts:cluster-seeds"
-      - "sdk-contracts:doc-examples"
       - "sdk-contracts:fixtures"
       - "sdk-contracts:headers"
       - "sdk-contracts:manifest"
@@ -39,7 +45,8 @@ tasks:
       - "/src/sdks/react-native/src/**/*.ts"
       - "/src/sdks/react-native/package.json"
       - "/src/sdks/rust/src/**/*.rs"
-      - "/src/shared/rust-query-core/**/*"
+      - project: "shared-rust-query-core"
+        group: "sources"
       - "/src/sdks/rust/crates/oliphaunt-build/src/**/*.rs"
       - "/src/sdks/swift/Sources/Oliphaunt/**/*.swift"
       - "/src/sdks/swift/Sources/OliphauntExtensionSupport/**/*.swift"
@@ -54,7 +61,8 @@ tasks:
     tags: ["quality", "static"]
     command: "bun tools/policy/check-cluster-seed-contract.mjs"
     inputs:
-      - "/src/shared/cluster-seed-contract/**/*"
+      - project: "cluster-seed-contract"
+        group: "contract"
       - "/tools/policy/check-cluster-seed-contract.mjs"
       - "/tools/release/native-cluster-seed-contract.mjs"
     options:
@@ -64,28 +72,9 @@ tasks:
     tags: ["quality", "static"]
     command: "bun tools/policy/check-shared-fixtures.mjs"
     inputs:
-      - "/src/shared/fixtures/**/*"
-      - "/src/**/*.{json,properties}"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
       - "/tools/policy/check-shared-fixtures.mjs"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
-  doc-examples:
-    tags: ["quality", "static"]
-    command: "node tools/policy/check-sdk-doc-examples.mjs"
-    inputs:
-      - "/src/sdks/{js,kotlin,react-native,rust,swift}/README.md"
-      - "/src/bindings/wasix-ts/README.md"
-      - "/src/bindings/wasix-ts/src/__tests__/**/*"
-      - "/src/sdks/js/src/__tests__/**/*"
-      - "/src/sdks/kotlin/oliphaunt/src/**/*"
-      - "/src/sdks/react-native/src/__tests__/**/*"
-      - "/src/sdks/rust/tests/**/*"
-      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/README.md"
-      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/tests/**/*"
-      - "/src/runtimes/liboliphaunt/native/crates/tools/src/**/*"
-      - "/src/sdks/swift/Tests/**/*"
-      - "/tools/policy/check-sdk-doc-examples.mjs"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -123,14 +112,21 @@ tasks:
     tags: ["quality", "static"]
     command: "bun tools/policy/check-native-boundaries.mjs"
     inputs:
-      - "/Cargo.toml"
-      - "/src/bindings/wasix-rust/**/*"
-      - "/src/runtimes/**/*"
-      - "/src/sdks/**/*"
-      - "/tools/perf/**/*"
+      - "/examples/react-native-expo/package.json"
+      - "/src/sdks/rust/Cargo.toml"
+      - "/src/sdks/react-native/package.json"
+      - "/src/sdks/{rust/src,rust/tests,swift/Sources,swift/Tests,kotlin/oliphaunt/src,react-native/src,react-native/ios,react-native/android/src}/**/*.{c,cpp,h,java,kt,m,mm,rs,swift,ts,tsx}"
+      - "/src/runtimes/liboliphaunt/native/{include,src}/**/*.{c,h}"
+      - "/src/sdks/swift/Package.swift"
+      - "/src/sdks/react-native/OliphauntReactNative.podspec"
+      - "/src/sdks/kotlin/build.gradle.kts"
+      - "/src/sdks/kotlin/oliphaunt/build.gradle.kts"
+      - "/src/sdks/react-native/android/build.gradle"
+      - "/src/sdks/react-native/android/settings.gradle"
+      - "/tools/perf/runner/Cargo.toml"
+      - "/tools/policy/sdk-manifest.toml"
       - "/tools/policy/check-native-boundaries.mjs"
-      - "/tools/policy/check-native-boundaries.sh"
-      - "/tools/xtask/**/*"
+      - "/tools/xtask/Cargo.toml"
     options:
       cache: true
       runFromWorkspaceRoot: true

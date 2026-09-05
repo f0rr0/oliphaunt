@@ -6,35 +6,7 @@ layer: "application"
 stack: "frontend"
 tags: ["docs", "fumadocs", "next", "public"]
 dependsOn:
-  - id: "postgres18"
-    scope: "build"
-  - id: "source-toolchains"
-    scope: "build"
-  - id: "third-party-shared"
-    scope: "build"
-  - id: "third-party-native"
-    scope: "build"
-  - id: "third-party-wasix"
-    scope: "build"
   - id: "extensions"
-    scope: "build"
-  - id: "liboliphaunt-native"
-    scope: "build"
-  - id: "liboliphaunt-wasix"
-    scope: "build"
-  - id: "oliphaunt-rust"
-    scope: "build"
-  - id: "oliphaunt-swift"
-    scope: "build"
-  - id: "oliphaunt-kotlin"
-    scope: "build"
-  - id: "oliphaunt-react-native"
-    scope: "build"
-  - id: "oliphaunt-js"
-    scope: "build"
-  - id: "oliphaunt-wasix-rust"
-    scope: "build"
-  - id: "oliphaunt-wasix-ts"
     scope: "build"
 
 project:
@@ -59,8 +31,9 @@ tasks:
       - "/.release-please-manifest.json"
       - "/release-please-config.json"
       - "/src/**/release.toml"
-      - "/src/docs/**/*"
-      - "/src/extensions/**/*"
+      - "**/*"
+      - project: "extensions"
+        group: "model"
       - "/pnpm-lock.yaml"
       - "/pnpm-workspace.yaml"
     options:
@@ -94,16 +67,15 @@ tasks:
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/**/*"
       - "/src/bindings/wasix-ts/src/**/*"
       - "/src/**/release.toml"
-      - "/src/docs/**/*"
-      - "/src/extensions/**/*"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
+      - "**/*"
+      - project: "extensions"
+        group: "model"
+      - "@group(pnpm-workspace)"
     options:
       cache: true
       runFromWorkspaceRoot: true
   build:
-    tags: ["build", "package"]
+    tags: ["build", "quality", "static"]
     command: "pnpm --dir src/docs run build"
     inputs:
       - "/docs/**/*"
@@ -128,25 +100,25 @@ tasks:
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/**/*"
       - "/src/bindings/wasix-ts/src/**/*"
       - "/src/**/release.toml"
-      - "/src/docs/**/*"
-      - "/src/extensions/**/*"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
+      - "**/*"
+      - project: "extensions"
+        group: "model"
+      - "@group(pnpm-workspace)"
     outputs:
       - "/target/docs/build/**/*"
+      - "/target/docs/generated/routes.json"
     options:
       cache: local
       runFromWorkspaceRoot: true
   smoke:
-    tags: ["runtime", "smoke"]
+    tags: ["quality", "runtime", "smoke"]
     command: "pnpm --dir src/docs run smoke"
     deps:
       - target: "docs:build"
         cacheStrategy: "outputs"
     inputs:
       - "/target/docs/build/**/*"
-      - "/target/docs/static/**/*"
+      - "/target/docs/generated/routes.json"
       - "/src/docs/tools/smoke-built-site.mjs"
     options:
       cache: local
@@ -182,11 +154,10 @@ tasks:
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/**/*"
       - "/src/bindings/wasix-ts/src/**/*"
       - "/src/**/release.toml"
-      - "/src/docs/**/*"
-      - "/src/extensions/**/*"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
+      - "**/*"
+      - project: "extensions"
+        group: "model"
+      - "@group(pnpm-workspace)"
     options:
       cache: local
       runFromWorkspaceRoot: true

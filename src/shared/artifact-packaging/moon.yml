@@ -1,0 +1,35 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "artifact-packaging"
+language: "javascript"
+layer: "library"
+stack: "systems"
+tags: ["shared", "artifacts", "packaging"]
+
+project:
+  title: "Artifact Packaging"
+  description: "Deterministic archive creation, reading, and safe staging shared by product packagers."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+fileGroups:
+  source:
+    - "*.mjs"
+    - "!*.test.mjs"
+
+tasks:
+  test:
+    tags: ["quality", "unit"]
+    script: |
+      set -e
+      node --test src/shared/artifact-packaging/archive-directory.test.mjs src/shared/artifact-packaging/portable-archive.test.mjs
+      bun test src/shared/artifact-packaging/materialize-release-symlinks.test.mjs
+    inputs:
+      - "*.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

@@ -96,8 +96,8 @@ test("accepts the exact one-parent release-bump commit and exact selected produc
     name: "shadow-derived",
     oliphaunt: { brokerVersion: "0.0.0" },
     optionalDependencies: {
-      [KNOWN_DERIVED_PACKAGE]: "workspace:0.0.0",
-      [UNRELATED_DERIVED_PACKAGE]: "workspace:0.0.0",
+      [KNOWN_DERIVED_PACKAGE]: "workspace:*",
+      [UNRELATED_DERIVED_PACKAGE]: "workspace:*",
     },
     dangerous: false,
   })}\n`);
@@ -188,8 +188,8 @@ test("accepts the exact one-parent release-bump commit and exact selected produc
     name: "shadow-derived",
     oliphaunt: { brokerVersion: "0.0.0" },
     optionalDependencies: {
-      [KNOWN_DERIVED_PACKAGE]: "workspace:0.0.0",
-      [UNRELATED_DERIVED_PACKAGE]: "workspace:0.0.0",
+      [KNOWN_DERIVED_PACKAGE]: "workspace:*",
+      [UNRELATED_DERIVED_PACKAGE]: "workspace:*",
     },
     dangerous: true,
   })}\n`);
@@ -207,8 +207,8 @@ test("accepts the exact one-parent release-bump commit and exact selected produc
     name: "shadow-derived",
     oliphaunt: { brokerVersion: "0.1.0" },
     optionalDependencies: {
-      [KNOWN_DERIVED_PACKAGE]: "workspace:0.1.0",
-      [UNRELATED_DERIVED_PACKAGE]: "workspace:0.0.0",
+      [KNOWN_DERIVED_PACKAGE]: "workspace:*",
+      [UNRELATED_DERIVED_PACKAGE]: "workspace:*",
     },
     dangerous: false,
   })}\n`);
@@ -226,7 +226,7 @@ test("accepts the exact one-parent release-bump commit and exact selected produc
     name: "shadow-derived",
     oliphaunt: { brokerVersion: "0.0.0" },
     optionalDependencies: {
-      [KNOWN_DERIVED_PACKAGE]: "workspace:0.0.0",
+      [KNOWN_DERIVED_PACKAGE]: "workspace:*",
       [UNRELATED_DERIVED_PACKAGE]: "workspace:0.1.0",
     },
     dangerous: false,
@@ -321,7 +321,7 @@ test("binds derived Cargo pins and lock entries to the referenced local package"
   );
 });
 
-test("accepts exact WASIX tools workspace dependency rewrites", { timeout: 20_000 }, () => {
+test("keeps WASIX tools workspace links independent of release versions", { timeout: 20_000 }, () => {
   const repo = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-release-wasix-tools-"));
   git(repo, "init", "-q");
   git(repo, "config", "user.name", "Release Test");
@@ -354,11 +354,11 @@ test("accepts exact WASIX tools workspace dependency rewrites", { timeout: 20_00
     })}\n`);
     write(repo, "src/bindings/wasix-ts/CHANGELOG.md", `# Changelog\n\n## ${version}\n`);
     write(repo, "src/bindings/wasix-ts/tools-package/package.json", `${JSON.stringify({
-      dependencies: { "@oliphaunt/liboliphaunt-wasix-tools": `workspace:${version}` },
-      peerDependencies: { "@oliphaunt/wasix-ts": `workspace:${version}` },
-      devDependencies: { "@oliphaunt/wasix-ts": `workspace:${version}` },
+      dependencies: { "@oliphaunt/liboliphaunt-wasix-tools": "workspace:*" },
+      peerDependencies: { "@oliphaunt/wasix-ts": "workspace:*" },
+      devDependencies: { "@oliphaunt/wasix-ts": "workspace:*" },
     })}\n`);
-    write(repo, "pnpm-lock.yaml", `lockfileVersion: '9.0'\nimporters:\n  src/bindings/wasix-ts/tools-package:\n    dependencies:\n      '@oliphaunt/liboliphaunt-wasix-tools':\n        specifier: workspace:${version}\n        version: link:../../../runtimes/liboliphaunt/wasix/tools-npm\n    devDependencies:\n      '@oliphaunt/wasix-ts':\n        specifier: workspace:${version}\n        version: link:..\n`);
+    write(repo, "pnpm-lock.yaml", `lockfileVersion: '9.0'\nimporters:\n  src/bindings/wasix-ts/tools-package:\n    dependencies:\n      '@oliphaunt/liboliphaunt-wasix-tools':\n        specifier: workspace:*\n        version: link:../../../runtimes/liboliphaunt/wasix/tools-npm\n    devDependencies:\n      '@oliphaunt/wasix-ts':\n        specifier: workspace:*\n        version: link:..\n`);
   };
   writeVersion("0.1.0");
   commit(repo, "feat: introduce WASIX tools fixture");

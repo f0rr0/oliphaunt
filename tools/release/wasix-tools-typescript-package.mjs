@@ -1,8 +1,9 @@
-import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { prepareWasixToolsTypescriptPackage as prepareProductPackage } from '../../src/bindings/wasix-ts/tools-package/tools/package.mjs';
+
 import { validateNpmTrustedPublishingManifest } from './npm-trusted-publishing.mjs';
-import { readPortableArchiveEntries } from './portable-archive.mjs';
+import { readPortableArchiveEntries } from '../../src/shared/artifact-packaging/portable-archive.mjs';
 import {
   assertReleaseNoticesInArchive,
   assertReleaseNoticesInDirectory,
@@ -17,36 +18,14 @@ const WASIX_BINDING = '@oliphaunt/wasix-ts';
 const NOTICE_OPTIONS = Object.freeze({ profile: 'source-sdk' });
 const EXACT_VERSION = /^\d+\.\d+\.\d+$/u;
 
-export const WASIX_TOOLS_TYPESCRIPT_REQUIRED_FILES = Object.freeze([
-  'package.json',
-  'README.md',
-  'CHANGELOG.md',
-  'LICENSE',
-  'THIRD_PARTY_NOTICES.md',
-  'lib/index.d.ts',
-  'lib/index.js',
-]);
-
 function fail(message) {
   throw new Error(`${TOOL}: ${message}`);
 }
 
 export function prepareWasixToolsTypescriptPackage(packageDir, bindingVersion) {
   const root = path.resolve(packageDir);
-  const manifestFile = path.join(root, 'package.json');
-  const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
-  if (!EXACT_VERSION.test(bindingVersion)) fail('binding version must be exact');
-  manifest.version = bindingVersion;
-  manifest.dependencies = {
-    [TOOLS_CARRIER]: manifest.oliphaunt?.runtimeVersion,
-  };
-  manifest.peerDependencies = {
-    [WASIX_BINDING]: bindingVersion,
-  };
-  delete manifest.scripts;
-  delete manifest.devDependencies;
+  const manifest = prepareProductPackage(root, bindingVersion);
   stageReleaseNotices(root, NOTICE_OPTIONS);
-  writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
   assertReleaseNoticesInDirectory(root, NOTICE_OPTIONS);
   assertWasixToolsTypescriptManifest(manifest, `${PACKAGE_NAME} staged package`);
   return manifest;
@@ -96,12 +75,24 @@ export function assertWasixToolsTypescriptNpmArchive(archive) {
     JSON.parse(required(entries, 'package/package.json').toString('utf8')),
     `${path.basename(file)} package.json`,
   );
-  const expected = new Set(WASIX_TOOLS_TYPESCRIPT_REQUIRED_FILES.map((name) => `package/${name}`));
+  if (
+    JSON.stringify([...(manifest.files ?? [])].sort()) !==
+    JSON.stringify(['CHANGELOG.md', 'LICENSE', 'README.md', 'THIRD_PARTY_NOTICES.md', 'lib'])
+  ) {
+    fail(`${file} package.json files differ from the owned package roots`);
+  }
+  const allowed = new Set(['package.json', ...manifest.files.filter((name) => name !== 'lib')]);
   for (const [name, entry] of entries) {
     if (entry.isSymbolicLink) fail(`${file} contains symbolic link ${name}`);
-    if (entry.isFile && !expected.has(name)) fail(`${file} contains unexpected file ${name}`);
+    const relative = name.replace(/^package\//u, '');
+    if (entry.isFile && !allowed.has(relative) && !relative.startsWith('lib/')) {
+      fail(`${file} contains file outside package.json files: ${name}`);
+    }
   }
-  for (const name of WASIX_TOOLS_TYPESCRIPT_REQUIRED_FILES) {
+  for (const name of ['README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'lib/index.d.ts', 'lib/index.js']) {
+    required(entries, `package/${name}`);
+  }
+  for (const name of ['CHANGELOG.md']) {
     if (name === 'CHANGELOG.md' && manifest.version === '0.0.0') continue;
     required(entries, `package/${name}`);
   }

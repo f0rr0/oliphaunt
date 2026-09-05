@@ -5,7 +5,7 @@ import path from "node:path";
 
 import { writeEntriesArchive } from "../test/release-fixture-utils.mjs";
 import { finalizeNativeMobileAbiProofs } from "./finalize-native-mobile-abi-proofs.mjs";
-import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import { readPortableArchiveEntries } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 
 function receipt(target, blockSize = 8192) {
   return [
@@ -105,6 +105,28 @@ test("rejects divergent duplicate producer receipts", async () => {
       assetDir: current.assetDir,
       receiptRoot: current.receiptRoot,
     })).toThrow(/divergent duplicate receipts/u);
+  } finally {
+    rmSync(current.root, { recursive: true, force: true });
+  }
+});
+
+test("can finalize an immutable input archive into a separately owned output", async () => {
+  const current = await fixture();
+  try {
+    const baseArchive = path.join(current.assetDir, "liboliphaunt-1.2.3-android-x86_64.tar.gz");
+    writeFileSync(baseArchive, "base carrier");
+    const before = readFileSync(current.archive);
+    const outputDir = path.join(current.root, "final");
+    const result = finalizeNativeMobileAbiProofs({
+      domain: "android-datum64",
+      assetDir: current.assetDir,
+      receiptRoot: current.receiptRoot,
+      outputDir,
+    });
+    expect(readFileSync(current.archive)).toEqual(before);
+    expect(result.archive).toBe(path.join(outputDir, path.basename(current.archive)));
+    expect(readFileSync(result.archive)).not.toEqual(before);
+    expect(readFileSync(path.join(outputDir, path.basename(baseArchive)), "utf8")).toBe("base carrier");
   } finally {
     rmSync(current.root, { recursive: true, force: true });
   }

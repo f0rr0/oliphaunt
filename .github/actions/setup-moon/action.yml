@@ -43,12 +43,15 @@ runs:
         mkdir -p "$moon_home_fs/plugins/toolchains"
         cp "$toolchain_root/plugins/"*.wasm "$moon_home_fs/plugins/toolchains/"
         toolchain_bin="$toolchain_root/bin"
+        moon_bin="$toolchain_bin/moon"
         if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
           command -v cygpath >/dev/null 2>&1
           toolchain_bin="$(cygpath -w "$toolchain_bin")"
+          moon_bin="$(cygpath -w "${moon_bin}.exe")"
         fi
         echo "$toolchain_bin" >> "$GITHUB_PATH"
         echo "MOON_HOME=$moon_home_env" >> "$GITHUB_ENV"
+        echo "MOON_BIN=$moon_bin" >> "$GITHUB_ENV"
         echo "MOON_TOOLCHAIN_FORCE_GLOBALS=true" >> "$GITHUB_ENV"
 
     - name: Install verified Bun
@@ -76,7 +79,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        [[ "$(moon --version)" == "moon 2.3.2" ]]
+        [[ "$(moon --version)" == "moon 2.5.4" ]]
         [[ "$(node --version)" == "v22.22.3" ]]
         [[ "$(pnpm --version)" == "11.5.0" ]]
         [[ "$(bun --version)" == "1.3.14" ]]
@@ -95,6 +98,16 @@ runs:
       if: ${{ inputs.install-workspace == 'true' }}
       shell: bash
       run: pnpm install --frozen-lockfile
+
+    - name: Restore Moon task outputs
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: |
+          .moon/cache/hashes
+          .moon/cache/outputs
+        key: moon-task-cache-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ strategy.job-index }}-${{ hashFiles('.prototools', '.moon/**/*.yml', '**/moon.yml', 'Cargo.lock', 'pnpm-lock.yaml') }}-${{ github.sha }}
+        restore-keys: |
+          moon-task-cache-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ strategy.job-index }}-${{ hashFiles('.prototools', '.moon/**/*.yml', '**/moon.yml', 'Cargo.lock', 'pnpm-lock.yaml') }}-
 
     - name: Hydrate Moon plugins
       shell: bash

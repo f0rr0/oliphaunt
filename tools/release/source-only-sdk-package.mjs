@@ -9,7 +9,7 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import { readPortableArchiveEntries } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import {
   assertReleaseNoticesInArchive,
   assertReleaseNoticesInDirectory,
@@ -17,6 +17,10 @@ import {
   stageReleaseNotices,
 } from "./release-notices.mjs";
 import { requireSafeDirectoryChain } from "./release-directory-safety.mjs";
+import {
+  assertJsCoreBundleInventory,
+  JS_CORE_PACKAGE,
+} from "../../src/shared/js-core/tools/stage-package.mjs";
 
 const TOOL = "source-only-sdk-package.mjs";
 const SOURCE_NOTICE_OPTIONS = Object.freeze({ profile: "source-sdk" });
@@ -27,6 +31,20 @@ export const SOURCE_ONLY_NPM_PROFILES = Object.freeze({
   js: Object.freeze({
     name: "@oliphaunt/ts",
     scripts: Object.freeze({}),
+    optionalDependencyVersions: Object.freeze({
+      "@oliphaunt/broker-darwin-arm64": "brokerVersion",
+      "@oliphaunt/broker-linux-arm64-gnu": "brokerVersion",
+      "@oliphaunt/broker-linux-x64-gnu": "brokerVersion",
+      "@oliphaunt/broker-win32-x64-msvc": "brokerVersion",
+      "@oliphaunt/liboliphaunt-darwin-arm64": "liboliphauntVersion",
+      "@oliphaunt/liboliphaunt-linux-arm64-gnu": "liboliphauntVersion",
+      "@oliphaunt/liboliphaunt-linux-x64-gnu": "liboliphauntVersion",
+      "@oliphaunt/liboliphaunt-win32-x64-msvc": "liboliphauntVersion",
+      "@oliphaunt/node-direct-darwin-arm64": "nodeDirectAddonVersion",
+      "@oliphaunt/node-direct-linux-arm64-gnu": "nodeDirectAddonVersion",
+      "@oliphaunt/node-direct-linux-x64-gnu": "nodeDirectAddonVersion",
+      "@oliphaunt/node-direct-win32-x64-msvc": "nodeDirectAddonVersion",
+    }),
   }),
   "react-native": Object.freeze({
     name: "@oliphaunt/react-native",
@@ -78,7 +96,30 @@ function checkedScripts(value, label) {
   return scripts;
 }
 
-function assertManifestContract(manifest, { name, scripts }, label) {
+function exactOptionalDependencies(manifest, fields, label) {
+  if (fields === undefined) return undefined;
+  const metadata = manifest.oliphaunt;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    throw new Error(`${label} must declare oliphaunt compatibility metadata`);
+  }
+  const dependencies = {};
+  for (const [name, field] of Object.entries(fields)) {
+    const version = metadata[field];
+    if (typeof version !== "string" || !/^\d+[.]\d+[.]\d+$/u.test(version)) {
+      throw new Error(`${label} oliphaunt.${field} must be an exact stable version`);
+    }
+    dependencies[name] = version;
+  }
+  return dependencies;
+}
+
+function sameStringMap(left, right) {
+  const entries = Object.entries(left ?? {});
+  return entries.length === Object.keys(right).length
+    && entries.every(([name, version]) => right[name] === version);
+}
+
+function assertManifestContract(manifest, { name, scripts, optionalDependencyVersions }, label) {
   if (manifest.name !== name) {
     throw new Error(`${label} must identify ${name}, got ${JSON.stringify(manifest.name)}`);
   }
@@ -99,6 +140,13 @@ function assertManifestContract(manifest, { name, scripts }, label) {
   }
   if (Object.hasOwn(manifest, "devDependencies")) {
     throw new Error(`${label} must not publish development-only dependencies`);
+  }
+  const expectedOptional = exactOptionalDependencies(manifest, optionalDependencyVersions, label);
+  if (
+    expectedOptional !== undefined
+    && !sameStringMap(manifest.optionalDependencies, expectedOptional)
+  ) {
+    throw new Error(`${label} must pin its optional runtime packages to its compatibility versions`);
   }
 }
 
@@ -150,6 +198,24 @@ export function prepareSourceOnlyNpmPackage(packageDir, contract) {
   } else {
     manifest.scripts = expectedScripts;
   }
+  const exactOptional = exactOptionalDependencies(
+    manifest,
+    contract.optionalDependencyVersions,
+    "source-only npm package manifest",
+  );
+  if (exactOptional !== undefined) {
+    const sourceOptional = manifest.optionalDependencies ?? {};
+    const sameNames = Object.keys(sourceOptional).length === Object.keys(exactOptional).length
+      && Object.keys(sourceOptional).every((name) => Object.hasOwn(exactOptional, name));
+    const local = Object.values(sourceOptional).every((version) => version === "workspace:*");
+    const staged = Object.entries(exactOptional).every(([name, version]) => sourceOptional[name] === version);
+    if (!sameNames || (!local && !staged)) {
+      throw new Error(
+        "source-only npm package manifest optional runtime packages must use workspace:* locally or exact compatibility versions when staged",
+      );
+    }
+    manifest.optionalDependencies = exactOptional;
+  }
   delete manifest.devDependencies;
   writeManifest(packageJsonFile, manifest);
   stageReleaseNotices(directory, SOURCE_NOTICE_OPTIONS);
@@ -187,6 +253,20 @@ export function assertSourceOnlyNpmArchive(archive, contract) {
   const manifest = archiveJson(entries, "package/package.json", label);
   assertManifestContract(manifest, contract, `${label} package.json`);
   requireNoticeAllowlist(manifest, `${label} package.json`);
+  assertJsCoreBundleInventory(entries.keys(), "package/node_modules/@oliphaunt/js-core/");
+  const coreManifest = archiveJson(
+    entries,
+    "package/node_modules/@oliphaunt/js-core/package.json",
+    label,
+  );
+  if (
+    coreManifest.name !== JS_CORE_PACKAGE
+    || coreManifest.private !== true
+    || manifest.dependencies?.[JS_CORE_PACKAGE] !== coreManifest.version
+    || JSON.stringify(manifest.bundledDependencies) !== JSON.stringify([JS_CORE_PACKAGE])
+  ) {
+    throw new Error(`${label} must bundle the exact minimal ${JS_CORE_PACKAGE} workspace payload`);
+  }
   return manifest;
 }
 

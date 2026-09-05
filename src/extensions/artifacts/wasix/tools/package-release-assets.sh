@@ -45,7 +45,7 @@ out_dir="${OLIPHAUNT_WASIX_EXTENSION_RELEASE_ASSET_DIR:-$default_out_dir}"
 [ -f "$built_manifest" ] || fail "missing built WASIX asset manifest: ${built_manifest#$root/}"
 [ -d "$asset_root/extensions" ] || fail "missing WASIX extension asset directory: ${asset_root#$root/}/extensions"
 
-"$root/tools/dev/bun.sh" \
+bun \
   "$root/src/extensions/artifacts/wasix/tools/package-release-assets.mjs" \
   --root "$root" \
   --asset-root "$asset_root" \

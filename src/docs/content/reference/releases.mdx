@@ -27,8 +27,9 @@ it in an application.
 
 | Relationship | Products | Rule |
 | --- | --- | --- |
-| Independently versioned | Native, WASIX, contrib, SDKs, and helper runtimes | Release Please selects changed product paths; each product owns its SemVer, and native and WASIX do not move together |
-| Directed compatibility | Products with exact dependency or runtime compatibility fields | A changed dependency can select its consumer, but selection never travels backwards and does not create a shared version |
+| Independently versioned | Native, WASIX, external extensions, SDKs, and helper runtimes | Release Please selects changed product paths; each product owns its SemVer, and native and WASIX do not move together |
+| Runtime-owned distribution | PostgreSQL contrib | Native and WASIX carriers inherit their owning runtime's version; contrib has no independent release identity |
+| Exact compatibility | Products with dependency or runtime compatibility fields | The consumer pins an exact published product version; dependency changes do not create consumer releases |
 | Upstream-bound | External exact-extension products | Packaging SemVer is independent; immutable upstream version/commit and compatible runtime versions are recorded separately |
 | Documentation | Public documentation site | Guides and references can change without a package release |
 

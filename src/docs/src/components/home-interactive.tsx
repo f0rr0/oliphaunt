@@ -48,6 +48,7 @@ export function BrandIcon({ id, className, title }: BrandIconProps) {
   return (
     <svg
       aria-hidden={title ? undefined : true}
+      aria-label={title}
       className={className ? `home-brand-icon ${className}` : 'home-brand-icon'}
       data-brand={id}
       fill={`#${icon.hex}`}
@@ -146,11 +147,7 @@ export function MotionArticle({ className, children }: { className: string; chil
   const inView = useInView(ref, { amount: 0.32, once: true });
 
   return (
-    <article
-      className={className}
-      data-motion-state={inView ? 'entered' : 'idle'}
-      ref={ref}
-    >
+    <article className={className} data-motion-state={inView ? 'entered' : 'idle'} ref={ref}>
       {children}
     </article>
   );
@@ -1071,11 +1068,13 @@ function SqlPreview({ sql }: { sql: string }) {
   return (
     <code>
       {sql.split('\n').map((line, lineIndex) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: Duplicate static SQL lines need their source position.
         <span className="home-use-case-query__line" key={`${lineIndex}-${line}`}>
           {line.split(tokenPattern).map((token, tokenIndex) => {
-            const isKeyword = /^(?:AS|BY|COUNT|DESC|FROM|GROUP|IS|JOIN|LEFT|LIMIT|NULL|ON|ORDER|SELECT|WHERE)$/i.test(
-              token,
-            );
+            const isKeyword =
+              /^(?:AS|BY|COUNT|DESC|FROM|GROUP|IS|JOIN|LEFT|LIMIT|NULL|ON|ORDER|SELECT|WHERE)$/i.test(
+                token,
+              );
             const isParameter = /^\$\d+$/.test(token);
 
             if (!isKeyword && !isParameter) {
@@ -1085,10 +1084,9 @@ function SqlPreview({ sql }: { sql: string }) {
             return (
               <span
                 className={
-                  isParameter
-                    ? 'home-use-case-query__parameter'
-                    : 'home-use-case-query__keyword'
+                  isParameter ? 'home-use-case-query__parameter' : 'home-use-case-query__keyword'
                 }
+                // biome-ignore lint/suspicious/noArrayIndexKey: Duplicate static SQL tokens need their source position.
                 key={`${lineIndex}-${token}-${tokenIndex}`}
               >
                 {token}
@@ -1516,10 +1514,13 @@ export function SdkCodeExplorer() {
                   </button>
                 </span>
               </header>
+              {/* biome-ignore lint/a11y/useSemanticElements: Preformatted content is itself the scroll region. */}
               <pre
                 aria-label={`${selectedSdk.label} Oliphaunt example. Scroll horizontally to read long lines.`}
                 className="home-code-panel__pre"
                 key="code"
+                role="region"
+                // biome-ignore lint/a11y/noNoninteractiveTabindex: The scrollable code region must be keyboard-scrollable.
                 tabIndex={0}
               >
                 <CodeLines lines={selectedCodeLines} />

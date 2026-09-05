@@ -22,19 +22,25 @@
     "nodeDirectAddon": "oliphaunt-node-direct",
     "brokerHelper": "oliphaunt-broker"
   },
+  "dependencies": {
+    "@oliphaunt/js-core": "workspace:*"
+  },
+  "bundledDependencies": [
+    "@oliphaunt/js-core"
+  ],
   "optionalDependencies": {
-    "@oliphaunt/broker-darwin-arm64": "workspace:0.1.1",
-    "@oliphaunt/broker-linux-arm64-gnu": "workspace:0.1.1",
-    "@oliphaunt/broker-linux-x64-gnu": "workspace:0.1.1",
-    "@oliphaunt/broker-win32-x64-msvc": "workspace:0.1.1",
-    "@oliphaunt/liboliphaunt-darwin-arm64": "workspace:0.1.1",
-    "@oliphaunt/liboliphaunt-linux-arm64-gnu": "workspace:0.1.1",
-    "@oliphaunt/liboliphaunt-linux-x64-gnu": "workspace:0.1.1",
-    "@oliphaunt/liboliphaunt-win32-x64-msvc": "workspace:0.1.1",
-    "@oliphaunt/node-direct-darwin-arm64": "workspace:0.1.1",
-    "@oliphaunt/node-direct-linux-arm64-gnu": "workspace:0.1.1",
-    "@oliphaunt/node-direct-linux-x64-gnu": "workspace:0.1.1",
-    "@oliphaunt/node-direct-win32-x64-msvc": "workspace:0.1.1"
+    "@oliphaunt/broker-darwin-arm64": "workspace:*",
+    "@oliphaunt/broker-linux-arm64-gnu": "workspace:*",
+    "@oliphaunt/broker-linux-x64-gnu": "workspace:*",
+    "@oliphaunt/broker-win32-x64-msvc": "workspace:*",
+    "@oliphaunt/liboliphaunt-darwin-arm64": "workspace:*",
+    "@oliphaunt/liboliphaunt-linux-arm64-gnu": "workspace:*",
+    "@oliphaunt/liboliphaunt-linux-x64-gnu": "workspace:*",
+    "@oliphaunt/liboliphaunt-win32-x64-msvc": "workspace:*",
+    "@oliphaunt/node-direct-darwin-arm64": "workspace:*",
+    "@oliphaunt/node-direct-linux-arm64-gnu": "workspace:*",
+    "@oliphaunt/node-direct-linux-x64-gnu": "workspace:*",
+    "@oliphaunt/node-direct-win32-x64-msvc": "workspace:*"
   },
   "publishConfig": {
     "access": "public",
@@ -63,11 +69,11 @@
     "!src/__tests__"
   ],
   "scripts": {
-    "build": "node ../../../tools/dev/clean-package-lib.mjs && tsc -p tsconfig.build.json",
+    "build": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "docs:api": "typedoc --options typedoc.json",
-    "test": "node ../../../tools/test/run-js-tests.mjs src/__tests__",
+    "test": "vitest run --pool=forks --fileParallelism=false --dir=src/__tests__",
     "typecheck": "tsc --noEmit",
-    "clean": "node ../../../tools/dev/clean-package-lib.mjs"
+    "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\""
   },
   "engines": {
     "node": ">=22.13 <25"

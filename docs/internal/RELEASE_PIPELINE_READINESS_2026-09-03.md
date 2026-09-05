@@ -1,7 +1,7 @@
 # Release pipeline readiness — 2026-09-03
 
 Baseline: freshly fetched `origin/main` at
-`6b3e16aed489507cc9140c0dacb677785792da7d`. `HEAD` and `origin/main` were
+`e20791d85b13151ef6eee023ff4b8cf39de0e123`. The branch merge base was
 rechecked after the audit and still matched. This report closes the execution
 and hosted-limit work from the broader
 [`CI_RELEASE_PROCESS_AUDIT_2026-09-02.md`](CI_RELEASE_PROCESS_AUDIT_2026-09-02.md)
@@ -55,6 +55,7 @@ local `release-check.mjs` maintainer gate.
 | `release-publish` was incorrectly required to accept transport tags. | The controls auditor conflated bootstrap continuation with normal publish. | Only `release-bootstrap` permits `oliphaunt-release-transport/*`; normal publish is main-only. |
 | A successful publish spent an artificial hour before its first GitHub content write. | A fresh per-run journal imposed a full rolling-hour cooldown even though all writes were already globally spaced by 10 seconds. | The cold-start delay and environment state were deleted. The durable exact-lineage journal, lock, deadline, retries, and 10-second interval remain. The first reservation is immediate. |
 | Release evidence expired earlier than the supported approval window. | WASIX qualification evidence used 30 days and the exact candidate record used 14. | Both now use the repository's 90-day release-evidence window. |
+| A contrib catalog edit selected both runtime owners **and** the N-API product. | Release planning followed the contrib project's ordinary consumer edges after applying its explicit shared-carrier mapping. | Explicit shared-source carrier mappings are now authoritative release boundaries; the same edit selects only native and WASIX runtimes. |
 
 ## Chaos and dependency results
 
@@ -62,6 +63,8 @@ local `release-check.mjs` maintainer gate.
 - A Node Direct edit selects the addon and its downstream JavaScript SDK.
 - A WASIX Node-API edit selects its actual WASIX runtime/AOT/carrier inputs.
 - WASIX Node-API prose and isolated unit fixtures do not start artifact builds.
+- Benchmark fixtures no longer emit a green `benchmarks:check` that only ran
+  `true`; real benchmark plan and harness tasks own their validation directly.
 - Shared contrib source selects both runtime owners but no fictitious contrib
   release product.
 - Each of the seven external extensions remains one independently versioned
@@ -87,7 +90,7 @@ fresh-checkout assumptions. The failures and fixes are intentionally narrow:
 | --- | --- | --- |
 | Static docs check, macOS release metadata, and Vercel | The deleted duplicate favicon left an empty local `src/docs/static` directory, but Git does not preserve empty directories. The generator still required that directory. | Removed the obsolete copy step. Docs generation still owns and recreates its generated static output; the 44-route check passes after physically removing the local source directory. |
 | Rust SDK and WASIX Rust binding package jobs | Final `.crate` test-closure validation is deliberately offline, but the package job had not fetched the root lock on a cold runner. | Each Cargo SDK artifact wrapper now fetches the exact locked dependency graph before offline closure validation. Both products pass from separate empty Cargo homes; the offline final-crate test remains. |
-| Release tooling unit job | It did not declare `ci-rust`, so two rustup proxies raced to install a missing toolchain. Once Rust setup exposed the next cold-cache assumptions, three unrelated facade behavior checks requested Cargo offline mode without provisioning registry dependencies, and an extension-model self-test also reran the complete model/xtask check under a 15-second child timeout. | Declared the truthful Rust capability, removed the false offline constraints, and made `--self-test` stop after its own adversarial checks. The real concurrency, facade behavior, and genuine offline-closure tests remain. |
+| Release tooling unit job | It did not declare `requires-rust`, so two rustup proxies raced to install a missing toolchain. Once Rust setup exposed the next cold-cache assumptions, three unrelated facade behavior checks requested Cargo offline mode without provisioning registry dependencies, and an extension-model self-test also reran the complete model/xtask check under a 15-second child timeout. | Declared the truthful Rust capability, removed the false offline constraints, and made `--self-test` stop after its own adversarial checks. The real concurrency, facade behavior, and genuine offline-closure tests remain. |
 
 Visible CI naming is now responsibility-first and consistent without changing
 stable job IDs or gate protocols. Static partitions list the exact Moon targets
@@ -249,9 +252,49 @@ is green.
   npm package-shape proof owned by `package`.
 - Removed the retired `--skip-package-size` option from the live WASIX
   performance recipe; dated command transcripts remain historical records.
+- Deleted N-API and Linux-builder source-string assertions; semantic package
+  metadata checks and executable compile/package/smoke coverage remain.
+- Deleted the no-op benchmark check and its no-op task dependency.
 
 Aggregate product behavior coverage is unchanged. The removed source-string
 checks and repeated gates provided earlier or duplicate diagnostics, not unique
 runtime proof. Compile, package reopening, installed-product smoke, regression,
 mobile lifecycle, exact-SHA qualification, registry reconciliation, public
 consumer checks, and final attestations remain.
+
+## Independent dependency model follow-up
+
+The graph now separates three concerns that were previously conflated:
+
+- Moon project edges select direct local consumers for qualification; task
+  `deps` order only real producers and consumers.
+- Release-product boundaries stop transitive version propagation. A native
+  release no longer invents SDK, binding, or extension releases.
+- Product-local `compatibility_versions` are the exact published dependency
+  contract used for release ordering, staged manifests, and existing-artifact
+  checks.
+
+This is implemented consistently across npm workspace links, staged Cargo
+crates, Kotlin's embedded Maven runtime pin, rendered SwiftPM binary targets,
+and React Native's exact Swift/Kotlin pins with local project overrides. The
+WASIX N-API project now directly declares both runtime and Rust-binding inputs.
+Its private Cargo build package uses unconstrained workspace paths so an
+independent runtime bump does not invalidate the unchanged addon's checkout;
+the public npm carrier keeps exact runtime and Rust-binding compatibility pins.
+
+The local chaos pass caught one regression before GitHub: changing the N-API
+Cargo path requirements exposed that `build.rs` parsed dependency source text
+to discover the runtime version. The runtime crate now exports its own package
+version, the addon reads that compiled identity directly, and the obsolete
+manifest parser was deleted. The real `oliphaunt-wasix-napi:compile` task then
+passed in 2.4 seconds. N-API metadata validation now parses JSON/TOML contracts;
+source-string assertions over Rust and shell files were deleted because the
+compile, package, Linux-baseline, and installed-addon smoke tasks own those
+behaviors.
+
+One architectural exception remains explicit: the broker executable compiles
+an internal feature of the Rust SDK while the SDK consumes the broker artifact.
+That source-level cycle cannot honestly become two independently pinned
+published dependencies. Removing it requires extracting their shared native
+engine/IPC implementation into a non-publishable internal crate; this refactor
+does not hide the cycle with reciprocal release metadata.

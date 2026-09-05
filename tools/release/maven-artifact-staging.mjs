@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
-import { createDeterministicZip } from "./archive_dir.mjs";
+import { createDeterministicZip } from "../../src/shared/artifact-packaging/archive-directory.mjs";
 import {
   createSiblingStage,
   promoteDirectory,

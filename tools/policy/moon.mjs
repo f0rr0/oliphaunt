@@ -1,4 +1,4 @@
-import { moonCommand } from '../dev/moon-command.mjs';
+import { moonCommand, moonEnvironment } from '../dev/moon-command.mjs';
 import { captureCommandOutput } from '../dev/capture-command-output.mjs';
 
 export function moonBin() {
@@ -12,7 +12,7 @@ export function runMoon(args, options = {}) {
     ...captureOptions
   } = options;
   const result = captureCommandOutput(moonBin(), args, {
-    env: {...process.env},
+    env: moonEnvironment(),
     label: `${moonBin()} ${args.join(' ')}`,
     maxOutputBytes: maxBuffer,
     ...captureOptions,

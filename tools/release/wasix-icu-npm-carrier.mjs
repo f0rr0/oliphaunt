@@ -15,7 +15,7 @@ import { zstdCompressSync } from "node:zlib";
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { createDeterministicTar } from "./cargo-source-package.mjs";
 import { validateNpmTrustedPublishingManifest } from "./npm-trusted-publishing.mjs";
-import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import { readPortableArchiveEntries } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import {
   assertReleaseNoticesInArchive,
   assertReleaseNoticesInDirectory,

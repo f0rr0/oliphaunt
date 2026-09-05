@@ -10,7 +10,8 @@ Use the repository graph to select work, but require the full exact-SHA gate for
 ## Local feedback
 
 1. Inspect the diff and ask Moon for affected projects/tasks. Do not infer affected products from directory names alone.
-2. Run affected `format-check`, `lint`, `compile`, `unit`, and `package` tasks
+2. Run affected formatting (`format-check`, `js-format-check`, or
+   `rust-format-check`), `lint`, `compile`, `unit`, and `package` tasks
    independently. Run producer, smoke, regression, and E2E lanes only when
    their inputs or public behavior changed.
 3. If the diff changes WASIX source pins, patches, build recipes, the toolchain,
@@ -39,7 +40,7 @@ tools/dev/bun.sh tools/release/release-check.mjs
 cargo run -p xtask -- assets verify-committed
 
 # Extension catalog, recipe, carrier, or generated extension metadata only:
-moon run extension-model:lint extension-model:unit
+moon run extensions:lint extensions:unit
 ```
 
 Do not run all three for an unrelated package or version edit. The repository
@@ -58,8 +59,8 @@ that toolchain setup unless it changes release metadata or graph inputs.
 classifiers but do not scan the candidate tree.
 
 For source-acquisition policy or a source `mirror_url`, run
-`tools/dev/bun.sh test tools/policy/source-fetch-core.test.mjs` and
-`tools/dev/bun.sh tools/policy/fetch-sources.mjs all --validate-only`. Prove a
+`tools/dev/bun.sh test src/sources/tools/source-fetch-core.test.mjs` and
+`tools/dev/bun.sh src/sources/tools/fetch-sources.mjs all --validate-only`. Prove a
 new endpoint with a live exact-commit fetch, but keep reachability out of the
 deterministic unit gate. Qualification must show bounded canonical-to-mirror
 failover, exact-pin rejection, canonical durable origin, and transactional
@@ -94,12 +95,12 @@ preservation of an existing checkout when every endpoint fails.
    This behavioral gate is authoritative for Bash 3.2 `set -u` empty-array
    semantics; a syntax check or a source-pattern check is not a substitute.
 6. Declare runner capabilities on the narrowest Moon task that needs them. Use
-   `ci-rust` for Cargo, rustc, rustfmt, or another Rust-toolchain command;
-   `ci-maintainer-tools` for the pinned tools installed by
-   `tools/dev/bootstrap-tools.sh`; and `ci-android-sdk` for Android SDK work.
+   `requires-rust` for Cargo, rustc, rustfmt, or another Rust-toolchain command;
+   `requires-maintainer-tools` for the pinned tools installed by
+   `tools/dev/bootstrap-tools.sh`; and `requires-android-sdk` for Android SDK work.
+   Use `requires-apple` for Swift, Xcode, or Apple-platform work.
    Capabilities propagate through task dependencies. The planner keeps
-   capability-bearing checks dedicated and combines only compatible static
-   checks into bounded shards.
+   capability-bearing checks grouped only with tasks requiring the same setup.
 7. Treat a hosted runner-image pin as a toolchain dependency. Never introduce a mutable `*-latest` alias; after changing an explicit runner pin, inspect the image delta and run the platform binary contract for every affected release target.
 
 For a WASIX Docker, APT snapshot, or bootstrap trust change, also run the
@@ -107,7 +108,7 @@ product-owned fault test and source verifier before the expensive build:
 
 ```sh
 bash src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-apt-packages.test.sh
-tools/dev/bun.sh tools/policy/fetch-sources.mjs wasix-runtime --verify-only
+tools/dev/bun.sh src/sources/tools/fetch-sources.mjs wasix-runtime --verify-only
 cargo run -p xtask -- assets source-spine --strict-local
 ```
 
@@ -127,7 +128,7 @@ for example, `cargo test -p oliphaunt --lib` excludes Rust executable tests unde
 `src/bin/**`, while `moon run oliphaunt-rust:unit` includes the library,
 executable, integration, build-crate, and documentation tests. Add
 the product's `qualify` task when the complete product replay is needed, and run
-`moon run extension-model:lint extension-model:unit` when an extension catalog or generated SDK
+`moon run extensions:lint extensions:unit` when an extension catalog or generated SDK
 extension surface changes. Put new guarantees in a parsed schema/generated
 contract, clean-consumer package check, or product-owned behavioral test. Do
 not qualify SDK behavior by grepping prose, test names, or

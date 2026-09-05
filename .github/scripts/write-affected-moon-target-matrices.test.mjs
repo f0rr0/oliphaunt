@@ -12,7 +12,10 @@ const WRITER = path.join(ROOT, ".github/scripts/write-affected-moon-target-matri
 
 function moonStub(root, body) {
   const file = path.join(root, "moon-stub.mjs");
-  writeFileSync(file, `#!/usr/bin/env node\n${body}`);
+  writeFileSync(
+    file,
+    `#!/usr/bin/env node\nif (process.argv.slice(2).join(" ") === "--version") {\n  process.stdout.write("moon 2.5.4\\n");\n} else {\n${body}\n}\n`,
+  );
   chmodSync(file, 0o755);
   return file;
 }
@@ -25,7 +28,7 @@ function invoke(stub, output) {
     MOON_BIN: stub,
     MOON_HEAD: "",
   };
-  return spawnSync(process.execPath, [WRITER, "check", "compile", "format-check", "lint", "tools-compile", "metadata", "graph-unit", "test", "tools-unit", "unit"], {
+  return spawnSync(process.execPath, [WRITER], {
     cwd: ROOT,
     encoding: "utf8",
     env,
@@ -36,19 +39,23 @@ function invoke(stub, output) {
 test("Node planner captures Moon JSON written at the successful child's final event-loop turn", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-affected-matrices-"));
   try {
-    const document = JSON.stringify({
-      tasks: {
-        alpha: {
-          check: { args: [], command: "node check.mjs", deps: [], id: "check", options: {}, tags: [], target: "alpha:check" },
-          compile: { args: [], command: "node compile.mjs", deps: [], id: "compile", options: {}, tags: [], target: "alpha:compile" },
-          "graph-unit": { args: [], command: "node graph-unit.mjs", deps: [], id: "graph-unit", options: {}, tags: [], target: "alpha:graph-unit" },
-          "tools-compile": { args: [], command: "node tools-compile.mjs", deps: [], id: "tools-compile", options: {}, tags: [], target: "alpha:tools-compile" },
-          test: { args: [], command: "node test.mjs", deps: [], id: "test", options: {}, tags: [], target: "alpha:test" },
-          "tools-unit": { args: [], command: "node tools-unit.mjs", deps: [], id: "tools-unit", options: {}, tags: [], target: "alpha:tools-unit" },
-          unit: { args: [], command: "node unit.mjs", deps: [], id: "unit", options: {}, tags: [], target: "alpha:unit" },
-        },
-      },
-    });
+    const tasks = {
+      "aot-qualification": { args: [], command: "node aot.mjs", deps: [], id: "aot-qualification", options: {}, tags: ["quality", "static"], target: "alpha:aot-qualification" },
+      "browser-qualification": { args: [], command: "node browser.mjs", deps: [], id: "browser-qualification", options: {}, tags: ["quality", "static"], target: "alpha:browser-qualification" },
+      check: { args: [], command: "node check.mjs", deps: [], id: "check", options: {}, tags: ["quality", "static"], target: "alpha:check" },
+      compile: { args: [], command: "node compile.mjs", deps: [], id: "compile", options: {}, tags: ["quality", "static"], target: "alpha:compile" },
+      "coverage-report": { args: [], command: "node coverage.mjs", deps: [], id: "coverage-report", options: {}, tags: ["coverage"], target: "alpha:coverage-report" },
+      "docs-preview": { args: [], command: "node docs.mjs", deps: [], id: "docs-preview", options: {}, tags: ["quality", "smoke"], target: "alpha:docs-preview" },
+      "graph-unit": { args: [], command: "node graph-unit.mjs", deps: [], id: "graph-unit", options: {}, tags: ["quality", "unit"], target: "alpha:graph-unit" },
+      "local-unit": { args: [], command: "node local-unit.mjs", deps: [], id: "local-unit", options: { runInCI: false }, tags: ["quality", "unit"], target: "alpha:local-unit" },
+      "skipped-unit": { args: [], command: "node skipped-unit.mjs", deps: [], id: "skipped-unit", options: { runInCI: "skip" }, tags: ["quality", "unit"], target: "alpha:skipped-unit" },
+      "tools-compile": { args: [], command: "node tools-compile.mjs", deps: [], id: "tools-compile", options: {}, tags: ["quality", "static"], target: "alpha:tools-compile" },
+      test: { args: [], command: "node test.mjs", deps: [], id: "test", options: {}, tags: ["quality", "unit"], target: "alpha:test" },
+      "tools-unit": { args: [], command: "node tools-unit.mjs", deps: [], id: "tools-unit", options: {}, tags: ["quality", "unit"], target: "alpha:tools-unit" },
+      unit: { args: [], command: "node unit.mjs", deps: [{ target: "alpha:internal" }], id: "unit", options: {}, tags: ["quality", "unit"], target: "alpha:unit" },
+    };
+    const internal = { args: [], command: "node internal.mjs", deps: [], id: "internal", options: { internal: true }, tags: ["requires-rust"], target: "alpha:internal" };
+    const document = JSON.stringify({ tasks: { alpha: tasks }, data: { ...tasks, internal } });
     const midpoint = Math.floor(document.length / 2);
     const stub = moonStub(root, [
       `const first = ${JSON.stringify(document.slice(0, midpoint))};`,
@@ -66,21 +73,35 @@ test("Node planner captures Moon JSON written at the successful child's final ev
         return [line.slice(0, separator), line.slice(separator + 1)];
       }),
     );
-    assert.equal(values.get("check_count"), "3");
-    assert.equal(values.get("test_count"), "4");
+    assert.equal(values.get("check_count"), "6");
+    assert.equal(values.get("test_count"), "5");
     const checkRows = JSON.parse(values.get("check_matrix")).include;
-    assert.equal(checkRows.length, 1);
-    assert.deepEqual(JSON.parse(checkRows[0].targets_json).include.map(({ target }) => target), [
+    assert.equal(checkRows.length, 2);
+    assert.deepEqual(checkRows.flatMap(({ targets_json }) =>
+      JSON.parse(targets_json).include.map(({ target }) => target)), [
+      "alpha:aot-qualification",
+      "alpha:browser-qualification",
       "alpha:check",
       "alpha:compile",
+      "alpha:docs-preview",
       "alpha:tools-compile",
     ]);
-    assert.deepEqual(JSON.parse(values.get("test_matrix")).include.map(({ target }) => target), [
+    assert.deepEqual(JSON.parse(values.get("test_matrix")).include.flatMap(({ targets_json }) =>
+      JSON.parse(targets_json).include.map(({ target }) => target)), [
+      "alpha:coverage-report",
       "alpha:graph-unit",
       "alpha:test",
       "alpha:tools-unit",
       "alpha:unit",
     ]);
+    assert.equal(
+      JSON.parse(values.get("test_matrix")).include.find(({ targets_json }) =>
+        JSON.parse(targets_json).include.some(({ target }) => target === "alpha:unit")
+      ).requires_rust,
+      true,
+    );
+    assert.equal(readFileSync(output, "utf8").includes("alpha:local-unit"), false);
+    assert.equal(readFileSync(output, "utf8").includes("alpha:skipped-unit"), false);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

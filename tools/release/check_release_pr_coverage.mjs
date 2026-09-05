@@ -186,9 +186,8 @@ try {
 const missing = coverage.missingProducts;
 if (missing.length > 0) {
   fail(
-    'the generated release PR did not version every dependency-selected release product. ' +
-      'Moon production/peer edges and directed release compatibility fields are authoritative; ' +
-      'Release Please plus sync-release-pr must own the corresponding versions, changelogs, and tags. ' +
+    'the generated release PR did not version every selected release product. ' +
+      'Each independently versioned product must own its version, changelog, and tag. ' +
       'Missing product version bumps: ' +
       missing.join(', '),
   );

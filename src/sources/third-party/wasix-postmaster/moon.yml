@@ -15,3 +15,7 @@ owners:
   defaultOwner: "@oliphaunt/wasix"
   paths:
     "**/*": ["@oliphaunt/wasix"]
+
+fileGroups:
+  sources:
+    - "*.toml"

@@ -11,7 +11,6 @@ import { WasixStorageError } from '../errors.js';
 import { PostgresError } from '../query.js';
 import type { OliphauntTransaction } from '../types.js';
 
-// liboliphaunt-doc-example:wasix-typescript-transaction
 describe('WASIX database recovery state', () => {
   it('validates explicit startup identities like Rust WASIX', () => {
     expect(normalizeWasixDatabaseIdentity('application', 'products')).toEqual({
@@ -927,6 +926,7 @@ describe('WASIX database recovery state', () => {
     ).rejects.toThrow(/must complete synchronously.*Promise or thenable/);
     await expect(database.execProtocolRaw(Uint8Array.of(2))).resolves.toEqual(ready());
     const dynamicallyTypedThenableCallback: (chunk: Uint8Array) => unknown = () => ({
+      // biome-ignore lint/suspicious/noThenProperty: This test deliberately supplies a thenable.
       then: () => undefined,
     });
     await expect(

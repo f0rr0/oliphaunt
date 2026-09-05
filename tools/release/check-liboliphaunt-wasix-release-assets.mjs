@@ -24,7 +24,7 @@ import {
   portableMemberName,
   readPortableArchiveEntries,
   readPortableTarZstdBufferEntries,
-} from "./portable-archive.mjs";
+} from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import {
   AOT_TARGET_TRIPLES,
   CORE_RUNTIME_ARCHIVE_FILES,

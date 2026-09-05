@@ -1,0 +1,60 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "wasix-ts-integration"
+language: "typescript"
+layer: "tool"
+stack: "infrastructure"
+tags: ["integration", "wasix", "typescript"]
+dependsOn:
+  - id: "shared-test-fixtures"
+    scope: "development"
+  - "liboliphaunt-wasix"
+  - "oliphaunt-wasix-napi"
+  - "oliphaunt-wasix-tools-ts"
+  - "oliphaunt-wasix-ts"
+
+project:
+  title: "WASIX TypeScript Integration"
+  description: "Installed-package runtime checks across the WASIX TypeScript packages and runtime carriers."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+
+tasks:
+  runtime:
+    tags: ["integration", "runtime", "ci-wasix-ts-sdk-package"]
+    script: |
+      set -e
+      node tools/integration/wasix-ts/smoke-node.mjs --runtime node
+      node tools/integration/wasix-ts/smoke-node.mjs --runtime bun
+      node tools/integration/wasix-ts/smoke-node.mjs --runtime deno
+      node tools/integration/wasix-ts/smoke-node.mjs --runtime electron
+      node tools/integration/wasix-ts/smoke-browser.mjs --postgis-worker
+      node tools/integration/wasix-ts/smoke-tools-host.mjs --runtime node
+      tools/dev/bun.sh tools/integration/wasix-ts/smoke-tools-host.mjs --runtime bun
+      tools/dev/deno.sh run --allow-all tools/integration/wasix-ts/smoke-tools-host.mjs --runtime deno
+      node tools/integration/wasix-ts/smoke-browser.mjs --package-only
+    deps:
+      - "liboliphaunt-wasix:runtime-portable"
+      - "oliphaunt-wasix-tools-ts:package"
+      - "oliphaunt-wasix-ts:package"
+      - "release-tools:wasix-napi-runtime"
+    inputs:
+      - "@group(legal-files)"
+      - "@group(pnpm-workspace)"
+      - "/benchmarks/wasix/**/*"
+      - "/examples/browser-wasix/**/*"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - "**/*"
+      - "/tools/dev/bun.sh"
+      - "/tools/dev/deno.sh"
+      - "/tools/perf/wasix-browser/*.mjs"
+      - "/tools/perf/wasix-node/installed-closure.mjs"
+      - "/tools/perf/wasix-node/plan.mjs"
+      - "/tools/release/wasix-*.mjs"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true

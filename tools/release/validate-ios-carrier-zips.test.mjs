@@ -9,7 +9,7 @@ import test from "node:test";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
 const TOOL = path.join(ROOT, "tools/release/validate-ios-carrier-zips.mjs");
-const ARCHIVER = path.join(ROOT, "tools/release/archive_dir.mjs");
+const ARCHIVER = path.join(ROOT, "src/shared/artifact-packaging/archive-directory.mjs");
 
 function run(command, args, { expectFailure = false, ...options } = {}) {
   const result = spawnSync(command, args, {

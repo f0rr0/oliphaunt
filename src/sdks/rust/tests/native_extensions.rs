@@ -31,10 +31,7 @@ const DIRECT_CHILD_BACKUP_ENV: &str = "OLIPHAUNT_EXTENSION_DIRECT_BACKUP";
 const RELEASE_PROOF_RUNNER_ENV: &str = "OLIPHAUNT_NATIVE_EXTENSION_PROOF_RUNNER";
 
 fn extension_smoke_recipe(sql_name: &str) -> String {
-    support::fixture_text(
-        &format!("shared/fixtures/extensions/{sql_name}.sql"),
-        &format!("tests/fixtures/extensions/{sql_name}.sql"),
-    )
+    support::fixture_text(&format!("extensions/{sql_name}.sql"))
 }
 
 fn extension_smoke_statements(sql: &str) -> impl Iterator<Item = &str> {
@@ -61,13 +58,9 @@ fn native_release_proof_catalog_and_smoke_recipes_match() {
 
     let package_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let recipe_directory = [
-        package_root
-            .join("../..")
-            .join("shared/fixtures/extensions"),
-        package_root
-            .join("../..")
-            .join("src/shared/fixtures/extensions"),
-        package_root.join("tests/fixtures/extensions"),
+        package_root.join("../../shared/fixtures/extensions"),
+        package_root.join("../../src/shared/fixtures/extensions"),
+        package_root.join("testdata/extensions"),
     ]
     .into_iter()
     .find(|candidate| candidate.is_dir())

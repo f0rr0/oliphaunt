@@ -22,7 +22,7 @@ import {
   currentProductVersion,
 } from "./release-artifact-targets.mjs";
 import { inspectPlatformBinaryTree } from "./platform-binary-contract.mjs";
-import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import { readPortableArchiveEntries } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import {
   assertReleaseNoticesInArchive,
   releaseNoticeRows,

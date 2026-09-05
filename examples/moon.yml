@@ -5,6 +5,20 @@ language: "typescript"
 layer: "application"
 stack: "frontend"
 tags: ["examples", "integration"]
+dependsOn:
+  - id: "extension-packages"
+    scope: "build"
+  - id: "extensions"
+    scope: "build"
+  - "liboliphaunt-native"
+  - "oliphaunt-broker"
+  - "oliphaunt-js"
+  - "oliphaunt-kotlin"
+  - "oliphaunt-node-direct"
+  - "oliphaunt-react-native"
+  - "oliphaunt-swift"
+  - "oliphaunt-wasix-ts"
+  - "release-tools"
 
 project:
   title: "Integration Examples"
@@ -17,38 +31,170 @@ owners:
     "**/*": ["@oliphaunt/core"]
 
 tasks:
-  check:
-    tags: ["quality", "static"]
-    command: "bash tools/dev/bun.sh examples/tools/check-examples.mjs"
+  js-sdk-smoke:
+    tags: ["runtime", "smoke", "node", "bun", "deno"]
+    command: "sh tools/smoke-js-sdk.sh"
+    deps:
+      - "liboliphaunt-native:build-runtime-desktop-target"
+      - "oliphaunt-broker:build"
+      - "release-tools:node-direct-runtime"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/examples/**/*"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/release-please-config.json"
-      - "!/examples/**/node_modules"
-      - "!/examples/**/node_modules/**"
-      - "/src/runtimes/liboliphaunt/native/VERSION"
-      - "/src/runtimes/liboliphaunt/native/tools-npm/package.json"
-      - "/src/sdks/js/package.json"
-      - "/src/sources/toolchains/wasix.toml"
-      - "/src/bindings/wasix-rust/moon.yml"
-      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
-      - "/src/sdks/react-native/moon.yml"
-      - "/src/**/examples/**/*"
-      - "/src/extensions/contrib/carriers.toml"
-      - "/src/sdks/react-native/tools/mobile-e2e.sh"
-      - "/src/sdks/react-native/tools/expo-android-runner.sh"
-      - "/src/sdks/react-native/tools/expo-ios-runner.sh"
-      - "/examples/tools/check-examples.mjs"
-      - "/examples/tools/check-examples.sh"
-      - "/tools/release/example-cargo-policy.mjs"
-      - "/tools/release/publication-catalog.mjs"
-      - "/tools/release/contrib-carriers.mjs"
-      - "/tools/release/release-graph.mjs"
-      - "/tools/release/wasix-cargo-toolchain-policy.mjs"
+      - project: "oliphaunt-js"
+        group: "code"
+      - "/src/runtimes/liboliphaunt/native/tools/runtime-preflight.sh"
+      - "tools/smoke-js-sdk.sh"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+      runInCI: false
+
+  browser-wasix-compile:
+    tags: ["quality", "static", "browser", "wasix"]
+    command: "pnpm --dir examples/browser-wasix typecheck"
+    deps:
+      - "shared-js-core:build"
+    inputs:
+      - "browser-wasix/**/*"
+      - project: "oliphaunt-wasix-ts"
+        group: "code"
+      - "@group(pnpm-workspace)"
     options:
       cache: true
       runFromWorkspaceRoot: true
+
+  check:
+    tags: ["quality", "static"]
+    command: "bun examples/tools/check-examples.mjs"
+    inputs:
+      - "**/*"
+      - "@group(pnpm-workspace)"
+      - "!/examples/**/node_modules"
+      - "!/examples/**/node_modules/**"
+      - "/src/**/examples/**/*"
+      - "/examples/tools/check-examples.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  react-native-android-build:
+    tags: ["mobile", "build", "android", "ci-mobile-build-android"]
+    script: |
+      export OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT="${OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT:-$PWD/target/mobile-extension-artifacts}"
+      exec pnpm --dir examples/react-native-expo run mobile-build:android
+    deps:
+      - "extension-packages:package-mobile"
+      - "liboliphaunt-native:package-runtime-android-x86_64"
+      - "release-tools:kotlin-sdk-package"
+      - "release-tools:react-native-sdk-package"
+    inputs:
+      - "react-native-expo/**/*"
+      - project: "oliphaunt-kotlin"
+        group: "code"
+      - project: "oliphaunt-react-native"
+        group: "code"
+      - project: "extensions"
+        group: "build"
+      - "/target/mobile-extension-artifacts/**/*"
+      - "/target/sdk-artifacts/oliphaunt-kotlin/**/*"
+      - "/target/sdk-artifacts/oliphaunt-react-native/**/*"
+      - "/tools/native-packaging/**/*"
+    outputs:
+      - "/target/mobile-build/react-native/android/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  react-native-android-e2e:
+    tags: ["mobile", "e2e", "android"]
+    command: "pnpm --dir examples/react-native-expo run mobile-e2e:android"
+    deps:
+      - "integration-examples:react-native-android-build"
+    inputs:
+      - "react-native-expo/src/**/*"
+      - "react-native-expo/maestro/**/*"
+      - "react-native-expo/package.json"
+      - project: "oliphaunt-react-native"
+        group: "code"
+      - "/src/sources/toolchains/android-emulator-runner.toml"
+      - "/src/sources/toolchains/maestro.toml"
+      - "/tools/dev/setup-maestro.sh"
+      - "/target/mobile-build/react-native/android/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: skip
+  react-native-android-drill:
+    tags: ["mobile", "drill", "android"]
+    command: "pnpm --dir examples/react-native-expo run mobile-drill:android"
+    inputs:
+      - "react-native-expo/**/*"
+      - project: "oliphaunt-kotlin"
+        group: "code"
+      - project: "oliphaunt-react-native"
+        group: "code"
+      - project: "extensions"
+        group: "build"
+      - "/tools/native-packaging/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  react-native-ios-build:
+    tags: ["mobile", "build", "ios", "ci-mobile-build-ios"]
+    script: |
+      export OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT="${OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT:-$PWD/target/mobile-extension-artifacts}"
+      exec pnpm --dir examples/react-native-expo run mobile-build:ios
+    deps:
+      - "extension-packages:package-mobile"
+      - "liboliphaunt-native:package-runtime-ios-xcframework"
+      - "release-tools:react-native-sdk-package"
+      - "release-tools:swift-sdk-package"
+    inputs:
+      - "react-native-expo/**/*"
+      - project: "oliphaunt-react-native"
+        group: "code"
+      - project: "oliphaunt-swift"
+        group: "code"
+      - project: "extensions"
+        group: "build"
+      - "/target/mobile-extension-artifacts/**/*"
+      - "/target/sdk-artifacts/oliphaunt-react-native/**/*"
+      - "/target/sdk-artifacts/oliphaunt-swift/**/*"
+      - "/tools/native-packaging/**/*"
+    outputs:
+      - "/target/mobile-build/react-native/ios/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  react-native-ios-e2e:
+    tags: ["mobile", "e2e", "ios"]
+    command: "pnpm --dir examples/react-native-expo run mobile-e2e:ios"
+    deps:
+      - "integration-examples:react-native-ios-build"
+    inputs:
+      - "react-native-expo/src/**/*"
+      - "react-native-expo/maestro/**/*"
+      - "react-native-expo/package.json"
+      - project: "oliphaunt-react-native"
+        group: "code"
+      - "/src/sources/toolchains/maestro.toml"
+      - "/tools/dev/setup-maestro.sh"
+      - "/target/mobile-build/react-native/ios/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: skip
+  react-native-ios-drill:
+    tags: ["mobile", "drill", "ios"]
+    command: "pnpm --dir examples/react-native-expo run mobile-drill:ios"
+    inputs:
+      - "react-native-expo/**/*"
+      - project: "oliphaunt-react-native"
+        group: "code"
+      - project: "oliphaunt-swift"
+        group: "code"
+      - project: "extensions"
+        group: "build"
+      - "/tools/native-packaging/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false

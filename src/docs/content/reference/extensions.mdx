@@ -100,12 +100,13 @@ External extensions are distributed as exact extension artifacts or indexes.
 Native consumers select SQL names; WASIX consumers use the runtime-specific
 typed value or descriptor published for that extension.
 
-Each public exact extension has its own product tag, changelog, and package
-version. The PostgreSQL contrib bundle and both runtime products are versioned
-independently. Exact compatibility metadata creates directed dependency edges:
-a changed dependency may select its consumer, but never the reverse. External
-extension packages own independent packaging SemVer; their immutable upstream
-version/commit and compatible Oliphaunt runtime versions are separate metadata.
+Each public external extension has its own product tag, changelog, and package
+version. The PostgreSQL contrib bundle is only a logical distribution: its
+native and WASIX carriers inherit the corresponding runtime product version.
+Exact compatibility metadata pins a consumer to a published dependency version
+without causing either product to release. External extension packages own
+independent packaging SemVer; their immutable upstream version/commit and
+compatible Oliphaunt runtime versions are separate metadata.
 Do not assume an external package version matches either its upstream project
 version or the runtime version.
 

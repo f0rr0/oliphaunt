@@ -1,7 +1,6 @@
 package dev.oliphaunt
 
 // liboliphaunt-doc-example:kotlin-typed-query
-// liboliphaunt-doc-example:kotlin-setup
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
@@ -39,6 +38,24 @@ class OliphauntDatabaseTest {
     }
 
     @Test
+    fun databaseTypedOperationsParseTheirSuccessfulResponses() = runTest {
+        val query = OliphauntDatabase.open(EngineConfig(), TestEngine(TestSession(rowResponse("1", "SELECT 1"))))
+        assertEquals("1", query.query("SELECT 1").rows.single().text(0))
+
+        val exec = OliphauntDatabase.open(EngineConfig(), TestEngine(TestSession(simpleCommandResponse("CREATE TABLE"))))
+        val command = assertIs<StatementResult.Command>(exec.exec("CREATE TABLE widgets(id int)").statements.single())
+        assertEquals("CREATE TABLE", command.result.commandTag)
+
+        val describeResponse =
+            backendMessage('1', ByteArray(0)) +
+                parameterDescription(listOf(PostgresOid.int4)) +
+                rowDescription("value", PostgresOid.text) +
+                backendMessage('Z', byteArrayOf('I'.code.toByte()))
+        val describe = OliphauntDatabase.open(EngineConfig(), TestEngine(TestSession(describeResponse)))
+        assertEquals(listOf(PostgresOid.int4), describe.describe("SELECT $1", listOf(PostgresOid.int4)).parameterTypes)
+    }
+
+    @Test
     fun executeUsesExtendedProtocolForParameters() = runTest {
         val session = TestSession(commandResponse("INSERT 0 1"))
         val database = OliphauntDatabase.open(EngineConfig(), TestEngine(session))
@@ -73,10 +90,22 @@ class OliphauntDatabaseTest {
         val binary = QueryParam.binary(source, PostgresOid.bytea)
         source[0] = 9
         assertContentEquals(byteArrayOf(1, 2), binary.bytes)
+        assertContentEquals(byteArrayOf(1, 2), QueryParam.Binary(byteArrayOf(1, 2)).value)
         assertEquals(PostgresOid.bytea, binary.typeOid)
         assertEquals(ValueFormat.Binary, binary.format)
-        assertNull(QueryParam.typedNull(PostgresOid.uuid).bytes)
-        assertEquals(ValueFormat.Text, QueryParam.typedNull(PostgresOid.uuid).format)
+        val typedNull = QueryParam.typedNull(PostgresOid.uuid)
+        assertNull(typedNull.bytes)
+        assertEquals(ValueFormat.Text, typedNull.format)
+        assertEquals(QueryParam.Text("text"), QueryParam.text("text"))
+        assertEquals(QueryParam.Text("text", PostgresOid.text), QueryParam.string("text"))
+        assertEquals(QueryParam.Text("t", PostgresOid.bool), QueryParam.boolean(true))
+        assertEquals(QueryParam.Text("7", PostgresOid.int2), QueryParam.short(7))
+        assertEquals(QueryParam.Text("8", PostgresOid.int8), QueryParam.long(8))
+        assertEquals(QueryParam.Text("1.5", PostgresOid.float4), QueryParam.float(1.5f))
+        assertEquals(QueryParam.Text("2.5", PostgresOid.float8), QueryParam.double(2.5))
+        assertEquals(QueryParam.Text("abc", PostgresOid.uuid), QueryParam.uuid("ABC"))
+        assertEquals(QueryParam.Text("abc", PostgresOid.uuid).hashCode(), QueryParam.uuid("ABC").hashCode())
+        assertNotEquals(typedNull, QueryParam.Null)
 
         val request =
             extendedQueryProtocol(

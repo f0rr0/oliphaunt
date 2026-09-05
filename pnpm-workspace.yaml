@@ -1,4 +1,5 @@
 packages:
+  - "src/shared/js-core"
   - "src/docs"
   - "src/sdks/js"
   - "src/runtimes/liboliphaunt/native/icu-npm"

@@ -15,7 +15,7 @@ import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import {
   canonicalGzipSync,
   readPortableArchiveEntries,
-} from "./portable-archive.mjs";
+} from "../../src/shared/artifact-packaging/portable-archive.mjs";
 
 export const CARGO_PACKAGE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
 

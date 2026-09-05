@@ -195,9 +195,9 @@ for (const [name, { tableName, spec }] of [...productDeps].sort(([left], [right]
 )) {
   const version = dependencyVersion(spec);
   const sourcePath = dependencyPath(spec);
-  if (version !== `=${runtimeVersion}`) {
+  if (version !== '*') {
     errors.push(
-      `${PRODUCT_MANIFEST_PATH} ${tableName}.${name} must use exact liboliphaunt-wasix version =${runtimeVersion}, got ${JSON.stringify(version)}`,
+      `${PRODUCT_MANIFEST_PATH} ${tableName}.${name} must use workspace version "*"; release packaging injects the declared runtime compatibility version, got ${JSON.stringify(version)}`,
     );
   }
   if (sourcePath === undefined || sourcePath === null || sourcePath === '') {

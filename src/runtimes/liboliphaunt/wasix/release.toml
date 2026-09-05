@@ -22,6 +22,7 @@ release_artifacts = [
   "release-assets",
 ]
 derived_version_files = ["src/runtimes/liboliphaunt/icu/Cargo.toml"]
+shared_source_paths = ["src/runtimes/liboliphaunt/icu"]
 
 [compatibility_versions.liboliphaunt-wasix-icu]
 source_product = "liboliphaunt-wasix"

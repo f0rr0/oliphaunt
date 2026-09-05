@@ -22,201 +22,85 @@ owners:
     "**/*.swift": ["@oliphaunt/sdk-swift"]
     "Package.swift": ["@oliphaunt/sdk-swift"]
 
+fileGroups:
+  code:
+    - "**/*"
+    - "!.build"
+    - "!.build/**"
+    - "!**/*.md"
+    - "!moon.yml"
+    - "!release.toml"
+
 tasks:
   compile:
     tags: ["quality", "static"]
-    command: "bash src/sdks/swift/tools/check-sdk.sh check-static"
+    command: "swift build --scratch-path ../../../target/moon/oliphaunt-swift/compile"
     inputs:
-      - "/Package.swift"
-      - "/src/shared/fixtures/**/*"
-      - "/src/extensions/generated/sdk/extensions.json"
-      - "/src/sdks/swift/**/*"
-      - "!/src/sdks/swift/.build"
-      - "!/src/sdks/swift/.build/**"
-      - "/tools/runtime/**/*"
+      - "@group(code)"
     options:
       cache: true
-      runFromWorkspaceRoot: true
   unit:
     tags: ["quality", "unit"]
-    command: "bash src/sdks/swift/tools/check-sdk.sh test-unit"
+    script: |
+      set -e
+      sh tools/test-c-bridge.sh
+      swift test --scratch-path ../../../target/moon/oliphaunt-swift/unit
     inputs:
-      - "/Package.swift"
-      - "/src/shared/fixtures/**/*"
-      - "/src/shared/cluster-seed-contract/**/*"
-      - "/src/sdks/swift/**/*"
+      - "@group(code)"
       - "!/src/sdks/swift/.build"
       - "!/src/sdks/swift/.build/**"
-      - "/tools/runtime/**/*"
     options:
       cache: true
-      runFromWorkspaceRoot: true
   smoke:
     tags: ["runtime", "smoke"]
-    command: "bash src/sdks/swift/tools/check-sdk.sh smoke-runtime"
+    script: |
+      set -e
+      . src/runtimes/liboliphaunt/native/tools/runtime-preflight.sh
+      oliphaunt_runtime_native_host_require basic
+      env OLIPHAUNT_SWIFT_REQUIRE_NATIVE=1 \
+        LIBOLIPHAUNT_PATH="$(oliphaunt_runtime_native_host_lib)" \
+        OLIPHAUNT_INSTALL_DIR="$(oliphaunt_runtime_native_host_install_dir)" \
+        swift test --package-path src/sdks/swift --scratch-path target/moon/oliphaunt-swift/smoke
     deps:
       - "liboliphaunt-native:host-smoke"
     inputs:
-      - "/Package.swift"
-      - "/src/extensions/**/*"
-      - "/src/runtimes/liboliphaunt/native/**/*"
-      - "/src/sdks/swift/**/*"
+      - project: "liboliphaunt-native"
+        group: "runtime"
+      - "@group(code)"
       - "!/src/sdks/swift/.build"
       - "!/src/sdks/swift/.build/**"
-      - "/tools/runtime/**/*"
-      - "/tools/xtask/**/*"
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
+      - "/src/runtimes/liboliphaunt/native/tools/runtime-preflight.sh"
     options:
       cache: local
       runFromWorkspaceRoot: true
   package:
     tags: ["package"]
-    command: "bash src/sdks/swift/tools/check-sdk.sh package-shape"
+    script: |
+      set -e
+      rm -rf target/liboliphaunt-sdk-check/oliphaunt-swift/package-shape/swift-source-archive
+      mkdir -p target/liboliphaunt-sdk-check/oliphaunt-swift/package-shape/swift-source-archive/package
+      rsync -a --exclude .build --exclude .swiftpm src/sdks/swift/ target/liboliphaunt-sdk-check/oliphaunt-swift/package-shape/swift-source-archive/package/
+      cp LICENSE THIRD_PARTY_NOTICES.md target/liboliphaunt-sdk-check/oliphaunt-swift/package-shape/swift-source-archive/package/
+      chmod 0644 target/liboliphaunt-sdk-check/oliphaunt-swift/package-shape/swift-source-archive/package/LICENSE target/liboliphaunt-sdk-check/oliphaunt-swift/package-shape/swift-source-archive/package/THIRD_PARTY_NOTICES.md
+      swift package --package-path target/liboliphaunt-sdk-check/oliphaunt-swift/package-shape/swift-source-archive/package archive-source --output target/liboliphaunt-sdk-check/oliphaunt-swift/package-shape/swift-source-archive/Oliphaunt-source.zip
     inputs:
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/Package.swift"
-      - "/src/shared/fixtures/**/*"
-      - "/src/sdks/swift/**/*"
+      - "@group(legal-files)"
+      - "**/*"
       - "!/src/sdks/swift/.build"
       - "!/src/sdks/swift/.build/**"
-      - "/src/runtimes/liboliphaunt/native/bin/build-ios-xcframework.sh"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/runtime/**/*"
     outputs:
       - "/target/liboliphaunt-sdk-check/oliphaunt-swift/package-shape/swift-source-archive/Oliphaunt-source.zip"
     options:
       cache: local
       runFromWorkspaceRoot: true
-  package-artifacts:
-    tags: ["release", "artifact-package", "ci-swift-sdk-package"]
-    command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-swift"
-    deps:
-      - "oliphaunt-swift:package"
-    inputs:
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/release-please-config.json"
-      - "/Package.swift"
-      - "/src/shared/fixtures/**/*"
-      - "/src/extensions/generated/sdk/extensions.json"
-      - "/src/sdks/swift/moon.yml"
-      - "/src/runtimes/liboliphaunt/native/VERSION"
-      - "/src/sdks/swift/**/*"
-      - "!/src/sdks/swift/.build"
-      - "!/src/sdks/swift/.build/**"
-      - "/src/runtimes/liboliphaunt/native/bin/build-ios-xcframework.sh"
-      - "/target/liboliphaunt/release-assets/**/*"
-      - "/tools/dev/bun.sh"
-      - "/tools/release/build-sdk-ci-artifacts.mjs"
-      - "/tools/release/sdk-artifacts/shared.mjs"
-      - "/tools/release/sdk-artifacts/swift.mjs"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/cargo-source-package.mjs"
-      - "/tools/release/check-staged-artifacts.mjs"
-      - "/tools/release/extension-runtime-asset-contract.mjs"
-      - "/tools/release/extension-upstream-licenses.mjs"
-      - "/tools/release/ios-carrier-manifest.mjs"
-      - "/tools/release/platform-compatibility-policy.mjs"
-      - "/tools/release/prepare-rust-release-source.mjs"
-      - "/tools/release/prepare-swift-release-consumer.mjs"
-      - "/tools/release/product-version.mjs"
-      - "/tools/release/extension-target-profiles.mjs"
-      - "/tools/release/extension-target-profiles.toml"
-      - "/tools/release/release-artifact-targets.mjs"
-      - "/tools/release/release-cli-utils.mjs"
-      - "/tools/release/release-graph.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/source-only-sdk-package.mjs"
-      - "/tools/release/render_swiftpm_release_package.mjs"
-      - "/tools/release/rust-native-targets.mjs"
-      - "/tools/release/swift-source-carrier-contract.mjs"
-      - "/tools/release/wasix-cargo-artifact-contract.mjs"
-      - "/tools/policy/source-fetch-core.mjs"
-      - "/tools/runtime/**/*"
-    outputs:
-      - "/target/sdk-artifacts/oliphaunt-swift/**/*"
-    options:
-      cache: local
-      runFromWorkspaceRoot: true
   qualify:
     tags: ["release", "package"]
-    command: "bash src/sdks/swift/tools/check-sdk.sh release-check"
+    command: "true"
     deps:
-      - "liboliphaunt-native:release-runtime"
-    inputs:
-      - "/Package.swift"
-      - "/src/shared/fixtures/**/*"
-      - "/src/sdks/swift/**/*"
-      - "!/src/sdks/swift/.build"
-      - "!/src/sdks/swift/.build/**"
-      - "/src/runtimes/liboliphaunt/native/bin/build-ios-xcframework.sh"
-      - "/tools/runtime/**/*"
-    options:
-      cache: local
-      runFromWorkspaceRoot: true
-  bench:
-    tags: ["bench", "plan"]
-    command: "bash tools/perf/matrix/run_mobile_footprint_matrix.sh --plan-only --quick --platform ios"
-    inputs:
-      - "/src/shared/fixtures/**/*"
-      - "/src/sdks/swift/**/*"
-      - "!/src/sdks/swift/.build"
-      - "!/src/sdks/swift/.build/**"
-      - "/tools/perf/**/*"
-      - "/benchmarks/**/*"
-      - "/release-please-config.json"
-      - "/src/**/targets/**/*.toml"
+      - "oliphaunt-swift:compile"
+      - "oliphaunt-swift:unit"
+      - "oliphaunt-swift:package"
+      - "oliphaunt-swift:smoke"
+    inputs: []
     options:
       cache: true
-      runFromWorkspaceRoot: true
-      runInCI: false
-  regression:
-    tags: ["regression", "runtime"]
-    command: "bash src/sdks/swift/tools/check-sdk.sh regression"
-    inputs:
-      - "/Package.swift"
-      - "/src/shared/fixtures/**/*"
-      - "/src/sdks/swift/**/*"
-      - "!/src/sdks/swift/.build"
-      - "!/src/sdks/swift/.build/**"
-      - "/tools/runtime/**/*"
-    options:
-      cache: local
-      runFromWorkspaceRoot: true
-      runInCI: false
-  coverage:
-    tags: ["coverage", "quality"]
-    command: "tools/coverage/run-product oliphaunt-swift"
-    inputs:
-      - "/Package.swift"
-      - "/coverage/baseline.toml"
-      - "/src/shared/fixtures/**/*"
-      - "/src/sdks/swift/**/*"
-      - "!/src/sdks/swift/.build"
-      - "!/src/sdks/swift/.build/**"
-      - "/tools/coverage/**/*"
-    outputs:
-      - "/target/coverage/oliphaunt-swift/**/*"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
-  bench-run:
-    tags: ["bench", "measured"]
-    command: "bash tools/perf/matrix/run_mobile_footprint_matrix.sh --platform ios"
-    inputs:
-      - "/src/shared/fixtures/**/*"
-      - "/src/sdks/swift/**/*"
-      - "!/src/sdks/swift/.build"
-      - "!/src/sdks/swift/.build/**"
-      - "/tools/perf/**/*"
-      - "/benchmarks/**/*"
-      - "/release-please-config.json"
-      - "/src/**/targets/**/*.toml"
-    options:
-      cache: false
-      runFromWorkspaceRoot: true
-      runInCI: false

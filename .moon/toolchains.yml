@@ -1,22 +1,22 @@
 $schema: "https://moonrepo.dev/schemas/toolchains.json"
 
 proto:
-  version: "0.57.4"
+  version: "0.61.3"
 
 javascript:
-  plugin: "registry://ghcr.io/moonrepo/javascript_toolchain@sha256:cc86bce23fb5d02228da3dd29396da21ff5e63ef97b74e6d7b4e2db78c69c762"
+  plugin: "registry://ghcr.io/moonrepo/javascript_toolchain@sha256:81c26ebeae43fb130ad3ce0411cbdfd3bc4aa9d5e488e25b43a08fda5e790176"
   packageManager: "pnpm"
   installDependencies: false
   syncProjectWorkspaceDependencies: false
 
 node:
-  plugin: "registry://ghcr.io/moonrepo/node_toolchain@sha256:f3d7fb17637b543ea4916caeedbfde6827b94b4b70ab1c30651846d96c8583b1"
+  plugin: "registry://ghcr.io/moonrepo/node_toolchain@sha256:1ac2fab8bf5297bea9361132612b0dd70c63a9482606d06c15e48704643934ec"
   versionFromPrototools: true
 
 pnpm:
-  plugin: "registry://ghcr.io/moonrepo/node_depman_toolchain@sha256:c56f6dd596fbbf9bc628b9fcf145fd6cd5c5d842d5a65537571e775f328ddce6"
+  plugin: "registry://ghcr.io/moonrepo/node_depman_toolchain@sha256:9337febf5b59f5a789a252179a7c2b1dd7c05be79905e311366a016d9f6f8677"
   versionFromPrototools: true
 
 rust:
-  plugin: "registry://ghcr.io/moonrepo/rust_toolchain@sha256:46387ad173cc254f83b4bd392618c8fa530bca667bdafe4c63c5114c4a59f4a5"
+  plugin: "registry://ghcr.io/moonrepo/rust_toolchain@sha256:477b97a7c5f1c98321c43c8a63b4921fa54ee884d49b1b25b9644de5c0e6209e"
   versionFromPrototools: false

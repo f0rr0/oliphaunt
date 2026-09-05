@@ -122,9 +122,9 @@ Moon task names are intentionally narrow:
 - `smoke`: one runtime happy path for that product.
 - `regression`: broader SQL, protocol, extension, lifecycle, or runtime
   regression suites.
-- `bench`: benchmark plan/report validation only.
-- `bench-run`: measured benchmark execution.
-- `coverage`: runs product-native measured line coverage and writes
+- `perf-tools:*-plan`: benchmark plan/report validation only.
+- `perf-tools:*-measure`: measured benchmark execution.
+- `coverage-tools:<product>`: runs product-native measured line coverage and writes
   machine-readable reports under `target/coverage/<product>/`.
 
 `check` and `test` must not call the same command for SDK products. `test`
@@ -132,7 +132,7 @@ must run tests, not metadata-only checks. `smoke` targets must be explicit
 runtime probes and must be run with `--cache off` in CI/release evidence lanes
 where current device/simulator/runtime state matters.
 
-Runtime prerequisites are centralized in `tools/runtime/preflight.sh`. Rust,
+Native and WASIX runtime prerequisites are owned by their runtime projects. Rust,
 Swift, Kotlin, TypeScript, and WASIX smoke/regression lanes use that helper for
 host liboliphaunt, Android liboliphaunt, iOS simulator probe, and WASIX
 asset/AOT checks. Static, package, unit, and coverage lanes remain
@@ -173,7 +173,7 @@ or inconsistent metadata fails before any download.
 
 The Node direct addon likewise treats `src/sources/toolchains/node.toml` as the
 single source for fallback header and Windows import-library release metadata.
-`build-node-addon.sh` continues to prefer an explicit or installed local header
+`package-node-direct-runtime.sh` continues to prefer an explicit or installed local header
 or `node.lib` candidate. Only a missing candidate activates the fallback, which
 then requires the manifest's exact Node runtime, HTTPS-only bounded transfer,
 SHA-256 verification, safe staged header extraction, and atomic cache promotion.
@@ -203,15 +203,16 @@ native reporter for their ecosystem: `cargo-llvm-cov` for Rust and WASIX library
 coverage, `swift test --enable-code-coverage` for Swift, Kover for Kotlin, and
 Vitest V8 coverage for TypeScript and React Native TypeScript code. Each product writes
 `target/coverage/<product>/summary.json` plus its native report formats, and
-`moon run repo:coverage` aggregates those summaries into `target/coverage/summary.json`
-and `target/coverage/summary.md`.
+The local-only `moon run repo:coverage` aggregate writes those summaries to
+`target/coverage/summary.json` and `target/coverage/summary.md`; hosted CI owns
+each product threshold directly and does not rerun the aggregate dependency tree.
 
 Rust and WASIX executable unit tests run through `cargo nextest` with the `ci`
 profile. Unit lanes still run doctests through `cargo test --doc` because
 nextest does not own doctest execution. Coverage lanes measure line coverage
-through `cargo llvm-cov nextest` and then run `cargo test --doc` as stable-Rust
-correctness evidence. Doctest coverage itself requires nightly rustdoc flags, so
-it is not part of the default stable LCOV gate.
+through `cargo llvm-cov nextest`; they do not recompile doctests after the unit
+lane has already established that correctness evidence. Doctest coverage itself
+requires nightly rustdoc flags, so it is not part of the default stable LCOV gate.
 WASIX library unit coverage intentionally uses `--no-default-features`.
 WASIX doctests run with the `tools` feature because the README contains
 tools-gated examples. The `public_api` lane separately enables one exact leaf
@@ -219,9 +220,8 @@ extension feature to compile-check its root selector. Runtime Postgres/WASIX
 execution stays in `smoke` and `regression`, where missing runtime assets must
 fail or skip explicitly according to the lane policy.
 
-TypeScript and React Native unit tests use the shared Vitest discovery runner
-in `tools/test/run-js-tests.mjs`. Coverage calls the same runner with Vitest V8
-coverage enabled, so test discovery and coverage discovery cannot drift. React
+TypeScript and React Native packages invoke Vitest directly. The coverage runner
+invokes the same test directories with Vitest V8 coverage enabled. React
 Native native adapter compile checks, Codegen checks, Expo prebuild/app wiring,
 and installed-device smokes remain separate package or runtime lanes; Vitest
 coverage is only evidence for TypeScript API/config/JSI contract code.

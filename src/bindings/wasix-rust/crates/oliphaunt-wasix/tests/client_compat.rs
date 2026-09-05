@@ -41,7 +41,6 @@ async fn tokio_postgres_parameters_and_error_recovery_work() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sqlx_uses_the_standard_postgres_connection_string() -> Result<()> {
-    // liboliphaunt-doc-example:wasix-rust-sqlx-server
     let mut server = DirectOliphauntServer::builder()
         .username("postgres")
         .database("postgres")

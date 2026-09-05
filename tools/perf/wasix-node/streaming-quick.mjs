@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { Worker } from 'node:worker_threads';
 
-import { createPackedWasixConsumer } from '../../../src/bindings/wasix-ts/tools/packed-node-fixture.mjs';
+import { createPackedWasixConsumer } from '../../integration/wasix-ts/packed-node-fixture.mjs';
 import {
   connect,
   onceClosed,

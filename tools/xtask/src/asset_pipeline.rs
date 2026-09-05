@@ -1189,7 +1189,7 @@ fn wasix_export_list_from_modules(modules: &[BuildModuleManifestOut]) -> Result<
     )?;
     let mut required_exports = BTreeSet::<String>::new();
 
-    for abi_export in required_runtime_abi_exports().iter().copied() {
+    for &abi_export in required_runtime_abi_exports() {
         required_exports.insert(abi_export.to_owned());
     }
 
@@ -3460,13 +3460,19 @@ mod tests {
 
     #[test]
     fn side_module_providers_follow_declared_dynamic_dependencies() {
-        let mut root = WasmLinkMetadataOut::default();
-        root.dylink_needed = vec!["declared.so".to_owned()];
-        root.exports = vec![wasm_export("root_symbol", "func")];
-        let mut declared = WasmLinkMetadataOut::default();
-        declared.exports = vec![wasm_export("declared_symbol", "func")];
-        let mut undeclared = WasmLinkMetadataOut::default();
-        undeclared.exports = vec![wasm_export("undeclared_symbol", "func")];
+        let root = WasmLinkMetadataOut {
+            dylink_needed: vec!["declared.so".to_owned()],
+            exports: vec![wasm_export("root_symbol", "func")],
+            ..Default::default()
+        };
+        let declared = WasmLinkMetadataOut {
+            exports: vec![wasm_export("declared_symbol", "func")],
+            ..Default::default()
+        };
+        let undeclared = WasmLinkMetadataOut {
+            exports: vec![wasm_export("undeclared_symbol", "func")],
+            ..Default::default()
+        };
         let links = BTreeMap::from([
             ("extension:test".to_owned(), root),
             ("extension:test:declared".to_owned(), declared),
@@ -3763,13 +3769,13 @@ fn wasix_icu_data_root() -> Result<PathBuf> {
 
 fn validate_canonical_wasix_icu_data_root(root: &Path) -> Result<()> {
     ensure!(
-        root.is_dir() && tree_contains_icu_files_data(&root)?,
+        root.is_dir() && tree_contains_icu_files_data(root)?,
         "ICU cluster-seed generation requires the exact WASIX ICU files-data tree at {}; build the WASIX runtime first",
         root.display()
     );
-    for file in sorted_files(&root)? {
+    for file in sorted_files(root)? {
         let relative = file
-            .strip_prefix(&root)
+            .strip_prefix(root)
             .with_context(|| format!("strip {} from {}", root.display(), file.display()))?;
         let first = relative
             .components()

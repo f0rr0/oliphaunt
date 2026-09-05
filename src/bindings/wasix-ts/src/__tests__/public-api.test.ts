@@ -28,8 +28,6 @@ import {
 import WorkerOliphaunt, { Oliphaunt as NamedWorkerOliphaunt } from '../worker-entry.js';
 
 describe('WASIX public ORM surface', () => {
-  // liboliphaunt-doc-example:wasix-typescript-root-entrypoint
-  // liboliphaunt-doc-example:wasix-typescript-worker-entrypoint
   it('publishes codecs and PostgreSQL metadata from the root entrypoint', () => {
     expect(typeof Oliphaunt.open).toBe('function');
     expect(WorkerOliphaunt).toBe(NamedWorkerOliphaunt);

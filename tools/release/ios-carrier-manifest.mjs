@@ -28,7 +28,7 @@ import {
   extensionCarrierLegalContract,
   extensionUpstreamLicenseRow,
 } from "./extension-upstream-licenses.mjs";
-import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import { readPortableArchiveEntries } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import {
   releaseNoticeRows,
   releaseProfilePackageLicense,

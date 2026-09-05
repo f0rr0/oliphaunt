@@ -1,6 +1,8 @@
-const RUST_CAPABILITY_TAG = "ci-rust";
-const MAINTAINER_TOOLS_CAPABILITY_TAG = "ci-maintainer-tools";
-const ANDROID_SDK_CAPABILITY_TAG = "ci-android-sdk";
+const RUST_CAPABILITY_TAG = "requires-rust";
+const MAINTAINER_TOOLS_CAPABILITY_TAG = "requires-maintainer-tools";
+const ANDROID_SDK_CAPABILITY_TAG = "requires-android-sdk";
+const APPLE_CAPABILITY_TAG = "requires-apple";
+const WASMER_LLVM_CAPABILITY_TAG = "requires-wasmer-llvm";
 
 const DISPLAY_WORDS = Object.freeze({
   abi: "ABI",
@@ -27,7 +29,7 @@ const DISPLAY_PARTS = Object.freeze({
   "extension-artifacts-native": "Native Extension Artifacts",
 });
 
-export const CHECK_SHARD_MAX_TARGETS = 4;
+export const MAX_TARGETS_PER_JOB = 4;
 
 function taskTags(task) {
   return new Set(Array.isArray(task?.tags) ? task.tags : []);
@@ -67,6 +69,9 @@ export function taskCapabilities(task, taskMap, state = {}) {
   let requiresMaintainerTools = tags.has(MAINTAINER_TOOLS_CAPABILITY_TAG);
   let requiresRust = tags.has(RUST_CAPABILITY_TAG) || requiresMaintainerTools;
   let requiresAndroidSdk = tags.has(ANDROID_SDK_CAPABILITY_TAG);
+  let requiresApple = tags.has(APPLE_CAPABILITY_TAG);
+  let requiresWasmerLlvm = tags.has(WASMER_LLVM_CAPABILITY_TAG);
+  let requiresWorkspace = Array.isArray(task.toolchains) && task.toolchains.includes("pnpm");
 
   for (const dependency of taskDependencies(task)) {
     const dependencyTask = taskMap.get(dependency);
@@ -77,6 +82,9 @@ export function taskCapabilities(task, taskMap, state = {}) {
     requiresMaintainerTools ||= capabilities.requires_maintainer_tools;
     requiresRust ||= capabilities.requires_rust;
     requiresAndroidSdk ||= capabilities.requires_android_sdk;
+    requiresApple ||= capabilities.requires_apple;
+    requiresWasmerLlvm ||= capabilities.requires_wasmer_llvm;
+    requiresWorkspace ||= capabilities.requires_workspace;
   }
 
   visiting.delete(target);
@@ -84,6 +92,9 @@ export function taskCapabilities(task, taskMap, state = {}) {
     requires_rust: requiresRust,
     requires_maintainer_tools: requiresMaintainerTools,
     requires_android_sdk: requiresAndroidSdk,
+    requires_apple: requiresApple,
+    requires_wasmer_llvm: requiresWasmerLlvm,
+    requires_workspace: requiresWorkspace,
   });
   memo.set(target, capabilities);
   return capabilities;
@@ -108,7 +119,7 @@ function compareTargets(left, right) {
   return left.target < right.target ? -1 : left.target > right.target ? 1 : 0;
 }
 
-function shardRow(targets) {
+function groupRow(targets) {
   const first = targets[0];
   return {
     label: targets.map(({ label }) => label).join(" + "),
@@ -116,32 +127,43 @@ function shardRow(targets) {
     requires_rust: first.requires_rust,
     requires_maintainer_tools: first.requires_maintainer_tools,
     requires_android_sdk: first.requires_android_sdk,
+    requires_apple: first.requires_apple,
+    requires_wasmer_llvm: first.requires_wasmer_llvm,
+    requires_workspace: first.requires_workspace,
+    runner: first.requires_apple ? "macos-26" : "ubuntu-24.04",
     targets_json: JSON.stringify({
       include: targets.map(({ target, upstream }) => ({ target, upstream })),
     }),
   };
 }
 
-export function shardCheckTargets(targets, { maxTargets = CHECK_SHARD_MAX_TARGETS } = {}) {
+export function groupTargets(targets, { maxTargets = MAX_TARGETS_PER_JOB } = {}) {
   if (!Number.isInteger(maxTargets) || maxTargets < 1) {
-    throw new Error("check shard size must be a positive integer");
+    throw new Error("target group size must be a positive integer");
   }
   const ordered = [...targets].sort(compareTargets);
   const unique = new Set(ordered.map(({ target }) => target));
   if (unique.size !== ordered.length) {
-    throw new Error("check shard input contains duplicate Moon targets");
+    throw new Error("target group input contains duplicate Moon targets");
   }
 
-  const shardable = ordered.filter((target) =>
-    !target.requires_rust
-    && !target.requires_maintainer_tools
-    && !target.requires_android_sdk);
-  const dedicated = ordered.filter((target) => !shardable.includes(target));
+  const byCapabilities = new Map();
+  for (const target of ordered) {
+    const key = [
+      target.requires_rust,
+      target.requires_maintainer_tools,
+      target.requires_android_sdk,
+      target.requires_apple,
+      target.requires_wasmer_llvm,
+      target.requires_workspace,
+    ].map(Number).join("");
+    byCapabilities.set(key, [...(byCapabilities.get(key) ?? []), target]);
+  }
   const groups = [];
-  for (let index = 0; index < shardable.length; index += maxTargets) {
-    groups.push(shardable.slice(index, index + maxTargets));
+  for (const targetsWithSameSetup of [...byCapabilities.values()]) {
+    for (let index = 0; index < targetsWithSameSetup.length; index += maxTargets) {
+      groups.push(targetsWithSameSetup.slice(index, index + maxTargets));
+    }
   }
-  groups.push(...dedicated.map((target) => [target]));
-
-  return groups.map(shardRow);
+  return groups.map(groupRow);
 }

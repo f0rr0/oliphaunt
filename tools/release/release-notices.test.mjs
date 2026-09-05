@@ -227,7 +227,7 @@ test("validates exact archive members and canonical bytes", (t) => {
   const archive = path.join(root, "carrier.tar.gz");
   const result = spawnSync(
     path.join(ROOT, "tools/dev/bun.sh"),
-    ["tools/release/archive_dir.mjs", "--keep-parent", stage, archive],
+    ["src/shared/artifact-packaging/archive-directory.mjs", "--keep-parent", stage, archive],
     { cwd: ROOT, encoding: "utf8" },
   );
   assert.equal(result.status, 0, result.stderr);
@@ -307,7 +307,7 @@ test("rejects archive byte and mode drift", (t) => {
   const byteArchive = path.join(root, "byte-drift.tar.gz");
   let result = spawnSync(
     path.join(ROOT, "tools/dev/bun.sh"),
-    ["tools/release/archive_dir.mjs", "--keep-parent", stage, byteArchive],
+    ["src/shared/artifact-packaging/archive-directory.mjs", "--keep-parent", stage, byteArchive],
     { cwd: ROOT, encoding: "utf8" },
   );
   assert.equal(result.status, 0, result.stderr);
@@ -324,7 +324,7 @@ test("rejects archive byte and mode drift", (t) => {
   const modeArchive = path.join(root, "mode-drift.tar.gz");
   result = spawnSync(
     path.join(ROOT, "tools/dev/bun.sh"),
-    ["tools/release/archive_dir.mjs", "--keep-parent", stage, modeArchive],
+    ["src/shared/artifact-packaging/archive-directory.mjs", "--keep-parent", stage, modeArchive],
     { cwd: ROOT, encoding: "utf8" },
   );
   assert.equal(result.status, 0, result.stderr);

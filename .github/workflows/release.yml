@@ -348,13 +348,6 @@ jobs:
           INPUT_RELEASE_COMMIT: ${{ inputs.release_commit }}
         run: .github/scripts/resolve-release-head.sh
 
-      - name: Set up pinned Node.js
-        id: setup_github_stage_node
-        timeout-minutes: 3
-        uses: ./.github/actions/setup-node-runtime
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
         with:
@@ -1156,13 +1149,13 @@ jobs:
             --products-json "$EXTENSION_PRODUCTS_JSON" \
             --github-output "$GITHUB_OUTPUT"
 
-      - name: Reserve extension attestation content write (shard 1)
+      - name: Reserve extension provenance write (batch 1)
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.has_extension_products == 'true' && steps.extension_attestation_subjects.outputs.nonempty_1 == 'true' }}
         run: |
-          tools/dev/bun.sh tools/release/github-content-write-pacer.mjs reserve --label "extension attestation shard 1"
-          tools/dev/bun.sh tools/release/github-core-request-journal.mjs reserve --label "extension attestation shard 1 API attempt"
+          tools/dev/bun.sh tools/release/github-content-write-pacer.mjs reserve --label "extension provenance batch 1"
+          tools/dev/bun.sh tools/release/github-core-request-journal.mjs reserve --label "extension provenance batch 1 API attempt"
 
-      - name: Attest selected extension release assets (shard 1)
+      - name: Attest extension release assets (batch 1)
         id: attest_extensions_1
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.has_extension_products == 'true' && steps.extension_attestation_subjects.outputs.nonempty_1 == 'true' }}
         timeout-minutes: 5
@@ -1170,13 +1163,13 @@ jobs:
         with:
           subject-path: ${{ steps.extension_attestation_subjects.outputs.paths_1 }}
 
-      - name: Reserve extension attestation content write (shard 2)
+      - name: Reserve extension provenance write (batch 2)
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.has_extension_products == 'true' && steps.extension_attestation_subjects.outputs.nonempty_2 == 'true' }}
         run: |
-          tools/dev/bun.sh tools/release/github-content-write-pacer.mjs reserve --label "extension attestation shard 2"
-          tools/dev/bun.sh tools/release/github-core-request-journal.mjs reserve --label "extension attestation shard 2 API attempt"
+          tools/dev/bun.sh tools/release/github-content-write-pacer.mjs reserve --label "extension provenance batch 2"
+          tools/dev/bun.sh tools/release/github-core-request-journal.mjs reserve --label "extension provenance batch 2 API attempt"
 
-      - name: Attest selected extension release assets (shard 2)
+      - name: Attest extension release assets (batch 2)
         id: attest_extensions_2
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.has_extension_products == 'true' && steps.extension_attestation_subjects.outputs.nonempty_2 == 'true' }}
         timeout-minutes: 5

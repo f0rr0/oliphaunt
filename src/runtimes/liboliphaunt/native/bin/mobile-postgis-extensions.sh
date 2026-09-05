@@ -312,10 +312,10 @@ build_postgis_libiconv_dependency() {
   fi
   if [ ! -f "$source_dir/configure" ] || [ ! -f "$source_dir/.oliphaunt-source-pin" ]; then
     oliphaunt_postgis_fail \
-      "pinned libiconv source checkout is missing; run tools/dev/bun.sh tools/policy/fetch-sources.mjs native-runtime --force"
+      "pinned libiconv source checkout is missing; run tools/dev/bun.sh src/sources/tools/fetch-sources.mjs native-runtime --force"
   fi
   "$repo_root/tools/dev/bun.sh" \
-    "$repo_root/tools/policy/fetch-sources.mjs" extensions --verify-only >/dev/null
+    "$repo_root/src/sources/tools/fetch-sources.mjs" extensions --verify-only >/dev/null
   rm -rf "$build_root" "$dependency_dir"
   mkdir -p "$build_root" "$dependency_dir"
   rsync -a --delete --exclude .git "$source_dir/" "$build_root/"

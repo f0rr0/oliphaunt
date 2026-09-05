@@ -25,7 +25,7 @@ import {
   assertPackedIcuCarrier,
 } from "./icu-npm-carrier-contract.mjs";
 import { nativeIcuDataManifest } from "./native-icu-data-contract.mjs";
-import { readPortableArchiveEntries } from "./portable-archive.mjs";
+import { readPortableArchiveEntries } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import { stageReleaseNotices } from "./release-notices.mjs";
 import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 

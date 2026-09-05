@@ -3,8 +3,8 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { readPortableArchiveEntries } from "./portable-archive.mjs";
-import { currentVersion } from "./product-version.mjs";
+import { readPortableArchiveEntries } from "../../src/shared/artifact-packaging/portable-archive.mjs";
+import { productCompatibilityVersion } from "./release-graph.mjs";
 import { validateNativeIcuDataManifest } from "./native-icu-data-contract.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -546,7 +546,11 @@ function parseArgs(argv) {
 
 async function main(argv) {
   const args = parseArgs(argv);
-  const liboliphauntVersion = await currentVersion("liboliphaunt-native");
+  const liboliphauntVersion = productCompatibilityVersion(
+    "oliphaunt-swift",
+    "liboliphaunt-native",
+    "render_swiftpm_release_package.mjs",
+  );
   const assetDir = path.resolve(ROOT, args.assetDir);
   const asset = `liboliphaunt-${liboliphauntVersion}-apple-spm-xcframework.zip`;
   const assetBaseUrl =

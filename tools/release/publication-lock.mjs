@@ -27,7 +27,7 @@ import {
   extensionSourceIdentity,
   extensionSqlNames,
 } from "./release-artifact-targets.mjs";
-import { ROOT, compareText } from "./release-graph.mjs";
+import { ROOT, compareText, productCompatibilityVersion } from "./release-graph.mjs";
 import { extensionRuntimeAssetContract } from "./extension-runtime-asset-contract.mjs";
 import { validateNpmTrustedPublishingManifest } from "./npm-trusted-publishing.mjs";
 import {
@@ -43,8 +43,8 @@ import {
   extensionCarrierLegalContract,
   extensionCarrierLegalFileInventory,
 } from "./extension-upstream-licenses.mjs";
-import { readCanonicalTarGzipEntries } from "./portable-archive.mjs";
-import { assertWasixExtensionMemberInstall } from "./wasix-extension-install-contract.mjs";
+import { readCanonicalTarGzipEntries } from "../../src/shared/artifact-packaging/portable-archive.mjs";
+import { assertWasixExtensionMemberInstall } from "../../src/shared/extension-runtime-contract/wasix-extension-install.mjs";
 
 export { validateSelectionNeutralSwiftSourceCarrier };
 
@@ -1508,7 +1508,11 @@ function swiftReleaseInputs(files, product, { requireExtensionFixture }) {
     }
     validateSwiftSourceReleaseContract({
       carrier,
-      expectedNativeVersion: currentProductVersionSync("liboliphaunt-native", "publication-lock"),
+      expectedNativeVersion: productCompatibilityVersion(
+        "oliphaunt-swift",
+        "liboliphaunt-native",
+        "publication-lock",
+      ),
       label: `${product.id} frozen source release`,
       manifestText: readFileSync(path.resolve(ROOT, manifestArtifact.path), "utf8"),
     });

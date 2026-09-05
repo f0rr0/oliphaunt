@@ -2,21 +2,31 @@
 set -euo pipefail
 
 job="${1:-}"
-if [[ -z "$job" ]]; then
-  echo "usage: .github/scripts/run-planned-moon-job.sh <job-id>" >&2
+target="${2:-}"
+if [[ -z "$job" || "$#" -gt 2 ]]; then
+  echo "usage: .github/scripts/run-planned-moon-job.sh <job-id> [target]" >&2
   exit 2
 fi
 
-targets_file="$(mktemp)"
-trap 'rm -f "$targets_file"' EXIT
+execution_file="$(mktemp)"
+trap 'rm -f "$execution_file"' EXIT
 
-bun .github/scripts/select-planned-moon-targets.mjs "$job" >"$targets_file"
+resolve_args=("$job")
+if [[ -n "$target" ]]; then resolve_args+=("$target"); fi
+bun .github/scripts/resolve-planned-moon-execution.mjs "${resolve_args[@]}" >"$execution_file"
 
 targets=()
-while IFS= read -r target; do
+local_dependencies=()
+transferred_dependencies=()
+while IFS=$'\t' read -r kind target; do
   target="${target%$'\r'}"
-  targets+=("$target")
-done <"$targets_file"
+  case "$kind" in
+    local) local_dependencies+=("$target") ;;
+    target) targets+=("$target") ;;
+    transferred) transferred_dependencies+=("$target") ;;
+    *) echo "CI job '$job' has invalid execution-plan row: $kind" >&2; exit 2 ;;
+  esac
+done <"$execution_file"
 
 if [[ "${#targets[@]}" -eq 0 ]]; then
   echo "CI job '$job' has no planned Moon targets" >&2
@@ -26,6 +36,17 @@ fi
 moon_args=()
 if [[ -n "${OLIPHAUNT_MOON_UPSTREAM:-}" ]]; then
   moon_args+=(--upstream "$OLIPHAUNT_MOON_UPSTREAM")
+fi
+
+if [[ "${#transferred_dependencies[@]}" -gt 0 ]]; then
+  if [[ "${#moon_args[@]}" -gt 0 ]]; then
+    echo "CI job '$job' cannot combine transferred dependencies with OLIPHAUNT_MOON_UPSTREAM" >&2
+    exit 2
+  fi
+  if [[ "${#local_dependencies[@]}" -gt 0 ]]; then
+    .github/scripts/run-moon-targets.sh "${local_dependencies[@]}"
+  fi
+  exec .github/scripts/run-moon-targets.sh --upstream none "${targets[@]}"
 fi
 
 if [[ "${#moon_args[@]}" -gt 0 ]]; then

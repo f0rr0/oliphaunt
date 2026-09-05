@@ -20,7 +20,7 @@ import {
   stageReleaseNotices,
 } from '../../../../../tools/release/release-notices.mjs';
 import { stageExtensionUpstreamLicenses } from '../../../../../tools/release/extension-upstream-licenses.mjs';
-import { canonicalGzipSync } from '../../../../../tools/release/portable-archive.mjs';
+import { canonicalGzipSync } from '../../../../../src/shared/artifact-packaging/portable-archive.mjs';
 import { extensionSqlNames } from '../../../../../tools/release/release-artifact-targets.mjs';
 import {
   loadNativeComponentContract,

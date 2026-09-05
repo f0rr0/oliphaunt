@@ -1,8 +1,9 @@
 use super::*;
 use std::path::Component;
 
-const EXTENSION_ARTIFACT_ARCHIVE_POLICY: &str =
-    include_str!("../extension-artifact-archive-policy.properties");
+const EXTENSION_ARTIFACT_ARCHIVE_POLICY: &str = include_str!(
+    "../../../src/shared/extension-runtime-contract/extension-artifact-archive-policy.properties"
+);
 const EXTENSION_ARTIFACT_ARCHIVE_POLICY_SCHEMA: &str =
     "oliphaunt-extension-artifact-archive-policy-v1";
 const DESKTOP_NATIVE_TARGETS: [&str; 4] = [

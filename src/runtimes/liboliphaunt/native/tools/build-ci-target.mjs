@@ -45,17 +45,24 @@ function stagePath(root, stageRoot, source) {
   run("rsync", ["-a", "--delete", `${absoluteSource}/`, `${destination}/`]);
 }
 
-function buildLinuxRuntimeAssets() {
-  run("src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh", ["--runtime-only"]);
+function buildLinuxRuntimeAssets(workRoot) {
+  run("src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh", ["--runtime-only"], {
+    env: { OLIPHAUNT_LINUX_WORK_ROOT: workRoot },
+  });
 }
 
-function buildLinuxDirectRuntimeAssets() {
-  run("src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh");
+function buildLinuxDirectRuntimeAssets(workRoot) {
+  run("src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh", [], {
+    env: { OLIPHAUNT_LINUX_WORK_ROOT: workRoot },
+  });
 }
 
-function buildMacosRuntimeAssets() {
+function buildMacosRuntimeAssets(workRoot) {
   run("src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh", ["--runtime-only"], {
-    env: { OLIPHAUNT_BUILD_EXTENSIONS: process.env.OLIPHAUNT_BUILD_EXTENSIONS ?? "0" },
+    env: {
+      OLIPHAUNT_BUILD_EXTENSIONS: process.env.OLIPHAUNT_BUILD_EXTENSIONS ?? "0",
+      OLIPHAUNT_WORK_ROOT: workRoot,
+    },
   });
 }
 
@@ -90,10 +97,9 @@ if (mobileExtensions !== "") {
 }
 
 const stageRoot = path.join(root, "target/liboliphaunt-native-ci", target);
+const hostWorkRoot = path.join(root, "target/liboliphaunt-mobile-host", target);
 rmSync(stageRoot, { recursive: true, force: true });
 mkdirSync(stageRoot, { recursive: true });
-
-run("bun", ["tools/policy/fetch-sources.mjs", "native-runtime"]);
 
 if (target === "android-arm64-v8a") {
   run("src/runtimes/liboliphaunt/native/bin/build-postgres18-android-arm64.sh", [], {
@@ -102,9 +108,9 @@ if (target === "android-arm64-v8a") {
       OLIPHAUNT_ANDROID_ARM64_ROOT: path.join(root, "target/liboliphaunt-pg18-android-arm64"),
     },
   });
-  buildLinuxRuntimeAssets();
+  buildLinuxRuntimeAssets(hostWorkRoot);
   writeMobileAbiReceipt(
-    path.join(root, "target/liboliphaunt-pg18-linux-x64-gnu/postgresql-18.4"),
+    path.join(hostWorkRoot, "postgresql-18.4"),
     "linux-x64-gnu",
     path.join(root, "target/liboliphaunt-pg18-android-arm64/out/native-mobile-abi-producer.properties"),
   );
@@ -114,8 +120,8 @@ if (target === "android-arm64-v8a") {
     path.join(root, "target/liboliphaunt-pg18-android-arm64/out/native-mobile-abi.properties"),
   );
   stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-pg18-android-arm64/out"));
-  stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-pg18-linux-x64-gnu/install"));
-  stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-pg18-linux-x64-gnu/icu/share/icu"));
+  stagePath(root, stageRoot, path.join(hostWorkRoot, "install"));
+  stagePath(root, stageRoot, path.join(hostWorkRoot, "icu/share/icu"));
 } else if (target === "android-x86_64") {
   run("src/runtimes/liboliphaunt/native/bin/build-postgres18-android-x86_64.sh", [], {
     env: {
@@ -123,9 +129,9 @@ if (target === "android-arm64-v8a") {
       OLIPHAUNT_ANDROID_X86_64_ROOT: path.join(root, "target/liboliphaunt-pg18-android-x86_64"),
     },
   });
-  buildLinuxDirectRuntimeAssets();
+  buildLinuxDirectRuntimeAssets(hostWorkRoot);
   writeMobileAbiReceipt(
-    path.join(root, "target/liboliphaunt-pg18-linux-x64-gnu/postgresql-18.4"),
+    path.join(hostWorkRoot, "postgresql-18.4"),
     "linux-x64-gnu",
     path.join(root, "target/liboliphaunt-pg18-android-x86_64/out/native-mobile-abi-producer.properties"),
   );
@@ -135,17 +141,19 @@ if (target === "android-arm64-v8a") {
     path.join(root, "target/liboliphaunt-pg18-android-x86_64/out/native-mobile-abi.properties"),
   );
   stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-pg18-android-x86_64/out"));
-  stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-pg18-linux-x64-gnu/install"));
-  stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-pg18-linux-x64-gnu/out/modules"));
-  stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-pg18-linux-x64-gnu/icu/share/icu"));
+  stagePath(root, stageRoot, path.join(hostWorkRoot, "install"));
+  stagePath(root, stageRoot, path.join(hostWorkRoot, "out/modules"));
+  stagePath(root, stageRoot, path.join(hostWorkRoot, "icu/share/icu"));
 } else if (target === "ios-xcframework") {
-  run("src/runtimes/liboliphaunt/native/bin/build-ios-xcframework.sh");
-  buildMacosRuntimeAssets();
+  run("src/runtimes/liboliphaunt/native/bin/build-ios-xcframework.sh", [], {
+    env: { OLIPHAUNT_WORK_ROOT: hostWorkRoot },
+  });
+  buildMacosRuntimeAssets(hostWorkRoot);
   const iosDeviceReceipt = path.join(root, "target/liboliphaunt-ios-device/out/native-mobile-abi.properties");
   const iosSimulatorReceipt = path.join(root, "target/liboliphaunt-ios-simulator/out/native-mobile-abi.properties");
   const macosProducerReceipt = path.join(root, "target/liboliphaunt-ios-xcframework/out/native-mobile-abi-producer.properties");
   writeMobileAbiReceipt(
-    path.join(root, "target/liboliphaunt-pg18/postgresql-18.4"),
+    path.join(hostWorkRoot, "postgresql-18.4"),
     "macos-arm64",
     macosProducerReceipt,
   );
@@ -170,7 +178,7 @@ if (target === "android-arm64-v8a") {
   stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-ios-xcframework/out"));
   stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-ios-simulator/out"));
   stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-ios-device/out"));
-  stagePath(root, stageRoot, path.join(root, "target/liboliphaunt-pg18/install"));
+  stagePath(root, stageRoot, path.join(hostWorkRoot, "install"));
 }
 
 console.log(`\nStaged liboliphaunt CI target artifact: ${stageRoot}`);

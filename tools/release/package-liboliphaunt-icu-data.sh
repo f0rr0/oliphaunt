@@ -63,7 +63,7 @@ tools/dev/bun.sh tools/release/write-icu-package-size-report.mjs \
 
 tools/dev/bun.sh tools/release/release-notices.mjs stage "$stage" --profile native-icu-data
 
-tools/release/archive_dir.mjs "$stage" "$partial"
+src/shared/artifact-packaging/archive-directory.mjs "$stage" "$partial"
 tools/dev/bun.sh tools/release/release-notices.mjs check-archive "$partial" --profile native-icu-data
 mv -f "$partial" "$out_dir/$asset"
 echo "liboliphauntIcuDataReleaseAsset=$out_dir/$asset"

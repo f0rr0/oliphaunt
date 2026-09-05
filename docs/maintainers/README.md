@@ -14,7 +14,8 @@ Executable configuration is authoritative. Documentation explains intent and ope
 | WASIX postmaster runtime and carrier | `wasix-postmaster.md` | `src/runtimes/liboliphaunt/wasix-postmaster`, its Moon project, sealed-carrier policy, and release metadata |
 | Extension support and packaging | `extension-packaging-policy.md` | extension catalog, global target profiles, native-component contract, release catalog |
 | SDK contracts | `sdk-products-policy.md`, `sdk-parity-policy.md`, `sdk-api-surface.md` | SDK manifests, package manifests, generated extension metadata, clean-consumer tests |
-| Repository layout | `repo-structure.md` | Moon graph and build/package manifests |
+| Product, task, qualification, and release boundaries | `../architecture/final-product-source-architecture.md` | Moon graph, release metadata, and workflows |
+| Repository layout | `repo-structure.md` | Moon projects and ecosystem manifests |
 
 The repository-local skills under `.codex/skills/` are the procedural entry
 points for agents:

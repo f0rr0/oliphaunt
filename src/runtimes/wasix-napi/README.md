@@ -99,10 +99,11 @@ manifest/archive/AOT manifest, and ICU tree digest are embedded under
 object also records the release Cargo profile, disabled incremental compilation,
 single codegen unit, thin LTO, symbol stripping, exact `release` feature, and
 Rust target triple.
-The addon's `runtimeVersion()` identity comes from the exact
-`liboliphaunt-wasix-portable` dependency. Product metadata tracks that runtime
-and the `oliphaunt-wasix` Rust binding as separate compatibility versions; they
-are not assumed to advance together.
+The addon's `runtimeVersion()` identity comes directly from the selected
+`liboliphaunt-wasix-portable` crate. Workspace builds therefore report the
+local runtime while released carriers retain exact product compatibility pins.
+Product metadata tracks the runtime and `oliphaunt-wasix` Rust binding as
+separate compatibility versions; they are not assumed to advance together.
 
 ## Distribution
 

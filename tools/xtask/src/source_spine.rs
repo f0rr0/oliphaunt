@@ -33,6 +33,7 @@ pub(super) fn check_sources_manifest_for_wasix_asset_build(
     if args.iter().any(|arg| arg == "--fetch") {
         fetch_pinned_sources_for_source_lane(&manifest, source_lane, true, source_scope)?;
     } else {
+        prepare_postgres_source_tree()?;
         check_source_spine_for_source_lane_filtered(
             &manifest,
             source_lane,
@@ -127,7 +128,11 @@ impl SourceFetchScope {
 
 fn run_hardened_source_fetch(scope: SourceFetchScope) -> Result<()> {
     let mut command = Command::new("tools/dev/bun.sh");
-    command.args(["tools/policy/fetch-sources.mjs", scope.as_arg(), "--force"]);
+    command.args([
+        "src/sources/tools/fetch-sources.mjs",
+        scope.as_arg(),
+        "--force",
+    ]);
     run_command(&mut command).with_context(|| {
         format!(
             "materialize {} sources through the hardened source acquisition spine",

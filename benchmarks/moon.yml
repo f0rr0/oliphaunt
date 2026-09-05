@@ -16,12 +16,6 @@ owners:
   paths:
     "**/*": ["@oliphaunt/perf"]
 
-tasks:
-  check:
-    tags: ["quality", "static"]
-    command: "true"
-    inputs:
-      - "/benchmarks/**/*"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
+fileGroups:
+  native-sql:
+    - "native/sql/*.sql"

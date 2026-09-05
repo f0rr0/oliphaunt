@@ -4,7 +4,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { moonCommand } from "../dev/moon-command.mjs";
+import { moonCommand, moonEnvironment } from "../dev/moon-command.mjs";
 import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -24,7 +24,9 @@ async function writeMoonStub(bin, script) {
     script,
     [
       'import { appendFileSync } from "node:fs";',
-      'if (process.argv.slice(2).join(" ") !== "query projects") process.exit(41);',
+      'const args = process.argv.slice(2).join(" ");',
+      'if (args === "--version") { process.stdout.write(`moon ${process.env.MOON_STUB_VERSION ?? "2.5.4"}\\n`); process.exit(0); }',
+      'if (args !== "query projects") process.exit(41);',
       'appendFileSync(process.env.MOON_STUB_MARKER, "path-stub\\n");',
       'process.stdout.write(process.env.MOON_PROJECTS_JSON);',
       "",
@@ -67,7 +69,7 @@ afterEach(async () => {
 });
 
 describe("Moon command resolution", () => {
-  test("release graph consumes Moon's resolved dependency scopes", async () => {
+  test("release graph separates Moon dependencies from published compatibility", async () => {
     const root = await fixture("resolved-dependencies");
     const bin = path.join(root, "bin");
     const script = path.join(root, "moon-stub.mjs");
@@ -98,14 +100,17 @@ describe("Moon command resolution", () => {
     };
     delete environment.MOON_BIN;
     const probe = [
-      'import { downstreamProjects, moonProjectsById, releaseOrder } from "./tools/release/release-graph.mjs";',
+      'import { moonProjectsById, releaseOrder } from "./tools/release/release-graph.mjs";',
       'const projects = moonProjectsById("moon-query-test");',
       'const graph = Object.fromEntries(projects);',
-      'const products = Object.fromEntries([...projects.keys()].map((id) => [id, { path: `packages/${id}` }]));',
+      'const products = {',
+      '  runtime: { path: "packages/runtime" },',
+      '  "consumer-production": { path: "packages/consumer-production", compatibility_versions: { runtime: { source_product: "runtime" } } },',
+      '  "consumer-build": { path: "packages/consumer-build" },',
+      '};',
       'process.stdout.write(JSON.stringify({',
       '  productionScope: graph["consumer-production"].dependencies[0].scope,',
       '  buildScope: graph["consumer-build"].dependencies[0].scope,',
-      '  releaseClosure: [...downstreamProjects(graph, ["runtime"], { releaseOnly: true })].sort(),',
       '  order: releaseOrder(products, graph, new Set(Object.keys(products)), "moon-query-test"),',
       '}));',
     ].join("\n");
@@ -119,7 +124,6 @@ describe("Moon command resolution", () => {
     expect(JSON.parse(new TextDecoder().decode(result.stdout))).toEqual({
       productionScope: "production",
       buildScope: "build",
-      releaseClosure: ["consumer-production", "runtime"],
       order: ["consumer-build", "runtime", "consumer-production"],
     });
   });
@@ -157,9 +161,10 @@ describe("Moon command resolution", () => {
     expect(await readFile(marker, "utf8")).toBe("path-stub\n");
   });
 
-  test("honors an explicit MOON_BIN and reports a missing command cleanly", () => {
-    expect(moonCommand({ MOON_BIN: "/verified/moon" })).toBe("/verified/moon");
-    expect(moonCommand({})).toBe("moon");
+  test("reports a missing Moon command cleanly", () => {
+    expect(moonEnvironment({ PATH: "/verified", PROTO_VERSION: "poison" })).toEqual({
+      PATH: "/verified",
+    });
 
     const missing = path.join(tmpdir(), `missing-moon-${randomUUID()}`);
     const result = spawnSync(process.execPath, [CHECK], {
@@ -168,7 +173,7 @@ describe("Moon command resolution", () => {
       stdio: ["ignore", "pipe", "pipe"],
     });
     expect(result.status).toBe(2);
-    expect(new TextDecoder().decode(result.stderr)).toContain("moon query projects failed to start");
+    expect(new TextDecoder().decode(result.stderr)).toContain("Moon 2.5.4 is required");
 
     const graphResult = spawnSync(process.execPath, [RELEASE_PLAN, "--changed-file", "README.md", "--format", "json"], {
       cwd: ROOT,
@@ -176,7 +181,24 @@ describe("Moon command resolution", () => {
       stdio: ["ignore", "pipe", "pipe"],
     });
     expect(graphResult.status).toBe(1);
-    expect(new TextDecoder().decode(graphResult.stderr)).toContain(`${missing} failed`);
+    expect(new TextDecoder().decode(graphResult.stderr)).toContain(`${missing} failed to start`);
+  });
+
+  test("rejects an ambient Moon version that differs from .prototools", async () => {
+    const root = await fixture("wrong-version");
+    const bin = path.join(root, "bin");
+    const script = path.join(root, "moon-stub.mjs");
+    await writeMoonStub(bin, script);
+    const environment = {
+      ...process.env,
+      PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+      MOON_STUB_RUNTIME: process.execPath,
+      MOON_STUB_SCRIPT: script,
+      MOON_STUB_VERSION: "2.4.0",
+    };
+    delete environment.MOON_BIN;
+
+    expect(() => moonCommand(environment)).toThrow("Moon 2.5.4 is required, but moon reported 2.4.0");
   });
 
 });

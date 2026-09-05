@@ -297,7 +297,7 @@ route = "sdk/wasix-typescript"
 source = "src/docs/content/sdk/wasix-typescript"
 version_source = "src/bindings/wasix-ts/release.toml:id"
 reference_kind = "typedoc"
-tested_snippet_path = "src/bindings/wasix-ts/tools/smoke-node.mjs"
+tested_snippet_path = "tools/integration/wasix-ts/smoke-node.mjs"
 tested_snippet_marker = "OLIPHAUNT_DOCS_SNIPPET wasix-typescript-quickstart"
 required_pages = [
   "index",

@@ -12,7 +12,7 @@ target_sdk_line_coverage = 85.0
 [products.oliphaunt-rust]
 tool = "cargo-llvm-cov"
 line_threshold = 80.0
-measured_line_coverage = 82.65
+measured_line_coverage = 86.09
 summary = "target/coverage/oliphaunt-rust/summary.json"
 reports = ["target/coverage/oliphaunt-rust/lcov.info"]
 source_globs = ["src/sdks/rust/src/*.rs"]
@@ -30,6 +30,13 @@ function_coverage = "advisory"
 path = "src/sdks/rust/src/broker.rs"
 reason = "broker process orchestration is runtime/integration evidence, not deterministic unit coverage yet"
 evidence = "oliphaunt-rust smoke/regression lanes and TypeScript broker helper tests"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-rust.waivers]]
+path = "src/sdks/rust/src/broker_support.rs"
+reason = "unpublished broker-helper boundary is compiled only for the packaged broker executable"
+evidence = "broker helper build plus native broker smoke/regression lanes"
 owner = "@oliphaunt/core"
 expires = "before-0.2.0"
 
@@ -64,7 +71,7 @@ expires = "before-0.2.0"
 [products.oliphaunt-swift]
 tool = "swift test --enable-code-coverage"
 line_threshold = 80.0
-measured_line_coverage = 86.83
+measured_line_coverage = 81.45
 summary = "target/coverage/oliphaunt-swift/summary.json"
 reports = ["target/coverage/oliphaunt-swift/swift-coverage.json"]
 source_globs = [
@@ -87,10 +94,17 @@ evidence = "Swift smoke, iOS/macOS packaging, and liboliphaunt C ABI tests"
 owner = "@oliphaunt/core"
 expires = "before-0.2.0"
 
+[[products.oliphaunt-swift.waivers]]
+path = "src/sdks/swift/Sources/Oliphaunt/OliphauntRuntimeResources.swift"
+reason = "packaged runtime discovery and filesystem materialization are qualified by real carrier and installed-consumer lanes"
+evidence = "Swift resource composition tests, Swift release consumer, and iOS mobile app qualification"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
 [products.oliphaunt-kotlin]
 tool = "kover"
 line_threshold = 80.0
-measured_line_coverage = 82.04
+measured_line_coverage = 80.03
 summary = "target/coverage/oliphaunt-kotlin/summary.json"
 reports = ["target/coverage/oliphaunt-kotlin/kover.xml"]
 source_globs = ["src/sdks/kotlin/oliphaunt/src/**/*.kt"]
@@ -130,7 +144,7 @@ expires = "before-0.2.0"
 [products.oliphaunt-js]
 tool = "vitest-v8"
 line_threshold = 80.0
-measured_line_coverage = 81.84
+measured_line_coverage = 82.97
 summary = "target/coverage/oliphaunt-js/summary.json"
 reports = [
   "target/coverage/oliphaunt-js/coverage-summary.json",
@@ -144,6 +158,8 @@ exclude_globs = [
   "src/sdks/js/src/__tests__/**",
   "src/sdks/js/src/**/*.d.ts",
   "src/sdks/js/src/**/types.ts",
+  "src/sdks/js/src/protocol.ts",
+  "src/sdks/js/src/query.ts",
   "src/sdks/js/lib/**",
   "src/sdks/js/node_modules/**",
 ]
@@ -217,7 +233,7 @@ expires = "before-0.2.0"
 [products.oliphaunt-react-native]
 tool = "vitest-v8"
 line_threshold = 80.0
-measured_line_coverage = 81.68
+measured_line_coverage = 87.30
 summary = "target/coverage/oliphaunt-react-native/summary.json"
 reports = [
   "target/coverage/oliphaunt-react-native/coverage-summary.json",
@@ -226,10 +242,13 @@ reports = [
 source_globs = [
   "src/sdks/react-native/src/*.ts",
   "src/sdks/react-native/src/**/*.ts",
-  "src/sdks/react-native/app.plugin.js",
+  "src/sdks/react-native/app*.js",
 ]
 exclude_globs = [
   "src/sdks/react-native/src/__tests__/**",
+  "src/sdks/react-native/src/generated/**",
+  "src/sdks/react-native/src/protocol.ts",
+  "src/sdks/react-native/src/query.ts",
   "src/sdks/react-native/lib/**",
   "src/sdks/react-native/node_modules/**",
 ]
@@ -244,10 +263,17 @@ evidence = "codegen:check, package-shape checks, and RN native adapter compile l
 owner = "@oliphaunt/core"
 expires = "before-0.2.0"
 
+[[products.oliphaunt-react-native.waivers]]
+path = "src/sdks/react-native/app.plugin.js"
+reason = "Expo prebuild filesystem mutation is qualified against staged native carriers and generated apps"
+evidence = "config-plugin unit tests plus Android and iOS mobile app qualification"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
 [products.oliphaunt-wasix-rust]
 tool = "cargo-llvm-cov"
 line_threshold = 80.0
-measured_line_coverage = 89.72
+measured_line_coverage = 85.49
 summary = "target/coverage/oliphaunt-wasix-rust/summary.json"
 reports = ["target/coverage/oliphaunt-wasix-rust/lcov.info"]
 source_globs = [
@@ -274,7 +300,7 @@ waivers = []
 [products.oliphaunt-wasix-ts]
 tool = "vitest-v8"
 line_threshold = 80.0
-measured_line_coverage = 80.36
+measured_line_coverage = 80.32
 summary = "target/coverage/oliphaunt-wasix-ts/summary.json"
 reports = [
   "target/coverage/oliphaunt-wasix-ts/coverage-summary.json",
@@ -287,10 +313,16 @@ source_globs = [
 exclude_globs = [
   "src/bindings/wasix-ts/src/__tests__/**",
   "src/bindings/wasix-ts/src/**/*.d.ts",
+  "src/bindings/wasix-ts/src/direct.node.ts",
+  "src/bindings/wasix-ts/src/server.node.ts",
   "src/bindings/wasix-ts/src/types.ts",
   "src/bindings/wasix-ts/src/public.ts",
+  "src/bindings/wasix-ts/src/protocol.ts",
+  "src/bindings/wasix-ts/src/query.ts",
   "src/bindings/wasix-ts/src/index.ts",
   "src/bindings/wasix-ts/src/index.*.ts",
+  "src/bindings/wasix-ts/src/worker-entry.ts",
+  "src/bindings/wasix-ts/src/worker-entry.*.ts",
   "src/bindings/wasix-ts/src/storage/bun.ts",
   "src/bindings/wasix-ts/src/storage/deno.ts",
   "src/bindings/wasix-ts/lib/**",
@@ -332,5 +364,33 @@ expires = "before-0.2.0"
 path = "src/bindings/wasix-ts/src/worker.ts"
 reason = "browser Worker entrypoint lifecycle requires a real WASIX runtime and browser worker host"
 evidence = "browser Worker smoke and package lanes"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-wasix-ts.waivers]]
+path = "src/bindings/wasix-ts/src/internal.ts"
+reason = "browser tool-worker construction requires a real packaged browser Worker host"
+evidence = "browser tool lifecycle and packaged browser smoke lanes"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-wasix-ts.waivers]]
+path = "src/bindings/wasix-ts/src/internal.node.ts"
+reason = "native tool dispatch requires the packaged WASIX Node-API carrier"
+evidence = "Node, Bun, Deno, and Electron packaged tool smoke lanes"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-wasix-ts.waivers]]
+path = "src/bindings/wasix-ts/src/tool-worker.ts"
+reason = "browser Worker bootstrap is exercised only inside the packaged Worker host"
+evidence = "browser tool lifecycle and packaged browser smoke lanes"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-wasix-ts.waivers]]
+path = "src/bindings/wasix-ts/src/worker-node-client.ts"
+reason = "Node Worker creation and embedded carrier stripping require the packaged Node-API runtime"
+evidence = "Node, Bun, Deno, and Electron Worker package smoke lanes"
 owner = "@oliphaunt/core"
 expires = "before-0.2.0"

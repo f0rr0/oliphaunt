@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { moonCommand } from '../dev/moon-command.mjs';
+import { moonCommand, moonEnvironment } from '../dev/moon-command.mjs';
 import { captureCommandOutput } from '../dev/capture-command-output.mjs';
 import { releasePleaseBootstrapLifecycleError } from './release-please-bootstrap.mjs';
 import { assertReleasePleasePackageIdentity } from './release-please-package-identity.mjs';
@@ -117,6 +117,7 @@ function runMoonProjects() {
   try {
     result = captureCommandOutput(moonCommand(), ['query', 'projects'], {
       cwd: root,
+      env: moonEnvironment(),
       label: 'moon query projects',
     });
   } catch (error) {

@@ -6,42 +6,33 @@ layer: "tool"
 stack: "infrastructure"
 tags: ["tools", "release"]
 dependsOn:
-  - id: "postgres18"
+  - id: "artifact-packaging"
     scope: "build"
-  - id: "source-toolchains"
-    scope: "build"
-  - id: "third-party-shared"
-    scope: "build"
-  - id: "third-party-native"
-    scope: "build"
-  - id: "third-party-wasix"
+  - id: "shared-test-fixtures"
+    scope: "development"
+  - id: "extension-runtime-contract"
     scope: "build"
   - id: "extensions"
+    scope: "build"
+  - id: "extension-artifacts-wasix"
+    scope: "build"
+  - id: "extension-artifacts-native"
     scope: "build"
   - id: "liboliphaunt-native"
     scope: "build"
   - id: "liboliphaunt-wasix"
     scope: "build"
-  - id: "oliphaunt-rust"
-    scope: "build"
-  - id: "oliphaunt-broker"
-    scope: "build"
-  - id: "oliphaunt-node-direct"
-    scope: "build"
-  - id: "oliphaunt-wasix-napi"
-    scope: "build"
-  - id: "oliphaunt-swift"
-    scope: "build"
-  - id: "oliphaunt-kotlin"
-    scope: "build"
-  - id: "oliphaunt-react-native"
-    scope: "build"
-  - id: "oliphaunt-js"
-    scope: "build"
-  - id: "oliphaunt-wasix-rust"
-    scope: "build"
-  - id: "oliphaunt-wasix-ts"
-    scope: "build"
+  - "oliphaunt-broker"
+  - "oliphaunt-js"
+  - "oliphaunt-kotlin"
+  - "oliphaunt-node-direct"
+  - "oliphaunt-react-native"
+  - "oliphaunt-rust"
+  - "oliphaunt-swift"
+  - "oliphaunt-wasix-rust"
+  - "oliphaunt-wasix-ts"
+  - "oliphaunt-wasix-tools-ts"
+  - "oliphaunt-wasix-napi"
 
 project:
   title: "Release Tools"
@@ -54,22 +45,249 @@ owners:
     "**/*": ["@oliphaunt/core"]
 
 tasks:
-  # Planner-only source edge for the fail-closed validation that runs after
-  # both iOS carrier producers and before either artifact upload.
-  ios-carrier-validation-trigger:
-    tags: ["release", "planner"]
-    command: "true"
+  js-sdk-package:
+    tags: ["release", "artifact-package", "ci-js-sdk-package"]
+    command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-js"
+    deps:
+      - "oliphaunt-js:package"
     inputs:
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/validate-ios-carrier-zips.mjs"
+      - "@group(legal-files)"
+      - "@group(pnpm-workspace)"
+      - "@group(release-archive-contract)"
+      - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
+      - "/tools/release/sdk-artifacts/js.mjs"
+      - "/tools/release/sdk-artifacts/npm.mjs"
+      - "/tools/release/sdk-artifacts/shared.mjs"
+      - "/tools/release/source-only-sdk-package.mjs"
+      - "/src/shared/js-core/tools/stage-package.mjs"
+      - "/tools/dev/bun.sh"
+      - "/src/sources/tools/source-fetch-core.mjs"
+    outputs:
+      - "/target/sdk-artifacts/oliphaunt-js/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  rust-sdk-package:
+    tags: ["release", "artifact-package", "ci-rust-sdk-package"]
+    command: "tools/dev/bun.sh tools/release/build-cargo-sdk-ci-artifacts.mjs oliphaunt-rust"
+    deps:
+      - "oliphaunt-rust:package"
+    env:
+      CARGO_TARGET_DIR: "target/moon/release-tools/rust-sdk-package"
+    inputs:
+      - "@group(legal-files)"
+      - "@group(cargo-workspace)"
+      - "@group(release-archive-contract)"
+      - "@group(release-target-contract)"
+      - "/tools/release/build-cargo-sdk-ci-artifacts.mjs"
+      - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - project: "artifact-packaging"
+        group: "source"
+      - "/tools/release/cargo-source-package.mjs"
+      - "/tools/release/check-cargo-package-test-closure.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
+      - "/tools/release/contrib-carriers.mjs"
+      - "/tools/release/prepare-rust-release-source.mjs"
+      - "/tools/release/release-graph.mjs"
+      - "/tools/release/rust-native-targets.mjs"
+      - "/tools/release/sdk-artifacts/rust.mjs"
+      - "/tools/release/sdk-artifacts/shared.mjs"
+      - "/tools/dev/bun.sh"
+      - "/src/sources/tools/source-fetch-core.mjs"
+    outputs:
+      - "/target/sdk-artifacts/oliphaunt-rust/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  rust-sdk-consumer:
+    tags: ["release", "runtime", "ci-rust-sdk-package"]
+    command: >-
+      src/sdks/rust/tools/check-release-consumer.sh build
+      target/sdk-artifacts/oliphaunt-rust
+      target/native-extension-proof/oliphaunt-rust-release-consumer
+    deps:
+      - "release-tools:rust-sdk-package"
+    env:
+      CARGO_TARGET_DIR: "target/moon/release-tools/rust-sdk-consumer"
+    inputs:
+      - "/rust-toolchain.toml"
+      - "/src/sdks/rust/tests/release-consumer/**/*"
+      - "/src/sdks/rust/tools/check-release-consumer.sh"
+      - "/tools/dev/bun.sh"
+    outputs:
+      - "/target/native-extension-proof/oliphaunt-rust-release-consumer"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  kotlin-sdk-package:
+    tags: ["release", "artifact-package", "ci-kotlin-sdk-package"]
+    command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-kotlin"
+    deps:
+      - "oliphaunt-kotlin:package"
+    inputs:
+      - "@group(legal-files)"
+      - "@group(release-archive-contract)"
+      - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
+      - "/tools/release/sdk-artifacts/kotlin.mjs"
+      - "/tools/release/sdk-artifacts/shared.mjs"
+      - "/tools/dev/bun.sh"
+      - "/src/sources/tools/source-fetch-core.mjs"
+    outputs:
+      - "/target/sdk-artifacts/oliphaunt-kotlin/**/*"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+  kotlin-maven-staging:
+    tags: ["release", "artifact-package", "ci-kotlin-maven-staging"]
+    command: "tools/dev/bun.sh tools/release/kotlin-maven-staging.mjs"
+    deps:
+      - "release-tools:kotlin-sdk-package"
+    inputs:
+      - "/src/sdks/kotlin/gradle.properties"
+      - "/tools/release/kotlin-maven-staging.mjs"
+      - "/tools/release/maven-central-contract.mjs"
+      - "/target/sdk-artifacts/oliphaunt-kotlin/maven/**/*"
     options:
       cache: false
       runFromWorkspaceRoot: true
-  # Planner-only source edge for the executable and supervision contract used
-  # by the hosted native extension lifecycle proof.
-  native-extension-lifecycle-trigger:
-    tags: ["release", "planner"]
-    command: "true"
+      runInCI: true
+  swift-sdk-package:
+    tags: ["release", "artifact-package", "ci-swift-sdk-package"]
+    command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-swift"
+    env:
+      OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR: "target/liboliphaunt/abi-compatible-release-assets/ios-datum64"
+    deps:
+      - "oliphaunt-swift:package"
+      - "liboliphaunt-native:finalize-runtime-ios-abi"
+    inputs:
+      - "@group(legal-files)"
+      - "@group(release-archive-contract)"
+      - "@group(release-target-contract)"
+      - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
+      - "/tools/release/contrib-carriers.mjs"
+      - "/tools/release/ios-carrier-manifest.mjs"
+      - "/tools/release/prepare-swift-release-consumer.mjs"
+      - "/tools/release/release-graph.mjs"
+      - "/tools/release/sdk-artifacts/shared.mjs"
+      - "/tools/release/sdk-artifacts/swift.mjs"
+      - "/tools/release/swift-source-carrier-contract.mjs"
+      - "/Package.swift"
+      - "/src/extensions/generated/sdk/extensions.json"
+      - "/target/liboliphaunt/abi-compatible-release-assets/ios-datum64/**/*"
+      - "/tools/dev/bun.sh"
+      - "/src/sources/tools/source-fetch-core.mjs"
+    outputs:
+      - "/target/sdk-artifacts/oliphaunt-swift/**/*"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+  react-native-sdk-package:
+    tags: ["release", "artifact-package", "ci-react-native-sdk-package"]
+    command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-react-native"
+    env:
+      OLIPHAUNT_REACT_NATIVE_IOS_RELEASE_ASSET_DIR: "target/liboliphaunt/abi-compatible-release-assets/ios-datum64"
+    deps:
+      - "oliphaunt-react-native:package"
+      - "liboliphaunt-native:finalize-runtime-ios-abi"
+    inputs:
+      - "@group(legal-files)"
+      - "@group(pnpm-workspace)"
+      - "@group(release-archive-contract)"
+      - "@group(release-target-contract)"
+      - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
+      - "/tools/release/contrib-carriers.mjs"
+      - "/tools/release/ios-carrier-manifest.mjs"
+      - "/tools/release/release-graph.mjs"
+      - "/tools/release/sdk-artifacts/npm.mjs"
+      - "/tools/release/sdk-artifacts/react-native.mjs"
+      - "/tools/release/sdk-artifacts/shared.mjs"
+      - "/tools/release/source-only-sdk-package.mjs"
+      - "/src/shared/js-core/tools/stage-package.mjs"
+      - "/src/runtimes/liboliphaunt/native/icu-npm/**/*"
+      - "/examples/react-native-expo/package.json"
+      - "/src/sdks/react-native/tools/ios-icu-autolinking.test.mjs"
+      - "/target/liboliphaunt/abi-compatible-release-assets/ios-datum64/**/*"
+      - "/tools/dev/bun.sh"
+      - "/src/sources/tools/source-fetch-core.mjs"
+    outputs:
+      - "/target/sdk-artifacts/oliphaunt-react-native/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  wasix-rust-package:
+    tags: ["release", "artifact-package", "ci-wasix-rust-package"]
+    command: "tools/dev/bun.sh tools/release/build-cargo-sdk-ci-artifacts.mjs oliphaunt-wasix-rust"
+    deps:
+      - "oliphaunt-wasix-rust:package"
+    env:
+      CARGO_TARGET_DIR: "target/moon/release-tools/wasix-rust-package"
+    inputs:
+      - "@group(legal-files)"
+      - "@group(cargo-workspace)"
+      - "@group(release-archive-contract)"
+      - "@group(release-target-contract)"
+      - "/tools/release/build-cargo-sdk-ci-artifacts.mjs"
+      - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - project: "artifact-packaging"
+        group: "source"
+      - "/tools/release/cargo-source-package.mjs"
+      - "/tools/release/check-cargo-package-test-closure.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
+      - "/tools/release/contrib-carriers.mjs"
+      - "/tools/release/package_oliphaunt_wasix_sdk_crate.mjs"
+      - "/tools/release/release-graph.mjs"
+      - "/tools/release/sdk-artifacts/shared.mjs"
+      - "/tools/release/sdk-artifacts/wasix-rust.mjs"
+      - "/tools/release/wasix-cargo-toolchain-policy.mjs"
+      - "/src/runtimes/liboliphaunt/icu/**/*"
+      - project: "liboliphaunt-wasix"
+        group: "crates"
+      - "/src/sources/toolchains/wasix.toml"
+      - "/tools/dev/bun.sh"
+      - "/src/sources/tools/source-fetch-core.mjs"
+    outputs:
+      - "/target/sdk-artifacts/oliphaunt-wasix-rust/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  wasix-ts-sdk-package:
+    tags: ["release", "artifact-package", "ci-wasix-ts-sdk-package"]
+    command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-wasix-ts"
+    deps:
+      - "oliphaunt-wasix-ts:package"
+      - "oliphaunt-wasix-tools-ts:package"
+      - "liboliphaunt-wasix:runtime-portable"
+    inputs:
+      - "@group(legal-files)"
+      - "@group(pnpm-workspace)"
+      - "@group(release-archive-contract)"
+      - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
+      - "/tools/release/npm-trusted-publishing.mjs"
+      - "/tools/release/sdk-artifacts/shared.mjs"
+      - "/tools/release/sdk-artifacts/wasix-tools-ts.mjs"
+      - "/tools/release/sdk-artifacts/wasix-ts.mjs"
+      - "/tools/release/wasix-tools-typescript-package.mjs"
+      - "/tools/release/wasix-typescript-package.mjs"
+      - "/src/shared/js-core/tools/stage-package.mjs"
+      - "/tools/dev/bun.sh"
+    outputs:
+      - "/target/sdk-artifacts/oliphaunt-wasix-ts/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  native-extension-lifecycle:
+    tags: ["release", "integration", "ci-native-extension-lifecycle"]
+    command: "tools/release/run-native-extension-lifecycle-proof.sh"
+    deps:
+      - "extension-artifacts-native:build-target"
+      - "liboliphaunt-native:build-runtime-desktop-target"
+      - "release-tools:broker-runtime"
+      - "release-tools:rust-sdk-package"
     inputs:
       - "/src/runtimes/liboliphaunt/wasix-postmaster/lib/process-supervision.sh"
       - "/tools/native-extension-proof/**/*"
@@ -94,9 +312,7 @@ tasks:
       - "/examples/**/Cargo.toml"
       - "/moon.yml"
       - "/Package.swift"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
+      - "@group(pnpm-workspace)"
       - "/release-please-config.json"
       - "/src/**/CHANGELOG.md"
       - "/src/**/Cargo.toml"
@@ -122,11 +338,12 @@ tasks:
       - "/src/postgres/versions/*/source.toml"
       - "/src/runtimes/liboliphaunt/licenses/**/*"
       - "/src/runtimes/wasix-napi/tools/build-native.sh"
-      - "/src/shared/fixtures/extensions/**/*"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
       - "/src/sources/**/*.toml"
       - "/tools/**/moon.yml"
       - "/tools/graph/**/*"
-      - "/tools/release/**/*"
+      - "**/*"
       - "!/tools/release/**/*.test.mjs"
       - "!/tools/release/**/*.md"
       - "/tools/test/create-broker-release-fixture.mjs"
@@ -137,7 +354,7 @@ tasks:
       runFromWorkspaceRoot: true
       runInCI: true
   unit:
-    tags: ["quality", "unit", "ci-rust"]
+    tags: ["quality", "unit", "requires-rust"]
     command: "tools/dev/bun.sh tools/release/release-check.mjs --mutation-tests-only --mutation-scope=release"
     inputs:
       - "/.github/scripts/bootstrap-registry-*"
@@ -157,7 +374,7 @@ tasks:
       - "/tools/dev/bun.sh"
       - "/tools/dev/capture-command-output.mjs"
       - "/tools/dev/moon-command.mjs"
-      - "/tools/release/**/*"
+      - "**/*"
       - "!/tools/release/**/*.md"
       - "/tools/test/**/*"
     options:
@@ -165,7 +382,7 @@ tasks:
       runFromWorkspaceRoot: true
   graph-unit:
     tags: ["quality", "unit"]
-    command: "tools/dev/bun.sh test --isolate --max-concurrency=1 --timeout=30000 tools/release/native-extension-lifecycle-receipts.test.mjs tools/release/product-task-model.test.mjs tools/release/release-dependent-candidates.test.mjs"
+    command: "tools/dev/bun.sh test --isolate --max-concurrency=1 --timeout=30000 tools/release/native-extension-lifecycle-receipts.test.mjs tools/release/product-task-model.test.mjs tools/release/release-candidate-sync.test.mjs"
     inputs:
       - "/.moon/tasks/**/*"
       - "/.moon/toolchains.yml"
@@ -185,26 +402,26 @@ tasks:
       - "/tools/**/moon.yml"
       - "/tools/dev/capture-command-output.mjs"
       - "/tools/dev/moon-command.mjs"
-      - "/tools/policy/source-fetch-core.mjs"
+      - "/src/sources/tools/source-fetch-core.mjs"
       - "/tools/release/artifact_target_matrix.mjs"
       - "/tools/release/contrib-carriers.mjs"
       - "/tools/release/extension-artifact-archive-policy.mjs"
+      - project: "extension-runtime-contract"
+        group: "contract"
       - "/tools/release/extension-artifact-inventory.mjs"
       - "/tools/release/extension-registry-packages.mjs"
-      - "/tools/release/extension-target-profiles.mjs"
+      - "/src/shared/extension-runtime-contract/extension-target-profiles.mjs"
       - "/tools/release/extension-upstream-licenses.mjs"
       - "/tools/release/native-extension-asset-index-contract.mjs"
       - "/tools/release/native-extension-lifecycle-receipts.test.mjs"
       - "/tools/release/optimize_native_runtime_payload.mjs"
       - "/tools/release/platform-compatibility-policy.mjs"
-      - "/tools/release/portable-archive.mjs"
       - "/tools/release/product-task-model.test.mjs"
       - "/tools/release/release-artifact-targets.mjs"
-      - "/tools/release/release-dependent-candidates.mjs"
-      - "/tools/release/release-dependent-candidates.test.mjs"
-      - "/tools/release/release-directory-safety.mjs"
+      - "/tools/release/release-candidate-sync.mjs"
+      - "/tools/release/release-candidate-sync.test.mjs"
+      - "@group(release-archive-contract)"
       - "/tools/release/release-graph.mjs"
-      - "/tools/release/release-notices.mjs"
       - "/tools/release/stage-native-extension-lifecycle.mjs"
       - "/tools/release/verify-native-extension-lifecycle-receipts.mjs"
       - "/tools/release/wasix-cargo-artifact-contract.mjs"
@@ -227,12 +444,10 @@ tasks:
       runFromWorkspaceRoot: true
       runInCI: false
   broker-dependency-license-audit:
-    tags: ["policy", "assertion", "quality", "static", "ci-rust"]
+    tags: ["policy", "assertion", "quality", "static", "requires-rust"]
     command: "tools/dev/bun.sh tools/release/broker-dependency-license-contract.mjs audit-contract"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
+      - "@group(cargo-workspace)"
       - "/benchmarks/**/Cargo.toml"
       - "/examples/**/Cargo.toml"
       - "/src/**/Cargo.toml"
@@ -241,6 +456,301 @@ tasks:
       - "/src/runtimes/broker/dependency-license-blobs/**/*"
       - "/tools/dev/capture-command-output.mjs"
       - "/tools/release/broker-dependency-license-contract.mjs"
+      - "/tools/release/release-directory-safety.mjs"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+
+  broker-runtime:
+    tags: ["release", "artifact", "in-place-finalizer-input", "ci-broker-runtime"]
+    command: "bash tools/release/package-broker-assets.sh"
+    env:
+      CARGO_TARGET_DIR: "target/moon/release-tools/broker-runtime"
+      OLIPHAUNT_RELEASE_ASSET_PARTIAL: "1"
+    inputs:
+      - "@group(legal-files)"
+      - "@group(cargo-workspace)"
+      - project: "oliphaunt-broker"
+        group: "code"
+      - project: "oliphaunt-rust"
+        group: "code"
+      - "/tools/release/build-linux-broker-baseline.sh"
+      - "/tools/release/broker-dependency-license-contract.mjs"
+      - "/tools/release/check-linux-consumer-baseline.sh"
+      - "/tools/release/linux-abi-baseline.test.mjs"
+      - "/tools/release/package-broker-assets.sh"
+      - "/tools/release/check-broker-release-assets.mjs"
+      - "/tools/release/platform-compatibility-policy.mjs"
+      - "/tools/release/platform-compatibility-policy.test.mjs"
+      - "/tools/release/platform-binary-contract.mjs"
+      - "/tools/release/platform-binary-contract.test.mjs"
+      - "/tools/release/release-asset-validation.mjs"
+      - "/src/shared/extension-runtime-contract/extension-target-profiles.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "@group(release-archive-contract)"
+      - "/tools/policy/moon.mjs"
+      - "/tools/release/artifact_target_matrix.mjs"
+      - "/release-please-config.json"
+    outputs:
+      - "/target/oliphaunt-broker/release-assets/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+
+  broker-release-assets:
+    tags: ["release", "artifact-package", "in-place-finalizer", "ci-broker-release-assets"]
+    command: "tools/dev/bun.sh tools/release/check-native-helper-aggregate-assets.mjs --product oliphaunt-broker"
+    deps:
+      - "release-tools:broker-runtime"
+    inputs:
+      - "@group(legal-files)"
+      - "@group(cargo-workspace)"
+      - project: "oliphaunt-broker"
+        group: "code"
+      - project: "oliphaunt-rust"
+        group: "code"
+      - "/tools/release/artifact_target_matrix.mjs"
+      - "/tools/release/broker-dependency-license-contract.mjs"
+      - "/tools/release/build-linux-broker-baseline.sh"
+      - "/tools/release/check-broker-release-assets.mjs"
+      - "/tools/release/check-linux-consumer-baseline.sh"
+      - "/tools/release/check-native-helper-aggregate-assets.mjs"
+      - "/tools/release/linux-abi-baseline.test.mjs"
+      - "/tools/release/package-broker-assets.sh"
+      - "/tools/release/platform-compatibility-policy.mjs"
+      - "/tools/release/platform-compatibility-policy.test.mjs"
+      - "/tools/release/platform-binary-contract.mjs"
+      - "/tools/release/platform-binary-contract.test.mjs"
+      - "/tools/release/release-asset-validation.mjs"
+      - "/src/shared/extension-runtime-contract/extension-target-profiles.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "@group(release-archive-contract)"
+      - "/tools/release/write_checksum_manifest.mjs"
+      - "/tools/policy/moon.mjs"
+      - "/release-please-config.json"
+      - "/target/oliphaunt-broker/release-assets/**/*"
+    outputs:
+      - "/target/oliphaunt-broker/release-assets/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+
+  node-direct-runtime:
+    tags: ["release", "artifact", "in-place-finalizer-input", "ci-node-direct"]
+    command: "bash tools/release/package-node-direct-runtime.sh"
+    deps:
+      - "shared-js-core:build"
+    inputs:
+      - project: "oliphaunt-node-direct"
+        group: "code"
+      - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
+      - "/src/sources/toolchains/node.toml"
+      - "@group(legal-files)"
+      - "@group(release-archive-contract)"
+      - "/tools/release/artifact_target_matrix.mjs"
+      - "/tools/release/check-node-direct-release-assets.mjs"
+      - "/tools/release/check-linux-consumer-baseline.sh"
+      - "/tools/release/linux-abi-baseline.test.mjs"
+      - "/tools/release/platform-compatibility-policy.mjs"
+      - "/tools/release/platform-compatibility-policy.test.mjs"
+      - "/tools/release/platform-binary-contract.mjs"
+      - "/tools/release/platform-binary-contract.test.mjs"
+      - "/tools/release/extract-node-headers.mjs"
+      - "/tools/release/install-node-fallback.sh"
+      - "/tools/release/package-node-direct-runtime.sh"
+      - "/tools/release/release-asset-validation.mjs"
+      - "/src/shared/extension-runtime-contract/extension-target-profiles.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release_graph_query.mjs"
+      - "/tools/policy/moon.mjs"
+      - "/release-please-config.json"
+    outputs:
+      - "/target/oliphaunt-node-direct/release-assets/**/*"
+      - "/target/oliphaunt-node-direct/npm-packages/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+
+  node-direct-release-assets:
+    tags: ["release", "artifact-package", "in-place-finalizer", "ci-node-direct-release-assets"]
+    command: "tools/dev/bun.sh tools/release/check-native-helper-aggregate-assets.mjs --product oliphaunt-node-direct"
+    deps:
+      - "release-tools:node-direct-runtime"
+    inputs:
+      - "@group(legal-files)"
+      - "/pnpm-workspace.yaml"
+      - project: "oliphaunt-node-direct"
+        group: "code"
+      - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
+      - "/src/sources/toolchains/node.toml"
+      - "/tools/policy/moon.mjs"
+      - "/tools/release/artifact_target_matrix.mjs"
+      - "/tools/release/check-linux-consumer-baseline.sh"
+      - "/tools/release/check-native-helper-aggregate-assets.mjs"
+      - "/tools/release/check-node-direct-release-assets.mjs"
+      - "/tools/release/linux-abi-baseline.test.mjs"
+      - "/tools/release/platform-compatibility-policy.mjs"
+      - "/tools/release/platform-compatibility-policy.test.mjs"
+      - "/tools/release/platform-binary-contract.mjs"
+      - "/tools/release/platform-binary-contract.test.mjs"
+      - "/tools/release/release-asset-validation.mjs"
+      - "/src/shared/extension-runtime-contract/extension-target-profiles.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "@group(release-archive-contract)"
+      - "/tools/release/release_graph_query.mjs"
+      - "/tools/release/write_checksum_manifest.mjs"
+      - "/release-please-config.json"
+      - "/target/oliphaunt-node-direct/npm-packages/**/*"
+      - "/target/oliphaunt-node-direct/release-assets/**/*"
+    outputs:
+      - "/target/oliphaunt-node-direct/npm-packages/**/*"
+      - "/target/oliphaunt-node-direct/release-assets/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+
+  wasix-napi-runtime:
+    tags: ["release", "artifact", "in-place-finalizer-input", "ci-wasix-napi"]
+    script: |
+      set -e
+      tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs --all --family wasix --require-wasix
+      exec bash src/runtimes/wasix-napi/tools/build-native.sh
+    deps:
+      - "liboliphaunt-wasix:runtime-aot"
+      - "extension-artifacts-wasix:build-target"
+    inputs:
+      - "@group(cargo-workspace)"
+      - "@group(legal-files)"
+      - project: "extensions"
+        group: "package"
+      - project: "liboliphaunt-wasix"
+        group: "release-metadata"
+      - project: "extension-runtime-contract"
+        group: "contract"
+      - "/src/runtimes/wasix-napi/Cargo.toml"
+      - "/src/runtimes/wasix-napi/build.rs"
+      - "/src/runtimes/wasix-napi/package.json"
+      - "/src/runtimes/wasix-napi/packages/**/*"
+      - "/src/runtimes/wasix-napi/src/**/*"
+      - "/src/runtimes/wasix-napi/tools/build-native.sh"
+      - "/src/runtimes/wasix-napi/tools/check-build-inputs.mjs"
+      - "/src/runtimes/wasix-napi/tools/detect-linux-libc.mjs"
+      - "/src/runtimes/wasix-napi/tools/package-platform.mjs"
+      - "/src/runtimes/wasix-napi/tools/portable-command.mjs"
+      - "/src/runtimes/wasix-napi/tools/smoke-packaged-addon.mjs"
+      - "/src/bindings/wasix-ts/tools/pgwire-client.mjs"
+      - project: "oliphaunt-wasix-rust"
+        group: "code"
+      - project: "liboliphaunt-wasix"
+        group: "crates"
+      - "/src/runtimes/liboliphaunt/icu/**/*"
+      - "/target/oliphaunt-wasix/assets/**/*"
+      - "/target/oliphaunt-wasix/aot/**/*"
+      - "/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu/**/*"
+      - "/target/extensions/wasix/release-assets/**/*"
+      - "/target/extensions/wasix/aot-artifacts/**/*"
+      - "/target/extension-artifacts/**/*"
+      - "/tools/xtask/**/*"
+      - "/.prototools"
+      - "/src/extensions/contrib/carriers.toml"
+      - "/src/extensions/generated/extensions.catalog.json"
+      - "/src/sources/toolchains/bun.toml"
+      - "/src/sources/toolchains/deno.toml"
+      - "/tools/dev/bun.sh"
+      - "/tools/dev/capture-command-output.mjs"
+      - "/tools/dev/deno.sh"
+      - "/tools/dev/install-pinned-js-runtime.sh"
+      - "/tools/dev/moon-command.mjs"
+      - project: "artifact-packaging"
+        group: "source"
+      - "/tools/release/check-wasix-napi-release-assets.mjs"
+      - "/tools/release/build-extension-ci-artifacts.mjs"
+      - "/tools/release/cargo-source-package.mjs"
+      - "/tools/release/extension-runtime-asset-contract.mjs"
+      - "/tools/release/extension-upstream-licenses.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/build-linux-wasix-napi-baseline.sh"
+      - "/tools/release/check-linux-consumer-baseline.sh"
+      - "/tools/release/contrib-carriers.mjs"
+      - "/tools/release/extension-registry-packages.mjs"
+      - "/tools/release/platform-binary-contract.mjs"
+      - "@group(release-target-contract)"
+      - "/tools/release/release-asset-validation.mjs"
+      - "/tools/release/release-graph.mjs"
+      - "@group(release-archive-contract)"
+      - "/tools/release/native-runtime-payload-policy.json"
+      - "/tools/release/tar-command.mjs"
+      - "/tools/release/wasix-aot-manifest.mjs"
+      - "/tools/release/windows-vc-runtime-closure.mjs"
+    outputs:
+      - "/target/oliphaunt-wasix-napi/release-assets/**/*"
+      - "/target/oliphaunt-wasix-napi/npm-packages/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+
+  postmaster-release-assets:
+    tags: ["release", "artifact-package", "in-place-finalizer", "ci-wasix-postmaster"]
+    script: |
+      set -eu
+      version="$(tr -d '\r\n' < src/runtimes/liboliphaunt/wasix-postmaster/VERSION)"
+      bun tools/release/merge-product-release-assets.mjs \
+        --product liboliphaunt-wasix-postmaster \
+        --version "$version" \
+        --asset-dir target/oliphaunt-wasix-postmaster/release-assets
+    deps:
+      - "liboliphaunt-wasix-postmaster:release-assets"
+    inputs:
+      - "/src/runtimes/liboliphaunt/wasix-postmaster/VERSION"
+      - "/src/runtimes/liboliphaunt/wasix-postmaster/moon.yml"
+      - "/tools/release/merge-product-release-assets.mjs"
+      - "/tools/release/platform-compatibility-policy.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-graph.mjs"
+      - "/target/oliphaunt-wasix-postmaster/release-assets/**/*"
+    outputs:
+      - "/target/oliphaunt-wasix-postmaster/release-assets/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true
+
+  wasix-napi-release-assets:
+    tags: ["release", "artifact-package", "in-place-finalizer", "ci-wasix-napi-release-assets"]
+    command: "tools/dev/bun.sh tools/release/check-native-helper-aggregate-assets.mjs --product oliphaunt-wasix-napi"
+    deps:
+      - "release-tools:wasix-napi-runtime"
+    inputs:
+      - "@group(legal-files)"
+      - "/pnpm-workspace.yaml"
+      - "/src/runtimes/wasix-napi/moon.yml"
+      - "/src/runtimes/wasix-napi/package.json"
+      - "/src/runtimes/wasix-napi/packages/**/*"
+      - "/src/runtimes/wasix-napi/release.toml"
+      - project: "oliphaunt-wasix-rust"
+        group: "code"
+      - project: "liboliphaunt-wasix"
+        group: "crates"
+      - "/src/runtimes/liboliphaunt/icu/**/*"
+      - project: "artifact-packaging"
+        group: "source"
+      - "/tools/release/check-native-helper-aggregate-assets.mjs"
+      - "/tools/release/check-wasix-napi-release-assets.mjs"
+      - "/tools/release/build-linux-wasix-napi-baseline.sh"
+      - "/tools/release/check-linux-consumer-baseline.sh"
+      - "/tools/release/platform-binary-contract.mjs"
+      - "/tools/release/platform-compatibility-policy.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-asset-validation.mjs"
+      - "@group(release-archive-contract)"
+      - "/tools/release/write_checksum_manifest.mjs"
+      - "/tools/release/native-runtime-payload-policy.json"
+      - "/tools/release/windows-vc-runtime-closure.mjs"
+      - "/target/oliphaunt-wasix-napi/npm-packages/**/*"
+      - "/target/oliphaunt-wasix-napi/release-assets/**/*"
+    outputs:
+      - "/target/oliphaunt-wasix-napi/npm-packages/**/*"
+      - "/target/oliphaunt-wasix-napi/release-assets/**/*"
     options:
       cache: false
       runFromWorkspaceRoot: true
