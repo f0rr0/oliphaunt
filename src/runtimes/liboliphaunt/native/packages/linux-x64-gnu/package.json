@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/liboliphaunt-linux-x64-gnu",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Linux x64 glibc liboliphaunt native library for Oliphaunt.",
   "license": "MIT AND PostgreSQL AND Unicode-3.0",
   "type": "module",

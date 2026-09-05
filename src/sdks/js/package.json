@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/ts",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "TypeScript SDK for Oliphaunt on Node.js, Bun, and Deno.",
   "license": "MIT",
   "type": "module",
@@ -14,11 +14,11 @@
   },
   "homepage": "https://oliphaunt.dev",
   "oliphaunt": {
-    "liboliphauntVersion": "0.1.1",
+    "liboliphauntVersion": "0.2.0",
     "icuPackage": "@oliphaunt/icu",
-    "icuVersion": "0.1.1",
-    "brokerVersion": "0.1.1",
-    "nodeDirectAddonVersion": "0.1.1",
+    "icuVersion": "0.2.0",
+    "brokerVersion": "0.2.0",
+    "nodeDirectAddonVersion": "0.2.0",
     "nodeDirectAddon": "oliphaunt-node-direct",
     "brokerHelper": "oliphaunt-broker"
   },

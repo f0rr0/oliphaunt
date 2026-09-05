@@ -1,6 +1,6 @@
 [package]
 name = "oliphaunt-wasix-napi"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.93"
 description = "Node-API adapter for the Oliphaunt WASIX Rust runtime."
@@ -103,10 +103,10 @@ extension-vector = ["extensions", "oliphaunt-wasix/extension-vector"]
 [dependencies]
 napi = { version = "=3.12.2", default-features = false, features = ["napi8"] }
 napi-derive = { version = "=3.6.3", default-features = false, features = ["strict", "type-def"] }
-liboliphaunt-wasix-portable = { version = "*", path = "../liboliphaunt/wasix/crates/assets" }
-oliphaunt-icu = { version = "*", path = "../liboliphaunt/icu" }
-oliphaunt-wasix = { version = "*", path = "../../bindings/wasix-rust/crates/oliphaunt-wasix", features = ["__internal-napi", "icu"] }
-oliphaunt-wasix-tools = { version = "*", path = "../liboliphaunt/wasix/crates/tools", optional = true }
+liboliphaunt-wasix-portable = { version = "0.2.0", path = "../liboliphaunt/wasix/crates/assets" }
+oliphaunt-icu = { version = "0.2.0", path = "../liboliphaunt/icu" }
+oliphaunt-wasix = { version = "0.2.0", path = "../../bindings/wasix-rust/crates/oliphaunt-wasix", features = ["__internal-napi", "icu"] }
+oliphaunt-wasix-tools = { version = "0.2.0", path = "../liboliphaunt/wasix/crates/tools", optional = true }
 sha2 = "0.10"
 
 [target.'cfg(unix)'.dependencies]

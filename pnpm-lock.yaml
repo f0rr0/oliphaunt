@@ -271,16 +271,16 @@ importers:
   src/runtimes/liboliphaunt/native/tools-npm:
     optionalDependencies:
       '@oliphaunt/tools-darwin-arm64':
-        specifier: workspace:0.1.1
+        specifier: workspace:0.2.0
         version: link:../tools-packages/darwin-arm64
       '@oliphaunt/tools-linux-arm64-gnu':
-        specifier: workspace:0.1.1
+        specifier: workspace:0.2.0
         version: link:../tools-packages/linux-arm64-gnu
       '@oliphaunt/tools-linux-x64-gnu':
-        specifier: workspace:0.1.1
+        specifier: workspace:0.2.0
         version: link:../tools-packages/linux-x64-gnu
       '@oliphaunt/tools-win32-x64-msvc':
-        specifier: workspace:0.1.1
+        specifier: workspace:0.2.0
         version: link:../tools-packages/win32-x64-msvc
 
   src/runtimes/liboliphaunt/native/tools-packages/darwin-arm64: {}
