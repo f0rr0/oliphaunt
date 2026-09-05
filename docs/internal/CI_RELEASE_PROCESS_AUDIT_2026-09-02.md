@@ -1365,3 +1365,11 @@ whose remaining direct dependency is internal. Exact uncached source fetch,
 Node Direct packaging, WASIX Rust coverage, graph, workflow, and format checks
 passed locally; the failed `Tests` aggregate was downstream of the two test
 lanes rather than a separate cause.
+
+Hosted run `33986113638` at `3d298d79` exposed one remaining local-asset
+assumption: the WASIX Rust coverage baseline passed when a prior runtime build
+was present but measured `storage.rs` at only 18/147 lines on a clean checkout.
+One source-only unit test now exercises the shared host and virtual filesystem
+contract, including nested Tokio execution. With runtime assets deliberately
+absent, the exact coverage lane passed 194 tests at 86.28% overall and 170/177
+lines for `storage.rs`; no threshold or waiver changed.

@@ -246,3 +246,45 @@ pub(crate) fn vfs_remove_file_if_exists(
         Err(err) => Err(err).with_context(|| format!("remove virtual file {}", path.display())),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn host_and_memory_storage_share_the_file_contract() -> Result<()> {
+        let directory = TempDir::new()?;
+        let host = StorageRoot::host_directory(directory.path());
+        let nested = Path::new("/nested");
+        let file = Path::new("/nested/file");
+
+        assert!(host.is_durable_host_directory());
+        assert!(host.memory_filesystem().is_none());
+        host.create_dir_all(nested)?;
+        std::fs::write(directory.path().join("nested/file"), b"host")?;
+        assert!(host.is_dir(nested));
+        assert!(host.is_file(file));
+        assert!(storage_host_path(directory.path(), Path::new("../outside")).is_err());
+
+        let memory = StorageRoot::memory();
+        let filesystem = memory.memory_filesystem().expect("memory filesystem");
+        assert!(!memory.is_durable_host_directory());
+        memory.create_dir_all(nested)?;
+        vfs_write(filesystem.as_ref(), file, b"memory")?;
+        assert!(memory.is_dir(nested));
+        assert!(memory.is_file(file));
+        assert_eq!(vfs_read(filesystem.as_ref(), file)?, b"memory");
+        assert!(vfs_file_exists(filesystem.as_ref(), file));
+
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(async { vfs_read(filesystem.as_ref(), file).map(|_| ()) })?;
+
+        vfs_remove_file_if_exists(filesystem.as_ref(), file)?;
+        vfs_remove_file_if_exists(filesystem.as_ref(), file)?;
+        assert!(!memory.is_file(file));
+        Ok(())
+    }
+}
