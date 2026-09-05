@@ -22,8 +22,6 @@ import type {
 import type { RuntimeBinding } from '../runtime/types.js';
 
 // OLIPHAUNT_DOCS_SNIPPET typescript-quickstart
-// liboliphaunt-doc-example:typescript-open-query
-// liboliphaunt-doc-example:typescript-backup-restore
 test('exposes the minimal database lifecycle and byte backup contract', async () => {
   const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-client-'));
   const binding = new FakeBinding();

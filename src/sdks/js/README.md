@@ -6,7 +6,6 @@ use the separate WASIX TypeScript package.
 
 ## Open and query
 
-<!-- liboliphaunt-doc-example:typescript-open-query -->
 ```ts
 import Oliphaunt from '@oliphaunt/ts';
 
@@ -119,7 +118,6 @@ session when its state is unknown.
 
 ## Backup and restore
 
-<!-- liboliphaunt-doc-example:typescript-backup-restore -->
 ```ts
 const source = await Oliphaunt.open({
   storage: { kind: 'directory', path: '.oliphaunt-source' },
@@ -137,7 +135,6 @@ There is no archive selector and no replace-existing option.
 
 ## Local server
 
-<!-- liboliphaunt-doc-example:typescript-open-server -->
 ```ts
 const server = await Oliphaunt.openServer({
   storage: { kind: 'directory', path: '.oliphaunt-server' },

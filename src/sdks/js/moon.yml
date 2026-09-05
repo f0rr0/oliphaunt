@@ -6,11 +6,13 @@ layer: "library"
 stack: "backend"
 tags: ["sdk", "typescript", "node", "bun", "deno", "release-product"]
 dependsOn:
+  - id: "cluster-seed-contract"
+    scope: "development"
+  - id: "shared-test-fixtures"
+    scope: "development"
   - "liboliphaunt-native"
-  - "oliphaunt-rust"
   - "oliphaunt-broker"
   - "oliphaunt-node-direct"
-  - "shared-js-core"
 
 project:
   title: "Oliphaunt TypeScript SDK"
@@ -26,231 +28,90 @@ owners:
     "**/*.ts": ["@oliphaunt/sdk-js"]
     "tools/**": ["@oliphaunt/sdk-js"]
 
+fileGroups:
+  code:
+    - "**/*"
+    - "!**/*.md"
+    - "!moon.yml"
+    - "!release.toml"
+
 tasks:
   compile:
     tags: ["quality", "static"]
-    command: "bash src/sdks/js/tools/check-sdk.sh check-static"
+    command: "pnpm run build"
+    deps:
+      - "shared-js-core:build"
     inputs:
-      - "/src/shared/fixtures/**/*"
-      - "/src/shared/cluster-seed-contract/fixtures/**/*"
-      - "/src/shared/js-core/**/*"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/tools/dev/write-scoped-pnpm-workspace.mjs"
-      - "/tools/dev/clean-package-lib.mjs"
-      - "/src/sdks/js/**/*"
-      - "/src/runtimes/node-direct/**/*"
-      - "/tools/runtime/**/*"
+      - project: "shared-js-core"
+        group: "sources"
+      - "@group(pnpm-workspace)"
+      - "@group(code)"
+    outputs:
+      - "lib/**/*"
     options:
       cache: true
-      runFromWorkspaceRoot: true
+  typecheck:
+    tags: ["quality", "static"]
+    command: "pnpm run typecheck"
+    deps:
+      - "shared-js-core:build"
+    inputs:
+      - project: "shared-js-core"
+        group: "sources"
+      - "@group(pnpm-workspace)"
+      - "@group(code)"
+    options:
+      cache: true
   unit:
     tags: ["quality", "unit"]
-    command: "bash src/sdks/js/tools/check-sdk.sh test-unit"
+    command: "pnpm test"
+    deps:
+      - "shared-js-core:build"
     inputs:
-      - "/src/shared/fixtures/**/*"
-      - "/src/shared/cluster-seed-contract/fixtures/**/*"
-      - "/src/shared/js-core/**/*"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/tools/dev/write-scoped-pnpm-workspace.mjs"
-      - "/tools/dev/clean-package-lib.mjs"
-      - "/src/sdks/js/**/*"
-      - "/src/runtimes/node-direct/**/*"
-      - "/tools/test/run-js-tests.mjs"
-      - "/tools/runtime/**/*"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - project: "cluster-seed-contract"
+        group: "contract"
+      - project: "shared-js-core"
+        group: "sources"
+      - "@group(pnpm-workspace)"
+      - "@group(code)"
     options:
       cache: true
-      runFromWorkspaceRoot: true
-  smoke:
-    tags: ["runtime", "smoke"]
-    command: "bash src/sdks/js/tools/check-sdk.sh smoke-runtime"
-    env:
-      CARGO_TARGET_DIR: "target/moon/oliphaunt-js/smoke"
-    deps:
-      - "liboliphaunt-native:release-runtime"
-      - "oliphaunt-node-direct:release-assets"
-    options:
-      cache: local
-      runFromWorkspaceRoot: true
       runInCI: false
-    inputs:
-      - "/Cargo.lock"
-      - "/src/shared/fixtures/**/*"
-      - "/src/shared/js-core/**/*"
-      - "/pnpm-lock.yaml"
-      - "/src/extensions/**/*"
-      - "/src/runtimes/broker/**/*"
-      - "/src/runtimes/node-direct/**/*"
-      - "/src/sdks/rust/Cargo.toml"
-      - "/src/sdks/rust/src/**/*"
-      - "/src/sdks/js/**/*"
-      - "/tools/runtime/**/*"
   package:
     tags: ["package"]
-    command: "bash src/sdks/js/tools/check-sdk.sh package-shape"
+    script: |
+      set -e
+      rm -rf target/liboliphaunt-sdk-check/oliphaunt-js/package-shape
+      mkdir -p target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js
+      rsync -a --exclude node_modules src/sdks/js/ target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js/
+      cp LICENSE THIRD_PARTY_NOTICES.md target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js/
+      node src/shared/js-core/tools/stage-package.mjs target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js src/shared/js-core
+    deps:
+      - "oliphaunt-js:compile"
     inputs:
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/src/shared/fixtures/**/*"
-      - "/src/shared/js-core/**/*"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/tools/dev/write-scoped-pnpm-workspace.mjs"
-      - "/tools/dev/clean-package-lib.mjs"
-      - "/src/sdks/js/**/*"
-      - "/src/runtimes/node-direct/**/*"
-      - "/tools/release/build-sdk-ci-artifacts.mjs"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/source-only-sdk-package.mjs"
-      - "/tools/release/check-staged-artifacts.mjs"
-      - "/tools/release/extension-runtime-asset-contract.mjs"
-      - "/tools/test/run-js-tests.mjs"
-      - "/tools/runtime/**/*"
+      - "@group(legal-files)"
+      - project: "shared-js-core"
+        group: "sources"
+      - "@group(pnpm-workspace)"
+      - "/src/shared/js-core/tools/stage-package.mjs"
+      - "**/*"
     outputs:
       - "/target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js/**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true
-  package-artifacts:
-    tags:
-      [
-        "release",
-        "artifact-package",
-        "ci-js-sdk-package",
-      ]
-    command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-js"
-    deps:
-      - "oliphaunt-js:package"
-    inputs:
-      - "/LICENSE"
-      - "/THIRD_PARTY_NOTICES.md"
-      - "/src/shared/fixtures/**/*"
-      - "/src/shared/js-core/**/*"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/src/sdks/js/**/*"
-      - "/src/runtimes/node-direct/**/*"
-      - "/tools/release/build-sdk-ci-artifacts.mjs"
-      - "/tools/release/sdk-artifacts/js.mjs"
-      - "/tools/release/sdk-artifacts/npm.mjs"
-      - "/tools/release/sdk-artifacts/shared.mjs"
-      - "/tools/release/cargo-source-package.mjs"
-      - "/tools/release/extension-upstream-licenses.mjs"
-      - "/tools/release/ios-carrier-manifest.mjs"
-      - "/tools/release/platform-compatibility-policy.mjs"
-      - "/tools/release/portable-archive.mjs"
-      - "/tools/release/prepare-rust-release-source.mjs"
-      - "/tools/release/prepare-swift-release-consumer.mjs"
-      - "/tools/release/extension-target-profiles.mjs"
-      - "/tools/release/extension-target-profiles.toml"
-      - "/tools/release/release-artifact-targets.mjs"
-      - "/tools/release/release-cli-utils.mjs"
-      - "/tools/release/release-graph.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/rust-native-targets.mjs"
-      - "/tools/release/source-only-sdk-package.mjs"
-      - "/tools/release/swift-source-carrier-contract.mjs"
-      - "/tools/release/check-staged-artifacts.mjs"
-      - "/tools/release/extension-runtime-asset-contract.mjs"
-      - "/tools/policy/source-fetch-core.mjs"
-      - "/tools/test/run-js-tests.mjs"
-      - "/tools/runtime/**/*"
-    outputs:
-      - "/target/sdk-artifacts/oliphaunt-js/**/*"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
   qualify:
     tags: ["release", "package"]
-    command: "bash src/sdks/js/tools/check-sdk.sh release-check"
-    inputs:
-      - "/src/shared/fixtures/**/*"
-      - "/src/shared/js-core/**/*"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/tools/dev/write-scoped-pnpm-workspace.mjs"
-      - "/tools/dev/clean-package-lib.mjs"
-      - "/src/sdks/js/**/*"
-      - "/src/runtimes/node-direct/**/*"
-      - "/tools/release/**/*"
-      - "/tools/test/run-js-tests.mjs"
-      - "/tools/runtime/**/*"
-    options:
-      cache: local
-      runFromWorkspaceRoot: true
-      runInCI: false
-  bench:
-    tags: ["bench", "plan"]
-    command: "bash tools/perf/matrix/run_native_oliphaunt_matrix.sh --plan-only --quick"
-    inputs:
-      - "/src/shared/fixtures/**/*"
-      - "/src/shared/js-core/**/*"
-      - "/src/sdks/js/**/*"
-      - "/src/runtimes/node-direct/**/*"
-      - "/tools/perf/**/*"
-      - "/benchmarks/**/*"
-      - "/release-please-config.json"
-      - "/src/**/targets/**/*.toml"
+    command: "true"
+    deps:
+      - "oliphaunt-js:compile"
+      - "oliphaunt-js:typecheck"
+      - "oliphaunt-js:unit"
+      - "oliphaunt-js:package"
+    inputs: []
     options:
       cache: true
-      runFromWorkspaceRoot: true
-      runInCI: false
-  regression:
-    tags: ["regression", "runtime"]
-    command: "bash src/sdks/js/tools/check-sdk.sh regression"
-    inputs:
-      - "/src/shared/fixtures/**/*"
-      - "/src/shared/js-core/**/*"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/tools/dev/write-scoped-pnpm-workspace.mjs"
-      - "/tools/dev/clean-package-lib.mjs"
-      - "/src/sdks/js/**/*"
-      - "/src/runtimes/node-direct/**/*"
-      - "/tools/runtime/**/*"
-    options:
-      cache: local
-      runFromWorkspaceRoot: true
-  coverage:
-    tags: ["coverage", "quality"]
-    command: "tools/coverage/run-product oliphaunt-js"
-    inputs:
-      - "/coverage/baseline.toml"
-      - "/src/shared/fixtures/**/*"
-      - "/src/shared/js-core/**/*"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/pnpm-workspace.yaml"
-      - "/src/sdks/js/**/*"
-      - "/src/runtimes/node-direct/**/*"
-      - "/tools/coverage/**/*"
-      - "/tools/test/run-js-tests.mjs"
-    outputs:
-      - "/target/coverage/oliphaunt-js/**/*"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
-  bench-run:
-    tags: ["bench", "measured"]
-    command: "bash tools/perf/matrix/run_native_oliphaunt_matrix.sh --engines direct,broker,server"
-    inputs:
-      - "/src/shared/fixtures/**/*"
-      - "/src/shared/js-core/**/*"
-      - "/src/sdks/js/**/*"
-      - "/src/runtimes/node-direct/**/*"
-      - "/tools/perf/**/*"
-      - "/benchmarks/**/*"
-      - "/release-please-config.json"
-      - "/src/**/targets/**/*.toml"
-    options:
-      cache: false
       runFromWorkspaceRoot: true
       runInCI: false

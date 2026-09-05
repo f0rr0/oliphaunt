@@ -11,6 +11,7 @@ export type TypeScriptPackageMetadata = {
     nodeDirectAddonVersion?: string;
     brokerHelper?: string;
   };
+  bundledDependencies?: string[];
   dependencies?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
 };

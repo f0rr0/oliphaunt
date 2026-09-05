@@ -18,7 +18,7 @@ fetch_release_source_assets() {
     return 0
   fi
   echo "==> Fetching pinned source assets"
-  bun tools/policy/fetch-sources.mjs native-runtime >/tmp/liboliphaunt-release-macos-assets-fetch.log
+  bun src/sources/tools/fetch-sources.mjs native-runtime >/tmp/liboliphaunt-release-macos-assets-fetch.log
 }
 
 if [ "$(uname -s)" != "Darwin" ]; then
@@ -50,9 +50,11 @@ mkdir -p "$out_dir" "$stage/include" "$stage/lib" "$stage/runtime" "$tools_stage
 
 fetch_release_source_assets
 
-echo "==> Building liboliphaunt $target_id"
-OLIPHAUNT_BUILD_EXTENSIONS="${OLIPHAUNT_BUILD_EXTENSIONS:-0}" \
-  src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh >/tmp/liboliphaunt-release-"$target_id".log
+if [ "${OLIPHAUNT_RELEASE_BUILD_RUNTIME:-1}" = "1" ]; then
+  echo "==> Building liboliphaunt $target_id"
+  OLIPHAUNT_BUILD_EXTENSIONS="${OLIPHAUNT_BUILD_EXTENSIONS:-0}" \
+    src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh >/tmp/liboliphaunt-release-"$target_id".log
+fi
 
 [ -f "$lib" ] || fail "missing macOS liboliphaunt dylib at $lib"
 oliphaunt_assert_base_embedded_modules_exact "$embedded_modules" dylib ||
@@ -99,7 +101,7 @@ done
 # PostgreSQL installs versioned shared-library aliases as symlinks. Release
 # archives are link-free consumer inputs, so materialize only validated,
 # relative aliases that remain inside the staged tree.
-tools/dev/bun.sh tools/release/materialize-release-symlinks.mjs "$stage"
+tools/dev/bun.sh src/shared/artifact-packaging/materialize-release-symlinks.mjs "$stage"
 
 echo "==> Optimizing staged liboliphaunt $target_id release payload"
 tools/dev/bun.sh tools/release/optimize_native_runtime_payload.mjs "$stage" --target "$target_id" --tool-set runtime
@@ -126,8 +128,8 @@ env \
   OLIPHAUNT_ICU_DATA_DIR="$work_root/icu/share/icu" \
   node src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.mjs --cluster-seeds
 
-tools/release/archive_dir.mjs "$stage" "$out_dir/$asset"
-tools/release/archive_dir.mjs "$tools_stage" "$out_dir/$tools_asset"
+src/shared/artifact-packaging/archive-directory.mjs "$stage" "$out_dir/$asset"
+src/shared/artifact-packaging/archive-directory.mjs "$tools_stage" "$out_dir/$tools_asset"
 tools/dev/bun.sh tools/release/release-notices.mjs check-archive "$out_dir/$asset" --profile native-runtime
 tools/dev/bun.sh tools/release/release-notices.mjs check-archive "$out_dir/$tools_asset" --profile native-tools
 echo "liboliphauntMacosReleaseAsset=$out_dir/$asset"

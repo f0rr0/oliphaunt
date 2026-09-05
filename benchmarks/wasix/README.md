@@ -16,8 +16,9 @@ and `sdk-worker` ownership values, so Promise shape is not mistaken for
 main-thread safety.
 
 ```sh
-pnpm --dir src/bindings/wasix-ts bench:browser
-# or: moon run oliphaunt-wasix-ts:bench-browser
+pnpm --dir src/bindings/wasix-ts package:build
+node tools/integration/wasix-ts/smoke-browser.mjs --benchmark
+# or: moon run perf-tools:wasix-browser-measure
 ```
 
 Build the portable WASIX runtime first with
@@ -44,7 +45,7 @@ For a harness smoke check without a full sample set, run:
 
 ```sh
 pnpm --dir src/bindings/wasix-ts package:build
-node src/bindings/wasix-ts/tools/smoke-browser.mjs --benchmark --quick
+node tools/integration/wasix-ts/smoke-browser.mjs --benchmark --quick
 ```
 
 Quick mode still requires every workload assertion and durability/WAL parity,
@@ -54,7 +55,7 @@ The explicit `/worker` OPFS path has a separate advisory comparison against
 PGlite's OPFS access-handle-pool Worker path:
 
 ```sh
-node src/bindings/wasix-ts/tools/smoke-browser.mjs --diagnostic-opfs --quick
+node tools/integration/wasix-ts/smoke-browser.mjs --diagnostic-opfs --quick
 ```
 
 It uses durable PostgreSQL settings on both Worker engines and prints the raw
@@ -101,14 +102,14 @@ Generated SQL is bounded by the compact row counts in the plan; upstream
 generated benchmark files are not vendored.
 
 Validate the plan without runtime assets with
-`moon run oliphaunt-wasix-ts:bench`. The uncached measurement deliberately does
+`moon run perf-tools:wasix-plan`. The uncached measurement deliberately does
 not build its large native prerequisite. Stage the portable/AOT runtime, ICU,
 and extension inputs, then build and smoke the optimized carrier for the
 current host before running it:
 
 ```sh
 bash src/runtimes/wasix-napi/tools/build-native.sh
-moon run oliphaunt-wasix-ts:bench-run
+moon run perf-tools:wasix-node-measure
 ```
 
 Each run writes machine-readable JSON

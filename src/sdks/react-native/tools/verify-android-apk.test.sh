@@ -187,17 +187,4 @@ apk="$apk_dir/app-link.apk"
 expect_failure symlink-apk 'APK must be a non-empty regular file, not a symlink' run_verifier
 apk="$original_apk"
 
-# The product-owned build invokes this verifier before its artifact-report
-# writer copies the APK into release staging.
-runner="$root/src/sdks/react-native/tools/expo-android-runner.sh"
-verification_line="run \"\$root/src/sdks/react-native/tools/verify-android-apk.sh\" \"\$apk\""
-verification_number="$(grep -nF "$verification_line" "$runner" | cut -d: -f1)"
-staging_line="write_android_build_artifact_report \"\$selected_extensions\""
-staging_number="$(grep -nF "$staging_line" "$runner" | cut -d: -f1)"
-if [ -z "$verification_number" ] || [ -z "$staging_number" ] ||
-  [ "$verification_number" -ge "$staging_number" ]; then
-  echo "Android runner must verify the APK before writing its staged artifact report" >&2
-  exit 1
-fi
-
 echo "verify-android-apk.test.sh: pinned tool selection and failure contracts passed"

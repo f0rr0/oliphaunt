@@ -346,7 +346,7 @@ class OliphauntDatabaseBase {
           await Promise.allSettled([...this.#cancellationOperations]);
         }
         this.#runtimeCloseActive = true;
-        let outcome;
+        let outcome: Awaited<ReturnType<RuntimeBinding['close']>>;
         try {
           outcome = await this.binding.close(this.handle);
         } catch (error) {

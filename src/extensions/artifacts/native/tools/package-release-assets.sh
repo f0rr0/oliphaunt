@@ -23,11 +23,12 @@ observed_phase="src/extensions/artifacts/native/tools/run-observed-phase.sh"
 native_asset_index_contract="tools/release/native-extension-asset-index-contract.mjs"
 
 target_id="${OLIPHAUNT_EXTENSION_TARGET:-${1:-}}"
+if [ -z "$target_id" ]; then
+  source "$root/src/runtimes/liboliphaunt/native/tools/runtime-preflight.sh"
+  target_id="$(oliphaunt_runtime_native_host_target_id)"
+fi
 case "$target_id" in
   macos-arm64|linux-x64-gnu|linux-arm64-gnu|windows-x64-msvc|ios-xcframework|android-arm64-v8a|android-x86_64)
-    ;;
-  "")
-    fail "usage: OLIPHAUNT_EXTENSION_TARGET=<target> $0, where target is macos-arm64, linux-x64-gnu, linux-arm64-gnu, windows-x64-msvc, ios-xcframework, android-arm64-v8a, or android-x86_64"
     ;;
   *)
     fail "unsupported native extension artifact target: $target_id"
@@ -212,9 +213,10 @@ fetch_extension_source_assets() {
   fi
   echo "==> Fetching pinned native runtime and extension source assets"
   "$observed_phase" \
-    --label "fetch pinned native extension sources" \
+    --label "fetch pinned native dependency sources" \
     --log /tmp/liboliphaunt-release-extension-assets-fetch.log \
-    -- bun tools/policy/fetch-sources.mjs native-runtime
+    -- bun src/sources/tools/fetch-sources.mjs native-runtime
+  bun src/sources/tools/fetch-sources.mjs extensions
 }
 
 archive_swiftpm_xcframework() {
@@ -222,7 +224,7 @@ archive_swiftpm_xcframework() {
   local output="$2"
   [ -d "$xcframework" ] || fail "missing SwiftPM XCFramework input at $xcframework"
   rm -f "$output"
-  tools/dev/bun.sh tools/release/archive_dir.mjs --keep-parent "$xcframework" "$output"
+  tools/dev/bun.sh src/shared/artifact-packaging/archive-directory.mjs --keep-parent "$xcframework" "$output"
 }
 
 mobile_static_dependency_archive() {
@@ -320,7 +322,7 @@ prepare_extension_release_runtime() {
   rm -rf "$staged_runtime"
   mkdir -p "$staged_runtime"
   rsync -a --delete "$source_runtime/" "$staged_runtime/"
-  tools/dev/bun.sh tools/release/materialize-release-symlinks.mjs "$staged_runtime" >&2
+  tools/dev/bun.sh src/shared/artifact-packaging/materialize-release-symlinks.mjs "$staged_runtime" >&2
   printf '%s\n' "$staged_runtime"
 }
 

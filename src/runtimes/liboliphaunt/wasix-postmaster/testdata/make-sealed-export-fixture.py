@@ -18,6 +18,22 @@ def json_bytes(value: object) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode()
 
 
+def uleb128(value: int) -> bytes:
+    encoded = bytearray()
+    while True:
+        byte = value & 0x7F
+        value >>= 7
+        encoded.append(byte | (0x80 if value else 0))
+        if not value:
+            return bytes(encoded)
+
+
+def fixture_module(template: bytes, identity: str) -> bytes:
+    name = b"oliphaunt.fixture"
+    payload = uleb128(len(name)) + name + identity.encode()
+    return template + b"\0" + uleb128(len(payload)) + payload
+
+
 def module_summary(path: str, sha256: str, size: int) -> dict[str, object]:
     return {
         "path": path,
@@ -102,7 +118,7 @@ def main() -> int:
         if not path.exists():
             # Keep fixture modules distinct so the carrier test also exercises
             # one AOT identity per declared side module.
-            path.write_bytes(template + b"\nfixture:" + relative.encode())
+            path.write_bytes(fixture_module(template, relative))
 
     mandatory_hash = digest((policy_root / "sealed-main-runtime-exports.v1.txt").read_bytes())
     dlsym_hash = digest((policy_root / "sealed-main-dlsym-exports.v1.txt").read_bytes())

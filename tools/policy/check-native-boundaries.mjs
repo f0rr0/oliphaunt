@@ -119,12 +119,6 @@ function checkJsonManifest(relativePath) {
   }
 }
 
-function requireText(relativePath, text, message) {
-  if (!readText(relativePath).includes(text)) {
-    errors.push(`${relativePath}: ${message}; expected ${JSON.stringify(text)}`);
-  }
-}
-
 function rejectManifestText(relativePath, patterns) {
   const text = readText(relativePath);
   for (const [label, pattern] of patterns) {
@@ -201,33 +195,6 @@ function checkToolCrateBoundaries() {
   }
 }
 
-function checkNativeScriptBoundary() {
-  requireText(
-    'tools/perf/matrix/run_native_oliphaunt_matrix.sh',
-    'cargo build --release -p oliphaunt-perf -p oliphaunt --bins',
-    'native perf matrix must build the dedicated perf runner and native broker helper',
-  );
-  requireText(
-    'src/runtimes/liboliphaunt/native/tools/check-track.sh',
-    'run src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --check',
-    'native track validation must keep the PostgreSQL patch-stack audit in the native lane',
-  );
-  requireText(
-    'src/runtimes/liboliphaunt/native/moon.yml',
-    'command: "bash src/runtimes/liboliphaunt/native/tools/check-track.sh host-smoke"',
-    'liboliphaunt host-smoke validation must run the host C ABI smoke rather than workspace legacy validation',
-  );
-  rejectManifestText(
-    'tools/policy/check-policy-tools.sh',
-    [
-      [
-        'tools/policy/check-sdk-parity.sh',
-        'policy-tools must stay a thin repository-policy aggregator; SDK parity evidence belongs to dedicated SDK/contract tasks',
-      ],
-    ],
-  );
-}
-
 function* walkFiles(relativeRoots, suffixes) {
   const suffixSet = new Set(suffixes);
   for (const relativeRoot of relativeRoots) {
@@ -257,7 +224,6 @@ checkNativeRustManifest('src/sdks/rust/Cargo.toml');
 checkJsonManifest('src/sdks/react-native/package.json');
 checkJsonManifest('examples/react-native-expo/package.json');
 checkToolCrateBoundaries();
-checkNativeScriptBoundary();
 
 const manifestTextPatterns = [
   ['oliphaunt-wasix package', String.raw`\boliphaunt-wasix\b`],

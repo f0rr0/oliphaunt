@@ -1,33 +1,77 @@
 $schema: "https://moonrepo.dev/schemas/tasks.json"
 
+fileGroups:
+  cargo-workspace:
+    - "/Cargo.lock"
+    - "/Cargo.toml"
+    - "/rust-toolchain.toml"
+  rust-test-config:
+    - "/.config/nextest.toml"
+  pnpm-workspace:
+    - "/package.json"
+    - "/pnpm-lock.yaml"
+    - "/pnpm-workspace.yaml"
+  js-quality:
+    - "/package.json"
+    - "/pnpm-lock.yaml"
+    - "/pnpm-workspace.yaml"
+    - "/biome.json"
+    - "/renovate.json"
+    - "/.markdownlint-cli2.jsonc"
+    - "/src/docs/package.json"
+    - "/src/docs/next.config.mjs"
+    - "/src/docs/postcss.config.mjs"
+    - "/src/docs/proxy.ts"
+    - "/src/docs/source.config.ts"
+    - "/src/docs/src/**/*"
+    - "/src/docs/tools/**/*"
+    - "/src/bindings/wasix-ts/package.json"
+    - "/src/bindings/wasix-ts/src/**/*"
+    - "/src/bindings/wasix-ts/tools-package/**/*"
+    - "/src/bindings/wasix-ts/tools/**/*"
+    - "/examples/browser-wasix/**/*"
+    - "!/examples/browser-wasix/dist/**/*"
+    - "/src/shared/js-core/src/**/*"
+    - "/src/runtimes/liboliphaunt/native/tools-npm/**/*"
+    - "/src/runtimes/liboliphaunt/native/tools/smoke-packed-tools-npm.mjs"
+    - "/src/sdks/react-native/package.json"
+    - "/src/sdks/react-native/typedoc.json"
+    - "/src/sdks/react-native/react-native.config.js"
+    - "/src/sdks/react-native/src/**/*"
+    - "/src/sdks/js/package.json"
+    - "/src/sdks/js/typedoc.json"
+    - "/src/sdks/js/src/**/*"
+    - "/tools/integration/**/*"
+    - "/tools/perf/matrix/**/*"
+    - "/tools/perf/wasix-browser/**/*"
+    - "/tools/perf/wasix-node/**/*"
+    - "/tools/test/**/*"
+    - "/tools/policy/format.sh"
+  legal-files:
+    - "/LICENSE"
+    - "/THIRD_PARTY_NOTICES.md"
+  release-archive-contract:
+    - "/tools/release/release-directory-safety.mjs"
+    - "/src/shared/artifact-packaging/portable-archive.mjs"
+    - "/tools/release/release-notices.mjs"
+  release-target-contract:
+    - "/tools/release/platform-compatibility-policy.mjs"
+    - "/src/shared/extension-runtime-contract/extension-target-profiles.mjs"
+    - "/src/shared/extension-runtime-contract/extension-target-profiles.toml"
+    - "/tools/release/release-artifact-targets.mjs"
 # Installed dependency trees are derived state. Task invalidation comes from
 # tracked package manifests, workspace configuration, and lockfiles instead of
 # pnpm's directory symlinks, which Moon cannot hash as files.
 implicitInputs:
-  - "/.moon/tasks/**/*"
-  # Moon resolves tool versions from this file before it evaluates tasks.
-  - "/.prototools"
+  # Changes to shared groups and universal inputs must invalidate their users.
+  - "/.moon/tasks/inputs.yml"
   # Git and Moon use ignore policy while constructing repository and affected
   # inventories, so it is part of every task's interpreted input universe.
   - "/.gitignore"
   # Checkout normalization affects every source byte seen by every task.
   - "/.gitattributes"
-  # Command discovery participates in Moon graph, affected-plan, policy, and
-  # release computation, so changing it must invalidate every consumer.
-  - "/tools/dev/bun.sh"
-  # File-backed synchronous command transport is shared by release, policy,
-  # graph, CI, SDK, and developer tooling. Treat it as execution
-  # infrastructure so no consumer can silently reuse output captured by an
-  # older transport contract.
-  - "/tools/dev/capture-command-output.mjs"
-  # Root-to-leaf release staging safety is shared by every carrier family.
-  # Treat it as execution infrastructure so cached payloads cannot outlive
-  # the directory policy that admitted their staging roots.
-  - "/tools/release/release-directory-safety.mjs"
-  # Bun-owned mutation tests share the fd-backed synchronous compatibility
-  # facade. Its semantics therefore participate in every cached test result.
-  - "/tools/test/fd-backed-spawn-sync.mjs"
-  - "/tools/dev/moon-command.mjs"
+  # Toolchain pin changes alter task execution even when project sources do not.
+  - "/.prototools"
   - "!/node_modules"
   - "!/node_modules/**"
   - "!/examples/**/node_modules"

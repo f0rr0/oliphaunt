@@ -27,7 +27,7 @@ EVIDENCE_MATRIX_SCHEMA = ROOT / "src/extensions/evidence/schemas/matrix.schema.j
 EVIDENCE_RUNS = ROOT / "src/extensions/evidence/runs"
 EVIDENCE_TABLE = ROOT / "src/extensions/generated/docs/extension-evidence.json"
 THIRD_PARTY_ROOT = ROOT / "src/sources/third-party"
-PRODUCTION_THIRD_PARTY_DOMAINS = ("shared", "native", "wasix")
+PRODUCTION_THIRD_PARTY_DOMAINS = ("shared", "native")
 EXTENSIONS_ROOT = ROOT / "src/extensions"
 EXTERNAL_ROOT = EXTENSIONS_ROOT / "external"
 SMOKE_RECIPE_ROOT = ROOT / "src/shared/fixtures/extensions"
@@ -481,7 +481,7 @@ def source_digest_inputs() -> list[str]:
     return [*BASE_SOURCE_DIGEST_INPUTS, *source_files, *recipe_files, *smoke_recipe_files]
 
 
-def validate_no_obsolete_extension_files(root: Path = EXTENSIONS_ROOT) -> None:
+def validate_no_obsolete_extension_files(root: Path = EXTERNAL_ROOT) -> None:
     obsolete = sorted(
         rel(path)
         for path in root.glob("**/*")

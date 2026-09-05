@@ -1,7 +1,7 @@
 $schema: "https://moonrepo.dev/schemas/project.json"
 
 id: "shared-rust-query-core"
-language: "javascript"
+language: "rust"
 layer: "library"
 stack: "systems"
 tags: ["shared", "rust", "sdk"]
@@ -17,19 +17,19 @@ owners:
     "query_core.rs": ["@oliphaunt/sdk-rust", "@oliphaunt/wasix-rust"]
     "tools/**": ["@oliphaunt/core"]
 
+fileGroups:
+  sources:
+    - "query_core.rs"
+
 tasks:
   check:
     tags: ["quality", "static"]
     command: "node src/shared/rust-query-core/tools/check-rust-query-core.mjs"
     inputs:
-      - "/src/shared/rust-query-core/**/*"
-      - "/src/sdks/rust/build.rs"
-      - "/src/sdks/rust/tools/check-sdk.sh"
-      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/build.rs"
-      - "/src/bindings/wasix-rust/tools/check-package.sh"
-      - "/tools/release/prepare-rust-release-source.mjs"
-      - "/tools/release/package_oliphaunt_wasix_sdk_crate.mjs"
-      - "/tools/release/check-staged-artifacts.mjs"
+      - "@group(sources)"
+      - "tools/check-rust-query-core.mjs"
+      - "/src/sdks/rust/src/query_core*"
+      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/query_core*"
     options:
       cache: true
       runFromWorkspaceRoot: true

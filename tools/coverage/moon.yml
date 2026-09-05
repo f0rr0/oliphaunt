@@ -6,6 +6,30 @@ layer: "tool"
 stack: "infrastructure"
 tags: ["tools", "coverage", "repo-hygiene"]
 
+dependsOn:
+  - id: "shared-test-fixtures"
+    scope: "development"
+  - id: "extension-runtime-contract"
+    scope: "build"
+  - id: "liboliphaunt-wasix"
+    scope: "build"
+  - id: "oliphaunt-js"
+    scope: "build"
+  - id: "oliphaunt-kotlin"
+    scope: "build"
+  - id: "oliphaunt-react-native"
+    scope: "build"
+  - id: "oliphaunt-rust"
+    scope: "build"
+  - id: "oliphaunt-swift"
+    scope: "build"
+  - id: "oliphaunt-wasix-rust"
+    scope: "build"
+  - id: "oliphaunt-wasix-ts"
+    scope: "build"
+  - id: "shared-rust-query-core"
+    scope: "build"
+
 project:
   title: "Coverage Tools"
   description: "Measured polyglot coverage runners, parsers, thresholds, and aggregate summaries."
@@ -21,8 +45,136 @@ tasks:
     tags: ["quality", "static"]
     command: "bash tools/dev/bun.sh tools/coverage/coverage.mjs check-tools"
     inputs:
-      - "/tools/coverage/**/*"
+      - "**/*"
       - "/coverage/baseline.toml"
+      - "/tools/dev/capture-command-output.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  rust:
+    tags: ["coverage", "quality", "requires-rust"]
+    command: "tools/coverage/run-product oliphaunt-rust"
+    inputs:
+      - "/.config/nextest.toml"
+      - "@group(cargo-workspace)"
+      - "/coverage/baseline.toml"
+      - project: "oliphaunt-rust"
+        group: "code"
+      - project: "shared-rust-query-core"
+        group: "sources"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - "**/*"
+    outputs:
+      - "/target/coverage/oliphaunt-rust/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  swift:
+    tags: ["coverage", "quality", "requires-apple"]
+    command: "tools/coverage/run-product oliphaunt-swift"
+    inputs:
+      - "/Package.swift"
+      - "/coverage/baseline.toml"
+      - project: "oliphaunt-swift"
+        group: "code"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - "**/*"
+    outputs:
+      - "/target/coverage/oliphaunt-swift/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  kotlin:
+    tags: ["coverage", "quality", "requires-android-sdk"]
+    command: "tools/coverage/run-product oliphaunt-kotlin"
+    inputs:
+      - "/coverage/baseline.toml"
+      - project: "oliphaunt-kotlin"
+        group: "code"
+      - project: "extension-runtime-contract"
+        group: "contract"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - "**/*"
+    outputs:
+      - "/target/coverage/oliphaunt-kotlin/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  js:
+    tags: ["coverage", "quality"]
+    command: "tools/coverage/run-product oliphaunt-js"
+    deps:
+      - "shared-js-core:build"
+    inputs:
+      - "@group(pnpm-workspace)"
+      - "/coverage/baseline.toml"
+      - project: "oliphaunt-js"
+        group: "code"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - "**/*"
+    outputs:
+      - "/target/coverage/oliphaunt-js/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  react-native:
+    tags: ["coverage", "quality"]
+    command: "tools/coverage/run-product oliphaunt-react-native"
+    deps:
+      - "shared-js-core:build"
+    inputs:
+      - "@group(pnpm-workspace)"
+      - "/coverage/baseline.toml"
+      - project: "oliphaunt-react-native"
+        group: "code"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - "**/*"
+    outputs:
+      - "/target/coverage/oliphaunt-react-native/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  wasix-rust:
+    tags: ["coverage", "quality", "requires-rust"]
+    command: "tools/coverage/run-product oliphaunt-wasix-rust"
+    inputs:
+      - "/.config/nextest.toml"
+      - "@group(cargo-workspace)"
+      - "/coverage/baseline.toml"
+      - project: "oliphaunt-wasix-rust"
+        group: "code"
+      - project: "liboliphaunt-wasix"
+        group: "crates"
+      - project: "shared-rust-query-core"
+        group: "sources"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - "**/*"
+    outputs:
+      - "/target/coverage/oliphaunt-wasix-rust/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  wasix-ts:
+    tags: ["coverage", "quality"]
+    command: "tools/coverage/run-product oliphaunt-wasix-ts"
+    deps:
+      - "shared-js-core:build"
+    inputs:
+      - "@group(pnpm-workspace)"
+      - "/coverage/baseline.toml"
+      - project: "oliphaunt-wasix-ts"
+        group: "code"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - "**/*"
+    outputs:
+      - "/target/coverage/oliphaunt-wasix-ts/**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true

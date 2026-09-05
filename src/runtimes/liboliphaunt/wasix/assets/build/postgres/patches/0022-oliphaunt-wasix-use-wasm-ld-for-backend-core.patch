@@ -8,14 +8,14 @@ assembling the backend core archive.  Leave the final dynamic-main link to the
 product build helper so its generated side-module export closure stays the one
 authoritative policy instead of wasixcc's unconditional export-all default.
 ---
- src/backend/Makefile | 16 +++++++++++-----
- 1 file changed, 11 insertions(+), 5 deletions(-)
+ src/backend/Makefile | 17 ++++++++++++-----
+ 1 file changed, 12 insertions(+), 5 deletions(-)
 
 diff --git a/src/backend/Makefile b/src/backend/Makefile
 index 9292f77031..89c356d090 100644
 --- a/src/backend/Makefile
 +++ b/src/backend/Makefile
-@@ -96,12 +96,18 @@ libpostgres.a: postgres
+@@ -96,12 +96,19 @@ libpostgres.a: postgres
  endif # win32
 
  ifeq ($(PORTNAME), wasix-dl)
@@ -32,6 +32,7 @@ index 9292f77031..89c356d090 100644
 -	$(LD) -r -o libpgcore.o $(filter-out main/main.o,$(call expand_subsys,$^))
 -	$(AR) rcs libpgcore.a libpgcore.o
 -	$(CC) $(CFLAGS) main/main.o libpgcore.a $(LDFLAGS) $(LIBS) -Wl,--no-entry -Wl,--export-dynamic -Wl,--export=_start -nostartfiles -o $@
++	rm -f $(top_builddir)/libpgmain.a $(LIBPG) $(top_builddir)/libpgcore.o $(LIBPGCORE)
 +	$(AR) rcs $(top_builddir)/libpgmain.a $(PGMAIN)
 +	$(AR) rcs $(LIBPG) $(PGBACKEND)
 +	$(WASM_LD) --relocatable -o $(top_builddir)/libpgcore.o --whole-archive $(PGCORE) --no-whole-archive

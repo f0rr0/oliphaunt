@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { createDeterministicZip } from "./archive_dir.mjs";
+import { createDeterministicZip } from "../../src/shared/artifact-packaging/archive-directory.mjs";
 import {
   openContinuationEnvelope,
   openContinuationAuthorization,

@@ -153,7 +153,7 @@ async function runTool(
   stdin?: Uint8Array,
 ): Promise<string> {
   const descriptor = name === 'pg_dump' ? tools.pgDump : tools.psql;
-  let result;
+  let result: Awaited<ReturnType<typeof runWasixToolProcess>>;
   try {
     result = await runWasixToolProcess(database, {
       runtimeVersion: tools.runtimeVersion,

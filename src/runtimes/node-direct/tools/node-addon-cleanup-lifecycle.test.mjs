@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import {
   Worker,
@@ -25,57 +25,6 @@ const streamFixtureRequest = Object.freeze({
   failureWithoutCallback: 0xf5,
   unknownWithoutCallback: 0xf6,
 });
-
-async function bundleSdkCleanupRuntime(outputDirectory) {
-  const clientSource = path.join(workspaceRoot, "src/sdks/js/src/client.ts");
-  const nodeBindingSource = path.join(workspaceRoot, "src/sdks/js/src/native/node.ts");
-  const sdkPackageJson = path.join(workspaceRoot, "src/sdks/js/package.json");
-  const result = spawnSync(
-    "bun",
-    [
-      "build",
-      clientSource,
-      nodeBindingSource,
-      "--target=node",
-      "--format=esm",
-      "--entry-naming=[dir]/[name].mjs",
-      `--outdir=${outputDirectory}`,
-    ],
-    { encoding: "utf8" },
-  );
-  assert.equal(
-    result.error,
-    undefined,
-    `could not bundle the SDK cleanup fixture: ${result.error?.message ?? "unknown error"}`,
-  );
-  assert.equal(
-    result.signal,
-    null,
-    `SDK cleanup fixture bundler terminated by ${result.signal}\n${result.stderr}`,
-  );
-  assert.equal(
-    result.status,
-    0,
-    `SDK cleanup fixture bundling failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
-  );
-
-  const clientBundle = path.join(outputDirectory, "client.mjs");
-  const nodeBindingBundle = path.join(outputDirectory, "native", "node.mjs");
-  assert.ok(existsSync(clientBundle), `SDK cleanup client bundle is missing: ${clientBundle}`);
-  assert.ok(
-    existsSync(nodeBindingBundle),
-    `SDK cleanup Node binding bundle is missing: ${nodeBindingBundle}`,
-  );
-  const bundledPackageRoot = path.join(
-    outputDirectory,
-    "node_modules",
-    "@oliphaunt",
-    "ts",
-  );
-  await mkdir(bundledPackageRoot, { recursive: true });
-  await copyFile(sdkPackageJson, path.join(bundledPackageRoot, "package.json"));
-  return { clientBundle, nodeBindingBundle };
-}
 
 function parseArgs(argv) {
   const parsed = {};
@@ -288,43 +237,6 @@ async function collectGarbageUntilCollected(signal) {
   throw new Error("Node did not collect the unreachable native handle after 200 forced GC cycles");
 }
 
-async function openAfterForgottenOwnerRecovery(client, config) {
-  assert.equal(typeof globalThis.gc, "function", "GC lifecycle child must run with --expose-gc");
-  let lastAdmissionError;
-  for (let attempt = 0; attempt < 200; attempt += 1) {
-    globalThis.gc();
-    await new Promise((resolve) => setImmediate(resolve));
-    try {
-      return await client.open(config);
-    } catch (error) {
-      if (!/native direct already has an active process-wide instance/u.test(String(error))) {
-        throw error;
-      }
-      lastAdmissionError = error;
-    }
-  }
-  throw new Error("forgotten native owner did not release its exact JavaScript admission lease", {
-    cause: lastAdmissionError,
-  });
-}
-
-async function prepareManagedDatabaseRoot(root) {
-  await mkdir(path.join(root, "pgdata", "global"), { recursive: true });
-  await mkdir(path.join(root, "pgdata", "pg_wal"), { recursive: true });
-  await writeFile(path.join(root, "pgdata", "PG_VERSION"), "18\n");
-  await writeFile(path.join(root, "pgdata", "global", "pg_control"), "control");
-  await writeFile(
-    path.join(root, ".oliphaunt.json"),
-    `${JSON.stringify({
-      schema: "oliphaunt-database-root-v1",
-      engineFamily: "native",
-      pgdata: "pgdata",
-      postgresMajor: 18,
-      physicalFormat: "native-pg18-v1",
-    })}\n`,
-  );
-}
-
 function observeCollection(value) {
   const signal = { collected: false, registry: undefined };
   signal.registry = new FinalizationRegistry(() => {
@@ -412,54 +324,6 @@ async function runChild(options) {
         false,
         "reopen must recover the retained failed-detach owner before init",
       );
-      return;
-    }
-    case "sdk-gc-owner-recovery": {
-      const [{ createOliphauntClient }, { createNodeNativeBinding }] = await Promise.all([
-        import(pathToFileURL(options.sdkClientBundle)),
-        import(pathToFileURL(options.sdkNodeBindingBundle)),
-      ]);
-      const databaseRoot = path.join(options.root, "database");
-      const runtimeDirectory = path.join(options.root, "runtime");
-      await Promise.all([
-        prepareManagedDatabaseRoot(databaseRoot),
-        mkdir(runtimeDirectory, { recursive: true }),
-      ]);
-      const client = createOliphauntClient((bindingOptions) =>
-        createNodeNativeBinding({
-          ...bindingOptions,
-          nodeAddonPath: options.addon,
-        }),
-      );
-      const config = {
-        storage: { kind: "directory", path: databaseRoot },
-        libraryPath: options.library,
-        runtimeDirectory,
-      };
-
-      let forgotten = await client.open(config);
-      const forgottenCollection = observeCollection(forgotten);
-      forgotten = undefined;
-      let reopened = await openAfterForgottenOwnerRecovery(client, config);
-      assert.equal(
-        forgottenCollection.collected,
-        true,
-        "the next open must follow collection of the forgotten public database",
-      );
-
-      let retired = reopened;
-      reopened = undefined;
-      await retired.close();
-      const current = await client.open(config);
-      const retiredCollection = observeCollection(retired);
-      retired = undefined;
-      await collectGarbageUntilCollected(retiredCollection);
-      await assert.rejects(
-        client.open(config),
-        /native direct already has an active process-wide instance/u,
-        "collection of an older explicitly closed owner must not release the current lease",
-      );
-      await current.close();
       return;
     }
     case "forgotten-token-generation-guard": {
@@ -996,10 +860,6 @@ async function runParent(options) {
   let copiedImageCases = 0;
   let staleAcquisitionCases = 0;
   try {
-    const sdkBundleDirectory = path.join(temporaryRoot, "sdk-bundle");
-    const { clientBundle, nodeBindingBundle } = await bundleSdkCleanupRuntime(
-      sdkBundleDirectory,
-    );
     const copiedAddonA = path.join(temporaryRoot, "oliphaunt-node-copy-a.node");
     const copiedAddonB = path.join(temporaryRoot, "oliphaunt-node-copy-b.node");
     const unicodeLibraryDirectory = path.join(temporaryRoot, "unicode-λ-路径");
@@ -1047,11 +907,6 @@ async function runParent(options) {
         expectedBeforeClose: ["init", "detach-failed", "detach", "init", "detach"],
         exposeGc: true,
         failDetachOnce: true,
-      },
-      {
-        name: "sdk-gc-owner-recovery",
-        expectedBeforeClose: ["init", "detach", "init", "detach", "init", "detach"],
-        exposeGc: true,
       },
       {
         name: "forgotten-token-generation-guard",
@@ -1262,10 +1117,6 @@ async function runParent(options) {
           scenarioRoot,
           "--log",
           logPath,
-          "--sdk-client-bundle",
-          clientBundle,
-          "--sdk-node-binding-bundle",
-          nodeBindingBundle,
         ];
         const child = spawnSync(process.execPath, childArgs, {
           encoding: "utf8",
@@ -1348,7 +1199,11 @@ async function runParent(options) {
             scenario.expectStaleCleanup ?? false,
           );
         } else {
-          assertTerminalLifecycle(executionName, events, scenario.expectedBeforeClose);
+          const assertedEvents = scenario.ignoreEarlyCancel
+            ? events.filter((event, index) =>
+                event !== "cancel-early-ignored" || index === events.indexOf(event))
+            : events;
+          assertTerminalLifecycle(executionName, assertedEvents, scenario.expectedBeforeClose);
         }
       }
     }

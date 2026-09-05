@@ -31,6 +31,7 @@ import {
   ROOT,
   compareText,
   compatibilityVersionEntries,
+  compatibilityVersionValue,
   loadGraph,
   moonReleaseMetadataRows,
   parseStableVersion,
@@ -299,54 +300,6 @@ function validateGraph(graph) {
   validateReleasePleaseVersions(graph);
 }
 
-function gitFileAtRef(ref, relativePath) {
-  const result = captureCommandOutput("git", ["show", `${ref}:${relativePath}`], {
-    cwd: ROOT,
-    label: `git show ${ref}:${relativePath}`,
-  });
-  if (result.error !== undefined || result.status !== 0) {
-    const detail = result.error?.message ?? (result.stderr || result.stdout || "").trim();
-    fail(`cannot read ${relativePath} at immutable compatibility ref ${ref}${detail ? `: ${detail}` : ""}`);
-  }
-  return result.stdout;
-}
-
-function compatibilityValue(entry, ref = null) {
-  const text = ref === null
-    ? readFileSync(path.join(ROOT, entry.path), "utf8")
-    : gitFileAtRef(ref, entry.path);
-  if (entry.parser === "raw") {
-    return text.trim();
-  }
-  if (entry.parser.startsWith("json:")) {
-    let value;
-    try {
-      value = object(JSON.parse(text), entry.path);
-    } catch (error) {
-      fail(`${entry.path}${ref === null ? "" : ` at ${ref}`} is not valid JSON: ${error.message}`);
-    }
-    return dottedValue(value, `$.${entry.parser.slice(5)}`, `${entry.id}.parser`);
-  }
-  if (entry.parser.startsWith("toml:")) {
-    let value;
-    try {
-      value = object(Bun.TOML.parse(text), entry.path);
-    } catch (error) {
-      fail(`${entry.path}${ref === null ? "" : ` at ${ref}`} is not valid TOML: ${error.message}`);
-    }
-    return dottedValue(value, `$.${entry.parser.slice(5)}`, `${entry.id}.parser`);
-  }
-  if (entry.parser.startsWith("rust-const:")) {
-    const name = entry.parser.slice("rust-const:".length);
-    assert(/^[A-Z][A-Z0-9_]*$/u.test(name), `${entry.id} has invalid Rust const parser`);
-    const expression = new RegExp(`(?:pub\\s+)?const\\s+${name}\\s*:[^=]+?=\\s*\"([^\"]+)\"\\s*;`, "gu");
-    const values = [...text.matchAll(expression)].map((match) => match[1]);
-    assert(values.length === 1, `${entry.path} must declare ${name} exactly once`);
-    return values[0];
-  }
-  fail(`${entry.id} uses unsupported compatibility parser ${entry.parser}`);
-}
-
 function validateCompatibility(graph) {
   const entries = compatibilityVersionEntries(graph.products, { requireSourceProduct: true, prefix: TOOL });
   assert(new Set(entries.map((entry) => entry.id)).size === entries.length, "compatibility field ids must be globally unique");
@@ -358,7 +311,7 @@ function validateCompatibility(graph) {
   const transitionedProducts = new Set(transitions.map(({ product }) => product));
   const versionSources = new Map();
   for (const entry of entries) {
-    const value = compatibilityValue(entry);
+    const value = compatibilityVersionValue(entry, { prefix: TOOL });
     let source = versionSources.get(entry.product);
     if (source === undefined) {
       source = compatibilityVersionSource(entry, graph.products, transitionedProducts, {
@@ -369,7 +322,13 @@ function validateCompatibility(graph) {
       versionSources.set(entry.product, source);
     }
     const expected = source.kind === "tagged-sink"
-      ? compatibilityValue(entry, source.ref)
+      ? compatibilityVersionValue(entry, {
+          ref: source.ref,
+          prefix: TOOL,
+          // A compatibility pin can become explicit before the sink's next
+          // release. Once published, its immutable tag supplies this value.
+          missingValue: value,
+        })
       : graph.products[entry.sourceProduct].version;
     const provenance = source.kind === "tagged-sink"
       ? `immutable ${entry.product} tag ${source.tag}`
@@ -520,9 +479,10 @@ function validateCatalogAndTargets(graph) {
   };
 }
 
-function exactDependency(table, name, version, { optional = false } = {}) {
+function workspaceDependency(table, name, { optional = false } = {}) {
   const dependency = object(table?.[name], `oliphaunt-wasix dependency ${name}`);
-  assert(dependency.version === `=${version}`, `${name} must use exact runtime version =${version}`);
+  assert(dependency.version === "*", `${name} must use the local workspace runtime without a release-version constraint`);
+  assert(typeof dependency.path === "string" && dependency.path.length > 0, `${name} must use a local workspace path`);
   assert(optional ? dependency.optional === true : dependency.optional !== true, `${name} optional dependency contract is wrong`);
 }
 
@@ -552,15 +512,15 @@ function validateWasixContract(graph, catalog) {
 
   const sdk = readToml("src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml");
   const dependencies = object(sdk.dependencies, "oliphaunt-wasix dependencies");
-  exactDependency(dependencies, RUNTIME_PACKAGE, runtimeVersion);
-  exactDependency(dependencies, TOOLS_PACKAGE, runtimeVersion, { optional: true });
-  exactDependency(dependencies, ICU_PACKAGE, runtimeVersion, { optional: true });
+  workspaceDependency(dependencies, RUNTIME_PACKAGE);
+  workspaceDependency(dependencies, TOOLS_PACKAGE, { optional: true });
+  workspaceDependency(dependencies, ICU_PACKAGE, { optional: true });
   const targetTables = object(sdk.target, "oliphaunt-wasix target dependencies");
   for (const [cfg, name] of Object.entries(publicAotCargoDependencies())) {
-    exactDependency(object(targetTables[cfg], `oliphaunt-wasix target ${cfg}`).dependencies, name, runtimeVersion);
+    workspaceDependency(object(targetTables[cfg], `oliphaunt-wasix target ${cfg}`).dependencies, name);
   }
   for (const [cfg, name] of Object.entries(publicToolsAotCargoDependencies())) {
-    exactDependency(object(targetTables[cfg], `oliphaunt-wasix target ${cfg}`).dependencies, name, runtimeVersion, { optional: true });
+    workspaceDependency(object(targetTables[cfg], `oliphaunt-wasix target ${cfg}`).dependencies, name, { optional: true });
   }
   assert(sameStrings(sdk.features?.tools ?? [], publicToolsFeatureDependencies()), "oliphaunt-wasix tools feature must select exactly the split tool carriers");
   assert(!("bundled" in object(sdk.features, "oliphaunt-wasix features")), "oliphaunt-wasix must not expose an inert bundled feature");

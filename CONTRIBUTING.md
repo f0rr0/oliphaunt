@@ -8,7 +8,7 @@ opening a PR:
 ```sh
 tools/dev/bootstrap-tools.sh
 moon run dev-tools:doctor
-moon run policy-tools:format-check
+moon run policy-tools:js-format-check policy-tools:rust-format-check
 moon run :check :compile :format-check :lint :tools-compile --affected
 moon run :test :unit :tools-unit --affected
 ```

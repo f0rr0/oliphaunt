@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   DEFAULT_PORTABLE_ARCHIVE_LIMITS,
   readPortableArchiveEntries,
-} from "./portable-archive.mjs";
+} from "../../src/shared/artifact-packaging/portable-archive.mjs";
 
 const PREFIX = "validate-ios-carrier-zips.mjs";
 const XCFRAMEWORK_ROOT = /^[A-Za-z0-9][A-Za-z0-9._-]*[.]xcframework$/u;

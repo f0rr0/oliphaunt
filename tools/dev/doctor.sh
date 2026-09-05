@@ -122,10 +122,6 @@ for optional in \
   lychee \
   prek \
   rg \
-  shellcheck \
-  shfmt \
-  swift-format \
-  swiftlint \
   taplo \
   typos \
   zizmor

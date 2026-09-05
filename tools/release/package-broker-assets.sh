@@ -91,7 +91,7 @@ tools/dev/bun.sh tools/release/broker-dependency-license-contract.mjs stage \
   "$stage" \
   --target "$target_id"
 
-tools/release/archive_dir.mjs "$stage" "$out_dir/$asset"
+src/shared/artifact-packaging/archive-directory.mjs "$stage" "$out_dir/$asset"
 tools/dev/bun.sh tools/release/broker-dependency-license-contract.mjs check-archive \
   "$out_dir/$asset" \
   --target "$target_id"

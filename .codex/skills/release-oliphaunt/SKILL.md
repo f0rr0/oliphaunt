@@ -12,9 +12,10 @@ same qualified inputs, and the resulting publication lock must byte-match the
 approved dry-run lock; bootstrap publishes the approved capsule bytes directly.
 
 Select release products and versions from the publication catalog and
-product-local metadata. PostgreSQL 18 contrib SQL members belong to the single
-runtime-bound `oliphaunt-extension-contrib-pg18` product; they remain exact
-member artifacts inside its target carriers rather than leaf release products.
+product-local metadata. PostgreSQL 18 contrib SQL members belong to the logical
+`oliphaunt-extension-contrib-pg18` distribution, not an independently versioned
+release product. Its native and WASIX carriers inherit the corresponding
+runtime product version; members remain exact nested artifacts.
 External extensions own independent packaging SemVer and record their upstream
 source identity separately. Never infer one repository-wide extension version,
 and do not treat target/ecosystem carriers as additional products.
@@ -31,11 +32,11 @@ and do not treat target/ecosystem carriers as additional products.
 5. Inspect `git status`, product versions, existing product tags/releases, registry identities, and the latest exact-SHA CI run. Report any public collision before attempting a mutation.
 6. Run `tools/dev/bun.sh tools/release/audit-github-release-controls.mjs` with the truthful credential lifecycle before any external mutation. Use `--governance solo --bootstrap-state idle` for qualification, release-PR preparation, and dry-run while bootstrap tokens are absent. Rerun with `--bootstrap-state ready` only for an imminent first-identity bootstrap after every reviewed short-lived token required by the approved lock is installed (one registry or both). If exact inventory proves that all selected Cargo/npm identities already match, keep the credential lifecycle `idle` and provision neither token. Use `retired` after trusted publishers are configured and every provisioned token is revoked. Select `team` only with an independent maintainer. Treat `FAIL` as a blocker; report but do not promote `WARN` to a solo-release blocker.
 7. Generate trusted-publisher work from the approved publication lock with `tools/dev/bun.sh tools/release/trusted-publisher-config.mjs`. Its default mode is offline/read-only. Use authenticated `--audit` before considering `--apply`; mutation additionally requires the exact printed lock digest. Run npm audit and apply directly in a terminal because each classification pass starts with a discarded read-only TTY authentication warm-up before the bounded captured reads, and supply a fresh `--output` path for the atomically created mode-`0600` JSON evidence. Configure the direct workflow `release.yml` and `release-publish` environment. Keep release credentials only in their protected environments; do not add repository-level copies or a reusable-workflow secret bridge.
-8. On a generated release PR, treat Release Please as the direct-candidate
-   authority and `sync-release-pr.mjs` as the deterministic dependent-candidate
-   closer. Inspect its dependency-only changelog reasons; do not manually copy
-   candidates, broaden build-only Moon scopes, or guess a first version for a
-   dependent still at `0.0.0`. Before preparation, require
+8. On a generated release PR, treat Release Please as the candidate authority
+   and `sync-release-pr.mjs` as the deterministic selected-candidate metadata
+   closer. It may add a shared-source candidate only when the same source bytes
+   are bundled by multiple products; it never creates a downstream release from
+   a Moon dependency edge. Before preparation, require
    `release-please-pr-lifecycle.mjs assert-clean` to report no merged `main` PR
    still pending. Before bootstrap or normal publication mutates public state,
    require `assert-markable` for the exact release SHA. Reassert it immediately
@@ -117,12 +118,13 @@ product outside the selected paths, move or represent the change under the
 owner before releasing. Do not add repository-meta fingerprints to force a
 candidate.
 
-For a normalized generated release PR, sync follows only Moon production/peer
-edges and directed compatibility source-to-owner edges. Native and WASIX are
-independent. A direct external-extension candidate therefore stays minimal,
-while a runtime candidate may require separately versioned consumers with
-exact compatibility fields. An unversioned first-release dependent is a
-Release Please/configuration blocker, not permission to weaken the graph.
+For a normalized generated release PR, Moon edges affect qualification, not
+candidate selection. Native, WASIX, SDKs, bindings, and external extensions are
+independently versioned. Sync updates compatibility pins only for consumers
+already selected by Release Please, using the dependency versions qualified at
+that commit; unselected consumers retain their older published pins. A selected
+consumer's dependency must be selected at the exact pinned version or already
+published with matching tag and carrier bytes.
 
 ```sh
 tools/dev/bun.sh tools/release/sync-release-pr.mjs

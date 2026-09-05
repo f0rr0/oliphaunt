@@ -12,7 +12,6 @@ Add `oliphaunt` and use `oliphaunt-build` from the build script so the matching
 native runtime, tools, and selected extension artifacts are staged for the
 target platform.
 
-<!-- liboliphaunt-doc-example:rust-build-script -->
 ```rust
 fn main() {
     oliphaunt_build::configure();
@@ -39,7 +38,6 @@ dedicated application threads, and callers which already control scheduling.
 SDK-owned temporary directory. `AsyncOliphaunt::open().await` does the same on
 the async owner thread. Use the cloneable builders when configuration differs.
 
-<!-- liboliphaunt-doc-example:rust-basic-query -->
 ```rust
 use oliphaunt::{DatabaseStorage, Oliphaunt};
 
@@ -63,7 +61,6 @@ db.close()?;
 Use the named asynchronous handle when the calling executor must remain
 responsive:
 
-<!-- liboliphaunt-doc-example:rust-async-basic -->
 ```rust
 use oliphaunt::AsyncOliphaunt;
 
@@ -187,7 +184,6 @@ Direct and broker databases expose one physical backup format as bytes. Restore
 is a static operation into an absent or empty destination. It never overwrites
 an existing managed database.
 
-<!-- liboliphaunt-doc-example:rust-backup-restore -->
 ```rust
 use oliphaunt::{DatabaseStorage, Oliphaunt};
 
@@ -226,7 +222,6 @@ Select a fixed loopback port or, on Unix hosts, a PostgreSQL socket directory.
 Unix socket directories must resolve to valid UTF-8 so the returned connection
 string preserves the exact path for Rust drivers and ORMs:
 
-<!-- liboliphaunt-doc-example:rust-start-server -->
 ```rust,no_run
 use oliphaunt::{OliphauntServer, ServerListen};
 
@@ -249,7 +244,6 @@ for a standard server physical backup. The optional `oliphaunt-tools` crate
 provides endpoint-oriented plain `pg_dump` and non-interactive `psql` runners;
 the core `oliphaunt` crate does not depend on or install client tools.
 
-<!-- liboliphaunt-doc-example:rust-native-pg-dump -->
 ```rust,no_run
 use oliphaunt_tools::{PgDumpOptions, pg_dump};
 

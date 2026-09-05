@@ -27,7 +27,7 @@ import {
 } from "./publication-lock.mjs";
 import { reserveGitHubCoreRequestSync } from "./github-core-request-journal.mjs";
 import { swiftExtensionCarrierAssetName } from "./ios-carrier-manifest.mjs";
-import { assertWasixExtensionMemberInstall } from "./wasix-extension-install-contract.mjs";
+import { assertWasixExtensionMemberInstall } from "../../src/shared/extension-runtime-contract/wasix-extension-install.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const PREFIX = "verify_github_release_attestations.mjs";

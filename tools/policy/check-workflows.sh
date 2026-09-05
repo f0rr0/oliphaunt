@@ -32,8 +32,10 @@ run tools/dev/bun.sh tools/policy/assertions/workflow-security.mjs
 run node --test \
   .github/scripts/configure-macos-release-toolchains.test.mjs \
   .github/scripts/moon-task-capabilities.test.mjs \
-  .github/scripts/write-affected-moon-target-matrices.test.mjs
+  .github/scripts/write-affected-moon-target-matrices.test.mjs \
+  .github/scripts/resolve-planned-moon-execution.test.mjs
 run tools/dev/bun.sh test \
   tools/policy/ci-plan-node-products.test.mjs \
-  tools/policy/ci-plan-wasix-postmaster-release.test.mjs
+  tools/policy/ci-plan-wasix-postmaster-release.test.mjs \
+  tools/policy/workflow-moon-transfers.test.mjs
 run tools/dev/bun.sh test tools/release/toolchain-bootstrap.test.mjs

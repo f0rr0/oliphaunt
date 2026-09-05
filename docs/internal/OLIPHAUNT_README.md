@@ -103,7 +103,7 @@ Maintainers track release-claim evidence and open blocker audits in
 moon query projects
 moon query tasks
 moon run repo:check
-moon run :check :compile :format-check :lint :tools-compile
+moon run :check :compile :format-check :js-format-check :rust-format-check :lint :tools-compile
 moon run :test :unit :tools-unit
 moon run :package
 moon run :coverage

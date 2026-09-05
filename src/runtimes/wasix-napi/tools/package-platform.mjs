@@ -24,7 +24,7 @@ const WORKSPACE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const PRODUCT_ROOT = path.join(WORKSPACE_ROOT, "src/runtimes/wasix-napi");
 const BUN_WRAPPER = path.join(WORKSPACE_ROOT, "tools/dev/bun.sh");
 const RELEASE_NOTICES = path.join(WORKSPACE_ROOT, "tools/release/release-notices.mjs");
-const ARCHIVE_DIRECTORY = path.join(WORKSPACE_ROOT, "tools/release/archive_dir.mjs");
+const ARCHIVE_DIRECTORY = path.join(WORKSPACE_ROOT, "src/shared/artifact-packaging/archive-directory.mjs");
 const PLATFORM_BINARY_CONTRACT = path.join(
   WORKSPACE_ROOT,
   "tools/release/platform-binary-contract.mjs",

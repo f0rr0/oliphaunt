@@ -2,7 +2,7 @@ $schema: "https://moonrepo.dev/schemas/project.json"
 
 id: "extensions"
 language: "unknown"
-layer: "tool"
+layer: "configuration"
 stack: "systems"
 tags: ["extensions", "catalog", "assets"]
 dependsOn:
@@ -10,21 +10,9 @@ dependsOn:
     scope: "build"
   - id: "extension-runtime-contract"
     scope: "build"
-  - id: "oliphaunt-extension-contrib-pg18"
+  - id: "third-party-native"
     scope: "build"
-  - id: "oliphaunt-extension-pg-hashids"
-    scope: "build"
-  - id: "oliphaunt-extension-pg-ivm"
-    scope: "build"
-  - id: "oliphaunt-extension-pg-textsearch"
-    scope: "build"
-  - id: "oliphaunt-extension-pg-uuidv7"
-    scope: "build"
-  - id: "oliphaunt-extension-pgtap"
-    scope: "build"
-  - id: "oliphaunt-extension-postgis"
-    scope: "build"
-  - id: "oliphaunt-extension-vector"
+  - id: "third-party-shared"
     scope: "build"
 
 project:
@@ -36,3 +24,89 @@ owners:
   defaultOwner: "@oliphaunt/core"
   paths:
     "**/*": ["@oliphaunt/core"]
+
+fileGroups:
+  sdk-metadata:
+    - "generated/sdk/**/*"
+  model:
+    - "catalog/**/*"
+    - "contrib/**/*"
+    - "evidence/**/*"
+    - "external/**/*"
+    - "generated/**/*"
+    - "schemas/**/*"
+    - "tools/**/*"
+  build:
+    - "catalog/**/*"
+    - "contrib/**/*"
+    - "external/**/*"
+    - "generated/**/*"
+    - "schemas/**/*"
+    - "tools/**/*"
+    - "!**/*.md"
+    - "!external/**/VERSION"
+    - "!external/**/release.toml"
+    - "!generated/docs"
+    - "!generated/docs/**"
+  package:
+    - "catalog/**/*"
+    - "contrib/**/*"
+    - "external/**/*"
+    - "generated/**/*"
+    - "schemas/**/*"
+    - "tools/**/*"
+    - "!generated/docs"
+    - "!generated/docs/**"
+
+tasks:
+  lint:
+    tags: ["quality", "static"]
+    command: "bash tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --check"
+    inputs:
+      - "@group(legal-files)"
+      - project: "postgres18"
+        group: "source"
+      - "@group(model)"
+      - project: "extension-runtime-contract"
+        group: "contract"
+      - "/src/shared/fixtures/extensions/**/*"
+      - project: "third-party-native"
+        group: "sources"
+      - project: "third-party-shared"
+        group: "sources"
+      - "/src/sdks/rust/src/generated/extensions.rs"
+      - "/src/sdks/js/src/generated/extensions.ts"
+      - "/src/sdks/kotlin/oliphaunt/src/commonMain/kotlin/dev/oliphaunt/GeneratedExtensions.kt"
+      - "/src/sdks/react-native/src/generated/extensions.ts"
+      - "/examples/react-native-expo/src/generated/extension-smoke.ts"
+      - "/src/runtimes/liboliphaunt/licenses/openssl-3.5.6-LICENSE.txt"
+      - "/src/runtimes/liboliphaunt/licenses/postgresql-18.4-COPYRIGHT"
+      - "/src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/extension-legal-catalog.json"
+      - "/tools/dev/capture-command-output.mjs"
+      - "/src/sources/tools/source-fetch-core.mjs"
+      - "/tools/release/extension-upstream-licenses.mjs"
+      - "@group(release-archive-contract)"
+      - "/tools/release/release_graph_query.mjs"
+      - "@group(release-target-contract)"
+      - "/tools/release/platform-compatibility-policy.test.mjs"
+      - "/tools/release/release-graph.mjs"
+      - "/tools/xtask/**/*"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  unit:
+    tags: ["quality", "unit"]
+    command: "bash tools/dev/bun.sh test '--path-ignore-patterns=target/**' src/extensions/tools/native-component-contract.test.mjs"
+    inputs:
+      - "catalog/native-components.toml"
+      - "catalog/extensions.source.json"
+      - "tools/native-component-contract.mjs"
+      - "tools/native-component-contract.test.mjs"
+      - "/src/runtimes/liboliphaunt/native/portable-uuid/**/*"
+      - project: "extension-runtime-contract"
+        group: "contract"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

@@ -1,3 +1,4 @@
+import type { Stats } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -11,7 +12,7 @@ export async function resolveExactNativeRuntimeProfile(
   runtimeDirectory: string,
 ): Promise<NativeRuntimeProfile> {
   const icuDataDirectory = join(runtimeDirectory, 'share/icu');
-  let metadata;
+  let metadata: Stats;
   try {
     metadata = await stat(icuDataDirectory);
   } catch (error) {

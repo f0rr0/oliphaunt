@@ -9,7 +9,6 @@ import {
   filesUnder,
   rel,
   requireFile,
-  run,
 } from "./shared.mjs";
 
 function kotlinVersion() {
@@ -25,25 +24,9 @@ function kotlinVersion() {
   return version;
 }
 
-export function stageArtifacts(artifactRoot, workRoot) {
-  const mavenRepo = path.join(workRoot, "maven-local");
-  const buildRoot = path.join(workRoot, "gradle-build");
-  const cxxRoot = path.join(workRoot, "cxx-build");
-  const cacheRoot = path.join(workRoot, "gradle-cache");
+export function stageArtifacts(artifactRoot) {
+  const mavenRepo = path.join(ROOT, "target/moon/oliphaunt-kotlin/package/maven");
   const version = kotlinVersion();
-  run(path.join(ROOT, "src/sdks/kotlin/gradlew"), [
-    "-p",
-    path.join(ROOT, "src/sdks/kotlin"),
-    ":oliphaunt:publishAndroidReleasePublicationToMavenLocal",
-    ":oliphaunt-android-gradle-plugin:publishToMavenLocal",
-    `-Dmaven.repo.local=${mavenRepo}`,
-    "-PoliphauntAndroidAbiFilters=arm64-v8a,x86_64",
-    `-PoliphauntBuildRoot=${buildRoot}`,
-    `-PoliphauntCxxBuildRoot=${cxxRoot}`,
-    "--project-cache-dir",
-    cacheRoot,
-    "--no-configuration-cache",
-  ], { label: "Kotlin SDK Gradle package artifacts" });
   requireFile(path.join(mavenRepo, `dev/oliphaunt/oliphaunt-android/${version}/oliphaunt-android-${version}.aar`));
   requireFile(path.join(mavenRepo, `dev/oliphaunt/oliphaunt-android-gradle-plugin/${version}/oliphaunt-android-gradle-plugin-${version}.jar`));
   const publishedArchives = filesUnder(mavenRepo)

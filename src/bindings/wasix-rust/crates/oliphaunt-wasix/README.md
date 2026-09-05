@@ -18,7 +18,6 @@ cargo add oliphaunt-wasix
 
 ## Direct API
 
-<!-- liboliphaunt-doc-example:wasix-rust-basic-query -->
 ```rust,no_run
 use oliphaunt_wasix::{DatabaseStorage, Error, Oliphaunt};
 
@@ -148,7 +147,6 @@ is not yet a supported or qualified workflow.
 
 Physical backup is a PostgreSQL online backup in a plain tar archive:
 
-<!-- liboliphaunt-doc-example:wasix-rust-backup-restore -->
 ```rust,no_run
 use oliphaunt_wasix::{DatabaseStorage, Oliphaunt};
 
@@ -184,7 +182,6 @@ client cancellation is unsupported. Treat the example below as the covered
 SQLx connection shape, not proof of pool, COPY, cancellation, or
 arbitrary-driver conformance.
 
-<!-- liboliphaunt-doc-example:wasix-rust-sqlx-server -->
 ```rust,no_run
 use oliphaunt_wasix::OliphauntServer;
 use sqlx::{Connection, Row};
@@ -207,7 +204,6 @@ With the `tools` feature, an open database gains fluent methods for the matching
 packaged WASIX PostgreSQL programs. The optional `tools` namespace contains
 their options and structured error type:
 
-<!-- liboliphaunt-doc-example:wasix-rust-tools -->
 ```rust,no_run
 # #[cfg(feature = "tools")]
 use oliphaunt_wasix::{Oliphaunt, tools};
@@ -238,7 +234,6 @@ and after the tool run.
 
 Use `AsyncOliphaunt` when PostgreSQL must not block the calling async executor:
 
-<!-- liboliphaunt-doc-example:wasix-rust-async -->
 ```rust,no_run
 use oliphaunt_wasix::AsyncOliphaunt;
 

@@ -93,7 +93,7 @@ function writeCarrierDescriptor(root) {
     contribManifest("18.4"),
   );
   writeFileSync(
-    path.join(root, "tools/release/extension-target-profiles.toml"),
+    path.join(root, "src/shared/extension-runtime-contract/extension-target-profiles.toml"),
     'schema = "oliphaunt-extension-artifact-target-profiles-v1"\n',
   );
   writeFileSync(path.join(root, "src/postgres/versions/18/source.toml"), 'version = "18.4"\n');
@@ -158,13 +158,32 @@ test("a post-first runtime release leaves an independently versioned external si
     ["liboliphaunt-native", "liboliphaunt-wasix", "oliphaunt-extension-amcheck"],
   );
   const entries = [
-    { id: "contrib-native", product: "oliphaunt-extension-amcheck" },
-    { id: "external-native", product: "oliphaunt-extension-vector" },
+    {
+      id: "contrib-native",
+      product: "oliphaunt-extension-amcheck",
+      sourceProduct: "liboliphaunt-native",
+    },
+    {
+      id: "contrib-wasix",
+      product: "oliphaunt-extension-amcheck",
+      sourceProduct: "liboliphaunt-wasix",
+    },
+    {
+      id: "external-native",
+      product: "oliphaunt-extension-vector",
+      sourceProduct: "liboliphaunt-native",
+    },
   ];
   assert.deepEqual(
     compatibilityEntriesForBumpedProducts(entries, transitions).map(({ id }) => id),
-    ["contrib-native"],
+    ["contrib-native", "contrib-wasix"],
   );
+});
+
+test("a consumer-only bump advances its compatibility metadata", () => {
+  const entries = [{ id: "sdk-native", product: "sdk", sourceProduct: "native" }];
+  const transitions = [{ product: "sdk", before: "1.0.0", after: "1.1.0" }];
+  assert.deepEqual(compatibilityEntriesForBumpedProducts(entries, transitions), entries);
 });
 
 test("native can advance without WASIX or contrib", (t) => {

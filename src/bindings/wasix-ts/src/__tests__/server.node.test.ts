@@ -57,7 +57,6 @@ beforeEach(() => {
   nativeMocks.requireAddon.mockReturnValue({ NativeWasixServer: { open: nativeMocks.open } });
 });
 
-// liboliphaunt-doc-example:wasix-typescript-server
 describe('WASIX native local server surface', () => {
   it('delegates TCP ownership directly to the Rust addon and closes idempotently', async () => {
     const server = await openServer();

@@ -20,20 +20,21 @@ import {
   mutationTestWaves,
   releaseCheckPlan,
 } from "./release-check.mjs";
+import { releaseMetadataCheckPlan } from "./release-metadata-check.mjs";
 import { uniqueValueFlag } from "./release-cli-utils.mjs";
 
-test("release mutation-only mode skips metadata without forwarding its private flag", () => {
-  assert.deepEqual(releaseCheckPlan(["--mutation-tests-only", "--head-ref", "abc"]), {
+test("release gates reject ignored arguments", () => {
+  assert.deepEqual(releaseCheckPlan(["--mutation-tests-only"]), {
     mutationScope: "all",
     mutationTestsOnly: true,
-    passthrough: ["--head-ref", "abc"],
   });
-  assert.deepEqual(releaseCheckPlan(["--mutation-scope=release", "--head-ref", "abc"]), {
+  assert.deepEqual(releaseCheckPlan(["--mutation-scope=release"]), {
     mutationScope: "release",
     mutationTestsOnly: false,
-    passthrough: ["--head-ref", "abc"],
   });
   assert.throws(() => releaseCheckPlan(["--mutation-scope=other"]), /must be all, policy, or release/u);
+  assert.throws(() => releaseCheckPlan(["--head-ref", "abc"]), /unexpected argument/u);
+  assert.throws(() => releaseMetadataCheckPlan(["--head-ref", "abc"]), /unexpected argument/u);
 });
 
 test("release CLI value flags reject ambiguous duplicate identities", () => {

@@ -266,7 +266,9 @@ function normalizedStartupGUCEntries(
     return { name: trimmedName.toLowerCase(), value };
   });
   const lastIndexByName = new Map<string, number>();
-  entries.forEach(({ name }, index) => lastIndexByName.set(name, index));
+  entries.forEach(({ name }, index) => {
+    lastIndexByName.set(name, index);
+  });
   return entries.filter(({ name }, index) => lastIndexByName.get(name) === index);
 }
 

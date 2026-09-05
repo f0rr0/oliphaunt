@@ -21,8 +21,7 @@ export const metadata: Metadata = {
     default: 'Oliphaunt Docs',
     template: '%s | Oliphaunt',
   },
-  description:
-    'Embedded PostgreSQL SDKs for native, Rust WASIX, and WASIX TypeScript apps.',
+  description: 'Embedded PostgreSQL SDKs for native, Rust WASIX, and WASIX TypeScript apps.',
   icons: {
     icon: [{ url: '/img/favicon.svg', type: 'image/svg+xml' }],
     shortcut: '/img/favicon.svg',

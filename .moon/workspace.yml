@@ -6,28 +6,13 @@ projects:
     - "moon.yml"
     - "benchmarks/moon.yml"
     - "examples/moon.yml"
-    - "src/*/moon.yml"
-    - "src/bindings/*/moon.yml"
-    - "src/extensions/artifacts/*/moon.yml"
-    - "src/extensions/contrib/moon.yml"
-    - "src/extensions/external/*/moon.yml"
-    - "src/extensions/model/moon.yml"
-    - "src/postgres/versions/*/moon.yml"
-    - "src/runtimes/*/moon.yml"
-    - "src/runtimes/liboliphaunt/*/moon.yml"
-    - "src/sdks/*/moon.yml"
-    - "src/sources/*/moon.yml"
-    - "src/sources/third-party/*/moon.yml"
-    - "src/shared/*/moon.yml"
-    - "tools/*/moon.yml"
+    - "src/**/moon.yml"
+    - "tools/**/moon.yml"
   sources:
     ci-workflows: ".github"
 
-defaultProject: "oliphaunt-rust"
-
 pipeline:
   installDependencies: false
-  cacheLifetime: "7 days"
   logRunningCommand: true
 
 vcs:
@@ -37,7 +22,4 @@ vcs:
 telemetry: false
 
 experiments:
-  asyncAffectedTracking: true
-  asyncGraphBuilding: true
   casOutputsCache: true
-  nativeFileHashing: true

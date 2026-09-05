@@ -1,17 +1,19 @@
 #!/usr/bin/env bun
 import { copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import process from "node:process";
 
-import { extensionSqlNames } from "../../../../../tools/release/release-artifact-targets.mjs";
 import {
   projectWasixExtensionInstallSidecar,
-} from "../../../../../tools/release/wasix-extension-install-contract.mjs";
+} from "../../../../shared/extension-runtime-contract/wasix-extension-install.mjs";
 import {
   loadNativeComponentContract,
   resolveNativeComponentClosure,
 } from "../../../tools/native-component-contract.mjs";
 const PREFIX = "package-wasix-extension-assets.sh";
 const WASIX_PRODUCT_PATH = "src/runtimes/liboliphaunt/wasix";
+const WASIX_VERSION_PATH = `${WASIX_PRODUCT_PATH}/VERSION`;
+const PRODUCT_METADATA_PATH = "src/extensions/generated/sdk/extensions.json";
 const nativeComponentContract = loadNativeComponentContract();
 
 function fail(message) {
@@ -63,24 +65,42 @@ function relativeToRoot(root, file) {
 }
 
 async function releaseVersion(root) {
-  const manifestPath = path.join(root, ".release-please-manifest.json");
-  const manifest = await readJson(manifestPath);
-  const version = manifest[WASIX_PRODUCT_PATH];
-  if (typeof version !== "string" || version.length === 0) {
-    fail(`.release-please-manifest.json is missing ${WASIX_PRODUCT_PATH}`);
+  let version;
+  try {
+    version = (await readFile(path.join(root, WASIX_VERSION_PATH), "utf8")).trim();
+  } catch (error) {
+    fail(`could not read ${WASIX_VERSION_PATH}: ${error.message}`);
+  }
+  if (!/^\d+\.\d+\.\d+$/u.test(version)) {
+    fail(`${WASIX_VERSION_PATH} must contain one semantic version`);
   }
   return version;
 }
 
-function selectedSqlNames(extensionProductsCsv) {
+async function selectedSqlNames(root, extensionProductsCsv) {
   const products = parseCsv(extensionProductsCsv);
   if (products.length === 0) {
     return new Set();
   }
 
+  const metadataPath = path.join(root, PRODUCT_METADATA_PATH);
+  const metadata = await readJson(metadataPath);
+  if (!Array.isArray(metadata.extensions)) {
+    fail(`${PRODUCT_METADATA_PATH} must contain an extensions array`);
+  }
   const sqlNames = new Set();
   for (const product of products) {
-    for (const sqlName of extensionSqlNames(product, PREFIX)) sqlNames.add(sqlName);
+    const matches = metadata.extensions.filter((row) => row?.["artifact-product"] === product);
+    if (matches.length === 0) {
+      fail(`${PRODUCT_METADATA_PATH} has no extension rows for product ${product}`);
+    }
+    for (const row of matches) {
+      const sqlName = row["sql-name"];
+      if (typeof sqlName !== "string" || sqlName.length === 0) {
+        fail(`${PRODUCT_METADATA_PATH} has an invalid sql-name for product ${product}`);
+      }
+      sqlNames.add(sqlName);
+    }
   }
   return sqlNames;
 }
@@ -101,7 +121,7 @@ function tsvCell(value) {
   return text;
 }
 
-const args = Bun.argv.slice(2);
+const args = process.argv.slice(2);
 const root = path.resolve(optionValue(args, "--root"));
 const assetRoot = path.resolve(optionValue(args, "--asset-root"));
 const metadataPath = path.resolve(optionValue(args, "--metadata"));
@@ -112,7 +132,7 @@ const extensionProductsCsv = optionValue(args, "--extension-products");
 
 const [version, selected] = await Promise.all([
   releaseVersion(root),
-  selectedSqlNames(extensionProductsCsv),
+  selectedSqlNames(root, extensionProductsCsv),
 ]);
 
 const data = await readJson(metadataPath);

@@ -25,7 +25,6 @@ import {
   ServerHandle,
 } from '../runtime/server.js';
 
-// liboliphaunt-doc-example:typescript-open-server
 test('runtime adapters implement the shared internal operation boundary', async () => {
   const broker = createBrokerRuntimeBinding();
   assert.equal(typeof broker.open, 'function');

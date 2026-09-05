@@ -106,8 +106,6 @@ for relative in \
   runtime/bin/build-runtime.sh \
   runtime/bin/build-patched-wasix-libc-sysroot.sh \
   runtime/bin/validate-runtime-capabilities.sh \
-  runtime/bin/verify-runtime-execution-ownership.py \
-  runtime/bin/verify-runtime-state-ownership.py \
   runtime/bin/verify-source-lock.py; do
   mkdir -p "$frozen_root/$(dirname "$relative")"
   cp "$original_fresh_root/$relative" "$frozen_root/$relative"

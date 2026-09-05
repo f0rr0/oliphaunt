@@ -15,3 +15,7 @@ owners:
   defaultOwner: "@oliphaunt/core"
   paths:
     "**/*": ["@oliphaunt/core"]
+
+fileGroups:
+  sources:
+    - "*.toml"

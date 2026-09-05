@@ -5,6 +5,18 @@ set -euo pipefail
 FRESH_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$FRESH_ROOT/lib/common.sh"
 
+mode="all"
+case "${1:-}" in
+	"") ;;
+	--build-only) mode="build"; shift ;;
+	--tests-only) mode="tests"; shift ;;
+	*) printf 'unknown argument: %s\n' "$1" >&2; exit 2 ;;
+esac
+[ "$#" -eq 0 ] || {
+	printf 'unexpected argument: %s\n' "$1" >&2
+	exit 2
+}
+
 UPSTREAM_WORK_ROOT="${UPSTREAM_WORK_ROOT:-$FRESH_WORK_ROOT/runtime}"
 WASMER_ROOT="${WASMER_ROOT:-$UPSTREAM_WORK_ROOT/wasmer}"
 LLVM_MAJOR=22
@@ -113,12 +125,6 @@ while IFS=$'\t' read -r capability _owner _basis source_paths _rest; do
 		}
 	done
 done <"$FRESH_ROOT/runtime/capabilities.tsv"
-python3 "$FRESH_ROOT/runtime/bin/verify-runtime-state-ownership.py" \
-	--wasmer-root "$WASMER_ROOT"
-python3 "$FRESH_ROOT/runtime/bin/verify-runtime-execution-ownership.py" \
-	--wasmer-root "$WASMER_ROOT"
-"$WASMER_ROOT/lib/oliphaunt-wasix-postmaster-executor/tests/check-dependency-policy.sh"
-
 wasmer_cargo_lock="$WASMER_ROOT/Cargo.lock"
 [ -f "$wasmer_cargo_lock" ] && [ ! -L "$wasmer_cargo_lock" ] || {
 	printf 'missing regular Wasmer Cargo.lock: %s\n' "$wasmer_cargo_lock" >&2
@@ -157,6 +163,8 @@ source_wasmer_wasix_version="$(awk '
 	exit 2
 }
 
+if [ "$mode" != build ]; then
+"$WASMER_ROOT/lib/oliphaunt-wasix-postmaster-executor/tests/check-dependency-policy.sh"
 listed_tests="$(cargo test \
 	--locked \
 	--target-dir "$WASMER_TARGET_DIR" \
@@ -1038,6 +1046,13 @@ cargo test \
 	--no-default-features \
 	--features "$FRESH_MEMORY_PROFILE_FEATURES" \
 	memory_profile::wasm_tool::tests
+fi
+
+if [ "$mode" = tests ]; then
+	printf 'patched Wasmer and Postmaster runtime tests passed\n'
+	exit 0
+fi
+
 cargo build \
 	--locked \
 	--target-dir "$WASMER_TARGET_DIR" \

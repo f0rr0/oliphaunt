@@ -18,10 +18,10 @@ JOBS="${JOBS:-4}"
 oliphaunt_wasix_apply_wasix_profile configure
 
 if [ ! -f "$LIBICONV_SOURCE_DIR/configure" ] || [ ! -f "$LIBICONV_SOURCE_PIN" ]; then
-  echo "pinned libiconv source checkout is missing; run tools/dev/bun.sh tools/policy/fetch-sources.mjs wasix-runtime --force" >&2
+  echo "pinned libiconv source checkout is missing; run tools/dev/bun.sh src/sources/tools/fetch-sources.mjs wasix-runtime --force" >&2
   exit 1
 fi
-source_tree_sha256="$(python3 "$REPO_ROOT/tools/policy/verify-source-tree.py" \
+source_tree_sha256="$(python3 "$REPO_ROOT/src/sources/tools/verify-source-tree.py" \
   --checkout "$LIBICONV_SOURCE_DIR" \
   --manifest "$LIBICONV_SOURCE_MANIFEST")"
 

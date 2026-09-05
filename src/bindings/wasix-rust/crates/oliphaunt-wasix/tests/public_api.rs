@@ -468,7 +468,6 @@ fn typed_and_fluent_database_api_is_public() {
     }
     let _: fn() = direct_construction_surface;
 
-    // liboliphaunt-doc-example:wasix-rust-basic-query
     fn direct_database_surface(database: &mut Oliphaunt) {
         let _: Result<_> = database.query("SELECT 1");
         let _query = database
@@ -525,7 +524,6 @@ fn typed_and_fluent_database_api_is_public() {
     let _: fn(&mut Transaction<'_>) = direct_transaction_surface;
     let _: fn(&mut oliphaunt_wasix::OliphauntServer) = direct_server_surface;
 
-    // liboliphaunt-doc-example:wasix-rust-async
     fn async_database_surface(database: &AsyncOliphaunt) {
         let _clone = database.clone();
         assert_send(database.query("SELECT 1"));
@@ -611,7 +609,6 @@ fn extension_features_expose_required_dependency_selectors() {
 #[cfg(feature = "tools")]
 #[test]
 fn packaged_psql_accepts_standard_script_input() {
-    // liboliphaunt-doc-example:wasix-rust-tools
     let options = oliphaunt_wasix::tools::PsqlOptions::new().script("SELECT 1;");
     let _: oliphaunt_wasix::tools::PsqlOptions = options;
     fn assert_tool_error<T: std::error::Error + Send + Sync + 'static>() {}

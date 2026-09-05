@@ -20,7 +20,6 @@ import type { WasixAssetManifest } from '../types.js';
 type ProjectedExtension = ReturnType<typeof resolveWasixExtensions>['extensions'][number];
 type ProjectedLifecycle = ProjectedExtension['lifecycle'];
 
-// liboliphaunt-doc-example:wasix-typescript-extensions
 describe('WASIX TypeScript extensions', () => {
   it('uses the shared cluster-seed profile fixtures', () => {
     const standard = sharedSeedFixture('standard.valid.json');

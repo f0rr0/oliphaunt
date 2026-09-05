@@ -25,7 +25,6 @@ them:
 The plugin packages ICU data with the matching platform cluster seed; this is a
 build-time choice and does not add a database-open option.
 
-<!-- liboliphaunt-doc-example:react-native-open-query -->
 ```typescript
 import Oliphaunt from '@oliphaunt/react-native';
 

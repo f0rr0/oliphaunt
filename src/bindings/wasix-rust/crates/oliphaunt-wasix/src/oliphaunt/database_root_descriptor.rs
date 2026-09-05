@@ -353,10 +353,7 @@ mod tests {
 
     #[test]
     fn managed_layout_matches_runtime_contract() -> Result<()> {
-        let fixture_text = crate::oliphaunt::test_fixtures::text(
-            "storage/database-root.json",
-            "database-root.json",
-        );
+        let fixture_text = crate::oliphaunt::test_fixtures::text("storage/database-root.json");
         let fixture: serde_json::Value = serde_json::from_str(&fixture_text)?;
         assert_eq!(fixture["descriptor"], DESCRIPTOR_FILE);
         assert_eq!(fixture["schema"], DESCRIPTOR_SCHEMA);
@@ -375,10 +372,7 @@ mod tests {
 
     #[test]
     fn shared_invalid_and_malformed_descriptors_are_rejected() -> Result<()> {
-        let fixture_text = crate::oliphaunt::test_fixtures::text(
-            "storage/database-root.json",
-            "database-root.json",
-        );
+        let fixture_text = crate::oliphaunt::test_fixtures::text("storage/database-root.json");
         let fixture: serde_json::Value = serde_json::from_str(&fixture_text)?;
         let root = TempDir::new()?;
         let descriptor = root.path().join(DESCRIPTOR_FILE);

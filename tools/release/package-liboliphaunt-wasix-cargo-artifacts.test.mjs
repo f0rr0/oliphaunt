@@ -33,7 +33,7 @@ import {
   wasixExtensionAotPackageName,
 } from "./wasix-cargo-artifact-contract.mjs";
 import { canonicalWasixAotMetadata } from "./wasix-aot-manifest.mjs";
-import { canonicalGzipSync } from "./portable-archive.mjs";
+import { canonicalGzipSync } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const directories = [];

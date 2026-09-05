@@ -1608,7 +1608,8 @@ async function typeScriptPackageMetadataMatchesRuntimePackages(): Promise<void> 
   assert.equal(icuVersion, liboliphauntVersion);
   assert.equal(packageJson.oliphaunt?.nodeDirectAddon, 'oliphaunt-node-direct');
   assert.equal(packageJson.oliphaunt?.brokerHelper, 'oliphaunt-broker');
-  assert.deepEqual(packageJson.dependencies ?? {}, {});
+  assert.deepEqual(packageJson.dependencies, { '@oliphaunt/js-core': 'workspace:*' });
+  assert.deepEqual(packageJson.bundledDependencies, ['@oliphaunt/js-core']);
   const optionalDependencyNames = [
     '@oliphaunt/broker-darwin-arm64',
     '@oliphaunt/broker-linux-arm64-gnu',
@@ -1628,16 +1629,13 @@ async function typeScriptPackageMetadataMatchesRuntimePackages(): Promise<void> 
     optionalDependencyNames,
   );
   for (const packageName of optionalDependencyNames.slice(0, 4)) {
-    assert.equal(packageJson.optionalDependencies?.[packageName], `workspace:${brokerVersion}`);
+    assert.equal(packageJson.optionalDependencies?.[packageName], 'workspace:*');
   }
   for (const packageName of optionalDependencyNames.slice(4, 8)) {
-    assert.equal(
-      packageJson.optionalDependencies?.[packageName],
-      `workspace:${liboliphauntVersion}`,
-    );
+    assert.equal(packageJson.optionalDependencies?.[packageName], 'workspace:*');
   }
   for (const packageName of optionalDependencyNames.slice(8, 12)) {
-    assert.equal(packageJson.optionalDependencies?.[packageName], `workspace:${nodeDirectVersion}`);
+    assert.equal(packageJson.optionalDependencies?.[packageName], 'workspace:*');
   }
   await assertPlatformPackageTarget(
     '../../../../runtimes/liboliphaunt/native/packages/linux-x64-gnu/package.json',

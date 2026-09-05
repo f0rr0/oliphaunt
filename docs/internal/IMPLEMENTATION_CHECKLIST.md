@@ -66,12 +66,12 @@ intentionally not maintained here.
   asserts Android mobile builds request only `android-arm64-v8a` and
   `android-x86_64` extension artifacts while iOS mobile builds request only
   `ios-xcframework`.
-- [x] Moon dependency scopes encode release-affecting versus build-only edges.
+- [x] Moon dependency scopes encode source/qualification impact; product-local compatibility metadata encodes published dependencies.
   Evidence: `tools/dev/bun.sh tools/release/release_plan.mjs --changed-file ... --format json`
   probes prove extension catalog changes run affected CI without releases,
   exact extension target changes release only that extension product,
-  native runtime patches release native plus production downstream products, and
-  WASIX patches release only WASIX runtime plus the WASIX Rust binding.
+  native runtime patches release only native, and WASIX patches release only
+  WASIX; consumers remain independently versioned.
 - [x] React Native depends on Swift/Kotlin at the product graph level. Mobile
   installed-app builder jobs consume target-scoped exact-extension package
   artifacts through CI artifact handoff, not a Moon product dependency.
@@ -134,18 +134,14 @@ intentionally not maintained here.
   only the native extension artifact builder and does not select
   `liboliphaunt-native`. WASIX AOT target fan-out is emitted by the affected
   planner as matrix data, not by a separate CI planner job.
-- [x] Builds workflow disables Moon output cache for every artifact-producing
-  builder invocation. Evidence: `tools/policy/check-release-policy.py` rejects
-  any selected `ci-*` builder job whose `run-planned-moon-job.sh` line omits
-  `MOON_CACHE=off`; compiler/package-manager caches remain available below
-  Moon for ccache, Cargo, Gradle, pnpm, and Docker layers.
-- [x] Builds workflow disables upstream Moon expansion for every
-  artifact-producing builder invocation. Evidence:
-  `tools/policy/check-release-policy.py` rejects any selected `ci-*` builder
-  job whose `run-planned-moon-job.sh` line omits
-  `OLIPHAUNT_MOON_UPSTREAM=none`, so `Builds` jobs cannot silently pull in
-  `check`, `test`, docs, coverage, regression, or release-readiness work while
-  producing runtime, SDK, extension, or mobile app artifacts.
+- [x] Builds workflow preserves Moon's supported `hashes` and `outputs` cache
+  directories between equivalent hosted jobs. Exact release artifacts still
+  travel through same-run GitHub artifacts; compiler/package-manager caches
+  remain separate below Moon.
+- [x] Cross-runner execution distinguishes downloaded direct dependencies from
+  local prerequisites. `run-planned-moon-job.sh` validates transferred targets
+  against Moon's task graph, executes remaining local prerequisites normally,
+  then runs only the selected roots without rebuilding transferred producers.
 - [x] Native exact-extension artifact builders are independent target builders
   from the same PostgreSQL/liboliphaunt source and ABI inputs. They are now
   addressed by target, receive the exact selected product set as
@@ -226,7 +222,7 @@ intentionally not maintained here.
   `oliphaunt-android-static-extension-link-v1` rows for ABI, liboliphaunt, each
   selected static extension archive, and dependency archives. React Native
   Android passes the same property through its builder and
-  `src/sdks/react-native/tools/check-sdk.sh build-android-bridge` asserts that
+  `bun test src/sdks/react-native/tools/validate-android-link-evidence.test.mjs` asserts that
   vector's `liboliphaunt_extension_vector.a` was linked for the selected ABI.
   The staged mobile artifact checker now requires this Android link evidence
   whenever `--require-mobile android --require-mobile-prebuilt-extensions` is
@@ -235,20 +231,18 @@ intentionally not maintained here.
   (`android-arm64-v8a`/`android-x86_64`), and rejects missing or unselected
   dependency archive rows.
 - [x] Swift SDK package artifacts render the public SwiftPM release manifest
-  from the real Apple liboliphaunt SwiftPM target artifact in CI, not a local
+  from the ABI-finalized Apple liboliphaunt artifact set in CI, not a local
   fixture and not the all-platform aggregate release asset job. Evidence:
-  `swift-sdk-package` depends on `liboliphaunt-native-ios`, downloads
-  `liboliphaunt-native-release-assets-ios-xcframework`, sets
+  `swift-sdk-package` depends on `liboliphaunt-native-ios-abi`, downloads
+  `liboliphaunt-native-abi-compatible-release-assets-ios-datum64`, sets
   `OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR`, and
-  `src/sdks/swift/tools/check-sdk.sh package-shape` fails closed unless that
+  `release-tools:swift-sdk-package` fails closed unless that
   directory contains a real
   `liboliphaunt-<version>-apple-spm-xcframework.zip` with macOS, iOS device,
   and iOS simulator slices.
-- [x] Downloaded-artifact consumer jobs run their explicit Moon target with
-  `OLIPHAUNT_MOON_UPSTREAM=none`, so they do not re-run producer tasks after
-  GitHub artifact handoff. SDK package jobs also run their package target with
-  upstream traversal disabled so they cannot silently rebuild helper/runtime
-  package tasks inside an SDK builder.
+- [x] Downloaded-artifact consumers declare transferred direct producer targets
+  to the planned-job wrapper. The wrapper validates those graph edges, preserves
+  local package prerequisites, and suppresses only already-downloaded producers.
 - [x] WASIX exact-extension packaging consumes portable runtime outputs instead
   of rerunning source-generation checks. Evidence: strict generated asset
   validation remains in `liboliphaunt-wasix:runtime-portable`; the WASIX
@@ -259,7 +253,7 @@ intentionally not maintained here.
   `release.py` validates staged Cargo crates, Kotlin Maven repository
   artifacts, Swift release manifests/source archives, and npm tarballs;
   Kotlin, React Native, TypeScript, WASIX Rust, and Rust dry-runs return after
-  staged validation rather than invoking `check-sdk.sh`, Gradle local publish,
+  staged validation rather than invoking source qualification, Gradle local publish,
   `cargo package`, or `cargo publish --dry-run`.
 - [x] Kotlin SDK builder artifacts use the consumer-facing Maven repository as
   the package boundary. Evidence: `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs`
@@ -510,7 +504,7 @@ intentionally not maintained here.
   released.
 - [x] Node direct optional npm packages are built in the Builds workflow and
   published from staged tarballs. Evidence:
-  `src/runtimes/node-direct/tools/build-node-addon.sh` emits both
+  `tools/release/package-node-direct-runtime.sh` emits both
   `target/oliphaunt-node-direct/release-assets/*` and
   `target/oliphaunt-node-direct/npm-packages/*.tgz`; the release workflow
   downloads `oliphaunt-node-direct-npm-package-*`; `release.py` validates and
@@ -563,10 +557,10 @@ Run before claiming this architecture complete:
 - [x] `moon run ci-workflows:check graph-tools:check`
 - [x] `MOON_BIN=$HOME/.proto/shims/moon
   .github/scripts/run-moon-targets.sh ci-workflows:check`
-- [x] `bash src/sdks/react-native/tools/check-sdk.sh build-android-bridge`
-- [x] `moon run policy-tools:check release-tools:check graph-tools:check`
+- [x] `moon run oliphaunt-react-native:compile oliphaunt-react-native:unit`
+- [x] `moon run policy-tools:tools-compile release-tools:check graph-tools:check`
 - [x] `MOON_BIN=$HOME/.proto/shims/moon
-  .github/scripts/run-moon-targets.sh extension-model:check
+  .github/scripts/run-moon-targets.sh extensions:lint
   extension-artifacts-native:check extension-artifacts-wasix:check`
 - [x] `moon query projects`
 - [x] `moon query tasks`
@@ -693,8 +687,8 @@ Run before claiming this architecture complete:
   installs the pinned platform-tools/platform/build-tools/CMake/NDK packages
   through `sdkmanager`, and passes idempotently on the local Android SDK with
   NDK `27.0.12077973`, CMake `3.22.1`, and compile SDK `36`.
-- [x] `bash src/sdks/kotlin/tools/check-sdk.sh check-static`
-- [x] `bash src/runtimes/node-direct/tools/build-node-addon.sh`
+- [x] `moon run oliphaunt-kotlin:check`
+- [x] `bash tools/release/package-node-direct-runtime.sh`
 - [x] `tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs
   oliphaunt-extension-vector --output-root target/extension-artifacts-validate
   --require-native-target android-x86_64 --require-native-target
@@ -716,13 +710,13 @@ Run before claiming this architecture complete:
   `python3 tools/policy/check-release-policy.py`.
 - [x] Local PR 38 CI hardening checks passed after fixing the observed builder
   failures: `cargo run -p xtask -- assets verify-committed`, `bash -n` for the
-  touched native scripts, `sh -n src/runtimes/node-direct/tools/build-node-addon.sh`,
+  touched native scripts, `sh -n tools/release/package-node-direct-runtime.sh`,
   `actionlint .github/workflows/ci.yml .github/workflows/mobile-e2e.yml
   .github/workflows/release.yml`, `python3 tools/release/check_artifact_targets.py`,
   `python3 tools/policy/check-release-policy.py`,
   `node tools/policy/check-moon-product-graph.mjs`,
-  `bash tools/policy/check-sdk-mobile-extension-surface.sh`,
-  `bash tools/policy/check-sdk-parity.sh`, and
+  `moon run extensions:lint`,
+  `moon run sdk-contracts:check`, and
   `bash tools/policy/check-repo-structure.sh`.
 - [x] Local PR 38 Windows builder follow-up checks passed after making native
   extension source fetch skip PostgreSQL preparation and making the Windows base
@@ -735,9 +729,9 @@ Run before claiming this architecture complete:
   `python3 tools/release/check_artifact_targets.py`,
   `python3 tools/policy/check-release-policy.py`,
   `node tools/policy/check-moon-product-graph.mjs`,
-  `bash tools/policy/check-sdk-mobile-extension-surface.sh`,
-  `bash tools/policy/check-sdk-parity.sh`, `bash tools/policy/check-repo-structure.sh`,
-  and `bash src/runtimes/node-direct/tools/check-package.sh check-static`.
+  `moon run extensions:lint`,
+  `moon run sdk-contracts:check`, `bash tools/policy/check-repo-structure.sh`,
+  and `moon run oliphaunt-node-direct:compile`.
   PowerShell parsing/execution still needs the GitHub Windows runner because
   `pwsh` is not installed in this macOS worktree.
 - [x] GitHub Builds run `27380605889` on `ff25ab64` proved the next CI-only
@@ -780,7 +774,7 @@ Run before claiming this architecture complete:
   `python3 tools/release/check_artifact_targets.py`,
   `python3 tools/policy/check-release-policy.py`, `python3 -m py_compile` for
   touched Python release/graph modules,
-  `bash tools/policy/check-sdk-mobile-extension-surface.sh`,
+  `moon run extensions:lint`,
   `python3 tools/release/artifact_target_matrix.py extension-artifacts-native`,
   and the focused extension package checks.
 - [x] GitHub Builds run `27383810080` on `d7ad6eca` proved the next CI-only
@@ -801,11 +795,11 @@ Run before claiming this architecture complete:
   focused macOS `OLIPHAUNT_NATIVE_EXTENSION_SQL_NAMES=amcheck`
   `build-postgres18-macos.sh`, `bash -n` for touched shell scripts,
   `cargo run -p xtask -- assets verify-committed`,
-  `bash tools/policy/check-source-inputs.sh`,
+  `moon run source-inputs:unit --upstream none`,
   `python3 src/extensions/tools/check-extension-model.py --check`,
   `python3 tools/release/check_artifact_targets.py`,
   `python3 tools/policy/check-release-policy.py`,
-  `bash tools/policy/check-sdk-mobile-extension-surface.sh`,
+  `moon run extensions:lint`,
   `node tools/policy/check-moon-product-graph.mjs`, and `git diff --check`.
 - [x] Builds workflow green on PR for affected builder jobs, including
   Android/iOS release-mode mobile build jobs when selected.
@@ -859,7 +853,7 @@ Run before claiming this architecture complete:
   dependency packaging. The follow-up guards the empty-array expansions for
   selected dependencies/extensions/stems and adds a mobile policy assertion for
   the strict-mode guard. Local evidence after this patch passed: `bash -n` for
-  the touched shell scripts, `bash tools/policy/check-sdk-mobile-extension-surface.sh`,
+  the touched shell scripts, `moon run extensions:lint`,
   `git diff --check`, and a focused `dict_xsyn` iOS XCFramework packaging
   smoke that produced simulator/device archives under
   `target/ios-xcframework-dict-xsyn-smoke/out` with `dependencies=` in the
@@ -896,7 +890,7 @@ Run before claiming this architecture complete:
   static registry source, and also hardens React Native runner empty-array
   expansions under Bash 3.2 strict mode. Local evidence after this patch
   passed: Bash syntax checks for the touched runner/policy scripts,
-  `bash tools/policy/check-sdk-mobile-extension-surface.sh`,
+  `moon run extensions:lint`,
   `node tools/policy/check-moon-product-graph.mjs`,
   `python3 tools/release/check_artifact_targets.py`, `git diff --check`,
   CI-artifact package lookup for the selected `vector` iOS XCFramework zip,
@@ -1018,7 +1012,7 @@ Run before claiming this architecture complete:
   `crates:oliphaunt-wasix@0.6.0` plus the renamed internal WASIX crates.
 - [x] GitHub Builds run `27448574605` on `927457d3` proved the native
   exact-extension source-fetch gap after decoupling artifact packaging from Rust:
-  all native extension rows failed before build work because CI runs
+  all native extension rows failed before build work because CI then ran
   `extension-artifacts-native` with `OLIPHAUNT_MOON_UPSTREAM=none`, so the
   `source-inputs:source-fetch-native-runtime` dependency did not materialize ICU,
   OpenSSL, and extension checkouts. The follow-up makes source checkout
@@ -1113,8 +1107,8 @@ Run before claiming this architecture complete:
   compatibility headers now define `PROJ_DLL` empty before `proj.h` is
   included, and the PostGIS compatibility header maps those case-insensitive
   string calls to MSVC's `_stricmp`/`_strnicmp`. Local evidence passed:
-  `bun tools/policy/fetch-sources.mjs native-runtime --force`,
-  `bun tools/policy/fetch-sources.mjs wasix-runtime --force`,
+  `bun src/sources/tools/fetch-sources.mjs native-runtime --force`,
+  `bun src/sources/tools/fetch-sources.mjs wasix-runtime --force`,
   `node tools/policy/check-moon-product-graph.mjs`,
   `bash tools/policy/check-tooling-stack.sh`,
   `bash tools/policy/check-repo-structure.sh`, Bash syntax checks for touched

@@ -3,10 +3,10 @@ import {appendFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import process from 'node:process';
 
-import {moonCommand} from '../../tools/dev/moon-command.mjs';
+import {moonCommand, moonEnvironment} from '../../tools/dev/moon-command.mjs';
 import {
+  groupTargets,
   matrixTarget,
-  shardCheckTargets,
   taskDependencies,
 } from './moon-task-capabilities.mjs';
 
@@ -39,7 +39,7 @@ function moonQueryTaskArgs(taskId = '', {affected = useAffectedQuery()} = {}) {
     args.push('--id', taskId);
   }
   if (affected) {
-    args.push('--upstream', 'none', '--downstream', 'deep');
+    args.push('--upstream', 'none', '--downstream', 'direct');
   }
   return args;
 }
@@ -50,6 +50,7 @@ function selectedScopeTaskMap() {
     moonQueryTaskArgs(),
     {
       encoding: 'utf8',
+      env: moonEnvironment(),
       stdio: ['ignore', 'pipe', 'inherit'],
       maxBuffer: MAX_CAPTURE_BYTES,
     },
@@ -84,35 +85,31 @@ function selectedScopeTaskMap() {
 function allTaskMap() {
   const result = spawnSync(
     moonCommand(),
-    moonQueryTaskArgs('', {affected: false}),
+    ['task-graph', '--json'],
     {
       encoding: 'utf8',
+      env: moonEnvironment(),
       stdio: ['ignore', 'pipe', 'inherit'],
       maxBuffer: MAX_CAPTURE_BYTES,
     },
   );
   if (result.error !== undefined || result.status !== 0) {
-    fail('moon query tasks failed for complete task capability metadata');
+    fail('moon task-graph failed for complete task capability metadata');
   }
   let query;
   try {
     query = JSON.parse(result.stdout);
   } catch (error) {
-    fail(`moon query tasks returned invalid JSON for complete task capability metadata: ${error.message}`);
+    fail(`moon task-graph returned invalid JSON for complete task capability metadata: ${error.message}`);
   }
-  const tasksByProject = query.tasks;
-  if (!tasksByProject || typeof tasksByProject !== 'object' || Array.isArray(tasksByProject)) {
-    fail('moon query tasks did not return a tasks object for complete task capability metadata');
+  const taskData = query.data;
+  if (!taskData || typeof taskData !== 'object') {
+    fail('moon task-graph did not return task data for complete task capability metadata');
   }
   const tasks = new Map();
-  for (const projectTasks of Object.values(tasksByProject)) {
-    if (!projectTasks || typeof projectTasks !== 'object' || Array.isArray(projectTasks)) {
-      continue;
-    }
-    for (const task of Object.values(projectTasks)) {
-      if (task && typeof task === 'object' && typeof task.target === 'string') {
-        tasks.set(task.target, task);
-      }
+  for (const task of Object.values(taskData)) {
+    if (task && typeof task === 'object' && typeof task.target === 'string') {
+      tasks.set(task.target, task);
     }
   }
   return tasks;
@@ -211,55 +208,35 @@ function matrix(targets) {
   };
 }
 
-const taskIds = process.argv.slice(2);
-if (taskIds.length === 0 || taskIds.some((taskId) => !/^[A-Za-z0-9_-]+$/.test(taskId))) {
-  fail('usage: write-affected-moon-target-matrices.mjs <task-id> [<task-id> ...]');
+if (process.argv.length !== 2) {
+  fail('usage: write-affected-moon-target-matrices.mjs');
 }
 
 const completeTasks = allTaskMap();
 const selectedScopeTasks = selectedScopeTaskMap();
-const staticTaskIds = new Set(['check', 'compile', 'format-check', 'lint', 'tools-compile']);
-const unitTaskIds = new Set(['graph-unit', 'test', 'tools-unit', 'unit']);
 const checkTargets = new Map();
 const policyTargets = new Map();
 const testTargets = new Map();
-for (const taskId of taskIds) {
-  const taskMap = new Map(
-    [...selectedScopeTasks].filter(([, task]) => task.id === taskId),
-  );
-  const targets = [...taskMap.keys()].sort();
-  if (staticTaskIds.has(taskId)) {
-    for (const target of targets) {
-      const task = taskMap.get(target);
-      if (!task) {
-        fail(`Moon metadata did not include selected target ${target}`);
-      }
-      classifySelectedTask(task, {check: checkTargets, policy: policyTargets}, {
-        selectedScopeTasks,
-        allTasks: completeTasks,
-      });
-    }
-    continue;
-  }
-  const matrixTargets = targets.flatMap((target) => {
-    const task = taskMap.get(target);
-    if (!task) {
-      fail(`Moon metadata did not include selected target ${target}`);
-    }
-    return runsInCI(task) ? [matrixTarget(task, 'deep', completeTasks)] : [];
-  });
-  if (unitTaskIds.has(taskId)) {
-    for (const target of matrixTargets) testTargets.set(target.target, target);
-  } else {
-    output(`${taskId}_count`, String(matrixTargets.length));
-    output(`${taskId}_matrix`, matrix(matrixTargets));
+for (const task of selectedScopeTasks.values()) {
+  const taskTags = tags(task);
+  if (taskTags.has('coverage') || (taskTags.has('quality') && taskTags.has('unit'))) {
+    if (runsInCI(task)) testTargets.set(task.target, matrixTarget(task, 'deep', completeTasks));
+  } else if (
+    taskTags.has('quality')
+    && ['format', 'smoke', 'static'].some((role) => taskTags.has(role))
+  ) {
+    classifySelectedTask(task, {check: checkTargets, policy: policyTargets}, {
+      selectedScopeTasks,
+      allTasks: completeTasks,
+    });
   }
 }
 
-const checkShards = shardCheckTargets([...checkTargets.values()]);
+const checkGroups = groupTargets([...checkTargets.values()]);
+const testGroups = groupTargets([...testTargets.values()]);
 output('check_count', String(checkTargets.size));
-output('check_job_count', String(checkShards.length));
-output('check_matrix', matrix(checkShards));
+output('check_job_count', String(checkGroups.length));
+output('check_matrix', matrix(checkGroups));
 output('policy_count', String(policyTargets.size));
 output('policy_matrix', matrix([...policyTargets.values()]));
 output(
@@ -267,13 +244,25 @@ output(
   String([...policyTargets.values()].some((target) => target.requires_android_sdk)),
 );
 output(
+  'policy_requires_rust',
+  String([...policyTargets.values()].some((target) => target.requires_rust)),
+);
+output(
   'policy_requires_maintainer_tools',
   String([...policyTargets.values()].some((target) => target.requires_maintainer_tools)),
+);
+output(
+  'policy_requires_workspace',
+  String([...policyTargets.values()].some((target) => target.requires_workspace)),
+);
+output(
+  'policy_requires_wasmer_llvm',
+  String([...policyTargets.values()].some((target) => target.requires_wasmer_llvm)),
 );
 output('check_jobs', [
   ...(checkTargets.size > 0 ? ['check-targets'] : []),
   ...(policyTargets.size > 0 ? ['policy-targets'] : []),
 ]);
 output('test_count', String(testTargets.size));
-output('test_matrix', matrix([...testTargets.values()]));
+output('test_matrix', matrix(testGroups));
 output('test_jobs', testTargets.size > 0 ? ['test-targets'] : []);

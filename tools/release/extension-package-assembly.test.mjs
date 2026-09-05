@@ -125,7 +125,7 @@ test("mobile contrib assembly scopes both staging and validation to native carri
   });
   assert.equal(execution.status, 73);
   assert.deepEqual(calls, [
-    "tools/release/build-extension-ci-artifacts.mjs --family native oliphaunt-extension-contrib-pg18 --require-native-target android-arm64-v8a --require-native-target ios-xcframework",
+    "tools/release/build-extension-ci-artifacts.mjs --output-root target/mobile-extension-artifacts --family native oliphaunt-extension-contrib-pg18 --require-native-target android-arm64-v8a --require-native-target ios-xcframework",
     "tools/release/check-staged-artifacts.mjs --family native --require-extension-product oliphaunt-extension-contrib-pg18",
   ]);
 });

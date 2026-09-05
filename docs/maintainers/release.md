@@ -17,7 +17,7 @@ release use their product's version.
 
 The canonical model is composed from:
 
-- Moon project/release metadata for ownership and dependency impact;
+- Moon project/release metadata for source ownership and qualification impact;
 - `release-please-config.json` and `.release-please-manifest.json` for product
   versions, changelogs, components, and tag naming;
 - the protected release workflow for exact-SHA tag and draft-release creation;
@@ -92,11 +92,12 @@ and participates in the same carrier checks as other public products.
   do not remove it before Release Please has consumed it or retain it after the
   first bump.
 
-`tools/dev/bun.sh tools/release/sync-release-pr.mjs` closes the complete generated
-release fixed point: dependent candidates, compatibility values, package pins,
-locks, and deterministic evidence. Its `--check` mode proves that the same
-fixed point is already closed. Pure version/changelog changes alter package
-envelopes but do not alter committed runtime binaries.
+`tools/dev/bun.sh tools/release/sync-release-pr.mjs` closes the generated
+candidate metadata: shared-source candidates, compatibility values for selected
+consumers, package pins, locks, and deterministic evidence. It never creates a
+consumer release merely because one of its dependencies changed. Its `--check`
+mode proves that the same state is already closed. Pure version/changelog
+changes alter package envelopes but do not alter committed runtime binaries.
 
 PR CI runs `sync-release-pr.mjs --check-generated-release` only for the
 same-repository `release-please--branches--main` head, before artifact planning.
@@ -116,35 +117,28 @@ product's release. A manually constructed `chore(release):` commit without an
 actual manifest/version/changelog transition is rejected by the structured
 release-commit verifier.
 
-### Generated dependent candidates
+### Independent candidates and pinned dependencies
 
-Release Please remains the sole authority for direct candidates and their
-version policy: it selects the product paths changed since their last releases.
-After the canonical generated PR is normalized, derived sync computes the
-deterministic downstream fixed point from two directed relationships:
+Release Please remains the sole authority for product candidates and version
+policy: it selects product paths changed since their last releases. Shared
+contrib inputs may select both runtime owners because those source files are
+physically bundled into both products. No Moon dependency edge creates another
+release candidate.
 
-- Moon `production` and `peer` edges, traversed from dependency to consumer;
-- compatibility metadata, traversed only from `source_product` to the product
-  that owns the compatibility field.
+Moon `production` and `peer` edges describe source and qualification impact.
+Product-local `compatibility_versions` describe the exact published product
+versions a carrier consumes. A native runtime can therefore be published
+without bumping an SDK, and the unchanged SDK continues to pin the older native
+version. When a consumer is selected for release, sync updates its compatibility
+fields to the current dependency versions so the package describes the source
+and artifacts qualified at that commit. If a dependency is also selected,
+publication orders it first.
 
-Moon `build`, development, and test edges never expand a release. Dependency
-edges are never traversed backwards. Native and WASIX are independent: a native
-candidate does not select WASIX, and a WASIX candidate does not select native.
-Consequently a directly changed external extension remains an independent
-one-product release unless another real consumer depends on it; a runtime
-change can still select consumers whose exact compatibility fields must
-advance.
-
-For a missing dependent that has already shipped, sync creates a patch
-candidate, updates only the canonical and extra version files already declared
-in `release-please-config.json`, and inserts a deterministic `Dependencies`
-changelog entry naming the exact graph reason. A missing dependent still at
-`0.0.0` is a hard failure: Release Please must choose its first version. The
-sync command reloads the expanded manifest before updating compatibility fields
-and package/lock dependencies, then `--check`, structured release-commit
-verification, and release-PR coverage independently require the fixed point to
-be closed. Do not hand-edit a missing candidate into a source PR or weaken
-dependency scopes to make this gate pass.
+Before publishing a selected consumer, version checks require each pinned
+dependency to be either selected at that exact version or already available at
+its exact product tag and registry/GitHub carriers. Selecting a newer dependency
+does not satisfy an older consumer pin. Structured release-commit verification
+also rejects source changes hidden inside compatibility-only edits.
 
 PR CI recognizes generated `chore(release):` changes only on the generated
 Release Please branch. Before merge it requires the release commit's parent to

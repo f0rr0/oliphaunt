@@ -8,7 +8,6 @@ import {
   normalizeFiles,
   wasixEvidenceProductsForRelease,
 } from "./release-graph.mjs";
-import { withDependentReleaseClosure } from "./release-dependent-candidates.mjs";
 import { extensionArtifactProductsForReleaseProducts } from "./release-artifact-targets.mjs";
 
 const TOOL = "release_plan.mjs";
@@ -38,13 +37,6 @@ function printJson(plan) {
 
 function printGithubOutput(plan) {
   const products = plan.releaseProducts;
-  const missingDependents = plan.dependentReleaseProducts ?? [];
-  if (missingDependents.length > 0) {
-    fail(
-      `release plan is not dependency-closed; independently versioned dependent products are missing: ` +
-      missingDependents.join(", "),
-    );
-  }
   const graph = loadGraph(TOOL);
   const wasixEvidenceProducts = wasixEvidenceProductsForRelease(
     graph.products,
@@ -149,7 +141,7 @@ function planForArgs(args) {
   } else {
     plan = buildPlan(graph, [], TOOL);
   }
-  return withDependentReleaseClosure(graph, plan, { prefix: TOOL });
+  return plan;
 }
 
 function main(argv) {

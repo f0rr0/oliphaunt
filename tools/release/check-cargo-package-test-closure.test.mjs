@@ -106,7 +106,7 @@ test("rejects conflicting path-patch sources for the same package identity", (t)
       'edition = "2024"',
       "",
       "[dependencies]",
-      `carrier = { version = "=0.1.0", path = ${JSON.stringify(dependency)} }`,
+      `carrier = { version = "*", path = ${JSON.stringify(dependency)} }`,
       "",
     ].join("\n"));
     controllers.push(path.join(controller, "Cargo.toml"));

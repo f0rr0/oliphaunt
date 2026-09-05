@@ -28,7 +28,6 @@ fn synthetic_sdk_error() -> oliphaunt_wasix::Error {
 
 #[test]
 fn direct_api_query_transaction_persistence_and_backup() -> Result<()> {
-    // liboliphaunt-doc-example:wasix-rust-backup-restore
     let workspace = tempfile::TempDir::new()?;
     let source_root = workspace.path().join("source");
     let mut database = Oliphaunt::builder()

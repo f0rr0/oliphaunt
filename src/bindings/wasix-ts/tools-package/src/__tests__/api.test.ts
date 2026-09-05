@@ -26,7 +26,6 @@ const fixture = JSON.parse(
   ),
 ) as LogicalToolsFixture;
 
-// liboliphaunt-doc-example:wasix-typescript-tools
 describe('WASIX tools public validation', () => {
   const database = {} as never;
 

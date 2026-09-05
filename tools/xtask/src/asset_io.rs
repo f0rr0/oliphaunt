@@ -825,17 +825,17 @@ fn promote_directories_transactionally(entries: &[(PathBuf, PathBuf)]) -> Result
 
     for index in 0..prepared.len() {
         let destination = prepared[index].destination.clone();
-        if let Some(backup) = prepared[index].backup.clone() {
-            if let Err(error) = fs::rename(&destination, &backup) {
-                rollback_promotions(&mut prepared, index);
-                return Err(error).with_context(|| {
-                    format!(
-                        "move existing install {} -> {}",
-                        destination.display(),
-                        backup.display()
-                    )
-                });
-            }
+        if let Some(backup) = prepared[index].backup.clone()
+            && let Err(error) = fs::rename(&destination, &backup)
+        {
+            rollback_promotions(&mut prepared, index);
+            return Err(error).with_context(|| {
+                format!(
+                    "move existing install {} -> {}",
+                    destination.display(),
+                    backup.display()
+                )
+            });
         }
         if let Err(error) = fs::rename(prepared[index].stage.path(), &destination) {
             if let Some(backup) = prepared[index].backup.take() {

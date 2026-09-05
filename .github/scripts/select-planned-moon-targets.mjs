@@ -15,8 +15,8 @@ function parseJson(raw, source) {
   }
 }
 
-function plannedTargetsJson() {
-  const envJson = process.env.OLIPHAUNT_CI_JOB_TARGETS_JSON;
+function plannedTargetsJson(environment = process.env) {
+  const envJson = environment.OLIPHAUNT_CI_JOB_TARGETS_JSON;
   if (envJson) {
     return parseJson(envJson, 'OLIPHAUNT_CI_JOB_TARGETS_JSON');
   }
@@ -30,16 +30,24 @@ function plannedTargetsJson() {
   return plan.job_targets ?? {};
 }
 
-const job = process.argv[2] ?? '';
-if (!job) {
-  fail('usage: select-planned-moon-targets.mjs <job-id>');
+export function plannedTargets(job, environment = process.env) {
+  const targets = plannedTargetsJson(environment)?.[job] ?? [];
+  if (!Array.isArray(targets) || targets.some((target) => typeof target !== 'string')) {
+    throw new Error(`CI job ${JSON.stringify(job)} has invalid target list`);
+  }
+  return targets;
 }
 
-const mapping = plannedTargetsJson();
-const targets = mapping?.[job] ?? [];
-if (!Array.isArray(targets) || targets.some((target) => typeof target !== 'string')) {
-  fail(`CI job ${JSON.stringify(job)} has invalid target list`);
-}
-for (const target of targets) {
-  console.log(target);
+if (import.meta.main) {
+  const job = process.argv[2] ?? '';
+  if (!job) {
+    fail('usage: select-planned-moon-targets.mjs <job-id>');
+  }
+  try {
+    for (const target of plannedTargets(job)) {
+      console.log(target);
+    }
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
 }

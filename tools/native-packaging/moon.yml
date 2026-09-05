@@ -6,7 +6,10 @@ layer: "tool"
 stack: "systems"
 tags: ["maintainer-tool", "native", "rust"]
 dependsOn:
-  - "oliphaunt-rust"
+  - id: "extensions"
+    scope: "build"
+  - id: "extension-runtime-contract"
+    scope: "build"
 
 project:
   title: "Native packaging tools"
@@ -18,32 +21,36 @@ owners:
 
 tasks:
   check:
-    tags: ["quality", "static", "ci-rust"]
+    tags: ["quality", "static", "requires-rust"]
     command: "cargo check -p oliphaunt-native-packaging --locked --all-targets"
     env:
       CARGO_TARGET_DIR: "target/moon/native-packaging/check"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
-      - "/src/extensions/generated/sdk/extensions.json"
-      - "/src/sdks/rust/**/*"
-      - "/tools/native-packaging/**/*"
+      - "@group(cargo-workspace)"
+      - project: "extensions"
+        group: "sdk-metadata"
+      - project: "extension-runtime-contract"
+        group: "contract"
+      - project: "oliphaunt-rust"
+        group: "code"
+      - "**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true
   unit:
-    tags: ["quality", "unit", "ci-rust"]
+    tags: ["quality", "unit", "requires-rust"]
     command: "cargo test -p oliphaunt-native-packaging --locked"
     env:
       CARGO_TARGET_DIR: "target/moon/native-packaging/unit"
     inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
-      - "/src/extensions/generated/sdk/extensions.json"
-      - "/src/sdks/rust/**/*"
-      - "/tools/native-packaging/**/*"
+      - "@group(cargo-workspace)"
+      - project: "extensions"
+        group: "sdk-metadata"
+      - project: "extension-runtime-contract"
+        group: "contract"
+      - project: "oliphaunt-rust"
+        group: "code"
+      - "**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true

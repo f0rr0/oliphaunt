@@ -98,7 +98,7 @@ Implemented:
   throughput, so those misses remain tracked work instead of parity claims.
 - `tools/xtask` now keeps `wasmer-types` behind the AOT serializer feature.
   Native no-default-feature builds no longer compile that legacy runtime crate,
-  and `tools/policy/check-native-boundaries.sh` guards the feature boundary.
+  and `sdk-contracts:native-boundaries` guards the feature boundary.
 
 ## Runtime Direction
 
@@ -1073,7 +1073,7 @@ The native SDK parity track now has a no-build public surface inventory:
 - `tools/policy/generate-sdk-api-surface.mjs --write` regenerates
   `src/docs/content/reference/sdk-api-surface.md` from the current Rust, Swift, Kotlin, and React
   Native SDK sources;
-- `tools/policy/check-sdk-parity.sh` runs the generator in `--check` mode so
+- `sdk-contracts:check` runs the generator in `--check` mode so
   accidental public symbol drift is visible in the fast parity gate;
 - `docs/maintainers/sdk-parity-policy.md` links the inventory next to `docs/products/sdk-manifest.toml`, so
   ownership, supported platform shape, and public API review evidence stay
@@ -1582,20 +1582,12 @@ release publishing:
 - React Native already inspects `npm pack --dry-run --json`, so the SDK parity
   gate now requires all four package artifact checks to remain in place.
 
-## SDK README Example Coverage
+## SDK README Example Coverage (removed)
 
-The SDK parity gate now mechanically links public README code examples to
-compiled or tested SDK coverage:
-
-- Rust, Swift, Kotlin, and React Native README code blocks carry
-  `liboliphaunt-doc-example:<id>` markers;
-- `tools/policy/check-sdk-doc-examples.mjs` rejects unmarked Rust/Swift/Kotlin/
-  TypeScript README examples, duplicate IDs, stale coverage markers, and
-  examples without SDK test/source coverage;
-- the current coverage set includes Rust backup/restore and typed-query
-  examples, Swift open/raw/streaming/typed/parameterized examples, Kotlin
-  Android-open/streaming/typed/parameterized examples, and React Native
-  open/query plus parameterized query examples.
+The marker-only parity gate was removed during the CI audit. It matched comment
+IDs between README fences and arbitrary source/test locations but neither
+compared nor executed the snippets, so it did not prove the claimed coverage.
+Product compile and unit tasks remain the executable evidence.
 
 ## Android Fast ABI Validation
 

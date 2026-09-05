@@ -46,7 +46,7 @@ import { CORE_RUNTIME_ARCHIVE_FILES } from "./wasix-cargo-artifact-contract.mjs"
 import {
   readPortableArchiveEntries,
   readPortableTarZstdBufferEntries,
-} from "./portable-archive.mjs";
+} from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import {
   IOS_CARRIER_FILENAME,
   buildIosCarrierManifest,
@@ -78,7 +78,7 @@ import {
   EXTENSION_RUNTIME_CONTRACT_SCHEMA,
   WASIX_EXTENSION_INSTALL_SCHEMA,
   WASIX_EXTENSION_INSTALL_SIDECAR_SCHEMA,
-} from "./wasix-extension-install-contract.mjs";
+} from "../../src/shared/extension-runtime-contract/wasix-extension-install.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
 const TOOL = "package-extension-release-carriers.mjs";

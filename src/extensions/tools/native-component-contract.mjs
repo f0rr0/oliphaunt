@@ -4,7 +4,7 @@ import { readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-import { loadExtensionTargetProfiles } from '../../../tools/release/extension-target-profiles.mjs';
+import { loadExtensionTargetProfiles } from '../../shared/extension-runtime-contract/extension-target-profiles.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 export const NATIVE_COMPONENT_CONTRACT_PATH = path.join(

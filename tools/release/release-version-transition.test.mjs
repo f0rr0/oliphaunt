@@ -7,6 +7,7 @@ import test from "node:test";
 
 import { buildPlanFromProductTags } from "./release-graph.mjs";
 import { releaseProductVersionCoverage } from "./release-product-version-coverage.mjs";
+import { selectedDependencySatisfiesPin } from "./check_release_versions.mjs";
 
 const PRODUCTS = {
   "liboliphaunt-native": "packages/native",
@@ -139,6 +140,12 @@ const V1 = {
   "oliphaunt-extension-vector": "1.0.0",
 };
 
+test("a selected dependency satisfies only its exact consumer pin", () => {
+  const selected = new Set(["liboliphaunt-native"]);
+  assert.equal(selectedDependencySatisfiesPin(selected, "liboliphaunt-native", "1.0.0", "1.0.0"), true);
+  assert.equal(selectedDependencySatisfiesPin(selected, "liboliphaunt-native", "1.0.0", "2.0.0"), false);
+});
+
 test("compatibility-only external sink edits cannot select its unchanged release identity", (t) => {
   const f = fixture(t, V1);
   tagVersions(f.root, V1);
@@ -157,8 +164,8 @@ test("compatibility-only external sink edits cannot select its unchanged release
       "transition-test",
     ),
     {
-      missingProducts: ["oliphaunt-extension-vector"],
-      requiredProducts: ["liboliphaunt-native", "liboliphaunt-wasix", "oliphaunt-extension-vector"],
+      missingProducts: [],
+      requiredProducts: ["liboliphaunt-native", "liboliphaunt-wasix"],
       versionedProducts: ["liboliphaunt-native", "liboliphaunt-wasix"],
     },
   );
@@ -222,7 +229,7 @@ test("a native release does not require WASIX to advance", (t) => {
   assert.equal(plan.changedFiles.includes("packages/vector/release.toml"), true);
 });
 
-test("production closure fails instead of reintroducing an unchanged downstream product", (t) => {
+test("production dependencies do not version an unchanged downstream product", (t) => {
   const f = fixture(t, V1);
   tagVersions(f.root, V1);
   const versions = { ...V1, "liboliphaunt-native": "2.0.0", "liboliphaunt-wasix": "2.0.0" };
@@ -235,9 +242,9 @@ test("production closure fails instead of reintroducing an unchanged downstream 
       scope: "production",
     }));
 
-  assert.throws(
-    () => buildPlanFromProductTags(releaseGraph, "HEAD", { prefix: "transition-test", root: f.root }),
-    /oliphaunt-extension-vector has release-affecting changes .* manifest version remains 1[.]0[.]0/u,
+  assert.deepEqual(
+    buildPlanFromProductTags(releaseGraph, "HEAD", { prefix: "transition-test", root: f.root }).releaseProducts,
+    ["liboliphaunt-native", "liboliphaunt-wasix"],
   );
 });
 

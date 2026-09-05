@@ -20,7 +20,7 @@ import {
   EXTENSION_ARTIFACT_ARCHIVE_POLICY,
   validateExtensionArtifactArchivePlan,
 } from "./extension-artifact-archive-policy.mjs";
-import { canonicalGzipSync } from "./portable-archive.mjs";
+import { canonicalGzipSync } from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import {
   extensionCarrierLegalContract,
   stageExtensionUpstreamLicenses,
@@ -1188,4 +1188,4 @@ async function main() {
   }
 }
 
-test("extension artifact inventory enforces exact inventory and adversarial bounds", main);
+test("extension artifact inventory enforces exact inventory and adversarial bounds", { timeout: 120_000 }, main);

@@ -19,7 +19,6 @@ export function reactNativePackageInputFingerprint({ root, rnDir, examplePackage
     ...walk(rnDir),
     path.join(root, 'src/extensions/generated/sdk/extensions.json'),
     path.join(root, 'src/extensions/generated/sdk/ios-static-dependencies.json'),
-    path.join(root, 'tools/dev/clean-package-lib.mjs'),
     ...(examplePackage ? [examplePackage] : []),
   ].sort(compare);
   const hash = createHash('sha256');

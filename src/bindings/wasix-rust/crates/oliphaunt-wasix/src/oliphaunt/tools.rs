@@ -1089,12 +1089,10 @@ mod tests {
 
     #[test]
     fn shared_option_fixture_matches_wasix_validation() {
-        let fixture: serde_json::Value =
-            serde_json::from_str(&crate::oliphaunt::test_fixtures::text(
-                "postgres/logical-tools.json",
-                "postgres-logical-tools.json",
-            ))
-            .expect("logical tools fixture must be valid JSON");
+        let fixture: serde_json::Value = serde_json::from_str(
+            &crate::oliphaunt::test_fixtures::text("postgres/logical-tools.json"),
+        )
+        .expect("logical tools fixture must be valid JSON");
         for argument in fixture["pgDump"]["acceptedArgs"].as_array().unwrap() {
             PgDumpOptions::new()
                 .arg(argument.as_str().unwrap())
@@ -1294,20 +1292,12 @@ mod tests {
     #[cfg(feature = "extension-pgtap")]
     #[test]
     fn public_tools_round_trip_shared_logical_fixture() -> crate::Result<()> {
-        let seed = crate::oliphaunt::test_fixtures::text(
-            "postgres/logical-tools-seed.sql",
-            "postgres-logical-tools-seed.sql",
-        );
-        let verify = crate::oliphaunt::test_fixtures::text(
-            "postgres/logical-tools-verify.sql",
-            "postgres-logical-tools-verify.sql",
-        );
-        let expected: serde_json::Value =
-            serde_json::from_str(&crate::oliphaunt::test_fixtures::text(
-                "postgres/logical-tools.json",
-                "postgres-logical-tools.json",
-            ))
-            .expect("logical tool contract must be valid JSON");
+        let seed = crate::oliphaunt::test_fixtures::text("postgres/logical-tools-seed.sql");
+        let verify = crate::oliphaunt::test_fixtures::text("postgres/logical-tools-verify.sql");
+        let expected: serde_json::Value = serde_json::from_str(
+            &crate::oliphaunt::test_fixtures::text("postgres/logical-tools.json"),
+        )
+        .expect("logical tool contract must be valid JSON");
 
         let mut source = crate::oliphaunt::client::Oliphaunt::builder()
             .extension(crate::Extension::PGTAP)

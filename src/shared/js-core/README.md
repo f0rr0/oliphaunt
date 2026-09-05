@@ -1,7 +1,7 @@
 # Shared JavaScript Core
 
-Canonical TypeScript helpers shared by the JavaScript and React Native SDKs.
+Canonical TypeScript helpers shared by the JavaScript, React Native, and WASIX
+TypeScript SDKs through the private `@oliphaunt/js-core` workspace package.
 
-The SDK packages keep mirrored copies of these files so published packages stay
-self-contained. Run `moon run shared-js-core:check` to verify the mirrors
-are byte-for-byte fresh.
+Moon builds its ESM and CommonJS exports once. Published SDKs bundle that
+minimal private package so registry consumers do not need another dependency.

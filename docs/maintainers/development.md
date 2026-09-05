@@ -1,6 +1,6 @@
 # Maintainer Development Guide
 
-Status: normative local-development guide. Last verified: 2026-07-15. Owner: repository maintainers.
+Status: normative local-development guide. Last verified: 2026-09-03. Owner: repository maintainers.
 
 This page is maintainer documentation for repository validation, generated
 artifacts, and local release metadata checks. It is not end-user product
@@ -18,8 +18,8 @@ inspect Moon affectedness, run focused checks first, and expand only when the
 changed contract requires it. A normal affected source feedback pass is:
 
 ```sh
-moon query affected --upstream none --downstream deep
-moon run :check :compile :format-check :lint :tools-compile --affected
+moon query affected --upstream none --downstream direct
+moon run :check :compile :format-check :js-format-check :rust-format-check :lint :tools-compile --affected
 moon run :test :unit :tools-unit --affected
 ```
 
@@ -51,7 +51,7 @@ directly:
 
 ```sh
 moon query projects
-moon query affected --upstream none --downstream deep
+moon query affected --upstream none --downstream direct
 moon run :coverage --affected
 ```
 
@@ -71,7 +71,7 @@ The validation entrypoint is split by maintainer workflow:
   C ABI/runtime smoke. It depends on the native release-runtime producer and
   refuses any implicit rebuild inside the smoke;
 - `moon run repo:check`: file hygiene and formatting;
-- `tools/policy/check-wasm-artifacts.sh`: source-controlled asset input verification
+- `moon run liboliphaunt-wasix:assets-verify`: source-controlled asset input verification
   plus AOT crate template checks;
 - `tools/dev/bun.sh tools/policy/check-rust-lint.mjs`: dependency invariants
   and clippy;
@@ -79,45 +79,19 @@ The validation entrypoint is split by maintainer workflow:
   behavior tests for helpers invoked by Actions;
 - `moon run liboliphaunt-wasix:smoke`: hard-requires portable assets plus host AOT,
   installs them into ignored paths, and runs the real runtime tests;
-- `moon run oliphaunt-wasix-ts:smoke`: local-only browser proof. It builds the
-  canonical portable runtime and PGDATA, rebuilds the source-pinned browser
-  host, serves COOP/COEP headers, and requires Chrome/Chromium to exercise
-  `pgtap`, recover two PostgreSQL error paths, return `42`, and exit cleanly;
-  `moon run oliphaunt-wasix-ts:smoke-pg-uuidv7` adds the private native-module
-  canary. Neither is a CI or release task yet;
+- `moon run liboliphaunt-wasix:runtime-portable oliphaunt-wasix-ts:package`, then
+  `node tools/integration/wasix-ts/smoke-browser.mjs`: local browser proof. It serves
+  COOP/COEP headers and requires Chrome/Chromium to exercise `pgtap`, recover two
+  PostgreSQL error paths, return `42`, and exit cleanly. Add `--pg-uuidv7` for the
+  private native-module canary;
 - `moon run integration-examples:check`: Tauri/Rust/frontend example checks;
-- `moon run liboliphaunt-native:smoke`: native-only C ABI smoke and
-  Rust native SDK tests. This delegates to the same fast product-track harness
-  as `check-track.sh quick`, so it reuses `target/liboliphaunt-pg18` by default
-  and only builds missing artifacts. Set `OLIPHAUNT_TRACK_BUILD=never` to prove
-  the command will not rebuild, `missing` to build absent artifacts, or `always`
-  for a deliberate rebuild. Use `check-track.sh extensions` or `full` for the
-  gated extension matrix. The native dylib is stamped and reused
-  unless edited C ABI sources, PostgreSQL embedded object inputs, compiler, or
-  patch/build inputs change; set `OLIPHAUNT_FORCE_RELINK=1` for a deliberate
-  relink. Extension artifact builds are separately fingerprinted and reused
-  across runs unless native C ABI, PostgreSQL patch/build, compiler, or
-  extension source inputs change. Set `OLIPHAUNT_FORCE_EXTENSION_REBUILD=1` for
-  a deliberate clean extension rebuild;
-- `src/runtimes/liboliphaunt/native/tools/check-track.sh [host-smoke|quick|rust|extensions|sdks|external-pgrx|full]`:
-  native-only liboliphaunt product validation. This is the preferred iteration lane
-  for the new product track because it avoids the WASIX release lane, exports the
-  local `target/liboliphaunt-pg18` runtime for Rust/Swift/Kotlin/RN tests, and only
-  runs `src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh` when native artifacts are
-  missing. Extension/full modes first call the build script's no-build
-  `--check-extension-artifacts-current` freshness probe; they only enter the
-  normal build path when the stamped extension fingerprint or required artifacts
-  are stale or absent. The readiness check consumes
-  `src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh --print-required-extension-artifacts`,
-  so it validates the complete artifact inventory used by the build instead of a
-  sample subset. Set
-  `OLIPHAUNT_TRACK_BUILD=never` to fail immediately instead of building,
-  `missing` to build only absent or stale required artifacts, or `always` for a
-  deliberate rebuild;
-- `tools/perf/check-native-perf-harness.sh`: fast no-build guard
-  proving the native perf script plans direct/broker/server/native-PostgreSQL
-  work with explicit `--perf-runner` support, without invoking the separate
-  WASIX comparison lane;
+- `moon run liboliphaunt-native:lint liboliphaunt-native:unit`: cached native
+  patch-stack and source-level tests without building a runtime;
+- `moon run oliphaunt-rust:regression`: native direct, broker, and server
+  behavior against the current host runtime. Extension behavior remains the
+  separate `oliphaunt-rust:extension-regression` lane;
+- `moon run perf-tools:native-plan`: validates the native benchmark plan without
+  building or measuring a runtime;
 - `pnpm --dir tools/perf/wasix-node bench:streaming`: quick local WASIX
   TypeScript transport benchmark. It reuses staged packages and portable assets,
   compares the root direct and explicit `/worker` contracts, exercises bounded COPY,
@@ -125,10 +99,10 @@ The validation entrypoint is split by maintainer workflow:
   `psql`, and prints a readable report (`-- --json` prints the complete JSON).
   Process RSS deltas are descriptive because the quick run reuses one process.
   If inputs are absent, first run
-  `moon run oliphaunt-wasix-ts:tools-package liboliphaunt-wasix:runtime-portable`;
+  `moon run oliphaunt-wasix-tools-ts:package liboliphaunt-wasix:runtime-portable`;
 - `moon run oliphaunt-rust:compile`: static Cargo checks for `oliphaunt` and
   `oliphaunt-build`. Artifact-relay build-script behavior is owned by `unit`;
-  package and native runtime evidence remain separate `package` and `smoke`
+  package and native runtime evidence remain separate `package` and `regression`
   targets;
 - `moon run oliphaunt-rust:unit`: the hosted-equivalent Rust source-test lane.
   It runs documentation tests, `oliphaunt-build` tests, and all `oliphaunt`
@@ -138,28 +112,22 @@ The validation entrypoint is split by maintainer workflow:
 - `moon run oliphaunt-rust:package`: creates and inspects the publishable Rust
   SDK package only. Run `compile`, `unit`, and `package` together for the compact
   pre-push gate; none silently owns the others;
-- `moon run oliphaunt-rust:smoke`: native SDK runtime proof. It reuses an
-  existing host runtime only when the matching liboliphaunt library,
-  PostgreSQL tools, normal extension files, and embedded extension modules are
-  all present and current. The shared preflight fails closed on a partial
-  extension inventory instead of silently skipping native SQL coverage;
 - `moon run sdk-contracts:check`: fast generated API, SDK registry, C ABI
-  header-copy, native-boundary, and README-example contract validation. Use
+  header-copy, and native-boundary contract validation. Use
   product `compile`, `unit`, and `package` targets for behavior and package proof;
-  `tools/policy/check-sdk-parity.sh` remains a compatible local aggregate;
 - `moon run oliphaunt-swift:compile`: SwiftPM package description and build checks
   for the SDK package and repository root package;
 - `moon run oliphaunt-swift:smoke`: Swift SDK tests against the current native
   host runtime; on macOS it also requires the iOS simulator preflight;
 - `moon run oliphaunt-swift:package`: validates the Swift source package
   shape without building platform release artifacts;
-- `moon run liboliphaunt-native:build-ios-xcframework`: explicitly builds and
+- `moon run liboliphaunt-native:build-runtime-ios-xcframework`: explicitly builds and
   freshness-checks iOS simulator and device `liboliphaunt.dylib` slices from
   the same PostgreSQL 18 patch stack, then packages them as
   `liboliphaunt.xcframework`;
 - `moon run oliphaunt-kotlin:smoke`: builds and freshness-checks the selected
   Android ABI's `liboliphaunt.so` artifact, then runs the Android SDK smoke;
-- `moon run oliphaunt-kotlin:compile`: Kotlin formatting, lint, common/JVM and
+- `moon run oliphaunt-kotlin:check`: Kotlin formatting, lint, common/JVM and
   Android compilation, and Android-only Maven publication-shape checks. Unit
   tests remain in `oliphaunt-kotlin:unit`;
 - `moon run oliphaunt-react-native:smoke-android`: Android React Native
@@ -194,9 +162,9 @@ The validation entrypoint is split by maintainer workflow:
   API compatibility;
 - `tools/dev/bun.sh tools/policy/check-supply-chain.mjs`: cargo-deny dependency
   policy checks;
-- `moon run :check :compile :format-check :lint :tools-compile && moon run :test :unit :tools-unit && moon run :package && moon run :coverage`:
+- `moon run :check :compile :format-check :js-format-check :rust-format-check :lint :tools-compile && moon run :test :unit :tools-unit && moon run :package && moon run :coverage`:
   explicit full local parity lane, including measured coverage;
-- `moon run :check :compile :format-check :lint :tools-compile && moon run :test :unit :tools-unit && moon run :smoke`: full source/runtime lane for repo, lint, source
+- `moon run :check :compile :format-check :js-format-check :rust-format-check :lint :tools-compile && moon run :test :unit :tools-unit && moon run :smoke`: full source/runtime lane for repo, lint, source
   tests, and examples;
 - `moon run :regression`: broader SQL, protocol, extension, and runtime regression suites;
 - `moon run release-tools:check`: the canonical full local release-policy gate.
@@ -229,7 +197,7 @@ The hook split is intentionally small:
 
 - pre-commit: file hygiene and formatting
 - release readiness: `tools/dev/bun.sh tools/policy/check-rust-lint.mjs` and
-  `tools/policy/check-wasm-artifacts.sh`
+  `moon run liboliphaunt-wasix:assets-verify`
 - CI/release: path-aware combinations of the same validation modes, workflow
   linting, feature powerset, public API compatibility, crate packaging,
   native AOT runtime tests, frozen Cargo publication dry-runs, and supply-chain
@@ -294,30 +262,23 @@ generated native AOT payloads. Use it for ordinary Rust, docs, tests, examples,
 and workflow edits:
 
 ```sh
-moon run :check :compile :format-check :lint :tools-compile --affected && moon run :test :unit :tools-unit --affected
+moon run :check :compile :format-check :js-format-check :rust-format-check :lint :tools-compile --affected && moon run :test :unit :tools-unit --affected
 ```
 
-For native liboliphaunt work, prefer the native-only track. It keeps the C ABI,
-Rust SDK, Swift/Kotlin/React Native SDK package lanes, extension matrix, and
-local runtime smoke tests separated from the WASIX release lane:
+For native liboliphaunt work, run only the product boundary you changed:
 
 ```sh
 moon run liboliphaunt-native:host-smoke
-src/runtimes/liboliphaunt/native/tools/check-track.sh quick
-src/runtimes/liboliphaunt/native/tools/check-track.sh sdks
-src/runtimes/liboliphaunt/native/tools/check-track.sh full
+moon run oliphaunt-rust:regression
+moon run extension-artifacts-native:build-target oliphaunt-rust:extension-regression
 ```
 
-`quick` is the normal native inner loop: it reuses
-`target/liboliphaunt-pg18` when present, runs the C smoke, and runs the Rust
-native SDK tests. `rust` skips the C smoke but still exports or creates the
-native runtime before Rust env-gated tests, so it is the faster Rust-only native
-validation lane. `moon run oliphaunt-rust:regression` uses the basic native
+`liboliphaunt-native:host-smoke` proves the C ABI. The Rust regression uses the basic native
 runtime and runs SQL/protocol regression across direct, broker, and server mode.
 `moon run oliphaunt-rust:extension-regression` is the separate
-extension-artifact lane; it depends on `extension-artifacts-native:qualify` and is
-intentionally not part of normal PR CI. `extensions` and `full` use the build
-script's no-build extension freshness probe before running the matrix, which avoids both
+extension-artifact lane; it depends on `extension-artifacts-native:build-target` and is
+intentionally not part of normal PR CI. The host artifact builder uses
+the build script's no-build freshness probe before running the matrix, which avoids both
 unnecessary rebuilds and the failure mode where a core-only runtime is
 accidentally treated as extension ready. `sdks` validates SDK ownership/parity,
 then runs the Rust, Swift, Kotlin, and React Native package checks. See

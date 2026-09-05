@@ -41,7 +41,7 @@ export function loadContribCarriers(root, prefix = "contrib-carriers") {
   const inputFiles = [
     CONTRIB_CARRIERS_PATH,
     memberManifest,
-    "tools/release/extension-target-profiles.toml",
+    "src/shared/extension-runtime-contract/extension-target-profiles.toml",
     source,
     contract,
   ];

@@ -23,7 +23,6 @@ import { parseCommandResponse, text } from '../query';
 import type { Spec } from '../specs/NativeOliphaunt';
 
 // OLIPHAUNT_DOCS_SNIPPET react-native-quickstart
-// liboliphaunt-doc-example:react-native-open-query
 
 const encoder = new TextEncoder();
 
@@ -725,6 +724,7 @@ async function testProtocolStreamCallbackFailure(): Promise<void> {
 
   const dynamicallyTypedInvalidCallbacks: Array<(chunk: Uint8Array) => unknown> = [
     async () => undefined,
+    // biome-ignore lint/suspicious/noThenProperty: This test deliberately supplies a thenable.
     () => ({ then: () => undefined }),
   ];
   for (const callback of dynamicallyTypedInvalidCallbacks) {

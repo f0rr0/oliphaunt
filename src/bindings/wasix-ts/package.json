@@ -101,27 +101,23 @@
     "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
-    "build": "node ../../../tools/dev/clean-package-lib.mjs && tsc -p tsconfig.build.json",
+    "build": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "dev": "pnpm run package:build && vite --config ../../../examples/browser-wasix/vite.config.ts",
     "host:build": "bash host/build-sdk.sh",
     "package:build": "pnpm run host:build && pnpm run build && node tools/stage-host.mjs",
     "package:build:closure": "pnpm run package:build && pnpm --dir tools-package build",
-    "package:check": "node tools/check-package.mjs",
-    "bench:browser": "pnpm run package:build && node tools/smoke-browser.mjs --benchmark",
     "docs:api": "typedoc --options typedoc.json",
-    "smoke:browser": "pnpm run package:build && node tools/smoke-browser.mjs",
-    "smoke:browser:pg-uuidv7": "pnpm run package:build && node tools/smoke-browser.mjs --pg-uuidv7",
-    "smoke:browser:postgis-worker": "pnpm run package:build && node tools/smoke-browser.mjs --postgis-worker",
-    "smoke:bun": "pnpm run package:build && node tools/smoke-node.mjs --runtime bun",
-    "smoke:deno": "pnpm run package:build && node tools/smoke-node.mjs --runtime deno",
-    "smoke:node": "pnpm run package:build && node tools/smoke-node.mjs --runtime node",
-    "test": "node ../../../tools/test/run-js-tests.mjs src/__tests__",
-    "typecheck": "tsc --noEmit && pnpm --dir ../../../examples/browser-wasix typecheck",
-    "clean": "node ../../../tools/dev/clean-package-lib.mjs"
+    "test": "vitest run --pool=forks --fileParallelism=false --dir=src/__tests__",
+    "typecheck": "tsc --noEmit",
+    "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\""
   },
   "dependencies": {
+    "@oliphaunt/js-core": "workspace:*",
     "fzstd": "0.1.1"
   },
+  "bundledDependencies": [
+    "@oliphaunt/js-core"
+  ],
   "optionalDependencies": {
     "@oliphaunt/wasix-napi-darwin-arm64": "workspace:*",
     "@oliphaunt/wasix-napi-linux-arm64-gnu": "workspace:*",

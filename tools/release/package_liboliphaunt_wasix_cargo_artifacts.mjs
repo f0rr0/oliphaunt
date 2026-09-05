@@ -30,7 +30,7 @@ import {
   readPortableArchiveEntries,
   readPortableTarZstdBufferEntries,
   releaseZstdCompressSync,
-} from "./portable-archive.mjs";
+} from "../../src/shared/artifact-packaging/portable-archive.mjs";
 import { compareText } from "./release-graph.mjs";
 import {
   currentProductVersionSync,
