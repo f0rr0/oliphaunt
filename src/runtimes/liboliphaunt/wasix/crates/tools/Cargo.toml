@@ -1,6 +1,6 @@
 [package]
 name = "oliphaunt-wasix-tools"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.93"
 description = "WASIX pg_dump and psql assets for oliphaunt-wasix"
