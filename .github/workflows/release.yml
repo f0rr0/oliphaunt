@@ -153,7 +153,7 @@ jobs:
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
         with:
-          install-workspace: ${{ inputs.operation == 'publish-dry-run' && 'true' || 'false' }}
+          install-workspace: "true"
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
