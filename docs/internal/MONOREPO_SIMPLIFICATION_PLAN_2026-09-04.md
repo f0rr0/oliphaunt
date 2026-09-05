@@ -105,6 +105,9 @@ dispatch/orchestration as Moon/native commands assume it. Relocating its entire
   built target assets is a repository release operation named
   `release-tools:postmaster-release-assets`; its workflow job remains fail-closed
   unless the exact Linux ARM64, Linux x64, and macOS set is present.
+- Moon project discovery now uses one recursive `src` glob and one recursive
+  `tools` glob instead of fourteen overlapping directory inventories. The
+  resolved 55-project set and 198-task/156-edge graph are unchanged.
 
 Still open: hosted cache persistence, host/portable Postmaster producer
 separation, removal of planner implications after equivalent Moon/data edges
@@ -287,6 +290,7 @@ Observed local runs, all with the repository-pinned Moon 2.5.4 toolchain and
 | Shared artifact packaging contract | Passed: 29 archive/symlink tests; Postmaster portable and target package rebuilds passed |
 | Shared extension runtime contract | Passed: 7 target-profile and WASIX install tests; WASIX staging produced all 39 extensions |
 | Complete release-tool mutation suite after the move | Passed in 4m57s |
+| Recursive Moon project discovery | Exact project inventory unchanged; task count and edge count unchanged |
 
 No behavioral test command was removed. The source parser deletion changes only
 the kind of proof: implementation spelling is no longer enforced, while the
