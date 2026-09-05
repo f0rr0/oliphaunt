@@ -16,6 +16,10 @@ dependsOn:
     scope: "build"
   - id: "extensions"
     scope: "build"
+  - id: "liboliphaunt-native"
+    scope: "build"
+  - id: "liboliphaunt-wasix"
+    scope: "build"
 
 project:
   title: "Extension Packages"
@@ -26,6 +30,8 @@ tasks:
   package-mobile:
     tags: ["release", "artifact-package", "ci-mobile-extension-packages"]
     command: "bash src/extensions/artifacts/packages/tools/package-mobile-release-assets.sh"
+    deps:
+      - "extension-artifacts-native:build-target"
     inputs:
       - "@group(legal-files)"
       - "/release-please-config.json"
@@ -77,6 +83,11 @@ tasks:
   package:
     tags: ["release", "artifact-package", "ci-extension-packages"]
     command: "bash src/extensions/artifacts/packages/tools/package-release-assets.sh"
+    deps:
+      - "extension-artifacts-native:build-target"
+      - "extension-artifacts-wasix:build-target"
+      - "liboliphaunt-native:release-assets"
+      - "liboliphaunt-wasix:release-assets"
     inputs:
       - "@group(legal-files)"
       - "/release-please-config.json"

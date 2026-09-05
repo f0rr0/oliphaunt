@@ -223,6 +223,7 @@ const staticTaskIds = new Set([
   'lint',
   'rust-format-check',
   'tools-compile',
+  'typecheck',
 ]);
 const unitTaskIds = new Set(['graph-unit', 'test', 'tools-unit', 'unit']);
 const checkTargets = new Map();

@@ -165,7 +165,7 @@ jobs:
         env:
           MOON_BASE: ${{ github.event.pull_request.base.sha }}
           MOON_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: node .github/scripts/write-affected-moon-target-matrices.mjs check compile format-check js-format-check lint rust-format-check tools-compile metadata graph-unit test tools-unit unit
+        run: node .github/scripts/write-affected-moon-target-matrices.mjs check compile typecheck format-check js-format-check lint rust-format-check tools-compile metadata graph-unit test tools-unit unit
 
       - name: Upload build plan
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

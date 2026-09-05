@@ -123,9 +123,10 @@ function directEffects(relativePath) {
     assert.equal(result.status, 0, result.stderr);
   }
   const projects = triggeringProjectNames(JSON.parse(direct.stdout).projects);
+  const directTasks = affectedNames(JSON.parse(direct.stdout).tasks);
   const tasks = affectedNames(JSON.parse(downstream.stdout).tasks);
-  const jobs = [...planJobsForAffected(new Set(projects), new Set(tasks))].sort();
-  return {projects, tasks, jobs};
+  const jobs = [...planJobsForAffected(new Set(directTasks))].sort();
+  return {projects, directTasks, tasks, jobs};
 }
 
 function assertReleaseSelection(relativePath) {
@@ -149,7 +150,7 @@ function assertNativeExtensionLifecycleSelection(relativePath) {
   const effects = directEffects(relativePath);
   assert.equal(
     effects.tasks.includes(
-      'release-tools:native-extension-lifecycle-trigger',
+      'release-tools:native-extension-lifecycle',
     ),
     true,
   );

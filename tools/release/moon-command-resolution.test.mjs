@@ -24,7 +24,9 @@ async function writeMoonStub(bin, script) {
     script,
     [
       'import { appendFileSync } from "node:fs";',
-      'if (process.argv.slice(2).join(" ") !== "query projects") process.exit(41);',
+      'const args = process.argv.slice(2).join(" ");',
+      'if (args === "--version") { process.stdout.write(`moon ${process.env.MOON_STUB_VERSION ?? "2.5.4"}\\n`); process.exit(0); }',
+      'if (args !== "query projects") process.exit(41);',
       'appendFileSync(process.env.MOON_STUB_MARKER, "path-stub\\n");',
       'process.stdout.write(process.env.MOON_PROJECTS_JSON);',
       "",
@@ -159,9 +161,7 @@ describe("Moon command resolution", () => {
     expect(await readFile(marker, "utf8")).toBe("path-stub\n");
   });
 
-  test("honors an explicit MOON_BIN and reports a missing command cleanly", () => {
-    expect(moonCommand({ MOON_BIN: "/verified/moon" })).toBe("/verified/moon");
-    expect(moonCommand({})).toBe("moon");
+  test("reports a missing Moon command cleanly", () => {
     expect(moonEnvironment({ PATH: "/verified", PROTO_VERSION: "poison" })).toEqual({
       PATH: "/verified",
     });
@@ -173,7 +173,7 @@ describe("Moon command resolution", () => {
       stdio: ["ignore", "pipe", "pipe"],
     });
     expect(result.status).toBe(2);
-    expect(new TextDecoder().decode(result.stderr)).toContain("moon query projects failed to start");
+    expect(new TextDecoder().decode(result.stderr)).toContain("Moon 2.5.4 is required");
 
     const graphResult = spawnSync(process.execPath, [RELEASE_PLAN, "--changed-file", "README.md", "--format", "json"], {
       cwd: ROOT,
@@ -181,7 +181,24 @@ describe("Moon command resolution", () => {
       stdio: ["ignore", "pipe", "pipe"],
     });
     expect(graphResult.status).toBe(1);
-    expect(new TextDecoder().decode(graphResult.stderr)).toContain(`${missing} failed`);
+    expect(new TextDecoder().decode(graphResult.stderr)).toContain(`${missing} failed to start`);
+  });
+
+  test("rejects an ambient Moon version that differs from .prototools", async () => {
+    const root = await fixture("wrong-version");
+    const bin = path.join(root, "bin");
+    const script = path.join(root, "moon-stub.mjs");
+    await writeMoonStub(bin, script);
+    const environment = {
+      ...process.env,
+      PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+      MOON_STUB_RUNTIME: process.execPath,
+      MOON_STUB_SCRIPT: script,
+      MOON_STUB_VERSION: "2.4.0",
+    };
+    delete environment.MOON_BIN;
+
+    expect(() => moonCommand(environment)).toThrow("Moon 2.5.4 is required, but moon reported 2.4.0");
   });
 
 });

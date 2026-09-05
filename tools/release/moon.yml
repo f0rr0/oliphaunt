@@ -16,6 +16,10 @@ dependsOn:
     scope: "build"
   - id: "extension-artifacts-wasix"
     scope: "build"
+  - id: "extension-artifacts-native"
+    scope: "build"
+  - id: "liboliphaunt-native"
+    scope: "build"
   - id: "liboliphaunt-wasix"
     scope: "build"
   - "oliphaunt-broker"
@@ -155,6 +159,7 @@ tasks:
       OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR: "target/liboliphaunt/release-assets"
     deps:
       - "oliphaunt-swift:package"
+      - "liboliphaunt-native:release-runtime-ios-target"
     inputs:
       - "@group(legal-files)"
       - "@group(release-archive-contract)"
@@ -185,6 +190,7 @@ tasks:
       OLIPHAUNT_REACT_NATIVE_IOS_RELEASE_ASSET_DIR: "target/liboliphaunt/release-assets"
     deps:
       - "oliphaunt-react-native:package"
+      - "liboliphaunt-native:release-runtime-ios-target"
     inputs:
       - "@group(legal-files)"
       - "@group(pnpm-workspace)"
@@ -271,31 +277,20 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  # Planner-only source edge for the fail-closed validation that runs after
-  # both iOS carrier producers and before either artifact upload.
-  ios-carrier-validation-trigger:
-    tags: ["release", "planner"]
-    command: "true"
-    inputs:
-      - project: "artifact-packaging"
-        group: "source"
-      - "/tools/release/validate-ios-carrier-zips.mjs"
-    options:
-      cache: false
-      internal: true
-      runFromWorkspaceRoot: true
-  # Planner-only source edge for the executable and supervision contract used
-  # by the hosted native extension lifecycle proof.
-  native-extension-lifecycle-trigger:
-    tags: ["release", "planner"]
-    command: "true"
+  native-extension-lifecycle:
+    tags: ["release", "integration", "ci-native-extension-lifecycle"]
+    command: "tools/release/run-native-extension-lifecycle-proof.sh"
+    deps:
+      - "extension-artifacts-native:build-target"
+      - "liboliphaunt-native:release-runtime"
+      - "release-tools:broker-runtime"
+      - "release-tools:rust-sdk-package"
     inputs:
       - "/src/runtimes/liboliphaunt/wasix-postmaster/lib/process-supervision.sh"
       - "/tools/native-extension-proof/**/*"
       - "/tools/release/run-native-extension-lifecycle-proof.sh"
     options:
       cache: false
-      internal: true
       runFromWorkspaceRoot: true
   metadata:
     tags: ["policy", "assertion", "quality", "static"]
@@ -502,6 +497,8 @@ tasks:
   broker-release-assets:
     tags: ["release", "artifact-package", "ci-broker-release-assets"]
     command: "tools/dev/bun.sh tools/release/check-native-helper-aggregate-assets.mjs --product oliphaunt-broker"
+    deps:
+      - "release-tools:broker-runtime"
     inputs:
       - "@group(legal-files)"
       - "@group(cargo-workspace)"
@@ -572,6 +569,8 @@ tasks:
   node-direct-release-assets:
     tags: ["release", "artifact-package", "ci-node-direct-release-assets"]
     command: "tools/dev/bun.sh tools/release/check-native-helper-aggregate-assets.mjs --product oliphaunt-node-direct"
+    deps:
+      - "release-tools:node-direct-runtime"
     inputs:
       - "@group(legal-files)"
       - "/pnpm-workspace.yaml"
@@ -732,6 +731,8 @@ tasks:
   wasix-napi-release-assets:
     tags: ["release", "artifact-package", "ci-wasix-napi-release-assets"]
     command: "tools/dev/bun.sh tools/release/check-native-helper-aggregate-assets.mjs --product oliphaunt-wasix-napi"
+    deps:
+      - "release-tools:wasix-napi-runtime"
     inputs:
       - "@group(legal-files)"
       - "/pnpm-workspace.yaml"

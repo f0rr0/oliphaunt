@@ -6,6 +6,8 @@ layer: "application"
 stack: "frontend"
 tags: ["examples", "integration"]
 dependsOn:
+  - id: "extension-packages"
+    scope: "build"
   - id: "extensions"
     scope: "build"
   - "liboliphaunt-native"
@@ -75,6 +77,8 @@ tasks:
     tags: ["mobile", "build", "android", "ci-mobile-build-android"]
     command: "pnpm --dir examples/react-native-expo run mobile-build:android"
     deps:
+      - "extension-packages:package-mobile"
+      - "liboliphaunt-native:release-runtime-android-target"
       - "release-tools:kotlin-sdk-package"
       - "release-tools:react-native-sdk-package"
     inputs:
@@ -133,6 +137,8 @@ tasks:
     tags: ["mobile", "build", "ios", "ci-mobile-build-ios"]
     command: "pnpm --dir examples/react-native-expo run mobile-build:ios"
     deps:
+      - "extension-packages:package-mobile"
+      - "liboliphaunt-native:release-runtime-ios-target"
       - "release-tools:react-native-sdk-package"
       - "release-tools:swift-sdk-package"
     inputs:

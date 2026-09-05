@@ -12,7 +12,10 @@ const WRITER = path.join(ROOT, ".github/scripts/write-affected-moon-target-matri
 
 function moonStub(root, body) {
   const file = path.join(root, "moon-stub.mjs");
-  writeFileSync(file, `#!/usr/bin/env node\n${body}`);
+  writeFileSync(
+    file,
+    `#!/usr/bin/env node\nif (process.argv.slice(2).join(" ") === "--version") {\n  process.stdout.write("moon 2.5.4\\n");\n} else {\n${body}\n}\n`,
+  );
   chmodSync(file, 0o755);
   return file;
 }
@@ -25,7 +28,7 @@ function invoke(stub, output) {
     MOON_BIN: stub,
     MOON_HEAD: "",
   };
-  return spawnSync(process.execPath, [WRITER, "check", "compile", "format-check", "js-format-check", "lint", "rust-format-check", "tools-compile", "metadata", "graph-unit", "test", "tools-unit", "unit"], {
+  return spawnSync(process.execPath, [WRITER, "check", "compile", "typecheck", "format-check", "js-format-check", "lint", "rust-format-check", "tools-compile", "metadata", "graph-unit", "test", "tools-unit", "unit"], {
     cwd: ROOT,
     encoding: "utf8",
     env,

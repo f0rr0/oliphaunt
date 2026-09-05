@@ -38,36 +38,6 @@ const PREFIX = "ci_plan.mjs";
 export const BASE_JOBS = new Set(["affected"]);
 export const ALWAYS_JOBS = new Set(BASE_JOBS);
 export const FULL_PAYLOAD_QUALIFICATION_MODE = "full-payload";
-export const BUILDER_JOBS = new Set([
-  "broker-release-assets",
-  "broker-runtime",
-  "extension-artifacts-native",
-  "extension-artifacts-wasix",
-  "extension-packages",
-  "js-sdk-package",
-  "kotlin-maven-staging",
-  "kotlin-sdk-package",
-  "liboliphaunt-native-android",
-  "liboliphaunt-native-desktop",
-  "liboliphaunt-native-ios",
-  "liboliphaunt-native-release-assets",
-  "liboliphaunt-wasix-aot",
-  "liboliphaunt-wasix-release-assets",
-  "liboliphaunt-wasix-runtime",
-  "wasix-postmaster",
-  "mobile-build-android",
-  "mobile-build-ios",
-  "mobile-extension-packages",
-  "node-direct",
-  "node-direct-release-assets",
-  "wasix-napi",
-  "wasix-napi-release-assets",
-  "react-native-sdk-package",
-  "rust-sdk-package",
-  "swift-sdk-package",
-  "wasix-rust-package",
-  "wasix-ts-sdk-package",
-]);
 const NATIVE_RUNTIME_JOBS = new Set([
   "liboliphaunt-native-android",
   "liboliphaunt-native-desktop",
@@ -75,16 +45,14 @@ const NATIVE_RUNTIME_JOBS = new Set([
 ]);
 const NATIVE_RUNTIME_TASKS = new Set([
   "liboliphaunt-native:release-runtime",
-  "liboliphaunt-native:release-runtime-mobile-target",
+  "liboliphaunt-native:release-runtime-android-target",
+  "liboliphaunt-native:release-runtime-ios-target",
 ]);
 export const WASM_RUNTIME_JOBS = new Set([
   "liboliphaunt-wasix-runtime",
   "liboliphaunt-wasix-aot",
   "liboliphaunt-wasix-release-assets",
 ]);
-const AGGREGATE_ARTIFACT_JOBS = new Set(["liboliphaunt-native-release-assets"]);
-const WASM_RUNTIME_PORTABLE_TASK = "liboliphaunt-wasix:runtime-portable";
-const WASM_RUNTIME_AOT_TASK = "liboliphaunt-wasix:runtime-aot";
 const MOBILE_JOB_SURFACES = {
   "mobile-build-android": "react-native-android",
   "mobile-build-ios": "react-native-ios",
@@ -97,29 +65,7 @@ const REACT_NATIVE_ANDROID_REPRESENTATIVE_TARGETS = new Set(["android-x86_64"]);
 export const NATIVE_EXTENSION_LIFECYCLE_JOB = "native-extension-lifecycle";
 export const NATIVE_EXTENSION_LIFECYCLE_AGGREGATE_JOB =
   "native-extension-lifecycle-aggregate";
-const IOS_CARRIER_VALIDATION_TRIGGER_TASKS = new Set([
-  "release-tools:ios-carrier-validation-trigger",
-]);
-const NATIVE_EXTENSION_LIFECYCLE_TRIGGER_TASKS = new Set([
-  "release-tools:native-extension-lifecycle-trigger",
-]);
 export const NATIVE_EXTENSION_LIFECYCLE_EXHAUSTIVE_SHARD_COUNT = 3;
-export const NATIVE_EXTENSION_LIFECYCLE_TRIGGER_PROJECTS = new Set([
-  "extension-artifacts-native",
-  "oliphaunt-extension-contrib-pg18",
-  "liboliphaunt-native",
-  "oliphaunt-broker",
-  "oliphaunt-rust",
-  "postgres18",
-  "third-party-native",
-  "third-party-shared",
-]);
-const ANDROID_MOBILE_JOBS = new Set(["mobile-build-android"]);
-const IOS_MOBILE_JOBS = new Set(["mobile-build-ios"]);
-const EXTENSION_ARTIFACT_CONSUMER_JOBS = new Set(["extension-packages", "mobile-extension-packages"]);
-const WASIX_EXTENSION_ARTIFACT_PORTABLE_CONSUMER_JOBS = new Set([
-  "extension-packages",
-]);
 export const BROAD_EXTENSION_INPUT_PROJECTS = new Set([
   "extension-artifacts-native",
   "extension-artifacts-wasix",
@@ -160,7 +106,7 @@ function affectedProjectsAndTasks() {
   return {
     directProjects: new Set(stringList(summary.directProjects ?? [])),
     projects: new Set(stringList(summary.projects ?? [])),
-    affectedTasks: new Set(stringList(summary.tasks ?? [])),
+    directTasks: new Set(stringList(summary.tasks ?? [])),
   };
 }
 
@@ -190,10 +136,6 @@ function intersects(left, right) {
   return false;
 }
 
-function difference(left, right) {
-  return new Set([...left].filter((item) => !right.has(item)));
-}
-
 function sorted(set) {
   return [...set].sort(compareText);
 }
@@ -219,32 +161,24 @@ function names(value) {
   return [];
 }
 
-export function moonCiJobTargets() {
-  const queried = moon(["query", "tasks"]);
-  const tasksByProject = queried.tasks;
-  if (tasksByProject === null || Array.isArray(tasksByProject) || typeof tasksByProject !== "object") {
-    fail("moon query tasks did not return a tasks object");
+const TASKS_BY_TARGET = (() => {
+  const graph = moon(["task-graph", "--json"]);
+  if (graph.data === null || Array.isArray(graph.data) || typeof graph.data !== "object") {
+    fail("moon task-graph did not return task data");
   }
+  return new Map(Object.values(graph.data).map((task) => [task.target, task]));
+})();
 
+export function moonCiJobTargets() {
   const jobs = new Map();
-  for (const [projectId, projectTasks] of Object.entries(tasksByProject)) {
-    if (projectTasks === null || Array.isArray(projectTasks) || typeof projectTasks !== "object") {
-      continue;
-    }
-    for (const [taskId, task] of Object.entries(projectTasks)) {
-      if (task === null || Array.isArray(task) || typeof task !== "object") {
-        continue;
-      }
-      const target = String(task.target || `${projectId}:${taskId}`);
-      const tags = Array.isArray(task.tags) ? task.tags : [];
-      for (const tag of tags) {
-        if (typeof tag === "string" && tag.startsWith("ci-")) {
-          const job = tag.slice("ci-".length);
-          if (!jobs.has(job)) {
-            jobs.set(job, new Set());
-          }
-          jobs.get(job).add(target);
+  for (const task of TASKS_BY_TARGET.values()) {
+    for (const tag of task.tags ?? []) {
+      if (typeof tag === "string" && tag.startsWith("ci-")) {
+        const job = tag.slice("ci-".length);
+        if (!jobs.has(job)) {
+          jobs.set(job, new Set());
         }
+        jobs.get(job).add(task.target);
       }
     }
   }
@@ -256,10 +190,29 @@ export function moonCiJobTargets() {
 }
 
 export const CI_JOB_TARGETS = moonCiJobTargets();
-export const ALL_BUILDER_JOBS = difference(
-  setUnion(BUILDER_JOBS, WASM_RUNTIME_JOBS, AGGREGATE_ARTIFACT_JOBS),
-  ALWAYS_JOBS,
+export const BUILDER_JOBS = new Set(
+  Object.keys(CI_JOB_TARGETS).filter((job) => job !== NATIVE_EXTENSION_LIFECYCLE_JOB),
 );
+const JOBS_BY_TARGET = (() => {
+  const jobs = new Map();
+  for (const [job, targets] of Object.entries(CI_JOB_TARGETS)) {
+    for (const target of targets) jobs.set(target, [...(jobs.get(target) ?? []), job]);
+  }
+  return jobs;
+})();
+const DEPENDENTS_BY_TARGET = (() => {
+  const dependents = new Map();
+  for (const task of TASKS_BY_TARGET.values()) {
+    for (const dependency of task.deps ?? []) {
+      const target = typeof dependency === "string" ? dependency : dependency.target;
+      if (typeof target === "string") {
+        dependents.set(target, [...(dependents.get(target) ?? []), task.target]);
+      }
+    }
+  }
+  return dependents;
+})();
+export const ALL_BUILDER_JOBS = new Set(Object.keys(CI_JOB_TARGETS));
 export const CI_JOBS_CONFIG = {
   always_jobs: sorted(ALWAYS_JOBS),
   ci_job_targets: CI_JOB_TARGETS,
@@ -291,177 +244,62 @@ export function jobsForTargets(targets, { allowedJobs = undefined } = {}) {
   return jobs;
 }
 
-export function addImpliedJobs(jobs, tasks, { directlySelectedJobs = jobs } = {}) {
-  if (jobs.has("broker-release-assets")) {
-    jobs.add("broker-runtime");
-  }
-  if (jobs.has("node-direct-release-assets")) {
-    jobs.add("node-direct");
-  }
-  if (jobs.has("wasix-napi-release-assets")) {
-    jobs.add("wasix-napi");
-  }
-  if (directlySelectedJobs.has("wasix-napi")) {
-    jobs.add("wasix-napi-release-assets");
-  }
-  // Release-feature N-API addons embed the portable WASIX payload, the
-  // current host's core/tool AOT payloads, and every selected extension's
-  // portable + host AOT payload. Keep all same-run producers in the plan so
-  // the native build can fail closed instead of emitting source-only crates.
-  if (jobs.has("wasix-napi")) {
-    jobs.add("extension-artifacts-wasix");
-    jobs.add("liboliphaunt-wasix-runtime");
-    jobs.add("liboliphaunt-wasix-aot");
-  }
-  if (
-    intersects(
-      directlySelectedJobs,
-      new Set(["liboliphaunt-wasix-runtime", "liboliphaunt-wasix-aot", "liboliphaunt-wasix-release-assets"]),
-    ) ||
-    intersects(new Set([WASM_RUNTIME_PORTABLE_TASK, WASM_RUNTIME_AOT_TASK]), tasks)
-  ) {
-    for (const job of WASM_RUNTIME_JOBS) {
-      jobs.add(job);
-    }
-  }
-
-  if (intersects(jobs, new Set(Object.keys(MOBILE_JOB_SURFACES)))) {
-    jobs.add("mobile-extension-packages");
-    jobs.add("react-native-sdk-package");
-  }
-
-  // The published React Native package embeds a checksum-bound base iOS
-  // carrier manifest even when an Android app is the only mobile consumer in
-  // this plan. Keep that producer prerequisite explicit without broadening the
-  // Android extension-target selection to iOS.
-  if (jobs.has("react-native-sdk-package")) {
-    jobs.add("liboliphaunt-native-ios");
-  }
-
-  if (intersects(jobs, ANDROID_MOBILE_JOBS)) {
-    jobs.add("liboliphaunt-native-android");
-    jobs.add("kotlin-sdk-package");
-  }
-
-  if (intersects(jobs, IOS_MOBILE_JOBS)) {
-    jobs.add("liboliphaunt-native-ios");
-    jobs.add("swift-sdk-package");
-  }
-
-  if (jobs.has("swift-sdk-package")) {
-    jobs.add("liboliphaunt-native-ios");
-  }
-
-  if (intersects(directlySelectedJobs, new Set(["extension-artifacts-native", "extension-artifacts-wasix"]))) {
-    jobs.add("extension-packages");
-  }
-
-  // Exact extension npm carriers freeze the same-run base iOS carrier, so the
-  // aggregate extension qualifier must consume the complete native aggregate.
-  if (jobs.has("extension-packages")) {
-    jobs.add("liboliphaunt-native-release-assets");
-  }
-
-  if (jobs.has("liboliphaunt-native-release-assets")) {
-    for (const job of NATIVE_RUNTIME_JOBS) {
-      jobs.add(job);
-    }
-  }
-
-  if (intersects(jobs, EXTENSION_ARTIFACT_CONSUMER_JOBS)) {
-    jobs.add("extension-artifacts-native");
-  }
-
-  if (intersects(jobs, WASIX_EXTENSION_ARTIFACT_PORTABLE_CONSUMER_JOBS)) {
-    jobs.add("extension-artifacts-wasix");
-    jobs.add("liboliphaunt-wasix-runtime");
-    jobs.add("liboliphaunt-wasix-aot");
-    jobs.add("liboliphaunt-wasix-release-assets");
-  }
-
-  if (jobs.has(NATIVE_EXTENSION_LIFECYCLE_JOB)) {
-    jobs.add("extension-artifacts-native");
-    jobs.add("liboliphaunt-native-desktop");
-    jobs.add("broker-runtime");
-    jobs.add("rust-sdk-package");
-  }
-
-  // The exact Maven staging gate consumes the Kotlin package artifact. Keep
-  // both halves together after every other implication has had a chance to
-  // select the Android SDK producer.
-  if (jobs.has("kotlin-maven-staging")) {
-    jobs.add("kotlin-sdk-package");
-  }
-  if (jobs.has("kotlin-sdk-package")) {
-    jobs.add("kotlin-maven-staging");
-  }
+function taskDependencyTargets(task) {
+  return (task?.deps ?? [])
+    .map((dependency) => typeof dependency === "string" ? dependency : dependency.target)
+    .filter((target) => typeof target === "string");
 }
 
-export function planJobsForAffected(directProjects, tasks) {
-  const jobs = new Set(ALWAYS_JOBS);
-  const directlySelectedJobs = jobsForTargets(tasks, { allowedJobs: ALL_BUILDER_JOBS });
-  for (const job of directlySelectedJobs) {
-    jobs.add(job);
-  }
-  if (
-    intersects(
-      directlySelectedJobs,
-      new Set(["wasix-napi", "wasix-napi-release-assets"]),
-    )
-  ) {
-    jobs.add("wasix-ts-sdk-package");
-  }
-  // The WASIX TypeScript package runs packed Node, Bun, and Deno consumers
-  // against the same-run portable runtime rather than silently falling back
-  // to workspace or registry assets.
-  if (jobs.has("wasix-ts-sdk-package")) {
-    jobs.add("liboliphaunt-wasix-runtime");
-    jobs.add("wasix-napi");
-  }
-  if (intersects(directProjects, new Set(exactExtensionProducts()))) {
-    jobs.add("extension-artifacts-native");
-    jobs.add("extension-artifacts-wasix");
-    jobs.add("extension-packages");
-    // The N-API carrier statically embeds the complete exact-extension set.
-    // Rebuild it even when a caller supplies only direct projects rather than
-    // Moon's already-expanded downstream task set.
-    jobs.add("wasix-napi");
-  }
-  if (jobs.has("react-native-sdk-package")) {
-    for (const job of ANDROID_MOBILE_JOBS) {
-      jobs.add(job);
-    }
-    for (const job of IOS_MOBILE_JOBS) {
-      jobs.add(job);
+function downstreamTaskClosure(tasks) {
+  const closure = new Set(tasks);
+  const pending = [...closure];
+  while (pending.length > 0) {
+    for (const dependent of DEPENDENTS_BY_TARGET.get(pending.pop()) ?? []) {
+      if (!closure.has(dependent)) {
+        closure.add(dependent);
+        pending.push(dependent);
+      }
     }
   }
-  const directTaskProjects = new Set([...tasks].map((target) => target.split(":", 1)[0]));
-  if (
-    intersects(directProjects, NATIVE_EXTENSION_LIFECYCLE_TRIGGER_PROJECTS) ||
-    intersects(directTaskProjects, NATIVE_EXTENSION_LIFECYCLE_TRIGGER_PROJECTS) ||
-    intersects(tasks, NATIVE_EXTENSION_LIFECYCLE_TRIGGER_TASKS) ||
-    intersects(directProjects, new Set(exactExtensionProducts()))
-  ) {
-    jobs.add(NATIVE_EXTENSION_LIFECYCLE_JOB);
-  }
-  addImpliedJobs(jobs, tasks, { directlySelectedJobs });
-  if (intersects(tasks, IOS_CARRIER_VALIDATION_TRIGGER_TASKS)) {
-    jobs.add("extension-artifacts-native");
-    jobs.add("liboliphaunt-native-ios");
-  }
-  if (jobs.has("liboliphaunt-wasix-runtime")) {
-    // Pull-request and push CI always run the Linux-host release regression
-    // when the portable runtime is affected. Select its exact-extension
-    // producer without broadening the plan to native or aggregate packages.
-    jobs.add("extension-artifacts-wasix");
-  }
-  if (intersects(tasks, NATIVE_RUNTIME_TASKS)) {
-    jobs.add("liboliphaunt-native-release-assets");
-    for (const job of NATIVE_RUNTIME_JOBS) {
-      jobs.add(job);
+  return closure;
+}
+
+export function addRequiredJobs(jobs) {
+  const pendingJobs = [...jobs];
+  const visitedTasks = new Set();
+  while (pendingJobs.length > 0) {
+    const job = pendingJobs.pop();
+    const pendingTasks = [...(CI_JOB_TARGETS[job] ?? [])];
+    while (pendingTasks.length > 0) {
+      const target = pendingTasks.pop();
+      if (visitedTasks.has(target)) continue;
+      visitedTasks.add(target);
+      const task = TASKS_BY_TARGET.get(target);
+      if (!task) fail(`CI job ${job} references missing Moon target ${target}`);
+      for (const dependency of taskDependencyTargets(task)) {
+        pendingTasks.push(dependency);
+        for (const dependencyJob of JOBS_BY_TARGET.get(dependency) ?? []) {
+          if (!jobs.has(dependencyJob)) {
+            jobs.add(dependencyJob);
+            pendingJobs.push(dependencyJob);
+          }
+        }
+      }
     }
   }
   return jobs;
+}
+
+export function planJobsForAffected(tasks) {
+  const jobs = new Set(ALWAYS_JOBS);
+  const directlySelectedJobs = jobsForTargets(
+    downstreamTaskClosure(tasks),
+    { allowedJobs: ALL_BUILDER_JOBS },
+  );
+  for (const job of directlySelectedJobs) {
+    jobs.add(job);
+  }
+  return addRequiredJobs(jobs);
 }
 
 export function nativeTargetSubsetForJobs(jobs, tasks) {
@@ -488,9 +326,6 @@ export function nativeTargetSubsetForJobs(jobs, tasks) {
     for (const target of liboliphauntNativeRuntimeTargetsForSurface("maven")) {
       targets.add(target);
     }
-  }
-  if (intersects(tasks, IOS_CARRIER_VALIDATION_TRIGGER_TASKS)) {
-    targets.add("ios-xcframework");
   }
   return targets.size > 0 ? targets : null;
 }
@@ -573,14 +408,21 @@ export function planForPullRequest() {
     throw new Error("MOON_BASE and MOON_HEAD are required for pull_request CI planning");
   }
 
-  const { directProjects, projects, affectedTasks } = affectedProjectsAndTasks();
-  const jobs = planJobsForAffected(directProjects, affectedTasks);
-  const selectedNativeTargets = nativeTargetSubsetForJobs(jobs, affectedTasks);
+  const { directProjects, projects, directTasks } = affectedProjectsAndTasks();
+  const jobs = planJobsForAffected(directTasks);
+  const selectedNativeTargets = nativeTargetSubsetForJobs(jobs, directTasks);
   const reason =
     `direct affected projects: ${sorted(directProjects).join(", ") || "(none)"}; ` +
     `downstream affected projects: ${sorted(projects).join(", ") || "(none)"}; ` +
-    `affected task closure: ${sorted(affectedTasks).join(", ") || "(none)"}`;
-  return { jobs, projects, tasks: affectedTasks, reason, selectedTargets: selectedNativeTargets };
+    `direct affected tasks: ${sorted(directTasks).join(", ") || "(none)"}`;
+  return {
+    jobs,
+    directProjects,
+    projects,
+    tasks: directTasks,
+    reason,
+    selectedTargets: selectedNativeTargets,
+  };
 }
 
 export function selectedExtensionProductsForPlan(directProjects, tasks, jobs) {
@@ -670,7 +512,7 @@ export function planForFullRun({
       throw new Error(`unknown mobile target ${mobileTarget}; expected one of: all, android, ios, both`);
     }
     const focusedJobs = setUnion(BASE_JOBS, focusedMobileJobs);
-    addImpliedJobs(focusedJobs, new Set());
+    addRequiredJobs(focusedJobs);
     const focusedNativeTargets = focusedMobileNativeTargets(mobileTarget, nativeTarget, focusedMobileJobs);
     return {
       jobs: focusedJobs,
@@ -699,7 +541,7 @@ export function planForFullRun({
         focusedJobs.add(NATIVE_EXTENSION_LIFECYCLE_JOB);
       }
     }
-    addImpliedJobs(focusedJobs, new Set());
+    addRequiredJobs(focusedJobs);
     return {
       jobs: focusedJobs,
       projects: focusedProjects,
@@ -732,7 +574,7 @@ export function planForFullRun({
     WASM_RUNTIME_JOBS,
     new Set([NATIVE_EXTENSION_LIFECYCLE_JOB]),
   );
-  addImpliedJobs(jobs, targetsForJobs(jobs));
+  addRequiredJobs(jobs);
   return {
     jobs,
     projects: new Set(),
@@ -1002,14 +844,8 @@ export function emitGithubOutputs() {
   try {
     if (process.env.GITHUB_EVENT_NAME === "pull_request") {
       const pullRequestPlan = planForPullRequest();
-      let directProjects = new Set();
-      try {
-        directProjects = affectedProjectsAndTasks().directProjects;
-      } catch {
-        directProjects = new Set();
-      }
       const selectedExtensionProducts = selectedExtensionProductsForPlan(
-        directProjects,
+        pullRequestPlan.directProjects,
         pullRequestPlan.tasks,
         pullRequestPlan.jobs,
       );
@@ -1119,7 +955,7 @@ Default command emits GitHub Actions outputs and target/graph/ci-plan.json.
 
 Commands:
   config
-  jobs-for-affected --direct-projects-json JSON --tasks-json JSON
+  jobs-for-affected --tasks-json JSON
   native-target-subset --jobs-json JSON --tasks-json JSON
   selected-extension-products --direct-projects-json JSON --tasks-json JSON --jobs-json JSON
   plan-full [--wasm-target TARGET] [--native-target TARGET] [--mobile-target TARGET]
@@ -1143,7 +979,7 @@ function main(argv) {
       ciJobsConfig: CI_JOBS_CONFIG,
     });
   } else if (command === "jobs-for-affected") {
-    printJson(sorted(planJobsForAffected(setFlag(rest, "direct-projects-json"), setFlag(rest, "tasks-json"))));
+    printJson(sorted(planJobsForAffected(setFlag(rest, "tasks-json"))));
   } else if (command === "native-target-subset") {
     const targets = nativeTargetSubsetForJobs(setFlag(rest, "jobs-json"), setFlag(rest, "tasks-json"));
     printJson(targets === null ? null : sorted(targets));

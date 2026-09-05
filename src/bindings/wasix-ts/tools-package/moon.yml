@@ -6,6 +6,8 @@ layer: "library"
 stack: "frontend"
 tags: ["binding", "wasix", "typescript", "tools", "package"]
 dependsOn:
+  - id: "liboliphaunt-wasix"
+    scope: "production"
   - id: "shared-test-fixtures"
     scope: "development"
 

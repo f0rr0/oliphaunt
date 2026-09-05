@@ -74,7 +74,7 @@ function affectedSummary() {
   return {
     directProjects: triggeringProjectNames(direct.projects),
     projects: affectedNames(downstream.projects),
-    tasks: affectedNames(downstream.tasks),
+    tasks: affectedNames(direct.tasks),
   };
 }
 

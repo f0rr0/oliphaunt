@@ -38,7 +38,7 @@ function effects(paths) {
   const tasks = affectedNames(JSON.parse(downstream.stdout).tasks);
   return {
     directTasks,
-    jobs: [...planJobsForAffected(new Set(projects), new Set(tasks))].sort(),
+    jobs: [...planJobsForAffected(new Set(directTasks))].sort(),
     projects,
     releaseProducts: buildPlan(
       GRAPH,

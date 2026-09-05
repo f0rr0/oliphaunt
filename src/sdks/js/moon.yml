@@ -49,6 +49,16 @@ tasks:
       - "lib/**/*"
     options:
       cache: true
+  typecheck:
+    tags: ["quality", "static"]
+    command: "pnpm run typecheck"
+    inputs:
+      - project: "shared-js-core"
+        group: "sources"
+      - "@group(pnpm-workspace)"
+      - "@group(code)"
+    options:
+      cache: true
   unit:
     tags: ["quality", "unit"]
     command: "pnpm test"
@@ -93,6 +103,7 @@ tasks:
     command: "true"
     deps:
       - "oliphaunt-js:compile"
+      - "oliphaunt-js:typecheck"
       - "oliphaunt-js:unit"
       - "oliphaunt-js:package"
     inputs: []

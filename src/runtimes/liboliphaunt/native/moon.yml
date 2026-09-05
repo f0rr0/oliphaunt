@@ -267,17 +267,13 @@ tasks:
       - "/tools/release/release-directory-safety.mjs"
       - "/tools/xtask/**/*"
       - "@group(cargo-workspace)"
+    outputs:
+      - "/target/liboliphaunt/release-assets/**/*"
     options:
       cache: false
       runFromWorkspaceRoot: true
-  release-runtime-mobile-target:
-    tags:
-      [
-        "runtime",
-        "release",
-        "ci-liboliphaunt-native-android",
-        "ci-liboliphaunt-native-ios",
-      ]
+  release-runtime-android-target:
+    tags: ["runtime", "release", "ci-liboliphaunt-native-android"]
     deps:
       - "source-inputs:source-fetch-native-runtime"
     command: "bun src/runtimes/liboliphaunt/native/tools/build-ci-target.mjs \"$OLIPHAUNT_CI_TARGET\""
@@ -298,12 +294,46 @@ tasks:
       - "/tools/release/release-directory-safety.mjs"
       - "/tools/xtask/**/*"
       - "@group(cargo-workspace)"
+    outputs:
+      - "/target/liboliphaunt/release-assets/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  release-runtime-ios-target:
+    tags: ["runtime", "release", "ci-liboliphaunt-native-ios"]
+    deps:
+      - "source-inputs:source-fetch-native-runtime"
+    command: "bun src/runtimes/liboliphaunt/native/tools/build-ci-target.mjs \"$OLIPHAUNT_CI_TARGET\""
+    inputs:
+      - "@group(legal-files)"
+      - project: "postgres18"
+        group: "source"
+      - "/src/runtimes/liboliphaunt/licenses/**/*"
+      - project: "third-party-shared"
+        group: "sources"
+      - project: "third-party-native"
+        group: "sources"
+      - project: "extension-runtime-contract"
+        group: "contract"
+      - "**/*"
+      - "/tools/native-packaging/**/*"
+      - "/tools/release/release-notices.mjs"
+      - "/tools/release/release-directory-safety.mjs"
+      - "/tools/release/validate-ios-carrier-zips.mjs"
+      - "/tools/xtask/**/*"
+      - "@group(cargo-workspace)"
+    outputs:
+      - "/target/liboliphaunt/release-assets/**/*"
     options:
       cache: false
       runFromWorkspaceRoot: true
   release-assets:
     tags: ["runtime", "release", "artifact-package", "ci-liboliphaunt-native-release-assets"]
     command: "bash tools/release/package-liboliphaunt-aggregate-assets.sh"
+    deps:
+      - "liboliphaunt-native:release-runtime"
+      - "liboliphaunt-native:release-runtime-android-target"
+      - "liboliphaunt-native:release-runtime-ios-target"
     inputs:
       - "/release-please-config.json"
       - project: "extensions"

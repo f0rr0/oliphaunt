@@ -5,7 +5,7 @@ import path from "node:path";
 
 import {
   BUILDER_JOBS,
-  addImpliedJobs,
+  addRequiredJobs,
   planForFullRun,
   planJobsForAffected,
   renderPlanForFullRun,
@@ -1223,27 +1223,26 @@ export function validateRepository() {
   validateCiArtifactCoverage(ci, inventory);
   validateCrossFamilyIcuWorkflow(ci, release);
   const fullPlan = planForFullRun({ wasmTarget: "all", nativeTarget: "all", mobileTarget: "all" });
-  const requiredProductBuilders = new Set([...BUILDER_JOBS].filter((job) => job !== "wasix-release-regression"));
-  invariant([...requiredProductBuilders].every((job) => fullPlan.jobs.has(job)), "full CI planning must select every product artifact builder");
+  invariant([...BUILDER_JOBS].every((job) => fullPlan.jobs.has(job)), "full CI planning must select every product artifact builder");
   const wasixNapiPlan = new Set(["wasix-napi"]);
-  addImpliedJobs(wasixNapiPlan, new Set());
+  addRequiredJobs(wasixNapiPlan);
   invariant(
     ["extension-artifacts-wasix", "liboliphaunt-wasix-aot", "liboliphaunt-wasix-runtime"]
       .every((job) => wasixNapiPlan.has(job)),
     "WASIX Node-API CI planning must select every same-run embedded payload producer",
   );
-  for (const product of inventory.products) {
-    const extensionPlan = planJobsForAffected(new Set([product]), new Set());
-    invariant(
-      [
-        "wasix-napi",
-        "extension-artifacts-wasix",
-        "liboliphaunt-wasix-aot",
-        "liboliphaunt-wasix-runtime",
-      ].every((job) => extensionPlan.has(job)),
-      `${product} CI planning must rebuild WASIX Node-API carriers and every embedded payload producer`,
-    );
-  }
+  const extensionPlan = planJobsForAffected(
+    new Set(["extension-artifacts-wasix:build-target"]),
+  );
+  invariant(
+    [
+      "wasix-napi",
+      "extension-artifacts-wasix",
+      "liboliphaunt-wasix-aot",
+      "liboliphaunt-wasix-runtime",
+    ].every((job) => extensionPlan.has(job)),
+    "WASIX extension changes must rebuild Node-API carriers and every embedded payload producer",
+  );
   const focusedWasix = planForFullRun({ wasmTarget: "linux-x64-gnu", nativeTarget: "all", mobileTarget: "all" });
   assertSameStrings(focusedWasix.jobs, ["affected", "extension-artifacts-wasix", "liboliphaunt-wasix-aot", "liboliphaunt-wasix-runtime"], "focused WASIX CI jobs");
   const focusedAndroid = renderPlanForFullRun({

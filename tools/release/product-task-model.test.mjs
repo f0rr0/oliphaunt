@@ -2,10 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { moonCommand, moonEnvironment } from "../dev/moon-command.mjs";
-import {
-  BROAD_EXTENSION_INPUT_PROJECTS,
-  NATIVE_EXTENSION_LIFECYCLE_TRIGGER_PROJECTS,
-} from "../graph/ci_plan.mjs";
+import { BROAD_EXTENSION_INPUT_PROJECTS } from "../graph/ci_plan.mjs";
 import { execFileSync } from "../test/fd-backed-spawn-sync.mjs";
 
 function moonJson(args) {
@@ -77,19 +74,34 @@ test("release product tasks use semantic names and keep package independent", ()
 test("task edges distinguish artifact data from ordering gates", () => {
   const tasks = Object.values(moonJson(["task-graph", "--json"]).data);
   const byTarget = new Map(tasks.map((task) => [task.target, task]));
+  const projectSources = new Map(
+    moonJson(["query", "projects"]).projects.map(({ id, source }) => [id, source]),
+  );
+  const outputOwners = new Map();
 
   for (const consumer of tasks) {
     const consumerTags = new Set(consumer.tags ?? []);
     const isProducer = ["artifact-builder", "artifact-package", "build", "package"]
       .some((tag) => consumerTags.has(tag));
     const isQualificationAggregate = consumer.id === "qualify" || consumerTags.has("aggregate");
-    const inputs = new Set((consumer.inputs ?? []).map((input) => input.file ?? input.glob));
-    if (consumer.options?.cache && !isQualificationAggregate) {
-      for (const output of consumer.outputs ?? []) {
+    const project = consumer.target.split(":", 1)[0];
+    const projectSource = projectSources.get(project);
+    const resolvePath = (value) => value.startsWith("/") ? value : `${projectSource}/${value}`;
+    const inputs = new Set(
+      (consumer.inputs ?? [])
+        .map((input) => input.file ?? input.glob)
+        .filter((input) => typeof input === "string")
+        .map(resolvePath),
+    );
+    for (const output of consumer.outputs ?? []) {
+      const path = output.file ?? output.glob;
+      const resolvedPath = resolvePath(path);
+      outputOwners.set(resolvedPath, [...(outputOwners.get(resolvedPath) ?? []), consumer]);
+      if (inputs.has(resolvedPath)) {
         assert.equal(
-          inputs.has(output.file ?? output.glob),
+          consumer.options?.cache,
           false,
-          `${consumer.target} declares its own output as an input`,
+          `${consumer.target} caches a path declared as both input and output`,
         );
       }
     }
@@ -110,6 +122,15 @@ test("task edges distinguish artifact data from ordering gates", () => {
         );
       }
     }
+  }
+
+  for (const [output, owners] of outputOwners) {
+    if (owners.length < 2) continue;
+    assert.equal(
+      owners.every((task) => task.options?.cache === false),
+      true,
+      `${output} has multiple cached producers: ${owners.map(({ target }) => target).join(", ")}`,
+    );
   }
 });
 
@@ -168,10 +189,7 @@ test("WASIX Node-API release build consumes its runtime and extension artifacts"
 test("CI planner project selectors resolve to Moon projects", () => {
   const projects = moonJson(["query", "projects"]).projects;
   const projectIds = new Set(projects.map(({ id }) => id));
-  for (const project of new Set([
-    ...BROAD_EXTENSION_INPUT_PROJECTS,
-    ...NATIVE_EXTENSION_LIFECYCLE_TRIGGER_PROJECTS,
-  ])) {
+  for (const project of BROAD_EXTENSION_INPUT_PROJECTS) {
     assert.equal(projectIds.has(project), true, `unknown CI planner project ${project}`);
   }
 });

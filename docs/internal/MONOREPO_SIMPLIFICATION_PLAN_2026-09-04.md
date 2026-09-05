@@ -18,16 +18,16 @@ implication that graph invariants prove task semantics.
 ## Evidence and limits
 
 Inspected on 2026-09-04: freshly fetched `origin/main` at
-`e20791d85b13151ef6eee023ff4b8cf39de0e123`; PR #173 at
-`3305a2f40207d1bcd7e39e0d343803e97f093585`. Shared-source ownership and trusted
-base-cache restoration are newer than that hosted baseline and require the next
-PR run.
+`e20791d85b13151ef6eee023ff4b8cf39de0e123`; PR #173's last reviewed hosted
+head was `da8103bd5a98699e322da1ddd3a58b57cab93b64`. The graph-authority changes
+recorded below are newer than that hosted baseline and require the next PR run.
 
 | Completed CI run | Wall time | Executed jobs | Summed job time |
 | --- | ---: | ---: | ---: |
 | [Latest main](https://github.com/f0rr0/oliphaunt/actions/runs/33801742528) | 135.5 min | 109 | 917.9 min |
 | [Latest PR #173](https://github.com/f0rr0/oliphaunt/actions/runs/33877271711) | 125.1 min | 87 | 900.2 min |
 | [Separated Postmaster baseline](https://github.com/f0rr0/oliphaunt/actions/runs/33931939861) | 111.0 min | 87 | 899.3 min |
+| [Last reviewed PR head](https://github.com/f0rr0/oliphaunt/actions/runs/33938169412) | 96.6 min | 87 | 854.8 min |
 
 Calculated from GitHub job/run timestamps, excluding skipped jobs. Summed job
 time is not billed time; runner types have different costs. Different events,
@@ -45,9 +45,10 @@ iOS extension artifacts remained the largest single producer at 78.5 minutes.
 The result localizes the next optimization to reusable compiler/producer state,
 not deletion of fast behavioral checks.
 
-Current resolved Moon graph: 55 projects, 198 tasks, 156 edges; 26 internal tasks;
-117 normal-cache, 13 local-cache, 68 uncached. Use `moon task-graph --json` for
-this inventory: `moon query tasks` omits internal tasks.
+Current resolved Moon graph after the local review remediation: 55 projects,
+199 tasks, 179 edges; 24 internal tasks; 118 normal-cache, 13 local-cache, 68
+uncached. Use `moon task-graph --json` for this inventory: `moon query tasks`
+omits internal tasks.
 
 Tracked-file footprint, including comments/tests/data: `tools/` has 517 files /
 176,086 lines; `tools/release/` accounts for 353 / 114,614; `tools/xtask/` for
@@ -62,7 +63,7 @@ comparable reduction in full-run cost.
 | --- | --- | --- |
 | 1 — native | Make real producer outputs explicit and reusable. Postmaster `runtime-build` / `postgres-build` and native `release-runtime` currently produce files without declaring Moon outputs. Cache their complete, target-specific deliverables; split portable production from host compiler/executor production so independent hosts can start concurrently. | Cold builds work; patch/toolchain/target changes invalidate; missing outputs hydrate or rebuild; restored binaries retain executable modes and provenance. |
 | 2 — shrink | Remove hidden qualification from builders. Postmaster `runtime/bin/build-runtime.sh` contains 86 `cargo test` invocations, including test-list probes, followed by release builds. Group tests by actual crate/feature/platform requirements and run explicit behavioral targets. Its `portable-inputs` depends on regression, and `release-assets` depends on stress/recovery. Put those proof edges on `qualify`; tests depend on prepared sources, not release binaries they do not consume. | All patched Wasmer behavior, memory isolation, concurrent connections, recovery and target-specific tests remain scheduled. Preserve distinct feature sets; do not combine compiler/headless profiles indiscriminately. |
-| 3 — delete/shrink | Retire hand-written dependency implications in `tools/graph/ci_plan.mjs:addImpliedJobs` as real Moon artifact edges become sufficient. Today Moon deps, planner job sets, and workflow `needs` jointly encode the execution model. Keep a small runner/artifact transport adapter. | Every selected consumer has all producers, platform artifacts and required proof jobs; no missing-job success. GitHub still needs cross-runner transport and a static job skeleton. |
+| 3 — delete/shrink | **Implemented:** hand-written product dependency implications are gone. Directly affected tasks and the resolved Moon DAG now select stable tagged jobs; GitHub retains runner/artifact transport only. | Every selected consumer has all producers, platform artifacts and required proof jobs; no missing-job success. GitHub still needs cross-runner transport and a static job skeleton. |
 | 4 — shrink | Separate package-owned assembly from release control. `tools/release` mixes carrier creation, binary validation, licensing, registry publication and graph loading. `src/sources/tools/fetch-sources.mjs` imports a release-layer license auditor; product packagers import root release helpers. Preserve small pure shared libraries, but product code must not invoke the release planner. | Archive safety, licenses, ABI compatibility, integrity, exact candidate identity and publication recovery remain. Do not replace one large tool with a generic framework in every product. |
 | 5 — native | Complete source-level sharing through existing [PR #166](https://github.com/f0rr0/oliphaunt/pull/166). `src/shared/js-core/moon.yml` still generates six checked-in mirrors into three consumers. Import a workspace module and bundle or publish it using normal package tooling. | Packed SDKs work outside the checkout; no unpublished workspace dependency leaks. Do not maintain a second implementation of that PR here. |
 | 6 — delete/shrink | Remove source-spelling tests after their intended invariant is either executable or explicitly retired. Postmaster's Python ownership verifiers parse Rust implementation text. The current task-model test accepts missing producer outputs as ordering edges and recognizes quality only through selected tags, so it misses real hidden work. | Keep parsed public-manifest checks, negative tamper tests, clean-consumer installation and runtime behavior. A string assertion on an emitted manifest/output is not automatically a bad test. |
@@ -121,12 +122,52 @@ dispatch/orchestration as Moon/native commands assume it. Relocating its entire
   exact predecessor. Only main can save a new cache, so untrusted PR code cannot
   seed reusable native build state; release outputs are still rebuilt and
   validated for the candidate SHA.
+- CI job selection now starts with directly affected Moon tasks and follows the
+  resolved task DAG in both directions. The product-specific `addImpliedJobs`
+  scheduler, its project-name triggers, and two planner-only no-op tasks are
+  deleted. CI task tags are the only builder-job inventory.
+- Native desktop, Android, and iOS producer tasks are distinct, declare their
+  staged outputs, and feed aggregate, Swift, React Native, mobile-app, and
+  extension packaging through explicit task edges. GitHub remains responsible
+  only for runner selection and transporting those outputs between runners.
+- JavaScript compilation and full TypeScript checking are separate cached
+  tasks. `qualify` requires both, so test sources excluded from the emit config
+  are still typechecked.
+- Moon commands now reject a missing or mismatched ambient version before any
+  graph query. `.prototools` remains the single version pin.
+- Graph tests reject cached tasks that share an output path or cache a path as
+  both input and output. Existing shared staging directories remain legal only
+  for explicitly uncached cross-runner producer/aggregate tasks.
 
 Still open: Moon task-cache persistence, host/portable Postmaster producer
-separation, removal of planner implications after equivalent Moon/data edges
-exist, removal of the remaining native/SDK product-to-`tools/` imports, PR #166
-integration, and evidence-led review of remaining source-spelling tests. These
-are not hidden behind this change.
+separation, removal of the remaining native/SDK product-to-`tools/` imports,
+PR #166 integration, and evidence-led review of remaining source-spelling
+tests. These are not hidden behind this change.
+
+### Decisions on the 2026-09-05 review
+
+The review correctly identified the parallel scheduler, JavaScript typecheck
+gap, missing native output declarations, and ambient Moon-version ambiguity;
+the changes above address those findings.
+
+The proposed increase from 20 to 24 release products is not adopted. A public
+registry carrier is not automatically an independently supported versioned
+product. ICU, native tools, and WASIX tools are currently built, validated, and
+consumed as lockstep runtime carriers. The TypeScript tools facade likewise
+pins its WASIX runtime dependency and its TypeScript binding peer when staged.
+Giving these four independent versions before an independent compatibility
+promise exists would add release states without adding user-visible
+flexibility. Split one only when its supported compatibility range or release
+cadence actually diverges; keep runtime and SDK/binding versions independent as
+they already are.
+
+The seven external extensions already are seven independent release products.
+Native and WASIX outputs are distinct carrier families of the same extension
+source/version. Their leaf Moon projects intentionally contain identity and
+release metadata while shared native/WASIX builders and lifecycle proofs do the
+work. Adding six inherited wrapper tasks to every leaf would duplicate task
+surfaces and would not execute additional behavior. Contrib remains bundled
+with its runtime owners as previously decided.
 
 ## One owner for each kind of dependency
 
@@ -169,7 +210,7 @@ these boundaries before contemplating renames.
 
 On one host, invoke Moon directly for the selected task closure. Across hosts,
 use a small fixed workflow stage structure and target matrices to transport
-declared artifacts. Do not replace `addImpliedJobs` with a new general-purpose
+declared artifacts. Do not replace the deleted product implications with a general-purpose
 workflow compiler or generate a second dependency database.
 
 Keep two explicit consumer paths: **released dependency pins** for SDK-only
