@@ -4,7 +4,10 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-const ARCHIVE_DIR = path.resolve(import.meta.dir, '../../src/shared/artifact-packaging/archive-directory.mjs');
+const ARCHIVE_DIR = path.resolve(
+  import.meta.dir,
+  '../../src/shared/artifact-packaging/archive-directory.mjs',
+);
 
 export function fail(message) {
   console.error(`release-fixture-utils.mjs: ${message}`);
