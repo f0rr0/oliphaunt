@@ -538,8 +538,6 @@ tasks:
   node-direct-runtime:
     tags: ["release", "artifact", "in-place-finalizer-input", "ci-node-direct"]
     command: "bash tools/release/package-node-direct-runtime.sh"
-    deps:
-      - "shared-js-core:build"
     inputs:
       - project: "oliphaunt-node-direct"
         group: "code"

@@ -1319,7 +1319,7 @@ JavaScript 82.97%, React Native 87.30%, WASIX Rust 85.49%, and WASIX TypeScript
 80.32%.
 
 The resolved pinned-Moon graph remains 55 projects and 207 tasks; it now has
-206 declared task dependency edges and no alternate output-producer exemption.
+205 declared task dependency edges and no alternate output-producer exemption.
 Affected-path fixtures issue one Moon query per change, and their former
 host-load-sensitive 15-second test deadlines are gone; the workflow job timeout
 remains the failure bound.
@@ -1339,3 +1339,15 @@ case-specific bound rather than inheriting the 30-second default. The exact
 Node Direct package, clean-output browser compile, SDK contract, full release
 mutation suite, uncached graph suite, and uncached workflow suite passed after
 these corrections.
+
+Hosted run `33978068948` at `093c859a` showed that the first Node Direct fix
+introduced a reverse product edge: four platform jobs tried to build the shared
+JavaScript core without installing the pnpm workspace. The redundant SDK GC
+scenario was removed from native packaging instead. Its two contracts remain
+covered at their owners: SDK finalizer/recovery behavior in JavaScript unit
+tests and exact-generation recovery in the native lifecycle test. Node Direct
+now packages independently again and retains 63 native lifecycle cases. The
+same run found real WASIX asset-helper coverage below the unchanged per-file
+floor; one behavioral feature-contract test raised that file to 114/121 covered
+lines. The exact uncached Node Direct package, WASIX Rust coverage (193 tests,
+85.73% overall), graph, workflow, and format gates passed locally.

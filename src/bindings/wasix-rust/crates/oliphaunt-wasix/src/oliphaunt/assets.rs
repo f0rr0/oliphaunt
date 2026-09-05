@@ -223,7 +223,50 @@ pub(crate) fn extension_aot_artifact_bytes(target: &str, name: &str) -> Option<&
 
 #[cfg(test)]
 mod tests {
-    use super::validate_embedded_source_fingerprints;
+    use super::{
+        CatalogProfile, asset_manifest_metadata, cluster_seed_archive, cluster_seed_manifest,
+        expected_icu_data_archive_sha256, expected_icu_data_tree_sha256,
+        expected_runtime_archive_sha256, icu_data_archive, runtime_archive,
+        validate_embedded_source_fingerprints,
+    };
+
+    #[test]
+    fn asset_helpers_expose_a_consistent_feature_contract() {
+        assert_eq!(CatalogProfile::default(), CatalogProfile::Standard);
+        CatalogProfile::Standard.validate_available().unwrap();
+        assert_eq!(
+            CatalogProfile::Icu.validate_available().is_ok(),
+            cfg!(feature = "icu")
+        );
+
+        let metadata = asset_manifest_metadata().unwrap();
+        assert_eq!(
+            metadata.cluster_seed_profile,
+            CatalogProfile::Standard.as_str()
+        );
+        assert!(!expected_runtime_archive_sha256().unwrap().is_empty());
+        assert_eq!(
+            runtime_archive().is_some(),
+            liboliphaunt_wasix_portable::HAS_EMBEDDED_ASSETS
+        );
+        assert_eq!(
+            cluster_seed_archive(CatalogProfile::Standard).is_some(),
+            liboliphaunt_wasix_portable::HAS_EMBEDDED_ASSETS
+        );
+        assert_eq!(
+            cluster_seed_manifest(CatalogProfile::Standard).is_some(),
+            liboliphaunt_wasix_portable::HAS_EMBEDDED_ASSETS
+        );
+        assert!(icu_data_archive(CatalogProfile::Standard).is_none());
+        assert_eq!(
+            expected_icu_data_archive_sha256().is_some(),
+            cfg!(feature = "icu")
+        );
+        assert_eq!(
+            expected_icu_data_tree_sha256().is_some(),
+            cfg!(feature = "icu")
+        );
+    }
 
     #[test]
     fn embedded_source_fingerprints_are_required_and_equal() {
