@@ -321,7 +321,7 @@ test("binds derived Cargo pins and lock entries to the referenced local package"
   );
 });
 
-test("binds wildcard Cargo pins to the referenced local package", { timeout: 20_000 }, (t) => {
+test("keeps wildcard Cargo pins independent of release versions", { timeout: 20_000 }, (t) => {
   const repo = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-release-cargo-wildcard-"));
   t.after(() => rmSync(repo, { recursive: true, force: true }));
   const packagePath = "src/runtimes/broker";
@@ -345,6 +345,7 @@ test("binds wildcard Cargo pins to the referenced local package", { timeout: 20_
 
   const pinned = dependency.replace('"*"', '"0.2.0"');
   for (const [name, entry] of [
+    ["workspace-wildcard", dependency],
     ["local-version", pinned],
     ["wrong-version", pinned.replace('"0.2.0"', '"0.3.0"')],
     ["changed-path", pinned.replace("../../sdks/rust", "../../sdks/other")],
@@ -357,7 +358,7 @@ test("binds wildcard Cargo pins to the referenced local package", { timeout: 20_
     write(repo, `${packagePath}/CHANGELOG.md`, "# Changelog\n\n## 0.2.0\n");
     const headRef = commit(repo, "chore(release): prepare broker release");
     const verify = () => verifyReleaseCommit({ repo, headRef, products: [RELEASE_PRODUCT] });
-    if (name === "local-version") {
+    if (name === "workspace-wildcard") {
       assert.deepEqual(verify().products, [RELEASE_PRODUCT]);
     } else {
       assert.throws(verify, /canonical version file.*non-version semantic change/u, name);
