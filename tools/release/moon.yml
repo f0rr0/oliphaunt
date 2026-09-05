@@ -60,6 +60,7 @@ tasks:
       - "/tools/release/sdk-artifacts/npm.mjs"
       - "/tools/release/sdk-artifacts/shared.mjs"
       - "/tools/release/source-only-sdk-package.mjs"
+      - "/src/shared/js-core/tools/stage-package.mjs"
       - "/tools/dev/bun.sh"
       - "/src/sources/tools/source-fetch-core.mjs"
     outputs:
@@ -205,6 +206,7 @@ tasks:
       - "/tools/release/sdk-artifacts/react-native.mjs"
       - "/tools/release/sdk-artifacts/shared.mjs"
       - "/tools/release/source-only-sdk-package.mjs"
+      - "/src/shared/js-core/tools/stage-package.mjs"
       - "/src/runtimes/liboliphaunt/native/icu-npm/**/*"
       - "/examples/react-native-expo/package.json"
       - "/src/sdks/react-native/tools/ios-icu-autolinking.test.mjs"
@@ -271,6 +273,7 @@ tasks:
       - "/tools/release/sdk-artifacts/wasix-ts.mjs"
       - "/tools/release/wasix-tools-typescript-package.mjs"
       - "/tools/release/wasix-typescript-package.mjs"
+      - "/src/shared/js-core/tools/stage-package.mjs"
       - "/tools/dev/bun.sh"
     outputs:
       - "/target/sdk-artifacts/oliphaunt-wasix-ts/**/*"
@@ -606,13 +609,22 @@ tasks:
 
   wasix-napi-runtime:
     tags: ["release", "artifact", "in-place-finalizer-input", "ci-wasix-napi"]
-    command: "bash src/runtimes/wasix-napi/tools/build-native.sh"
+    script: |
+      set -e
+      tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs --all --family wasix --require-wasix
+      exec bash src/runtimes/wasix-napi/tools/build-native.sh
     deps:
       - "liboliphaunt-wasix:runtime-aot"
-      - "release-tools:wasix-extension-packages"
+      - "extension-artifacts-wasix:build-target"
     inputs:
       - "@group(cargo-workspace)"
       - "@group(legal-files)"
+      - project: "extensions"
+        group: "package"
+      - project: "liboliphaunt-wasix"
+        group: "release-metadata"
+      - project: "extension-runtime-contract"
+        group: "contract"
       - "/src/runtimes/wasix-napi/Cargo.toml"
       - "/src/runtimes/wasix-napi/build.rs"
       - "/src/runtimes/wasix-napi/package.json"
@@ -650,6 +662,11 @@ tasks:
       - project: "artifact-packaging"
         group: "source"
       - "/tools/release/check-wasix-napi-release-assets.mjs"
+      - "/tools/release/build-extension-ci-artifacts.mjs"
+      - "/tools/release/cargo-source-package.mjs"
+      - "/tools/release/extension-runtime-asset-contract.mjs"
+      - "/tools/release/extension-upstream-licenses.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
       - "/tools/release/build-linux-wasix-napi-baseline.sh"
       - "/tools/release/check-linux-consumer-baseline.sh"
       - "/tools/release/contrib-carriers.mjs"
@@ -695,40 +712,6 @@ tasks:
       cache: false
       runFromWorkspaceRoot: true
       runInCI: true
-
-  wasix-extension-packages:
-    tags: ["release", "artifact-package", "alternative-producer"]
-    command: "tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs --all --family wasix --require-wasix"
-    deps:
-      - "extension-artifacts-wasix:build-target"
-      - "liboliphaunt-wasix:runtime-aot"
-    inputs:
-      - "@group(legal-files)"
-      - project: "extensions"
-        group: "package"
-      - project: "liboliphaunt-wasix"
-        group: "release-metadata"
-      - "/src/shared/extension-runtime-contract/**/*"
-      - "/tools/dev/bun.sh"
-      - "/tools/release/build-extension-ci-artifacts.mjs"
-      - project: "artifact-packaging"
-        group: "source"
-      - "/tools/release/cargo-source-package.mjs"
-      - "/tools/release/extension-runtime-asset-contract.mjs"
-      - "/tools/release/extension-upstream-licenses.mjs"
-      - "/tools/release/release-artifact-targets.mjs"
-      - "/tools/release/wasix-aot-manifest.mjs"
-      - "/tools/release/wasix-cargo-artifact-contract.mjs"
-      - project: "extension-runtime-contract"
-        group: "contract"
-      - "/target/extensions/wasix/release-assets/**/*"
-      - "/target/extensions/wasix/aot-artifacts/**/*"
-    outputs:
-      - "/target/extension-artifacts/**/*"
-    options:
-      cache: false
-      internal: true
-      runFromWorkspaceRoot: true
 
   wasix-napi-release-assets:
     tags: ["release", "artifact-package", "in-place-finalizer", "ci-wasix-napi-release-assets"]

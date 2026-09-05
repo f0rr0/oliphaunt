@@ -1,6 +1,10 @@
 import path from 'node:path';
 
 import { prepareWasixTypescriptPackage as prepareProductPackage } from '../../src/bindings/wasix-ts/tools/package.mjs';
+import {
+  assertJsCoreBundleInventory,
+  JS_CORE_PACKAGE,
+} from '../../src/shared/js-core/tools/stage-package.mjs';
 
 import { readPortableArchiveEntries } from '../../src/shared/artifact-packaging/portable-archive.mjs';
 import {
@@ -54,13 +58,14 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
   }
   const dependencies = manifest.dependencies ?? {};
   const optionalDependencies = manifest.optionalDependencies ?? {};
-  const expectedDependencies = [FZSTD_PACKAGE, RUNTIME_PACKAGE].sort(compareText);
+  const expectedDependencies = [FZSTD_PACKAGE, JS_CORE_PACKAGE, RUNTIME_PACKAGE].sort(compareText);
   const nativeVersion = manifest.oliphaunt?.wasixNapiVersion;
   if (
     JSON.stringify(sortedKeys(dependencies)) !== JSON.stringify(expectedDependencies)
     || typeof dependencies[RUNTIME_PACKAGE] !== 'string'
     || !/^\d+\.\d+\.\d+$/u.test(dependencies[RUNTIME_PACKAGE])
     || dependencies[FZSTD_PACKAGE] !== FZSTD_VERSION
+    || dependencies[JS_CORE_PACKAGE] !== '0.0.0'
     || typeof nativeVersion !== 'string'
     || !/^\d+\.\d+\.\d+$/u.test(nativeVersion)
     || JSON.stringify(sortedKeys(optionalDependencies))
@@ -68,11 +73,11 @@ export function assertWasixTypescriptManifest(manifest, label = `${PACKAGE_NAME}
     || NATIVE_PACKAGES.some((name) => optionalDependencies[name] !== nativeVersion)
     || sortedKeys(manifest.peerDependencies).length !== 0
     || manifest.peerDependenciesMeta !== undefined
-    || manifest.bundledDependencies !== undefined
+    || JSON.stringify(manifest.bundledDependencies) !== JSON.stringify([JS_CORE_PACKAGE])
     || manifest.bundleDependencies !== undefined
   ) {
     fail(
-      `${label} must depend only on the exact portable runtime, decompressor, and native platform carriers`,
+      `${label} must depend only on its bundled JavaScript core, portable runtime, decompressor, and native platform carriers`,
     );
   }
   const root = manifest.exports?.['.'];
@@ -237,6 +242,7 @@ export function assertWasixTypescriptNpmArchive(archive) {
     label: path.basename(file),
   });
   const entries = readPortableArchiveEntries(file);
+  assertJsCoreBundleInventory(entries.keys(), 'package/node_modules/@oliphaunt/js-core/');
   const requireFile = (name) => {
     const entry = entries.get(`package/${name}`);
     if (!entry?.isFile || entry.isSymbolicLink || entry.size <= 0) {
@@ -263,7 +269,12 @@ export function assertWasixTypescriptNpmArchive(archive) {
   for (const [name, entry] of entries) {
     if (entry.isSymbolicLink) fail(`${path.basename(file)} contains symbolic link ${name}`);
     const relative = name.replace(/^package\//u, '');
-    if (entry.isFile && !allowedFiles.has(relative) && !relative.startsWith('lib/')) {
+    if (
+      entry.isFile
+      && !allowedFiles.has(relative)
+      && !relative.startsWith('lib/')
+      && !relative.startsWith('node_modules/@oliphaunt/js-core/')
+    ) {
       fail(`${path.basename(file)} contains file outside package.json files: ${name}`);
     }
   }

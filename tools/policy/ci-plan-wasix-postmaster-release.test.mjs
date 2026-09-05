@@ -4,7 +4,7 @@ import {test} from 'node:test';
 
 import {captureCommandOutput} from '../dev/capture-command-output.mjs';
 import {moonCommand, moonEnvironment} from '../dev/moon-command.mjs';
-import {affectedNames, triggeringProjectNames} from '../graph/affected.mjs';
+import {affectedNames, triggeringProjectNames, triggeringTaskNames} from '../graph/affected.mjs';
 import {
   CI_JOB_TARGETS,
   planJobsForAffected,
@@ -46,7 +46,13 @@ test('postmaster planner renders every supported release target', () => {
     reason: 'postmaster planner fixture',
     selectedTargets: null,
     selectedExtensionProducts: new Set(),
+    qualificationMode: 'affected',
+    qualificationBaseSha: 'base-sha',
+    qualificationHeadSha: 'head-sha',
   });
+  assert.equal(plan.qualification_mode, 'affected');
+  assert.equal(plan.qualification_base_sha, 'base-sha');
+  assert.equal(plan.qualification_head_sha, 'head-sha');
   assert.deepEqual(
     plan.liboliphaunt_wasix_postmaster_runtime_matrix.include.map(
       ({target_id}) => target_id,
@@ -70,6 +76,9 @@ test('postmaster planner renders every supported release target', () => {
     planWithoutPostmaster.liboliphaunt_wasix_postmaster_runtime_matrix,
     {include: []},
   );
+  assert.equal(planWithoutPostmaster.qualification_mode, 'full-payload');
+  assert.equal(planWithoutPostmaster.qualification_base_sha, null);
+  assert.equal(planWithoutPostmaster.qualification_head_sha, null);
 });
 
 test('postmaster source preparation waits for the shared source fetch', () => {
@@ -105,26 +114,22 @@ function directEffects(relativePath) {
   const environment = {...process.env, MOON_CACHE: 'off'};
   delete environment.MOON_BASE;
   delete environment.MOON_HEAD;
-  const query = (downstream) =>
-    captureCommandOutput(
-      moonCommand(environment),
-      ['query', 'affected', 'stdin', '--upstream', 'none', '--downstream', downstream],
-      {
-        cwd: ROOT,
-        env: moonEnvironment(environment),
-        input: `${relativePath}\n`,
-        label: `moon WASIX postmaster release fixture ${relativePath}`,
-      },
-    );
-  const direct = query('none');
-  const downstream = query('direct');
-  for (const result of [direct, downstream]) {
-    assert.equal(result.error, undefined, result.error?.message ?? result.stderr);
-    assert.equal(result.status, 0, result.stderr);
-  }
-  const projects = triggeringProjectNames(JSON.parse(direct.stdout).projects);
-  const directTasks = affectedNames(JSON.parse(direct.stdout).tasks);
-  const tasks = affectedNames(JSON.parse(downstream.stdout).tasks);
+  const result = captureCommandOutput(
+    moonCommand(environment),
+    ['query', 'affected', 'stdin', '--upstream', 'none', '--downstream', 'direct'],
+    {
+      cwd: ROOT,
+      env: moonEnvironment(environment),
+      input: `${relativePath}\n`,
+      label: `moon WASIX postmaster release fixture ${relativePath}`,
+    },
+  );
+  assert.equal(result.error, undefined, result.error?.message ?? result.stderr);
+  assert.equal(result.status, 0, result.stderr);
+  const affected = JSON.parse(result.stdout);
+  const projects = triggeringProjectNames(affected.projects);
+  const directTasks = triggeringTaskNames(affected.tasks);
+  const tasks = affectedNames(affected.tasks);
   const jobs = [...planJobsForAffected(new Set(directTasks))].sort();
   return {projects, directTasks, tasks, jobs};
 }
@@ -184,7 +189,7 @@ test('source fetch implementation changes retain their real consumers', () => {
   }
 });
 
-test('source prose, transport tests, and unrelated toolchains do not rebuild runtimes', {timeout: 15_000}, () => {
+test('source prose, transport tests, and unrelated toolchains do not rebuild runtimes', () => {
   const cases = [
     ['src/postgres/versions/18/fetch-source.test.sh', 'source-inputs:unit'],
     ['src/runtimes/liboliphaunt/wasix-postmaster/runtime/README.md', null],
@@ -208,7 +213,7 @@ test('source prose, transport tests, and unrelated toolchains do not rebuild run
   }
 });
 
-test('runtime patch lint follows only the patch inputs it reads', {timeout: 15_000}, () => {
+test('runtime patch lint follows only the patch inputs it reads', () => {
   for (const relativePath of [
     'src/extensions/external/vector/source.toml',
     'src/runtimes/liboliphaunt/wasix/crates/tools/src/lib.rs',

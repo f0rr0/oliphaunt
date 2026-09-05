@@ -28,7 +28,7 @@ project:
 
 tasks:
   package-mobile:
-    tags: ["release", "artifact-package", "alternative-producer", "ci-mobile-extension-packages"]
+    tags: ["release", "artifact-package", "ci-mobile-extension-packages"]
     command: "bash src/extensions/artifacts/packages/tools/package-mobile-release-assets.sh"
     deps:
       - "extension-artifacts-native:build-target"
@@ -74,20 +74,19 @@ tasks:
       - "/src/postgres/versions/18/source.toml"
       - "/target/extensions/native/release-assets/**/*"
     outputs:
-      - "/target/extension-artifacts/**/*"
+      - "/target/mobile-extension-artifacts/**/*"
     options:
       cache: false
       runFromWorkspaceRoot: true
       runInCI: true
 
   package:
-    tags: ["release", "artifact-package", "alternative-producer", "ci-extension-packages"]
+    tags: ["release", "artifact-package", "ci-extension-packages"]
     command: "bash src/extensions/artifacts/packages/tools/package-release-assets.sh"
     deps:
       - "extension-artifacts-native:build-target"
       - "extension-artifacts-wasix:build-target"
-      - "liboliphaunt-native:release-assets"
-      - "liboliphaunt-wasix:release-assets"
+      - "liboliphaunt-wasix:runtime-aot"
     inputs:
       - "@group(legal-files)"
       - "/release-please-config.json"

@@ -121,7 +121,7 @@ The validation entrypoint is split by maintainer workflow:
   host runtime; on macOS it also requires the iOS simulator preflight;
 - `moon run oliphaunt-swift:package`: validates the Swift source package
   shape without building platform release artifacts;
-- `moon run liboliphaunt-native:build-ios-xcframework`: explicitly builds and
+- `moon run liboliphaunt-native:build-runtime-ios-xcframework`: explicitly builds and
   freshness-checks iOS simulator and device `liboliphaunt.dylib` slices from
   the same PostgreSQL 18 patch stack, then packages them as
   `liboliphaunt.xcframework`;
@@ -270,13 +270,13 @@ For native liboliphaunt work, run only the product boundary you changed:
 ```sh
 moon run liboliphaunt-native:host-smoke
 moon run oliphaunt-rust:regression
-moon run extension-artifacts-native:build-host oliphaunt-rust:extension-regression
+moon run extension-artifacts-native:build-target oliphaunt-rust:extension-regression
 ```
 
 `liboliphaunt-native:host-smoke` proves the C ABI. The Rust regression uses the basic native
 runtime and runs SQL/protocol regression across direct, broker, and server mode.
 `moon run oliphaunt-rust:extension-regression` is the separate
-extension-artifact lane; it depends on `extension-artifacts-native:build-host` and is
+extension-artifact lane; it depends on `extension-artifacts-native:build-target` and is
 intentionally not part of normal PR CI. The host artifact builder uses
 the build script's no-build freshness probe before running the matrix, which avoids both
 unnecessary rebuilds and the failure mode where a core-only runtime is

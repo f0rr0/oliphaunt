@@ -28,7 +28,7 @@ function invoke(stub, output) {
     MOON_BIN: stub,
     MOON_HEAD: "",
   };
-  return spawnSync(process.execPath, [WRITER, "check", "compile", "typecheck", "format-check", "js-format-check", "lint", "rust-format-check", "tools-compile", "metadata", "graph-unit", "test", "tools-unit", "unit"], {
+  return spawnSync(process.execPath, [WRITER], {
     cwd: ROOT,
     encoding: "utf8",
     env,
@@ -42,15 +42,17 @@ test("Node planner captures Moon JSON written at the successful child's final ev
     const tasks = {
       "aot-qualification": { args: [], command: "node aot.mjs", deps: [], id: "aot-qualification", options: {}, tags: ["quality", "static"], target: "alpha:aot-qualification" },
       "browser-qualification": { args: [], command: "node browser.mjs", deps: [], id: "browser-qualification", options: {}, tags: ["quality", "static"], target: "alpha:browser-qualification" },
-      check: { args: [], command: "node check.mjs", deps: [], id: "check", options: {}, tags: [], target: "alpha:check" },
-      compile: { args: [], command: "node compile.mjs", deps: [], id: "compile", options: {}, tags: [], target: "alpha:compile" },
+      check: { args: [], command: "node check.mjs", deps: [], id: "check", options: {}, tags: ["quality", "static"], target: "alpha:check" },
+      compile: { args: [], command: "node compile.mjs", deps: [], id: "compile", options: {}, tags: ["quality", "static"], target: "alpha:compile" },
       "coverage-report": { args: [], command: "node coverage.mjs", deps: [], id: "coverage-report", options: {}, tags: ["coverage"], target: "alpha:coverage-report" },
       "docs-preview": { args: [], command: "node docs.mjs", deps: [], id: "docs-preview", options: {}, tags: ["quality", "smoke"], target: "alpha:docs-preview" },
-      "graph-unit": { args: [], command: "node graph-unit.mjs", deps: [], id: "graph-unit", options: {}, tags: [], target: "alpha:graph-unit" },
-      "tools-compile": { args: [], command: "node tools-compile.mjs", deps: [], id: "tools-compile", options: {}, tags: [], target: "alpha:tools-compile" },
-      test: { args: [], command: "node test.mjs", deps: [], id: "test", options: {}, tags: [], target: "alpha:test" },
-      "tools-unit": { args: [], command: "node tools-unit.mjs", deps: [], id: "tools-unit", options: {}, tags: [], target: "alpha:tools-unit" },
-      unit: { args: [], command: "node unit.mjs", deps: [{ target: "alpha:internal" }], id: "unit", options: {}, tags: [], target: "alpha:unit" },
+      "graph-unit": { args: [], command: "node graph-unit.mjs", deps: [], id: "graph-unit", options: {}, tags: ["quality", "unit"], target: "alpha:graph-unit" },
+      "local-unit": { args: [], command: "node local-unit.mjs", deps: [], id: "local-unit", options: { runInCI: false }, tags: ["quality", "unit"], target: "alpha:local-unit" },
+      "skipped-unit": { args: [], command: "node skipped-unit.mjs", deps: [], id: "skipped-unit", options: { runInCI: "skip" }, tags: ["quality", "unit"], target: "alpha:skipped-unit" },
+      "tools-compile": { args: [], command: "node tools-compile.mjs", deps: [], id: "tools-compile", options: {}, tags: ["quality", "static"], target: "alpha:tools-compile" },
+      test: { args: [], command: "node test.mjs", deps: [], id: "test", options: {}, tags: ["quality", "unit"], target: "alpha:test" },
+      "tools-unit": { args: [], command: "node tools-unit.mjs", deps: [], id: "tools-unit", options: {}, tags: ["quality", "unit"], target: "alpha:tools-unit" },
+      unit: { args: [], command: "node unit.mjs", deps: [{ target: "alpha:internal" }], id: "unit", options: {}, tags: ["quality", "unit"], target: "alpha:unit" },
     };
     const internal = { args: [], command: "node internal.mjs", deps: [], id: "internal", options: { internal: true }, tags: ["requires-rust"], target: "alpha:internal" };
     const document = JSON.stringify({ tasks: { alpha: tasks }, data: { ...tasks, internal } });
@@ -98,6 +100,8 @@ test("Node planner captures Moon JSON written at the successful child's final ev
       ).requires_rust,
       true,
     );
+    assert.equal(readFileSync(output, "utf8").includes("alpha:local-unit"), false);
+    assert.equal(readFileSync(output, "utf8").includes("alpha:skipped-unit"), false);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

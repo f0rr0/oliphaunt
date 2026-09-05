@@ -10,9 +10,11 @@ function manifest() {
     type: 'module',
     publishConfig: { access: 'public', provenance: true },
     dependencies: {
+      '@oliphaunt/js-core': '0.0.0',
       '@oliphaunt/liboliphaunt-wasix': '1.2.3',
       fzstd: '0.1.1',
     },
+    bundledDependencies: ['@oliphaunt/js-core'],
     optionalDependencies: {
       '@oliphaunt/wasix-napi-darwin-arm64': '1.2.3',
       '@oliphaunt/wasix-napi-linux-arm64-gnu': '1.2.3',
@@ -107,7 +109,7 @@ describe('WASIX TypeScript package dependency contract', () => {
     const candidate = manifest();
     delete candidate.optionalDependencies['@oliphaunt/wasix-napi-linux-x64-gnu'];
     expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
-      'must depend only on the exact portable runtime, decompressor, and native platform carriers',
+      /must depend only/u,
     );
   });
 
@@ -115,7 +117,7 @@ describe('WASIX TypeScript package dependency contract', () => {
     const candidate = manifest();
     candidate.optionalDependencies['@oliphaunt/wasix-napi-linux-x64-gnu'] = '1.2.4';
     expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
-      'must depend only on the exact portable runtime, decompressor, and native platform carriers',
+      /must depend only/u,
     );
   });
 
@@ -238,16 +240,16 @@ describe('WASIX TypeScript package dependency contract', () => {
       const candidate = manifest();
       candidate[family] = { ...candidate[family], [dependency]: '1.0.0' };
       expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
-        'must depend only on the exact portable runtime, decompressor, and native platform carriers',
+        /must depend only/u,
       );
     });
   }
 
-  test('rejects bundled dependency families', () => {
+  test('rejects bundling anything except the JavaScript core', () => {
     const candidate = manifest();
     candidate.bundledDependencies = ['fzstd'];
     expect(() => assertWasixTypescriptManifest(candidate)).toThrow(
-      'must depend only on the exact portable runtime, decompressor, and native platform carriers',
+      /must depend only/u,
     );
   });
 });

@@ -1034,9 +1034,12 @@ export function validateCiArtifactCoverage(workflow, inventory) {
       && wasixNapiBuild.env.OLIPHAUNT_WASIX_NAPI_ARTIFACT_SOURCE_SHA === "${{ github.event.pull_request.head.sha || github.sha }}",
     "WASIX Node-API builds must fail closed on exact same-run portable, ICU, AOT, and extension payload roots",
   );
-  const wasixNapiExtensionStage = namedStep(workflow, "wasix-napi", "Stage exact-extension WASIX build inputs");
+  const releaseTasks = object(
+    Bun.YAML.parse(readFileSync(path.join(ROOT, "tools/release/moon.yml"), "utf8")),
+    "tools/release/moon.yml",
+  ).tasks;
   invariant(
-    String(wasixNapiExtensionStage?.run ?? "").includes(
+    String(releaseTasks?.["wasix-napi-runtime"]?.script ?? "").includes(
       "build-extension-ci-artifacts.mjs --all --family wasix --require-wasix",
     ),
     "WASIX Node-API builds must stage complete exact-extension portable and target AOT inputs",

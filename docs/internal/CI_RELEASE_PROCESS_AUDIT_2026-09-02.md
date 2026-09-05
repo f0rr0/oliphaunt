@@ -1064,7 +1064,7 @@ miniature CI systems:
   explicit dependency of the release producer that actually consumes them.
   The obsolete product-level assertion was removed. A task-graph test now locks
   the two real build inputs, `liboliphaunt-wasix:runtime-aot` and
-  `release-tools:wasix-extension-packages`, without coupling the addon product
+  `extension-artifacts-wasix:build-target`, without coupling the addon product
   to every extension project.
 - The same run exposed a synthetic Postmaster fixture that made modules unique
   by appending arbitrary bytes after valid WebAssembly. The first byte was
@@ -1225,10 +1225,11 @@ instead of adding product wrappers or another scheduler:
 - Swift and React Native packaging consume the finalized iOS artifact while
   still running their local package prerequisites. JS and React Native release
   assembly mutate release-owned copies rather than cached product outputs.
-- Native and WASIX source fetch scopes no longer acquire external extension
-  sources. Extension builders own those sources and include their executable
-  packagers in task inputs. WASIX TypeScript browser-host production is a
-  reusable task instead of hidden package-script work.
+- Native and WASIX runtime fetch scopes include external extension sources
+  while those runtime producers still validate and build them. Extension
+  builders consume the same declared source boundary and include their
+  executable packagers in task inputs. WASIX TypeScript browser-host production
+  is a reusable task instead of hidden package-script work.
 - ICU shared source, Nextest configuration, docs build metadata, browser
   example typechecking, AOT serializer compilation, and coverage measurements
   have semantic selection ownership. JavaScript and Rust lint are explicit CI
@@ -1238,9 +1239,9 @@ instead of adding product wrappers or another scheduler:
   closure; Apple requirements select a macOS runner. Hosted Moon caching
   persists only documented hash/output state, while same-run release artifacts
   remain explicit transports. Gradle build caching is enabled for Kotlin.
-- Output-ownership checks now reject overlapping producer globs unless the
-  relationship is an explicit alternative or in-place finalizer. Release
-  ownership tests cover shared ICU source and source/helper invalidation.
+- Output-ownership checks now reject overlapping producer globs except for
+  explicit in-place finalizer/input pairs. Release ownership tests cover shared
+  ICU source and source/helper invalidation.
 
 Adversarial proof completed locally with repository-pinned Moon 2.5.4:
 
@@ -1249,7 +1250,7 @@ Adversarial proof completed locally with repository-pinned Moon 2.5.4:
   `oliphaunt-react-native:package`, and WASIX TypeScript retained both local
   package tasks;
 - actionlint, zizmor, workflow security, 15 capability/execution-plan tests,
-  40 product/Postmaster/handoff planner tests, and 13 bootstrap tests passed;
+  41 product/Postmaster/handoff planner tests, and 13 bootstrap tests passed;
 - artifact finalization and graph ownership tests passed, including immutable
   mobile finalization and the real multi-root WASIX TypeScript plan;
 - repository-wide pinned Biome lint and Cargo Clippy with warnings denied
@@ -1271,3 +1272,60 @@ extension source acquisition. Full Android/iOS/native matrix builds and real
 registry publication remain hosted-only proofs; ordinary CI, dry-run, and
 publish workflows were validated statically and through their local policy and
 execution-plan gates, without external writes.
+
+### Hosted-failure closure and deletion pass
+
+The subsequent review of hosted run `33963125726` found four boundaries that
+the graph-only proof had missed. The corrections keep the existing product
+behavior while making the work and transport explicit:
+
+- Native and WASIX runtime fetch tasks now declare and acquire external
+  extension source pins because those runtime producers still validate/build
+  the sources. This deliberately preserves the cost until extension compilation
+  is actually removed from those producers.
+- Android and iOS host runtime, `initdb`, ICU, and carrier consumers now use the
+  transported `target/liboliphaunt-mobile-host/<target>` layout. Native target
+  builds/packages are exact target tasks, and local ABI finalizers consume the
+  same receipt and release-asset directories used by workflow downloads.
+- `xtask:aot-serializer-compile` alone declares the pinned Wasmer LLVM
+  capability. Checks and Policy install it only when the selected task closure
+  requires it.
+- Output-overlap exemptions and alternate producer labels were deleted. Native
+  extension, mobile extension, and WASIX N-API staging now each have one output
+  owner and depend on the exact producers whose files they consume.
+
+The deletion pass removed work that did not provide a second guarantee:
+
+- six committed JavaScript query/protocol mirrors, their synchronization tool,
+  and three duplicate protocol-fixture suites were replaced by one private
+  workspace source package. Final SDK archives bundle that package and verify
+  its exact inventory, so installed consumers have no checkout-relative link;
+- the hosted aggregate coverage rerun, duplicate JavaScript/WASIX TypeScript
+  unit runs, duplicate release metadata host, legacy task-name selector,
+  unsupported Moon response compatibility branch, ignored release-check
+  arguments, redundant native build aliases, and WASIX extension meta-task were
+  deleted;
+- Rust coverage no longer recompiles doctests after the instrumented test run;
+  the product unit tasks retain doctest ownership. Kotlin coverage similarly
+  runs one Kover report task instead of report plus duplicate verification; and
+- ordinary `main` pushes use affected qualification. Only explicit full
+  workflow dispatches may produce the `Qualified` release evidence.
+
+Coverage thresholds were not reduced. Measurement scope excludes source-only
+facades/generated entrypoints and records runtime-boundary waivers with named
+integration evidence. Missing public behavior was covered directly. The local
+measurements after the pass were Rust 86.09%, Swift 81.45%, Kotlin 80.03%,
+JavaScript 82.97%, React Native 87.30%, WASIX Rust 85.49%, and WASIX TypeScript
+80.32%.
+
+The resolved pinned-Moon graph remains 55 projects and 207 tasks; it now has
+204 declared task dependency edges and no alternate output-producer exemption.
+Affected-path fixtures issue one Moon query per change, and their former
+host-load-sensitive 15-second test deadlines are gone; the workflow job timeout
+remains the failure bound.
+The shared JavaScript build/test plus all three consumer compiles passed cold,
+then all seven actions restored from Moon cache in 246ms. A materialized
+handoff regression now checks the actual Android/iOS download directories
+against ABI finalizer inputs. Product-task, planner, source-scope, package, and
+workflow gates remain the local proof; full platform compilers and registry
+writes remain intentionally hosted or protected operations.

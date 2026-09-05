@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { test } from "bun:test";
+import { test } from "node:test";
 
 import {
   PostgresError,
@@ -16,12 +16,22 @@ import {
   parseDescribeResponse,
   parseExecResponse,
   parseQueryRawResponse,
+  parseSimpleQueryRawResponse,
   planQuery,
   postgresOids,
   responseTransactionStatus,
   text,
   typedNull,
 } from "../src/query.ts";
+import { assertSharedProtocolFixtures } from "./protocol-fixtures.mjs";
+
+test("protocol fixtures", () => {
+  assertSharedProtocolFixtures({
+    parseSimpleQueryResponse: parseSimpleQueryRawResponse,
+    parseExtendedQueryResponse: parseQueryRawResponse,
+    isPostgresError: (error): error is PostgresError => error instanceof PostgresError,
+  });
+});
 
 test("parameter plans infer OIDs without exposing mutable values across the await", () => {
   const value = { stable: 1 };

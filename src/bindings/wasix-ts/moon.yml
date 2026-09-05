@@ -12,7 +12,6 @@ dependsOn:
     scope: "development"
   - "liboliphaunt-wasix"
   - "oliphaunt-wasix-napi"
-  - "shared-js-core"
 
 project:
   title: "Oliphaunt WASIX TypeScript binding"
@@ -36,6 +35,8 @@ tasks:
   compile:
     tags: ["quality", "static"]
     command: "pnpm --dir src/bindings/wasix-ts typecheck"
+    deps:
+      - "shared-js-core:build"
     inputs:
       - "@group(pnpm-workspace)"
       - project: "shared-js-core"
@@ -48,6 +49,8 @@ tasks:
   unit:
     tags: ["quality", "unit"]
     command: "pnpm --dir src/bindings/wasix-ts test"
+    deps:
+      - "shared-js-core:build"
     inputs:
       - "@group(pnpm-workspace)"
       - project: "shared-js-core"
@@ -60,12 +63,16 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
+      runInCI: false
 
   browser-host:
     tags: ["artifact", "build", "requires-rust"]
     command: "bash src/bindings/wasix-ts/host/build-sdk.sh"
+    env:
+      WASM_PACK_VERSION: "0.15.0"
     inputs:
       - "host/**/*"
+      - "@group(cargo-workspace)"
     outputs:
       - "/target/oliphaunt-wasix-ts/host/wasmer-sdk/**/*"
     options:
@@ -81,6 +88,7 @@ tasks:
       node src/bindings/wasix-ts/tools/package.mjs target/oliphaunt-wasix-ts/package
     deps:
       - "oliphaunt-wasix-ts:browser-host"
+      - "shared-js-core:build"
     inputs:
       - "@group(legal-files)"
       - "@group(pnpm-workspace)"
@@ -105,3 +113,4 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
+      runInCI: false

@@ -23,11 +23,12 @@ observed_phase="src/extensions/artifacts/native/tools/run-observed-phase.sh"
 native_asset_index_contract="tools/release/native-extension-asset-index-contract.mjs"
 
 target_id="${OLIPHAUNT_EXTENSION_TARGET:-${1:-}}"
+if [ -z "$target_id" ]; then
+  source "$root/src/runtimes/liboliphaunt/native/tools/runtime-preflight.sh"
+  target_id="$(oliphaunt_runtime_native_host_target_id)"
+fi
 case "$target_id" in
   macos-arm64|linux-x64-gnu|linux-arm64-gnu|windows-x64-msvc|ios-xcframework|android-arm64-v8a|android-x86_64)
-    ;;
-  "")
-    fail "usage: OLIPHAUNT_EXTENSION_TARGET=<target> $0, where target is macos-arm64, linux-x64-gnu, linux-arm64-gnu, windows-x64-msvc, ios-xcframework, android-arm64-v8a, or android-x86_64"
     ;;
   *)
     fail "unsupported native extension artifact target: $target_id"

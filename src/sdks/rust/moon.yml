@@ -148,7 +148,7 @@ tasks:
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/extension-regression"
     deps:
-      - "extension-artifacts-native:build-host"
+      - "extension-artifacts-native:build-target"
     inputs:
       - "@group(cargo-workspace)"
       - project: "shared-test-fixtures"

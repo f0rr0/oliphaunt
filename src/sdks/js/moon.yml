@@ -13,7 +13,6 @@ dependsOn:
   - "liboliphaunt-native"
   - "oliphaunt-broker"
   - "oliphaunt-node-direct"
-  - "shared-js-core"
 
 project:
   title: "Oliphaunt TypeScript SDK"
@@ -40,6 +39,8 @@ tasks:
   compile:
     tags: ["quality", "static"]
     command: "pnpm run build"
+    deps:
+      - "shared-js-core:build"
     inputs:
       - project: "shared-js-core"
         group: "sources"
@@ -52,6 +53,8 @@ tasks:
   typecheck:
     tags: ["quality", "static"]
     command: "pnpm run typecheck"
+    deps:
+      - "shared-js-core:build"
     inputs:
       - project: "shared-js-core"
         group: "sources"
@@ -62,6 +65,8 @@ tasks:
   unit:
     tags: ["quality", "unit"]
     command: "pnpm test"
+    deps:
+      - "shared-js-core:build"
     inputs:
       - project: "shared-test-fixtures"
         group: "fixtures"
@@ -73,17 +78,16 @@ tasks:
       - "@group(code)"
     options:
       cache: true
+      runInCI: false
   package:
     tags: ["package"]
     script: |
       set -e
-      rm -rf target/liboliphaunt-sdk-check/oliphaunt-js/package-shape target/liboliphaunt-sdk-check/oliphaunt-js/packages
-      mkdir -p target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js target/liboliphaunt-sdk-check/oliphaunt-js/packages
+      rm -rf target/liboliphaunt-sdk-check/oliphaunt-js/package-shape
+      mkdir -p target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js
       rsync -a --exclude node_modules src/sdks/js/ target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js/
       cp LICENSE THIRD_PARTY_NOTICES.md target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js/
-      ln -s "$PWD/src/sdks/js/node_modules" target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js/node_modules
-      pnpm --silent --dir target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js pack --pack-destination "$PWD/target/liboliphaunt-sdk-check/oliphaunt-js/packages"
-      rm target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js/node_modules
+      node src/shared/js-core/tools/stage-package.mjs target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js src/shared/js-core
     deps:
       - "oliphaunt-js:compile"
     inputs:
@@ -91,10 +95,10 @@ tasks:
       - project: "shared-js-core"
         group: "sources"
       - "@group(pnpm-workspace)"
+      - "/src/shared/js-core/tools/stage-package.mjs"
       - "**/*"
     outputs:
       - "/target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js/**/*"
-      - "/target/liboliphaunt-sdk-check/oliphaunt-js/packages/**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true

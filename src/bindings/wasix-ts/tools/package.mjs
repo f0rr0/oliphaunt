@@ -11,6 +11,11 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 
+import {
+  JS_CORE_PACKAGE,
+  stageJsCoreBundle,
+} from '../../../shared/js-core/tools/stage-package.mjs';
+
 export const ROOT = path.resolve(import.meta.dirname, '../../../..');
 const SOURCE = path.join(ROOT, 'src/bindings/wasix-ts');
 const RUNTIME = '@oliphaunt/liboliphaunt-wasix';
@@ -29,8 +34,16 @@ export function prepareWasixTypescriptPackage(packageDir) {
   if (![runtimeVersion, nativeVersion].every((version) => /^\d+\.\d+\.\d+$/u.test(version))) {
     throw new Error('WASIX TypeScript package requires exact runtime and Node-API versions');
   }
+  const { manifest: coreManifest } = stageJsCoreBundle(
+    packageDir,
+    path.join(ROOT, 'src/shared/js-core'),
+  );
   manifest.dependencies = Object.fromEntries(
-    Object.entries({ ...(manifest.dependencies ?? {}), [RUNTIME]: runtimeVersion }).sort(),
+    Object.entries({
+      ...(manifest.dependencies ?? {}),
+      [JS_CORE_PACKAGE]: coreManifest.version,
+      [RUNTIME]: runtimeVersion,
+    }).sort(),
   );
   manifest.optionalDependencies = Object.fromEntries(NATIVE.map((name) => [name, nativeVersion]));
   delete manifest.devDependencies;

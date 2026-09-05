@@ -22,6 +22,12 @@
     "nodeDirectAddon": "oliphaunt-node-direct",
     "brokerHelper": "oliphaunt-broker"
   },
+  "dependencies": {
+    "@oliphaunt/js-core": "workspace:*"
+  },
+  "bundledDependencies": [
+    "@oliphaunt/js-core"
+  ],
   "optionalDependencies": {
     "@oliphaunt/broker-darwin-arm64": "workspace:*",
     "@oliphaunt/broker-linux-arm64-gnu": "workspace:*",

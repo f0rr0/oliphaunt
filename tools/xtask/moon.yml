@@ -42,7 +42,7 @@ tasks:
       runFromWorkspaceRoot: true
       runInCI: skip
   aot-serializer-compile:
-    tags: ["quality", "static", "requires-rust"]
+    tags: ["quality", "static", "requires-rust", "requires-wasmer-llvm"]
     command: "cargo check -p xtask --features aot-serializer --locked"
     env:
       CARGO_TARGET_DIR: "target/moon/xtask/aot-serializer-compile"

@@ -75,10 +75,12 @@ tasks:
       runFromWorkspaceRoot: true
   react-native-android-build:
     tags: ["mobile", "build", "android", "ci-mobile-build-android"]
-    command: "pnpm --dir examples/react-native-expo run mobile-build:android"
+    script: |
+      export OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT="${OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT:-$PWD/target/mobile-extension-artifacts}"
+      exec pnpm --dir examples/react-native-expo run mobile-build:android
     deps:
       - "extension-packages:package-mobile"
-      - "liboliphaunt-native:package-runtime-android-target"
+      - "liboliphaunt-native:package-runtime-android-x86_64"
       - "release-tools:kotlin-sdk-package"
       - "release-tools:react-native-sdk-package"
     inputs:
@@ -89,7 +91,7 @@ tasks:
         group: "code"
       - project: "extensions"
         group: "build"
-      - "/target/extension-artifacts/**/*"
+      - "/target/mobile-extension-artifacts/**/*"
       - "/target/sdk-artifacts/oliphaunt-kotlin/**/*"
       - "/target/sdk-artifacts/oliphaunt-react-native/**/*"
       - "/tools/native-packaging/**/*"
@@ -135,10 +137,12 @@ tasks:
       runInCI: false
   react-native-ios-build:
     tags: ["mobile", "build", "ios", "ci-mobile-build-ios"]
-    command: "pnpm --dir examples/react-native-expo run mobile-build:ios"
+    script: |
+      export OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT="${OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT:-$PWD/target/mobile-extension-artifacts}"
+      exec pnpm --dir examples/react-native-expo run mobile-build:ios
     deps:
       - "extension-packages:package-mobile"
-      - "liboliphaunt-native:package-runtime-ios-target"
+      - "liboliphaunt-native:package-runtime-ios-xcframework"
       - "release-tools:react-native-sdk-package"
       - "release-tools:swift-sdk-package"
     inputs:
@@ -149,7 +153,7 @@ tasks:
         group: "code"
       - project: "extensions"
         group: "build"
-      - "/target/extension-artifacts/**/*"
+      - "/target/mobile-extension-artifacts/**/*"
       - "/target/sdk-artifacts/oliphaunt-react-native/**/*"
       - "/target/sdk-artifacts/oliphaunt-swift/**/*"
       - "/tools/native-packaging/**/*"

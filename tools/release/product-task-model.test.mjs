@@ -136,11 +136,10 @@ test("task edges distinguish artifact data from ordering gates", () => {
       const second = outputs[right];
       if (first.task.target === second.task.target || !overlaps(first.path, second.path)) continue;
       const pair = [first.task, second.task];
-      const alternatives = pair.every((task) => task.tags?.includes("alternative-producer"));
       const finalizer = pair.find((task) => task.tags?.includes("in-place-finalizer"));
       const input = pair.find((task) => task.tags?.includes("in-place-finalizer-input"));
       assert.equal(
-        alternatives || Boolean(finalizer && input),
+        Boolean(finalizer && input),
         true,
         `${first.path} and ${second.path} have overlapping owners without an explicit ownership contract: ${pair.map(({ target }) => target).join(", ")}`,
       );
@@ -207,8 +206,8 @@ test("WASIX TypeScript products build packages and root integration consumes the
 test("WASIX Node-API release build consumes its runtime and extension artifacts", () => {
   const task = moonJson(["query", "tasks"]).tasks["release-tools"]["wasix-napi-runtime"];
   assert.deepEqual(task.deps.map(({ target }) => target).sort(), [
+    "extension-artifacts-wasix:build-target",
     "liboliphaunt-wasix:runtime-aot",
-    "release-tools:wasix-extension-packages",
   ]);
 });
 

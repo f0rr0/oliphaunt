@@ -4,7 +4,7 @@ import { test } from "node:test";
 
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { moonCommand, moonEnvironment } from "../dev/moon-command.mjs";
-import { affectedNames, triggeringProjectNames } from "../graph/affected.mjs";
+import { affectedNames, triggeringProjectNames, triggeringTaskNames } from "../graph/affected.mjs";
 import { planJobsForAffected } from "../graph/ci_plan.mjs";
 import { buildPlan, loadGraph, normalizeFiles } from "../release/release-graph.mjs";
 
@@ -16,26 +16,22 @@ function effects(paths) {
   const environment = { ...process.env, MOON_CACHE: "off" };
   delete environment.MOON_BASE;
   delete environment.MOON_HEAD;
-  const query = (downstream) =>
-    captureCommandOutput(
-      moonCommand(environment),
-      ["query", "affected", "stdin", "--upstream", "none", "--downstream", downstream],
-      {
-        cwd: ROOT,
-        env: moonEnvironment(environment),
-        input: `${relativePaths.join("\n")}\n`,
-        label: `Moon Node-product chaos fixture ${relativePaths.join(", ")}`,
-      },
-    );
-  const direct = query("none");
-  const downstream = query("direct");
-  for (const result of [direct, downstream]) {
-    assert.equal(result.error, undefined, result.error?.message ?? result.stderr);
-    assert.equal(result.status, 0, result.stderr);
-  }
-  const projects = triggeringProjectNames(JSON.parse(direct.stdout).projects);
-  const directTasks = affectedNames(JSON.parse(direct.stdout).tasks);
-  const tasks = affectedNames(JSON.parse(downstream.stdout).tasks);
+  const result = captureCommandOutput(
+    moonCommand(environment),
+    ["query", "affected", "stdin", "--upstream", "none", "--downstream", "direct"],
+    {
+      cwd: ROOT,
+      env: moonEnvironment(environment),
+      input: `${relativePaths.join("\n")}\n`,
+      label: `Moon Node-product chaos fixture ${relativePaths.join(", ")}`,
+    },
+  );
+  assert.equal(result.error, undefined, result.error?.message ?? result.stderr);
+  assert.equal(result.status, 0, result.stderr);
+  const affected = JSON.parse(result.stdout);
+  const projects = triggeringProjectNames(affected.projects);
+  const directTasks = triggeringTaskNames(affected.tasks);
+  const tasks = affectedNames(affected.tasks);
   return {
     directTasks,
     jobs: [...planJobsForAffected(new Set(directTasks))].sort(),
@@ -219,23 +215,24 @@ test("WASIX extension staging follows its own code and produced runtime artifact
 
   const releaseMetadata = effects("src/runtimes/liboliphaunt/wasix/release.toml");
   assert.equal(releaseMetadata.directTasks.includes("extension-artifacts-wasix:build-target"), false);
-  assert.equal(releaseMetadata.directTasks.includes("release-tools:wasix-extension-packages"), true);
+  assert.equal(releaseMetadata.directTasks.includes("release-tools:wasix-napi-runtime"), true);
 });
 
-test("executable packagers and Rust test configuration select their real owners", { timeout: 15_000 }, () => {
+test("executable packagers and Rust test configuration select their real owners", () => {
   const nativeExtensions = effects("src/extensions/artifacts/native/tools/package-release-assets.sh");
   assert.equal(nativeExtensions.directTasks.includes("extension-artifacts-native:build-target"), true);
   assert.equal(nativeExtensions.jobs.includes("extension-artifacts-native"), true);
 
   const mobile = effects("tools/release/package-liboliphaunt-mobile-assets.sh");
   for (const target of [
-    "liboliphaunt-native:package-runtime-android-target",
-    "liboliphaunt-native:package-runtime-ios-target",
+    "liboliphaunt-native:package-runtime-android-arm64-v8a",
+    "liboliphaunt-native:package-runtime-android-x86_64",
+    "liboliphaunt-native:package-runtime-ios-xcframework",
   ]) {
     assert.equal(mobile.directTasks.includes(target), true, `${target} executes the mobile packager`);
   }
-  assert.equal(mobile.directTasks.includes("liboliphaunt-native:build-runtime-android-target"), false);
-  assert.equal(mobile.directTasks.includes("liboliphaunt-native:build-runtime-ios-target"), false);
+  assert.equal(mobile.directTasks.some((target) => target.includes(":build-runtime-android-")), false);
+  assert.equal(mobile.directTasks.includes("liboliphaunt-native:build-runtime-ios-xcframework"), false);
 
   const desktop = effects("tools/release/package-liboliphaunt-linux-assets.sh");
   assert.equal(desktop.directTasks.includes("liboliphaunt-native:package-runtime-desktop-target"), true);
@@ -249,13 +246,16 @@ test("executable packagers and Rust test configuration select their real owners"
 test("source acquisition and WASIX browser-host ownership stay narrow", () => {
   const extensionPin = effects("src/extensions/external/vector/source.toml");
   assert.equal(extensionPin.directTasks.includes("source-inputs:source-fetch-extensions"), true);
-  assert.equal(extensionPin.directTasks.includes("source-inputs:source-fetch-native-runtime"), false);
-  assert.equal(extensionPin.directTasks.includes("source-inputs:source-fetch-wasix-runtime"), false);
+  assert.equal(extensionPin.directTasks.includes("source-inputs:source-fetch-native-runtime"), true);
+  assert.equal(extensionPin.directTasks.includes("source-inputs:source-fetch-wasix-runtime"), true);
 
   const browserHost = effects("src/bindings/wasix-ts/host/source.toml");
   assert.equal(browserHost.directTasks.includes("oliphaunt-wasix-ts:browser-host"), true);
   assert.equal(browserHost.tasks.includes("oliphaunt-wasix-ts:package"), true);
   assert.equal(browserHost.jobs.includes("wasix-ts-sdk-package"), true);
+
+  const cargoLock = effects("Cargo.lock");
+  assert.equal(cargoLock.directTasks.includes("oliphaunt-wasix-ts:browser-host"), true);
 });
 
 test("docs changes select the production artifact and built-site smoke", () => {

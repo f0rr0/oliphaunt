@@ -17,6 +17,10 @@ import {
   stageReleaseNotices,
 } from "./release-notices.mjs";
 import { requireSafeDirectoryChain } from "./release-directory-safety.mjs";
+import {
+  assertJsCoreBundleInventory,
+  JS_CORE_PACKAGE,
+} from "../../src/shared/js-core/tools/stage-package.mjs";
 
 const TOOL = "source-only-sdk-package.mjs";
 const SOURCE_NOTICE_OPTIONS = Object.freeze({ profile: "source-sdk" });
@@ -249,6 +253,20 @@ export function assertSourceOnlyNpmArchive(archive, contract) {
   const manifest = archiveJson(entries, "package/package.json", label);
   assertManifestContract(manifest, contract, `${label} package.json`);
   requireNoticeAllowlist(manifest, `${label} package.json`);
+  assertJsCoreBundleInventory(entries.keys(), "package/node_modules/@oliphaunt/js-core/");
+  const coreManifest = archiveJson(
+    entries,
+    "package/node_modules/@oliphaunt/js-core/package.json",
+    label,
+  );
+  if (
+    coreManifest.name !== JS_CORE_PACKAGE
+    || coreManifest.private !== true
+    || manifest.dependencies?.[JS_CORE_PACKAGE] !== coreManifest.version
+    || JSON.stringify(manifest.bundledDependencies) !== JSON.stringify([JS_CORE_PACKAGE])
+  ) {
+    throw new Error(`${label} must bundle the exact minimal ${JS_CORE_PACKAGE} workspace payload`);
+  }
   return manifest;
 }
 

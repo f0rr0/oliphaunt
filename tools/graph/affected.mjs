@@ -33,48 +33,40 @@ function moon(args) {
 }
 
 export function affectedNames(value) {
-  if (value !== null && !Array.isArray(value) && typeof value === "object") {
-    return Object.keys(value).sort();
+  if (value === null || Array.isArray(value) || typeof value !== "object") {
+    throw new TypeError("Moon affected query must return an object");
   }
-  if (Array.isArray(value)) {
-    const result = new Set();
-    for (const item of value) {
-      if (typeof item === "string") {
-        result.add(item);
-      } else if (item !== null && typeof item === "object") {
-        const identifier = item.id ?? item.target;
-        if (identifier !== undefined && identifier !== null && identifier !== "") {
-          result.add(String(identifier));
-        }
-      }
-    }
-    return [...result].sort();
-  }
-  return [];
+  return Object.keys(value).sort();
 }
 
 export function triggeringProjectNames(value) {
-  if (value !== null && !Array.isArray(value) && typeof value === "object") {
-    return Object.entries(value)
-      .filter(([, detail]) => {
-        if (detail === null || Array.isArray(detail) || typeof detail !== "object") return false;
-        return detail.other === true || (Array.isArray(detail.tasks) && detail.tasks.length > 0);
-      })
-      .map(([project]) => project)
-      .sort();
-  }
-  // Preserve compatibility with Moon versions that return a flat list and do
-  // not expose the task-vs-ownership distinction.
-  return affectedNames(value);
+  affectedNames(value);
+  return Object.entries(value)
+    .filter(([, detail]) => {
+      if (detail === null || Array.isArray(detail) || typeof detail !== "object") return false;
+      return detail.other === true || (Array.isArray(detail.tasks) && detail.tasks.length > 0);
+    })
+    .map(([project]) => project)
+    .sort();
+}
+
+export function triggeringTaskNames(value) {
+  affectedNames(value);
+  return Object.entries(value)
+    .filter(([, detail]) => {
+      if (detail === null || Array.isArray(detail) || typeof detail !== "object") return false;
+      return detail.other === true || (Array.isArray(detail.files) && detail.files.length > 0);
+    })
+    .map(([task]) => task)
+    .sort();
 }
 
 function affectedSummary() {
-  const direct = moon(["query", "affected", "--upstream", "none", "--downstream", "none"]);
-  const downstream = moon(["query", "affected", "--upstream", "none", "--downstream", "direct"]);
+  const affected = moon(["query", "affected", "--upstream", "none", "--downstream", "direct"]);
   return {
-    directProjects: triggeringProjectNames(direct.projects),
-    projects: affectedNames(downstream.projects),
-    tasks: affectedNames(direct.tasks),
+    directProjects: triggeringProjectNames(affected.projects),
+    projects: affectedNames(affected.projects),
+    tasks: triggeringTaskNames(affected.tasks),
   };
 }
 

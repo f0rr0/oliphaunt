@@ -64,7 +64,7 @@ for the literal C library artifact path.
 The direct build produces PostgreSQL runtime artifacts without optional
 extension artifacts by default. Set `OLIPHAUNT_BUILD_EXTENSIONS=1` only when
 refreshing or validating exact extension artifacts; the
-`extension-artifacts-native:build-host` sets that flag when building extension artifacts.
+`extension-artifacts-native:build-target` sets that flag when building extension artifacts.
 
 External pgrx extensions are not folded into the first-party extension build by
 default. Their source pins live in
@@ -227,7 +227,7 @@ Run the narrow product boundary instead of a workspace-wide track wrapper:
 ```sh
 moon run liboliphaunt-native:host-smoke
 moon run oliphaunt-rust:regression
-moon run extension-artifacts-native:build-host oliphaunt-rust:extension-regression
+moon run extension-artifacts-native:build-target oliphaunt-rust:extension-regression
 ```
 
 `liboliphaunt-native:host-smoke` is the no-build host C ABI smoke for the current platform.

@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
@@ -64,4 +65,60 @@ test("downloaded Moon dependencies are explicit direct handoffs", () => {
     }
   }
   assert.ok(handoffs > 0, "CI must exercise at least one cross-runner Moon handoff");
+});
+
+test("mobile artifact downloads materialize under the ABI finalizer inputs", () => {
+  const cases = [
+    {
+      artifact: "liboliphaunt-native-target-android-arm64-v8a",
+      job: "liboliphaunt-native-android-abi",
+      path: "target/liboliphaunt-native-ci/android-arm64-v8a",
+      target: "liboliphaunt-native:finalize-runtime-android-abi",
+    },
+    {
+      artifact: "liboliphaunt-native-target-android-x86_64",
+      job: "liboliphaunt-native-android-abi",
+      path: "target/liboliphaunt-native-ci/android-x86_64",
+      target: "liboliphaunt-native:finalize-runtime-android-abi",
+    },
+    {
+      artifact: "liboliphaunt-native-target-ios-xcframework",
+      job: "liboliphaunt-native-ios-abi",
+      path: "target/liboliphaunt-native-ci/ios-xcframework",
+      target: "liboliphaunt-native:finalize-runtime-ios-abi",
+    },
+    {
+      artifact: "liboliphaunt-native-release-assets-android-x86_64",
+      job: "liboliphaunt-native-android-abi",
+      path: "target/liboliphaunt/mobile-release-assets/android-x86_64",
+      target: "liboliphaunt-native:finalize-runtime-android-abi",
+    },
+    {
+      artifact: "liboliphaunt-native-release-assets-ios-xcframework",
+      job: "liboliphaunt-native-ios-abi",
+      path: "target/liboliphaunt/mobile-release-assets/ios-xcframework",
+      target: "liboliphaunt-native:finalize-runtime-ios-abi",
+    },
+  ];
+  const scratch = mkdtempSync(path.join(tmpdir(), "oliphaunt-handoff-"));
+  try {
+    for (const entry of cases) {
+      const step = workflow.jobs[entry.job].steps.find(({ with: options }) => options?.name === entry.artifact);
+      assert.equal(step?.with?.path, entry.path);
+      const inputs = tasks.get(entry.target)?.inputs ?? [];
+      assert.ok(inputs.some((input) =>
+        Object.values(input).some((value) => String(value).includes(entry.path.replace(/\/[^/]+$/u, "/")))));
+
+      const uploaded = path.join(scratch, "uploaded");
+      const downloaded = path.join(scratch, entry.path);
+      rmSync(uploaded, { recursive: true, force: true });
+      mkdirSync(uploaded, { recursive: true });
+      writeFileSync(path.join(uploaded, "abi-receipt.json"), "{}\n");
+      mkdirSync(downloaded, { recursive: true });
+      cpSync(uploaded, downloaded, { recursive: true });
+      assert.ok(existsSync(path.join(downloaded, "abi-receipt.json")));
+    }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 });

@@ -18,6 +18,10 @@ import {
   prepareSourceOnlyNpmPackage,
   SOURCE_ONLY_NPM_PROFILES,
 } from "./source-only-sdk-package.mjs";
+import {
+  JS_CORE_BUNDLE_FILES,
+  JS_CORE_PACKAGE,
+} from "../../src/shared/js-core/tools/stage-package.mjs";
 import { assertReleaseNoticesInDirectory } from "./release-notices.mjs";
 import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 
@@ -39,6 +43,8 @@ function packageManifest(profile) {
       test: "false",
       ...profile.scripts,
     },
+    dependencies: { [JS_CORE_PACKAGE]: "0.0.0" },
+    bundledDependencies: [JS_CORE_PACKAGE],
     devDependencies: { imaginary: "1.0.0" },
   };
   if (profile.optionalDependencyVersions !== undefined) {
@@ -52,6 +58,26 @@ function packageManifest(profile) {
   return manifest;
 }
 
+function stageCoreFixture(packageDir) {
+  const coreDir = path.join(packageDir, "node_modules", "@oliphaunt", "js-core");
+  for (const relative of JS_CORE_BUNDLE_FILES) {
+    const file = path.join(coreDir, relative);
+    mkdirSync(path.dirname(file), { recursive: true });
+    if (relative === "package.json") {
+      writeJson(file, {
+        name: JS_CORE_PACKAGE,
+        version: "0.0.0",
+        private: true,
+        files: ["dist/module", "dist/commonjs"],
+      });
+    } else if (relative.endsWith("/package.json")) {
+      writeJson(file, { type: relative.includes("/module/") ? "module" : "commonjs" });
+    } else {
+      writeFileSync(file, relative === "README.md" ? "# Fixture\n" : "export {};\n", "utf8");
+    }
+  }
+}
+
 function pack(directory, destination) {
   mkdirSync(destination, { recursive: true });
   const result = spawnSync(
@@ -60,7 +86,11 @@ function pack(directory, destination) {
     {
       cwd: ROOT,
       encoding: "utf8",
-      env: { ...process.env, PNPM_CONFIG_IGNORE_SCRIPTS: "true" },
+      env: {
+        ...process.env,
+        PNPM_CONFIG_IGNORE_SCRIPTS: "true",
+        PNPM_CONFIG_NODE_LINKER: "hoisted",
+      },
     },
   );
   assert.equal(result.status, 0, `pnpm pack failed:\n${result.stdout}\n${result.stderr}`);
@@ -78,6 +108,7 @@ for (const [profileName, profile] of Object.entries(SOURCE_ONLY_NPM_PROFILES)) {
       mkdirSync(packageDir, { recursive: true });
       writeJson(path.join(packageDir, "package.json"), packageManifest(profile));
       writeFileSync(path.join(packageDir, "index.js"), "export {};\n", "utf8");
+      stageCoreFixture(packageDir);
       prepareSourceOnlyNpmPackage(packageDir, profile);
       prepareSourceOnlyNpmPackage(packageDir, profile);
 

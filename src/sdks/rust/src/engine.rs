@@ -60,3 +60,55 @@ pub(crate) trait EngineSession: Send + 'static {
 pub(crate) trait EngineCancel: Send + Sync + 'static {
     fn cancel(&self) -> Result<()>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct StubSession {
+        fail: bool,
+    }
+
+    impl EngineSession for StubSession {
+        fn exec_protocol_raw(&mut self, request: ProtocolRequest) -> Result<ProtocolResponse> {
+            if self.fail {
+                Err(Error::Engine("transport failed".into()))
+            } else {
+                Ok(ProtocolResponse::new(request.as_bytes()))
+            }
+        }
+    }
+
+    #[test]
+    fn default_session_contract_preserves_stream_outcomes_and_optional_capabilities() {
+        let mut session = StubSession { fail: false };
+        assert_eq!(session.connection_string(), None);
+        assert!(session.cancel_handle().is_none());
+        assert!(session.close().is_ok());
+        assert_eq!(
+            session.backup().unwrap_err().to_string(),
+            "physical backup is not supported by this runtime"
+        );
+
+        let mut chunk = Vec::new();
+        let outcome =
+            session.exec_protocol_raw_stream(ProtocolRequest::new([1, 2, 3]), &mut |bytes| {
+                chunk.extend_from_slice(bytes);
+                Ok(())
+            });
+        assert!(matches!(
+            outcome,
+            ProtocolStreamOutcome::ReadyForQuery(Ok(()))
+        ));
+        assert_eq!(chunk, [1, 2, 3]);
+
+        session.fail = true;
+        let outcome = session.exec_protocol_raw_stream(ProtocolRequest::new([]), &mut |_| {
+            panic!("transport failure must not invoke the callback")
+        });
+        assert!(matches!(
+            outcome,
+            ProtocolStreamOutcome::SessionStateUnknown(_)
+        ));
+    }
+}

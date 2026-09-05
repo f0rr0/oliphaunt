@@ -203,15 +203,16 @@ native reporter for their ecosystem: `cargo-llvm-cov` for Rust and WASIX library
 coverage, `swift test --enable-code-coverage` for Swift, Kover for Kotlin, and
 Vitest V8 coverage for TypeScript and React Native TypeScript code. Each product writes
 `target/coverage/<product>/summary.json` plus its native report formats, and
-`moon run repo:coverage` aggregates those summaries into `target/coverage/summary.json`
-and `target/coverage/summary.md`.
+The local-only `moon run repo:coverage` aggregate writes those summaries to
+`target/coverage/summary.json` and `target/coverage/summary.md`; hosted CI owns
+each product threshold directly and does not rerun the aggregate dependency tree.
 
 Rust and WASIX executable unit tests run through `cargo nextest` with the `ci`
 profile. Unit lanes still run doctests through `cargo test --doc` because
 nextest does not own doctest execution. Coverage lanes measure line coverage
-through `cargo llvm-cov nextest` and then run `cargo test --doc` as stable-Rust
-correctness evidence. Doctest coverage itself requires nightly rustdoc flags, so
-it is not part of the default stable LCOV gate.
+through `cargo llvm-cov nextest`; they do not recompile doctests after the unit
+lane has already established that correctness evidence. Doctest coverage itself
+requires nightly rustdoc flags, so it is not part of the default stable LCOV gate.
 WASIX library unit coverage intentionally uses `--no-default-features`.
 WASIX doctests run with the `tools` feature because the README contains
 tools-gated examples. The `public_api` lane separately enables one exact leaf

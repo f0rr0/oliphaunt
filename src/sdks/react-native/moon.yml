@@ -12,7 +12,6 @@ dependsOn:
     scope: "development"
   - "oliphaunt-swift"
   - "oliphaunt-kotlin"
-  - "shared-js-core"
   - id: "extension-runtime-contract"
     scope: "build"
 
@@ -47,6 +46,8 @@ tasks:
       pnpm run build
       pnpm run typecheck
       pnpm run codegen:check
+    deps:
+      - "shared-js-core:build"
     inputs:
       - project: "shared-js-core"
         group: "sources"
@@ -73,6 +74,8 @@ tasks:
       bun test tools/validate-android-link-evidence.test.mjs
       node tools/stage-ios-app.test.mjs
       pnpm test
+    deps:
+      - "shared-js-core:build"
     inputs:
       - project: "shared-js-core"
         group: "sources"
@@ -97,15 +100,13 @@ tasks:
     tags: ["package"]
     script: |
       set -e
-      rm -rf target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape target/liboliphaunt-sdk-check/oliphaunt-react-native/packages
-      mkdir -p target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native target/liboliphaunt-sdk-check/oliphaunt-react-native/packages
+      rm -rf target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape
+      mkdir -p target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native
       rsync -a --exclude node_modules --exclude .build --exclude android/.gradle --exclude android/.cxx --exclude android/build --exclude ios/vendor src/sdks/react-native/ target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native/
       mkdir -p target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native/src/generated
       cp src/extensions/generated/sdk/extensions.json src/extensions/generated/sdk/ios-static-dependencies.json target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native/src/generated/
       cp LICENSE THIRD_PARTY_NOTICES.md target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native/
-      ln -s "$PWD/src/sdks/react-native/node_modules" target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native/node_modules
-      pnpm --silent --dir target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native pack --pack-destination "$PWD/target/liboliphaunt-sdk-check/oliphaunt-react-native/packages"
-      rm target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native/node_modules
+      node src/shared/js-core/tools/stage-package.mjs target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native src/shared/js-core
     deps:
       - "oliphaunt-react-native:compile"
     inputs:
@@ -115,6 +116,7 @@ tasks:
       - project: "extensions"
         group: "sdk-metadata"
       - "@group(pnpm-workspace)"
+      - "/src/shared/js-core/tools/stage-package.mjs"
       - "**/*"
       - "!/src/sdks/react-native/**/node_modules"
       - "!/src/sdks/react-native/**/node_modules/**"
@@ -127,7 +129,6 @@ tasks:
       - "!/src/sdks/react-native/ios/vendor/**"
     outputs:
       - "/target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native/**/*"
-      - "/target/liboliphaunt-sdk-check/oliphaunt-react-native/packages/**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true

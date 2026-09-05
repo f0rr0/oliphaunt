@@ -72,7 +72,13 @@ import { validateMobileRuntimeFiles } from "../../src/sdks/react-native/tools/va
 
 const PREFIX = "check-staged-artifacts.mjs";
 const SDK_ROOT = path.join(ROOT, "target/sdk-artifacts");
-const EXTENSION_ROOT = path.join(ROOT, "target/extension-artifacts");
+const EXTENSION_ROOT = path.resolve(
+  ROOT,
+  process.env.OLIPHAUNT_EXTENSION_ARTIFACT_ROOT ?? "target/extension-artifacts",
+);
+if (path.relative(ROOT, EXTENSION_ROOT).startsWith("..")) {
+  throw new Error("extension artifact root must stay inside the repository");
+}
 const MOBILE_ROOT = path.join(ROOT, "target/mobile-build/react-native");
 const SWIFT_SOURCE_FIXTURE_REPOSITORY_ROOT = path.join(
   ROOT,

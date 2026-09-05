@@ -112,8 +112,12 @@
     "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\""
   },
   "dependencies": {
+    "@oliphaunt/js-core": "workspace:*",
     "fzstd": "0.1.1"
   },
+  "bundledDependencies": [
+    "@oliphaunt/js-core"
+  ],
   "optionalDependencies": {
     "@oliphaunt/wasix-napi-darwin-arm64": "workspace:*",
     "@oliphaunt/wasix-napi-linux-arm64-gnu": "workspace:*",

@@ -25,6 +25,8 @@ owners:
 fileGroups:
   code:
     - "**/*"
+    - "!.build"
+    - "!.build/**"
     - "!**/*.md"
     - "!moon.yml"
     - "!release.toml"

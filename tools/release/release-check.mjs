@@ -13,6 +13,10 @@ export const DEDICATED_GATE_TESTS = new Set([
   "tools/policy/assertions/workflow-security.test.mjs",
   "tools/policy/ci-plan-node-products.test.mjs",
   "tools/policy/ci-plan-wasix-postmaster-release.test.mjs",
+  "tools/policy/workflow-moon-transfers.test.mjs",
+  "tools/release/native-extension-lifecycle-receipts.test.mjs",
+  "tools/release/product-task-model.test.mjs",
+  "tools/release/release-candidate-sync.test.mjs",
   "tools/release/toolchain-bootstrap.test.mjs",
 ]);
 export const MUTATION_TEST_PROCESS_CONCURRENCY = 4;
@@ -136,19 +140,21 @@ export function releaseCheckPlan(argv) {
   if (!new Set(["all", "policy", "release"]).has(mutationScope)) {
     throw new Error(`${TOOL}: --mutation-scope must be all, policy, or release`);
   }
-  const passthrough = argv.filter(
+  const unexpected = argv.filter(
     (arg) => arg !== "--mutation-tests-only" && !arg.startsWith("--mutation-scope="),
   );
-  return { mutationScope, mutationTestsOnly, passthrough };
+  if (unexpected.length > 0) {
+    throw new Error(`${TOOL}: unexpected argument ${unexpected[0]}`);
+  }
+  return { mutationScope, mutationTestsOnly };
 }
 
 function parseArgs(argv) {
   for (const arg of argv) {
     if (arg === "-h" || arg === "--help") {
-      console.log(`usage: tools/release/release-check.mjs [--mutation-tests-only] [--mutation-scope=all|policy|release] [legacy passthrough args]
+      console.log(`usage: tools/release/release-check.mjs [--mutation-tests-only] [--mutation-scope=all|policy|release]
 
-Runs release metadata gates followed by release mutation unit tests. Current passthrough flags remain
-accepted for compatibility with release workflow and Moon callers.
+Runs release metadata gates followed by release mutation unit tests.
 `);
       process.exit(0);
     }
@@ -159,7 +165,7 @@ accepted for compatibility with release workflow and Moon callers.
 async function main(argv) {
   const plan = parseArgs(argv);
   if (!plan.mutationTestsOnly) {
-    run(TOOL, [process.execPath, "tools/release/release-metadata-check.mjs", ...plan.passthrough]);
+    run(TOOL, [process.execPath, "tools/release/release-metadata-check.mjs"]);
   }
   const roots = plan.mutationScope === "all"
     ? ["tools/policy", "tools/release"]

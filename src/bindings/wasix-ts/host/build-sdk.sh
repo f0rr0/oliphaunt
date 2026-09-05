@@ -78,6 +78,10 @@ for command_name in awk curl git node npm "$patch_command" "$sha256sum_command" 
     exit 1
   fi
 done
+if [[ "$(wasm-pack --version)" != "wasm-pack ${WASM_PACK_VERSION:-0.15.0}" ]]; then
+  echo "wasix-ts host build: wasm-pack ${WASM_PACK_VERSION:-0.15.0} is required" >&2
+  exit 1
+fi
 
 build_root="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-wasmer-sdk.XXXXXX")"
 cleanup() {

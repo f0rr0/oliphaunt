@@ -143,7 +143,7 @@ Acceptance:
   emulator/device with current native Android artifacts.
 - `pnpm moon run oliphaunt-swift:smoke` passes on macOS with Xcode and
   stays warning-clean for the PostgreSQL embedded patch objects.
-- `pnpm moon run liboliphaunt-native:build-ios-xcframework` produces current
+- `pnpm moon run liboliphaunt-native:build-runtime-ios-xcframework` produces current
   iOS simulator/device `liboliphaunt.dylib` slices with the public C ABI
   symbols.
 - `pnpm --dir src/sdks/react-native/examples/expo run smoke:ios` passes on an iOS
@@ -173,7 +173,7 @@ Remaining work:
 
 Acceptance:
 
-- `moon run extension-artifacts-native:build-host oliphaunt-rust:extension-regression`
+- `moon run extension-artifacts-native:build-target oliphaunt-rust:extension-regression`
   passes with first-party extension artifacts.
 - `extension-packages:package` receives native extension artifacts for every
   published native runtime target and WASIX extension artifacts for every

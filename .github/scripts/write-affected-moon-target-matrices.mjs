@@ -208,24 +208,12 @@ function matrix(targets) {
   };
 }
 
-const taskIds = process.argv.slice(2);
-if (taskIds.length === 0 || taskIds.some((taskId) => !/^[A-Za-z0-9_-]+$/.test(taskId))) {
-  fail('usage: write-affected-moon-target-matrices.mjs <task-id> [<task-id> ...]');
+if (process.argv.length !== 2) {
+  fail('usage: write-affected-moon-target-matrices.mjs');
 }
 
 const completeTasks = allTaskMap();
 const selectedScopeTasks = selectedScopeTaskMap();
-const staticTaskIds = new Set([
-  'check',
-  'compile',
-  'format-check',
-  'js-format-check',
-  'lint',
-  'rust-format-check',
-  'tools-compile',
-  'typecheck',
-]);
-const unitTaskIds = new Set(['graph-unit', 'test', 'tools-unit', 'unit']);
 const checkTargets = new Map();
 const policyTargets = new Map();
 const testTargets = new Map();
@@ -241,38 +229,6 @@ for (const task of selectedScopeTasks.values()) {
       selectedScopeTasks,
       allTasks: completeTasks,
     });
-  }
-}
-for (const taskId of taskIds) {
-  const taskMap = new Map(
-    [...selectedScopeTasks].filter(([, task]) => task.id === taskId),
-  );
-  const targets = [...taskMap.keys()].sort();
-  if (staticTaskIds.has(taskId)) {
-    for (const target of targets) {
-      const task = taskMap.get(target);
-      if (!task) {
-        fail(`Moon metadata did not include selected target ${target}`);
-      }
-      classifySelectedTask(task, {check: checkTargets, policy: policyTargets}, {
-        selectedScopeTasks,
-        allTasks: completeTasks,
-      });
-    }
-    continue;
-  }
-  const matrixTargets = targets.flatMap((target) => {
-    const task = taskMap.get(target);
-    if (!task) {
-      fail(`Moon metadata did not include selected target ${target}`);
-    }
-    return runsInCI(task) ? [matrixTarget(task, 'deep', completeTasks)] : [];
-  });
-  if (unitTaskIds.has(taskId)) {
-    for (const target of matrixTargets) testTargets.set(target.target, target);
-  } else {
-    output(`${taskId}_count`, String(matrixTargets.length));
-    output(`${taskId}_matrix`, matrix(matrixTargets));
   }
 }
 
@@ -298,6 +254,10 @@ output(
 output(
   'policy_requires_workspace',
   String([...policyTargets.values()].some((target) => target.requires_workspace)),
+);
+output(
+  'policy_requires_wasmer_llvm',
+  String([...policyTargets.values()].some((target) => target.requires_wasmer_llvm)),
 );
 output('check_jobs', [
   ...(checkTargets.size > 0 ? ['check-targets'] : []),

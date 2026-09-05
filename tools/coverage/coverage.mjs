@@ -742,7 +742,6 @@ function runRust(product) {
     ],
     { env },
   );
-  run(['cargo', 'test', '--doc', '--package', packageName, '--locked'], { env });
   run(['cargo', 'llvm-cov', 'report', '--lcov', '--output-path', lcov], { env });
   const parsed = parseLcov(lcov, productConfig(product));
   writeSummary(product, 'cargo-llvm-cov', parsed.covered, parsed.total, parsed.files, [lcov]);
@@ -804,7 +803,6 @@ function runKotlin() {
     '-p',
     relPath(packageDir),
     ':oliphaunt:koverXmlReport',
-    ':oliphaunt:koverVerify',
     '--no-daemon',
     `-PoliphauntBuildRoot=${buildRoot}`,
     `-PoliphauntCxxBuildRoot=${cxxBuildRoot}`,

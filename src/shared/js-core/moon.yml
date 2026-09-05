@@ -11,7 +11,7 @@ dependsOn:
 
 project:
   title: "Shared JavaScript Core"
-  description: "Canonical TypeScript helpers mirrored into the JavaScript and React Native SDK packages."
+  description: "Private workspace package for canonical TypeScript query and protocol helpers."
   owner: "oliphaunt"
 
 owners:
@@ -22,45 +22,57 @@ owners:
 
 fileGroups:
   sources:
-    - "src/*.ts"
+    - "module.package.json"
+    - "package.json"
+    - "src/**/*.ts"
+    - "tsconfig*.json"
 
 tasks:
-  sync:
-    description: "Regenerate SDK mirrors from the canonical JavaScript query and protocol core."
-    command: "node src/shared/js-core/tools/check-js-core.mjs --write"
+  build-module:
+    tags: ["build", "static", "typescript"]
+    script: |
+      set -e
+      pnpm --dir src/shared/js-core exec tsc -p tsconfig.build.module.json
+      cp src/shared/js-core/module.package.json src/shared/js-core/dist/module/package.json
     inputs:
-      - "/src/shared/js-core/src/*.ts"
-      - "/src/shared/js-core/tools/check-js-core.mjs"
+      - "/src/shared/js-core/package.json"
+      - "/src/shared/js-core/module.package.json"
+      - "/src/shared/js-core/src/**/*.ts"
+      - "/src/shared/js-core/tsconfig*.json"
+      - "/pnpm-lock.yaml"
     outputs:
-      - "/src/sdks/js/src/protocol.ts"
-      - "/src/sdks/js/src/query.ts"
-      - "/src/sdks/react-native/src/protocol.ts"
-      - "/src/sdks/react-native/src/query.ts"
-      - "/src/bindings/wasix-ts/src/protocol.ts"
-      - "/src/bindings/wasix-ts/src/query.ts"
-    options:
-      cache: false
-      runFromWorkspaceRoot: true
-  check:
-    tags: ["quality", "static"]
-    command: "node src/shared/js-core/tools/check-js-core.mjs"
-    inputs:
-      - "@group(sources)"
-      - "tools/check-js-core.mjs"
-      - "/src/sdks/js/src/protocol.ts"
-      - "/src/sdks/js/src/query.ts"
-      - "/src/sdks/react-native/src/protocol.ts"
-      - "/src/sdks/react-native/src/query.ts"
-      - "/src/bindings/wasix-ts/src/protocol.ts"
-      - "/src/bindings/wasix-ts/src/query.ts"
+      - "/src/shared/js-core/dist/module/*.d.ts"
+      - "/src/shared/js-core/dist/module/*.js"
+      - "/src/shared/js-core/dist/module/package.json"
     options:
       cache: true
       runFromWorkspaceRoot: true
+  build-commonjs:
+    tags: ["build", "static", "typescript"]
+    command: "pnpm --dir src/shared/js-core exec tsc -p tsconfig.build.commonjs.json"
+    inputs:
+      - "/src/shared/js-core/package.json"
+      - "/src/shared/js-core/src/**/*.ts"
+      - "/src/shared/js-core/tsconfig*.json"
+      - "/pnpm-lock.yaml"
+    outputs:
+      - "/src/shared/js-core/dist/commonjs/*.d.ts"
+      - "/src/shared/js-core/dist/commonjs/*.js"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  build:
+    tags: ["build", "typescript", "aggregate"]
+    command: "true"
+    deps:
+      - "shared-js-core:build-module"
+      - "shared-js-core:build-commonjs"
+    inputs: []
   test:
     tags: ["quality", "unit"]
-    command: "bun test src/shared/js-core/test/query.test.ts"
+    command: "tools/dev/bun.sh test src/shared/js-core/test/query.test.ts"
     inputs:
-      - "@group(sources)"
+      - "/src/shared/js-core/src/**/*.ts"
       - "test/**/*"
       - project: "shared-test-fixtures"
         group: "fixtures"

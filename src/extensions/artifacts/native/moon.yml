@@ -36,60 +36,11 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  build-host:
-    tags: ["release", "artifact-builder", "alternative-producer"]
-    script: |
-      set -eu
-      . src/runtimes/liboliphaunt/native/tools/runtime-preflight.sh
-      export OLIPHAUNT_EXTENSION_TARGET="${OLIPHAUNT_EXTENSION_TARGET:-$(oliphaunt_runtime_native_host_target_id)}"
-      exec src/extensions/artifacts/native/tools/package-release-assets.sh
+  build-target:
+    tags: ["release", "artifact-builder", "ci-extension-artifacts-native"]
+    command: "bash src/extensions/artifacts/native/tools/package-release-assets.sh"
     env:
       OLIPHAUNT_TRACK_BUILD: "missing"
-    deps:
-      - "source-inputs:source-fetch-native-runtime"
-      - "source-inputs:source-fetch-extensions"
-    inputs:
-      - "@group(legal-files)"
-      - "@group(cargo-workspace)"
-      - project: "extensions"
-        group: "build"
-      - "/src/postgres/versions/18/**/*"
-      - "/src/runtimes/liboliphaunt/licenses/**/*"
-      - project: "liboliphaunt-native"
-        group: "runtime"
-      - project: "extension-runtime-contract"
-        group: "contract"
-      - project: "third-party-shared"
-        group: "sources"
-      - project: "third-party-native"
-        group: "sources"
-      - "/src/extensions/artifacts/native/tools/**/*"
-      - "/tools/release/check-linux-consumer-baseline.sh"
-      - "/src/sources/tools/source-fetch-core.mjs"
-      - "/tools/release/extension-upstream-licenses.mjs"
-      - "/tools/release/linux-abi-baseline.test.mjs"
-      - project: "artifact-packaging"
-        group: "source"
-      - "/tools/release/extension-artifact-archive-policy.mjs"
-      - "/tools/release/native-extension-asset-index-contract.mjs"
-      - "/tools/release/native-runtime-payload-policy.json"
-      - "/tools/release/platform-compatibility-policy.mjs"
-      - "/tools/release/platform-compatibility-policy.test.mjs"
-      - "/tools/release/platform-binary-contract.mjs"
-      - "/tools/release/platform-binary-contract.test.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-directory-safety.mjs"
-      - "/tools/release/validate-ios-carrier-zips.mjs"
-      - "/tools/release/windows-vc-runtime-closure.mjs"
-    outputs:
-      - "/target/extensions/native/release-assets/**/*"
-    options:
-      cache: false
-      runFromWorkspaceRoot: true
-      runInCI: false
-  build-target:
-    tags: ["release", "artifact-builder", "alternative-producer", "ci-extension-artifacts-native"]
-    command: "bash src/extensions/artifacts/native/tools/package-release-assets.sh"
     deps:
       - "source-inputs:source-fetch-native-runtime"
       - "source-inputs:source-fetch-extensions"

@@ -283,13 +283,12 @@ tasks:
     options:
       cache: false
       runFromWorkspaceRoot: true
-  build-runtime-android-target:
+  build-runtime-android-arm64-v8a:
     tags: ["runtime", "build"]
     deps:
       - "source-inputs:source-fetch-native-runtime"
-    command: "bun src/runtimes/liboliphaunt/native/tools/build-ci-target.mjs \"$OLIPHAUNT_CI_TARGET\""
+    command: "bun src/runtimes/liboliphaunt/native/tools/build-ci-target.mjs android-arm64-v8a"
     inputs:
-      - "$OLIPHAUNT_CI_TARGET"
       - "@group(legal-files)"
       - project: "postgres18"
         group: "source"
@@ -306,22 +305,21 @@ tasks:
       - "/tools/xtask/**/*"
       - "@group(cargo-workspace)"
     outputs:
-      - "/target/liboliphaunt-native-ci/android-*/**/*"
-      - "/target/liboliphaunt-pg18-android-*/**/*"
-      - "/target/liboliphaunt-mobile-host/android-*/**/*"
+      - "/target/liboliphaunt-native-ci/android-arm64-v8a/**/*"
+      - "/target/liboliphaunt-pg18-android-arm64/**/*"
+      - "/target/liboliphaunt-mobile-host/android-arm64-v8a/**/*"
     options:
       cache: false
       runFromWorkspaceRoot: true
-  package-runtime-android-target:
+  package-runtime-android-arm64-v8a:
     tags: ["runtime", "release", "artifact-package", "ci-liboliphaunt-native-android"]
     command: >-
-      env OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS="target/liboliphaunt/mobile-release-assets/$OLIPHAUNT_CI_TARGET"
-      OLIPHAUNT_LINUX_X64_ROOT="target/liboliphaunt-mobile-host/$OLIPHAUNT_CI_TARGET"
-      bash tools/release/package-liboliphaunt-mobile-assets.sh "$OLIPHAUNT_CI_TARGET"
+      env OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS="target/liboliphaunt/mobile-release-assets/android-arm64-v8a"
+      OLIPHAUNT_LINUX_X64_ROOT="$PWD/target/liboliphaunt-mobile-host/android-arm64-v8a"
+      bash tools/release/package-liboliphaunt-mobile-assets.sh android-arm64-v8a
     deps:
-      - "liboliphaunt-native:build-runtime-android-target"
+      - "liboliphaunt-native:build-runtime-android-arm64-v8a"
     inputs:
-      - "$OLIPHAUNT_CI_TARGET"
       - "@group(legal-files)"
       - "/src/runtimes/liboliphaunt/native/include/**/*"
       - "/tools/release/package-liboliphaunt-mobile-assets.sh"
@@ -333,17 +331,68 @@ tasks:
       - "/tools/release/platform-binary-contract.mjs"
       - "@group(release-archive-contract)"
     outputs:
-      - "/target/liboliphaunt/mobile-release-assets/android-*/**/*"
+      - "/target/liboliphaunt/mobile-release-assets/android-arm64-v8a/**/*"
     options:
       cache: false
       runFromWorkspaceRoot: true
-  build-runtime-ios-target:
-    tags: ["runtime", "build", "alternative-producer"]
+  build-runtime-android-x86_64:
+    tags: ["runtime", "build"]
     deps:
       - "source-inputs:source-fetch-native-runtime"
-    command: "bun src/runtimes/liboliphaunt/native/tools/build-ci-target.mjs \"$OLIPHAUNT_CI_TARGET\""
+    command: "bun src/runtimes/liboliphaunt/native/tools/build-ci-target.mjs android-x86_64"
     inputs:
-      - "$OLIPHAUNT_CI_TARGET"
+      - "@group(legal-files)"
+      - project: "postgres18"
+        group: "source"
+      - "/src/runtimes/liboliphaunt/licenses/**/*"
+      - project: "third-party-shared"
+        group: "sources"
+      - project: "third-party-native"
+        group: "sources"
+      - project: "extension-runtime-contract"
+        group: "contract"
+      - "**/*"
+      - "/tools/native-packaging/**/*"
+      - "/tools/release/native-mobile-abi-contract.mjs"
+      - "/tools/xtask/**/*"
+      - "@group(cargo-workspace)"
+    outputs:
+      - "/target/liboliphaunt-native-ci/android-x86_64/**/*"
+      - "/target/liboliphaunt-pg18-android-x86_64/**/*"
+      - "/target/liboliphaunt-mobile-host/android-x86_64/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  package-runtime-android-x86_64:
+    tags: ["runtime", "release", "artifact-package", "ci-liboliphaunt-native-android"]
+    command: >-
+      env OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS="target/liboliphaunt/mobile-release-assets/android-x86_64"
+      OLIPHAUNT_LINUX_X64_ROOT="$PWD/target/liboliphaunt-mobile-host/android-x86_64"
+      bash tools/release/package-liboliphaunt-mobile-assets.sh android-x86_64
+    deps:
+      - "liboliphaunt-native:build-runtime-android-x86_64"
+    inputs:
+      - "@group(legal-files)"
+      - "/src/runtimes/liboliphaunt/native/include/**/*"
+      - "/tools/release/package-liboliphaunt-mobile-assets.sh"
+      - "/tools/release/liboliphaunt-extension-guard.sh"
+      - "/tools/release/native-mobile-abi-contract.mjs"
+      - "/tools/release/stage-native-cluster-seed.mjs"
+      - "/tools/release/finalize-native-runtime-carrier.mjs"
+      - "/tools/release/strip_native_release_binaries.mjs"
+      - "/tools/release/platform-binary-contract.mjs"
+      - "@group(release-archive-contract)"
+    outputs:
+      - "/target/liboliphaunt/mobile-release-assets/android-x86_64/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  build-runtime-ios-xcframework:
+    tags: ["runtime", "build"]
+    deps:
+      - "source-inputs:source-fetch-native-runtime"
+    command: "bun src/runtimes/liboliphaunt/native/tools/build-ci-target.mjs ios-xcframework"
+    inputs:
       - "@group(legal-files)"
       - project: "postgres18"
         group: "source"
@@ -368,18 +417,17 @@ tasks:
     options:
       cache: false
       runFromWorkspaceRoot: true
-  package-runtime-ios-target:
+  package-runtime-ios-xcframework:
     tags: ["runtime", "release", "artifact-package", "ci-liboliphaunt-native-ios"]
     script: |
       set -e
-      export OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS="target/liboliphaunt/mobile-release-assets/$OLIPHAUNT_CI_TARGET"
-      export OLIPHAUNT_WORK_ROOT="target/liboliphaunt-mobile-host/$OLIPHAUNT_CI_TARGET"
-      tools/release/package-liboliphaunt-mobile-assets.sh "$OLIPHAUNT_CI_TARGET"
+      export OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS="target/liboliphaunt/mobile-release-assets/ios-xcframework"
+      export OLIPHAUNT_WORK_ROOT="$PWD/target/liboliphaunt-mobile-host/ios-xcframework"
+      tools/release/package-liboliphaunt-mobile-assets.sh ios-xcframework
       node tools/release/validate-ios-carrier-zips.mjs --root "$OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS"
     deps:
-      - "liboliphaunt-native:build-runtime-ios-target"
+      - "liboliphaunt-native:build-runtime-ios-xcframework"
     inputs:
-      - "$OLIPHAUNT_CI_TARGET"
       - "@group(legal-files)"
       - "/src/runtimes/liboliphaunt/native/include/**/*"
       - "/tools/release/package-liboliphaunt-mobile-assets.sh"
@@ -402,16 +450,17 @@ tasks:
     command: >-
       tools/dev/bun.sh tools/release/finalize-native-mobile-abi-proofs.mjs
       --domain android-datum64
-      --asset-dir target/liboliphaunt/mobile-abi-inputs/android-datum64/assets
-      --receipt-root target/liboliphaunt/native-mobile-abi-inputs
+      --asset-dir target/liboliphaunt/mobile-release-assets/android-x86_64
+      --receipt-root target/liboliphaunt-native-ci
       --output-dir target/liboliphaunt/abi-compatible-release-assets/android-datum64
     deps:
-      - "liboliphaunt-native:package-runtime-android-target"
+      - "liboliphaunt-native:package-runtime-android-arm64-v8a"
+      - "liboliphaunt-native:package-runtime-android-x86_64"
     inputs:
       - "/tools/release/finalize-native-mobile-abi-proofs.mjs"
       - "/tools/release/native-mobile-abi-contract.mjs"
-      - "/target/liboliphaunt/mobile-abi-inputs/android-datum64/assets/**/*"
-      - "/target/liboliphaunt/native-mobile-abi-inputs/**/*"
+      - "/target/liboliphaunt/mobile-release-assets/android-x86_64/**/*"
+      - "/target/liboliphaunt-native-ci/android-*/**/*"
     outputs:
       - "/target/liboliphaunt/abi-compatible-release-assets/android-datum64/**/*"
     options:
@@ -422,16 +471,16 @@ tasks:
     command: >-
       tools/dev/bun.sh tools/release/finalize-native-mobile-abi-proofs.mjs
       --domain ios-datum64
-      --asset-dir target/liboliphaunt/mobile-abi-inputs/ios-datum64/assets
-      --receipt-root target/liboliphaunt/native-mobile-abi-inputs
+      --asset-dir target/liboliphaunt/mobile-release-assets/ios-xcframework
+      --receipt-root target/liboliphaunt-native-ci/ios-xcframework
       --output-dir target/liboliphaunt/abi-compatible-release-assets/ios-datum64
     deps:
-      - "liboliphaunt-native:package-runtime-ios-target"
+      - "liboliphaunt-native:package-runtime-ios-xcframework"
     inputs:
       - "/tools/release/finalize-native-mobile-abi-proofs.mjs"
       - "/tools/release/native-mobile-abi-contract.mjs"
-      - "/target/liboliphaunt/mobile-abi-inputs/ios-datum64/assets/**/*"
-      - "/target/liboliphaunt/native-mobile-abi-inputs/**/*"
+      - "/target/liboliphaunt/mobile-release-assets/ios-xcframework/**/*"
+      - "/target/liboliphaunt-native-ci/ios-xcframework/**/*"
     outputs:
       - "/target/liboliphaunt/abi-compatible-release-assets/ios-datum64/**/*"
     options:
@@ -442,8 +491,9 @@ tasks:
     command: "bash tools/release/package-liboliphaunt-aggregate-assets.sh"
     deps:
       - "liboliphaunt-native:package-runtime-desktop-target"
-      - "liboliphaunt-native:package-runtime-android-target"
-      - "liboliphaunt-native:package-runtime-ios-target"
+      - "liboliphaunt-native:package-runtime-android-arm64-v8a"
+      - "liboliphaunt-native:package-runtime-android-x86_64"
+      - "liboliphaunt-native:package-runtime-ios-xcframework"
       - "liboliphaunt-native:finalize-runtime-android-abi"
       - "liboliphaunt-native:finalize-runtime-ios-abi"
     inputs:
@@ -468,27 +518,6 @@ tasks:
       cache: false
       runFromWorkspaceRoot: true
       runInCI: true
-  build-ios-xcframework:
-    tags: ["runtime", "artifact", "alternative-producer"]
-    command: "bash src/runtimes/liboliphaunt/native/bin/build-ios-xcframework.sh"
-    deps:
-      - "source-inputs:source-fetch-native-runtime"
-    inputs:
-      - "**/*"
-      - project: "postgres18"
-        group: "source"
-      - project: "third-party-shared"
-        group: "sources"
-      - project: "third-party-native"
-        group: "sources"
-      - project: "extension-runtime-contract"
-        group: "contract"
-    outputs:
-      - "/target/liboliphaunt-ios-xcframework/**/*"
-    options:
-      cache: false
-      runFromWorkspaceRoot: true
-      runInCI: false
   qualify:
     tags: ["release", "package"]
     command: "true"

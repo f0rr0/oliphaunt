@@ -1,5 +1,8 @@
 # Oliphaunt Source Architecture
 
+Status: canonical product, task, qualification, and release-boundary model.
+Last verified: 2026-09-05. Owner: repository maintainers.
+
 This document describes the active repository model. It is not a migration log.
 
 ## Authority Boundaries

@@ -106,6 +106,8 @@ tasks:
   js:
     tags: ["coverage", "quality"]
     command: "tools/coverage/run-product oliphaunt-js"
+    deps:
+      - "shared-js-core:build"
     inputs:
       - "@group(pnpm-workspace)"
       - "/coverage/baseline.toml"
@@ -122,6 +124,8 @@ tasks:
   react-native:
     tags: ["coverage", "quality"]
     command: "tools/coverage/run-product oliphaunt-react-native"
+    deps:
+      - "shared-js-core:build"
     inputs:
       - "@group(pnpm-workspace)"
       - "/coverage/baseline.toml"
@@ -159,6 +163,8 @@ tasks:
   wasix-ts:
     tags: ["coverage", "quality"]
     command: "tools/coverage/run-product oliphaunt-wasix-ts"
+    deps:
+      - "shared-js-core:build"
     inputs:
       - "@group(pnpm-workspace)"
       - "/coverage/baseline.toml"

@@ -161,6 +161,7 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
+      runInCI: false
   coverage-policy:
     tags: ["coverage", "policy"]
     command: "bun tools/policy/check-coverage-baseline.mjs all"

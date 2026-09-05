@@ -80,3 +80,30 @@ test('resolves a real multi-root job with downloaded dependencies', () => {
   assert.match(result.stdout, /^target\twasix-ts-integration:runtime$/mu);
   assert.match(result.stdout, /^transferred\tliboliphaunt-wasix:runtime-portable$/mu);
 });
+
+test('runs one exact matrix target and rejects targets outside the plan', () => {
+  const env = {
+    ...process.env,
+    OLIPHAUNT_CI_JOB_TARGETS_JSON: JSON.stringify({
+      'liboliphaunt-native-android': [
+        'liboliphaunt-native:package-runtime-android-arm64-v8a',
+        'liboliphaunt-native:package-runtime-android-x86_64',
+      ],
+    }),
+  };
+  const selected = spawnSync(process.execPath, [
+    '.github/scripts/resolve-planned-moon-execution.mjs',
+    'liboliphaunt-native-android',
+    'liboliphaunt-native:package-runtime-android-x86_64',
+  ], {encoding: 'utf8', env});
+  assert.equal(selected.status, 0, selected.stderr);
+  assert.equal(selected.stdout.trim(), 'target\tliboliphaunt-native:package-runtime-android-x86_64');
+
+  const rejected = spawnSync(process.execPath, [
+    '.github/scripts/resolve-planned-moon-execution.mjs',
+    'liboliphaunt-native-android',
+    'liboliphaunt-native:package-runtime-ios-xcframework',
+  ], {encoding: 'utf8', env});
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /is not planned/u);
+});

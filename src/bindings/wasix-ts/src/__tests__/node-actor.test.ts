@@ -10,6 +10,7 @@ vi.mock('../native-session.js', () => ({
 }));
 
 import { openNodeActorSession } from '../node-actor.js';
+import { requireNodeStorage } from '../node-client-common.js';
 
 beforeEach(() => nativeMocks.open.mockReset());
 
@@ -22,5 +23,28 @@ describe('WASIX Node actor routing', () => {
     await expect(openNodeActorSession(options)).resolves.toBe(session);
     expect(nativeMocks.open).toHaveBeenCalledOnce();
     expect(nativeMocks.open).toHaveBeenCalledWith(options);
+  });
+
+  it('accepts host storage and rejects browser-only storage before native startup', () => {
+    const memory = workerOpenOptions();
+    expect(() => requireNodeStorage(memory)).not.toThrow();
+
+    const directory = workerOpenOptions();
+    directory.storage = {
+      schema: 'oliphaunt-wasix-storage-v1',
+      kind: 'directory',
+      path: 'relative-database',
+    };
+    requireNodeStorage(directory);
+    expect(directory.storage).toMatchObject({
+      kind: 'directory',
+      path: expect.stringMatching(/[/\\]relative-database$/),
+    });
+
+    for (const kind of ['indexed-db', 'opfs'] as const) {
+      const browser = workerOpenOptions();
+      browser.storage = { schema: 'oliphaunt-wasix-storage-v1', kind, name: 'database' };
+      expect(() => requireNodeStorage(browser)).toThrow(/browser-only/);
+    }
   });
 });

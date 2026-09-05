@@ -38,6 +38,7 @@ const PREFIX = "ci_plan.mjs";
 export const BASE_JOBS = new Set(["affected"]);
 export const ALWAYS_JOBS = new Set(BASE_JOBS);
 export const FULL_PAYLOAD_QUALIFICATION_MODE = "full-payload";
+export const AFFECTED_QUALIFICATION_MODE = "affected";
 const NATIVE_RUNTIME_JOBS = new Set([
   "liboliphaunt-native-android",
   "liboliphaunt-native-desktop",
@@ -45,8 +46,9 @@ const NATIVE_RUNTIME_JOBS = new Set([
 ]);
 const NATIVE_RUNTIME_TASKS = new Set([
   "liboliphaunt-native:package-runtime-desktop-target",
-  "liboliphaunt-native:package-runtime-android-target",
-  "liboliphaunt-native:package-runtime-ios-target",
+  "liboliphaunt-native:package-runtime-android-arm64-v8a",
+  "liboliphaunt-native:package-runtime-android-x86_64",
+  "liboliphaunt-native:package-runtime-ios-xcframework",
 ]);
 export const WASM_RUNTIME_JOBS = new Set([
   "liboliphaunt-wasix-runtime",
@@ -138,27 +140,6 @@ function intersects(left, right) {
 
 function sorted(set) {
   return [...set].sort(compareText);
-}
-
-function names(value) {
-  if (value !== null && !Array.isArray(value) && typeof value === "object") {
-    return Object.keys(value).sort(compareText);
-  }
-  if (Array.isArray(value)) {
-    const result = new Set();
-    for (const item of value) {
-      if (typeof item === "string") {
-        result.add(item);
-      } else if (item !== null && typeof item === "object") {
-        const identifier = item.id ?? item.target;
-        if (identifier !== undefined && identifier !== null && identifier !== "") {
-          result.add(String(identifier));
-        }
-      }
-    }
-    return sorted(result);
-  }
-  return [];
 }
 
 const TASKS_BY_TARGET = (() => {
@@ -401,11 +382,11 @@ function focusedMobileNativeTargets(mobileTarget, nativeTarget, focusedMobileJob
   return targets;
 }
 
-export function planForPullRequest() {
+export function planForAffectedRange() {
   const base = process.env.MOON_BASE;
   const head = process.env.MOON_HEAD;
   if (!base || !head) {
-    throw new Error("MOON_BASE and MOON_HEAD are required for pull_request CI planning");
+    throw new Error("MOON_BASE and MOON_HEAD are required for affected CI planning");
   }
 
   const { directProjects, projects, directTasks } = affectedProjectsAndTasks();
@@ -579,7 +560,7 @@ export function planForFullRun({
     jobs,
     projects: new Set(),
     tasks: targetsForJobs(jobs),
-    reason: "non-PR full CI/runtime run",
+    reason: "manual full CI/runtime run",
     selectedTargets: null,
   };
 }
@@ -721,6 +702,9 @@ export function renderPlanWithSelection({
   selectedExtensionProducts,
   nativeTarget = process.env.NATIVE_TARGET || "all",
   wasmTarget = process.env.WASM_TARGET || "all",
+  qualificationMode = FULL_PAYLOAD_QUALIFICATION_MODE,
+  qualificationBaseSha = null,
+  qualificationHeadSha = null,
 }) {
   const extensionProducts = sorted(selectedExtensionProducts ?? new Set());
   const extensionSqlNames = extensionSqlNamesForProducts(extensionProducts);
@@ -732,9 +716,9 @@ export function renderPlanWithSelection({
   const nativeLifecycleSqlNames = extensionSqlNamesForProducts(nativeLifecycleProducts);
   const nativeLifecycleShards = nativeExtensionLifecycleShardPlan(nativeLifecycleProducts);
   const plan = {
-    qualification_mode: FULL_PAYLOAD_QUALIFICATION_MODE,
-    qualification_base_sha: null,
-    qualification_head_sha: null,
+    qualification_mode: qualificationMode,
+    qualification_base_sha: qualificationBaseSha,
+    qualification_head_sha: qualificationHeadSha,
     jobs: sorted(jobs),
     builder_jobs: sorted(new Set([...jobs].filter((job) => BUILDER_JOBS.has(job)))),
     e2e_jobs: mobileE2eJobsForPlan(jobs),
@@ -842,14 +826,20 @@ function writePlanArtifact(plan) {
 export function emitGithubOutputs() {
   let planned;
   try {
-    if (process.env.GITHUB_EVENT_NAME === "pull_request") {
-      const pullRequestPlan = planForPullRequest();
+    if (process.env.GITHUB_EVENT_NAME !== "workflow_dispatch") {
+      const affectedPlan = planForAffectedRange();
       const selectedExtensionProducts = selectedExtensionProductsForPlan(
-        pullRequestPlan.directProjects,
-        pullRequestPlan.tasks,
-        pullRequestPlan.jobs,
+        affectedPlan.directProjects,
+        affectedPlan.tasks,
+        affectedPlan.jobs,
       );
-      planned = renderPlanWithSelection({ ...pullRequestPlan, selectedExtensionProducts });
+      planned = renderPlanWithSelection({
+        ...affectedPlan,
+        selectedExtensionProducts,
+        qualificationMode: AFFECTED_QUALIFICATION_MODE,
+        qualificationBaseSha: process.env.MOON_BASE,
+        qualificationHeadSha: process.env.MOON_HEAD,
+      });
     } else {
       planned = renderPlanForFullRun({
         wasmTarget: process.env.WASM_TARGET || "all",

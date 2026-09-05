@@ -4,10 +4,10 @@ import { run } from "./release-cli-utils.mjs";
 
 const TOOL = "release-metadata-check.mjs";
 
-function parseArgs(argv) {
+export function releaseMetadataCheckPlan(argv) {
   for (const arg of argv) {
     if (arg === "-h" || arg === "--help") {
-      console.log(`usage: tools/release/release-metadata-check.mjs [legacy passthrough args]
+      console.log(`usage: tools/release/release-metadata-check.mjs
 
 Runs Release Please, artifact-target, release-PR, publication metadata,
 and generated-docs checks without replaying mutation unit tests.
@@ -16,11 +16,12 @@ use release-check.mjs for the full local gate.
 `);
       process.exit(0);
     }
+    throw new Error(`${TOOL}: unexpected argument ${arg}`);
   }
 }
 
 function main(argv) {
-  parseArgs(argv);
+  releaseMetadataCheckPlan(argv);
   run(TOOL, [process.execPath, "tools/release/check_release_please_config.mjs"]);
   run(TOOL, [process.execPath, "tools/release/check_artifact_targets.mjs"]);
   run(TOOL, [process.execPath, "tools/release/sync-release-pr.mjs", "--check"]);

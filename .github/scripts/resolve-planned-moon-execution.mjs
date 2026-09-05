@@ -85,10 +85,15 @@ function taskMap() {
 
 if (import.meta.main) {
   const job = process.argv[2] ?? '';
-  if (!job) fail('usage: resolve-planned-moon-execution.mjs <job-id>');
+  const selectedTarget = process.argv[3];
+  if (!job || process.argv.length > 4) fail('usage: resolve-planned-moon-execution.mjs <job-id> [target]');
   try {
-    const targets = plannedTargets(job);
-    if (targets.length === 0) throw new Error(`CI job ${JSON.stringify(job)} has no planned Moon targets`);
+    const planned = plannedTargets(job);
+    if (planned.length === 0) throw new Error(`CI job ${JSON.stringify(job)} has no planned Moon targets`);
+    if (selectedTarget !== undefined && !planned.includes(selectedTarget)) {
+      throw new Error(`Moon target ${selectedTarget} is not planned for CI job ${job}`);
+    }
+    const targets = selectedTarget === undefined ? planned : [selectedTarget];
     const execution = resolveExecution(targets, parseTransferred(), taskMap());
     for (const target of execution.localDependencies) console.log(`local\t${target}`);
     for (const target of execution.targets) console.log(`target\t${target}`);

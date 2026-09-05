@@ -2,15 +2,18 @@
 set -euo pipefail
 
 job="${1:-}"
-if [[ -z "$job" ]]; then
-  echo "usage: .github/scripts/run-planned-moon-job.sh <job-id>" >&2
+target="${2:-}"
+if [[ -z "$job" || "$#" -gt 2 ]]; then
+  echo "usage: .github/scripts/run-planned-moon-job.sh <job-id> [target]" >&2
   exit 2
 fi
 
 execution_file="$(mktemp)"
 trap 'rm -f "$execution_file"' EXIT
 
-bun .github/scripts/resolve-planned-moon-execution.mjs "$job" >"$execution_file"
+resolve_args=("$job")
+if [[ -n "$target" ]]; then resolve_args+=("$target"); fi
+bun .github/scripts/resolve-planned-moon-execution.mjs "${resolve_args[@]}" >"$execution_file"
 
 targets=()
 local_dependencies=()
