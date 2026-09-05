@@ -36,6 +36,12 @@ owners:
   paths:
     "**/*": ["@oliphaunt/wasix"]
 
+fileGroups:
+  runtime-source:
+    - "runtime/**/*"
+    - "!runtime/**/*.md"
+    - "!runtime/**/*.test.py"
+
 tasks:
   lint:
     tags: ["quality", "static", "requires-rust"]
@@ -79,7 +85,11 @@ tasks:
     deps:
       - "liboliphaunt-wasix-postmaster:lint"
       - "liboliphaunt-wasix-postmaster:unit"
+      - "liboliphaunt-wasix-postmaster:runtime-patch-tests"
+      - "liboliphaunt-wasix-postmaster:regression"
       - "liboliphaunt-wasix-postmaster:release-assets"
+      - "liboliphaunt-wasix-postmaster:immediate-recovery"
+      - "liboliphaunt-wasix-postmaster:linear-memory-integration"
     inputs: []
 
   prepare-postgres:
@@ -106,7 +116,7 @@ tasks:
     deps:
       - "source-inputs:source-fetch-wasix-postmaster-runtime"
     inputs:
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/runtime/**/*"
+      - "@group(runtime-source)"
       - "/src/runtimes/liboliphaunt/wasix-postmaster/lib/common.sh"
       - "/src/runtimes/liboliphaunt/wasix-postmaster/sources.lock.toml"
     options:
@@ -116,8 +126,8 @@ tasks:
       runInCI: true
 
   runtime-build:
-    tags: ["runtime", "wasix", "rust"]
-    command: "bash src/runtimes/liboliphaunt/wasix-postmaster/runtime/bin/build-runtime.sh"
+    tags: ["runtime", "wasix", "rust", "build"]
+    command: "bash src/runtimes/liboliphaunt/wasix-postmaster/runtime/bin/build-runtime.sh --build-only"
     deps:
       - "liboliphaunt-wasix-postmaster:prepare-runtime"
     inputs:
@@ -125,12 +135,38 @@ tasks:
       - "/src/sources/toolchains/wasix.toml"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/**/*"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker_wasix_env.sh"
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/runtime/**/*"
+      - "@group(runtime-source)"
+      - "/src/runtimes/liboliphaunt/wasix-postmaster/lib/common.sh"
+      - "/src/runtimes/liboliphaunt/wasix-postmaster/sources.lock.toml"
+    outputs:
+      - "/target/oliphaunt-wasix-postmaster/runtime/build/**/*"
+      - "/target/oliphaunt-wasix-postmaster/runtime/wasmer/target/release/wasmer"
+      - "/target/oliphaunt-wasix-postmaster/runtime/wasmer/target/release/wasmer-headless"
+      - "/target/oliphaunt-wasix-postmaster/runtime/postmaster-executor-target/release/oliphaunt-wasix-postmaster-executor"
+      - "/target/oliphaunt-wasix-postmaster/runtime/postmaster-executor-target/release/oliphaunt-wasix-start-proof"
+      - "/target/oliphaunt-wasix-postmaster/runtime/postmaster-executor-target/release/oliphaunt-wasix-memory-profile"
+      - "/target/oliphaunt-wasix-postmaster/runtime/postmaster-compiler-target/release/oliphaunt-wasix-postmaster-compiler"
+    options:
+      cache: false
+      internal: true
+      runFromWorkspaceRoot: true
+      runInCI: true
+
+  runtime-patch-tests:
+    tags: ["runtime", "wasix", "test", "requires-rust"]
+    command: "bash src/runtimes/liboliphaunt/wasix-postmaster/runtime/bin/build-runtime.sh --tests-only"
+    deps:
+      - "liboliphaunt-wasix-postmaster:prepare-runtime"
+    inputs:
+      - "@group(cargo-workspace)"
+      - "/src/sources/toolchains/wasix.toml"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker_wasix_env.sh"
+      - "@group(runtime-source)"
       - "/src/runtimes/liboliphaunt/wasix-postmaster/lib/common.sh"
       - "/src/runtimes/liboliphaunt/wasix-postmaster/sources.lock.toml"
     options:
       cache: false
-      internal: true
       runFromWorkspaceRoot: true
       runInCI: true
 
@@ -168,6 +204,8 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix-postmaster/lib/common.sh"
       - "/src/runtimes/liboliphaunt/wasix-postmaster/runtime/bin/verify-postmaster-wasm-import.py"
       - "/src/runtimes/liboliphaunt/wasix-postmaster/runtime/bin/verify-postmaster-concurrency-contract.py"
+    outputs:
+      - "/target/oliphaunt-wasix-postmaster/install/wasix-core-release-o3/**/*"
     options:
       cache: false
       internal: true
@@ -183,7 +221,7 @@ tasks:
       - "/src/sources/toolchains/wasix.toml"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/**/*"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker_wasix_env.sh"
-      - "/src/runtimes/liboliphaunt/wasix-postmaster/runtime/**/*"
+      - "@group(runtime-source)"
       - "/src/runtimes/liboliphaunt/wasix-postmaster/lib/common.sh"
     options:
       cache: false
@@ -204,7 +242,6 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix-postmaster/testdata/make-sealed-export-fixture.py"
     options:
       cache: false
-      internal: true
       runFromWorkspaceRoot: true
       runInCI: true
 
@@ -290,9 +327,6 @@ tasks:
     command: "bash src/runtimes/liboliphaunt/wasix-postmaster/bin/package-release-assets.sh"
     deps:
       - "liboliphaunt-wasix-postmaster:carrier"
-      - "liboliphaunt-wasix-postmaster:backend-wave-stress"
-      - "liboliphaunt-wasix-postmaster:immediate-recovery"
-      - "liboliphaunt-wasix-postmaster:linear-memory-integration"
     inputs:
       - "@group(legal-files)"
       - "**/*"
@@ -359,7 +393,6 @@ tasks:
       - "/target/oliphaunt-wasix-postmaster/carriers/**/*"
     options:
       cache: false
-      internal: true
       runFromWorkspaceRoot: true
       runInCI: true
 
@@ -367,7 +400,7 @@ tasks:
     tags: ["runtime", "artifact", "ci-wasix-postmaster"]
     command: "bash src/runtimes/liboliphaunt/wasix-postmaster/bin/package-portable-build-inputs.sh"
     deps:
-      - "liboliphaunt-wasix-postmaster:regression"
+      - "liboliphaunt-wasix-postmaster:postgres-build"
       - "liboliphaunt-wasix-postmaster:runtime-capabilities"
     inputs:
       - "**/*"

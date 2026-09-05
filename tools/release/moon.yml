@@ -674,7 +674,7 @@ tasks:
       - project: "extensions"
         group: "package"
       - project: "liboliphaunt-wasix"
-        group: "artifact-source"
+        group: "release-metadata"
       - "/src/shared/extension-runtime-contract/**/*"
       - "/tools/dev/bun.sh"
       - "/tools/release/build-extension-ci-artifacts.mjs"

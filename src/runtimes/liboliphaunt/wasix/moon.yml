@@ -43,12 +43,9 @@ owners:
     "tools/**": ["@oliphaunt/wasix"]
 
 fileGroups:
-  artifact-source:
-    - "assets/build/**/*"
-    - "assets/generated/**/*"
-    - "crates/**/*"
-    - "tools/build-aot-target.sh"
-    - "tools/build-runtime-portable.sh"
+  version:
+    - "VERSION"
+  release-metadata:
     - "VERSION"
     - "release.toml"
   crates:
@@ -80,7 +77,7 @@ tasks:
       runFromWorkspaceRoot: true
 
   assets-verify:
-    tags: ["release", "package"]
+    tags: ["quality", "static", "requires-rust"]
     command: "bash src/runtimes/liboliphaunt/wasix/tools/verify-committed-assets.sh"
     inputs:
       - "@group(cargo-workspace)"

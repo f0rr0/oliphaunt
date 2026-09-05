@@ -14,6 +14,22 @@ import {buildPlan, loadGraph, normalizeFiles} from '../release/release-graph.mjs
 
 const ROOT = path.resolve(import.meta.dir, '../..');
 
+function taskGraph(target) {
+  const environment = {...process.env, MOON_CACHE: 'off'};
+  const result = captureCommandOutput(
+    moonCommand(environment),
+    ['task-graph', target, '--json'],
+    {
+      cwd: ROOT,
+      env: moonEnvironment(environment),
+      label: `Moon task graph for ${target}`,
+    },
+  );
+  assert.equal(result.error, undefined, result.error?.message ?? result.stderr);
+  assert.equal(result.status, 0, result.stderr);
+  return Object.values(JSON.parse(result.stdout).data);
+}
+
 test('postmaster CI selects only terminal product roots', () => {
   assert.deepEqual(CI_JOB_TARGETS['wasix-postmaster'], [
     'liboliphaunt-wasix-postmaster:aggregate-release-assets',
@@ -57,19 +73,7 @@ test('postmaster planner renders every supported release target', () => {
 });
 
 test('postmaster source preparation waits for the shared source fetch', () => {
-  const environment = {...process.env, MOON_CACHE: 'off'};
-  const result = captureCommandOutput(
-    moonCommand(environment),
-    ['task-graph', '--json'],
-    {
-      cwd: ROOT,
-      env: moonEnvironment(environment),
-      label: 'Moon WASIX postmaster prepare-postgres dependency graph',
-    },
-  );
-  assert.equal(result.error, undefined, result.error?.message ?? result.stderr);
-  assert.equal(result.status, 0, result.stderr);
-  const task = Object.values(JSON.parse(result.stdout).data).find(
+  const task = taskGraph('liboliphaunt-wasix-postmaster:prepare-postgres').find(
     ({target}) => target === 'liboliphaunt-wasix-postmaster:prepare-postgres',
   );
   assert.ok(task);
@@ -79,6 +83,22 @@ test('postmaster source preparation waits for the shared source fetch', () => {
     ),
     true,
   );
+});
+
+test('postmaster production and qualification roots stay separate', () => {
+  const patchTests = 'liboliphaunt-wasix-postmaster:runtime-patch-tests';
+  const targets = (root) => new Set(taskGraph(root).map(({target}) => target));
+  const portableProduction = targets('liboliphaunt-wasix-postmaster:portable-inputs');
+  const targetProduction = targets('liboliphaunt-wasix-postmaster:release-assets');
+  assert.equal(portableProduction.has(patchTests), false);
+  assert.equal(targetProduction.has(patchTests), false);
+  for (const behavior of [
+    'liboliphaunt-wasix-postmaster:backend-wave-stress',
+    'liboliphaunt-wasix-postmaster:immediate-recovery',
+    'liboliphaunt-wasix-postmaster:linear-memory-integration',
+  ]) {
+    assert.equal(targetProduction.has(behavior), false);
+  }
 });
 
 function directEffects(relativePath) {
@@ -166,6 +186,11 @@ test('source fetch implementation changes retain their real consumers', () => {
 test('source prose, transport tests, and unrelated toolchains do not rebuild runtimes', () => {
   const cases = [
     ['src/postgres/versions/18/fetch-source.test.sh', 'source-inputs:unit'],
+    ['src/runtimes/liboliphaunt/wasix-postmaster/runtime/README.md', null],
+    [
+      'src/runtimes/liboliphaunt/wasix-postmaster/runtime/bin/verify-source-lock.test.py',
+      'liboliphaunt-wasix-postmaster:unit',
+    ],
     ['src/sources/third-party/native/README.md', null],
     ['src/sources/toolchains/maestro.toml', 'ci-workflows:check'],
   ];

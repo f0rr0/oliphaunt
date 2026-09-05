@@ -6,15 +6,9 @@ layer: "tool"
 stack: "systems"
 tags: ["extensions", "artifacts", "wasix"]
 dependsOn:
-  - id: "extension-runtime-contract"
-    scope: "build"
   - id: "extensions"
     scope: "build"
   - id: "liboliphaunt-wasix"
-    scope: "build"
-  - id: "source-inputs"
-    scope: "build"
-  - id: "third-party-shared"
     scope: "build"
 
 project:
@@ -29,24 +23,15 @@ tasks:
     deps:
       - "liboliphaunt-wasix:runtime-portable"
     inputs:
-      - "@group(legal-files)"
-      - "@group(cargo-workspace)"
       - project: "extensions"
         group: "build"
-      - "/src/postgres/versions/18/**/*"
-      - "/src/runtimes/liboliphaunt/licenses/**/*"
       - project: "liboliphaunt-wasix"
-        group: "artifact-source"
-      - project: "extension-runtime-contract"
-        group: "contract"
-      - project: "third-party-shared"
-        group: "sources"
-      - "/src/sources/tools/source-fetch-core.mjs"
-      - "/tools/release/extension-target-profiles.mjs"
-      - "/tools/release/extension-target-profiles.toml"
-      - "/tools/release/extension-upstream-licenses.mjs"
-      - "/tools/release/release-notices.mjs"
-      - "/tools/release/release-directory-safety.mjs"
+        group: "version"
+      - "tools/package-release-assets.mjs"
+      - "tools/package-release-assets.sh"
+      - "/tools/dev/bun.sh"
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/wasix-extension-install-contract.mjs"
     outputs:
       - "/target/extensions/wasix/release-assets/**/*"
     options:

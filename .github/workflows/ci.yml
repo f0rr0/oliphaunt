@@ -2078,7 +2078,7 @@ jobs:
           if-no-files-found: error
 
   wasix-postmaster-portable:
-    name: Builds / WASIX Postmaster Portable Inputs
+    name: WASIX Postmaster / Portable build and qualification
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'wasix-postmaster') }}
@@ -2108,7 +2108,7 @@ jobs:
           cache-save-if: ${{ env.HEAVY_CACHE_SAVE_IF }}
 
       - name: Build and qualify portable WASIX postmaster inputs
-        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream deep liboliphaunt-wasix-postmaster:portable-inputs
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream deep liboliphaunt-wasix-postmaster:portable-inputs liboliphaunt-wasix-postmaster:runtime-patch-tests liboliphaunt-wasix-postmaster:regression
 
       - name: Upload portable WASIX postmaster build inputs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -2118,7 +2118,7 @@ jobs:
           if-no-files-found: error
 
   wasix-postmaster-target:
-    name: Builds / WASIX Postmaster Release Asset (${{ matrix.target_id }})
+    name: WASIX Postmaster / ${{ matrix.target_id }} build and qualification
     needs:
       - affected
       - wasix-postmaster-portable
@@ -2174,10 +2174,10 @@ jobs:
           tar -xzf "$archive" --strip-components=1 \
             -C target/oliphaunt-wasix-postmaster
 
-      - name: Build, verify, qualify, and package WASIX postmaster
+      - name: Build, qualify, and package target WASIX postmaster
         env:
           OLIPHAUNT_WASIX_POSTMASTER_PORTABLE_INPUTS: "1"
-        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream deep liboliphaunt-wasix-postmaster:release-assets
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-moon-targets.sh --upstream deep liboliphaunt-wasix-postmaster:release-assets liboliphaunt-wasix-postmaster:immediate-recovery liboliphaunt-wasix-postmaster:linear-memory-integration
 
       - name: Upload target WASIX postmaster release asset
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -2187,7 +2187,7 @@ jobs:
           if-no-files-found: error
 
   wasix-postmaster:
-    name: Builds / WASIX Postmaster Release Assets
+    name: WASIX Postmaster / Aggregate release assets
     needs:
       - affected
       - wasix-postmaster-target

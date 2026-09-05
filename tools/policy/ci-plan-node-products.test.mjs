@@ -196,6 +196,18 @@ test("WASIX test helpers invalidate only tasks that execute them", () => {
   }
 });
 
+test("WASIX extension staging follows its own code and produced runtime artifact", () => {
+  const packager = effects("src/extensions/artifacts/wasix/tools/package-release-assets.mjs");
+  assert.equal(packager.directTasks.includes("extension-artifacts-wasix:build-target"), true);
+
+  const runtimeVersion = effects("src/runtimes/liboliphaunt/wasix/VERSION");
+  assert.equal(runtimeVersion.directTasks.includes("extension-artifacts-wasix:build-target"), true);
+
+  const releaseMetadata = effects("src/runtimes/liboliphaunt/wasix/release.toml");
+  assert.equal(releaseMetadata.directTasks.includes("extension-artifacts-wasix:build-target"), false);
+  assert.equal(releaseMetadata.directTasks.includes("release-tools:wasix-extension-packages"), true);
+});
+
 test("WASIX N-API production helpers keep the release builder affected", () => {
   for (const relativePath of [
     "src/bindings/wasix-ts/tools/pgwire-client.mjs",

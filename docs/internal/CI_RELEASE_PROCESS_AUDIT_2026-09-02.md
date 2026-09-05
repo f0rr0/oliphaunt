@@ -1,5 +1,10 @@
 # CI, Release, and Product Task Audit
 
+Current architectural recommendations and completed main/PR timing comparison:
+[`MONOREPO_SIMPLIFICATION_PLAN_2026-09-04.md`](MONOREPO_SIMPLIFICATION_PLAN_2026-09-04.md).
+That reassessment supersedes the blanket justification of all uncached tasks
+later in this ledger; correct graph tags alone do not prove task behavior.
+
 Final adversarial release readiness and hosted-limit results are recorded in
 [`RELEASE_PIPELINE_READINESS_2026-09-03.md`](RELEASE_PIPELINE_READINESS_2026-09-03.md).
 

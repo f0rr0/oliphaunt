@@ -861,20 +861,24 @@ export function validateCiArtifactCoverage(workflow, inventory) {
     [{}],
     ["liboliphaunt-wasix-postmaster-portable-build-inputs"],
   );
-  const portablePostmasterQualification = workflowJob(workflow, "wasix-postmaster-portable").steps
-    .find((step) => step.name === "Build and qualify portable WASIX postmaster inputs");
+  const portablePostmasterSteps = workflowJob(workflow, "wasix-postmaster-portable").steps;
+  const portablePostmasterBuild = portablePostmasterSteps.find((step) =>
+    step.run?.includes("liboliphaunt-wasix-postmaster:portable-inputs"));
   invariant(
-    portablePostmasterQualification?.run?.includes("--upstream deep")
-      && portablePostmasterQualification.run.includes("liboliphaunt-wasix-postmaster:portable-inputs"),
-    "portable WASIX postmaster qualification must execute its complete Moon dependency graph",
+    portablePostmasterBuild?.run?.includes("--upstream deep")
+      && portablePostmasterBuild.run.includes("liboliphaunt-wasix-postmaster:runtime-patch-tests")
+      && portablePostmasterBuild.run.includes("liboliphaunt-wasix-postmaster:regression"),
+    "portable WASIX postmaster production and qualification must execute their complete Moon graphs",
   );
-  const targetPostmasterQualification = workflowJob(workflow, "wasix-postmaster-target").steps
-    .find((step) => step.name === "Build, verify, qualify, and package WASIX postmaster");
+  const targetPostmasterSteps = workflowJob(workflow, "wasix-postmaster-target").steps;
+  const targetPostmasterBuild = targetPostmasterSteps.find((step) =>
+    step.run?.includes("liboliphaunt-wasix-postmaster:release-assets"));
   invariant(
-    targetPostmasterQualification?.run?.includes("--upstream deep")
-      && targetPostmasterQualification.run.includes("liboliphaunt-wasix-postmaster:release-assets")
-      && targetPostmasterQualification.if === undefined,
-    "every WASIX postmaster target must execute its complete Moon dependency graph",
+    targetPostmasterBuild?.run?.includes("--upstream deep")
+      && targetPostmasterBuild.if === undefined
+      && targetPostmasterBuild.run.includes("liboliphaunt-wasix-postmaster:immediate-recovery")
+      && targetPostmasterBuild.run.includes("liboliphaunt-wasix-postmaster:linear-memory-integration"),
+    "every WASIX postmaster target must execute complete production and qualification Moon graphs",
   );
   const postmasterUpload = actionSteps(workflow, "wasix-postmaster-target", "actions/upload-artifact@")
     .find((step) => step.with?.name === "liboliphaunt-wasix-postmaster-release-assets-${{ matrix.target_id }}");

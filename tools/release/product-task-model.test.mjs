@@ -115,11 +115,21 @@ test("task edges distinguish artifact data from ordering gates", () => {
 
 test("WASIX Postmaster qualification includes its packaged runtime behavior", () => {
   const tasks = moonJson(["query", "tasks"]).tasks["liboliphaunt-wasix-postmaster"];
-  assert.equal(
-    tasks.qualify.deps.some(({ target }) =>
-      target === "liboliphaunt-wasix-postmaster:release-assets"
-    ),
-    true,
+  assert.deepEqual(
+    tasks["runtime-patch-tests"].deps.map(({target}) => target),
+    ["liboliphaunt-wasix-postmaster:prepare-runtime"],
+  );
+  assert.deepEqual(
+    tasks.qualify.deps.map(({target}) => target).sort(),
+    [
+      "liboliphaunt-wasix-postmaster:immediate-recovery",
+      "liboliphaunt-wasix-postmaster:linear-memory-integration",
+      "liboliphaunt-wasix-postmaster:lint",
+      "liboliphaunt-wasix-postmaster:regression",
+      "liboliphaunt-wasix-postmaster:release-assets",
+      "liboliphaunt-wasix-postmaster:runtime-patch-tests",
+      "liboliphaunt-wasix-postmaster:unit",
+    ],
   );
 });
 

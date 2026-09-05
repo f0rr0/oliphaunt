@@ -36,6 +36,7 @@ From the repository root:
 moon run source-inputs:source-fetch-wasix-postmaster-runtime
 moon run liboliphaunt-wasix-postmaster:prepare-runtime
 moon run liboliphaunt-wasix-postmaster:runtime-build
+moon run liboliphaunt-wasix-postmaster:runtime-patch-tests
 moon run liboliphaunt-wasix-postmaster:runtime-capabilities
 ```
 
