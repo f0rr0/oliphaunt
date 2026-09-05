@@ -319,7 +319,8 @@ function cargoDependencyVersionChange({ repo, parent, commit, file, parts, befor
     return false;
   }
   const exact = typeof before === "string" && before.startsWith("=");
-  return before === `${exact ? "=" : ""}${priorPackage.version}` && after === `${exact ? "=" : ""}${nextPackage.version}`;
+  return (before === "*" || before === `${exact ? "=" : ""}${priorPackage.version}`) &&
+    after === `${exact ? "=" : ""}${nextPackage.version}`;
 }
 
 function localCargoPackageVersions(repo, commit, cache) {
