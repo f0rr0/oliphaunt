@@ -44,10 +44,7 @@ expected_guest_identity="$(fresh_manifest_value "$guest_dir/guest-build.receipt"
 }
 
 mkdir -p "$output_dir"
-[ ! -e "$archive" ] || {
-  printf 'refusing to overwrite portable build inputs: %s\n' "$archive" >&2
-  exit 2
-}
+rm -f -- "$archive"
 stage="$(mktemp -d "$FRESH_WORK_ROOT/.portable-inputs-stage.XXXXXX")"
 cleanup() {
   chmod -R u+w "$stage" 2>/dev/null || true

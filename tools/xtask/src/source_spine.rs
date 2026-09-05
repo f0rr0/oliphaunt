@@ -33,6 +33,7 @@ pub(super) fn check_sources_manifest_for_wasix_asset_build(
     if args.iter().any(|arg| arg == "--fetch") {
         fetch_pinned_sources_for_source_lane(&manifest, source_lane, true, source_scope)?;
     } else {
+        prepare_postgres_source_tree()?;
         check_source_spine_for_source_lane_filtered(
             &manifest,
             source_lane,
