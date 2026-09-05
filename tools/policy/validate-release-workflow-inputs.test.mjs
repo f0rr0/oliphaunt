@@ -15,25 +15,20 @@ const BASH = process.env.OLIPHAUNT_TEST_BASH
 function validate({
   operation = "prepare-release-pr",
   releaseCommit = "",
-  continuationPointer = "",
+  approvalRunId = "",
   workflowSha = SHA,
-  workflowRef,
+  workflowRef = "refs/heads/main",
 } = {}) {
-  const resolvedWorkflowRef = workflowRef ?? (
-    continuationPointer === ""
-      ? "refs/heads/main"
-      : `refs/tags/oliphaunt-release-transport/${workflowSha.toLowerCase()}`
-  );
   const result = spawnSync(BASH, [SCRIPT], {
     cwd: ROOT,
     encoding: "utf8",
     env: {
       ...process.env,
-      GITHUB_REF: resolvedWorkflowRef,
+      GITHUB_REF: workflowRef,
       GITHUB_SHA: workflowSha,
       RELEASE_OPERATION: operation,
       RELEASE_COMMIT: releaseCommit,
-      RELEASE_CONTINUATION_POINTER: continuationPointer,
+      RELEASE_APPROVAL_RUN_ID: approvalRunId,
     },
   });
   return {
@@ -44,7 +39,8 @@ function validate({
 
 test("accepts every supported root operation with its implicit workflow commit", () => {
   for (const operation of ["prepare-release-pr", "publish-dry-run", "publish-bootstrap", "publish"]) {
-    const result = validate({ operation });
+    const approvalRunId = operation === "publish" || operation === "publish-bootstrap" ? "33989155433" : "";
+    const result = validate({ operation, approvalRunId });
     assert.equal(result.status, 0, `${operation}: ${result.output}`);
   }
 });
@@ -69,68 +65,29 @@ test("rejects malformed and stale release commit assertions before every operati
   }
 });
 
-test("accepts continuations only for bootstrap with the exact commit assertion", () => {
-  const accepted = validate({
-    operation: "publish-bootstrap",
-    releaseCommit: SHA,
-    continuationPointer: "verified-pointer",
-  });
-  assert.equal(accepted.status, 0, accepted.output);
-
-  for (const operation of ["prepare-release-pr", "publish-dry-run", "publish"]) {
-    const result = validate({ operation, releaseCommit: SHA, continuationPointer: "verified-pointer" });
-    assert.notEqual(result.status, 0, `${operation} unexpectedly accepted a continuation`);
-    assert.match(result.output, /continuation_pointer is not valid/u);
-  }
-});
-
-test("root operations are main-only and continuations are exact transport-ref-only", () => {
+test("release operations are main-only", () => {
   const rootOnTag = validate({
     operation: "publish",
+    approvalRunId: "33989155433",
     workflowRef: `refs/tags/oliphaunt-release-transport/${SHA}`,
   });
   assert.notEqual(rootOnTag.status, 0, rootOnTag.output);
-  assert.match(rootOnTag.output, /root release operations must execute from refs\/heads\/main/u);
+  assert.match(rootOnTag.output, /release operations must execute from refs\/heads\/main/u);
+});
 
-  for (const workflowRef of [
-    "refs/heads/main",
-    `refs/tags/oliphaunt-release-transport/${"1".repeat(40)}`,
-    `refs/tags/unrelated/${SHA}`,
-  ]) {
-    const continuation = validate({
-      continuationPointer: "verified-pointer",
-      operation: "publish-bootstrap",
-      releaseCommit: SHA,
-      workflowRef,
-    });
-    assert.notEqual(continuation.status, 0, `${workflowRef} unexpectedly accepted`);
-    assert.match(continuation.output, /exact immutable transport ref/u);
+test("requires one pinned approval run only for publish operations", () => {
+  for (const operation of ["publish", "publish-bootstrap"]) {
+    for (const approvalRunId of ["", "0", "latest", "12.5"]) {
+      const result = validate({ operation, approvalRunId });
+      assert.notEqual(result.status, 0, `${operation} unexpectedly accepted ${approvalRunId}`);
+      assert.match(result.output, /requires approval_run_id/u);
+    }
   }
-
-  const uppercaseIdentity = validate({
-    continuationPointer: "verified-pointer",
-    operation: "publish-bootstrap",
-    releaseCommit: SHA.toUpperCase(),
-    workflowRef: `refs/tags/oliphaunt-release-transport/${SHA}`,
-    workflowSha: SHA.toUpperCase(),
-  });
-  assert.equal(uppercaseIdentity.status, 0, uppercaseIdentity.output);
-});
-
-test("rejects a continuation without an explicit exact commit assertion", () => {
-  const result = validate({ operation: "publish-bootstrap", continuationPointer: "verified-pointer" });
-  assert.notEqual(result.status, 0, result.output);
-  assert.match(result.output, /automatic continuation requires release_commit/u);
-});
-
-test("rejects an oversized continuation pointer", () => {
-  const result = validate({
-    operation: "publish-bootstrap",
-    releaseCommit: SHA,
-    continuationPointer: "x".repeat(32769),
-  });
-  assert.notEqual(result.status, 0, result.output);
-  assert.match(result.output, /32 KiB transport bound/u);
+  for (const operation of ["prepare-release-pr", "publish-dry-run"]) {
+    const result = validate({ operation, approvalRunId: "33989155433" });
+    assert.notEqual(result.status, 0, `${operation} unexpectedly accepted approval_run_id`);
+    assert.match(result.output, /approval_run_id is not valid/u);
+  }
 });
 
 test("rejects unsupported operations and malformed workflow identities", () => {

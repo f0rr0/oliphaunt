@@ -2,7 +2,7 @@
 #
 # This file is intentionally small and reviewed with SDK changes. It is the
 # repo-level registry for SDK ownership, target platforms, and delegation rules.
-# `sdk-contracts:check` parses this schema and cross-checks release identities;
+# `sdk-contracts:manifest` parses this schema and cross-checks release identities;
 # product tasks own behavior and package proof.
 # `calling_contract` records synchronous versus language-level asynchronous
 # completion. `execution_owner` independently records where an admitted public

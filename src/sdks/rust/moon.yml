@@ -52,7 +52,7 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  unit:
+  unit-distinct:
     tags: ["quality", "unit", "requires-rust"]
     script: |
       set -e
@@ -65,7 +65,6 @@ tasks:
       "$CARGO_TARGET_DIR/build-script-tests"
       cargo test -p oliphaunt --doc --locked
       cargo test -p oliphaunt-build --locked
-      cargo nextest run -p oliphaunt --locked --profile ci --no-tests=fail --lib --test public_api --test sdk_extensions
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/test"
     inputs:
@@ -79,6 +78,32 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
+  unit-shared:
+    command: "cargo nextest run -p oliphaunt --locked --profile ci --no-tests=fail --lib --test public_api --test sdk_extensions"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/test"
+    inputs:
+      - "@group(cargo-workspace)"
+      - "@group(rust-test-config)"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - project: "shared-rust-query-core"
+        group: "sources"
+      - "@group(code)"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+      runInCI: false
+  unit:
+    command: "true"
+    deps:
+      - "oliphaunt-rust:unit-distinct"
+      - "oliphaunt-rust:unit-shared"
+    inputs: []
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
   package:
     tags: ["package"]
     script: |
@@ -109,7 +134,7 @@ tasks:
     command: "true"
     deps:
       - "oliphaunt-rust:compile"
-      - "oliphaunt-rust:unit"
+      - "oliphaunt-rust:unit-distinct"
       - "oliphaunt-rust:package"
       - "oliphaunt-rust:regression"
     inputs: []

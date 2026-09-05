@@ -50,13 +50,12 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
 
-  unit:
+  unit-distinct:
     tags: ["quality", "unit", "requires-rust"]
     script: |
       set -e
       cargo test -p oliphaunt-wasix --doc --locked
       cargo test -p oliphaunt-wasix --doc --locked --features tools
-      cargo nextest run -p oliphaunt-wasix --locked --profile ci --no-default-features --lib --no-tests=fail --test-threads=1
       cargo nextest run -p oliphaunt-wasix --locked --profile ci --no-default-features --features extensions,tools,extension-vector --test public_api --no-tests=fail --test-threads=1
       cargo test -p oliphaunt-wasix --locked --no-default-features --features extensions --test runtime_smoke --test client_compat --no-run
     env:
@@ -74,6 +73,36 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
+
+  unit-shared:
+    command: "cargo nextest run -p oliphaunt-wasix --locked --profile ci --no-default-features --lib --no-tests=fail --test-threads=1"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/test"
+    inputs:
+      - "@group(cargo-workspace)"
+      - "@group(rust-test-config)"
+      - project: "shared-test-fixtures"
+        group: "fixtures"
+      - project: "shared-rust-query-core"
+        group: "sources"
+      - "@group(code)"
+      - project: "liboliphaunt-wasix"
+        group: "crates"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+      runInCI: false
+
+  unit:
+    command: "true"
+    deps:
+      - "oliphaunt-wasix-rust:unit-distinct"
+      - "oliphaunt-wasix-rust:unit-shared"
+    inputs: []
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
 
   package:
     tags: ["package"]
@@ -107,7 +136,7 @@ tasks:
     command: "true"
     deps:
       - "oliphaunt-wasix-rust:compile"
-      - "oliphaunt-wasix-rust:unit"
+      - "oliphaunt-wasix-rust:unit-distinct"
       - "oliphaunt-wasix-rust:package"
     inputs: []
     options:

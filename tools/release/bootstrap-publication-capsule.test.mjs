@@ -19,10 +19,10 @@ import path from "node:path";
 import test from "node:test";
 
 import {
-  BOOTSTRAP_CAPSULE_LOCK_PATH,
-  BOOTSTRAP_CAPSULE_MANIFEST_PATH,
-  packBootstrapCapsule,
-  verifyExtractBootstrapCapsule,
+  PUBLICATION_CANDIDATE_LOCK_PATH as BOOTSTRAP_CAPSULE_LOCK_PATH,
+  PUBLICATION_CANDIDATE_MANIFEST_PATH as BOOTSTRAP_CAPSULE_MANIFEST_PATH,
+  packBootstrapCapsule as packCandidate,
+  verifyExtractBootstrapCapsule as extractCandidate,
 } from "./bootstrap-publication-capsule.mjs";
 import {
   buildPublicationCandidate,
@@ -32,6 +32,15 @@ import { loadPublicationCatalog } from "./publication-catalog.mjs";
 import { ROOT } from "./release-graph.mjs";
 
 const PRODUCTS = ["oliphaunt-rust", "oliphaunt-js"];
+const APPROVAL = { approvalRunId: "123", qualificationRunId: "456" };
+
+function packBootstrapCapsule(options) {
+  return packCandidate({ ...APPROVAL, ...options });
+}
+
+function verifyExtractBootstrapCapsule(options) {
+  return extractCandidate({ ...APPROVAL, ...options });
+}
 
 function sha256(file) {
   return createHash("sha256").update(readFileSync(file)).digest("hex");
@@ -96,7 +105,7 @@ function mavenFixture(artifacts, group, name, version) {
 
 function fixture() {
   mkdirSync(path.join(ROOT, "target"), { recursive: true });
-  const root = mkdtempSync(path.join(ROOT, "target", "bootstrap-capsule-test-"));
+  const root = mkdtempSync(path.join(ROOT, "target", "publication-candidate-test-"));
   const stage = path.join(root, "stage");
   const artifacts = path.join(root, "artifacts");
   mkdirSync(stage, { recursive: true });
@@ -120,7 +129,7 @@ function fixture() {
 
 function mavenOnlyFixture() {
   mkdirSync(path.join(ROOT, "target"), { recursive: true });
-  const root = mkdtempSync(path.join(ROOT, "target", "bootstrap-capsule-empty-test-"));
+  const root = mkdtempSync(path.join(ROOT, "target", "publication-candidate-empty-test-"));
   const artifacts = path.join(root, "artifacts");
   mkdirSync(artifacts, { recursive: true });
   const products = ["oliphaunt-kotlin"];
@@ -146,7 +155,7 @@ function mavenOnlyFixture() {
 }
 
 function workspace() {
-  return mkdtempSync(path.join(os.tmpdir(), "oliphaunt-bootstrap-capsule-workspace-"));
+  return mkdtempSync(path.join(os.tmpdir(), "oliphaunt-publication-candidate-workspace-"));
 }
 
 function mutateTarPayload(source, destination, member, replacement) {
@@ -176,7 +185,37 @@ function mutateTarPayload(source, destination, member, replacement) {
   assert.fail(`archive member not found: ${member}`);
 }
 
-test("packs a deterministic exact Cargo/npm capsule and atomically installs it", () => {
+function tarRecords(source) {
+  const bytes = Buffer.from(readFileSync(source));
+  const records = [];
+  for (let position = 0; !bytes.subarray(position, position + 512).every((byte) => byte === 0);) {
+    const header = bytes.subarray(position, position + 512);
+    const size = Number.parseInt(header.subarray(124, 136).toString("ascii").replaceAll("\0", "").trim(), 8);
+    const end = position + 512 + Math.ceil(size / 512) * 512;
+    records.push(Buffer.from(bytes.subarray(position, end)));
+    position = end;
+  }
+  return records;
+}
+
+function renamedTarRecord(record, name) {
+  assert.ok(Buffer.byteLength(name) <= 100);
+  const changed = Buffer.from(record);
+  changed.fill(0, 0, 100);
+  changed.write(name, 0, "utf8");
+  changed.fill(0, 345, 500);
+  changed.fill(0x20, 148, 156);
+  let checksum = 0;
+  for (const byte of changed.subarray(0, 512)) checksum += byte;
+  changed.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, "ascii");
+  return changed;
+}
+
+function writeTar(destination, records) {
+  writeFileSync(destination, Buffer.concat([...records, Buffer.alloc(1024)]));
+}
+
+test("packs every locked publication file deterministically and atomically installs it", () => {
   const value = fixture();
   const first = path.join(value.root, "first.tar");
   const second = path.join(value.root, "second.tar");
@@ -189,8 +228,9 @@ test("packs a deterministic exact Cargo/npm capsule and atomically installs it",
     });
     packBootstrapCapsule({ lockFile: value.lockFile, products: PRODUCTS, output: second });
     assert.equal(sha256(first), sha256(second), "capsule must be byte-for-byte deterministic");
-    assert.equal(manifest.carriers.length, 3);
-    assert.deepEqual(manifest.carriers.map(({ ecosystem }) => ecosystem).sort(), ["cargo", "cargo", "npm"]);
+    assert.equal(manifest.approval.releaseRunId, APPROVAL.approvalRunId);
+    assert.equal(manifest.approval.qualificationRunId, APPROVAL.qualificationRunId);
+    assert.equal(manifest.files.length, 3);
 
     const installed = verifyExtractBootstrapCapsule({
       transport: first,
@@ -205,11 +245,11 @@ test("packs a deterministic exact Cargo/npm capsule and atomically installs it",
     );
     assert.equal(lstatSync(path.join(output, ...BOOTSTRAP_CAPSULE_MANIFEST_PATH.split("/"))).isFile(), true);
     for (const source of [...value.cargo, value.npm]) {
-      const carrier = manifest.carriers.find(({ artifact }) => artifact.sha256 === sha256(source));
-      assert.ok(carrier);
+      const artifact = manifest.files.find((file) => file.sha256 === sha256(source));
+      assert.ok(artifact);
       assert.equal(
-        sha256(path.join(output, ...carrier.artifact.path.split("/"))),
-        carrier.artifact.sha256,
+        sha256(path.join(output, ...artifact.path.split("/"))),
+        artifact.sha256,
       );
     }
   } finally {
@@ -218,7 +258,7 @@ test("packs a deterministic exact Cargo/npm capsule and atomically installs it",
   }
 });
 
-test("packs and verifies a deterministic empty capsule for a Maven-only release", () => {
+test("packs and verifies all Maven payloads for a Maven-only release", () => {
   const value = mavenOnlyFixture();
   const first = path.join(value.root, "first.tar");
   const second = path.join(value.root, "second.tar");
@@ -230,7 +270,7 @@ test("packs and verifies a deterministic empty capsule for a Maven-only release"
       output: first,
     });
     packBootstrapCapsule({ lockFile: value.lockFile, products: value.products, output: second });
-    assert.deepEqual(manifest.carriers, []);
+    assert.ok(manifest.files.length > 0);
     assert.equal(sha256(first), sha256(second));
     const installed = verifyExtractBootstrapCapsule({
       transport: first,
@@ -238,7 +278,7 @@ test("packs and verifies a deterministic empty capsule for a Maven-only release"
       products: value.products,
       workspaceRoot: output,
     });
-    assert.deepEqual(installed.carriers, []);
+    assert.deepEqual(installed.files, manifest.files);
     assert.deepEqual(
       readFileSync(path.join(output, ...BOOTSTRAP_CAPSULE_LOCK_PATH.split("/"))),
       readFileSync(value.lockFile),
@@ -259,6 +299,17 @@ test("fails closed on selection drift, external-lock drift, and a preexisting de
       /selected products do not exactly match/u,
     );
     packBootstrapCapsule({ lockFile: value.lockFile, products: PRODUCTS, output: capsule });
+    assert.throws(
+      () => extractCandidate({
+        ...APPROVAL,
+        approvalRunId: "999",
+        transport: capsule,
+        approvedLock: value.lockFile,
+        products: PRODUCTS,
+        workspaceRoot: output,
+      }),
+      /manifest does not exactly describe its approval/u,
+    );
     const changedLock = path.join(value.root, "changed-lock.json");
     copyFileSync(value.lockFile, changedLock);
     writeFileSync(changedLock, `${readFileSync(changedLock, "utf8").trimEnd()}  \n`);
@@ -300,13 +351,13 @@ test("rejects tampered manifests and carrier bytes without installing partial ou
   try {
     const manifest = packBootstrapCapsule({ lockFile: value.lockFile, products: PRODUCTS, output: capsule });
     mutateTarPayload(capsule, manifestTamper, BOOTSTRAP_CAPSULE_MANIFEST_PATH, (bytes) => {
-      const marker = Buffer.from("oliphaunt-bootstrap-publication-capsule-v1");
+      const marker = Buffer.from("oliphaunt-frozen-publication-candidate-v1");
       const index = bytes.indexOf(marker);
       assert.ok(index >= 0);
       bytes[index] = "x".charCodeAt(0);
       return bytes;
     });
-    mutateTarPayload(capsule, carrierTamper, manifest.carriers[0].artifact.path, (bytes) => {
+    mutateTarPayload(capsule, carrierTamper, manifest.files[0].path, (bytes) => {
       bytes[Math.floor(bytes.length / 2)] ^= 0xff;
       return bytes;
     });
@@ -338,6 +389,41 @@ test("rejects tampered manifests and carrier bytes without installing partial ou
   }
 });
 
+test("rejects missing, extra, and unsafe archive members", () => {
+  const value = fixture();
+  const capsule = path.join(value.root, "capsule.tar");
+  const missing = path.join(value.root, "missing.tar");
+  const extra = path.join(value.root, "extra.tar");
+  const unsafe = path.join(value.root, "unsafe.tar");
+  try {
+    packBootstrapCapsule({ lockFile: value.lockFile, products: PRODUCTS, output: capsule });
+    const records = tarRecords(capsule);
+    writeTar(missing, records.slice(0, -1));
+    writeTar(extra, [...records, renamedTarRecord(records.at(-1), "target/zzzz-unapproved")]);
+    writeTar(unsafe, [renamedTarRecord(records[0], "../escape"), ...records.slice(1)]);
+    for (const [transport, pattern] of [
+      [missing, /unavailable|file set or bytes differ/u],
+      [extra, /file set or bytes differ/u],
+      [unsafe, /unsafe path component/u],
+    ]) {
+      const output = workspace();
+      try {
+        assert.throws(() => verifyExtractBootstrapCapsule({
+          transport,
+          approvedLock: value.lockFile,
+          products: PRODUCTS,
+          workspaceRoot: output,
+        }), pattern);
+        assert.throws(() => lstatSync(path.join(output, "target")), /ENOENT/u);
+      } finally {
+        rmSync(output, { recursive: true, force: true });
+      }
+    }
+  } finally {
+    rmSync(value.root, { recursive: true, force: true });
+  }
+});
+
 test("rejects symlinked frozen inputs before producing a capsule", () => {
   const value = fixture();
   const output = path.join(value.root, "capsule.tar");
@@ -350,7 +436,7 @@ test("rejects symlinked frozen inputs before producing a capsule", () => {
     symlinkSync(replacement, artifact);
     assert.throws(
       () => packBootstrapCapsule({ lockFile: value.lockFile, products: PRODUCTS, output }),
-      /regular non-symlink|open .* safely/u,
+      /regular (?:non-symlink )?file|regular file or directory|open .* safely/u,
     );
     assert.throws(() => lstatSync(output), /ENOENT/u);
   } finally {

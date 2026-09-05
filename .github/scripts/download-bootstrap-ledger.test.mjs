@@ -18,7 +18,6 @@ import { isolatedGitHubTestEnvironment } from "../../tools/test/isolated-github-
 import test from "node:test";
 
 import {
-  restoreExactContinuationLedger,
   selectEarlierAttemptArtifact,
   validateAttemptMetadata,
 } from "./download-bootstrap-ledger.mjs";
@@ -89,46 +88,8 @@ if (attempt) {
 }
 const run = /\\/actions\\/runs\\/([0-9]+)$/.exec(endpoint);
 if (run) {
-  if (run[1] === "900") {
-    process.stdout.write(process.env.FAKE_CURRENT_RUN);
-    process.exit(0);
-  }
-  const row = JSON.parse(process.env.FAKE_RUNS)
-    .find((candidate) => String(candidate.databaseId) === run[1]);
-  if (!row) throw new Error("missing fake run metadata " + run[1]);
-  process.stdout.write(JSON.stringify({
-    id: Number(run[1]),
-    workflow_id: row.workflowId ?? 42,
-    head_sha: row.headSha ?? "${SHA}",
-    event: row.event ?? "workflow_dispatch",
-    created_at: row.createdAt,
-    status: row.status,
-    conclusion: row.conclusion ?? null,
-  }));
-  process.exit(0);
-}
-if (/\\/actions\\/workflows\\/42\\/runs[?]/.test(endpoint)) {
-  const url = new URL("https://api.github.com/" + endpoint);
-  const page = Number(url.searchParams.get("page"));
-  const all = JSON.parse(process.env.FAKE_RUNS).map((row) => ({
-    id: row.databaseId,
-    workflow_id: row.workflowId ?? 42,
-    head_sha: row.headSha ?? "${SHA}",
-    event: row.event ?? "workflow_dispatch",
-    created_at: row.createdAt,
-    status: row.status,
-    conclusion: row.conclusion ?? null,
-  }));
-  const workflow_runs = all.slice((page - 1) * 100, page * 100);
-  let link = "";
-  if (page * 100 < all.length) {
-    const next = new URL(url);
-    next.searchParams.set("page", String(page + 1));
-    const last = new URL(url);
-    last.searchParams.set("page", String(Math.ceil(all.length / 100)));
-    link = \`Link: <\${next}>; rel="next", <\${last}>; rel="last"\\n\`;
-  }
-  process.stdout.write("HTTP/2.0 200 OK\\n" + link + "\\n" + JSON.stringify({ workflow_runs }));
+  if (run[1] !== "900") throw new Error("unexpected run " + run[1]);
+  process.stdout.write(process.env.FAKE_CURRENT_RUN);
   process.exit(0);
 }
 if (/\\/actions\\/artifacts[?]name=/.test(endpoint)) {
@@ -146,7 +107,7 @@ if (/\\/actions\\/artifacts[?]name=/.test(endpoint)) {
           size_in_bytes: bytes.length,
           digest: "sha256:" + crypto.createHash("sha256").update(bytes).digest("hex"),
         }),
-        workflow_run: { ...artifact.workflow_run, head_sha: "${SHA}" },
+        workflow_run: { head_sha: "${SHA}", ...artifact.workflow_run },
       };
     });
   const artifacts = all.slice((page - 1) * 100, page * 100);
@@ -220,7 +181,6 @@ function invoke(fixture, {
     created_at: "2026-07-15T10:00:00Z",
     status: "in_progress",
   },
-  runs = [],
   zipsByArtifact = {},
   downloadMode = "success",
 } = {}) {
@@ -236,7 +196,6 @@ function invoke(fixture, {
       FAKE_DOWNLOAD_MODE: downloadMode,
       FAKE_DOWNLOAD_STATE: fixture.downloadState,
       FAKE_GH_LOG: fixture.log,
-      FAKE_RUNS: JSON.stringify(runs),
       FAKE_ZIPS_BY_ARTIFACT: JSON.stringify(zipsByArtifact),
       GH_REPO: "f0rr0/oliphaunt",
       GH_TOKEN: "test-token",
@@ -289,7 +248,6 @@ test("rerun restores an earlier-attempt artifact by immutable artifact id and ex
         artifact(101, 900, "2026-07-15T09:50:00Z", "2026-07-15T09:51:00Z"),
       ],
     },
-    runs: [{ databaseId: 800, createdAt: "2026-07-14T10:00:00Z", status: "completed", conclusion: "failure" }],
     zipsByArtifact: { 101: priorZip, 202: currentZip },
   });
   assert.equal(result.status, 0, result.stderr);
@@ -299,148 +257,18 @@ test("rerun restores an earlier-attempt artifact by immutable artifact id and ex
   assert.equal(calls(f).some((args) => args[0] === "run" && args[1] === "list"), false);
 });
 
-test("fresh attempt preserves recovery from the newest completed distinct dispatch", async (t) => {
-  const f = await fixture(t, "fresh-dispatch");
-  const priorZip = ledgerZip(f.root, "prior-dispatch", 3, "c");
-  const result = invoke(f, {
-    artifactsByRun: {
-      800: [artifact(303, 800, "2026-07-14T10:05:00Z")],
-      700: [artifact(404, 700, "2026-07-14T09:05:00Z")],
-    },
-    runs: [
-      { databaseId: 900, createdAt: "2026-07-15T10:00:00Z", status: "in_progress", conclusion: null },
-      { databaseId: 700, createdAt: "2026-07-14T09:00:00Z", status: "in_progress", conclusion: null },
-      { databaseId: 800, createdAt: "2026-07-14T10:00:00Z", status: "completed", conclusion: "failure" },
-    ],
-    zipsByArtifact: { 303: priorZip },
-  });
-  assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(downloadedArtifactIds(f), ["303"]);
-  assert.deepEqual(restoredNames(f), [checkpointName(3, "c")]);
-  assert.match(readFileSync(f.output, "utf8"), /^found=true\nrun_id=800\n$/u);
-  assert.equal(
-    calls(f).filter((args) => args.at(-1)?.includes("/actions/artifacts?name=oliphaunt-bootstrap-ledger")).length,
-    1,
-    "all candidate dispatches must share one repository-level named artifact inventory",
-  );
-  assert.equal(
-    calls(f).some((args) => args.at(-1)?.includes("/runs/900/artifacts")),
-    false,
-    "attempt 1 must never inspect or download its own run artifact",
-  );
-});
-
-test("paginated artifact/run recovery finds an eligible dispatch beyond one hundred newer retries", async (t) => {
-  const f = await fixture(t, "beyond-one-hundred");
-  const priorZip = ledgerZip(f.root, "beyond-one-hundred-prior", 13, "a");
-  const artifactsByRun = {};
-  const runs = [];
-  for (let index = 0; index < 101; index += 1) {
-    const runId = 1_000 + index;
-    const timestamp = `2026-07-15T${String(Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}:00Z`;
-    artifactsByRun[runId] = [artifact(2_000 + index, runId, timestamp)];
-    runs.push({ databaseId: runId, createdAt: timestamp, status: "in_progress", conclusion: null });
-  }
-  artifactsByRun[800] = [artifact(3_000, 800, "2026-07-14T10:05:00Z")];
-  runs.push({ databaseId: 800, createdAt: "2026-07-14T10:00:00Z", status: "completed", conclusion: "failure" });
-  const result = invoke(f, {
-    artifactsByRun,
-    runs,
-    zipsByArtifact: { 3_000: priorZip },
-  });
-  assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(downloadedArtifactIds(f), ["3000"]);
-  assert.deepEqual(restoredNames(f), [checkpointName(13, "a")]);
-  const inventory = calls(f);
-  assert.equal(
-    inventory.filter((args) => /\/actions\/runs\/[0-9]+$/u.test(args.at(-1))).length,
-    1,
-    "only the current run needs an individual metadata read",
-  );
-  assert.equal(
-    inventory.filter((args) => args.at(-1)?.includes("/actions/workflows/42/runs?")).length,
-    2,
-    "the exact-SHA workflow run inventory must traverse both pages",
-  );
-  assert.equal(
-    inventory.filter((args) => args.at(-1)?.includes("/actions/artifacts?name=")).length,
-    2,
-    "the immutable named-artifact inventory must traverse both pages",
-  );
-  assert.equal(inventory.some((args) => args[0] === "run" && args[1] === "list"), false);
-  assert.equal(inventory.flat().includes("--limit"), false);
-});
-
-test("a newer same-name artifact from another workflow cannot shadow the Release ledger", async (t) => {
-  const f = await fixture(t, "wrong-workflow-shadow");
-  const correctZip = ledgerZip(f.root, "correct-workflow", 14, "b");
-  const result = invoke(f, {
-    artifactsByRun: {
-      850: [artifact(4_000, 850, "2026-07-15T09:05:00Z")],
-      800: [artifact(4_001, 800, "2026-07-14T10:05:00Z")],
-    },
-    runs: [
-      {
-        databaseId: 850,
-        createdAt: "2026-07-15T09:00:00Z",
-        status: "completed",
-        conclusion: "success",
-        workflowId: 99,
-      },
-      {
-        databaseId: 800,
-        createdAt: "2026-07-14T10:00:00Z",
-        status: "completed",
-        conclusion: "failure",
-      },
-    ],
-    zipsByArtifact: { 4_001: correctZip },
-  });
-  assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(downloadedArtifactIds(f), ["4001"]);
-  assert.match(readFileSync(f.output, "utf8"), /^found=true\nrun_id=800\n$/u);
-});
-
-test("an artifact/run exact-SHA identity disagreement fails closed", async (t) => {
+test("the current run artifact must retain its exact-SHA binding", async (t) => {
   const f = await fixture(t, "sha-disagreement");
   const result = invoke(f, {
-    artifactsByRun: { 800: [artifact(5_000, 800, "2026-07-14T10:05:00Z")] },
-    runs: [{
-      databaseId: 800,
-      createdAt: "2026-07-14T10:00:00Z",
-      status: "completed",
-      conclusion: "failure",
-      headSha: "b".repeat(40),
-    }],
+    artifactsByRun: {
+      900: [artifact(5_000, 900, "2026-07-14T10:05:00Z", undefined, {
+        workflow_run: { id: 900, head_sha: "b".repeat(40) },
+      })],
+    },
   });
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /disagrees with its exact-SHA artifact binding/u);
+  assert.match(result.stderr, /artifact disagrees with its exact-SHA binding/u);
   assert.equal(readFileSync(f.output, "utf8"), "");
-});
-
-test("rerun falls back to a completed distinct dispatch without consuming a current-attempt artifact", async (t) => {
-  const f = await fixture(t, "rerun-fallback");
-  const currentZip = ledgerZip(f.root, "current", 4, "d");
-  const priorZip = ledgerZip(f.root, "prior", 5, "e");
-  const result = invoke(f, {
-    attempt: 3,
-    attemptMetadata: {
-      id: 900,
-      run_attempt: 3,
-      run_started_at: "2026-07-15T11:00:00Z",
-      head_sha: SHA,
-      event: "workflow_dispatch",
-    },
-    artifactsByRun: {
-      900: [artifact(202, 900, "2026-07-15T11:00:01Z")],
-      800: [artifact(303, 800, "2026-07-14T10:05:00Z")],
-    },
-    runs: [{ databaseId: 800, createdAt: "2026-07-14T10:00:00Z", status: "completed", conclusion: "failure" }],
-    zipsByArtifact: { 202: currentZip, 303: priorZip },
-  });
-  assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(downloadedArtifactIds(f), ["303"]);
-  assert.deepEqual(restoredNames(f), [checkpointName(5, "e")]);
 });
 
 test("rerun refuses genesis when only an artifact from the current attempt is visible", async (t) => {
@@ -456,7 +284,6 @@ test("rerun refuses genesis when only an artifact from the current attempt is vi
       event: "workflow_dispatch",
     },
     artifactsByRun: { 900: [artifact(202, 900, "2026-07-15T12:00:00Z")] },
-    runs: [],
     zipsByArtifact: { 202: currentZip },
   });
   assert.equal(result.status, 1);
@@ -502,9 +329,10 @@ test("artifact transport retries transient failure and restores only a complete 
   const f = await fixture(t, "transient-download");
   const archive = ledgerZip(f.root, "transient", 7, "a");
   const result = invoke(f, {
-    artifactsByRun: { 800: [artifact(707, 800, "2026-07-14T10:05:00Z")] },
+    attempt: 2,
+    attemptMetadata: { id: 900, run_attempt: 2, run_started_at: "2026-07-15T10:00:00Z", head_sha: SHA, event: "workflow_dispatch" },
+    artifactsByRun: { 900: [artifact(707, 900, "2026-07-14T10:05:00Z")] },
     downloadMode: "transient",
-    runs: [{ databaseId: 800, createdAt: "2026-07-14T10:00:00Z", status: "completed", conclusion: "failure" }],
     zipsByArtifact: { 707: archive },
   });
   assert.equal(result.status, 0, result.stderr);
@@ -520,9 +348,10 @@ test("repeated truncated ZIP responses preserve the durable checkpoint cache and
   writeFileSync(path.join(f.destination, existing), "durable\n");
   const archive = ledgerZip(f.root, "truncated", 9, "c");
   const result = invoke(f, {
-    artifactsByRun: { 800: [artifact(808, 800, "2026-07-14T10:05:00Z")] },
+    attempt: 2,
+    attemptMetadata: { id: 900, run_attempt: 2, run_started_at: "2026-07-15T10:00:00Z", head_sha: SHA, event: "workflow_dispatch" },
+    artifactsByRun: { 900: [artifact(808, 900, "2026-07-14T10:05:00Z")] },
     downloadMode: "truncated",
-    runs: [{ databaseId: 800, createdAt: "2026-07-14T10:00:00Z", status: "completed", conclusion: "failure" }],
     zipsByArtifact: { 808: archive },
   });
   assert.equal(result.status, 1);
@@ -540,9 +369,10 @@ test("a valid-looking ZIP with the wrong immutable digest is never restored", as
   writeFileSync(path.join(f.destination, existing), "durable\n");
   const archive = ledgerZip(f.root, "identity-mismatch", 12, "f");
   const result = invoke(f, {
-    artifactsByRun: { 800: [artifact(1001, 800, "2026-07-14T10:05:00Z")] },
+    attempt: 2,
+    attemptMetadata: { id: 900, run_attempt: 2, run_started_at: "2026-07-15T10:00:00Z", head_sha: SHA, event: "workflow_dispatch" },
+    artifactsByRun: { 900: [artifact(1001, 900, "2026-07-14T10:05:00Z")] },
     downloadMode: "identity-mismatch",
-    runs: [{ databaseId: 800, createdAt: "2026-07-14T10:00:00Z", status: "completed", conclusion: "failure" }],
     zipsByArtifact: { 1001: archive },
   });
   assert.equal(result.status, 1);
@@ -559,8 +389,9 @@ test("checkpoint collision is validated before atomic promotion and preserves pr
   writeFileSync(path.join(f.destination, name), "local-different-bytes\n");
   const archive = ledgerZip(f.root, "collision", 10, "d");
   const result = invoke(f, {
-    artifactsByRun: { 800: [artifact(909, 800, "2026-07-14T10:05:00Z")] },
-    runs: [{ databaseId: 800, createdAt: "2026-07-14T10:00:00Z", status: "completed", conclusion: "failure" }],
+    attempt: 2,
+    attemptMetadata: { id: 900, run_attempt: 2, run_started_at: "2026-07-15T10:00:00Z", head_sha: SHA, event: "workflow_dispatch" },
+    artifactsByRun: { 900: [artifact(909, 900, "2026-07-14T10:05:00Z")] },
     zipsByArtifact: { 909: archive },
   });
   assert.equal(result.status, 1);
@@ -568,21 +399,4 @@ test("checkpoint collision is validated before atomic promotion and preserves pr
   assert.equal(readFileSync(path.join(f.destination, name), "utf8"), "local-different-bytes\n");
   assert.equal(existsSync(path.join(f.destination, ".artifact.zip")), false);
   assert.equal(readdirSync(f.root).some((entry) => entry.startsWith(".destination.")), false);
-});
-
-test("exact continuation restore installs only immutable checkpoint entries and rejects collisions", async (t) => {
-  const f = await fixture(t, "exact-continuation");
-  const name = checkpointName(13, "a");
-  restoreExactContinuationLedger({
-    checkpointEntries: [{ name, bytes: Buffer.from("exact\n") }],
-  }, f.destination);
-  assert.deepEqual(restoredNames(f), [name]);
-  assert.equal(readFileSync(path.join(f.destination, name), "utf8"), "exact\n");
-  assert.throws(
-    () => restoreExactContinuationLedger({
-      checkpointEntries: [{ name, bytes: Buffer.from("changed\n") }],
-    }, f.destination),
-    /conflicts with local/u,
-  );
-  assert.equal(readFileSync(path.join(f.destination, name), "utf8"), "exact\n");
 });

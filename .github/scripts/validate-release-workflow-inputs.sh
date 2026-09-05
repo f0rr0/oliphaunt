@@ -6,7 +6,7 @@ set -euo pipefail
 : "${RELEASE_OPERATION:?RELEASE_OPERATION is required}"
 
 release_commit="${RELEASE_COMMIT:-}"
-continuation_pointer="${RELEASE_CONTINUATION_POINTER:-}"
+approval_run_id="${RELEASE_APPROVAL_RUN_ID:-}"
 
 if [[ ! "${GITHUB_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]; then
   echo "GITHUB_SHA must be a full 40-character commit SHA, got: ${GITHUB_SHA}" >&2
@@ -39,27 +39,17 @@ if [[ -n "${release_commit}" ]]; then
   fi
 fi
 
-if (( ${#continuation_pointer} > 32768 )); then
-  echo "continuation_pointer exceeds the 32 KiB transport bound" >&2
+if [[ "${RELEASE_OPERATION}" == "publish" || "${RELEASE_OPERATION}" == "publish-bootstrap" ]]; then
+  if [[ ! "${approval_run_id}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "${RELEASE_OPERATION} requires approval_run_id from the exact successful publish-dry-run" >&2
+    exit 1
+  fi
+elif [[ -n "${approval_run_id}" ]]; then
+  echo "approval_run_id is not valid for ${RELEASE_OPERATION}" >&2
   exit 1
 fi
-if [[ -n "${continuation_pointer}" ]]; then
-  if [[ "${RELEASE_OPERATION}" != "publish-bootstrap" ]]; then
-    echo "continuation_pointer is not valid for ${RELEASE_OPERATION}" >&2
-    exit 1
-  fi
-  if [[ -z "${release_commit}" ]]; then
-    echo "automatic continuation requires release_commit to equal the exact workflow SHA" >&2
-    exit 1
-  fi
-  expected_ref="refs/tags/oliphaunt-release-transport/${normalized_github_sha}"
-  if [[ "${GITHUB_REF}" != "${expected_ref}" ]]; then
-    echo "automatic continuation must execute from its exact immutable transport ref" >&2
-    echo "expected ref: ${expected_ref}" >&2
-    echo "workflow ref: ${GITHUB_REF}" >&2
-    exit 1
-  fi
-elif [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-  echo "root release operations must execute from refs/heads/main; got: ${GITHUB_REF}" >&2
+
+if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+  echo "release operations must execute from refs/heads/main; got: ${GITHUB_REF}" >&2
   exit 1
 fi

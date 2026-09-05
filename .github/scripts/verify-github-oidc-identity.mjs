@@ -2,8 +2,6 @@
 
 import process from "node:process";
 
-import { releaseTransportFullRef } from "./release-transport-ref.mjs";
-
 const TOOL = "verify-github-oidc-identity";
 const OIDC_ISSUER = "https://token.actions.githubusercontent.com";
 const OIDC_AUDIENCE = "oliphaunt-release-identity-preflight";
@@ -13,10 +11,7 @@ const CURRENT_JOB_WORKFLOW_ALIAS_CLAIMS = Object.freeze({
   job_workflow_ref: "workflow_ref",
   job_workflow_sha: "workflow_sha",
 });
-const ENVIRONMENT_BY_OPERATION = Object.freeze({
-  "publish-bootstrap": "release-bootstrap",
-  publish: "release-publish",
-});
+const ENVIRONMENT_BY_OPERATION = Object.freeze({ publish: "release-publish" });
 
 function required(environment, name) {
   const value = environment[name]?.trim();
@@ -37,7 +32,7 @@ export function expectedOidcIdentity(environment = process.env) {
   const operation = required(environment, "RELEASE_OPERATION");
   const releaseEnvironment = ENVIRONMENT_BY_OPERATION[operation];
   if (releaseEnvironment === undefined) {
-    throw new Error(`RELEASE_OPERATION must be publish-bootstrap or publish; got ${operation}`);
+    throw new Error(`RELEASE_OPERATION must be publish; got ${operation}`);
   }
 
   const repository = required(environment, "CANONICAL_RELEASE_REPOSITORY");
@@ -45,15 +40,8 @@ export function expectedOidcIdentity(environment = process.env) {
     throw new Error(`CANONICAL_RELEASE_REPOSITORY must be owner/repository; got ${repository}`);
   }
   const sha = requireFullSha(required(environment, "GITHUB_SHA"), "GITHUB_SHA");
-  const continuationPointer = environment.RELEASE_CONTINUATION_POINTER ?? "";
-  if (typeof continuationPointer !== "string") {
-    throw new Error("RELEASE_CONTINUATION_POINTER must be a string");
-  }
-  if (continuationPointer !== "" && operation !== "publish-bootstrap") {
-    throw new Error("RELEASE_CONTINUATION_POINTER is valid only for publish-bootstrap");
-  }
   const ref = required(environment, "GITHUB_REF");
-  const expectedRef = continuationPointer === "" ? "refs/heads/main" : releaseTransportFullRef(sha);
+  const expectedRef = "refs/heads/main";
   if (ref !== expectedRef) {
     throw new Error(
       `trusted publication ref mismatch: expected ${expectedRef}, got ${ref}`,
@@ -70,7 +58,7 @@ export function expectedOidcIdentity(environment = process.env) {
     event_name: eventName,
     iss: OIDC_ISSUER,
     ref,
-    ref_type: continuationPointer === "" ? "branch" : "tag",
+    ref_type: "branch",
     repository,
     runner_environment: "github-hosted",
     sha,

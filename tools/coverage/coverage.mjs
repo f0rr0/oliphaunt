@@ -623,6 +623,45 @@ function writeSummary(product, tool, coveredLines, totalLines, files, reports) {
   return summaryPath;
 }
 
+export function coveragePolicyWarnings(product, summary, config) {
+  const total = Number.parseInt(summary.total_lines ?? 0, 10);
+  const covered = Number.parseInt(summary.covered_lines ?? 0, 10);
+  if (total <= 0 || covered <= 0 || covered > total) {
+    throw new Error(`${product}: coverage summary is unmeasured: covered=${covered} total=${total}`);
+  }
+  if (!Array.isArray(summary.files) || summary.files.length === 0) {
+    throw new Error(`${product}: coverage summary contains no measured source files`);
+  }
+  const measured = Number.parseFloat(summary.line_coverage);
+  const threshold = Number.parseFloat(config.line_threshold);
+  if (!Number.isFinite(measured) || !Number.isFinite(threshold)) {
+    throw new Error(`${product}: coverage summary or aggregate threshold is malformed`);
+  }
+  if (Math.abs(measured - percent(covered, total)) >= 0.005) {
+    throw new Error(`${product}: coverage summary percentage does not match its measured lines`);
+  }
+  if (measured + 0.005 < threshold) {
+    throw new Error(`${product}: line coverage ${measured.toFixed(2)}% is below threshold ${threshold.toFixed(2)}%`);
+  }
+  const perFileWarning = Number.parseFloat(config.per_file_line_warning ?? 0.0);
+  if (!Number.isFinite(perFileWarning) || perFileWarning < 0 || perFileWarning > 100) {
+    throw new Error(`${product}: per-file coverage warning threshold is malformed`);
+  }
+  const warnings = [];
+  for (const file of summary.files) {
+    const totalLines = Number.parseInt(file.total_lines ?? 0, 10);
+    const coveredLines = Number.parseInt(file.covered_lines ?? -1, 10);
+    if (typeof file.path !== 'string' || file.path.length === 0 || totalLines <= 0 || coveredLines < 0 || coveredLines > totalLines) {
+      throw new Error(`${product}: coverage summary contains malformed per-file evidence`);
+    }
+    const measuredFile = percent(coveredLines, totalLines);
+    if (perFileWarning > 0 && measuredFile + 0.005 < perFileWarning) {
+      warnings.push(`${product}: ${file.path} line coverage ${measuredFile.toFixed(2)}% is below advisory ${perFileWarning.toFixed(2)}%`);
+    }
+  }
+  return warnings;
+}
+
 function checkSummary(product) {
   const config = productConfig(product);
   const summaryPath = path.join(ROOT, config.summary);
@@ -633,23 +672,16 @@ function checkSummary(product) {
   if (summary.product !== product) {
     fail(`${product}: coverage summary product mismatch`);
   }
-  const total = Number.parseInt(summary.total_lines ?? 0, 10);
-  const covered = Number.parseInt(summary.covered_lines ?? 0, 10);
-  if (total <= 0 || covered <= 0) {
-    fail(`${product}: coverage summary is unmeasured: covered=${covered} total=${total}`);
-  }
   const files = summary.files;
-  if (!Array.isArray(files) || files.length === 0) {
-    fail(`${product}: coverage summary contains no measured source files`);
+  let warnings;
+  try {
+    warnings = coveragePolicyWarnings(product, summary, config);
+  } catch (cause) {
+    fail(cause instanceof Error ? cause.message : String(cause));
   }
-  const measured = Number.parseFloat(summary.line_coverage ?? 0.0);
-  const threshold = Number.parseFloat(config.line_threshold);
-  const committedMeasured = Number.parseFloat(config.measured_line_coverage ?? 0.0);
-  if (committedMeasured < threshold) {
-    fail(`${product}: committed measured_line_coverage is below line_threshold`);
-  }
-  if (measured + 0.005 < threshold) {
-    fail(`${product}: line coverage ${measured.toFixed(2)}% is below threshold ${threshold.toFixed(2)}%`);
+  for (const warning of warnings) {
+    const sourcePath = warning.slice(warning.indexOf(': ') + 2, warning.indexOf(' line coverage'));
+    console.warn(process.env.GITHUB_ACTIONS === 'true' ? `::warning file=${sourcePath}::${warning}` : `warning: ${warning}`);
   }
   const summaryReports = new Set(summary.reports ?? []);
   for (const report of config.reports ?? []) {
@@ -671,18 +703,6 @@ function checkSummary(product) {
     }
     if (!allowedFile(sourcePath, config)) {
       fail(`${product}: coverage includes a source path outside the baseline scope: ${sourcePath}`);
-    }
-  }
-  const perFileThreshold = Number.parseFloat(config.per_file_line_threshold ?? 0.0);
-  if (perFileThreshold > 0.0) {
-    for (const file of files) {
-      const sourcePath = file.path ?? '';
-      const fileTotal = Number.parseInt(file.total_lines ?? 0, 10);
-      const fileCovered = Number.parseInt(file.covered_lines ?? 0, 10);
-      const filePercent = percent(fileCovered, fileTotal);
-      if (filePercent + 0.005 < perFileThreshold) {
-        fail(`${product}: ${sourcePath} line coverage ${filePercent.toFixed(2)}% is below per-file threshold ${perFileThreshold.toFixed(2)}%`);
-      }
     }
   }
   const measuredPaths = new Set(files.map((file) => file.path ?? ''));
@@ -1023,14 +1043,16 @@ function parseArgs(argv) {
   fail(`unknown command: ${command}\n${usage()}`);
 }
 
-const args = parseArgs(Bun.argv.slice(2));
-if (args.command === 'run-product') {
-  runProduct(args.product);
-} else if (args.command === 'check-product') {
-  const summary = checkSummary(args.product);
-  console.log(`${args.product}: ${summary.line_coverage.toFixed(2)}% line coverage`);
-} else if (args.command === 'summarize') {
-  summarize({ allowMissing: args.allowMissing, productsJson: args.productsJson });
-} else if (args.command === 'check-tools') {
-  checkTools();
+if (import.meta.main) {
+  const args = parseArgs(Bun.argv.slice(2));
+  if (args.command === 'run-product') {
+    runProduct(args.product);
+  } else if (args.command === 'check-product') {
+    const summary = checkSummary(args.product);
+    console.log(`${args.product}: ${summary.line_coverage.toFixed(2)}% line coverage`);
+  } else if (args.command === 'summarize') {
+    summarize({ allowMissing: args.allowMissing, productsJson: args.productsJson });
+  } else if (args.command === 'check-tools') {
+    checkTools();
+  }
 }

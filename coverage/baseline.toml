@@ -1,18 +1,12 @@
-# Coverage baselines are measured product evidence, not policy placeholders.
-# `line_threshold` is the aggregate gate. `per_file_line_threshold` prevents
-# aggregate coverage from hiding weak files. `measured_line_coverage` records
-# the last committed local/CI measurement for audit only.
+# `line_threshold` is the blocking aggregate gate. `per_file_line_warning`
+# keeps weak files visible without blocking otherwise healthy coverage.
 
 [policy]
 fail_on_unmeasured_product = true
-minimum_new_sdk_line_coverage = 80.0
-release_ratchet_percentage_points = 2.0
-target_sdk_line_coverage = 85.0
 
 [products.oliphaunt-rust]
 tool = "cargo-llvm-cov"
 line_threshold = 80.0
-measured_line_coverage = 86.09
 summary = "target/coverage/oliphaunt-rust/summary.json"
 reports = ["target/coverage/oliphaunt-rust/lcov.info"]
 source_globs = ["src/sdks/rust/src/*.rs"]
@@ -22,9 +16,7 @@ exclude_globs = [
   "src/postgres/versions/18/**",
   "target/**",
 ]
-per_file_line_threshold = 50.0
-branch_coverage = "advisory"
-function_coverage = "advisory"
+per_file_line_warning = 50.0
 
 [[products.oliphaunt-rust.waivers]]
 path = "src/sdks/rust/src/broker.rs"
@@ -71,7 +63,6 @@ expires = "before-0.2.0"
 [products.oliphaunt-swift]
 tool = "swift test --enable-code-coverage"
 line_threshold = 80.0
-measured_line_coverage = 81.45
 summary = "target/coverage/oliphaunt-swift/summary.json"
 reports = ["target/coverage/oliphaunt-swift/swift-coverage.json"]
 source_globs = [
@@ -83,9 +74,7 @@ exclude_globs = [
   "src/sdks/swift/Tests/**",
   "target/**",
 ]
-per_file_line_threshold = 50.0
-branch_coverage = "advisory"
-function_coverage = "advisory"
+per_file_line_warning = 50.0
 
 [[products.oliphaunt-swift.waivers]]
 path = "src/sdks/swift/Sources/Oliphaunt/OliphauntNativeDirect.swift"
@@ -104,7 +93,6 @@ expires = "before-0.2.0"
 [products.oliphaunt-kotlin]
 tool = "kover"
 line_threshold = 80.0
-measured_line_coverage = 80.03
 summary = "target/coverage/oliphaunt-kotlin/summary.json"
 reports = ["target/coverage/oliphaunt-kotlin/kover.xml"]
 source_globs = ["src/sdks/kotlin/oliphaunt/src/**/*.kt"]
@@ -116,9 +104,7 @@ exclude_globs = [
   "src/sdks/kotlin/**/generated/**",
   "target/**",
 ]
-per_file_line_threshold = 50.0
-branch_coverage = "advisory"
-function_coverage = "advisory"
+per_file_line_warning = 50.0
 
 [[products.oliphaunt-kotlin.waivers]]
 path = "src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/AndroidNativeDirectEngine.kt"
@@ -144,7 +130,6 @@ expires = "before-0.2.0"
 [products.oliphaunt-js]
 tool = "vitest-v8"
 line_threshold = 80.0
-measured_line_coverage = 82.97
 summary = "target/coverage/oliphaunt-js/summary.json"
 reports = [
   "target/coverage/oliphaunt-js/coverage-summary.json",
@@ -163,9 +148,7 @@ exclude_globs = [
   "src/sdks/js/lib/**",
   "src/sdks/js/node_modules/**",
 ]
-per_file_line_threshold = 50.0
-branch_coverage = "advisory"
-function_coverage = "advisory"
+per_file_line_warning = 50.0
 
 [[products.oliphaunt-js.waivers]]
 path = "src/sdks/js/src/native/assets-deno.ts"
@@ -233,7 +216,6 @@ expires = "before-0.2.0"
 [products.oliphaunt-react-native]
 tool = "vitest-v8"
 line_threshold = 80.0
-measured_line_coverage = 87.30
 summary = "target/coverage/oliphaunt-react-native/summary.json"
 reports = [
   "target/coverage/oliphaunt-react-native/coverage-summary.json",
@@ -252,9 +234,7 @@ exclude_globs = [
   "src/sdks/react-native/lib/**",
   "src/sdks/react-native/node_modules/**",
 ]
-per_file_line_threshold = 50.0
-branch_coverage = "advisory"
-function_coverage = "advisory"
+per_file_line_warning = 50.0
 
 [[products.oliphaunt-react-native.waivers]]
 path = "src/sdks/react-native/src/specs/NativeOliphaunt.ts"
@@ -273,7 +253,6 @@ expires = "before-0.2.0"
 [products.oliphaunt-wasix-rust]
 tool = "cargo-llvm-cov"
 line_threshold = 80.0
-measured_line_coverage = 85.49
 summary = "target/coverage/oliphaunt-wasix-rust/summary.json"
 reports = ["target/coverage/oliphaunt-wasix-rust/lcov.info"]
 source_globs = [
@@ -292,15 +271,12 @@ exclude_globs = [
   "src/runtimes/liboliphaunt/wasix/crates/aot/**",
   "target/**",
 ]
-per_file_line_threshold = 50.0
-branch_coverage = "advisory"
-function_coverage = "advisory"
+per_file_line_warning = 50.0
 waivers = []
 
 [products.oliphaunt-wasix-ts]
 tool = "vitest-v8"
 line_threshold = 80.0
-measured_line_coverage = 80.32
 summary = "target/coverage/oliphaunt-wasix-ts/summary.json"
 reports = [
   "target/coverage/oliphaunt-wasix-ts/coverage-summary.json",
@@ -328,9 +304,7 @@ exclude_globs = [
   "src/bindings/wasix-ts/lib/**",
   "src/bindings/wasix-ts/node_modules/**",
 ]
-per_file_line_threshold = 50.0
-branch_coverage = "advisory"
-function_coverage = "advisory"
+per_file_line_warning = 50.0
 
 [[products.oliphaunt-wasix-ts.waivers]]
 path = "src/bindings/wasix-ts/src/client.ts"

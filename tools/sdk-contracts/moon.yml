@@ -27,13 +27,6 @@ tasks:
   check:
     tags: ["quality", "static"]
     command: "node tools/policy/generate-sdk-api-surface.mjs --check"
-    deps:
-      - "sdk-contracts:cluster-seeds"
-      - "sdk-contracts:fixtures"
-      - "sdk-contracts:headers"
-      - "sdk-contracts:manifest"
-      - "sdk-contracts:native-boundaries"
-      - "shared-rust-query-core:check"
     inputs:
       - "/docs/maintainers/sdk-api-surface.md"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
@@ -57,6 +50,21 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
+  all:
+    command: "true"
+    deps:
+      - "sdk-contracts:check"
+      - "sdk-contracts:cluster-seeds"
+      - "sdk-contracts:fixtures"
+      - "sdk-contracts:headers"
+      - "sdk-contracts:manifest"
+      - "sdk-contracts:native-boundaries"
+      - "shared-rust-query-core:check"
+    inputs: []
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
   cluster-seeds:
     tags: ["quality", "static"]
     command: "bun tools/policy/check-cluster-seed-contract.mjs"

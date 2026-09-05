@@ -66,14 +66,13 @@ tasks:
       - "lib/**/*"
     options:
       cache: true
-  unit:
+  unit-distinct:
     tags: ["quality", "unit"]
     script: |
       set -e
       bash tools/verify-android-apk.test.sh
       bun test tools/validate-android-link-evidence.test.mjs
       node tools/stage-ios-app.test.mjs
-      pnpm test
     deps:
       - "shared-js-core:build"
     inputs:
@@ -96,6 +95,29 @@ tasks:
       - "!/src/sdks/react-native/ios/vendor/**"
     options:
       cache: true
+  unit-shared:
+    command: "pnpm test"
+    deps:
+      - "shared-js-core:build"
+    inputs:
+      - project: "shared-js-core"
+        group: "sources"
+      - "@group(pnpm-workspace)"
+      - "@group(code)"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "!/src/sdks/react-native/**/lib/**"
+    options:
+      cache: true
+      runInCI: false
+  unit:
+    command: "true"
+    deps:
+      - "oliphaunt-react-native:unit-distinct"
+      - "oliphaunt-react-native:unit-shared"
+    inputs: []
+    options:
+      cache: false
+      runInCI: false
   package:
     tags: ["package"]
     script: |
@@ -137,7 +159,7 @@ tasks:
     command: "true"
     deps:
       - "oliphaunt-react-native:compile"
-      - "oliphaunt-react-native:unit"
+      - "oliphaunt-react-native:unit-distinct"
       - "oliphaunt-react-native:package"
     inputs: []
     options:

@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import {
-  appendFileSync,
   mkdirSync,
   mkdtempSync,
   renameSync,
@@ -52,7 +51,6 @@ import { stagedKotlinMavenRepo as validateStagedKotlinMavenRepo } from "./kotlin
 import {
   compareText,
   currentProductVersionSync,
-  exactExtensionProducts,
 } from "./release-artifact-targets.mjs";
 import {
   collectNormalPublicationReceipts,
@@ -75,7 +73,7 @@ import {
   githubReleaseAssetUploadChildEnvironment,
   writeConcurrentGithubReleaseAssetUploadReport,
 } from "./concurrent-github-release-asset-upload.mjs";
-import { loadGraph, productCompatibilityVersion, releaseOrder } from "./release-graph.mjs";
+import { loadGraph, releaseOrder } from "./release-graph.mjs";
 import { readSelectedRemoteTagMapSync } from "../../.github/scripts/manage-release-drafts.mjs";
 
 const TOOL = "release-publish.mjs";
@@ -95,7 +93,7 @@ protected workflow may pass --qualified-ci after downloading the exact-SHA
 Qualified record. That mode
 reverifies the fixed candidate/plan/evidence paths, binds a clean checkout to
 RELEASE_HEAD_SHA and binds --head-ref to that same release commit for product identity
-and tag checks, and then runs live metadata and registry checks without replaying the
+and tag checks, and then runs live registry checks without replaying the
 already-proved mutation unit tests. --qualified-ci is incompatible with
 --allow-dirty and is rejected outside GitHub Actions.
 
@@ -160,16 +158,6 @@ const REGISTRY_RECEIPT_EVIDENCE_PATH = path.resolve(
   process.env.OLIPHAUNT_REGISTRY_RECEIPTS ?? "target/release/registry-integrity-receipts.json",
 );
 let ACTIVE_PUBLICATION_LOCK = null;
-const EXTENSION_PRODUCTS = new Set(exactExtensionProducts(TOOL));
-const GITHUB_RELEASE_ASSET_PRODUCTS = new Set([
-  "liboliphaunt-native",
-  "liboliphaunt-wasix",
-  "liboliphaunt-wasix-postmaster",
-  "oliphaunt-broker",
-  "oliphaunt-node-direct",
-  "oliphaunt-wasix-napi",
-]);
-
 function activePublicationSourceRef(environment = process.env) {
   const configured = environment.RELEASE_HEAD_SHA?.trim();
   if (configured === undefined || configured === "") return "HEAD";
@@ -197,6 +185,14 @@ for (const valueFlag of [
   "--step",
 ]) {
   flagValue(argv.slice(1), valueFlag);
+}
+
+if (
+  command === "publish"
+  && !argv.slice(1).includes("--registry-plan")
+  && new Set(["crates-io", "npm", "maven-central"]).has(flagValue(argv.slice(1), "--step"))
+) {
+  fail("normal product/ecosystem registry steps are disabled; use the exact-lock --registry-plan executor");
 }
 
 if (BOOTSTRAP_IDENTITIES && command !== "publish") {
@@ -345,21 +341,6 @@ function requireFrozenArtifacts(roots, { products, ecosystem }) {
   }
 }
 
-function frozenCarrierPackages(ecosystem, { product = undefined, products = undefined } = {}) {
-  const carriers = lockedCarriers(ACTIVE_PUBLICATION_LOCK, { product, products, ecosystem })
-    .sort((left, right) => left.publishOrder - right.publishOrder);
-  if (carriers.length === 0) {
-    fail(`publication lock contains no ${ecosystem} carriers for ${product ?? products?.join(",") ?? "selection"}`);
-  }
-  return carriers.map((carrier) => {
-    try {
-      return { ...carrier, file: lockedCarrierFile(ACTIVE_PUBLICATION_LOCK, ecosystem, carrier.name).file };
-    } catch (error) {
-      fail(error instanceof Error ? error.message : String(error));
-    }
-  });
-}
-
 function requireFrozenProductArtifacts(product, roots) {
   try {
     assertLockedProductArtifacts(ACTIVE_PUBLICATION_LOCK, product, roots);
@@ -380,11 +361,6 @@ function githubReleaseAssetUploadCommand(product, assets) {
     command.push("--asset", asset);
   }
   return command;
-}
-
-function uploadGithubReleaseAssets(product, assets) {
-  const command = githubReleaseAssetUploadCommand(product, assets);
-  run(TOOL, command);
 }
 
 function uploadGithubReleaseAssetsAsync(product, assets, windowMs, abortPath) {
@@ -419,20 +395,6 @@ function uploadGithubReleaseAssetsAsync(product, assets, windowMs, abortPath) {
       resolve({ code: 0, product });
     });
   });
-}
-
-function publishGithubReleaseAssets(product, headRef) {
-  verifyReleaseTag(product, headRef);
-  const assets = lockedProductArtifactPaths(ACTIVE_PUBLICATION_LOCK, product)
-    .filter(({ artifact }) => artifact.role === "github-release-asset" || artifact.role === "github-release-metadata");
-  if (assets.length === 0 || assets.some(({ type }) => type !== "file")) {
-    fail(`${product} publication lock contains no regular frozen GitHub release assets`);
-  }
-  uploadGithubReleaseAssets(product, assets.map(({ path: file }) => rel(file)));
-}
-
-function publishExtensionGithubReleaseAssets(product, headRef) {
-  publishGithubReleaseAssets(product, headRef);
 }
 
 async function publishSelectedGithubReleaseAssetSets(products, headRef) {
@@ -534,118 +496,8 @@ async function publishSelectedGithubReleaseAssetSets(products, headRef) {
   }
 }
 
-function selectedExtensionProducts(products) {
-  const extensions = products
-    .filter((product) => EXTENSION_PRODUCTS.has(product))
-    .sort(compareText);
-  if (extensions.length === 0) {
-    fail("no extension products selected");
-  }
-  return extensions;
-}
-
-function registryPublicationCheck(args) {
-  run(TOOL, [...REGISTRY_PUBLICATION_CHECK, ...args]);
-}
-
 function registryPublicationCheckOrThrow(args) {
   runOrThrow(TOOL, [...REGISTRY_PUBLICATION_CHECK, ...args]);
-}
-
-function registryPublicationCheckSucceeds(args) {
-  const result = spawnSync(REGISTRY_PUBLICATION_CHECK[0], [...REGISTRY_PUBLICATION_CHECK.slice(1), ...args], {
-    cwd: ROOT,
-    encoding: "utf8",
-    stdio: "ignore",
-  });
-  if (result.error !== undefined) {
-    throw new Error(`registry publication check failed to start: ${result.error.message}`);
-  }
-  return result.status === 0;
-}
-
-function gitCommit(ref) {
-  const result = captureCommandOutput("git", ["rev-parse", `${ref}^{commit}`], {
-    cwd: ROOT,
-    label: `git rev-parse ${ref}^{commit}`,
-    maxOutputBytes: 1024 * 1024,
-  });
-  return result.status === 0 ? result.stdout.trim() : null;
-}
-
-function productTagReady(product, headRef) {
-  const version = currentProductVersionSync(product, TOOL);
-  const tagCommit = gitCommit(`${product}-v${version}`);
-  const headCommit = gitCommit(headRef);
-  return tagCommit !== null && headCommit !== null && tagCommit === headCommit;
-}
-
-function publishedRerun(product, headRef) {
-  return productTagReady(product, headRef) && productRegistryPublished(product, null);
-}
-
-function extensionMavenArtifactsPublished(products) {
-  return registryPublicationCheckSucceeds([
-    "--products-json",
-    JSON.stringify(products),
-    "--registry-kind",
-    "maven",
-    "--require-published",
-  ]);
-}
-
-function requireExtensionMavenArtifactsPublished(products) {
-  registryPublicationCheck([
-    "--products-json",
-    JSON.stringify(products),
-    "--registry-kind",
-    "maven",
-    "--require-published",
-    "--retries",
-    "12",
-    "--retry-delay",
-    "10",
-  ]);
-}
-
-function requireExtensionRegistryArtifactsPublished(products, registryKind) {
-  registryPublicationCheck([
-    "--products-json",
-    JSON.stringify(products),
-    "--registry-kind",
-    registryKind,
-    "--require-published",
-    "--retries",
-    "12",
-    "--retry-delay",
-    "10",
-  ]);
-}
-
-function productRegistryPublished(product, registryKind) {
-  return registryPublicationCheckSucceeds([
-    "--product",
-    product,
-    "--registry-kind",
-    registryKind,
-    "--require-published",
-  ]);
-}
-
-function requireProductRegistryPublished(product, registryKind) {
-  const args = [
-    "--product",
-    product,
-    "--require-published",
-    "--retries",
-    "12",
-    "--retry-delay",
-    "10",
-  ];
-  if (registryKind !== null) {
-    args.splice(2, 0, "--registry-kind", registryKind);
-  }
-  registryPublicationCheck(args);
 }
 
 function requireProductRegistryPublishedOrThrow(product, registryKind) {
@@ -662,33 +514,6 @@ function requireProductRegistryPublishedOrThrow(product, registryKind) {
     args.splice(2, 0, "--registry-kind", registryKind);
   }
   registryPublicationCheckOrThrow(args);
-}
-
-function requireProductRegistryVersionPublished(product, registryKind, version) {
-  registryPublicationCheck([
-    "--product",
-    product,
-    "--registry-kind",
-    registryKind,
-    "--require-published",
-    "--version",
-    version,
-  ]);
-}
-
-function requireLockedProductIntegrity(products, ecosystems) {
-  const command = [
-    process.execPath,
-    "tools/release/registry-integrity.mjs",
-    "--lock",
-    PUBLICATION_LOCK_PATH,
-    "--products-json",
-    JSON.stringify(products),
-  ];
-  for (const ecosystem of ecosystems) {
-    command.push("--ecosystem", ecosystem);
-  }
-  run(TOOL, command);
 }
 
 function releaseEnvironment(name) {
@@ -735,33 +560,6 @@ async function publishLockedMavenProducts(products, slug) {
   } finally {
     rmSync(gpgHome, { recursive: true, force: true });
   }
-}
-
-function cratesioCrateVersionPublished(crateName, version) {
-  const result = jsonOutput([
-    "tools/release/check_registry_publication.mjs",
-    "crate-version-exists",
-    "--crate",
-    crateName,
-    "--version",
-    version,
-  ]);
-  if (result === null || typeof result.exists !== "boolean") {
-    fail(`crate-version-exists returned invalid JSON for ${crateName} ${version}`);
-  }
-  return result.exists;
-}
-
-async function waitForCratesioCrate(crateName, version) {
-  for (let attempt = 0; attempt < 12; attempt += 1) {
-    if (cratesioCrateVersionPublished(crateName, version)) {
-      return;
-    }
-    if (attempt + 1 < 12) {
-      await boundedRegistrySleep(10_000, `crates.io visibility wait for ${crateName}@${version}`);
-    }
-  }
-  fail(`${crateName} ${version} did not appear on crates.io after publish`);
 }
 
 function registryMutationDeadlineSeconds() {
@@ -925,81 +723,6 @@ async function publishBootstrapCarrier(carrierId, headRef) {
   await npmPublishTarball(carrier.name, locked.file, carrier.version);
 }
 
-async function publishNodeDirectNpmOptionalPackages(headRef) {
-  const product = "oliphaunt-node-direct";
-  verifyReleaseTag(product, headRef);
-  for (const carrier of frozenCarrierPackages("npm", { product })) {
-    await npmPublishTarball(carrier.name, carrier.file, carrier.version);
-  }
-}
-
-async function publishWasixNapiNpmOptionalPackages(headRef) {
-  const product = "oliphaunt-wasix-napi";
-  verifyReleaseTag(product, headRef);
-  for (const carrier of frozenCarrierPackages("npm", { product })) {
-    await npmPublishTarball(carrier.name, carrier.file, carrier.version);
-  }
-}
-
-async function publishBrokerNpmPackages(headRef) {
-  const product = "oliphaunt-broker";
-  verifyReleaseTag(product, headRef);
-  for (const carrier of frozenCarrierPackages("npm", { product })) {
-    await npmPublishTarball(carrier.name, carrier.file, carrier.version);
-  }
-}
-
-async function publishBrokerCargoArtifacts(headRef) {
-  const product = "oliphaunt-broker";
-  verifyReleaseTag(product, headRef);
-  const carriers = frozenCarrierPackages("cargo", { product });
-  for (const carrier of carriers) {
-    await cargoPublishLockedCrate(carrier.name, carrier.version, carrier.file);
-  }
-  requireProductRegistryPublished(product, "crates");
-}
-
-async function publishLiboliphauntWasixCargoArtifacts(headRef) {
-  const product = "liboliphaunt-wasix";
-  verifyReleaseTag(product, headRef);
-  const carriers = frozenCarrierPackages("cargo", { product });
-  for (const carrier of carriers) {
-    await cargoPublishLockedCrate(carrier.name, carrier.version, carrier.file);
-  }
-  requireProductRegistryPublished(product, "crates");
-}
-
-async function publishLiboliphauntNativeCargoArtifacts(headRef) {
-  const product = "liboliphaunt-native";
-  verifyReleaseTag(product, headRef);
-  const carriers = frozenCarrierPackages("cargo", { product });
-  for (const carrier of carriers) {
-    await cargoPublishLockedCrate(carrier.name, carrier.version, carrier.file);
-  }
-  requireProductRegistryPublished(product, "crates");
-}
-
-async function publishLiboliphauntNpmPackages(headRef) {
-  const product = "liboliphaunt-native";
-  verifyReleaseTag(product, headRef);
-  for (const carrier of frozenCarrierPackages("npm", { product })) {
-    await npmPublishTarball(carrier.name, carrier.file, carrier.version);
-  }
-}
-
-async function publishReactNativeNpm(headRef) {
-  const product = "oliphaunt-react-native";
-  verifyReleaseTag(product, headRef);
-  requireFrozenProductArtifacts(product, [
-    path.join(ROOT, "target/sdk-artifacts", product),
-    path.join(ROOT, "target/release/ios-carriers"),
-  ]);
-  for (const carrier of frozenCarrierPackages("npm", { product })) {
-    await npmPublishTarball(carrier.name, carrier.file, carrier.version);
-  }
-  uploadGithubReleaseAssets(product, []);
-}
-
 function lockedSwiftSourceInputs(headRef) {
   const product = "oliphaunt-swift";
   assertPublicationLockSource(ACTIVE_PUBLICATION_LOCK, headRef);
@@ -1032,169 +755,6 @@ function publishSwiftGithubRelease(headRef) {
     releaseTree.path,
     "--push",
   ]);
-}
-
-async function publishKotlinMaven(headRef) {
-  const product = "oliphaunt-kotlin";
-  verifyReleaseTag(product, headRef);
-  const stagedRepo = stagedKotlinMavenRepo();
-  requireFrozenArtifacts([stagedRepo], { products: [product], ecosystem: "maven" });
-  const version = currentProductVersionSync(product, TOOL);
-  const wasPublished = productRegistryPublished(product, "maven");
-  if (wasPublished) {
-    requireLockedProductIntegrity([product], ["maven"]);
-    console.log(`dev.oliphaunt Android artifacts ${version} are already published on Maven Central with lock-matching bytes; skipping frozen Maven publication.`);
-  } else {
-    await publishLockedMavenProducts([product], product);
-  }
-  requireProductRegistryPublished(product, "maven");
-  if (!wasPublished) requireLockedProductIntegrity([product], ["maven"]);
-  uploadGithubReleaseAssets(product, []);
-}
-
-async function publishTypescriptNpmBootstrap(headRef) {
-  const product = "oliphaunt-js";
-  const packageName = "@oliphaunt/ts";
-  if (!BOOTSTRAP_IDENTITIES) {
-    fail("the separate oliphaunt-js npm step is reserved for --bootstrap-identities");
-  }
-  verifyReleaseTag(product, headRef);
-  const carrier = frozenCarrierPackages("npm", { product }).find(({ name }) => name === packageName);
-  await npmPublishTarball(carrier.name, carrier.file, carrier.version);
-}
-
-async function publishTypescriptNpm(headRef) {
-  const product = "oliphaunt-js";
-  const packageName = "@oliphaunt/ts";
-  verifyReleaseTag(product, headRef);
-  const carrier = frozenCarrierPackages("npm", { product }).find(({ name }) => name === packageName);
-  await npmPublishTarball(carrier.name, carrier.file, carrier.version);
-}
-
-async function publishRustCratesIo(headRef) {
-  const product = "oliphaunt-rust";
-  if (publishedRerun(product, headRef)) {
-    requireLockedProductIntegrity([product], ["cargo"]);
-    console.log("oliphaunt-rust is already published at this commit with lock-matching bytes; skipping crates.io publish.");
-    return;
-  }
-  verifyReleaseTag(product, headRef);
-  const nativeVersion = productCompatibilityVersion(product, "liboliphaunt-native", TOOL);
-  const brokerVersion = productCompatibilityVersion(product, "oliphaunt-broker", TOOL);
-  requireProductRegistryVersionPublished("liboliphaunt-native", "crates", nativeVersion);
-  requireProductRegistryVersionPublished("oliphaunt-broker", "crates", brokerVersion);
-  const carriers = frozenCarrierPackages("cargo", { product });
-  for (const carrier of carriers) {
-    await cargoPublishLockedCrate(carrier.name, carrier.version, carrier.file);
-  }
-  requireProductRegistryPublished(product, null);
-}
-
-async function publishWasixRustCratesIo(headRef) {
-  const product = "oliphaunt-wasix-rust";
-  if (publishedRerun(product, headRef)) {
-    requireLockedProductIntegrity([product], ["cargo"]);
-    console.log("oliphaunt-wasix-rust is already published at this commit with lock-matching bytes; skipping crates.io publish.");
-    return;
-  }
-  verifyReleaseTag(product, headRef);
-  const runtimeVersion = productCompatibilityVersion(product, "liboliphaunt-wasix", TOOL);
-  requireProductRegistryVersionPublished("liboliphaunt-wasix", "crates", runtimeVersion);
-  const carriers = frozenCarrierPackages("cargo", { product });
-  for (const carrier of carriers) {
-    await cargoPublishLockedCrate(carrier.name, carrier.version, carrier.file);
-  }
-  requireProductRegistryPublished(product, null);
-}
-
-async function publishLiboliphauntRuntimeMaven(headRef) {
-  const product = "liboliphaunt-native";
-  verifyReleaseTag(product, headRef);
-  const version = currentProductVersionSync(product, TOOL);
-  const wasPublished = productRegistryPublished(product, "maven");
-  if (wasPublished) {
-    requireLockedProductIntegrity([product], ["maven"]);
-    console.log(`dev.oliphaunt.runtime artifacts ${version} are already published on Maven Central with lock-matching bytes; skipping frozen Maven publication.`);
-  } else {
-    await publishLockedMavenProducts([product], product);
-  }
-  requireProductRegistryPublished(product, "maven");
-  if (!wasPublished) requireLockedProductIntegrity([product], ["maven"]);
-}
-
-async function publishSelectedExtensionMaven(products, headRef) {
-  const extensions = selectedExtensionProducts(products);
-  for (const product of extensions) {
-    verifyReleaseTag(product, headRef);
-  }
-  const werePublished = extensionMavenArtifactsPublished(extensions);
-  if (werePublished) {
-    requireLockedProductIntegrity(extensions, ["maven"]);
-    console.log("selected Oliphaunt extension Android artifacts are already published on Maven Central with lock-matching bytes; skipping frozen Maven publication.");
-  } else {
-    await publishLockedMavenProducts(extensions, "selected-extensions");
-  }
-  requireExtensionMavenArtifactsPublished(extensions);
-  if (!werePublished) requireLockedProductIntegrity(extensions, ["maven"]);
-}
-
-function packageIdentityLabel(identity) {
-  return `${identity.name}@${identity.version}`;
-}
-
-function uniquePackages(packages) {
-  const seen = new Set();
-  const unique = [];
-  for (const pkg of packages) {
-    const key = packageIdentityLabel(pkg);
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    unique.push(pkg);
-  }
-  return unique;
-}
-
-function allCargoPackagesPublished(packages) {
-  return uniquePackages(packages).every((pkg) => cratesioCrateVersionPublished(pkg.name, pkg.version));
-}
-
-async function requireCargoPackagesPublished(packages) {
-  for (const pkg of uniquePackages(packages).sort((left, right) => compareText(packageIdentityLabel(left), packageIdentityLabel(right)))) {
-    await waitForCratesioCrate(pkg.name, pkg.version);
-  }
-}
-
-async function publishSelectedExtensionNpm(products, headRef) {
-  const extensions = selectedExtensionProducts(products);
-  for (const product of extensions) {
-    verifyReleaseTag(product, headRef);
-  }
-  const carriers = frozenCarrierPackages("npm", { products: extensions });
-  for (const carrier of carriers) {
-    await npmPublishTarball(carrier.name, carrier.file, carrier.version);
-  }
-}
-
-async function publishSelectedExtensionCargo(products, headRef) {
-  const extensions = selectedExtensionProducts(products);
-  for (const product of extensions) {
-    verifyReleaseTag(product, headRef);
-  }
-  const carriers = frozenCarrierPackages("cargo", { products: extensions });
-  const packages = carriers.map(({ name, version }) => ({ name, version }));
-  if (allCargoPackagesPublished(packages)) {
-    requireLockedProductIntegrity(extensions, ["cargo"]);
-    console.log("selected Oliphaunt extension Cargo artifact crates, including generated part crates, are already published with lock-matching bytes; skipping cargo publish.");
-    return;
-  }
-  for (const carrier of carriers) {
-    await cargoPublishLockedCrate(carrier.name, carrier.version, carrier.file);
-  }
-  await requireCargoPackagesPublished(packages);
-  requireExtensionRegistryArtifactsPublished(extensions, "crates");
-  requireLockedProductIntegrity(extensions, ["cargo"]);
 }
 
 function lockedCarrierById(carrierId) {
@@ -1463,7 +1023,6 @@ function verifyQualifiedCiReplay(validationPlan) {
 function runReleaseValidation(validationPlan) {
   if (validationPlan.qualifiedCi) {
     verifyQualifiedCiReplay(validationPlan);
-    run(TOOL, [process.execPath, "tools/release/release-metadata-check.mjs"]);
   } else {
     run(TOOL, [process.execPath, "tools/release/release-check.mjs"]);
   }
@@ -1570,20 +1129,6 @@ if (normalRegistryPlanSelected) {
   }
   process.exit(0);
 }
-if (new Set(["crates-io", "npm", "maven-central"]).has(flagValue(argv.slice(1), "--step"))) {
-  fail("normal product/ecosystem registry steps are disabled; use the exact-lock --registry-plan executor");
-}
-if (publishProductStep?.step === "github-release-assets") {
-  if (GITHUB_RELEASE_ASSET_PRODUCTS.has(publishProductStep.product)) {
-    publishGithubReleaseAssets(publishProductStep.product, publishProductStep.headRef);
-    process.exit(0);
-  }
-  if (EXTENSION_PRODUCTS.has(publishProductStep.product)) {
-    publishExtensionGithubReleaseAssets(publishProductStep.product, publishProductStep.headRef);
-    process.exit(0);
-  }
-}
-
 if (command === "publish" && flagValue(argv.slice(1), "--step") === "github-release-assets" && flagValue(argv.slice(1), "--product") === null) {
   const requested = parseProductsJson(argv.slice(1));
   if (requested !== null) {
@@ -1595,126 +1140,9 @@ if (command === "publish" && flagValue(argv.slice(1), "--step") === "github-rele
   }
 }
 
-if (publishProductStep?.product === "liboliphaunt-native" && publishProductStep.step === "maven-central") {
-  await publishLiboliphauntRuntimeMaven(publishProductStep.headRef);
-  process.exit(0);
-}
-
-if (publishProductStep?.product === "liboliphaunt-native" && publishProductStep.step === "npm") {
-  await publishLiboliphauntNpmPackages(publishProductStep.headRef);
-  process.exit(0);
-}
-
-if (publishProductStep?.product === "liboliphaunt-native" && publishProductStep.step === "crates-io") {
-  await publishLiboliphauntNativeCargoArtifacts(publishProductStep.headRef);
-  process.exit(0);
-}
-
-if (publishProductStep?.product === "liboliphaunt-wasix" && publishProductStep.step === "crates-io") {
-  await publishLiboliphauntWasixCargoArtifacts(publishProductStep.headRef);
-  process.exit(0);
-}
-
-if (publishProductStep?.product === "oliphaunt-node-direct" && publishProductStep.step === "npm") {
-  await publishNodeDirectNpmOptionalPackages(publishProductStep.headRef);
-  process.exit(0);
-}
-
-if (publishProductStep?.product === "oliphaunt-wasix-napi" && publishProductStep.step === "npm") {
-  await publishWasixNapiNpmOptionalPackages(publishProductStep.headRef);
-  process.exit(0);
-}
-
-if (publishProductStep?.product === "oliphaunt-broker" && publishProductStep.step === "npm") {
-  await publishBrokerNpmPackages(publishProductStep.headRef);
-  process.exit(0);
-}
-
-if (publishProductStep?.product === "oliphaunt-broker" && publishProductStep.step === "crates-io") {
-  await publishBrokerCargoArtifacts(publishProductStep.headRef);
-  process.exit(0);
-}
-
-if (publishProductStep?.product === "oliphaunt-react-native" && publishProductStep.step === "npm") {
-  await publishReactNativeNpm(publishProductStep.headRef);
-  process.exit(0);
-}
-
 if (publishProductStep?.product === "oliphaunt-swift" && publishProductStep.step === "github-release") {
   publishSwiftGithubRelease(publishProductStep.headRef);
   process.exit(0);
-}
-
-if (publishProductStep?.product === "oliphaunt-kotlin" && publishProductStep.step === "maven-central") {
-  await publishKotlinMaven(publishProductStep.headRef);
-  process.exit(0);
-}
-
-if (publishProductStep?.product === "oliphaunt-js" && publishProductStep.step === "npm") {
-  if (BOOTSTRAP_IDENTITIES) {
-    await publishTypescriptNpmBootstrap(publishProductStep.headRef);
-  } else {
-    await publishTypescriptNpm(publishProductStep.headRef);
-  }
-  process.exit(0);
-}
-
-if (publishProductStep?.product === "oliphaunt-rust" && publishProductStep.step === "crates-io") {
-  await publishRustCratesIo(publishProductStep.headRef);
-  process.exit(0);
-}
-
-if (publishProductStep?.product === "oliphaunt-wasix-rust" && publishProductStep.step === "crates-io") {
-  await publishWasixRustCratesIo(publishProductStep.headRef);
-  process.exit(0);
-}
-
-if (publishProductStep?.step === "maven-central" && EXTENSION_PRODUCTS.has(publishProductStep.product)) {
-  await publishSelectedExtensionMaven([publishProductStep.product], publishProductStep.headRef);
-  process.exit(0);
-}
-
-if (publishProductStep?.step === "npm" && EXTENSION_PRODUCTS.has(publishProductStep.product)) {
-  await publishSelectedExtensionNpm([publishProductStep.product], publishProductStep.headRef);
-  process.exit(0);
-}
-
-if (publishProductStep?.step === "crates-io" && EXTENSION_PRODUCTS.has(publishProductStep.product)) {
-  await publishSelectedExtensionCargo([publishProductStep.product], publishProductStep.headRef);
-  process.exit(0);
-}
-
-if (command === "publish" && flagValue(argv.slice(1), "--step") === "maven-central" && flagValue(argv.slice(1), "--product") === null) {
-  const requested = parseProductsJson(argv.slice(1));
-  if (requested !== null) {
-    await publishSelectedExtensionMaven(
-      releaseOrderedProducts(requested),
-      flagValue(argv.slice(1), "--head-ref") ?? "HEAD",
-    );
-    process.exit(0);
-  }
-}
-
-if (command === "publish" && flagValue(argv.slice(1), "--step") === "npm" && flagValue(argv.slice(1), "--product") === null) {
-  const requested = parseProductsJson(argv.slice(1));
-  if (requested !== null) {
-    await publishSelectedExtensionNpm(
-      releaseOrderedProducts(requested),
-      flagValue(argv.slice(1), "--head-ref") ?? "HEAD",
-    );
-    process.exit(0);
-  }
-}
-
-if (command === "publish" && flagValue(argv.slice(1), "--step") === "crates-io" && flagValue(argv.slice(1), "--product") === null) {
-  const requested = parseProductsJson(argv.slice(1));
-  if (requested !== null) {
-    await publishSelectedExtensionCargo(
-      releaseOrderedProducts(requested),
-      flagValue(argv.slice(1), "--head-ref") ?? "HEAD",
-    );
-    process.exit(0);
-  }
 }
 
 if (command === "publish" && publishProductStep === null && flagValue(argv.slice(1), "--product") === null && flagValue(argv.slice(1), "--step") === null) {

@@ -8,10 +8,9 @@ const DEFAULT_CRATES_IO_API = "https://crates.io/api/v1";
 const MAX_U32 = 0xffff_ffff;
 const UPLOAD_TIMEOUT_MS = 60_000;
 const MAX_RATE_LIMIT_RETRIES = 3;
-// Keep a nonempty interval between bounded in-process waits and the 15-minute
-// continuation dispatcher ceiling. A normal crates.io 10-minute new-name
-// refill is checkpointed instead of occupying a runner and still fits the
-// authorized child dispatch delay including clock skew.
+// Keep bounded in-process waits below the job deadline. A normal crates.io
+// 10-minute new-name refill is checkpointed for a later manual rerun instead
+// of occupying a runner.
 const MAX_RATE_LIMIT_WAIT_SECONDS = 9 * 60;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const RATE_LIMIT_CLOCK_SKEW_MS = 2_000;

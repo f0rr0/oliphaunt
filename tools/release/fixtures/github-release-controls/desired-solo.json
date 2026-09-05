@@ -83,8 +83,7 @@
         }
       },
       "branchPolicies": [
-        { "name": "main", "type": "branch" },
-        { "name": "oliphaunt-release-transport/*", "type": "tag" }
+        { "name": "main", "type": "branch" }
       ],
       "secretNames": ["CRATES_IO_BOOTSTRAP_TOKEN", "NPM_BOOTSTRAP_TOKEN"]
     },

@@ -52,7 +52,6 @@ function rootEnvironment(operation, runAttempt = 1, overrides = {}) {
     GITHUB_REF: "refs/heads/main",
     GITHUB_RUN_ATTEMPT: String(runAttempt),
     GITHUB_SHA: SHA,
-    RELEASE_CONTINUATION_POINTER: "",
     RELEASE_OPERATION: operation,
     ...overrides,
   });
@@ -286,7 +285,6 @@ test("pre-reserved and isolated-bootstrap admissions are exact root-run-only", a
       { GITHUB_RUN_ATTEMPT: "not-a-number" },
       { GITHUB_RUN_ATTEMPT: "9".repeat(100) },
       { GITHUB_SHA: OTHER_SHA },
-      { RELEASE_CONTINUATION_POINTER: "pointer" },
       { RELEASE_OPERATION: wrongOperation },
     ]) {
       let fetchCalls = 0;

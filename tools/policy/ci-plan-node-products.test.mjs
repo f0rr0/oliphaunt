@@ -55,6 +55,16 @@ function actionTargets(target) {
   return new Set(Object.values(JSON.parse(result.stdout).data).map((task) => task.target));
 }
 
+function taskRecord(target) {
+  const result = captureCommandOutput(moonCommand(), ["task-graph", target, "--json"], {
+    cwd: ROOT,
+    env: moonEnvironment(),
+    label: `Moon task record for ${target}`,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return Object.values(JSON.parse(result.stdout).data).find((task) => task.target === target);
+}
+
 test("JavaScript SDK source does not rebuild the Node Direct addon", () => {
   const result = effects("src/sdks/js/src/client.ts");
   assert.deepEqual(result.jobs, ["affected", "js-sdk-package"]);
@@ -239,8 +249,36 @@ test("executable packagers and Rust test configuration select their real owners"
   assert.equal(desktop.directTasks.includes("liboliphaunt-native:build-runtime-desktop-target"), false);
 
   const nextest = effects(".config/nextest.toml");
-  assert.equal(nextest.directTasks.includes("oliphaunt-rust:unit"), true);
-  assert.equal(nextest.directTasks.includes("oliphaunt-wasix-rust:unit"), true);
+  assert.equal(nextest.directTasks.includes("coverage-tools:rust"), true);
+  assert.equal(nextest.directTasks.includes("oliphaunt-rust:unit-distinct"), true);
+  assert.equal(nextest.directTasks.includes("oliphaunt-rust:unit-shared"), true);
+  assert.equal(taskRecord("oliphaunt-rust:unit-shared").options.runInCI, false);
+  assert.equal(nextest.directTasks.includes("coverage-tools:wasix-rust"), true);
+  assert.equal(nextest.directTasks.includes("oliphaunt-wasix-rust:unit-distinct"), true);
+  assert.equal(nextest.directTasks.includes("oliphaunt-wasix-rust:unit-shared"), true);
+  assert.equal(taskRecord("oliphaunt-wasix-rust:unit-shared").options.runInCI, false);
+});
+
+test("coverage owns shared hosted suites while distinct product checks remain selected", () => {
+  const reactNative = effects("src/sdks/react-native/src/index.ts");
+  for (const target of [
+    "coverage-tools:react-native",
+    "oliphaunt-react-native:unit-distinct",
+    "oliphaunt-react-native:unit-shared",
+  ]) {
+    assert.equal(reactNative.directTasks.includes(target), true, target);
+  }
+  assert.equal(taskRecord("oliphaunt-react-native:unit-shared").options.runInCI, false);
+
+  const wasixRust = effects("src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs");
+  for (const target of [
+    "coverage-tools:wasix-rust",
+    "oliphaunt-wasix-rust:unit-distinct",
+    "oliphaunt-wasix-rust:unit-shared",
+  ]) {
+    assert.equal(wasixRust.directTasks.includes(target), true, target);
+  }
+  assert.equal(taskRecord("oliphaunt-wasix-rust:unit-shared").options.runInCI, false);
 });
 
 test("source acquisition and WASIX browser-host ownership stay narrow", () => {

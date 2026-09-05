@@ -7,13 +7,11 @@ import { fileURLToPath } from "node:url";
 
 import { reserveGitHubContentWriteSync } from "../../tools/release/github-content-write-pacer.mjs";
 import { reserveGitHubCoreRequestSync } from "../../tools/release/github-core-request-journal.mjs";
-import { RELEASE_TRANSPORT_REF_STEP_TIMEOUT_MINUTES } from "../../tools/release/release-continuation-read-budget.mjs";
 
 export const RELEASE_TRANSPORT_TAG_PREFIX = "oliphaunt-release-transport/";
 export const RELEASE_TRANSPORT_REQUEST_TIMEOUT_MS = 30_000;
 export const RELEASE_TRANSPORT_MAX_RESPONSE_BYTES = 64 * 1024;
-export const RELEASE_TRANSPORT_STEP_TIMEOUT_MINUTES =
-  RELEASE_TRANSPORT_REF_STEP_TIMEOUT_MINUTES;
+export const RELEASE_TRANSPORT_STEP_TIMEOUT_MINUTES = 3;
 
 const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const REQUIRE_CURRENT_MAIN = path.join(
@@ -107,7 +105,6 @@ function rootAdmission(contentWriteAdmission, commit, environment) {
   if (
     environment.GITHUB_ACTIONS !== "true"
     || environment.RELEASE_OPERATION !== expectedOperation
-    || (environment.RELEASE_CONTINUATION_POINTER ?? "") !== ""
     || environment.GITHUB_REF !== "refs/heads/main"
     || workflowSha !== commit
     || !/^[1-9][0-9]*$/u.test(runAttempt)

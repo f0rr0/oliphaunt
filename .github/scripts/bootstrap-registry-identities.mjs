@@ -31,7 +31,7 @@ import {
   decodeRegistryPublicationDeferral,
   REGISTRY_PUBLICATION_DEFERRAL_EXIT_CODE,
 } from "../../tools/release/registry-publication-deferral.mjs";
-import { validateReleaseExecutionResult } from "../../tools/release/release-continuation-contract.mjs";
+import { validateBootstrapExecutionResult } from "../../tools/release/bootstrap-execution-result.mjs";
 import { inspectNpmVersionState } from "../../tools/release/frozen-npm-publish.mjs";
 import { loadPublicationLock } from "../../tools/release/publication-lock.mjs";
 import { verifyLockedRegistryIntegrity } from "../../tools/release/registry-integrity.mjs";
@@ -56,8 +56,7 @@ const EXECUTION_RESULT_PATH = path.resolve(
 const CHILD_STDERR_TAIL_BYTES = 128 * 1024;
 
 function writeExecutionResult(value) {
-  const normalized = validateReleaseExecutionResult(value, {
-    operation: "publish-bootstrap",
+  const normalized = validateBootstrapExecutionResult(value, {
     releaseCommit: value.source.commit,
     releaseTree: value.source.tree,
     lock: value.lock,
@@ -137,12 +136,6 @@ try {
     appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${summary}\n`);
   }
   assertCratesIoBootstrapCapacity(capacityAssessment);
-  if (capacityAssessment.decision !== "execute") {
-    throw new Error(
-      `bounded bootstrap invocation cannot make dependency-closed progress before its deadline; `
-        + `${capacityAssessment.remainingMutationCount} carrier(s) remain and continuation requires nonzero progress`,
-    );
-  }
 } catch (error) {
   fail(error instanceof Error ? error.message : String(error));
 }
@@ -256,23 +249,30 @@ function publishCarrier(carrier) {
 
 let execution;
 try {
-  const admitted = new Set(capacityAssessment.admittedCarrierIds);
-  const admittedPlan = reconciliation.missingCarriers.filter(({ id }) => admitted.has(id));
-  if (admittedPlan.length !== admitted.size) {
-    throw new Error("token-bucket admission contains a carrier outside the exact missing-identity inventory");
+  if (capacityAssessment.decision === "defer") {
+    execution = {
+      deferReason: "capacity",
+      notBeforeEpochSeconds: capacityAssessment.notBeforeEpochSeconds,
+    };
+  } else {
+    const admitted = new Set(capacityAssessment.admittedCarrierIds);
+    const admittedPlan = reconciliation.missingCarriers.filter(({ id }) => admitted.has(id));
+    if (admittedPlan.length !== admitted.size) {
+      throw new Error("token-bucket admission contains a carrier outside the exact missing-identity inventory");
+    }
+    execution = await executeBootstrapPublicationPlan({
+      plan: admittedPlan,
+      satisfiedCarrierIds: reconciliation.publicCarrierIds,
+      publishCarrier,
+      checkpointCarrierIds: async (carrierIds) => {
+        const receipts = await verifyLockedRegistryIntegrity(lock, {
+          carrierIds,
+          concurrency: REGISTRY_BOOTSTRAP_INTEGRITY_CONCURRENCY,
+        });
+        checkpoint = appendBootstrapCheckpoint(bootstrapLedger, lock, products, receipts);
+      },
+    });
   }
-  execution = await executeBootstrapPublicationPlan({
-    plan: admittedPlan,
-    satisfiedCarrierIds: reconciliation.publicCarrierIds,
-    publishCarrier,
-    checkpointCarrierIds: async (carrierIds) => {
-      const receipts = await verifyLockedRegistryIntegrity(lock, {
-        carrierIds,
-        concurrency: REGISTRY_BOOTSTRAP_INTEGRITY_CONCURRENCY,
-      });
-      checkpoint = appendBootstrapCheckpoint(bootstrapLedger, lock, products, receipts);
-    },
-  });
 } catch (error) {
   fail(error instanceof Error ? error.message : String(error));
 }
@@ -302,6 +302,8 @@ try {
       ? "progress"
       : execution.deferReason === "rate-limit"
         ? "rate-limit"
+        : execution.deferReason === "capacity"
+          ? "pre-mutation-capacity"
         : execution.deferReason === "deadline"
           ? "pre-mutation-deadline"
           : (() => {
@@ -342,6 +344,6 @@ if (result.decision === "complete") {
 } else {
   console.log(
     `checkpointed ${result.newlyCompletedIds.length} new exact bootstrap receipt(s); `
-      + `${result.remainingIds.length} carrier(s) remain for a continuation no earlier than ${result.notBeforeEpochSeconds}`,
+      + `${result.remainingIds.length} carrier(s) remain for a manual rerun no earlier than ${result.notBeforeEpochSeconds}`,
   );
 }

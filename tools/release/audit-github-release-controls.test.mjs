@@ -105,32 +105,8 @@ describe("GitHub release controls", () => {
     expect(findings.find(({ id }) => id === "environment.release-dry-run.secrets-isolated")?.status).toBe("FAIL");
   });
 
-  test("only bootstrap allows the deterministic transport-tag namespace", () => {
-    for (const branchPolicies of [
-      [{ name: "main", type: "branch" }],
-      [
-        { name: "main", type: "branch" },
-        { name: "*", type: "tag" },
-      ],
-      [
-        { name: "main", type: "branch" },
-        { name: "oliphaunt-release-transport/*", type: "branch" },
-      ],
-    ]) {
-      const snapshot = fixture("desired-solo");
-      snapshot.environments["release-bootstrap"].branchPolicies = branchPolicies;
-      const findings = auditGitHubReleaseControls(snapshot, {
-        bootstrapState: "ready",
-        governance: "solo",
-      });
-      const finding = findings.find(
-        ({ id }) => id === "environment.release-bootstrap.branch-policy",
-      );
-      expect(finding?.status).toBe("FAIL");
-      expect(finding?.message).toContain("oliphaunt-release-transport/*");
-    }
-
-    for (const environmentName of ["release-pr", "release-dry-run", "release-publish"]) {
+  test("all release environments accept only main", () => {
+    for (const environmentName of ["release-bootstrap", "release-pr", "release-dry-run", "release-publish"]) {
       const snapshot = fixture("desired-solo");
       snapshot.environments[environmentName].branchPolicies.push({
         name: "oliphaunt-release-transport/*",

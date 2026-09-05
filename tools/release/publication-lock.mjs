@@ -2396,6 +2396,60 @@ export function lockedProductArtifactPaths(lock, product, { role = undefined, ki
   });
 }
 
+export function lockedPublicationFiles(lock, { products, workspaceRoot = ROOT } = {}) {
+  const selected = products === undefined ? lock.products.map(({ id }) => id) : products;
+  const selectedSet = new Set(selected);
+  const lockedProducts = lock.products.map(({ id }) => id).sort(compareText);
+  if (
+    selected.length !== selectedSet.size
+    || stableJson([...selectedSet].sort(compareText)) !== stableJson(lockedProducts)
+  ) {
+    throw error("publication file selection must exactly match the lock products");
+  }
+
+  const artifacts = [
+    ...lockedCarriers(lock, { products: selected }).flatMap((carrier) =>
+      carrier.artifacts.map((artifact) => ({ artifact, context: carrier.id }))),
+    ...lock.productArtifacts
+      .filter((artifact) => selectedSet.has(artifact.product))
+      .map((artifact) => ({ artifact, context: `${artifact.product}:${artifact.id}` })),
+  ];
+  const files = new Map();
+  for (const { artifact, context } of artifacts) {
+    const value = path.resolve(workspaceRoot, ...artifact.path.split("/"));
+    const relative = path.relative(path.resolve(workspaceRoot), value);
+    if (relative === "" || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      throw error(`${context} artifact path must remain inside the workspace: ${artifact.path}`);
+    }
+    let metadata;
+    try {
+      metadata = lstatSync(value);
+    } catch (cause) {
+      throw error(`${context} frozen artifact is missing: ${artifact.path}: ${cause.message}`);
+    }
+    if (metadata.isSymbolicLink() || !(metadata.isFile() || metadata.isDirectory())) {
+      throw error(`${context} frozen artifact must be a regular file or directory: ${artifact.path}`);
+    }
+    const observed = metadata.isFile()
+      ? { sha256: sha256File(value), size: metadata.size }
+      : directoryEnvelope(value);
+    if (observed.sha256 !== artifact.sha256 || observed.size !== artifact.size) {
+      throw error(`${context} frozen artifact bytes do not match the publication lock: ${artifact.path}`);
+    }
+    const concrete = metadata.isFile() ? [value] : walkFiles(value, { ignoreBuildDirectories: true });
+    for (const file of concrete) {
+      const filePath = path.relative(workspaceRoot, file).split(path.sep).join("/");
+      const envelope = { path: filePath, size: statSync(file).size, sha256: sha256File(file) };
+      const prior = files.get(filePath);
+      if (prior !== undefined && stableJson(prior) !== stableJson(envelope)) {
+        throw error(`overlapping frozen artifacts disagree for ${filePath}`);
+      }
+      files.set(filePath, envelope);
+    }
+  }
+  return [...files.values()].sort((left, right) => compareText(left.path, right.path));
+}
+
 function parseArgs(argv) {
   const command = argv.shift();
   const values = new Map();

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "../test/fd-backed-spawn-sync.mjs";
+import { execFileSync, spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import {
   chmodSync,
   mkdirSync,
@@ -71,6 +71,23 @@ test("release CLI value flags reject ambiguous duplicate identities", () => {
     () => uniqueValueFlag(["--head-ref"], "--head-ref"),
     /--head-ref requires a value/u,
   );
+});
+
+test("deleted product registry routes fail before publication lock access", () => {
+  for (const step of ["crates-io", "npm", "maven-central"]) {
+    const result = spawnSync(
+      process.execPath,
+      ["tools/release/release-publish.mjs", "publish", "--product", "oliphaunt-js", "--step", step],
+      {
+        cwd: path.resolve(import.meta.dirname, "../.."),
+        encoding: "utf8",
+        env: { ...process.env, OLIPHAUNT_PUBLICATION_LOCK: "/does/not/exist" },
+      },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(`${result.stdout}${result.stderr}`, /normal product\/ecosystem registry steps are disabled/u);
+    assert.doesNotMatch(`${result.stdout}${result.stderr}`, /cannot read publication lock/u);
+  }
 });
 
 test("mutation test discovery includes repository sources but excludes ignored dependency trees", () => {

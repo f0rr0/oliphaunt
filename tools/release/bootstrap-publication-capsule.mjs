@@ -25,13 +25,13 @@ import { TextDecoder } from "node:util";
 import {
   assertPublicationLockSource,
   loadPublicationLock,
-  lockedCarriers,
+  lockedPublicationFiles,
 } from "./publication-lock.mjs";
 import { ROOT, compareText } from "./release-graph.mjs";
 
-export const BOOTSTRAP_CAPSULE_SCHEMA = "oliphaunt-bootstrap-publication-capsule-v1";
-export const BOOTSTRAP_CAPSULE_MANIFEST_PATH = "target/release/bootstrap-capsule-manifest.json";
-export const BOOTSTRAP_CAPSULE_LOCK_PATH = "target/release/publication-lock.json";
+export const PUBLICATION_CANDIDATE_SCHEMA = "oliphaunt-frozen-publication-candidate-v1";
+export const PUBLICATION_CANDIDATE_MANIFEST_PATH = "target/release/publication-candidate-manifest.json";
+export const PUBLICATION_CANDIDATE_LOCK_PATH = "target/release/publication-lock.json";
 
 const BLOCK_SIZE = 512;
 const END_MARKER_SIZE = BLOCK_SIZE * 2;
@@ -181,7 +181,7 @@ function sameStrings(left, right) {
   return stableJson(left.slice().sort(compareText)) === stableJson(right.slice().sort(compareText));
 }
 
-function selectedBootstrapCarriers(lock, products) {
+function assertSelectedProducts(lock, products) {
   const selectedProducts = safeProducts(products);
   const lockedProducts = lock.products.map(({ id }) => id).sort(compareText);
   if (!sameStrings(selectedProducts, lockedProducts)) {
@@ -189,78 +189,47 @@ function selectedBootstrapCarriers(lock, products) {
       `selected products do not exactly match the approved lock: selected=${JSON.stringify(selectedProducts)}, lock=${JSON.stringify(lockedProducts)}`,
     );
   }
-  const selected = new Set(selectedProducts);
-  const carriers = lockedCarriers(lock)
-    .filter((carrier) => selected.has(carrier.product) && ["cargo", "npm"].includes(carrier.ecosystem))
-    .slice()
-    .sort((left, right) => left.publishOrder - right.publishOrder || compareText(left.id, right.id));
-  const seenPaths = new Set();
-  const caseFoldedPaths = new Map();
-  return carriers.map((carrier) => {
-    if (carrier.artifacts.length !== 1) {
-      throw error(`${carrier.id} must freeze exactly one bootstrap artifact`);
-    }
-    const artifact = carrier.artifacts[0];
-    const artifactPath = safeArchivePath(artifact.path, `${carrier.id} artifact path`);
-    const expectedExtension = carrier.ecosystem === "cargo" ? ".crate" : ".tgz";
-    if (!artifactPath.endsWith(expectedExtension)) {
-      throw error(`${carrier.id} bootstrap artifact must end in ${expectedExtension}: ${artifactPath}`);
-    }
-    if (seenPaths.has(artifactPath)) {
-      throw error(`bootstrap carriers reuse artifact path ${artifactPath}`);
-    }
-    seenPaths.add(artifactPath);
-    const folded = artifactPath.toLocaleLowerCase("en-US");
-    const prior = caseFoldedPaths.get(folded);
-    if (prior !== undefined) {
-      throw error(`bootstrap artifact paths collide by case: ${prior} and ${artifactPath}`);
-    }
-    caseFoldedPaths.set(folded, artifactPath);
-    return {
-      id: carrier.id,
-      product: carrier.product,
-      ecosystem: carrier.ecosystem,
-      name: carrier.name,
-      version: carrier.version,
-      publishOrder: carrier.publishOrder,
-      dependencies: carrier.dependencies.slice().sort(compareText),
-      artifact: {
-        path: artifactPath,
-        size: artifact.size,
-        sha256: artifact.sha256,
-      },
-    };
-  });
+  return selectedProducts;
 }
 
-function expectedManifest(lock, products, lockBytes) {
-  const selectedProducts = safeProducts(products);
+function safeRunId(value, context) {
+  const runId = String(value);
+  if (!/^[1-9][0-9]*$/u.test(runId)) throw error(`${context} must be a positive integer`);
+  return runId;
+}
+
+function expectedManifest(lock, products, lockBytes, workspaceRoot, approvalRunId, qualificationRunId) {
+  const selectedProducts = assertSelectedProducts(lock, products);
   const lockFile = {
-    path: BOOTSTRAP_CAPSULE_LOCK_PATH,
+    path: PUBLICATION_CANDIDATE_LOCK_PATH,
     size: lockBytes.length,
     sha256: sha256(lockBytes),
   };
   return {
-    schema: BOOTSTRAP_CAPSULE_SCHEMA,
+    schema: PUBLICATION_CANDIDATE_SCHEMA,
     source: {
       commit: lock.source.commit,
       tree: lock.source.tree,
+    },
+    approval: {
+      releaseRunId: safeRunId(approvalRunId, "approval run ID"),
+      qualificationRunId: safeRunId(qualificationRunId, "qualification run ID"),
     },
     lockDigest: lock.lockDigest,
     packageEnvelopeDigest: lock.packageEnvelopeDigest,
     catalogDigest: lock.catalogDigest,
     products: selectedProducts,
     publicationLock: lockFile,
-    carriers: selectedBootstrapCarriers(lock, selectedProducts),
+    files: lockedPublicationFiles(lock, { products: selectedProducts, workspaceRoot }),
   };
 }
 
-function verifyCarrierFiles(manifest, workspaceRoot) {
-  for (const carrier of manifest.carriers) {
-    const file = workspaceFile(workspaceRoot, carrier.artifact.path, `${carrier.id} artifact path`);
-    const observed = hashRegularFile(file, carrier.id, carrier.artifact.size);
-    if (observed.sha256 !== carrier.artifact.sha256) {
-      throw error(`${carrier.id} bytes do not match the approved publication lock`);
+function verifyCandidateFiles(manifest, workspaceRoot) {
+  for (const artifact of manifest.files) {
+    const file = workspaceFile(workspaceRoot, artifact.path, "frozen candidate file path");
+    const observed = hashRegularFile(file, artifact.path, artifact.size);
+    if (observed.sha256 !== artifact.sha256) {
+      throw error(`${artifact.path} bytes do not match the approved publication lock`);
     }
   }
 }
@@ -358,7 +327,7 @@ function atomicTar(output, entries) {
   const destination = path.resolve(output);
   mkdirSync(path.dirname(destination), { recursive: true });
   if (existsSync(destination)) throw error(`refusing to overwrite existing capsule ${destination}`);
-  const temporaryRoot = mkdtempSync(path.join(path.dirname(destination), ".bootstrap-capsule-pack-"));
+  const temporaryRoot = mkdtempSync(path.join(path.dirname(destination), ".publication-candidate-pack-"));
   const temporary = path.join(temporaryRoot, "capsule.tar");
   let descriptor;
   try {
@@ -384,24 +353,31 @@ function atomicTar(output, entries) {
   }
 }
 
-function capsuleEntries(lock, products, lockBytes, workspaceRoot) {
-  const manifest = expectedManifest(lock, products, lockBytes);
-  verifyCarrierFiles(manifest, workspaceRoot);
+function capsuleEntries(lock, products, lockBytes, workspaceRoot, approvalRunId, qualificationRunId) {
+  const manifest = expectedManifest(
+    lock,
+    products,
+    lockBytes,
+    workspaceRoot,
+    approvalRunId,
+    qualificationRunId,
+  );
+  verifyCandidateFiles(manifest, workspaceRoot);
   const manifestBytes = Buffer.from(canonicalJson(manifest));
   const entries = [
     {
-      path: BOOTSTRAP_CAPSULE_MANIFEST_PATH,
+      path: PUBLICATION_CANDIDATE_MANIFEST_PATH,
       size: manifestBytes.length,
       sha256: sha256(manifestBytes),
       bytes: manifestBytes,
     },
     {
-      path: BOOTSTRAP_CAPSULE_LOCK_PATH,
+      path: PUBLICATION_CANDIDATE_LOCK_PATH,
       size: lockBytes.length,
       sha256: sha256(lockBytes),
       bytes: lockBytes,
     },
-    ...manifest.carriers.map(({ artifact }) => ({
+    ...manifest.files.map((artifact) => ({
       path: artifact.path,
       size: artifact.size,
       sha256: artifact.sha256,
@@ -423,13 +399,22 @@ export function packBootstrapCapsule({
   products,
   headRef = "HEAD",
   output,
+  approvalRunId,
+  qualificationRunId,
   workspaceRoot = ROOT,
 }) {
   const lockPath = path.resolve(lockFile);
   const lockBytes = readMetadataFile(lockPath, "approved publication lock");
   const lock = loadPublicationLock(lockPath);
   assertPublicationLockSource(lock, headRef);
-  const { entries, manifest } = capsuleEntries(lock, products, lockBytes, workspaceRoot);
+  const { entries, manifest } = capsuleEntries(
+    lock,
+    products,
+    lockBytes,
+    workspaceRoot,
+    approvalRunId,
+    qualificationRunId,
+  );
   atomicTar(output, entries);
   return manifest;
 }
@@ -494,8 +479,8 @@ function ensureParentDirectories(root, relative) {
 }
 
 function extractCanonicalTar(transport, stage) {
-  const archiveStat = regularFileStat(transport, "bootstrap capsule transport");
-  const { descriptor } = openRegularNoFollow(transport, "bootstrap capsule transport");
+  const archiveStat = regularFileStat(transport, "publication candidate transport");
+  const { descriptor } = openRegularNoFollow(transport, "publication candidate transport");
   const observed = [];
   const names = new Set();
   const folded = new Map();
@@ -504,21 +489,21 @@ function extractCanonicalTar(transport, stage) {
   try {
     while (position < archiveStat.size) {
       const header = Buffer.alloc(BLOCK_SIZE);
-      readExact(descriptor, header, position, "bootstrap capsule transport");
+      readExact(descriptor, header, position, "publication candidate transport");
       position += BLOCK_SIZE;
       if (header.every((byte) => byte === 0)) {
         zeroBlocks += 1;
         if (zeroBlocks === 2) break;
         continue;
       }
-      if (zeroBlocks > 0) throw error("bootstrap capsule has an incomplete ustar end marker");
-      if (observed.length >= MAX_ARCHIVE_ENTRIES) throw error(`bootstrap capsule exceeds ${MAX_ARCHIVE_ENTRIES} entries`);
+      if (zeroBlocks > 0) throw error("publication candidate has an incomplete ustar end marker");
+      if (observed.length >= MAX_ARCHIVE_ENTRIES) throw error(`publication candidate exceeds ${MAX_ARCHIVE_ENTRIES} entries`);
       const entry = parseCanonicalHeader(header);
-      if (names.has(entry.path)) throw error(`bootstrap capsule repeats ${entry.path}`);
+      if (names.has(entry.path)) throw error(`publication candidate repeats ${entry.path}`);
       names.add(entry.path);
       const caseKey = entry.path.toLocaleLowerCase("en-US");
       const prior = folded.get(caseKey);
-      if (prior !== undefined) throw error(`bootstrap capsule paths collide by case: ${prior} and ${entry.path}`);
+      if (prior !== undefined) throw error(`publication candidate paths collide by case: ${prior} and ${entry.path}`);
       folded.set(caseKey, entry.path);
       const target = workspaceFile(stage, entry.path, "capsule member path");
       ensureParentDirectories(stage, entry.path);
@@ -549,10 +534,10 @@ function extractCanonicalTar(transport, stage) {
       }
       observed.push({ ...entry, sha256: hash.digest("hex") });
     }
-    if (zeroBlocks !== 2) throw error("bootstrap capsule is missing its two-block ustar end marker");
-    if (position !== archiveStat.size) throw error("bootstrap capsule contains bytes after its ustar end marker");
+    if (zeroBlocks !== 2) throw error("publication candidate is missing its two-block ustar end marker");
+    if (position !== archiveStat.size) throw error("publication candidate contains bytes after its ustar end marker");
     if (observed.map(({ path: member }) => member).join("\n") !== observed.map(({ path: member }) => member).sort(compareText).join("\n")) {
-      throw error("bootstrap capsule members are not in canonical path order");
+      throw error("publication candidate members are not in canonical path order");
     }
     return observed;
   } finally {
@@ -561,12 +546,12 @@ function extractCanonicalTar(transport, stage) {
 }
 
 function parseManifest(file) {
-  const bytes = readMetadataFile(file, "bootstrap capsule manifest");
+  const bytes = readMetadataFile(file, "publication candidate manifest");
   let manifest;
   try {
     manifest = JSON.parse(bytes.toString("utf8"));
   } catch (cause) {
-    throw error(`bootstrap capsule manifest is invalid JSON: ${cause.message}`);
+    throw error(`publication candidate manifest is invalid JSON: ${cause.message}`);
   }
   return { bytes, manifest };
 }
@@ -584,6 +569,8 @@ export function verifyExtractBootstrapCapsule({
   approvedLock,
   products,
   headRef = "HEAD",
+  approvalRunId,
+  qualificationRunId,
   workspaceRoot,
 }) {
   const root = path.resolve(workspaceRoot);
@@ -596,22 +583,29 @@ export function verifyExtractBootstrapCapsule({
     throw error(`atomic capsule installation requires an absent destination: ${destination}`);
   }
   const approvedLockBytes = readMetadataFile(path.resolve(approvedLock), "separately downloaded approved publication lock");
-  const stage = mkdtempSync(path.join(root, ".bootstrap-capsule-extract-"));
+  const stage = mkdtempSync(path.join(root, ".publication-candidate-extract-"));
   try {
     const observed = extractCanonicalTar(path.resolve(transport), stage);
-    const embeddedLockFile = workspaceFile(stage, BOOTSTRAP_CAPSULE_LOCK_PATH, "embedded publication lock path");
+    const embeddedLockFile = workspaceFile(stage, PUBLICATION_CANDIDATE_LOCK_PATH, "embedded publication lock path");
     const embeddedLockBytes = readMetadataFile(embeddedLockFile, "embedded publication lock");
     if (!embeddedLockBytes.equals(approvedLockBytes)) {
       throw error("embedded publication lock is not byte-identical to the separately downloaded approved lock");
     }
     const lock = loadPublicationLock(embeddedLockFile);
     assertPublicationLockSource(lock, headRef);
-    const expected = capsuleEntries(lock, products, embeddedLockBytes, stage);
-    const manifestFile = workspaceFile(stage, BOOTSTRAP_CAPSULE_MANIFEST_PATH, "capsule manifest path");
+    const manifestFile = workspaceFile(stage, PUBLICATION_CANDIDATE_MANIFEST_PATH, "candidate manifest path");
     const parsed = parseManifest(manifestFile);
+    const expected = capsuleEntries(
+      lock,
+      products,
+      embeddedLockBytes,
+      stage,
+      approvalRunId,
+      qualificationRunId ?? parsed.manifest?.approval?.qualificationRunId,
+    );
     const expectedManifestBytes = Buffer.from(canonicalJson(expected.manifest));
     if (!parsed.bytes.equals(expectedManifestBytes) || stableJson(parsed.manifest) !== stableJson(expected.manifest)) {
-      throw error("bootstrap capsule manifest does not exactly describe the approved lock and selected products");
+      throw error("publication candidate manifest does not exactly describe its approval, lock, and files");
     }
     verifyObservedEntries(observed, expected.entries);
     renameSync(path.join(stage, "target"), destination);
@@ -626,6 +620,7 @@ function parseArgs(argv) {
   if (!new Set(["pack", "verify-extract"]).has(command)) {
     throw error(
       "usage: bootstrap-publication-capsule.mjs <pack|verify-extract> --products-json JSON --head-ref SHA "
+        + "--approval-run-id ID --qualification-run-id ID "
         + "[--lock FILE --output FILE | --transport FILE --approved-lock FILE --workspace-root DIR]",
     );
   }
@@ -641,11 +636,12 @@ function parseArgs(argv) {
     values.set(name, value);
   }
   const allowed = command === "pack"
-    ? new Set(["lock", "products-json", "head-ref", "output"])
-    : new Set(["transport", "approved-lock", "products-json", "head-ref", "workspace-root"]);
+    ? new Set(["lock", "products-json", "head-ref", "output", "approval-run-id", "qualification-run-id"])
+    : new Set(["transport", "approved-lock", "products-json", "head-ref", "workspace-root", "approval-run-id", "qualification-run-id"]);
   const unknown = [...values.keys()].filter((name) => !allowed.has(name));
   if (unknown.length > 0) throw error(`unsupported ${command} arguments: ${unknown.map((name) => `--${name}`).join(" ")}`);
-  const missing = [...allowed].filter((name) => !values.get(name));
+  const optional = command === "verify-extract" ? new Set(["qualification-run-id"]) : new Set();
+  const missing = [...allowed].filter((name) => !optional.has(name) && !values.get(name));
   if (missing.length > 0) throw error(`${command} requires ${missing.map((name) => `--${name}`).join(" ")}`);
   return { command, values };
 }
@@ -658,9 +654,11 @@ function main(argv) {
       products: values.get("products-json"),
       headRef: values.get("head-ref"),
       output: values.get("output"),
+      approvalRunId: values.get("approval-run-id"),
+      qualificationRunId: values.get("qualification-run-id"),
     });
     console.log(
-      `packed ${manifest.carriers.length} Cargo/npm carriers from approved lock ${manifest.lockDigest} into ${values.get("output")}`,
+      `packed ${manifest.files.length} frozen publication files from approved lock ${manifest.lockDigest} into ${values.get("output")}`,
     );
     return;
   }
@@ -669,10 +667,12 @@ function main(argv) {
     approvedLock: values.get("approved-lock"),
     products: values.get("products-json"),
     headRef: values.get("head-ref"),
+    approvalRunId: values.get("approval-run-id"),
+    qualificationRunId: values.get("qualification-run-id"),
     workspaceRoot: values.get("workspace-root"),
   });
   console.log(
-    `verified and atomically installed ${manifest.carriers.length} Cargo/npm carriers from approved lock ${manifest.lockDigest}`,
+    `verified and atomically installed ${manifest.files.length} frozen publication files from approved lock ${manifest.lockDigest}`,
   );
 }
 
