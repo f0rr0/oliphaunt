@@ -15,6 +15,26 @@ source_product = "liboliphaunt-wasix"
 path = "src/runtimes/wasix-napi/package.json"
 parser = "json:oliphaunt.runtimeVersion"
 
+[compatibility_versions.oliphaunt-wasix-napi-runtime-darwin-arm64]
+source_product = "liboliphaunt-wasix"
+path = "src/runtimes/wasix-napi/packages/darwin-arm64/package.json"
+parser = "json:oliphaunt.runtimeVersion"
+
+[compatibility_versions.oliphaunt-wasix-napi-runtime-linux-arm64-gnu]
+source_product = "liboliphaunt-wasix"
+path = "src/runtimes/wasix-napi/packages/linux-arm64-gnu/package.json"
+parser = "json:oliphaunt.runtimeVersion"
+
+[compatibility_versions.oliphaunt-wasix-napi-runtime-linux-x64-gnu]
+source_product = "liboliphaunt-wasix"
+path = "src/runtimes/wasix-napi/packages/linux-x64-gnu/package.json"
+parser = "json:oliphaunt.runtimeVersion"
+
+[compatibility_versions.oliphaunt-wasix-napi-runtime-win32-x64-msvc]
+source_product = "liboliphaunt-wasix"
+path = "src/runtimes/wasix-napi/packages/win32-x64-msvc/package.json"
+parser = "json:oliphaunt.runtimeVersion"
+
 [compatibility_versions.oliphaunt-wasix-napi-wasix-rust]
 source_product = "oliphaunt-wasix-rust"
 path = "src/runtimes/wasix-napi/package.json"

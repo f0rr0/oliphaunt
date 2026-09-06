@@ -2625,6 +2625,8 @@ jobs:
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'mobile-build-ios') }}
     runs-on: macos-26
     timeout-minutes: 180
+    env:
+      OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT: ${{ github.workspace }}/target/mobile-extension-artifacts
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -2817,6 +2819,7 @@ jobs:
             fi
             product_root="$(tools/dev/bun.sh tools/release/release_graph_query.mjs \
               extension-artifact-root --product "$product" --family native)"
+            product_root="$OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT/${product_root#target/extension-artifacts/}"
             release_assets="$product_root/release-assets"
             product_carriers=()
             while IFS= read -r carrier; do
@@ -2848,7 +2851,6 @@ jobs:
           OLIPHAUNT_EXPO_IOS_EXTENSIONS: ${{ needs.affected.outputs.extension_package_sql_names_csv }}
           OLIPHAUNT_EXPO_IOS_SDK: iphonesimulator
           OLIPHAUNT_EXPO_REQUIRE_PREBUILT_EXTENSIONS: "1"
-          OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT: ${{ github.workspace }}/target/extension-artifacts
           OLIPHAUNT_EXPO_IOS_OLIPHAUNT_XCFRAMEWORK: ${{ github.workspace }}/target/liboliphaunt-ios-xcframework/out/liboliphaunt.xcframework
           OLIPHAUNT_EXPO_IOS_RUNTIME_DIR: ${{ github.workspace }}/target/liboliphaunt-mobile-host/ios-xcframework/install
           OLIPHAUNT_EXPO_IOS_INITDB: ${{ github.workspace }}/target/liboliphaunt-mobile-host/ios-xcframework/install/bin/initdb
