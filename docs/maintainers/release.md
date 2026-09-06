@@ -216,7 +216,7 @@ The `Release` workflow has four operations:
 
 1. `prepare-release-pr` — run from current `main`; creates/updates the single generated release PR and syncs derived files.
 2. `publish-dry-run` — downloads exact-SHA CI artifacts, packages every public carrier, freezes/verifies the exhaustive lock, and uploads the complete lock-bound publication candidate without write credentials.
-3. `publish-bootstrap` — creation of missing npm/crates identities only, from an explicitly approved candidate in a bounded Linux job. If it stops incomplete, rerun the failed job of that same workflow run; the checkpoint ledger resumes the exact SHA and approval. npm requires a short-lived granular `@oliphaunt` read/write token with 2FA bypass only when an npm identity is absent.
+3. `publish-bootstrap` — creation of missing npm/crates identities only, from an explicitly approved candidate in a bounded Linux job. Its first registry inventory freezes only absent names into the checkpoint ledger; existing names awaiting a later version stay on the normal trusted-publication path. If bootstrap stops incomplete, rerun the failed job of that same workflow run; the checkpoint ledger resumes the exact SHA and approval. Provision only the registry token required by that frozen scope. npm requires a short-lived granular `@oliphaunt` read/write token with 2FA bypass only when an npm identity is absent.
 4. `publish` — normal trusted release. It installs that same explicitly approved candidate, adds signing/upload envelopes, and uses short-lived Cargo/npm credentials plus Maven protected secrets.
 
 On the normal path, only a successful `publish-dry-run` uploads the canonical

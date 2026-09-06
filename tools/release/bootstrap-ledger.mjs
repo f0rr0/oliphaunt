@@ -97,12 +97,32 @@ function publicationRows(lock, products) {
     .sort((left, right) => left.publishOrder - right.publishOrder || compareText(left.id, right.id));
 }
 
-function checkpointBase(lock, products) {
+function checkpointBase(lock, products, publicationIds = undefined) {
   const selected = uniqueProducts(products);
   const known = new Set(lock.products.map((product) => product.id));
   const unknown = selected.filter((product) => !known.has(product));
   if (unknown.length > 0) throw error(`selected products are absent from the publication lock: ${unknown.join(", ")}`);
-  const publications = publicationRows(lock, selected);
+  const allPublications = publicationRows(lock, selected);
+  if (
+    publicationIds !== undefined
+    && (
+      !Array.isArray(publicationIds)
+      || publicationIds.some((id) => typeof id !== "string" || id.length === 0)
+      || new Set(publicationIds).size !== publicationIds.length
+    )
+  ) {
+    throw error("bootstrap publication IDs must be a non-empty unique string list");
+  }
+  const selectedIds = publicationIds === undefined
+    ? new Set(allPublications.map(({ id }) => id))
+    : new Set(publicationIds);
+  if (selectedIds.size === 0) {
+    throw error("bootstrap publication IDs must be a non-empty unique string list");
+  }
+  const allIds = new Set(allPublications.map(({ id }) => id));
+  const unknownIds = [...selectedIds].filter((id) => !allIds.has(id)).sort(compareText);
+  if (unknownIds.length > 0) throw error(`bootstrap publication IDs are absent from the selected lock: ${unknownIds.join(", ")}`);
+  const publications = allPublications.filter(({ id }) => selectedIds.has(id));
   if (publications.length === 0) throw error("selected products have no Cargo or npm publication identities to bootstrap");
   return {
     schema: BOOTSTRAP_LEDGER_SCHEMA,
@@ -124,10 +144,11 @@ function withoutDigest(checkpoint) {
 export function buildBootstrapLedger(lock, products, {
   sequence = 0,
   previousCheckpointDigest = null,
+  publicationIds = undefined,
   receipts = [],
 } = {}) {
   const checkpoint = {
-    ...checkpointBase(lock, products),
+    ...checkpointBase(lock, products, publicationIds),
     sequence,
     previousCheckpointDigest,
     receipts: [...receipts].sort((left, right) => compareText(left.id, right.id)),
@@ -163,7 +184,10 @@ export function validateBootstrapLedger(checkpoint, lock, products) {
   if (checkpoint.schema !== BOOTSTRAP_LEDGER_SCHEMA) throw error(`ledger schema must be ${BOOTSTRAP_LEDGER_SCHEMA}`);
   assertHash(checkpoint.checkpointDigest, "ledger.checkpointDigest");
   if (checkpoint.checkpointDigest !== digest(withoutDigest(checkpoint))) throw error("ledger checkpoint digest mismatch");
-  const expectedBase = checkpointBase(lock, products);
+  const publicationIds = Array.isArray(checkpoint.publications)
+    ? checkpoint.publications.map(({ id }) => id)
+    : [];
+  const expectedBase = checkpointBase(lock, products, publicationIds);
   for (const key of ["schema", "lockDigest", "packageEnvelopeDigest", "catalogDigest", "source", "products", "publications"]) {
     if (stableJson(checkpoint[key]) !== stableJson(expectedBase[key])) {
       throw error(`ledger ${key} is not bound to the active publication lock/source/package envelope`);
@@ -290,8 +314,16 @@ function syncCheckpointDirectory(directory) {
   }
 }
 
-export function appendBootstrapCheckpoint(directory, lock, products, receipts) {
+export function appendBootstrapCheckpoint(directory, lock, products, receipts, { publicationIds = undefined } = {}) {
   const previous = loadBootstrapLedger(directory, lock, products, { allowEmpty: true });
+  const activePublicationIds = previous?.publications.map(({ id }) => id) ?? publicationIds;
+  if (
+    previous !== null
+    && publicationIds !== undefined
+    && stableJson([...publicationIds].sort(compareText)) !== stableJson([...activePublicationIds].sort(compareText))
+  ) {
+    throw error("bootstrap publication scope conflicts with its immutable first checkpoint");
+  }
   const merged = new Map((previous?.receipts ?? []).map((receipt) => [receipt.id, receipt]));
   let added = 0;
   for (const receipt of receipts) {
@@ -306,6 +338,7 @@ export function appendBootstrapCheckpoint(directory, lock, products, receipts) {
   const checkpoint = buildBootstrapLedger(lock, products, {
     sequence: previous === null ? 0 : previous.sequence + 1,
     previousCheckpointDigest: previous?.checkpointDigest ?? null,
+    publicationIds: activePublicationIds,
     receipts: [...merged.values()],
   });
   validateBootstrapLedger(checkpoint, lock, products);
@@ -387,7 +420,8 @@ if (import.meta.main) {
         : { products: [args.product], ecosystems: [args.ecosystem] });
       checkpoint = appendBootstrapCheckpoint(args.ledger, lock, args.products, receipts);
     } else if (args.command === "seal") {
-      const expected = checkpointBase(lock, args.products).publications;
+      checkpoint = loadBootstrapLedger(args.ledger, lock, args.products);
+      const expected = checkpoint.publications;
       const receipts = await verifyLockedRegistryIntegrity(lock, { carrierIds: expected.map(({ id }) => id) });
       checkpoint = appendBootstrapCheckpoint(args.ledger, lock, args.products, receipts);
       loadBootstrapLedger(args.ledger, lock, args.products, { requireComplete: true });

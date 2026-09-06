@@ -88,7 +88,7 @@ export function bootstrapPublicationPlan(lock, products) {
       }
     }
   }
-  return carriers.map(({ id, product, ecosystem, name, version, publishOrder, dependencies }) => ({
+  return carriers.map(({ id, product, ecosystem, name, version, publishOrder, dependencies, packageDependencies }) => ({
     id,
     product,
     ecosystem,
@@ -96,6 +96,7 @@ export function bootstrapPublicationPlan(lock, products) {
     version,
     publishOrder,
     dependencies: dependencies.filter((dependency) => BOOTSTRAP_ECOSYSTEMS.has(allById.get(dependency).ecosystem)),
+    packageDependencies: packageDependencies ?? [],
   }));
 }
 

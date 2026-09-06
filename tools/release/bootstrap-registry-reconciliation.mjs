@@ -59,7 +59,7 @@ function inventoryStates(ecosystem, expectedCarriers, inventory) {
     inventory.publishedIdentities.map((identity, index) => requiredIdentity(identity, `${ecosystem} published identity ${index}`)),
     `${ecosystem} published identities`,
   );
-  const conflicts = uniqueSet(
+  const pendingVersions = uniqueSet(
     inventory.pendingVersions.map((identity, index) => requiredIdentity(identity, `${ecosystem} pending version ${index}`)),
     `${ecosystem} pending versions`,
   );
@@ -78,15 +78,15 @@ function inventoryStates(ecosystem, expectedCarriers, inventory) {
   const states = new Map();
   for (const carrier of expectedCarriers) {
     const key = identityKey(carrier.name, carrier.version);
-    const matches = Number(published.has(key)) + Number(conflicts.has(key)) + Number(missingNames.has(carrier.name));
+    const matches = Number(published.has(key)) + Number(pendingVersions.has(key)) + Number(missingNames.has(carrier.name));
     if (matches !== 1) {
       throw error(`${carrier.id} must have exactly one registry inventory state, observed ${matches}`);
     }
     if (published.has(key)) states.set(carrier.id, "published");
-    else if (conflicts.has(key)) states.set(carrier.id, "pending-version");
+    else if (pendingVersions.has(key)) states.set(carrier.id, "pending-version");
     else states.set(carrier.id, "missing-name");
   }
-  for (const key of [...published, ...conflicts]) {
+  for (const key of [...published, ...pendingVersions]) {
     if (!expectedKeys.has(key)) throw error(`${ecosystem} inventory contains an identity outside the frozen bootstrap plan`);
   }
   return states;
@@ -125,7 +125,7 @@ export function reconcileBootstrapRegistryState({
   ]);
   const publicCarrierIds = plan.filter(({ id }) => states.get(id) === "published").map(({ id }) => id);
   const missingCarriers = plan.filter(({ id }) => states.get(id) === "missing-name");
-  const conflicts = plan.filter(({ id }) => states.get(id) === "pending-version");
+  const existingNameCarriers = plan.filter(({ id }) => states.get(id) === "pending-version");
 
   if (checkpoint !== null) {
     if (
@@ -149,7 +149,55 @@ export function reconcileBootstrapRegistryState({
   return {
     publicCarrierIds,
     missingCarriers,
-    conflicts,
+    existingNameCarriers,
     receiptedCarrierIds: checkpoint?.receipts.map(({ id }) => id) ?? [],
   };
+}
+
+export function resolveBootstrapScope(plan, reconciliation, checkpoint = null) {
+  const scopeIds = checkpoint?.publications.map(({ id }) => id)
+    ?? reconciliation.missingCarriers.map(({ id }) => id);
+  if (scopeIds.length === 0) {
+    throw error("the approved candidate has no absent Cargo/npm package names to bootstrap; use normal publish");
+  }
+  const scope = new Set(scopeIds);
+  const scopedPlan = plan.filter(({ id }) => scope.has(id));
+  if (scopedPlan.length !== scope.size) {
+    throw error("bootstrap ledger scope contains a carrier outside the exact canonical plan");
+  }
+  const scopeConflicts = reconciliation.existingNameCarriers.filter(({ id }) => scope.has(id));
+  if (scopeConflicts.length > 0) {
+    throw error(
+      `bootstrap-scoped package names now exist without the locked exact version: ${scopeConflicts.map(({ id }) => id).join(", ")}`,
+    );
+  }
+  const outsideMissing = reconciliation.missingCarriers.filter(({ id }) => !scope.has(id));
+  if (outsideMissing.length > 0) {
+    throw error(`registry names disappeared outside the immutable bootstrap scope: ${outsideMissing.map(({ id }) => id).join(", ")}`);
+  }
+  const publicIds = new Set(reconciliation.publicCarrierIds);
+  const existingIds = new Set(reconciliation.existingNameCarriers.map(({ id }) => id));
+  return scopedPlan.map((carrier) => ({
+    ...carrier,
+    dependencies: carrier.dependencies.filter((dependency) => {
+      if (scope.has(dependency)) return true;
+      if (publicIds.has(dependency)) return false;
+      if (!existingIds.has(dependency)) {
+        throw error(`${carrier.id} depends on an unknown carrier outside the bootstrap scope: ${dependency}`);
+      }
+      const [ecosystem, ...nameParts] = dependency.split(":");
+      const name = nameParts.join(":");
+      const optionalNpmDependency = carrier.ecosystem === "npm"
+        && ecosystem === "npm"
+        && carrier.packageDependencies?.some((row) =>
+          row.ecosystem === "npm" && row.name === name && row.scope === "optional"
+        );
+      if (!optionalNpmDependency) {
+        throw error(
+          `${carrier.id} cannot bootstrap before existing-name dependency ${dependency} reaches its locked version`,
+        );
+      }
+      return false;
+    }),
+  }));
 }
