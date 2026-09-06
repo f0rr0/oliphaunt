@@ -205,6 +205,7 @@ test("WASIX TypeScript products build packages and root integration consumes the
 
 test("WASIX Node-API release build consumes its runtime and extension artifacts", () => {
   const task = moonJson(["query", "tasks"]).tasks["release-tools"]["wasix-napi-runtime"];
+  assert.equal(task.command, "bash");
   assert.deepEqual(task.deps.map(({ target }) => target).sort(), [
     "extension-artifacts-wasix:build-target",
     "liboliphaunt-wasix:runtime-aot",
