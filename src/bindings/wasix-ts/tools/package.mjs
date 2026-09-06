@@ -81,7 +81,8 @@ if (import.meta.main) {
   mkdirSync(packages);
   const result = spawnSync('pnpm', ['--silent', 'pack', '--pack-destination', packages], {
     cwd: path.resolve(ROOT, output),
-    stdio: ['ignore', 'ignore', 'inherit'],
+    env: { ...process.env, PNPM_CONFIG_NODE_LINKER: 'hoisted' },
+    stdio: ['ignore', 'inherit', 'inherit'],
   });
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
