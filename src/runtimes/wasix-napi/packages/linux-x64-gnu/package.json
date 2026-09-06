@@ -22,7 +22,7 @@
   "oliphaunt": {
     "target": "linux-x64-gnu",
     "runtimeProduct": "liboliphaunt-wasix",
-    "runtimeVersion": "0.1.1",
+    "runtimeVersion": "0.2.0",
     "addonAbiVersion": 1,
     "nodeApiVersion": 8,
     "profiles": [
