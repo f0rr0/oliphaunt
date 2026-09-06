@@ -228,6 +228,16 @@ test("WASIX extension staging follows its own code and produced runtime artifact
   assert.equal(releaseMetadata.directTasks.includes("release-tools:wasix-napi-runtime"), true);
 });
 
+test("extension artifact builders materialize overlapping source scopes once", () => {
+  const native = actionTargets("extension-artifacts-native:build-target");
+  assert.equal(native.has("source-inputs:source-fetch-native-runtime"), true);
+  assert.equal(native.has("source-inputs:source-fetch-extensions"), false);
+
+  const wasix = actionTargets("extension-artifacts-wasix:build-target");
+  assert.equal(wasix.has("source-inputs:source-fetch-wasix-runtime"), true);
+  assert.equal(wasix.has("source-inputs:source-fetch-extensions"), false);
+});
+
 test("executable packagers and Rust test configuration select their real owners", () => {
   const nativeExtensions = effects("src/extensions/artifacts/native/tools/package-release-assets.sh");
   assert.equal(nativeExtensions.directTasks.includes("extension-artifacts-native:build-target"), true);

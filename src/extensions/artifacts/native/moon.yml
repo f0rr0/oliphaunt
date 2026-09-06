@@ -43,7 +43,6 @@ tasks:
       OLIPHAUNT_TRACK_BUILD: "missing"
     deps:
       - "source-inputs:source-fetch-native-runtime"
-      - "source-inputs:source-fetch-extensions"
     inputs:
       - "@group(legal-files)"
       - "@group(cargo-workspace)"
