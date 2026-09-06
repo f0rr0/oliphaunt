@@ -83,14 +83,35 @@ test("accepts an exact same-SHA rerun after its product tag exists", () => {
   );
 });
 
-test("rejects a later commit because only the exact tagged SHA can rerun", () => {
+test("accepts a later release-control fix without changing the pending release", () => {
   const { repo, release } = fixture();
   write(repo, "tools/release-control.txt", "changed\n");
   const controller = commit(repo, "fix(release): change release control");
 
-  assert.throws(
-    () => verifyPublicationCandidate({ repo, headRef: controller, products: [PRODUCT] }),
-    /release commit .* subject must start/u,
+  assert.deepEqual(
+    verifyPublicationCandidate({ repo, headRef: controller, products: [PRODUCT] }),
+    {
+      mode: "release-bump",
+      publicationSha: controller,
+      releaseSha: release,
+      products: [PRODUCT],
+      versions: { [PRODUCT]: "0.1.0" },
+    },
   );
-  assert.notEqual(controller, release);
+  assert.throws(
+    () => verifyPublicationCandidate({ repo, headRef: controller, products: ["other"] }),
+    /selected products do not match release commit/u,
+  );
+});
+
+test("rejects a publication version changed after the verified release", () => {
+  const { repo, release } = fixture();
+  write(repo, ".release-please-manifest.json", '{"packages/alpha":"0.2.0"}\n');
+  const changed = commit(repo, "fix(release): change pending version");
+
+  assert.throws(
+    () => verifyPublicationCandidate({ repo, headRef: changed, products: [PRODUCT] }),
+    /publication versions .* do not match release commit/u,
+  );
+  assert.notEqual(changed, release);
 });

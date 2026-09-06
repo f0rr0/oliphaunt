@@ -386,7 +386,7 @@ jobs:
           RELEASE_OPERATION: ${{ inputs.operation }}
         run: bun .github/scripts/verify-github-oidc-identity.mjs
 
-      - name: Prove workflow HEAD is the release commit
+      - name: Prove pending release identity
         id: verify_publication_candidate
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
         timeout-minutes: 2

@@ -6,7 +6,7 @@ import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { ROOT } from "./release-graph.mjs";
 import {
   deriveReleaseProducts,
-  verifyReleaseCommit,
+  latestVerifiedReleaseCommit,
 } from "./verify-release-commit.mjs";
 
 const TOOL = "verify-publication-candidate.mjs";
@@ -26,6 +26,38 @@ function publicationCommit(repo, headRef) {
     throw error(`could not resolve publication commit${detail ? `: ${detail}` : ""}`);
   }
   return result.stdout.trimEnd();
+}
+
+function sameStrings(left, right) {
+  return JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());
+}
+
+function manifestVersions(repo, commit, products) {
+  const readJson = (file) => {
+    const result = captureCommandOutput("git", ["show", `${commit}:${file}`], {
+      cwd: repo,
+      label: `git show ${commit}:${file}`,
+    });
+    if (result.error !== undefined || result.status !== 0) {
+      throw error(`could not read ${file} at publication commit ${commit}`);
+    }
+    try {
+      return JSON.parse(result.stdout);
+    } catch (cause) {
+      throw error(`${file} at publication commit ${commit} is not valid JSON: ${cause.message}`);
+    }
+  };
+  const packages = readJson("release-please-config.json").packages;
+  const manifest = readJson(".release-please-manifest.json");
+  return Object.fromEntries(products.map((product) => {
+    const packagePath = Object.entries(packages ?? {})
+      .find(([, config]) => config?.component === product)?.[0];
+    const version = manifest?.[packagePath];
+    if (packagePath === undefined || typeof version !== "string") {
+      throw error(`${product} has no publication version at ${commit}`);
+    }
+    return [product, version];
+  }));
 }
 
 export function derivePublicationProducts({
@@ -51,11 +83,35 @@ export function verifyPublicationCandidate({
   headRef = "HEAD",
   products,
 } = {}) {
+  if (
+    !Array.isArray(products)
+    || products.length === 0
+    || products.some((product) => typeof product !== "string" || product.length === 0)
+    || new Set(products).size !== products.length
+  ) {
+    throw error("products must be a non-empty product string list without duplicates");
+  }
   const commit = publicationCommit(repo, headRef);
-  const verified = verifyReleaseCommit({ repo, headRef: commit, products });
+  const verified = latestVerifiedReleaseCommit({ repo, headRef: commit });
+  if (verified === null) {
+    throw error(`no verified release commit is reachable from publication commit ${commit}`);
+  }
+  if (!sameStrings(products, verified.products)) {
+    throw error(
+      `selected products do not match release commit ${verified.commit}: `
+      + `selected=${JSON.stringify(products)}, released=${JSON.stringify(verified.products)}`,
+    );
+  }
+  const currentVersions = manifestVersions(repo, commit, verified.products);
+  if (JSON.stringify(currentVersions) !== JSON.stringify(verified.versions)) {
+    throw error(
+      `publication versions at ${commit} do not match release commit ${verified.commit}: `
+      + `publication=${JSON.stringify(currentVersions)}, released=${JSON.stringify(verified.versions)}`,
+    );
+  }
   return {
     mode: "release-bump",
-    publicationSha: verified.commit,
+    publicationSha: commit,
     releaseSha: verified.commit,
     products: verified.products,
     versions: verified.versions,
