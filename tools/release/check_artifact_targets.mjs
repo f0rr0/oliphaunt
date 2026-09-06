@@ -847,12 +847,14 @@ export function validateCiArtifactCoverage(workflow, inventory) {
     .find((step) => step.with?.name === "oliphaunt-mobile-extension-package-artifacts");
   const iosCarrierManifest = namedStep(workflow, "mobile-build-ios", "Render exact-SHA cache-warm iOS carrier manifest");
   const iosSwiftConsumer = namedStep(workflow, "mobile-build-ios", "Run exact-extension Swift release consumer");
+  const iosMobileBuild = namedStep(workflow, "mobile-build-ios", "Build iOS mobile app");
   const iosMobileJob = workflowJob(workflow, "mobile-build-ios");
   invariant(
     iosMobileExtensions?.with?.path === "target/mobile-extension-artifacts"
       && String(iosCarrierManifest?.run ?? "").includes("--extension-root target/mobile-extension-artifacts")
-      && iosMobileJob.env?.OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT === "${{ github.workspace }}/target/mobile-extension-artifacts"
-      && String(iosSwiftConsumer?.run ?? "").includes("$OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT/${product_root#target/extension-artifacts/}"),
+      && iosMobileJob.env?.OLIPHAUNT_EXTENSION_ARTIFACT_ROOT === "${{ github.workspace }}/target/mobile-extension-artifacts"
+      && iosMobileBuild?.env?.OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT === "${{ env.OLIPHAUNT_EXTENSION_ARTIFACT_ROOT }}"
+      && String(iosSwiftConsumer?.run ?? "").includes("$OLIPHAUNT_EXTENSION_ARTIFACT_ROOT/${product_root#target/extension-artifacts/}"),
     "iOS consumers must restore and read mobile extension artifacts at their frozen producer root",
   );
   const postmasterReleaseAssets = releaseAssets(
@@ -1051,9 +1053,8 @@ export function validateCiArtifactCoverage(workflow, inventory) {
     "tools/release/moon.yml",
   ).tasks;
   invariant(
-    String(releaseTasks?.["wasix-napi-runtime"]?.script ?? "").includes(
-      "build-extension-ci-artifacts.mjs --all --family wasix --require-wasix",
-    ),
+    String(releaseTasks?.["wasix-napi-runtime"]?.command ?? "").startsWith("bash ")
+      && String(releaseTasks["wasix-napi-runtime"].command).includes("build-extension-ci-artifacts.mjs --all --family wasix --require-wasix"),
     "WASIX Node-API builds must stage complete exact-extension portable and target AOT inputs",
   );
   const wasixNapiAotRestore = namedStep(workflow, "wasix-napi", "Restore exact target core and tool AOT layout");

@@ -607,10 +607,7 @@ tasks:
 
   wasix-napi-runtime:
     tags: ["release", "artifact", "in-place-finalizer-input", "ci-wasix-napi"]
-    script: |
-      set -e
-      tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs --all --family wasix --require-wasix
-      exec bash src/runtimes/wasix-napi/tools/build-native.sh
+    command: "bash -c 'set -e; tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs --all --family wasix --require-wasix; exec bash src/runtimes/wasix-napi/tools/build-native.sh'"
     deps:
       - "liboliphaunt-wasix:runtime-aot"
       - "extension-artifacts-wasix:build-target"

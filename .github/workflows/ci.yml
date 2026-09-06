@@ -2626,7 +2626,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 180
     env:
-      OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT: ${{ github.workspace }}/target/mobile-extension-artifacts
+      OLIPHAUNT_EXTENSION_ARTIFACT_ROOT: ${{ github.workspace }}/target/mobile-extension-artifacts
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -2819,7 +2819,7 @@ jobs:
             fi
             product_root="$(tools/dev/bun.sh tools/release/release_graph_query.mjs \
               extension-artifact-root --product "$product" --family native)"
-            product_root="$OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT/${product_root#target/extension-artifacts/}"
+            product_root="$OLIPHAUNT_EXTENSION_ARTIFACT_ROOT/${product_root#target/extension-artifacts/}"
             release_assets="$product_root/release-assets"
             product_carriers=()
             while IFS= read -r carrier; do
@@ -2844,6 +2844,7 @@ jobs:
       - name: Build iOS mobile app
         env:
           OLIPHAUNT_EXPO_ALLOW_NATIVE_BUILDS: "0"
+          OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT: ${{ env.OLIPHAUNT_EXTENSION_ARTIFACT_ROOT }}
           OLIPHAUNT_EXPO_REQUIRE_SDK_ARTIFACTS: "1"
           OLIPHAUNT_EXPO_SDK_ARTIFACT_ROOT: ${{ github.workspace }}/target/sdk-artifacts
           OLIPHAUNT_EXPO_IOS_CONFIGURATION: Release
