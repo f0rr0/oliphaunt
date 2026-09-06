@@ -7,7 +7,11 @@ import path from "node:path";
 import test from "node:test";
 
 import { RELEASE_PLEASE_BOOTSTRAP_SHA } from "./release-please-bootstrap.mjs";
-import { deriveReleaseProducts, verifyReleaseCommit } from "./verify-release-commit.mjs";
+import {
+  deriveReleaseProducts,
+  latestVerifiedReleaseCommit,
+  verifyReleaseCommit,
+} from "./verify-release-commit.mjs";
 
 const RELEASE_PRODUCT = "oliphaunt-broker";
 const KNOWN_DERIVED_PACKAGE = "@oliphaunt/broker-linux-x64-gnu";
@@ -50,6 +54,7 @@ test("permits only the exact one-time bootstrap-sha removal in a release commit"
   write(repo, "packages/alpha/VERSION", "0.0.0\n");
   write(repo, "packages/alpha/CHANGELOG.md", "# Changelog\n");
   const base = commit(repo, "feat: introduce bootstrap fixture");
+  assert.equal(latestVerifiedReleaseCommit({ repo, headRef: base }), null);
 
   const writeRelease = (bootstrapSha) => {
     write(repo, "release-please-config.json", config(bootstrapSha));
@@ -120,6 +125,7 @@ test("accepts the exact one-parent release-bump commit and exact selected produc
 
   write(repo, "fix.txt", "post-release fix\n");
   const laterFix = commit(repo, "fix(tools): repair publication");
+  assert.equal(latestVerifiedReleaseCommit({ repo, headRef: laterFix }).commit, release);
   assert.throws(
     () => verifyReleaseCommit({ repo, headRef: laterFix, products: [RELEASE_PRODUCT] }),
     /subject must start/u,

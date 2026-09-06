@@ -27,17 +27,18 @@ function compareVersions(left, right) {
 
 /**
  * Choose the immutable source of a compatibility field. A sink whose manifest
- * advances in the release commit follows the current source product. Every
- * unchanged released sink follows its own immutable current tag, regardless of
- * whether it is an extension, runtime, or SDK product.
+ * is pending from the latest verified release commit follows the current
+ * source product. Every unchanged released sink follows its own immutable
+ * current tag, regardless of whether it is an extension, runtime, or SDK.
  */
 export function compatibilityVersionSource(
   entry,
   products,
-  transitionedProducts,
+  pendingVersions,
   {
     root = ROOT,
     headRef = "HEAD",
+    pendingCommit = headRef,
     prefix = "compatibility-version-policy",
   } = {},
 ) {
@@ -55,7 +56,10 @@ export function compatibilityVersionSource(
   });
   if (status.currentTagCommit !== null) {
     const headCommit = commitForRef(headRef, root);
-    if (transitionedProducts.has(entry.product)) {
+    if (
+      pendingVersions.get(entry.product) === sink.version &&
+      commitForRef(pendingCommit, root) === headCommit
+    ) {
       if (status.currentTagCommit !== headCommit) {
         throw policyError(
           prefix,
@@ -71,11 +75,11 @@ export function compatibilityVersionSource(
     };
   }
 
-  if (transitionedProducts.has(entry.product)) {
+  if (pendingVersions.get(entry.product) === sink.version) {
     if (!status.eligible && !status.firstRelease) {
       throw policyError(
         prefix,
-        `${entry.product} advanced in the current release commit without an eligible version transition`,
+        `${entry.product} advanced in its verified release commit without an eligible version transition`,
       );
     }
     return { kind: "current-source", ref: null, tag: null };
@@ -84,7 +88,7 @@ export function compatibilityVersionSource(
   const prior = baseRef === EMPTY_TREE ? "no prior product tag" : `latest reachable tag ${baseRef}`;
   throw policyError(
     prefix,
-    `${entry.product} version ${sink.version} has no immutable current-version tag and did not advance in the current release commit (${prior})`,
+    `${entry.product} version ${sink.version} has no immutable current-version tag and is not pending from a verified release commit (${prior})`,
   );
 }
 
