@@ -707,7 +707,6 @@ export function assessCratesIoBootstrapCapacity({
   const plannedPublicationSeconds = (pendingCargoCount * parsedCargoSeconds) + (pendingNpmCount * parsedNpmSeconds);
   const reconciliationCount = publishedCargoCount + publishedNpmCount;
   const plannedReconciliationSeconds = reconciliationCount * parsedReconciliationSeconds;
-  const identityCreationOnlySatisfied = cargoConflictCount === 0 && npmConflictCount === 0;
   const initialCargoTokens = publishedCargoCount === 0
     ? CRATES_IO_DEFAULT_NEW_CRATE_BURST
     : 0;
@@ -777,7 +776,7 @@ export function assessCratesIoBootstrapCapacity({
   );
   const timeSatisfied = remainingSeconds >= requiredWindowSeconds;
   const makesProgress = admittedCount > 0 || remainingMutationCount === 0;
-  const decision = identityCreationOnlySatisfied && timeSatisfied && makesProgress ? "execute" : "defer";
+  const decision = timeSatisfied && makesProgress ? "execute" : "defer";
   return {
     selectedCount,
     existingCount,
@@ -817,7 +816,6 @@ export function assessCratesIoBootstrapCapacity({
       : null,
     decision,
     timeSatisfied,
-    identityCreationOnlySatisfied,
     allowed: decision === "execute",
   };
 }
@@ -903,11 +901,11 @@ export function cratesIoCapacitySummary(assessment) {
     `- Names already present on crates.io: ${assessment.existingCount}`,
     `- Brand-new names still missing: ${assessment.missingCount}`,
     `- Cargo versions already public: ${assessment.publishedCargoCount}`,
-    `- Existing Cargo names with a different locked version pending (forbidden): ${assessment.cargoConflictCount}`,
+    `- Existing Cargo names left for normal trusted publication: ${assessment.cargoConflictCount}`,
     `- Brand-new Cargo names still requiring their first version: ${assessment.pendingCargoCount}`,
     `- Exact-lock npm versions selected: ${assessment.selectedNpmCount}`,
     `- npm versions already public: ${assessment.publishedNpmCount}`,
-    `- Existing npm names with a different locked version pending (forbidden): ${assessment.npmConflictCount}`,
+    `- Existing npm names left for normal trusted publication: ${assessment.npmConflictCount}`,
     `- Brand-new npm names still requiring their first version: ${assessment.pendingNpmCount}`,
     `- Conservatively available Cargo tokens at invocation start: ${assessment.initialCargoTokens}`,
     `- Official token-bucket time for every pending Cargo identity: ${durationText(assessment.tokenBucketPublicationSeconds)} (${durationText(assessment.tokenBucketWaitSeconds)} waiting, with publication work overlapping refill)`,
@@ -924,14 +922,4 @@ export function cratesIoCapacitySummary(assessment) {
     `- Decision: ${assessment.decision.toUpperCase()}`,
     "",
   ].join("\n");
-}
-
-export function assertCratesIoBootstrapCapacity(assessment) {
-  if (!assessment.identityCreationOnlySatisfied) {
-    throw error(
-      `identity bootstrap is first-version creation only, but ${assessment.cargoConflictCount} Cargo and `
-        + `${assessment.npmConflictCount} npm package name(s) already exist without the locked exact version; `
-        + "publish later versions only through the normal trusted release path",
-    );
-  }
 }

@@ -78,6 +78,29 @@ test("immutable checkpoints resume 417 Cargo plus 214 npm identities and reject 
       },
     }));
 
+    const scopedIds = template.publications.slice(-2).map(({ id }) => id);
+    const scoped = buildBootstrapLedger(lock, ["alpha"], { publicationIds: scopedIds });
+    assert.deepEqual(scoped.publications.map(({ id }) => id), scopedIds);
+    assert.equal(validateBootstrapLedger(scoped, lock, ["alpha"]), scoped);
+    assert.throws(
+      () => buildBootstrapLedger(lock, ["alpha"], { publicationIds: ["npm:@example/absent"] }),
+      /absent from the selected lock/u,
+    );
+    const scopedChain = path.join(root, "scoped-chain");
+    appendBootstrapCheckpoint(scopedChain, lock, ["alpha"], [], { publicationIds: scopedIds });
+    assert.throws(
+      () => appendBootstrapCheckpoint(scopedChain, lock, ["alpha"], [], {
+        publicationIds: [template.publications[0].id],
+      }),
+      /scope conflicts with its immutable first checkpoint/u,
+    );
+    const scopedReceipts = receipts.filter(({ id }) => scopedIds.includes(id));
+    appendBootstrapCheckpoint(scopedChain, lock, ["alpha"], scopedReceipts);
+    assert.equal(
+      loadBootstrapLedger(scopedChain, lock, ["alpha"], { requireComplete: true }).receipts.length,
+      scopedIds.length,
+    );
+
     const chain = path.join(root, "chain");
     const genesis = appendBootstrapCheckpoint(chain, lock, ["alpha"], []);
     assert.equal(genesis.sequence, 0);

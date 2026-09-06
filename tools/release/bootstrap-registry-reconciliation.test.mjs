@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-import { reconcileBootstrapRegistryState } from "./bootstrap-registry-reconciliation.mjs";
+import {
+  reconcileBootstrapRegistryState,
+  resolveBootstrapScope,
+} from "./bootstrap-registry-reconciliation.mjs";
 
 function carrier(ecosystem, index) {
   const name = ecosystem === "cargo" ? `crate-${index}` : `@oliphaunt/pkg-${index}`;
@@ -11,6 +14,8 @@ function carrier(ecosystem, index) {
     name,
     version: "1.0.0",
     publishOrder: index,
+    dependencies: [],
+    packageDependencies: [],
   };
 }
 
@@ -47,10 +52,10 @@ describe("bootstrap registry reconciliation", () => {
     expect(result.publicCarrierIds).toHaveLength(630);
     expect(result.receiptedCarrierIds).toHaveLength(630);
     expect(result.missingCarriers.map(({ id }) => id)).toEqual([npm[213].id]);
-    expect(result.conflicts).toEqual([]);
+    expect(result.existingNameCarriers).toEqual([]);
   });
 
-  test("classifies existing-name missing-version states as conflicts, never bootstrap writes", () => {
+  test("keeps existing names on the normal trusted-publication path", () => {
     const cargo = carrier("cargo", 0);
     const npm = carrier("npm", 1);
     const result = reconcileBootstrapRegistryState({
@@ -70,7 +75,60 @@ describe("bootstrap registry reconciliation", () => {
     });
 
     expect(result.missingCarriers).toEqual([]);
-    expect(result.conflicts.map(({ id }) => id)).toEqual([cargo.id, npm.id]);
+    expect(result.existingNameCarriers.map(({ id }) => id)).toEqual([cargo.id, npm.id]);
+  });
+
+  test("scopes mixed releases to absent names and preserves that scope across reruns", () => {
+    const existing = carrier("cargo", 0);
+    const missing = carrier("npm", 1);
+    const plan = [existing, missing];
+    const reconciliation = reconcileBootstrapRegistryState({
+      plan,
+      cargoInventory: {
+        selectedIdentities: [identity(existing)],
+        publishedIdentities: [],
+        pendingVersions: [identity(existing)],
+        missingNames: [],
+      },
+      npmInventory: {
+        selectedIdentities: [identity(missing)],
+        publishedIdentities: [],
+        pendingVersions: [],
+        missingNames: [missing.name],
+      },
+    });
+
+    expect(resolveBootstrapScope(plan, reconciliation).map(({ id }) => id)).toEqual([missing.id]);
+    expect(() => resolveBootstrapScope(plan, {
+      ...reconciliation,
+      existingNameCarriers: [existing, missing],
+      missingCarriers: [],
+    }, { publications: [missing] })).toThrow(/bootstrap-scoped package names now exist/u);
+  });
+
+  test("allows only optional npm dependencies to wait on normal existing-name publication", () => {
+    const existing = carrier("npm", 0);
+    const missing = {
+      ...carrier("npm", 1),
+      dependencies: [existing.id],
+      packageDependencies: [{
+        ecosystem: "npm",
+        name: existing.name,
+        requirement: "1.0.0",
+        scope: "optional",
+      }],
+    };
+    const reconciliation = {
+      publicCarrierIds: [],
+      missingCarriers: [missing],
+      existingNameCarriers: [existing],
+    };
+
+    expect(resolveBootstrapScope([existing, missing], reconciliation)[0].dependencies).toEqual([]);
+    expect(() => resolveBootstrapScope([existing, {
+      ...missing,
+      packageDependencies: [{ ...missing.packageDependencies[0], scope: "runtime" }],
+    }], reconciliation)).toThrow(/cannot bootstrap before existing-name dependency/u);
   });
 
   test("rejects a restored receipt unless its frozen exact version is public", () => {

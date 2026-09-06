@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import {
   appendFileSync,
   mkdirSync,
+  readFileSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -17,10 +18,12 @@ import {
   appendBootstrapCheckpoint,
   loadBootstrapLedger,
 } from "../../tools/release/bootstrap-ledger.mjs";
-import { reconcileBootstrapRegistryState } from "../../tools/release/bootstrap-registry-reconciliation.mjs";
+import {
+  reconcileBootstrapRegistryState,
+  resolveBootstrapScope,
+} from "../../tools/release/bootstrap-registry-reconciliation.mjs";
 import {
   assessCratesIoBootstrapCapacity,
-  assertCratesIoBootstrapCapacity,
   cratesIoCapacitySummary,
   inspectCratesIoVersionState,
   parseRegistryMutationDeadline,
@@ -48,6 +51,12 @@ function requiredEnv(name) {
   }
   return value;
 }
+
+const args = Bun.argv.slice(2);
+if (args.length > 1 || (args.length === 1 && args[0] !== "--credential-needs")) {
+  fail("usage: bootstrap-registry-identities.mjs [--credential-needs]");
+}
+const credentialNeedsOnly = args[0] === "--credential-needs";
 
 const EXECUTION_RESULT_PATH = path.resolve(
   process.env.OLIPHAUNT_BOOTSTRAP_EXECUTION_RESULT?.trim()
@@ -105,13 +114,11 @@ try {
   fail(error instanceof Error ? error.message : String(error));
 }
 
-// This read-only inventory and official token-bucket admission must complete
-// before the genesis ledger is initialized and, critically, before npm or
-// crates.io receives any publication request. Oversized first-release graphs
-// are split into dependency-closed batches and resumed from immutable receipts.
+// This read-only inventory must complete before the genesis ledger is
+// initialized and, critically, before npm or crates.io receives any
+// publication request.
 let cargoInventory;
 let npmInventory;
-let capacityAssessment;
 try {
   const deadlineEpochSeconds = parseRegistryMutationDeadline(
     requiredEnv("REGISTRY_MUTATION_DEADLINE_EPOCH"),
@@ -120,33 +127,34 @@ try {
     inspectCratesIoVersionState({ plan, deadlineEpochSeconds }),
     inspectNpmVersionState({ plan, deadlineEpochSeconds }),
   ]);
-  capacityAssessment = assessCratesIoBootstrapCapacity({
-    inventory: cargoInventory,
-    npmInventory,
-    bootstrapPlan: plan,
-    cargoSecondsPerCarrier: process.env.REGISTRY_BOOTSTRAP_CARGO_SECONDS_PER_CARRIER,
-    npmSecondsPerCarrier: process.env.REGISTRY_BOOTSTRAP_NPM_SECONDS_PER_CARRIER,
-    reconciliationSecondsPerCarrier: process.env.REGISTRY_BOOTSTRAP_RECONCILIATION_SECONDS_PER_CARRIER,
-    reserveSeconds: process.env.REGISTRY_BOOTSTRAP_RESERVE_SECONDS,
-    deadlineEpochSeconds,
-  });
-  const summary = cratesIoCapacitySummary(capacityAssessment);
-  console.log(summary);
-  if (process.env.GITHUB_STEP_SUMMARY?.trim()) {
-    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${summary}\n`);
-  }
-  assertCratesIoBootstrapCapacity(capacityAssessment);
 } catch (error) {
   fail(error instanceof Error ? error.message : String(error));
+}
+if (credentialNeedsOnly) {
+  const needsCargo = cargoInventory.missingNames.length > 0;
+  const needsNpm = npmInventory.missingNames.length > 0;
+  if (process.env.GITHUB_OUTPUT?.trim()) {
+    appendFileSync(process.env.GITHUB_OUTPUT, `needs_cargo_token=${needsCargo}\nneeds_npm_token=${needsNpm}\n`);
+  }
+  console.log(
+    `approved candidate requires bootstrap credentials for: ${[
+      needsCargo ? "Cargo" : "",
+      needsNpm ? "npm" : "",
+    ].filter(Boolean).join(", ") || "none"}`,
+  );
+  process.exit(0);
 }
 
 // Validate a restored immutable chain before using its receipts. Inventory is
 // authoritative for current public visibility; a receipt whose exact version
 // disappeared is a hard pre-mutation failure. Existing names lacking the
-// locked exact version were already rejected by the admission check above.
+// locked exact version remain normal trusted-publication work.
 let checkpoint;
 let reconciliation;
 let startingCompletedIds;
+let scopedPlan;
+let scopedIds;
+let capacityAssessment;
 try {
   checkpoint = loadBootstrapLedger(bootstrapLedger, lock, products, { allowEmpty: true });
   startingCompletedIds = new Set(checkpoint?.receipts.map(({ id }) => id) ?? []);
@@ -156,6 +164,39 @@ try {
     npmInventory,
     checkpoint,
   });
+  scopedPlan = resolveBootstrapScope(plan, reconciliation, checkpoint);
+  scopedIds = new Set(scopedPlan.map(({ id }) => id));
+
+  capacityAssessment = assessCratesIoBootstrapCapacity({
+    inventory: cargoInventory,
+    npmInventory,
+    bootstrapPlan: scopedPlan,
+    cargoSecondsPerCarrier: process.env.REGISTRY_BOOTSTRAP_CARGO_SECONDS_PER_CARRIER,
+    npmSecondsPerCarrier: process.env.REGISTRY_BOOTSTRAP_NPM_SECONDS_PER_CARRIER,
+    reconciliationSecondsPerCarrier: process.env.REGISTRY_BOOTSTRAP_RECONCILIATION_SECONDS_PER_CARRIER,
+    reserveSeconds: process.env.REGISTRY_BOOTSTRAP_RESERVE_SECONDS,
+    deadlineEpochSeconds: parseRegistryMutationDeadline(requiredEnv("REGISTRY_MUTATION_DEADLINE_EPOCH")),
+  });
+  const summary = cratesIoCapacitySummary(capacityAssessment);
+  console.log(summary);
+  if (process.env.GITHUB_STEP_SUMMARY?.trim()) {
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${summary}\n`);
+  }
+
+  const missing = reconciliation.missingCarriers.filter(({ id }) => scopedIds.has(id));
+  if (missing.some(({ ecosystem }) => ecosystem === "cargo") && !process.env.CARGO_REGISTRY_TOKEN?.trim()) {
+    throw new Error("CRATES_IO_BOOTSTRAP_TOKEN is required because the approved candidate contains absent Cargo names");
+  }
+  if (missing.some(({ ecosystem }) => ecosystem === "npm")) {
+    const npmrc = process.env.NPM_CONFIG_USERCONFIG?.trim();
+    let npmrcBody = "";
+    try {
+      npmrcBody = npmrc ? readFileSync(npmrc, "utf8") : "";
+    } catch {}
+    if (!/^\/\/registry[.]npmjs[.]org\/:_authToken=[^\r\n]+\r?\n?$/u.test(npmrcBody)) {
+      throw new Error("NPM_BOOTSTRAP_TOKEN is required because the approved candidate contains absent npm names");
+    }
+  }
 } catch (error) {
   fail(error instanceof Error ? error.message : String(error));
 }
@@ -166,9 +207,10 @@ try {
 // immutable checksum/SRI conflict. No registry mutation has happened yet.
 let publicReceipts = [];
 try {
-  if (reconciliation.publicCarrierIds.length > 0) {
+  const scopedPublicCarrierIds = reconciliation.publicCarrierIds.filter((id) => scopedIds.has(id));
+  if (scopedPublicCarrierIds.length > 0) {
     publicReceipts = await verifyLockedRegistryIntegrity(lock, {
-      carrierIds: reconciliation.publicCarrierIds,
+      carrierIds: scopedPublicCarrierIds,
       concurrency: REGISTRY_BOOTSTRAP_INTEGRITY_CONCURRENCY,
     });
   }
@@ -181,7 +223,9 @@ try {
 // content-addressed, so `if: always()` can upload a useful resume chain.
 try {
   if (checkpoint === null) {
-    checkpoint = appendBootstrapCheckpoint(bootstrapLedger, lock, products, []);
+    checkpoint = appendBootstrapCheckpoint(bootstrapLedger, lock, products, [], {
+      publicationIds: scopedPlan.map(({ id }) => id),
+    });
   }
   if (publicReceipts.length > 0) {
     checkpoint = appendBootstrapCheckpoint(bootstrapLedger, lock, products, publicReceipts);
@@ -192,8 +236,8 @@ try {
 
 // Only completely absent names reach a publisher subprocess. Cargo and npm
 // each retain one sequential mutation lane, while independent lanes overlap
-// and explicit cross-registry dependency edges remain barriers. Node's async
-// spawn is required here: spawnSync would silently serialize both lanes.
+// and scoped dependency edges remain barriers. Node's async spawn is required
+// here: spawnSync would silently serialize both lanes.
 function publishCarrier(carrier) {
   console.log(`reconciling pending ${carrier.ecosystem} identity ${carrier.id} (${carrier.product})`);
   return new Promise((resolve, reject) => {
@@ -256,7 +300,7 @@ try {
     };
   } else {
     const admitted = new Set(capacityAssessment.admittedCarrierIds);
-    const admittedPlan = reconciliation.missingCarriers.filter(({ id }) => admitted.has(id));
+    const admittedPlan = scopedPlan.filter(({ id }) => admitted.has(id));
     if (admittedPlan.length !== admitted.size) {
       throw new Error("token-bucket admission contains a carrier outside the exact missing-identity inventory");
     }
@@ -281,17 +325,17 @@ let result;
 try {
   checkpoint = loadBootstrapLedger(bootstrapLedger, lock, products, { allowEmpty: true });
   const completedSet = new Set(checkpoint?.receipts.map(({ id }) => id) ?? []);
-  const completedIds = plan.filter(({ id }) => completedSet.has(id)).map(({ id }) => id);
+  const completedIds = scopedPlan.filter(({ id }) => completedSet.has(id)).map(({ id }) => id);
   if (completedIds.length !== completedSet.size) {
     throw new Error("bootstrap ledger contains a receipt outside the exact canonical plan");
   }
-  const remainingIds = plan.filter(({ id }) => !completedSet.has(id)).map(({ id }) => id);
+  const remainingIds = scopedPlan.filter(({ id }) => !completedSet.has(id)).map(({ id }) => id);
   const newlyCompletedIds = completedIds.filter((id) => !startingCompletedIds.has(id));
   const decision = remainingIds.length === 0 ? "complete" : "deferred";
   if (decision === "complete") {
     checkpoint = loadBootstrapLedger(bootstrapLedger, lock, products, { requireComplete: true });
   }
-  const remainingHasCargo = plan.some(({ id, ecosystem }) => ecosystem === "cargo" && remainingIds.includes(id));
+  const remainingHasCargo = scopedPlan.some(({ id, ecosystem }) => ecosystem === "cargo" && remainingIds.includes(id));
   const notBeforeEpochSeconds = decision === "complete"
     ? null
     : execution.notBeforeEpochSeconds
@@ -324,7 +368,7 @@ try {
       packageEnvelopeDigest: lock.packageEnvelopeDigest,
     },
     products: [...products].sort(),
-    admittedIds: plan
+    admittedIds: scopedPlan
       .filter(({ id }) => capacityAssessment.admittedCarrierIds.includes(id))
       .map(({ id }) => id),
     completedIds,

@@ -9,7 +9,6 @@ import {
   REGISTRY_BOOTSTRAP_DEFAULT_RECONCILIATION_SECONDS_PER_CARRIER,
   REGISTRY_BOOTSTRAP_DEFAULT_RESERVE_SECONDS,
   assessCratesIoBootstrapCapacity,
-  assertCratesIoBootstrapCapacity,
   cratesIoCapacitySummary,
   cratesIoTokenBucketSchedule,
   createCratesIoReadGate,
@@ -135,7 +134,6 @@ describe("crates.io release capacity gates", () => {
     });
     expect(tooShortToMakeProgress.decision).toBe("defer");
     expect(tooShortToMakeProgress.admittedCount).toBe(0);
-    expect(() => assertCratesIoBootstrapCapacity(tooShortToMakeProgress)).not.toThrow();
   });
 
   test("resume inventory removes already-public exact versions from the time requirement", () => {
@@ -334,10 +332,9 @@ describe("crates.io release capacity gates", () => {
     });
     expect(oneSecondShort.decision).toBe("defer");
     expect(oneSecondShort.admittedCargoCount).toBe(0);
-    expect(() => assertCratesIoBootstrapCapacity(oneSecondShort)).not.toThrow();
   });
 
-  test("rejects later-version misuse in either immutable-name registry", () => {
+  test("excludes existing names awaiting later versions from bootstrap work", () => {
     const cargoIdentity = { name: "already-cargo", version: "2.0.0" };
     const npmIdentity = { name: "@oliphaunt/already-npm", version: "2.0.0" };
     const assessment = assessCratesIoBootstrapCapacity({
@@ -356,9 +353,10 @@ describe("crates.io release capacity gates", () => {
       deadlineEpochSeconds: 10_000,
       nowEpochSeconds: 1_000,
     });
-    expect(assessment.identityCreationOnlySatisfied).toBe(false);
     expect(assessment.plannedPublicationSeconds).toBe(0);
-    expect(() => assertCratesIoBootstrapCapacity(assessment)).toThrow(/first-version creation only.*1 Cargo.*1 npm/u);
+    expect(assessment.pendingCargoCount).toBe(0);
+    expect(assessment.pendingNpmCount).toBe(0);
+    expect(assessment.decision).toBe("execute");
   });
 
   test("counts only missing exact-lock Cargo names using read-only requests", async () => {
@@ -401,7 +399,6 @@ describe("crates.io release capacity gates", () => {
     expect(defaultAssessment.tokenBucketPublicationSeconds).toBe(112_830);
     expect(defaultAssessment.admittedCargoCount).toBe(36);
     expect(defaultAssessment.allowed).toBe(true);
-    expect(() => assertCratesIoBootstrapCapacity(defaultAssessment)).not.toThrow();
     expect(cratesIoCapacitySummary(defaultAssessment)).toContain("31h 21m");
 
     const attemptedOverride = assessCratesIoBootstrapCapacity({
@@ -440,7 +437,6 @@ describe("crates.io release capacity gates", () => {
     });
     expect(late.decision).toBe("defer");
     expect(late.notBeforeEpochSeconds).toBe(1_600);
-    expect(() => assertCratesIoBootstrapCapacity(late)).not.toThrow();
   });
 
   test("honors bounded transient read retry and rejects an excessive Retry-After", async () => {

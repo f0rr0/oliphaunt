@@ -1656,37 +1656,30 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: node .github/scripts/download-bootstrap-ledger.mjs
 
+      - name: Classify exact bootstrap credential needs
+        id: bootstrap_credential_needs
+        if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
+        env:
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+          REGISTRY_MUTATION_DEADLINE_EPOCH: ${{ env.REGISTRY_JOB_HARD_DEADLINE_EPOCH }}
+        run: bun .github/scripts/bootstrap-registry-identities.mjs --credential-needs
+
       - name: Require bootstrap credentials before mutation
-        id: require_bootstrap_credentials
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
         env:
           CRATES_IO_BOOTSTRAP_TOKEN: ${{ secrets.CRATES_IO_BOOTSTRAP_TOKEN }}
           NPM_BOOTSTRAP_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
-          SELECTED_NEEDS_CARGO: ${{ steps.registry_needs.outputs.needs_cargo }}
-          SELECTED_NEEDS_NPM: ${{ steps.registry_needs.outputs.needs_npm }}
+          NEEDS_CARGO_TOKEN: ${{ steps.bootstrap_credential_needs.outputs.needs_cargo_token }}
+          NEEDS_NPM_TOKEN: ${{ steps.bootstrap_credential_needs.outputs.needs_npm_token }}
         run: |
-          needs_cargo="$SELECTED_NEEDS_CARGO"
-          needs_npm="$SELECTED_NEEDS_NPM"
-          if [[ "$needs_cargo" != true && "$needs_cargo" != false ]]; then
-            echo 'bootstrap Cargo credential decision is not boolean' >&2
+          if [[ "$NEEDS_CARGO_TOKEN" == true && -z "$CRATES_IO_BOOTSTRAP_TOKEN" ]]; then
+            echo 'approved candidate contains absent Cargo names but CRATES_IO_BOOTSTRAP_TOKEN is unavailable' >&2
             exit 1
           fi
-          if [[ "$needs_npm" != true && "$needs_npm" != false ]]; then
-            echo 'bootstrap npm credential decision is not boolean' >&2
+          if [[ "$NEEDS_NPM_TOKEN" == true && -z "$NPM_BOOTSTRAP_TOKEN" ]]; then
+            echo 'approved candidate contains absent npm names but NPM_BOOTSTRAP_TOKEN is unavailable' >&2
             exit 1
           fi
-          if [[ "$needs_cargo" == true && -z "$CRATES_IO_BOOTSTRAP_TOKEN" ]]; then
-            echo 'selected products require CRATES_IO_BOOTSTRAP_TOKEN in the release-bootstrap environment' >&2
-            exit 1
-          fi
-          if [[ "$needs_npm" == true && -z "$NPM_BOOTSTRAP_TOKEN" ]]; then
-            echo 'selected products require NPM_BOOTSTRAP_TOKEN in the release-bootstrap environment' >&2
-            exit 1
-          fi
-          {
-            echo "needs_cargo_token=$needs_cargo"
-            echo "needs_npm_token=$needs_npm"
-          } >> "$GITHUB_OUTPUT"
 
       - name: Ensure exact immutable release transport ref
         id: ensure_bootstrap_transport_ref
@@ -1722,7 +1715,7 @@ jobs:
 
       - name: Configure npm identity-bootstrap authentication
         id: configure_bootstrap_npm_auth
-        if: ${{ steps.bootstrap_scope.outputs.required == 'true' && steps.require_bootstrap_credentials.outputs.needs_npm_token == 'true' }}
+        if: ${{ steps.bootstrap_scope.outputs.required == 'true' && steps.bootstrap_credential_needs.outputs.needs_npm_token == 'true' }}
         env:
           NPM_BOOTSTRAP_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
         run: |
@@ -1734,7 +1727,7 @@ jobs:
         id: bootstrap_registry_identities
         if: ${{ steps.bootstrap_scope.outputs.required == 'true' }}
         env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.require_bootstrap_credentials.outputs.needs_cargo_token == 'true' && secrets.CRATES_IO_BOOTSTRAP_TOKEN || '' }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.bootstrap_credential_needs.outputs.needs_cargo_token == 'true' && secrets.CRATES_IO_BOOTSTRAP_TOKEN || '' }}
           NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/oliphaunt-bootstrap.npmrc
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
           REGISTRY_BOOTSTRAP_CARGO_SECONDS_PER_CARRIER: ${{ vars.REGISTRY_BOOTSTRAP_CARGO_SECONDS_PER_CARRIER || '30' }}
