@@ -132,7 +132,7 @@ function tarGzip(output, cwd, member) {
   }
 }
 
-function npmFixture(root, name, version, overrides = {}) {
+function npmFixture(root, name, version, overrides = {}, bundledManifest = null) {
   const stage = path.join(root, "npm-stage", "package");
   mkdirSync(stage, { recursive: true });
   writeFileSync(path.join(stage, "package.json"), `${JSON.stringify({
@@ -149,6 +149,11 @@ function npmFixture(root, name, version, overrides = {}) {
     optionalDependencies: { "@oliphaunt/optional-test": version },
     ...overrides,
   }, null, 2)}\n`);
+  if (bundledManifest !== null) {
+    const bundled = path.join(stage, "node_modules", "@oliphaunt", "js-core");
+    mkdirSync(bundled, { recursive: true });
+    writeFileSync(path.join(bundled, "package.json"), `${JSON.stringify(bundledManifest)}\n`);
+  }
   const output = path.join(root, "package.tgz");
   tarGzip(output, path.dirname(stage), "package");
   return output;
@@ -296,6 +301,7 @@ function extensionGithubReleaseFixture(
     }
     const dependencies = [...extension["selected-extension-dependencies"]].sort();
     const createsExtension = extension["creates-extension"] !== false;
+    const stagesIos = memberAssets.some((asset) => asset.target === "ios-xcframework");
     extensions.push({
       sqlName,
       createsExtension,
@@ -304,8 +310,8 @@ function extensionGithubReleaseFixture(
       extensionSqlFileNames: [...extension["extension-sql-file-names"]].sort(),
       extensionSqlFilePrefixes: [...extension["extension-sql-file-prefixes"]].sort(),
       nativeModuleStem,
-      iosNativeDependencies,
-      iosRegistration: nativeModuleStem === null ? null : {
+      iosNativeDependencies: stagesIos ? iosNativeDependencies : [],
+      iosRegistration: nativeModuleStem === null || !stagesIos ? null : {
         schema: "oliphaunt-ios-extension-registration-v1",
         sqlName,
         nativeModuleStem,
@@ -716,6 +722,19 @@ describe("publication artifact discovery and freezing", () => {
       npmFixture(root, `@oliphaunt/${label}`, "1.2.3", overrides);
       expect(() => discoverPublicationArtifacts([root])).toThrow(pattern);
     }
+  });
+
+  test("reads the root npm manifest when a dependency is bundled", () => {
+    const root = temporaryDirectory();
+    npmFixture(root, "@oliphaunt/ts", "1.2.3", {}, {
+      name: "@oliphaunt/js-core",
+      version: "0.0.0",
+    });
+    expect(discoverPublicationArtifacts([root])).toMatchObject([{
+      ecosystem: "npm",
+      name: "@oliphaunt/ts",
+      version: "1.2.3",
+    }]);
   });
 
   test("freezes an exhaustive product carrier set and detects tampering", () => {
