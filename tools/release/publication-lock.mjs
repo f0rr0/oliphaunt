@@ -177,11 +177,11 @@ function commandOutput(args, context) {
   return result.stdout;
 }
 
-function archiveMemberText(file, suffix) {
+function archiveMemberText(file, suffix, { exact = false } = {}) {
   const listing = commandOutput(["tar", "-tzf", file], `list ${rel(file)}`)
     .split(/\r?\n/u)
     .filter(Boolean);
-  const members = listing.filter((name) => name.endsWith(suffix));
+  const members = listing.filter((name) => exact ? name === suffix : name.endsWith(suffix));
   if (members.length !== 1) {
     throw error(`${rel(file)} must contain exactly one ${suffix}, found ${members.length}`);
   }
@@ -238,7 +238,7 @@ function dependencyRows(ecosystem, tables) {
 function npmArtifact(file) {
   let manifest;
   try {
-    manifest = JSON.parse(archiveMemberText(file, "/package.json"));
+    manifest = JSON.parse(archiveMemberText(file, "package/package.json", { exact: true }));
   } catch (cause) {
     throw error(`invalid npm tarball ${rel(file)}: ${cause.message}`);
   }
@@ -867,6 +867,9 @@ function exactExtensionManifestRows(product, manifest, manifestPath) {
 
 function validateExtensionManifestRow(product, manifestPath, member) {
   const iosContract = exactExtensionIosContract(product.id, member.sqlName);
+  const stagesIos = Array.isArray(member.assets)
+    && member.assets.some((asset) => asset?.target === "ios-xcframework");
+  const iosDependencies = stagesIos ? iosContract.dependencies : [];
   const sortedStrings = (value) => Array.isArray(value)
     && value.every((item) => typeof item === "string" && item.length > 0)
     && new Set(value).size === value.length
@@ -881,7 +884,7 @@ function validateExtensionManifestRow(product, manifestPath, member) {
     || stableJson(sortedStrings(member.extensionSqlFileNames)) !== stableJson([...(iosContract.metadata["extension-sql-file-names"] ?? [])].sort(compareText))
     || stableJson(sortedStrings(member.extensionSqlFilePrefixes)) !== stableJson([...(iosContract.metadata["extension-sql-file-prefixes"] ?? [])].sort(compareText))
     || stableJson(sortedStrings(member.sharedPreloadLibraries)) !== stableJson([...(iosContract.metadata["shared-preload-libraries"] ?? [])].sort(compareText))
-    || stableJson(sortedStrings(member.iosNativeDependencies)) !== stableJson(iosContract.dependencies)
+    || stableJson(sortedStrings(member.iosNativeDependencies)) !== stableJson(iosDependencies)
   ) {
     throw error(`${rel(manifestPath)} ${member.sqlName} semantic extension metadata is not canonical generated metadata`);
   }
@@ -889,15 +892,17 @@ function validateExtensionManifestRow(product, manifestPath, member) {
     if (member.iosRegistration !== null) {
       throw error(`${rel(manifestPath)} SQL-only extension ${member.sqlName} must not carry iOS registration`);
     }
-  } else if (
+  } else if (stagesIos && (
     member.iosRegistration === null
     || Array.isArray(member.iosRegistration)
     || typeof member.iosRegistration !== "object"
     || member.iosRegistration.schema !== "oliphaunt-ios-extension-registration-v1"
     || member.iosRegistration.sqlName !== member.sqlName
     || member.iosRegistration.nativeModuleStem !== iosContract.nativeModuleStem
-  ) {
+  )) {
     throw error(`${rel(manifestPath)} native extension ${member.sqlName} lacks matching build-derived iOS registration`);
+  } else if (!stagesIos && member.iosRegistration !== null) {
+    throw error(`${rel(manifestPath)} native extension ${member.sqlName} claims iOS registration without an iOS carrier`);
   }
   return iosContract;
 }

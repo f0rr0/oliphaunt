@@ -610,6 +610,8 @@ async function pack(directory, tarballs) {
     'pnpm',
     ['pack', '--pack-destination', tarballs, '--json'],
     directory,
+    120_000,
+    { PNPM_CONFIG_NODE_LINKER: 'hoisted' },
   );
   const result = stdout.trim() === '' ? undefined : JSON.parse(stdout);
   const reportedFilename = Array.isArray(result) ? result[0]?.filename : result?.filename;
