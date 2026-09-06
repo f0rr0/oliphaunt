@@ -843,6 +843,14 @@ export function validateCiArtifactCoverage(workflow, inventory) {
     ["liboliphaunt-wasix-release-assets", "liboliphaunt-wasix-release-assets"],
     ["wasix-postmaster", "liboliphaunt-wasix-postmaster-release-assets"],
   ]) validateWorkflowProducer(workflow, jobId, artifact, [{}], [artifact]);
+  const iosMobileExtensions = actionSteps(workflow, "mobile-build-ios", "actions/download-artifact@")
+    .find((step) => step.with?.name === "oliphaunt-mobile-extension-package-artifacts");
+  const iosCarrierManifest = namedStep(workflow, "mobile-build-ios", "Render exact-SHA cache-warm iOS carrier manifest");
+  invariant(
+    iosMobileExtensions?.with?.path === "target/mobile-extension-artifacts"
+      && String(iosCarrierManifest?.run ?? "").includes("--extension-root target/mobile-extension-artifacts"),
+    "iOS carrier qualification must restore mobile extension artifacts at their frozen producer root",
+  );
   const postmasterReleaseAssets = releaseAssets(
     "liboliphaunt-wasix-postmaster",
     "wasix-postmaster-runtime",

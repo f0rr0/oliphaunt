@@ -2722,13 +2722,13 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: oliphaunt-mobile-extension-package-artifacts
-          path: target/extension-artifacts
+          path: target/mobile-extension-artifacts
 
       - name: Render exact-SHA cache-warm iOS carrier manifest
         run: |
           tools/dev/bun.sh tools/release/ios-carrier-manifest.mjs \
             --base-asset-dir target/liboliphaunt/release-assets \
-            --extension-root target/extension-artifacts \
+            --extension-root target/mobile-extension-artifacts \
             --output target/release/ios-carriers/oliphaunt-react-native-ios-carriers.json \
             --local-urls
 
