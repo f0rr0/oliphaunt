@@ -111,6 +111,10 @@ function products(versions) {
 const ZERO = Object.fromEntries(Object.keys(PATHS).map((product) => [product, "0.0.0"]));
 const V1 = Object.fromEntries(Object.keys(PATHS).map((product) => [product, "1.0.0"]));
 
+function pending(versions, ...productIds) {
+  return new Map(productIds.map((product) => [product, versions[product]]));
+}
+
 test("an untagged external in the first release follows the current runtime", (t) => {
   const root = fixture(t, ZERO);
   const released = Object.fromEntries(Object.keys(PATHS).map((product) => [product, "0.1.0"]));
@@ -118,11 +122,18 @@ test("an untagged external in the first release follows the current runtime", (t
   commit(root, "chore(release): first release");
 
   assert.deepEqual(
-    compatibilityVersionSource(EXTERNAL_ENTRY, products(released), new Set([EXTERNAL]), {
+    compatibilityVersionSource(EXTERNAL_ENTRY, products(released), pending(released, EXTERNAL), {
       root,
       prefix: "compatibility-test",
     }),
     { kind: "current-source", ref: null, tag: null },
+  );
+  assert.throws(
+    () => compatibilityVersionSource(EXTERNAL_ENTRY, products(released), new Map([[EXTERNAL, "1.2.0"]]), {
+      root,
+      prefix: "compatibility-test",
+    }),
+    /is not pending from a verified release commit/u,
   );
 });
 
@@ -135,7 +146,7 @@ test("an unchanged independently versioned external is bound to its immutable cu
   commit(root, "chore(release): runtime release");
 
   assert.deepEqual(
-    compatibilityVersionSource(EXTERNAL_ENTRY, products(released), new Set([NATIVE, CONTRIB]), {
+    compatibilityVersionSource(EXTERNAL_ENTRY, products(released), pending(released, NATIVE, CONTRIB), {
       root,
       prefix: "compatibility-test",
     }),
@@ -151,7 +162,7 @@ test("a newly bumped external without its not-yet-created tag follows the curren
   commit(root, "chore(release): vector release");
 
   assert.deepEqual(
-    compatibilityVersionSource(EXTERNAL_ENTRY, products(released), new Set([EXTERNAL]), {
+    compatibilityVersionSource(EXTERNAL_ENTRY, products(released), pending(released, EXTERNAL), {
       root,
       prefix: "compatibility-test",
     }),
@@ -162,11 +173,11 @@ test("a newly bumped external without its not-yet-created tag follows the curren
 test("an unchanged released external without its current immutable tag fails closed", (t) => {
   const root = fixture(t, V1);
   assert.throws(
-    () => compatibilityVersionSource(EXTERNAL_ENTRY, products(V1), new Set(), {
+    () => compatibilityVersionSource(EXTERNAL_ENTRY, products(V1), new Map(), {
       root,
       prefix: "compatibility-test",
     }),
-    /version 1[.]0[.]0 has no immutable current-version tag and did not advance in the current release commit/u,
+    /version 1[.]0[.]0 has no immutable current-version tag and is not pending from a verified release commit/u,
   );
 });
 
@@ -178,7 +189,7 @@ test("a current-version tag whose manifest names another version fails closed", 
   commit(root, "chore(release): vector 1.0.0");
 
   assert.throws(
-    () => compatibilityVersionSource(EXTERNAL_ENTRY, products(V1), new Set([EXTERNAL]), {
+    () => compatibilityVersionSource(EXTERNAL_ENTRY, products(V1), pending(V1, EXTERNAL), {
       root,
       prefix: "compatibility-test",
     }),
@@ -197,7 +208,7 @@ test("a current-version tag on unrelated history fails closed", (t) => {
   git(root, "checkout", "-q", "--detach", candidate);
 
   assert.throws(
-    () => compatibilityVersionSource(EXTERNAL_ENTRY, products(V1), new Set(), {
+    () => compatibilityVersionSource(EXTERNAL_ENTRY, products(V1), new Map(), {
       root,
       headRef: candidate,
       prefix: "compatibility-test",
@@ -216,7 +227,7 @@ test("a release commit cannot reuse a current-version tag from an ancestor", (t)
   commit(root, "chore(release): reuse vector 1.0.0");
 
   assert.throws(
-    () => compatibilityVersionSource(EXTERNAL_ENTRY, products(V1), new Set([EXTERNAL]), {
+    () => compatibilityVersionSource(EXTERNAL_ENTRY, products(V1), pending(V1, EXTERNAL), {
       root,
       prefix: "compatibility-test",
     }),
@@ -239,7 +250,7 @@ test("unchanged SDK and runtime consumer sinks remain bound to their immutable p
 
   for (const product of [SDK, RUNTIME_CONSUMER]) {
     assert.deepEqual(
-      compatibilityVersionSource({ ...EXTERNAL_ENTRY, product }, products(released), new Set([NATIVE, CONTRIB]), {
+      compatibilityVersionSource({ ...EXTERNAL_ENTRY, product }, products(released), pending(released, NATIVE, CONTRIB), {
         root,
         prefix: "compatibility-test",
       }),
@@ -256,7 +267,7 @@ test("a newly bumped SDK without its not-yet-created tag follows the current sou
   commit(root, "chore(release): JS SDK release");
 
   assert.deepEqual(
-    compatibilityVersionSource({ ...EXTERNAL_ENTRY, product: SDK }, products(released), new Set([SDK]), {
+    compatibilityVersionSource({ ...EXTERNAL_ENTRY, product: SDK }, products(released), pending(released, SDK), {
       root,
       prefix: "compatibility-test",
     }),
@@ -273,7 +284,7 @@ test("a transitioned contrib sink follows current source, then binds to its tag 
   const entry = { ...EXTERNAL_ENTRY, product: CONTRIB };
 
   assert.deepEqual(
-    compatibilityVersionSource(entry, products(released), new Set([NATIVE, CONTRIB]), {
+    compatibilityVersionSource(entry, products(released), pending(released, NATIVE, CONTRIB), {
       root,
       prefix: "compatibility-test",
     }),
@@ -284,7 +295,7 @@ test("a transitioned contrib sink follows current source, then binds to its tag 
   writeFileSync(path.join(root, "ordinary-change.txt"), "ordinary change\n");
   commit(root, "docs: ordinary post-release commit");
   assert.deepEqual(
-    compatibilityVersionSource(entry, products(released), new Set(), {
+    compatibilityVersionSource(entry, products(released), new Map(), {
       root,
       prefix: "compatibility-test",
     }),

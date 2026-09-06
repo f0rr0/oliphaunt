@@ -39,7 +39,7 @@ import {
   versionFiles,
 } from "./release-graph.mjs";
 import { captureCommandOutput } from "../dev/capture-command-output.mjs";
-import { releasePleaseWorktreeTransitions } from "./release-please-transition.mjs";
+import { latestVerifiedReleaseCommit } from "./verify-release-commit.mjs";
 import {
   PUBLICATION_CATALOG_SCHEMA,
   REGISTRY_KIND_TO_ECOSYSTEM,
@@ -303,19 +303,16 @@ function validateGraph(graph) {
 function validateCompatibility(graph) {
   const entries = compatibilityVersionEntries(graph.products, { requireSourceProduct: true, prefix: TOOL });
   assert(new Set(entries.map((entry) => entry.id)).size === entries.length, "compatibility field ids must be globally unique");
-  const transitionHeadRef = "HEAD";
-  const transitions = releasePleaseWorktreeTransitions(ROOT, {
-    headRef: transitionHeadRef,
-    prefix: TOOL,
-  });
-  const transitionedProducts = new Set(transitions.map(({ product }) => product));
+  const pendingRelease = latestVerifiedReleaseCommit({ repo: ROOT });
+  const pendingVersions = new Map(Object.entries(pendingRelease?.versions ?? {}));
   const versionSources = new Map();
   for (const entry of entries) {
     const value = compatibilityVersionValue(entry, { prefix: TOOL });
     let source = versionSources.get(entry.product);
     if (source === undefined) {
-      source = compatibilityVersionSource(entry, graph.products, transitionedProducts, {
-        headRef: transitionHeadRef,
+      source = compatibilityVersionSource(entry, graph.products, pendingVersions, {
+        headRef: "HEAD",
+        pendingCommit: pendingRelease?.commit,
         prefix: TOOL,
         root: ROOT,
       });

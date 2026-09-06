@@ -712,6 +712,21 @@ export function verifyReleaseCommit({ repo = ROOT, headRef = "HEAD", products })
   };
 }
 
+export function latestVerifiedReleaseCommit({ repo = ROOT, headRef = "HEAD" } = {}) {
+  const release = git(repo, [
+    "log",
+    "-1",
+    "--format=%H",
+    "--grep=^chore(release): ",
+    headRef,
+    "--",
+    ".release-please-manifest.json",
+  ], { allowEmptyOutput: true, stdoutTerminator: "\n" }).stdout;
+  if (release === "") return null;
+  const { products } = deriveReleaseProducts({ repo, headRef: release });
+  return verifyReleaseCommit({ repo, headRef: release, products });
+}
+
 function parseArgs(argv) {
   let productsJson = "";
   let headRef = "HEAD";
