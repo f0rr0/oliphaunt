@@ -8,9 +8,8 @@ const DEFAULT_CRATES_IO_API = "https://crates.io/api/v1";
 const MAX_U32 = 0xffff_ffff;
 const UPLOAD_TIMEOUT_MS = 60_000;
 const MAX_RATE_LIMIT_RETRIES = 3;
-// Keep bounded in-process waits below the job deadline. A normal crates.io
-// 10-minute new-name refill is checkpointed for a later manual rerun instead
-// of occupying a runner.
+// Without a caller deadline, retain a bounded fallback wait. Hosted publishers
+// use their mutation deadline so a normal ten-minute refill can finish in place.
 const MAX_RATE_LIMIT_WAIT_SECONDS = 9 * 60;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const RATE_LIMIT_CLOCK_SKEW_MS = 2_000;
@@ -469,7 +468,7 @@ export async function publishFrozenCargoCrate({
         context: `crates.io rejected ${identity} ${rateLimitAttempt + 1} times with valid Retry-After headers`,
       });
     }
-    if (retryAfter > MAX_RATE_LIMIT_WAIT_SECONDS) {
+    if (deadlineEpochMs === undefined && retryAfter > MAX_RATE_LIMIT_WAIT_SECONDS) {
       throw new RegistryPublicationDeferredError({
         reason: "rate-limit",
         notBeforeEpochSeconds: Math.ceil((now + delayMs) / 1000),

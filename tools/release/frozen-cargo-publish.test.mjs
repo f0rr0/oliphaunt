@@ -202,7 +202,7 @@ describe("frozen Cargo registry publication", () => {
     })).rejects.toThrow("identity is not authorized");
   });
 
-  test("honors crates.io Retry-After and replays only the exact frozen bytes after HTTP 429", async () => {
+  test("waits through the ten-minute crates.io refill and replays only exact frozen bytes", async () => {
     const cratePath = cargoFixture();
     const requests = [];
     const sleeps = [];
@@ -225,7 +225,7 @@ describe("frozen Cargo registry publication", () => {
             { errors: [{ detail: "new-crate bucket empty" }] },
             {
               status: 429,
-              headers: { "Retry-After": "Wed, 21 Oct 2015 07:32:00 GMT" },
+              headers: { "Retry-After": "Wed, 21 Oct 2015 07:37:00 GMT" },
             },
           );
         }
@@ -233,7 +233,7 @@ describe("frozen Cargo registry publication", () => {
       },
     });
 
-    expect(sleeps).toEqual([302_000]);
+    expect(sleeps).toEqual([602_000]);
     expect(requests).toHaveLength(2);
     expect(requests[1]).toEqual(requests[0]);
     expect(result.warnings).toEqual({ invalid_categories: [], invalid_badges: [], other: [] });
