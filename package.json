@@ -6,5 +6,10 @@
     "node": ">=22.13 <25",
     "pnpm": "11.5.0"
   },
-  "scripts": {}
+  "scripts": {},
+  "pnpm": {
+    "overrides": {
+      "brace-expansion": "5.0.9"
+    }
+  }
 }
