@@ -317,6 +317,14 @@ from the candidate source. No build or packaging command is replayed.
 Use the same publishing commit for bootstrap and normal publish so the latter
 can discover the completed bootstrap ledger. Incomplete bootstrap still resumes
 only through its original run; this does not add cross-run checkpoint migration.
+If a publication-only code fix makes that run unusable, retain its ledger and
+first verify every recorded public package against the approved lock. Then a
+fresh bootstrap dispatch at the corrected current `main`, with the same source
+SHA and approval run, inventories registry state and starts a new scope for
+only the still-absent names. Already-public versions are excluded from that new
+scope and remain subject to normal publication integrity verification. Use the
+new run for subsequent checkpoint retries and its publishing commit for normal
+publish. Never edit or transplant the old checkpoint chain.
 At the mutation boundary, a root
 `publish-bootstrap` or `publish` run first reads the lightweight
 `oliphaunt-release-transport/<full-sha>` tag and accepts only a direct commit

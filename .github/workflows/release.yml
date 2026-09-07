@@ -1494,6 +1494,7 @@ jobs:
     permissions:
       actions: read
       contents: write
+      id-token: write
       pull-requests: read
     steps:
       - name: Record bounded bootstrap job deadline
