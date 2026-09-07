@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import path from "node:path";
 import test from "node:test";
@@ -103,4 +104,19 @@ test("rejects unsupported operations and malformed workflow identities", () => {
   const malformedSha = validate({ workflowSha: "84d90b9" });
   assert.notEqual(malformedSha.status, 0, malformedSha.output);
   assert.match(malformedSha.output, /GITHUB_SHA must be a full 40-character commit SHA/u);
+});
+
+
+test("release workflow CI gates run after the action that installs Bun", () => {
+  const workflow = Bun.YAML.parse(readFileSync(path.join(ROOT, ".github/workflows/release.yml"), "utf8"));
+  let gates = 0;
+  for (const [job, { steps = [] }] of Object.entries(workflow.jobs)) {
+    const setup = steps.findIndex((step) => step.uses === "./.github/actions/setup-moon");
+    for (const [index, step] of steps.entries()) {
+      if (!step.run?.includes(".github/scripts/require-workflow-success.sh")) continue;
+      gates++;
+      assert.ok(setup >= 0 && setup < index, `${job}: ${step.name} requires Bun from setup-moon`);
+    }
+  }
+  assert.ok(gates >= 2, "bootstrap and publish gates must be inspected");
 });
