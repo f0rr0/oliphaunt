@@ -15,6 +15,7 @@ const CONTROL_FILES = new Set([
   ".github/scripts/download-bootstrap-ledger.test.mjs",
   "tools/release/publication-controller.mjs",
   "tools/release/crates-io-bootstrap-capacity.mjs",
+  "tools/release/frozen-cargo-publish.mjs",
   "tools/release/verify_github_release_attestations.mjs",
 ]);
 
