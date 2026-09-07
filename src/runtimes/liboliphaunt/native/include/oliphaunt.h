@@ -81,7 +81,10 @@ typedef struct OliphauntConfig {
     const char *database;
     /* OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK or zero. */
     uint64_t flags;
-    /* Zero or more `-c`, `name=value` pairs. Storage-routing GUCs are rejected. */
+    /*
+     * Zero or more `-c`, `name=value` pairs. Storage-routing GUCs are rejected.
+     * PostgreSQL fsync defaults to on; explicit fsync=off sacrifices crash safety.
+     */
     const char *const *startup_args;
     size_t startup_arg_count;
 } OliphauntConfig;

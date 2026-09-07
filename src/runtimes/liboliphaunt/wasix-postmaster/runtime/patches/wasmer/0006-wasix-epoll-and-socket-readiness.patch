@@ -1,0 +1,2975 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH 6/8] wasix: connect epoll and socket readiness lifetimes
+
+Bridge the virtual network readiness model into WASIX sockets, poll and epoll.
+Listener/accepted descriptor reuse and close must not leave stale registrations
+or discard another open-file description's readiness. Depends on descriptor,
+process and virtual-io/net changes in this series; retained probes exercise
+external connections and descriptor lifecycle.
+
+Extracted without runtime hunk changes from the inherited integration bundle.
+The complete ordered series is the build and qualification unit.
+
+diff --git a/lib/wasix/src/net/socket.rs b/lib/wasix/src/net/socket.rs
+index 1ca5276..d2460d4 100644
+--- a/lib/wasix/src/net/socket.rs
++++ b/lib/wasix/src/net/socket.rs
+@@ -396,13 +396,10 @@ impl InodeSocket {
+         &self,
+         tasks: &dyn VirtualTaskManager,
+         net: &dyn VirtualNetworking,
+-        _backlog: usize,
++        backlog: usize,
+     ) -> Result<Option<InodeSocket>, Errno> {
+-        let timeout = self
+-            .opt_time(TimeType::AcceptTimeout)
+-            .ok()
+-            .flatten()
+-            .unwrap_or(Duration::from_secs(30));
++        let accept_timeout = self.opt_time(TimeType::AcceptTimeout).ok().flatten();
++        let listen_timeout = accept_timeout.unwrap_or(Duration::from_secs(30));
+ 
+         let socket = {
+             let inner = self.inner.protected.read().unwrap();
+@@ -419,7 +416,7 @@ impl InodeSocket {
+                         let reuse_addr = props.reuse_addr;
+                         drop(inner);
+ 
+-                        net.listen_tcp(addr, only_v6, reuse_port, reuse_addr)
++                        net.listen_tcp_with_backlog(addr, only_v6, reuse_port, reuse_addr, backlog)
+                     }
+                     ty => {
+                         tracing::warn!(
+@@ -441,7 +438,7 @@ impl InodeSocket {
+                         let reuse_addr = props.reuse_addr;
+                         drop(inner);
+ 
+-                        net.listen_tcp(addr, only_v6, reuse_port, reuse_addr)
++                        net.listen_tcp_with_backlog(addr, only_v6, reuse_port, reuse_addr, backlog)
+                     }
+                     ty => {
+                         tracing::warn!(
+@@ -481,10 +478,10 @@ impl InodeSocket {
+                 let socket = socket.map_err(net_error_into_wasi_err)?;
+                 Ok(Some(InodeSocket::new(InodeSocketKind::TcpListener {
+                     socket,
+-                    accept_timeout: Some(timeout),
++                    accept_timeout,
+                 })))
+             },
+-            _ = tasks.sleep_now(timeout) => Err(Errno::Timedout)
++            _ = tasks.sleep_now(listen_timeout) => Err(Errno::Timedout)
+         }
+     }
+ 
+@@ -497,20 +494,11 @@ impl InodeSocket {
+         struct SocketAccepter<'a> {
+             sock: &'a InodeSocket,
+             nonblocking: bool,
+-            handler_registered: bool,
+-        }
+-        impl Drop for SocketAccepter<'_> {
+-            fn drop(&mut self) {
+-                if self.handler_registered {
+-                    let mut inner = self.sock.inner.protected.write().unwrap();
+-                    inner.remove_handler();
+-                }
+-            }
+         }
+         impl Future for SocketAccepter<'_> {
+             type Output = Result<(Box<dyn VirtualTcpSocket + Sync>, SocketAddr), Errno>;
+             fn poll(
+-                mut self: Pin<&mut Self>,
++                self: Pin<&mut Self>,
+                 cx: &mut std::task::Context<'_>,
+             ) -> std::task::Poll<Self::Output> {
+                 loop {
+@@ -521,16 +509,17 @@ impl InodeSocket {
+                             Err(NetworkError::WouldBlock) if self.nonblocking => {
+                                 Poll::Ready(Err(Errno::Again))
+                             }
+-                            Err(NetworkError::WouldBlock) if !self.handler_registered => {
+-                                let res = socket.set_handler(cx.waker().into());
+-                                if let Err(err) = res {
+-                                    return Poll::Ready(Err(net_error_into_wasi_err(err)));
++                            Err(NetworkError::WouldBlock) => {
++                                match socket.poll_read_ready(cx) {
++                                    Poll::Ready(Ok(_)) => {}
++                                    Poll::Ready(Err(err)) => {
++                                        return Poll::Ready(Err(net_error_into_wasi_err(err)));
++                                    }
++                                    Poll::Pending => return Poll::Pending,
+                                 }
+                                 drop(inner);
+-                                self.handler_registered = true;
+                                 continue;
+                             }
+-                            Err(NetworkError::WouldBlock) => Poll::Pending,
+                             Err(err) => Poll::Ready(Err(net_error_into_wasi_err(err))),
+                         },
+                         InodeSocketKind::PreSocket { .. } => Poll::Ready(Err(Errno::Notconn)),
+@@ -543,7 +532,6 @@ impl InodeSocket {
+         let acceptor = SocketAccepter {
+             sock: self,
+             nonblocking,
+-            handler_registered: false,
+         };
+         if let Some(timeout) = timeout {
+             tokio::select! {
+@@ -1114,6 +1102,69 @@ impl InodeSocket {
+         }
+     }
+ 
++    pub fn try_send_now(&self, buf: &[u8]) -> Result<usize, Errno> {
++        let mut inner = self.inner.protected.write().unwrap();
++        let res = {
++            match &mut inner.kind {
++                InodeSocketKind::Raw(socket) => socket.try_send(buf),
++                InodeSocketKind::TcpStream { socket, .. } => socket.try_send(buf),
++                InodeSocketKind::UdpSocket { socket, peer } => {
++                    if let Some(peer) = peer {
++                        socket.try_send_to(buf, *peer)
++                    } else {
++                        Err(NetworkError::NotConnected)
++                    }
++                }
++                InodeSocketKind::PreSocket { .. } => return Err(Errno::Notconn),
++                InodeSocketKind::RemoteSocket { is_dead, .. } => match is_dead {
++                    true => return Err(Errno::Connreset),
++                    false => return Ok(buf.len()),
++                },
++                _ => return Err(Errno::Notsup),
++            }
++        };
++        match res {
++            Ok(amt) => Ok(amt),
++            Err(NetworkError::WouldBlock) => Err(Errno::Again),
++            Err(err) => Err(net_error_into_wasi_err(err)),
++        }
++    }
++
++    pub fn try_recv_now(&self, buf: &mut [MaybeUninit<u8>], peek: bool) -> Result<usize, Errno> {
++        let mut inner = self.inner.protected.write().unwrap();
++        let res = {
++            match &mut inner.kind {
++                InodeSocketKind::Raw(socket) => socket.try_recv(buf, peek),
++                InodeSocketKind::TcpStream { socket, .. } => socket.try_recv(buf, peek),
++                InodeSocketKind::UdpSocket { socket, peer } => {
++                    if let Some(peer) = peer {
++                        match socket.try_recv_from(buf, peek) {
++                            Ok((amt, addr)) if addr == *peer => Ok(amt),
++                            Ok(_) => Err(NetworkError::WouldBlock),
++                            Err(err) => Err(err),
++                        }
++                    } else {
++                        match socket.try_recv_from(buf, peek) {
++                            Ok((amt, _)) => Ok(amt),
++                            Err(err) => Err(err),
++                        }
++                    }
++                }
++                InodeSocketKind::RemoteSocket { is_dead, .. } => match is_dead {
++                    true => return Ok(0),
++                    false => return Err(Errno::Again),
++                },
++                InodeSocketKind::PreSocket { .. } => return Err(Errno::Notconn),
++                _ => return Err(Errno::Notsup),
++            }
++        };
++        match res {
++            Ok(amt) => Ok(amt),
++            Err(NetworkError::WouldBlock) => Err(Errno::Again),
++            Err(err) => Err(net_error_into_wasi_err(err)),
++        }
++    }
++
+     pub async fn send(
+         &self,
+         tasks: &dyn VirtualTaskManager,
+@@ -1125,59 +1176,51 @@ impl InodeSocket {
+             inner: &'a InodeSocketInner,
+             data: &'b [u8],
+             nonblocking: bool,
+-            handler_registered: bool,
+-        }
+-        impl Drop for SocketSender<'_, '_> {
+-            fn drop(&mut self) {
+-                if self.handler_registered {
+-                    let mut inner = self.inner.protected.write().unwrap();
+-                    inner.remove_handler();
+-                }
+-            }
+         }
+         impl Future for SocketSender<'_, '_> {
+             type Output = Result<usize, Errno>;
+-            fn poll(
+-                mut self: Pin<&mut Self>,
+-                cx: &mut std::task::Context<'_>,
+-            ) -> Poll<Self::Output> {
++            fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+                 loop {
+                     let mut inner = self.inner.protected.write().unwrap();
+-                    let res = match &mut inner.kind {
+-                        InodeSocketKind::Raw(socket) => socket.try_send(self.data),
+-                        InodeSocketKind::TcpStream { socket, .. } => socket.try_send(self.data),
+-                        InodeSocketKind::UdpSocket { socket, peer } => {
+-                            if let Some(peer) = peer {
+-                                socket.try_send_to(self.data, *peer)
+-                            } else {
+-                                Err(NetworkError::NotConnected)
++                    let res = {
++                        match &mut inner.kind {
++                            InodeSocketKind::Raw(socket) => socket.try_send(self.data),
++                            InodeSocketKind::TcpStream { socket, .. } => socket.try_send(self.data),
++                            InodeSocketKind::UdpSocket { socket, peer } => {
++                                if let Some(peer) = peer {
++                                    socket.try_send_to(self.data, *peer)
++                                } else {
++                                    Err(NetworkError::NotConnected)
++                                }
+                             }
++                            InodeSocketKind::PreSocket { .. } => {
++                                return Poll::Ready(Err(Errno::Notconn));
++                            }
++                            InodeSocketKind::RemoteSocket { is_dead, .. } => {
++                                return match is_dead {
++                                    true => Poll::Ready(Err(Errno::Connreset)),
++                                    false => Poll::Ready(Ok(self.data.len())),
++                                };
++                            }
++                            _ => return Poll::Ready(Err(Errno::Notsup)),
+                         }
+-                        InodeSocketKind::PreSocket { .. } => {
+-                            return Poll::Ready(Err(Errno::Notconn));
+-                        }
+-                        InodeSocketKind::RemoteSocket { is_dead, .. } => {
+-                            return match is_dead {
+-                                true => Poll::Ready(Err(Errno::Connreset)),
+-                                false => Poll::Ready(Ok(self.data.len())),
+-                            };
+-                        }
+-                        _ => return Poll::Ready(Err(Errno::Notsup)),
+                     };
+                     return match res {
+                         Ok(amt) => Poll::Ready(Ok(amt)),
+                         Err(NetworkError::WouldBlock) if self.nonblocking => {
+                             Poll::Ready(Err(Errno::Again))
+                         }
+-                        Err(NetworkError::WouldBlock) if !self.handler_registered => {
+-                            inner
+-                                .set_handler(cx.waker().into())
+-                                .map_err(net_error_into_wasi_err)?;
++                        Err(NetworkError::WouldBlock) => {
++                            match inner.poll_write_ready(cx) {
++                                Poll::Ready(Ok(_)) => {}
++                                Poll::Ready(Err(err)) => {
++                                    return Poll::Ready(Err(crate::utils::map_io_err(err)));
++                                }
++                                Poll::Pending => return Poll::Pending,
++                            }
+                             drop(inner);
+-                            self.handler_registered = true;
+                             continue;
+                         }
+-                        Err(NetworkError::WouldBlock) => Poll::Pending,
+                         Err(err) => Poll::Ready(Err(net_error_into_wasi_err(err))),
+                     };
+                 }
+@@ -1188,7 +1231,6 @@ impl InodeSocket {
+             inner: &self.inner,
+             data: buf,
+             nonblocking,
+-            handler_registered: false,
+         };
+         if let Some(timeout) = timeout {
+             tokio::select! {
+@@ -1213,55 +1255,49 @@ impl InodeSocket {
+             data: &'b [u8],
+             addr: SocketAddr,
+             nonblocking: bool,
+-            handler_registered: bool,
+-        }
+-        impl Drop for SocketSender<'_, '_> {
+-            fn drop(&mut self) {
+-                if self.handler_registered {
+-                    let mut inner = self.inner.protected.write().unwrap();
+-                    inner.remove_handler();
+-                }
+-            }
+         }
+         impl Future for SocketSender<'_, '_> {
+             type Output = Result<usize, Errno>;
+-            fn poll(
+-                mut self: Pin<&mut Self>,
+-                cx: &mut std::task::Context<'_>,
+-            ) -> Poll<Self::Output> {
++            fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+                 loop {
+                     let mut inner = self.inner.protected.write().unwrap();
+-                    let res = match &mut inner.kind {
+-                        InodeSocketKind::Icmp(socket) => socket.try_send_to(self.data, self.addr),
+-                        InodeSocketKind::TcpStream { socket, .. } => socket.try_send(self.data),
+-                        InodeSocketKind::UdpSocket { socket, .. } => {
+-                            socket.try_send_to(self.data, self.addr)
+-                        }
+-                        InodeSocketKind::PreSocket { .. } => {
+-                            return Poll::Ready(Err(Errno::Notconn));
+-                        }
+-                        InodeSocketKind::RemoteSocket { is_dead, .. } => {
+-                            return match is_dead {
+-                                true => Poll::Ready(Err(Errno::Connreset)),
+-                                false => Poll::Ready(Ok(self.data.len())),
+-                            };
++                    let res = {
++                        match &mut inner.kind {
++                            InodeSocketKind::Icmp(socket) => {
++                                socket.try_send_to(self.data, self.addr)
++                            }
++                            InodeSocketKind::TcpStream { socket, .. } => socket.try_send(self.data),
++                            InodeSocketKind::UdpSocket { socket, .. } => {
++                                socket.try_send_to(self.data, self.addr)
++                            }
++                            InodeSocketKind::PreSocket { .. } => {
++                                return Poll::Ready(Err(Errno::Notconn));
++                            }
++                            InodeSocketKind::RemoteSocket { is_dead, .. } => {
++                                return match is_dead {
++                                    true => Poll::Ready(Err(Errno::Connreset)),
++                                    false => Poll::Ready(Ok(self.data.len())),
++                                };
++                            }
++                            _ => return Poll::Ready(Err(Errno::Notsup)),
+                         }
+-                        _ => return Poll::Ready(Err(Errno::Notsup)),
+                     };
+                     return match res {
+                         Ok(amt) => Poll::Ready(Ok(amt)),
+                         Err(NetworkError::WouldBlock) if self.nonblocking => {
+                             Poll::Ready(Err(Errno::Again))
+                         }
+-                        Err(NetworkError::WouldBlock) if !self.handler_registered => {
+-                            inner
+-                                .set_handler(cx.waker().into())
+-                                .map_err(net_error_into_wasi_err)?;
+-                            self.handler_registered = true;
++                        Err(NetworkError::WouldBlock) => {
++                            match inner.poll_write_ready(cx) {
++                                Poll::Ready(Ok(_)) => {}
++                                Poll::Ready(Err(err)) => {
++                                    return Poll::Ready(Err(crate::utils::map_io_err(err)));
++                                }
++                                Poll::Pending => return Poll::Pending,
++                            }
+                             drop(inner);
+                             continue;
+                         }
+-                        Err(NetworkError::WouldBlock) => Poll::Pending,
+                         Err(err) => Poll::Ready(Err(net_error_into_wasi_err(err))),
+                     };
+                 }
+@@ -1273,7 +1309,6 @@ impl InodeSocket {
+             data: buf,
+             addr,
+             nonblocking,
+-            handler_registered: false,
+         };
+         if let Some(timeout) = timeout {
+             tokio::select! {
+@@ -1298,15 +1333,6 @@ impl InodeSocket {
+             data: &'b mut [MaybeUninit<u8>],
+             nonblocking: bool,
+             peek: bool,
+-            handler_registered: bool,
+-        }
+-        impl Drop for SocketReceiver<'_, '_> {
+-            fn drop(&mut self) {
+-                if self.handler_registered {
+-                    let mut inner = self.inner.protected.write().unwrap();
+-                    inner.remove_handler();
+-                }
+-            }
+         }
+         impl Future for SocketReceiver<'_, '_> {
+             type Output = Result<usize, Errno>;
+@@ -1317,51 +1343,54 @@ impl InodeSocket {
+                 loop {
+                     let peek = self.peek;
+                     let mut inner = self.inner.protected.write().unwrap();
+-                    let res = match &mut inner.kind {
+-                        InodeSocketKind::Raw(socket) => socket.try_recv(self.data, peek),
+-                        InodeSocketKind::TcpStream { socket, .. } => {
+-                            socket.try_recv(self.data, peek)
+-                        }
+-                        InodeSocketKind::UdpSocket { socket, peer } => {
+-                            if let Some(peer) = peer {
+-                                match socket.try_recv_from(self.data, peek) {
+-                                    Ok((amt, addr)) if addr == *peer => Ok(amt),
+-                                    Ok(_) => Err(NetworkError::WouldBlock),
+-                                    Err(err) => Err(err),
+-                                }
+-                            } else {
+-                                match socket.try_recv_from(self.data, peek) {
+-                                    Ok((amt, _)) => Ok(amt),
+-                                    Err(err) => Err(err),
++                    let res = {
++                        match &mut inner.kind {
++                            InodeSocketKind::Raw(socket) => socket.try_recv(self.data, peek),
++                            InodeSocketKind::TcpStream { socket, .. } => {
++                                socket.try_recv(self.data, peek)
++                            }
++                            InodeSocketKind::UdpSocket { socket, peer } => {
++                                if let Some(peer) = peer {
++                                    match socket.try_recv_from(self.data, peek) {
++                                        Ok((amt, addr)) if addr == *peer => Ok(amt),
++                                        Ok(_) => Err(NetworkError::WouldBlock),
++                                        Err(err) => Err(err),
++                                    }
++                                } else {
++                                    match socket.try_recv_from(self.data, peek) {
++                                        Ok((amt, _)) => Ok(amt),
++                                        Err(err) => Err(err),
++                                    }
+                                 }
+                             }
++                            InodeSocketKind::RemoteSocket { is_dead, .. } => {
++                                return match is_dead {
++                                    true => Poll::Ready(Ok(0)),
++                                    false => Poll::Pending,
++                                };
++                            }
++                            InodeSocketKind::PreSocket { .. } => {
++                                return Poll::Ready(Err(Errno::Notconn));
++                            }
++                            _ => return Poll::Ready(Err(Errno::Notsup)),
+                         }
+-                        InodeSocketKind::RemoteSocket { is_dead, .. } => {
+-                            return match is_dead {
+-                                true => Poll::Ready(Ok(0)),
+-                                false => Poll::Pending,
+-                            };
+-                        }
+-                        InodeSocketKind::PreSocket { .. } => {
+-                            return Poll::Ready(Err(Errno::Notconn));
+-                        }
+-                        _ => return Poll::Ready(Err(Errno::Notsup)),
+                     };
+                     return match res {
+                         Ok(amt) => Poll::Ready(Ok(amt)),
+                         Err(NetworkError::WouldBlock) if self.nonblocking => {
+                             Poll::Ready(Err(Errno::Again))
+                         }
+-                        Err(NetworkError::WouldBlock) if !self.handler_registered => {
+-                            inner
+-                                .set_handler(cx.waker().into())
+-                                .map_err(net_error_into_wasi_err)?;
+-                            self.handler_registered = true;
++                        Err(NetworkError::WouldBlock) => {
++                            match inner.poll_read_ready_direct(cx) {
++                                Poll::Ready(Ok(_)) => {}
++                                Poll::Ready(Err(err)) => {
++                                    return Poll::Ready(Err(crate::utils::map_io_err(err)));
++                                }
++                                Poll::Pending => return Poll::Pending,
++                            }
+                             drop(inner);
+                             continue;
+                         }
+-
+-                        Err(NetworkError::WouldBlock) => Poll::Pending,
+                         Err(err) => Poll::Ready(Err(net_error_into_wasi_err(err))),
+                     };
+                 }
+@@ -1373,7 +1402,6 @@ impl InodeSocket {
+             data: buf,
+             nonblocking,
+             peek,
+-            handler_registered: false,
+         };
+         if let Some(timeout) = timeout {
+             tokio::select! {
+@@ -1398,15 +1426,6 @@ impl InodeSocket {
+             data: &'b mut [MaybeUninit<u8>],
+             nonblocking: bool,
+             peek: bool,
+-            handler_registered: bool,
+-        }
+-        impl Drop for SocketReceiver<'_, '_> {
+-            fn drop(&mut self) {
+-                if self.handler_registered {
+-                    let mut inner = self.inner.protected.write().unwrap();
+-                    inner.remove_handler();
+-                }
+-            }
+         }
+         impl Future for SocketReceiver<'_, '_> {
+             type Output = Result<(usize, SocketAddr), Errno>;
+@@ -1415,8 +1434,8 @@ impl InodeSocket {
+                 cx: &mut std::task::Context<'_>,
+             ) -> Poll<Self::Output> {
+                 let peek = self.peek;
+-                let mut inner = self.inner.protected.write().unwrap();
+                 loop {
++                    let mut inner = self.inner.protected.write().unwrap();
+                     let res = match &mut inner.kind {
+                         InodeSocketKind::Icmp(socket) => socket.try_recv_from(self.data, peek),
+                         InodeSocketKind::UdpSocket { socket, .. } => {
+@@ -1440,14 +1459,17 @@ impl InodeSocket {
+                         Err(NetworkError::WouldBlock) if self.nonblocking => {
+                             Poll::Ready(Err(Errno::Again))
+                         }
+-                        Err(NetworkError::WouldBlock) if !self.handler_registered => {
+-                            inner
+-                                .set_handler(cx.waker().into())
+-                                .map_err(net_error_into_wasi_err)?;
+-                            self.handler_registered = true;
++                        Err(NetworkError::WouldBlock) => {
++                            match inner.poll_read_ready(cx) {
++                                Poll::Ready(Ok(_)) => {}
++                                Poll::Ready(Err(err)) => {
++                                    return Poll::Ready(Err(crate::utils::map_io_err(err)));
++                                }
++                                Poll::Pending => return Poll::Pending,
++                            }
++                            drop(inner);
+                             continue;
+                         }
+-                        Err(NetworkError::WouldBlock) => Poll::Pending,
+                         Err(err) => Poll::Ready(Err(net_error_into_wasi_err(err))),
+                     };
+                 }
+@@ -1459,7 +1481,6 @@ impl InodeSocket {
+             data: buf,
+             nonblocking,
+             peek,
+-            handler_registered: false,
+         };
+         if let Some(timeout) = timeout {
+             tokio::select! {
+@@ -1501,22 +1522,6 @@ impl InodeSocket {
+ }
+ 
+ impl InodeSocketProtected {
+-    pub fn remove_handler(&mut self) {
+-        match &mut self.kind {
+-            InodeSocketKind::TcpListener { socket, .. } => socket.remove_handler(),
+-            InodeSocketKind::TcpStream { socket, .. } => socket.remove_handler(),
+-            InodeSocketKind::UdpSocket { socket, .. } => socket.remove_handler(),
+-            InodeSocketKind::Raw(socket) => socket.remove_handler(),
+-            InodeSocketKind::Icmp(socket) => socket.remove_handler(),
+-            InodeSocketKind::PreSocket { props, .. } => {
+-                props.handler.take();
+-            }
+-            InodeSocketKind::RemoteSocket { props, .. } => {
+-                props.handler.take();
+-            }
+-        }
+-    }
+-
+     pub fn poll_read_ready(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
+         match &mut self.kind {
+             InodeSocketKind::TcpListener { socket, .. } => socket.poll_read_ready(cx),
+@@ -1533,6 +1538,14 @@ impl InodeSocketProtected {
+         .map_err(net_error_into_io_err)
+     }
+ 
++    pub fn poll_read_ready_direct(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
++        match &mut self.kind {
++            InodeSocketKind::TcpStream { socket, .. } => socket.poll_read_ready_direct(cx),
++            _ => return self.poll_read_ready(cx),
++        }
++        .map_err(net_error_into_io_err)
++    }
++
+     pub fn poll_write_ready(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
+         match &mut self.kind {
+             InodeSocketKind::TcpListener { socket, .. } => socket.poll_write_ready(cx),
+@@ -1591,7 +1604,7 @@ pub(crate) fn all_socket_rights() -> Rights {
+ 
+ #[cfg(test)]
+ mod tests {
+-    use super::{InodeSocket, InodeSocketKind, WasiSocketStatus};
++    use super::{InodeSocket, InodeSocketKind, TimeType, WasiSocketStatus};
+     use std::{
+         mem::MaybeUninit,
+         net::{Ipv4Addr, Shutdown, SocketAddr},
+@@ -1606,12 +1619,13 @@ mod tests {
+     use virtual_mio::InterestHandler;
+     use virtual_net::{
+         NetworkError, Result as NetResult, SocketStatus, VirtualConnectedSocket, VirtualIoSource,
+-        VirtualSocket, VirtualTcpSocket,
++        VirtualSocket, VirtualTcpListener, VirtualTcpSocket,
+     };
+ 
+     #[derive(Debug)]
+     struct MockTcpSocket {
+         read_calls: Arc<AtomicUsize>,
++        direct_read_calls: Arc<AtomicUsize>,
+         write_calls: Arc<AtomicUsize>,
+         status: Arc<AtomicUsize>,
+     }
+@@ -1634,6 +1648,11 @@ mod tests {
+             Poll::Ready(Ok(3))
+         }
+ 
++        fn poll_read_ready_direct(&mut self, _cx: &mut Context<'_>) -> Poll<NetResult<usize>> {
++            self.direct_read_calls.fetch_add(1, Ordering::Relaxed);
++            Poll::Ready(Ok(11))
++        }
++
+         fn poll_write_ready(&mut self, _cx: &mut Context<'_>) -> Poll<NetResult<usize>> {
+             self.write_calls.fetch_add(1, Ordering::Relaxed);
+             self.status.store(MOCK_STATUS_OPENED, Ordering::Relaxed);
+@@ -1746,6 +1765,46 @@ mod tests {
+         }
+     }
+ 
++    #[derive(Debug)]
++    struct MockTcpListener;
++
++    impl VirtualIoSource for MockTcpListener {
++        fn remove_handler(&mut self) {}
++
++        fn poll_read_ready(&mut self, _cx: &mut Context<'_>) -> Poll<NetResult<usize>> {
++            Poll::Pending
++        }
++
++        fn poll_write_ready(&mut self, _cx: &mut Context<'_>) -> Poll<NetResult<usize>> {
++            Poll::Ready(Ok(0))
++        }
++    }
++
++    impl VirtualTcpListener for MockTcpListener {
++        fn try_accept(&mut self) -> NetResult<(Box<dyn VirtualTcpSocket + Sync>, SocketAddr)> {
++            Err(NetworkError::WouldBlock)
++        }
++
++        fn set_handler(
++            &mut self,
++            _handler: Box<dyn InterestHandler + Send + Sync>,
++        ) -> NetResult<()> {
++            Ok(())
++        }
++
++        fn addr_local(&self) -> NetResult<SocketAddr> {
++            Ok(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
++        }
++
++        fn set_ttl(&mut self, _ttl: u8) -> NetResult<()> {
++            Ok(())
++        }
++
++        fn ttl(&self) -> NetResult<u8> {
++            Ok(64)
++        }
++    }
++
+     #[test]
+     fn inode_socket_poll_write_ready_uses_write_path() {
+         let read_calls = Arc::new(AtomicUsize::new(0));
+@@ -1754,6 +1813,7 @@ mod tests {
+         let mut inode = InodeSocket::new(InodeSocketKind::TcpStream {
+             socket: Box::new(MockTcpSocket {
+                 read_calls: read_calls.clone(),
++                direct_read_calls: Arc::new(AtomicUsize::new(0)),
+                 write_calls: write_calls.clone(),
+                 status,
+             }),
+@@ -1770,12 +1830,39 @@ mod tests {
+         assert_eq!(write_calls.load(Ordering::Relaxed), 1);
+     }
+ 
++    #[test]
++    fn inode_socket_poll_read_ready_direct_uses_tcp_direct_path() {
++        let read_calls = Arc::new(AtomicUsize::new(0));
++        let direct_read_calls = Arc::new(AtomicUsize::new(0));
++        let mut inner = super::InodeSocketProtected {
++            kind: InodeSocketKind::TcpStream {
++                socket: Box::new(MockTcpSocket {
++                    read_calls: read_calls.clone(),
++                    direct_read_calls: direct_read_calls.clone(),
++                    write_calls: Arc::new(AtomicUsize::new(0)),
++                    status: Arc::new(AtomicUsize::new(MOCK_STATUS_OPENED)),
++                }),
++                write_timeout: None,
++                read_timeout: None,
++            },
++        };
++
++        let waker = futures::task::noop_waker();
++        let mut cx = Context::from_waker(&waker);
++        let ready = inner.poll_read_ready_direct(&mut cx);
++
++        assert!(matches!(ready, Poll::Ready(Ok(11))));
++        assert_eq!(read_calls.load(Ordering::Relaxed), 0);
++        assert_eq!(direct_read_calls.load(Ordering::Relaxed), 1);
++    }
++
+     #[test]
+     fn inode_socket_status_tracks_tcp_socket_status() {
+         let status = Arc::new(AtomicUsize::new(MOCK_STATUS_OPENING));
+         let inode = InodeSocket::new(InodeSocketKind::TcpStream {
+             socket: Box::new(MockTcpSocket {
+                 read_calls: Arc::new(AtomicUsize::new(0)),
++                direct_read_calls: Arc::new(AtomicUsize::new(0)),
+                 write_calls: Arc::new(AtomicUsize::new(0)),
+                 status: status.clone(),
+             }),
+@@ -1787,4 +1874,14 @@ mod tests {
+         status.store(MOCK_STATUS_OPENED, Ordering::Relaxed);
+         assert!(matches!(inode.status().unwrap(), WasiSocketStatus::Opened));
+     }
++
++    #[test]
++    fn tcp_listener_accept_timeout_defaults_to_unset() {
++        let inode = InodeSocket::new(InodeSocketKind::TcpListener {
++            socket: Box::new(MockTcpListener),
++            accept_timeout: None,
++        });
++
++        assert_eq!(inode.opt_time(TimeType::AcceptTimeout).unwrap(), None);
++    }
+ }
+diff --git a/lib/wasix/src/os/epoll/mod.rs b/lib/wasix/src/os/epoll/mod.rs
+index 9b5ace4..7e97ee0 100644
+--- a/lib/wasix/src/os/epoll/mod.rs
++++ b/lib/wasix/src/os/epoll/mod.rs
+@@ -24,7 +24,7 @@
+ //! 3. Enqueue exactly one `ReadyItem` per subscription while `enqueued == true`.
+ //! 4. Wake one waiter via `Notify`.
+ //!
+-//! ### Consumer path (`drain_ready_events` used by `epoll_wait`)
++//! ### Consumer path (`wait_for_ready_events` used by `epoll_wait`)
+ //! 1. Pop `ReadyItem` from the ready queue.
+ //! 2. Resolve the current subscription and drop stale/missing entries.
+ //! 3. Atomically take readiness bits, clear `enqueued`, and map bits to output events.
+@@ -40,7 +40,7 @@
+ use std::{
+     collections::VecDeque,
+     sync::{
+-        Arc, Mutex as StdMutex,
++        Arc, Mutex as StdMutex, Weak,
+         atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
+     },
+ };
+@@ -48,17 +48,16 @@ use std::{
+ use fnv::FnvHashMap;
+ use serde::{Deserialize, Serialize};
+ use tokio::sync::Notify;
+-use virtual_mio::{InterestHandler, InterestType};
++use virtual_mio::{InterestHandler, InterestHandlerRegistration, InterestType};
+ use virtual_net::net_error_into_io_err;
+ use wasmer_wasix_types::wasi::{
+-    EpollEventCtl, EpollType, Errno, Eventtype, Fd as WasiFd, Subscription,
++    EpollEventCtl, EpollType, Errno, Eventtype, Fd as WasiFd, Rights, Subscription,
+     SubscriptionFsReadwrite, SubscriptionUnion,
+ };
+ 
+ use crate::{
+-    fs::{InodeValFilePollGuard, InodeValFilePollGuardMode},
+-    state::{PollEvent, PollEventBuilder, WasiState},
+-    syscalls::poll_fd_guard,
++    fs::{EpollRegistrationGuard, Fd, InodeValFilePollGuard, InodeValFilePollGuardMode},
++    state::{PollEvent, PollEventBuilder},
+ };
+ 
+ const READABLE_BIT: u8 = 1 << 0;
+@@ -66,11 +65,6 @@ const WRITABLE_BIT: u8 = 1 << 1;
+ const HUP_BIT: u8 = 1 << 2;
+ const ERR_BIT: u8 = 1 << 3;
+ 
+-static EPOLL_ENQUEUE_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
+-static EPOLL_ENQUEUE_DEDUPE_HITS: AtomicU64 = AtomicU64::new(0);
+-static EPOLL_STALE_GENERATION_DROPS: AtomicU64 = AtomicU64::new(0);
+-static EPOLL_EMPTY_DEQUEUE_ENTRIES: AtomicU64 = AtomicU64::new(0);
+-
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ pub struct EpollFd {
+     /// Event mask configured by the caller (`epoll_ctl`).
+@@ -128,55 +122,65 @@ impl EpollFd {
+     }
+ }
+ 
++/// Linux identifies an epoll interest by the numeric fd used for ADD plus the
++/// underlying open file description. The fd can later be closed and reused
++/// while a dup/fork alias keeps the old description alive.
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
++pub(crate) struct EpollSubscriptionKey {
++    fd: WasiFd,
++    ofd_id: u64,
++}
++
++impl EpollSubscriptionKey {
++    pub(crate) fn new(fd: WasiFd, ofd_id: u64) -> Self {
++        Self { fd, ofd_id }
++    }
++
++    pub(crate) fn fd(self) -> WasiFd {
++        self.fd
++    }
++
++    fn ofd_id(self) -> u64 {
++        self.ofd_id
++    }
++}
++
+ #[derive(Debug)]
+ pub struct EpollJoinGuard {
+     /// Underlying poll registration guard.
+     fd_guard: InodeValFilePollGuard,
++    /// Removes only this subscription's handler from the OFD fanout.
++    _handler_registration: Option<InterestHandlerRegistration>,
+ }
+ 
+ impl EpollJoinGuard {
+-    fn new(fd_guard: InodeValFilePollGuard) -> Self {
+-        Self { fd_guard }
+-    }
+-}
+-
+-impl Drop for EpollJoinGuard {
+-    fn drop(&mut self) {
+-        // Dropping a subscription must detach its interest handler from the source.
+-        match &self.fd_guard.mode {
+-            InodeValFilePollGuardMode::File(_) => {
+-                // Intentionally ignored, epoll doesn't work with files
+-            }
+-            InodeValFilePollGuardMode::Socket { inner } => {
+-                let mut inner = inner.protected.write().unwrap();
+-                inner.remove_handler();
+-            }
+-            InodeValFilePollGuardMode::EventNotifications(inner) => {
+-                inner.remove_interest_handler();
+-            }
+-            InodeValFilePollGuardMode::DuplexPipe { pipe } => {
+-                let inner = pipe.write().unwrap();
+-                inner.remove_interest_handler();
+-            }
+-            InodeValFilePollGuardMode::PipeRx { rx } => {
+-                let inner = rx.write().unwrap();
+-                inner.remove_interest_handler();
+-            }
+-            InodeValFilePollGuardMode::PipeTx { .. } => {
+-                // Intentionally ignored, the sending end of a pipe can't have an interest handler
+-            }
++    fn new(
++        fd_guard: InodeValFilePollGuard,
++        handler_registration: Option<InterestHandlerRegistration>,
++    ) -> Self {
++        Self {
++            fd_guard,
++            _handler_registration: handler_registration,
+         }
+     }
+ }
+ 
+ #[derive(Debug)]
+ pub struct EpollState {
+-    /// Active subscriptions keyed by watched fd.
+-    subscriptions: StdMutex<FnvHashMap<WasiFd, Arc<EpollSubState>>>,
++    /// Serializes the multi-step state/source transaction performed by
++    /// epoll_ctl. Source registration can block or fail, so the subscription
++    /// map alone cannot make ADD/MOD rollback atomic with another ctl call.
++    ctl: StdMutex<()>,
++    /// Active subscriptions keyed by the ADD fd and its open-file-description.
++    subscriptions: StdMutex<FnvHashMap<EpollSubscriptionKey, Arc<EpollSubState>>>,
+     /// Ready queue of subscriptions with potentially pending bits.
+     ready: StdMutex<VecDeque<ReadyItem>>,
+     /// Wake primitive for blocked `epoll_wait`.
+     notify: Notify,
++    /// Final close is idempotent and prevents new registrations.
++    closed: AtomicBool,
++    /// Never-reused identity for queued readiness and replacement detection.
++    next_registration_id: AtomicU64,
+ }
+ 
+ impl Default for EpollState {
+@@ -189,34 +193,65 @@ impl EpollState {
+     /// Creates a fresh epoll runtime state.
+     pub fn new() -> Self {
+         Self {
++            ctl: StdMutex::new(()),
+             subscriptions: StdMutex::new(FnvHashMap::default()),
+             ready: StdMutex::new(VecDeque::new()),
+             notify: Notify::new(),
++            closed: AtomicBool::new(false),
++            next_registration_id: AtomicU64::new(1),
+         }
+     }
+ 
++    fn allocate_registration_id(&self) -> u64 {
++        self.next_registration_id
++            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
++                current.checked_add(1)
++            })
++            .expect("epoll registration identity space exhausted")
++    }
++
++    pub(crate) fn with_ctl_transaction<T>(&self, transaction: impl FnOnce() -> T) -> T {
++        let _ctl = self.ctl.lock().unwrap();
++        transaction()
++    }
++
+     #[cfg(test)]
+-    fn insert_subscription(&self, fd: WasiFd, state: Arc<EpollSubState>) {
+-        self.subscriptions.lock().unwrap().insert(fd, state);
++    fn insert_subscription(&self, key: EpollSubscriptionKey, state: Arc<EpollSubState>) {
++        self.subscriptions.lock().unwrap().insert(key, state);
+     }
+ 
+-    fn restore_subscription(&self, fd: WasiFd, previous: Option<Arc<EpollSubState>>) {
+-        let mut subscriptions = self.subscriptions.lock().unwrap();
+-        subscriptions.remove(&fd);
+-        if let Some(previous) = previous {
+-            subscriptions.insert(fd, previous);
+-        }
++    fn subscription(&self, key: EpollSubscriptionKey) -> Option<Arc<EpollSubState>> {
++        self.subscriptions.lock().unwrap().get(&key).cloned()
++    }
++
++    #[cfg(test)]
++    pub(crate) fn contains_exact_subscription(
++        &self,
++        key: EpollSubscriptionKey,
++        expected: &Arc<EpollSubState>,
++    ) -> bool {
++        self.subscription(key)
++            .is_some_and(|current| Arc::ptr_eq(&current, expected))
+     }
+ 
+-    fn subscription(&self, fd: WasiFd) -> Option<Arc<EpollSubState>> {
+-        self.subscriptions.lock().unwrap().get(&fd).cloned()
++    #[cfg(test)]
++    pub(crate) fn subscription_count(&self) -> usize {
++        self.subscriptions.lock().unwrap().len()
+     }
+ 
+-    fn enqueue_ready(&self, fd: WasiFd, generation: u64) {
+-        self.ready
+-            .lock()
+-            .unwrap()
+-            .push_back(ReadyItem { fd, generation });
++    fn enqueue_ready(&self, key: EpollSubscriptionKey, registration_id: u64) {
++        let mut ready = self.ready.lock().unwrap();
++        // Linearize enqueue against final close. If enqueue wins this lock,
++        // close clears the item afterward; if close publishes first, no new
++        // item may enter a permanently closed epoll queue.
++        if self.closed.load(Ordering::Acquire) {
++            return;
++        }
++        ready.push_back(ReadyItem {
++            key,
++            registration_id,
++        });
++        drop(ready);
+         self.notify.notify_one();
+     }
+ 
+@@ -224,90 +259,215 @@ impl EpollState {
+         self.ready.lock().unwrap().pop_front()
+     }
+ 
+-    /// Waits until a producer enqueues readiness and notifies.
+-    pub async fn wait(&self) {
+-        self.notify.notified().await;
++    fn ready_queue_snapshot(&self) -> Vec<ReadyItem> {
++        self.ready.lock().unwrap().iter().copied().collect()
++    }
++
++    fn refresh_level_readiness(&self) -> bool {
++        if self.is_closed() {
++            return false;
++        }
++        let ready_items = self.ready_queue_snapshot();
++        let refreshed_ready_queue = !ready_items.is_empty();
++        let subscriptions: Vec<_> = {
++            let subscriptions = self.subscriptions.lock().unwrap();
++            if refreshed_ready_queue {
++                ready_items
++                    .iter()
++                    .filter_map(|item| {
++                        let sub_state = subscriptions.get(&item.key)?.clone();
++                        (sub_state.registration_id() == item.registration_id)
++                            .then_some((item.key, sub_state))
++                    })
++                    .collect()
++            } else {
++                subscriptions
++                    .iter()
++                    .map(|(&key, sub_state)| (key, sub_state.clone()))
++                    .collect()
++            }
++        };
++        for (key, sub_state) in subscriptions {
++            let current_bits = if refreshed_ready_queue {
++                let pending_bits = sub_state.pending_bits();
++                if pending_bits != 0 {
++                    pending_bits
++                } else {
++                    sub_state.poll_current_level_bits()
++                }
++            } else {
++                sub_state.poll_current_level_bits()
++            };
++            if current_bits == 0 {
++                continue;
++            }
++
++            sub_state
++                .pending_bits
++                .fetch_or(current_bits, Ordering::AcqRel);
++            if sub_state.mark_enqueued() {
++                self.enqueue_ready(key, sub_state.registration_id());
++            }
++        }
++        refreshed_ready_queue
+     }
+ 
+     pub(crate) fn prepare_add(
+         &self,
+-        fd: WasiFd,
++        key: EpollSubscriptionKey,
+         event: &EpollEventCtl,
+     ) -> Result<(EpollFd, Arc<EpollSubState>), Errno> {
+         let mut subscriptions = self.subscriptions.lock().unwrap();
+-        if subscriptions.contains_key(&fd) {
++        if self.closed.load(Ordering::Acquire) {
++            return Err(Errno::Badf);
++        }
++        if subscriptions.contains_key(&key) {
+             return Err(Errno::Exist);
+         }
+ 
+-        let (epoll_fd, sub_state) = self.build_pending_subscription(fd, event, 1);
+-        subscriptions.insert(fd, sub_state.clone());
++        let (epoll_fd, sub_state) = self.build_pending_subscription(key, event);
++        subscriptions.insert(key, sub_state.clone());
+         Ok((epoll_fd, sub_state))
+     }
+ 
+     pub(crate) fn prepare_mod(
+         &self,
+-        fd: WasiFd,
++        key: EpollSubscriptionKey,
+         event: &EpollEventCtl,
+     ) -> Result<(EpollFd, Arc<EpollSubState>, Arc<EpollSubState>), Errno> {
+         let mut subscriptions = self.subscriptions.lock().unwrap();
+-        let Some(previous) = subscriptions.remove(&fd) else {
++        if self.closed.load(Ordering::Acquire) {
++            return Err(Errno::Badf);
++        }
++        let Some(previous) = subscriptions.remove(&key) else {
+             return Err(Errno::Noent);
+         };
+-        tracing::trace!(fd, "unregistering waker");
++        tracing::trace!(fd = key.fd(), ofd_id = key.ofd_id(), "unregistering waker");
+ 
+-        let (epoll_fd, sub_state) =
+-            self.build_pending_subscription(fd, event, previous.next_generation());
+-        subscriptions.insert(fd, sub_state.clone());
++        let (epoll_fd, sub_state) = self.build_pending_subscription(key, event);
++        subscriptions.insert(key, sub_state.clone());
+         Ok((epoll_fd, sub_state, previous))
+     }
+ 
+-    pub(crate) fn apply_del(&self, fd: WasiFd) -> Result<(), Errno> {
+-        let removed = self
+-            .subscriptions
+-            .lock()
+-            .unwrap()
+-            .remove(&fd)
+-            .ok_or(Errno::Noent)?;
+-        removed.detach_joins();
++    pub(crate) fn prepare_restore(
++        &self,
++        key: EpollSubscriptionKey,
++        epoll_fd: EpollFd,
++    ) -> Result<Arc<EpollSubState>, Errno> {
++        let mut subscriptions = self.subscriptions.lock().unwrap();
++        if self.closed.load(Ordering::Acquire) {
++            return Err(Errno::Badf);
++        }
++        if subscriptions.contains_key(&key) {
++            return Err(Errno::Exist);
++        }
++        let registration_id = self.allocate_registration_id();
++        let sub_state = Arc::new(EpollSubState::new(epoll_fd, registration_id));
++        subscriptions.insert(key, sub_state.clone());
++        Ok(sub_state)
++    }
++
++    pub(crate) fn apply_del(&self, key: EpollSubscriptionKey) -> Result<(), Errno> {
++        let removed = self.subscriptions.lock().unwrap().remove(&key);
++        let Some(removed) = removed else {
++            return Err(Errno::Noent);
++        };
++        removed.deactivate_and_detach();
+         Ok(())
+     }
+ 
+-    pub(crate) fn rollback_registration(&self, fd: WasiFd, previous: Option<Arc<EpollSubState>>) {
+-        self.restore_subscription(fd, previous);
++    pub(crate) fn rollback_registration(
++        &self,
++        key: EpollSubscriptionKey,
++        expected: &Arc<EpollSubState>,
++    ) -> bool {
++        self.remove_if_same(key, expected)
+     }
+ 
+     fn build_pending_subscription(
+         &self,
+-        fd: WasiFd,
++        key: EpollSubscriptionKey,
+         event: &EpollEventCtl,
+-        generation: u64,
+     ) -> (EpollFd, Arc<EpollSubState>) {
+-        let epoll_fd = EpollFd::from_event_ctl(fd, event);
++        let registration_id = self.allocate_registration_id();
++        let epoll_fd = EpollFd::from_event_ctl(key.fd(), event);
+         tracing::trace!(
+             peb = ?event.events,
+             ptr = ?event.ptr,
+             data1 = event.data1,
+             data2 = event.data2,
+-            fd,
++            fd = key.fd(),
++            ofd_id = key.ofd_id(),
+             "registering waker"
+         );
+-        let sub_state = Arc::new(EpollSubState::new(epoll_fd.clone(), generation));
++        let sub_state = Arc::new(EpollSubState::new(epoll_fd.clone(), registration_id));
+         (epoll_fd, sub_state)
+     }
++
++    pub(crate) fn remove_if_same(
++        &self,
++        key: EpollSubscriptionKey,
++        expected: &Arc<EpollSubState>,
++    ) -> bool {
++        let removed = {
++            let mut subscriptions = self.subscriptions.lock().unwrap();
++            let is_same = subscriptions
++                .get(&key)
++                .is_some_and(|current| Arc::ptr_eq(current, expected));
++            is_same.then(|| subscriptions.remove(&key)).flatten()
++        };
++        let Some(removed) = removed else {
++            return false;
++        };
++        removed.deactivate_and_detach();
++        true
++    }
++
++    /// Closes the epoll open file description. This is idempotent and drops
++    /// subscription resources outside the state locks.
++    pub(crate) fn close(&self) {
++        if self.closed.swap(true, Ordering::AcqRel) {
++            return;
++        }
++        let subscriptions = {
++            let mut subscriptions = self.subscriptions.lock().unwrap();
++            subscriptions
++                .drain()
++                .map(|(_, sub)| sub)
++                .collect::<Vec<_>>()
++        };
++        for subscription in subscriptions {
++            subscription.deactivate_and_detach();
++        }
++        self.ready.lock().unwrap().clear();
++        self.notify.notify_waiters();
++    }
++
++    pub(crate) fn is_closed(&self) -> bool {
++        self.closed.load(Ordering::Acquire)
++    }
+ }
+ 
+ #[derive(Debug)]
+ pub struct EpollSubState {
+     /// Snapshot of user-visible metadata.
+     fd_meta: StdMutex<EpollFd>,
+-    /// Guard ownership for all attached handlers.
+-    joins: StdMutex<Vec<EpollJoinGuard>>,
++    /// Lifecycle-owned resources. Active is checked under the same lock used
++    /// to attach resources so final close cannot race in a dead handler.
++    resources: StdMutex<EpollSubResources>,
+     /// Atomic readiness bitset (EPOLLIN/OUT/HUP/ERR).
+     pending_bits: AtomicU8,
+     /// Queue dedupe flag: whether this sub already has a ready-queue entry.
+     enqueued: AtomicBool,
+-    /// Generation used to invalidate stale queue entries after DEL/MOD.
+-    generation: AtomicU64,
++    /// Never-reused identity used to invalidate stale queue entries.
++    registration_id: AtomicU64,
++}
++
++#[derive(Debug)]
++struct EpollSubResources {
++    active: bool,
++    joins: Vec<EpollJoinGuard>,
++    close_registration: Option<EpollRegistrationGuard>,
+ }
+ 
+ impl EpollSubState {
+@@ -315,32 +475,68 @@ impl EpollSubState {
+     pub fn new(fd_meta: EpollFd, generation: u64) -> Self {
+         Self {
+             fd_meta: StdMutex::new(fd_meta),
+-            joins: StdMutex::new(Vec::new()),
++            resources: StdMutex::new(EpollSubResources {
++                active: true,
++                joins: Vec::new(),
++                close_registration: None,
++            }),
+             pending_bits: AtomicU8::new(0),
+             enqueued: AtomicBool::new(false),
+-            generation: AtomicU64::new(generation),
++            registration_id: AtomicU64::new(generation),
+         }
+     }
+ 
+-    /// Returns `generation + 1` without mutating the current subscription.
+-    ///
+-    /// Callers use this to seed the generation of a replacement subscription.
+-    pub fn next_generation(&self) -> u64 {
+-        self.generation.load(Ordering::Acquire).saturating_add(1)
++    /// Adds a registration guard that will detach handlers when dropped.
++    pub fn add_join(&self, join: EpollJoinGuard) -> Result<(), EpollJoinGuard> {
++        let mut resources = self.resources.lock().unwrap();
++        if !resources.active {
++            return Err(join);
++        }
++        resources.joins.push(join);
++        Ok(())
+     }
+ 
+-    /// Adds a registration guard that will detach handlers when dropped.
+-    pub fn add_join(&self, join: EpollJoinGuard) {
+-        self.joins.lock().unwrap().push(join);
++    pub(crate) fn attach_close_registration(
++        &self,
++        registration: EpollRegistrationGuard,
++    ) -> Result<(), EpollRegistrationGuard> {
++        let mut resources = self.resources.lock().unwrap();
++        if !resources.active {
++            return Err(registration);
++        }
++        resources.close_registration = Some(registration);
++        Ok(())
++    }
++
++    /// Marks this subscription inactive, extracts owned resources under the
++    /// lifecycle lock, then drops them after releasing it.
++    pub(crate) fn deactivate_and_detach(&self) {
++        let (joins, close_registration) = {
++            let mut resources = self.resources.lock().unwrap();
++            if !resources.active && resources.joins.is_empty() {
++                return;
++            }
++            resources.active = false;
++            (
++                std::mem::take(&mut resources.joins),
++                resources.close_registration.take(),
++            )
++        };
++        drop(joins);
++        drop(close_registration);
+     }
+ 
+-    /// Detaches and drops all registered handlers for this subscription.
+-    pub fn detach_joins(&self) {
+-        self.joins.lock().unwrap().clear();
++    pub(crate) fn is_active(&self) -> bool {
++        self.resources.lock().unwrap().active
+     }
+ 
+-    fn generation(&self) -> u64 {
+-        self.generation.load(Ordering::Acquire)
++    #[cfg(test)]
++    fn join_count(&self) -> usize {
++        self.resources.lock().unwrap().joins.len()
++    }
++
++    fn registration_id(&self) -> u64 {
++        self.registration_id.load(Ordering::Acquire)
+     }
+ 
+     pub(crate) fn fd_meta(&self) -> EpollFd {
+@@ -369,14 +565,53 @@ impl EpollSubState {
+     fn clear_enqueued(&self) {
+         self.enqueued.store(false, Ordering::Release);
+     }
++
++    fn poll_current_level_bits(&self) -> u8 {
++        let event = self.fd_meta();
++        let mask_bits = epoll_mask_to_pending_bits(event.events());
++        let mut bits = 0;
++
++        let resources = self.resources.lock().unwrap();
++        for join in resources.joins.iter() {
++            for readiness in join.fd_guard.poll_immediate_ready() {
++                if let Some(bit) = epoll_type_to_pending_bit(readiness) {
++                    bits |= bit;
++                }
++            }
++        }
++
++        bits & mask_bits
++    }
++
++    fn has_tcp_listener_join(&self) -> bool {
++        self.resources.lock().unwrap().joins.iter().any(|join| {
++            let InodeValFilePollGuardMode::Socket { inner } = &join.fd_guard.mode else {
++                return false;
++            };
++            matches!(
++                &inner.protected.read().unwrap().kind,
++                crate::net::socket::InodeSocketKind::TcpListener { .. }
++            )
++        })
++    }
++
++    fn validate_current_level_bits(&self, bits: u8) -> u8 {
++        if !self.has_tcp_listener_join() {
++            return bits;
++        }
++
++        let current_bits = self.poll_current_level_bits();
++        let edge_bits = bits & (HUP_BIT | ERR_BIT);
++        (bits & current_bits) | edge_bits
++    }
+ }
+ 
+ #[derive(Debug, Clone, Copy)]
+ struct ReadyItem {
+-    /// Watched fd key used to resolve current subscription state.
+-    fd: WasiFd,
+-    /// Generation snapshot captured when enqueued.
+-    generation: u64,
++    /// Exact subscription key used to resolve current state.
++    key: EpollSubscriptionKey,
++    /// Never-reused registration identity captured when enqueued.
++    registration_id: u64,
+ }
+ 
+ /// Maps epoll readiness flags into internal pending-bit positions.
+@@ -447,6 +682,7 @@ fn epoll_mask_to_pending_bits(mask: EpollType) -> u8 {
+ }
+ 
+ fn prime_immediate_writable_if_applicable(
++    key: EpollSubscriptionKey,
+     event: &EpollFd,
+     fd_guard: &InodeValFilePollGuard,
+     epoll_state: &Arc<EpollState>,
+@@ -472,18 +708,18 @@ fn prime_immediate_writable_if_applicable(
+         .pending_bits
+         .fetch_or(WRITABLE_BIT, Ordering::AcqRel);
+     if sub_state.mark_enqueued() {
+-        epoll_state.enqueue_ready(event.fd(), sub_state.generation());
++        epoll_state.enqueue_ready(key, sub_state.registration_id());
+     }
+ }
+ 
+ /// Re-enqueues a subscription if new pending bits arrived during/after consumer drain.
+ fn repair_ready_queue_after_drain(
+     epoll_state: &Arc<EpollState>,
+-    fd: WasiFd,
++    key: EpollSubscriptionKey,
+     sub_state: &Arc<EpollSubState>,
+ ) {
+     if sub_state.pending_bits() != 0 && sub_state.mark_enqueued() {
+-        epoll_state.enqueue_ready(fd, sub_state.generation());
++        epoll_state.enqueue_ready(key, sub_state.registration_id());
+     }
+ }
+ 
+@@ -502,14 +738,11 @@ pub(crate) fn drain_ready_events(
+         let Some(item) = epoll_state.dequeue_ready() else {
+             break;
+         };
+-
+-        let Some(sub_state) = epoll_state.subscription(item.fd) else {
+-            epoll_empty_dequeue_entry();
++        let Some(sub_state) = epoll_state.subscription(item.key) else {
+             continue;
+         };
+ 
+-        if sub_state.generation() != item.generation {
+-            epoll_stale_generation_drop();
++        if sub_state.registration_id() != item.registration_id {
+             continue;
+         }
+ 
+@@ -517,8 +750,13 @@ pub(crate) fn drain_ready_events(
+         sub_state.clear_enqueued();
+ 
+         if bits == 0 {
+-            repair_ready_queue_after_drain(epoll_state, item.fd, &sub_state);
+-            epoll_empty_dequeue_entry();
++            repair_ready_queue_after_drain(epoll_state, item.key, &sub_state);
++            continue;
++        }
++
++        let bits = sub_state.validate_current_level_bits(bits);
++        if bits == 0 {
++            repair_ready_queue_after_drain(epoll_state, item.key, &sub_state);
+             continue;
+         }
+ 
+@@ -539,7 +777,7 @@ pub(crate) fn drain_ready_events(
+                 .pending_bits
+                 .fetch_or(undispatched_bits, Ordering::AcqRel);
+         }
+-        repair_ready_queue_after_drain(epoll_state, item.fd, &sub_state);
++        repair_ready_queue_after_drain(epoll_state, item.key, &sub_state);
+ 
+         if ret.len() >= maxevents {
+             break;
+@@ -548,59 +786,112 @@ pub(crate) fn drain_ready_events(
+     ret
+ }
+ 
++/// Waits until at least one ready event can be drained.
++///
++/// `tokio::Notify` requires the waiter to be enabled before the queue is
++/// checked. Otherwise a producer can enqueue readiness and call `notify_one`
++/// after an empty drain but before the `Notified` future is registered.
++pub(crate) async fn wait_for_ready_events(
++    epoll_state: &Arc<EpollState>,
++    maxevents: usize,
++) -> Vec<(EpollFd, EpollType)> {
++    loop {
++        let notified = epoll_state.notify.notified();
++        tokio::pin!(notified);
++        notified.as_mut().enable();
++
++        let refreshed_ready_queue = epoll_state.refresh_level_readiness();
++        let ret = drain_ready_events(epoll_state, maxevents);
++        if !ret.is_empty() {
++            return ret;
++        }
++        if refreshed_ready_queue {
++            continue;
++        }
++        if epoll_state.is_closed() {
++            return Vec::new();
++        }
++
++        notified.as_mut().await;
++    }
++}
++
+ #[derive(Debug)]
+ struct EpollHandler {
+-    /// Watched fd associated with the subscription.
+-    fd: WasiFd,
++    /// Exact numeric-fd/open-file-description subscription identity.
++    key: EpollSubscriptionKey,
+     /// Parent epoll state for queueing and wakeups.
+-    epoll_state: Arc<EpollState>,
++    epoll_state: Weak<EpollState>,
+     /// Per-subscription state updated by interest callbacks.
+-    sub_state: Arc<EpollSubState>,
++    sub_state: Weak<EpollSubState>,
+ }
+ 
+ impl EpollHandler {
+-    fn new(fd: WasiFd, epoll_state: Arc<EpollState>, sub_state: Arc<EpollSubState>) -> Box<Self> {
++    fn new(
++        key: EpollSubscriptionKey,
++        epoll_state: &Arc<EpollState>,
++        sub_state: &Arc<EpollSubState>,
++    ) -> Box<Self> {
+         Box::new(Self {
+-            fd,
+-            epoll_state,
+-            sub_state,
++            key,
++            epoll_state: Arc::downgrade(epoll_state),
++            sub_state: Arc::downgrade(sub_state),
+         })
+     }
+ }
+ 
++impl Drop for EpollHandler {
++    fn drop(&mut self) {
++        let Some(epoll_state) = self.epoll_state.upgrade() else {
++            return;
++        };
++        let Some(sub_state) = self.sub_state.upgrade() else {
++            return;
++        };
++        epoll_state.remove_if_same(self.key, &sub_state);
++    }
++}
++
+ impl InterestHandler for EpollHandler {
+     /// Producer path:
+     /// set pending bits, enqueue once, and wake one waiter.
+     fn push_interest(&mut self, interest: InterestType) {
+-        EPOLL_ENQUEUE_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
++        let Some(sub_state) = self.sub_state.upgrade() else {
++            return;
++        };
++        let Some(epoll_state) = self.epoll_state.upgrade() else {
++            return;
++        };
++        if !sub_state.is_active() {
++            return;
++        }
+         let bit = interest_to_pending_bit(interest);
+-        if !self.sub_state.set_pending(bit) {
+-            EPOLL_ENQUEUE_DEDUPE_HITS.fetch_add(1, Ordering::Relaxed);
++        if !sub_state.set_pending(bit) {
+             return;
+         }
+ 
+-        if self.sub_state.mark_enqueued() {
+-            self.epoll_state
+-                .enqueue_ready(self.fd, self.sub_state.generation());
+-        } else {
+-            EPOLL_ENQUEUE_DEDUPE_HITS.fetch_add(1, Ordering::Relaxed);
++        if sub_state.mark_enqueued() {
++            epoll_state.enqueue_ready(self.key, sub_state.registration_id());
+         }
+     }
+ 
+     /// Clears one readiness bit from this subscription only.
+     fn pop_interest(&mut self, interest: InterestType) -> bool {
++        let Some(sub_state) = self.sub_state.upgrade() else {
++            return false;
++        };
+         let bit = interest_to_pending_bit(interest);
+-        let old = self
+-            .sub_state
+-            .pending_bits
+-            .fetch_and(!bit, Ordering::AcqRel);
++        let old = sub_state.pending_bits.fetch_and(!bit, Ordering::AcqRel);
+         (old & bit) != 0
+     }
+ 
+     /// Checks whether this subscription currently has a readiness bit set.
+     fn has_interest(&self, interest: InterestType) -> bool {
++        let Some(sub_state) = self.sub_state.upgrade() else {
++            return false;
++        };
+         let bit = interest_to_pending_bit(interest);
+-        (self.sub_state.pending_bits() & bit) != 0
++        (sub_state.pending_bits() & bit) != 0
+     }
+ }
+ 
+@@ -608,7 +899,8 @@ impl InterestHandler for EpollHandler {
+ ///
+ /// `None` means the fd kind does not support handler attachment for epoll.
+ pub(crate) fn register_epoll_handler(
+-    state: &Arc<WasiState>,
++    fd_entry: &Fd,
++    key: EpollSubscriptionKey,
+     event: &EpollFd,
+     epoll_state: Arc<EpollState>,
+     sub_state: Arc<EpollSubState>,
+@@ -637,57 +929,128 @@ pub(crate) fn register_epoll_handler(
+         },
+     };
+ 
+-    let fd_guard = poll_fd_guard(state, peb.build(), event.fd(), s)?;
+-    let handler = EpollHandler::new(event.fd(), epoll_state.clone(), sub_state.clone());
++    let requires_access = match s.type_ {
++        Eventtype::FdRead => Rights::FD_READ,
++        Eventtype::FdWrite => Rights::FD_WRITE,
++        _ => Rights::empty(),
++    };
++    if !(fd_entry.inner.rights.contains(Rights::POLL_FD_READWRITE)
++        && fd_entry.inner.rights.contains(requires_access))
++    {
++        return Err(Errno::Access);
++    }
++    let fd_guard = {
++        let guard = fd_entry.inode.read();
++        InodeValFilePollGuard::new(event.fd(), peb.build(), s, &guard).ok_or(Errno::Badf)?
++    };
+ 
+     match &fd_guard.mode {
+         InodeValFilePollGuardMode::File(_) => {
+             // Intentionally ignored, epoll doesn't work with files
+             return Ok(None);
+         }
++        InodeValFilePollGuardMode::PipeTx { .. } => {
++            // The sending end of a pipe can't have an interest handler, since we
++            // only support "readable" interest on pipes; they're considered to
++            // always be writable.
++            prime_immediate_writable_if_applicable(key, event, &fd_guard, &epoll_state, &sub_state);
++            return Ok(Some(EpollJoinGuard::new(fd_guard, None)));
++        }
++        _ => {}
++    }
++
++    // One source may feed multiple epolls and multiple dup-backed numeric fds.
++    // The OFD-owned fanout installs once on the source and gives this
++    // subscription an independently removable handler token.
++    let fanout = fd_entry.inner.ofd.interest_fanout();
++    let handler_registration = fanout.register(EpollHandler::new(key, &epoll_state, &sub_state));
++    match &fd_guard.mode {
+         InodeValFilePollGuardMode::Socket { inner, .. } => {
+             let mut inner = inner.protected.write().unwrap();
+-            inner.set_handler(handler).map_err(net_error_into_io_err)?;
+-            drop(inner);
++            inner
++                .set_handler(Box::new(fanout.clone()))
++                .map_err(net_error_into_io_err)?;
++        }
++        InodeValFilePollGuardMode::EventNotifications(inner) => {
++            inner.set_interest_handler(Box::new(fanout.clone()));
+         }
+-        InodeValFilePollGuardMode::EventNotifications(inner) => inner.set_interest_handler(handler),
+         InodeValFilePollGuardMode::DuplexPipe { pipe } => {
+             let inner = pipe.write().unwrap();
+-            inner.set_interest_handler(handler);
++            inner.set_interest_handler(Box::new(fanout.clone()));
+         }
+         InodeValFilePollGuardMode::PipeRx { rx } => {
+             let inner = rx.write().unwrap();
+-            inner.set_interest_handler(handler);
++            inner.set_interest_handler(Box::new(fanout.clone()));
+         }
+-        InodeValFilePollGuardMode::PipeTx { .. } => {
+-            // The sending end of a pipe can't have an interest handler, since we
+-            // only support "readable" interest on pipes; they're considered to
+-            // always be writable.
+-            prime_immediate_writable_if_applicable(event, &fd_guard, &epoll_state, &sub_state);
+-            return Ok(None);
++        InodeValFilePollGuardMode::File(_) | InodeValFilePollGuardMode::PipeTx { .. } => {
++            unreachable!("non-handler fd kinds returned above")
+         }
+     }
+ 
+-    prime_immediate_writable_if_applicable(event, &fd_guard, &epoll_state, &sub_state);
+-
+-    Ok(Some(EpollJoinGuard::new(fd_guard)))
+-}
++    prime_immediate_writable_if_applicable(key, event, &fd_guard, &epoll_state, &sub_state);
+ 
+-/// Increments stale-generation dequeue metric.
+-pub(crate) fn epoll_stale_generation_drop() {
+-    EPOLL_STALE_GENERATION_DROPS.fetch_add(1, Ordering::Relaxed);
+-}
+-
+-/// Increments empty dequeue metric.
+-pub(crate) fn epoll_empty_dequeue_entry() {
+-    EPOLL_EMPTY_DEQUEUE_ENTRIES.fetch_add(1, Ordering::Relaxed);
++    Ok(Some(EpollJoinGuard::new(
++        fd_guard,
++        Some(handler_registration),
++    )))
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+-    use std::sync::RwLock;
++    use crate::net::socket::{InodeSocket, InodeSocketKind};
++    use std::{
++        io::Write,
++        net::{Ipv4Addr, SocketAddr},
++        sync::{Barrier, RwLock},
++        task::{Context, Poll},
++        thread,
++    };
+     use virtual_fs::Pipe;
++    use virtual_mio::InterestHandler;
++    use virtual_net::{
++        NetworkError, Result as NetResult, VirtualIoSource, VirtualTcpListener, VirtualTcpSocket,
++    };
++
++    #[derive(Debug)]
++    struct PendingTcpListener;
++
++    impl VirtualIoSource for PendingTcpListener {
++        fn remove_handler(&mut self) {}
++
++        fn poll_read_ready(&mut self, _cx: &mut Context<'_>) -> Poll<NetResult<usize>> {
++            Poll::Pending
++        }
++
++        fn poll_write_ready(&mut self, _cx: &mut Context<'_>) -> Poll<NetResult<usize>> {
++            Poll::Pending
++        }
++    }
++
++    impl VirtualTcpListener for PendingTcpListener {
++        fn try_accept(&mut self) -> NetResult<(Box<dyn VirtualTcpSocket + Sync>, SocketAddr)> {
++            Err(NetworkError::WouldBlock)
++        }
++
++        fn set_handler(
++            &mut self,
++            _handler: Box<dyn InterestHandler + Send + Sync>,
++        ) -> NetResult<()> {
++            Ok(())
++        }
++
++        fn addr_local(&self) -> NetResult<SocketAddr> {
++            Ok(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
++        }
++
++        fn set_ttl(&mut self, _ttl: u8) -> NetResult<()> {
++            Ok(())
++        }
++
++        fn ttl(&self) -> NetResult<u8> {
++            Ok(64)
++        }
++    }
+ 
+     fn test_epoll_event_ctl(fd: WasiFd) -> EpollEventCtl {
+         EpollEventCtl {
+@@ -699,6 +1062,10 @@ mod tests {
+         }
+     }
+ 
++    fn test_key(fd: WasiFd) -> EpollSubscriptionKey {
++        EpollSubscriptionKey::new(fd, 10_000 + u64::from(fd))
++    }
++
+     fn test_epoll_handler(fd: WasiFd) -> (Arc<EpollState>, Arc<EpollSubState>, Box<EpollHandler>) {
+         let epoll_state = Arc::new(EpollState::new());
+         let sub_state = Arc::new(EpollSubState::new(
+@@ -714,7 +1081,7 @@ mod tests {
+             ),
+             1,
+         ));
+-        let handler = EpollHandler::new(fd, epoll_state.clone(), sub_state.clone());
++        let handler = EpollHandler::new(test_key(fd), &epoll_state, &sub_state);
+         (epoll_state, sub_state, handler)
+     }
+ 
+@@ -734,6 +1101,29 @@ mod tests {
+         ))
+     }
+ 
++    fn test_pipe_tx_join(fd: WasiFd) -> EpollJoinGuard {
++        let (tx, _rx) = Pipe::new().split();
++        EpollJoinGuard::new(
++            InodeValFilePollGuard {
++                fd,
++                peb: PollEventBuilder::new().build(),
++                subscription: Subscription {
++                    userdata: 0,
++                    type_: Eventtype::FdRead,
++                    data: SubscriptionUnion {
++                        fd_readwrite: SubscriptionFsReadwrite {
++                            file_descriptor: fd,
++                        },
++                    },
++                },
++                mode: InodeValFilePollGuardMode::PipeTx {
++                    tx: Arc::new(RwLock::new(Box::new(tx))),
++                },
++            },
++            None,
++        )
++    }
++
+     #[test]
+     fn epoll_fd_from_event_ctl_uses_explicit_fd() {
+         let event = test_epoll_event_ctl(1234);
+@@ -756,8 +1146,8 @@ mod tests {
+             EpollFd::new(EpollType::EPOLLIN, 0, 11, 0, 0),
+             1,
+         ));
+-        let mut handler1 = EpollHandler::new(10, epoll_state.clone(), sub_state1.clone());
+-        let mut handler2 = EpollHandler::new(11, epoll_state.clone(), sub_state2.clone());
++        let mut handler1 = EpollHandler::new(test_key(10), &epoll_state, &sub_state1);
++        let mut handler2 = EpollHandler::new(test_key(11), &epoll_state, &sub_state2);
+ 
+         handler1.push_interest(InterestType::Readable);
+         handler2.push_interest(InterestType::Readable);
+@@ -805,6 +1195,22 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn epoll_handler_does_not_retain_closed_subscription_graph() {
++        let (epoll_state, sub_state, mut handler) = test_epoll_handler(8);
++        let epoll_state_weak = Arc::downgrade(&epoll_state);
++        let sub_state_weak = Arc::downgrade(&sub_state);
++
++        drop(epoll_state);
++        drop(sub_state);
++
++        assert!(epoll_state_weak.upgrade().is_none());
++        assert!(sub_state_weak.upgrade().is_none());
++        handler.push_interest(InterestType::Readable);
++        assert!(!handler.has_interest(InterestType::Readable));
++        assert!(!handler.pop_interest(InterestType::Readable));
++    }
++
+     #[test]
+     fn epoll_type_to_pending_bit_has_stable_mapping() {
+         assert_eq!(
+@@ -865,10 +1271,10 @@ mod tests {
+         sub_b.pending_bits.store(readable_bit, Ordering::Release);
+         sub_b.enqueued.store(true, Ordering::Release);
+ 
+-        epoll_state.insert_subscription(10, sub_a);
+-        epoll_state.insert_subscription(11, sub_b);
+-        epoll_state.enqueue_ready(10, 1);
+-        epoll_state.enqueue_ready(11, 1);
++        epoll_state.insert_subscription(test_key(10), sub_a);
++        epoll_state.insert_subscription(test_key(11), sub_b);
++        epoll_state.enqueue_ready(test_key(10), 1);
++        epoll_state.enqueue_ready(test_key(11), 1);
+ 
+         let events = drain_ready_events(&epoll_state, 8);
+         assert_eq!(events.len(), 2);
+@@ -889,8 +1295,8 @@ mod tests {
+         sub.pending_bits
+             .store(READABLE_BIT | WRITABLE_BIT, Ordering::Release);
+         sub.enqueued.store(true, Ordering::Release);
+-        epoll_state.insert_subscription(90, sub.clone());
+-        epoll_state.enqueue_ready(90, 1);
++        epoll_state.insert_subscription(test_key(90), sub.clone());
++        epoll_state.enqueue_ready(test_key(90), 1);
+ 
+         let first = drain_ready_events(&epoll_state, 1);
+         assert_eq!(first.len(), 1);
+@@ -908,7 +1314,7 @@ mod tests {
+     }
+ 
+     #[test]
+-    fn drain_ready_events_drops_stale_generation_items() {
++    fn drain_ready_events_drops_stale_registration_items() {
+         let epoll_state = Arc::new(EpollState::new());
+ 
+         let sub = test_sub_state(22, 2);
+@@ -916,19 +1322,138 @@ mod tests {
+         sub.pending_bits.store(readable_bit, Ordering::Release);
+         sub.enqueued.store(true, Ordering::Release);
+ 
+-        epoll_state.insert_subscription(22, sub.clone());
+-        epoll_state.enqueue_ready(22, 1);
++        epoll_state.insert_subscription(test_key(22), sub.clone());
++        epoll_state.enqueue_ready(test_key(22), 1);
+ 
+         let events = drain_ready_events(&epoll_state, 8);
+         assert!(
+             events.is_empty(),
+-            "stale generation items must not emit events"
++            "stale registration items must not emit events"
+         );
+         assert_eq!(
+             sub.pending_bits.load(Ordering::Acquire),
+             readable_bit,
+-            "stale dequeue must not clear pending bits for current generation"
++            "stale dequeue must not clear pending bits for current registration"
++        );
++    }
++
++    #[test]
++    fn refresh_level_readiness_requeues_current_pipe_readiness() {
++        let epoll_state = Arc::new(EpollState::new());
++        let sub = Arc::new(EpollSubState::new(
++            EpollFd::new(EpollType::EPOLLIN, 0, 77, 0, 0),
++            1,
++        ));
++        epoll_state.insert_subscription(test_key(77), sub.clone());
++
++        let (mut tx, rx) = Pipe::new().split();
++        tx.write_all(b"ready").unwrap();
++        sub.add_join(EpollJoinGuard::new(
++            InodeValFilePollGuard {
++                fd: 77,
++                peb: PollEventBuilder::new()
++                    .add(PollEvent::PollIn)
++                    .add(PollEvent::PollError)
++                    .add(PollEvent::PollHangUp)
++                    .build(),
++                subscription: Subscription {
++                    userdata: 0,
++                    type_: Eventtype::FdRead,
++                    data: SubscriptionUnion {
++                        fd_readwrite: SubscriptionFsReadwrite {
++                            file_descriptor: 77,
++                        },
++                    },
++                },
++                mode: InodeValFilePollGuardMode::PipeRx {
++                    rx: Arc::new(RwLock::new(Box::new(rx))),
++                },
++            },
++            None,
++        ))
++        .unwrap();
++
++        epoll_state.refresh_level_readiness();
++
++        let events = drain_ready_events(&epoll_state, 8);
++        assert_eq!(events.len(), 1);
++        assert_eq!(events[0].0.fd(), 77);
++        assert_eq!(events[0].1, EpollType::EPOLLIN);
++    }
++
++    #[test]
++    fn drain_ready_events_drops_stale_tcp_listener_readiness() {
++        let epoll_state = Arc::new(EpollState::new());
++        let sub = Arc::new(EpollSubState::new(
++            EpollFd::new(EpollType::EPOLLIN, 0, 78, 0, 0),
++            1,
++        ));
++        epoll_state.insert_subscription(test_key(78), sub.clone());
++
++        let listener = InodeSocket::new(InodeSocketKind::TcpListener {
++            socket: Box::new(PendingTcpListener),
++            accept_timeout: None,
++        });
++        sub.add_join(EpollJoinGuard::new(
++            InodeValFilePollGuard {
++                fd: 78,
++                peb: PollEventBuilder::new()
++                    .add(PollEvent::PollIn)
++                    .add(PollEvent::PollError)
++                    .add(PollEvent::PollHangUp)
++                    .build(),
++                subscription: Subscription {
++                    userdata: 0,
++                    type_: Eventtype::FdRead,
++                    data: SubscriptionUnion {
++                        fd_readwrite: SubscriptionFsReadwrite {
++                            file_descriptor: 78,
++                        },
++                    },
++                },
++                mode: InodeValFilePollGuardMode::Socket {
++                    inner: listener.inner.clone(),
++                },
++            },
++            None,
++        ))
++        .unwrap();
++        sub.pending_bits.store(READABLE_BIT, Ordering::Release);
++        sub.enqueued.store(true, Ordering::Release);
++        epoll_state.enqueue_ready(test_key(78), 1);
++
++        let events = drain_ready_events(&epoll_state, 8);
++        assert!(
++            events.is_empty(),
++            "stale producer readiness must not be dispatched after level revalidation"
+         );
++        assert_eq!(sub.pending_bits(), 0);
++        assert!(!sub.enqueued.load(Ordering::Acquire));
++        assert_eq!(epoll_state.ready.lock().unwrap().len(), 0);
++    }
++
++    #[tokio::test]
++    async fn wait_for_ready_events_observes_async_producer() {
++        let (epoll_state, sub_state, mut handler) = test_epoll_handler(33);
++        epoll_state.insert_subscription(test_key(33), sub_state);
++
++        let producer = tokio::spawn(async move {
++            tokio::task::yield_now().await;
++            handler.push_interest(InterestType::Readable);
++            handler
++        });
++
++        let events = tokio::time::timeout(
++            std::time::Duration::from_secs(1),
++            wait_for_ready_events(&epoll_state, 8),
++        )
++        .await
++        .expect("waiter should wake when the producer enqueues readiness");
++
++        let _handler = producer.await.unwrap();
++        assert_eq!(events.len(), 1);
++        assert_eq!(events[0].0.fd(), 33);
++        assert_eq!(events[0].1, EpollType::EPOLLIN);
+     }
+ 
+     #[test]
+@@ -939,11 +1464,11 @@ mod tests {
+         sub.pending_bits.store(writable_bit, Ordering::Release);
+         sub.enqueued.store(false, Ordering::Release);
+ 
+-        repair_ready_queue_after_drain(&epoll_state, 44, &sub);
++        repair_ready_queue_after_drain(&epoll_state, test_key(44), &sub);
+ 
+         assert!(sub.enqueued.load(Ordering::Acquire));
+         let queued = epoll_state.ready.lock().unwrap().pop_front().unwrap();
+-        assert_eq!(queued.fd, 44);
++        assert_eq!(queued.key.fd(), 44);
+     }
+ 
+     #[test]
+@@ -951,31 +1476,241 @@ mod tests {
+         let epoll_state = Arc::new(EpollState::new());
+         let event = test_epoll_event_ctl(55);
+         let sub = Arc::new(EpollSubState::new(EpollFd::from_event_ctl(55, &event), 1));
+-        epoll_state.insert_subscription(55, sub.clone());
++        epoll_state.insert_subscription(test_key(55), sub.clone());
+ 
+         let (tx, _rx) = Pipe::new().split();
+-        sub.add_join(EpollJoinGuard::new(InodeValFilePollGuard {
+-            fd: 55,
+-            peb: PollEventBuilder::new().build(),
+-            subscription: Subscription {
+-                userdata: 0,
+-                type_: Eventtype::FdRead,
+-                data: SubscriptionUnion {
+-                    fd_readwrite: SubscriptionFsReadwrite {
+-                        file_descriptor: 55,
++        sub.add_join(EpollJoinGuard::new(
++            InodeValFilePollGuard {
++                fd: 55,
++                peb: PollEventBuilder::new().build(),
++                subscription: Subscription {
++                    userdata: 0,
++                    type_: Eventtype::FdRead,
++                    data: SubscriptionUnion {
++                        fd_readwrite: SubscriptionFsReadwrite {
++                            file_descriptor: 55,
++                        },
+                     },
+                 },
++                mode: InodeValFilePollGuardMode::PipeTx {
++                    tx: Arc::new(RwLock::new(Box::new(tx))),
++                },
+             },
+-            mode: InodeValFilePollGuardMode::PipeTx {
+-                tx: Arc::new(RwLock::new(Box::new(tx))),
+-            },
+-        }));
++            None,
++        ))
++        .unwrap();
+ 
+         let leaked_ref = sub.clone();
+-        assert_eq!(leaked_ref.joins.lock().unwrap().len(), 1);
++        assert_eq!(leaked_ref.join_count(), 1);
++
++        epoll_state.apply_del(test_key(55)).unwrap();
++
++        assert_eq!(leaked_ref.join_count(), 0);
++    }
++
++    #[test]
++    fn add_join_racing_epoll_final_close_cannot_retain_guard() {
++        // Exercise both valid mutex orderings repeatedly: either ADD attaches
++        // first and close drains it, or close wins and ADD rejects the guard.
++        for iteration in 0..64 {
++            let state = Arc::new(EpollState::new());
++            let key = EpollSubscriptionKey::new(56, 50_000 + iteration);
++            let (_, subscription) = state.prepare_add(key, &test_epoll_event_ctl(56)).unwrap();
++            let barrier = Arc::new(Barrier::new(3));
++
++            let add_subscription = subscription.clone();
++            let add_barrier = barrier.clone();
++            let add = thread::spawn(move || {
++                add_barrier.wait();
++                drop(add_subscription.add_join(test_pipe_tx_join(56)));
++            });
++
++            let close_state = state.clone();
++            let close_barrier = barrier.clone();
++            let close = thread::spawn(move || {
++                close_barrier.wait();
++                close_state.close();
++            });
++
++            barrier.wait();
++            add.join().unwrap();
++            close.join().unwrap();
++
++            assert!(state.is_closed());
++            assert!(!subscription.is_active());
++            assert_eq!(subscription.join_count(), 0);
++        }
++    }
++
++    #[test]
++    fn readiness_enqueue_racing_epoll_final_close_leaves_queue_drained() {
++        for iteration in 0..64 {
++            let state = Arc::new(EpollState::new());
++            let key = EpollSubscriptionKey::new(57, 60_000 + iteration);
++            let (_, subscription) = state.prepare_add(key, &test_epoll_event_ctl(57)).unwrap();
++            let mut handler = EpollHandler::new(key, &state, &subscription);
++            let barrier = Arc::new(Barrier::new(3));
++
++            let push_barrier = barrier.clone();
++            let push = thread::spawn(move || {
++                push_barrier.wait();
++                handler.push_interest(InterestType::Readable);
++                handler
++            });
++
++            let close_state = state.clone();
++            let close_barrier = barrier.clone();
++            let close = thread::spawn(move || {
++                close_barrier.wait();
++                close_state.close();
++            });
++
++            barrier.wait();
++            let _handler = push.join().unwrap();
++            close.join().unwrap();
++
++            assert!(state.is_closed());
++            assert!(state.ready.lock().unwrap().is_empty());
++            assert_eq!(state.subscription_count(), 0);
++            assert!(!subscription.is_active());
++        }
++    }
++
++    #[test]
++    fn ofd_aware_keys_allow_dup_backed_old_watch_and_reused_numeric_fd() {
++        let state = Arc::new(EpollState::new());
++        let old_key = EpollSubscriptionKey::new(5, 1001);
++        let new_key = EpollSubscriptionKey::new(5, 1002);
++        let mut old_event = test_epoll_event_ctl(5);
++        old_event.data1 = 1;
++        let mut new_event = test_epoll_event_ctl(5);
++        new_event.data1 = 2;
++        let (_, old_sub) = state.prepare_add(old_key, &old_event).unwrap();
++        let (_, new_sub) = state.prepare_add(new_key, &new_event).unwrap();
++
++        old_sub.pending_bits.store(READABLE_BIT, Ordering::Release);
++        old_sub.enqueued.store(true, Ordering::Release);
++        new_sub.pending_bits.store(READABLE_BIT, Ordering::Release);
++        new_sub.enqueued.store(true, Ordering::Release);
++        state.enqueue_ready(old_key, old_sub.registration_id());
++        state.enqueue_ready(new_key, new_sub.registration_id());
++
++        let events = drain_ready_events(&state, 8);
++        assert_eq!(events.len(), 2);
++        assert!(events.iter().all(|(event, _)| event.fd() == 5));
++        let payloads = events
++            .iter()
++            .map(|(event, _)| event.data1())
++            .collect::<std::collections::HashSet<_>>();
++        assert_eq!(payloads, std::collections::HashSet::from([1, 2]));
++    }
+ 
+-        epoll_state.apply_del(55).unwrap();
++    #[test]
++    fn del_add_same_ofd_key_cannot_replay_stale_ready_item() {
++        let state = Arc::new(EpollState::new());
++        let key = EpollSubscriptionKey::new(6, 2001);
++        let mut old_event = test_epoll_event_ctl(6);
++        old_event.data1 = 1;
++        let (_, old_sub) = state.prepare_add(key, &old_event).unwrap();
++        old_sub.pending_bits.store(READABLE_BIT, Ordering::Release);
++        old_sub.enqueued.store(true, Ordering::Release);
++        state.enqueue_ready(key, old_sub.registration_id());
++        state.apply_del(key).unwrap();
++
++        let mut new_event = test_epoll_event_ctl(6);
++        new_event.data1 = 2;
++        let (_, new_sub) = state.prepare_add(key, &new_event).unwrap();
++        new_sub.pending_bits.store(READABLE_BIT, Ordering::Release);
++        new_sub.enqueued.store(true, Ordering::Release);
++        state.enqueue_ready(key, new_sub.registration_id());
++
++        let events = drain_ready_events(&state, 8);
++        assert_eq!(events.len(), 1);
++        assert_eq!(events[0].0.data1(), 2);
++    }
++
++    #[test]
++    fn delayed_old_handler_drop_cannot_remove_replacement_subscription() {
++        let state = Arc::new(EpollState::new());
++        let key = EpollSubscriptionKey::new(7, 3001);
++        let (_, old_sub) = state.prepare_add(key, &test_epoll_event_ctl(7)).unwrap();
++        let old_handler = EpollHandler::new(key, &state, &old_sub);
++        state.apply_del(key).unwrap();
++        let (_, replacement) = state.prepare_add(key, &test_epoll_event_ctl(7)).unwrap();
+ 
+-        assert_eq!(leaked_ref.joins.lock().unwrap().len(), 0);
++        drop(old_handler);
++
++        assert!(state.contains_exact_subscription(key, &replacement));
++        assert!(replacement.is_active());
++    }
++
++    #[test]
++    fn failed_older_mod_cannot_rollback_over_later_subscription() {
++        let state = Arc::new(EpollState::new());
++        let key = EpollSubscriptionKey::new(71, 7001);
++        let (_, original) = state.prepare_add(key, &test_epoll_event_ctl(71)).unwrap();
++        let (_, first_provisional, replaced_original) =
++            state.prepare_mod(key, &test_epoll_event_ctl(72)).unwrap();
++        assert!(Arc::ptr_eq(&original, &replaced_original));
++
++        // Force the exact historical interleave: an older MOD is between map
++        // publication and source installation while a later MOD replaces it.
++        let later_published = Arc::new(Barrier::new(2));
++        let later_state = state.clone();
++        let later_barrier = later_published.clone();
++        let first_for_later = first_provisional.clone();
++        let later = thread::spawn(move || {
++            let (_, later_subscription, replaced_first) = later_state
++                .prepare_mod(key, &test_epoll_event_ctl(73))
++                .unwrap();
++            assert!(Arc::ptr_eq(&replaced_first, &first_for_later));
++            replaced_first.deactivate_and_detach();
++            later_barrier.wait();
++            later_subscription
++        });
++
++        later_published.wait();
++        let later_subscription = later.join().unwrap();
++
++        // The first operation now reports a source-install failure. Its
++        // rollback must be conditional on exact identity and restoration must
++        // not overwrite the later successful registration.
++        assert!(!state.rollback_registration(key, &first_provisional));
++        assert!(matches!(
++            state.prepare_restore(key, replaced_original.fd_meta()),
++            Err(Errno::Exist)
++        ));
++        assert!(state.contains_exact_subscription(key, &later_subscription));
++        assert!(later_subscription.is_active());
++    }
++
++    #[test]
++    fn fanout_delivers_to_two_epolls_and_removing_one_keeps_the_other() {
++        let first_state = Arc::new(EpollState::new());
++        let second_state = Arc::new(EpollState::new());
++        let first_key = EpollSubscriptionKey::new(8, 4001);
++        let second_key = EpollSubscriptionKey::new(9, 4001);
++        let (_, first_sub) = first_state
++            .prepare_add(first_key, &test_epoll_event_ctl(8))
++            .unwrap();
++        let (_, second_sub) = second_state
++            .prepare_add(second_key, &test_epoll_event_ctl(9))
++            .unwrap();
++        let mut fanout = virtual_mio::InterestHandlerFanout::default();
++        let first_registration =
++            fanout.register(EpollHandler::new(first_key, &first_state, &first_sub));
++        let _second_registration =
++            fanout.register(EpollHandler::new(second_key, &second_state, &second_sub));
++
++        fanout.push_interest(InterestType::Readable);
++        assert_eq!(drain_ready_events(&first_state, 8).len(), 1);
++        assert_eq!(drain_ready_events(&second_state, 8).len(), 1);
++
++        drop(first_registration);
++        assert_eq!(first_state.subscription_count(), 0);
++        assert_eq!(fanout.handler_count(), 1);
++        fanout.push_interest(InterestType::Readable);
++        assert!(drain_ready_events(&first_state, 8).is_empty());
++        assert_eq!(drain_ready_events(&second_state, 8).len(), 1);
+     }
+ }
+diff --git a/lib/wasix/src/syscalls/wasi/poll_oneoff.rs b/lib/wasix/src/syscalls/wasi/poll_oneoff.rs
+index 5cd9781..1cc026c 100644
+--- a/lib/wasix/src/syscalls/wasi/poll_oneoff.rs
++++ b/lib/wasix/src/syscalls/wasi/poll_oneoff.rs
+@@ -474,14 +474,9 @@ where
+         return Ok(Errno::Success);
+     }
+ 
+-    // We use asyncify with a deep sleep to wait on new IO events
+-    let res = __asyncify_with_deep_sleep::<M, Result<Vec<EventResult>, Errno>, _>(
+-        ctx,
+-        Box::pin(trigger),
+-    )?;
+-    if let AsyncifyAction::Finish(mut ctx, events) = res {
+-        let events = events.map(|events| events.into_iter().map(EventResult::into_event).collect());
+-        process_events(&ctx, events);
+-    }
++    // Wait on new IO events while still processing signals.
++    let events = __asyncify(&mut ctx, None, Box::pin(trigger))?;
++    let events = events.map(|events| events.into_iter().map(EventResult::into_event).collect());
++    process_events(&ctx, events);
+     Ok(Errno::Success)
+ }
+diff --git a/lib/wasix/src/syscalls/wasix/epoll_ctl.rs b/lib/wasix/src/syscalls/wasix/epoll_ctl.rs
+index 14cf332..2302ca1 100644
+--- a/lib/wasix/src/syscalls/wasix/epoll_ctl.rs
++++ b/lib/wasix/src/syscalls/wasix/epoll_ctl.rs
+@@ -3,12 +3,84 @@ use wasmer_wasix_types::wasi::{EpollCtl, EpollEvent, EpollEventCtl, Subscription
+ use super::*;
+ use crate::{
+     WasiInodes,
+-    fs::{InodeValFilePollGuard, InodeValFilePollGuardJoin},
+-    os::epoll::register_epoll_handler,
++    fs::{Fd, InodeValFilePollGuard, InodeValFilePollGuardJoin},
++    os::epoll::{EpollFd, EpollState, EpollSubState, EpollSubscriptionKey, register_epoll_handler},
+     state::PollEventSet,
+     syscalls::*,
+ };
+ 
++fn install_subscription(
++    target: &Fd,
++    key: EpollSubscriptionKey,
++    epoll_fd: &EpollFd,
++    state: &Arc<EpollState>,
++    subscription: &Arc<EpollSubState>,
++) -> Result<(), Errno> {
++    let close_registration = target
++        .inner
++        .ofd
++        .register_epoll(state, subscription, key)
++        .ok_or(Errno::Badf)?;
++    subscription
++        .attach_close_registration(close_registration)
++        .map_err(|_| Errno::Badf)?;
++
++    if let Some(join) =
++        register_epoll_handler(target, key, epoll_fd, state.clone(), subscription.clone())?
++    {
++        subscription.add_join(join).map_err(|_| Errno::Badf)?;
++    }
++    Ok(())
++}
++
++fn add_subscription(
++    target: &Fd,
++    key: EpollSubscriptionKey,
++    state: &Arc<EpollState>,
++    event: &EpollEventCtl,
++) -> Result<(), Errno> {
++    let (epoll_fd, subscription) = state.prepare_add(key, event)?;
++    match install_subscription(target, key, &epoll_fd, state, &subscription) {
++        Ok(()) => Ok(()),
++        Err(err) => {
++            state.rollback_registration(key, &subscription);
++            Err(err)
++        }
++    }
++}
++
++fn modify_subscription(
++    target: &Fd,
++    key: EpollSubscriptionKey,
++    state: &Arc<EpollState>,
++    event: &EpollEventCtl,
++) -> Result<(), Errno> {
++    let (epoll_fd, subscription, old_subscription) = state.prepare_mod(key, event)?;
++    let old_epoll_fd = old_subscription.fd_meta();
++    old_subscription.deactivate_and_detach();
++
++    match install_subscription(target, key, &epoll_fd, state, &subscription) {
++        Ok(()) => Ok(()),
++        Err(err) => {
++            state.rollback_registration(key, &subscription);
++            let restored = state.prepare_restore(key, old_epoll_fd.clone())?;
++            if let Err(reinstall_err) =
++                install_subscription(target, key, &old_epoll_fd, state, &restored)
++            {
++                state.rollback_registration(key, &restored);
++                tracing::warn!(
++                    fd = key.fd(),
++                    ?err,
++                    ?reinstall_err,
++                    "failed to reinstall previous epoll handler after MOD failure"
++                );
++                return Err(reinstall_err);
++            }
++            Err(err)
++        }
++    }
++}
++
+ /// ### `epoll_ctl()`
+ /// Modifies an epoll interest list
+ /// Output:
+@@ -69,99 +141,176 @@ pub(crate) fn epoll_ctl_internal(
+     event_ctl: Option<&EpollEventCtl>,
+ ) -> Result<Result<(), Errno>, WasiError> {
+     let env = ctx.data();
+-    let fd_entry = wasi_try_ok_ok!(env.state.fs.get_fd(epfd));
+-
+-    let mut inode_guard = fd_entry.inode.read();
+-    match inode_guard.deref() {
+-        Kind::Epoll { state } => {
+-            let res = match op {
+-                EpollCtl::Add => {
+-                    let Some(event) = event_ctl else {
+-                        return Ok(Err(Errno::Inval));
+-                    };
+-                    let (epoll_fd, sub_state) = match state.prepare_add(fd, event) {
+-                        Ok(v) => v,
+-                        Err(err) => return Ok(Err(err)),
+-                    };
+-
+-                    match register_epoll_handler(
+-                        &env.state,
+-                        &epoll_fd,
+-                        state.clone(),
+-                        sub_state.clone(),
+-                    ) {
+-                        Ok(fd_guard) => {
+-                            if let Some(fd_guard) = fd_guard {
+-                                sub_state.add_join(fd_guard);
+-                            }
+-                            Ok(())
+-                        }
+-                        Err(err) => {
+-                            state.rollback_registration(fd, None);
+-                            Err(err)
+-                        }
+-                    }
+-                }
+-                EpollCtl::Mod => {
+-                    let Some(event) = event_ctl else {
+-                        return Ok(Err(Errno::Inval));
+-                    };
+-                    let (epoll_fd, sub_state, old_subscription) = match state.prepare_mod(fd, event)
+-                    {
+-                        Ok(v) => v,
+-                        Err(err) => return Ok(Err(err)),
+-                    };
+-                    // Detach the previous generation before installing the new
+-                    // handler so dropping old guards cannot remove the new one.
+-                    old_subscription.detach_joins();
+-
+-                    match register_epoll_handler(
+-                        &env.state,
+-                        &epoll_fd,
+-                        state.clone(),
+-                        sub_state.clone(),
+-                    ) {
+-                        Ok(fd_guard) => {
+-                            if let Some(fd_guard) = fd_guard {
+-                                sub_state.add_join(fd_guard);
+-                            }
+-                            Ok(())
+-                        }
+-                        Err(err) => {
+-                            state.rollback_registration(fd, Some(old_subscription.clone()));
+-                            let old_epoll_fd = old_subscription.fd_meta();
+-                            match register_epoll_handler(
+-                                &env.state,
+-                                &old_epoll_fd,
+-                                state.clone(),
+-                                old_subscription.clone(),
+-                            ) {
+-                                Ok(fd_guard) => {
+-                                    if let Some(fd_guard) = fd_guard {
+-                                        old_subscription.add_join(fd_guard);
+-                                    }
+-                                }
+-                                Err(reinstall_err) => {
+-                                    // Do not leave a restored subscription without handlers.
+-                                    state.rollback_registration(fd, None);
+-                                    tracing::warn!(
+-                                        fd,
+-                                        ?err,
+-                                        ?reinstall_err,
+-                                        "failed to reinstall previous epoll handler after MOD failure"
+-                                    );
+-                                    return Ok(Err(reinstall_err));
+-                                }
+-                            }
+-                            Err(err)
+-                        }
+-                    }
+-                }
+-                EpollCtl::Del => state.apply_del(fd),
+-                EpollCtl::Unknown => Err(Errno::Inval),
+-            };
+-            Ok(res)
++    let epoll_entry = wasi_try_ok_ok!(env.state.fs.get_fd(epfd));
++    let state = {
++        let inode_guard = epoll_entry.inode.read();
++        match inode_guard.deref() {
++            Kind::Epoll { state } => state.clone(),
++            _ => return Ok(Err(Errno::Inval)),
++        }
++    };
++    if epfd == fd {
++        return Ok(Err(Errno::Inval));
++    }
++
++    // Capture the target once. Numeric fd reuse after this point must not make
++    // registration attach to a different open file description.
++    let target = wasi_try_ok_ok!(env.state.fs.get_fd(fd));
++    let key = EpollSubscriptionKey::new(fd, target.inner.ofd.id());
++
++    let result = state.with_ctl_transaction(|| match op {
++        EpollCtl::Add => event_ctl
++            .ok_or(Errno::Inval)
++            .and_then(|event| add_subscription(&target, key, &state, event)),
++        EpollCtl::Mod => event_ctl
++            .ok_or(Errno::Inval)
++            .and_then(|event| modify_subscription(&target, key, &state, event)),
++        EpollCtl::Del => state.apply_del(key),
++        EpollCtl::Unknown => Err(Errno::Inval),
++    });
++    Ok(result)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::{
++        fs::{FdInner, InodeVal, OpenFileDescription},
++        net::socket::{InodeSocket, InodeSocketKind},
++        os::epoll::drain_ready_events,
++    };
++    use std::{
++        borrow::Cow,
++        net::{Ipv4Addr, SocketAddr},
++        sync::{Arc, Mutex, RwLock, atomic::AtomicU64},
++        task::{Context, Poll},
++    };
++    use virtual_net::{
++        InterestHandler, NetworkError, Result as NetResult, VirtualIoSource, VirtualTcpListener,
++        VirtualTcpSocket,
++    };
++    use wasmer_wasix_types::wasi::EpollType;
++
++    #[derive(Debug)]
++    struct FailSecondHandlerInstall {
++        calls: Arc<std::sync::atomic::AtomicUsize>,
++        handler: Arc<Mutex<Option<Box<dyn InterestHandler + Send + Sync>>>>,
++    }
++
++    impl VirtualIoSource for FailSecondHandlerInstall {
++        fn remove_handler(&mut self) {
++            self.handler.lock().unwrap().take();
++        }
++
++        fn poll_read_ready(&mut self, _cx: &mut Context<'_>) -> Poll<NetResult<usize>> {
++            Poll::Pending
++        }
++
++        fn poll_write_ready(&mut self, _cx: &mut Context<'_>) -> Poll<NetResult<usize>> {
++            Poll::Pending
++        }
++    }
++
++    impl VirtualTcpListener for FailSecondHandlerInstall {
++        fn try_accept(&mut self) -> NetResult<(Box<dyn VirtualTcpSocket + Sync>, SocketAddr)> {
++            Err(NetworkError::WouldBlock)
++        }
++
++        fn set_handler(
++            &mut self,
++            handler: Box<dyn InterestHandler + Send + Sync>,
++        ) -> NetResult<()> {
++            let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
++            if call == 2 {
++                return Err(NetworkError::IOError);
++            }
++            *self.handler.lock().unwrap() = Some(handler);
++            Ok(())
+         }
+-        _ => Ok(Err(Errno::Inval)),
++
++        fn addr_local(&self) -> NetResult<SocketAddr> {
++            Ok(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
++        }
++
++        fn set_ttl(&mut self, _ttl: u8) -> NetResult<()> {
++            Ok(())
++        }
++
++        fn ttl(&self) -> NetResult<u8> {
++            Ok(64)
++        }
++    }
++
++    #[test]
++    fn failed_mod_rebuilds_active_old_subscription_with_fresh_identity() {
++        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
++        let installed_handler = Arc::new(Mutex::new(None));
++        let socket = InodeSocket::new(InodeSocketKind::TcpListener {
++            socket: Box::new(FailSecondHandlerInstall {
++                calls: calls.clone(),
++                handler: installed_handler.clone(),
++            }),
++            accept_timeout: None,
++        });
++        let inodes = WasiInodes::new();
++        let inode = inodes.add_inode_val(InodeVal {
++            stat: RwLock::new(Default::default()),
++            is_preopened: false,
++            name: RwLock::new(Cow::Borrowed("mod-rollback-listener")),
++            kind: RwLock::new(Kind::Socket { socket }),
++        });
++        let ofd = OpenFileDescription::new();
++        let rights = Rights::POLL_FD_READWRITE | Rights::FD_READ;
++        let target = Fd {
++            inner: FdInner {
++                rights,
++                rights_inheriting: rights,
++                flags: Fdflags::empty(),
++                offset: Arc::new(AtomicU64::new(0)),
++                ofd: ofd.clone(),
++                readdir_cache: Default::default(),
++                fd_flags: Fdflagsext::empty(),
++            },
++            open_flags: 0,
++            inode,
++            is_stdio: false,
++        };
++        target.acquire_descriptor();
++
++        let state = Arc::new(EpollState::new());
++        let key = EpollSubscriptionKey::new(42, ofd.id());
++        let old_event = EpollEventCtl {
++            events: EpollType::EPOLLIN,
++            ptr: 0,
++            fd: 42,
++            data1: 11,
++            data2: 0,
++        };
++        let new_event = EpollEventCtl {
++            data1: 22,
++            ..old_event
++        };
++        add_subscription(&target, key, &state, &old_event).unwrap();
++
++        assert_eq!(
++            modify_subscription(&target, key, &state, &new_event),
++            Err(Errno::Pipe)
++        );
++        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
++        assert_eq!(state.subscription_count(), 1);
++        assert_eq!(ofd.epoll_registration_count(), 1);
++
++        installed_handler
++            .lock()
++            .unwrap()
++            .as_mut()
++            .unwrap()
++            .push_interest(virtual_mio::InterestType::Error);
++        let events = drain_ready_events(&state, 8);
++        assert_eq!(events.len(), 1);
++        assert_eq!(events[0].0.data1(), 11);
++
++        target.release_descriptor();
++        assert_eq!(state.subscription_count(), 0);
+     }
+ }
+diff --git a/lib/wasix/src/syscalls/wasix/epoll_wait.rs b/lib/wasix/src/syscalls/wasix/epoll_wait.rs
+index d1b56a3..d99411f 100644
+--- a/lib/wasix/src/syscalls/wasix/epoll_wait.rs
++++ b/lib/wasix/src/syscalls/wasix/epoll_wait.rs
+@@ -4,7 +4,7 @@ use super::*;
+ use crate::{
+     WasiInodes,
+     fs::{InodeValFilePollGuard, InodeValFilePollGuardJoin},
+-    os::epoll::{EpollFd, drain_ready_events},
++    os::epoll::{EpollFd, wait_for_ready_events},
+     state::PollEventSet,
+     syscalls::*,
+ };
+@@ -49,19 +49,7 @@ pub fn epoll_wait<M: MemorySize + 'static>(
+     // We enter a controlled loop that will continuously poll and react to
+     // epoll events until something of interest needs to be returned to the
+     // caller or a timeout happens
+-    let work = {
+-        async move {
+-            // Loop until some events of interest are returned
+-            loop {
+-                let ret = drain_ready_events(&epoll_state, maxevents);
+-                if !ret.is_empty() {
+-                    return Ok(ret);
+-                }
+-
+-                epoll_state.wait().await;
+-            }
+-        }
+-    };
++    let work = async move { Ok(wait_for_ready_events(&epoll_state, maxevents).await) };
+ 
+     // Build the trigger using the timeout
+     let trigger = {
+@@ -128,6 +116,10 @@ pub fn epoll_wait<M: MemorySize + 'static>(
+                     wasi_try_mem!(ret_nevents.write(&memory, M::ZERO));
+                     Errno::Success
+                 }
++                Err(Errno::Intr) => {
++                    tracing::trace!("epoll interrupted by signal");
++                    Errno::Intr
++                }
+                 Err(err) => {
+                     tracing::warn!("failed to epoll during deep sleep - {}", err);
+                     err
+@@ -143,14 +135,7 @@ pub fn epoll_wait<M: MemorySize + 'static>(
+         return Ok(process_events(&ctx, events));
+     }
+ 
+-    // We use asyncify with a deep sleep to wait on new IO events
+-    let res = __asyncify_with_deep_sleep::<M, Result<Vec<(EpollFd, EpollType)>, Errno>, _>(
+-        ctx,
+-        Box::pin(trigger),
+-    )?;
+-    if let AsyncifyAction::Finish(mut ctx, events) = res {
+-        Ok(process_events(&ctx, events))
+-    } else {
+-        Ok(Errno::Success)
+-    }
++    // Wait on new IO events while still processing signals.
++    let events = __asyncify(&mut ctx, None, Box::pin(trigger))?;
++    Ok(process_events(&ctx, events))
+ }
+diff --git a/lib/wasix/src/syscalls/wasix/sock_accept.rs b/lib/wasix/src/syscalls/wasix/sock_accept.rs
+index b851666..76aedb0 100644
+--- a/lib/wasix/src/syscalls/wasix/sock_accept.rs
++++ b/lib/wasix/src/syscalls/wasix/sock_accept.rs
+@@ -26,19 +26,18 @@ pub fn sock_accept<M: MemorySize>(
+ 
+     ctx = wasi_try_ok!(maybe_snapshot::<M>(ctx)?);
+ 
+-    let env = ctx.data();
+-    let (memory, state, _) = unsafe { env.get_memory_and_wasi_state_and_inodes(&ctx, 0) };
+-
+     let nonblocking = fd_flags.contains(Fdflags::NONBLOCK);
+ 
+     let (fd, _, _) = wasi_try_ok!(sock_accept_internal(
+-        env,
++        &mut ctx,
+         sock,
+         fd_flags,
+         nonblocking,
+         None
+     )?);
+ 
++    let env = ctx.data();
++    let memory = unsafe { env.memory_view(&ctx) };
+     wasi_try_mem_ok!(ro_fd.write(&memory, fd));
+ 
+     Ok(Errno::Success)
+@@ -67,13 +66,10 @@ pub fn sock_accept_v2<M: MemorySize>(
+ ) -> Result<Errno, WasiError> {
+     WasiEnv::do_pending_operations(&mut ctx)?;
+ 
+-    let env = ctx.data();
+-    let (memory, state, _) = unsafe { env.get_memory_and_wasi_state_and_inodes(&ctx, 0) };
+-
+     let nonblocking = fd_flags.contains(Fdflags::NONBLOCK);
+ 
+     let (fd, local_addr, peer_addr) = wasi_try_ok!(sock_accept_internal(
+-        env,
++        &mut ctx,
+         sock,
+         fd_flags,
+         nonblocking,
+@@ -98,7 +94,7 @@ pub fn sock_accept_v2<M: MemorySize>(
+     }
+ 
+     let env = ctx.data();
+-    let (memory, state, _) = unsafe { env.get_memory_and_wasi_state_and_inodes(&ctx, 0) };
++    let memory = unsafe { env.memory_view(&ctx) };
+     wasi_try_mem_ok!(ro_fd.write(&memory, fd));
+     wasi_try_ok!(crate::net::write_ip_port(
+         &memory,
+@@ -111,37 +107,46 @@ pub fn sock_accept_v2<M: MemorySize>(
+ }
+ 
+ pub(crate) fn sock_accept_internal(
+-    env: &WasiEnv,
++    ctx: &mut FunctionEnvMut<'_, WasiEnv>,
+     sock: WasiFd,
+     mut fd_flags: Fdflags,
+     mut nonblocking: bool,
+     with_fd: Option<WasiFd>,
+ ) -> Result<Result<(WasiFd, SocketAddr, SocketAddr), Errno>, WasiError> {
+-    let state = env.state();
+-    let inodes = &state.inodes;
+-
+-    let tasks = env.tasks().clone();
+-    let (child, local_addr, peer_addr, fd_flags) = wasi_try_ok_ok!(__sock_asyncify(
+-        env,
+-        sock,
+-        Rights::SOCK_ACCEPT,
+-        move |socket, fd| async move {
+-            if fd.inner.flags.contains(Fdflags::NONBLOCK) {
+-                fd_flags.set(Fdflags::NONBLOCK, true);
+-                nonblocking = true;
++    let tasks = ctx.data().tasks().clone();
++    let accept = {
++        let fd_entry = wasi_try_ok_ok!(ctx.data().state.fs.get_fd(sock));
++        if !fd_entry.inner.rights.contains(Rights::SOCK_ACCEPT) {
++            return Ok(Err(Errno::Access));
++        }
++
++        let inode = fd_entry.inode.clone();
++        let mut guard = inode.write();
++        match guard.deref_mut() {
++            Kind::Socket { socket } => {
++                let socket = socket.clone();
++                drop(guard);
++
++                async move {
++                    if fd_entry.inner.flags.contains(Fdflags::NONBLOCK) {
++                        fd_flags.set(Fdflags::NONBLOCK, true);
++                        nonblocking = true;
++                    }
++                    let timeout = socket.opt_time(TimeType::AcceptTimeout).ok().flatten();
++                    let local_addr = socket.addr_local()?;
++                    socket
++                        .accept(tasks.deref(), nonblocking, timeout)
++                        .await
++                        .map(|a| (a.0, local_addr, a.1, fd_flags))
++                }
+             }
+-            let timeout = socket
+-                .opt_time(TimeType::AcceptTimeout)
+-                .ok()
+-                .flatten()
+-                .unwrap_or(Duration::from_secs(30));
+-            let local_addr = socket.addr_local()?;
+-            socket
+-                .accept(tasks.deref(), nonblocking, Some(timeout))
+-                .await
+-                .map(|a| (a.0, local_addr, a.1, fd_flags))
+-        },
+-    ));
++            _ => return Ok(Err(Errno::Notsock)),
++        }
++    };
++    let (child, local_addr, peer_addr, fd_flags) = wasi_try_ok_ok!(__asyncify(ctx, None, accept)?);
++
++    let state = ctx.data().state();
++    let inodes = &state.inodes;
+ 
+     let kind = Kind::Socket {
+         socket: InodeSocket::new(InodeSocketKind::TcpStream {
+@@ -159,11 +164,6 @@ pub(crate) fn sock_accept_internal(
+         new_flags.set(Fdflags::NONBLOCK, true);
+     }
+ 
+-    let mut new_flags = Fdflags::empty();
+-    if fd_flags.contains(Fdflags::NONBLOCK) {
+-        new_flags.set(Fdflags::NONBLOCK, true);
+-    }
+-
+     let rights = Rights::all_socket();
+     let fd = wasi_try_ok_ok!(if let Some(fd) = with_fd {
+         state
+diff --git a/lib/wasix/src/syscalls/wasix/sock_recv.rs b/lib/wasix/src/syscalls/wasix/sock_recv.rs
+index f507a5b..cf5b823 100644
+--- a/lib/wasix/src/syscalls/wasix/sock_recv.rs
++++ b/lib/wasix/src/syscalls/wasix/sock_recv.rs
+@@ -29,11 +29,12 @@ pub fn sock_recv<M: MemorySize>(
+     WasiEnv::do_pending_operations(&mut ctx)?;
+ 
+     let env = ctx.data();
+-    let fd_entry = wasi_try_ok!(env.state.fs.get_fd(sock));
+-    let guard = fd_entry.inode.read();
+-    // Some guests route socket-like wakeups through pipe-backed fds.
+-    let use_read = matches!(guard.deref(), Kind::DuplexPipe { .. } | Kind::PipeRx { .. });
+-    drop(guard);
++    let fd_entry = wasi_try_ok!({ env.state.fs.get_fd(sock) });
++    let use_read = {
++        let guard = fd_entry.inode.read();
++        // Some guests route socket-like wakeups through pipe-backed fds.
++        matches!(guard.deref(), Kind::DuplexPipe { .. } | Kind::PipeRx { .. })
++    };
+     if use_read {
+         fd_read(ctx, sock, ri_data, ri_data_len, ro_data_len)
+     } else {
+@@ -116,23 +117,28 @@ pub(super) fn sock_recv_internal<M: MemorySize>(
+ 
+     let peek = (ri_flags & __WASI_SOCK_RECV_INPUT_PEEK) != 0;
+     let nonblocking_flag = (ri_flags & __WASI_SOCK_RECV_INPUT_DONT_WAIT) != 0;
++
+     let data = wasi_try_ok_ok!(__sock_asyncify(
+         env,
+         sock,
+         Rights::SOCK_RECV,
+         |socket, fd| async move {
+-            let iovs_arr = ri_data
+-                .slice(&memory, ri_data_len)
+-                .map_err(mem_error_to_wasi)?;
+-            let iovs_arr = iovs_arr.access().map_err(mem_error_to_wasi)?;
++            let iovs_arr = {
++                let iovs_arr = ri_data
++                    .slice(&memory, ri_data_len)
++                    .map_err(mem_error_to_wasi)?;
++                iovs_arr.access().map_err(mem_error_to_wasi)
++            }?;
+ 
+             let mut total_read = 0;
+             for iovs in iovs_arr.iter() {
+-                let mut buf = WasmPtr::<u8, M>::new(iovs.buf)
+-                    .slice(&memory, iovs.buf_len)
+-                    .map_err(mem_error_to_wasi)?
+-                    .access()
+-                    .map_err(mem_error_to_wasi)?;
++                let mut buf = {
++                    WasmPtr::<u8, M>::new(iovs.buf)
++                        .slice(&memory, iovs.buf_len)
++                        .map_err(mem_error_to_wasi)?
++                        .access()
++                        .map_err(mem_error_to_wasi)
++                }?;
+ 
+                 let nonblocking = nonblocking_flag || fd.inner.flags.contains(Fdflags::NONBLOCK);
+                 let timeout = socket
+diff --git a/lib/wasix/src/syscalls/wasix/sock_send.rs b/lib/wasix/src/syscalls/wasix/sock_send.rs
+index bfc196b..939e8a4 100644
+--- a/lib/wasix/src/syscalls/wasix/sock_send.rs
++++ b/lib/wasix/src/syscalls/wasix/sock_send.rs
+@@ -28,12 +28,13 @@ pub fn sock_send<M: MemorySize>(
+     WasiEnv::do_pending_operations(&mut ctx)?;
+ 
+     let env = ctx.data();
+-    let fd_entry = wasi_try_ok!(env.state.fs.get_fd(fd));
++    let fd_entry = wasi_try_ok!({ env.state.fs.get_fd(fd) });
+     let enable_journal = env.enable_journal;
+-    let guard = fd_entry.inode.read();
+-    // Some guests route socket-like wakeups through pipe-backed fds.
+-    let use_write = matches!(guard.deref(), Kind::DuplexPipe { .. } | Kind::PipeTx { .. });
+-    drop(guard);
++    let use_write = {
++        let guard = fd_entry.inode.read();
++        // Some guests route socket-like wakeups through pipe-backed fds.
++        matches!(guard.deref(), Kind::DuplexPipe { .. } | Kind::PipeTx { .. })
++    };
+ 
+     let bytes_written = if use_write {
+         let offset = { fd_entry.inner.offset.load(Ordering::Acquire) as usize };
+@@ -108,16 +109,20 @@ pub(crate) fn sock_send_internal<M: MemorySize>(
+ 
+             match si_data {
+                 FdWriteSource::Iovs { iovs, iovs_len } => {
+-                    let iovs_arr = iovs.slice(&memory, iovs_len).map_err(mem_error_to_wasi)?;
+-                    let iovs_arr = iovs_arr.access().map_err(mem_error_to_wasi)?;
++                    let iovs_arr = {
++                        let iovs_arr = iovs.slice(&memory, iovs_len).map_err(mem_error_to_wasi)?;
++                        iovs_arr.access().map_err(mem_error_to_wasi)
++                    }?;
+ 
+                     let mut sent = 0usize;
+                     for iovs in iovs_arr.iter() {
+-                        let buf = WasmPtr::<u8, M>::new(iovs.buf)
+-                            .slice(&memory, iovs.buf_len)
+-                            .map_err(mem_error_to_wasi)?
+-                            .access()
+-                            .map_err(mem_error_to_wasi)?;
++                        let buf = {
++                            WasmPtr::<u8, M>::new(iovs.buf)
++                                .slice(&memory, iovs.buf_len)
++                                .map_err(mem_error_to_wasi)?
++                                .access()
++                                .map_err(mem_error_to_wasi)
++                        }?;
+                         let local_sent = match socket
+                             .send(
+                                 env.tasks().deref(),
+diff --git a/lib/wasix/src/syscalls/wasix/sock_set_opt_flag.rs b/lib/wasix/src/syscalls/wasix/sock_set_opt_flag.rs
+index f7ddbeb..bf020e3 100644
+--- a/lib/wasix/src/syscalls/wasix/sock_set_opt_flag.rs
++++ b/lib/wasix/src/syscalls/wasix/sock_set_opt_flag.rs
+@@ -48,6 +48,13 @@ pub(crate) fn sock_set_opt_flag_internal(
+         Ok(o) => o,
+         Err(_) => return Ok(Err(Errno::Inval)),
+     };
++    match (&option, flag) {
++        (crate::net::socket::WasiSocketOption::NoDelay, true) => {}
++        (crate::net::socket::WasiSocketOption::NoDelay, false) => {}
++        (crate::net::socket::WasiSocketOption::KeepAlive, true) => {}
++        (crate::net::socket::WasiSocketOption::KeepAlive, false) => {}
++        _ => {}
++    }
+     wasi_try_ok_ok!(__sock_actor_mut(
+         ctx,
+         sock,
+

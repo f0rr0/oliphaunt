@@ -1,0 +1,219 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH 6/7] libc: query process resource limits through WASIX
+
+Expose proc_rlimit_get in the public ABI and import implementation so libc can
+report the host-selected stack limit rather than a fabricated constant. Update
+expected symbol inventories across supported libc variants with the same ABI.
+Requires the host resource-limit syscall in the Wasmer process patch.
+
+Extracted without runtime hunk changes from the inherited integration bundle.
+The complete ordered series is the build and qualification unit.
+
+diff --git a/expected/wasm32-wasi-eh/defined-symbols.txt b/expected/wasm32-wasi-eh/defined-symbols.txt
+index 51b29a4..29811fd 100644
+--- a/expected/wasm32-wasi-eh/defined-symbols.txt
++++ b/expected/wasm32-wasi-eh/defined-symbols.txt
+@@ -1650,6 +1650,7 @@ swprintf
+ swscanf
+ symlink
+ symlinkat
++sync_file_range
+ sysconf
+ syslog
+ system
+diff --git a/expected/wasm32-wasi-eh/undefined-symbols.txt b/expected/wasm32-wasi-eh/undefined-symbols.txt
+index 4f926be..b03cc61 100644
+--- a/expected/wasm32-wasi-eh/undefined-symbols.txt
++++ b/expected/wasm32-wasi-eh/undefined-symbols.txt
+@@ -10,6 +10,7 @@ __floatsitf
+ __floatunsitf
+ __getf2
+ __gttf2
++__imported_oliphaunt_postmaster_v1_fd_sync_range
+ __imported_wasi_snapshot_preview1_args_get
+ __imported_wasi_snapshot_preview1_args_sizes_get
+ __imported_wasi_snapshot_preview1_clock_res_get
+diff --git a/expected/wasm32-wasi-ehpic/defined-symbols.txt b/expected/wasm32-wasi-ehpic/defined-symbols.txt
+index 3885a66..ddaacd9 100644
+--- a/expected/wasm32-wasi-ehpic/defined-symbols.txt
++++ b/expected/wasm32-wasi-ehpic/defined-symbols.txt
+@@ -1658,6 +1658,7 @@ swprintf
+ swscanf
+ symlink
+ symlinkat
++sync_file_range
+ sysconf
+ syslog
+ system
+diff --git a/expected/wasm32-wasi-ehpic/undefined-symbols.txt b/expected/wasm32-wasi-ehpic/undefined-symbols.txt
+index 7af7e4c..49fbed2 100644
+--- a/expected/wasm32-wasi-ehpic/undefined-symbols.txt
++++ b/expected/wasm32-wasi-ehpic/undefined-symbols.txt
+@@ -11,6 +11,7 @@ __floatsitf
+ __floatunsitf
+ __getf2
+ __gttf2
++__imported_oliphaunt_postmaster_v1_fd_sync_range
+ __imported_wasi_snapshot_preview1_args_get
+ __imported_wasi_snapshot_preview1_args_sizes_get
+ __imported_wasi_snapshot_preview1_clock_res_get
+diff --git a/expected/wasm32-wasi-threads/defined-symbols.txt b/expected/wasm32-wasi-threads/defined-symbols.txt
+index c8996ef..ad96b32 100644
+--- a/expected/wasm32-wasi-threads/defined-symbols.txt
++++ b/expected/wasm32-wasi-threads/defined-symbols.txt
+@@ -1562,6 +1562,7 @@ swprintf
+ swscanf
+ symlink
+ symlinkat
++sync_file_range
+ sysconf
+ syslog
+ system
+diff --git a/expected/wasm32-wasi-threads/undefined-symbols.txt b/expected/wasm32-wasi-threads/undefined-symbols.txt
+index e4a2638..9145830 100644
+--- a/expected/wasm32-wasi-threads/undefined-symbols.txt
++++ b/expected/wasm32-wasi-threads/undefined-symbols.txt
+@@ -13,6 +13,7 @@ __getf2
+ __global_base
+ __gttf2
+ __heap_base
++__imported_oliphaunt_postmaster_v1_fd_sync_range
+ __imported_wasi_snapshot_preview1_args_get
+ __imported_wasi_snapshot_preview1_args_sizes_get
+ __imported_wasi_snapshot_preview1_clock_res_get
+diff --git a/expected/wasm32-wasi/defined-symbols.txt b/expected/wasm32-wasi/defined-symbols.txt
+index 6d33bff..a7e915b 100644
+--- a/expected/wasm32-wasi/defined-symbols.txt
++++ b/expected/wasm32-wasi/defined-symbols.txt
+@@ -1657,6 +1657,7 @@ swprintf
+ swscanf
+ symlink
+ symlinkat
++sync_file_range
+ sysconf
+ syslog
+ system
+diff --git a/expected/wasm32-wasi/undefined-symbols.txt b/expected/wasm32-wasi/undefined-symbols.txt
+index 4f926be..b03cc61 100644
+--- a/expected/wasm32-wasi/undefined-symbols.txt
++++ b/expected/wasm32-wasi/undefined-symbols.txt
+@@ -10,6 +10,7 @@ __floatsitf
+ __floatunsitf
+ __getf2
+ __gttf2
++__imported_oliphaunt_postmaster_v1_fd_sync_range
+ __imported_wasi_snapshot_preview1_args_get
+ __imported_wasi_snapshot_preview1_args_sizes_get
+ __imported_wasi_snapshot_preview1_clock_res_get
+diff --git a/expected/wasm64-wasi/defined-symbols.txt b/expected/wasm64-wasi/defined-symbols.txt
+index cd3d45b..ca54a6d 100644
+--- a/expected/wasm64-wasi/defined-symbols.txt
++++ b/expected/wasm64-wasi/defined-symbols.txt
+@@ -1612,6 +1612,7 @@ swprintf
+ swscanf
+ symlink
+ symlinkat
++sync_file_range
+ sysconf
+ syslog
+ system
+diff --git a/expected/wasm64-wasi/undefined-symbols.txt b/expected/wasm64-wasi/undefined-symbols.txt
+index ae7c7ff..a70377f 100644
+--- a/expected/wasm64-wasi/undefined-symbols.txt
++++ b/expected/wasm64-wasi/undefined-symbols.txt
+@@ -14,6 +14,7 @@ __getf2
+ __global_base
+ __gttf2
+ __heap_base
++__imported_oliphaunt_postmaster_v1_fd_sync_range
+ __imported_wasi_snapshot_preview1_args_get
+ __imported_wasi_snapshot_preview1_args_sizes_get
+ __imported_wasi_snapshot_preview1_clock_res_get
+diff --git a/libc-bottom-half/headers/public/wasi/api_wasix.h b/libc-bottom-half/headers/public/wasi/api_wasix.h
+index 5b02c4b..3963e83 100644
+--- a/libc-bottom-half/headers/public/wasi/api_wasix.h
++++ b/libc-bottom-half/headers/public/wasi/api_wasix.h
+@@ -4399,6 +4399,14 @@ __wasi_errno_t __wasi_proc_spawn2(
+ __wasi_errno_t __wasi_proc_id(
+     __wasi_pid_t *retptr0
+ ) __attribute__((__warn_unused_result__));
++/**
++ * Returns the current and maximum resource limit for the current process
++ */
++__wasi_errno_t __wasi_proc_rlimit_get(
++    uint32_t resource,
++    uint64_t *retptr0,
++    uint64_t *retptr1
++) __attribute__((__warn_unused_result__));
+ /**
+  * Returns the parent handle of a particular process
+  */
+diff --git a/libc-bottom-half/sources/__wasixlibc_real.c b/libc-bottom-half/sources/__wasixlibc_real.c
+index 41a3f0b..56d916e 100644
+--- a/libc-bottom-half/sources/__wasixlibc_real.c
++++ b/libc-bottom-half/sources/__wasixlibc_real.c
+@@ -502,6 +502,20 @@ __wasi_errno_t __wasi_proc_id(
+     return (uint16_t) ret;
+ }
+ 
++int32_t __imported_wasix_32v1_proc_rlimit_get(int32_t arg0, int32_t arg1, int32_t arg2) __attribute__((
++    __import_module__("wasix_32v1"),
++    __import_name__("proc_rlimit_get")
++));
++
++__wasi_errno_t __wasi_proc_rlimit_get(
++    uint32_t resource,
++    uint64_t *retptr0,
++    uint64_t *retptr1
++){
++    int32_t ret = __imported_wasix_32v1_proc_rlimit_get((int32_t) resource, (intptr_t) retptr0, (intptr_t) retptr1);
++    return (uint16_t) ret;
++}
++
+ int32_t __imported_wasix_32v1_proc_parent(int32_t arg0, int32_t arg1) __attribute__((
+     __import_module__("wasix_32v1"),
+     __import_name__("proc_parent")
+@@ -1278,4 +1292,3 @@ __wasi_errno_t __wasi_context_destroy(
+     int32_t ret = __imported_wasix_32v1_context_destroy((int64_t) context);
+     return (uint16_t) ret;
+ }
+-
+diff --git a/libc-top-half/musl/src/misc/getrlimit.c b/libc-top-half/musl/src/misc/getrlimit.c
+index 67bfc7c..972fb67 100644
+--- a/libc-top-half/musl/src/misc/getrlimit.c
++++ b/libc-top-half/musl/src/misc/getrlimit.c
+@@ -2,6 +2,12 @@
+ #include <errno.h>
+ #ifdef __wasilibc_unmodified_upstream
+ #include "syscall.h"
++#else
++#include <wasi/api.h>
++#endif
++
++#ifndef SYSCALL_RLIM_INFINITY
++#define SYSCALL_RLIM_INFINITY RLIM_INFINITY
+ #endif
+ 
+ #define FIX(x) do{ if ((x)>=SYSCALL_RLIM_INFINITY) (x)=RLIM_INFINITY; }while(0)
+@@ -24,8 +30,17 @@ int getrlimit(int resource, struct rlimit *rlim)
+ 	FIX(rlim->rlim_cur);
+ 	FIX(rlim->rlim_max);
+ #else
+-    rlim->rlim_cur = RLIM_INFINITY;
+-	rlim->rlim_max = RLIM_INFINITY;
++	uint64_t rlim_cur;
++	uint64_t rlim_max;
++	__wasi_errno_t error = __wasi_proc_rlimit_get(resource, &rlim_cur, &rlim_max);
++	if (error != __WASI_ERRNO_SUCCESS) {
++		errno = error;
++		return -1;
++	}
++	rlim->rlim_cur = rlim_cur;
++	rlim->rlim_max = rlim_max;
++	FIX(rlim->rlim_cur);
++	FIX(rlim->rlim_max);
+ #endif
+ 	return 0;
+ }
+

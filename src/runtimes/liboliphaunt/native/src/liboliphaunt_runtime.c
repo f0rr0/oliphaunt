@@ -11,7 +11,6 @@
 #define DEFAULT_BACKEND_STACK_BYTES (8 * 1024 * 1024)
 
 static const char *const DEFAULT_BACKEND_ARGS[] = {
-    "-F",
     "-c",
     "search_path=public",
     "-c",

@@ -1,0 +1,2090 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH 2/8] virtual-fs: represent file descriptions and writeback
+
+Preserve open-file-description state and host filesystem operations needed by
+PostgreSQL shared mappings, positional I/O, explicit durability and descriptor
+finalization. Wrapper files must delegate the same semantics as the underlying
+file. This group supplies the filesystem API consumed by the WASIX FD patch;
+generic corrections are candidates for independent upstream review.
+
+Extracted without runtime hunk changes from the inherited integration bundle.
+The complete ordered series is the build and qualification unit.
+
+diff --git a/lib/virtual-fs/src/arc_fs.rs b/lib/virtual-fs/src/arc_fs.rs
+index 507bbc1..d384d2a 100644
+--- a/lib/virtual-fs/src/arc_fs.rs
++++ b/lib/virtual-fs/src/arc_fs.rs
+@@ -58,6 +58,10 @@ impl FileSystem for ArcFileSystem {
+         self.fs.remove_file(path)
+     }
+ 
++    fn open_dir(&self, path: &Path) -> Result<Box<dyn VirtualDirectory + Send + Sync>> {
++        self.fs.open_dir(path)
++    }
++
+     fn new_open_options(&self) -> OpenOptions<'_> {
+         self.fs.new_open_options()
+     }
+diff --git a/lib/virtual-fs/src/host_fs.rs b/lib/virtual-fs/src/host_fs.rs
+index 687f6ce..38062d1 100644
+--- a/lib/virtual-fs/src/host_fs.rs
++++ b/lib/virtual-fs/src/host_fs.rs
+@@ -1,6 +1,6 @@
+ use crate::{
+-    DirEntry, FileType, FsError, Metadata, OpenOptions, OpenOptionsConfig, ReadDir, Result,
+-    VirtualFile,
++    DirEntry, FileAdvice, FileType, FileWritebackFlags, FsError, Metadata, OpenOptions,
++    OpenOptionsConfig, ReadDir, Result, VirtualDirectory, VirtualFile,
+ };
+ use bytes::{Buf, Bytes};
+ use futures::future::BoxFuture;
+@@ -9,9 +9,13 @@ use serde::{Deserialize, Serialize, de};
+ use std::convert::TryInto;
+ use std::fs;
+ use std::io::{self, Seek};
++#[cfg(not(any(unix, windows)))]
++use std::io::{Read, Write};
+ use std::path::{Component, Path, PathBuf};
+ use std::pin::Pin;
+ use std::sync::Arc;
++#[cfg(unix)]
++use std::sync::OnceLock;
+ use std::task::{Context, Poll};
+ use std::time::{SystemTime, UNIX_EPOCH};
+ use tokio::fs as tfs;
+@@ -221,6 +225,28 @@ impl crate::FileSystem for FileSystem {
+         fs::remove_file(path).map_err(Into::into)
+     }
+ 
++    fn open_dir(&self, path: &Path) -> Result<Box<dyn VirtualDirectory + Send + Sync>> {
++        #[cfg(unix)]
++        {
++            use std::os::unix::fs::OpenOptionsExt;
++
++            let host_path = self.prepare_path(path)?;
++            let file = fs::OpenOptions::new()
++                .read(true)
++                // O_DIRECTORY rejects non-directories while retaining a real
++                // read descriptor that supports fsync (unlike Linux O_PATH).
++                .custom_flags(libc::O_DIRECTORY)
++                .open(&host_path)?;
++            Ok(Box::new(Directory { file }))
++        }
++
++        #[cfg(not(unix))]
++        {
++            let _ = path;
++            Err(FsError::Unsupported)
++        }
++    }
++
+     fn new_open_options(&self) -> OpenOptions<'_> {
+         OpenOptions::new(self)
+     }
+@@ -242,6 +268,27 @@ impl crate::FileSystem for FileSystem {
+     }
+ }
+ 
++#[cfg(unix)]
++#[derive(Debug)]
++struct Directory {
++    file: fs::File,
++}
++
++#[cfg(unix)]
++impl VirtualDirectory for Directory {
++    fn sync_all_to_disk(&self) -> BoxFuture<'_, io::Result<()>> {
++        Box::pin(async move { host_sync_all(&self.file) })
++    }
++
++    fn has_blocking_sync_all_to_disk(&self) -> bool {
++        true
++    }
++
++    fn sync_all_to_disk_blocking(&self) -> io::Result<()> {
++        host_sync_all(&self.file)
++    }
++}
++
+ impl TryInto<Metadata> for std::fs::Metadata {
+     type Error = io::Error;
+ 
+@@ -311,6 +358,7 @@ impl crate::FileOpener for FileSystem {
+         let append = if conf.truncate { false } else { conf.append() };
+ 
+         let mut oo = fs::OpenOptions::new();
++        let (sync, data_sync) = apply_sync_open_options(&mut oo, conf.sync(), conf.data_sync());
+         oo.read(conf.read())
+             .write(conf.write())
+             .create_new(conf.create_new())
+@@ -327,11 +375,42 @@ impl crate::FileOpener for FileSystem {
+                     read,
+                     write,
+                     append,
++                    sync,
++                    data_sync,
+                 )) as Box<dyn VirtualFile + Send + Sync + 'static>
+             })
+     }
+ }
+ 
++#[cfg(unix)]
++fn apply_sync_open_options(
++    options: &mut fs::OpenOptions,
++    sync: bool,
++    data_sync: bool,
++) -> (bool, bool) {
++    use std::os::unix::fs::OpenOptionsExt;
++
++    let mut flags = 0;
++    if sync {
++        flags |= libc::O_SYNC;
++    } else if data_sync {
++        flags |= libc::O_DSYNC;
++    }
++    if flags != 0 {
++        options.custom_flags(flags);
++    }
++    (sync, !sync && data_sync)
++}
++
++#[cfg(not(unix))]
++fn apply_sync_open_options(
++    _options: &mut fs::OpenOptions,
++    _sync: bool,
++    _data_sync: bool,
++) -> (bool, bool) {
++    (false, false)
++}
++
+ /// A thin wrapper around `std::fs::File`
+ #[derive(Debug)]
+ #[cfg_attr(feature = "enable-serde", derive(Serialize))]
+@@ -339,11 +418,12 @@ pub struct File {
+     #[cfg_attr(feature = "enable-serde", serde(skip, default = "default_handle"))]
+     handle: Handle,
+     #[cfg_attr(feature = "enable-serde", serde(skip))]
+-    inner: tfs::File,
++    inner: Option<tfs::File>,
+     #[cfg_attr(feature = "enable-serde", serde(skip_serializing))]
+     inner_std: fs::File,
+     pub host_path: PathBuf,
+-    #[cfg(feature = "enable-serde")]
++    sync: bool,
++    data_sync: bool,
+     flags: u16,
+ }
+ 
+@@ -379,17 +459,26 @@ impl<'de> Deserialize<'de> for File {
+                 let flags = seq
+                     .next_element()?
+                     .ok_or_else(|| de::Error::invalid_length(1, &self))?;
+-                let inner = fs::OpenOptions::new()
+-                    .read(flags & File::READ != 0)
+-                    .write(flags & File::WRITE != 0)
+-                    .append(flags & File::APPEND != 0)
++                let read = flags & File::READ != 0;
++                let write = flags & File::WRITE != 0;
++                let append = flags & File::APPEND != 0;
++                let sync = flags & File::SYNC != 0;
++                let data_sync = flags & File::DATA_SYNC != 0;
++                let mut open_options = fs::OpenOptions::new();
++                let (sync, data_sync) = apply_sync_open_options(&mut open_options, sync, data_sync);
++                let inner = open_options
++                    .read(read)
++                    .write(write)
++                    .append(append)
+                     .open(&host_path)
+                     .map_err(|_| de::Error::custom("Could not open file on this system"))?;
+                 Ok(File {
+                     handle: Handle::current(),
+-                    inner: tokio::fs::File::from_std(inner.try_clone().unwrap()),
++                    inner: None,
+                     inner_std: inner,
+                     host_path,
++                    sync,
++                    data_sync,
+                     flags,
+                 })
+             }
+@@ -418,17 +507,26 @@ impl<'de> Deserialize<'de> for File {
+                 }
+                 let host_path = host_path.ok_or_else(|| de::Error::missing_field("host_path"))?;
+                 let flags = flags.ok_or_else(|| de::Error::missing_field("flags"))?;
+-                let inner = fs::OpenOptions::new()
+-                    .read(flags & File::READ != 0)
+-                    .write(flags & File::WRITE != 0)
+-                    .append(flags & File::APPEND != 0)
++                let read = flags & File::READ != 0;
++                let write = flags & File::WRITE != 0;
++                let append = flags & File::APPEND != 0;
++                let sync = flags & File::SYNC != 0;
++                let data_sync = flags & File::DATA_SYNC != 0;
++                let mut open_options = fs::OpenOptions::new();
++                let (sync, data_sync) = apply_sync_open_options(&mut open_options, sync, data_sync);
++                let inner = open_options
++                    .read(read)
++                    .write(write)
++                    .append(append)
+                     .open(&host_path)
+                     .map_err(|_| de::Error::custom("Could not open file on this system"))?;
+                 Ok(File {
+                     handle: Handle::current(),
+-                    inner: tokio::fs::File::from_std(inner.try_clone().unwrap()),
++                    inner: None,
+                     inner_std: inner,
+                     host_path,
++                    sync,
++                    data_sync,
+                     flags,
+                 })
+             }
+@@ -443,6 +541,8 @@ impl File {
+     const READ: u16 = 1;
+     const WRITE: u16 = 2;
+     const APPEND: u16 = 4;
++    const SYNC: u16 = 8;
++    const DATA_SYNC: u16 = 16;
+ 
+     /// creates a new host file from a `std::fs::File` and a path
+     pub fn new(
+@@ -452,9 +552,10 @@ impl File {
+         read: bool,
+         write: bool,
+         append: bool,
++        sync: bool,
++        data_sync: bool,
+     ) -> Self {
+         let mut _flags = 0;
+-
+         if read {
+             _flags |= Self::READ;
+         }
+@@ -467,13 +568,21 @@ impl File {
+             _flags |= Self::APPEND;
+         }
+ 
+-        let async_file = tfs::File::from_std(file.try_clone().unwrap());
++        if sync {
++            _flags |= Self::SYNC;
++        }
++
++        if data_sync {
++            _flags |= Self::DATA_SYNC;
++        }
++
+         Self {
+             handle,
+             inner_std: file,
+-            inner: async_file,
++            inner: None,
+             host_path,
+-            #[cfg(feature = "enable-serde")]
++            sync,
++            data_sync,
+             flags: _flags,
+         }
+     }
+@@ -482,6 +591,370 @@ impl File {
+         // FIXME: no unwrap!
+         self.inner_std.metadata().unwrap()
+     }
++
++    pub fn try_clone_std_file(&self) -> io::Result<fs::File> {
++        self.inner_std.try_clone()
++    }
++
++    /// Materializes the Tokio view only for callers that actually use the
++    /// asynchronous I/O traits. Most WASIX host-file operations use the
++    /// blocking/positioned fast paths and therefore need only one host fd.
++    fn async_file(&mut self) -> io::Result<&mut tfs::File> {
++        if self.inner.is_none() {
++            self.inner = Some(tfs::File::from_std(self.inner_std.try_clone()?));
++        }
++        Ok(self.inner.as_mut().unwrap())
++    }
++}
++
++#[cfg(target_os = "linux")]
++fn host_file_advise(file: &fs::File, offset: u64, len: u64, advice: FileAdvice) -> io::Result<()> {
++    use std::os::fd::AsRawFd;
++
++    let range_error = || io::Error::from_raw_os_error(libc::EOVERFLOW);
++    let _end = offset.checked_add(len).ok_or_else(range_error)?;
++    let offset: libc::off_t = offset.try_into().map_err(|_| range_error())?;
++    let len: libc::off_t = len.try_into().map_err(|_| range_error())?;
++    let advice = match advice {
++        FileAdvice::Normal => libc::POSIX_FADV_NORMAL,
++        FileAdvice::Sequential => libc::POSIX_FADV_SEQUENTIAL,
++        FileAdvice::Random => libc::POSIX_FADV_RANDOM,
++        FileAdvice::WillNeed => libc::POSIX_FADV_WILLNEED,
++        FileAdvice::DontNeed => libc::POSIX_FADV_DONTNEED,
++        FileAdvice::NoReuse => libc::POSIX_FADV_NOREUSE,
++    };
++
++    // Unlike most libc calls, posix_fadvise returns the errno value directly
++    // and does not communicate failures through the thread-local errno slot.
++    let result = unsafe { libc::posix_fadvise(file.as_raw_fd(), offset, len, advice) };
++    if result == 0 {
++        Ok(())
++    } else {
++        Err(io::Error::from_raw_os_error(result))
++    }
++}
++
++#[cfg(not(target_os = "linux"))]
++fn host_file_advise(
++    _file: &fs::File,
++    _offset: u64,
++    _len: u64,
++    _advice: FileAdvice,
++) -> io::Result<()> {
++    Err(io::ErrorKind::Unsupported.into())
++}
++
++#[cfg(target_os = "linux")]
++fn host_file_writeback_range(
++    file: &fs::File,
++    offset: u64,
++    len: u64,
++    flags: FileWritebackFlags,
++) -> io::Result<()> {
++    use std::os::fd::AsRawFd;
++
++    let representation_error = || io::Error::from_raw_os_error(libc::EOVERFLOW);
++    let invalid_range = || io::Error::from_raw_os_error(libc::EINVAL);
++    let offset: libc::off64_t = offset.try_into().map_err(|_| representation_error())?;
++    let len: libc::off64_t = len.try_into().map_err(|_| representation_error())?;
++
++    // Linux requires a signed, representable exclusive end. A zero length
++    // means from offset through EOF and therefore has no finite end to check.
++    if len > 0 {
++        let end = offset.checked_add(len).ok_or_else(invalid_range)?;
++        let _end: libc::off64_t = end;
++    }
++
++    let mut host_flags = 0;
++    if flags.contains(FileWritebackFlags::WAIT_BEFORE) {
++        host_flags |= libc::SYNC_FILE_RANGE_WAIT_BEFORE;
++    }
++    if flags.contains(FileWritebackFlags::WRITE) {
++        host_flags |= libc::SYNC_FILE_RANGE_WRITE;
++    }
++    if flags.contains(FileWritebackFlags::WAIT_AFTER) {
++        host_flags |= libc::SYNC_FILE_RANGE_WAIT_AFTER;
++    }
++
++    let result = unsafe { libc::sync_file_range(file.as_raw_fd(), offset, len, host_flags) };
++    if result == 0 {
++        Ok(())
++    } else {
++        Err(io::Error::last_os_error())
++    }
++}
++
++#[cfg(not(target_os = "linux"))]
++fn host_file_writeback_range(
++    _file: &fs::File,
++    _offset: u64,
++    _len: u64,
++    _flags: FileWritebackFlags,
++) -> io::Result<()> {
++    Err(io::ErrorKind::Unsupported.into())
++}
++
++#[cfg(unix)]
++fn positioned_read(file: &fs::File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
++    use std::os::unix::fs::FileExt;
++    file.read_at(buf, offset)
++}
++
++#[cfg(unix)]
++fn positioned_write(file: &fs::File, buf: &[u8], offset: u64) -> io::Result<usize> {
++    use std::os::unix::fs::FileExt;
++    file.write_at(buf, offset)
++}
++
++#[cfg(unix)]
++fn positioned_write_vectored(
++    file: &fs::File,
++    bufs: &[io::IoSlice<'_>],
++    offset: u64,
++) -> io::Result<usize> {
++    use std::os::unix::io::AsRawFd;
++
++    let offset: libc::off_t = offset
++        .try_into()
++        .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
++    let iovcnt: libc::c_int = bufs
++        .len()
++        .try_into()
++        .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
++    let raw_iov = bufs
++        .iter()
++        .map(|buf| {
++            let bytes: &[u8] = buf;
++            libc::iovec {
++                iov_base: bytes.as_ptr() as *mut libc::c_void,
++                iov_len: bytes.len(),
++            }
++        })
++        .collect::<Vec<_>>();
++
++    loop {
++        let rc = unsafe { libc::pwritev(file.as_raw_fd(), raw_iov.as_ptr(), iovcnt, offset) };
++        if rc >= 0 {
++            return Ok(rc as usize);
++        }
++        let err = io::Error::last_os_error();
++        if err.raw_os_error() == Some(libc::EINTR) {
++            continue;
++        }
++        return Err(err);
++    }
++}
++
++const ZERO_WRITE_CHUNK_LEN: usize = 8192;
++static ZERO_WRITE_CHUNK: [u8; ZERO_WRITE_CHUNK_LEN] = [0; ZERO_WRITE_CHUNK_LEN];
++
++fn try_extend_with_zeroes(file: &fs::File, len: u64, offset: u64) -> io::Result<Option<usize>> {
++    let written = usize::try_from(len).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
++    let end = offset
++        .checked_add(len)
++        .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
++
++    if len == 0 {
++        return Ok(Some(0));
++    }
++
++    if offset >= file.metadata()?.len() {
++        file.set_len(end)?;
++        return Ok(Some(written));
++    }
++
++    Ok(None)
++}
++
++#[cfg(unix)]
++fn host_iov_max() -> usize {
++    static IOV_MAX: OnceLock<usize> = OnceLock::new();
++    *IOV_MAX.get_or_init(|| {
++        let max = unsafe { libc::sysconf(libc::_SC_IOV_MAX) };
++        if max > 0 { max as usize } else { 1024 }
++    })
++}
++
++#[cfg(unix)]
++fn positioned_write_zeroes(file: &fs::File, len: u64, offset: u64) -> io::Result<usize> {
++    if let Some(written) = try_extend_with_zeroes(file, len, offset)? {
++        return Ok(written);
++    }
++
++    let mut written = 0usize;
++    let mut remaining = len;
++    let max_batch = host_iov_max().max(1) * ZERO_WRITE_CHUNK_LEN;
++
++    while remaining > 0 {
++        let batch_len = (remaining.min(max_batch as u64)) as usize;
++        let full_chunks = batch_len / ZERO_WRITE_CHUNK_LEN;
++        let tail = batch_len % ZERO_WRITE_CHUNK_LEN;
++        let mut bufs = Vec::with_capacity(full_chunks + usize::from(tail > 0));
++        for _ in 0..full_chunks {
++            bufs.push(io::IoSlice::new(&ZERO_WRITE_CHUNK));
++        }
++        if tail > 0 {
++            bufs.push(io::IoSlice::new(&ZERO_WRITE_CHUNK[..tail]));
++        }
++
++        let local = positioned_write_vectored(file, &bufs, offset + written as u64)?;
++        if local == 0 {
++            break;
++        }
++        written = written
++            .checked_add(local)
++            .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidData))?;
++        if local < batch_len {
++            break;
++        }
++        remaining -= local as u64;
++    }
++
++    Ok(written)
++}
++
++#[cfg(windows)]
++fn positioned_read(file: &fs::File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
++    use std::os::windows::fs::FileExt;
++    file.seek_read(buf, offset)
++}
++
++#[cfg(windows)]
++fn positioned_write(file: &fs::File, buf: &[u8], offset: u64) -> io::Result<usize> {
++    use std::os::windows::fs::FileExt;
++    file.seek_write(buf, offset)
++}
++
++#[cfg(not(any(unix, windows)))]
++fn positioned_read(file: &mut fs::File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
++    let cursor = file.stream_position()?;
++    file.seek(io::SeekFrom::Start(offset))?;
++    let read_result = file.read(buf);
++    let restore_result = file.seek(io::SeekFrom::Start(cursor));
++
++    match (read_result, restore_result) {
++        (Ok(read), Ok(_)) => Ok(read),
++        (Err(err), _) => Err(err),
++        (Ok(_), Err(err)) => Err(err),
++    }
++}
++
++#[cfg(not(any(unix, windows)))]
++fn positioned_write(file: &mut fs::File, buf: &[u8], offset: u64) -> io::Result<usize> {
++    let cursor = file.stream_position()?;
++    file.seek(io::SeekFrom::Start(offset))?;
++    let write_result = file.write(buf);
++    let restore_result = file.seek(io::SeekFrom::Start(cursor));
++
++    match (write_result, restore_result) {
++        (Ok(written), Ok(_)) => Ok(written),
++        (Err(err), _) => Err(err),
++        (Ok(_), Err(err)) => Err(err),
++    }
++}
++
++#[cfg(not(unix))]
++fn positioned_write_zeroes(file: &mut fs::File, len: u64, offset: u64) -> io::Result<usize> {
++    if let Some(written) = try_extend_with_zeroes(file, len, offset)? {
++        return Ok(written);
++    }
++
++    let mut written = 0usize;
++    while (written as u64) < len {
++        let remaining = (len - written as u64) as usize;
++        let local_len = remaining.min(ZERO_WRITE_CHUNK_LEN);
++        let local = positioned_write(
++            file,
++            &ZERO_WRITE_CHUNK[..local_len],
++            offset + written as u64,
++        )?;
++        if local == 0 {
++            break;
++        }
++        written = written
++            .checked_add(local)
++            .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidData))?;
++        if local < local_len {
++            break;
++        }
++    }
++    Ok(written)
++}
++
++#[cfg(unix)]
++fn cvt_sync_result(mut sync: impl FnMut() -> libc::c_int) -> io::Result<()> {
++    loop {
++        if sync() == 0 {
++            return Ok(());
++        }
++        let err = io::Error::last_os_error();
++        if err.raw_os_error() == Some(libc::EINTR) {
++            continue;
++        }
++        return Err(err);
++    }
++}
++
++#[cfg(unix)]
++fn host_sync_all(file: &fs::File) -> io::Result<()> {
++    use std::os::unix::io::AsRawFd;
++
++    cvt_sync_result(|| unsafe { libc::fsync(file.as_raw_fd()) })
++}
++
++#[cfg(any(
++    target_os = "android",
++    target_os = "freebsd",
++    target_os = "fuchsia",
++    target_os = "hurd",
++    target_os = "linux",
++    target_os = "netbsd",
++    target_os = "nto",
++    target_os = "openbsd",
++))]
++fn host_sync_data(file: &fs::File) -> io::Result<()> {
++    use std::os::unix::io::AsRawFd;
++
++    cvt_sync_result(|| unsafe { libc::fdatasync(file.as_raw_fd()) })
++}
++
++#[cfg(target_vendor = "apple")]
++fn host_sync_data(file: &fs::File) -> io::Result<()> {
++    use std::os::unix::io::AsRawFd;
++
++    unsafe extern "C" {
++        fn fdatasync(fd: libc::c_int) -> libc::c_int;
++    }
++
++    cvt_sync_result(|| unsafe { fdatasync(file.as_raw_fd()) })
++}
++
++#[cfg(all(
++    unix,
++    not(any(
++        target_os = "android",
++        target_os = "freebsd",
++        target_os = "fuchsia",
++        target_os = "hurd",
++        target_os = "linux",
++        target_os = "netbsd",
++        target_os = "nto",
++        target_os = "openbsd",
++        target_vendor = "apple",
++    ))
++))]
++fn host_sync_data(file: &fs::File) -> io::Result<()> {
++    host_sync_all(file)
++}
++
++#[cfg(not(unix))]
++fn host_sync_all(file: &fs::File) -> io::Result<()> {
++    file.sync_all()
++}
++
++#[cfg(not(unix))]
++fn host_sync_data(file: &fs::File) -> io::Result<()> {
++    file.sync_data()
+ }
+ 
+ //#[cfg_attr(feature = "enable-serde", typetag::serde)]
+@@ -538,6 +1011,14 @@ impl VirtualFile for File {
+         None
+     }
+ 
++    fn open_read(&self) -> Option<bool> {
++        Some(self.flags & Self::READ != 0)
++    }
++
++    fn open_write(&self) -> Option<bool> {
++        Some(self.flags & (Self::WRITE | Self::APPEND) != 0)
++    }
++
+     fn poll_read_ready(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
+         let cursor = match self.inner_std.stream_position() {
+             Ok(a) => a,
+@@ -556,6 +1037,221 @@ impl VirtualFile for File {
+     fn poll_write_ready(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
+         Poll::Ready(Ok(8192))
+     }
++
++    fn has_blocking_seek(&self) -> bool {
++        true
++    }
++
++    fn seek_blocking(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
++        std::io::Seek::seek(&mut self.inner_std, pos)
++    }
++
++    fn has_blocking_read(&self) -> bool {
++        true
++    }
++
++    fn read_blocking(&mut self, buf: &mut [u8]) -> io::Result<usize> {
++        std::io::Read::read(&mut self.inner_std, buf)
++    }
++
++    fn has_blocking_read_at(&self) -> bool {
++        true
++    }
++
++    fn read_at_blocking(&mut self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
++        #[cfg(any(unix, windows))]
++        {
++            positioned_read(&self.inner_std, buf, offset)
++        }
++        #[cfg(not(any(unix, windows)))]
++        {
++            positioned_read(&mut self.inner_std, buf, offset)
++        }
++    }
++
++    fn has_blocking_read_at_shared(&self) -> bool {
++        cfg!(any(unix, windows))
++    }
++
++    fn read_at_blocking_shared(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
++        #[cfg(any(unix, windows))]
++        {
++            positioned_read(&self.inner_std, buf, offset)
++        }
++        #[cfg(not(any(unix, windows)))]
++        {
++            let _ = buf;
++            let _ = offset;
++            Err(io::ErrorKind::Unsupported.into())
++        }
++    }
++
++    fn has_blocking_write(&self) -> bool {
++        true
++    }
++
++    fn write_blocking(&mut self, buf: &[u8]) -> io::Result<usize> {
++        std::io::Write::write(&mut self.inner_std, buf)
++    }
++
++    fn write_at<'a>(&'a mut self, buf: &'a [u8], offset: u64) -> BoxFuture<'a, io::Result<usize>> {
++        Box::pin(async move {
++            #[cfg(any(unix, windows))]
++            {
++                positioned_write(&self.inner_std, buf, offset)
++            }
++            #[cfg(not(any(unix, windows)))]
++            {
++                positioned_write(&mut self.inner_std, buf, offset)
++            }
++        })
++    }
++
++    fn has_blocking_write_at(&self) -> bool {
++        true
++    }
++
++    fn write_at_blocking(&mut self, buf: &[u8], offset: u64) -> io::Result<usize> {
++        #[cfg(any(unix, windows))]
++        {
++            positioned_write(&self.inner_std, buf, offset)
++        }
++        #[cfg(not(any(unix, windows)))]
++        {
++            positioned_write(&mut self.inner_std, buf, offset)
++        }
++    }
++
++    fn has_blocking_write_at_shared(&self) -> bool {
++        cfg!(any(unix, windows))
++    }
++
++    fn write_at_blocking_shared(&self, buf: &[u8], offset: u64) -> io::Result<usize> {
++        #[cfg(any(unix, windows))]
++        {
++            positioned_write(&self.inner_std, buf, offset)
++        }
++        #[cfg(not(any(unix, windows)))]
++        {
++            let _ = buf;
++            let _ = offset;
++            Err(io::ErrorKind::Unsupported.into())
++        }
++    }
++
++    fn has_blocking_write_vectored_at(&self) -> bool {
++        cfg!(unix)
++    }
++
++    fn write_vectored_at_blocking(
++        &mut self,
++        bufs: &[io::IoSlice<'_>],
++        offset: u64,
++    ) -> io::Result<usize> {
++        #[cfg(unix)]
++        {
++            positioned_write_vectored(&self.inner_std, bufs, offset)
++        }
++        #[cfg(not(unix))]
++        {
++            let _ = bufs;
++            let _ = offset;
++            Err(io::ErrorKind::Unsupported.into())
++        }
++    }
++
++    fn has_blocking_write_vectored_at_shared(&self) -> bool {
++        cfg!(unix)
++    }
++
++    fn write_vectored_at_blocking_shared(
++        &self,
++        bufs: &[io::IoSlice<'_>],
++        offset: u64,
++    ) -> io::Result<usize> {
++        #[cfg(unix)]
++        {
++            positioned_write_vectored(&self.inner_std, bufs, offset)
++        }
++        #[cfg(not(unix))]
++        {
++            let _ = bufs;
++            let _ = offset;
++            Err(io::ErrorKind::Unsupported.into())
++        }
++    }
++
++    fn has_blocking_write_zeroes_at(&self) -> bool {
++        true
++    }
++
++    fn write_zeroes_at_blocking(&mut self, len: u64, offset: u64) -> io::Result<usize> {
++        #[cfg(unix)]
++        {
++            positioned_write_zeroes(&self.inner_std, len, offset)
++        }
++        #[cfg(not(unix))]
++        {
++            positioned_write_zeroes(&mut self.inner_std, len, offset)
++        }
++    }
++
++    fn has_blocking_write_zeroes_at_shared(&self) -> bool {
++        cfg!(unix)
++    }
++
++    fn write_zeroes_at_blocking_shared(&self, len: u64, offset: u64) -> io::Result<usize> {
++        #[cfg(unix)]
++        {
++            positioned_write_zeroes(&self.inner_std, len, offset)
++        }
++        #[cfg(not(unix))]
++        {
++            let _ = len;
++            let _ = offset;
++            Err(io::ErrorKind::Unsupported.into())
++        }
++    }
++
++    fn sync_data_to_disk(&mut self) -> BoxFuture<'_, io::Result<()>> {
++        Box::pin(async move { host_sync_data(&self.inner_std) })
++    }
++
++    fn sync_all_to_disk(&mut self) -> BoxFuture<'_, io::Result<()>> {
++        Box::pin(async move { host_sync_all(&self.inner_std) })
++    }
++
++    fn has_blocking_sync_data_to_disk(&self) -> bool {
++        true
++    }
++
++    fn sync_data_to_disk_blocking(&mut self) -> io::Result<()> {
++        host_sync_data(&self.inner_std)
++    }
++
++    fn has_blocking_sync_all_to_disk(&self) -> bool {
++        true
++    }
++
++    fn sync_all_to_disk_blocking(&mut self) -> io::Result<()> {
++        host_sync_all(&self.inner_std)
++    }
++
++    fn is_sync_on_write(&self, sync_metadata: bool) -> bool {
++        if sync_metadata {
++            self.sync
++        } else {
++            self.sync || self.data_sync
++        }
++    }
++
++    fn advise(&self, offset: u64, len: u64, advice: FileAdvice) -> io::Result<()> {
++        host_file_advise(&self.inner_std, offset, len, advice)
++    }
++
++    fn writeback_range(&self, offset: u64, len: u64, flags: FileWritebackFlags) -> io::Result<()> {
++        host_file_writeback_range(&self.inner_std, offset, len, flags)
++    }
+ }
+ 
+ impl AsyncRead for File {
+@@ -564,8 +1260,13 @@ impl AsyncRead for File {
+         cx: &mut Context<'_>,
+         buf: &mut tokio::io::ReadBuf<'_>,
+     ) -> Poll<io::Result<()>> {
+-        let _guard = Handle::try_current().map_err(|_| self.handle.enter());
+-        let inner = Pin::new(&mut self.inner);
++        let this = self.as_mut().get_mut();
++        let handle = this.handle.clone();
++        let _guard = Handle::try_current().map_err(|_| handle.enter());
++        let inner = match this.async_file() {
++            Ok(inner) => Pin::new(inner),
++            Err(err) => return Poll::Ready(Err(err)),
++        };
+         inner.poll_read(cx, buf)
+     }
+ }
+@@ -576,20 +1277,35 @@ impl AsyncWrite for File {
+         cx: &mut Context<'_>,
+         buf: &[u8],
+     ) -> Poll<io::Result<usize>> {
+-        let _guard = Handle::try_current().map_err(|_| self.handle.enter());
+-        let inner = Pin::new(&mut self.inner);
++        let this = self.as_mut().get_mut();
++        let handle = this.handle.clone();
++        let _guard = Handle::try_current().map_err(|_| handle.enter());
++        let inner = match this.async_file() {
++            Ok(inner) => Pin::new(inner),
++            Err(err) => return Poll::Ready(Err(err)),
++        };
+         inner.poll_write(cx, buf)
+     }
+ 
+     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+-        let _guard = Handle::try_current().map_err(|_| self.handle.enter());
+-        let inner = Pin::new(&mut self.inner);
++        let this = self.as_mut().get_mut();
++        let handle = this.handle.clone();
++        let _guard = Handle::try_current().map_err(|_| handle.enter());
++        let inner = match this.async_file() {
++            Ok(inner) => Pin::new(inner),
++            Err(err) => return Poll::Ready(Err(err)),
++        };
+         inner.poll_flush(cx)
+     }
+ 
+     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+-        let _guard = Handle::try_current().map_err(|_| self.handle.enter());
+-        let inner = Pin::new(&mut self.inner);
++        let this = self.as_mut().get_mut();
++        let handle = this.handle.clone();
++        let _guard = Handle::try_current().map_err(|_| handle.enter());
++        let inner = match this.async_file() {
++            Ok(inner) => Pin::new(inner),
++            Err(err) => return Poll::Ready(Err(err)),
++        };
+         inner.poll_shutdown(cx)
+     }
+ 
+@@ -598,26 +1314,41 @@ impl AsyncWrite for File {
+         cx: &mut Context<'_>,
+         bufs: &[io::IoSlice<'_>],
+     ) -> Poll<io::Result<usize>> {
+-        let _guard = Handle::try_current().map_err(|_| self.handle.enter());
+-        let inner = Pin::new(&mut self.inner);
++        let this = self.as_mut().get_mut();
++        let handle = this.handle.clone();
++        let _guard = Handle::try_current().map_err(|_| handle.enter());
++        let inner = match this.async_file() {
++            Ok(inner) => Pin::new(inner),
++            Err(err) => return Poll::Ready(Err(err)),
++        };
+         inner.poll_write_vectored(cx, bufs)
+     }
+ 
+     fn is_write_vectored(&self) -> bool {
+-        self.inner.is_write_vectored()
++        self.inner
++            .as_ref()
++            .map(AsyncWrite::is_write_vectored)
++            .unwrap_or(true)
+     }
+ }
+ 
+ impl AsyncSeek for File {
+     fn start_seek(mut self: Pin<&mut Self>, position: io::SeekFrom) -> io::Result<()> {
+-        let _guard = Handle::try_current().map_err(|_| self.handle.enter());
+-        let inner = Pin::new(&mut self.inner);
++        let this = self.as_mut().get_mut();
++        let handle = this.handle.clone();
++        let _guard = Handle::try_current().map_err(|_| handle.enter());
++        let inner = Pin::new(this.async_file()?);
+         inner.start_seek(position)
+     }
+ 
+     fn poll_complete(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<u64>> {
+-        let _guard = Handle::try_current().map_err(|_| self.handle.enter());
+-        let inner = Pin::new(&mut self.inner);
++        let this = self.as_mut().get_mut();
++        let handle = this.handle.clone();
++        let _guard = Handle::try_current().map_err(|_| handle.enter());
++        let inner = match this.async_file() {
++            Ok(inner) => Pin::new(inner),
++            Err(err) => return Poll::Ready(Err(err)),
++        };
+         inner.poll_complete(cx)
+     }
+ }
+@@ -1026,10 +1757,220 @@ mod tests {
+     use tempfile::TempDir;
+     use tokio::runtime::Handle;
+ 
+-    use super::FileSystem;
++    use super::{File, FileSystem};
++    use crate::AsyncSeekExt;
+     use crate::FileSystem as FileSystemTrait;
+     use crate::FsError;
++    use crate::VirtualFile;
++    use crate::{FileAdvice, FileWritebackFlags};
++    use std::io::{IoSlice, SeekFrom};
+     use std::path::Path;
++    use std::sync::{Arc, Barrier};
++
++    #[tokio::test]
++    async fn host_file_defers_async_descriptor_until_async_io_is_requested() {
++        let temp = TempDir::new().unwrap();
++        let path = temp.path().join("lazy-async-file.txt");
++        std::fs::write(&path, b"contents").unwrap();
++        let std_file = std::fs::OpenOptions::new().read(true).open(&path).unwrap();
++
++        let mut file = File::new(
++            Handle::current(),
++            std_file,
++            path,
++            true,
++            false,
++            false,
++            false,
++            false,
++        );
++
++        assert!(file.inner.is_none());
++        file.async_file().unwrap();
++        assert!(file.inner.is_some());
++    }
++
++    #[cfg(target_os = "linux")]
++    #[tokio::test]
++    async fn host_file_advice_uses_existing_descriptor_without_async_clone() {
++        let temp = TempDir::new().unwrap();
++        let path = temp.path().join("advice.txt");
++        std::fs::write(&path, vec![0u8; 8192]).unwrap();
++        let std_file = std::fs::OpenOptions::new().read(true).open(&path).unwrap();
++
++        let file = File::new(
++            Handle::current(),
++            std_file,
++            path,
++            true,
++            false,
++            false,
++            false,
++            false,
++        );
++
++        assert!(file.inner.is_none());
++        file.advise(0, 4096, FileAdvice::WillNeed).unwrap();
++        file.advise(0, 4096, FileAdvice::DontNeed).unwrap();
++        assert!(file.inner.is_none());
++    }
++
++    #[cfg(target_os = "linux")]
++    #[tokio::test]
++    async fn host_file_advice_rejects_unrepresentable_range_without_async_clone() {
++        let temp = TempDir::new().unwrap();
++        let path = temp.path().join("advice-overflow.txt");
++        std::fs::write(&path, b"contents").unwrap();
++        let std_file = std::fs::OpenOptions::new().read(true).open(&path).unwrap();
++
++        let file = File::new(
++            Handle::current(),
++            std_file,
++            path,
++            true,
++            false,
++            false,
++            false,
++            false,
++        );
++
++        let beyond_off_t = (libc::off_t::MAX as u64) + 1;
++        for (offset, len) in [(u64::MAX, 1), (beyond_off_t, 0), (0, beyond_off_t)] {
++            let error = file.advise(offset, len, FileAdvice::WillNeed).unwrap_err();
++            assert_eq!(error.raw_os_error(), Some(libc::EOVERFLOW));
++        }
++        assert!(file.inner.is_none());
++    }
++
++    #[cfg(target_os = "linux")]
++    #[tokio::test]
++    async fn host_file_advice_accepts_individually_representable_boundary_ranges() {
++        let temp = TempDir::new().unwrap();
++        let path = temp.path().join("advice-boundary.txt");
++        std::fs::write(&path, b"contents").unwrap();
++        let std_file = std::fs::OpenOptions::new().read(true).open(&path).unwrap();
++
++        let file = File::new(
++            Handle::current(),
++            std_file,
++            path,
++            true,
++            false,
++            false,
++            false,
++            false,
++        );
++
++        let off_max = libc::off_t::MAX as u64;
++        file.advise(off_max, 1, FileAdvice::WillNeed).unwrap();
++        file.advise(off_max - 1, 3, FileAdvice::WillNeed).unwrap();
++        assert!(file.inner.is_none());
++    }
++
++    #[cfg(target_os = "linux")]
++    #[tokio::test]
++    async fn host_file_range_writeback_uses_existing_descriptor_without_async_clone() {
++        let temp = TempDir::new().unwrap();
++        let path = temp.path().join("writeback.txt");
++        std::fs::write(&path, vec![0u8; 8192]).unwrap();
++        let std_file = std::fs::OpenOptions::new()
++            .read(true)
++            .write(true)
++            .open(&path)
++            .unwrap();
++
++        let file = File::new(
++            Handle::current(),
++            std_file,
++            path,
++            true,
++            true,
++            false,
++            false,
++            false,
++        );
++
++        assert!(file.inner.is_none());
++        file.writeback_range(0, 4096, FileWritebackFlags::WRITE)
++            .unwrap();
++        file.writeback_range(0, 0, FileWritebackFlags::empty())
++            .unwrap();
++        assert!(file.inner.is_none());
++    }
++
++    #[cfg(target_os = "linux")]
++    #[tokio::test]
++    async fn host_file_range_writeback_rejects_unrepresentable_ranges() {
++        let temp = TempDir::new().unwrap();
++        let path = temp.path().join("writeback-overflow.txt");
++        std::fs::write(&path, b"contents").unwrap();
++        let std_file = std::fs::OpenOptions::new()
++            .read(true)
++            .write(true)
++            .open(&path)
++            .unwrap();
++
++        let file = File::new(
++            Handle::current(),
++            std_file,
++            path,
++            true,
++            true,
++            false,
++            false,
++            false,
++        );
++
++        let beyond_off_t = (libc::off64_t::MAX as u64) + 1;
++        for (offset, len) in [(beyond_off_t, 0), (0, beyond_off_t)] {
++            let error = file
++                .writeback_range(offset, len, FileWritebackFlags::WRITE)
++                .unwrap_err();
++            assert_eq!(error.raw_os_error(), Some(libc::EOVERFLOW));
++        }
++        for (offset, len) in [
++            (libc::off64_t::MAX as u64, 1),
++            (libc::off64_t::MAX as u64 - 1, 2),
++        ] {
++            let error = file
++                .writeback_range(offset, len, FileWritebackFlags::WRITE)
++                .unwrap_err();
++            assert_eq!(error.raw_os_error(), Some(libc::EINVAL));
++        }
++        assert!(file.inner.is_none());
++    }
++
++    #[cfg(target_os = "linux")]
++    #[tokio::test]
++    async fn host_file_range_writeback_accepts_maximum_finite_boundary() {
++        let temp = TempDir::new().unwrap();
++        let path = temp.path().join("writeback-boundary.txt");
++        std::fs::write(&path, b"contents").unwrap();
++        let std_file = std::fs::OpenOptions::new()
++            .read(true)
++            .write(true)
++            .open(&path)
++            .unwrap();
++
++        let file = File::new(
++            Handle::current(),
++            std_file,
++            path,
++            true,
++            true,
++            false,
++            false,
++            false,
++        );
++
++        file.writeback_range(
++            libc::off64_t::MAX as u64 - 1,
++            1,
++            FileWritebackFlags::empty(),
++        )
++        .unwrap();
++        assert!(file.inner.is_none());
++    }
+ 
+     #[tokio::test]
+     async fn test_new_filesystem() {
+@@ -1050,6 +1991,172 @@ mod tests {
+         );
+     }
+ 
++    #[cfg(target_os = "linux")]
++    #[tokio::test]
++    async fn host_directory_sync_retains_identity_after_rename() {
++        let temp = TempDir::new().unwrap();
++        let original = temp.path().join("original");
++        let renamed = temp.path().join("renamed");
++        std::fs::create_dir(&original).unwrap();
++
++        let fs = FileSystem::new(Handle::current(), temp.path()).expect("get filesystem");
++        let directory = fs.open_dir(Path::new("/original")).unwrap();
++        assert!(directory.has_blocking_sync_all_to_disk());
++
++        std::fs::rename(&original, &renamed).unwrap();
++        assert!(!original.exists());
++
++        // A path-reopen implementation would fail here. The retained host
++        // descriptor continues to refer to the directory opened above.
++        directory.sync_all_to_disk_blocking().unwrap();
++        directory.sync_all_to_disk().await.unwrap();
++    }
++
++    #[tokio::test]
++    async fn host_file_write_at_preserves_cursor_and_syncs() {
++        let temp = TempDir::new().unwrap();
++        let path = temp.path().join("foo.txt");
++        std::fs::write(&path, b"abcdef").unwrap();
++
++        let fs = FileSystem::new(Handle::current(), temp.path()).expect("get filesystem");
++        let mut file = fs
++            .new_open_options()
++            .read(true)
++            .write(true)
++            .open(Path::new("/foo.txt"))
++            .expect("open file");
++
++        file.seek(SeekFrom::Start(3)).await.unwrap();
++        assert_eq!(file.write_at(b"XY", 1).await.unwrap(), 2);
++        assert_eq!(file.seek(SeekFrom::Current(0)).await.unwrap(), 3);
++        assert!(file.has_blocking_read_at());
++        let mut read_buf = [0; 2];
++        assert_eq!(file.read_at_blocking(&mut read_buf, 1).unwrap(), 2);
++        assert_eq!(&read_buf, b"XY");
++        assert_eq!(file.seek(SeekFrom::Current(0)).await.unwrap(), 3);
++        assert!(file.has_blocking_read_at_shared());
++        let mut shared_read_buf = [0; 2];
++        assert_eq!(
++            file.read_at_blocking_shared(&mut shared_read_buf, 1)
++                .unwrap(),
++            2
++        );
++        assert_eq!(&shared_read_buf, b"XY");
++        assert_eq!(file.seek(SeekFrom::Current(0)).await.unwrap(), 3);
++        assert!(file.has_blocking_read());
++        file.seek_blocking(SeekFrom::Start(0)).unwrap();
++        let mut read_buf = [0; 1];
++        assert_eq!(file.read_blocking(&mut read_buf).unwrap(), 1);
++        assert_eq!(&read_buf, b"a");
++        file.seek_blocking(SeekFrom::Start(3)).unwrap();
++        assert!(file.has_blocking_write_at());
++        assert_eq!(file.write_at_blocking(b"ZZ", 4).unwrap(), 2);
++        assert_eq!(file.seek(SeekFrom::Current(0)).await.unwrap(), 3);
++        assert!(file.has_blocking_write_at_shared());
++        assert_eq!(file.write_at_blocking_shared(b"QQ", 4).unwrap(), 2);
++        assert_eq!(file.seek(SeekFrom::Current(0)).await.unwrap(), 3);
++        assert!(file.has_blocking_write_vectored_at());
++        let bufs = [IoSlice::new(b"12"), IoSlice::new(b"34")];
++        assert_eq!(file.write_vectored_at_blocking(&bufs, 1).unwrap(), 4);
++        assert_eq!(file.seek(SeekFrom::Current(0)).await.unwrap(), 3);
++        assert!(file.has_blocking_write_vectored_at_shared());
++        let bufs = [IoSlice::new(b"56"), IoSlice::new(b"78")];
++        assert_eq!(file.write_vectored_at_blocking_shared(&bufs, 1).unwrap(), 4);
++        assert_eq!(file.seek(SeekFrom::Current(0)).await.unwrap(), 3);
++        assert!(file.has_blocking_write_zeroes_at());
++        assert_eq!(file.write_zeroes_at_blocking(2, 2).unwrap(), 2);
++        assert_eq!(file.seek(SeekFrom::Current(0)).await.unwrap(), 3);
++        assert!(file.has_blocking_write_zeroes_at_shared());
++        assert_eq!(file.write_zeroes_at_blocking_shared(2, 2).unwrap(), 2);
++        assert_eq!(file.seek(SeekFrom::Current(0)).await.unwrap(), 3);
++        assert!(file.has_blocking_seek());
++        assert!(file.has_blocking_write());
++        assert_eq!(file.seek_blocking(SeekFrom::Start(3)).unwrap(), 3);
++        assert_eq!(file.write_blocking(b"Y").unwrap(), 1);
++        assert_eq!(file.seek(SeekFrom::Current(0)).await.unwrap(), 4);
++        assert!(file.has_blocking_sync_data_to_disk());
++        assert!(file.has_blocking_sync_all_to_disk());
++        file.sync_data_to_disk_blocking().unwrap();
++        file.sync_all_to_disk_blocking().unwrap();
++        file.sync_data_to_disk().await.unwrap();
++        file.sync_all_to_disk().await.unwrap();
++        assert_eq!(file.write_zeroes_at_blocking(3, 6).unwrap(), 3);
++        assert_eq!(file.seek(SeekFrom::Current(0)).await.unwrap(), 4);
++
++        drop(file);
++        assert_eq!(std::fs::read(path).unwrap(), b"a5\0Y8Q\0\0\0");
++    }
++
++    #[cfg(any(unix, windows))]
++    #[tokio::test]
++    async fn host_file_shared_positioned_reads_are_concurrent_and_cursor_invariant() {
++        let temp = TempDir::new().unwrap();
++        let path = temp.path().join("shared-positioned-read.txt");
++        let contents = b"0123456789abcdefghijklmnopqrstuv";
++        std::fs::write(&path, contents).unwrap();
++
++        let fs = FileSystem::new(Handle::current(), temp.path()).expect("get filesystem");
++        let mut file = fs
++            .new_open_options()
++            .read(true)
++            .open(Path::new("/shared-positioned-read.txt"))
++            .expect("open file");
++        file.seek_blocking(SeekFrom::Start(7)).unwrap();
++        assert!(file.has_blocking_read_at_shared());
++
++        let file = Arc::new(file);
++        let barrier = Arc::new(Barrier::new(4));
++        let readers = [(0_u64, b"0123"), (8, b"89ab"), (16, b"ghij"), (24, b"opqr")]
++            .into_iter()
++            .map(|(offset, expected)| {
++                let file = file.clone();
++                let barrier = barrier.clone();
++                std::thread::spawn(move || {
++                    barrier.wait();
++                    for _ in 0..256 {
++                        let mut buf = [0_u8; 4];
++                        assert_eq!(
++                            file.read_at_blocking_shared(&mut buf, offset).unwrap(),
++                            buf.len()
++                        );
++                        assert_eq!(&buf, expected);
++                    }
++                })
++            })
++            .collect::<Vec<_>>();
++
++        for reader in readers {
++            reader.join().unwrap();
++        }
++        let mut file = Arc::try_unwrap(file).expect("reader retained the host file");
++        assert_eq!(file.seek_blocking(SeekFrom::Current(0)).unwrap(), 7);
++    }
++
++    #[tokio::test]
++    async fn host_file_reports_native_sync_open_modes() {
++        let temp = TempDir::new().unwrap();
++        std::fs::write(temp.path().join("foo.txt"), b"").unwrap();
++
++        let fs = FileSystem::new(Handle::current(), temp.path()).expect("get filesystem");
++        let data_sync_file = fs
++            .new_open_options()
++            .write(true)
++            .data_sync(true)
++            .open(Path::new("/foo.txt"))
++            .expect("open data-sync file");
++        assert!(data_sync_file.is_sync_on_write(false));
++        assert!(!data_sync_file.is_sync_on_write(true));
++
++        let sync_file = fs
++            .new_open_options()
++            .write(true)
++            .sync(true)
++            .open(Path::new("/foo.txt"))
++            .expect("open sync file");
++        assert!(sync_file.is_sync_on_write(false));
++        assert!(sync_file.is_sync_on_write(true));
++    }
++
+     #[tokio::test]
+     async fn test_create_dir() {
+         let temp: TempDir = TempDir::new().unwrap();
+diff --git a/lib/virtual-fs/src/lib.rs b/lib/virtual-fs/src/lib.rs
+index 4fc7c5b..4fc28c2 100644
+--- a/lib/virtual-fs/src/lib.rs
++++ b/lib/virtual-fs/src/lib.rs
+@@ -9,7 +9,7 @@ use shared_buffer::OwnedBuffer;
+ use std::any::Any;
+ use std::ffi::OsString;
+ use std::fmt;
+-use std::io;
++use std::io::{self, SeekFrom};
+ use std::ops::Deref;
+ use std::path::{Path, PathBuf};
+ use std::pin::Pin;
+@@ -85,6 +85,68 @@ pub trait ClonableVirtualFile: VirtualFile + Clone {}
+ 
+ pub use ops::{copy_reference, copy_reference_ext, create_dir_all, walk};
+ 
++/// Backend-neutral file access advice.
++///
++/// These variants correspond one-for-one with the six defined WASI
++/// `advice` values. Backends must treat advice as a range-scoped hint; a
++/// backend that cannot preserve those semantics should return
++/// [`io::ErrorKind::Unsupported`] instead of approximating them with a
++/// process-wide or persistent cache policy.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum FileAdvice {
++    Normal,
++    Sequential,
++    Random,
++    WillNeed,
++    DontNeed,
++    NoReuse,
++}
++
++/// Backend-neutral controls for range-scoped file writeback.
++///
++/// These bits intentionally mirror Linux `sync_file_range(2)`, but this type
++/// does not imply durability: writeback does not flush file metadata or a
++/// device's volatile write cache. Backends that cannot preserve these exact
++/// advisory semantics must report [`io::ErrorKind::Unsupported`].
++#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
++pub struct FileWritebackFlags(u8);
++
++impl FileWritebackFlags {
++    pub const WAIT_BEFORE: Self = Self(1);
++    pub const WRITE: Self = Self(2);
++    pub const WAIT_AFTER: Self = Self(4);
++
++    const VALID_BITS: u32 = Self::WAIT_BEFORE.bits() | Self::WRITE.bits() | Self::WAIT_AFTER.bits();
++
++    pub const fn empty() -> Self {
++        Self(0)
++    }
++
++    pub const fn from_bits(bits: u32) -> Option<Self> {
++        if bits & !Self::VALID_BITS == 0 {
++            Some(Self(bits as u8))
++        } else {
++            None
++        }
++    }
++
++    pub const fn bits(self) -> u32 {
++        self.0 as u32
++    }
++
++    pub const fn contains(self, other: Self) -> bool {
++        self.bits() & other.bits() == other.bits()
++    }
++}
++
++impl std::ops::BitOr for FileWritebackFlags {
++    type Output = Self;
++
++    fn bitor(self, rhs: Self) -> Self::Output {
++        Self(self.0 | rhs.0)
++    }
++}
++
+ pub trait FileSystem: fmt::Debug + Send + Sync + 'static + Upcastable {
+     fn readlink(&self, path: &Path) -> Result<PathBuf>;
+     fn read_dir(&self, path: &Path) -> Result<ReadDir>;
+@@ -101,6 +163,17 @@ pub trait FileSystem: fmt::Debug + Send + Sync + 'static + Upcastable {
+     fn symlink_metadata(&self, path: &Path) -> Result<Metadata>;
+     fn remove_file(&self, path: &Path) -> Result<()>;
+ 
++    /// Open a directory as a stable object that can be synchronized later.
++    ///
++    /// This is deliberately separate from [`FileOpener`]: a directory handle
++    /// must retain the identity of the opened directory across renames and
++    /// unlinks, while reopening a path at sync time can target a different
++    /// directory. Backends without a real directory-sync primitive must fail
++    /// closed instead of reporting a successful no-op.
++    fn open_dir(&self, _path: &Path) -> Result<Box<dyn VirtualDirectory + Send + Sync>> {
++        Err(FsError::Unsupported)
++    }
++
+     fn new_open_options(&self) -> OpenOptions<'_>;
+ }
+ 
+@@ -157,11 +230,34 @@ where
+         (**self).remove_file(path)
+     }
+ 
++    fn open_dir(&self, path: &Path) -> Result<Box<dyn VirtualDirectory + Send + Sync>> {
++        (**self).open_dir(path)
++    }
++
+     fn new_open_options(&self) -> OpenOptions<'_> {
+         (**self).new_open_options()
+     }
+ }
+ 
++/// An opened directory whose identity is independent of its current path.
++///
++/// Directory entries are metadata on POSIX filesystems, so both WASI
++/// `fd_sync` and `fd_datasync` use the full-directory sync operation exposed
++/// here. Implementations must not substitute a flush/no-op for durable sync.
++pub trait VirtualDirectory: fmt::Debug + Send + Sync + 'static {
++    fn sync_all_to_disk(&self) -> BoxFuture<'_, io::Result<()>> {
++        Box::pin(async { Err(io::ErrorKind::Unsupported.into()) })
++    }
++
++    fn has_blocking_sync_all_to_disk(&self) -> bool {
++        false
++    }
++
++    fn sync_all_to_disk_blocking(&self) -> io::Result<()> {
++        Err(io::ErrorKind::Unsupported.into())
++    }
++}
++
+ pub trait FileOpener {
+     fn open(
+         &self,
+@@ -178,6 +274,8 @@ pub struct OpenOptionsConfig {
+     pub create: bool,
+     pub append: bool,
+     pub truncate: bool,
++    pub sync: bool,
++    pub data_sync: bool,
+ }
+ 
+ impl OpenOptionsConfig {
+@@ -190,6 +288,8 @@ impl OpenOptionsConfig {
+             create: parent_rights.create && self.create,
+             append: parent_rights.append && self.append,
+             truncate: parent_rights.truncate && self.truncate,
++            sync: self.sync,
++            data_sync: self.data_sync,
+         }
+     }
+ 
+@@ -217,6 +317,14 @@ impl OpenOptionsConfig {
+         self.truncate
+     }
+ 
++    pub const fn sync(&self) -> bool {
++        self.sync
++    }
++
++    pub const fn data_sync(&self) -> bool {
++        self.data_sync
++    }
++
+     /// Would a file opened with this [`OpenOptionsConfig`] change files on the
+     /// filesystem.
+     pub const fn would_mutate(&self) -> bool {
+@@ -227,6 +335,8 @@ impl OpenOptionsConfig {
+             create,
+             append,
+             truncate,
++            sync: _,
++            data_sync: _,
+         } = *self;
+         append || write || create || create_new || truncate
+     }
+@@ -254,6 +364,8 @@ impl<'a> OpenOptions<'a> {
+                 create: false,
+                 append: false,
+                 truncate: false,
++                sync: false,
++                data_sync: false,
+             },
+         }
+     }
+@@ -323,6 +435,18 @@ impl<'a> OpenOptions<'a> {
+         self
+     }
+ 
++    /// Sets synchronous write-through semantics for file data and metadata.
++    pub fn sync(&mut self, sync: bool) -> &mut Self {
++        self.conf.sync = sync;
++        self
++    }
++
++    /// Sets synchronous write-through semantics for file data.
++    pub fn data_sync(&mut self, data_sync: bool) -> &mut Self {
++        self.conf.data_sync = data_sync;
++        self
++    }
++
+     pub fn open<P: AsRef<Path>>(
+         &mut self,
+         path: P,
+@@ -374,12 +498,282 @@ pub trait VirtualFile:
+         None
+     }
+ 
++    /// Returns whether this handle was opened with read access when the backend
++    /// can report that cheaply.
++    fn open_read(&self) -> Option<bool> {
++        None
++    }
++
++    /// Returns whether this handle was opened with write access when the backend
++    /// can report that cheaply.
++    fn open_write(&self) -> Option<bool> {
++        None
++    }
++
+     /// Writes to this file using an mmap offset and reference
+     /// (this method only works for mmap optimized file systems)
+     fn write_from_mmap(&mut self, _offset: u64, _len: u64) -> std::io::Result<()> {
+         Err(std::io::ErrorKind::Unsupported.into())
+     }
+ 
++    /// Advise the backing filesystem about access to one byte range.
++    ///
++    /// The default is deliberately unsupported: silently accepting advice
++    /// would prevent callers from distinguishing a real range-scoped hint
++    /// from a no-op.
++    fn advise(&self, _offset: u64, _len: u64, _advice: FileAdvice) -> io::Result<()> {
++        Err(io::ErrorKind::Unsupported.into())
++    }
++
++    /// Initiate and/or wait for writeback of one file range.
++    ///
++    /// This is an advisory writeback operation, not a durability primitive.
++    /// In particular, callers must continue using data/full sync operations
++    /// wherever crash durability is required.
++    fn writeback_range(
++        &self,
++        _offset: u64,
++        _len: u64,
++        _flags: FileWritebackFlags,
++    ) -> io::Result<()> {
++        Err(io::ErrorKind::Unsupported.into())
++    }
++
++    /// Returns whether this file has a native blocking seek path.
++    ///
++    /// Runtime users can use this to avoid async scheduling overhead for host
++    /// regular files while preserving the async fallback for virtual files.
++    fn has_blocking_seek(&self) -> bool {
++        false
++    }
++
++    /// Seek using a backend-native blocking primitive.
++    ///
++    /// Only call this when [`VirtualFile::has_blocking_seek`] returns true.
++    fn seek_blocking(&mut self, _pos: SeekFrom) -> io::Result<u64> {
++        Err(io::ErrorKind::Unsupported.into())
++    }
++
++    /// Returns whether this file has a native blocking cursor-read path.
++    fn has_blocking_read(&self) -> bool {
++        false
++    }
++
++    /// Read from the current file cursor using a backend-native blocking
++    /// primitive.
++    ///
++    /// Only call this when [`VirtualFile::has_blocking_read`] returns true.
++    fn read_blocking(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
++        Err(io::ErrorKind::Unsupported.into())
++    }
++
++    /// Returns whether this file has a native blocking positioned-read path.
++    fn has_blocking_read_at(&self) -> bool {
++        false
++    }
++
++    /// Read at a file offset using a backend-native blocking primitive.
++    ///
++    /// Only call this when [`VirtualFile::has_blocking_read_at`] returns true.
++    fn read_at_blocking(&mut self, _buf: &mut [u8], _offset: u64) -> io::Result<usize> {
++        Err(io::ErrorKind::Unsupported.into())
++    }
++
++    /// Returns whether this file has a native blocking positioned-read path
++    /// that can be called through a shared reference.
++    ///
++    /// Backends should only return true when the operation does not mutate
++    /// backend cursor state and the backend is safe to use concurrently.
++    fn has_blocking_read_at_shared(&self) -> bool {
++        false
++    }
++
++    /// Read at a file offset through a shared reference using a backend-native
++    /// blocking primitive.
++    ///
++    /// Only call this when [`VirtualFile::has_blocking_read_at_shared`]
++    /// returns true.
++    fn read_at_blocking_shared(&self, _buf: &mut [u8], _offset: u64) -> io::Result<usize> {
++        Err(io::ErrorKind::Unsupported.into())
++    }
++
++    /// Returns whether this file has a native blocking cursor-write path.
++    fn has_blocking_write(&self) -> bool {
++        false
++    }
++
++    /// Write at the current file cursor using a backend-native blocking
++    /// primitive.
++    ///
++    /// Only call this when [`VirtualFile::has_blocking_write`] returns true.
++    fn write_blocking(&mut self, _buf: &[u8]) -> io::Result<usize> {
++        Err(io::ErrorKind::Unsupported.into())
++    }
++
++    /// Write at a file offset without changing the file cursor.
++    ///
++    /// File-system backends should override this when they have a native
++    /// positioned-write primitive. The fallback preserves POSIX `pwrite`
++    /// cursor semantics for backends that only expose seek/write.
++    fn write_at<'a>(&'a mut self, buf: &'a [u8], offset: u64) -> BoxFuture<'a, io::Result<usize>> {
++        Box::pin(async move {
++            let cursor = self.seek(SeekFrom::Current(0)).await?;
++            self.seek(SeekFrom::Start(offset)).await?;
++            let write_result = self.write(buf).await;
++            let restore_result = self.seek(SeekFrom::Start(cursor)).await;
++
++            match (write_result, restore_result) {
++                (Ok(written), Ok(_)) => Ok(written),
++                (Err(err), _) => Err(err),
++                (Ok(_), Err(err)) => Err(err),
++            }
++        })
++    }
++
++    /// Returns whether this file has a native blocking positioned-write path.
++    ///
++    /// Runtime users can use this to avoid async scheduling overhead for host
++    /// regular files while preserving the async fallback for virtual files.
++    fn has_blocking_write_at(&self) -> bool {
++        false
++    }
++
++    /// Write at a file offset using a backend-native blocking primitive.
++    ///
++    /// Only call this when [`VirtualFile::has_blocking_write_at`] returns true.
++    fn write_at_blocking(&mut self, _buf: &[u8], _offset: u64) -> io::Result<usize> {
++        Err(io::ErrorKind::Unsupported.into())
++    }
++
++    /// Returns whether this file has a native blocking positioned-write path
++    /// that can be called through a shared reference.
++    ///
++    /// Backends should only return true when the operation does not mutate
++    /// backend cursor state and the backend is safe to use concurrently.
++    fn has_blocking_write_at_shared(&self) -> bool {
++        false
++    }
++
++    /// Write at a file offset through a shared reference using a backend-native
++    /// blocking primitive.
++    ///
++    /// Only call this when [`VirtualFile::has_blocking_write_at_shared`]
++    /// returns true.
++    fn write_at_blocking_shared(&self, _buf: &[u8], _offset: u64) -> io::Result<usize> {
++        Err(io::ErrorKind::Unsupported.into())
++    }
++
++    /// Returns whether this file has a native blocking vectored
++    /// positioned-write path.
++    fn has_blocking_write_vectored_at(&self) -> bool {
++        false
++    }
++
++    /// Vectored write at a file offset using a backend-native blocking
++    /// primitive.
++    ///
++    /// Only call this when [`VirtualFile::has_blocking_write_vectored_at`]
++    /// returns true.
++    fn write_vectored_at_blocking(
++        &mut self,
++        _bufs: &[io::IoSlice<'_>],
++        _offset: u64,
++    ) -> io::Result<usize> {
++        Err(io::ErrorKind::Unsupported.into())
++    }
++
++    /// Returns whether this file has a native blocking vectored
++    /// positioned-write path that can be called through a shared reference.
++    fn has_blocking_write_vectored_at_shared(&self) -> bool {
++        false
++    }
++
++    /// Vectored write at a file offset through a shared reference using a
++    /// backend-native blocking primitive.
++    ///
++    /// Only call this when [`VirtualFile::has_blocking_write_vectored_at_shared`]
++    /// returns true.
++    fn write_vectored_at_blocking_shared(
++        &self,
++        _bufs: &[io::IoSlice<'_>],
++        _offset: u64,
++    ) -> io::Result<usize> {
++        Err(io::ErrorKind::Unsupported.into())
++    }
++
++    /// Returns whether this file has a native blocking positioned zero-write
++    /// path.
++    fn has_blocking_write_zeroes_at(&self) -> bool {
++        false
++    }
++
++    /// Write zero bytes at a file offset using a backend-native blocking
++    /// primitive.
++    ///
++    /// Only call this when [`VirtualFile::has_blocking_write_zeroes_at`]
++    /// returns true.
++    fn write_zeroes_at_blocking(&mut self, _len: u64, _offset: u64) -> io::Result<usize> {
++        Err(io::ErrorKind::Unsupported.into())
++    }
++
++    /// Returns whether this file has a native blocking positioned zero-write
++    /// path that can be called through a shared reference.
++    fn has_blocking_write_zeroes_at_shared(&self) -> bool {
++        false
++    }
++
++    /// Write zero bytes at a file offset through a shared reference using a
++    /// backend-native blocking primitive.
++    ///
++    /// Only call this when [`VirtualFile::has_blocking_write_zeroes_at_shared`]
++    /// returns true.
++    fn write_zeroes_at_blocking_shared(&self, _len: u64, _offset: u64) -> io::Result<usize> {
++        Err(io::ErrorKind::Unsupported.into())
++    }
++
++    /// Synchronize file data to durable storage.
++    fn sync_data_to_disk(&mut self) -> BoxFuture<'_, io::Result<()>> {
++        Box::pin(async move { self.flush().await })
++    }
++
++    /// Synchronize file data and metadata to durable storage.
++    fn sync_all_to_disk(&mut self) -> BoxFuture<'_, io::Result<()>> {
++        Box::pin(async move { self.flush().await })
++    }
++
++    /// Returns whether this file has a native blocking data-only sync path.
++    fn has_blocking_sync_data_to_disk(&self) -> bool {
++        false
++    }
++
++    /// Synchronize file data using a backend-native blocking primitive.
++    ///
++    /// Only call this when [`VirtualFile::has_blocking_sync_data_to_disk`]
++    /// returns true.
++    fn sync_data_to_disk_blocking(&mut self) -> io::Result<()> {
++        Err(io::ErrorKind::Unsupported.into())
++    }
++
++    /// Returns whether this file has a native blocking full sync path.
++    fn has_blocking_sync_all_to_disk(&self) -> bool {
++        false
++    }
++
++    /// Synchronize file data and metadata using a backend-native blocking
++    /// primitive.
++    ///
++    /// Only call this when [`VirtualFile::has_blocking_sync_all_to_disk`]
++    /// returns true.
++    fn sync_all_to_disk_blocking(&mut self) -> io::Result<()> {
++        Err(io::ErrorKind::Unsupported.into())
++    }
++
++    /// Returns whether this file handle was opened with host-native
++    /// synchronous write-through semantics.
++    fn is_sync_on_write(&self, _sync_metadata: bool) -> bool {
++        false
++    }
++
+     /// This method will copy a file from a source to this destination where
+     /// the default is to do a straight byte copy however file system implementors
+     /// may optimize this to do a zero copy
+@@ -765,3 +1159,53 @@ impl Iterator for ReadDir {
+         None
+     }
+ }
++
++#[cfg(test)]
++mod advice_tests {
++    use super::{FileAdvice, FileWritebackFlags, NullFile, VirtualFile};
++
++    #[test]
++    fn virtual_file_advice_defaults_to_unsupported() {
++        let file = NullFile::default();
++        let error = file.advise(0, 4096, FileAdvice::WillNeed).unwrap_err();
++
++        assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
++    }
++
++    #[test]
++    fn virtual_file_shared_positioned_read_defaults_to_unsupported() {
++        let file = NullFile::default();
++        let mut buf = [0_u8; 1];
++
++        assert!(!file.has_blocking_read_at_shared());
++        let error = file.read_at_blocking_shared(&mut buf, 0).unwrap_err();
++        assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
++    }
++
++    #[test]
++    fn file_writeback_flags_preserve_the_linux_abi_bits() {
++        assert_eq!(FileWritebackFlags::WAIT_BEFORE.bits(), 1);
++        assert_eq!(FileWritebackFlags::WRITE.bits(), 2);
++        assert_eq!(FileWritebackFlags::WAIT_AFTER.bits(), 4);
++        assert_eq!(FileWritebackFlags::empty().bits(), 0);
++        assert_eq!(
++            (FileWritebackFlags::WAIT_BEFORE
++                | FileWritebackFlags::WRITE
++                | FileWritebackFlags::WAIT_AFTER)
++                .bits(),
++            7
++        );
++        assert!(FileWritebackFlags::from_bits(7).is_some());
++        assert!(FileWritebackFlags::from_bits(8).is_none());
++    }
++
++    #[test]
++    fn virtual_file_writeback_defaults_to_unsupported() {
++        let file = NullFile::default();
++        let error = file
++            .writeback_range(0, 4096, FileWritebackFlags::WRITE)
++            .unwrap_err();
++
++        assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
++    }
++}
+diff --git a/lib/virtual-fs/src/mount_fs.rs b/lib/virtual-fs/src/mount_fs.rs
+index 25b9e23..f921671 100644
+--- a/lib/virtual-fs/src/mount_fs.rs
++++ b/lib/virtual-fs/src/mount_fs.rs
+@@ -695,6 +695,22 @@ impl FileSystem for MountFileSystem {
+         }
+     }
+ 
++    fn open_dir(&self, path: &Path) -> Result<Box<dyn VirtualDirectory + Send + Sync>> {
++        let path = self.prepare_path(path)?;
++
++        if let Some(node) = self.exact_node(&path)
++            && node.fs.is_none()
++        {
++            // A synthetic mount-tree directory has no durable backing object.
++            return Err(FsError::Unsupported);
++        }
++
++        match self.resolve_mount(path) {
++            Some(resolved) => resolved.fs.open_dir(&resolved.delegated_path),
++            None => Err(FsError::EntryNotFound),
++        }
++    }
++
+     fn new_open_options(&self) -> OpenOptions<'_> {
+         OpenOptions::new(self)
+     }
+@@ -988,6 +1004,8 @@ mod tests {
+                 create: true,
+                 append: false,
+                 truncate: false,
++                sync: false,
++                data_sync: false,
+             },
+         )
+         .unwrap();
+@@ -1001,6 +1019,8 @@ mod tests {
+                 create: true,
+                 append: false,
+                 truncate: false,
++                sync: false,
++                data_sync: false,
+             },
+         )
+         .unwrap();
+diff --git a/lib/virtual-fs/src/overlay_fs.rs b/lib/virtual-fs/src/overlay_fs.rs
+index 846bdf7..bd608f6 100644
+--- a/lib/virtual-fs/src/overlay_fs.rs
++++ b/lib/virtual-fs/src/overlay_fs.rs
+@@ -427,6 +427,44 @@ where
+         self.permission_error_or_not_found(path)
+     }
+ 
++    fn open_dir(
++        &self,
++        path: &Path,
++    ) -> crate::Result<Box<dyn crate::VirtualDirectory + Send + Sync>> {
++        if ops::is_white_out(path).is_some() {
++            return Err(FsError::EntryNotFound);
++        }
++
++        // Sync the highest-precedence directory that is actually visible.
++        // In particular, do not bypass an unsupported writable upper layer
++        // and report success after syncing an unrelated lower directory.
++        match self.primary.metadata(path) {
++            Ok(metadata) if metadata.is_dir() => return self.primary.open_dir(path),
++            Ok(_) => return Err(FsError::NotAFile),
++            Err(error) if should_continue(error) => {}
++            Err(error) => return Err(error),
++        }
++
++        if ops::has_white_out(&self.primary, path) {
++            return Err(FsError::EntryNotFound);
++        }
++
++        for fs in self.secondaries.filesystems() {
++            match fs.metadata(path) {
++                // A lower-only directory can be copied up after this open. A
++                // handle to the lower inode could then return successful fsync
++                // without making the visible upper-layer mutation durable.
++                // Fail closed until the directory exists in the mutable primary.
++                Ok(metadata) if metadata.is_dir() => return Err(FsError::Unsupported),
++                Ok(_) => return Err(FsError::NotAFile),
++                Err(error) if should_continue(error) => continue,
++                Err(error) => return Err(error),
++            }
++        }
++
++        Err(FsError::EntryNotFound)
++    }
++
+     fn new_open_options(&self) -> OpenOptions<'_> {
+         OpenOptions::new(self)
+     }
+@@ -1176,6 +1214,20 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn lower_only_directory_handle_fails_closed_before_copy_up() {
++        let primary = MemFS::default();
++        let secondary = MemFS::default();
++        ops::create_dir_all(&secondary, "/lower-only").unwrap();
++        let overlay = OverlayFileSystem::new(primary, [secondary]);
++
++        assert!(overlay.metadata(Path::new("/lower-only")).unwrap().is_dir());
++        assert!(matches!(
++            overlay.open_dir(Path::new("/lower-only")),
++            Err(FsError::Unsupported)
++        ));
++    }
++
+     #[tokio::test]
+     async fn remove_directory() {
+         let primary = MemFS::default();
+diff --git a/lib/virtual-fs/src/passthru_fs.rs b/lib/virtual-fs/src/passthru_fs.rs
+index a32f9da..5fe117b 100644
+--- a/lib/virtual-fs/src/passthru_fs.rs
++++ b/lib/virtual-fs/src/passthru_fs.rs
+@@ -61,6 +61,10 @@ impl FileSystem for PassthruFileSystem {
+         self.fs.remove_file(path)
+     }
+ 
++    fn open_dir(&self, path: &Path) -> Result<Box<dyn VirtualDirectory + Send + Sync>> {
++        self.fs.open_dir(path)
++    }
++
+     fn new_open_options(&self) -> OpenOptions<'_> {
+         self.fs.new_open_options()
+     }
+diff --git a/lib/virtual-fs/src/trace_fs.rs b/lib/virtual-fs/src/trace_fs.rs
+index 667bc84..139034e 100644
+--- a/lib/virtual-fs/src/trace_fs.rs
++++ b/lib/virtual-fs/src/trace_fs.rs
+@@ -83,6 +83,14 @@ where
+         self.0.remove_file(path)
+     }
+ 
++    #[tracing::instrument(level = "trace", skip(self), err)]
++    fn open_dir(
++        &self,
++        path: &std::path::Path,
++    ) -> crate::Result<Box<dyn crate::VirtualDirectory + Send + Sync>> {
++        self.0.open_dir(path)
++    }
++
+     #[tracing::instrument(level = "trace", skip(self))]
+     fn new_open_options(&self) -> crate::OpenOptions<'_> {
+         crate::OpenOptions::new(self)
+

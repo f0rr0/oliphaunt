@@ -44,16 +44,96 @@ feature_macro = "PG_WASIX_ATOMIC_LATCH_STATE"
 native_behavior_preserved = true
 
 [current_runtime_patches.wasmer]
-path = "runtime/patches/wasmer/0001-postgres-wasix-blockers.patch"
+path = "runtime/patches/wasmer/series"
 base_commit = "1d1b3420beef28550afbb4692b664bd7f6bc2581"
-sha256 = "2f96deacd77fca90b5010bf54e5b7db8c3de13f6f8137a337ac30b0a03005fdb"
-bytes = 1728487
+sha256 = "c8303bd20b6fdca187eb10823ff232956c7257f4c26e4402bba0cc86ac57aad4"
+bytes = 444
+
+[[current_runtime_patches.wasmer.file]]
+path = "runtime/patches/wasmer/0001-engine-memory-and-exception-lifetimes.patch"
+sha256 = "ca1af4b7687f4bde599cecd9f88b361ea07f9010784eae9b1e85e464e4ac3242"
+bytes = 300305
+
+[[current_runtime_patches.wasmer.file]]
+path = "runtime/patches/wasmer/0002-virtual-fs-file-description-and-writeback.patch"
+sha256 = "8f2a4449ed7accd54a1e7db0aea4d25eed81ed8c72e6dbf38c45a227f9275139"
+bytes = 71138
+
+[[current_runtime_patches.wasmer.file]]
+path = "runtime/patches/wasmer/0003-network-readiness-and-interest-lifetimes.patch"
+sha256 = "b8b75b0abe695ebb89363a44c1d1bb0d53eb6b8fdb1f4e502ba5e3b979acf717"
+bytes = 56152
+
+[[current_runtime_patches.wasmer.file]]
+path = "runtime/patches/wasmer/0004-wasix-open-file-description-operations.patch"
+sha256 = "cd72d05e0f2d0d711aba2c3306092a9719bdf0ab27640c29ef5897c316eb0378"
+bytes = 212636
+
+[[current_runtime_patches.wasmer.file]]
+path = "runtime/patches/wasmer/0005-wasix-process-thread-and-join-lifetimes.patch"
+sha256 = "7728df2aa0620680de06d21d761d24a4c288eba15259acc10623fc7b96394cd8"
+bytes = 263656
+
+[[current_runtime_patches.wasmer.file]]
+path = "runtime/patches/wasmer/0006-wasix-epoll-and-socket-readiness.patch"
+sha256 = "45adcba526a75a8eae61ec7ee412ef27ef38a96a8bc8825d2238612a9833a979"
+bytes = 118285
+
+[[current_runtime_patches.wasmer.file]]
+path = "runtime/patches/wasmer/0007-wasix-instance-linker-and-sealed-runtime.patch"
+sha256 = "52c41e6189b8b1fea350d02f198cb442148a951826f7a56f5f9842a20cc114b4"
+bytes = 434910
+
+[[current_runtime_patches.wasmer.file]]
+path = "runtime/patches/wasmer/0008-postmaster-executor-and-build-closure.patch"
+sha256 = "954ab1efaf5f6204303a12c8989843cb045be05170e30f075e018103014035f3"
+bytes = 275228
+
+[[current_runtime_patches.wasmer.file]]
+path = "runtime/patches/wasmer/0009-strict-shared-memory-compilation.patch"
+sha256 = "6b901e9a71ebb9d5f99df7d4e5f3d5cd95de95b2ee15079a799af7783fe46117"
+bytes = 6226
 
 [current_runtime_patches.wasix_libc]
-path = "runtime/patches/wasix-libc/0001-postgres-wasix-blockers.patch"
+path = "runtime/patches/wasix-libc/series"
 base_commit = "34178a6272804f90448b5bd08dc7bcf0d85438e3"
-sha256 = "27cee4e4670a9862b1487db75882e6b8583d6f9cd91a564075e15a4462fd1251"
-bytes = 59078
+sha256 = "cdbd601f9ec43c74b75840f0053683708b0fc99af6400034e467cc132005c595"
+bytes = 275
+
+[[current_runtime_patches.wasix_libc.file]]
+path = "runtime/patches/wasix-libc/0001-mmap-and-allocator-exec-ownership.patch"
+sha256 = "b19aad2548d6f923b200a1bd9f3f230d7d4134defe3de73ab74947e911c986c7"
+bytes = 25638
+
+[[current_runtime_patches.wasix_libc.file]]
+path = "runtime/patches/wasix-libc/0002-file-flags-and-sync-range.patch"
+sha256 = "2435ae5577b86099dadcabcdf55c3fa40a0e3049943ca445ed34fe15fe276a01"
+bytes = 9541
+
+[[current_runtime_patches.wasix_libc.file]]
+path = "runtime/patches/wasix-libc/0003-socket-and-epoll-flags.patch"
+sha256 = "c1605fe87c8c3e934e2601d356ab5e29dd3e0e2552a3ff0ed22bc3937a6b0404"
+bytes = 2562
+
+[[current_runtime_patches.wasix_libc.file]]
+path = "runtime/patches/wasix-libc/0004-process-wait-signal-and-futex-semantics.patch"
+sha256 = "bc389b10eba5343f58d3da411c358ee38c100aad302c05f959b4cedd31f2f26b"
+bytes = 11324
+
+[[current_runtime_patches.wasix_libc.file]]
+path = "runtime/patches/wasix-libc/0005-wasm-eh-signal-context.patch"
+sha256 = "864046033c912ba7638e8c06b51326097aa976039e6ae6df5e4ef38ef1e4bbd1"
+bytes = 3624
+
+[[current_runtime_patches.wasix_libc.file]]
+path = "runtime/patches/wasix-libc/0006-process-resource-limit-import.patch"
+sha256 = "fdba599f3e526f6443871764305f7c45490ed6d19b405453bc333c7045740e24"
+bytes = 7648
+
+[[current_runtime_patches.wasix_libc.file]]
+path = "runtime/patches/wasix-libc/0007-word-at-a-time-memcmp.patch"
+sha256 = "46307be448af385a322cc7a2372d04f4fde339244c97219b6938fb80d9b786c6"
+bytes = 1947
 
 [postgresql]
 version = "18.4"

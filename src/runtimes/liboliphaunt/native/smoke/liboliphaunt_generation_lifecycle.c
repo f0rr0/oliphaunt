@@ -103,7 +103,31 @@ static void *claim_and_close_current_generation(void *data) {
     return NULL;
 }
 
+static int verify_backend_durability_arguments(void) {
+    char *overrides[] = {"-c", "fsync=off", "-c", "fsync=on"};
+    OliphauntHandle handle = {0};
+    handle.postgres_path = "/runtime/bin/postgres";
+    handle.pgdata = "/database/pgdata";
+    handle.startup_args = overrides;
+    for (size_t count = 0; count <= 4; count += 2) {
+        handle.startup_arg_count = count;
+        OliphauntBackendArgv args = {0};
+        CHECK(oliphaunt_build_backend_argv(&handle, &args) == 0, "build durability argv");
+        /* PostgreSQL starts with fsync=on; later caller GUCs may override it. */
+        bool fsync_enabled = true;
+        for (int i = 1; i < args.argc; i++) {
+            CHECK(strcmp(args.argv[i], "-F") != 0, "default argv must not disable fsync");
+            if (strcmp(args.argv[i], "fsync=off") == 0) fsync_enabled = false;
+            if (strcmp(args.argv[i], "fsync=on") == 0) fsync_enabled = true;
+        }
+        CHECK(fsync_enabled == (count != 2), "explicit fsync override ordering");
+        oliphaunt_free_backend_argv(&args);
+    }
+    return 0;
+}
+
 int main(void) {
+    if (verify_backend_durability_arguments() != 0) return 1;
     char *startup_args[] = {"-c", "search_path=public"};
     OliphauntHandle resident_config;
     memset(&resident_config, 0, sizeof(resident_config));

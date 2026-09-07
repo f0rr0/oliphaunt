@@ -1,0 +1,801 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH 1/7] libc: preserve mmap and allocator state across exec
+
+Keep mapped-file writeback, fixed/shared mappings and allocator/sbrk ownership
+changes together. PostgreSQL uses shared mappings across EXEC_BACKEND children;
+allocator reset/growth must not overwrite those mappings. The mmap writeback
+probe accompanies the implementation. This is preserved integration behavior,
+not a claim that allocator or mapping redesign has been newly qualified.
+
+Extracted without runtime hunk changes from the inherited integration bundle.
+The complete ordered series is the build and qualification unit.
+
+diff --git a/dlmalloc/src/dlmalloc.c b/dlmalloc/src/dlmalloc.c
+index 331536b..e7063c5 100644
+--- a/dlmalloc/src/dlmalloc.c
++++ b/dlmalloc/src/dlmalloc.c
+@@ -12,6 +12,16 @@
+ // WebAssembly doesn't support shrinking linear memory.
+ #define MORECORE_CANNOT_TRIM 1
+ 
++// WASIX runtime facilities such as MAP_SHARED and dynamic linking also grow
++// linear memory. Consecutive MORECORE calls therefore are not contractually
++// contiguous even though each individual sbrk segment is exclusive.
++#define MORECORE_CONTIGUOUS 0
++
++// WASIX sbrk returns an exclusive segment of exactly the requested size.
++// dlmalloc must not infer that size from a later sbrk(0): another thread or a
++// direct caller can advance the logical break between those two calls.
++#define MORECORE_RETURNS_EXACT_SIZE 1
++
+ // Disable sanity checks to reduce code size.
+ #define ABORT __builtin_unreachable()
+ 
+diff --git a/dlmalloc/src/malloc.c b/dlmalloc/src/malloc.c
+index 96e6cea..e466124 100644
+--- a/dlmalloc/src/malloc.c
++++ b/dlmalloc/src/malloc.c
+@@ -4172,6 +4172,15 @@ static void* sys_alloc(mstate m, size_t nb) {
+   if (HAVE_MORECORE && tbase == CMFAIL) { /* Try noncontiguous MORECORE */
+     if (asize < HALF_MAX_SIZE_T) {
+       char* br = CMFAIL;
++#if defined(MORECORE_RETURNS_EXACT_SIZE) && MORECORE_RETURNS_EXACT_SIZE
++      ACQUIRE_MALLOC_GLOBAL_LOCK();
++      br = (char*)(CALL_MORECORE(asize));
++      RELEASE_MALLOC_GLOBAL_LOCK();
++      if (br != CMFAIL) {
++        tbase = br;
++        tsize = asize;
++      }
++#else
+       char* end = CMFAIL;
+       ACQUIRE_MALLOC_GLOBAL_LOCK();
+       br = (char*)(CALL_MORECORE(asize));
+@@ -4184,6 +4193,7 @@ static void* sys_alloc(mstate m, size_t nb) {
+           tsize = ssize;
+         }
+       }
++#endif
+     }
+   }
+ 
+diff --git a/emmalloc/emmalloc.c b/emmalloc/emmalloc.c
+index c98e42e..c76a2eb 100644
+--- a/emmalloc/emmalloc.c
++++ b/emmalloc/emmalloc.c
+@@ -54,9 +54,6 @@
+ #include <emscripten/trace.h>
+ #endif
+ 
+-// Defind by the linker to have the address of the start of the heap.
+-extern unsigned char __heap_base;
+-
+ // Behavior of right shifting a signed integer is compiler implementation defined.
+ static_assert((((int32_t)0x80000000U) >> 31) == -1, "This malloc implementation requires that right-shifting a signed integer produces a sign-extending (arithmetic) shift!");
+ 
+@@ -110,7 +107,7 @@ typedef struct RootRegion
+   uint8_t* endPtr;
+ } RootRegion;
+ 
+-#if defined(__EMSCRIPTEN_PTHREADS__)
++#if defined(__EMSCRIPTEN_PTHREADS__) || defined(_REENTRANT)
+ // In multithreaded builds, use a simple global spinlock strategy to acquire/release access to the memory allocator.
+ static volatile uint8_t multithreadingLock = 0;
+ #define MALLOC_ACQUIRE() while(__sync_lock_test_and_set(&multithreadingLock, 1)) { while(multithreadingLock) { /*nop*/ } }
+@@ -539,38 +536,24 @@ static bool claim_more_memory(size_t numBytes)
+   validate_memory_regions();
+ #endif
+ 
+-  uint8_t *startPtr;
+-  uint8_t *endPtr;
+-  do {
+-    // If this is the first time we're called, see if we can use
+-    // the initial heap memory set up by wasm-ld.
+-    if (!listOfAllRegions) {
+-      unsigned char *heap_end = sbrk(0);
+-      if (numBytes <= (size_t)(heap_end - &__heap_base)) {
+-        startPtr = &__heap_base;
+-        endPtr = heap_end;
+-	break;
+-      }
+-    }
+-
+-    // Round numBytes up to the nearest page size.
+-    numBytes = (numBytes + (PAGE_SIZE-1)) & -PAGE_SIZE;
++  // Runtime facilities can grow linear memory without transferring ownership
++  // to this allocator. Claim only the exact interval returned by positive
++  // sbrk; sbrk(0) is an address-space frontier, not an ownership boundary.
++  numBytes = (numBytes + (PAGE_SIZE-1)) & -PAGE_SIZE;
+ 
+-    // Claim memory via sbrk
+-    startPtr = (uint8_t*)sbrk(numBytes);
+-    if ((intptr_t)startPtr == -1)
+-    {
++  uint8_t *startPtr = (uint8_t*)sbrk(numBytes);
++  if ((intptr_t)startPtr == -1)
++  {
+ #ifdef EMMALLOC_VERBOSE
+-      MAIN_THREAD_ASYNC_EM_ASM(console.error('claim_more_memory: sbrk failed!'));
++    MAIN_THREAD_ASYNC_EM_ASM(console.error('claim_more_memory: sbrk failed!'));
+ #endif
+-      return false;
+-    }
++    return false;
++  }
+ #ifdef EMMALLOC_VERBOSE
+-    MAIN_THREAD_ASYNC_EM_ASM(console.log('claim_more_memory: claimed 0x' + ($0>>>0).toString(16) + ' - 0x' + ($1>>>0).toString(16) + ' (' + ($2>>>0) + ' bytes) via sbrk()'), startPtr, startPtr + numBytes, numBytes);
++  MAIN_THREAD_ASYNC_EM_ASM(console.log('claim_more_memory: claimed 0x' + ($0>>>0).toString(16) + ' - 0x' + ($1>>>0).toString(16) + ' (' + ($2>>>0) + ' bytes) via sbrk()'), startPtr, startPtr + numBytes, numBytes);
+ #endif
+-    assert(HAS_ALIGNMENT(startPtr, alignof(size_t)));
+-    endPtr = startPtr + numBytes;
+-  } while (0);
++  assert(HAS_ALIGNMENT(startPtr, alignof(size_t)));
++  uint8_t *endPtr = startPtr + numBytes;
+ 
+   // Create a sentinel region at the end of the new heap block
+   Region *endSentinelRegion = (Region*)(endPtr - sizeof(Region));
+diff --git a/libc-bottom-half/mman/mman.c b/libc-bottom-half/mman/mman.c
+index 7e26562..a156655 100644
+--- a/libc-bottom-half/mman/mman.c
++++ b/libc-bottom-half/mman/mman.c
+@@ -13,25 +13,188 @@
+ #include <errno.h>
+ #include <unistd.h>
+ #include <string.h>
++#include <stdint.h>
++#include <pthread.h>
+ #include <sys/mman.h>
+ #include <sys/types.h>
++#include <wasi/api.h>
++
++#define RUNTIME_MMAP_ALIGN ((size_t) 65536)
++
++int32_t __imported_wasix_32v1_mem_mmap(int32_t arg0, int32_t arg1,
++                                        int32_t arg2, int32_t arg3,
++                                        int32_t arg4, int64_t arg5,
++                                        int32_t arg6) __attribute__((
++    __import_module__("wasix_32v1"),
++    __import_name__("mem_mmap")
++));
++
++int32_t __imported_wasix_32v1_mem_munmap(int32_t arg0, int32_t arg1) __attribute__((
++    __import_module__("wasix_32v1"),
++    __import_name__("mem_munmap")
++));
++
++int32_t __imported_wasix_32v1_mem_msync(int32_t arg0, int32_t arg1,
++                                        int32_t arg2) __attribute__((
++    __import_module__("wasix_32v1"),
++    __import_name__("mem_msync")
++));
+ 
+ struct map {
++    void *addr;
+     int prot;
+     int flags;
+     off_t offset;
+     size_t length;
+     int fd;
++    struct map *next;
+ };
+ 
++/* Runtime-backed mappings live only in Wasmer's authoritative interval
++   registry. This guest list is solely for malloc-backed legacy emulation. */
++static struct map *legacy_maps;
++static pthread_mutex_t maps_lock = PTHREAD_MUTEX_INITIALIZER;
++
++static __wasi_errno_t runtime_mem_mmap(void *addr, size_t length, int prot,
++                                       int flags, int fd, off_t offset,
++                                       void **ret_addr) {
++    uintptr_t out = 0;
++    int32_t ret = __imported_wasix_32v1_mem_mmap(
++        (int32_t) (uintptr_t) addr,
++        (int32_t) length,
++        (int32_t) prot,
++        (int32_t) flags,
++        (int32_t) fd,
++        (int64_t) offset,
++        (int32_t) (uintptr_t) &out);
++    *ret_addr = (void *) out;
++    return (__wasi_errno_t) ret;
++}
++
++static __wasi_errno_t runtime_mem_munmap(void *addr, size_t length) {
++    int32_t ret = __imported_wasix_32v1_mem_munmap(
++        (int32_t) (uintptr_t) addr,
++        (int32_t) length);
++    return (__wasi_errno_t) ret;
++}
++
++static __wasi_errno_t runtime_mem_msync(void *addr, size_t length, int flags) {
++    int32_t ret = __imported_wasix_32v1_mem_msync(
++        (int32_t) (uintptr_t) addr,
++        (int32_t) length,
++        (int32_t) flags);
++    return (__wasi_errno_t) ret;
++}
++
++static int range_end(void *addr, size_t length, uintptr_t *end) {
++    return length != 0 &&
++           !__builtin_add_overflow((uintptr_t) addr, length, end);
++}
++
++static struct map *find_overlapping_legacy_map_locked(
++    void *addr, size_t length, struct map ***link_out) {
++    uintptr_t start = (uintptr_t) addr;
++    uintptr_t end;
++    struct map **link = &legacy_maps;
++
++    if (!range_end(addr, length, &end)) {
++        return NULL;
++    }
++
++    while (*link != NULL) {
++        uintptr_t map_start = (uintptr_t) (*link)->addr;
++        uintptr_t map_end;
++
++        if (!range_end((*link)->addr, (*link)->length, &map_end)) {
++            /* Registry entries are validated before insertion. */
++            abort();
++        }
++        if (start < map_end && map_start < end) {
++            if (link_out) {
++                *link_out = link;
++            }
++            return *link;
++        }
++        link = &(*link)->next;
++    }
++
++    return NULL;
++}
++
++static int map_contains(const struct map *map, void *addr, size_t length) {
++    uintptr_t start = (uintptr_t) addr;
++    uintptr_t end;
++    uintptr_t map_start = (uintptr_t) map->addr;
++    uintptr_t map_end;
++
++    return range_end(addr, length, &end) &&
++           range_end(map->addr, map->length, &map_end) &&
++           start >= map_start && end <= map_end;
++}
++
++static int map_is_exact(const struct map *map, void *addr, size_t length) {
++    return map->addr == addr && map->length == length;
++}
++
++static void remove_map_locked(struct map **link) {
++    struct map *entry = *link;
++
++    *link = entry->next;
++}
++
++static void *runtime_mmap(void *addr, size_t length, int prot, int flags,
++                          int fd, off_t offset) {
++    void *target = addr;
++    void *mapped = NULL;
++    int fixed = (flags & MAP_FIXED) != 0;
++    __wasi_errno_t error;
++
++    if (!fixed) {
++        /*
++         * Address selection belongs to the runtime. It atomically claims new
++         * WebAssembly pages and returns their old end as the selected address.
++         * Allocators claim only exact positive-sbrk return intervals. A
++         * non-NULL POSIX hint is deliberately ignored rather than converted
++         * into an unsafe fixed replacement.
++         */
++        target = NULL;
++    } else if (((uintptr_t) target & (RUNTIME_MMAP_ALIGN - 1)) != 0) {
++        errno = EINVAL;
++        return MAP_FAILED;
++    }
++
++    /* The host remap is currently read/write. Reject weaker or broader
++       protection contracts instead of silently violating them. */
++    if (prot != (PROT_READ | PROT_WRITE)) {
++        errno = EINVAL;
++        return MAP_FAILED;
++    }
++
++    error = runtime_mem_mmap(target, length, prot, flags, fd, offset, &mapped);
++    if (error != __WASI_ERRNO_SUCCESS) {
++        errno = error;
++        return MAP_FAILED;
++    }
++    if (mapped == NULL || (fixed && mapped != target)) {
++        if (mapped != NULL) {
++            runtime_mem_munmap(mapped, length);
++        }
++        errno = EINVAL;
++        return MAP_FAILED;
++    }
++
++    return mapped;
++}
++
+ void *mmap(void *addr, size_t length, int prot, int flags,
+            int fd, off_t offset) {
++    int runtime_candidate =
++        (flags & MAP_TYPE) == MAP_SHARED && (flags & MAP_ANON) == 0;
++
+     // Check for unsupported flags.
+-    if ((flags & (MAP_PRIVATE | MAP_SHARED)) == 0 ||
+-        (flags & MAP_FIXED) != 0 ||
+-#ifdef MAP_SHARED_VALIDATE
+-        (flags & MAP_SHARED_VALIDATE) == MAP_SHARED_VALIDATE ||
+-#endif
++    if (((flags & MAP_TYPE) != MAP_PRIVATE &&
++         (flags & MAP_TYPE) != MAP_SHARED) ||
++        ((flags & MAP_FIXED) != 0 && !runtime_candidate) ||
+ #ifdef MAP_NORESERVE
+         (flags & MAP_NORESERVE) != 0 ||
+ #endif
+@@ -67,6 +230,10 @@ void *mmap(void *addr, size_t length, int prot, int flags,
+         return MAP_FAILED;
+     }
+ 
++    if (runtime_candidate) {
++        return runtime_mmap(addr, length, prot, flags, fd, offset);
++    }
++
+     // Check for integer overflow.
+     size_t buf_len = 0;
+     if (__builtin_add_overflow(length, sizeof(struct map), &buf_len)) {
+@@ -97,7 +264,7 @@ void *mmap(void *addr, size_t length, int prot, int flags,
+             errno = EINVAL;
+             free(map);
+ 
+-            return NULL;
++            return MAP_FAILED;
+         }
+ 
+         map->fd = new_fd;
+@@ -108,6 +275,8 @@ void *mmap(void *addr, size_t length, int prot, int flags,
+             if (nread < 0) {
+                 if (errno == EINTR)
+                     continue;
++                close(new_fd);
++                free(map);
+                 return MAP_FAILED;
+             }
+             if (nread == 0)
+@@ -121,28 +290,94 @@ void *mmap(void *addr, size_t length, int prot, int flags,
+         memset(addr, 0, length);
+     }
+ 
++    map->addr = addr;
++    pthread_mutex_lock(&maps_lock);
++    if (find_overlapping_legacy_map_locked(addr, map->length, NULL) != NULL) {
++        pthread_mutex_unlock(&maps_lock);
++        if (map->fd >= 0) {
++            close(map->fd);
++        }
++        free(map);
++        errno = EINVAL;
++        return MAP_FAILED;
++    }
++    map->next = legacy_maps;
++    legacy_maps = map;
++    pthread_mutex_unlock(&maps_lock);
++
+     return addr;
+ }
+ 
++static int legacy_msync(struct map *map, void *addr, size_t length) {
++    uintptr_t delta = (uintptr_t) addr - (uintptr_t) map->addr;
++    off_t map_offset;
++
++    if (__builtin_add_overflow(map->offset, (off_t) delta, &map_offset)) {
++        errno = EOVERFLOW;
++        return -1;
++    }
++
++    if ((map->flags & MAP_SHARED) != 0 &&
++        (map->flags & MAP_ANON) == 0 &&
++        (map->prot & PROT_WRITE) != 0) {
++        char *body = (char *) addr;
++
++        while (length > 0) {
++            const ssize_t nwrite = pwrite(map->fd, body, length, map_offset);
++
++            if (nwrite > 0) {
++                length -= (size_t) nwrite;
++                map_offset += (size_t) nwrite;
++                body += (size_t) nwrite;
++            } else if (errno == EINTR) {
++                continue;
++            } else {
++                return -1;
++            }
++        }
++    }
++
++    return 0;
++}
++
+ int munmap(void *addr, size_t length) {
+-    struct map *map = (struct map *)addr - 1;
++    struct map **link = NULL;
++    struct map *map;
++    __wasi_errno_t runtime_error = runtime_mem_munmap(addr, length);
+ 
+-    // We don't support partial munmapping.
+-    if (map->length != length) {
++    if (runtime_error == __WASI_ERRNO_SUCCESS) {
++        return 0;
++    }
++    if (runtime_error != __WASI_ERRNO_NOENT) {
++        errno = runtime_error;
++        return -1;
++    }
++
++    pthread_mutex_lock(&maps_lock);
++    map = find_overlapping_legacy_map_locked(addr, length, &link);
++    if (map == NULL || !map_is_exact(map, addr, length)) {
++        pthread_mutex_unlock(&maps_lock);
+         errno = EINVAL;
+         return -1;
+     }
+ 
+     // Write the data back to the backing file and close
+     // the file handle
+-    if (map->fd > 0) {
+-        if ((map->prot & PROT_WRITE) != 0) {
+-            msync(addr, length, MS_SYNC);
++    if (map->fd >= 0) {
++        if ((map->flags & MAP_SHARED) != 0 &&
++            (map->prot & PROT_WRITE) != 0) {
++            if (legacy_msync(map, addr, length) < 0) {
++                pthread_mutex_unlock(&maps_lock);
++                return -1;
++            }
+         }
+ 
+         close(map->fd);
+     }
+ 
++    remove_map_locked(link);
++    pthread_mutex_unlock(&maps_lock);
++
+     // Release the memory.
+     free(map);
+ 
+@@ -151,39 +386,38 @@ int munmap(void *addr, size_t length) {
+ }
+ 
+ int msync (void *addr, size_t length, int flags) {
+-    struct map *map = (struct map *)addr - 1;
+-    size_t map_flags = map->flags;
+-    off_t map_offset = map->offset;
+-    size_t map_length = map->length;
+-    int fd = map->fd;
++    struct map *map;
++    __wasi_errno_t runtime_error;
+ 
+-    if (length > map_length) {
++    if ((flags & ~(MS_ASYNC | MS_INVALIDATE | MS_SYNC)) != 0 ||
++        ((flags & MS_ASYNC) != 0 && (flags & MS_SYNC) != 0)) {
+         errno = EINVAL;
+         return -1;
+     }
+ 
+-    if ((map->prot & PROT_WRITE) != 0) {
+-        errno = EINVAL;
++    runtime_error = runtime_mem_msync(addr, length, flags);
++    if (runtime_error == __WASI_ERRNO_SUCCESS) {
++        return 0;
++    }
++    if (runtime_error != __WASI_ERRNO_NOENT) {
++        errno = runtime_error;
+         return -1;
+     }
+ 
+-    if ((map_flags & MAP_ANON) == 0) {
+-        char *body = (char *)addr;
+-
+-        while (length > 0) {
+-            const ssize_t nwrite = pwrite(fd, body, length, map_offset);
+-
+-            if (nwrite > 0) {
+-                length -= (size_t)nwrite;
+-                map_offset += (size_t)nwrite;
+-                body += (size_t)nwrite;
+-            } else if (errno == EINTR) {
+-                continue;
+-            } else {
+-                return -1;
+-            }
+-        }
++    pthread_mutex_lock(&maps_lock);
++    map = find_overlapping_legacy_map_locked(addr, length, NULL);
++    if (map == NULL) {
++        pthread_mutex_unlock(&maps_lock);
++        errno = ENOMEM;
++        return -1;
++    }
++    if (!map_contains(map, addr, length)) {
++        pthread_mutex_unlock(&maps_lock);
++        errno = EINVAL;
++        return -1;
+     }
+ 
+-    return 0;
++    int result = legacy_msync(map, addr, length);
++    pthread_mutex_unlock(&maps_lock);
++    return result;
+ }
+diff --git a/libc-bottom-half/sources/sbrk.c b/libc-bottom-half/sources/sbrk.c
+index a26b75e..98cd803 100644
+--- a/libc-bottom-half/sources/sbrk.c
++++ b/libc-bottom-half/sources/sbrk.c
+@@ -1,13 +1,18 @@
+ #include <unistd.h>
+ #include <stdlib.h>
+ #include <errno.h>
++#include <stdint.h>
+ #include <__macro_PAGESIZE.h>
+ 
+-// Bare-bones implementation of sbrk.
++/*
++ * Every positive call owns exactly the interval it returns. Runtime facilities
++ * may grow linear memory between calls, so callers must not infer ownership
++ * from a later sbrk(0) or assume that independently acquired intervals are
++ * consecutive.
++ */
+ void *sbrk(intptr_t increment) {
+-    // sbrk(0) returns the current memory size.
+     if (increment == 0) {
+-        // The wasm spec doesn't guarantee that memory.grow of 0 always succeeds.
++        // The wasm spec doesn't guarantee that memory.grow of 0 succeeds.
+         return (void *)(__builtin_wasm_memory_size(0) * PAGESIZE);
+     }
+ 
+@@ -28,5 +33,17 @@ void *sbrk(intptr_t increment) {
+         return (void *)-1;
+     }
+ 
+-    return (void *)(old * PAGESIZE);
++    if (old > UINTPTR_MAX / PAGESIZE) {
++        errno = ENOMEM;
++        return (void *)-1;
++    }
++    old *= PAGESIZE;
++    if ((uintptr_t)increment > UINTPTR_MAX - old) {
++        /* memory.grow has already reserved this terminal interval, but its
++           one-past end is not representable in the guest pointer width. Do
++           not transfer an interval with a wrapping end to the caller. */
++        errno = ENOMEM;
++        return (void *)-1;
++    }
++    return (void *)old;
+ }
+diff --git a/test/wasix/c_mmap_writeback/CMakeLists.txt b/test/wasix/c_mmap_writeback/CMakeLists.txt
+new file mode 100644
+index 0000000..eb29426
+--- /dev/null
++++ b/test/wasix/c_mmap_writeback/CMakeLists.txt
+@@ -0,0 +1,4 @@
++cmake_minimum_required (VERSION 3.5.0)
++project (c_mmap_writeback)
++
++add_executable(main main.c)
+diff --git a/test/wasix/c_mmap_writeback/main.c b/test/wasix/c_mmap_writeback/main.c
+new file mode 100644
+index 0000000..3ab7648
+--- /dev/null
++++ b/test/wasix/c_mmap_writeback/main.c
+@@ -0,0 +1,194 @@
++#include <errno.h>
++#include <fcntl.h>
++#include <stdio.h>
++#include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/mman.h>
++#include <unistd.h>
++
++static int write_full(int fd, const char *buf, size_t len)
++{
++    while (len > 0) {
++        ssize_t written = write(fd, buf, len);
++        if (written < 0) {
++            if (errno == EINTR) {
++                continue;
++            }
++            return -1;
++        }
++        buf += (size_t)written;
++        len -= (size_t)written;
++    }
++    return 0;
++}
++
++static int read_full(int fd, char *buf, size_t len)
++{
++    while (len > 0) {
++        ssize_t got = read(fd, buf, len);
++        if (got < 0) {
++            if (errno == EINTR) {
++                continue;
++            }
++            return -1;
++        }
++        if (got == 0) {
++            errno = EIO;
++            return -1;
++        }
++        buf += (size_t)got;
++        len -= (size_t)got;
++    }
++    return 0;
++}
++
++static int reset_file(int fd, const char *contents, size_t len)
++{
++    if (ftruncate(fd, 0) < 0) {
++        return -1;
++    }
++    if (lseek(fd, 0, SEEK_SET) < 0) {
++        return -1;
++    }
++    if (write_full(fd, contents, len) < 0) {
++        return -1;
++    }
++    return lseek(fd, 0, SEEK_SET) < 0 ? -1 : 0;
++}
++
++static int expect_file(int fd, const char *expected, size_t len)
++{
++    char buf[32];
++
++    if (len > sizeof(buf)) {
++        return -1;
++    }
++    memset(buf, 0, sizeof(buf));
++    if (lseek(fd, 0, SEEK_SET) < 0) {
++        return -1;
++    }
++    if (read_full(fd, buf, len) < 0) {
++        return -1;
++    }
++    return memcmp(buf, expected, len);
++}
++
++int main(void)
++{
++    const char *path = "wasix-libc-mmap-writeback-test.dat";
++    const char initial[] = "abcdefgh";
++    int fd;
++    char *map;
++    void *frontier_after_map;
++    unsigned char *morecore_segment;
++    size_t i;
++
++    unlink(path);
++    fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0600);
++    if (fd < 0) {
++        perror("open");
++        return 1;
++    }
++    if (reset_file(fd, initial, sizeof(initial) - 1) < 0) {
++        perror("reset shared");
++        return 2;
++    }
++
++    map = mmap(NULL, sizeof(initial) - 1, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
++    if (map == MAP_FAILED) {
++        perror("mmap shared");
++        return 3;
++    }
++    errno = 0;
++    if (munmap(map + 1, 1) == 0 || errno != EINVAL) {
++        fprintf(stderr, "overlapping unaligned munmap escaped runtime ownership\n");
++        return 18;
++    }
++    errno = 0;
++    if (msync(map + 1, 1, MS_SYNC) == 0 || errno != EINVAL) {
++        fprintf(stderr, "overlapping unaligned msync escaped runtime ownership\n");
++        return 19;
++    }
++    if (memcmp(map, initial, sizeof(initial) - 1) != 0) {
++        fprintf(stderr, "rejected shared operations mutated the mapping\n");
++        return 20;
++    }
++    frontier_after_map = sbrk(0);
++    morecore_segment = sbrk(65536);
++    if (morecore_segment == (void *)-1) {
++        perror("sbrk after shared mmap");
++        return 13;
++    }
++    if (morecore_segment != frontier_after_map ||
++        sbrk(0) != morecore_segment + 65536) {
++        fprintf(stderr, "sbrk did not return its exact exclusive interval\n");
++        return 14;
++    }
++    if ((uintptr_t)morecore_segment < (uintptr_t)map + 65536 &&
++        (uintptr_t)map < (uintptr_t)morecore_segment + 65536) {
++        fprintf(stderr, "MORECORE overlapped the runtime-owned mmap range\n");
++        return 15;
++    }
++    memset(morecore_segment, 0x5a, 65536);
++    memcpy(map, "WXYZ", 4);
++    for (i = 1; i <= 256; ++i) {
++        unsigned char *allocation = malloc(i * 17);
++        if (!allocation) {
++            fprintf(stderr, "malloc failed after nonconsecutive MORECORE\n");
++            return 16;
++        }
++        memset(allocation, (int)(i & 0xff), i * 17);
++        free(allocation);
++    }
++    if (morecore_segment[0] != 0x5a || morecore_segment[65535] != 0x5a ||
++        memcmp(map, "WXYZ", 4) != 0) {
++        fprintf(stderr, "allocator or mmap sentinel was corrupted\n");
++        return 17;
++    }
++    if (msync(map, sizeof(initial) - 1, MS_SYNC) < 0) {
++        perror("msync shared");
++        return 4;
++    }
++    if (expect_file(fd, "WXYZefgh", sizeof(initial) - 1) != 0) {
++        fprintf(stderr, "MAP_SHARED changes were not written back\n");
++        return 5;
++    }
++    if (munmap(map, sizeof(initial) - 1) < 0) {
++        perror("munmap shared");
++        return 6;
++    }
++    errno = 0;
++    map = mmap(NULL, sizeof(initial) - 1, PROT_READ, MAP_SHARED, fd, 0);
++    if (map != MAP_FAILED || errno != EINVAL) {
++        fprintf(stderr, "runtime mapping accepted an unenforced protection contract\n");
++        return 21;
++    }
++
++    if (reset_file(fd, initial, sizeof(initial) - 1) < 0) {
++        perror("reset private");
++        return 7;
++    }
++    map = mmap(NULL, sizeof(initial) - 1, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
++    if (map == MAP_FAILED) {
++        perror("mmap private");
++        return 8;
++    }
++    memcpy(map, "PRIV", 4);
++    if (msync(map, sizeof(initial) - 1, MS_SYNC) < 0) {
++        perror("msync private");
++        return 9;
++    }
++    if (munmap(map, sizeof(initial) - 1) < 0) {
++        perror("munmap private");
++        return 10;
++    }
++    if (expect_file(fd, initial, sizeof(initial) - 1) != 0) {
++        fprintf(stderr, "MAP_PRIVATE changes were written back\n");
++        return 11;
++    }
++
++    close(fd);
++    unlink(path);
++    return 0;
++}
+diff --git a/test/wasix/c_mmap_writeback/test.sh b/test/wasix/c_mmap_writeback/test.sh
+new file mode 100755
+index 0000000..3c120c4
+--- /dev/null
++++ b/test/wasix/c_mmap_writeback/test.sh
+@@ -0,0 +1,10 @@
++#!/bin/bash
++
++wasmer run --verbose --enable-all ./main
++RESULT=$?
++if [ "$RESULT" != "0" ]; then
++    echo "Test failed: different exit code ($RESULT vs. 0)" > /dev/stderr
++    exit 1
++fi
++
++echo "c_mmap_writeback test passed"
+

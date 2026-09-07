@@ -31,10 +31,9 @@ def fixture(root: Path) -> tuple[Path, Path]:
         "postgres/patches/0004-wasix-core-execbackend-initdb-runtime.patch",
         "postgres/patches/0006-wasix-retry-proc-join-on-eintr.patch",
         "postgres/patches/0008-wasix-packed-atomic-latch-state.patch",
-        "runtime/patches/wasmer/0001-postgres-wasix-blockers.patch",
-        "runtime/patches/wasix-libc/0001-postgres-wasix-blockers.patch",
     ):
         copy_file(PROJECT_ROOT / patch, project / patch)
+    shutil.copytree(PROJECT_ROOT / "runtime/patches", project / "runtime/patches")
     shutil.copytree(
         REPO_ROOT / "src/sources/third-party/wasix-postmaster",
         repo / "src/sources/third-party/wasix-postmaster",
@@ -119,21 +118,21 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="wasix-source-lock-test-") as temporary:
         project, repo = fixture(Path(temporary))
-        patch = project / "runtime/patches/wasmer/0001-postgres-wasix-blockers.patch"
+        patch = project / "runtime/patches/wasmer/0001-engine-memory-and-exception-lifetimes.patch"
         with patch.open("ab") as handle:
             handle.write(b"\n")
-        run(project, repo, succeeds=False, marker="current_runtime_patches.wasmer.bytes")
+        run(project, repo, succeeds=False, marker="current_runtime_patches.wasmer.file[0].bytes")
 
     with tempfile.TemporaryDirectory(prefix="wasix-source-lock-test-") as temporary:
         project, repo = fixture(Path(temporary))
-        patch = project / "runtime/patches/wasix-libc/0001-postgres-wasix-blockers.patch"
+        patch = project / "runtime/patches/wasix-libc/0001-mmap-and-allocator-exec-ownership.patch"
         with patch.open("ab") as handle:
             handle.write(b"\n")
         run(
             project,
             repo,
             succeeds=False,
-            marker="current_runtime_patches.wasix_libc.bytes",
+            marker="current_runtime_patches.wasix_libc.file[0].bytes",
         )
 
     with tempfile.TemporaryDirectory(prefix="wasix-source-lock-test-") as temporary:
@@ -147,6 +146,18 @@ def main() -> None:
             succeeds=False,
             marker="current_postgresql_product_inputs.file",
         )
+
+    with tempfile.TemporaryDirectory(prefix="wasix-source-lock-test-") as temporary:
+        project, repo = fixture(Path(temporary))
+        series = project / "runtime/patches/wasmer/series"
+        lines = series.read_text().splitlines()
+        series.write_text("\n".join(reversed(lines)) + "\n")
+        run(project, repo, succeeds=False, marker="current_runtime_patches.wasmer.sha256")
+
+    with tempfile.TemporaryDirectory(prefix="wasix-source-lock-test-") as temporary:
+        project, repo = fixture(Path(temporary))
+        (project / "runtime/patches/wasmer/9999-unlisted.patch").write_text("unlisted\n")
+        run(project, repo, succeeds=False, marker="current_runtime_patches.wasmer.unlisted patches")
 
     print("source lock verifier tests passed")
 

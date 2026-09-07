@@ -2692,6 +2692,14 @@ static int run_cycle(const char *pgdata, const char *runtime_dir) {
         return 1;
     }
 
+    if (exec_simple_query_expect_bytes(
+            db,
+            "SELECT 'native-default-fsync-' || current_setting('fsync')",
+            "native-default-fsync-on") != 0) {
+        oliphaunt_close(db);
+        return 1;
+    }
+
     if (exec_query_expect_bytes(
             db,
             "SELECT CASE WHEN "

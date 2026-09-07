@@ -72,8 +72,6 @@ tasks:
   browser-host:
     tags: ["artifact", "build", "requires-rust"]
     command: "bash src/bindings/wasix-ts/host/build-sdk.sh"
-    deps:
-      - "oliphaunt-wasix-ts:host-contract"
     env:
       WASM_PACK_VERSION: "0.15.0"
     inputs:

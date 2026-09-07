@@ -1,0 +1,346 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH 4/7] libc: adapt exec, wait, signals and futex clocks
+
+Retain process entrypoints for the Wasm exception-handling build, preserve exec
+argument/search behavior, and map wait, signal and futex semantics required by
+Postmaster's concurrent children. This layer must match host lifecycle and
+clock domains; native tests alone do not qualify the Wasm/exec behavior.
+
+Extracted without runtime hunk changes from the inherited integration bundle.
+The complete ordered series is the build and qualification unit.
+
+diff --git a/libc-bottom-half/sources/__wasilibc_futex.c b/libc-bottom-half/sources/__wasilibc_futex.c
+index 340899b..1a453fa 100644
+--- a/libc-bottom-half/sources/__wasilibc_futex.c
++++ b/libc-bottom-half/sources/__wasilibc_futex.c
+@@ -12,7 +12,7 @@ int __wasilibc_futex_wait_wasix(volatile void *addr, int op, int expected, int64
+   __wasi_bool_t woken = __WASI_BOOL_FALSE;
+   
+   __wasi_option_timestamp_t timeout;
+-  if (max_wait_ns > 0) {
++  if (max_wait_ns >= 0) {
+     timeout.tag = __WASI_OPTION_SOME;
+     timeout.u.some = max_wait_ns;
+   } else {
+@@ -30,8 +30,9 @@ int __wasilibc_futex_wait_wasix(volatile void *addr, int op, int expected, int64
+     return -EWOULDBLOCK;
+   }
+ 
+-  if (__wasi_futex_wait((uint32_t*)addr, expected, &timeout, &woken) != 0) {
+-    __builtin_trap();
++  __wasi_errno_t ret = __wasi_futex_wait((uint32_t*)addr, expected, &timeout, &woken);
++  if (ret != 0) {
++    return -ret;
+   }
+ 
+   if (woken == __WASI_BOOL_FALSE && *paddr == expected) {
+diff --git a/libc-top-half/musl/include/unistd.h b/libc-top-half/musl/include/unistd.h
+index 95a3ee7..7c30563 100644
+--- a/libc-top-half/musl/include/unistd.h
++++ b/libc-top-half/musl/include/unistd.h
+@@ -134,11 +134,9 @@ unsigned sleep(unsigned);
+ int pause(void);
+ #endif
+ 
+-#if defined(__wasilibc_unmodified_upstream) || !defined(__wasm_exception_handling__)
+ pid_t fork(void);
+ pid_t _fork_internal(int copy_mem);
+ pid_t _Fork(int copy_mem);
+-#endif
+ int execve(const char *, char *const [], char *const []);
+ int execv(const char *, char *const []);
+ int execle(const char *, const char *, ...);
+diff --git a/libc-top-half/musl/src/process/_Fork.c b/libc-top-half/musl/src/process/_Fork.c
+index 76df425..8f0ee8e 100644
+--- a/libc-top-half/musl/src/process/_Fork.c
++++ b/libc-top-half/musl/src/process/_Fork.c
+@@ -10,8 +10,6 @@
+ #include "pthread_impl.h"
+ #include "aio_impl.h"
+ 
+-#if defined(__wasilibc_unmodified_upstream) || !defined(__wasm_exception_handling__)
+-
+ static void dummy(int x) { }
+ weak_alias(dummy, __aio_atfork);
+ 
+@@ -62,5 +60,3 @@ pid_t _Fork(int copy_mem)
+ 	__restore_sigs(&set);
+ 	return __syscall_ret(ret);
+ }
+-
+-#endif /* defined(__wasilibc_unmodified_upstream) || !defined(__wasm_exception_handling__) */
+\ No newline at end of file
+diff --git a/libc-top-half/musl/src/process/execv.c b/libc-top-half/musl/src/process/execv.c
+index bce72e3..5ef4ebe 100644
+--- a/libc-top-half/musl/src/process/execv.c
++++ b/libc-top-half/musl/src/process/execv.c
+@@ -7,6 +7,7 @@ extern char **__environ;
+ #include <stdlib.h>
+ #include <errno.h>
+ #include <wasi/api.h>
++char *__wasilibc_exec_combine_strings(char *const strings[]);
+ #endif
+ 
+ int execv(const char *path, char *const argv[])
+@@ -14,22 +15,16 @@ int execv(const char *path, char *const argv[])
+ #ifdef __wasilibc_unmodified_upstream
+ 	return execve(path, argv, __environ);
+ #else
+-	int combined_len = 0;
+-	for (char **argvp = (char **)argv; *argvp != NULL; argvp++) {
+-		combined_len += strlen(*argvp) + 1;
++	char *combined_argv = __wasilibc_exec_combine_strings(argv);
++	if (combined_argv == NULL) {
++		return -1;
+ 	}
+ 
+-	char *combined_argv = malloc((combined_len + 1));
+-	char *combined_argv_p = combined_argv;
+-	for (char **argvp = (char **)argv; *argvp != NULL; argvp++) {
+-		memcpy(combined_argv_p, *argvp, strlen(*argvp));
+-		combined_argv_p += strlen(*argvp);
+-		*combined_argv_p = '\n';
+-		combined_argv_p++;
+-	}
+-	*combined_argv_p = 0;
+-	
+ 	int e = __wasi_proc_exec3(path, combined_argv, NULL, 0, NULL);
++	/* A successful vfork+exec returns in the shared parent image immediately
++	   before the restore longjmp. Release child marshaling storage first so
++	   every backend launch returns the parent heap to its prior plateau. */
++	free(combined_argv);
+ #ifdef __wasm_exception_handling__
+ 	extern _Noreturn void __vfork_restore();
+ 	if (e == 0) {
+@@ -37,7 +32,7 @@ int execv(const char *path, char *const argv[])
+ 	}
+ #endif
+ 
+-	// A return from proc_exec automatically means it failed
++	// Any ordinary return from proc_exec means it failed.
+ 	errno = e;
+ 	return -1;
+ #endif
+diff --git a/libc-top-half/musl/src/process/execvp.c b/libc-top-half/musl/src/process/execvp.c
+index b26c275..0c5d1d5 100644
+--- a/libc-top-half/musl/src/process/execvp.c
++++ b/libc-top-half/musl/src/process/execvp.c
+@@ -3,6 +3,7 @@
+ #include <unistd.h>
+ #include <errno.h>
+ #include <limits.h>
++#include <stdint.h>
+ 
+ extern char **__wasilibc_environ;
+ 
+@@ -64,15 +65,31 @@ int __execvpe(const char *file, char *const argv[], char *const envp[])
+ #else
+ char *__wasilibc_exec_combine_strings(char *const strings[])
+ {
+-	int combined_len = 0;
+-	for (char **ptr = (char **)strings; *ptr != NULL; ptr++)
++	size_t combined_len = 0;
++	for (char **ptr = (char **)strings; strings != NULL && *ptr != NULL; ptr++)
+ 	{
+-		combined_len += strlen(*ptr) + 1;
++		size_t len = strlen(*ptr);
++		if (len == SIZE_MAX || combined_len > SIZE_MAX - len - 1)
++		{
++			errno = E2BIG;
++			return NULL;
++		}
++		combined_len += len + 1;
+ 	}
+ 
+-	char *combined = malloc((combined_len + 1));
++	if (combined_len == SIZE_MAX)
++	{
++		errno = E2BIG;
++		return NULL;
++	}
++	char *combined = malloc(combined_len + 1);
++	if (combined == NULL)
++	{
++		errno = ENOMEM;
++		return NULL;
++	}
+ 	char *combined_p = combined;
+-	for (char **ptr = (char **)strings; *ptr != NULL; ptr++)
++	for (char **ptr = (char **)strings; strings != NULL && *ptr != NULL; ptr++)
+ 	{
+ 		memcpy(combined_p, *ptr, strlen(*ptr));
+ 		combined_p += strlen(*ptr);
+@@ -87,11 +104,22 @@ char *__wasilibc_exec_combine_strings(char *const strings[])
+ int __execvpe(const char *path, char *const argv[], char *const envp[], uint8_t use_path)
+ {
+ 	char *combined_argv = __wasilibc_exec_combine_strings(argv);
++	if (combined_argv == NULL)
++		return -1;
+ 	char *combined_env = __wasilibc_exec_combine_strings(envp);
++	if (combined_env == NULL)
++	{
++		free(combined_argv);
++		return -1;
++	}
+ 
+ 	int e = __wasi_proc_exec3(
+ 		path, combined_argv, combined_env,
+ 		use_path ? __WASI_BOOL_TRUE : __WASI_BOOL_FALSE, getenv("PATH"));
++	/* proc_exec3 has consumed both buffers before returning. On vfork success
++	   this is the last point before longjmp restores the shared parent image. */
++	free(combined_argv);
++	free(combined_env);
+ #ifdef __wasm_exception_handling__
+ 	extern _Noreturn void __vfork_restore();
+ 	if (e == 0) {
+@@ -99,9 +127,6 @@ int __execvpe(const char *path, char *const argv[], char *const envp[], uint8_t
+ 	}
+ #endif
+ 
+-	free(combined_argv);
+-	free(combined_env);
+-
+ 	// A return from proc_exec automatically means it failed
+ 	errno = e;
+ 	return -1;
+diff --git a/libc-top-half/musl/src/process/fork.c b/libc-top-half/musl/src/process/fork.c
+index df38cf7..21895b4 100644
+--- a/libc-top-half/musl/src/process/fork.c
++++ b/libc-top-half/musl/src/process/fork.c
+@@ -51,8 +51,6 @@ weak_alias(dummy_0, __tl_lock);
+ weak_alias(dummy_0, __tl_unlock);
+ #endif
+ 
+-#if defined(__wasilibc_unmodified_upstream) || !defined(__wasm_exception_handling__)
+-
+ pid_t fork(void)
+ {
+ 	return _fork_internal(1);
+@@ -102,5 +100,3 @@ pid_t _fork_internal(int copy_mem)
+ 	if (ret<0) errno = errno_save;
+ 	return ret;
+ }
+-
+-#endif /* defined(__wasilibc_unmodified_upstream) || !defined(__wasm_exception_handling__) */
+\ No newline at end of file
+diff --git a/libc-top-half/musl/src/process/waitpid.c b/libc-top-half/musl/src/process/waitpid.c
+index 456cca9..330aa66 100644
+--- a/libc-top-half/musl/src/process/waitpid.c
++++ b/libc-top-half/musl/src/process/waitpid.c
+@@ -35,6 +35,13 @@ pid_t waitpid(pid_t pid, int *status, int options)
+ 		errno = ret;
+ 		return -1;
+ 	} else {
++		if (code.tag == __WASI_JOIN_STATUS_TYPE_NOTHING) {
++			if (status != NULL) {
++				*status = 0;
++			}
++			return 0;
++		}
++
+ 		// Read the PID
+ 		if (opid.tag == __WASI_OPTION_SOME) {
+ 			pid = opid.u.some;
+@@ -44,14 +51,18 @@ pid_t waitpid(pid_t pid, int *status, int options)
+ 		}
+ 
+ 		// Build the status code depending on what happened
+-		if (code.tag == __WASI_JOIN_STATUS_TYPE_NOTHING) {
+-			*status = 0;
+-		} else if (code.tag == __WASI_JOIN_STATUS_TYPE_EXIT_NORMAL) {
+-			*status = W_EXITCODE(code.u.exit_normal, 0);
++		if (code.tag == __WASI_JOIN_STATUS_TYPE_EXIT_NORMAL) {
++			if (status != NULL) {
++				*status = W_EXITCODE(code.u.exit_normal, 0);
++			}
+ 		} else if (code.tag == __WASI_JOIN_STATUS_TYPE_EXIT_SIGNAL) {
+-			*status = W_EXITCODE(code.u.exit_signal.exit_code, code.u.exit_signal.signal);
++			if (status != NULL) {
++				*status = W_EXITCODE(code.u.exit_signal.exit_code, code.u.exit_signal.signal);
++			}
+ 		} else if (code.tag == __WASI_JOIN_STATUS_TYPE_STOPPED) {
+-			*status = W_STOPCODE(code.u.stopped);
++			if (status != NULL) {
++				*status = W_STOPCODE(code.u.stopped);
++			}
+ 		} else {
+ 			errno = EUNKNOWN;
+ 			return -1;
+diff --git a/libc-top-half/musl/src/signal/kill.c b/libc-top-half/musl/src/signal/kill.c
+index ca43eb8..bb34cce 100644
+--- a/libc-top-half/musl/src/signal/kill.c
++++ b/libc-top-half/musl/src/signal/kill.c
+@@ -2,6 +2,7 @@
+ #ifdef __wasilibc_unmodified_upstream
+ #include "syscall.h"
+ #else
++#include <errno.h>
+ #include <wasi/api.h>
+ #endif
+ 
+@@ -11,6 +12,10 @@ int kill(pid_t pid, int sig)
+ 	return syscall(SYS_kill, pid, sig);
+ #else
+ 	int r = __wasi_proc_signal(pid, (__wasi_signal_t)sig);
+-	return r;
++	if (r != 0) {
++		errno = r;
++		return -1;
++	}
++	return 0;
+ #endif
+-}
+\ No newline at end of file
++}
+diff --git a/libc-top-half/musl/src/signal/sigaction.c b/libc-top-half/musl/src/signal/sigaction.c
+index d2ffaad..332feb2 100644
+--- a/libc-top-half/musl/src/signal/sigaction.c
++++ b/libc-top-half/musl/src/signal/sigaction.c
+@@ -133,8 +133,7 @@ static void __default_handler(int sig) {
+ #endif
+ 		case SIGURG:
+ 		case SIGWINCH:
+-			SIG_IGN(sig);
+-			break;
++			return;
+ 
+ 		// Default behavior: "continue".
+ 		case SIGCONT:
+@@ -170,6 +169,18 @@ static void __default_handler(int sig) {
+ 			break;
+ 	}
+ }
++
++static void __invoke_default_handler(int sig) {
++	/*
++	 * The WASIX callback is registered at startup, before a program is
++	 * required to call sigaction().  Materialize the built-in handler in the
++	 * function table before the first default-disposition signal arrives.
++	 */
++	if (default_handler == NULL) {
++		default_handler = &__default_handler;
++	}
++	default_handler(sig);
++}
+ #endif
+ 
+ static sighandler_t handlers[_NSIG];
+@@ -187,12 +198,14 @@ void __wasm_signal(int sig) {
+ 	struct k_sigaction ksa = __eintr_handler_callbacks[sig];
+ 	UNLOCK(__eintr_handler_lock);
+ 
+-	if (ksa.handler != 0) {
++	if (ksa.handler == SIG_IGN) {
++		return;
++	} else if (ksa.handler != 0 && ksa.handler != SIG_DFL) {
+ 		ksa.handler(sig);
+ 	} else {
+ 		unsigned long set[_NSIG/(8*sizeof(long))];
+ 		__block_all_sigs(&set);
+-		default_handler(sig);
++		__invoke_default_handler(sig);
+ 		__restore_sigs(&set);
+ 	}
+ }
+

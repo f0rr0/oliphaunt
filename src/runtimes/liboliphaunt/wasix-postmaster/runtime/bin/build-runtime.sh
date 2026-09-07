@@ -20,8 +20,8 @@ esac
 UPSTREAM_WORK_ROOT="${UPSTREAM_WORK_ROOT:-$FRESH_WORK_ROOT/runtime}"
 WASMER_ROOT="${WASMER_ROOT:-$UPSTREAM_WORK_ROOT/wasmer}"
 LLVM_MAJOR=22
-WASMER_PATCH="$FRESH_ROOT/runtime/patches/wasmer/0001-postgres-wasix-blockers.patch"
-WASIX_LIBC_PATCH="$FRESH_ROOT/runtime/patches/wasix-libc/0001-postgres-wasix-blockers.patch"
+WASMER_PATCH="$FRESH_ROOT/runtime/patches/wasmer/series"
+WASIX_LIBC_PATCH="$FRESH_ROOT/runtime/patches/wasix-libc/series"
 WASMER_BUILD_RECEIPT_OUT="${WASMER_BUILD_RECEIPT_OUT:-$FRESH_WASMER_BUILD_RECEIPT}"
 POSTMASTER_EXECUTOR_BUILD_RECEIPT_OUT="${POSTMASTER_EXECUTOR_BUILD_RECEIPT_OUT:-$FRESH_POSTMASTER_EXECUTOR_BUILD_RECEIPT}"
 WASMER_TARGET_DIR="$WASMER_ROOT/target"
@@ -1046,6 +1046,27 @@ cargo test \
 	--no-default-features \
 	--features "$FRESH_MEMORY_PROFILE_FEATURES" \
 	memory_profile::wasm_tool::tests
+
+# Exercise both the product serializer/verifier profile and the generic CLI
+# compilation routes; a zero-test filter is not a passing memory-policy proof.
+strict_compiler_test=(cargo test --locked
+	--target-dir "$POSTMASTER_COMPILER_TARGET_DIR"
+	--manifest-path "$WASMER_ROOT/Cargo.toml"
+	--package "$FRESH_POSTMASTER_EXECUTOR_PACKAGE"
+	--bin "$FRESH_POSTMASTER_COMPILER_BINARY"
+	--no-default-features --features "$FRESH_POSTMASTER_COMPILER_FEATURES"
+	product_compiler_uses_strict_memory_identity)
+listed_tests="$("${strict_compiler_test[@]}" -- --list)"
+require_listed_test "$listed_tests" 'product_compiler_uses_strict_memory_identity'
+"${strict_compiler_test[@]}" -- --exact
+strict_cli_test=(cargo test --locked
+	--target-dir "$WASMER_TARGET_DIR"
+	--manifest-path "$WASMER_ROOT/lib/cli/Cargo.toml"
+	--lib --no-default-features --features "$FRESH_WASMER_COMPILER_FEATURES"
+	backend::tests::llvm_cli_routes_use_strict_memory_identity)
+listed_tests="$("${strict_cli_test[@]}" -- --list)"
+require_listed_test "$listed_tests" 'backend::tests::llvm_cli_routes_use_strict_memory_identity'
+"${strict_cli_test[@]}" -- --exact
 fi
 
 if [ "$mode" = tests ]; then
@@ -1162,7 +1183,7 @@ trap 'rm -f "$temporary_manifest"' EXIT
 	printf 'wasmer_napi_commit=%s\n' "$(git -C "$WASMER_ROOT/lib/napi" rev-parse HEAD)"
 	printf 'wasmer_test_files_commit=%s\n' "$(git -C "$WASMER_ROOT/wasmer-test-files" rev-parse HEAD)"
 	printf 'wasmer_spec_commit=%s\n' "$(git -C "$WASMER_ROOT/tests/wast/spec" rev-parse HEAD)"
-	printf 'wasmer_patch_sha256=%s\n' "$(fresh_wasmer_bin_hash "$WASMER_PATCH")"
+	printf 'wasmer_patch_sha256=%s\n' "$(fresh_runtime_patch_hash "$WASMER_PATCH")"
 	printf 'wasmer_prepared_signature_sha256=%s\n' "$(fresh_wasmer_bin_hash "$prepared_signature")"
 	printf 'wasmer_cargo_lock_sha256=%s\n' "$(fresh_wasmer_bin_hash "$WASMER_ROOT/Cargo.lock")"
 	printf 'wasmer_binary_sha256=%s\n' "$(fresh_wasmer_bin_hash "$wasmer_bin")"
@@ -1172,7 +1193,7 @@ trap 'rm -f "$temporary_manifest"' EXIT
 	printf 'runtime_abi_id=%s\n' "$runtime_abi_id"
 	printf 'artifact_abi_version=%s\n' "$FRESH_WASMER_ARTIFACT_ABI_VERSION"
 	printf 'wasix_libc_source_commit=%s\n' "$(git -C "$UPSTREAM_WORK_ROOT/wasix-libc" rev-parse HEAD)"
-	printf 'wasix_libc_patch_sha256=%s\n' "$(fresh_wasmer_bin_hash "$WASIX_LIBC_PATCH")"
+	printf 'wasix_libc_patch_sha256=%s\n' "$(fresh_runtime_patch_hash "$WASIX_LIBC_PATCH")"
 	printf 'wasix_libc_prepared_signature_sha256=%s\n' "$(fresh_wasmer_bin_hash "$libc_prepared_signature")"
 	printf 'sysroot_carrier_manifest_sha256=%s\n' "$(fresh_wasmer_bin_hash "$carrier_manifest")"
 	printf 'sysroot_variant=%s\n' "$WASIXCC_SYSROOT_VARIANT"
@@ -1200,7 +1221,7 @@ trap 'rm -f "$temporary_executor_receipt"' EXIT
 	printf 'build_recipe_sha256=%s\n' "$(fresh_runtime_build_recipe_sha256)"
 	printf 'wasmer_build_receipt_sha256=%s\n' "$(fresh_wasmer_bin_hash "$WASMER_BUILD_RECEIPT_OUT")"
 	printf 'wasmer_source_commit=%s\n' "$(git -C "$WASMER_ROOT" rev-parse HEAD)"
-	printf 'wasmer_patch_sha256=%s\n' "$(fresh_wasmer_bin_hash "$WASMER_PATCH")"
+	printf 'wasmer_patch_sha256=%s\n' "$(fresh_runtime_patch_hash "$WASMER_PATCH")"
 	printf 'wasmer_prepared_signature_sha256=%s\n' "$(fresh_wasmer_bin_hash "$prepared_signature")"
 	printf 'wasmer_cargo_lock_sha256=%s\n' "$(fresh_wasmer_bin_hash "$WASMER_ROOT/Cargo.lock")"
 	printf 'runtime_abi_id=%s\n' "$runtime_abi_id"

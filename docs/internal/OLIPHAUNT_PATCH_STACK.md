@@ -53,7 +53,7 @@ src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --write
 - `src/backend/access/transam/xlogarchive.c` (`0007-liboliphaunt-disable-shell-commands-on-apple-mobile.patch`)
 - `src/backend/access/transam/xlogfuncs.c` (`0021-liboliphaunt-model-trusted-embedded-sessions.patch`)
 - `src/backend/archive/shell_archive.c` (`0007-liboliphaunt-disable-shell-commands-on-apple-mobile.patch`)
-- `src/backend/commands/collationcmds.c` (`0016-liboliphaunt-control-initdb-collation-discovery.patch`)
+- `src/backend/commands/collationcmds.c` (`0016-liboliphaunt-control-initdb-collation-discovery.patch`, `0022-liboliphaunt-preserve-host-process-boundaries.patch`)
 - `src/backend/commands/copyfromparse.c` (`0022-liboliphaunt-preserve-host-process-boundaries.patch`)
 - `src/backend/commands/event_trigger.c` (`0012-liboliphaunt-enable-event-triggers-in-embedded-backend.patch`, `0021-liboliphaunt-model-trusted-embedded-sessions.patch`)
 - `src/backend/commands/tsearchcmds.c` (`0021-liboliphaunt-model-trusted-embedded-sessions.patch`)
@@ -85,6 +85,7 @@ src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --write
 - `src/bin/initdb/initdb.c` (`0016-liboliphaunt-control-initdb-collation-discovery.patch`)
 - `src/include/libpq/libpq-be.h` (`0001-liboliphaunt-add-backend-host-io.patch`, `0022-liboliphaunt-preserve-host-process-boundaries.patch`)
 - `src/include/libpq/libpq.h` (`0022-liboliphaunt-preserve-host-process-boundaries.patch`)
+- `src/include/libpq/pqsignal.h` (`0022-liboliphaunt-preserve-host-process-boundaries.patch`)
 - `src/include/miscadmin.h` (`0021-liboliphaunt-model-trusted-embedded-sessions.patch`, `0022-liboliphaunt-preserve-host-process-boundaries.patch`)
 - `src/include/port.h` (`0011-liboliphaunt-add-android-embedded-shared-memory.patch`, `0020-liboliphaunt-enforce-embedded-signal-boundary.patch`)
 - `src/include/port/win32_port.h` (`0022-liboliphaunt-preserve-host-process-boundaries.patch`)
@@ -111,7 +112,7 @@ src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --write
 | `src/backend/access/transam/xlogarchive.c` | Apple mobile embedded builds compile out optional archive shell commands. |
 | `src/backend/access/transam/xlogfuncs.c` | Trusted embedded sessions reject standby promotion before creating files, signalling, or waiting on an absent postmaster. |
 | `src/backend/archive/shell_archive.c` | Apple mobile embedded builds compile out optional archive shell commands. |
-| `src/backend/commands/collationcmds.c` | System-collation import preserves host providers except during deliberate deterministic distributed-seed production; verified ICU readiness independently gates only the ICU provider. |
+| `src/backend/commands/collationcmds.c` | Seed production controls provider discovery; trusted sessions skip subprocess-only libc enumeration while preserving in-process ICU import and ordinary server behavior. |
 | `src/backend/commands/copyfromparse.c` | Direct COPY FROM accepts cancellation only between complete frontend frames, after the Native ABI has rejected truncated headers and bodies before publication. |
 | `src/backend/commands/event_trigger.c` | Real server children and attached trusted Native sessions can run event and login triggers without changing recovery standalone behavior. |
 | `src/backend/commands/tsearchcmds.c` | Trusted user sessions validate text-search dictionary options while initdb retains its standalone compatibility exception. |
@@ -143,6 +144,7 @@ src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs --write
 | `src/bin/initdb/initdb.c` | Controlled seed production selects standard or verified ICU collation discovery without changing ordinary initdb semantics. |
 | `src/include/libpq/libpq-be.h` | Private embedded host reads accept a nearest-deadline timeout without changing PostgreSQL client ABI. |
 | `src/include/libpq/libpq.h` | The backend-private protocol reader exposes an embedded-only interrupted sentinel used to stop Direct COPY only at a validated message boundary. |
+| `src/include/libpq/pqsignal.h` | Declares the embedded thread-mask helper beside PostgreSQL sigset_t, including its Windows emulation, without imposing backend include order on common support objects. |
 | `src/include/miscadmin.h` | Declares trusted-session lifecycle and makes interrupt checks consume the host atomic mailbox and cooperative deadlines. |
 | `src/include/port.h` | Embedded mobile builds avoid POSIX shared memory declarations and route embedded backend signal calls through the host-safe provider boundary. |
 | `src/include/port/win32_port.h` | Declares the trusted Windows signal-emulation lifecycle that omits host process listeners and releases its local event explicitly. |

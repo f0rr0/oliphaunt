@@ -28,16 +28,19 @@ static int contains(const OliphauntResponse *response, const char *expected) {
 }
 
 int main(int argc, char **argv) {
-    if (argc != 5) {
-        fprintf(stderr, "usage: %s <pgdata> <runtime-dir> <sql> <expected>\n", argv[0]);
+    if (argc != 5 && argc != 6) {
+        fprintf(stderr, "usage: %s <pgdata> <runtime-dir> <sql> <expected> [startup-guc]\n", argv[0]);
         return 2;
     }
+    const char *startup_args[] = {"-c", argc == 6 ? argv[5] : NULL};
     const OliphauntConfig config = {
         .abi_version = OLIPHAUNT_ABI_VERSION,
         .pgdata = argv[1],
         .runtime_dir = argv[2],
         .username = "postgres",
         .database = "postgres",
+        .startup_args = argc == 6 ? startup_args : NULL,
+        .startup_arg_count = argc == 6 ? 2 : 0,
     };
     OliphauntHandle *database = NULL;
     if (oliphaunt_init(&config, &database) != 0 || database == NULL) {

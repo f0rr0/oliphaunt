@@ -37,6 +37,12 @@ archive/recovery shell commands because Direct cannot safely provide those
 process capabilities. Broker isolation remains required for arbitrary native
 extensions, external commands, blocking foreign code, and other process-global
 behavior. This is a correctness boundary, not a performance optimization.
+
+The libc collation enumerator uses locale -a, so trusted sessions report and
+skip that subprocess-only discovery while still importing ICU collations in
+process. Ordinary server and initdb discovery remain unchanged. Put the signal
+mask prototype beside PostgreSQL's sigset_t definition so Windows support
+objects can include miscadmin.h without relying on backend include order.
 ---
 diff --git a/src/backend/access/transam/xact.c b/src/backend/access/transam/xact.c
 index b885513f76541bc165a41ce78f83623703c2410a..ddd112f69b49e268f76e5e96d5314b94817b8ce4 100644
@@ -1656,13 +1662,12 @@ index addc3469b0ef6a0dc8254dfa8c0433bc714f8956..34bc20224b4ad1c8cff8007dfe29163e
  static inline bool
  IsTrustedEmbeddedSession(void)
  {
-@@ -351,6 +401,10 @@ extern void InitStandaloneProcess(const char *argv0);
+@@ -351,6 +401,9 @@ extern void InitStandaloneProcess(const char *argv0);
  extern void InitProcessLocalLatch(void);
  extern void SwitchToSharedLatch(void);
  extern void SwitchBackToLocalLatch(void);
 +#ifdef OLIPHAUNT_EMBEDDED
 +extern void ShutdownTrustedEmbeddedLatchSupport(void);
-+extern int SetTrustedEmbeddedThreadSignalMask(const sigset_t *mask);
 +#endif
  
  /*
@@ -1821,3 +1826,35 @@ index 146d085906352e179a416d6eefa52300270d39aa..1aa8451f7050096c22ad776e63e1d40d
  		return;
  #endif
  
+diff --git a/src/backend/commands/collationcmds.c b/src/backend/commands/collationcmds.c
+--- a/src/backend/commands/collationcmds.c
++++ b/src/backend/commands/collationcmds.c
+@@ -858,6 +858,16 @@ pg_import_system_collations(PG_FUNCTION_ARGS)
+ 	/* Load collations known to libc, using "locale -a" to enumerate them */
+ #ifdef READ_LOCALE_A_OUTPUT
++#ifdef OLIPHAUNT_EMBEDDED
++	if (!oliphaunt_skip_system_collation_discovery && IsTrustedEmbeddedProcess())
++	{
++		/* No portable in-process API enumerates libc's installed locales. */
++		ereport(NOTICE,
++				(errmsg("skipping libc collation discovery in a trusted embedded backend"),
++				 errdetail("The locale enumeration program cannot run inside the host process. ICU collation discovery is unaffected.")));
++		oliphaunt_skip_system_collation_discovery = true;
++	}
++#endif
+ 	if (!oliphaunt_skip_system_collation_discovery)
+ 	{
+ 		FILE	   *locale_a_handle;
+ 		char		localebuf[LOCALE_NAME_BUFLEN];
+diff --git a/src/include/libpq/pqsignal.h b/src/include/libpq/pqsignal.h
+--- a/src/include/libpq/pqsignal.h
++++ b/src/include/libpq/pqsignal.h
+@@ -51,4 +51,8 @@ extern PGDLLIMPORT sigset_t StartupBlockSig;
+ 
+ extern void pqinitmask(void);
+ 
++#ifdef OLIPHAUNT_EMBEDDED
++extern int SetTrustedEmbeddedThreadSignalMask(const sigset_t *mask);
++#endif
++
+ #endif							/* PQSIGNAL_H */

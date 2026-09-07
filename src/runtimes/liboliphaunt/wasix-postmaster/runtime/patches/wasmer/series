@@ -1,0 +1,9 @@
+0001-engine-memory-and-exception-lifetimes.patch
+0002-virtual-fs-file-description-and-writeback.patch
+0003-network-readiness-and-interest-lifetimes.patch
+0004-wasix-open-file-description-operations.patch
+0005-wasix-process-thread-and-join-lifetimes.patch
+0006-wasix-epoll-and-socket-readiness.patch
+0007-wasix-instance-linker-and-sealed-runtime.patch
+0008-postmaster-executor-and-build-closure.patch
+0009-strict-shared-memory-compilation.patch

@@ -1,0 +1,63 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH 7/7] libc: retain bounded word-at-a-time memcmp
+
+Isolate the inherited little-endian word-at-a-time comparison optimization
+from the runtime correctness patches. Loads remain bounded by the requested
+length and use memcpy for alignment/aliasing safety. This decomposition does
+not establish a new performance win or cross-compiler portability: retain its
+existing aggregate semantics here and require factor-isolated evidence before
+promoting it as an independent upstream optimization.
+
+Extracted without runtime hunk changes from the inherited integration bundle.
+The complete ordered series is the build and qualification unit.
+
+diff --git a/libc-top-half/musl/src/string/memcmp.c b/libc-top-half/musl/src/string/memcmp.c
+index bdbce9f..3fbc3c5 100644
+--- a/libc-top-half/musl/src/string/memcmp.c
++++ b/libc-top-half/musl/src/string/memcmp.c
+@@ -1,8 +1,43 @@
++#include <endian.h>
++#include <stdint.h>
+ #include <string.h>
+ 
++static uint64_t load64(const unsigned char *p)
++{
++	uint64_t v;
++	__builtin_memcpy(&v, p, sizeof(v));
++	return v;
++}
++
++static uint32_t load32(const unsigned char *p)
++{
++	uint32_t v;
++	__builtin_memcpy(&v, p, sizeof(v));
++	return v;
++}
++
+ int memcmp(const void *vl, const void *vr, size_t n)
+ {
+ 	const unsigned char *l=vl, *r=vr;
++#if defined(__GNUC__) && __BYTE_ORDER == __LITTLE_ENDIAN
++	for (; n >= 8; n-=8, l+=8, r+=8) {
++		uint64_t a = load64(l), b = load64(r);
++		if (a != b) {
++			unsigned shift = __builtin_ctzll(a ^ b) & ~7U;
++			return (int)((a >> shift) & 0xff) - (int)((b >> shift) & 0xff);
++		}
++	}
++	if (n >= 4) {
++		uint32_t a = load32(l), b = load32(r);
++		if (a != b) {
++			unsigned shift = __builtin_ctz(a ^ b) & ~7U;
++			return (int)((a >> shift) & 0xff) - (int)((b >> shift) & 0xff);
++		}
++		n-=4;
++		l+=4;
++		r+=4;
++	}
++#endif
+ 	for (; n && *l == *r; n--, l++, r++);
+ 	return n ? *l-*r : 0;
+ }
+

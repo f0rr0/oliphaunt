@@ -59,9 +59,11 @@ experiments are not promoted and are not mandatory future work.
 - A callback abort may be returned after the guest has drained the operation;
   a subsequent guest failure takes precedence. A terminal guest failure means
   the session cannot be reused.
-- Native's existing `-F`/`fsync=off` default is unchanged. Explicit
-  `-c fsync=on` is required for durable-storage qualification; successful
-  functional reopen does not prove crash durability.
+- Native no longer silently adds `-F`: PostgreSQL's `fsync=on` default is
+  preserved. An explicit PostgreSQL `fsync=off` setting remains available for
+  disposable data. This can increase durable-write latency; functional reopen
+  still does not prove crash durability. Fresh Linux ICU direct and installed
+  broker tests cover both default-on and explicit-off behavior.
 - Embedded and Postmaster cannot safely become the same runnable binary by
   adding an environment flag. Their process model, imports, lifecycle and
   recovery assumptions differ. Share safe build inputs where useful, not a
@@ -78,10 +80,10 @@ The local fast path uses cached third-party dependencies and keeps final
 artifacts/evidence. It does not stage the research harness, historical binaries
 or producer trees in Git.
 
-The local Moon affected-task query is blocked by installed proto 0.57.5 versus
-the Rust plugin's minimum 0.60.0; explicitly invoked task commands are not a
-claim that the Moon graph gate passed. The complete prepared-source catalog
-check also needs extension sources outside the deliberately core-only build.
+The repository-pinned Moon toolchain now runs locally: affected-project
+resolution, the complete SDK contract task and graph unit tests passed.
+The complete prepared-source catalog check still needs extension sources
+outside the deliberately core-only build.
 
 Exact-candidate performance remains an explicit follow-up. Earlier compound
 candidate numbers cannot be attached to this integration, and strict-memory

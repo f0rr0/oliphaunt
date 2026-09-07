@@ -860,12 +860,10 @@ fn check_rust_host_runtime_abi_surface(postgres_mod: &str) -> Result<()> {
             "Rust WASIX host must consciously load optional runtime export {export}"
         );
     }
-    for export in ["oliphaunt_wasix_set_protocol_transport"] {
-        ensure!(
-            runtime_exports.contains(export),
-            "WASIX runtime export validator must require optional Rust host export {export} for current generated assets"
-        );
-    }
+    ensure!(
+        runtime_exports.contains("oliphaunt_wasix_set_protocol_transport"),
+        "WASIX runtime export validator must require optional Rust host protocol transport export for current generated assets"
+    );
     for legacy in [
         "PostgresMainLongJmp",
         "oliphaunt_wasix_set_force_host_error_recovery",

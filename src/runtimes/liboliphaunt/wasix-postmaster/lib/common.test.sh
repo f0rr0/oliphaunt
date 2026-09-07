@@ -79,15 +79,15 @@ if env FRESH_PROJECT_SOURCE_ID_PREFIX=src/runtimes/liboliphaunt/wasix-postmaster
 fi
 
 [ "$(fresh_project_source_identity_path \
-  "$project_root/runtime/patches/wasix-libc/0001-postgres-wasix-blockers.patch")" = \
-  "src/runtimes/liboliphaunt/wasix-postmaster/runtime/patches/wasix-libc/0001-postgres-wasix-blockers.patch" ]
+  "$project_root/runtime/patches/wasix-libc/series")" = \
+  "src/runtimes/liboliphaunt/wasix-postmaster/runtime/patches/wasix-libc/series" ]
 original_fresh_root="$FRESH_ROOT"
 frozen_root="$test_root/measurement-tool-closures/example"
 mkdir -p "$frozen_root/runtime/patches/wasix-libc"
 FRESH_ROOT="$frozen_root"
 [ "$(fresh_project_source_identity_path \
-  "$frozen_root/runtime/patches/wasix-libc/0001-postgres-wasix-blockers.patch")" = \
-  "src/runtimes/liboliphaunt/wasix-postmaster/runtime/patches/wasix-libc/0001-postgres-wasix-blockers.patch" ]
+  "$frozen_root/runtime/patches/wasix-libc/series")" = \
+  "src/runtimes/liboliphaunt/wasix-postmaster/runtime/patches/wasix-libc/series" ]
 expect_source_identity_failure() {
   fresh_project_source_identity_path "$1" >/dev/null 2>&1
 }
@@ -382,7 +382,7 @@ write_receipt() {
     printf 'wasmer_napi_commit=706383f42391cb4e4e82e5fd5e63a0ebf81ae19d\n'
     printf 'wasmer_test_files_commit=7f27e84c69af3b772f751d6c4a733d9f448b2c70\n'
     printf 'wasmer_spec_commit=7e0b83aba9dbbb6e0623c9334b0f73b3bb584b90\n'
-    printf 'wasmer_patch_sha256=%s\n' "$(fresh_wasmer_bin_hash "$project_root/runtime/patches/wasmer/0001-postgres-wasix-blockers.patch")"
+    printf 'wasmer_patch_sha256=%s\n' "$(fresh_runtime_patch_hash "$project_root/runtime/patches/wasmer/series")"
     printf 'wasmer_prepared_signature_sha256=%064d\n' 0
     printf 'wasmer_cargo_lock_sha256=%s\n' "$cargo_lock_sha256"
     printf 'wasmer_binary_sha256=%s\n' "$(fresh_wasmer_bin_hash "$FRESH_UPSTREAM_WASMER_BIN")"
@@ -392,7 +392,7 @@ write_receipt() {
     printf 'runtime_abi_id=%s\n' "$runtime_abi_id"
     printf 'artifact_abi_version=%s\n' "$FRESH_WASMER_ARTIFACT_ABI_VERSION"
     printf 'wasix_libc_source_commit=34178a6272804f90448b5bd08dc7bcf0d85438e3\n'
-    printf 'wasix_libc_patch_sha256=%s\n' "$(fresh_wasmer_bin_hash "$project_root/runtime/patches/wasix-libc/0001-postgres-wasix-blockers.patch")"
+    printf 'wasix_libc_patch_sha256=%s\n' "$(fresh_runtime_patch_hash "$project_root/runtime/patches/wasix-libc/series")"
     printf 'wasix_libc_prepared_signature_sha256=%064d\n' 0
     printf 'sysroot_carrier_manifest_sha256=%064d\n' 0
     printf 'sysroot_variant=%s\n' "$WASIXCC_SYSROOT_VARIANT"
@@ -413,7 +413,7 @@ write_postmaster_executor_receipt() {
     printf 'build_recipe_sha256=%s\n' "$(fresh_runtime_build_recipe_sha256)"
     printf 'wasmer_build_receipt_sha256=%s\n' "$(fresh_wasmer_bin_hash "$WASMER_BUILD_RECEIPT")"
     printf 'wasmer_source_commit=%s\n' "$FRESH_WASMER_SOURCE_COMMIT"
-    printf 'wasmer_patch_sha256=%s\n' "$(fresh_wasmer_bin_hash "$project_root/runtime/patches/wasmer/0001-postgres-wasix-blockers.patch")"
+    printf 'wasmer_patch_sha256=%s\n' "$(fresh_runtime_patch_hash "$project_root/runtime/patches/wasmer/series")"
     printf 'wasmer_prepared_signature_sha256=%s\n' \
       "$(fresh_manifest_value "$WASMER_BUILD_RECEIPT" wasmer_prepared_signature_sha256)"
     printf 'wasmer_cargo_lock_sha256=%s\n' \
@@ -875,4 +875,26 @@ FRESH_UPSTREAM_WASMER_BIN="$test_root/missing" \
   PATH="$test_root/bin:$PATH" \
   expect_failure fresh_wasmer_bin
 
-printf 'patched Wasmer receipt selection tests passed\n'
+series_dir="$test_root/runtime-series"
+mkdir -p "$series_dir"
+printf 'first payload\n' >"$series_dir/0001-one.patch"
+printf 'second payload\n' >"$series_dir/0002-two.patch"
+printf '0001-one.patch\n0002-two.patch\n' >"$series_dir/series"
+series_hash="$(fresh_runtime_patch_hash "$series_dir/series")"
+fresh_is_sha256 "$series_hash"
+printf 'changed payload\n' >>"$series_dir/0002-two.patch"
+[ "$series_hash" != "$(fresh_runtime_patch_hash "$series_dir/series")" ]
+series_hash="$(fresh_runtime_patch_hash "$series_dir/series")"
+printf '0002-two.patch\n0001-one.patch\n' >"$series_dir/series"
+[ "$series_hash" != "$(fresh_runtime_patch_hash "$series_dir/series")" ]
+printf '0001-one.patch\n0001-one.patch\n' >"$series_dir/series"
+expect_failure fresh_runtime_patch_hash "$series_dir/series"
+printf '../escape.patch\n' >"$series_dir/series"
+expect_failure fresh_runtime_patch_hash "$series_dir/series"
+printf '0003-link.patch\n' >"$series_dir/series"
+ln -s "$series_dir/0001-one.patch" "$series_dir/0003-link.patch"
+expect_failure fresh_runtime_patch_hash "$series_dir/series"
+printf '# no active patches\n' >"$series_dir/series"
+expect_failure fresh_runtime_patch_hash "$series_dir/series"
+
+printf 'patched Wasmer receipt selection and ordered-series tests passed\n'

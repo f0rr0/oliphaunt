@@ -474,6 +474,117 @@ fn verify_direct_database(root: &Path) -> Result<(), Box<dyn std::error::Error>>
 }
 
 #[test]
+fn broker_preserves_configured_identity_and_session_policy_when_available() {
+    if std::env::var_os("LIBOLIPHAUNT_PATH").is_none()
+        || std::env::var_os("OLIPHAUNT_BROKER").is_none()
+    {
+        eprintln!("skipping installed broker identity smoke: native library/broker is unset");
+        return;
+    }
+    let root = unique_root("native-broker-identity");
+    let result = std::panic::catch_unwind(|| {
+        let mut bootstrap = DirectOliphaunt::builder()
+            .broker()
+            .storage(DatabaseStorage::Directory(root.clone()))
+            .open()
+            .unwrap();
+        bootstrap
+            .execute("CREATE DATABASE broker_identity")
+            .unwrap();
+        bootstrap.close().unwrap();
+        let open = |username: &str| {
+            DirectOliphaunt::builder()
+                .broker()
+                .storage(DatabaseStorage::Directory(root.clone()))
+                .username(username)
+                .database("broker_identity")
+                .open()
+        };
+        let mut admin = open("postgres").unwrap();
+        for sql in [
+            "CREATE ROLE broker_reader LOGIN",
+            "CREATE ROLE broker_no_login NOLOGIN",
+            "ALTER ROLE broker_reader SET application_name = 'configured-broker-role'",
+            "ALTER DATABASE broker_identity SET default_statistics_target = 137",
+            "CREATE TABLE broker_login_events(who name)",
+            "CREATE FUNCTION broker_login_event() RETURNS event_trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$ BEGIN INSERT INTO public.broker_login_events VALUES (session_user); END $$",
+            "CREATE EVENT TRIGGER broker_login ON login EXECUTE FUNCTION broker_login_event()",
+            "GRANT SELECT ON broker_login_events TO broker_reader",
+        ] {
+            admin.execute(sql).unwrap();
+        }
+        admin.close().unwrap();
+
+        for expected_logins in ["1", "2"] {
+            let mut database = open("broker_reader").unwrap();
+            let row = database.query("SELECT current_user::text AS current_role, session_user::text AS session_role, current_database() AS database, (system_user IS NULL)::text AS no_auth_identity, current_setting('application_name') AS application_name, current_setting('default_statistics_target') AS statistics_target, current_setting('fsync') AS fsync, (SELECT count(*)::text FROM broker_login_events WHERE who = session_user) AS logins").unwrap();
+            assert_eq!(
+                row.get_text(0, "current_role").unwrap(),
+                Some("broker_reader")
+            );
+            assert_eq!(
+                row.get_text(0, "session_role").unwrap(),
+                Some("broker_reader")
+            );
+            assert_eq!(row.get_text(0, "no_auth_identity").unwrap(), Some("true"));
+            assert_eq!(
+                row.get_text(0, "database").unwrap(),
+                Some("broker_identity")
+            );
+            assert_eq!(row.get_text(0, "statistics_target").unwrap(), Some("137"));
+            assert_eq!(
+                row.get_text(0, "application_name").unwrap(),
+                Some("configured-broker-role")
+            );
+            assert_eq!(row.get_text(0, "fsync").unwrap(), Some("on"));
+            assert_eq!(row.get_text(0, "logins").unwrap(), Some(expected_logins));
+            database
+                .execute("SET ROLE postgres")
+                .expect_err("configured role must not acquire superuser rights");
+            database
+                .execute("SET application_name = 'session-local-change'")
+                .unwrap();
+            database.execute("DISCARD ALL").unwrap();
+            assert_eq!(
+                database
+                    .query("SELECT current_setting('application_name') AS value")
+                    .unwrap()
+                    .get_text(0, "value")
+                    .unwrap(),
+                Some("configured-broker-role")
+            );
+            database.close().unwrap();
+        }
+
+        for username in ["broker_no_login", "broker_missing_role"] {
+            assert!(
+                open(username).is_err(),
+                "broker accepted invalid startup role {username}"
+            );
+        }
+        let mut opted_out = DirectOliphaunt::builder()
+            .broker()
+            .storage(DatabaseStorage::Directory(root.clone()))
+            .startup_guc("fsync", "off")
+            .open()
+            .unwrap();
+        assert_eq!(
+            opted_out
+                .query("SELECT current_setting('fsync') AS value")
+                .unwrap()
+                .get_text(0, "value")
+                .unwrap(),
+            Some("off")
+        );
+        opted_out.close().unwrap();
+    });
+    let _ = std::fs::remove_dir_all(root);
+    if let Err(payload) = result {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+#[test]
 fn descriptorless_nonempty_root_is_rejected_without_mutation_when_available() {
     if std::env::var_os("LIBOLIPHAUNT_PATH").is_none() {
         return;

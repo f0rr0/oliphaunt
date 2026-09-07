@@ -147,11 +147,15 @@ tasks:
       set -e
       . src/runtimes/liboliphaunt/native/tools/runtime-preflight.sh
       oliphaunt_runtime_native_host_require basic
+      OLIPHAUNT_BROKER="$PWD/target/moon/oliphaunt-broker/build/debug/oliphaunt-broker"
+      case "$(uname -s)" in MINGW* | MSYS* | CYGWIN*) OLIPHAUNT_BROKER="$OLIPHAUNT_BROKER.exe" ;; esac
+      export OLIPHAUNT_BROKER
       cargo test -p oliphaunt --locked --test native_smoke --test native_sql_regression -- --test-threads=1
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/regression"
     deps:
       - "liboliphaunt-native:host-smoke"
+      - "oliphaunt-broker:build"
     inputs:
       - "@group(cargo-workspace)"
       - project: "shared-test-fixtures"

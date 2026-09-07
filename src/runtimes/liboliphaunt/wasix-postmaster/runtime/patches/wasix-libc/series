@@ -1,0 +1,7 @@
+0001-mmap-and-allocator-exec-ownership.patch
+0002-file-flags-and-sync-range.patch
+0003-socket-and-epoll-flags.patch
+0004-process-wait-signal-and-futex-semantics.patch
+0005-wasm-eh-signal-context.patch
+0006-process-resource-limit-import.patch
+0007-word-at-a-time-memcmp.patch

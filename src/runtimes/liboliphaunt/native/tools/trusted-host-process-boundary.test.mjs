@@ -92,6 +92,28 @@ function addedSource(section) {
   return sourceFromDiff(section, ['+']);
 }
 
+test('0022 keeps signal-mask types in their owning header on Windows', async () => {
+  const {patch} = await fixturePromise;
+  assert.doesNotMatch(
+    addedSource(diffSection(patch, 'src/include/miscadmin.h')),
+    /\bsigset_t\b/u,
+  );
+  assert.match(
+    addedSource(diffSection(patch, 'src/include/libpq/pqsignal.h')),
+    /extern int SetTrustedEmbeddedThreadSignalMask\(const sigset_t \*mask\);/u,
+  );
+});
+
+test('0022 preserves in-process ICU import without spawning locale enumeration', async () => {
+  const {patch} = await fixturePromise;
+  const section = diffSection(patch, 'src/backend/commands/collationcmds.c');
+  assert.match(section, /#ifdef READ_LOCALE_A_OUTPUT\n\+#ifdef OLIPHAUNT_EMBEDDED/u);
+  assert.match(section, /!oliphaunt_skip_system_collation_discovery && IsTrustedEmbeddedProcess\(\)/u);
+  assert.match(section, /ereport\(NOTICE,/u);
+  assert.match(section, /oliphaunt_skip_system_collation_discovery = true;/u);
+  assert.doesNotMatch(addedSource(section), /oliphaunt_skip_icu_collation_discovery/u);
+});
+
 function destinationSource(section) {
   return sourceFromDiff(section, [' ', '+']);
 }
