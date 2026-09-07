@@ -22,6 +22,30 @@ const tasks = new Map(
   Object.values(JSON.parse(graphResult.stdout).data).map((task) => [task.target, task]),
 );
 
+test("cross-workflow artifact gates reference existing producer job names", () => {
+  const jobNames = Object.values(workflow.jobs).map((job) => job.name);
+  let gates = 0;
+  for (const file of ["release.yml", "mobile-e2e.yml"]) {
+    const consumer = Bun.YAML.parse(readFileSync(path.join(ROOT, ".github/workflows", file), "utf8"));
+    for (const job of Object.values(consumer.jobs)) {
+      for (const step of job.steps ?? []) {
+        const run = String(step.run ?? "");
+        if (!/download-build-artifacts[.]mjs|require-workflow-success[.]sh/u.test(run)) continue;
+        for (const match of run.matchAll(/--job\s+(?:"([^"]+)"|'([^']+)'|([^\s\\]+))/gu)) {
+          const name = match[1] ?? match[2] ?? match[3];
+          gates += 1;
+          assert.equal(
+            jobNames.filter((candidate) => candidate === name).length,
+            1,
+            `${file}: ${step.name} requires exactly one CI job named ${name}`,
+          );
+        }
+      }
+    }
+  }
+  assert.ok(gates > 0, "cross-workflow downloads must retain their producer gates");
+});
+
 function dependencies(target) {
   const task = tasks.get(target);
   assert.ok(task, `workflow root ${target} must exist in Moon`);

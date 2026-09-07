@@ -516,7 +516,7 @@ jobs:
             "$RELEASE_HEAD_SHA" \
             target/release-candidate/affected-plan \
             --run-id "$CI_RUN_ID" \
-            --job Plan \
+            --job "Planning / Affected Work" \
             --artifact artifact-build-plan
 
       - name: Download required exact-SHA WASIX evidence
@@ -531,7 +531,7 @@ jobs:
             "$RELEASE_HEAD_SHA" \
             target/release-candidate/wasix-evidence \
             --run-id "$CI_RUN_ID" \
-            --job "E2E / WASIX release regression" \
+            --job "E2E / WASIX Release Regression" \
             --artifact wasix-release-regression-evidence
 
       - name: Verify exact-SHA qualification record
