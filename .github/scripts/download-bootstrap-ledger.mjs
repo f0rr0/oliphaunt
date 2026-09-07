@@ -356,7 +356,7 @@ function restoreArtifact(repo, runId, artifact, destination, sourceDescription) 
 
 export async function main() {
   const repo = required("GH_REPO");
-  const sha = required("RELEASE_HEAD_SHA");
+  const sha = process.env.GITHUB_SHA || required("RELEASE_HEAD_SHA");
   if (!/^[0-9a-f]{40}$/u.test(sha)) fail("RELEASE_HEAD_SHA must be a full lowercase commit SHA");
   const destination = path.resolve(
     ROOT,

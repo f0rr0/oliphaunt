@@ -836,6 +836,13 @@ describe("GitHub release attestation receipt", () => {
     expect(receipt.signerWorkflow).toBe("f0rr0/oliphaunt/.github/workflows/release.yml");
     expect(receipt.head).toBe(COMMIT);
     expect(receipt.lockDigest).toBe(LOCK_DIGEST);
+    const publisherReceipt = buildGithubAttestationReceipt({
+      attestations: receiptSubjects(), lock, releases, repo: REPO, publisherSha: "4".repeat(40),
+    });
+    expect(validateGithubAttestationReceipt(publisherReceipt, lock, { repo: REPO }).publisherSha).toBe("4".repeat(40));
+    expect(publisherReceipt.head).toBe(COMMIT);
+    publisherReceipt.publisherSha = "5".repeat(40);
+    expect(() => validateGithubAttestationReceipt(publisherReceipt, lock, { repo: REPO })).toThrow(/digest mismatch/u);
 
     const changed = structuredClone(releases);
     changed[0].assets[0].assetId = "999";
@@ -871,6 +878,14 @@ describe("GitHub release attestation receipt", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].file).toBe(local);
     expect(records[0].subjects).toEqual(subjects);
+    const publisherSha = "4".repeat(40);
+    await verifyAttestationBundles(lock, [bundlePath], {
+      repo: REPO, publisherSha,
+      verifyBundleImpl: async (options) => {
+        expect(options.head).toBe(publisherSha);
+        return subjects;
+      },
+    });
 
     await expect(verifyAttestationBundles(lock, [bundlePath], {
       repo: REPO,

@@ -4,6 +4,7 @@ import {
   reconcileBootstrapRegistryState,
   resolveBootstrapScope,
 } from "./bootstrap-registry-reconciliation.mjs";
+import { assessCratesIoBootstrapCapacity } from "./crates-io-bootstrap-capacity.mjs";
 
 function carrier(ecosystem, index) {
   const name = ecosystem === "cargo" ? `crate-${index}` : `@oliphaunt/pkg-${index}`;
@@ -24,6 +25,37 @@ function identity({ name, version }) {
 }
 
 describe("bootstrap registry reconciliation", () => {
+  test("scoped execution admits mixed registry inventories and resumes without losing missing identities", () => {
+    const plan = [0, 1, 2].map((index) => carrier("cargo", index))
+      .concat([3, 4, 5].map((index) => carrier("npm", index)));
+    const inventory = (rows) => ({
+      selectedIdentities: rows.map(identity),
+      publishedIdentities: [identity(rows[0])],
+      pendingVersions: [identity(rows[1])],
+      missingNames: [rows[2].name],
+    });
+    const cargoInventory = inventory(plan.slice(0, 3));
+    const npmInventory = inventory(plan.slice(3));
+    const reconciliation = reconcileBootstrapRegistryState({ plan, cargoInventory, npmInventory, checkpoint: null });
+    const scoped = resolveBootstrapScope(plan, reconciliation, null);
+    const assess = (bootstrapPlan) => assessCratesIoBootstrapCapacity({
+      inventory: cargoInventory, npmInventory, bootstrapPlan,
+      nowEpochSeconds: 1000, deadlineEpochSeconds: 20800,
+    });
+    expect(scoped.map(({ id }) => id)).toEqual([plan[2].id, plan[5].id]);
+    const admitted = assess(scoped);
+    expect(admitted.admittedCarrierIds).toEqual(scoped.map(({ id }) => id));
+    expect(admitted.initialCargoTokens).toBe(0);
+    expect(() => assess(scoped.slice(1))).toThrow(/disagrees with the exact version inventory/u);
+    expect(() => assess(scoped.map((row) => ({ ...row, version: "9.0.0" })))).toThrow(/version disagrees/u);
+    cargoInventory.publishedIdentities.push(identity(plan[2]));
+    cargoInventory.missingNames = [];
+    const checkpoint = { publications: scoped.map(({ id }) => ({ id })), receipts: [{ id: plan[2].id }] };
+    // Preserve the original frozen scope while the public inventory advances.
+    expect(assess(scoped).admittedCarrierIds).toEqual([plan[5].id]);
+    expect(reconcileBootstrapRegistryState({ plan, cargoInventory, npmInventory, checkpoint }).missingCarriers.map(({ id }) => id))
+      .toEqual([plan[5].id]);
+  });
   test("a 630/631 resume executes only the one still-absent name", () => {
     const cargo = Array.from({ length: 417 }, (_, index) => carrier("cargo", index));
     const npm = Array.from({ length: 214 }, (_, index) => carrier("npm", 417 + index));

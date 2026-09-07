@@ -22,16 +22,15 @@ case "${RELEASE_OPERATION}" in
     ;;
 esac
 
-# release_commit is an assertion about this workflow run, never a selector for
-# historical code. Validate it before operation-specific jobs are evaluated so
-# every operation, including prepare-release-pr, fails closed on a stale input.
+# Preparation stays exact-SHA. Publishers additionally prove that a supplied
+# approved source is an ancestor with only permitted publication-code changes.
 if [[ -n "${release_commit}" ]]; then
   if [[ ! "${release_commit}" =~ ^[0-9a-fA-F]{40}$ ]]; then
     echo "release_commit must be a full 40-character commit SHA, got: ${release_commit}" >&2
     exit 2
   fi
   normalized_release_commit="$(printf '%s' "${release_commit}" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
-  if [[ "${normalized_release_commit}" != "${normalized_github_sha}" ]]; then
+  if [[ "${normalized_release_commit}" != "${normalized_github_sha}" && "${RELEASE_OPERATION}" != publish && "${RELEASE_OPERATION}" != publish-bootstrap ]]; then
     echo "release_commit must equal the exact workflow SHA" >&2
     echo "workflow commit: ${GITHUB_SHA}" >&2
     echo "release commit:  ${release_commit}" >&2

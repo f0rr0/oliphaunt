@@ -528,8 +528,14 @@ function bootstrapPublicationSchedule({
       .filter((carrier) => carrier.ecosystem === ecosystem)
       .map(({ name }) => name));
     const states = stateByEcosystem.get(ecosystem);
-    if (planned.size !== states.size || [...states.keys()].some((name) => !planned.has(name))) {
+    if ([...planned].some((name) => !states.has(name))
+      || [...states].some(([name, state]) => state.state === "missing" && !planned.has(name))) {
       throw error(`${ecosystem} bootstrap plan disagrees with the exact version inventory`);
+    }
+    for (const carrier of bootstrapPlan.filter((row) => row.ecosystem === ecosystem)) {
+      if (states.get(carrier.name).version !== carrier.version) {
+        throw error(`${ecosystem} bootstrap plan version disagrees with the exact version inventory`);
+      }
     }
   }
   const selected = new Set(selectedCarrierIds);

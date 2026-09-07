@@ -304,13 +304,24 @@ or non-hosted use, binds HEAD to `RELEASE_HEAD_SHA`, and reruns the fixed
 candidate/plan/WASIX-evidence verifier before omitting mutation tests. Workflow
 policy rejects extra full invocations or replay before candidate verification.
 
-On the normal path, `release_commit`, when supplied, is an assertion that must equal the workflow
-commit. It cannot select historical code. A tooling fix is a new candidate and
-must pass new qualification. At the mutation boundary, a root
+Preparation and dry-run bind `release_commit` to the workflow commit. For
+`publish-bootstrap` and `publish`, it may instead identify an approved ancestor
+candidate after narrowly permitted publication-only fixes. The controller
+check requires a clean checkout and rejects changes to product source,
+packagers, build definitions, CI, and lockfiles. The publishing commit requires
+successful CI `Required`; the frozen candidate retains its original full
+qualification, approval run, source SHA/tree, and package hashes. GitHub
+attestations verify the actual publishing workflow SHA and record it separately
+from the candidate source. No build or packaging command is replayed.
+
+Use the same publishing commit for bootstrap and normal publish so the latter
+can discover the completed bootstrap ledger. Incomplete bootstrap still resumes
+only through its original run; this does not add cross-run checkpoint migration.
+At the mutation boundary, a root
 `publish-bootstrap` or `publish` run first reads the lightweight
 `oliphaunt-release-transport/<full-sha>` tag and accepts only a direct commit
 ref at its exact release SHA. If the tag is absent, or this is the first run
-attempt, the helper proves current `main` before creating or accepting it;
+attempt, the helper proves that the publishing workflow is current `main` before creating or accepting it;
 creating an absent append-only tag is the root generation's first mutation.
 Only a genuine rerun (`GITHUB_RUN_ATTEMPT > 1`) of the exact root operation,
 original `refs/heads/main` workflow SHA may reuse an

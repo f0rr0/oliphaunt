@@ -15,7 +15,7 @@ on:
           - publish
           - publish-bootstrap
       release_commit:
-        description: Optional full commit SHA assertion; when set it must equal the workflow commit
+        description: Candidate source SHA; publish/bootstrap may reuse an approved ancestor after publication-only fixes
         required: false
         type: string
         default: ""
@@ -312,6 +312,7 @@ jobs:
     permissions:
       actions: read
       contents: read
+      pull-requests: read
     steps: &release_candidate_steps
       - name: Record release deadline
         id: release_job_deadline
@@ -343,6 +344,13 @@ jobs:
         env:
           INPUT_RELEASE_COMMIT: ${{ inputs.release_commit }}
         run: .github/scripts/resolve-release-head.sh
+
+      - name: Require checked publishing code
+        if: ${{ inputs.operation == 'publish' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: bash .github/scripts/require-workflow-success.sh CI "$GITHUB_SHA" 0 --job Required
 
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
@@ -400,7 +408,7 @@ jobs:
 
       - name: Prove Release Please PR can complete after publication
         id: assert_release_please_markable
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
         timeout-minutes: 1
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1019,7 +1027,7 @@ jobs:
         run: |
           node .github/scripts/download-build-artifacts.mjs \
             Release \
-            "$RELEASE_HEAD_SHA" \
+            "$GITHUB_SHA" \
             "$BOOTSTRAP_LEDGER_PATH" \
             --artifact oliphaunt-bootstrap-ledger
 
@@ -1515,6 +1523,12 @@ jobs:
           INPUT_RELEASE_COMMIT: ${{ inputs.release_commit }}
         run: .github/scripts/resolve-release-head.sh
 
+      - name: Require checked publishing code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: bash .github/scripts/require-workflow-success.sh CI "$GITHUB_SHA" 0 --job Required
+
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
         with:
@@ -1533,6 +1547,19 @@ jobs:
       - name: No package release planned
         if: ${{ steps.release_plan.outputs.has_release_changes != 'true' }}
         run: echo "No release-affecting product changes were found since the last product tag."
+
+      - name: Prove Release Please PR can complete after bootstrap
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: |
+          tools/dev/bun.sh tools/release/verify-publication-candidate.mjs \
+            --products-json "$PRODUCTS_JSON" --head-ref "$RELEASE_HEAD_SHA" \
+            --github-output "$RUNNER_TEMP/bootstrap-release-identity"
+          release_sha="$(sed -n 's/^release_sha=//p' "$RUNNER_TEMP/bootstrap-release-identity")"
+          tools/dev/bun.sh tools/release/release-please-pr-lifecycle.mjs \
+            assert-markable --release-sha "$release_sha" --base main
 
       - name: Resolve selected bootstrap authentication needs
         id: registry_needs

@@ -56,12 +56,17 @@ test("rejects malformed and stale release commit assertions before every operati
   for (const [operation, releaseCommit] of [
     ["prepare-release-pr", "84d90b9"],
     ["publish-dry-run", "1111111111111111111111111111111111111111"],
-    ["publish-bootstrap", "1111111111111111111111111111111111111111"],
-    ["publish", "1111111111111111111111111111111111111111"],
   ]) {
     const result = validate({ operation, releaseCommit });
     assert.notEqual(result.status, 0, `${operation} unexpectedly accepted ${releaseCommit}`);
     assert.match(result.output, /release_commit must (?:be a full 40-character commit SHA|equal the exact workflow SHA)/u);
+  }
+});
+
+test("publish operations admit a pinned source for subsequent controller and approval verification", () => {
+  for (const operation of ["publish", "publish-bootstrap"]) {
+    const result = validate({ operation, releaseCommit: "1".repeat(40), approvalRunId: "123" });
+    assert.equal(result.status, 0, result.output);
   }
 });
 
