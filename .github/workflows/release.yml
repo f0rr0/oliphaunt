@@ -345,17 +345,17 @@ jobs:
           INPUT_RELEASE_COMMIT: ${{ inputs.release_commit }}
         run: .github/scripts/resolve-release-head.sh
 
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+        with:
+          install-workspace: "true"
+
       - name: Require checked publishing code
         if: ${{ inputs.operation == 'publish' }}
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: bash .github/scripts/require-workflow-success.sh CI "$GITHUB_SHA" 0 --job Required
-
-      - name: Set up Moon
-        uses: ./.github/actions/setup-moon
-        with:
-          install-workspace: "true"
 
       - name: Set up Rust
         uses: ./.github/actions/setup-rust
@@ -1523,16 +1523,16 @@ jobs:
           INPUT_RELEASE_COMMIT: ${{ inputs.release_commit }}
         run: .github/scripts/resolve-release-head.sh
 
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+        with:
+          install-workspace: "false"
+
       - name: Require checked publishing code
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: bash .github/scripts/require-workflow-success.sh CI "$GITHUB_SHA" 0 --job Required
-
-      - name: Set up Moon
-        uses: ./.github/actions/setup-moon
-        with:
-          install-workspace: "false"
 
       - name: Plan bootstrap releases
         id: release_plan
