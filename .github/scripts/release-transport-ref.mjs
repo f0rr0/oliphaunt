@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { reserveGitHubContentWriteSync } from "../../tools/release/github-content-write-pacer.mjs";
 import { reserveGitHubCoreRequestSync } from "../../tools/release/github-core-request-journal.mjs";
+import { assertPublicationController } from "../../tools/release/publication-controller.mjs";
 
 export const RELEASE_TRANSPORT_TAG_PREFIX = "oliphaunt-release-transport/";
 export const RELEASE_TRANSPORT_REQUEST_TIMEOUT_MS = 30_000;
@@ -106,7 +107,6 @@ function rootAdmission(contentWriteAdmission, commit, environment) {
     environment.GITHUB_ACTIONS !== "true"
     || environment.RELEASE_OPERATION !== expectedOperation
     || environment.GITHUB_REF !== "refs/heads/main"
-    || workflowSha !== commit
     || !/^[1-9][0-9]*$/u.test(runAttempt)
     || !Number.isSafeInteger(Number(runAttempt))
   ) {
@@ -114,7 +114,14 @@ function rootAdmission(contentWriteAdmission, commit, environment) {
       `${contentWriteAdmission} admission requires the exact root ${expectedOperation} GitHub run`,
     );
   }
-  return { root: true, runAttempt: Number(runAttempt) };
+  if (workflowSha !== commit) {
+    try {
+      assertPublicationController({ source: commit, controller: workflowSha });
+    } catch (cause) {
+      throw error(`${contentWriteAdmission} admission requires the exact root ${expectedOperation} GitHub run with a verified publication controller: ${cause.message}`);
+    }
+  }
+  return { root: true, runAttempt: Number(runAttempt), workflowSha };
 }
 
 export function proveCurrentMainSync({ commit, environment = process.env } = {}) {
@@ -289,7 +296,7 @@ export async function ensureReleaseTransportRef({
       label: `create release transport ref ${normalizedCommit}`,
     });
   }
-  await proveCurrentMain({ commit: normalizedCommit, environment });
+  await proveCurrentMain({ commit: admission.workflowSha ?? normalizedCommit, environment });
   if (existing !== null) return { ...existing, created: false };
 
   reserveGitHubCoreRequestSync({

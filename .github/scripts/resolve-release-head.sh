@@ -25,13 +25,7 @@ else
   fi
 fi
 
-if [[ "$release_sha" != "$workflow_sha" ]]; then
-  echo "release_commit must equal the workflow commit exactly." >&2
-  echo "workflow commit: $workflow_sha" >&2
-  echo "release commit:  $release_sha" >&2
-  echo "Tooling-lag publication is intentionally unsupported; dispatch from the exact release commit." >&2
-  exit 2
-fi
+node tools/release/publication-controller.mjs "$release_sha" "$workflow_sha"
 
 {
   echo "sha=$release_sha"

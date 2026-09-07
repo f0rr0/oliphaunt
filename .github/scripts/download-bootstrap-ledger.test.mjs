@@ -204,7 +204,8 @@ function invoke(fixture, {
       GITHUB_RUN_ATTEMPT: String(attempt),
       GITHUB_RUN_ID: "900",
       GITHUB_SHA: SHA,
-      RELEASE_HEAD_SHA: SHA,
+      RELEASE_HEAD_SHA: "b".repeat(40), // Frozen source differs from the publishing workflow SHA.
+
       OLIPHAUNT_GITHUB_READ_BASE_DELAY_MS: "0",
       OLIPHAUNT_GITHUB_READ_MAX_DELAY_MS: "0",
     }),

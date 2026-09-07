@@ -27,6 +27,7 @@ import {
 } from "./publication-lock.mjs";
 import { reserveGitHubCoreRequestSync } from "./github-core-request-journal.mjs";
 import { swiftExtensionCarrierAssetName } from "./ios-carrier-manifest.mjs";
+import { assertPublicationController } from "./publication-controller.mjs";
 import { assertWasixExtensionMemberInstall } from "../../src/shared/extension-runtime-contract/wasix-extension-install.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -1982,6 +1983,7 @@ export function buildGithubAttestationReceipt({
   lock,
   releases,
   repo = repository(),
+  publisherSha = lock.source.commit,
 }) {
   const canonicalRepo = normalizedRepository(repo);
   const normalizedReleases = normalizeGithubReleaseSnapshot(lock, releases);
@@ -1999,6 +2001,7 @@ export function buildGithubAttestationReceipt({
     signerWorkflow: githubSignerWorkflow(canonicalRepo),
     sourceRef: "refs/heads/main",
     sourceTree: lock.source.tree,
+    ...(publisherSha === lock.source.commit ? {} : { publisherSha }),
   };
   receipt.receiptDigest = receiptDigest(receipt);
   return receipt;
@@ -2017,7 +2020,11 @@ export function validateGithubAttestationReceipt(receipt, lock, { repo = reposit
     "signerWorkflow",
     "sourceRef",
     "sourceTree",
+    ...(Object.hasOwn(receipt, "publisherSha") ? ["publisherSha"] : []),
   ], "GitHub attestation receipt");
+  if (receipt.publisherSha !== undefined && !/^[0-9a-f]{40}$/u.test(receipt.publisherSha)) {
+    throw new Error("GitHub attestation receipt publisher SHA is invalid");
+  }
   if (
     receipt.schema !== GITHUB_ATTESTATION_RECEIPT_SCHEMA
     || receipt.repository !== canonicalRepo
@@ -2349,6 +2356,7 @@ function runGhBundleVerification({
 export async function verifyAttestationBundles(lock, bundlePaths, {
   repo = repository(),
   verifyBundleImpl = runGhBundleVerification,
+  publisherSha = lock.source.commit,
 } = {}) {
   const canonicalRepo = normalizedRepository(repo);
   if (!Array.isArray(bundlePaths)) {
@@ -2359,7 +2367,7 @@ export async function verifyAttestationBundles(lock, bundlePaths, {
     throw new Error("attestation bundles contaminate a release selection with no frozen GitHub assets");
   }
   const expectedByKey = new Map(assets.map((asset) => [githubAssetSubjectKey(asset), asset]));
-  const signerHead = lock.source.commit;
+  const signerHead = publisherSha;
   const records = [];
   const suppliedPaths = new Set();
   const suppliedDigests = new Set();
@@ -2553,17 +2561,20 @@ async function receiptMain(command, argv) {
   assertRequestedProducts(lock, args.productsJson);
   const repo = normalizedRepository(args.repo);
   if (command === "pre-mutation") {
+    const publisherSha = process.env.GITHUB_SHA || lock.source.commit;
+    assertPublicationController({ source: lock.source.commit, controller: publisherSha });
     const releases = await queryLockedGithubReleases(lock, { repo });
     const attestations = await verifyAttestationBundles(
       lock,
       args.attestationBundles,
-      { repo },
+      { repo, publisherSha },
     );
     const receipt = buildGithubAttestationReceipt({
       attestations,
       lock,
       releases,
       repo,
+      publisherSha,
     });
     const output = await writeImmutableReceipt(args.output, receipt);
     console.log(

@@ -306,6 +306,44 @@ test("publish and bootstrap workflow commands install the same approved candidat
   }
 });
 
+test("the real bootstrap command checkpoints a mixed inventory before a bounded deferral without uploading", () => {
+  const value = fixture();
+  try {
+    const preload = path.join(value.root, "registry-fixture.mjs");
+    writeFileSync(preload, `
+      import { mock } from "bun:test";
+      import * as childProcess from "node:child_process";
+      mock.module("node:child_process", () => ({ ...childProcess, spawn() { throw new Error("unexpected publisher invocation"); } }));
+      globalThis.fetch = async (input, options = {}) => {
+        if (options.method && options.method !== "GET") throw new Error("unexpected registry mutation");
+        const url = new URL(String(input));
+        if (!["crates.io", "registry.npmjs.org"].includes(url.hostname)) throw new Error("unexpected registry");
+        return new Response("{}", { status: url.hostname === "crates.io" && url.pathname.startsWith("/api/v1/crates/oliphaunt-build/") ? 200 : 404 });
+      };
+    `);
+    const npmrc = path.join(value.root, "npmrc");
+    writeFileSync(npmrc, "//registry.npmjs.org/:_authToken=fixture-not-a-credential\n");
+    const resultFile = path.join(value.root, "execution.json");
+    const result = spawnSync(process.execPath, ["--preload", preload, ".github/scripts/bootstrap-registry-identities.mjs"], {
+      cwd: ROOT, encoding: "utf8",
+      env: {
+        ...isolatedGitHubTestEnvironment(),
+        PRODUCTS_JSON: JSON.stringify(PRODUCTS), RELEASE_HEAD_SHA: value.lock.source.commit,
+        PUBLICATION_LOCK_PATH: value.lockFile, BOOTSTRAP_LEDGER_PATH: path.join(value.root, "ledger"),
+        REGISTRY_MUTATION_DEADLINE_EPOCH: String(Math.floor(Date.now() / 1000) + 60),
+        REGISTRY_JOB_HARD_DEADLINE_EPOCH: String(Math.floor(Date.now() / 1000) + 600),
+        CARGO_REGISTRY_TOKEN: "fixture-not-a-credential", NPM_CONFIG_USERCONFIG: npmrc,
+        OLIPHAUNT_BOOTSTRAP_EXECUTION_RESULT: resultFile,
+      },
+    });
+    assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+    const decision = JSON.parse(readFileSync(resultFile, "utf8"));
+    assert.equal(decision.decision, "deferred");
+    assert.equal(decision.newlyCompletedIds.length, 0);
+    assert.equal(decision.remainingIds.length, 2);
+  } finally { rmSync(value.root, { recursive: true, force: true }); }
+});
+
 test("packs and verifies all Maven payloads for a Maven-only release", () => {
   const value = mavenOnlyFixture();
   const first = path.join(value.root, "first.tar");
