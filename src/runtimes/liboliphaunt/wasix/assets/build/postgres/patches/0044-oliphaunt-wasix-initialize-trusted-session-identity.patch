@@ -1,0 +1,271 @@
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] oliphaunt-wasix: initialize the trusted session principal
+
+W0029 activated normal-session policy only after standalone InitPostgres
+had selected the bootstrap superuser. Consequently the configured PGUSER
+was ignored, RESET ROLE returned to postgres, and role defaults and login
+policy were bypassed.
+
+Consume the one-shot prepared capability in InitPostgres, using a regular
+backend PGPROC and a protocol port initialized before session admission.
+Use PostgreSQL's catalog-backed session authorization, role/database
+settings, connection policy and login event triggers. Capture login-trigger
+startup errors through the existing typed startup-error boundary.
+
+The host remains the trust boundary: this is not HBA authentication and no
+authentication provider identity is fabricated. Unprepared initdb and
+recovery retain genuine standalone behavior. IsUnderPostmaster and
+IsPostmasterEnvironment remain truthful, and worker limits remain pinned
+before shared-memory sizing. This is embedded lifecycle integration, not a
+performance shortcut or a new runtime option.
+
+---
+diff --git a/src/backend/commands/event_trigger.c b/src/backend/commands/event_trigger.c
+index 13e5f1e..3725525 100644
+--- a/src/backend/commands/event_trigger.c
++++ b/src/backend/commands/event_trigger.c
+@@ -904,7 +904,7 @@ EventTriggerOnLogin(void)
+ 	 * triggers are disabled in single user mode or via a GUC.  We also need a
+ 	 * database connection (some background workers don't have it).
+ 	 */
+-	if (!IsUnderPostmaster || !event_triggers ||
++	if (!IsNormalUserSession() || !event_triggers ||
+ 		!OidIsValid(MyDatabaseId) || !MyDatabaseHasLoginEventTriggers)
+ 		return;
+ 
+diff --git a/src/backend/main/main.c b/src/backend/main/main.c
+index a3513ec..ba399b0 100644
+--- a/src/backend/main/main.c
++++ b/src/backend/main/main.c
+@@ -83,10 +83,17 @@ IsTrustedEmbeddedSession(void)
+ 		OLIPHAUNT_TRUSTED_EMBEDDED_ATTACHED;
+ }
+ 
++bool
++IsPreparedTrustedEmbeddedSession(void)
++{
++	return trusted_embedded_lifecycle ==
++		OLIPHAUNT_TRUSTED_EMBEDDED_PREPARED;
++}
++
+ /*
+  * Select the embedded topology exactly once and before main().  PREPARED is
+  * intentionally not an active session: PostgreSQL remains a truthful
+- * standalone backend until the host attaches after _start.
++ * standalone backend until InitPostgres consumes the prepared identity.
+  */
+ OLIPHAUNT_WASM_HOST_EXPORT("oliphaunt_wasix_prepare_trusted_embedded_session")
+ int
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+index 120e4a4..63d7bfb 100644
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -239,9 +239,9 @@ oliphaunt_wasix_init_protocol_port(void)
+ OLIPHAUNT_WASM_HOST_EXPORT("oliphaunt_wasix_start") void
+ oliphaunt_wasix_start(void)
+ {
+-	if (!AttachPreparedTrustedEmbeddedSession())
++	if (!IsTrustedEmbeddedSession() || whereToSendOutput == DestRemote)
+ 		elog(FATAL,
+-			 "trusted embedded session attach requires exactly one pre-start preparation and safe single-backend settings");
++			 "trusted embedded protocol requires a successfully initialized session and one attachment");
+ 
+ 	oliphaunt_wasix_init_protocol_port();
+ 	whereToSendOutput = DestRemote;
+@@ -4237,12 +4237,29 @@ PostgresSingleUserMain(int argc, char *argv[],
+ 					   const char *username)
+ {
+ 	const char *dbname = NULL;
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	bool		trusted_client = IsPreparedTrustedEmbeddedSession();
++#endif
+ 
+ 	Assert(!IsUnderPostmaster);
+ 
+ 	/* Initialize startup process environment. */
+ 	InitStandaloneProcess(argv[0]);
+ 
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	if (trusted_client)
++	{
++		/* PGUSER is supplied by the host; initdb/recovery keep the OS user. */
++		username = getenv("PGUSER");
++		if (username == NULL || username[0] == '\0')
++			ereport(FATAL,
++					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
++					 errmsg("trusted embedded startup requires a host-selected role")));
++		/* InitProcess must allocate a regular backend's PGPROC. */
++		MyBackendType = B_BACKEND;
++	}
++#endif
++
+ 	/*
+ 	 * Set default values for command-line options.
+ 	 */
+@@ -4350,6 +4367,14 @@ PostgresSingleUserMain(int argc, char *argv[],
+ 	 * Now that sufficient infrastructure has been initialized, PostgresMain()
+ 	 * can do the rest.
+ 	 */
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	if (trusted_client)
++	{
++		oliphaunt_wasix_init_protocol_port();
++		MyProcPort->database_name = MemoryContextStrdup(TopMemoryContext, dbname);
++		MyProcPort->user_name = MemoryContextStrdup(TopMemoryContext, username);
++	}
++#endif
+ 	PostgresMain(dbname, username);
+ }
+ 
+@@ -5174,7 +5199,10 @@ PostgresMain(const char *dbname, const char *username)
+ #endif
+ 	InitPostgres(dbname, InvalidOid,	/* database to connect to */
+ 				 username, InvalidOid,	/* role to connect as */
+-				 (!am_walsender) ? INIT_PG_LOAD_SESSION_LIBS : 0,
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++				 (IsPreparedTrustedEmbeddedSession() ? INIT_PG_TRUSTED_CLIENT : 0) |
++#endif
++				 ((!am_walsender) ? INIT_PG_LOAD_SESSION_LIBS : 0),
+ 				 NULL);			/* no out_dbname */
+ #ifdef OLIPHAUNT_WASM_SINGLE_USER
+ 	oliphaunt_wasix_end_startup_error_capture();
+@@ -5255,7 +5283,13 @@ PostgresMain(const char *dbname, const char *username)
+ 	MemoryContextSwitchTo(TopMemoryContext);
+ 
+ 	/* Fire any defined login event triggers, if appropriate */
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	oliphaunt_wasix_begin_startup_error_capture();
++#endif
+ 	EventTriggerOnLogin();
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	oliphaunt_wasix_end_startup_error_capture();
++#endif
+ 
+ 	/*
+ 	 * POSTGRES main processing loop begins here
+diff --git a/src/backend/utils/init/miscinit.c b/src/backend/utils/init/miscinit.c
+index 6941770..6e9e99a 100644
+--- a/src/backend/utils/init/miscinit.c
++++ b/src/backend/utils/init/miscinit.c
+@@ -842,11 +842,10 @@ InitializeSessionUserId(const char *rolename, Oid roleid,
+ 					PGC_BACKEND, PGC_S_OVERRIDE);
+ 
+ 	/*
+-	 * These next checks are not enforced when in standalone mode, so that
+-	 * there is a way to recover from sillinesses like "UPDATE pg_authid SET
+-	 * rolcanlogin = false;".
++	 * Trusted embedded clients obey login policy. Genuine recovery standalone
++	 * mode uses InitializeSessionUserIdStandalone() instead.
+ 	 */
+-	if (IsUnderPostmaster)
++	if (IsNormalUserSession())
+ 	{
+ 		/*
+ 		 * Is role allowed to login at all?  (But background workers can
+diff --git a/src/backend/utils/init/postinit.c b/src/backend/utils/init/postinit.c
+index 53e65b7..e66464e 100644
+--- a/src/backend/utils/init/postinit.c
++++ b/src/backend/utils/init/postinit.c
+@@ -351,7 +351,7 @@ CheckMyDatabase(const char *name, bool am_superuser, bool override_allow_connect
+ 	 * a way to recover from disabling all access to all databases, for
+ 	 * example "UPDATE pg_database SET datallowconn = false;".
+ 	 */
+-	if (IsUnderPostmaster)
++	if (IsNormalUserSession())
+ 	{
+ 		/*
+ 		 * Check that the database is currently allowing connections.
+@@ -677,6 +677,8 @@ BaseInit(void)
+  *	  - INIT_PG_LOAD_SESSION_LIBS to honor [session|local]_preload_libraries.
+  *	  - INIT_PG_OVERRIDE_ALLOW_CONNS to connect despite !datallowconn.
+  *	  - INIT_PG_OVERRIDE_ROLE_LOGIN to connect despite !rolcanlogin.
++ *	  - INIT_PG_TRUSTED_CLIENT to initialize a prepared WASIX host-selected
++ *	    identity without HBA authentication, retaining normal login policy.
+  *	out_dbname: optional output parameter, see below; pass NULL if not used
+  *
+  * The database can be specified by name, using the in_dbname parameter, or by
+@@ -716,6 +718,9 @@ InitPostgres(const char *in_dbname, Oid dboid,
+ {
+ 	bool		bootstrap = IsBootstrapProcessingMode();
+ 	bool		am_superuser;
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	bool		trusted_client = (flags & INIT_PG_TRUSTED_CLIENT) != 0;
++#endif
+ 	char	   *fullpath;
+ 	char		dbname[NAMEDATALEN];
+ 	int			nfree = 0;
+@@ -855,6 +860,18 @@ InitPostgres(const char *in_dbname, Oid dboid,
+ 		XactIsoLevel = XACT_READ_COMMITTED;
+ 	}
+ 
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	if (trusted_client)
++	{
++		if (bootstrap || IsPostmasterEnvironment || IsUnderPostmaster ||
++			!AmRegularBackendProcess() || MyProcPort == NULL ||
++			!AttachPreparedTrustedEmbeddedSession())
++			ereport(FATAL,
++					(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
++					 errmsg("trusted client requires a prepared standalone regular backend and protocol port")));
++	}
++#endif
++
+ 	/*
+ 	 * Perform client authentication if necessary, then figure out our
+ 	 * postgres user ID, and see if we are a superuser.
+@@ -868,6 +885,14 @@ InitPostgres(const char *in_dbname, Oid dboid,
+ 		InitializeSessionUserIdStandalone();
+ 		am_superuser = true;
+ 	}
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++	else if (trusted_client)
++	{
++		/* The host selects the principal; no authentication provider ran. */
++		InitializeSessionUserId(username, useroid, false);
++		am_superuser = superuser();
++	}
++#endif
+ 	else if (!IsUnderPostmaster)
+ 	{
+ 		InitializeSessionUserIdStandalone();
+@@ -1304,7 +1329,7 @@ void
+ oliphaunt_wasix_process_startup_options(Port *port)
+ {
+ 	if (port != NULL)
+-		process_startup_options(port, true);
++		process_startup_options(port, superuser());
+ }
+ #endif
+ 
+@@ -1320,7 +1345,7 @@ process_settings(Oid databaseid, Oid roleid)
+ 	Relation	relsetting;
+ 	Snapshot	snapshot;
+ 
+-	if (!IsUnderPostmaster)
++	if (!IsNormalUserSession())
+ 		return;
+ 
+ 	relsetting = table_open(DbRoleSettingRelationId, AccessShareLock);
+diff --git a/src/include/miscadmin.h b/src/include/miscadmin.h
+index b8ce6be..2b00a43 100644
+--- a/src/include/miscadmin.h
++++ b/src/include/miscadmin.h
+@@ -170,6 +170,7 @@ extern PGDLLIMPORT bool IsBinaryUpgrade;
+ 
+ #ifdef OLIPHAUNT_WASM_SINGLE_USER
+ extern bool IsTrustedEmbeddedSession(void);
++extern bool IsPreparedTrustedEmbeddedSession(void);
+ extern void ConfigurePreparedTrustedEmbeddedSession(void);
+ extern bool AttachPreparedTrustedEmbeddedSession(void);
+ #else
+@@ -522,6 +523,9 @@ extern PGDLLIMPORT ProcessingMode Mode;
+ #define INIT_PG_LOAD_SESSION_LIBS		0x0001
+ #define INIT_PG_OVERRIDE_ALLOW_CONNS	0x0002
+ #define INIT_PG_OVERRIDE_ROLE_LOGIN		0x0004
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++#define INIT_PG_TRUSTED_CLIENT			0x0008
++#endif
+ extern void pg_split_opts(char **argv, int *argcp, const char *optstr);
+ extern void InitializeMaxBackends(void);
+ extern void InitializeFastPathLocks(void);

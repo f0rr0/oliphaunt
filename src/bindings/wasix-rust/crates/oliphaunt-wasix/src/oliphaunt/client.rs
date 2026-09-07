@@ -512,16 +512,16 @@ impl Oliphaunt {
         extensions: &[Extension],
     ) -> Result<Self> {
         let backend = if extensions.is_empty() {
-            BackendSession::open(outcome, postgres_config, startup_config.clone())?
+            BackendSession::open(outcome, postgres_config, startup_config)?
         } else {
             BackendSession::open_with_extension_preload(
                 outcome,
                 postgres_config,
-                startup_config.clone(),
+                startup_config,
                 extensions,
             )?
         };
-        Self::finish_open(backend, startup_config)
+        Ok(Self::finish_open(backend))
     }
 
     #[cfg(not(feature = "extensions"))]
@@ -530,12 +530,12 @@ impl Oliphaunt {
         postgres_config: PostgresConfig,
         startup_config: StartupConfig,
     ) -> Result<Self> {
-        let backend = BackendSession::open(outcome, postgres_config, startup_config.clone())?;
-        Self::finish_open(backend, startup_config)
+        let backend = BackendSession::open(outcome, postgres_config, startup_config)?;
+        Ok(Self::finish_open(backend))
     }
 
-    fn finish_open(backend: BackendSession, startup_config: StartupConfig) -> Result<Self> {
-        let mut instance = Self {
+    fn finish_open(backend: BackendSession) -> Self {
+        Self {
             backend: TeardownOwnership::new(backend),
             _workspace: TeardownOwnership::new(None),
             _directory_lock: TeardownOwnership::new(None),
@@ -547,15 +547,7 @@ impl Oliphaunt {
             close_result: None,
             protocol_stream: Arc::new(Mutex::new(CallbackProtocolState::default())),
             protocol_stream_attached: false,
-        };
-        if startup_config.username != "postgres" {
-            let sql = format!(
-                "SET ROLE {}",
-                crate::oliphaunt::sql::quote_identifier(&startup_config.username)
-            );
-            instance.execute_inner(&sql)?;
         }
-        Ok(instance)
     }
 
     /// Restore a validated physical backup into an absent or empty managed directory root.
@@ -1112,14 +1104,6 @@ impl Oliphaunt {
             .context("roll back embedded session")?;
         self.execute_inner("DISCARD ALL")
             .context("discard embedded session state")?;
-        let username = self.backend.startup_config().username.clone();
-        if username != "postgres" {
-            self.execute_inner(&format!(
-                "SET ROLE {}",
-                crate::oliphaunt::sql::quote_identifier(&username)
-            ))
-            .context("restore embedded session role")?;
-        }
         Ok(())
     }
 

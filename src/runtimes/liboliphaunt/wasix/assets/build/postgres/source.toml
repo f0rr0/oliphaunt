@@ -30,4 +30,5 @@ series = [
   "0041-oliphaunt-wasix-honor-noninteractive-psql-invocations.patch",
   "0042-oliphaunt-wasix-use-explicit-wal-sync-operations.patch",
   "0043-oliphaunt-wasix-cache-jsonb-build-object-metadata.patch",
+  "0044-oliphaunt-wasix-initialize-trusted-session-identity.patch",
 ]

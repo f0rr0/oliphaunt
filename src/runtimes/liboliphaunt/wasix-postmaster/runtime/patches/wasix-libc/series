@@ -5,3 +5,4 @@
 0005-wasm-eh-signal-context.patch
 0006-process-resource-limit-import.patch
 0007-word-at-a-time-memcmp.patch
+0008-single-evaluation-signal-jump-buffer.patch

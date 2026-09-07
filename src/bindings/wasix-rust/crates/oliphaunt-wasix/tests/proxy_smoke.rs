@@ -30,6 +30,43 @@ fn tcp_addr(server: &OliphauntServer) -> Result<SocketAddr> {
 }
 
 #[test]
+fn tcp_proxy_initializes_the_startup_principal_before_admission() -> Result<()> {
+    let mut server = OliphauntServer::builder().start()?;
+    let addr = tcp_addr(&server)?;
+    query_proxy(
+        addr,
+        false,
+        "CREATE ROLE proxy_app LOGIN; CREATE ROLE proxy_no_login NOLOGIN;
+         ALTER ROLE proxy_app SET work_mem = '9MB'",
+    )?;
+    let mut client = TcpStream::connect(addr)?;
+    client.set_read_timeout(Some(Duration::from_secs(30)))?;
+    client.write_all(&startup_message_for("proxy_app"))?;
+    read_until_ready(&mut client)?;
+    client.write_all(&simple_query_message(
+        "RESET ROLE; SELECT current_user, session_user, current_setting('work_mem'), system_user IS NULL",
+    ))?;
+    assert_eq!(
+        read_query_values(&mut client)?,
+        vec!["proxy_app", "proxy_app", "9MB", "t"]
+    );
+    client.write_all(&terminate_message())?;
+    drop(client);
+    let mut rejected = TcpStream::connect(addr)?;
+    rejected.set_read_timeout(Some(Duration::from_secs(30)))?;
+    rejected.write_all(&startup_message_for("proxy_no_login"))?;
+    let error = read_until_ready(&mut rejected).expect_err("NOLOGIN must fail at startup");
+    assert!(
+        error.to_string().contains("not permitted to log in"),
+        "{error}"
+    );
+    drop(rejected);
+    assert_eq!(query_proxy(addr, false, "SELECT 1")?, vec!["1"]);
+    server.close()?;
+    Ok(())
+}
+
+#[test]
 fn tcp_proxy_handles_psql_style_and_fragmented_connections() -> Result<()> {
     let mut server = OliphauntServer::builder().start()?;
     assert!(!server.is_closed());
@@ -389,11 +426,15 @@ fn cancel_request() -> Vec<u8> {
 }
 
 fn startup_message() -> Vec<u8> {
+    startup_message_for("postgres")
+}
+
+fn startup_message_for(username: &str) -> Vec<u8> {
     let mut message = Vec::new();
     message.extend_from_slice(&0_i32.to_be_bytes());
     message.extend_from_slice(&PROTOCOL_3.to_be_bytes());
     for (key, value) in [
-        ("user", "postgres"),
+        ("user", username),
         ("database", "postgres"),
         ("application_name", "oliphaunt-wasix-test"),
     ] {

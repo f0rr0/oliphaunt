@@ -1537,6 +1537,14 @@ pub(crate) fn package_aot_only(
     check_aot_package_manifest(target, source_lane)
 }
 
+#[cfg(feature = "aot-serializer")]
+fn ensure_aot_serializer_binary() -> Result<PathBuf> {
+    // Reuse the already selected compiler instead of rebuilding a shared
+    // target/release/xtask that another worktree may have replaced.
+    env::current_exe().context("locate the active AOT serializer")
+}
+
+#[cfg(not(feature = "aot-serializer"))]
 fn ensure_aot_serializer_binary() -> Result<PathBuf> {
     let mut command = Command::new("cargo");
     command
@@ -2999,6 +3007,15 @@ fn extension_control_files_for_asset_manifest(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "aot-serializer")]
+    #[test]
+    fn aot_enabled_tool_reuses_its_own_serializer() {
+        assert_eq!(
+            ensure_aot_serializer_binary().expect("active serializer"),
+            env::current_exe().expect("current executable"),
+        );
+    }
 
     fn test_binary_asset(name: &str, path: &str, sha256: &str, size: u64) -> BinaryAssetOut {
         BinaryAssetOut {

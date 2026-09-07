@@ -9,11 +9,11 @@ work and acceptance criteria are tracked in [issue #201](https://github.com/f0rr
 | Area | Product change |
 | --- | --- |
 | Native PostgreSQL/C | Restore trusted embedded-session semantics, startup admission/cleanup and working-directory restoration; isolate cancellation, wakeups, timers and COPY deadlines from the embedding process; preserve current ABI 10 and error/lifetime handling. |
-| Embedded WASIX PostgreSQL | Replace host-longjmp symptom handling with live guest-local recovery boundaries and typed outcomes; model the actual standalone topology; defer checkpoint execution to a safe point; use checked entropy. |
+| Embedded WASIX PostgreSQL | Replace host-longjmp symptom handling with live guest-local recovery boundaries and typed outcomes; model the actual standalone topology; defer checkpoint execution to a safe point; use checked entropy. Initialize the host-selected catalog role during startup, with normal admission, role/database settings and login triggers. |
 | Rust and browser hosts | Match the guest ABI, distinguish ordinary output streaming from COPY, enforce signed flush failures and bounded owned output, reject unsafe reuse after terminal guest faults, and preserve current public callback-abort/drain behavior. |
 | Native and WASIX tool APIs | Bound aggregate captured stdout plus stderr to 64 MiB; report sticky overflow/allocation failures rather than truncated success. Streaming APIs remain the path for larger output. |
 | AOT | Stop promoting nonvolatile-memory code generation. Use the fixed strict-memory/read-only-funcref profile `llvm-opta-ro_ftable`; keep producer cache, manifest and carrier identities consistent. |
-| Postmaster | Remove inert patch material, repair scoped libc/runtime correctness issues and document the seven-patch PostgreSQL series. This does not qualify the entire inherited Wasmer/libc bundle. |
+| Postmaster | Remove inert patch material, repair scoped libc/runtime correctness issues and document the seven-patch PostgreSQL series. Replace the inherited monoliths with eight Wasmer and seven libc logical patches that produce exactly the original applied trees; add separate strict-memory compiler policy and single-evaluation `sigsetjmp` corrections. Full corrected-profile runtime qualification remains distinct from clean replay. |
 | Patch maintenance | Ordered strict replay, patch-local rationale, retirement decisions, shared ABI checks and focused regression tests. No experimental benchmark framework is required by product builds. |
 
 The previously merged seek, protocol parsing, JSONB and WAL-sync improvements
@@ -59,6 +59,15 @@ experiments are not promoted and are not mandatory future work.
 - A callback abort may be returned after the guest has drained the operation;
   a subsequent guest failure takes precedence. A terminal guest failure means
   the session cannot be reused.
+- WASIX now initializes the configured role as the actual session principal,
+  not a later `SET ROLE` under a bootstrap-superuser session. `RESET ROLE` and
+  `DISCARD ALL` retain the intended principal; role/database defaults and login
+  policy apply before accepting queries. Rust direct/proxy and browser
+  direct/worker paths share this guest behavior, so their late-role workarounds
+  are deleted. The host still authenticates/selects the principal: this is not
+  HBA authentication, and `system_user` does not invent an authentication
+  provider. Rust startup rejection exposes PostgreSQL SQLSTATE/details while
+  retaining the original response bytes for proxy clients.
 - Native no longer silently adds `-F`: PostgreSQL's `fsync=on` default is
   preserved. An explicit PostgreSQL `fsync=off` setting remains available for
   disposable data. This can increase durable-write latency; functional reopen
@@ -85,7 +94,132 @@ resolution, the complete SDK contract task and graph unit tests passed.
 The complete prepared-source catalog check still needs extension sources
 outside the deliberately core-only build.
 
-Exact-candidate performance remains an explicit follow-up. Earlier compound
-candidate numbers cannot be attached to this integration, and strict-memory
-correctness is not represented as performance-neutral. Broad platform,
-extension, crash-durability and release qualification are separate gates.
+The subsequent configured-identity guest passed fresh standard and ICU seed
+creation, strict AOT packaging/validation, and strict replay of all **31 WASIX,
+22 Native and 7 Postmaster PostgreSQL patches**. On fresh guest/AOT artifacts,
+Rust passed **211 library tests, 19 runtime tests, 7 proxy tests and 7 PostgreSQL
+regressions** with the `extensions` feature. This count has a different feature
+scope from the initial tools-enabled unit/API run; it is not a loss of tests.
+Actual Chrome memory/IndexedDB tests cover recovery and COPY, plus configured
+identity across direct/worker reopen, login triggers, session reset, rejected
+superuser escalation and NOLOGIN rejection. The TypeScript suite passed all
+343 tests in 36 files, with binding and example typechecks.
+
+The AOT-enabled build tool now reuses its own selected serializer executable,
+instead of rebuilding a shared bare `xtask` path that another worktree can
+replace. The regression check and Clippy cover the serializer-enabled path;
+the ordinary bootstrap path remains available. Retained benchmark binaries
+are checked against their embedded portable/AOT payloads and source identities,
+not merely a filename or a Cargo freshness message.
+
+## Measured performance boundary
+
+The frozen initial integration `34f173f6` was compared with main `e8192180`
+under the **same strict-memory profile**. Nine substantial workloads, memory
+and directory storage, balanced ordering and main A/A controls produced 324
+accepted independent children. Fifty-four known-interference records were
+replaced as complete balanced blocks; the originals were retained, not pooled.
+Every accepted directory run verified `fsync`, `synchronous_commit` and
+`full_page_writes` were on. Memory deliberately had `fsync=off`.
+
+| Directory workload | Main median | Initial integration median | Median paired ratio |
+| --- | ---: | ---: | ---: |
+| Raw Rust query RTT | 7.386 us | 7.707 us | 1.045 |
+| 250k narrow temporary INSERT | 115.2 ms | 124.9 ms | 1.107 |
+| 250k wide temporary INSERT | 330.7 ms | 312.5 ms | 0.938 |
+
+The RTT cost was consistent across six pairs; narrow INSERT was noisy and is a
+warning, not a precise regression estimate. Its change was in the INSERT body,
+not commit, and the table is temporary: WAL-sync weakening is not a remedy.
+The wide INSERT win was consistent, but this compound comparison cannot assign
+credit to one patch. Other workload changes were mostly small relative to the
+controls. These numbers do **not** measure the later configured-identity guest,
+the Native durability change, browser/Node SDK overhead, or main's unsafe
+as-shipped compiler profile.
+
+### Final configured-identity screen
+
+All **220 independent children passed**: six balanced replicates for the two
+earlier warning cases against main/prior/final, four balanced replicates for
+seven other cases against prior/final, and two stock PostgreSQL 18.4 replicates
+per case/storage mode. Loads were 250k INSERT/COPY/prepared rows, a 500k-row
+indexed fixture, one million JSONB constructions and 500 mixed OLTP cycles.
+Internal RTT/read samples are not counted as independent process replicates.
+
+The final identity fix matches the prior corrected candidate's RTT and narrow
+INSERT. Against strict main, paired RTT costs remain **3.5% memory / 2.3%
+directory**, around 0.25–0.29 us. The historical 10.7% narrow-directory warning
+was not reproduced (final/main +1.8% here), but is not erased. New warnings
+against the prior candidate are wide temporary INSERT **+5.1% memory / +4.2%
+directory**, memory logged wide INSERT +2.6%, and directory JSONB +3.2%.
+Mixed OLTP is essentially unchanged. These small-sample warnings preclude a
+blanket non-regression claim.
+
+Stock-server context below is **descriptive, not paired cross-engine proof**.
+Times are milliseconds except RTT/read microseconds and mixed milliseconds per
+cycle. The stock server uses a local Unix socket; in-process WASIX RTT/read wins
+include that transport difference, not evidence of a faster SQL executor.
+
+| Case | PG memory | Final WASIX memory | Ratio | PG directory | Final WASIX directory | Ratio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Query RTT (us) | 49.729 | 7.707 | 0.155 | 40.581 | 7.731 | 0.191 |
+| Narrow temporary INSERT | 72.412 | 101.909 | 1.407 | 70.691 | 115.739 | 1.637 |
+| Wide temporary INSERT | 194.630 | 313.677 | 1.612 | 201.612 | 322.388 | 1.599 |
+| Logged wide INSERT | 288.449 | 440.928 | 1.529 | 402.775 | 563.520 | 1.399 |
+| Prepared multirow INSERT | 322.282 | 496.079 | 1.539 | 463.954 | 619.778 | 1.336 |
+| COPY | 204.539 | 241.827 | 1.182 | 273.241 | 321.313 | 1.176 |
+| Indexed read (us) | 69.929 | 24.141 | 0.345 | 70.125 | 25.709 | 0.367 |
+| JSONB | 1722.288 | 1585.289 | 0.920 | 1808.254 | 1700.663 | 0.941 |
+| Mixed OLTP (ms/cycle) | 3.062 | 4.140 | 1.352 | 3.812 | 5.772 | 1.514 |
+
+All 220 reports verified actual settings: memory `fsync=off`, directory
+`fsync=on`, and both modes `synchronous_commit=on`, `full_page_writes=on`.
+Directory work used ext4; the stock memory control used tmpfs. The window was
+2026-09-07 23:38:19–23:48:25 UTC, with equal CPU affinity 4,15 and team builds
+paused. An unrelated Next.js server and shared-host activity remained: these
+were not reserved cores or perfect isolation. No samples were discarded.
+The earlier screen was unpinned and must not be pooled with this one.
+
+The final retained executable SHA256 is
+`93ddccec253eb6f3c059799d15d544cb0f09d195da1adac7899cd19dbe82ef89`;
+guest `ecb76dd754d25b2efd0c5acddc7b9b760c7b70e659eb5c4b1d568f5480a701b1`;
+raw AOT `c392b9b37c7af1ee3bcd8040c33238b5639034fb4020dfe8e1ea31f5a1d3aed6`.
+It contains the final W0044/Rust-host source over `51789da1`, not the unchanged
+base commit. Exact embedded payload/source checks and all raw reports remain
+in the retained research evidence (`results/w0044-final-20260907.md` and its six
+result directories), outside product build inputs.
+
+The next performance investigation is the retained wide-INSERT pair, not another
+uncontrolled compiler variant. Earlier regular-backend initialization now
+creates PostgreSQL's normal backend statistics entry and correct PGPROC state;
+that is an **unproven attribution lead**, alongside AOT/code-layout effects and
+noise. Disabling correct identity, statistics, atomics or durability is not a
+remedy. The roughly **1.4–1.6x stock-server INSERT gap remains unresolved**.
+
+## Newly established Postmaster limitation
+
+Libc's signal-jump macro now evaluates each argument once while retaining the
+live caller's jump frame. C/C++ host execution at O0/O2 rejects the old macro
+and passes the corrected one. Actual C/C++ Wasm O2 probes also pass on a newly
+built strict-memory Wasmer LLVM runner, using the updated header and helper
+objects over the retained EH sysroot. These are focused checks, not a rebuilt
+sealed Postmaster carrier. The Postmaster source/shell unit suite and lock
+verification pass; inherited memcmp checks cover independent alignment, all
+byte positions and protected-page ends at O0/O2 without claiming a speedup.
+
+This does not repair libc's underlying signal-mask
+backend: pinned WASIX `pthread_sigmask` returns success without implementing
+masks, `sigpending` returns `EINVAL`, and handler `sa_mask` is ignored. The
+capability inventory now explicitly marks POSIX signal masks **unsupported**.
+
+This inherited gap matters to PostgreSQL startup/fork masking, nested SIGQUIT
+protection and saved-mask error boundaries. It is not an observed corruption
+claim, nor a new regression introduced by splitting the patches. A correct fix
+requires guest/host mask and pending-signal state, deferred delivery/unblocking,
+handler masking and restoration semantics, followed by PostgreSQL stress tests.
+A libc-only variable would not prevent Wasmer from delivering blocked signals.
+The small macro fix and host-mask adapter tests must not be advertised as that
+larger fix. See the runtime patch README and issue #201 for the concrete scope.
+
+Broad platform, extension, crash-durability and release qualification remain
+separate gates. No PostgreSQL performance-parity claim is made.

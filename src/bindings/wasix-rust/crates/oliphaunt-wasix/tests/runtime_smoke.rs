@@ -27,6 +27,96 @@ fn synthetic_sdk_error() -> oliphaunt_wasix::Error {
 }
 
 #[test]
+fn configured_startup_identity_survives_reset_role() -> Result<()> {
+    let workspace = tempfile::TempDir::new()?;
+    let storage = DatabaseStorage::Directory(workspace.path().join("identity"));
+    let mut setup = Oliphaunt::builder().storage(storage.clone()).open()?;
+    setup.execute("CREATE ROLE patch_app LOGIN")?;
+    setup.execute("CREATE ROLE patch_member NOLOGIN")?;
+    setup.execute("GRANT patch_member TO patch_app")?;
+    setup.execute("ALTER ROLE patch_app SET work_mem = '9MB'")?;
+    setup.execute("CREATE ROLE patch_blocked LOGIN")?;
+    setup.execute("CREATE ROLE patch_limited LOGIN CONNECTION LIMIT 0")?;
+    setup.execute("CREATE ROLE patch_no_connect LOGIN")?;
+    setup.execute("REVOKE CONNECT ON DATABASE postgres FROM PUBLIC")?;
+    setup.execute("GRANT CONNECT ON DATABASE postgres TO patch_app, patch_blocked")?;
+    setup.execute(
+        "CREATE FUNCTION patch_login() RETURNS event_trigger LANGUAGE plpgsql AS $$
+         BEGIN
+           IF session_user = 'patch_blocked' THEN
+             RAISE EXCEPTION 'patch login denied' USING ERRCODE = '28000';
+           END IF;
+           PERFORM set_config('patch.login', 'fired', false);
+         END $$",
+    )?;
+    setup.execute("CREATE EVENT TRIGGER patch_login ON login EXECUTE FUNCTION patch_login()")?;
+    setup.close()?;
+
+    let mut database = Oliphaunt::builder()
+        .storage(storage.clone())
+        .username("patch_app")
+        .open()?;
+    let identity = database.query(
+        "SELECT current_user::text AS current_role, session_user::text AS session_role, current_setting('work_mem') AS work_mem",
+    )?;
+    assert_eq!(identity.get_text(0, "current_role")?, Some("patch_app"));
+    assert_eq!(identity.get_text(0, "session_role")?, Some("patch_app"));
+    assert_eq!(identity.get_text(0, "work_mem")?, Some("9MB"));
+    let login = database.query("SELECT current_setting('patch.login') AS login")?;
+    assert_eq!(login.get_text(0, "login")?, Some("fired"));
+    database.execute("SET ROLE patch_member")?;
+    database.execute("RESET ROLE")?;
+    let reset = database.query("SELECT current_user::text AS current_role")?;
+    assert_eq!(reset.get_text(0, "current_role")?, Some("patch_app"));
+    database.execute("SET work_mem = '12MB'")?;
+    database.execute("DISCARD ALL")?;
+    let discarded = database.query(
+        "SELECT current_user::text AS current_role, current_setting('work_mem') AS work_mem",
+    )?;
+    assert_eq!(discarded.get_text(0, "current_role")?, Some("patch_app"));
+    assert_eq!(discarded.get_text(0, "work_mem")?, Some("9MB"));
+    let denied = database
+        .execute("SET ROLE postgres")
+        .expect_err("no bootstrap-superuser escape");
+    assert_eq!(
+        denied
+            .postgres_error()
+            .and_then(|error| error.sqlstate.as_deref()),
+        Some("42501")
+    );
+    database.close()?;
+    for (username, expected, sqlstate) in [
+        ("patch_member", "not permitted to log in", "28000"),
+        ("patch_missing", "does not exist", "28000"),
+        ("patch_blocked", "patch login denied", "28000"),
+        ("patch_limited", "too many connections", "53300"),
+        (
+            "patch_no_connect",
+            "permission denied for database",
+            "42501",
+        ),
+    ] {
+        let error = Oliphaunt::builder()
+            .storage(storage.clone())
+            .username(username)
+            .open()
+            .err()
+            .expect("startup must enforce the configured role's admission policy");
+        assert!(error.to_string().contains(expected), "{username}: {error}");
+        assert_eq!(
+            error
+                .postgres_error()
+                .and_then(|error| error.sqlstate.as_deref()),
+            Some(sqlstate),
+            "{username}: admission must preserve PostgreSQL's structured error",
+        );
+    }
+    // Rejected startup must leave the directory usable by a permitted session.
+    Oliphaunt::builder().storage(storage).open()?.close()?;
+    Ok(())
+}
+
+#[test]
 fn direct_api_query_transaction_persistence_and_backup() -> Result<()> {
     let workspace = tempfile::TempDir::new()?;
     let source_root = workspace.path().join("source");

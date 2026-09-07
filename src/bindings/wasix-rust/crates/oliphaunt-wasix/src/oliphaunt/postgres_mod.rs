@@ -118,6 +118,25 @@ impl StartupErrorResponse {
     pub(crate) fn output(&self) -> &[u8] {
         &self.output
     }
+
+    fn into_error(self) -> anyhow::Error {
+        let diagnostic = (|| {
+            let mut input = self.output.as_slice();
+            while !input.is_empty() {
+                let (tag, body, rest) = crate::oliphaunt::query::read_backend_message(input)?;
+                if tag == b'E' {
+                    return crate::oliphaunt::query::parse_postgres_error(body);
+                }
+                input = rest;
+            }
+            anyhow::bail!("startup response has no PostgreSQL ErrorResponse")
+        })();
+        // Keep both typed identities: SDK callers get SQLSTATE/details, while
+        // the proxy can still forward the original startup response bytes.
+        diagnostic
+            .map_or_else(|error| error, anyhow::Error::new)
+            .context(self)
+    }
 }
 
 impl fmt::Display for StartupErrorResponse {
@@ -417,7 +436,7 @@ impl PostgresMod {
             Ok(output) => {
                 let rejection = StartupErrorResponse::new(output);
                 self.poison_main_loop(rejection.to_string());
-                Err(rejection.into())
+                Err(rejection.into_error())
             }
             Err(error) => {
                 let failure = format!(
@@ -2330,6 +2349,22 @@ mod tests {
     use std::io;
     use std::pin::Pin;
 
+    #[test]
+    fn startup_rejection_preserves_public_diagnostic_and_proxy_bytes() {
+        let output = crate::oliphaunt::wire::error_response("FATAL", "28000", "login denied");
+        let error = StartupErrorResponse::new(output.clone())
+            .into_error()
+            .context("open database");
+        assert_eq!(
+            startup_error_response_output(&error),
+            Some(output.as_slice())
+        );
+        let error = crate::Error::from_anyhow(error);
+        assert_eq!(error.kind(), crate::ErrorKind::Postgres);
+        let diagnostic = error.postgres_error().expect("typed startup error");
+        assert_eq!(diagnostic.sqlstate.as_deref(), Some("28000"));
+        assert_eq!(diagnostic.message, "login denied");
+    }
     #[test]
     fn main_loop_outcome_classification_is_exact() {
         assert_eq!(

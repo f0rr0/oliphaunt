@@ -17,7 +17,6 @@ pub(crate) mod query_core {
     include!(env!("OLIPHAUNT_QUERY_CORE_RS"));
 }
 pub(crate) mod server;
-pub(crate) mod sql;
 pub(crate) mod storage;
 pub(crate) mod sync_host_fs;
 #[cfg(test)]

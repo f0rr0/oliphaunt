@@ -3,7 +3,9 @@ Date: Mon, 7 Sep 2026 00:00:00 +0000
 Subject: [PATCH 5/7] libc: establish EH signal jump context in the caller
 
 Capture signal jump state in the calling frame for the Wasm EH configuration;
-restore saved signal masks on longjmp. Header and implementation guards match,
+install mask preparation/restoration hooks around longjmp. The pinned WASIX
+pthread_sigmask backend is a success-returning stub: these hooks do not provide
+actual guest signal masking. Header and implementation guards match,
 including unmodified-upstream and libc-internal builds. The sigsetjmp macro
 still evaluates its buffer more than once: that inherited API limitation must
 be resolved before claiming generic upstream quality, not hidden by a wrapper
@@ -104,4 +106,3 @@ index 57b00c5..f35da65 100644
 +	return 0;
 +}
 +#endif
-

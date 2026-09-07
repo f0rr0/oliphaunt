@@ -20,6 +20,10 @@ pub(crate) fn simple_query(sql: &str) -> Result<Vec<u8>> {
     query_core_result(query_core::simple_query(sql))
 }
 
+pub(crate) fn read_backend_message(bytes: &[u8]) -> Result<(u8, &[u8], &[u8])> {
+    query_core_result(query_core::read_backend_message(bytes))
+}
+
 impl QueryResult {
     /// Read a text-format value by row index and column name.
     pub fn get_text(&self, row: usize, column: &str) -> crate::Result<Option<&str>> {
@@ -146,8 +150,7 @@ pub(crate) fn response_ready_status(bytes: &[u8]) -> Result<ReadyStatus> {
     query_core_result(query_core::response_ready_status(bytes))
 }
 
-#[cfg(test)]
-fn parse_postgres_error(body: &[u8]) -> Result<PostgresError> {
+pub(crate) fn parse_postgres_error(body: &[u8]) -> Result<PostgresError> {
     let fields = query_core_result(query_core::parse_diagnostic_fields(body, "ErrorResponse"))?;
     Ok(PostgresError::from_core(query_core::diagnostic(
         fields,

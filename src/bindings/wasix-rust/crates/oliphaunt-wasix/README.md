@@ -115,6 +115,12 @@ until the guest runtime can interrupt execution and prove protocol recovery.
 
 The builder also supports `username`, `database`, `startup_gucs`, and bundled
 `extension`/`extensions` when the corresponding crate features are enabled.
+The host-selected username initializes PostgreSQL's real session principal:
+role/database admission, role defaults and login triggers apply, and
+`RESET ROLE`/`DISCARD ALL` cannot revert to a bootstrap superuser. This is
+trusted embedding, not HBA or password authentication; `system_user` remains
+NULL. New storage must first be initialized as `postgres` before selecting an
+existing application role.
 Selecting an extension makes its artifact and required pre-start configuration
 available; it never runs `CREATE EXTENSION`, `LOAD`, or migration SQL. Install
 database-local objects explicitly through your normal migrations. Each

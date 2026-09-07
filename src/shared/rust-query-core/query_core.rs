@@ -2578,7 +2578,7 @@ fn command_tag_row_count(tag: &str) -> Option<u64> {
     parts.last().or(Some(command))?.parse().ok()
 }
 
-fn read_backend_message(bytes: &[u8]) -> Result<(u8, &[u8], &[u8])> {
+pub(crate) fn read_backend_message(bytes: &[u8]) -> Result<(u8, &[u8], &[u8])> {
     if bytes.len() < 5 {
         return Err(protocol("truncated backend message header"));
     }

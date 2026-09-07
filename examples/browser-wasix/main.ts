@@ -17,6 +17,7 @@ import logicalToolsSeed from '../../src/shared/fixtures/postgres/logical-tools-s
 import logicalToolsVerify from '../../src/shared/fixtures/postgres/logical-tools-verify.sql?raw';
 import { expectDirectPgDump } from './direct-pg-dump-smoke.js';
 import { expectStructuredApi } from './structured-api-smoke.js';
+import { expectConfiguredIdentity } from './configured-identity-smoke.js';
 
 const logicalToolsFixture = JSON.parse(logicalToolsFixtureJson) as {
   expected: {
@@ -111,6 +112,7 @@ try {
       await readPgUuidv7(database);
     }
     await database.close();
+    await expectConfiguredIdentity();
     const logicalTools = await expectLogicalTools();
     const opfsAnswers = await expectOpfsPersistence(extensions);
     const opfsCrash = await expectOpfsCrashRecovery();
@@ -123,6 +125,7 @@ try {
       startupSqlstate: '3D000',
       directWorkers: 0,
       directPgDump: true,
+      configuredIdentity: true,
       opfsTransport: 'synchronous-access',
       opfsCrashAnswer: opfsCrash.answer,
       opfsCrashRelations: opfsCrash.relations,

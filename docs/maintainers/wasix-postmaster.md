@@ -80,6 +80,15 @@ expects it and must preserve the distinction between a still-running child,
 normal exit, signalled exit, and an unknown process. The supervisor owns
 cleanup; a failed backend cannot tear down another cluster's resources.
 
+Inherited limitation: the pinned WASIX `pthread_sigmask` is a success-returning
+stub. Signal delivery and child-wait support do **not** imply POSIX blocked masks,
+handler `sa_mask`, or `sigsetjmp` mask restoration. Libc 0008 fixes argument
+evaluation only. This is a high-priority correctness dependency for PostgreSQL
+startup, error recovery and signal-sensitive critical sections; see the runtime
+[mask capability and remediation](../../src/runtimes/liboliphaunt/wasix-postmaster/runtime/README.md).
+Do not treat host-adapter mask tests as proof of guest masking or replace the
+missing delivery semantics with a libc-only remembered mask.
+
 ## Sealed carrier
 
 The release carrier is compiler-free. Compilation happens in the trusted

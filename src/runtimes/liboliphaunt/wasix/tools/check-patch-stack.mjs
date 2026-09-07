@@ -35,7 +35,7 @@ const EXPECTED_TOUCHPOINTS = new Map([
   ['src/backend/access/transam/varsup.c', 'Retains normal-session XID stops and OID allocation semantics.'],
   ['src/backend/access/transam/xlog.c', 'Defers XLog-size checkpoint requests to an embedded idle boundary.'],
   ['src/backend/access/transam/xlogfuncs.c', 'Rejects standby promotion before signaling an absent postmaster.'],
-  ['src/backend/commands/event_trigger.c', 'Runs DDL event triggers for an explicitly attached normal user session.'],
+  ['src/backend/commands/event_trigger.c', 'Runs DDL and login event triggers for an explicitly initialized normal user session.'],
   ['src/backend/commands/copyfromparse.c', 'Reports COPY protocol state to the host.'],
   ['src/backend/commands/copyto.c', 'Reports COPY protocol state to the host.'],
   ['src/backend/commands/collationcmds.c', 'Controls deterministic collation discovery for the existing seed producer.'],
@@ -50,8 +50,8 @@ const EXPECTED_TOUCHPOINTS = new Map([
   ['src/backend/storage/ipc/signalfuncs.c', 'Rejects unsupported postmaster signals and reports unavailable log rotation truthfully.'],
   ['src/backend/tcop/backend_startup.c', 'Exports the startup packet parser for host-driven startup.'],
   ['src/backend/tcop/postgres.c', 'Owns embedded lifecycle, protocol loop, error recovery, and the prepared-session attach check.'],
-  ['src/backend/utils/init/miscinit.c', 'Routes process identity through the WASIX port layer.'],
-  ['src/backend/utils/init/postinit.c', 'Skips data-directory ownership checks under embedded WASIX.'],
+  ['src/backend/utils/init/miscinit.c', 'Routes OS identity through the port and enforces catalog login and role connection limits for trusted sessions.'],
+  ['src/backend/utils/init/postinit.c', 'Initializes the host-selected catalog principal, database admission and role defaults without pretending HBA authentication ran; checks startup options against actual privileges.'],
   ['src/backend/utils/misc/guc_tables.c', 'Keeps attached parallel-worker limits observably pinned to zero.'],
   ['src/backend/utils/misc/superuser.c', 'Uses catalog-backed superuser semantics in the attached user session.'],
   ['src/bin/initdb/initdb.c', 'Keeps the existing standard/ICU initdb discovery contract.'],
@@ -75,6 +75,19 @@ const EXPECTED_TOUCHPOINTS = new Map([
 ]);
 
 const REQUIRED_AUDIT_CHECKS = [
+  {
+    requirement: 'Prepared host identity is initialized before normal-session admission',
+    patches: ['0044-oliphaunt-wasix-initialize-trusted-session-identity.patch'],
+    evidence: [
+      'INIT_PG_TRUSTED_CLIENT',
+      'InitializeSessionUserId(username, useroid, false)',
+      'MyBackendType = B_BACKEND',
+      'MyProcPort->user_name = MemoryContextStrdup',
+      'IsNormalUserSession()',
+      'EventTriggerOnLogin();',
+    ],
+    posture: 'Consume the prepared capability in InitPostgres, not after bootstrap-superuser initialization. Enforce catalog login/database policy, role defaults and login triggers without pretending HBA authentication occurred; unprepared recovery remains standalone.',
+  },
   {
     requirement: 'Fixed JSONB constructor metadata preserves PostgreSQL semantics',
     patches: ['0043-oliphaunt-wasix-cache-jsonb-build-object-metadata.patch'],

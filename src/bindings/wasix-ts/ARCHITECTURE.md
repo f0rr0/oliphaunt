@@ -104,9 +104,12 @@ smaller qualified side modules remain supported in a direct Window.
 5. The direct export driver completes the exported startup transition before
    exposing the session. Selected carriers contribute verified artifacts and
    required startup/preload configuration only; database-local extension SQL is
-   application/ORM-owned. A requested non-default user is selected from existing
-   roles with `SET ROLE`; standalone bootstrap remains the fixed `postgres`
-   identity.
+   application/ORM-owned. PostgreSQL selects the trusted configured `PGUSER`
+   as the actual session principal during startup, applying catalog login,
+   database access, settings and login-trigger policy. The host does not emulate
+   that identity with later `SET ROLE` SQL; `RESET ROLE` and `DISCARD ALL` restore
+   the configured session principal. Fresh cluster seeds retain `postgres` as
+   their bootstrap owner.
 6. The binding frames later responses through `ReadyForQuery` and exposes
    serialized `query`, `execute`, buffered `execProtocolRaw`, callback
    `execProtocolRawStream`, and callback-scoped `transaction` calls

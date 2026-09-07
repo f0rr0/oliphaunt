@@ -51,6 +51,7 @@ src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs --write
 | 28 | `0041-oliphaunt-wasix-honor-noninteractive-psql-invocations.patch` | Oliphaunt Maintainers <dev@oliphaunt.dev> | oliphaunt-wasix: honor noninteractive psql invocations |
 | 29 | `0042-oliphaunt-wasix-use-explicit-wal-sync-operations.patch` | Oliphaunt Maintainers <dev@oliphaunt.dev> | oliphaunt-wasix: use explicit WAL sync operations |
 | 30 | `0043-oliphaunt-wasix-cache-jsonb-build-object-metadata.patch` | Oliphaunt Maintainers <dev@oliphaunt.dev> | oliphaunt-wasix: cache jsonb_build_object metadata |
+| 31 | `0044-oliphaunt-wasix-initialize-trusted-session-identity.patch` | Oliphaunt Maintainers <dev@oliphaunt.dev> | oliphaunt-wasix: initialize the trusted session principal |
 
 ## Changed Upstream Files
 
@@ -65,21 +66,21 @@ src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs --write
 | `src/backend/commands/collationcmds.c` | `0033-oliphaunt-wasix-control-initdb-collation-discovery.patch` | Controls deterministic collation discovery for the existing seed producer. |
 | `src/backend/commands/copyfromparse.c` | `0006-oliphaunt-wasix-report-copy-protocol-state.patch` | Reports COPY protocol state to the host. |
 | `src/backend/commands/copyto.c` | `0006-oliphaunt-wasix-report-copy-protocol-state.patch` | Reports COPY protocol state to the host. |
-| `src/backend/commands/event_trigger.c` | `0029-oliphaunt-wasix-model-trusted-embedded-session.patch` | Runs DDL event triggers for an explicitly attached normal user session. |
+| `src/backend/commands/event_trigger.c` | `0029-oliphaunt-wasix-model-trusted-embedded-session.patch`, `0044-oliphaunt-wasix-initialize-trusted-session-identity.patch` | Runs DDL and login event triggers for an explicitly initialized normal user session. |
 | `src/backend/commands/tsearchcmds.c` | `0029-oliphaunt-wasix-model-trusted-embedded-session.patch` | Validates text-search dictionary options outside bootstrap and recovery modes. |
 | `src/backend/libpq/be-secure.c` | `0002-oliphaunt-wasix-add-backend-host-io-hooks.patch` | Routes embedded protocol reads and writes through host-owned callbacks. |
 | `src/backend/libpq/pqcomm.c` | `0002-oliphaunt-wasix-add-backend-host-io-hooks.patch` | Skips unavailable postmaster-death wait handles in embedded WASIX. |
-| `src/backend/main/main.c` | `0029-oliphaunt-wasix-model-trusted-embedded-session.patch` | Exposes the one-way pre-start embedded-session selection. |
+| `src/backend/main/main.c` | `0029-oliphaunt-wasix-model-trusted-embedded-session.patch`, `0044-oliphaunt-wasix-initialize-trusted-session-identity.patch` | Exposes the one-way pre-start embedded-session selection. |
 | `src/backend/optimizer/plan/createplan.c` | `0029-oliphaunt-wasix-model-trusted-embedded-session.patch` | Prevents async Append execution in the host-pumped session. |
 | `src/backend/postmaster/fork_process.c` | `0021-oliphaunt-wasix-declare-wasix-fork.patch` | Declares the WASIX fork boundary without enabling postmaster concurrency. |
 | `src/backend/replication/walsender.c` | `0006-oliphaunt-wasix-report-copy-protocol-state.patch` | Suppresses activity identifier reporting in embedded WASIX. |
 | `src/backend/storage/file/fd.c` | `0032-oliphaunt-wasix-treat-directory-fsync-eisdir-as-unsupported.patch`, `0038-oliphaunt-wasix-disable-unsupported-writeback-hints.patch` | Keeps real fsync while narrowing unsupported WASIX directory and writeback-hint behavior. |
 | `src/backend/storage/ipc/signalfuncs.c` | `0029-oliphaunt-wasix-model-trusted-embedded-session.patch` | Rejects unsupported postmaster signals and reports unavailable log rotation truthfully. |
 | `src/backend/tcop/backend_startup.c` | `0003-oliphaunt-wasix-export-startup-packet-parser.patch` | Exports the startup packet parser for host-driven startup. |
-| `src/backend/tcop/postgres.c` | `0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`, `0008-oliphaunt-wasix-reset-copy-state-on-error-recovery.patch`, `0012-oliphaunt-wasix-capture-startup-errors.patch`, `0019-oliphaunt-wasix-schedule-ready-after-loop-step-recovery.patch`, `0027-oliphaunt-wasix-defer-xlog-size-checkpoint-requests.patch`, `0029-oliphaunt-wasix-model-trusted-embedded-session.patch` | Owns embedded lifecycle, protocol loop, error recovery, and the prepared-session attach check. |
+| `src/backend/tcop/postgres.c` | `0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`, `0008-oliphaunt-wasix-reset-copy-state-on-error-recovery.patch`, `0012-oliphaunt-wasix-capture-startup-errors.patch`, `0019-oliphaunt-wasix-schedule-ready-after-loop-step-recovery.patch`, `0027-oliphaunt-wasix-defer-xlog-size-checkpoint-requests.patch`, `0029-oliphaunt-wasix-model-trusted-embedded-session.patch`, `0044-oliphaunt-wasix-initialize-trusted-session-identity.patch` | Owns embedded lifecycle, protocol loop, error recovery, and the prepared-session attach check. |
 | `src/backend/utils/adt/jsonb.c` | `0043-oliphaunt-wasix-cache-jsonb-build-object-metadata.patch` | Caches immutable jsonb_build_object expression metadata while preserving PostgreSQL cast and VARIADIC semantics. |
-| `src/backend/utils/init/miscinit.c` | `0023-oliphaunt-wasix-skip-data-dir-ownership-check-under-embedded-wasix.patch` | Routes process identity through the WASIX port layer. |
-| `src/backend/utils/init/postinit.c` | `0004-oliphaunt-wasix-add-host-lifecycle-exports.patch` | Skips data-directory ownership checks under embedded WASIX. |
+| `src/backend/utils/init/miscinit.c` | `0023-oliphaunt-wasix-skip-data-dir-ownership-check-under-embedded-wasix.patch`, `0044-oliphaunt-wasix-initialize-trusted-session-identity.patch` | Routes OS identity through the port and enforces catalog login and role connection limits for trusted sessions. |
+| `src/backend/utils/init/postinit.c` | `0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0044-oliphaunt-wasix-initialize-trusted-session-identity.patch` | Initializes the host-selected catalog principal, database admission and role defaults without pretending HBA authentication ran; checks startup options against actual privileges. |
 | `src/backend/utils/misc/guc_tables.c` | `0029-oliphaunt-wasix-model-trusted-embedded-session.patch` | Keeps attached parallel-worker limits observably pinned to zero. |
 | `src/backend/utils/misc/superuser.c` | `0029-oliphaunt-wasix-model-trusted-embedded-session.patch` | Uses catalog-backed superuser semantics in the attached user session. |
 | `src/bin/initdb/initdb.c` | `0033-oliphaunt-wasix-control-initdb-collation-discovery.patch` | Keeps the existing standard/ICU initdb discovery contract. |
@@ -91,7 +92,7 @@ src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs --write
 | `src/common/file_utils.c` | `0032-oliphaunt-wasix-treat-directory-fsync-eisdir-as-unsupported.patch`, `0038-oliphaunt-wasix-disable-unsupported-writeback-hints.patch` | Keeps real fsync while narrowing unsupported WASIX directory and writeback-hint behavior. |
 | `src/include/access/xlog.h` | `0027-oliphaunt-wasix-defer-xlog-size-checkpoint-requests.patch` | Exposes the embedded idle-boundary checkpoint handoff within PostgreSQL. |
 | `src/include/libpq/libpq-be.h` | `0002-oliphaunt-wasix-add-backend-host-io-hooks.patch` | Adds the host I/O callback table to Port only for embedded WASIX. |
-| `src/include/miscadmin.h` | `0029-oliphaunt-wasix-model-trusted-embedded-session.patch` | Defines a positive normal-user-session capability without falsifying process topology. |
+| `src/include/miscadmin.h` | `0029-oliphaunt-wasix-model-trusted-embedded-session.patch`, `0044-oliphaunt-wasix-initialize-trusted-session-identity.patch` | Defines a positive normal-user-session capability without falsifying process topology. |
 | `src/include/port/wasix-dl.h` | `0001-oliphaunt-wasix-add-wasix-dl-build-spine.patch`, `0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`, `0006-oliphaunt-wasix-report-copy-protocol-state.patch`, `0009-oliphaunt-wasix-route-process-identity-through-port.patch`, `0010-oliphaunt-wasix-route-sysv-shmem-through-port.patch`, `0012-oliphaunt-wasix-capture-startup-errors.patch`, `0034-oliphaunt-wasix-declare-hybrid-protocol-transport.patch`, `0039-oliphaunt-wasix-inline-sigsetjmp.patch`, `0042-oliphaunt-wasix-use-explicit-wal-sync-operations.patch` | Defines the embedded WASIX port header, ABI redirects, and call-site SJLJ contract. |
 | `src/include/port/wasix-dl/sys/ipc.h` | `0010-oliphaunt-wasix-route-sysv-shmem-through-port.patch` | Provides the WASIX SysV IPC shim surface. |
 | `src/include/port/wasix-dl/sys/shm.h` | `0010-oliphaunt-wasix-route-sysv-shmem-through-port.patch` | Provides the WASIX SysV shared-memory shim surface. |
@@ -107,6 +108,7 @@ src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs --write
 
 | Requirement | Owning Patch(es) | Required Evidence | Review Posture |
 | --- | --- | --- | --- |
+| Prepared host identity is initialized before normal-session admission | `0044-oliphaunt-wasix-initialize-trusted-session-identity.patch` | `INIT_PG_TRUSTED_CLIENT`, `InitializeSessionUserId(username, useroid, false)`, `MyBackendType = B_BACKEND`, `MyProcPort->user_name = MemoryContextStrdup`, `IsNormalUserSession()`, `EventTriggerOnLogin();` | Consume the prepared capability in InitPostgres, not after bootstrap-superuser initialization. Enforce catalog login/database policy, role defaults and login triggers without pretending HBA authentication occurred; unprepared recovery remains standalone. |
 | Fixed JSONB constructor metadata preserves PostgreSQL semantics | `0043-oliphaunt-wasix-cache-jsonb-build-object-metadata.patch` | `JsonbBuildObjectState`, `get_fn_expr_variadic`, `FirstNormalObjectId`, `jsonb_build_object_cache_drop_cast` | Ordinary calls reuse immutable expression metadata; explicit VARIADIC arrays keep the generic path and user-defined types are recategorized so cast DDL remains visible. |
 | WASIX WAL durability exposes only explicit sync operations | `0042-oliphaunt-wasix-use-explicit-wal-sync-operations.patch` | `PLATFORM_DEFAULT_WAL_SYNC_METHOD`, `WAL_SYNC_METHOD_FDATASYNC`, `OLIPHAUNT_WASM_EXPLICIT_WAL_SYNC_ONLY`, `explicit fd_datasync operation` | The shared PostgreSQL port selects fdatasync and removes open_sync/open_datasync from the WASIX GUC choices because Wasmer does not honor their open flags. |
 | WASIX dynamic-main build spine is isolated | `0001-oliphaunt-wasix-add-wasix-dl-build-spine.patch` | `PORTNAME), wasix-dl`, `oliphaunt: $(OBJS)` | Build plumbing lands before lifecycle behavior, so linker changes are reviewable alone. |
@@ -138,13 +140,13 @@ RequestCheckpoint already performs the requested checkpoint locally` | XLogWrite
 - `OLIPHAUNT_WASM_MAIN_LOOP_PROCESSED` (`0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`)
 - `OLIPHAUNT_WASM_MAIN_LOOP_RECOVERED` (`0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`)
 - `OLIPHAUNT_WASM_SIDE_MODULE` (`0039-oliphaunt-wasix-inline-sigsetjmp.patch`)
-- `OLIPHAUNT_WASM_SINGLE_USER` (`0002-oliphaunt-wasix-add-backend-host-io-hooks.patch`, `0003-oliphaunt-wasix-export-startup-packet-parser.patch`, `0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`, `0006-oliphaunt-wasix-report-copy-protocol-state.patch`, `0008-oliphaunt-wasix-reset-copy-state-on-error-recovery.patch`, `0012-oliphaunt-wasix-capture-startup-errors.patch`, `0019-oliphaunt-wasix-schedule-ready-after-loop-step-recovery.patch`, `0021-oliphaunt-wasix-declare-wasix-fork.patch`, `0023-oliphaunt-wasix-skip-data-dir-ownership-check-under-embedded-wasix.patch`, `0025-oliphaunt-wasix-stub-pg-dump-parallel-fork.patch`, `0027-oliphaunt-wasix-defer-xlog-size-checkpoint-requests.patch`, `0029-oliphaunt-wasix-model-trusted-embedded-session.patch`, `0038-oliphaunt-wasix-disable-unsupported-writeback-hints.patch`, `0039-oliphaunt-wasix-inline-sigsetjmp.patch`)
+- `OLIPHAUNT_WASM_SINGLE_USER` (`0002-oliphaunt-wasix-add-backend-host-io-hooks.patch`, `0003-oliphaunt-wasix-export-startup-packet-parser.patch`, `0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`, `0006-oliphaunt-wasix-report-copy-protocol-state.patch`, `0008-oliphaunt-wasix-reset-copy-state-on-error-recovery.patch`, `0012-oliphaunt-wasix-capture-startup-errors.patch`, `0019-oliphaunt-wasix-schedule-ready-after-loop-step-recovery.patch`, `0021-oliphaunt-wasix-declare-wasix-fork.patch`, `0023-oliphaunt-wasix-skip-data-dir-ownership-check-under-embedded-wasix.patch`, `0025-oliphaunt-wasix-stub-pg-dump-parallel-fork.patch`, `0027-oliphaunt-wasix-defer-xlog-size-checkpoint-requests.patch`, `0029-oliphaunt-wasix-model-trusted-embedded-session.patch`, `0038-oliphaunt-wasix-disable-unsupported-writeback-hints.patch`, `0039-oliphaunt-wasix-inline-sigsetjmp.patch`, `0044-oliphaunt-wasix-initialize-trusted-session-identity.patch`)
 - `PostgresMainLongJmp` (`0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`)
 - `PostgresMainLoopOnce` (`0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`)
 - `ProcessStartupPacket` (`0003-oliphaunt-wasix-export-startup-packet-parser.patch`)
-- `oliphaunt_wasix_begin_startup_error_capture` (`0012-oliphaunt-wasix-capture-startup-errors.patch`)
+- `oliphaunt_wasix_begin_startup_error_capture` (`0012-oliphaunt-wasix-capture-startup-errors.patch`, `0044-oliphaunt-wasix-initialize-trusted-session-identity.patch`)
 - `oliphaunt_wasix_checkpoint_deferred` (`0027-oliphaunt-wasix-defer-xlog-size-checkpoint-requests.patch`)
-- `oliphaunt_wasix_end_startup_error_capture` (`0012-oliphaunt-wasix-capture-startup-errors.patch`)
+- `oliphaunt_wasix_end_startup_error_capture` (`0012-oliphaunt-wasix-capture-startup-errors.patch`, `0044-oliphaunt-wasix-initialize-trusted-session-identity.patch`)
 - `oliphaunt_wasix_get_proc_port` (`0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`)
 - `oliphaunt_wasix_getegid` (`0009-oliphaunt-wasix-route-process-identity-through-port.patch`)
 - `oliphaunt_wasix_geteuid` (`0009-oliphaunt-wasix-route-process-identity-through-port.patch`)
@@ -154,7 +156,7 @@ RequestCheckpoint already performs the requested checkpoint locally` | XLogWrite
 - `oliphaunt_wasix_getuid` (`0009-oliphaunt-wasix-route-process-identity-through-port.patch`)
 - `oliphaunt_wasix_host_read` (`0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`)
 - `oliphaunt_wasix_host_write` (`0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`)
-- `oliphaunt_wasix_init_protocol_port` (`0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0012-oliphaunt-wasix-capture-startup-errors.patch`)
+- `oliphaunt_wasix_init_protocol_port` (`0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0012-oliphaunt-wasix-capture-startup-errors.patch`, `0044-oliphaunt-wasix-initialize-trusted-session-identity.patch`)
 - `oliphaunt_wasix_io` (`0002-oliphaunt-wasix-add-backend-host-io-hooks.patch`, `0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`)
 - `oliphaunt_wasix_output_status` (`0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`)
 - `oliphaunt_wasix_pgdump_fork` (`0025-oliphaunt-wasix-stub-pg-dump-parallel-fork.patch`)

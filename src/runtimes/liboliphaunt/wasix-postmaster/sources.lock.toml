@@ -97,8 +97,8 @@ bytes = 6226
 [current_runtime_patches.wasix_libc]
 path = "runtime/patches/wasix-libc/series"
 base_commit = "34178a6272804f90448b5bd08dc7bcf0d85438e3"
-sha256 = "cdbd601f9ec43c74b75840f0053683708b0fc99af6400034e467cc132005c595"
-bytes = 275
+sha256 = "a1ca7c42a304847730e5ea97902011ef5ea730c9fa856fc49a78ed30b3f22f24"
+bytes = 323
 
 [[current_runtime_patches.wasix_libc.file]]
 path = "runtime/patches/wasix-libc/0001-mmap-and-allocator-exec-ownership.patch"
@@ -122,8 +122,8 @@ bytes = 11324
 
 [[current_runtime_patches.wasix_libc.file]]
 path = "runtime/patches/wasix-libc/0005-wasm-eh-signal-context.patch"
-sha256 = "864046033c912ba7638e8c06b51326097aa976039e6ae6df5e4ef38ef1e4bbd1"
-bytes = 3624
+sha256 = "e3dad332d736df388bd0191f4935c9bc55d6491056300052c0fa0f7abb4fb4f1"
+bytes = 3769
 
 [[current_runtime_patches.wasix_libc.file]]
 path = "runtime/patches/wasix-libc/0006-process-resource-limit-import.patch"
@@ -134,6 +134,11 @@ bytes = 7648
 path = "runtime/patches/wasix-libc/0007-word-at-a-time-memcmp.patch"
 sha256 = "46307be448af385a322cc7a2372d04f4fde339244c97219b6938fb80d9b786c6"
 bytes = 1947
+
+[[current_runtime_patches.wasix_libc.file]]
+path = "runtime/patches/wasix-libc/0008-single-evaluation-signal-jump-buffer.patch"
+sha256 = "5ce5b33b97a955db10dea7335f0a6787586088a0f7a55bbd7514c2c0b657967c"
+bytes = 3261
 
 [postgresql]
 version = "18.4"

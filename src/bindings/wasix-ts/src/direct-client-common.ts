@@ -51,8 +51,6 @@ import { normalizeWasixStartupGUCs } from './startup-config.js';
 import {
   compileWasixModule,
   composeLifecycleFailure,
-  configureWasixDatabase,
-  configureWasixRole,
   describeError,
   materializeWasixMounts,
   wasixPostgresArgs,
@@ -154,7 +152,6 @@ export class DirectWasixSession implements WasixDatabaseSession {
   readonly #baseDirectory: Directory;
   readonly #instantiate: DirectInstanceFactory;
   readonly #initialize: DirectInstanceInitializer;
-  readonly #username: string;
   readonly #host: DirectWasixHost;
   #pgDump: Promise<CachedPgDump> | undefined;
   #pgDumpIdentity: string | undefined;
@@ -179,7 +176,6 @@ export class DirectWasixSession implements WasixDatabaseSession {
     this.#baseDirectory = baseDirectory;
     this.#instantiate = instantiate;
     this.#initialize = initialize;
-    this.#username = username;
     this.#host = host;
     this.identity = normalizeWasixDatabaseIdentity(username, database);
   }
@@ -241,7 +237,6 @@ export class DirectWasixSession implements WasixDatabaseSession {
       const initialize: DirectInstanceInitializer = async (candidate, _storageState) => {
         const response = candidate.startup(startupPacket(options.username, options.database));
         assertSuccessfulStartupResponse(response);
-        await configureWasixDatabase(options, async (input) => candidate.execProtocolRaw(input));
         return new Uint8Array(response);
       };
       instance = await instantiate();
@@ -555,9 +550,6 @@ export class DirectWasixSession implements WasixDatabaseSession {
       );
       assertSuccessfulQueryResponse(response);
     }
-    await configureWasixRole(this.#username, async (input) =>
-      this.#callGuest((instance) => instance.execProtocolRaw(input)),
-    );
   }
 
   async #restartProtocolBackend(): Promise<void> {

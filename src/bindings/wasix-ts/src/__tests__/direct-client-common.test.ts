@@ -228,7 +228,7 @@ describe('direct WASIX session lifecycle', () => {
     await session.close();
   });
 
-  it('keeps an existing configured role across a tool session without loading a seed', async () => {
+  it('keeps startup identity across a tool session without post-startup role or extension SQL', async () => {
     const queries: string[] = [];
     const options = openOptions();
     options.username = 'app"role';
@@ -264,13 +264,10 @@ describe('direct WASIX session lifecycle', () => {
 
     expect(seedLoads).toBe(0);
     expect(queries).toEqual([
-      'SET ROLE "app""role"',
       'ROLLBACK',
       'DISCARD ALL',
-      'SET ROLE "app""role"',
       'ROLLBACK',
       'DISCARD ALL',
-      'SET ROLE "app""role"',
     ]);
   });
 

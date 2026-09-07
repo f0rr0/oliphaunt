@@ -62,6 +62,7 @@ to submit upstream unchanged.
 | 0005 | Caller-owned EH signal-jump context |
 | 0006 | Process resource-limit ABI and expected symbols |
 | 0007 | Isolated inherited word-at-a-time memcmp optimization |
+| 0008 | Separate correctness delta: single evaluation of the EH signal jump buffer |
 
 Both original bundles and the decomposed Wasmer 0001-0008/libc 0001-0007 series were applied with
 `git apply --index --whitespace=error-all` to the pinned upstream commits.
@@ -90,11 +91,36 @@ concurrent-runtime result is inferred from the source-equivalence proof.
 Applying 0009 after either equivalent source tree yields
 `fa9663dac062e8e8f05868c8a90030d5d22dbdc6` with strict whitespace checking.
 
-The libc `sigsetjmp` buffer expression still has a
-multiple-evaluation limitation, and memcmp has not gained fresh independent
-performance/portability evidence merely by being split out. Those facts remain
-visible in the corresponding patches rather than being silently redesigned
-during a source-equivalent decomposition.
+Libc 0008 separately fixes the inherited `sigsetjmp` buffer-expression double
+evaluation. Its pointer-returning preparation helper leaves `setjmp` in the
+live caller's controlling expression; libc and callers must be rebuilt together.
+The C/C++ host adapter checks argument evaluation, zero/nonzero jump values and
+mask helper behavior against the host's actual mask implementation. The real-Wasm
+probe checks jumps and evaluation only: **guest signal masks remain unsupported**.
+Pinned WASIX `pthread_sigmask` returns success without changing or querying a
+mask; `sigpending` returns `EINVAL`, and `__wasm_signal` ignores `sa_mask`.
+Neither libc 0005's helper hooks nor child-wait/signal support repair this.
+
+This is a high-priority inherited Postmaster limitation, not a performance knob.
+Correct masking needs a WASIX mask/pending-signal ABI, per-thread blocked/pending
+state in Wasmer, deferred delivery and wakeup on unblocking, and libc bindings
+including handler `sa_mask`/`SA_NODEFER` behavior and saved-mask restoration.
+PostgreSQL interrupt, error-unwind, startup and child-management stress must then
+validate the result. A libc-only remembered mask would falsely claim protection
+while Wasmer still delivers blocked signals, so is not a valid remediation.
+Concrete PostgreSQL consumers are `quickdie()` (prevent nested `SIGQUIT`),
+`PostgresMain()`'s saved-mask error boundary, postmaster startup block/unblock,
+`fork_process()`'s child-creation mask and `dsm_impl_posix()`'s mapping critical
+section. Background writer, WAL writer, checkpointer and autovacuum recovery
+boundaries also request saved masks. These dependencies justify the priority;
+this audit has not demonstrated a particular signal race or data corruption.
+
+The inherited memcmp has bounded, alias-safe loads and only calls `ctz` on a
+nonzero XOR; little-endian byte selection preserves the unsigned-byte ordering.
+This correctness review does not establish independent performance benefit or
+non-GNU compiler portability (the load helpers use GNU-compatible builtins).
+The focused O0/O2 host check covers independent alignments, every first differing
+byte, high-bit ordering and protected-page ends without changing the algorithm.
 
 The product executor accepts only an independently verified sealed carrier. It
 does not expose the general Wasmer package, registry, network, or compilation
